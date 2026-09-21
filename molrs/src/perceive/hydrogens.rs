@@ -607,7 +607,7 @@ mod tests {
         let c1 = g.add_atom(atom("C"));
         let c2 = g.add_atom(atom("C"));
         bond_with_order(&mut g, c1, c2, 2.0);
-        let frame = g.to_frame();
+        let frame = g.to_frame().expect("a schema-conforming graph converts");
         let g2 = Atomistic::from_frame(&frame).unwrap();
         let result = add_hydrogens(&g2).expect("repletion succeeds on a well-formed graph");
         assert_eq!(result.n_atoms(), 6, "C=C round-trip should give 2C + 4H");
@@ -620,7 +620,7 @@ mod tests {
         let c1 = g.add_atom(atom("C"));
         let c2 = g.add_atom(atom("C"));
         bond_with_order(&mut g, c1, c2, 3.0);
-        let frame = g.to_frame();
+        let frame = g.to_frame().expect("a schema-conforming graph converts");
         let g2 = Atomistic::from_frame(&frame).unwrap();
         let result = add_hydrogens(&g2).expect("repletion succeeds on a well-formed graph");
         assert_eq!(result.n_atoms(), 4, "C#C round-trip should give 2C + 2H");
@@ -1222,7 +1222,8 @@ mod smiles_formula_tests {
         assert_eq!(direct.n_atoms(), 9, "C2H6O is nine atoms");
 
         let read_back =
-            Atomistic::from_frame(&mol.to_frame()).expect("an atomistic frame reads back");
+            Atomistic::from_frame(&mol.to_frame().expect("a schema-conforming graph converts"))
+                .expect("an atomistic frame reads back");
         assert_eq!(
             add_hydrogens(&read_back)
                 .expect("repletion succeeds on a well-formed graph")
@@ -1243,7 +1244,8 @@ mod smiles_formula_tests {
         assert_eq!(direct.n_atoms(), 8, "ethane is 2 C + 6 H");
 
         let read_back =
-            Atomistic::from_frame(&mol.to_frame()).expect("an atomistic frame reads back");
+            Atomistic::from_frame(&mol.to_frame().expect("a schema-conforming graph converts"))
+                .expect("an atomistic frame reads back");
         assert_eq!(
             add_hydrogens(&read_back)
                 .expect("repletion succeeds on a well-formed graph")

@@ -50,6 +50,8 @@
 //!     step_index u64  [n_updates]     absent while the block is regular
 //!     offset     u64  [n_updates+1]   CSR row pointer, offset[0] = 0
 //!     <column>        [total_rows][...trailing]
+//!     _validity/                 group; only for columns declared nullable
+//!       <column> bool [total_rows]    one flag per row, no trailing axes
 //! ```
 //!
 //! The layout is built so the common run — a fixed number of atoms moving
@@ -156,7 +158,8 @@ use molrs::types::F;
 use crate::io::reader::TrajectoryReader;
 
 use super::frame_io::{
-    BOX_GROUP, insert_column_into_block, join_path, node_prefix, read_column_array, zarr_dtype,
+    BOX_GROUP, VALIDITY_GROUP, insert_column_into_block, join_path, node_prefix, read_column_array,
+    zarr_dtype,
 };
 use super::record_io::zerr;
 
@@ -210,7 +213,7 @@ const DENSE_UPDATES_ATTRIBUTE: &str = "dense_updates";
 /// Children of `trajectory/` a block may not be named after.
 const RESERVED_BLOCK_NAMES: [&str; 4] = [STEP_ARRAY, TIME_ARRAY, META_GROUP, BOX_GROUP];
 /// Children of a block section a column may not be named after.
-const RESERVED_COLUMN_NAMES: [&str; 2] = [OFFSET_ARRAY, STEP_INDEX_ARRAY];
+const RESERVED_COLUMN_NAMES: [&str; 3] = [OFFSET_ARRAY, STEP_INDEX_ARRAY, VALIDITY_GROUP];
 
 // ---------------------------------------------------------------------------
 // Extent policy
@@ -576,6 +579,10 @@ fn same_column(left: &Column, right: &Column) -> bool {
 }
 
 /// Whether two blocks carry the same content, column for column.
+///
+/// The validity masks count as content: two frames whose values agree while
+/// one holds nulls under them are different frames, and letting the second
+/// earn no update would carry the first frame's mask forward over it.
 fn same_block(left: &Block, right: &Block) -> bool {
     left.len() == right.len()
         && left.nrows() == right.nrows()
@@ -584,6 +591,7 @@ fn same_block(left: &Block, right: &Block) -> bool {
             right
                 .get(name)
                 .is_some_and(|other| same_column(column, other))
+                && left.validity(name) == right.validity(name)
         })
 }
 
@@ -684,7 +692,8 @@ fn empty_column(dtype: DType, trailing: &[u64]) -> Result<Column, MolRsError> {
 // Schema
 // ---------------------------------------------------------------------------
 
-/// One declared column: the width and trailing shape it arrived with.
+/// One declared column: the width and trailing shape it arrived with, and
+/// whether its rows may be null.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ColumnSchema {
     /// [`dtype_tag`] of the column's storage width.
@@ -692,6 +701,13 @@ struct ColumnSchema {
     /// Axes after the leading row axis, e.g. `[3]` for xyz.
     #[serde(default)]
     trailing: Vec<u64>,
+    /// Whether the column carries a [validity
+    /// mask](crate::store::block::Block::validity), stored as a `bool` array
+    /// under the section's `_validity` subgroup. Absent from the serialized
+    /// pin while false, so a pin written before masks existed deserializes as
+    /// a run of plain columns -- which is what it is.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    nullable: bool,
 }
 
 /// One declared block: its columns, and the structural shape it declares.
@@ -794,6 +810,10 @@ impl SequenceSchema {
     /// that would have discovered it. The largest row count a block shows
     /// across the frames becomes its representative row count.
     ///
+    /// Nullability is unioned the same way: a column masked in **any** of the
+    /// frames is declared nullable, because a schema derived from a run whose
+    /// first frame is whole must still describe the frame that holes it.
+    ///
     /// # Errors
     ///
     /// Every case is a [`MolRsError::Zarr`] naming the offending block, column
@@ -829,6 +849,9 @@ impl SequenceSchema {
                     let trailing: Vec<u64> =
                         values.shape().iter().skip(1).map(|&n| n as u64).collect();
                     schema.declare_column(name, column, values.dtype(), &trailing)?;
+                    if block.validity(column).is_some() {
+                        schema.declare_nullable(name, column)?;
+                    }
                 }
             }
 
@@ -898,6 +921,7 @@ impl SequenceSchema {
         let declared = ColumnSchema {
             dtype: dtype_tag(dtype).to_string(),
             trailing: trailing.to_vec(),
+            nullable: false,
         };
         let entry = self
             .blocks
@@ -924,6 +948,33 @@ impl SequenceSchema {
             Some(_) => {}
         }
         Ok(())
+    }
+
+    /// Record that `column` of `block` may carry nulls.
+    ///
+    /// A union, never a toggle: a column masked in one frame of a run is
+    /// nullable for the whole run, so the flag is set and never cleared.
+    ///
+    /// [`from_frames`](Self::from_frames) sets this for every column it sees a
+    /// mask on, so a schema derived from frames needs no call. A schema
+    /// declared by hand does: appending a frame whose column carries a mask to
+    /// a column this schema declares non-nullable is refused, and this is the
+    /// door that opts the column in.
+    ///
+    /// # Errors
+    ///
+    /// A [`MolRsError::Zarr`] when `block` names no declared block, or
+    /// `column` no declared column of it.
+    pub fn declare_nullable(&mut self, block: &str, column: &str) -> Result<(), MolRsError> {
+        self.blocks
+            .get_mut(block)
+            .and_then(|declared| declared.columns.get_mut(column))
+            .map(|declared| declared.nullable = true)
+            .ok_or_else(|| {
+                MolRsError::zarr(format!(
+                    "cannot declare column {column:?} of block {block:?} nullable: it is not declared"
+                ))
+            })
     }
 
     /// Declare the structural shape of `block` (a volumetric `[nx][ny][nz]`).
@@ -1152,6 +1203,12 @@ where
             })?;
             let trailing: Vec<u64> = array.shape().iter().skip(1).copied().collect();
             schema.declare_column(&name, &column, dtype, &trailing)?;
+            // A store whose pin was stripped still says which columns are
+            // nullable: the mask arrays are on disk.
+            let mask_path = join_path(&join_path(&path, VALIDITY_GROUP), &column);
+            if array_exists(store, &mask_path)? {
+                schema.declare_nullable(&name, &column)?;
+            }
         }
 
         // The section mirrors its structural shape for exactly this reader.
@@ -1808,6 +1865,10 @@ const DENSE_COMPRESSION: Compression = Compression::Gzip(GZIP_LEVEL);
 /// the regular history, and withdraws the hints for good.
 struct BlockArrays {
     columns: BTreeMap<String, GrowthArray>,
+    /// The validity mask of each column pinned nullable: a `bool` array under
+    /// the section's `_validity` subgroup, grown in lockstep with the columns
+    /// so a mask row sits at the row index of the value it qualifies.
+    masks: BTreeMap<String, GrowthArray>,
     /// The CSR index, once the block stopped being regular.
     index: Option<IndexArrays>,
     /// Rows landed across every update.
@@ -1817,6 +1878,144 @@ struct BlockArrays {
     /// Rows one inner chunk of this block's columns holds.
     rows_per_chunk: u64,
     hints: BlockHints,
+}
+
+impl BlockArrays {
+    /// Land one flag per landed row into every mask array of this section.
+    ///
+    /// A block that carries no mask for a nullable column lands all-true: the
+    /// mask array is dense over the section's rows, which is what keeps a
+    /// frame's flags at exactly the row range its values occupy, and what
+    /// lets a column be holed in one frame and whole in the next.
+    fn land_masks(
+        &mut self,
+        blocks: &[&Block],
+        added: u64,
+        options: &CodecOptions,
+    ) -> Result<(), MolRsError> {
+        for (column, array) in &mut self.masks {
+            let mut flags: Vec<bool> = Vec::with_capacity(added as usize);
+            for block in blocks {
+                match block.validity(column) {
+                    Some(mask) => flags.extend_from_slice(mask),
+                    None => flags.extend(std::iter::repeat_n(true, block.nrows().unwrap_or(0))),
+                }
+            }
+            land_values!(array, added, flags, options);
+        }
+        Ok(())
+    }
+}
+
+/// The names of the columns `declared` pins nullable.
+fn nullable_columns(declared: &BlockSchema) -> Vec<&String> {
+    declared
+        .columns
+        .iter()
+        .filter(|(_, column)| column.nullable)
+        .map(|(name, _)| name)
+        .collect()
+}
+
+/// Build a section's reserved `_validity` subgroup and yield its path.
+fn create_validity_group(
+    store: &ReadableWritableListableStorage,
+    path: &str,
+) -> Result<String, MolRsError> {
+    let prefix = join_path(path, VALIDITY_GROUP);
+    GroupBuilder::new()
+        .build(store.clone(), &prefix)?
+        .store_metadata()?;
+    Ok(prefix)
+}
+
+/// Create one column's mask array: `bool`, one flag per row, no trailing
+/// axes, sharing its block's `rows_per_chunk` so a mask chunk covers the row
+/// range its values' chunk does.
+fn create_mask_array(
+    store: &ReadableWritableListableStorage,
+    prefix: &str,
+    column: &str,
+    rows_per_chunk: u64,
+    knobs: Knobs,
+) -> Result<GrowthArray, MolRsError> {
+    GrowthArray::create(
+        store,
+        &join_path(prefix, column),
+        DType::Bool,
+        &[],
+        Extents::for_column(rows_per_chunk, 1, knobs.chunks_per_shard),
+        serde_json::Map::new(),
+        DENSE_COMPRESSION,
+    )
+}
+
+/// Create the mask array of every column `declared` pins nullable.
+///
+/// A section with no nullable column gets no subgroup at all: its store is
+/// what a molrs that never masked a column wrote, and what a reader that
+/// knows nothing of masks still reads.
+fn create_mask_arrays(
+    store: &ReadableWritableListableStorage,
+    path: &str,
+    declared: &BlockSchema,
+    rows_per_chunk: u64,
+    knobs: Knobs,
+) -> Result<BTreeMap<String, GrowthArray>, MolRsError> {
+    let mut masks = BTreeMap::new();
+    let nullable = nullable_columns(declared);
+    if nullable.is_empty() {
+        return Ok(masks);
+    }
+    let prefix = create_validity_group(store, path)?;
+    for column in nullable {
+        masks.insert(
+            column.clone(),
+            create_mask_array(store, &prefix, column, rows_per_chunk, knobs)?,
+        );
+    }
+    Ok(masks)
+}
+
+/// Reopen the mask array of every nullable column of `declared`, creating and
+/// backfilling any the store does not carry.
+///
+/// A missing array means `rows` rows were landed while the column held no
+/// nulls, so the backfill is all-true — that is what those rows are. It keeps
+/// the invariant the reader leans on: a nullable column's mask covers exactly
+/// the rows its values do.
+fn open_mask_arrays(
+    store: &ReadableWritableListableStorage,
+    path: &str,
+    declared: &BlockSchema,
+    rows: u64,
+    rows_per_chunk: u64,
+    knobs: Knobs,
+) -> Result<BTreeMap<String, GrowthArray>, MolRsError> {
+    let mut masks = BTreeMap::new();
+    let mut missing: Vec<&String> = Vec::new();
+    let prefix = join_path(path, VALIDITY_GROUP);
+    for column in nullable_columns(declared) {
+        let mask_path = join_path(&prefix, column);
+        if array_exists(store, &mask_path)? {
+            masks.insert(column.clone(), GrowthArray::open(store, &mask_path)?);
+        } else {
+            missing.push(column);
+        }
+    }
+    if !missing.is_empty() {
+        let prefix = create_validity_group(store, path)?;
+        let options = partial_encoding_options();
+        for column in missing {
+            let mut array = create_mask_array(store, &prefix, column, rows_per_chunk, knobs)?;
+            if rows > 0 {
+                let flags = vec![true; rows as usize];
+                land_values!(array, rows, flags, &options);
+            }
+            masks.insert(column.clone(), array);
+        }
+    }
+    Ok(masks)
 }
 
 /// A block section's CSR index arrays.
@@ -2546,10 +2745,12 @@ impl SequenceArrays {
                     )?,
                 );
             }
+            let masks = create_mask_arrays(store, &path, declared, rows_per_chunk, knobs)?;
             blocks.insert(
                 name.clone(),
                 BlockArrays {
                     columns,
+                    masks,
                     index: None,
                     total_rows: 0,
                     updates: 0,
@@ -2674,6 +2875,21 @@ impl SequenceArrays {
             for column in columns.values_mut() {
                 column.truncate_to(total_rows)?;
             }
+            let rows_per_chunk = rows_per_chunk.unwrap_or(1);
+            // The extents of a reopened section come off its arrays, so a
+            // mask created here takes the block's own rows-per-chunk and
+            // derives the rest, exactly as the create path would.
+            let mut masks = open_mask_arrays(
+                store,
+                &path,
+                declared,
+                total_rows,
+                rows_per_chunk,
+                Knobs::default(),
+            )?;
+            for mask in masks.values_mut() {
+                mask.truncate_to(total_rows)?;
+            }
             hints.stored = stored;
             let wanted = if index.is_some() {
                 (None, false)
@@ -2689,10 +2905,11 @@ impl SequenceArrays {
                 name.clone(),
                 BlockArrays {
                     columns,
+                    masks,
                     index,
                     total_rows,
                     updates,
-                    rows_per_chunk: rows_per_chunk.unwrap_or(1),
+                    rows_per_chunk,
                     hints,
                 },
             );
@@ -3413,12 +3630,16 @@ impl FrameSequenceWriter {
 
     /// Check `frame` against the pinned schema.
     ///
-    /// The schema pins a dtype and trailing shape per column and nothing else,
-    /// so a column's [validity
-    /// mask](crate::store::block::Block::validity) is neither declared here nor
-    /// written by [`commit`](Self::commit): a sequence round-trip returns the
-    /// values a masked column holds, without the mask. Carrying it would take
-    /// a schema-level declaration, not a writer change.
+    /// The schema pins a dtype, a trailing shape and a nullability per column.
+    /// A column declared nullable carries its [validity
+    /// mask](crate::store::block::Block::validity) into the store — a `bool`
+    /// array under the section's reserved `_validity` subgroup, grown row for
+    /// row with the values — so a masked column round-trips masked, and a
+    /// frame that leaves it whole round-trips whole.
+    ///
+    /// A mask on a column the pin declares **non-nullable** is refused here
+    /// rather than dropped: the pin is a contract, and a writer that silently
+    /// forgot which rows hold nothing is the data loss this check exists for.
     fn validate(&self, frame: &Frame) -> Result<(), MolRsError> {
         for (name, block) in frame.iter() {
             let Some(declared) = self.schema.blocks.get(name) else {
@@ -3440,6 +3661,14 @@ impl FrameSequenceWriter {
                         "column {column:?} of block {name:?} is declared {} but this frame carries \
                          {dtype}",
                         pinned.dtype
+                    )));
+                }
+                if block.validity(column).is_some() && !pinned.nullable {
+                    return Err(MolRsError::zarr(format!(
+                        "column {column:?} of block {name:?} carries a validity mask but is \
+                         declared non-nullable by this sequence: a schema is pinned at create, \
+                         and landing the values without the mask would lose which rows hold \
+                         nothing"
                     )));
                 }
                 let trailing: Vec<u64> = values.shape().iter().skip(1).map(|&n| n as u64).collect();
@@ -3637,6 +3866,7 @@ impl FrameSequenceWriter {
                     )?;
                     array.commit_shape()?;
                 }
+                section.land_masks(&landed, added, &options)?;
             }
 
             let mut hints = section.hints;
@@ -4056,6 +4286,10 @@ impl ColumnReader {
 #[derive(Default)]
 struct ReadState {
     columns: BTreeMap<String, ColumnReader>,
+    /// Mask readers by array path, `None` for a nullable column the store
+    /// carries no mask array for — caching the absence, so a column that was
+    /// never holed costs one existence check for the whole run.
+    masks: BTreeMap<String, Option<ColumnReader>>,
     metas: BTreeMap<String, Array<dyn ReadableListableStorageTraits>>,
     boxes: Option<BoxReader>,
 }
@@ -4365,6 +4599,16 @@ impl FrameSequence {
                         .rows(start, rows, &declared.trailing)?
                 };
                 insert_column_into_block(&mut block, column, values)?;
+                if declared.nullable
+                    && rows > 0
+                    && let Some(mask) = self.mask_rows(&mut state, name, column, start, rows)?
+                {
+                    block.set_validity(column, mask).map_err(|e| {
+                        MolRsError::zarr(format!(
+                            "validity mask of column {column:?} of block {name:?}: {e}"
+                        ))
+                    })?;
+                }
             }
             if block.is_empty() {
                 // A declared block with no (selected) columns is still a block
@@ -4400,6 +4644,56 @@ impl FrameSequence {
         }
 
         Ok(Some(frame))
+    }
+
+    /// The validity flags of `column` over rows `start..start + rows`, or
+    /// `None` when the store carries no mask array for it.
+    ///
+    /// A column pinned nullable whose run never holed it has no mask array;
+    /// that absence is cached with the readers, so it costs one lookup rather
+    /// than one per frame.
+    ///
+    /// # Errors
+    ///
+    /// A [`MolRsError::Zarr`] naming block and column when the mask is not a
+    /// `bool` array, or does not cover the rows its column does — a mask that
+    /// disagrees with its column is a corrupt store, and padding it would
+    /// invent the very answer the mask exists to give.
+    fn mask_rows(
+        &self,
+        state: &mut ReadState,
+        block: &str,
+        column: &str,
+        start: u64,
+        rows: u64,
+    ) -> Result<Option<Vec<bool>>, MolRsError> {
+        let section = join_path(TRAJECTORY_GROUP, block);
+        let path = join_path(&join_path(&section, VALIDITY_GROUP), column);
+        if !state.masks.contains_key(&path) {
+            let reader = match array_exists(&self.store, &path)? {
+                true => Some(ColumnReader::open(&self.store, &path)?),
+                false => None,
+            };
+            state.masks.insert(path.clone(), reader);
+        }
+        let Some(reader) = state.masks.get_mut(&path).expect("just inserted").as_mut() else {
+            return Ok(None);
+        };
+        let flags = reader.rows(start, rows, &[]).map_err(|e| {
+            MolRsError::zarr(format!(
+                "validity mask of column {column:?} of block {block:?} does not cover rows \
+                 {start}..{}: {e}",
+                start + rows
+            ))
+        })?;
+        let flags = flags.as_bool().ok_or_else(|| {
+            MolRsError::zarr(format!(
+                "validity mask of column {column:?} of block {block:?} is stored as {}, and a \
+                 mask is one bool per row",
+                flags.dtype()
+            ))
+        })?;
+        Ok(Some(flags.iter().copied().collect()))
     }
 
     /// The update of block `name` that frame `index` resolves to, or `None`
@@ -7013,6 +7307,284 @@ mod tests {
         assert_eq!(
             inner_codecs(&format!("{TRAJ}/step")),
             vec!["bytes", "gzip", "crc32c"]
+        );
+    }
+
+    // -- nullable columns across a run -------------------------------------
+
+    /// The mask every nullable fixture carries over its three rows: the first
+    /// row valid, the last two null. Asymmetric on purpose — a reversed mask
+    /// cannot match it by accident.
+    const MASK: [bool; 3] = [true, false, false];
+
+    /// A frame whose `atoms` block carries one masked [`PROBE`] column.
+    fn masked_frame(values: &[f64], validity: &[bool]) -> Frame {
+        let mut block = Block::new();
+        block
+            .insert_nullable(
+                PROBE,
+                ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap(),
+                validity.to_vec(),
+            )
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert(ATOMS, block);
+        frame
+    }
+
+    /// The mask of column [`PROBE`] as that frame came back from the store.
+    fn atoms_mask(frame: &Frame) -> Option<Vec<bool>> {
+        frame
+            .get(ATOMS)
+            .expect("the frame carries an atoms block")
+            .validity(PROBE)
+            .map(<[bool]>::to_vec)
+    }
+
+    /// A mask belongs to the frame it was appended with: two frames that both
+    /// mask the column must both say so on the way back, not just the one
+    /// whose rows happen to sit at the head of the growth array.
+    #[test]
+    fn every_frame_keeps_the_mask_of_its_masked_column() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        write_all(
+            &store,
+            &[
+                masked_frame(&[1.0, 0.0, 0.0], &MASK),
+                masked_frame(&[2.0, 0.0, 0.0], &MASK),
+            ],
+        );
+
+        let mut seq = open_sequence(&store);
+        assert_eq!(atoms_mask(&frame_at(&mut seq, 0)), Some(MASK.to_vec()));
+        assert_eq!(atoms_mask(&frame_at(&mut seq, 1)), Some(MASK.to_vec()));
+    }
+
+    /// The mask is per frame, not per column of the run: a column that is
+    /// whole in one frame and holed in the next keeps both answers, so a
+    /// declared-nullable column cannot make every frame look masked.
+    #[test]
+    fn a_column_masked_in_one_frame_only_keeps_both_answers() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        write_all(
+            &store,
+            &[
+                masked_frame(&[1.0, 2.0, 3.0], &[true, true, true]),
+                masked_frame(&[4.0, 0.0, 0.0], &MASK),
+            ],
+        );
+
+        let mut seq = open_sequence(&store);
+        assert_eq!(atoms_mask(&frame_at(&mut seq, 0)), None);
+        assert_eq!(atoms_mask(&frame_at(&mut seq, 1)), Some(MASK.to_vec()));
+    }
+
+    /// Whether a column may hold nulls is part of the pin, not a per-append
+    /// discovery: the declaration derived from a masked frame says so.
+    #[test]
+    fn from_frames_declares_a_masked_column_nullable() {
+        let schema = SequenceSchema::from_frames(&[masked_frame(&[1.0, 0.0, 0.0], &MASK)]).unwrap();
+        assert!(schema.blocks[ATOMS].columns[PROBE].nullable);
+    }
+
+    /// And a run that never masks the column declares it plain — the flag
+    /// states something, rather than being set for every column there is.
+    #[test]
+    fn from_frames_leaves_an_unmasked_column_not_nullable() {
+        let schema = SequenceSchema::from_frames(&[atoms_frame(&[1.0, 2.0, 3.0])]).unwrap();
+        assert!(!schema.blocks[ATOMS].columns[X].nullable);
+    }
+
+    /// The declaration is the union over the frames it is derived from: one
+    /// frame masking the column is enough, otherwise the schema minted from a
+    /// run whose first frame is whole could not describe its second.
+    #[test]
+    fn from_frames_unions_nullable_across_frames() {
+        let schema = SequenceSchema::from_frames(&[
+            masked_frame(&[1.0, 2.0, 3.0], &[true, true, true]),
+            masked_frame(&[4.0, 0.0, 0.0], &MASK),
+        ])
+        .unwrap();
+        assert!(schema.blocks[ATOMS].columns[PROBE].nullable);
+    }
+
+    /// The flag survives the pin written to `trajectory/`: a reopened writer
+    /// reads its own declaration back out of the store, so a flag that only
+    /// existed in memory would be lost at the first reopen.
+    #[test]
+    fn the_pinned_schema_carries_the_nullable_flag() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        write_all(&store, &[masked_frame(&[1.0, 0.0, 0.0], &MASK)]);
+
+        let group = Group::open(store.clone(), TRAJ).expect("the sequence group exists");
+        let pinned: SequenceSchema = serde_json::from_value(
+            group
+                .attributes()
+                .get(SCHEMA_ATTRIBUTE)
+                .expect("the writer pins its schema")
+                .clone(),
+        )
+        .expect("the pin deserializes");
+        assert!(pinned.blocks[ATOMS].columns[PROBE].nullable);
+    }
+
+    /// A store pinned before the flag existed still opens, with every column
+    /// plain: the field defaults rather than making the pin unreadable.
+    #[test]
+    fn a_schema_pin_without_nullable_deserializes_as_not_nullable() {
+        // The pin molrs <= 0.15 wrote, verbatim.
+        let pinned =
+            r#"{"blocks":{"atoms":{"columns":{"probe":{"dtype":"f64","trailing":[]}}}},"meta":{}}"#;
+        let schema: SequenceSchema =
+            serde_json::from_str(pinned).expect("an older pin still deserializes");
+        assert!(!schema.blocks[ATOMS].columns[PROBE].nullable);
+    }
+
+    /// A frame whose values repeat while its mask moves is a *different*
+    /// frame. Change detection compares the validity masks, so the second
+    /// frame earns an update of its own; without the mask in the comparison
+    /// it would earn none and read back under the first frame's mask, which
+    /// is the silent loss the comparison exists to close.
+    #[test]
+    fn a_frame_repeating_its_values_under_a_moved_mask_keeps_its_own_mask() {
+        /// [`MASK`] with the middle row filled in — same values underneath.
+        const MOVED: [bool; 3] = [true, true, false];
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        write_all(
+            &store,
+            &[
+                masked_frame(&[1.0, 0.0, 0.0], &MASK),
+                masked_frame(&[1.0, 0.0, 0.0], &MOVED),
+            ],
+        );
+
+        let mut seq = open_sequence(&store);
+        assert_eq!(atoms_mask(&frame_at(&mut seq, 0)), Some(MASK.to_vec()));
+        assert_eq!(atoms_mask(&frame_at(&mut seq, 1)), Some(MOVED.to_vec()));
+        assert_eq!(seq.block_update_at(ATOMS, 0).unwrap(), Some(0));
+        assert_eq!(
+            seq.block_update_at(ATOMS, 1).unwrap(),
+            Some(1),
+            "a mask that moved is a change, and a change costs an update"
+        );
+    }
+
+    /// The converse guard: the mask entering the comparison must not make
+    /// every masked frame look new. Two frames identical in values *and*
+    /// mask still collapse into the one update an unchanging block costs.
+    #[test]
+    fn two_frames_identical_in_values_and_mask_cost_one_update() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        write_all(
+            &store,
+            &[
+                masked_frame(&[1.0, 0.0, 0.0], &MASK),
+                masked_frame(&[1.0, 0.0, 0.0], &MASK),
+            ],
+        );
+
+        let mut seq = open_sequence(&store);
+        assert_eq!(seq.block_update_at(ATOMS, 0).unwrap(), Some(0));
+        assert_eq!(
+            seq.block_update_at(ATOMS, 1).unwrap(),
+            Some(0),
+            "an unchanged block, mask included, earns no second update"
+        );
+        let probe = |frame: &Frame| -> Vec<f64> {
+            frame
+                .get(ATOMS)
+                .expect("the frame carries an atoms block")
+                .get(PROBE)
+                .expect("the atoms block carries the probe column")
+                .as_float()
+                .expect("the probe column arrived as f64")
+                .iter()
+                .copied()
+                .collect()
+        };
+        let first = frame_at(&mut seq, 0);
+        let second = frame_at(&mut seq, 1);
+        assert_eq!(probe(&first), vec![1.0, 0.0, 0.0]);
+        assert_eq!(probe(&second), probe(&first));
+        assert_eq!(atoms_mask(&first), Some(MASK.to_vec()));
+        assert_eq!(atoms_mask(&second), atoms_mask(&first));
+    }
+
+    /// `declare_nullable` is the door a hand-declared schema opts its column
+    /// in through: with the call, a masked frame appends and the mask
+    /// survives the round trip, exactly as a derived schema's would.
+    #[test]
+    fn a_hand_declared_nullable_column_accepts_a_masked_frame() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut schema = SequenceSchema::new();
+        schema.declare_block(ATOMS, Some(3)).unwrap();
+        schema
+            .declare_column(ATOMS, PROBE, DType::Float, &[])
+            .unwrap();
+        schema.declare_nullable(ATOMS, PROBE).unwrap();
+
+        let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
+        writer
+            .append(&masked_frame(&[1.0, 0.0, 0.0], &MASK))
+            .unwrap();
+        writer.close().unwrap();
+
+        let mut seq = open_sequence(&store);
+        assert_eq!(atoms_mask(&frame_at(&mut seq, 0)), Some(MASK.to_vec()));
+    }
+
+    /// Without that call the same append is refused rather than landed
+    /// mask-less: the pin is a contract, and the error names the block and
+    /// the column whose mask has nowhere to go.
+    #[test]
+    fn a_masked_frame_is_refused_by_a_non_nullable_declaration() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut schema = SequenceSchema::new();
+        schema.declare_block(ATOMS, Some(3)).unwrap();
+        schema
+            .declare_column(ATOMS, PROBE, DType::Float, &[])
+            .unwrap();
+
+        let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
+        let err = writer
+            .append(&masked_frame(&[1.0, 0.0, 0.0], &MASK))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(PROBE) && err.contains(ATOMS) && err.contains("non-nullable"),
+            "{err}"
+        );
+    }
+
+    /// Nullability is a property of a declared column, so declaring it on a
+    /// column that was never declared is an error naming the column.
+    #[test]
+    fn declare_nullable_on_an_undeclared_column_is_refused() {
+        let mut schema = SequenceSchema::new();
+        schema.declare_block(ATOMS, None).unwrap();
+        let err = schema
+            .declare_nullable(ATOMS, PROBE)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(PROBE) && err.contains(ATOMS), "{err}");
+    }
+
+    /// And on a column of a block that was never declared either — the same
+    /// refusal, naming both, rather than a silently inserted declaration.
+    #[test]
+    fn declare_nullable_on_an_undeclared_block_is_refused() {
+        let mut schema = SequenceSchema::new();
+        let err = schema.declare_nullable(BONDS, I).unwrap_err().to_string();
+        assert!(
+            err.contains(BONDS) && err.contains(&format!("{I:?}")),
+            "{err}"
         );
     }
 }

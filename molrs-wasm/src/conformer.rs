@@ -56,6 +56,7 @@ use crate::core::frame::Frame;
 /// - The frame has no `"atoms"` block or is missing required columns
 /// - The molecular graph has invalid valences or topology
 /// - The 3D embedding fails to converge
+/// - A property of the result contradicts the Frame schema on the way out
 ///
 /// # Example (JavaScript)
 ///
@@ -85,7 +86,11 @@ pub fn generate_3d_wasm(
         .generate(&atomistic)
         .map_err(|e| JsValue::from_str(&format!("conformer: {e}")))?;
 
-    Frame::from_rs(result.to_frame())
+    Frame::from_rs(
+        result
+            .to_frame()
+            .map_err(|e| JsValue::from_str(&format!("toFrame: {e}")))?,
+    )
 }
 
 fn parse_opts(speed: Option<&str>, seed: Option<u32>) -> Result<ConformerOptions, JsValue> {

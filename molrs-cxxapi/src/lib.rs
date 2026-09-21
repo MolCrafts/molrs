@@ -1831,7 +1831,9 @@ mod tests {
         }
 
         let mut fref = frame_new();
-        fref.0.with_mut(|frame| *frame = mol.to_frame()).unwrap();
+        fref.0
+            .with_mut(|frame| *frame = mol.to_frame().expect("methane converts"))
+            .unwrap();
         let charges = am1_bcc_assign_frame_from_base(
             &mut fref,
             &[-0.266000, 0.066000, 0.066000, 0.066000, 0.066000],

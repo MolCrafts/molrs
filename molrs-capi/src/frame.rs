@@ -143,6 +143,8 @@ pub extern "C" fn molrs_frame_schema_version() -> u32 {
 /// * `MolrsStatus::NullPointer` if either pointer is null.
 /// * `MolrsStatus::Utf8Error` if `smiles` is not valid UTF-8.
 /// * `MolrsStatus::ParseError` if the SMILES string is malformed.
+/// * `MolrsStatus::InternalError` if the parsed molecule cannot be expressed
+///   as a frame (a property contradicting the Frame schema).
 ///
 /// # Safety
 ///
@@ -179,7 +181,13 @@ pub unsafe extern "C" fn molrs_frame_from_smiles(
                 return MolrsStatus::ParseError;
             }
         };
-        let frame = mol.to_frame();
+        let frame = match mol.to_frame() {
+            Ok(f) => f,
+            Err(e) => {
+                error::set_last_error(format!("{e}"));
+                return MolrsStatus::InternalError;
+            }
+        };
 
         let mut store = lock_store();
         let id = store.inner.frame_new();

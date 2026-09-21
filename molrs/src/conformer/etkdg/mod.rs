@@ -66,7 +66,51 @@ pub fn generate_3d_impl(
         ));
     }
 
-    // --- Preprocess: hydrogen handling -----------------------------------
+    let work = run_preprocess(mol, opts, &mut report)?;
+    let n = work.n_atoms();
+
+    // Single atom: place at origin (no geometry to solve). RDKit also returns
+    // a valid (trivial) conformer.
+    if n == 1 {
+        return embed_single_atom(work, report);
+    }
+
+    // --- Build ETKDGv3 constraints ---------------------------------------
+    // Experimental torsions are assigned through the full CrystalFF
+    // three-table set (v2 ++ small-rings ++ macrocycles) matched by the core
+    // SMARTS engine (`molrs::perceive::smarts`), reproducing RDKit
+    // `getExperimentalTorsions`. See `distgeom::torsion_prefs`.
+    let version = EtkdgVersion::Etkdgv3;
+    let constraints = distgeom::DgConstraints::from_graph(&work, version)?;
+
+    let mut embedding = run_embedding(&constraints, n, seed, opts, &mut report);
+    let mut coords3d = match embedding.best.take() {
+        Some(c) => c,
+        None => {
+            return Err(MolRsError::validation(
+                "ETKDG embedding failed: no consistent conformer after retries",
+            ));
+        }
+    };
+    push_embedding_stages(&mut report, &embedding);
+
+    let final_energy = run_mmff_cleanup_stage(&work, &mut coords3d, opts, &mut report);
+    run_stereo_check(&constraints, &coords3d, &mut report);
+
+    // --- Write coordinates back ------------------------------------------
+    let mut out = work;
+    write_coords(&mut out, &coords3d)?;
+    report.final_energy = final_energy.or(Some(embedding.coarse_energy));
+    Ok((out, report))
+}
+
+/// `Preprocess` stage: optional hydrogen repletion, reported as the atom
+/// count the molecule gained.
+fn run_preprocess(
+    mol: &Atomistic,
+    opts: &ConformerOptions,
+    report: &mut ConformerReport,
+) -> Result<Atomistic, MolRsError> {
     let work = if opts.add_hydrogens {
         add_hydrogens(mol)?
     } else {
@@ -81,78 +125,101 @@ pub fn generate_3d_impl(
         converged: true,
         elapsed_ms: 0,
     });
+    Ok(work)
+}
 
-    let n = work.n_atoms();
+/// `BuildInitial` stage for the degenerate one-atom case: place the atom at
+/// the origin and close the report at zero energy.
+fn embed_single_atom(
+    work: Atomistic,
+    mut report: ConformerReport,
+) -> Result<(Atomistic, ConformerReport), MolRsError> {
+    let mut out = work;
+    place_single_atom(&mut out)?;
+    report.stages.push(ConformerStageReport {
+        stage: StageKind::BuildInitial,
+        energy_before: None,
+        energy_after: None,
+        steps: 1,
+        converged: true,
+        elapsed_ms: 0,
+    });
+    report.final_energy = Some(0.0);
+    Ok((out, report))
+}
 
-    // Single atom: place at origin (no geometry to solve). RDKit also returns
-    // a valid (trivial) conformer.
-    if n == 1 {
-        let mut out = work;
-        place_single_atom(&mut out)?;
-        report.stages.push(ConformerStageReport {
-            stage: StageKind::BuildInitial,
-            energy_before: None,
-            energy_after: None,
-            steps: 1,
-            converged: true,
-            elapsed_ms: 0,
-        });
-        report.final_energy = Some(0.0);
-        return Ok((out, report));
-    }
+/// Best candidate of the embedding stage plus the telemetry the
+/// `BuildInitial` / `CoarseOptimize` stage reports are built from.
+struct EmbedOutcome {
+    /// Best 3D coordinate buffer found, `None` if every attempt was degenerate.
+    best: Option<Vec<f64>>,
+    /// 4D embedding steps of the last attempt.
+    embed4d_steps: usize,
+    /// First-stage energy of the last attempt.
+    coarse_energy: f64,
+    /// First-stage minimizer steps of the last attempt.
+    coarse_steps: usize,
+    /// Whether the last attempt's first-stage minimization converged.
+    coarse_converged: bool,
+    /// Whether `best` passed the chiral-volume check.
+    chiral_ok: bool,
+}
 
-    // --- Build ETKDGv3 constraints ---------------------------------------
-    // Experimental torsions are assigned through the full CrystalFF
-    // three-table set (v2 ++ small-rings ++ macrocycles) matched by the core
-    // SMARTS engine (`molrs::perceive::smarts`), reproducing RDKit
-    // `getExperimentalTorsions`. See `distgeom::torsion_prefs`.
-    let version = EtkdgVersion::Etkdgv3;
-    let constraints = distgeom::DgConstraints::from_graph(&work, version)?;
-
-    // --- Retry loop ------------------------------------------------------
+/// Embedding stage: the `maxIterations` retry loop followed by RDKit's
+/// `useRandomCoords` fallback attempt.
+fn run_embedding(
+    constraints: &DgConstraints,
+    n: usize,
+    seed: u64,
+    opts: &ConformerOptions,
+    report: &mut ConformerReport,
+) -> EmbedOutcome {
     let max_iters = retry::effective_max_iterations(opts.max_iterations_internal(), n);
-    let mut best: Option<Vec<f64>> = None;
-    let mut last_embed4d_steps = 0usize;
-    let mut last_coarse_energy = f64::NAN;
-    let mut last_coarse_steps = 0usize;
-    let mut last_coarse_conv = false;
-    let mut chiral_ok = false;
+    let mut outcome = EmbedOutcome {
+        best: None,
+        embed4d_steps: 0,
+        coarse_energy: f64::NAN,
+        coarse_steps: 0,
+        coarse_converged: false,
+        chiral_ok: false,
+    };
 
     for attempt in 0..max_iters {
         let aseed = retry::attempt_seed(seed, attempt);
         let mut rng = StdRng::seed_from_u64(aseed);
         let (coords3d, e4d_steps, coarse_e, coarse_steps, coarse_conv, chiral_pass) =
-            try_embed(&constraints, n, &mut rng, false);
-        last_embed4d_steps = e4d_steps;
-        last_coarse_energy = coarse_e;
-        last_coarse_steps = coarse_steps;
-        last_coarse_conv = coarse_conv;
+            try_embed(constraints, n, &mut rng, false);
+        outcome.embed4d_steps = e4d_steps;
+        outcome.coarse_energy = coarse_e;
+        outcome.coarse_steps = coarse_steps;
+        outcome.coarse_converged = coarse_conv;
         if let Some(c) = coords3d {
             if chiral_pass {
-                best = Some(c);
-                chiral_ok = true;
+                outcome.best = Some(c);
+                outcome.chiral_ok = true;
                 break;
             }
             // Keep a non-chiral-clean candidate as a fallback.
-            if best.is_none() {
-                best = Some(c);
+            if outcome.best.is_none() {
+                outcome.best = Some(c);
             }
         }
     }
 
     // useRandomCoords fallback.
-    if (best.is_none() || !chiral_ok) && opts.use_random_coords_fallback_internal() {
+    if (outcome.best.is_none() || !outcome.chiral_ok) && opts.use_random_coords_fallback_internal()
+    {
         let aseed = retry::attempt_seed(seed, max_iters + 1);
         let mut rng = StdRng::seed_from_u64(aseed);
         let (coords3d, e4d_steps, coarse_e, coarse_steps, coarse_conv, chiral_pass) =
-            try_embed(&constraints, n, &mut rng, true);
-        last_embed4d_steps = e4d_steps;
-        last_coarse_energy = coarse_e;
-        last_coarse_steps = coarse_steps;
-        last_coarse_conv = coarse_conv;
+            try_embed(constraints, n, &mut rng, true);
+        outcome.embed4d_steps = e4d_steps;
+        outcome.coarse_energy = coarse_e;
+        outcome.coarse_steps = coarse_steps;
+        outcome.coarse_converged = coarse_conv;
         if let Some(c) = coords3d {
-            if chiral_pass || best.is_none() {
-                best = Some(c);
+            if chiral_pass || outcome.best.is_none() {
+                outcome.best = Some(c);
             }
             report
                 .warnings
@@ -160,70 +227,79 @@ pub fn generate_3d_impl(
         }
     }
 
-    let mut coords3d = match best {
-        Some(c) => c,
-        None => {
-            return Err(MolRsError::validation(
-                "ETKDG embedding failed: no consistent conformer after retries",
-            ));
-        }
-    };
+    outcome
+}
 
+/// Report the `BuildInitial` and `CoarseOptimize` stages of the accepted
+/// embedding attempt.
+fn push_embedding_stages(report: &mut ConformerReport, outcome: &EmbedOutcome) {
     report.stages.push(ConformerStageReport {
         stage: StageKind::BuildInitial,
         energy_before: None,
         energy_after: None,
-        steps: last_embed4d_steps,
+        steps: outcome.embed4d_steps,
         converged: true,
         elapsed_ms: 0,
     });
     report.stages.push(ConformerStageReport {
         stage: StageKind::CoarseOptimize,
         energy_before: None,
-        energy_after: Some(last_coarse_energy),
-        steps: last_coarse_steps,
-        converged: last_coarse_conv,
+        energy_after: Some(outcome.coarse_energy),
+        steps: outcome.coarse_steps,
+        converged: outcome.coarse_converged,
         elapsed_ms: 0,
     });
+}
 
-    // --- Second-stage MMFF94 cleanup -------------------------------------
-    let mut final_energy = None;
-    if opts.mmff_cleanup_internal() {
-        match mmff_cleanup(&work, &mut coords3d) {
-            Ok((e, steps, conv)) => {
-                final_energy = Some(e);
-                report.stages.push(ConformerStageReport {
-                    stage: StageKind::FinalOptimize,
-                    energy_before: None,
-                    energy_after: Some(e),
-                    steps,
-                    converged: conv,
-                    elapsed_ms: 0,
-                });
-            }
-            Err(msg) => {
-                report
-                    .warnings
-                    .push(format!("MMFF94 cleanup skipped: {msg}"));
-                report.stages.push(ConformerStageReport {
-                    stage: StageKind::FinalOptimize,
-                    energy_before: None,
-                    energy_after: None,
-                    steps: 0,
-                    converged: false,
-                    elapsed_ms: 0,
-                });
-            }
+/// `FinalOptimize` stage: second-stage MMFF94 cleanup minimization, skipped
+/// (with a warning) when the molecule cannot be MMFF-typed.
+fn run_mmff_cleanup_stage(
+    work: &Atomistic,
+    coords3d: &mut [f64],
+    opts: &ConformerOptions,
+    report: &mut ConformerReport,
+) -> Option<f64> {
+    if !opts.mmff_cleanup_internal() {
+        return None;
+    }
+    match mmff_cleanup(work, coords3d) {
+        Ok((e, steps, conv)) => {
+            report.stages.push(ConformerStageReport {
+                stage: StageKind::FinalOptimize,
+                energy_before: None,
+                energy_after: Some(e),
+                steps,
+                converged: conv,
+                elapsed_ms: 0,
+            });
+            Some(e)
+        }
+        Err(msg) => {
+            report
+                .warnings
+                .push(format!("MMFF94 cleanup skipped: {msg}"));
+            report.stages.push(ConformerStageReport {
+                stage: StageKind::FinalOptimize,
+                energy_before: None,
+                energy_after: None,
+                steps: 0,
+                converged: false,
+                elapsed_ms: 0,
+            });
+            None
         }
     }
+}
 
-    // --- Stereo check ----------------------------------------------------
+/// `StereoCheck` stage: warn for every chiral center whose signed volume
+/// inverted or shrank past [`CHIRAL_RATIO_TOL`] relative to its target.
+fn run_stereo_check(constraints: &DgConstraints, coords3d: &[f64], report: &mut ConformerReport) {
     let mut stereo_warnings = Vec::new();
     for c in &constraints.chiral {
         if c.sign == ChiralSign::Unknown {
             continue;
         }
-        let vol = etmin::calc_chiral_volume(&coords3d, c.neighbors, 3);
+        let vol = etmin::calc_chiral_volume(coords3d, c.neighbors, 3);
         let target_positive = matches!(c.sign, ChiralSign::Positive);
         let got_positive = vol > 0.0;
         if target_positive != got_positive
@@ -246,12 +322,6 @@ pub fn generate_3d_impl(
         converged: true,
         elapsed_ms: 0,
     });
-
-    // --- Write coordinates back ------------------------------------------
-    let mut out = work;
-    write_coords(&mut out, &coords3d)?;
-    report.final_energy = final_energy.or(Some(last_coarse_energy));
-    Ok((out, report))
 }
 
 /// One embedding attempt: 4D embed → first-stage minimization → 3D
@@ -361,7 +431,10 @@ fn mmff_cleanup(mol: &Atomistic, coords3d: &mut [f64]) -> Result<(f64, usize, bo
     write_coords(&mut staged, coords3d).map_err(|e| e.to_string())?;
 
     let typifier = mmff94_typifier();
-    let mut frame = typifier.typify(&staged)?.to_frame();
+    let mut frame = typifier
+        .typify(&staged)?
+        .to_frame()
+        .map_err(|e| e.to_string())?;
     // The neighbour list is the consumer's to build — and here the consumer is the
     // minimizer. Bonded terms and the 1-2/1-3 exclusions are topological, so this
     // list stays valid across the relaxation. Which close neighbours belong in

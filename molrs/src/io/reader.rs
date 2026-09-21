@@ -84,7 +84,10 @@ pub trait FromFrame: Sized {
     ///
     /// [`Atomistic`]: crate::system::atomistic::Atomistic
     fn from_atomistic(mol: crate::system::atomistic::Atomistic) -> Result<Self> {
-        Self::from_frame(&mol.to_frame())
+        let frame = mol
+            .to_frame()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+        Self::from_frame(&frame)
     }
 }
 

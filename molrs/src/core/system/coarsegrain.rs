@@ -94,20 +94,40 @@ impl CoarseGrain {
     }
 
     /// Add a bead with type name and 3D coordinates.
+    ///
+    /// # Panics
+    ///
+    /// Panics when a value of the bag this builds contradicts the element
+    /// type an existing bead column holds for that key (a string `x` where
+    /// `x` is an `f64` column). The bag is built here out of typed arguments,
+    /// so that is a defect in the graph's own vocabulary and not a data
+    /// condition; the generic
+    /// [`MolGraph::add_node_with`](crate::system::molgraph::MolGraph::add_node_with)
+    /// reached through [`as_molgraph_mut`](Self::as_molgraph_mut) returns the
+    /// conflict for callers holding a foreign bag.
     pub fn add_bead(&mut self, bead_type: &str, x: f64, y: f64, z: f64) -> BeadId {
         let mut a = Atom::new();
         a.set("bead_type", bead_type);
         a.set("x", x);
         a.set("y", y);
         a.set("z", z);
-        self.graph.add_node_with(a)
+        self.graph
+            .add_node_with(a)
+            .expect("caller-built bead bag contradicts an existing bead column")
     }
 
     /// Add a bead with type name only (no coordinates).
+    ///
+    /// # Panics
+    ///
+    /// Panics when the `bead_type` column already holds a different element
+    /// type — see [`add_bead`](Self::add_bead).
     pub fn add_bead_bare(&mut self, bead_type: &str) -> BeadId {
         let mut a = Atom::new();
         a.set("bead_type", bead_type);
-        self.graph.add_node_with(a)
+        self.graph
+            .add_node_with(a)
+            .expect("caller-built bead bag contradicts an existing bead column")
     }
 
     /// Remove a bead and all incident CG bonds (and its membership).
@@ -188,8 +208,16 @@ impl CoarseGrain {
     /// `bonds`→`cgbonds` with its `atomi`/`atomj` endpoint columns renamed to
     /// `ibead`/`jbead`. All relabeling is on the already-materialized numpy
     /// columns — no data is copied.
-    pub fn to_frame(&self) -> Frame {
-        let mut frame = self.graph.to_frame();
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when a bead or bond property contradicts the
+    /// dtype the Frame schema declares for its key; the message names the
+    /// refused column. The inner [`MolGraph`] accepts any value under a key it
+    /// has no column for, so a string written under `"x"` is legal in the
+    /// graph and only refused here.
+    pub fn to_frame(&self) -> Result<Frame, MolRsError> {
+        let mut frame = self.graph.to_frame()?;
         frame.rename_block("atoms", "beads");
         // A CG system with no bonds has no `bonds` block, so the rename is
         // legitimately a no-op there. When the block *is* present the graph
@@ -204,7 +232,7 @@ impl CoarseGrain {
                 .expect("graph-built bonds block carries atomj");
         }
         frame.rename_block("bonds", "cgbonds");
-        frame
+        Ok(frame)
     }
 
     /// Build from the CG-shaped [`Frame`] emitted by [`Self::to_frame`].
@@ -409,7 +437,7 @@ mod tests {
         let b = cg.add_bead("P1", 3.0, 0.0, 0.0);
         cg.add_bond(a, b).unwrap();
 
-        let frame = cg.to_frame();
+        let frame = cg.to_frame().expect("a schema-conforming graph converts");
         assert!(frame.contains_key("beads"));
         assert!(frame.contains_key("cgbonds"));
         assert!(!frame.contains_key("atoms"));
@@ -418,11 +446,38 @@ mod tests {
         assert_eq!(restored.n_bonds(), 1);
     }
 
+    /// A `CoarseGrain` owns no bead setter of its own, so the door a caller
+    /// reaches is the inner graph's `set_node` — and it carries the same
+    /// schema opinion there: a string under the float key `charge` never
+    /// becomes a bead property, so no bead column can contradict the Frame
+    /// schema in the first place.
+    #[test]
+    fn set_node_through_the_inner_graph_refuses_a_str_under_a_schema_float_key() {
+        use crate::store::block::DType;
+        let mut cg = CoarseGrain::new();
+        let b = cg.add_bead("W", 0.0, 0.0, 0.0);
+
+        let err = cg
+            .as_molgraph_mut()
+            .set_node(b, "charge", "negative")
+            .expect_err("a str cannot be stored at a schema-float key");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("'charge'"),
+            "the error names the key, got {msg}"
+        );
+        assert!(
+            msg.contains(DType::Float.name()) && msg.contains(DType::String.name()),
+            "the error names both dtypes, got {msg}"
+        );
+    }
+
     #[test]
     fn test_try_from_molgraph_missing_bead_type() {
         let mut g = MolGraph::new();
         g.register_kind("bonds", 2);
-        g.add_node_with(Atom::new());
+        g.add_node_with(Atom::new()).expect("fixture node");
         assert!(CoarseGrain::try_from_molgraph(g).is_err());
     }
 
@@ -435,8 +490,8 @@ mod tests {
         let ports = graph.register_kind("ports", 2);
         let mut bead = Atom::new();
         bead.set("bead_type", "W");
-        let b1 = graph.add_node_with(bead.clone());
-        let b2 = graph.add_node_with(bead);
+        let b1 = graph.add_node_with(bead.clone()).expect("fixture node");
+        let b2 = graph.add_node_with(bead).expect("fixture node");
         graph.add_relation(ports, &[b1, b2]).unwrap();
 
         let mut cg = CoarseGrain::try_from_molgraph(graph).expect("bead types are present");

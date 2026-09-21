@@ -34,7 +34,7 @@
 //! let mol = Atomistic::new();                             // build or load your molecule
 //! let typifier = MMFF94Typifier::new();
 //!
-//! let mut frame = typifier.typify(&mol)?.to_frame();      // labels + charges
+//! let mut frame = typifier.typify(&mol)?.to_frame().map_err(|e| e.to_string())?;
 //! let ff = typifier.ff();
 //! frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds())?);
 //! let potentials = ff.to_potentials(&frame)?;              // the standard compile path

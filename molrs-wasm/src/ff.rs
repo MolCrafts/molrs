@@ -56,7 +56,7 @@ macro_rules! wasm_typifier {
 
             /// Typify a molecular [`Frame`]. Returns a **new** labeled frame.
             ///
-            /// Native: `typifier.typify(&mol)?.to_frame()`.
+            /// Native: `typifier.typify(&mol)?.to_frame()?`.
             pub fn typify(&self, frame: &Frame) -> Result<Frame, JsValue> {
                 let mol = frame.with_frame(|rs| {
                     Atomistic::from_frame(rs).map_err(|e| {
@@ -67,7 +67,11 @@ macro_rules! wasm_typifier {
                     .inner
                     .typify(&mol)
                     .map_err(|e| JsValue::from_str(&e))?;
-                Frame::from_rs(typed.to_frame())
+                Frame::from_rs(
+                    typed.to_frame().map_err(|e| {
+                        JsValue::from_str(&format!("toFrame: {e}"))
+                    })?,
+                )
             }
 
             /// Compile molecule-bound potentials from a **typed** frame.

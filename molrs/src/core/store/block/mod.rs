@@ -349,14 +349,16 @@ impl Block {
 
     /// Attach `mask` to the already-inserted column `key`.
     ///
-    /// The transport path: a decoder rebuilds the columns first (it holds
-    /// [`Column`] values, not typed arrays) and restores the masks afterwards.
+    /// Every decoding path: the transport decoder and the Zarr reader both
+    /// rebuild the columns first (they hold [`Column`] values, not typed
+    /// arrays) and restore the masks afterwards. Gated on the two features
+    /// that decode -- `serde` does not imply `zarr`, nor the reverse.
     ///
     /// # Errors
     ///
     /// [`BlockError::Validation`] if `key` names no column, and
     /// [`BlockError::ValidityLength`] if `mask` does not cover the block's rows.
-    #[cfg(feature = "serde")]
+    #[cfg(any(feature = "serde", feature = "zarr"))]
     pub(crate) fn set_validity(&mut self, key: &str, mask: Vec<bool>) -> Result<(), BlockError> {
         if !self.map.contains_key(key) {
             return Err(BlockError::validation(format!(
@@ -455,77 +457,7 @@ impl Block {
             .map
             .get(key)
             .ok_or_else(|| BlockError::validation(format!("sort key '{key}' not found")))?;
-        let mut order: Vec<usize> = (0..nrows).collect();
-        match col {
-            Column::Float(h) => {
-                let v: Vec<crate::types::F> = h.array().iter().copied().collect();
-                order.sort_by(|&i, &j| v[i].total_cmp(&v[j]));
-            }
-            Column::Float16(h) => {
-                let v: Vec<half::f16> = h.array().iter().copied().collect();
-                order.sort_by(|&i, &j| v[i].total_cmp(&v[j]));
-            }
-            Column::Float32(h) => {
-                let v: Vec<f32> = h.array().iter().copied().collect();
-                order.sort_by(|&i, &j| v[i].total_cmp(&v[j]));
-            }
-            Column::Int(h) => {
-                let v: Vec<crate::types::I> = h.array().iter().copied().collect();
-                order.sort_by_key(|&i| v[i]);
-            }
-            Column::Int8(h) => {
-                let v: Vec<i8> = h.array().iter().copied().collect();
-                order.sort_by_key(|&i| v[i]);
-            }
-            Column::Int16(h) => {
-                let v: Vec<i16> = h.array().iter().copied().collect();
-                order.sort_by_key(|&i| v[i]);
-            }
-            Column::Int64(h) => {
-                let v: Vec<i64> = h.array().iter().copied().collect();
-                order.sort_by_key(|&i| v[i]);
-            }
-            Column::UInt(h) => {
-                let v: Vec<crate::types::Idx> = h.array().iter().copied().collect();
-                order.sort_by_key(|&i| v[i]);
-            }
-            Column::U8(h) => {
-                let v: Vec<u8> = h.array().iter().copied().collect();
-                order.sort_by_key(|&i| v[i]);
-            }
-            Column::UInt16(h) => {
-                let v: Vec<u16> = h.array().iter().copied().collect();
-                order.sort_by_key(|&i| v[i]);
-            }
-            Column::UInt32(h) => {
-                let v: Vec<u32> = h.array().iter().copied().collect();
-                order.sort_by_key(|&i| v[i]);
-            }
-            Column::Bool(h) => {
-                let v: Vec<bool> = h.array().iter().copied().collect();
-                order.sort_by_key(|&i| v[i]);
-            }
-            Column::String(h) => {
-                let v: Vec<&String> = h.array().iter().collect();
-                order.sort_by(|&i, &j| v[i].cmp(v[j]));
-            }
-            Column::Complex64(h) => {
-                let v: Vec<_> = h.array().iter().copied().collect();
-                order.sort_by(|&i, &j| {
-                    v[i].re
-                        .total_cmp(&v[j].re)
-                        .then_with(|| v[i].im.total_cmp(&v[j].im))
-                });
-            }
-            Column::Complex128(h) => {
-                let v: Vec<_> = h.array().iter().copied().collect();
-                order.sort_by(|&i, &j| {
-                    v[i].re
-                        .total_cmp(&v[j].re)
-                        .then_with(|| v[i].im.total_cmp(&v[j].im))
-                });
-            }
-        }
+        let mut order = sort_order(col, nrows);
         if reverse {
             order.reverse();
         }
@@ -850,90 +782,12 @@ impl Block {
 
         // If self is empty, clone other
         if self.is_empty() {
-            self.map = other.map.clone();
-            self.validity = other.validity.clone();
-            self.nrows = other.nrows;
-            self.shape = other.shape.clone();
+            self.adopt(other);
             return Ok(());
         }
 
-        // Check that both blocks have the same keys
-        let self_keys: std::collections::HashSet<_> = self.keys().collect();
-        let other_keys: std::collections::HashSet<_> = other.keys().collect();
-
-        if self_keys != other_keys {
-            return Err(BlockError::validation(format!(
-                "Cannot merge blocks with different keys. Self has {:?}, other has {:?}",
-                self_keys, other_keys
-            )));
-        }
-
-        // Merge each column
-        let mut new_map = HashMap::new();
-        for key in self.keys() {
-            let self_col = &self.map[key];
-            let other_col = &other.map[key];
-
-            // Check dtype compatibility
-            if self_col.dtype() != other_col.dtype() {
-                return Err(BlockError::validation(format!(
-                    "Column '{}' has incompatible dtypes: {:?} vs {:?}",
-                    key,
-                    self_col.dtype(),
-                    other_col.dtype()
-                )));
-            }
-
-            // Concatenate based on dtype
-            let merged_col = match (self_col, other_col) {
-                (Column::Float(a), Column::Float(b)) => {
-                    concat_pair(a, b, key, "float", Column::from_float)?
-                }
-                (Column::Float16(a), Column::Float16(b)) => {
-                    concat_pair(a, b, key, "f16", Column::from_f16)?
-                }
-                (Column::Float32(a), Column::Float32(b)) => {
-                    concat_pair(a, b, key, "f32", Column::from_f32)?
-                }
-                (Column::Int(a), Column::Int(b)) => {
-                    concat_pair(a, b, key, "int", Column::from_int)?
-                }
-                (Column::Int8(a), Column::Int8(b)) => {
-                    concat_pair(a, b, key, "i8", Column::from_i8)?
-                }
-                (Column::Int16(a), Column::Int16(b)) => {
-                    concat_pair(a, b, key, "i16", Column::from_i16)?
-                }
-                (Column::Int64(a), Column::Int64(b)) => {
-                    concat_pair(a, b, key, "i64", Column::from_i64)?
-                }
-                (Column::UInt(a), Column::UInt(b)) => {
-                    concat_pair(a, b, key, "uint", Column::from_uint)?
-                }
-                (Column::U8(a), Column::U8(b)) => concat_pair(a, b, key, "u8", Column::from_u8)?,
-                (Column::UInt16(a), Column::UInt16(b)) => {
-                    concat_pair(a, b, key, "u16", Column::from_u16)?
-                }
-                (Column::UInt32(a), Column::UInt32(b)) => {
-                    concat_pair(a, b, key, "u32", Column::from_u32)?
-                }
-                (Column::Bool(a), Column::Bool(b)) => {
-                    concat_pair(a, b, key, "bool", Column::from_bool)?
-                }
-                (Column::String(a), Column::String(b)) => {
-                    concat_pair(a, b, key, "string", Column::from_string)?
-                }
-                (Column::Complex64(a), Column::Complex64(b)) => {
-                    concat_pair(a, b, key, "c64", Column::from_c64)?
-                }
-                (Column::Complex128(a), Column::Complex128(b)) => {
-                    concat_pair(a, b, key, "c128", Column::from_c128)?
-                }
-                _ => unreachable!("dtype mismatch already checked"),
-            };
-
-            new_map.insert(key.to_string(), merged_col);
-        }
+        self.ensure_same_keys(other)?;
+        let new_map = self.concat_columns(other)?;
 
         // Update nrows. As with `resize`, an explicit N-D shape becomes
         // meaningless once axis-0 grows; the merged block falls back to a
@@ -947,6 +801,41 @@ impl Block {
         self.concat_validity(other, self_rows, other_rows);
 
         Ok(())
+    }
+
+    /// Become `other`: merging into an empty block adopts its columns, masks,
+    /// row count and shape wholesale instead of concatenating anything.
+    fn adopt(&mut self, other: &Block) {
+        self.map = other.map.clone();
+        self.validity = other.validity.clone();
+        self.nrows = other.nrows;
+        self.shape = other.shape.clone();
+    }
+
+    /// Reject operands that do not name the same columns, so that every merged
+    /// column is built from two halves and none is silently dropped.
+    fn ensure_same_keys(&self, other: &Block) -> Result<(), BlockError> {
+        let self_keys: std::collections::HashSet<_> = self.keys().collect();
+        let other_keys: std::collections::HashSet<_> = other.keys().collect();
+
+        if self_keys != other_keys {
+            return Err(BlockError::validation(format!(
+                "Cannot merge blocks with different keys. Self has {:?}, other has {:?}",
+                self_keys, other_keys
+            )));
+        }
+        Ok(())
+    }
+
+    /// Concatenate every column with its namesake in `other`, keeping the
+    /// all-or-nothing invariant: no map is returned unless every pair merged.
+    fn concat_columns(&self, other: &Block) -> Result<HashMap<String, Column>, BlockError> {
+        let mut new_map = HashMap::new();
+        for key in self.keys() {
+            let merged_col = concat_column(key, &self.map[key], &other.map[key])?;
+            new_map.insert(key.to_string(), merged_col);
+        }
+        Ok(new_map)
     }
 
     /// Concatenate `other`'s validity masks onto `self`'s, mirroring the column
@@ -988,6 +877,129 @@ impl IndexMut<&str> for Block {
         self.get_mut(key)
             .unwrap_or_else(|| panic!("key '{}' not found in Block", key))
     }
+}
+
+/// Row order sorting one column ascending, keeping the invariant that every
+/// dtype orders totally — floats by `total_cmp`, complex by (re, im).
+fn sort_order(col: &Column, nrows: usize) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..nrows).collect();
+    match col {
+        Column::Float(h) => {
+            let v: Vec<crate::types::F> = h.array().iter().copied().collect();
+            order.sort_by(|&i, &j| v[i].total_cmp(&v[j]));
+        }
+        Column::Float16(h) => {
+            let v: Vec<half::f16> = h.array().iter().copied().collect();
+            order.sort_by(|&i, &j| v[i].total_cmp(&v[j]));
+        }
+        Column::Float32(h) => {
+            let v: Vec<f32> = h.array().iter().copied().collect();
+            order.sort_by(|&i, &j| v[i].total_cmp(&v[j]));
+        }
+        Column::Int(h) => {
+            let v: Vec<crate::types::I> = h.array().iter().copied().collect();
+            order.sort_by_key(|&i| v[i]);
+        }
+        Column::Int8(h) => {
+            let v: Vec<i8> = h.array().iter().copied().collect();
+            order.sort_by_key(|&i| v[i]);
+        }
+        Column::Int16(h) => {
+            let v: Vec<i16> = h.array().iter().copied().collect();
+            order.sort_by_key(|&i| v[i]);
+        }
+        Column::Int64(h) => {
+            let v: Vec<i64> = h.array().iter().copied().collect();
+            order.sort_by_key(|&i| v[i]);
+        }
+        Column::UInt(h) => {
+            let v: Vec<crate::types::Idx> = h.array().iter().copied().collect();
+            order.sort_by_key(|&i| v[i]);
+        }
+        Column::U8(h) => {
+            let v: Vec<u8> = h.array().iter().copied().collect();
+            order.sort_by_key(|&i| v[i]);
+        }
+        Column::UInt16(h) => {
+            let v: Vec<u16> = h.array().iter().copied().collect();
+            order.sort_by_key(|&i| v[i]);
+        }
+        Column::UInt32(h) => {
+            let v: Vec<u32> = h.array().iter().copied().collect();
+            order.sort_by_key(|&i| v[i]);
+        }
+        Column::Bool(h) => {
+            let v: Vec<bool> = h.array().iter().copied().collect();
+            order.sort_by_key(|&i| v[i]);
+        }
+        Column::String(h) => {
+            let v: Vec<&String> = h.array().iter().collect();
+            order.sort_by(|&i, &j| v[i].cmp(v[j]));
+        }
+        Column::Complex64(h) => {
+            let v: Vec<_> = h.array().iter().copied().collect();
+            order.sort_by(|&i, &j| {
+                v[i].re
+                    .total_cmp(&v[j].re)
+                    .then_with(|| v[i].im.total_cmp(&v[j].im))
+            });
+        }
+        Column::Complex128(h) => {
+            let v: Vec<_> = h.array().iter().copied().collect();
+            order.sort_by(|&i, &j| {
+                v[i].re
+                    .total_cmp(&v[j].re)
+                    .then_with(|| v[i].im.total_cmp(&v[j].im))
+            });
+        }
+    }
+    order
+}
+
+/// Concatenate one key's two halves along axis-0, keeping the invariant that a
+/// merged column carries the dtype both halves already share.
+fn concat_column(key: &str, self_col: &Column, other_col: &Column) -> Result<Column, BlockError> {
+    // Check dtype compatibility
+    if self_col.dtype() != other_col.dtype() {
+        return Err(BlockError::validation(format!(
+            "Column '{}' has incompatible dtypes: {:?} vs {:?}",
+            key,
+            self_col.dtype(),
+            other_col.dtype()
+        )));
+    }
+
+    // Concatenate based on dtype
+    Ok(match (self_col, other_col) {
+        (Column::Float(a), Column::Float(b)) => {
+            concat_pair(a, b, key, "float", Column::from_float)?
+        }
+        (Column::Float16(a), Column::Float16(b)) => {
+            concat_pair(a, b, key, "f16", Column::from_f16)?
+        }
+        (Column::Float32(a), Column::Float32(b)) => {
+            concat_pair(a, b, key, "f32", Column::from_f32)?
+        }
+        (Column::Int(a), Column::Int(b)) => concat_pair(a, b, key, "int", Column::from_int)?,
+        (Column::Int8(a), Column::Int8(b)) => concat_pair(a, b, key, "i8", Column::from_i8)?,
+        (Column::Int16(a), Column::Int16(b)) => concat_pair(a, b, key, "i16", Column::from_i16)?,
+        (Column::Int64(a), Column::Int64(b)) => concat_pair(a, b, key, "i64", Column::from_i64)?,
+        (Column::UInt(a), Column::UInt(b)) => concat_pair(a, b, key, "uint", Column::from_uint)?,
+        (Column::U8(a), Column::U8(b)) => concat_pair(a, b, key, "u8", Column::from_u8)?,
+        (Column::UInt16(a), Column::UInt16(b)) => concat_pair(a, b, key, "u16", Column::from_u16)?,
+        (Column::UInt32(a), Column::UInt32(b)) => concat_pair(a, b, key, "u32", Column::from_u32)?,
+        (Column::Bool(a), Column::Bool(b)) => concat_pair(a, b, key, "bool", Column::from_bool)?,
+        (Column::String(a), Column::String(b)) => {
+            concat_pair(a, b, key, "string", Column::from_string)?
+        }
+        (Column::Complex64(a), Column::Complex64(b)) => {
+            concat_pair(a, b, key, "c64", Column::from_c64)?
+        }
+        (Column::Complex128(a), Column::Complex128(b)) => {
+            concat_pair(a, b, key, "c128", Column::from_c128)?
+        }
+        _ => unreachable!("dtype mismatch already checked"),
+    })
 }
 
 fn concat_pair<T: Clone>(

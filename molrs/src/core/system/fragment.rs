@@ -300,18 +300,37 @@ impl Fragment {
     // ---- atoms (nodes) ----
 
     /// Add an atom with element symbol and 3D coordinates (Å).
+    ///
+    /// # Panics
+    ///
+    /// Panics when a value of the bag this builds contradicts the element
+    /// type an existing atom column holds for that key (a string `x` where
+    /// `x` is an `f64` column). The bag is built here out of typed arguments,
+    /// so that is a defect in the graph's own vocabulary and not a data
+    /// condition; the generic
+    /// [`MolGraph::add_node_with`](crate::system::molgraph::MolGraph::add_node_with)
+    /// returns the conflict for callers holding a foreign bag.
     pub fn add_atom_xyz(&mut self, symbol: &str, x: f64, y: f64, z: f64) -> AtomId {
-        self.graph.add_node_with(Atom::xyz(symbol, x, y, z))
+        self.graph
+            .add_node_with(Atom::xyz(symbol, x, y, z))
+            .expect("caller-built atom bag contradicts an existing atom column")
     }
 
     /// Add an atom with element symbol only (no coordinates).
     ///
     /// Writes the chemical identity under the canonical [`keys::ELEMENT`] field
     /// (not a format alias such as `"symbol"`).
+    ///
+    /// # Panics
+    ///
+    /// Panics when the `element` column already holds a different element
+    /// type — see [`add_atom_xyz`](Self::add_atom_xyz).
     pub fn add_atom_bare(&mut self, symbol: &str) -> AtomId {
         let mut atom = Atom::new();
         atom.set(keys::ELEMENT, symbol);
-        self.graph.add_node_with(atom)
+        self.graph
+            .add_node_with(atom)
+            .expect("caller-built atom bag contradicts an existing atom column")
     }
 
     /// Number of atoms.
@@ -566,7 +585,15 @@ impl Fragment {
     /// that wants every atom labelled assigns the labels (or calls
     /// [`inherit_frag_ids`](Self::inherit_frag_ids)) before emitting; the
     /// frame no longer decides that for it.
-    pub fn to_frame(&self) -> Frame {
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when an atom or relation property
+    /// contradicts the dtype the Frame schema declares for its key; the
+    /// message names the refused column. The inner [`MolGraph`] accepts any
+    /// value under a key it has no column for, so a string written under
+    /// `"x"` is legal in the graph and only refused here.
+    pub fn to_frame(&self) -> Result<Frame, MolRsError> {
         self.graph.to_frame()
     }
 
@@ -668,7 +695,7 @@ mod tests {
     #[test]
     fn try_from_molgraph_rejects_node_without_element() {
         let mut graph = MolGraph::new();
-        graph.add_node_with(Atom::new());
+        graph.add_node_with(Atom::new()).expect("fixture node");
         let err = Fragment::try_from_molgraph(graph)
             .expect_err("every fragment node must carry an element");
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
@@ -679,7 +706,9 @@ mod tests {
         let mut graph = MolGraph::new();
         let bonds = graph.register_kind("bonds", 2);
         let ports = graph.register_kind("ports", 2);
-        graph.add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0));
+        graph
+            .add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0))
+            .expect("fixture node");
 
         let frag = Fragment::try_from_molgraph(graph).expect("both kinds already match");
         assert_eq!(frag.kind_id("bonds"), Some(bonds));
@@ -949,7 +978,7 @@ mod tests {
     #[test]
     fn to_frame_emits_atoms_bonds_and_ports_blocks() {
         let (frag, _c0, _c1, _h, _pid) = ported_template();
-        let frame = frag.to_frame();
+        let frame = frag.to_frame().expect("a schema-conforming graph converts");
 
         assert!(frame.contains_key("atoms"), "a fragment's nodes are atoms");
         assert!(frame.contains_key("bonds"), "no block relabeling");
@@ -967,7 +996,7 @@ mod tests {
     fn to_frame_masks_unlabelled_frag_id() {
         let (mut frag, c0, _c1, _h) = ch_template();
         frag.set_frag_id(c0, 1).unwrap();
-        let frame = frag.to_frame();
+        let frame = frag.to_frame().expect("a schema-conforming graph converts");
         let atoms = frame.get("atoms").expect("atoms block");
         assert!(
             atoms.contains_key("frag_id"),
@@ -980,10 +1009,31 @@ mod tests {
         );
     }
 
+    /// A `Fragment` exposes the graph's own setter through `DerefMut`, and
+    /// that setter carries the Frame schema's dtype opinion: a string under
+    /// the float key `x` never becomes an atom property of a fragment either.
+    #[test]
+    fn set_node_through_the_fragment_refuses_a_str_under_a_schema_float_key() {
+        use crate::store::block::DType;
+        let mut frag = Fragment::new();
+        let a = frag.add_atom_bare("C");
+
+        let err = frag
+            .set_node(a, "x", "left")
+            .expect_err("a str cannot be stored at a schema-float key");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        let msg = err.to_string();
+        assert!(msg.contains("'x'"), "the error names the key, got {msg}");
+        assert!(
+            msg.contains(DType::Float.name()) && msg.contains(DType::String.name()),
+            "the error names both dtypes, got {msg}"
+        );
+    }
+
     #[test]
     fn to_frame_omits_ports_block_when_no_ports() {
         let (frag, _c0, _c1, _h) = ch_template();
-        let frame = frag.to_frame();
+        let frame = frag.to_frame().expect("a schema-conforming graph converts");
         assert!(frame.contains_key("atoms"));
         assert!(frame.contains_key("bonds"));
         assert!(
@@ -999,7 +1049,9 @@ mod tests {
         frag.set_frag_id(c1, 2).unwrap();
         frag.set_frag_id(h, 2).unwrap();
 
-        let restored = Fragment::from_frame(&frag.to_frame()).expect("a fragment frame reads back");
+        let restored =
+            Fragment::from_frame(&frag.to_frame().expect("a schema-conforming graph converts"))
+                .expect("a fragment frame reads back");
         assert_eq!(restored.n_atoms(), 3);
         assert_eq!(restored.n_bonds(), 2);
         assert_eq!(restored.n_ports(), 1);
@@ -1022,7 +1074,9 @@ mod tests {
         let (mut frag, c0, _c1, _h) = ch_template();
         frag.set_frag_id(c0, 2).unwrap();
 
-        let restored = Fragment::from_frame(&frag.to_frame()).expect("a fragment frame reads back");
+        let restored =
+            Fragment::from_frame(&frag.to_frame().expect("a schema-conforming graph converts"))
+                .expect("a fragment frame reads back");
         let ids: Vec<Option<u32>> = restored.node_ids().map(|n| restored.frag_id(n)).collect();
         assert_eq!(ids, vec![Some(2), None, None]);
     }

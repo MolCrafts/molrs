@@ -59,8 +59,9 @@ impl Perceive {
     ///
     /// # Errors
     ///
-    /// Throws if the frame cannot be read as an atomistic molecule, or if
-    /// repletion reports a stale atom handle on the graph it built.
+    /// Throws if the frame cannot be read as an atomistic molecule, if
+    /// repletion reports a stale atom handle on the graph it built, or if a
+    /// property of the result contradicts the Frame schema on the way out.
     #[wasm_bindgen(js_name = findHydrogens)]
     pub fn find_hydrogens(&self, frame: &Frame) -> Result<Frame, JsValue> {
         let mol = frame_to_atomistic(frame)?;
@@ -68,7 +69,10 @@ impl Perceive {
             .inner
             .find_hydrogens(&mol)
             .map_err(|e| JsValue::from_str(&format!("findHydrogens: {e}")))?;
-        Frame::from_rs(out.to_frame())
+        Frame::from_rs(
+            out.to_frame()
+                .map_err(|e| JsValue::from_str(&format!("toFrame: {e}")))?,
+        )
     }
 
     /// Assign a localized (Kekulé) `bond_number` to every aromatic bond.
@@ -80,12 +84,16 @@ impl Perceive {
     ///
     /// # Errors
     ///
-    /// Throws if the frame cannot be read as an atomistic molecule.
+    /// Throws if the frame cannot be read as an atomistic molecule, or if a
+    /// property of the result contradicts the Frame schema on the way out.
     #[wasm_bindgen(js_name = findKekuleOrders)]
     pub fn find_kekule_orders(&self, frame: &Frame) -> Result<Frame, JsValue> {
         let mol = frame_to_atomistic(frame)?;
         let out = self.inner.find_kekule_orders(&mol);
-        Frame::from_rs(out.to_frame())
+        Frame::from_rs(
+            out.to_frame()
+                .map_err(|e| JsValue::from_str(&format!("toFrame: {e}")))?,
+        )
     }
 
     /// Bring a frame to the standard aromatic representation.
@@ -101,12 +109,16 @@ impl Perceive {
     ///
     /// # Errors
     ///
-    /// Throws if the frame cannot be read as an atomistic molecule.
+    /// Throws if the frame cannot be read as an atomistic molecule, or if a
+    /// property of the result contradicts the Frame schema on the way out.
     #[wasm_bindgen(js_name = findAromaticity)]
     pub fn find_aromaticity(&self, frame: &Frame) -> Result<Frame, JsValue> {
         let mol = frame_to_atomistic(frame)?;
         let out = self.inner.find_aromaticity(&mol);
-        Frame::from_rs(out.to_frame())
+        Frame::from_rs(
+            out.to_frame()
+                .map_err(|e| JsValue::from_str(&format!("toFrame: {e}")))?,
+        )
     }
 
     /// Remove terminal (degree-1) explicit hydrogen atoms.
@@ -116,14 +128,18 @@ impl Perceive {
     ///
     /// # Errors
     ///
-    /// Throws if the frame cannot be read as an atomistic molecule, or if
-    /// stripping reports a stale atom handle on the graph it built.
+    /// Throws if the frame cannot be read as an atomistic molecule, if
+    /// stripping reports a stale atom handle on the graph it built, or if a
+    /// property of the result contradicts the Frame schema on the way out.
     #[wasm_bindgen(js_name = removeHydrogens)]
     pub fn remove_hydrogens(&self, frame: &Frame) -> Result<Frame, JsValue> {
         let mol = frame_to_atomistic(frame)?;
         let out = remove_hydrogens(&mol)
             .map_err(|e| JsValue::from_str(&format!("removeHydrogens: {e}")))?;
-        Frame::from_rs(out.to_frame())
+        Frame::from_rs(
+            out.to_frame()
+                .map_err(|e| JsValue::from_str(&format!("toFrame: {e}")))?,
+        )
     }
 }
 

@@ -443,7 +443,10 @@ impl SmilesErrorKind {
                 "invalid coarse bond order — write one of '-', '=', '#', '$'".to_owned()
             }
             SmilesErrorKind::CgInvalidRepeatCount(s) => {
-                format!("invalid repeat count '{s}' — '|' takes a positive integer")
+                format!(
+                    "invalid repeat count '{s}' — '|' takes a positive integer up to \
+                     65535, a molrs bound the notation does not state"
+                )
             }
             SmilesErrorKind::CgDuplicateEdge { i, j } if i == j => {
                 format!("node {i} is bonded to itself — a coarse graph has no self-loops")

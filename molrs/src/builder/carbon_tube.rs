@@ -235,7 +235,9 @@ impl CarbonTubeBuilder {
                 .map_err(|error| CarbonTubeError::Graph(error.to_string()))?;
         }
 
-        let mut frame = graph.to_frame();
+        let mut frame = graph
+            .to_frame()
+            .map_err(|error| CarbonTubeError::Graph(error.to_string()))?;
         frame.simbox = Some(self.cell_from_geometry(compiled.radius, compiled.axial_length)?);
         Ok(frame)
     }

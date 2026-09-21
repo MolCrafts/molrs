@@ -203,7 +203,7 @@ mod tests {
     #[test]
     fn try_from_molgraph_through_the_trait_rejects_node_without_element() {
         let mut graph = MolGraph::new();
-        graph.add_node_with(Atom::new());
+        graph.add_node_with(Atom::new()).expect("fixture node");
         let err = <Atomistic as ElementGraph>::try_from_molgraph(graph)
             .expect_err("a node without 'element' is not an element-bearing graph");
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");

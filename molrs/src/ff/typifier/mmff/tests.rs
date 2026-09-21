@@ -76,7 +76,11 @@ mod tests {
             bond_order(&mut mol, c2, h, 1.0);
         }
 
-        let frame = typifier.typify(&mol).expect("typify ethane").to_frame();
+        let frame = typifier
+            .typify(&mol)
+            .expect("typify ethane")
+            .to_frame()
+            .expect("a schema-conforming graph converts");
         let types = frame
             .get("atoms")
             .unwrap()

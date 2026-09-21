@@ -332,7 +332,7 @@ impl std::error::Error for GaffError {}
 /// Returns the molecule with its bonded topology enumerated and every term
 /// labelled with the force-field type it matched, together with the
 /// [`ForceField`] holding those types' parameters. The two are a pair:
-/// `mol.to_frame()` carries the labels that `ff.to_potentials` resolves.
+/// `mol.to_frame()?` carries the labels that `ff.to_potentials` resolves.
 ///
 /// Angles and dihedrals are regenerated from the bond graph; impropers are added
 /// — in AMBER's central-atom-third order — wherever the table has an exact row
@@ -392,7 +392,7 @@ impl std::error::Error for GaffError {}
 ///     assert_eq!(bond.props.get(keys::TYPE), Some(&name));
 /// }
 ///
-/// let mut frame = labelled.to_frame();
+/// let mut frame = labelled.to_frame()?;
 /// let pairs = intramolecular_pairs(&frame, ff.special_bonds())?;
 /// frame.insert("pairs", pairs);
 /// let potentials = ff.to_potentials(&frame)?;

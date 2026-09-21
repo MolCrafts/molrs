@@ -61,7 +61,9 @@ impl<R: BufRead> FrameReader for SmilesReader<R> {
     fn read(&mut self) -> Result<Option<Frame>> {
         match self.next_record()? {
             Some(s) => {
-                let frame = parse_atomistic(&s)?.to_frame();
+                let frame = parse_atomistic(&s)?.to_frame().map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+                })?;
                 crate::io::reader::validated(Some(frame))
             }
             None => Ok(None),

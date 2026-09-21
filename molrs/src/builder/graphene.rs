@@ -208,7 +208,9 @@ impl GrapheneBuilder {
                 .map_err(|e| GrapheneError::Graph(e.to_string()))?;
         }
 
-        let mut frame = graph.to_frame();
+        let mut frame = graph
+            .to_frame()
+            .map_err(|e| GrapheneError::Graph(e.to_string()))?;
         frame.simbox = Some(self.cell()?);
         Ok(frame)
     }

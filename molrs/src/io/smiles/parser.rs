@@ -1224,228 +1224,280 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Dispatch one SMARTS bracket primitive (Daylight §3.1) to the helper
+    /// owning its family; each helper consumes exactly the primitive it reads.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the family helper's error, or reports
+    /// [`SmilesErrorKind::UnexpectedChar`] / [`SmilesErrorKind::UnclosedBracket`]
+    /// when the next character starts no primitive at all.
     fn parse_atom_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
         match self.scanner.peek() {
-            Some(':') => {
-                // Atom class / map number — Daylight `[atom:<n>]`.
-                self.scanner.advance();
-                let digits = self.scanner.eat_digits();
-                let n: u16 = digits.parse().map_err(|_| {
-                    self.error(SmilesErrorKind::InvalidQueryPrimitive(format!(":{digits}")))
-                })?;
-                Ok(AtomPrimitive::AtomClass(n))
-            }
+            Some(':') => self.parse_atom_class_primitive(),
             Some('*') => {
                 self.scanner.advance();
                 Ok(AtomPrimitive::Wildcard)
             }
             Some('#') => self.parse_atomic_number_primitive(),
-            Some('$') => {
-                // Recursive SMARTS: $(...)
-                self.scanner.advance();
-                if self.scanner.peek() != Some('(') {
-                    return Err(self.error(SmilesErrorKind::UnexpectedChar(
-                        self.scanner.peek().unwrap_or('\0'),
-                    )));
-                }
-                self.scanner.advance(); // consume '('
-                self.depth += 1;
-                if self.depth > MAX_RECURSION_DEPTH {
-                    return Err(self.error(SmilesErrorKind::RecursionLimit));
-                }
-                let mol = self.parse_molecule()?;
-                self.depth -= 1;
-                if self.scanner.peek() != Some(')') {
-                    return Err(self.error(SmilesErrorKind::UnclosedRecursive));
-                }
-                self.scanner.advance(); // consume ')'
-                Ok(AtomPrimitive::Recursive(Box::new(mol)))
-            }
-            Some('@') => {
-                self.scanner.advance();
-                if self.scanner.peek() == Some('@') {
-                    self.scanner.advance();
-                    Ok(AtomPrimitive::Chirality(Chirality::Clockwise))
-                } else {
-                    Ok(AtomPrimitive::Chirality(Chirality::CounterClockwise))
-                }
-            }
-            Some('+') => {
-                self.scanner.advance();
-                if self.scanner.peek() == Some('+') {
-                    self.scanner.advance();
-                    Ok(AtomPrimitive::Charge(2))
-                } else if let Some(d) = self.scanner.eat_digit() {
-                    Ok(AtomPrimitive::Charge(d as i8))
-                } else {
-                    Ok(AtomPrimitive::Charge(1))
-                }
-            }
-            Some('-') => {
-                self.scanner.advance();
-                if self.scanner.peek() == Some('-') {
-                    self.scanner.advance();
-                    Ok(AtomPrimitive::Charge(-2))
-                } else if let Some(d) = self.scanner.eat_digit() {
-                    Ok(AtomPrimitive::Charge(-(d as i8)))
-                } else {
-                    Ok(AtomPrimitive::Charge(-1))
-                }
-            }
-            Some(c) if c.is_ascii_digit() => {
-                // Isotope: bare number
-                let digits = self.scanner.eat_digits();
-                let iso: u16 = digits.parse().map_err(|_| {
-                    self.error(SmilesErrorKind::InvalidQueryPrimitive(digits.to_owned()))
-                })?;
-                Ok(AtomPrimitive::Isotope(iso))
-            }
-            Some(c) if c.is_ascii_uppercase() => {
-                // Uppercase: element symbol or SMARTS primitive letter
-                match c {
-                    'A' => {
-                        // Could be 'A' (aliphatic wildcard) or element like 'Al', 'Ag', etc.
-                        self.scanner.advance();
-                        if let Some(c2) = self.scanner.peek() {
-                            if c2.is_ascii_lowercase()
-                                && c2 != 'l'
-                                && c2 != 'g'
-                                && c2 != 'r'
-                                && c2 != 's'
-                                && c2 != 'u'
-                                && c2 != 'c'
-                                && c2 != 't'
-                                && c2 != 'm'
-                            {
-                                // Not a known two-letter element starting with A
-                                return Ok(AtomPrimitive::Aliphatic);
-                            }
-                            if c2.is_ascii_lowercase() {
-                                // Two-letter element: Al, Ag, Ar, As, Au, Ac, At, Am
-                                let mut sym = String::from('A');
-                                sym.push(c2);
-                                self.scanner.advance();
-                                return Ok(AtomPrimitive::Element {
-                                    symbol: sym,
-                                    aromatic: false,
-                                });
-                            }
-                        }
-                        Ok(AtomPrimitive::Aliphatic)
-                    }
-                    'D' => {
-                        self.scanner.advance();
-                        if let Some(d) = self.scanner.eat_digit() {
-                            Ok(AtomPrimitive::Degree(d))
-                        } else if self.scanner.peek().is_some_and(|c| c.is_ascii_lowercase()) {
-                            // Dy, Db, Ds — two-letter elements
-                            let c2 = self.scanner.advance().unwrap();
-                            Ok(AtomPrimitive::Element {
-                                symbol: format!("D{c2}"),
-                                aromatic: false,
-                            })
-                        } else {
-                            Ok(AtomPrimitive::Degree(1))
-                        }
-                    }
-                    'H' => {
-                        self.scanner.advance();
-                        if let Some(d) = self.scanner.eat_digit() {
-                            Ok(AtomPrimitive::HCount(d))
-                        } else if self.scanner.peek().is_some_and(|c| {
-                            c == 'e' || c == 'f' || c == 'g' || c == 's' || c == 'o'
-                        }) {
-                            let c2 = self.scanner.advance().unwrap();
-                            Ok(AtomPrimitive::Element {
-                                symbol: format!("H{c2}"),
-                                aromatic: false,
-                            })
-                        } else {
-                            Ok(AtomPrimitive::HCount(1))
-                        }
-                    }
-                    'R' => {
-                        self.scanner.advance();
-                        if let Some(d) = self.scanner.eat_digit() {
-                            Ok(AtomPrimitive::RingMembership(Some(d)))
-                        } else if self.scanner.peek().is_some_and(|c| c.is_ascii_lowercase()) {
-                            let c2 = self.scanner.advance().unwrap();
-                            Ok(AtomPrimitive::Element {
-                                symbol: format!("R{c2}"),
-                                aromatic: false,
-                            })
-                        } else {
-                            Ok(AtomPrimitive::RingMembership(None))
-                        }
-                    }
-                    'X' => {
-                        self.scanner.advance();
-                        if let Some(d) = self.scanner.eat_digit() {
-                            Ok(AtomPrimitive::TotalConnections(d))
-                        } else if self.scanner.peek().is_some_and(|c| c.is_ascii_lowercase()) {
-                            let c2 = self.scanner.advance().unwrap();
-                            Ok(AtomPrimitive::Element {
-                                symbol: format!("X{c2}"),
-                                aromatic: false,
-                            })
-                        } else {
-                            Ok(AtomPrimitive::TotalConnections(1))
-                        }
-                    }
-                    _ => {
-                        // Generic uppercase: element symbol
-                        let sym = self.consume_element_symbol();
-                        Ok(AtomPrimitive::Element {
-                            symbol: sym,
-                            aromatic: false,
-                        })
-                    }
-                }
-            }
-            Some(c) if c.is_ascii_lowercase() => {
-                match c {
-                    'h' => {
-                        self.scanner.advance();
-                        if let Some(d) = self.scanner.eat_digit() {
-                            Ok(AtomPrimitive::ImplicitH(d))
-                        } else {
-                            Ok(AtomPrimitive::ImplicitH(1))
-                        }
-                    }
-                    'r' => {
-                        self.scanner.advance();
-                        if let Some(d) = self.scanner.eat_digit() {
-                            Ok(AtomPrimitive::RingSize(d))
-                        } else {
-                            // Bare 'r' means "in a ring" — same as R but lowercase
-                            Ok(AtomPrimitive::RingMembership(None))
-                        }
-                    }
-                    'v' => {
-                        self.scanner.advance();
-                        if let Some(d) = self.scanner.eat_digit() {
-                            Ok(AtomPrimitive::Valence(d))
-                        } else {
-                            Ok(AtomPrimitive::Valence(1))
-                        }
-                    }
-                    // Aromatic element symbols: c, n, o, s, p
-                    'c' | 'n' | 'o' | 's' | 'p' => {
-                        self.scanner.advance();
-                        Ok(AtomPrimitive::Element {
-                            symbol: c.to_string(),
-                            aromatic: true,
-                        })
-                    }
-                    _ => {
-                        let sym = c.to_string();
-                        self.scanner.advance();
-                        Err(self.error(SmilesErrorKind::InvalidQueryPrimitive(sym)))
-                    }
-                }
-            }
+            Some('$') => self.parse_recursive_primitive(),
+            Some('@') => self.parse_chirality_primitive(),
+            Some(sign @ ('+' | '-')) => self.parse_charge_primitive(sign),
+            Some(c) if c.is_ascii_digit() => self.parse_isotope_primitive(),
+            Some(c) if c.is_ascii_uppercase() => self.parse_uppercase_primitive(c),
+            Some(c) if c.is_ascii_lowercase() => self.parse_lowercase_primitive(c),
             Some(c) => Err(self.error(SmilesErrorKind::UnexpectedChar(c))),
             None => Err(self.error(SmilesErrorKind::UnclosedBracket)),
+        }
+    }
+
+    /// Parse the atom-class / map-number primitive `:<n>` (Daylight
+    /// `[atom:<n>]`).
+    fn parse_atom_class_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        self.scanner.advance();
+        let digits = self.scanner.eat_digits();
+        let n: u16 = digits.parse().map_err(|_| {
+            self.error(SmilesErrorKind::InvalidQueryPrimitive(format!(":{digits}")))
+        })?;
+        Ok(AtomPrimitive::AtomClass(n))
+    }
+
+    /// Parse the recursive-SMARTS primitive `$(...)`, which nests a whole
+    /// molecule pattern and so shares the parser's recursion budget.
+    fn parse_recursive_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        self.scanner.advance();
+        if self.scanner.peek() != Some('(') {
+            return Err(self.error(SmilesErrorKind::UnexpectedChar(
+                self.scanner.peek().unwrap_or('\0'),
+            )));
+        }
+        self.scanner.advance(); // consume '('
+        self.depth += 1;
+        if self.depth > MAX_RECURSION_DEPTH {
+            return Err(self.error(SmilesErrorKind::RecursionLimit));
+        }
+        let mol = self.parse_molecule()?;
+        self.depth -= 1;
+        if self.scanner.peek() != Some(')') {
+            return Err(self.error(SmilesErrorKind::UnclosedRecursive));
+        }
+        self.scanner.advance(); // consume ')'
+        Ok(AtomPrimitive::Recursive(Box::new(mol)))
+    }
+
+    /// Parse the tetrahedral-chirality primitive `@` / `@@`.
+    fn parse_chirality_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        self.scanner.advance();
+        if self.scanner.peek() == Some('@') {
+            self.scanner.advance();
+            Ok(AtomPrimitive::Chirality(Chirality::Clockwise))
+        } else {
+            Ok(AtomPrimitive::Chirality(Chirality::CounterClockwise))
+        }
+    }
+
+    /// Parse the formal-charge primitive `+`/`-`, in either the doubled
+    /// (`++`, `--`) or the digit-suffixed (`+2`, `-2`) spelling; a bare sign
+    /// is ±1.
+    fn parse_charge_primitive(&mut self, sign: char) -> Result<AtomPrimitive, SmilesError> {
+        self.scanner.advance();
+        let magnitude = if self.scanner.peek() == Some(sign) {
+            self.scanner.advance();
+            2
+        } else if let Some(d) = self.scanner.eat_digit() {
+            d as i8
+        } else {
+            1
+        };
+        Ok(AtomPrimitive::Charge(if sign == '-' {
+            -magnitude
+        } else {
+            magnitude
+        }))
+    }
+
+    /// Parse the isotope primitive: a bare mass number leading the bracket.
+    fn parse_isotope_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        let digits = self.scanner.eat_digits();
+        let iso: u16 = digits
+            .parse()
+            .map_err(|_| self.error(SmilesErrorKind::InvalidQueryPrimitive(digits.to_owned())))?;
+        Ok(AtomPrimitive::Isotope(iso))
+    }
+
+    /// Dispatch an uppercase-initial primitive: the counter letters `D`, `H`,
+    /// `R`, `X` and the aliphatic wildcard `A` each shadow an element symbol,
+    /// every other letter is an aliphatic element symbol.
+    fn parse_uppercase_primitive(&mut self, c: char) -> Result<AtomPrimitive, SmilesError> {
+        match c {
+            'A' => self.parse_aliphatic_primitive(),
+            'D' => self.parse_degree_primitive(),
+            'H' => self.parse_hcount_primitive(),
+            'R' => self.parse_ring_membership_primitive(),
+            'X' => self.parse_total_connections_primitive(),
+            _ => {
+                // Generic uppercase: element symbol
+                let sym = self.consume_element_symbol();
+                Ok(AtomPrimitive::Element {
+                    symbol: sym,
+                    aromatic: false,
+                })
+            }
+        }
+    }
+
+    /// Parse `A` — the aliphatic wildcard, unless the next character makes it
+    /// one of the two-letter elements Al, Ag, Ar, As, Au, Ac, At, Am.
+    fn parse_aliphatic_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        self.scanner.advance();
+        if let Some(c2) = self.scanner.peek() {
+            if c2.is_ascii_lowercase()
+                && c2 != 'l'
+                && c2 != 'g'
+                && c2 != 'r'
+                && c2 != 's'
+                && c2 != 'u'
+                && c2 != 'c'
+                && c2 != 't'
+                && c2 != 'm'
+            {
+                // Not a known two-letter element starting with A
+                return Ok(AtomPrimitive::Aliphatic);
+            }
+            if c2.is_ascii_lowercase() {
+                // Two-letter element: Al, Ag, Ar, As, Au, Ac, At, Am
+                let mut sym = String::from('A');
+                sym.push(c2);
+                self.scanner.advance();
+                return Ok(AtomPrimitive::Element {
+                    symbol: sym,
+                    aromatic: false,
+                });
+            }
+        }
+        Ok(AtomPrimitive::Aliphatic)
+    }
+
+    /// Parse the explicit-connection counter `D<n>`, or the two-letter
+    /// elements Dy, Db, Ds that share its letter.
+    fn parse_degree_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        self.scanner.advance();
+        if let Some(d) = self.scanner.eat_digit() {
+            Ok(AtomPrimitive::Degree(d))
+        } else if self.scanner.peek().is_some_and(|c| c.is_ascii_lowercase()) {
+            // Dy, Db, Ds — two-letter elements
+            let c2 = self.scanner.advance().unwrap();
+            Ok(AtomPrimitive::Element {
+                symbol: format!("D{c2}"),
+                aromatic: false,
+            })
+        } else {
+            Ok(AtomPrimitive::Degree(1))
+        }
+    }
+
+    /// Parse the total-hydrogen counter `H<n>`, or the elements He, Hf, Hg,
+    /// Hs, Ho that share its letter.
+    fn parse_hcount_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        self.scanner.advance();
+        if let Some(d) = self.scanner.eat_digit() {
+            Ok(AtomPrimitive::HCount(d))
+        } else if self
+            .scanner
+            .peek()
+            .is_some_and(|c| c == 'e' || c == 'f' || c == 'g' || c == 's' || c == 'o')
+        {
+            let c2 = self.scanner.advance().unwrap();
+            Ok(AtomPrimitive::Element {
+                symbol: format!("H{c2}"),
+                aromatic: false,
+            })
+        } else {
+            Ok(AtomPrimitive::HCount(1))
+        }
+    }
+
+    /// Parse the ring-membership counter `R<n>`, or a two-letter element
+    /// starting with R (Rb, Ru, Rh, ...).
+    fn parse_ring_membership_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        self.scanner.advance();
+        if let Some(d) = self.scanner.eat_digit() {
+            Ok(AtomPrimitive::RingMembership(Some(d)))
+        } else if self.scanner.peek().is_some_and(|c| c.is_ascii_lowercase()) {
+            let c2 = self.scanner.advance().unwrap();
+            Ok(AtomPrimitive::Element {
+                symbol: format!("R{c2}"),
+                aromatic: false,
+            })
+        } else {
+            Ok(AtomPrimitive::RingMembership(None))
+        }
+    }
+
+    /// Parse the total-connection counter `X<n>`, or a two-letter element
+    /// starting with X (Xe).
+    fn parse_total_connections_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        self.scanner.advance();
+        if let Some(d) = self.scanner.eat_digit() {
+            Ok(AtomPrimitive::TotalConnections(d))
+        } else if self.scanner.peek().is_some_and(|c| c.is_ascii_lowercase()) {
+            let c2 = self.scanner.advance().unwrap();
+            Ok(AtomPrimitive::Element {
+                symbol: format!("X{c2}"),
+                aromatic: false,
+            })
+        } else {
+            Ok(AtomPrimitive::TotalConnections(1))
+        }
+    }
+
+    /// Dispatch a lowercase-initial primitive: the counters `h`, `r`, `v` and
+    /// the aromatic element symbols `c`, `n`, `o`, `s`, `p`.
+    ///
+    /// # Errors
+    ///
+    /// Any other lowercase letter is no primitive at all and yields
+    /// [`SmilesErrorKind::InvalidQueryPrimitive`] naming the letter.
+    fn parse_lowercase_primitive(&mut self, c: char) -> Result<AtomPrimitive, SmilesError> {
+        match c {
+            'h' => {
+                self.scanner.advance();
+                if let Some(d) = self.scanner.eat_digit() {
+                    Ok(AtomPrimitive::ImplicitH(d))
+                } else {
+                    Ok(AtomPrimitive::ImplicitH(1))
+                }
+            }
+            'r' => {
+                self.scanner.advance();
+                if let Some(d) = self.scanner.eat_digit() {
+                    Ok(AtomPrimitive::RingSize(d))
+                } else {
+                    // Bare 'r' means "in a ring" — same as R but lowercase
+                    Ok(AtomPrimitive::RingMembership(None))
+                }
+            }
+            'v' => {
+                self.scanner.advance();
+                if let Some(d) = self.scanner.eat_digit() {
+                    Ok(AtomPrimitive::Valence(d))
+                } else {
+                    Ok(AtomPrimitive::Valence(1))
+                }
+            }
+            // Aromatic element symbols: c, n, o, s, p
+            'c' | 'n' | 'o' | 's' | 'p' => {
+                self.scanner.advance();
+                Ok(AtomPrimitive::Element {
+                    symbol: c.to_string(),
+                    aromatic: true,
+                })
+            }
+            _ => {
+                let sym = c.to_string();
+                self.scanner.advance();
+                Err(self.error(SmilesErrorKind::InvalidQueryPrimitive(sym)))
+            }
         }
     }
 }

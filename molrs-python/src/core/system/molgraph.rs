@@ -814,8 +814,14 @@ impl PyAtomistic {
 
     /// Export to a tabular [`Frame`] (atoms / bonds / angles / dihedrals /
     /// impropers blocks). Leaf-owned — `self.inner.to_frame()`, zero conversion.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If an atom or relation property contradicts the dtype the Frame
+    ///     schema declares for its key (a string under ``"x"``).
     fn to_frame(&self) -> PyResult<PyFrame> {
-        PyFrame::from_core_frame(self.inner.to_frame())
+        PyFrame::from_core_frame(self.inner.to_frame().map_err(molrs_error_to_pyerr)?)
     }
 
     /// Build an `Atomistic` from a [`Frame`] (registers the chemistry kinds,
@@ -1518,8 +1524,14 @@ impl PyCoarseGrain {
     }
 
     /// Export to a tabular [`Frame`] (beads + bonds blocks).
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If a bead or bond property contradicts the dtype the Frame schema
+    ///     declares for its key (a string under ``"x"``).
     fn to_frame(&self) -> PyResult<PyFrame> {
-        PyFrame::from_core_frame(self.inner.to_frame())
+        PyFrame::from_core_frame(self.inner.to_frame().map_err(molrs_error_to_pyerr)?)
     }
 
     /// Build a `CoarseGrain` from a [`Frame`] (registers the CG bonds kind).
@@ -1888,8 +1900,14 @@ impl PyFragment {
     /// Returns
     /// -------
     /// Frame
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If an atom or relation property contradicts the dtype the Frame
+    ///     schema declares for its key (a string under ``"x"``).
     fn to_frame(&self) -> PyResult<PyFrame> {
-        PyFrame::from_core_frame(self.inner.to_frame())
+        PyFrame::from_core_frame(self.inner.to_frame().map_err(molrs_error_to_pyerr)?)
     }
 
     /// Build a `Fragment` from the :class:`~molrs.Frame` :meth:`to_frame`

@@ -274,7 +274,14 @@ impl MolGraph {
         let mut node_map: HashMap<NodeId, NodeId> = HashMap::with_capacity(ordered.len());
         for &old in ordered {
             let payload = self.read_atom(old);
-            let new_id = graph.add_node_with(payload);
+            // The payload was just read out of `self`'s own node columns into
+            // a graph that mirrors `self`'s kinds, and an `EntityTable` holds
+            // one element type per key, so every key arrives at the type it
+            // already has there: a conflict would mean the subgraph stopped
+            // mirroring the parent mid-copy.
+            let new_id = graph
+                .add_node_with(payload)
+                .expect("induced subgraph mirrors the parent's component types");
             node_map.insert(old, new_id);
         }
 
@@ -575,7 +582,7 @@ mod tests {
     #[test]
     fn materialize_does_not_need_atom_payload_import() {
         let mut g = MolGraph::new();
-        let n = g.add_node_with(Atom::new());
+        let n = g.add_node_with(Atom::new()).expect("fixture node");
         let _ = g.induced_subgraph(&[n]).unwrap();
     }
 

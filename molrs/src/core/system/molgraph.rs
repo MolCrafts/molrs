@@ -38,8 +38,8 @@
 //! let mut g = MolGraph::new();
 //! let bond = g.register_kind("bond", 2);
 //!
-//! let o = g.add_node_with(Atom::xyz("O", 0.0, 0.0, 0.0));
-//! let h1 = g.add_node_with(Atom::xyz("H", 0.96, 0.0, 0.0));
+//! let o = g.add_node_with(Atom::xyz("O", 0.0, 0.0, 0.0)).expect("add O");
+//! let h1 = g.add_node_with(Atom::xyz("H", 0.96, 0.0, 0.0)).expect("add H");
 //! g.add_relation(bond, &[o, h1]).expect("add bond");
 //!
 //! assert_eq!(g.n_nodes(), 2);
@@ -118,23 +118,98 @@ impl From<String> for PropValue {
     }
 }
 
-/// Coerce a value to the canonical dtype registered for `key` (if any) so a
-/// field's column type stays stable across writers.
+/// Admit a value into a node or relation column only if it can be stored at
+/// the dtype the Frame schema declares for `key`, widening where width is not
+/// semantics and refusing otherwise.
 ///
-/// Width is not semantics: an `Int` written to a float field (e.g. `x` or
-/// `charge` as `1`) is widened to `F64`. A *sign* is semantics,
-/// so a negative under a `UInt` field (`id`, `mol_id`, `type_id`, …) is refused
-/// here rather than silently dropped by [`MolGraph::to_frame`], which must
-/// re-type the column to the declared dtype to satisfy the Frame schema. This
-/// mirrors the same rule on the Python `Block` boundary.
+/// A key the vocabulary does not declare (`tag`, `frag_id`, a perceived fact,
+/// a per-instance force-field parameter) carries whatever the caller stores:
+/// no frame column type contradicts it.
+///
+/// For a declared key the refusal belongs *here*, at the write, because the
+/// declared dtype is what every later stage already assumes: [`MolGraph::to_frame`]
+/// must hand [`Block::insert`] a column of exactly that dtype, the infallible
+/// leaf constructors ([`Atomistic::add_atom_xyz`](crate::system::atomistic::Atomistic::add_atom_xyz)) write their components into
+/// a column whose element type a stray write has already fixed, and the Python
+/// `Block` boundary re-states the same rule. Every one of those stages is past
+/// the point where the caller still holds the value — a `set_node` that
+/// accepted a string `"x"` would hand back a graph whose only remaining moves
+/// are to lose the property or to fail on the way out. [`set_node`](MolGraph::set_node)
+/// has a `Result`, so it is the last door where the caller can still act.
+///
+/// Width is not semantics: an `Int` under a float key (`x`, `charge` written
+/// as `1`) is widened to `F64`. A *sign* is semantics, so a negative under an
+/// unsigned key (`id`, `mol_id`, `type_id`, …) keeps its own refusal naming
+/// the sign rather than a dtype mismatch. A declared dtype the graph store has
+/// no element type for (a narrow width, a complex pair) can hold no
+/// [`PropValue`] at all, so every value is refused there rather than stored at
+/// a width `to_frame` could not emit.
+///
+/// The match over the declared dtype is exhaustive by construction: a dtype
+/// added to the vocabulary is a compile error here, not a value that slips
+/// through a catch-all and detonates downstream.
+///
+/// # Errors
+///
+/// [`MolRsError::Validation`] when the value's element type cannot be stored
+/// at the declared dtype, naming the key and both dtypes
+/// (`'x' is declared float by the Frame schema; got string`), or when a
+/// negative is offered under an unsigned key.
 fn coerce_canonical(key: &str, pv: PropValue) -> Result<PropValue, MolRsError> {
     use crate::store::block::DType;
-    match (keys::canonical_dtype(key), pv) {
-        (Some(DType::Float), PropValue::Int(v)) => Ok(PropValue::F64(v as f64)),
-        (Some(DType::UInt), PropValue::Int(v)) if v < 0 => Err(MolRsError::validation(format!(
-            "'{key}' is declared unsigned by the Frame schema; got {v}"
-        ))),
-        (_, pv) => Ok(pv),
+
+    let Some(declared) = keys::canonical_dtype(key) else {
+        return Ok(pv);
+    };
+    let offered = match &pv {
+        PropValue::F64(_) => DType::Float,
+        PropValue::Int(_) => DType::Int,
+        PropValue::Str(_) => DType::String,
+        PropValue::Bool(_) => DType::Bool,
+    };
+    let refuse = || {
+        Err(MolRsError::validation(format!(
+            "'{key}' is declared {} by the Frame schema; got {}",
+            declared.name(),
+            offered.name()
+        )))
+    };
+
+    match declared {
+        DType::Float => match pv {
+            PropValue::Int(v) => Ok(PropValue::F64(v as f64)),
+            PropValue::F64(_) => Ok(pv),
+            PropValue::Str(_) | PropValue::Bool(_) => refuse(),
+        },
+        DType::Int => match pv {
+            PropValue::Int(_) => Ok(pv),
+            PropValue::F64(_) | PropValue::Str(_) | PropValue::Bool(_) => refuse(),
+        },
+        DType::UInt => match pv {
+            PropValue::Int(v) if v < 0 => Err(MolRsError::validation(format!(
+                "'{key}' is declared unsigned by the Frame schema; got {v}"
+            ))),
+            PropValue::Int(_) => Ok(pv),
+            PropValue::F64(_) | PropValue::Str(_) | PropValue::Bool(_) => refuse(),
+        },
+        DType::String => match pv {
+            PropValue::Str(_) => Ok(pv),
+            PropValue::F64(_) | PropValue::Int(_) | PropValue::Bool(_) => refuse(),
+        },
+        DType::Bool => match pv {
+            PropValue::Bool(_) => Ok(pv),
+            PropValue::F64(_) | PropValue::Int(_) | PropValue::Str(_) => refuse(),
+        },
+        DType::Float16
+        | DType::Float32
+        | DType::Int8
+        | DType::Int16
+        | DType::Int64
+        | DType::U8
+        | DType::UInt16
+        | DType::UInt32
+        | DType::Complex64
+        | DType::Complex128 => refuse(),
     }
 }
 
@@ -674,21 +749,26 @@ impl MolGraph {
 
     /// Insert a node carrying a property bag, returning its stable handle.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics when a value of `payload` contradicts the element type an
-    /// existing node column holds for that key (a string `tag` into an `i32`
-    /// `tag` column). The caller of this constructor *built* the bag, so that
-    /// is a defect in the caller and not a data condition — it was already a
-    /// `debug_assert` before it was a panic. Callers holding **foreign**
-    /// property bags — [`merge`](Self::merge) from another graph, the leaves'
-    /// `from_frame` from a file — have an error channel and return the
-    /// conflict instead.
-    pub fn add_node_with(&mut self, payload: Atom) -> NodeId {
+    /// [`MolRsError::Validation`] when a value of `payload` contradicts the
+    /// element type an existing node column holds for that key (a string
+    /// `tag` into an `i32` `tag` column); the message names the conflicting
+    /// key. Likewise when a value cannot be stored at the dtype the Frame
+    /// schema declares for a canonical key (a string under `"x"`), which is
+    /// refused here rather than on the way out to a `Frame`. The bag is
+    /// not always the caller's own — [`merge`](Self::merge)
+    /// and the leaves' `from_frame` hand over property bags read out of
+    /// another graph or a file, where a disagreeing key is data and not a
+    /// defect — so the conflict is returned rather than asserted.
+    ///
+    /// The node is **not** rolled back: it keeps the prefix of `payload` that
+    /// was written before the conflict, as `self` does for any other partial
+    /// write (see [`merge`](Self::merge)).
+    pub fn add_node_with(&mut self, payload: Atom) -> Result<NodeId, MolRsError> {
         let id = self.add_node();
-        self.write_atom(id, &payload)
-            .expect("node property bag contradicts an existing node column");
-        id
+        self.write_atom(id, &payload)?;
+        Ok(id)
     }
 
     /// Remove a node and every relation that references it, across **all**
@@ -1107,12 +1187,7 @@ impl MolGraph {
     pub fn merge(&mut self, other: MolGraph) -> Result<HashMap<NodeId, NodeId>, MolRsError> {
         let mut node_map: HashMap<NodeId, NodeId> = HashMap::new();
         for old_id in other.nodes.handles() {
-            let payload = other.read_atom(old_id);
-            // Not `add_node_with`: that constructor panics on a conflict,
-            // which is right for a bag the caller built and wrong for one
-            // read out of another graph.
-            let new_id = self.add_node();
-            self.write_atom(new_id, &payload)?;
+            let new_id = self.add_node_with(other.read_atom(old_id))?;
             node_map.insert(old_id, new_id);
         }
 
@@ -1148,7 +1223,19 @@ impl MolGraph {
     /// column in the `"atoms"` block; every non-empty relation kind becomes a
     /// block (named by the kind) with `atomi`/`atomj`/… columns referencing node
     /// row order plus one column per relation property — registry-driven.
-    pub(crate) fn to_frame(&self) -> Frame {
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when a column is refused by the [`Block`] it
+    /// is written into; the message names the column. A value whose element
+    /// type the Frame schema does not declare for its key is refused at the
+    /// write ([`set_node`](Self::set_node) no longer accepts a string under
+    /// `"x"`), so the property API cannot build such a column; the raw column
+    /// table ([`node_table_mut`](Self::node_table_mut)) still can, because it
+    /// writes an element type without consulting the key's declared dtype.
+    /// That is a caller reaching past the door, not a broken invariant, so it
+    /// is returned rather than asserted.
+    pub(crate) fn to_frame(&self) -> Result<Frame, MolRsError> {
         let mut frame = Frame::new();
 
         let node_ids: Vec<NodeId> = self.nodes.handles().collect();
@@ -1166,12 +1253,7 @@ impl MolGraph {
 
         let mut atoms_block = Block::new();
         for key in &all_keys {
-            // The columns are dense, row-aligned, and written through
-            // `coerce_canonical`, so a rejected insert is a broken invariant
-            // rather than a data condition — hence expect, not a swallowed
-            // Result. Swallowing it dropped the whole column silently.
-            emit_column(&mut atoms_block, &self.nodes, key)
-                .expect("node column is dense, row-aligned and canonically typed");
+            emit_column(&mut atoms_block, &self.nodes, key)?;
         }
         if n > 0 {
             frame.insert("atoms", atoms_block);
@@ -1183,27 +1265,11 @@ impl MolGraph {
             if self.kinds[kidx].props.is_empty() {
                 continue;
             }
-            // `relation_block` reports the two conditions a `Block` write can
-            // fail on — a column of the wrong row count, and a canonical key
-            // written at a dtype the Frame schema forbids — and neither is
-            // reachable from here: the endpoint and property columns are built
-            // from one relation row order, and every value entered the graph
-            // through `coerce_canonical`. `to_frame` therefore has no error
-            // channel to offer, and the branch exists to name the invariant
-            // that broke rather than to drop the block, which is what the
-            // discarded `Result` used to do.
-            match self.relation_block(kid, &id_to_row) {
-                Ok(block) => {
-                    frame.insert(&self.kind_name[kidx], block);
-                }
-                Err(e) => unreachable!(
-                    "relation block '{}' is dense, row-aligned and canonically typed: {e}",
-                    self.kind_name[kidx]
-                ),
-            }
+            let block = self.relation_block(kid, &id_to_row)?;
+            frame.insert(&self.kind_name[kidx], block);
         }
 
-        frame
+        Ok(frame)
     }
 
     /// The [`Frame`] block of one relation kind: the `atomi`/`atomj`/… endpoint
@@ -1212,9 +1278,9 @@ impl MolGraph {
     ///
     /// # Errors
     ///
-    /// [`MolRsError::Validation`] if a column is refused by the block — see the
-    /// call site in [`to_frame`](Self::to_frame) for why that cannot happen
-    /// there.
+    /// [`MolRsError::Validation`] if a column is refused by the block: a
+    /// column of the wrong row count, or a canonical key written at a dtype
+    /// the Frame schema forbids. [`to_frame`](Self::to_frame) propagates it.
     fn relation_block(
         &self,
         kind: KindId,
@@ -1329,12 +1395,7 @@ impl MolGraph {
             for (key, value) in columns.cells(row)? {
                 node.set(key, value);
             }
-            // Not `add_node_with`: a frame is foreign data, so a property that
-            // contradicts an existing column is a data condition to report,
-            // not a caller defect to panic on.
-            let id = self.add_node();
-            self.write_atom(id, &node)?;
-            node_ids.push(id);
+            node_ids.push(self.add_node_with(node)?);
         }
         Ok(node_ids)
     }
@@ -1525,12 +1586,43 @@ mod tests {
     fn test_add_remove_node() {
         let mut g = MolGraph::new();
         assert_eq!(g.n_nodes(), 0);
-        let id = g.add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0));
+        let id = g
+            .add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0))
+            .expect("fixture node");
         assert_eq!(g.n_nodes(), 1);
         assert_eq!(g.get_node(id).unwrap().get_str("element"), Some("C"));
         g.remove_node(id).unwrap();
         assert_eq!(g.n_nodes(), 0);
         assert!(g.get_node(id).is_err());
+    }
+
+    /// `add_node_with` builds a node out of a property bag the caller hands
+    /// it, and a bag whose value contradicts an existing node column is a
+    /// data condition the caller can act on — so it is returned, not
+    /// asserted by a panic.
+    ///
+    /// The fixture key is deliberately one the Frame schema declares nothing
+    /// about: under a canonical key the setter refuses the seed's element
+    /// type before a column ever exists, which is a different rule. What is
+    /// tested here is the *column* the graph already holds.
+    #[test]
+    fn add_node_with_returns_the_conflict_when_the_payload_contradicts_a_node_column() {
+        let mut g = MolGraph::new();
+        let seeded = g.add_node();
+        g.set_node(seeded, "tag", -0.5_f64)
+            .expect("a fresh 'tag' column takes an f64");
+
+        let mut payload = Atom::new();
+        payload.set("tag", "negative");
+
+        let err = g
+            .add_node_with(payload)
+            .expect_err("a str 'tag' cannot enter an f64 'tag' column");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        assert!(
+            err.to_string().contains("'tag'"),
+            "the error names the conflicting key, got {err:?}"
+        );
     }
 
     // ----- Relation CRUD -----
@@ -1618,11 +1710,15 @@ mod tests {
     #[test]
     fn test_translate_and_rotate() {
         let mut g = MolGraph::new();
-        let id = g.add_node_with(Atom::xyz("C", 1.0, 0.0, 0.0));
+        let id = g
+            .add_node_with(Atom::xyz("C", 1.0, 0.0, 0.0))
+            .expect("fixture node");
         crate::spatial::geometry::translate(&mut g, [10.0, 20.0, 30.0]);
         let a = g.get_node(id).unwrap();
         assert!((a.get_f64("x").unwrap() - 11.0).abs() < 1e-12);
-        let id2 = g.add_node_with(Atom::xyz("C", 1.0, 0.0, 0.0));
+        let id2 = g
+            .add_node_with(Atom::xyz("C", 1.0, 0.0, 0.0))
+            .expect("fixture node");
         crate::spatial::geometry::rotate(
             &mut g,
             [0.0, 0.0, 1.0],
@@ -1640,12 +1736,18 @@ mod tests {
     fn test_to_read_frame_roundtrip() {
         let mut g = MolGraph::new();
         let bond = g.register_kind("bonds", 2);
-        let o = g.add_node_with(Atom::xyz("O", 0.0, 0.0, 0.0));
-        let h1 = g.add_node_with(Atom::xyz("H", 0.96, 0.0, 0.0));
-        let h2 = g.add_node_with(Atom::xyz("H", -0.24, 0.93, 0.0));
+        let o = g
+            .add_node_with(Atom::xyz("O", 0.0, 0.0, 0.0))
+            .expect("fixture node");
+        let h1 = g
+            .add_node_with(Atom::xyz("H", 0.96, 0.0, 0.0))
+            .expect("fixture node");
+        let h2 = g
+            .add_node_with(Atom::xyz("H", -0.24, 0.93, 0.0))
+            .expect("fixture node");
         g.add_relation(bond, &[o, h1]).unwrap();
         g.add_relation(bond, &[o, h2]).unwrap();
-        let frame = g.to_frame();
+        let frame = g.to_frame().expect("a schema-conforming graph converts");
         assert!(frame.contains_key("atoms"));
         assert!(frame.contains_key("bonds"));
         assert_eq!(frame["atoms"].nrows(), Some(3));
@@ -1663,8 +1765,12 @@ mod tests {
     fn test_read_frame_restores_int_and_str_relation_props() {
         let mut g = MolGraph::new();
         let bond = g.register_kind("bonds", 2);
-        let a = g.add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0));
-        let b = g.add_node_with(Atom::xyz("C", 1.5, 0.0, 0.0));
+        let a = g
+            .add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0))
+            .expect("fixture node");
+        let b = g
+            .add_node_with(Atom::xyz("C", 1.5, 0.0, 0.0))
+            .expect("fixture node");
         let rid = g.add_relation(bond, &[a, b]).unwrap();
         // A genuinely float-valued relation prop. `bond_number` is not one —
         // it is a schema uint — and a *computed* fractional bond order is
@@ -1676,7 +1782,7 @@ mod tests {
         g.set_relation_prop(bond, rid, "label", PropValue::Str("aromatic".to_owned()))
             .unwrap();
 
-        let frame = g.to_frame();
+        let frame = g.to_frame().expect("a schema-conforming graph converts");
 
         let mut g2 = MolGraph::new();
         let bond2 = g2.register_kind("bonds", 2);
@@ -1706,14 +1812,18 @@ mod tests {
         // column against the schema — and, with the error swallowed, the
         // identifiers vanished from the frame entirely.
         let mut g = MolGraph::new();
-        let a = g.add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0));
-        let b = g.add_node_with(Atom::xyz("H", 1.1, 0.0, 0.0));
+        let a = g
+            .add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0))
+            .expect("fixture node");
+        let b = g
+            .add_node_with(Atom::xyz("H", 1.1, 0.0, 0.0))
+            .expect("fixture node");
         g.set_node(a, "id", PropValue::Int(1)).unwrap();
         g.set_node(b, "id", PropValue::Int(2)).unwrap();
         g.set_node(a, "mol_id", PropValue::Int(7)).unwrap();
         g.set_node(b, "mol_id", PropValue::Int(7)).unwrap();
 
-        let atoms = &g.to_frame()["atoms"];
+        let atoms = &g.to_frame().expect("a schema-conforming graph converts")["atoms"];
         assert_eq!(
             atoms
                 .get_uint("id")
@@ -1737,13 +1847,17 @@ mod tests {
     #[test]
     fn test_to_frame_keeps_bool_node_columns() {
         let mut g = MolGraph::new();
-        let a = g.add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0));
-        let b = g.add_node_with(Atom::xyz("H", 1.1, 0.0, 0.0));
+        let a = g
+            .add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0))
+            .expect("fixture node");
+        let b = g
+            .add_node_with(Atom::xyz("H", 1.1, 0.0, 0.0))
+            .expect("fixture node");
         g.set_node(a, "frozen", true).unwrap();
         g.set_node(b, "frozen", false).unwrap();
 
         assert_eq!(
-            g.to_frame()["atoms"]
+            g.to_frame().expect("a schema-conforming graph converts")["atoms"]
                 .get_bool("frozen")
                 .expect("bool column reaches the frame")
                 .iter()
@@ -1756,18 +1870,203 @@ mod tests {
     #[test]
     fn test_read_frame_restores_unsigned_and_bool_node_props() {
         let mut g = MolGraph::new();
-        let a = g.add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0));
+        let a = g
+            .add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0))
+            .expect("fixture node");
         g.set_node(a, "id", PropValue::Int(4)).unwrap();
         g.set_node(a, "mol_id", PropValue::Int(9)).unwrap();
         g.set_node(a, "frozen", true).unwrap();
 
         let mut g2 = MolGraph::new();
-        g2.read_frame(&g.to_frame()).unwrap();
+        g2.read_frame(&g.to_frame().expect("a schema-conforming graph converts"))
+            .unwrap();
 
         let (_, atom) = g2.nodes().next().expect("node round-trips");
         assert_eq!(atom.get("id"), Some(&PropValue::Int(4)));
         assert_eq!(atom.get("mol_id"), Some(&PropValue::Int(9)));
         assert_eq!(atom.get("frozen"), Some(&PropValue::Bool(true)));
+    }
+
+    /// The Frame schema declares `x` a float, so a string is not a narrower
+    /// or wider `x` — it is a different kind of thing. The door that owns the
+    /// key's dtype is the setter, which has a `Result`; letting the value in
+    /// and refusing it at `to_frame` leaves the graph holding a column no
+    /// frame can ever carry.
+    #[test]
+    fn set_node_refuses_a_str_under_the_schema_float_key_x() {
+        use crate::store::block::DType;
+        let mut g = MolGraph::new();
+        let n = g.add_node();
+
+        let err = g
+            .set_node(n, "x", "left")
+            .expect_err("a str cannot be stored at a schema-float key");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        let msg = err.to_string();
+        assert!(msg.contains("'x'"), "the error names the key, got {msg}");
+        assert!(
+            msg.contains(DType::Float.name()),
+            "the error names the declared dtype, got {msg}"
+        );
+        assert!(
+            msg.contains(DType::String.name()),
+            "the error names the offered dtype, got {msg}"
+        );
+    }
+
+    /// Same refusal under a different float key: the rule is the schema's, not
+    /// a special case carved out for coordinates.
+    #[test]
+    fn set_node_refuses_a_str_under_the_schema_float_key_charge() {
+        use crate::store::block::DType;
+        let mut g = MolGraph::new();
+        let n = g.add_node();
+
+        let err = g
+            .set_node(n, "charge", "negative")
+            .expect_err("a str cannot be stored at a schema-float key");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("'charge'"),
+            "the error names the key, got {msg}"
+        );
+        assert!(
+            msg.contains(DType::Float.name()) && msg.contains(DType::String.name()),
+            "the error names both dtypes, got {msg}"
+        );
+    }
+
+    /// A bool is numeric-adjacent and still not a float: `true` is not `1.0`
+    /// under a key the schema declares float.
+    #[test]
+    fn set_node_refuses_a_bool_under_a_schema_float_key() {
+        use crate::store::block::DType;
+        let mut g = MolGraph::new();
+        let n = g.add_node();
+
+        let err = g
+            .set_node(n, "y", true)
+            .expect_err("a bool cannot be stored at a schema-float key");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        let msg = err.to_string();
+        assert!(msg.contains("'y'"), "the error names the key, got {msg}");
+        assert!(
+            msg.contains(DType::Float.name()) && msg.contains(DType::Bool.name()),
+            "the error names both dtypes, got {msg}"
+        );
+    }
+
+    /// The refusal runs in both directions: `element` is declared a string, so
+    /// an atomic number written there is refused rather than creating an int
+    /// column under a string key.
+    #[test]
+    fn set_node_refuses_an_int_under_a_schema_string_key() {
+        use crate::store::block::DType;
+        let mut g = MolGraph::new();
+        let n = g.add_node();
+
+        let err = g
+            .set_node(n, "element", PropValue::Int(6 as I))
+            .expect_err("an int cannot be stored at a schema-string key");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("'element'"),
+            "the error names the key, got {msg}"
+        );
+        assert!(
+            msg.contains(DType::String.name()) && msg.contains(DType::Int.name()),
+            "the error names both dtypes, got {msg}"
+        );
+    }
+
+    /// Width is not semantics: an int under a float key is still a number, so
+    /// it is widened rather than refused, and reads back as the float the
+    /// schema declares.
+    #[test]
+    fn set_node_widens_an_int_under_a_schema_float_key() {
+        let mut g = MolGraph::new();
+        let n = g.add_node();
+
+        g.set_node(n, "x", PropValue::Int(1 as I))
+            .expect("an int is a number and widens into a float key");
+        assert_eq!(
+            g.get_node(n).expect("node exists").get("x"),
+            Some(&PropValue::F64(1.0))
+        );
+    }
+
+    /// An unsigned key is not a numeric key: `1.0` is a float, and storing it
+    /// under `id` leaves the graph holding a float column the Frame schema
+    /// declares unsigned — a column no frame can carry. The setter owns the
+    /// key's dtype, so it refuses there.
+    #[test]
+    fn set_node_refuses_an_f64_under_a_schema_uint_key() {
+        use crate::store::block::DType;
+        let mut g = MolGraph::new();
+        let n = g.add_node();
+
+        let err = g
+            .set_node(n, "id", 1.0_f64)
+            .expect_err("an f64 cannot be stored at a schema-uint key");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        let msg = err.to_string();
+        assert!(msg.contains("'id'"), "the error names the key, got {msg}");
+        assert!(
+            msg.contains(DType::UInt.name()) && msg.contains(DType::Float.name()),
+            "the error names both dtypes, got {msg}"
+        );
+    }
+
+    /// The refusal above is about the element type, not about `id` being
+    /// closed: a non-negative int is an identifier and still goes in, and
+    /// reads back as the int the store holds it as.
+    #[test]
+    fn set_node_accepts_an_int_under_a_schema_uint_key() {
+        let mut g = MolGraph::new();
+        let n = g.add_node();
+
+        g.set_node(n, "id", 1 as I)
+            .expect("a non-negative int is an identifier");
+        assert_eq!(
+            g.get_node(n).expect("node exists").get("id"),
+            Some(&PropValue::Int(1))
+        );
+    }
+
+    /// Tightening the element-type door must not restate the sign rule: a
+    /// negative under an unsigned key keeps refusing with the message that
+    /// names the sign, not a dtype mismatch.
+    #[test]
+    fn set_node_keeps_the_unsigned_message_for_a_negative_under_a_uint_key() {
+        let mut g = MolGraph::new();
+        let n = g.add_node();
+
+        let err = g
+            .set_node(n, "id", PropValue::Int(-1 as I))
+            .expect_err("a negative is not an identifier");
+        assert!(
+            err.to_string()
+                .contains("declared unsigned by the Frame schema"),
+            "the sign refusal keeps its own message, got {err}"
+        );
+    }
+
+    /// The vocabulary is closed but the key space is open: a key the schema
+    /// declares nothing about carries whatever the caller stores, because no
+    /// frame column type contradicts it.
+    #[test]
+    fn set_node_accepts_a_str_under_a_key_the_schema_does_not_declare() {
+        let mut g = MolGraph::new();
+        let n = g.add_node();
+
+        g.set_node(n, "tag", "left")
+            .expect("'tag' is not in the canonical vocabulary");
+        assert_eq!(
+            g.get_node(n).expect("node exists").get_str("tag"),
+            Some("left")
+        );
     }
 
     #[test]
@@ -1813,8 +2112,12 @@ mod tests {
     fn test_clone_preserves_handles() {
         let mut g = MolGraph::new();
         let bond = g.register_kind("bonds", 2);
-        let a = g.add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0));
-        let b = g.add_node_with(Atom::xyz("H", 1.0, 0.0, 0.0));
+        let a = g
+            .add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0))
+            .expect("fixture node");
+        let b = g
+            .add_node_with(Atom::xyz("H", 1.0, 0.0, 0.0))
+            .expect("fixture node");
         let rid = g.add_relation(bond, &[a, b]).unwrap();
         let g2 = g.clone();
         assert!(g2.get_node(a).is_ok());
@@ -1828,8 +2131,11 @@ mod tests {
     #[test]
     fn test_clone_independence() {
         let mut g = MolGraph::new();
-        let id = g.add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0));
-        g.add_node_with(Atom::xyz("H", 1.0, 0.0, 0.0));
+        let id = g
+            .add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0))
+            .expect("fixture node");
+        g.add_node_with(Atom::xyz("H", 1.0, 0.0, 0.0))
+            .expect("fixture node");
         let g2 = g.clone();
         g.set_node(id, "x", 99.0).unwrap();
         assert_eq!(g2.get_node(id).unwrap().get_f64("x"), Some(0.0));
@@ -1847,8 +2153,8 @@ mod tests {
 
         let mut graph = MolGraph::new();
         let bonds = graph.register_kind("bonds", 2);
-        let a = graph.add_node_with(Atom::new());
-        let b = graph.add_node_with(Atom::new());
+        let a = graph.add_node_with(Atom::new()).expect("fixture node");
+        let b = graph.add_node_with(Atom::new()).expect("fixture node");
         let rid = graph.add_relation(bonds, &[a, b]).unwrap();
         graph
             .set_relation_prop(bonds, rid, "tag", PropValue::Int(1 as I))
@@ -1890,13 +2196,13 @@ mod tests {
     #[test]
     fn merge_rejects_a_node_prop_whose_dtype_conflicts_with_an_existing_column() {
         let mut dst = MolGraph::new();
-        let kept = dst.add_node_with(Atom::new());
+        let kept = dst.add_node_with(Atom::new()).expect("fixture node");
         dst.set_node(kept, "tag", PropValue::Int(1 as I)).unwrap();
 
         let mut src = MolGraph::new();
         let mut incoming = Atom::new();
         incoming.set("tag", "single");
-        src.add_node_with(incoming);
+        src.add_node_with(incoming).expect("fixture node");
 
         let err = dst
             .merge(src)
@@ -1910,16 +2216,16 @@ mod tests {
     fn merge_rejects_a_relation_prop_whose_dtype_conflicts_with_an_existing_component() {
         let mut dst = MolGraph::new();
         let bonds = dst.register_kind("bonds", 2);
-        let a = dst.add_node_with(Atom::new());
-        let b = dst.add_node_with(Atom::new());
+        let a = dst.add_node_with(Atom::new()).expect("fixture node");
+        let b = dst.add_node_with(Atom::new()).expect("fixture node");
         let rid = dst.add_relation(bonds, &[a, b]).unwrap();
         dst.set_relation_prop(bonds, rid, "tag", PropValue::Int(1 as I))
             .unwrap();
 
         let mut src = MolGraph::new();
         let src_bonds = src.register_kind("bonds", 2);
-        let c = src.add_node_with(Atom::new());
-        let d = src.add_node_with(Atom::new());
+        let c = src.add_node_with(Atom::new()).expect("fixture node");
+        let d = src.add_node_with(Atom::new()).expect("fixture node");
         let src_rid = src.add_relation(src_bonds, &[c, d]).unwrap();
         src.set_relation_prop(src_bonds, src_rid, "tag", "single")
             .unwrap();

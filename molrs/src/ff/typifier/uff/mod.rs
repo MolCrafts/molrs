@@ -9,7 +9,7 @@
 //!
 //! ```ignore
 //! let t = UFFTypifier::new();
-//! let mut frame = t.typify(&mol)?.to_frame();
+//! let mut frame = t.typify(&mol)?.to_frame()?;
 //! frame.insert("pairs", intramolecular_pairs(&frame, t.ff().special_bonds())?);
 //! let pots = t.ff().to_potentials(&frame)?;
 //! ```

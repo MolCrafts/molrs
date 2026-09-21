@@ -304,55 +304,73 @@ table follows. The last block of a multi-block string is atomistic by position
   into any gate, so Python-side drift is invisible.
 
 <!-- mol:note:topic:cgsmiles-deferred-fix -->
-## 2026-09-21 — deferred to `/mol:fix` (found by the cgsmiles chain; fixed items struck)
+## 2026-09-22 — the cgsmiles deferred-fix list is closed
 
-Fixed on 2026-09-21 in the two same-day fix commits after 5e1ede5d:
-`[#6]` via `Element::by_number`; SMILES `%n` → `InvalidRingMarker`; the six
-discarded `Result`s and the `InvalidElement` mislabel on the SMILES build path
-(→ `SmilesErrorKind::Build`); unmatched ring closures and unknown bracket
-elements refused at parse by both SMILES entry points; the CGsmiles
-repeat-count cap (65535); the coarse-body scanner bounded by the body;
-`remove_hydrogens` bonds-only degree with an explicit port-handle exemption;
-the `1.008` mass literal and the redundant `set_bond_type` in `add_hydrogens`;
-`add_hydrogens` / `remove_hydrogens` / `Perceive::find_hydrogens` returning
-`Result` (no invariant asserted by panic); `read_frame` refusing an
-unregistered relation block, a registered block missing an endpoint column and
-a relation prop whose dtype conflicts, and split into ≤ 80-line helpers;
-`MolGraph::merge` returning `Result` (the writers no longer `debug_assert!`
-and discard a dtype conflict); **nullable Frame columns** (`Block::insert_nullable`
-/ `validity`, masks maintained through `remove`/`select_rows`/`resize`/`merge`,
-serialized on the transport path; `to_frame` emits partial columns with their
-mask, `read_frame` honours it — the all-or-nothing `frag_id` rule is gone and
-an undeclared `h_count` survives a round trip); `Block.validity` /
-`Block.insert_nullable` in Python with masks carried through the rich
-`Block.copy`, `Block.__init__(validity=)` and Block/Frame pickling
-(`validity` on an absent key raises `KeyError` like `view`); the relation
-reader refusing an endpoint index past the atoms block;
-`molrs.io.SmilesError` (`kind`/`span`/`input`/`notation`, a `ValueError`
-subclass); the binder's private intra-doc links; `views.Atomistic.def_bond`.
+Every item the chain deferred is fixed, in four same-day commits after the
+0.15.0 bump. Kept as the record of what the list contained and what it cost.
 
-Still open:
-- The zarr Frame writers (`io/zarr/frame_io.rs::write_frame_group`,
-  `io/zarr/sequence.rs`) persist column values but not validity masks: a
-  sibling boolean array needs a reserved name in the MolRec block namespace
-  that `read_frame_group` and the pinned sequence schema must recognise — a
-  stored-contract change read by molrec/molvis, not a writer detail. Documented
-  in place at `frame_io.rs:~485` and `sequence.rs:~3414`.
-- `MolGraph::add_node_with` keeps its infallible signature (48 call sites) and
-  now `.expect`s a node-prop dtype conflict (documented `# Panics`): release
-  builds agree with debug instead of silently dropping the property, but the
-  honest end state is a fallible `add_node_with`. `extract.rs:~294` likewise
-  `.expect`s `write_relation_props` on an induced subgraph.
-- `Block::merge` (`block/mod.rs:~845`) is 106 lines; `MolGraph::to_frame`
-  handles `Block::insert`'s provably unreachable failure with an
-  `unreachable!` arm listing the three conditions.
-- `CgParser::read_repeat_count`'s cap is a molrs rule the notation does not
-  state; it still owes the small spec that names it.
-- `molrs-python/python/molrs/frame.py` defines `Block.has_f32` / `has_f64` /
-  `get_f32` / `get_f64` twice each (the first definitions are shadowed) and is
-  not ruff-governed (~470 pre-existing findings; never run `ruff format` on it).
-- `parse_atom_primitive` (io/smiles/parser.rs) is 224 lines; `generate_3d_impl`
-  (conformer/etkdg/mod.rs) 206 — pre-existing, `/mol:refactor`.
+Closed on 2026-09-21: `[#6]` via `Element::by_number`; SMILES `%n` →
+`InvalidRingMarker`; the six discarded `Result`s and the `InvalidElement`
+mislabel on the SMILES build path (→ `SmilesErrorKind::Build`); unmatched ring
+closures and unknown bracket elements refused at parse; the CGsmiles
+repeat-count cap; the coarse-body scanner bounded by the body;
+`remove_hydrogens` bonds-only degree with a port-handle exemption; the `1.008`
+mass literal; `add_hydrogens` / `remove_hydrogens` / `Perceive::find_hydrogens`
+returning `Result`; `read_frame` refusing an unregistered relation block, a
+registered block missing an endpoint column, a dtype-conflicting relation prop
+and an endpoint index past the atoms block; `MolGraph::merge` returning
+`Result`; nullable Frame columns end to end (`Block::insert_nullable` /
+`validity`, `to_frame` emitting masks, `read_frame` honouring them, the
+all-or-nothing `frag_id` rule gone, Python `Block.validity` /
+`insert_nullable` with masks through `copy` and pickling);
+`molrs.io.SmilesError`; the binder's private intra-doc links;
+`views.Atomistic.def_bond`.
+
+Closed on 2026-09-22:
+- **Zarr persists validity masks.** A mask is a `bool` array at
+  `<block>/_validity/<column>`, a reserved **subgroup** of the block group,
+  one flag per row, for a frame group and for a trajectory alike. The reader
+  skips non-array children of a block, so a pre-mask reader — molrec, molvis —
+  ignores the subgroup instead of reading it as a column, and an old store
+  still reads as fully valid. The name is `_validity`, not `__validity__`:
+  Zarr V3 reserves the `__` prefix and `zarrs` enforces it. `ColumnSchema`
+  gains `nullable` (`#[serde(default)]`, absent when false), `from_frames`
+  unions it, `SequenceSchema::declare_nullable` is the public opt-in for a
+  hand-declared pin, and appending a masked column to a pin that declares it
+  non-nullable is refused. `same_block` compares masks, so a frame repeating
+  its values under a moved mask still earns its update.
+- **No write path asserts an invariant by a panic.** `MolGraph::add_node_with`
+  and `to_frame` (with the `Atomistic` / `CoarseGrain` / `Fragment` delegates)
+  return `Result`; `to_frame`'s was a live process kill, not style debt.
+- **The class is closed at the door.** `coerce_canonical` no longer lets a
+  value through whose element type cannot be stored at the key's declared
+  dtype: a `Str`/`Bool` under a numeric key, a number under a string key, an
+  `F64` under a `UInt` or `Int` key are refused by `set_node` / `set_atom`,
+  which already returned `Result`. That is what makes the seven `.expect`s in
+  the infallible leaf constructors (`Atomistic::add_atom{,_xyz,_bare}`,
+  `Fragment::add_atom_{xyz,bare}`, `CoarseGrain::add_bead{,_bare}`)
+  unreachable rather than merely fallible, and it is why `to_frame`'s schema
+  arm now has only one caller left that can trigger it — `node_table_mut()`,
+  the raw door past the property API.
+- **Long functions split**, pure moves: `Block::merge` 106 → 28,
+  `Block::sort_indices` 82 → 12, `parse_atom_primitive` 224 → 18,
+  `generate_3d_impl` 206 → 56 (an A/B harness over 100 SMARTS parses and 26
+  ETKDG runs produced byte-identical output, coordinates at full precision).
+- The `|n` repeat-count refusal names its bound; `molrs.frame.Block` no longer
+  defines seven methods twice.
+
+**Rule**: a value whose element type contradicts a key's declared dtype is
+refused where it is written, never carried to the Frame boundary. A write path
+returns its invariant; it does not assert it with `expect` or `unreachable!`.
+
+Still open, and none of it is cgsmiles debt:
+- `io/zarr/sequence.rs`: `FrameSequenceWriter::commit` (~235 lines) and
+  `FrameSequence::assemble` (~100) are over the 80-line rule — pre-existing,
+  `/mol:refactor`, and the largest such functions left in the crate.
+- `molrs-python/python/molrs/frame.py` is not ruff-governed (~470 pre-existing
+  findings; never run `ruff format` on it — it rewrites unrelated lines).
+- `MolGraph::node_table_mut()` writes a column without consulting the key's
+  declared dtype, so it can still build what the property API now refuses.
 
 <!-- mol:note:topic:cgsmiles-pairing-order -->
 ## 2026-09-21 — descriptor pairing: parse-order edges, per-atom entities, greedy scan

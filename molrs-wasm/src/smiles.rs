@@ -83,8 +83,9 @@ impl WasmSmilesIR {
     ///
     /// # Errors
     ///
-    /// Throws a `JsValue` string if the conversion fails (e.g.,
-    /// invalid valence).
+    /// Throws a `JsValue` string if the conversion fails (e.g., invalid
+    /// valence), or if a property of the result contradicts the Frame schema
+    /// on the way out.
     ///
     /// # Example (JavaScript)
     ///
@@ -98,7 +99,10 @@ impl WasmSmilesIR {
     pub fn to_frame(&self) -> Result<Frame, JsValue> {
         let mol = molrs::io::smiles::to_atomistic(&self.inner)
             .map_err(|e| JsValue::from_str(&format!("IR -> Atomistic: {e}")))?;
-        Frame::from_rs(mol.to_frame())
+        Frame::from_rs(
+            mol.to_frame()
+                .map_err(|e| JsValue::from_str(&format!("toFrame: {e}")))?,
+        )
     }
 }
 

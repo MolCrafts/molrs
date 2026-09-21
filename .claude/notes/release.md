@@ -149,6 +149,25 @@ items live under the `cgsmiles-*` topics in `notes.md`).
   descriptor and `Cg*` variants (exhaustive matches must be extended);
   `core::system::mapping` (`CGMapping`, `WeightScheme`) is deleted — zero
   consumers in molrs or any sibling repo.
+- **Breaking (Rust):** `MolGraph::add_node_with` returns
+  `Result<NodeId, MolRsError>` instead of `NodeId`. A payload whose value
+  contradicts the element type an existing node column holds for that key is
+  data (`merge` and the leaves' `from_frame` hand over foreign bags), so the
+  conflict is returned rather than asserted. The leaf constructors
+  (`Atomistic::add_atom{,_xyz,_bare}`, `Fragment::add_atom_{xyz,bare}`,
+  `CoarseGrain::add_bead{,_bare}`) keep their infallible signatures and now
+  carry the `# Panics` contract that used to live on `add_node_with`.
+- **Breaking (Rust / Python / WASM / C):** `to_frame` returns
+  `Result<Frame, MolRsError>` — `MolGraph::to_frame` and the three leaf
+  delegates `Atomistic::to_frame`, `CoarseGrain::to_frame`,
+  `Fragment::to_frame`. It was a live panic, not style debt: the graph holds
+  no dtype opinion about a key it has no column for, so
+  `set_atom(id, "x", "left")` stores a str column under a key the Frame schema
+  declares float and the emit-side refusal killed the process. Python
+  `Atomistic.to_frame` / `CoarseGrain.to_frame` / `Fragment.to_frame` now
+  raise `ValueError`; wasm `toFrame` and the perceive / conformer / typify
+  entry points throw; `molrs_frame_from_smiles` can return
+  `MolrsStatus::InternalError`.
 - **Breaking (Python stubs only):** 17 stub declarations that mirrored no
   `_lib` class (`Parameters`, `Type`, the `*Type` / `*Style` view classes,
   `ChargeModel`, `Compute`) are removed from `_lib.pyi`;

@@ -118,23 +118,46 @@ impl Atomistic {
     // ---- atoms (nodes) ----
 
     /// Add an atom carrying a property bag.
+    ///
+    /// # Panics
+    ///
+    /// Panics when a value of `atom` contradicts the element type an existing
+    /// atom column holds for that key (a string `charge` into an `f64`
+    /// `charge` column). The caller of this constructor *built* the bag, so
+    /// that is a defect in the caller and not a data condition; callers
+    /// holding a **foreign** bag reach
+    /// [`MolGraph::add_node_with`](crate::system::molgraph::MolGraph::add_node_with)
+    /// through [`as_molgraph_mut`](Self::as_molgraph_mut), which returns the
+    /// conflict instead.
     pub fn add_atom(&mut self, atom: Atom) -> AtomId {
-        self.graph.add_node_with(atom)
+        self.graph
+            .add_node_with(atom)
+            .expect("caller-built atom bag contradicts an existing atom column")
     }
 
     /// Add an atom with element symbol and 3D coordinates.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the `element` / `x` / `y` / `z` columns already hold a
+    /// different element type — see [`add_atom`](Self::add_atom).
     pub fn add_atom_xyz(&mut self, symbol: &str, x: f64, y: f64, z: f64) -> AtomId {
-        self.graph.add_node_with(Atom::xyz(symbol, x, y, z))
+        self.add_atom(Atom::xyz(symbol, x, y, z))
     }
 
     /// Add an atom with element symbol only (no coordinates).
     ///
     /// Writes the chemical identity under the canonical [`keys::ELEMENT`] field
     /// (not a format alias such as `"symbol"`).
+    ///
+    /// # Panics
+    ///
+    /// Panics when the `element` column already holds a different element
+    /// type — see [`add_atom`](Self::add_atom).
     pub fn add_atom_bare(&mut self, symbol: &str) -> AtomId {
         let mut a = Atom::new();
         a.set(keys::ELEMENT, symbol);
-        self.graph.add_node_with(a)
+        self.add_atom(a)
     }
 
     /// Remove an atom and all incident bonds / angles / dihedrals / impropers.
@@ -575,7 +598,15 @@ impl Atomistic {
 
     /// Export to a tabular [`Frame`] (atoms / bonds / angles / dihedrals /
     /// impropers blocks).
-    pub fn to_frame(&self) -> Frame {
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when an atom or relation property
+    /// contradicts the dtype the Frame schema declares for its key; the
+    /// message names the refused column. [`set_atom`](Self::set_atom) accepts
+    /// any value under a key the graph has no column for, so a string written
+    /// under `"x"` is legal in the graph and only refused here.
+    pub fn to_frame(&self) -> Result<Frame, MolRsError> {
         self.graph.to_frame()
     }
 
@@ -1078,7 +1109,7 @@ mod tests {
         mol.add_bond(a, b).unwrap();
         mol.add_angle(a, b, c).unwrap();
         mol.add_improper(a, b, c, d).unwrap();
-        let frame = mol.to_frame();
+        let frame = mol.to_frame().expect("a schema-conforming graph converts");
         let mol2 = Atomistic::from_frame(&frame).unwrap();
         assert_eq!(mol2.n_atoms(), 4);
         assert_eq!(mol2.n_bonds(), 1);
@@ -1179,7 +1210,7 @@ mod tests {
         frag.add_port(c0, h, PortKind::Symmetric, "A", BondNumber::Single)
             .expect("a bonded H handle on its anchor is a legal port");
 
-        let frame = frag.to_frame();
+        let frame = frag.to_frame().expect("a schema-conforming graph converts");
         assert!(frame.contains_key("ports"), "the fixture carries the block");
 
         let err = Atomistic::from_frame(&frame)
@@ -1194,7 +1225,7 @@ mod tests {
     fn test_try_from_molgraph_missing_element() {
         let mut g = MolGraph::new();
         g.register_kind("bonds", 2);
-        g.add_node_with(Atom::new()); // no element
+        g.add_node_with(Atom::new()).expect("fixture node"); // no element
         assert!(Atomistic::try_from_molgraph(g).is_err());
     }
 
@@ -1216,8 +1247,12 @@ mod tests {
     fn try_from_molgraph_resolves_bonds_by_name_not_kind_zero() {
         let mut graph = MolGraph::new();
         let ports = graph.register_kind("ports", 2);
-        let c = graph.add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0));
-        let h = graph.add_node_with(Atom::xyz("H", 1.09, 0.0, 0.0));
+        let c = graph
+            .add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0))
+            .expect("fixture node");
+        let h = graph
+            .add_node_with(Atom::xyz("H", 1.09, 0.0, 0.0))
+            .expect("fixture node");
         graph.add_relation(ports, &[c, h]).unwrap();
 
         let mut mol = Atomistic::try_from_molgraph(graph).expect("elements are present");
@@ -1250,7 +1285,7 @@ mod tests {
     fn to_frame_masks_a_partially_set_int_column() {
         let (mut mol, a0) = partly_labelled();
         mol.set_atom(a0, "frag_id", PropValue::Int(7 as I)).unwrap();
-        let frame = mol.to_frame();
+        let frame = mol.to_frame().expect("a schema-conforming graph converts");
         let atoms = frame.get("atoms").expect("atoms block");
         assert_eq!(atoms.validity("frag_id"), Some(&[true, false, false][..]));
     }
@@ -1259,7 +1294,7 @@ mod tests {
     fn to_frame_masks_a_partially_set_float_column() {
         let (mut mol, a0) = partly_labelled();
         mol.set_atom(a0, "charge", -0.5_f64).unwrap();
-        let frame = mol.to_frame();
+        let frame = mol.to_frame().expect("a schema-conforming graph converts");
         let atoms = frame.get("atoms").expect("atoms block");
         assert_eq!(atoms.validity("charge"), Some(&[true, false, false][..]));
     }
@@ -1268,15 +1303,66 @@ mod tests {
     fn to_frame_masks_a_partially_set_string_column() {
         let (mut mol, a0) = partly_labelled();
         mol.set_atom(a0, "name", "CA").unwrap();
-        let frame = mol.to_frame();
+        let frame = mol.to_frame().expect("a schema-conforming graph converts");
         let atoms = frame.get("atoms").expect("atoms block");
         assert_eq!(atoms.validity("name"), Some(&[true, false, false][..]));
+    }
+
+    /// `set_atom` is the door an `Atomistic` caller reaches, and it carries
+    /// the same schema opinion as the graph underneath: a string under the
+    /// float key `x` never becomes an atom property.
+    #[test]
+    fn set_atom_refuses_a_str_under_a_schema_float_key() {
+        use crate::store::block::DType;
+        let mut mol = Atomistic::new();
+        let a = mol.add_atom_bare("C");
+
+        let err = mol
+            .set_atom(a, "x", "left")
+            .expect_err("a str cannot be stored at a schema-float key");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        let msg = err.to_string();
+        assert!(msg.contains("'x'"), "the error names the key, got {msg}");
+        assert!(
+            msg.contains(DType::Float.name()) && msg.contains(DType::String.name()),
+            "the error names both dtypes, got {msg}"
+        );
+    }
+
+    /// The sequence that made the infallible constructors panic —
+    /// store a str `x`, then add an atom carrying a real float `x` — cannot be
+    /// assembled any more: it already ends at its first step, so the
+    /// `add_atom_xyz` that used to meet a str `x` column meets a float one and
+    /// the frame it produces is the schema-conforming one.
+    #[test]
+    fn set_atom_refusal_leaves_add_atom_xyz_a_float_x_column() {
+        let mut mol = Atomistic::new();
+        let a = mol.add_atom_bare("C");
+
+        mol.set_atom(a, "x", "left")
+            .expect_err("step one of the panicking sequence is refused");
+
+        let b = mol.add_atom_xyz("O", 1.0, 2.0, 3.0);
+        assert_eq!(
+            mol.get_atom(b).expect("atom exists").get_f64("x"),
+            Some(1.0)
+        );
+        let frame = mol
+            .to_frame()
+            .expect("no str 'x' was ever stored, so the frame converts");
+        assert!(
+            frame
+                .get("atoms")
+                .expect("atoms block")
+                .get_float("x")
+                .is_some()
+        );
     }
 
     #[test]
     fn to_frame_leaves_a_fully_populated_column_unmasked() {
         let (mol, _a0) = partly_labelled();
-        let frame = mol.to_frame();
+        let frame = mol.to_frame().expect("a schema-conforming graph converts");
         let atoms = frame.get("atoms").expect("atoms block");
         assert_eq!(atoms.validity("element"), None);
     }
@@ -1285,7 +1371,9 @@ mod tests {
     fn from_frame_leaves_a_masked_int_cell_unset() {
         let (mut mol, a0) = partly_labelled();
         mol.set_atom(a0, "frag_id", PropValue::Int(7 as I)).unwrap();
-        let back = Atomistic::from_frame(&mol.to_frame()).expect("an atomistic frame reads back");
+        let back =
+            Atomistic::from_frame(&mol.to_frame().expect("a schema-conforming graph converts"))
+                .expect("an atomistic frame reads back");
         let read: Vec<Option<I>> = back.atoms().map(|(_, a)| a.get_int("frag_id")).collect();
         assert_eq!(read, vec![Some(7 as I), None, None]);
     }
@@ -1294,7 +1382,9 @@ mod tests {
     fn from_frame_leaves_a_masked_float_cell_unset() {
         let (mut mol, a0) = partly_labelled();
         mol.set_atom(a0, "charge", -0.5_f64).unwrap();
-        let back = Atomistic::from_frame(&mol.to_frame()).expect("an atomistic frame reads back");
+        let back =
+            Atomistic::from_frame(&mol.to_frame().expect("a schema-conforming graph converts"))
+                .expect("an atomistic frame reads back");
         let read: Vec<Option<f64>> = back.atoms().map(|(_, a)| a.get_f64("charge")).collect();
         assert_eq!(read, vec![Some(-0.5), None, None]);
     }
@@ -1303,7 +1393,9 @@ mod tests {
     fn from_frame_leaves_a_masked_string_cell_unset() {
         let (mut mol, a0) = partly_labelled();
         mol.set_atom(a0, "name", "CA").unwrap();
-        let back = Atomistic::from_frame(&mol.to_frame()).expect("an atomistic frame reads back");
+        let back =
+            Atomistic::from_frame(&mol.to_frame().expect("a schema-conforming graph converts"))
+                .expect("an atomistic frame reads back");
         let read: Vec<Option<String>> = back
             .atoms()
             .map(|(_, a)| a.get_str("name").map(str::to_owned))
