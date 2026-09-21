@@ -219,6 +219,15 @@ AST names what was written, `core` names what is stored — the same split as
 mapping may appear. `PortKind`'s stored form is the glyph (`Str` column
 `port_kind`), a recorded departure from `BondType::code()`.
 
+Open at the Python seam (2026-09-21, architect review of cgsmiles-01e): the IR
+side crosses `BondingDescriptor.kind` as the lowercase role name
+(`"symmetric" | "left" | "right" | "shared"`, the grill-ratified 01e rule
+"a name enum crosses as its lowercase name"), while 02a/02d cross a stored
+port's kind as the glyph (`"$" | "<" | ">" | "!"`, the Frame column). Two
+spellings of the same four roles, one per door. Both were user decisions;
+reconcile them in the schema-vocabulary spec (or by a user call before 02d
+lands) rather than by documenting the difference.
+
 <!-- mol:note:topic:cgsmiles-frag-id -->
 ## 2026-09-21 — `frag_id` is the provisional per-atom fragment-instance key
 
@@ -269,6 +278,16 @@ table follows. The last block of a multi-block string is atomistic by position
 - `BondType` has no quadruple variant (`core/system/bond.rs:28-38`), so
   `BondKind::bond_type` maps `Quadruple` to `Double` (the number stays
   `BondNumber::Quadruple`); widening `BondType` is its own spec.
+- Python enum conventions are split: `io` crosses names as lowercase strings
+  (`build_smiles_emit_options`, `cgsmiles.rs`), `core` crosses bond classes as
+  two `u32` codes (`set_bond_class` / `bond_type`, `molgraph.rs:808,829`) that
+  have no code for `up`/`down`/`any`/`ring`. Reconciling is a breaking Python
+  API change with its own spec.
+- `_lib.pyi` parity is guarded at class-name level only
+  (`tests/test_stub_parity.py`); method- and parameter-level parity, which the
+  stub header claims, is unguarded. No doctest runner executes the binder's
+  `>>>` examples (`pyproject.toml` `testpaths` only), and no `ruff` step is wired
+  into any gate, so Python-side drift is invisible.
 
 <!-- mol:note:topic:cgsmiles-deferred-fix -->
 ## 2026-09-21 — deferred to `/mol:fix` (found by the cgsmiles chain)
@@ -297,6 +316,17 @@ table follows. The last block of a multi-block string is atomistic by position
   `validate_smiles` does), so a last-block body with an unmatched ring marker
   is caught by the builder inside `resolve`, not by the parser; 01d re-bases and
   boxes it as `CgLastBlockNotAtomistic`, but the earlier check is the better home.
+- `CgParser::read_repeat_count` accepts any `u32`, so `{[#A]|900000000}` replays
+  the unit until memory runs out — now reachable from Python as an abort, not a
+  `ValueError`. Cap the count (its own small spec: the limit is a notation rule).
+- `molrs-python/src/helpers.rs::smiles_error_to_pyerr` flattens kind, span and
+  input into one `ValueError` string; the fix is a typed exception via
+  `create_exception!` applied to the whole `io::smiles` error surface.
+- `molrs-python/src/lib.rs:11-26` "Module Layout" table links sixteen private
+  items, so `RUSTDOCFLAGS="-D warnings" cargo doc` fails for the binder; the
+  pre-commit clippy hook documents only `molcrafts-molrs`, never a binder.
+- `molrs-python/src/conformer/mod.rs:239` still reads `parse_smiles("CCO")` —
+  the last dead `molrs.SmilesIR`-family name; cgsmiles-02d owns that file.
 
 <!-- mol:note:topic:cgsmiles-pairing-order -->
 ## 2026-09-21 — descriptor pairing: parse-order edges, per-atom entities, greedy scan
@@ -337,3 +367,25 @@ never-perceived body — the `FragmentCache` no-perception invariant) is
 (`[$]C1=CC=CC=C1`) therefore bonds `Single`. A coarse edge of multiplicity n
 is n separate bonds, never a multiple bond (Martini cyclohexane
 `{[#SC3]=[#SC3]}` → two singles).
+
+<!-- mol:note:topic:cgsmiles-python-seam -->
+## 2026-09-21 — `molrs.io.CGSmilesIR` is the one Python door; nested IR records are frozen values
+
+In this binding "Reader" means a lazy, path-backed trajectory cursor
+(`XYZTrajReader`, `DCDTrajReader`, …), so a text-in/IR-out parser is not a
+Reader; the reader-shaped `CGSmilesReader(text).read()` is molpy's to write
+over this class, as molpy's `SmilesReader` wraps `molrs.io.SmilesIR`.
+
+**Rule**: `molrs.io.CGSmilesIR(text)` mirrors `PySmilesIR` (`{inner, input}`,
+`#[new]`, `to_atomistic()`, `__repr__`); no free `parse_cgsmiles`, no
+`n_levels` (`len(ir.levels)` is the fact). The seven nested records follow
+the `LammpsLog` house style: `frozen, skip_from_py_object`, getters only, no
+`#[new]`, values handed out by cloning. An enum that *is* a count crosses as
+the count (`CGEdge.multiplicity`, no `order`); a name enum crosses as its
+lowercase variant name through a total mapping fn (no `_ =>`); a sum whose
+payload types already distinguish the variants has no tag (`CGFragmentDef.body`
+is a `CGGraph` or a `SmilesIR`; `CGEdge.derived_from` is `(level, pair) | None`),
+one whose payloads do not gets a tagged pyclass (`PairEnd.end/index/port`).
+Errors go through the one `smiles_error_to_pyerr`. `tests/test_stub_parity.py`
+keeps `_lib.pyi` and `molrs._lib` equal at class-name level with
+`inspect.ismodule` as the only exemption — never an allowlist.
