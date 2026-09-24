@@ -43,3 +43,13 @@ slotmap = "1.0"
 
 [dev-dependencies]
 ndarray = "0.17"
+
+# Standalone workspace root: does NOT inherit the repo root's [profile.dev].
+# Keep these two keys identical to ../Cargo.toml -- they are what keeps the
+# shared target/ small enough to stay fast on Lustre (see ../Cargo.toml for the
+# measurement).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

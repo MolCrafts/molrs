@@ -4,10 +4,13 @@ mol_project:
   language: rust
   stage: experimental
   build:
-    install: "cargo build"
-    check: "cargo fmt --check && cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem,stream -- -D warnings && cargo clippy --manifest-path molrs-cxxapi/Cargo.toml --all-targets -- -D warnings"
-    test: "cargo test -p molcrafts-molrs --lib --features full,filesystem,stream"
-    test_single: "cargo test {path}"
+    # Every root-workspace cargo call goes through a `cargo mrs-*` alias
+    # (.cargo/config.toml). A hand-spelled feature list is a different feature
+    # set, hence a full 293k-line rebuild. See .claude/notes/build.md.
+    install: "cargo mrs-build"
+    check: "cargo fmt --check && cargo mrs-clippy -- -D warnings && cargo clippy --manifest-path molrs-cxxapi/Cargo.toml --all-targets -- -D warnings"
+    test: "cargo mrs-test && cargo mrs-doctest"
+    test_single: "scripts/test-scope.sh {path}"
   ci:
     # Local pre-push mirrors default CI + docs (not optional Full).
     # Single source: .pre-commit-config.yaml (prek); tox via molrs-python[dev]
@@ -121,11 +124,12 @@ is no `molrs/tests/` tree. Fixtures are inline strings (a tiny `include_str!`
 literal is fine); tests that need a file write it into a `tempfile` directory.
 There is no fixture corpus to fetch.
 
-Default gate: `cargo test -p molcrafts-molrs --lib --features full,filesystem,stream`
-plus `cargo test --doc -p molcrafts-molrs --features full,filesystem,stream` —
-`--lib` does not run doctests, so a rustdoc example can rot against a renamed
-API without CI noticing. `stream` is named explicitly because it is not in
-`default`.
+Default gate: `cargo mrs-test && cargo mrs-doctest` — `--lib` does not run
+doctests, so a rustdoc example can rot against a renamed API without CI
+noticing. Inside an implementation loop run `scripts/test-scope.sh`, which
+filters the already-built test binary down to the modules you touched (~0.1 s).
+Never spell the feature list by hand: `cargo test <module>` resolves a different
+feature set and rebuilds all 293k lines. See `.claude/notes/build.md`.
 
 **Bindings (Python / C / WASM)** only smoke the FFI seam (construct, call,
 round-trip types, dtype at the boundary, error mapping). Science depth lives in
@@ -144,26 +148,48 @@ additionally runs sccache (GHA cache backend). Optional local sccache:
 `brew install sccache`, then in `~/.cargo/config.toml` (user-level, never
 committed): `[build] rustc-wrapper = "sccache"`.
 
-Every consumer links molrs statically; `.cargo/config.toml` carries only
-`[build] target-dir`, and `lto = "thin"` lives in the committed
-`[profile.release]` of every root (a standalone workspace does not inherit it).
+Every consumer links molrs statically; `.cargo/config.toml` carries
+`[build] target-dir` plus the `mrs-*` aliases, and `lto = "thin"` lives in the
+committed `[profile.release]` of every root (a standalone workspace does not
+inherit it). `[profile.dev] debug = "line-tables-only"` is repeated in every
+root for the same reason — it keeps the incremental cache at ~420 MB per
+feature set instead of 1.4 GB, which is the difference between a 6 s and a 45 s
+one-file rebuild on this repo's Lustre filesystem.
+
+**`target/` is a cache, not state.** It reached 101 GB (57 GB of incremental
+caches, 124 molrs rlibs, 2197 fingerprint dirs) before 2026-09-22, and a
+cluttered cache is slower than no cache: the same one-file edit cost 44-79 s
+there and 6-7 s in a clean one, while a cold full build is 65 s. The
+`target-sweep` pre-push hook prunes it automatically past 20 GB
+(`cargo sweep -t 14`); `rm -rf target` is the blunt version. The
+`mrs-*` aliases are what keep it from growing back; the four legitimate molrs
+builds are listed in `.cargo/config.toml`.
 
 ## Build & Test Commands
 
+Aliases live in `.cargo/config.toml`; they exist so the feature string is
+identical in every invocation. Two spellings of the same build are two
+fingerprints, two compiles of 293k lines and two incremental caches.
+
 ```bash
 # Build
-cargo build
+cargo mrs-build
 
-# Default gate (mirrors CI): function-level unit tests only — should be seconds
-cargo test -p molcrafts-molrs --lib --features full,filesystem,stream
+# Default gate (mirrors CI): function-level unit tests only — ~5 s
+cargo mrs-test
 
 # Doctests are NOT covered by --lib. Run them too: a rustdoc example is public
 # API that compiles, and a renamed constant breaks it invisibly otherwise.
-cargo test --doc -p molcrafts-molrs --features full,filesystem,stream
+cargo mrs-doctest
+
+# Inner loop: only the modules the working tree touched (~0.1 s, no rebuild).
+scripts/test-scope.sh
+scripts/test-scope.sh ff::potential            # or an explicit module
+scripts/test-scope.sh molrs/src/io/data/xyz.rs # or an explicit file
 
 # Lint & Format
 cargo fmt --all
-cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem,stream -- -D warnings
+cargo mrs-clippy -- -D warnings
 ```
 
 There are no benchmark targets; the benchmark and regression systems are being
@@ -353,6 +379,7 @@ Agent mapping by domain (plugin agents read the notes pages below):
 | Testing | `.claude/notes/testing.md` | `mol:tester` |
 | Scientific correctness | `.claude/notes/science.md` | `mol:scientist` |
 | FFI safety | `.claude/notes/ffi.md` | `mol:ffi-guard` (`/mol:review --axis=ffi`) |
+| Build & cache | `.claude/notes/build.md` | `mol:ci-guard` |
 
 Evolving decisions live in `.claude/notes/notes.md`; specs live in
 `.claude/specs/` indexed by `.claude/specs/INDEX.md`.

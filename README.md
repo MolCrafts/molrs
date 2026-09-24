@@ -39,12 +39,13 @@ By becoming the dependable core the rest of the MolCrafts ecosystem builds on, m
 ## Capabilities
 
 One crate, `molcrafts-molrs`, whose sub-systems are feature-gated modules
-(`core`, `perceive`, and `builder` are always on):
+(`core` and `perceive` are always on):
 
 | Module (feature) | Capability |
 |------------------|------------|
-| `core`, `perceive`, `builder` *(always on)* | Frame / Block column store, MolGraph topology, elements, `SimBox` + MIC, spatial regions, neighbor search, chemical perception, structure builders |
-| `io` | Readers / writers for PDB, XYZ, mol2, SDF, CIF, GRO, POSCAR, CHGCAR, Cube, LAMMPS data/dump, DCD, Zarr V3 trajectories (SMILES/SMARTS parser under the `smiles` feature) |
+| `core`, `perceive` *(always on)* | Frame / Block column store, MolGraph topology, elements, `SimBox` + minimum-image convention, spatial regions, neighbor search, chemical perception, SMARTS matching |
+| `builder` | Structure builders: graphene, nanotubes, self-avoiding walks, fragment placement along a trace, reaction-site labelling |
+| `io` | Readers / writers for PDB, XYZ, mol2, SDF, CIF, GRO, POSCAR, CHGCAR, Cube, LAMMPS data/dump, DCD, Zarr V3 trajectories (SMILES / CGsmiles parser under the `smiles` feature) |
 | `compute` | Trajectory analysis: RDF, MSD, clustering, gyration / inertia tensors, PCA, k-means, density, diffraction, PMFT, order parameters, dielectric, environment matching |
 | `ff` | Force fields and potentials — MMFF94 / OPLS-AA / GAFF typing, LJ, PME; LAMMPS `*.ff` include read/write (`LammpsFfReader` / `LammpsFfWriter`); L-BFGS geometry optimization over a `Potential` |
 | `conformer` | 3D conformer generation: ETKDGv3 distance geometry, experimental-torsion refinement, MMFF94 cleanup, stereo guards |
@@ -61,9 +62,9 @@ provides a CXX bridge for zero-copy integration with Atomiverse C++.
 cargo add molcrafts-molrs
 ```
 
-The default build enables `full`, `stream`, `filesystem`, and `rayon`.
-`full` bundles the scientific modules, including `md` and `voronoi`; it does
-not enable streaming, filesystem access, or BLAS. For a smaller build, disable
+The default build enables `full`, `filesystem`, and `rayon`.
+`full` bundles every sub-system, including `builder`, `md` and `voronoi`; it
+does not enable `stream` (opt-in) or filesystem access. For a smaller build, disable
 defaults and select the modules you need:
 
 ```toml
@@ -103,8 +104,12 @@ them automatically on the first build.
 ```bash
 git clone https://github.com/MolCrafts/molrs.git
 cd molrs
-cargo build --workspace            # compile the Rust library
-cargo test --features full,filesystem,stream  # unit tests and doctests
+# `mrs-*` are cargo aliases committed in .cargo/config.toml. They pin one
+# feature set, so every command reuses the same build instead of compiling
+# the crate again under a slightly different spelling.
+cargo mrs-build   # compile the Rust library
+cargo mrs-test    # unit tests
+cargo mrs-doctest # rustdoc examples
 ```
 
 Binding crates are standalone workspaces. Build each with

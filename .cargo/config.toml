@@ -7,3 +7,37 @@
 # CARGO_TARGET_DIR (env) still overrides when set.
 [build]
 target-dir = "target"
+
+# Canonical command set for the root workspace.
+#
+# Every human, hook, CI step and agent invocation goes through these aliases.
+# The reason is not brevity: a cargo invocation that spells the feature list
+# differently resolves a *different* feature set, which is a different
+# fingerprint, which compiles all 293k lines of `molcrafts-molrs` again and
+# leaves another ~420 MB incremental cache in target/. `cargo test <filter>`
+# with no flags is exactly that mistake — it drops `stream`/`serde` and adds
+# the doctest and bin targets, so "run one test" used to cost a full rebuild.
+#
+# With the aliases, only the filter after `--` varies, so the crate is compiled
+# once and every later run is a filter over the same test binary:
+#
+#     cargo mrs-test                       # all 2513 unit tests (~5 s)
+#     cargo mrs-test -- ff::potential      # just that module (~0.1 s, no rebuild)
+#     scripts/test-scope.sh                # the modules the working tree touched
+#
+# Legitimate builds of molcrafts-molrs in this repo, and no others:
+#   1. this set — `full,filesystem,stream` (+ default `rayon`) for every root
+#      workspace command: build, check, clippy, test, doc;
+#   2. `full,filesystem,rayon` — what molrs-capi and molrs-cxxapi link. They
+#      must not ship `stream` (tokio + tungstenite in a C archive), so this set
+#      stays separate on purpose;
+#   3. molrs-ffi's `default-features = false` minimal set;
+#   4. the wasm32 build of molrs-wasm.
+# Anything else in target/debug/.fingerprint/molcrafts-molrs-* is drift.
+[alias]
+mrs-build   = ["build",  "-p", "molcrafts-molrs", "--features", "full,filesystem,stream"]
+mrs-check   = ["check",  "-p", "molcrafts-molrs", "--all-targets", "--features", "full,filesystem,stream"]
+mrs-clippy  = ["clippy", "-p", "molcrafts-molrs", "--all-targets", "--features", "full,filesystem,stream"]
+mrs-test    = ["test",   "-p", "molcrafts-molrs", "--lib", "--features", "full,filesystem,stream"]
+mrs-doctest = ["test",   "--doc", "-p", "molcrafts-molrs", "--features", "full,filesystem,stream"]
+mrs-doc     = ["doc",    "-p", "molcrafts-molrs", "--no-deps", "--features", "full,filesystem,stream"]

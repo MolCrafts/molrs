@@ -14,6 +14,17 @@ name = "molwasm"
 
 [workspace]
 
+# Standalone workspace root: does NOT inherit the repo root's [profile.release].
+# Keep the four keys identical to ../Cargo.toml so every root ships the same
+# optimisation. This block was missing until 2026-09-22, so every published
+# wasm bundle before then was built without lto/opt-level/codegen-units while
+# the other four binder roots had them.
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+strip = "symbols"
+
 [features]
 # Default build = full (all subsystems). Each forwards to the merged crate's
 # matching module feature.
@@ -64,4 +75,16 @@ wasm-bindgen-test = "0.3"
 # Binaryen wasm-opt after wasm-bindgen. -O1: ~19% smaller than rustc-only
 # release on Apple M4 (~4s); ABI/smoke-tested locally. Requires `wasm-opt` on PATH
 # (e.g. `brew install binaryen`).
-wasm-opt = ["-O1"]
+# rustc enables bulk-memory and nontrapping-fptoint for wasm32 by default;
+# older binaryen releases reject them unless the features are named.
+wasm-opt = ["-O1", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
+
+# Standalone workspace root: does NOT inherit the repo root's [profile.dev].
+# Keep these two keys identical to ../Cargo.toml -- they are what keeps the
+# shared target/ small enough to stay fast on Lustre (see ../Cargo.toml for the
+# measurement).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

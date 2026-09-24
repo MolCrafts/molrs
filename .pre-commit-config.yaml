@@ -1,5 +1,17 @@
 # prek: pre-commit = rustfmt + clippy + rustdoc; pre-push = unit + python + wasm
 # + capi. Mirrors ci.yml (rust / wasm / python / capi). No wrapper scripts.
+#
+# Two rules hold this file together:
+#
+# 1. Every cargo invocation against the root workspace goes through a
+#    `cargo mrs-*` alias (.cargo/config.toml). Spelling the feature list by
+#    hand resolves a different feature set, which recompiles all 293k lines of
+#    molcrafts-molrs into a second ~420 MB incremental cache.
+# 2. Hooks are scoped with `files:` instead of `always_run: true`, so a change
+#    confined to one binder does not build the other four. `molrs/` (and the
+#    root build config) is in every scope, because every binder links it.
+#    `prek run --all-files` — what /mol:ship runs at the push tier — matches
+#    every scope, so the full CI-parity gate is unchanged.
 
 default_install_hook_types: [pre-commit, pre-push]
 default_stages: [pre-commit, pre-push]
@@ -18,6 +30,7 @@ repos:
 
   - repo: local
     hooks:
+      # Formatting is cheap and root-independent, so it stays unconditional.
       - id: cargo-fmt
         name: rustfmt
         entry: >-
@@ -31,30 +44,75 @@ repos:
         always_run: true
         stages: [pre-commit]
 
-      - id: cargo-clippy
-        name: clippy
+      - id: clippy-molrs
+        name: clippy + rustdoc (molcrafts-molrs)
         entry: >-
-          sh -c 'cargo clippy -p molcrafts-molrs --all-targets --features full,filesystem,stream -- -D warnings
-          && cargo clippy --manifest-path molrs-cxxapi/Cargo.toml --all-targets -- -D warnings
-          && cargo clippy --manifest-path molrs-python/Cargo.toml --all-targets -- -D warnings
-          && cargo clippy --manifest-path molrs-capi/Cargo.toml --all-targets -- -D warnings
-          && cargo clippy --manifest-path molrs-wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings
-          && RUSTDOCFLAGS="-D warnings" cargo doc -p molcrafts-molrs --no-deps --features full,filesystem,stream'
+          sh -c 'cargo mrs-clippy -- -D warnings
+          && RUSTDOCFLAGS="-D warnings" cargo mrs-doc'
         language: system
         pass_filenames: false
-        always_run: true
+        files: ^(molrs/|Cargo\.toml|\.cargo/|rust-toolchain\.toml)
         stages: [pre-commit]
 
-      - id: cargo-test-unit
-        name: Rust tests (core + FFI + CXX)
+      - id: clippy-binders
+        name: clippy (ffi consumers)
         entry: >-
-          sh -c 'cargo test -p molcrafts-molrs --lib --features full,filesystem,stream
-          && cargo test --doc -p molcrafts-molrs --features full,filesystem,stream
-          && cargo test --manifest-path molrs-ffi/Cargo.toml
-          && cargo test --manifest-path molrs-cxxapi/Cargo.toml'
+          sh -c 'cargo clippy --manifest-path molrs-cxxapi/Cargo.toml --all-targets -- -D warnings
+          && cargo clippy --manifest-path molrs-python/Cargo.toml --all-targets -- -D warnings
+          && cargo clippy --manifest-path molrs-capi/Cargo.toml --all-targets -- -D warnings'
+        language: system
+        pass_filenames: false
+        files: ^(molrs/|molrs-ffi/|molrs-cxxapi/|molrs-python/|molrs-capi/|Cargo\.toml|\.cargo/|rust-toolchain\.toml)
+        stages: [pre-commit]
+
+      - id: clippy-wasm
+        name: clippy (wasm32)
+        entry: cargo clippy --manifest-path molrs-wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings
+        language: system
+        pass_filenames: false
+        files: ^(molrs/|molrs-ffi/|molrs-wasm/|Cargo\.toml|\.cargo/|rust-toolchain\.toml)
+        stages: [pre-commit]
+
+      # target/ is a cache, and a bloated one is slower than none: at 101 GB a
+      # one-file rebuild cost 44-79 s where a clean tree costs 6-7 s, because a
+      # 1.4 GB incremental cache has to come back over Lustre. The `du` is ~2 s,
+      # and cargo-sweep only touches artifacts nothing has read for two weeks.
+      - id: target-sweep
+        name: prune target/ past 20 GB
+        entry: >-
+          bash -c 'set -euo pipefail;
+          [ -d target ] || exit 0;
+          size=$(du -sx --block-size=1G target | cut -f1);
+          if [ "$size" -ge 20 ]; then
+          echo "target/ is ${size}G - sweeping artifacts unread for 14 days";
+          cargo sweep -t 14;
+          else
+          echo "target/ is ${size}G - under the 20G threshold";
+          fi'
         language: system
         pass_filenames: false
         always_run: true
+        stages: [pre-push]
+
+      - id: cargo-test-unit
+        name: Rust tests (core)
+        # --lib does not run rustdoc examples, so a renamed public item would
+        # otherwise rot in a doc comment until someone opens docs.rs.
+        entry: sh -c 'cargo mrs-test && cargo mrs-doctest'
+        language: system
+        pass_filenames: false
+        files: ^(molrs/|Cargo\.toml|\.cargo/|rust-toolchain\.toml)
+        stages: [pre-push]
+
+      - id: cargo-test-binders
+        name: Rust tests (FFI + CXX + C API)
+        entry: >-
+          sh -c 'cargo test --manifest-path molrs-ffi/Cargo.toml
+          && cargo test --manifest-path molrs-cxxapi/Cargo.toml
+          && cargo test --manifest-path molrs-capi/Cargo.toml'
+        language: system
+        pass_filenames: false
+        files: ^(molrs/|molrs-ffi/|molrs-cxxapi/|molrs-capi/|Cargo\.toml|\.cargo/|rust-toolchain\.toml)
         stages: [pre-push]
 
       - id: python-tox
@@ -64,7 +122,7 @@ repos:
           && uv --directory molrs-python run --no-sync tox -e py'
         language: system
         pass_filenames: false
-        always_run: true
+        files: ^(molrs/|molrs-ffi/|molrs-python/|Cargo\.toml|\.cargo/|rust-toolchain\.toml)
         stages: [pre-push]
 
       - id: wasm-pack
@@ -81,7 +139,7 @@ repos:
           wasm-pack build --release --target bundler --scope molcrafts --out-name molrs'
         language: system
         pass_filenames: false
-        always_run: true
+        files: ^(molrs/|molrs-ffi/|molrs-wasm/|Cargo\.toml|\.cargo/|rust-toolchain\.toml)
         stages: [pre-push]
 
       # The `;` after every line are load-bearing, not style: `>-` folds this
@@ -101,5 +159,5 @@ repos:
           ctest --test-dir molrs-capi/build-test --output-on-failure'
         language: system
         pass_filenames: false
-        always_run: true
+        files: ^(molrs/|molrs-ffi/|molrs-capi/|Cargo\.toml|\.cargo/|rust-toolchain\.toml)
         stages: [pre-push]

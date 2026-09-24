@@ -1,81 +1,199 @@
 name: CI Snapshot
 
-# Measures one run and publishes its tests and coverage to the MolCrafts CI
-# index, whose push rebuilds the engineering dashboard.
+# Measures one run of the Rust core and publishes three records to the
+# MolCrafts CI index, whose push rebuilds the engineering dashboard:
 #
-# Separate from ci-rust.yml on purpose. That workflow is the gate: it decides
-# whether molrs is releasable, and it must not be slowed down or made to fail
-# by instrumentation. This one only reports.
+#   tests         cargo test --lib, the same invocation as cargo mrs-test
+#   coverage      rustc -C instrument-coverage, then the toolchain's llvm-cov
+#   conformance   molrec's standard suite, through molrs.io.mrec
+#
+# Rust core only. molrs-python's pytest suite, and the ffi / C / CXX / WASM
+# crates, are not measured here. Doctests stay in ci-rust.yml (`cargo mrs-doctest`).
+#
+# Separate from ci-rust.yml on purpose. That workflow is the release gate
+# for the unit tests. This one reports, and it also runs the mrec suite,
+# which the gate does not. A red unit-test run still publishes its tests
+# record. A red mrec suite fails this job after the record is written.
+
+#
+# Two jobs, so no third-party code shares a job with a secret. `measure` builds
+# molrec and runs its suite with a read-only token and no secrets; `publish`
+# holds MOLCRAFTS_CI_SSH_KEY and only submits the three named records that
+# `measure` uploaded.
 
 on:
   workflow_call:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  snapshot:
-    name: Publish tests + coverage
+  measure:
+    name: Measure tests + coverage + mrec
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # The suite and its molrs adapter live in molrec, not in this repo.
+      # Pinned to a molrec `dev` commit: a floating ref would run whatever
+      # lands there. Bump deliberately when molrec's adapter moves.
+      - uses: actions/checkout@v7
+        with:
+          repository: MolCrafts/molrec
+          ref: 8048532590093fa6df4fd511fe9c9d96f60f00e2
+          path: .ci-out/molrec
+          persist-credentials: false
+
       - uses: dtolnay/rust-toolchain@stable
         with:
-          # cargo-llvm-cov needs it; without it the tool stops to ask, and a
-          # CI runner has nobody to answer.
+          # Ships llvm-profdata and llvm-cov next to rustc. They are not on
+          # PATH; the measure step calls them by their sysroot path.
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: snapshot
           workspaces: ". -> target"
-      - uses: taiki-e/install-action@v2
+      - uses: actions/setup-python@v7
         with:
-          tool: cargo-nextest,cargo-llvm-cov
-      # The adapter is a Python tool; uv runs it from git without a checkout,
-      # and molpy's snapshot job uses the same mechanism.
-      - uses: astral-sh/setup-uv@v9.0.0
+          python-version: "3.12"
 
-      # One command produces both records: nextest writes the JUnit report
-      # that becomes `tests`, llvm-cov writes the tracefile that becomes
-      # `coverage`. Running them separately would compile the crate twice.
-      #
-      # `|| true` keeps a red suite from failing this job — the gate already
-      # decided that, and a run whose tests failed is exactly the run whose
-      # test record is worth keeping.
-      #
-      # Scope note: nextest does not run doctests, so `cargo test --doc` in
-      # ci-rust.yml is not counted here, and molrs-ffi and molrs-cxxapi are
-      # standalone workspace roots that this crate's run never reaches.
-      - name: Measure this run
+      # Same cargo test as `cargo mrs-test`, with rustc's coverage
+      # instrumentation. The toolchain's llvm-profdata merges the raw
+      # profiles and llvm-cov exports LCOV. A red suite still leaves a
+      # `test result:` line and a tracefile. A compile failure does not,
+      # and fails this step.
+      - name: Measure the Rust core
+        id: measure
         if: ${{ !cancelled() }}
         run: |
-          # cargo-llvm-cov does not create the parent of --output-path. Without
-          # this the report step fails, and `|| true` hides it until the next
-          # step trips over a tracefile that was never written.
-          mkdir -p .ci-out
-          cargo llvm-cov nextest \
-            -p molcrafts-molrs --lib --features full,filesystem,stream \
-            --profile ci \
-            --lcov --output-path .ci-out/lcov.info || true
+          mkdir -p .ci-out/profraw
+          sysroot=$(rustc --print sysroot)
+          host=$(rustc -vV | awk '/^host: / { print $2 }')
+          llvm=$sysroot/lib/rustlib/$host/bin
+          export RUSTFLAGS="-C instrument-coverage"
+          export LLVM_PROFILE_FILE="$PWD/.ci-out/profraw/molrs-%p-%m.profraw"
+          export CARGO_TERM_COLOR=never
 
-      # `--track` waits on the credential as well as the branch: without
-      # MOLCRAFTS_CI_SSH_KEY there is nothing to push with, so the snapshots are
-      # built and uploaded as an artifact but never published, and CI stays
-      # green. Fork pull requests, which get no secrets, stay on that path.
-      - name: Build snapshots
-        if: ${{ !cancelled() && hashFiles('target/nextest/ci/junit.xml') != '' }}
+          set +e
+          cargo test -p molcrafts-molrs --lib --features full,filesystem,stream \
+            -- --color=never | tee .ci-out/cargo-test.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if ! grep -q '^test result:' .ci-out/cargo-test.log; then
+            exit "$status"
+          fi
+
+          exe=$(cargo test -p molcrafts-molrs --lib --features full,filesystem,stream \
+            --no-run --message-format=json | python3 -c '
+          import json, sys
+          found = None
+          for line in sys.stdin:
+              line = line.strip()
+              if not line.startswith("{"):
+                  continue
+              try:
+                  msg = json.loads(line)
+              except json.JSONDecodeError:
+                  continue
+              if msg.get("reason") != "compiler-artifact" or not msg.get("executable"):
+                  continue
+              if (msg.get("profile") or {}).get("test"):
+                  found = msg["executable"]
+          if not found:
+              raise SystemExit("no instrumented test executable")
+          print(found)
+          ')
+          "$llvm/llvm-profdata" merge -sparse .ci-out/profraw/*.profraw -o .ci-out/coverage.profdata
+          "$llvm/llvm-cov" export \
+            -format=lcov \
+            -instr-profile=.ci-out/coverage.profdata \
+            -ignore-filename-regex='/\.cargo/registry/' \
+            -ignore-filename-regex='/rustlib/' \
+            "$exe" > .ci-out/lcov.info
+
+      # molci and maturin. maturin is the build backend molrs-python already
+      # declares; the suite calls the Rust core through molrs.io.mrec.
+      - name: Python tools
+        if: ${{ !cancelled() }}
         run: |
-          uvx --from git+https://github.com/MolCrafts/molcrafts-ci@master molci snapshot \
-            --out .ci-out/snapshots \
-            --junit target/nextest/ci/junit.xml \
-            --coverage .ci-out/lcov.info --coverage-format lcov \
-            --tests-producer cargo-nextest \
-            --coverage-producer cargo-llvm-cov \
-            ${{ (github.event_name == 'push' && github.ref == 'refs/heads/master' && secrets.MOLCRAFTS_CI_SSH_KEY != '') && '--track' || '' }}
+          set -euo pipefail
+          python -m venv .ci-out/venv
+          # shellcheck disable=SC1091
+          source .ci-out/venv/bin/activate
+          python -m pip install \
+            maturin \
+            "./.ci-out/molrec[zarr]" \
+            "molcrafts-ci @ git+https://github.com/MolCrafts/molcrafts-ci@master"
 
+      # `--track` marks master pushes. Whether the records are actually pushed
+      # is decided by the publish job, which alone sees MOLCRAFTS_CI_SSH_KEY.
+      - name: Build test and coverage snapshots
+        if: ${{ !cancelled() && steps.measure.outcome == 'success' && hashFiles('.ci-out/cargo-test.log') != '' }}
+        run: |
+          set -euo pipefail
+          args=(
+            --out .ci-out/snapshots
+            --cargo-test .ci-out/cargo-test.log
+            --coverage-producer llvm-cov
+          )
+          if [[ -f .ci-out/lcov.info ]]; then
+            args+=(--coverage .ci-out/lcov.info --coverage-format lcov)
+          fi
+          # shellcheck disable=SC1091
+          source .ci-out/venv/bin/activate
+          molci snapshot \
+            "${args[@]}" \
+            ${{ (github.event_name == 'push' && github.ref == 'refs/heads/master') && '--track' || '' }}
+
+      # molrs.io.mrec is the Rust core's path door. Building the extension
+      # is how the suite reaches that door. The Python test suite is not run.
+      # Non-blocking until the pinned molrec adapter reads frame.meta's
+      # MetaDocument values (molrec zarr.py json.dumps). The record is still
+      # written and published red.
+      - name: Run the mrec suite
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source .ci-out/venv/bin/activate
+          maturin develop --manifest-path molrs-python/Cargo.toml
+          python scripts/ci-conformance.py \
+            --suite .ci-out/molrec/tests \
+            --out .ci-out/snapshots/conformance.json \
+            ${{ (github.event_name == 'push' && github.ref == 'refs/heads/master') && '--track' || '' }}
+
+      # Only the three records molci writes, by name: nothing else a step may
+      # have dropped into .ci-out/snapshots reaches the publish job.
+      - name: Upload snapshots
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-snapshots
+          if-no-files-found: ignore
+          path: |
+            .ci-out/snapshots/tests.json
+            .ci-out/snapshots/coverage.json
+            .ci-out/snapshots/conformance.json
+
+  publish:
+    name: Publish to molcrafts-ci
+    needs: measure
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-snapshots
+          path: snapshots
+        continue-on-error: true
       - name: Publish to molcrafts-ci
-        if: ${{ !cancelled() && hashFiles('.ci-out/snapshots/*.json') != '' }}
+        if: ${{ hashFiles('snapshots/*.json') != '' }}
         uses: MolCrafts/molcrafts-ci/actions/submit@master
         with:
-          snapshot-path: .ci-out/snapshots/*.json
+          snapshot-path: snapshots/*.json
           project: molrs
           # A deploy key on molcrafts-ci: one repository, git only.
           ssh-key: ${{ secrets.MOLCRAFTS_CI_SSH_KEY }}

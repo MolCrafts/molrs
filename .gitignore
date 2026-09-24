@@ -90,3 +90,6 @@ scripts/molrs-aarch64-*.err
 .pytest_cache/
 .ruff_cache/
 .ci-out/
+
+# Captured build/lint output (e.g. `cargo mrs-clippy > x.log`) is not source.
+*.log
