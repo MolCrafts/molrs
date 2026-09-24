@@ -122,7 +122,7 @@ def test_graph_out_paths_keep_the_public_fragment_type() -> None:
 def test_translate_moves_fragment_atoms() -> None:
     fragment, carbon, _oxygen, _hydrogen = _capped_fragment()
 
-    molrs.translate(fragment, (1.0, 0.0, 0.0))
+    fragment.translate((1.0, 0.0, 0.0))
 
     assert carbon["x"] == pytest.approx(1.0, abs=1e-12)
     assert carbon["y"] == pytest.approx(0.0, abs=1e-12)

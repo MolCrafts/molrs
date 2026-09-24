@@ -474,7 +474,7 @@ impl Frame {
             .ok()?
     }
 
-    /// Return the names of all metadata keys on this frame.
+    /// Return the names of all metadata keys on this frame, in insertion order.
     ///
     /// Includes all keys regardless of whether their values are numeric
     /// or categorical. To filter to numeric keys, iterate and call
@@ -545,8 +545,8 @@ impl Frame {
         self.inner
             .store
             .borrow_mut()
-            .with_frame_mut(self.inner.id, |frame| {
-                frame.meta.insert(
+            .with_frame_meta_mut(self.inner.id, |meta| {
+                meta.insert(
                     name.to_string(),
                     molrs::store::meta::MetaValue::String(value.to_string()),
                 );
@@ -560,10 +560,8 @@ impl Frame {
         self.inner
             .store
             .borrow_mut()
-            .with_frame_mut(self.inner.id, |frame| {
-                frame
-                    .meta
-                    .insert(name.to_string(), molrs::store::meta::MetaValue::F64(value));
+            .with_frame_meta_mut(self.inner.id, |meta| {
+                meta.insert(name.to_string(), molrs::store::meta::MetaValue::F64(value));
             })
             .map_err(js_err)
     }
@@ -754,11 +752,11 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn meta_names_contains_all_keys() {
+    fn meta_names_follow_insertion_order() {
         let frame = frame_with_meta();
-        let names = frame.meta_names();
-        assert_eq!(names.len(), 2);
-        assert!(names.contains(&"energy".to_string()));
-        assert!(names.contains(&"config".to_string()));
+        assert_eq!(
+            frame.meta_names(),
+            vec!["energy".to_string(), "config".to_string()]
+        );
     }
 }

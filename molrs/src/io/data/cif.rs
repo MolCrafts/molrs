@@ -336,9 +336,13 @@ impl FrameInProgress {
         if !self.name.is_empty() {
             frame.meta.insert("title", self.name);
         }
-        for (k, v) in self.meta {
-            frame.meta.insert(k, v);
-        }
+        // `MetaMap` has no owned iterator. Copy in `iter` order so the frame
+        // keeps the keys in the order this reader inserted them.
+        frame.meta.extend(
+            self.meta
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
 
         // Cell → SimBox (only if all six are present)
         let cell_present = self.cell_a.is_some()

@@ -1020,10 +1020,9 @@ fn empty_meta_entry(key: String, dtype: bridge::ffi::MetaType) -> bridge::ffi::M
 fn frame_meta_entries(fref: &FrameRef) -> Vec<bridge::ffi::MetaEntry> {
     fref.0
         .with(|frame| {
-            let mut values: Vec<_> = frame.meta.iter().collect();
-            values.sort_by_key(|(a, _)| *a);
-            values
-                .into_iter()
+            frame
+                .meta
+                .iter()
                 .map(|(key, value)| {
                     use bridge::ffi::MetaType;
                     let dtype = match value {
@@ -1128,8 +1127,8 @@ fn meta_from_entry(entry: bridge::ffi::MetaEntry) -> Result<(String, MetaValue),
 fn frame_set_meta_entry(fref: &mut FrameRef, entry: bridge::ffi::MetaEntry) -> Result<(), String> {
     let (key, value) = meta_from_entry(entry)?;
     fref.0
-        .with_mut(|frame| {
-            frame.meta.insert(key, value);
+        .with_meta_mut(|meta| {
+            meta.insert(key, value);
         })
         .map_err(|err| err.to_string())
 }
@@ -1751,6 +1750,34 @@ mod tests {
         let mut malformed = empty_meta_entry("bad".into(), MetaType::F64x6);
         malformed.f64_values = vec![1.0; 5];
         assert!(frame_set_meta_entry(&mut fref, malformed).is_err());
+    }
+
+    #[test]
+    fn frame_meta_entries_follow_insertion_order() {
+        use bridge::ffi::MetaType;
+        let mut fref = frame_new();
+
+        // Not alphabetical: a reintroduced sort must fail this case.
+        let mut tag = empty_meta_entry("tag".into(), MetaType::I64);
+        tag.i64_value = 1;
+        frame_set_meta_entry(&mut fref, tag).unwrap();
+
+        let mut stress = empty_meta_entry("stress".into(), MetaType::F64);
+        stress.f64_value = 2.0;
+        frame_set_meta_entry(&mut fref, stress).unwrap();
+
+        let mut run = empty_meta_entry("run".into(), MetaType::String);
+        run.string_value = "third".into();
+        frame_set_meta_entry(&mut fref, run).unwrap();
+
+        let keys: Vec<String> = frame_meta_entries(&fref)
+            .into_iter()
+            .map(|entry| entry.key)
+            .collect();
+        assert_eq!(
+            keys,
+            vec!["tag".to_string(), "stress".to_string(), "run".to_string()]
+        );
     }
 
     #[test]

@@ -4,7 +4,7 @@
 //! exact scalar or fixed-vector dtype; metadata is never routed through a
 //! string representation.
 
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 /// Exact metadata value stored on a frame.
 #[derive(Clone, Debug, PartialEq)]
@@ -302,15 +302,62 @@ impl From<&str> for MetaValue {
 }
 
 /// The unique metadata map used by owned and borrowed frames.
+///
+/// Iteration is insertion-ordered. [`Self::remove`] drops one key and keeps
+/// the remaining keys in their original relative order. Inserting a key that
+/// is already present updates its value and leaves it where it was.
+///
+/// # Examples
+///
+/// ```
+/// use molrs::MetaMap;
+///
+/// let mut meta = MetaMap::new();
+/// meta.insert("z", "Z");
+/// meta.insert("a", "A");
+/// meta.insert("m", "M");
+/// meta.remove("a");
+/// assert_eq!(
+///     meta.keys().map(String::as_str).collect::<Vec<_>>(),
+///     ["z", "m"]
+/// );
+/// ```
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct MetaMap(HashMap<String, MetaValue>);
+pub struct MetaMap(IndexMap<String, MetaValue>);
+
+/// Borrowed iterator over a [`MetaMap`], in insertion order.
+pub struct MetaIter<'a>(indexmap::map::Iter<'a, String, MetaValue>);
+
+impl<'a> Iterator for MetaIter<'a> {
+    type Item = (&'a String, &'a MetaValue);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+}
+
+impl ExactSizeIterator for MetaIter<'_> {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl DoubleEndedIterator for MetaIter<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.0.next_back()
+    }
+}
 
 impl MetaMap {
     pub fn new() -> Self {
         Self::default()
     }
     pub fn with_capacity(capacity: usize) -> Self {
-        Self(HashMap::with_capacity(capacity))
+        Self(IndexMap::with_capacity(capacity))
     }
     pub fn len(&self) -> usize {
         self.0.len()
@@ -337,11 +384,12 @@ impl MetaMap {
     ) -> Option<MetaValue> {
         self.0.insert(key.into(), value.into())
     }
+    /// Removes `key`, shifting later keys down so their relative order holds.
     pub fn remove(&mut self, key: &str) -> Option<MetaValue> {
-        self.0.remove(key)
+        self.0.shift_remove(key)
     }
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &MetaValue)> {
-        self.0.iter()
+    pub fn iter(&self) -> MetaIter<'_> {
+        MetaIter(self.0.iter())
     }
     pub fn keys(&self) -> impl Iterator<Item = &String> {
         self.0.keys()
@@ -354,19 +402,11 @@ impl MetaMap {
     }
 }
 
-impl IntoIterator for MetaMap {
-    type Item = (String, MetaValue);
-    type IntoIter = std::collections::hash_map::IntoIter<String, MetaValue>;
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
-    }
-}
-
 impl<'a> IntoIterator for &'a MetaMap {
     type Item = (&'a String, &'a MetaValue);
-    type IntoIter = std::collections::hash_map::Iter<'a, String, MetaValue>;
+    type IntoIter = MetaIter<'a>;
     fn into_iter(self) -> Self::IntoIter {
-        self.0.iter()
+        self.iter()
     }
 }
 
@@ -440,6 +480,81 @@ mod tests {
                 "value": f64::MAX,
             }))
             .is_err()
+        );
+    }
+
+    #[test]
+    fn keys_iter_and_values_follow_insertion_order() {
+        let mut meta = MetaMap::new();
+        meta.insert("z", "Z");
+        meta.insert("a", "A");
+        meta.insert("m", "M");
+
+        assert_eq!(
+            meta.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["z", "a", "m"]
+        );
+        assert_eq!(
+            meta.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+            vec!["z", "a", "m"]
+        );
+        assert_eq!(
+            meta.values()
+                .map(|v| v.as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["Z", "A", "M"]
+        );
+    }
+
+    #[test]
+    fn remove_of_the_second_key_keeps_the_order_of_the_survivors() {
+        let mut meta = MetaMap::new();
+        meta.insert("z", "Z");
+        meta.insert("a", "A");
+        meta.insert("m", "M");
+        meta.insert("q", "Q");
+
+        let removed = meta.remove("a");
+        assert_eq!(removed.as_ref().and_then(MetaValue::as_str), Some("A"));
+        // Four keys, second removed: shift_remove leaves [z, m, q].
+        // swap_remove would park the last key in the hole: [z, q, m].
+        assert_eq!(
+            meta.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["z", "m", "q"]
+        );
+    }
+
+    #[test]
+    fn reinserting_a_key_keeps_its_position_and_updates_the_value() {
+        let mut meta = MetaMap::new();
+        meta.insert("z", "Z");
+        meta.insert("a", "A");
+        meta.insert("m", "M");
+
+        let replaced = meta.insert("a", "A2");
+        assert_eq!(replaced.as_ref().and_then(MetaValue::as_str), Some("A"));
+        assert_eq!(meta.get("a").and_then(MetaValue::as_str), Some("A2"));
+        assert_eq!(
+            meta.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["z", "a", "m"]
+        );
+    }
+
+    #[test]
+    fn clear_then_insert_restarts_insertion_order() {
+        let mut meta = MetaMap::new();
+        meta.insert("z", "Z");
+        meta.insert("a", "A");
+        meta.insert("m", "M");
+        meta.clear();
+        meta.insert("m", "M");
+        meta.insert("z", "Z");
+        meta.insert("a", "A");
+        meta.insert("q", "Q");
+
+        assert_eq!(
+            meta.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["m", "z", "a", "q"]
         );
     }
 }

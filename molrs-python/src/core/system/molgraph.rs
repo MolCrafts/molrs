@@ -1965,7 +1965,10 @@ impl PyFragment {
 /// graph, not the empty `PyGraph` base it carries for subclassing. A missing
 /// leaf arm is not an error but a *wrong answer*: the fallthrough would move
 /// the empty base and report success.
-fn with_world_mut(mol: &Bound<'_, PyAny>, f: impl FnOnce(&mut MolGraph)) -> PyResult<()> {
+pub(crate) fn with_world_mut(
+    mol: &Bound<'_, PyAny>,
+    f: impl FnOnce(&mut MolGraph),
+) -> PyResult<()> {
     if let Ok(leaf) = mol.cast::<PyAtomistic>() {
         f(leaf.borrow_mut().mol_mut());
     } else if let Ok(leaf) = mol.cast::<PyCoarseGrain>() {
@@ -1982,26 +1985,49 @@ fn with_world_mut(mol: &Bound<'_, PyAny>, f: impl FnOnce(&mut MolGraph)) -> PyRe
     Ok(())
 }
 
-/// Translate every node's coordinates by `delta` (generic geometry system).
-#[pyfunction]
-pub fn translate(mol: &Bound<'_, PyAny>, delta: [f64; 3]) -> PyResult<()> {
-    with_world_mut(mol, |g| molrs::spatial::geometry::translate(g, delta))
+/// The fallible sibling of [`with_world_mut`]: the same leaf-first dispatch,
+/// with the closure's `Result` handed back to Python as a `ValueError`.
+pub(crate) fn try_with_world_mut<T, E: std::fmt::Display>(
+    mol: &Bound<'_, PyAny>,
+    f: impl FnOnce(&mut MolGraph) -> Result<T, E>,
+) -> PyResult<T> {
+    let result = if let Ok(leaf) = mol.cast::<PyAtomistic>() {
+        f(leaf.borrow_mut().mol_mut())
+    } else if let Ok(leaf) = mol.cast::<PyCoarseGrain>() {
+        f(leaf.borrow_mut().mol_mut())
+    } else if let Ok(leaf) = mol.cast::<PyFragment>() {
+        f(leaf.borrow_mut().mol_mut())
+    } else if let Ok(g) = mol.cast::<PyGraph>() {
+        f(g.borrow_mut().mol_mut())
+    } else {
+        return Err(PyTypeError::new_err(
+            "expected a Graph / Atomistic / CoarseGrain / Fragment",
+        ));
+    };
+    result.map_err(|error| PyValueError::new_err(error.to_string()))
 }
 
-/// Rotate node coordinates by `angle` radians about `axis` (optionally about a
-/// point — defaults to the origin). Generic geometry system.
-#[pyfunction]
-#[pyo3(signature = (mol, axis, angle, about=None))]
-pub fn rotate(
-    mol: &Bound<'_, PyAny>,
-    axis: [f64; 3],
-    angle: f64,
-    about: Option<[f64; 3]>,
-) -> PyResult<()> {
-    with_world_mut(mol, |g| {
-        molrs::spatial::geometry::rotate(g, axis, angle, about)
-    })
+macro_rules! rigid_body_impl {
+    ($ty:ty) => {
+        #[pymethods]
+        impl $ty {
+            /// Translate every node that has coordinates by `delta`.
+            fn translate(&mut self, delta: [f64; 3]) {
+                molrs::spatial::geometry::translate(self.mol_mut(), delta);
+            }
+
+            /// Rotate every node that has coordinates by `angle` radians about `axis`.
+            #[pyo3(signature = (axis, angle, about=None))]
+            fn rotate(&mut self, axis: [f64; 3], angle: f64, about: Option<[f64; 3]>) {
+                molrs::spatial::geometry::rotate(self.mol_mut(), axis, angle, about);
+            }
+        }
+    };
 }
+
+rigid_body_impl!(PyAtomistic);
+rigid_body_impl!(PyCoarseGrain);
+rigid_body_impl!(PyFragment);
 
 /// Scale node coordinates by a per-axis `factor` about an optional center
 /// (defaults to the origin). Pass `[s, s, s]` for a uniform scale. Generic
@@ -2010,22 +2036,6 @@ pub fn rotate(
 #[pyo3(signature = (mol, factor, about=None))]
 pub fn scale(mol: &Bound<'_, PyAny>, factor: [f64; 3], about: Option<[f64; 3]>) -> PyResult<()> {
     with_world_mut(mol, |g| molrs::spatial::geometry::scale(g, factor, about))
-}
-
-/// Rigidly align an optional direction at ``from`` and translate it to ``to``.
-#[pyfunction]
-#[pyo3(signature = (mol, from_, to, from_dir=None, to_dir=None, flip=false))]
-pub fn align_direction(
-    mol: &Bound<'_, PyAny>,
-    from_: [f64; 3],
-    to: [f64; 3],
-    from_dir: Option<[f64; 3]>,
-    to_dir: Option<[f64; 3]>,
-    flip: bool,
-) -> PyResult<()> {
-    with_world_mut(mol, |graph| {
-        molrs::spatial::geometry::align_direction(graph, from_, to, from_dir, to_dir, flip)
-    })
 }
 
 /// The ring facts of a molecule: SSSR rings and the systems they fuse into.

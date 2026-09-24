@@ -6,6 +6,7 @@
 
 use crate::error::FfiError;
 use crate::handle::{BlockHandle, FrameId};
+use molrs::store::meta::MetaMap;
 use molrs::types::{F, I, Idx};
 use molrs::{spatial::simbox::SimBox, store::block::Block, store::frame::Frame};
 use slotmap::SlotMap;
@@ -146,6 +147,19 @@ impl Store {
         }
 
         Ok(result)
+    }
+
+    /// Borrows a frame's metadata mutably and runs a closure on it.
+    ///
+    /// Metadata holds no block, so unlike [`with_frame_mut`](Self::with_frame_mut)
+    /// this invalidates no block handle.
+    pub fn with_frame_meta_mut<R>(
+        &mut self,
+        id: FrameId,
+        f: impl FnOnce(&mut MetaMap) -> R,
+    ) -> Result<R, FfiError> {
+        let entry = self.frames.get_mut(id).ok_or(FfiError::InvalidFrameId)?;
+        Ok(f(&mut entry.frame.meta))
     }
 
     /// Borrows a frame's simbox immutably and runs a closure on it.
@@ -727,5 +741,34 @@ mod tests {
 
         assert!(store.get_block(id, "atoms").is_err());
         assert!(store.get_block(id, "particles").is_ok());
+    }
+
+    #[test]
+    fn test_with_frame_meta_mut_keeps_block_handles_valid() {
+        let mut store = Store::new();
+        let id = store.frame_new();
+
+        let mut block = Block::new();
+        block
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn())
+            .unwrap();
+        store.set_block(id, "atoms", block).unwrap();
+        let handle = store.get_block(id, "atoms").unwrap();
+
+        store
+            .with_frame_meta_mut(id, |meta| meta.insert("title", "water"))
+            .unwrap();
+
+        // The meta write landed, and the block handle taken before it still
+        // resolves at the same version.
+        let title = store
+            .with_frame(id, |f| f.meta.get("title").cloned())
+            .unwrap();
+        assert!(title.is_some());
+        assert!(store.clone_block(&handle).is_ok());
+        assert_eq!(
+            store.get_block(id, "atoms").unwrap().version,
+            handle.version
+        );
     }
 }

@@ -18,8 +18,10 @@ pub mod neighbors;
 pub mod periodic;
 pub mod region;
 pub mod simbox;
+pub mod trace;
 pub(crate) mod vec3;
 
 pub use mesh::TriMesh;
 pub use periodic::{GhostError, GhostSet, ImageRange};
 pub use simbox::{BoxError, BoxKind, Mic, SimBox};
+pub use trace::Trace;

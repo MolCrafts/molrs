@@ -4,14 +4,16 @@ slug: cgsmiles-03-release
 status: code-complete
 created: 2026-09-21
 chain: cgsmiles (01a → 01b → 01c → 01d → 01e → 02a → 02b → 02c → 02d → 03)
-depends_on: cgsmiles-01a-descriptors, cgsmiles-01b-graph, cgsmiles-01c-fragments, cgsmiles-01d-resolve, cgsmiles-01e-python-ir, cgsmiles-02a-fragment-core, cgsmiles-02b-to-fragment, cgsmiles-02c-conformer-fragment, cgsmiles-02d-python-fragment
+depends_on: cgsmiles-01a-descriptors, cgsmiles-01b-graph, cgsmiles-01c-fragments, cgsmiles-01d-resolve, cgsmiles-01e-python-ir, cgsmiles-02a-fragment-core, cgsmiles-02b-to-fragment, cgsmiles-02c-conformer-fragment, cgsmiles-02d-python-fragment, frame-meta-dict-parity-01-ordered, frame-meta-dict-parity-02-binder-order, frame-meta-dict-parity-03-untyped-write, frame-meta-dict-parity-04-dict-views, frame-meta-dict-parity-05-document
 ---
 
 # cgsmiles-03: release molrs 0.15.0
 
 ## Summary
 
-After every other link of the `cgsmiles-` chain has landed, cut molrs `0.15.0`: move the hand-maintained version literal from `0.14.0` to `0.15.0` at its 16 sites in 7 manifests, move the four user-facing install pins from `version = "0.14"` to `version = "0.15"`, refresh the one tracked lock file, append a `## v0.15.0` section to `.claude/notes/release.md` recording what this release adds, removes and still defers, run the full release gate from `docs/releasing.md:9-64` against the exact tree that will be tagged, land that tree on `master` through a PR, tag `v0.15.0`, and wait for the **Publish** workflow to finish crates.io / npm / PyPI. No behaviour change and no API change; the only product is a tagged, published `0.15.0` that unblocks the two downstream repos — molpy's `backmap-` chain (pin `molcrafts-molrs>=0.15.0,<0.16`) and molpack's three `^0.14` path pins, which break in the shared checkout the moment `Cargo.toml:12` reads 0.15.0.
+After every other link of the `cgsmiles-` chain has landed, cut molrs `0.15.0`: move the hand-maintained version literal from `0.14.0` to `0.15.0` at its 16 sites in 7 manifests, move the four user-facing install pins from `version = "0.14"` to `version = "0.15"`, refresh the one tracked lock file, append a `## v0.15.0` section to `.claude/notes/release.md` recording what this release adds, removes and still defers, run the full release gate from `docs/releasing.md:9-64` against the exact tree that will be tagged, land that tree on `master` through a PR, tag `v0.15.0`, and wait for the **Publish** workflow to finish crates.io / npm / PyPI. No behaviour change and no API change **from this link**; the only product is a tagged, published `0.15.0` that unblocks the two downstream repos — molpy's `backmap-` chain (pin `molcrafts-molrs>=0.15.0,<0.16`) and molpack's three `^0.14` path pins, which break in the shared checkout the moment `Cargo.toml:12` reads 0.15.0.
+
+**Revised 2026-09-22.** The `frame-meta-dict-parity-*` chain lands on this same unreleased 0.15 tree and carries breaking Python, C and C++ changes — key enumeration order, the `frame.meta` dtype rule, view return types, and frozen metadata values. That chain does not edit this spec, does not add a version, and does not own a release-notes link. The `## v0.15.0` section and the pre-tag gate stay this spec's tasks; run them against the tree after that chain, not against a later minor.
 
 ## Domain basis
 

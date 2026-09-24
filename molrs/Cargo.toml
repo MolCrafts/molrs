@@ -84,6 +84,9 @@ slotmap    = "1"
 smallvec   = "1"
 serde      = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Insertion-ordered frame metadata (`MetaMap`). Always-on because `core` is.
+# `serde` so the frame wire form can carry meta keys in that order.
+indexmap   = { version = "2", features = ["serde"] }
 # `lgamma` (Wigner / spherical harmonics) and `erf`/`erfc` (PME) — none of
 # them is in Rust's std on any target.
 libm       = "0.2"

@@ -452,3 +452,74 @@ static-dispatch bound beside its one consumer may name `Self` in return position
 or carry generic methods. `ElementGraph` lives in `conformer/element_graph.rs`
 because that generic function is its only consumer; `CoarseGrain` deliberately
 does not implement it (bead types are not elements).
+
+---
+
+## 2026-09-22 — the build gate is a filter problem, not a crate-size problem
+
+**Decision:** every root-workspace cargo call goes through a `cargo mrs-*`
+alias (`.cargo/config.toml`); scoped test runs go through
+`scripts/test-scope.sh`, which narrows the **filter** and never the feature
+list; `[profile.dev] debug = "line-tables-only"` in all six roots; hooks are
+scoped with `files:` instead of `always_run: true`; `target/` gets pruned when
+it passes ~20 GB. Full note: `.claude/notes/build.md`.
+
+**Why:** measured on the 4-core Lustre box, `molcrafts-molrs` at 293k lines /
+2513 tests. Running the suite was never the cost (5.3 s). The costs were
+(a) `test_single: "cargo test {path}"`, which resolved a *different* feature
+set and so rebuilt the whole crate on every single-test run, and (b) a
+`target/` that had grown to 101 GB — the same one-file edit cost 44-79 s there
+and 6-7 s in a clean one, because a 1.4 GB incremental cache has to come back
+over Lustre whenever it falls out of page cache. `debug = "line-tables-only"`
+takes that cache to 420 MB.
+
+**Rejected, with the measurement that rejected it:** splitting `ff/params`
+(107,883 lines, 37% of the crate) into its own crate. Compiled standalone,
+those 19 files build in **1.5 s** — static tables are ~2% of the build time
+despite being 37% of the lines. Line count is not where rustc spends time
+here, so neither that extraction nor the wider module-crate split (worst case
+today: 27 s when `lib.rs` itself changes) pays for the churn. The
+"Single crate (0.12+)" rule in `architecture-rules.md` stands.
+
+**Status:** promoted (→ CLAUDE.md § Build cache, § Build & Test Commands)
+
+---
+
+## 2026-09-22 — frame-meta binder order, found debt
+
+**Decision:** Python, C, C++ and wasm enumerate `frame.meta` in insertion order. Three leftover costs are named and not fixed in that change.
+
+**Why:**
+- The `molrs-capi` Rust `#[cfg(test)]` suite never runs. Evidence: `molrs-capi/src/schema.rs:150-168`. Pre-push and `ci-capi.yml` build and `ctest`; they do not `cargo test --manifest-path molrs-capi/Cargo.toml`. Route: `/mol:fix`.
+- `molrs_frame_read_meta`, `molrs_frame_meta_count` and `molrs_frame_meta_key` each `clone_frame` the whole frame. `Store::with_frame` (`molrs-ffi/src/store.rs:117`) is the borrow-only door. Route: `/mol:refactor`.
+- `PyFrameMeta::map` cloned the whole `MetaMap` on every read. Route: `frame-meta-dict-parity-04-dict-views`, which deletes it.
+
+**Status:** provisional
+
+---
+
+## 2026-09-22 — per-frame Zarr groups and MolRec carry meta untagged
+
+**Decision:** a per-frame Zarr group (`molrs/src/io/zarr/frame_io.rs:536` attribute write, `:640` attribute read) and `MolRec::meta` (`molrs/src/core/store/record.rs:100`) carry meta untagged. A dtype does not survive either path. Making those paths tag-preserving is a separate 0.15 change, not this binder rule and not a compatibility deferral — and not a later minor.
+
+**Why:** `write_frame_group` stores `to_attr_value()`, the plain payload, in the group's attributes, and `read_frame_group` rebuilds each entry with `MetaValue::from_attr_value`, which infers. `MolRec::meta` is a `JsonMap<String, JsonValue>`. A tag is durable only on a declared sequence schema and on the serde frame document; these two paths were already outside that bound.
+
+**Status:** provisional
+
+---
+
+## 2026-09-22 — frame.meta freezes documents; found debt
+
+**Decision:** Every `frame.meta` door returns a frozen value (`tuple` for a fixed-length vector or a JSON array, `molrs.MetaDocument` for a JSON object). `MetaValue.value` stays a plain decode so pickle keeps working. Document key order stays unspecified. Two molrec call sites are molrec's to fix on this same 0.15 tree — named here, not edited, and not gated on a tag.
+
+**Why:**
+- `frame.meta["run"]["step"] = 3` used to mutate a decoded snapshot and vanish. A `MetaDocument` raises `TypeError` instead. `copy()` is the unfreeze, and `json.dumps(frame.meta["run"].copy())` is the JSON idiom.
+- `molrec/src/molrec/core/bindings/zarr.py:783-785` does `json.dumps(frame.meta[key])` when `series.dtype == "json"`. A document is not a `dict`, so this raises. molrec's fix: `json.dumps(value.copy())`, or `frame.meta.typed()[key].value` (plain by the value-object rule). Same 0.15, not a post-publish deferral.
+- `molrec/tests/molrs_adapter.py:259-261` reads `value.dtype` off `dict(frame.meta).items()`. `dict(meta)` has not returned tagged values since that door started handing out plain values — the adapter is already stale, independent of the freeze. molrec's to fix. `molrec/tests/molrs_adapter.py:110-113` round-trips `dict(frame.meta)` and does not need a tag.
+- Bulk doors that assign the mapping back still round-trip, verified by reading them and not edited: `Frame.to_dict` (`molrs-python/python/molrs/frame.py`, `dict(self.meta)`, read-only), `Frame.copy` (`new.meta = self.meta`, whole-map fast path), `molpy/src/molpy/io/data/pdb.py:66` (`out.meta = dict(frame.meta)`), `molpy/src/molpy/io/forcefield/amber.py:74` (`{**frame.meta, **dict(structure.meta)}`). Tuples and documents re-infer; the copy path never decodes.
+- `serde_json` document order depends on a transitive crate enabling `preserve_order`. Neither `molrs/Cargo.toml` nor `molrs-python/Cargo.toml` declares it. Declaring it would swap every `Map` in molrs from `BTreeMap` to `IndexMap`, a core behaviour change. Order inside a `MetaDocument` is unspecified on purpose. Route: `/mol:note` (this entry). Not a compatibility shim.
+- `PyFrameMeta` declares `module = "molrs._lib"` while `PyMetaValue` and `MetaDocument` declare `module = "molrs"`, though all three are exported at `molrs.*`. Observed, unowned, not fixed — changing `FrameMeta.__module__` is a visible `repr` change with no consumer need.
+- `_lib.pyi` parity (`molrs-python/tests/test_stub_parity.py`) is class-name level only, so the corrected frozen return types are unguarded. Pre-existing; already on the deferred list.
+- Three copies of `json_to_py` / `py_to_json`: `molrs-python/src/core/store/frame.rs`, `molrs-python/src/core/store/record.rs:297`, `molrs-python/src/io/mrec.rs:702`. Record and mrec payloads are owned values a caller re-submits wholesale, not live views, so they stay plain. The triplication is rot. Route: `/mol:refactor`.
+
+**Status:** provisional

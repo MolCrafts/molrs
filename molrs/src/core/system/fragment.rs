@@ -297,6 +297,22 @@ impl Fragment {
         &self.graph
     }
 
+    /// Mutably borrow the inner [`MolGraph`].
+    pub fn as_molgraph_mut(&mut self) -> &mut MolGraph {
+        &mut self.graph
+    }
+
+    /// Translate every atom that has coordinates by `delta`.
+    pub fn translate(&mut self, delta: [f64; 3]) {
+        crate::spatial::geometry::translate(self.as_molgraph_mut(), delta);
+    }
+
+    /// Rotate every atom that has coordinates by `angle` radians about `axis`.
+    /// `about` defaults to the origin when `None`.
+    pub fn rotate(&mut self, axis: [f64; 3], angle: f64, about: Option<[f64; 3]>) {
+        crate::spatial::geometry::rotate(self.as_molgraph_mut(), axis, angle, about);
+    }
+
     // ---- atoms (nodes) ----
 
     /// Add an atom with element symbol and 3D coordinates (Å).

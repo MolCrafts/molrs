@@ -312,6 +312,17 @@ impl CoarseGrain {
         &mut self.graph
     }
 
+    /// Translate every bead that has coordinates by `delta`.
+    pub fn translate(&mut self, delta: [f64; 3]) {
+        crate::spatial::geometry::translate(self.as_molgraph_mut(), delta);
+    }
+
+    /// Rotate every bead that has coordinates by `angle` radians about `axis`.
+    /// `about` defaults to the origin when `None`.
+    pub fn rotate(&mut self, axis: [f64; 3], angle: f64, about: Option<[f64; 3]>) {
+        crate::spatial::geometry::rotate(self.as_molgraph_mut(), axis, angle, about);
+    }
+
     // ---- subgraph extraction / composition ----
 
     /// Induced subgraph on an explicit bead set. Stale handles fail-fast.

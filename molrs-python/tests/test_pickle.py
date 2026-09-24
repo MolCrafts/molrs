@@ -1,3 +1,4 @@
+import copy
 import pickle
 
 import numpy as np
@@ -300,3 +301,54 @@ def test_schema_and_metadata_pickle_as_value_types() -> None:
     nested = roundtrip(molrs.MetaValue("json", {"ok": True}))
     assert nested.dtype == "json"
     assert nested.value == {"ok": True}
+
+
+def test_frame_json_meta_roundtrip_stays_json_and_frozen() -> None:
+    frame = molrs.Frame(meta={"nested": {"ok": True, "tags": [1, 2]}})
+    restored = roundtrip(frame)
+    assert restored.meta.dtype("nested") == "json"
+    assert isinstance(restored.meta["nested"], molrs.MetaDocument)
+    assert isinstance(restored.meta["nested"], dict) is False
+    assert restored.meta["nested"] == {"ok": True, "tags": (1, 2)}
+
+
+def test_meta_value_json_payload_is_plain_and_vector_payload_is_tuple() -> None:
+    vector = molrs.MetaValue("f64x6", [1, 2, 3, 4, 5, 6])
+    assert isinstance(vector.value, tuple)
+    assert vector.value == (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
+    document = molrs.MetaValue("json", {"ok": True, "tags": [1, 2]})
+    assert isinstance(document.value, dict)
+    assert isinstance(document.value["tags"], list)
+    assert document.value == {"ok": True, "tags": [1, 2]}
+    assert not isinstance(document.value, molrs.MetaDocument)
+
+
+def test_document_assigned_across_frames_keeps_json_dtype() -> None:
+    src = molrs.Frame()
+    src.meta["run"] = {"step": 1, "tags": [1, 2], "inner": {"a": [3]}}
+    dst = molrs.Frame()
+    dst.meta["copied"] = src.meta["run"]
+    assert dst.meta.dtype("copied") == "json"
+    assert isinstance(dst.meta["copied"], molrs.MetaDocument)
+    assert dst.meta["copied"] == {"step": 1, "tags": (1, 2), "inner": {"a": (3,)}}
+    assert isinstance(dst.meta["copied"]["tags"], tuple)
+    assert isinstance(dst.meta["copied"]["inner"]["a"], tuple)
+
+
+def test_a_meta_document_pickles_by_content() -> None:
+    frame = molrs.Frame(meta={"doc": {"ok": True, "tags": [1, 2], "inner": {"a": 1}}})
+    doc = frame.meta["doc"]
+    assert roundtrip(doc) == {"ok": True, "tags": (1, 2), "inner": {"a": 1}}
+
+
+def test_a_meta_document_deep_copies_by_content() -> None:
+    frame = molrs.Frame(meta={"doc": {"ok": True, "tags": [1, 2], "inner": {"a": 1}}})
+    doc = frame.meta["doc"]
+    assert copy.deepcopy(doc) == {"ok": True, "tags": (1, 2), "inner": {"a": 1}}
+
+
+def test_a_frame_dict_snapshot_with_a_document_pickles() -> None:
+    frame = molrs.Frame(meta={"doc": {"ok": True, "tags": [1, 2]}, "step": 3})
+    restored = roundtrip(frame.to_dict())
+    assert restored["blocks"] == {}
+    assert restored["meta"] == {"doc": {"ok": True, "tags": (1, 2)}, "step": 3}

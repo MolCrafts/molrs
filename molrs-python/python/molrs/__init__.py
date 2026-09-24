@@ -44,6 +44,7 @@ from ._lib import (
     # Block + Frame
     Block,
     MetaValue,
+    MetaDocument,
     FrameMeta,
     Frame,
     FRAME_SCHEMA_VERSION,
@@ -77,10 +78,14 @@ from ._lib import (
     ExtractedSubgraph,
     Reaction,
     # Systems (module-level free functions over a graph)
-    translate,
-    rotate,
     scale,
-    align_direction,
+    Trace,
+    SiteMap,
+    Placer,
+    TracePlacer,
+    Orienter,
+    LineOrienter,
+    TangOrienter,
 )
 
 # Rich Python Frame/Block layer (pandas-style API; CSV engine in Rust on the
@@ -89,7 +94,7 @@ from ._lib import (
 # (io readers, etc.) yields these. The shadow is safe now that molpy re-exports
 # them instead of subclassing the bare core (chain spec 04). Internal modules
 # that need the raw cores import them from ``._lib`` directly.
-from collections.abc import MutableMapping
+from collections.abc import Mapping, MutableMapping
 
 from . import keys, schema
 from . import frame  # noqa: F401
@@ -98,6 +103,11 @@ from .frame import Block, Frame
 # `frame.meta` implements the full mapping protocol in Rust; this makes
 # `isinstance(frame.meta, MutableMapping)` say so too.
 MutableMapping.register(FrameMeta)
+# Registration supplies isinstance only — MetaDocument implements its own
+# surface. Callers that branch on Mapping rather than dict:
+# molvis/python/src/molvis/wire.py:389,530
+# molrec/tests/molrs_adapter.py:110-113
+Mapping.register(MetaDocument)
 
 from . import compute  # analysis subpackage — one module per molrs::compute domain
 from . import conformer
@@ -170,6 +180,7 @@ __all__ = [
     "VerletSkin",
     "Block",
     "MetaValue",
+    "MetaDocument",
     "FrameMeta",
     "Frame",
     "FRAME_SCHEMA_VERSION",
@@ -212,10 +223,14 @@ __all__ = [
     "Bead",
     "CGBond",
     "Port",
-    "translate",
-    "rotate",
     "scale",
-    "align_direction",
+    "Trace",
+    "SiteMap",
+    "Placer",
+    "TracePlacer",
+    "Orienter",
+    "LineOrienter",
+    "TangOrienter",
     "keys",
     "schema",
 ]

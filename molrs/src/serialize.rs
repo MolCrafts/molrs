@@ -22,6 +22,8 @@
 
 use std::collections::BTreeMap;
 
+use indexmap::IndexMap;
+
 use ndarray::{ArrayD, IxDyn};
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::ser::SerializeStruct;
@@ -508,7 +510,7 @@ impl Serialize for Frame {
         st.serialize_field("version", &FRAME_SCHEMA_VERSION)?;
         let blocks: BTreeMap<&str, &Block> = self.iter().collect();
         st.serialize_field("blocks", &blocks)?;
-        let meta: BTreeMap<&str, &MetaValue> =
+        let meta: IndexMap<&str, &MetaValue> =
             self.meta.iter().map(|(k, v)| (k.as_str(), v)).collect();
         st.serialize_field("meta", &meta)?;
         if let Some(sb) = &self.simbox {
@@ -524,7 +526,7 @@ struct FrameRepr {
     #[serde(default)]
     blocks: BTreeMap<String, Block>,
     #[serde(default)]
-    meta: BTreeMap<String, MetaValue>,
+    meta: IndexMap<String, MetaValue>,
     #[serde(default, rename = "box")]
     simbox: Option<SimBox>,
 }
@@ -629,5 +631,22 @@ mod tests {
     fn a_column_with_a_bad_dtype_tag_is_refused() {
         let json = r#"{"dtype":"quaternion","shape":[1],"data":[0]}"#;
         assert!(serde_json::from_str::<crate::core::store::block::Column>(json).is_err());
+    }
+
+    /// Meta keys are part of the frame document, and a round trip must not
+    /// reshuffle them into alphabetical or hash order.
+    #[test]
+    fn a_frame_round_trips_meta_keys_in_insertion_order() {
+        let mut frame = Frame::new();
+        frame.meta.insert("z", MetaValue::String("Z".into()));
+        frame.meta.insert("a", MetaValue::String("A".into()));
+        frame.meta.insert("m", MetaValue::String("M".into()));
+
+        let json = serde_json::to_string(&frame).unwrap();
+        let back: Frame = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            back.meta.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["z", "a", "m"]
+        );
     }
 }

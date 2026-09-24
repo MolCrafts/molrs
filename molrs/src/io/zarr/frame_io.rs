@@ -1661,4 +1661,31 @@ mod tests {
             .to_string();
         assert!(err.contains(BLOCK) && err.contains(COLUMN), "{err}");
     }
+
+    #[test]
+    fn frame_group_attributes_round_trip_meta_keys_in_insertion_order() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = Frame::new();
+        frame.meta.insert("z", "Z");
+        frame.meta.insert("a", "A");
+        frame.meta.insert("m", "M");
+        write_frame_group(&store, FRAME, &frame).unwrap();
+
+        let group = zarrs::group::Group::open(store.clone(), FRAME).unwrap();
+        assert_eq!(
+            group
+                .attributes()
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["z", "a", "m"]
+        );
+
+        let back = read_frame_group(&store, FRAME).unwrap();
+        assert_eq!(
+            back.meta.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["z", "a", "m"]
+        );
+    }
 }

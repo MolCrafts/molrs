@@ -44,7 +44,7 @@ pub fn write_frame(
     let system_core = system
         .map(|sys| sys.borrow().clone_core_frame())
         .transpose()?;
-    let meta_map = meta.map(dict_to_json_map).transpose()?;
+    let meta_map = meta.map(|meta| dict_to_json_map(meta, 0)).transpose()?;
     molrs::io::mrec::write_frame_file(path, &core, system_core.as_ref(), meta_map.as_ref())
         .map_err(molrs_error_to_pyerr)
 }
@@ -65,7 +65,7 @@ pub fn write_system(
     system: &Bound<'_, PyFrame>,
     meta: Option<&Bound<'_, PyDict>>,
 ) -> PyResult<()> {
-    let meta_map = meta.map(dict_to_json_map).transpose()?;
+    let meta_map = meta.map(|meta| dict_to_json_map(meta, 0)).transpose()?;
     molrs::io::mrec::write_system_file(
         path,
         &system.borrow().clone_core_frame()?,
@@ -422,11 +422,11 @@ impl PyMrecSequenceSchema {
         } else if let Some(dtype) = dtype {
             MetaValue::from_json_value(&serde_json::json!({
                 "dtype": dtype,
-                "value": py_to_json(fill)?,
+                "value": py_to_json(fill, 0)?,
             }))
             .map_err(|e| PyValueError::new_err(format!("meta key {key:?} fill: {e}")))?
         } else {
-            MetaValue::from_attr_value(&py_to_json(fill)?)
+            MetaValue::from_attr_value(&py_to_json(fill, 0)?)
         };
         self.inner
             .declare_meta_with_fill(key, value)
@@ -529,7 +529,7 @@ impl PyMrecTrajectoryWriter {
         }
         if let Some(meta) = meta {
             writer = writer
-                .with_meta(&dict_to_json_map(meta)?)
+                .with_meta(&dict_to_json_map(meta, 0)?)
                 .map_err(molrs_error_to_pyerr)?;
         }
         Ok(Self {
@@ -671,7 +671,7 @@ pub fn mrec_validate_path(path: &str) -> PyResult<()> {
 ///         reader supports.
 #[pyfunction]
 pub fn mrec_validate_meta(meta: &Bound<'_, PyDict>) -> PyResult<()> {
-    let map = dict_to_json_map(meta)?;
+    let map = dict_to_json_map(meta, 0)?;
     molrs::io::mrec::schema::validate_meta(&map).map_err(molrs_error_to_pyerr)
 }
 
@@ -728,18 +728,31 @@ fn json_to_py(py: Python<'_>, value: &JsonValue) -> PyResult<Py<PyAny>> {
     })
 }
 
-fn dict_to_json_map(dict: &Bound<'_, PyDict>) -> PyResult<JsonMap<String, JsonValue>> {
+fn dict_to_json_map(
+    dict: &Bound<'_, PyDict>,
+    depth: usize,
+) -> PyResult<JsonMap<String, JsonValue>> {
     let mut map = JsonMap::new();
     for (key, value) in dict.iter() {
         let key: String = key
             .extract()
             .map_err(|_| PyTypeError::new_err("record metadata keys must be strings"))?;
-        map.insert(key, py_to_json(&value)?);
+        map.insert(key, py_to_json(&value, depth + 1)?);
     }
     Ok(map)
 }
 
-fn py_to_json(value: &Bound<'_, PyAny>) -> PyResult<JsonValue> {
+/// Deepest container nesting accepted from Python. Past it the value is
+/// refused rather than recursed into: a self-referencing list or dict would
+/// otherwise overflow the stack and kill the interpreter.
+const MAX_JSON_DEPTH: usize = 128;
+
+fn py_to_json(value: &Bound<'_, PyAny>, depth: usize) -> PyResult<JsonValue> {
+    if depth > MAX_JSON_DEPTH {
+        return Err(PyValueError::new_err(format!(
+            "metadata nests deeper than {MAX_JSON_DEPTH} levels (cyclic?)"
+        )));
+    }
     if value.is_none() {
         return Ok(JsonValue::Null);
     }
@@ -758,12 +771,12 @@ fn py_to_json(value: &Bound<'_, PyAny>) -> PyResult<JsonValue> {
         return Ok(JsonValue::String(s.extract::<String>()?));
     }
     if let Ok(dict) = value.cast::<PyDict>() {
-        return Ok(JsonValue::Object(dict_to_json_map(dict)?));
+        return Ok(JsonValue::Object(dict_to_json_map(dict, depth)?));
     }
     if let Ok(list) = value.cast::<PyList>() {
         let mut items = Vec::with_capacity(list.len());
         for item in list.iter() {
-            items.push(py_to_json(&item)?);
+            items.push(py_to_json(&item, depth + 1)?);
         }
         return Ok(JsonValue::Array(items));
     }

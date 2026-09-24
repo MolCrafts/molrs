@@ -43,7 +43,10 @@ mod store;
 // compute/, ff/, conformer/, signal/.
 mod builder;
 mod core;
-use crate::builder::{PyCarbonTubeBuilder, PyGrapheneBuilder};
+use crate::builder::{
+    PyCarbonTubeBuilder, PyGrapheneBuilder, PyLineOrienter, PyOrienter, PyPlacer, PySiteMap,
+    PyTangOrienter, PyTrace, PyTracePlacer,
+};
 use crate::core::spatial::mesh::PyTriMesh;
 use crate::core::spatial::neighborlist::{
     PyNeighborList, PyNeighborQuery, PyNeighbors, PyVerletSkin,
@@ -54,14 +57,14 @@ use crate::core::spatial::region::{
 };
 use crate::core::spatial::simbox::PyBox;
 use crate::core::store::block::PyBlock;
-use crate::core::store::frame::{PyFrame, PyFrameMeta, PyMetaValue};
+use crate::core::store::frame::{PyFrame, PyFrameMeta, PyMetaDocument, PyMetaValue};
 use crate::core::store::trajectory::{PyScalarObservable, PyTrajectory, PyVectorObservable};
 use crate::core::system::element::PyElement;
 use crate::core::system::molgraph::{
     PyAtomistic, PyCoarseGrain, PyExtractedSubgraph, PyFragment, PyGraph, PyReaction,
     PySmartsMatch, PySmartsPattern,
 };
-use crate::core::system::molgraph::{PyRingInfo, align_direction, rotate, scale, translate};
+use crate::core::system::molgraph::{PyRingInfo, scale};
 use crate::core::units::{PyQuantity, PyUnit, PyUnitPreset, PyUnitRegistry};
 
 mod io;
@@ -156,6 +159,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Block + Frame
     m.add_class::<PyBlock>()?;
     m.add_class::<PyMetaValue>()?;
+    m.add_class::<PyMetaDocument>()?;
     m.add_class::<PyFrameMeta>()?;
     m.add_class::<PyFrame>()?;
     m.add(
@@ -331,12 +335,19 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Structure builders (graphene, nanotubes, …)
     m.add_class::<PyCarbonTubeBuilder>()?;
     m.add_class::<PyGrapheneBuilder>()?;
+    m.add_class::<PyTrace>()?;
+    m.add_class::<PySiteMap>()?;
+    // Base classes first: a subclass cannot be registered before its base.
+    m.add_class::<PyPlacer>()?;
+    m.add_class::<PyTracePlacer>()?;
+    m.add_class::<PyOrienter>()?;
+    m.add_class::<PyLineOrienter>()?;
+    m.add_class::<PyTangOrienter>()?;
 
-    // Systems = module-level free functions (no algorithm methods on the classes)
-    m.add_function(wrap_pyfunction!(translate, m)?)?;
-    m.add_function(wrap_pyfunction!(rotate, m)?)?;
+    // `scale` stays a free function. translate / rotate are methods on
+    // Atomistic, CoarseGrain and Fragment. Placement is a Placer subclass
+    // (TracePlacer) choosing an Orienter subclass (Line / Tang).
     m.add_function(wrap_pyfunction!(scale, m)?)?;
-    m.add_function(wrap_pyfunction!(align_direction, m)?)?;
 
     // Chemical perception, as a builder: graph in / graph out, non-mutating.
     m.add_class::<PyPerceive>()?;

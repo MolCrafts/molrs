@@ -6,8 +6,10 @@ is the freshness guard: every compiled `_lib` export must be declared here, with
 the same parameter names as the compiled signature.
 """
 
+from collections.abc import ItemsView, KeysView, ValuesView
 from typing import (
     Any,
+    ClassVar,
     Dict,
     Generic,
     Iterable,
@@ -328,37 +330,99 @@ class MetaValue:
     @property
     def dtype(self) -> str: ...
     @property
-    def value(self) -> bool | int | float | str | list[bool | int | float]: ...
+    def value(self) -> (
+        bool
+        | int
+        | float
+        | str
+        | None
+        | tuple[bool | int | float, ...]
+        | dict[str, Any]
+        | list[Any]
+    ):
+        """Stored payload.
 
-class FrameMeta:
-    """Live, write-through ``frame.meta`` mapping of plain Python values.
+        Fixed-length vectors are tuples. A ``json`` payload stays plain
+        (``dict`` / ``list`` / scalar) — this is the pickle argument, not a
+        ``frame.meta`` door.
+        """
+        ...
 
-    The dtype belongs to the key, not to the value: writing a plain value to an
-    existing key keeps that key's dtype and refuses one it cannot hold, so
-    ``m[k] = m[k]`` is an identity. Assign a :class:`MetaValue` to give a key a
-    dtype other than the inferred default; ``dtype(k)`` reads the tag back.
+# A value handed out by ``frame.meta``: scalars unwrap, fixed-length vectors
+# and JSON arrays are tuples, a JSON object is a MetaDocument.
+type FrozenMetaValue = bool | int | float | str | None | tuple[Any, ...] | MetaDocument
 
-    A JSON document is returned decoded, and therefore as a snapshot: mutating
-    it in place does not reach the frame.
+class MetaDocument:
+    """Frozen JSON object read from ``frame.meta``.
+
+    Every door of ``frame.meta`` hands back a frozen value: a fixed-length
+    vector is a ``tuple``, and a JSON object is a ``MetaDocument``. Nested
+    arrays are tuples; nested objects are documents. Item assignment raises
+    ``TypeError``. ``copy()`` is a deep plain ``dict`` (nested documents become
+    dicts, nested arrays become lists). ``json.dumps`` rejects a document; use
+    ``json.dumps(frame.meta["run"].copy())``.
+
+    Iteration order is unspecified. ``frame.meta`` itself enumerates in
+    insertion order; the two levels differ.
     """
 
-    def __getitem__(self, key: str) -> Any: ...
+    __hash__: ClassVar[None]
+    def __getitem__(self, key: object) -> FrozenMetaValue: ...
+    def __len__(self) -> int: ...
+    def __iter__(self) -> Any: ...
+    def __contains__(self, key: object) -> bool: ...
+    def keys(self) -> KeysView[str]: ...
+    def values(self) -> ValuesView[FrozenMetaValue]: ...
+    def items(self) -> ItemsView[str, FrozenMetaValue]: ...
+    def get(self, key: object, default: Any = None) -> Any: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __ne__(self, other: object) -> bool: ...
+    def __repr__(self) -> str: ...
+    def copy(self) -> dict[str, Any]: ...
+
+class FrameMeta:
+    """Live, write-through ``frame.meta`` mapping.
+
+    Every door hands back a frozen value: scalars unwrap, a fixed-length
+    vector is a ``tuple``, a JSON array is a ``tuple``, and a JSON object is
+    a :class:`MetaDocument`. ``frame.meta["run"]["step"] = 3`` raises
+    ``TypeError``. ``json.dumps`` rejects a document; use
+    ``json.dumps(frame.meta["run"].copy())``. ``copy()``, ``|``, and ``|=``'s
+    merge partner return a plain ``dict``; values inside it are still frozen.
+    :meth:`MetaDocument.copy` is the deep plain unfreeze one level down.
+
+    ``dtype(k)`` reports the tag of the value stored right now; any plain write
+    re-infers it. :class:`MetaValue` fixes the dtype of that write only — it
+    does not pin the key. A tag survives a round trip only through a declared
+    sequence schema or the serde frame document; outside those two it is
+    re-inferred on read.
+
+    Enumeration follows insertion order. ``popitem`` returns the last-inserted
+    key. Order inside a nested :class:`MetaDocument` is unspecified.
+
+    ``keys``, ``values``, and ``items`` are live ``collections.abc`` views in
+    insertion order. A non-``str`` lookup is absent; a non-``str`` write raises
+    ``TypeError``. Deleting a not-yet-visited key while iterating ``values()``
+    or ``items()`` raises ``KeyError``.
+    """
+
+    def __getitem__(self, key: object) -> FrozenMetaValue: ...
     def __setitem__(self, key: str, value: Any) -> None: ...
-    def __delitem__(self, key: str) -> None: ...
+    def __delitem__(self, key: object) -> None: ...
     def __contains__(self, key: object) -> bool: ...
     def __len__(self) -> int: ...
     def __iter__(self) -> Any: ...
     def __eq__(self, other: object) -> bool: ...
     def __repr__(self) -> str: ...
     def dtype(self, key: str) -> Optional[str]: ...
-    def keys(self) -> list[str]: ...
-    def values(self) -> list[Any]: ...
-    def items(self) -> list[tuple[str, Any]]: ...
-    def get(self, key: str, default: Any = None) -> Any: ...
-    def pop(self, key: str, *default: Any) -> Any: ...
-    def popitem(self) -> tuple[str, Any]: ...
+    def keys(self) -> KeysView[str]: ...
+    def values(self) -> ValuesView[FrozenMetaValue]: ...
+    def items(self) -> ItemsView[str, FrozenMetaValue]: ...
+    def get(self, key: object, default: Any = None) -> FrozenMetaValue | Any: ...
+    def pop(self, key: object, *default: Any) -> FrozenMetaValue | Any: ...
+    def popitem(self) -> tuple[str, FrozenMetaValue]: ...
     def clear(self) -> None: ...
-    def setdefault(self, key: str, default: Any = None) -> Any: ...
+    def setdefault(self, key: str, default: Any = None) -> FrozenMetaValue | Any: ...
     def update(self, other: Any = None, **kwargs: Any) -> None: ...
     def copy(self) -> dict[str, Any]: ...
     def typed(self) -> dict[str, MetaValue]: ...
@@ -904,6 +968,10 @@ class Atomistic(Graph):
     def structural_hash(self) -> int: ...
     def canonical_order(self) -> list[int]: ...
     def is_isomorphic(self, other: "Atomistic") -> bool: ...
+    def translate(self, delta: List[float]) -> None: ...
+    def rotate(
+        self, axis: List[float], angle: float, about: Optional[List[float]] = None
+    ) -> None: ...
 
 class ExtractedSubgraph:
     """Result of :meth:`Atomistic.extract_subgraph` / :meth:`CoarseGrain.extract_subgraph`."""
@@ -964,6 +1032,10 @@ class CoarseGrain(Graph):
     def structural_hash(self) -> int: ...
     def canonical_order(self) -> list[int]: ...
     def is_isomorphic(self, other: "CoarseGrain") -> bool: ...
+    def translate(self, delta: List[float]) -> None: ...
+    def rotate(
+        self, axis: List[float], angle: float, about: Optional[List[float]] = None
+    ) -> None: ...
 
 class Fragment(Graph):
     """Fragment leaf — holds a core ``Fragment`` from construction.
@@ -1005,6 +1077,10 @@ class Fragment(Graph):
     def to_frame(self) -> Frame: ...
     @staticmethod
     def from_frame(frame: Frame) -> "Fragment": ...
+    def translate(self, delta: List[float]) -> None: ...
+    def rotate(
+        self, axis: List[float], angle: float, about: Optional[List[float]] = None
+    ) -> None: ...
 
 class SmartsMatch:
     """One SMARTS embedding."""
@@ -1100,10 +1176,6 @@ class Reaction:
 # Systems — module-level free functions over a graph world
 # ---------------------------------------------------------------------------
 
-def translate(mol: Graph, delta: List[float]) -> None: ...
-def rotate(
-    mol: Graph, axis: List[float], angle: float, about: Optional[List[float]] = None
-) -> None: ...
 def scale(
     mol: Graph, factor: List[float], about: Optional[List[float]] = None
 ) -> None:
@@ -1647,14 +1719,130 @@ class Conformer:
     @overload
     def generate(self, mol: Fragment) -> tuple[Fragment, ConformerReport]: ...
 
-def align_direction(
-    mol: Graph,
-    from_: Sequence[float],
-    to: Sequence[float],
-    from_dir: Optional[Sequence[float]] = None,
-    to_dir: Optional[Sequence[float]] = None,
-    flip: bool = False,
-) -> None: ...
+class Trace:
+    """A trajectory of points. No chemistry and no facing."""
+
+    def __init__(self, points: List[List[float]]) -> None: ...
+    def __len__(self) -> int: ...
+    def point(self, index: int) -> List[float]: ...
+    def tangent(self, index: int) -> List[float]: ...
+
+class SiteMap:
+    """Mark the atoms of one graph that a reaction may bind.
+
+    A site is an ordinary atom carrying the ``site`` field: a plain unordered
+    name a reaction SMARTS finds with a ``%label`` predicate, not a port.
+    """
+
+    def __init__(self, mol: Graph) -> None: ...
+    @property
+    def mol(self) -> Graph: ...
+    def label(self, node: int, name: str) -> None: ...
+    def label_atoms(self, nodes: List[int], *names: str) -> List[int]: ...
+    def label_elements(self, element: str, *names: str) -> List[int]: ...
+    def every_nth(
+        self,
+        nodes: List[int],
+        step: int,
+        site: str,
+        leaving: Optional[str] = None,
+        fold_charge: bool = True,
+    ) -> List[int]: ...
+    def prepare_leaving_hydrogens(
+        self, site: str, leaving: str = "h", fold_charge: bool = True
+    ) -> int: ...
+    def clear(self, nodes: Optional[List[int]] = None) -> None: ...
+
+class Placer:
+    """Put the fragments a set of forming bonds joins at a pose. Base class.
+
+    The contract every placer honours: a forming bond is a
+    ``(parent-side atom, child-side atom)`` pair of handles; after
+    :meth:`place`, each forming bond's endpoints sit at bonding range; a
+    placer that cannot do that raises and never leaves a partial placement
+    behind. A subclass may take its own constructor arguments.
+    """
+
+    def __init__(self, *args: object, **kwargs: object) -> None: ...
+    def place(self, mol: Graph, bonds: List[Tuple[int, int]]) -> None:
+        """Move whole fragments so each forming bond ends at bonding range.
+
+        Raises:
+            NotImplementedError: always, on the base class.
+        """
+        ...
+
+class TracePlacer(Placer):
+    """Lay the fragments of a topology along a :class:`Trace`.
+
+    Fragments are node groups read off `res_id` by default; each child fragment
+    lands on the next trace sample and is turned by the orienter. The straight
+    default trace is used until :meth:`with_trace` supplies one.
+    """
+
+    def __init__(self) -> None: ...
+    def with_trace(self, trace: Trace) -> "TracePlacer": ...
+    def with_orienter(
+        self, orienter: LineOrienter | TangOrienter
+    ) -> "TracePlacer": ...
+    def with_buffer(self, buffer: float) -> "TracePlacer": ...
+    def with_group_key(self, key: str) -> "TracePlacer": ...
+    def with_site_key(self, key: str) -> "TracePlacer": ...
+    def place(self, mol: Graph, bonds: List[Tuple[int, int]]) -> None: ...
+
+class Orienter:
+    """Which way a fragment faces.
+
+    A closed set: :class:`LineOrienter` and :class:`TangOrienter`. A facing
+    rule runs natively inside a placer, so defining a Python subclass raises
+    ``TypeError``.
+    """
+
+    def __init__(self) -> None: ...
+
+class LineOrienter(Orienter):
+    """The site axis itself: the fragment's outgoing site points along the trace."""
+
+    def __init__(self) -> None: ...
+    def direction(self, body_axis: List[float]) -> Optional[List[float]]: ...
+    def orient(
+        self,
+        mol: Graph,
+        anchor: List[float],
+        body_axis: List[float],
+        to_dir: List[float],
+        flip: bool = False,
+    ) -> None:
+        """Rotate ``mol`` about ``anchor`` so this rule's direction points along
+        ``to_dir`` (``-to_dir`` when ``flip``).
+
+        Raises:
+            ValueError: ``body_axis`` has no direction under this rule (zero,
+                too short, non-finite, or overflowing); ``mol`` is untouched.
+        """
+        ...
+
+class TangOrienter(Orienter):
+    """A perpendicular of the site axis: the fragment meets the trace at an angle."""
+
+    def __init__(self) -> None: ...
+    def direction(self, body_axis: List[float]) -> Optional[List[float]]: ...
+    def orient(
+        self,
+        mol: Graph,
+        anchor: List[float],
+        body_axis: List[float],
+        to_dir: List[float],
+        flip: bool = False,
+    ) -> None:
+        """Rotate ``mol`` about ``anchor`` so this rule's direction points along
+        ``to_dir`` (``-to_dir`` when ``flip``).
+
+        Raises:
+            ValueError: ``body_axis`` has no direction under this rule (zero,
+                too short, non-finite, or overflowing); ``mol`` is untouched.
+        """
+        ...
 
 # ---------------------------------------------------------------------------
 # Force field

@@ -6,7 +6,7 @@
 
 use molrs::store::record::{MolRec as CoreMolRec, Observables as CoreObservables};
 use molrs::store::trajectory::{ObservableKind, ObservableRecord};
-use pyo3::exceptions::{PyKeyError, PyTypeError};
+use pyo3::exceptions::{PyKeyError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -120,7 +120,7 @@ impl PyMolRec {
 
     #[setter]
     fn set_meta(&mut self, value: &Bound<'_, PyDict>) -> PyResult<()> {
-        self.inner.meta = dict_to_json_map(value)?;
+        self.inner.meta = dict_to_json_map(value, 0)?;
         Ok(())
     }
 
@@ -131,7 +131,7 @@ impl PyMolRec {
 
     #[setter]
     fn set_method(&mut self, value: &Bound<'_, PyDict>) -> PyResult<()> {
-        self.inner.method = dict_to_json_map(value)?;
+        self.inner.method = dict_to_json_map(value, 0)?;
         Ok(())
     }
 
@@ -142,7 +142,7 @@ impl PyMolRec {
 
     #[setter]
     fn set_status(&mut self, value: &Bound<'_, PyDict>) -> PyResult<()> {
-        self.inner.status = dict_to_json_map(value)?;
+        self.inner.status = dict_to_json_map(value, 0)?;
         Ok(())
     }
 
@@ -153,7 +153,7 @@ impl PyMolRec {
 
     #[setter]
     fn set_metrics(&mut self, value: &Bound<'_, PyDict>) -> PyResult<()> {
-        self.inner.metrics = dict_to_json_map(value)?;
+        self.inner.metrics = dict_to_json_map(value, 0)?;
         Ok(())
     }
 }
@@ -323,18 +323,31 @@ fn json_to_py(py: Python<'_>, value: &JsonValue) -> PyResult<Py<PyAny>> {
     })
 }
 
-fn dict_to_json_map(dict: &Bound<'_, PyDict>) -> PyResult<JsonMap<String, JsonValue>> {
+fn dict_to_json_map(
+    dict: &Bound<'_, PyDict>,
+    depth: usize,
+) -> PyResult<JsonMap<String, JsonValue>> {
     let mut map = JsonMap::new();
     for (key, value) in dict.iter() {
         let key: String = key
             .extract()
             .map_err(|_| PyTypeError::new_err("record metadata keys must be strings"))?;
-        map.insert(key, py_to_json(&value)?);
+        map.insert(key, py_to_json(&value, depth + 1)?);
     }
     Ok(map)
 }
 
-fn py_to_json(value: &Bound<'_, PyAny>) -> PyResult<JsonValue> {
+/// Deepest container nesting accepted from Python. Past it the value is
+/// refused rather than recursed into: a self-referencing list or dict would
+/// otherwise overflow the stack and kill the interpreter.
+const MAX_JSON_DEPTH: usize = 128;
+
+fn py_to_json(value: &Bound<'_, PyAny>, depth: usize) -> PyResult<JsonValue> {
+    if depth > MAX_JSON_DEPTH {
+        return Err(PyValueError::new_err(format!(
+            "record metadata nests deeper than {MAX_JSON_DEPTH} levels (cyclic?)"
+        )));
+    }
     if value.is_none() {
         return Ok(JsonValue::Null);
     }
@@ -354,12 +367,12 @@ fn py_to_json(value: &Bound<'_, PyAny>) -> PyResult<JsonValue> {
         return Ok(JsonValue::String(s.extract::<String>()?));
     }
     if let Ok(dict) = value.cast::<PyDict>() {
-        return Ok(JsonValue::Object(dict_to_json_map(dict)?));
+        return Ok(JsonValue::Object(dict_to_json_map(dict, depth)?));
     }
     if let Ok(list) = value.cast::<PyList>() {
         let mut items = Vec::with_capacity(list.len());
         for item in list.iter() {
-            items.push(py_to_json(&item)?);
+            items.push(py_to_json(&item, depth + 1)?);
         }
         return Ok(JsonValue::Array(items));
     }

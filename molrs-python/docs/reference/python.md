@@ -24,6 +24,14 @@ keeps signatures visible to static tools and the docs build.
 
 ::: molrs.MetaValue
 
+Every door of `frame.meta` hands back a frozen value: a fixed-length vector
+is a `tuple`, and a JSON object is a `MetaDocument`. Nested arrays are
+tuples. `json.dumps` accepts a tuple and rejects a document — use
+`json.dumps(frame.meta["run"].copy())`. Order inside a nested document is
+unspecified.
+
+::: molrs.MetaDocument
+
 ## Topology and SMILES
 
 ::: molrs.Atomistic

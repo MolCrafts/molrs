@@ -153,13 +153,78 @@ def test_get_missing_component_returns_none_and_type_conflict_raises():
 # --------------------------------------------------------------------------- #
 
 
-def test_rigid_moves_are_module_level_free_functions():
-    # translate/rotate act on any Graph and carry no state, so they have no
-    # owning type and live on molrs::core as free functions.
-    for name in ("translate", "rotate", "scale", "align_direction"):
-        assert callable(getattr(molrs, name))
-        assert not hasattr(molrs.Atomistic, name)
-        assert not hasattr(molrs.Graph, name)
+def test_translate_and_rotate_are_methods_of_the_three_leaves():
+    for cls in (molrs.Atomistic, molrs.CoarseGrain, molrs.Fragment):
+        assert callable(getattr(cls, "translate"))
+        assert callable(getattr(cls, "rotate"))
+    assert not hasattr(molrs, "translate")
+    assert not hasattr(molrs, "rotate")
+    assert not hasattr(molrs, "align_direction")
+    assert callable(molrs.scale)
+
+
+def test_placer_and_orienter_are_base_classes():
+    # The variant is the class, never a flag: the motion is a Placer subclass
+    # and the facing rule is an Orienter subclass.
+    assert issubclass(molrs.TracePlacer, molrs.Placer)
+    assert issubclass(molrs.LineOrienter, molrs.Orienter)
+    assert issubclass(molrs.TangOrienter, molrs.Orienter)
+    assert callable(molrs.TracePlacer().place)
+    assert callable(molrs.LineOrienter().orient)
+    assert callable(molrs.LineOrienter().direction)
+
+
+def test_a_placer_subclass_may_take_its_own_constructor_arguments():
+    class P(molrs.Placer):
+        def __init__(self, cg):
+            super().__init__()
+            self.cg = cg
+
+    cg = object()
+    placer = P(cg)
+    assert placer.cg is cg
+    assert isinstance(placer, molrs.Placer)
+
+
+def test_the_placer_base_place_is_not_implemented():
+    with pytest.raises(NotImplementedError):
+        molrs.Placer().place(molrs.Atomistic(), [])
+
+
+def test_the_orienter_set_is_closed_at_class_creation():
+    # The facing rule is a native class; a Python subclass could never be
+    # applied, so it must be refused when it is defined, not when it is used.
+    with pytest.raises(TypeError):
+
+        class Custom(molrs.Orienter):
+            pass
+
+
+@pytest.mark.parametrize("orienter_type", ["LineOrienter", "TangOrienter"])
+def test_an_overflowing_site_axis_has_no_direction_and_never_panics(orienter_type):
+    orienter = getattr(molrs, orienter_type)()
+    try:
+        result = orienter.direction([1e200, 0.0, 0.0])
+    except BaseException as error:  # PanicException derives from BaseException
+        pytest.fail(f"{orienter_type}.direction raised {type(error).__name__}: {error}")
+    assert result is None, f"{orienter_type}.direction gave {result}"
+
+
+def test_trace_placer_place_maps_an_unreachable_fragment_to_value_error():
+    # Four two-atom fragments; the bonds join 1-2 and 3-4 separately, so
+    # fragment 3 has no path from the root and the native PlaceError surfaces.
+    mol = molrs.Atomistic()
+    fragments = []
+    for k in range(1, 5):
+        head = mol.add_atom("C", 4.0 * k, 0.0, 0.0)
+        tail = mol.add_atom("O", 4.0 * k + 1.4, 0.0, 0.0)
+        mol.add_bond(head, tail)
+        for h in (head, tail):
+            mol.set(h, "res_id", k)
+        fragments.append((head, tail))
+    bonds = [(fragments[0][1], fragments[1][0]), (fragments[2][1], fragments[3][0])]
+    with pytest.raises(ValueError, match="fragment 3"):
+        molrs.TracePlacer().place(mol, bonds)
 
 
 def test_find_rings_system():
@@ -184,17 +249,12 @@ def test_gasteiger_charges_system():
 def test_translate_operates_on_leaf_own_graph_not_empty_base():
     a = molrs.Atomistic()
     h = a.add_atom("C", 1.0, 0.0, 0.0)
-    molrs.translate(a, [10.0, 0.0, 0.0])
+    a.translate([10.0, 0.0, 0.0])
     assert a.get(h, molrs.keys.X) == 11.0
 
 
-def test_translate_on_generic_graph():
-    g = molrs.Graph()
-    e = g.spawn()
-    for k in molrs.keys.COORDS:
-        g.set(e, k, 0.0)
-    molrs.translate(g, [5.0, -1.0, 2.0])
-    assert (g.get(e, "x"), g.get(e, "y"), g.get(e, "z")) == (5.0, -1.0, 2.0)
+def test_generic_graph_has_no_translate():
+    assert not hasattr(molrs.Graph, "translate")
 
 
 def test_perceive_aromaticity_pipeline():

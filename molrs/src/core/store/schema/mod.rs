@@ -254,6 +254,14 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "Human-readable atom name (e.g. \"CA\")."
     ),
     col!(
+        "q0",
+        "Q0",
+        Float,
+        Scalar,
+        "",
+        "On a leaving hydrogen: its own charge before it was folded onto its site. Thaw: q(site) -= q0(H), q(H) = q0(H), within floating-point rounding."
+    ),
+    col!(
         "quati",
         "QUATI",
         Float,
@@ -300,6 +308,14 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         Scalar,
         "",
         "Residue name (e.g. \"ALA\")."
+    ),
+    col!(
+        "site",
+        "SITE",
+        Str,
+        Scalar,
+        "",
+        "Assembly site label. Marks an atom a reaction SMARTS %label predicate may bind; a plain unordered name, not a port."
     ),
     col!(
         "type",
@@ -554,6 +570,12 @@ pub mod consts {
     pub const RES_ID: &str = "res_id";
     /// Residue name.
     pub const RES_NAME: &str = "res_name";
+    /// Assembly site label.
+    pub const SITE: &str = "site";
+    /// On a leaving hydrogen: its own charge before it was folded onto its
+    /// site. Thaw: `q(site) -= q0(H)`, `q(H) = q0(H)`, within floating-point
+    /// rounding.
+    pub const Q0: &str = "q0";
     /// Whether a non-bonded pair is 1-4.
     pub const IS_14: &str = "is_14";
     /// Whether this torsion's 1-4 non-bonded term is suppressed.

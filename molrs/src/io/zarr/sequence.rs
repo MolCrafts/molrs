@@ -128,6 +128,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::num::NonZeroU64;
 use std::sync::{Arc, Mutex, Once};
 
+use indexmap::IndexMap;
 use ndarray::{Array1, Array2, ArrayD, Axis, Slice};
 use serde::{Deserialize, Serialize};
 use zarrs::array::codec::GzipCodec;
@@ -151,7 +152,7 @@ use molrs::MolRsError;
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::{Block, Column, DType};
 use molrs::store::frame::Frame;
-use molrs::store::meta::MetaValue;
+use molrs::store::meta::{MetaMap, MetaValue};
 use molrs::store::trajectory::Trajectory;
 use molrs::types::F;
 
@@ -752,7 +753,7 @@ struct MetaSchema {
 pub struct SequenceSchema {
     blocks: BTreeMap<String, BlockSchema>,
     #[serde(default)]
-    meta: BTreeMap<String, MetaSchema>,
+    meta: IndexMap<String, MetaSchema>,
     /// Representative rows per block, for chunk sizing. Never pinned.
     #[serde(skip)]
     rows_hint: BTreeMap<String, u64>,
@@ -1084,6 +1085,12 @@ impl SequenceSchema {
     }
 
     /// The declared per-step metadata keys with their dtype tags.
+    ///
+    /// Keys are yielded in declaration order, the order
+    /// [`declare_meta`](Self::declare_meta) first inserted each key.
+    /// [`from_frame`](Self::from_frame) / [`from_frames`](Self::from_frames)
+    /// declare in `frame.meta`'s iteration order, and reading a pinned
+    /// sequence inserts into the returned frame in this same order.
     pub fn meta_keys(&self) -> impl Iterator<Item = (&str, &str)> {
         self.meta
             .iter()
@@ -2633,7 +2640,7 @@ where
 struct SequenceArrays {
     step: Track<i64>,
     time: Option<Track<f64>>,
-    meta: BTreeMap<String, GrowthArray>,
+    meta: IndexMap<String, GrowthArray>,
     blocks: BTreeMap<String, BlockArrays>,
     cell: Option<CellStore>,
     /// Frames committed — the `nstep` attribute.
@@ -2665,7 +2672,7 @@ impl SequenceArrays {
             )
         };
 
-        let mut meta = BTreeMap::new();
+        let mut meta = IndexMap::new();
         if !schema.meta.is_empty() {
             GroupBuilder::new()
                 .build(store.clone(), &join_path(TRAJECTORY_GROUP, META_GROUP))?
@@ -2810,7 +2817,7 @@ impl SequenceArrays {
             None
         };
 
-        let mut meta = BTreeMap::new();
+        let mut meta = IndexMap::new();
         for key in schema.meta.keys() {
             let mut array = GrowthArray::open(
                 store,
@@ -3025,7 +3032,7 @@ struct PendingFrame {
     /// The cell, when it changed.
     cell: Option<SimBox>,
     /// Every declared meta key, resolved to a value or its declared fill.
-    meta: BTreeMap<String, MetaValue>,
+    meta: MetaMap,
 }
 
 /// The streaming producer of a frame sequence: one frame per
@@ -3703,7 +3710,7 @@ impl FrameSequenceWriter {
     }
 
     /// Resolve every declared meta key to the value this step stores.
-    fn resolve_meta(&self, frame: &Frame) -> Result<BTreeMap<String, MetaValue>, MolRsError> {
+    fn resolve_meta(&self, frame: &Frame) -> Result<MetaMap, MolRsError> {
         for key in frame.meta.keys() {
             if key == STEP_ARRAY || key == TIME_ARRAY {
                 continue;
@@ -3715,7 +3722,7 @@ impl FrameSequenceWriter {
                 )));
             }
         }
-        let mut resolved = BTreeMap::new();
+        let mut resolved = MetaMap::new();
         for (key, declared) in &self.schema.meta {
             let value = match frame.meta.get(key) {
                 Some(value) if value.dtype() == declared.dtype => value.clone(),
@@ -4290,7 +4297,7 @@ struct ReadState {
     /// carries no mask array for — caching the absence, so a column that was
     /// never holed costs one existence check for the whole run.
     masks: BTreeMap<String, Option<ColumnReader>>,
-    metas: BTreeMap<String, Array<dyn ReadableListableStorageTraits>>,
+    metas: IndexMap<String, Array<dyn ReadableListableStorageTraits>>,
     boxes: Option<BoxReader>,
 }
 
@@ -6001,6 +6008,38 @@ mod tests {
         );
     }
 
+    /// Declared meta keys read back in `declare_meta` order, not the order the
+    /// frame inserted them and not alphabetical order.
+    #[test]
+    fn declared_meta_keys_read_back_in_declaration_order() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut schema = SequenceSchema::new();
+        schema.declare_column(ATOMS, X, DType::Float, &[]).unwrap();
+        schema.declare_meta("zeta", "f64").unwrap();
+        schema.declare_meta("alpha", "f64").unwrap();
+        schema.declare_meta("mu", "f64").unwrap();
+
+        let mut frame = atoms_frame(&[1.0]);
+        frame.meta.insert("mu", MetaValue::F64(3.0));
+        frame.meta.insert("zeta", MetaValue::F64(1.0));
+        frame.meta.insert("alpha", MetaValue::F64(2.0));
+
+        let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
+        writer.append(&frame).unwrap();
+        writer.close().unwrap();
+
+        let seq = FrameSequence::open(store).unwrap();
+        let back = seq.frame(0).unwrap().expect("frame 0 is present");
+        assert_eq!(
+            back.meta.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["zeta", "alpha", "mu"]
+        );
+        assert_eq!(back.meta.get("zeta"), Some(&MetaValue::F64(1.0)));
+        assert_eq!(back.meta.get("alpha"), Some(&MetaValue::F64(2.0)));
+        assert_eq!(back.meta.get("mu"), Some(&MetaValue::F64(3.0)));
+    }
+
     // =======================================================================
     // D. Lifecycle — create, open, commit, reopen, the knob window
     // =======================================================================
@@ -7198,20 +7237,33 @@ mod tests {
         let mut schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
         schema.declare_meta("com", "f64x3").unwrap();
         schema.declare_meta("scale", "f32").unwrap();
+        schema.declare_meta("count", "i64").unwrap();
         let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
         let mut frame = atoms_frame(&[1.0]);
         frame
             .meta
             .insert("com", MetaValue::Json(serde_json::json!([1.0, 2.0, 3.0])));
         frame.meta.insert("scale", MetaValue::F64(0.5));
+        frame.meta.insert("count", MetaValue::I64(3));
         writer.append(&frame).unwrap();
         let mut wrong = atoms_frame(&[2.0]);
         wrong
             .meta
             .insert("com", MetaValue::Json(serde_json::json!([1.0, 2.0])));
         wrong.meta.insert("scale", MetaValue::F64(0.25));
+        wrong.meta.insert("count", MetaValue::I64(4));
         let err = writer.append(&wrong).unwrap_err().to_string();
         assert!(err.contains("com") && err.contains("f64x3"), "{err}");
+        // Declared keys are walked in BTreeMap order, so a bad `com` masks
+        // `count`. This frame's `com` fits; its `count` is an f64 under i64.
+        let mut refused = atoms_frame(&[3.0]);
+        refused
+            .meta
+            .insert("com", MetaValue::Json(serde_json::json!([4.0, 5.0, 6.0])));
+        refused.meta.insert("scale", MetaValue::F64(0.125));
+        refused.meta.insert("count", MetaValue::F64(0.5));
+        let err = writer.append(&refused).unwrap_err().to_string();
+        assert!(err.contains("count") && err.contains("i64"), "{err}");
         writer.close().unwrap();
         let mut seq = open_sequence(&store);
         let back = frame_at(&mut seq, 0);

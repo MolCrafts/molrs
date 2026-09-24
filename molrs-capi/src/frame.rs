@@ -791,9 +791,11 @@ pub unsafe extern "C" fn molrs_frame_put_meta(
             Err(status) => return status,
         };
         let mut store = lock_store();
-        match store.inner.with_frame_mut(handle_to_frame_id(frame), |f| {
-            f.meta.insert(key, value);
-        }) {
+        match store
+            .inner
+            .with_frame_meta_mut(handle_to_frame_id(frame), |meta| {
+                meta.insert(key, value);
+            }) {
             Ok(()) => MolrsStatus::Ok,
             Err(e) => ffi_err_to_status(&e),
         }
@@ -855,7 +857,7 @@ pub unsafe extern "C" fn molrs_frame_meta_count(
     })
 }
 
-/// Return the lexicographically sorted metadata key at `index`.
+/// Return the metadata key at `index`, in insertion order.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn molrs_frame_meta_key(
     frame: MolrsFrameHandle,
@@ -869,8 +871,7 @@ pub unsafe extern "C" fn molrs_frame_meta_key(
             Ok(frame) => frame,
             Err(e) => return ffi_err_to_status(&e),
         };
-        let mut keys: Vec<_> = frame.meta.keys().collect();
-        keys.sort();
+        let keys: Vec<_> = frame.meta.keys().collect();
         let Some(key) = keys.get(index) else {
             error::set_last_error(format!("metadata index {index} out of range"));
             return MolrsStatus::InvalidArgument;

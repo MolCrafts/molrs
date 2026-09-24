@@ -79,7 +79,9 @@ pub mod builder;
 #[cfg(feature = "builder")]
 pub use crate::builder::{
     CarbonTubeBuilder, CarbonTubeError, FccLattice, GrapheneBuilder, GrapheneError, GrowthStrategy,
-    OccupancyMode, OffLattice, SelfAvoidingWalk, WalkError, WalkOutput,
+    LineOrienter, OccupancyMode, OffLattice, Orienter, PRE_REACTION_CHARGE_KEY, PlaceError, Placer,
+    SITE_KEY, SelfAvoidingWalk, SiteError, SiteMap, TangOrienter, TracePlacer, WalkError,
+    WalkOutput,
 };
 
 // Chemical perception: one layer above `core`, below `ff` / `io` / `conformer`.

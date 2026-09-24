@@ -119,6 +119,37 @@ TEST_F(MolrsTest, FrameMetadata) {
     ASSERT_MOLRS_OK(molrs_frame_drop(frame));
 }
 
+TEST_F(MolrsTest, FrameMetadataOrder) {
+    MolrsFrameHandle frame{};
+    ASSERT_MOLRS_OK(molrs_frame_new(&frame));
+
+    // Not alphabetical: a reintroduced sort must fail this case.
+    const char* keys[] = {"zeta", "alpha", "mu"};
+    for (size_t i = 0; i < 3; ++i) {
+        MolrsMetaValue value{};
+        value.dtype = MOLRS_META_TYPE_STRING;
+        value.string_value = const_cast<char*>(keys[i]);
+        ASSERT_MOLRS_OK(molrs_frame_put_meta(frame, keys[i], &value));
+    }
+
+    uintptr_t count = 0;
+    ASSERT_MOLRS_OK(molrs_frame_meta_count(frame, &count));
+    EXPECT_EQ(count, 3u);
+
+    for (uintptr_t i = 0; i < 3; ++i) {
+        char* out = nullptr;
+        ASSERT_MOLRS_OK(molrs_frame_meta_key(frame, i, &out));
+        ASSERT_NE(out, nullptr);
+        EXPECT_STREQ(out, keys[i]);
+        molrs_free_string(out);
+    }
+
+    char* out_of_range = nullptr;
+    EXPECT_NE(molrs_frame_meta_key(frame, 3, &out_of_range), MOLRS_STATUS_OK);
+
+    ASSERT_MOLRS_OK(molrs_frame_drop(frame));
+}
+
 // ===== Block Insert & Read ================================================
 
 TEST_F(MolrsTest, BlockInsertAndRead) {

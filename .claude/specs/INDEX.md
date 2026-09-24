@@ -6,7 +6,21 @@ spec files.
 
 | Spec | State |
 |------|-------|
+| [frame-meta-dict-parity-01-ordered](frame-meta-dict-parity-01-ordered.md) — MetaMap HashMap→IndexMap, shift_remove, opaque iterators, order-preserving serde wire, Zarr round-trip contract | approved |
+| [frame-meta-dict-parity-02-binder-order](frame-meta-dict-parity-02-binder-order.md) — delete the three binder alphabetical sorts, popitem LIFO, four enumeration surfaces agree | approved |
+| [frame-meta-dict-parity-03-untyped-write](frame-meta-dict-parity-03-untyped-write.md) — delete the typed-slot rule; a plain write takes the value's own dtype; dtype is durable on two named paths | approved |
+| [frame-meta-dict-parity-04-dict-views](frame-meta-dict-parity-04-dict-views.md) — live collections.abc views, one key-acceptance rule, read/write borrow split, delete the clone-per-read | approved |
+| [frame-meta-dict-parity-05-document](frame-meta-dict-parity-05-document.md) — MetaDocument + tuples: every frame.meta door hands back a frozen value | approved |
+| [frame-meta-dict-parity-07-sequence](frame-meta-dict-parity-07-sequence.md) — sequence meta-key maps follow declaration order; other BTreeMaps stay sorted | approved |
 | [cgsmiles-03-release](cgsmiles-03-release.md) — release molrs 0.15.0: version literals, release notes, full gate, tag, Publish | approved |
+
+The `frame-meta-dict-parity-*` links are one chain (`frame.meta` becomes a
+Python dict in behaviour, revised 2026-09-22). They land on the unreleased
+0.15 tree. No version bump, no pin window, no migration guide, and no
+release-notes link. Chain order: 01 → 02 → 04 (02 and 04 require 01; 04 also
+requires 02 and 03); 03 and 05 do not change enumeration order. `07-sequence`
+is the meta-key maps in `io/zarr/sequence.rs` (01 routed them). There is no
+`06-release-notes`.
 
 The ten `cgsmiles-*` links are one chain (molrs half of the CG→all-atom backmapping plan, 2026-09-21); they land in chain order and 03 ships 0.15.0, after which molpy's `backmap-*` chain may start.
 

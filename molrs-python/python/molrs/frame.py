@@ -633,7 +633,14 @@ class Frame(_RsFrame):
         return iter(self._blocks.values())
 
     def to_dict(self) -> dict[str, Any]:
-        """Frame as ``{"blocks": {name: block.to_dict()}, "meta": {...}}``."""
+        """Frame as ``{"blocks": {name: block.to_dict()}, "meta": {...}}``.
+
+        ``meta`` values follow ``frame.meta``: a fixed-length vector is a
+        ``tuple``, a JSON object is a :class:`MetaDocument`, and a nested
+        JSON array is a ``tuple``. Nested document order is unspecified.
+        ``json.dumps`` rejects a document; use
+        ``json.dumps(frame.meta["run"].copy())``.
+        """
         return {
             "blocks": {name: self[name].to_dict() for name in self.keys()},
             "meta": dict(self.meta),
