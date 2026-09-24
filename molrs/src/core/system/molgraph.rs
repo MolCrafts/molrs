@@ -1724,7 +1724,8 @@ mod tests {
             [0.0, 0.0, 1.0],
             std::f64::consts::FRAC_PI_2,
             None,
-        );
+        )
+        .expect("the z axis is a direction");
         let b = g.get_node(id2).unwrap();
         assert!((b.get_f64("x").unwrap()).abs() < 1e-12);
         assert!((b.get_f64("y").unwrap() - 1.0).abs() < 1e-12);

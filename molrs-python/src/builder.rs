@@ -4,10 +4,11 @@ use molrs::{CarbonTubeBuilder, GrapheneBuilder};
 use pyo3::PyRefMut;
 use pyo3::exceptions::{PyIndexError, PyNotImplementedError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::{Borrowed, intern};
 
 use crate::core::spatial::simbox::PyBox;
 use crate::core::store::frame::PyFrame;
-use crate::core::system::molgraph::try_with_world_mut;
+use crate::core::system::molgraph::{expect_world, try_with_world_mut};
 use molrs::system::molgraph::{node_from_u64, node_to_u64};
 
 /// Exact single-wall carbon nanotube builder.
@@ -233,14 +234,45 @@ impl PyTrace {
 }
 
 /// Mark the atoms of one graph that a reaction may bind.
+///
+/// Every node argument is an int handle or a node view (`NodeRef`, `Atom`, …)
+/// — anything with an int `.handle`. Returned nodes are int handles.
 #[pyclass(module = "molrs", name = "SiteMap")]
 pub struct PySiteMap {
     mol: Py<PyAny>,
 }
 
-fn as_handles(py: Python<'_>, nodes: Vec<u64>) -> Vec<molrs::NodeId> {
-    let _ = py;
-    nodes.into_iter().map(node_from_u64).collect()
+/// A node argument: an int handle, or any object with an int `.handle` (the
+/// `NodeRef` views of `molrs.views`). The one place a binder method turns a
+/// Python node into a [`molrs::NodeId`].
+struct NodeArg(molrs::NodeId);
+
+impl<'a, 'py> FromPyObject<'a, 'py> for NodeArg {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        if let Ok(raw) = obj.extract::<u64>() {
+            return Ok(Self(node_from_u64(raw)));
+        }
+        let not_a_node = || {
+            PyTypeError::new_err(format!(
+                "expected an int node handle or a node view with an int .handle, got {}",
+                obj.get_type()
+                    .name()
+                    .map_or_else(|_| "?".to_string(), |name| name.to_string())
+            ))
+        };
+        let raw = obj
+            .getattr(intern!(obj.py(), "handle"))
+            .map_err(|_| not_a_node())?
+            .extract::<u64>()
+            .map_err(|_| not_a_node())?;
+        Ok(Self(node_from_u64(raw)))
+    }
+}
+
+fn as_handles(nodes: Vec<NodeArg>) -> Vec<molrs::NodeId> {
+    nodes.into_iter().map(|NodeArg(node)| node).collect()
 }
 
 fn names_of(names: &[String]) -> Vec<&str> {
@@ -249,9 +281,11 @@ fn names_of(names: &[String]) -> Vec<&str> {
 
 #[pymethods]
 impl PySiteMap {
+    /// Bind to `mol`, which must be a `Graph` or one of its leaves.
     #[new]
-    fn new(mol: Py<PyAny>) -> Self {
-        Self { mol }
+    fn new(mol: Bound<'_, PyAny>) -> PyResult<Self> {
+        expect_world(&mol)?;
+        Ok(Self { mol: mol.unbind() })
     }
 
     /// The graph these labels are written to.
@@ -261,10 +295,10 @@ impl PySiteMap {
     }
 
     /// Label one atom with a site name.
-    fn label(&self, py: Python<'_>, node: u64, name: &str) -> PyResult<()> {
+    fn label(&self, py: Python<'_>, node: NodeArg, name: &str) -> PyResult<()> {
         let bound = self.mol.bind(py);
         try_with_world_mut(bound, |graph| {
-            molrs::SiteMap::new(graph).label(node_from_u64(node), name)
+            molrs::SiteMap::new(graph).label(node.0, name)
         })
     }
 
@@ -273,13 +307,13 @@ impl PySiteMap {
     fn label_atoms(
         &self,
         py: Python<'_>,
-        nodes: Vec<u64>,
+        nodes: Vec<NodeArg>,
         names: Vec<String>,
     ) -> PyResult<Vec<u64>> {
         let bound = self.mol.bind(py);
         try_with_world_mut(bound, |graph| -> Result<Vec<u64>, molrs::SiteError> {
-            let marked = molrs::SiteMap::new(graph)
-                .label_atoms(&as_handles(py, nodes), &names_of(&names))?;
+            let marked =
+                molrs::SiteMap::new(graph).label_atoms(&as_handles(nodes), &names_of(&names))?;
             Ok(marked.into_iter().map(node_to_u64).collect::<Vec<u64>>())
         })
     }
@@ -293,9 +327,16 @@ impl PySiteMap {
         names: Vec<String>,
     ) -> PyResult<Vec<u64>> {
         let bound = self.mol.bind(py);
-        try_with_world_mut(bound, |graph| -> Result<Vec<u64>, molrs::SiteError> {
-            let marked = molrs::SiteMap::new(graph).label_elements(element, &names_of(&names))?;
-            Ok(marked.into_iter().map(node_to_u64).collect::<Vec<u64>>())
+        try_with_world_mut(bound, |graph| -> Result<Vec<u64>, String> {
+            // The core error counts atoms without naming the element; the
+            // caller only asked about one, so say which.
+            match molrs::SiteMap::new(graph).label_elements(element, &names_of(&names)) {
+                Ok(marked) => Ok(marked.into_iter().map(node_to_u64).collect()),
+                Err(molrs::SiteError::TooFewAtoms { needed, found }) => {
+                    Err(format!("need {needed} {element} atoms, found {found}"))
+                }
+                Err(other) => Err(other.to_string()),
+            }
         })
     }
 
@@ -304,7 +345,7 @@ impl PySiteMap {
     fn every_nth(
         &self,
         py: Python<'_>,
-        nodes: Vec<u64>,
+        nodes: Vec<NodeArg>,
         step: usize,
         site: &str,
         leaving: Option<String>,
@@ -313,7 +354,7 @@ impl PySiteMap {
         let bound = self.mol.bind(py);
         try_with_world_mut(bound, |graph| -> Result<Vec<u64>, molrs::SiteError> {
             let marked = molrs::SiteMap::new(graph).every_nth(
-                &as_handles(py, nodes),
+                &as_handles(nodes),
                 step,
                 site,
                 leaving.as_deref(),
@@ -340,10 +381,10 @@ impl PySiteMap {
 
     /// Clear site labels: on `nodes`, or on the whole graph when `None`.
     #[pyo3(signature = (nodes=None))]
-    fn clear(&self, py: Python<'_>, nodes: Option<Vec<u64>>) -> PyResult<()> {
+    fn clear(&self, py: Python<'_>, nodes: Option<Vec<NodeArg>>) -> PyResult<()> {
         let bound = self.mol.bind(py);
         try_with_world_mut(bound, |graph| {
-            let targets = nodes.as_ref().map(|nodes| as_handles(py, nodes.clone()));
+            let targets = nodes.map(as_handles);
             molrs::SiteMap::new(graph).clear(targets.as_deref())
         })
         .map(|_| ())
@@ -390,7 +431,23 @@ fn extract_orienter(orienter: &Bound<'_, PyAny>) -> PyResult<Box<dyn molrs::Orie
     }
 }
 
-/// Lay the fragments of a topology along a [`PyTrace`].
+/// Grow the fragments a set of forming bonds joins out of one another.
+///
+/// Fragments are node groups read off `res_id` by default. The placer walks
+/// the fragment graph breadth-first from the lowest fragment id and moves each
+/// other fragment rigidly, once, relative to **its own parent**: the child's
+/// anchor lands one bonding range (summed covalent radii plus the buffer) from
+/// the parent's reacting atom along a growth direction, and the orienter turns
+/// the child to point along it, away from the parent.
+///
+/// Without a trace the root stays put and a child grows along its parent's
+/// outward direction (centroid through reacting atom), so any tree of
+/// fragments places. With a trace (`with_trace`) the fragments must form a
+/// single path; the trace supplies directions only. A forming bond that closes
+/// a ring of fragments is checked, not placed: if it does not end at bonding
+/// range once the tree is placed, `place` raises. Failures raise `ValueError`
+/// before any coordinate is written (only a refused coordinate write can fail
+/// later); `molrs::Placer::place` lists every case.
 #[pyclass(module = "molrs", name = "TracePlacer", extends = PyPlacer)]
 pub struct PyTracePlacer {
     inner: molrs::TracePlacer,
@@ -408,7 +465,13 @@ impl PyTracePlacer {
         )
     }
 
-    /// Lay the fragments out on this trace instead of a straight line.
+    /// Grow a path of fragments along this trace's tangents instead of each
+    /// parent's outward direction: the root's outward direction follows the
+    /// tangent at sample 0 with its reacting atom on sample 0, and the `k`-th
+    /// child grows along the tangent at sample `k`. The chain follows the
+    /// curve's shape at bonding range, not the samples themselves. `place`
+    /// then refuses branched or cyclic fragment graphs, and a trace with fewer
+    /// samples than fragments, with `ValueError`.
     fn with_trace<'py>(mut slf: PyRefMut<'py, Self>, trace: &PyTrace) -> PyRefMut<'py, Self> {
         let current = std::mem::take(&mut slf.inner);
         slf.inner = current.with_trace(trace.inner.clone());
@@ -448,7 +511,11 @@ impl PyTracePlacer {
     }
 
     /// Move whole fragments so each forming bond's endpoints sit at bonding
-    /// range. `bonds` are `(handle, handle)` pairs.
+    /// range. `bonds` are `(parent-side handle, child-side handle)` pairs.
+    /// Raises `ValueError` — with nothing moved — when the bonds leave a
+    /// fragment unreachable, a trace meets a branched or cyclic fragment graph
+    /// or runs out of samples, a ring-closing bond is not at bonding range, or
+    /// an endpoint lacks a fragment id, element, radius or coordinates.
     fn place(&self, mol: &Bound<'_, PyAny>, bonds: Vec<(u64, u64)>) -> PyResult<()> {
         let pairs: Vec<(molrs::NodeId, molrs::NodeId)> = bonds
             .into_iter()

@@ -8,7 +8,7 @@
 //! | [`GrapheneBuilder`] | flat honeycomb sheet [`Frame`] |
 //! | [`CarbonTubeBuilder`] | rolled SWCNT [`Frame`] (exact graphene quotient) |
 //! | [`SelfAvoidingWalk`] | multi-chain [`Trace`](crate::spatial::Trace)s + [`SimBox`](crate::spatial::simbox::SimBox) (no chemistry) |
-//! | [`TracePlacer`] (a [`Placer`]) | fragments onto a [`Trace`](crate::spatial::Trace) |
+//! | [`TracePlacer`] (a [`Placer`]) | fragments grown out of their parents at bonding range, optionally along a [`Trace`](crate::spatial::Trace) |
 //! | [`SiteMap`] | marks the atoms a reaction may bind |
 //! | [`LineOrienter`] / [`TangOrienter`] (an [`Orienter`]) | body axis onto a direction |
 //!

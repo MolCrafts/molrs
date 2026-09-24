@@ -6,6 +6,7 @@
 //! as methods on the data structure. Coordinates are read and written through
 //! the canonical [`crate::store::keys`] coordinate convention — no field-name literals.
 
+use crate::error::MolRsError;
 use crate::store::keys;
 use crate::system::molgraph::MolGraph;
 
@@ -50,11 +51,33 @@ pub fn scale(mol: &mut MolGraph, factor: [f64; 3], about: Option<[f64; 3]>) {
 /// Rotate every node that has coordinates around `axis` by `angle` radians,
 /// optionally about a center point (defaults to the origin). Nodes missing any
 /// coordinate are left untouched.
-pub fn rotate(mol: &mut MolGraph, axis: [f64; 3], angle: f64, about: Option<[f64; 3]>) {
-    let len = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
-    if len < 1e-15 {
-        return;
+///
+/// Only the direction of `axis` matters; its length does not.
+///
+/// # Errors
+///
+/// [`MolRsError::Validation`] when `axis` has no direction (every component
+/// zero, a component non-finite, or a squared length that overflows) or
+/// `angle` is not finite. Nothing is written then.
+pub fn rotate(
+    mol: &mut MolGraph,
+    axis: [f64; 3],
+    angle: f64,
+    about: Option<[f64; 3]>,
+) -> Result<(), MolRsError> {
+    let norm_sq = axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2];
+    // NaN fails the comparison, so a NaN component is rejected too.
+    if !(norm_sq.is_finite() && norm_sq > 0.0) {
+        return Err(MolRsError::Validation {
+            message: format!("rotation axis {axis:?} has no direction"),
+        });
     }
+    if !angle.is_finite() {
+        return Err(MolRsError::Validation {
+            message: format!("rotation angle {angle} is not finite"),
+        });
+    }
+    let len = norm_sq.sqrt();
     let k = [axis[0] / len, axis[1] / len, axis[2] / len];
     let cos_a = angle.cos();
     let sin_a = angle.sin();
@@ -66,17 +89,18 @@ pub fn rotate(mol: &mut MolGraph, axis: [f64; 3], angle: f64, about: Option<[f64
     // x/y/z are all present, and write each column back in a single pass.
     // Rows missing any coordinate keep their original value (identity write).
     let (nx, ny, nz) = {
+        // A graph without a coordinate column has nothing to rotate.
         let (x, vx) = match table.column_f64(keys::X) {
             Ok(t) => t,
-            Err(_) => return,
+            Err(_) => return Ok(()),
         };
         let (y, vy) = match table.column_f64(keys::Y) {
             Ok(t) => t,
-            Err(_) => return,
+            Err(_) => return Ok(()),
         };
         let (z, vz) = match table.column_f64(keys::Z) {
             Ok(t) => t,
-            Err(_) => return,
+            Err(_) => return Ok(()),
         };
         let mut nx = x.to_vec();
         let mut ny = y.to_vec();
@@ -107,6 +131,7 @@ pub fn rotate(mol: &mut MolGraph, axis: [f64; 3], angle: f64, about: Option<[f64
         .unwrap()
         .0
         .copy_from_slice(&nz);
+    Ok(())
 }
 
 /// Rotate one point about the unit axis `k` through `origin` (Rodrigues'
@@ -205,18 +230,48 @@ pub(crate) fn alignment(from_dir: [f64; 3], to_dir: [f64; 3]) -> Option<([f64; 3
 /// Rotate about `anchor` so `from_dir` points along `to_dir`.
 ///
 /// The anchor stays fixed. This is only the facing half of a rigid motion;
-/// moving the anchor onto a trace point is [`crate::builder::TracePlacer`].
+/// moving the anchor to where it bonds is [`crate::builder::TracePlacer`].
+/// Nothing moves when the two already point the same way or either one is not
+/// a direction.
+///
+/// # Errors
+///
+/// The error of [`rotate`]; nothing is written then.
 pub fn orient(
     mol: &mut MolGraph,
     anchor: [f64; 3],
     from_dir: [f64; 3],
     mut to_dir: [f64; 3],
     flip: bool,
-) {
+) -> Result<(), MolRsError> {
     if flip {
         to_dir = [-to_dir[0], -to_dir[1], -to_dir[2]];
     }
-    if let Some((axis, angle)) = alignment(from_dir, to_dir) {
-        rotate(mol, axis, angle, Some(anchor));
+    match alignment(from_dir, to_dir) {
+        Some((axis, angle)) => rotate(mol, axis, angle, Some(anchor)),
+        None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::system::atomistic::Atomistic;
+
+    #[test]
+    fn rotating_about_an_axis_with_no_direction_is_an_error() {
+        for axis in [
+            [0.0, 0.0, 0.0],
+            [f64::NAN, 0.0, 0.0],
+            [f64::INFINITY, 0.0, 0.0],
+        ] {
+            let mut mol = Atomistic::new();
+            let atom = mol.add_atom_xyz("C", 1.0, 2.0, 3.0);
+            let result = rotate(mol.as_molgraph_mut(), axis, 1.0, None);
+            assert!(result.is_err(), "axis {axis:?} was accepted");
+            let node = mol.as_molgraph().get_node(atom).unwrap();
+            let position = [keys::X, keys::Y, keys::Z].map(|key| node.get_f64(key).unwrap());
+            assert_eq!(position, [1.0, 2.0, 3.0], "axis {axis:?} moved the atom");
+        }
     }
 }

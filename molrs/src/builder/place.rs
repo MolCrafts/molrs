@@ -15,8 +15,16 @@ use crate::spatial::Trace;
 use crate::spatial::geometry::{self, normalize, perpendicular};
 use crate::store::keys;
 use crate::system::element::Element;
-use crate::system::molgraph::{MolGraph, NodeId};
+use crate::system::molgraph::{MolGraph, NodeId, node_to_u64};
 use crate::types::F;
+
+/// Farthest (Å) a ring-closing forming bond may end from bonding range and
+/// still count as closed.
+///
+/// Rigid fragments bond exactly along a spanning tree; a ring-closing bond is
+/// whatever length the tree leaves it, so this is a rounding allowance, not a
+/// chemical one.
+const CLOSURE_TOLERANCE: F = 1e-6;
 
 /// Put the fragments a set of forming bonds joins at a pose.
 ///
@@ -38,15 +46,20 @@ pub trait Placer {
     /// - [`PlaceError::MissingElement`] / [`PlaceError::UnknownElement`] — a
     ///   cross-fragment bond endpoint has no element, or one with no
     ///   tabulated covalent radius;
-    /// - [`PlaceError::MissingCoordinates`] — a node the placement reads (a
-    ///   child's anchor or far site; for the straight default trace, also the
-    ///   first bond's endpoints and every node of its parent) lacks x, y or z;
     /// - [`PlaceError::Unreachable`] — the bonds join fragments into more than
     ///   one connected piece, so some fragment has no path from the root;
+    /// - [`PlaceError::Branched`] — a trace was given but the bonds do not
+    ///   join the fragments into a single path;
     /// - [`PlaceError::Index`] — the trace has fewer samples than fragments to
     ///   place;
+    /// - [`PlaceError::MissingCoordinates`] — a node the placement reads lacks
+    ///   x, y or z: a forming bond's endpoint; a child's far site, or every
+    ///   node of a child with no far site; without a trace, every node of a
+    ///   parent; with one, every node of the root;
     /// - [`PlaceError::Unorientable`] — a child's site axis, or the trace
-    ///   tangent where it lands, has no direction;
+    ///   tangent it grows along, has no direction;
+    /// - [`PlaceError::RingClosure`] — a forming bond that closes a ring of
+    ///   fragments does not end at bonding range once the others do;
     /// - [`PlaceError::Graph`] — the graph refused a coordinate write.
     ///
     /// Every error except [`PlaceError::Graph`] is raised before `world` is
@@ -70,17 +83,154 @@ struct Junction {
     to_end: Endpoint,
 }
 
-/// Lay the fragments of a topology along a trajectory.
+/// A junction the walk crosses, oriented from the fragment already placed to
+/// the one it places.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Step {
+    parent: i64,
+    child: i64,
+    parent_end: Endpoint,
+    child_end: Endpoint,
+}
+
+/// A breadth-first walk over the fragment graph the junctions span.
 ///
-/// Walks the fragment graph the forming bonds imply and, for each child
-/// fragment on its own, lands its anchor — the atom the bond reaches — on the
-/// next [`Trace`] sample, then turns the fragment's site axis to the trace
-/// tangent through its [`Orienter`]. Only whole fragments move.
+/// `steps` is a spanning tree: every fragment but `root` is some step's child
+/// exactly once, and its parent is placed before it. `closures` are the
+/// junctions the tree does not use — each one closes a ring of fragments.
+struct Walk {
+    root: i64,
+    steps: Vec<Step>,
+    closures: Vec<Junction>,
+}
+
+impl Walk {
+    /// Walk from the lowest fragment id or, `from_an_end`, from the lowest id
+    /// joined to at most one other fragment (the lowest id when every
+    /// fragment has two partners or more). `None` when there is no junction.
+    ///
+    /// # Errors
+    ///
+    /// [`PlaceError::Unreachable`] naming the lowest fragment the junctions
+    /// touch that has no path from the root.
+    fn new(junctions: &[Junction], from_an_end: bool) -> Result<Option<Self>, PlaceError> {
+        let mut adjacency: HashMap<i64, Vec<(usize, bool)>> = HashMap::new();
+        let mut partners: BTreeMap<i64, BTreeSet<i64>> = BTreeMap::new();
+        for (index, junction) in junctions.iter().enumerate() {
+            adjacency
+                .entry(junction.from)
+                .or_default()
+                .push((index, false));
+            adjacency
+                .entry(junction.to)
+                .or_default()
+                .push((index, true));
+            partners
+                .entry(junction.from)
+                .or_default()
+                .insert(junction.to);
+            partners
+                .entry(junction.to)
+                .or_default()
+                .insert(junction.from);
+        }
+        let Some(&lowest) = partners.keys().next() else {
+            return Ok(None);
+        };
+        let root = if from_an_end {
+            partners
+                .iter()
+                .find(|(_, joined)| joined.len() <= 1)
+                .map_or(lowest, |(&fragment, _)| fragment)
+        } else {
+            lowest
+        };
+
+        let mut seen = HashSet::from([root]);
+        let mut crossed = vec![false; junctions.len()];
+        let mut queue = VecDeque::from([root]);
+        let (mut steps, mut closures) = (Vec::new(), Vec::new());
+        while let Some(parent) = queue.pop_front() {
+            for &(index, reversed) in adjacency.get(&parent).into_iter().flatten() {
+                if std::mem::replace(&mut crossed[index], true) {
+                    continue;
+                }
+                let junction = junctions[index];
+                let (child, parent_end, child_end) = if reversed {
+                    (junction.from, junction.to_end, junction.from_end)
+                } else {
+                    (junction.to, junction.from_end, junction.to_end)
+                };
+                if seen.insert(child) {
+                    queue.push_back(child);
+                    steps.push(Step {
+                        parent,
+                        child,
+                        parent_end,
+                        child_end,
+                    });
+                } else {
+                    closures.push(junction);
+                }
+            }
+        }
+        match partners.keys().find(|fragment| !seen.contains(fragment)) {
+            Some(&fragment) => Err(PlaceError::Unreachable { fragment }),
+            None => Ok(Some(Self {
+                root,
+                steps,
+                closures,
+            })),
+        }
+    }
+
+    /// The first fragment the walk leaves from anywhere but the tip of the
+    /// fragments placed so far — `None` exactly when the fragments form a
+    /// single path walked from one end.
+    fn branch_point(&self) -> Option<i64> {
+        let mut tip = self.root;
+        for step in &self.steps {
+            if step.parent != tip {
+                return Some(step.parent);
+            }
+            tip = step.child;
+        }
+        None
+    }
+}
+
+/// Grow the fragments a set of forming bonds joins out of one another.
 ///
-/// `trace` defaults to a straight line, so a path of fragments becomes a
-/// straight chain: samples sit one fragment *advance* apart (the fragment's own
-/// span plus one closing bond), starting one span behind the first parent's
-/// reacting atom, and the line leaves that parent away from its own body.
+/// Walks the fragment graph the forming bonds imply breadth-first from a root
+/// fragment and places every other fragment relative to **its own parent**:
+/// the child moves rigidly so its anchor — the atom the bond reaches — sits one
+/// bonding range (summed covalent radii plus the buffer) from the parent's
+/// reacting atom, along a growth direction, and its [`Orienter`] direction
+/// points along that same growth direction, away from the parent. Only whole
+/// fragments move, each exactly once, so every forming bond of the spanning
+/// tree ends at bonding range.
+///
+/// - **No trace (default).** The root — the lowest fragment id — stays where it
+///   is. A child grows along its parent's *outward* direction: from the
+///   parent's centroid through its reacting atom, as the parent now stands
+///   (`+x` when those coincide). Any fragment graph that is a tree places:
+///   paths, stars, combs.
+/// - **With a trace ([`Self::with_trace`]).** The fragments must form a single
+///   path, walked from its lowest-id end. That root turns so its outward
+///   direction follows the tangent at sample 0 and slides its reacting atom
+///   onto sample 0; the `k`-th child grows along the tangent at sample `k`.
+///   The trace supplies directions only, so the chain follows the curve's
+///   shape at bonding range rather than landing on the samples.
+///
+/// A fragment's site axis runs from its anchor to its far site (the first
+/// other site-labelled node). A fragment with no far site has no site axis;
+/// its body axis, anchor to centroid, is turned along the growth direction
+/// instead, so it points away from its parent.
+///
+/// A forming bond that closes a ring of fragments is checked, not placed:
+/// rigid fragments cannot in general close a ring, so one that is not within
+/// 1e-6 Å of bonding range once the tree is placed is a
+/// [`PlaceError::RingClosure`] and nothing moves.
 pub struct TracePlacer {
     trace: Option<Trace>,
     orienter: Box<dyn Orienter>,
@@ -96,7 +246,7 @@ impl Default for TracePlacer {
 }
 
 impl TracePlacer {
-    /// A placer with a straight default trace and [`LineOrienter`] facing.
+    /// A placer with no trace and [`LineOrienter`] facing.
     pub fn new() -> Self {
         Self {
             trace: None,
@@ -107,7 +257,9 @@ impl TracePlacer {
         }
     }
 
-    /// Lay the fragments out on this trace instead of the straight default.
+    /// Grow a path of fragments along this trace's tangents instead of each
+    /// parent's outward direction. Branched and cyclic fragment graphs are
+    /// refused with [`PlaceError::Branched`].
     pub fn with_trace(mut self, trace: Trace) -> Self {
         self.trace = Some(trace);
         self
@@ -149,6 +301,83 @@ impl TracePlacer {
     /// [`Self::position`], or [`PlaceError::MissingCoordinates`].
     fn located(world: &MolGraph, node: NodeId) -> Result<[F; 3], PlaceError> {
         Self::position(world, node).ok_or(PlaceError::MissingCoordinates { node })
+    }
+
+    /// Where `node` stands now: its pending placement in `moved`, else the
+    /// graph's own coordinates.
+    fn current(
+        world: &MolGraph,
+        moved: &HashMap<NodeId, [F; 3]>,
+        node: NodeId,
+    ) -> Result<[F; 3], PlaceError> {
+        match moved.get(&node) {
+            Some(&position) => Ok(position),
+            None => Self::located(world, node),
+        }
+    }
+
+    /// Mean position of `nodes` as they stand now.
+    fn centroid(
+        world: &MolGraph,
+        moved: &HashMap<NodeId, [F; 3]>,
+        nodes: &[NodeId],
+    ) -> Result<[F; 3], PlaceError> {
+        let mut sum = [0.0; 3];
+        for &node in nodes {
+            let position = Self::current(world, moved, node)?;
+            for axis in 0..3 {
+                sum[axis] += position[axis];
+            }
+        }
+        let count = nodes.len() as F;
+        Ok([sum[0] / count, sum[1] / count, sum[2] / count])
+    }
+
+    /// Unit vector from a fragment's centroid through its `site` atom. A site
+    /// atom sits on the fragment's surface, so this points out of the fragment
+    /// — the way a partner should approach from. `+x` for a one-atom fragment
+    /// or a site at the centroid, where any direction will do.
+    fn outward(site: [F; 3], centroid: [F; 3]) -> [F; 3] {
+        normalize([
+            site[0] - centroid[0],
+            site[1] - centroid[1],
+            site[2] - centroid[2],
+        ])
+        .unwrap_or([1.0, 0.0, 0.0])
+    }
+
+    /// Where `nodes` land when their fragment turns about `anchor` by `turn`
+    /// (a unit axis and an angle) and then slides `anchor` onto `target`. Reads
+    /// the graph's own coordinates; a node without a full x, y, z is left out,
+    /// so it stays where it is.
+    fn posed(
+        world: &MolGraph,
+        nodes: &[NodeId],
+        anchor: [F; 3],
+        turn: Option<([F; 3], F)>,
+        target: [F; 3],
+    ) -> Vec<(NodeId, [F; 3])> {
+        let turn = turn.map(|(axis, angle)| {
+            let (sin_a, cos_a) = angle.sin_cos();
+            (axis, cos_a, sin_a)
+        });
+        nodes
+            .iter()
+            .filter_map(|&node| {
+                let mut p = Self::position(world, node)?;
+                if let Some((axis, cos_a, sin_a)) = turn {
+                    p = geometry::rotate_point(p, axis, cos_a, sin_a, anchor);
+                }
+                Some((
+                    node,
+                    [
+                        p[0] - anchor[0] + target[0],
+                        p[1] - anchor[1] + target[1],
+                        p[2] - anchor[2] + target[2],
+                    ],
+                ))
+            })
+            .collect()
     }
 
     fn radius(world: &MolGraph, node: NodeId) -> Result<F, PlaceError> {
@@ -241,108 +470,33 @@ impl TracePlacer {
         })
     }
 
-    /// A straight line leaving `first`'s parent away from its own body, with
-    /// `samples` points one fragment advance apart.
-    fn straight_trace(
+    /// The direction in `step.child`'s own frame that is turned along the
+    /// growth direction: the orienter's reading of its site axis, or its body
+    /// axis when it has no far site (`None` for a one-atom child, which has
+    /// nothing to turn).
+    fn heading(
         &self,
         world: &MolGraph,
-        first: &Junction,
-        parent: &[NodeId],
-        child: &[NodeId],
-        samples: usize,
-    ) -> Result<Trace, PlaceError> {
-        let closing = first.from_end.radius + first.to_end.radius + self.buffer;
-        let reacting = Self::located(world, first.from_end.node)?;
-        let target = Self::located(world, first.to_end.node)?;
-        let span_length = match self.far_site(world, child, first.to_end.node) {
-            Some(far) => {
-                let far = Self::located(world, far)?;
-                let span = [far[0] - target[0], far[1] - target[1], far[2] - target[2]];
-                (span[0] * span[0] + span[1] * span[1] + span[2] * span[2]).sqrt()
-            }
-            None => 0.0,
+        nodes: &[NodeId],
+        step: &Step,
+        anchor: [F; 3],
+    ) -> Result<Option<[F; 3]>, PlaceError> {
+        let Some(far) = self.far_site(world, nodes, step.child_end.node) else {
+            let centroid = Self::centroid(world, &HashMap::new(), nodes)?;
+            return Ok(normalize([
+                centroid[0] - anchor[0],
+                centroid[1] - anchor[1],
+                centroid[2] - anchor[2],
+            ]));
         };
-        let advance = closing + span_length;
-
-        // Grow away from the parent's body, not along an arbitrary axis: the
-        // parent keeps every atom the reaction did not consume, so a direction
-        // read off overlapping templates would bury the child in them.
-        let mut centroid = [0.0; 3];
-        for &node in parent {
-            let position = Self::located(world, node)?;
-            for axis in 0..3 {
-                centroid[axis] += position[axis];
-            }
-        }
-        let count = parent.len() as F;
-        let direction = normalize([
-            reacting[0] - centroid[0] / count,
-            reacting[1] - centroid[1] / count,
-            reacting[2] - centroid[2] / count,
-        ])
-        .unwrap_or([1.0, 0.0, 0.0]);
-
-        let origin = [
-            reacting[0] - direction[0] * span_length,
-            reacting[1] - direction[1] * span_length,
-            reacting[2] - direction[2] * span_length,
-        ];
-        Ok(Trace::from_arrays(
-            (0..samples)
-                .map(|k| {
-                    let distance = advance * k as F;
-                    [
-                        origin[0] + direction[0] * distance,
-                        origin[1] + direction[1] * distance,
-                        origin[2] + direction[2] * distance,
-                    ]
-                })
-                .collect(),
-        ))
-    }
-
-    /// Breadth-first placement steps over the fragment graph the junctions
-    /// span, from its lowest fragment id. A fragment no forming bond reaches
-    /// is not part of the placement and is left alone.
-    ///
-    /// # Errors
-    ///
-    /// [`PlaceError::Unreachable`] naming the lowest fragment the junctions
-    /// touch that has no path from the root.
-    fn steps(junctions: &[Junction]) -> Result<Vec<(Junction, bool)>, PlaceError> {
-        let mut adjacency: HashMap<i64, Vec<(Junction, bool)>> = HashMap::new();
-        let mut joined = BTreeSet::new();
-        for junction in junctions {
-            adjacency
-                .entry(junction.from)
-                .or_default()
-                .push((*junction, false));
-            adjacency
-                .entry(junction.to)
-                .or_default()
-                .push((*junction, true));
-            joined.extend([junction.from, junction.to]);
-        }
-        let Some(&root) = joined.first() else {
-            return Ok(Vec::new());
-        };
-        let mut seen = HashSet::from([root]);
-        let mut queue = VecDeque::from([root]);
-        let mut steps = Vec::new();
-        while let Some(parent) = queue.pop_front() {
-            for &(junction, reversed) in adjacency.get(&parent).into_iter().flatten() {
-                let child = if reversed { junction.from } else { junction.to };
-                if !seen.insert(child) {
-                    continue;
-                }
-                queue.push_back(child);
-                steps.push((junction, reversed));
-            }
-        }
-        match joined.into_iter().find(|fragment| !seen.contains(fragment)) {
-            Some(fragment) => Err(PlaceError::Unreachable { fragment }),
-            None => Ok(steps),
-        }
+        let far = Self::located(world, far)?;
+        let site_axis = [far[0] - anchor[0], far[1] - anchor[1], far[2] - anchor[2]];
+        self.orienter
+            .direction(site_axis)
+            .map(Some)
+            .ok_or(PlaceError::Unorientable {
+                fragment: Some(step.child),
+            })
     }
 }
 
@@ -350,83 +504,81 @@ impl Placer for TracePlacer {
     fn place(&self, world: &mut MolGraph, bonds: &[(NodeId, NodeId)]) -> Result<(), PlaceError> {
         let groups = self.fragments(world)?;
         let junctions = self.junctions(world, bonds, &groups)?;
-        let Some(first) = junctions.first() else {
+        let Some(walk) = Walk::new(&junctions, self.trace.is_some())? else {
             return Ok(());
         };
-        let steps = Self::steps(&junctions)?;
-        // Every junction endpoint's fragment is a key of `groups`: `junctions`
-        // read each fragment id off `groups` itself.
-        let trace = match &self.trace {
-            Some(trace) => trace.clone(),
-            None => self.straight_trace(
-                world,
-                first,
-                &groups[&first.from],
-                &groups[&first.to],
-                junctions.len() + 2,
-            )?,
-        };
+        // Every fragment id the walk names was read off `groups` by
+        // `junctions`, so indexing `groups` by it cannot miss.
 
-        // `steps` visits every child fragment exactly once and the root is
-        // never a child, so each fragment's new coordinates are computed from
-        // its own untouched nodes. They are all written only once every
-        // fragment is placed, so an error leaves `world` untouched.
-        let mut placed: Vec<(NodeId, [F; 3])> = Vec::new();
-        for (index, (junction, reversed)) in steps.iter().enumerate() {
-            let index = index + 1;
-            let (child, child_end) = if *reversed {
-                (junction.from, junction.from_end)
-            } else {
-                (junction.to, junction.to_end)
-            };
-            let sample = trace.point(index).ok_or(PlaceError::Index { index })?;
-            let nodes = &groups[&child];
-            let anchor = Self::located(world, child_end.node)?;
-
-            // Rigid motion over just this fragment's nodes. A node without a
-            // full x, y, z is left where it is.
-            let delta = [
-                sample[0] - anchor[0],
-                sample[1] - anchor[1],
-                sample[2] - anchor[2],
-            ];
-            let mut moved: Vec<(NodeId, [F; 3])> = nodes
-                .iter()
-                .filter_map(|&node| {
-                    let p = Self::position(world, node)?;
-                    Some((node, [p[0] + delta[0], p[1] + delta[1], p[2] + delta[2]]))
-                })
-                .collect();
-
-            // Facing is measured in the frame the fragment is now in.
-            let anchor = [
-                anchor[0] + delta[0],
-                anchor[1] + delta[1],
-                anchor[2] + delta[2],
-            ];
-            if let Some(far) = self.far_site(world, nodes, child_end.node) {
-                let far = Self::located(world, far)?;
-                let far = [far[0] + delta[0], far[1] + delta[1], far[2] + delta[2]];
-                let body_axis = [far[0] - anchor[0], far[1] - anchor[1], far[2] - anchor[2]];
-                let unorientable = PlaceError::Unorientable {
-                    fragment: Some(child),
-                };
-                let from_dir = self
-                    .orienter
-                    .direction(body_axis)
-                    .ok_or_else(|| unorientable.clone())?;
-                let to_dir = trace.tangent(index).ok_or(unorientable)?;
-                if let Some((axis, angle)) = geometry::alignment(from_dir, to_dir) {
-                    let (sin_a, cos_a) = angle.sin_cos();
-                    for (_, position) in &mut moved {
-                        *position = geometry::rotate_point(*position, axis, cos_a, sin_a, anchor);
-                    }
-                }
+        // Each fragment moves at most once and is read from the graph's own
+        // coordinates when it does; a parent is read as it now stands through
+        // `moved`. Nothing is written until every fragment is placed and every
+        // ring closure checked, so an error leaves `world` untouched.
+        let mut moved: HashMap<NodeId, [F; 3]> = HashMap::new();
+        if let Some(trace) = &self.trace {
+            if let Some(fragment) = walk.branch_point() {
+                return Err(PlaceError::Branched { fragment });
             }
-
-            placed.append(&mut moved);
+            if trace.len() <= walk.steps.len() {
+                return Err(PlaceError::Index { index: trace.len() });
+            }
+            // A junction joins two fragments, so the root has a first step.
+            let reacting_end = walk.steps[0].parent_end.node;
+            let nodes = &groups[&walk.root];
+            let reacting = Self::located(world, reacting_end)?;
+            let outward = Self::outward(reacting, Self::centroid(world, &moved, nodes)?);
+            let unorientable = PlaceError::Unorientable {
+                fragment: Some(walk.root),
+            };
+            let tangent = trace.tangent(0).ok_or(unorientable)?;
+            let sample = trace.point(0).ok_or(PlaceError::Index { index: 0 })?;
+            let turn = geometry::alignment(outward, tangent);
+            moved.extend(Self::posed(world, nodes, reacting, turn, sample));
         }
-        for (node, position) in placed {
+
+        for (index, step) in walk.steps.iter().enumerate() {
+            let site = Self::current(world, &moved, step.parent_end.node)?;
+            let direction = match &self.trace {
+                Some(trace) => trace.tangent(index + 1).ok_or(PlaceError::Unorientable {
+                    fragment: Some(step.child),
+                })?,
+                None => Self::outward(site, Self::centroid(world, &moved, &groups[&step.parent])?),
+            };
+            let reach = step.parent_end.radius + step.child_end.radius + self.buffer;
+            let target = [
+                site[0] + direction[0] * reach,
+                site[1] + direction[1] * reach,
+                site[2] + direction[2] * reach,
+            ];
+            let nodes = &groups[&step.child];
+            let anchor = Self::located(world, step.child_end.node)?;
+            let turn = self
+                .heading(world, nodes, step, anchor)?
+                .and_then(|heading| geometry::alignment(heading, direction));
+            moved.extend(Self::posed(world, nodes, anchor, turn, target));
+        }
+
+        for junction in &walk.closures {
+            let (a, b) = (junction.from_end.node, junction.to_end.node);
+            let (p, q) = (
+                Self::current(world, &moved, a)?,
+                Self::current(world, &moved, b)?,
+            );
+            let length =
+                ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] - q[2]).powi(2)).sqrt();
+            let expected = junction.from_end.radius + junction.to_end.radius + self.buffer;
+            let miss = (length - expected).abs();
+            if miss.is_nan() || miss > CLOSURE_TOLERANCE {
+                return Err(PlaceError::RingClosure {
+                    a,
+                    b,
+                    length,
+                    expected,
+                });
+            }
+        }
+
+        for (node, position) in moved {
             for (value, key) in position.into_iter().zip([keys::X, keys::Y, keys::Z]) {
                 world
                     .set_node(node, key, value)
@@ -464,13 +616,15 @@ pub trait Orienter: Send + Sync {
         let from_dir = self
             .direction(body_axis)
             .ok_or(PlaceError::Unorientable { fragment: None })?;
-        geometry::orient(mol, anchor, from_dir, to_dir, flip);
-        Ok(())
+        // `alignment` only ever yields a unit axis and a finite angle, which
+        // `rotate` accepts; its error is still carried rather than dropped.
+        geometry::orient(mol, anchor, from_dir, to_dir, flip)
+            .map_err(|error| PlaceError::Graph(error.to_string()))
     }
 }
 
-/// The site axis itself: the fragment's outgoing site points along the trace,
-/// so a chain of them runs straight.
+/// The site axis itself: the fragment's outgoing site points along the growth
+/// direction, so a chain of them runs away from each parent.
 pub struct LineOrienter;
 
 impl Orienter for LineOrienter {
@@ -479,8 +633,8 @@ impl Orienter for LineOrienter {
     }
 }
 
-/// A perpendicular of the site axis: the fragment meets the trace at an angle,
-/// so the chain kinks by that angle at every unit.
+/// A perpendicular of the site axis: the fragment meets the growth direction
+/// at an angle, so the chain kinks by that angle at every unit.
 pub struct TangOrienter;
 
 impl Orienter for TangOrienter {
@@ -490,7 +644,10 @@ impl Orienter for TangOrienter {
 }
 
 /// A [`Placer`] could not place the fragments it was given.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Nodes print as the opaque `u64` handle the bindings expose
+/// ([`node_to_u64`]).
+#[derive(Debug, Clone, PartialEq)]
 pub enum PlaceError {
     /// `index` is past the end of the trace.
     Index { index: usize },
@@ -510,11 +667,23 @@ pub enum PlaceError {
     /// The forming bonds join fragments into more than one connected piece;
     /// `fragment` (the lowest such id) has no path from the root fragment.
     Unreachable { fragment: i64 },
+    /// A trace lays out a single path of fragments, but the forming bonds
+    /// branch or close a ring at `fragment`.
+    Branched { fragment: i64 },
     /// A fragment cannot be faced: its site axis has no direction under the
     /// orienter (zero, shorter than 1e-6 Å, non-finite, or so long its squared
     /// length overflows), or the trace has no tangent where it lands.
     /// `fragment` is the fragment id when a placer was placing one.
     Unorientable { fragment: Option<i64> },
+    /// The forming bond `a`-`b` closes a ring of fragments, and once every
+    /// other bond sits at bonding range it is `length` Å long instead of the
+    /// `expected` bonding range. Rigid fragments cannot close it.
+    RingClosure {
+        a: NodeId,
+        b: NodeId,
+        length: F,
+        expected: F,
+    },
     /// The graph refused an edit (a stale handle, a type conflict).
     Graph(String),
 }
@@ -529,22 +698,34 @@ impl std::fmt::Display for PlaceError {
                     "no node carries '{key}'; nothing groups nodes into fragments"
                 )
             }
-            Self::MissingNode { node } => write!(f, "graph holds no node {node:?}"),
-            Self::Ungrouped { node } => {
-                write!(f, "bond endpoint {node:?} carries no fragment id")
+            Self::MissingNode { node } => {
+                write!(f, "graph holds no node {}", node_to_u64(*node))
             }
-            Self::MissingElement { node } => {
-                write!(f, "node {node:?} carries no element, so no radius is known")
-            }
+            Self::Ungrouped { node } => write!(
+                f,
+                "bond endpoint {} carries no fragment id",
+                node_to_u64(*node)
+            ),
+            Self::MissingElement { node } => write!(
+                f,
+                "node {} carries no element, so no radius is known",
+                node_to_u64(*node)
+            ),
             Self::UnknownElement { symbol } => {
                 write!(f, "no covalent radius tabulated for element '{symbol}'")
             }
-            Self::MissingCoordinates { node } => {
-                write!(f, "node {node:?} lacks a full x, y, z to place by")
-            }
+            Self::MissingCoordinates { node } => write!(
+                f,
+                "node {} lacks a full x, y, z to place by",
+                node_to_u64(*node)
+            ),
             Self::Unreachable { fragment } => write!(
                 f,
                 "fragment {fragment} has no path of forming bonds from the root fragment"
+            ),
+            Self::Branched { fragment } => write!(
+                f,
+                "fragment {fragment} branches or closes a ring; a trace lays out a single path of fragments"
             ),
             Self::Unorientable {
                 fragment: Some(fragment),
@@ -555,6 +736,18 @@ impl std::fmt::Display for PlaceError {
             Self::Unorientable { fragment: None } => {
                 write!(f, "the site axis has no direction to face")
             }
+            Self::RingClosure {
+                a,
+                b,
+                length,
+                expected,
+            } => write!(
+                f,
+                "forming bond {}-{} closes a ring of fragments at {length} Å, not the bonding range \
+                 {expected} Å; rigid fragments cannot close it",
+                node_to_u64(*a),
+                node_to_u64(*b)
+            ),
             Self::Graph(message) => write!(f, "{message}"),
         }
     }
@@ -1006,5 +1199,210 @@ mod tests {
             .unwrap();
         let after: Vec<[F; 3]> = fragments[0].iter().map(|&n| position(&mol, n)).collect();
         assert_eq!(before, after);
+    }
+
+    // ----- Parent-relative placement: branched and cyclic topologies -----
+
+    /// Summed covalent radii of the two atoms a forming bond joins: the
+    /// bonding range at the default zero buffer.
+    fn bonding_range(mol: &Atomistic, a: NodeId, b: NodeId) -> F {
+        let radius = |node: NodeId| {
+            let symbol = mol
+                .as_molgraph()
+                .get_node(node)
+                .unwrap()
+                .get_str(keys::ELEMENT)
+                .unwrap()
+                .to_string();
+            Element::by_symbol(&symbol).unwrap().covalent_radius() as F
+        };
+        radius(a) + radius(b)
+    }
+
+    /// Every forming bond ends at bonding range, within 1e-6 Å.
+    fn assert_all_at_bonding_range(mol: &Atomistic, bonds: &[(NodeId, NodeId)]) {
+        for &(a, b) in bonds {
+            let (got, expected) = (distance(mol, a, b), bonding_range(mol, a, b));
+            assert!(
+                (got - expected).abs() < 1e-6,
+                "forming bond {a:?}-{b:?} is {got} Å long, expected {expected}"
+            );
+        }
+    }
+
+    /// Append one `C(a)-C-O(b)` unit (the [`chain`] fragment) with fragment id
+    /// `id`, its head at `origin`. Returns `[head, middle, tail]`.
+    fn add_unit(mol: &mut Atomistic, id: i64, origin: [F; 3]) -> [NodeId; 3] {
+        let [x0, y0, z0] = origin;
+        let head = mol.add_atom_xyz("C", x0, y0, z0);
+        let middle = mol.add_atom_xyz("C", x0 + 1.2, y0 + 0.9, z0);
+        let tail = mol.add_atom_xyz("O", x0 + 2.4, y0, z0);
+        for (a, b) in [(head, middle), (middle, tail)] {
+            mol.add_bond(a, b)
+                .expect("a fresh bond between distinct atoms");
+        }
+        for node in [head, middle, tail] {
+            mol.set_atom(node, keys::RES_ID, PropValue::Int(id as I))
+                .unwrap();
+        }
+        mol.set_atom(head, keys::SITE, PropValue::Str("a".to_string()))
+            .unwrap();
+        mol.set_atom(tail, keys::SITE, PropValue::Str("b".to_string()))
+            .unwrap();
+        [head, middle, tail]
+    }
+
+    fn all_positions(mol: &Atomistic) -> Vec<[F; 3]> {
+        mol.as_molgraph()
+            .node_ids()
+            .map(|node| position(mol, node))
+            .collect()
+    }
+
+    #[test]
+    fn a_star_puts_every_arm_bond_at_bonding_range() {
+        // Core fragment 1: a carbon with three oxygen sites at 120 degrees.
+        // Three arms hang off it, each two units long (ids 2..=4 next to the
+        // core, 5..=7 at the arm ends). The arms start stacked far away, so
+        // nothing is at bonding range before placement.
+        let mut mol = Atomistic::new();
+        let centre = mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
+        mol.set_atom(centre, keys::RES_ID, PropValue::Int(1 as I))
+            .unwrap();
+        let mut core_sites = Vec::new();
+        for k in 0..3 {
+            let angle = 2.0 * std::f64::consts::PI * k as F / 3.0;
+            let site = mol.add_atom_xyz("O", 1.43 * angle.cos(), 1.43 * angle.sin(), 0.0);
+            mol.add_bond(centre, site)
+                .expect("a fresh bond between distinct atoms");
+            mol.set_atom(site, keys::RES_ID, PropValue::Int(1 as I))
+                .unwrap();
+            mol.set_atom(site, keys::SITE, PropValue::Str(format!("s{k}")))
+                .unwrap();
+            core_sites.push(site);
+        }
+        let mut bonds = Vec::new();
+        for (k, &site) in core_sites.iter().enumerate() {
+            let near = add_unit(&mut mol, 2 + k as i64, [20.0 + 4.0 * k as F, 7.0, 0.0]);
+            let far = add_unit(&mut mol, 5 + k as i64, [20.0 + 4.0 * k as F, -7.0, 3.0]);
+            bonds.push((site, near[0]));
+            bonds.push((near[2], far[0]));
+        }
+
+        TracePlacer::new()
+            .place(mol.as_molgraph_mut(), &bonds)
+            .expect("a star is one connected fragment tree");
+        assert_all_at_bonding_range(&mol, &bonds);
+    }
+
+    #[test]
+    fn a_comb_puts_the_branch_bond_at_bonding_range() {
+        // Backbone 1-2-3; branch fragment 4 hangs off fragment 2's middle
+        // carbon, which is a site of its own.
+        let mut mol = Atomistic::new();
+        let backbone: Vec<[NodeId; 3]> = (1..=3)
+            .map(|id| add_unit(&mut mol, id, [4.0 * id as F, 0.0, 0.0]))
+            .collect();
+        let branch = add_unit(&mut mol, 4, [30.0, -9.0, 2.0]);
+        mol.set_atom(backbone[1][1], keys::SITE, PropValue::Str("c".to_string()))
+            .unwrap();
+        let bonds = [
+            (backbone[0][2], backbone[1][0]),
+            (backbone[1][2], backbone[2][0]),
+            (backbone[1][1], branch[0]),
+        ];
+
+        TracePlacer::new()
+            .place(mol.as_molgraph_mut(), &bonds)
+            .expect("a comb is one connected fragment tree");
+        assert_all_at_bonding_range(&mol, &bonds);
+    }
+
+    #[test]
+    fn a_ring_either_closes_at_bonding_range_or_is_refused_untouched() {
+        // Four fragments bonded head-to-tail in a cycle. A spanning tree of
+        // three bonds can always be placed rigidly; the fourth, ring-closing
+        // bond in general cannot. The placer must not report success with the
+        // closing bond left at an arbitrary length.
+        let (mut mol, fragments) = chain(4);
+        let bonds = [
+            (fragments[0][2], fragments[1][0]),
+            (fragments[1][2], fragments[2][0]),
+            (fragments[2][2], fragments[3][0]),
+            (fragments[3][2], fragments[0][0]),
+        ];
+        let before = all_positions(&mol);
+
+        match TracePlacer::new().place(mol.as_molgraph_mut(), &bonds) {
+            Ok(()) => assert_all_at_bonding_range(&mol, &bonds),
+            Err(error) => {
+                assert!(
+                    !matches!(
+                        error,
+                        PlaceError::Index { .. }
+                            | PlaceError::Unreachable { .. }
+                            | PlaceError::MissingCoordinates { .. }
+                            | PlaceError::Unorientable { .. }
+                            | PlaceError::Graph(_)
+                    ),
+                    "a ring-closing bond out of range must be reported as such, got {error:?}"
+                );
+                assert_eq!(
+                    before,
+                    all_positions(&mol),
+                    "a refused ring wrote coordinates"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn neighbouring_fragments_of_a_chain_do_not_clash() {
+        // Units `C(a)(H)-C-O(b)` with sp3 geometry at the head: the head's
+        // hydrogen and middle carbon sit at tetrahedral positions, leaving the
+        // fourth tetrahedral direction (-x) free for the incoming bond. A
+        // placement that turned the child so its hydrogen pointed at the
+        // parent's oxygen would put them ~0.3 Å apart.
+        let mut mol = Atomistic::new();
+        let mut units: Vec<Vec<NodeId>> = Vec::new();
+        for id in 1..=3 {
+            let x0 = 6.0 * id as F;
+            let head = mol.add_atom_xyz("C", x0, 0.0, 0.0);
+            let hydrogen = mol.add_atom_xyz("H", x0 + 0.3633, -0.5139, 0.8900);
+            let middle = mol.add_atom_xyz("C", x0 + 0.5133, 1.4519, 0.0);
+            let tail = mol.add_atom_xyz("O", x0 + 1.9433, 1.4519, 0.0);
+            for (a, b) in [(head, hydrogen), (head, middle), (middle, tail)] {
+                mol.add_bond(a, b)
+                    .expect("a fresh bond between distinct atoms");
+            }
+            for node in [head, hydrogen, middle, tail] {
+                mol.set_atom(node, keys::RES_ID, PropValue::Int(id as I))
+                    .unwrap();
+            }
+            mol.set_atom(head, keys::SITE, PropValue::Str("a".to_string()))
+                .unwrap();
+            mol.set_atom(tail, keys::SITE, PropValue::Str("b".to_string()))
+                .unwrap();
+            units.push(vec![head, hydrogen, middle, tail]);
+        }
+        let bonds = [(units[0][3], units[1][0]), (units[1][3], units[2][0])];
+
+        TracePlacer::new()
+            .place(mol.as_molgraph_mut(), &bonds)
+            .expect("a linear chain places");
+        assert_all_at_bonding_range(&mol, &bonds);
+        for (i, first) in units.iter().enumerate() {
+            for second in &units[i + 1..] {
+                for &a in first {
+                    for &b in second {
+                        if bonds.contains(&(a, b)) || bonds.contains(&(b, a)) {
+                            continue;
+                        }
+                        let d = distance(&mol, a, b);
+                        assert!(d >= 1.0, "atoms {a:?} and {b:?} clash at {d} Å");
+                    }
+                }
+            }
+        }
     }
 }

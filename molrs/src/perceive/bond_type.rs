@@ -306,13 +306,13 @@ pub fn find_kekule_orders(mol: &Atomistic) -> Atomistic {
 ///
 /// Returns whether every aromatic bond came out with a legal number.
 pub fn assign_kekule_numbers(mol: &mut Atomistic) -> bool {
-    if mol.n_bonds() == 0 {
+    // Nothing to assign without an aromatic bond. Checked on the bonds
+    // directly: `BondGraph::new` perceives rings and implicit hydrogens for
+    // every atom, which is the whole cost of this call.
+    if !has_aromatic_marking(mol) {
         return true;
     }
     let graph = BondGraph::new(mol);
-    if !graph.aromatic.iter().any(|a| *a) {
-        return true;
-    }
 
     // Conservative: a legal assignment already on the graph is *the* answer.
     // Re-deriving one would rewrite the phase an input stated for itself, so a
@@ -1130,5 +1130,23 @@ mod tests {
                 assert!(!is_double, "double placed on the pyrrole N: ({i}, {j})");
             }
         }
+    }
+
+    #[test]
+    fn a_ring_free_chain_keeps_every_bond_number() {
+        // No aromatic bond, so nothing to assign: the call succeeds and every
+        // localized number -- single, double and triple alike -- is the one
+        // the input stated.
+        let mut mol =
+            to_atomistic(&parse_smiles("C=CC#CCCCC").expect("parse")).expect("to_atomistic");
+        let numbers = |m: &Atomistic| -> Vec<BondNumber> {
+            m.bonds().map(|(id, _)| m.bond_number(id)).collect()
+        };
+        let before = numbers(&mol);
+        assert!(before.contains(&BondNumber::Double) && before.contains(&BondNumber::Triple));
+
+        assert!(assign_kekule_numbers(&mut mol));
+
+        assert_eq!(numbers(&mol), before);
     }
 }

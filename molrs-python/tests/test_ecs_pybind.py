@@ -1,8 +1,8 @@
 """Contract tests for the ECS-shaped Python binding (molgraph-ecs-02-pybind).
 
 The core is an ECS *world*: entities are stable opaque handles, components live
-in aligned columns, and topology is kind-tagged relations. Rigid-body moves are
-module-level free functions because they have no owning type; chemical
+in aligned columns, and topology is kind-tagged relations. Rigid-body moves
+(translate, rotate, scale) are methods of the leaves and return the leaf; chemical
 perception has owners (`molrs.perceive.Perceive` / `RingInfo`,
 `molrs.ff.charge.*`, `molrs.io.SmilesIR`) and is reached through them, never
 through a method on the graph classes. Leaves (`Atomistic`/`CoarseGrain`) hold a
@@ -149,18 +149,74 @@ def test_get_missing_component_returns_none_and_type_conflict_raises():
 
 
 # --------------------------------------------------------------------------- #
-# Rigid-body moves are free functions; perception is owned by a type          #
+# Rigid-body moves are leaf methods; perception is owned by a type           #
 # --------------------------------------------------------------------------- #
 
 
-def test_translate_and_rotate_are_methods_of_the_three_leaves():
+def test_translate_rotate_and_scale_are_methods_of_the_three_leaves():
     for cls in (molrs.Atomistic, molrs.CoarseGrain, molrs.Fragment):
         assert callable(getattr(cls, "translate"))
         assert callable(getattr(cls, "rotate"))
+        assert callable(getattr(cls, "scale"))
     assert not hasattr(molrs, "translate")
     assert not hasattr(molrs, "rotate")
     assert not hasattr(molrs, "align_direction")
-    assert callable(molrs.scale)
+    assert not hasattr(molrs, "scale")
+
+
+LEAVES = [molrs.Atomistic, molrs.CoarseGrain, molrs.Fragment]
+
+
+def _one_node(cls):
+    mol = cls()
+    h = mol.spawn()
+    for key, value in zip(("x", "y", "z"), (1.0, 0.0, 0.0)):
+        mol.set(h, key, value)
+    return mol, h
+
+
+@pytest.mark.parametrize("cls", LEAVES, ids=lambda c: c.__name__)
+def test_translate_returns_the_leaf_itself(cls):
+    mol, h = _one_node(cls)
+    assert mol.translate([1.0, 0.0, 0.0]) is mol
+    assert mol.get(h, "x") == 2.0
+
+
+@pytest.mark.parametrize("cls", LEAVES, ids=lambda c: c.__name__)
+def test_rotate_returns_the_leaf_itself(cls):
+    mol, h = _one_node(cls)
+    assert mol.rotate([0.0, 0.0, 1.0], np.pi / 2) is mol
+    assert mol.get(h, "y") == pytest.approx(1.0, abs=1e-12)
+
+
+@pytest.mark.parametrize("cls", LEAVES, ids=lambda c: c.__name__)
+def test_scale_returns_the_leaf_itself(cls):
+    mol, h = _one_node(cls)
+    assert mol.scale([2.0, 2.0, 2.0]) is mol
+    assert mol.get(h, "x") == 2.0
+
+
+@pytest.mark.parametrize("cls", LEAVES, ids=lambda c: c.__name__)
+def test_rigid_body_moves_chain(cls):
+    mol, h = _one_node(cls)
+    chained = mol.translate([1.0, 0.0, 0.0]).rotate([0.0, 0.0, 1.0], np.pi).scale(
+        [0.5, 0.5, 0.5]
+    )
+    assert chained is mol
+    assert mol.get(h, "x") == pytest.approx(-1.0, abs=1e-12)
+
+
+@pytest.mark.parametrize(
+    "axis",
+    [[0.0, 0.0, 0.0], [float("nan"), 0.0, 0.0], [float("inf"), 0.0, 0.0]],
+    ids=["zero", "nan", "inf"],
+)
+@pytest.mark.parametrize("cls", LEAVES, ids=lambda c: c.__name__)
+def test_rotate_about_a_degenerate_axis_is_a_value_error(cls, axis):
+    mol, h = _one_node(cls)
+    with pytest.raises(ValueError):
+        mol.rotate(axis, 1.0)
+    assert (mol.get(h, "x"), mol.get(h, "y"), mol.get(h, "z")) == (1.0, 0.0, 0.0)
 
 
 def test_placer_and_orienter_are_base_classes():
@@ -225,6 +281,71 @@ def test_trace_placer_place_maps_an_unreachable_fragment_to_value_error():
     bonds = [(fragments[0][1], fragments[1][0]), (fragments[2][1], fragments[3][0])]
     with pytest.raises(ValueError, match="fragment 3"):
         molrs.TracePlacer().place(mol, bonds)
+
+
+def test_a_place_error_names_a_node_by_its_python_handle():
+    mol = molrs.Atomistic()
+    grouped = mol.def_atom(element="O", x=0.0, y=0.0, z=0.0, res_id=1)
+    stray = mol.def_atom(element="C", x=1.4, y=0.0, z=0.0)
+    with pytest.raises(ValueError) as caught:
+        molrs.TracePlacer().place(mol, [(grouped.handle, stray.handle)])
+    message = str(caught.value)
+    assert str(stray.handle) in message
+    assert "NodeId(" not in message
+
+
+# --------------------------------------------------------------------------- #
+# SiteMap: node views and handles are interchangeable                          #
+# --------------------------------------------------------------------------- #
+
+
+def _carbons(n):
+    mol = molrs.Atomistic()
+    atoms = [mol.def_atom(element="C", x=1.5 * k, y=0.0, z=0.0) for k in range(n)]
+    return mol, atoms
+
+
+def test_site_map_label_accepts_a_node_view():
+    mol, (atom,) = _carbons(1)
+    molrs.SiteMap(mol).label(atom, "a")
+    assert mol.get(atom.handle, "site") == "a"
+
+
+def test_site_map_label_atoms_accepts_node_views():
+    mol, (atom,) = _carbons(1)
+    marked = molrs.SiteMap(mol).label_atoms([atom], "b")
+    assert marked == [atom.handle]
+    assert mol.get(atom.handle, "site") == "b"
+
+
+def test_site_map_every_nth_accepts_node_views():
+    mol, atoms = _carbons(4)
+    marked = molrs.SiteMap(mol).every_nth(atoms, 2, "s")
+    assert marked == [atoms[0].handle, atoms[2].handle]
+
+
+def test_site_map_clear_accepts_node_views():
+    mol, atoms = _carbons(2)
+    sites = molrs.SiteMap(mol)
+    sites.label_atoms([a.handle for a in atoms], "a", "b")
+    sites.clear([atoms[0]])
+    assert mol.get(atoms[0].handle, "site") in (None, "")
+    assert mol.get(atoms[1].handle, "site") == "b"
+
+
+def test_site_map_label_elements_error_names_the_element():
+    mol, _ = _carbons(1)
+    with pytest.raises(ValueError, match="Cl"):
+        molrs.SiteMap(mol).label_elements("Cl", "x")
+
+
+def test_a_site_error_names_a_node_by_its_python_handle():
+    mol, (atom,) = _carbons(1)
+    with pytest.raises(ValueError) as caught:
+        molrs.SiteMap(mol).every_nth([atom.handle], 1, "s", leaving="h")
+    message = str(caught.value)
+    assert str(atom.handle) in message
+    assert "NodeId(" not in message
 
 
 def test_find_rings_system():
@@ -391,7 +512,7 @@ def test_scale_about_center():
         mol.set(h, "x", float(i))
         mol.set(h, "y", 0.0)
         mol.set(h, "z", 0.0)
-    molrs.scale(mol, [2.0, 2.0, 2.0], [1.0, 0.0, 0.0])
+    mol.scale([2.0, 2.0, 2.0], [1.0, 0.0, 0.0])
     assert [mol.get(h, "x") for h in handles] == [-1.0, 1.0, 3.0]
 
 
@@ -401,5 +522,5 @@ def test_scale_uniform_about_origin():
     mol.set(h, "x", 1.0)
     mol.set(h, "y", 2.0)
     mol.set(h, "z", 3.0)
-    molrs.scale(mol, [0.5, 0.5, 0.5])
+    mol.scale([0.5, 0.5, 0.5])
     assert (mol.get(h, "x"), mol.get(h, "y"), mol.get(h, "z")) == (0.5, 1.0, 1.5)

@@ -28,7 +28,7 @@
 
 use std::collections::HashSet;
 
-use crate::system::atomistic::{AtomId, Atomistic, BondId};
+use crate::system::atomistic::{AtomId, Atomistic};
 use crate::system::bond::BondType;
 use crate::system::molgraph::Atom;
 use molrs::Element;
@@ -461,9 +461,9 @@ pub fn implicit_h_count(mol: &Atomistic, atom_id: AtomId) -> Option<u32> {
 fn valence_demand(mol: &Atomistic, atom_id: AtomId, lowest_valence: u8) -> f64 {
     // The two facts are read from their own places: how many bonds this is
     // (the localized number) and whether it is delocalized (the class).
-    let bonds: Vec<(BondType, f64)> = bond_ids_for(mol, atom_id)
-        .into_iter()
-        .map(|bid| {
+    let bonds: Vec<(BondType, f64)> = mol
+        .incident_bond_ids(atom_id)
+        .map(|(bid, _)| {
             let number = mol.bond_number(bid).count().max(1) as f64;
             (mol.bond_type(bid), number)
         })
@@ -482,23 +482,6 @@ fn valence_demand(mol: &Atomistic, atom_id: AtomId, lowest_valence: u8) -> f64 {
     } else {
         sigma
     }
-}
-
-/// Collect all `BondId`s incident to `atom_id` by scanning `mol.bonds()`.
-///
-/// O(E) — acceptable for the sizes of typical drug molecules.  If a
-/// `neighbors_with_bonds` API is added to `MolGraph` in the future this can
-/// be replaced with an O(degree) call.
-fn bond_ids_for(mol: &Atomistic, atom_id: AtomId) -> Vec<BondId> {
-    mol.bonds()
-        .filter_map(|(bid, bond)| {
-            if bond.nodes[0] == atom_id || bond.nodes[1] == atom_id {
-                Some(bid)
-            } else {
-                None
-            }
-        })
-        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1095,6 +1078,25 @@ mod tests {
 
         let result = remove_hydrogens(&g).expect("an exempt handle is not an error");
         assert_eq!(result.n_atoms(), 2, "the port handle is kept");
+    }
+
+    #[test]
+    fn implicit_h_count_on_a_long_alkane_reads_only_incident_bonds() {
+        // Guards the O(degree) incident-bond read in `valence_demand`: on a
+        // 2000-carbon chain the middle carbon has exactly two C-C bonds out of
+        // 1999, so it must see a bond-order sum of 2 and take 2 H; each end
+        // carbon sees one bond and takes 3.
+        const N: usize = 2000;
+        let mut g = Atomistic::new();
+        let ids: Vec<AtomId> = (0..N).map(|_| g.add_atom(atom("C"))).collect();
+        for pair in ids.windows(2) {
+            bond_with_order(&mut g, pair[0], pair[1], 1.0);
+        }
+        assert_eq!(g.n_bonds(), N - 1);
+
+        assert_eq!(implicit_h_count(&g, ids[N / 2]), Some(2));
+        assert_eq!(implicit_h_count(&g, ids[0]), Some(3));
+        assert_eq!(implicit_h_count(&g, ids[N - 1]), Some(3));
     }
 }
 

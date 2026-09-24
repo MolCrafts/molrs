@@ -60,11 +60,11 @@ use crate::core::store::block::PyBlock;
 use crate::core::store::frame::{PyFrame, PyFrameMeta, PyMetaDocument, PyMetaValue};
 use crate::core::store::trajectory::{PyScalarObservable, PyTrajectory, PyVectorObservable};
 use crate::core::system::element::PyElement;
+use crate::core::system::molgraph::PyRingInfo;
 use crate::core::system::molgraph::{
     PyAtomistic, PyCoarseGrain, PyExtractedSubgraph, PyFragment, PyGraph, PyReaction,
     PySmartsMatch, PySmartsPattern,
 };
-use crate::core::system::molgraph::{PyRingInfo, scale};
 use crate::core::units::{PyQuantity, PyUnit, PyUnitPreset, PyUnitRegistry};
 
 mod io;
@@ -344,10 +344,9 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLineOrienter>()?;
     m.add_class::<PyTangOrienter>()?;
 
-    // `scale` stays a free function. translate / rotate are methods on
-    // Atomistic, CoarseGrain and Fragment. Placement is a Placer subclass
-    // (TracePlacer) choosing an Orienter subclass (Line / Tang).
-    m.add_function(wrap_pyfunction!(scale, m)?)?;
+    // translate / rotate / scale are methods on Atomistic, CoarseGrain and
+    // Fragment. Placement is a Placer subclass (TracePlacer) choosing an
+    // Orienter subclass (Line / Tang).
 
     // Chemical perception, as a builder: graph in / graph out, non-mutating.
     m.add_class::<PyPerceive>()?;

@@ -317,10 +317,26 @@ impl CoarseGrain {
         crate::spatial::geometry::translate(self.as_molgraph_mut(), delta);
     }
 
+    /// Scale every bead that has coordinates by a per-axis `factor` about
+    /// `about` (the origin when `None`). Pass `[s, s, s]` for a uniform scale.
+    pub fn scale(&mut self, factor: [f64; 3], about: Option<[f64; 3]>) {
+        crate::spatial::geometry::scale(self.as_molgraph_mut(), factor, about);
+    }
+
     /// Rotate every bead that has coordinates by `angle` radians about `axis`.
     /// `about` defaults to the origin when `None`.
-    pub fn rotate(&mut self, axis: [f64; 3], angle: f64, about: Option<[f64; 3]>) {
-        crate::spatial::geometry::rotate(self.as_molgraph_mut(), axis, angle, about);
+    ///
+    /// # Errors
+    ///
+    /// The error of [`crate::spatial::geometry::rotate`] — `axis` has no
+    /// direction or `angle` is not finite; nothing moves then.
+    pub fn rotate(
+        &mut self,
+        axis: [f64; 3],
+        angle: f64,
+        about: Option<[f64; 3]>,
+    ) -> Result<(), crate::error::MolRsError> {
+        crate::spatial::geometry::rotate(self.as_molgraph_mut(), axis, angle, about)
     }
 
     // ---- subgraph extraction / composition ----
@@ -536,5 +552,38 @@ mod tests {
         cg.add_bead("W", 0.0, 0.0, 0.0);
         let g: MolGraph = cg.into_inner();
         assert_eq!(g.n_nodes(), 1);
+    }
+
+    #[test]
+    fn scale_multiplies_offsets_from_the_centre_per_axis() {
+        // p' = (p - c) * f + c. Point (1, 2, 3), factor (2, 3, 0.5):
+        //   about c = (1, 1, 1) -> (1, 4, 2);  about the origin -> (2, 6, 1.5).
+        let factor = [2.0, 3.0, 0.5];
+        let cases: [(Option<[f64; 3]>, [f64; 3]); 2] = [
+            (Some([1.0, 1.0, 1.0]), [1.0, 4.0, 2.0]),
+            (None, [2.0, 6.0, 1.5]),
+        ];
+        for (about, expected) in cases {
+            let mut sys = CoarseGrain::new();
+            let id = sys.add_bead("W", 1.0, 2.0, 3.0);
+            let fixed = sys.add_bead("W", 1.0, 1.0, 1.0);
+            sys.scale(factor, about);
+            let moved = sys.get_bead(id).expect("live handle");
+            for (key, want) in ["x", "y", "z"].into_iter().zip(expected) {
+                let got = moved.get_f64(key).expect("coordinate kept");
+                assert!(
+                    (got - want).abs() < 1e-12,
+                    "{about:?} {key}: {got} != {want}"
+                );
+            }
+            if about.is_some() {
+                // The centre itself is a fixed point of the map.
+                let centre = sys.get_bead(fixed).expect("live handle");
+                for key in ["x", "y", "z"] {
+                    let got = centre.get_f64(key).expect("coordinate kept");
+                    assert!((got - 1.0).abs() < 1e-12, "centre {key} moved to {got}");
+                }
+            }
+        }
     }
 }

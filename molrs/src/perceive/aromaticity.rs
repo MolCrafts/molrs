@@ -845,4 +845,51 @@ mod tests {
         let n2 = perceive_aromaticity(&mut g);
         assert_eq!(n1, n2);
     }
+
+    /// Every bond's `(bond_type, bond_number)` in iteration order.
+    #[cfg(feature = "smiles")]
+    fn bond_classes(mol: &Atomistic) -> Vec<(BondType, BondNumber)> {
+        mol.bonds()
+            .map(|(id, _)| (mol.bond_type(id), mol.bond_number(id)))
+            .collect()
+    }
+
+    /// A ring-free molecule has no ring to classify: perception must flag no
+    /// atom, leave every bond's class and localized number as the input stated
+    /// them, and still write `is_aromatic = 0` on every atom.
+    #[cfg(feature = "smiles")]
+    fn assert_ring_free_stays_non_aromatic(smiles: &str) {
+        use crate::io::smiles::{parse_smiles, to_atomistic};
+        let mut mol = to_atomistic(&parse_smiles(smiles).expect("parse")).expect("to_atomistic");
+        let before = bond_classes(&mol);
+
+        let n = perceive_aromaticity(&mut mol);
+
+        assert_eq!(n, 0, "{smiles}: no atom of a chain is aromatic");
+        for (id, _) in mol.atoms() {
+            let atom = mol.get_atom(id).expect("live atom");
+            assert_eq!(
+                atom.get_int("is_aromatic"),
+                Some(0),
+                "{smiles}: atom {id:?} must be written non-aromatic"
+            );
+        }
+        assert!(
+            mol.bonds().all(|(id, _)| !mol.bond_type(id).is_aromatic()),
+            "{smiles}: no bond of a chain is aromatic"
+        );
+        assert_eq!(bond_classes(&mol), before, "{smiles}: bonds unchanged");
+    }
+
+    #[cfg(feature = "smiles")]
+    #[test]
+    fn butane_has_no_aromatic_atom_or_bond() {
+        assert_ring_free_stays_non_aromatic("CCCC");
+    }
+
+    #[cfg(feature = "smiles")]
+    #[test]
+    fn a_fifty_carbon_alkane_has_no_aromatic_atom_or_bond() {
+        assert_ring_free_stays_non_aromatic(&"C".repeat(50));
+    }
 }

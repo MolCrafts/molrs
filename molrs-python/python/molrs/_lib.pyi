@@ -8,6 +8,7 @@ the same parameter names as the compiled signature.
 
 from collections.abc import ItemsView, KeysView, ValuesView
 from typing import (
+    TYPE_CHECKING,
     Any,
     ClassVar,
     Dict,
@@ -16,6 +17,7 @@ from typing import (
     List,
     Literal,
     Optional,
+    Self,
     Sequence,
     Tuple,
     TypeVar,
@@ -24,6 +26,9 @@ from typing import (
 )
 import numpy as np
 import numpy.typing as npt
+
+if TYPE_CHECKING:
+    from .views import NodeRef
 
 # Type aliases — `F = f64` is invariant in molrs-core; Python side must match.
 ArrayF = npt.ArrayF
@@ -968,10 +973,27 @@ class Atomistic(Graph):
     def structural_hash(self) -> int: ...
     def canonical_order(self) -> list[int]: ...
     def is_isomorphic(self, other: "Atomistic") -> bool: ...
-    def translate(self, delta: List[float]) -> None: ...
+    def translate(self, delta: List[float]) -> Self:
+        """Translate every node that has coordinates by ``delta``; returns self."""
+        ...
     def rotate(
         self, axis: List[float], angle: float, about: Optional[List[float]] = None
-    ) -> None: ...
+    ) -> Self:
+        """Rotate every node that has coordinates by ``angle`` radians about
+        ``axis``, pivoting on ``about`` (default: the origin); returns self.
+
+        Raises:
+            ValueError: ``axis`` has no direction or ``angle`` is not finite;
+                nothing moves then.
+        """
+        ...
+    def scale(
+        self, factor: List[float], about: Optional[List[float]] = None
+    ) -> Self:
+        """Scale every node that has coordinates by a per-axis ``factor``
+        about ``about`` (default: the origin); returns self. Pass
+        ``[s, s, s]`` for a uniform scale."""
+        ...
 
 class ExtractedSubgraph:
     """Result of :meth:`Atomistic.extract_subgraph` / :meth:`CoarseGrain.extract_subgraph`."""
@@ -1032,10 +1054,27 @@ class CoarseGrain(Graph):
     def structural_hash(self) -> int: ...
     def canonical_order(self) -> list[int]: ...
     def is_isomorphic(self, other: "CoarseGrain") -> bool: ...
-    def translate(self, delta: List[float]) -> None: ...
+    def translate(self, delta: List[float]) -> Self:
+        """Translate every node that has coordinates by ``delta``; returns self."""
+        ...
     def rotate(
         self, axis: List[float], angle: float, about: Optional[List[float]] = None
-    ) -> None: ...
+    ) -> Self:
+        """Rotate every node that has coordinates by ``angle`` radians about
+        ``axis``, pivoting on ``about`` (default: the origin); returns self.
+
+        Raises:
+            ValueError: ``axis`` has no direction or ``angle`` is not finite;
+                nothing moves then.
+        """
+        ...
+    def scale(
+        self, factor: List[float], about: Optional[List[float]] = None
+    ) -> Self:
+        """Scale every node that has coordinates by a per-axis ``factor``
+        about ``about`` (default: the origin); returns self. Pass
+        ``[s, s, s]`` for a uniform scale."""
+        ...
 
 class Fragment(Graph):
     """Fragment leaf — holds a core ``Fragment`` from construction.
@@ -1077,10 +1116,27 @@ class Fragment(Graph):
     def to_frame(self) -> Frame: ...
     @staticmethod
     def from_frame(frame: Frame) -> "Fragment": ...
-    def translate(self, delta: List[float]) -> None: ...
+    def translate(self, delta: List[float]) -> Self:
+        """Translate every node that has coordinates by ``delta``; returns self."""
+        ...
     def rotate(
         self, axis: List[float], angle: float, about: Optional[List[float]] = None
-    ) -> None: ...
+    ) -> Self:
+        """Rotate every node that has coordinates by ``angle`` radians about
+        ``axis``, pivoting on ``about`` (default: the origin); returns self.
+
+        Raises:
+            ValueError: ``axis`` has no direction or ``angle`` is not finite;
+                nothing moves then.
+        """
+        ...
+    def scale(
+        self, factor: List[float], about: Optional[List[float]] = None
+    ) -> Self:
+        """Scale every node that has coordinates by a per-axis ``factor``
+        about ``about`` (default: the origin); returns self. Pass
+        ``[s, s, s]`` for a uniform scale."""
+        ...
 
 class SmartsMatch:
     """One SMARTS embedding."""
@@ -1172,17 +1228,6 @@ class Reaction:
         refresh: bool = True,
     ) -> tuple[list[list[int]], list[list[int]]]: ...
 
-# ---------------------------------------------------------------------------
-# Systems — module-level free functions over a graph world
-# ---------------------------------------------------------------------------
-
-def scale(
-    mol: Graph, factor: List[float], about: Optional[List[float]] = None
-) -> None:
-    """Scale node coordinates by a per-axis `factor` about an optional center
-    (defaults to the origin). Pass `[s, s, s]` for a uniform scale. Generic
-    geometry system."""
-    ...
 # ---------------------------------------------------------------------------
 # Chemical perception — the builder (graph in / graph out, non-mutating)
 # ---------------------------------------------------------------------------
@@ -1732,17 +1777,29 @@ class SiteMap:
 
     A site is an ordinary atom carrying the ``site`` field: a plain unordered
     name a reaction SMARTS finds with a ``%label`` predicate, not a port.
+
+    Every node argument is an int handle or a node view (:class:`NodeRef`,
+    e.g. an ``Atom``) — anything with an int ``.handle``. Nodes are always
+    returned as int handles. ``mol`` is checked at construction: anything but
+    a ``Graph`` or one of its leaves raises ``TypeError``.
     """
 
     def __init__(self, mol: Graph) -> None: ...
     @property
     def mol(self) -> Graph: ...
-    def label(self, node: int, name: str) -> None: ...
-    def label_atoms(self, nodes: List[int], *names: str) -> List[int]: ...
-    def label_elements(self, element: str, *names: str) -> List[int]: ...
+    def label(self, node: int | NodeRef, name: str) -> None: ...
+    def label_atoms(self, nodes: Sequence[int | NodeRef], *names: str) -> List[int]: ...
+    def label_elements(self, element: str, *names: str) -> List[int]:
+        """Label the first atoms of ``element``, in node order.
+
+        Raises:
+            ValueError: fewer ``element`` atoms than names (the message names
+                the element), or no name given.
+        """
+        ...
     def every_nth(
         self,
-        nodes: List[int],
+        nodes: Sequence[int | NodeRef],
         step: int,
         site: str,
         leaving: Optional[str] = None,
@@ -1751,7 +1808,7 @@ class SiteMap:
     def prepare_leaving_hydrogens(
         self, site: str, leaving: str = "h", fold_charge: bool = True
     ) -> int: ...
-    def clear(self, nodes: Optional[List[int]] = None) -> None: ...
+    def clear(self, nodes: Optional[Sequence[int | NodeRef]] = None) -> None: ...
 
 class Placer:
     """Put the fragments a set of forming bonds joins at a pose. Base class.
@@ -1773,22 +1830,61 @@ class Placer:
         ...
 
 class TracePlacer(Placer):
-    """Lay the fragments of a topology along a :class:`Trace`.
+    """Grow the fragments a set of forming bonds joins out of one another.
 
-    Fragments are node groups read off `res_id` by default; each child fragment
-    lands on the next trace sample and is turned by the orienter. The straight
-    default trace is used until :meth:`with_trace` supplies one.
+    Fragments are node groups read off ``res_id`` by default. The placer walks
+    the fragment graph breadth-first from the lowest fragment id and moves each
+    other fragment rigidly, once, relative to **its own parent**: the child's
+    anchor (the atom the bond reaches) lands one bonding range — summed
+    covalent radii plus the buffer — from the parent's reacting atom along a
+    growth direction, and the orienter turns the child to point along it, away
+    from the parent.
+
+    * **No trace (default).** The root stays where it is; a child grows along
+      its parent's outward direction, from the parent's centroid through its
+      reacting atom (``+x`` when those coincide). Any tree of fragments places:
+      paths, stars, combs.
+    * **With a trace** (:meth:`with_trace`). The fragments must form a single
+      path; the trace supplies directions, not positions.
+
+    A forming bond that closes a ring of fragments is checked, not placed.
     """
 
     def __init__(self) -> None: ...
-    def with_trace(self, trace: Trace) -> "TracePlacer": ...
+    def with_trace(self, trace: Trace) -> "TracePlacer":
+        """Grow a path of fragments along ``trace``'s tangents instead of each
+        parent's outward direction.
+
+        The root turns so its outward direction follows the tangent at sample 0
+        and its reacting atom sits on sample 0; the ``k``-th child grows along
+        the tangent at sample ``k``. The chain follows the curve's shape at
+        bonding range rather than landing on the samples. :meth:`place` then
+        refuses a branched or cyclic fragment graph, and a trace with fewer
+        samples than fragments, with ``ValueError``.
+        """
+        ...
     def with_orienter(
         self, orienter: LineOrienter | TangOrienter
     ) -> "TracePlacer": ...
     def with_buffer(self, buffer: float) -> "TracePlacer": ...
     def with_group_key(self, key: str) -> "TracePlacer": ...
     def with_site_key(self, key: str) -> "TracePlacer": ...
-    def place(self, mol: Graph, bonds: List[Tuple[int, int]]) -> None: ...
+    def place(self, mol: Graph, bonds: List[Tuple[int, int]]) -> None:
+        """Move whole fragments so each forming bond ends at bonding range.
+
+        ``bonds`` are ``(parent-side handle, child-side handle)`` pairs.
+
+        Raises:
+            ValueError: nothing has moved when raised. The bonds join the
+                fragments into more than one piece (unreachable fragment); a
+                trace was given but the fragments branch or close a ring, or
+                the trace has fewer samples than fragments; a ring-closing
+                bond is not at bonding range once the tree is placed; a
+                fragment cannot be faced (no site axis or tangent direction);
+                or an endpoint lacks a fragment id, an element, a tabulated
+                radius, or coordinates. Errors name nodes by their handle.
+        """
+        ...
 
 class Orienter:
     """Which way a fragment faces.

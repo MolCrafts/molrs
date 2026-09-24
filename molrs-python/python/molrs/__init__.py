@@ -77,8 +77,7 @@ from ._lib import (
     Fragment,
     ExtractedSubgraph,
     Reaction,
-    # Systems (module-level free functions over a graph)
-    scale,
+    # Building: site labels and fragment placement
     Trace,
     SiteMap,
     Placer,
@@ -223,7 +222,6 @@ __all__ = [
     "Bead",
     "CGBond",
     "Port",
-    "scale",
     "Trace",
     "SiteMap",
     "Placer",

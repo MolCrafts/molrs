@@ -11,7 +11,7 @@
 //! that leaves when it reacts.
 
 use crate::store::keys;
-use crate::system::molgraph::{MolGraph, NodeId, PropValue};
+use crate::system::molgraph::{MolGraph, NodeId, PropValue, node_to_u64};
 
 /// The field marking an atom as a reaction site.
 pub const SITE_KEY: &str = keys::SITE;
@@ -52,12 +52,15 @@ impl std::fmt::Display for SiteError {
             Self::StepTooSmall { step } => write!(f, "step must be >= 1, got {step}"),
             Self::NoLeavingHydrogen { node } => write!(
                 f,
-                "node {node:?} carries a site label but no hydrogen neighbour to leave"
+                "node {} carries a site label but no hydrogen neighbour to leave",
+                node_to_u64(*node)
             ),
             Self::OneSidedCharge { site, hydrogen } => write!(
                 f,
-                "cannot fold charge: only one of site {site:?} and its leaving hydrogen \
-                 {hydrogen:?} carries a charge"
+                "cannot fold charge: only one of site {} and its leaving hydrogen {} \
+                 carries a charge",
+                node_to_u64(*site),
+                node_to_u64(*hydrogen)
             ),
             Self::Graph(message) => write!(f, "{message}"),
         }

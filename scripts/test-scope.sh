@@ -4,6 +4,7 @@
 #   scripts/test-scope.sh                            # modules changed vs HEAD (incl. untracked)
 #   scripts/test-scope.sh origin/dev                 # modules changed vs a revision
 #   scripts/test-scope.sh ff::potential              # explicit module path(s)
+#   scripts/test-scope.sh perceive                   # a bare top-level module
 #   scripts/test-scope.sh molrs/src/io/data/xyz.rs   # explicit file path(s)
 #
 # Why a script and not a hand-typed `cargo test <module>`: the feature string
@@ -32,7 +33,16 @@ for arg in "$@"; do
     case "$arg" in
         *::*) modules+=("$arg") ;;
         *.rs | molrs/*) paths+=("$arg") ;;
-        *) rev="$arg" ;;
+        -*) modules+=("$arg") ;;
+        *)
+            # A revision only if git resolves it to a commit; anything else
+            # (`perceive`, `ff`) is a bare module name, never silently dropped.
+            if git rev-parse --verify --quiet --end-of-options "$arg^{commit}" >/dev/null; then
+                rev="$arg"
+            else
+                modules+=("$arg")
+            fi
+            ;;
     esac
 done
 

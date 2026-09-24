@@ -1951,42 +1951,34 @@ impl PyFragment {
 }
 
 // ---------------------------------------------------------------------------
-// Systems = module-level free functions
+// World dispatch for binders that take any graph
 // ---------------------------------------------------------------------------
 //
-// Algorithms are NOT methods on the graph classes; they are module functions
-// that take a world. Generic geometry systems accept any of the three types and
-// dispatch leaf-first so a leaf resolves to its *own* graph (never the empty
-// base it carries for `issubclass`). Chemistry systems require an `Atomistic`,
-// so they take `PyAtomistic` directly.
+// Rigid-body moves (`translate` / `rotate` / `scale`) are leaf methods, below.
+// Owners that act on a graph they are handed (`SiteMap`, `TracePlacer`) accept
+// any of the graph types and dispatch leaf-first so a leaf resolves to its
+// *own* graph (never the empty base it carries for `issubclass`).
 
-/// Resolve a Python graph object to its own `MolGraph` and run `f` on it.
-/// Leaf-first so a `PyAtomistic`/`PyCoarseGrain`/`PyFragment` uses its core
-/// graph, not the empty `PyGraph` base it carries for subclassing. A missing
-/// leaf arm is not an error but a *wrong answer*: the fallthrough would move
-/// the empty base and report success.
-pub(crate) fn with_world_mut(
-    mol: &Bound<'_, PyAny>,
-    f: impl FnOnce(&mut MolGraph),
-) -> PyResult<()> {
-    if let Ok(leaf) = mol.cast::<PyAtomistic>() {
-        f(leaf.borrow_mut().mol_mut());
-    } else if let Ok(leaf) = mol.cast::<PyCoarseGrain>() {
-        f(leaf.borrow_mut().mol_mut());
-    } else if let Ok(leaf) = mol.cast::<PyFragment>() {
-        f(leaf.borrow_mut().mol_mut());
-    } else if let Ok(g) = mol.cast::<PyGraph>() {
-        f(g.borrow_mut().mol_mut());
+/// Refuse at once any object [`try_with_world_mut`] would refuse later, so a
+/// type that stores a graph fails at construction rather than on first use.
+/// Every leaf extends `PyGraph`, so one type check covers all four.
+pub(crate) fn expect_world(mol: &Bound<'_, PyAny>) -> PyResult<()> {
+    if mol.is_instance_of::<PyGraph>() {
+        Ok(())
     } else {
-        return Err(PyTypeError::new_err(
-            "expected a Graph / Atomistic / CoarseGrain / Fragment",
-        ));
+        Err(PyTypeError::new_err(format!(
+            "expected a Graph / Atomistic / CoarseGrain / Fragment, got {}",
+            mol.get_type().name()?
+        )))
     }
-    Ok(())
 }
 
-/// The fallible sibling of [`with_world_mut`]: the same leaf-first dispatch,
-/// with the closure's `Result` handed back to Python as a `ValueError`.
+/// Resolve a Python graph object to its own `MolGraph` and run `f` on it,
+/// handing the closure's `Result` back to Python as a `ValueError`.
+/// Leaf-first so a `PyAtomistic`/`PyCoarseGrain`/`PyFragment` uses its core
+/// graph, not the empty `PyGraph` base it carries for subclassing. A missing
+/// leaf arm is not an error but a *wrong answer*: the fallthrough would edit
+/// the empty base and report success.
 pub(crate) fn try_with_world_mut<T, E: std::fmt::Display>(
     mol: &Bound<'_, PyAny>,
     f: impl FnOnce(&mut MolGraph) -> Result<T, E>,
@@ -2011,15 +2003,39 @@ macro_rules! rigid_body_impl {
     ($ty:ty) => {
         #[pymethods]
         impl $ty {
-            /// Translate every node that has coordinates by `delta`.
-            fn translate(&mut self, delta: [f64; 3]) {
-                molrs::spatial::geometry::translate(self.mol_mut(), delta);
+            /// Translate every node that has coordinates by `delta`. Returns
+            /// this graph, so moves chain.
+            fn translate(mut slf: PyRefMut<'_, Self>, delta: [f64; 3]) -> PyRefMut<'_, Self> {
+                molrs::spatial::geometry::translate(slf.mol_mut(), delta);
+                slf
             }
 
-            /// Rotate every node that has coordinates by `angle` radians about `axis`.
+            /// Rotate every node that has coordinates by `angle` radians about
+            /// `axis`, pivoting on `about` (default: the origin). Returns this
+            /// graph, so moves chain.
             #[pyo3(signature = (axis, angle, about=None))]
-            fn rotate(&mut self, axis: [f64; 3], angle: f64, about: Option<[f64; 3]>) {
-                molrs::spatial::geometry::rotate(self.mol_mut(), axis, angle, about);
+            fn rotate(
+                mut slf: PyRefMut<'_, Self>,
+                axis: [f64; 3],
+                angle: f64,
+                about: Option<[f64; 3]>,
+            ) -> PyResult<PyRefMut<'_, Self>> {
+                molrs::spatial::geometry::rotate(slf.mol_mut(), axis, angle, about)
+                    .map_err(|error| PyValueError::new_err(error.to_string()))?;
+                Ok(slf)
+            }
+
+            /// Scale every node that has coordinates by a per-axis `factor`
+            /// about `about` (default: the origin). Pass `[s, s, s]` for a
+            /// uniform scale. Returns this graph, so moves chain.
+            #[pyo3(signature = (factor, about=None))]
+            fn scale(
+                mut slf: PyRefMut<'_, Self>,
+                factor: [f64; 3],
+                about: Option<[f64; 3]>,
+            ) -> PyRefMut<'_, Self> {
+                molrs::spatial::geometry::scale(slf.mol_mut(), factor, about);
+                slf
             }
         }
     };
@@ -2028,15 +2044,6 @@ macro_rules! rigid_body_impl {
 rigid_body_impl!(PyAtomistic);
 rigid_body_impl!(PyCoarseGrain);
 rigid_body_impl!(PyFragment);
-
-/// Scale node coordinates by a per-axis `factor` about an optional center
-/// (defaults to the origin). Pass `[s, s, s]` for a uniform scale. Generic
-/// geometry system.
-#[pyfunction]
-#[pyo3(signature = (mol, factor, about=None))]
-pub fn scale(mol: &Bound<'_, PyAny>, factor: [f64; 3], about: Option<[f64; 3]>) -> PyResult<()> {
-    with_world_mut(mol, |g| molrs::spatial::geometry::scale(g, factor, about))
-}
 
 /// The ring facts of a molecule: SSSR rings and the systems they fuse into.
 ///
