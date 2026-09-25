@@ -13,9 +13,6 @@ spec files.
 | [frame-meta-dict-parity-05-document](frame-meta-dict-parity-05-document.md) — MetaDocument + tuples: every frame.meta door hands back a frozen value | approved |
 | [frame-meta-dict-parity-07-sequence](frame-meta-dict-parity-07-sequence.md) — sequence meta-key maps follow declaration order; other BTreeMaps stay sorted | approved |
 | [cgsmiles-03-release](cgsmiles-03-release.md) — release molrs 0.15.0: version literals, release notes, full gate, tag, Publish | approved |
-| [opls-gromacs-01-gromacs-io](opls-gromacs-01-gromacs-io.md) — GROMACS force-field reader/writer are directive-only and correct (funct map, comb-rule 3, RB↔Fourier once, refusals by name); free doors deleted | code-complete (chain gate owed) |
-| [opls-gromacs-02-table](opls-gromacs-02-table.md) — OPLS-AA table regenerated from pinned GROMACS v2026.3 oplsaa.ff (classes = bond_type, geometric mixing, provenance); rules split into OplsRuleRow | code-complete (chain gate owed) |
-| [opls-gromacs-03-rules](opls-gromacs-03-rules.md) — molrs-owned Daylight OPLS typing rules, aromaticity on a private copy, pairwise override dominance, opls_150/178; Python skip_directives; chain gate | in-progress |
 
 The `frame-meta-dict-parity-*` links are one chain (`frame.meta` becomes a
 Python dict in behaviour, revised 2026-09-22). They land on the unreleased
@@ -68,4 +65,4 @@ manual checklist in `.claude/notes/release.md` § v0.14.0.
 - **12** the full-import and warning-scope gates are not unit tests and are
   not written; the molnex smoke and the molpy tag are release mechanics.
 
-The three `opls-gromacs-*` links are one chain (2026-09-25, operator-ruled): OPLS-AA follows GROMACS `share/top/oplsaa.ff` (v2026.3, commit 42105e46…) for types, charges, classes, LJ and bonded parameters; the typing SMARTS rules are molrs-owned Daylight SMARTS with explicit bonds and aromaticity perceived before matching; CL&P does not land in molrs (molpy deletes its typifiers in its own chain). Chain order 01 → 03, linear. Shared rules: each task verifies with `cargo mrs-test [-- filter]` only; no A/B harness, no second build cache; Rust first — the one binder change (molrs-python) is in 03; links 01–02 are never committed on their own; one full gate at the end of 03 discharges every link's full-gate criterion. English only; stage experimental.
+The three `opls-gromacs-*` links (closed 2026-09-26, commit d274957e; record in `.claude/notes/release.md`) were one chain (2026-09-25, operator-ruled): OPLS-AA follows GROMACS `share/top/oplsaa.ff` (v2026.3, commit 42105e46…) for types, charges, classes, LJ and bonded parameters; the typing SMARTS rules are molrs-owned Daylight SMARTS with explicit bonds and aromaticity perceived before matching; CL&P does not land in molrs (molpy deletes its typifiers in its own chain). Chain order 01 → 03, linear. Shared rules: each task verifies with `cargo mrs-test [-- filter]` only; no A/B harness, no second build cache; Rust first — the one binder change (molrs-python) is in 03; links 01–02 are never committed on their own; one full gate at the end of 03 discharges every link's full-gate criterion. English only; stage experimental.
