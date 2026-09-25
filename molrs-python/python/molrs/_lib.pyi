@@ -1815,14 +1815,18 @@ class Placer:
 
     The contract every placer honours: a forming bond is a
     ``(parent-side atom, child-side atom)`` pair of handles; after
-    :meth:`place`, each forming bond's endpoints sit at bonding range; a
-    placer that cannot do that raises and never leaves a partial placement
-    behind. A subclass may take its own constructor arguments.
+    :meth:`place`, every tree forming bond — a fragment to its parent in the
+    placement walk — sits at bonding range; a placer that cannot do that
+    raises and never leaves a partial placement behind. A placer does not
+    close rings: a ring-closing bond is formed but not placed, and its length
+    is the caller's concern (an explicit trace, or geometry optimisation
+    afterwards). A subclass may take its own constructor arguments.
     """
 
     def __init__(self, *args: object, **kwargs: object) -> None: ...
     def place(self, mol: Graph, bonds: List[Tuple[int, int]]) -> None:
-        """Move whole fragments so each forming bond ends at bonding range.
+        """Move whole fragments so every tree forming bond ends at bonding
+        range.
 
         Raises:
             NotImplementedError: always, on the base class.
@@ -1833,21 +1837,25 @@ class TracePlacer(Placer):
     """Grow the fragments a set of forming bonds joins out of one another.
 
     Fragments are node groups read off ``res_id`` by default. The placer walks
-    the fragment graph breadth-first from the lowest fragment id and moves each
-    other fragment rigidly, once, relative to **its own parent**: the child's
+    the fragment graph from a root fragment and moves each other fragment
+    rigidly, once, relative to **its own parent**: the child's
     anchor (the atom the bond reaches) lands one bonding range — summed
     covalent radii plus the buffer — from the parent's reacting atom along a
     growth direction, and the orienter turns the child to point along it, away
     from the parent.
 
-    * **No trace (default).** The root stays where it is; a child grows along
-      its parent's outward direction, from the parent's centroid through its
-      reacting atom (``+x`` when those coincide). Any tree of fragments places:
-      paths, stars, combs.
+    * **No trace (default).** The walk is breadth-first from the lowest
+      fragment id, which stays where it is; a child grows along its parent's
+      outward direction, from the parent's centroid through its reacting atom
+      (``+x`` when those coincide). Any connected fragment graph places —
+      paths, stars, combs, rings — along the walk's spanning tree.
     * **With a trace** (:meth:`with_trace`). The fragments must form a single
-      path; the trace supplies directions, not positions.
+      path, or a single ring walked as a path from its lowest id; the trace
+      supplies directions, not positions.
 
-    A forming bond that closes a ring of fragments is checked, not placed.
+    A forming bond that closes a ring of fragments is neither placed nor
+    checked: its length is the caller's concern (a closed trace of the ring's
+    size, or geometry optimisation afterwards).
     """
 
     def __init__(self) -> None: ...
@@ -1858,9 +1866,11 @@ class TracePlacer(Placer):
         The root turns so its outward direction follows the tangent at sample 0
         and its reacting atom sits on sample 0; the ``k``-th child grows along
         the tangent at sample ``k``. The chain follows the curve's shape at
-        bonding range rather than landing on the samples. :meth:`place` then
-        refuses a branched or cyclic fragment graph, and a trace with fewer
-        samples than fragments, with ``ValueError``.
+        bonding range rather than landing on the samples. A ring of fragments
+        is walked as a path from its lowest id; its closing bond is formed but
+        not placed. :meth:`place` then refuses a fragment joined to three
+        others or more, and a trace with fewer samples than fragments, with
+        ``ValueError``.
         """
         ...
     def with_orienter(
@@ -1870,16 +1880,18 @@ class TracePlacer(Placer):
     def with_group_key(self, key: str) -> "TracePlacer": ...
     def with_site_key(self, key: str) -> "TracePlacer": ...
     def place(self, mol: Graph, bonds: List[Tuple[int, int]]) -> None:
-        """Move whole fragments so each forming bond ends at bonding range.
+        """Move whole fragments so every tree forming bond ends at bonding
+        range.
 
-        ``bonds`` are ``(parent-side handle, child-side handle)`` pairs.
+        ``bonds`` are ``(parent-side handle, child-side handle)`` pairs. A
+        ring-closing bond is formed but not placed; its length is the
+        caller's concern.
 
         Raises:
             ValueError: nothing has moved when raised. The bonds join the
                 fragments into more than one piece (unreachable fragment); a
-                trace was given but the fragments branch or close a ring, or
-                the trace has fewer samples than fragments; a ring-closing
-                bond is not at bonding range once the tree is placed; a
+                trace was given but a fragment is joined to three others or
+                more, or the trace has fewer samples than fragments; a
                 fragment cannot be faced (no site axis or tangent direction);
                 or an endpoint lacks a fragment id, an element, a tabulated
                 radius, or coordinates. Errors name nodes by their handle.

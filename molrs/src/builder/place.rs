@@ -18,23 +18,26 @@ use crate::system::element::Element;
 use crate::system::molgraph::{MolGraph, NodeId, node_to_u64};
 use crate::types::F;
 
-/// Farthest (Å) a ring-closing forming bond may end from bonding range and
-/// still count as closed.
-///
-/// Rigid fragments bond exactly along a spanning tree; a ring-closing bond is
-/// whatever length the tree leaves it, so this is a rounding allowance, not a
-/// chemical one.
-const CLOSURE_TOLERANCE: F = 1e-6;
-
 /// Put the fragments a set of forming bonds joins at a pose.
 ///
 /// Implementations mutate `world`'s coordinates in place. `bonds` are the
 /// node pairs the reaction is about to join, each `(parent-side atom,
 /// child-side atom)`. A placer that cannot place every fragment the bonds
 /// join returns an error and never leaves a partial placement behind.
+///
+/// A placer knows only local information: it places each fragment relative to
+/// its parent in the placement walk. It does not close rings. A ring's global
+/// shape is the caller's to give — an explicit trace of the right size — or
+/// geometry optimisation's to find afterwards.
 pub trait Placer {
-    /// Move whole fragments so each forming bond's endpoints sit at bonding
-    /// range.
+    /// Move whole fragments so every tree forming bond — one joining a
+    /// fragment to its parent in the placement walk — ends at bonding range.
+    ///
+    /// A forming bond the walk does not cross closes a ring of fragments. It is
+    /// neither placed nor checked: its length is whatever the tree leaves it,
+    /// and closing it is the caller's concern (an explicit trace, or geometry
+    /// optimisation afterwards). It is still a forming bond, so the reaction
+    /// still forms it.
     ///
     /// # Errors
     ///
@@ -48,8 +51,9 @@ pub trait Placer {
     ///   tabulated covalent radius;
     /// - [`PlaceError::Unreachable`] — the bonds join fragments into more than
     ///   one connected piece, so some fragment has no path from the root;
-    /// - [`PlaceError::Branched`] — a trace was given but the bonds do not
-    ///   join the fragments into a single path;
+    /// - [`PlaceError::Branched`] — a trace was given but some fragment is
+    ///   joined to three others or more, so the fragments are neither a path
+    ///   nor a ring;
     /// - [`PlaceError::Index`] — the trace has fewer samples than fragments to
     ///   place;
     /// - [`PlaceError::MissingCoordinates`] — a node the placement reads lacks
@@ -58,8 +62,6 @@ pub trait Placer {
     ///   parent; with one, every node of the root;
     /// - [`PlaceError::Unorientable`] — a child's site axis, or the trace
     ///   tangent it grows along, has no direction;
-    /// - [`PlaceError::RingClosure`] — a forming bond that closes a ring of
-    ///   fragments does not end at bonding range once the others do;
     /// - [`PlaceError::Graph`] — the graph refused a coordinate write.
     ///
     /// Every error except [`PlaceError::Graph`] is raised before `world` is
@@ -83,6 +85,28 @@ struct Junction {
     to_end: Endpoint,
 }
 
+impl Junction {
+    /// This junction as a step out of the fragment already placed: out of
+    /// `to` when `reversed`, else out of `from`.
+    fn step(&self, reversed: bool) -> Step {
+        if reversed {
+            Step {
+                parent: self.to,
+                child: self.from,
+                parent_end: self.to_end,
+                child_end: self.from_end,
+            }
+        } else {
+            Step {
+                parent: self.from,
+                child: self.to,
+                parent_end: self.from_end,
+                child_end: self.to_end,
+            }
+        }
+    }
+}
+
 /// A junction the walk crosses, oriented from the fragment already placed to
 /// the one it places.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -93,27 +117,31 @@ struct Step {
     child_end: Endpoint,
 }
 
-/// A breadth-first walk over the fragment graph the junctions span.
+/// A walk over the fragment graph the junctions span.
 ///
 /// `steps` is a spanning tree: every fragment but `root` is some step's child
-/// exactly once, and its parent is placed before it. `closures` are the
-/// junctions the tree does not use — each one closes a ring of fragments.
+/// exactly once, and its parent is placed before it. A junction the tree does
+/// not use closes a ring of fragments; the walk leaves it out, so nothing
+/// places it.
 struct Walk {
     root: i64,
     steps: Vec<Step>,
-    closures: Vec<Junction>,
 }
 
 impl Walk {
-    /// Walk from the lowest fragment id or, `from_an_end`, from the lowest id
-    /// joined to at most one other fragment (the lowest id when every
-    /// fragment has two partners or more). `None` when there is no junction.
+    /// Walk breadth-first from the lowest fragment id or, `as_path`, as one
+    /// path: from the lowest id joined to at most one other fragment (the
+    /// lowest id when every fragment is joined to two, a ring), each step
+    /// leaving from the fragment the previous one placed. `None` when there is
+    /// no junction.
     ///
     /// # Errors
     ///
-    /// [`PlaceError::Unreachable`] naming the lowest fragment the junctions
-    /// touch that has no path from the root.
-    fn new(junctions: &[Junction], from_an_end: bool) -> Result<Option<Self>, PlaceError> {
+    /// - [`PlaceError::Unreachable`] naming the lowest fragment the junctions
+    ///   touch that has no path from the root;
+    /// - [`PlaceError::Branched`], `as_path` only, naming the lowest fragment
+    ///   joined to three others or more.
+    fn new(junctions: &[Junction], as_path: bool) -> Result<Option<Self>, PlaceError> {
         let mut adjacency: HashMap<i64, Vec<(usize, bool)>> = HashMap::new();
         let mut partners: BTreeMap<i64, BTreeSet<i64>> = BTreeMap::new();
         for (index, junction) in junctions.iter().enumerate() {
@@ -137,7 +165,7 @@ impl Walk {
         let Some(&lowest) = partners.keys().next() else {
             return Ok(None);
         };
-        let root = if from_an_end {
+        let root = if as_path {
             partners
                 .iter()
                 .find(|(_, joined)| joined.len() <= 1)
@@ -145,80 +173,72 @@ impl Walk {
         } else {
             lowest
         };
+        let leaving = |parent: i64| {
+            adjacency
+                .get(&parent)
+                .into_iter()
+                .flatten()
+                .map(move |&(index, reversed)| junctions[index].step(reversed))
+        };
 
         let mut seen = HashSet::from([root]);
-        let mut crossed = vec![false; junctions.len()];
+        let mut tree = Vec::new();
         let mut queue = VecDeque::from([root]);
-        let (mut steps, mut closures) = (Vec::new(), Vec::new());
         while let Some(parent) = queue.pop_front() {
-            for &(index, reversed) in adjacency.get(&parent).into_iter().flatten() {
-                if std::mem::replace(&mut crossed[index], true) {
-                    continue;
-                }
-                let junction = junctions[index];
-                let (child, parent_end, child_end) = if reversed {
-                    (junction.from, junction.to_end, junction.from_end)
-                } else {
-                    (junction.to, junction.from_end, junction.to_end)
-                };
-                if seen.insert(child) {
-                    queue.push_back(child);
-                    steps.push(Step {
-                        parent,
-                        child,
-                        parent_end,
-                        child_end,
-                    });
-                } else {
-                    closures.push(junction);
+            for step in leaving(parent) {
+                if seen.insert(step.child) {
+                    queue.push_back(step.child);
+                    tree.push(step);
                 }
             }
         }
-        match partners.keys().find(|fragment| !seen.contains(fragment)) {
-            Some(&fragment) => Err(PlaceError::Unreachable { fragment }),
-            None => Ok(Some(Self {
-                root,
-                steps,
-                closures,
-            })),
+        if let Some(&fragment) = partners.keys().find(|fragment| !seen.contains(fragment)) {
+            return Err(PlaceError::Unreachable { fragment });
         }
-    }
+        if !as_path {
+            return Ok(Some(Self { root, steps: tree }));
+        }
 
-    /// The first fragment the walk leaves from anywhere but the tip of the
-    /// fragments placed so far — `None` exactly when the fragments form a
-    /// single path walked from one end.
-    fn branch_point(&self) -> Option<i64> {
-        let mut tip = self.root;
-        for step in &self.steps {
-            if step.parent != tip {
-                return Some(step.parent);
-            }
-            tip = step.child;
+        // Connected, and no fragment joined to more than two others: a path
+        // walked from an end, or a ring walked round one way from `root`.
+        if let Some((&fragment, _)) = partners.iter().find(|(_, joined)| joined.len() >= 3) {
+            return Err(PlaceError::Branched { fragment });
         }
-        None
+        let mut placed = HashSet::from([root]);
+        let mut steps = Vec::new();
+        let mut tip = root;
+        while let Some(step) = leaving(tip).find(|step| !placed.contains(&step.child)) {
+            placed.insert(step.child);
+            tip = step.child;
+            steps.push(step);
+        }
+        Ok(Some(Self { root, steps }))
     }
 }
 
 /// Grow the fragments a set of forming bonds joins out of one another.
 ///
-/// Walks the fragment graph the forming bonds imply breadth-first from a root
-/// fragment and places every other fragment relative to **its own parent**:
-/// the child moves rigidly so its anchor — the atom the bond reaches — sits one
+/// Walks the fragment graph the forming bonds imply from a root fragment and
+/// places every other fragment relative to **its own parent**: the child
+/// moves rigidly so its anchor — the atom the bond reaches — sits one
 /// bonding range (summed covalent radii plus the buffer) from the parent's
 /// reacting atom, along a growth direction, and its [`Orienter`] direction
 /// points along that same growth direction, away from the parent. Only whole
 /// fragments move, each exactly once, so every forming bond of the spanning
 /// tree ends at bonding range.
 ///
-/// - **No trace (default).** The root — the lowest fragment id — stays where it
-///   is. A child grows along its parent's *outward* direction: from the
-///   parent's centroid through its reacting atom, as the parent now stands
-///   (`+x` when those coincide). Any fragment graph that is a tree places:
-///   paths, stars, combs.
+/// - **No trace (default).** The walk is breadth-first from the lowest
+///   fragment id, which stays where it is. A child grows along its parent's
+///   *outward* direction: from the parent's centroid through its reacting
+///   atom, as the parent now stands (`+x` when those coincide). Any connected
+///   fragment graph places — paths, stars, combs, rings — along the walk's
+///   spanning tree.
 /// - **With a trace ([`Self::with_trace`]).** The fragments must form a single
-///   path, walked from its lowest-id end. That root turns so its outward
-///   direction follows the tangent at sample 0 and slides its reacting atom
-///   onto sample 0; the `k`-th child grows along the tangent at sample `k`.
+///   path, walked from its lowest-id end, or a single ring, walked round one
+///   way from its lowest id as if it were a path. That root turns so its
+///   outward direction follows the tangent at sample 0 and slides its
+///   reacting atom onto sample 0; the `k`-th child grows along the tangent at
+///   sample `k`.
 ///   The trace supplies directions only, so the chain follows the curve's
 ///   shape at bonding range rather than landing on the samples.
 ///
@@ -227,10 +247,10 @@ impl Walk {
 /// its body axis, anchor to centroid, is turned along the growth direction
 /// instead, so it points away from its parent.
 ///
-/// A forming bond that closes a ring of fragments is checked, not placed:
-/// rigid fragments cannot in general close a ring, so one that is not within
-/// 1e-6 Å of bonding range once the tree is placed is a
-/// [`PlaceError::RingClosure`] and nothing moves.
+/// A forming bond the walk does not cross closes a ring of fragments. It is
+/// not placed and not checked: it ends wherever the spanning tree leaves it.
+/// A ring's size and shape are the caller's — a closed trace of the right
+/// size lays the ring out, and geometry optimisation relaxes the closing bond.
 pub struct TracePlacer {
     trace: Option<Trace>,
     orienter: Box<dyn Orienter>,
@@ -258,8 +278,11 @@ impl TracePlacer {
     }
 
     /// Grow a path of fragments along this trace's tangents instead of each
-    /// parent's outward direction. Branched and cyclic fragment graphs are
-    /// refused with [`PlaceError::Branched`].
+    /// parent's outward direction. A ring of fragments is walked as a path
+    /// from its lowest id; the bond that closes it is formed but not placed,
+    /// so a closed trace of the ring's size is what brings its ends together.
+    /// A fragment joined to three others or more is refused with
+    /// [`PlaceError::Branched`].
     pub fn with_trace(mut self, trace: Trace) -> Self {
         self.trace = Some(trace);
         self
@@ -512,13 +535,10 @@ impl Placer for TracePlacer {
 
         // Each fragment moves at most once and is read from the graph's own
         // coordinates when it does; a parent is read as it now stands through
-        // `moved`. Nothing is written until every fragment is placed and every
-        // ring closure checked, so an error leaves `world` untouched.
+        // `moved`. Nothing is written until every fragment is placed, so an
+        // error leaves `world` untouched.
         let mut moved: HashMap<NodeId, [F; 3]> = HashMap::new();
         if let Some(trace) = &self.trace {
-            if let Some(fragment) = walk.branch_point() {
-                return Err(PlaceError::Branched { fragment });
-            }
             if trace.len() <= walk.steps.len() {
                 return Err(PlaceError::Index { index: trace.len() });
             }
@@ -556,26 +576,6 @@ impl Placer for TracePlacer {
                 .heading(world, nodes, step, anchor)?
                 .and_then(|heading| geometry::alignment(heading, direction));
             moved.extend(Self::posed(world, nodes, anchor, turn, target));
-        }
-
-        for junction in &walk.closures {
-            let (a, b) = (junction.from_end.node, junction.to_end.node);
-            let (p, q) = (
-                Self::current(world, &moved, a)?,
-                Self::current(world, &moved, b)?,
-            );
-            let length =
-                ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] - q[2]).powi(2)).sqrt();
-            let expected = junction.from_end.radius + junction.to_end.radius + self.buffer;
-            let miss = (length - expected).abs();
-            if miss.is_nan() || miss > CLOSURE_TOLERANCE {
-                return Err(PlaceError::RingClosure {
-                    a,
-                    b,
-                    length,
-                    expected,
-                });
-            }
         }
 
         for (node, position) in moved {
@@ -667,23 +667,14 @@ pub enum PlaceError {
     /// The forming bonds join fragments into more than one connected piece;
     /// `fragment` (the lowest such id) has no path from the root fragment.
     Unreachable { fragment: i64 },
-    /// A trace lays out a single path of fragments, but the forming bonds
-    /// branch or close a ring at `fragment`.
+    /// A trace lays out the fragments as one path, but `fragment` is joined
+    /// to three others or more, so the forming bonds branch there.
     Branched { fragment: i64 },
     /// A fragment cannot be faced: its site axis has no direction under the
     /// orienter (zero, shorter than 1e-6 Å, non-finite, or so long its squared
     /// length overflows), or the trace has no tangent where it lands.
     /// `fragment` is the fragment id when a placer was placing one.
     Unorientable { fragment: Option<i64> },
-    /// The forming bond `a`-`b` closes a ring of fragments, and once every
-    /// other bond sits at bonding range it is `length` Å long instead of the
-    /// `expected` bonding range. Rigid fragments cannot close it.
-    RingClosure {
-        a: NodeId,
-        b: NodeId,
-        length: F,
-        expected: F,
-    },
     /// The graph refused an edit (a stale handle, a type conflict).
     Graph(String),
 }
@@ -725,7 +716,7 @@ impl std::fmt::Display for PlaceError {
             ),
             Self::Branched { fragment } => write!(
                 f,
-                "fragment {fragment} branches or closes a ring; a trace lays out a single path of fragments"
+                "fragment {fragment} is joined to three fragments or more; a trace lays the fragments out as one path"
             ),
             Self::Unorientable {
                 fragment: Some(fragment),
@@ -736,18 +727,6 @@ impl std::fmt::Display for PlaceError {
             Self::Unorientable { fragment: None } => {
                 write!(f, "the site axis has no direction to face")
             }
-            Self::RingClosure {
-                a,
-                b,
-                length,
-                expected,
-            } => write!(
-                f,
-                "forming bond {}-{} closes a ring of fragments at {length} Å, not the bonding range \
-                 {expected} Å; rigid fragments cannot close it",
-                node_to_u64(*a),
-                node_to_u64(*b)
-            ),
             Self::Graph(message) => write!(f, "{message}"),
         }
     }
@@ -1318,42 +1297,143 @@ mod tests {
         assert_all_at_bonding_range(&mol, &bonds);
     }
 
+    /// [`chain`] of `n` fragments closed into a ring: fragment `k`'s tail
+    /// bonds to fragment `k + 1`'s head, and the last tail to the first head.
+    /// Returns the world, its `[head, middle, tail]` per fragment, and the
+    /// `n` forming bonds in that order, closing bond last.
+    fn ring(n: usize) -> (Atomistic, Vec<[NodeId; 3]>, Vec<(NodeId, NodeId)>) {
+        let (mol, fragments) = chain(n);
+        let bonds = (0..n)
+            .map(|k| (fragments[k][2], fragments[(k + 1) % n][0]))
+            .collect();
+        (mol, fragments, bonds)
+    }
+
     #[test]
-    fn a_ring_either_closes_at_bonding_range_or_is_refused_untouched() {
-        // Four fragments bonded head-to-tail in a cycle. A spanning tree of
-        // three bonds can always be placed rigidly; the fourth, ring-closing
-        // bond in general cannot. The placer must not report success with the
-        // closing bond left at an arbitrary length.
-        let (mut mol, fragments) = chain(4);
-        let bonds = [
-            (fragments[0][2], fragments[1][0]),
-            (fragments[1][2], fragments[2][0]),
-            (fragments[2][2], fragments[3][0]),
-            (fragments[3][2], fragments[0][0]),
-        ];
+    fn a_ring_places_its_tree_bonds_and_leaves_the_closing_bond_to_the_caller() {
+        // Five fragments bonded head-to-tail in a cycle. A placer knows only
+        // each fragment's parent: it places the spanning tree of its walk, and
+        // the one bond the tree leaves out closes the ring at whatever length
+        // the tree leaves it. Closing it is geometry optimisation's job.
+        let (mut mol, _, bonds) = ring(5);
         let before = all_positions(&mol);
 
-        match TracePlacer::new().place(mol.as_molgraph_mut(), &bonds) {
-            Ok(()) => assert_all_at_bonding_range(&mol, &bonds),
-            Err(error) => {
+        TracePlacer::new()
+            .place(mol.as_molgraph_mut(), &bonds)
+            .expect("a ring places without a trace");
+
+        let at_range = bonds
+            .iter()
+            .filter(|&&(a, b)| (distance(&mol, a, b) - bonding_range(&mol, a, b)).abs() < 1e-6)
+            .count();
+        assert_eq!(
+            at_range,
+            bonds.len() - 1,
+            "every spanning-tree bond, and only those, sits at bonding range"
+        );
+        assert_ne!(
+            before,
+            all_positions(&mol),
+            "the ring placed without writing coordinates"
+        );
+    }
+
+    #[test]
+    fn an_explicit_trace_lays_a_ring_out_as_a_path_from_the_root() {
+        // Five fragments in a cycle and a closed circular trace of six
+        // samples (the last one back on the first), so its tangents run
+        // round the ring. The ring is walked as a path from its root
+        // (fragment 1, the lowest id); the bond back to the root is left
+        // unchecked.
+        let n = 5;
+        let (mut mol, fragments, bonds) = ring(n);
+        let radius = 6.0;
+        let samples: Vec<[F; 3]> = (0..=n)
+            .map(|k| {
+                let angle = 2.0 * std::f64::consts::PI * k as F / n as F;
+                [radius * angle.cos(), radius * angle.sin(), 0.0]
+            })
+            .collect();
+        let trace = Trace::from_arrays(samples);
+
+        TracePlacer::new()
+            .with_trace(trace.clone())
+            .place(mol.as_molgraph_mut(), &bonds)
+            .expect("an explicit trace places a ring as a path, not as Branched");
+
+        // The root slides its reacting atom onto sample 0. Which of its two
+        // bonds the path leaves by is the placer's choice; the path is the
+        // other n - 1 bonds, each oriented (parent side, child side).
+        let sample = trace.point(0).unwrap();
+        let on_sample = |node: NodeId| {
+            let p = position(&mol, node);
+            (0..3).all(|axis| (p[axis] - sample[axis]).abs() < 1e-8)
+        };
+        let path: Vec<(NodeId, NodeId)> = if on_sample(fragments[0][2]) {
+            // 1 -> 2 -> ... -> n
+            bonds[..n - 1].to_vec()
+        } else if on_sample(fragments[0][0]) {
+            // 1 -> n -> ... -> 2
+            bonds[1..].iter().rev().map(|&(a, b)| (b, a)).collect()
+        } else {
+            panic!("neither of the root's reacting atoms sits on trace sample 0");
+        };
+
+        // The k-th child grows along the tangent at sample k: its anchor sits
+        // one bonding range from its parent's reacting atom along it.
+        for (index, &(site, anchor)) in path.iter().enumerate() {
+            let tangent = trace.tangent(index + 1).unwrap();
+            let reach = bonding_range(&mol, site, anchor);
+            let (p, q) = (position(&mol, site), position(&mol, anchor));
+            for axis in 0..3 {
+                let expected = p[axis] + tangent[axis] * reach;
                 assert!(
-                    !matches!(
-                        error,
-                        PlaceError::Index { .. }
-                            | PlaceError::Unreachable { .. }
-                            | PlaceError::MissingCoordinates { .. }
-                            | PlaceError::Unorientable { .. }
-                            | PlaceError::Graph(_)
-                    ),
-                    "a ring-closing bond out of range must be reported as such, got {error:?}"
-                );
-                assert_eq!(
-                    before,
-                    all_positions(&mol),
-                    "a refused ring wrote coordinates"
+                    (q[axis] - expected).abs() < 1e-8,
+                    "child {} anchor is off the tangent at sample {} on axis {axis}: {} vs {expected}",
+                    index + 1,
+                    index + 1,
+                    q[axis]
                 );
             }
         }
+        assert_all_at_bonding_range(&mol, &path);
+    }
+
+    #[test]
+    fn an_explicit_trace_refuses_a_star_as_branched_and_moves_nothing() {
+        // Core fragment 1 has three fragment neighbours (2, 3, 4): a tree that
+        // is neither a path nor a cycle, so a trace cannot lay it out.
+        let mut mol = Atomistic::new();
+        let centre = mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
+        mol.set_atom(centre, keys::RES_ID, PropValue::Int(1 as I))
+            .unwrap();
+        let mut bonds = Vec::new();
+        for k in 0..3 {
+            let angle = 2.0 * std::f64::consts::PI * k as F / 3.0;
+            let site = mol.add_atom_xyz("O", 1.43 * angle.cos(), 1.43 * angle.sin(), 0.0);
+            mol.add_bond(centre, site)
+                .expect("a fresh bond between distinct atoms");
+            mol.set_atom(site, keys::RES_ID, PropValue::Int(1 as I))
+                .unwrap();
+            mol.set_atom(site, keys::SITE, PropValue::Str(format!("s{k}")))
+                .unwrap();
+            let arm = add_unit(&mut mol, 2 + k as i64, [20.0 + 4.0 * k as F, 7.0, 0.0]);
+            bonds.push((site, arm[0]));
+        }
+        // Samples to spare, so a short trace is not what is refused.
+        let trace = Trace::from_arrays((0..6).map(|k| [2.0 * k as F, 0.0, 0.0]).collect());
+        let before = all_positions(&mol);
+
+        let error = TracePlacer::new()
+            .with_trace(trace)
+            .place(mol.as_molgraph_mut(), &bonds)
+            .expect_err("a star is not a path");
+        assert_eq!(error, PlaceError::Branched { fragment: 1 });
+        assert_eq!(
+            before,
+            all_positions(&mol),
+            "a refused star wrote coordinates"
+        );
     }
 
     #[test]

@@ -394,9 +394,12 @@ impl PySiteMap {
 /// Put the fragments a set of forming bonds joins at a pose. Base class.
 ///
 /// The contract every placer honours: a forming bond is a
-/// `(parent-side atom, child-side atom)` pair of handles; after `place`, each
-/// forming bond's endpoints sit at bonding range; a placer that cannot do that
-/// raises and never leaves a partial placement behind.
+/// `(parent-side atom, child-side atom)` pair of handles; after `place`, every
+/// tree forming bond — a fragment to its parent in the placement walk — sits
+/// at bonding range; a placer that cannot do that raises and never leaves a
+/// partial placement behind. A placer does not close rings: a ring-closing
+/// bond is formed but not placed, and its length is the caller's concern (an
+/// explicit trace, or geometry optimisation afterwards).
 #[pyclass(module = "molrs", name = "Placer", subclass)]
 pub struct PyPlacer;
 
@@ -408,8 +411,8 @@ impl PyPlacer {
         PyPlacer
     }
 
-    /// Move whole fragments so each forming bond in `bonds` ends at bonding
-    /// range. The base class places nothing: a subclass implements it.
+    /// Move whole fragments so every tree forming bond in `bonds` ends at
+    /// bonding range. The base class places nothing: a subclass implements it.
     fn place(&self, _mol: &Bound<'_, PyAny>, _bonds: Vec<(u64, u64)>) -> PyResult<()> {
         Err(PyNotImplementedError::new_err(
             "Placer.place is abstract; a subclass implements it",
@@ -442,10 +445,12 @@ fn extract_orienter(orienter: &Bound<'_, PyAny>) -> PyResult<Box<dyn molrs::Orie
 ///
 /// Without a trace the root stays put and a child grows along its parent's
 /// outward direction (centroid through reacting atom), so any tree of
-/// fragments places. With a trace (`with_trace`) the fragments must form a
-/// single path; the trace supplies directions only. A forming bond that closes
-/// a ring of fragments is checked, not placed: if it does not end at bonding
-/// range once the tree is placed, `place` raises. Failures raise `ValueError`
+/// fragments places, and a ring places along its spanning tree. With a trace
+/// (`with_trace`) the fragments must form a single path or a single ring,
+/// walked as a path from its lowest id; the trace supplies directions only. A
+/// forming bond that closes a ring of fragments is neither placed nor checked:
+/// its length is the caller's concern (a closed trace of the ring's size, or
+/// geometry optimisation afterwards). Failures raise `ValueError`
 /// before any coordinate is written (only a refused coordinate write can fail
 /// later); `molrs::Placer::place` lists every case.
 #[pyclass(module = "molrs", name = "TracePlacer", extends = PyPlacer)]
@@ -469,9 +474,11 @@ impl PyTracePlacer {
     /// parent's outward direction: the root's outward direction follows the
     /// tangent at sample 0 with its reacting atom on sample 0, and the `k`-th
     /// child grows along the tangent at sample `k`. The chain follows the
-    /// curve's shape at bonding range, not the samples themselves. `place`
-    /// then refuses branched or cyclic fragment graphs, and a trace with fewer
-    /// samples than fragments, with `ValueError`.
+    /// curve's shape at bonding range, not the samples themselves. A ring of
+    /// fragments is walked as a path from its lowest id; its closing bond is
+    /// formed but not placed. `place` then refuses a fragment joined to three
+    /// others or more, and a trace with fewer samples than fragments, with
+    /// `ValueError`.
     fn with_trace<'py>(mut slf: PyRefMut<'py, Self>, trace: &PyTrace) -> PyRefMut<'py, Self> {
         let current = std::mem::take(&mut slf.inner);
         slf.inner = current.with_trace(trace.inner.clone());
@@ -510,12 +517,13 @@ impl PyTracePlacer {
         slf
     }
 
-    /// Move whole fragments so each forming bond's endpoints sit at bonding
-    /// range. `bonds` are `(parent-side handle, child-side handle)` pairs.
-    /// Raises `ValueError` — with nothing moved — when the bonds leave a
-    /// fragment unreachable, a trace meets a branched or cyclic fragment graph
-    /// or runs out of samples, a ring-closing bond is not at bonding range, or
-    /// an endpoint lacks a fragment id, element, radius or coordinates.
+    /// Move whole fragments so every tree forming bond's endpoints sit at
+    /// bonding range; a ring-closing bond is formed but not placed. `bonds`
+    /// are `(parent-side handle, child-side handle)` pairs. Raises
+    /// `ValueError` — with nothing moved — when the bonds leave a fragment
+    /// unreachable, a trace meets a branched fragment graph or runs out of
+    /// samples, a fragment cannot be faced, or an endpoint lacks a fragment
+    /// id, element, radius or coordinates.
     fn place(&self, mol: &Bound<'_, PyAny>, bonds: Vec<(u64, u64)>) -> PyResult<()> {
         let pairs: Vec<(molrs::NodeId, molrs::NodeId)> = bonds
             .into_iter()
