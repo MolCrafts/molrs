@@ -11,14 +11,14 @@ pub mod typifier;
 pub use charge::{BccModel, BccParameterSet, ChargeError, ChargeModel, MullikenModel};
 pub use forcefield::readers::{
     ForceFieldReader,
-    gromacs::{GromacsTopFfReader, read_gromacs_top_ff},
+    gromacs::GromacsTopFfReader,
     lammps::LammpsFfReader,
     opls::OplsXmlReader,
     prmtop::{AmberPrmtopFfReader, read_amber_prmtop_ff},
 };
 pub use forcefield::writers::{
     ForceFieldWriter,
-    gromacs::{GromacsTopFfWriter, write_gromacs_top_ff, write_gromacs_top_ff_str},
+    gromacs::GromacsTopFfWriter,
     lammps::{LammpsFfWriter, LammpsWriteOptions},
     xml::{XmlForceFieldWriter, write_forcefield_xml, write_forcefield_xml_str},
 };

@@ -191,6 +191,10 @@ cargo mrs-test -- ff::potential
 # Lint & Format
 cargo fmt --all
 cargo mrs-clippy -- -D warnings
+
+# Regenerate molrs/src/ff/params/oplsaa.rs from a pinned GROMACS oplsaa.ff
+# (the SHA-256s are pinned in molrs/examples/gen_opls_params.rs)
+cargo mrs-gen-opls --gromacs <dir>
 ```
 
 There are no benchmark targets; the benchmark and regression systems are being

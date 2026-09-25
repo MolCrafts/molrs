@@ -23,6 +23,18 @@ Re-run the failed tag workflow, or dispatch Publish against the same tag
 publishing. Tags must match the root package version and be on master.
 Registry publications wait for CI. The public checklist is [docs/releasing.md](../../docs/releasing.md).
 
+**Expected `cargo package` warning.** `molrs/Cargo.toml` excludes `examples/`
+(the OPLS generator is a repository tool, not published), so `cargo package`
+and `cargo publish` print
+
+```text
+warning: ignoring example `gen_opls_params` as `examples/gen_opls_params.rs` is not included in the published package
+```
+
+That is the exclusion working, not a packaging failure. Any *other* warning is
+still a finding; `cargo package --list -p molcrafts-molrs` must list no
+`examples/` path.
+
 ## scripts/
 
 Fixture fetching and the optional shared-library verification scripts live
@@ -249,10 +261,30 @@ items live under the `cgsmiles-*` topics in `notes.md`).
   Energies, forces and ETKDG coordinates are bitwise unchanged.
 - **Fixed (Rust / Python) — OPLS strict typing:** strict mode (the default) returned
   `Ok` with atoms no def matched left untyped and their bonded terms skipped, so
-  compiling failed later. It now returns an error naming every untyped atom. Known
-  gap: the shipped OPLS defs assume bond-order-agnostic matching, so molecules with a
-  C=C or C=O bond are currently refused in strict mode (use `strict=False` until the
-  defs are fixed).
+  compiling failed later. It now returns an error naming every untyped atom.
+- **Breaking / Fixed — OPLS-AA follows GROMACS (opls-gromacs 01–03):**
+  - GROMACS force-field I/O is directive-only: the reader reads `[ defaults ]`
+    (comb-rule 2/3 → `lj/cut` `mixing`), `[ atomtypes ]` (σ/ε on the `lj/cut` self row),
+    `[ bondtypes ]` / `[ angletypes ]` / `[ dihedraltypes ]` with the correct function
+    codes (3 = Ryckaert–Bellemans; 2 and 3 were swapped), and `#include` / `#define` /
+    `#ifdef`; molecule sections and unmodelled sections are refused by name unless
+    skipped (`with_skipped_directive`; Python `skip_directives=`). The writer emits the
+    same directives (OPLS torsions as code 3; it wrote them as zeros) and refuses what
+    GROMACS cannot express. Removed: Rust `read_gromacs_top_ff`,
+    `write_gromacs_top_ff(_str)` (use `GromacsTopFfReader` / `GromacsTopFfWriter`), the
+    reader's public fields and `include_dirs`.
+  - The OPLS-AA table is regenerated from GROMACS v2026.3 `oplsaa.ff` by `cargo
+    mrs-gen-opls --gromacs <dir>`: classes are GROMACS `bond_type` (651 types used to
+    carry their own name, leaving most bonded rows unreachable), the library declares
+    geometric mixing (the kernel used arithmetic), and LAMMPS exports now state the
+    kernel's rule (`pair_modify mix …`) when a style declares none. OPLS energies change.
+  - OPLS typing rules are molrs-owned Daylight SMARTS (`ff::params::OPLSAA_TYPING`,
+    `OplsRuleRow`), matched after aromaticity is perceived on a private copy; ranking is
+    pairwise override dominance (`priorities()` / `LAYER_PRIORITY_STRIDE` removed); new
+    diene types opls_150 / opls_178. Fixed: C=C / C=O molecules were untypeable,
+    chlorobenzene's Cl was typed as chloride (net −0.82), pyridine / pyrimidine / pyrrole
+    were untypeable, `[Cl,C,H]` read H as a count, a later level overwrote a type that
+    overrides it. `from_xml_str` refuses override cycles and unknown overrides.
 - **Breaking (Rust) / Fixed — one type-label grammar (system-forcefield-05):** new
   `core::store::type_labels::{TypeName, TypeLabels, BlockTypes}`. `TypeName` owns the
   endpoint grammar (`-`, or `::` when a part contains `-`; empty wildcard positions are

@@ -3873,12 +3873,23 @@ def read_frcmod(path: str):
     """Read an AMBER FRCMOD file into a section dict."""
     ...
 
-def read_gromacs_top_ff(path: str, include: bool = False):
-    """Read a GROMACS ``.top`` / ``.itp`` into a :class:`ForceField`."""
+def read_gromacs_top_ff(path: str, include: bool = False, *, skip_directives: Sequence[str] = ()):
+    """Read the force-field directives of a GROMACS topology into a :class:`ForceField`.
+
+    Reads ``[ defaults ]``, ``[ atomtypes ]``, ``[ bondtypes ]``,
+    ``[ angletypes ]`` and ``[ dihedraltypes ]``. Unmodelled directives and
+    every molecule section raise ``ValueError`` naming them; molecule sections
+    need :func:`molrs.io.read_top` or a skip. Each name in ``skip_directives``
+    is read past instead of refused.
+    """
     ...
 
-def read_gromacs_top_ff_str(text: str, include: bool = False):
-    """Parse GROMACS topology force-field tables from a string."""
+def read_gromacs_top_ff_str(text: str, include: bool = False, *, skip_directives: Sequence[str] = ()):
+    """Parse the force-field directives of GROMACS topology text into a :class:`ForceField`.
+
+    Same directive model, refusals and ``skip_directives`` as
+    :func:`read_gromacs_top_ff`.
+    """
     ...
 
 def read_lammps_log(path: str, style: str = 'default') -> LammpsLog:
@@ -3928,11 +3939,14 @@ def write_frcmod(path: str, sections: Dict[str, Any]):
     ...
 
 def write_gromacs_top_ff(path: str, forcefield, precision: int = 6):
-    """Write a ForceField to GROMACS ``.top`` / ``.itp`` force-field tables."""
+    """Write a ForceField as GROMACS force-field directives (no molecule sections).
+
+    A style or parameter the directives cannot express raises ``ValueError``.
+    """
     ...
 
 def write_gromacs_top_ff_str(forcefield, precision: int = 6):
-    """Serialize a ForceField to a GROMACS topology force-field string."""
+    """Serialize a ForceField as GROMACS force-field directives to a string."""
     ...
 
 def write_lammps_molecule(path: str, frame, format: str = 'native'):

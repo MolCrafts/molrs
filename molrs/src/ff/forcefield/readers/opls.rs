@@ -40,8 +40,9 @@
 //! - bond `k` kJ/mol/nm² → kcal/mol/Å² (÷ 4.184 ÷ 100). molrs and GROMACS both
 //!   use the `½k(r−r₀)²` form, so no extra ½ factor (unlike a LAMMPS target).
 //! - angle `k` kJ/mol/rad² → kcal/mol/rad² (÷ 4.184); `angle` already in radians.
-//! - RB `c0..c5` → OPLS 4-cosine `f1..f4` via the private `rb_to_opls` helper
-//!   (GROMACS Eqs. 200–201), in kcal/mol — matching the `dihedral:opls` kernel.
+//! - RB `c0..c5` (kJ/mol) → OPLS 4-cosine `k1..k4` (kcal/mol) through
+//!   `ff::forcefield::torsion::rb_to_opls` (GROMACS Eqs. 200–201), then ÷ 4.184.
+//!   A row with `C5 ≠ 0` or `ΣCₙ ≠ 0` has no OPLS form and is an error.
 //! - charge `e`, mass `amu`: unchanged.
 
 use roxmltree::Node;
@@ -49,6 +50,7 @@ use roxmltree::Node;
 use super::ForceFieldReader;
 use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::torsion::rb_to_opls;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use molrs::store::type_labels::TypeName;
 use molrs::units::constants::COULOMB_REAL;
@@ -433,7 +435,9 @@ fn parse_dihedrals(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
             opt_f64(&d, "c4")?.unwrap_or(0.0),
             opt_f64(&d, "c5")?.unwrap_or(0.0),
         ];
-        let [f1, f2, f3, f4] = rb_to_opls(rb);
+        let [f1, f2, f3, f4] = rb_to_opls(rb)
+            .map_err(|e| format!("RBTorsionForce {c1}-{c2}-{c3}-{c4}: {e}"))?
+            .map(|f| f / KJ_PER_KCAL);
         style
             .def_type_at(
                 TypeName::join(&[c1, c2, c3, c4])?.as_str(),
@@ -475,36 +479,6 @@ fn parse_periodic_torsions(ff: &mut ForceField, sec: &Node) -> Result<(), String
             .map_err(|e| e.to_string())?;
     }
     Ok(())
-}
-
-/// Convert Ryckaert–Bellemans coefficients `[c0..c5]` (kJ/mol) to OPLS 4-cosine
-/// Fourier coefficients `[f1, f2, f3, f4]` (kcal/mol).
-///
-/// The OPLS torsion is
-/// `V = ½[F1(1+cosφ) + F2(1−cos2φ) + F3(1+cos3φ) + F4(1−cos4φ)]`, the RB form is
-/// `V = Σ Cₙ(cosψ)ⁿ`, ψ = φ − π. GROMACS manual Eqs. 200–201 give the exact
-/// analytic inversion (independent of `c0` and `c5`):
-///
-/// ```text
-/// F1 = −2·C1 − 1.5·C3
-/// F2 =   −C2 −     C4
-/// F3 =        −0.5·C3
-/// F4 =       −0.25·C4
-/// ```
-///
-/// The kJ/mol → kcal/mol factor (÷ 4.184) is applied here, matching molpy's
-/// `rb_to_opls(..., units="kJ")`.
-fn rb_to_opls([_c0, c1, c2, c3, c4, _c5]: [f64; 6]) -> [f64; 4] {
-    let f1 = -2.0 * c1 - 1.5 * c3;
-    let f2 = -c2 - c4;
-    let f3 = -0.5 * c3;
-    let f4 = -0.25 * c4;
-    [
-        f1 / KJ_PER_KCAL,
-        f2 / KJ_PER_KCAL,
-        f3 / KJ_PER_KCAL,
-        f4 / KJ_PER_KCAL,
-    ]
 }
 
 // --- attribute helpers (total: missing/malformed → Err) -------------------
@@ -581,18 +555,49 @@ mod tests {
   </NonbondedForce>
 </ForceField>"#;
 
+    /// `<RBTorsionForce>` with the given `c0..c5` (kJ/mol) on Br-C-CT-HC.
+    fn rb_row(c: [&str; 6]) -> String {
+        format!(
+            r#"<ForceField name="x"><RBTorsionForce>
+    <Proper class1="Br" class2="C" class3="CT" class4="HC" c0="{}" c1="{}" c2="{}" c3="{}" c4="{}" c5="{}"/>
+</RBTorsionForce></ForceField>"#,
+            c[0], c[1], c[2], c[3], c[4], c[5]
+        )
+    }
+
+    /// C5 = 0.1 kJ/mol with ΣC = 0 (C0 = −0.1): cos⁵ has no OPLS Fourier
+    /// counterpart, so the row is refused rather than silently dropped.
     #[test]
-    fn rb_to_opls_matches_gromacs_inversion() {
-        // c1=2.25936, c3=-3.01248 (kJ); others 0.
-        let [f1, f2, f3, f4] = rb_to_opls([0.75312, 2.25936, 0.0, -3.01248, 0.0, 0.0]);
-        // F1 = -2*c1 - 1.5*c3 = -4.51872 + 4.51872 = 0  → /4.184 = 0
-        assert!((f1 - 0.0).abs() < 1e-12, "f1 {f1}");
-        // F2 = -c2 - c4 = 0
-        assert!((f2 - 0.0).abs() < 1e-12, "f2 {f2}");
-        // F3 = -0.5*c3 = 1.50624 kJ → /4.184 = 0.360 kcal
-        assert!((f3 - (1.50624 / 4.184)).abs() < 1e-12, "f3 {f3}");
-        // F4 = -0.25*c4 = 0
-        assert!((f4 - 0.0).abs() < 1e-12, "f4 {f4}");
+    fn rb_row_with_nonzero_c5_is_an_error() {
+        let xml = rb_row(["-0.1", "0.0", "0.0", "0.0", "0.0", "0.1"]);
+        let err = OplsXmlReader::new()
+            .read_str(&xml)
+            .expect_err("C5 = 0.1 is not representable");
+        assert!(
+            err.contains("0.1"),
+            "error should name the coefficients: {err}"
+        );
+    }
+
+    /// ΣC = 1 kJ/mol is a constant offset the OPLS form (V(180°) = 0) cannot
+    /// hold, so the row is refused rather than silently dropped.
+    #[test]
+    fn rb_row_with_nonzero_sum_is_an_error() {
+        let xml = rb_row(["1.0", "0.0", "0.0", "0.0", "0.0", "0.0"]);
+        assert!(OplsXmlReader::new().read_str(&xml).is_err());
+    }
+
+    /// The MINI row (ΣC = 0.75312 + 2.25936 − 3.01248 = 0) is representable:
+    /// F3 = 3.01248/2 = 1.50624 kJ/mol ÷ 4.184 = 0.36 kcal/mol, F1 = F2 = F4 = 0.
+    #[test]
+    fn representable_rb_row_reads_as_opls_fourier_terms_in_kcal() {
+        let ff = OplsXmlReader::new().read_str(MINI).unwrap();
+        let dih = ff.get_style("dihedral", "opls").unwrap();
+        let p = &dihedral_types(dih)[0].params;
+        for (key, want) in [("k1", 0.0), ("k2", 0.0), ("k3", 0.36), ("k4", 0.0)] {
+            let got = p.get(key).unwrap();
+            assert!((got - want).abs() < 1e-12, "{key}: got {got}, want {want}");
+        }
     }
 
     #[test]

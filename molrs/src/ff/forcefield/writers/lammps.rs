@@ -80,6 +80,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::ForceFieldWriter;
 use crate::ff::forcefield::lammps_units::{LammpsFfUnits, molrs_half_k_to_lammps_k};
+use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::{
     AngleType, BondType, DihedralType, ForceField, ImproperType, PairType, Params, Style, StyleDefs,
 };
@@ -775,14 +776,18 @@ fn push_data_section(lines: &mut Vec<String>, heading: &str, rows: Vec<String>) 
 
 // ── pair styles ──────────────────────────────────────────────────────────────
 
-/// `pair_modify mix <rule>` for a style that declares one. LAMMPS' own default
-/// for `lj/cut` is `geometric`, so a force field mixing any other way must say
-/// so on its way out or the run silently uses the wrong cross terms.
+/// `pair_modify mix <rule>`: the rule the style declares, or — for an `lj/cut`
+/// that declares none — the rule the kernel evaluates it under,
+/// [`Mixing::UNDECLARED`]. LAMMPS' own default for `lj/cut` is `geometric`, so
+/// an export that stays silent mixes differently from molrs whenever the rule
+/// is anything else, and the run silently uses the wrong cross terms.
 fn pair_modify_line(style: &Style) -> Option<String> {
-    style
-        .params()
-        .get_str("mixing")
-        .map(|rule| format!("pair_modify mix {rule}\n"))
+    let rule = match style.params().get_str("mixing") {
+        Some(rule) => rule,
+        None if style.name() == "lj/cut" => Mixing::UNDECLARED.name(),
+        None => return None,
+    };
+    Some(format!("pair_modify mix {rule}\n"))
 }
 
 fn is_split_lj_coulomb(styles: &[&Style]) -> bool {
@@ -1295,6 +1300,77 @@ pair_coeff c3 c3 0.107800 3.397710
             .filter(|l| l.starts_with(prefix))
             .map(str::to_owned)
             .collect()
+    }
+
+    /// `lj/cut` (cutoff 9) with `c3` / `hc` self rows and, when given, the
+    /// style-level string param `mixing`.
+    fn lj_only_ff(mixing: Option<&str>) -> ForceField {
+        let mut params = Params::from_pairs(&[("cutoff", 9.0)]);
+        if let Some(rule) = mixing {
+            params.set_str("mixing", rule);
+        }
+        let mut ff = ForceField::new("hand");
+        ff.def_style("pair", "lj/cut", params)
+            .unwrap()
+            .def_type("c3", lj(0.1078, 3.39771))
+            .unwrap()
+            .def_type("hc", lj(0.0157, 2.64953))
+            .unwrap();
+        ff
+    }
+
+    /// [`lj_only_ff`] plus a type-less `coul/cut` (cutoff 10): the split pair
+    /// the writer recombines into `lj/cut/coul/cut`.
+    fn split_pair_ff_mixing(rule: &str) -> ForceField {
+        let mut ff = lj_only_ff(Some(rule));
+        ff.def_style("pair", "coul/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+            .unwrap();
+        ff
+    }
+
+    /// Combined branch (`lj/cut` + `coul/cut` → `lj/cut/coul/cut`): an
+    /// `lj/cut` declaring no rule is evaluated arithmetically by the kernel,
+    /// so the export must say so — LAMMPS' own default is geometric.
+    #[test]
+    fn combined_undeclared_lj_cut_writes_pair_modify_mix_arithmetic() {
+        let ff = split_pair_ff();
+        let labels = labels_of(&[("atoms", &["c3", "hc"])]);
+        let text = LammpsFfWriter::new(&labels).write_str(&ff).unwrap();
+        assert_eq!(
+            lines_starting_with(&text, "pair_modify"),
+            vec!["pair_modify mix arithmetic".to_owned()],
+            "{text}"
+        );
+    }
+
+    /// Single-style branch: the same rule for a lone undeclared `lj/cut`.
+    #[test]
+    fn single_undeclared_lj_cut_writes_pair_modify_mix_arithmetic() {
+        let ff = lj_only_ff(None);
+        let labels = labels_of(&[("atoms", &["c3", "hc"])]);
+        let text = LammpsFfWriter::new(&labels).write_str(&ff).unwrap();
+        assert_eq!(
+            lines_starting_with(&text, "pair_modify"),
+            vec!["pair_modify mix arithmetic".to_owned()],
+            "{text}"
+        );
+    }
+
+    /// A declared rule is written as declared, in both branches.
+    #[test]
+    fn declared_geometric_lj_cut_writes_pair_modify_mix_geometric() {
+        let labels = labels_of(&[("atoms", &["c3", "hc"])]);
+        for ff in [
+            split_pair_ff_mixing("geometric"),
+            lj_only_ff(Some("geometric")),
+        ] {
+            let text = LammpsFfWriter::new(&labels).write_str(&ff).unwrap();
+            assert_eq!(
+                lines_starting_with(&text, "pair_modify"),
+                vec!["pair_modify mix geometric".to_owned()],
+                "{text}"
+            );
+        }
     }
 
     #[test]

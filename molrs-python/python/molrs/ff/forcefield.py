@@ -20,6 +20,7 @@ Both round-trip through ``params``.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from .._lib import ForceField as _RsForceField
@@ -575,29 +576,70 @@ def read_amber_prmtop_ff_str(text: str) -> ForceField:
     return ForceField._from_raw(_rs_read_amber_prmtop_ff_str(text))
 
 
-def read_gromacs_top_ff(path: str, *, include: bool = False) -> ForceField:
-    """Read a GROMACS ``.top`` / ``.itp`` into a :class:`ForceField`.
+def read_gromacs_top_ff(
+    path: str, *, include: bool = False, skip_directives: Sequence[str] = ()
+) -> ForceField:
+    """Read the force-field directives of a GROMACS topology into a :class:`ForceField`.
 
-    Bonded parameters (when present) are converted from GROMACS units to molrs
-    store units at this boundary. ``include`` controls ``#include`` expansion.
+    Reads ``[ defaults ]`` (nbfunc 1, gen-pairs ``yes``, comb-rule 2 or 3 →
+    ``lj/cut`` ``mixing`` ``arithmetic`` / ``geometric``), ``[ atomtypes ]``,
+    ``[ bondtypes ]``, ``[ angletypes ]`` and ``[ dihedraltypes ]``, converting
+    GROMACS units (nm, kJ/mol, degrees) to molrs store units (Å, kcal/mol, rad).
+
+    Anything the reader does not model raises ``ValueError`` naming it: an
+    unsupported function code or comb-rule, ``[ pairtypes ]``,
+    ``[ nonbond_params ]``, ``[ constrainttypes ]``, ``[ cmaptypes ]``,
+    ``[ implicit_genborn_params ]``, any unknown section, and every molecule
+    section (``[ moleculetype ]``, ``[ atoms ]``, ``[ bonds ]``,
+    ``[ system ]``, ``[ molecules ]``, …). Molecule sections are topology: read
+    them with :func:`molrs.io.read_top`, or skip them here.
+
+    ``include`` follows ``#include`` relative to the including file (default
+    ``False``: ignored). Each name in ``skip_directives`` (bracket-less,
+    case-insensitive, e.g. ``"constrainttypes"``) is read past, rows and all,
+    instead of refused.
     """
-    return ForceField._from_raw(_rs_read_gromacs_top_ff(path, include=include))
+    return ForceField._from_raw(
+        _rs_read_gromacs_top_ff(path, include=include, skip_directives=skip_directives)
+    )
 
 
-def read_gromacs_top_ff_str(text: str, *, include: bool = False) -> ForceField:
-    """Parse GROMACS topology force-field tables from a string."""
-    return ForceField._from_raw(_rs_read_gromacs_top_ff_str(text, include=include))
+def read_gromacs_top_ff_str(
+    text: str, *, include: bool = False, skip_directives: Sequence[str] = ()
+) -> ForceField:
+    """Parse the force-field directives of GROMACS topology text into a :class:`ForceField`.
+
+    Same directive model as :func:`read_gromacs_top_ff`: the directives read,
+    the ``ValueError`` refusals (molecule sections included — use
+    :func:`molrs.io.read_top` or skip them), and ``skip_directives`` all apply.
+    """
+    return ForceField._from_raw(
+        _rs_read_gromacs_top_ff_str(
+            text, include=include, skip_directives=skip_directives
+        )
+    )
 
 
 def write_gromacs_top_ff(
     path: str, forcefield: ForceField, *, precision: int = 6
 ) -> None:
-    """Write a ForceField to GROMACS ``.top``/``.itp`` tables (inverse unit map)."""
+    """Write a ForceField as GROMACS force-field directives.
+
+    Writes ``[ defaults ]``, ``[ atomtypes ]``, ``[ bondtypes ]``,
+    ``[ angletypes ]`` and ``[ dihedraltypes ]`` in GROMACS units (nm, kJ/mol,
+    degrees) — the inverse of :func:`read_gromacs_top_ff`. No molecule section
+    is written: a force field holds no molecule. A style or parameter GROMACS
+    directives cannot express raises ``ValueError`` naming it. ``precision`` is
+    the number of decimal places for floating coefficients.
+    """
     _rs_write_gromacs_top_ff(path, forcefield, precision=precision)
 
 
 def write_gromacs_top_ff_str(forcefield: ForceField, *, precision: int = 6) -> str:
-    """Serialize a ForceField to a GROMACS topology force-field string."""
+    """Serialize a ForceField as GROMACS force-field directives to a string.
+
+    Same output and ``ValueError`` refusals as :func:`write_gromacs_top_ff`.
+    """
     return _rs_write_gromacs_top_ff_str(forcefield, precision=precision)
 
 

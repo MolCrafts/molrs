@@ -640,11 +640,9 @@ pub fn pair_lj_cut_ctor(
 ) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let scale_14 = style_params.get("lj14scale").unwrap_or(1.0) as F;
-    // Absent `mixing` keeps Lorentz-Berthelot, the rule every reader that does
-    // not declare one (AMBER prmtop, GAFF) actually means.
     let mixing = match style_params.get_str("mixing") {
         Some(name) => Mixing::parse(name).map_err(|e| format!("LJCut: {e}"))?,
-        None => Mixing::Arithmetic,
+        None => Mixing::UNDECLARED,
     };
 
     let atoms = frame
@@ -715,7 +713,7 @@ pub fn pair_lj_cut_typed_ctor(
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let mixing = match style_params.get_str("mixing") {
         Some(name) => Mixing::parse(name).map_err(|e| format!("LJCut: {e}"))?,
-        None => Mixing::Arithmetic,
+        None => Mixing::UNDECLARED,
     };
     // Required, where the compiled form has no cutoff at all: an intramolecular
     // list is finite by construction, a periodic neighbour sum is not.

@@ -1948,36 +1948,86 @@ pub fn read_amber_prmtop_ff_str_py(text: &str) -> PyResult<PyForceField> {
     Ok(PyForceField { inner: forcefield })
 }
 
-/// Read a GROMACS ``.top`` / ``.itp`` into a :class:`ForceField`.
+/// Read the force-field directives of a GROMACS topology into a
+/// :class:`ForceField`.
 ///
-/// Parses ``[ atoms ]`` / ``[ bonds ]`` / ``[ angles ]`` / ``[ dihedrals ]`` /
-/// ``[ pairs ]`` tables. Bonded parameters (when present) are converted from
-/// GROMACS units (nm, kJ/mol, degrees) to molrs store units. ``include``
-/// controls ``#include`` expansion (default false).
+/// Reads ``[ defaults ]`` (nbfunc 1, gen-pairs ``yes``, comb-rule 2 or 3 →
+/// ``lj/cut`` ``mixing`` ``arithmetic`` / ``geometric``), ``[ atomtypes ]``,
+/// ``[ bondtypes ]``, ``[ angletypes ]`` and ``[ dihedraltypes ]``, converting
+/// GROMACS units (nm, kJ/mol, degrees) to molrs store units (Å, kcal/mol, rad).
+///
+/// Anything the reader does not model raises ``ValueError`` naming it: an
+/// unsupported function code or comb-rule, ``[ pairtypes ]``,
+/// ``[ nonbond_params ]``, ``[ constrainttypes ]``, ``[ cmaptypes ]``,
+/// ``[ implicit_genborn_params ]``, any unknown section, and every molecule
+/// section (``[ moleculetype ]``, ``[ atoms ]``, ``[ bonds ]``, ``[ system ]``,
+/// ``[ molecules ]``, …). Molecule sections are topology: read them with
+/// :func:`molrs.io.read_top`, or skip them here.
+///
+/// ``include`` follows ``#include`` relative to the including file (default
+/// false: ignored). Each name in ``skip_directives`` (bracket-less,
+/// case-insensitive, e.g. ``"constrainttypes"``) is read past, rows and all,
+/// instead of refused.
 #[pyfunction]
-#[pyo3(name = "read_gromacs_top_ff", signature = (path, include = false))]
-pub fn read_gromacs_top_ff_py(path: &str, include: bool) -> PyResult<PyForceField> {
+#[pyo3(
+    name = "read_gromacs_top_ff",
+    signature = (path, include = false, *, skip_directives = Vec::new())
+)]
+pub fn read_gromacs_top_ff_py(
+    path: &str,
+    include: bool,
+    skip_directives: Vec<String>,
+) -> PyResult<PyForceField> {
     use molrs::ff::ForceFieldReader;
-    let forcefield = molrs::ff::GromacsTopFfReader::new()
-        .with_include(include)
+    let forcefield = gromacs_top_ff_reader(include, &skip_directives)
         .read(path)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
 }
 
-/// Parse GROMACS topology force-field tables from a string.
+/// Parse the force-field directives of GROMACS topology text into a
+/// :class:`ForceField`.
+///
+/// Same directive model as :func:`read_gromacs_top_ff`: the directives read,
+/// the ``ValueError`` refusals (molecule sections included — use
+/// :func:`molrs.io.read_top` or skip them), and ``skip_directives`` all
+/// apply.
 #[pyfunction]
-#[pyo3(name = "read_gromacs_top_ff_str", signature = (text, include = false))]
-pub fn read_gromacs_top_ff_str_py(text: &str, include: bool) -> PyResult<PyForceField> {
+#[pyo3(
+    name = "read_gromacs_top_ff_str",
+    signature = (text, include = false, *, skip_directives = Vec::new())
+)]
+pub fn read_gromacs_top_ff_str_py(
+    text: &str,
+    include: bool,
+    skip_directives: Vec<String>,
+) -> PyResult<PyForceField> {
     use molrs::ff::ForceFieldReader;
-    let forcefield = molrs::ff::GromacsTopFfReader::new()
-        .with_include(include)
+    let forcefield = gromacs_top_ff_reader(include, &skip_directives)
         .read_str(text)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
 }
 
-/// Write a ForceField to GROMACS ``.top`` / ``.itp`` force-field tables.
+/// The GROMACS directive reader both Python entry points configure.
+fn gromacs_top_ff_reader(
+    include: bool,
+    skip_directives: &[String],
+) -> molrs::ff::GromacsTopFfReader {
+    skip_directives.iter().fold(
+        molrs::ff::GromacsTopFfReader::new().with_include(include),
+        |reader, name| reader.with_skipped_directive(name),
+    )
+}
+
+/// Write a ForceField as GROMACS force-field directives.
+///
+/// Writes ``[ defaults ]``, ``[ atomtypes ]``, ``[ bondtypes ]``,
+/// ``[ angletypes ]`` and ``[ dihedraltypes ]`` in GROMACS units (nm, kJ/mol,
+/// degrees) — the inverse of :func:`read_gromacs_top_ff`. No molecule section
+/// is written: a force field holds no molecule. A style or parameter GROMACS
+/// directives cannot express raises ``ValueError`` naming it. ``precision`` is
+/// the number of decimal places for floating coefficients.
 #[pyfunction]
 #[pyo3(name = "write_gromacs_top_ff", signature = (path, forcefield, precision = 6))]
 pub fn write_gromacs_top_ff_py(
@@ -1985,18 +2035,26 @@ pub fn write_gromacs_top_ff_py(
     forcefield: &PyForceField,
     precision: usize,
 ) -> PyResult<()> {
-    molrs::ff::write_gromacs_top_ff(path, &forcefield.inner, precision)
+    use molrs::ff::ForceFieldWriter;
+    molrs::ff::GromacsTopFfWriter::new()
+        .with_precision(precision)
+        .write(&forcefield.inner, path)
         .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
-/// Serialize a ForceField to a GROMACS topology force-field string.
+/// Serialize a ForceField as GROMACS force-field directives to a string.
+///
+/// Same output and ``ValueError`` refusals as :func:`write_gromacs_top_ff`.
 #[pyfunction]
 #[pyo3(name = "write_gromacs_top_ff_str", signature = (forcefield, precision = 6))]
 pub fn write_gromacs_top_ff_str_py(
     forcefield: &PyForceField,
     precision: usize,
 ) -> PyResult<String> {
-    molrs::ff::write_gromacs_top_ff_str(&forcefield.inner, precision)
+    use molrs::ff::ForceFieldWriter;
+    molrs::ff::GromacsTopFfWriter::new()
+        .with_precision(precision)
+        .write_str(&forcefield.inner)
         .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 

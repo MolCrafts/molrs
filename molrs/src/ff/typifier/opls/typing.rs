@@ -1,50 +1,64 @@
 //! OPLS-AA SMARTS atom typing (dependency-aware, layered).
 //!
 //! [`typify_atoms`] drives the [`LayeredTypingEngine`]: it processes the type
-//! defs level by level so that a def referencing a
-//! previously-assigned type via `%opls_NNN` (e.g. benzene's aromatic-H type
-//! `opls_146` = `[H][C;%opls_145]`) is matched only after its dependency is
-//! resolved. The engine returns the per-atom `opls_NNN` assignment, which this
-//! function turns into the node [`Annotation`]s of a [`Match`](crate::ff::typifier::Match):
+//! defs level by level so that a def referencing a previously-assigned type via
+//! a `%label` (e.g. benzene's aromatic-H type `opls_146` =
+//! `[#1]-[c;%opls_145]`) is matched only after its dependency is resolved. The
+//! engine returns the per-atom `opls_NNN` assignment, which this function turns
+//! into the node [`Annotation`]s of a [`Match`](crate::ff::typifier::Match):
 //! each type's `type` (with its `atom/full` row's `mass` and `charge`) and
 //! `class`. It writes nothing; the typing base stamps the match.
+//!
+//! # Aromaticity on a private copy
+//!
+//! The engine never sees the caller's graph as given. It matches a clone
+//! brought to the standard aromatic form by
+//! [`Perceive::find_aromaticity`](molrs::perceive::Perceive::find_aromaticity),
+//! which keeps every [`AtomId`], so a Kekulé ring and an aromatic-declared ring
+//! type alike under the aromatic rules (`c`, `n`, `:`). Only the assigned type
+//! names travel back; the caller's bond types and bond numbers are never
+//! touched, so a Kekulé input stays Kekulé.
 //!
 //! # SMARTS reuse
 //!
 //! Matching uses the always-compiled molrs SMARTS engine
-//! ([`SmartsPattern`](molrs::SmartsPattern)) with the context-label extension
-//! ([`MatchOptions::labels`](molrs::MatchOptions::labels)):
-//! the engine feeds back the current assignment map as the label context so
+//! ([`SmartsPattern`](molrs::SmartsPattern)) with standard Daylight semantics
+//! (an unmarked bond is single-or-aromatic, `[#1]` is a hydrogen atom, `H<n>`
+//! a hydrogen count, `r<n>` the smallest ring) plus the context-label
+//! extension ([`MatchOptions::labels`](molrs::MatchOptions::labels)): the
+//! engine feeds back the current assignment map as the label context so
 //! `%opls_NNN` predicates can read it. Each `def` is the SMARTS for the type's
 //! *target* atom: by RDKit convention the engine roots a match at query atom 0,
 //! so the typed atom of every match is `match[0]`.
 //!
 //! # Conflict resolution
 //!
-//! When several defs match the same atom *within a level*, the winner is chosen
-//! by, in order:
-//! 1. higher priority (overrides / explicit / layer — see [`OplsTypingMeta`]);
-//! 2. more specific pattern (more query atoms);
-//! 3. earlier definition order (stable tie-break, by sorted `opls_NNN` name).
+//! When several defs match the same atom *within a level*:
+//! 1. candidates dominated by another candidate drop out — a type dominates
+//!    another when it sits on a higher `layer`, or on the same layer overrides
+//!    it directly or transitively (see [`OplsTypingMeta`]);
+//! 2. among the rest, higher explicit `priority` wins (absent = 0);
+//! 3. then the more specific pattern (more query atoms);
+//! 4. then the earlier sorted type name.
 //!
-//! Step 2 is a specificity proxy; molpy's exact `(score, pattern_size,
-//! definition_order)` tie-break (which also counts query *edges*) is a chain-3
-//! per-atom-parity refinement, not required here.
+//! Across levels, a later level's winner replaces an atom's current type unless
+//! the current type dominates it.
 //!
 //! # Levels
 //!
-//! Standalone (no-`%opls_NNN`) defs are level 0 — the chain-1 single-pass case.
-//! `%opls_NNN`-referencing defs resolve in dependency order; mutually-dependent
-//! defs form a circular group resolved by fixed-point iteration (see
-//! [`layered`](super::layered)).
+//! Standalone (no-`%label`) defs are level 0. `%label`-referencing defs
+//! resolve in dependency order; mutually-dependent defs form a circular group
+//! resolved by fixed-point iteration (see [`layered`](super::layered)).
 //!
 //! # Out of scope
 //!
-//! - Legacy rows with no `def` are skipped (cannot be SMARTS-matched).
-//! - Bonded-term (bond / angle / dihedral) labeling is chain 2.
+//! - Rows with no `def` are skipped (cannot be SMARTS-matched).
+//! - Bonded-term (bond / angle / dihedral) labeling lives in
+//!   [`assign`](super::assign).
 
 use std::collections::HashMap;
 
+use molrs::perceive::Perceive;
 use molrs::system::molgraph::PropValue;
 use molrs::{AtomId, Atomistic};
 
@@ -65,8 +79,9 @@ pub(crate) struct AtomTyping {
 
 /// Type the atoms of `mol` with OPLS-AA atom types.
 ///
-/// Drives the [`LayeredTypingEngine`] over `meta`. Every atom assigned a type
-/// gets two annotations:
+/// Drives the [`LayeredTypingEngine`] over `meta`, matching a privately
+/// aromaticity-perceived copy of `mol` (same [`AtomId`]s; `mol` itself is never
+/// changed). Every atom assigned a type gets two annotations:
 /// - `type` → [`Annotation::Type`] under the `atom/full` style of `ff`, named
 ///   by the `opls_NNN` type, with that row's numeric params (`mass`, `charge`)
 ///   — or a plain [`Annotation::Value`] when `ff` has no such row. The row's
@@ -79,14 +94,16 @@ pub(crate) struct AtomTyping {
 ///
 /// # Errors
 ///
-/// Returns `Err` if any SMARTS `def` is malformed (fail-fast).
+/// Returns `Err` if the engine cannot be built from `meta`: a malformed SMARTS
+/// `def`, an override naming an absent type, or an overrides cycle.
 pub(crate) fn typify_atoms(
     mol: &Atomistic,
     meta: &OplsTypingMeta,
     ff: &ForceField,
 ) -> Result<AtomTyping, String> {
     let engine = LayeredTypingEngine::build(meta)?;
-    let types = engine.assign(mol);
+    let perceived = Perceive::new().find_aromaticity(mol);
+    let types = engine.assign(&perceived);
     let atom_full = ff.get_style("atom", "full");
 
     let nodes = mol
@@ -124,6 +141,7 @@ mod tests {
     use crate::ff::typifier::Match;
     use crate::ff::typifier::opls::meta::OplsTypeRow;
     use molrs::Atom;
+    use molrs::system::BondType;
 
     /// `mol` with the node annotations of [`typify_atoms`] written onto it
     /// through the typing base's one execution path.
@@ -145,7 +163,8 @@ mod tests {
 
     /// Build a tiny ethane-like skeleton C-C with explicit H neighbours so the
     /// `[C;X4](C)(H)(H)H` style defs have something to match. (Pure-function
-    /// unit fixture — real-molecule typing lives in tests/ff/typifier/opls.rs.)
+    /// unit fixture — typing of real molecules by the shipped rules is the
+    /// golden tests of `opls/embedded.rs`.)
     fn ethane() -> Atomistic {
         let mut g = Atomistic::new();
         let c0 = g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
@@ -273,7 +292,7 @@ mod tests {
         // matching dependency present (nothing is ever typed opls_145), the
         // `%opls_145` predicate never holds, so the def matches nothing — and
         // it is NOT an error. (Real layered typing is covered in
-        // src/ff/typifier/opls/layered.rs and tests/ff/typifier/opls.rs.)
+        // `opls/layered.rs` and the golden tests of `opls/embedded.rs`.)
         let m = meta_with(&[("opls_ref", row("HA", Some("[H][C;%opls_145]"), &[]))]);
         let ff = ForceField::new("OPLS-AA");
         let typed = typed_graph(&ethane(), &m, &ff).unwrap();
@@ -319,5 +338,73 @@ mod tests {
             Some("opls_155"),
             "hydroxyl H typed opls_155 via the %opls_154 dependency"
         );
+    }
+
+    /// Kekulé benzene, hand-built: ring carbons 0..=5 bonded `C0=C1-C2=C3-C4=C5-C0`
+    /// (bond types `Double` / `Single`, no `is_aromatic` flag), one hydrogen on
+    /// each carbon (atoms 6..=11). Returns the graph and its six ring bonds.
+    fn kekule_benzene() -> (Atomistic, Vec<molrs::BondId>) {
+        let mut g = Atomistic::new();
+        let c: Vec<AtomId> = (0..6)
+            .map(|k| g.add_atom(Atom::xyz("C", 1.4 * k as f64, 0.0, 0.0)))
+            .collect();
+        let ring: Vec<molrs::BondId> = (0..6)
+            .map(|k| {
+                let bond = g.add_bond(c[k], c[(k + 1) % 6]).unwrap();
+                let order = if k % 2 == 0 {
+                    BondType::Double
+                } else {
+                    BondType::Single
+                };
+                g.set_bond_type(bond, order).unwrap();
+                bond
+            })
+            .collect();
+        for (k, &carbon) in c.iter().enumerate() {
+            let h = g.add_atom(Atom::xyz("H", 1.4 * k as f64, 1.1, 0.0));
+            g.add_bond(carbon, h).unwrap();
+        }
+        (g, ring)
+    }
+
+    /// Typing perceives aromaticity on a private copy.
+    ///
+    /// Kekulé benzene declares no aromatic atom, yet it matches the
+    /// aromatic-only rules `[c;X3;r6]` (every ring carbon) and `[#1]-[c]`
+    /// (every hydrogen), so all 12 atoms are typed. The perceived copy stays
+    /// private: the returned graph keeps the caller's `Double` / `Single` type
+    /// and bond number on every ring bond.
+    #[test]
+    fn kekule_input_is_typed_by_aromatic_rules_and_keeps_its_bond_orders() {
+        let m = meta_with(&[
+            ("t_ca", row("CA", Some("[c;X3;r6]"), &[])),
+            ("t_ha", row("HA", Some("[#1]-[c]"), &[])),
+        ]);
+        let ff = ForceField::new("OPLS-AA");
+        let (mol, ring) = kekule_benzene();
+        let typed = typed_graph(&mol, &m, &ff).unwrap();
+
+        let count = |t: &str| {
+            typed
+                .atoms()
+                .filter(|(_, a)| a.get_str("type") == Some(t))
+                .count()
+        };
+        assert_eq!(count("t_ca"), 6, "all six ring carbons typed t_ca");
+        assert_eq!(count("t_ha"), 6, "all six hydrogens typed t_ha");
+
+        for (k, &bond) in ring.iter().enumerate() {
+            let want = if k % 2 == 0 {
+                BondType::Double
+            } else {
+                BondType::Single
+            };
+            assert_eq!(typed.bond_type(bond), want, "ring bond {k} type");
+            assert_eq!(
+                typed.bond_number(bond),
+                mol.bond_number(bond),
+                "ring bond {k} number"
+            );
+        }
     }
 }

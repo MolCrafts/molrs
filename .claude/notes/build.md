@@ -30,7 +30,7 @@ Three things follow, and they are the whole of this note:
 
 Every root-workspace invocation goes through a `cargo mrs-*` alias in
 `.cargo/config.toml` — `mrs-build`, `mrs-check`, `mrs-clippy`, `mrs-test`,
-`mrs-doctest`, `mrs-doc`. Hooks, CI and CLAUDE.md's `mol_project.build` all
+`mrs-doctest`, `mrs-doc`, and the OPLS table generator `mrs-gen-opls`. Hooks, CI and CLAUDE.md's `mol_project.build` all
 call the aliases, so the feature string exists in exactly one place.
 
 The rule has teeth: `test_single` used to be `cargo test {path}`, which drops
@@ -42,7 +42,11 @@ saves at most the 5 s suite run, never compile time.)
 
 ### Four legitimate builds of `molcrafts-molrs`
 
-1. `full,filesystem,stream` (+ default `rayon`) — every root-workspace command.
+1. `full,filesystem,stream` (+ default `rayon`) — every root-workspace command,
+   `cargo mrs-gen-opls` included. The OPLS generator links this same library
+   unit and adds exactly one example unit (a fingerprint directory holding
+   `example-gen_opls_params*`); `mrs-check` / `mrs-clippy --all-targets` add
+   their check units for it. It adds no library fingerprint.
 2. `full,filesystem,rayon` — what `molrs-capi` and `molrs-cxxapi` link. They
    must not ship `stream` (tokio + tungstenite inside a C archive), so this set
    is separate **on purpose**; do not "unify" it by moving `stream` into `full`.

@@ -19,6 +19,7 @@
 //! `TypeLabels`.
 
 use super::ForceFieldWriter;
+use crate::ff::forcefield::torsion::opls_to_rb;
 use crate::ff::forcefield::{ForceField, StyleDefs};
 
 /// kcal/mol → kJ/mol.
@@ -205,7 +206,21 @@ impl ForceFieldWriter for XmlForceFieldWriter {
                         self.esc(&dt.ktom),
                         self.esc(&dt.ltom)
                     );
-                    for (i, c) in opls_to_rb(&dt.params).iter().enumerate() {
+                    // A type already in `c0..c5` (kcal/mol) passes through;
+                    // `k1..k4` (kcal/mol) go through the Fourier → RB relation.
+                    // Either way the attributes are written in kJ/mol.
+                    let p = &dt.params;
+                    let rb = if p.get("k1").is_none() {
+                        let mut c = [0.0; 6];
+                        for (i, ci) in c.iter_mut().enumerate() {
+                            *ci = p.get(&format!("c{i}")).unwrap_or(0.0) * KJ_PER_KCAL;
+                        }
+                        c
+                    } else {
+                        let f = |k: &str| p.get(k).unwrap_or(0.0) * KJ_PER_KCAL;
+                        opls_to_rb([f("k1"), f("k2"), f("k3"), f("k4")])
+                    };
+                    for (i, c) in rb.iter().enumerate() {
                         attrs.push_str(&format!(" c{i}=\"{}\"", self.fmt_f(*c)));
                     }
                     out.push_str(&format!("    <Proper {attrs}/>\n"));
@@ -324,29 +339,6 @@ impl ForceFieldWriter for XmlForceFieldWriter {
     }
 }
 
-/// OPLS 4-cosine `k1..k4` (kcal/mol) → Ryckaert–Bellemans `c0..c5` (kJ/mol):
-/// the inverse of the reader's `rb_to_opls` (GROMACS Eqs. 200–201). A type
-/// that already carries `c0..c5` (in kcal/mol) is passed through converted.
-fn opls_to_rb(params: &crate::ff::forcefield::Params) -> [f64; 6] {
-    if params.get("k1").is_none() {
-        let mut c = [0.0; 6];
-        for (i, ci) in c.iter_mut().enumerate() {
-            *ci = params.get(&format!("c{i}")).unwrap_or(0.0) * KJ_PER_KCAL;
-        }
-        return c;
-    }
-    let f = |k: &str| params.get(k).unwrap_or(0.0) * KJ_PER_KCAL;
-    let (f1, f2, f3, f4) = (f("k1"), f("k2"), f("k3"), f("k4"));
-    [
-        f2 + 0.5 * (f1 + f3),
-        0.5 * (-f1 + 3.0 * f3),
-        -f2 + 4.0 * f4,
-        -2.0 * f3,
-        -4.0 * f4,
-        0.0,
-    ]
-}
-
 pub fn write_forcefield_xml(path: &str, ff: &ForceField, precision: usize) -> Result<(), String> {
     XmlForceFieldWriter::new()
         .with_precision(precision)
@@ -457,6 +449,70 @@ mod tests {
             .expect("opls_135");
         assert!((pt.params.get("sigma").unwrap() - 3.5).abs() < 1e-6);
         assert!((pt.params.get("epsilon").unwrap() - 0.066).abs() < 1e-6);
+    }
+
+    /// The `c0..c5` attributes of the only `<Proper>` under `<RBTorsionForce>`.
+    fn rb_coefficients(xml: &str) -> [f64; 6] {
+        let doc = roxmltree::Document::parse(xml).expect("well-formed XML");
+        let propers: Vec<_> = doc
+            .descendants()
+            .filter(|n| n.has_tag_name("Proper"))
+            .filter(|n| n.parent().is_some_and(|p| p.has_tag_name("RBTorsionForce")))
+            .collect();
+        assert_eq!(propers.len(), 1, "{xml}");
+        let mut c = [0.0; 6];
+        for (i, ci) in c.iter_mut().enumerate() {
+            let raw = propers[0]
+                .attribute(format!("c{i}").as_str())
+                .unwrap_or_else(|| panic!("missing c{i}: {xml}"));
+            *ci = raw.parse().expect("numeric coefficient");
+        }
+        c
+    }
+
+    fn one_opls_torsion(params: Params) -> ForceField {
+        let mut ff = ForceField::new("opls");
+        ff.def_style("dihedral", "opls", Params::new())
+            .unwrap()
+            .def_type("HC-CT-CT-HC", params)
+            .unwrap();
+        ff
+    }
+
+    /// k3 = 0.3 kcal/mol → F3 = 1.2552 kJ/mol: C0 = ½F3 = 0.6276,
+    /// C1 = 1.5·F3 = 1.8828, C3 = −2·F3 = −2.5104, C2 = C4 = C5 = 0 (kJ/mol).
+    #[test]
+    fn opls_fourier_torsion_is_written_as_rb_in_kj() {
+        let ff = one_opls_torsion(Params::from_pairs(&[
+            ("k1", 0.0),
+            ("k2", 0.0),
+            ("k3", 0.3),
+            ("k4", 0.0),
+        ]));
+        let c = rb_coefficients(&write_forcefield_xml_str(&ff, 8).unwrap());
+        let want = [0.6276, 1.8828, 0.0, -2.5104, 0.0, 0.0];
+        for (i, (got, want)) in c.iter().zip(want).enumerate() {
+            assert!((got - want).abs() < 1e-9, "c{i}: got {got}, want {want}");
+        }
+    }
+
+    /// A type already in `c0..c5` (kcal/mol) passes through, × 4.184:
+    /// 0.15 → 0.6276, 0.45 → 1.8828, −0.6 → −2.5104.
+    #[test]
+    fn rb_torsion_passes_through_converted_to_kj() {
+        let ff = one_opls_torsion(Params::from_pairs(&[
+            ("c0", 0.15),
+            ("c1", 0.45),
+            ("c2", 0.0),
+            ("c3", -0.6),
+            ("c4", 0.0),
+            ("c5", 0.0),
+        ]));
+        let c = rb_coefficients(&write_forcefield_xml_str(&ff, 8).unwrap());
+        let want = [0.6276, 1.8828, 0.0, -2.5104, 0.0, 0.0];
+        for (i, (got, want)) in c.iter().zip(want).enumerate() {
+            assert!((got - want).abs() < 1e-9, "c{i}: got {got}, want {want}");
+        }
     }
 
     #[test]

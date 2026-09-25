@@ -562,6 +562,9 @@ The infallible public constructors over compile-time tables keep their signature
   memoised per set as `GaffTypifier`'s library (moved from `ff::forcefield::gaff` by
   system-forcefield-08)
 - `UFFTypifier::new` → `try_new` — `ff::typifier::uff::tests::new_defines_without_conflict`
+- `ff::typifier::opls::embedded::typing_meta` → `try_typing_meta` (the join of
+  `OPLSAA_TYPING` to `OPLSAA_ATOMS`) —
+  `ff::typifier::opls::embedded::tests::typing_meta_joins_every_rule` (opls-gromacs-02)
 
 Anything taking runtime input (readers, `from_xml_str`, `GaffTypifier::r#match`) returns
 `Err`. Checked after system-forcefield-07: the symbols and test paths above are
@@ -569,20 +572,66 @@ unchanged; `mmff::embedded::force_field` is now called once per variant, memoise
 `OnceLock<Arc<…>>` (`typifier/mmff/embedded.rs:40-41`). 08 moved the candidate builder
 and rewrote the GAFF line above.
 
-## 2026-09-25 — GROMACS force-field files model a molecule, not directives (routed `/mol:refactor`)
+## 2026-09-25 — GROMACS force-field files model a molecule, not directives (resolved by opls-gromacs-01)
 
-Both GROMACS force-field files write/read bonded rows by atom index into an `[ atoms ]`
-table (`readers/gromacs.rs:382-614`, `writers/gromacs.rs:77-236`) instead of the
-force-field directives `[ bondtypes ]` / `[ angletypes ]` / `[ dihedraltypes ]` /
-`[ pairtypes ]` keyed by type name. Costs left in place until the rewrite
-(system-forcefield-02):
+Both GROMACS force-field files used to write/read bonded rows by atom index into an
+`[ atoms ]` table instead of the force-field directives. opls-gromacs-01 removed the
+molecule model: `GromacsTopFfReader` and `GromacsTopFfWriter` deal only in `[ defaults ]`,
+`[ atomtypes ]` (split into `atom/full` + the `pair/lj/cut` self row), `[ bondtypes ]`,
+`[ angletypes ]` and `[ dihedraltypes ]`, keyed by type labels (`X` ↔ the empty
+wildcard). The reader refuses every molecule section by name ("topology: read with
+io::data::top::read_top") unless the caller skips it with `with_skipped_directive`. Its
+debts are gone with it: the writer no longer invents `[ atoms ]` fields (`resnr 0`,
+`residu LIG`, `cgnr 1`, `charge` / `mass` `0.0`), per-instance `TypeConflict` from
+bonded rows cannot arise, and no `[ atoms ]` sections are merged across molecule types.
+A full `.top` now needs its molecule sections skipped, or the caller reads
+`forcefield.itp`.
 
-- the writer invents per-atom `[ atoms ]` fields: `resnr 0`, `residu LIG`, `cgnr 1`
-  (`writers/gromacs.rs:92-95`), and `charge` / `mass` `0.0` when the atom type has none
-  (`:96-100`);
-- lost reading capability: a `.top` whose bonded rows give different per-instance
-  parameters to instances sharing one type tuple now fails with `TypeConflict`;
-- the reader merges all `[ atoms ]` sections across molecule types into one list.
+## 2026-09-25 — `OplsXmlReader` drops content silently (routed `/mol:fix`)
+
+Found by opls-gromacs-01 (not fixed there; `OplsXmlReader` now refuses only
+non-representable RB rows):
+
+- `ff/forcefield/readers/opls.rs:143-149` skips `<Residues>`, `<ImproperTorsionForce>`,
+  `<PeriodicImproperForce>` and every `<Custom*Force>` without a word, so impropers and
+  custom terms in the pack vanish;
+- `:460-463` drops `<Improper>` children of `<PeriodicTorsionForce>`;
+- `:349-360` (`ensure_class_wildcards`, from `:283`) invents placeholder atom types
+  (`type_="*"`, `class_=<class>`, empty params) for class-only bonded endpoints.
+
+Each should be an `Err` naming the element, or a modelled style.
+
+## 2026-09-25 — `read_top` reads both branches of `#ifdef` / `#else` (routed `/mol:fix`)
+
+`io/data/top.rs:271-274` skips every `#` line, so both branches of an
+`#ifdef` / `#else` block (e.g. `FLEXIBLE` water) are read as topology. The GROMACS
+force-field reader evaluates `#define` / `#ifdef` / `#ifndef` / `#else` / `#endif`
+since opls-gromacs-01, but io and ff may not share code (architecture-rules.md), so
+`io::data::top` needs its own conditional evaluation.
+
+## 2026-09-25 — private unit-constant copies beside `molrs::units` (routed `/mol:refactor`)
+
+`KJ_PER_KCAL` / `NM_TO_ANGSTROM` are private `const` copies in
+`ff/forcefield/readers/gromacs.rs:92-93`, `ff/forcefield/writers/gromacs.rs:75-76`,
+`ff/forcefield/readers/opls.rs:59-61` and `ff/forcefield/writers/xml.rs:26`, beside the
+unit system in `molrs::units` (`core/units/`). One source for each conversion factor.
+
+## 2026-09-25 — OPLS improper assignment (routed `/mol:spec`)
+
+GROMACS OPLS-AA applies its six improper macros (`improper_Z_N_X_Y`, …, defined in
+`ffbonded.itp`) through `.rtp` residue entries, not through `[ dihedraltypes ]`. The
+GROMACS force-field reader records `#define` names but never expands bodies, so OPLS
+impropers are not assigned by molrs typing. Owed as its own spec.
+
+## 2026-09-25 — remaining Rust convenience free functions (routed `/mol:refactor`)
+
+opls-gromacs-01 deleted `read_gromacs_top_ff` and `write_gromacs_top_ff(_str)`. The
+same pattern — a free function wrapping a reader/writer type — remains for
+`read_amber_prmtop_ff` (`ff/forcefield/readers/prmtop.rs:75`), `read_forcefield_xml(_str)`
+(`ff/forcefield/xml.rs:46`, `:59`) and `write_forcefield_xml(_str)`
+(`ff/forcefield/writers/xml.rs:342`, `:348`), re-exported at `ff/mod.rs:13-26`.
+Callers should construct the reader/writer (CLAUDE.md § Prefer); binder callers migrate
+with them.
 
 ## 2026-09-25 — prmtop impropers still keep the first parameter set per name (routed `/mol:fix`)
 
@@ -610,12 +659,12 @@ system-forcefield-04 A/B harness: strict typing of 1,3-butadiene, caffeine and
 N-methylacetamide is `Ok`, then compiling fails (`bonds block missing "type" column` /
 `unknown bond type ''`). Fixed: strict `typify_labeled_graph` returns `Err` naming every
 untyped atom (`atom {i} ({element})`), and the bonded pass refuses an untyped endpoint
-under `NoMatch::Error`; tests in `opls/mod.rs` and `opls/assign.rs`. Until the bond-order
-entry below is fixed, strict OPLS refuses every molecule with a C=C or C=O bond. system-forcefield-07's
+under `NoMatch::Error`; tests in `opls/mod.rs` and `opls/assign.rs`. (The bond-order gap that made strict
+OPLS refuse every C=C / C=O molecule was closed by opls-gromacs-03.) system-forcefield-07's
 `Match::write_onto` checks shape, not coverage, so it does not catch this; 07's OPLS
 `r#match` must carry the fix, not the skip.
 
-## 2026-09-25 — OPLS defs assume bond-order-agnostic matching (routed `/mol:spec`)
+## 2026-09-25 — OPLS defs assumed bond-order-agnostic matching (resolved by opls-gromacs-03)
 
 The embedded OPLS defs (`ff/params/oplsaa.rs`, same text as molpy's
 `data/forcefield/oplsaa.xml`, from foyer) write neighbours as `[C;X3](C)(H)H`
@@ -626,6 +675,10 @@ carbons stay untyped, and the miss cascades (N-methylacetamide's amide N becomes
 `opls_901`). Fix needs its own spec and A/B (it changes assigned types): compile OPLS defs
 with an any-order unmarked bond, or rewrite the defs with `~`/`=`. On the backmap
 critical path (the methacrylate monomer has C=C and C=O).
+
+Resolved 2026-09-25 (opls-gromacs chain): the rules are molrs-owned Daylight SMARTS in
+`ff/params/oplsaa_typing.rs` (explicit bonds, `[#1]` hydrogens, aromatic case), matched after
+aromaticity is perceived on a private copy; opls_150/178 added; ranking is pairwise dominance.
 
 ## 2026-09-25 — the `ParamSource` bidirectional gate test does not exist (routed `/mol:fix`)
 
@@ -690,3 +743,28 @@ corrected true-title-case token fallback that returns `Element::symbol()`.
 - Routed to the molpy chain: `molpy/src/molpy/typifier/base.py:99` defines `typify`
   (now a `TypeError` against molrs 0.15), and `base.py:115` passes the caller's graph,
   not a copy, to `match`, so molpy typing mutates its input.
+
+## 2026-09-25 — mixing mandatory on every `lj/cut` (routed `/mol:spec`)
+
+An `lj/cut` style that declares no `mixing` is evaluated under `Mixing::UNDECLARED`
+(arithmetic): `ff/potential/pair/lj_cut.rs:643-646` (`pair_lj_cut_ctor`) and `:714-717`
+(`pair_lj_cut_typed_ctor`). opls-gromacs-02 made the LAMMPS writer name that rule
+(`pair_modify mix arithmetic`), so an export no longer mixes geometrically behind the
+kernel's back — a patch at the seam. The principled fix is the `coul/cut` one: every
+`lj/cut` must declare `mixing`, and a style without it is an `Err`, never a silent
+default. Owed as its own spec. Still open meanwhile: the writer's hybrid branch
+(`ff/forcefield/writers/lammps.rs:616-618`) writes no rule at all, so an undeclared `lj/cut` inside a `pair_style hybrid`
+still mixes geometrically in LAMMPS.
+
+## 2026-09-25 — OPLS engine unit tests still write foyer-style defs (routed `/mol:refactor`)
+
+opls-gromacs-03 rewrote the shipped rules (`ff/params/oplsaa_typing.rs`) as Daylight
+SMARTS, but the older hand-written fixtures in `ff/typifier/opls/layered.rs`,
+`typing.rs` and `deps.rs` tests (and `opls/mod.rs`'s estimator fixtures) still write
+foyer-dialect defs: unmarked bonds, a bare `H` as a hydrogen atom
+(`[C;X4](C)(H)(H)H`, `H[C;X4]`, `[O;X2](H)([!H])`), uppercase `C` for ring carbons.
+They pass because each fixture only crosses single bonds and never meets an aromatic
+atom, so an unmarked bond and a bare `H` happen to read right — but they document a
+dialect the shipped table no longer uses, and a copy into a real rule set would
+reintroduce the defect this chain fixed. Owed: rewrite them to the header conventions of
+`oplsaa_typing.rs` (`-`/`=`/`#`/`:`, `[#1]`, lowercase aromatics), assertions unchanged.

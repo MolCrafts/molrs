@@ -27,7 +27,10 @@ target-dir = "target"
 #
 # Legitimate builds of molcrafts-molrs in this repo, and no others:
 #   1. this set — `full,filesystem,stream` (+ default `rayon`) for every root
-#      workspace command: build, check, clippy, test, doc;
+#      workspace command: build, check, clippy, test, doc, and `mrs-gen-opls`.
+#      The generator links this same library unit; it adds exactly one example
+#      unit (`example-gen_opls_params`), and `mrs-check` / `mrs-clippy
+#      --all-targets` add their check units for it;
 #   2. `full,filesystem,rayon` — what molrs-capi and molrs-cxxapi link. They
 #      must not ship `stream` (tokio + tungstenite in a C archive), so this set
 #      stays separate on purpose;
@@ -41,3 +44,5 @@ mrs-clippy  = ["clippy", "-p", "molcrafts-molrs", "--all-targets", "--features",
 mrs-test    = ["test",   "-p", "molcrafts-molrs", "--lib", "--features", "full,filesystem,stream"]
 mrs-doctest = ["test",   "--doc", "-p", "molcrafts-molrs", "--features", "full,filesystem,stream"]
 mrs-doc     = ["doc",    "-p", "molcrafts-molrs", "--no-deps", "--features", "full,filesystem,stream"]
+# Regenerate molrs/src/ff/params/oplsaa.rs: `cargo mrs-gen-opls --gromacs <dir>`.
+mrs-gen-opls = ["run",  "-p", "molcrafts-molrs", "--example", "gen_opls_params", "--features", "full,filesystem,stream", "--"]

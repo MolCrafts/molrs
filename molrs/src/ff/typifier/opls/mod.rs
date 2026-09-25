@@ -1,10 +1,27 @@
 //! OPLS-AA SMARTS atom typifier.
 //!
 //! Mirrors [`mmff`](crate::ff::typifier::mmff): typing metadata
-//! ([`OplsTypingMeta`]) is read *separately* from the potential [`ForceField`],
-//! both from the same OPLS-AA XML. [`OPLSAATypifier`] owns both and implements
-//! [`Typifier`], assigning `opls_NNN` atom types by SMARTS matching with
-//! overrides / priority / layer conflict resolution.
+//! ([`OplsTypingMeta`]) is kept *separately* from the potential [`ForceField`].
+//! [`OPLSAATypifier`] owns both and implements [`Typifier`], assigning
+//! `opls_NNN` atom types by SMARTS matching.
+//!
+//! # How atoms are typed
+//!
+//! - **Rules.** The shipped rules ([`crate::ff::params::oplsaa_typing`]) are
+//!   molrs-owned Daylight SMARTS with explicit bonds, `[#1]` hydrogens and
+//!   lowercase aromatic atoms, matched with standard semantics against a
+//!   molecule with explicit hydrogens.
+//! - **Aromaticity on a private copy.** The rules run on a clone brought to the
+//!   standard aromatic form by
+//!   [`Perceive::find_aromaticity`](molrs::perceive::Perceive::find_aromaticity)
+//!   (same atom ids), so a Kekulé ring and an aromatic-declared ring type
+//!   alike, while the caller's bond types and bond numbers are never changed.
+//!   Typifiers built by [`OPLSAATypifier::from_xml_str`] do the same.
+//! - **Ranking.** A type on a higher `layer`, or on the same layer overriding
+//!   another (directly or transitively), dominates it: it wins on an atom where
+//!   both match, and a later dependency level never replaces it. Candidates
+//!   nothing dominates rank by explicit `priority`, then pattern size, then
+//!   name (see [`layered`]).
 //!
 //! After atom typing, its `r#match` ([`Typifier`]) matches every bond /
 //! angle / dihedral against the force field's bonded tables by OPLS
@@ -22,8 +39,8 @@
 //!
 //! # Scope
 //!
-//! Only types carrying a SMARTS `def` participate; legacy `oplsaa.xml` rows
-//! (`opls_001`–`opls_134`, no `def`) are out of scope for auto-typing. Improper
+//! Only types carrying a SMARTS `def` participate; the united-atom types
+//! (`opls_001`–`opls_134`) carry none and are out of scope for auto-typing. Improper
 //! matching is out of scope. Uncovered bonded terms follow the [`NoMatch`]
 //! policy; a consumer that wants to fill them can attach its own [`Estimator`]
 //! via [`OPLSAATypifier::with_estimator`], or the restored
@@ -47,7 +64,7 @@ pub mod meta;
 pub(crate) mod typing;
 
 pub use assign::{BondedTerm, CandidateTables, Estimator, NoMatch};
-pub use meta::{LAYER_PRIORITY_STRIDE, OplsTypeRow, OplsTypingMeta};
+pub use meta::{OplsTypeRow, OplsTypingMeta};
 
 use assign::typify_bonded_with;
 use typing::typify_atoms;
@@ -78,25 +95,82 @@ impl OPLSAATypifier {
     ///
     /// # Errors
     ///
-    /// Returns `Err` if either parse fails.
+    /// Returns `Err` if either parse fails, and — so that an invalid typifier
+    /// is never constructed — if a type's `overrides` names a type the XML does
+    /// not declare (naming both) or the overrides form a cycle (naming its
+    /// members).
     pub fn from_xml_str(xml: &str) -> Result<Self, String> {
         let meta = crate::ff::forcefield::xml::read_opls_typing_xml_str(xml)?;
+        layered::Dominance::new(&meta)?;
         let ff = OplsXmlReader::new().read_str(xml)?;
         Ok(Self::new(meta, ff))
     }
 
-    /// Build a typifier over the shipped canonical OPLS-AA parameter set
-    /// ([`crate::ff::params::oplsaa`]).
+    /// Build a typifier over the shipped canonical OPLS-AA parameter set.
+    ///
+    /// The parameters ([`crate::ff::params::oplsaa`]) are generated from
+    /// GROMACS v2026.3 `share/top/oplsaa.ff` (LGPL-2.1-or-later): atom classes
+    /// are GROMACS `bond_type`s, and the `pair/lj/cut` style declares
+    /// OPLS-AA's **geometric** combining rule (σᵢⱼ = √(σᵢσⱼ), εᵢⱼ = √(εᵢεⱼ);
+    /// Jorgensen et al. 1996, GROMACS comb-rule 3), so molrs's kernel and an
+    /// exported LAMMPS input mix alike. The SMARTS typing rules
+    /// ([`crate::ff::params::oplsaa_typing`]) are molrs's own Daylight SMARTS;
+    /// each takes its class from the atom row of the same name.
+    ///
+    /// The input molecule needs explicit hydrogens. Its rings may be written
+    /// Kekulé or aromatic: typing perceives aromaticity on a private copy and
+    /// leaves the caller's bond orders as they were.
     ///
     /// The parameters are compiled-in typed Rust, so this is the standalone
     /// path: the OPLS typifier needs no external file on disk and parses nothing
-    /// at runtime. The shipped set uses lowercase SMARTS `c` for aromatic ring
-    /// carbons / hydrogens (RDKit-faithful aromatic matching), so benzene-type
-    /// rings type exactly as molpy's ground truth. Mirrors
+    /// at runtime. Mirrors
     /// [`MMFF94Typifier::new`](crate::ff::typifier::mmff::MMFF94Typifier::new).
     ///
     /// Infallible: the parameters are compile-time constants, the same policy
     /// as `MMFF94Typifier::new` and `UFFTypifier::new`.
+    ///
+    /// # Examples
+    ///
+    /// The library declares OPLS-AA's geometric mixing:
+    ///
+    /// ```
+    /// use molrs::ff::typifier::Typifier;
+    /// use molrs::ff::typifier::opls::OPLSAATypifier;
+    ///
+    /// let typifier = OPLSAATypifier::oplsaa();
+    /// let lj = typifier
+    ///     .library()
+    ///     .get_style("pair", "lj/cut")
+    ///     .expect("OPLS-AA declares lj/cut");
+    /// assert_eq!(lj.params().get_str("mixing"), Some("geometric"));
+    /// ```
+    ///
+    /// Typing ethanol, `CH3-CH2-OH` with explicit hydrogens: the hydroxyl
+    /// oxygen is the mono-alcohol O, `opls_154`.
+    ///
+    /// ```
+    /// use molrs::ff::typifier::Typing;
+    /// use molrs::ff::typifier::opls::OPLSAATypifier;
+    /// use molrs::{Atom, Atomistic};
+    ///
+    /// let mut ethanol = Atomistic::new();
+    /// let c1 = ethanol.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
+    /// let c2 = ethanol.add_atom(Atom::xyz("C", 1.5, 0.0, 0.0));
+    /// let o = ethanol.add_atom(Atom::xyz("O", 2.0, 1.3, 0.0));
+    /// ethanol.add_bond(c1, c2).unwrap();
+    /// ethanol.add_bond(c2, o).unwrap();
+    /// for (heavy, n) in [(c1, 3), (c2, 2), (o, 1)] {
+    ///     for _ in 0..n {
+    ///         let h = ethanol.add_atom(Atom::xyz("H", 0.0, 0.0, 1.0));
+    ///         ethanol.add_bond(heavy, h).unwrap();
+    ///     }
+    /// }
+    ///
+    /// let typed = Typing::new(OPLSAATypifier::oplsaa().with_strict(false))
+    ///     .typify(&ethanol)
+    ///     .expect("ethanol types");
+    /// assert_eq!(typed.get_atom(o).unwrap().get_str("type"), Some("opls_154"));
+    /// ```
     pub fn oplsaa() -> Self {
         Self::new(embedded::typing_meta(), embedded::force_field())
     }
@@ -210,24 +284,17 @@ mod tests {
     use molrs::system::molgraph::PropValue;
     use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-    /// Explicit-H 1,3-butadiene `H2C=CH-CH=CH2`, hand-built.
-    ///
-    /// Atom order (0-based graph index): carbons `C0=C1-C2=C3` are 0..=3; the
-    /// hydrogens follow — 4, 5 on C0; 6 on C1; 7 on C2; 8, 9 on C3.
-    fn butadiene() -> Atomistic {
+    /// Methylsilane `H3C-SiH3`, hand-built: C is atom 0, Si is atom 1, the
+    /// hydrogens on C are 2..=4 and the hydrogens on Si are 5..=7.
+    fn methylsilane() -> Atomistic {
         let mut g = Atomistic::new();
-        let c: Vec<_> = (0..4)
-            .map(|k| g.add_atom(Atom::xyz("C", 1.4 * k as f64, 0.0, 0.0)))
-            .collect();
-        let double = g.add_bond(c[0], c[1]).unwrap();
-        g.set_bond_type(double, BondType::Double).unwrap();
-        g.add_bond(c[1], c[2]).unwrap();
-        let double = g.add_bond(c[2], c[3]).unwrap();
-        g.set_bond_type(double, BondType::Double).unwrap();
-        for (carbon, n_h) in [(c[0], 2), (c[1], 1), (c[2], 1), (c[3], 2)] {
-            for k in 0..n_h {
+        let c = g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
+        let si = g.add_atom(Atom::xyz("Si", 1.9, 0.0, 0.0));
+        g.add_bond(c, si).unwrap();
+        for heavy in [c, si] {
+            for k in 0..3 {
                 let h = g.add_atom(Atom::xyz("H", 0.3 * k as f64, 1.0, 0.0));
-                g.add_bond(carbon, h).unwrap();
+                g.add_bond(heavy, h).unwrap();
             }
         }
         g
@@ -242,22 +309,21 @@ mod tests {
     /// Strict typing of a molecule with atoms no def matches is an `Err` that
     /// names every untyped atom — and only those.
     ///
-    /// Hand-derived from the shipped defs: an unmarked SMARTS bond is
-    /// single-or-aromatic, so `[C;X3](C)(H)H` (opls_143) cannot see a terminal
-    /// carbon's `=` neighbour and `[C;X3](C)(C)H` (opls_142) sees only one of an
-    /// inner carbon's two carbon neighbours. All four carbons stay untyped; every
-    /// hydrogen matches `[H][C;X3]` (opls_144).
+    /// Hand-derived from the shipped rules: `[#1]-[C;X4]` (opls_140) types the
+    /// three hydrogens on carbon (atoms 2..=4); no rule types a carbon bonded to
+    /// silicon, silicon itself, or a hydrogen on silicon, so atoms 0, 1 and
+    /// 5..=7 stay untyped.
     #[test]
     fn strict_typify_names_every_untyped_atom() {
         let err = Typing::new(OPLSAATypifier::oplsaa().with_strict(true))
-            .typify(&butadiene())
+            .typify(&methylsilane())
             .expect_err("strict typing must refuse a partly typed molecule");
 
-        for i in 0..4 {
-            let label = atom_label(i, "C");
+        for (i, el) in [(0, "C"), (1, "Si"), (5, "H"), (6, "H"), (7, "H")] {
+            let label = atom_label(i, el);
             assert!(err.contains(&label), "err names {label}: {err}");
         }
-        for i in 4..10 {
+        for i in 2..=4 {
             let label = atom_label(i, "H");
             assert!(
                 !err.contains(&label),
@@ -270,8 +336,42 @@ mod tests {
     /// untyped atoms left without a `type`.
     #[test]
     fn non_strict_typify_accepts_a_partly_typed_molecule() {
-        let typed = Typing::new(OPLSAATypifier::oplsaa().with_strict(false)).typify(&butadiene());
+        let typed =
+            Typing::new(OPLSAATypifier::oplsaa().with_strict(false)).typify(&methylsilane());
         assert!(typed.is_ok(), "non-strict typing stays Ok: {typed:?}");
+    }
+
+    /// One-type OPLS XML whose `opls_a` carries the given `overrides`
+    /// attribute (none when `None`).
+    fn one_type_xml(overrides: Option<&str>) -> String {
+        let overrides = overrides.map_or(String::new(), |o| format!(r#" overrides="{o}""#));
+        format!(
+            r#"<ForceField name="OPLS-AA" combining_rule="geometric">
+  <AtomTypes>
+    <Type name="opls_a" class="CT" element="C" mass="12.011" def="[#6]"{overrides}/>
+  </AtomTypes>
+  <NonbondedForce coulomb14scale="0.5" lj14scale="0.5">
+    <Atom type="opls_a" charge="0.0" sigma="0.35" epsilon="0.276144"/>
+  </NonbondedForce>
+</ForceField>"#
+        )
+    }
+
+    /// `from_xml_str` refuses a dangling override at construction: `opls_a`
+    /// overrides `opls_missing`, which the XML never declares, so no typifier
+    /// is built and the error names both. The same XML without the attribute
+    /// builds.
+    #[test]
+    fn from_xml_str_refuses_a_dangling_override() {
+        assert!(
+            OPLSAATypifier::from_xml_str(&one_type_xml(None)).is_ok(),
+            "the XML without the override builds"
+        );
+        let Err(e) = OPLSAATypifier::from_xml_str(&one_type_xml(Some("opls_missing"))) else {
+            panic!("a dangling override must refuse construction");
+        };
+        assert!(e.contains("opls_a"), "err names the overriding type: {e}");
+        assert!(e.contains("opls_missing"), "err names the absent type: {e}");
     }
 
     /// A typifier whose defs cover C and H only, over a force field whose

@@ -11,8 +11,11 @@ homepage.workspace = true
 readme = "../README.md"
 keywords = ["molecular-modeling", "chemistry", "simulation", "molecular-dynamics"]
 categories = ["science"]
-# No integration-test, bench or example targets: behaviour is tested in
-# `#[cfg(test)]` modules next to the code (`cargo test --lib`).
+# The generator example is a repository tool, not part of the published crate.
+exclude = ["examples/"]
+# No integration-test or bench targets: behaviour is tested in `#[cfg(test)]`
+# modules next to the code (`cargo test --lib`). One example target: the OPLS
+# parameter generator, a tool, not a test; excluded from the package.
 autotests = false
 autobenches = false
 autoexamples = false
@@ -24,8 +27,15 @@ features = ["full"]
 [lib]
 name = "molrs"
 
+# `cargo mrs-gen-opls --gromacs <dir>` regenerates src/ff/params/oplsaa.rs.
+[[example]]
+name = "gen_opls_params"
+required-features = ["ff"]
+
 [dev-dependencies]
 tempfile = "3.0"
+# The OPLS generator's input pin (shares `digest 0.10` with the lockfile).
+sha2 = "0.10"
 
 [features]
 # Native default: every sub-system plus filesystem-backed zarr and rayon.
