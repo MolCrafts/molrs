@@ -1,24 +1,38 @@
 //! GROMACS `.top` / `.itp` force-field reader.
 //!
-//! Parses section tables (`[ atoms ]`, `[ bonds ]`, …) — the same layout the
-//! historical molpy `GromacsTopReader` consumed — into a molrs [`ForceField`]
-//! in molrs units (Å, kcal/mol, radians, e).
+//! Parses section tables (`[ atomtypes ]`, `[ atoms ]`, `[ bonds ]`, …) — the
+//! same layout the historical molpy `GromacsTopReader` consumed — into a molrs
+//! [`ForceField`] in molrs units (Å, kcal/mol, radians, e).
 //!
 //! # Notes
 //!
-//! - Molecule topology files list **per-atom** rows under `[ atoms ]`; each row
-//!   becomes an atom-type entry (duplicate type names are kept so bond indices
-//!   resolve to the same per-atom handles the Python reader produced).
-//! - Bonded rows reference **1-based atom indices** into that list when they
-//!   carry no type labels; optional numeric parameters (when present) are
+//! - `[ atomtypes ]` rows are the only source of atom-type parameters. Each is
+//!   defined on atom style `full` with numeric `mass` (amu), `charge` (e),
+//!   `sigma` (Å = nm × 10), `epsilon` (kcal/mol = kJ/mol ÷ 4.184) and
+//!   `atomic_number` when present, and string `ptype` and `bond_type` when
+//!   present. Columns resolve from the right: the last five are
+//!   `mass charge ptype V W` (`ptype` one of `A S V D B`); the one to three
+//!   leading tokens are `name`, an optional `bond_type` and an optional
+//!   integer `at.num`. V/W are σ/ε only under comb-rule 2, so `[ atomtypes ]`
+//!   requires `[ defaults ]`.
+//! - `[ atoms ]` is molecule topology (read by `io::data::top::read_top`), not
+//!   force-field data: its rows only give the per-atom type list that resolves
+//!   bonded rows' **1-based atom indices** to type names. Nothing from it is
+//!   stored in the force field. A type it names with no `[ atomtypes ]` row is
+//!   defined once, with empty params, after every `[ atomtypes ]` row.
+//! - Bonded rows define their type tuple through the conflict rule: instances
+//!   of one tuple with equal parameters are one type, with different
+//!   parameters a `TypeConflict`. Numeric parameters (when present) are
 //!   converted from GROMACS units.
 //! - `#include` is optional (`include: true`); unresolved includes fail fast.
+//!   Rows repeated across includes follow the same conflict rule.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use super::ForceFieldReader;
-use crate::ff::forcefield::{ForceField, SpecialBonds};
+use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
+use molrs::store::type_labels::TypeName;
 
 const KJ_PER_KCAL: f64 = 4.184;
 const NM_TO_ANGSTROM: f64 = 10.0;
@@ -300,47 +314,34 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
         None => {}
     }
 
-    // Atom rows → atom types (one per row, strings for non-float metadata).
-    let atom_lines = sections.get("atoms").cloned().unwrap_or_default();
-    let atom_header = [
-        "nr", "name", "resnr", "residu", "atom", "cgnr", "charge", "mass", "typeB", "chargeB",
-        "massB",
-    ];
-    let mut atom_type_names: Vec<String> = Vec::new();
-    let mut pending_strs: Vec<(String, Vec<(String, String)>)> = Vec::new();
-    {
-        let style = ff.def_atomstyle("full");
-        for line in &atom_lines {
-            let cols: Vec<&str> = line.split_whitespace().collect();
-            if cols.len() < 2 {
-                continue;
-            }
-            let mut map: HashMap<&str, &str> = HashMap::new();
-            for (h, c) in atom_header.iter().zip(cols.iter()) {
-                map.insert(*h, *c);
-            }
-            // "name" column in the historical header is the type token (2nd field).
-            let tname = map.get("name").copied().unwrap_or("").to_string();
-            if tname.is_empty() {
-                continue;
-            }
-            // Numeric bag empty — charge/mass stay string params (molpy parity).
-            style.def_atomtype(&tname, &[]);
-            let strs: Vec<(String, String)> = map
-                .iter()
-                .filter(|(k, _)| **k != "name")
-                .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
-                .collect();
-            pending_strs.push((tname.clone(), strs));
-            atom_type_names.push(tname);
-        }
+    // `[ atomtypes ]` rows are the atom types' parameters; V/W mean σ/ε only
+    // under comb-rule 2, which `parse_defaults_section` enforces.
+    if sections.contains_key("atomtypes") && !sections.contains_key("defaults") {
+        return Err("[ defaults ] is required when [ atomtypes ] is present".into());
     }
-    if let Some(st) = ff.get_style_mut("atom", "full") {
-        for (tname, strs) in pending_strs {
-            for (k, v) in strs {
-                st.set_type_str_param(&tname, &k, &v);
-            }
+    let style = ff
+        .def_style("atom", "full", Params::new())
+        .map_err(|e| e.to_string())?;
+    for line in sections.get("atomtypes").into_iter().flatten() {
+        let (name, params) = parse_atomtypes_row(line)?;
+        style.def_type(name, params).map_err(|e| e.to_string())?;
+    }
+
+    // `[ atoms ]` is topology: only its type column is read, to resolve bonded
+    // rows' atom indices. A type it names without an `[ atomtypes ]` row is
+    // referenced, not parameterised — defined once, with empty params.
+    let mut atom_type_names: Vec<String> = Vec::new();
+    for line in sections.get("atoms").into_iter().flatten() {
+        let tname = line
+            .split_whitespace()
+            .nth(1)
+            .ok_or_else(|| format!("[ atoms ] row has no type column: {line}"))?;
+        if style.get_atomtype(tname).is_none() {
+            style
+                .def_type(tname, Params::new())
+                .map_err(|e| e.to_string())?;
         }
+        atom_type_names.push(tname.to_owned());
     }
 
     // Bonds — empty style name matches historical BondStyle("harmonic") bug
@@ -372,6 +373,58 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     Ok(ff)
 }
 
+/// One `[ atomtypes ]` row → `(name, params)` in molrs units.
+///
+/// Columns resolve from the right: the last five are `mass charge ptype V W`;
+/// the one to three leading tokens are `name`, then an optional `bond_type`
+/// and an optional integer `at.num`. Anything else is `Err` naming the row.
+fn parse_atomtypes_row(line: &str) -> Result<(&str, Params), String> {
+    let cols: Vec<&str> = line.split_whitespace().collect();
+    let bad = |why: &str| format!("[ atomtypes ] row '{line}': {why}");
+    if cols.len() < 6 {
+        return Err(bad(
+            "expected `name [bond_type] [at.num] mass charge ptype V W`",
+        ));
+    }
+    let (lead, tail) = cols.split_at(cols.len() - 5);
+    let is_int = |tok: &str| tok.parse::<i64>().is_ok();
+    let (name, bond_type, at_num) = match *lead {
+        [name] => (name, None, None),
+        [name, second] if is_int(second) => (name, None, Some(second)),
+        [name, second] => (name, Some(second), None),
+        [name, bond_type, at_num] if is_int(at_num) => (name, Some(bond_type), Some(at_num)),
+        [_, _, _] => return Err(bad("at.num is not an integer")),
+        _ => return Err(bad("more than three tokens before `mass charge ptype V W`")),
+    };
+    let number = |tok: &str, what: &str| {
+        tok.parse::<f64>()
+            .map_err(|_| bad(&format!("{what} is not a number: {tok}")))
+    };
+    let mass = number(tail[0], "mass")?;
+    let charge = number(tail[1], "charge")?;
+    let ptype = tail[2];
+    if !matches!(ptype, "A" | "S" | "V" | "D" | "B") {
+        return Err(bad(&format!("ptype '{ptype}' is not one of A S V D B")));
+    }
+    let sigma_nm = number(tail[3], "V (sigma)")?;
+    let epsilon_kj = number(tail[4], "W (epsilon)")?;
+
+    let mut params = Params::from_pairs(&[
+        ("mass", mass),
+        ("charge", charge),
+        ("sigma", sigma_nm * NM_TO_ANGSTROM),
+        ("epsilon", epsilon_kj / KJ_PER_KCAL),
+    ]);
+    if let Some(tok) = at_num {
+        params.set("atomic_number", number(tok, "at.num")?);
+    }
+    params.set_str("ptype", ptype);
+    if let Some(bond_type) = bond_type {
+        params.set_str("bond_type", bond_type);
+    }
+    Ok((name, params))
+}
+
 fn atom_name_at(names: &[String], idx_1based: usize) -> Result<String, String> {
     names
         .get(idx_1based.wrapping_sub(1))
@@ -394,7 +447,8 @@ fn parse_bond_section(
     .collect();
 
     // One empty-named bond style (historical molpy surface).
-    let _ = ff.def_bondstyle("");
+    ff.def_style("bond", "", Params::new())
+        .map_err(|e| e.to_string())?;
     for raw in lines {
         let cols: Vec<&str> = raw.split_whitespace().collect();
         if cols.len() < 3 {
@@ -428,7 +482,12 @@ fn parse_bond_section(
         let owned: Vec<(&str, f64)> = converted.iter().map(|(k, v)| (k.as_str(), *v)).collect();
         ff.get_style_mut("bond", "")
             .ok_or("bond style missing")?
-            .def_bondtype(&iname, &jname, &owned);
+            .def_type_at(
+                TypeName::join(&[&iname, &jname])?.as_str(),
+                &[&iname, &jname],
+                Params::from_pairs(&owned),
+            )
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -447,7 +506,8 @@ fn parse_angle_section(
     .into_iter()
     .collect();
 
-    let _ = ff.def_anglestyle("");
+    ff.def_style("angle", "", Params::new())
+        .map_err(|e| e.to_string())?;
     for raw in lines {
         let cols: Vec<&str> = raw.split_whitespace().collect();
         if cols.len() < 4 {
@@ -476,7 +536,12 @@ fn parse_angle_section(
         let kname = atom_name_at(atom_names, k)?;
         ff.get_style_mut("angle", "")
             .ok_or("angle style missing")?
-            .def_angletype(&iname, &jname, &kname, &owned);
+            .def_type_at(
+                TypeName::join(&[&iname, &jname, &kname])?.as_str(),
+                &[&iname, &jname, &kname],
+                Params::from_pairs(&owned),
+            )
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -497,7 +562,8 @@ fn parse_dihedral_section(
     .into_iter()
     .collect();
 
-    let _ = ff.def_dihedralstyle("");
+    ff.def_style("dihedral", "", Params::new())
+        .map_err(|e| e.to_string())?;
     for raw in lines {
         let cols: Vec<&str> = raw.split_whitespace().collect();
         if cols.len() < 5 {
@@ -539,7 +605,12 @@ fn parse_dihedral_section(
         let lname = atom_name_at(atom_names, l)?;
         ff.get_style_mut("dihedral", "")
             .ok_or("dihedral style missing")?
-            .def_dihedraltype(&iname, &jname, &kname, &lname, &owned);
+            .def_type_at(
+                TypeName::join(&[&iname, &jname, &kname, &lname])?.as_str(),
+                &[&iname, &jname, &kname, &lname],
+                Params::from_pairs(&owned),
+            )
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -561,7 +632,8 @@ fn parse_pair_section(
     .into_iter()
     .collect();
 
-    let _ = ff.def_pairstyle("", &[]);
+    ff.def_style("pair", "", Params::new())
+        .map_err(|e| e.to_string())?;
     for raw in lines {
         let cols: Vec<&str> = raw.split_whitespace().collect();
         if cols.len() < 3 {
@@ -608,7 +680,12 @@ fn parse_pair_section(
         let jname = atom_name_at(atom_names, j)?;
         ff.get_style_mut("pair", "")
             .ok_or("pair style missing")?
-            .def_pairtype(&iname, Some(&jname), &owned);
+            .def_type_at(
+                TypeName::pair(&iname, &jname)?.as_str(),
+                &[&iname, &jname],
+                Params::from_pairs(&owned),
+            )
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -629,5 +706,228 @@ mod tests {
         let ff = GromacsTopFfReader::new().read_str(text).expect("parse");
         assert_eq!(ff.get_atomtypes().len(), 2);
         assert_eq!(ff.get_bondtypes().len(), 1);
+    }
+
+    // -- [ atomtypes ] ---------------------------------------------------------
+
+    /// `nbfunc 1`, comb-rule 2 (V/W are σ/ε), `gen-pairs yes`.
+    const DEFAULTS: &str = "[ defaults ]\n1  2  yes  0.5  0.8333\n";
+
+    fn read(text: &str) -> ForceField {
+        GromacsTopFfReader::new()
+            .read_str(text)
+            .unwrap_or_else(|e| panic!("read_str: {e}"))
+    }
+
+    fn read_err(text: &str) -> String {
+        GromacsTopFfReader::new()
+            .read_str(text)
+            .expect_err("expected Err from read_str")
+    }
+
+    fn with_atomtypes(row: &str) -> String {
+        format!("{DEFAULTS}[ atomtypes ]\n{row}\n")
+    }
+
+    fn atom_type<'a>(ff: &'a ForceField, name: &str) -> &'a crate::ff::forcefield::AtomType {
+        ff.get_style("atom", "full")
+            .and_then(|s| s.get_atomtype(name))
+            .unwrap_or_else(|| panic!("no atom type {name}"))
+    }
+
+    /// 6-column form `name mass charge ptype V W`. Hand conversion:
+    /// σ = 0.35 nm × 10 = 3.5 Å; ε = 0.276144 kJ/mol ÷ 4.184 = 0.066 kcal/mol.
+    #[test]
+    fn atomtypes_row_is_defined_in_molrs_units() {
+        let ff = read(&with_atomtypes(
+            "opls_135  12.011  -0.18  A  0.35  0.276144",
+        ));
+        let p = &atom_type(&ff, "opls_135").params;
+        assert!((p.get("sigma").unwrap() - 3.5).abs() < 1e-12);
+        assert!((p.get("epsilon").unwrap() - 0.066).abs() < 1e-10);
+        assert_eq!(p.get("mass"), Some(12.011));
+        assert_eq!(p.get("charge"), Some(-0.18));
+        assert_eq!(p.get_str("ptype"), Some("A"));
+    }
+
+    #[test]
+    fn atomtypes_six_column_row_has_no_bond_type_or_atomic_number() {
+        let ff = read(&with_atomtypes(
+            "opls_135  12.011  -0.18  A  0.35  0.276144",
+        ));
+        let p = &atom_type(&ff, "opls_135").params;
+        assert_eq!(p.get_str("bond_type"), None);
+        assert_eq!(p.get("atomic_number"), None);
+    }
+
+    /// Seven columns with an integer second token: `name at.num mass …`.
+    #[test]
+    fn atomtypes_seven_column_row_with_an_integer_reads_the_atomic_number() {
+        let ff = read(&with_atomtypes(
+            "opls_135  6  12.011  -0.18  A  0.35  0.276144",
+        ));
+        let p = &atom_type(&ff, "opls_135").params;
+        assert_eq!(p.get("atomic_number"), Some(6.0));
+        assert_eq!(p.get_str("bond_type"), None);
+        assert_eq!(p.get("mass"), Some(12.011));
+    }
+
+    /// Seven columns with a non-integer second token: `name bond_type mass …`.
+    #[test]
+    fn atomtypes_seven_column_row_with_a_label_reads_the_bond_type() {
+        let ff = read(&with_atomtypes(
+            "opls_135  CT  12.011  -0.18  A  0.35  0.276144",
+        ));
+        let p = &atom_type(&ff, "opls_135").params;
+        assert_eq!(p.get_str("bond_type"), Some("CT"));
+        assert_eq!(p.get("atomic_number"), None);
+        assert_eq!(p.get("mass"), Some(12.011));
+    }
+
+    /// Eight columns: `name bond_type at.num mass charge ptype V W`.
+    #[test]
+    fn atomtypes_eight_column_row_reads_bond_type_and_atomic_number() {
+        let ff = read(&with_atomtypes(
+            "opls_135  CT  6  12.011  -0.18  A  0.35  0.276144",
+        ));
+        let p = &atom_type(&ff, "opls_135").params;
+        assert_eq!(p.get_str("bond_type"), Some("CT"));
+        assert_eq!(p.get("atomic_number"), Some(6.0));
+        assert_eq!(p.get("mass"), Some(12.011));
+        assert_eq!(p.get_str("ptype"), Some("A"));
+    }
+
+    /// `at.num` must be an integer token.
+    #[test]
+    fn atomtypes_eight_column_row_with_a_non_integer_atomic_number_is_an_error() {
+        let err = read_err(&with_atomtypes(
+            "opls_135  CT  C  12.011  -0.18  A  0.35  0.276144",
+        ));
+        assert!(err.contains("opls_135"), "error should name the row: {err}");
+    }
+
+    /// More than three leading tokens before `mass charge ptype V W`.
+    #[test]
+    fn atomtypes_row_with_four_leading_tokens_is_an_error() {
+        let err = read_err(&with_atomtypes(
+            "opls_135  CT  6  extra  12.011  -0.18  A  0.35  0.276144",
+        ));
+        assert!(err.contains("opls_135"), "error should name the row: {err}");
+    }
+
+    /// `ptype` is one of `A S V D B`.
+    #[test]
+    fn atomtypes_row_with_an_unknown_ptype_is_an_error() {
+        let err = read_err(&with_atomtypes(
+            "opls_135  12.011  -0.18  X  0.35  0.276144",
+        ));
+        assert!(err.contains("opls_135"), "error should name the row: {err}");
+    }
+
+    /// V/W mean σ/ε only under comb-rule 2, which only `[ defaults ]` declares.
+    #[test]
+    fn atomtypes_without_defaults_is_an_error() {
+        let text = "[ atomtypes ]\nopls_135  12.011  -0.18  A  0.35  0.276144\n";
+        let err = read_err(text);
+        assert!(
+            err.contains("defaults"),
+            "error should name [ defaults ]: {err}"
+        );
+    }
+
+    // -- [ atoms ] is topology, not force-field parameters ---------------------
+
+    /// A full 11-column `[ atoms ]` row (with the B-state columns) leaves no
+    /// per-atom string on any atom type.
+    #[test]
+    fn atoms_rows_put_no_per_atom_field_on_an_atom_type() {
+        let text = format!(
+            "{DEFAULTS}[ atomtypes ]\n\
+             opls_135  12.011  -0.18  A  0.35  0.276144\n\
+             [ atoms ]\n\
+             1  opls_135  1  LIG  C1  1  -0.18  12.011  opls_135  -0.18  12.011\n\
+             2  opls_140  1  LIG  H1  2   0.06   1.008  opls_140   0.06   1.008\n"
+        );
+        let ff = read(&text);
+        let per_atom = [
+            "nr", "resnr", "residu", "atom", "cgnr", "charge", "mass", "typeB", "chargeB", "massB",
+        ];
+        let types = ff.get_atomtypes();
+        assert_eq!(types.len(), 2);
+        for t in types {
+            for key in per_atom {
+                assert_eq!(
+                    t.params.get_str(key),
+                    None,
+                    "{} carries per-atom string `{key}`",
+                    t.name
+                );
+            }
+        }
+    }
+
+    /// Two `[ atoms ]` rows of a type with no `[ atomtypes ]` row: the type is
+    /// referenced, not parameterised — one definition, empty params.
+    #[test]
+    fn a_type_named_only_in_atoms_is_defined_once_with_empty_params() {
+        let text = "[ atoms ]\n\
+                    1  opls_140  1  LIG  H1  1  0.06  1.008\n\
+                    2  opls_140  1  LIG  H2  1  0.06  1.008\n";
+        let ff = read(text);
+        let types = ff.get_atomtypes();
+        assert_eq!(types.len(), 1);
+        assert_eq!(types[0].name, "opls_140");
+        assert_eq!(types[0].params.iter().count(), 0);
+        assert_eq!(types[0].params.iter_strings().count(), 0);
+    }
+
+    /// A type with an `[ atomtypes ]` row keeps those params when `[ atoms ]`
+    /// names it: the reference is not a second, empty definition.
+    #[test]
+    fn a_type_named_in_atoms_keeps_its_atomtypes_params() {
+        let text = format!(
+            "{DEFAULTS}[ atomtypes ]\n\
+             opls_135  12.011  -0.18  A  0.35  0.276144\n\
+             [ atoms ]\n\
+             1  opls_135  1  LIG  C1  1  -0.18  12.011\n"
+        );
+        let ff = read(&text);
+        assert_eq!(ff.get_atomtypes().len(), 1);
+        assert!((atom_type(&ff, "opls_135").params.get("sigma").unwrap() - 3.5).abs() < 1e-12);
+    }
+
+    // -- bonded rows follow the conflict rule ----------------------------------
+
+    const THREE_ATOMS: &str = "[ atoms ]\n\
+                               1  opls_135  1  LIG  C1  1  -0.18  12.011\n\
+                               2  opls_140  1  LIG  H1  1   0.06   1.008\n\
+                               3  opls_140  1  LIG  H2  1   0.06   1.008\n";
+
+    /// Two instances of one type pair with equal per-instance params: one type.
+    #[test]
+    fn two_bonds_rows_of_one_type_pair_with_equal_params_define_one_type() {
+        let text = format!(
+            "{THREE_ATOMS}[ bonds ]\n\
+             1  2  1  0.1090  284512.0\n\
+             1  3  1  0.1090  284512.0\n"
+        );
+        let ff = read(&text);
+        assert_eq!(ff.get_bondtypes().len(), 1);
+    }
+
+    /// Two instances of one type pair with different `k`: a conflict, not
+    /// last-writer-wins.
+    #[test]
+    fn two_bonds_rows_of_one_type_pair_with_different_k_are_an_error() {
+        let text = format!(
+            "{THREE_ATOMS}[ bonds ]\n\
+             1  2  1  0.1090  284512.0\n\
+             1  3  1  0.1090  300000.0\n"
+        );
+        let err = read_err(&text);
+        assert!(
+            err.contains("opls_135-opls_140"),
+            "error should name the type: {err}"
+        );
     }
 }

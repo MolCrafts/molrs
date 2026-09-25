@@ -8,13 +8,12 @@
 ```bash
 cargo mrs-test                       # the gate: all 2513 unit tests, ~5 s
 cargo mrs-doctest                    # rustdoc examples (not covered by --lib)
-scripts/test-scope.sh                # inner loop: only the modules you touched
-scripts/test-scope.sh ff::potential  # or an explicit module / file
+cargo mrs-test -- ff::potential      # inner loop, filtered: same binary
 ```
 
-Narrow the **filter**, never the feature list. `cargo mrs-test` and
-`scripts/test-scope.sh` share one already-built test binary, so a scoped run is
-~0.1 s. A hand-written `cargo test <module>` (or `--features md`) resolves a
+Narrow the **filter**, never the feature list. Every `cargo mrs-test` run shares
+one test binary; after an edit cargo rebuilds it incrementally (~6 s) and the
+whole suite runs in ~5 s, so filtering saves at most seconds. A hand-written `cargo test <module>` (or `--features md`) resolves a
 different feature set and recompiles all 293k lines — that is a 67 s rebuild
 and another ~420 MB of incremental cache, not a saving. See
 `.claude/notes/build.md`.

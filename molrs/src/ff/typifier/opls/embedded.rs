@@ -11,51 +11,68 @@
 //! gone is molrs re-parsing *its own* parameter set at runtime.
 
 use crate::ff::constants::VACUUM_DIELECTRIC;
-use crate::ff::forcefield::{ForceField, SpecialBonds};
+use crate::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
 use crate::ff::params::oplsaa::{
     OPLSAA_ANGLES, OPLSAA_ATOMS, OPLSAA_BONDS, OPLSAA_COULOMB_14, OPLSAA_DIHEDRALS, OPLSAA_LJ_14,
     OPLSAA_NAME,
 };
+use molrs::store::type_labels::TypeName;
 use molrs::units::constants::COULOMB_REAL;
 
 use super::meta::{OplsTypeRow, OplsTypingMeta};
 
 /// Build the shipped [`ForceField`].
 ///
+/// An input-free constructor over a compiled table: the one definition result
+/// it can meet is the table's own, and
+/// `tests::force_field_defines_without_conflict` proves it `Ok`.
+pub(super) fn force_field() -> ForceField {
+    try_force_field().expect(
+        "OPLS-AA table defines without conflict — proved by \
+         ff::typifier::opls::embedded::tests::force_field_defines_without_conflict",
+    )
+}
+
+/// The fallible body of [`force_field`].
+///
 /// Style order is the source file's section order, and it is load-bearing:
 /// `ForceField` lookups scan and take the first match.
-pub(super) fn force_field() -> ForceField {
+fn try_force_field() -> Result<ForceField, DefError> {
     let mut ff = ForceField::new(OPLSAA_NAME);
 
-    let bonds = ff.def_bondstyle("harmonic");
+    let bonds = ff.def_style("bond", "harmonic", Params::new())?;
     for row in OPLSAA_BONDS {
-        bonds.def_bondtype(row.i, row.j, &[("k", row.force_constant), ("r0", row.r0)]);
+        let ends = [row.i, row.j];
+        bonds.def_type_at(
+            TypeName::join(&ends).map_err(DefError::Name)?.as_str(),
+            &ends,
+            Params::from_pairs(&[("k", row.force_constant), ("r0", row.r0)]),
+        )?;
     }
 
-    let angles = ff.def_anglestyle("harmonic");
+    let angles = ff.def_style("angle", "harmonic", Params::new())?;
     for row in OPLSAA_ANGLES {
-        angles.def_angletype(
-            row.i,
-            row.j,
-            row.k,
-            &[("k", row.force_constant), ("theta0", row.theta0)],
-        );
+        let ends = [row.i, row.j, row.k];
+        angles.def_type_at(
+            TypeName::join(&ends).map_err(DefError::Name)?.as_str(),
+            &ends,
+            Params::from_pairs(&[("k", row.force_constant), ("theta0", row.theta0)]),
+        )?;
     }
 
-    let dihedrals = ff.def_dihedralstyle("opls");
+    let dihedrals = ff.def_style("dihedral", "opls", Params::new())?;
     for row in OPLSAA_DIHEDRALS {
-        dihedrals.def_dihedraltype(
-            row.i,
-            row.j,
-            row.k,
-            row.l,
-            &[
+        let ends = [row.i, row.j, row.k, row.l];
+        dihedrals.def_type_at(
+            TypeName::join(&ends).map_err(DefError::Name)?.as_str(),
+            &ends,
+            Params::from_pairs(&[
                 ("k1", row.f1),
                 ("k2", row.f2),
                 ("k3", row.f3),
                 ("k4", row.f4),
-            ],
-        );
+            ]),
+        )?;
     }
 
     // Atoms carry mass + charge; the LJ pair style carries ε / σ. Charges are
@@ -67,23 +84,27 @@ pub(super) fn force_field() -> ForceField {
     // default) in vacuum (D = 1.0) with CODATA's k. This style used to be defined
     // with EMPTY params and merely happened to agree with the constant the kernel
     // held privately — the right numbers for the wrong reason. OPLS now says them.
-    let atoms = ff.def_atomstyle("full");
+    let atoms = ff.def_style("atom", "full", Params::new())?;
     for row in OPLSAA_ATOMS {
-        atoms.def_atomtype(row.name, &[("mass", row.mass), ("charge", row.charge)]);
+        atoms.def_type(
+            row.name,
+            Params::from_pairs(&[("mass", row.mass), ("charge", row.charge)]),
+        )?;
     }
 
-    let lj = ff.def_pairstyle("lj/cut", &[]);
+    let lj = ff.def_style("pair", "lj/cut", Params::new())?;
     for row in OPLSAA_ATOMS {
-        lj.def_pairtype(
+        lj.def_type_at(
             row.name,
-            None,
-            &[("epsilon", row.epsilon), ("sigma", row.sigma)],
-        );
+            &[row.name],
+            Params::from_pairs(&[("epsilon", row.epsilon), ("sigma", row.sigma)]),
+        )?;
     }
-    ff.def_pairstyle(
+    ff.def_style(
+        "pair",
         "coul/cut",
-        &[("coulomb", COULOMB_REAL), ("dielectric", VACUUM_DIELECTRIC)],
-    );
+        Params::from_pairs(&[("coulomb", COULOMB_REAL), ("dielectric", VACUUM_DIELECTRIC)]),
+    )?;
 
     // OPLS excludes 1-2 / 1-3 (molrs omits them from the neighbour list) and
     // scales 1-4 by the source's own weights.
@@ -91,7 +112,7 @@ pub(super) fn force_field() -> ForceField {
         lj: [0.0, 0.0, OPLSAA_LJ_14],
         coul: [0.0, 0.0, OPLSAA_COULOMB_14],
     });
-    ff
+    Ok(ff)
 }
 
 /// Build the shipped typing metadata (SMARTS `def`, `overrides`, `priority`,
@@ -112,4 +133,16 @@ pub(super) fn typing_meta() -> OplsTypingMeta {
         );
     }
     meta
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The shipped OPLS-AA table defines every style and type without a
+    /// conflict. `force_field` `expect`s this result and names this test.
+    #[test]
+    fn force_field_defines_without_conflict() {
+        assert_eq!(try_force_field().err(), None);
+    }
 }

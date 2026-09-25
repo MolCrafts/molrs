@@ -6,7 +6,7 @@ is the freshness guard: every compiled `_lib` export must be declared here, with
 the same parameter names as the compiled signature.
 """
 
-from collections.abc import ItemsView, KeysView, ValuesView
+from collections.abc import ItemsView, KeysView, Mapping, ValuesView
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -22,6 +22,7 @@ from typing import (
     Tuple,
     TypeVar,
     Union,
+    final,
     overload,
 )
 import numpy as np
@@ -1961,16 +1962,46 @@ class TangOrienter(Orienter):
 # ---------------------------------------------------------------------------
 
 class ForceField:
+    def __init__(self, name: str = "forcefield", units: str | None = None) -> None: ...
     @property
     def name(self) -> str: ...
+    @property
+    def units(self) -> str: ...
+    @units.setter
+    def units(self, units: str) -> None: ...
+    def declared_units(self) -> str | None: ...
+    def declared_special_bonds(
+        self,
+    ) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None: ...
+    def merge(self, other: ForceField) -> Self: ...
     @property
     def special_bonds_lj(self) -> Any: ...
     @property
     def special_bonds_coul(self) -> Any: ...
     def set_special_bonds(self, lj: Any, coul: Any) -> None: ...
     def style_names(self) -> list[str]: ...
-    def to_potentials(self, frame: Frame) -> Potentials: ...
-    def to_typed_potentials(self, frame: Frame) -> TypedPotentials: ...
+    def def_style(
+        self,
+        category: str,
+        name: str,
+        params: dict[str, float | str] | None = None,
+    ) -> None: ...
+    def _def_type(
+        self,
+        category: str,
+        style: str,
+        name: str,
+        params: dict[str, float | str] | None = None,
+    ) -> None: ...
+    def _def_type_at(
+        self,
+        category: str,
+        style: str,
+        name: str,
+        endpoints: list[str],
+        params: dict[str, float | str] | None = None,
+    ) -> None: ...
+    def style_params(self, category: str, style: str) -> dict[str, float | str]: ...
 
 class LammpsLogHeader:
     """Header lines that precede the first run of a LAMMPS log."""
@@ -2198,7 +2229,7 @@ class TypedPotentials:
 
     re-deciding which member is which and how its close neighbours are
 
-    scaled -- the two things ``to_typed_potentials`` decides once.
+    scaled -- the two things ``PotentialCompiler.compile_typed`` decides once.
 
     """
 
@@ -2228,6 +2259,21 @@ class Potentials:
     def calc_energy(self, arg: Union[Frame, ArrayF]) -> float: ...
     def calc_forces(self, arg: Union[Frame, ArrayF]) -> ArrayF: ...
 
+class PotentialCompiler:
+    """Compiles a ``ForceField`` into evaluable kernels.
+
+    Owns a copy of the force field taken at construction; later edits to that
+    ``ForceField`` do not reach it. ``compile(frame)`` binds a typed frame now;
+    ``defer()`` returns ``Potentials`` that bind the frame they are evaluated
+    on; ``compile_typed(frame)`` builds the kernels of a neighbour-driven (MD)
+    evaluation.
+    """
+
+    def __init__(self, forcefield: ForceField) -> None: ...
+    def compile(self, frame: Frame) -> Potentials: ...
+    def defer(self) -> Potentials: ...
+    def compile_typed(self, frame: Frame) -> TypedPotentials: ...
+
 class LBFGS:
     """L-BFGS geometry optimizer over a force-field Potential.
 
@@ -2252,8 +2298,83 @@ class LBFGS:
     @overload
     def run(self, coords: ArrayF) -> tuple[ArrayF, list[OptReport]]: ...
 
+#: A param value of a type annotation or style: numbers to the numeric side,
+#: strings to the string side.
+ParamValue = float | int | str
+
+#: What a ``Match`` writes under one key of one graph element: a scalar is
+#: stamped and defines nothing; ``(style, name, params)`` or
+#: ``(style, name, endpoints, params)`` stamps ``name`` and every param and
+#: defines the type under the style.
+Annotation = (
+    str
+    | bool
+    | int
+    | float
+    | tuple[str, str, dict[str, ParamValue]]
+    | tuple[str, str, Sequence[str], dict[str, ParamValue]]
+)
+
+class Match:
+    """What a typifier's ``match`` assigns to one graph.
+
+    ``nodes`` is positional against ``graph.nodes``; ``links`` maps a relation
+    class (``Bond``, ``Angle``, ``Dihedral``, ``Improper``) to rows positional
+    against ``graph.links.exact_bucket(cls)`` — the kind's own rows, so an
+    improper never shifts a dihedral position. An unknown kind raises
+    ``TypeError``. ``styles`` are ``(category, style, params)`` to declare, in
+    order; ``pairs`` are ``(style, name, endpoints, params)`` pair rows."""
+
+    def __init__(
+        self,
+        nodes: Sequence[Mapping[str, Annotation]],
+        links: Mapping[type, Sequence[Mapping[str, Annotation]]] | None = None,
+        *,
+        styles: Sequence[tuple[str, str, dict[str, ParamValue]]] = (),
+        pairs: Sequence[
+            tuple[str, str, Sequence[str], dict[str, ParamValue]]
+        ] = (),
+    ) -> None: ...
+
 class Typifier(Generic[TGraph]):
-    def typify(self, mol: TGraph) -> TGraph: ...
+    """The base of every graph typifier: one ``match`` hook plus the output
+    force field its typing accumulates.
+
+    A subclass implements ``match`` (and optionally ``library``) and nothing
+    else; defining ``typify`` on a subclass raises ``TypeError`` at class
+    creation. The native classes extend this base and only construct."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None: ...
+    def match(self, graph: TGraph) -> Match:
+        """Match ``graph`` and return what it assigns.
+
+        ``match`` may write intermediate results (generated topology, perceived
+        bond types) onto the graph it is given; ``typify`` always gives it a
+        private copy. The base raises ``NotImplementedError``; a native class
+        runs its Rust matcher."""
+    @final
+    def typify(self, mol: TGraph) -> TGraph:
+        """Do not override; the only writer of ``forcefield()``.
+
+        Copies ``mol``, calls ``match`` on the copy, and writes the match onto
+        the copy and the output. Returns the typed copy; ``mol`` is untouched.
+        ``mol`` must be an ``Atomistic`` (anything else raises ``TypeError``).
+        Raises ``NotImplementedError`` without a ``match`` and ``ValueError``
+        when the match does not fit the graph or contradicts the output (which
+        is then unchanged)."""
+    def forcefield(self) -> ForceField:
+        """The accumulated output — exactly the definitions ``typify`` has
+        assigned — returned as a copy.
+
+        Edits to the copy do not reach the typifier; ``typify`` is the only
+        writer. Before the first ``typify`` it is the seeded empty output."""
+    def library(self) -> ForceField:
+        """The force field this typifier matches against, returned as a copy.
+
+        The output starts as its empty likeness (name, declared units and
+        special_bonds). A Python subclass that does not override it raises
+        ``NotImplementedError``, and its output starts as an empty force field
+        named after the class."""
 
 class MMFF94Typifier(Typifier[Atomistic]):
     """MMFF94 (Halgren 1996) atom types, charges and bonded parameters.
@@ -2261,13 +2382,11 @@ class MMFF94Typifier(Typifier[Atomistic]):
     The variant is the class, never a flag. See ``MMFF94STypifier`` for the
     "static" parameter set.
 
-    ``typify`` labels the graph; ``forcefield().to_potentials(frame)`` compiles
-    it. There is no one-step ``build`` — MMFF walks the same route as every other
+    ``typify`` labels the graph; ``PotentialCompiler(forcefield()).compile(frame)``
+    compiles it. There is no one-step ``build`` — MMFF walks the same route as every other
     force field."""
 
     def __init__(self) -> None: ...
-    def typify(self, mol: Atomistic) -> Atomistic: ...
-    def forcefield(self) -> ForceField: ...
 
 class MMFF94STypifier(Typifier[Atomistic]):
     """MMFF94s (Halgren 1999) — the "static" set, for energy minimization.
@@ -2282,13 +2401,9 @@ class MMFF94STypifier(Typifier[Atomistic]):
     MMFF94."""
 
     def __init__(self) -> None: ...
-    def typify(self, mol: Atomistic) -> Atomistic: ...
-    def forcefield(self) -> ForceField: ...
 
 class OPLSAATypifier(Typifier[Atomistic]):
     def __init__(self, source: Any = None, *, strict: bool = True) -> None: ...
-    def typify(self, mol: Atomistic) -> Atomistic: ...
-    def forcefield(self) -> ForceField: ...
 
 AtdParameterSet = Literal["bcc", "abcg2", "gas", "gaff", "gaff2", "amber", "sybyl"]
 
@@ -2302,7 +2417,6 @@ class AtdTypifier(Typifier[Atomistic]):
     def __init__(self, *, parameter_set: AtdParameterSet) -> None: ...
     @property
     def parameter_set(self) -> AtdParameterSet: ...
-    def typify(self, mol: Atomistic) -> Atomistic: ...
 
 # ---------------------------------------------------------------------------
 # Charge models — one calling convention
@@ -2366,40 +2480,28 @@ def read_lammps_data_coeffs(
 def write_lammps_forcefield(
     path: str,
     forcefield: ForceField,
+    frame: Frame,
+    *,
     precision: int = 6,
     skip_pair_style: bool = False,
     skip_units: bool = False,
     units: str = "real",
-    atom_types: set[str] | None = None,
-    bond_types: set[str] | None = None,
-    angle_types: set[str] | None = None,
-    dihedral_types: set[str] | None = None,
-    improper_types: set[str] | None = None,
-    type_ids: dict[str, int] | None = None,
 ) -> None: ...
 def write_lammps_forcefield_str(
     forcefield: ForceField,
+    frame: Frame,
+    *,
     precision: int = 6,
     skip_pair_style: bool = False,
     skip_units: bool = False,
     units: str = "real",
-    atom_types: set[str] | None = None,
-    bond_types: set[str] | None = None,
-    angle_types: set[str] | None = None,
-    dihedral_types: set[str] | None = None,
-    improper_types: set[str] | None = None,
-    type_ids: dict[str, int] | None = None,
 ) -> str: ...
 def write_lammps_data_coeffs(
     forcefield: ForceField,
+    frame: Frame,
+    *,
     precision: int = 6,
     units: str = "real",
-    atom_types: set[str] | None = None,
-    bond_types: set[str] | None = None,
-    angle_types: set[str] | None = None,
-    dihedral_types: set[str] | None = None,
-    improper_types: set[str] | None = None,
-    type_ids: dict[str, int] | None = None,
 ) -> str: ...
 def intramolecular_pairs(
     frame: Frame, forcefield: ForceField | None = None
@@ -3717,10 +3819,6 @@ def dielectric_decompose_current(per_particle_current, water_mask):
     ...
 
 def dielectric_static_dielectric_constant(dipole_moments, volume: float, temperature: float, epsilon_inf: float):
-    ...
-
-def lammps_type_ids_from_frame(frame):
-    """ForceField type-name → LAMMPS type id, matching the data-file writer."""
     ...
 
 def parse_frcmod(text: str):

@@ -22,15 +22,14 @@ mod embed4d;
 mod etmin;
 mod retry;
 
-use std::sync::OnceLock;
-
 use rand::{SeedableRng, random, rngs::StdRng};
 
 use crate::conformer::distgeom::{self, ChiralSign, DgConstraints, EtkdgVersion};
 use crate::conformer::options::{ConformerOptions, ForceFieldKind};
 use crate::conformer::report::{ConformerReport, ConformerStageReport, StageKind};
 use molrs::error::MolRsError;
-use molrs::ff::potential::intramolecular_pairs;
+use molrs::ff::potential::{PotentialCompiler, intramolecular_pairs};
+use molrs::ff::typifier::Typing;
 use molrs::ff::typifier::mmff::MMFF94Typifier;
 use molrs::perceive::hydrogens::add_hydrogens;
 use molrs::system::atomistic::Atomistic;
@@ -405,23 +404,10 @@ fn have_opposite_sign(a: f64, b: f64) -> bool {
     a.is_sign_negative() ^ b.is_sign_negative()
 }
 
-/// The MMFF94 typifier, constructed **once for the process**.
-///
-/// `MMFF94Typifier::new()` parses the embedded MMFF94 parameter set — hundreds of
-/// KB of XML — on every call. It is stateless with respect to the molecule, so
-/// constructing one per conformer would re-parse that XML on every `generate`,
-/// which is pure waste in the one place the conformer pipeline is called in a
-/// loop (`Conformer::generate` is invoked once per conformer). It is hoisted here
-/// so the parse happens at most once, on the first cleanup that runs.
-fn mmff94_typifier() -> &'static MMFF94Typifier {
-    static TYPIFIER: OnceLock<MMFF94Typifier> = OnceLock::new();
-    TYPIFIER.get_or_init(MMFF94Typifier::new)
-}
-
 /// MMFF94 second-stage cleanup minimization. Returns `(energy, steps,
 /// converged)`. Errors (as a message) if the molecule has no MMFF typing.
 ///
-/// Runs the standard route — typify → `Frame` → `ForceField::to_potentials` — the
+/// Runs the standard route — typify → `Frame` → `PotentialCompiler::compile` — the
 /// same one every other force field in molrs goes through. (It used to call a
 /// bespoke `MmffForceField` energy assembly, a second implementation of the seven
 /// MMFF terms that `ff::potential::*::mmff` already provides; that layer is gone.)
@@ -430,8 +416,11 @@ fn mmff_cleanup(mol: &Atomistic, coords3d: &mut [f64]) -> Result<(f64, usize, bo
     let mut staged = mol.clone();
     write_coords(&mut staged, coords3d).map_err(|e| e.to_string())?;
 
-    let typifier = mmff94_typifier();
-    let mut frame = typifier
+    // A fresh typing per call: its output holds exactly this molecule's types.
+    // `MMFF94Typifier::new` shares the process-wide memoised MMFF94 library, so
+    // this costs no parameter assembly.
+    let mut typing = Typing::new(MMFF94Typifier::new());
+    let mut frame = typing
         .typify(&staged)?
         .to_frame()
         .map_err(|e| e.to_string())?;
@@ -440,9 +429,9 @@ fn mmff_cleanup(mol: &Atomistic, coords3d: &mut [f64]) -> Result<(f64, usize, bo
     // list stays valid across the relaxation. Which close neighbours belong in
     // it is MMFF's call, so the list is built from MMFF's own weights rather
     // than from an assumption about them.
-    let ff = typifier.ff();
+    let ff = typing.forcefield();
     frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds())?);
-    let potentials = ff.to_potentials(&frame)?;
+    let potentials = PotentialCompiler::new(ff).compile(&frame)?;
 
     // RDKit's MMFFOptimizeMolecule runs a full BFGS minimization to a
     // gradient-norm tolerance. Mirror that with L-BFGS to an RMS-gradient

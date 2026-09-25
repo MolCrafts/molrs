@@ -1,9 +1,45 @@
-//! LAMMPS force-field writer (the `*.ff` include next to a data file).
+//! LAMMPS force-field coefficient writer: the `*.ff` include next to a data
+//! file, and the data file's `* Coeffs` sections.
+//!
+//! # Coefficient writing, not whole-FF serialization
+//!
+//! molrs has two kinds of force-field writer:
+//!
+//! - **Coefficient writing** (this module, LAMMPS only) answers "which
+//!   coefficients does this system's data file need". It is keyed by the
+//!   system's type labels ([`TypeLabels`]): one coefficient per label, in label
+//!   id order. A label the [`ForceField`] does not define is an error naming the
+//!   block and the label; a `ForceField` type no label uses is not written
+//!   (assembly retyping legitimately leaves stale types behind).
+//! - **Whole-FF serialization** ([`super::gromacs`], [`super::xml`]) writes
+//!   every type the `ForceField` holds, as a force-field file, and takes no
+//!   labels.
+//!
+//! The data-file writer and this writer are composed by the caller; neither
+//! calls the other.
+//!
+//! # Label matching
+//!
+//! - `atoms` labels select pair coefficients: the self pair named by each label
+//!   (missing → error), plus explicit cross pairs whose two atom types are both
+//!   labels.
+//! - `bonds`, `angles` and `dihedrals` labels match a `ForceField` type in
+//!   either orientation ([`TypeName::canonical`]); the canonical label is what
+//!   is written.
+//! - `impropers` labels match exactly: reversing an improper moves its centre
+//!   and names a different term.
+//! - A block whose types carry no labels (pure-integer types) is matched by
+//!   its ids, `"1"`, `"2"`, ….
+//! - A style is written only when it holds a used type; an unsupported style
+//!   is an error only then. Type-less pair styles (`coul/cut`) apply to every
+//!   atom and are always in play.
+//!
+//! # Units (molrs store → LAMMPS file)
 //!
 //! Inverse of [`super::super::readers::lammps::LammpsFfReader`]: takes a molrs
 //! [`ForceField`] in molrs units (Å, kcal/mol, **radians**, e; harmonic
-//! stiffness in the `½k(x−x₀)²` form) and emits an AMBER/GAFF-flavour LAMMPS
-//! include in LAMMPS `real` units:
+//! stiffness in the `½k(x−x₀)²` form) and emits AMBER/GAFF-flavour LAMMPS
+//! coefficients in LAMMPS `real` units:
 //!
 //! ```text
 //! pair_style lj/cut/coul/cut 10.0 10.0
@@ -15,8 +51,6 @@
 //! dihedral_style fourier
 //! dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.0 # m  K1 n1 d1(deg) ...
 //! ```
-//!
-//! # Units (molrs store → LAMMPS file)
 //!
 //! Store is **real** (Å, kcal/mol, rad; `½k` harmonic form) for force fields
 //! read from physical styles, or **lj** pass-through when the file was already
@@ -42,19 +76,20 @@
 //! defeats mixing). A force field that already holds a single combined-style
 //! name, or only one of the two halves, is written as-is.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::ForceFieldWriter;
 use crate::ff::forcefield::lammps_units::{LammpsFfUnits, molrs_half_k_to_lammps_k};
 use crate::ff::forcefield::{
-    AngleType, BondType, ForceField, ImproperType, PairType, Params, Style, StyleDefs,
+    AngleType, BondType, DihedralType, ForceField, ImproperType, PairType, Params, Style, StyleDefs,
 };
+use molrs::store::type_labels::{TypeLabels, TypeName};
 
 /// Default pair cutoff (Å / reduced σ) when a style carries none — keeps the
 /// written include a legal LAMMPS command rather than a bare `pair_style lj/cut`.
 const DEFAULT_PAIR_CUTOFF: f64 = 10.0;
 
-/// Optional filters / formatting for [`LammpsFfWriter`].
+/// Formatting options for [`LammpsFfWriter`].
 #[derive(Debug, Clone)]
 pub struct LammpsWriteOptions {
     /// Decimal places for floating-point coefficients (default 6).
@@ -71,16 +106,6 @@ pub struct LammpsWriteOptions {
     pub skip_units: bool,
     /// LAMMPS `units` style for the written include (default `"real"`).
     pub units: &'static str,
-    /// Restrict pair coeffs to pairs whose atom types are a subset of this set.
-    pub atom_types: Option<HashSet<String>>,
-    pub bond_types: Option<HashSet<String>>,
-    pub angle_types: Option<HashSet<String>>,
-    pub dihedral_types: Option<HashSet<String>>,
-    pub improper_types: Option<HashSet<String>>,
-    /// Optional ForceField type-name → 1-based LAMMPS type id (from Frame).
-    /// Used by [`LammpsFfWriter::write_data_coeffs_str`]. Integer-parseable
-    /// names (`\"3\"`, `\"3-3\"`) resolve without this map.
-    pub type_ids: Option<HashMap<String, u32>>,
 }
 
 impl Default for LammpsWriteOptions {
@@ -90,12 +115,6 @@ impl Default for LammpsWriteOptions {
             skip_pair_style: false,
             skip_units: false,
             units: "real",
-            atom_types: None,
-            bond_types: None,
-            angle_types: None,
-            dihedral_types: None,
-            improper_types: None,
-            type_ids: None,
         }
     }
 }
@@ -136,53 +155,577 @@ impl WriteUnits {
     }
 }
 
-/// Writer for a LAMMPS force-field include (`*.ff`), AMBER/GAFF flavour.
-#[derive(Debug, Clone)]
-pub struct LammpsFfWriter {
-    options: LammpsWriteOptions,
+/// A bonded type category the writer emits coefficients for.
+trait BondedCoeff: Sized {
+    /// Style category, and the LAMMPS command prefix (`bond_style`, `bond_coeff`).
+    const CATEGORY: &'static str;
+    /// The [`TypeLabels`] block holding this category's labels.
+    const BLOCK: &'static str;
+    /// Data-file section heading.
+    const HEADING: &'static str;
+    /// Whether a label and its reverse name one term (all but impropers).
+    const UNDIRECTED: bool;
+
+    /// The types of this category `defs` holds, or `None` for another category.
+    fn types_of(defs: &StyleDefs) -> Option<&[Self]>;
+
+    /// The stored type name.
+    fn name(&self) -> &str;
+
+    /// The coefficients after the label or id, in file units, for a type of
+    /// style `style`. `Err` for a style LAMMPS output does not support.
+    fn coeffs(&self, style: &str, units: &WriteUnits, precision: usize) -> Result<String, String>;
+
+    /// Lookup key of a name: its canonical orientation when undirected.
+    fn key(name: &str) -> String {
+        if Self::UNDIRECTED {
+            TypeName::from(name.to_owned()).canonical().to_string()
+        } else {
+            name.to_owned()
+        }
+    }
 }
 
-impl LammpsFfWriter {
-    /// Writer with default options (6 decimal places, no type filters).
-    pub fn new() -> Self {
-        Self {
-            options: LammpsWriteOptions::default(),
+impl BondedCoeff for BondType {
+    const CATEGORY: &'static str = "bond";
+    const BLOCK: &'static str = "bonds";
+    const HEADING: &'static str = "Bond Coeffs";
+    const UNDIRECTED: bool = true;
+
+    fn types_of(defs: &StyleDefs) -> Option<&[Self]> {
+        match defs {
+            StyleDefs::Bond(types) => Some(types),
+            _ => None,
         }
     }
 
-    /// Writer with explicit options (filters, precision, skip pair style).
-    pub fn with_options(options: LammpsWriteOptions) -> Self {
-        Self { options }
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn coeffs(&self, style: &str, units: &WriteUnits, precision: usize) -> Result<String, String> {
+        if style != "harmonic" {
+            return Err(format!(
+                "unsupported bond_style `{style}` for LAMMPS coefficients (expected `harmonic`)"
+            ));
+        }
+        let k = self
+            .params
+            .get("k")
+            .ok_or_else(|| format!("bond type `{}` missing param `k`", self.name))?;
+        let r0 = self
+            .params
+            .get("r0")
+            .ok_or_else(|| format!("bond type `{}` missing param `r0`", self.name))?;
+        Ok(format_nums(
+            &[units.bond_k(k)?, units.length(r0)?],
+            precision,
+        ))
+    }
+}
+
+impl BondedCoeff for AngleType {
+    const CATEGORY: &'static str = "angle";
+    const BLOCK: &'static str = "angles";
+    const HEADING: &'static str = "Angle Coeffs";
+    const UNDIRECTED: bool = true;
+
+    fn types_of(defs: &StyleDefs) -> Option<&[Self]> {
+        match defs {
+            StyleDefs::Angle(types) => Some(types),
+            _ => None,
+        }
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn coeffs(&self, style: &str, units: &WriteUnits, precision: usize) -> Result<String, String> {
+        if style != "harmonic" {
+            return Err(format!(
+                "unsupported angle_style `{style}` for LAMMPS coefficients (expected `harmonic`)"
+            ));
+        }
+        let k = self
+            .params
+            .get("k")
+            .ok_or_else(|| format!("angle type `{}` missing param `k`", self.name))?;
+        let theta0 = self
+            .params
+            .get("theta0")
+            .ok_or_else(|| format!("angle type `{}` missing param `theta0`", self.name))?;
+        // Equilibrium angle is always degrees in the LAMMPS file (all unit styles).
+        Ok(format_nums(
+            &[units.angle_k(k)?, theta0.to_degrees()],
+            precision,
+        ))
+    }
+}
+
+impl BondedCoeff for DihedralType {
+    const CATEGORY: &'static str = "dihedral";
+    const BLOCK: &'static str = "dihedrals";
+    const HEADING: &'static str = "Dihedral Coeffs";
+    const UNDIRECTED: bool = true;
+
+    fn types_of(defs: &StyleDefs) -> Option<&[Self]> {
+        match defs {
+            StyleDefs::Dihedral(types) => Some(types),
+            _ => None,
+        }
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn coeffs(&self, style: &str, units: &WriteUnits, precision: usize) -> Result<String, String> {
+        match style {
+            "fourier" => {
+                let terms = fourier_terms(&self.params, &self.name, units)?;
+                let mut parts = vec![format!("{}", terms.len())];
+                for (k, n, d_deg) in terms {
+                    parts.push(fmt_num(k, precision));
+                    // LAMMPS EXTRA-MOLECULE dihedral_fourier requires integer n.
+                    parts.push(format!("{}", n.round() as i64));
+                    parts.push(fmt_num(d_deg, precision));
+                }
+                Ok(parts.join(" "))
+            }
+            "opls" => {
+                // OPLS K1–K4 (energy) from `k1`..`k4`; an absent term is 0.
+                let mut ks = Vec::with_capacity(4);
+                for key in ["k1", "k2", "k3", "k4"] {
+                    ks.push(units.energy(self.params.get(key).unwrap_or(0.0))?);
+                }
+                Ok(format_nums(&ks, precision))
+            }
+            "harmonic" => {
+                // dihedral_style harmonic: K d n (d = ±1 sign, n multiplicity).
+                let k_store = self
+                    .params
+                    .get("k")
+                    .ok_or_else(|| format!("dihedral type `{}` missing param `k`", self.name))?;
+                let sign = self.params.get("sign").unwrap_or(1.0);
+                let n = self.params.get("periodicity").unwrap_or(1.0);
+                Ok(format!(
+                    "{} {} {}",
+                    fmt_num(units.energy(k_store)?, precision),
+                    fmt_num(sign, precision),
+                    // multiplicity is an integer in LAMMPS
+                    n.round() as i64
+                ))
+            }
+            other => Err(format!(
+                "unsupported dihedral_style `{other}` for LAMMPS coefficients \
+                 (expected `fourier`, `opls`, or `harmonic`)"
+            )),
+        }
+    }
+}
+
+impl BondedCoeff for ImproperType {
+    const CATEGORY: &'static str = "improper";
+    const BLOCK: &'static str = "impropers";
+    const HEADING: &'static str = "Improper Coeffs";
+    const UNDIRECTED: bool = false;
+
+    fn types_of(defs: &StyleDefs) -> Option<&[Self]> {
+        match defs {
+            StyleDefs::Improper(types) => Some(types),
+            _ => None,
+        }
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn coeffs(&self, style: &str, units: &WriteUnits, precision: usize) -> Result<String, String> {
+        if style != "harmonic" {
+            return Err(format!(
+                "unsupported improper_style `{style}` for LAMMPS coefficients (expected `harmonic`)"
+            ));
+        }
+        let k = self
+            .params
+            .get("k")
+            .ok_or_else(|| format!("improper type `{}` missing param `k`", self.name))?;
+        let chi0 = self
+            .params
+            .get("chi0")
+            .ok_or_else(|| format!("improper type `{}` missing param `chi0`", self.name))?;
+        Ok(format_nums(
+            &[units.angle_k(k)?, chi0.to_degrees()],
+            precision,
+        ))
+    }
+}
+
+/// A bonded label resolved to the style and type that define it.
+struct Resolved<'f, T> {
+    /// 1-based type id (label order).
+    id: usize,
+    /// The label as written: canonical orientation when undirected.
+    label: String,
+    style: &'f Style,
+    ty: &'f T,
+}
+
+impl<T: BondedCoeff> Resolved<'_, T> {
+    /// The coefficients of the resolved type; an error names the label.
+    fn coeffs(&self, units: &WriteUnits, precision: usize) -> Result<String, String> {
+        self.ty
+            .coeffs(self.style.name(), units, precision)
+            .map_err(|e| format!("{} label `{}`: {e}", T::BLOCK, self.label))
+    }
+}
+
+/// A pair coefficient row: the ids of its two atom labels (lower first) and
+/// the pair type that defines it.
+struct PairRow<'f> {
+    ids: (usize, usize),
+    style: &'f Style,
+    ty: &'f PairType,
+}
+
+impl PairRow<'_> {
+    /// `epsilon sigma` in file units, or `None` for a type without both
+    /// (Coulomb-only styles carry no per-type coefficients).
+    fn coeffs(&self, units: &WriteUnits, precision: usize) -> Result<Option<String>, String> {
+        let (Some(eps), Some(sigma)) = (self.ty.params.get("epsilon"), self.ty.params.get("sigma"))
+        else {
+            return Ok(None);
+        };
+        Ok(Some(format_nums(
+            &[units.energy(eps)?, units.length(sigma)?],
+            precision,
+        )))
+    }
+}
+
+/// Label-driven LAMMPS coefficient writer (AMBER/GAFF flavour).
+///
+/// Holds the system's [`TypeLabels`]; see the module docs for the matching
+/// rules. [`ForceFieldWriter::write_str`] emits the `*.ff` include,
+/// [`LammpsFfWriter::write_data_coeffs_str`] the data-file `* Coeffs`
+/// sections; both write the same labels with the same numbers.
+#[derive(Debug, Clone)]
+pub struct LammpsFfWriter<'a> {
+    labels: &'a TypeLabels,
+    options: LammpsWriteOptions,
+}
+
+impl<'a> LammpsFfWriter<'a> {
+    /// Writer for `labels` with default options (6 decimal places, `real`).
+    pub fn new(labels: &'a TypeLabels) -> Self {
+        Self::with_options(labels, LammpsWriteOptions::default())
+    }
+
+    /// Writer for `labels` with explicit options.
+    pub fn with_options(labels: &'a TypeLabels, options: LammpsWriteOptions) -> Self {
+        Self { labels, options }
     }
 
     /// Emit data-file `* Coeffs` sections only (no `units` / `*_style` lines).
     ///
-    /// Numbers use the same form map and [`LammpsWriteOptions::units`] as
-    /// [`ForceFieldWriter::write_str`]. Type ids come from integer-parseable
-    /// type names or [`LammpsWriteOptions::type_ids`] (Frame-derived).
-    ///
-    /// Bond / angle / dihedral names are undirected: `h1-c3-c3-os` and
-    /// `os-c3-c3-h1` resolve to the same id and emit **one** coeff row.
-    /// Impropers stay directed.
+    /// Rows are the labels' 1-based ids in [`TypeLabels`] order, with the same
+    /// numbers, form map and [`LammpsWriteOptions::units`] as
+    /// [`ForceFieldWriter::write_str`]. `Pair Coeffs` holds self pairs only, so
+    /// a used explicit cross pair is an error here (write it through the
+    /// include).
     pub fn write_data_coeffs_str(&self, ff: &ForceField) -> Result<String, String> {
         let units = WriteUnits::new(self.options.units)?;
         let mut lines: Vec<String> = Vec::new();
-        write_data_pair_coeffs(&mut lines, ff, &self.options, &units)?;
-        write_data_bond_coeffs(&mut lines, ff, &self.options, &units)?;
-        write_data_angle_coeffs(&mut lines, ff, &self.options, &units)?;
-        write_data_dihedral_coeffs(&mut lines, ff, &self.options, &units)?;
-        write_data_improper_coeffs(&mut lines, ff, &self.options, &units)?;
+        self.write_data_pair_coeffs(&mut lines, ff, &units)?;
+        self.write_data_section::<BondType>(&mut lines, ff, &units)?;
+        self.write_data_section::<AngleType>(&mut lines, ff, &units)?;
+        self.write_data_section::<DihedralType>(&mut lines, ff, &units)?;
+        self.write_data_section::<ImproperType>(&mut lines, ff, &units)?;
         Ok(lines.concat())
     }
-}
 
-impl Default for LammpsFfWriter {
-    fn default() -> Self {
-        Self::new()
+    /// Labels of `block` in id order; the ids themselves (`"1"`, `"2"`, …)
+    /// when the block's types carry no labels.
+    fn block_labels(&self, block: &str) -> Vec<String> {
+        match self.labels.block(block) {
+            None => Vec::new(),
+            Some(types) => match types.labels() {
+                Some(labels) => labels.to_vec(),
+                None => (1..=types.n_types()).map(|id| id.to_string()).collect(),
+            },
+        }
+    }
+
+    /// Every label of `T::BLOCK` resolved to its type, in id order. The first
+    /// style (in force-field order) defining a name wins.
+    fn resolve<'f, T: BondedCoeff>(
+        &self,
+        ff: &'f ForceField,
+    ) -> Result<Vec<Resolved<'f, T>>, String> {
+        let labels = self.block_labels(T::BLOCK);
+        if labels.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut by_key: HashMap<String, (&'f Style, &'f T)> = HashMap::new();
+        for style in ff.get_styles(T::CATEGORY) {
+            for ty in T::types_of(style.defs()).unwrap_or_default() {
+                by_key.entry(T::key(ty.name())).or_insert((style, ty));
+            }
+        }
+        labels
+            .iter()
+            .enumerate()
+            .map(|(i, label)| {
+                let label = T::key(label);
+                let &(style, ty) = by_key.get(&label).ok_or_else(|| {
+                    format!(
+                        "{}: type label `{label}` has no {} type in the force field",
+                        T::BLOCK,
+                        T::CATEGORY
+                    )
+                })?;
+                Ok(Resolved {
+                    id: i + 1,
+                    label,
+                    style,
+                    ty,
+                })
+            })
+            .collect()
+    }
+
+    /// Pair rows for the `atoms` labels, ordered by id pair: every label's
+    /// self pair (missing → error) and every explicit cross pair of two used
+    /// labels. The first style (in force-field order) defining a pair wins.
+    fn resolve_pairs<'f>(&self, ff: &'f ForceField) -> Result<Vec<PairRow<'f>>, String> {
+        let labels = self.block_labels("atoms");
+        let ids: HashMap<&str, usize> = labels
+            .iter()
+            .enumerate()
+            .map(|(i, label)| (label.as_str(), i + 1))
+            .collect();
+        let mut rows: BTreeMap<(usize, usize), PairRow<'f>> = BTreeMap::new();
+        for style in ff.get_styles("pair") {
+            let StyleDefs::Pair(types) = style.defs() else {
+                continue;
+            };
+            for ty in types {
+                let (Some(&i), Some(&j)) = (ids.get(ty.itom.as_str()), ids.get(ty.jtom.as_str()))
+                else {
+                    continue;
+                };
+                let key = (i.min(j), i.max(j));
+                rows.entry(key).or_insert(PairRow {
+                    ids: key,
+                    style,
+                    ty,
+                });
+            }
+        }
+        if let Some((_, label)) = labels
+            .iter()
+            .enumerate()
+            .find(|(i, _)| !rows.contains_key(&(i + 1, i + 1)))
+        {
+            return Err(format!(
+                "atoms: type label `{label}` has no pair type in the force field"
+            ));
+        }
+        Ok(rows.into_values().collect())
+    }
+
+    fn write_pair_section(
+        &self,
+        lines: &mut Vec<String>,
+        ff: &ForceField,
+        units: &WriteUnits,
+    ) -> Result<(), String> {
+        let rows = self.resolve_pairs(ff)?;
+        if rows.is_empty() {
+            return Ok(());
+        }
+        // Styles in play: those defining a used pair, plus type-less ones
+        // (Coulomb), which apply to every atom.
+        let styles: Vec<&Style> = ff
+            .get_styles("pair")
+            .into_iter()
+            .filter(|s| {
+                matches!(s.defs(), StyleDefs::Pair(types) if types.is_empty())
+                    || rows.iter().any(|r| std::ptr::eq(r.style, *s))
+            })
+            .collect();
+        let opts = &self.options;
+
+        // Reader always builds lj/cut + coul/cut; recombine for a correct write-back.
+        if is_split_lj_coulomb(&styles) {
+            if !opts.skip_pair_style {
+                let lj = styles
+                    .iter()
+                    .find(|s| s.name() == "lj/cut")
+                    .ok_or_else(|| "split pair styles missing lj/cut".to_owned())?;
+                let coul = styles
+                    .iter()
+                    .find(|s| s.name() == "coul/cut" || s.name() == "coul/long")
+                    .ok_or_else(|| "split pair styles missing coul/*".to_owned())?;
+                let lj_cut = units.length(style_cutoff(lj).unwrap_or(DEFAULT_PAIR_CUTOFF))?;
+                let coul_cut = units.length(style_cutoff(coul).unwrap_or(DEFAULT_PAIR_CUTOFF))?;
+                lines.push(format!(
+                    "pair_style lj/cut/coul/cut {} {}\n",
+                    fmt_num(lj_cut, opts.precision),
+                    fmt_num(coul_cut, opts.precision)
+                ));
+                lines.extend(pair_modify_line(lj));
+                lines.push("\n".to_owned());
+            }
+            // Only LJ carries per-type ε/σ; Coulomb charges live on the atoms.
+            return self.push_pair_coeffs(lines, &rows, false, units);
+        }
+
+        if let [style] = styles.as_slice() {
+            if !opts.skip_pair_style {
+                let params = pair_style_cutoffs(style, units)?;
+                lines.push(format!(
+                    "pair_style {} {}\n",
+                    style.name(),
+                    format_nums(&params, opts.precision)
+                ));
+                lines.extend(pair_modify_line(style));
+                lines.push("\n".to_owned());
+            }
+            return self.push_pair_coeffs(lines, &rows, false, units);
+        }
+
+        // Genuinely independent sub-styles → hybrid with per-substyle cutoffs.
+        if !opts.skip_pair_style {
+            let mut sub = Vec::new();
+            for s in &styles {
+                let cuts = pair_style_cutoffs(s, units)?;
+                if cuts.is_empty() {
+                    sub.push(s.name().to_owned());
+                } else {
+                    sub.push(format!(
+                        "{} {}",
+                        s.name(),
+                        format_nums(&cuts, opts.precision)
+                    ));
+                }
+            }
+            lines.push(format!("pair_style hybrid {}\n", sub.join(" ")));
+            // A hybrid needs `pair_modify pair <substyle> mix <rule>` per sub-style;
+            // no in-tree force field carries a non-default `mixing` on a hybrid, so
+            // emitting it is deferred rather than guessed.
+            lines.push("\n".to_owned());
+        }
+        self.push_pair_coeffs(lines, &rows, true, units)?;
+        lines.push("\n".to_owned());
+        Ok(())
+    }
+
+    /// `pair_coeff` lines for the rows carrying ε/σ, naming the sub-style when
+    /// `hybrid`. A single-style block ends with a blank line when non-empty.
+    fn push_pair_coeffs(
+        &self,
+        lines: &mut Vec<String>,
+        rows: &[PairRow<'_>],
+        hybrid: bool,
+        units: &WriteUnits,
+    ) -> Result<(), String> {
+        let mut any = false;
+        for row in rows {
+            let Some(nums) = row.coeffs(units, self.options.precision)? else {
+                continue;
+            };
+            let (i, j) = (&row.ty.itom, &row.ty.jtom);
+            if hybrid {
+                lines.push(format!("pair_coeff {i} {j} {} {nums}\n", row.style.name()));
+            } else {
+                lines.push(format!("pair_coeff {i} {j} {nums}\n"));
+            }
+            any = true;
+        }
+        if any && !hybrid {
+            lines.push("\n".to_owned());
+        }
+        Ok(())
+    }
+
+    /// `T_style` and `T_coeff` lines for every style holding a used label, the
+    /// coefficients in label id order.
+    fn write_section<T: BondedCoeff>(
+        &self,
+        lines: &mut Vec<String>,
+        ff: &ForceField,
+        units: &WriteUnits,
+    ) -> Result<(), String> {
+        let used = self.resolve::<T>(ff)?;
+        for style in ff.get_styles(T::CATEGORY) {
+            let rows: Vec<&Resolved<'_, T>> = used
+                .iter()
+                .filter(|r| std::ptr::eq(r.style, style))
+                .collect();
+            if rows.is_empty() {
+                continue;
+            }
+            let mut section = vec![format!("{}_style {}\n", T::CATEGORY, style.name())];
+            for r in rows {
+                section.push(format!(
+                    "{}_coeff {} {}\n",
+                    T::CATEGORY,
+                    r.label,
+                    r.coeffs(units, self.options.precision)?
+                ));
+            }
+            section.push("\n".to_owned());
+            lines.extend(section);
+        }
+        Ok(())
+    }
+
+    fn write_data_pair_coeffs(
+        &self,
+        lines: &mut Vec<String>,
+        ff: &ForceField,
+        units: &WriteUnits,
+    ) -> Result<(), String> {
+        let mut section = Vec::new();
+        for row in self.resolve_pairs(ff)? {
+            if row.ids.0 != row.ids.1 {
+                return Err(format!(
+                    "pair type `{}` is an explicit cross pair; a data-file Pair Coeffs \
+                     section holds self pairs only (write it through the *.ff include)",
+                    row.ty.name
+                ));
+            }
+            if let Some(nums) = row.coeffs(units, self.options.precision)? {
+                section.push(format!("{} {nums}\n", row.ids.0));
+            }
+        }
+        push_data_section(lines, "Pair Coeffs", section);
+        Ok(())
+    }
+
+    fn write_data_section<T: BondedCoeff>(
+        &self,
+        lines: &mut Vec<String>,
+        ff: &ForceField,
+        units: &WriteUnits,
+    ) -> Result<(), String> {
+        let mut section = Vec::new();
+        for r in self.resolve::<T>(ff)? {
+            section.push(format!(
+                "{} {}\n",
+                r.id,
+                r.coeffs(units, self.options.precision)?
+            ));
+        }
+        push_data_section(lines, T::HEADING, section);
+        Ok(())
     }
 }
 
-impl ForceFieldWriter for LammpsFfWriter {
+impl ForceFieldWriter for LammpsFfWriter<'_> {
     fn write_str(&self, ff: &ForceField) -> Result<String, String> {
         let units = WriteUnits::new(self.options.units)?;
         let mut lines: Vec<String> = Vec::new();
@@ -210,419 +753,34 @@ impl ForceFieldWriter for LammpsFfWriter {
             lines.push("\n".to_owned());
         }
 
-        write_pair_section(&mut lines, ff, &self.options, &units)?;
-        write_bond_section(&mut lines, ff, &self.options, &units)?;
-        write_angle_section(&mut lines, ff, &self.options, &units)?;
-        write_dihedral_section(&mut lines, ff, &self.options, &units)?;
-        write_improper_section(&mut lines, ff, &self.options, &units)?;
+        self.write_pair_section(&mut lines, ff, &units)?;
+        self.write_section::<BondType>(&mut lines, ff, &units)?;
+        self.write_section::<AngleType>(&mut lines, ff, &units)?;
+        self.write_section::<DihedralType>(&mut lines, ff, &units)?;
+        self.write_section::<ImproperType>(&mut lines, ff, &units)?;
 
         Ok(lines.concat())
     }
 }
 
-/// Resolve a ForceField type name to a 1-based LAMMPS data type id.
-fn reverse_hyphen_label(name: &str) -> String {
-    name.split('-')
-        .filter(|p| !p.is_empty())
-        .rev()
-        .collect::<Vec<_>>()
-        .join("-")
-}
-
-fn data_type_id(
-    name: &str,
-    map: Option<&HashMap<String, u32>>,
-    reverse: bool,
-) -> Result<u32, String> {
-    if let Some(m) = map {
-        if let Some(&id) = m.get(name) {
-            return Ok(id);
-        }
-        if reverse {
-            let rev = reverse_hyphen_label(name);
-            if rev != name
-                && let Some(&id) = m.get(&rev)
-            {
-                return Ok(id);
-            }
-        }
-    }
-    if let Ok(id) = name.parse::<u32>()
-        && id >= 1
-    {
-        return Ok(id);
-    }
-    let parts: Vec<&str> = name.split('-').filter(|p| !p.is_empty()).collect();
-    if !parts.is_empty() && parts.iter().all(|p| p.parse::<u32>().is_ok()) {
-        let first: u32 = parts[0].parse().unwrap();
-        if first >= 1 && parts.iter().all(|p| p.parse::<u32>().ok() == Some(first)) {
-            return Ok(first);
-        }
-        // Distinct numeric segments (rare as a type *name*): prefer map, else first.
-        if first >= 1 {
-            return Ok(first);
-        }
-    }
-    Err(format!(
-        "cannot resolve LAMMPS type id for `{name}`: need an integer type name \
-         (or repeated `N-N`) or a Frame-derived entry in type_ids"
-    ))
-}
-
-/// First row wins when reverse-bonded aliases share an id.
-fn take_data_type_id(
-    name: &str,
-    map: Option<&HashMap<String, u32>>,
-    reverse: bool,
-    seen: &mut HashSet<u32>,
-) -> Result<Option<u32>, String> {
-    let id = data_type_id(name, map, reverse)?;
-    Ok(seen.insert(id).then_some(id))
-}
-
-fn push_data_section(lines: &mut Vec<String>, heading: &str, rows: &mut Vec<(u32, String)>) {
+/// `heading`, a blank line, the rows and a blank line; nothing when empty.
+fn push_data_section(lines: &mut Vec<String>, heading: &str, rows: Vec<String>) {
     if rows.is_empty() {
         return;
     }
-    rows.sort_by_key(|(id, _)| *id);
-    rows.dedup_by_key(|(id, _)| *id);
     lines.push(format!("{heading}\n\n"));
-    for (id, body) in rows.iter() {
-        lines.push(format!("{id} {body}\n"));
-    }
+    lines.extend(rows);
     lines.push("\n".to_owned());
 }
 
-fn write_data_pair_coeffs(
-    lines: &mut Vec<String>,
-    ff: &ForceField,
-    opts: &LammpsWriteOptions,
-    units: &WriteUnits,
-) -> Result<(), String> {
-    let mut rows: Vec<(u32, String)> = Vec::new();
-    let mut seen = HashSet::new();
-    for style in ff.get_styles("pair") {
-        let StyleDefs::Pair(types) = &style.defs else {
-            continue;
-        };
-        for t in types {
-            if !pair_included(t, opts) {
-                continue;
-            }
-            let Some(eps_store) = t.params.get("epsilon") else {
-                continue;
-            };
-            let Some(sigma_store) = t.params.get("sigma") else {
-                continue;
-            };
-            let Some(id) = take_data_type_id(&t.name, opts.type_ids.as_ref(), false, &mut seen)?
-            else {
-                continue;
-            };
-            let eps = units.energy(eps_store)?;
-            let sigma = units.length(sigma_store)?;
-            rows.push((
-                id,
-                format!(
-                    "{} {}",
-                    fmt_num(eps, opts.precision),
-                    fmt_num(sigma, opts.precision)
-                ),
-            ));
-        }
-    }
-    push_data_section(lines, "Pair Coeffs", &mut rows);
-    Ok(())
-}
-
-fn write_data_bond_coeffs(
-    lines: &mut Vec<String>,
-    ff: &ForceField,
-    opts: &LammpsWriteOptions,
-    units: &WriteUnits,
-) -> Result<(), String> {
-    let mut rows: Vec<(u32, String)> = Vec::new();
-    let mut seen = HashSet::new();
-    for style in ff.get_styles("bond") {
-        if style.name != "harmonic" {
-            return Err(format!(
-                "unsupported bond_style `{}` for data coeffs (expected `harmonic`)",
-                style.name
-            ));
-        }
-        let StyleDefs::Bond(types) = &style.defs else {
-            continue;
-        };
-        for t in types {
-            if !bonded_name_included(&t.name, &opts.bond_types) {
-                continue;
-            }
-            let Some(id) = take_data_type_id(&t.name, opts.type_ids.as_ref(), true, &mut seen)?
-            else {
-                continue;
-            };
-            let (k, r0) = bond_lammps_params(t, units)?;
-            rows.push((
-                id,
-                format!(
-                    "{} {}",
-                    fmt_num(k, opts.precision),
-                    fmt_num(r0, opts.precision)
-                ),
-            ));
-        }
-    }
-    push_data_section(lines, "Bond Coeffs", &mut rows);
-    Ok(())
-}
-
-fn write_data_angle_coeffs(
-    lines: &mut Vec<String>,
-    ff: &ForceField,
-    opts: &LammpsWriteOptions,
-    units: &WriteUnits,
-) -> Result<(), String> {
-    let mut rows: Vec<(u32, String)> = Vec::new();
-    let mut seen = HashSet::new();
-    for style in ff.get_styles("angle") {
-        if style.name != "harmonic" {
-            return Err(format!(
-                "unsupported angle_style `{}` for data coeffs (expected `harmonic`)",
-                style.name
-            ));
-        }
-        let StyleDefs::Angle(types) = &style.defs else {
-            continue;
-        };
-        for t in types {
-            if !bonded_name_included(&t.name, &opts.angle_types) {
-                continue;
-            }
-            let Some(id) = take_data_type_id(&t.name, opts.type_ids.as_ref(), true, &mut seen)?
-            else {
-                continue;
-            };
-            let (k, theta0_deg) = angle_lammps_params(t, units)?;
-            rows.push((
-                id,
-                format!(
-                    "{} {}",
-                    fmt_num(k, opts.precision),
-                    fmt_num(theta0_deg, opts.precision)
-                ),
-            ));
-        }
-    }
-    push_data_section(lines, "Angle Coeffs", &mut rows);
-    Ok(())
-}
-
-fn write_data_dihedral_coeffs(
-    lines: &mut Vec<String>,
-    ff: &ForceField,
-    opts: &LammpsWriteOptions,
-    units: &WriteUnits,
-) -> Result<(), String> {
-    let mut rows: Vec<(u32, String)> = Vec::new();
-    let mut seen = HashSet::new();
-    for style in ff.get_styles("dihedral") {
-        let StyleDefs::Dihedral(types) = &style.defs else {
-            continue;
-        };
-        match style.name.as_str() {
-            "harmonic" => {
-                for t in types {
-                    if !bonded_name_included(&t.name, &opts.dihedral_types) {
-                        continue;
-                    }
-                    let Some(id) =
-                        take_data_type_id(&t.name, opts.type_ids.as_ref(), true, &mut seen)?
-                    else {
-                        continue;
-                    };
-                    let k_store = t
-                        .params
-                        .get("k")
-                        .ok_or_else(|| format!("dihedral type `{}` missing `k`", t.name))?;
-                    let sign = t.params.get("sign").unwrap_or(1.0);
-                    let n = t.params.get("periodicity").unwrap_or(1.0);
-                    let k = units.energy(k_store)?;
-                    rows.push((
-                        id,
-                        format!(
-                            "{} {} {}",
-                            fmt_num(k, opts.precision),
-                            fmt_num(sign, opts.precision),
-                            n.round() as i64
-                        ),
-                    ));
-                }
-            }
-            "opls" => {
-                for t in types {
-                    if !bonded_name_included(&t.name, &opts.dihedral_types) {
-                        continue;
-                    }
-                    let Some(id) =
-                        take_data_type_id(&t.name, opts.type_ids.as_ref(), true, &mut seen)?
-                    else {
-                        continue;
-                    };
-                    let f1 = units.energy(t.params.get("k1").unwrap_or(0.0))?;
-                    let f2 = units.energy(t.params.get("k2").unwrap_or(0.0))?;
-                    let f3 = units.energy(t.params.get("k3").unwrap_or(0.0))?;
-                    let f4 = units.energy(t.params.get("k4").unwrap_or(0.0))?;
-                    rows.push((
-                        id,
-                        format!(
-                            "{} {} {} {}",
-                            fmt_num(f1, opts.precision),
-                            fmt_num(f2, opts.precision),
-                            fmt_num(f3, opts.precision),
-                            fmt_num(f4, opts.precision)
-                        ),
-                    ));
-                }
-            }
-            "fourier" => {
-                for t in types {
-                    if !bonded_name_included(&t.name, &opts.dihedral_types) {
-                        continue;
-                    }
-                    let Some(id) =
-                        take_data_type_id(&t.name, opts.type_ids.as_ref(), true, &mut seen)?
-                    else {
-                        continue;
-                    };
-                    let terms = fourier_terms(&t.params, &t.name, units)?;
-                    let m = terms.len();
-                    let mut parts = vec![format!("{m}")];
-                    for (k, n, d_deg) in terms {
-                        parts.push(fmt_num(k, opts.precision));
-                        parts.push(format!("{}", n.round() as i64));
-                        parts.push(fmt_num(d_deg, opts.precision));
-                    }
-                    rows.push((id, parts.join(" ")));
-                }
-            }
-            other => {
-                return Err(format!(
-                    "unsupported dihedral_style `{other}` for data coeffs"
-                ));
-            }
-        }
-    }
-    push_data_section(lines, "Dihedral Coeffs", &mut rows);
-    Ok(())
-}
-
-fn write_data_improper_coeffs(
-    lines: &mut Vec<String>,
-    ff: &ForceField,
-    opts: &LammpsWriteOptions,
-    units: &WriteUnits,
-) -> Result<(), String> {
-    let mut rows: Vec<(u32, String)> = Vec::new();
-    let mut seen = HashSet::new();
-    for style in ff.get_styles("improper") {
-        if style.name != "harmonic" {
-            return Err(format!(
-                "unsupported improper_style `{}` for data coeffs (expected `harmonic`)",
-                style.name
-            ));
-        }
-        let StyleDefs::Improper(types) = &style.defs else {
-            continue;
-        };
-        for t in types {
-            if !name_included(&t.name, &opts.improper_types) {
-                continue;
-            }
-            let Some(id) = take_data_type_id(&t.name, opts.type_ids.as_ref(), false, &mut seen)?
-            else {
-                continue;
-            };
-            let (k, chi0_deg) = improper_lammps_params(t, units)?;
-            rows.push((
-                id,
-                format!(
-                    "{} {}",
-                    fmt_num(k, opts.precision),
-                    fmt_num(chi0_deg, opts.precision)
-                ),
-            ));
-        }
-    }
-    push_data_section(lines, "Improper Coeffs", &mut rows);
-    Ok(())
-}
-
-// ── pair ─────────────────────────────────────────────────────────────────────
-
-fn write_pair_section(
-    lines: &mut Vec<String>,
-    ff: &ForceField,
-    opts: &LammpsWriteOptions,
-    units: &WriteUnits,
-) -> Result<(), String> {
-    let styles = ff.get_styles("pair");
-    if styles.is_empty() {
-        return Ok(());
-    }
-
-    // Reader always builds lj/cut + coul/cut; recombine for a correct write-back.
-    if is_split_lj_coulomb(&styles) {
-        write_combined_lj_coulomb(lines, &styles, opts, units)?;
-        return Ok(());
-    }
-
-    if styles.len() == 1 {
-        let s = styles[0];
-        if !opts.skip_pair_style {
-            let params = pair_style_cutoffs(s, units)?;
-            lines.push(format!(
-                "pair_style {} {}\n",
-                s.name,
-                format_nums(&params, opts.precision)
-            ));
-            lines.extend(pair_modify_line(s));
-            lines.push("\n".to_owned());
-        }
-        write_pair_coeffs(lines, s, /*hybrid_substyle=*/ None, opts, units)?;
-        return Ok(());
-    }
-
-    // Genuinely independent sub-styles → hybrid with per-substyle cutoffs.
-    if !opts.skip_pair_style {
-        let mut sub = Vec::new();
-        for s in &styles {
-            let cuts = pair_style_cutoffs(s, units)?;
-            if cuts.is_empty() {
-                sub.push(s.name.clone());
-            } else {
-                sub.push(format!("{} {}", s.name, format_nums(&cuts, opts.precision)));
-            }
-        }
-        lines.push(format!("pair_style hybrid {}\n", sub.join(" ")));
-        // A hybrid needs `pair_modify pair <substyle> mix <rule>` per sub-style;
-        // no in-tree force field carries a non-default `mixing` on a hybrid, so
-        // emitting it is deferred rather than guessed.
-        lines.push("\n".to_owned());
-    }
-    let mut seen = HashSet::new();
-    for s in &styles {
-        write_pair_coeffs_dedup(lines, s, Some(s.name.as_str()), opts, units, &mut seen)?;
-    }
-    lines.push("\n".to_owned());
-    Ok(())
-}
+// ── pair styles ──────────────────────────────────────────────────────────────
 
 /// `pair_modify mix <rule>` for a style that declares one. LAMMPS' own default
 /// for `lj/cut` is `geometric`, so a force field mixing any other way must say
 /// so on its way out or the run silently uses the wrong cross terms.
 fn pair_modify_line(style: &Style) -> Option<String> {
     style
-        .params
+        .params()
         .get_str("mixing")
         .map(|rule| format!("pair_modify mix {rule}\n"))
 }
@@ -631,48 +789,16 @@ fn is_split_lj_coulomb(styles: &[&Style]) -> bool {
     if styles.len() != 2 {
         return false;
     }
-    let names: HashSet<&str> = styles.iter().map(|s| s.name.as_str()).collect();
+    let names: HashSet<&str> = styles.iter().map(|s| s.name()).collect();
     names == HashSet::from(["lj/cut", "coul/cut"])
         || names == HashSet::from(["lj/cut", "coul/long"])
-}
-
-fn write_combined_lj_coulomb(
-    lines: &mut Vec<String>,
-    styles: &[&Style],
-    opts: &LammpsWriteOptions,
-    units: &WriteUnits,
-) -> Result<(), String> {
-    let lj = styles
-        .iter()
-        .find(|s| s.name == "lj/cut")
-        .ok_or_else(|| "split pair styles missing lj/cut".to_owned())?;
-    let coul = styles
-        .iter()
-        .find(|s| s.name == "coul/cut" || s.name == "coul/long")
-        .ok_or_else(|| "split pair styles missing coul/*".to_owned())?;
-
-    let lj_cut = units.length(style_cutoff(lj).unwrap_or(DEFAULT_PAIR_CUTOFF))?;
-    let coul_cut = units.length(style_cutoff(coul).unwrap_or(DEFAULT_PAIR_CUTOFF))?;
-
-    if !opts.skip_pair_style {
-        lines.push(format!(
-            "pair_style lj/cut/coul/cut {} {}\n",
-            fmt_num(lj_cut, opts.precision),
-            fmt_num(coul_cut, opts.precision)
-        ));
-        lines.extend(pair_modify_line(lj));
-        lines.push("\n".to_owned());
-    }
-    // Only LJ carries per-type ε/σ; Coulomb charges live on the atoms.
-    write_pair_coeffs(lines, lj, None, opts, units)?;
-    Ok(())
 }
 
 fn pair_style_cutoffs(style: &Style, units: &WriteUnits) -> Result<Vec<f64>, String> {
     // Combined names want two cutoffs; simple kernels one. Fall back to default
     // so the line is a legal LAMMPS command.
     let convert = |c: f64| units.length(c);
-    match style.name.as_str() {
+    match style.name() {
         "lj/cut/coul/cut" | "lj/cut/coul/long" => {
             let c = convert(style_cutoff(style).unwrap_or(DEFAULT_PAIR_CUTOFF))?;
             Ok(vec![c, c])
@@ -688,242 +814,10 @@ fn pair_style_cutoffs(style: &Style, units: &WriteUnits) -> Result<Vec<f64>, Str
 }
 
 fn style_cutoff(style: &Style) -> Option<f64> {
-    style.params.get("cutoff")
+    style.params().get("cutoff")
 }
 
-fn write_pair_coeffs(
-    lines: &mut Vec<String>,
-    style: &Style,
-    hybrid_substyle: Option<&str>,
-    opts: &LammpsWriteOptions,
-    units: &WriteUnits,
-) -> Result<(), String> {
-    let mut seen = HashSet::new();
-    write_pair_coeffs_dedup(lines, style, hybrid_substyle, opts, units, &mut seen)?;
-    if !seen.is_empty() {
-        lines.push("\n".to_owned());
-    }
-    Ok(())
-}
-
-fn write_pair_coeffs_dedup(
-    lines: &mut Vec<String>,
-    style: &Style,
-    hybrid_substyle: Option<&str>,
-    opts: &LammpsWriteOptions,
-    units: &WriteUnits,
-    seen: &mut HashSet<String>,
-) -> Result<(), String> {
-    let StyleDefs::Pair(types) = &style.defs else {
-        return Ok(());
-    };
-    for t in types {
-        if !pair_included(t, opts) {
-            continue;
-        }
-        // Only emit self-pairs with ε/σ (cross terms are combining-rule products).
-        // Coulomb-only styles have no ε/σ — skip empty coeffs.
-        let Some(eps_store) = t.params.get("epsilon") else {
-            continue;
-        };
-        let Some(sigma_store) = t.params.get("sigma") else {
-            continue;
-        };
-        let id = format!("{} {}", t.itom, t.jtom);
-        if !seen.insert(id.clone()) {
-            continue;
-        }
-        let eps = units.energy(eps_store)?;
-        let sigma = units.length(sigma_store)?;
-        let nums = format_nums(&[eps, sigma], opts.precision);
-        match hybrid_substyle {
-            Some(sub) => lines.push(format!("pair_coeff {id} {sub} {nums}\n")),
-            None => lines.push(format!("pair_coeff {id} {nums}\n")),
-        }
-    }
-    Ok(())
-}
-
-fn pair_included(t: &PairType, opts: &LammpsWriteOptions) -> bool {
-    match &opts.atom_types {
-        None => true,
-        Some(allow) => allow.contains(&t.itom) && allow.contains(&t.jtom),
-    }
-}
-
-// ── bonded ───────────────────────────────────────────────────────────────────
-
-fn write_bond_section(
-    lines: &mut Vec<String>,
-    ff: &ForceField,
-    opts: &LammpsWriteOptions,
-    units: &WriteUnits,
-) -> Result<(), String> {
-    let styles = ff.get_styles("bond");
-    if styles.is_empty() {
-        return Ok(());
-    }
-    // AMBER/GAFF include is single-style harmonic.
-    for style in styles {
-        if style.name != "harmonic" {
-            return Err(format!(
-                "unsupported bond_style `{}` for LAMMPS *.ff writer (expected `harmonic`)",
-                style.name
-            ));
-        }
-        lines.push("bond_style harmonic\n".to_owned());
-        let StyleDefs::Bond(types) = &style.defs else {
-            continue;
-        };
-        let mut seen = HashSet::new();
-        let mut any = false;
-        for t in types {
-            let Some(label) = take_bonded_label(&t.name, &opts.bond_types, &mut seen) else {
-                continue;
-            };
-            let (k, r0) = bond_lammps_params(t, units)?;
-            lines.push(format!(
-                "bond_coeff {} {} {}\n",
-                label,
-                fmt_num(k, opts.precision),
-                fmt_num(r0, opts.precision)
-            ));
-            any = true;
-        }
-        if any {
-            lines.push("\n".to_owned());
-        }
-    }
-    Ok(())
-}
-
-fn bond_lammps_params(t: &BondType, units: &WriteUnits) -> Result<(f64, f64), String> {
-    let k = t
-        .params
-        .get("k")
-        .ok_or_else(|| format!("bond type `{}` missing param `k`", t.name))?;
-    let r0 = t
-        .params
-        .get("r0")
-        .ok_or_else(|| format!("bond type `{}` missing param `r0`", t.name))?;
-    Ok((units.bond_k(k)?, units.length(r0)?))
-}
-
-fn write_angle_section(
-    lines: &mut Vec<String>,
-    ff: &ForceField,
-    opts: &LammpsWriteOptions,
-    units: &WriteUnits,
-) -> Result<(), String> {
-    let styles = ff.get_styles("angle");
-    if styles.is_empty() {
-        return Ok(());
-    }
-    for style in styles {
-        if style.name != "harmonic" {
-            return Err(format!(
-                "unsupported angle_style `{}` for LAMMPS *.ff writer (expected `harmonic`)",
-                style.name
-            ));
-        }
-        lines.push("angle_style harmonic\n".to_owned());
-        let StyleDefs::Angle(types) = &style.defs else {
-            continue;
-        };
-        let mut seen = HashSet::new();
-        let mut any = false;
-        for t in types {
-            let Some(label) = take_bonded_label(&t.name, &opts.angle_types, &mut seen) else {
-                continue;
-            };
-            let (k, theta0_deg) = angle_lammps_params(t, units)?;
-            lines.push(format!(
-                "angle_coeff {} {} {}\n",
-                label,
-                fmt_num(k, opts.precision),
-                fmt_num(theta0_deg, opts.precision)
-            ));
-            any = true;
-        }
-        if any {
-            lines.push("\n".to_owned());
-        }
-    }
-    Ok(())
-}
-
-fn angle_lammps_params(t: &AngleType, units: &WriteUnits) -> Result<(f64, f64), String> {
-    let k = t
-        .params
-        .get("k")
-        .ok_or_else(|| format!("angle type `{}` missing param `k`", t.name))?;
-    let theta0 = t
-        .params
-        .get("theta0")
-        .ok_or_else(|| format!("angle type `{}` missing param `theta0`", t.name))?;
-    // Equilibrium angle is always degrees in the LAMMPS file (all unit styles).
-    Ok((units.angle_k(k)?, theta0.to_degrees()))
-}
-
-fn write_dihedral_section(
-    lines: &mut Vec<String>,
-    ff: &ForceField,
-    opts: &LammpsWriteOptions,
-    units: &WriteUnits,
-) -> Result<(), String> {
-    let styles = ff.get_styles("dihedral");
-    if styles.is_empty() {
-        return Ok(());
-    }
-    for style in styles {
-        match style.name.as_str() {
-            "fourier" => write_dihedral_fourier(lines, style, opts, units)?,
-            "opls" => write_dihedral_opls(lines, style, opts, units)?,
-            "harmonic" => write_dihedral_harmonic(lines, style, opts, units)?,
-            other => {
-                return Err(format!(
-                    "unsupported dihedral_style `{other}` for LAMMPS *.ff writer \
-                     (expected `fourier`, `opls`, or `harmonic`)"
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn write_dihedral_fourier(
-    lines: &mut Vec<String>,
-    style: &Style,
-    opts: &LammpsWriteOptions,
-    units: &WriteUnits,
-) -> Result<(), String> {
-    lines.push("dihedral_style fourier\n".to_owned());
-    let StyleDefs::Dihedral(types) = &style.defs else {
-        return Ok(());
-    };
-    let mut seen = HashSet::new();
-    let mut any = false;
-    for t in types {
-        let Some(label) = take_bonded_label(&t.name, &opts.dihedral_types, &mut seen) else {
-            continue;
-        };
-        let terms = fourier_terms(&t.params, &t.name, units)?;
-        let m = terms.len();
-        let mut parts = vec![format!("dihedral_coeff {}", label), format!("{m}")];
-        for (k, n, d_deg) in terms {
-            parts.push(fmt_num(k, opts.precision));
-            // LAMMPS EXTRA-MOLECULE dihedral_fourier requires integer n.
-            parts.push(format!("{}", n.round() as i64));
-            parts.push(fmt_num(d_deg, opts.precision));
-        }
-        lines.push(parts.join(" ") + "\n");
-        any = true;
-    }
-    if any {
-        lines.push("\n".to_owned());
-    }
-    Ok(())
-}
+// ── helpers ──────────────────────────────────────────────────────────────────
 
 /// Collect fourier terms `(K_file, n, phase_deg)` from the canonical keys
 /// `k{i}` / `periodicity{i}` / `phase{i}`.
@@ -949,184 +843,6 @@ fn fourier_terms(
         ));
     }
     Ok(terms)
-}
-
-fn write_dihedral_opls(
-    lines: &mut Vec<String>,
-    style: &Style,
-    opts: &LammpsWriteOptions,
-    units: &WriteUnits,
-) -> Result<(), String> {
-    lines.push("dihedral_style opls\n".to_owned());
-    let StyleDefs::Dihedral(types) = &style.defs else {
-        return Ok(());
-    };
-    let mut seen = HashSet::new();
-    let mut any = false;
-    for t in types {
-        let Some(label) = take_bonded_label(&t.name, &opts.dihedral_types, &mut seen) else {
-            continue;
-        };
-        // molrs OPLS kernel keys are f1–f4 (energy); accept legacy c1–c4 aliases.
-        let f1 = units.energy(t.params.get("k1").unwrap_or(0.0))?;
-        let f2 = units.energy(t.params.get("k2").unwrap_or(0.0))?;
-        let f3 = units.energy(t.params.get("k3").unwrap_or(0.0))?;
-        let f4 = units.energy(t.params.get("k4").unwrap_or(0.0))?;
-        lines.push(format!(
-            "dihedral_coeff {} {} {} {} {}\n",
-            label,
-            fmt_num(f1, opts.precision),
-            fmt_num(f2, opts.precision),
-            fmt_num(f3, opts.precision),
-            fmt_num(f4, opts.precision)
-        ));
-        any = true;
-    }
-    if any {
-        lines.push("\n".to_owned());
-    }
-    Ok(())
-}
-
-fn write_dihedral_harmonic(
-    lines: &mut Vec<String>,
-    style: &Style,
-    opts: &LammpsWriteOptions,
-    units: &WriteUnits,
-) -> Result<(), String> {
-    // dihedral_style harmonic: K d n  (d = ±1 sign, n multiplicity)
-    lines.push("dihedral_style harmonic\n".to_owned());
-    let StyleDefs::Dihedral(types) = &style.defs else {
-        return Ok(());
-    };
-    let mut seen = HashSet::new();
-    let mut any = false;
-    for t in types {
-        let Some(label) = take_bonded_label(&t.name, &opts.dihedral_types, &mut seen) else {
-            continue;
-        };
-        let k_store = t
-            .params
-            .get("k")
-            .ok_or_else(|| format!("dihedral type `{}` missing param `k`", t.name))?;
-        let sign = t.params.get("sign").unwrap_or(1.0);
-        let n = t.params.get("periodicity").unwrap_or(1.0);
-        let k = units.energy(k_store)?;
-        lines.push(format!(
-            "dihedral_coeff {} {} {} {}\n",
-            label,
-            fmt_num(k, opts.precision),
-            fmt_num(sign, opts.precision),
-            // multiplicity is an integer in LAMMPS
-            n.round() as i64
-        ));
-        any = true;
-    }
-    if any {
-        lines.push("\n".to_owned());
-    }
-    Ok(())
-}
-
-fn write_improper_section(
-    lines: &mut Vec<String>,
-    ff: &ForceField,
-    opts: &LammpsWriteOptions,
-    units: &WriteUnits,
-) -> Result<(), String> {
-    let styles = ff.get_styles("improper");
-    if styles.is_empty() {
-        return Ok(());
-    }
-    for style in styles {
-        if style.name != "harmonic" {
-            return Err(format!(
-                "unsupported improper_style `{}` for LAMMPS *.ff writer (expected `harmonic`)",
-                style.name
-            ));
-        }
-        lines.push("improper_style harmonic\n".to_owned());
-        let StyleDefs::Improper(types) = &style.defs else {
-            continue;
-        };
-        let mut seen = HashSet::new();
-        let mut any = false;
-        for t in types {
-            if !name_included(&t.name, &opts.improper_types) {
-                continue;
-            }
-            if !seen.insert(t.name.clone()) {
-                continue;
-            }
-            let (k, chi0_deg) = improper_lammps_params(t, units)?;
-            lines.push(format!(
-                "improper_coeff {} {} {}\n",
-                t.name,
-                fmt_num(k, opts.precision),
-                fmt_num(chi0_deg, opts.precision)
-            ));
-            any = true;
-        }
-        if any {
-            lines.push("\n".to_owned());
-        }
-    }
-    Ok(())
-}
-
-fn improper_lammps_params(t: &ImproperType, units: &WriteUnits) -> Result<(f64, f64), String> {
-    let k = t
-        .params
-        .get("k")
-        .ok_or_else(|| format!("improper type `{}` missing param `k`", t.name))?;
-    let chi0 = t
-        .params
-        .get("chi0")
-        .ok_or_else(|| format!("improper type `{}` missing param `chi0`", t.name))?;
-    Ok((units.angle_k(k)?, chi0.to_degrees()))
-}
-
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-fn name_included(name: &str, allow: &Option<HashSet<String>>) -> bool {
-    match allow {
-        None => true,
-        Some(set) => set.contains(name),
-    }
-}
-
-fn canonical_bonded_label(name: &str) -> String {
-    let rev = reverse_hyphen_label(name);
-    if !rev.is_empty() && rev.as_str() < name {
-        rev
-    } else {
-        name.to_string()
-    }
-}
-
-fn bonded_name_included(name: &str, allow: &Option<HashSet<String>>) -> bool {
-    match allow {
-        None => true,
-        Some(set) => {
-            set.contains(name) || {
-                let rev = reverse_hyphen_label(name);
-                rev != name && set.contains(&rev)
-            }
-        }
-    }
-}
-
-/// First orientation wins; emit the lex-min label so it matches the data file.
-fn take_bonded_label(
-    name: &str,
-    allow: &Option<HashSet<String>>,
-    seen: &mut HashSet<String>,
-) -> Option<String> {
-    if !bonded_name_included(name, allow) {
-        return None;
-    }
-    let canon = canonical_bonded_label(name);
-    seen.insert(canon.clone()).then_some(canon)
 }
 
 fn fmt_num(v: f64, precision: usize) -> String {
@@ -1164,10 +880,21 @@ dihedral_style fourier
 dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
 "#;
 
+    /// Labels of a system using every type in [`MINI`].
+    fn mini_labels() -> TypeLabels {
+        labels_of(&[
+            ("atoms", &["c3", "c3", "oh"]),
+            ("bonds", &["c3-c3"]),
+            ("angles", &["c3-c3-oh"]),
+            ("dihedrals", &["c3-c3-oh-ho"]),
+        ])
+    }
+
     #[test]
     fn writes_lammps_units_inverse_of_reader() {
         let ff = LammpsFfReader::new().read_str(MINI).unwrap();
-        let text = LammpsFfWriter::new().write_str(&ff).unwrap();
+        let labels = mini_labels();
+        let text = LammpsFfWriter::new(&labels).write_str(&ff).unwrap();
 
         // Combined pair style (not hybrid) so mixing stays intact.
         assert!(
@@ -1203,7 +930,8 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
     #[test]
     fn round_trip_preserves_molrs_params() {
         let ff = LammpsFfReader::new().read_str(MINI).unwrap();
-        let text = LammpsFfWriter::new().write_str(&ff).unwrap();
+        let labels = mini_labels();
+        let text = LammpsFfWriter::new(&labels).write_str(&ff).unwrap();
         let ff2 = LammpsFfReader::new().read_str(&text).unwrap();
 
         let bt = ff2
@@ -1247,7 +975,10 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
             skip_pair_style: true,
             ..Default::default()
         };
-        let text = LammpsFfWriter::with_options(opts).write_str(&ff).unwrap();
+        let labels = mini_labels();
+        let text = LammpsFfWriter::with_options(&labels, opts)
+            .write_str(&ff)
+            .unwrap();
         assert!(!text.contains("pair_style"), "no pair_style:\n{text}");
         assert!(
             !text.contains("special_bonds"),
@@ -1259,7 +990,8 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
     #[test]
     fn default_write_keeps_special_bonds() {
         let ff = LammpsFfReader::new().read_str(MINI).unwrap();
-        let text = LammpsFfWriter::new().write_str(&ff).unwrap();
+        let labels = mini_labels();
+        let text = LammpsFfWriter::new(&labels).write_str(&ff).unwrap();
         assert!(
             text.contains("special_bonds lj"),
             "full include declares 1-4:\n{text}"
@@ -1274,7 +1006,10 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
             skip_pair_style: true,
             ..Default::default()
         };
-        let text = LammpsFfWriter::with_options(opts).write_str(&ff).unwrap();
+        let labels = mini_labels();
+        let text = LammpsFfWriter::with_options(&labels, opts)
+            .write_str(&ff)
+            .unwrap();
         assert!(
             !text.contains("units "),
             "include after input units:\n{text}"
@@ -1294,7 +1029,11 @@ dihedral_coeff h1-c3-os-c3 1 0.337000 3 0.000000
 dihedral_coeff c3-os-c3-h1 1 0.337000 3 0.000000
 "#;
         let ff = LammpsFfReader::new().read_str(SRC).unwrap();
-        let text = LammpsFfWriter::new().write_str(&ff).unwrap();
+        let labels = labels_of(&[
+            ("atoms", &["c3"]),
+            ("dihedrals", &["h1-c3-os-c3", "c3-os-c3-h1"]),
+        ]);
+        let text = LammpsFfWriter::new(&labels).write_str(&ff).unwrap();
         let n = text
             .lines()
             .filter(|l| l.starts_with("dihedral_coeff "))
@@ -1307,27 +1046,17 @@ dihedral_coeff c3-os-c3-h1 1 0.337000 3 0.000000
     #[test]
     fn writes_units_real_line_by_default() {
         let ff = LammpsFfReader::new().read_str(MINI).unwrap();
-        let text = LammpsFfWriter::new().write_str(&ff).unwrap();
+        let labels = mini_labels();
+        let text = LammpsFfWriter::new(&labels).write_str(&ff).unwrap();
         assert!(text.contains("units real\n"), "default units real:\n{text}");
     }
 
     #[test]
     fn write_data_coeffs_matches_command_form_numbers() {
         let ff = LammpsFfReader::new().read_str(MINI).unwrap();
-        // Labelled types need an id map (Frame-derived in production).
-        let mut ids = HashMap::new();
-        ids.insert("c3".into(), 1u32);
-        ids.insert("oh".into(), 2u32);
-        ids.insert("c3-c3".into(), 1u32);
-        ids.insert("c3-c3-oh".into(), 1u32);
-        ids.insert("c3-c3-oh-ho".into(), 1u32);
-        let opts = LammpsWriteOptions {
-            type_ids: Some(ids),
-            ..Default::default()
-        };
-        let data = LammpsFfWriter::with_options(opts)
-            .write_data_coeffs_str(&ff)
-            .unwrap();
+        let labels = mini_labels();
+        let writer = LammpsFfWriter::new(&labels);
+        let data = writer.write_data_coeffs_str(&ff).unwrap();
         assert!(
             !data.contains("pair_style") && !data.contains("units "),
             "sections only:\n{data}"
@@ -1343,7 +1072,7 @@ dihedral_coeff c3-os-c3-h1 1 0.337000 3 0.000000
             "bond K=k/2:\n{data}"
         );
 
-        let cmd = LammpsFfWriter::new().write_str(&ff).unwrap();
+        let cmd = writer.write_str(&ff).unwrap();
         // Same bond K appears in both layouts.
         assert!(cmd.contains("bond_coeff c3-c3 228.890000 1.535400"));
         assert!(data.contains("228.890000 1.535400"));
@@ -1383,24 +1112,19 @@ dihedral_coeff h1-c3-c3-os 2 0.250000 1 0.000000 0.000000 3 0.000000
 dihedral_coeff os-c3-c3-h1 2 0.250000 1 0.000000 0.000000 3 0.000000
 "#;
         let ff = LammpsFfReader::new().read_str(SRC).unwrap();
-        let mut ids = HashMap::new();
-        ids.insert("c3".into(), 1u32);
-        ids.insert("c3-h1".into(), 1u32);
-        ids.insert("h1-c3".into(), 1u32);
-        ids.insert("c3-c3-h1".into(), 1u32);
-        ids.insert("h1-c3-c3".into(), 1u32);
-        ids.insert("h1-c3-c3-os".into(), 4u32);
-        ids.insert("os-c3-c3-h1".into(), 4u32);
-        let opts = LammpsWriteOptions {
-            type_ids: Some(ids),
-            ..Default::default()
-        };
-        let data = LammpsFfWriter::with_options(opts)
+        // Rows in both orientations collapse to one label (id 1) per block.
+        let labels = labels_of(&[
+            ("atoms", &["c3"]),
+            ("bonds", &["c3-h1", "h1-c3"]),
+            ("angles", &["c3-c3-h1", "h1-c3-c3"]),
+            ("dihedrals", &["h1-c3-c3-os", "os-c3-c3-h1"]),
+        ]);
+        let data = LammpsFfWriter::new(&labels)
             .write_data_coeffs_str(&ff)
             .unwrap();
         assert_eq!(coeff_ids(&data, "Bond Coeffs"), vec![1], "{data}");
         assert_eq!(coeff_ids(&data, "Angle Coeffs"), vec![1], "{data}");
-        assert_eq!(coeff_ids(&data, "Dihedral Coeffs"), vec![4], "{data}");
+        assert_eq!(coeff_ids(&data, "Dihedral Coeffs"), vec![1], "{data}");
     }
 
     #[test]
@@ -1409,18 +1133,12 @@ dihedral_coeff os-c3-c3-h1 2 0.250000 1 0.000000 0.000000 3 0.000000
 special_bonds amber
 pair_style lj/cut 10.0
 pair_coeff c3 c3 0.107800 3.397710
-
-dihedral_style fourier
-dihedral_coeff c3-os-c3-h1 1 0.180000 1 0.000000
 "#;
+        // The dihedral label's head `c3` is an atom label with a pair type;
+        // the dihedral must still resolve against dihedral types only.
         let ff = LammpsFfReader::new().read_str(SRC).unwrap();
-        let mut ids = HashMap::new();
-        ids.insert("c3".into(), 1u32);
-        let opts = LammpsWriteOptions {
-            type_ids: Some(ids),
-            ..Default::default()
-        };
-        let err = LammpsFfWriter::with_options(opts)
+        let labels = labels_of(&[("atoms", &["c3"]), ("dihedrals", &["c3-os-c3-h1"])]);
+        let err = LammpsFfWriter::new(&labels)
             .write_data_coeffs_str(&ff)
             .unwrap_err();
         assert!(
@@ -1436,7 +1154,10 @@ dihedral_coeff c3-os-c3-h1 1 0.180000 1 0.000000
             units: "metal",
             ..Default::default()
         };
-        let text = LammpsFfWriter::with_options(opts).write_str(&ff).unwrap();
+        let labels = mini_labels();
+        let text = LammpsFfWriter::with_options(&labels, opts)
+            .write_str(&ff)
+            .unwrap();
         assert!(text.contains("units metal\n"), "metal header:\n{text}");
 
         // 0.1078 kcal/mol → eV through lj hub
@@ -1479,15 +1200,401 @@ dihedral_coeff c3-os-c3-h1 1 0.180000 1 0.000000
     #[test]
     fn atom_type_filter_restricts_pair_coeffs() {
         let ff = LammpsFfReader::new().read_str(MINI).unwrap();
-        let opts = LammpsWriteOptions {
-            atom_types: Some(HashSet::from(["c3".to_owned()])),
-            ..Default::default()
-        };
-        let text = LammpsFfWriter::with_options(opts).write_str(&ff).unwrap();
+        // Only `c3` is used; `oh` is a ForceField type nobody labels.
+        let labels = labels_of(&[("atoms", &["c3"])]);
+        let text = LammpsFfWriter::new(&labels).write_str(&ff).unwrap();
         assert!(text.contains("pair_coeff c3 c3"));
         assert!(
             !text.contains("pair_coeff oh oh"),
             "oh filtered out:\n{text}"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Label-driven writing (system-forcefield-06): a hand-built ForceField
+    // plus TypeLabels from a hand-written Frame, one stage per test.
+    // ------------------------------------------------------------------
+
+    use crate::core::store::block::Block;
+    use crate::core::store::frame::Frame;
+    use crate::core::store::keys;
+    use crate::core::store::type_labels::TypeLabels;
+    use ndarray::{ArrayD, IxDyn};
+
+    /// A block whose only column is the string `type` label per row.
+    fn label_type_block(types: &[&str]) -> Block {
+        let mut block = Block::new();
+        block
+            .insert(
+                keys::TYPE,
+                ArrayD::from_shape_vec(
+                    IxDyn(&[types.len()]),
+                    types.iter().map(|t| t.to_string()).collect::<Vec<String>>(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        block
+    }
+
+    /// `TypeLabels` of a Frame holding one labelled block per `(name, types)`.
+    fn labels_of(blocks: &[(&str, &[&str])]) -> TypeLabels {
+        let mut frame = Frame::new();
+        for (name, types) in blocks {
+            frame.insert(*name, label_type_block(types));
+        }
+        TypeLabels::from_frame(&frame).unwrap()
+    }
+
+    fn lj(eps: f64, sigma: f64) -> Params {
+        Params::from_pairs(&[("epsilon", eps), ("sigma", sigma)])
+    }
+
+    /// Harmonic bond in molrs `½k` form: stored `k` is twice the LAMMPS `K`.
+    fn bond(k_lammps: f64, r0: f64) -> Params {
+        Params::from_pairs(&[("k", 2.0 * k_lammps), ("r0", r0)])
+    }
+
+    /// Split `lj/cut` (cutoff 9) + `coul/cut` (cutoff 10) with hand-written
+    /// ε/σ for `c3`, `hc` and `oh`, and harmonic bonds `c3-hc`, `c3-oh`.
+    fn split_pair_ff() -> ForceField {
+        let mut ff = ForceField::new("hand");
+        ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 9.0)]))
+            .unwrap()
+            .def_type("c3", lj(0.1078, 3.39771))
+            .unwrap()
+            .def_type("hc", lj(0.0157, 2.64953))
+            .unwrap()
+            .def_type("oh", lj(0.093, 3.242871))
+            .unwrap();
+        ff.def_style("pair", "coul/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+            .unwrap();
+        ff.def_style("bond", "harmonic", Params::new())
+            .unwrap()
+            .def_type("c3-hc", bond(340.0, 1.09))
+            .unwrap()
+            .def_type("c3-oh", bond(320.0, 1.41))
+            .unwrap();
+        ff
+    }
+
+    /// Rows of a data-file `heading` section (between its blank lines).
+    fn data_section_rows(text: &str, heading: &str) -> Vec<String> {
+        let Some(rest) = text.split(&format!("{heading}\n")).nth(1) else {
+            return vec![];
+        };
+        rest.lines()
+            .skip_while(|l| l.trim().is_empty())
+            .take_while(|l| !l.trim().is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
+
+    fn lines_starting_with(text: &str, prefix: &str) -> Vec<String> {
+        text.lines()
+            .filter(|l| l.starts_with(prefix))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn label_writer_skips_unused_forcefield_types_in_include() {
+        let ff = split_pair_ff();
+        let labels = labels_of(&[("atoms", &["c3", "hc", "hc"]), ("bonds", &["c3-hc"])]);
+        let text = LammpsFfWriter::new(&labels).write_str(&ff).unwrap();
+        assert!(!text.contains("pair_coeff oh"), "unused oh:\n{text}");
+        assert!(!text.contains("c3-oh"), "unused c3-oh:\n{text}");
+        assert!(text.contains("pair_coeff c3 c3"), "{text}");
+        assert!(text.contains("bond_coeff c3-hc"), "{text}");
+    }
+
+    #[test]
+    fn label_writer_skips_unused_forcefield_types_in_data_coeffs() {
+        let ff = split_pair_ff();
+        let labels = labels_of(&[("atoms", &["c3", "hc", "hc"]), ("bonds", &["c3-hc"])]);
+        let data = LammpsFfWriter::new(&labels)
+            .write_data_coeffs_str(&ff)
+            .unwrap();
+        assert_eq!(
+            data_section_rows(&data, "Pair Coeffs"),
+            vec!["1 0.107800 3.397710", "2 0.015700 2.649530"],
+            "{data}"
+        );
+        assert_eq!(
+            data_section_rows(&data, "Bond Coeffs"),
+            vec!["1 340.000000 1.090000"],
+            "{data}"
+        );
+    }
+
+    #[test]
+    fn label_writer_missing_bond_label_is_err_naming_block_and_label() {
+        let ff = split_pair_ff();
+        let labels = labels_of(&[("atoms", &["c3", "hc"]), ("bonds", &["c3-n"])]);
+        let err = LammpsFfWriter::new(&labels).write_str(&ff).unwrap_err();
+        assert!(err.contains("bonds"), "names the block: {err}");
+        assert!(err.contains("c3-n"), "names the label: {err}");
+    }
+
+    #[test]
+    fn label_writer_missing_atom_label_in_data_coeffs_is_err_naming_block_and_label() {
+        let ff = split_pair_ff();
+        let labels = labels_of(&[("atoms", &["c3", "os"])]);
+        let err = LammpsFfWriter::new(&labels)
+            .write_data_coeffs_str(&ff)
+            .unwrap_err();
+        assert!(err.contains("atoms"), "names the block: {err}");
+        assert!(err.contains("os"), "names the label: {err}");
+    }
+
+    #[test]
+    fn label_writer_resolves_reversed_bond_label_to_stored_type() {
+        let mut ff = ForceField::new("hand");
+        ff.def_style("bond", "harmonic", Params::new())
+            .unwrap()
+            .def_type("h1-c3", bond(340.0, 1.09))
+            .unwrap();
+        // TypeLabels stores the canonical orientation `c3-h1`.
+        let labels = labels_of(&[("bonds", &["c3-h1"])]);
+        let writer = LammpsFfWriter::new(&labels);
+
+        let text = writer.write_str(&ff).unwrap();
+        assert_eq!(
+            lines_starting_with(&text, "bond_coeff"),
+            vec!["bond_coeff c3-h1 340.000000 1.090000"],
+            "{text}"
+        );
+        let data = writer.write_data_coeffs_str(&ff).unwrap();
+        assert_eq!(
+            data_section_rows(&data, "Bond Coeffs"),
+            vec!["1 340.000000 1.090000"],
+            "{data}"
+        );
+    }
+
+    /// Improper `k` in molrs `½k` form, `chi0` in radians.
+    fn improper_ff() -> ForceField {
+        let mut ff = ForceField::new("hand");
+        ff.def_style("improper", "harmonic", Params::new())
+            .unwrap()
+            .def_type(
+                "c3-n-c-o",
+                Params::from_pairs(&[("k", 2.2), ("chi0", std::f64::consts::PI)]),
+            )
+            .unwrap();
+        ff
+    }
+
+    #[test]
+    fn label_writer_matches_improper_label_exactly() {
+        let ff = improper_ff();
+        let labels = labels_of(&[("impropers", &["c3-n-c-o"])]);
+        let text = LammpsFfWriter::new(&labels).write_str(&ff).unwrap();
+        assert_eq!(
+            lines_starting_with(&text, "improper_coeff"),
+            vec!["improper_coeff c3-n-c-o 1.100000 180.000000"],
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn label_writer_does_not_resolve_reversed_improper_label() {
+        let ff = improper_ff();
+        let labels = labels_of(&[("impropers", &["o-c-n-c3"])]);
+        let err = LammpsFfWriter::new(&labels).write_str(&ff).unwrap_err();
+        assert!(err.contains("impropers"), "names the block: {err}");
+        assert!(err.contains("o-c-n-c3"), "names the label: {err}");
+    }
+
+    #[test]
+    fn label_data_coeff_ids_follow_type_labels_not_forcefield_order() {
+        // ForceField order: oh, hc, c3 / c3-oh, c3-hc. Label order (sorted):
+        // c3=1, hc=2, oh=3 / c3-hc=1, c3-oh=2.
+        let mut ff = ForceField::new("hand");
+        ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 9.0)]))
+            .unwrap()
+            .def_type("oh", lj(0.093, 3.242871))
+            .unwrap()
+            .def_type("hc", lj(0.0157, 2.64953))
+            .unwrap()
+            .def_type("c3", lj(0.1078, 3.39771))
+            .unwrap();
+        ff.def_style("bond", "harmonic", Params::new())
+            .unwrap()
+            .def_type("c3-oh", bond(320.0, 1.41))
+            .unwrap()
+            .def_type("c3-hc", bond(340.0, 1.09))
+            .unwrap();
+        let labels = labels_of(&[
+            ("atoms", &["hc", "oh", "c3", "hc"]),
+            ("bonds", &["c3-oh", "c3-hc"]),
+        ]);
+        let data = LammpsFfWriter::new(&labels)
+            .write_data_coeffs_str(&ff)
+            .unwrap();
+        assert_eq!(
+            data_section_rows(&data, "Pair Coeffs"),
+            vec![
+                "1 0.107800 3.397710",
+                "2 0.015700 2.649530",
+                "3 0.093000 3.242871"
+            ],
+            "{data}"
+        );
+        assert_eq!(
+            data_section_rows(&data, "Bond Coeffs"),
+            vec!["1 340.000000 1.090000", "2 320.000000 1.410000"],
+            "{data}"
+        );
+    }
+
+    #[test]
+    fn label_writer_combines_split_lj_coul_into_one_pair_style_line() {
+        let ff = split_pair_ff();
+        let labels = labels_of(&[("atoms", &["c3", "hc"])]);
+        let text = LammpsFfWriter::new(&labels).write_str(&ff).unwrap();
+        assert_eq!(
+            lines_starting_with(&text, "pair_style"),
+            vec!["pair_style lj/cut/coul/cut 9.000000 10.000000"],
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn label_writer_pair_coeff_lines_follow_hand_written_eps_sigma() {
+        let ff = split_pair_ff();
+        let labels = labels_of(&[("atoms", &["hc", "c3"])]);
+        let text = LammpsFfWriter::new(&labels).write_str(&ff).unwrap();
+        assert_eq!(
+            lines_starting_with(&text, "pair_coeff"),
+            vec![
+                "pair_coeff c3 c3 0.107800 3.397710",
+                "pair_coeff hc hc 0.015700 2.649530"
+            ],
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn label_writer_writes_cross_pair_only_when_both_endpoints_used() {
+        let mut ff = split_pair_ff();
+        ff.get_style_mut("pair", "lj/cut")
+            .unwrap()
+            .def_type("c3-hc", lj(0.05, 3.0))
+            .unwrap()
+            .def_type("c3-oh", lj(0.07, 3.3))
+            .unwrap();
+        let labels = labels_of(&[("atoms", &["c3", "hc"])]);
+        let text = LammpsFfWriter::new(&labels).write_str(&ff).unwrap();
+        assert!(
+            text.contains("pair_coeff c3 hc 0.050000 3.000000\n"),
+            "{text}"
+        );
+        assert!(!text.contains("pair_coeff c3 oh"), "{text}");
+    }
+
+    #[test]
+    fn label_writer_skip_pair_style_omits_pair_style_and_special_bonds() {
+        let ff = split_pair_ff();
+        let labels = labels_of(&[("atoms", &["c3", "hc"])]);
+        let opts = LammpsWriteOptions {
+            skip_pair_style: true,
+            ..Default::default()
+        };
+        let text = LammpsFfWriter::with_options(&labels, opts)
+            .write_str(&ff)
+            .unwrap();
+        assert!(!text.contains("pair_style"), "{text}");
+        assert!(!text.contains("special_bonds"), "{text}");
+        assert!(
+            text.contains("pair_coeff c3 c3 0.107800 3.397710"),
+            "{text}"
+        );
+    }
+
+    /// Harmonic `c3-hc` plus an unsupported `morse` style holding `morse_type`.
+    fn ff_with_morse(morse_type: &str) -> ForceField {
+        let mut ff = ForceField::new("hand");
+        ff.def_style("bond", "harmonic", Params::new())
+            .unwrap()
+            .def_type("c3-hc", bond(340.0, 1.09))
+            .unwrap();
+        ff.def_style("bond", "morse", Params::new())
+            .unwrap()
+            .def_type(
+                morse_type,
+                Params::from_pairs(&[("d0", 90.0), ("alpha", 2.0), ("r0", 1.4)]),
+            )
+            .unwrap();
+        ff
+    }
+
+    #[test]
+    fn label_writer_tolerates_unsupported_style_holding_only_unused_types() {
+        let ff = ff_with_morse("c3-oh");
+        let labels = labels_of(&[("bonds", &["c3-hc"])]);
+        let writer = LammpsFfWriter::new(&labels);
+        let text = writer.write_str(&ff).unwrap();
+        assert!(!text.contains("morse"), "{text}");
+        assert!(text.contains("bond_coeff c3-hc"), "{text}");
+        let data = writer.write_data_coeffs_str(&ff).unwrap();
+        assert_eq!(
+            data_section_rows(&data, "Bond Coeffs"),
+            vec!["1 340.000000 1.090000"],
+            "{data}"
+        );
+    }
+
+    #[test]
+    fn label_writer_rejects_unsupported_style_holding_a_used_type() {
+        let ff = ff_with_morse("c3-oh");
+        let labels = labels_of(&[("bonds", &["c3-hc", "c3-oh"])]);
+        let writer = LammpsFfWriter::new(&labels);
+        let err = writer.write_str(&ff).unwrap_err();
+        assert!(err.contains("morse"), "names the style: {err}");
+        let err = writer.write_data_coeffs_str(&ff).unwrap_err();
+        assert!(err.contains("morse"), "names the style: {err}");
+    }
+
+    /// UFF-style qualified labels (system-forcefield-07's grammar on 05's `@`
+    /// qualifier) resolve through the reversed orientation: the frame labels
+    /// the bond `O_R-C_3@1.5` and the angle `O_2-C_R-C_3@1.5_1_2` (the angle's
+    /// two bond-order fields swapped, as `TypeName::reversed` does), the force
+    /// field defines `C_3-O_R@1.5` and `C_3-C_R-O_2@1_1.5_2`. Hand-written
+    /// numbers: bond K = 350 (stored `k` = 700, molrs ½k form), r0 = 1.40;
+    /// angle K = 60 (stored `k` = 120), theta0 = 120 degrees.
+    #[test]
+    fn label_writer_writes_reversed_uff_qualified_labels_once_each() {
+        let mut ff = ForceField::new("hand");
+        ff.def_style("bond", "harmonic", Params::new())
+            .unwrap()
+            .def_type("C_3-O_R@1.5", bond(350.0, 1.40))
+            .unwrap();
+        ff.def_style("angle", "harmonic", Params::new())
+            .unwrap()
+            .def_type(
+                "C_3-C_R-O_2@1_1.5_2",
+                Params::from_pairs(&[("k", 120.0), ("theta0", 120.0_f64.to_radians())]),
+            )
+            .unwrap();
+        let labels = labels_of(&[
+            ("bonds", &["O_R-C_3@1.5"]),
+            ("angles", &["O_2-C_R-C_3@1.5_1_2"]),
+        ]);
+
+        let text = LammpsFfWriter::new(&labels)
+            .write_str(&ff)
+            .expect("both reversed labels resolve");
+
+        assert_eq!(
+            lines_starting_with(&text, "bond_coeff"),
+            vec!["bond_coeff C_3-O_R@1.5 350.000000 1.400000"],
+            "{text}"
+        );
+        assert_eq!(
+            lines_starting_with(&text, "angle_coeff"),
+            vec!["angle_coeff C_3-C_R-O_2@1_1.5_2 60.000000 120.000000"],
+            "{text}"
         );
     }
 }

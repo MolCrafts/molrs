@@ -8,7 +8,6 @@
 use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
-use crate::ff::forcefield::pair_type_name;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::atom_type_index;
@@ -19,6 +18,7 @@ use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
+use molrs::store::type_labels::TypeName;
 use molrs::types::F;
 
 /// Where a pair's Buckingham `(A, ρ, C)` comes from.
@@ -311,7 +311,7 @@ pub fn pair_buck_ctor(
     frame: &Frame,
 ) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
-    // `Style::to_potential` projects the force field's `special_bonds` 1-4
+    // `PotentialCompiler::compile` projects the force field's `special_bonds` 1-4
     // weight here. `E = A·exp(-r/rho) - C/r⁶` is linear in **both** `A` and
     // `C`, so scaling the two is exactly scaling the pair; scaling only `A`
     // would leave the dispersion term at full strength.
@@ -391,8 +391,8 @@ pub fn pair_buck_typed_ctor(
         for tj in 0..ntypes {
             // A cross-pair may be declared either way round; a self-pair is
             // named by the atom type alone.
-            let forward = pair_type_name(&labels[ti], &labels[tj]);
-            let reverse = pair_type_name(&labels[tj], &labels[ti]);
+            let forward = TypeName::pair(&labels[ti], &labels[tj])?;
+            let reverse = TypeName::pair(&labels[tj], &labels[ti])?;
             let p = type_map
                 .get(forward.as_str())
                 .or_else(|| type_map.get(reverse.as_str()))

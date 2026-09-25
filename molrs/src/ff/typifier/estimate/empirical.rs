@@ -14,7 +14,7 @@
 //! to reproduce `gaff.dat`'s own numbers and AMBER writes a harmonic term as
 //! `E = K·(x − x₀)²` where molrs's kernels write `E = ½k·(x − x₀)²`. The caller
 //! doubles: the private `cascade` module's `empirical_bond` / `empirical_angle`
-//! apply the ×2 exactly as [`forcefield::gaff`](crate::ff::forcefield::gaff)'s
+//! apply the ×2 exactly as [`typifier::gaff`](crate::ff::typifier::gaff)'s
 //! `bond_params` / `angle_params` apply it to a row it looked up, so a formula
 //! and a table hit reach a consumer in the same convention.
 //!

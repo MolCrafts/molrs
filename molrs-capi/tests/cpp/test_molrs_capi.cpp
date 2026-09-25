@@ -461,18 +461,13 @@ TEST_F(MolrsTest, ForceFieldLifecycle) {
     MolrsForceFieldHandle ff{};
     ASSERT_MOLRS_OK(molrs_ff_new("gtest_ff", &ff));
 
-    ASSERT_MOLRS_OK(molrs_ff_def_bondstyle(ff, "harmonic"));
-    ASSERT_MOLRS_OK(molrs_ff_def_anglestyle(ff, "harmonic"));
-    ASSERT_MOLRS_OK(molrs_ff_def_atomstyle(ff, "full"));
+    ASSERT_MOLRS_OK(molrs_ff_def_style(ff, "bond", "harmonic", nullptr, nullptr, 0));
+    ASSERT_MOLRS_OK(molrs_ff_def_style(ff, "angle", "harmonic", nullptr, nullptr, 0));
+    ASSERT_MOLRS_OK(molrs_ff_def_style(ff, "atom", "full", nullptr, nullptr, 0));
 
     size_t count = 0;
     ASSERT_MOLRS_OK(molrs_ff_style_count(ff, &count));
     EXPECT_EQ(count, 3u);
-
-    // define a bond type via unified API
-    const char* pk[] = {"k0", "r0"};
-    double pv[] = {300.0, 1.4};
-    ASSERT_MOLRS_OK(molrs_ff_def_type(ff, "bond", "harmonic", "CT-OH", pk, pv, 2));
 
     // query style name
     char* cat = nullptr;
@@ -493,7 +488,7 @@ TEST_F(MolrsTest, ForceFieldPairStyle) {
 
     const char* style_pk[] = {"cutoff"};
     double style_pv[] = {10.0};
-    ASSERT_MOLRS_OK(molrs_ff_def_pairstyle(ff, "lj/cut", style_pk, style_pv, 1));
+    ASSERT_MOLRS_OK(molrs_ff_def_style(ff, "pair", "lj/cut", style_pk, style_pv, 1));
 
     const char* type_pk[] = {"epsilon", "sigma"};
     double type_pv[] = {0.5, 3.4};
@@ -507,13 +502,68 @@ TEST_F(MolrsTest, ForceFieldPairStyle) {
     ASSERT_MOLRS_OK(molrs_ff_drop(ff));
 }
 
+TEST_F(MolrsTest, ForceFieldDefStyleDefTypeDefTypeAtAreOk) {
+    MolrsForceFieldHandle ff{};
+    ASSERT_MOLRS_OK(molrs_ff_new("gtest_primitives", &ff));
+
+    ASSERT_MOLRS_OK(molrs_ff_def_style(ff, "bond", "harmonic", nullptr, nullptr, 0));
+
+    const char* pk[] = {"k0", "r0"};
+    double pv[] = {300.0, 1.4};
+    ASSERT_MOLRS_OK(molrs_ff_def_type(ff, "bond", "harmonic", "CT-OH", pk, pv, 2));
+
+    // MMFF-style name outside the endpoint grammar: endpoints are given.
+    const char* endpoints[] = {"1", "5"};
+    ASSERT_MOLRS_OK(
+        molrs_ff_def_type_at(ff, "bond", "harmonic", "0_1_5", endpoints, 2, pk, pv, 2));
+
+    ASSERT_MOLRS_OK(molrs_ff_drop(ff));
+}
+
+TEST_F(MolrsTest, ForceFieldDefStyleUnknownCategoryIsInvalidArgument) {
+    MolrsForceFieldHandle ff{};
+    ASSERT_MOLRS_OK(molrs_ff_new("gtest_bad_category", &ff));
+
+    EXPECT_EQ(molrs_ff_def_style(ff, "kspace", "pme", nullptr, nullptr, 0),
+              MOLRS_STATUS_INVALID_ARGUMENT);
+
+    ASSERT_MOLRS_OK(molrs_ff_drop(ff));
+}
+
+TEST_F(MolrsTest, ForceFieldDefTypeOnMissingStyleIsInvalidArgument) {
+    MolrsForceFieldHandle ff{};
+    ASSERT_MOLRS_OK(molrs_ff_new("gtest_missing_style", &ff));
+
+    const char* pk[] = {"k0", "r0"};
+    double pv[] = {300.0, 1.4};
+    // No style is created implicitly.
+    EXPECT_EQ(molrs_ff_def_type(ff, "bond", "harmonic", "CT-OH", pk, pv, 2),
+              MOLRS_STATUS_INVALID_ARGUMENT);
+
+    ASSERT_MOLRS_OK(molrs_ff_drop(ff));
+}
+
+TEST_F(MolrsTest, ForceFieldDefTypeMalformedNameIsInvalidArgument) {
+    MolrsForceFieldHandle ff{};
+    ASSERT_MOLRS_OK(molrs_ff_new("gtest_malformed", &ff));
+    ASSERT_MOLRS_OK(molrs_ff_def_style(ff, "bond", "harmonic", nullptr, nullptr, 0));
+
+    const char* pk[] = {"k0", "r0"};
+    double pv[] = {300.0, 1.4};
+    // A one-part name on a bond style: an error status, never a panic.
+    EXPECT_EQ(molrs_ff_def_type(ff, "bond", "harmonic", "CT", pk, pv, 2),
+              MOLRS_STATUS_INVALID_ARGUMENT);
+
+    ASSERT_MOLRS_OK(molrs_ff_drop(ff));
+}
+
 TEST_F(MolrsTest, ForceFieldJsonRoundtrip) {
     MolrsForceFieldHandle ff{};
     ASSERT_MOLRS_OK(molrs_ff_new("gtest_json", &ff));
 
     const char* spk[] = {"cutoff"};
     double spv[] = {12.0};
-    ASSERT_MOLRS_OK(molrs_ff_def_pairstyle(ff, "lj/cut", spk, spv, 1));
+    ASSERT_MOLRS_OK(molrs_ff_def_style(ff, "pair", "lj/cut", spk, spv, 1));
 
     const char* tpk[] = {"epsilon", "sigma"};
     double tpv[] = {1.0, 3.4};

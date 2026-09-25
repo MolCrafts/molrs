@@ -753,7 +753,8 @@ mod remap_tests {
 #[cfg(test)]
 mod owned_potential_tests {
     use super::*;
-    use molrs::ff::forcefield::ForceField;
+    use molrs::ff::forcefield::{ForceField, Params};
+    use molrs::ff::potential::PotentialCompiler;
     use molrs::spatial::simbox::SimBox;
     use molrs::store::block::Block;
     use molrs::store::frame::Frame;
@@ -808,14 +809,20 @@ mod owned_potential_tests {
         // length, so a correctly-resolved bond has zero energy and a
         // mis-resolved one does not.
         let mut field = ForceField::new("probe");
-        let bs = field.def_bondstyle("harmonic");
-        bs.def_bondtype("a", "a", &[("k", 100.0), ("r0", 1.0)]);
+        field
+            .def_style("bond", "harmonic", Params::new())
+            .unwrap()
+            .def_type("a-a", Params::from_pairs(&[("k", 100.0), ("r0", 1.0)]))
+            .unwrap();
 
         // A small skin, so drifting forces several rebuilds over the run.
         let mut comm = Comm::new(bx.clone(), owned.view(), 3.0, 0.2).unwrap();
         // The force field compiles once, here. Nothing below names it again:
         // what MD carries forward is the kernels and their index lists.
-        let members = field.to_potentials(&frame).unwrap().into_members();
+        let members = PotentialCompiler::new(&field)
+            .compile(&frame)
+            .unwrap()
+            .into_members();
         let mut lists = BondedLists::new(&members);
 
         let mut seen_rebuild = false;
@@ -907,11 +914,17 @@ mod owned_potential_tests {
         frame.insert("atoms", atoms);
 
         let mut field = ForceField::new("probe");
-        let bs = field.def_bondstyle("harmonic");
-        bs.def_bondtype("a", "a", &[("k", 100.0), ("r0", 1.0)]);
+        field
+            .def_style("bond", "harmonic", Params::new())
+            .unwrap()
+            .def_type("a-a", Params::from_pairs(&[("k", 100.0), ("r0", 1.0)]))
+            .unwrap();
 
         let mut comm = Comm::new(bx.clone(), owned.view(), 3.0, 0.2).unwrap();
-        let members = field.to_potentials(&frame).unwrap().into_members();
+        let members = PotentialCompiler::new(&field)
+            .compile(&frame)
+            .unwrap()
+            .into_members();
         let mut lists = BondedLists::new(&members);
 
         let mut generations: Vec<u64> = vec![comm.ghosts().generation()];

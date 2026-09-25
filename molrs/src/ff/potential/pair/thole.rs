@@ -307,7 +307,7 @@ pub fn pair_thole_ctor(
     frame: &Frame,
 ) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
-    // `Style::to_potential` projects the force field's `special_bonds` 1-4
+    // `PotentialCompiler::compile` projects the force field's `special_bonds` 1-4
     // weight here. The energy is linear in the charge product, so scaling it
     // is exactly scaling the pair.
     let scale_14 = style_params.get("coulomb14scale").unwrap_or(1.0) as F;

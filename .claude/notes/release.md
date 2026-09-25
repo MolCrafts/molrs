@@ -172,6 +172,158 @@ items live under the `cgsmiles-*` topics in `notes.md`).
   `_lib` class (`Parameters`, `Type`, the `*Type` / `*Style` view classes,
   `ChargeModel`, `Compute`) are removed from `_lib.pyi`;
   `tests/test_stub_parity.py` now guards class-name parity.
+- **Breaking (Rust / Python / C) — force-field construction (system-forcefield-01):**
+  a force field is built only through `ForceField::def_style(category, name, Params)
+  -> Result<&mut Style, DefError>`, `Style::def_type(name, Params)` and
+  `Style::def_type_at(name, endpoints, Params)` (endpoints given explicitly, for names
+  outside the `-` grammar such as MMFF's `0_1_5`). Removed: `def_atomstyle` …
+  `def_pairstyle`, `with_*style`, `def_atomtype` … `def_pairtype`, the old
+  `ForceField::def_type(category, style, …)`, the panicking `Style::def_type`,
+  `try_def_type`, `styles_mut`. `DefTypeError` is renamed `DefError` (new variant
+  `UnknownStyle`). `Style.name` / `.params` / `.defs` are private — read them through
+  `name()` / `params()` / `defs()`. Python mirrors the three primitives:
+  `ForceField.def_style(category, name, params=None) -> Style`,
+  `Style.def_type(name, params=None)`, `Style.def_type_at(name, endpoints,
+  params=None)`; removed `def_*style`, the `def_style(Style)` overload, the unbound
+  `Style()` form and `BondHarmonicStyle` / `AngleHarmonicStyle` / `DihedralOPLSStyle` /
+  `PairCoulLongStyle`, and the per-category `def_type(itom, jtom, …)`. C:
+  `molrs_ff_def_style(ff, category, …)` replaces `molrs_ff_def_{atom,bond,angle,pair}style`;
+  `molrs_ff_def_type` no longer creates a missing style (InvalidArgument) and never
+  panics on a malformed name; new `molrs_ff_def_type_at`. The C JSON round trip now
+  carries string params, endpoints, every style's params and `special_bonds`, and
+  refuses anything it cannot carry.
+- **Fixed (Python):** force fields read in Python (`read_opls_xml`,
+  `read_lammps_forcefield`) kept only numeric style params, so a declared
+  `mixing` (combining rule) was dropped and σ combined with the kernel default.
+  Energies from those readers change to the declared rule.
+- **Breaking (Rust / Python / C) — one conflict rule (system-forcefield-02):** a
+  type is identified by (category, style, name); re-defining it with the same
+  endpoints and exactly equal params is a no-op, anything else is the new
+  `DefError::TypeConflict`; re-defining a style with different style params is
+  `DefError::StyleConflict` (previously ignored). Definitions no longer append
+  duplicates. `Params` and the `*Type` structs derive `PartialEq`.
+  `Style::rename_type` returns `Result<bool, DefError>` (renaming onto an existing
+  name with different params is a conflict). `OPLSAATypifier::oplsaa()` returns
+  `Self`. Python and C map conflicts to `ValueError` / `InvalidArgument`.
+- **Breaking (readers) — system-forcefield-02:** prmtop bond / angle types no longer
+  carry the table-row `id` param, a second parameter set under one name is an error
+  instead of being silently dropped, and a missing `ATOM_TYPE_INDEX` entry is an
+  error. GROMACS atom types carry only `[ atomtypes ]` parameters (molrs units:
+  σ Å, ε kcal/mol, mass, charge, `ptype`, optional `bond_type` / `atomic_number`);
+  the per-atom `[ atoms ]` strings (`nr`, `resnr`, `residu`, `atom`, `cgnr`,
+  `charge`, `mass`, `typeB`, …) are no longer written onto atom types — read them
+  with `io::data::top::read_top`. `[ atomtypes ]` without `[ defaults ]` is an
+  error. The GROMACS writer now writes `[ atomtypes ]` and refuses a partially
+  parameterised atom type. The OPLS XML reader refuses differing
+  `<NonbondedForce>` charges for one type. Files these rules now refuse: a `.top`
+  whose bonded rows give different per-instance parameters under one type tuple,
+  and a prmtop with hydrogen mass repartitioning (one type, several masses).
+- **Breaking (Rust / Python / C) — merge and declared state (system-forcefield-03):**
+  new `ForceField::merge(&mut self, &ForceField) -> Result<(), DefError>`, the union
+  replayed through the def primitives, all-or-nothing, carrying style params,
+  `special_bonds` and `units` (new `DefError::UnitsConflict` /
+  `SpecialBondsConflict`; `DefError` is `PartialEq` but no longer `Eq`). `units` moves
+  into Rust (`set_units`, `units()` defaulting to `"real"`); `declared_units()` /
+  `declared_special_bonds()` return `None` until declared. Removed:
+  `ForceField::subset(&Frame)` (Rust and Python) — no replacement, `ff::forcefield`
+  no longer depends on `Frame`; Python `ForceField.map_type` — the LAMMPS data writer
+  assigns type ids; the Python-only `units` attribute — now the Rust property, and
+  `ForceField(name, units=None)` declares units only when given (was `"real"`). The
+  Python `merge` no longer drops `special_bonds` and style params, and a conflicting
+  merge raises `ValueError` instead of silently keeping the first definition. The
+  LAMMPS force-field reader declares `"lj"` for a `units lj` include (was read as
+  `"real"`) and `"real"` otherwise; prmtop declares `"real"`. C JSON: `units` is
+  carried, `special_bonds` is written only when declared, a non-string `units` is
+  InvalidArgument.
+- **Breaking (Rust / Python / wasm) — PotentialCompiler (system-forcefield-04):**
+  compiling moves off the force field. Removed: `ForceField::to_potentials` /
+  `to_typed_potentials` and `Style::to_potential` / `to_typed_potential` (Rust), and
+  `ForceField.to_potentials` / `to_typed_potentials` (Python). Replacement:
+  `ff::potential::PotentialCompiler::new(&ff).compile(&frame)` /
+  `.compile_typed(&frame)`; Python `molrs.ff.PotentialCompiler(ff)` with
+  `compile(frame)` (`None` is now a `TypeError`), `defer()` (the former
+  `to_potentials(None)`, binding topology at evaluation) and `compile_typed(frame)`;
+  the compiler holds a copy of the force field taken at construction.
+  `molrs.md.MD.set_forcefield` now requires a `ForceField`. wasm keeps
+  `typifier.toPotentials(frame)`; its error prefix changes to `toPotentials:`.
+  Energies, forces and ETKDG coordinates are bitwise unchanged.
+- **Fixed (Rust / Python) — OPLS strict typing:** strict mode (the default) returned
+  `Ok` with atoms no def matched left untyped and their bonded terms skipped, so
+  compiling failed later. It now returns an error naming every untyped atom. Known
+  gap: the shipped OPLS defs assume bond-order-agnostic matching, so molecules with a
+  C=C or C=O bond are currently refused in strict mode (use `strict=False` until the
+  defs are fixed).
+- **Breaking (Rust) / Fixed — one type-label grammar (system-forcefield-05):** new
+  `core::store::type_labels::{TypeName, TypeLabels, BlockTypes}`. `TypeName` owns the
+  endpoint grammar (`-`, or `::` when a part contains `-`; empty wildcard positions are
+  kept) and an optional `@` qualifier (`with_qualifier` / `qualifier`), reordered with
+  the endpoints by `reversed` / `canonical`. `TypeLabels::from_frame` is the Frame's
+  type-id contract, used by the LAMMPS data writer; new `keys::*_TYPE_LABELS` meta
+  keys. New `DefError::Name` for a malformed type name; `def_type` keeps an `@`
+  qualifier in the name instead of folding it into the last endpoint. Stricter: a
+  malformed type-label inventory meta value (`"1C"`, `"x:C"`, `"1:"`, a repeated id,
+  a non-string value) is an error instead of being skipped. Fixed: an OPLS wildcard
+  dihedral such as `-CA-CA-` was aliased to the bond label `CA-CA`, so
+  `lammps_type_ids_from_frame` gave the bond the dihedral's id and
+  `write_data_coeffs` wrote that bond's coefficients under the wrong type (seen for
+  benzene with an inventory); `*.ff` includes now spell wildcard dihedrals with their
+  empty position (`CA-CA-N-` → `-N-CA-CA`). Pure-label frames write byte-identical
+  data files.
+- **Breaking (Rust / Python) — label-driven LAMMPS coefficients (system-forcefield-06):**
+  `LammpsFfWriter::new(&TypeLabels)` / `with_options(&TypeLabels, LammpsWriteOptions)`
+  write the coefficients the system's labels need, looked up by name (bond / angle /
+  dihedral labels in either orientation, impropers exactly). `LammpsWriteOptions`
+  loses `atom_types` … `improper_types` and `type_ids`; `lammps_type_ids_from_frame`
+  is deleted (Rust, Python). Python: `write_lammps_forcefield(path, forcefield, frame,
+  *, precision, skip_pair_style, skip_units, units)`,
+  `write_lammps_forcefield_str(forcefield, frame, …)`,
+  `write_lammps_data_coeffs(forcefield, frame, *, precision, units)`. Force-field types
+  no label uses are not written, and an unsupported style that holds only unused types
+  is no longer an error. Refused now instead of written incomplete: a label with no
+  type in the force field (including an atom label with no pair type, and an integer
+  type id the force field lacks), and, in the data-file Pair Coeffs, an explicit cross
+  pair between used types (use the `*.ff` include). Coefficients for OPLS and GAFF
+  systems are byte-identical (`*.ff` lines may be reordered within a section).
+- **Breaking (Rust) — typing is a template method (system-forcefield-07):** the
+  `Typifier` trait now requires exactly `r#match(&self, &mut Atomistic) ->
+  Result<Match, String>` and `library(&self) -> &ForceField` (no `type Mol`, no
+  `typify`). New `Match`, `Annotation`, `Match::write_onto` and `Typing<T>`
+  (`Typing::new(t).typify(&mol)` returns the typed copy; `forcefield()` is the output:
+  exactly the types assigned so far). New `ForceField::empty_like`. Removed: the
+  inherent `typify` / `ff` of `OPLSAATypifier`, `MMFF94Typifier`, `MMFF94STypifier` and
+  `UFFTypifier`, and `LayeredTypingEngine::typify` (now `assign`). Replacement:
+  `Typing::new(X::new()).typify(&mol)` and `.library()` / `.forcefield()`. `AtdTypifier`
+  and `BCCAtomChargeTypifier` implement the trait with empty libraries. MMFF
+  `stbn_type` is `{sbt}_{i}_{j}_{k}` in the angle's own node order; UFF bonded labels
+  follow `TypeName` with `@` bond orders; OPLS atom types now also stamp `mass`, and
+  estimator-filled terms get a `type`. UFF bond/angle parameters are computed on the
+  canonical orientation (≤1 ulp change for reversed terms).
+- **Fixed — MMFF / OPLS naming (system-forcefield-07):** an MMFF torsion found on the
+  secondary-type restart or by the empirical rules is named `{tt}@{sec}_…` /
+  `{tt}@{b}_…` (bond class `-` `=` `:` `~`), so ring torsions sharing `{tt}_{types}`
+  with different parameters no longer collide. The OPLS/parmchk2 dihedral estimate is
+  now the same whichever end it is read from (the penalty used to depend on atom order).
+- **Fixed — OPLS estimator element classes:** all-caps OPLS classes (`CA CM CN CO CR CS
+  CU NA NB NO OS HO HS`) were read as the elements Ca, Cm, …, Hs, so the estimator
+  refused every element-compatible substitution at those slots (worse analogs, empirical
+  fallbacks, dihedrals dropping to the `no_torsion` placeholder). A class now takes the
+  element of its member types, and the token fallback only accepts true title case.
+- **Breaking (Rust) — GAFF is a typifier (system-forcefield-08):** `gaff_forcefield(set,
+  &Atomistic)`, `GaffError`, `MissingTerm` and `ff::forcefield::gaff` are removed.
+  Replacement: `Typing::new(ff::typifier::GaffTypifier::new(set)).typify(&typed)` after
+  ATD (`Typing::new(AtdTypifier::new(AtdParameterSet::Gff))`); `GaffParameterSet` stays
+  at `ff::`. The library declares the AMBER 1-4 weights (lj 1/2, coul 1/1.2), so they
+  reach the output like every other typifier's; typed atoms also get `mass`.
+- **Breaking (Python / wasm) — typifier bindings (system-forcefield-09):** Python
+  `molrs.ff.typifier.Typifier` is the one base: subclasses implement `match(graph) ->
+  Match` (new `molrs.ff.typifier.Match(nodes, links=None, *, styles=(), pairs=())`) and
+  may override `library()`; `typify` is final (defining it in a subclass is a
+  `TypeError`) and returns a typed copy; `forcefield()` is now the output (the types
+  assigned so far), returned as a copy — it used to return the library. Native
+  `MMFF94Typifier`, `MMFF94STypifier`, `OPLSAATypifier`, `AtdTypifier` can no longer be
+  subclassed. wasm typifiers wrap `Typing`; `toPotentials` compiles what `typify` wrote.
+  Fixed: Python integer props outside the 32-bit range were silently wrapped, and past 64
+  bits turned into floats; both now raise `OverflowError`.
 - Re-deferred: the wasm `NeighborQuery` symmetry gate (`notes.md` § Known
   asymmetries, promised "to 0.15" on 2026-08-25) does not ship in 0.15.0 —
   wasm still has no consumer (facade-first), and deletion stays ruled out

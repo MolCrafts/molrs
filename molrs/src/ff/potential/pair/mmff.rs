@@ -18,11 +18,11 @@
 //! MMFF scales the 1-4 **electrostatic** interaction by 0.75 and does **not**
 //! scale the 1-4 **van der Waals** interaction at all (Halgren 1996; RDKit
 //! `Nonbonded.cpp`). Both weights arrive through [`SpecialBonds`], which
-//! [`Style::to_potential`] projects into the pair params as `coulomb14scale` /
+//! [`PotentialCompiler::compile`] projects into the pair params as `coulomb14scale` /
 //! `lj14scale` — so neither kernel hardcodes a scale factor.
 //!
 //! [`SpecialBonds`]: crate::ff::forcefield::SpecialBonds
-//! [`Style::to_potential`]: crate::ff::forcefield::Style::to_potential
+//! [`PotentialCompiler::compile`]: crate::ff::potential::PotentialCompiler::compile
 
 use std::collections::HashMap;
 
@@ -394,7 +394,7 @@ fn vdw_combining(pi: &VdwAtomParams, pj: &VdwAtomParams, sp: &VdwStyleParams) ->
 /// Build the buffered-14-7 van der Waals potential.
 ///
 /// Style params (`sp`, from `<VdWParams>`): `B`, `Beta`, `DARAD`, `DAEPS`, plus
-/// the `lj14scale` weight [`Style::to_potential`] projects out of the force
+/// the `lj14scale` weight [`PotentialCompiler::compile`] projects out of the force
 /// field's [`SpecialBonds`]. Type params (`tp`, from `<VdW>`): `alpha`, `n_eff`,
 /// `a_i`, `g_i`, `da`.
 ///
@@ -408,7 +408,7 @@ fn vdw_combining(pi: &VdwAtomParams, pj: &VdwAtomParams, sp: &VdwStyleParams) ->
 /// *does* scale can reuse this kernel, and so the 1.0 is visible as a choice.
 ///
 /// [`SpecialBonds`]: crate::ff::forcefield::SpecialBonds
-/// [`Style::to_potential`]: crate::ff::forcefield::Style::to_potential
+/// [`PotentialCompiler::compile`]: crate::ff::potential::PotentialCompiler::compile
 pub fn mmff_vdw_ctor(sp: &Params, tp: &[(&str, &Params)], frame: &Frame) -> Result<Member, String> {
     let style = VdwStyleParams::from_style(sp);
     let lj_14 = sp.get("lj14scale").unwrap_or(1.0) as F;

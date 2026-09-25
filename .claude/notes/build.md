@@ -36,7 +36,9 @@ call the aliases, so the feature string exists in exactly one place.
 The rule has teeth: `test_single` used to be `cargo test {path}`, which drops
 `stream`/`serde` and adds the doctest and bin targets. "Run one test" therefore
 cost a full rebuild of the crate every time and doubled the cache. It is now
-`scripts/test-scope.sh`, which filters the already-built binary.
+`cargo mrs-test -- {module}`: the same binary, filtered. (`scripts/test-scope.sh`,
+a wrapper that mapped changed files to filters, was deleted 2026-09-25: filtering
+saves at most the 5 s suite run, never compile time.)
 
 ### Four legitimate builds of `molcrafts-molrs`
 
@@ -84,22 +86,17 @@ immune to the page-cache effect — measured 5.7-11 s for the same edits, never
 the cache does not follow you to another node, and `.cargo/config.toml` is
 shared with the molpack repo.
 
-### Scoped test runs
+### One build configuration per phase (2026-09-25)
 
-```bash
-scripts/test-scope.sh                            # modules changed vs HEAD
-scripts/test-scope.sh origin/dev                 # vs a revision
-scripts/test-scope.sh ff::potential              # explicit module
-scripts/test-scope.sh molrs/src/io/data/xyz.rs   # explicit file
-```
-
-It maps `molrs/src/<path>.rs` to the module path that unit tests are named
-after (tests live in `#[cfg(test)]` modules next to the code, so the test name
-*is* the module path) and hands the result to `cargo mrs-test` as a filter.
-Filters are libtest substrings, not anchored patterns, so a scope may pull in a
-few unrelated tests; it can never drop one in a module you changed. `lib.rs`
-falls back to the full suite. The full gate before a commit is still
-`cargo mrs-test && cargo mrs-doctest`.
+Inner loop: `cargo mrs-test [-- <module>]` only. At commit: rustfmt + `cargo
+mrs-clippy` (molrs only). At push: rustdoc, binder and wasm clippy, doctests,
+binder tests, tox, wasm-pack, capi. Every binder links molrs under its own feature
+set, target or profile, i.e. one more full compile of molrs each; that is why
+they never run in the loop or at commit. Cargo keeps one artifact set per
+(features × profile × mode × target) and never deletes stale ones, which is how
+`target/` reached 26 GB; there is exactly one `target/` (on this machine a symlink
+to local disk, `/tmp/$USER/molrs-target`), never a second `CARGO_TARGET_DIR`,
+worktree or copied crate.
 
 ### Hook scoping
 

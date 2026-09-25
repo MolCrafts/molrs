@@ -209,7 +209,7 @@ fn reject_frozen_members(members: &[(Member, SpecialWeights)]) -> Result<(), MdE
                 "member {m} resolved its parameters against a fixed pair list, so it \
                  cannot be evaluated over a neighbour table — it would ignore the table \
                  and answer for the list it was built from. Build it from the atoms \
-                 instead (ForceField::to_typed_potentials)"
+                 instead (PotentialCompiler::compile_typed)"
             )));
         }
     }
@@ -599,8 +599,8 @@ fn owned_output(energy: F, forces: Vec<F>, n_atoms: usize) -> Result<ForceOutput
 mod tests {
     use ndarray::array;
 
-    use molrs::ff::potential::Potentials;
     use molrs::ff::potential::pair::LJCut;
+    use molrs::ff::potential::{PotentialCompiler, Potentials};
     use molrs::spatial::neighbors::{NeighborList, NeighborPolicy};
     use molrs::spatial::simbox::SimBox;
 
@@ -695,7 +695,7 @@ mod tests {
     /// ghost régime exists to remove.
     #[test]
     fn a_molecule_across_a_face_scores_as_one_that_is_not() {
-        use molrs::ff::forcefield::ForceField;
+        use molrs::ff::forcefield::{ForceField, Params};
         use molrs::store::block::Block;
         use molrs::store::frame::Frame;
         use molrs::types::Idx;
@@ -748,14 +748,15 @@ mod tests {
         // this test by contributing nothing.
         let mut field = ForceField::new("probe");
         field
-            .def_bondstyle("harmonic")
-            .def_bondtype("a", "a", &[("k", 100.0), ("r0", 1.2)]);
-        field.def_anglestyle("harmonic").def_angletype(
-            "a",
-            "a",
-            "a",
-            &[("k", 40.0), ("theta0", 2.0)],
-        );
+            .def_style("bond", "harmonic", Params::new())
+            .unwrap()
+            .def_type("a-a", Params::from_pairs(&[("k", 100.0), ("r0", 1.2)]))
+            .unwrap();
+        field
+            .def_style("angle", "harmonic", Params::new())
+            .unwrap()
+            .def_type("a-a-a", Params::from_pairs(&[("k", 40.0), ("theta0", 2.0)]))
+            .unwrap();
 
         let run = |origin: [F; 3]| {
             let mut pts = shape.clone();
@@ -766,7 +767,10 @@ mod tests {
             }
             let (wrapped, _) = bx.wrap_shifts(pts.view());
             let comm = Comm::new(bx.clone(), wrapped.view(), 4.0, 0.0).unwrap();
-            let members = field.to_potentials(&frame(())).unwrap().into_members();
+            let members = PotentialCompiler::new(&field)
+                .compile(&frame(()))
+                .unwrap()
+                .into_members();
             let members = members
                 .into_iter()
                 .map(|p| (p, SpecialWeights::default()))
@@ -1121,7 +1125,7 @@ mod tests {
     #[test]
     fn both_doors_keep_the_1_3_pairs_a_fene_field_asks_for() {
         use molrs::Topology;
-        use molrs::ff::forcefield::{ForceField, SpecialBonds};
+        use molrs::ff::forcefield::{ForceField, Params, SpecialBonds};
         use molrs::ff::potential::intramolecular_pairs;
         use molrs::store::block::Block;
         use molrs::store::frame::Frame;
@@ -1167,8 +1171,10 @@ mod tests {
 
         let mut field = ForceField::new("fene-probe");
         field
-            .def_pairstyle("lj/cut", &[("cutoff", 6.0_f64)])
-            .def_type("a", &[("epsilon", 0.3), ("sigma", 3.4)]);
+            .def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 6.0_f64)]))
+            .unwrap()
+            .def_type("a", Params::from_pairs(&[("epsilon", 0.3), ("sigma", 3.4)]))
+            .unwrap();
         field.set_special_bonds(SpecialBonds {
             lj: [0.0, 1.0, 1.0],
             coul: [0.0, 1.0, 1.0],
@@ -1184,15 +1190,17 @@ mod tests {
         );
         let mut compiled_frame = frame.clone();
         compiled_frame.insert("pairs", pairs);
-        let pots = field.to_potentials(&compiled_frame).unwrap();
+        let pots = PotentialCompiler::new(&field)
+            .compile(&compiled_frame)
+            .unwrap();
         let mut compiled = Direct::new(pots);
         let no_fold = Array2::<i64>::zeros((n, 3));
         let a = compiled.compute(pts.view(), no_fold.view()).unwrap();
         assert!(a.energy.abs() > 1e-6, "the 1-3 pair must carry energy");
 
         // The neighbour-driven door, over a table holding *every* pair.
-        let members: Vec<(Member, SpecialWeights)> = field
-            .to_typed_potentials(&frame)
+        let members: Vec<(Member, SpecialWeights)> = PotentialCompiler::new(&field)
+            .compile_typed(&frame)
             .unwrap()
             .into_iter()
             .map(|(pot, weights)| {
@@ -1287,7 +1295,7 @@ mod tests {
 
     /// A kernel bound to a fixed pair list is refused, not quietly humoured.
     ///
-    /// `ForceField::to_potentials` builds exactly such kernels: their
+    /// `PotentialCompiler::compile` builds exactly such kernels: their
     /// parameters were resolved against the frame's `pairs` block, and they
     /// answer for that list whatever table they are handed. Given one, a
     /// provider would maintain a neighbour list, rebuild it, and report its
@@ -1312,7 +1320,7 @@ mod tests {
         };
         let msg = format!("{err}");
         assert!(msg.contains("fixed pair list"), "{msg}");
-        assert!(msg.contains("to_typed_potentials"), "{msg}");
+        assert!(msg.contains("PotentialCompiler::compile_typed"), "{msg}");
 
         let comm = Comm::new(cell(), pos.view(), 5.0, 0.0).unwrap();
         let compiled = LJCut::compiled(vec![0], vec![1], vec![0.3], vec![3.4]);

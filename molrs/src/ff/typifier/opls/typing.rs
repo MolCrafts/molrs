@@ -5,8 +5,9 @@
 //! previously-assigned type via `%opls_NNN` (e.g. benzene's aromatic-H type
 //! `opls_146` = `[H][C;%opls_145]`) is matched only after its dependency is
 //! resolved. The engine returns the per-atom `opls_NNN` assignment, which this
-//! function writes — together with each type's `class` and `charge` — onto a
-//! labeled copy of the input [`Atomistic`].
+//! function turns into the node [`Annotation`]s of a [`Match`](crate::ff::typifier::Match):
+//! each type's `type` (with its `atom/full` row's `mass` and `charge`) and
+//! `class`. It writes nothing; the typing base stamps the match.
 //!
 //! # SMARTS reuse
 //!
@@ -42,66 +43,105 @@
 //! - Legacy rows with no `def` are skipped (cannot be SMARTS-matched).
 //! - Bonded-term (bond / angle / dihedral) labeling is chain 2.
 
-use molrs::Atomistic;
+use std::collections::HashMap;
 
-use crate::ff::forcefield::ForceField;
+use molrs::system::molgraph::PropValue;
+use molrs::{AtomId, Atomistic};
+
+use crate::ff::forcefield::{ForceField, Params};
+use crate::ff::typifier::Annotation;
 
 use super::layered::LayeredTypingEngine;
 use super::meta::OplsTypingMeta;
 
-/// Typify atoms with OPLS-AA atom types, returning a labeled copy.
+/// The OPLS-AA atom typing of one graph.
+pub(crate) struct AtomTyping {
+    /// The `opls_NNN` type of every atom a def typed; an atom no def typed is
+    /// absent.
+    pub(crate) types: HashMap<AtomId, String>,
+    /// The node annotations, positional against `graph.atoms()`.
+    pub(crate) nodes: Vec<Vec<(String, Annotation)>>,
+}
+
+/// Type the atoms of `mol` with OPLS-AA atom types.
 ///
-/// Drives the [`LayeredTypingEngine`] over `meta`: every atom assigned a type
-/// gets that type's `type` (`opls_NNN`), `class`, and `charge` (`e`, from the
-/// potential `ForceField`'s `("atom","full")` style) written onto the returned
-/// [`Atomistic`]. Atoms typed by no def are left untyped (no `type` prop) —
-/// strict-mode failure is the consumer's policy.
+/// Drives the [`LayeredTypingEngine`] over `meta`. Every atom assigned a type
+/// gets two annotations:
+/// - `type` → [`Annotation::Type`] under the `atom/full` style of `ff`, named
+///   by the `opls_NNN` type, with that row's numeric params (`mass`, `charge`)
+///   — or a plain [`Annotation::Value`] when `ff` has no such row. The row's
+///   string metadata (`type_`, `def_`, …, from the XML reader) is typing input
+///   and is neither stamped nor defined;
+/// - `class` → [`Annotation::Value`] of the type's class, when `meta` has one.
 ///
-/// `ff` supplies per-type charges; a type absent from the atom style simply
-/// yields no `charge` prop. Bonded-term labeling is out of scope (chain 2).
+/// Atoms typed by no def get no annotation (and stay untyped); the strict
+/// [`OPLSAATypifier`](super::OPLSAATypifier) refuses such a molecule.
 ///
 /// # Errors
 ///
-/// Returns `Err` if any SMARTS `def` is malformed (fail-fast), or if writing a
-/// label onto the graph fails.
-pub fn typify_atoms(
+/// Returns `Err` if any SMARTS `def` is malformed (fail-fast).
+pub(crate) fn typify_atoms(
     mol: &Atomistic,
     meta: &OplsTypingMeta,
     ff: &ForceField,
-) -> Result<Atomistic, String> {
+) -> Result<AtomTyping, String> {
     let engine = LayeredTypingEngine::build(meta)?;
-    let assignments = engine.typify(mol);
+    let types = engine.assign(mol);
+    let atom_full = ff.get_style("atom", "full");
 
-    // Per-type charge from the potential ForceField's atom style.
-    let charge_of = |type_name: &str| -> Option<f64> {
-        ff.get_style("atom", "full")?
-            .get_atomtype(type_name)?
-            .params
-            .get("charge")
-    };
+    let nodes = mol
+        .atoms()
+        .map(|(id, _)| {
+            let Some(type_name) = types.get(&id) else {
+                return Vec::new();
+            };
+            let typed = match atom_full.and_then(|s| s.get_atomtype(type_name)) {
+                Some(row) => Annotation::Type {
+                    style: "full".to_owned(),
+                    name: type_name.clone(),
+                    endpoints: Some(Vec::new()),
+                    params: Params::from_pairs(&row.params.iter().collect::<Vec<_>>()),
+                },
+                None => Annotation::Value(PropValue::Str(type_name.clone())),
+            };
+            let mut annotations = vec![("type".to_owned(), typed)];
+            if let Some(row) = meta.get(type_name) {
+                annotations.push((
+                    "class".to_owned(),
+                    Annotation::Value(PropValue::Str(row.class.clone())),
+                ));
+            }
+            annotations
+        })
+        .collect();
 
-    let mut out = mol.clone();
-    for (atom_id, type_name) in &assignments {
-        out.set_atom(*atom_id, "type", type_name.clone())
-            .map_err(|e| e.to_string())?;
-        if let Some(row) = meta.get(type_name) {
-            out.set_atom(*atom_id, "class", row.class.clone())
-                .map_err(|e| e.to_string())?;
-        }
-        if let Some(q) = charge_of(type_name) {
-            out.set_atom(*atom_id, "charge", q)
-                .map_err(|e| e.to_string())?;
-        }
-    }
-
-    Ok(out)
+    Ok(AtomTyping { types, nodes })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::typifier::Match;
     use crate::ff::typifier::opls::meta::OplsTypeRow;
     use molrs::Atom;
+
+    /// `mol` with the node annotations of [`typify_atoms`] written onto it
+    /// through the typing base's one execution path.
+    fn typed_graph(
+        mol: &Atomistic,
+        meta: &OplsTypingMeta,
+        ff: &ForceField,
+    ) -> Result<Atomistic, String> {
+        let typing = typify_atoms(mol, meta, ff)?;
+        let mut graph = mol.clone();
+        let mut m = Match {
+            nodes: typing.nodes,
+            ..Match::default()
+        };
+        m.declare_styles_of(ff);
+        m.write_onto(&mut graph, &mut ff.empty_like())?;
+        Ok(graph)
+    }
 
     /// Build a tiny ethane-like skeleton C-C with explicit H neighbours so the
     /// `[C;X4](C)(H)(H)H` style defs have something to match. (Pure-function
@@ -145,7 +185,7 @@ mod tests {
             ("opls_140", row("HC", Some("H[C;X4]"), &[])),
         ]);
         let ff = ForceField::new("OPLS-AA");
-        let typed = typify_atoms(&ethane(), &m, &ff).unwrap();
+        let typed = typed_graph(&ethane(), &m, &ff).unwrap();
 
         let mut n_ct = 0;
         let mut n_hc = 0;
@@ -172,7 +212,7 @@ mod tests {
             ("opls_special", row("CS", Some("[C;X4]"), &["opls_generic"])),
         ]);
         let ff = ForceField::new("OPLS-AA");
-        let typed = typify_atoms(&ethane(), &m, &ff).unwrap();
+        let typed = typed_graph(&ethane(), &m, &ff).unwrap();
         for (id, a) in typed.atoms() {
             if matches!(a.get_str("element"), Some("C")) {
                 assert_eq!(
@@ -188,9 +228,14 @@ mod tests {
     fn charge_written_from_forcefield() {
         let m = meta_with(&[("opls_140", row("HC", Some("H[C;X4]"), &[]))]);
         let mut ff = ForceField::new("OPLS-AA");
-        ff.def_atomstyle("full")
-            .def_atomtype("opls_140", &[("mass", 1.008), ("charge", 0.06)]);
-        let typed = typify_atoms(&ethane(), &m, &ff).unwrap();
+        ff.def_style("atom", "full", Params::new())
+            .unwrap()
+            .def_type(
+                "opls_140",
+                Params::from_pairs(&[("mass", 1.008), ("charge", 0.06)]),
+            )
+            .unwrap();
+        let typed = typed_graph(&ethane(), &m, &ff).unwrap();
         let h = typed
             .atoms()
             .find(|(_, a)| a.get_str("type") == Some("opls_140"))
@@ -203,7 +248,7 @@ mod tests {
         // Unbalanced bracket — a broken force-field def, must Err (never drop).
         let m = meta_with(&[("opls_bad", row("X", Some("[C"), &[]))]);
         let ff = ForceField::new("OPLS-AA");
-        let err = typify_atoms(&ethane(), &m, &ff).unwrap_err();
+        let err = typed_graph(&ethane(), &m, &ff).unwrap_err();
         assert!(err.contains("opls_bad"), "err names the type: {err}");
     }
 
@@ -214,7 +259,7 @@ mod tests {
         // candidate atom). Both ethane carbons match.
         let m = meta_with(&[("opls_rec", row("CT", Some("[$([CX4][CX4])]"), &[]))]);
         let ff = ForceField::new("OPLS-AA");
-        let typed = typify_atoms(&ethane(), &m, &ff).unwrap();
+        let typed = typed_graph(&ethane(), &m, &ff).unwrap();
         let n = typed
             .atoms()
             .filter(|(_, a)| a.get_str("type") == Some("opls_rec"))
@@ -231,7 +276,7 @@ mod tests {
         // src/ff/typifier/opls/layered.rs and tests/ff/typifier/opls.rs.)
         let m = meta_with(&[("opls_ref", row("HA", Some("[H][C;%opls_145]"), &[]))]);
         let ff = ForceField::new("OPLS-AA");
-        let typed = typify_atoms(&ethane(), &m, &ff).unwrap();
+        let typed = typed_graph(&ethane(), &m, &ff).unwrap();
         assert!(typed.atoms().all(|(_, a)| a.get_str("type").is_none()));
     }
 
@@ -262,7 +307,7 @@ mod tests {
             ("opls_155", row("HO", Some("H[O;%opls_154]"), &[])),
         ]);
         let ff = ForceField::new("OPLS-AA");
-        let typed = typify_atoms(&g, &m, &ff).unwrap();
+        let typed = typed_graph(&g, &m, &ff).unwrap();
 
         assert_eq!(
             typed.get_atom(o).unwrap().get_str("type"),

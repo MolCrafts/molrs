@@ -4,12 +4,35 @@
 //! molrs store units (Å, kcal/mol, radians) → GROMACS file units (nm, kJ/mol,
 //! degrees) at this boundary only.
 //!
-//! Output layout matches the historical molpy `GromacsForceFieldWriter`:
-//! `[ atoms ]` / `[ bonds ]` / `[ angles ]` / `[ dihedrals ]` / `[ pairs ]`
-//! with 1-based atom-type indices for bonded rows (reader convention).
+//! Output layout: `[ defaults ]`, then `[ atomtypes ]` for every atom type
+//! that carries parameters, then — as the historical molpy
+//! `GromacsForceFieldWriter` did — `[ atoms ]` / `[ bonds ]` / `[ angles ]` /
+//! `[ dihedrals ]` / `[ pairs ]` with 1-based atom-type indices for bonded rows
+//! (reader convention).
+//!
+//! - `[ atomtypes ]` is `name [bond_type] [at.num] mass charge ptype V W`: the
+//!   6-, 7- or 8-column form by which of `bond_type` / `atomic_number` the type
+//!   carries, `at.num` as a bare integer, V = σ ÷ 10 (nm) and W = ε × 4.184
+//!   (kJ/mol). A type with none of `mass charge ptype sigma epsilon` gets no
+//!   row; a type with some but not all of them is `Err` naming the type and
+//!   the missing keys — nothing is fabricated.
+//! - `[ atoms ]` is an index table built from the atom-type names alone. Its
+//!   `charge` / `mass` come from the type's numeric params when present; every
+//!   other per-atom field (`resnr` `0`, `residu` `LIG`, `cgnr` `1`, and
+//!   `charge` / `mass` `0.0` otherwise) is a placeholder, because a force field
+//!   holds no per-atom data.
+//!
+//! # Whole-FF serialization, not coefficient writing
+//!
+//! molrs has two kinds of force-field writer. This one is **whole-FF
+//! serialization**: it writes every type the [`ForceField`] holds, as a
+//! force-field file, and takes no type labels. **Coefficient writing**
+//! ([`super::lammps::LammpsFfWriter`], LAMMPS only) answers "which coefficients
+//! does this system's data file need" and is keyed by the system's
+//! `TypeLabels`.
 
 use super::ForceFieldWriter;
-use crate::ff::forcefield::{ForceField, StyleDefs};
+use crate::ff::forcefield::{AtomType, ForceField, StyleDefs};
 
 const KJ_PER_KCAL: f64 = 4.184;
 const NM_TO_ANGSTROM: f64 = 10.0;
@@ -40,6 +63,65 @@ impl GromacsTopFfWriter {
     fn fmt_f(&self, v: f64) -> String {
         format!("{:.*}", self.precision, v)
     }
+
+    /// The `[ atomtypes ]` line of `t` in file units, `None` for a type that
+    /// carries none of the five row keys, `Err` for one that carries some.
+    fn atomtypes_row(&self, t: &AtomType) -> Result<Option<String>, String> {
+        let p = &t.params;
+        let (mass, charge, ptype, sigma, epsilon) = (
+            p.get("mass"),
+            p.get("charge"),
+            p.get_str("ptype"),
+            p.get("sigma"),
+            p.get("epsilon"),
+        );
+        let present = [
+            ("mass", mass.is_some()),
+            ("charge", charge.is_some()),
+            ("ptype", ptype.is_some()),
+            ("sigma", sigma.is_some()),
+            ("epsilon", epsilon.is_some()),
+        ];
+        let missing: Vec<&str> = present
+            .iter()
+            .filter(|(_, has)| !has)
+            .map(|(key, _)| *key)
+            .collect();
+        if missing.len() == present.len() {
+            return Ok(None);
+        }
+        let (Some(mass), Some(charge), Some(ptype), Some(sigma), Some(epsilon)) =
+            (mass, charge, ptype, sigma, epsilon)
+        else {
+            return Err(format!(
+                "atom type '{}' cannot be written to [ atomtypes ]: missing {}",
+                t.name,
+                missing.join(", ")
+            ));
+        };
+
+        let mut cols = vec![t.name.clone()];
+        if let Some(bond_type) = p.get_str("bond_type") {
+            cols.push(bond_type.to_owned());
+        }
+        if let Some(z) = p.get("atomic_number") {
+            if z.fract() != 0.0 || !z.is_finite() {
+                return Err(format!(
+                    "atom type '{}': atomic_number {z} is not an integer",
+                    t.name
+                ));
+            }
+            cols.push(format!("{}", z as i64));
+        }
+        cols.extend([
+            self.fmt_f(mass),
+            self.fmt_f(charge),
+            ptype.to_owned(),
+            self.fmt_f(sigma / NM_TO_ANGSTROM),
+            self.fmt_f(epsilon * KJ_PER_KCAL),
+        ]);
+        Ok(Some(format!("  {}\n", cols.join("  "))))
+    }
 }
 
 impl ForceFieldWriter for GromacsTopFfWriter {
@@ -54,52 +136,43 @@ impl ForceFieldWriter for GromacsTopFfWriter {
             self.fmt_f(sb.coul_14()),
         ));
 
-        // Collect atom types in style order (may contain duplicate names — match reader).
-        let mut atom_names: Vec<String> = Vec::new();
-        let mut atom_meta: Vec<std::collections::HashMap<String, String>> = Vec::new();
-        for style in ff.get_styles("atom") {
-            let StyleDefs::Atom(types) = &style.defs else {
-                continue;
-            };
-            for t in types {
-                atom_names.push(t.name.clone());
-                let mut m = std::collections::HashMap::new();
-                for (k, v) in t.params.iter_strings() {
-                    m.insert(k.to_string(), v.to_string());
-                }
-                for (k, v) in t.params.iter() {
-                    m.entry(k.to_string()).or_insert_with(|| self.fmt_f(v));
-                }
-                atom_meta.push(m);
+        // Atom types in style order: the `[ atomtypes ]` rows, and the
+        // `[ atoms ]` index table the bonded rows point into.
+        let atom_types: Vec<&AtomType> = ff.get_atomtypes();
+
+        let mut atomtype_rows = Vec::new();
+        for t in &atom_types {
+            if let Some(row) = self.atomtypes_row(t)? {
+                atomtype_rows.push(row);
             }
+        }
+        if !atomtype_rows.is_empty() {
+            out.push_str("[ atomtypes ]\n");
+            out.push_str("; name  [bond_type]  [at.num]  mass  charge  ptype  sigma  epsilon\n");
+            for row in atomtype_rows {
+                out.push_str(&row);
+            }
+            out.push('\n');
         }
 
         // name → first 1-based index (for bonded endpoint lookup by AtomType name)
-        let mut name_to_idx: std::collections::HashMap<String, usize> =
+        let mut name_to_idx: std::collections::HashMap<&str, usize> =
             std::collections::HashMap::new();
-        for (i, n) in atom_names.iter().enumerate() {
-            name_to_idx.entry(n.clone()).or_insert(i + 1);
+        for (i, t) in atom_types.iter().enumerate() {
+            name_to_idx.entry(t.name.as_str()).or_insert(i + 1);
         }
 
-        if !atom_names.is_empty() {
+        if !atom_types.is_empty() {
             out.push_str("[ atoms ]\n");
             out.push_str("; nr  name  resnr  residu  atom  cgnr  charge  mass\n");
-            for (idx, (name, meta)) in atom_names.iter().zip(atom_meta.iter()).enumerate() {
-                let nr = meta
-                    .get("nr")
-                    .cloned()
-                    .unwrap_or_else(|| (idx + 1).to_string());
-                let resnr = meta.get("resnr").cloned().unwrap_or_else(|| "0".into());
-                let residu = meta.get("residu").cloned().unwrap_or_else(|| "LIG".into());
-                let atom = meta.get("atom").cloned().unwrap_or_else(|| name.clone());
-                let cgnr = meta.get("cgnr").cloned().unwrap_or_else(|| "1".into());
-                let charge = meta
-                    .get("charge")
-                    .cloned()
-                    .unwrap_or_else(|| self.fmt_f(0.0));
-                let mass = meta.get("mass").cloned().unwrap_or_else(|| self.fmt_f(0.0));
+            for (idx, t) in atom_types.iter().enumerate() {
+                let nr = idx + 1;
+                let name = &t.name;
+                let charge = self.fmt_f(t.params.get("charge").unwrap_or(0.0));
+                let mass = self.fmt_f(t.params.get("mass").unwrap_or(0.0));
                 out.push_str(&format!(
-                    "  {nr:>4}  {name:<5} {resnr:>5}  {residu:<5} {atom:<5} {cgnr:>4}  {charge}  {mass}\n"
+                    "  {nr:>4}  {name:<5} {:>5}  {:<5} {name:<5} {:>4}  {charge}  {mass}\n",
+                    0, "LIG", 1
                 ));
             }
             out.push('\n');
@@ -108,7 +181,7 @@ impl ForceFieldWriter for GromacsTopFfWriter {
         // Bonds
         let mut any_bond = false;
         for style in ff.get_styles("bond") {
-            let StyleDefs::Bond(types) = &style.defs else {
+            let StyleDefs::Bond(types) = style.defs() else {
                 continue;
             };
             if types.is_empty() {
@@ -119,16 +192,16 @@ impl ForceFieldWriter for GromacsTopFfWriter {
                 out.push_str("; i  j  func  params...\n");
                 any_bond = true;
             }
-            let style_name = if style.name.is_empty() {
+            let style_name = if style.name().is_empty() {
                 "harmonic"
             } else {
-                style.name.as_str()
+                style.name()
             };
             let funct = bond_funct(style_name);
             let param_keys = bond_param_keys(style_name);
             for bt in types {
-                let i = *name_to_idx.get(&bt.itom).unwrap_or(&0);
-                let j = *name_to_idx.get(&bt.jtom).unwrap_or(&0);
+                let i = *name_to_idx.get(bt.itom.as_str()).unwrap_or(&0);
+                let j = *name_to_idx.get(bt.jtom.as_str()).unwrap_or(&0);
                 let params = format_params(self, &bt.params, param_keys, UnitKind::Bond);
                 out.push_str(&format!("  {i}  {j}  {funct}  {params}\n"));
             }
@@ -140,7 +213,7 @@ impl ForceFieldWriter for GromacsTopFfWriter {
         // Angles
         let mut any_angle = false;
         for style in ff.get_styles("angle") {
-            let StyleDefs::Angle(types) = &style.defs else {
+            let StyleDefs::Angle(types) = style.defs() else {
                 continue;
             };
             if types.is_empty() {
@@ -151,17 +224,17 @@ impl ForceFieldWriter for GromacsTopFfWriter {
                 out.push_str("; i  j  k  func  params...\n");
                 any_angle = true;
             }
-            let style_name = if style.name.is_empty() {
+            let style_name = if style.name().is_empty() {
                 "harmonic"
             } else {
-                style.name.as_str()
+                style.name()
             };
             let funct = angle_funct(style_name);
             let param_keys = angle_param_keys(style_name);
             for at in types {
-                let i = *name_to_idx.get(&at.itom).unwrap_or(&0);
-                let j = *name_to_idx.get(&at.jtom).unwrap_or(&0);
-                let k = *name_to_idx.get(&at.ktom).unwrap_or(&0);
+                let i = *name_to_idx.get(at.itom.as_str()).unwrap_or(&0);
+                let j = *name_to_idx.get(at.jtom.as_str()).unwrap_or(&0);
+                let k = *name_to_idx.get(at.ktom.as_str()).unwrap_or(&0);
                 let params = format_params(self, &at.params, param_keys, UnitKind::Angle);
                 out.push_str(&format!("  {i}  {j}  {k}  {funct}  {params}\n"));
             }
@@ -173,7 +246,7 @@ impl ForceFieldWriter for GromacsTopFfWriter {
         // Dihedrals
         let mut any_dih = false;
         for style in ff.get_styles("dihedral") {
-            let StyleDefs::Dihedral(types) = &style.defs else {
+            let StyleDefs::Dihedral(types) = style.defs() else {
                 continue;
             };
             if types.is_empty() {
@@ -184,18 +257,18 @@ impl ForceFieldWriter for GromacsTopFfWriter {
                 out.push_str("; i  j  k  l  func  params...\n");
                 any_dih = true;
             }
-            let style_name = if style.name.is_empty() {
+            let style_name = if style.name().is_empty() {
                 "harmonic"
             } else {
-                style.name.as_str()
+                style.name()
             };
             let funct = dihedral_funct(style_name);
             let param_keys = dihedral_param_keys(style_name);
             for dt in types {
-                let i = *name_to_idx.get(&dt.itom).unwrap_or(&0);
-                let j = *name_to_idx.get(&dt.jtom).unwrap_or(&0);
-                let k = *name_to_idx.get(&dt.ktom).unwrap_or(&0);
-                let l = *name_to_idx.get(&dt.ltom).unwrap_or(&0);
+                let i = *name_to_idx.get(dt.itom.as_str()).unwrap_or(&0);
+                let j = *name_to_idx.get(dt.jtom.as_str()).unwrap_or(&0);
+                let k = *name_to_idx.get(dt.ktom.as_str()).unwrap_or(&0);
+                let l = *name_to_idx.get(dt.ltom.as_str()).unwrap_or(&0);
                 let params = format_params(self, &dt.params, param_keys, UnitKind::Dihedral);
                 out.push_str(&format!("  {i}  {j}  {k}  {l}  {funct}  {params}\n"));
             }
@@ -207,7 +280,7 @@ impl ForceFieldWriter for GromacsTopFfWriter {
         // Pairs
         let mut any_pair = false;
         for style in ff.get_styles("pair") {
-            let StyleDefs::Pair(types) = &style.defs else {
+            let StyleDefs::Pair(types) = style.defs() else {
                 continue;
             };
             if types.is_empty() {
@@ -218,16 +291,16 @@ impl ForceFieldWriter for GromacsTopFfWriter {
                 out.push_str("; i  j  func  params...\n");
                 any_pair = true;
             }
-            let style_name = if style.name.is_empty() {
+            let style_name = if style.name().is_empty() {
                 "lj12-6"
             } else {
-                style.name.as_str()
+                style.name()
             };
             let funct = pair_funct(style_name);
             let param_keys = pair_param_keys(style_name);
             for pt in types {
-                let i = *name_to_idx.get(&pt.itom).unwrap_or(&0);
-                let j = *name_to_idx.get(&pt.jtom).unwrap_or(&0);
+                let i = *name_to_idx.get(pt.itom.as_str()).unwrap_or(&0);
+                let j = *name_to_idx.get(pt.jtom.as_str()).unwrap_or(&0);
                 let params = format_params(self, &pt.params, param_keys, UnitKind::Pair);
                 out.push_str(&format!("  {i}  {j}  {funct}  {params}\n"));
             }
@@ -378,7 +451,7 @@ fn format_params(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::forcefield::ForceField;
+    use crate::ff::forcefield::{ForceField, Params};
 
     #[test]
     fn empty_ff_writes_header() {
@@ -390,22 +463,151 @@ mod tests {
     #[test]
     fn atom_and_bond_roundtrip_shape() {
         let mut ff = ForceField::new("gmx");
-        {
-            let st = ff.def_atomstyle("full");
-            st.def_atomtype("opls_135", &[]);
-            st.def_atomtype("opls_140", &[]);
-        }
-        {
-            let st = ff.def_bondstyle("");
-            st.def_bondtype(
-                "opls_135",
-                "opls_140",
-                &[("r0", 1.09), ("k", 300.0)], // molrs units
-            );
-        }
+        ff.def_style("atom", "full", Params::new())
+            .unwrap()
+            .def_type("opls_135", Params::new())
+            .unwrap()
+            .def_type("opls_140", Params::new())
+            .unwrap();
+        ff.def_style("bond", "", Params::new())
+            .unwrap()
+            .def_type(
+                "opls_135-opls_140",
+                Params::from_pairs(&[("r0", 1.09), ("k", 300.0)]), // molrs units
+            )
+            .unwrap();
         let s = GromacsTopFfWriter::new().write_str(&ff).unwrap();
         assert!(s.contains("[ atoms ]"));
         assert!(s.contains("[ bonds ]"));
         assert!(s.contains("opls_135"));
+    }
+
+    // -- [ atomtypes ] ---------------------------------------------------------
+
+    /// An `opls_135`-like type in molrs units: σ = 3.5 Å, ε = 0.066 kcal/mol.
+    fn molrs_unit_params() -> Params {
+        let mut p = Params::from_pairs(&[
+            ("mass", 12.011),
+            ("charge", -0.18),
+            ("sigma", 3.5),
+            ("epsilon", 0.066),
+        ]);
+        p.set_str("ptype", "A");
+        p
+    }
+
+    fn ff_with_atom_type(name: &str, params: Params) -> ForceField {
+        let mut ff = ForceField::new("gmx");
+        ff.def_style("atom", "full", Params::new())
+            .unwrap()
+            .def_type(name, params)
+            .unwrap();
+        ff
+    }
+
+    /// The whitespace-split data rows of `[ atomtypes ]` (comments skipped).
+    fn atomtypes_rows(text: &str) -> Vec<Vec<&str>> {
+        let mut rows = Vec::new();
+        let mut inside = false;
+        for line in text.lines() {
+            let t = line.trim();
+            if t.starts_with('[') {
+                inside = t == "[ atomtypes ]";
+                continue;
+            }
+            if inside && !t.is_empty() && !t.starts_with(';') {
+                rows.push(t.split_whitespace().collect());
+            }
+        }
+        rows
+    }
+
+    fn row_for<'a>(rows: &'a [Vec<&'a str>], name: &str) -> &'a [&'a str] {
+        rows.iter()
+            .find(|r| r[0] == name)
+            .unwrap_or_else(|| panic!("no [ atomtypes ] row for {name}: {rows:?}"))
+    }
+
+    fn number(token: &str) -> f64 {
+        token
+            .parse()
+            .unwrap_or_else(|e| panic!("{token:?} is not a number: {e}"))
+    }
+
+    /// 6-column form `name mass charge ptype V W`. Hand inversion:
+    /// V = 3.5 Å ÷ 10 = 0.35 nm; W = 0.066 kcal/mol × 4.184 = 0.276144 kJ/mol.
+    #[test]
+    fn atomtypes_row_is_written_in_file_units() {
+        let ff = ff_with_atom_type("opls_135", molrs_unit_params());
+        let text = GromacsTopFfWriter::new().write_str(&ff).unwrap();
+        let rows = atomtypes_rows(&text);
+        let row = row_for(&rows, "opls_135");
+
+        assert_eq!(row.len(), 6, "{row:?}");
+        assert!((number(row[1]) - 12.011).abs() < 1e-9);
+        assert!((number(row[2]) - -0.18).abs() < 1e-9);
+        assert_eq!(row[3], "A");
+        assert!((number(row[4]) - 0.35).abs() < 1e-9);
+        assert!((number(row[5]) - 0.276144).abs() < 1e-9);
+    }
+
+    /// `bond_type` alone gives the 7-column form `name bond_type mass …`.
+    #[test]
+    fn atomtypes_row_with_a_bond_type_has_seven_columns() {
+        let mut params = molrs_unit_params();
+        params.set_str("bond_type", "CT");
+        let ff = ff_with_atom_type("opls_135", params);
+        let text = GromacsTopFfWriter::new().write_str(&ff).unwrap();
+        let rows = atomtypes_rows(&text);
+        let row = row_for(&rows, "opls_135");
+
+        assert_eq!(row.len(), 7, "{row:?}");
+        assert_eq!(row[1], "CT");
+        assert!((number(row[2]) - 12.011).abs() < 1e-9);
+    }
+
+    /// `bond_type` and `atomic_number` give the 8-column form
+    /// `name bond_type at.num mass charge ptype V W`, `at.num` an integer.
+    #[test]
+    fn atomtypes_row_with_bond_type_and_atomic_number_has_eight_columns() {
+        let mut params = molrs_unit_params();
+        params.set_str("bond_type", "CT");
+        params.set("atomic_number", 6.0);
+        let ff = ff_with_atom_type("opls_135", params);
+        let text = GromacsTopFfWriter::new().write_str(&ff).unwrap();
+        let rows = atomtypes_rows(&text);
+        let row = row_for(&rows, "opls_135");
+
+        assert_eq!(row.len(), 8, "{row:?}");
+        assert_eq!(row[1], "CT");
+        assert_eq!(row[2], "6");
+        assert_eq!(row[5], "A");
+    }
+
+    /// A type with no params is referenced, not parameterised: no row.
+    #[test]
+    fn atom_type_without_params_gets_no_atomtypes_row() {
+        let ff = ff_with_atom_type("opls_140", Params::new());
+        let text = GromacsTopFfWriter::new().write_str(&ff).unwrap();
+        assert!(
+            atomtypes_rows(&text).iter().all(|r| r[0] != "opls_140"),
+            "{text}"
+        );
+    }
+
+    /// Some but not all of `mass charge ptype sigma epsilon`: `Err` naming the
+    /// type and the missing keys, never a fabricated zero.
+    #[test]
+    fn partially_parameterised_atom_type_is_an_error() {
+        let ff = ff_with_atom_type(
+            "opls_135",
+            Params::from_pairs(&[("mass", 12.011), ("charge", -0.18)]),
+        );
+        let err = GromacsTopFfWriter::new()
+            .write_str(&ff)
+            .expect_err("a partial atom type must not be written");
+        for needle in ["opls_135", "ptype", "sigma", "epsilon"] {
+            assert!(err.contains(needle), "error should name `{needle}`: {err}");
+        }
     }
 }

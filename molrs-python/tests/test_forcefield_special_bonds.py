@@ -47,3 +47,23 @@ def test_from_raw_forwards_special_bonds():
     wrapped = molrs.ff.ForceField._from_raw(raw)
     np.testing.assert_allclose(wrapped.special_bonds_lj, [0.0, 0.0, 0.5])
     np.testing.assert_allclose(wrapped.special_bonds_coul, [0.0, 0.0, 1.0 / 1.2])
+
+
+def test_declared_special_bonds_is_none_on_an_undeclared_forcefield():
+    ff = molrs.ff.ForceField("x")
+    assert ff.declared_special_bonds() is None
+
+
+def test_set_special_bonds_declares_them():
+    ff = molrs.ff.ForceField("x")
+    ff.set_special_bonds([0.0, 0.0, 0.5], [0.0, 0.0, 0.75])
+    assert ff.declared_special_bonds() == ((0.0, 0.0, 0.5), (0.0, 0.0, 0.75))
+
+
+def test_merge_keeps_special_bonds_lj():
+    other = molrs.ff.ForceField("src")
+    other.set_special_bonds([0.0, 0.0, 0.5], [0.0, 0.0, 0.75])
+    ff = molrs.ff.ForceField("dst")
+    ff.merge(other)
+    np.testing.assert_array_equal(ff.special_bonds_lj, [0.0, 0.0, 0.5])
+    np.testing.assert_array_equal(ff.special_bonds_coul, [0.0, 0.0, 0.75])

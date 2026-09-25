@@ -16,10 +16,8 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use molrs::ff::typifier::Typifier;
 use molrs::ff::typifier::atd::{AtdParameterSet, AtdTypifier};
 
-use crate::core::system::molgraph::PyAtomistic;
 use crate::ff::PyTypifier;
 
 /// The `-at` flag of every table, paired with the set that walks it.
@@ -73,6 +71,17 @@ fn parameter_set_name(set: AtdParameterSet) -> &'static str {
 /// antechamber bond types, derives the facts each rule can ask about, and labels
 /// every atom with the first rule of the table that matches it.
 ///
+/// Graph in / graph out: :meth:`typify` returns a clone of ``mol`` with the
+/// table's atom type in ``keys.TYPE`` on every atom and the perceived
+/// ``bcc_bond_type`` on every bond; the caller's handles still address their
+/// atoms on it, and ``mol`` is left untouched — the standard AM1-BCC workflow
+/// needs the caller's force-field types *and* these at once. It raises
+/// ``ValueError`` if the molecule's facts cannot be derived.
+///
+/// An atom no rule matches comes back labelled ``"DU"``, the table's own
+/// catch-all row; that is antechamber's answer, not a fallback the engine
+/// invents. Refusing ``DU`` is the *charge* model's job.
+///
 /// Parameters
 /// ----------
 /// parameter_set : str
@@ -93,7 +102,7 @@ fn parameter_set_name(set: AtdParameterSet) -> &'static str {
 #[pyclass(module = "molrs.ff.typifier", name = "AtdTypifier", extends = PyTypifier)]
 #[derive(Debug)]
 pub struct PyAtdTypifier {
-    inner: AtdTypifier,
+    parameter_set: AtdParameterSet,
 }
 
 #[pymethods]
@@ -102,51 +111,17 @@ impl PyAtdTypifier {
     #[new]
     #[pyo3(signature = (*, parameter_set))]
     fn new(parameter_set: &str) -> PyResult<(Self, PyTypifier)> {
+        let parameter_set = parameter_set_from_name(parameter_set)?;
         Ok((
-            Self {
-                inner: AtdTypifier::new(parameter_set_from_name(parameter_set)?),
-            },
-            PyTypifier,
+            Self { parameter_set },
+            PyTypifier::native(AtdTypifier::new(parameter_set)),
         ))
     }
 
     /// The antechamber ``-at`` flag of the table this typifier walks.
     #[getter]
     fn parameter_set(&self) -> &'static str {
-        parameter_set_name(self.inner.parameter_set())
-    }
-
-    /// Assign atom types to a molecular graph.
-    ///
-    /// Graph in / graph out: the caller's handles still address their atoms on the
-    /// returned clone, and the input's ``type`` column is left alone — the standard
-    /// AM1-BCC workflow needs the caller's force-field types *and* these at once.
-    ///
-    /// An atom no rule matches comes back labelled ``"DU"``, the table's own
-    /// catch-all row; that is antechamber's answer, not a fallback the engine
-    /// invents. Refusing ``DU`` is the *charge* model's job.
-    ///
-    /// Parameters
-    /// ----------
-    /// mol : Atomistic
-    ///     The molecule to type; left untouched.
-    ///
-    /// Returns
-    /// -------
-    /// Atomistic
-    ///     A clone of ``mol`` with the table's atom type in ``keys.TYPE`` on every
-    ///     atom, and the perceived ``bcc_bond_type`` on every bond.
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If the molecule's facts cannot be derived.
-    fn typify(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
-        let typed = self
-            .inner
-            .typify(mol.core())
-            .map_err(PyValueError::new_err)?;
-        PyAtomistic::from_core(py, typed)
+        parameter_set_name(self.parameter_set)
     }
 
     fn __repr__(&self) -> String {

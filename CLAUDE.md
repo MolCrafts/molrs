@@ -8,9 +8,9 @@ mol_project:
     # (.cargo/config.toml). A hand-spelled feature list is a different feature
     # set, hence a full 293k-line rebuild. See .claude/notes/build.md.
     install: "cargo mrs-build"
-    check: "cargo fmt --check && cargo mrs-clippy -- -D warnings && cargo clippy --manifest-path molrs-cxxapi/Cargo.toml --all-targets -- -D warnings"
+    check: "cargo fmt --check && cargo mrs-clippy -- -D warnings"
     test: "cargo mrs-test && cargo mrs-doctest"
-    test_single: "scripts/test-scope.sh {path}"
+    test_single: "cargo mrs-test -- {module}"
   ci:
     # Local pre-push mirrors default CI + docs (not optional Full).
     # Single source: .pre-commit-config.yaml (prek); tox via molrs-python[dev]
@@ -126,10 +126,13 @@ There is no fixture corpus to fetch.
 
 Default gate: `cargo mrs-test && cargo mrs-doctest` — `--lib` does not run
 doctests, so a rustdoc example can rot against a renamed API without CI
-noticing. Inside an implementation loop run `scripts/test-scope.sh`, which
-filters the already-built test binary down to the modules you touched (~0.1 s).
-Never spell the feature list by hand: `cargo test <module>` resolves a different
-feature set and rebuilds all 293k lines. See `.claude/notes/build.md`.
+noticing. Inside an implementation loop run `cargo mrs-test` (optionally
+`-- <module>` to filter): cargo recompiles the one crate incrementally (~6 s after
+an edit) and the whole suite runs in ~5 s. The loop uses this one build
+configuration only; clippy runs at commit, and rustdoc, the binders, tox, wasm and
+capi run at push. Never spell the feature list by hand: `cargo test <module>`
+resolves a different feature set and rebuilds all 293k lines. See
+`.claude/notes/build.md`.
 
 **Bindings (Python / C / WASM)** only smoke the FFI seam (construct, call,
 round-trip types, dtype at the boundary, error mapping). Science depth lives in
@@ -182,10 +185,8 @@ cargo mrs-test
 # API that compiles, and a renamed constant breaks it invisibly otherwise.
 cargo mrs-doctest
 
-# Inner loop: only the modules the working tree touched (~0.1 s, no rebuild).
-scripts/test-scope.sh
-scripts/test-scope.sh ff::potential            # or an explicit module
-scripts/test-scope.sh molrs/src/io/data/xyz.rs # or an explicit file
+# Inner loop: the same binary, filtered (only the filter after `--` varies).
+cargo mrs-test -- ff::potential
 
 # Lint & Format
 cargo fmt --all
@@ -289,7 +290,7 @@ Graph-based molecular structure with atoms, bonds, stereochemistry, ring detecti
 |---|---|---|---|
 | `NeighborList` engine (public; internal closed `Backend` trait) | `molrs::core::spatial::neighbors` | Neighbor search: `build`/`update`/`build_columns` own the spatial index, `for_each_pair` streams `NeighborPair`s, `neighbors(storage)` materializes a `Neighbors` table | `LinkCell` (O(N), `NeighborList::new`), `Aabb` (BVH, `NeighborList::aabb`), `BruteForce` (O(N²), `NeighborList::brute_force`) — picked by constructor, not user-implemented; cross-queries go through `NeighborQuery` |
 | `Potential` (+ `IndexedTerms`, `PairDriven`) | `molrs::ff::potential` | Energy/force evaluation. `IndexedTerms` adds a replaceable index table (bonded kernels); `PairDriven` adds neighbour-table summation (pair kernels). `Member` is the three as one value, chosen by the kernel constructor | Bond harmonic, MMFF bond/angle/torsion/oop/vdw/ele, LJ/cut, PME |
-| `Typifier` | `molrs::ff::typifier` | MolGraph → typed Frame | `MMFF94Typifier` / `MMFF94STypifier` (one engine, two named front doors — the MMFF variant is a private field, never a constructor flag), `OPLSAATypifier`, `AtdTypifier` |
+| `Typifier` | `molrs::ff::typifier` | `r#match(&mut Atomistic) -> Match` + `library()`; run by `Typing<T>`, which owns the output force field (the union of the types assigned) | `MMFF94Typifier` / `MMFF94STypifier` (one engine, two named front doors — the MMFF variant is a private field, never a constructor flag), `OPLSAATypifier`, `UFFTypifier`, `AtdTypifier`, `BCCAtomChargeTypifier` |
 
 Pack-related traits (`Restraint`, `Region`, `Relaxer`, `Handler`, `Objective`) now live
 in the standalone `molcrafts-molpack` crate.
@@ -298,11 +299,11 @@ in the standalone `molcrafts-molpack` crate.
 
 ### Potential System (molrs/src/ff/potential/)
 
-`KernelRegistry` maps `(category, style_name)` → `KernelConstructor`. Categories: bonds, angles, dihedrals, impropers, pairs. PME is the pair style `coul/long/pme` (`ff/potential/kspace` is the FFT compilation unit, not a category). `ForceField::to_potentials(frame)` (with `Style::to_potential`) resolves topology and constructs `Potentials` (aggregate sum) — frame-free, deferred potentials that bind topology and coordinates at evaluation time. Coordinate format: flat `[x0,y0,z0, x1,y1,z1, ...]` (3N elements).
+`KernelRegistry` maps `(category, style_name)` → `KernelConstructor`. Categories: bonds, angles, dihedrals, impropers, pairs. PME is the pair style `coul/long/pme` (`ff/potential/kspace` is the FFT compilation unit, not a category). `PotentialCompiler::new(&ff).compile(&frame)` (`ff/potential/compile.rs`) resolves topology and constructs `Potentials` (aggregate sum); `compile_typed(&frame)` builds the neighbour-driven form. `ForceField` holds parameters only and names no potential. Python adds `PotentialCompiler.defer()`: a `Potentials` that binds topology and coordinates at evaluation time. Coordinate format: flat `[x0,y0,z0, x1,y1,z1, ...]` (3N elements).
 
 **Every parameter table is committed Rust, in one place.** `molrs/src/ff/params/` holds them all, flat — GAFF/GAFF2, the seven `ATOMTYPE_*.DEF` sets, BCCPARM, GASPARM, MMFF, OPLS-AA, UFF. Nothing parses parameter text at runtime, so a malformed table is a **compile** error, not a runtime one. `molrs/data/` and `molrs::data::*_XML` no longer exist. How a table *arrived* lives in its header doc (AmberTools `.DAT`/`.DEF`, RDKit `Params.cpp` for MMFF / UFF) — never in its name.
 
-**A registered kernel constructor that ignores `tp` is not a Style.** `ParamSource::{TypeRows, PerInstance}` (`ff/potential/registry.rs`) makes that a type, and a bidirectional gate makes it a test. MMFF's parameters depend on aromaticity, ring size and equivalence degradation — no type-tuple table expresses them — so the typifier resolves them per instance and bakes them onto the Frame, and its kernels read those columns. That is legitimate; *registering as if it used type rows* was not.
+**A registered kernel constructor that ignores `tp` is not a Style.** `ParamSource::{TypeRows, PerInstance}` (`ff/potential/registry.rs`) makes that a type. The bidirectional gate test that should enforce it does not exist yet (routed `/mol:fix`, notes.md 2026-09-25). MMFF's parameters depend on aromaticity, ring size and equivalence degradation — no type-tuple table expresses them — so the typifier resolves them per instance and bakes them onto the Frame, and its kernels read those columns. That is legitimate; *registering as if it used type rows* was not.
 
 **MMFF owns no kernel.** Its electrostatics is a buffered Coulomb — `pair/coul/cut` parameterised by `MMFF_ELE_STYLE` (`E = k·qᵢqⱼ / (D·(r+δ))`, δ = 0.05 Å; δ = 0 degenerates to the textbook form). A force field must **declare** the constants it means: a style that omits `coulomb` / `dielectric` / `coulomb14scale` is an `Err`, never a silent default. A kernel that supplies the force field's own constants is not reading the force field.
 

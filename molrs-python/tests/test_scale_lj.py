@@ -5,13 +5,12 @@ import molrs
 
 def _forcefield():
     ff = molrs.ff.ForceField()
-    ff.def_atomstyle("full").def_type("CR", type_=1.0)
-    ff.def_atomstyle("full").def_type("B", type_=2.0)
-    pairs = ff.def_pairstyle("lj/cut")
-    cr = ff.def_atomstyle("full").types[0]
-    b = ff.def_atomstyle("full").types[1]
-    pairs.def_type(cr, b, epsilon=1.0, sigma=3.5)
-    pairs.def_type(cr, cr, epsilon=2.0, sigma=3.6)
+    ff.def_style("atom", "full").def_type("CR", {"type_": 1.0}).def_type(
+        "B", {"type_": 2.0}
+    )
+    ff.def_style("pair", "lj/cut").def_type(
+        "CR-B", {"epsilon": 1.0, "sigma": 3.5}
+    ).def_type("CR", {"epsilon": 2.0, "sigma": 3.6})
     return ff
 
 

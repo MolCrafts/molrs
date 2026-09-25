@@ -114,9 +114,9 @@ use molrs::Element;
 /// `{1, 2, 3, 6, 7, 8, 9}`.
 ///
 /// Written by [`find_bond_types`] and read by everything keyed on the antechamber
-/// alphabet — the `ATOMTYPE_*.DEF` rule engine
-/// ([`AtdTypifier`](crate::ff::typifier::AtdTypifier)) and the `BCCPARM.DAT`
-/// corrector ([`BCCCorrector`](crate::ff::typifier::am1bcc::BCCCorrector)).
+/// alphabet — the `ATOMTYPE_*.DEF` rule engine (`ff::typifier::AtdTypifier`)
+/// and the `BCCPARM.DAT` corrector (`ff::typifier::am1bcc::BCCCorrector`);
+/// `perceive` sits below `ff` and names no item of it.
 ///
 /// Deliberately **not** [`keys::TYPE`]: that key is the caller's, and holds the
 /// force-field type *name*. See the [module docs](self).

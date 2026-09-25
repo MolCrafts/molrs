@@ -54,7 +54,7 @@ fn provider(
     // `MicPairs` refuses a kernel whose parameters were resolved against a
     // fixed pair list — it would ignore the neighbour table and answer for the
     // list it was built from, while the driver went on rebuilding and reporting
-    // that table. `ForceField.to_potentials` builds exactly such kernels, so
+    // that table. `PotentialCompiler.compile` builds exactly such kernels, so
     // this is the path where that mistake is made, and the error says what to
     // build instead.
     Ok(match skin {
@@ -438,19 +438,19 @@ impl Potential for SubclassPotential {
     }
 }
 
+/// The members a provider will evaluate, with the weights each one takes.
+///
+/// A [`TypedPotentials`](crate::ff::PyTypedPotentials) already knows both —
+/// which kernel is which and how its close neighbours are scaled — because
+/// `PotentialCompiler::compile_typed` decided it. Anything else is one member
+/// that scales nothing.
+pub(crate) type Members = Vec<(Member, molrs::md::SpecialWeights)>;
+
 /// Move the Rust potential out of any exposed potential class.
 ///
 /// Arm order is a hard invariant: concrete Rust types first, duck-typed
 /// fallback last. Putting the fallback first would wrap every `Potentials`
 /// as a Python dispatch object.
-/// The members a provider will evaluate, with the weights each one takes.
-///
-/// A [`TypedPotentials`](crate::ff::PyTypedPotentials) already knows both —
-/// which kernel is which and how its close neighbours are scaled — because
-/// `ForceField::to_typed_potentials` decided it. Anything else is one member
-/// that scales nothing.
-pub(crate) type Members = Vec<(Member, molrs::md::SpecialWeights)>;
-
 pub(crate) fn take_members(obj: &Bound<'_, PyAny>) -> PyResult<(Members, Vec<ErrSlot>)> {
     if let Ok(typed) = obj.cast::<crate::ff::PyTypedPotentials>() {
         let members = typed.borrow_mut().members.take().ok_or_else(|| {

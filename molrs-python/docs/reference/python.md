@@ -190,6 +190,10 @@ The native force-field model exposes a `Style`/`Type` hierarchy
 
 ::: molrs.ff.typifier.Typifier
 
+::: molrs.ff.typifier.Match
+
+::: molrs.ff.PotentialCompiler
+
 ::: molrs.ff.Potentials
 
 ::: molrs.optimize.LBFGS

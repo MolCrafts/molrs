@@ -136,7 +136,11 @@ Known asymmetries (in internal-refactor priority order):
 2. The `LinkedCell` / `BruteForce` aliases survive only for the molvis link
    (default `FULL`, safe); once molvis moves to the engine API they are **deleted**
    — two doors are not maintained long-term.
-3. The remaining routed items are done slowly, as needed: core SoA
+3. **`PotentialCompiler.defer()` is Python-only, and wasm has no `PotentialCompiler`
+   class** (system-forcefield-04, 2026-09-25). Rust callers compile when they hold the
+   frame; wasm compiles inside `typifier.toPotentials(frame)` and `LBFGS`. Add the door
+   when a consumer needs it.
+4. The remaining routed items are done slowly, as needed: core SoA
    `update_columns`, splitting `neighbors/mod.rs` into `table.rs` (a pure move).
    Borrowing `Compute::Args` is done (2026-08-10).
 
@@ -458,9 +462,9 @@ does not implement it (bead types are not elements).
 ## 2026-09-22 — the build gate is a filter problem, not a crate-size problem
 
 **Decision:** every root-workspace cargo call goes through a `cargo mrs-*`
-alias (`.cargo/config.toml`); scoped test runs go through
-`scripts/test-scope.sh`, which narrows the **filter** and never the feature
-list; `[profile.dev] debug = "line-tables-only"` in all six roots; hooks are
+alias (`.cargo/config.toml`); scoped test runs are `cargo mrs-test -- <module>`,
+which narrows the **filter** and never the feature list (`scripts/test-scope.sh`
+was deleted 2026-09-25); `[profile.dev] debug = "line-tables-only"` in all six roots; hooks are
 scoped with `files:` instead of `always_run: true`; `target/` gets pruned when
 it passes ~20 GB. Full note: `.claude/notes/build.md`.
 
@@ -523,3 +527,166 @@ today: 27 s when `lib.rs` itself changes) pays for the churn. The
 - Three copies of `json_to_py` / `py_to_json`: `molrs-python/src/core/store/frame.rs`, `molrs-python/src/core/store/record.rs:297`, `molrs-python/src/io/mrec.rs:702`. Record and mrec payloads are owned values a caller re-submits wholesale, not live views, so they stay plain. The triplication is rot. Route: `/mol:refactor`.
 
 **Status:** provisional
+
+## 2026-09-25 — C force-field params are numeric; strings travel only through JSON
+
+`molrs_ff_def_style` / `molrs_ff_def_type` / `molrs_ff_def_type_at` take `const char**`
+keys and `double*` values, so a C caller cannot define a string param (`mixing`,
+OPLS provenance) through the `def_*` calls. `ff_to_json_string` / `ff_from_json_string`
+carry string params (`str_params`), endpoints and `special_bonds`. Known C-vs-Rust/Python
+asymmetry (system-forcefield-01); a string-valued C door is added only when a C consumer
+needs one.
+
+## 2026-09-25 — owed: the compiled MMFF tables have no source-equivalence test
+
+`ff/forcefield/xml.rs` claimed the shipped MMFF set was "checked field for field, at
+zero tolerance, against the pre-conversion parse in `tests/ff/tables_equivalence.rs`".
+That test never existed (no `tests/` tree); the only test in `ff/params/mmff.rs` is
+`sorted_invariants`. Nothing checks the compiled MMFF tables against their source
+values. Owed — route `/mol:fix` (a unit test in `ff/params/mmff.rs` pinning a sample of
+rows per table against hand-copied MMFF94 source values). Found by system-forcefield-01.
+
+## 2026-09-25 — input-free constructors over `ff/params` tables may `expect` a definition result (scoped amendment)
+
+Amends 2026-09-22 "a write path returns its invariant", which is about runtime input.
+The infallible public constructors over compile-time tables keep their signatures and
+`expect` the result of a fallible private body that one unit test proves `Ok`; the
+`expect` message names that test by path:
+
+- `ff::typifier::opls::embedded::force_field` → `try_force_field` —
+  `ff::typifier::opls::embedded::tests::force_field_defines_without_conflict`
+- `ff::typifier::mmff::embedded::force_field` → `try_force_field` —
+  `ff::typifier::mmff::embedded::tests::force_field_defines_without_conflict` (both tables)
+- `ff::typifier::gaff::candidate_forcefield` → `try_candidate_forcefield` —
+  `ff::typifier::gaff::tests::candidate_forcefield_defines_without_conflict` (GAFF, GAFF2);
+  memoised per set as `GaffTypifier`'s library (moved from `ff::forcefield::gaff` by
+  system-forcefield-08)
+- `UFFTypifier::new` → `try_new` — `ff::typifier::uff::tests::new_defines_without_conflict`
+
+Anything taking runtime input (readers, `from_xml_str`, `GaffTypifier::r#match`) returns
+`Err`. Checked after system-forcefield-07: the symbols and test paths above are
+unchanged; `mmff::embedded::force_field` is now called once per variant, memoised in a
+`OnceLock<Arc<…>>` (`typifier/mmff/embedded.rs:40-41`). 08 moved the candidate builder
+and rewrote the GAFF line above.
+
+## 2026-09-25 — GROMACS force-field files model a molecule, not directives (routed `/mol:refactor`)
+
+Both GROMACS force-field files write/read bonded rows by atom index into an `[ atoms ]`
+table (`readers/gromacs.rs:382-614`, `writers/gromacs.rs:77-236`) instead of the
+force-field directives `[ bondtypes ]` / `[ angletypes ]` / `[ dihedraltypes ]` /
+`[ pairtypes ]` keyed by type name. Costs left in place until the rewrite
+(system-forcefield-02):
+
+- the writer invents per-atom `[ atoms ]` fields: `resnr 0`, `residu LIG`, `cgnr 1`
+  (`writers/gromacs.rs:92-95`), and `charge` / `mass` `0.0` when the atom type has none
+  (`:96-100`);
+- lost reading capability: a `.top` whose bonded rows give different per-instance
+  parameters to instances sharing one type tuple now fails with `TypeConflict`;
+- the reader merges all `[ atoms ]` sections across molecule types into one list.
+
+## 2026-09-25 — prmtop impropers still keep the first parameter set per name (routed `/mol:fix`)
+
+`readers/prmtop.rs` (~:544, `terms.values().next()`) reduces two improper rows that
+share a name but carry different parameter sets to one, silently. Whether to reject or
+sum is unspecified; bonds/angles/dihedrals already refuse (system-forcefield-02).
+
+## 2026-09-25 — defining a type scans its style linearly
+
+The single insert path checks the conflict rule by a linear scan of the style's types,
+so building a table is O(n²) in its row count (debug build: OPLS 0.85 s, GAFF+GAFF2
+0.98 s, MMFF 0.66 s, UFF 0.42 s, including ~0.4 s cargo overhead). A name index on
+`Style` is the follow-up if a larger table or a hot path appears.
+
+
+## 2026-09-25 — OPLS strict typing returned Ok for partly typed molecules (fixed same day)
+
+Strict mode (`NoMatch::Error`) fails only for a bonded term whose endpoints are all
+typed and that no bonded type matches. Atoms no def matches stay untyped
+(`typifier/opls/typing.rs:242-243`: "strict-mode failure is the consumer's policy" — no
+consumer applies it), and `typifier/opls/assign.rs` skips every bond/angle/dihedral with
+an untyped endpoint before looking at the policy (`:355-357`, `:377-380`, `:397-404`).
+`typify_labeled_graph` (`opls/mod.rs:163-170`) never checks coverage. Seen by the
+system-forcefield-04 A/B harness: strict typing of 1,3-butadiene, caffeine and
+N-methylacetamide is `Ok`, then compiling fails (`bonds block missing "type" column` /
+`unknown bond type ''`). Fixed: strict `typify_labeled_graph` returns `Err` naming every
+untyped atom (`atom {i} ({element})`), and the bonded pass refuses an untyped endpoint
+under `NoMatch::Error`; tests in `opls/mod.rs` and `opls/assign.rs`. Until the bond-order
+entry below is fixed, strict OPLS refuses every molecule with a C=C or C=O bond. system-forcefield-07's
+`Match::write_onto` checks shape, not coverage, so it does not catch this; 07's OPLS
+`r#match` must carry the fix, not the skip.
+
+## 2026-09-25 — OPLS defs assume bond-order-agnostic matching (routed `/mol:spec`)
+
+The embedded OPLS defs (`ff/params/oplsaa.rs`, same text as molpy's
+`data/forcefield/oplsaa.xml`, from foyer) write neighbours as `[C;X3](C)(H)H`
+(opls_143), `[C;X3]([O;X1])[N;X3]` (opls_235): foyer's graph matching ignores bond order.
+In molrs SMARTS an unmarked bond is single-or-aromatic (`perceive/smarts/ast.rs:290-291`,
+`:322`), so every def whose pattern crosses a `=` bond never matches: alkene and carbonyl
+carbons stay untyped, and the miss cascades (N-methylacetamide's amide N becomes amine
+`opls_901`). Fix needs its own spec and A/B (it changes assigned types): compile OPLS defs
+with an any-order unmarked bond, or rewrite the defs with `~`/`=`. On the backmap
+critical path (the methacrylate monomer has C=C and C=O).
+
+## 2026-09-25 — the `ParamSource` bidirectional gate test does not exist (routed `/mol:fix`)
+
+`ff/potential/registry.rs` cited `tests/ff/potential/param_source_gate.rs` and CLAUDE.md
+§ Potential System said "a bidirectional gate makes it a test"; no such test exists
+anywhere. system-forcefield-04 corrected both texts. Owed: a unit test in
+`ff/potential/registry.rs` asserting, per registered kernel, that a `TypeRows` kernel
+reads its type rows and a `PerInstance` kernel reads frame columns only.
+
+## 2026-09-25 — data-file coefficients refuse explicit cross pairs (routed `/mol:spec`)
+
+Since system-forcefield-06, `LammpsFfWriter::write_data_coeffs_str` refuses a force
+field holding an explicit cross pair between two used atom types ("a data-file Pair
+Coeffs section holds self pairs only"); before, it dropped the pair silently. The
+`*.ff` include writes it. The complete answer is a `PairIJ Coeffs` section in the data
+file when explicit cross pairs exist; owed as its own spec.
+
+## 2026-09-25 — type rows on `PerInstance` styles are export and conflict records
+
+After system-forcefield-07 every typifier defines, in its output force field, one type
+per stamped name. For MMFF and UFF (`ParamSource::PerInstance`) the kernels read the
+per-instance parameters stamped on the frame; the type rows under those styles are never
+compiled. They exist so the output names every parameter set used (export, merge) and so
+two terms that share a name with different parameters are a `TypeConflict`. A label must
+therefore carry every input that changes the parameters (MMFF `stbn_type` is
+`{sbt}_{i}_{j}_{k}` in the angle's own node order; UFF labels carry bond orders after
+`@`).
+
+## 2026-09-25 — typing is `Typing<T>`; typifiers only match
+
+`Typifier` requires exactly `r#match(&self, &mut Atomistic) -> Result<Match, String>` and
+`library(&self) -> &ForceField`. `Typing<T>` owns the typifier and the output force
+field (seeded by `library().empty_like()`); `typify(&mut self, &Atomistic)` matches a
+copy and runs `Match::write_onto` (validate → stamp → define). No typifier overrides
+typing. UFF bond/angle parameters are computed on the label's canonical orientation, so
+a reversed term may differ from 0.14 by ≤1 ulp.
+
+## 2026-09-25 — the estimator reads all-caps OPLS classes as element symbols (routed `/mol:debug`, same chain)
+
+`ff/typifier/estimate/mod.rs:396-403` (`element_from_token`) treats a token whose second
+letter is upper case as a "title-cased" element symbol and `Element::from_str` accepts it
+case-insensitively, so OPLS classes `CA CM CN CO CR CS CU NA NB NO OS HO HS` resolve to
+Ca/Cm/…/Hs and are returned in their raw spelling (never equal to a mass-derived
+symbol). Row classes never sit in the mass map, so the estimator refuses every
+element-compatible substitution at those slots (117/300 bond, 492/932 angle,
+510/1048 dihedral OPLS rows involved): worse analogs, empirical fallbacks, and
+dihedrals dropping to the `no_torsion` placeholder. GAFF (lower-case types, mass-derived
+elements) is unaffected. Fix: element of a class from its member types' mass, with a
+corrected true-title-case token fallback that returns `Element::symbol()`.
+
+## 2026-09-25 — typifier binding surfaces (system-forcefield-09)
+
+- Rust `Typing<XTypifier>` ↔ Python/wasm `XTypifier`: the binding class holds the
+  `Typing` (Python: `Typing<Box<dyn Typifier + Send + Sync>>`; a Python subclass holds
+  its own output `ForceField`, seeded by `library().empty_like()`, and runs the Rust
+  `Match::write_onto`). A Python subclass that defines `typify` is a `TypeError` at class
+  creation; native classes are construct-only.
+- wasm exposes no `forcefield()` / `library()` (documented no-FF-handle surface);
+  `toPotentials` compiles the typing output, so it must follow `typify`.
+- Class-set asymmetry: Python binds MMFF94, MMFF94S, OPLSAA, ATD (not UFF); wasm binds
+  UFF, MMFF94, MMFF94S (not OPLSAA, ATD).
+- Routed to the molpy chain: `molpy/src/molpy/typifier/base.py:99` defines `typify`
+  (now a `TypeError` against molrs 0.15), and `base.py:115` passes the caller's graph,
+  not a copy, to `match`, so molpy typing mutates its input.

@@ -8,8 +8,8 @@
 //! # The provenance convention
 //!
 //! [`Provenance::write_onto`] writes four keys onto an estimated term's
-//! [`Params`], and every consumer (the OPLS assign seam, the GAFF force-field
-//! builder, the parmchk2 oracle test) reads the same four:
+//! [`Params`], and every consumer (the OPLS assign seam, the GAFF typifier,
+//! the parmchk2 oracle test) reads the same four:
 //!
 //! | key | type | meaning |
 //! |---|---|---|
@@ -190,7 +190,7 @@ impl Estimate {
     /// failed to match the term against its own tables, so from its point of view
     /// the generic row is a fallback and it needs to be told so. A caller that
     /// reads the parameter table itself
-    /// ([`forcefield::gaff`](crate::ff::forcefield::gaff)) matches on [`Estimate`]
+    /// ([`typifier::gaff`](crate::ff::typifier::gaff)) matches on [`Estimate`]
     /// instead and keeps the distinction, which is what the parmchk2 oracle
     /// demands of it.
     pub fn into_params(self) -> Params {

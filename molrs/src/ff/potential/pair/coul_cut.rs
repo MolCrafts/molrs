@@ -325,7 +325,7 @@ impl PairDriven for PairCoulCut {
 /// `dielectric` is a kernel answering a question only the force field can answer: it
 /// computes plausible numbers from constants nobody handed it, and every energy test
 /// still passes. (`coulomb14scale` is projected out of the force field's
-/// `SpecialBonds` by `Style::to_potential`, so through the documented route it is
+/// `SpecialBonds` by `PotentialCompiler::compile`, so through the documented route it is
 /// always present — which is exactly why defaulting it here would be invisible.)
 fn required(style_params: &Params, key: &str) -> Result<F, String> {
     style_params.get(key).map(|v| v as F).ok_or_else(|| {
@@ -351,7 +351,7 @@ fn required(style_params: &Params, key: &str) -> Result<F, String> {
 /// |---|---|---|
 /// | `coulomb` | Coulomb constant `k` | **`Err`** — the force field's to choose |
 /// | `dielectric` | dielectric `D` | **`Err`** — a property of the medium, not of the kernel |
-/// | `coulomb14scale` | 1-4 weight | **`Err`** — projected from `special_bonds` by `Style::to_potential` |
+/// | `coulomb14scale` | 1-4 weight | **`Err`** — projected from `special_bonds` by `PotentialCompiler::compile` |
 /// | `delta` | buffering distance δ (Å) | `0.0` — *semantic* default: no buffer, the textbook Coulomb |
 /// | `cutoff` | cutoff (Å) | `∞` — *semantic* default: do not truncate |
 ///

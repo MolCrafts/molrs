@@ -52,7 +52,7 @@ async `init()` function that must be awaited before calling the API.
 ```js
 const typifier = new UFFTypifier();                 // or MMFF94Typifier / MMFF94STypifier
 const typed    = typifier.typify(frame);
-const pots     = typifier.toPotentials(typed);      // no .ff()
+const pots     = typifier.toPotentials(typed);      // compiles the typed output; no forcefield() handle
 const report   = new LBFGS(pots).run(typed, 200);   // Optimizer(pots).run(frame, n_steps)
 // optional: new LBFGS(pots, neighborList).run(typed, 200)
 // no neighborList → internal bruteforce topology pair list (exclude 1-2/1-3)

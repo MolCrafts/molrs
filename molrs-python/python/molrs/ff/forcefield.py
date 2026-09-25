@@ -7,17 +7,20 @@ state. There is no parallel Python storage — mirroring how :mod:`molrs.frame`'
 ``Frame``/``Block`` view the Rust column store, and how
 :class:`molpy.core.entity.Entity` views a molrs world.
 
-A type's matching label (the key a Frame's ``type`` column carries) is the
-``name`` keyword when given, else the endpoint-derived composite (``"CT-CT"``) —
-following the molpy convention where the typifier writes ``type.name`` into the
-frame. Parameters flow as keyword args by convention: numeric ones (``k``,
-``r0``, the numeric type ``id``) live in the float bag; string metadata
-(``element``, …) is carried as string params. Both round-trip through ``params``.
+A force field is built through three primitives, spelled as in Rust:
+``ForceField.def_style(category, name, params=None)`` returns the category's
+style handle, and ``Style.def_type(name, params=None)`` (endpoints parsed from
+the name, ``"CT-CT"``) or ``Style.def_type_at(name, endpoints, params=None)``
+(endpoints given, for names outside that grammar) define a type and return the
+same handle for chaining. A type's name is the key a Frame's ``type`` column
+carries. ``params`` is a dict: numbers (``k``, ``r0``, the numeric type ``id``)
+go to the float bag, strings (``element``, ``mixing``, …) to the string params.
+Both round-trip through ``params``.
 """
 
 from __future__ import annotations
 
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any
 
 from .._lib import ForceField as _RsForceField
 from .._lib import read_forcefield_xml as _rs_read_forcefield_xml
@@ -39,25 +42,13 @@ from .._lib import write_gromacs_top_ff_str as _rs_write_gromacs_top_ff_str
 from .._lib import write_forcefield_xml as _rs_write_forcefield_xml
 from .._lib import write_forcefield_xml_str as _rs_write_forcefield_xml_str
 
-# def_style returns a bound handle of the SAME Style subclass it was given, so
-# `ff.def_style(AtomStyle(...)).def_type(...)` keeps the subclass-specific def_type.
-_StyleT = TypeVar("_StyleT", bound="Style")
+if TYPE_CHECKING:
+    from ..frame import Frame
 
 
 def _name_of(x: Any) -> str:
     """The atom-type name of ``x`` (a :class:`Type`/ref or a bare string)."""
     return x.name if hasattr(x, "name") else str(x)
-
-
-def _numeric(params: dict[str, Any]) -> dict[str, float]:
-    """Keep only the float-representable params the molrs ``Params`` bag holds."""
-    out: dict[str, float] = {}
-    for k, v in params.items():
-        if isinstance(v, bool):
-            continue
-        if isinstance(v, (int, float)):
-            out[k] = float(v)
-    return out
 
 
 # ===================================================================
@@ -314,14 +305,9 @@ class Style:
     _category: str = ""
     _type_cls: type[Type] = Type
 
-    def __init__(self, ff: "ForceField | None" = None, name: str = "") -> None:
-        # ``ff is None`` is an *unbound* style marker (e.g. ``BondHarmonicStyle()``)
-        # passed to :meth:`ForceField.def_style`, which binds and registers it.
+    def __init__(self, ff: "ForceField", name: str) -> None:
         self._ff = ff
-        self._name = name or self._name_default()
-
-    def _name_default(self) -> str:
-        return ""
+        self._name = name
 
     @property
     def name(self) -> str:
@@ -347,27 +333,25 @@ class Style:
                 return t
         return None
 
-    def _finish_type(
-        self, default_label: str, name: str, params: dict[str, Any]
-    ) -> Type:
-        """Apply the optional ``name`` keyword as the type's matching label and
-        persist any string params (e.g. ``element``).
+    def def_type(self, name: str, params: dict[str, Any] | None = None) -> Style:
+        """Define a type whose endpoints are parsed from ``name`` (``"CT-OH"``;
+        ``"A::B"`` when a label contains ``-``) and return this style for
+        chaining. A malformed name raises ``ValueError``."""
+        self._ff._def_type(self._category, self._name, name, params)
+        return self
 
-        The matching label (the key a Frame's ``type`` column carries) is the
-        ``name`` keyword when given, else the endpoint-derived ``default_label``.
-        ``name`` is the molpy convention — the typifier writes ``type.name`` into
-        the frame; numeric ``id`` flows through as an ordinary numeric param, and
-        string metadata (``element``, …) is carried as string params.
-        """
-        label = name or default_label
-        if label != default_label:
-            _RsForceField.rename_type(
-                self._ff, self._category, self._name, default_label, label
-            )
-        for k, v in params.items():
-            if isinstance(v, str):
-                self._ff.set_type_str_param(self._category, self._name, label, k, v)
-        return self._type_cls(self._ff, self._name, label)
+    def def_type_at(
+        self,
+        name: str,
+        endpoints: list[str],
+        params: dict[str, Any] | None = None,
+    ) -> Style:
+        """Define a type named ``name`` with the given ``endpoints`` (for names
+        outside the endpoint grammar, such as MMFF's ``0_1_5``) and return this
+        style for chaining. An endpoint count that does not match the category
+        raises ``ValueError``."""
+        self._ff._def_type_at(self._category, self._name, name, list(endpoints), params)
+        return self
 
     def __hash__(self) -> int:
         return hash((self._category, self._name))
@@ -387,118 +371,37 @@ class AtomStyle(Style):
     _category = "atom"
     _type_cls = AtomType
 
-    def def_type(self, name: str, **params: Any) -> AtomType:
-        self._ff.def_atomtype(self._name, name, _numeric(params))
-        for k, v in params.items():
-            if isinstance(v, str):
-                self._ff.set_type_str_param(self._category, self._name, name, k, v)
-        return AtomType(self._ff, self._name, name)
-
 
 class BondStyle(Style):
     _category = "bond"
     _type_cls = BondType
-
-    def def_type(self, itom: Any, jtom: Any, name: str = "", **params: Any) -> BondType:
-        i, j = _name_of(itom), _name_of(jtom)
-        self._ff.def_bondtype(self._name, i, j, _numeric(params))
-        return self._finish_type(f"{i}-{j}", name, params)
 
 
 class AngleStyle(Style):
     _category = "angle"
     _type_cls = AngleType
 
-    def def_type(
-        self, itom: Any, jtom: Any, ktom: Any, name: str = "", **params: Any
-    ) -> AngleType:
-        i, j, k = _name_of(itom), _name_of(jtom), _name_of(ktom)
-        self._ff.def_angletype(self._name, i, j, k, _numeric(params))
-        return self._finish_type(f"{i}-{j}-{k}", name, params)
-
 
 class DihedralStyle(Style):
     _category = "dihedral"
     _type_cls = DihedralType
-
-    def def_type(
-        self, itom: Any, jtom: Any, ktom: Any, ltom: Any, name: str = "", **params: Any
-    ) -> DihedralType:
-        i, j, k, length = (
-            _name_of(itom),
-            _name_of(jtom),
-            _name_of(ktom),
-            _name_of(ltom),
-        )
-        self._ff.def_dihedraltype(self._name, i, j, k, length, _numeric(params))
-        return self._finish_type(f"{i}-{j}-{k}-{length}", name, params)
 
 
 class ImproperStyle(Style):
     _category = "improper"
     _type_cls = ImproperType
 
-    def def_type(
-        self, itom: Any, jtom: Any, ktom: Any, ltom: Any, name: str = "", **params: Any
-    ) -> ImproperType:
-        i, j, k, length = (
-            _name_of(itom),
-            _name_of(jtom),
-            _name_of(ktom),
-            _name_of(ltom),
-        )
-        self._ff.def_impropertype(self._name, i, j, k, length, _numeric(params))
-        return self._finish_type(f"{i}-{j}-{k}-{length}", name, params)
-
 
 class PairStyle(Style):
     _category = "pair"
     _type_cls = PairType
-
-    def def_type(
-        self, itom: Any, jtom: Any = None, name: str = "", **params: Any
-    ) -> PairType:
-        i = _name_of(itom)
-        j = i if jtom is None else _name_of(jtom)
-        self._ff.def_pairtype(self._name, i, j, _numeric(params))
-        return self._finish_type(f"{i}-{j}" if i != j else i, name, params)
-
-
-# ===================================================================
-#        Named specialized styles/types (fixed kernel name)
-# ===================================================================
-# Thin subclasses that pin the kernel/style name, so a reader can write
-# ``ff.def_style(BondHarmonicStyle())`` instead of ``ff.def_bondstyle("harmonic")``.
-# The energy math lives in the molrs kernels keyed by these names; the combined
-# lj/coul pair styles use their LAMMPS names for I/O round-trips (molrs evaluates
-# the separable lj/cut + coul kernels).
-
-
-class BondHarmonicStyle(BondStyle):
-    def _name_default(self) -> str:
-        return "harmonic"
-
-
-class AngleHarmonicStyle(AngleStyle):
-    def _name_default(self) -> str:
-        return "harmonic"
-
-
-class DihedralOPLSStyle(DihedralStyle):
-    def _name_default(self) -> str:
-        return "opls"
-
-
-class PairCoulLongStyle(PairStyle):
-    def _name_default(self) -> str:
-        return "coul/long"
 
 
 # ===================================================================
 #                          ForceField
 # ===================================================================
 
-# Style subclass per molrs category + the chainable ``def_*style`` builder name.
+# Style handle class per molrs category, returned by ``ForceField.def_style``.
 _STYLE_CLASSES: dict[str, type[Style]] = {
     "atom": AtomStyle,
     "bond": BondStyle,
@@ -520,148 +423,35 @@ _TYPE_CLASSES: dict[str, type[Type]] = {
 class ForceField(_RsForceField):
     """A molrs force field with the chainable, object-style builder layer.
 
-    Subclasses the Rust :class:`molrs.ForceField` (inheriting ``def_type`` /
-    ``types`` / ``to_potentials``) and adds ``def_*style`` factories that return
-    chainable :class:`Style` handles plus style/type query helpers.
+    Subclasses the Rust :class:`molrs.ForceField` (inheriting ``types`` /
+    ``style_names`` / …); :meth:`def_style` returns a chainable
+    :class:`Style` handle whose ``def_type`` / ``def_type_at`` define types.
+    Style/type query helpers sit on top.
     """
-
-    def __init__(self, name: str = "forcefield", units: str = "real") -> None:
-        # The Rust ``__new__`` already built the inner force field from ``name``.
-        self.units = units
 
     # ---- raw <-> Python conversion (so all FF-returning APIs yield this type) ----
     @classmethod
     def _from_raw(cls, raw: _RsForceField) -> "ForceField":
-        """Re-wrap a bare Rust force field as a :class:`ForceField` by replaying
-        its styles and types (used by readers / ``subset`` which return the core
-        type).
+        """Re-wrap a bare Rust force field (what the readers return) as a
+        :class:`ForceField`: an exact copy, through the Rust ``merge``.
 
-        Numeric and string params are both preserved (``_replay_type``) so OPLS
-        ``class_`` / ``type_`` / ``element`` metadata survives the wrap.
+        The new force field declares nothing, so it adopts ``raw``'s declared
+        ``units`` and ``special_bonds``; every style keeps its full params
+        (``cutoff``, ``mixing``, …) and every type its endpoints and params.
         """
-        ff = cls(name=raw.name)
-        ff.set_special_bonds(
-            list(raw.special_bonds_lj),
-            list(raw.special_bonds_coul),
-        )
-        for cat_name in raw.style_names():
-            category, sname = cat_name.split(":", 1)
-            if category == "pair":
-                _RsForceField.def_pairstyle(
-                    ff, sname, raw.style_params(category, sname)
-                )
-            else:
-                ff._ensure_style(category, sname)
-            for tname, params in raw.types(category, sname):
-                endpoints = raw.type_endpoints(category, sname, tname)
-                ff._replay_type(
-                    category, sname, tname, params, endpoints=endpoints
-                )
-        return ff
+        return cls(raw.name).merge(raw)
 
-    def subset(self, frame: Any) -> "ForceField":
-        return ForceField._from_raw(_RsForceField.subset(self, frame))
-
-    def map_type(self, frame: Any) -> Any:
-        """Stamp ``type_id`` on Frame blocks from existing ``type`` labels.
-
-        Frame is the source of truth: this method does **not** invent types.
-        For each of ``atoms`` / ``bonds`` / ``angles`` / ``dihedrals`` /
-        ``impropers``:
-
-        * if ``type`` is present → write ``type_id`` (1-based; pure-integer
-          labels use identity ``id = int(label)``, else dense ids in numeric-
-          aware sort order of unique labels);
-        * if only ``type_id`` is present → leave as-is;
-        * if neither is present on ``atoms`` → ``ValueError`` (incomplete
-          Frame). Connectivity blocks without either column are skipped.
-
-        Returns:
-            The same ``frame`` (mutated in place).
+    # ---- the style primitive (types are defined on the returned handle) ----
+    def def_style(
+        self, category: str, name: str, params: dict[str, Any] | None = None
+    ) -> Style:
+        """Define the ``category`` style ``name`` (or keep the existing one) and
+        return its handle (:class:`AtomStyle` … :class:`PairStyle`). ``params``
+        (numbers and strings, e.g. ``{"cutoff": 10.0, "mixing": "geometric"}``)
+        apply when the style is new. An unknown category raises ``ValueError``.
         """
-        import numpy as np
-
-        def _is_int_token(value: object) -> bool:
-            s = str(value).strip()
-            if not s:
-                return False
-            if s[0] in "+-":
-                s = s[1:]
-            return s.isdigit()
-
-        def _sorted_names(names: list[str]) -> list[str]:
-            if names and all(_is_int_token(n) for n in names):
-                return sorted(names, key=lambda n: int(n))
-            return sorted(names)
-
-        def _name_to_id(names: list[str]) -> dict[str, int]:
-            unique = list(dict.fromkeys(names))
-            if unique and all(_is_int_token(n) for n in unique):
-                return {n: int(n) for n in unique}
-            ordered = _sorted_names(unique)
-            return {n: i + 1 for i, n in enumerate(ordered)}
-
-        atoms_ok = False
-        for block_name in ("atoms", "bonds", "angles", "dihedrals", "impropers"):
-            if block_name not in frame:
-                continue
-            block = frame[block_name]
-            if getattr(block, "nrows", 0) == 0:
-                continue
-            has_type = "type" in block
-            has_tid = "type_id" in block
-            if not has_type and not has_tid:
-                if block_name == "atoms":
-                    raise ValueError(
-                        "frame['atoms'] has neither 'type' nor 'type_id'; "
-                        "assign types (e.g. typify) before ForceField.map_type"
-                    )
-                continue
-            if has_type:
-                types = [str(t) for t in list(block["type"])]
-                mapping = _name_to_id(types)
-                block["type_id"] = np.asarray(
-                    [mapping[t] for t in types], dtype=np.uint32
-                )
-            if block_name == "atoms":
-                atoms_ok = True
-        if "atoms" in frame and frame["atoms"].nrows > 0 and not atoms_ok:
-            # atoms present but skipped somehow
-            if "type" not in frame["atoms"] and "type_id" not in frame["atoms"]:
-                raise ValueError(
-                    "frame['atoms'] has neither 'type' nor 'type_id'; "
-                    "assign types before ForceField.map_type"
-                )
-        return frame
-
-    # ---- chainable style factories (ensure-exists, return a handle) ----
-    def def_atomstyle(self, name: str) -> AtomStyle:
-        super().def_atomstyle(name)
-        return AtomStyle(self, name)
-
-    def def_bondstyle(self, name: str) -> BondStyle:
-        super().def_bondstyle(name)
-        return BondStyle(self, name)
-
-    def def_anglestyle(self, name: str) -> AngleStyle:
-        super().def_anglestyle(name)
-        return AngleStyle(self, name)
-
-    def def_dihedralstyle(self, name: str) -> DihedralStyle:
-        super().def_dihedralstyle(name)
-        return DihedralStyle(self, name)
-
-    def def_improperstyle(self, name: str) -> ImproperStyle:
-        super().def_improperstyle(name)
-        return ImproperStyle(self, name)
-
-    def def_pairstyle(
-        self, name: str, params: dict[str, Any] | None = None, **kwparams: Any
-    ) -> PairStyle:
-        merged = dict(params or {})
-        merged.update(kwparams)
-        super().def_pairstyle(name, _numeric(merged))
-        return PairStyle(self, name)
+        super().def_style(category, name, params)
+        return _STYLE_CLASSES[category](self, name)
 
     # ---- style / type queries ----
     def _styles(self) -> list[Style]:
@@ -721,78 +511,7 @@ class ForceField(_RsForceField):
                 out.extend(t for t in s.types if isinstance(t, type_cls))
         return out
 
-    # ---- def_style(instance): register an (unbound) Style, return bound ----
-    def _ensure_style(self, category: str, name: str) -> None:
-        if category == "pair":
-            _RsForceField.def_pairstyle(self, name, {})
-        else:
-            getattr(_RsForceField, f"def_{category}style")(self, name)
-
-    def def_style(self, style: _StyleT) -> _StyleT:
-        """Register ``style`` (an unbound :class:`Style`, e.g.
-        ``BondHarmonicStyle()``) and return a bound handle of the same class."""
-        self._ensure_style(style.category, style.name)
-        bound = object.__new__(type(style))
-        bound._ff = self
-        bound._name = style.name
-        return bound
-
-    # ---- merge / rename / remove (molpy signatures: by Style subclass) ----
-    def _replay_type(
-        self,
-        category: str,
-        style: str,
-        name: str,
-        params: dict[str, Any],
-        endpoints: list[str] | None = None,
-    ) -> None:
-        """Write one type, replacing any prior definition of the same name.
-
-        Overlay merges (e.g. CL&P onto OPLS) otherwise accumulate duplicate
-        names: ``def_type`` always appends, while ``set_type_str_param`` updates
-        the *first* match — so a class-wildcard ``NA`` would swallow the
-        overlay's string metadata and leave a second, charge-only ``NA``.
-        Removing first keeps one coherent type with numeric + string params.
-
-        Pair (and other multi-endpoint) types whose labels contain ``-`` must
-        be rebuilt from *endpoints*, not by dash-splitting *name* — otherwise
-        ``tip3p-O`` becomes a spurious tip3p×O cross-pair.
-        """
-        floats = {
-            k: v
-            for k, v in params.items()
-            if isinstance(v, (int, float)) and not isinstance(v, bool)
-        }
-        _RsForceField.remove_type(self, category, style, name)
-        if category == "pair" and endpoints:
-            if len(endpoints) >= 2 and endpoints[0] == endpoints[1]:
-                _RsForceField.def_pairtype(self, style, endpoints[0], None, floats)
-            elif len(endpoints) >= 2:
-                _RsForceField.def_pairtype(
-                    self, style, endpoints[0], endpoints[1], floats
-                )
-            else:
-                _RsForceField.def_pairtype(self, style, endpoints[0], None, floats)
-        elif category == "atom":
-            _RsForceField.def_atomtype(self, style, name, floats)
-        else:
-            _RsForceField.def_type(self, category, style, name, floats)
-        for k, v in params.items():
-            if isinstance(v, str):
-                self.set_type_str_param(category, style, name, k, v)
-
-    def merge(self, other: "ForceField") -> "ForceField":
-        """Merge ``other``'s styles and types into this force field (in place)."""
-        for cat_name in other.style_names():
-            category, sname = cat_name.split(":", 1)
-            self._ensure_style(category, sname)
-            for tname, params in other.types(category, sname):
-                endpoints = other.type_endpoints(category, sname, tname)
-                self._replay_type(
-                    category, sname, tname, params, endpoints=endpoints
-                )
-        return self
-
+    # ---- rename / remove (molpy signatures: by Style subclass) ----
     def rename_type(self, style_cls: Any, old: str, new: str) -> int:
         """Rename type ``old`` -> ``new`` across all styles of ``style_cls``'s
         category (molpy signature)."""
@@ -845,18 +564,15 @@ def read_amber_prmtop_ff(path: str) -> ForceField:
 
     Structure/connectivity is :func:`molrs.io.read_amber_prmtop`. Harmonic
     form map (``k = 2·K``), Fourier dihedrals, and LJ A/B → σ/ε run in native
-    Rust. Result is pure molrs store units; ``units`` is set to ``\"real\"``.
+    Rust. Result is pure molrs store units; the reader declares ``units``
+    ``"real"``.
     """
-    ff = ForceField._from_raw(_rs_read_amber_prmtop_ff(path))
-    ff.units = "real"
-    return ff
+    return ForceField._from_raw(_rs_read_amber_prmtop_ff(path))
 
 
 def read_amber_prmtop_ff_str(text: str) -> ForceField:
     """Parse AMBER prmtop force-field tables from a string."""
-    ff = ForceField._from_raw(_rs_read_amber_prmtop_ff_str(text))
-    ff.units = "real"
-    return ff
+    return ForceField._from_raw(_rs_read_amber_prmtop_ff_str(text))
 
 
 def read_gromacs_top_ff(path: str, *, include: bool = False) -> ForceField:
@@ -928,102 +644,91 @@ def read_lammps_data_coeffs(
 def write_lammps_forcefield(
     path: str,
     forcefield: ForceField,
+    frame: Frame,
     *,
     precision: int = 6,
     skip_pair_style: bool = False,
     skip_units: bool = False,
     units: str = "real",
-    atom_types: set[str] | None = None,
-    bond_types: set[str] | None = None,
-    angle_types: set[str] | None = None,
-    dihedral_types: set[str] | None = None,
-    improper_types: set[str] | None = None,
-    type_ids: dict[str, int] | None = None,
 ) -> None:
-    """Write a force field to a LAMMPS ``*.ff`` include (AMBER/GAFF flavour).
+    """Write the coefficients ``frame`` uses to a LAMMPS ``*.ff`` include.
+
+    Coefficient writing is keyed by the system's type labels: every
+    ``atoms`` / ``bonds`` / ``angles`` / ``dihedrals`` / ``impropers`` label of
+    ``frame`` is looked up in ``forcefield`` (bond, angle and dihedral labels in
+    either orientation, impropers exactly) and written in label id order;
+    force-field types no label uses are not written.
 
     Inverse of :func:`read_lammps_forcefield`: molrs store → LAMMPS file units
     (``K = k/2``, angles in degrees). Energy/length for ``metal``/``lj`` go
     through the lj reduced hub in native Rust; this is a thin façade.
 
     Args:
+        path: Destination path for the include.
+        forcefield: Force field in molrs store units.
+        frame: The system whose type labels select the coefficients.
+        precision: Decimal places for floating coefficients.
+        skip_pair_style: Omit ``pair_style`` and ``special_bonds``.
+        skip_units: Omit the ``units`` line.
         units: LAMMPS ``units`` style for the written file (``real``, ``metal``,
             ``lj``). Default ``real``.
-        type_ids: Optional name→id map (unused for ``*.ff`` command form).
+
+    Raises:
+        ValueError: A label of ``frame`` has no type in ``forcefield`` (the
+            message names the block and the label), or an unsupported style
+            holds a used type.
     """
     _rs_write_lammps_forcefield(
         path,
         forcefield,
+        frame,
         precision=precision,
         skip_pair_style=skip_pair_style,
         skip_units=skip_units,
         units=units,
-        atom_types=atom_types,
-        bond_types=bond_types,
-        angle_types=angle_types,
-        dihedral_types=dihedral_types,
-        improper_types=improper_types,
-        type_ids=type_ids,
     )
 
 
 def write_lammps_forcefield_str(
     forcefield: ForceField,
+    frame: Frame,
     *,
     precision: int = 6,
     skip_pair_style: bool = False,
     skip_units: bool = False,
     units: str = "real",
-    atom_types: set[str] | None = None,
-    bond_types: set[str] | None = None,
-    angle_types: set[str] | None = None,
-    dihedral_types: set[str] | None = None,
-    improper_types: set[str] | None = None,
-    type_ids: dict[str, int] | None = None,
 ) -> str:
-    """Serialize a force field to a LAMMPS ``*.ff`` include string."""
+    """Serialize the coefficients ``frame`` uses to a LAMMPS ``*.ff`` string.
+
+    Same labels, format and errors as :func:`write_lammps_forcefield`.
+    """
     return _rs_write_lammps_forcefield_str(
         forcefield,
+        frame,
         precision=precision,
         skip_pair_style=skip_pair_style,
         skip_units=skip_units,
         units=units,
-        atom_types=atom_types,
-        bond_types=bond_types,
-        angle_types=angle_types,
-        dihedral_types=dihedral_types,
-        improper_types=improper_types,
-        type_ids=type_ids,
     )
 
 
 def write_lammps_data_coeffs(
     forcefield: ForceField,
+    frame: Frame,
     *,
     precision: int = 6,
     units: str = "real",
-    atom_types: set[str] | None = None,
-    bond_types: set[str] | None = None,
-    angle_types: set[str] | None = None,
-    dihedral_types: set[str] | None = None,
-    improper_types: set[str] | None = None,
-    type_ids: dict[str, int] | None = None,
 ) -> str:
-    """Serialize a force field to LAMMPS data-file ``* Coeffs`` section text.
+    """Serialize the coefficients ``frame`` uses to data-file ``* Coeffs`` text.
 
-    Same form map / units conversion as :func:`write_lammps_forcefield`, but
-    emits ``Pair Coeffs`` / ``Bond Coeffs`` / … with integer type ids. Pass
-    ``type_ids`` from the Frame (via :meth:`ForceField.map_type` + inventory)
-    when type names are non-integer labels.
+    Same labels, form map and units conversion as
+    :func:`write_lammps_forcefield`, but emits ``Pair Coeffs`` / ``Bond Coeffs``
+    / … whose integer ids are ``frame``'s type-label ids. ``Pair Coeffs`` holds
+    self pairs only; a used explicit cross pair raises ``ValueError``.
     """
     return _rs_write_lammps_data_coeffs(
         forcefield,
+        frame,
         precision=precision,
         units=units,
-        atom_types=atom_types,
-        bond_types=bond_types,
-        angle_types=angle_types,
-        dihedral_types=dihedral_types,
-        improper_types=improper_types,
-        type_ids=type_ids,
     )

@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
-from .._lib import NeighborList, Potentials, VerletSkin
+from .._lib import ForceField, NeighborList, PotentialCompiler, Potentials, VerletSkin
 from .._lib import md as _md
 
 _NEIGHBOR_DEFAULTS = {
@@ -85,7 +85,7 @@ class MD:
 
     def set_forcefield(self, forcefield: object) -> MD:
         """Attach a ``ForceField``; each :meth:`run` compiles it per frame."""
-        if not hasattr(forcefield, "to_potentials"):
+        if not isinstance(forcefield, ForceField):
             raise TypeError(
                 f"set_forcefield expects a ForceField, got {type(forcefield).__name__}"
             )
@@ -107,7 +107,7 @@ class MD:
         if isinstance(potential, Potentials) and len(potential) == 0:
             raise ValueError(
                 "Potentials is still deferred (len==0); compile with "
-                "ff.to_potentials(frame) first"
+                "PotentialCompiler(ff).compile(frame) first"
             )
         self._potential = potential
         self._forcefield = None
@@ -197,7 +197,7 @@ class MD:
 
         First of: ``set_neighbors(cutoff=…)``, the largest style-level
         ``cutoff`` the force field declares, a prebuilt skin's own cutoff.
-        A neighbour-driven pair style must declare one — ``to_typed_potentials``
+        A neighbour-driven pair style must declare one — ``compile_typed``
         refuses it otherwise — so the second of those is normally the answer.
         """
         if config["cutoff"] is not None:
@@ -270,10 +270,11 @@ class MD:
         """Wire one run. This single step does exactly:
 
         1. **Compile the potential.** ``set_forcefield`` path with a pair
-           style: ``to_typed_potentials(frame)`` — kernels keyed on the atoms
-           rather than on a ``pairs`` block, each carrying the force field's
-           own ``special_bonds`` weights. Without a pair style:
-           ``to_potentials(frame)``, which is the bonded-only case.
+           style: ``PotentialCompiler(ff).compile_typed(frame)`` — kernels
+           keyed on the atoms rather than on a ``pairs`` block, each carrying
+           the force field's own ``special_bonds`` weights. Without a pair
+           style: ``PotentialCompiler(ff).compile(frame)``, which is the
+           bonded-only case.
            ``set_potential`` path: adopt the attached potential as-is (caller
            owns units).
         2. **Build the neighbour state.** With a nonbond term: a fresh
@@ -298,13 +299,14 @@ class MD:
                 # set — and refused a bonded topology outright because it had no
                 # way to apply special_bonds to a neighbour table.
                 config = self._neighbor_config or dict(_NEIGHBOR_DEFAULTS)
-                pots = ff.to_typed_potentials(frame)
+                pots = PotentialCompiler(ff).compile_typed(frame)
                 neighbors = self._build_skin(frame, pos, self._force_cutoff(config))
             else:
-                pots = ff.to_potentials(frame)
+                pots = PotentialCompiler(ff).compile(frame)
                 if len(pots) == 0:
                     raise ValueError(
-                        "forcefield.to_potentials(frame) produced empty Potentials"
+                        "PotentialCompiler(forcefield).compile(frame) produced "
+                        "empty Potentials"
                     )
                 neighbors = None
         elif self._potential is not None:

@@ -7,6 +7,8 @@
 //! the force field writes them; which force field named them is not this type's
 //! business.
 
+use molrs::store::type_labels::TypeName;
+
 /// One bonded term awaiting parameters: its arity-tagged endpoint atom types.
 ///
 /// Handed to a [`ParameterInterpolator`](super::ParameterInterpolator) when no
@@ -53,6 +55,25 @@ impl BondedTerm {
         match self {
             Self::Improper(t) => Some([t[0].as_str(), t[1].as_str(), t[3].as_str()]),
             _ => None,
+        }
+    }
+
+    /// The force-field type name of this term, in the [`TypeName`] grammar.
+    ///
+    /// A bond, an angle and an improper join their atom types in slot order
+    /// (an improper keeps its centre third). A dihedral is reversal-symmetric,
+    /// so its name is the [`TypeName::canonical`] of the forward and the
+    /// reversed join: both spellings of one torsion name one type.
+    ///
+    /// # Errors
+    ///
+    /// An atom type containing `@`, which [`TypeName::join`] refuses.
+    pub fn type_name(&self) -> Result<TypeName, String> {
+        match self {
+            Self::Bond(t) => TypeName::join(&[&t[0], &t[1]]),
+            Self::Angle(t) => TypeName::join(&[&t[0], &t[1], &t[2]]),
+            Self::Dihedral(t) => Ok(TypeName::join(&[&t[0], &t[1], &t[2], &t[3]])?.canonical()),
+            Self::Improper(t) => TypeName::join(&[&t[0], &t[1], &t[2], &t[3]]),
         }
     }
 }

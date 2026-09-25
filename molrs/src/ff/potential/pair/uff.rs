@@ -273,7 +273,7 @@ pub fn uff_lj_ctor(
     let atoms = frame.get("atoms").ok_or("uff_lj: missing atoms")?;
     let x1 = atoms.get_float("x1").ok_or("uff_lj: missing atoms.x1")?;
     let d1 = atoms.get_float("D1").ok_or("uff_lj: missing atoms.D1")?;
-    // `Style::to_potential` projects the force field's `special_bonds` 1-4
+    // `PotentialCompiler::compile` projects the force field's `special_bonds` 1-4
     // weight here. `E = D·((x/r)¹² − 2(x/r)⁶)` is linear in `D`, so scaling
     // the well depth is exactly scaling the pair.
     let scale_14 = style_params.get("lj14scale").unwrap_or(1.0) as F;

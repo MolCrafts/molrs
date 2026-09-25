@@ -14,12 +14,12 @@
 //! // Define a pair style with a global cutoff parameter
 //! const char* pk[] = {"cutoff"};
 //! double      pv[] = {12.0};
-//! molrs_ff_def_pairstyle(ff, "lj/cut", pk, pv, 1);
+//! molrs_ff_def_style(ff, "pair", "lj/cut", pk, pv, 1);
 //!
 //! // Define a type under that style
 //! const char* tk[] = {"epsilon", "sigma"};
 //! double      tv[] = {0.1553, 3.166};
-//! molrs_ff_def_type(ff, "pair", "lj/cut", "OW-OW", tk, tv, 2);
+//! molrs_ff_def_type(ff, "pair", "lj/cut", "OW", tk, tv, 2);
 //!
 //! // Serialize to JSON for storage
 //! char*  json;
@@ -36,10 +36,17 @@
 //! All parameter values are `double` (`f64`) regardless of the float
 //! precision feature, because force field parameters require full
 //! precision for numerical stability.
+//!
+//! The `molrs_ff_def_*` calls take numeric parameters only. String
+//! parameters (a pair style's `mixing`, an atom type's `element`) reach a
+//! force field from C through [`molrs_ff_from_json`], whose document
+//! carries both.
 
 use std::ffi::{CStr, CString, c_char};
 
-use molrs::ff::ForceField;
+use molrs::ff::forcefield::{DefError, Params, StyleDefs};
+use molrs::ff::{ForceField, SpecialBonds};
+use serde_json::{Value, json};
 
 use crate::error::{self, MolrsStatus};
 use crate::handle::{MolrsForceFieldHandle, ff_key_to_handle, handle_to_ff_key};
@@ -196,224 +203,132 @@ unsafe fn parse_params<'a>(
 }
 
 // ---------------------------------------------------------------------------
-// Style definition
+// Definition: def_style / def_type / def_type_at
 // ---------------------------------------------------------------------------
 
-/// Define (or get) an atom style on a ForceField.
-///
-/// If the style already exists, this is a no-op and the existing style
-/// is returned internally.
-///
-/// # C signature
-///
-/// ```c
-/// MolrsStatus molrs_ff_def_atomstyle(MolrsForceFieldHandle ff,
-///                                     const char* name);
-/// ```
-///
-/// # Arguments
-///
-/// * `ff` -- ForceField handle.
-/// * `name` -- Style name (e.g. `"full"`, `"charge"`).
-///
-/// # Returns
-///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if `name` is null.
-/// * `MolrsStatus::Utf8Error` if `name` is not valid UTF-8.
-/// * `MolrsStatus::InvalidForceFieldHandle` if `ff` is stale.
-///
-/// # Safety
-///
-/// * `ff` must be a live ForceField handle.
-/// * `name` must be a valid, null-terminated C string.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_ff_def_atomstyle(
-    ff: MolrsForceFieldHandle,
-    name: *const c_char,
-) -> MolrsStatus {
-    ffi_try!({
-        null_check!(name);
-        let name_str = match unsafe { CStr::from_ptr(name) }.to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                error::set_last_error("style name is not valid UTF-8");
-                return MolrsStatus::Utf8Error;
-            }
-        };
-        let mut store = lock_store();
-        let ff = get_ff_mut!(store, ff);
-        ff.def_atomstyle(name_str);
-        MolrsStatus::Ok
+/// Read a required C string argument as UTF-8.
+unsafe fn arg_str<'a>(ptr: *const c_char, what: &str) -> Result<&'a str, MolrsStatus> {
+    if ptr.is_null() {
+        error::set_last_error(format!("{what} is null"));
+        return Err(MolrsStatus::NullPointer);
+    }
+    unsafe { CStr::from_ptr(ptr) }.to_str().map_err(|_| {
+        error::set_last_error(format!("{what} is not valid UTF-8"));
+        MolrsStatus::Utf8Error
     })
 }
 
-/// Define (or get) a bond style on a ForceField.
-///
-/// # C signature
-///
-/// ```c
-/// MolrsStatus molrs_ff_def_bondstyle(MolrsForceFieldHandle ff,
-///                                     const char* name);
-/// ```
-///
-/// # Arguments
-///
-/// * `ff` -- ForceField handle.
-/// * `name` -- Style name (e.g. `"harmonic"`, `"morse"`).
-///
-/// # Returns
-///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if `name` is null.
-/// * `MolrsStatus::Utf8Error` if `name` is not valid UTF-8.
-/// * `MolrsStatus::InvalidForceFieldHandle` if `ff` is stale.
-///
-/// # Safety
-///
-/// * `ff` must be a live ForceField handle.
-/// * `name` must be a valid, null-terminated C string.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_ff_def_bondstyle(
-    ff: MolrsForceFieldHandle,
-    name: *const c_char,
-) -> MolrsStatus {
-    ffi_try!({
-        null_check!(name);
-        let name_str = match unsafe { CStr::from_ptr(name) }.to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                error::set_last_error("style name is not valid UTF-8");
-                return MolrsStatus::Utf8Error;
-            }
-        };
-        let mut store = lock_store();
-        let ff = get_ff_mut!(store, ff);
-        ff.def_bondstyle(name_str);
-        MolrsStatus::Ok
-    })
+/// Parse an array of `n` C strings (type endpoints).
+unsafe fn parse_strings<'a>(
+    ptrs: *const *const c_char,
+    n: usize,
+    what: &str,
+) -> Result<Vec<&'a str>, MolrsStatus> {
+    if n == 0 {
+        return Ok(Vec::new());
+    }
+    if ptrs.is_null() {
+        error::set_last_error(format!("{what} is null"));
+        return Err(MolrsStatus::NullPointer);
+    }
+    let slice = unsafe { std::slice::from_raw_parts(ptrs, n) };
+    slice
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| unsafe { arg_str(p, &format!("{what}[{i}]")) })
+        .collect()
 }
 
-/// Define (or get) an angle style on a ForceField.
-///
-/// # C signature
-///
-/// ```c
-/// MolrsStatus molrs_ff_def_anglestyle(MolrsForceFieldHandle ff,
-///                                      const char* name);
-/// ```
-///
-/// # Arguments
-///
-/// * `ff` -- ForceField handle.
-/// * `name` -- Style name (e.g. `"harmonic"`, `"cosine"`).
-///
-/// # Returns
-///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if `name` is null.
-/// * `MolrsStatus::Utf8Error` if `name` is not valid UTF-8.
-/// * `MolrsStatus::InvalidForceFieldHandle` if `ff` is stale.
-///
-/// # Safety
-///
-/// * `ff` must be a live ForceField handle.
-/// * `name` must be a valid, null-terminated C string.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_ff_def_anglestyle(
-    ff: MolrsForceFieldHandle,
-    name: *const c_char,
-) -> MolrsStatus {
-    ffi_try!({
-        null_check!(name);
-        let name_str = match unsafe { CStr::from_ptr(name) }.to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                error::set_last_error("style name is not valid UTF-8");
-                return MolrsStatus::Utf8Error;
-            }
-        };
-        let mut store = lock_store();
-        let ff = get_ff_mut!(store, ff);
-        ff.def_anglestyle(name_str);
-        MolrsStatus::Ok
-    })
+/// Unwrap a `Result<T, MolrsStatus>`, returning the status from the calling
+/// `extern "C"` function on error.
+macro_rules! or_return {
+    ($e:expr) => {
+        match $e {
+            Ok(v) => v,
+            Err(status) => return status,
+        }
+    };
 }
 
-/// Define (or get) a pair style on a ForceField, with optional
-/// style-level parameters (e.g. global cutoff).
+/// Map a definition error to `InvalidArgument`, recording its message.
+fn invalid_argument(e: DefError) -> MolrsStatus {
+    error::set_last_error(e.to_string());
+    MolrsStatus::InvalidArgument
+}
+
+/// Define the `category` style named `name` on a ForceField.
+///
+/// A style is identified by `(category, name)`: re-defining it with equal
+/// params keeps the existing style; with different params it is
+/// `InvalidArgument` and the first definition is kept.
 ///
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_ff_def_pairstyle(MolrsForceFieldHandle ff,
-///                                     const char* name,
-///                                     const char** param_keys,
-///                                     const double* param_values,
-///                                     size_t n_params);
+/// MolrsStatus molrs_ff_def_style(MolrsForceFieldHandle ff,
+///                                 const char* category,
+///                                 const char* name,
+///                                 const char** param_keys,
+///                                 const double* param_values,
+///                                 size_t n_params);
 /// ```
 ///
 /// # Arguments
 ///
 /// * `ff` -- ForceField handle.
-/// * `name` -- Style name (e.g. `"lj/cut"`, `"buck"`).
-/// * `param_keys` -- Array of `n_params` null-terminated parameter name
-///   strings (e.g. `"cutoff"`).  May be `NULL` if `n_params == 0`.
-/// * `param_values` -- Array of `n_params` `double` values.
-///   May be `NULL` if `n_params == 0`.
+/// * `category` -- One of `"atom"`, `"bond"`, `"angle"`, `"dihedral"`,
+///   `"improper"`, `"pair"`.
+/// * `name` -- Style name (e.g. `"harmonic"`, `"lj/cut"`).
+/// * `param_keys` -- Array of `n_params` style-level parameter names
+///   (e.g. `"cutoff"`). May be `NULL` if `n_params == 0`.
+/// * `param_values` -- Array of `n_params` `double` values. May be `NULL`
+///   if `n_params == 0`.
 /// * `n_params` -- Number of style-level parameters.
 ///
+/// Parameters are numeric only; string params (e.g. `mixing`) reach a
+/// force field from C through [`molrs_ff_from_json`].
+///
 /// # Returns
 ///
 /// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if `name` is null, or if `n_params > 0`
-///   and `param_keys`/`param_values` is null.
+/// * `MolrsStatus::NullPointer` if a required pointer is null.
 /// * `MolrsStatus::Utf8Error` if any string is not valid UTF-8.
+/// * `MolrsStatus::InvalidArgument` if `category` is not one of the values
+///   above, or the style is already defined with different params.
 /// * `MolrsStatus::InvalidForceFieldHandle` if `ff` is stale.
 ///
 /// # Safety
 ///
 /// * `ff` must be a live ForceField handle.
-/// * `name` must be a valid, null-terminated C string.
+/// * `category` and `name` must be valid, null-terminated C strings.
 /// * `param_keys` (if non-null) must point to `n_params` valid C string
-///   pointers.
-/// * `param_values` (if non-null) must point to `n_params` `double` values.
+///   pointers; `param_values` (if non-null) to `n_params` doubles.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_ff_def_pairstyle(
+pub unsafe extern "C" fn molrs_ff_def_style(
     ff: MolrsForceFieldHandle,
+    category: *const c_char,
     name: *const c_char,
     param_keys: *const *const c_char,
     param_values: *const f64,
     n_params: usize,
 ) -> MolrsStatus {
     ffi_try!({
-        null_check!(name);
-        let name_str = match unsafe { CStr::from_ptr(name) }.to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                error::set_last_error("style name is not valid UTF-8");
-                return MolrsStatus::Utf8Error;
-            }
-        };
-        let params = match unsafe { parse_params(param_keys, param_values, n_params) } {
-            Ok(p) => p,
-            Err(status) => return status,
-        };
+        let category = or_return!(unsafe { arg_str(category, "category") });
+        let name = or_return!(unsafe { arg_str(name, "name") });
+        let params = or_return!(unsafe { parse_params(param_keys, param_values, n_params) });
         let mut store = lock_store();
         let ff = get_ff_mut!(store, ff);
-        ff.def_pairstyle(name_str, &params);
-        MolrsStatus::Ok
+        match ff.def_style(category, name, Params::from_pairs(&params)) {
+            Ok(_) => MolrsStatus::Ok,
+            Err(e) => invalid_argument(e),
+        }
     })
 }
 
-// ---------------------------------------------------------------------------
-// Type definition (unified)
-// ---------------------------------------------------------------------------
-
-/// Define a type on a style using the unified name format.
+/// Define a type on an existing style, its endpoints parsed from the name.
 ///
-/// This is the primary function for populating a force field with
-/// per-type parameters.
+/// The style `(style_category, style_name)` must already exist (see
+/// [`molrs_ff_def_style`]); it is never created implicitly.
 ///
 /// # C signature
 ///
@@ -432,27 +347,28 @@ pub unsafe extern "C" fn molrs_ff_def_pairstyle(
 /// * `ff` -- ForceField handle.
 /// * `style_category` -- One of `"atom"`, `"bond"`, `"angle"`,
 ///   `"dihedral"`, `"improper"`, `"pair"`.
-/// * `style_name` -- Style name (e.g. `"harmonic"`, `"lj/cut"`).
-///   If the style does not yet exist it is created.
-/// * `type_name` -- Unified type name format:
+/// * `style_name` -- Name of an existing style (e.g. `"harmonic"`).
+/// * `type_name` -- Type name in the endpoint grammar:
 ///   - Atom: `"A"` (single type name)
-///   - Bond: `"A-B"` (dash-separated pair)
-///   - Angle: `"A-B-C"` (three types)
-///   - Dihedral: `"A-B-C-D"` (four types)
-///   - Pair: `"A-B"` (pair types, e.g. `"OW-OW"`)
-/// * `param_keys` -- Array of `n_params` parameter name strings.
-///   May be `NULL` if `n_params == 0`.
-/// * `param_values` -- Array of `n_params` `double` values.
-///   May be `NULL` if `n_params == 0`.
-/// * `n_params` -- Number of parameters for this type.
+///   - Bond: `"A-B"`
+///   - Angle: `"A-B-C"`
+///   - Dihedral / improper: `"A-B-C-D"`
+///   - Pair: `"A"` (self-pair) or `"A-B"`
+///
+///   Endpoints are separated by `::` instead when a label contains `-`.
+///   Names outside this grammar go through [`molrs_ff_def_type_at`].
+/// * `param_keys` / `param_values` / `n_params` -- Numeric type parameters;
+///   the arrays may be `NULL` if `n_params == 0`.
 ///
 /// # Returns
 ///
 /// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if any required pointer is null.
+/// * `MolrsStatus::NullPointer` if a required pointer is null.
 /// * `MolrsStatus::Utf8Error` if any string is not valid UTF-8.
-/// * `MolrsStatus::InvalidArgument` if `style_category` is not one of
-///   the recognised values.
+/// * `MolrsStatus::InvalidArgument` if the style does not exist,
+///   `type_name` has the wrong number of endpoints for the category, or the
+///   style already defines `type_name` with other endpoints or params (an
+///   identical re-definition is `Ok` and changes nothing).
 /// * `MolrsStatus::InvalidForceFieldHandle` if `ff` is stale.
 ///
 /// # Safety
@@ -460,8 +376,7 @@ pub unsafe extern "C" fn molrs_ff_def_pairstyle(
 /// * `ff` must be a live ForceField handle.
 /// * All string arguments must be valid, null-terminated C strings.
 /// * `param_keys` (if non-null) must point to `n_params` valid C string
-///   pointers.
-/// * `param_values` (if non-null) must point to `n_params` doubles.
+///   pointers; `param_values` (if non-null) to `n_params` doubles.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn molrs_ff_def_type(
     ff: MolrsForceFieldHandle,
@@ -473,52 +388,106 @@ pub unsafe extern "C" fn molrs_ff_def_type(
     n_params: usize,
 ) -> MolrsStatus {
     ffi_try!({
-        null_check!(style_category);
-        null_check!(style_name);
-        null_check!(type_name);
-
-        let cat_str = match unsafe { CStr::from_ptr(style_category) }.to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                error::set_last_error("style_category is not valid UTF-8");
-                return MolrsStatus::Utf8Error;
-            }
-        };
-        let name_str = match unsafe { CStr::from_ptr(style_name) }.to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                error::set_last_error("style_name is not valid UTF-8");
-                return MolrsStatus::Utf8Error;
-            }
-        };
-        let type_str = match unsafe { CStr::from_ptr(type_name) }.to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                error::set_last_error("type_name is not valid UTF-8");
-                return MolrsStatus::Utf8Error;
-            }
-        };
-        let params = match unsafe { parse_params(param_keys, param_values, n_params) } {
-            Ok(p) => p,
-            Err(status) => return status,
-        };
-
+        let category = or_return!(unsafe { arg_str(style_category, "style_category") });
+        let style_name = or_return!(unsafe { arg_str(style_name, "style_name") });
+        let type_name = or_return!(unsafe { arg_str(type_name, "type_name") });
+        let params = or_return!(unsafe { parse_params(param_keys, param_values, n_params) });
         let mut store = lock_store();
         let ff = get_ff_mut!(store, ff);
-        let style = match cat_str {
-            "atom" => ff.def_atomstyle(name_str),
-            "bond" => ff.def_bondstyle(name_str),
-            "angle" => ff.def_anglestyle(name_str),
-            "pair" => ff.def_pairstyle(name_str, &[]),
-            "dihedral" => ff.def_dihedralstyle(name_str),
-            "improper" => ff.def_improperstyle(name_str),
-            _ => {
-                error::set_last_error(format!("unknown style category: {cat_str}"));
-                return MolrsStatus::InvalidArgument;
-            }
+        let Some(style) = ff.get_style_mut(category, style_name) else {
+            return invalid_argument(DefError::UnknownStyle {
+                category: category.to_owned(),
+                name: style_name.to_owned(),
+            });
         };
-        style.def_type(type_str, &params);
-        MolrsStatus::Ok
+        match style.def_type(type_name, Params::from_pairs(&params)) {
+            Ok(_) => MolrsStatus::Ok,
+            Err(e) => invalid_argument(e),
+        }
+    })
+}
+
+/// Define a type on an existing style with its endpoints given explicitly.
+///
+/// For type names outside the endpoint grammar of [`molrs_ff_def_type`]
+/// (MMFF's `0_1_5`, custom labels). The name and endpoints are stored
+/// verbatim.
+///
+/// # C signature
+///
+/// ```c
+/// MolrsStatus molrs_ff_def_type_at(MolrsForceFieldHandle ff,
+///                                   const char* style_category,
+///                                   const char* style_name,
+///                                   const char* type_name,
+///                                   const char** endpoints,
+///                                   size_t n_endpoints,
+///                                   const char** param_keys,
+///                                   const double* param_values,
+///                                   size_t n_params);
+/// ```
+///
+/// # Arguments
+///
+/// * `ff` -- ForceField handle.
+/// * `style_category` / `style_name` -- An existing style.
+/// * `type_name` -- The type name, stored as given.
+/// * `endpoints` -- Array of `n_endpoints` atom-type labels. The count must
+///   match the category: atom 0, pair 1 or 2, bond 2, angle 3, dihedral and
+///   improper 4. May be `NULL` if `n_endpoints == 0`.
+/// * `param_keys` / `param_values` / `n_params` -- Numeric type parameters;
+///   the arrays may be `NULL` if `n_params == 0`.
+///
+/// # Returns
+///
+/// * `MolrsStatus::Ok` on success.
+/// * `MolrsStatus::NullPointer` if a required pointer is null.
+/// * `MolrsStatus::Utf8Error` if any string is not valid UTF-8.
+/// * `MolrsStatus::InvalidArgument` if the style does not exist, the
+///   endpoint count does not match the category, or the style already
+///   defines `type_name` with other endpoints or params (an identical
+///   re-definition is `Ok` and changes nothing).
+/// * `MolrsStatus::InvalidForceFieldHandle` if `ff` is stale.
+///
+/// # Safety
+///
+/// * `ff` must be a live ForceField handle.
+/// * All string arguments must be valid, null-terminated C strings.
+/// * `endpoints` (if non-null) must point to `n_endpoints` valid C string
+///   pointers.
+/// * `param_keys` (if non-null) must point to `n_params` valid C string
+///   pointers; `param_values` (if non-null) to `n_params` doubles.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn molrs_ff_def_type_at(
+    ff: MolrsForceFieldHandle,
+    style_category: *const c_char,
+    style_name: *const c_char,
+    type_name: *const c_char,
+    endpoints: *const *const c_char,
+    n_endpoints: usize,
+    param_keys: *const *const c_char,
+    param_values: *const f64,
+    n_params: usize,
+) -> MolrsStatus {
+    ffi_try!({
+        let category = or_return!(unsafe { arg_str(style_category, "style_category") });
+        let style_name = or_return!(unsafe { arg_str(style_name, "style_name") });
+        let type_name = or_return!(unsafe { arg_str(type_name, "type_name") });
+        let endpoints = or_return!(unsafe { parse_strings(endpoints, n_endpoints, "endpoints") });
+        let params = or_return!(unsafe { parse_params(param_keys, param_values, n_params) });
+        let mut store = lock_store();
+        let ff = get_ff_mut!(store, ff);
+        let Some(style) = ff.get_style_mut(category, style_name) else {
+            return invalid_argument(DefError::UnknownStyle {
+                category: category.to_owned(),
+                name: style_name.to_owned(),
+            });
+        };
+        match style.def_type_at(type_name, &endpoints, Params::from_pairs(&params)) {
+            Ok(_) => MolrsStatus::Ok,
+            Err(e) => invalid_argument(e),
+        }
     })
 }
 
@@ -625,7 +594,7 @@ pub unsafe extern "C" fn molrs_ff_get_style_name(
         }
         let style = &styles[index];
         let cat = CString::new(style.category()).unwrap_or_default();
-        let name = CString::new(style.name.as_str()).unwrap_or_default();
+        let name = CString::new(style.name()).unwrap_or_default();
         unsafe {
             *out_category = cat.into_raw();
             *out_name = name.into_raw();
@@ -639,6 +608,11 @@ pub unsafe extern "C" fn molrs_ff_get_style_name(
 // ---------------------------------------------------------------------------
 
 /// Serialize a ForceField to a JSON string.
+///
+/// The document carries every definition -- the declared `units` and
+/// `special_bonds` (each written only when declared), numeric and string
+/// params of every style and type, and every type's endpoints -- in the format
+/// described at [`molrs_ff_from_json`].
 ///
 /// The returned string is heap-allocated and must be freed with
 /// [`molrs_free_string`](crate::molrs_free_string).
@@ -700,18 +674,31 @@ pub unsafe extern "C" fn molrs_ff_to_json(
 /// ```json
 /// {
 ///   "name": "my_ff",
+///   "units": "real",
+///   "special_bonds": {"lj": [0.0, 0.0, 0.5], "coul": [0.0, 0.0, 0.8333]},
 ///   "styles": [
 ///     {
 ///       "category": "pair",
 ///       "name": "lj/cut",
 ///       "params": {"cutoff": 12.0},
+///       "str_params": {"mixing": "geometric"},
 ///       "types": [
-///         {"name": "OW-OW", "params": {"epsilon": 0.1553, "sigma": 3.166}}
+///         {"name": "OW", "endpoints": ["OW", "OW"],
+///          "params": {"epsilon": 0.1553, "sigma": 3.166}, "str_params": {}}
 ///       ]
 ///     }
 ///   ]
 /// }
 /// ```
+///
+/// `units` and `special_bonds` are optional: present means declared, absent
+/// means undeclared, and the force field is rebuilt declaring exactly what the
+/// document holds. Every other key shown is required and no other key is
+/// accepted. The document is carried whole or refused: a missing or unknown
+/// key, a non-string `units`, a non-number in `params`, a non-string in
+/// `str_params` or `endpoints`, a `special_bonds` array whose length is not 3,
+/// an unknown category, or an endpoint count that does not match the category
+/// is `InvalidArgument` -- nothing is skipped.
 ///
 /// # C signature
 ///
@@ -730,8 +717,8 @@ pub unsafe extern "C" fn molrs_ff_to_json(
 /// * `MolrsStatus::Ok` on success.
 /// * `MolrsStatus::NullPointer` if `json` or `out` is null.
 /// * `MolrsStatus::Utf8Error` if `json` is not valid UTF-8.
-/// * `MolrsStatus::InvalidArgument` if the JSON is malformed or
-///   contains unknown style categories.
+/// * `MolrsStatus::InvalidArgument` if the JSON is malformed or does not
+///   match the document above.
 ///
 /// # Safety
 ///
@@ -767,113 +754,475 @@ pub unsafe extern "C" fn molrs_ff_from_json(
 }
 
 // ---------------------------------------------------------------------------
-// JSON helpers (manual serialization, no serde derives needed)
+// JSON document: carries every definition or refuses it
 // ---------------------------------------------------------------------------
 
+type JsonMap = serde_json::Map<String, Value>;
+
+/// Serialize every piece of declared state: name, the declared `units` and
+/// `special_bonds` (absent when undeclared), and per style its category, name,
+/// numeric and string params, and per type its name, endpoints, numeric and
+/// string params.
 fn ff_to_json_string(ff: &ForceField) -> String {
-    use std::fmt::Write;
-    let mut json = String::new();
-    write!(json, "{{\"name\":{},\"styles\":[", json_escape(&ff.name)).unwrap();
-
-    for (i, style) in ff.styles().iter().enumerate() {
-        if i > 0 {
-            json.push(',');
-        }
-        write!(
-            json,
-            "{{\"category\":{},\"name\":{},\"params\":{{",
-            json_escape(style.category()),
-            json_escape(&style.name),
-        )
-        .unwrap();
-        write_params(&mut json, &style.params);
-        json.push_str("},\"types\":[");
-
-        let type_params = style.defs.collect_type_params();
-        for (j, (tname, tparams)) in type_params.iter().enumerate() {
-            if j > 0 {
-                json.push(',');
-            }
-            write!(json, "{{\"name\":{},\"params\":{{", json_escape(tname)).unwrap();
-            write_params(&mut json, tparams);
-            json.push_str("}}");
-        }
-        json.push_str("]}");
+    let styles: Vec<Value> = ff
+        .styles()
+        .iter()
+        .map(|style| {
+            json!({
+                "category": style.category(),
+                "name": style.name(),
+                "params": numeric_params(style.params()),
+                "str_params": string_params(style.params()),
+                "types": type_rows(style.defs()),
+            })
+        })
+        .collect();
+    let mut doc = JsonMap::new();
+    doc.insert("name".into(), json!(ff.name));
+    if let Some(units) = ff.declared_units() {
+        doc.insert("units".into(), json!(units));
     }
-
-    json.push_str("]}");
-    json
+    if let Some(special) = ff.declared_special_bonds() {
+        doc.insert(
+            "special_bonds".into(),
+            json!({"lj": special.lj, "coul": special.coul}),
+        );
+    }
+    doc.insert("styles".into(), json!(styles));
+    Value::Object(doc).to_string()
 }
 
+fn numeric_params(params: &Params) -> JsonMap {
+    params
+        .iter()
+        .map(|(k, v)| (k.to_owned(), json!(v)))
+        .collect()
+}
+
+fn string_params(params: &Params) -> JsonMap {
+    params
+        .iter_strings()
+        .map(|(k, v)| (k.to_owned(), json!(v)))
+        .collect()
+}
+
+/// Every type of a style as `{name, endpoints, params, str_params}`, in
+/// definition order (duplicated names included).
+fn type_rows(defs: &StyleDefs) -> Vec<Value> {
+    let row = |name: &str, endpoints: &[&str], params: &Params| {
+        json!({
+            "name": name,
+            "endpoints": endpoints,
+            "params": numeric_params(params),
+            "str_params": string_params(params),
+        })
+    };
+    match defs {
+        StyleDefs::Atom(v) => v.iter().map(|t| row(&t.name, &[], &t.params)).collect(),
+        StyleDefs::Bond(v) => v
+            .iter()
+            .map(|t| row(&t.name, &[&t.itom, &t.jtom], &t.params))
+            .collect(),
+        StyleDefs::Angle(v) => v
+            .iter()
+            .map(|t| row(&t.name, &[&t.itom, &t.jtom, &t.ktom], &t.params))
+            .collect(),
+        StyleDefs::Dihedral(v) => v
+            .iter()
+            .map(|t| row(&t.name, &[&t.itom, &t.jtom, &t.ktom, &t.ltom], &t.params))
+            .collect(),
+        StyleDefs::Improper(v) => v
+            .iter()
+            .map(|t| row(&t.name, &[&t.itom, &t.jtom, &t.ktom, &t.ltom], &t.params))
+            .collect(),
+        StyleDefs::Pair(v) => v
+            .iter()
+            .map(|t| row(&t.name, &[&t.itom, &t.jtom], &t.params))
+            .collect(),
+    }
+}
+
+/// Rebuild a force field from the [`ff_to_json_string`] document.
+///
+/// Every style is defined through `def_style` with its full params, every type
+/// through `def_type_at` with its endpoints. Nothing is skipped: a missing or
+/// unknown key at any level, a non-string `units`, a non-number in `params`, a
+/// non-string in `str_params` or `endpoints`, or a `special_bonds` array whose
+/// length is not 3 is an error. `units` and `special_bonds` are declared
+/// exactly when present.
 fn ff_from_json_string(json: &str) -> Result<ForceField, String> {
-    let val: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| format!("JSON parse error: {e}"))?;
-    let name = val["name"].as_str().ok_or("missing 'name' field")?;
-    let mut ff = ForceField::new(name);
+    let val: Value = serde_json::from_str(json).map_err(|e| format!("JSON parse error: {e}"))?;
+    let doc = JsonObject::new(
+        &val,
+        "document",
+        &["name", "styles"],
+        &["units", "special_bonds"],
+    )?;
+    let mut ff = ForceField::new(doc.str("name")?);
 
-    let styles = val["styles"].as_array().ok_or("missing 'styles' array")?;
-    for style_val in styles {
-        let category = style_val["category"]
-            .as_str()
-            .ok_or("missing style 'category'")?;
-        let style_name = style_val["name"].as_str().ok_or("missing style 'name'")?;
+    if doc.has("units") {
+        ff.set_units(doc.str("units")?);
+    }
+    if doc.has("special_bonds") {
+        let special = JsonObject::new(
+            doc.get("special_bonds")?,
+            "special_bonds",
+            &["lj", "coul"],
+            &[],
+        )?;
+        ff.set_special_bonds(SpecialBonds {
+            lj: special.weights("lj")?,
+            coul: special.weights("coul")?,
+        });
+    }
 
-        let style_params = extract_params(&style_val["params"]);
-
-        let style = match category {
-            "atom" => ff.def_atomstyle(style_name),
-            "bond" => ff.def_bondstyle(style_name),
-            "angle" => ff.def_anglestyle(style_name),
-            "dihedral" => ff.def_dihedralstyle(style_name),
-            "improper" => ff.def_improperstyle(style_name),
-            "pair" => ff.def_pairstyle(style_name, &style_params),
-            _ => return Err(format!("unknown category: {category}")),
-        };
-
-        if let Some(types) = style_val["types"].as_array() {
-            for type_val in types {
-                let type_name = type_val["name"].as_str().ok_or("missing type 'name'")?;
-                let type_params = extract_params(&type_val["params"]);
-                style.def_type(type_name, &type_params);
-            }
+    for (i, style_val) in doc.array("styles")?.iter().enumerate() {
+        let at = format!("styles[{i}]");
+        let style_obj = JsonObject::new(
+            style_val,
+            &at,
+            &["category", "name", "params", "str_params", "types"],
+            &[],
+        )?;
+        let style = ff
+            .def_style(
+                style_obj.str("category")?,
+                style_obj.str("name")?,
+                style_obj.params()?,
+            )
+            .map_err(|e| format!("{at}: {e}"))?;
+        for (j, type_val) in style_obj.array("types")?.iter().enumerate() {
+            let at = format!("{at}.types[{j}]");
+            let type_obj = JsonObject::new(
+                type_val,
+                &at,
+                &["name", "endpoints", "params", "str_params"],
+                &[],
+            )?;
+            let endpoints = type_obj
+                .array("endpoints")?
+                .iter()
+                .enumerate()
+                .map(|(k, v)| {
+                    v.as_str()
+                        .ok_or_else(|| format!("{at}.endpoints[{k}] is not a string"))
+                })
+                .collect::<Result<Vec<&str>, String>>()?;
+            style
+                .def_type_at(type_obj.str("name")?, &endpoints, type_obj.params()?)
+                .map_err(|e| format!("{at}: {e}"))?;
         }
     }
 
     Ok(ff)
 }
 
-fn extract_params(val: &serde_json::Value) -> Vec<(&str, f64)> {
-    let mut params = Vec::new();
-    if let Some(obj) = val.as_object() {
-        for (k, v) in obj {
-            if let Some(f) = v.as_f64() {
-                // We need 'static str but have &String. Use leak for simplicity.
-                // This is called rarely (JSON import) so the leak is acceptable.
-                // A better approach would be to collect owned strings separately.
-                params.push((k.as_str(), f));
-            }
+/// A JSON object holding every `required` key, any of the `optional` keys and
+/// nothing else, with typed field readers that name the offending path on
+/// error.
+struct JsonObject<'a> {
+    at: &'a str,
+    map: &'a JsonMap,
+}
+
+impl<'a> JsonObject<'a> {
+    fn new(
+        val: &'a Value,
+        at: &'a str,
+        required: &[&str],
+        optional: &[&str],
+    ) -> Result<Self, String> {
+        let map = val
+            .as_object()
+            .ok_or_else(|| format!("{at} is not an object"))?;
+        if let Some(unknown) = map
+            .keys()
+            .find(|k| !required.contains(&k.as_str()) && !optional.contains(&k.as_str()))
+        {
+            return Err(format!("{at}: unknown key '{unknown}'"));
+        }
+        if let Some(missing) = required.iter().find(|k| !map.contains_key(**k)) {
+            return Err(format!("{at}: missing key '{missing}'"));
+        }
+        Ok(Self { at, map })
+    }
+
+    fn has(&self, key: &str) -> bool {
+        self.map.contains_key(key)
+    }
+
+    fn get(&self, key: &str) -> Result<&'a Value, String> {
+        self.map
+            .get(key)
+            .ok_or_else(|| format!("{}: missing key '{key}'", self.at))
+    }
+
+    fn str(&self, key: &str) -> Result<&'a str, String> {
+        self.get(key)?
+            .as_str()
+            .ok_or_else(|| format!("{}.{key} is not a string", self.at))
+    }
+
+    fn array(&self, key: &str) -> Result<&'a Vec<Value>, String> {
+        self.get(key)?
+            .as_array()
+            .ok_or_else(|| format!("{}.{key} is not an array", self.at))
+    }
+
+    fn object(&self, key: &str) -> Result<&'a JsonMap, String> {
+        self.get(key)?
+            .as_object()
+            .ok_or_else(|| format!("{}.{key} is not an object", self.at))
+    }
+
+    /// `params` (numbers) and `str_params` (strings) as one [`Params`].
+    fn params(&self) -> Result<Params, String> {
+        let mut params = Params::new();
+        for (k, v) in self.object("params")? {
+            let v = v
+                .as_f64()
+                .ok_or_else(|| format!("{}.params.{k} is not a number", self.at))?;
+            params.set(k, v);
+        }
+        for (k, v) in self.object("str_params")? {
+            let v = v
+                .as_str()
+                .ok_or_else(|| format!("{}.str_params.{k} is not a string", self.at))?;
+            params.set_str(k, v);
+        }
+        Ok(params)
+    }
+
+    /// A `[1-2, 1-3, 1-4]` weight triple: exactly three numbers.
+    fn weights(&self, key: &str) -> Result<[f64; 3], String> {
+        let values = self
+            .array(key)?
+            .iter()
+            .map(Value::as_f64)
+            .collect::<Option<Vec<f64>>>()
+            .ok_or_else(|| format!("{}.{key} holds a non-number", self.at))?;
+        values.try_into().map_err(|v: Vec<f64>| {
+            format!(
+                "{}.{key} must hold 3 weights [1-2, 1-3, 1-4], got {}",
+                self.at,
+                v.len()
+            )
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use molrs::ff::SpecialBonds;
+    use molrs::ff::forcefield::Params;
+
+    fn round_trip(ff: &ForceField) -> ForceField {
+        ff_from_json_string(&ff_to_json_string(ff)).unwrap()
+    }
+
+    #[test]
+    fn json_round_trip_keeps_a_string_style_param() {
+        let mut params = Params::from_pairs(&[("cutoff", 10.0)]);
+        params.set_str("mixing", "geometric");
+        let mut ff = ForceField::new("rt");
+        ff.def_style("pair", "lj/cut", params).unwrap();
+
+        let back = round_trip(&ff);
+        let style = back.get_style("pair", "lj/cut").unwrap();
+        assert_eq!(style.params().get_str("mixing"), Some("geometric"));
+    }
+
+    #[test]
+    fn json_round_trip_keeps_bond_style_params() {
+        let mut ff = ForceField::new("rt");
+        ff.def_style("bond", "harmonic", Params::from_pairs(&[("scale", 0.5)]))
+            .unwrap();
+
+        let back = round_trip(&ff);
+        let style = back.get_style("bond", "harmonic").unwrap();
+        assert_eq!(style.params().get("scale"), Some(0.5));
+    }
+
+    /// MMFF's `0_1_5` is not in the endpoint grammar, so it comes back only if
+    /// the document carries its endpoints.
+    #[test]
+    fn json_round_trip_keeps_def_type_at_endpoints() {
+        let mut ff = ForceField::new("rt");
+        ff.def_style("bond", "mmff", Params::new())
+            .unwrap()
+            .def_type_at("0_1_5", &["1", "5"], Params::from_pairs(&[("kb", 4.258)]))
+            .unwrap();
+
+        let back = round_trip(&ff);
+        let style = back.get_style("bond", "mmff").unwrap();
+        assert_eq!(
+            style.type_endpoints("0_1_5"),
+            Some(vec!["1".to_string(), "5".to_string()])
+        );
+    }
+
+    #[test]
+    fn json_round_trip_keeps_special_bonds() {
+        let special = SpecialBonds {
+            lj: [0.0, 0.0, 0.5],
+            coul: [0.0, 0.0, 0.8333],
+        };
+        let mut ff = ForceField::new("rt");
+        ff.set_special_bonds(special);
+
+        let back = round_trip(&ff);
+        assert_eq!(*back.special_bonds(), special);
+    }
+
+    #[test]
+    fn json_round_trip_keeps_declared_units() {
+        let mut ff = ForceField::new("rt");
+        ff.set_units("lj");
+
+        let back = round_trip(&ff);
+        assert_eq!(back.declared_units(), Some("lj"));
+    }
+
+    /// Undeclared state is not written as a default and read back as a
+    /// declaration.
+    #[test]
+    fn json_round_trip_keeps_an_undeclared_forcefield_undeclared() {
+        let ff = ForceField::new("rt");
+
+        let back = round_trip(&ff);
+        assert_eq!(back.declared_units(), None);
+        assert_eq!(back.declared_special_bonds(), None);
+    }
+
+    #[test]
+    fn json_from_string_refuses_a_numeric_units() {
+        let doc = r#"{
+            "name": "doc",
+            "units": 1,
+            "special_bonds": {"lj": [0.0, 0.0, 0.5], "coul": [0.0, 0.0, 0.8333]},
+            "styles": [{
+                "category": "bond", "name": "harmonic", "params": {}, "str_params": {},
+                "types": [{"name": "CT-OH", "endpoints": ["CT", "OH"],
+                           "params": {"k": 300.0, "r0": 1.4}, "str_params": {}}]
+            }]
+        }"#;
+        assert!(ff_from_json_string(doc).is_err());
+    }
+
+    /// The control for the refusals below: each differs from this document in
+    /// exactly one place.
+    const VALID: &str = r#"{
+        "name": "doc",
+        "special_bonds": {"lj": [0.0, 0.0, 0.5], "coul": [0.0, 0.0, 0.8333]},
+        "styles": [{
+            "category": "bond", "name": "harmonic", "params": {}, "str_params": {},
+            "types": [{"name": "CT-OH", "endpoints": ["CT", "OH"],
+                       "params": {"k": 300.0, "r0": 1.4}, "str_params": {}}]
+        }]
+    }"#;
+
+    #[test]
+    fn json_from_string_accepts_a_complete_document() {
+        assert!(ff_from_json_string(VALID).is_ok());
+    }
+
+    #[test]
+    fn json_from_string_refuses_a_bool_param_value() {
+        let doc = r#"{
+            "name": "doc",
+            "special_bonds": {"lj": [0.0, 0.0, 0.5], "coul": [0.0, 0.0, 0.8333]},
+            "styles": [{
+                "category": "bond", "name": "harmonic", "params": {}, "str_params": {},
+                "types": [{"name": "CT-OH", "endpoints": ["CT", "OH"],
+                           "params": {"k": true, "r0": 1.4}, "str_params": {}}]
+            }]
+        }"#;
+        assert!(ff_from_json_string(doc).is_err());
+    }
+
+    #[test]
+    fn json_from_string_refuses_an_unknown_key() {
+        let doc = r#"{
+            "name": "doc",
+            "bogus": 1,
+            "special_bonds": {"lj": [0.0, 0.0, 0.5], "coul": [0.0, 0.0, 0.8333]},
+            "styles": [{
+                "category": "bond", "name": "harmonic", "params": {}, "str_params": {},
+                "types": [{"name": "CT-OH", "endpoints": ["CT", "OH"],
+                           "params": {"k": 300.0, "r0": 1.4}, "str_params": {}}]
+            }]
+        }"#;
+        assert!(ff_from_json_string(doc).is_err());
+    }
+
+    /// Seam only: the Rust conflict rule is unit-tested in molrs; here a
+    /// conflicting `molrs_ff_def_type` must surface as `InvalidArgument`.
+    #[test]
+    fn def_type_conflicting_redefinition_is_invalid_argument() {
+        let name = CString::new("conflict").unwrap();
+        let bond = CString::new("bond").unwrap();
+        let harmonic = CString::new("harmonic").unwrap();
+        let ct_oh = CString::new("CT-OH").unwrap();
+        let k = CString::new("k").unwrap();
+        let r0 = CString::new("r0").unwrap();
+        let keys = [k.as_ptr(), r0.as_ptr()];
+        let first = [300.0, 1.4];
+        let second = [310.0, 1.4];
+        let mut ff = MolrsForceFieldHandle { idx: 0, version: 0 };
+
+        // SAFETY: every pointer is a live CString / array of the stated length,
+        // and `ff` is written by `molrs_ff_new` before use.
+        unsafe {
+            assert_eq!(molrs_ff_new(name.as_ptr(), &mut ff), MolrsStatus::Ok);
+            assert_eq!(
+                molrs_ff_def_style(
+                    ff,
+                    bond.as_ptr(),
+                    harmonic.as_ptr(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    0
+                ),
+                MolrsStatus::Ok
+            );
+            assert_eq!(
+                molrs_ff_def_type(
+                    ff,
+                    bond.as_ptr(),
+                    harmonic.as_ptr(),
+                    ct_oh.as_ptr(),
+                    keys.as_ptr(),
+                    first.as_ptr(),
+                    2
+                ),
+                MolrsStatus::Ok
+            );
+            let status = molrs_ff_def_type(
+                ff,
+                bond.as_ptr(),
+                harmonic.as_ptr(),
+                ct_oh.as_ptr(),
+                keys.as_ptr(),
+                second.as_ptr(),
+                2,
+            );
+            assert_eq!(molrs_ff_drop(ff), MolrsStatus::Ok);
+            assert_eq!(status, MolrsStatus::InvalidArgument);
         }
     }
-    params
-}
 
-fn json_escape(s: &str) -> String {
-    format!(
-        "\"{}\"",
-        s.replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-            .replace('\r', "\\r")
-            .replace('\t', "\\t")
-    )
-}
-
-fn write_params(json: &mut String, params: &molrs::ff::forcefield::Params) {
-    use std::fmt::Write;
-    for (i, (k, v)) in params.iter().enumerate() {
-        if i > 0 {
-            json.push(',');
-        }
-        write!(json, "{}:{}", json_escape(k), v).unwrap();
+    #[test]
+    fn json_from_string_refuses_a_two_element_special_bonds_array() {
+        let doc = r#"{
+            "name": "doc",
+            "special_bonds": {"lj": [0.0, 0.5], "coul": [0.0, 0.0, 0.8333]},
+            "styles": [{
+                "category": "bond", "name": "harmonic", "params": {}, "str_params": {},
+                "types": [{"name": "CT-OH", "endpoints": ["CT", "OH"],
+                           "params": {"k": 300.0, "r0": 1.4}, "str_params": {}}]
+            }]
+        }"#;
+        assert!(ff_from_json_string(doc).is_err());
     }
 }

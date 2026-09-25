@@ -22,6 +22,19 @@ requires 02 and 03); 03 and 05 do not change enumeration order. `07-sequence`
 is the meta-key maps in `io/zarr/sequence.rs` (01 routed them). There is no
 `06-release-notes`.
 
+The nine `system-forcefield-*` links (closed 2026-09-25; record: git history and `.claude/notes/release.md` § v0.15.0) were one chain (2026-09-25, operator-ruled): after typing, the system force field is the union of the parameters of every typified molecule, built only through `def_style().def_type()`; ForceField depends on no Frame/Atomistic; the typifier base owns the output and typifiers only implement `match`; coefficient writing is one label-driven capability. Chain order 01 → 09, linear. Shared rules for every link of this chain: The chain lands before `cgsmiles-03-release` tags 0.15.0; molpy is broken on this tree from 01 on, by design, and follows in its own chain after the tag.
+
+- Rust first, FFI last (operator ruling 2026-09-25; replaces the per-link binder seam rule): links 07–08 change only `molrs/`; the binder crates may not compile against the tree until 09 brings all five (molrs-python, molrs-wasm, molrs-capi, molrs-ffi, molrs-cxxapi) to the settled API.
+- Verification (operator ruling 2026-09-25): every task of links 07–09 runs only `cargo mrs-test [-- <module filter>]` (one build configuration; an edit rebuilds in ~6 s, the suite runs in ~5 s). Never a second `CARGO_TARGET_DIR`, worktree, copied crate or hand-typed feature string; no clippy, fmt check, doctest, rustdoc or binder build inside the chain. All of that happens once, at the chain end in 09: update the binders, commit (the pre-commit hook runs rustfmt + clippy), then `prek run --all-files --hook-stage pre-push`, which discharges the full-gate criterion of every link; the links then close together.
+- Definitions vs edits: `def_style` / `def_type` / `def_type_at` define. `set_type_param`, `set_type_str_param`, `remove_type` and `remove_style`, reached through `get_style_mut`, edit an existing definition and sit outside the conflict rule; `rename_type` is the one edit that can land on an existing name and carries the collision rule (02).
+- Constitution: no `.claude/notes/law.md` exists; governing rules are CLAUDE.md § Design preferences / § Testing Rules, `.claude/notes/architecture-rules.md` (io and ff never name each other), notes.md § Binding-surface symmetry.
+- English only.
+- No `regressions/` tree in molrs; no committed public-API script.
+- No A/B harness (operator ruling 2026-09-25): invariance is guarded by the existing unit tests of the touched modules, which run unedited. A/B tasks and criteria in the remaining links are dropped.
+- Domain basis: links 01–06 declare none; 07 cites MMFF (Halgren 1996) and UFF (Rappé 1992); 08 cites GAFF (Wang 2004).
+- Release order: public API changes on the unreleased 0.15 tree; the chain lands before cgsmiles-03-release tags 0.15.0 (operator decided backmap primitives fold into 0.15.0 too). The molpy half starts after the tag; molpy is broken on this tree from 01 on, by design.
+- Stage experimental: moved APIs are deleted outright (no deprecation shims), C symbols included.
+
 The ten `cgsmiles-*` links are one chain (molrs half of the CG→all-atom backmapping plan, 2026-09-21); they land in chain order and 03 ships 0.15.0, after which molpy's `backmap-*` chain may start.
 
 ## release-0-14 chain — closed 2026-09-20

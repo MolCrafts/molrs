@@ -61,7 +61,7 @@ def test_typify_and_compose_potentials():
 
     pairs = molrs.ff.intramolecular_pairs(frame)
     frame["pairs"] = pairs
-    pots = typifier.forcefield().to_potentials(frame)
+    pots = molrs.ff.PotentialCompiler(typifier.forcefield()).compile(frame)
     coords = molrs.ff.extract_coords(frame)
     energy, forces = pots.calc_energy_forces(coords)
     assert math.isfinite(energy)

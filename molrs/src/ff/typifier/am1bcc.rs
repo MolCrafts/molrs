@@ -23,9 +23,11 @@ use molrs::store::keys;
 use molrs::{AtomId, Atomistic, BondId};
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::OnceLock;
 
-use super::Typifier;
 use super::atd::{AtdParameterSet, AtdTypifier, antechamber_bond_type};
+use super::{Match, Typifier};
+use crate::ff::forcefield::ForceField;
 use crate::ff::params::{BccAlias, BccCorrectionRow};
 
 /// AM1-BCC correction-family selector.
@@ -137,8 +139,6 @@ impl BCCAtomChargeTypifier {
 }
 
 impl Typifier for BCCAtomChargeTypifier {
-    type Mol = Atomistic;
-
     /// Perceive BCC bond types, then label every atom from the set's
     /// `ATOMTYPE_*.DEF` rules.
     ///
@@ -151,22 +151,24 @@ impl Typifier for BCCAtomChargeTypifier {
     /// unresolved aromatic precursor (10), which must be resolved, not trusted. To
     /// apply corrections with types of your own, drive [`BCCCorrector`] directly.
     ///
-    /// # Arguments
-    ///
-    /// * `mol` — the molecule to type; left untouched.
-    ///
-    /// # Returns
-    ///
-    /// A clone of `mol` whose atoms carry BCC codes in [`keys::TYPE`] and whose
+    /// The match is the [`AtdTypifier`]'s over the set's table: `graph`'s
     /// bonds carry perceived antechamber bond types in
     /// [`BCC_BOND_TYPE`](molrs::perceive::bond_type::BCC_BOND_TYPE) — the bond's own
-    /// [`keys::TYPE`], the caller's force-field label, is left untouched.
+    /// [`keys::TYPE`], the caller's force-field label, is left untouched — and
+    /// every atom's BCC code is a `type` value. It defines nothing.
     ///
     /// # Errors
     ///
     /// A message naming the atom no rule of the table matched.
-    fn typify(&self, mol: &Self::Mol) -> Result<Self::Mol, String> {
-        AtdTypifier::new(self.model.atd_set()).typify(mol)
+    fn r#match(&self, graph: &mut Atomistic) -> Result<Match, String> {
+        AtdTypifier::new(self.model.atd_set()).r#match(graph)
+    }
+
+    /// An empty force field named `BCC`: the atom-type table assigns labels,
+    /// not parameters. Built once.
+    fn library(&self) -> &ForceField {
+        static LIBRARY: OnceLock<ForceField> = OnceLock::new();
+        LIBRARY.get_or_init(|| ForceField::new("BCC"))
     }
 }
 
@@ -564,5 +566,52 @@ impl BCCCorrector {
                 .map_err(|e| e.to_string())?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ff::typifier::Typing;
+
+    /// Methane, hand-built: C is atom 0, the four hydrogens follow.
+    fn methane() -> Atomistic {
+        let mut m = Atomistic::new();
+        let c = m.add_atom_bare("C");
+        for _ in 0..4 {
+            let h = m.add_atom_bare("H");
+            m.add_bond(c, h).unwrap();
+        }
+        m
+    }
+
+    /// Typing through the base stamps a non-empty `type` on every atom and
+    /// defines nothing: the match is stamp-only, so the output holds no type.
+    #[test]
+    fn typing_stamps_every_atom_and_defines_no_type() {
+        let mut typing = Typing::new(BCCAtomChargeTypifier::bcc());
+        let typed = typing.typify(&methane()).expect("methane types");
+
+        assert_eq!(typed.atoms().count(), 5);
+        for (id, atom) in typed.atoms() {
+            let t = atom.get_str(keys::TYPE);
+            assert!(t.is_some_and(|t| !t.is_empty()), "atom {id:?}: {t:?}");
+        }
+        assert!(
+            typing
+                .forcefield()
+                .styles()
+                .iter()
+                .all(|s| s.defs().collect_type_params().is_empty()),
+            "output holds no type: {:?}",
+            typing.forcefield()
+        );
+    }
+
+    /// The library a BCC atom typer matches against is empty: no styles.
+    #[test]
+    fn library_is_an_empty_forcefield() {
+        let typing = Typing::new(BCCAtomChargeTypifier::bcc());
+        assert!(typing.library().styles().is_empty());
     }
 }

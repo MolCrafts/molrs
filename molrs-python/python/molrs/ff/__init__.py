@@ -5,7 +5,8 @@ same word:
 
 * :mod:`~molrs.ff.forcefield` — the chainable :class:`ForceField` plus its
   ``Style`` / ``Type`` handle views
-* :mod:`~molrs.ff.typifier` — graph-in / graph-out atom typers (OPLS-AA, MMFF94,
+* :mod:`~molrs.ff.typifier` — the subclassable ``Typifier`` base and its
+  ``Match``, plus the graph-in / graph-out atom typers (OPLS-AA, MMFF94,
   MMFF94s, ATD)
 * :mod:`~molrs.ff.charge` — partial-charge models (AM1-BCC / ABCG2, Mulliken,
   Gasteiger)
@@ -22,6 +23,7 @@ from . import charge, forcefield, potential, typifier
 from .potential import Potential
 from .._lib import (
     FragmentScaling as FragmentScaling,
+    PotentialCompiler as PotentialCompiler,
     Potentials as Potentials,
     compute_k_ij as compute_k_ij,
     extract_coords as extract_coords,
@@ -31,21 +33,17 @@ from .._lib import (
 )
 from .charge import BccModel, GasteigerModel, MullikenModel
 from .forcefield import (
-    AngleHarmonicStyle,
     AngleStyle,
     AngleType,
     AtomStyle,
     AtomType,
-    BondHarmonicStyle,
     BondStyle,
     BondType,
-    DihedralOPLSStyle,
     DihedralStyle,
     DihedralType,
     ForceField,
     ImproperStyle,
     ImproperType,
-    PairCoulLongStyle,
     PairStyle,
     PairType,
     Parameters,
@@ -72,6 +70,7 @@ from .forcefield import (
 )
 from .typifier import (
     AtdTypifier,
+    Match,
     MMFF94STypifier,
     MMFF94Typifier,
     OPLSAATypifier,
@@ -94,10 +93,6 @@ __all__ = [
     "DihedralStyle",
     "ImproperStyle",
     "PairStyle",
-    "BondHarmonicStyle",
-    "AngleHarmonicStyle",
-    "DihedralOPLSStyle",
-    "PairCoulLongStyle",
     "Type",
     "AtomType",
     "BondType",
@@ -106,6 +101,7 @@ __all__ = [
     "ImproperType",
     "PairType",
     "Parameters",
+    "PotentialCompiler",
     "Potentials",
     # force-field file formats
     "read_forcefield_xml",
@@ -128,6 +124,7 @@ __all__ = [
     "write_lammps_data_coeffs",
     # typifiers
     "Typifier",
+    "Match",
     "OPLSAATypifier",
     "MMFF94Typifier",
     "MMFF94STypifier",

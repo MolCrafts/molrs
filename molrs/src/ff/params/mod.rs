@@ -38,9 +38,9 @@
 //! DIHE / IMPROPER / NONBON rows. Values are kept in the **upstream's own units
 //! and conventions** — degrees, and AMBER's un-halved force constants — because
 //! the table is a transcription of the file, not a force field: converting to
-//! molrs's radians-and-half-k kernel convention is the job of the reader that
+//! molrs's radians-and-half-k kernel convention is the job of the code that
 //! populates a [`ForceField`](crate::ff::forcefield::ForceField) from it (see
-//! [`crate::ff::forcefield::gaff`]).
+//! [`crate::ff::typifier::gaff`]).
 
 pub mod amber;
 pub mod atomtype_abcg2;
@@ -403,7 +403,7 @@ pub struct ParmMassRow {
 /// That is **AMBER's** convention and it carries no ½ — unlike molrs's
 /// [`BondHarmonic`](crate::ff::potential::bond::harmonic::BondHarmonic), whose
 /// `k` is `2 · force_constant`. The factor is applied where the units are
-/// normalised (the [`gaff`](crate::ff::forcefield::gaff) reader), never here:
+/// normalised (the [`gaff`](crate::ff::typifier::gaff) candidate library), never here:
 /// this row is what the file says.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ParmBondRow {

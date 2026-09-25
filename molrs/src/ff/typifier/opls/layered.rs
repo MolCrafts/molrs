@@ -9,7 +9,7 @@
 //!
 //! This replicates molpy's `LayeredTypingEngine`
 //! (`molpy/typifier/layered_engine.py`):
-//! - levels processed in ascending order ([`LayeredTypingEngine::typify`]);
+//! - levels processed in ascending order ([`LayeredTypingEngine::assign`]);
 //! - a normal level is resolved in a single pass — matching under the current
 //!   assignment context, resolving per-atom conflicts by priority, then merging
 //!   (new assignments override) — mirroring molpy's `_resolve_level`;
@@ -124,7 +124,7 @@ impl LayeredTypingEngine {
     /// is threaded into each level's SMARTS matching as the context-label map,
     /// so `%opls_NNN` defs see the prior levels' results. A level whose defs lie
     /// in a circular-dependency group is resolved by fixed-point iteration.
-    pub fn typify(&self, mol: &Atomistic) -> HashMap<AtomId, String> {
+    pub fn assign(&self, mol: &Atomistic) -> HashMap<AtomId, String> {
         let mut assignments: HashMap<AtomId, String> = HashMap::new();
         for level in 0..self.by_level.len() {
             let defs = &self.by_level[level];
@@ -295,7 +295,7 @@ mod tests {
         assert_eq!(engine.analyzer().max_level(), Some(0));
 
         let (g, _o, _ho) = ethanol();
-        let assigned = engine.typify(&g);
+        let assigned = engine.assign(&g);
         // The methyl carbon (CH3 on a C) types opls_135; its 3 H type opls_140.
         let n135 = assigned.values().filter(|t| *t == "opls_135").count();
         let n140 = assigned.values().filter(|t| *t == "opls_140").count();
@@ -316,7 +316,7 @@ mod tests {
         assert_eq!(engine.analyzer().level("opls_155"), Some(1));
 
         let (g, o, ho) = ethanol();
-        let assigned = engine.typify(&g);
+        let assigned = engine.assign(&g);
         assert_eq!(
             assigned.get(&o).map(String::as_str),
             Some("opls_154"),
@@ -336,7 +336,7 @@ mod tests {
         let meta = meta_with(&[("opls_155", row("HO", Some("H[O;%opls_154]"), &[]))]);
         let engine = LayeredTypingEngine::build(&meta).unwrap();
         let (g, _o, ho) = ethanol();
-        let assigned = engine.typify(&g);
+        let assigned = engine.assign(&g);
         assert!(
             !assigned.contains_key(&ho),
             "no dependency assigned -> dependent stays untyped"
@@ -358,7 +358,7 @@ mod tests {
         let engine = LayeredTypingEngine::build(&meta).unwrap();
         assert_eq!(engine.analyzer().circular_groups().len(), 1);
         let (g, _o, _ho) = ethanol();
-        let assigned = engine.typify(&g);
+        let assigned = engine.assign(&g);
         // The base def still types the methyl carbon; the cyclic defs (needing
         // an O/N neighbour with cyclic types) never fire on ethanol.
         assert_eq!(

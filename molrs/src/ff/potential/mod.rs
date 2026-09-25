@@ -2,7 +2,7 @@
 //!
 //! A [`Potential`] stores pre-resolved topology indices and parameters.
 //! Callers pass only flat coordinates — no [`Frame`] in the hot loop.
-//! Construction from a [`Frame`] happens once via [`ForceField::to_potentials`](crate::ff::forcefield::ForceField::to_potentials).
+//! Construction from a [`Frame`] happens once via [`PotentialCompiler::compile`](compile::PotentialCompiler::compile).
 
 pub mod geometry;
 
@@ -16,6 +16,7 @@ pub mod pair;
 pub mod registry;
 pub mod soft;
 
+pub use compile::PotentialCompiler;
 pub use registry::{
     KernelConstructor, KernelRegistry, ParamSource, RowSource, lookup_kernel, lookup_param_source,
     lookup_row_source, register_kernel, register_kernel_with,
@@ -42,7 +43,7 @@ use molrs::types::{F, Idx};
 /// is still under 2 GiB and the caller is still plausibly asking for what this
 /// function is for: the intramolecular pairs of one molecule, in free space.
 /// A periodic or larger system wants a neighbour list and
-/// [`ForceField::to_typed_potentials`](crate::ff::forcefield::ForceField::to_typed_potentials).
+/// [`PotentialCompiler::compile_typed`](compile::PotentialCompiler::compile_typed).
 ///
 /// molrs-wasm caps the same path at 2 000 for its own memory budget; this is
 /// the native ceiling, not a duplicate of that policy.
@@ -55,7 +56,7 @@ const BYTES_PER_PAIR_ROW: usize = 4 + 4 + 1;
 /// from a frame's bond/angle/dihedral topology: every `i < j` pair, excluding
 /// 1-2 (bonded) and 1-3 (angle) pairs and flagging 1-4 (dihedral-end) pairs.
 ///
-/// This is the neighbour list that [`ForceField::to_potentials`](crate::ff::forcefield::ForceField::to_potentials) hands to every
+/// This is the neighbour list that [`PotentialCompiler::compile`](compile::PotentialCompiler::compile) hands to every
 /// pair kernel — the same logic the MMFF frame builder used to compute
 /// privately, lifted here so every force field (GAFF/LAMMPS, OPLS, MMFF, …)
 /// shares one path. Per-pair scaling of the flagged 1-4 pairs is applied by the
@@ -82,7 +83,7 @@ pub fn intramolecular_pairs(frame: &Frame, special: &SpecialBonds) -> Result<Blo
             "intramolecular_pairs: {n_atoms} atoms would enumerate {} pairs \
              (~{} GiB) — this list is every pair in the molecule, with no cutoff. \
              Above {MAX_ATOMS_FOR_A_FULL_PAIR_LIST} atoms build a neighbour list \
-             instead and evaluate through ForceField::to_typed_potentials.",
+             instead and evaluate through PotentialCompiler::compile_typed.",
             n_atoms * (n_atoms - 1) / 2,
             (n_atoms * (n_atoms - 1) / 2 * BYTES_PER_PAIR_ROW) >> 30,
         ));
@@ -150,7 +151,7 @@ fn end_pairs(frame: &Frame, block: &str, col_a: &str, col_b: &str) -> HashSet<(u
 /// Energy and forces from coordinates alone.
 ///
 /// A `Potential` is **molecule-bound**: its per-element parameters are expanded
-/// against the molecule's topology once at [`ForceField::to_potentials`](crate::ff::forcefield::ForceField::to_potentials)
+/// against the molecule's topology once at [`PotentialCompiler::compile`](compile::PotentialCompiler::compile)
 /// (string type labels resolved to per-bond/angle/… arrays). Evaluation
 /// therefore takes only coordinates — there is no per-call topology resolution.
 ///
@@ -543,7 +544,7 @@ impl Potentials {
         self.n_atoms
     }
 
-    /// Record the compiled atom count (used by [`ForceField::to_potentials`](crate::ff::forcefield::ForceField::to_potentials)).
+    /// Record the compiled atom count (used by [`PotentialCompiler::compile`](compile::PotentialCompiler::compile)).
     pub fn set_n_atoms(&mut self, n_atoms: usize) {
         self.n_atoms = n_atoms;
     }
@@ -963,19 +964,31 @@ mod tests {
     #[test]
     fn rebinding_a_kernel_to_its_own_indices_changes_nothing() {
         let mut ff = ForceField::new("all-bonded");
-        ff.def_bondstyle("harmonic")
-            .def_type("A-A", &[("k", 300.0), ("r0", 1.5)]);
-        ff.def_anglestyle("harmonic")
-            .def_type("A-A-A", &[("k", 50.0), ("theta0", 1.911)]);
-        ff.def_dihedralstyle("opls").def_type(
-            "A-A-A-A",
-            &[("k1", 1.3), ("k2", -0.05), ("k3", 0.24), ("k4", 0.0)],
-        );
-        ff.def_improperstyle("harmonic")
-            .def_type("A-A-A-A", &[("k", 10.0), ("chi0", 0.0)]);
+        ff.def_style("bond", "harmonic", Params::new())
+            .unwrap()
+            .def_type("A-A", Params::from_pairs(&[("k", 300.0), ("r0", 1.5)]))
+            .unwrap();
+        ff.def_style("angle", "harmonic", Params::new())
+            .unwrap()
+            .def_type(
+                "A-A-A",
+                Params::from_pairs(&[("k", 50.0), ("theta0", 1.911)]),
+            )
+            .unwrap();
+        ff.def_style("dihedral", "opls", Params::new())
+            .unwrap()
+            .def_type(
+                "A-A-A-A",
+                Params::from_pairs(&[("k1", 1.3), ("k2", -0.05), ("k3", 0.24), ("k4", 0.0)]),
+            )
+            .unwrap();
+        ff.def_style("improper", "harmonic", Params::new())
+            .unwrap()
+            .def_type("A-A-A-A", Params::from_pairs(&[("k", 10.0), ("chi0", 0.0)]))
+            .unwrap();
 
         let frame = make_all_bonded_frame();
-        let pots = ff.to_potentials(&frame).unwrap();
+        let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
         let coords = extract_coords(&frame).unwrap();
 
         let mut checked = 0;
@@ -1113,28 +1126,33 @@ mod tests {
 
     #[test]
     fn unknown_style_kernel_is_error() {
-        // A style whose (category, name) has no kernel -> Err from to_potential.
+        // A style whose (category, name) has no kernel -> Err from PotentialCompiler::compile.
         let mut ff = ForceField::new("test");
-        ff.def_bondstyle("nonexistent")
-            .def_type("A-A", &[("k", 1.0)]);
+        ff.def_style("bond", "nonexistent", Params::new())
+            .unwrap()
+            .def_type("A-A", Params::from_pairs(&[("k", 1.0)]))
+            .unwrap();
         let frame = make_bond_frame();
-        let err = ff.to_potentials(&frame).unwrap_err();
+        let err = PotentialCompiler::new(&ff).compile(&frame).unwrap_err();
         assert!(err.contains("no kernel"), "{err}");
     }
 
     #[test]
     fn register_kernel_extends_dispatch() {
         // A custom (category, name) with no built-in kernel becomes usable by
-        // registering its constructor — no edit to to_potential required.
+        // registering its constructor — no edit to PotentialCompiler required.
         fn my_ctor(_sp: &Params, _tp: &[(&str, &Params)], _f: &Frame) -> Result<Member, String> {
             Ok(Member::plain(DummyPotential { value: 42.0 }))
         }
         register_kernel("pair", "test/custom", my_ctor);
 
         let mut ff = ForceField::new("test");
-        ff.def_pairstyle("test/custom", &[]).def_type("A", &[]);
+        ff.def_style("pair", "test/custom", Params::new())
+            .unwrap()
+            .def_type("A", Params::new())
+            .unwrap();
         let frame = make_lj_frame();
-        let pots = ff.to_potentials(&frame).unwrap();
+        let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
         let coords = extract_coords(&frame).unwrap();
         // the custom kernel ran: DummyPotential yields its constant value.
         assert!((pots.calc_energy(&coords) - 42.0).abs() < 1e-9);
@@ -1143,19 +1161,20 @@ mod tests {
     #[test]
     fn atom_style_is_skipped() {
         // Atom styles carry types/charges, not a pairwise kernel -> skipped.
-        let ff = ForceField::new("test").with_atomstyle("full");
+        let mut ff = ForceField::new("test");
+        ff.def_style("atom", "full", Params::new()).unwrap();
         let frame = make_atoms_only_frame();
-        let pots = ff.to_potentials(&frame).unwrap();
+        let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
         assert_eq!(pots.len(), 0);
     }
 
     #[test]
     fn test_compile_requires_types() {
         let mut ff = ForceField::new("test");
-        ff.def_bondstyle("harmonic");
+        ff.def_style("bond", "harmonic", Params::new()).unwrap();
         let frame = make_bond_frame();
-        let err = ff
-            .to_potentials(&frame)
+        let err = PotentialCompiler::new(&ff)
+            .compile(&frame)
             .expect_err("expected compile to fail");
         assert!(err.contains("has no type definitions"));
     }
@@ -1163,11 +1182,13 @@ mod tests {
     #[test]
     fn test_compile_energy() {
         let mut ff = ForceField::new("test");
-        ff.def_pairstyle("lj/cut", &[("cutoff", 10.0)])
-            .def_type("A", &[("epsilon", 1.0), ("sigma", 1.0)]);
+        ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+            .unwrap()
+            .def_type("A", Params::from_pairs(&[("epsilon", 1.0), ("sigma", 1.0)]))
+            .unwrap();
 
         let frame = make_lj_frame();
-        let pots = ff.to_potentials(&frame).unwrap();
+        let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
         let coords = extract_coords(&frame).unwrap();
 
         let (energy, _) = pots.calc_energy_forces(&coords);
@@ -1178,11 +1199,13 @@ mod tests {
     #[test]
     fn test_compile_forces() {
         let mut ff = ForceField::new("test");
-        ff.def_pairstyle("lj/cut", &[("cutoff", 10.0)])
-            .def_type("A", &[("epsilon", 1.0), ("sigma", 1.0)]);
+        ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+            .unwrap()
+            .def_type("A", Params::from_pairs(&[("epsilon", 1.0), ("sigma", 1.0)]))
+            .unwrap();
 
         let frame = make_lj_frame();
-        let pots = ff.to_potentials(&frame).unwrap();
+        let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
         let coords = extract_coords(&frame).unwrap();
 
         let (_, forces) = pots.calc_energy_forces(&coords);
@@ -1217,11 +1240,14 @@ mod tests {
         );
 
         let mut ff = ForceField::new("test");
-        ff.def_pairstyle("lj/cut", &[])
-            .def_type("A", &[("epsilon", 1.0), ("sigma", 1.0)])
-            .def_type("B", &[("epsilon", 4.0), ("sigma", 3.0)]);
+        ff.def_style("pair", "lj/cut", Params::new())
+            .unwrap()
+            .def_type("A", Params::from_pairs(&[("epsilon", 1.0), ("sigma", 1.0)]))
+            .unwrap()
+            .def_type("B", Params::from_pairs(&[("epsilon", 4.0), ("sigma", 3.0)]))
+            .unwrap();
 
-        let pots = ff.to_potentials(&frame).unwrap();
+        let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
         let coords = extract_coords(&frame).unwrap();
         let (energy, _) = pots.calc_energy_forces(&coords);
 
@@ -1298,13 +1324,15 @@ mod tests {
         frame.insert("pairs", pairs);
 
         let mut ff = ForceField::new("test");
-        ff.def_pairstyle("lj/cut", &[])
-            .def_type("A", &[("epsilon", 1.0), ("sigma", 1.0)]);
+        ff.def_style("pair", "lj/cut", Params::new())
+            .unwrap()
+            .def_type("A", Params::from_pairs(&[("epsilon", 1.0), ("sigma", 1.0)]))
+            .unwrap();
         let mut sb = *ff.special_bonds();
         sb.lj[2] = 0.5;
         ff.set_special_bonds(sb);
 
-        let pots = ff.to_potentials(&frame).unwrap();
+        let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
         let coords = extract_coords(&frame).unwrap();
         let (energy, _) = pots.calc_energy_forces(&coords);
 
@@ -1321,7 +1349,7 @@ mod tests {
     fn test_compile_empty_ff() {
         let ff = ForceField::new("test");
         let frame = make_lj_frame();
-        let pots = ff.to_potentials(&frame).unwrap();
+        let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
         let coords = extract_coords(&frame).unwrap();
 
         let (energy, forces) = pots.calc_energy_forces(&coords);
@@ -1335,11 +1363,13 @@ mod tests {
         // A style whose topology block is absent from the frame contributes
         // nothing (no rows of that kind) — skipped, not an error.
         let mut ff = ForceField::new("test");
-        ff.def_pairstyle("lj/cut", &[("cutoff", 10.0)])
-            .def_type("A", &[("epsilon", 1.0), ("sigma", 1.0)]);
+        ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+            .unwrap()
+            .def_type("A", Params::from_pairs(&[("epsilon", 1.0), ("sigma", 1.0)]))
+            .unwrap();
 
         let frame = make_atoms_only_frame();
-        let pots = ff.to_potentials(&frame).unwrap();
+        let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
         assert_eq!(pots.len(), 0);
         let coords = extract_coords(&frame).unwrap();
         assert!(pots.calc_energy(&coords).abs() < 1e-9);
@@ -1366,7 +1396,7 @@ mod tests {
         let err = intramolecular_pairs(&frame, &SpecialBonds::default())
             .expect_err("a list this size is not an answer");
         assert!(err.contains("neighbour list"), "{err}");
-        assert!(err.contains("to_typed_potentials"), "{err}");
+        assert!(err.contains("compile_typed"), "{err}");
 
         // And one atom under the ceiling still builds, so the bound is a
         // ceiling and not an off-by-one that refuses the supported case.

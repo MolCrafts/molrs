@@ -1,9 +1,9 @@
 //! MMFF atom/bond/angle/torsion/improper typifiers — two named front doors.
 //!
-//! Annotates an [`Atomistic`] with MMFF type labels and partial charges. That is
+//! Matches an [`Atomistic`] to MMFF type labels and partial charges. That is
 //! the typifier's contract, and all of it: MMFF is a parameter set plus a topology
 //! labeler, and it computes energies the way every other force field in molrs does
-//! — through [`ForceField::to_potentials`](crate::ff::forcefield::ForceField).
+//! — through [`PotentialCompiler::compile`](crate::ff::potential::PotentialCompiler::compile).
 //! **MMFF is not a special case.**
 //!
 //! # Which door?
@@ -28,16 +28,17 @@
 //!
 //! ```no_run
 //! use molrs::Atomistic;
-//! use molrs::ff::potential::intramolecular_pairs;
+//! use molrs::ff::potential::{PotentialCompiler, intramolecular_pairs};
+//! use molrs::ff::typifier::Typing;
 //! use molrs::ff::typifier::mmff::MMFF94Typifier;
 //! # fn main() -> Result<(), String> {
 //! let mol = Atomistic::new();                             // build or load your molecule
-//! let typifier = MMFF94Typifier::new();
+//! let mut typing = Typing::new(MMFF94Typifier::new());
 //!
-//! let mut frame = typifier.typify(&mol)?.to_frame().map_err(|e| e.to_string())?;
-//! let ff = typifier.ff();
+//! let mut frame = typing.typify(&mol)?.to_frame().map_err(|e| e.to_string())?;
+//! let ff = typing.forcefield();                           // exactly the types assigned
 //! frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds())?);
-//! let potentials = ff.to_potentials(&frame)?;              // the standard compile path
+//! let potentials = PotentialCompiler::new(ff).compile(&frame)?; // the standard compile path
 //!
 //! let coords: Vec<f64> = Vec::new();                      // flat [x,y,z, ...]
 //! let (energy, _forces) = potentials.calc_energy_forces(&coords);
@@ -53,9 +54,9 @@
 
 use crate::ff::forcefield::ForceField;
 use crate::ff::mmff::MmffVariant;
+use crate::ff::typifier::{Match, Typifier};
 use molrs::Atomistic;
 
-use super::Typifier;
 use engine::MmffEngine;
 
 mod embedded;
@@ -86,11 +87,11 @@ macro_rules! mmff_front_door {
         impl $name {
             #[doc = concat!("Create a typifier over the shipped `", $set, "` parameter set.")]
             ///
-            /// Infallible: the parameters are compiled-in typed Rust
-            /// ([`ff::params::mmff`](crate::ff::params::mmff)), so there is
-            /// nothing that can fail to parse at runtime.
+            /// Infallible and cheap: the parameters are compiled-in typed Rust
+            /// ([`ff::params::mmff`](crate::ff::params::mmff)), assembled once
+            /// per process and shared by every typifier of this door.
             pub fn new() -> Self {
-                Self(MmffEngine::embedded($variant, $set))
+                Self(MmffEngine::embedded($variant))
             }
 
             #[doc = concat!("Create a typifier from a caller-supplied `", $set, "` XML string.")]
@@ -106,41 +107,38 @@ macro_rules! mmff_front_door {
             pub fn params(&self) -> &MMFFParams {
                 self.0.params()
             }
+        }
 
-            /// The force field this door compiles potentials from.
-            pub fn ff(&self) -> &ForceField {
-                self.0.ff()
-            }
-
-            #[doc = concat!("Assign `", $set, "` labels and parameters to an all-atom graph.")]
+        impl Typifier for $name {
+            #[doc = concat!("Match an all-atom graph against `", $set, "`.")]
             ///
             /// Atoms get their MMFF numeric `type` and partial `charge`; bonds,
             /// angles, dihedrals and impropers get their type labels **and** the
             /// per-instance numbers the kernels read — including `koop` on every
             /// improper and `(v1, v2, v3)` on every dihedral, resolved from *this*
-            /// door's parameter set.
+            /// door's parameter set. Each distinct parameter set is one type,
+            /// named by its label; the vdW rows of the atom types used are pairs.
             ///
-            /// This is the whole contract. To evaluate an energy, materialize the
-            /// result ([`Atomistic::to_frame`]), add the neighbour list
+            /// To evaluate an energy, type through
+            /// [`Typing`](crate::ff::typifier::Typing), materialize the result
+            /// ([`Atomistic::to_frame`]), add the neighbour list
             /// ([`intramolecular_pairs`](crate::ff::potential::intramolecular_pairs)),
-            /// and compile it with [`ff()`](Self::ff)`.to_potentials(&frame)` — see
+            /// and compile it with
+            /// `PotentialCompiler::new(typing.forcefield()).compile(&frame)` — see
             /// the module example.
-            pub fn typify(&self, mol: &Atomistic) -> Result<Atomistic, String> {
-                self.0.typify(mol)
+            fn r#match(&self, graph: &mut Atomistic) -> Result<Match, String> {
+                self.0.r#match(graph)
+            }
+
+            #[doc = concat!("The `", $set, "` force field this door matches against.")]
+            fn library(&self) -> &ForceField {
+                self.0.library()
             }
         }
 
         impl Default for $name {
             fn default() -> Self {
                 Self::new()
-            }
-        }
-
-        impl Typifier for $name {
-            type Mol = Atomistic;
-
-            fn typify(&self, mol: &Atomistic) -> Result<Atomistic, String> {
-                self.0.typify(mol)
             }
         }
     };
@@ -154,11 +152,12 @@ mmff_front_door! {
     ///
     /// ```no_run
     /// use molrs::ff::typifier::mmff::MMFF94Typifier;
+    /// use molrs::ff::typifier::{Typifier, Typing};
     /// # fn main() -> Result<(), String> {
     /// # let mol = molrs::Atomistic::new();
     /// let typifier = MMFF94Typifier::new();
-    /// assert_eq!(typifier.ff().name, "MMFF94");
-    /// let typed = typifier.typify(&mol)?;
+    /// assert_eq!(typifier.library().name, "MMFF94");
+    /// let typed = Typing::new(typifier).typify(&mol)?;
     /// # let _ = typed;
     /// # Ok(())
     /// # }
@@ -199,11 +198,12 @@ mmff_front_door! {
     ///
     /// ```no_run
     /// use molrs::ff::typifier::mmff::MMFF94STypifier;
+    /// use molrs::ff::typifier::{Typifier, Typing};
     /// # fn main() -> Result<(), String> {
     /// # let mol = molrs::Atomistic::new();
     /// let typifier = MMFF94STypifier::new();
-    /// assert_eq!(typifier.ff().name, "MMFF94s");
-    /// let typed = typifier.typify(&mol)?;
+    /// assert_eq!(typifier.library().name, "MMFF94s");
+    /// let typed = Typing::new(typifier).typify(&mol)?;
     /// # let _ = typed;
     /// # Ok(())
     /// # }

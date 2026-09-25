@@ -284,7 +284,7 @@ pub fn pair_tang_toennies_ctor(
     let b = style_params.get("b").unwrap_or(4.5) as F;
     let n = style_params.get("order").unwrap_or(4.0).round() as usize;
     let c = style_params.get("c").unwrap_or(1.0) as F;
-    // `Style::to_potential` projects the force field's `special_bonds` 1-4
+    // `PotentialCompiler::compile` projects the force field's `special_bonds` 1-4
     // weight here. The energy is linear in the charge product, so scaling it
     // is exactly scaling the pair.
     let scale_14 = style_params.get("coulomb14scale").unwrap_or(1.0) as F;

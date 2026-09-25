@@ -18,14 +18,15 @@
 //! MMFF computes energies the way every other force field in molrs does:
 //!
 //! ```no_run
-//! use molrs::ff::potential::intramolecular_pairs;
+//! use molrs::ff::potential::{PotentialCompiler, intramolecular_pairs};
+//! use molrs::ff::typifier::Typing;
 //! use molrs::ff::typifier::mmff::MMFF94Typifier;
 //! # fn run(mol: &molrs::Atomistic) -> Result<(), String> {
-//! let typifier = MMFF94Typifier::new();
-//! let mut frame = typifier.typify(mol)?.to_frame().map_err(|e| e.to_string())?;
-//! let ff = typifier.ff();
+//! let mut typing = Typing::new(MMFF94Typifier::new());
+//! let mut frame = typing.typify(mol)?.to_frame().map_err(|e| e.to_string())?;
+//! let ff = typing.forcefield();
 //! frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds())?);
-//! let potentials = ff.to_potentials(&frame)?;              // the standard route
+//! let potentials = PotentialCompiler::new(ff).compile(&frame)?; // the standard route
 //! # let _ = potentials; Ok(())
 //! # }
 //! ```

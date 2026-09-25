@@ -61,13 +61,17 @@ use crate::helpers::molrs_error_to_pyerr;
 /// (so `extract::<i64>()` would silently collapse `True`→`1`); `int` is tried
 /// before `float` so an integer literal doesn't become a float. Anything that is
 /// not `bool` / `int` / `float` / `str` is rejected fail-fast — non-representable
-/// values (lists, `None`, arbitrary objects) MUST raise, never be stashed.
-fn py_to_prop(value: &Bound<'_, PyAny>) -> PyResult<PropValue> {
+/// values (lists, `None`, arbitrary objects) MUST raise, never be stashed. An
+/// integer outside the stored 32-bit range raises `OverflowError` rather than
+/// wrapping (or, past 64 bits, silently becoming a float).
+pub(crate) fn py_to_prop(value: &Bound<'_, PyAny>) -> PyResult<PropValue> {
     // `extract::<bool>()` matches only a genuine Python `bool`, not an `int`.
     if let Ok(b) = value.extract::<bool>() {
         Ok(PropValue::Bool(b))
-    } else if let Ok(i) = value.extract::<i64>() {
-        Ok(PropValue::Int(i as i32))
+    } else if value.hasattr(pyo3::intern!(value.py(), "__index__"))? {
+        // An integer (Python `int`, numpy integer). Extracting straight to the
+        // stored width raises `OverflowError` out of range instead of wrapping.
+        value.extract::<i32>().map(PropValue::Int)
     } else if let Ok(f) = value.extract::<f64>() {
         Ok(PropValue::F64(f))
     } else if let Ok(s) = value.extract::<String>() {

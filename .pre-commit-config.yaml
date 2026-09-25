@@ -1,5 +1,8 @@
-# prek: pre-commit = rustfmt + clippy + rustdoc; pre-push = unit + python + wasm
-# + capi. Mirrors ci.yml (rust / wasm / python / capi). No wrapper scripts.
+# prek: pre-commit = rustfmt + clippy of molcrafts-molrs only (one build
+# configuration). pre-push = rustdoc + binder/wasm clippy + unit + python + wasm
+# + capi. Each binder links molrs under its own feature set / target, i.e. one
+# more full compile of molrs, so none of them runs at commit time (operator
+# ruling 2026-09-25). Mirrors ci.yml (rust / wasm / python / capi) at push.
 #
 # Two rules hold this file together:
 #
@@ -45,14 +48,20 @@ repos:
         stages: [pre-commit]
 
       - id: clippy-molrs
-        name: clippy + rustdoc (molcrafts-molrs)
-        entry: >-
-          sh -c 'cargo mrs-clippy -- -D warnings
-          && RUSTDOCFLAGS="-D warnings" cargo mrs-doc'
+        name: clippy (molcrafts-molrs)
+        entry: cargo mrs-clippy -- -D warnings
         language: system
         pass_filenames: false
         files: ^(molrs/|Cargo\.toml|\.cargo/|rust-toolchain\.toml)
         stages: [pre-commit]
+
+      - id: rustdoc-molrs
+        name: rustdoc (molcrafts-molrs)
+        entry: sh -c 'RUSTDOCFLAGS="-D warnings" cargo mrs-doc'
+        language: system
+        pass_filenames: false
+        files: ^(molrs/|Cargo\.toml|\.cargo/|rust-toolchain\.toml)
+        stages: [pre-push]
 
       - id: clippy-binders
         name: clippy (ffi consumers)
@@ -63,7 +72,7 @@ repos:
         language: system
         pass_filenames: false
         files: ^(molrs/|molrs-ffi/|molrs-cxxapi/|molrs-python/|molrs-capi/|Cargo\.toml|\.cargo/|rust-toolchain\.toml)
-        stages: [pre-commit]
+        stages: [pre-push]
 
       - id: clippy-wasm
         name: clippy (wasm32)
@@ -71,7 +80,7 @@ repos:
         language: system
         pass_filenames: false
         files: ^(molrs/|molrs-ffi/|molrs-wasm/|Cargo\.toml|\.cargo/|rust-toolchain\.toml)
-        stages: [pre-commit]
+        stages: [pre-push]
 
       # target/ is a cache, and a bloated one is slower than none: at 101 GB a
       # one-file rebuild cost 44-79 s where a clean tree costs 6-7 s, because a
@@ -149,12 +158,15 @@ repos:
       # unconditionally. This gate could not fail from the day it was written
       # until 2026-08-23. Reproduce the old shape with:
       #   sh -c 'set -euo pipefail echo NOPE false'; echo $?   # -> 0, no NOPE
+      # Profile and target dir are passed explicitly: CMake caches both, so a
+      # build-test/ configured once with CARGO_PROFILE=release kept rebuilding
+      # the release C library (~2 min) on every gate after that.
       - id: capi-tests
         name: C API ctest
         entry: >-
           bash -c 'set -euo pipefail;
           cargo build --manifest-path molrs-capi/Cargo.toml;
-          cmake -S molrs-capi/tests/cpp -B molrs-capi/build-test;
+          cmake -S molrs-capi/tests/cpp -B molrs-capi/build-test -DCARGO_PROFILE=debug -DCARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}";
           cmake --build molrs-capi/build-test;
           ctest --test-dir molrs-capi/build-test --output-on-failure'
         language: system

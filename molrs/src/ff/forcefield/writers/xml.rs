@@ -8,6 +8,15 @@
 //! every torsion / pair energy × 4.184, lengths ÷ 10). OPLS dihedrals stored as
 //! the 4-cosine `k1..k4` are written as Ryckaert–Bellemans `c0..c5` (GROMACS
 //! Eqs. 200–201); periodic terms use `k{m}/periodicity{m}/phase{m}`.
+//!
+//! # Whole-FF serialization, not coefficient writing
+//!
+//! molrs has two kinds of force-field writer. This one is **whole-FF
+//! serialization**: it writes every type the [`ForceField`] holds, as a
+//! force-field file, and takes no type labels. **Coefficient writing**
+//! ([`super::lammps::LammpsFfWriter`], LAMMPS only) answers "which coefficients
+//! does this system's data file need" and is keyed by the system's
+//! `TypeLabels`.
 
 use super::ForceFieldWriter;
 use crate::ff::forcefield::{ForceField, StyleDefs};
@@ -66,7 +75,7 @@ impl ForceFieldWriter for XmlForceFieldWriter {
         // AtomTypes
         let mut atoms_xml = String::new();
         for style in ff.get_styles("atom") {
-            let StyleDefs::Atom(types) = &style.defs else {
+            let StyleDefs::Atom(types) = style.defs() else {
                 continue;
             };
             let mut sorted: Vec<_> = types.iter().collect();
@@ -125,10 +134,10 @@ impl ForceFieldWriter for XmlForceFieldWriter {
 
         // Bonds
         for style in ff.get_styles("bond") {
-            if style.name != "harmonic" && !style.name.is_empty() {
+            if style.name() != "harmonic" && !style.name().is_empty() {
                 continue;
             }
-            let StyleDefs::Bond(types) = &style.defs else {
+            let StyleDefs::Bond(types) = style.defs() else {
                 continue;
             };
             if types.is_empty() {
@@ -153,10 +162,10 @@ impl ForceFieldWriter for XmlForceFieldWriter {
 
         // Angles
         for style in ff.get_styles("angle") {
-            if style.name != "harmonic" && !style.name.is_empty() {
+            if style.name() != "harmonic" && !style.name().is_empty() {
                 continue;
             }
-            let StyleDefs::Angle(types) = &style.defs else {
+            let StyleDefs::Angle(types) = style.defs() else {
                 continue;
             };
             if types.is_empty() {
@@ -180,13 +189,13 @@ impl ForceFieldWriter for XmlForceFieldWriter {
 
         // Dihedrals: opls → RB, else Periodic
         for style in ff.get_styles("dihedral") {
-            let StyleDefs::Dihedral(types) = &style.defs else {
+            let StyleDefs::Dihedral(types) = style.defs() else {
                 continue;
             };
             if types.is_empty() {
                 continue;
             }
-            if style.name == "opls" {
+            if style.name() == "opls" {
                 out.push_str("  <RBTorsionForce>\n");
                 for dt in types {
                     let mut attrs = format!(
@@ -252,7 +261,7 @@ impl ForceFieldWriter for XmlForceFieldWriter {
 
         // Impropers periodic
         for style in ff.get_styles("improper") {
-            let StyleDefs::Improper(types) = &style.defs else {
+            let StyleDefs::Improper(types) = style.defs() else {
                 continue;
             };
             if types.is_empty() {
@@ -279,10 +288,10 @@ impl ForceFieldWriter for XmlForceFieldWriter {
 
         // Nonbonded
         for style in ff.get_styles("pair") {
-            if !(style.name.contains("lj") || style.name.is_empty()) {
+            if !(style.name().contains("lj") || style.name().is_empty()) {
                 continue;
             }
-            let StyleDefs::Pair(types) = &style.defs else {
+            let StyleDefs::Pair(types) = style.defs() else {
                 continue;
             };
             if types.is_empty() {
@@ -375,12 +384,24 @@ mod tests {
 
     fn small_ff() -> ForceField {
         let mut ff = ForceField::new("tiny");
-        ff.def_atomstyle("full")
-            .def_type("CT", &[("mass", 12.011), ("charge", -0.18)]);
-        ff.def_bondstyle("harmonic")
-            .def_type("CT-CT", &[("k", 268.0), ("r0", 1.529)]);
-        ff.def_anglestyle("harmonic")
-            .def_type("CT-CT-CT", &[("k", 58.35), ("theta0", 1.9670)]);
+        ff.def_style("atom", "full", Params::new())
+            .unwrap()
+            .def_type(
+                "CT",
+                Params::from_pairs(&[("mass", 12.011), ("charge", -0.18)]),
+            )
+            .unwrap();
+        ff.def_style("bond", "harmonic", Params::new())
+            .unwrap()
+            .def_type("CT-CT", Params::from_pairs(&[("k", 268.0), ("r0", 1.529)]))
+            .unwrap();
+        ff.def_style("angle", "harmonic", Params::new())
+            .unwrap()
+            .def_type(
+                "CT-CT-CT",
+                Params::from_pairs(&[("k", 58.35), ("theta0", 1.9670)]),
+            )
+            .unwrap();
         ff
     }
 
@@ -402,14 +423,20 @@ mod tests {
     #[test]
     fn opls_torsions_and_pairs_round_trip_through_the_openmm_units() {
         let mut ff = ForceField::new("opls");
-        ff.def_dihedralstyle("opls").def_type(
-            "CT-CT-CT-CT",
-            &[("k1", 1.3), ("k2", -0.05), ("k3", 0.2), ("k4", 0.0)],
-        );
-        ff.def_pairstyle("lj/cut", &[]).def_type(
-            "opls_135",
-            &[("charge", -0.18), ("sigma", 3.5), ("epsilon", 0.066)],
-        );
+        ff.def_style("dihedral", "opls", Params::new())
+            .unwrap()
+            .def_type(
+                "CT-CT-CT-CT",
+                Params::from_pairs(&[("k1", 1.3), ("k2", -0.05), ("k3", 0.2), ("k4", 0.0)]),
+            )
+            .unwrap();
+        ff.def_style("pair", "lj/cut", Params::new())
+            .unwrap()
+            .def_type(
+                "opls_135",
+                Params::from_pairs(&[("charge", -0.18), ("sigma", 3.5), ("epsilon", 0.066)]),
+            )
+            .unwrap();
         let xml = write_forcefield_xml_str(&ff, 8).unwrap();
         let back = read_forcefield_xml_str(&xml).unwrap();
         let dt = type_params(style(&back, "dihedral"), "CT-CT-CT-CT");

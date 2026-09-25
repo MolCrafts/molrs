@@ -16,6 +16,8 @@
 //! | `NeighborQuery`           | `PyNeighborQuery`   | Cross-query against a reference point set   |
 //! | `Atomistic`               | `PyAtomistic`       | All-atom molecular graph                    |
 //! | `Perceive`                | `PyPerceive`        | Chemical perception (graph in / graph out)  |
+//! | `Typifier`                | `PyTypifier`        | Typifier base: `match` hook, owned output   |
+//! | `Match`                   | `PyMatch`           | What a typifier's `match` assigns           |
 //! | `MMFF94Typifier`          | `PyMMFF94Typifier`  | MMFF94 atom-type assignment                 |
 //! | `MMFF94STypifier`         | `PyMMFF94STypifier` | MMFF94s (static) atom-type assignment       |
 //! | `OPLSAATypifier`          | `PyOPLSAATypifier`  | OPLS-AA atom-type + bonded assignment       |
@@ -23,6 +25,7 @@
 //! | `BccModel`                | `PyBccModel`        | AM1-BCC / ABCG2 bond-charge corrections     |
 //! | `MullikenModel`           | `PyMullikenModel`   | QM Mulliken charges, unchanged              |
 //! | `GasteigerModel`          | `PyGasteigerModel`  | Gasteiger / PEOE charges (no QM input)      |
+//! | `PotentialCompiler`       | `PyPotentialCompiler` | ForceField → Potentials / TypedPotentials |
 //! | `Potentials`              | `PyPotentials`      | Compiled energy/force evaluator             |
 //! | `RDF` / `MSD` / `Cluster` |                     | Structural analysis                         |
 //!
@@ -80,8 +83,8 @@ mod ff;
 use ff::atd::PyAtdTypifier;
 use ff::charge::{PyBccModel, PyGasteigerModel, PyMullikenModel};
 use ff::{
-    PyForceField, PyLBFGS, PyMMFF94STypifier, PyMMFF94Typifier, PyOPLSAATypifier, PyOptReport,
-    PyPotentials, PyTypedPotentials, PyTypifier,
+    PyForceField, PyLBFGS, PyMMFF94STypifier, PyMMFF94Typifier, PyMatch, PyOPLSAATypifier,
+    PyOptReport, PyPotentialCompiler, PyPotentials, PyTypedPotentials, PyTypifier,
 };
 
 mod compute;
@@ -252,7 +255,6 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(io::write_pdb_trajectory, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_xyz, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_lammps, m)?)?;
-    m.add_function(wrap_pyfunction!(io::lammps_type_ids_from_frame, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_lammps_traj, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_lammps_dump_local, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_dcd, m)?)?;
@@ -365,10 +367,12 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyForceField>()?;
     m.add_class::<ff::PyFragmentScaling>()?;
     m.add_class::<PyTypifier>()?;
+    m.add_class::<PyMatch>()?;
     m.add_class::<PyMMFF94Typifier>()?;
     m.add_class::<PyMMFF94STypifier>()?;
     m.add_class::<PyOPLSAATypifier>()?;
     m.add_class::<PyAtdTypifier>()?;
+    m.add_class::<PyPotentialCompiler>()?;
     m.add_class::<PyPotentials>()?;
     m.add_class::<PyTypedPotentials>()?;
 

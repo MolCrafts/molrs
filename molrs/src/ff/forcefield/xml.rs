@@ -33,7 +33,7 @@
 
 use std::collections::HashMap;
 
-use super::{ForceField, PairType, Params, SpecialBonds, StyleDefs};
+use super::{ForceField, Params, SpecialBonds};
 use crate::ff::mmff::da::encode_da;
 use crate::ff::typifier::mmff::{MMFFAtomProp, MMFFParams};
 use crate::ff::typifier::opls::{OplsTypeRow, OplsTypingMeta};
@@ -354,18 +354,16 @@ fn parse_generic_style(
 ) -> Result<(), String> {
     let style_name = attr_str(node, "name")?;
 
-    let style = match category {
-        "bond" => ff.def_bondstyle(style_name),
-        "angle" => ff.def_anglestyle(style_name),
-        "dihedral" => ff.def_dihedralstyle(style_name),
-        "improper" => ff.def_improperstyle(style_name),
-        _ => return Err(format!("unknown category: {}", category)),
-    };
+    let style = ff
+        .def_style(category, style_name, Params::new())
+        .map_err(|e| e.to_string())?;
 
     for type_node in children_named(node, "Type") {
         let name = attr_str(&type_node, "name")?;
         let params = numeric_attrs(&type_node, &["name"]);
-        style.def_type(name, &params);
+        style
+            .def_type(name, Params::from_pairs(&params))
+            .map_err(|e| e.to_string())?;
     }
 
     Ok(())
@@ -375,12 +373,16 @@ fn parse_generic_pair_style(ff: &mut ForceField, node: &roxmltree::Node) -> Resu
     let style_name = attr_str(node, "name")?;
     let style_params = numeric_attrs(node, &["name"]);
 
-    let style = ff.def_pairstyle(style_name, &style_params);
+    let style = ff
+        .def_style("pair", style_name, Params::from_pairs(&style_params))
+        .map_err(|e| e.to_string())?;
 
     for type_node in children_named(node, "Type") {
         let name = attr_str(&type_node, "name")?;
         let params = numeric_attrs(&type_node, &["name"]);
-        style.def_type(name, &params);
+        style
+            .def_type(name, Params::from_pairs(&params))
+            .map_err(|e| e.to_string())?;
     }
 
     Ok(())
@@ -398,10 +400,9 @@ fn parse_mmff_vdw(ff: &mut ForceField, node: &roxmltree::Node) -> Result<(), Str
         }
     }
 
-    let style = ff.def_pairstyle("mmff_vdw", &style_params);
-    let StyleDefs::Pair(types) = &mut style.defs else {
-        unreachable!();
-    };
+    let style = ff
+        .def_style("pair", "mmff_vdw", Params::from_pairs(&style_params))
+        .map_err(|e| e.to_string())?;
 
     for vdw in children_named(node, "VdW") {
         let atype = attr_f64(&vdw, "type")?;
@@ -417,19 +418,20 @@ fn parse_mmff_vdw(ff: &mut ForceField, node: &roxmltree::Node) -> Result<(), Str
         let da = encode_da(vdw.attribute("da").unwrap_or("-"));
 
         let type_name = format!("{}", atype as u32);
-        types.push(PairType {
-            name: type_name.clone(),
-            itom: type_name.clone(),
-            jtom: type_name,
-            params: Params::from_pairs(&[
-                ("alpha", alpha),
-                ("n_eff", n_eff),
-                ("a_i", a_i),
-                ("g_i", g_i),
-                ("da", da),
-                ("type", atype),
-            ]),
-        });
+        style
+            .def_type_at(
+                &type_name,
+                &[&type_name],
+                Params::from_pairs(&[
+                    ("alpha", alpha),
+                    ("n_eff", n_eff),
+                    ("a_i", a_i),
+                    ("g_i", g_i),
+                    ("da", da),
+                    ("type", atype),
+                ]),
+            )
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -476,14 +478,16 @@ fn parse_electrostatics(ff: &mut ForceField, node: &roxmltree::Node) -> Result<(
         lj: [0.0, 0.0, 1.0],
         coul: [0.0, 0.0, scale14],
     });
-    ff.def_pairstyle(
+    ff.def_style(
+        "pair",
         "coul/cut",
-        &[
+        Params::from_pairs(&[
             ("coulomb", coulomb),
             ("dielectric", dielectric),
             ("delta", delta),
-        ],
-    );
+        ]),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -572,7 +576,7 @@ mod tests {
     // the typifier and baked into Frame columns), so they are declared through the
     // generic `<BondStyle>` / `<AngleStyle>` / `<DihedralStyle>` / `<ImproperStyle>`
     // elements with no `<Type>` children — which `test_mmff_per_instance_styles`
-    // below covers, and `tests/ff/potential/param_source.rs` covers at runtime.
+    // below covers.
     //
     // `<VdWParams>` is a real 95-row table and keeps its reader and its test.
 
@@ -647,9 +651,8 @@ mod tests {
     // `test_mmff_params_xml` (the `<AtomProperties>` table) — are gone with their
     // subject: `chem-perceive-14` compiled that parameter set into
     // `ff::params::mmff` and deleted the XML, so there is no longer a shipped
-    // string for them to parse. What they asserted did not go with them: the
-    // shipped set is now checked field for field, at zero tolerance, against the
-    // pre-conversion parse in `tests/ff/tables_equivalence.rs`.
+    // string for them to parse. The compiled set's own checks live with it, in
+    // the `ff::params::mmff` test module.
     //
     // This reader is still the door for a CALLER's MMFF XML
     // (`MMFF94Typifier::from_xml_str`), which is what the section tests above and
@@ -671,8 +674,9 @@ mod tests {
         assert_eq!((p.atno, p.crd, p.val), (6, 4, 4));
     }
 
-    // --- OPLS typing metadata reader (edge cases; happy-path parse over a
-    //     caller's oplsaa.xml lives in tests/ff/typifier/opls.rs) -------------
+    // --- OPLS typing metadata reader (the inline-fixture parse is
+    //     `test_opls_typing_overrides_and_layer_defaults`; the rest are edge
+    //     cases) ------------------------------------------------------------
 
     #[test]
     fn test_opls_typing_overrides_and_layer_defaults() {
