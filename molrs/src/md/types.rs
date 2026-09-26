@@ -67,8 +67,11 @@ pub struct MDState {
     /// Wrapped positions `(N, 3)` in Å — inside the primary cell.
     pub pos: FNx3,
     /// Accumulated box crossings `(N, 3)`, one signed count per lattice
-    /// vector. `pos + H·images` is the continuous position.
-    pub images: Array2<i64>,
+    /// vector, in the schema's image integer type ([`I`], i32) — the type of
+    /// the `ix`/`iy`/`iz` columns it is written to. `pos + H·images` is the
+    /// continuous position. An atom would have to cross the same face two
+    /// billion times before the count overflowed, far beyond any physical run.
+    pub images: Array2<I>,
     /// Velocities `(N, 3)` in Å/fs.
     pub vel: FNx3,
     /// Cached forces `(N, 3)` at `pos`.
@@ -154,7 +157,7 @@ impl MDState {
                 .map_err(|e| MdError::Invalid(format!("atoms.{key}: {e}")))?;
         }
         for (axis, key) in keys::IMAGES.iter().enumerate() {
-            let col: Array1<I> = self.images.column(axis).mapv(|m| m as I);
+            let col: Array1<I> = self.images.column(axis).to_owned();
             atoms
                 .insert(*key, col.into_dyn())
                 .map_err(|e| MdError::Invalid(format!("atoms.{key}: {e}")))?;
@@ -208,7 +211,7 @@ mod persistence_tests {
     fn the_state_writes_its_flags_beside_its_coordinates() {
         let state = MDState {
             pos: array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
-            images: array![[1_i64, 0, -2], [0, 3, 0]],
+            images: array![[1 as I, 0, -2], [0, 3, 0]],
             vel: Array2::zeros((2, 3)),
             forces: Array2::zeros((2, 3)),
             energy: 0.0,
@@ -229,7 +232,7 @@ mod persistence_tests {
                 .get_int(key)
                 .unwrap_or_else(|| panic!("atoms block is missing {key}"));
             for i in 0..2 {
-                assert_eq!(col[[i]] as i64, state.images[[i, axis]], "{key}[{i}]");
+                assert_eq!(col[[i]], state.images[[i, axis]], "{key}[{i}]");
             }
         }
     }
@@ -244,7 +247,7 @@ mod persistence_tests {
         // An atom that has crossed +x three times: stored at 2.0, really at 32.
         let state = MDState {
             pos: array![[2.0, 5.0, 5.0]],
-            images: array![[3_i64, 0, 0]],
+            images: array![[3 as I, 0, 0]],
             vel: Array2::zeros((1, 3)),
             forces: Array2::zeros((1, 3)),
             energy: 0.0,

@@ -25,7 +25,7 @@ use molrs::ff::potential::Member;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::spatial::periodic::{GhostError, GhostSet};
 use molrs::spatial::simbox::SimBox;
-use molrs::types::{F, FNx3, FNx3View};
+use molrs::types::{F, FNx3, FNx3View, I};
 
 use molrs::math::Virial;
 
@@ -166,7 +166,7 @@ impl Comm {
     fn reimage(
         &mut self,
         owned: FNx3View<'_>,
-        wrap_shifts: ArrayView2<'_, i64>,
+        wrap_shifts: ArrayView2<'_, I>,
     ) -> Result<(), MdError> {
         let n_owned = self.set.n_owned();
         let folded: Vec<bool> = (0..n_owned)
@@ -215,7 +215,7 @@ impl Comm {
     pub fn advance(
         &mut self,
         owned: FNx3View<'_>,
-        wrap_shifts: ArrayView2<'_, i64>,
+        wrap_shifts: ArrayView2<'_, I>,
     ) -> Result<(), MdError> {
         self.set
             .forward_comm(&self.bx, owned, wrap_shifts)
@@ -464,7 +464,7 @@ impl BondedLists {
         &mut self,
         comm: &Comm,
         owned: FNx3View<'_>,
-        wrap_shifts: ArrayView2<'_, i64>,
+        wrap_shifts: ArrayView2<'_, I>,
     ) -> Result<(), MdError> {
         let stale = self.generation != Some(comm.ghosts().generation());
         if stale {
@@ -611,7 +611,7 @@ mod remap_tests {
     fn resolve_one(pot: Member, owned: FNx3View<'_>, comm: &Comm) -> Result<Array2<u32>, MdError> {
         let members = vec![pot];
         let mut lists = BondedLists::new(&members);
-        let no_fold = Array2::<i64>::zeros((owned.nrows(), 3));
+        let no_fold = Array2::<I>::zeros((owned.nrows(), 3));
         lists.refresh(comm, owned, no_fold.view())?;
         Ok(lists
             .current(0)
@@ -744,7 +744,7 @@ mod remap_tests {
         let members: Vec<Member> = vec![Member::plain(molrs::ff::potential::Potentials::new())];
         let mut lists = BondedLists::new(&members);
         assert_eq!(lists.bound(), 0, "an aggregate keeps no atom indices");
-        let no_fold = Array2::<i64>::zeros((owned.nrows(), 3));
+        let no_fold = Array2::<I>::zeros((owned.nrows(), 3));
         lists.refresh(&comm, owned.view(), no_fold.view()).unwrap();
         assert!(lists.current(0).is_none());
     }

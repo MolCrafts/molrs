@@ -8,7 +8,7 @@
 use crate::op::linalg::{det3, inv3};
 use crate::op::types::{Vec3, to_mat3, to_vec3};
 use crate::op::vec3::{cross, dot, norm};
-use crate::types::{F, F3, F3View, F3x3, FNx3, FNx3View, Pbc3};
+use crate::types::{F, F3, F3View, F3x3, FNx3, FNx3View, I, Pbc3};
 use ndarray::{Array1, Array2, Array3, ArrayView1, ArrayView2, Zip, array};
 
 /// Box geometry kind, detected once at construction.
@@ -732,11 +732,13 @@ impl SimBox {
         )
     }
 
-    /// The accumulated shift as exact integers. Every component is a whole
-    /// number by construction — it only ever gains `floor` or `round` results.
+    /// The accumulated shift as exact integers of the schema's image type
+    /// ([`I`], i32). Every component is a whole number by construction — it
+    /// only ever gains `floor` or `round` results. A single wrap shifts a point
+    /// by a handful of cells, far inside the i32 range.
     #[inline]
-    fn as_i64(n: [F; 3]) -> [i64; 3] {
-        [n[0] as i64, n[1] as i64, n[2] as i64]
+    fn as_images(n: [F; 3]) -> [I; 3] {
+        [n[0] as I, n[1] as I, n[2] as I]
     }
 
     /// Shift `r` by the integer lattice vector `n`, always from the original
@@ -761,7 +763,7 @@ impl SimBox {
     /// the `(1, 3)` array round-trip. It is the *same* arithmetic `wrap` runs
     /// per row, so the two agree bit for bit by construction, not by luck.
     #[inline]
-    pub(crate) fn wrap_row_shift(&self, r: [F; 3]) -> ([F; 3], [i64; 3]) {
+    pub(crate) fn wrap_row_shift(&self, r: [F; 3]) -> ([F; 3], [I; 3]) {
         let f = self.make_fractional_raw_arr3(r);
         let mut n = [0.0; 3];
         let mut crossed = false;
@@ -805,7 +807,7 @@ impl SimBox {
                 }
             }
             if !adjusted {
-                return (out, Self::as_i64(n));
+                return (out, Self::as_images(n));
             }
             out = self.shifted_by_images(r, n);
         }
@@ -824,7 +826,7 @@ impl SimBox {
         for d in 0..3 {
             n[d] += absorbed[d];
         }
-        (snapped, Self::as_i64(n))
+        (snapped, Self::as_images(n))
     }
 
     /// Per-row kernel of [`wrap`](Self::wrap), discarding the shift.
@@ -933,10 +935,13 @@ impl SimBox {
     ///
     /// A point already inside the cell yields `m = [0, 0, 0]` and comes back
     /// untouched to the bit; only atoms that actually crossed are arithmetic.
-    pub fn wrap_shifts(&self, xyz: FNx3View<'_>) -> (FNx3, Array2<i64>) {
+    ///
+    /// `m` is the schema's image integer type ([`I`], i32) — the same type as
+    /// the `ix`/`iy`/`iz` columns it is banked into.
+    pub fn wrap_shifts(&self, xyz: FNx3View<'_>) -> (FNx3, Array2<I>) {
         let n = xyz.nrows();
         let mut out = xyz.to_owned();
-        let mut shifts = Array2::<i64>::zeros((n, 3));
+        let mut shifts = Array2::<I>::zeros((n, 3));
         for i in 0..n {
             let (w, m) = self.wrap_row_shift([xyz[[i, 0]], xyz[[i, 1]], xyz[[i, 2]]]);
             for d in 0..3 {
@@ -959,13 +964,17 @@ impl SimBox {
     /// Reconstructing from a position alone is only possible because a
     /// continuous coordinate carries its own history; a wrapped one does not,
     /// and calling this on wrapped input correctly returns all zeros.
-    pub fn images(&self, xyz: FNx3View<'_>) -> Array2<i64> {
+    ///
+    /// The flags are the schema's image integer type ([`I`], i32), matching the
+    /// `ix`/`iy`/`iz` columns. A point would have to sit two billion cells away
+    /// before the count overflowed — far past any physical configuration.
+    pub fn images(&self, xyz: FNx3View<'_>) -> Array2<I> {
         let frac = self.to_frac(xyz);
         let mut images = Array2::zeros((frac.nrows(), 3));
         for i in 0..frac.nrows() {
             for d in 0..3 {
                 if self.pbc[d] {
-                    images[[i, d]] = frac[[i, d]].floor() as i64;
+                    images[[i, d]] = frac[[i, d]].floor() as I;
                 }
             }
         }
@@ -973,7 +982,10 @@ impl SimBox {
     }
 
     /// Reconstruct unwrapped coordinates from wrapped points and image flags.
-    pub fn unwrap(&self, xyz: FNx3View<'_>, images: ArrayView2<'_, i64>) -> FNx3 {
+    ///
+    /// `images` is the schema's image integer type ([`I`], i32), so the
+    /// `ix`/`iy`/`iz` columns of a frame pass straight in.
+    pub fn unwrap(&self, xyz: FNx3View<'_>, images: ArrayView2<'_, I>) -> FNx3 {
         assert_eq!(xyz.raw_dim(), images.raw_dim());
         assert_eq!(xyz.ncols(), 3);
         let mut result = xyz.to_owned();
@@ -1129,6 +1141,7 @@ fn detect_box_kind(h: &F3x3) -> BoxKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::I;
 
     fn assert_close(a: F, b: F) {
         assert!((a - b).abs() < 1e-6 as F, "{} != {}", a, b);
@@ -1396,7 +1409,7 @@ mod tests {
             }
 
             // In-cell points are untouched and carry no shift.
-            assert_eq!(m.row(0).to_vec(), vec![0_i64; 3]);
+            assert_eq!(m.row(0).to_vec(), vec![0 as I; 3]);
         }
     }
 
@@ -1436,7 +1449,7 @@ mod tests {
         // The ordinary cases are unaffected.
         let pts = array![[-0.5 * l, 1.5 * l, 2.5 * l]];
         let im = bx.images(pts.view());
-        assert_eq!(im.row(0).to_vec(), vec![-1_i64, 1, 2]);
+        assert_eq!(im.row(0).to_vec(), vec![-1 as I, 1, 2]);
     }
 
     /// Wrapping is idempotent: a second pass moves nothing, bit for bit.

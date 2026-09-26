@@ -11,7 +11,7 @@ static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 use super::images::{GhostError, ImageRange};
 use crate::spatial::neighbors::{NeighborList, Neighbors, NeighborsStorage, QueryMode};
 use crate::spatial::simbox::SimBox;
-use crate::types::{F, FNx3, FNx3View};
+use crate::types::{F, FNx3, FNx3View, I};
 
 /// The periodic copies of one owned point set.
 ///
@@ -159,7 +159,9 @@ impl GhostSet {
     /// step.
     ///
     /// `wrap_shifts` is the per-owned-atom integer shift that the wrap just
-    /// applied (the second half of [`SimBox::wrap_shifts`]). It is not optional
+    /// applied (the second half of [`SimBox::wrap_shifts`]), in the schema's
+    /// image integer type ([`I`], i32) — the same type as a ghost's shift, so
+    /// it adds in without a cast. It is not optional
     /// bookkeeping: when owner `j` is folded by `m`, its stored coordinate
     /// moves by `−H·m`, and a ghost replaced as `r_owner + H·s_g` would move by
     /// `−H·m` with it — a jump of at least one cell, while the neighbour list
@@ -178,7 +180,7 @@ impl GhostSet {
         &mut self,
         bx: &SimBox,
         owned: FNx3View<'_>,
-        wrap_shifts: ArrayView2<'_, i64>,
+        wrap_shifts: ArrayView2<'_, I>,
     ) -> Result<(), GhostError> {
         if owned.nrows() != self.n_owned {
             return Err(GhostError::Shape {
@@ -195,7 +197,7 @@ impl GhostSet {
         for (g, &o) in self.owner.iter().enumerate() {
             let o = o as usize;
             for k in 0..3 {
-                self.shift[g][k] += wrap_shifts[[o, k]] as i32;
+                self.shift[g][k] += wrap_shifts[[o, k]];
             }
         }
         self.place(bx, owned)
@@ -696,7 +698,7 @@ mod tests {
 
         // Drift well inside the cell: nothing wraps, and nothing leaves.
         let moved = array![[4.9_f64, 4.9, 4.9]];
-        let zero = Array2::<i64>::zeros((1, 3));
+        let zero = Array2::<I>::zeros((1, 3));
         set.forward_comm(&bx, moved.view(), zero.view()).unwrap();
 
         assert_eq!(set.len(), n, "membership is decided by build, not refresh");

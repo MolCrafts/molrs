@@ -31,6 +31,37 @@ def test_images_and_unwrap_round_trip_natively():
     np.testing.assert_allclose(box.unwrap(wrapped, images), unwrapped)
 
 
+def test_images_are_int32_like_the_frame_image_columns():
+    box = molrs.Box.cube(10.0)
+    images = box.images(np.array([[21.0, -9.0, 5.0]]))
+    assert images.dtype == np.int32
+    np.testing.assert_array_equal(images, [[2, -1, 0]])
+
+
+def test_unwrap_accepts_the_int32_image_columns_of_a_frame():
+    # ix/iy/iz are the schema's integer type (int32), as a LAMMPS reader
+    # stores them; unwrap must take them without a cast.
+    atoms = molrs.Block(
+        {
+            "x": np.array([1.0, 9.0]),
+            "y": np.array([2.0, 5.0]),
+            "z": np.array([3.0, 0.5]),
+            "ix": np.array([1, 0], dtype=np.int32),
+            "iy": np.array([0, -1], dtype=np.int32),
+            "iz": np.array([0, 2], dtype=np.int32),
+        }
+    )
+    frame = molrs.Frame({"atoms": atoms}, box=molrs.Box.cube(10.0))
+    atoms = frame["atoms"]
+
+    unwrapped = frame.box.unwrap(atoms["x", "y", "z"], atoms["ix", "iy", "iz"])
+
+    # xyz + L * image, L = 10 on every axis.
+    np.testing.assert_allclose(
+        unwrapped, [[11.0, 2.0, 3.0], [9.0, -5.0, 20.5]], atol=1e-12
+    )
+
+
 def test_from_bounds_and_batched_geometry():
     points = np.array([[0.0, -1.0, 0.0], [2.0, 3.0, 4.0]])
     box = molrs.Box.from_bounds(

@@ -37,7 +37,7 @@ use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
 use molrs::spatial::simbox::SimBox;
 
 use super::forces::ForceProvider;
-use molrs::types::{F, FNx3};
+use molrs::types::{F, FNx3, I};
 
 use super::error::MdError;
 use super::types::{ForceOutput, MDState};
@@ -61,7 +61,7 @@ fn as_mass_col(mass: ArrayView1<'_, F>) -> Result<Array2<F>, MdError> {
 ///
 /// `m` is the shift the wrap actually applied, so the flags cannot disagree
 /// with the positions they belong to.
-fn wrap_and_bank(simbox: Option<&SimBox>, state: &mut MDState) -> Array2<i64> {
+fn wrap_and_bank(simbox: Option<&SimBox>, state: &mut MDState) -> Array2<I> {
     let Some(bx) = simbox else {
         return Array2::zeros((state.pos.nrows(), 3));
     };
@@ -964,7 +964,7 @@ mod ghost_path_tests {
         // The drift carries the run 0.8 Å along +x, so the four atoms that
         // start a tenth of an Ångström inside the face cross and the four at
         // 3.9 do not. Four folds are what this exercises.
-        let crossed: i64 = state.images.iter().map(|&m| m.abs()).sum();
+        let crossed: I = state.images.iter().map(|&m| m.abs()).sum();
         assert!(crossed >= 4, "atoms should have crossed; got {crossed}");
         let rebuilds = ig
             .forces()
@@ -1092,7 +1092,7 @@ mod ghost_path_tests {
             )
             .unwrap()
         };
-        let no_fold = Array2::<i64>::zeros((n, 3));
+        let no_fold = Array2::<I>::zeros((n, 3));
 
         let skin = VerletSkin::new(
             NeighborList::new(cutoff),
@@ -1162,6 +1162,6 @@ mod wrapped_state_tests {
             state = ig.advance(state).unwrap();
         }
         assert!(state.pos[[0, 0]] > 100.0, "nothing folded it back");
-        assert_eq!(state.images.row(0).to_vec(), vec![0_i64; 3]);
+        assert_eq!(state.images.row(0).to_vec(), vec![0 as I; 3]);
     }
 }

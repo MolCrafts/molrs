@@ -25,7 +25,7 @@ use molrs::math::Virial;
 use molrs::md::{
     Direct, ForceProvider, Langevin, MDState, MaxwellBoltzmann, MdError, MicPairs, VelocityVerlet,
 };
-use molrs::types::F;
+use molrs::types::{F, I};
 use ndarray::{Array1, Array2};
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::{PyTypeError, PyValueError};
@@ -159,18 +159,19 @@ impl PyMDState {
     }
 
     /// Accumulated box crossings ``(N, 3)``, one signed count per lattice
-    /// vector.
+    /// vector, as ``int32`` — the schema's integer type for the
+    /// ``ix``/``iy``/``iz`` columns.
     ///
     /// A wrapped coordinate on its own has lost the atom's history. `pos +
     /// H·images` is the continuous position, and mean-squared displacement,
     /// diffusion and any other path-dependent quantity read that, not `pos`.
     #[getter]
-    fn images<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<i64>> {
+    fn images<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<I>> {
         self.inner.images.clone().into_pyarray(py)
     }
 
     #[setter]
-    fn set_images(&mut self, value: PyReadonlyArray2<'_, i64>) -> PyResult<()> {
+    fn set_images(&mut self, value: PyReadonlyArray2<'_, I>) -> PyResult<()> {
         let v = value.as_array();
         if v.ncols() != 3 || v.nrows() != self.inner.pos.nrows() {
             return Err(PyValueError::new_err(

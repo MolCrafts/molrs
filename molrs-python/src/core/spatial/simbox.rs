@@ -10,7 +10,7 @@
 
 use crate::helpers::{NpF, box_error_to_pyerr, parse_origin, parse_pbc};
 use molrs::spatial::simbox::SimBox;
-use molrs::types::F;
+use molrs::types::{F, I};
 use ndarray::{Array2, Axis, array};
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;
@@ -511,11 +511,14 @@ impl PyBox {
     }
 
     /// Integer periodic image flags for Cartesian coordinates.
+    ///
+    /// The flags are ``int32``, the schema's integer type for the
+    /// ``ix``/``iy``/``iz`` columns.
     fn images<'py>(
         &self,
         py: Python<'py>,
         xyz: PyReadonlyArray2<'_, NpF>,
-    ) -> PyResult<Bound<'py, PyArray2<i64>>> {
+    ) -> PyResult<Bound<'py, PyArray2<I>>> {
         let view = xyz.as_array();
         if view.ncols() != 3 {
             return Err(PyValueError::new_err("expected shape (N,3)"));
@@ -524,11 +527,14 @@ impl PyBox {
     }
 
     /// Reconstruct unwrapped coordinates from wrapped coordinates and images.
+    ///
+    /// ``images`` is ``int32``, the schema's integer type, so a frame's
+    /// ``ix``/``iy``/``iz`` columns pass in without a cast.
     fn unwrap<'py>(
         &self,
         py: Python<'py>,
         xyz: PyReadonlyArray2<'_, NpF>,
-        images: PyReadonlyArray2<'_, i64>,
+        images: PyReadonlyArray2<'_, I>,
     ) -> PyResult<Bound<'py, PyArray2<NpF>>> {
         let xyz = xyz.as_array();
         let images = images.as_array();
