@@ -40,13 +40,19 @@ pub fn write_frame(
     system: Option<&Bound<'_, PyFrame>>,
     meta: Option<&Bound<'_, PyDict>>,
 ) -> PyResult<()> {
-    let core = frame.borrow().clone_core_frame()?;
-    let system_core = system
-        .map(|sys| sys.borrow().clone_core_frame())
-        .transpose()?;
     let meta_map = meta.map(|meta| dict_to_json_map(meta, 0)).transpose()?;
-    molrs::io::mrec::write_frame_file(path, &core, system_core.as_ref(), meta_map.as_ref())
-        .map_err(molrs_error_to_pyerr)
+    let frame = frame.borrow();
+    match system {
+        None => frame.with_frame(|core| {
+            molrs::io::mrec::write_frame_file(path, core, None, meta_map.as_ref())
+        })?,
+        Some(system) => system.borrow().with_frame(|system_core| {
+            frame.with_frame(|core| {
+                molrs::io::mrec::write_frame_file(path, core, Some(system_core), meta_map.as_ref())
+            })
+        })??,
+    }
+    .map_err(molrs_error_to_pyerr)
 }
 
 /// Write a topology as a record whose only state section is ``system``.
@@ -66,12 +72,10 @@ pub fn write_system(
     meta: Option<&Bound<'_, PyDict>>,
 ) -> PyResult<()> {
     let meta_map = meta.map(|meta| dict_to_json_map(meta, 0)).transpose()?;
-    molrs::io::mrec::write_system_file(
-        path,
-        &system.borrow().clone_core_frame()?,
-        meta_map.as_ref(),
-    )
-    .map_err(molrs_error_to_pyerr)
+    system
+        .borrow()
+        .with_frame(|core| molrs::io::mrec::write_system_file(path, core, meta_map.as_ref()))?
+        .map_err(molrs_error_to_pyerr)
 }
 
 /// Write a trajectory as a record whose only state section is ``trajectory``.
@@ -347,8 +351,10 @@ impl PyMrecSequenceSchema {
     /// Derive a schema from one representative frame.
     #[staticmethod]
     fn from_frame(frame: &Bound<'_, PyFrame>) -> PyResult<Self> {
-        let core = frame.borrow().clone_core_frame()?;
-        let inner = SequenceSchema::from_frame(&core).map_err(molrs_error_to_pyerr)?;
+        let inner = frame
+            .borrow()
+            .with_frame(SequenceSchema::from_frame)?
+            .map_err(molrs_error_to_pyerr)?;
         Ok(Self { inner })
     }
 
@@ -570,20 +576,18 @@ impl PyMrecTrajectoryWriter {
         step: Option<i64>,
         time: Option<f64>,
     ) -> PyResult<()> {
-        let core = frame.borrow().clone_core_frame()?;
         let writer = self
             .inner
             .as_mut()
             .ok_or_else(|| PyValueError::new_err("writer is closed"))?;
-        match (step, time) {
-            (Some(step), time) => writer
-                .append_at(&core, step, time)
-                .map_err(molrs_error_to_pyerr),
-            (None, Some(time)) => writer
-                .append_timed(&core, time)
-                .map_err(molrs_error_to_pyerr),
-            (None, None) => writer.append(&core).map_err(molrs_error_to_pyerr),
-        }
+        frame
+            .borrow()
+            .with_frame(|core| match (step, time) {
+                (Some(step), time) => writer.append_at(core, step, time),
+                (None, Some(time)) => writer.append_timed(core, time),
+                (None, None) => writer.append(core),
+            })?
+            .map_err(molrs_error_to_pyerr)
     }
 
     /// Commit every buffered frame (durably, unless ``durable=False``).
@@ -684,7 +688,9 @@ pub fn mrec_validate_meta(meta: &Bound<'_, PyDict>) -> PyResult<()> {
 ///     ValueError: If the frame fails the canonical vocabulary.
 #[pyfunction]
 pub fn mrec_validate_frame(frame: &Bound<'_, PyFrame>) -> PyResult<()> {
-    molrs::io::mrec::schema::validate_frame(&frame.borrow().clone_core_frame()?)
+    frame
+        .borrow()
+        .with_frame(molrs::io::mrec::schema::validate_frame)?
         .map_err(molrs_error_to_pyerr)
 }
 

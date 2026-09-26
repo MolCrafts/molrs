@@ -1,7 +1,7 @@
 ---
 title: "cgsmiles-03: release molrs 0.15.0"
 slug: cgsmiles-03-release
-status: code-complete
+status: in-progress
 created: 2026-09-21
 chain: cgsmiles (01a → 01b → 01c → 01d → 01e → 02a → 02b → 02c → 02d → 03)
 depends_on: cgsmiles-01a-descriptors, cgsmiles-01b-graph, cgsmiles-01c-fragments, cgsmiles-01d-resolve, cgsmiles-01e-python-ir, cgsmiles-02a-fragment-core, cgsmiles-02b-to-fragment, cgsmiles-02c-conformer-fragment, cgsmiles-02d-python-fragment, frame-meta-dict-parity-01-ordered, frame-meta-dict-parity-02-binder-order, frame-meta-dict-parity-03-untyped-write, frame-meta-dict-parity-04-dict-views, frame-meta-dict-parity-05-document
@@ -177,3 +177,30 @@ There is no code under test: this link changes no compiled line (`molrs/src/lib.
 - **Recording the deferred implementation-summary items.** `/mol:note`, run by the orchestrator; this link only proves the release notes do not claim them.
 - **Refreshing `.claude/notes/architecture.md:3`.** That stamp is `/mol:map`'s.
 - **A `regressions/` example.** molrs has no `regressions/` tree (`CLAUDE.md`: the regression and benchmark systems are being redesigned outside this repo), and a release link with no behaviour change has nothing to pin; the gate run is the verification.
+
+## Re-run after the assembly chain
+
+The `assembly-*` chain (assembly-01 §0.12) changes the public surface of the
+unreleased 0.15 tree after this link verified its notes and gate. The
+`## v0.15.0` section of `.claude/notes/release.md` and the gate are re-run on
+the post-chain tree (ac-007, ac-009, ac-010). The section must add:
+
+- the new always-on `molrs::op` module (numeric base beneath `core`);
+- the assembly surface: `FragGraph`, `Mapping`, `FragLibrary.map` (coarse-type
+  → template-label rules), `TracePlacer` / orienters, `PortReacter`,
+  `Finalizer`, `Assembler`, `MolGraph::replicate`, `CGSmilesIR::to_template` /
+  `to_frag_graph`, `CoarseGrain::from_atom_frame`, `Frame::convert_units`, LJ
+  `lj_mass` / `lj_charge` / `define_lj_sigma`;
+- the retirements: `SiteMap`, the `site` / `q0` keys, `LineOrienter` /
+  `TangOrienter`, the whole-graph `TracePlacer`, `replicate(n)`,
+  `compute::density::kabsch`, the `core::math` pure functions,
+  `Trace::from_arrays` / `tangent`;
+- `FRAME_VOCAB_VERSION` 2;
+- `ColumnSpec.unit` replaced by a typed `dimension`, with the schema
+  document's unit column now derived;
+- the LAMMPS data reader refusing unknown sections, incomplete / duplicate /
+  unknown-id per-atom rows, repeated sections, and header lines it does not
+  read (incl. the general-triclinic `avec` / `bvec` / `cvec` / `abc origin`
+  keywords, previously ignored with the box left unset); `with_skipped_section`;
+- the Python builder classes moving under `molrs.builder`.
+- `ScaleLjError::InvalidMass` (a non-finite fragment mass is refused).

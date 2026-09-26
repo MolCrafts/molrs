@@ -1242,8 +1242,8 @@ pub fn extract_coords_py<'py>(
     py: Python<'py>,
     frame: &PyFrame,
 ) -> PyResult<Bound<'py, PyArray1<NpF>>> {
-    let core_frame = frame.clone_core_frame()?;
-    let coords = extract_coords(&core_frame)
+    let coords = frame
+        .with_frame(extract_coords)?
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
     Ok(coords.to_pyarray(py))
 }
@@ -1729,9 +1729,8 @@ impl PyPotentialCompiler {
     ///     If a style has no registered kernel, a type label is unknown, or
     ///     the force field's 1-2 / 1-3 weights are not 0 or 1.
     fn compile(&self, frame: &PyFrame) -> PyResult<PyPotentials> {
-        let core = frame.clone_core_frame()?;
-        let potentials = PotentialCompiler::new(&self.ff)
-            .compile(&core)
+        let potentials = frame
+            .with_frame(|core| PotentialCompiler::new(&self.ff).compile(core))?
             .map_err(PyValueError::new_err)?;
         Ok(PyPotentials {
             inner: PotBacking::Compiled(potentials),
@@ -1787,12 +1786,14 @@ impl PyPotentialCompiler {
     ///     If a style cannot be built, or a pair style has no
     ///     neighbour-driven form.
     fn compile_typed(&self, frame: &PyFrame) -> PyResult<PyTypedPotentials> {
-        let core = frame.clone_core_frame()?;
-        let topo =
-            molrs::Topology::from_frame(&core).map_err(|e| PyValueError::new_err(e.to_string()))?;
-        let members = PotentialCompiler::new(&self.ff)
-            .compile_typed(&core)
-            .map_err(PyValueError::new_err)?;
+        let (topo, members) = frame.with_frame(|core| -> PyResult<_> {
+            let topo = molrs::Topology::from_frame(core)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            let members = PotentialCompiler::new(&self.ff)
+                .compile_typed(core)
+                .map_err(PyValueError::new_err)?;
+            Ok((topo, members))
+        })??;
         let bound = members
             .into_iter()
             .map(|(pot, weights)| {
@@ -2354,7 +2355,6 @@ pub fn intramolecular_pairs_py(
     frame: &PyFrame,
     forcefield: Option<&PyForceField>,
 ) -> PyResult<PyBlock> {
-    let core = frame.clone_core_frame()?;
     let owned;
     let special = match forcefield {
         Some(ff) => ff.inner.special_bonds(),
@@ -2363,7 +2363,8 @@ pub fn intramolecular_pairs_py(
             &owned
         }
     };
-    let block = molrs::ff::potential::intramolecular_pairs(&core, special)
+    let block = frame
+        .with_frame(|core| molrs::ff::potential::intramolecular_pairs(core, special))?
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     PyBlock::from_core_block(block)
 }

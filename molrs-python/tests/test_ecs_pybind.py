@@ -219,135 +219,6 @@ def test_rotate_about_a_degenerate_axis_is_a_value_error(cls, axis):
     assert (mol.get(h, "x"), mol.get(h, "y"), mol.get(h, "z")) == (1.0, 0.0, 0.0)
 
 
-def test_placer_and_orienter_are_base_classes():
-    # The variant is the class, never a flag: the motion is a Placer subclass
-    # and the facing rule is an Orienter subclass.
-    assert issubclass(molrs.TracePlacer, molrs.Placer)
-    assert issubclass(molrs.LineOrienter, molrs.Orienter)
-    assert issubclass(molrs.TangOrienter, molrs.Orienter)
-    assert callable(molrs.TracePlacer().place)
-    assert callable(molrs.LineOrienter().orient)
-    assert callable(molrs.LineOrienter().direction)
-
-
-def test_a_placer_subclass_may_take_its_own_constructor_arguments():
-    class P(molrs.Placer):
-        def __init__(self, cg):
-            super().__init__()
-            self.cg = cg
-
-    cg = object()
-    placer = P(cg)
-    assert placer.cg is cg
-    assert isinstance(placer, molrs.Placer)
-
-
-def test_the_placer_base_place_is_not_implemented():
-    with pytest.raises(NotImplementedError):
-        molrs.Placer().place(molrs.Atomistic(), [])
-
-
-def test_the_orienter_set_is_closed_at_class_creation():
-    # The facing rule is a native class; a Python subclass could never be
-    # applied, so it must be refused when it is defined, not when it is used.
-    with pytest.raises(TypeError):
-
-        class Custom(molrs.Orienter):
-            pass
-
-
-@pytest.mark.parametrize("orienter_type", ["LineOrienter", "TangOrienter"])
-def test_an_overflowing_site_axis_has_no_direction_and_never_panics(orienter_type):
-    orienter = getattr(molrs, orienter_type)()
-    try:
-        result = orienter.direction([1e200, 0.0, 0.0])
-    except BaseException as error:  # PanicException derives from BaseException
-        pytest.fail(f"{orienter_type}.direction raised {type(error).__name__}: {error}")
-    assert result is None, f"{orienter_type}.direction gave {result}"
-
-
-def test_trace_placer_place_maps_an_unreachable_fragment_to_value_error():
-    # Four two-atom fragments; the bonds join 1-2 and 3-4 separately, so
-    # fragment 3 has no path from the root and the native PlaceError surfaces.
-    mol = molrs.Atomistic()
-    fragments = []
-    for k in range(1, 5):
-        head = mol.add_atom("C", 4.0 * k, 0.0, 0.0)
-        tail = mol.add_atom("O", 4.0 * k + 1.4, 0.0, 0.0)
-        mol.add_bond(head, tail)
-        for h in (head, tail):
-            mol.set(h, "res_id", k)
-        fragments.append((head, tail))
-    bonds = [(fragments[0][1], fragments[1][0]), (fragments[2][1], fragments[3][0])]
-    with pytest.raises(ValueError, match="fragment 3"):
-        molrs.TracePlacer().place(mol, bonds)
-
-
-def test_a_place_error_names_a_node_by_its_python_handle():
-    mol = molrs.Atomistic()
-    grouped = mol.def_atom(element="O", x=0.0, y=0.0, z=0.0, res_id=1)
-    stray = mol.def_atom(element="C", x=1.4, y=0.0, z=0.0)
-    with pytest.raises(ValueError) as caught:
-        molrs.TracePlacer().place(mol, [(grouped.handle, stray.handle)])
-    message = str(caught.value)
-    assert str(stray.handle) in message
-    assert "NodeId(" not in message
-
-
-# --------------------------------------------------------------------------- #
-# SiteMap: node views and handles are interchangeable                          #
-# --------------------------------------------------------------------------- #
-
-
-def _carbons(n):
-    mol = molrs.Atomistic()
-    atoms = [mol.def_atom(element="C", x=1.5 * k, y=0.0, z=0.0) for k in range(n)]
-    return mol, atoms
-
-
-def test_site_map_label_accepts_a_node_view():
-    mol, (atom,) = _carbons(1)
-    molrs.SiteMap(mol).label(atom, "a")
-    assert mol.get(atom.handle, "site") == "a"
-
-
-def test_site_map_label_atoms_accepts_node_views():
-    mol, (atom,) = _carbons(1)
-    marked = molrs.SiteMap(mol).label_atoms([atom], "b")
-    assert marked == [atom.handle]
-    assert mol.get(atom.handle, "site") == "b"
-
-
-def test_site_map_every_nth_accepts_node_views():
-    mol, atoms = _carbons(4)
-    marked = molrs.SiteMap(mol).every_nth(atoms, 2, "s")
-    assert marked == [atoms[0].handle, atoms[2].handle]
-
-
-def test_site_map_clear_accepts_node_views():
-    mol, atoms = _carbons(2)
-    sites = molrs.SiteMap(mol)
-    sites.label_atoms([a.handle for a in atoms], "a", "b")
-    sites.clear([atoms[0]])
-    assert mol.get(atoms[0].handle, "site") in (None, "")
-    assert mol.get(atoms[1].handle, "site") == "b"
-
-
-def test_site_map_label_elements_error_names_the_element():
-    mol, _ = _carbons(1)
-    with pytest.raises(ValueError, match="Cl"):
-        molrs.SiteMap(mol).label_elements("Cl", "x")
-
-
-def test_a_site_error_names_a_node_by_its_python_handle():
-    mol, (atom,) = _carbons(1)
-    with pytest.raises(ValueError) as caught:
-        molrs.SiteMap(mol).every_nth([atom.handle], 1, "s", leaving="h")
-    message = str(caught.value)
-    assert str(atom.handle) in message
-    assert "NodeId(" not in message
-
-
 def test_find_rings_system():
     bz = molrs.perceive.Perceive().find_hydrogens(
         molrs.io.SmilesIR("C1=CC=CC=C1").to_atomistic()
@@ -475,6 +346,20 @@ def test_keys_convention_exposed():
     assert by_str is not None and by_key is not None
     assert by_key.key == by_str.key
     assert by_key.dtype == by_str.dtype
+
+
+def test_keys_expose_bead():
+    # A template atom's bead index is `bead`.
+    assert molrs.keys.BEAD == "bead"
+
+
+def test_column_spec_exposes_dimension_and_the_unit_derived_from_it():
+    # SchemaDocument: `x` has dimension "length", whose real-preset unit is
+    # "angstrom" (molrs/src/core/store/schema/document.rs).
+    x = molrs.schema.column("x")
+    assert x is not None
+    assert x.dimension == "length"
+    assert x.unit == "angstrom"
 
 
 # --------------------------------------------------------------------------- #

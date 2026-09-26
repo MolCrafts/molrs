@@ -1,6 +1,8 @@
 //! Canonical column vocabulary: what a column key means and how it is stored.
 
 use crate::store::block::DType;
+use crate::units::UnitPreset;
+use crate::units::preset::PresetDim;
 
 /// Structural shape of a column beyond axis 0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +32,62 @@ impl std::fmt::Display for ColShape {
     }
 }
 
+/// Physical dimension of a column, over the ten [`PresetDim`]s.
+///
+/// This is the single truth for what a column measures: the schema document
+/// derives the unit it displays from it, and
+/// [`Frame::convert_units`](crate::store::frame::Frame::convert_units) derives
+/// the conversion factor from it. molrs still stores raw numbers; the
+/// dimension says what they measure, and the unit is that dimension's unit in
+/// whichever preset the frame is in (its `units` meta entry; see
+/// `Frame::convert_units`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColumnDim {
+    /// Not a physical quantity: identifiers, labels, flags, codes, endpoints.
+    NotAQuantity,
+    /// A pure number with the same value in every preset (quaternion
+    /// components).
+    Dimensionless,
+    /// One preset dimension.
+    Of(PresetDim),
+    /// The product of two preset dimensions (a dipole is charge × length).
+    Product(PresetDim, PresetDim),
+}
+
+impl ColumnDim {
+    /// The unit this dimension takes in `preset`.
+    ///
+    /// `None` for [`NotAQuantity`](Self::NotAQuantity), `""` for
+    /// [`Dimensionless`](Self::Dimensionless), the preset's unit for
+    /// [`Of`](Self::Of), and `"<a> * <b>"` for [`Product`](Self::Product).
+    /// `None` also when the preset lacks a named dimension.
+    pub fn unit_in(&self, preset: &UnitPreset) -> Option<String> {
+        match *self {
+            ColumnDim::NotAQuantity => None,
+            ColumnDim::Dimensionless => Some(String::new()),
+            ColumnDim::Of(d) => preset.unit(d.name()).map(str::to_owned),
+            ColumnDim::Product(a, b) => {
+                let ua = preset.unit(a.name())?;
+                let ub = preset.unit(b.name())?;
+                Some(format!("{ua} * {ub}"))
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for ColumnDim {
+    /// Lower-case dimension names: `""`, `"dimensionless"`, `"length"`,
+    /// `"charge * length"`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ColumnDim::NotAQuantity => Ok(()),
+            ColumnDim::Dimensionless => write!(f, "dimensionless"),
+            ColumnDim::Of(d) => write!(f, "{}", d.name()),
+            ColumnDim::Product(a, b) => write!(f, "{} * {}", a.name(), b.name()),
+        }
+    }
+}
+
 /// One canonical column of the Frame vocabulary.
 ///
 /// A spec binds a **column key**, wherever that key appears — in `atoms`, in
@@ -52,10 +110,56 @@ pub struct ColumnSpec {
     pub dtype: DType,
     /// Shape beyond axis 0.
     pub shape: ColShape,
-    /// Physical unit as a bare symbol (`"angstrom"`, `"e"`, `"amu"`, `""` for
-    /// dimensionless). Documentation and IO-boundary conversion only; never
-    /// enforced — molrs stores raw numbers.
-    pub unit: &'static str,
+    /// Physical dimension. Drives the displayed unit and unit conversion;
+    /// never enforced on write — molrs stores raw numbers.
+    pub dimension: ColumnDim,
     /// One-line meaning. Never empty (asserted by the vocabulary gate).
     pub doc: &'static str,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::units::UnitPreset;
+    use crate::units::preset::PresetDim;
+
+    #[test]
+    fn unit_in_not_a_quantity_is_none() {
+        assert_eq!(ColumnDim::NotAQuantity.unit_in(&UnitPreset::real()), None);
+    }
+
+    #[test]
+    fn unit_in_dimensionless_is_empty() {
+        assert_eq!(
+            ColumnDim::Dimensionless
+                .unit_in(&UnitPreset::real())
+                .as_deref(),
+            Some("")
+        );
+    }
+
+    #[test]
+    fn unit_in_of_is_the_preset_unit() {
+        let real = UnitPreset::real();
+        assert_eq!(
+            ColumnDim::Of(PresetDim::Length).unit_in(&real).as_deref(),
+            Some("angstrom")
+        );
+        assert_eq!(
+            ColumnDim::Of(PresetDim::Velocity)
+                .unit_in(&UnitPreset::metal())
+                .as_deref(),
+            Some("angstrom / picosecond")
+        );
+    }
+
+    #[test]
+    fn unit_in_product_joins_both_units_with_a_star() {
+        assert_eq!(
+            ColumnDim::Product(PresetDim::Charge, PresetDim::Length)
+                .unit_in(&UnitPreset::real())
+                .as_deref(),
+            Some("elementary_charge * angstrom")
+        );
+    }
 }

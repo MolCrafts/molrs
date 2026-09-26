@@ -35,6 +35,12 @@ pub const ANGLE_TYPE_LABELS: &str = "angle_type_labels";
 pub const DIHEDRAL_TYPE_LABELS: &str = "dihedral_type_labels";
 /// Frame meta key: the improper-type inventory, packed as `"id:label,…"`.
 pub const IMPROPER_TYPE_LABELS: &str = "improper_type_labels";
+/// Frame meta key: the unit-preset name (`"real"`, `"lj"`, …) the frame's
+/// numbers are in. Absent means the file or caller stated none.
+///
+/// Owned by [`Frame::convert_units`](crate::store::frame::Frame::convert_units),
+/// which checks it against the source preset and sets it to the target.
+pub const UNITS: &str = "units";
 
 /// Canonical storage dtype for a key, if the vocabulary declares one.
 ///

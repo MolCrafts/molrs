@@ -101,10 +101,8 @@ criteria:
       parse_fragment_smiles, fragment_to_atomistic, write_fragment_smiles,
       Fragment, PortKind, Conformer::generate, SmilesError, notation,
       SmilesErrorKind, CGMapping, WeightScheme, NeighborQuery.
-    status: verified
-    verified_by: agent-auto
-    last_checked: 2026-09-21
-    note: "release.md v0.15.0 section lists the CGsmiles reader/IR/expansion/templates, the fragment SMILES dialect, core::Fragment + Python surface, ElementGraph/generic generate, the try_from_molgraph fix, the SmilesError.notation / SmilesErrorKind / CGMapping breaking changes and the stub cleanup"
+    status: pending
+    note: "re-verify after the assembly-* chain (assembly-01 §0.12)"
   - id: ac-008
     summary: The wasm NeighborQuery symmetry gate is re-deferred, not claimed
     type: docs
@@ -138,10 +136,8 @@ criteria:
       --no-sync tox -e py`, `wasm-pack build --release --target bundler --scope
       molcrafts --out-name molrs`, `wasm-pack test --node`, and `ctest
       --test-dir molrs-capi/build-test --output-on-failure`.
-    status: verified
-    verified_by: impl-gate
-    last_checked: 2026-09-21
-    note: "releasing.md gates on the bumped tree 2026-09-21: fmt x6, clippy x5 (incl. wasm32), rustdoc -D warnings, cargo test molcrafts-molrs (lib + 80 doctests), molrs-ffi 17+1, molrs-cxxapi 11, cargo package + --list, tox -e py 616, wasm-pack build + 39 node tests, capi cmake/ctest 1/1 — all exit 0 (scratchpad gate-03.log)"
+    status: pending
+    note: "re-verify after the assembly-* chain (assembly-01 §0.12)"
   - id: ac-010
     summary: Gate numbers in the notes table were measured at the tagged tree
     type: runtime
@@ -151,10 +147,8 @@ criteria:
       commands at `v0.15.0` reproduces the recorded counts; no 0.14.0 figure
       (2045 / 74 / 557, measured under full,filesystem without stream) is
       carried forward.
-    status: verified
-    verified_by: impl-gate
-    last_checked: 2026-09-21
-    note: "gate table numbers in release.md were replaced from the gate-03 log measured at the bumped tree on 2026-09-21"
+    status: pending
+    note: "re-verify after the assembly-* chain (assembly-01 §0.12)"
   - id: ac-011
     summary: Tag v0.15.0 matches the workspace version and sits on master
     type: runtime

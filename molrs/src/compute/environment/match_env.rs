@@ -18,9 +18,9 @@
 //!   when there is a **rotation** and a **permutation** of one bond
 //!   set that minimises the RMSD vs the other to within
 //!   `rmsd_threshold`. Optimal rotation per permutation is found by
-//!   Horn's quaternion method (largest eigenvector of a 4×4 symmetric
-//!   `N` matrix built from the cross-covariance; eigensolver lives in
-//!   [`molrs::math::diagonalize::eigh_largest_sym_4x4`]).
+//!   Horn's quaternion method ([`crate::op::superpose`]), rotation only:
+//!   the bond vectors are already relative to the centre particle, so no
+//!   translation is fitted.
 //!   Permutations are enumerated by Heap's algorithm — viable for the
 //!   typical neighborhood sizes `n ≤ 12` (12! ≈ 4.8 × 10⁸ but with
 //!   early-exit on `rmsd > threshold` the practical count is much lower).
@@ -43,7 +43,7 @@
 use crate::compute::result::ComputeResult;
 use std::collections::HashMap;
 
-use molrs::math::diagonalize::eigh_largest_sym_4x4;
+use crate::op::superpose::{DEFAULT_GAP_TOL, SuperposeError, superpose};
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
@@ -169,54 +169,36 @@ fn rmsd_no_rotation(a: &[F], b: &[F]) -> F {
     (s / a.len() as F).sqrt()
 }
 
-/// Optimal-rotation RMSD between two point sets `a[i] ↔ b[i]` via
-/// Horn's quaternion method. Assumes `a.len() == b.len()`.
+/// Optimal-rotation RMSD between two bond-vector sets `a[i] ↔ b[i]`,
+/// `√(min_R Σ |R aᵢ − bᵢ|² / n)` over proper rotations `R` only (no
+/// translation: the vectors are relative to the centre particle, as in freud's
+/// MatchEnv registration). Assumes `a.len() == b.len()`.
+///
+/// [`superpose`] centres both sets, which would add a translation degree of
+/// freedom. It is fed the point-reflection-symmetric sets `{aᵢ} ∪ {−aᵢ}` and
+/// `{bᵢ} ∪ {−bᵢ}` instead: both centroids are then exactly 0, the
+/// cross-covariance `S = Σ a bᵀ` merely doubles (same optimal `R`), and the
+/// weighted RMSD² over the `2n` points, `2 Σ |R aᵢ − bᵢ|² / 2n`, equals the
+/// rotation-only RMSD² over the original `n`.
 fn rmsd_horn(a: &[[F; 3]], b: &[[F; 3]]) -> F {
-    let n = a.len() as F;
-    // Cross-covariance H_kl = Σ_i a_i,k · b_i,l
-    let mut h = [[0.0_f64; 3]; 3];
-    let mut sa: F = 0.0;
-    let mut sb: F = 0.0;
-    for i in 0..a.len() {
-        for k in 0..3 {
-            sa += a[i][k] * a[i][k];
-            sb += b[i][k] * b[i][k];
-            for l in 0..3 {
-                h[k][l] += a[i][k] * b[i][l];
-            }
-        }
+    let reference: Vec<[F; 3]> = a
+        .iter()
+        .copied()
+        .chain(a.iter().map(|v| [-v[0], -v[1], -v[2]]))
+        .collect();
+    let target: Vec<[F; 3]> = b
+        .iter()
+        .copied()
+        .chain(b.iter().map(|v| [-v[0], -v[1], -v[2]]))
+        .collect();
+    let weights = vec![1.0; reference.len()];
+    match superpose(&reference, &target, &weights, DEFAULT_GAP_TOL) {
+        Ok(fit) => fit.rmsd,
+        // No bonds: two empty environments coincide.
+        Err(SuperposeError::NoPoints) => 0.0,
+        // A non-finite bond vector never matches.
+        Err(_) => F::INFINITY,
     }
-    // Horn's N matrix.
-    let n_mat = [
-        [
-            h[0][0] + h[1][1] + h[2][2],
-            h[1][2] - h[2][1],
-            h[2][0] - h[0][2],
-            h[0][1] - h[1][0],
-        ],
-        [
-            h[1][2] - h[2][1],
-            h[0][0] - h[1][1] - h[2][2],
-            h[0][1] + h[1][0],
-            h[2][0] + h[0][2],
-        ],
-        [
-            h[2][0] - h[0][2],
-            h[0][1] + h[1][0],
-            -h[0][0] + h[1][1] - h[2][2],
-            h[1][2] + h[2][1],
-        ],
-        [
-            h[0][1] - h[1][0],
-            h[2][0] + h[0][2],
-            h[1][2] + h[2][1],
-            -h[0][0] - h[1][1] + h[2][2],
-        ],
-    ];
-    let (lambda_max, _) = eigh_largest_sym_4x4(&n_mat);
-    // Standard Horn identity: min Σ |a − R b|² = (|a|² + |b|² − 2 λ_max).
-    let sq_err = (sa + sb - 2.0 * lambda_max).max(0.0);
-    (sq_err / n).sqrt()
 }
 
 /// Heap's algorithm: enumerate every permutation of `b`, callback per perm.

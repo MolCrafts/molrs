@@ -47,8 +47,9 @@ mod store;
 mod builder;
 mod core;
 use crate::builder::{
-    PyCarbonTubeBuilder, PyGrapheneBuilder, PyLineOrienter, PyOrienter, PyPlacer, PySiteMap,
-    PyTangOrienter, PyTrace, PyTracePlacer,
+    PyAssembler, PyCarbonTubeBuilder, PyFinalizer, PyFragLibrary, PyGrapheneBuilder,
+    PyHintOrienter, PyNullOrienter, PyOrienter, PyPlacer, PyPortReacter, PyRandomOrienter,
+    PyReacter, PyTracePlacer,
 };
 use crate::core::spatial::mesh::PyTriMesh;
 use crate::core::spatial::neighborlist::{
@@ -59,10 +60,13 @@ use crate::core::spatial::region::{
     PySphere, PySphereUnion,
 };
 use crate::core::spatial::simbox::PyBox;
+use crate::core::spatial::trace::PyTrace;
 use crate::core::store::block::PyBlock;
 use crate::core::store::frame::{PyFrame, PyFrameMeta, PyMetaDocument, PyMetaValue};
 use crate::core::store::trajectory::{PyScalarObservable, PyTrajectory, PyVectorObservable};
 use crate::core::system::element::PyElement;
+use crate::core::system::frag_graph::PyFragGraph;
+use crate::core::system::mapping::PyMapping;
 use crate::core::system::molgraph::PyRingInfo;
 use crate::core::system::molgraph::{
     PyAtomistic, PyCoarseGrain, PyExtractedSubgraph, PyFragment, PyGraph, PyReaction,
@@ -96,6 +100,7 @@ use compute::{
 };
 
 mod md;
+mod op;
 mod signal;
 
 // Live Frame streaming (`molrs::stream`). `ControlCommand` is portable;
@@ -333,22 +338,31 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySmartsMatch>()?;
     m.add_class::<PySmartsPattern>()?;
     m.add_class::<PyReaction>()?;
+    // Unit-level assembly topology (core; the assembly components that
+    // consume it live under `molrs.builder`).
+    m.add_class::<PyFragGraph>()?;
+    m.add_class::<PyTrace>()?;
+    m.add_class::<PyMapping>()?;
 
     // Structure builders (graphene, nanotubes, …)
     m.add_class::<PyCarbonTubeBuilder>()?;
     m.add_class::<PyGrapheneBuilder>()?;
-    m.add_class::<PyTrace>()?;
-    m.add_class::<PySiteMap>()?;
-    // Base classes first: a subclass cannot be registered before its base.
+    // Assembly components, re-exported by `molrs.builder` (bases before
+    // their native subclasses).
+    m.add_class::<PyFragLibrary>()?;
     m.add_class::<PyPlacer>()?;
     m.add_class::<PyTracePlacer>()?;
     m.add_class::<PyOrienter>()?;
-    m.add_class::<PyLineOrienter>()?;
-    m.add_class::<PyTangOrienter>()?;
+    m.add_class::<PyNullOrienter>()?;
+    m.add_class::<PyRandomOrienter>()?;
+    m.add_class::<PyHintOrienter>()?;
+    m.add_class::<PyReacter>()?;
+    m.add_class::<PyPortReacter>()?;
+    m.add_class::<PyFinalizer>()?;
+    m.add_class::<PyAssembler>()?;
 
     // translate / rotate / scale are methods on Atomistic, CoarseGrain and
-    // Fragment. Placement is a Placer subclass (TracePlacer) choosing an
-    // Orienter subclass (Line / Tang).
+    // Fragment.
 
     // Chemical perception, as a builder: graph in / graph out, non-mutating.
     m.add_class::<PyPerceive>()?;
@@ -387,6 +401,10 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let md = PyModule::new(m.py(), "md")?;
     md::register(&md)?;
     m.add_submodule(&md)?;
+    // Pure numeric base; `Fit` lives only in `_lib.op`.
+    let op = PyModule::new(m.py(), "op")?;
+    op::register(&op)?;
+    m.add_submodule(&op)?;
     m.add_function(wrap_pyfunction!(ff::read_forcefield_xml_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_forcefield_xml_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_opls_xml_py, m)?)?;

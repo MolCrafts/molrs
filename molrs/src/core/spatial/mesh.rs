@@ -3,8 +3,8 @@
 //! Sits beside [`region`](super::region) because that is what consumes it:
 //! molpack's `StlRegion` is a watertight [`TriMesh`] plus a containment rule,
 //! and molvis paints the same mesh as the container a trajectory plays inside.
-//! Reading one out of a file is [`crate::io::mesh`]'s job; this is the geometry
-//! it hands back.
+//! Reading one out of a file is `crate::io::mesh`'s job (feature `io`); this
+//! is the geometry it hands back.
 //!
 //! Coordinates carry no units of their own — they are whatever the file said.
 //! Callers that know the file's unit convert with [`TriMesh::scaled`] (molpack
@@ -18,7 +18,7 @@
 
 use std::collections::HashMap;
 
-use super::vec3::{cross, sub};
+use crate::op::vec3::{cross, sub};
 use crate::types::F;
 
 /// Below this twice-area a face has no usable normal and no interior.

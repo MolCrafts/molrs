@@ -40,6 +40,8 @@ use ndarray::{Array2, ArrayView2};
 
 use crate::compute::error::ComputeError;
 use crate::compute::result::ComputeResult;
+use crate::op::linalg::det3;
+use crate::op::vec3::sub;
 
 /// Bohr → Å (CODATA, matches the cube reader's constant).
 pub const BOHR_TO_ANG: F = 0.529_177_210_67;
@@ -65,7 +67,7 @@ pub struct DensityGrid {
 impl DensityGrid {
     /// Build a grid directly from in-Å density values (`e/Å³`).
     pub fn new(origin: [F; 3], basis: [[F; 3]; 3], dims: [usize; 3], density: Vec<F>) -> Self {
-        let dv = det3(basis).abs();
+        let dv = det3(&basis).abs();
         DensityGrid {
             origin,
             basis,
@@ -387,11 +389,6 @@ impl VoronoiIntegration {
 // `compute::util::mic_disp` is the general (box-kind-resolving) path used
 // elsewhere. Kept local on purpose to avoid per-iteration box dispatch.
 
-#[inline]
-fn sub(a: [F; 3], b: [F; 3]) -> [F; 3] {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-
 /// Minimum-image displacement for an orthorhombic box.
 #[inline]
 fn min_image(mut d: [F; 3], l: [F; 3]) -> [F; 3] {
@@ -592,13 +589,6 @@ impl CellList {
         }
         fb_best
     }
-}
-
-#[inline]
-fn det3(m: [[F; 3]; 3]) -> F {
-    m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
-        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
-        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
 }
 
 /// `ComputeError::DimensionMismatch::what` wants a `&'static str`; the error is

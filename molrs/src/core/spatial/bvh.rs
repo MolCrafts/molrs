@@ -431,8 +431,8 @@ pub(crate) fn triangle_box(t: &[[F; 3]; 3]) -> ([F; 3], [F; 3]) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::vec3::{dot, sub};
     use super::*;
+    use crate::op::vec3::{dot, sub};
 
     /// Deterministic triangle soup — no rand dependency in a unit test.
     fn soup(n: usize) -> Vec<[[F; 3]; 3]> {
@@ -560,7 +560,7 @@ mod tests {
     /// Möller–Trumbore, forward hits only — the same shape of test the region
     /// runs, so the tree may only skip what this would have rejected anyway.
     fn ray_hits(o: [F; 3], d: [F; 3], t: &[[F; 3]; 3]) -> bool {
-        use super::super::vec3::cross;
+        use crate::op::vec3::cross;
         let (e1, e2) = (sub(t[1], t[0]), sub(t[2], t[0]));
         let h = cross(d, e2);
         let a = dot(e1, h);

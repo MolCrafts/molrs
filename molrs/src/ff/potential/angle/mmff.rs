@@ -18,9 +18,10 @@ use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
 use crate::ff::potential::geometry::{
-    accumulate_angle_forces, compute_angle, mag3, sub3, term_table, validate_coords,
+    accumulate_angle_forces, compute_angle, sub3, term_table, validate_coords,
 };
 use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::op::vec3::norm;
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -265,8 +266,8 @@ impl MMFFStretchBend {
             let (i, j, k) = atoms(idx);
             let rij_vec = sub3(coords, i, coords, j);
             let rkj_vec = sub3(coords, k, coords, j);
-            let rij = mag3(rij_vec);
-            let rkj = mag3(rkj_vec);
+            let rij = norm(rij_vec);
+            let rkj = norm(rkj_vec);
             let theta = compute_angle(coords, i, j, k);
             let dr_ij = rij - self.r0_ij[idx];
             let dr_kj = rkj - self.r0_kj[idx];

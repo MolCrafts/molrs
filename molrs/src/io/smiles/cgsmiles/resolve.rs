@@ -463,7 +463,9 @@ pub(super) type ConvertedBody = (Atomistic, Vec<(AtomId, BondingDescriptor)>);
 /// map.
 ///
 /// A per-call local, built and dropped inside one call of [`resolve`] or of
-/// [`CGSmilesIR::to_atomistic`](crate::io::smiles::CGSmilesIR::to_atomistic):
+/// the lowest-level expansion behind
+/// [`CGSmilesIR::to_atomistic`](crate::io::smiles::CGSmilesIR::to_atomistic)
+/// and [`CGSmilesIR::to_template`](crate::io::smiles::CGSmilesIR::to_template):
 /// never a field of the IR (which would make a value of parse results own a
 /// second representation of its own bodies), never a `static`, a
 /// `thread_local` or a cross-call memo. Within one call a definition is
@@ -516,6 +518,12 @@ impl FragmentCache {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => Ok(entry.insert(fragment_to_atomistic(body)?)),
         }
+    }
+
+    /// The converted body and port map of the fragment called `name`, if a
+    /// [`get_or_build`](Self::get_or_build) of this cache converted it.
+    pub(super) fn get(&self, name: &str) -> Option<&ConvertedBody> {
+        self.entries.get(name)
     }
 }
 

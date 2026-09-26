@@ -40,3 +40,18 @@ def test_custom_definition_is_registry_local():
 def test_affine_temperature_conversion():
     units = molrs.UnitRegistry()
     assert units.quantity(25.0, "degC").to("K").magnitude == pytest.approx(298.15)
+
+
+def test_define_lj_sigma_defines_the_reduced_length_unit_alone():
+    units = molrs.UnitRegistry()
+    units.define_lj_sigma(units.quantity(4.2, "angstrom"))
+    assert units.parse("lj_sigma").factor_to(units.angstrom) == pytest.approx(4.2, rel=1e-12)
+    # Only sigma is known, so no reduced mass exists.
+    with pytest.raises(molrs.UnitsError):
+        units.parse("lj_mass")
+
+
+def test_define_lj_sigma_refuses_a_sigma_that_is_not_a_length():
+    units = molrs.UnitRegistry()
+    with pytest.raises(molrs.UnitsError):
+        units.define_lj_sigma(units.quantity(1.0, "second"))

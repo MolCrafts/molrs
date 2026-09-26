@@ -1,15 +1,60 @@
-//! Python bindings for structure builders (`molrs::builder`).
+//! Python bindings for structure builders (`molrs::builder`) and the assembly
+//! surface under `molrs.builder`: `FragLibrary`, the placers, orienters,
+//! reacters, `Finalizer` and `Assembler`. The core `Trace` and `Mapping` they
+//! consume live beside the core layout (`core::spatial::trace`,
+//! `core::system::mapping`).
+//!
+//! # Crossing a component (assembly-07 §2)
+//!
+//! `Placer`, `Orienter` and `Reacter` are subclassable base pyclasses holding
+//! an [`Implementation`]: either a native Rust component behind an [`Arc`], or
+//! "the Python object itself". A Rust consumer (`Assembler`, `TracePlacer`)
+//! takes a `Box<dyn Trait>`, built by the base's `boxed`:
+//!
+//! - **native** — a `Shared*` newtype over the `Arc` that forwards every trait
+//!   method, the batched ones included, so a native batched override (e.g.
+//!   `TracePlacer::place_many`) is never replaced by the per-unit default;
+//! - **Python** — a `Py*Adapter` over the instance that re-enters Python once
+//!   per batch by overriding the batched trait method.
+//!
+//! These adaptors are new with this surface. `PyTypifier`
+//! (`ff/mod.rs`) is **not** their precedent: it wraps no Python subclass in a
+//! Rust-trait adaptor, keeping `TypifierState::Python(Option<ForceField>)` and
+//! calling `match` on the Python object directly from its `typify` pymethod.
+//! It is the pattern here only for the base pyclass's two-state enum (and, on
+//! the typifier, its `__init_subclass__` class-creation check, which these
+//! bases do not need).
 
-use molrs::{CarbonTubeBuilder, GrapheneBuilder};
-use pyo3::PyRefMut;
-use pyo3::exceptions::{PyIndexError, PyNotImplementedError, PyTypeError, PyValueError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+use molrs::op::rigid::Rigid;
+use molrs::op::superpose::Fit;
+use molrs::op::types::Vec3;
+use molrs::store::keys;
+use molrs::system::atomistic::BondId;
+use molrs::system::fragment::{Fragment, PortId};
+use molrs::system::molgraph::{node_to_u64, relation_from_u64, relation_to_u64};
+use molrs::{
+    AssembleError, Assembler, BodyAxis, CarbonTubeBuilder, Finalizer, FragLibrary,
+    FragLibraryError, GrapheneBuilder, HintOrienter, NullOrienter, OrientError, Orienter,
+    PairError, PlaceError, Placer, PortReacter, RandomOrienter, ReactError, Reacter, TracePlacer,
+};
+use ndarray::{Array1, Array2, Array3};
+use numpy::{AllowTypeChange, IntoPyArray, PyArray1, PyArray2, PyArray3, PyArrayLikeDyn};
+use pyo3::PyClassInitializer;
+use pyo3::exceptions::{PyException, PyNotImplementedError, PyTypeError, PyValueError};
+use pyo3::intern;
 use pyo3::prelude::*;
-use pyo3::{Borrowed, intern};
+use pyo3::types::{PyDict, PyList, PyTuple};
 
 use crate::core::spatial::simbox::PyBox;
+use crate::core::spatial::trace::PyTrace;
 use crate::core::store::frame::PyFrame;
-use crate::core::system::molgraph::{expect_world, try_with_world_mut};
-use molrs::system::molgraph::{node_from_u64, node_to_u64};
+use crate::core::system::frag_graph::PyFragGraph;
+use crate::core::system::mapping::PyMapping;
+use crate::core::system::molgraph::{PyAtomistic, PyCoarseGrain, PyFragment};
+use crate::helpers::{molrs_error_to_pyerr, py_value_err};
+use crate::op::{PyFit, points_from_array, rigids_from_arrays};
 
 /// Exact single-wall carbon nanotube builder.
 #[pyclass(module = "molrs.builder", name = "CarbonTubeBuilder", subclass)]
@@ -201,424 +246,1301 @@ impl PyGrapheneBuilder {
     }
 }
 
-/// A trajectory of points. No chemistry, no facing.
-#[pyclass(module = "molrs", name = "Trace")]
-pub struct PyTrace {
-    inner: molrs::spatial::Trace,
+// ---------------------------------------------------------------------------
+// Array seams of the assembly surface
+// ---------------------------------------------------------------------------
+
+/// A refusal's message with every graph id written as the `int` handle
+/// Python holds for it (`node_to_u64` for an atom or bead, `relation_to_u64`
+/// for a port), never as the Rust debug form `NodeId(3v1)`. A variant that
+/// carries no id keeps its `Display`.
+trait HandleMessage {
+    fn handle_message(&self) -> String;
 }
 
-#[pymethods]
-impl PyTrace {
-    #[new]
-    fn new(points: Vec<[f64; 3]>) -> Self {
-        Self {
-            inner: molrs::spatial::Trace::from_arrays(points),
-        }
-    }
-
-    fn __len__(&self) -> usize {
-        self.inner.len()
-    }
-
-    fn point(&self, index: usize) -> PyResult<[f64; 3]> {
-        self.inner
-            .point(index)
-            .ok_or_else(|| PyIndexError::new_err(format!("trace index {index} out of range")))
-    }
-
-    fn tangent(&self, index: usize) -> PyResult<[f64; 3]> {
-        self.inner
-            .tangent(index)
-            .ok_or_else(|| PyIndexError::new_err(format!("trace index {index} has no tangent")))
-    }
-}
-
-/// Mark the atoms of one graph that a reaction may bind.
-///
-/// Every node argument is an int handle or a node view (`NodeRef`, `Atom`, …)
-/// — anything with an int `.handle`. Returned nodes are int handles.
-#[pyclass(module = "molrs", name = "SiteMap")]
-pub struct PySiteMap {
-    mol: Py<PyAny>,
-}
-
-/// A node argument: an int handle, or any object with an int `.handle` (the
-/// `NodeRef` views of `molrs.views`). The one place a binder method turns a
-/// Python node into a [`molrs::NodeId`].
-struct NodeArg(molrs::NodeId);
-
-impl<'a, 'py> FromPyObject<'a, 'py> for NodeArg {
-    type Error = PyErr;
-
-    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
-        if let Ok(raw) = obj.extract::<u64>() {
-            return Ok(Self(node_from_u64(raw)));
-        }
-        let not_a_node = || {
-            PyTypeError::new_err(format!(
-                "expected an int node handle or a node view with an int .handle, got {}",
-                obj.get_type()
-                    .name()
-                    .map_or_else(|_| "?".to_string(), |name| name.to_string())
-            ))
-        };
-        let raw = obj
-            .getattr(intern!(obj.py(), "handle"))
-            .map_err(|_| not_a_node())?
-            .extract::<u64>()
-            .map_err(|_| not_a_node())?;
-        Ok(Self(node_from_u64(raw)))
-    }
-}
-
-fn as_handles(nodes: Vec<NodeArg>) -> Vec<molrs::NodeId> {
-    nodes.into_iter().map(|NodeArg(node)| node).collect()
-}
-
-fn names_of(names: &[String]) -> Vec<&str> {
-    names.iter().map(String::as_str).collect()
-}
-
-#[pymethods]
-impl PySiteMap {
-    /// Bind to `mol`, which must be a `Graph` or one of its leaves.
-    #[new]
-    fn new(mol: Bound<'_, PyAny>) -> PyResult<Self> {
-        expect_world(&mol)?;
-        Ok(Self { mol: mol.unbind() })
-    }
-
-    /// The graph these labels are written to.
-    #[getter]
-    fn mol(&self, py: Python<'_>) -> Py<PyAny> {
-        self.mol.clone_ref(py)
-    }
-
-    /// Label one atom with a site name.
-    fn label(&self, py: Python<'_>, node: NodeArg, name: &str) -> PyResult<()> {
-        let bound = self.mol.bind(py);
-        try_with_world_mut(bound, |graph| {
-            molrs::SiteMap::new(graph).label(node.0, name)
-        })
-    }
-
-    /// Label `nodes` with `names`, in order.
-    #[pyo3(signature = (nodes, *names))]
-    fn label_atoms(
-        &self,
-        py: Python<'_>,
-        nodes: Vec<NodeArg>,
-        names: Vec<String>,
-    ) -> PyResult<Vec<u64>> {
-        let bound = self.mol.bind(py);
-        try_with_world_mut(bound, |graph| -> Result<Vec<u64>, molrs::SiteError> {
-            let marked =
-                molrs::SiteMap::new(graph).label_atoms(&as_handles(nodes), &names_of(&names))?;
-            Ok(marked.into_iter().map(node_to_u64).collect::<Vec<u64>>())
-        })
-    }
-
-    /// Label the first atoms of `element`, in node order.
-    #[pyo3(signature = (element, *names))]
-    fn label_elements(
-        &self,
-        py: Python<'_>,
-        element: &str,
-        names: Vec<String>,
-    ) -> PyResult<Vec<u64>> {
-        let bound = self.mol.bind(py);
-        try_with_world_mut(bound, |graph| -> Result<Vec<u64>, String> {
-            // The core error counts atoms without naming the element; the
-            // caller only asked about one, so say which.
-            match molrs::SiteMap::new(graph).label_elements(element, &names_of(&names)) {
-                Ok(marked) => Ok(marked.into_iter().map(node_to_u64).collect()),
-                Err(molrs::SiteError::TooFewAtoms { needed, found }) => {
-                    Err(format!("need {needed} {element} atoms, found {found}"))
-                }
-                Err(other) => Err(other.to_string()),
+impl HandleMessage for PlaceError {
+    fn handle_message(&self) -> String {
+        match self {
+            Self::MissingBead { node } => format!(
+                "atom {} carries no non-negative '{}'",
+                node_to_u64(*node),
+                keys::BEAD
+            ),
+            Self::MissingMass { node } => {
+                format!("atom {} carries no '{}'", node_to_u64(*node), keys::MASS)
             }
-        })
-    }
-
-    /// Label `nodes[0::step]`, optionally preparing each one's leaving hydrogen.
-    #[pyo3(signature = (nodes, step, site, leaving=None, fold_charge=true))]
-    fn every_nth(
-        &self,
-        py: Python<'_>,
-        nodes: Vec<NodeArg>,
-        step: usize,
-        site: &str,
-        leaving: Option<String>,
-        fold_charge: bool,
-    ) -> PyResult<Vec<u64>> {
-        let bound = self.mol.bind(py);
-        try_with_world_mut(bound, |graph| -> Result<Vec<u64>, molrs::SiteError> {
-            let marked = molrs::SiteMap::new(graph).every_nth(
-                &as_handles(nodes),
-                step,
-                site,
-                leaving.as_deref(),
-                fold_charge,
-            )?;
-            Ok(marked.into_iter().map(node_to_u64).collect::<Vec<u64>>())
-        })
-    }
-
-    /// Prepare a leaving hydrogen on every atom already labelled `site`.
-    #[pyo3(signature = (site, leaving="h", fold_charge=true))]
-    fn prepare_leaving_hydrogens(
-        &self,
-        py: Python<'_>,
-        site: &str,
-        leaving: &str,
-        fold_charge: bool,
-    ) -> PyResult<usize> {
-        let bound = self.mol.bind(py);
-        try_with_world_mut(bound, |graph| {
-            molrs::SiteMap::new(graph).prepare_leaving_hydrogens(site, leaving, fold_charge)
-        })
-    }
-
-    /// Clear site labels: on `nodes`, or on the whole graph when `None`.
-    #[pyo3(signature = (nodes=None))]
-    fn clear(&self, py: Python<'_>, nodes: Option<Vec<NodeArg>>) -> PyResult<()> {
-        let bound = self.mol.bind(py);
-        try_with_world_mut(bound, |graph| {
-            let targets = nodes.map(as_handles);
-            molrs::SiteMap::new(graph).clear(targets.as_deref())
-        })
-        .map(|_| ())
+            Self::MissingCoordinates { node } => {
+                format!("atom {} lacks x/y/z coordinates", node_to_u64(*node))
+            }
+            other => other.to_string(),
+        }
     }
 }
 
-/// Put the fragments a set of forming bonds joins at a pose. Base class.
+impl HandleMessage for ReactError {
+    fn handle_message(&self) -> String {
+        let port = |id| relation_to_u64(id);
+        let atom = |id| node_to_u64(id);
+        match self {
+            Self::StalePort { port: p } => format!(
+                "port {} is stale: its anchor–handle bond no longer exists",
+                port(*p)
+            ),
+            Self::Incompatible { a, b } => {
+                format!("ports {} and {} are not compatible", port(*a), port(*b))
+            }
+            Self::SameAnchor { a, b } => format!(
+                "ports {} and {} share one anchor; a bond cannot join an atom to itself",
+                port(*a),
+                port(*b)
+            ),
+            Self::AlreadyBonded { a, b } => {
+                format!("anchors {} and {} are already bonded", atom(*a), atom(*b))
+            }
+            Self::BranchReachesAnchor { port: p } => {
+                format!("port {}'s handle branch reaches its own anchor", port(*p))
+            }
+            Self::OneSidedCharge { anchor } => format!(
+                "charge is present on only part of anchor {} and its handle branch",
+                atom(*anchor)
+            ),
+            other => other.to_string(),
+        }
+    }
+}
+
+impl HandleMessage for PairError {
+    fn handle_message(&self) -> String {
+        match self.pair {
+            Some(i) => format!("pair {i}: {}", self.error.handle_message()),
+            None => format!("a pair: {}", self.error.handle_message()),
+        }
+    }
+}
+
+impl HandleMessage for AssembleError {
+    fn handle_message(&self) -> String {
+        match self {
+            Self::Place(e) => format!("placement failed: {}", e.handle_message()),
+            Self::React {
+                edge: Some(edge),
+                error,
+            } => format!(
+                "edge {edge} could not be linked: {}",
+                error.handle_message()
+            ),
+            Self::React { edge: None, error } => {
+                format!("an edge could not be linked: {}", error.handle_message())
+            }
+            other => other.to_string(),
+        }
+    }
+}
+
+impl HandleMessage for FragLibraryError {
+    fn handle_message(&self) -> String {
+        let bead = |id| node_to_u64(id);
+        match self {
+            Self::AmbiguousAssignment { bead: b } => format!(
+                "coarse bead {} admits two template-bead assignments in its unit",
+                bead(*b)
+            ),
+            Self::Unmapped { bead: b } => format!(
+                "coarse bead {} is covered by no template occurrence",
+                bead(*b)
+            ),
+            Self::Ambiguous { bead: b } => format!(
+                "coarse bead {} and every other uncovered bead have several occurrences",
+                bead(*b)
+            ),
+            Self::Unmatchable {
+                a,
+                b,
+                template_a,
+                template_b,
+            } => format!(
+                "coarse bond {}-{} between units '{template_a}' and '{template_b}' has no \
+                 free pair of accepting ports",
+                bead(*a),
+                bead(*b)
+            ),
+            other => other.to_string(),
+        }
+    }
+}
+
+/// Where the Python adapters of one consumer keep the exception they turned
+/// into a Rust error, so the binder surfacing that error can chain it.
 ///
-/// The contract every placer honours: a forming bond is a
-/// `(parent-side atom, child-side atom)` pair of handles; after `place`, every
-/// tree forming bond — a fragment to its parent in the placement walk — sits
-/// at bonding range; a placer that cannot do that raises and never leaves a
-/// partial placement behind. A placer does not close rings: a ring-closing
-/// bond is formed but not placed, and its length is the caller's concern (an
-/// explicit trace, or geometry optimisation afterwards).
-#[pyclass(module = "molrs", name = "Placer", subclass)]
-pub struct PyPlacer;
+/// A Rust error carries only the message; the slot keeps the original
+/// exception with its type, traceback and `__cause__`. A consumer clears it
+/// before a call and takes it when the call fails. A component shared by two
+/// calls running at once on two threads shares one slot, so each may chain
+/// the other's exception; the message is always its own.
+#[derive(Clone, Default)]
+struct ErrorSlot(Arc<Mutex<Option<PyErr>>>);
+
+impl ErrorSlot {
+    fn lock(&self) -> MutexGuard<'_, Option<PyErr>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Keep `err` as the cause of the Rust error its adapter returns.
+    fn keep(&self, err: PyErr) {
+        *self.lock() = Some(err);
+    }
+
+    /// Drop a kept exception left over from an earlier call.
+    fn clear(&self) {
+        self.lock().take();
+    }
+
+    /// The Python error for a call that failed with `message`: a kept
+    /// `BaseException` that is not an `Exception` (`KeyboardInterrupt`,
+    /// `SystemExit`) unchanged, else `ValueError(message)` whose
+    /// `__cause__` is the kept exception, if any.
+    fn raise(&self, py: Python<'_>, message: String) -> PyErr {
+        let kept = self.lock().take();
+        match kept {
+            Some(cause) if !cause.is_instance_of::<PyException>(py) => cause,
+            cause => {
+                let err = PyValueError::new_err(message);
+                err.set_cause(py, cause);
+                err
+            }
+        }
+    }
+}
+
+/// `units` as the `(N,)` int64 array every Python `*_many` hook receives.
+fn units_to_py<'py>(py: Python<'py>, units: &[usize]) -> Bound<'py, PyArray1<i64>> {
+    Array1::from_iter(units.iter().map(|&u| u as i64)).into_pyarray(py)
+}
+
+/// One motion as `(rotation (3, 3), translation (3,))` numpy arrays.
+type RigidArrays<'py> = (Bound<'py, PyArray2<f64>>, Bound<'py, PyArray1<f64>>);
+
+/// Motions as `(rotations (N, 3, 3), translations (N, 3))` numpy arrays.
+type RigidsArrays<'py> = (Bound<'py, PyArray3<f64>>, Bound<'py, PyArray2<f64>>);
+
+/// One motion as `(rotation (3, 3), translation (3,))`.
+fn rigid_to_py<'py>(py: Python<'py>, rigid: &Rigid) -> RigidArrays<'py> {
+    (
+        Array2::from_shape_fn((3, 3), |(i, j)| rigid.rotation[i][j]).into_pyarray(py),
+        Array1::from(rigid.translation.to_vec()).into_pyarray(py),
+    )
+}
+
+/// Motions as `(rotations (N, 3, 3), translations (N, 3))`.
+fn rigids_to_py<'py>(py: Python<'py>, rigids: &[Rigid]) -> RigidsArrays<'py> {
+    let n = rigids.len();
+    (
+        Array3::from_shape_fn((n, 3, 3), |(c, i, j)| rigids[c].rotation[i][j]).into_pyarray(py),
+        Array2::from_shape_fn((n, 3), |(c, i)| rigids[c].translation[i]).into_pyarray(py),
+    )
+}
+
+/// The two float arrays of a hook's `(rotation(s), translation(s))` return.
+type MotionArrays<'py> = (
+    PyArrayLikeDyn<'py, f64, AllowTypeChange>,
+    PyArrayLikeDyn<'py, f64, AllowTypeChange>,
+);
+
+fn motion_arrays<'py>(returned: &Bound<'py, PyAny>, hook: &str) -> PyResult<MotionArrays<'py>> {
+    returned.extract::<MotionArrays<'py>>().map_err(|err| {
+        PyTypeError::new_err(format!(
+            "{hook} must return a (rotations, translations) tuple of float arrays: {err}"
+        ))
+    })
+}
+
+/// Read a per-unit hook's `(rotation (3, 3), translation (3,))`.
+fn rigid_from_py(returned: &Bound<'_, PyAny>, hook: &str) -> PyResult<Rigid> {
+    let (rotation, translation) = motion_arrays(returned, hook)?;
+    let (r, t) = (rotation.as_array(), translation.as_array());
+    if r.shape() != [3, 3] || t.shape() != [3] {
+        return Err(PyValueError::new_err(format!(
+            "{hook} must return rotation (3, 3) and translation (3,), got {:?} and {:?}",
+            r.shape(),
+            t.shape()
+        )));
+    }
+    Ok(Rigid {
+        rotation: std::array::from_fn(|i| std::array::from_fn(|j| r[[i, j]])),
+        translation: std::array::from_fn(|i| t[[i]]),
+    })
+}
+
+/// Read a batched hook's `(rotations (n, 3, 3), translations (n, 3))`.
+fn rigids_from_py(returned: &Bound<'_, PyAny>, hook: &str, n: usize) -> PyResult<Vec<Rigid>> {
+    let (rotations, translations) = motion_arrays(returned, hook)?;
+    let rigids = rigids_from_arrays(&rotations, &translations)?;
+    if rigids.len() != n {
+        return Err(PyValueError::new_err(format!(
+            "{hook} returned {} motions for {n} units",
+            rigids.len()
+        )));
+    }
+    Ok(rigids)
+}
+
+// ---------------------------------------------------------------------------
+// FragLibrary
+// ---------------------------------------------------------------------------
+
+/// Named fragment templates, each keeping its own bead labels.
+///
+/// A template's atoms carry ``bead`` (template-local bead index ``0..k``) and
+/// ``bead_type`` (that bead's label). Templates are stored as copies.
+#[pyclass(module = "molrs.builder", name = "FragLibrary")]
+pub struct PyFragLibrary {
+    inner: FragLibrary,
+}
+
+#[pymethods]
+impl PyFragLibrary {
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: FragLibrary::new(),
+        }
+    }
+
+    /// Store a copy of ``template`` under ``name``.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If the name is taken or the template is invalid (no atom, an atom
+    ///     without ``bead`` / ``bead_type``, non-contiguous beads, one bead
+    ///     with two labels, a disconnected bead pattern, an unreadable port).
+    fn insert(&mut self, name: &str, template: PyRef<'_, PyFragment>) -> PyResult<()> {
+        self.inner
+            .insert(name, template.core().clone())
+            .map_err(|e| PyValueError::new_err(e.handle_message()))
+    }
+
+    /// A copy of the template stored under ``name``, or ``None``.
+    fn get(&self, py: Python<'_>, name: &str) -> PyResult<Option<Py<PyFragment>>> {
+        self.inner
+            .get(name)
+            .map(|template| PyFragment::from_core(py, template.clone()))
+            .transpose()
+    }
+
+    /// Template names, in lexicographic order.
+    fn names(&self) -> Vec<String> {
+        self.inner.names().map(str::to_owned).collect()
+    }
+
+    /// Cover ``graph`` with template occurrences under ``rules`` and pair
+    /// their ports.
+    ///
+    /// Parameters
+    /// ----------
+    /// graph : CoarseGrain
+    /// rules : list[tuple[str, str]]
+    ///     ``(coarse type, template label)`` pairs.
+    ///
+    /// Returns
+    /// -------
+    /// Mapping
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If a rule is not a ``(str, str)`` pair.
+    /// ValueError
+    ///     If the rules are empty, license no template, or the cover is
+    ///     missing, ambiguous or unmatchable.
+    fn map(
+        &self,
+        py: Python<'_>,
+        graph: PyRef<'_, PyCoarseGrain>,
+        rules: Vec<(String, String)>,
+    ) -> PyResult<PyMapping> {
+        let rules: Vec<(&str, &str)> = rules
+            .iter()
+            .map(|(coarse, label)| (coarse.as_str(), label.as_str()))
+            .collect();
+        let graph = graph.core();
+        py.detach(|| self.inner.map(graph, &rules))
+            .map(|inner| PyMapping { inner })
+            .map_err(|e| PyValueError::new_err(e.handle_message()))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Component bases: native (Arc) or Python (the instance's own methods)
+// ---------------------------------------------------------------------------
+
+/// What a component base pyclass dispatches to.
+enum Implementation<T: ?Sized> {
+    /// A native Rust component. A Rust consumer shares it through the
+    /// `Shared*` forwarder of its trait.
+    Native(Arc<T>),
+    /// A Python subclass: its methods are the hooks. A Rust consumer reaches
+    /// it through the `Py*Adapter` of its trait.
+    Python,
+}
+
+fn not_implemented(method: &str) -> PyErr {
+    PyNotImplementedError::new_err(format!(
+        "{method} must be implemented by a concrete subclass"
+    ))
+}
+
+// ---- Placer ----------------------------------------------------------------
+
+/// Forwards **every** [`Placer`] method to a shared native placer, so a
+/// native batched override stays in force.
+struct SharedPlacer(Arc<dyn Placer>);
+
+impl Placer for SharedPlacer {
+    fn place(&self, unit: usize, name: &str, fragment: &Fragment) -> Result<Rigid, PlaceError> {
+        self.0.place(unit, name, fragment)
+    }
+
+    fn place_many(
+        &self,
+        units: &[usize],
+        name: &str,
+        fragment: &Fragment,
+    ) -> Result<Vec<Rigid>, PlaceError> {
+        self.0.place_many(units, name, fragment)
+    }
+}
+
+/// A Python `Placer` subclass as a Rust [`Placer`]. Re-enters Python once
+/// per template group: one template copy, one ``place_many`` call. An
+/// exception or a wrong shape becomes [`PlaceError::Other`] with the message,
+/// and the exception itself is kept in `errors`.
+struct PyPlacerAdapter {
+    instance: Py<PyAny>,
+    errors: ErrorSlot,
+}
+
+impl Placer for PyPlacerAdapter {
+    fn place(&self, unit: usize, name: &str, fragment: &Fragment) -> Result<Rigid, PlaceError> {
+        self.place_many(&[unit], name, fragment)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| PlaceError::Other("place_many returned no motion".to_owned()))
+    }
+
+    fn place_many(
+        &self,
+        units: &[usize],
+        name: &str,
+        fragment: &Fragment,
+    ) -> Result<Vec<Rigid>, PlaceError> {
+        Python::attach(|py| {
+            let call = || -> PyResult<Vec<Rigid>> {
+                let template = PyFragment::from_core(py, fragment.clone())?;
+                let returned = self.instance.bind(py).call_method1(
+                    intern!(py, "place_many"),
+                    (units_to_py(py, units), name, template),
+                )?;
+                rigids_from_py(&returned, "place_many", units.len())
+            };
+            call().map_err(|err| {
+                let message = err.to_string();
+                self.errors.keep(err);
+                PlaceError::Other(message)
+            })
+        })
+    }
+}
+
+/// Where each unit of a coarse-grained sequence goes, as a rigid motion of
+/// its template. Subclassable.
+///
+/// A Python subclass implements :meth:`place` or :meth:`place_many` (whose
+/// default loops over :meth:`place`). The :class:`Assembler` calls
+/// :meth:`place_many` once per template group with a fresh copy of the
+/// template; mutating that copy never reaches the library. An exception or a
+/// wrong shape surfaces from :meth:`Assembler.assemble` as ``ValueError``
+/// carrying the message, raised ``from`` the exception; a
+/// ``KeyboardInterrupt`` or ``SystemExit`` propagates unchanged.
+///
+/// Implementation note: the Rust ``Assembler`` calls a placer through the
+/// Rust ``Placer`` trait, so a Python subclass crosses through an explicit
+/// trait adaptor (``PyPlacerAdapter``) that enters Python once per
+/// ``place_many`` batch. ``molrs.ff.typifier.Typifier`` is the model for this
+/// base's native-or-Python two-state dispatch only: its ``typify`` calls the
+/// subclass's ``match`` directly and wraps no trait adaptor.
+#[pyclass(module = "molrs.builder", name = "Placer", subclass, frozen)]
+pub struct PyPlacer {
+    state: Implementation<dyn Placer>,
+    /// Where a Python adapter this placer reaches keeps its exception: its
+    /// own (a Python subclass) or its orienter's (a native `TracePlacer`).
+    errors: ErrorSlot,
+}
+
+impl PyPlacer {
+    fn native(placer: Arc<dyn Placer>, errors: ErrorSlot) -> Self {
+        Self {
+            state: Implementation::Native(placer),
+            errors,
+        }
+    }
+
+    /// This placer as the `Box<dyn Placer>` a Rust consumer takes.
+    fn boxed(slf: &Bound<'_, Self>) -> Box<dyn Placer> {
+        let this = slf.get();
+        match &this.state {
+            Implementation::Native(placer) => Box::new(SharedPlacer(Arc::clone(placer))),
+            Implementation::Python => Box::new(PyPlacerAdapter {
+                instance: slf.clone().into_any().unbind(),
+                errors: this.errors.clone(),
+            }),
+        }
+    }
+}
 
 #[pymethods]
 impl PyPlacer {
+    /// A Python-subclass base. Accepts and ignores any arguments, so a
+    /// subclass's own ``__init__`` signature is its own.
     #[new]
     #[pyo3(signature = (*_args, **_kwargs))]
-    fn new(_args: &Bound<'_, PyAny>, _kwargs: Option<&Bound<'_, PyAny>>) -> Self {
-        PyPlacer
+    fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
+        Self {
+            state: Implementation::Python,
+            errors: ErrorSlot::default(),
+        }
     }
 
-    /// Move whole fragments so every tree forming bond in `bonds` ends at
-    /// bonding range. The base class places nothing: a subclass implements it.
-    fn place(&self, _mol: &Bound<'_, PyAny>, _bonds: Vec<(u64, u64)>) -> PyResult<()> {
-        Err(PyNotImplementedError::new_err(
-            "Placer.place is abstract; a subclass implements it",
-        ))
+    /// The motion placing unit ``unit``, an instance of template ``name``.
+    ///
+    /// Returns
+    /// -------
+    /// tuple[ndarray, ndarray]
+    ///     ``rotation (3, 3)`` and ``translation (3,)``.
+    ///
+    /// Raises
+    /// ------
+    /// NotImplementedError
+    ///     On the base, when a subclass does not implement it.
+    /// ValueError
+    ///     If a native placer cannot place the unit.
+    fn place<'py>(
+        &self,
+        py: Python<'py>,
+        unit: usize,
+        name: &str,
+        template: PyRef<'py, PyFragment>,
+    ) -> PyResult<RigidArrays<'py>> {
+        match &self.state {
+            Implementation::Native(placer) => {
+                self.errors.clear();
+                let rigid = placer
+                    .place(unit, name, template.core())
+                    .map_err(|e| self.errors.raise(py, e.handle_message()))?;
+                Ok(rigid_to_py(py, &rigid))
+            }
+            Implementation::Python => Err(not_implemented("Placer.place")),
+        }
+    }
+
+    /// :meth:`place` for each of ``units``, all instances of template
+    /// ``name``. The Python default loops over :meth:`place`.
+    ///
+    /// Returns
+    /// -------
+    /// tuple[ndarray, ndarray]
+    ///     ``rotations (N, 3, 3)`` and ``translations (N, 3)``.
+    fn place_many<'py>(
+        slf: &Bound<'py, Self>,
+        units: Vec<usize>,
+        name: &str,
+        template: &Bound<'py, PyFragment>,
+    ) -> PyResult<RigidsArrays<'py>> {
+        let py = slf.py();
+        let this = slf.get();
+        let rigids = match &this.state {
+            Implementation::Native(placer) => {
+                this.errors.clear();
+                placer
+                    .place_many(&units, name, template.borrow().core())
+                    .map_err(|e| this.errors.raise(py, e.handle_message()))?
+            }
+            Implementation::Python => units
+                .iter()
+                .map(|&unit| {
+                    let returned =
+                        slf.call_method1(intern!(py, "place"), (unit, name, template))?;
+                    rigid_from_py(&returned, "place")
+                })
+                .collect::<PyResult<Vec<_>>>()?,
+        };
+        Ok(rigids_to_py(py, &rigids))
     }
 }
 
-/// The native facing rule a [`PyTracePlacer`] applies. Closed set: the variant
-/// is the class, and a new rule is a new class on both sides of the binding.
-fn extract_orienter(orienter: &Bound<'_, PyAny>) -> PyResult<Box<dyn molrs::Orienter>> {
-    if orienter.is_instance_of::<PyLineOrienter>() {
-        Ok(Box::new(molrs::LineOrienter))
-    } else if orienter.is_instance_of::<PyTangOrienter>() {
-        Ok(Box::new(molrs::TangOrienter))
-    } else {
-        Err(PyTypeError::new_err(
-            "expected a LineOrienter or a TangOrienter",
-        ))
-    }
-}
-
-/// Grow the fragments a set of forming bonds joins out of one another.
+/// Places unit ``i`` by superposing the template's bead reference points
+/// (mass-weighted bead centroids) onto the trace's unit ``i`` points,
+/// completing an under-determined fit with its orienter (default
+/// :class:`NullOrienter`).
 ///
-/// Fragments are node groups read off `res_id` by default. The placer walks
-/// the fragment graph breadth-first from the lowest fragment id and moves each
-/// other fragment rigidly, once, relative to **its own parent**: the child's
-/// anchor lands one bonding range (summed covalent radii plus the buffer) from
-/// the parent's reacting atom along a growth direction, and the orienter turns
-/// the child to point along it, away from the parent.
+/// Parameters
+/// ----------
+/// trace : Trace
+/// seq : list[str]
+///     Template name of each unit; a unit is only placed with that template.
 ///
-/// Without a trace the root stays put and a child grows along its parent's
-/// outward direction (centroid through reacting atom), so any tree of
-/// fragments places, and a ring places along its spanning tree. With a trace
-/// (`with_trace`) the fragments must form a single path or a single ring,
-/// walked as a path from its lowest id; the trace supplies directions only. A
-/// forming bond that closes a ring of fragments is neither placed nor checked:
-/// its length is the caller's concern (a closed trace of the ring's size, or
-/// geometry optimisation afterwards). Failures raise `ValueError`
-/// before any coordinate is written (only a refused coordinate write can fail
-/// later); `molrs::Placer::place` lists every case.
-#[pyclass(module = "molrs", name = "TracePlacer", extends = PyPlacer)]
+/// Raises
+/// ------
+/// ValueError
+///     If ``seq`` and the trace differ in unit count.
+#[pyclass(module = "molrs.builder", name = "TracePlacer", extends = PyPlacer, frozen)]
 pub struct PyTracePlacer {
-    inner: molrs::TracePlacer,
+    // The placer the base `PyPlacer` also holds, typed, so `with_orienter`
+    // can read its trace and sequence.
+    inner: Arc<TracePlacer>,
+}
+
+impl PyTracePlacer {
+    /// `placer` as a new `TracePlacer` object whose adapters keep their
+    /// exceptions in `errors`.
+    fn create(placer: TracePlacer, errors: ErrorSlot) -> PyClassInitializer<Self> {
+        let inner = Arc::new(placer);
+        PyClassInitializer::from(PyPlacer::native(inner.clone(), errors))
+            .add_subclass(Self { inner })
+    }
 }
 
 #[pymethods]
 impl PyTracePlacer {
     #[new]
-    fn new() -> (Self, PyPlacer) {
-        (
-            PyTracePlacer {
-                inner: molrs::TracePlacer::new(),
-            },
-            PyPlacer,
-        )
+    fn new(trace: &Bound<'_, PyTrace>, seq: Vec<String>) -> PyResult<PyClassInitializer<Self>> {
+        let placer = TracePlacer::new(trace.get().inner.clone(), seq)
+            .map_err(|e| PyValueError::new_err(e.handle_message()))?;
+        Ok(Self::create(placer, ErrorSlot::default()))
     }
 
-    /// Grow a path of fragments along this trace's tangents instead of each
-    /// parent's outward direction: the root's outward direction follows the
-    /// tangent at sample 0 with its reacting atom on sample 0, and the `k`-th
-    /// child grows along the tangent at sample `k`. The chain follows the
-    /// curve's shape at bonding range, not the samples themselves. A ring of
-    /// fragments is walked as a path from its lowest id; its closing bond is
-    /// formed but not placed. `place` then refuses a fragment joined to three
-    /// others or more, and a trace with fewer samples than fragments, with
-    /// `ValueError`.
-    fn with_trace<'py>(mut slf: PyRefMut<'py, Self>, trace: &PyTrace) -> PyRefMut<'py, Self> {
-        let current = std::mem::take(&mut slf.inner);
-        slf.inner = current.with_trace(trace.inner.clone());
-        slf
+    /// A new placer over the same trace and sequence that completes
+    /// under-determined fits with ``orienter``. This placer is unchanged.
+    ///
+    /// A Python orienter receives one :meth:`Orienter.orient_many` call per
+    /// :meth:`place_many` batch.
+    fn with_orienter(
+        &self,
+        py: Python<'_>,
+        orienter: &Bound<'_, PyOrienter>,
+    ) -> PyResult<Py<Self>> {
+        let errors = ErrorSlot::default();
+        let placer = TracePlacer::new(self.inner.trace().clone(), self.inner.seq().to_vec())
+            .map_err(|e| PyValueError::new_err(e.handle_message()))?
+            .with_orienter(PyOrienter::boxed(orienter, &errors));
+        Py::new(py, Self::create(placer, errors))
+    }
+}
+
+// ---- Orienter --------------------------------------------------------------
+
+/// Forwards **every** [`Orienter`] method to a shared native orienter, so a
+/// native batched override stays in force.
+struct SharedOrienter(Arc<dyn Orienter>);
+
+impl Orienter for SharedOrienter {
+    fn orient(
+        &self,
+        unit: usize,
+        fragment: &Fragment,
+        fit: &Fit,
+        hint: Option<Vec3>,
+    ) -> Result<Rigid, OrientError> {
+        self.0.orient(unit, fragment, fit, hint)
     }
 
-    /// Face each fragment by this rule instead of `LineOrienter()`.
-    fn with_orienter<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        orienter: &Bound<'_, PyAny>,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        let extracted = extract_orienter(orienter)?;
-        let current = std::mem::take(&mut slf.inner);
-        slf.inner = current.with_orienter(extracted);
-        Ok(slf)
+    fn orient_many(
+        &self,
+        units: &[usize],
+        fragment: &Fragment,
+        fits: &[Fit],
+        hints: &[Option<Vec3>],
+    ) -> Result<Vec<Rigid>, OrientError> {
+        self.0.orient_many(units, fragment, fits, hints)
     }
+}
 
-    /// Extra separation (Å) beyond the summed covalent radii.
-    fn with_buffer<'py>(mut slf: PyRefMut<'py, Self>, buffer: f64) -> PyRefMut<'py, Self> {
-        let current = std::mem::take(&mut slf.inner);
-        slf.inner = current.with_buffer(buffer);
-        slf
-    }
+/// A Python `Orienter` subclass as a Rust [`Orienter`]. Re-enters Python once
+/// per batch: one template copy, one ``orient_many`` call. An exception or a
+/// wrong shape becomes [`OrientError::Other`] with the message, and the
+/// exception itself is kept in `errors`.
+///
+/// **Hints are all-or-none.** They cross as one `(N, 3)` array, or `None`
+/// when no unit of the batch has one; a batch where only some units have a
+/// hint is refused with [`OrientError::Other`], since one array cannot say
+/// which rows are missing. A [`Trace`](molrs::spatial::Trace) gives every
+/// unit a hint or none, so a `TracePlacer` batch never mixes them.
+struct PyOrienterAdapter {
+    instance: Py<PyAny>,
+    errors: ErrorSlot,
+}
 
-    /// The field that groups nodes into fragments (default `res_id`).
-    fn with_group_key<'py>(mut slf: PyRefMut<'py, Self>, key: &str) -> PyRefMut<'py, Self> {
-        let current = std::mem::take(&mut slf.inner);
-        slf.inner = current.with_group_key(key);
-        slf
-    }
-
-    /// The field that marks a fragment's site atoms (default `site`).
-    fn with_site_key<'py>(mut slf: PyRefMut<'py, Self>, key: &str) -> PyRefMut<'py, Self> {
-        let current = std::mem::take(&mut slf.inner);
-        slf.inner = current.with_site_key(key);
-        slf
-    }
-
-    /// Move whole fragments so every tree forming bond's endpoints sit at
-    /// bonding range; a ring-closing bond is formed but not placed. `bonds`
-    /// are `(parent-side handle, child-side handle)` pairs. Raises
-    /// `ValueError` — with nothing moved — when the bonds leave a fragment
-    /// unreachable, a trace meets a branched fragment graph or runs out of
-    /// samples, a fragment cannot be faced, or an endpoint lacks a fragment
-    /// id, element, radius or coordinates.
-    fn place(&self, mol: &Bound<'_, PyAny>, bonds: Vec<(u64, u64)>) -> PyResult<()> {
-        let pairs: Vec<(molrs::NodeId, molrs::NodeId)> = bonds
+impl Orienter for PyOrienterAdapter {
+    fn orient(
+        &self,
+        unit: usize,
+        fragment: &Fragment,
+        fit: &Fit,
+        hint: Option<Vec3>,
+    ) -> Result<Rigid, OrientError> {
+        self.orient_many(&[unit], fragment, std::slice::from_ref(fit), &[hint])?
             .into_iter()
-            .map(|(a, b)| (node_from_u64(a), node_from_u64(b)))
-            .collect();
-        try_with_world_mut(mol, |graph| {
-            molrs::Placer::place(&self.inner, graph, &pairs)
+            .next()
+            .ok_or_else(|| OrientError::Other("orient_many returned no motion".to_owned()))
+    }
+
+    fn orient_many(
+        &self,
+        units: &[usize],
+        fragment: &Fragment,
+        fits: &[Fit],
+        hints: &[Option<Vec3>],
+    ) -> Result<Vec<Rigid>, OrientError> {
+        if fits.len() != units.len() || hints.len() != units.len() {
+            return Err(OrientError::Other(format!(
+                "batch of {} units has {} fits and {} hints",
+                units.len(),
+                fits.len(),
+                hints.len()
+            )));
+        }
+        let hints: Option<Vec<Vec3>> = if hints.iter().all(Option::is_none) {
+            None
+        } else {
+            Some(
+                units
+                    .iter()
+                    .zip(hints)
+                    .map(|(&unit, hint)| {
+                        hint.ok_or_else(|| {
+                            OrientError::Other(format!(
+                                "unit {unit} has no hint but others of its batch do; a \
+                                 Python orienter takes hints for every unit or none"
+                            ))
+                        })
+                    })
+                    .collect::<Result<_, _>>()?,
+            )
+        };
+        Python::attach(|py| {
+            let call = || -> PyResult<Vec<Rigid>> {
+                let template = PyFragment::from_core(py, fragment.clone())?;
+                let fits = PyList::new(py, fits.iter().map(|&fit| PyFit::from_core(fit)))?;
+                let hints = hints.as_ref().map(|hints| {
+                    Array2::from_shape_fn((hints.len(), 3), |(n, a)| hints[n][a]).into_pyarray(py)
+                });
+                let returned = self.instance.bind(py).call_method1(
+                    intern!(py, "orient_many"),
+                    (units_to_py(py, units), template, fits, hints),
+                )?;
+                rigids_from_py(&returned, "orient_many", units.len())
+            };
+            call().map_err(|err| {
+                let message = err.to_string();
+                self.errors.keep(err);
+                OrientError::Other(message)
+            })
         })
     }
 }
 
-/// Which way a fragment faces. A closed set — `LineOrienter` and
-/// `TangOrienter` — because a facing rule runs natively inside a placer, so a
-/// Python subclass could never be applied; subclassing it is refused.
+/// Completes a superposition fit the trace leaves under-determined (a spin
+/// about its axis, or any rotation) with one member of its optimal family.
+/// Subclassable.
 ///
-/// `subclass` stays on the pyclass only so the two native rules can extend it;
-/// `__init_subclass__` refuses every class Python itself creates.
-#[pyclass(module = "molrs", name = "Orienter", subclass)]
-pub struct PyOrienter;
+/// A Python subclass implements :meth:`orient` or :meth:`orient_many` (whose
+/// default loops over :meth:`orient`). A :class:`TracePlacer` calls
+/// :meth:`orient_many` once per ``place_many`` batch with a fresh copy of the
+/// template. An exception or a wrong shape surfaces from
+/// :meth:`Assembler.assemble` as ``ValueError`` carrying the message, raised
+/// ``from`` the exception; a ``KeyboardInterrupt`` or ``SystemExit``
+/// propagates unchanged.
+///
+/// **Hints are all-or-none.** :meth:`orient_many` receives ``hints`` as one
+/// ``(N, 3)`` array, or ``None`` when no unit of the batch has one; a batch
+/// where only some units have a hint is refused. A :class:`~molrs.Trace`
+/// carries hints for every unit or for none.
+///
+/// Implementation note: the Rust ``TracePlacer`` calls an orienter through
+/// the Rust ``Orienter`` trait, so a Python subclass crosses through an
+/// explicit trait adaptor (``PyOrienterAdapter``) that enters Python once per
+/// ``orient_many`` batch. ``molrs.ff.typifier.Typifier`` is the model for
+/// this base's native-or-Python two-state dispatch only: its ``typify`` calls
+/// the subclass's ``match`` directly and wraps no trait adaptor.
+#[pyclass(module = "molrs.builder", name = "Orienter", subclass, frozen)]
+pub struct PyOrienter {
+    state: Implementation<dyn Orienter>,
+}
+
+impl PyOrienter {
+    fn native(orienter: impl Orienter + 'static) -> Self {
+        Self {
+            state: Implementation::Native(Arc::new(orienter)),
+        }
+    }
+
+    /// This orienter as the `Box<dyn Orienter>` a Rust consumer takes; a
+    /// Python adapter keeps its exception in the consumer's `errors`.
+    fn boxed(slf: &Bound<'_, Self>, errors: &ErrorSlot) -> Box<dyn Orienter> {
+        match &slf.get().state {
+            Implementation::Native(orienter) => Box::new(SharedOrienter(Arc::clone(orienter))),
+            Implementation::Python => Box::new(PyOrienterAdapter {
+                instance: slf.clone().into_any().unbind(),
+                errors: errors.clone(),
+            }),
+        }
+    }
+}
 
 #[pymethods]
 impl PyOrienter {
+    /// A Python-subclass base. Accepts and ignores any arguments, so a
+    /// subclass's own ``__init__`` signature is its own.
     #[new]
-    fn new() -> Self {
-        PyOrienter
-    }
-
-    /// Refuse a Python subclass when it is defined, not when it is used.
-    #[classmethod]
-    #[pyo3(signature = (**_kwargs))]
-    fn __init_subclass__(
-        _cls: &Bound<'_, pyo3::types::PyType>,
-        _kwargs: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<()> {
-        Err(PyTypeError::new_err(
-            "Orienter is a closed set (LineOrienter, TangOrienter); it cannot be subclassed",
-        ))
-    }
-}
-
-fn orient_with<O: molrs::Orienter>(
-    orienter: &O,
-    mol: &Bound<'_, PyAny>,
-    anchor: [f64; 3],
-    body_axis: [f64; 3],
-    to_dir: [f64; 3],
-    flip: bool,
-) -> PyResult<()> {
-    try_with_world_mut(mol, |graph| {
-        orienter.orient(graph, anchor, body_axis, to_dir, flip)
-    })
-}
-
-macro_rules! orienter_class {
-    ($py:ident, $rust:expr, $name:literal, $doc:literal) => {
-        #[doc = $doc]
-        #[pyclass(module = "molrs", name = $name, extends = PyOrienter)]
-        pub struct $py;
-
-        #[pymethods]
-        impl $py {
-            #[new]
-            fn new() -> (Self, PyOrienter) {
-                ($py, PyOrienter)
-            }
-
-            /// The direction this rule reads out of `body_axis`, or ``None``.
-            fn direction(&self, body_axis: [f64; 3]) -> Option<[f64; 3]> {
-                molrs::Orienter::direction(&$rust, body_axis)
-            }
-
-            #[pyo3(signature = (mol, anchor, body_axis, to_dir, flip=false))]
-            fn orient(
-                &self,
-                mol: &Bound<'_, PyAny>,
-                anchor: [f64; 3],
-                body_axis: [f64; 3],
-                to_dir: [f64; 3],
-                flip: bool,
-            ) -> PyResult<()> {
-                orient_with(&$rust, mol, anchor, body_axis, to_dir, flip)
-            }
+    #[pyo3(signature = (*_args, **_kwargs))]
+    fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
+        Self {
+            state: Implementation::Python,
         }
-    };
+    }
+
+    /// Orient unit ``unit``, an instance of ``template``, given its ``fit``
+    /// and its optional direction ``hint`` (shape ``(3,)``).
+    ///
+    /// Returns
+    /// -------
+    /// tuple[ndarray, ndarray]
+    ///     ``rotation (3, 3)`` and ``translation (3,)``.
+    ///
+    /// Raises
+    /// ------
+    /// NotImplementedError
+    ///     On the base, when a subclass does not implement it.
+    /// ValueError
+    ///     If a native orienter cannot complete the fit.
+    fn orient<'py>(
+        &self,
+        py: Python<'py>,
+        unit: usize,
+        template: PyRef<'py, PyFragment>,
+        fit: &Bound<'py, PyFit>,
+        hint: Option<PyArrayLikeDyn<'py, f64, AllowTypeChange>>,
+    ) -> PyResult<RigidArrays<'py>> {
+        match &self.state {
+            Implementation::Native(orienter) => {
+                let hint = match hint {
+                    None => None,
+                    Some(hint) => {
+                        let h = hint.as_array();
+                        if h.shape() != [3] {
+                            return Err(PyValueError::new_err(format!(
+                                "hint must have shape (3,), got {:?}",
+                                h.shape()
+                            )));
+                        }
+                        Some([h[[0]], h[[1]], h[[2]]])
+                    }
+                };
+                let rigid = orienter
+                    .orient(unit, template.core(), &fit.get().inner, hint)
+                    .map_err(py_value_err)?;
+                Ok(rigid_to_py(py, &rigid))
+            }
+            Implementation::Python => Err(not_implemented("Orienter.orient")),
+        }
+    }
+
+    /// :meth:`orient` for each ``units[n]`` with ``fits[n]`` and
+    /// ``hints[n]``. The Python default loops over :meth:`orient`.
+    ///
+    /// Parameters
+    /// ----------
+    /// units : array_like of int
+    /// template : Fragment
+    /// fits : list[Fit]
+    /// hints : ndarray, shape (N, 3), or None
+    ///
+    /// Returns
+    /// -------
+    /// tuple[ndarray, ndarray]
+    ///     ``rotations (N, 3, 3)`` and ``translations (N, 3)``.
+    fn orient_many<'py>(
+        slf: &Bound<'py, Self>,
+        units: Vec<usize>,
+        template: &Bound<'py, PyFragment>,
+        fits: Vec<Bound<'py, PyFit>>,
+        hints: Option<PyArrayLikeDyn<'py, f64, AllowTypeChange>>,
+    ) -> PyResult<RigidsArrays<'py>> {
+        let py = slf.py();
+        let hints: Vec<Option<Vec3>> = match hints {
+            None => vec![None; units.len()],
+            Some(hints) => points_from_array(&hints, "hints")?
+                .into_iter()
+                .map(Some)
+                .collect(),
+        };
+        let rigids = match &slf.get().state {
+            Implementation::Native(orienter) => {
+                let fits: Vec<Fit> = fits.iter().map(|fit| fit.get().inner).collect();
+                orienter
+                    .orient_many(&units, template.borrow().core(), &fits, &hints)
+                    .map_err(py_value_err)?
+            }
+            Implementation::Python => {
+                if fits.len() != units.len() || hints.len() != units.len() {
+                    return Err(PyValueError::new_err(format!(
+                        "batch of {} units has {} fits and {} hints",
+                        units.len(),
+                        fits.len(),
+                        hints.len()
+                    )));
+                }
+                units
+                    .iter()
+                    .zip(&fits)
+                    .zip(&hints)
+                    .map(|((&unit, fit), hint)| {
+                        let hint = hint.map(|h| Array1::from(h.to_vec()).into_pyarray(py));
+                        let returned =
+                            slf.call_method1(intern!(py, "orient"), (unit, template, fit, hint))?;
+                        rigid_from_py(&returned, "orient")
+                    })
+                    .collect::<PyResult<Vec<_>>>()?
+            }
+        };
+        Ok(rigids_to_py(py, &rigids))
+    }
 }
 
-orienter_class!(
-    PyLineOrienter,
-    molrs::LineOrienter,
-    "LineOrienter",
-    "The site axis itself: the fragment's outgoing site points along the trace."
-);
-orienter_class!(
-    PyTangOrienter,
-    molrs::TangOrienter,
-    "TangOrienter",
-    "A perpendicular of the site axis: the fragment meets the trace at an angle."
-);
+/// Leaves every fit as the superposition returned it.
+#[pyclass(module = "molrs.builder", name = "NullOrienter", extends = PyOrienter, frozen)]
+pub struct PyNullOrienter;
+
+#[pymethods]
+impl PyNullOrienter {
+    #[new]
+    fn new() -> (Self, PyOrienter) {
+        (Self, PyOrienter::native(NullOrienter))
+    }
+}
+
+/// A uniform member of each fit's family, a pure function of
+/// ``(seed, unit)``: a uniform spin angle, or a Haar-random rotation for a
+/// free fit (Shoemake 1992).
+#[pyclass(module = "molrs.builder", name = "RandomOrienter", extends = PyOrienter, frozen)]
+pub struct PyRandomOrienter;
+
+#[pymethods]
+impl PyRandomOrienter {
+    #[new]
+    fn new(seed: u64) -> (Self, PyOrienter) {
+        (Self, PyOrienter::native(RandomOrienter::new(seed)))
+    }
+}
+
+/// Turns a body axis of the template onto each unit's direction hint.
+///
+/// Parameters
+/// ----------
+/// axis : {"principal", "dipole"}
+///     The top gyration eigenvector, or the charge dipole.
+///
+/// Raises
+/// ------
+/// ValueError
+///     If ``axis`` is neither.
+#[pyclass(module = "molrs.builder", name = "HintOrienter", extends = PyOrienter, frozen)]
+pub struct PyHintOrienter;
+
+#[pymethods]
+impl PyHintOrienter {
+    #[new]
+    #[pyo3(signature = (axis="principal"))]
+    fn new(axis: &str) -> PyResult<(Self, PyOrienter)> {
+        let axis = match axis {
+            "principal" => BodyAxis::Principal,
+            "dipole" => BodyAxis::Dipole,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown body axis {other:?}; expected 'principal' or 'dipole'"
+                )));
+            }
+        };
+        Ok((Self, PyOrienter::native(HintOrienter::new(axis))))
+    }
+}
+
+// ---- Reacter ---------------------------------------------------------------
+
+/// Forwards **every** [`Reacter`] method to a shared native reacter, so a
+/// native batched override stays in force.
+struct SharedReacter(Arc<dyn Reacter>);
+
+impl Reacter for SharedReacter {
+    fn link(&self, world: &mut Fragment, a: PortId, b: PortId) -> Result<BondId, ReactError> {
+        self.0.link(world, a, b)
+    }
+
+    fn link_many(
+        &self,
+        world: &mut Fragment,
+        pairs: &[(PortId, PortId)],
+    ) -> Result<Vec<BondId>, PairError> {
+        self.0.link_many(world, pairs)
+    }
+}
+
+/// A Python `Reacter` subclass as a Rust [`Reacter`]. Re-enters Python once
+/// per batch: the world is moved (`std::mem::take`, no atom copied) into a
+/// fresh `molrs.Fragment`, handed to ``link_many``, and moved back out
+/// whatever the call did, leaving that Python object an empty fragment.
+///
+/// A failure (an exception, or a return that is not one bond handle per
+/// pair) becomes [`PairError`] with [`ReactError::Other`] carrying the
+/// message, and the exception itself is kept in `errors`. The pair is the
+/// exception's [`PAIR_TAG`] attribute when it names an index into this batch
+/// (`Some(i)`), else `None`: an untagged exception does not say which pair
+/// failed, and no index is made up for it.
+struct PyReacterAdapter {
+    instance: Py<PyAny>,
+    errors: ErrorSlot,
+}
+
+/// The attribute the base `Reacter.link_many` sets on an exception raised by
+/// `link` for pair `i` (the index into the `pairs` it was given).
+const PAIR_TAG: &str = "molrs_pair";
+
+impl Reacter for PyReacterAdapter {
+    fn link(&self, world: &mut Fragment, a: PortId, b: PortId) -> Result<BondId, ReactError> {
+        self.link_many(world, &[(a, b)])
+            .map_err(|failed| failed.error)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| ReactError::Other("link_many returned no bond".to_owned()))
+    }
+
+    fn link_many(
+        &self,
+        world: &mut Fragment,
+        pairs: &[(PortId, PortId)],
+    ) -> Result<Vec<BondId>, PairError> {
+        Python::attach(|py| {
+            let mut call = || -> PyResult<Vec<BondId>> {
+                // The empty Python object is made first, so a failure to make
+                // it cannot lose the world.
+                let lent = PyFragment::from_core(py, Fragment::new())?;
+                // Borrowed before the world is taken, so a refused borrow
+                // leaves the world where it was.
+                std::mem::swap(lent.try_borrow_mut(py)?.core_mut(), world);
+                let handles: Vec<(u64, u64)> = pairs
+                    .iter()
+                    .map(|&(a, b)| (relation_to_u64(a), relation_to_u64(b)))
+                    .collect();
+                let returned = self
+                    .instance
+                    .bind(py)
+                    .call_method1(intern!(py, "link_many"), (&lent, handles));
+                // The call has returned, so a borrow still held on `lent` was
+                // taken by another thread that has released the GIL. It ends;
+                // wait for it rather than lose the world.
+                loop {
+                    if let Ok(mut back) = lent.try_borrow_mut(py) {
+                        *world = std::mem::take(back.core_mut());
+                        break;
+                    }
+                    py.detach(std::thread::yield_now);
+                }
+                let bonds: Vec<u64> = returned?.extract()?;
+                if bonds.len() != pairs.len() {
+                    return Err(PyValueError::new_err(format!(
+                        "link_many returned {} bonds for {} pairs",
+                        bonds.len(),
+                        pairs.len()
+                    )));
+                }
+                Ok(bonds.into_iter().map(relation_from_u64).collect())
+            };
+            call().map_err(|err| {
+                let pair = err
+                    .value(py)
+                    .getattr(intern!(py, PAIR_TAG))
+                    .and_then(|tag| tag.extract::<usize>())
+                    .ok()
+                    .filter(|&i| i < pairs.len());
+                let message = err.to_string();
+                self.errors.keep(err);
+                PairError {
+                    pair,
+                    error: ReactError::Other(message),
+                }
+            })
+        })
+    }
+}
+
+/// Joins two ports of one world fragment into a bond. Subclassable.
+///
+/// A Python subclass implements :meth:`link` or :meth:`link_many` (whose
+/// default loops over :meth:`link`). Port and bond handles cross as ``int``.
+/// The :class:`Assembler` calls :meth:`link_many` once per assembly.
+///
+/// **Which edge failed.** The default :meth:`link_many` sets
+/// ``exc.molrs_pair = i`` on an exception raised by :meth:`link` for pair
+/// ``i`` and re-raises it, and :meth:`Assembler.assemble` names edge ``i`` in
+/// its ``ValueError``. An override that raises without that attribute is
+/// reported as failing on "an edge"; an override that knows the pair may set
+/// ``molrs_pair`` itself.
+///
+/// **The ``world`` handed to a Python** :meth:`link_many` **is valid only
+/// during the call.** The world is moved into it, not copied, and moved back
+/// out when the call returns: afterwards that object is an empty fragment
+/// (``n_atoms == 0``), never a stale view of the assembled world. An
+/// exception surfaces from :meth:`Assembler.assemble` as ``ValueError``
+/// carrying the message, raised ``from`` the exception; a
+/// ``KeyboardInterrupt`` or ``SystemExit`` propagates unchanged.
+///
+/// Implementation note: the Rust ``Assembler`` calls a reacter through the
+/// Rust ``Reacter`` trait, so a Python subclass crosses through an explicit
+/// trait adaptor (``PyReacterAdapter``) that enters Python once per
+/// ``link_many`` batch. ``molrs.ff.typifier.Typifier`` is the model for this
+/// base's native-or-Python two-state dispatch only: its ``typify`` calls the
+/// subclass's ``match`` directly and wraps no trait adaptor.
+#[pyclass(module = "molrs.builder", name = "Reacter", subclass, frozen)]
+pub struct PyReacter {
+    state: Implementation<dyn Reacter>,
+    /// Where this reacter's Python adapter keeps its exception.
+    errors: ErrorSlot,
+}
+
+impl PyReacter {
+    fn native(reacter: impl Reacter + 'static) -> Self {
+        Self {
+            state: Implementation::Native(Arc::new(reacter)),
+            errors: ErrorSlot::default(),
+        }
+    }
+
+    /// This reacter as the `Box<dyn Reacter>` a Rust consumer takes.
+    fn boxed(slf: &Bound<'_, Self>) -> Box<dyn Reacter> {
+        let this = slf.get();
+        match &this.state {
+            Implementation::Native(reacter) => Box::new(SharedReacter(Arc::clone(reacter))),
+            Implementation::Python => Box::new(PyReacterAdapter {
+                instance: slf.clone().into_any().unbind(),
+                errors: this.errors.clone(),
+            }),
+        }
+    }
+}
+
+#[pymethods]
+impl PyReacter {
+    /// A Python-subclass base. Accepts and ignores any arguments, so a
+    /// subclass's own ``__init__`` signature is its own.
+    #[new]
+    #[pyo3(signature = (*_args, **_kwargs))]
+    fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
+        Self {
+            state: Implementation::Python,
+            errors: ErrorSlot::default(),
+        }
+    }
+
+    /// Join port ``a`` to port ``b`` of ``world`` in place.
+    ///
+    /// Returns
+    /// -------
+    /// int
+    ///     The new anchor–anchor bond handle.
+    ///
+    /// Raises
+    /// ------
+    /// NotImplementedError
+    ///     On the base, when a subclass does not implement it.
+    /// ValueError
+    ///     If a native reacter refuses the pair.
+    fn link(&self, mut world: PyRefMut<'_, PyFragment>, a: u64, b: u64) -> PyResult<u64> {
+        match &self.state {
+            Implementation::Native(reacter) => reacter
+                .link(world.core_mut(), relation_from_u64(a), relation_from_u64(b))
+                .map(relation_to_u64)
+                .map_err(|e| PyValueError::new_err(e.handle_message())),
+            Implementation::Python => Err(not_implemented("Reacter.link")),
+        }
+    }
+
+    /// Join every ``(a, b)`` port pair of ``world`` in order. The Python
+    /// default loops over :meth:`link`.
+    ///
+    /// Returns
+    /// -------
+    /// list[int]
+    ///     The new bond handles, in pair order.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If a native reacter refuses a pair (the message names its index;
+    ///     the pairs before it stay linked).
+    ///
+    /// On a Python subclass, an exception from :meth:`link` for pair ``i``
+    /// is re-raised with ``molrs_pair = i`` set on it.
+    fn link_many(
+        slf: &Bound<'_, Self>,
+        world: &Bound<'_, PyFragment>,
+        pairs: Vec<(u64, u64)>,
+    ) -> PyResult<Vec<u64>> {
+        let py = slf.py();
+        match &slf.get().state {
+            Implementation::Native(reacter) => {
+                let pairs: Vec<(PortId, PortId)> = pairs
+                    .iter()
+                    .map(|&(a, b)| (relation_from_u64(a), relation_from_u64(b)))
+                    .collect();
+                reacter
+                    .link_many(world.borrow_mut().core_mut(), &pairs)
+                    .map(|bonds| bonds.into_iter().map(relation_to_u64).collect())
+                    .map_err(|e| PyValueError::new_err(e.handle_message()))
+            }
+            Implementation::Python => pairs
+                .into_iter()
+                .enumerate()
+                .map(|(i, (a, b))| {
+                    slf.call_method1(intern!(py, "link"), (world, a, b))
+                        .and_then(|bond| bond.extract::<u64>())
+                        .inspect_err(|err| {
+                            // An exception that refuses attributes stays
+                            // untagged and is reported as "an edge".
+                            let _ = err.value(py).setattr(intern!(py, PAIR_TAG), i);
+                        })
+                })
+                .collect(),
+        }
+    }
+}
+
+/// The port-driven reacter: deletes each port's handle branch, folds its
+/// charge onto the anchor, and bonds the two anchors with the port order.
+#[pyclass(module = "molrs.builder", name = "PortReacter", extends = PyReacter, frozen)]
+pub struct PyPortReacter;
+
+#[pymethods]
+impl PyPortReacter {
+    #[new]
+    fn new() -> (Self, PyReacter) {
+        (Self, PyReacter::native(PortReacter))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Finalizer / Assembler
+// ---------------------------------------------------------------------------
+
+/// Completes an assembled molecule's angles, dihedrals and, when
+/// ``impropers`` is true, impropers from its bond graph. Idempotent.
+#[pyclass(module = "molrs.builder", name = "Finalizer", frozen)]
+pub struct PyFinalizer {
+    inner: Finalizer,
+}
+
+#[pymethods]
+impl PyFinalizer {
+    #[new]
+    #[pyo3(signature = (impropers=false))]
+    fn new(impropers: bool) -> Self {
+        Self {
+            inner: Finalizer::new(impropers),
+        }
+    }
+
+    /// Add every missing angle, dihedral (and improper, when configured) of
+    /// ``mol`` in place.
+    ///
+    /// Returns
+    /// -------
+    /// tuple[int, int, int]
+    ///     ``(angles, dihedrals, impropers)`` added.
+    fn finalize(&self, mol: &Bound<'_, PyAtomistic>) -> PyResult<(usize, usize, usize)> {
+        self.inner
+            .finalize(mol.borrow_mut().core_mut())
+            .map_err(molrs_error_to_pyerr)
+    }
+}
+
+/// Builds one placed, linked world :class:`~molrs.Fragment` from a
+/// :class:`~molrs.FragGraph`.
+///
+/// Parameters
+/// ----------
+/// library : FragLibrary
+///     Copied at construction.
+/// placer : Placer
+/// reacter : Reacter
+///
+/// Native components run without the GIL; a Python subclass is called once
+/// per batch (see :class:`Placer`, :class:`Orienter`, :class:`Reacter`).
+#[pyclass(module = "molrs.builder", name = "Assembler", frozen)]
+pub struct PyAssembler {
+    inner: Assembler,
+    /// The placer's and the reacter's exception slots.
+    placer_errors: ErrorSlot,
+    reacter_errors: ErrorSlot,
+}
+
+#[pymethods]
+impl PyAssembler {
+    #[new]
+    fn new(
+        library: PyRef<'_, PyFragLibrary>,
+        placer: &Bound<'_, PyPlacer>,
+        reacter: &Bound<'_, PyReacter>,
+    ) -> Self {
+        Self {
+            inner: Assembler::new(
+                library.inner.clone(),
+                PyPlacer::boxed(placer),
+                PyReacter::boxed(reacter),
+            ),
+            placer_errors: placer.get().errors.clone(),
+            reacter_errors: reacter.get().errors.clone(),
+        }
+    }
+
+    /// Place every node of ``graph`` as a copy of its template and link every
+    /// edge. The GIL is released for the whole assembly; the returned world
+    /// is moved into the new fragment, not copied.
+    ///
+    /// Atoms are grouped by template name, not node order; ``frag_id`` (the
+    /// node index) is the unit key. Ports no edge names stay on the world.
+    ///
+    /// Returns
+    /// -------
+    /// Fragment
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     For every refusal, with the message: an unknown template, a port
+    ///     ordinal past a template's ports, a placement, orientation or link
+    ///     failure. A Python subclass's exception is the ``__cause__``.
+    /// KeyboardInterrupt, SystemExit
+    ///     Raised by a Python subclass, unchanged.
+    fn assemble(&self, py: Python<'_>, graph: &Bound<'_, PyFragGraph>) -> PyResult<Py<PyFragment>> {
+        let graph = &graph.get().inner;
+        self.placer_errors.clear();
+        self.reacter_errors.clear();
+        let world = py.detach(|| self.inner.assemble(graph)).map_err(|e| {
+            let errors = match &e {
+                AssembleError::React { .. } => &self.reacter_errors,
+                _ => &self.placer_errors,
+            };
+            errors.raise(py, e.handle_message())
+        })?;
+        PyFragment::from_core(py, world)
+    }
+}

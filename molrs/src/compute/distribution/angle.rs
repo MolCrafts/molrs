@@ -13,7 +13,8 @@ use crate::compute::error::ComputeError;
 
 use crate::compute::util::MicHelper;
 
-use super::observable::{AtomGroups, Observable, displacement, dot, norm, positions};
+use super::observable::{AtomGroups, Observable, displacement, positions};
+use crate::op::vec3::{dot, norm};
 
 /// Angle θ ∈ [0, π] (radians) at atom `j` of each triple i–j–k (arity 3).
 #[derive(Debug, Clone, Default)]

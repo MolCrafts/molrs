@@ -12,7 +12,7 @@ workspace roots / path deps, not multi-crate science packages.
 
 ```
 molrs/src modules:
-  core (always) ──► perceive (always)
+  op (always) ──► core (always) ──► perceive (always)
                  ├── io (feature)
                  ├── ff (feature) ──► optimize (with ff)
                  │                 └─► md (feature → ff)
@@ -26,9 +26,13 @@ binders (depend on molcrafts-molrs + molrs-ffi):
 
 ### Module dependency rules (ENFORCED)
 
-- `core` depends on no other molrs module.
-- `perceive` may depend on `core` only.
-- `io` / `ff` may depend on `core` + `perceive`.
+- `op` depends on no molrs module; every module may depend on `op`; `core`
+  depends on `op` only. `op` is pure numerics in a functional style (scoped
+  exception, notes.md 2026-09-26). Check:
+  `grep -rnE "(crate|molrs)::" molrs/src/op | grep -vE "(crate|molrs)::op"`
+  prints nothing.
+- `perceive` may depend on `core` (+ `op`) only.
+- `io` / `ff` may depend on `core` + `perceive` (+ `op`).
 - `compute` depends on `signal` (+ `core` for Frame access).
 - `conformer` requires `ff`.
 - `optimize` is behind `ff` (not always-on).
@@ -37,9 +41,9 @@ binders (depend on molcrafts-molrs + molrs-ffi):
   index table, and neither may reach up to the loop that runs it. A
   `md`-defined `Virial` leaked into `core` once already, which is why the rule
   is written down.
-- `builder` depends on `core` only.
+- `builder` depends on `core` (+ `op`) only.
 - These rules are checked by grep at review time (`grep -rn "crate::md" molrs/src/ff`,
-  `grep -rn "crate::" molrs/src/core | grep -v core::`), not by a test binary.
+  `grep -rnE "(crate|molrs)::(io|ff|compute|signal|conformer|optimize|md|builder|stream)\b" molrs/src/core molrs/src/perceive | grep -v "//"` (doc links may name higher modules; test modules are the exception below) — the crate-root re-exports `crate::types`, `crate::store`, `crate::units` are `core` itself), not by a test binary.
   Test modules may build fixtures through `io::smiles`; that is the one
   test-only exception.
 - No cyclic module edges in library code.
@@ -54,6 +58,7 @@ binders (depend on molcrafts-molrs + molrs-ffi):
 
 | Module | Owns |
 |---|---|
+| `op` | numeric base: array/stack aliases, `[F;3]` vector ops, 3×3/4×4 linear algebra, rigid + quaternion kernels, weighted superpose, centroid, SO(3) sampling |
 | `core` | Frame, Block, MolGraph, MolRec, Topology, Element, SimBox, neighbors, schema, generate, units |
 | `perceive` | rings, aromaticity, SMARTS, stereo, hydrogens, bond types, equivalence |
 | `io` | format readers/writers, SMILES, CGsmiles, trajectory, Zarr/MolRec |
@@ -62,6 +67,7 @@ binders (depend on molcrafts-molrs + molrs-ffi):
 | `compute` | RDF, MSD, transport, dielectric, spectra, shape, cluster, … |
 | `conformer` | distance geometry / ETKDG-style pipeline |
 | `optimize` | LBFGS / potential-driven minimize |
+| `builder` | structure generators; assembly components (`FragLibrary`, `Placer`, `Orienter`, `Reacter`, `Finalizer`, `Assembler`) — only the `Assembler` sees the whole graph |
 | `md` | integrators, `ForceProvider` and the minimum-image / ghost régimes, the halo (`Comm`), bonded index lists, special-bonds weights, Maxwell-Boltzmann |
 
 ### Potential's three traits

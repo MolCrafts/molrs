@@ -139,6 +139,22 @@ impl BondNumber {
         }
     }
 
+    /// The bond class a localized number implies: the inverse of
+    /// [`BondType::implied_number`], and the one number → class map.
+    ///
+    /// `Quadruple` is classed [`BondType::Double`]: no quadruple class exists
+    /// (the class code `4` is aromatic), so it takes the highest multiple-bond
+    /// class below it, as the SMILES reader classes `$`. `Unknown` implies
+    /// [`BondType::Unknown`].
+    pub fn implied_type(self) -> BondType {
+        match self {
+            BondNumber::Single => BondType::Single,
+            BondNumber::Double | BondNumber::Quadruple => BondType::Double,
+            BondNumber::Triple => BondType::Triple,
+            BondNumber::Unknown => BondType::Unknown,
+        }
+    }
+
     /// The number as a count, for valence sums. `Unknown` counts as zero; a
     /// caller that cannot tolerate that must check for it.
     pub fn count(self) -> u32 {
@@ -245,6 +261,21 @@ mod tests {
         ] {
             assert_eq!(t.implied_number(), Some(n));
             assert_eq!(t.code(), n.code());
+        }
+    }
+
+    /// The one number → class map (amended 2026-09-26), the inverse of
+    /// `BondType::implied_number`. Quadruple has no class of its own and is
+    /// classed `Double`, as the SMILES reader classes `$`.
+    #[test]
+    fn bond_number_implied_type_maps_each_order() {
+        for (n, t) in [
+            (BondNumber::Single, BondType::Single),
+            (BondNumber::Double, BondType::Double),
+            (BondNumber::Triple, BondType::Triple),
+            (BondNumber::Quadruple, BondType::Double),
+        ] {
+            assert_eq!(n.implied_type(), t, "{n:?}");
         }
     }
 

@@ -714,6 +714,24 @@ impl Atomistic {
         crate::spatial::geometry::rotate(self.as_molgraph_mut(), axis, angle, about)
     }
 
+    /// Place `transforms.len()` rigid copies of `template`, copy `c` moved by
+    /// `transforms[c]` and stamped `frag_id = frag_ids[c]`; returns the new
+    /// atoms copy-major. Column-wise and atomic — see
+    /// [`MolGraph::replicate`](crate::system::molgraph::MolGraph::replicate).
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`MolGraph::replicate`](crate::system::molgraph::MolGraph::replicate);
+    /// `self` is unchanged then.
+    pub fn replicate(
+        &mut self,
+        template: &Atomistic,
+        transforms: &[crate::op::rigid::Rigid],
+        frag_ids: &[crate::types::I],
+    ) -> Result<Vec<AtomId>, MolRsError> {
+        self.graph.replicate(&template.graph, transforms, frag_ids)
+    }
+
     // ---- subgraph extraction (see [`crate::system::extract`]) ----
 
     /// Induced subgraph on an explicit atom set. Stale handles fail-fast.

@@ -5,7 +5,9 @@
 //! - frac = H^{-1} * (cart - origin)
 //! - Lattice vectors are the columns of H.
 
-use crate::math;
+use crate::op::linalg::{det3, inv3};
+use crate::op::types::{Vec3, to_mat3, to_vec3};
+use crate::op::vec3::{cross, dot, norm};
 use crate::types::{F, F3, F3View, F3x3, FNx3, FNx3View, Pbc3};
 use ndarray::{Array1, Array2, Array3, ArrayView1, ArrayView2, Zip, array};
 
@@ -72,7 +74,8 @@ impl SimBox {
     /// zero-volume): supply the identity matrix so geometry ops degrade to
     /// no-ops, and `volume` / `is_cell_defined` reflect the undefined cell.
     pub fn new_cell(h: F3x3, origin: F3, pbc: Pbc3, cell_defined: bool) -> Result<Self, BoxError> {
-        if let Some(inv) = math::inv3(&h) {
+        if let Some(inv) = inv3(&to_mat3(h.view())) {
+            let inv: F3x3 = ndarray::arr2(&inv);
             let kind = detect_box_kind(&h);
             Ok(Self {
                 h,
@@ -167,25 +170,29 @@ impl SimBox {
                 cols: matrix.ncols(),
             });
         }
-        let a = matrix.column(0).to_owned();
-        let b = matrix.column(1).to_owned();
-        let c = matrix.column(2).to_owned();
-        let ax = math::norm3(&a);
+        let a = to_vec3(matrix.column(0));
+        let b = to_vec3(matrix.column(1));
+        let c = to_vec3(matrix.column(2));
+        let ax = norm(a);
         if ax <= 0.0 {
             return Err(BoxError::SingularCell);
         }
-        let ua = &a / ax;
-        let bx = b.dot(&ua);
-        let cross_ab = math::cross3(&a, &b);
-        let cross_norm = math::norm3(&cross_ab);
+        let ua = [a[0] / ax, a[1] / ax, a[2] / ax];
+        let bx = dot(b, ua);
+        let cross_ab = cross(a, b);
+        let cross_norm = norm(cross_ab);
         if cross_norm <= 0.0 {
             return Err(BoxError::SingularCell);
         }
-        let by = math::norm3(&math::cross3(&ua, &b));
-        let uab = &cross_ab / cross_norm;
-        let cx = c.dot(&ua);
-        let cy = c.dot(&math::cross3(&uab, &ua));
-        let cz = c.dot(&uab);
+        let by = norm(cross(ua, b));
+        let uab = [
+            cross_ab[0] / cross_norm,
+            cross_ab[1] / cross_norm,
+            cross_ab[2] / cross_norm,
+        ];
+        let cx = dot(c, ua);
+        let cy = dot(c, cross(uab, ua));
+        let cz = dot(c, uab);
         Ok(array![[ax, bx, cx], [0.0, by, cy], [0.0, 0.0, cz]])
     }
 
@@ -337,7 +344,7 @@ impl SimBox {
 
     /// Cell volume (|det(H)|)
     pub fn volume(&self) -> F {
-        math::det3(&self.h).abs()
+        det3(&to_mat3(self.h.view())).abs()
     }
 
     /// `true` when the box is free (non-periodic on every axis).
@@ -365,19 +372,19 @@ impl SimBox {
 
     /// Lattice vector lengths
     pub fn lengths(&self) -> F3 {
-        let a = self.lattice(0);
-        let b = self.lattice(1);
-        let c = self.lattice(2);
-        array![math::norm3(&a), math::norm3(&b), math::norm3(&c)]
+        let a = to_vec3(self.lattice(0).view());
+        let b = to_vec3(self.lattice(1).view());
+        let c = to_vec3(self.lattice(2).view());
+        array![norm(a), norm(b), norm(c)]
     }
 
     /// Lattice angles `[alpha, beta, gamma]` in degrees.
     pub fn angles(&self) -> F3 {
-        let a = self.lattice(0);
-        let b = self.lattice(1);
-        let c = self.lattice(2);
-        let angle = |u: &F3, v: &F3| {
-            (u.dot(v) / (math::norm3(u) * math::norm3(v)))
+        let a = to_vec3(self.lattice(0).view());
+        let b = to_vec3(self.lattice(1).view());
+        let c = to_vec3(self.lattice(2).view());
+        let angle = |u: &Vec3, v: &Vec3| {
+            (dot(*u, *v) / (norm(*u) * norm(*v)))
                 .clamp(-1.0, 1.0)
                 .acos()
                 .to_degrees()
@@ -396,18 +403,14 @@ impl SimBox {
     /// [`lengths`](Self::lengths) — otherwise pairs are silently missed.
     pub fn nearest_plane_distance(&self) -> F3 {
         let v = self.volume();
-        let a1 = self.lattice(0);
-        let a2 = self.lattice(1);
-        let a3 = self.lattice(2);
-
-        let c23 = math::cross3(&a2, &a3);
-        let c31 = math::cross3(&a3, &a1);
-        let c12 = math::cross3(&a1, &a2);
+        let a1 = to_vec3(self.lattice(0).view());
+        let a2 = to_vec3(self.lattice(1).view());
+        let a3 = to_vec3(self.lattice(2).view());
 
         array![
-            v / math::norm3(&c23),
-            v / math::norm3(&c31),
-            v / math::norm3(&c12)
+            v / norm(cross(a2, a3)),
+            v / norm(cross(a3, a1)),
+            v / norm(cross(a1, a2))
         ]
     }
 

@@ -203,17 +203,18 @@ redesigned outside this repo.
 ## Crate Structure & Modules
 
 molrs is a **single published crate** `molcrafts-molrs` (lib name `molrs`, dir
-`molrs/`). Sub-systems are modules under `molrs/src/`. **Two are always
-compiled** — `core`, `perceive` — and the rest gate on a matching feature.
+`molrs/`). Sub-systems are modules under `molrs/src/`. **Three are always
+compiled** — `op`, `core`, `perceive` — and the rest gate on a matching feature.
 `optimize` gates with `ff` (not always-on); `md` gates on `md` (→ `ff`). `core` and `perceive` are re-exported
 at the crate root (so `molrs::Frame`, `molrs::system::…`, `molrs::find_rings`,
 `molrs::SmartsPattern` resolve). The dependency spine is
-`core → perceive → {io, ff} → conformer` (`compute` → `signal`, `conformer` →
+`op → core → perceive → {io, ff} → conformer` (`compute` → `signal`, `conformer` →
 `ff`). In-crate paths use `crate::core::…` / `crate::perceive::…` / `crate::io::…`
 (and `molrs::…` via `extern crate self as molrs;`).
 
 | Module (`molrs/src/`) | Feature | Purpose |
 |---|---|---|
+| `op` | always on | Pure numeric base beneath `core`, functional by operator ruling (notes.md 2026-09-26): type aliases, `[F; 3]` vector ops, 3×3/4×4 linalg (relative-tolerance Jacobi), rigid + quaternion kernels, weighted superpose, centroid, uniform SO(3). Names no other molrs module |
 | `core` | always on | Frame/Block/Grid/MolGraph/Record/Topology/Element, neighbors, math, SimBox (spatial), geometric regions, triangle meshes (`spatial::TriMesh`), graph hash, structure generators (`generate` / SARW) |
 | `perceive` | always on | **Chemical perception**, one layer above `core` and below `ff`/`io`/`conformer`: rings (SSSR), aromaticity, hydrogen perception, stereochemistry, rotatable bonds, SMARTS/SMIRKS. Builder API `Perceive::new().find_*(&MolGraph) -> MolGraph` (graph-in/graph-out, non-mutating). **Gasteiger charges live in `ff::charge`**, re-exported at crate root under `ff`. |
 | `optimize` | `ff` | Geometry optimizers (`Optimizer`, `LBFGS`); depends on `ff::potential::Potential` |
@@ -224,7 +225,7 @@ at the crate root (so `molrs::Frame`, `molrs::system::…`, `molrs::find_rings`,
 | `ff` | `ff` | Force fields, potentials (KernelRegistry), atom typifier |
 | `conformer` | `conformer` (→ `ff`) | 3D conformer generation: ETKDGv3 distance geometry, experimental-torsion refinement, MMFF94 cleanup, stereo guards |
 | `md` | `md` (→ `ff`) | In-process MD: `VelocityVerlet` / `Langevin`, `ForceProvider` (minimum-image and ghost régimes), the halo (`Comm`), bonded index lists, special-bonds weights, Maxwell–Boltzmann. `ff` never names `md` |
-| `builder` | `builder` | Structure generators: graphene, carbon nanotubes, FCC lattices, self-avoiding walks |
+| `builder` | `builder` | Structure generators (graphene, carbon nanotubes, FCC lattices, self-avoiding walks) and assembly on orthogonal components: `FragLibrary` (+ `map(graph, rules)` → `Mapping`), `Placer` / `TracePlacer`, `Orienter`s (`Null` / `Random` / `Hint`), port-only `Reacter` / `PortReacter`, `Finalizer` (the ruled second door to `generate_topology`), and the `Assembler` — the one composition point that sees the whole `FragGraph` and never finalizes (notes.md 2026-09-26) |
 
 The umbrella feature `full` enables every gated sub-system module; core knobs are
 `rayon` (default), `zarr`, `zarr-codecs`, `filesystem`, `serde`, `stream`.
@@ -295,6 +296,7 @@ Graph-based molecular structure with atoms, bonds, stereochemistry, ring detecti
 | `NeighborList` engine (public; internal closed `Backend` trait) | `molrs::core::spatial::neighbors` | Neighbor search: `build`/`update`/`build_columns` own the spatial index, `for_each_pair` streams `NeighborPair`s, `neighbors(storage)` materializes a `Neighbors` table | `LinkCell` (O(N), `NeighborList::new`), `Aabb` (BVH, `NeighborList::aabb`), `BruteForce` (O(N²), `NeighborList::brute_force`) — picked by constructor, not user-implemented; cross-queries go through `NeighborQuery` |
 | `Potential` (+ `IndexedTerms`, `PairDriven`) | `molrs::ff::potential` | Energy/force evaluation. `IndexedTerms` adds a replaceable index table (bonded kernels); `PairDriven` adds neighbour-table summation (pair kernels). `Member` is the three as one value, chosen by the kernel constructor | Bond harmonic, MMFF bond/angle/torsion/oop/vdw/ele, LJ/cut, PME |
 | `Typifier` | `molrs::ff::typifier` | `r#match(&mut Atomistic) -> Match` + `library()`; run by `Typing<T>`, which owns the output force field (the union of the types assigned) | `MMFF94Typifier` / `MMFF94STypifier` (one engine, two named front doors — the MMFF variant is a private field, never a constructor flag), `OPLSAATypifier`, `UFFTypifier`, `AtdTypifier`, `BCCAtomChargeTypifier` |
+| `Placer` / `Orienter` / `Reacter` | `molrs::builder` | Assembly primitives, each with one batched default method (`place_many` / `orient_many` / `link_many`) that the `Assembler` calls once per group or per `assemble`; Python-subclassable through explicit adaptors (assembly-07) | `TracePlacer`; `NullOrienter`, `RandomOrienter`, `HintOrienter`; `PortReacter` |
 
 Pack-related traits (`Restraint`, `Region`, `Relaxer`, `Handler`, `Objective`) now live
 in the standalone `molcrafts-molpack` crate.

@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use super::forcefield::{ForceField, StyleDefs};
+use crate::op::superpose::centroid;
 
 const C0: f64 = 0.254_952;
 const C1: f64 = 0.106_906;
@@ -25,12 +26,17 @@ pub struct FragmentAtoms {
     pub name: String,
     pub atom_types: Vec<String>,
     pub coords: Vec<[f64; 3]>,
+    /// Per-atom masses weighting the centre of mass. A non-positive finite
+    /// mass counts as weight 1; a non-finite mass, or a total that overflows,
+    /// is [`ScaleLjError::InvalidMass`]. An empty fragment's centre is the
+    /// origin.
     pub masses: Vec<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScaleLjError {
     InvalidAlpha(String),
+    InvalidMass(String),
     MissingFragment(String),
     Shape(String),
 }
@@ -39,6 +45,9 @@ impl fmt::Display for ScaleLjError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidAlpha(name) => write!(f, "fragment '{name}' alpha must be positive"),
+            Self::InvalidMass(name) => {
+                write!(f, "fragment '{name}' has a non-finite mass or total mass")
+            }
             Self::MissingFragment(name) => write!(f, "no scaling data for fragment '{name}'"),
             Self::Shape(name) => write!(
                 f,
@@ -72,27 +81,33 @@ pub fn compute_k_ij(
     Ok(1.0 / denominator)
 }
 
+/// Mass-weighted centre of `fragment`. A non-positive finite mass counts as
+/// weight 1; an empty fragment's centre is the origin; a non-finite mass or an
+/// overflowing total mass is [`ScaleLjError::InvalidMass`].
 fn center_of_mass(fragment: &FragmentAtoms) -> Result<[f64; 3], ScaleLjError> {
     if fragment.atom_types.len() != fragment.coords.len()
         || fragment.coords.len() != fragment.masses.len()
     {
         return Err(ScaleLjError::Shape(fragment.name.clone()));
     }
-    let mut total = 0.0;
-    let mut center = [0.0; 3];
-    for (coord, mass) in fragment.coords.iter().zip(&fragment.masses) {
-        let weight = if *mass > 0.0 { *mass } else { 1.0 };
-        total += weight;
-        for d in 0..3 {
-            center[d] += weight * coord[d];
-        }
+    // A non-finite mass has no centre of mass to give.
+    if fragment.masses.iter().any(|mass| !mass.is_finite()) {
+        return Err(ScaleLjError::InvalidMass(fragment.name.clone()));
     }
-    if total > 0.0 {
-        for value in &mut center {
-            *value /= total;
-        }
+    // An empty fragment's centre is the origin.
+    if fragment.masses.is_empty() {
+        return Ok([0.0; 3]);
     }
-    Ok(center)
+    // A non-positive finite mass counts as weight 1.
+    let weights: Vec<f64> = fragment
+        .masses
+        .iter()
+        .map(|&mass| if mass > 0.0 { mass } else { 1.0 })
+        .collect();
+    // Every weight is positive and finite, so `None` means the total mass
+    // overflowed `f64` — a non-finite fragment mass.
+    centroid(&fragment.coords, &weights)
+        .ok_or_else(|| ScaleLjError::InvalidMass(fragment.name.clone()))
 }
 
 /// Clone and scale cross-fragment LJ pair parameters without mutating `ff`.
@@ -332,6 +347,14 @@ mod tests {
         let out = scale_lj(&input_ff(), &fragments(), &scaling(), false).unwrap();
         let style = out.get_style("pair", "lj/cut").unwrap();
         assert_eq!(style.params().get_str("mixing"), Some("geometric"));
+    }
+
+    #[test]
+    fn infinite_mass_is_refused_not_placed_at_the_origin() {
+        let mut frags = fragments();
+        frags[1].masses = vec![f64::INFINITY];
+        let err = scale_lj(&input_ff(), &frags, &scaling(), false).unwrap_err();
+        assert_eq!(err, ScaleLjError::InvalidMass("B".into()));
     }
 
     #[test]

@@ -6,7 +6,8 @@ is the freshness guard: every compiled `_lib` export must be declared here, with
 the same parameter names as the compiled signature.
 """
 
-from collections.abc import ItemsView, KeysView, Mapping, ValuesView
+from collections.abc import ItemsView, KeysView, ValuesView
+from collections.abc import Mapping as _AbcMapping
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -32,7 +33,8 @@ if TYPE_CHECKING:
     from .views import NodeRef
 
 # Type aliases — `F = f64` is invariant in molrs-core; Python side must match.
-ArrayF = npt.ArrayF
+ArrayF = npt.NDArray[np.float64]
+ArrayI32 = npt.NDArray[np.int32]
 ArrayBool = npt.NDArray[np.bool_]
 ArrayU8 = npt.NDArray[np.uint8]
 ArrayU32 = npt.NDArray[np.uint32]
@@ -459,6 +461,16 @@ class Frame:
     def meta(self) -> FrameMeta: ...
     @meta.setter
     def meta(self, value: Any) -> None: ...
+    def convert_units(
+        self, registry: UnitRegistry, from_preset: UnitPreset, to_preset: UnitPreset
+    ) -> None:
+        """Rescale every physical column in place between two presets.
+
+        Raises:
+            UnitsError: a column, the box or ``meta["units"]`` cannot be
+                converted (the message names it); the frame is unchanged.
+        """
+        ...
     def validate(self) -> None: ...
 
 # ---------------------------------------------------------------------------
@@ -818,6 +830,14 @@ class UnitRegistry:
         offset: float = 0.0,
         prefixable: bool = False,
     ) -> None: ...
+    def define_lj_sigma(self, sigma: Quantity) -> None:
+        """Define the reduced-LJ length unit ``lj_sigma`` alone.
+
+        Raises:
+            UnitsError: ``sigma`` is not a finite positive length, or
+                ``lj_sigma`` is already defined.
+        """
+        ...
     def define_lj_units(
         self, mass: Quantity, sigma: Quantity, epsilon: Quantity
     ) -> None: ...
@@ -958,7 +978,21 @@ class Atomistic(Graph):
     def set_bond_order(self, handle: int, order: float) -> None: ...
     def copy(self) -> "Atomistic": ...
     def merge(self, other: "Atomistic") -> Dict[int, int]: ...
-    def replicate(self, n: int) -> "Atomistic": ...
+    def replicate(
+        self,
+        template: "Atomistic",
+        rotations: ArrayF,
+        translations: ArrayF,
+        frag_ids: ArrayI32,
+    ) -> List[int]:
+        """Grow this graph by one rigid copy of ``template`` per transform
+        (``rotations (N,3,3)``, ``translations (N,3)``), copy ``c`` stamped
+        ``frag_id = frag_ids[c]``; returns the new handles, copy-major.
+
+        Raises:
+            ValueError: a wrong shape or count; this graph is unchanged.
+        """
+        ...
     def induced_subgraph(
         self, nodes: List[int]
     ) -> Tuple["Atomistic", Dict[int, int]]: ...
@@ -1039,12 +1073,30 @@ class CoarseGrain(Graph):
     def to_frame(self) -> Frame: ...
     @staticmethod
     def from_frame(frame: Frame) -> "CoarseGrain": ...
+    @staticmethod
+    def from_atom_frame(frame: Frame, type_key: str) -> "CoarseGrain":
+        """One bead per ``atoms`` row, one CG bond per ``bonds`` row;
+        ``bead_type`` read from the ``type_key`` column.
+
+        Raises:
+            ValueError: no ``atoms`` block, no ``type_key`` column, or a bond
+                endpoint past the atom rows.
+        """
+        ...
     def set_bead_members(self, bead: int, atoms: List[int]) -> None: ...
     def bead_members(self, bead: int) -> List[int]: ...
     def beads_of_atom(self, atom: int) -> List[int]: ...
     def copy(self) -> "CoarseGrain": ...
     def merge(self, other: "CoarseGrain") -> Dict[int, int]: ...
-    def replicate(self, n: int) -> "CoarseGrain": ...
+    def replicate(
+        self,
+        template: "CoarseGrain",
+        rotations: ArrayF,
+        translations: ArrayF,
+        frag_ids: ArrayI32,
+    ) -> List[int]:
+        """As :meth:`Atomistic.replicate`; bead membership is not copied."""
+        ...
     def induced_subgraph(
         self, nodes: List[int]
     ) -> Tuple["CoarseGrain", Dict[int, int]]: ...
@@ -1113,6 +1165,16 @@ class Fragment(Graph):
     def set_frag_id(self, atom: int, id: int) -> None: ...
     def frag_id(self, atom: int) -> Optional[int]: ...
     def inherit_frag_ids(self) -> int: ...
+    def replicate(
+        self,
+        template: "Fragment",
+        rotations: ArrayF,
+        translations: ArrayF,
+        frag_ids: ArrayI32,
+    ) -> List[int]:
+        """As :meth:`Atomistic.replicate`; every copy keeps the template's
+        ports on its own atoms."""
+        ...
     def copy(self) -> "Fragment": ...
     def to_frame(self) -> Frame: ...
     @staticmethod
@@ -1137,6 +1199,257 @@ class Fragment(Graph):
         """Scale every node that has coordinates by a per-axis ``factor``
         about ``about`` (default: the origin); returns self. Pass
         ``[s, s, s]`` for a uniform scale."""
+        ...
+
+class FragGraph:
+    """Unit-level assembly topology: node ``i`` names the template of unit
+    ``i``; each edge ``(a, b, port_a, port_b)`` joins port ordinal ``port_a``
+    of node ``a`` to port ordinal ``port_b`` of node ``b``.
+
+    A unit is one placed copy of a template (a ``Fragment`` with ports); a
+    port ordinal is the port's index in the template's ordered port list.
+    Whether an ordinal exists in its template is checked later, by
+    :meth:`Assembler.assemble`.
+
+    Raises:
+        ValueError: an edge endpoint out of range, a self-edge, or a
+            (node, port) on two edges.
+    """
+
+    def __init__(
+        self, nodes: list[str], edges: list[tuple[int, int, int, int]]
+    ) -> None: ...
+    @staticmethod
+    def path(nodes: list[str], link: tuple[int, int]) -> FragGraph:
+        """A linear chain: edge ``(i, i + 1, link[0], link[1])`` for each
+        consecutive pair of ``nodes``.
+
+        Raises:
+            ValueError: ``link[0] == link[1]`` with three or more nodes (one
+                port of each interior unit would sit on two edges).
+        """
+        ...
+    @staticmethod
+    def cycle(nodes: list[str], link: tuple[int, int]) -> FragGraph:
+        """A ring: the :meth:`path` edges plus the closing edge
+        ``(n - 1, 0, link[0], link[1])``.
+
+        Raises:
+            ValueError: fewer than three nodes, or as :meth:`path`.
+        """
+        ...
+    @staticmethod
+    def star(
+        center: str, center_ports: list[int], arm: str, arm_port: int
+    ) -> FragGraph:
+        """A star: node 0 is ``center``, nodes ``1..k`` are copies of ``arm``,
+        and edge ``(0, i + 1, center_ports[i], arm_port)`` joins arm ``i``.
+
+        Raises:
+            ValueError: a repeated entry in ``center_ports``.
+        """
+        ...
+    @property
+    def nodes(self) -> list[str]:
+        """Template name per node; node ``i`` is unit ``i``."""
+        ...
+    @property
+    def edges(self) -> list[tuple[int, int, int, int]]:
+        """``(a, b, port_a, port_b)`` per edge, in construction order."""
+        ...
+
+class Trace:
+    """Ordered points split into consecutive non-empty units, with an optional
+    unit-length direction hint per unit. No chemistry: a trace says where
+    each unit goes (for example, the bead positions of a coarse-grained
+    polymer), not what goes there. Frozen.
+
+    Args:
+        points: shape ``(n, 3)``, every point in order (Å).
+        offsets: unit ``i`` is ``points[offsets[i]:offsets[i + 1]]``;
+            default one point per unit.
+        hints: shape ``(n_units, 3)``, one direction per unit, stored
+            normalised (dimensionless).
+
+    Raises:
+        ValueError: a wrong shape, offsets that do not start at 0, end at the
+            point count and strictly increase, or a hint that is not a
+            direction.
+    """
+
+    def __init__(
+        self,
+        points: npt.ArrayLike,
+        offsets: Optional[list[int]] = None,
+        hints: Optional[npt.ArrayLike] = None,
+    ) -> None: ...
+    @property
+    def n_units(self) -> int: ...
+    def unit(self, i: int) -> ArrayF:
+        """Unit ``i``'s points (Å), shape ``(k, 3)``. IndexError when out of range."""
+        ...
+    def hint(self, i: int) -> Optional[ArrayF]:
+        """Unit ``i``'s unit-length hint, shape ``(3,)``, or None when the
+        trace has none. IndexError when ``i`` is out of range."""
+        ...
+
+class Mapping:
+    """A :class:`FragGraph` whose every unit is tied to coarse source beads.
+
+    For unit ``u``, ``sources(u)`` are its coarse bead handles in
+    template-bead order and ``labels(u)`` the template bead label each was
+    assigned; ``rules`` is the ``(coarse type, template label)`` relation that
+    licensed the assignment. Usually produced by :meth:`FragLibrary.map`.
+
+    Raises:
+        ValueError: sources/labels not matching the units, an empty unit, a
+            repeated source, or a label no rule licenses.
+        TypeError: a rule that is not a ``(str, str)`` pair.
+    """
+
+    def __init__(
+        self,
+        graph: FragGraph,
+        sources: list[list[Union[int, NodeRef]]],
+        labels: list[list[str]],
+        rules: list[tuple[str, str]],
+    ) -> None: ...
+    @property
+    def graph(self) -> FragGraph: ...
+    @property
+    def n_units(self) -> int: ...
+    def sources(self, unit: int) -> list[int]:
+        """Unit ``unit``'s coarse bead handles, in template-bead order.
+        IndexError when ``unit`` is out of range."""
+        ...
+    def labels(self, unit: int) -> list[str]:
+        """Unit ``unit``'s template bead labels, one per source bead.
+        IndexError when ``unit`` is out of range."""
+        ...
+    @property
+    def rules(self) -> list[tuple[str, str]]: ...
+    def trace(self, source: CoarseGrain) -> Trace:
+        """Per unit, its source beads' positions (Å) as a :class:`Trace`.
+
+        Raises:
+            ValueError: a source bead missing from ``source``, lacking
+                coordinates, or whose current type no rule licenses for its
+                label.
+        """
+        ...
+
+class op:
+    """``molrs::op`` — superposition, centroids, uniform SO(3) sampling.
+
+    Superposition finds the rotation ``R`` and translation ``t`` that best lay
+    matched points ``reference[i]`` onto ``target[i]`` (weighted least
+    squares, Horn's quaternion method). SO(3) is the set of 3D rotations;
+    "uniform" means Haar-uniform, every orientation equally likely.
+    Coordinates are in the caller's length unit (Å in molrs).
+    ``DEFAULT_GAP_TOL`` is the default ``gap_tol``: below this scale-free
+    eigen-gap the rotation is reported ``"spin"`` (under-determined).
+    """
+
+    DEFAULT_GAP_TOL: float
+
+    class Fit:
+        """Best-fit proper rigid motion ``target ≈ rotation @ reference +
+        translation`` from :func:`molrs.op.superpose`. Frozen."""
+
+        @property
+        def rotation(self) -> ArrayF:
+            """Shape ``(3, 3)``, a proper rotation (determinant +1)."""
+            ...
+        @property
+        def translation(self) -> ArrayF:
+            """Shape ``(3,)``, in the coordinates' length unit (Å)."""
+            ...
+        @property
+        def rmsd(self) -> float:
+            """Weighted root-mean-square deviation of the fit, in the
+            coordinates' length unit (Å)."""
+            ...
+        @property
+        def rho(self) -> float:
+            """Scale-free eigen-gap (dimensionless); 0 when ``freedom == "free"``."""
+            ...
+        @property
+        def center(self) -> ArrayF:
+            """Weighted target centroid (Å): the point a spin axis passes through."""
+            ...
+        @property
+        def freedom(self) -> Literal["unique", "spin", "free"]:
+            """``"unique"``; ``"spin"`` (rotation about :attr:`axis` is
+            undetermined); ``"free"`` (no rotation determined, ``rotation`` is
+            the identity)."""
+            ...
+        @property
+        def axis(self) -> Optional[ArrayF]:
+            """The unit spin axis; ``None`` unless ``freedom == "spin"``."""
+            ...
+
+    @staticmethod
+    def superpose(
+        reference: ArrayF,
+        target: ArrayF,
+        weights: Optional[ArrayF] = None,
+        *,
+        gap_tol: float = ...,
+    ) -> Fit:
+        """Best-fit proper rigid motion mapping ``reference`` onto ``target``
+        (both shape ``(k, 3)``); ``weights`` shape ``(k,)``, uniform when
+        omitted, zero-weight points dropped.
+
+        Raises:
+            ValueError: a shape other than ``(k, 3)``, a length mismatch, a
+                negative or non-finite weight, a non-finite coordinate, or no
+                positive weight.
+        """
+        ...
+    @staticmethod
+    def superpose_many(
+        reference: ArrayF,
+        targets: ArrayF,
+        weights: Optional[ArrayF] = None,
+        *,
+        gap_tol: float = ...,
+    ) -> list[Fit]:
+        """:meth:`superpose` of one ``reference`` against each of the ``N``
+        units stacked back to back in ``targets`` (shape ``(N·k, 3)``); each
+        fit equals the single call on that unit.
+
+        Raises:
+            ValueError: ``targets`` is not a whole number of units, or as
+                :meth:`superpose`.
+        """
+        ...
+    @staticmethod
+    def centroid(
+        points: ArrayF, weights: Optional[ArrayF] = None
+    ) -> Optional[ArrayF]:
+        """Weighted centroid ``Σ wᵢ pᵢ / Σ wᵢ`` (uniform weights when
+        omitted); ``None`` when the lengths differ or the total weight is not
+        positive and finite."""
+        ...
+    @staticmethod
+    def random_rotations(seed: int, indices: list[int]) -> ArrayF:
+        """Haar-uniform rotations, shape ``(len(indices), 3, 3)``; each
+        depends only on ``(seed, index)``, not on batch order."""
+        ...
+    @staticmethod
+    def random_angles(seed: int, indices: list[int]) -> ArrayF:
+        """Uniform angles in ``[0, 2π)`` radians, one per index; each depends
+        only on ``(seed, index)``."""
+        ...
+    @staticmethod
+    def rotation_from_uniform(u: tuple[float, float, float]) -> ArrayF:
+        """Shoemake's rotation for ``u`` in ``[0, 1]³``, shape ``(3, 3)``;
+        Haar-uniform when ``u`` is uniform.
+
+        Raises:
+            ValueError: a component of ``u`` is not finite or lies outside
+                ``[0, 1]``.
+        """
         ...
 
 class SmartsMatch:
@@ -1506,6 +1819,23 @@ class CGSmilesIR:
     @property
     def pairs(self) -> list[list[ResolvedPair]]: ...
     def to_atomistic(self) -> Atomistic: ...
+    def to_fragment(self) -> dict[str, Fragment]: ...
+    def to_template(self) -> Fragment:
+        """One template of the whole lowest level: atoms stamped ``bead`` /
+        ``bead_type``, unpaired descriptors capped and made ports.
+
+        Raises:
+            ValueError: a base-only string (no atomistic body).
+        """
+        ...
+    def to_frag_graph(self) -> FragGraph:
+        """The unit-level topology: one node per lowest-level node, one
+        ``(a, b, port_a, port_b)`` edge per resolved pair.
+
+        Raises:
+            ValueError: a base-only string, or pairs that form no valid graph.
+        """
+        ...
 
 # ---------------------------------------------------------------------------
 # I/O — readers and writers
@@ -1718,6 +2048,179 @@ class GrapheneBuilder:
     def periodic_xy(self) -> bool: ...
 
 # ---------------------------------------------------------------------------
+# Fragment assembly (molrs::builder), re-exported by `molrs.builder`
+# ---------------------------------------------------------------------------
+
+class FragLibrary:
+    """Named fragment templates, stored as copies.
+
+    A template is a :class:`Fragment` whose atoms carry ``bead`` (the
+    template-local bead index ``0..k``) and ``bead_type`` (that bead's
+    label); a bead is a group of atoms a coarse-grained model treats as one
+    particle.
+    """
+
+    def __init__(self) -> None: ...
+    def insert(self, name: str, template: Fragment) -> None:
+        """Raises ValueError for a taken name or an invalid template."""
+        ...
+    def get(self, name: str) -> Optional[Fragment]: ...
+    def names(self) -> list[str]: ...
+    def map(self, graph: CoarseGrain, rules: list[tuple[str, str]]) -> Mapping:
+        """Cover ``graph`` with template occurrences and pair their ports.
+
+        ``rules`` are ``(coarse type, template label)`` pairs: a coarse bead of
+        ``bead_type`` ``t`` may stand for a template bead labelled ``L`` iff
+        ``(t, L)`` is a rule.
+
+        Raises:
+            TypeError: a rule that is not a ``(str, str)`` pair.
+            ValueError: no rules, no licensed template, or a cover that is
+                missing, ambiguous or has unpairable ports.
+        """
+        ...
+
+class Placer:
+    """Subclassable: implement ``place`` or ``place_many``.
+
+    The Assembler calls ``place_many`` once per template group with a fresh
+    template copy; an exception or wrong shape surfaces as ValueError.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None: ...
+    def place(self, unit: int, name: str, template: Fragment) -> Tuple[ArrayF, ArrayF]:
+        """``(rotation (3, 3), translation (3,))``; NotImplementedError on the base."""
+        ...
+    def place_many(
+        self, units: ArrayI64, name: str, template: Fragment
+    ) -> Tuple[ArrayF, ArrayF]:
+        """``(rotations (N, 3, 3), translations (N, 3))``; the default loops ``place``."""
+        ...
+
+@final
+class TracePlacer(Placer):
+    """Superposes each template's bead centroids onto its trace unit.
+
+    Bead ``b``'s reference point is its mass-weighted centroid (Å, weights
+    ``mass`` in g/mol); trace point ``j`` of a unit targets template bead
+    ``j``. Every template atom needs ``bead``, ``mass`` and ``x``/``y``/``z``.
+    An under-determined fit is completed by the orienter
+    (:class:`NullOrienter` by default).
+
+    Raises:
+        ValueError: ``seq`` and the trace differ in unit count.
+    """
+
+    def __init__(self, trace: Trace, seq: list[str]) -> None: ...
+    def with_orienter(self, orienter: Orienter) -> TracePlacer:
+        """A new placer completing under-determined fits with ``orienter``."""
+        ...
+
+class Orienter:
+    """Subclassable: implement ``orient`` or ``orient_many``.
+
+    A TracePlacer calls ``orient_many`` once per ``place_many`` batch. Hints
+    are all-or-none: ``hints`` is one ``(N, 3)`` array or ``None``; a batch
+    where only some units have a hint is refused.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None: ...
+    def orient(
+        self, unit: int, template: Fragment, fit: op.Fit, hint: Optional[ArrayF]
+    ) -> Tuple[ArrayF, ArrayF]:
+        """``(rotation (3, 3), translation (3,))``; NotImplementedError on the base."""
+        ...
+    def orient_many(
+        self,
+        units: ArrayI64,
+        template: Fragment,
+        fits: list[op.Fit],
+        hints: Optional[ArrayF],
+    ) -> Tuple[ArrayF, ArrayF]:
+        """``(rotations (N, 3, 3), translations (N, 3))``; the default loops ``orient``."""
+        ...
+
+@final
+class NullOrienter(Orienter):
+    """Leaves every fit as the superposition returned it."""
+
+    def __init__(self) -> None: ...
+
+@final
+class RandomOrienter(Orienter):
+    """A uniform member of each fit's family, a pure function of
+    ``(seed, unit)``: a uniform spin angle in ``[0, 2π)``, or a Haar-uniform
+    rotation for a free fit (Shoemake 1992)."""
+
+    def __init__(self, seed: int) -> None: ...
+
+@final
+class HintOrienter(Orienter):
+    """Turns a body axis of the template onto each unit's direction hint.
+
+    ``"principal"`` is the long axis (top eigenvector of the mass-weighted
+    gyration tensor); ``"dipole"`` is the charge dipole ``Σ qᵢ (rᵢ − c)``
+    (needs ``charge`` on every atom). A unit without a hint, or a template
+    without that axis, is refused.
+    """
+
+    def __init__(self, axis: Literal["principal", "dipole"] = "principal") -> None:
+        """Raises ValueError for any other axis."""
+        ...
+
+class Reacter:
+    """Subclassable: implement ``link`` or ``link_many``.
+
+    The ``world`` handed to a Python ``link_many`` is valid only during the
+    call: afterwards it is an empty fragment (``n_atoms == 0``).
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None: ...
+    def link(self, world: Fragment, a: int, b: int) -> int:
+        """The new bond handle; NotImplementedError on the base."""
+        ...
+    def link_many(self, world: Fragment, pairs: list[tuple[int, int]]) -> list[int]:
+        """The new bond handles in pair order; the default loops ``link``."""
+        ...
+
+@final
+class PortReacter(Reacter):
+    """The port-driven reacter: deletes each port's handle branch, folds its
+    partial charge (e) onto the anchor, and bonds the two anchors with the
+    port order. Total and per-``frag_id`` charge are conserved."""
+
+    def __init__(self) -> None: ...
+
+@final
+class Finalizer:
+    """Completes an assembled molecule's angles (three atoms bonded in
+    sequence), dihedrals (four in sequence) and, when ``impropers`` is true,
+    impropers (a centre with three neighbours) from its bond graph.
+    Idempotent."""
+
+    def __init__(self, impropers: bool = False) -> None: ...
+    def finalize(self, mol: Atomistic) -> Tuple[int, int, int]:
+        """``(angles, dihedrals, impropers)`` added in place."""
+        ...
+
+@final
+class Assembler:
+    """Library + placer + reacter; ``assemble`` releases the GIL.
+
+    Builds one placed, linked world :class:`Fragment` from a
+    :class:`FragGraph`: one template copy per node (``frag_id`` = node index),
+    placed by the placer, joined along every edge by the reacter. Ports no
+    edge names stay on the world. The library is copied at construction.
+    """
+
+    def __init__(self, library: FragLibrary, placer: Placer, reacter: Reacter) -> None: ...
+    def assemble(self, graph: FragGraph) -> Fragment:
+        """Raises ValueError, message kept, for every refusal; a Python
+        subclass's exception is its ``__cause__``, and a KeyboardInterrupt or
+        SystemExit propagates unchanged."""
+        ...
+
+# ---------------------------------------------------------------------------
 # 3D coordinate generation (embed)
 # ---------------------------------------------------------------------------
 
@@ -1764,194 +2267,6 @@ class Conformer:
     def generate(self, mol: Atomistic) -> tuple[Atomistic, ConformerReport]: ...
     @overload
     def generate(self, mol: Fragment) -> tuple[Fragment, ConformerReport]: ...
-
-class Trace:
-    """A trajectory of points. No chemistry and no facing."""
-
-    def __init__(self, points: List[List[float]]) -> None: ...
-    def __len__(self) -> int: ...
-    def point(self, index: int) -> List[float]: ...
-    def tangent(self, index: int) -> List[float]: ...
-
-class SiteMap:
-    """Mark the atoms of one graph that a reaction may bind.
-
-    A site is an ordinary atom carrying the ``site`` field: a plain unordered
-    name a reaction SMARTS finds with a ``%label`` predicate, not a port.
-
-    Every node argument is an int handle or a node view (:class:`NodeRef`,
-    e.g. an ``Atom``) — anything with an int ``.handle``. Nodes are always
-    returned as int handles. ``mol`` is checked at construction: anything but
-    a ``Graph`` or one of its leaves raises ``TypeError``.
-    """
-
-    def __init__(self, mol: Graph) -> None: ...
-    @property
-    def mol(self) -> Graph: ...
-    def label(self, node: int | NodeRef, name: str) -> None: ...
-    def label_atoms(self, nodes: Sequence[int | NodeRef], *names: str) -> List[int]: ...
-    def label_elements(self, element: str, *names: str) -> List[int]:
-        """Label the first atoms of ``element``, in node order.
-
-        Raises:
-            ValueError: fewer ``element`` atoms than names (the message names
-                the element), or no name given.
-        """
-        ...
-    def every_nth(
-        self,
-        nodes: Sequence[int | NodeRef],
-        step: int,
-        site: str,
-        leaving: Optional[str] = None,
-        fold_charge: bool = True,
-    ) -> List[int]: ...
-    def prepare_leaving_hydrogens(
-        self, site: str, leaving: str = "h", fold_charge: bool = True
-    ) -> int: ...
-    def clear(self, nodes: Optional[Sequence[int | NodeRef]] = None) -> None: ...
-
-class Placer:
-    """Put the fragments a set of forming bonds joins at a pose. Base class.
-
-    The contract every placer honours: a forming bond is a
-    ``(parent-side atom, child-side atom)`` pair of handles; after
-    :meth:`place`, every tree forming bond — a fragment to its parent in the
-    placement walk — sits at bonding range; a placer that cannot do that
-    raises and never leaves a partial placement behind. A placer does not
-    close rings: a ring-closing bond is formed but not placed, and its length
-    is the caller's concern (an explicit trace, or geometry optimisation
-    afterwards). A subclass may take its own constructor arguments.
-    """
-
-    def __init__(self, *args: object, **kwargs: object) -> None: ...
-    def place(self, mol: Graph, bonds: List[Tuple[int, int]]) -> None:
-        """Move whole fragments so every tree forming bond ends at bonding
-        range.
-
-        Raises:
-            NotImplementedError: always, on the base class.
-        """
-        ...
-
-class TracePlacer(Placer):
-    """Grow the fragments a set of forming bonds joins out of one another.
-
-    Fragments are node groups read off ``res_id`` by default. The placer walks
-    the fragment graph from a root fragment and moves each other fragment
-    rigidly, once, relative to **its own parent**: the child's
-    anchor (the atom the bond reaches) lands one bonding range — summed
-    covalent radii plus the buffer — from the parent's reacting atom along a
-    growth direction, and the orienter turns the child to point along it, away
-    from the parent.
-
-    * **No trace (default).** The walk is breadth-first from the lowest
-      fragment id, which stays where it is; a child grows along its parent's
-      outward direction, from the parent's centroid through its reacting atom
-      (``+x`` when those coincide). Any connected fragment graph places —
-      paths, stars, combs, rings — along the walk's spanning tree.
-    * **With a trace** (:meth:`with_trace`). The fragments must form a single
-      path, or a single ring walked as a path from its lowest id; the trace
-      supplies directions, not positions.
-
-    A forming bond that closes a ring of fragments is neither placed nor
-    checked: its length is the caller's concern (a closed trace of the ring's
-    size, or geometry optimisation afterwards).
-    """
-
-    def __init__(self) -> None: ...
-    def with_trace(self, trace: Trace) -> "TracePlacer":
-        """Grow a path of fragments along ``trace``'s tangents instead of each
-        parent's outward direction.
-
-        The root turns so its outward direction follows the tangent at sample 0
-        and its reacting atom sits on sample 0; the ``k``-th child grows along
-        the tangent at sample ``k``. The chain follows the curve's shape at
-        bonding range rather than landing on the samples. A ring of fragments
-        is walked as a path from its lowest id; its closing bond is formed but
-        not placed. :meth:`place` then refuses a fragment joined to three
-        others or more, and a trace with fewer samples than fragments, with
-        ``ValueError``.
-        """
-        ...
-    def with_orienter(
-        self, orienter: LineOrienter | TangOrienter
-    ) -> "TracePlacer": ...
-    def with_buffer(self, buffer: float) -> "TracePlacer": ...
-    def with_group_key(self, key: str) -> "TracePlacer": ...
-    def with_site_key(self, key: str) -> "TracePlacer": ...
-    def place(self, mol: Graph, bonds: List[Tuple[int, int]]) -> None:
-        """Move whole fragments so every tree forming bond ends at bonding
-        range.
-
-        ``bonds`` are ``(parent-side handle, child-side handle)`` pairs. A
-        ring-closing bond is formed but not placed; its length is the
-        caller's concern.
-
-        Raises:
-            ValueError: nothing has moved when raised. The bonds join the
-                fragments into more than one piece (unreachable fragment); a
-                trace was given but a fragment is joined to three others or
-                more, or the trace has fewer samples than fragments; a
-                fragment cannot be faced (no site axis or tangent direction);
-                or an endpoint lacks a fragment id, an element, a tabulated
-                radius, or coordinates. Errors name nodes by their handle.
-        """
-        ...
-
-class Orienter:
-    """Which way a fragment faces.
-
-    A closed set: :class:`LineOrienter` and :class:`TangOrienter`. A facing
-    rule runs natively inside a placer, so defining a Python subclass raises
-    ``TypeError``.
-    """
-
-    def __init__(self) -> None: ...
-
-class LineOrienter(Orienter):
-    """The site axis itself: the fragment's outgoing site points along the trace."""
-
-    def __init__(self) -> None: ...
-    def direction(self, body_axis: List[float]) -> Optional[List[float]]: ...
-    def orient(
-        self,
-        mol: Graph,
-        anchor: List[float],
-        body_axis: List[float],
-        to_dir: List[float],
-        flip: bool = False,
-    ) -> None:
-        """Rotate ``mol`` about ``anchor`` so this rule's direction points along
-        ``to_dir`` (``-to_dir`` when ``flip``).
-
-        Raises:
-            ValueError: ``body_axis`` has no direction under this rule (zero,
-                too short, non-finite, or overflowing); ``mol`` is untouched.
-        """
-        ...
-
-class TangOrienter(Orienter):
-    """A perpendicular of the site axis: the fragment meets the trace at an angle."""
-
-    def __init__(self) -> None: ...
-    def direction(self, body_axis: List[float]) -> Optional[List[float]]: ...
-    def orient(
-        self,
-        mol: Graph,
-        anchor: List[float],
-        body_axis: List[float],
-        to_dir: List[float],
-        flip: bool = False,
-    ) -> None:
-        """Rotate ``mol`` about ``anchor`` so this rule's direction points along
-        ``to_dir`` (``-to_dir`` when ``flip``).
-
-        Raises:
-            ValueError: ``body_axis`` has no direction under this rule (zero,
-                too short, non-finite, or overflowing); ``mol`` is untouched.
-        """
-        ...
 
 # ---------------------------------------------------------------------------
 # Force field
@@ -2327,8 +2642,8 @@ class Match:
 
     def __init__(
         self,
-        nodes: Sequence[Mapping[str, Annotation]],
-        links: Mapping[type, Sequence[Mapping[str, Annotation]]] | None = None,
+        nodes: Sequence[_AbcMapping[str, Annotation]],
+        links: _AbcMapping[type, Sequence[_AbcMapping[str, Annotation]]] | None = None,
         *,
         styles: Sequence[tuple[str, str, dict[str, ParamValue]]] = (),
         pairs: Sequence[

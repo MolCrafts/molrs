@@ -14,7 +14,8 @@ use crate::compute::error::ComputeError;
 
 use crate::compute::util::MicHelper;
 
-use super::observable::{AtomGroups, Observable, displacement, norm, positions};
+use super::observable::{AtomGroups, Observable, displacement, positions};
+use crate::op::vec3::norm;
 
 /// Distance between the two atoms of each pair (arity 2), minimum-image under PBC.
 #[derive(Debug, Clone, Default)]

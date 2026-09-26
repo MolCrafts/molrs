@@ -21,8 +21,13 @@ use serde_json::{Value as JsonValue, json};
 
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
+use molrs::store::keys;
 use molrs::store::meta::MetaValue;
 use molrs::types::{F, I, Idx};
+
+/// The LAMMPS molecule JSON field naming the unit style. It is the file's
+/// vocabulary, not the frame's: the frame meta key is [`keys::UNITS`].
+const JSON_UNITS: &str = "units";
 
 fn invalid_data<E: std::fmt::Display>(e: E) -> Error {
     Error::new(ErrorKind::InvalidData, e.to_string())
@@ -657,10 +662,16 @@ fn read_lammps_molecule_json(path: &Path) -> Result<Frame> {
         "title",
         data.get("title").and_then(|v| v.as_str()).unwrap_or(""),
     );
-    frame.meta.insert(
-        "units",
-        data.get("units").and_then(|v| v.as_str()).unwrap_or("lj"),
-    );
+    // `units` is optional in the molecule schema; an unstated one stays
+    // absent rather than being guessed, and a non-string one is refused.
+    if let Some(units) = data.get(JSON_UNITS) {
+        let units = units.as_str().ok_or_else(|| {
+            invalid_data(format!(
+                "JSON molecule field `{JSON_UNITS}` must be a string, got {units}"
+            ))
+        })?;
+        frame.meta.insert(keys::UNITS, units);
+    }
     frame.meta.insert(
         "revision",
         MetaValue::I64(data.get("revision").and_then(|v| v.as_i64()).unwrap_or(1)),
@@ -849,20 +860,26 @@ fn write_lammps_molecule_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<
         .get("title")
         .and_then(|v| v.as_str())
         .unwrap_or("Molecule template written by molrs");
-    let units = frame
-        .meta
-        .get("units")
-        .and_then(|v| v.as_str())
-        .unwrap_or("lj");
     let mut data = json!({
         "application": "LAMMPS",
         "format": "molecule",
         "revision": 1,
         "title": title,
         "schema": "https://download.lammps.org/json/molecule-schema.json",
-        "units": units,
         "types": { "format": ["atom-id", "type"], "data": types_data },
     });
+    // `units` is optional in the molecule schema: written only when the frame
+    // states it, and refused when the frame states it as anything but a string.
+    if let Some(units) = frame.meta.get(keys::UNITS) {
+        let units = units.as_str().ok_or_else(|| {
+            invalid_data(format!(
+                "frame meta `{}` must be a string to write the JSON `{JSON_UNITS}` \
+                 field, got {units:?}",
+                keys::UNITS
+            ))
+        })?;
+        data[JSON_UNITS] = json!(units);
+    }
 
     if atoms.contains_key("x") && atoms.contains_key("y") && atoms.contains_key("z") {
         let x = atoms.get_float("x").ok_or_else(|| invalid_data("x"))?;
@@ -1011,5 +1028,33 @@ Angles
             charge.iter().copied().collect::<Vec<_>>(),
             vec![-0.834, 0.417, 0.417]
         );
+    }
+
+    #[test]
+    fn json_units_that_is_not_a_string_is_refused_on_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("atom.json");
+        std::fs::write(
+            &path,
+            r#"{"format": "molecule", "units": 3,
+                "types": {"format": ["atom-id", "type"], "data": [[1, 1]]}}"#,
+        )
+        .unwrap();
+        let err = read_lammps_molecule(&path).expect_err("a numeric units must be refused");
+        assert_eq!(err.kind(), ErrorKind::InvalidData, "{err}");
+        assert!(err.to_string().contains("units"), "{err}");
+    }
+
+    #[test]
+    fn meta_units_that_is_not_a_string_is_refused_on_json_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("water.mol");
+        std::fs::write(&path, WATER).unwrap();
+        let mut frame = read_lammps_molecule(&path).unwrap();
+        frame.meta.insert(keys::UNITS, MetaValue::I64(3));
+        let err = write_lammps_molecule(dir.path().join("water.json"), &frame, "json")
+            .expect_err("a non-string units meta must be refused");
+        assert_eq!(err.kind(), ErrorKind::InvalidData, "{err}");
+        assert!(err.to_string().contains("units"), "{err}");
     }
 }

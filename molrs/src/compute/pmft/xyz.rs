@@ -24,6 +24,7 @@ use ndarray::Array3;
 use crate::compute::error::ComputeError;
 use crate::compute::require_disp;
 use crate::compute::traits::Compute;
+use crate::op::rigid::{quat_conj, rotate_by_quat};
 
 /// `PMFTXYZ` analyzer.
 #[derive(Debug, Clone, Copy)]
@@ -134,7 +135,7 @@ impl PMFTXYZ {
                     }
                     // Rotate the lab-frame bond into i's local frame: use
                     // q⁻¹ · v · q (with q⁻¹ = q_conj for unit quaternions).
-                    let r = rotate_by_quat_conj(o[i], [vx, vy, vz]);
+                    let r = rotate_by_quat(quat_conj(o[i]), [vx, vy, vz]);
                     (r[0], r[1], r[2])
                 }
             };
@@ -151,7 +152,7 @@ impl PMFTXYZ {
                                 what: "PMFTXYZ orientations length",
                             });
                         }
-                        let r = rotate_by_quat_conj(o[j], [-vx, -vy, -vz]);
+                        let r = rotate_by_quat(quat_conj(o[j]), [-vx, -vy, -vz]);
                         (r[0], r[1], r[2])
                     }
                 };
@@ -201,23 +202,6 @@ impl PMFTXYZ {
             z_edges,
         })
     }
-}
-
-/// Rotate `v` by `q⁻¹` (= `q_conj` for unit quaternions). Used to bring a
-/// lab-frame bond vector into the query particle's local frame.
-///
-/// `q⁻¹ · v · q` expanded in component form, with q = (w, x, y, z).
-#[inline]
-fn rotate_by_quat_conj(q: [F; 4], v: [F; 3]) -> [F; 3] {
-    let (w, x, y, z) = (q[0], -q[1], -q[2], -q[3]);
-    let tx = 2.0 * (y * v[2] - z * v[1]);
-    let ty = 2.0 * (z * v[0] - x * v[2]);
-    let tz = 2.0 * (x * v[1] - y * v[0]);
-    [
-        v[0] + w * tx + (y * tz - z * ty),
-        v[1] + w * ty + (z * tx - x * tz),
-        v[2] + w * tz + (x * ty - y * tx),
-    ]
 }
 
 /// `Args` for [`PMFTXYZ`]. When `query_orientations` is `Some`, each entry

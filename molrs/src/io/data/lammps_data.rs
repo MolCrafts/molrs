@@ -26,7 +26,8 @@ use molrs::store::frame_access::FrameAccess;
 use molrs::store::keys;
 use molrs::store::type_labels::TypeLabels;
 use molrs::types::{F, I, Idx, Pbc3};
-use std::collections::HashMap;
+use ndarray::ArrayViewD;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Cursor, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -506,9 +507,17 @@ fn push_atom_line(
 // Section parsers
 // ============================================================================
 
+/// Read the header up to the first section header, which is returned.
+///
+/// As in LAMMPS `read_data`, every header line is a keyword line; a line that
+/// is neither a keyword this reader knows nor a section header, and a keyword
+/// whose count does not parse, is refused with an `InvalidData` error naming
+/// it. The general-triclinic keywords (`avec`, `bvec`, `cvec`, `abc origin`)
+/// are not read, so they are refused rather than leaving the box unset.
 fn parse_header_with_first_section<R: BufRead>(
     reader: &mut R,
-) -> std::io::Result<(LAMMPSHeader, Option<String>)> {
+    skipped: &HashSet<String>,
+) -> std::io::Result<(LAMMPSHeader, Option<SectionHeader>)> {
     let mut header = LAMMPSHeader::default();
     let mut line = String::new();
 
@@ -525,168 +534,240 @@ fn parse_header_with_first_section<R: BufRead>(
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
+        if let Some(section) = SectionHeader::parse(&line, skipped) {
+            return Ok((header, Some(section)));
+        }
         let tokens = tokenize(trimmed);
         if tokens.is_empty() {
             continue;
         }
-        if tokens[0].chars().next().is_some_and(|c| c.is_uppercase()) {
-            return Ok((header, Some(line.clone())));
-        }
-        // Non-integer count tokens (e.g. "invalid atoms") are skipped — same
-        // as the historical molpy header pass — so a garbage count line does
-        // not abort a file that still has Atoms + box.
-        match tokens.last() {
-            Some(&"atoms") if tokens.len() >= 2 => {
-                if let Ok(n) = tokens[0].parse() {
-                    header.num_atoms = n;
+        let bad_count = |e: std::num::ParseIntError| {
+            err_mapper(format!("Invalid LAMMPS data header line `{trimmed}`: {e}"))
+        };
+        match tokens.as_slice() {
+            [n, "atoms", ..] => header.num_atoms = n.parse().map_err(bad_count)?,
+            [n, "bonds", ..] => header.num_bonds = n.parse().map_err(bad_count)?,
+            [n, "angles", ..] => header.num_angles = n.parse().map_err(bad_count)?,
+            [n, "dihedrals", ..] => header.num_dihedrals = n.parse().map_err(bad_count)?,
+            [n, "impropers", ..] => header.num_impropers = n.parse().map_err(bad_count)?,
+            [
+                n,
+                kind @ ("atom" | "bond" | "angle" | "dihedral" | "improper"),
+                "types",
+                ..,
+            ] => {
+                let n = n.parse().map_err(bad_count)?;
+                match *kind {
+                    "atom" => header.num_atom_types = n,
+                    "bond" => header.num_bond_types = n,
+                    "angle" => header.num_angle_types = n,
+                    "dihedral" => header.num_dihedral_types = n,
+                    _ => header.num_improper_types = n,
                 }
             }
-            Some(&"bonds") if tokens.len() >= 2 => {
-                if let Ok(n) = tokens[0].parse() {
-                    header.num_bonds = n;
-                }
+            // Counts this reader has no use for: the body sections they size
+            // are refused or skipped by name, and the per-atom extras are
+            // LAMMPS memory hints.
+            [n, "ellipsoids" | "lines" | "triangles" | "bodies", ..]
+            | [
+                n,
+                "extra",
+                "bond" | "angle" | "dihedral" | "improper" | "special",
+                "per",
+                "atom",
+                ..,
+            ] => {
+                n.parse::<usize>().map_err(bad_count)?;
             }
-            Some(&"angles") if tokens.len() >= 2 => {
-                if let Ok(n) = tokens[0].parse() {
-                    header.num_angles = n;
-                }
-            }
-            Some(&"dihedrals") if tokens.len() >= 2 => {
-                if let Ok(n) = tokens[0].parse() {
-                    header.num_dihedrals = n;
-                }
-            }
-            Some(&"impropers") if tokens.len() >= 2 => {
-                if let Ok(n) = tokens[0].parse() {
-                    header.num_impropers = n;
-                }
-            }
-            Some(&"types") if tokens.len() >= 3 => {
-                if let Ok(n) = tokens[0].parse::<usize>() {
-                    match tokens[1] {
-                        "atom" => header.num_atom_types = n,
-                        "bond" => header.num_bond_types = n,
-                        "angle" => header.num_angle_types = n,
-                        "dihedral" => header.num_dihedral_types = n,
-                        "improper" => header.num_improper_types = n,
-                        _ => {}
-                    }
-                }
-            }
-            Some(&"xhi") if tokens.len() >= 4 && tokens[2] == "xlo" => {
-                header.bounds.xlo = tokens[0].parse().map_err(err_mapper)?;
-                header.bounds.xhi = tokens[1].parse().map_err(err_mapper)?;
+            [lo, hi, "xlo", "xhi", ..] => {
+                header.bounds.xlo = lo.parse().map_err(err_mapper)?;
+                header.bounds.xhi = hi.parse().map_err(err_mapper)?;
                 header.bounds.has_x = true;
             }
-            Some(&"yhi") if tokens.len() >= 4 && tokens[2] == "ylo" => {
-                header.bounds.ylo = tokens[0].parse().map_err(err_mapper)?;
-                header.bounds.yhi = tokens[1].parse().map_err(err_mapper)?;
+            [lo, hi, "ylo", "yhi", ..] => {
+                header.bounds.ylo = lo.parse().map_err(err_mapper)?;
+                header.bounds.yhi = hi.parse().map_err(err_mapper)?;
                 header.bounds.has_y = true;
             }
-            Some(&"zhi") if tokens.len() >= 4 && tokens[2] == "zlo" => {
-                header.bounds.zlo = tokens[0].parse().map_err(err_mapper)?;
-                header.bounds.zhi = tokens[1].parse().map_err(err_mapper)?;
+            [lo, hi, "zlo", "zhi", ..] => {
+                header.bounds.zlo = lo.parse().map_err(err_mapper)?;
+                header.bounds.zhi = hi.parse().map_err(err_mapper)?;
                 header.bounds.has_z = true;
             }
-            Some(&"yz") if tokens.len() >= 6 && tokens[3] == "xy" && tokens[4] == "xz" => {
-                header.bounds.xy = Some(tokens[0].parse().map_err(err_mapper)?);
-                header.bounds.xz = Some(tokens[1].parse().map_err(err_mapper)?);
-                header.bounds.yz = Some(tokens[2].parse().map_err(err_mapper)?);
+            [xy, xz, yz, "xy", "xz", "yz", ..] => {
+                header.bounds.xy = Some(xy.parse().map_err(err_mapper)?);
+                header.bounds.xz = Some(xz.parse().map_err(err_mapper)?);
+                header.bounds.yz = Some(yz.parse().map_err(err_mapper)?);
             }
-            _ => {}
+            _ => {
+                let name = SectionHeader::name_of(trimmed);
+                return Err(err_mapper(format!(
+                    "LAMMPS data header line `{trimmed}` is neither a header keyword \
+                     this reader reads nor a section; if it opens a section, {}",
+                    skip_hint(&name)
+                )));
+            }
         }
     }
 }
 
+/// The `read_data` section headers this reader knows by name (docs.lammps.org/
+/// read_data.html). Every `* Coeffs` header is one too; see [`SectionHeader`].
+const SECTION_NAMES: &[&str] = &[
+    "Atoms",
+    "Velocities",
+    "Masses",
+    "Ellipsoids",
+    "Lines",
+    "Triangles",
+    "Bodies",
+    "Bonds",
+    "Angles",
+    "Dihedrals",
+    "Impropers",
+    "Atom Type Labels",
+    "Bond Type Labels",
+    "Angle Type Labels",
+    "Dihedral Type Labels",
+    "Improper Type Labels",
+    "Charges",
+];
+
+/// A section header line and the section name it opens.
+struct SectionHeader {
+    /// The header's words before any `# style` comment, single-spaced.
+    name: String,
+    /// The header line as read, `# style` comment included.
+    line: String,
+}
+
+impl SectionHeader {
+    /// The header `line` opens, or `None` when it is not a section header.
+    ///
+    /// A header is a line whose name is in the closed `read_data` vocabulary,
+    /// ends in `Coeffs`, or is one the caller asked to skip. A label-led row
+    /// such as `CA 12.011` inside `Masses` or a `Coeffs` section is a row of
+    /// that section, not a header.
+    fn parse(line: &str, skipped: &HashSet<String>) -> Option<Self> {
+        let header = Self {
+            name: Self::name_of(line),
+            line: line.to_string(),
+        };
+        let known = SECTION_NAMES.contains(&header.name.as_str());
+        (known || header.is_coeffs() || skipped.contains(&header.name)).then_some(header)
+    }
+
+    /// Whether this is a `* Coeffs` section (`Pair Coeffs`, `PairIJ Coeffs`,
+    /// the class2 cross terms, …).
+    fn is_coeffs(&self) -> bool {
+        self.name.ends_with(" Coeffs")
+    }
+
+    /// The section name `line` would open: its words before any `#`
+    /// comment, single-spaced.
+    fn name_of(line: &str) -> String {
+        tokenize(line).join(" ")
+    }
+}
+
+/// How to get past the section `name` that this reader does not read.
+fn skip_hint(name: &str) -> String {
+    format!("skip it with LAMMPSDataReader::with_skipped_section(\"{name}\")")
+}
+
+/// The refusal of `row`, found inside `section`, that is not a row of it. It is
+/// most likely the header of a section this reader does not read.
+fn not_a_row(section: &str, row: &str) -> std::io::Error {
+    let name = SectionHeader::name_of(row);
+    err_mapper(format!(
+        "LAMMPS data line `{name}` in {section} is neither a {section} row nor a \
+         section this reader reads; if it opens a section, {}",
+        skip_hint(&name)
+    ))
+}
+
+/// Read the body of the current section up to the next section header (which
+/// is returned) or EOF, handing every non-blank, non-comment line to `row`.
+fn for_each_row<R: BufRead>(
+    reader: &mut R,
+    skipped: &HashSet<String>,
+    mut row: impl FnMut(&str) -> std::io::Result<()>,
+) -> std::io::Result<Option<SectionHeader>> {
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line)? == 0 {
+            return Ok(None);
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(header) = SectionHeader::parse(&line, skipped) {
+            return Ok(Some(header));
+        }
+        row(trimmed)?;
+    }
+}
+
+/// A `* Type Labels` section: `type-id label` per row → map type-id → label.
+/// A row that does not start with a type id is refused as a section this
+/// reader does not read.
 fn parse_type_labels<R: BufRead>(
     reader: &mut R,
-) -> std::io::Result<(HashMap<String, String>, Option<String>)> {
+    section: &str,
+    skipped: &HashSet<String>,
+) -> std::io::Result<(HashMap<String, String>, Option<SectionHeader>)> {
     let mut labels = HashMap::new();
-    let mut line = String::new();
-    loop {
-        line.clear();
-        let bytes = reader.read_line(&mut line)?;
-        if bytes == 0 {
-            return Ok((labels, None));
+    let next = for_each_row(reader, skipped, |row| {
+        let tokens = tokenize(row);
+        if tokens.first().is_none_or(|t| t.parse::<I>().is_err()) {
+            return Err(not_a_row(section, row));
         }
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
+        if tokens.len() < 2 {
+            return Err(err_mapper(format!(
+                "Invalid {section} line `{row}`: expected `type-id label`"
+            )));
         }
-        let tokens = tokenize(trimmed);
-        if trimmed.chars().next().is_some_and(|c| c.is_uppercase()) {
-            if tokens.len() >= 2 {
-                if tokens[0].parse::<i64>().is_err() {
-                    return Ok((labels, Some(line.clone())));
-                }
-            } else if tokens.len() == 1 {
-                return Ok((labels, Some(line.clone())));
-            }
-        }
-        if tokens.len() >= 2 {
-            labels.insert(tokens[0].to_string(), tokens[1].to_string());
-        }
-    }
+        labels.insert(tokens[0].to_string(), tokens[1].to_string());
+        Ok(())
+    })?;
+    Ok((labels, next))
 }
 
-/// Masses section: `type mass` per line → map type-id → mass.
-fn parse_masses<R: BufRead>(reader: &mut R) -> std::io::Result<HashMap<I, F>> {
+/// Masses section: `type mass` per row → map type-id → mass. `type` is a
+/// numeric type id or a label from the `Atom Type Labels` read before it.
+fn parse_masses<R: BufRead>(
+    reader: &mut R,
+    atom_type_labels: &HashMap<String, String>,
+    skipped: &HashSet<String>,
+) -> std::io::Result<(HashMap<I, F>, Option<SectionHeader>)> {
+    let label_to_id = invert_type_labels(atom_type_labels);
     let mut masses = HashMap::new();
-    let mut line = String::new();
-    // Read until blank line or next section (uppercase non-numeric).
-    // We don't know the count; stop at section header.
-    // But we're called mid-stream after "Masses" — consume lines until blank
-    // then stop, OR until next section. Actually blank lines appear between
-    // Masses header and first row, and after last row before next section.
-    // Strategy: read while lines look like "int float"; stop at uppercase
-    // section or empty after having seen data. For simplicity read until
-    // we hit a line that doesn't match type-mass, then if it's a section
-    // the caller re-dispatches — but we already consumed it.
-    //
-    // Better: peek-style by returning leftover section line like type_labels.
-    // For Masses LAMMPS always has blank line after last mass before next
-    // section. Read until blank-after-data or EOF; section after blank is
-    // handled by outer loop.
-    let mut saw_data = false;
-    loop {
-        line.clear();
-        let bytes = reader.read_line(&mut line)?;
-        if bytes == 0 {
-            break;
+    let next = for_each_row(reader, skipped, |row| {
+        let tokens = tokenize(row);
+        if tokens.len() < 2 {
+            return Err(err_mapper(format!(
+                "Invalid Masses line `{row}`: expected `type mass`"
+            )));
         }
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            if saw_data {
-                break;
-            }
-            continue;
-        }
-        if trimmed.starts_with('#') {
-            continue;
-        }
-        if trimmed.chars().next().is_some_and(|c| c.is_uppercase())
-            && tokenize(trimmed)
-                .first()
-                .is_some_and(|t| t.parse::<i64>().is_err())
-        {
-            // Hit next section without blank — shouldn't happen for Masses,
-            // but don't consume: we can't put it back. Outer loop already
-            // lost this line. Rare. Ignore and stop.
-            break;
-        }
-        let tokens = tokenize(trimmed);
-        if tokens.len() >= 2
-            && let (Ok(tid), Ok(m)) = (tokens[0].parse::<I>(), tokens[1].parse::<F>())
-        {
-            masses.insert(tid, m);
-            saw_data = true;
-            continue;
-        }
-        if saw_data {
-            break;
-        }
-    }
-    Ok(masses)
+        let type_id = match tokens[0].parse::<I>() {
+            Ok(tid) => tid,
+            Err(_) => *label_to_id.get(tokens[0]).ok_or_else(|| {
+                err_mapper(format!(
+                    "Invalid Masses line `{row}`: `{}` is neither a type id nor an \
+                     Atom Type Labels label",
+                    tokens[0]
+                ))
+            })?,
+        };
+        let mass = tokens[1]
+            .parse::<F>()
+            .map_err(|e| err_mapper(format!("Invalid Masses line `{row}`: {e}")))?;
+        masses.insert(type_id, mass);
+        Ok(())
+    })?;
+    Ok((masses, next))
 }
 
 fn parse_atoms_streamed<R: BufRead>(
@@ -711,6 +792,12 @@ fn parse_atoms_streamed<R: BufRead>(
         let tokens = tokenize(trimmed);
         let layout = resolve_layout(&tokens, known, style_known)?;
         push_atom_line(&mut cols, &tokens, layout)?;
+    }
+    if cols.len() > 0 && cols.len() < num_atoms {
+        return Err(err_mapper(format!(
+            "Atoms section has {} rows, the header declares {num_atoms} atoms",
+            cols.len()
+        )));
     }
     Ok(cols)
 }
@@ -750,65 +837,61 @@ fn parse_topology_section<R: BufRead>(
             n_members: n_members as u8,
         });
     }
+    if terms.len() < count {
+        return Err(err_mapper(format!(
+            "{section} section has {} rows, the header declares {count}",
+            terms.len()
+        )));
+    }
     Ok(terms)
 }
 
-/// Velocities: `id vx vy vz` — merge into atom columns by id.
-fn parse_velocities_into<R: BufRead>(
+/// Rows of a per-atom section (`Velocities`, `Charges`): `id v1 … vK` once for
+/// every atom, in any order. Returns the K values aligned to `ids` (the atom
+/// ids in row order) and the next section header.
+///
+/// An id that is not an atom, an id given twice, and fewer rows than atoms are
+/// each refused with an `InvalidData` error naming `section`.
+fn parse_per_atom_rows<const K: usize, R: BufRead>(
     reader: &mut R,
-    cols: &mut AtomColumns,
-) -> std::io::Result<()> {
-    let n = cols.len();
-    if n == 0 {
-        return Ok(());
-    }
-    // Ensure velocity columns exist and are zeroed.
-    cols.vx.data.resize(n, 0.0);
-    cols.vy.data.resize(n, 0.0);
-    cols.vz.data.resize(n, 0.0);
-    cols.vx.present = true;
-    cols.vy.present = true;
-    cols.vz.present = true;
-
-    let id_to_idx: HashMap<I, usize> = cols.id.iter().enumerate().map(|(i, &id)| (id, i)).collect();
-
-    let mut line = String::new();
+    ids: &[I],
+    section: &str,
+    skipped: &HashSet<String>,
+) -> std::io::Result<(Vec<[F; K]>, Option<SectionHeader>)> {
+    let id_to_idx: HashMap<I, usize> = ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
+    let mut values = vec![[0.0 as F; K]; ids.len()];
+    let mut seen = vec![false; ids.len()];
     let mut filled = 0usize;
-    while filled < n {
-        line.clear();
-        if reader.read_line(&mut line)? == 0 {
-            break;
+    let next = for_each_row(reader, skipped, |row| {
+        let invalid = |why: String| err_mapper(format!("Invalid {section} line `{row}`: {why}"));
+        let tokens = tokenize(row);
+        if tokens.len() < K + 1 {
+            return Err(invalid(format!(
+                "expected {} columns, got {}",
+                K + 1,
+                tokens.len()
+            )));
         }
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            if filled > 0 {
-                break;
-            }
-            continue;
+        let id = tokens[0].parse::<I>().map_err(|e| invalid(e.to_string()))?;
+        let &idx = id_to_idx
+            .get(&id)
+            .ok_or_else(|| invalid(format!("atom ID {id} is not in Atoms")))?;
+        if std::mem::replace(&mut seen[idx], true) {
+            return Err(invalid(format!("atom ID {id} appears twice")));
         }
-        if trimmed.starts_with('#') {
-            continue;
+        for (slot, tok) in values[idx].iter_mut().zip(&tokens[1..]) {
+            *slot = tok.parse::<F>().map_err(|e| invalid(e.to_string()))?;
         }
-        if trimmed.chars().next().is_some_and(|c| c.is_uppercase())
-            && tokenize(trimmed)
-                .first()
-                .is_some_and(|t| t.parse::<i64>().is_err())
-        {
-            break;
-        }
-        let tokens = tokenize(trimmed);
-        if tokens.len() < 4 {
-            continue;
-        }
-        let id = parse_i(tokens[0])?;
-        if let Some(&idx) = id_to_idx.get(&id) {
-            cols.vx.data[idx] = parse_f(tokens[1])?;
-            cols.vy.data[idx] = parse_f(tokens[2])?;
-            cols.vz.data[idx] = parse_f(tokens[3])?;
-            filled += 1;
-        }
+        filled += 1;
+        Ok(())
+    })?;
+    if filled < ids.len() {
+        return Err(err_mapper(format!(
+            "{section} section has {filled} rows for {} atoms",
+            ids.len()
+        )));
     }
-    Ok(())
+    Ok((values, next))
 }
 
 // ============================================================================
@@ -999,146 +1082,186 @@ fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
 // Section dispatch
 // ============================================================================
 
+/// Parse the section `header` opens; returns the next section header when the
+/// section reader consumed it, `None` when it stopped at a row count.
 fn dispatch_section<R: BufRead>(
-    header_line: &str,
+    header: &SectionHeader,
     reader: &mut R,
     data: &mut ParsedData,
-) -> std::io::Result<Option<String>> {
-    let trimmed = header_line.trim();
-
-    if trimmed.starts_with("Atom Type Labels") {
-        let (labels, next) = parse_type_labels(reader)?;
-        data.atom_type_labels = labels;
-        return Ok(next);
+    skipped: &HashSet<String>,
+) -> std::io::Result<Option<SectionHeader>> {
+    let name = header.name.as_str();
+    if skipped.contains(name) {
+        return for_each_row(reader, skipped, |_| Ok(()));
     }
-    if trimmed.starts_with("Bond Type Labels") {
-        let (labels, next) = parse_type_labels(reader)?;
-        data.bond_type_labels = labels;
-        return Ok(next);
-    }
-    if trimmed.starts_with("Angle Type Labels") {
-        let (labels, next) = parse_type_labels(reader)?;
-        data.angle_type_labels = labels;
-        return Ok(next);
-    }
-    if trimmed.starts_with("Dihedral Type Labels") {
-        let (labels, next) = parse_type_labels(reader)?;
-        data.dihedral_type_labels = labels;
-        return Ok(next);
-    }
-    if trimmed.starts_with("Improper Type Labels") {
-        let (labels, next) = parse_type_labels(reader)?;
-        data.improper_type_labels = labels;
-        return Ok(next);
-    }
-    if trimmed.starts_with("Masses") {
-        data.type_masses = parse_masses(reader)?;
-        return Ok(None);
-    }
-    if trimmed.starts_with("Atoms") {
-        let hint = parse_atoms_style_hint(trimmed);
-        data.atoms = parse_atoms_streamed(reader, data.header.num_atoms, hint.as_deref())?;
-        return Ok(None);
-    }
-    if trimmed.starts_with("Velocities") {
-        parse_velocities_into(reader, &mut data.atoms)?;
-        return Ok(None);
-    }
-    if trimmed.starts_with("Bonds") {
-        data.bonds = parse_topology_section(reader, data.header.num_bonds, 2, "Bonds")?;
-        return Ok(None);
-    }
-    if trimmed.starts_with("Angles") {
-        data.angles = parse_topology_section(reader, data.header.num_angles, 3, "Angles")?;
-        return Ok(None);
-    }
-    if trimmed.starts_with("Dihedrals") {
-        data.dihedrals = parse_topology_section(reader, data.header.num_dihedrals, 4, "Dihedrals")?;
-        return Ok(None);
-    }
-    if trimmed.starts_with("Impropers") {
-        data.impropers = parse_topology_section(reader, data.header.num_impropers, 4, "Impropers")?;
-        return Ok(None);
-    }
-    // Force-field coefficient blocks — capture for downstream FF parse.
-    if trimmed.starts_with("Pair Coeffs")
-        || trimmed.starts_with("Bond Coeffs")
-        || trimmed.starts_with("Angle Coeffs")
-        || trimmed.starts_with("Dihedral Coeffs")
-        || trimmed.starts_with("Improper Coeffs")
-    {
-        let (body, next) = capture_coeffs_section(trimmed, reader)?;
-        if !data.coeffs_text.is_empty() {
-            data.coeffs_text.push('\n');
+    match name {
+        "Atom Type Labels" => {
+            let (labels, next) = parse_type_labels(reader, name, skipped)?;
+            data.atom_type_labels = labels;
+            Ok(next)
         }
-        data.coeffs_text.push_str(&body);
-        return Ok(next);
+        "Bond Type Labels" => {
+            let (labels, next) = parse_type_labels(reader, name, skipped)?;
+            data.bond_type_labels = labels;
+            Ok(next)
+        }
+        "Angle Type Labels" => {
+            let (labels, next) = parse_type_labels(reader, name, skipped)?;
+            data.angle_type_labels = labels;
+            Ok(next)
+        }
+        "Dihedral Type Labels" => {
+            let (labels, next) = parse_type_labels(reader, name, skipped)?;
+            data.dihedral_type_labels = labels;
+            Ok(next)
+        }
+        "Improper Type Labels" => {
+            let (labels, next) = parse_type_labels(reader, name, skipped)?;
+            data.improper_type_labels = labels;
+            Ok(next)
+        }
+        "Masses" => {
+            let (masses, next) = parse_masses(reader, &data.atom_type_labels, skipped)?;
+            data.type_masses = masses;
+            Ok(next)
+        }
+        "Atoms" => {
+            let hint = parse_atoms_style_hint(header.line.trim());
+            data.atoms = parse_atoms_streamed(reader, data.header.num_atoms, hint.as_deref())?;
+            Ok(None)
+        }
+        "Velocities" => {
+            let (rows, next) = parse_per_atom_rows::<3, _>(reader, &data.atoms.id, name, skipped)?;
+            let atoms = &mut data.atoms;
+            for (k, col) in [&mut atoms.vx, &mut atoms.vy, &mut atoms.vz]
+                .into_iter()
+                .enumerate()
+            {
+                col.data = rows.iter().map(|r| r[k]).collect();
+                col.present = true;
+            }
+            Ok(next)
+        }
+        "Charges" => {
+            let (rows, next) = parse_per_atom_rows::<1, _>(reader, &data.atoms.id, name, skipped)?;
+            data.atoms.charge.data = rows.iter().map(|[q]| *q).collect();
+            data.atoms.charge.present = true;
+            Ok(next)
+        }
+        "Bonds" => {
+            data.bonds = parse_topology_section(reader, data.header.num_bonds, 2, "Bonds")?;
+            Ok(None)
+        }
+        "Angles" => {
+            data.angles = parse_topology_section(reader, data.header.num_angles, 3, "Angles")?;
+            Ok(None)
+        }
+        "Dihedrals" => {
+            data.dihedrals =
+                parse_topology_section(reader, data.header.num_dihedrals, 4, "Dihedrals")?;
+            Ok(None)
+        }
+        "Impropers" => {
+            data.impropers =
+                parse_topology_section(reader, data.header.num_impropers, 4, "Impropers")?;
+            Ok(None)
+        }
+        // Force-field coefficient blocks — the header line (`# style` comment
+        // included) and its rows, captured verbatim for the FF reader. A row
+        // must start with a type id or a declared type label; anything else is
+        // the header of a section this reader does not read.
+        _ if header.is_coeffs() => {
+            let declared: HashSet<&str> = [
+                &data.atom_type_labels,
+                &data.bond_type_labels,
+                &data.angle_type_labels,
+                &data.dihedral_type_labels,
+                &data.improper_type_labels,
+            ]
+            .into_iter()
+            .flat_map(|labels| labels.values().map(String::as_str))
+            .collect();
+            let text = &mut data.coeffs_text;
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(header.line.trim());
+            text.push('\n');
+            for_each_row(reader, skipped, |row| {
+                let first = tokenize(row).first().copied().unwrap_or(row);
+                if first.parse::<I>().is_err() && !declared.contains(first) {
+                    return Err(not_a_row(name, row));
+                }
+                text.push_str(row);
+                text.push('\n');
+                Ok(())
+            })
+        }
+        _ => Err(err_mapper(format!(
+            "LAMMPS data section `{name}` is not read by this reader; {}",
+            skip_hint(name)
+        ))),
     }
-    Ok(None)
-}
-
-/// Capture a `* Coeffs` section including the header line; stop at next section.
-fn capture_coeffs_section<R: BufRead>(
-    header: &str,
-    reader: &mut R,
-) -> std::io::Result<(String, Option<String>)> {
-    let mut out = String::new();
-    out.push_str(header.trim());
-    out.push('\n');
-    let mut line = String::new();
-    loop {
-        line.clear();
-        let bytes = reader.read_line(&mut line)?;
-        if bytes == 0 {
-            return Ok((out, None));
-        }
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            out.push('\n');
-            continue;
-        }
-        // Next uppercase section (not a digit-leading coeff line).
-        if trimmed.chars().next().is_some_and(|c| c.is_uppercase())
-            && trimmed
-                .split_whitespace()
-                .next()
-                .is_some_and(|t| t.parse::<i64>().is_err())
-        {
-            return Ok((out, Some(line.clone())));
-        }
-        out.push_str(trimmed);
-        out.push('\n');
-    }
-}
-
-fn is_section_header(trimmed: &str) -> bool {
-    !trimmed.is_empty()
-        && !trimmed.starts_with('#')
-        && trimmed.chars().next().is_some_and(|c| c.is_uppercase())
 }
 
 // ============================================================================
 // Reader
 // ============================================================================
 
+/// Reads one LAMMPS data file into one [`Frame`].
+///
+/// No section is lost silently. The sections this reader parses are the five
+/// `* Type Labels` sections, `Masses`, `Atoms`, `Velocities`, `Charges`,
+/// `Bonds`, `Angles`, `Dihedrals` and `Impropers`; every `* Coeffs` section
+/// (`PairIJ` and the class2 cross terms included) is kept verbatim in the
+/// frame's `lammps_coeffs_text` meta. Any other section — `Ellipsoids`,
+/// `Lines`, `Triangles`, `Bodies`, or a fix-defined one such as `CMAP` — is
+/// refused with an `InvalidData` error naming it, unless it was named in
+/// [`with_skipped_section`], in which case its body is read past and
+/// discarded. A line inside a `* Coeffs` or `* Type Labels` section that does
+/// not start like a row of it (a type id, or for `Coeffs` a declared type
+/// label) is refused the same way.
+///
+/// A parsed section given twice is refused; `* Coeffs` sections accumulate.
+/// A header line that is neither a `read_data` keyword this reader reads nor
+/// a section, or whose count does not parse, is refused, as LAMMPS does.
+///
+/// `Velocities` and `Charges` must give exactly one row per atom: an unknown
+/// atom id, a repeated id, or a missing atom is refused. `Charges` overrides
+/// any charge the atom style supplied.
+///
+/// [`with_skipped_section`]: LAMMPSDataReader::with_skipped_section
 pub struct LAMMPSDataReader<R: BufRead + Seek> {
     reader: R,
     frame: OnceLock<Option<Frame>>,
     returned: bool,
+    skipped: HashSet<String>,
 }
 
 impl<R: BufRead + Seek> LAMMPSDataReader<R> {
+    /// A reader that skips no section.
     pub fn new(reader: R) -> Self {
         Self {
             reader,
             frame: OnceLock::new(),
             returned: false,
+            skipped: HashSet::new(),
         }
+    }
+
+    /// Read past the section `header` instead of refusing it, discarding its
+    /// body. `header` is the section name without its `# style` comment
+    /// (`"Ellipsoids"`, `"Bodies"`, or a fix-defined `"CMAP"` the `read_data`
+    /// vocabulary does not name — a line reading `header` then opens a
+    /// section); it is case-sensitive, as in LAMMPS.
+    pub fn with_skipped_section(mut self, header: &str) -> Self {
+        self.skipped.insert(SectionHeader::name_of(header));
+        self
     }
 
     fn parse_file(&mut self) -> std::io::Result<Option<Frame>> {
         self.reader.seek(SeekFrom::Start(0))?;
-        let (header, first) = parse_header_with_first_section(&mut self.reader)?;
+        let (header, first) = parse_header_with_first_section(&mut self.reader, &self.skipped)?;
         let mut data = ParsedData {
             header,
             atoms: AtomColumns::with_capacity(0),
@@ -1156,24 +1279,38 @@ impl<R: BufRead + Seek> LAMMPSDataReader<R> {
         };
 
         let mut pending = first;
-        while let Some(line) = pending.take() {
-            pending = dispatch_section(&line, &mut self.reader, &mut data)?;
-        }
-
+        // Parsed sections read so far: a second one would replace the first.
+        let mut read_sections: HashSet<String> = HashSet::new();
         let mut line = String::new();
         loop {
+            while let Some(section) = pending.take() {
+                let parsed = !section.is_coeffs() && !self.skipped.contains(&section.name);
+                if parsed && !read_sections.insert(section.name.clone()) {
+                    return Err(err_mapper(format!(
+                        "LAMMPS data section `{}` appears twice",
+                        section.name
+                    )));
+                }
+                pending = dispatch_section(&section, &mut self.reader, &mut data, &self.skipped)?;
+            }
+            // A section that stops at its row count leaves the reader between
+            // sections: scan to the next header.
             line.clear();
             if self.reader.read_line(&mut line)? == 0 {
                 break;
             }
             let trimmed = line.trim();
-            if !is_section_header(trimmed) {
+            if trimmed.is_empty() || trimmed.starts_with('#') {
                 continue;
             }
-            let mut next = dispatch_section(trimmed, &mut self.reader, &mut data)?;
-            while let Some(hdr) = next.take() {
-                next = dispatch_section(&hdr, &mut self.reader, &mut data)?;
-            }
+            let Some(section) = SectionHeader::parse(&line, &self.skipped) else {
+                return Err(err_mapper(format!(
+                    "LAMMPS data line `{trimmed}` is outside any section; if it opens \
+                     a section this reader does not read, {}",
+                    skip_hint(&SectionHeader::name_of(trimmed))
+                )));
+            };
+            pending = Some(section);
         }
 
         if data.atoms.len() == 0 && data.header.num_atoms > 0 {
@@ -1277,9 +1414,15 @@ fn resolve_row_masses(frame: &impl FrameAccess, n: usize) -> Vec<F> {
         vec![1.0; n]
     };
     if let Some(el) = frame.get_string("atoms", keys::ELEMENT) {
-        for i in 0..n {
-            if let Some(e) = crate::Element::by_symbol(&el[[i]]) {
-                masses[i] = F::from(e.atomic_mass());
+        // One periodic-table lookup per distinct symbol, not per row.
+        let mut memo: HashMap<&str, Option<F>> = HashMap::new();
+        for (i, mass) in masses.iter_mut().enumerate() {
+            let sym = el[[i]].as_str();
+            let known = *memo.entry(sym).or_insert_with(|| {
+                crate::Element::by_symbol(sym).map(|e| F::from(e.atomic_mass()))
+            });
+            if let Some(m) = known {
+                *mass = m;
             }
         }
     }
@@ -1316,53 +1459,107 @@ fn frame_has_atom_field(frame: &impl FrameAccess, field: DataField) -> bool {
         || frame.get_float("atoms", key).is_some()
 }
 
-fn write_atom_field_value<W: Write>(
-    writer: &mut W,
-    frame: &impl FrameAccess,
-    field: DataField,
-    i: usize,
-    row_masses: &[F],
-) -> std::io::Result<()> {
-    let key = field_column_key(field);
-    match field {
-        DataField::Id
-        | DataField::Type
-        | DataField::Bodyflag
-        | DataField::ShapeFlag
-        | DataField::Espin
-        | DataField::Status
-        | DataField::TemplateIndex
-        | DataField::TemplateAtom => {
-            // Type/Id are handled by the caller with resolved arrays.
-            if let Some(col) = frame.get_uint("atoms", key) {
-                write!(writer, " {}", col[i])?;
-            } else {
-                let col = frame
-                    .get_int("atoms", key)
-                    .ok_or_else(|| err_mapper(format!("Missing integer column '{key}'")))?;
-                write!(writer, " {}", col[i])?;
-            }
-        }
-        DataField::Mol => {
-            if let Some(col) = frame.get_uint("atoms", keys::MOL_ID) {
-                write!(writer, " {}", col[i])?;
-            } else {
-                let col = frame
-                    .get_int("atoms", "molecule_id")
-                    .ok_or_else(|| err_mapper("Missing mol_id column"))?;
-                write!(writer, " {}", col[i])?;
-            }
-        }
-        DataField::Mass => {
-            write!(writer, " {}", row_masses[i])?;
-        }
-        _ => {
-            let col = frame
-                .get_float("atoms", key)
-                .ok_or_else(|| err_mapper(format!("Missing float column '{key}'")))?;
-            write!(writer, " {}", col[i])?;
+/// One ``Atoms`` column, resolved once before the row loop.
+enum AtomColumn<'a> {
+    Uint(ArrayViewD<'a, Idx>),
+    Int(ArrayViewD<'a, I>),
+    Float(ArrayViewD<'a, F>),
+    /// Already-resolved per-row values (type ids).
+    IdxRows(&'a [Idx]),
+    /// Already-resolved per-row values (masses).
+    FloatRows(&'a [F]),
+}
+
+impl<'a> AtomColumn<'a> {
+    /// Resolve the column backing one non-``Id`` data-file field.
+    fn resolve(
+        frame: &'a impl FrameAccess,
+        field: DataField,
+        type_ids: &'a [Idx],
+        row_masses: &'a [F],
+    ) -> std::io::Result<Self> {
+        let key = field_column_key(field);
+        let col = match field {
+            DataField::Type => Self::IdxRows(type_ids),
+            DataField::Mass => Self::FloatRows(row_masses),
+            DataField::Bodyflag
+            | DataField::ShapeFlag
+            | DataField::Espin
+            | DataField::Status
+            | DataField::TemplateIndex
+            | DataField::TemplateAtom => match frame.get_uint("atoms", key) {
+                Some(col) => Self::Uint(col),
+                None => Self::Int(
+                    frame
+                        .get_int("atoms", key)
+                        .ok_or_else(|| err_mapper(format!("Missing integer column '{key}'")))?,
+                ),
+            },
+            DataField::Mol => match frame.get_uint("atoms", keys::MOL_ID) {
+                Some(col) => Self::Uint(col),
+                None => Self::Int(
+                    frame
+                        .get_int("atoms", "molecule_id")
+                        .ok_or_else(|| err_mapper("Missing mol_id column"))?,
+                ),
+            },
+            _ => Self::Float(
+                frame
+                    .get_float("atoms", key)
+                    .ok_or_else(|| err_mapper(format!("Missing float column '{key}'")))?,
+            ),
+        };
+        Ok(col)
+    }
+
+    fn write_cell<W: Write>(&self, writer: &mut W, i: usize) -> std::io::Result<()> {
+        match self {
+            Self::Uint(col) => write!(writer, " {}", col[[i]]),
+            Self::Int(col) => write!(writer, " {}", col[[i]]),
+            Self::Float(col) => write!(writer, " {}", col[[i]]),
+            Self::IdxRows(rows) => write!(writer, " {}", rows[i]),
+            Self::FloatRows(rows) => write!(writer, " {}", rows[i]),
         }
     }
+}
+
+/// ``Atoms`` section: columns and image flags resolved before the row loop.
+fn write_atoms_section<W: Write>(
+    writer: &mut W,
+    frame: &impl FrameAccess,
+    style_name: &str,
+    fields: &[DataField],
+    atom_ids: &[Idx],
+    type_ids: &[Idx],
+    row_masses: &[F],
+) -> std::io::Result<()> {
+    let images = match (
+        frame.get_int("atoms", keys::IX),
+        frame.get_int("atoms", keys::IY),
+        frame.get_int("atoms", keys::IZ),
+    ) {
+        (Some(ix), Some(iy), Some(iz)) => Some([ix, iy, iz]),
+        _ => None,
+    };
+
+    writeln!(writer, "Atoms # {style_name}")?;
+    writeln!(writer)?;
+    let columns = fields
+        .iter()
+        .filter(|&&f| f != DataField::Id)
+        .map(|&f| AtomColumn::resolve(frame, f, type_ids, row_masses))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    for (i, id) in atom_ids.iter().enumerate() {
+        write!(writer, "{id}")?;
+        for col in &columns {
+            col.write_cell(writer, i)?;
+        }
+        if let Some([ix, iy, iz]) = &images {
+            write!(writer, " {} {} {}", ix[[i]], iy[[i]], iz[[i]])?;
+        }
+        writeln!(writer)?;
+    }
+    writeln!(writer)?;
     Ok(())
 }
 
@@ -1580,42 +1777,22 @@ fn write_lammps_data_frame<W: Write>(
         writeln!(writer)?;
     }
 
-    let has_image = frame.get_int("atoms", keys::IX).is_some()
-        && frame.get_int("atoms", keys::IY).is_some()
-        && frame.get_int("atoms", keys::IZ).is_some();
-
-    writeln!(writer, "Atoms # {style_name}")?;
-    writeln!(writer)?;
-    for i in 0..num_atoms {
-        write!(writer, "{}", atom_ids[i])?;
-        for &field in layout.fields.iter().skip(1) {
-            if field == DataField::Id {
-                continue;
-            }
-            if field == DataField::Type {
-                write!(writer, " {}", atom_rt.type_ids()[i])?;
-                continue;
-            }
-            write_atom_field_value(writer, frame, field, i, &row_masses)?;
-        }
-        if has_image {
-            let ix = frame.get_int("atoms", keys::IX).unwrap();
-            let iy = frame.get_int("atoms", keys::IY).unwrap();
-            let iz = frame.get_int("atoms", keys::IZ).unwrap();
-            write!(writer, " {} {} {}", ix[[i]], iy[[i]], iz[[i]])?;
-        }
-        writeln!(writer)?;
-    }
-    writeln!(writer)?;
+    write_atoms_section(
+        writer,
+        frame,
+        style_name,
+        layout.fields,
+        &atom_ids,
+        atom_rt.type_ids(),
+        &row_masses,
+    )?;
 
     // Velocities section when all three components exist.
-    if frame.get_float("atoms", keys::VX).is_some()
-        && frame.get_float("atoms", keys::VY).is_some()
-        && frame.get_float("atoms", keys::VZ).is_some()
-    {
-        let vx = frame.get_float("atoms", keys::VX).unwrap();
-        let vy = frame.get_float("atoms", keys::VY).unwrap();
-        let vz = frame.get_float("atoms", keys::VZ).unwrap();
+    if let (Some(vx), Some(vy), Some(vz)) = (
+        frame.get_float("atoms", keys::VX),
+        frame.get_float("atoms", keys::VY),
+        frame.get_float("atoms", keys::VZ),
+    ) {
         writeln!(writer, "Velocities")?;
         writeln!(writer)?;
         for i in 0..num_atoms {
@@ -2169,5 +2346,215 @@ mod atom_style_tests {
         assert_eq!(native_dump_column(keys::CHARGE), "q");
         assert_eq!(native_dump_column(keys::MOL_ID), "mol");
         assert_eq!(canonical_dump_column("spin"), "espin");
+    }
+
+    // ------------------------------------------------------------------
+    // Sections: per-atom rows, unknown sections, header recognition
+    // ------------------------------------------------------------------
+
+    /// Three `bond`-style atoms (ids 1..3, no q column) followed by `body`.
+    fn three_bond_atoms_then(body: &str) -> String {
+        format!(
+            "LAMMPS data file\n\n3 atoms\n1 atom types\n\n\
+             0 10 xlo xhi\n0 10 ylo yhi\n0 10 zlo zhi\n\n\
+             Atoms # bond\n\n\
+             1 1 1 0.0 0.0 0.0\n2 1 1 1.0 0.0 0.0\n3 1 1 2.0 0.0 0.0\n\n\
+             {body}"
+        )
+    }
+
+    fn refusal(text: &str) -> std::io::Error {
+        match parse_frame_bytes(text.as_bytes()) {
+            Ok(_) => panic!("expected the reader to refuse:\n{text}"),
+            Err(e) => e,
+        }
+    }
+
+    fn assert_invalid_data_naming(err: &std::io::Error, section: &str) {
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData, "{err}");
+        assert!(err.to_string().contains(section), "{err}");
+    }
+
+    #[test]
+    fn charges_section_sets_charge_by_atom_id() {
+        let text = three_bond_atoms_then("Charges\n\n3 0.5\n1 -0.25\n2 -0.25\n");
+        let frame = parse_text(&text);
+        let q = frame
+            .get_float("atoms", keys::CHARGE)
+            .expect("Charges must create the charge column");
+        let expected = [-0.25, -0.25, 0.5];
+        for (i, want) in expected.iter().enumerate() {
+            assert!((q[i] - want).abs() < 1e-12, "row {i}: {} != {want}", q[i]);
+        }
+    }
+
+    #[test]
+    fn charges_section_overrides_atom_style_charge() {
+        let text = concat!(
+            "LAMMPS data file\n\n3 atoms\n1 atom types\n\n",
+            "0 10 xlo xhi\n0 10 ylo yhi\n0 10 zlo zhi\n\n",
+            "Atoms # full\n\n",
+            "1 1 1 1.0 0.0 0.0 0.0\n2 1 1 1.0 1.0 0.0 0.0\n3 1 1 1.0 2.0 0.0 0.0\n\n",
+            "Charges\n\n1 0.4\n2 -0.8\n3 0.4\n",
+        );
+        let frame = parse_text(text);
+        let q = frame.get_float("atoms", keys::CHARGE).unwrap();
+        let expected = [0.4, -0.8, 0.4];
+        for (i, want) in expected.iter().enumerate() {
+            assert!((q[i] - want).abs() < 1e-12, "row {i}: {} != {want}", q[i]);
+        }
+    }
+
+    #[test]
+    fn charges_unknown_atom_id_is_refused() {
+        let text = three_bond_atoms_then("Charges\n\n1 0.1\n7 0.2\n2 0.3\n3 0.4\n");
+        assert_invalid_data_naming(&refusal(&text), "Charges");
+    }
+
+    #[test]
+    fn charges_duplicate_atom_id_is_refused() {
+        let text = three_bond_atoms_then("Charges\n\n1 0.1\n1 0.2\n2 0.3\n3 0.4\n");
+        assert_invalid_data_naming(&refusal(&text), "Charges");
+    }
+
+    #[test]
+    fn charges_fewer_rows_than_atoms_is_refused() {
+        let text = three_bond_atoms_then("Charges\n\n1 0.1\n2 0.3\n");
+        assert_invalid_data_naming(&refusal(&text), "Charges");
+    }
+
+    #[test]
+    fn velocities_unknown_atom_id_is_refused() {
+        let text = three_bond_atoms_then(
+            "Velocities\n\n1 0.1 0.0 0.0\n7 0.2 0.0 0.0\n2 0.3 0.0 0.0\n3 0.4 0.0 0.0\n",
+        );
+        assert_invalid_data_naming(&refusal(&text), "Velocities");
+    }
+
+    #[test]
+    fn velocities_duplicate_atom_id_is_refused() {
+        let text = three_bond_atoms_then(
+            "Velocities\n\n1 0.1 0.0 0.0\n1 0.2 0.0 0.0\n2 0.3 0.0 0.0\n3 0.4 0.0 0.0\n",
+        );
+        assert_invalid_data_naming(&refusal(&text), "Velocities");
+    }
+
+    #[test]
+    fn velocities_fewer_rows_than_atoms_is_refused() {
+        let text = three_bond_atoms_then("Velocities\n\n1 0.1 0.0 0.0\n2 0.3 0.0 0.0\n");
+        assert_invalid_data_naming(&refusal(&text), "Velocities");
+    }
+
+    /// Three `molecular` atoms, an `Ellipsoids` section, then two bonds.
+    const WITH_ELLIPSOIDS: &str = concat!(
+        "LAMMPS data file\n\n3 atoms\n2 bonds\n1 ellipsoids\n1 atom types\n1 bond types\n\n",
+        "0 10 xlo xhi\n0 10 ylo yhi\n0 10 zlo zhi\n\n",
+        "Atoms # molecular\n\n",
+        "1 1 1 0 0 0\n2 1 1 1 0 0\n3 1 1 2 0 0\n\n",
+        "Ellipsoids\n\n1 1.0 1.0 1.0 1.0 0.0 0.0 0.0\n\n",
+        "Bonds\n\n1 1 1 2\n2 1 2 3\n",
+    );
+
+    #[test]
+    fn unknown_section_is_refused_by_name() {
+        let err = refusal(WITH_ELLIPSOIDS);
+        assert_invalid_data_naming(&err, "Ellipsoids");
+        assert!(err.to_string().contains("with_skipped_section"), "{err}");
+    }
+
+    #[test]
+    fn with_skipped_section_discards_that_section_only() {
+        let frame = LAMMPSDataReader::new(Cursor::new(WITH_ELLIPSOIDS.as_bytes()))
+            .with_skipped_section("Ellipsoids")
+            .read()
+            .expect("skipped section must not refuse the file")
+            .expect("one frame");
+        assert_eq!(frame.get("atoms").unwrap().nrows().unwrap(), 3);
+        assert_eq!(frame.get("bonds").unwrap().nrows().unwrap(), 2);
+    }
+
+    #[test]
+    fn type_labelled_masses_row_is_a_row_not_a_header() {
+        let text = concat!(
+            "LAMMPS data file\n\n3 atoms\n1 atom types\n\n",
+            "0 10 xlo xhi\n0 10 ylo yhi\n0 10 zlo zhi\n\n",
+            "Atom Type Labels\n\n1 CA\n\n",
+            "Masses\n\nCA 12.011\n\n",
+            "Atoms # bond\n\n",
+            "1 1 1 0.0 0.0 0.0\n2 1 1 1.0 0.0 0.0\n3 1 1 2.0 0.0 0.0\n",
+        );
+        let frame = parse_text(text);
+        let mass = frame
+            .get_float("atoms", keys::MASS)
+            .expect("the CA mass row must yield a mass column");
+        for i in 0..3 {
+            assert!((mass[i] - 12.011).abs() < 1e-12, "row {i}: {}", mass[i]);
+        }
+    }
+
+    #[test]
+    fn pairij_coeffs_section_is_captured() {
+        let text = three_bond_atoms_then("PairIJ Coeffs\n\n1 1 0.1 3.0\n");
+        let frame = parse_text(&text);
+        let coeffs = frame
+            .meta
+            .get("lammps_coeffs_text")
+            .and_then(|value| value.as_str())
+            .expect("PairIJ Coeffs must land in lammps_coeffs_text");
+        assert!(coeffs.contains("PairIJ Coeffs"), "{coeffs}");
+        assert!(coeffs.contains("1 1 0.1 3.0"), "{coeffs}");
+    }
+
+    /// Three `bond` atoms, a `Pair Coeffs` section, then a fix-defined `CMAP`
+    /// section this reader has no name for.
+    fn pair_coeffs_then_cmap() -> String {
+        three_bond_atoms_then("Pair Coeffs\n\n1 0.1 3.0\n\nCMAP\n\n1 1 1 2 3 1 2\n")
+    }
+
+    #[test]
+    fn unknown_section_after_coeffs_is_refused_by_name() {
+        let err = refusal(&pair_coeffs_then_cmap());
+        assert_invalid_data_naming(&err, "CMAP");
+        assert!(err.to_string().contains("with_skipped_section"), "{err}");
+    }
+
+    #[test]
+    fn with_skipped_section_skips_a_name_outside_the_vocabulary() {
+        let text = pair_coeffs_then_cmap();
+        let frame = LAMMPSDataReader::new(Cursor::new(text.as_bytes()))
+            .with_skipped_section("CMAP")
+            .read()
+            .expect("a skipped CMAP section must not refuse the file")
+            .expect("one frame");
+        let coeffs = frame
+            .meta
+            .get("lammps_coeffs_text")
+            .and_then(|value| value.as_str())
+            .expect("Pair Coeffs must land in lammps_coeffs_text");
+        assert!(coeffs.contains("1 0.1 3.0"), "{coeffs}");
+        assert!(!coeffs.contains("CMAP"), "{coeffs}");
+        assert!(!coeffs.contains("1 1 1 2 3 1 2"), "{coeffs}");
+    }
+
+    #[test]
+    fn unparseable_header_count_line_is_refused_by_name() {
+        let text = concat!(
+            "LAMMPS data file\n\n1 atoms\nmany bonds\n1 atom types\n\n",
+            "0 10 xlo xhi\n0 10 ylo yhi\n0 10 zlo zhi\n\n",
+            "Atoms # bond\n\n1 1 1 0.0 0.0 0.0\n",
+        );
+        assert_invalid_data_naming(&refusal(text), "many bonds");
+    }
+
+    #[test]
+    fn repeated_masses_section_is_refused_by_name() {
+        let text = concat!(
+            "LAMMPS data file\n\n1 atoms\n1 atom types\n\n",
+            "0 10 xlo xhi\n0 10 ylo yhi\n0 10 zlo zhi\n\n",
+            "Masses\n\n1 12.0\n\n",
+            "Masses\n\n1 14.0\n\n",
+            "Atoms # bond\n\n1 1 1 0.0 0.0 0.0\n",
+        );
+        assert_invalid_data_naming(&refusal(text), "Masses");
     }
 }

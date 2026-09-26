@@ -19,7 +19,6 @@ pub mod periodic;
 pub mod region;
 pub mod simbox;
 pub mod trace;
-pub(crate) mod vec3;
 
 pub use mesh::TriMesh;
 pub use periodic::{GhostError, GhostSet, ImageRange};

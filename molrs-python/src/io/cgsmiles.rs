@@ -63,6 +63,7 @@ use molrs::io::smiles::{
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+use crate::core::system::frag_graph::PyFragGraph;
 use crate::core::system::molgraph::{PyAtomistic, PyFragment};
 use crate::helpers::smiles_error_to_pyerr;
 use crate::io::PySmilesIR;
@@ -882,6 +883,58 @@ impl PyCGSmilesIR {
             out.set_item(name, PyFragment::from_core(py, fragment)?)?;
         }
         Ok(out)
+    }
+
+    /// Build one :class:`~molrs.Fragment` template of the whole lowest level.
+    ///
+    /// The lowest level expands as :meth:`to_atomistic` expands it; then every
+    /// atom is stamped ``bead`` (the index of the lowest-level node it came
+    /// from) and ``bead_type`` (that node's name), and every descriptor no
+    /// pair consumed becomes a capping hydrogen plus a port — as
+    /// :meth:`to_fragment` caps a definition. No atom carries ``frag_id`` and
+    /// none carries a coordinate.
+    ///
+    /// Returns
+    /// -------
+    /// Fragment
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If there is no atomistic body to expand (a base-only string).
+    ///
+    /// Examples
+    /// --------
+    /// >>> ir = molrs.io.CGSmilesIR("{[#A][#B]}.{#A=[<]CC[$],#B=[$]CO[>]}")
+    /// >>> ir.to_template().n_ports
+    /// 2
+    fn to_template(&self, py: Python<'_>) -> PyResult<Py<PyFragment>> {
+        let template = self.inner.to_template().map_err(smiles_error_to_pyerr)?;
+        PyFragment::from_core(py, template)
+    }
+
+    /// The unit-level topology this string writes, as a
+    /// :class:`~molrs.FragGraph`.
+    ///
+    /// One node per lowest-level node, named after its fragment; one edge
+    /// ``(a, b, port_a, port_b)`` per resolved pair of the lowest level, the
+    /// ports being descriptor indices on each body (their ordinals in the
+    /// template's ordered ports).
+    ///
+    /// Returns
+    /// -------
+    /// FragGraph
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     For a base-only string (no fragment table), or when the resolved
+    ///     pairs do not form a valid graph.
+    fn to_frag_graph(&self) -> PyResult<PyFragGraph> {
+        self.inner
+            .to_frag_graph()
+            .map(PyFragGraph::from_core)
+            .map_err(smiles_error_to_pyerr)
     }
 
     /// ``CGSmilesIR('…', levels=…)``, quoting the string that was parsed.

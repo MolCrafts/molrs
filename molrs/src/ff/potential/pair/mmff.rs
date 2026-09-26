@@ -29,11 +29,12 @@ use std::collections::HashMap;
 use crate::ff::forcefield::Params;
 use crate::ff::mmff::da::{DA_ACCEPTOR, DA_DONOR, DA_NEITHER};
 use crate::ff::potential::gather_copies;
-use crate::ff::potential::geometry::{mag3, sub3, validate_coords};
+use crate::ff::potential::geometry::{sub3, validate_coords};
 use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::{Member, PairDriven, Potential};
+use crate::op::vec3::norm;
 use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
@@ -118,7 +119,7 @@ impl MMFFVdW {
 
     /// The pair term for one already-reduced separation (Halgren buffered 14-7).
     fn pair_kernel(&self, d: [F; 3], rs: F, eps: F) -> Option<(F, [F; 3])> {
-        let r = mag3(d);
+        let r = norm(d);
         if r < 1e-12 as F {
             return None;
         }

@@ -12,7 +12,7 @@ spec files.
 | [frame-meta-dict-parity-04-dict-views](frame-meta-dict-parity-04-dict-views.md) — live collections.abc views, one key-acceptance rule, read/write borrow split, delete the clone-per-read | approved |
 | [frame-meta-dict-parity-05-document](frame-meta-dict-parity-05-document.md) — MetaDocument + tuples: every frame.meta door hands back a frozen value | approved |
 | [frame-meta-dict-parity-07-sequence](frame-meta-dict-parity-07-sequence.md) — sequence meta-key maps follow declaration order; other BTreeMaps stay sorted | approved |
-| [cgsmiles-03-release](cgsmiles-03-release.md) — release molrs 0.15.0: version literals, release notes, full gate, tag, Publish | approved |
+| [cgsmiles-03-release](cgsmiles-03-release.md) — release molrs 0.15.0: version literals, release notes, full gate, tag, Publish | in-progress |
 
 The `frame-meta-dict-parity-*` links are one chain (`frame.meta` becomes a
 Python dict in behaviour, revised 2026-09-22). They land on the unreleased
@@ -66,3 +66,5 @@ manual checklist in `.claude/notes/release.md` § v0.14.0.
   not written; the molnex smoke and the molpy tag are release mechanics.
 
 The three `opls-gromacs-*` links (closed 2026-09-26, commit d274957e; record in `.claude/notes/release.md`) were one chain (2026-09-25, operator-ruled): OPLS-AA follows GROMACS `share/top/oplsaa.ff` (v2026.3, commit 42105e46…) for types, charges, classes, LJ and bonded parameters; the typing SMARTS rules are molrs-owned Daylight SMARTS with explicit bonds and aromaticity perceived before matching; CL&P does not land in molrs (molpy deletes its typifiers in its own chain). Chain order 01 → 03, linear. Shared rules: each task verifies with `cargo mrs-test [-- filter]` only; no A/B harness, no second build cache; Rust first — the one binder change (molrs-python) is in 03; links 01–02 are never committed on their own; one full gate at the end of 03 discharges every link's full-gate criterion. English only; stage experimental.
+
+The seven `assembly-*` links (closed 2026-09-26; record: git history, `.claude/notes/notes.md` 2026-09-26 entries, and the `cgsmiles-03-release` re-run checklist) were one chain: the molrs half of polymer building and CG→all-atom backmapping on orthogonal components — the always-on functional `op/` numeric base; LAMMPS sections / `CoarseGrain::from_atom_frame` / typed column dimensions / `Frame::convert_units`; templates with mass, `bead` and `MolGraph::replicate`; `FragGraph` / `Mapping` / `FragLibrary::map`; ragged `Trace`, `TracePlacer`, orienters; port-only `PortReacter`, `Finalizer`, `Assembler`; the Python surface with subclass adaptors. molpy (`PolymerBuilder` / `Backmapper`) and the molpack `pack_peo_*` examples follow in their own chains after `cgsmiles-03-release` re-runs and tags 0.15.0.

@@ -33,19 +33,8 @@ use ndarray::Array2;
 
 use crate::compute::error::ComputeError;
 use crate::compute::traits::Compute;
-
-/// Quaternion (w, x, y, z), unit-normalised by convention.
-pub type Quat = [F; 4];
-
-#[inline]
-fn quat_norm(q: Quat) -> F {
-    (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt()
-}
-
-#[inline]
-fn quat_dot(a: Quat, b: Quat) -> F {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]
-}
+use crate::op::rigid::{quat_dot, quat_norm};
+use crate::op::types::Quat;
 
 /// Angular distance between two unit quaternions, in radians.
 ///

@@ -240,7 +240,9 @@ mod resolve;
 #[cfg(test)]
 pub(super) mod test_support;
 mod to_atomistic;
+mod to_frag_graph;
 mod to_fragment;
+mod to_template;
 mod validate;
 
 use crate::io::smiles::error::SmilesError;

@@ -21,7 +21,10 @@ the Python path and the Rust path are the same word:
   velocity-Verlet/Langevin integrators, the ``Potential`` base class, the
   ``MD`` driver. Loaded lazily so a compiled ``_lib`` without ``md`` still
   imports.
-* :mod:`molrs.builder` — structure builders (graphene, nanotubes, SARW paths).
+* :mod:`molrs.op` — pure numeric base: weighted superposition, centroids,
+  uniform SO(3) sampling.
+* :mod:`molrs.builder` — structure builders (graphene, nanotubes) and fragment
+  assembly (``FragLibrary``, placers, orienters, reacters, ``Assembler``).
 * :mod:`molrs.compute` — analysis, one subpackage per ``molrs::compute`` domain.
 * :mod:`molrs.signal` — FFT autocorrelation, windows, frequency grids.
 * :mod:`molrs.stream` — live Frame streaming over WebSocket.
@@ -77,14 +80,10 @@ from ._lib import (
     Fragment,
     ExtractedSubgraph,
     Reaction,
-    # Building: site labels and fragment placement
+    # Unit-level assembly topology
+    FragGraph,
     Trace,
-    SiteMap,
-    Placer,
-    TracePlacer,
-    Orienter,
-    LineOrienter,
-    TangOrienter,
+    Mapping,
 )
 
 # Rich Python Frame/Block layer (pandas-style API; CSV engine in Rust on the
@@ -93,7 +92,9 @@ from ._lib import (
 # (io readers, etc.) yields these. The shadow is safe now that molpy re-exports
 # them instead of subclassing the bare core (chain spec 04). Internal modules
 # that need the raw cores import them from ``._lib`` directly.
-from collections.abc import Mapping, MutableMapping
+# `collections.abc.Mapping` is aliased: `molrs.Mapping` is the assembly type.
+from collections.abc import Mapping as _AbcMapping
+from collections.abc import MutableMapping
 
 from . import keys, schema
 from . import frame  # noqa: F401
@@ -106,7 +107,7 @@ MutableMapping.register(FrameMeta)
 # surface. Callers that branch on Mapping rather than dict:
 # molvis/python/src/molvis/wire.py:389,530
 # molrec/tests/molrs_adapter.py:110-113
-Mapping.register(MetaDocument)
+_AbcMapping.register(MetaDocument)
 
 from . import compute  # analysis subpackage — one module per molrs::compute domain
 from . import conformer
@@ -114,6 +115,7 @@ from . import ff
 from . import builder
 from . import io
 from . import stream
+from . import op
 from . import optimize
 from . import perceive
 from . import signal
@@ -165,6 +167,7 @@ __all__ = [
     "builder",
     "io",
     "md",
+    "op",
     "stream",
     "optimize",
     "perceive",
@@ -207,6 +210,9 @@ __all__ = [
     "Fragment",
     "ExtractedSubgraph",
     "Reaction",
+    "FragGraph",
+    "Trace",
+    "Mapping",
     "NodeRef",
     "RelationRef",
     "Refs",
@@ -222,13 +228,6 @@ __all__ = [
     "Bead",
     "CGBond",
     "Port",
-    "Trace",
-    "SiteMap",
-    "Placer",
-    "TracePlacer",
-    "Orienter",
-    "LineOrienter",
-    "TangOrienter",
     "keys",
     "schema",
 ]

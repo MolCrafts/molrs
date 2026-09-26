@@ -76,7 +76,10 @@ fn hash_u64_slice(mut h: u64, xs: &[u64]) -> u64 {
 
 /// The label string of a node: element symbol for an atom, else bead type for a
 /// bead, else the empty string (a bare graph node).
-fn node_label_str(g: &MolGraph, id: NodeId) -> String {
+///
+/// Shared with the subgraph matcher (`graph_match`), whose structural
+/// labelling reads exactly these strings.
+pub(crate) fn node_label_str(g: &MolGraph, id: NodeId) -> String {
     let atom = match g.get_node(id) {
         Ok(a) => a,
         Err(_) => return String::new(),
@@ -107,14 +110,17 @@ const AROMATIC_BOND_TYPE: u64 = 4;
 /// A dense, immutable snapshot of `g`: contiguous node indices, per-node initial
 /// WL color, and a labeled adjacency list built once so the refinement loop and
 /// the matcher never re-materialize relations.
-struct GraphView {
+///
+/// Shared with the subgraph matcher (`graph_match`), which reads `nodes` and
+/// the edge labels in `adj`; the WL colors are this module's alone.
+pub(crate) struct GraphView {
     /// Node handles in dense-index order (row order of the node table).
-    nodes: Vec<NodeId>,
+    pub(crate) nodes: Vec<NodeId>,
     /// Initial WL color per dense node index.
     init_colors: Vec<u64>,
     /// Per node: the `(neighbor dense index, edge-label bits)` of each incident
     /// arity-2 relation.
-    adj: Vec<Vec<(usize, u64)>>,
+    pub(crate) adj: Vec<Vec<(usize, u64)>>,
     /// Total number of (undirected) edges.
     n_edges: usize,
 }
@@ -123,7 +129,7 @@ impl GraphView {
     /// Build the dense snapshot: assign contiguous indices, read edge labels
     /// (bond order bits) from each incident relation, then compute initial
     /// colors from element/bead label + degree + charge + aromatic flag.
-    fn build(g: &MolGraph) -> Self {
+    pub(crate) fn build(g: &MolGraph) -> Self {
         let nodes: Vec<NodeId> = g.node_ids().collect();
         let index: HashMap<NodeId, usize> =
             nodes.iter().enumerate().map(|(i, &id)| (id, i)).collect();
@@ -360,7 +366,7 @@ pub fn is_isomorphic(a: &MolGraph, b: &MolGraph) -> bool {
 // ---------------------------------------------------------------------------
 
 /// Neighbor → edge-label map per dense node index (O(1) edge lookup).
-fn adjacency_map(view: &GraphView) -> Vec<HashMap<usize, u64>> {
+pub(crate) fn adjacency_map(view: &GraphView) -> Vec<HashMap<usize, u64>> {
     view.adj
         .iter()
         .map(|nbrs| nbrs.iter().map(|&(j, label)| (j, label)).collect())
@@ -418,7 +424,14 @@ fn backtrack(
 /// Whether mapping `u -> v` is consistent with the edges among already-mapped
 /// nodes, in both directions (so no A-edge is dropped and no extra B-edge is
 /// introduced).
-fn feasible(
+///
+/// Map slots hold a dense index of the other graph, or `usize::MAX` when
+/// unmapped. The check is purely structural, so it serves both the bijective
+/// [`is_isomorphic`] search and the injective, induced subgraph search of
+/// `graph_match` (where `map_ba` is sized to the larger graph and its
+/// unmapped slots are skipped); node-label compatibility is each caller's own
+/// test.
+pub(crate) fn feasible(
     u: usize,
     v: usize,
     adj_a: &[HashMap<usize, u64>],

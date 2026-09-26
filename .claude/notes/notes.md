@@ -140,7 +140,14 @@ Known asymmetries (in internal-refactor priority order):
    class** (system-forcefield-04, 2026-09-25). Rust callers compile when they hold the
    frame; wasm compiles inside `typifier.toPotentials(frame)` and `LBFGS`. Add the door
    when a consumer needs it.
-4. The remaining routed items are done slowly, as needed: core SoA
+4. **The assembly surfaces are Python-only** (assembly-07, 2026-09-26):
+   `FragGraph`, `Mapping`, `Trace` (ragged), `FragLibrary`, the placers,
+   orienters and reacters (Python-subclassable through explicit adaptors),
+   `Finalizer`, `Assembler`; `molrs.op`; `Frame.convert_units`;
+   `CoarseGrain.from_atom_frame`; `CGSmilesIR.to_template` / `to_frag_graph`;
+   `UnitRegistry.define_lj_sigma`. wasm and C/C++ add them when a consumer
+   needs them.
+5. The remaining routed items are done slowly, as needed: core SoA
    `update_columns`, splitting `neighbors/mod.rs` into `table.rs` (a pure move).
    Borrowing `Compute::Args` is done (2026-08-10).
 
@@ -149,9 +156,10 @@ Known asymmetries (in internal-refactor priority order):
 <!-- mol:note:topic:md-experimental-ship-0.14 -->
 ## 2026-09-20 — no BLAS feature; the 3x3 helpers are closed-form only
 
-**Decision:** the `blas` feature and `ndarray-linalg` are gone. `core::math`
-keeps the hand-written `det3` / `inv3` and a single-body `matmul` that `rayon`
-parallelises by row.
+**Decision:** the `blas` feature and `ndarray-linalg` are gone. The 3×3
+`det3` / `inv3` are hand-written closed forms, now in `op::linalg` (2026-09-26,
+assembly-01). The `matmul` clause is superseded: `matmul` had test-only use and
+is deleted.
 **Why:** the LAPACK path served only a 3×3 determinant and inverse — slower
 than the cofactor forms next to it — and it `.expect()`-panicked on a singular
 matrix where the default build returned a value, so enabling an
@@ -249,10 +257,11 @@ first-registered kind pose as `bonds`. `mapping.rs` (`CGMapping`,
 
 **Rule**: write fragment-instance membership as the open node prop `frag_id`
 (`Int`), all-or-nothing per Frame column; do not reuse `res_id` or `mol_id`.
-Two writers exist by construction: `CGSmilesIR::to_atomistic` stamps it on
-every expanded atom (`cgsmiles/to_atomistic.rs`, landed in cgsmiles-01d) and
-02a's `Fragment::set_frag_id`; the schema-vocabulary spec gives the key one
-validated owner.
+Two writers exist by construction: `MolGraph::replicate` stamps it column-wise
+on every copy (assembly-03; `CGSmilesIR::to_atomistic` and the Assembler reach
+it through `replicate`), and `Fragment::set_frag_id` per atom. The key is
+spelled by one crate-level constant until the schema-vocabulary spec gives it
+one validated owner.
 
 <!-- mol:note:topic:cgsmiles-v1-refusals -->
 ## 2026-09-21 — CGsmiles v1 refusals and conventions
@@ -768,3 +777,238 @@ atom, so an unmarked bond and a bare `H` happen to read right — but they docum
 dialect the shipped table no longer uses, and a copy into a real rule set would
 reintroduce the defect this chain fixed. Owed: rewrite them to the header conventions of
 `oplsaa_typing.rs` (`-`/`=`/`#`/`:`, `[#1]`, lowercase aromatics), assertions unchanged.
+
+## 2026-09-26 — `molrs::op` is functional by operator ruling (scoped exception)
+
+**Decision:** `molrs::op` exposes plain value types (`Rigid`, `Fit`,
+`Freedom`) and free functions — vector arithmetic, 3×3/4×4 linear algebra,
+rigid and quaternion kernels, weighted superposition, centroid, SO(3)
+sampling. The CLAUDE.md OOP default does not apply inside `op`, and only
+there.
+**Why:** grill 2026-09-26 (assembly chain). These are pure numeric kernels with
+no natural owner; nine private vector copies, four quaternion copies, three
+centroid copies and two Horn kernels existed because there was no shared base.
+**Status:** locked (scope: `molrs::op`)
+
+## 2026-09-26 — `core::types` re-exports the `op` array aliases permanently
+
+**Decision:** `F`, `F3`, `F3x3`, `FN`, `FNx3`, `F3View`, `FNx3View` live in
+`op::types`; `core/types.rs` re-exports them, and `molrs::types::*` stays the
+canonical crate-root spelling for downstream code. New code inside
+`molrs/src` imports `crate::op::types` directly. The re-export is never
+widened to the stack aliases `Vec3`, `Mat3`, `Quat` — those have exactly one
+path, `op::types`.
+**Why:** downstream (molpack, binders) spells `molrs::types::F`; moving the
+path would break every consumer for no gain.
+**Status:** locked
+
+
+## 2026-09-26 — routed to `/mol:refactor` (found by assembly-01)
+
+- The `core::math` special functions (`complex`, `spherical_harmonics`,
+  `wigner3j`, `wigner_d`) are pure numerics with no assembly role; moving them
+  into `op` is a separate refactor.
+- The graph-transform systems `translate`, `scale`, `rotate` (and `orient`
+  until link 05 deletes it) in `core/spatial/geometry.rs` are free functions
+  taking `&mut MolGraph`; the OOP shape is a `MolGraph::transform` method.
+**Status:** open
+
+## 2026-09-26 — `scale_lj::center_of_mass` passes non-finite coordinates through (routed `/mol:fix`)
+
+**Found by:** assembly-01 (the op redirect). A non-finite *mass* is now refused
+(`ScaleLjError::InvalidMass`); a NaN/inf *coordinate* still yields a NaN
+fragment centre that flows into the scaled LJ parameters. Fix: validate the
+coordinates the way `op::superpose` does (`NonFinite { index }`) and refuse.
+**Status:** open
+
+## 2026-09-26 — a second Jacobi eigensolver with absolute tolerances (routed `/mol:refactor`)
+
+**Found by:** assembly-01 architect review. `conformer/etkdg/embed4d.rs:167-236`
+`jacobi_eigen` is an N×N cyclic Jacobi with absolute tolerances (`off < 1e-30`,
+`|apq| < 1e-300`) — the scale dependence `op::linalg` removed for 3×3/4×4
+(1e-15·‖A‖_F). Fix: generalise `op::linalg`'s const-generic Jacobi to N×N with
+the relative tolerance and delete this copy.
+**Status:** open
+
+
+## 2026-09-26 — one typed dimension per column
+
+**Decision:** `ColumnSpec.dimension: ColumnDim` (`NotAQuantity` /
+`Dimensionless` / `Of(PresetDim)` / `Product(PresetDim, PresetDim)`) is the
+single truth for what a column measures. The free-text `ColumnSpec.unit` string
+is removed. The schema document derives its displayed unit from the dimension
+in `real` units (`ColumnDim::unit_in(&UnitPreset::real())`), and
+`Frame::convert_units` derives its per-column factor from the same dimension.
+`PresetDim` replaces the `PRESET_DIMENSIONS` string array, so there is one list
+of dimension names. **Why:** the `unit` string had drifted (`"amu"`, `"e"`,
+`""` on `x`) and, being free text, could not drive a conversion.
+The one undeclared-in-spec Float key, `q0`, was declared `Of(Charge)` (superseded: `q0` removed by assembly-06, port-only connection).
+**Source:** assembly-02-io-units §Design 5.
+**Status:** adopted
+
+## 2026-09-26 — per-key unit doc strings vs the derived unit column (routed `/mol:docs`)
+
+The `doc` strings on `x` and `vx` still say "Unit follows the force field …;
+molrs stores raw numbers", while the schema document now shows a derived
+`unit (real)` column (`angstrom`, `angstrom / femtosecond`). Reconcile the
+wording with the typed dimension. Routed `/mol:docs`.
+**Status:** open
+
+## 2026-09-26 — `CoarseGrain` frame blocks `members` / `cgbonds` are outside the schema vocabulary (routed `/mol:spec`)
+
+**Found by:** assembly-02 architect review. `CoarseGrain::to_frame` writes a
+`members` block (`ibead`, `atom`, both UInt) and a `cgbonds` block; neither is
+in `SCHEMA_BLOCKS` nor `keys.rs`, so the schema document does not describe
+them. Declaring `atom` as a schema column would bind its dtype wherever the key
+appears, so the right shape is a decision for the schema-vocabulary spec (the
+same spec that owes `frag_id`, notes.md 2026-09-21).
+**Status:** open
+
+## 2026-09-26 — `Fragment::inherit_frag_ids` ignores a `set_frag_id` error (routed `/mol:fix`)
+
+**Found by:** assembly-03. `fragment.rs` `inherit_frag_ids` does
+`if self.set_frag_id(atom, id).is_ok()` and drops the error. It cannot fail
+today (live handle, `frag_id` is i32 whenever a label exists), but surfacing it
+changes the public `-> usize` signature, which assembly-03 ruled out.
+**Status:** open
+
+## 2026-09-26 — the LAMMPS force-field reader drops label-led Coeffs rows (routed `/mol:fix`)
+
+**Found by:** assembly-02. `ff/forcefield/readers/lammps.rs:296-302` ends a
+`… Coeffs` section on any line starting with an uppercase letter, so a
+type-labelled row such as `CA 0.1 3.4` in `lammps_coeffs_text` is silently
+dropped. The data reader now keeps such rows (assembly-02 closed-vocabulary
+headers); this parser needs the same header rule.
+**Status:** open
+
+## 2026-09-26 — `Mapping.labels` restates its template's bead labels (routed `/mol:spec`)
+
+**Found by:** assembly-04 architect review. `labels[u]` is, by construction in
+`FragLibrary::map`, the bead-label list of the template named on node u. A
+hand-built `Mapping` can disagree with the template, and nothing checks it:
+`Mapping::trace` (assembly-05) validates (bead_type, label) ∈ rules but has no
+library, and `Assembler::assemble` (assembly-06) takes a `FragGraph`, not a
+`Mapping`. Either a library-aware check (e.g. `FragLibrary` validating a
+`Mapping`) or dropping `labels` in favour of the library is a design decision.
+**Status:** open
+
+## 2026-09-26 — the `Assembler` is the ruled composition point (assembly-06)
+
+**Decision:** `builder::Assembler(library, placer, reacter)` holds three
+injected primitives, is the only component that sees the whole `FragGraph`,
+places every unit, replicates each template per unit with `frag_id` = node
+index, and links along every edge in one `link_many` batch. It never finalizes
+and never writes `res_id`. molrs has no further entry class; molpy's
+`PolymerBuilder` / `Backmapper` compose it (molpy's façade exception).
+**Why:** grill 2026-09-26 — placers, orienters and reacters were leaking
+whole-graph and polymer semantics; one owner of the walk keeps each primitive
+single-purpose.
+**Status:** locked
+
+## 2026-09-26 — connection is by port only; `SiteMap` / `SITE` / `Q0` retired
+
+**Decision:** two units join only through a port pair (`Port::accepts`,
+`PortReacter::link`). `builder/sites.rs` (`SiteMap`, `SiteError`, `SITE_KEY`,
+`PRE_REACTION_CHARGE_KEY`) and the schema keys `site` / `q0` are deleted;
+`FRAME_VOCAB_VERSION` is 2. Cross-repo consumers follow in their own chains:
+molpy `builder/__init__.py`, `builder/assembly/__init__.py`,
+`builder/assembly/_polymer.py`, `core/atomistic.py`, `core/cg.py`,
+`core/fields.py`; molpack `pack_peo_*`.
+The SMIRKS `Reaction` engine stays (consumers: `lib.rs`, `perceive/smarts`,
+Python `PyReaction`, molpy `GraphAssembler` / ambertools builders, molpack
+examples) and so does `%label` (OPLS typing).
+**Why:** two connection mechanisms (SITE maps vs ports) and two grouping keys
+(`res_id` vs `frag_id`) described the same join.
+**Status:** locked
+
+## 2026-09-26 — `Finalizer` is the ruled second door to `generate_topology`
+
+**Decision:** `builder::Finalizer::new(impropers)` calls
+`Atomistic::generate_topology(true, true, impropers, false)` — always angles
+and dihedrals. It is the composable, Python-visible step replacing molpy's
+`StructureFinalizer`, not a second implementation. The Assembler never calls it.
+**Status:** locked
+
+## 2026-09-26 — two doors, one golden: `CGSmilesIR::to_atomistic` and the `Assembler`
+
+**Decision:** both exist. `to_atomistic` reads a CGsmiles string *as a
+molecule* — topology only, no geometry, no handles for unpaired descriptors,
+`frag_id` = node index; it is the notation's own expansion. The Assembler builds
+*placed geometry* from any `FragGraph` source (`FragLibrary::map`, the
+constructors, `to_frag_graph`) and keeps unpaired ports as ports. Neither
+replaces the other. Each is pinned by its own single-stage unit test against the
+one hand-derived heavy-atom golden (`{[#A][#B]}.{#A=CC=[>],#B=[<]=CO}` → C, C,
+C, O; bond numbers (1, 2, 1); `frag_id` [0,0,1,1]); no test chains them
+(CLAUDE.md § Testing Rules).
+**Status:** locked
+
+## 2026-09-26 — assembly-06 test gap and naming kept (recorded, not routed)
+
+- `AssembleError::FragIdOverflow` has no unit test: reaching it needs a
+  `FragGraph` of > 2³¹ nodes. The check is a single `I::try_from` at validation.
+- `builder::PairError` keeps its spec name (assembly-06 §2, assembly-07 §2)
+  although `molrs::PairError` at the crate root is generic; renaming it would
+  touch both specs for a cosmetic gain.
+- The Assembler lays world atoms out grouped by template name (`BTreeMap`),
+  not in node order, unlike `CGSmilesIR::to_atomistic`; `frag_id` is the only
+  unit key downstream code may rely on.
+
+## 2026-09-26 — `perceive_aromaticity` drops write errors with `let _ =` (routed `/mol:fix`)
+
+**Found by:** assembly-06. `perceive/aromaticity.rs:~764,773,778` discard
+`set_atom` / bond-class write errors. At :764 an existing F64 `is_aromatic`
+column refuses the Int write, the error is swallowed, and a stale aromatic flag
+stays (readers accept F64, `perceive/smarts/ast.rs:76`). The fix needs either a
+`Result` return (public signature change) or a coerced write.
+**Status:** open
+
+## 2026-09-26 — six multi-frame Python writers still deep-copy their frames (routed `/mol:refactor`)
+
+**Found by:** assembly-07. The nine single-frame writers in
+`molrs-python/src/io/mod.rs` borrow through `PyFrame::with_frame`; the six
+multi-frame writers still `clone_core_frame()` every frame of the list, because
+`with_frame` borrows one store entry at a time: `write_pdb_trajectory` (~:1619),
+`write_lammps_dump` (~:1677), `write_lammps_dump_local` (~:1693), `write_dcd`
+(~:1720), `write_trr` (~:2047), `write_xtc` (~:2068) (line numbers as of
+2026-09-26). Fix: a multi-entry borrow over the frame store.
+**Status:** open
+
+## 2026-09-26 — Python assemble→finalize copies the world twice (routed `/mol:spec`)
+
+**Found by:** assembly-07 architect review. `Assembler.assemble` returns a
+`Fragment` (moved, not copied), but `Finalizer.finalize` takes an `Atomistic`
+and Python has no move-based `Fragment` → `Atomistic` conversion (Rust:
+`Atomistic::try_from_molgraph(world.into_inner())`), so the Python path is a
+`to_frame` / `from_frame` round trip. Separately `Finalizer.finalize` and
+`Atomistic.generate_topology` are two Python entry points for one capability.
+Decide: `Finalizer` accepting the assembled `Fragment`, or a move-based
+conversion; and which entry point is canonical in Python.
+**Status:** open
+
+## 2026-09-26 — Rust debug ids inside crate-built error strings (routed `/mol:fix`)
+
+**Found by:** assembly-07. The binder renders node / port ids as the integer
+handles Python sees for every error variant that *carries* an id. Two crate
+errors format the id into text instead, so Python still sees `NodeId(..)`:
+`FragLibraryError::InvalidTemplate.reason` (`molrs/src/builder/library.rs:~141,
+~195`, reachable through `FragLibrary.insert`) and one `AssembleError::Graph`
+message (`builder/assemble.rs:~271`, effectively unreachable). Fix: structured
+id fields on those variants, rendered by the binder.
+**Status:** open
+
+## 2026-09-26 — `Potentials.eval_any` deep-copies its frame (routed `/mol:refactor`)
+
+**Found by:** assembly-07. `molrs-python/src/ff/mod.rs:~786` still
+`clone_core_frame()`s: borrowing through `with_frame` would hold the frame store
+while it calls Python-implemented potentials that may touch the same store.
+Restructure: compile inside `with_frame`, evaluate outside.
+**Status:** open
+
+## 2026-09-26 — `op::linalg::inv3` of a matrix whose determinant overflows (routed `/mol:fix`)
+
+**Found at:** the assembly chain-end gate. For finite entries so large that
+`det` overflows to +inf while the relative threshold stays finite, `inv3`
+returns an all-zero matrix instead of `None` or a scaled inverse. Behaviour
+unchanged by the gate's lint fix; decide `None` (overflow = unrepresentable) or
+compute on a rescaled matrix.
+**Status:** open

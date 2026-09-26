@@ -12,9 +12,9 @@
 //! The radii are the caller's: molrs knows centres and lengths, not chemistry.
 
 use super::region::Region;
+use crate::op::vec3::{add, norm, sub};
 use crate::spatial::bvh::Bvh;
 use crate::spatial::simbox::{BoxError, SimBox};
-use crate::spatial::vec3::{add, norm, sub};
 use crate::types::{F, FNx3, FNx3View};
 use ndarray::Array2;
 

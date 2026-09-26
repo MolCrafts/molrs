@@ -32,6 +32,7 @@
 
 use std::collections::HashMap;
 
+use crate::op::vec3::{cross, dot, norm, scale, sub};
 use crate::store::keys;
 use crate::system::atomistic::{AtomId, Atomistic, BondId};
 use crate::system::bond::BondType;
@@ -99,8 +100,8 @@ pub fn chiral_volume(mol: &Atomistic, center: AtomId, neighbor_order: &[AtomId; 
 
     // Scalar triple product of v1, v2, v3  (v4 is the "viewing" direction)
     // volume = v[0] · (v[1] × v[2])
-    let cross = cross3(v[1], v[2]);
-    dot3(v[0], cross)
+    let v12 = cross(v[1], v[2]);
+    dot(v[0], v12)
 }
 
 // ---------------------------------------------------------------------------
@@ -262,10 +263,10 @@ pub fn assign_bond_stereo_from_3d(mol: &Atomistic) -> HashMap<BondId, BondStereo
         let ab = sub(pb, pa); // A → B (bond axis)
 
         // Project va and vb onto the plane perpendicular to ab
-        let va_perp = sub(va, scale(ab, dot3(va, ab) / dot3(ab, ab)));
-        let vb_perp = sub(vb, scale(ab, dot3(vb, ab) / dot3(ab, ab)));
+        let va_perp = sub(va, scale(ab, dot(va, ab) / dot(ab, ab)));
+        let vb_perp = sub(vb, scale(ab, dot(vb, ab) / dot(ab, ab)));
 
-        let cos_angle = dot3(va_perp, vb_perp) / (vec_len(va_perp) * vec_len(vb_perp) + 1e-15);
+        let cos_angle = dot(va_perp, vb_perp) / (norm(va_perp) * norm(vb_perp) + 1e-15);
 
         // cos > 0 → same side → Z; cos < 0 → opposite sides → E
         let stereo = if cos_angle > 1e-9 {
@@ -279,39 +280,6 @@ pub fn assign_bond_stereo_from_3d(mol: &Atomistic) -> HashMap<BondId, BondStereo
     }
 
     result
-}
-
-// ---------------------------------------------------------------------------
-// 3-D math helpers
-// ---------------------------------------------------------------------------
-
-#[inline]
-fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-
-#[inline]
-fn dot3(a: [f64; 3], b: [f64; 3]) -> f64 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-
-#[inline]
-fn cross3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
-
-#[inline]
-fn scale(a: [f64; 3], s: f64) -> [f64; 3] {
-    [a[0] * s, a[1] * s, a[2] * s]
-}
-
-#[inline]
-fn vec_len(a: [f64; 3]) -> f64 {
-    dot3(a, a).sqrt()
 }
 
 // ---------------------------------------------------------------------------

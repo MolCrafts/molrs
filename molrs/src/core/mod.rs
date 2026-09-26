@@ -9,7 +9,8 @@
 //! - [`spatial`] — regions, neighbor lists, geometry
 //! - [`math`], [`units`] — numerical and unit-system foundations
 //!
-//! Structure builders live in [`crate::builder`], above the core layer.
+//! Structure builders live in `crate::builder` (feature `builder`), above the
+//! core layer.
 //!
 //! ## Examples
 //!
@@ -78,8 +79,10 @@ pub use system::atomistic::{
 pub use system::bond_weights::BondDistanceWeights;
 pub use system::coarsegrain::{CoarseGrain, ExtractedCoarseGrain};
 pub use system::extract::{ExtractedBall, InducedSubgraph};
-pub use system::fragment::{Fragment, Port, PortId, PortKind};
+pub use system::frag_graph::{FragEdge, FragGraph};
+pub use system::fragment::{BeadError, Fragment, Port, PortId, PortKind};
 pub use system::graph_hash::{canonical_order, is_isomorphic, structural_hash};
+pub use system::mapping::Mapping;
 pub use system::molgraph::{Atom, Bead, KindId, MolGraph, NodeId, PropValue, Relation};
 pub use system::topology::{Topology, TopologyRingInfo};
 pub use units::{

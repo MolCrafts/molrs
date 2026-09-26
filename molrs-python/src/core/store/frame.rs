@@ -844,6 +844,37 @@ impl PyFrame {
             .map_err(ffi_error_to_pyerr)
     }
 
+    /// Rescale every physical column in place from preset ``from_preset`` to
+    /// ``to_preset``.
+    ///
+    /// Each Float column is scaled by its schema dimension's factor between
+    /// the two presets, resolved through ``registry`` (so a reduced-LJ preset
+    /// needs its ``lj_*`` units defined there); the box scales by the length
+    /// factor. ``meta["units"]`` must name ``from_preset`` when present and
+    /// names ``to_preset`` afterwards. Atomic: on refusal nothing changes.
+    ///
+    /// Parameters
+    /// ----------
+    /// registry : UnitRegistry
+    /// from_preset, to_preset : UnitPreset
+    ///
+    /// Raises
+    /// ------
+    /// UnitsError
+    ///     (a ``ValueError``) naming the column, ``simbox`` or
+    ///     ``meta.units`` that cannot be converted.
+    fn convert_units(
+        &mut self,
+        registry: &crate::core::units::PyUnitRegistry,
+        from_preset: &crate::core::units::PyUnitPreset,
+        to_preset: &crate::core::units::PyUnitPreset,
+    ) -> PyResult<()> {
+        self.inner
+            .with_mut(|f| f.convert_units(&registry.inner, &from_preset.inner, &to_preset.inner))
+            .map_err(ffi_error_to_pyerr)?
+            .map_err(crate::error::units_error)
+    }
+
     /// Judge this frame against the canonical Frame schema.
     ///
     /// Delegates to ``molrs``'s ``Validator::canonical`` — dtype, shape,

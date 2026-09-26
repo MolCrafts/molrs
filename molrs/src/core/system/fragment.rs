@@ -11,8 +11,11 @@
 //!
 //! A port is an arity-2 relation `(anchor, handle)`: the **anchor** is the atom
 //! that keeps its place in the product molecule, and the **handle** is a real
-//! capping hydrogen bonded to it — which is what an unconsumed BigSMILES /
-//! CGsmiles descriptor means, and what a paired descriptor's bond replaces.
+//! atom bonded to it — the root of the leaving group a paired descriptor's
+//! bond replaces. The handle may be any element: an unconsumed BigSMILES /
+//! CGsmiles descriptor is a capping hydrogen, and a hydroxyl leaving group
+//! roots at its O. The leaving group is the handle's branch — what stays
+//! connected to the handle once the anchor–handle bond is cut.
 //! Storing only the anchor would lose which valence of a multivalent anchor was
 //! meant. The descriptor itself is a [`PortKind`] (the closed four-glyph
 //! vocabulary), a free-form `label` and a [`BondNumber`] order.
@@ -45,9 +48,9 @@
 //!
 //! # Two enums for four roles
 //!
-//! [`PortKind`] and the notation-side
-//! [`DescriptorKind`](crate::io::smiles::DescriptorKind) name the same four
-//! roles and are deliberately distinct types, mirroring the existing split
+//! [`PortKind`] and the notation-side `crate::io::smiles::DescriptorKind`
+//! (feature `smiles`) name the same four roles and are deliberately distinct
+//! types, mirroring the existing split
 //! between the SMILES AST's `BondKind` and this layer's
 //! [`BondType`] / [`BondNumber`]: the AST names what was *written*, `core`
 //! names what is *stored*. `core` does not name `io`, and the single conversion
@@ -85,15 +88,18 @@
 //! # Ok::<(), molrs::MolRsError>(())
 //! ```
 
+use std::collections::{BTreeSet, HashMap};
+use std::fmt;
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 
 use crate::error::MolRsError;
 use crate::store::frame::Frame;
 use crate::store::keys;
-use crate::system::atomistic::{AtomId, BondId};
+use crate::system::atomistic::{AtomId, Bond, BondId};
 use crate::system::bond::{BondNumber, BondType, write_bond_class};
-use crate::system::molgraph::{Atom, KindId, MolGraph, PropValue, RelationId};
+use crate::system::molgraph::{Atom, FRAG_ID, KindId, MolGraph, PropValue, RelationId};
+use crate::types::I;
 
 /// Handle to a port (a relation of the `ports` kind).
 ///
@@ -117,8 +123,8 @@ pub type PortId = RelationId;
 /// declared dtype to pin a code table to.
 ///
 /// This enum is the **stored** vocabulary; the notation-side
-/// [`DescriptorKind`](crate::io::smiles::DescriptorKind) is the *written* one,
-/// and the two are distinct types by design (see the module docs).
+/// `crate::io::smiles::DescriptorKind` is the *written* one, and the two are
+/// distinct types by design (see the module docs).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PortKind {
     /// `$` — self-complementary: bonds any `$` carrying the same label.
@@ -139,6 +145,19 @@ impl PortKind {
             PortKind::Left => "<",
             PortKind::Right => ">",
             PortKind::Shared => "!",
+        }
+    }
+
+    /// The role a partner port must play: `<` ↔ `>`, while `$` and `!` are
+    /// self-complementary.
+    ///
+    /// An involution: `k.complement().complement() == k`.
+    pub fn complement(self) -> PortKind {
+        match self {
+            PortKind::Left => PortKind::Right,
+            PortKind::Right => PortKind::Left,
+            PortKind::Symmetric => PortKind::Symmetric,
+            PortKind::Shared => PortKind::Shared,
         }
     }
 }
@@ -179,7 +198,8 @@ impl FromStr for PortKind {
 pub struct Port {
     /// The fragment atom that keeps its place in the product molecule.
     pub anchor: AtomId,
-    /// The capping hydrogen this descriptor sits on.
+    /// The root of the leaving group this descriptor sits on: bonded to
+    /// `anchor`, any element.
     pub handle: AtomId,
     /// The descriptor's role.
     pub kind: PortKind,
@@ -189,11 +209,76 @@ pub struct Port {
     pub order: BondNumber,
 }
 
+impl Port {
+    /// Whether `other` may pair with this port: `other.kind` is this kind's
+    /// [`complement`](PortKind::complement), and the labels and orders are
+    /// equal.
+    ///
+    /// This is **the one** port-compatibility rule on stored ports, following
+    /// the CGsmiles pairing rule (Grünewald et al., *J. Chem. Inf. Model.*
+    /// 2025, doi:10.1021/acs.jcim.5c00064). `builder::FragLibrary::map` and
+    /// `builder::PortReacter::link` both pair ports through it. The CGsmiles
+    /// resolver keeps its own private rule on the notation-side
+    /// `DescriptorKind` (in `io::smiles`); the two enums are distinct by
+    /// design (module docs, "Two enums for four roles").
+    ///
+    /// Symmetric in its arguments, because [`PortKind::complement`] is an
+    /// involution. The anchor and handle atoms are not compared.
+    pub fn accepts(&self, other: &Port) -> bool {
+        other.kind == self.kind.complement()
+            && self.label == other.label
+            && self.order == other.order
+    }
+}
+
+/// Why a [`Fragment`] has no well-formed bead partition
+/// ([`Fragment::beads`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BeadError {
+    /// Atom `atom` carries no integer [`keys::BEAD`].
+    Missing {
+        /// The offending atom.
+        atom: AtomId,
+    },
+    /// Atom `atom` carries the negative [`keys::BEAD`] `bead`.
+    ///
+    /// The Frame schema declares `bead` unsigned and every public write
+    /// refuses a negative, so this guards that invariant against a raw
+    /// crate-internal column write.
+    Negative {
+        /// The offending atom.
+        atom: AtomId,
+        /// The value it carries.
+        bead: I,
+    },
+    /// Bead index `bead` lies below the bead count but no atom carries it.
+    Empty {
+        /// The index no atom carries.
+        bead: usize,
+    },
+}
+
+impl fmt::Display for BeadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Missing { atom } => {
+                write!(f, "atom {atom:?} carries no integer '{}'", keys::BEAD)
+            }
+            Self::Negative { atom, bead } => {
+                write!(f, "atom {atom:?} carries negative '{}' {bead}", keys::BEAD)
+            }
+            Self::Empty { bead } => write!(f, "no atom carries bead {bead}"),
+        }
+    }
+}
+
+impl std::error::Error for BeadError {}
+
 /// Molecular graph with named attachment points.
 ///
 /// Invariant: every node carries the canonical [`keys::ELEMENT`] property, as
 /// on [`Atomistic`](crate::system::atomistic::Atomistic) — a handle is a real
-/// hydrogen, never a dummy atom, because a conformer needs an element.
+/// atom, never a dummy, because a conformer needs an element.
 ///
 /// Generic graph methods (`nodes`, `neighbors`, `remove_relation`, …) remain
 /// available through `Deref` / `DerefMut`, with two consequences worth stating:
@@ -202,9 +287,11 @@ pub struct Port {
 ///   [`add_port`](Self::add_port). It is not an invariant maintained across
 ///   `DerefMut`: a caller that removes that bond through the inner graph leaves
 ///   a port whose handle is unbonded, and [`port`](Self::port) — which
-///   validates the three descriptor props only — will still read it back.
-///   Hydrogen-stripping passes are the practical hazard: removing a fragment's
-///   hydrogens removes its handles, and the ports left behind are dangling.
+///   validates the three descriptor props only — will still read it back;
+///   [`leaving_group`](Self::leaving_group) refuses such a stale port.
+///   Hydrogen-stripping passes are the practical hazard: removing a node
+///   removes every port on it, so stripping a fragment's hydrogens silently
+///   drops every port whose handle is a hydrogen.
 /// * A `frag_id` an atom does not carry is emitted to a [`Frame`] as a null
 ///   cell, not as fragment instance zero (see [`to_frame`](Self::to_frame)).
 ///
@@ -329,6 +416,24 @@ impl Fragment {
         crate::spatial::geometry::rotate(self.as_molgraph_mut(), axis, angle, about)
     }
 
+    /// Place `transforms.len()` rigid copies of `template`, copy `c` moved by
+    /// `transforms[c]` and stamped `frag_id = frag_ids[c]`; returns the new
+    /// atoms copy-major. Ports are a relation kind, so every copy keeps the
+    /// template's ports on its own atoms. Column-wise and atomic — see
+    /// [`MolGraph::replicate`].
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`MolGraph::replicate`]; `self` is unchanged then.
+    pub fn replicate(
+        &mut self,
+        template: &Fragment,
+        transforms: &[crate::op::rigid::Rigid],
+        frag_ids: &[crate::types::I],
+    ) -> Result<Vec<AtomId>, MolRsError> {
+        self.graph.replicate(&template.graph, transforms, frag_ids)
+    }
+
     // ---- atoms (nodes) ----
 
     /// Add an atom with element symbol and 3D coordinates (Å).
@@ -395,9 +500,45 @@ impl Fragment {
         Ok(bid)
     }
 
+    /// Stamp both facts about bond `id` — its class and its localized number —
+    /// like [`Atomistic::set_bond_class`](crate::system::atomistic::Atomistic::set_bond_class).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MolRsError::NotFound`] when `id` names no live bond, and
+    /// [`MolRsError::Validation`] when the store refuses either value.
+    pub fn set_bond_class(
+        &mut self,
+        id: BondId,
+        bond_type: BondType,
+        bond_number: BondNumber,
+    ) -> Result<(), MolRsError> {
+        write_bond_class(&mut self.graph, self.bond, id, bond_type, bond_number)
+    }
+
+    /// Whether `a` and `b` are joined by a bond (a port does not count).
+    pub fn is_bonded(&self, a: AtomId, b: AtomId) -> bool {
+        self.bond_between(a, b).is_some()
+    }
+
+    /// The bond joining `a` and `b`, if any.
+    fn bond_between(&self, a: AtomId, b: AtomId) -> Option<BondId> {
+        self.graph
+            .neighbor_relations(a)
+            .find(|&(kind, _, other)| kind == self.bond && other == b)
+            .map(|(_, rid, _)| rid)
+    }
+
     /// Number of bonds. Ports are a separate kind and are not counted here.
     pub fn n_bonds(&self) -> usize {
         self.graph.n_relations(self.bond)
+    }
+
+    /// Iterate over all `(BondId, Bond)` pairs (each materialized), in row
+    /// order. Ports are a separate kind and are not listed here; a bond's
+    /// `nodes` are its two atoms.
+    pub fn bonds(&self) -> impl Iterator<Item = (BondId, Bond)> + '_ {
+        self.graph.relations(self.bond)
     }
 
     // ---- ports ----
@@ -405,20 +546,25 @@ impl Fragment {
     /// Record a descriptor on the `(anchor, handle)` valence.
     ///
     /// Endpoint order is load-bearing: `anchor` is the atom that stays in the
-    /// product molecule, `handle` the capping hydrogen bonded to it that a
-    /// paired descriptor's bond replaces. `label` is free-form; `""` means
-    /// unnamed. `order` is the multiplicity the formed bond will carry.
+    /// product molecule, `handle` the atom bonded to it that roots the leaving
+    /// group a paired descriptor's bond replaces. The handle may be any
+    /// element: a capping hydrogen is the common case, and a hydroxyl leaving
+    /// group roots at its O (the O and its H leave together). `label` is
+    /// free-form; `""` means unnamed. `order` is the multiplicity the formed
+    /// bond will carry.
     ///
     /// The three descriptor facts are written as the relation props `port_kind`
     /// (the glyph), `port_label` and `port_order`.
     ///
     /// # Errors
     ///
-    /// Returns [`MolRsError::NotFound`] when either handle is stale or unknown,
-    /// and [`MolRsError::Validation`] when `handle` is not a hydrogen, when it
-    /// is not bonded to `anchor` (checked here and only here — see the type
-    /// docs), or when `order` is [`BondNumber::Unknown`], which is not a
-    /// definite multiplicity.
+    /// Returns [`MolRsError::NotFound`] when either atom id (`anchor` or
+    /// `handle`) is stale or unknown, and [`MolRsError::Validation`] when
+    /// `handle` is not bonded to `anchor`
+    /// (checked here and only here — see the type docs), when `order` is
+    /// [`BondNumber::Unknown`], which is not a definite multiplicity, or when
+    /// the `(anchor, handle)` valence already carries a port: a world port is
+    /// resolved by that pair, so it names at most one.
     pub fn add_port(
         &mut self,
         anchor: AtomId,
@@ -428,13 +574,7 @@ impl Fragment {
         order: BondNumber,
     ) -> Result<PortId, MolRsError> {
         self.graph.get_node(anchor)?;
-        let handle_atom = self.graph.get_node(handle)?;
-        let element = handle_atom.get_str(keys::ELEMENT).unwrap_or_default();
-        if element != "H" {
-            return Err(MolRsError::validation(format!(
-                "port handle {handle:?} is '{element}'; a handle is a capping hydrogen"
-            )));
-        }
+        self.graph.get_node(handle)?;
         if !self.is_bonded(anchor, handle) {
             return Err(MolRsError::validation(format!(
                 "port handle {handle:?} is not bonded to its anchor {anchor:?}"
@@ -445,6 +585,22 @@ impl Fragment {
                 "a port order is a definite bond number, never Unknown",
             ));
         }
+        let taken = self
+            .graph
+            .neighbor_relations(anchor)
+            .any(|(kind, rid, other)| {
+                kind == self.port
+                    && other == handle
+                    && self
+                        .graph
+                        .relation_nodes(self.port, rid)
+                        .is_ok_and(|nodes| nodes[0] == anchor)
+            });
+        if taken {
+            return Err(MolRsError::validation(format!(
+                "the valence ({anchor:?}, {handle:?}) already carries a port"
+            )));
+        }
         let pid = self.graph.add_relation(self.port, &[anchor, handle])?;
         self.graph
             .set_relation_prop(self.port, pid, "port_kind", kind.as_str())?;
@@ -453,13 +609,6 @@ impl Fragment {
         self.graph
             .set_relation_prop(self.port, pid, "port_order", PropValue::from(order))?;
         Ok(pid)
-    }
-
-    /// Whether `a` and `b` are joined by a bond (not by a port).
-    fn is_bonded(&self, a: AtomId, b: AtomId) -> bool {
-        self.graph
-            .neighbor_relations(a)
-            .any(|(kind, _, other)| kind == self.bond && other == b)
     }
 
     /// Read a port back, validating its descriptor.
@@ -511,6 +660,33 @@ impl Fragment {
         })
     }
 
+    /// The leaving group of `port`: its handle's connected component over
+    /// bonds once the anchor–handle bond is cut. It contains the handle, and
+    /// contains the anchor only when the handle sits on a ring with it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MolRsError::Validation`] when the anchor–handle bond no longer
+    /// exists (the port is stale — see the type docs); that is the only error.
+    pub fn leaving_group(&self, port: &Port) -> Result<BTreeSet<AtomId>, MolRsError> {
+        let cut = self.bond_between(port.handle, port.anchor).ok_or_else(|| {
+            MolRsError::validation(format!(
+                "port handle {:?} is no longer bonded to its anchor {:?}",
+                port.handle, port.anchor
+            ))
+        })?;
+        let mut seen = BTreeSet::from([port.handle]);
+        let mut stack = vec![port.handle];
+        while let Some(node) = stack.pop() {
+            for (kind, rid, other) in self.graph.neighbor_relations(node) {
+                if kind == self.bond && rid != cut && seen.insert(other) {
+                    stack.push(other);
+                }
+            }
+        }
+        Ok(seen)
+    }
+
     /// The error a port missing one of its three descriptor props yields.
     fn missing_prop(id: PortId, key: &str) -> MolRsError {
         MolRsError::validation(format!("port {id:?} carries no '{key}' property"))
@@ -524,6 +700,85 @@ impl Fragment {
     /// Number of ports.
     pub fn n_ports(&self) -> usize {
         self.graph.n_relations(self.port)
+    }
+
+    /// The fragment's ports in canonical order: sorted by their handle atom's
+    /// node row, ties (ports sharing a handle) broken by their anchor's row.
+    ///
+    /// A port's **ordinal** is its index in this list, and ordinals are how a
+    /// [`FragGraph`](crate::system::frag_graph::FragGraph) edge addresses a
+    /// port. For a template built from CGsmiles the ordinal equals the
+    /// descriptor index, since the CGsmiles builder appends one handle per
+    /// descriptor, in descriptor order, after every other atom. A string
+    /// label cannot address a port: `[$]COC[$]` carries two ports both
+    /// labelled `""`.
+    ///
+    /// [`add_port`](Self::add_port) admits one port per `(anchor, handle)`
+    /// valence, so the key is unique and port insertion order does not enter
+    /// (only a duplicate relation written through `DerefMut`, which bypasses
+    /// that check, would fall back to relation order).
+    ///
+    /// # Errors
+    ///
+    /// The [`port`](Self::port) error of a live port that does not read back
+    /// (its descriptor props were overwritten through `DerefMut`), and
+    /// [`MolRsError::Validation`] naming a port whose handle or anchor is no
+    /// live node
+    /// (removing a node removes every port on it, so that is a broken
+    /// invariant, not a sort key).
+    pub fn ordered_ports(&self) -> Result<Vec<PortId>, MolRsError> {
+        let mut ids: Vec<((usize, usize), PortId)> = Vec::with_capacity(self.n_ports());
+        for id in self.ports() {
+            let port = self.port(id)?;
+            let row = |atom: AtomId| {
+                self.graph.node_table().row(atom).ok_or_else(|| {
+                    MolRsError::validation(format!(
+                        "port {id:?} names {atom:?}, which is no live atom"
+                    ))
+                })
+            };
+            ids.push(((row(port.handle)?, row(port.anchor)?), id));
+        }
+        ids.sort_by_key(|&(key, _)| key);
+        Ok(ids.into_iter().map(|(_, id)| id).collect())
+    }
+
+    // ---- the bead partition ----
+
+    /// The fragment's bead partition: per bead index `0..k`, the atoms
+    /// carrying that [`keys::BEAD`], in node-row order.
+    ///
+    /// A **bead** is a group of atoms that a coarse-grained model represents
+    /// as one particle; the integer `bead` column on each atom says which
+    /// group it belongs to, numbered from 0 within this fragment.
+    ///
+    /// `k` is the largest `bead` plus one; a fragment without atoms has no
+    /// beads. This is the one reading of the `bead` column; a template's
+    /// labels, reference points and weights are built on top of it.
+    ///
+    /// # Errors
+    ///
+    /// Atoms are read in node-row order and the first offending one is
+    /// reported: [`BeadError::Missing`] when it carries no integer `bead`,
+    /// [`BeadError::Negative`] when its `bead` is negative. Once every atom
+    /// reads, [`BeadError::Empty`] names the lowest index below `k` that no
+    /// atom carries.
+    pub fn beads(&self) -> Result<Vec<Vec<AtomId>>, BeadError> {
+        let mut beads: Vec<Vec<AtomId>> = Vec::new();
+        for (atom, props) in self.graph.nodes() {
+            let bead = props
+                .get_int(keys::BEAD)
+                .ok_or(BeadError::Missing { atom })?;
+            let index = usize::try_from(bead).map_err(|_| BeadError::Negative { atom, bead })?;
+            if index >= beads.len() {
+                beads.resize_with(index + 1, Vec::new);
+            }
+            beads[index].push(atom);
+        }
+        match beads.iter().position(Vec::is_empty) {
+            Some(bead) => Err(BeadError::Empty { bead }),
+            None => Ok(beads),
+        }
     }
 
     // ---- per-atom fragment membership ----
@@ -547,13 +802,13 @@ impl Fragment {
                 i32::MAX
             ))
         })?;
-        self.graph.set_node(atom, "frag_id", PropValue::Int(stored))
+        self.graph.set_node(atom, FRAG_ID, PropValue::Int(stored))
     }
 
     /// The fragment instance `atom` came from, or `None` when it carries no
     /// `frag_id` (or the handle is stale).
     pub fn frag_id(&self, atom: AtomId) -> Option<u32> {
-        let stored = self.graph.get_node(atom).ok()?.get_int("frag_id")?;
+        let stored = self.graph.get_node(atom).ok()?.get_int(FRAG_ID)?;
         u32::try_from(stored).ok()
     }
 
@@ -569,14 +824,14 @@ impl Fragment {
     /// conformer, for instance). The precondition is exactly that: a degree-1
     /// atom deliberately left unassigned **will** be relabelled.
     pub fn inherit_frag_ids(&mut self) -> usize {
-        let labels: Vec<(AtomId, Option<u32>)> = self
+        let labels: HashMap<AtomId, u32> = self
             .graph
             .node_ids()
-            .map(|atom| (atom, self.frag_id(atom)))
+            .filter_map(|atom| self.frag_id(atom).map(|id| (atom, id)))
             .collect();
         let mut pending: Vec<(AtomId, u32)> = Vec::new();
-        for &(atom, label) in &labels {
-            if label.is_some() {
+        for atom in self.graph.node_ids() {
+            if labels.contains_key(&atom) {
                 continue;
             }
             let mut bonded = self
@@ -587,7 +842,7 @@ impl Fragment {
             let (Some(only), None) = (bonded.next(), bonded.next()) else {
                 continue;
             };
-            if let Some(&(_, Some(inherited))) = labels.iter().find(|&&(id, _)| id == only) {
+            if let Some(&inherited) = labels.get(&only) {
                 pending.push((atom, inherited));
             }
         }
@@ -654,7 +909,7 @@ mod tests {
 
     use ndarray::Array1;
 
-    use super::{Fragment, Port, PortId, PortKind};
+    use super::{BeadError, Fragment, Port, PortId, PortKind};
     use crate::error::MolRsError;
     use crate::store::block::Block;
     use crate::store::frame::Frame;
@@ -801,14 +1056,33 @@ mod tests {
     }
 
     #[test]
-    fn add_port_rejects_non_hydrogen_handle() {
-        let (mut frag, c0, c1, _h) = ch_template();
-        // C1 is bonded to C0, so only the element rule can reject it.
+    fn add_port_accepts_a_heavy_leaving_group_handle() {
+        // Rework (spec assembly-06 §1, decision 9 / golden C2): a leaving
+        // group may root at a heavy atom — here the O of an OH on C0.
+        let (mut frag, c0, _c1, _h) = ch_template();
+        let o = frag.add_atom_bare("O");
+        let oh = frag.add_atom_bare("H");
+        frag.add_bond(c0, o).unwrap();
+        frag.add_bond(o, oh).unwrap();
+        let pid = frag
+            .add_port(c0, o, PortKind::Left, "A", BondNumber::Single)
+            .expect("a bonded heavy handle is a legal port");
+        assert_eq!(frag.n_ports(), 1);
+        let port = frag.port(pid).expect("the port reads back");
+        assert_eq!(port.anchor, c0);
+        assert_eq!(port.handle, o);
+    }
+
+    /// Amended 2026-09-26 (spec assembly-06 §1): the Assembler resolves a
+    /// world port by its (anchor, handle) pair, so a pair holds one port.
+    #[test]
+    fn add_port_refuses_a_second_port_on_the_same_valence() {
+        let (mut frag, c0, _c1, h, _pid) = ported_template();
         let err = frag
-            .add_port(c0, c1, PortKind::Symmetric, "A", BondNumber::Single)
-            .expect_err("a handle is a real capping hydrogen");
+            .add_port(c0, h, PortKind::Left, "B", BondNumber::Single)
+            .expect_err("(C0, H) already carries a port");
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
-        assert_eq!(frag.n_ports(), 0, "a rejected port leaves no relation");
+        assert_eq!(frag.n_ports(), 1, "a rejected port leaves no relation");
     }
 
     #[test]
@@ -1169,5 +1443,184 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ---- port ordinals and the one compatibility rule ----------------------
+
+    /// `ordered_ports` sorts by the handle's node row, not by insertion order:
+    /// the port on handle row 3 is added first, the port on handle row 2
+    /// second, and the ordinal list puts the row-2 port at index 0.
+    #[test]
+    fn ordered_ports_sorts_by_handle_row() {
+        let mut frag = Fragment::new();
+        let c0 = frag.add_atom_xyz("C", 0.0, 0.0, 0.0); // row 0
+        let c1 = frag.add_atom_xyz("C", 1.54, 0.0, 0.0); // row 1
+        let h2 = frag.add_atom_bare("H"); // row 2
+        let h3 = frag.add_atom_bare("H"); // row 3
+        frag.add_bond(c0, c1).unwrap();
+        frag.add_bond(c0, h2).unwrap();
+        frag.add_bond(c1, h3).unwrap();
+
+        let on_h3 = frag
+            .add_port(c1, h3, PortKind::Right, "", BondNumber::Single)
+            .expect("legal port on row-3 handle");
+        let on_h2 = frag
+            .add_port(c0, h2, PortKind::Left, "", BondNumber::Single)
+            .expect("legal port on row-2 handle");
+
+        assert_eq!(
+            frag.ports().collect::<Vec<PortId>>(),
+            vec![on_h3, on_h2],
+            "fixture precondition: insertion order differs from handle-row order"
+        );
+        assert_eq!(
+            frag.ordered_ports().expect("every port reads back"),
+            vec![on_h2, on_h3]
+        );
+    }
+
+    #[test]
+    fn ordered_ports_of_a_portless_fragment_is_empty() {
+        let (frag, _c0, _c1, _h) = ch_template();
+        assert_eq!(
+            frag.ordered_ports().expect("no port to read back"),
+            Vec::<PortId>::new()
+        );
+    }
+
+    /// A port whose kind glyph was overwritten through `DerefMut` does not
+    /// read back, so the ordering is refused rather than panicking.
+    #[test]
+    fn ordered_ports_refuses_a_port_that_does_not_read_back() {
+        let (mut frag, _c0, _c1, _h, pid) = ported_template();
+        let ports = frag.kind_id("ports").expect("'ports' registered");
+        frag.set_relation_prop(ports, pid, "port_kind", "Z")
+            .unwrap();
+
+        let err = frag
+            .ordered_ports()
+            .expect_err("a corrupted port is refused");
+
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+    }
+
+    // ---- the bead partition -------------------------------------------------
+
+    /// Atoms stamped bead 1, 0, 1 in rows 0, 1, 2: bead 0 holds row 1 and
+    /// bead 1 holds rows 0 and 2, each in row order.
+    #[test]
+    fn beads_lists_each_beads_atoms_in_row_order() {
+        let mut frag = Fragment::new();
+        let ids: Vec<AtomId> = [1_i32, 0, 1]
+            .into_iter()
+            .map(|b| {
+                let id = frag.add_atom_bare("C");
+                frag.set_node(id, crate::store::keys::BEAD, b)
+                    .expect("stamp bead");
+                id
+            })
+            .collect();
+
+        let beads = frag.beads().expect("beads 0 and 1 are contiguous");
+
+        assert_eq!(beads, vec![vec![ids[1]], vec![ids[0], ids[2]]]);
+    }
+
+    /// The schema refuses a negative `bead` on every public write, so a raw
+    /// column write plants −1 on row 1; `beads` refuses it, naming that atom.
+    #[test]
+    fn beads_refuses_a_negative_bead_naming_the_atom() {
+        let mut frag = Fragment::new();
+        let ids: Vec<AtomId> = (0..2)
+            .map(|_| {
+                let id = frag.add_atom_bare("C");
+                frag.set_node(id, crate::store::keys::BEAD, 0_i32)
+                    .expect("stamp bead");
+                id
+            })
+            .collect();
+        frag.as_molgraph_mut()
+            .node_table_mut()
+            .set_i32(ids[1], crate::store::keys::BEAD, -1)
+            .expect("raw write bypasses the schema");
+
+        let err = frag.beads().expect_err("a negative bead is refused");
+
+        assert_eq!(
+            err,
+            BeadError::Negative {
+                atom: ids[1],
+                bead: -1
+            }
+        );
+    }
+
+    #[test]
+    fn port_kind_complement_maps_left_right_and_fixes_the_others() {
+        assert_eq!(PortKind::Left.complement(), PortKind::Right);
+        assert_eq!(PortKind::Right.complement(), PortKind::Left);
+        assert_eq!(PortKind::Symmetric.complement(), PortKind::Symmetric);
+        assert_eq!(PortKind::Shared.complement(), PortKind::Shared);
+    }
+
+    #[test]
+    fn port_kind_complement_is_an_involution() {
+        for kind in [
+            PortKind::Symmetric,
+            PortKind::Left,
+            PortKind::Right,
+            PortKind::Shared,
+        ] {
+            assert_eq!(kind.complement().complement(), kind, "{kind:?}");
+        }
+    }
+
+    /// A materialized [`Port`] on `ch_template`'s `(C0, H)` valence with the
+    /// given descriptor; `accepts` reads only kind, label and order.
+    fn port_with(kind: PortKind, label: &str, order: BondNumber) -> Port {
+        let (_frag, c0, _c1, h) = ch_template();
+        Port {
+            anchor: c0,
+            handle: h,
+            kind,
+            label: label.to_owned(),
+            order,
+        }
+    }
+
+    #[test]
+    fn port_accepts_left_right_with_equal_label_and_order() {
+        let left = port_with(PortKind::Left, "a", BondNumber::Single);
+        let right = port_with(PortKind::Right, "a", BondNumber::Single);
+        assert!(left.accepts(&right));
+        assert!(right.accepts(&left));
+    }
+
+    #[test]
+    fn port_accepts_symmetric_with_symmetric() {
+        let a = port_with(PortKind::Symmetric, "", BondNumber::Single);
+        let b = port_with(PortKind::Symmetric, "", BondNumber::Single);
+        assert!(a.accepts(&b));
+    }
+
+    #[test]
+    fn port_accepts_refuses_a_label_mismatch() {
+        let left = port_with(PortKind::Left, "a", BondNumber::Single);
+        let right = port_with(PortKind::Right, "b", BondNumber::Single);
+        assert!(!left.accepts(&right));
+    }
+
+    #[test]
+    fn port_accepts_refuses_an_order_mismatch() {
+        let left = port_with(PortKind::Left, "a", BondNumber::Single);
+        let right = port_with(PortKind::Right, "a", BondNumber::Double);
+        assert!(!left.accepts(&right));
+    }
+
+    #[test]
+    fn port_accepts_refuses_left_with_left() {
+        let a = port_with(PortKind::Left, "a", BondNumber::Single);
+        let b = port_with(PortKind::Left, "a", BondNumber::Single);
+        assert!(!a.accepts(&b));
     }
 }

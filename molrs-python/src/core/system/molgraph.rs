@@ -31,6 +31,7 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 
+use numpy::PyReadonlyArrayDyn;
 use pyo3::PyClass;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -928,17 +929,6 @@ impl PyAtomistic {
             .collect())
     }
 
-    /// Build ``n`` native copies in one graph. The source is unchanged.
-    fn replicate(&self, py: Python<'_>, n: usize) -> PyResult<Py<PyAtomistic>> {
-        let mut output = Atomistic::new();
-        for _ in 0..n {
-            output
-                .merge(self.inner.clone())
-                .map_err(molrs_error_to_pyerr)?;
-        }
-        PyAtomistic::from_core(py, output)
-    }
-
     /// Induced subgraph on an explicit list of atom handles.
     ///
     /// Returns ``(subgraph, {parent_handle: new_handle})``. Stale handles raise.
@@ -1546,6 +1536,41 @@ impl PyCoarseGrain {
         PyCoarseGrain::from_core(py, inner)
     }
 
+    /// Build a `CoarseGrain` from an all-atom-shaped :class:`~molrs.Frame`:
+    /// every ``atoms`` row becomes one bead and every ``bonds`` row one CG
+    /// bond (endpoints ``atomi`` / ``atomj`` are 0-based ``atoms`` rows, as
+    /// the LAMMPS data reader writes them).
+    ///
+    /// Parameters
+    /// ----------
+    /// frame : Frame
+    /// type_key : str
+    ///     The ``atoms`` column read as ``bead_type``: a string column is
+    ///     copied verbatim, an integer column is rendered in decimal.
+    ///
+    /// Returns
+    /// -------
+    /// CoarseGrain
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If the frame has no ``atoms`` block or no ``type_key`` column, the
+    ///     column is neither string nor integer or has a null row, ``atoms``
+    ///     already holds a different ``bead_type`` column, or a bond endpoint
+    ///     is past the atom rows.
+    #[staticmethod]
+    fn from_atom_frame(
+        py: Python<'_>,
+        frame: &PyFrame,
+        type_key: &str,
+    ) -> PyResult<Py<PyCoarseGrain>> {
+        let inner = frame
+            .with_frame(|f| CoarseGrain::from_atom_frame(f, type_key))?
+            .map_err(molrs_error_to_pyerr)?;
+        PyCoarseGrain::from_core(py, inner)
+    }
+
     // ---- structural graph hash (WL) ----
 
     /// Isomorphism-invariant Weisfeiler–Lehman structural hash (``int``) of the
@@ -1594,17 +1619,6 @@ impl PyCoarseGrain {
             .collect())
     }
 
-    /// Build ``n`` native copies in one coarse-grained graph.
-    fn replicate(&self, py: Python<'_>, n: usize) -> PyResult<Py<PyCoarseGrain>> {
-        let mut output = CoarseGrain::new();
-        for _ in 0..n {
-            output
-                .merge(self.inner.clone())
-                .map_err(molrs_error_to_pyerr)?;
-        }
-        PyCoarseGrain::from_core(py, output)
-    }
-
     /// Induced subgraph on bead handles. Returns ``(subgraph, node_map)``.
     fn induced_subgraph(
         &self,
@@ -1646,6 +1660,12 @@ impl PyCoarseGrain {
     /// Wrap an existing core [`CoarseGrain`] as a Python `CoarseGrain` object.
     pub(crate) fn from_core(py: Python<'_>, inner: CoarseGrain) -> PyResult<Py<PyCoarseGrain>> {
         from_core_shadowed(py, PyCoarseGrain { inner })
+    }
+
+    /// Borrow the held core [`CoarseGrain`] (for the assembly bindings that
+    /// map or trace it).
+    pub(crate) fn core(&self) -> &CoarseGrain {
+        &self.inner
     }
 }
 
@@ -1952,56 +1972,115 @@ impl PyFragment {
     pub(crate) fn core(&self) -> &Fragment {
         &self.inner
     }
-}
 
-// ---------------------------------------------------------------------------
-// World dispatch for binders that take any graph
-// ---------------------------------------------------------------------------
-//
-// Rigid-body moves (`translate` / `rotate` / `scale`) are leaf methods, below.
-// Owners that act on a graph they are handed (`SiteMap`, `TracePlacer`) accept
-// any of the graph types and dispatch leaf-first so a leaf resolves to its
-// *own* graph (never the empty base it carries for `issubclass`).
-
-/// Refuse at once any object [`try_with_world_mut`] would refuse later, so a
-/// type that stores a graph fails at construction rather than on first use.
-/// Every leaf extends `PyGraph`, so one type check covers all four.
-pub(crate) fn expect_world(mol: &Bound<'_, PyAny>) -> PyResult<()> {
-    if mol.is_instance_of::<PyGraph>() {
-        Ok(())
-    } else {
-        Err(PyTypeError::new_err(format!(
-            "expected a Graph / Atomistic / CoarseGrain / Fragment, got {}",
-            mol.get_type().name()?
-        )))
+    /// Mutably borrow the held core [`Fragment`] (for the assembly bindings,
+    /// which link ports in place and move a world in and out by swap).
+    pub(crate) fn core_mut(&mut self) -> &mut Fragment {
+        &mut self.inner
     }
 }
 
-/// Resolve a Python graph object to its own `MolGraph` and run `f` on it,
-/// handing the closure's `Result` back to Python as a `ValueError`.
-/// Leaf-first so a `PyAtomistic`/`PyCoarseGrain`/`PyFragment` uses its core
-/// graph, not the empty `PyGraph` base it carries for subclassing. A missing
-/// leaf arm is not an error but a *wrong answer*: the fallthrough would edit
-/// the empty base and report success.
-pub(crate) fn try_with_world_mut<T, E: std::fmt::Display>(
-    mol: &Bound<'_, PyAny>,
-    f: impl FnOnce(&mut MolGraph) -> Result<T, E>,
-) -> PyResult<T> {
-    let result = if let Ok(leaf) = mol.cast::<PyAtomistic>() {
-        f(leaf.borrow_mut().mol_mut())
-    } else if let Ok(leaf) = mol.cast::<PyCoarseGrain>() {
-        f(leaf.borrow_mut().mol_mut())
-    } else if let Ok(leaf) = mol.cast::<PyFragment>() {
-        f(leaf.borrow_mut().mol_mut())
-    } else if let Ok(g) = mol.cast::<PyGraph>() {
-        f(g.borrow_mut().mol_mut())
-    } else {
-        return Err(PyTypeError::new_err(
-            "expected a Graph / Atomistic / CoarseGrain / Fragment",
-        ));
+/// The shared argument seam of the three leaf ``replicate`` methods:
+/// ``rotations (N,3,3)`` + ``translations (N,3)`` as rigid motions, and
+/// ``frag_ids`` as ``i32`` (an ``int32`` array read directly, any other
+/// integer sequence element by element, out-of-range values refused).
+fn replicate_args(
+    rotations: &PyReadonlyArrayDyn<'_, f64>,
+    translations: &PyReadonlyArrayDyn<'_, f64>,
+    frag_ids: &Bound<'_, PyAny>,
+) -> PyResult<(Vec<molrs::op::rigid::Rigid>, Vec<i32>)> {
+    let transforms = crate::op::rigids_from_arrays(rotations, translations)?;
+    let frag_ids = match frag_ids.extract::<PyReadonlyArrayDyn<'_, i32>>() {
+        Ok(array) => {
+            let view = array.as_array();
+            if view.ndim() != 1 {
+                return Err(PyValueError::new_err(format!(
+                    "frag_ids must have shape (N,), got {:?}",
+                    view.shape()
+                )));
+            }
+            view.iter().copied().collect()
+        }
+        Err(_) => frag_ids.extract::<Vec<i32>>()?,
     };
-    result.map_err(|error| PyValueError::new_err(error.to_string()))
+    Ok((transforms, frag_ids))
 }
+
+// ---------------------------------------------------------------------------
+// Rigid replication
+// ---------------------------------------------------------------------------
+
+/// The leaf ``replicate`` method: `$leaf` is the Python class name, `$node`
+/// what its nodes are called, `$kept` what else a copy carries.
+macro_rules! replicate_impl {
+    ($ty:ty, $leaf:literal, $node:literal, $kept:literal) => {
+        #[pymethods]
+        impl $ty {
+            /// Grow this graph by one rigid copy of ``template`` per transform.
+            ///
+            /// Copy ``c`` is ``template`` moved by ``rotations[c] @ r + translations[c]``
+            /// and every node of it is stamped ``frag_id = frag_ids[c]``. Every
+            #[doc = concat!("relation kind of ``template`` is copied with it", $kept, ". Column-wise and")]
+            /// atomic: on an error this graph is unchanged. ``template`` is never
+            /// mutated. The GIL is released while the copies are written.
+            ///
+            /// Parameters
+            /// ----------
+            #[doc = concat!("template : ", $leaf)]
+            ///     Another graph: this graph cannot be its own template.
+            /// rotations : ndarray, shape (N, 3, 3), float64
+            /// translations : ndarray, shape (N, 3), float64
+            /// frag_ids : ndarray, shape (N,), int32
+            ///
+            /// Returns
+            /// -------
+            /// list[int]
+            #[doc = concat!("    The new ", $node, " handles, copy-major.")]
+            ///
+            /// Raises
+            /// ------
+            /// ValueError
+            ///     If ``template`` is this graph, on a wrong shape, disagreeing
+            ///     counts, or a column of ``template`` whose type contradicts
+            ///     the one this graph holds.
+            fn replicate(
+                slf: &Bound<'_, Self>,
+                template: &Bound<'_, Self>,
+                rotations: PyReadonlyArrayDyn<'_, f64>,
+                translations: PyReadonlyArrayDyn<'_, f64>,
+                frag_ids: &Bound<'_, PyAny>,
+            ) -> PyResult<Vec<u64>> {
+                // Checked before either borrow: borrowing one object both
+                // ways would be PyO3's borrow error, not this refusal.
+                if slf.is(template) {
+                    return Err(PyValueError::new_err(
+                        "a graph cannot replicate itself; pass a copy as the template",
+                    ));
+                }
+                let (transforms, frag_ids) = replicate_args(&rotations, &translations, frag_ids)?;
+                let template = template.try_borrow()?;
+                let mut this = slf.try_borrow_mut()?;
+                let (target, source) = (&mut this.inner, &template.inner);
+                let added = slf
+                    .py()
+                    .detach(|| target.replicate(source, &transforms, &frag_ids))
+                    .map_err(molrs_error_to_pyerr)?;
+                Ok(added.into_iter().map(node_to_u64).collect())
+            }
+        }
+    };
+}
+
+replicate_impl!(PyAtomistic, "Atomistic", "atom", "");
+replicate_impl!(PyCoarseGrain, "CoarseGrain", "bead", "");
+replicate_impl!(PyFragment, "Fragment", "atom", ", ports included");
+
+// ---------------------------------------------------------------------------
+// Rigid-body moves
+// ---------------------------------------------------------------------------
+//
+// `translate` / `rotate` / `scale` are leaf methods: each resolves to the
+// leaf's *own* graph (never the empty base it carries for `issubclass`).
 
 macro_rules! rigid_body_impl {
     ($ty:ty) => {

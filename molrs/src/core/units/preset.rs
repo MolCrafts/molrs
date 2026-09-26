@@ -17,19 +17,72 @@ use crate::types::F;
 
 use super::constants::{BOLTZMANN, BOLTZMANN_REAL, COULOMB_REAL, ELEMENTARY_CHARGE};
 
-/// Ten named dimensions a preset reports, in a stable order.
-pub const PRESET_DIMENSIONS: [&str; 10] = [
-    "mass",
-    "length",
-    "time",
-    "energy",
-    "temperature",
-    "charge",
-    "pressure",
-    "velocity",
-    "force",
-    "density",
-];
+/// One of the ten named dimensions every [`UnitPreset`] reports.
+///
+/// A *dimension* is the kind of quantity (length, energy, …), independent of
+/// the unit it is written in; a preset fixes one unit per dimension. Each
+/// variant's doc gives its unit in the `real` preset, the preset the schema
+/// document displays units in.
+///
+/// [`name`](Self::name) is the preset table key, so
+/// `preset.unit(dim.name())` is the preset's unit for that dimension.
+/// [`ALL`](Self::ALL) is the single list of those keys, in the order of the
+/// LAMMPS `units` documentation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PresetDim {
+    /// Mass (`real`: g/mol).
+    Mass,
+    /// Length (`real`: Å).
+    Length,
+    /// Time (`real`: fs).
+    Time,
+    /// Energy (`real`: kcal/mol).
+    Energy,
+    /// Temperature (`real`: K).
+    Temperature,
+    /// Charge (`real`: e, the elementary charge).
+    Charge,
+    /// Pressure (`real`: atm).
+    Pressure,
+    /// Velocity (`real`: Å/fs).
+    Velocity,
+    /// Force (`real`: kcal/(mol·Å)).
+    Force,
+    /// Mass density (`real`: g/cm³).
+    Density,
+}
+
+impl PresetDim {
+    /// Every dimension, in preset table order.
+    pub const ALL: [PresetDim; 10] = [
+        PresetDim::Mass,
+        PresetDim::Length,
+        PresetDim::Time,
+        PresetDim::Energy,
+        PresetDim::Temperature,
+        PresetDim::Charge,
+        PresetDim::Pressure,
+        PresetDim::Velocity,
+        PresetDim::Force,
+        PresetDim::Density,
+    ];
+
+    /// The preset table key (`"mass"`, `"length"`, …).
+    pub fn name(self) -> &'static str {
+        match self {
+            PresetDim::Mass => "mass",
+            PresetDim::Length => "length",
+            PresetDim::Time => "time",
+            PresetDim::Energy => "energy",
+            PresetDim::Temperature => "temperature",
+            PresetDim::Charge => "charge",
+            PresetDim::Pressure => "pressure",
+            PresetDim::Velocity => "velocity",
+            PresetDim::Force => "force",
+            PresetDim::Density => "density",
+        }
+    }
+}
 
 /// One unit-system view: ten unit names plus the Boltzmann and Coulomb
 /// constants expressed in that system.
@@ -162,7 +215,8 @@ impl UnitPreset {
     }
 
     /// Reduced LJ units. Numeric constants are 1; names follow the registry's
-    /// `lj_*` definitions.
+    /// `lj_*` definitions (`UnitRegistry::define_lj_units`, or
+    /// `define_lj_sigma` for the length scale alone).
     pub fn lj() -> Self {
         Self::from_table(
             "lj",
@@ -171,7 +225,7 @@ impl UnitPreset {
                 ("length", "lj_sigma"),
                 ("time", "lj_tau"),
                 ("energy", "lj_epsilon"),
-                ("temperature", "lj_epsilon"),
+                ("temperature", "lj_epsilon_over_kB"),
                 ("charge", "lj_charge"),
                 ("pressure", "lj_epsilon / lj_sigma ** 3"),
                 ("velocity", "lj_sigma / lj_tau"),
@@ -386,11 +440,65 @@ mod tests {
         let reg = UnitPresetRegistry::new();
         assert!(reg.len() >= 7);
         for (_name, preset) in reg.iter() {
-            for dim in PRESET_DIMENSIONS {
+            for dim in PresetDim::ALL {
                 assert!(
-                    preset.unit(dim).is_some(),
-                    "preset `{}` missing dimension `{dim}`",
-                    preset.name()
+                    preset.unit(dim.name()).is_some(),
+                    "preset `{}` missing dimension `{}`",
+                    preset.name(),
+                    dim.name()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn preset_dim_all_names_are_exactly_the_preset_table_keys() {
+        // `PresetDim` is the single list of dimension names; this pins it to
+        // the real preset table: every name is a key, and there is no key it
+        // misses (distinct names, same count).
+        let real = UnitPreset::real();
+        for dim in PresetDim::ALL {
+            assert!(
+                real.unit(dim.name()).is_some(),
+                "`{}` is not a preset table key",
+                dim.name()
+            );
+        }
+        let names: std::collections::HashSet<&str> =
+            PresetDim::ALL.iter().map(|d| d.name()).collect();
+        assert_eq!(
+            names.len(),
+            PresetDim::ALL.len(),
+            "duplicate PresetDim name"
+        );
+        assert_eq!(names.len(), real.units.len());
+    }
+
+    #[test]
+    fn lj_temperature_is_epsilon_over_boltzmann() {
+        assert_eq!(UnitPreset::lj().temperature(), "lj_epsilon_over_kB");
+    }
+
+    #[test]
+    fn every_dimension_of_every_builtin_preset_parses_after_define_lj_units() {
+        use crate::units::UnitRegistry;
+        let mut units = UnitRegistry::new();
+        let mass = units.quantity(100.0, "gram_per_mole").unwrap();
+        let sigma = units.quantity(4.2, "angstrom").unwrap();
+        let epsilon = units.quantity(1.0, "kilocalorie_per_mole").unwrap();
+        units.define_lj_units(&mass, &sigma, &epsilon).unwrap();
+
+        let presets = UnitPresetRegistry::new();
+        for (name, preset) in presets.iter() {
+            for dim in PresetDim::ALL {
+                let expr = preset
+                    .unit(dim.name())
+                    .unwrap_or_else(|| panic!("preset `{name}` lacks `{}`", dim.name()));
+                assert!(
+                    units.parse(expr).is_ok(),
+                    "preset `{name}` dimension `{}`: `{expr}` does not parse: {:?}",
+                    dim.name(),
+                    units.parse(expr).err()
                 );
             }
         }

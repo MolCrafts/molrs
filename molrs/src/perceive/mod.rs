@@ -4,8 +4,8 @@
 //!
 //! Gasteiger charges used to live here. They are a *charge model*, not a
 //! perception, and they now sit with the other charge models in
-//! [`ff::charge`](crate::ff::charge) — one implementation, reached through the
-//! [`ChargeModel`](crate::ff::charge::ChargeModel) trait.
+//! `crate::ff::charge` (feature `ff`) — one implementation, reached through the
+//! `ChargeModel` trait there.
 //!
 //! The layer's public face is the [`Perceive`] builder, which gives every
 //! perception one shape — graph in / graph out, non-mutating:

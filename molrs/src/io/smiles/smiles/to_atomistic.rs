@@ -8,7 +8,7 @@
 //!
 //! The conversion walks the IR tree, creates atoms with element symbols, creates
 //! bonds from the chain structure and ring closures, and sets properties
-//! (charge, isotope, chirality, hydrogen count).
+//! (mass, charge, isotope, chirality, hydrogen count).
 //!
 //! [`fragment_to_atomistic`] is the fragment-dialect entry point and shares
 //! that one walk: it additionally hands back the bonding descriptors the
@@ -20,7 +20,9 @@ use std::collections::{HashMap, HashSet};
 use crate::io::smiles::chem::ast::*;
 use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
 use crate::io::smiles::smiles::canonical_element_symbol;
+use molrs::Element;
 use molrs::error::MolRsError;
+use molrs::store::keys;
 use molrs::system::atomistic::{AtomId, Atomistic};
 use molrs::system::molgraph::PropValue;
 
@@ -247,6 +249,17 @@ impl<'a> Builder<'a> {
     /// Every atom of every chain, branch and component flows through here, so
     /// this is also where bonding descriptors are either refused (plain path)
     /// or recorded against their atom (fragment path).
+    ///
+    /// # Mass
+    ///
+    /// Every atom that names an element carries `mass` (amu, `f64`): the
+    /// standard atomic weight [`Element::atomic_mass`] states, the same table
+    /// hydrogen repletion reads. An atom written with an explicit isotope
+    /// (`[13C]`) carries its **mass number** A instead — an approximation,
+    /// since molrs has no isotope-mass table; the error is below 0.02 amu for
+    /// the light elements. The wildcard (`*`, and the bracket `[*]`, `[A]`,
+    /// `[a]`) names no element and carries no mass, isotope or not: an isotope
+    /// on a wildcard is an attachment label, not a nucleus.
     fn add_atom_node(&mut self, node: &AtomNode) -> Result<AtomId, SmilesError> {
         if !self.collect_descriptors && !node.descriptors.is_empty() {
             return Err(SmilesError::new(
@@ -259,7 +272,9 @@ impl<'a> Builder<'a> {
 
         let id = match &node.spec {
             AtomSpec::Organic { symbol, .. } => {
-                let id = self.mol.add_atom_bare(&canonical_element_symbol(symbol));
+                let element = canonical_element_symbol(symbol);
+                let id = self.mol.add_atom_bare(&element);
+                self.set_mass(id, &element, None, node.span)?;
                 if node.spec.written_aromatic() {
                     self.mark_aromatic(id, node.span)?;
                 }
@@ -279,7 +294,9 @@ impl<'a> Builder<'a> {
                     BracketSymbol::Aliphatic | BracketSymbol::Aromatic => "*".to_owned(),
                 };
 
-                let id = self.mol.add_atom_bare(&canonical_element_symbol(&sym));
+                let element = canonical_element_symbol(&sym);
+                let id = self.mol.add_atom_bare(&element);
+                self.set_mass(id, &element, *isotope, node.span)?;
 
                 if node.spec.written_aromatic() {
                     self.mark_aromatic(id, node.span)?;
@@ -447,6 +464,31 @@ impl<'a> Builder<'a> {
             ));
         }
         Ok(())
+    }
+
+    /// Write `mass` on `id` for the element symbol `element`, per the rule
+    /// [`Builder::add_atom_node`] states: the mass number when `isotope` is
+    /// written, the table's atomic weight otherwise, nothing when `element`
+    /// names no element.
+    ///
+    /// # Errors
+    ///
+    /// [`SmilesErrorKind::Build`] at `span` — see [`Builder::build_error`].
+    fn set_mass(
+        &mut self,
+        id: AtomId,
+        element: &str,
+        isotope: Option<u16>,
+        span: Span,
+    ) -> Result<(), SmilesError> {
+        let Some(table) = Element::by_symbol(element) else {
+            return Ok(());
+        };
+        let mass = match isotope {
+            Some(a) => f64::from(a),
+            None => f64::from(table.atomic_mass()),
+        };
+        self.set_prop(id, keys::MASS, mass, span)
     }
 
     /// Write one numeric component on `id`.
@@ -713,6 +755,75 @@ mod tests {
         let mol = smiles_to_mol("[CH3:1]");
         let (_, atom) = mol.atoms().next().unwrap();
         assert_eq!(atom.get_f64("atom_class"), Some(1.0));
+    }
+
+    // -- mass ---------------------------------------------------------------
+    //
+    // The expected mass of an element atom is read from molrs's own `Element`
+    // table (the source of truth, `.claude/specs/assembly-03-template.md`
+    // § Domain basis); an explicit isotope writes its mass number A. No
+    // external program produced any value here.
+
+    /// The standard atomic weight of `symbol` from the `Element` table, as
+    /// the `f64` a mass prop stores.
+    fn table_mass(symbol: &str) -> f64 {
+        f64::from(
+            molrs::Element::by_symbol(symbol)
+                .unwrap_or_else(|| panic!("{symbol:?} is not in the Element table"))
+                .atomic_mass(),
+        )
+    }
+
+    #[test]
+    fn test_element_atoms_carry_their_table_mass() {
+        let mol = smiles_to_mol("CCO");
+        let masses: Vec<(String, Option<f64>)> = mol
+            .atoms()
+            .map(|(_, a)| {
+                (
+                    a.get_str("element").unwrap_or("").to_owned(),
+                    a.get_f64(molrs::store::keys::MASS),
+                )
+            })
+            .collect();
+        let expected = ["C", "C", "O"];
+        assert_eq!(masses.len(), expected.len());
+        for ((element, mass), want) in masses.iter().zip(expected) {
+            assert_eq!(element, want);
+            let mass = mass.unwrap_or_else(|| panic!("{element} atom carries no mass"));
+            assert!(
+                (mass - table_mass(want)).abs() < 1e-12,
+                "{element}: mass {mass} != table {}",
+                table_mass(want)
+            );
+        }
+    }
+
+    #[test]
+    fn test_isotope_atom_carries_its_mass_number() {
+        let mol = smiles_to_mol("[13CH4]");
+        let (_, atom) = mol.atoms().next().unwrap();
+        let mass = atom
+            .get_f64(molrs::store::keys::MASS)
+            .expect("an isotope atom carries a mass");
+        assert!((mass - 13.0).abs() < 1e-12, "mass {mass} != 13.0");
+    }
+
+    #[test]
+    fn test_wildcard_atom_carries_no_mass() {
+        let mol = smiles_to_mol("*C");
+        let atoms: Vec<_> = mol.atoms().map(|(_, a)| a).collect();
+        assert_eq!(atoms.len(), 2);
+        assert_eq!(atoms[0].get_str("element"), Some("*"));
+        assert!(
+            !atoms[0].contains_key(molrs::store::keys::MASS),
+            "the wildcard has no element, hence no mass"
+        );
+        assert_eq!(atoms[1].get_str("element"), Some("C"));
+        let mass = atoms[1]
+            .get_f64(molrs::store::keys::MASS)
+            .expect("the carbon carries a mass");
+        assert!((mass - table_mass("C")).abs() < 1e-12);
     }
 
     // -- disconnected components --------------------------------------------

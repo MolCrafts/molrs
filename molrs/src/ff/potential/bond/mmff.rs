@@ -3,8 +3,9 @@
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{mag3, sub3, term_table, validate_coords};
+use crate::ff::potential::geometry::{sub3, term_table, validate_coords};
 use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::op::vec3::norm;
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -40,7 +41,7 @@ impl MMFFBondStretch {
         for idx in 0..n_terms {
             let (i, j) = atoms(idx);
             let d = sub3(coords, j, coords, i);
-            let r = mag3(d);
+            let r = norm(d);
             let dr = r - self.r0[idx];
             let cs2 = cs * cs;
 

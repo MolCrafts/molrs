@@ -16,6 +16,7 @@ use crate::compute::error::ComputeError;
 use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
 use crate::compute::util::{MicHelper, get_positions_ref};
+use crate::op::vec3::{dot, norm};
 
 /// A single detected D–H···A hydrogen bond (atom indices into the frame).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -56,16 +57,6 @@ pub struct HBondsResult {
 }
 
 impl ComputeResult for HBondsResult {}
-
-#[inline]
-fn norm(v: [F; 3]) -> F {
-    (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
-}
-
-#[inline]
-fn dot(a: [F; 3], b: [F; 3]) -> F {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
 
 impl HBonds {
     /// Construct a detector. Convenience over struct-literal syntax.

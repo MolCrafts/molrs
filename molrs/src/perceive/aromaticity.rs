@@ -774,13 +774,7 @@ pub fn perceive_aromaticity(mol: &mut Atomistic) -> usize {
         } else if mol.bond_type(bid).is_aromatic() {
             // A bond that was aromatic and is no longer falls back to the class
             // its own localized number states — never to a stale aromatic flag.
-            let number = mol.bond_number(bid);
-            let demoted = match number {
-                BondNumber::Double => BondType::Double,
-                BondNumber::Triple => BondType::Triple,
-                BondNumber::Unknown => BondType::Unknown,
-                _ => BondType::Single,
-            };
+            let demoted = mol.bond_number(bid).implied_type();
             let _ = mol.set_bond_prop(bid, keys::BOND_TYPE, demoted);
         }
     }

@@ -236,7 +236,7 @@ type UnitDefTuple = (String, Vec<String>, String, f64, f64, [i32; 7], bool);
 
 #[pyclass(module = "molrs", name = "UnitRegistry", subclass, dict)]
 pub struct PyUnitRegistry {
-    inner: UnitRegistry,
+    pub(crate) inner: UnitRegistry,
 }
 
 impl PyUnitRegistry {
@@ -327,6 +327,22 @@ impl PyUnitRegistry {
             .map_err(units_error)
     }
 
+    /// Define the reduced-LJ length unit ``lj_sigma`` alone.
+    ///
+    /// Only quantities of pure length dimension then have a reduced scale;
+    /// every other ``lj_*`` unit stays unknown.
+    ///
+    /// Raises
+    /// ------
+    /// UnitsError
+    ///     If ``sigma`` is not a finite positive length, or ``lj_sigma`` is
+    ///     already defined.
+    fn define_lj_sigma(&mut self, sigma: &PyQuantity) -> PyResult<()> {
+        self.inner
+            .define_lj_sigma(&sigma.inner)
+            .map_err(units_error)
+    }
+
     fn define_lj_units(
         &mut self,
         mass: &PyQuantity,
@@ -379,7 +395,7 @@ impl PyUnitRegistry {
 #[pyclass(module = "molrs", name = "UnitPreset", frozen, from_py_object)]
 #[derive(Clone)]
 pub struct PyUnitPreset {
-    inner: UnitPreset,
+    pub(crate) inner: UnitPreset,
 }
 
 #[pymethods]

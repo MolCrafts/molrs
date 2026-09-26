@@ -4,7 +4,7 @@
 //!
 //! Unlike [`GaussianDensity`](super::gaussian_density::GaussianDensity), which
 //! is lab-frame, the SDF first superimposes each frame's reference atoms onto a
-//! canonical template (native Kabsch, [`super::kabsch`]), applies the same
+//! canonical template (Horn superposition, [`crate::op::superpose`]), applies the same
 //! rigid rotation to the surrounding target atoms — after minimum-image
 //! unwrapping relative to the reference centre of mass — and only then bins
 //! them into a grid centred on that COM. The result is the familiar "density
@@ -29,11 +29,14 @@ use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::{Array2, Array3, Array4};
 
-use super::kabsch::{kabsch, rotate};
 use crate::compute::error::ComputeError;
 use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
 use crate::compute::util::{MicHelper, get_positions_ref};
+use crate::op::rigid::{Rigid, apply};
+use crate::op::superpose::{DEFAULT_GAP_TOL, Freedom, centroid, superpose};
+use crate::op::types::{Vec3, to_vec3};
+use crate::op::vec3::normalize;
 
 /// A regular axis-aligned voxel grid centred on the reference COM.
 ///
@@ -91,7 +94,8 @@ impl GridSpec {
 #[derive(Debug, Clone)]
 pub struct SpatialDistribution {
     reference: Vec<usize>,
-    template: Array2<F>,
+    /// Canonical reference geometry, one row per reference atom.
+    template: Vec<Vec3>,
     target: Vec<usize>,
     grid: GridSpec,
     /// Optional `(tail, head)` atom-index pairs (parallel to `target`) defining
@@ -108,9 +112,11 @@ impl SpatialDistribution {
     /// # Errors
     ///
     /// [`ComputeError::DimensionMismatch`] if `template` rows ≠ `reference`
-    /// length; [`ComputeError::OutOfRange`] for a degenerate grid or fewer than
-    /// 3 reference atoms. (Collinearity of the template is caught per-frame by
-    /// [`kabsch`].)
+    /// length or `template` does not have 3 columns;
+    /// [`ComputeError::OutOfRange`] for a degenerate grid or fewer than 3
+    /// reference atoms. (A frame whose superposition leaves the orientation
+    /// undetermined, e.g. a collinear template, is refused per-frame with
+    /// [`ComputeError::OutOfRange`].)
     pub fn new(
         reference: Vec<usize>,
         template: Array2<F>,
@@ -122,6 +128,13 @@ impl SpatialDistribution {
                 expected: reference.len(),
                 got: template.nrows(),
                 what: "SDF template rows",
+            });
+        }
+        if template.ncols() != 3 {
+            return Err(ComputeError::DimensionMismatch {
+                expected: 3,
+                got: template.ncols(),
+                what: "SDF template columns",
             });
         }
         if reference.len() < 3 {
@@ -136,6 +149,7 @@ impl SpatialDistribution {
                 value: format!("n={:?}, extent={:?}", grid.n, grid.extent),
             });
         }
+        let template = template.rows().into_iter().map(to_vec3).collect();
         Ok(Self {
             reference,
             template,
@@ -160,14 +174,11 @@ impl SpatialDistribution {
         self
     }
 
-    fn reference_coords(&self, xs: &[F], ys: &[F], zs: &[F]) -> Array2<F> {
-        let mut a = Array2::<F>::zeros((self.reference.len(), 3));
-        for (row, &i) in self.reference.iter().enumerate() {
-            a[[row, 0]] = xs[i];
-            a[[row, 1]] = ys[i];
-            a[[row, 2]] = zs[i];
-        }
-        a
+    fn reference_coords(&self, xs: &[F], ys: &[F], zs: &[F]) -> Vec<Vec3> {
+        self.reference
+            .iter()
+            .map(|&i| [xs[i], ys[i], zs[i]])
+            .collect()
     }
 
     /// Bin one frame's targets into `counts` (and, when supplied, the orientation
@@ -191,16 +202,43 @@ impl SpatialDistribution {
         let zs = zs_p.slice();
 
         // Align this frame's reference set onto the template.
+        // `superpose(frame, template)` gives R with R·(frameᵢ − c_f) ≈
+        // (templateᵢ − c_t): the lab → body-frame rotation.
         let ref_coords = self.reference_coords(xs, ys, zs);
-        let (r, _rmsd) = kabsch(self.template.view(), ref_coords.view())?;
+        let weights = vec![1.0; ref_coords.len()];
+        let fit =
+            superpose(&ref_coords, &self.template, &weights, DEFAULT_GAP_TOL).map_err(|e| {
+                ComputeError::OutOfRange {
+                    field: "SpatialDistribution::reference",
+                    value: e.to_string(),
+                }
+            })?;
+        if fit.freedom != Freedom::Unique {
+            return Err(ComputeError::OutOfRange {
+                field: "SpatialDistribution::reference",
+                value: format!(
+                    "superposition leaves the orientation undetermined ({:?}); \
+                     the template must span a plane",
+                    fit.freedom
+                ),
+            });
+        }
+        let body_rotation = Rigid {
+            rotation: fit.rigid.rotation,
+            translation: [0.0; 3],
+        };
 
-        // Reference COM (lab frame) = centroid of the reference atoms.
-        let com = centroid(&ref_coords);
+        // Reference COM (lab frame) = centroid of the reference atoms. The
+        // weights are all 1 and `superpose` accepted the set, so it is non-empty.
+        let com = centroid(&ref_coords, &weights).ok_or(ComputeError::OutOfRange {
+            field: "SpatialDistribution::reference",
+            value: "empty reference selection".into(),
+        })?;
 
         for (t, &ai) in self.target.iter().enumerate() {
             // Minimum-image vector COM → target, then rotate into body frame.
             let disp = mic.disp(com, [xs[ai], ys[ai], zs[ai]]);
-            let body = rotate(&r, disp);
+            let body = apply(&body_rotation, disp);
             let Some([ix, iy, iz]) = self.grid.index(body) else {
                 continue;
             };
@@ -214,10 +252,8 @@ impl SpatialDistribution {
                     [xs[tail], ys[tail], zs[tail]],
                     [xs[head], ys[head], zs[head]],
                 );
-                let n = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-                if n > 0.0 {
-                    let u = [v[0] / n, v[1] / n, v[2] / n];
-                    let bu = rotate(&r, u);
+                if let Some(u) = normalize(v) {
+                    let bu = apply(&body_rotation, u);
                     for d in 0..3 {
                         osum[[ix, iy, iz, d]] += bu[d];
                     }
@@ -313,21 +349,6 @@ impl Compute for SpatialDistribution {
     }
 }
 
-/// Centroid of an `M × 3` coordinate array.
-fn centroid(a: &Array2<F>) -> [F; 3] {
-    let m = a.nrows().max(1) as F;
-    let mut c = [0.0_f64; 3];
-    for row in a.rows() {
-        for d in 0..3 {
-            c[d] += row[d];
-        }
-    }
-    for cd in &mut c {
-        *cd /= m;
-    }
-    c
-}
-
 /// Accumulated SDF grid plus optional bulk-normalized density and orientation.
 #[derive(Debug, Clone)]
 pub struct SpatialDistributionResult {
@@ -384,5 +405,116 @@ impl ComputeResult for SpatialDistributionResult {
             self.orientation = Some(mean);
         }
         self.finalized = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use molrs::Frame;
+    use molrs::store::block::Block;
+    use ndarray::{Array1 as A1, array};
+
+    fn frame_with(positions: &[[F; 3]]) -> Frame {
+        let x = A1::from_iter(positions.iter().map(|p| p[0]));
+        let y = A1::from_iter(positions.iter().map(|p| p[1]));
+        let z = A1::from_iter(positions.iter().map(|p| p[2]));
+        let mut block = Block::new();
+        block.insert("x", x.into_dyn()).unwrap();
+        block.insert("y", y.into_dyn()).unwrap();
+        block.insert("z", z.into_dyn()).unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", block);
+        frame
+    }
+
+    /// 4 × 4 × 4 grid of unit voxels spanning `[−2, 2]³` about the COM.
+    fn unit_grid() -> GridSpec {
+        GridSpec {
+            n: [4, 4, 4],
+            extent: [4.0, 4.0, 4.0],
+        }
+    }
+
+    #[test]
+    fn two_reference_atoms_are_refused() {
+        // Two points fix only a line: the spin about it is undetermined.
+        let template = array![[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
+        let err = SpatialDistribution::new(vec![0, 1], template, vec![], unit_grid()).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ComputeError::OutOfRange {
+                    field: "SpatialDistribution::reference",
+                    ..
+                }
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn collinear_reference_is_refused_per_frame() {
+        // Three collinear points: superposition leaves a free spin about the
+        // line (Freedom::Spin), so the body frame is undetermined.
+        let template = array![[-1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
+        let sdf = SpatialDistribution::new(vec![0, 1, 2], template, vec![3], unit_grid()).unwrap();
+        let frame = frame_with(&[
+            [4.0, 5.0, 5.0],
+            [5.0, 5.0, 5.0],
+            [6.0, 5.0, 5.0],
+            [5.0, 5.5, 5.0],
+        ]);
+        let err = sdf.compute(&[&frame], ()).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ComputeError::OutOfRange {
+                    field: "SpatialDistribution::reference",
+                    ..
+                }
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn template_without_three_columns_is_dimension_mismatch() {
+        let template = array![[1.0, 0.0], [0.0, 2.0], [-1.0, -2.0]];
+        let err =
+            SpatialDistribution::new(vec![0, 1, 2], template, vec![], unit_grid()).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ComputeError::DimensionMismatch {
+                    expected: 3,
+                    got: 2,
+                    ..
+                }
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn target_lands_in_body_frame_voxel_after_z_rotation() {
+        // Template (body frame), centroid at the origin, spans the xy-plane.
+        let template = array![[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [-1.0, -2.0, 0.0]];
+        let sdf = SpatialDistribution::new(vec![0, 1, 2], template, vec![3], unit_grid()).unwrap();
+        // Lab copy = Rz(+90°)·template + (5, 5, 5); Rz(+90°): (x, y) → (−y, x).
+        //   (1, 0, 0) → (5, 6, 5); (0, 2, 0) → (3, 5, 5); (−1, −2, 0) → (7, 4, 5).
+        // COM = (5, 5, 5). Lab → body rotation is Rz(−90°): (x, y) → (y, −x).
+        // Target displacement (−0.5, 1.5, 0.5) → body (1.5, 0.5, 0.5).
+        // Shifted by +2 → (3.5, 2.5, 2.5) → voxel (3, 2, 2).
+        // (Identity would give voxel (1, 3, 2); the wrong sense Rz(+90°), (0, 1, 2).)
+        let frame = frame_with(&[
+            [5.0, 6.0, 5.0],
+            [3.0, 5.0, 5.0],
+            [7.0, 4.0, 5.0],
+            [4.5, 6.5, 5.5],
+        ]);
+        let res = sdf.compute(&[&frame], ()).unwrap();
+        assert_eq!(res.counts[[3, 2, 2]], 1.0);
+        assert_eq!(res.counts.sum(), 1.0);
     }
 }

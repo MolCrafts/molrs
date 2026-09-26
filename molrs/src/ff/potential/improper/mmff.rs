@@ -3,8 +3,9 @@
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{cross3, dot3, mag3, sub3, term_table, validate_coords};
+use crate::ff::potential::geometry::{sub3, term_table, validate_coords};
 use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::op::vec3::{cross, dot, norm};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -40,14 +41,14 @@ impl MMFFOutOfPlane {
             let a = sub3(coords, i, coords, j); // ji
             let b = sub3(coords, k, coords, j); // jk
             let c = sub3(coords, l, coords, j); // jl
-            let n = cross3(a, b);
-            let n_mag = mag3(n);
-            let c_mag = mag3(c);
+            let n = cross(a, b);
+            let n_mag = norm(n);
+            let c_mag = norm(c);
             if n_mag < 1e-12 as F || c_mag < 1e-12 as F {
                 continue;
             }
 
-            let sin_chi = (dot3(c, n) / (c_mag * n_mag)).clamp(-1.0, 1.0);
+            let sin_chi = (dot(c, n) / (c_mag * n_mag)).clamp(-1.0, 1.0);
             let chi = sin_chi.asin();
             let cos_chi = chi.cos();
             energy += 0.5 * conv * self.koop[idx] * chi * chi;
@@ -65,16 +66,16 @@ impl MMFFOutOfPlane {
                 forces[j * 3 + dim] -= -prefactor * dsdc;
             }
             // d(sin chi)/d(r_i)  (a = r_i - r_j, affects n = a x b)
-            let bxc = cross3(b, c);
-            let bxn = cross3(b, n);
+            let bxc = cross(b, c);
+            let bxn = cross(b, n);
             for dim in 0..3 {
                 let dsda = bxc[dim] * inv_cn - sin_chi * bxn[dim] / (n_mag * n_mag);
                 forces[i * 3 + dim] += -prefactor * dsda;
                 forces[j * 3 + dim] -= -prefactor * dsda;
             }
             // d(sin chi)/d(r_k)  (b = r_k - r_j, affects n = a x b)
-            let axc = cross3(a, c);
-            let axn = cross3(a, n);
+            let axc = cross(a, c);
+            let axn = cross(a, n);
             for dim in 0..3 {
                 let dsdb = -axc[dim] * inv_cn + sin_chi * axn[dim] / (n_mag * n_mag);
                 forces[k * 3 + dim] += -prefactor * dsdb;

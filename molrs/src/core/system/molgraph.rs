@@ -63,6 +63,14 @@ use crate::store::keys;
 use crate::system::entity_table::{Cell, EntityTable, Validity};
 use crate::types::{F, I, Idx};
 
+/// The open node key naming the fragment instance a node belongs to — an
+/// `i32` column that [`MolGraph::replicate`] stamps on every copy and
+/// [`Fragment::set_frag_id`](crate::system::fragment::Fragment::set_frag_id)
+/// writes per atom (notes.md 2026-09-21). Not a Frame-schema key: it is spelled
+/// by this one crate-level constant until the schema vocabulary gives it a
+/// validated owner.
+pub(crate) const FRAG_ID: &str = "frag_id";
+
 // ---------------------------------------------------------------------------
 // PropValue
 // ---------------------------------------------------------------------------
@@ -155,7 +163,7 @@ impl From<String> for PropValue {
 /// at the declared dtype, naming the key and both dtypes
 /// (`'x' is declared float by the Frame schema; got string`), or when a
 /// negative is offered under an unsigned key.
-fn coerce_canonical(key: &str, pv: PropValue) -> Result<PropValue, MolRsError> {
+pub(crate) fn coerce_canonical(key: &str, pv: PropValue) -> Result<PropValue, MolRsError> {
     use crate::store::block::DType;
 
     let Some(declared) = keys::canonical_dtype(key) else {
@@ -467,6 +475,13 @@ impl Atom {
             PropValue::Int(v) => Some(*v),
             _ => None,
         }
+    }
+
+    /// The node's position `[x, y, z]`, when all three of
+    /// [`keys::COORDS`] are `f64` props. Finiteness is not checked.
+    pub fn position(&self) -> Option<[f64; 3]> {
+        let [x, y, z] = keys::COORDS.map(|k| self.get_f64(k));
+        Some([x?, y?, z?])
     }
 
     /// Check whether a key exists.
@@ -865,8 +880,25 @@ impl MolGraph {
     }
 
     /// Mutable access to the underlying node column table.
-    pub fn node_table_mut(&mut self) -> &mut EntityTable<NodeId> {
+    ///
+    /// Crate-internal: a raw column write bypasses the canonical coercion of
+    /// [`set_node`](Self::set_node) and the adjacency index, so only code that
+    /// maintains both itself may reach it.
+    pub(crate) fn node_table_mut(&mut self) -> &mut EntityTable<NodeId> {
         &mut self.nodes
+    }
+
+    /// Move node column `from` to the key `to`, admitting it under `to`
+    /// exactly as a [`set_node`](Self::set_node) of the same values would —
+    /// see [`EntityTable::rename_column`]. Atomic.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when `from` is not held, when `to` already
+    /// is, or when the Frame schema's dtype for `to` does not admit the
+    /// column (a negative under an unsigned key included).
+    pub(crate) fn rename_node_column(&mut self, from: &str, to: &str) -> Result<(), MolRsError> {
+        self.nodes.rename_column(from, to)
     }
 
     /// Number of nodes.
@@ -1208,6 +1240,184 @@ impl MolGraph {
         Ok(node_map)
     }
 
+    /// Place `transforms.len()` rigid copies of `template` into `self`, copy
+    /// `c` moved by `transforms[c]` and stamped `frag_id = frag_ids[c]`.
+    ///
+    /// Returns the new node handles copy-major: template node `t` of copy `c`
+    /// (template nodes in [`node_ids`](Self::node_ids) order) is at index
+    /// `c * n + t`, `n` being the template's node count.
+    ///
+    /// - **Column-wise.** Nodes and each relation kind's properties are
+    ///   appended with `EntityTable::extend_repeated`, one pass per column;
+    ///   no per-node [`add_node_with`](Self::add_node_with) runs.
+    /// - **Coordinates.** `x`/`y`/`z` of a template row holding the full
+    ///   triple are rewritten per copy by [`crate::op::rigid::apply_all`]. A
+    ///   row without the full triple is copied untransformed.
+    /// - **Relations.** Every relation kind of `template` is registered on
+    ///   `self` by name, its endpoints offset into each copy and its props
+    ///   copied. Ports are a relation kind, so they are kept.
+    /// - **`frag_id`.** The `i32` node column `frag_id` holds `frag_ids[c]` on
+    ///   every node of copy `c`, overwriting any template value.
+    ///
+    /// Unlike [`merge`](Self::merge), this is **atomic**: every check runs
+    /// before the first write, so on an error `self` is unchanged — no node,
+    /// relation, column or kind is added.
+    ///
+    /// No transforms place no copy: `Ok` of no handles with `self` untouched —
+    /// no kind registered, no column added — and no check beyond the length
+    /// one runs, since nothing would be written.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when
+    /// - `transforms.len() != frag_ids.len()`;
+    /// - a node column of `template` has an element type other than the one
+    ///   `self` holds for that key;
+    /// - `frag_id` is held, by `self` or `template`, as a non-`i32` column;
+    /// - a relation kind of `template` is registered on `self` at another
+    ///   arity;
+    /// - a relation property column of `template` contradicts the element
+    ///   type `self` holds for that key in the same kind.
+    pub fn replicate(
+        &mut self,
+        template: &MolGraph,
+        transforms: &[crate::op::rigid::Rigid],
+        frag_ids: &[I],
+    ) -> Result<Vec<NodeId>, MolRsError> {
+        // ---- checks: nothing is written until all pass ----
+        if transforms.len() != frag_ids.len() {
+            return Err(MolRsError::validation(format!(
+                "replicate needs one frag_id per transform; got {} transforms and {} frag_ids",
+                transforms.len(),
+                frag_ids.len()
+            )));
+        }
+        if transforms.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.nodes.check_extend(&template.nodes)?;
+        for (owner, table) in [("self", &self.nodes), ("template", &template.nodes)] {
+            if let Some(col) = table.column(FRAG_ID)
+                && !matches!(col, crate::system::entity_table::Column::I32(..))
+            {
+                return Err(MolRsError::validation(format!(
+                    "'{FRAG_ID}' of {owner} is typed {}; replicate stamps an i32 {FRAG_ID}",
+                    col.type_name()
+                )));
+            }
+        }
+        for tkid in template.kind_ids() {
+            let tidx = tkid.0 as usize;
+            let name = &template.kind_name[tidx];
+            let arity = template.kind_arity[tidx];
+            if let Some(skid) = self.kind_id(name) {
+                let found = self.arity(skid);
+                if found != arity {
+                    return Err(MolRsError::validation(format!(
+                        "kind '{name}' is registered with arity {found}, but the template's is {arity}"
+                    )));
+                }
+                self.kinds[skid.0 as usize]
+                    .props
+                    .check_extend(&template.kinds[tidx].props)?;
+            }
+        }
+
+        // ---- nodes: one column-wise append ----
+        let copies = transforms.len();
+        let n = template.n_nodes();
+        let row0 = self.nodes.len();
+        let handles = self.nodes.extend_repeated(&template.nodes, copies)?;
+        for &id in &handles {
+            self.adjacency.insert(id, Vec::new());
+        }
+
+        // ---- coordinates: rows with the full triple, per copy ----
+        let (placed_rows, points) = template.full_triple_rows();
+        if !placed_rows.is_empty() {
+            let images: Vec<Vec<[F; 3]>> = transforms
+                .iter()
+                .map(|rigid| crate::op::rigid::apply_all(rigid, &points))
+                .collect();
+            for (axis, key) in [keys::X, keys::Y, keys::Z].into_iter().enumerate() {
+                let (col, _) = self
+                    .nodes
+                    .column_f64_mut(key)
+                    .expect("a template row holds the full triple, so x/y/z were appended as f64");
+                for (c, image) in images.iter().enumerate() {
+                    let base = row0 + c * n;
+                    for (&t, p) in placed_rows.iter().zip(image) {
+                        col[base + t] = p[axis];
+                    }
+                }
+            }
+        }
+
+        // ---- frag_id: one fill per copy ----
+        for (c, &fid) in frag_ids.iter().enumerate() {
+            let start = row0 + c * n;
+            self.nodes
+                .fill_i32(FRAG_ID, start..start + n, fid)
+                .expect("checked before the first write");
+        }
+
+        // ---- relations: kind by name, endpoints offset per copy ----
+        for tkid in template.kind_ids() {
+            let tidx = tkid.0 as usize;
+            let skid = self.register_kind(&template.kind_name[tidx], template.kind_arity[tidx]);
+            let tkind = &template.kinds[tidx];
+            let arity = template.kind_arity[tidx];
+            let rel_rows: Vec<SmallVec<[usize; 4]>> = tkind
+                .props
+                .handles()
+                .map(|rid| {
+                    tkind.endpoints[rid]
+                        .iter()
+                        .map(|&node| {
+                            template
+                                .nodes
+                                .row(node)
+                                .expect("a template relation names a live template node")
+                        })
+                        .collect()
+                })
+                .collect();
+            let rids = self.kinds[skid.0 as usize]
+                .props
+                .extend_repeated(&tkind.props, copies)
+                .expect("checked before the first write");
+            let m = rel_rows.len();
+            for (i, rid) in rids.into_iter().enumerate() {
+                let base = (i / m) * n;
+                let eps: SmallVec<[NodeId; 4]> =
+                    rel_rows[i % m].iter().map(|&t| handles[base + t]).collect();
+                if arity == 2 {
+                    for &ep in &eps[..2] {
+                        self.adjacency.entry(ep).or_default().push((skid, rid));
+                    }
+                }
+                self.kinds[skid.0 as usize].endpoints.insert(rid, eps);
+            }
+        }
+        Ok(handles)
+    }
+
+    /// Rows holding all of `x`, `y` and `z`, with their coordinates, in row
+    /// order.
+    fn full_triple_rows(&self) -> (Vec<usize>, Vec<[F; 3]>) {
+        let (Ok((xs, xv)), Ok((ys, yv)), Ok((zs, zv))) = (
+            self.nodes.column_f64(keys::X),
+            self.nodes.column_f64(keys::Y),
+            self.nodes.column_f64(keys::Z),
+        ) else {
+            return (Vec::new(), Vec::new());
+        };
+        (0..xs.len())
+            .filter(|&r| xv.get(r) && yv.get(r) && zv.get(r))
+            .map(|r| (r, [xs[r], ys[r], zs[r]]))
+            .unzip()
+    }
+
     // =====================================================================
     // Frame conversion (shared mechanism)
     //
@@ -1519,6 +1729,15 @@ mod tests {
         assert_eq!(v, PropValue::Int(42 as I));
         let v: PropValue = "H".into();
         assert_eq!(v, PropValue::Str("H".to_owned()));
+    }
+
+    /// All three of x/y/z make a position; without z there is none.
+    #[test]
+    fn atom_position_reads_xyz_and_needs_all_three() {
+        let mut a = Atom::xyz("C", 1.0, -2.0, 3.5);
+        assert_eq!(a.position(), Some([1.0, -2.0, 3.5]));
+        a.remove(keys::Z);
+        assert_eq!(a.position(), None);
     }
 
     #[test]
@@ -2243,5 +2462,365 @@ mod tests {
     fn test_groups_reserved_empty() {
         let g = MolGraph::new();
         assert_eq!(g.groups.len(), 0);
+    }
+
+    // ----- Composition: replicate -----
+
+    use crate::op::rigid::Rigid;
+    use crate::system::bond::BondNumber;
+    use crate::system::fragment::{Fragment, PortKind};
+
+    /// C (0,0,0), O (1,0,0), H handle (-1,0,0); bonds C-O and C-H; one port
+    /// (anchor C, handle H). Template node order is C, O, H.
+    fn replicate_template() -> Fragment {
+        let mut frag = Fragment::new();
+        let c = frag.add_atom_xyz("C", 0.0, 0.0, 0.0);
+        let o = frag.add_atom_xyz("O", 1.0, 0.0, 0.0);
+        let h = frag.add_atom_xyz("H", -1.0, 0.0, 0.0);
+        frag.add_bond(c, o).expect("fixture bond C-O");
+        frag.add_bond(c, h).expect("fixture bond C-H");
+        frag.add_port(c, h, PortKind::Symmetric, "a", BondNumber::Single)
+            .expect("a bonded H handle is a legal port");
+        frag
+    }
+
+    /// Copy 0: identity rotation, t = (0,0,5). Copy 1: hand-derived Rz(90 deg)
+    /// (x -> y, y -> -x), t = (10,0,0).
+    fn replicate_transforms() -> [Rigid; 2] {
+        [
+            Rigid {
+                rotation: Rigid::IDENTITY.rotation,
+                translation: [0.0, 0.0, 5.0],
+            },
+            Rigid {
+                rotation: [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+                translation: [10.0, 0.0, 0.0],
+            },
+        ]
+    }
+
+    fn xyz_of(g: &MolGraph, id: NodeId) -> [f64; 3] {
+        let a = g.get_node(id).expect("live replicated node");
+        [
+            a.get_f64("x").expect("x"),
+            a.get_f64("y").expect("y"),
+            a.get_f64("z").expect("z"),
+        ]
+    }
+
+    fn assert_xyz(got: [f64; 3], want: [f64; 3]) {
+        for k in 0..3 {
+            assert!(
+                (got[k] - want[k]).abs() < 1e-12,
+                "component {k}: got {got:?}, want {want:?}"
+            );
+        }
+    }
+
+    /// `self` holding two bonded nodes, one of which carries `extra_key` as a
+    /// string: the pre-state every refusal test compares against.
+    fn replicate_target(extra_key: &str) -> MolGraph {
+        let mut g = MolGraph::new();
+        let bonds = g.register_kind("bonds", 2);
+        let mut seed = Atom::xyz("N", 0.0, 0.0, 0.0);
+        seed.set(extra_key, "bar");
+        let a = g.add_node_with(seed).expect("fixture node");
+        let b = g
+            .add_node_with(Atom::xyz("N", 1.1, 0.0, 0.0))
+            .expect("fixture node");
+        g.add_relation(bonds, &[a, b]).expect("fixture bond");
+        g
+    }
+
+    fn assert_target_unchanged(g: &MolGraph) {
+        assert_eq!(g.n_nodes(), 2, "no node was written");
+        let bonds = g.kind_id("bonds").expect("bonds kind of the fixture");
+        assert_eq!(g.n_relations(bonds), 1, "no bond was written");
+        assert!(g.kind_id("ports").is_none(), "no kind was registered");
+    }
+
+    /// Regression: two rigid copies of a three-atom template. Hard-coded
+    /// goldens derived by hand: O (1,0,0) under (I, (0,0,5)) is (1,0,5); under
+    /// (Rz(90 deg), (10,0,0)) it is (0,1,0) + (10,0,0) = (10,1,0).
+    #[test]
+    fn replicate_places_two_rigid_copies_and_stamps_frag_id() {
+        let template = replicate_template();
+        let mut out = MolGraph::new();
+        let handles = out
+            .replicate(template.as_molgraph(), &replicate_transforms(), &[7, 8])
+            .expect("two copies of a well-formed template replicate");
+
+        assert_xyz(xyz_of(&out, handles[1]), [1.0, 0.0, 5.0]);
+        assert_xyz(xyz_of(&out, handles[3 + 1]), [10.0, 1.0, 0.0]);
+
+        let frag_ids: Vec<I> = handles
+            .iter()
+            .map(|&h| {
+                out.get_node(h)
+                    .unwrap()
+                    .get_int(FRAG_ID)
+                    .expect("every replicated node carries frag_id")
+            })
+            .collect();
+        assert_eq!(frag_ids, vec![7, 7, 7, 8, 8, 8]);
+    }
+
+    #[test]
+    fn replicate_returns_copy_major_handles() {
+        let template = replicate_template();
+        let mut out = MolGraph::new();
+        let handles = out
+            .replicate(template.as_molgraph(), &replicate_transforms(), &[7, 8])
+            .unwrap();
+
+        assert_eq!(handles.len(), 6);
+        assert_eq!(out.n_nodes(), 6);
+        let elements: Vec<String> = handles
+            .iter()
+            .map(|&h| {
+                out.get_node(h)
+                    .unwrap()
+                    .get_str("element")
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect();
+        assert_eq!(elements, ["C", "O", "H", "C", "O", "H"]);
+        // Template node t of copy c sits at c*n + t: each copy's C is its origin
+        // image, i.e. that copy's translation.
+        assert_xyz(xyz_of(&out, handles[0]), [0.0, 0.0, 5.0]);
+        assert_xyz(xyz_of(&out, handles[3]), [10.0, 0.0, 0.0]);
+        // Copy 1's H (-1,0,0) under Rz(90 deg) is (0,-1,0), then + (10,0,0).
+        assert_xyz(xyz_of(&out, handles[5]), [10.0, -1.0, 0.0]);
+    }
+
+    #[test]
+    fn replicate_carries_bonds_and_ports_offset_per_copy() {
+        let template = replicate_template();
+        let mut out = MolGraph::new();
+        let handles = out
+            .replicate(template.as_molgraph(), &replicate_transforms(), &[7, 8])
+            .unwrap();
+
+        let bonds = out.kind_id("bonds").expect("'bonds' registered by name");
+        let ports = out.kind_id("ports").expect("'ports' registered by name");
+        assert_eq!(out.n_relations(bonds), 4);
+        assert_eq!(out.n_relations(ports), 2);
+
+        let copy_of = |id: NodeId| handles.iter().position(|&h| h == id).unwrap() / 3;
+        for (_, rel) in out.relations(bonds) {
+            assert_eq!(
+                copy_of(rel.nodes[0]),
+                copy_of(rel.nodes[1]),
+                "bond stays in its copy"
+            );
+        }
+        let mut port_ends: Vec<(NodeId, NodeId)> = out
+            .relations(ports)
+            .map(|(_, rel)| {
+                assert_eq!(
+                    rel.props.get("port_kind"),
+                    Some(&PropValue::Str("$".to_owned())),
+                    "port props are copied"
+                );
+                (rel.nodes[0], rel.nodes[1])
+            })
+            .collect();
+        port_ends.sort_by_key(|&(a, _)| copy_of(a));
+        assert_eq!(
+            port_ends,
+            vec![(handles[0], handles[2]), (handles[3], handles[5])],
+            "each port is (anchor C, handle H) of its own copy"
+        );
+    }
+
+    #[test]
+    fn replicate_copies_a_row_without_a_full_triple_untransformed() {
+        let mut template = MolGraph::new();
+        let mut planar = Atom::new();
+        planar.set("element", "C");
+        planar.set("x", 1.0);
+        planar.set("y", 2.0);
+        template.add_node_with(planar).expect("x,y-only node");
+        let mut bare = Atom::new();
+        bare.set("element", "N");
+        template.add_node_with(bare).expect("coordinate-less node");
+        template
+            .add_node_with(Atom::xyz("O", 1.0, 0.0, 0.0))
+            .expect("full-triple node");
+
+        let mut out = MolGraph::new();
+        let handles = out
+            .replicate(&template, &replicate_transforms()[1..], &[3])
+            .unwrap();
+
+        let planar = out.get_node(handles[0]).unwrap();
+        assert_eq!(planar.get_f64("x"), Some(1.0));
+        assert_eq!(planar.get_f64("y"), Some(2.0));
+        assert_eq!(planar.get_f64("z"), None);
+        let bare = out.get_node(handles[1]).unwrap();
+        assert!(bare.get_f64("x").is_none() && bare.get_f64("y").is_none());
+        assert!(bare.get_f64("z").is_none());
+        // The full-triple row in the same call is still moved.
+        assert_xyz(xyz_of(&out, handles[2]), [10.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn replicate_overwrites_a_template_frag_id() {
+        let mut template = replicate_template();
+        let c = template.node_ids().next().unwrap();
+        template.set_frag_id(c, 99).unwrap();
+
+        let mut out = MolGraph::new();
+        let handles = out
+            .replicate(template.as_molgraph(), &replicate_transforms(), &[7, 8])
+            .unwrap();
+        assert_eq!(out.get_node(handles[0]).unwrap().get_int(FRAG_ID), Some(7));
+        assert_eq!(out.get_node(handles[3]).unwrap().get_int(FRAG_ID), Some(8));
+    }
+
+    #[test]
+    fn replicate_refuses_a_length_mismatch_and_writes_nothing() {
+        let template = replicate_template();
+        let mut out = replicate_target("tag");
+        let err = out
+            .replicate(template.as_molgraph(), &replicate_transforms(), &[7])
+            .expect_err("two transforms need two frag_ids");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        assert_target_unchanged(&out);
+    }
+
+    #[test]
+    fn replicate_refuses_a_column_type_conflict_and_writes_nothing() {
+        let mut template = replicate_template();
+        let c = template.node_ids().next().unwrap();
+        template.set_node(c, "foo", 1.5).unwrap();
+        let mut out = replicate_target("foo");
+        let err = out
+            .replicate(template.as_molgraph(), &replicate_transforms(), &[7, 8])
+            .expect_err("a float 'foo' cannot enter a str 'foo' column");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        assert_target_unchanged(&out);
+    }
+
+    #[test]
+    fn replicate_refuses_a_non_int_frag_id_column_and_writes_nothing() {
+        let template = replicate_template();
+        let mut out = replicate_target(FRAG_ID);
+        let err = out
+            .replicate(template.as_molgraph(), &replicate_transforms(), &[7, 8])
+            .expect_err("frag_id is an Int column; self holds a str one");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        assert_target_unchanged(&out);
+    }
+
+    fn sorted_node_columns(g: &MolGraph) -> Vec<String> {
+        let mut cols: Vec<String> = g.node_table().columns().map(str::to_owned).collect();
+        cols.sort();
+        cols
+    }
+
+    #[test]
+    fn replicate_into_a_non_empty_target_appends_only_new_copies() {
+        let template = replicate_template();
+        let mut out = replicate_target("tag");
+        let before: Vec<(NodeId, Atom)> = out.nodes().collect();
+
+        let handles = out
+            .replicate(template.as_molgraph(), &replicate_transforms(), &[7, 8])
+            .expect("a compatible non-empty target accepts copies");
+
+        assert_eq!(handles.len(), 6, "only the new copies are returned");
+        assert_eq!(out.n_nodes(), 2 + 6);
+        for (id, atom) in &before {
+            assert!(!handles.contains(id), "an old handle is not returned");
+            assert_eq!(&out.get_node(*id).unwrap(), atom, "old node untouched");
+        }
+        for (i, &h) in handles.iter().enumerate() {
+            assert_eq!(
+                out.node_table().row(h),
+                Some(2 + i),
+                "copies follow old rows"
+            );
+            assert!(out.get_node(h).unwrap().get("tag").is_none());
+        }
+        let bonds = out.kind_id("bonds").unwrap();
+        assert_eq!(out.n_relations(bonds), 1 + 2 * 2, "old + copies * template");
+    }
+
+    #[test]
+    fn replicate_refuses_a_kind_arity_conflict_and_writes_nothing() {
+        let template = replicate_template();
+        let mut out = replicate_target("tag");
+        let ports = out.register_kind("ports", 3);
+        let n_kinds = out.kind_ids().count();
+        let cols = sorted_node_columns(&out);
+
+        let err = out
+            .replicate(template.as_molgraph(), &replicate_transforms(), &[7, 8])
+            .expect_err("template 'ports' is arity 2; self holds arity 3");
+
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        assert_eq!(out.n_nodes(), 2);
+        assert_eq!(out.kind_ids().count(), n_kinds, "no kind was registered");
+        assert_eq!(out.arity(ports), 3);
+        assert_eq!(out.n_relations(ports), 0);
+        assert_eq!(out.n_relations(out.kind_id("bonds").unwrap()), 1);
+        assert_eq!(sorted_node_columns(&out), cols, "no column was added");
+    }
+
+    #[test]
+    fn replicate_refuses_a_relation_prop_type_conflict_and_writes_nothing() {
+        let mut template = MolGraph::new();
+        let tlinks = template.register_kind("links", 2);
+        let p = template
+            .add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0))
+            .unwrap();
+        let q = template
+            .add_node_with(Atom::xyz("C", 1.5, 0.0, 0.0))
+            .unwrap();
+        let trid = template.add_relation(tlinks, &[p, q]).unwrap();
+        template.set_relation_prop(tlinks, trid, "w", 1.5).unwrap();
+
+        let mut out = replicate_target("tag");
+        let links = out.register_kind("links", 2);
+        let ends: Vec<NodeId> = out.node_ids().collect();
+        let rid = out.add_relation(links, &ends).unwrap();
+        out.set_relation_prop(links, rid, "w", "heavy").unwrap();
+        let n_kinds = out.kind_ids().count();
+        let cols = sorted_node_columns(&out);
+
+        let err = out
+            .replicate(&template, &replicate_transforms(), &[7, 8])
+            .expect_err("a float 'w' cannot enter a str 'w' relation column");
+
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        assert_eq!(out.n_nodes(), 2);
+        assert_eq!(out.kind_ids().count(), n_kinds);
+        assert_eq!(out.n_relations(links), 1);
+        assert_eq!(out.n_relations(out.kind_id("bonds").unwrap()), 1);
+        assert_eq!(
+            out.get_relation(links, rid).unwrap().props.get("w"),
+            Some(&PropValue::Str("heavy".to_owned()))
+        );
+        assert_eq!(sorted_node_columns(&out), cols);
+    }
+
+    #[test]
+    fn replicate_with_no_transforms_places_nothing_and_leaves_self_untouched() {
+        let template = replicate_template();
+        let mut out = replicate_target("tag");
+        let n_kinds = out.kind_ids().count();
+        let cols = sorted_node_columns(&out);
+
+        let handles = out
+            .replicate(template.as_molgraph(), &[], &[])
+            .expect("no transforms is a valid empty placement");
+
+        assert!(handles.is_empty());
+        assert_target_unchanged(&out);
+        assert_eq!(out.kind_ids().count(), n_kinds, "no kind was registered");
+        assert_eq!(sorted_node_columns(&out), cols, "no column was added");
+        assert!(out.node_table().column(FRAG_ID).is_none());
     }
 }

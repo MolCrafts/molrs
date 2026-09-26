@@ -3,8 +3,9 @@
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{cross3, dot3, mag3, sub3, term_table, validate_coords};
+use crate::ff::potential::geometry::{sub3, term_table, validate_coords};
 use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::op::vec3::{cross, dot, norm};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -41,14 +42,14 @@ impl UffTorsion {
             let r2 = sub3(coords, c, coords, b);
             let r3 = sub3(coords, b, coords, c);
             let r4 = sub3(coords, d, coords, c);
-            let t1 = cross3(r1, r2);
-            let t2 = cross3(r3, r4);
-            let d1 = mag3(t1);
-            let d2 = mag3(t2);
+            let t1 = cross(r1, r2);
+            let t2 = cross(r3, r4);
+            let d1 = norm(t1);
+            let d2 = norm(t2);
             if d1 < 1e-12 as F || d2 < 1e-12 as F {
                 continue;
             }
-            let cos_phi = (dot3(t1, t2) / (d1 * d2)).clamp(-1.0, 1.0);
+            let cos_phi = (dot(t1, t2) / (d1 * d2)).clamp(-1.0, 1.0);
             let sin_sq = (1.0 - cos_phi * cos_phi).max(0.0);
             let sin_phi = sin_sq.sqrt();
 

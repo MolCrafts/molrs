@@ -1,8 +1,8 @@
 //! A solid bounded by a watertight triangle mesh.
 //!
 //! Where the mesh came from is not this type's concern: an STL read by
-//! [`crate::io::mesh::read_stl`], a marching-cubes extraction, a hand-built
-//! [`TriMesh`] — anything closed. Unit conversion is the caller's
+//! `crate::io::mesh::read_stl` (feature `io`), a marching-cubes extraction, a
+//! hand-built [`TriMesh`] — anything closed. Unit conversion is the caller's
 //! composition, `Polyhedron::new(mesh.scaled(s))`.
 //!
 //! Containment is the even-odd rule along one fixed ray, which for a closed
@@ -14,9 +14,9 @@
 use std::f64::consts::{PI, SQRT_2};
 
 use super::region::Region;
+use crate::op::vec3::{add, cross, dot, norm, scale, sub};
 use crate::spatial::bvh::{Bvh, triangle_box};
 use crate::spatial::mesh::{DEGENERATE_AREA2, TriMesh};
-use crate::spatial::vec3::{add, cross, dot, norm, scale, sub};
 use crate::types::{F, FNx3};
 use ndarray::Array2;
 

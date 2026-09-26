@@ -28,6 +28,7 @@
 
 use std::collections::HashSet;
 
+use crate::op::vec3::{cross, norm};
 use crate::system::atomistic::{AtomId, Atomistic};
 use crate::system::bond::BondType;
 use crate::system::molgraph::Atom;
@@ -160,7 +161,7 @@ fn cap_length(element: &str) -> f64 {
 }
 
 fn unit(v: [f64; 3]) -> [f64; 3] {
-    let n = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    let n = norm(v);
     if n > 1e-9 {
         [v[0] / n, v[1] / n, v[2] / n]
     } else {
@@ -174,23 +175,7 @@ fn orthogonal(v: [f64; 3]) -> [f64; 3] {
     } else {
         [0.0, 1.0, 0.0]
     };
-    unit([
-        v[1] * seed[2] - v[2] * seed[1],
-        v[2] * seed[0] - v[0] * seed[2],
-        v[0] * seed[1] - v[1] * seed[0],
-    ])
-}
-
-fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
-
-fn norm(v: [f64; 3]) -> f64 {
-    (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
+    unit(cross(v, seed))
 }
 
 /// `k` unit directions completing ~sp3 (tetrahedral) coordination.

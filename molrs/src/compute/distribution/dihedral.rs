@@ -20,7 +20,8 @@ use crate::compute::error::ComputeError;
 
 use crate::compute::util::MicHelper;
 
-use super::observable::{AtomGroups, Observable, cross, displacement, dot, norm, positions};
+use super::observable::{AtomGroups, Observable, displacement, positions};
+use crate::op::vec3::{cross, dot, norm};
 
 /// Signed dihedral φ ∈ (−π, π] (radians) over each quadruple i–j–k–l (arity 4).
 #[derive(Debug, Clone, Default)]

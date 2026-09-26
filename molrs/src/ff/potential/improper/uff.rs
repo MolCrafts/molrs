@@ -7,8 +7,9 @@
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{cross3, dot3, mag3, sub3, term_table, validate_coords};
+use crate::ff::potential::geometry::{sub3, term_table, validate_coords};
 use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::op::vec3::{cross, dot, norm};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -45,9 +46,9 @@ impl UffInversion {
             let r_ji = sub3(coords, i, coords, j);
             let r_jk = sub3(coords, k, coords, j);
             let r_jl = sub3(coords, l, coords, j);
-            let d_ji = mag3(r_ji);
-            let d_jk = mag3(r_jk);
-            let d_jl = mag3(r_jl);
+            let d_ji = norm(r_ji);
+            let d_jk = norm(r_jk);
+            let d_jl = norm(r_jl);
             if d_ji < 1e-12 || d_jk < 1e-12 || d_jl < 1e-12 {
                 continue;
             }
@@ -55,14 +56,14 @@ impl UffInversion {
             // t3 = r̂_JK × r̂_JI) is written for the normal (−r_JI) × r_JK.
             // E is even in cosY so the wrong orientation is invisible in the
             // energy; the force is odd in it and comes out inverted.
-            let mut n = cross3([-r_ji[0], -r_ji[1], -r_ji[2]], r_jk);
-            let ln = mag3(n);
+            let mut n = cross([-r_ji[0], -r_ji[1], -r_ji[2]], r_jk);
+            let ln = norm(n);
             if ln < 1e-12 {
                 continue;
             }
             n = [n[0] / ln, n[1] / ln, n[2] / ln];
             let r_jl_u = [r_jl[0] / d_jl, r_jl[1] / d_jl, r_jl[2] / d_jl];
-            let cos_y = dot3(n, r_jl_u).clamp(-1.0, 1.0);
+            let cos_y = dot(n, r_jl_u).clamp(-1.0, 1.0);
             let sin_y_sq = (1.0 - cos_y * cos_y).max(0.0);
             let sin_y = sin_y_sq.sqrt();
             let cos2_w = 2.0 * sin_y * sin_y - 1.0;
@@ -72,15 +73,15 @@ impl UffInversion {
             // Gradient (RDKit getGrad) — forces = −grad
             let r_ji_u = [r_ji[0] / d_ji, r_ji[1] / d_ji, r_ji[2] / d_ji];
             let r_jk_u = [r_jk[0] / d_jk, r_jk[1] / d_jk, r_jk[2] / d_jk];
-            let cos_theta = dot3(r_ji_u, r_jk_u).clamp(-1.0, 1.0);
+            let cos_theta = dot(r_ji_u, r_jk_u).clamp(-1.0, 1.0);
             let sin_theta = (1.0 - cos_theta * cos_theta).max(0.0).sqrt().max(1e-8);
             let sin_y_s = sin_y.max(1e-8);
             // dE/dW = −K (C1 cosY + 4 C2 cosY sinY)
             let d_e_d_w = -kk * (self.c1[idx] * cos_y + 4.0 * self.c2[idx] * cos_y * sin_y);
 
-            let t1 = cross3(r_jl_u, r_jk_u);
-            let t2 = cross3(r_ji_u, r_jl_u);
-            let t3 = cross3(r_jk_u, r_ji_u);
+            let t1 = cross(r_jl_u, r_jk_u);
+            let t2 = cross(r_ji_u, r_jl_u);
+            let t3 = cross(r_jk_u, r_ji_u);
             let term1 = sin_y_s * sin_theta;
             let term2 = cos_y / (sin_y_s * sin_theta * sin_theta);
 

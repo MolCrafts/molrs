@@ -1,8 +1,9 @@
 //! # molrs
 //!
 //! Unified molecular simulation toolkit. A single crate whose sub-systems are
-//! feature-gated modules: `core` (always on) plus `io`, `compute`, `smiles`,
-//! `ff`, `conformer`, and `signal`.
+//! modules. Three are always compiled — `op`, `core`, and `perceive` — and the
+//! rest are feature-gated: `builder`, `io`, `signal`, `compute`, `ff`,
+//! `optimize`, `md`, `smiles`, `conformer`, and `stream`.
 //!
 //! ```toml
 //! molcrafts-molrs = { version = "0.15", default-features = false, features = ["io", "smiles"] }
@@ -63,6 +64,10 @@ extern crate self as molrs;
 /// line.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+// Op is always compiled: the numeric base beneath core (vector, rigid-motion,
+// linear-algebra kernels); it names no other molrs module.
+pub mod op;
+
 // Core is always compiled and its public surface is re-exported at the crate
 // root, so `molrs::Frame`, `molrs::system::…`, `molrs::error::…` resolve exactly
 // as they did when core was a separate crate.
@@ -78,9 +83,10 @@ pub use crate::core::*;
 pub mod builder;
 #[cfg(feature = "builder")]
 pub use crate::builder::{
-    CarbonTubeBuilder, CarbonTubeError, FccLattice, GrapheneBuilder, GrapheneError, GrowthStrategy,
-    LineOrienter, OccupancyMode, OffLattice, Orienter, PRE_REACTION_CHARGE_KEY, PlaceError, Placer,
-    SITE_KEY, SelfAvoidingWalk, SiteError, SiteMap, TangOrienter, TracePlacer, WalkError,
+    AssembleError, Assembler, BodyAxis, CarbonTubeBuilder, CarbonTubeError, FccLattice, Finalizer,
+    FragLibrary, FragLibraryError, GrapheneBuilder, GrapheneError, GrowthStrategy, HintOrienter,
+    NullOrienter, OccupancyMode, OffLattice, OrientError, Orienter, PairError, PlaceError, Placer,
+    PortReacter, RandomOrienter, ReactError, Reacter, SelfAvoidingWalk, TracePlacer, WalkError,
     WalkOutput,
 };
 

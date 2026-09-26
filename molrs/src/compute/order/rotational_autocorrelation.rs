@@ -30,6 +30,8 @@ use molrs::types::F;
 
 use crate::compute::error::ComputeError;
 use crate::compute::traits::Compute;
+use crate::op::rigid::{quat_conj, quat_mul, quat_norm};
+use crate::op::types::Quat;
 
 /// Rotational autocorrelation calculator.
 #[derive(Debug, Clone, Copy)]
@@ -46,29 +48,6 @@ impl RotationalAutocorrelation {
     pub fn l(&self) -> u32 {
         self.l
     }
-}
-
-/// Quaternion (w, x, y, z).
-type Quat = [F; 4];
-
-#[inline]
-fn quat_conj(q: Quat) -> Quat {
-    [q[0], -q[1], -q[2], -q[3]]
-}
-
-#[inline]
-fn quat_mul(a: Quat, b: Quat) -> Quat {
-    [
-        a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3],
-        a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
-        a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],
-        a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0],
-    ]
-}
-
-#[inline]
-fn quat_norm(q: Quat) -> F {
-    (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt()
 }
 
 #[inline]

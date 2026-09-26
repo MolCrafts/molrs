@@ -639,6 +639,45 @@ class TestMetaDocument:
         assert isinstance(frame.meta["wrapped"]["tags"], tuple)
 
 
+class TestFrameConvertUnits:
+    """Seam of ``Frame.convert_units(registry, from_preset, to_preset)``.
+
+    The scaling rules are proven by ``molrs/src/core/store/frame.rs``; these
+    check only that the call crosses: one length column scaled by a hand-set
+    sigma, and a refused conversion surfacing as ``ValueError``.
+    """
+
+    @staticmethod
+    def _sigma_only_registry() -> molrs.UnitRegistry:
+        units = molrs.UnitRegistry()
+        units.define_lj_sigma(units.quantity(4.2, "angstrom"))
+        return units
+
+    def test_lj_length_column_scales_by_sigma_into_real(self):
+        f = Frame()
+        atoms = Block()
+        atoms.insert("x", np.array([1.0, -2.0], dtype=np.float64))
+        f["atoms"] = atoms
+
+        f.convert_units(
+            self._sigma_only_registry(), molrs.UnitPreset("lj"), molrs.UnitPreset("real")
+        )
+
+        np.testing.assert_allclose(f["atoms"].view("x"), [4.2, -8.4], rtol=0, atol=1e-12)
+
+    def test_a_column_the_registry_cannot_scale_is_refused_and_left_unchanged(self):
+        f = Frame()
+        atoms = Block()
+        atoms.insert("charge", np.array([1.0], dtype=np.float64))
+        f["atoms"] = atoms
+
+        with pytest.raises(ValueError, match="charge"):
+            f.convert_units(
+                self._sigma_only_registry(), molrs.UnitPreset("lj"), molrs.UnitPreset("real")
+            )
+        np.testing.assert_array_equal(f["atoms"].view("charge"), [1.0])
+
+
 class TestFrameValidation:
     def test_validate_empty(self):
         Frame().validate()

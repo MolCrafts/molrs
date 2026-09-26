@@ -106,7 +106,12 @@ pub struct PyColumnSpec {
     pub dtype: String,
     /// `"scalar"` or `"vec(n)"`.
     pub shape: String,
-    /// Unit symbol; empty when dimensionless or unit-free.
+    /// Physical dimension as lower-case preset names joined by ``" * "``
+    /// (``"length"``, ``"charge * length"``), ``"dimensionless"``, or empty
+    /// for a column that is not a physical quantity.
+    pub dimension: String,
+    /// The dimension's unit in the ``real`` preset (the convention molrs's
+    /// readers normalise to); empty when dimensionless or not a quantity.
     pub unit: String,
     /// One-line meaning.
     pub doc: String,
@@ -120,6 +125,7 @@ impl PyColumnSpec {
         const_name: String,
         dtype: String,
         shape: String,
+        dimension: String,
         unit: String,
         doc: String,
     ) -> Self {
@@ -128,6 +134,7 @@ impl PyColumnSpec {
             const_name,
             dtype,
             shape,
+            dimension,
             unit,
             doc,
         }
@@ -148,6 +155,7 @@ impl PyColumnSpec {
                 this.const_name.clone(),
                 this.dtype.clone(),
                 this.shape.clone(),
+                this.dimension.clone(),
                 this.unit.clone(),
                 this.doc.clone(),
             ),
@@ -255,6 +263,7 @@ fn column_specs() -> Vec<PyColumnSpec> {
             const_name: c.const_name,
             dtype: c.dtype,
             shape: c.shape,
+            dimension: c.dimension,
             unit: c.unit,
             doc: c.doc,
         })

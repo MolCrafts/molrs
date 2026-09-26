@@ -901,8 +901,7 @@ pub fn read_gro(path: &str) -> PyResult<Vec<PyFrame>> {
 ///     If the frame is missing the ``"atoms"`` block or coordinate columns.
 #[pyfunction]
 pub fn write_gro(path: &str, frame: &PyFrame) -> PyResult<()> {
-    let core_frame = frame.clone_core_frame()?;
-    write_gro_rs(path, &core_frame).map_err(io_error_to_pyerr)
+    frame.with_frame(|f| write_gro_rs(path, f).map_err(io_error_to_pyerr))?
 }
 
 /// Read a VASP CHGCAR or CHGDIF file.
@@ -997,8 +996,7 @@ pub fn read_cube_file(path: &str) -> PyResult<PyFrame> {
 ///     Frame to write.
 #[pyfunction]
 pub fn write_cube_file(path: &str, frame: &PyFrame) -> PyResult<()> {
-    let core_frame = frame.clone_core_frame()?;
-    write_cube(path, &core_frame).map_err(molrs_error_to_pyerr)
+    frame.with_frame(|f| write_cube(path, f).map_err(molrs_error_to_pyerr))?
 }
 
 /// Read a Tripos MOL2 file and return the first molecule as a Frame.
@@ -1345,8 +1343,7 @@ fn map_to_frcmod(sections: std::collections::HashMap<String, String>) -> FrcmodF
 ///     Frame to write.
 #[pyfunction]
 pub fn write_mol2(path: &str, frame: &PyFrame) -> PyResult<()> {
-    let core_frame = frame.clone_core_frame()?;
-    write_mol2_rs(path, &core_frame).map_err(io_error_to_pyerr)
+    frame.with_frame(|f| write_mol2_rs(path, f).map_err(io_error_to_pyerr))?
 }
 
 /// Read a GROMACS topology (``.top`` / ``.itp``) **structure** file.
@@ -1386,8 +1383,7 @@ pub fn read_top(path: &str) -> PyResult<PyFrame> {
 ///     Frame to write (atoms + optional bonds/pairs/angles/dihedrals).
 #[pyfunction]
 pub fn write_top(path: &str, frame: &PyFrame) -> PyResult<()> {
-    let core_frame = frame.clone_core_frame()?;
-    write_top_rs(path, &core_frame).map_err(io_error_to_pyerr)
+    frame.with_frame(|f| write_top_rs(path, f).map_err(io_error_to_pyerr))?
 }
 
 /// Read a LAMMPS molecule template (native ``.mol`` or JSON).
@@ -1441,8 +1437,7 @@ pub fn read_xsf(path: &str) -> PyResult<PyFrame> {
 ///     If the file cannot be written.
 #[pyfunction]
 pub fn write_xsf(path: &str, frame: &PyFrame) -> PyResult<()> {
-    let core_frame = frame.clone_core_frame()?;
-    write_xsf_rs(path, &core_frame).map_err(io_error_to_pyerr)
+    frame.with_frame(|f| write_xsf_rs(path, f).map_err(io_error_to_pyerr))?
 }
 
 /// Read a LAMMPS log file into a nested plain-Python dict.
@@ -1577,8 +1572,7 @@ fn json_value_to_py(py: Python<'_>, value: &JsonValue) -> PyResult<Py<PyAny>> {
 #[pyfunction]
 #[pyo3(signature = (path, frame, format = "native"))]
 pub fn write_lammps_molecule(path: &str, frame: &PyFrame, format: &str) -> PyResult<()> {
-    let core_frame = frame.clone_core_frame()?;
-    write_lammps_molecule_rs(path, &core_frame, format).map_err(io_error_to_pyerr)
+    frame.with_frame(|f| write_lammps_molecule_rs(path, f, format).map_err(io_error_to_pyerr))?
 }
 
 // ============================================================================
@@ -1595,10 +1589,11 @@ pub fn write_lammps_molecule(path: &str, frame: &PyFrame, format: &str) -> PyRes
 ///     Frame to write.
 #[pyfunction]
 pub fn write_pdb(path: &str, frame: &PyFrame) -> PyResult<()> {
-    let core_frame = frame.clone_core_frame()?;
-    let file = File::create(path).map_err(io_error_to_pyerr)?;
-    let mut buf = BufWriter::new(file);
-    write_pdb_frame(&mut buf, &core_frame).map_err(io_error_to_pyerr)
+    frame.with_frame(|f| {
+        let file = File::create(path).map_err(io_error_to_pyerr)?;
+        let mut buf = BufWriter::new(file);
+        write_pdb_frame(&mut buf, f).map_err(io_error_to_pyerr)
+    })?
 }
 
 /// Write a list of Frames to a multi-MODEL PDB trajectory.
@@ -1633,10 +1628,11 @@ pub fn write_pdb_trajectory(path: &str, frames: Vec<PyFrame>) -> PyResult<()> {
 ///     Frame to write.
 #[pyfunction]
 pub fn write_xyz(path: &str, frame: &PyFrame) -> PyResult<()> {
-    let core_frame = frame.clone_core_frame()?;
-    let file = File::create(path).map_err(io_error_to_pyerr)?;
-    let mut buf = BufWriter::new(file);
-    write_xyz_frame(&mut buf, &core_frame).map_err(io_error_to_pyerr)
+    frame.with_frame(|f| {
+        let file = File::create(path).map_err(io_error_to_pyerr)?;
+        let mut buf = BufWriter::new(file);
+        write_xyz_frame(&mut buf, f).map_err(io_error_to_pyerr)
+    })?
 }
 
 /// Write a Frame to a LAMMPS data file.
@@ -1649,8 +1645,7 @@ pub fn write_xyz(path: &str, frame: &PyFrame) -> PyResult<()> {
 ///     Frame to write.
 #[pyfunction]
 pub fn write_lammps(path: &str, frame: &PyFrame) -> PyResult<()> {
-    let core_frame = frame.clone_core_frame()?;
-    write_lammps_data(path, &core_frame).map_err(io_error_to_pyerr)
+    frame.with_frame(|f| write_lammps_data(path, f).map_err(io_error_to_pyerr))?
 }
 
 /// Write Frames to a LAMMPS dump trajectory file.

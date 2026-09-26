@@ -22,6 +22,7 @@
 use crate::conformer::distgeom::{
     BoundsMatrix, ChiralConstraint, ImproperConstraint, TorsionConstraint,
 };
+use crate::op::vec3::{cross, dot, norm, sub};
 
 /// Per-atom energy threshold above which the first minimization is rejected
 /// (RDKit `MAX_MINIMIZED_E_PER_ATOM`).
@@ -193,12 +194,7 @@ impl FirstStageField {
             p[i3 * dim + 1] - p[i4 * dim + 1],
             p[i3 * dim + 2] - p[i4 * dim + 2],
         ];
-        let v2xv3 = [
-            v2[1] * v3[2] - v2[2] * v3[1],
-            v2[2] * v3[0] - v2[0] * v3[2],
-            v2[0] * v3[1] - v2[1] * v3[0],
-        ];
-        let vol = v1[0] * v2xv3[0] + v1[1] * v2xv3[1] + v1[2] * v2xv3[2];
+        let vol = dot(v1, cross(v2, v3));
 
         let (energy, pre) = if vol < c.vol_lower {
             (
@@ -262,12 +258,7 @@ pub fn calc_chiral_volume(p: &[f64], idx: [usize; 4], dim: usize) -> f64 {
         p[i3 * dim + 1] - p[i4 * dim + 1],
         p[i3 * dim + 2] - p[i4 * dim + 2],
     ];
-    let v2xv3 = [
-        v2[1] * v3[2] - v2[2] * v3[1],
-        v2[2] * v3[0] - v2[0] * v3[2],
-        v2[0] * v3[1] - v2[1] * v3[0],
-    ];
-    v1[0] * v2xv3[0] + v1[1] * v2xv3[1] + v1[2] * v2xv3[2]
+    dot(v1, cross(v2, v3))
 }
 
 /// Second-stage 3D experimental-torsion field (CrystalFF M6 + distance
@@ -520,23 +511,6 @@ fn torsion_cos_phi(p: &[f64], atoms: [usize; 4]) -> f64 {
         return 1.0;
     }
     (dot(t1, t2) / (d1 * d2)).clamp(-1.0, 1.0)
-}
-
-fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
-fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-fn norm(a: [f64; 3]) -> f64 {
-    dot(a, a).sqrt()
 }
 
 /// Generic gradient minimizer (steepest descent with adaptive step + a simple
