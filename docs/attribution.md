@@ -38,7 +38,7 @@ tables that hold them now.
 Standard results cited in doc-comments, implemented independently: van Hove
 *Phys. Rev.* **95**, 249 (1954) (`compute/van_hove.rs`); Racah/Edmonds Wigner-3j
 (`core/math/wigner3j.rs`); Press et al. *Numerical Recipes*
-(`core/math/spherical_harmonics.rs`, `op/linalg.rs`); Shoemake, *Graphics Gems III* (1992) uniform SO(3) and Steele–Lea–Flood SplitMix64 (OOPSLA 2014) (`op/so3.rs`); Tang–Toennies
+(`core/math/spherical_harmonics.rs`, `op/linalg.rs`); Archimedes' hat-box theorem for uniform directions on S² (`op/so3.rs`); Tang–Toennies
 DOI 10.1063/1.447150 and Thole DOI 10.1016/0301-0104(81)85176-2 as emitted by
 **paduagroup/clandpol** (`ff/potential/pair/{tang_toennies,thole}.rs`); NIST
 CODATA constants (`core/units/constants.rs`).

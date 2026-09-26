@@ -32,31 +32,13 @@ use molrs::types::I;
 
 /// The lowest level of an IR, with the fragment table that defines its
 /// nodes and its resolved pairs, as [`CGSmilesIR::lowest_level`] reads them.
-pub(super) struct LowestLevel<'ir> {
+struct LowestLevel<'ir> {
     /// The fragment definitions the level's node names refer to.
-    pub(super) defs: &'ir BTreeMap<String, CGFragmentDef>,
+    defs: &'ir BTreeMap<String, CGFragmentDef>,
     /// The lowest level — the IR's last.
-    pub(super) level: &'ir CGGraph,
+    level: &'ir CGGraph,
     /// That level's resolved pairs.
-    pub(super) pairs: &'ir [ResolvedPair],
-}
-
-/// What expanding the lowest level produced, and what it was expanded from.
-pub(super) struct Expansion<'ir> {
-    /// The expanded graph: every atom stamped `frag_id` = the index of the
-    /// lowest-level node it came from, every resolved pair a bond.
-    pub(super) mol: Atomistic,
-    /// Per node of the level, its port atoms in descriptor order, as they sit
-    /// in `mol`.
-    pub(super) ports: Vec<Vec<AtomId>>,
-    /// The level expanded — the IR's last.
-    pub(super) level: &'ir CGGraph,
-    /// That level's resolved pairs, each one a bond of `mol`.
-    pub(super) pairs: &'ir [ResolvedPair],
-    /// The converted body of every definition the level names; entry `p` of
-    /// a body's port map is port `p` of every node naming it, so the
-    /// descriptor of a port is read here rather than copied per node.
-    pub(super) bodies: FragmentCache,
+    pairs: &'ir [ResolvedPair],
 }
 
 impl CGSmilesIR {
@@ -146,29 +128,25 @@ impl CGSmilesIR {
     /// assert_eq!(mol.n_bonds(), 10);
     /// ```
     pub fn to_atomistic(&self) -> Result<Atomistic, SmilesError> {
-        Ok(self.expand_lowest_level()?.mol)
+        self.expand_lowest_level()
     }
 
-    /// Expand the lowest level into one graph, and report where every node's
-    /// ports landed in it.
+    /// Expand the lowest level into one graph.
     ///
-    /// The one expansion both [`to_atomistic`](Self::to_atomistic) and
-    /// [`to_template`](Self::to_template) build on: every node becomes a copy
-    /// of its converted body, and every [`ResolvedPair`] of the level becomes
-    /// one bond of the class it resolved. Each run of consecutive nodes naming
-    /// one definition is placed by a single [`Atomistic::replicate`] under
-    /// identity transforms, so node order — and hence atom row order — is the
-    /// level's.
+    /// The expansion behind [`to_atomistic`](Self::to_atomistic): every node
+    /// becomes a copy of its converted body, and every [`ResolvedPair`] of the
+    /// level becomes one bond of the class it resolved. Each run of
+    /// consecutive nodes naming one definition is placed by a single
+    /// [`Atomistic::replicate`] under identity transforms, so node order — and
+    /// hence atom row order — is the level's.
     ///
     /// **`frag_id` is the lowest-level node index.** Every atom of node `i`'s
-    /// copy carries `frag_id = i` — the index into
-    /// the `nodes` of [`Expansion::level`], nothing else. `to_template` relies on
-    /// exactly this to derive each atom's `bead` from its `frag_id`.
+    /// copy carries `frag_id = i`.
     ///
     /// # Errors
     ///
     /// Those of [`to_atomistic`](Self::to_atomistic).
-    pub(super) fn expand_lowest_level(&self) -> Result<Expansion<'_>, SmilesError> {
+    fn expand_lowest_level(&self) -> Result<Atomistic, SmilesError> {
         let LowestLevel { defs, level, pairs } = self.lowest_level()?;
         let nodes = &level.nodes;
         let mut cache = FragmentCache::default();
@@ -237,13 +215,7 @@ impl CGSmilesIR {
             first = last;
         }
         self.bond_pairs(&mut mol, &ports, pairs)?;
-        Ok(Expansion {
-            mol,
-            ports,
-            level,
-            pairs,
-            bodies: cache,
-        })
+        Ok(mol)
     }
 
     /// Turn every resolved pair of the lowest level into one classed bond.
@@ -313,7 +285,7 @@ impl CGSmilesIR {
     /// fragment table, or no level), which writes beads and never says what
     /// they are made of. The first check makes the lowest level's pair list
     /// present exactly when the lowest level is.
-    pub(super) fn lowest_level(&self) -> Result<LowestLevel<'_>, SmilesError> {
+    fn lowest_level(&self) -> Result<LowestLevel<'_>, SmilesError> {
         if self.pairs.len() != self.levels.len() {
             let reason = format!(
                 "pairs/levels misaligned: {} pair lists for {} levels",
@@ -637,8 +609,7 @@ mod tests {
     /// prop-1-en-1-ol, C–C=C–O: the `=` belongs to each descriptor, so the
     /// one resolved pair is a double bond. Hand-derived (spec assembly-06
     /// § Domain basis): heavy atoms C, C, C, O in chain order, bond numbers
-    /// (1, 2, 1) along the chain, `frag_id` [0, 0, 1, 1]. The Assembler door
-    /// pins the same golden in `builder::assemble`.
+    /// (1, 2, 1) along the chain, `frag_id` [0, 0, 1, 1].
     #[test]
     fn test_shared_golden_expands_to_the_c_c_eq_c_o_chain() {
         let mol = expanded("{[#A][#B]}.{#A=CC=[>],#B=[<]=CO}");

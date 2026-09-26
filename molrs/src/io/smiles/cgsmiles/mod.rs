@@ -19,7 +19,11 @@
 //! [`Fragment`](crate::system::Fragment) **template** per definition of the
 //! last fragment table, each open valence made explicit as a capping hydrogen
 //! carrying a port. Expansion is the molecule the string states; a template is
-//! what a builder places, many times, without re-reading the string.
+//! what a builder places, many times, without re-reading the string. The third
+//! conversion, [`CGSmilesIR::to_coarsegrain`], needs no fragment table at all:
+//! it reads the coarsest level, `levels[0]`, as a
+//! [`CoarseGrain`](crate::system::coarsegrain::CoarseGrain) bead graph — one
+//! bead per node, one CG bond per edge, no coordinates.
 //!
 //! # What the block grammar says
 //!
@@ -240,9 +244,8 @@ mod resolve;
 #[cfg(test)]
 pub(super) mod test_support;
 mod to_atomistic;
-mod to_frag_graph;
+mod to_coarsegrain;
 mod to_fragment;
-mod to_template;
 mod validate;
 
 use crate::io::smiles::error::SmilesError;

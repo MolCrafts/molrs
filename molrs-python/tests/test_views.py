@@ -1,4 +1,3 @@
-import numpy as np
 import pytest
 
 import molrs
@@ -37,38 +36,6 @@ def test_public_coarse_grain_factories_and_graph_out_paths() -> None:
         assert type(result) is molrs.CoarseGrain
         assert isinstance(result, molrs.GraphViews)
         assert len(result.beads) == 2
-
-
-def test_coarse_grain_from_atom_frame_reads_atoms_as_beads_and_bonds_as_cg_bonds() -> None:
-    # A LAMMPS-style atom frame: bond endpoints are 0-based `atoms` rows.
-    atoms = molrs.Block()
-    atoms.insert("x", np.array([0.0, 1.0, 2.0], dtype=np.float64))
-    atoms.insert("y", np.zeros(3, dtype=np.float64))
-    atoms.insert("z", np.zeros(3, dtype=np.float64))
-    atoms.insert("type", ["A", "B", "C"])
-    bonds = molrs.Block()
-    bonds.insert("atomi", np.array([0, 1], dtype=np.uint64))
-    bonds.insert("atomj", np.array([2, 2], dtype=np.uint64))
-    frame = molrs.Frame()
-    frame["atoms"] = atoms
-    frame["bonds"] = bonds
-
-    cg = molrs.CoarseGrain.from_atom_frame(frame, "type")
-
-    assert type(cg) is molrs.CoarseGrain
-    assert cg.n_beads == 3
-    assert sorted(cg.get(h, "bead_type") for h in cg.entities()) == ["A", "B", "C"]
-    assert len(cg.cgbonds) == 2
-
-
-def test_coarse_grain_from_atom_frame_without_the_type_column_is_a_value_error() -> None:
-    atoms = molrs.Block()
-    atoms.insert("x", np.array([0.0], dtype=np.float64))
-    frame = molrs.Frame()
-    frame["atoms"] = atoms
-
-    with pytest.raises(ValueError, match="type"):
-        molrs.CoarseGrain.from_atom_frame(frame, "type")
 
 
 def test_public_fragment_factories_and_graph_out_paths() -> None:

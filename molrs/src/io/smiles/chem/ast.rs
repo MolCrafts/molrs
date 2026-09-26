@@ -42,8 +42,9 @@ impl Span {
 ///
 /// This is a pure syntax tree — it captures the notation faithfully without
 /// committing to atomistic or coarse-grained semantics. Convert to
-/// [`Atomistic`](crate::system::atomistic::Atomistic) or
-/// [`CoarseGrain`](crate::system::coarsegrain::CoarseGrain) for domain use.
+/// [`Atomistic`](crate::system::atomistic::Atomistic) for domain use; a
+/// coarse-grained bead graph comes from `CGsmiles` instead, via
+/// [`CGSmilesIR::to_coarsegrain`](crate::io::smiles::CGSmilesIR::to_coarsegrain).
 ///
 /// Multiple disconnected components are separated by `.` in the input.
 #[derive(Debug, Clone, PartialEq)]

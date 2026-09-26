@@ -178,29 +178,60 @@ There is no code under test: this link changes no compiled line (`molrs/src/lib.
 - **Refreshing `.claude/notes/architecture.md:3`.** That stamp is `/mol:map`'s.
 - **A `regressions/` example.** molrs has no `regressions/` tree (`CLAUDE.md`: the regression and benchmark systems are being redesigned outside this repo), and a release link with no behaviour change has nothing to pin; the gate run is the verification.
 
-## Re-run after the assembly chain
+## Re-run after the assembly and backmap-primitives chains
 
-The `assembly-*` chain (assembly-01 §0.12) changes the public surface of the
-unreleased 0.15 tree after this link verified its notes and gate. The
-`## v0.15.0` section of `.claude/notes/release.md` and the gate are re-run on
-the post-chain tree (ac-007, ac-009, ac-010). The section must add:
+Two chains change the public surface of the unreleased 0.15 tree after this
+link verified its notes and gate: the `assembly-*` chain added an assembly
+builder, and the `backmap-primitives-*` chain (backmap-primitives-01 §0)
+retired that builder on the same day in favour of primitives the caller
+composes (notes.md 2026-09-26). The `## v0.15.0` section of
+`.claude/notes/release.md` and the gate are re-run on the post-chain tree
+(ac-007, ac-009, ac-010).
 
-- the new always-on `molrs::op` module (numeric base beneath `core`);
-- the assembly surface: `FragGraph`, `Mapping`, `FragLibrary.map` (coarse-type
-  → template-label rules), `TracePlacer` / orienters, `PortReacter`,
-  `Finalizer`, `Assembler`, `MolGraph::replicate`, `CGSmilesIR::to_template` /
-  `to_frag_graph`, `CoarseGrain::from_atom_frame`, `Frame::convert_units`, LJ
-  `lj_mass` / `lj_charge` / `define_lj_sigma`;
-- the retirements: `SiteMap`, the `site` / `q0` keys, `LineOrienter` /
-  `TangOrienter`, the whole-graph `TracePlacer`, `replicate(n)`,
-  `compute::density::kabsch`, the `core::math` pure functions,
-  `Trace::from_arrays` / `tangent`;
-- `FRAME_VOCAB_VERSION` 2;
+**Rules for the section.**
+
+- It compares against `v0.14` (no patch component, so the § 4 `0.14.0` sweep
+  stays exact).
+- A symbol born in the assembly chain and removed by backmap-primitives never
+  shipped, and the section names it nowhere — neither as an addition nor as a
+  retirement.
+- A retirement bullet names a symbol only if
+  `git grep -nw <symbol> v0.14.0 -- molrs/src molrs-python/src molrs-python/python`
+  finds it (the tag rule).
+- Every added symbol must resolve at the post-chain tree.
+
+**The section must add:**
+
+- the new always-on `molrs::op` module (the numeric base beneath `core`);
+- the backmap primitives:
+  - `geometry::center` with `CenterError`, and the three leaf `center`s on
+    `Atomistic` / `CoarseGrain` / `Fragment` (Python returns an ndarray of
+    shape (3,));
+  - `perceive::SubgraphMatcher` (also at the crate root);
+  - `Fragment::link`, and `Fragment::merge` returning (atom map, port map);
+  - `Frame::subset` (Python: a row mask, plus `frame["atoms", "mol_id"]` tuple
+    indexing);
+  - `CGSmilesIR::to_coarsegrain`;
+  - `MolGraph::replicate`;
+  - Python `Fragment.to_atomistic()`;
+- `CoarseGrain::from_frame` / `to_frame` on the one-molecule `atoms` / `bonds`
+  vocabulary;
+- LJ `lj_mass` / `lj_charge` / `define_lj_sigma`;
+- the retirements, each candidate kept only if it passes the tag rule:
+  `SiteMap`, the `site` / `q0` keys, `LineOrienter` / `TangOrienter`,
+  `Placer` / `TracePlacer`, the orienters, `Reacter` / `PortReacter` /
+  `PairError`, `replicate(n)`, `compute::density::kabsch`, the `core::math`
+  pure functions, `Trace::from_arrays` / `tangent`, the `beads` block, and the
+  Python `Trace` and assembly classes;
+- `ReactError` moving to `core::system::link` as `LinkError`, without the
+  `Other` variant (tag rule: if `ReactError` is absent at `v0.14.0`, name only
+  `LinkError`);
+- `FRAME_VOCAB_VERSION` 2, quoting its History comment;
 - `ColumnSpec.unit` replaced by a typed `dimension`, with the schema
   document's unit column now derived;
 - the LAMMPS data reader refusing unknown sections, incomplete / duplicate /
   unknown-id per-atom rows, repeated sections, and header lines it does not
   read (incl. the general-triclinic `avec` / `bvec` / `cvec` / `abc origin`
   keywords, previously ignored with the box left unset); `with_skipped_section`;
-- the Python builder classes moving under `molrs.builder`.
+- `molrs.builder` holding only `CarbonTubeBuilder` / `GrapheneBuilder`;
 - `ScaleLjError::InvalidMass` (a non-finite fragment mass is refused).

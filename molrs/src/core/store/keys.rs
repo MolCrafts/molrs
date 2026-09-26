@@ -38,8 +38,8 @@ pub const IMPROPER_TYPE_LABELS: &str = "improper_type_labels";
 /// Frame meta key: the unit-preset name (`"real"`, `"lj"`, …) the frame's
 /// numbers are in. Absent means the file or caller stated none.
 ///
-/// Owned by [`Frame::convert_units`](crate::store::frame::Frame::convert_units),
-/// which checks it against the source preset and sets it to the target.
+/// The LAMMPS molecule-JSON reader writes it and its writer emits it back
+/// (`io::data::lammps_molecule`); molrs converts no frame between presets.
 pub const UNITS: &str = "units";
 
 /// Canonical storage dtype for a key, if the vocabulary declares one.

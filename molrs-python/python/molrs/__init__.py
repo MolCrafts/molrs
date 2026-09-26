@@ -13,7 +13,8 @@ the Python path and the Rust path are the same word:
   cube, SMILES). Field-canonicalizing; ``molrs.io.raw`` is the format-native
   binding.
 * :mod:`molrs.perceive` — chemical perception: rings, aromaticity, hydrogens,
-  stereochemistry, SMARTS matching.
+  stereochemistry, SMARTS matching, coarse-grained bead-pattern matching
+  (``SubgraphMatcher``).
 * :mod:`molrs.ff` — force fields, typifiers, charge models, potentials.
 * :mod:`molrs.optimize` — geometry optimizers.
 * :mod:`molrs.conformer` — 3D conformer generation.
@@ -21,10 +22,8 @@ the Python path and the Rust path are the same word:
   velocity-Verlet/Langevin integrators, the ``Potential`` base class, the
   ``MD`` driver. Loaded lazily so a compiled ``_lib`` without ``md`` still
   imports.
-* :mod:`molrs.op` — pure numeric base: weighted superposition, centroids,
-  uniform SO(3) sampling.
-* :mod:`molrs.builder` — structure builders (graphene, nanotubes) and fragment
-  assembly (``FragLibrary``, placers, orienters, reacters, ``Assembler``).
+* :mod:`molrs.op` — pure numeric base: weighted superposition, centroids.
+* :mod:`molrs.builder` — structure builders (graphene, nanotubes).
 * :mod:`molrs.compute` — analysis, one subpackage per ``molrs::compute`` domain.
 * :mod:`molrs.signal` — FFT autocorrelation, windows, frequency grids.
 * :mod:`molrs.stream` — live Frame streaming over WebSocket.
@@ -80,10 +79,6 @@ from ._lib import (
     Fragment,
     ExtractedSubgraph,
     Reaction,
-    # Unit-level assembly topology
-    FragGraph,
-    Trace,
-    Mapping,
 )
 
 # Rich Python Frame/Block layer (pandas-style API; CSV engine in Rust on the
@@ -92,7 +87,7 @@ from ._lib import (
 # (io readers, etc.) yields these. The shadow is safe now that molpy re-exports
 # them instead of subclassing the bare core (chain spec 04). Internal modules
 # that need the raw cores import them from ``._lib`` directly.
-# `collections.abc.Mapping` is aliased: `molrs.Mapping` is the assembly type.
+# `collections.abc.Mapping` is aliased so that it is not exported as `molrs.Mapping`.
 from collections.abc import Mapping as _AbcMapping
 from collections.abc import MutableMapping
 
@@ -210,9 +205,6 @@ __all__ = [
     "Fragment",
     "ExtractedSubgraph",
     "Reaction",
-    "FragGraph",
-    "Trace",
-    "Mapping",
     "NodeRef",
     "RelationRef",
     "Refs",

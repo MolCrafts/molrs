@@ -102,7 +102,7 @@ criteria:
       Fragment, PortKind, Conformer::generate, SmilesError, notation,
       SmilesErrorKind, CGMapping, WeightScheme, NeighborQuery.
     status: pending
-    note: "re-verify after the assembly-* chain (assembly-01 §0.12)"
+    note: "re-verify after the assembly-* and backmap-primitives-* chains (backmap-primitives-01 §0)"
   - id: ac-008
     summary: The wasm NeighborQuery symmetry gate is re-deferred, not claimed
     type: docs
@@ -137,7 +137,7 @@ criteria:
       molcrafts --out-name molrs`, `wasm-pack test --node`, and `ctest
       --test-dir molrs-capi/build-test --output-on-failure`.
     status: pending
-    note: "re-verify after the assembly-* chain (assembly-01 §0.12)"
+    note: "re-verify after the assembly-* and backmap-primitives-* chains (backmap-primitives-01 §0)"
   - id: ac-010
     summary: Gate numbers in the notes table were measured at the tagged tree
     type: runtime
@@ -148,7 +148,7 @@ criteria:
       (2045 / 74 / 557, measured under full,filesystem without stream) is
       carried forward.
     status: pending
-    note: "re-verify after the assembly-* chain (assembly-01 §0.12)"
+    note: "re-verify after the assembly-* and backmap-primitives-* chains (backmap-primitives-01 §0)"
   - id: ac-011
     summary: Tag v0.15.0 matches the workspace version and sits on master
     type: runtime

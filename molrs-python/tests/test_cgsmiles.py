@@ -384,52 +384,6 @@ def test_cg_node_is_not_constructible_from_python() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Whole-string template and unit-level topology (assembly-07)
-# ---------------------------------------------------------------------------
-
-# A two-bead monomer: `[<]CC[$]` + `[$]CO[>]`, the `$` pair consumed, the `<`
-# and `>` left open (the `to_template` rustdoc example in
-# molrs/src/io/smiles/cgsmiles/to_template.rs).
-MONOMER = "{[#A][#B]}.{#A=[<]CC[$],#B=[$]CO[>]}"
-
-
-def test_to_template_returns_a_fragment_with_the_open_valences_as_ports() -> None:
-    # 4 heavy atoms + one capping hydrogen per unpaired `<` / `>` = 6 atoms;
-    # 3 heavy-atom bonds + 2 handle bonds = 5 bonds; 2 ports.
-    template = molrs.io.CGSmilesIR(MONOMER).to_template()
-
-    assert type(template) is molrs.Fragment
-    assert template.n_atoms == 6
-    assert template.n_relations("bonds") == 5
-    assert template.n_ports == 2
-
-
-def test_to_template_of_a_base_only_string_is_a_value_error() -> None:
-    with pytest.raises(ValueError):
-        molrs.io.CGSmilesIR("{[#A][#B]}").to_template()
-
-
-def test_to_frag_graph_crosses_node_names_and_edge_tuples() -> None:
-    # Seam only: the mapping itself is proven by the Rust `to_frag_graph` tests.
-    graph = molrs.io.CGSmilesIR(F2).to_frag_graph()
-
-    assert isinstance(graph, molrs.FragGraph)
-    assert graph.nodes and graph.edges
-    assert isinstance(graph.nodes, list)
-    assert all(isinstance(name, str) for name in graph.nodes)
-    assert isinstance(graph.edges, list)
-    assert all(
-        isinstance(edge, tuple) and len(edge) == 4 and all(isinstance(v, int) for v in edge)
-        for edge in graph.edges
-    )
-
-
-def test_to_frag_graph_of_a_base_only_string_is_a_value_error() -> None:
-    with pytest.raises(ValueError):
-        molrs.io.CGSmilesIR("{[#A][#B]}").to_frag_graph()
-
-
-# ---------------------------------------------------------------------------
 # Public-API example (this repo's stand-in for a regressions/ script)
 # ---------------------------------------------------------------------------
 
@@ -450,3 +404,18 @@ def test_cgsmiles_f2_public_api() -> None:
     assert isinstance(mol, molrs.Atomistic)
     assert mol.n_atoms == 11
     assert mol.n_relations("bonds") == 10
+
+
+# ---------------------------------------------------------------------------
+# to_coarsegrain: the bead graph as a CoarseGrain (backmap-primitives-07)
+# ---------------------------------------------------------------------------
+
+
+def test_to_coarsegrain_crosses_as_a_coarse_grain() -> None:
+    # Four written beads, three written edges; the counts are the ones the
+    # Rust doctest of ``CGSmilesIR::to_coarsegrain`` pins.
+    cg = molrs.io.CGSmilesIR("{[#1][#1][#1][#4]}").to_coarsegrain()
+
+    assert type(cg) is molrs.CoarseGrain
+    assert cg.n_beads == 4
+    assert cg.n_relations("bonds") == 3

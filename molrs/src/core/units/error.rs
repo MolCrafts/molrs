@@ -38,26 +38,6 @@ pub enum UnitsError {
         /// The conflicting name.
         name: String,
     },
-    /// A frame unit conversion was refused before anything was written.
-    ///
-    /// Raised by [`Frame::convert_units`](crate::store::frame::Frame::convert_units)
-    /// for any of these causes:
-    ///
-    /// - the frame's `meta.units` names a preset other than the source;
-    /// - a `Float` column's key is undeclared in the schema or declared not a
-    ///   physical quantity, or a column of a quantity key is stored in a
-    ///   floating dtype other than `Float` (`f16`, `f32`, complex);
-    /// - the scaled box cell is not a valid cell;
-    /// - a preset unit does not parse in the registry (e.g. an `lj_*` unit
-    ///   the registry never defined) — the underlying [`UnitsError`] is
-    ///   flattened into `reason`.
-    Unconvertible {
-        /// Where the refusal happened: `block.key` for a column, `simbox`
-        /// for the box, or `meta.units` for the declared preset.
-        column: String,
-        /// Human-readable cause.
-        reason: String,
-    },
 }
 
 impl fmt::Display for UnitsError {
@@ -74,9 +54,6 @@ impl fmt::Display for UnitsError {
                 write!(f, "failed to parse '{}': {}", expr, message)
             }
             UnitsError::Redefinition { name } => write!(f, "unit already defined: {}", name),
-            UnitsError::Unconvertible { column, reason } => {
-                write!(f, "cannot convert '{}': {}", column, reason)
-            }
         }
     }
 }

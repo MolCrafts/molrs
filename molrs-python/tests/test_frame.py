@@ -639,45 +639,6 @@ class TestMetaDocument:
         assert isinstance(frame.meta["wrapped"]["tags"], tuple)
 
 
-class TestFrameConvertUnits:
-    """Seam of ``Frame.convert_units(registry, from_preset, to_preset)``.
-
-    The scaling rules are proven by ``molrs/src/core/store/frame.rs``; these
-    check only that the call crosses: one length column scaled by a hand-set
-    sigma, and a refused conversion surfacing as ``ValueError``.
-    """
-
-    @staticmethod
-    def _sigma_only_registry() -> molrs.UnitRegistry:
-        units = molrs.UnitRegistry()
-        units.define_lj_sigma(units.quantity(4.2, "angstrom"))
-        return units
-
-    def test_lj_length_column_scales_by_sigma_into_real(self):
-        f = Frame()
-        atoms = Block()
-        atoms.insert("x", np.array([1.0, -2.0], dtype=np.float64))
-        f["atoms"] = atoms
-
-        f.convert_units(
-            self._sigma_only_registry(), molrs.UnitPreset("lj"), molrs.UnitPreset("real")
-        )
-
-        np.testing.assert_allclose(f["atoms"].view("x"), [4.2, -8.4], rtol=0, atol=1e-12)
-
-    def test_a_column_the_registry_cannot_scale_is_refused_and_left_unchanged(self):
-        f = Frame()
-        atoms = Block()
-        atoms.insert("charge", np.array([1.0], dtype=np.float64))
-        f["atoms"] = atoms
-
-        with pytest.raises(ValueError, match="charge"):
-            f.convert_units(
-                self._sigma_only_registry(), molrs.UnitPreset("lj"), molrs.UnitPreset("real")
-            )
-        np.testing.assert_array_equal(f["atoms"].view("charge"), [1.0])
-
-
 class TestFrameValidation:
     def test_validate_empty(self):
         Frame().validate()
@@ -689,3 +650,81 @@ class TestFrameValidation:
         b.insert("y", np.array([0.0, 1.0, 2.0], dtype=np.float64))
         f["atoms"] = b
         f.validate()
+
+
+class TestFrameSubset:
+    """Seam of ``molrs.Frame.subset`` and ``(block, key)`` column access.
+
+    Row gathering and relation renumbering are proven by
+    ``molrs/src/core/store/frame.rs``; these check the rich return type, the
+    Python row normaliser (bool mask, int rows, negative wrap) and the error
+    mapping.
+    """
+
+    @staticmethod
+    def _chain() -> molrs.Frame:
+        # 4 atoms at x = 0..3 (Å) in two molecules, bonded (0,1), (1,2), (2,3).
+        return molrs.Frame(
+            {
+                "atoms": {
+                    "x": np.array([0.0, 1.0, 2.0, 3.0], dtype=np.float64),
+                    "mol_id": np.array([1, 1, 2, 2]),
+                },
+                "bonds": {
+                    "atomi": np.array([0, 1, 2]),
+                    "atomj": np.array([1, 2, 3]),
+                },
+            }
+        )
+
+    def test_subset_returns_a_rich_frame_with_the_selected_rows(self):
+        sub = self._chain().subset([2, 3])
+
+        assert type(sub) is molrs.Frame
+        np.testing.assert_array_equal(sub["atoms"]["x"], [2.0, 3.0])
+        np.testing.assert_array_equal(sub["atoms"]["mol_id"], [2, 2])
+        assert sub["bonds"].nrows == 1
+        np.testing.assert_array_equal(sub["bonds"]["atomi"], [0])
+        np.testing.assert_array_equal(sub["bonds"]["atomj"], [1])
+
+    def test_a_bool_mask_and_int_rows_select_the_same_rows(self):
+        frame = self._chain()
+
+        by_mask = frame.subset(np.array([True, False, True, False]))
+        by_rows = frame.subset([0, 2])
+
+        np.testing.assert_array_equal(by_mask["atoms"]["x"], by_rows["atoms"]["x"])
+        np.testing.assert_array_equal(by_mask["atoms"]["x"], [0.0, 2.0])
+        assert by_mask["bonds"].nrows == by_rows["bonds"].nrows == 0
+
+    def test_a_negative_row_wraps(self):
+        sub = self._chain().subset([-1])
+
+        np.testing.assert_array_equal(sub["atoms"]["x"], [3.0])
+
+    def test_a_block_key_tuple_is_column_access(self):
+        frame = self._chain()
+
+        np.testing.assert_array_equal(
+            frame["atoms", "mol_id"], frame["atoms"]["mol_id"]
+        )
+
+    def test_subset_by_a_mol_id_comparison_selects_one_molecule(self):
+        frame = self._chain()
+
+        one = frame.subset(frame["atoms", "mol_id"] == 1)
+
+        np.testing.assert_array_equal(one["atoms"]["x"], [0.0, 1.0])
+        assert one["bonds"].nrows == 1
+
+    def test_a_row_past_the_end_is_a_value_error(self):
+        with pytest.raises(ValueError):
+            self._chain().subset([4])
+
+    def test_a_mask_of_the_wrong_length_is_an_index_error(self):
+        with pytest.raises(IndexError):
+            self._chain().subset(np.array([True, False]))
+
+    def test_a_missing_block_is_a_key_error(self):
+        with pytest.raises(KeyError):
+            self._chain().subset([0], block="missing")

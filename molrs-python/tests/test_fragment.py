@@ -208,3 +208,158 @@ def test_to_fragment_returns_named_fragments() -> None:
         assert type(fragment) is molrs.Fragment
     assert fragments["PEO"].n_ports == 2
     assert fragments["OH"].n_ports == 1
+
+
+# ---------------------------------------------------------------------------
+# merge / link / to_atomistic (backmap-primitives-07)
+#
+# Seam only: the handle maps, the leaving-group removal and the refusals are
+# proven by ``molrs/src/core/system/fragment.rs`` and ``link.rs``. These tests
+# check the Python shapes (dicts of int handles, an int bond handle, the public
+# ``Atomistic``) and that every refusal is a ``ValueError`` that leaves the
+# fragment as it was.
+# ---------------------------------------------------------------------------
+
+
+def _def_ported_monomer(fragment: molrs.Fragment, y: float = 0.0) -> dict[str, int]:
+    """Write ``H0–C0–C1–H1`` with ports ``(C0, H0, ">")`` and ``(C1, H1, "<")``
+    into ``fragment`` through the native writers; return the port handles keyed
+    by glyph.
+
+    Positions in Å and masses in g/mol are hand-set: C0 (0, y, 0), C1 (1.54,
+    y, 0), H0 (-1, y, 0), H1 (2.54, y, 0); C 12.011, H 1.008.
+    """
+    c0 = fragment.def_atom(element="C", x=0.0, y=y, z=0.0, mass=12.011)
+    c1 = fragment.def_atom(element="C", x=1.54, y=y, z=0.0, mass=12.011)
+    h0 = fragment.def_atom(element="H", x=-1.0, y=y, z=0.0, mass=1.008)
+    h1 = fragment.def_atom(element="H", x=2.54, y=y, z=0.0, mass=1.008)
+    fragment.def_bond(c0, c1)
+    fragment.def_bond(c0, h0)
+    fragment.def_bond(c1, h1)
+    head = fragment.def_port(c0, h0, ">")
+    tail = fragment.def_port(c1, h1, "<")
+    return {">": head.handle, "<": tail.handle}
+
+
+def _ported_monomer() -> molrs.Fragment:
+    """One ported monomer (see :func:`_def_ported_monomer`) in its own
+    fragment."""
+    fragment = molrs.Fragment()
+    _def_ported_monomer(fragment)
+    return fragment
+
+
+def _two_monomers() -> tuple[molrs.Fragment, dict[str, int], dict[str, int]]:
+    """One fragment holding two separate ported monomers, written directly
+    (no ``merge``), and each monomer's port handles keyed by glyph.
+
+    The second copy sits 10 Å along +y so the two are disjoint in space too.
+    """
+    fragment = molrs.Fragment()
+    first = _def_ported_monomer(fragment, y=0.0)
+    second = _def_ported_monomer(fragment, y=10.0)
+    return fragment, first, second
+
+
+def test_merge_returns_atom_and_port_maps_and_empties_other() -> None:
+    world = _ported_monomer()
+    other = _ported_monomer()
+
+    atom_map, port_map = world.merge(other)
+
+    assert isinstance(atom_map, dict)
+    assert isinstance(port_map, dict)
+    assert len(atom_map) == 4
+    assert len(port_map) == 2
+    assert set(atom_map.values()) <= set(world.entities())
+    assert set(port_map.values()) <= set(world.relation_ids("ports"))
+    assert other.n_atoms == 0
+    assert other.n_ports == 0
+    assert world.n_atoms == 8
+    assert world.n_ports == 4
+
+
+def test_merge_type_conflict_is_a_value_error() -> None:
+    world = molrs.Fragment()
+    world.def_atom(element="C", tag=1.0)
+    other = molrs.Fragment()
+    other.def_atom(element="C", tag="one")
+
+    with pytest.raises(ValueError):
+        world.merge(other)
+
+
+def test_link_returns_a_bond_handle_and_consumes_both_ports() -> None:
+    world, first, second = _two_monomers()
+    assert world.n_atoms == 8
+    assert world.n_ports == 4
+
+    bond = world.link(first[">"], second["<"])
+
+    assert isinstance(bond, int)
+    assert bond in world.relation_ids("bonds")
+    # One leaving hydrogen per port.
+    assert world.n_atoms == 6
+    assert world.n_ports == 2
+
+
+def test_link_refusal_is_a_value_error_naming_int_handles() -> None:
+    world, first, second = _two_monomers()
+
+    # Two ">" ports are not complements, so the pair is refused.
+    with pytest.raises(ValueError) as excinfo:
+        world.link(first[">"], second[">"])
+
+    message = str(excinfo.value)
+    assert "RelationId(" not in message
+    assert "NodeId(" not in message
+    assert str(first[">"]) in message
+    assert str(second[">"]) in message
+    assert world.n_atoms == 8
+    assert world.n_ports == 4
+
+
+def test_link_of_a_stale_port_is_a_value_error_naming_int_handles() -> None:
+    world, first, second = _two_monomers()
+    world.link(first[">"], second["<"])
+    stale = first[">"]  # consumed by the link above
+    n_atoms, n_ports = world.n_atoms, world.n_ports
+
+    with pytest.raises(ValueError) as excinfo:
+        world.link(stale, second[">"])
+
+    message = str(excinfo.value)
+    assert str(stale) in message
+    assert "RelationId(" not in message
+    assert "NodeId(" not in message
+    assert world.n_atoms == n_atoms
+    assert world.n_ports == n_ports
+
+
+def test_to_atomistic_returns_a_public_atomistic_and_keeps_the_fragment() -> None:
+    fragment = _ported_monomer()
+    anchor = fragment.atoms[0].handle
+    fragment.set_frag_id(anchor, 3)
+
+    mol = fragment.to_atomistic()
+
+    assert type(mol) is molrs.Atomistic
+    assert mol.n_atoms == 4
+    assert sorted(mol.entities()) == sorted(fragment.entities())
+    assert "ports" in mol.kinds()
+    assert mol.get(anchor, "frag_id") == 3
+    assert fragment.n_atoms == 4
+    assert fragment.n_ports == 2
+
+
+def test_to_atomistic_refusal_is_a_value_error_and_keeps_the_fragment() -> None:
+    fragment = _ported_monomer()
+    bare = fragment.spawn()  # a node with no element cannot be an atom
+    n_nodes = fragment.n_nodes
+
+    with pytest.raises(ValueError):
+        fragment.to_atomistic()
+
+    assert fragment.n_nodes == n_nodes
+    assert fragment.has_entity(bare)
+    assert fragment.n_ports == 2

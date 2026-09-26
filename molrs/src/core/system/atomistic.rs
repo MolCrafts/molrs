@@ -6,8 +6,10 @@
 //! convenience API (`add_bond`, `bonds`, `get_bond`, …). `MolGraph` itself knows
 //! nothing of bonds — the chemistry lives here.
 //!
-//! Generic graph methods (`nodes`, `neighbors`, `translate`, `add_relation`, …)
-//! remain available via `Deref`/`DerefMut`.
+//! Generic graph methods (`nodes`, `neighbors`, `add_relation`, …) remain
+//! available via `Deref`/`DerefMut`; the coordinate transforms and
+//! [`Atomistic::center`] are inherent methods delegating to
+//! [`crate::spatial::geometry`].
 //!
 //! # Examples
 //!
@@ -35,6 +37,7 @@ use crate::system::molgraph::{Atom, KindId, MolGraph, NodeId, PropValue, Relatio
 /// Result of [`Atomistic::extract_subgraph`].
 #[derive(Debug, Clone)]
 pub struct ExtractedAtomistic {
+    /// The extracted all-atom graph.
     pub graph: Atomistic,
     /// Selected parent atoms with a bond-neighbor outside the ball.
     pub boundary: Vec<AtomId>,
@@ -687,19 +690,20 @@ impl Atomistic {
         &mut self.graph
     }
 
-    /// Translate every atom that has coordinates by `delta`.
+    /// Translate every atom that has coordinates by `delta` (Å).
     pub fn translate(&mut self, delta: [f64; 3]) {
         crate::spatial::geometry::translate(self.as_molgraph_mut(), delta);
     }
 
-    /// Scale every atom that has coordinates by a per-axis `factor` about
-    /// `about` (the origin when `None`). Pass `[s, s, s]` for a uniform scale.
+    /// Scale every atom that has coordinates by a per-axis `factor`
+    /// (dimensionless) about `about` (Å; the origin when `None`). Pass
+    /// `[s, s, s]` for a uniform scale.
     pub fn scale(&mut self, factor: [f64; 3], about: Option<[f64; 3]>) {
         crate::spatial::geometry::scale(self.as_molgraph_mut(), factor, about);
     }
 
     /// Rotate every atom that has coordinates by `angle` radians about `axis`.
-    /// `about` defaults to the origin when `None`.
+    /// `about` (Å) defaults to the origin when `None`.
     ///
     /// # Errors
     ///
@@ -712,6 +716,19 @@ impl Atomistic {
         about: Option<[f64; 3]>,
     ) -> Result<(), crate::error::MolRsError> {
         crate::spatial::geometry::rotate(self.as_molgraph_mut(), axis, angle, about)
+    }
+
+    /// Centre of mass `Σ mᵢ rᵢ / Σ mᵢ` over every atom, in the coordinates'
+    /// length unit (Å) — see [`crate::spatial::geometry::center`]. No periodic
+    /// imaging: unwrap a molecule split across the box first.
+    ///
+    /// # Errors
+    ///
+    /// The [`CenterError`](crate::spatial::geometry::CenterError) of
+    /// [`crate::spatial::geometry::center`]; an atomless molecule is
+    /// [`CenterError::Empty`](crate::spatial::geometry::CenterError::Empty).
+    pub fn center(&self) -> Result<[f64; 3], crate::spatial::geometry::CenterError> {
+        crate::spatial::geometry::center(self.as_molgraph(), &self.node_ids().collect::<Vec<_>>())
     }
 
     /// Place `transforms.len()` rigid copies of `template`, copy `c` moved by
@@ -1566,5 +1583,24 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ---- center ----
+
+    /// Every atom enters: masses 1 and 3 at x = 0 and 4 give (3,0,0); an
+    /// atomless molecule has no centre.
+    #[test]
+    fn center_covers_every_atom_and_an_empty_molecule_is_empty() {
+        let mut mol = Atomistic::new();
+        let light = mol.add_atom_xyz("H", 0.0, 0.0, 0.0);
+        let heavy = mol.add_atom_xyz("Li", 4.0, 0.0, 0.0);
+        mol.set_atom(light, crate::store::keys::MASS, 1.0).unwrap();
+        mol.set_atom(heavy, crate::store::keys::MASS, 3.0).unwrap();
+        assert_eq!(mol.center(), Ok([3.0, 0.0, 0.0]));
+
+        assert_eq!(
+            Atomistic::new().center(),
+            Err(crate::spatial::geometry::CenterError::Empty)
+        );
     }
 }

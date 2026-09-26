@@ -844,37 +844,6 @@ impl PyFrame {
             .map_err(ffi_error_to_pyerr)
     }
 
-    /// Rescale every physical column in place from preset ``from_preset`` to
-    /// ``to_preset``.
-    ///
-    /// Each Float column is scaled by its schema dimension's factor between
-    /// the two presets, resolved through ``registry`` (so a reduced-LJ preset
-    /// needs its ``lj_*`` units defined there); the box scales by the length
-    /// factor. ``meta["units"]`` must name ``from_preset`` when present and
-    /// names ``to_preset`` afterwards. Atomic: on refusal nothing changes.
-    ///
-    /// Parameters
-    /// ----------
-    /// registry : UnitRegistry
-    /// from_preset, to_preset : UnitPreset
-    ///
-    /// Raises
-    /// ------
-    /// UnitsError
-    ///     (a ``ValueError``) naming the column, ``simbox`` or
-    ///     ``meta.units`` that cannot be converted.
-    fn convert_units(
-        &mut self,
-        registry: &crate::core::units::PyUnitRegistry,
-        from_preset: &crate::core::units::PyUnitPreset,
-        to_preset: &crate::core::units::PyUnitPreset,
-    ) -> PyResult<()> {
-        self.inner
-            .with_mut(|f| f.convert_units(&registry.inner, &from_preset.inner, &to_preset.inner))
-            .map_err(ffi_error_to_pyerr)?
-            .map_err(crate::error::units_error)
-    }
-
     /// Judge this frame against the canonical Frame schema.
     ///
     /// Delegates to ``molrs``'s ``Validator::canonical`` — dtype, shape,
@@ -900,6 +869,47 @@ impl PyFrame {
     ///     An independent copy.
     fn copy(&self) -> PyResult<Self> {
         Self::from_core_frame(self.clone_core_frame()?)
+    }
+
+    /// A new frame holding rows ``rows`` of ``block``, with every relation
+    /// block that indexes it cut down and renumbered.
+    ///
+    /// Old row ``rows[k]`` becomes new row ``k``; every column travels. A
+    /// relation block whose endpoints index ``block`` (``bonds``, ``angles``,
+    /// …, or any block carrying ``atomi``..``atoml``) keeps only the rows whose
+    /// endpoints all lie in the selection, in their original order, with each
+    /// endpoint rewritten. Every other block, the box and ``meta`` are copied
+    /// unchanged. Values keep their units. This frame is never modified.
+    ///
+    /// Parameters
+    /// ----------
+    /// rows : Sequence[int]
+    ///     Non-negative row indices into ``block``, no repeats. An empty
+    ///     sequence gives zero-row blocks. A ``bool`` item is an ``int`` to
+    ///     Python, so ``True`` / ``False`` are taken as row indices 1 / 0,
+    ///     never as a mask.
+    /// block : str, optional
+    ///     The block to select from (default ``"atoms"``).
+    ///
+    /// Returns
+    /// -------
+    /// Frame
+    ///     A new, independent frame.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If there is no block ``block``, a row is past its end or repeated,
+    ///     or a relation block indexing it lacks a ``UInt`` endpoint column,
+    ///     or the frame carries a ``members`` block.
+    /// OverflowError
+    ///     If a row is negative.
+    #[pyo3(signature = (rows, block = "atoms"))]
+    fn subset(&self, rows: Vec<usize>, block: &str) -> PyResult<Self> {
+        let sub = self
+            .with_frame(|f| f.subset(block, &rows))?
+            .map_err(molrs_error_to_pyerr)?;
+        Self::from_core_frame(sub)
     }
 
     fn __repr__(&self) -> PyResult<String> {

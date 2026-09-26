@@ -39,8 +39,6 @@ use molrs::store::keys;
 use molrs::system::atomistic::{AtomId, Atomistic};
 use molrs::system::bond::BondNumber;
 use molrs::system::fragment::{Fragment, PortKind};
-use molrs::system::molgraph::PropValue;
-use molrs::types::I;
 
 impl CGSmilesIR {
     /// Build one [`Fragment`] template per definition of the last fragment
@@ -66,9 +64,9 @@ impl CGSmilesIR {
     ///
     /// Capping adds an atom and a bond and writes **no valence-bearing
     /// property**: no `h_count`, no `formal_charge`, no `is_aromatic` on
-    /// either anchor or handle. The handle carries its element, the hydrogen
-    /// `mass` of the [`Element`] table, and the bead stamps below — mass is
-    /// not valence-bearing, so it changes nothing here. That single rule keeps
+    /// either anchor or handle. The handle carries its element and the
+    /// hydrogen `mass` of the [`Element`] table — mass is not
+    /// valence-bearing, so it changes nothing here. That single rule keeps
     /// two opposite valence paths both correct, and any "adjust the anchor's
     /// `h_count` by one" breaks both:
     ///
@@ -97,12 +95,6 @@ impl CGSmilesIR {
     /// port relation is being counted as a bond, which is a routed defect,
     /// not a contract. Adding hydrogens is safe: repletion skips atoms that
     /// are already hydrogen and never touches a handle.
-    ///
-    /// # One template is one bead
-    ///
-    /// Every atom, handles included, carries `bead = 0` (a
-    /// [`PropValue::Int`]) and `bead_type` = the definition's name: a
-    /// per-definition template is a single bead, and the stamps say which.
     ///
     /// # A template is instance-free
     ///
@@ -209,27 +201,13 @@ impl CGSmilesIR {
                     Notation::CGsmiles,
                 ));
             };
-            let (mut atomistic, descriptors) = fragment_to_atomistic(ir)?;
+            let (atomistic, descriptors) = fragment_to_atomistic(ir)?;
             let context = format!("fragment '{name}'");
-            // A per-definition template is one bead: bead 0, named after the
-            // definition. The handles are stamped alike by `cap_open_sites`.
-            let build = |e: MolRsError| cg_build(def.span, format!("{context}: {e}"));
-            let atoms: Vec<AtomId> = atomistic.as_molgraph().node_ids().collect();
-            for atom in atoms {
-                atomistic
-                    .set_atom(atom, keys::BEAD, PropValue::Int(0))
-                    .map_err(build)?;
-                atomistic
-                    .set_atom(atom, keys::BEAD_TYPE, name.as_str())
-                    .map_err(build)?;
-            }
             let sites: Vec<OpenSite<'_>> = descriptors
                 .iter()
                 .map(|(anchor, descriptor)| OpenSite {
                     anchor: *anchor,
                     descriptor,
-                    bead: 0,
-                    bead_type: name,
                 })
                 .collect();
             let fragment = cap_open_sites(atomistic, &sites, &context, def.span)?;
@@ -239,34 +217,29 @@ impl CGSmilesIR {
     }
 }
 
-/// One open valence to cap: the anchor atom, the descriptor written on it, and
-/// the bead stamps the capping hydrogen shares with its anchor.
-pub(super) struct OpenSite<'a> {
+/// One open valence to cap: the anchor atom and the descriptor written on it.
+struct OpenSite<'a> {
     /// The atom the descriptor was written on.
-    pub(super) anchor: AtomId,
+    anchor: AtomId,
     /// The descriptor itself: kind, label and written bond order.
-    pub(super) descriptor: &'a BondingDescriptor,
-    /// The anchor's `bead`.
-    pub(super) bead: I,
-    /// The anchor's `bead_type`.
-    pub(super) bead_type: &'a str,
+    descriptor: &'a BondingDescriptor,
 }
 
 /// Cap every open site of `atomistic` with a hydrogen **handle** and promote
 /// the graph to a [`Fragment`] holding one port per site, in `sites` order.
 ///
-/// Each handle is a real hydrogen carrying its element, the [`Element`]
-/// table's H mass and its anchor's bead stamps, bonded to the anchor by a
-/// single bond; handles are appended in `sites` order, so they follow every
-/// atom already present. Each port records the descriptor's kind (R4.3),
-/// label (R4.4) and order (R4.5). Handles and their bonds are written on the
-/// `Atomistic`, before promotion: `Atomistic::add_bond` stamps both bond facts
-/// in one call, and `Fragment::add_port` re-checks that the handle is a
-/// hydrogen bonded to its anchor, so the bond must exist by then. The graph
-/// is re-wrapped, never copied atom by atom — a copy would drop `h_count`,
-/// `formal_charge`, `isotope`, `is_aromatic` and the stereo the SMILES
-/// builder declared — and neither `into_inner` nor `try_from_molgraph`
-/// renumbers a node, so every anchor id stays valid.
+/// Each handle is a real hydrogen carrying its element and the [`Element`]
+/// table's H mass, bonded to the anchor by a single bond; handles are
+/// appended in `sites` order, so they follow every atom already present. Each
+/// port records the descriptor's kind (R4.3), label (R4.4) and order (R4.5).
+/// Handles and their bonds are written on the `Atomistic`, before promotion:
+/// `Atomistic::add_bond` stamps both bond facts in one call, and
+/// `Fragment::add_port` re-checks that the handle is bonded to its anchor (it
+/// accepts a handle of any element), so the bond must exist by then. The graph is re-wrapped, never
+/// copied atom by atom — a copy would drop `h_count`, `formal_charge`,
+/// `isotope`, `is_aromatic` and the stereo the SMILES builder declared — and
+/// neither `into_inner` nor `try_from_molgraph` renumbers a node, so every
+/// anchor id stays valid.
 ///
 /// # Errors
 ///
@@ -274,7 +247,7 @@ pub(super) struct OpenSite<'a> {
 /// anything is written; otherwise [`SmilesErrorKind::CgBuild`], spanned at
 /// `span` and prefixed by `context`, when a handle, its bond, the promotion
 /// or a port cannot be written.
-pub(super) fn cap_open_sites(
+fn cap_open_sites(
     mut atomistic: Atomistic,
     sites: &[OpenSite<'_>],
     context: &str,
@@ -297,12 +270,6 @@ pub(super) fn cap_open_sites(
         let handle = atomistic.add_atom_bare("H");
         atomistic
             .set_atom(handle, keys::MASS, h_mass)
-            .map_err(build)?;
-        atomistic
-            .set_atom(handle, keys::BEAD, PropValue::Int(site.bead))
-            .map_err(build)?;
-        atomistic
-            .set_atom(handle, keys::BEAD_TYPE, site.bead_type)
             .map_err(build)?;
         atomistic.add_bond(site.anchor, handle).map_err(build)?;
         handles.push(handle);
@@ -374,8 +341,7 @@ fn port_order(desc: &BondingDescriptor, span: Span) -> Result<BondNumber, Smiles
 
 /// A reader invariant violated while building from an IR — expanding the
 /// lowest level, or building a template — spanned at `span`: the whole string
-/// for the expansion and a whole-molecule template, the definition for a
-/// per-definition one. The one constructor of a
+/// for the expansion, the definition for a template. The one constructor of a
 /// [`SmilesErrorKind::CgBuild`] on those paths.
 ///
 /// The input text is not carried: 01b froze the IR without its source string,
@@ -789,14 +755,14 @@ mod tests {
 
     // -- to_fragment: property discipline -----------------------------------
 
-    /// A handle is added with its element, the hydrogen mass and its bead
-    /// stamps, and nothing else: no coordinates, and none of the
+    /// A handle is added with its element and the hydrogen mass, and nothing
+    /// else: no coordinates, no bead stamps, and none of the
     /// valence-bearing properties whose presence would change what a later
     /// `add_hydrogens` computes. Mass is not valence-bearing
     /// (`.claude/specs/assembly-03-template.md` § Design 1, reworked from the
     /// earlier "no mass literal" contract).
     #[test]
-    fn writes_only_element_mass_and_bead_on_a_handle() {
+    fn writes_only_element_and_mass_on_a_handle() {
         let peo = template(F2, "PEO");
         let h_mass = f64::from(
             molrs::Element::by_symbol("H")
@@ -833,11 +799,11 @@ mod tests {
             }
             let mut written: Vec<&str> = handle.keys().collect();
             written.sort_unstable();
-            let mut expected = vec![keys::ELEMENT, keys::MASS, keys::BEAD, keys::BEAD_TYPE];
+            let mut expected = vec![keys::ELEMENT, keys::MASS];
             expected.sort_unstable();
             assert_eq!(
                 written, expected,
-                "a handle carries the element, mass and bead stamps and nothing else"
+                "a handle carries the element and mass and nothing else"
             );
         }
     }
@@ -863,32 +829,6 @@ mod tests {
                     assert!(
                         (mass - h_mass).abs() < 1e-12,
                         "{name}: handle mass {mass} != H mass {h_mass}"
-                    );
-                }
-            }
-        }
-    }
-
-    /// A per-definition template is one bead: every atom, handles included,
-    /// is stamped `bead = 0` and `bead_type = <definition name>`.
-    #[test]
-    fn stamps_bead_zero_and_the_definition_name_on_every_atom() {
-        for text in [F2, F5_BB] {
-            for (name, frag) in templates(text) {
-                assert!(frag.n_atoms() > 0);
-                for atom in frag.node_ids() {
-                    let props = frag
-                        .get_node(atom)
-                        .unwrap_or_else(|e| panic!("{name}: atom {atom:?} is missing: {e}"));
-                    assert_eq!(
-                        props.get(keys::BEAD),
-                        Some(&PropValue::Int(0)),
-                        "{name}: atom {atom:?} bead"
-                    );
-                    assert_eq!(
-                        props.get_str(keys::BEAD_TYPE),
-                        Some(name.as_str()),
-                        "{name}: atom {atom:?} bead_type"
                     );
                 }
             }

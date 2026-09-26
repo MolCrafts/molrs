@@ -375,7 +375,7 @@ mod tests {
         for out in [out_off(), out_fcc()] {
             assert_eq!(out.traces.len(), 3);
             for trace in &out.traces {
-                assert_eq!(trace.n_units(), 20usize);
+                assert_eq!(trace.points().len(), 20usize);
             }
         }
     }

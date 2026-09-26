@@ -3,9 +3,9 @@
 These prove that the numeric primitives cross: arrays arrive as float64 of the
 documented shape, ``Fit`` is a frozen record whose ``freedom`` crosses as its
 lowercase name, and ``SuperposeError`` maps to ``ValueError``. They re-derive
-no numerics: superposition, SO(3) sampling and the eigen-gap are proven by the
-unit tests in ``molrs/src/op/superpose.rs`` and ``molrs/src/op/so3.rs``. The
-one geometric value asserted (a pure translation) is hand-checkable.
+no numerics: superposition and the eigen-gap are proven by the unit tests in
+``molrs/src/op/superpose.rs``. The one geometric value asserted (a pure
+translation) is hand-checkable.
 """
 
 from __future__ import annotations
@@ -106,21 +106,6 @@ class TestSuperpose:
             molrs.op.superpose(TRIANGLE[:, :2], TRIANGLE[:, :2])
 
 
-class TestSuperposeMany:
-    def test_returns_one_fit_per_target_unit(self):
-        # Targets back to back, (N·k, 3), as `op::superpose::superpose_many`.
-        targets = np.vstack([TRIANGLE + [1.0, 0.0, 0.0], TRIANGLE + [0.0, 0.0, 5.0]])
-        fits = molrs.op.superpose_many(TRIANGLE, targets)
-
-        assert len(fits) == 2
-        assert all(isinstance(f, molrs.op.Fit) for f in fits)
-        np.testing.assert_allclose(fits[1].translation, [0.0, 0.0, 5.0], rtol=0, atol=POS_TOL)
-
-    def test_targets_not_a_multiple_of_the_reference_is_a_value_error(self):
-        with pytest.raises(ValueError):
-            molrs.op.superpose_many(TRIANGLE, TRIANGLE[:2])
-
-
 class TestCentroid:
     def test_weighted_centroid(self):
         # Hand-derived: (1·0 + 3·2) / 4 = 1.5.
@@ -130,25 +115,3 @@ class TestCentroid:
 
     def test_zero_total_weight_has_no_centroid(self):
         assert molrs.op.centroid(TRIANGLE, np.zeros(3)) is None
-
-
-class TestSO3Sampling:
-    def test_random_rotations_shape_and_dtype(self):
-        rotations = molrs.op.random_rotations(7, [0, 1, 2])
-        assert rotations.dtype == np.float64
-        assert rotations.shape == (3, 3, 3)
-
-    def test_random_rotations_depend_only_on_seed_and_index(self):
-        one = molrs.op.random_rotations(7, [5])
-        two = molrs.op.random_rotations(7, [0, 5])
-        np.testing.assert_array_equal(one[0], two[1])
-
-    def test_random_angles_shape_and_dtype(self):
-        angles = molrs.op.random_angles(7, [0, 1, 2, 3])
-        assert angles.dtype == np.float64
-        assert angles.shape == (4,)
-
-    def test_rotation_from_uniform_shape_and_dtype(self):
-        rotation = molrs.op.rotation_from_uniform([0.1, 0.2, 0.3])
-        assert rotation.dtype == np.float64
-        assert rotation.shape == (3, 3)

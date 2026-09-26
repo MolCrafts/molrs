@@ -13,19 +13,14 @@ pub mod coarsegrain;
 pub(crate) mod element;
 pub mod entity_table;
 pub mod extract;
-pub mod frag_graph;
 pub mod fragment;
 pub mod graph_hash;
-// Its only non-test caller, `FragLibrary::map`, is behind `builder`.
-#[cfg(any(test, feature = "builder"))]
-pub(crate) mod graph_match;
-pub mod mapping;
+pub mod link;
 pub mod molgraph;
 pub mod topology;
 
 pub use bond::{BondNumber, BondType};
 pub use bond_weights::BondDistanceWeights;
 pub use extract::{ExtractedBall, InducedSubgraph};
-pub use frag_graph::{FragEdge, FragGraph};
-pub use fragment::{BeadError, Fragment, Port, PortId, PortKind};
-pub use mapping::Mapping;
+pub use fragment::{Fragment, MergeMaps, Port, PortId, PortKind};
+pub use link::LinkError;

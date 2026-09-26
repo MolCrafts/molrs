@@ -63,8 +63,7 @@ use molrs::io::smiles::{
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::core::system::frag_graph::PyFragGraph;
-use crate::core::system::molgraph::{PyAtomistic, PyFragment};
+use crate::core::system::molgraph::{PyAtomistic, PyCoarseGrain, PyFragment};
 use crate::helpers::smiles_error_to_pyerr;
 use crate::io::PySmilesIR;
 
@@ -885,56 +884,39 @@ impl PyCGSmilesIR {
         Ok(out)
     }
 
-    /// Build one :class:`~molrs.Fragment` template of the whole lowest level.
+    /// Read the coarsest level, ``levels[0]``, as a bead graph.
     ///
-    /// The lowest level expands as :meth:`to_atomistic` expands it; then every
-    /// atom is stamped ``bead`` (the index of the lowest-level node it came
-    /// from) and ``bead_type`` (that node's name), and every descriptor no
-    /// pair consumed becomes a capping hydrogen plus a port — as
-    /// :meth:`to_fragment` caps a definition. No atom carries ``frag_id`` and
-    /// none carries a coordinate.
+    /// One bead per node, in node order, whose only property is
+    /// ``bead_type`` (the name written after ``#``); one CG bond per edge.
+    /// Only the base block is read, so a base-only string such as
+    /// ``"{[#1][#1][#1][#4]}"`` converts. This is how a bead-group pattern for
+    /// :class:`molrs.perceive.SubgraphMatcher` is written as notation.
+    ///
+    /// **No geometry.** No bead carries ``x`` / ``y`` / ``z`` (Å), ``mass``
+    /// (g/mol) or ``charge``, and there is no bead membership, so
+    /// :meth:`CoarseGrain.center` refuses the result. Edge multiplicities and
+    /// node annotations are dropped.
     ///
     /// Returns
     /// -------
-    /// Fragment
+    /// CoarseGrain
+    ///     The level-0 bead graph.
     ///
     /// Raises
     /// ------
-    /// ValueError
-    ///     If there is no atomistic body to expand (a base-only string).
+    /// SmilesError
+    ///     (a ``ValueError``) if the IR breaks a reader invariant: no levels,
+    ///     an edge endpoint out of range, or a CG bond that cannot be added.
+    ///     No parsed string reaches this; only a hand-edited IR does.
     ///
     /// Examples
     /// --------
-    /// >>> ir = molrs.io.CGSmilesIR("{[#A][#B]}.{#A=[<]CC[$],#B=[$]CO[>]}")
-    /// >>> ir.to_template().n_ports
-    /// 2
-    fn to_template(&self, py: Python<'_>) -> PyResult<Py<PyFragment>> {
-        let template = self.inner.to_template().map_err(smiles_error_to_pyerr)?;
-        PyFragment::from_core(py, template)
-    }
-
-    /// The unit-level topology this string writes, as a
-    /// :class:`~molrs.FragGraph`.
-    ///
-    /// One node per lowest-level node, named after its fragment; one edge
-    /// ``(a, b, port_a, port_b)`` per resolved pair of the lowest level, the
-    /// ports being descriptor indices on each body (their ordinals in the
-    /// template's ordered ports).
-    ///
-    /// Returns
-    /// -------
-    /// FragGraph
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     For a base-only string (no fragment table), or when the resolved
-    ///     pairs do not form a valid graph.
-    fn to_frag_graph(&self) -> PyResult<PyFragGraph> {
-        self.inner
-            .to_frag_graph()
-            .map(PyFragGraph::from_core)
-            .map_err(smiles_error_to_pyerr)
+    /// >>> cg = molrs.io.CGSmilesIR("{[#1][#1][#1][#4]}").to_coarsegrain()
+    /// >>> cg.n_beads
+    /// 4
+    fn to_coarsegrain(&self, py: Python<'_>) -> PyResult<Py<PyCoarseGrain>> {
+        let cg = self.inner.to_coarsegrain().map_err(smiles_error_to_pyerr)?;
+        PyCoarseGrain::from_core(py, cg)
     }
 
     /// ``CGSmilesIR('…', levels=…)``, quoting the string that was parsed.

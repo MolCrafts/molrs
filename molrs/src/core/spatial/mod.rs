@@ -9,7 +9,9 @@
 //! - [`mesh`] — triangle surfaces (`TriMesh`), what an STL reads into
 //! - [`neighbors`] — neighbor search algorithms
 //! - [`periodic`] — ghost atoms for the MD force path
-//! - [`geometry`] — free geometric helpers
+//! - [`geometry`] — whole-graph transforms (translate, scale, rotate) and the
+//!   node-group centre query ([`geometry::center`])
+//! - [`trace`] — an ordered path of 3D points with no chemistry ([`Trace`])
 
 pub(crate) mod bvh;
 pub mod geometry;

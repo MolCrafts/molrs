@@ -1,32 +1,28 @@
-//! `molrs.op` — the pure numeric base (`molrs::op`): weighted superposition,
-//! centroids and SO(3) sampling over `float64` numpy arrays.
+//! `molrs.op` — the pure numeric base (`molrs::op`): weighted superposition
+//! and centroids over `float64` numpy arrays.
 //!
 //! Registered as a submodule of `_lib`, like `md`. Points cross as `(k, 3)`
-//! arrays and rotations as `(3, 3)` (or `(N, 3, 3)`) row-major matrices. A
+//! arrays and rotations as `(3, 3)` row-major matrices. A
 //! wrong shape is a `ValueError` naming the argument; a
 //! [`SuperposeError`](molrs::op::superpose::SuperposeError) is a `ValueError`
 //! carrying the Rust message.
 
 use molrs::op::rigid::Rigid;
-use molrs::op::so3;
 use molrs::op::superpose::{self, DEFAULT_GAP_TOL, Fit, Freedom};
 use molrs::op::types::{Mat3, Vec3};
-use ndarray::{Array1, Array2, Array3};
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3, PyReadonlyArrayDyn};
+use ndarray::{Array1, Array2};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArrayDyn};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use crate::helpers::py_value_err;
 
 // ---------------------------------------------------------------------------
-// Array seams shared with the leaf `replicate` and the assembly bindings
+// Array seams shared with the leaf `replicate`
 // ---------------------------------------------------------------------------
 
 /// Read an `(n, 3)` float64 array as points, refusing any other shape.
-pub(crate) fn points_from_array(
-    array: &PyReadonlyArrayDyn<'_, f64>,
-    name: &str,
-) -> PyResult<Vec<Vec3>> {
+fn points_from_array(array: &PyReadonlyArrayDyn<'_, f64>, name: &str) -> PyResult<Vec<Vec3>> {
     let view = array.as_array();
     let shape = view.shape();
     if shape.len() != 2 || shape[1] != 3 {
@@ -42,10 +38,7 @@ pub(crate) fn points_from_array(
 }
 
 /// Read an `(n, 3, 3)` float64 array as row-major rotation matrices.
-pub(crate) fn matrices_from_array(
-    array: &PyReadonlyArrayDyn<'_, f64>,
-    name: &str,
-) -> PyResult<Vec<Mat3>> {
+fn matrices_from_array(array: &PyReadonlyArrayDyn<'_, f64>, name: &str) -> PyResult<Vec<Mat3>> {
     let view = array.as_array();
     let shape = view.shape();
     if shape.len() != 3 || shape[1] != 3 || shape[2] != 3 {
@@ -86,7 +79,7 @@ fn matrix_to_py<'py>(py: Python<'py>, m: &Mat3) -> Bound<'py, PyArray2<f64>> {
     Array2::from_shape_fn((3, 3), |(i, j)| m[i][j]).into_pyarray(py)
 }
 
-fn vector_to_py<'py>(py: Python<'py>, v: &Vec3) -> Bound<'py, PyArray1<f64>> {
+pub(crate) fn vector_to_py<'py>(py: Python<'py>, v: &Vec3) -> Bound<'py, PyArray1<f64>> {
     Array1::from(v.to_vec()).into_pyarray(py)
 }
 
@@ -120,13 +113,17 @@ fn weights_or_uniform(
 /// Attributes
 /// ----------
 /// rotation : ndarray, shape (3, 3), float64
+///     A proper rotation (orthogonal, determinant +1), row-major.
 /// translation : ndarray, shape (3,), float64
+///     In the coordinates' length unit (Å in molrs), applied after the
+///     rotation.
 /// rmsd : float
-///     Weighted RMSD of the fit.
+///     Weighted root-mean-square deviation of the fit, in the coordinates'
+///     length unit (Å).
 /// rho : float
-///     Scale-free eigen-gap; 0 when ``freedom == "free"``.
+///     Scale-free eigen-gap (dimensionless); 0 when ``freedom == "free"``.
 /// center : ndarray, shape (3,), float64
-///     Weighted target centroid (the point a spin axis passes through).
+///     Weighted target centroid in Å (the point a spin axis passes through).
 /// freedom : str
 ///     ``"unique"``, ``"spin"`` (rotation about ``axis`` is undetermined) or
 ///     ``"free"`` (no rotation determined; ``rotation`` is the identity).
@@ -237,41 +234,6 @@ fn py_superpose(
         .map_err(py_value_err)
 }
 
-/// :func:`superpose` of one ``reference`` against each unit of ``targets``.
-///
-/// Parameters
-/// ----------
-/// reference : ndarray, shape (k, 3), float64
-/// targets : ndarray, shape (N·k, 3), float64
-///     The ``N`` target units back to back.
-/// weights : ndarray, shape (k,), float64, optional
-/// gap_tol : float, keyword-only
-///
-/// Returns
-/// -------
-/// list[Fit]
-///     One fit per unit, each equal to the single call on that unit.
-///
-/// Raises
-/// ------
-/// ValueError
-///     If ``targets`` is not a whole number of units, or as :func:`superpose`.
-#[pyfunction(name = "superpose_many")]
-#[pyo3(signature = (reference, targets, weights=None, *, gap_tol=DEFAULT_GAP_TOL))]
-fn py_superpose_many(
-    reference: PyReadonlyArrayDyn<'_, f64>,
-    targets: PyReadonlyArrayDyn<'_, f64>,
-    weights: Option<PyReadonlyArrayDyn<'_, f64>>,
-    gap_tol: f64,
-) -> PyResult<Vec<PyFit>> {
-    let reference = points_from_array(&reference, "reference")?;
-    let targets = points_from_array(&targets, "targets")?;
-    let weights = weights_or_uniform(weights, reference.len())?;
-    superpose::superpose_many(&reference, &targets, &weights, gap_tol)
-        .map(|fits| fits.into_iter().map(PyFit::from_core).collect())
-        .map_err(py_value_err)
-}
-
 /// Weighted centroid ``Σ wᵢ pᵢ / Σ wᵢ``.
 ///
 /// Parameters
@@ -283,8 +245,14 @@ fn py_superpose_many(
 /// Returns
 /// -------
 /// ndarray, shape (3,), float64, or None
-///     ``None`` when the lengths differ or the total weight is not positive
-///     and finite.
+///     The centroid in the length unit of ``points`` (Å in molrs); ``None``
+///     when the lengths differ or the total weight is not positive and
+///     finite.
+///
+/// Raises
+/// ------
+/// ValueError
+///     If ``points`` is not shape ``(k, 3)`` or ``weights`` is not 1-D.
 #[pyfunction(name = "centroid")]
 #[pyo3(signature = (points, weights=None))]
 fn py_centroid<'py>(
@@ -297,60 +265,11 @@ fn py_centroid<'py>(
     Ok(superpose::centroid(&points, &weights).map(|c| vector_to_py(py, &c)))
 }
 
-/// Haar-random rotations, one per entry of ``indices``; each depends only on
-/// ``(seed, index)``.
-///
-/// Returns
-/// -------
-/// ndarray, shape (len(indices), 3, 3), float64
-#[pyfunction(name = "random_rotations")]
-fn py_random_rotations(py: Python<'_>, seed: u64, indices: Vec<u64>) -> Bound<'_, PyArray3<f64>> {
-    let rotations = so3::random_rotations(seed, &indices);
-    Array3::from_shape_fn((rotations.len(), 3, 3), |(c, i, j)| rotations[c][i][j]).into_pyarray(py)
-}
-
-/// Uniform angles in ``[0, 2π)`` radians, one per entry of ``indices``; each
-/// depends only on ``(seed, index)``.
-///
-/// Returns
-/// -------
-/// ndarray, shape (len(indices),), float64
-#[pyfunction(name = "random_angles")]
-fn py_random_angles(py: Python<'_>, seed: u64, indices: Vec<u64>) -> Bound<'_, PyArray1<f64>> {
-    so3::random_angles(seed, &indices).into_pyarray(py)
-}
-
-/// The rotation of Shoemake's unit quaternion for ``u`` in ``[0, 1]³``;
-/// Haar-distributed on SO(3) when ``u`` is uniform.
-///
-/// Returns
-/// -------
-/// ndarray, shape (3, 3), float64
-///
-/// Raises
-/// ------
-/// ValueError
-///     If a component of ``u`` is not finite or lies outside ``[0, 1]``.
-#[pyfunction(name = "rotation_from_uniform")]
-fn py_rotation_from_uniform(py: Python<'_>, u: [f64; 3]) -> PyResult<Bound<'_, PyArray2<f64>>> {
-    // `contains` is false for NaN, and ±inf lies outside [0, 1].
-    if !u.iter().all(|c| (0.0..=1.0).contains(c)) {
-        return Err(PyValueError::new_err(format!(
-            "u must lie in [0, 1]^3 with finite components, got {u:?}"
-        )));
-    }
-    Ok(matrix_to_py(py, &so3::rotation_from_uniform(u)))
-}
-
 /// Populate the `molrs.op` submodule.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyFit>()?;
     m.add("DEFAULT_GAP_TOL", DEFAULT_GAP_TOL)?;
     m.add_function(wrap_pyfunction!(py_superpose, m)?)?;
-    m.add_function(wrap_pyfunction!(py_superpose_many, m)?)?;
     m.add_function(wrap_pyfunction!(py_centroid, m)?)?;
-    m.add_function(wrap_pyfunction!(py_random_rotations, m)?)?;
-    m.add_function(wrap_pyfunction!(py_random_angles, m)?)?;
-    m.add_function(wrap_pyfunction!(py_rotation_from_uniform, m)?)?;
     Ok(())
 }

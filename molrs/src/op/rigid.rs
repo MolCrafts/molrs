@@ -2,11 +2,19 @@
 //!
 //! [`Rigid`] is a plain value; the operations on it are free functions
 //! (the functional style scoped to `molrs::op`). Rotations are proper
-//! orthogonal [`Mat3`]s; quaternions are [`Quat`] `(w, x, y, z)` with the
-//! Hamilton product, a unit `q` rotating `v` as `q v q*`.
+//! orthogonal [`Mat3`]s: `Rᵀ R = I` and `det R = +1`, so lengths and angles
+//! are kept and no mirror image is made.
+//!
+//! A **quaternion** is a four-component number `q = w + x i + y j + z k`,
+//! stored as [`Quat`] `(w, x, y, z)`, multiplied with the Hamilton rules
+//! `i² = j² = k² = ijk = −1` (so `i j = k` but `j i = −k`). Its conjugate is
+//! `q* = w − x i − y j − z k`. A *unit* quaternion (`|q| = 1`) encodes a
+//! rotation: writing a vector `v` as the pure quaternion `0 + vₓ i + v_y j +
+//! v_z k`, the rotated vector is `q v q*`; the rotation by angle `θ` about the
+//! unit axis `k̂` is `q = (cos(θ/2), sin(θ/2) k̂)`.
 
 use crate::op::types::{F, Mat3, Quat, Vec3};
-use crate::op::vec3::{add, cross, dot, norm, normalize, perpendicular};
+use crate::op::vec3::{add, dot};
 
 /// A rigid motion `p' = R p + t`: rotate by `rotation`, then translate by
 /// `translation`.
@@ -33,17 +41,6 @@ fn mat_vec(m: &Mat3, v: Vec3) -> Vec3 {
     [dot(m[0], v), dot(m[1], v), dot(m[2], v)]
 }
 
-/// `a · b`.
-fn mat_mul(a: &Mat3, b: &Mat3) -> Mat3 {
-    let mut out = [[0.0; 3]; 3];
-    for (r, row) in out.iter_mut().enumerate() {
-        for (c, x) in row.iter_mut().enumerate() {
-            *x = a[r][0] * b[0][c] + a[r][1] * b[1][c] + a[r][2] * b[2][c];
-        }
-    }
-    out
-}
-
 /// The image `R p + t` of one point.
 #[inline]
 pub fn apply(rigid: &Rigid, point: Vec3) -> Vec3 {
@@ -53,15 +50,6 @@ pub fn apply(rigid: &Rigid, point: Vec3) -> Vec3 {
 /// The images `R pᵢ + t` of every point, in order.
 pub fn apply_all(rigid: &Rigid, points: &[Vec3]) -> Vec<Vec3> {
     points.iter().map(|&p| apply(rigid, p)).collect()
-}
-
-/// The motion that applies `inner` first, then `outer`:
-/// `R = R_o R_i`, `t = R_o t_i + t_o`.
-pub fn compose(outer: &Rigid, inner: &Rigid) -> Rigid {
-    Rigid {
-        rotation: mat_mul(&outer.rotation, &inner.rotation),
-        translation: apply(outer, inner.translation),
-    }
 }
 
 /// The rotation by `angle` radians (right-handed) about `axis`, by Rodrigues'
@@ -112,35 +100,6 @@ pub fn about(rotation: Mat3, center: Vec3) -> Rigid {
         rotation,
         translation: [center[0] - rc[0], center[1] - rc[1], center[2] - rc[2]],
     }
-}
-
-/// The rotation, as a unit axis and an angle in radians, that turns `from`
-/// onto `to`.
-///
-/// The angle is in `[0, π]`. Antiparallel directions (cross product shorter
-/// than 1e-8 after normalisation) give a half turn about a perpendicular
-/// ([`perpendicular`]). `None` when the two already point the same way (cross
-/// product at most 1e-15) or either one is not a direction ([`normalize`]).
-pub fn alignment(from: Vec3, to: Vec3) -> Option<(Vec3, F)> {
-    let (a, b) = (normalize(from)?, normalize(to)?);
-    let axis = cross(a, b);
-    let cross_norm = norm(axis);
-    let cos = dot(a, b).clamp(-1.0, 1.0);
-    // Near-antiparallel: `axis` is too short to carry a reliable direction, so
-    // turn half a revolution about any perpendicular instead.
-    if cos < 0.0 && cross_norm < 1e-8 {
-        return Some((perpendicular(a)?, std::f64::consts::PI));
-    }
-    (cross_norm > 1e-15).then(|| {
-        (
-            [
-                axis[0] / cross_norm,
-                axis[1] / cross_norm,
-                axis[2] / cross_norm,
-            ],
-            cross_norm.atan2(cos),
-        )
-    })
 }
 
 /// Quaternion conjugate `q* = (w, −x, −y, −z)`.
@@ -220,7 +179,7 @@ pub fn quat_to_matrix(q: Quat) -> Mat3 {
 mod tests {
     use super::*;
     use crate::op::types::{F, Mat3, Quat, Vec3};
-    use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+    use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
 
     const TOL: F = 1e-12;
 
@@ -285,26 +244,6 @@ mod tests {
         assert_vec_close(out[1], [0.0, 2.0, 3.0]);
     }
 
-    // ---------- compose ----------
-
-    #[test]
-    fn compose_applies_inner_first() {
-        let shift = Rigid {
-            rotation: Rigid::IDENTITY.rotation,
-            translation: [1.0, 0.0, 0.0],
-        };
-        let turn = Rigid {
-            rotation: RZ90,
-            translation: [0.0, 0.0, 0.0],
-        };
-        // Rotate then translate: x̂ → ŷ → (1, 1, 0).
-        let turn_then_shift = compose(&shift, &turn);
-        assert_vec_close(apply(&turn_then_shift, [1.0, 0.0, 0.0]), [1.0, 1.0, 0.0]);
-        // Translate then rotate: x̂ → (2, 0, 0) → (0, 2, 0).
-        let shift_then_turn = compose(&turn, &shift);
-        assert_vec_close(apply(&shift_then_turn, [1.0, 0.0, 0.0]), [0.0, 2.0, 0.0]);
-    }
-
     // ---------- axis_angle ----------
 
     #[test]
@@ -334,34 +273,6 @@ mod tests {
         assert_vec_close(apply(&rigid, c), c);
         // A point one unit along x̂ from the centre ends one unit along ŷ.
         assert_vec_close(apply(&rigid, [2.0, 2.0, 3.0]), [1.0, 3.0, 3.0]);
-    }
-
-    // ---------- alignment ----------
-
-    #[test]
-    fn alignment_of_perpendicular_directions_is_a_quarter_turn() {
-        let (axis, angle) = alignment([1.0, 0.0, 0.0], [0.0, 2.0, 0.0]).expect("distinct");
-        assert_vec_close(axis, [0.0, 0.0, 1.0]);
-        assert!((angle - FRAC_PI_2).abs() < TOL, "angle = {angle}");
-    }
-
-    #[test]
-    fn alignment_of_antiparallel_directions_is_a_half_turn_about_a_perpendicular() {
-        let (axis, angle) = alignment([1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]).expect("antiparallel");
-        assert!((angle - PI).abs() < TOL, "angle = {angle}");
-        assert!(axis[0].abs() < TOL, "axis {axis:?} not ⟂ x̂");
-        let len = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
-        assert!((len - 1.0).abs() < TOL, "|axis| = {len}");
-    }
-
-    #[test]
-    fn alignment_of_parallel_directions_is_none() {
-        assert_eq!(alignment([0.0, 1.0, 0.0], [0.0, 3.0, 0.0]), None);
-    }
-
-    #[test]
-    fn alignment_refuses_a_zero_direction() {
-        assert_eq!(alignment([0.0, 0.0, 0.0], [0.0, 1.0, 0.0]), None);
     }
 
     // ---------- quaternion kernels ----------

@@ -1,9 +1,9 @@
 //! Python bindings for the chemical-perception layer (`molrs::perceive`).
 //!
-//! One class, [`PyPerceive`] (`molrs.Perceive`), mirroring the Rust builder: the
-//! layer's free functions have four different shapes (a side table, an in-place
-//! mutation returning a count, a graph-out transform, and maps), and the builder
-//! normalises all four to a single contract —
+//! The main class, [`PyPerceive`] (`molrs.perceive.Perceive`), mirrors the Rust
+//! builder: the layer's free functions have four different shapes (a side
+//! table, an in-place mutation returning a count, a graph-out transform, and
+//! maps), and the builder normalises all four to a single contract —
 //!
 //! > **graph in / graph out, non-mutating** — each `find_*` clones the molecule,
 //! > writes the perceived facts onto the clone as atom / bond props, and returns
@@ -11,7 +11,7 @@
 //!
 //! That contract is the whole reason the builder exists, and it is the property a
 //! binding is most likely to lose: handing PyO3 a `&mut` and returning `None` would
-//! still "work" for a caller who only looks at the output. Every method here takes
+//! still "work" for a caller who only looks at the output. Every `Perceive` method takes
 //! `&PyAtomistic` (a shared borrow) and returns a **new** `Atomistic`, so the shape
 //! is enforced by the borrow checker rather than by convention.
 //!
@@ -25,18 +25,25 @@
 //! that composes with the next finder — and `molrs.perceive.SmartsPattern`
 //! matches a query against a perceived graph.
 //!
-//! Perception is all-atom, so every method is typed against `Atomistic`; a
-//! `CoarseGrain` leaf is a `TypeError` from PyO3's own extraction, not a wrong
-//! answer.
+//! Chemical perception is all-atom, so every `Perceive` method is typed
+//! against `Atomistic`; a `CoarseGrain` leaf is a `TypeError` from PyO3's own
+//! extraction, not a wrong answer.
+//!
+//! The one coarse-grained class is [`PySubgraphMatcher`]
+//! (`molrs.perceive.SubgraphMatcher`): it snapshots a bead pattern and lists
+//! every occurrence of it in a target `CoarseGrain` as bead-handle groups, in
+//! pattern order and without partitioning overlaps. It is typed against
+//! `CoarseGrain` the same way, so an `Atomistic` target is a `TypeError`.
 
 use pyo3::prelude::*;
 
-use molrs::perceive::Perceive;
+use molrs::perceive::{Perceive, SubgraphMatcher};
+use molrs::system::molgraph::node_to_u64;
 
-use crate::core::system::molgraph::PyAtomistic;
+use crate::core::system::molgraph::{PyAtomistic, PyCoarseGrain};
 use crate::helpers::molrs_error_to_pyerr;
 
-/// Chemical perception, as a builder — `molrs.Perceive`.
+/// Chemical perception, as a builder — `molrs.perceive.Perceive`.
 ///
 /// Exposed to Python as `molrs.perceive.Perceive`. Every ``find_*`` method is graph-in /
 /// graph-out and **non-mutating**.
@@ -58,7 +65,7 @@ use crate::helpers::molrs_error_to_pyerr;
 ///
 /// Examples
 /// --------
-/// >>> perceived = molrs.Perceive().find_rings(mol)
+/// >>> perceived = molrs.perceive.Perceive().find_rings(mol)
 /// >>> perceived.get(atom, "is_in_ring")
 /// 1
 /// >>> mol.has(atom, "is_in_ring")   # the input is untouched
@@ -66,7 +73,7 @@ use crate::helpers::molrs_error_to_pyerr;
 // `subclass`: molpy layers a thin `Perceive` over this one so its finders
 // return molpy graphs. Without it the base type is final and molpy cannot
 // import at all.
-#[pyclass(module = "molrs", name = "Perceive", subclass)]
+#[pyclass(module = "molrs.perceive", name = "Perceive", subclass)]
 #[derive(Debug)]
 pub struct PyPerceive {
     inner: Perceive,
@@ -268,5 +275,83 @@ impl PyPerceive {
 
     fn __repr__(&self) -> String {
         "Perceive()".to_string()
+    }
+}
+
+/// Bead-group pattern matching over coarse-grained graphs —
+/// `molrs.perceive.SubgraphMatcher`.
+///
+/// Snapshots a bead pattern once; :meth:`find` lists every induced occurrence
+/// of it in a target :class:`~molrs.CoarseGrain`. Beads match on equal
+/// ``bead_type``; bonds match on adjacency.
+///
+/// ``find`` does **not** partition: overlapping groups are all returned, and a
+/// caller that needs disjoint groups selects among them.
+///
+/// Parameters
+/// ----------
+/// pattern : CoarseGrain
+///     The bead pattern, e.g. ``CGSmilesIR("{[#1][#4]}").to_coarsegrain()``.
+///     It is copied, so later edits to it do not affect the matcher.
+///
+/// Raises
+/// ------
+/// TypeError
+///     If ``pattern`` is not a :class:`~molrs.CoarseGrain`.
+///
+/// Examples
+/// --------
+/// The two groups below share the middle bead:
+///
+/// >>> pattern = molrs.io.CGSmilesIR("{[#1][#4]}").to_coarsegrain()
+/// >>> target = molrs.io.CGSmilesIR("{[#1][#4][#1]}").to_coarsegrain()
+/// >>> len(molrs.perceive.SubgraphMatcher(pattern).find(target))
+/// 2
+#[pyclass(module = "molrs.perceive", name = "SubgraphMatcher", frozen)]
+pub struct PySubgraphMatcher {
+    inner: SubgraphMatcher,
+}
+
+#[pymethods]
+impl PySubgraphMatcher {
+    #[new]
+    fn new(pattern: PyRef<'_, PyCoarseGrain>) -> Self {
+        Self {
+            inner: SubgraphMatcher::new(pattern.core()),
+        }
+    }
+
+    /// Every induced occurrence of the pattern in ``target``.
+    ///
+    /// One group per distinct bead set: ``group[i]`` is the target bead
+    /// matched to pattern bead ``i``, in the pattern's bead order. Groups are
+    /// not partitioned, so two groups may share beads. The GIL is released
+    /// while matching.
+    ///
+    /// Parameters
+    /// ----------
+    /// target : CoarseGrain
+    ///     The bead graph to search.
+    ///
+    /// Returns
+    /// -------
+    /// list[list[int]]
+    ///     Target bead handles, one list per group; ``[]`` when there is no
+    ///     occurrence (or the pattern or target is empty).
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If ``target`` is not a :class:`~molrs.CoarseGrain`.
+    fn find(&self, py: Python<'_>, target: PyRef<'_, PyCoarseGrain>) -> Vec<Vec<u64>> {
+        let (matcher, target) = (&self.inner, target.core());
+        py.detach(|| matcher.find(target))
+            .into_iter()
+            .map(|group| group.into_iter().map(node_to_u64).collect())
+            .collect()
+    }
+
+    fn __repr__(&self) -> String {
+        "SubgraphMatcher()".to_string()
     }
 }

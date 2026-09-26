@@ -36,12 +36,8 @@ use std::ops::{Index, IndexMut};
 
 use crate::error::MolRsError;
 use crate::spatial::simbox::SimBox;
-use crate::store::block::{Block, DType};
+use crate::store::block::Block;
 use crate::store::meta::MetaMap;
-use crate::store::schema::ColumnDim;
-use crate::types::F;
-use crate::units::preset::PresetDim;
-use crate::units::{UnitPreset, UnitRegistry, UnitsError};
 
 /// Exact schema version of serialized frames and per-frame Zarr groups.
 pub const FRAME_SCHEMA_VERSION: u32 = 2;
@@ -435,6 +431,147 @@ impl Frame {
             .map_err(|report| MolRsError::validation(report.to_string()))
     }
 
+    /// A new frame holding the rows `rows` of `block`, with every relation
+    /// block that indexes `block` cut down to the selection and renumbered.
+    ///
+    /// A *relation block* is one whose rows name rows of another block by
+    /// index: each `bonds` row names two `atoms` rows in its 0-based endpoint
+    /// columns `atomi` / `atomj`, an `angles` row three. Selecting atoms must
+    /// therefore also drop the bonds that leave the selection and rewrite the
+    /// surviving endpoints to the new row numbers.
+    ///
+    /// - `block` is gathered in the order `rows` gives: old row `rows[k]`
+    ///   becomes new row `k`. Every column and its validity mask (the per-row
+    ///   flag that marks a null cell, see
+    ///   [`Block::validity`](crate::store::block::Block::validity)) travel.
+    /// - A relation block whose endpoints index `block` (canonical `bonds`,
+    ///   `angles`, …, and any unspecified block carrying `atomi`..`atoml`)
+    ///   keeps only the rows whose endpoints all lie in `rows`, in their
+    ///   original order, with each endpoint rewritten to its new row.
+    ///   Endpoints are assumed valid (run [`validate`](Self::validate)
+    ///   first); a relation row whose endpoint is out of range is dropped.
+    /// - Every other block is copied unchanged, as are the box and `meta`.
+    ///
+    /// An empty `rows` is legal and gives zero-row blocks.
+    ///
+    /// # Errors
+    ///
+    /// The frame itself is never modified.
+    ///
+    /// - [`MolRsError::NotFound`] if there is no block `block`.
+    /// - [`MolRsError::Validation`] if a row is past the end of `block`, if a
+    ///   row is repeated, or if a relation block indexing `block` lacks one of
+    ///   its declared endpoint columns (or carries it as anything but a 1-D
+    ///   `UInt` column) — copying it would leave stale indices.
+    /// - [`MolRsError::Validation`] naming `members` if the frame carries a
+    ///   `members` block. Its `ibead` column indexes `atoms` rows but is not
+    ///   a schema endpoint, so it cannot be renumbered, and a copy would
+    ///   attach in-range but stale rows to the wrong beads. The refusal
+    ///   stands until `members` is declared in the schema.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use molrs::store::frame::Frame;
+    /// use molrs::store::block::Block;
+    /// use molrs::types::{F, Idx};
+    /// use ndarray::Array1;
+    ///
+    /// // 4 atoms at x = 0..3, bonded as a chain (0,1), (1,2), (2,3).
+    /// let mut atoms = Block::new();
+    /// atoms.insert("x", Array1::from_vec(vec![0.0 as F, 1.0, 2.0, 3.0]).into_dyn()).unwrap();
+    /// let mut bonds = Block::new();
+    /// bonds.insert("atomi", Array1::from_vec(vec![0 as Idx, 1, 2]).into_dyn()).unwrap();
+    /// bonds.insert("atomj", Array1::from_vec(vec![1 as Idx, 2, 3]).into_dyn()).unwrap();
+    /// bonds.insert("type_id", Array1::from_vec(vec![10 as Idx, 11, 12]).into_dyn()).unwrap();
+    /// let mut frame = Frame::new();
+    /// frame.insert("atoms", atoms);
+    /// frame.insert("bonds", bonds);
+    ///
+    /// // Old atom 2 becomes row 0 and old atom 1 row 1; only bond (1,2) lies
+    /// // inside the selection, and it becomes (1,0).
+    /// let one = frame.subset("atoms", &[2, 1]).unwrap();
+    ///
+    /// let x: Vec<F> = one["atoms"].get_float("x").unwrap().iter().copied().collect();
+    /// assert_eq!(x, vec![2.0, 1.0]);
+    /// assert_eq!(one["bonds"].nrows(), Some(1));
+    /// assert_eq!(one["bonds"].get_uint("atomi").unwrap()[[0]], 1);
+    /// assert_eq!(one["bonds"].get_uint("atomj").unwrap()[[0]], 0);
+    /// assert_eq!(one["bonds"].get_uint("type_id").unwrap()[[0]], 11);
+    /// ```
+    pub fn subset(&self, block: &str, rows: &[usize]) -> Result<Frame, MolRsError> {
+        let target = self.get(block).ok_or_else(|| {
+            MolRsError::not_found("block", format!("frame has no '{block}' block"))
+        })?;
+        if self.contains_key("members") {
+            return Err(MolRsError::validation(
+                "cannot subset a frame carrying a 'members' block: members.ibead \
+                 is not a schema endpoint and cannot be renumbered",
+            ));
+        }
+        let nrows = target.nrows().unwrap_or(0);
+        // new_row[old] = Some(new) for a selected row.
+        let mut new_row: Vec<Option<usize>> = vec![None; nrows];
+        for (k, &r) in rows.iter().enumerate() {
+            if r >= nrows {
+                return Err(MolRsError::validation(format!(
+                    "subset row {r} is past the end of '{block}' ({nrows} rows)"
+                )));
+            }
+            if new_row[r].is_some() {
+                return Err(MolRsError::validation(format!(
+                    "subset row {r} of '{block}' is selected twice"
+                )));
+            }
+            new_row[r] = Some(k);
+        }
+
+        let mut out = Frame::with_capacity(self.len());
+        out.meta = self.meta.clone();
+        out.simbox = self.simbox.clone();
+        out.insert(block, target.select_rows(rows)?);
+
+        for (name, b) in self.iter() {
+            if name == block {
+                continue;
+            }
+            let endpoints = crate::store::schema::relation_endpoints(name, |k| b.contains_key(k))
+                .filter(|(t, _)| *t == block);
+            let Some((_, columns)) = endpoints else {
+                out.insert(name, b.clone());
+                continue;
+            };
+            let mut ends = Vec::with_capacity(columns.len());
+            for col in &columns {
+                let values = b.get_uint(col).filter(|v| v.ndim() == 1).ok_or_else(|| {
+                    MolRsError::validation(format!(
+                        "cannot subset '{block}': relation block '{name}' has no 1-D \
+                         UInt endpoint column '{col}'"
+                    ))
+                })?;
+                ends.push(values);
+            }
+            let kept: Vec<usize> = (0..b.nrows().unwrap_or(0))
+                .filter(|&i| {
+                    ends.iter()
+                        .all(|e| new_row.get(e[[i]] as usize).is_some_and(|n| n.is_some()))
+                })
+                .collect();
+            let mut cut = b.select_rows(&kept)?;
+            for col in &columns {
+                let values = cut
+                    .get_uint_mut(col)
+                    .expect("select_rows keeps every column and its dtype");
+                for v in values.iter_mut() {
+                    let new = new_row[*v as usize].expect("kept rows lie in the selection");
+                    *v = new as crate::types::Idx;
+                }
+            }
+            out.insert(name, cut);
+        }
+        Ok(out)
+    }
+
     /// Checks if the frame is consistent without returning an error.
     ///
     /// This is a non-panicking version of `validate()` that returns a boolean.
@@ -450,174 +587,6 @@ impl Frame {
     /// ```
     pub fn is_consistent(&self) -> bool {
         self.validate().is_ok()
-    }
-
-    /// Convert every physical column and the box from preset `from` to
-    /// preset `to`, in place.
-    ///
-    /// The factor of each Float column comes from its key's
-    /// [`ColumnSpec::dimension`](crate::store::schema::ColumnSpec::dimension):
-    ///
-    /// - `Of(d)` — `registry.parse(from.unit(d))` to `registry.parse(to.unit(d))`;
-    /// - `Product(a, b)` — the product of the two factors;
-    /// - `Dimensionless` — untouched.
-    ///
-    /// Int, UInt, String and Bool columns are never converted. The
-    /// [`SimBox`] cell matrix and origin scale by the length factor (a box
-    /// with no defined cell keeps its placeholder matrix; only its origin
-    /// scales).
-    ///
-    /// `meta[`[`keys::UNITS`](crate::store::keys::UNITS)`]`, when present,
-    /// must name `from`; after success it names `to`. An absent key is taken
-    /// to mean `from` and is set to `to`.
-    ///
-    /// The conversion is atomic: every factor and the meta check are
-    /// resolved before anything is written, so on refusal the frame is
-    /// unchanged.
-    ///
-    /// # Errors
-    ///
-    /// [`UnitsError::Unconvertible`] naming `block.key`, `simbox` or
-    /// `meta.units` when:
-    ///
-    /// - a Float column's key is undeclared in the schema, or declared
-    ///   [`NotAQuantity`](ColumnDim::NotAQuantity);
-    /// - a column stored as `Float16`, `Float32`, `Complex64` or `Complex128`
-    ///   has a key that is not declared
-    ///   [`Dimensionless`](ColumnDim::Dimensionless) — only `Float` storage
-    ///   is scaled;
-    /// - a dimension's unit does not parse in `registry` — e.g. `lj_mass`
-    ///   in a registry built with only
-    ///   [`define_lj_sigma`](UnitRegistry::define_lj_sigma), which is how a
-    ///   σ-only conversion refuses mass, charge and velocity;
-    /// - the scaled box is not a valid cell;
-    /// - `meta.units` is not a string equal to `from.name()`.
-    pub fn convert_units(
-        &mut self,
-        registry: &UnitRegistry,
-        from: &UnitPreset,
-        to: &UnitPreset,
-    ) -> Result<(), UnitsError> {
-        if let Some(value) = self.meta.get(crate::store::keys::UNITS)
-            && value.as_str() != Some(from.name())
-        {
-            return Err(UnitsError::Unconvertible {
-                column: "meta.units".to_string(),
-                reason: format!(
-                    "frame declares units {value:?}, but the source preset is `{}`",
-                    from.name()
-                ),
-            });
-        }
-
-        let factor_of = |d: PresetDim, column: &str| -> Result<F, UnitsError> {
-            let refuse = |reason: String| UnitsError::Unconvertible {
-                column: column.to_string(),
-                reason,
-            };
-            let scale = |e: UnitsError| {
-                refuse(format!(
-                    "no {} scale from `{}` to `{}`: {e}",
-                    d.name(),
-                    from.name(),
-                    to.name()
-                ))
-            };
-            let [src, dst] = [from, to].map(|preset| {
-                preset.unit(d.name()).ok_or_else(|| {
-                    refuse(format!(
-                        "preset `{}` defines no {} unit",
-                        preset.name(),
-                        d.name()
-                    ))
-                })
-            });
-            let src = registry.parse(src?).map_err(scale)?;
-            let dst = registry.parse(dst?).map_err(scale)?;
-            src.factor_to(&dst).map_err(scale)
-        };
-
-        let mut plan: Vec<(String, String, F)> = Vec::new();
-        for (block_name, block) in self.iter() {
-            for key in block.keys() {
-                let dtype = block.dtype(key).expect("key comes from block.keys()");
-                let scalable = match dtype {
-                    DType::Float => true,
-                    DType::Float16 | DType::Float32 | DType::Complex64 | DType::Complex128 => false,
-                    DType::Int8
-                    | DType::Int16
-                    | DType::Int
-                    | DType::Int64
-                    | DType::Bool
-                    | DType::UInt
-                    | DType::U8
-                    | DType::UInt16
-                    | DType::UInt32
-                    | DType::String => continue,
-                };
-                let column = format!("{block_name}.{key}");
-                let dimension = crate::store::schema::column(key).map(|spec| spec.dimension);
-                if !scalable {
-                    // Only `Float` storage is scaled in place; any other
-                    // floating width may pass solely when it carries no unit.
-                    if dimension == Some(ColumnDim::Dimensionless) {
-                        continue;
-                    }
-                    return Err(UnitsError::Unconvertible {
-                        column,
-                        reason: format!("storage dtype {} not convertible", dtype.name()),
-                    });
-                }
-                let dimension = dimension.ok_or_else(|| UnitsError::Unconvertible {
-                    column: column.clone(),
-                    reason: "Float column with no schema dimension".to_string(),
-                })?;
-                let factor = match dimension {
-                    ColumnDim::Dimensionless => continue,
-                    ColumnDim::NotAQuantity => {
-                        return Err(UnitsError::Unconvertible {
-                            column,
-                            reason: "Float column declared as not a physical quantity".to_string(),
-                        });
-                    }
-                    ColumnDim::Of(d) => factor_of(d, &column)?,
-                    ColumnDim::Product(a, b) => factor_of(a, &column)? * factor_of(b, &column)?,
-                };
-                plan.push((block_name.to_string(), key.to_string(), factor));
-            }
-        }
-
-        let simbox = match &self.simbox {
-            None => None,
-            Some(b) => {
-                let length = factor_of(PresetDim::Length, "simbox")?;
-                let h = if b.is_cell_defined() {
-                    b.h_view().to_owned() * length
-                } else {
-                    // A no-cell box carries the identity as a placeholder.
-                    b.h_view().to_owned()
-                };
-                let origin = b.origin_view().to_owned() * length;
-                Some(
-                    SimBox::new_cell(h, origin, b.pbc(), b.is_cell_defined()).map_err(|e| {
-                        UnitsError::Unconvertible {
-                            column: "simbox".to_string(),
-                            reason: format!("scaled cell is invalid: {e:?}"),
-                        }
-                    })?,
-                )
-            }
-        };
-
-        for (block_name, key, factor) in plan {
-            self.get_mut(&block_name)
-                .and_then(|block| block.get_float_mut(&key))
-                .expect("planned column exists")
-                .mapv_inplace(|v| v * factor);
-        }
-        self.simbox = simbox;
-        self.meta.insert(crate::store::keys::UNITS, to.name());
-        Ok(())
     }
 }
 
@@ -895,342 +864,211 @@ mod tests {
         assert!(!frame.rename_block("molecules", "bonds"));
     }
 
-    // ---- convert_units ----------------------------------------------------
-    //
-    // Goldens hand-derived (spec assembly-02 Domain basis) for sigma = 4.2 A,
-    // m = 100 g/mol, epsilon = 1 kcal/mol under the LAMMPS `lj` relations
-    // (docs.lammps.org/units.html): x = x* sigma; v = v* sigma/tau;
-    // q = q* e sqrt(sigma[A] eps[kcal/mol] / 332.06371).
+    // ---- subset ----
 
-    use crate::store::keys::UNITS;
+    use crate::spatial::simbox::SimBox;
     use crate::types::Idx;
-    use crate::units::{UnitPreset, UnitRegistry, UnitsError};
     use ndarray::array;
 
-    fn sigma_only_registry() -> UnitRegistry {
-        let mut r = UnitRegistry::new();
-        let sigma = r.quantity(4.2, "angstrom").unwrap();
-        r.define_lj_sigma(&sigma).unwrap();
-        r
+    fn float_col(values: &[F]) -> ndarray::ArrayD<F> {
+        Array1::from_vec(values.to_vec()).into_dyn()
     }
 
-    fn full_lj_registry() -> UnitRegistry {
-        let mut r = UnitRegistry::new();
-        let mass = r.quantity(100.0, "gram_per_mole").unwrap();
-        let sigma = r.quantity(4.2, "angstrom").unwrap();
-        let epsilon = r.quantity(1.0, "kilocalorie_per_mole").unwrap();
-        r.define_lj_units(&mass, &sigma, &epsilon).unwrap();
-        r
+    fn uint_col(values: &[Idx]) -> ndarray::ArrayD<Idx> {
+        Array1::from_vec(values.to_vec()).into_dyn()
     }
 
-    fn float_col(block: &mut Block, key: &str, v: F) {
-        block
-            .insert(key, Array1::from_vec(vec![v]).into_dyn())
-            .unwrap();
+    fn uint_block(cols: &[(&str, &[Idx])]) -> Block {
+        let mut b = Block::new();
+        for (key, values) in cols {
+            b.insert(*key, uint_col(values)).unwrap();
+        }
+        b
     }
 
-    /// One atom at x* = 1.5 in a triclinic box with bounds [0, 10] and
-    /// xy tilt -0.5, declared as `lj` in meta.
-    fn lj_frame() -> Frame {
+    /// 4 atoms at x = 0..3, and the chain bonds (0,1), (1,2), (2,3) with
+    /// `type_id` 10, 11, 12.
+    fn chain_of_four() -> Frame {
         let mut atoms = Block::new();
-        float_col(&mut atoms, "x", 1.5);
-        float_col(&mut atoms, "y", 0.5);
-        float_col(&mut atoms, "z", -1.0);
+        atoms.insert("x", float_col(&[0.0, 1.0, 2.0, 3.0])).unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
+        frame.insert(
+            "bonds",
+            uint_block(&[
+                ("atomi", &[0, 1, 2]),
+                ("atomj", &[1, 2, 3]),
+                ("type_id", &[10, 11, 12]),
+            ]),
+        );
+        frame
+    }
+
+    fn uint_values(frame: &Frame, block: &str, col: &str) -> Vec<Idx> {
+        frame[block]
+            .get_uint(col)
+            .unwrap_or_else(|| panic!("{block}.{col} is a UInt column"))
+            .iter()
+            .copied()
+            .collect()
+    }
+
+    fn float_values(frame: &Frame, block: &str, col: &str) -> Vec<F> {
+        frame[block]
+            .get_float(col)
+            .unwrap_or_else(|| panic!("{block}.{col} is a Float column"))
+            .iter()
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn subset_gathers_atoms_in_order_and_reindexes_the_bonds_inside() {
+        // rows [2, 1]: old 2 -> new 0, old 1 -> new 1. Only bond (1,2) lies
+        // inside; it becomes (1,0) and keeps type_id 11.
+        let out = chain_of_four().subset("atoms", &[2, 1]).unwrap();
+
+        assert_eq!(float_values(&out, "atoms", "x"), vec![2.0, 1.0]);
+        assert_eq!(out["bonds"].nrows(), Some(1));
+        assert_eq!(uint_values(&out, "bonds", "atomi"), vec![1]);
+        assert_eq!(uint_values(&out, "bonds", "atomj"), vec![0]);
+        assert_eq!(uint_values(&out, "bonds", "type_id"), vec![11]);
+    }
+
+    #[test]
+    fn subset_keeps_only_the_angles_inside_the_selection() {
+        // rows [1, 2, 3]: angle (0,1,2) touches atom 0 and is dropped;
+        // angle (1,2,3) becomes (0,1,2).
+        let mut frame = chain_of_four();
+        frame.insert(
+            "angles",
+            uint_block(&[("atomi", &[0, 1]), ("atomj", &[1, 2]), ("atomk", &[2, 3])]),
+        );
+
+        let out = frame.subset("atoms", &[1, 2, 3]).unwrap();
+
+        assert_eq!(out["angles"].nrows(), Some(1));
+        assert_eq!(uint_values(&out, "angles", "atomi"), vec![0]);
+        assert_eq!(uint_values(&out, "angles", "atomj"), vec![1]);
+        assert_eq!(uint_values(&out, "angles", "atomk"), vec![2]);
+    }
+
+    #[test]
+    fn subset_reindexes_a_relation_block_without_a_spec() {
+        // `ports` has no BlockSpec; its atomi/atomj still index atoms.
+        // rows [2, 3]: port (3,2) becomes (1,0); port (0,3) leaves the
+        // selection and is dropped.
+        let mut frame = chain_of_four();
+        frame.insert(
+            "ports",
+            uint_block(&[("atomi", &[3, 0]), ("atomj", &[2, 3])]),
+        );
+
+        let out = frame.subset("atoms", &[2, 3]).unwrap();
+
+        assert_eq!(out["ports"].nrows(), Some(1));
+        assert_eq!(uint_values(&out, "ports", "atomi"), vec![1]);
+        assert_eq!(uint_values(&out, "ports", "atomj"), vec![0]);
+    }
+
+    #[test]
+    fn subset_copies_the_box_meta_and_a_non_relation_block_unchanged() {
+        let mut frame = chain_of_four();
+        let mut labels = Block::new();
+        labels
+            .insert("weight", float_col(&[0.5, 1.5, 2.5]))
+            .unwrap();
+        frame.insert("labels", labels);
         frame.simbox = Some(
-            SimBox::new(
-                SimBox::matrix_from_lengths_tilts([10.0, 10.0, 10.0], [-0.5, 0.0, 0.0]),
-                array![0.0, 0.0, 0.0],
-                [true, true, true],
+            SimBox::ortho(
+                array![10.0 as F, 20.0, 30.0],
+                array![1.0 as F, 2.0, 3.0],
+                [true, false, true],
             )
             .unwrap(),
         );
-        frame.meta.insert(UNITS, "lj");
-        frame
+        frame.meta.insert("title", "melt");
+
+        let out = frame.subset("atoms", &[0, 1]).unwrap();
+
+        assert_eq!(out.meta, frame.meta);
+        let (before, after) = (frame.simbox.as_ref().unwrap(), out.simbox.as_ref().unwrap());
+        assert_eq!(after.h_view(), before.h_view());
+        assert_eq!(after.origin_view(), before.origin_view());
+        assert_eq!(after.pbc(), before.pbc());
+        assert_eq!(out["labels"].nrows(), Some(3));
+        assert_eq!(float_values(&out, "labels", "weight"), vec![0.5, 1.5, 2.5]);
     }
 
-    fn with_float(key: &str, v: F) -> Frame {
-        let mut frame = lj_frame();
-        float_col(frame.get_mut("atoms").unwrap(), key, v);
-        frame
-    }
-
-    /// Bit-level image of blocks, box and meta, to prove a refusal wrote nothing.
-    #[derive(Debug, PartialEq)]
-    struct Snapshot {
-        columns: Vec<(String, String, String)>,
-        simbox: Option<(Vec<String>, Vec<String>)>,
-        meta: MetaMap,
-    }
-
-    fn snapshot(frame: &Frame) -> Snapshot {
-        let mut columns = Vec::new();
-        for (bname, block) in frame.iter() {
-            for key in block.keys() {
-                let image = if let Some(a) = block.get_float(key) {
-                    let bits: Vec<String> =
-                        a.iter().map(|v| format!("{:x}", v.to_bits())).collect();
-                    format!("float{:?}{:?}", a.shape(), bits)
-                } else if let Some(a) = block.get_int(key) {
-                    format!("int{a:?}")
-                } else if let Some(a) = block.get_uint(key) {
-                    format!("uint{a:?}")
-                } else {
-                    panic!("snapshot: unexpected dtype for {bname}.{key}");
-                };
-                columns.push((bname.to_string(), key.to_string(), image));
-            }
-        }
-        columns.sort();
-        fn bits<'a>(it: impl Iterator<Item = &'a F>) -> Vec<String> {
-            it.map(|v| format!("{:x}", v.to_bits())).collect()
-        }
-        let simbox = frame
-            .simbox
-            .as_ref()
-            .map(|b| (bits(b.h_view().iter()), bits(b.origin_view().iter())));
-        Snapshot {
-            columns,
-            simbox,
-            meta: frame.meta.clone(),
-        }
-    }
-
-    fn atom(frame: &Frame, key: &str) -> F {
-        frame["atoms"].get_float(key).unwrap()[[0]]
-    }
-
-    fn meta_units(frame: &Frame) -> Option<&str> {
-        frame.meta.get(UNITS).and_then(|v| v.as_str())
-    }
-
-    fn assert_close(got: F, want: F, tol: F) {
-        assert!((got - want).abs() < tol, "got {got}, want {want}");
-    }
-
-    fn assert_rel(got: F, want: F) {
-        let rel = ((got - want) / want).abs();
-        assert!(rel < 1e-6, "got {got}, want {want} (rel {rel:e})");
-    }
-
-    /// Converting lj -> real must be refused naming `column`, leaving the
-    /// frame bitwise unchanged (meta `units` included).
-    fn assert_refused_unchanged(mut frame: Frame, reg: &UnitRegistry, column: &str) {
-        let before = snapshot(&frame);
-        let err = frame
-            .convert_units(reg, &UnitPreset::lj(), &UnitPreset::real())
-            .unwrap_err();
-        match err {
-            UnitsError::Unconvertible { column: named, .. } => {
-                assert!(
-                    named.contains(column),
-                    "refusal names {named:?}, want {column:?}"
-                )
-            }
-            other => panic!("expected Unconvertible for {column}, got {other:?}"),
-        }
-        assert_eq!(
-            snapshot(&frame),
-            before,
-            "refusal must leave the frame unchanged"
+    #[test]
+    fn subset_refuses_a_frame_carrying_a_members_block() {
+        // `members.ibead` is not a schema endpoint, so it cannot be remapped;
+        // copying it would leave in-range but stale bead rows.
+        let mut frame = chain_of_four();
+        frame.insert(
+            "members",
+            uint_block(&[("ibead", &[0, 3]), ("atom", &[10, 11])]),
         );
-    }
-
-    #[test]
-    fn sigma_only_lj_to_real_converts_lengths_and_refuses_mass() {
-        let reg = sigma_only_registry();
-        let (lj, real) = (UnitPreset::lj(), UnitPreset::real());
-
-        let mut frame = lj_frame();
-        frame.convert_units(&reg, &lj, &real).unwrap();
-        assert_close(atom(&frame, "x"), 6.3, 1e-12);
-        assert_close(atom(&frame, "y"), 2.1, 1e-12);
-        assert_close(atom(&frame, "z"), -4.2, 1e-12);
-        let bx = frame.simbox.as_ref().unwrap();
-        let h = bx.h_view();
-        for i in 0..3 {
-            assert_close(h[[i, i]], 42.0, 1e-12);
-            assert_close(bx.origin_view()[i], 0.0, 1e-12);
-        }
-        assert_close(bx.tilts()[0], -2.1, 1e-12);
-        assert_eq!(meta_units(&frame), Some("real"));
-
-        let mut with_mass = with_float("mass", 1.0);
-        let before = snapshot(&with_mass);
-        let err = with_mass.convert_units(&reg, &lj, &real).unwrap_err();
-        assert!(
-            matches!(err, UnitsError::Unconvertible { ref column, .. } if column.contains("mass")),
-            "got {err:?}"
-        );
-        assert_eq!(meta_units(&with_mass), Some("lj"));
-        assert_eq!(snapshot(&with_mass), before);
-    }
-
-    #[test]
-    fn convert_units_scales_box_origin_by_length_factor() {
-        let mut frame = lj_frame();
-        frame.simbox = Some(
-            SimBox::new(
-                SimBox::matrix_from_lengths_tilts([10.0, 10.0, 10.0], [0.0, 0.0, 0.0]),
-                array![1.0, -2.0, 0.5],
-                [true, true, true],
-            )
-            .unwrap(),
-        );
-        frame
-            .convert_units(
-                &sigma_only_registry(),
-                &UnitPreset::lj(),
-                &UnitPreset::real(),
-            )
-            .unwrap();
-        let o = frame.simbox.as_ref().unwrap().origin_view().to_owned();
-        assert_close(o[0], 4.2, 1e-12);
-        assert_close(o[1], -8.4, 1e-12);
-        assert_close(o[2], 2.1, 1e-12);
-    }
-
-    #[test]
-    fn sigma_only_refuses_charge_leaving_frame_unchanged() {
-        assert_refused_unchanged(with_float("charge", 1.0), &sigma_only_registry(), "charge");
-    }
-
-    #[test]
-    fn sigma_only_refuses_velocity_leaving_frame_unchanged() {
-        assert_refused_unchanged(with_float("vx", 1.0), &sigma_only_registry(), "vx");
-    }
-
-    #[test]
-    fn undeclared_float_column_is_refused() {
-        assert_refused_unchanged(with_float("foo", 1.0), &full_lj_registry(), "foo");
-    }
-
-    #[test]
-    fn integer_id_type_and_image_columns_are_untouched() {
-        let mut frame = lj_frame();
-        let atoms = frame.get_mut("atoms").unwrap();
-        atoms
-            .insert("id", Array1::from_vec(vec![7 as Idx]).into_dyn())
-            .unwrap();
-        atoms
-            .insert("type_id", Array1::from_vec(vec![2 as Idx]).into_dyn())
-            .unwrap();
-        atoms
-            .insert("ix", Array1::from_vec(vec![-1 as I]).into_dyn())
-            .unwrap();
-        frame
-            .convert_units(
-                &sigma_only_registry(),
-                &UnitPreset::lj(),
-                &UnitPreset::real(),
-            )
-            .unwrap();
-        let atoms = &frame["atoms"];
-        assert_eq!(atoms.get_uint("id").unwrap()[[0]], 7);
-        assert_eq!(atoms.get_uint("type_id").unwrap()[[0]], 2);
-        assert_eq!(atoms.get_int("ix").unwrap()[[0]], -1);
-        assert_close(atom(&frame, "x"), 6.3, 1e-12);
-    }
-
-    #[test]
-    fn meta_units_other_than_the_source_preset_is_refused() {
-        let mut frame = lj_frame();
-        frame.meta.insert(UNITS, "metal");
-        assert_refused_unchanged(frame, &full_lj_registry(), "meta.units");
-
-        let mut frame = lj_frame();
-        frame.meta.insert(UNITS, "metal");
-        let err = frame
-            .convert_units(&full_lj_registry(), &UnitPreset::lj(), &UnitPreset::real())
-            .unwrap_err();
-        assert!(
-            matches!(err, UnitsError::Unconvertible { ref column, .. } if column == "meta.units"),
-            "got {err:?}"
-        );
-    }
-
-    #[test]
-    fn absent_meta_units_is_set_to_the_target_preset() {
-        let mut frame = lj_frame();
-        frame.meta.remove(UNITS);
-        frame
-            .convert_units(
-                &sigma_only_registry(),
-                &UnitPreset::lj(),
-                &UnitPreset::real(),
-            )
-            .unwrap();
-        assert_eq!(meta_units(&frame), Some("real"));
-    }
-
-    #[test]
-    fn full_lj_converts_velocity_and_charge_goldens() {
-        let mut frame = with_float("vx", 1.0);
-        float_col(frame.get_mut("atoms").unwrap(), "charge", 1.0);
-        frame
-            .convert_units(&full_lj_registry(), &UnitPreset::lj(), &UnitPreset::real())
-            .unwrap();
-        assert_rel(atom(&frame, "vx"), 2.045483e-3);
-        assert_rel(atom(&frame, "charge"), 0.1124641);
-    }
-
-    #[test]
-    fn full_lj_converts_mass_and_dipole_product() {
-        // mux: Product(Charge, Length) -> 0.1124641 e * 4.2 A = 0.4723492 e*A.
-        let mut frame = with_float("mass", 1.0);
-        float_col(frame.get_mut("atoms").unwrap(), "mux", 1.0);
-        frame
-            .convert_units(&full_lj_registry(), &UnitPreset::lj(), &UnitPreset::real())
-            .unwrap();
-        assert_rel(atom(&frame, "mass"), 100.0);
-        assert_rel(atom(&frame, "mux"), 0.4723492);
-    }
-
-    #[test]
-    fn f32_length_column_is_refused_leaving_frame_unchanged() {
-        // The Zarr reader stores an f32 array as `Column::from_f32`.
-        let mut frame = lj_frame();
-        let atoms = frame.get_mut("atoms").unwrap();
-        atoms.remove("x");
-        atoms
-            .insert_column(
-                "x",
-                crate::store::block::Column::from_f32(Array1::from_vec(vec![1.5f32]).into_dyn()),
-            )
-            .unwrap();
-        let before_h = frame.simbox.as_ref().unwrap().h_view().to_owned();
 
         let err = frame
-            .convert_units(
-                &sigma_only_registry(),
-                &UnitPreset::lj(),
-                &UnitPreset::real(),
-            )
-            .unwrap_err();
-        match err {
-            UnitsError::Unconvertible {
-                ref column,
-                ref reason,
-            } => {
-                assert_eq!(column, "atoms.x");
-                assert!(reason.contains("f32"), "reason {reason:?}");
-            }
-            other => panic!("expected Unconvertible for atoms.x, got {other:?}"),
-        }
-        let x = frame["atoms"].get("x").unwrap().as_f32().unwrap()[[0]];
-        assert_eq!(x.to_bits(), 1.5f32.to_bits());
-        assert_eq!(atom(&frame, "y").to_bits(), (0.5 as F).to_bits());
-        assert_eq!(frame.simbox.as_ref().unwrap().h_view().to_owned(), before_h);
-        assert_eq!(meta_units(&frame), Some("lj"));
+            .subset("atoms", &[3, 2])
+            .expect_err("a members block cannot be remapped");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        assert!(err.to_string().contains("members"), "{err}");
     }
 
     #[test]
-    fn dimensionless_quaternion_is_untouched() {
-        let mut frame = with_float("quatw", 0.3);
-        frame
-            .convert_units(&full_lj_registry(), &UnitPreset::lj(), &UnitPreset::real())
-            .unwrap();
-        assert_eq!(atom(&frame, "quatw").to_bits(), (0.3 as F).to_bits());
+    fn subset_of_bonds_selects_bond_rows_and_leaves_the_atoms_unchanged() {
+        // No block's endpoints index `bonds`, so nothing is renumbered.
+        let out = chain_of_four().subset("bonds", &[1]).unwrap();
+
+        assert_eq!(uint_values(&out, "bonds", "atomi"), vec![1]);
+        assert_eq!(uint_values(&out, "bonds", "atomj"), vec![2]);
+        assert_eq!(uint_values(&out, "bonds", "type_id"), vec![11]);
+        assert_eq!(float_values(&out, "atoms", "x"), vec![0.0, 1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn subset_with_no_rows_gives_zero_row_atoms_and_bonds() {
+        let out = chain_of_four().subset("atoms", &[]).unwrap();
+
+        assert_eq!(out["atoms"].nrows(), Some(0));
+        assert_eq!(out["bonds"].nrows(), Some(0));
+    }
+
+    #[test]
+    fn subset_refuses_a_missing_block() {
+        let err = chain_of_four()
+            .subset("residues", &[0])
+            .expect_err("there is no residues block");
+        assert!(matches!(err, MolRsError::NotFound { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn subset_refuses_a_row_past_the_block() {
+        let err = chain_of_four()
+            .subset("atoms", &[4])
+            .expect_err("4 atoms are rows 0..=3");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn subset_refuses_a_repeated_row() {
+        let err = chain_of_four()
+            .subset("atoms", &[1, 1])
+            .expect_err("row 1 is selected twice");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn subset_refuses_a_bond_block_missing_an_endpoint_column() {
+        let mut frame = chain_of_four();
+        frame.insert("bonds", uint_block(&[("atomi", &[0, 1])]));
+
+        let err = frame
+            .subset("atoms", &[0, 1])
+            .expect_err("bonds without atomj cannot be reindexed");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        assert!(err.to_string().contains("atomj"), "{err}");
     }
 }

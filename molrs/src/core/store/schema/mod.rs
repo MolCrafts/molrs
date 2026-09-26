@@ -69,7 +69,12 @@ use crate::units::preset::PresetDim;
 ///
 /// History:
 /// - 2 (assembly-06): the atom keys `site` and `q0` were removed — connection
-///   is port-only, and a leaving group's charge is folded by the reacter.
+///   is port-only, and a leaving group's charge is folded by `Fragment::link`.
+///   Folded into 2, which never shipped.
+/// - Also 2 (backmap-primitives): the atom key `bead` was removed — a whole
+///   molecule maps onto a bead group, so no atom carries a template-local
+///   bead index — and the `beads` block was removed: a coarse-grained frame
+///   stores its beads as `atoms` rows and its bonds in `bonds`.
 pub const FRAME_VOCAB_VERSION: u32 = 2;
 
 macro_rules! col {
@@ -137,14 +142,6 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         Scalar,
         NotAQuantity,
         "Fourth endpoint of a relation (dihedral / improper), 0-indexed."
-    ),
-    col!(
-        "bead",
-        "BEAD",
-        UInt,
-        Scalar,
-        NotAQuantity,
-        "Index, within its template, of the bead an atom belongs to (0-based). Template-local: not an instance id — the instance is `frag_id`."
     ),
     col!(
         "bead_type",
@@ -403,7 +400,6 @@ pub static SCHEMA_BLOCKS: &[BlockSpec] = &[
             "type_id",
             "element",
             "atomic_number",
-            "bead",
             "bead_type",
             "mass",
             "charge",
@@ -417,15 +413,6 @@ pub static SCHEMA_BLOCKS: &[BlockSpec] = &[
         ],
         open: true,
         doc: "Per-atom properties. The node table relation blocks index into.",
-    },
-    BlockSpec {
-        name: "beads",
-        row_kind: RowKind::Node,
-        endpoints: None,
-        required: &[],
-        optional: &["x", "y", "z", "id", "bead_type", "mass", "charge", "mol_id"],
-        open: true,
-        doc: "Per-bead properties of a coarse-grained system.",
     },
     BlockSpec {
         name: "bonds",
@@ -509,10 +496,51 @@ pub fn block(name: &str) -> Option<&'static BlockSpec> {
         .map(|i| &SCHEMA_BLOCKS[i])
 }
 
-/// Canonical string constants, generated from [`SCHEMA_COLUMNS`].
+/// The relation-endpoint rule: which columns of block `name` are endpoints,
+/// and which node block they index.
 ///
-/// Supersedes the hand-written `store::keys` table: a key is declared once, in
-/// the spec, and the constant follows.
+/// - A canonical [`RowKind::Relation`] block answers from its [`BlockSpec`]
+///   (`target`, `columns`) without consulting `has_column`.
+/// - Any other block (unspecified, or a non-relation spec) is read as a
+///   relation over `atoms` whose endpoints are the present subset of
+///   [`consts::ENDPOINTS`], in position order — `MolGraph` mints one block
+///   per relation kind, and those carry no spec.
+/// - `None` when that column list is empty: the block is not a relation.
+///
+/// The one rule both [`Validator`] (range checks) and
+/// [`Frame::subset`](crate::store::frame::Frame::subset) (reindexing) follow,
+/// so the two cannot disagree on what an endpoint is.
+pub(crate) fn relation_endpoints(
+    name: &str,
+    has_column: impl Fn(&str) -> bool,
+) -> Option<(&'static str, Vec<&'static str>)> {
+    let (target, columns) = match block(name) {
+        Some(spec) if matches!(spec.row_kind, RowKind::Relation { .. }) => {
+            let e = spec.endpoints.expect("relation spec carries endpoints");
+            (e.target, e.columns.to_vec())
+        }
+        _ => (
+            "atoms",
+            consts::ENDPOINTS
+                .iter()
+                .copied()
+                .filter(|k| has_column(k))
+                .collect(),
+        ),
+    };
+    if columns.is_empty() {
+        None
+    } else {
+        Some((target, columns))
+    }
+}
+
+/// Canonical string constants for the keys of [`SCHEMA_COLUMNS`].
+///
+/// Written by hand beside the table and checked against it by the unit test
+/// `consts_agree_with_the_table`, so a renamed key cannot leave a constant
+/// pointing at nothing. `store::keys` re-exports this module; it no longer
+/// keeps a list of its own.
 pub mod consts {
     /// Cartesian x-coordinate component.
     pub const X: &str = "x";
@@ -538,10 +566,6 @@ pub mod consts {
     pub const ELEMENT: &str = "element";
     /// Atomic number Z.
     pub const ATOMIC_NUMBER: &str = "atomic_number";
-    /// Index, within its template, of the bead an atom belongs to
-    /// (0-based). Template-local, not an instance id: the instance is
-    /// `frag_id`.
-    pub const BEAD: &str = "bead";
     /// Coarse-grained bead type.
     pub const BEAD_TYPE: &str = "bead_type";
     /// Partial charge.
@@ -792,5 +816,38 @@ mod tests {
                 c.dtype
             );
         }
+    }
+
+    // ---- relation_endpoints ----
+
+    #[test]
+    fn relation_endpoints_reads_a_spec_relation_without_consulting_columns() {
+        // A canonical relation answers from its BlockSpec: `has_column` says
+        // nothing is present, and the declared endpoints come back anyway.
+        assert_eq!(
+            relation_endpoints("bonds", |_| false),
+            Some(("atoms", vec!["atomi", "atomj"]))
+        );
+        assert_eq!(
+            relation_endpoints("angles", |_| false),
+            Some(("atoms", vec!["atomi", "atomj", "atomk"]))
+        );
+    }
+
+    #[test]
+    fn relation_endpoints_infers_atoms_endpoints_for_an_unspecified_block() {
+        // `ports` has no BlockSpec: the endpoints are the present subset of
+        // atomi..atoml, in position order, indexing `atoms`.
+        let present = |k: &str| matches!(k, "atomi" | "atomj" | "port_kind");
+        assert_eq!(
+            relation_endpoints("ports", present),
+            Some(("atoms", vec!["atomi", "atomj"]))
+        );
+    }
+
+    #[test]
+    fn relation_endpoints_is_none_without_endpoint_columns() {
+        let present = |k: &str| matches!(k, "ibead" | "atom");
+        assert_eq!(relation_endpoints("members", present), None);
     }
 }

@@ -1,7 +1,13 @@
 //! Coarse-grained molecular graph.
 //!
+//! A *coarse-grained* (CG) model describes a molecule with fewer particles
+//! than it has atoms: each particle, a **bead**, stands for a group of atoms
+//! (a monomer, a few CH₂ units, a water cluster) and sits at a representative
+//! position of that group. A **CG bond** says two beads are connected; it has
+//! no chemical bond order.
+//!
 //! [`CoarseGrain`] wraps the domain-agnostic [`MolGraph`] where every node is a
-//! bead (a group of atoms). It registers its own `bonds` kind and exposes the
+//! bead. It registers its own `bonds` kind and exposes the
 //! bead / CG-bond vocabulary; `MolGraph` itself stays chemistry-agnostic.
 //!
 //! Generic graph methods (`nodes`, `neighbors`, …) remain available via
@@ -30,6 +36,7 @@ use slotmap::Key;
 use crate::error::MolRsError;
 use crate::store::block::Block;
 use crate::store::frame::Frame;
+use crate::store::keys;
 use crate::system::atomistic::{Bond, BondId};
 use crate::system::molgraph::{Atom, KindId, MolGraph, NodeId};
 use crate::types::Idx;
@@ -37,10 +44,15 @@ use crate::types::Idx;
 /// Result of [`CoarseGrain::extract_subgraph`].
 #[derive(Debug, Clone)]
 pub struct ExtractedCoarseGrain {
+    /// The extracted bead graph (membership copied for selected beads).
     pub graph: CoarseGrain,
+    /// Selected parent beads with a CG-bond neighbour outside the ball.
     pub boundary: Vec<BeadId>,
+    /// New bead id → parent bead id.
     pub parent_of: HashMap<BeadId, BeadId>,
+    /// Parent bead id → hops (CG bonds) from the nearest center.
     pub hops: HashMap<BeadId, i64>,
+    /// Parent bead id → new bead id.
     pub node_map: HashMap<BeadId, BeadId>,
 }
 
@@ -110,10 +122,10 @@ impl CoarseGrain {
     /// conflict for callers holding a foreign bag.
     pub fn add_bead(&mut self, bead_type: &str, x: f64, y: f64, z: f64) -> BeadId {
         let mut a = Atom::new();
-        a.set("bead_type", bead_type);
-        a.set("x", x);
-        a.set("y", y);
-        a.set("z", z);
+        a.set(keys::BEAD_TYPE, bead_type);
+        a.set(keys::X, x);
+        a.set(keys::Y, y);
+        a.set(keys::Z, z);
         self.graph
             .add_node_with(a)
             .expect("caller-built bead bag contradicts an existing bead column")
@@ -127,7 +139,7 @@ impl CoarseGrain {
     /// type — see [`add_bead`](Self::add_bead).
     pub fn add_bead_bare(&mut self, bead_type: &str) -> BeadId {
         let mut a = Atom::new();
-        a.set("bead_type", bead_type);
+        a.set(keys::BEAD_TYPE, bead_type);
         self.graph
             .add_node_with(a)
             .expect("caller-built bead bag contradicts an existing bead column")
@@ -203,20 +215,23 @@ impl CoarseGrain {
         self.graph.n_relations(self.bond)
     }
 
-    /// Export to a tabular [`Frame`] (`beads` block + a `cgbonds` block).
+    /// Export to a tabular [`Frame`] in the canonical vocabulary every graph
+    /// type shares: one `atoms` row per bead, one `bonds` row per CG bond
+    /// (`atomi` / `atomj` = the endpoint beads' `atoms` rows), plus a
+    /// `members` block for bead membership. The frame validates canonically.
     ///
-    /// CoarseGrain owns its frame conversion because the central [`Frame`] is a
-    /// domain interface with CG-specific block requirements: the generic node
-    /// block is relabeled `atoms`→`beads` and the bond relation block
-    /// `bonds`→`cgbonds` with its `atomi`/`atomj` endpoint columns renamed to
-    /// `ibead`/`jbead`. All relabeling is on the already-materialized numpy
-    /// columns — no data is copied.
+    /// `members` has one row per (bead, atom) pair: `ibead` (UInt, the bead's
+    /// row in `atoms`) and `atom` (UInt, the opaque atom handle), grouped by
+    /// bead in `atoms` row order and keeping each bead's member order. The
+    /// block is absent when no bead has members.
     ///
-    /// Bead membership is written to a `members` block with one row per
-    /// (bead, atom) pair: `ibead` (UInt, the bead's row in `beads`) and `atom`
-    /// (UInt, the opaque atom handle), grouped by bead in `beads` row order and
-    /// keeping each bead's member order. The block is absent when no bead has
-    /// members.
+    /// # Known limit
+    ///
+    /// Every property a bead carries is written, `mol_id` included, while
+    /// [`Self::from_frame`] reads exactly one molecule. So
+    /// `from_frame(to_frame(cg))` refuses a CoarseGrain whose beads carry two
+    /// or more distinct `mol_id` values; select one molecule with
+    /// [`Frame::subset`] first.
     ///
     /// # Errors
     ///
@@ -227,22 +242,8 @@ impl CoarseGrain {
     /// graph and only refused here.
     pub fn to_frame(&self) -> Result<Frame, MolRsError> {
         let mut frame = self.graph.to_frame()?;
-        frame.rename_block("atoms", "beads");
-        // A CG system with no bonds has no `bonds` block, so the rename is
-        // legitimately a no-op there. When the block *is* present the graph
-        // just wrote both endpoints, so a failure is a broken invariant rather
-        // than a data condition — hence expect, not a swallowed Result.
-        if frame.contains_key("bonds") {
-            frame
-                .rename_column("bonds", "atomi", "ibead")
-                .expect("graph-built bonds block carries atomi");
-            frame
-                .rename_column("bonds", "atomj", "jbead")
-                .expect("graph-built bonds block carries atomj");
-        }
-        frame.rename_block("bonds", "cgbonds");
 
-        // `node_ids` is the row order the graph just wrote `beads` in.
+        // `node_ids` is the row order the graph just wrote `atoms` in.
         let mut ibead: Vec<Idx> = Vec::new();
         let mut atom: Vec<Idx> = Vec::new();
         for (row, id) in self.graph.node_ids().enumerate() {
@@ -262,121 +263,111 @@ impl CoarseGrain {
         Ok(frame)
     }
 
-    /// Build from the CG-shaped [`Frame`] emitted by [`Self::to_frame`].
+    /// Build from a [`Frame`] that holds **one molecule** in the canonical
+    /// `atoms` / `bonds` vocabulary — the frame [`Self::to_frame`] writes,
+    /// or one molecule of a LAMMPS data frame.
     ///
-    /// [`MolGraph`] owns one canonical frame vocabulary (`atoms` / `bonds` /
-    /// `atomi` / `atomj`), so the CG domain labels are reversed on a clone before
-    /// delegating.  The caller's frame is never mutated.
+    /// Every `atoms` row becomes one bead and every `bonds` row one CG bond
+    /// (`atomi` / `atomj` are 0-based `atoms` rows). Every `atoms` column is
+    /// copied onto its bead and every `bonds` column onto its bond.
     ///
-    /// A `members` block (see [`Self::to_frame`]) is read back after the
-    /// graph: row `ibead` of `beads` gains atom handle `atom`, in block row
-    /// order.
+    /// `bead_type` comes from the first of these `atoms` columns present:
+    ///
+    /// 1. `bead_type` (Str), used as is;
+    /// 2. `type` (Str), copied;
+    /// 3. `type_id` (UInt), rendered in decimal.
+    ///
+    /// The source column also stays on each bead as a plain property. A null
+    /// row in the chosen column is an error; it never falls through to the
+    /// next source.
+    ///
+    /// A frame of many molecules is refused: when `atoms` carries `mol_id`,
+    /// every row must hold the same value. Select one molecule with
+    /// [`Frame::subset`] first. A frame without `mol_id` is one molecule.
+    ///
+    /// Only `atoms`, `bonds` and `members` are read. `angles`, `dihedrals`
+    /// and every other block are ignored, so a CG relation kind other than
+    /// `bonds` does not survive a round trip. A `members` block (see
+    /// [`Self::to_frame`]) is read after the graph: row `ibead` of `atoms`
+    /// gains atom handle `atom`, in block row order. The caller's frame is
+    /// never mutated.
     ///
     /// # Errors
     ///
-    /// [`MolRsError::Parse`] when the frame has no `beads` block or its
-    /// `cgbonds` endpoints cannot be renamed, and [`MolRsError::Validation`]
-    /// when a bead carries no `bead_type`, when the `members` block lacks a
-    /// UInt `ibead` or `atom` column, when an `ibead` names no bead row, or
-    /// when an `(ibead, atom)` row repeats — plus every error of the graph
-    /// read itself.
+    /// [`MolRsError::Validation`] when the frame has no `atoms` rows; when
+    /// `mol_id` has a null row, is not UInt, or holds two distinct values
+    /// (naming both and `Frame::subset`); when none of `bead_type` / `type` /
+    /// `type_id` is present, or the chosen one has a null row or the wrong
+    /// dtype; when the `members` block lacks a UInt `ibead` or `atom` column,
+    /// an `ibead` names no bead row, or an `(ibead, atom)` row repeats — plus
+    /// every error of the graph read itself (e.g. a bond endpoint past the
+    /// atom rows).
     pub fn from_frame(frame: &Frame) -> Result<Self, MolRsError> {
-        let mut canonical = frame.clone();
-        if !canonical.rename_block("beads", "atoms") {
-            return Err(MolRsError::parse("Frame missing 'beads' block"));
-        }
-        if canonical.contains_key("cgbonds") {
-            // The rename is a write into `atomi`/`atomj`, so the schema checks
-            // the moved column against the endpoint spec (UInt). A CG frame
-            // carrying signed endpoints is rejected here rather than silently
-            // losing its topology downstream.
-            canonical
-                .rename_column("cgbonds", "ibead", "atomi")
-                .and_then(|()| canonical.rename_column("cgbonds", "jbead", "atomj"))
-                .map_err(|e| {
-                    MolRsError::parse(format!("Frame 'cgbonds' endpoints unusable: {e}"))
-                })?;
-            if !canonical.rename_block("cgbonds", "bonds") {
-                return Err(MolRsError::parse(
-                    "Frame 'cgbonds' block could not be renamed",
+        let atoms = frame
+            .get("atoms")
+            .filter(|a| a.nrows().unwrap_or(0) > 0)
+            .ok_or_else(|| {
+                MolRsError::validation("Frame has no 'atoms' rows to read beads from")
+            })?;
+
+        if atoms.contains_key(keys::MOL_ID) {
+            if atoms.validity(keys::MOL_ID).is_some() {
+                return Err(MolRsError::validation(
+                    "Frame 'atoms' column 'mol_id' has a null row, so a bead belongs to no \
+                     molecule",
                 ));
             }
+            let mol_id = atoms.get_uint(keys::MOL_ID).ok_or_else(|| {
+                MolRsError::validation("Frame 'atoms' column 'mol_id' is not UInt")
+            })?;
+            let mut ids = mol_id.iter();
+            if let Some(&first) = ids.next()
+                && let Some(&other) = ids.find(|&&id| id != first)
+            {
+                return Err(MolRsError::validation(format!(
+                    "Frame 'atoms' holds more than one molecule (mol_id {first} and \
+                     {other}); select one molecule with `Frame::subset` first"
+                )));
+            }
         }
-        let mut cg = Self::from_canonical_frame(&canonical)?;
-        if let Some(members) = frame.get("members") {
-            cg.read_members(members)?;
-        }
-        Ok(cg)
-    }
 
-    /// Build from the atomistic vocabulary of a LAMMPS data frame: every
-    /// `atoms` row becomes one bead and every `bonds` row one CG bond.
-    ///
-    /// Where [`Self::from_frame`] reads the `beads` / `cgbonds` vocabulary,
-    /// this reads `atoms` / `bonds` as the LAMMPS data reader
-    /// (`io::data::lammps_data`) writes them: bond
-    /// endpoints `atomi` / `atomj` are 0-based `atoms` rows. Every `atoms`
-    /// column is copied onto its bead and every `bonds` column onto its bond.
-    /// `bead_type` is taken from the `type_key` column: a `Str` column is
-    /// copied verbatim, and a `UInt` / `Int` column (the reader's `type_id`) is
-    /// rendered in decimal. The `type_key` column itself is kept on each bead
-    /// as a plain property; with `type_key == "bead_type"` that column (which
-    /// the schema declares `Str`) is the bead type and nothing is added. Only
-    /// `atoms` and `bonds` are read;
-    /// `angles`, `dihedrals`, `impropers` and every other block are ignored.
-    ///
-    /// Resolving LAMMPS "Atom Type Labels" into names is the caller's job:
-    /// pass the column that already holds the type spelling you want.
-    ///
-    /// # Errors
-    ///
-    /// [`MolRsError::Validation`] when the frame has no `atoms` block, when
-    /// `atoms` has no `type_key` column, when that column is neither `Str` nor
-    /// `UInt` / `Int`, when one of its rows is null, or when `atoms` already
-    /// has a `bead_type` column and `type_key` names another one (the read
-    /// would overwrite it) — plus every error of
-    /// the graph read itself (e.g. a bond endpoint past the atom rows).
-    pub fn from_atom_frame(frame: &Frame, type_key: &str) -> Result<Self, MolRsError> {
-        let atoms = frame.get("atoms").ok_or_else(|| {
-            MolRsError::validation("Frame has no 'atoms' block to read beads from")
-        })?;
-        let Some(dtype) = atoms.dtype(type_key) else {
+        let sources = [keys::BEAD_TYPE, keys::TYPE, keys::TYPE_ID];
+        let Some(source) = sources.into_iter().find(|k| atoms.contains_key(k)) else {
             return Err(MolRsError::validation(format!(
-                "Frame 'atoms' block has no '{type_key}' column to take bead_type from"
+                "Frame 'atoms' block has none of the columns {} to take bead_type from",
+                sources.map(|k| format!("'{k}'")).join(", ")
             )));
         };
-        if type_key != "bead_type" && atoms.contains_key("bead_type") {
+        if atoms.validity(source).is_some() {
             return Err(MolRsError::validation(format!(
-                "Frame 'atoms' block already has a 'bead_type' column, which taking \
-                 bead_type from '{type_key}' would overwrite"
-            )));
-        }
-        if atoms.validity(type_key).is_some() {
-            return Err(MolRsError::validation(format!(
-                "Frame 'atoms' column '{type_key}' has a null row, so a bead would have no \
+                "Frame 'atoms' column '{source}' has a null row, so a bead would have no \
                  bead_type"
             )));
         }
-        // `None`: the `type_key` column already is a Str `bead_type`.
-        let bead_type: Option<Vec<String>> = if let Some(col) = atoms.get_string(type_key) {
-            (type_key != "bead_type").then(|| col.iter().cloned().collect())
-        } else if let Some(col) = atoms.get_uint(type_key) {
-            Some(col.iter().map(ToString::to_string).collect())
-        } else if let Some(col) = atoms.get_int(type_key) {
-            Some(col.iter().map(ToString::to_string).collect())
+        let wrong_dtype = |expected: &str| {
+            MolRsError::validation(format!(
+                "Frame 'atoms' column '{source}' is {}, not {expected}",
+                atoms.dtype(source).map_or("unknown", |d| d.name())
+            ))
+        };
+        // `None`: the source already is a Str `bead_type`.
+        let bead_type: Option<Vec<String>> = if source == keys::BEAD_TYPE {
+            atoms.get_string(source).ok_or_else(|| wrong_dtype("Str"))?;
+            None
+        } else if source == keys::TYPE {
+            let col = atoms.get_string(source).ok_or_else(|| wrong_dtype("Str"))?;
+            Some(col.iter().cloned().collect())
         } else {
-            return Err(MolRsError::validation(format!(
-                "Frame 'atoms' column '{type_key}' is {}, not a Str or UInt/Int bead type",
-                dtype.name()
-            )));
+            let col = atoms.get_uint(source).ok_or_else(|| wrong_dtype("UInt"))?;
+            Some(col.iter().map(ToString::to_string).collect())
         };
 
         let mut beads = atoms.clone();
         if let Some(bead_type) = bead_type {
             beads
-                .insert("bead_type", Array1::from_vec(bead_type).into_dyn())
+                .insert(keys::BEAD_TYPE, Array1::from_vec(bead_type).into_dyn())
                 .map_err(|e| {
-                    MolRsError::validation(format!("Frame 'atoms' column '{type_key}': {e}"))
+                    MolRsError::validation(format!("Frame 'atoms' column '{source}': {e}"))
                 })?;
         }
         let mut canonical = Frame::new();
@@ -384,7 +375,11 @@ impl CoarseGrain {
         if let Some(bonds) = frame.get("bonds") {
             canonical.insert("bonds", bonds.clone());
         }
-        Self::from_canonical_frame(&canonical)
+        let mut cg = Self::from_canonical_frame(&canonical)?;
+        if let Some(members) = frame.get("members") {
+            cg.read_members(members)?;
+        }
+        Ok(cg)
     }
 
     /// Read a frame already in [`MolGraph`]'s canonical vocabulary (`atoms` /
@@ -399,7 +394,7 @@ impl CoarseGrain {
 
     /// Attach the membership a `members` block states: row `r` gives bead row
     /// `ibead[r]` the atom handle `atom[r]`. Bead rows are the graph's row
-    /// order, which a freshly read graph shares with its `beads` block. A
+    /// order, which a freshly read graph shares with its `atoms` block. A
     /// repeated `(ibead, atom)` row is refused, since it would list the atom
     /// twice in its bead.
     fn read_members(&mut self, members: &Block) -> Result<(), MolRsError> {
@@ -444,7 +439,7 @@ impl CoarseGrain {
     /// (naming the kind and both arities).
     pub fn try_from_molgraph(mut mol: MolGraph) -> Result<Self, MolRsError> {
         for (id, atom) in mol.nodes() {
-            if atom.get_str("bead_type").is_none() {
+            if atom.get_str(keys::BEAD_TYPE).is_none() {
                 return Err(MolRsError::validation(format!(
                     "node {:?} missing 'bead_type' property",
                     id
@@ -474,19 +469,20 @@ impl CoarseGrain {
         &mut self.graph
     }
 
-    /// Translate every bead that has coordinates by `delta`.
+    /// Translate every bead that has coordinates by `delta` (Å).
     pub fn translate(&mut self, delta: [f64; 3]) {
         crate::spatial::geometry::translate(self.as_molgraph_mut(), delta);
     }
 
-    /// Scale every bead that has coordinates by a per-axis `factor` about
-    /// `about` (the origin when `None`). Pass `[s, s, s]` for a uniform scale.
+    /// Scale every bead that has coordinates by a per-axis `factor`
+    /// (dimensionless) about `about` (Å; the origin when `None`). Pass
+    /// `[s, s, s]` for a uniform scale.
     pub fn scale(&mut self, factor: [f64; 3], about: Option<[f64; 3]>) {
         crate::spatial::geometry::scale(self.as_molgraph_mut(), factor, about);
     }
 
     /// Rotate every bead that has coordinates by `angle` radians about `axis`.
-    /// `about` defaults to the origin when `None`.
+    /// `about` (Å) defaults to the origin when `None`.
     ///
     /// # Errors
     ///
@@ -499,6 +495,28 @@ impl CoarseGrain {
         about: Option<[f64; 3]>,
     ) -> Result<(), crate::error::MolRsError> {
         crate::spatial::geometry::rotate(self.as_molgraph_mut(), axis, angle, about)
+    }
+
+    /// Bead-mass-weighted centre `Σ mᵢ rᵢ / Σ mᵢ` of the bead group `group`,
+    /// in the coordinates' length unit (Å) — see
+    /// [`crate::spatial::geometry::center`] (no periodic imaging: unwrap a
+    /// group split across the box first; each listed bead counts once per
+    /// occurrence).
+    ///
+    /// Every listed bead needs `x` / `y` / `z` and a `mass`
+    /// ([`keys::MASS`]). [`add_bead`](Self::add_bead) writes no mass, so set
+    /// one (through the inner graph's `set_node`, or from a frame's `mass`
+    /// column via [`from_frame`](Self::from_frame)) before asking for a centre.
+    ///
+    /// # Errors
+    ///
+    /// The [`CenterError`](crate::spatial::geometry::CenterError) of
+    /// [`crate::spatial::geometry::center`].
+    pub fn center(
+        &self,
+        group: &[BeadId],
+    ) -> Result<[f64; 3], crate::spatial::geometry::CenterError> {
+        crate::spatial::geometry::center(self.as_molgraph(), group)
     }
 
     /// Place `transforms.len()` rigid copies of `template`, copy `c` moved by
@@ -641,16 +659,35 @@ mod tests {
     }
 
     #[test]
-    fn frame_round_trip_uses_cg_domain_labels() {
+    fn to_frame_writes_atoms_and_bonds_that_validate() {
         let mut cg = CoarseGrain::new();
         let a = cg.add_bead("W", 0.0, 0.0, 0.0);
         let b = cg.add_bead("P1", 3.0, 0.0, 0.0);
         cg.add_bond(a, b).unwrap();
 
         let frame = cg.to_frame().expect("a schema-conforming graph converts");
-        assert!(frame.contains_key("beads"));
-        assert!(frame.contains_key("cgbonds"));
-        assert!(!frame.contains_key("atoms"));
+        let mut names: Vec<&str> = frame.keys().collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["atoms", "bonds"]);
+        let bead_type: Vec<String> = frame["atoms"]
+            .get_string("bead_type")
+            .expect("atoms carries a Str bead_type")
+            .iter()
+            .cloned()
+            .collect();
+        assert_eq!(bead_type, vec!["W", "P1"]);
+        let endpoint = |col: &str| -> Vec<Idx> {
+            frame["bonds"]
+                .get_uint(col)
+                .expect("bonds carries UInt endpoints")
+                .iter()
+                .copied()
+                .collect()
+        };
+        assert_eq!(endpoint("atomi"), vec![0]);
+        assert_eq!(endpoint("atomj"), vec![1]);
+        frame.validate().expect("the CG frame is a canonical frame");
+
         let restored = CoarseGrain::from_frame(&frame).expect("CG frame round-trip");
         assert_eq!(restored.n_beads(), 2);
         assert_eq!(restored.n_bonds(), 1);
@@ -770,7 +807,7 @@ mod tests {
         }
     }
 
-    // ---- from_atom_frame / from_frame validation / membership round trip ----
+    // ---- from_frame: atoms/bonds vocabulary, validation, membership ----
 
     use crate::store::block::Block;
     use ndarray::Array1;
@@ -787,8 +824,8 @@ mod tests {
         Array1::from_vec(values.iter().map(|s| (*s).to_owned()).collect()).into_dyn()
     }
 
-    /// A LAMMPS-style `atoms` block of `n` rows with x/y/z only; the caller
-    /// adds the type column under test.
+    /// An `atoms` block of `n` rows with x/y/z only; the caller adds the
+    /// bead-type source under test.
     fn xyz_atoms(x: &[f64], y: &[f64], z: &[f64]) -> Block {
         let mut atoms = Block::new();
         atoms.insert("x", float_col(x)).unwrap();
@@ -797,20 +834,64 @@ mod tests {
         atoms
     }
 
+    fn frame_of(atoms: Block) -> Frame {
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame
+    }
+
+    fn bead_types(cg: &CoarseGrain) -> Vec<String> {
+        cg.beads()
+            .map(|(_, bead)| {
+                bead.get_str("bead_type")
+                    .expect("every bead carries bead_type")
+                    .to_owned()
+            })
+            .collect()
+    }
+
     #[test]
-    fn from_atom_frame_copies_a_str_type_column_verbatim_and_every_other_column() {
+    fn from_frame_takes_bead_type_before_type() {
+        let mut atoms = xyz_atoms(&[0.0, 1.0], &[0.0; 2], &[0.0; 2]);
+        atoms.insert("bead_type", str_col(&["W", "W"])).unwrap();
+        atoms.insert("type", str_col(&["CT", "OH"])).unwrap();
+
+        let cg = CoarseGrain::from_frame(&frame_of(atoms)).expect("a bead_type column");
+        assert_eq!(bead_types(&cg), vec!["W", "W"]);
+    }
+
+    #[test]
+    fn from_frame_takes_type_before_type_id() {
+        let mut atoms = xyz_atoms(&[0.0, 1.0], &[0.0; 2], &[0.0; 2]);
+        atoms.insert("type", str_col(&["CT", "OH"])).unwrap();
+        atoms.insert("type_id", uint_col(&[1, 2])).unwrap();
+
+        let cg = CoarseGrain::from_frame(&frame_of(atoms)).expect("a type column");
+        assert_eq!(bead_types(&cg), vec!["CT", "OH"]);
+    }
+
+    #[test]
+    fn from_frame_renders_a_uint_type_id_in_decimal() {
+        let mut atoms = xyz_atoms(&[0.0], &[0.0], &[0.0]);
+        atoms.insert("type_id", uint_col(&[2])).unwrap();
+
+        let cg = CoarseGrain::from_frame(&frame_of(atoms)).expect("a UInt type_id column");
+        assert_eq!(bead_types(&cg), vec!["2"]);
+    }
+
+    #[test]
+    fn from_frame_copies_a_type_column_and_every_other_atoms_column() {
         let mut atoms = xyz_atoms(&[0.0, 1.0], &[0.5, 2.0], &[-1.0, 3.0]);
         atoms.insert("type", str_col(&["CT", "OH"])).unwrap();
         atoms.insert("charge", float_col(&[0.25, -0.25])).unwrap();
-        let mut frame = Frame::new();
-        frame.insert("atoms", atoms);
 
-        let cg = CoarseGrain::from_atom_frame(&frame, "type").expect("a Str type column");
+        let cg = CoarseGrain::from_frame(&frame_of(atoms)).expect("a Str type column");
         assert_eq!(cg.n_beads(), 2);
         let beads: Vec<Atom> = cg.beads().map(|(_, bead)| bead).collect();
         let expected = [("CT", 0.0, 0.5, -1.0, 0.25), ("OH", 1.0, 2.0, 3.0, -0.25)];
         for (bead, (ty, x, y, z, q)) in beads.iter().zip(expected) {
             assert_eq!(bead.get_str("bead_type"), Some(ty));
+            assert_eq!(bead.get_str("type"), Some(ty), "the source stays a prop");
             assert_eq!(bead.get_f64("x"), Some(x));
             assert_eq!(bead.get_f64("y"), Some(y));
             assert_eq!(bead.get_f64("z"), Some(z));
@@ -819,31 +900,18 @@ mod tests {
     }
 
     #[test]
-    fn from_atom_frame_renders_a_uint_type_id_in_decimal() {
-        let mut atoms = xyz_atoms(&[0.0], &[0.0], &[0.0]);
-        atoms.insert("type_id", uint_col(&[2])).unwrap();
-        let mut frame = Frame::new();
-        frame.insert("atoms", atoms);
-
-        let cg = CoarseGrain::from_atom_frame(&frame, "type_id").expect("a UInt type_id column");
-        let (_, bead) = cg.beads().next().expect("one bead");
-        assert_eq!(bead.get_str("bead_type"), Some("2"));
-    }
-
-    #[test]
-    fn from_atom_frame_turns_bond_rows_into_cg_bonds() {
+    fn from_frame_turns_bond_rows_into_cg_bonds() {
         let mut atoms = xyz_atoms(&[0.0, 1.0, 2.0], &[0.0; 3], &[0.0; 3]);
         atoms.insert("type", str_col(&["A", "B", "C"])).unwrap();
-        // LAMMPS data frames address bond endpoints by 0-based atoms row.
+        // Bond endpoints address 0-based atoms rows.
         let mut bonds = Block::new();
         bonds.insert("atomi", uint_col(&[0, 1])).unwrap();
         bonds.insert("atomj", uint_col(&[2, 2])).unwrap();
         bonds.insert("type_id", uint_col(&[1, 1])).unwrap();
-        let mut frame = Frame::new();
-        frame.insert("atoms", atoms);
+        let mut frame = frame_of(atoms);
         frame.insert("bonds", bonds);
 
-        let cg = CoarseGrain::from_atom_frame(&frame, "type").expect("atoms + bonds");
+        let cg = CoarseGrain::from_frame(&frame).expect("atoms + bonds");
         assert_eq!(cg.n_bonds(), 2);
         let ids: Vec<BeadId> = cg.node_ids().collect();
         let mut endpoints: Vec<[BeadId; 2]> = cg
@@ -855,58 +923,107 @@ mod tests {
     }
 
     #[test]
-    fn from_atom_frame_refuses_a_missing_type_key_column() {
-        let mut atoms = xyz_atoms(&[0.0], &[0.0], &[0.0]);
-        atoms.insert("type_id", uint_col(&[1])).unwrap();
-        let mut frame = Frame::new();
-        frame.insert("atoms", atoms);
+    fn from_frame_ignores_an_angles_block() {
+        let mut atoms = xyz_atoms(&[0.0, 1.0, 2.0], &[0.0; 3], &[0.0; 3]);
+        atoms.insert("type", str_col(&["A", "B", "C"])).unwrap();
+        let mut bonds = Block::new();
+        bonds.insert("atomi", uint_col(&[0, 1])).unwrap();
+        bonds.insert("atomj", uint_col(&[1, 2])).unwrap();
+        let mut angles = Block::new();
+        angles.insert("atomi", uint_col(&[0])).unwrap();
+        angles.insert("atomj", uint_col(&[1])).unwrap();
+        angles.insert("atomk", uint_col(&[2])).unwrap();
+        let mut frame = frame_of(atoms);
+        frame.insert("bonds", bonds);
+        frame.insert("angles", angles);
 
-        let err = CoarseGrain::from_atom_frame(&frame, "type")
-            .expect_err("no 'type' column to take bead_type from");
+        let cg = CoarseGrain::from_frame(&frame).expect("an angles block is ignored");
+        assert_eq!(cg.n_beads(), 3);
+        assert_eq!(cg.n_bonds(), 2);
+    }
+
+    #[test]
+    fn from_frame_accepts_a_single_mol_id() {
+        let mut atoms = xyz_atoms(&[0.0, 1.0], &[0.0; 2], &[0.0; 2]);
+        atoms.insert("type", str_col(&["A", "B"])).unwrap();
+        atoms.insert("mol_id", uint_col(&[7, 7])).unwrap();
+
+        let cg = CoarseGrain::from_frame(&frame_of(atoms)).expect("one molecule, id 7");
+        assert_eq!(cg.n_beads(), 2);
+    }
+
+    #[test]
+    fn from_frame_refuses_a_frame_without_atoms() {
+        let err =
+            CoarseGrain::from_frame(&Frame::new()).expect_err("no atoms block to read beads from");
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
     }
 
     #[test]
-    fn from_atom_frame_refuses_a_float_type_key_column() {
-        let mut atoms = xyz_atoms(&[0.0], &[0.0], &[0.0]);
-        atoms.insert("mass", float_col(&[12.011])).unwrap();
-        let mut frame = Frame::new();
-        frame.insert("atoms", atoms);
+    fn from_frame_refuses_an_atoms_block_with_no_rows() {
+        let mut atoms = Block::new();
+        atoms.insert("bead_type", str_col(&[])).unwrap();
 
-        let err = CoarseGrain::from_atom_frame(&frame, "mass")
-            .expect_err("a Float column is not a bead type");
+        let err = CoarseGrain::from_frame(&frame_of(atoms))
+            .expect_err("a CoarseGrain needs at least one bead row");
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
     }
 
     #[test]
-    fn from_atom_frame_refuses_an_existing_bead_type_under_another_type_key() {
-        let mut atoms = xyz_atoms(&[0.0], &[0.0], &[0.0]);
-        atoms.insert("type", str_col(&["CT"])).unwrap();
-        atoms.insert("bead_type", str_col(&["W"])).unwrap();
-        let mut frame = Frame::new();
-        frame.insert("atoms", atoms);
+    fn from_frame_refuses_more_than_one_mol_id() {
+        let mut atoms = xyz_atoms(&[0.0, 1.0, 2.0], &[0.0; 3], &[0.0; 3]);
+        atoms.insert("type", str_col(&["A", "B", "C"])).unwrap();
+        atoms.insert("mol_id", uint_col(&[0, 0, 1])).unwrap();
 
-        let err = CoarseGrain::from_atom_frame(&frame, "type")
-            .expect_err("taking bead_type from 'type' would overwrite the existing bead_type");
+        let err = CoarseGrain::from_frame(&frame_of(atoms))
+            .expect_err("molecules 0 and 1 are two molecules");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        let msg = err.to_string();
+        assert!(msg.contains("mol_id"), "the error names mol_id, got {msg}");
+        assert!(
+            msg.contains("Frame::subset"),
+            "the error points at Frame::subset, got {msg}"
+        );
+    }
+
+    #[test]
+    fn from_frame_refuses_a_null_mol_id() {
+        let mut atoms = xyz_atoms(&[0.0, 1.0], &[0.0; 2], &[0.0; 2]);
+        atoms.insert("type", str_col(&["A", "B"])).unwrap();
+        atoms
+            .insert_nullable("mol_id", uint_col(&[7, 0]), vec![true, false])
+            .unwrap();
+
+        let err =
+            CoarseGrain::from_frame(&frame_of(atoms)).expect_err("bead 1 belongs to no molecule");
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
     }
 
     #[test]
-    fn from_atom_frame_refuses_a_frame_without_an_atoms_block() {
-        let frame = Frame::new();
-        let err = CoarseGrain::from_atom_frame(&frame, "type")
-            .expect_err("no atoms block to read beads from");
+    fn from_frame_refuses_atoms_without_a_bead_type_source() {
+        let atoms = xyz_atoms(&[0.0, 1.0], &[0.0, 0.0], &[0.0, 0.0]);
+
+        let err = CoarseGrain::from_frame(&frame_of(atoms))
+            .expect_err("none of bead_type, type, type_id is present");
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        let msg = err.to_string();
+        for source in ["bead_type", "type", "type_id"] {
+            assert!(msg.contains(source), "the error names {source}, got {msg}");
+        }
     }
 
     #[test]
-    fn from_frame_refuses_a_bead_without_bead_type() {
-        let beads = xyz_atoms(&[0.0, 1.0], &[0.0, 0.0], &[0.0, 0.0]);
-        let mut frame = Frame::new();
-        frame.insert("beads", beads);
+    fn from_frame_refuses_a_null_type_row() {
+        // A present `type_id` is not a fallback: the first present source
+        // decides, and its null row is an error.
+        let mut atoms = xyz_atoms(&[0.0, 1.0], &[0.0; 2], &[0.0; 2]);
+        atoms
+            .insert_nullable("type", str_col(&["CT", ""]), vec![true, false])
+            .unwrap();
+        atoms.insert("type_id", uint_col(&[1, 2])).unwrap();
 
-        let err = CoarseGrain::from_frame(&frame)
-            .expect_err("every bead carries bead_type, on the way in too");
+        let err = CoarseGrain::from_frame(&frame_of(atoms))
+            .expect_err("bead 1 has a null type and no fall-through");
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
     }
 
@@ -930,13 +1047,13 @@ mod tests {
 
     #[test]
     fn from_frame_refuses_a_members_row_past_the_bead_count() {
-        let mut beads = xyz_atoms(&[0.0, 1.0], &[0.0, 0.0], &[0.0, 0.0]);
-        beads.insert("bead_type", str_col(&["W", "W"])).unwrap();
+        let mut atoms = xyz_atoms(&[0.0, 1.0], &[0.0, 0.0], &[0.0, 0.0]);
+        atoms.insert("bead_type", str_col(&["W", "W"])).unwrap();
         let mut members = Block::new();
         members.insert("ibead", uint_col(&[0, 2])).unwrap();
         members.insert("atom", uint_col(&[10, 11])).unwrap();
         let mut frame = Frame::new();
-        frame.insert("beads", beads);
+        frame.insert("atoms", atoms);
         frame.insert("members", members);
 
         let err =
@@ -946,13 +1063,13 @@ mod tests {
 
     #[test]
     fn from_frame_refuses_a_repeated_members_row() {
-        let mut beads = xyz_atoms(&[0.0, 1.0], &[0.0, 0.0], &[0.0, 0.0]);
-        beads.insert("bead_type", str_col(&["W", "W"])).unwrap();
+        let mut atoms = xyz_atoms(&[0.0, 1.0], &[0.0, 0.0], &[0.0, 0.0]);
+        atoms.insert("bead_type", str_col(&["W", "W"])).unwrap();
         let mut members = Block::new();
         members.insert("ibead", uint_col(&[0, 0])).unwrap();
         members.insert("atom", uint_col(&[10, 10])).unwrap();
         let mut frame = Frame::new();
-        frame.insert("beads", beads);
+        frame.insert("atoms", atoms);
         frame.insert("members", members);
 
         let err =
@@ -994,5 +1111,23 @@ mod tests {
             );
         }
         assert_eq!(template.bead_members(w), &[10, 11], "template untouched");
+    }
+
+    // ---- center ----
+
+    /// The group restricts the node set: an unlisted mass-100 bead at
+    /// (50,0,0) leaves masses 1 and 3 at x = 0 and 4 centred at (3,0,0).
+    #[test]
+    fn center_of_a_group_ignores_beads_outside_it() {
+        let mut cg = CoarseGrain::new();
+        let light = cg.add_bead("W", 0.0, 0.0, 0.0);
+        let outside = cg.add_bead("W", 50.0, 0.0, 0.0);
+        let heavy = cg.add_bead("P1", 4.0, 0.0, 0.0);
+        for (bead, mass) in [(light, 1.0), (outside, 100.0), (heavy, 3.0)] {
+            cg.as_molgraph_mut()
+                .set_node(bead, crate::store::keys::MASS, mass)
+                .unwrap();
+        }
+        assert_eq!(cg.center(&[light, heavy]), Ok([3.0, 0.0, 0.0]));
     }
 }

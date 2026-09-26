@@ -140,13 +140,17 @@ Known asymmetries (in internal-refactor priority order):
    class** (system-forcefield-04, 2026-09-25). Rust callers compile when they hold the
    frame; wasm compiles inside `typifier.toPotentials(frame)` and `LBFGS`. Add the door
    when a consumer needs it.
-4. **The assembly surfaces are Python-only** (assembly-07, 2026-09-26):
-   `FragGraph`, `Mapping`, `Trace` (ragged), `FragLibrary`, the placers,
-   orienters and reacters (Python-subclassable through explicit adaptors),
-   `Finalizer`, `Assembler`; `molrs.op`; `Frame.convert_units`;
-   `CoarseGrain.from_atom_frame`; `CGSmilesIR.to_template` / `to_frag_graph`;
-   `UnitRegistry.define_lj_sigma`. wasm and C/C++ add them when a consumer
-   needs them.
+4. **The backmap primitives are bound for Rust and Python only**
+   (backmap-primitives-07, 2026-09-26): `SubgraphMatcher`, `center` on
+   `Atomistic` / `CoarseGrain` / `Fragment`, `Fragment.link`, `Fragment.merge`,
+   `Frame.subset`, `CGSmilesIR.to_coarsegrain`; also `molrs.op` and
+   `UnitRegistry.define_lj_sigma`. Python-only door: `Fragment.to_atomistic()`
+   (Rust: `Atomistic::try_from_molgraph(fragment.into_inner())`). Python-only
+   column access: `frame["atoms", "mol_id"]` (tuple = (block, key) on `Frame`;
+   on `Block` a tuple means several columns). Name parity: `center(group)` in
+   both. Recorded shape asymmetry: `Frame.subset(mask, block="atoms")` in Python
+   vs `Frame::subset(block, rows)` in Rust. wasm and C/C++ add them when a
+   consumer needs them.
 5. The remaining routed items are done slowly, as needed: core SoA
    `update_columns`, splitting `neighbors/mod.rs` into `table.rs` (a pure move).
    Borrowing `Compute::Args` is done (2026-08-10).
@@ -258,8 +262,9 @@ first-registered kind pose as `bonds`. `mapping.rs` (`CGMapping`,
 **Rule**: write fragment-instance membership as the open node prop `frag_id`
 (`Int`), all-or-nothing per Frame column; do not reuse `res_id` or `mol_id`.
 Two writers exist by construction: `MolGraph::replicate` stamps it column-wise
-on every copy (assembly-03; `CGSmilesIR::to_atomistic` and the Assembler reach
-it through `replicate`), and `Fragment::set_frag_id` per atom. The key is
+on every copy
+(assembly-03; `CGSmilesIR::to_atomistic` reaches it through `replicate`),
+and `Fragment::set_frag_id` per atom. The key is
 spelled by one crate-level constant until the schema-vocabulary spec gives it
 one validated owner.
 
@@ -782,8 +787,8 @@ reintroduce the defect this chain fixed. Owed: rewrite them to the header conven
 
 **Decision:** `molrs::op` exposes plain value types (`Rigid`, `Fit`,
 `Freedom`) and free functions — vector arithmetic, 3×3/4×4 linear algebra,
-rigid and quaternion kernels, weighted superposition, centroid, SO(3)
-sampling. The CLAUDE.md OOP default does not apply inside `op`, and only
+rigid and quaternion kernels, weighted superposition, centroid, uniform S²
+directions. The CLAUDE.md OOP default does not apply inside `op`, and only
 there.
 **Why:** grill 2026-09-26 (assembly chain). These are pure numeric kernels with
 no natural owner; nine private vector copies, four quaternion copies, three
@@ -808,8 +813,8 @@ path would break every consumer for no gain.
 - The `core::math` special functions (`complex`, `spherical_harmonics`,
   `wigner3j`, `wigner_d`) are pure numerics with no assembly role; moving them
   into `op` is a separate refactor.
-- The graph-transform systems `translate`, `scale`, `rotate` (and `orient`
-  until link 05 deletes it) in `core/spatial/geometry.rs` are free functions
+- The graph-transform systems `translate`, `scale`, `rotate` in
+  `core/spatial/geometry.rs` are free functions
   taking `&mut MolGraph`; the OOP shape is a `MolGraph::transform` method.
 **Status:** open
 
@@ -819,6 +824,11 @@ path would break every consumer for no gain.
 (`ScaleLjError::InvalidMass`); a NaN/inf *coordinate* still yields a NaN
 fragment centre that flows into the scaled LJ parameters. Fix: validate the
 coordinates the way `op::superpose` does (`NonFinite { index }`) and refuse.
+It is also a second mass-weighted-centre entry point beside `geometry::center`
+(backmap-primitives-01), not reused because its input is `FragmentAtoms` and it
+weights a non-positive mass as 1 where `center` refuses a negative mass
+(`CenterError::BadMass`) and weights a zero mass as 0; the fix should settle
+whether that policy difference is intended.
 **Status:** open
 
 ## 2026-09-26 — a second Jacobi eigensolver with absolute tolerances (routed `/mol:refactor`)
@@ -837,8 +847,9 @@ the relative tolerance and delete this copy.
 `Dimensionless` / `Of(PresetDim)` / `Product(PresetDim, PresetDim)`) is the
 single truth for what a column measures. The free-text `ColumnSpec.unit` string
 is removed. The schema document derives its displayed unit from the dimension
-in `real` units (`ColumnDim::unit_in(&UnitPreset::real())`), and
-`Frame::convert_units` derives its per-column factor from the same dimension.
+in `real` units (`ColumnDim::unit_in(&UnitPreset::real())`); molrs converts no
+frame columns itself — the per-column frame conversion was retired by
+backmap-primitives-02, and callers convert one unit at a time.
 `PresetDim` replaces the `PRESET_DIMENSIONS` string array, so there is one list
 of dimension names. **Why:** the `unit` string had drifted (`"amu"`, `"e"`,
 `""` on `x`) and, being free text, could not drive a conversion.
@@ -854,14 +865,17 @@ molrs stores raw numbers", while the schema document now shows a derived
 wording with the typed dimension. Routed `/mol:docs`.
 **Status:** open
 
-## 2026-09-26 — `CoarseGrain` frame blocks `members` / `cgbonds` are outside the schema vocabulary (routed `/mol:spec`)
+## 2026-09-26 — the `CoarseGrain` frame block `members` is outside the schema vocabulary (routed `/mol:spec`)
 
-**Found by:** assembly-02 architect review. `CoarseGrain::to_frame` writes a
-`members` block (`ibead`, `atom`, both UInt) and a `cgbonds` block; neither is
-in `SCHEMA_BLOCKS` nor `keys.rs`, so the schema document does not describe
-them. Declaring `atom` as a schema column would bind its dtype wherever the key
-appears, so the right shape is a decision for the schema-vocabulary spec (the
-same spec that owes `frag_id`, notes.md 2026-09-21).
+**Found by:** assembly-02 architect review; narrowed by backmap-primitives-05,
+which removed the CG-bond block. `members` (`ibead`, `atom`, both UInt) is in
+neither `SCHEMA_BLOCKS` nor `keys.rs`, so the schema document does not describe
+it. It is not a relation block — `ibead` indexes `atoms` rows but is not a
+schema endpoint — so `Frame::subset` refuses a frame carrying it, whatever the
+target block, until it is in the schema (otherwise its rows would go stale when
+bead rows are dropped). Declaring `atom` as a schema column would bind its dtype
+wherever the key appears, so the right shape is a decision for the
+schema-vocabulary spec (the same spec that owes `frag_id`, notes.md 2026-09-21).
 **Status:** open
 
 ## 2026-09-26 — `Fragment::inherit_frag_ids` ignores a `set_frag_id` error (routed `/mol:fix`)
@@ -881,34 +895,11 @@ dropped. The data reader now keeps such rows (assembly-02 closed-vocabulary
 headers); this parser needs the same header rule.
 **Status:** open
 
-## 2026-09-26 — `Mapping.labels` restates its template's bead labels (routed `/mol:spec`)
-
-**Found by:** assembly-04 architect review. `labels[u]` is, by construction in
-`FragLibrary::map`, the bead-label list of the template named on node u. A
-hand-built `Mapping` can disagree with the template, and nothing checks it:
-`Mapping::trace` (assembly-05) validates (bead_type, label) ∈ rules but has no
-library, and `Assembler::assemble` (assembly-06) takes a `FragGraph`, not a
-`Mapping`. Either a library-aware check (e.g. `FragLibrary` validating a
-`Mapping`) or dropping `labels` in favour of the library is a design decision.
-**Status:** open
-
-## 2026-09-26 — the `Assembler` is the ruled composition point (assembly-06)
-
-**Decision:** `builder::Assembler(library, placer, reacter)` holds three
-injected primitives, is the only component that sees the whole `FragGraph`,
-places every unit, replicates each template per unit with `frag_id` = node
-index, and links along every edge in one `link_many` batch. It never finalizes
-and never writes `res_id`. molrs has no further entry class; molpy's
-`PolymerBuilder` / `Backmapper` compose it (molpy's façade exception).
-**Why:** grill 2026-09-26 — placers, orienters and reacters were leaking
-whole-graph and polymer semantics; one owner of the walk keeps each primitive
-single-purpose.
-**Status:** locked
-
 ## 2026-09-26 — connection is by port only; `SiteMap` / `SITE` / `Q0` retired
 
 **Decision:** two units join only through a port pair (`Port::accepts`,
-`PortReacter::link`). `builder/sites.rs` (`SiteMap`, `SiteError`, `SITE_KEY`,
+`Fragment::link` — backmap-primitives-03, which folds the removed handle
+branch's charge onto the anchor). `builder/sites.rs` (`SiteMap`, `SiteError`, `SITE_KEY`,
 `PRE_REACTION_CHARGE_KEY`) and the schema keys `site` / `q0` are deleted;
 `FRAME_VOCAB_VERSION` is 2. Cross-repo consumers follow in their own chains:
 molpy `builder/__init__.py`, `builder/assembly/__init__.py`,
@@ -920,38 +911,6 @@ examples) and so does `%label` (OPLS typing).
 **Why:** two connection mechanisms (SITE maps vs ports) and two grouping keys
 (`res_id` vs `frag_id`) described the same join.
 **Status:** locked
-
-## 2026-09-26 — `Finalizer` is the ruled second door to `generate_topology`
-
-**Decision:** `builder::Finalizer::new(impropers)` calls
-`Atomistic::generate_topology(true, true, impropers, false)` — always angles
-and dihedrals. It is the composable, Python-visible step replacing molpy's
-`StructureFinalizer`, not a second implementation. The Assembler never calls it.
-**Status:** locked
-
-## 2026-09-26 — two doors, one golden: `CGSmilesIR::to_atomistic` and the `Assembler`
-
-**Decision:** both exist. `to_atomistic` reads a CGsmiles string *as a
-molecule* — topology only, no geometry, no handles for unpaired descriptors,
-`frag_id` = node index; it is the notation's own expansion. The Assembler builds
-*placed geometry* from any `FragGraph` source (`FragLibrary::map`, the
-constructors, `to_frag_graph`) and keeps unpaired ports as ports. Neither
-replaces the other. Each is pinned by its own single-stage unit test against the
-one hand-derived heavy-atom golden (`{[#A][#B]}.{#A=CC=[>],#B=[<]=CO}` → C, C,
-C, O; bond numbers (1, 2, 1); `frag_id` [0,0,1,1]); no test chains them
-(CLAUDE.md § Testing Rules).
-**Status:** locked
-
-## 2026-09-26 — assembly-06 test gap and naming kept (recorded, not routed)
-
-- `AssembleError::FragIdOverflow` has no unit test: reaching it needs a
-  `FragGraph` of > 2³¹ nodes. The check is a single `I::try_from` at validation.
-- `builder::PairError` keeps its spec name (assembly-06 §2, assembly-07 §2)
-  although `molrs::PairError` at the crate root is generic; renaming it would
-  touch both specs for a cosmetic gain.
-- The Assembler lays world atoms out grouped by template name (`BTreeMap`),
-  not in node order, unlike `CGSmilesIR::to_atomistic`; `frag_id` is the only
-  unit key downstream code may rely on.
 
 ## 2026-09-26 — `perceive_aromaticity` drops write errors with `let _ =` (routed `/mol:fix`)
 
@@ -973,27 +932,21 @@ multi-frame writers still `clone_core_frame()` every frame of the list, because
 2026-09-26). Fix: a multi-entry borrow over the frame store.
 **Status:** open
 
-## 2026-09-26 — Python assemble→finalize copies the world twice (routed `/mol:spec`)
-
-**Found by:** assembly-07 architect review. `Assembler.assemble` returns a
-`Fragment` (moved, not copied), but `Finalizer.finalize` takes an `Atomistic`
-and Python has no move-based `Fragment` → `Atomistic` conversion (Rust:
-`Atomistic::try_from_molgraph(world.into_inner())`), so the Python path is a
-`to_frame` / `from_frame` round trip. Separately `Finalizer.finalize` and
-`Atomistic.generate_topology` are two Python entry points for one capability.
-Decide: `Finalizer` accepting the assembled `Fragment`, or a move-based
-conversion; and which entry point is canonical in Python.
-**Status:** open
-
 ## 2026-09-26 — Rust debug ids inside crate-built error strings (routed `/mol:fix`)
 
-**Found by:** assembly-07. The binder renders node / port ids as the integer
-handles Python sees for every error variant that *carries* an id. Two crate
-errors format the id into text instead, so Python still sees `NodeId(..)`:
-`FragLibraryError::InvalidTemplate.reason` (`molrs/src/builder/library.rs:~141,
-~195`, reachable through `FragLibrary.insert`) and one `AssembleError::Graph`
-message (`builder/assemble.rs:~271`, effectively unreachable). Fix: structured
-id fields on those variants, rendered by the binder.
+**Found by:** assembly-07; retargeted by backmap-primitives-08 after 02 deleted
+the builder sites. The binder renders node / port ids as the integer handles
+Python sees for every error variant that *carries* an id. One crate refusal
+formats the id into text instead, so Python still sees `NodeId(..)`:
+`Atomistic::try_from_molgraph` (`core/system/atomistic.rs:~656`, "node {:?}
+missing '{}' property"), reachable from Python through `Fragment.to_atomistic`.
+The same format sits in the sibling leaf checks `Fragment::try_from_molgraph`
+(`fragment.rs:~329`) and `CoarseGrain::try_from_molgraph`
+(`coarsegrain.rs:~433`). Fix: a structured id field on that refusal, rendered
+by the binder. The `Fragment.link` path (`LinkError::Port` through
+`MolGraph::get_relation` / `Fragment::port` / `missing_prop`) is being fixed in
+this chain (backmap-primitives-07 amendment 7); the entry stays open for
+`try_from_molgraph` and the remaining sites.
 **Status:** open
 
 ## 2026-09-26 — `Potentials.eval_any` deep-copies its frame (routed `/mol:refactor`)
@@ -1011,4 +964,199 @@ Restructure: compile inside `with_frame`, evaluate outside.
 returns an all-zero matrix instead of `None` or a scaled inverse. Behaviour
 unchanged by the gate's lint fix; decide `None` (overflow = unrepresentable) or
 compute on a rescaled matrix.
+**Status:** open
+
+## 2026-09-26 — backmap is primitives the caller composes (supersedes the assembly builder)
+
+**Decision:** molrs ships no assembly engine. Backmapping means replacing each
+group of coarse-grained beads with the all-atom molecule it stands for; the
+caller composes it from these primitives:
+
+- `perceive::SubgraphMatcher::new(&pattern).find(&target)` finds bead groups
+  (whole molecule ↔ bead group); `SubgraphMatcher` is also re-exported at the
+  crate root.
+- `CoarseGrain::center(group)`, `Atomistic::center()` and `Fragment::center()`
+  delegate to `geometry::center` (`CenterError`; centre of mass for atoms,
+  bead-mass-weighted centre for beads).
+- `geometry::translate` places, translation only.
+- `Fragment::merge` returns (atom map, port map).
+- `Fragment::link(a, b)` is the only join.
+- `Frame::subset(block, rows)` plus single-molecule `CoarseGrain::from_frame`
+  select a molecule.
+- `CGSmilesIR` converts only to `MolGraph` leaves (`to_atomistic`,
+  `to_fragment`, `to_coarsegrain`).
+- A `MolGraph` holds no box: the caller unwraps with `SimBox::unwrap` (Python
+  `Box.unwrap`), converts LJ lengths one unit at a time, and wraps with
+  `SimBox::wrap` (Python `Box.wrap`).
+
+**Retired with no replacement** (backmap-primitives-02 and -05):
+
+- `FragLibrary`, `Mapping`, `FragGraph`, `Placer` / `TracePlacer`, the
+  orienters, `Reacter` / `PortReacter` / `link_many` / `PairError`,
+  `Finalizer`, `Assembler` (Rust and Python, including the adaptors and Python
+  `Trace`);
+- `Frame::convert_units` and `Unconvertible`, `CoarseGrain::from_atom_frame`,
+  `CGSmilesIR::to_template` / `to_frag_graph`;
+- `op::rigid::{compose, alignment}`, `op::so3::{random_rotations,
+  random_angles, rotation_from_uniform}`, `op::superpose::superpose_many`, and
+  `op::vec3::perpendicular` (its last caller was `rigid::alignment`; no sibling
+  repo consumes it; 02 removed 147 tests in all, not the 143 first counted);
+- the `bead` key and the `beads` / `cgbonds` blocks.
+
+Renamed, not retired: `ReactError` became `core::system::link::LinkError`
+(backmap-primitives-03).
+
+**Why:** operator rulings and grill decisions of 2026-09-26:
+
+- whole molecule ↔ bead group;
+- primitives only, the user composes;
+- IR → `MolGraph` leaves only;
+- no in-crate frame unit conversion;
+- single-molecule `from_frame` + `Frame::subset`;
+- translation only;
+- core = data, and queries do not sit on data types;
+- joining only through port-bearing `Fragment`s;
+- no box in `MolGraph`;
+- finding bead groups is the matcher's job;
+- centre = centre of mass / bead-mass-weighted centre.
+
+**Supersedes** the Assembler, Finalizer and two-doors entries. **Resolves** the
+`Mapping.labels`, assembly-06 test gap and assemble→finalize copy entries
+(Python now has the move-based `Fragment.to_atomistic()`). The composition
+itself lives in molpy's `backmap-` chain.
+
+**Out-of-repo consumers** of the retired vocabulary (backmap-primitives-05
+amendment 4):
+
+- molpy `src/molpy/core/cg.py` (`CoarseGrain.to_frame` documents the retired
+  blocks, and its `bead_fields` filter checks `"beads" in frame`, so it is now a
+  silent no-op) and `tests/test_core/test_cg.py` (asserts the retired blocks and
+  `ibead` / `jbead`) — routed to molpy's `backmap-` chain;
+- molexp `src/molexp/harness/prompts/workflow_source.py` and its copy molab
+  `src/molab/harness/prompts/workflow_source.py` (agent prompts that teach
+  `src["beads"]`) — routed to a molexp/molab fix.
+
+**Status:** locked
+
+## 2026-09-26 — known limits of the backmap primitives (recorded, accepted)
+
+- **Placement is translation only:** every copy keeps its orientation, and
+  anchor–anchor distances are uncontrolled. The operator accepted relaxation
+  afterwards.
+- **`find` does not partition:** it returns every induced match, so bead
+  pattern 1-1-1-4 in target 1-1-1-4-1-1-1-4 gives
+  `[[0,1,2,3],[4,5,6,7],[6,5,4,3]]`. `[6,5,4,3]` overlaps `[0,1,2,3]` on bead 3
+  and `[4,5,6,7]` on beads 4–6; choosing a partition is the caller's job.
+- **Edge labels are ignored** by the matcher.
+- **`to_coarsegrain`** reads `levels[0]` only, writes no coordinates, and does
+  not record CG edge order.
+- **`Frame::subset`** refuses a frame carrying `members`, whatever the target
+  block, and refuses an endpoint column that is not UInt.
+- **Round trip:** `from_frame(to_frame(cg))` fails for a multi-molecule
+  `CoarseGrain` (`from_frame` refuses more than one `mol_id`).
+- **Python row errors split by sign:** `_row_indices`
+  (`molrs-python/python/molrs/frame.py`) raises `IndexError` in Python for a
+  row below `-n`, while a row at or above `n` is a `ValueError` raised in Rust
+  (`Frame::subset`). One error class per fault is open (routed `/mol:fix`).
+
+**Status:** recorded
+
+## 2026-09-26 — `perceive::subgraph` reaches `graph_hash` through `pub(crate)`; graph-hash queries stay in `core` (routed `/mol:spec`)
+
+- **Scope of the rule** (backmap-primitives-01 §0): a computation's home is a
+  free function — `core::spatial` for geometric reductions and transforms,
+  `perceive` for graph searches — and delegating leaf methods (e.g.
+  `CoarseGrain::center`) are allowed where the operator's script uses them.
+- `GraphView`, `adjacency_map` and `feasible` in `core/system/graph_hash.rs`
+  stay `pub(crate)`; `perceive` → `core` is the allowed direction.
+  `node_label_str` is private.
+- `SubgraphMatcher` reads the `pub(crate)` `GraphView` and zeroes its packed
+  edge-label bits, and `GraphView::build` computes Weisfeiler–Lehman colours
+  (iterated neighbourhood hashes) that `find` discards. Open: core gets one
+  owner for an unlabelled adjacency snapshot.
+- Two notions of a CG match: `SubgraphMatcher` compares `bead_type` only and
+  ignores bond order — ruling: a CG bond has no order — while
+  `CoarseGrain::is_isomorphic` (through `graph_hash`) prefers `element`,
+  compares bond bits and colours by charge. Aligning `graph_hash`'s CG path is
+  routed `/mol:spec`.
+- Open: `structural_hash`, `canonical_order` and `is_isomorphic` are graph
+  queries implemented in `core` rather than in `perceive`. Moving them changes
+  public paths and needs its own spec.
+
+**Status:** open
+
+## 2026-09-26 — `test_backmap_seam.py` chains stages by operator ruling (scoped exception)
+
+`molrs-python/tests/test_backmap_seam.py` runs find → center → translate →
+merge → link → to_atomistic on hand-built fixtures and asserts seam facts and
+hand counts only. It is the one exception to "no multi-stage pipelines"
+(CLAUDE.md § Testing Rules), because it is the operator's expressibility
+criterion and there is no `regressions/` tree.
+**Status:** locked (scope: that file)
+
+## 2026-09-26 — `MolGraph::merge` drops a failed relation and panics on a kind-arity conflict (routed `/mol:fix`)
+
+- `molgraph.rs:1222` (`molgraph.rs:1235` at `b6418561`):
+  `if let Ok(rid) = self.add_relation(…)` silently drops a refused relation.
+- `molgraph.rs:687`: `register_kind` panics on an arity conflict
+  (`assert_eq!`).
+- Both are reachable through `MolGraph::merge`. The kind-arity panic is also
+  reachable through `Fragment::merge` (two fragments registering one foreign
+  kind at different arities through `DerefMut`), and `Fragment::merge` inherits
+  the non-atomic `Err`: there is no rollback, so on failure `self` keeps the
+  atoms and ports copied so far and the caller gets no atom map.
+- The Python `merge` (`Fragment.merge`, and `Atomistic.merge` /
+  `CoarseGrain.merge` in the same shape, `molrs-python/src/core/system/molgraph.rs`)
+  takes `other` with `std::mem::take` before the core merge validates, so a
+  refused merge destroys the argument; `f.merge(f)` raises PyO3's borrow
+  `RuntimeError`, not `ValueError`.
+- Fix: return the error, register through `try_register_kind`, and validate
+  every property against `self` before the first write (or roll back on error);
+  `Fragment::merge` then gains atomicity without a change of its own. In the
+  binder, validate before consuming `other`, or hand `other` back in the `Err`.
+
+**Status:** open
+
+## 2026-09-26 — Python binder debts found by backmap-primitives-07 (routed `/mol:fix`)
+
+- Open: method-level stub parity — `molrs-python/tests/test_stub_parity.py`
+  compares only class names, so a method missing from `_lib.pyi` passes.
+- Fixed in 07 (recorded, not routed): the `PyFragment` `KeyError` docstrings
+  now say `ValueError`; `PyPerceive` is `module = "molrs.perceive"`.
+
+**Status:** open (stub parity only)
+
+## 2026-09-26 — `CoarseGrain` `DerefMut` can remove `bead_type` (routed `/mol:refactor`)
+
+`core/system/coarsegrain.rs` implements `DerefMut` to the inner `MolGraph`,
+which lets a caller delete a bead's `bead_type` and break the
+every-bead-has-a-type rule; `SubgraphMatcher` documents the result (such a bead
+reads as `""`, `perceive/subgraph.rs` module rustdoc). Fix: stop `DerefMut`
+from removing `bead_type`, then drop that sentence from the `subgraph.rs`
+rustdoc.
+**Status:** open
+
+## 2026-09-26 — store debts found by backmap-primitives-05 (routed `/mol:fix`)
+
+- `Block::get_mut` (`core/store/block/mod.rs`) returns `&mut Column`, so a
+  caller can swap in any dtype past `check_schema`. `from_frame` and `subset`
+  therefore refuse wrong-dtype `mol_id` / type / endpoint columns with
+  `Validation` rather than `expect`. Fix: narrow `get_mut` to typed in-place
+  access, or re-run `check_schema` on replacement.
+- `EndpointSpec.target` has one value (`"atoms"`) since the `beads` spec was
+  deleted. It is kept on purpose for a future node table; collapse it if none
+  arrives.
+- `io/data/lammps_molecule.rs` still has `get_int("mol_id")` branches (`:520`,
+  `:904`), the unreachable-Int pattern 05 removed from `from_frame`.
+
+**Status:** open
+
+## 2026-09-26 — two `CgBuild` constructors (routed `/mol:refactor`)
+
+`cg_build` (`io/smiles/cgsmiles/to_fragment.rs`) passes `""` as the input text,
+while `resolve.rs` (two sites) and `instantiate.rs` build
+`SmilesErrorKind::CgBuild` directly with the input. `to_coarsegrain.rs` (and
+`to_atomistic.rs`) import a sibling conversion file just to build errors. Fix:
+move `cg_build` to `cgsmiles/mod.rs` or `error.rs` with an optional input and
+route all sites through it.
 **Status:** open

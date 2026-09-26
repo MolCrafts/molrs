@@ -8,11 +8,10 @@
 //! validator judges an owned `Frame` and a borrowed `FrameView` without
 //! changes — including the `FrameView` that crosses the CXX bridge.
 
-use super::block::RowKind;
 use super::violation::{
     InstancePath, MAX_CELL_VIOLATIONS_PER_COLUMN, SchemaReport, Violation, ViolationKind,
 };
-use super::{block, column, consts};
+use super::{block, column, relation_endpoints};
 use crate::store::block::{BlockAccess, DType};
 use crate::store::frame_access::FrameAccess;
 use std::collections::HashMap;
@@ -176,38 +175,23 @@ impl Validator {
         nrows: &HashMap<String, usize>,
         report: &mut SchemaReport,
     ) {
-        let spec = block(name);
-        let (endpoint_cols, target): (Vec<&str>, &str) = match spec {
-            Some(s) if matches!(s.row_kind, RowKind::Relation { .. }) => {
-                let e = s.endpoints.expect("relation spec carries endpoints");
-                (e.columns.to_vec(), e.target)
-            }
-            // A block with no spec is legal (MolGraph mints one per relation
-            // kind); infer that it is a relation from the endpoint columns it
-            // carries, so those get range-checked too.
-            _ => (self.inferred_endpoints(frame, name), "atoms"),
-        };
-        if endpoint_cols.is_empty() {
+        // A block with no spec is legal (MolGraph mints one per relation
+        // kind); `relation_endpoints` infers its endpoints from the columns
+        // it carries, so those get range-checked too.
+        let Some((target, endpoint_cols)) = frame
+            .visit_block(name, |b: &dyn BlockAccess| {
+                relation_endpoints(name, |k| b.contains_key(k))
+            })
+            .flatten()
+        else {
             return;
-        }
+        };
         let Some(&target_rows) = nrows.get(target) else {
             return;
         };
         for col in endpoint_cols {
             self.check_range(frame, name, col, target, target_rows, report);
         }
-    }
-
-    fn inferred_endpoints<FA: FrameAccess + ?Sized>(&self, frame: &FA, name: &str) -> Vec<&str> {
-        frame
-            .visit_block(name, |b: &dyn BlockAccess| {
-                consts::ENDPOINTS
-                    .iter()
-                    .copied()
-                    .filter(|k| b.contains_key(k))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default()
     }
 
     fn check_range<FA: FrameAccess + ?Sized>(
@@ -257,5 +241,83 @@ impl Validator {
                 ViolationKind::TruncatedCells { extra },
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::block::Block;
+    use crate::store::frame::Frame;
+    use crate::types::{F, Idx};
+    use ndarray::Array1;
+
+    /// An `atoms` block of `n` rows carrying only `x`.
+    fn atoms(n: usize) -> Block {
+        let mut b = Block::new();
+        b.insert("x", Array1::from_vec(vec![0.0 as F; n]).into_dyn())
+            .unwrap();
+        b
+    }
+
+    fn uint_block(cols: &[(&str, &[Idx])]) -> Block {
+        let mut b = Block::new();
+        for (key, values) in cols {
+            b.insert(*key, Array1::from_vec(values.to_vec()).into_dyn())
+                .unwrap();
+        }
+        b
+    }
+
+    fn out_of_range(block: &str, col: &str, value: Idx, target_nrows: usize) -> Violation {
+        Violation {
+            path: InstancePath::Cell {
+                block: block.to_string(),
+                col: col.to_string(),
+                row: 0,
+            },
+            kind: ViolationKind::IndexOutOfRange {
+                value,
+                target: "atoms".to_string(),
+                target_nrows,
+            },
+        }
+    }
+
+    #[test]
+    fn check_reports_a_canonical_bond_endpoint_past_the_atoms() {
+        // 3 atoms are rows 0..=2, so atomj = 3 is one past the end.
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms(3));
+        frame.insert("bonds", uint_block(&[("atomi", &[0]), ("atomj", &[3])]));
+
+        let report = Validator::canonical().check(&frame);
+        let found: Vec<&Violation> = report.iter().collect();
+        assert_eq!(found, vec![&out_of_range("bonds", "atomj", 3, 3)]);
+    }
+
+    #[test]
+    fn check_reports_an_inferred_relation_endpoint_past_the_atoms() {
+        // `ports` has no BlockSpec; its endpoint columns are inferred from
+        // the keys it carries. atomi = 5 is past rows 0..=1.
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms(2));
+        frame.insert("ports", uint_block(&[("atomi", &[5]), ("atomj", &[1])]));
+
+        let report = Validator::canonical().check(&frame);
+        let found: Vec<&Violation> = report.iter().collect();
+        assert_eq!(found, vec![&out_of_range("ports", "atomi", 5, 2)]);
+    }
+
+    #[test]
+    fn check_ignores_a_block_without_endpoint_columns() {
+        // `members` carries no atomi..atoml, so ibead = 9 is never read as an
+        // index into the 2 atoms.
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms(2));
+        frame.insert("members", uint_block(&[("ibead", &[9]), ("atom", &[10])]));
+
+        let report = Validator::canonical().check(&frame);
+        assert!(report.is_empty(), "{report}");
     }
 }

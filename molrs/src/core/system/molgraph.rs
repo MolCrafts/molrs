@@ -163,7 +163,7 @@ impl From<String> for PropValue {
 /// at the declared dtype, naming the key and both dtypes
 /// (`'x' is declared float by the Frame schema; got string`), or when a
 /// negative is offered under an unsigned key.
-pub(crate) fn coerce_canonical(key: &str, pv: PropValue) -> Result<PropValue, MolRsError> {
+fn coerce_canonical(key: &str, pv: PropValue) -> Result<PropValue, MolRsError> {
     use crate::store::block::DType;
 
     let Some(declared) = keys::canonical_dtype(key) else {
@@ -839,7 +839,10 @@ impl MolGraph {
     /// Materialize a node's property bag (owned copy of its set components).
     pub fn get_node(&self, id: NodeId) -> Result<Atom, MolRsError> {
         if !self.nodes.contains(id) {
-            return Err(MolRsError::not_found("node", format!("NodeId {:?}", id)));
+            return Err(MolRsError::not_found(
+                "node",
+                format!("NodeId {}", id.data().as_ffi()),
+            ));
         }
         Ok(self.read_atom(id))
     }
@@ -886,19 +889,6 @@ impl MolGraph {
     /// maintains both itself may reach it.
     pub(crate) fn node_table_mut(&mut self) -> &mut EntityTable<NodeId> {
         &mut self.nodes
-    }
-
-    /// Move node column `from` to the key `to`, admitting it under `to`
-    /// exactly as a [`set_node`](Self::set_node) of the same values would —
-    /// see [`EntityTable::rename_column`]. Atomic.
-    ///
-    /// # Errors
-    ///
-    /// [`MolRsError::Validation`] when `from` is not held, when `to` already
-    /// is, or when the Frame schema's dtype for `to` does not admit the
-    /// column (a negative under an unsigned key included).
-    pub(crate) fn rename_node_column(&mut self, from: &str, to: &str) -> Result<(), MolRsError> {
-        self.nodes.rename_column(from, to)
     }
 
     /// Number of nodes.
@@ -1019,7 +1009,7 @@ impl MolGraph {
         if !k.props.contains(id) {
             return Err(MolRsError::not_found(
                 "relation",
-                format!("RelationId {:?}", id),
+                format!("RelationId {}", id.data().as_ffi()),
             ));
         }
         Ok(self.read_relation(kind, id))

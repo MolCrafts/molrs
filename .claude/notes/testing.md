@@ -55,7 +55,9 @@ Bindings only prove the **seam**:
 
 They must **not** re-derive numerics the Rust suite proves or run
 multi-stage pipelines. `molrs-python/tests/test_stream.py` is the Python-side
-coverage of the WebSocket publisher and stays.
+coverage of the WebSocket publisher and stays. `molrs-python/tests/test_backmap_seam.py`
+is the one operator-ruled multi-stage seam test (find → center → translate →
+merge → link → to_atomistic on hand-built fixtures; notes.md 2026-09-26).
 
 ```bash
 uv --directory molrs-python sync --no-install-project --extra dev

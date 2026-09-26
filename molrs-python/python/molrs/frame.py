@@ -51,6 +51,45 @@ def _is_array_like(value: Any) -> bool:
     return isinstance(value, (list, tuple))
 
 
+def _row_indices(key: np.ndarray, n: int) -> list[int]:
+    """Normalise a row selector over ``n`` rows to non-negative row indices.
+
+    Shared by ``Block.__getitem__`` (an ndarray key) and ``Frame.subset``.
+
+    - A bool mask of length ``n`` selects its ``True`` rows, in order.
+    - Integer indices in ``-n..-1`` wrap to ``n + i``; non-negative ones pass
+      through unchanged (the upper bound is checked by the Rust gather).
+    - An empty array selects nothing, whatever its dtype.
+
+    Raises
+    ------
+    IndexError
+        If a bool mask's length is not ``n``, an index is below ``-n``, or the
+        selector is not 1-D.
+    TypeError
+        If the selector is neither bool nor integer (floats are not truncated).
+    """
+    if key.ndim != 1:
+        raise IndexError(f"row selector must be 1-D, got shape {key.shape}")
+    if key.dtype == bool:
+        if key.shape[0] != n:
+            raise IndexError(
+                f"boolean index did not match block: block has {n} "
+                f"rows but mask has length {key.shape[0]}"
+            )
+        return np.nonzero(key)[0].tolist()
+    if key.size == 0:
+        return []
+    if not np.issubdtype(key.dtype, np.integer):
+        raise TypeError(f"row indices must be bool or integer, got dtype {key.dtype}")
+    rows: list[int] = []
+    for i in key.tolist():
+        if i < -n:
+            raise IndexError(f"row index {i} is out of range for {n} rows")
+        rows.append(i + n if i < 0 else i)
+    return rows
+
+
 def _adopt_schema_dtype(key: object, arr: "np.ndarray") -> "np.ndarray":
     """Store a canonical column at the dtype the vocabulary declares.
 
@@ -254,7 +293,9 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
     @overload
     def __getitem__(self, key: str) -> np.ndarray: ...
     @overload
-    def __getitem__(self, key: int | slice) -> "Block": ...  # type: ignore[override]
+    def __getitem__(self, key: int) -> dict[str, Any]: ...  # type: ignore[override]
+    @overload
+    def __getitem__(self, key: slice) -> "Block": ...  # type: ignore[override]
     @overload
     def __getitem__(self, key: list[str]) -> np.ndarray: ...  # type: ignore[override]
     @overload
@@ -263,6 +304,24 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
     def __getitem__(self, key: np.ndarray) -> "Block": ...  # type: ignore[override]
 
     def __getitem__(self, key):  # type: ignore[override]
+        """Return a column, a row, or a row selection.
+
+        ``block["x"]`` is one column; ``block[i]`` one row as a dict;
+        ``block[a:b]``, an integer array or a boolean mask a new
+        :class:`Block` of those rows; a callable is applied to the block. A
+        tuple or list of names, ``block["x", "y", "z"]``, stacks several
+        columns side by side into one ``(nrows, len(key))`` array. On a
+        :class:`Frame` a tuple means something else: ``frame["atoms", "x"]``
+        is ``(block, column)`` (see :meth:`Frame.__getitem__`).
+
+        Raises
+        ------
+        KeyError
+            If a column is missing, a name list is empty, or ``key`` has an
+            unsupported type.
+        ValueError
+            If stacked columns differ in shape or dtype.
+        """
         if isinstance(key, (str, _keys.Key)):
             val = _RsBlock.view(self._backing(), _column_name(key))
             return np.asarray(val) if isinstance(val, list) else val
@@ -307,17 +366,7 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
             return np.column_stack(arrays)
         elif isinstance(key, np.ndarray):
             # Boolean mask or integer fancy-index -> Rust-native row gather.
-            n = self.nrows
-            if key.dtype == bool:
-                if key.shape[0] != n:
-                    raise IndexError(
-                        f"boolean index did not match block: block has {n} "
-                        f"rows but mask has length {key.shape[0]}"
-                    )
-                idx = np.nonzero(key)[0]
-            else:
-                idx = key
-            indices = [int(i) % n if n and int(i) < 0 else int(i) for i in idx]
+            indices = _row_indices(key, self.nrows)
             return Block.from_dict(_RsBlock.select_rows(self._backing(), indices))
         elif callable(key):
             # Duck-typed selector: any callable that filters/derives from a Block.
@@ -578,8 +627,34 @@ class Frame(_RsFrame):
     def __reduce__(self):
         return type(self), _frame_ctor_args(self)
 
-    def __getitem__(self, key: str) -> Block:  # type: ignore[override]
-        """Return the named block as a rich :class:`Block` (live view)."""
+    @overload
+    def __getitem__(self, key: str) -> Block: ...
+    @overload
+    def __getitem__(self, key: tuple[str, str]) -> np.ndarray: ...  # type: ignore[override]
+
+    def __getitem__(self, key):  # type: ignore[override]
+        """Return a block, or one column of a block.
+
+        ``frame["atoms"]`` is the named block as a rich :class:`Block` (live
+        view). ``frame["atoms", "mol_id"]`` is column access, the same array
+        as ``frame["atoms"]["mol_id"]``; it exists so a selection reads as
+        ``frame.subset(frame["atoms", "mol_id"] == 1)``. Rows are selected
+        only through :meth:`subset`. On a :class:`Block` a tuple means
+        something else: ``block["x", "y", "z"]`` stacks several columns (see
+        :meth:`Block.__getitem__`).
+
+        Raises
+        ------
+        KeyError
+            If the block or column is missing, or ``key`` is a tuple that is
+            not ``(block, column)``.
+        """
+        if isinstance(key, tuple):
+            if len(key) == 2:
+                block, column = key
+                if isinstance(block, str) and isinstance(column, (str, _keys.Key)):
+                    return self[block][column]
+            raise KeyError(f"a tuple key must be (block, column), got {key!r}")
         return Block.from_dict(_RsFrame.__getitem__(self, key))
 
     def __setitem__(self, key: str, value: "BlockLike | Block") -> None:  # type: ignore[override]
@@ -659,6 +734,48 @@ class Frame(_RsFrame):
         """
         base = _RsFrame._from_ffi_frameref_capsule(capsule)
         return cls(base)
+
+    def subset(self, mask: ArrayLike, block: str = "atoms") -> "Frame":  # type: ignore[override]
+        """A new frame holding the selected rows of ``block``.
+
+        Every relation block that indexes ``block`` (``bonds``, ``angles``, …)
+        keeps only the rows whose endpoints are all selected, renumbered to
+        the new rows; every other block, the box and ``meta`` are copied. Values
+        keep their units (positions in Å). This frame is never modified.
+
+        Parameters
+        ----------
+        mask : ArrayLike
+            A 1-D bool mask of length ``block.nrows`` (e.g.
+            ``frame["atoms", "mol_id"] == 1``), which keeps its ``True`` rows
+            in order, or 1-D integer row indices, which may be negative down
+            to ``-nrows``; the ``k``-th selected old row becomes new row ``k``.
+        block : str, optional
+            The block to select from (default ``"atoms"``).
+
+        Returns
+        -------
+        Frame
+            A new, independent rich frame.
+
+        Raises
+        ------
+        KeyError
+            If there is no block ``block``.
+        IndexError
+            If ``mask`` is not 1-D, a bool mask has the wrong length, or an
+            index is below ``-nrows``.
+        TypeError
+            If ``mask`` is neither bool nor integer.
+        ValueError
+            If a row is past the end or repeated, a relation block cannot be
+            renumbered, or the frame carries a ``members`` block (see the core
+            ``Frame.subset``).
+        """
+        if block not in self:
+            raise KeyError(block)
+        rows = _row_indices(np.asarray(mask), self[block].nrows)
+        return Frame(_RsFrame.subset(self, rows, block))
 
     def copy(self) -> "Frame":
         """Deep copy (blocks copied into new storage; box + metadata copied)."""

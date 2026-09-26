@@ -10,8 +10,6 @@
 //! `Σ wᵢ |R rᵢ + t − yᵢ|²`, its weighted RMSD (root-mean-square deviation,
 //! `√(Σ wᵢ |R rᵢ + t − yᵢ|² / Σ wᵢ)`, in the coordinates' length unit, Å in
 //! molrs), and how well the data fix the rotation ([`Freedom`]).
-//! [`superpose_many`] repeats that for a batch of targets against one
-//! reference.
 //!
 //! # Method
 //!
@@ -26,8 +24,9 @@
 //!   means `√w` on each factor).
 //! - Horn's symmetric 4×4 key matrix `N(S)` has the optimal rotation quaternion
 //!   `q₁` as its top eigenvector ([`eigh_sym_4x4`]). A unit quaternion always
-//!   encodes a proper rotation, so there is no `det = −1` branch: the Kabsch
-//!   reflection guard is automatic.
+//!   encodes a proper rotation, so there is no `det = −1` branch: the
+//!   reflection check Kabsch's singular-value method needs (to reject a
+//!   mirror-image `det = −1` solution) is automatic here.
 //! - `t = c_y − R c_r`.
 //! - `RMSD_w² = Σ w |R p − x|² / Σ w`, evaluated from the residuals. The
 //!   algebraically equal `(Σw|p|² + Σw|x|² − 2λ₁)/Σw` cancels catastrophically
@@ -50,7 +49,7 @@
 //!   `q₁* ⊗ q₂ = (0, v)` with `|v| = 1`, so `R(φ) = Rot(R₁v, 2φ)·R₁`, where
 //!   `Rot(a, α)` is the rotation by `α` about the unit axis `a`: a free
 //!   spin about the axis `R₁v` through `c_y`. The returned `rigid` is the
-//!   `φ = 0` member; choosing another is the caller's job (an Orienter).
+//!   `φ = 0` member; choosing another is the caller's job.
 //!
 //! Under-determination is **reported, not refused**.
 //!
@@ -72,7 +71,7 @@ use crate::op::vec3::{dot, norm, sub};
 /// ~1e-6 for 6-significant-digit input. At `ρ = τ = 1e-4` the uncertainty is
 /// therefore ≤ 0.02 rad (≈1.1°) for 6-digit input and ≤ ~`2e-12·k` rad for
 /// exact input. Below `τ` the fit is under-determined and reported as
-/// [`Freedom::Spin`], left to an Orienter to complete.
+/// [`Freedom::Spin`], left to the caller to complete.
 pub const DEFAULT_GAP_TOL: F = 1e-4;
 
 /// `σ₁` at or below this fraction of `√(Σw|p|²·Σw|x|²)` counts as zero.
@@ -116,8 +115,7 @@ pub struct Fit {
 /// Why [`superpose`] refused its input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SuperposeError {
-    /// `reference`, `target` (per unit) and `weights` do not have matching
-    /// lengths.
+    /// `reference`, `target` and `weights` do not have matching lengths.
     LengthMismatch {
         /// Number of reference points.
         reference: usize,
@@ -314,41 +312,6 @@ pub fn superpose(
         center: c_y,
         freedom,
     })
-}
-
-/// [`superpose`] of one `reference` against each of a batch of targets.
-///
-/// `targets` holds the units back to back: unit `n` is
-/// `targets[n·k..(n+1)·k]` with `k = reference.len()`. Each fit is bitwise
-/// equal to the single call on that unit.
-///
-/// # Errors
-///
-/// - [`SuperposeError::NoPoints`] if `reference` is empty.
-/// - [`SuperposeError::LengthMismatch`] if `targets.len()` is not a multiple of
-///   `k` or `weights.len() != k`.
-/// - Otherwise the first error of a per-unit [`superpose`].
-pub fn superpose_many(
-    reference: &[Vec3],
-    targets: &[Vec3],
-    weights: &[F],
-    gap_tol: F,
-) -> Result<Vec<Fit>, SuperposeError> {
-    let k = reference.len();
-    if k == 0 {
-        return Err(SuperposeError::NoPoints);
-    }
-    if !targets.len().is_multiple_of(k) || weights.len() != k {
-        return Err(SuperposeError::LengthMismatch {
-            reference: k,
-            target: targets.len(),
-            weights: weights.len(),
-        });
-    }
-    targets
-        .chunks_exact(k)
-        .map(|unit| superpose(reference, unit, weights, gap_tol))
-        .collect()
 }
 
 /// Horn's symmetric key matrix `N(S)` for `S = Σ w p xᵀ` (Horn 1987, §4).
@@ -786,40 +749,6 @@ mod tests {
         bad[2][1] = F::INFINITY;
         let err = superpose(&good, &bad, &[1.0; 3], DEFAULT_GAP_TOL).unwrap_err();
         assert_eq!(err, SuperposeError::NonFinite { index: 2 });
-    }
-
-    // ---------- superpose_many ----------
-
-    #[test]
-    fn superpose_many_equals_per_unit_superpose_bitwise() {
-        let reference = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
-        let units: [[Vec3; 3]; 3] = [
-            // K3 quarter turn.
-            [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0]],
-            // Quarter turn about x̂, then shifted by (1, −2, 0.5).
-            [[1.0, -2.0, 0.5], [2.0, -2.0, 0.5], [1.0, -2.0, 1.5]],
-            // Perturbed copy (non-zero RMSD).
-            [[0.1, 0.0, 0.0], [1.0, 0.2, 0.0], [0.0, 1.0, -0.1]],
-        ];
-        let weights = [1.0, 2.0, 0.5];
-        let targets: Vec<Vec3> = units.iter().flatten().copied().collect();
-        let many = superpose_many(&reference, &targets, &weights, DEFAULT_GAP_TOL).unwrap();
-        assert_eq!(many.len(), 3);
-        for (n, unit) in units.iter().enumerate() {
-            let single = superpose(&reference, unit, &weights, DEFAULT_GAP_TOL).unwrap();
-            assert_eq!(many[n], single, "unit {n}");
-        }
-    }
-
-    #[test]
-    fn superpose_many_refuses_targets_not_a_multiple_of_the_reference() {
-        let reference = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
-        let targets = [[0.0; 3]; 7];
-        let result = superpose_many(&reference, &targets, &[1.0; 3], DEFAULT_GAP_TOL);
-        assert!(
-            matches!(result, Err(SuperposeError::LengthMismatch { .. })),
-            "got {result:?}"
-        );
     }
 
     #[test]

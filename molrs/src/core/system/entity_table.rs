@@ -27,7 +27,6 @@ use std::collections::HashMap;
 use slotmap::{Key, SlotMap};
 
 use crate::error::MolRsError;
-use crate::system::molgraph::{PropValue, coerce_canonical};
 use crate::types::{F, I};
 
 /// Per-column validity mask — one flag per row (`true` ⇒ the row holds a value).
@@ -247,83 +246,6 @@ impl Column {
             Column::Str(_, mask) => mask.set(row, v),
             Column::Bool(_, mask) => mask.set(row, v),
         }
-    }
-
-    /// This column as the component `key` admits it.
-    ///
-    /// Every held value runs through [`coerce_canonical`], the coercion every
-    /// property write of [`MolGraph`](crate::system::molgraph::MolGraph)
-    /// runs, so the result is the column those writes would have built from
-    /// the same values: an `i32` column under a float key is widened to
-    /// `f64`, under an unsigned key it stays `i32` but a negative is refused,
-    /// and an element type the key's declared dtype does not admit is
-    /// refused. `None` means the column is admitted as held: `key` is not
-    /// one the Frame schema declares. The landing element type follows from
-    /// the source element type alone (it is probed with that type's zero), so
-    /// an all-null column is admitted or refused exactly as a populated one;
-    /// a null slot is never read, since it may hold a stale value.
-    ///
-    /// # Errors
-    ///
-    /// [`MolRsError::Validation`] naming `key`, as [`coerce_canonical`]
-    /// refuses.
-    fn admitted_as(&self, key: &str) -> Result<Option<Column>, MolRsError> {
-        if crate::store::keys::canonical_dtype(key).is_none() {
-            return Ok(None);
-        }
-        let zero = match self {
-            Column::F64(..) => PropValue::F64(0.0),
-            Column::I32(..) => PropValue::Int(0),
-            Column::Str(..) => PropValue::Str(String::new()),
-            Column::Bool(..) => PropValue::Bool(false),
-        };
-        let null = coerce_canonical(key, zero)?;
-        let n = self.len();
-        let mut out = match &null {
-            PropValue::F64(_) => Column::F64(Vec::with_capacity(n), Validity::default()),
-            PropValue::Int(_) => Column::I32(Vec::with_capacity(n), Validity::default()),
-            PropValue::Str(_) => Column::Str(Vec::with_capacity(n), Validity::default()),
-            PropValue::Bool(_) => Column::Bool(Vec::with_capacity(n), Validity::default()),
-        };
-        for row in 0..n {
-            let valid = self.validity().get(row);
-            let value = if valid {
-                let held = match cell_at(self, row) {
-                    Cell::F64(v) => PropValue::F64(v),
-                    Cell::I32(v) => PropValue::Int(v),
-                    Cell::Str(s) => PropValue::Str(s.to_owned()),
-                    Cell::Bool(v) => PropValue::Bool(v),
-                };
-                coerce_canonical(key, held)?
-            } else {
-                null.clone()
-            };
-            match (&mut out, value) {
-                (Column::F64(d, v), PropValue::F64(x)) => {
-                    d.push(x);
-                    v.push(valid);
-                }
-                (Column::I32(d, v), PropValue::Int(x)) => {
-                    d.push(x);
-                    v.push(valid);
-                }
-                (Column::Str(d, v), PropValue::Str(x)) => {
-                    d.push(x);
-                    v.push(valid);
-                }
-                (Column::Bool(d, v), PropValue::Bool(x)) => {
-                    d.push(x);
-                    v.push(valid);
-                }
-                (dst, _) => {
-                    unreachable!(
-                        "coerce_canonical maps one element type to one ({} under '{key}')",
-                        dst.type_name()
-                    )
-                }
-            }
-        }
-        Ok(Some(out))
     }
 }
 
@@ -620,41 +542,6 @@ impl<K: Key> EntityTable<K> {
         if let Some(col) = self.cols.get_mut(key) {
             col.set_valid(row, false);
         }
-        Ok(())
-    }
-
-    /// Move column `from` to the key `to`, validity unchanged — the contract
-    /// of [`Block::rename_column`](crate::store::block::Block::rename_column).
-    ///
-    /// Renaming is a write into `to`, so the column is admitted under `to`
-    /// exactly as a property write of the same values would be (see
-    /// [`Column::admitted_as`]): a key the Frame schema declares receives its
-    /// declared element type — an `i32` column moved onto an unsigned key such
-    /// as `bead` stays `i32` with every value checked non-negative — or the
-    /// rename is refused. Without the check the vocabulary would be one rename
-    /// away from being bypassed.
-    ///
-    /// Atomic: every check runs before the move, so on an error `self` is
-    /// unchanged.
-    ///
-    /// # Errors
-    ///
-    /// [`MolRsError::Validation`] when `from` is not held, when `to` already
-    /// is, or when the column cannot be admitted under `to`.
-    pub(crate) fn rename_column(&mut self, from: &str, to: &str) -> Result<(), MolRsError> {
-        let Some(col) = self.cols.get(from) else {
-            return Err(MolRsError::validation(format!(
-                "cannot rename: no column '{from}'"
-            )));
-        };
-        if self.cols.contains_key(to) {
-            return Err(MolRsError::validation(format!(
-                "cannot rename column '{from}' to '{to}': '{to}' is already held"
-            )));
-        }
-        let admitted = col.admitted_as(to)?;
-        let held = self.cols.remove(from).expect("checked above");
-        self.cols.insert(to.to_owned(), admitted.unwrap_or(held));
         Ok(())
     }
 }
@@ -1092,118 +979,5 @@ mod tests {
         let (data, valid) = t.column_f64("fid").unwrap();
         assert_eq!(valid.as_slice(), &[true, false]);
         assert_eq!(data[0], 0.5);
-    }
-
-    // ----- rename_column -----
-
-    #[test]
-    fn rename_column_refuses_a_missing_source_and_writes_nothing() {
-        let mut t = T::new();
-        let a = t.spawn();
-        t.set_f64(a, "p", 1.0).unwrap();
-
-        let err = t.rename_column("absent", "q").expect_err("no 'absent'");
-
-        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
-        assert_eq!(sorted_columns(&t), vec!["p".to_owned()]);
-        assert_eq!(t.get_f64(a, "p").unwrap(), 1.0);
-    }
-
-    #[test]
-    fn rename_column_refuses_a_held_target_and_writes_nothing() {
-        let mut t = T::new();
-        let a = t.spawn();
-        t.set_f64(a, "p", 1.0).unwrap();
-        t.set_str(a, "q", "keep").unwrap();
-
-        let err = t.rename_column("p", "q").expect_err("'q' is held");
-
-        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
-        assert_eq!(sorted_columns(&t), vec!["p".to_owned(), "q".to_owned()]);
-        assert_eq!(t.get_f64(a, "p").unwrap(), 1.0);
-        assert_eq!(t.get_str(a, "q").unwrap(), "keep");
-    }
-
-    #[test]
-    fn rename_column_refuses_a_negative_int_onto_an_unsigned_key() {
-        use crate::store::keys::BEAD;
-        let mut t = T::new();
-        let a = t.spawn();
-        let b = t.spawn();
-        t.set_i32(a, "idx", 2).unwrap();
-        t.set_i32(b, "idx", -1).unwrap();
-
-        let err = t.rename_column("idx", BEAD).expect_err("bead is unsigned");
-
-        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
-        assert_eq!(sorted_columns(&t), vec!["idx".to_owned()]);
-        assert_eq!(t.get_i32(b, "idx").unwrap(), -1);
-    }
-
-    #[test]
-    fn rename_column_moves_a_non_negative_int_onto_an_unsigned_key() {
-        use crate::store::keys::BEAD;
-        let mut t = T::new();
-        let a = t.spawn();
-        let b = t.spawn();
-        let c = t.spawn();
-        t.set_i32(a, "idx", 0).unwrap();
-        t.set_i32(b, "idx", 3).unwrap();
-
-        t.rename_column("idx", BEAD).unwrap();
-
-        assert_eq!(sorted_columns(&t), vec![BEAD.to_owned()]);
-        // `bead` is UInt; the store has no unsigned column, so it stays i32.
-        let (data, valid) = t.column_i32(BEAD).unwrap();
-        assert_eq!(valid.as_slice(), &[true, true, false]);
-        assert_eq!(&data[..2], &[0, 3]);
-        assert!(!t.has(c, BEAD));
-    }
-
-    #[test]
-    fn rename_column_widens_an_int_column_onto_a_float_key() {
-        use crate::store::keys::MASS;
-        let mut t = T::new();
-        let a = t.spawn();
-        let b = t.spawn();
-        t.spawn();
-        t.set_i32(a, "m", 12).unwrap();
-        t.set_i32(b, "m", 16).unwrap();
-
-        t.rename_column("m", MASS).unwrap();
-
-        assert_eq!(sorted_columns(&t), vec![MASS.to_owned()]);
-        let (data, valid) = t.column_f64(MASS).unwrap();
-        assert_eq!(valid.as_slice(), &[true, true, false], "validity unchanged");
-        assert_eq!(&data[..2], &[12.0, 16.0]);
-    }
-
-    #[test]
-    fn rename_column_refuses_a_str_column_onto_a_float_key() {
-        use crate::store::keys::MASS;
-        let mut t = T::new();
-        let a = t.spawn();
-        t.set_str(a, "m", "heavy").unwrap();
-
-        let err = t.rename_column("m", MASS).expect_err("mass is float");
-
-        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
-        assert_eq!(sorted_columns(&t), vec!["m".to_owned()]);
-        assert_eq!(t.get_str(a, "m").unwrap(), "heavy");
-    }
-
-    #[test]
-    fn rename_column_moves_a_non_schema_key_as_is() {
-        let mut t = T::new();
-        let a = t.spawn();
-        t.spawn();
-        t.set_i32(a, "tag", -4).unwrap();
-
-        t.rename_column("tag", "label").unwrap();
-
-        assert_eq!(sorted_columns(&t), vec!["label".to_owned()]);
-        let (data, valid) = t.column_i32("label").unwrap();
-        assert_eq!(valid.as_slice(), &[true, false]);
-        assert_eq!(data[0], -4);
     }
 }

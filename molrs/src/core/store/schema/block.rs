@@ -3,7 +3,9 @@
 /// What one row of a block represents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowKind {
-    /// One row per entity; the block others index into (`atoms`, `beads`).
+    /// One row per entity; the block others index into (`atoms`).
+    ///
+    /// A coarse-grained frame's beads are `atoms` rows, too.
     Node,
     /// One row per k-tuple of nodes, addressed by `arity` endpoint columns.
     Relation {
@@ -26,11 +28,13 @@ impl std::fmt::Display for RowKind {
 
 /// Which node table a relation block's endpoints index into.
 ///
-/// The `target` is what lets a coarse-grained `bonds` block point at `beads`
-/// instead of `atoms` without inventing a third endpoint naming scheme.
+/// Every canonical relation targets `atoms`; a coarse-grained frame stores
+/// its beads as `atoms` rows, so its `bonds` need no other target. The field
+/// keeps the target explicit rather than assumed.
 #[derive(Debug, Clone, Copy)]
 pub struct EndpointSpec {
-    /// Block whose rows the endpoint values index (`"atoms"`, `"beads"`).
+    /// Block whose rows the endpoint values index (`"atoms"` for every
+    /// canonical relation).
     pub target: &'static str,
     /// Endpoint column keys, in position order.
     pub columns: &'static [&'static str],

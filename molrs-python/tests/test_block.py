@@ -308,3 +308,24 @@ class TestBlockMultiColumnIndexing:
         # Stacking a float column onto a uint one would silently upcast.
         with pytest.raises(ValueError, match="dtype"):
             self._xyz()["x", "id"]
+
+
+class TestBlockRowIndexRefusals:
+    """``block[ndarray]`` refuses the two indices it used to answer wrongly.
+
+    An index below ``-n`` used to wrap modulo ``n`` onto an arbitrary row, and
+    a float index used to be truncated. Both are refused by the shared row
+    normaliser now.
+    """
+
+    @staticmethod
+    def _three() -> molrs.Block:
+        return molrs.Block({"x": np.array([0.0, 1.0, 2.0], dtype=np.float64)})
+
+    def test_an_index_below_minus_n_is_an_index_error(self):
+        with pytest.raises(IndexError):
+            self._three()[np.array([-4])]
+
+    def test_a_float_index_is_a_type_error(self):
+        with pytest.raises(TypeError):
+            self._three()[np.array([0.5])]

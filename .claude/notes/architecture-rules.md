@@ -58,16 +58,16 @@ binders (depend on molcrafts-molrs + molrs-ffi):
 
 | Module | Owns |
 |---|---|
-| `op` | numeric base: array/stack aliases, `[F;3]` vector ops, 3×3/4×4 linear algebra, rigid + quaternion kernels, weighted superpose, centroid, SO(3) sampling |
-| `core` | Frame, Block, MolGraph, MolRec, Topology, Element, SimBox, neighbors, schema, generate, units |
-| `perceive` | rings, aromaticity, SMARTS, stereo, hydrogens, bond types, equivalence |
+| `op` | numeric base: array/stack aliases, `[F;3]` vector ops, 3×3/4×4 linear algebra, rigid + quaternion kernels, weighted superpose, centroid, uniform S² directions |
+| `core` | Frame, Block, MolGraph, MolRec, Topology, Element, SimBox, neighbors, schema, generate, units, port joining (`Fragment::link`), node-group centres (`geometry::center`) |
+| `perceive` | rings, aromaticity, SMARTS, stereo, hydrogens, bond types, equivalence, bead-group subgraph matching (`SubgraphMatcher`) |
 | `io` | format readers/writers, SMILES, CGsmiles, trajectory, Zarr/MolRec |
 | `ff` | ForceField, potentials, typifiers, charge (Gasteiger/BCC), scale_lj |
 | `signal` | FFT ACF, windows, frequency grids |
 | `compute` | RDF, MSD, transport, dielectric, spectra, shape, cluster, … |
 | `conformer` | distance geometry / ETKDG-style pipeline |
 | `optimize` | LBFGS / potential-driven minimize |
-| `builder` | structure generators; assembly components (`FragLibrary`, `Placer`, `Orienter`, `Reacter`, `Finalizer`, `Assembler`) — only the `Assembler` sees the whole graph |
+| `builder` | structure generators (graphene, carbon nanotubes, FCC lattices, self-avoiding walks); no assembly — the caller composes the backmap primitives (notes.md 2026-09-26) |
 | `md` | integrators, `ForceProvider` and the minimum-image / ghost régimes, the halo (`Comm`), bonded index lists, special-bonds weights, Maxwell-Boltzmann |
 
 ### Potential's three traits

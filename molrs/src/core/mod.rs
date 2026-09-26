@@ -63,6 +63,7 @@ pub(crate) mod test_rayon;
 
 // Public re-exports for common types
 pub use error::MolRsError;
+pub use spatial::geometry::CenterError;
 pub use spatial::simbox::{BoxError, BoxKind, Mic, SimBox};
 pub use store::block::Block;
 pub use store::frame::Frame;
@@ -79,10 +80,9 @@ pub use system::atomistic::{
 pub use system::bond_weights::BondDistanceWeights;
 pub use system::coarsegrain::{CoarseGrain, ExtractedCoarseGrain};
 pub use system::extract::{ExtractedBall, InducedSubgraph};
-pub use system::frag_graph::{FragEdge, FragGraph};
-pub use system::fragment::{BeadError, Fragment, Port, PortId, PortKind};
+pub use system::fragment::{Fragment, MergeMaps, Port, PortId, PortKind};
 pub use system::graph_hash::{canonical_order, is_isomorphic, structural_hash};
-pub use system::mapping::Mapping;
+pub use system::link::LinkError;
 pub use system::molgraph::{Atom, Bead, KindId, MolGraph, NodeId, PropValue, Relation};
 pub use system::topology::{Topology, TopologyRingInfo};
 pub use units::{

@@ -76,10 +76,7 @@ fn hash_u64_slice(mut h: u64, xs: &[u64]) -> u64 {
 
 /// The label string of a node: element symbol for an atom, else bead type for a
 /// bead, else the empty string (a bare graph node).
-///
-/// Shared with the subgraph matcher (`graph_match`), whose structural
-/// labelling reads exactly these strings.
-pub(crate) fn node_label_str(g: &MolGraph, id: NodeId) -> String {
+fn node_label_str(g: &MolGraph, id: NodeId) -> String {
     let atom = match g.get_node(id) {
         Ok(a) => a,
         Err(_) => return String::new(),
@@ -111,8 +108,9 @@ const AROMATIC_BOND_TYPE: u64 = 4;
 /// WL color, and a labeled adjacency list built once so the refinement loop and
 /// the matcher never re-materialize relations.
 ///
-/// Shared with the subgraph matcher (`graph_match`), which reads `nodes` and
-/// the edge labels in `adj`; the WL colors are this module's alone.
+/// Shared with the subgraph matcher (`perceive::subgraph`), which reads `nodes`
+/// and the neighbours in `adj` (it zeroes their edge labels); the WL colors are
+/// this module's alone.
 pub(crate) struct GraphView {
     /// Node handles in dense-index order (row order of the node table).
     pub(crate) nodes: Vec<NodeId>,
@@ -428,7 +426,7 @@ fn backtrack(
 /// Map slots hold a dense index of the other graph, or `usize::MAX` when
 /// unmapped. The check is purely structural, so it serves both the bijective
 /// [`is_isomorphic`] search and the injective, induced subgraph search of
-/// `graph_match` (where `map_ba` is sized to the larger graph and its
+/// `perceive::subgraph` (where `map_ba` is sized to the larger graph and its
 /// unmapped slots are skipped); node-label compatibility is each caller's own
 /// test.
 pub(crate) fn feasible(

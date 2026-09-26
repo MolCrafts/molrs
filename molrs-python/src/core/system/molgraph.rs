@@ -31,7 +31,7 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use numpy::PyReadonlyArrayDyn;
+use numpy::{PyArray1, PyReadonlyArrayDyn};
 use pyo3::PyClass;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -39,11 +39,14 @@ use pyo3::pyclass::boolean_struct::False;
 
 use molrs::perceive::rings::max_ring_system_size as core_max_ring_system_size;
 use molrs::perceive::smarts::{MatchOptions, Reaction, RingPrimitive, SmartsPattern};
+use molrs::spatial::geometry::CenterError;
+use molrs::store::keys;
 use molrs::system::atomistic::{Atomistic, ExtractedAtomistic};
 use molrs::system::bond::{BondNumber, BondType};
 use molrs::system::coarsegrain::{CoarseGrain, ExtractedCoarseGrain};
 use molrs::system::entity_table::Cell;
 use molrs::system::fragment::{Fragment, PortKind};
+use molrs::system::link::LinkError;
 use molrs::system::molgraph::{
     KindId, MolGraph, NodeId, PropValue, node_from_u64, node_to_u64, relation_from_u64,
     relation_to_u64,
@@ -51,6 +54,7 @@ use molrs::system::molgraph::{
 
 use crate::core::store::frame::PyFrame;
 use crate::helpers::molrs_error_to_pyerr;
+use crate::op::vector_to_py;
 
 // ---------------------------------------------------------------------------
 // Value conversion helpers
@@ -106,6 +110,72 @@ fn prop_to_py(py: Python<'_>, value: &PropValue) -> PyResult<Py<PyAny>> {
 fn kind_id_checked(mol: &MolGraph, kind: &str) -> PyResult<KindId> {
     mol.kind_id(kind)
         .ok_or_else(|| PyValueError::new_err(format!("kind '{kind}' is not registered")))
+}
+
+/// Render a [`CenterError`] as a Python `ValueError`.
+///
+/// Node ids cross as the `int` handles Python holds (`node_to_u64`), never as
+/// the Rust debug form `NodeId(3v1)`. Every variant is matched by name, so a
+/// new variant is a compile error here rather than a silent fallback.
+fn center_error_to_pyerr(e: CenterError) -> PyErr {
+    let message = match e {
+        CenterError::Empty => "center of an empty node set".to_owned(),
+        CenterError::NotFound { node } => {
+            format!("node {} is not in this graph", node_to_u64(node))
+        }
+        CenterError::BadPosition { node } => format!(
+            "node {} has a missing or non-finite '{}'/'{}'/'{}'",
+            node_to_u64(node),
+            keys::X,
+            keys::Y,
+            keys::Z
+        ),
+        CenterError::BadMass { node } => format!(
+            "node {} has a missing, negative or non-finite '{}'",
+            node_to_u64(node),
+            keys::MASS
+        ),
+        CenterError::ZeroMass => "total mass is not positive and finite".to_owned(),
+    };
+    PyValueError::new_err(message)
+}
+
+/// Render a [`LinkError`] as a Python `ValueError`.
+///
+/// Port and atom ids cross as the `int` handles Python holds
+/// (`relation_to_u64` / `node_to_u64`), never as `PortId(..)` / `NodeId(..)`.
+/// Every variant is matched by name, with no catch-all arm.
+fn link_error_to_pyerr(e: LinkError) -> PyErr {
+    let port = relation_to_u64;
+    let atom = node_to_u64;
+    let message = match e {
+        LinkError::Port(inner) => format!("port does not read back: {inner}"),
+        LinkError::StalePort { port: p } => format!(
+            "port {} is stale: its anchor–handle bond no longer exists",
+            port(p)
+        ),
+        LinkError::Incompatible { a, b } => {
+            format!("ports {} and {} are not compatible", port(a), port(b))
+        }
+        LinkError::SameAnchor { a, b } => format!(
+            "ports {} and {} share one anchor; a bond cannot join an atom to itself",
+            port(a),
+            port(b)
+        ),
+        LinkError::AlreadyBonded { a, b } => {
+            format!("anchors {} and {} are already bonded", atom(a), atom(b))
+        }
+        LinkError::BranchReachesAnchor { port: p } => {
+            format!("port {}'s handle branch reaches its own anchor", port(p))
+        }
+        LinkError::BranchesOverlap => "the two ports' handle branches overlap".to_owned(),
+        LinkError::OneSidedCharge { anchor } => format!(
+            "charge is present on only part of anchor {} and its handle branch",
+            atom(anchor)
+        ),
+        LinkError::Graph(inner) => format!("graph refused a read: {inner}"),
+    };
+    PyValueError::new_err(message)
 }
 
 // ---------------------------------------------------------------------------
@@ -1020,6 +1090,29 @@ impl PyAtomistic {
     fn is_isomorphic(&self, other: &PyAtomistic) -> bool {
         self.inner.is_isomorphic(other.core())
     }
+
+    /// Mass-weighted centre of every atom.
+    ///
+    /// ``R = sum_i m_i r_i / sum_i m_i`` over all atoms, reading positions
+    /// from ``x`` / ``y`` / ``z`` (Å) and masses from ``mass`` (g/mol). No
+    /// periodic imaging: a molecule split across a box face must be unwrapped
+    /// first (:meth:`Box.unwrap`).
+    ///
+    /// Returns
+    /// -------
+    /// numpy.ndarray, shape (3,), float64
+    ///     The centre in Å.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If the molecule has no atoms; if an atom lacks a finite ``x`` /
+    ///     ``y`` / ``z`` or a finite, non-negative ``mass`` (the message names
+    ///     its int handle); or if the total mass is not positive.
+    fn center<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let center = self.inner.center().map_err(center_error_to_pyerr)?;
+        Ok(vector_to_py(py, &center))
+    }
 }
 graph_world_impl!(PyAtomistic);
 
@@ -1517,7 +1610,21 @@ impl PyCoarseGrain {
             .collect()
     }
 
-    /// Export to a tabular [`Frame`] (beads + bonds blocks).
+    /// Export to a tabular :class:`~molrs.Frame` in the shared vocabulary.
+    ///
+    /// One ``atoms`` row per bead and one ``bonds`` row per CG bond
+    /// (``atomi`` / ``atomj`` are the endpoint beads' ``atoms`` rows), plus a
+    /// ``members`` block when any bead records membership: one row per
+    /// bead–atom pair, ``ibead`` being the bead's row in ``atoms`` and
+    /// ``atom`` the opaque atom handle. Coordinates stay in Å.
+    ///
+    /// Every bead property is written, ``mol_id`` included, so a CoarseGrain
+    /// whose beads carry two ``mol_id`` values does not round-trip through
+    /// :meth:`from_frame`; select one molecule with ``Frame.subset`` first.
+    ///
+    /// Returns
+    /// -------
+    /// Frame
     ///
     /// Raises
     /// ------
@@ -1528,25 +1635,19 @@ impl PyCoarseGrain {
         PyFrame::from_core_frame(self.inner.to_frame().map_err(molrs_error_to_pyerr)?)
     }
 
-    /// Build a `CoarseGrain` from a [`Frame`] (registers the CG bonds kind).
-    #[staticmethod]
-    fn from_frame(py: Python<'_>, frame: &PyFrame) -> PyResult<Py<PyCoarseGrain>> {
-        let core = frame.clone_core_frame()?;
-        let inner = CoarseGrain::from_frame(&core).map_err(molrs_error_to_pyerr)?;
-        PyCoarseGrain::from_core(py, inner)
-    }
-
-    /// Build a `CoarseGrain` from an all-atom-shaped :class:`~molrs.Frame`:
-    /// every ``atoms`` row becomes one bead and every ``bonds`` row one CG
-    /// bond (endpoints ``atomi`` / ``atomj`` are 0-based ``atoms`` rows, as
-    /// the LAMMPS data reader writes them).
+    /// Build a `CoarseGrain` from a frame holding **one molecule**.
+    ///
+    /// Every ``atoms`` row becomes a bead and every ``bonds`` row a CG bond
+    /// (``atomi`` / ``atomj`` are 0-based ``atoms`` rows); a ``members``
+    /// block, when present, is read back as bead membership. ``bead_type``
+    /// comes from the first column present: ``bead_type``, then ``type``,
+    /// then ``type_id`` (rendered in decimal). Other blocks are ignored.
     ///
     /// Parameters
     /// ----------
     /// frame : Frame
-    /// type_key : str
-    ///     The ``atoms`` column read as ``bead_type``: a string column is
-    ///     copied verbatim, an integer column is rendered in decimal.
+    ///     One molecule in the ``atoms`` / ``bonds`` vocabulary. Select one
+    ///     molecule of a many-molecule frame with ``Frame.subset`` first.
     ///
     /// Returns
     /// -------
@@ -1555,19 +1656,19 @@ impl PyCoarseGrain {
     /// Raises
     /// ------
     /// ValueError
-    ///     If the frame has no ``atoms`` block or no ``type_key`` column, the
-    ///     column is neither string nor integer or has a null row, ``atoms``
-    ///     already holds a different ``bead_type`` column, or a bond endpoint
-    ///     is past the atom rows.
+    ///     If the frame has no ``atoms`` rows; if ``mol_id`` holds a null row,
+    ///     is not an unsigned-int column, or holds more than one distinct
+    ///     value (the message points at ``Frame.subset``); if none of
+    ///     ``bead_type`` / ``type`` / ``type_id`` is present, or the chosen one
+    ///     has a null row or the wrong dtype (string for ``bead_type`` /
+    ///     ``type``, unsigned int for ``type_id``); if a bond row names no bead
+    ///     row; or if the ``members`` block lacks an unsigned-int ``ibead`` or
+    ///     ``atom`` column, names no bead row, or repeats an
+    ///     ``(ibead, atom)`` pair.
     #[staticmethod]
-    fn from_atom_frame(
-        py: Python<'_>,
-        frame: &PyFrame,
-        type_key: &str,
-    ) -> PyResult<Py<PyCoarseGrain>> {
-        let inner = frame
-            .with_frame(|f| CoarseGrain::from_atom_frame(f, type_key))?
-            .map_err(molrs_error_to_pyerr)?;
+    fn from_frame(py: Python<'_>, frame: &PyFrame) -> PyResult<Py<PyCoarseGrain>> {
+        let core = frame.clone_core_frame()?;
+        let inner = CoarseGrain::from_frame(&core).map_err(molrs_error_to_pyerr)?;
         PyCoarseGrain::from_core(py, inner)
     }
 
@@ -1653,6 +1754,43 @@ impl PyCoarseGrain {
             .map_err(molrs_error_to_pyerr)?;
         PyExtractedSubgraph::from_coarsegrain(py, ext)
     }
+
+    /// Mass-weighted centre of the bead group ``group``.
+    ///
+    /// ``R = sum_i m_i r_i / sum_i m_i`` over the listed beads, reading
+    /// positions from ``x`` / ``y`` / ``z`` (Å) and masses from ``mass``
+    /// (g/mol). A bead listed twice counts twice. :meth:`add_bead` writes no
+    /// ``mass``, so give each bead one (or read it from a frame's ``mass``
+    /// column with :meth:`from_frame`) before asking for a centre.
+    ///
+    /// No periodic imaging: the group's coordinates are used as stored. A
+    /// group that straddles a box face must be unwrapped first
+    /// (:meth:`Box.unwrap`), otherwise the centre lands between the images.
+    ///
+    /// Parameters
+    /// ----------
+    /// group : Sequence[int]
+    ///     Bead handles, e.g. one group from ``SubgraphMatcher.find``.
+    ///
+    /// Returns
+    /// -------
+    /// numpy.ndarray, shape (3,), float64
+    ///     The centre in Å.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If ``group`` is empty; if a handle is not a live bead of this graph,
+    ///     or a bead lacks a finite ``x`` / ``y`` / ``z`` or a finite,
+    ///     non-negative ``mass`` (the message names its int handle); or if the
+    ///     total mass is not positive.
+    /// OverflowError
+    ///     If a handle in ``group`` is negative (handles are unsigned ints).
+    fn center<'py>(&self, py: Python<'py>, group: Vec<u64>) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let group: Vec<NodeId> = group.into_iter().map(node_from_u64).collect();
+        let center = self.inner.center(&group).map_err(center_error_to_pyerr)?;
+        Ok(vector_to_py(py, &center))
+    }
 }
 graph_world_impl!(PyCoarseGrain);
 
@@ -1662,8 +1800,8 @@ impl PyCoarseGrain {
         from_core_shadowed(py, PyCoarseGrain { inner })
     }
 
-    /// Borrow the held core [`CoarseGrain`] (for the assembly bindings that
-    /// map or trace it).
+    /// Borrow the held core [`CoarseGrain`] (for the bead-pattern matcher,
+    /// which reads the pattern and the target graph).
     pub(crate) fn core(&self) -> &CoarseGrain {
         &self.inner
     }
@@ -1679,7 +1817,9 @@ impl PyCoarseGrain {
 /// its atoms and bonds it owns a second relation kind, ``ports``, one entry
 /// per unsatisfied valence. A port is the ordered pair
 /// ``(anchor, handle_atom)`` — the anchor keeps its place in the product
-/// molecule, the handle is a real capping hydrogen bonded to it — carrying
+/// molecule, the handle is a real atom bonded to it that roots the leaving
+/// group (usually a capping hydrogen; any element is accepted, e.g. the O of
+/// a leaving hydroxyl) — carrying
 /// three props: ``port_kind`` (the BigSMILES / CGsmiles glyph ``$``, ``<``,
 /// ``>`` or ``!``), ``port_label`` (free-form, ``""`` when unnamed) and
 /// ``port_order`` (the multiplicity the formed bond will have).
@@ -1779,7 +1919,7 @@ impl PyFragment {
     ///
     /// Raises
     /// ------
-    /// KeyError
+    /// ValueError
     ///     If either handle is stale or unknown.
     fn add_bond(&mut self, a: u64, b: u64) -> PyResult<u64> {
         self.inner
@@ -1795,8 +1935,9 @@ impl PyFragment {
     /// anchor : int
     ///     Handle of the atom that keeps its place in the product molecule.
     /// handle : int
-    ///     Handle of the capping hydrogen bonded to `anchor`, which a paired
-    ///     descriptor's bond replaces. Endpoint order is load-bearing.
+    ///     Handle of the atom bonded to `anchor` that roots the leaving group
+    ///     a paired descriptor's bond replaces — usually a capping hydrogen,
+    ///     but any element is accepted. Endpoint order is load-bearing.
     /// kind : str
     ///     The notation glyph — one of ``"$"``, ``"<"``, ``">"``, ``"!"``.
     ///     This vocabulary crosses as the glyph, never as an integer code:
@@ -1815,11 +1956,10 @@ impl PyFragment {
     /// Raises
     /// ------
     /// ValueError
-    ///     If `kind` is not one of the four glyphs, if `handle` is not a
-    ///     hydrogen, if it is not bonded to `anchor`, or if `order` is not a
-    ///     definite bond number.
-    /// KeyError
-    ///     If either handle is stale or unknown.
+    ///     If `kind` is not one of the four glyphs, if `handle` is not bonded
+    ///     to `anchor`, if `order` is not a definite bond number, if the
+    ///     ``(anchor, handle)`` valence already carries a port, or if either
+    ///     handle is stale or unknown.
     #[pyo3(signature = (anchor, handle, kind, label="", order=1))]
     fn add_port(
         &mut self,
@@ -1866,9 +2006,8 @@ impl PyFragment {
     /// Raises
     /// ------
     /// ValueError
-    ///     If `id` exceeds the widest identifier a node column stores.
-    /// KeyError
-    ///     If `atom` is stale or unknown.
+    ///     If `id` exceeds the widest identifier a node column stores, or if
+    ///     `atom` is stale or unknown.
     fn set_frag_id(&mut self, atom: u64, id: u32) -> PyResult<()> {
         self.inner
             .set_frag_id(node_from_u64(atom), id)
@@ -1958,6 +2097,131 @@ impl PyFragment {
         let inner = Fragment::from_frame(&core).map_err(molrs_error_to_pyerr)?;
         PyFragment::from_core(py, inner)
     }
+
+    /// Mass-weighted centre of every atom.
+    ///
+    /// ``R = sum_i m_i r_i / sum_i m_i`` over all atoms, port anchors and
+    /// handles included, reading positions from ``x`` / ``y`` / ``z`` (Å) and
+    /// masses from ``mass`` (g/mol). No periodic imaging: a fragment split
+    /// across a box face must be unwrapped first (:meth:`Box.unwrap`).
+    ///
+    /// Returns
+    /// -------
+    /// numpy.ndarray, shape (3,), float64
+    ///     The centre in Å; it feeds :meth:`translate` directly.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If the fragment has no atoms; if an atom lacks a finite ``x`` /
+    ///     ``y`` / ``z`` or a finite, non-negative ``mass`` (the message names
+    ///     its int handle); or if the total mass is not positive.
+    fn center<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        let center = self.inner.center().map_err(center_error_to_pyerr)?;
+        Ok(vector_to_py(py, &center))
+    }
+
+    /// Structural merge of ``other`` into ``self``, consuming ``other``.
+    ///
+    /// Every atom and port of ``other`` is carried across under a new handle.
+    /// Coordinates (Å) are copied as they are; place ``other`` first.
+    /// ``other`` is consumed: it is left an empty fragment, even when the
+    /// merge is refused.
+    ///
+    /// Parameters
+    /// ----------
+    /// other : Fragment
+    ///     The fragment to absorb; a different object from ``self``.
+    ///
+    /// Returns
+    /// -------
+    /// tuple[dict[int, int], dict[int, int]]
+    ///     ``(atom_map, port_map)``: ``{old_atom: new_atom}`` and
+    ///     ``{old_port: new_port}``, old handles of ``other`` to handles of
+    ///     ``self``.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If a property of ``other`` contradicts the type this graph holds
+    ///     for that key (a string ``tag`` into a float ``tag`` column);
+    ///     ``other`` has already been emptied then.
+    /// RuntimeError
+    ///     If ``other`` is ``self`` (``f.merge(f)``): a fragment cannot absorb
+    ///     itself. ``f`` is unchanged.
+    fn merge(&mut self, other: &mut Self) -> PyResult<(HashMap<u64, u64>, HashMap<u64, u64>)> {
+        let taken = std::mem::take(&mut other.inner);
+        let (atom_map, port_map) = self.inner.merge(taken).map_err(molrs_error_to_pyerr)?;
+        Ok((
+            atom_map
+                .into_iter()
+                .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
+                .collect(),
+            port_map
+                .into_iter()
+                .map(|(k, v)| (relation_to_u64(k), relation_to_u64(v)))
+                .collect(),
+        ))
+    }
+
+    /// Join port ``a`` to port ``b`` with a new anchor–anchor bond.
+    ///
+    /// Both ports are consumed: each port's leaving group (its handle atom
+    /// and whatever hangs off it) is removed, its partial charge (e) is
+    /// folded onto its own anchor, and the two anchors are bonded with the
+    /// port order. No coordinate is moved.
+    ///
+    /// Parameters
+    /// ----------
+    /// a, b : int
+    ///     Port handles of this fragment, e.g. from the ``port_map`` that
+    ///     :meth:`merge` returns.
+    ///
+    /// Returns
+    /// -------
+    /// int
+    ///     The new bond's relation handle.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If a handle names no live port or its descriptor does not read
+    ///     back, a port is stale (its anchor–handle bond was removed), the two
+    ///     ports are not complements (``<`` with ``>``, ``$`` with ``$``,
+    ///     ``!`` with ``!``) or disagree on label or order, share an
+    ///     anchor, their anchors are already bonded, a leaving group reaches
+    ///     its own anchor or overlaps the other, or charge is present on only
+    ///     part of an anchor and its leaving group. The message names int
+    ///     handles, and the fragment is unchanged.
+    /// OverflowError
+    ///     If ``a`` or ``b`` is negative (handles are unsigned ints).
+    fn link(&mut self, a: u64, b: u64) -> PyResult<u64> {
+        self.inner
+            .link(relation_from_u64(a), relation_from_u64(b))
+            .map(relation_to_u64)
+            .map_err(link_error_to_pyerr)
+    }
+
+    /// A copy of this fragment as a public :class:`~molrs.Atomistic`.
+    ///
+    /// Every atom, bond and relation kind is kept, ``ports`` and ``frag_id``
+    /// included, and **handles are preserved**. The fragment itself is left
+    /// intact (one O(atoms) copy).
+    ///
+    /// Returns
+    /// -------
+    /// Atomistic
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If a node carries no ``element`` (a bare :meth:`spawn`); the
+    ///     fragment is unchanged.
+    fn to_atomistic(&self, py: Python<'_>) -> PyResult<Py<PyAtomistic>> {
+        let inner = Atomistic::try_from_molgraph(self.inner.clone().into_inner())
+            .map_err(molrs_error_to_pyerr)?;
+        PyAtomistic::from_core(py, inner)
+    }
 }
 graph_world_impl!(PyFragment);
 
@@ -1971,12 +2235,6 @@ impl PyFragment {
     /// conformer, which embeds the leaf it was handed).
     pub(crate) fn core(&self) -> &Fragment {
         &self.inner
-    }
-
-    /// Mutably borrow the held core [`Fragment`] (for the assembly bindings,
-    /// which link ports in place and move a world in and out by swap).
-    pub(crate) fn core_mut(&mut self) -> &mut Fragment {
-        &mut self.inner
     }
 }
 

@@ -348,11 +348,6 @@ def test_keys_convention_exposed():
     assert by_key.dtype == by_str.dtype
 
 
-def test_keys_expose_bead():
-    # A template atom's bead index is `bead`.
-    assert molrs.keys.BEAD == "bead"
-
-
 def test_column_spec_exposes_dimension_and_the_unit_derived_from_it():
     # SchemaDocument: `x` has dimension "length", whose real-preset unit is
     # "angstrom" (molrs/src/core/store/schema/document.rs).
@@ -409,3 +404,68 @@ def test_scale_uniform_about_origin():
     mol.set(h, "z", 3.0)
     mol.scale([0.5, 0.5, 0.5])
     assert (mol.get(h, "x"), mol.get(h, "y"), mol.get(h, "z")) == (0.5, 1.0, 1.5)
+
+
+# --------------------------------------------------------------------------- #
+# center — a query on each leaf (backmap-primitives-07)                       #
+# --------------------------------------------------------------------------- #
+#
+# Seam only: the mass-weighted centre R = sum(m_i r_i) / sum(m_i) and every
+# refusal are proven by molrs/src/core/spatial/geometry.rs. These tests check
+# the call shape per leaf, the ndarray that crosses back, and the error mapping
+# (every CenterError is a ValueError naming the int handle, amendment 1).
+
+
+def _one_weighted_node(cls, position, mass):
+    """A leaf holding one node at ``position`` (Å) with ``mass`` (g/mol)."""
+    mol = cls()
+    h = mol.spawn()
+    for key, value in zip(("x", "y", "z"), position):
+        mol.set(h, key, value)
+    mol.set(h, "mass", mass)
+    return mol, h
+
+
+def _center(mol, handles):
+    # Atomistic and Fragment centre all their own nodes; CoarseGrain centres
+    # the bead group it is given.
+    if isinstance(mol, molrs.CoarseGrain):
+        return mol.center(handles)
+    return mol.center()
+
+
+@pytest.mark.parametrize("cls", LEAVES, ids=lambda c: c.__name__)
+def test_center_returns_a_float64_triple_of_the_leafs_own_nodes(cls):
+    mol, h = _one_weighted_node(cls, (1.0, 2.0, 3.0), 1.0)
+
+    center = _center(mol, [h])
+
+    assert isinstance(center, np.ndarray)
+    assert center.dtype == np.float64
+    assert center.shape == (3,)
+    np.testing.assert_allclose(center, [1.0, 2.0, 3.0], rtol=0, atol=1e-12)
+
+
+def test_center_of_an_unknown_bead_is_a_value_error_naming_the_handle():
+    cg, live = _one_weighted_node(molrs.CoarseGrain, (0.0, 0.0, 0.0), 1.0)
+    stale = cg.spawn()
+    cg.despawn(stale)
+
+    with pytest.raises(ValueError) as excinfo:
+        cg.center([live, stale])
+
+    message = str(excinfo.value)
+    assert str(stale) in message
+    assert "NodeId(" not in message
+
+
+@pytest.mark.parametrize("cls", LEAVES, ids=lambda c: c.__name__)
+def test_center_with_a_non_finite_mass_is_a_value_error_naming_the_handle(cls):
+    mol, h = _one_weighted_node(cls, (1.0, 2.0, 3.0), float("nan"))
+
+    with pytest.raises(ValueError) as excinfo:
+        _center(mol, [h])
+
+    message = str(excinfo.value)
+    assert str(h) in message
+    assert "NodeId(" not in message

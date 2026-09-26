@@ -1,6 +1,14 @@
 //! Chemical perception algorithms operating on molecular graphs:
 //! aromaticity, bond-type perception, hydrogen handling, ring detection,
-//! stereochemistry, rotatable bonds, and SMARTS matching.
+//! stereochemistry, rotatable bonds, SMARTS matching, and subgraph matching
+//! of coarse-grained bead graphs.
+//!
+//! *Perception* means deriving chemical facts that a connectivity graph
+//! implies but does not state — which atoms lie on rings, which rings are
+//! aromatic, which centres are chiral. SMARTS (SMILES Arbitrary Target
+//! Specification) is the substructure query language matched here;
+//! [`SubgraphMatcher`] is its coarse-grained counterpart, finding groups of
+//! beads (one node per group of atoms) by bead type.
 //!
 //! Gasteiger charges used to live here. They are a *charge model*, not a
 //! perception, and they now sit with the other charge models in
@@ -26,5 +34,7 @@ pub mod rings;
 pub mod rotatable;
 pub mod smarts;
 pub mod stereo;
+pub mod subgraph;
 
 pub use builder::Perceive;
+pub use subgraph::SubgraphMatcher;

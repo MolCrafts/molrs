@@ -83,11 +83,8 @@ pub use crate::core::*;
 pub mod builder;
 #[cfg(feature = "builder")]
 pub use crate::builder::{
-    AssembleError, Assembler, BodyAxis, CarbonTubeBuilder, CarbonTubeError, FccLattice, Finalizer,
-    FragLibrary, FragLibraryError, GrapheneBuilder, GrapheneError, GrowthStrategy, HintOrienter,
-    NullOrienter, OccupancyMode, OffLattice, OrientError, Orienter, PairError, PlaceError, Placer,
-    PortReacter, RandomOrienter, ReactError, Reacter, SelfAvoidingWalk, TracePlacer, WalkError,
-    WalkOutput,
+    CarbonTubeBuilder, CarbonTubeError, FccLattice, GrapheneBuilder, GrapheneError, GrowthStrategy,
+    OccupancyMode, OffLattice, SelfAvoidingWalk, WalkError, WalkOutput,
 };
 
 // Chemical perception: one layer above `core`, below `ff` / `io` / `conformer`.
@@ -112,6 +109,7 @@ pub use crate::perceive::stereo::{
     BondStereo, TetrahedralStereo, assign_bond_stereo_from_3d, assign_stereo_from_3d,
     chiral_volume, find_chiral_centers,
 };
+pub use crate::perceive::subgraph::SubgraphMatcher;
 
 #[cfg(feature = "io")]
 pub mod io;

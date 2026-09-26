@@ -886,7 +886,8 @@ class Port(RelationRef[Atom]):
 
     @property
     def handle_atom(self) -> Atom:
-        """The capping hydrogen this descriptor sits on."""
+        """The atom this descriptor sits on: the root of the leaving group,
+        usually a capping hydrogen (any element is accepted)."""
         return self.endpoints[1]
 
 
@@ -1155,8 +1156,8 @@ class Fragment(GraphViews, _RsFragment):
         """Record a bonding descriptor on the ``(anchor, handle_atom)`` valence.
 
         Routes through the native writer, which is where the validation lives:
-        the roles, the hydrogen check, the anchor--handle bond check, the glyph
-        parse and the order check are all core's. The generic relation path
+        the roles, the anchor--handle bond check, the one-port-per-valence
+        check, the glyph parse and the order check are all core's. The generic relation path
         would write an unchecked ``port_kind`` and call it a port. There is no
         ``**attrs``: a port's three props *are* the validated arguments.
 
@@ -1165,8 +1166,9 @@ class Fragment(GraphViews, _RsFragment):
         anchor : Atom
             The atom that keeps its place in the product molecule.
         handle_atom : Atom
-            The capping hydrogen bonded to `anchor`; see :class:`Port` for why
-            it is not spelled ``handle``.
+            The atom bonded to `anchor` that roots the leaving group, usually
+            a capping hydrogen (any element is accepted); see :class:`Port`
+            for why it is not spelled ``handle``.
         kind : str
             The notation glyph -- one of ``"$"``, ``"<"``, ``">"``, ``"!"``.
         label : str, optional
@@ -1182,8 +1184,9 @@ class Fragment(GraphViews, _RsFragment):
         ------
         ValueError
             If an endpoint belongs to another graph, if `kind` is not one of
-            the four glyphs, if `handle_atom` is not a hydrogen bonded to
-            `anchor`, or if `order` is not a definite bond number.
+            the four glyphs, if `handle_atom` is not bonded to `anchor`, if
+            that valence already carries a port, or if `order` is not a
+            definite bond number.
         """
         self._check_endpoints(anchor, handle_atom)
         handle = self.add_port(anchor.handle, handle_atom.handle, kind, label, order)

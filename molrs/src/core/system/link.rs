@@ -1,20 +1,43 @@
-//! Port chemistry: [`Reacter`] joins two ports of one world fragment, and
-//! [`PortReacter`] is the port-driven implementation.
+//! Port joining: [`Fragment::link`] joins two ports of one world fragment into
+//! a bond.
 //!
-//! A **port** ([`Port`](crate::system::fragment::Port)) is an open attachment
-//! point on a fragment: an **anchor** atom that will gain the new bond, and a
-//! **handle** atom bonded to it (usually a capping hydrogen) that stands in
-//! for the partner until the join. Joining two ports removes each handle
-//! together with everything hanging off it (its *branch*, the leaving group)
-//! and bonds the two anchors directly, as a condensation reaction would.
+//! The vocabulary is defined in full in [`crate::system::fragment`]. In short:
+//! a **port** is a marked, not-yet-used bonding site on a [`Fragment`]. It
+//! names two bonded atoms: the **anchor** `a`, which gains the new bond, and
+//! the **handle** `h`, a real atom (usually a capping hydrogen) standing where
+//! the partner will go. The **world** is the one fragment that holds every unit
+//! being joined; a caller first [`merge`](Fragment::merge)s each unit into it.
+//! An atom may carry a partial charge `q` (the `charge` property, in units of
+//! the elementary charge e) and a `frag_id`, the index of the unit it came
+//! from.
 //!
-//! `PortReacter::link` validates before it writes. It pairs ports only through
-//! [`Port::accepts`](crate::system::fragment::Port::accepts), deletes each
-//! port's handle branch, bonds the two anchors with the port order, and folds
-//! the deleted atoms' partial charge (in e) onto their anchor:
-//! `q_a' = q_a + Σ_{i∈D} q_i`, where `D` is the handle and its branch (the
-//! practice of pysimm's `random_walk` polymer builder). The sum of all charges,
-//! and the sum within each `frag_id` unit, is therefore unchanged by a link.
+//! A port `p = (a, h)` joins its anchor `a` to a partner's anchor. Its leaving
+//! group `D_p` is the handle's connected component over bonds once the `a`–`h`
+//! bond is cut ([`Fragment::leaving_group`]). Linking `p` (anchor `a`) with `r`
+//! (anchor `b`) pairs the two only through
+//! [`Port::accepts`](crate::system::fragment::Port::accepts), removes
+//! `D_p ∪ D_r` (their ports go with them), folds each leaving group's partial
+//! charge (e) onto its own anchor,
+//!
+//! ```text
+//! q_a' = q_a + Σ_{i ∈ D_p} q_i        q_b' = q_b + Σ_{i ∈ D_r} q_i
+//! ```
+//!
+//! and bonds the two anchors with the port order.
+//!
+//! **Conservation.** The refusals guarantee `D_p ∩ D_r = ∅` and that both
+//! anchors lie outside both branches, so the total charge `Σ_{i ∈ V} q_i` over
+//! the world's atom set `V` is conserved: every removed atom's charge reappears
+//! on exactly one surviving anchor (exactly in real arithmetic; to rounding in
+//! `f64`). The sum within one
+//! `frag_id` unit is conserved when every atom of `D_p` carries `frag_id(a)`
+//! and every atom of `D_r` carries `frag_id(b)` (a sufficient condition);
+//! `link` does not check that labelling.
+//!
+//! Putting the whole leaving-group charge on the one anchor is the practice of
+//! pysimm's `random_walk` polymer builder (Fortunato & Colina, *SoftwareX* **6**,
+//! 7 (2017), doi:10.1016/j.softx.2016.12.002); AMBER's `prepgen` spreads it
+//! instead, which molrs does not offer.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -24,76 +47,9 @@ use crate::store::keys;
 use crate::system::atomistic::{AtomId, BondId};
 use crate::system::fragment::{Fragment, Port, PortId};
 
-/// Joins two ports of one world [`Fragment`] into a bond.
-///
-/// An implementor consumes both ports: after a successful [`link`](Self::link)
-/// the two anchors are bonded and neither port remains.
-pub trait Reacter: Send + Sync {
-    /// Join port `a` to port `b` of `world` and return the new anchor–anchor
-    /// bond.
-    ///
-    /// # Errors
-    ///
-    /// A [`ReactError`] naming why the pair cannot be joined.
-    fn link(&self, world: &mut Fragment, a: PortId, b: PortId) -> Result<BondId, ReactError>;
-
-    /// Join every pair in order and return the new bonds in pair order.
-    ///
-    /// The default is a loop over [`link`](Self::link), so it is correct for
-    /// every implementor. It is the one batch call the `Assembler` makes and
-    /// the one call the Python adaptor crosses.
-    ///
-    /// # Errors
-    ///
-    /// The first failing pair, as a [`PairError`] carrying its index in
-    /// `pairs` (`Some(i)`). The pairs before it stay linked. An override that
-    /// cannot tell which pair failed reports `None` rather than an index.
-    fn link_many(
-        &self,
-        world: &mut Fragment,
-        pairs: &[(PortId, PortId)],
-    ) -> Result<Vec<BondId>, PairError> {
-        pairs
-            .iter()
-            .enumerate()
-            .map(|(i, &(a, b))| {
-                self.link(world, a, b).map_err(|error| PairError {
-                    pair: Some(i),
-                    error,
-                })
-            })
-            .collect()
-    }
-}
-
-/// The pair a [`Reacter::link_many`] batch failed on, and why.
+/// Why [`Fragment::link`] refused to join two ports.
 #[derive(Debug)]
-pub struct PairError {
-    /// Index of the failing pair in the batch; `None` when the implementor
-    /// could not name it (e.g. a batch reacter outside this crate).
-    pub pair: Option<usize>,
-    /// Why that pair was refused.
-    pub error: ReactError,
-}
-
-impl fmt::Display for PairError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.pair {
-            Some(i) => write!(f, "pair {i}: {}", self.error),
-            None => write!(f, "a pair: {}", self.error),
-        }
-    }
-}
-
-impl std::error::Error for PairError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.error)
-    }
-}
-
-/// Why a [`Reacter`] refused to join two ports.
-#[derive(Debug)]
-pub enum ReactError {
+pub enum LinkError {
     /// A port did not read back (stale id or malformed descriptor).
     Port(MolRsError),
     /// The port reads back, but its anchor–handle bond no longer exists: the
@@ -119,8 +75,7 @@ pub enum ReactError {
         b: PortId,
     },
     /// The two anchors are already bonded; linking them would add a duplicate
-    /// bond (reachable through a `FragGraph` with two edges between one node
-    /// pair).
+    /// bond.
     AlreadyBonded {
         /// The first port's anchor.
         a: AtomId,
@@ -145,13 +100,9 @@ pub enum ReactError {
     },
     /// The graph refused a read during validation.
     Graph(MolRsError),
-    /// A failure reported by an implementor outside this crate. A Python
-    /// exception raised by a Python-side reacter keeps only its message and
-    /// surfaces back in Python as `ValueError`.
-    Other(String),
 }
 
-impl fmt::Display for ReactError {
+impl fmt::Display for LinkError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Port(e) => write!(f, "port does not read back: {e}"),
@@ -178,12 +129,11 @@ impl fmt::Display for ReactError {
                 "charge is present on only part of anchor {anchor:?} and its handle branch"
             ),
             Self::Graph(e) => write!(f, "graph refused a read: {e}"),
-            Self::Other(msg) => write!(f, "link failed: {msg}"),
         }
     }
 }
 
-impl std::error::Error for ReactError {
+impl std::error::Error for LinkError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Port(e) | Self::Graph(e) => Some(e),
@@ -192,112 +142,148 @@ impl std::error::Error for ReactError {
     }
 }
 
-/// The port-driven [`Reacter`].
-///
-/// [`link`](Reacter::link) validates both ports before it writes anything, so
-/// a refusal leaves the world unchanged. It refuses, in this order:
-///
-/// 1. a port that does not read back → [`ReactError::Port`];
-/// 2. a port whose anchor–handle bond is gone → [`ReactError::StalePort`];
-/// 3. `!a.accepts(&b)` → [`ReactError::Incompatible`];
-/// 4. two ports on one anchor → [`ReactError::SameAnchor`];
-/// 5. anchors already bonded → [`ReactError::AlreadyBonded`];
-/// 6. a branch containing its own anchor → [`ReactError::BranchReachesAnchor`];
-/// 7. overlapping branches, or an anchor inside the other branch →
-///    [`ReactError::BranchesOverlap`];
-/// 8. charge on only part of `{anchor} ∪ branch` →
-///    [`ReactError::OneSidedCharge`] (an atom without `charge` counts as
-///    absent; a side with no charge at all is fine).
-///
-/// A port's **branch** is its [`Fragment::leaving_group`]. It writes by
-/// folding each branch's charge (e) onto its anchor, `q_a' = q_a + Σ_{i∈D} q_i`
-/// with `D` the branch, then removing both branches (their ports go with them)
-/// and bonding the two anchors, classed from the port order through
-/// [`BondNumber::implied_type`](crate::system::bond::BondNumber::implied_type)
-/// and written with [`Fragment::set_bond_class`]. The folding puts the whole
-/// leaving-group charge on the one anchor, as pysimm's `random_walk` does,
-/// rather than spreading it as AMBER's `prepgen` does; it conserves total and
-/// per-`frag_id` charge.
-///
-/// # Panics
-///
-/// A write that fails after validation passed is a broken invariant of this
-/// type (every atom written is live, the removed set is duplicate-free and
-/// leaves both anchors, and the new bond is fresh), so it panics rather than
-/// returning a half-applied edit as an error.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct PortReacter;
-
-impl Reacter for PortReacter {
-    fn link(&self, world: &mut Fragment, a: PortId, b: PortId) -> Result<BondId, ReactError> {
+impl Fragment {
+    /// Join port `a` to port `b` and return the new anchor–anchor bond.
+    ///
+    /// Both ports are consumed: on success the two anchors are bonded and
+    /// neither port remains. `link` validates both ports before it writes
+    /// anything, so a refusal leaves `self` unchanged. It refuses, in this
+    /// order:
+    ///
+    /// 1. a port that does not read back → [`LinkError::Port`];
+    /// 2. a port whose anchor–handle bond is gone → [`LinkError::StalePort`];
+    /// 3. `!a.accepts(&b)` → [`LinkError::Incompatible`];
+    /// 4. two ports on one anchor → [`LinkError::SameAnchor`];
+    /// 5. anchors already bonded → [`LinkError::AlreadyBonded`];
+    /// 6. a branch containing its own anchor → [`LinkError::BranchReachesAnchor`];
+    /// 7. overlapping branches, or an anchor inside the other branch →
+    ///    [`LinkError::BranchesOverlap`];
+    /// 8. charge on only part of `{anchor} ∪ branch` →
+    ///    [`LinkError::OneSidedCharge`] (an atom without `charge` counts as
+    ///    absent; a side with no charge at all is fine and writes nothing).
+    ///
+    /// A port's **branch** is its [`leaving_group`](Self::leaving_group). The
+    /// write folds each branch's charge (e) onto its anchor,
+    /// `q_a' = q_a + Σ_{i∈D} q_i` with `D` the branch, removes both branches
+    /// (their ports go with them) and bonds the two anchors, classed from the
+    /// port order through
+    /// [`BondNumber::implied_type`](crate::system::bond::BondNumber::implied_type)
+    /// and written with [`set_bond_class`](Self::set_bond_class). Total charge
+    /// is conserved; per-`frag_id` charge only under the labelling condition
+    /// in the [module docs](crate::system::link).
+    ///
+    /// There is no batch form: a caller joining several pairs loops over
+    /// `link`.
+    ///
+    /// # Errors
+    ///
+    /// The [`LinkError`] of the first refusal above.
+    ///
+    /// # Panics
+    ///
+    /// A write that fails after validation passed is a broken invariant of this
+    /// type (every atom written is live, the removed set is duplicate-free and
+    /// leaves both anchors, and the new bond is fresh), so it panics rather than
+    /// returning a half-applied edit as an error.
+    ///
+    /// # Examples
+    ///
+    /// Two one-H units joined through a `<` / `>` pair: each H's charge folds
+    /// onto its own carbon.
+    ///
+    /// ```
+    /// use molrs::store::keys;
+    /// use molrs::system::bond::BondNumber;
+    /// use molrs::system::fragment::{Fragment, PortKind};
+    ///
+    /// let mut world = Fragment::new();
+    /// let mut unit = |q_c: f64, kind: PortKind| -> Result<_, molrs::MolRsError> {
+    ///     let c = world.add_atom_bare("C");
+    ///     let h = world.add_atom_bare("H");
+    ///     world.set_node(c, keys::CHARGE, q_c)?;
+    ///     world.set_node(h, keys::CHARGE, 0.125)?;
+    ///     world.add_bond(c, h)?;
+    ///     let port = world.add_port(c, h, kind, "p", BondNumber::Single)?;
+    ///     Ok((c, port))
+    /// };
+    /// let (c0, p0) = unit(-0.25, PortKind::Left)?;
+    /// let (c1, p1) = unit(-0.125, PortKind::Right)?;
+    ///
+    /// world.link(p0, p1)?;
+    ///
+    /// let q = |atom| world.get_node(atom).map(|a| a.get_f64(keys::CHARGE));
+    /// assert_eq!(q(c0)?, Some(-0.125));
+    /// assert_eq!(q(c1)?, Some(0.0));
+    /// assert_eq!(world.n_atoms(), 2);
+    /// assert_eq!(world.n_bonds(), 1);
+    /// assert_eq!(world.n_ports(), 0);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn link(&mut self, a: PortId, b: PortId) -> Result<BondId, LinkError> {
         // ---- validate: nothing is written until every check passes ----
-        let pa = world.port(a).map_err(ReactError::Port)?;
-        let pb = world.port(b).map_err(ReactError::Port)?;
+        let pa = self.port(a).map_err(LinkError::Port)?;
+        let pb = self.port(b).map_err(LinkError::Port)?;
         // `leaving_group`'s only error is a missing anchor–handle bond.
-        let branch_a = world
+        let branch_a = self
             .leaving_group(&pa)
-            .map_err(|_| ReactError::StalePort { port: a })?;
-        let branch_b = world
+            .map_err(|_| LinkError::StalePort { port: a })?;
+        let branch_b = self
             .leaving_group(&pb)
-            .map_err(|_| ReactError::StalePort { port: b })?;
+            .map_err(|_| LinkError::StalePort { port: b })?;
         if !pa.accepts(&pb) {
-            return Err(ReactError::Incompatible { a, b });
+            return Err(LinkError::Incompatible { a, b });
         }
         if pa.anchor == pb.anchor {
-            return Err(ReactError::SameAnchor { a, b });
+            return Err(LinkError::SameAnchor { a, b });
         }
-        if world.is_bonded(pa.anchor, pb.anchor) {
-            return Err(ReactError::AlreadyBonded {
+        if self.is_bonded(pa.anchor, pb.anchor) {
+            return Err(LinkError::AlreadyBonded {
                 a: pa.anchor,
                 b: pb.anchor,
             });
         }
         if branch_a.contains(&pa.anchor) {
-            return Err(ReactError::BranchReachesAnchor { port: a });
+            return Err(LinkError::BranchReachesAnchor { port: a });
         }
         if branch_b.contains(&pb.anchor) {
-            return Err(ReactError::BranchReachesAnchor { port: b });
+            return Err(LinkError::BranchReachesAnchor { port: b });
         }
         if !branch_a.is_disjoint(&branch_b)
             || branch_a.contains(&pb.anchor)
             || branch_b.contains(&pa.anchor)
         {
-            return Err(ReactError::BranchesOverlap);
+            return Err(LinkError::BranchesOverlap);
         }
-        let folded_a = Self::folded_charge(world, &pa, &branch_a)?;
-        let folded_b = Self::folded_charge(world, &pb, &branch_b)?;
+        let folded_a = self.folded_charge(&pa, &branch_a)?;
+        let folded_b = self.folded_charge(&pb, &branch_b)?;
 
         // ---- write ----
         const VALIDATED: &str = "validated before the first write";
         for (anchor, folded) in [(pa.anchor, folded_a), (pb.anchor, folded_b)] {
             if let Some(q) = folded {
-                world.set_node(anchor, keys::CHARGE, q).expect(VALIDATED);
+                self.set_node(anchor, keys::CHARGE, q).expect(VALIDATED);
             }
         }
         let doomed: Vec<AtomId> = branch_a.iter().chain(&branch_b).copied().collect();
-        world.remove_nodes(&doomed).expect(VALIDATED);
-        let bond = world.add_bond(pa.anchor, pb.anchor).expect(VALIDATED);
-        world
-            .set_bond_class(bond, pa.order.implied_type(), pa.order)
+        self.remove_nodes(&doomed).expect(VALIDATED);
+        let bond = self.add_bond(pa.anchor, pb.anchor).expect(VALIDATED);
+        self.set_bond_class(bond, pa.order.implied_type(), pa.order)
             .expect(VALIDATED);
         Ok(bond)
     }
-}
 
-impl PortReacter {
     /// The anchor's charge after folding `branch` onto it: `None` when no atom
     /// of `{anchor} ∪ branch` carries a charge, `Some(q_a + Σ q_i)` when every
     /// atom does.
     fn folded_charge(
-        world: &Fragment,
+        &self,
         port: &Port,
         branch: &BTreeSet<AtomId>,
-    ) -> Result<Option<f64>, ReactError> {
-        let charge = |atom: AtomId| -> Result<Option<f64>, ReactError> {
-            world
-                .get_node(atom)
+    ) -> Result<Option<f64>, LinkError> {
+        let charge = |atom: AtomId| -> Result<Option<f64>, LinkError> {
+            self.get_node(atom)
                 .map(|props| props.get_f64(keys::CHARGE))
-                .map_err(ReactError::Graph)
+                .map_err(LinkError::Graph)
         };
         let anchor_q = charge(port.anchor)?;
         let mut present = usize::from(anchor_q.is_some());
@@ -311,7 +297,7 @@ impl PortReacter {
         match anchor_q {
             _ if present == 0 => Ok(None),
             Some(q) if present == branch.len() + 1 => Ok(Some(q + branch_q)),
-            _ => Err(ReactError::OneSidedCharge {
+            _ => Err(LinkError::OneSidedCharge {
                 anchor: port.anchor,
             }),
         }
@@ -322,7 +308,8 @@ impl PortReacter {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{PairError, PortReacter, ReactError, Reacter};
+    use super::LinkError;
+    use crate::error::MolRsError;
     use crate::store::keys;
     use crate::system::atomistic::AtomId;
     use crate::system::bond::BondNumber;
@@ -415,7 +402,8 @@ mod tests {
     struct Snapshot {
         atoms: Vec<(AtomId, Option<f64>)>,
         bonds: Vec<Vec<AtomId>>,
-        ports: Vec<Port>,
+        /// A port that does not read back is recorded as `None`.
+        ports: Vec<(PortId, Option<Port>)>,
     }
 
     fn snapshot(world: &Fragment) -> Snapshot {
@@ -425,22 +413,15 @@ mod tests {
                 .map(|(id, atom)| (id, atom.get_f64(keys::CHARGE)))
                 .collect(),
             bonds: world.bonds().map(|(_, bond)| bond.nodes.to_vec()).collect(),
-            ports: world
-                .ports()
-                .collect::<Vec<_>>()
-                .into_iter()
-                .map(|id| world.port(id).expect("fixture port reads back"))
-                .collect(),
+            ports: world.ports().map(|id| (id, world.port(id).ok())).collect(),
         }
     }
 
     /// Run a link that must be refused, assert the world is unchanged, and
     /// return the refusal.
-    fn refuse(world: &mut Fragment, a: PortId, b: PortId) -> ReactError {
+    fn refuse(world: &mut Fragment, a: PortId, b: PortId) -> LinkError {
         let before = snapshot(world);
-        let err = PortReacter
-            .link(world, a, b)
-            .expect_err("this pair must be refused");
+        let err = world.link(a, b).expect_err("this pair must be refused");
         assert_eq!(
             snapshot(world),
             before,
@@ -464,9 +445,7 @@ mod tests {
             1,
         );
 
-        PortReacter
-            .link(&mut world, p0, p1)
-            .expect("complementary ports link");
+        world.link(p0, p1).expect("complementary ports link");
 
         assert_eq!(charge(&world, a0), -0.125, "C1: -0.25 + 0.125");
         assert_eq!(charge(&world, a1), 0.0, "partner: -0.125 + 0.125");
@@ -504,9 +483,7 @@ mod tests {
             1,
         );
 
-        PortReacter
-            .link(&mut world, p0, p1)
-            .expect("complementary ports link");
+        world.link(p0, p1).expect("complementary ports link");
 
         assert_eq!(charge(&world, c), 0.25, "C2: 0.5 - 0.625 + 0.375");
         assert_eq!(
@@ -551,12 +528,14 @@ mod tests {
             2,
         );
 
-        let bonds = PortReacter
-            .link_many(&mut world, &[(pa1, pb1), (pa2, pb2)])
-            .expect("both pairs link");
+        let first = world.link(pa1, pb1).expect("the first pair links");
+        let second = world
+            .link(pa2, pb2)
+            .expect("the second port on the same anchor still links");
 
-        assert_eq!(bonds.len(), 2, "one new bond per pair");
+        assert_ne!(first, second, "one new bond per link");
         assert_eq!(charge(&world, a), -0.25, "C3: -0.5 + 0.125 + 0.125");
+        assert_eq!(world.n_bonds(), 2);
         assert!(is_bonded(&world, a, b1));
         assert!(is_bonded(&world, a, b2));
         assert_eq!(world.n_ports(), 0);
@@ -575,7 +554,7 @@ mod tests {
         let h = atom(&mut world, "H", Some(0.25), 1);
         world.add_bond(a1, h).unwrap();
 
-        PortReacter.link(&mut world, p0, p1).expect("link");
+        world.link(p0, p1).expect("link");
 
         assert_eq!(total_charge(&world), 0.0, "C4: total stays 0");
         let sums = frag_sums(&world);
@@ -593,7 +572,7 @@ mod tests {
         let o = atom(&mut world, "O", Some(-0.625), 1);
         world.add_bond(a1, o).unwrap();
 
-        PortReacter.link(&mut world, p0, p1).expect("link");
+        world.link(p0, p1).expect("link");
 
         let sums = frag_sums(&world);
         assert_eq!(sums.get(&0), Some(&-1.0), "C5: frag 0 sums to -1");
@@ -619,7 +598,7 @@ mod tests {
             .add_port(b, hb, PortKind::Right, "p", BondNumber::Double)
             .unwrap();
 
-        let bid = PortReacter.link(&mut world, pa, pb).expect("link");
+        let bid = world.link(pa, pb).expect("link");
 
         let bonds = world.kind_id("bonds").expect("'bonds' registered");
         let bond = world
@@ -652,7 +631,7 @@ mod tests {
         let err = refuse(&mut world, p0, p1);
 
         assert!(
-            matches!(err, ReactError::Incompatible { a, b } if a == p0 && b == p1),
+            matches!(err, LinkError::Incompatible { a, b } if a == p0 && b == p1),
             "{err:?}"
         );
     }
@@ -674,7 +653,7 @@ mod tests {
 
         let err = refuse(&mut world, p0, p1);
 
-        assert!(matches!(err, ReactError::Incompatible { .. }), "{err:?}");
+        assert!(matches!(err, LinkError::Incompatible { .. }), "{err:?}");
     }
 
     #[test]
@@ -696,7 +675,7 @@ mod tests {
         let err = refuse(&mut world, p0, p1);
 
         assert!(
-            matches!(err, ReactError::BranchReachesAnchor { port } if port == p0),
+            matches!(err, LinkError::BranchReachesAnchor { port } if port == p0),
             "{err:?}"
         );
     }
@@ -719,7 +698,7 @@ mod tests {
 
         let err = refuse(&mut world, pa, pb);
 
-        assert!(matches!(err, ReactError::BranchesOverlap), "{err:?}");
+        assert!(matches!(err, LinkError::BranchesOverlap), "{err:?}");
     }
 
     #[test]
@@ -743,7 +722,7 @@ mod tests {
 
         let err = refuse(&mut world, pa, pb);
 
-        assert!(matches!(err, ReactError::BranchesOverlap), "{err:?}");
+        assert!(matches!(err, LinkError::BranchesOverlap), "{err:?}");
     }
 
     #[test]
@@ -762,7 +741,7 @@ mod tests {
         let err = refuse(&mut world, p0, p1);
 
         assert!(
-            matches!(err, ReactError::OneSidedCharge { anchor } if anchor == a0),
+            matches!(err, LinkError::OneSidedCharge { anchor } if anchor == a0),
             "{err:?}"
         );
     }
@@ -783,7 +762,7 @@ mod tests {
         let err = refuse(&mut world, p0, p1);
 
         assert!(
-            matches!(err, ReactError::OneSidedCharge { anchor } if anchor == a1),
+            matches!(err, LinkError::OneSidedCharge { anchor } if anchor == a1),
             "{err:?}"
         );
     }
@@ -806,7 +785,7 @@ mod tests {
         let err = refuse(&mut world, p0, p1);
 
         assert!(
-            matches!(err, ReactError::AlreadyBonded { a, b } if a == a0 && b == a1),
+            matches!(err, LinkError::AlreadyBonded { a, b } if a == a0 && b == a1),
             "{err:?}"
         );
     }
@@ -835,7 +814,7 @@ mod tests {
         let err = refuse(&mut world, p0, p1);
 
         assert!(
-            matches!(err, ReactError::SameAnchor { a, b } if a == p0 && b == p1),
+            matches!(err, LinkError::SameAnchor { a, b } if a == p0 && b == p1),
             "{err:?}"
         );
     }
@@ -866,32 +845,32 @@ mod tests {
         let err = refuse(&mut world, p0, p1);
 
         assert!(
-            matches!(err, ReactError::StalePort { port } if port == p0),
+            matches!(err, LinkError::StalePort { port } if port == p0),
             "{err:?}"
         );
     }
 
-    // ---- batch ---------------------------------------------------------------
-
+    /// Refusal step 1: a port whose kind glyph was overwritten through
+    /// `DerefMut` does not read back through `Fragment::port`.
     #[test]
-    fn link_many_reports_the_failing_pair_index() {
+    fn link_refuses_a_port_that_does_not_read_back() {
         let mut world = Fragment::new();
         let (_, _, p0) = h_unit(&mut world, "C", None, None, PortKind::Left, 0);
         let (_, _, p1) = h_unit(&mut world, "C", None, None, PortKind::Right, 1);
-        let (_, _, p2) = h_unit(&mut world, "C", None, None, PortKind::Left, 2);
-        let (_, _, p3) = h_unit(&mut world, "C", None, None, PortKind::Left, 3);
-        let (_, _, p4) = h_unit(&mut world, "C", None, None, PortKind::Left, 4);
-        let (_, _, p5) = h_unit(&mut world, "C", None, None, PortKind::Right, 5);
-
-        let err = PortReacter
-            .link_many(&mut world, &[(p0, p1), (p2, p3), (p4, p5)])
-            .expect_err("the second pair is `<`/`<`");
-
-        let PairError { pair, error } = err;
-        assert_eq!(pair, Some(1), "the index of the failing pair");
+        let ports = world.kind_id("ports").expect("'ports' registered");
+        world
+            .set_relation_prop(ports, p0, "port_kind", "Z")
+            .expect("the inner graph overwrites the glyph");
         assert!(
-            matches!(error, ReactError::Incompatible { a, b } if a == p2 && b == p3),
-            "{error:?}"
+            world.port(p0).is_err(),
+            "fixture: the corrupted port does not read back"
+        );
+
+        let err = refuse(&mut world, p0, p1);
+
+        assert!(
+            matches!(err, LinkError::Port(MolRsError::Validation { .. })),
+            "{err:?}"
         );
     }
 }

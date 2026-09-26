@@ -30,7 +30,10 @@
 //! real atoms is a separate step on the value itself,
 //! [`CGSmilesIR::to_atomistic`]: it replaces every bead of the lowest
 //! resolution with a copy of its fragment body and turns each descriptor pair
-//! the reader resolved into one bond. What it shares with the
+//! the reader resolved into one bond. Reading the coarsest resolution alone as
+//! a bead graph is another step, [`CGSmilesIR::to_coarsegrain`]: one
+//! `CoarseGrain` bead per node of `levels[0]`, one CG bond per edge, and no
+//! fragment table needed. What `CGsmiles` shares with the
 //! two atomistic notations is the scanner, the [`Span`], the [`SmilesError`]
 //! and the [`BondingDescriptor`] vocabulary — not the grammar, not the AST. The
 //! token vocabularies overlap adversarially (`[#NAME]` against the SMARTS
@@ -72,6 +75,10 @@
 //! ```text
 //! CGsmiles string → parse_cgsmiles() → CGSmilesIR
 //!     → CGSmilesIR::to_atomistic() → Atomistic
+//! CGsmiles string → parse_cgsmiles() → CGSmilesIR
+//!     → CGSmilesIR::to_coarsegrain() → CoarseGrain
+//! CGsmiles string → parse_cgsmiles() → CGSmilesIR
+//!     → CGSmilesIR::to_fragment() → BTreeMap<String, Fragment>
 //! ```
 //!
 //! # Examples

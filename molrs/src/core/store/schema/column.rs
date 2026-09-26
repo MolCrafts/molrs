@@ -35,12 +35,9 @@ impl std::fmt::Display for ColShape {
 /// Physical dimension of a column, over the ten [`PresetDim`]s.
 ///
 /// This is the single truth for what a column measures: the schema document
-/// derives the unit it displays from it, and
-/// [`Frame::convert_units`](crate::store::frame::Frame::convert_units) derives
-/// the conversion factor from it. molrs still stores raw numbers; the
+/// derives the unit it displays from it. molrs stores raw numbers; the
 /// dimension says what they measure, and the unit is that dimension's unit in
-/// whichever preset the frame is in (its `units` meta entry; see
-/// `Frame::convert_units`).
+/// whichever preset the frame is in (its `units` meta entry).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnDim {
     /// Not a physical quantity: identifiers, labels, flags, codes, endpoints.
@@ -102,16 +99,18 @@ impl std::fmt::Display for ColumnDim {
 pub struct ColumnSpec {
     /// Canonical key as it appears in a `Block` (`"x"`, `"atomi"`).
     pub key: &'static str,
-    /// Rust/Python constant name (`"X"`, `"ATOMI"`), so `keys::X` and
-    /// `molrs.keys.X` are generated from this table rather than hand-mirrored.
+    /// Rust/Python constant name (`"X"`, `"ATOMI"`). The Python binding
+    /// generates `molrs.keys.X` from this table; the Rust `keys::X` is the
+    /// hand-written [`consts`](super::consts) entry, checked against the table
+    /// by a unit test.
     pub const_name: &'static str,
     /// The one admissible storage dtype. Not a set — see the module doc on
     /// [`super`] for why a key that needs two dtypes is two keys.
     pub dtype: DType,
     /// Shape beyond axis 0.
     pub shape: ColShape,
-    /// Physical dimension. Drives the displayed unit and unit conversion;
-    /// never enforced on write — molrs stores raw numbers.
+    /// Physical dimension. Drives the displayed unit; never enforced on
+    /// write — molrs stores raw numbers.
     pub dimension: ColumnDim,
     /// One-line meaning. Never empty (asserted by the vocabulary gate).
     pub doc: &'static str,
