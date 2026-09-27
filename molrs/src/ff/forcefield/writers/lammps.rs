@@ -392,17 +392,25 @@ struct PairRow<'f> {
 }
 
 impl PairRow<'_> {
-    /// `epsilon sigma` in file units, or `None` for a type without both
-    /// (Coulomb-only styles carry no per-type coefficients).
-    fn coeffs(&self, units: &WriteUnits, precision: usize) -> Result<Option<String>, String> {
+    /// `epsilon sigma` in file units. A type without both (`thole`, `coul/tt`,
+    /// `buck`, …) has no coefficient form this writer knows; skipping it would
+    /// leave the `pair_style` line without its `pair_coeff` rows, so it is an
+    /// error naming the category, style and type. Type-less styles (`coul/cut`)
+    /// produce no rows and never reach here.
+    fn coeffs(&self, units: &WriteUnits, precision: usize) -> Result<String, String> {
         let (Some(eps), Some(sigma)) = (self.ty.params.get("epsilon"), self.ty.params.get("sigma"))
         else {
-            return Ok(None);
+            return Err(format!(
+                "pair style `{}`: type `{}` carries no epsilon/sigma; the LAMMPS \
+                 writer cannot emit its coefficients",
+                self.style.name(),
+                self.ty.name
+            ));
         };
-        Ok(Some(format_nums(
+        Ok(format_nums(
             &[units.energy(eps)?, units.length(sigma)?],
             precision,
-        )))
+        ))
     }
 }
 
@@ -624,8 +632,8 @@ impl<'a> LammpsFfWriter<'a> {
         Ok(())
     }
 
-    /// `pair_coeff` lines for the rows carrying ε/σ, naming the sub-style when
-    /// `hybrid`. A single-style block ends with a blank line when non-empty.
+    /// `pair_coeff` lines for the rows, naming the sub-style when `hybrid`. A
+    /// single-style block ends with a blank line when non-empty.
     fn push_pair_coeffs(
         &self,
         lines: &mut Vec<String>,
@@ -633,20 +641,16 @@ impl<'a> LammpsFfWriter<'a> {
         hybrid: bool,
         units: &WriteUnits,
     ) -> Result<(), String> {
-        let mut any = false;
         for row in rows {
-            let Some(nums) = row.coeffs(units, self.options.precision)? else {
-                continue;
-            };
+            let nums = row.coeffs(units, self.options.precision)?;
             let (i, j) = (&row.ty.itom, &row.ty.jtom);
             if hybrid {
                 lines.push(format!("pair_coeff {i} {j} {} {nums}\n", row.style.name()));
             } else {
                 lines.push(format!("pair_coeff {i} {j} {nums}\n"));
             }
-            any = true;
         }
-        if any && !hybrid {
+        if !rows.is_empty() && !hybrid {
             lines.push("\n".to_owned());
         }
         Ok(())
@@ -699,9 +703,8 @@ impl<'a> LammpsFfWriter<'a> {
                     row.ty.name
                 ));
             }
-            if let Some(nums) = row.coeffs(units, self.options.precision)? {
-                section.push(format!("{} {nums}\n", row.ids.0));
-            }
+            let nums = row.coeffs(units, self.options.precision)?;
+            section.push(format!("{} {nums}\n", row.ids.0));
         }
         push_data_section(lines, "Pair Coeffs", section);
         Ok(())
@@ -1672,5 +1675,34 @@ pair_coeff c3 c3 0.107800 3.397710
             vec!["angle_coeff C_3-C_R-O_2@1_1.5_2 60.000000 120.000000"],
             "{text}"
         );
+    }
+
+    /// A pair style whose types carry no ε/σ (`thole`: per-type `charge`,
+    /// `alpha`, `a_thole`) has no `pair_coeff` form here. Writing the
+    /// `pair_style` line without its coefficients is an incomplete include, so
+    /// both writers refuse and name the category and the style.
+    #[test]
+    fn pair_style_without_writable_coeffs_is_err_naming_style() {
+        let mut ff = ForceField::new("hand");
+        ff.def_style("pair", "thole", Params::from_pairs(&[("cutoff", 12.0)]))
+            .unwrap()
+            .def_type(
+                "c3",
+                Params::from_pairs(&[("charge", -0.2), ("alpha", 1.1), ("a_thole", 2.6)]),
+            )
+            .unwrap();
+        let labels = labels_of(&[("atoms", &["c3"])]);
+        let writer = LammpsFfWriter::new(&labels);
+
+        for err in [
+            writer
+                .write_str(&ff)
+                .expect_err("thole has no pair_coeff form"),
+            writer
+                .write_data_coeffs_str(&ff)
+                .expect_err("thole has no Pair Coeffs form"),
+        ] {
+            assert!(err.contains("pair") && err.contains("thole"), "{err}");
+        }
     }
 }

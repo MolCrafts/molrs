@@ -21,27 +21,28 @@ Both round-trip through ``params``.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from os import PathLike
 from typing import TYPE_CHECKING, Any
 
 from .._lib import ForceField as _RsForceField
-from .._lib import read_forcefield_xml as _rs_read_forcefield_xml
-from .._lib import read_forcefield_xml_str as _rs_read_forcefield_xml_str
-from .._lib import read_opls_xml as _rs_read_opls_xml
-from .._lib import read_opls_xml_str as _rs_read_opls_xml_str
-from .._lib import read_lammps_forcefield as _rs_read_lammps_forcefield
-from .._lib import read_lammps_forcefield_str as _rs_read_lammps_forcefield_str
-from .._lib import read_lammps_data_coeffs as _rs_read_lammps_data_coeffs
-from .._lib import write_lammps_forcefield as _rs_write_lammps_forcefield
-from .._lib import write_lammps_forcefield_str as _rs_write_lammps_forcefield_str
-from .._lib import write_lammps_data_coeffs as _rs_write_lammps_data_coeffs
 from .._lib import read_amber_prmtop_ff as _rs_read_amber_prmtop_ff
 from .._lib import read_amber_prmtop_ff_str as _rs_read_amber_prmtop_ff_str
+from .._lib import read_forcefield_xml as _rs_read_forcefield_xml
+from .._lib import read_forcefield_xml_str as _rs_read_forcefield_xml_str
 from .._lib import read_gromacs_top_ff as _rs_read_gromacs_top_ff
 from .._lib import read_gromacs_top_ff_str as _rs_read_gromacs_top_ff_str
-from .._lib import write_gromacs_top_ff as _rs_write_gromacs_top_ff
-from .._lib import write_gromacs_top_ff_str as _rs_write_gromacs_top_ff_str
+from .._lib import read_lammps_data_coeffs as _rs_read_lammps_data_coeffs
+from .._lib import read_lammps_forcefield as _rs_read_lammps_forcefield
+from .._lib import read_lammps_forcefield_str as _rs_read_lammps_forcefield_str
+from .._lib import read_opls_xml as _rs_read_opls_xml
+from .._lib import read_opls_xml_str as _rs_read_opls_xml_str
 from .._lib import write_forcefield_xml as _rs_write_forcefield_xml
 from .._lib import write_forcefield_xml_str as _rs_write_forcefield_xml_str
+from .._lib import write_gromacs_top_ff as _rs_write_gromacs_top_ff
+from .._lib import write_gromacs_top_ff_str as _rs_write_gromacs_top_ff_str
+from .._lib import write_lammps_data_coeffs as _rs_write_lammps_data_coeffs
+from .._lib import write_lammps_forcefield as _rs_write_lammps_forcefield
+from .._lib import write_lammps_forcefield_str as _rs_write_lammps_forcefield_str
 
 if TYPE_CHECKING:
     from ..frame import Frame
@@ -112,7 +113,7 @@ class Type:
 
     _category: str = ""
 
-    def __init__(self, ff: "ForceField", style: str, name: str) -> None:
+    def __init__(self, ff: ForceField, style: str, name: str) -> None:
         self._ff = ff
         self._style = style
         self._name = name
@@ -153,7 +154,7 @@ class Type:
         return self.params.items()
 
     @property
-    def endpoints(self) -> tuple["AtomType", ...]:
+    def endpoints(self) -> tuple[AtomType, ...]:
         eps = self._ff.type_endpoints(self._category, self._style, self._name) or []
         return tuple(AtomType(self._ff, None, n) for n in eps)
 
@@ -306,7 +307,7 @@ class Style:
     _category: str = ""
     _type_cls: type[Type] = Type
 
-    def __init__(self, ff: "ForceField", name: str) -> None:
+    def __init__(self, ff: ForceField, name: str) -> None:
         self._ff = ff
         self._name = name
 
@@ -432,7 +433,7 @@ class ForceField(_RsForceField):
 
     # ---- raw <-> Python conversion (so all FF-returning APIs yield this type) ----
     @classmethod
-    def _from_raw(cls, raw: _RsForceField) -> "ForceField":
+    def _from_raw(cls, raw: _RsForceField) -> ForceField:
         """Re-wrap a bare Rust force field (what the readers return) as a
         :class:`ForceField`: an exact copy, through the Rust ``merge``.
 
@@ -500,9 +501,7 @@ class ForceField(_RsForceField):
                 for c, sc in _STYLE_CLASSES.items()
                 if issubclass(category_or_cls, sc) or issubclass(sc, category_or_cls)
             }
-            type_cls = (
-                _TYPE_CLASSES[next(iter(cats))] if len(cats) == 1 else Type
-            )
+            type_cls = _TYPE_CLASSES[next(iter(cats))] if len(cats) == 1 else Type
         else:
             type_cls = category_or_cls
             cats = {c for c, tc in _TYPE_CLASSES.items() if issubclass(tc, type_cls)}
@@ -536,31 +535,31 @@ class ForceField(_RsForceField):
 # ---- XML readers re-wrapped to yield the Python ForceField ----
 
 
-def read_forcefield_xml(path: str) -> ForceField:
-    return ForceField._from_raw(_rs_read_forcefield_xml(path))
+def read_forcefield_xml(path: str | PathLike[str]) -> ForceField:
+    return ForceField._from_raw(_rs_read_forcefield_xml(str(path)))
 
 
 def read_forcefield_xml_str(xml: str) -> ForceField:
     return ForceField._from_raw(_rs_read_forcefield_xml_str(xml))
 
 
-def read_opls_xml(path: str) -> ForceField:
-    return ForceField._from_raw(_rs_read_opls_xml(path))
+def read_opls_xml(path: str | PathLike[str]) -> ForceField:
+    return ForceField._from_raw(_rs_read_opls_xml(str(path)))
 
 
 def read_opls_xml_str(xml: str) -> ForceField:
     return ForceField._from_raw(_rs_read_opls_xml_str(xml))
 
 
-def read_lammps_forcefield(path: str) -> ForceField:
-    return ForceField._from_raw(_rs_read_lammps_forcefield(path))
+def read_lammps_forcefield(path: str | PathLike[str]) -> ForceField:
+    return ForceField._from_raw(_rs_read_lammps_forcefield(str(path)))
 
 
 def read_lammps_forcefield_str(text: str) -> ForceField:
     return ForceField._from_raw(_rs_read_lammps_forcefield_str(text))
 
 
-def read_amber_prmtop_ff(path: str) -> ForceField:
+def read_amber_prmtop_ff(path: str | PathLike[str]) -> ForceField:
     """Read AMBER prmtop force-field tables into a :class:`ForceField`.
 
     Structure/connectivity is :func:`molrs.io.read_amber_prmtop`. Harmonic
@@ -568,7 +567,7 @@ def read_amber_prmtop_ff(path: str) -> ForceField:
     Rust. Result is pure molrs store units; the reader declares ``units``
     ``"real"``.
     """
-    return ForceField._from_raw(_rs_read_amber_prmtop_ff(path))
+    return ForceField._from_raw(_rs_read_amber_prmtop_ff(str(path)))
 
 
 def read_amber_prmtop_ff_str(text: str) -> ForceField:
@@ -577,7 +576,10 @@ def read_amber_prmtop_ff_str(text: str) -> ForceField:
 
 
 def read_gromacs_top_ff(
-    path: str, *, include: bool = False, skip_directives: Sequence[str] = ()
+    path: str | PathLike[str],
+    *,
+    include: bool = False,
+    skip_directives: Sequence[str] = (),
 ) -> ForceField:
     """Read the force-field directives of a GROMACS topology into a :class:`ForceField`.
 
@@ -600,7 +602,9 @@ def read_gromacs_top_ff(
     instead of refused.
     """
     return ForceField._from_raw(
-        _rs_read_gromacs_top_ff(path, include=include, skip_directives=skip_directives)
+        _rs_read_gromacs_top_ff(
+            str(path), include=include, skip_directives=skip_directives
+        )
     )
 
 
@@ -621,7 +625,7 @@ def read_gromacs_top_ff_str(
 
 
 def write_gromacs_top_ff(
-    path: str, forcefield: ForceField, *, precision: int = 6
+    path: str | PathLike[str], forcefield: ForceField, *, precision: int = 6
 ) -> None:
     """Write a ForceField as GROMACS force-field directives.
 
@@ -632,7 +636,7 @@ def write_gromacs_top_ff(
     directives cannot express raises ``ValueError`` naming it. ``precision`` is
     the number of decimal places for floating coefficients.
     """
-    _rs_write_gromacs_top_ff(path, forcefield, precision=precision)
+    _rs_write_gromacs_top_ff(str(path), forcefield, precision=precision)
 
 
 def write_gromacs_top_ff_str(forcefield: ForceField, *, precision: int = 6) -> str:
@@ -644,10 +648,10 @@ def write_gromacs_top_ff_str(forcefield: ForceField, *, precision: int = 6) -> s
 
 
 def write_forcefield_xml(
-    path: str, forcefield: ForceField, *, precision: int = 6
+    path: str | PathLike[str], forcefield: ForceField, *, precision: int = 6
 ) -> None:
     """Write a ForceField to OpenMM-style XML."""
-    _rs_write_forcefield_xml(path, forcefield, precision=precision)
+    _rs_write_forcefield_xml(str(path), forcefield, precision=precision)
 
 
 def write_forcefield_xml_str(forcefield: ForceField, *, precision: int = 6) -> str:
@@ -684,7 +688,7 @@ def read_lammps_data_coeffs(
 
 
 def write_lammps_forcefield(
-    path: str,
+    path: str | PathLike[str],
     forcefield: ForceField,
     frame: Frame,
     *,
@@ -721,7 +725,7 @@ def write_lammps_forcefield(
             holds a used type.
     """
     _rs_write_lammps_forcefield(
-        path,
+        str(path),
         forcefield,
         frame,
         precision=precision,

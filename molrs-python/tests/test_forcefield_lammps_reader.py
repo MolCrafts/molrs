@@ -8,10 +8,9 @@ FFI capsule a consumer like molpack resolves) and that errors map to ``ValueErro
 
 import math
 
+import molrs
 import numpy as np
 import pytest
-
-import molrs
 
 # Values copied from a real GAFF2 PEO ``*.ff`` (the molpack-paper figure-5 melt).
 _FF = """\
@@ -225,3 +224,15 @@ def test_label_write_lammps_data_coeffs_missing_label_raises_value_error():
 
 def test_label_io_has_no_lammps_type_ids_from_frame():
     assert not hasattr(molrs.io, "lammps_type_ids_from_frame")
+
+
+def test_ff_file_io_accepts_pathlike(tmp_path):
+    """``molrs.ff`` path functions take ``os.PathLike`` like ``molrs.io`` does."""
+    xml = tmp_path / "hand.xml"
+    molrs.ff.write_forcefield_xml(xml, _hand_ff())
+    back = molrs.ff.read_forcefield_xml(xml)
+    assert back.get_style("bond", "harmonic").get_type_by_name("c3-c3") is not None
+
+    out = tmp_path / "hand.ff"
+    molrs.ff.write_lammps_forcefield(out, _hand_ff(), _labelled_frame())
+    assert "bond_coeff c3-c3" in out.read_text()
