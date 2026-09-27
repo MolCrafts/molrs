@@ -97,8 +97,25 @@ impl LammpsFfReader {
     /// Parse data-file `* Coeffs` sections with optional Type Labels maps.
     ///
     /// `coeffs_text` is a fragment containing `Pair Coeffs` / `Bond Coeffs` / …
-    /// (and optional `units` line). Style defaults to harmonic / lj when the
-    /// data file does not declare `*_style`.
+    /// (and optional `units` line).
+    ///
+    /// # Styles
+    ///
+    /// A data file has no `*_style` lines; `write_data` records each style as
+    /// the section header's comment, e.g. `Bond Coeffs # harmonic/kk`. That
+    /// hint selects the category's style, with an accelerator suffix (`/kk`,
+    /// `/gpu`, `/omp`, `/intel`, `/opt`) removed. A hinted style this reader
+    /// has no kernel for (`fene`, `cosine`, …) is an error naming the section
+    /// and the style — the numbers are never read under another kernel.
+    ///
+    /// A section **without** a hint, and a category with no section, fall back
+    /// to `harmonic` (bond, angle, dihedral, improper) and `lj/cut` (pair).
+    /// The pair cutoff is always 10.0 in the file's units: a data file does not
+    /// carry one.
+    ///
+    /// # Errors
+    ///
+    /// An unsupported hinted style, plus every error of the `*_coeff` parse.
     pub fn read_data_coeffs(
         &self,
         coeffs_text: &str,
@@ -117,13 +134,23 @@ impl LammpsFfReader {
             1.0 / AMBER_SCNB,
             1.0 / AMBER_SCEE
         ));
-        // Default styles for data-file coeffs (no style line in the data file).
-        synthetic.push_str("pair_style lj/cut 10.0\n");
-        synthetic.push_str("bond_style harmonic\n");
-        synthetic.push_str("angle_style harmonic\n");
-        synthetic.push_str("dihedral_style harmonic\n");
-        synthetic.push_str("improper_style harmonic\n");
-        synthetic.push_str(&data_sections_to_commands(coeffs_text, labels)?);
+        let (hints, commands) = data_sections_to_commands(coeffs_text, labels)?;
+        for category in ["pair", "bond", "angle", "dihedral", "improper"] {
+            let style = match hints.get(category) {
+                Some(hint) => {
+                    hint.require_supported(category)?;
+                    hint.style.as_str()
+                }
+                None if category == "pair" => "lj/cut",
+                None => "harmonic",
+            };
+            if category == "pair" {
+                synthetic.push_str(&format!("pair_style {style} {DATA_PAIR_CUTOFF}\n"));
+            } else {
+                synthetic.push_str(&format!("{category}_style {style}\n"));
+            }
+        }
+        synthetic.push_str(&commands);
         self.read_str_with_labels(&synthetic, labels)
     }
 
@@ -174,14 +201,7 @@ impl LammpsFfReader {
                     let name = rest
                         .first()
                         .ok_or_else(|| format!("{}: dihedral_style missing name", where_()))?;
-                    let allowed = ["fourier", "opls", "harmonic", "multi/harmonic", "charmm"];
-                    if !allowed.contains(name) {
-                        return Err(format!(
-                            "{}: unsupported dihedral_style `{name}` (expected one of {})",
-                            where_(),
-                            allowed.join(", ")
-                        ));
-                    }
+                    require_dihedral_style(name, &where_)?;
                     // Each LAMMPS style has its own molrs kernel and coefficient
                     // layout (see `coeff_params`); the name is kept as written.
                     dihedral_style_name = Some((*name).to_owned());
@@ -262,9 +282,56 @@ impl ForceFieldReader for LammpsFfReader {
     }
 }
 
-/// Rewrite data-file section blocks into `*_coeff` command lines.
-fn data_sections_to_commands(text: &str, labels: &LammpsTypeLabelMaps) -> Result<String, String> {
+/// Pair cutoff `read_data_coeffs` declares: a data file carries none.
+const DATA_PAIR_CUTOFF: f64 = 10.0;
+
+/// A data-file `* Coeffs` section header's `# <style>` comment.
+#[derive(Debug)]
+struct SectionStyleHint {
+    /// The header line as written, e.g. `Bond Coeffs # fene/kk`.
+    header: String,
+    /// The style with any accelerator suffix removed, e.g. `fene`.
+    style: String,
+}
+
+impl SectionStyleHint {
+    /// The hint on `header`, or `None` when it has no `# <style>` comment.
+    fn parse(header: &str) -> Option<Self> {
+        let (_, comment) = header.split_once('#')?;
+        let raw = comment.split_whitespace().next()?;
+        let style = ["/kk", "/gpu", "/omp", "/intel", "/opt"]
+            .iter()
+            .find_map(|suffix| raw.strip_suffix(suffix))
+            .unwrap_or(raw);
+        Some(Self {
+            header: header.trim().to_owned(),
+            style: style.to_owned(),
+        })
+    }
+
+    /// Refuse a style the `category`'s `*_style` directive would refuse, with
+    /// the error naming this section.
+    fn require_supported(&self, category: &str) -> Result<(), String> {
+        let where_ = || format!("`{}` section", self.header);
+        let style = self.style.as_str();
+        match category {
+            "pair" => {
+                require_pair_style(&[style, &DATA_PAIR_CUTOFF.to_string()], &where_).map(|_| ())
+            }
+            "dihedral" => require_dihedral_style(style, &where_),
+            _ => require_kernel(&format!("{category}_style"), &[style], "harmonic", &where_),
+        }
+    }
+}
+
+/// Rewrite data-file section blocks into `*_coeff` command lines, and collect
+/// each section header's `# <style>` hint by category.
+fn data_sections_to_commands(
+    text: &str,
+    labels: &LammpsTypeLabelMaps,
+) -> Result<(BTreeMap<&'static str, SectionStyleHint>, String), String> {
     let mut out = String::new();
+    let mut hints = BTreeMap::new();
     let mut section: Option<&str> = None;
     for (lineno, raw) in text.lines().enumerate() {
         let line = strip_comment(raw).trim();
@@ -272,24 +339,21 @@ fn data_sections_to_commands(text: &str, labels: &LammpsTypeLabelMaps) -> Result
             continue;
         }
         let lower = line.to_ascii_lowercase();
-        if lower.starts_with("pair coeffs") {
-            section = Some("pair");
-            continue;
-        }
-        if lower.starts_with("bond coeffs") {
-            section = Some("bond");
-            continue;
-        }
-        if lower.starts_with("angle coeffs") {
-            section = Some("angle");
-            continue;
-        }
-        if lower.starts_with("dihedral coeffs") {
-            section = Some("dihedral");
-            continue;
-        }
-        if lower.starts_with("improper coeffs") {
-            section = Some("improper");
+        let opened = [
+            ("pair coeffs", "pair"),
+            ("bond coeffs", "bond"),
+            ("angle coeffs", "angle"),
+            ("dihedral coeffs", "dihedral"),
+            ("improper coeffs", "improper"),
+        ]
+        .into_iter()
+        .find(|(name, _)| lower.starts_with(name));
+        if let Some((_, kind)) = opened {
+            section = Some(kind);
+            match SectionStyleHint::parse(raw) {
+                Some(hint) => hints.insert(kind, hint),
+                None => hints.remove(kind),
+            };
             continue;
         }
         // New uppercase section ends coeffs.
@@ -366,7 +430,7 @@ fn data_sections_to_commands(text: &str, labels: &LammpsTypeLabelMaps) -> Result
             }
         }
     }
-    Ok(out)
+    Ok((hints, out))
 }
 
 // ── pair ──────────────────────────────────────────────────────────────────────
@@ -813,6 +877,19 @@ fn strip_comment(line: &str) -> &str {
         Some(i) => &line[..i],
         None => line,
     }
+}
+
+/// Refuse a `dihedral_style` this reader has no kernel for.
+fn require_dihedral_style(name: &str, where_: &dyn Fn() -> String) -> Result<(), String> {
+    let allowed = ["fourier", "opls", "harmonic", "multi/harmonic", "charmm"];
+    if allowed.contains(&name) {
+        return Ok(());
+    }
+    Err(format!(
+        "{}: unsupported dihedral_style `{name}` (expected one of {})",
+        where_(),
+        allowed.join(", ")
+    ))
 }
 
 fn require_kernel(
@@ -1288,6 +1365,91 @@ Pair Coeffs
         let lj = ff.get_style("pair", "lj/cut").unwrap();
         let pt = lj.get_pairtype("OW", None).unwrap();
         assert!((pt.params.get("epsilon").unwrap() - 0.1521).abs() < 1e-9);
+    }
+
+    fn read_data(coeffs: &str) -> Result<ForceField, String> {
+        LammpsFfReader::new().read_data_coeffs(coeffs, &LammpsTypeLabelMaps::default(), "real")
+    }
+
+    /// `Bond Coeffs # fene/kk` must not be read as harmonic: the reader has no
+    /// FENE kernel, so it refuses, naming the section and the style.
+    #[test]
+    fn data_coeffs_unsupported_bond_hint_is_an_error() {
+        let err = read_data("Bond Coeffs # fene/kk\n\n1 30 1.5 1 1\n").unwrap_err();
+        assert!(err.contains("Bond Coeffs"), "{err}");
+        assert!(
+            err.contains("`fene`"),
+            "stripped style must be named: {err}"
+        );
+    }
+
+    #[test]
+    fn data_coeffs_unsupported_angle_hint_is_an_error() {
+        let err = read_data("Angle Coeffs # cosine/kk\n\n1 2.156\n").unwrap_err();
+        assert!(err.contains("cosine"), "{err}");
+        assert!(err.contains("Angle Coeffs"), "{err}");
+    }
+
+    #[test]
+    fn data_coeffs_unsupported_pair_hint_is_an_error() {
+        let err = read_data("Pair Coeffs # morse\n\n1 1.0 2.0 3.0\n").unwrap_err();
+        assert!(err.contains("morse"), "{err}");
+        assert!(err.contains("Pair Coeffs"), "{err}");
+    }
+
+    #[test]
+    fn data_coeffs_angle_harmonic_hint_reads() {
+        let ff = read_data("Angle Coeffs # harmonic\n\n1 50.0 109.5\n").unwrap();
+        let a = ff.get_style("angle", "harmonic").unwrap();
+        let at = &angle_types(a)[0];
+        assert!((at.params.get("k").unwrap() - 100.0).abs() < 1e-12); // 2*50
+        assert!((at.params.get("theta0").unwrap() - 109.5_f64.to_radians()).abs() < 1e-12);
+    }
+
+    #[test]
+    fn data_coeffs_accelerator_suffix_is_stripped() {
+        let ff = read_data("Bond Coeffs # harmonic/kk\n\n1 450.0 0.9572\n").unwrap();
+        let bt = ff
+            .get_style("bond", "harmonic")
+            .unwrap()
+            .get_bondtype("1", "1")
+            .unwrap();
+        assert!((bt.params.get("k").unwrap() - 900.0).abs() < 1e-9);
+        assert!((bt.params.get("r0").unwrap() - 0.9572).abs() < 1e-12);
+    }
+
+    #[test]
+    fn data_coeffs_pair_lj_cut_coul_long_hint_reads() {
+        let ff = read_data("Pair Coeffs # lj/cut/coul/long/kk\n\n1 0.1521 3.1507\n").unwrap();
+        let pt = ff
+            .get_style("pair", "lj/cut")
+            .unwrap()
+            .get_pairtype("1", None)
+            .unwrap();
+        assert!((pt.params.get("epsilon").unwrap() - 0.1521).abs() < 1e-12);
+        assert!((pt.params.get("sigma").unwrap() - 3.1507).abs() < 1e-12);
+    }
+
+    /// The hint selects the dihedral kernel and its coefficient layout: four
+    /// OPLS coefficients, not the default harmonic `K d n`.
+    #[test]
+    fn data_coeffs_dihedral_hint_selects_kernel() {
+        let ff = read_data("Dihedral Coeffs # opls/omp\n\n1 1.0 2.0 3.0 4.0\n").unwrap();
+        let d = ff.get_style("dihedral", "opls").unwrap();
+        let dt = &dihedral_types(d)[0];
+        assert!((dt.params.get("k4").unwrap() - 4.0).abs() < 1e-12);
+    }
+
+    /// A section without a `# style` hint keeps the documented default.
+    #[test]
+    fn data_coeffs_without_hint_defaults_to_harmonic() {
+        let ff = read_data("Bond Coeffs\n\n1 450.0 0.9572\n").unwrap();
+        let bt = ff
+            .get_style("bond", "harmonic")
+            .unwrap()
+            .get_bondtype("1", "1")
+            .unwrap();
+        assert!((bt.params.get("k").unwrap() - 900.0).abs() < 1e-9);
     }
 
     #[test]

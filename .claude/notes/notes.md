@@ -1167,3 +1167,9 @@ route all sites through it.
 - charmm dihedral `w` (1-4 weight) is now stored as a param, but the pair term takes 1-4 weights only from `special_bonds`; nothing consumes `w`.
 - Fix: store per-pair cutoffs where the kernel has one, refuse any other surplus token; decide `w` against `special_bonds`.
 - **Status:** open.
+
+## 2026-09-27 — LAMMPS data Coeffs hint follow-ups (routed `/mol:fix`)
+
+- `Pair Coeffs # hybrid` fails with a misleading message (`unsupported hybrid pair sub-style `10``, the stand-in cutoff) instead of naming the real cause: data-file pair rows carry no per-row sub-style.
+- The accelerator-suffix list (`/kk`, `/gpu`, `/omp`, `/intel`, `/opt`) now lives twice: `ff/forcefield/readers/lammps.rs` and `io/lammps/atom_style.rs:334` (`normalize_atom_style`); `ff` does not depend on `io`, so they cannot share today. Fix: one home both features can reach.
+- **Status:** open.

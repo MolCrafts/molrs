@@ -50,6 +50,9 @@ struct LAMMPSHeader {
     num_dihedral_types: usize,
     num_improper_types: usize,
     bounds: BoxBounds,
+    /// The `units = <style>` field of the title line, as `write_data` writes
+    /// it; `None` when the title does not state one.
+    units: Option<String>,
 }
 
 // ============================================================================
@@ -521,8 +524,14 @@ fn parse_header_with_first_section<R: BufRead>(
     let mut header = LAMMPSHeader::default();
     let mut line = String::new();
 
-    reader.read_line(&mut line)?; // comment
-    line.clear();
+    // Title line. `write_data` ends it with `…, units = <style>`; LAMMPS
+    // itself ignores the line, so any other text is accepted as-is.
+    reader.read_line(&mut line)?;
+    header.units = line.split(',').find_map(|field| {
+        let value = field.trim().strip_prefix("units")?.trim_start();
+        let style = value.strip_prefix('=')?.split_whitespace().next()?;
+        Some(style.to_owned())
+    });
 
     loop {
         line.clear();
@@ -1059,6 +1068,10 @@ fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
             h.num_improper_types,
         ),
     );
+    // Unit style from the `write_data` title line; absent when not stated.
+    if let Some(units) = &h.units {
+        frame.meta.insert("lammps_units".to_string(), units.clone());
+    }
     // Which box axes appeared in the header (zero-volume boxes still set has_*).
     frame.meta.insert(
         "lammps_box_axes".to_string(),
@@ -1990,6 +2003,26 @@ mod atom_style_tests {
             parse_atoms_style_hint("Atoms # hybrid charge bond"),
             Some("hybrid".into())
         );
+    }
+
+    /// `write_data` records the unit style on its title line; it lands in
+    /// `lammps_units`, and a title without one sets no key.
+    #[test]
+    fn title_units_land_in_meta() {
+        let body = "\n1 atoms\n1 atom types\n\n\
+                    0 1 xlo xhi\n0 1 ylo yhi\n0 1 zlo zhi\n\n\
+                    Atoms # atomic\n\n1 1 0.1 0.2 0.3\n";
+        let titled = format!(
+            "LAMMPS data file via write_data, version 4 Jul 2026, \
+             timestep = 50000000, units = lj\n{body}"
+        );
+        let frame = parse_text(&titled);
+        assert_eq!(
+            frame.meta.get("lammps_units").and_then(|v| v.as_str()),
+            Some("lj")
+        );
+        let bare = parse_text(&format!("LAMMPS data file\n{body}"));
+        assert!(!bare.meta.contains_key("lammps_units"));
     }
 
     #[test]
