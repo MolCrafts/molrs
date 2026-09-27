@@ -12,19 +12,18 @@ is no Python-side object-column overflow. ``Block`` is the tidy columnar table;
 CSV and streaming bytes are read and written through ``molrs.io``.
 """
 
-from collections.abc import Iterator, Mapping, MutableMapping
-from io import StringIO
-from pathlib import Path
+from collections.abc import Iterator, Mapping, MutableMapping, Sequence
 from typing import Any, Self, overload
 
 import numpy as np
 
 from ._lib import schema as _schema
-from numpy.typing import ArrayLike, NDArray
+from numpy.typing import ArrayLike
 
 from ._lib import Block as _RsBlock
 from ._lib import BlockDtypeError
 from ._lib import Frame as _RsFrame
+from ._lib import MetaValue
 from ._lib import keys as _keys
 
 type BlockLike = Mapping[str, ArrayLike]
@@ -344,6 +343,7 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
             # so both yield one (nrows, len(key)) array. Reading coordinates is
             # the reason this exists, and a caller that has to remember which
             # bracket form transposes the result does not have a shortcut.
+            # The tuple/list branch of ``__setitem__`` is its inverse.
             if not key:
                 raise KeyError("Empty list not allowed for indexing")
             names = [_column_name(k) for k in key]
@@ -377,7 +377,58 @@ class Block(_RsBlock, MutableMapping[str, np.ndarray]):
                 "Expected str, int, slice, list[str], ndarray, or callable."
             )
 
-    def __setitem__(self, key: str, value: Any) -> None:  # type: ignore[override]
+    def __setitem__(  # type: ignore[override]
+        self, key: "str | _keys.Key | Sequence[str | _keys.Key]", value: ArrayLike
+    ) -> None:
+        """Store a column, or spread an array over several columns.
+
+        ``block["x"] = arr`` stores one column, adopting the Frame schema dtype
+        and replacing a column already under that name.
+
+        A tuple or list of names, ``block["x", "y", "z"] = arr``, is the
+        inverse of the tuple read: an ``(N, k)`` array is spread over the k
+        named columns, column ``key[i]`` receiving a contiguous copy of
+        ``arr[:, i]`` through the single-name path. So
+        ``block["x", "y", "z"] = block["x", "y", "z"]`` is an identity. The
+        key, shape, row-count and schema-dtype checks all run before the first
+        column is written, so a refusal leaves the block unchanged.
+
+        Raises
+        ------
+        KeyError
+            If a name list is empty.
+        ValueError
+            If a name repeats; if the value is not 2-D with one column per
+            name; if the block already has rows and the value's row count
+            differs; or, for a single name, if the value is a scalar or does
+            not fit the schema or the row count.
+        """
+        if isinstance(key, (list, tuple)):
+            if not key:
+                raise KeyError("Empty list not allowed for indexing")
+            names = [_column_name(k) for k in key]
+            if len(set(names)) != len(names):
+                raise ValueError(f"Block column names {names} repeat a name")
+            arr = np.asarray(value)
+            if arr.ndim != 2 or arr.shape[1] != len(names):
+                raise ValueError(
+                    f"Writing {len(names)} columns {names} needs an "
+                    f"(N, {len(names)}) array; got shape {arr.shape}"
+                )
+            if len(self) > 0 and arr.shape[0] != self.nrows:
+                raise ValueError(
+                    f"Writing columns {names} needs {self.nrows} rows, the "
+                    f"block's row count; got {arr.shape[0]}"
+                )
+            # Adopt each schema dtype up front: a refusal there must come
+            # before the first column is written, not halfway through.
+            columns = [
+                _adopt_schema_dtype(name, np.ascontiguousarray(arr[:, i]))
+                for i, name in enumerate(names)
+            ]
+            for name, column in zip(names, columns, strict=True):
+                self[name] = column
+            return
         name = _column_name(key)
         arr = np.asarray(value)
         if arr.ndim == 0:

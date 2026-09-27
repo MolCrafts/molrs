@@ -1549,15 +1549,17 @@ impl MolGraph {
     /// # Errors
     ///
     /// [`MolRsError::Parse`] when the frame has no `"atoms"` block, and
-    /// [`MolRsError::Validation`] when a column value does not fit its
-    /// canonical type, when a column's dtype contradicts a component `self`
-    /// already holds under that key, or when the frame carries an unreadable
-    /// relation block.
+    /// [`MolRsError::Validation`] when a column of `atoms` or of a registered
+    /// kind's block is not 1-D (a graph property is one value per row; the
+    /// refusal names the block and the column and comes before any node or
+    /// relation is added), when a column value does not fit its canonical
+    /// type, when a column's dtype contradicts a component `self` already
+    /// holds under that key, or when the frame carries an unreadable relation
+    /// block.
     pub(crate) fn read_frame(&mut self, frame: &Frame) -> Result<(), MolRsError> {
         let atoms_block = frame
             .get("atoms")
             .ok_or_else(|| MolRsError::parse("Frame missing 'atoms' block"))?;
-        let node_ids = self.read_node_rows(atoms_block)?;
 
         let kind_specs: Vec<(KindId, String, usize)> = self
             .kind_ids()
@@ -1567,6 +1569,15 @@ impl MolGraph {
             })
             .collect();
 
+        Self::require_1d_columns("atoms", atoms_block)?;
+        for (_, block_name, _) in &kind_specs {
+            if let Some(block) = frame.get(block_name) {
+                Self::require_1d_columns(block_name, block)?;
+            }
+        }
+
+        let node_ids = self.read_node_rows(atoms_block)?;
+
         for (kid, block_name, arity) in kind_specs {
             let Some(block) = frame.get(&block_name) else {
                 continue;
@@ -1575,6 +1586,29 @@ impl MolGraph {
         }
 
         self.reject_unreadable_relation_blocks(frame)
+    }
+
+    /// Refuse `block` if any of its columns is not 1-D.
+    ///
+    /// [`MaskedColumns`] reads one cell per row, which only a 1-D column has;
+    /// an `(N, 3)` column would panic there. Checking every consumed block up
+    /// front keeps the refusal ahead of the first write.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] naming the block, the first offending column
+    /// and its rank.
+    fn require_1d_columns(block_name: &str, block: &Block) -> Result<(), MolRsError> {
+        for key in block.keys() {
+            let ndim = block.get(key).map_or(1, |col| col.shape().len());
+            if ndim != 1 {
+                return Err(MolRsError::validation(format!(
+                    "frame block '{block_name}' column '{key}' is {ndim}-D; a graph property \
+                     column must be 1-D"
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Add one node per row of the `"atoms"` block, in row order, and return
@@ -2398,6 +2432,48 @@ mod tests {
             .read_frame(&frame)
             .expect_err("a str 'tag' cannot enter an int 'tag' component");
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+    }
+
+    /// A graph property is one value per row, so a 2-D column has no reading.
+    /// It is refused by name before any node is added, rather than panicking
+    /// in the per-row walk.
+    #[test]
+    fn read_frame_refuses_a_2d_atoms_column_before_adding_a_node() {
+        use ndarray::{Array1, Array2};
+
+        let mut atoms = Block::new();
+        atoms
+            .insert(
+                "element",
+                Array1::from_vec(vec!["C".to_owned(), "O".to_owned()]).into_dyn(),
+            )
+            .unwrap();
+        atoms
+            .insert(
+                "xyz",
+                Array2::from_shape_vec((2, 3), vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
+                    .unwrap()
+                    .into_dyn(),
+            )
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+
+        let mut graph = MolGraph::new();
+        let err = graph
+            .read_frame(&frame)
+            .expect_err("a (2, 3) column is not a per-row property");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("'atoms'"),
+            "the error names the block, got {msg}"
+        );
+        assert!(
+            msg.contains("'xyz'"),
+            "the error names the column, got {msg}"
+        );
+        assert_eq!(graph.n_nodes(), 0, "a refusal adds no node");
     }
 
     /// `merge` moves node property bags into `self`'s columns. A bag whose

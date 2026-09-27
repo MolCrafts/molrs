@@ -8,13 +8,16 @@ base :class:`Typifier` owns the rest. ``typify(mol)`` copies ``mol``, calls
 the output force field — ``forcefield()``, of which ``typify`` is the only
 writer. A subclass must not define ``typify``.
 
-The built-in typifiers accept and return ``Atomistic``.
+The built-in typifiers accept and return ``Atomistic``. :class:`ElementTypifier`
+labels by element symbol alone and defines no force field; it is exported from
+this module only.
 """
 
 from __future__ import annotations
 
 from .._lib import (
     AtdTypifier,
+    ElementTypifier,
     Match,
     MMFF94STypifier,
     MMFF94Typifier,
@@ -29,4 +32,5 @@ __all__ = [
     "MMFF94Typifier",
     "MMFF94STypifier",
     "AtdTypifier",
+    "ElementTypifier",
 ]

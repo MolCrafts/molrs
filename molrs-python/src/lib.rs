@@ -11,21 +11,26 @@
 //! | `Block`                   | `PyBlock`           | Heterogeneous column store (numpy arrays)   |
 //! | `Frame`                   | `PyFrame`           | Collection of named `Block`s + `SimBox`     |
 //! | `Box`                     | `PyBox`             | Simulation box / periodic boundaries        |
+//! | `Trace`                   | `PyTrace`           | Ordered path of 3D points (no chemistry)    |
 //! | `NeighborList`            | `PyNeighborList`    | Neighbor-search engine (build / update)     |
 //! | `Neighbors`               | `PyNeighbors`       | Materialized pair table (read-only columns) |
 //! | `NeighborQuery`           | `PyNeighborQuery`   | Cross-query against a reference point set   |
 //! | `Atomistic`               | `PyAtomistic`       | All-atom molecular graph                    |
 //! | `Perceive`                | `PyPerceive`        | Chemical perception (graph in / graph out)  |
 //! | `SubgraphMatcher`         | `PySubgraphMatcher` | Bead-pattern occurrences in a CoarseGrain   |
+//! | `Coarsener`               | `PyCoarsener`       | Node groups → sites of a new CoarseGrain    |
 //! | `Typifier`                | `PyTypifier`        | Typifier base: `match` hook, owned output   |
 //! | `Match`                   | `PyMatch`           | What a typifier's `match` assigns           |
 //! | `MMFF94Typifier`          | `PyMMFF94Typifier`  | MMFF94 atom-type assignment                 |
 //! | `MMFF94STypifier`         | `PyMMFF94STypifier` | MMFF94s (static) atom-type assignment       |
 //! | `OPLSAATypifier`          | `PyOPLSAATypifier`  | OPLS-AA atom-type + bonded assignment       |
 //! | `AtdTypifier`             | `PyAtdTypifier`     | antechamber atom types (7 `-at` tables)     |
+//! | `ElementTypifier`         | `PyElementTypifier` | Element-symbol type labels, no force field  |
 //! | `BccModel`                | `PyBccModel`        | AM1-BCC / ABCG2 bond-charge corrections     |
 //! | `MullikenModel`           | `PyMullikenModel`   | QM Mulliken charges, unchanged              |
 //! | `GasteigerModel`          | `PyGasteigerModel`  | Gasteiger / PEOE charges (no QM input)      |
+//! | `TracePlacer`             | `PyTracePlacer`     | Translation-only placement of copies        |
+//! | `Assembler`               | `PyAssembler`       | Traces + names → one placed, linked world   |
 //! | `PotentialCompiler`       | `PyPotentialCompiler` | ForceField → Potentials / TypedPotentials |
 //! | `Potentials`              | `PyPotentials`      | Compiled energy/force evaluator             |
 //! | `RDF` / `MSD` / `Cluster` |                     | Structural analysis                         |
@@ -47,7 +52,7 @@ mod store;
 // compute/, ff/, conformer/, signal/.
 mod builder;
 mod core;
-use crate::builder::{PyCarbonTubeBuilder, PyGrapheneBuilder};
+use crate::builder::{PyAssembler, PyCarbonTubeBuilder, PyGrapheneBuilder, PyTracePlacer};
 use crate::core::spatial::mesh::PyTriMesh;
 use crate::core::spatial::neighborlist::{
     PyNeighborList, PyNeighborQuery, PyNeighbors, PyVerletSkin,
@@ -57,6 +62,7 @@ use crate::core::spatial::region::{
     PySphere, PySphereUnion,
 };
 use crate::core::spatial::simbox::PyBox;
+use crate::core::spatial::trace::PyTrace;
 use crate::core::store::block::PyBlock;
 use crate::core::store::frame::{PyFrame, PyFrameMeta, PyMetaDocument, PyMetaValue};
 use crate::core::store::trajectory::{PyScalarObservable, PyTrajectory, PyVectorObservable};
@@ -72,7 +78,7 @@ mod io;
 
 // Chemical perception: one layer above `core`, mirroring `molrs::perceive`.
 mod perceive;
-use crate::perceive::{PyPerceive, PySubgraphMatcher};
+use crate::perceive::{PyCoarsener, PyPerceive, PySubgraphMatcher};
 
 mod conformer;
 use conformer::{PyConformer, PyConformerReport, PyConformerStageReport};
@@ -81,8 +87,9 @@ mod ff;
 use ff::atd::PyAtdTypifier;
 use ff::charge::{PyBccModel, PyGasteigerModel, PyMullikenModel};
 use ff::{
-    PyForceField, PyLBFGS, PyMMFF94STypifier, PyMMFF94Typifier, PyMatch, PyOPLSAATypifier,
-    PyOptReport, PyPotentialCompiler, PyPotentials, PyTypedPotentials, PyTypifier,
+    PyElementTypifier, PyForceField, PyLBFGS, PyMMFF94STypifier, PyMMFF94Typifier, PyMatch,
+    PyOPLSAATypifier, PyOptReport, PyPotentialCompiler, PyPotentials, PyTypedPotentials,
+    PyTypifier,
 };
 
 mod compute;
@@ -322,6 +329,9 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySphereUnion>()?;
     m.add_class::<PyRegion>()?;
 
+    // An ordered path of points (the sites of one chain)
+    m.add_class::<PyTrace>()?;
+
     // Molecular graph hierarchy (base before subclasses)
     m.add_class::<PyElement>()?;
     m.add_class::<PyGraph>()?;
@@ -337,6 +347,10 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCarbonTubeBuilder>()?;
     m.add_class::<PyGrapheneBuilder>()?;
 
+    // Trace assembly: place and link one world Fragment
+    m.add_class::<PyTracePlacer>()?;
+    m.add_class::<PyAssembler>()?;
+
     // translate / rotate / scale are methods on Atomistic, CoarseGrain and
     // Fragment.
 
@@ -344,6 +358,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPerceive>()?;
     m.add_class::<PyRingInfo>()?;
     m.add_class::<PySubgraphMatcher>()?;
+    m.add_class::<PyCoarsener>()?;
 
     // Field-name convention (`molrs.keys.X`, `molrs.keys.ELEMENT`, …)
     schema::register_keys(m)?;
@@ -363,6 +378,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMMFF94STypifier>()?;
     m.add_class::<PyOPLSAATypifier>()?;
     m.add_class::<PyAtdTypifier>()?;
+    m.add_class::<PyElementTypifier>()?;
     m.add_class::<PyPotentialCompiler>()?;
     m.add_class::<PyPotentials>()?;
     m.add_class::<PyTypedPotentials>()?;

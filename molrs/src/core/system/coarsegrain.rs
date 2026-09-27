@@ -38,6 +38,7 @@ use crate::store::block::Block;
 use crate::store::frame::Frame;
 use crate::store::keys;
 use crate::system::atomistic::{Bond, BondId};
+use crate::system::entity_table::EntityTable;
 use crate::system::molgraph::{Atom, KindId, MolGraph, NodeId};
 use crate::types::Idx;
 
@@ -195,6 +196,106 @@ impl CoarseGrain {
         self.graph.n_nodes()
     }
 
+    /// The positions `[x, y, z]` of `beads`, in Å as stored, in the order of
+    /// `beads` (a bead listed twice appears twice). O(k) for k listed beads;
+    /// each coordinate column is looked up once.
+    ///
+    /// # Errors
+    ///
+    /// Reporting the first offender in slice order:
+    ///
+    /// - [`MolRsError::NotFound`] when a handle is stale or belongs to
+    ///   another graph;
+    /// - [`MolRsError::Validation`] when a bead's `x`, `y` or `z` is missing or
+    ///   not finite, naming the bead by its integer handle.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use molrs::system::coarsegrain::CoarseGrain;
+    ///
+    /// let mut cg = CoarseGrain::new();
+    /// let a = cg.add_bead("W", 0.0, 1.0, 2.0);
+    /// let b = cg.add_bead("P1", 3.0, 4.0, 5.0);
+    /// assert_eq!(cg.positions(&[b, a])?, vec![[3.0, 4.0, 5.0], [0.0, 1.0, 2.0]]);
+    /// # Ok::<(), molrs::MolRsError>(())
+    /// ```
+    pub fn positions(&self, beads: &[BeadId]) -> Result<Vec<[f64; 3]>, MolRsError> {
+        let table = self.graph.node_table();
+        // An absent (or non-f64) column reads as "missing" for every bead.
+        let columns = keys::COORDS.map(|key| (key, table.column_f64(key).ok()));
+        beads
+            .iter()
+            .map(|&bead| {
+                let row = Self::bead_row(table, bead)?;
+                let mut point = [0.0; 3];
+                for (value, (key, column)) in point.iter_mut().zip(&columns) {
+                    *value = match column {
+                        Some((data, valid)) if valid.get(row) && data[row].is_finite() => data[row],
+                        _ => {
+                            return Err(MolRsError::validation(format!(
+                                "bead {} has no finite '{key}' coordinate",
+                                bead.data().as_ffi()
+                            )));
+                        }
+                    };
+                }
+                Ok(point)
+            })
+            .collect()
+    }
+
+    /// The `bead_type` of each of `beads`, in the order of `beads` (a bead
+    /// listed twice appears twice). O(k) for k listed beads; the column is
+    /// looked up once.
+    ///
+    /// # Errors
+    ///
+    /// Reporting the first offender in slice order:
+    ///
+    /// - [`MolRsError::NotFound`] when a handle is stale or belongs to
+    ///   another graph;
+    /// - [`MolRsError::Validation`] when a bead's `bead_type` was cleared
+    ///   through the inner graph, naming the bead by its integer handle.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use molrs::system::coarsegrain::CoarseGrain;
+    ///
+    /// let mut cg = CoarseGrain::new();
+    /// let a = cg.add_bead("W", 0.0, 0.0, 0.0);
+    /// let b = cg.add_bead("P1", 1.0, 0.0, 0.0);
+    /// assert_eq!(cg.bead_types(&[b, a, b])?, ["P1", "W", "P1"]);
+    /// # Ok::<(), molrs::MolRsError>(())
+    /// ```
+    pub fn bead_types(&self, beads: &[BeadId]) -> Result<Vec<String>, MolRsError> {
+        let table = self.graph.node_table();
+        let column = table.column_str(keys::BEAD_TYPE).ok();
+        beads
+            .iter()
+            .map(|&bead| {
+                let row = Self::bead_row(table, bead)?;
+                match column {
+                    Some((data, valid)) if valid.get(row) => Ok(data[row].clone()),
+                    _ => Err(MolRsError::validation(format!(
+                        "bead {} carries no '{}'",
+                        bead.data().as_ffi(),
+                        keys::BEAD_TYPE
+                    ))),
+                }
+            })
+            .collect()
+    }
+
+    /// The row of `bead` in the node table, or `NotFound` naming its integer
+    /// handle.
+    fn bead_row(table: &EntityTable<NodeId>, bead: BeadId) -> Result<usize, MolRsError> {
+        table
+            .row(bead)
+            .ok_or_else(|| MolRsError::not_found("bead", format!("bead {}", bead.data().as_ffi())))
+    }
+
     /// Add a CG bond between two existing beads.
     pub fn add_bond(&mut self, a: BeadId, b: BeadId) -> Result<BondId, MolRsError> {
         self.graph.add_relation(self.bond, &[a, b])
@@ -299,9 +400,10 @@ impl CoarseGrain {
     /// (naming both and `Frame::subset`); when none of `bead_type` / `type` /
     /// `type_id` is present, or the chosen one has a null row or the wrong
     /// dtype; when the `members` block lacks a UInt `ibead` or `atom` column,
-    /// an `ibead` names no bead row, or an `(ibead, atom)` row repeats — plus
-    /// every error of the graph read itself (e.g. a bond endpoint past the
-    /// atom rows).
+    /// an `ibead` names no bead row, or an `(ibead, atom)` row repeats; when a
+    /// column of `atoms` or `bonds` is not 1-D (an `(N, 3)` coordinate column,
+    /// say), naming the block and the column — plus every other error of the
+    /// graph read itself (e.g. a bond endpoint past the atom rows).
     pub fn from_frame(frame: &Frame) -> Result<Self, MolRsError> {
         let atoms = frame
             .get("atoms")
@@ -1028,6 +1130,25 @@ mod tests {
     }
 
     #[test]
+    fn from_frame_refuses_a_2d_atoms_column() {
+        let mut atoms = Block::new();
+        atoms.insert("type", str_col(&["A", "B"])).unwrap();
+        atoms
+            .insert(
+                "xyz",
+                ndarray::Array2::from_shape_vec((2, 3), vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
+                    .unwrap()
+                    .into_dyn(),
+            )
+            .unwrap();
+
+        let err = CoarseGrain::from_frame(&frame_of(atoms))
+            .expect_err("a (2, 3) column is not a per-bead property");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        assert!(err.to_string().contains("'xyz'"), "{err}");
+    }
+
+    #[test]
     fn bead_membership_survives_to_frame_then_from_frame() {
         let mut cg = CoarseGrain::new();
         let a = cg.add_bead("W", 0.0, 0.0, 0.0);
@@ -1129,5 +1250,71 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(cg.center(&[light, heavy]), Ok([3.0, 0.0, 0.0]));
+    }
+
+    // ---- positions / bead_types ----
+
+    #[test]
+    fn positions_come_back_in_the_order_asked() {
+        let mut cg = CoarseGrain::new();
+        let b0 = cg.add_bead("W", 0.5, -1.25, 2.0);
+        cg.add_bead("P1", 3.0, 4.0, 5.0);
+        let b2 = cg.add_bead("P2", -0.75, 8.5, 0.125);
+
+        let positions = cg.positions(&[b2, b0]).expect("both beads are placed");
+
+        assert_eq!(positions, vec![[-0.75, 8.5, 0.125], [0.5, -1.25, 2.0]]);
+    }
+
+    #[test]
+    fn bead_types_repeat_a_repeated_bead() {
+        let mut cg = CoarseGrain::new();
+        cg.add_bead("W", 0.0, 0.0, 0.0);
+        let b1 = cg.add_bead("P1", 1.0, 0.0, 0.0);
+
+        let types = cg.bead_types(&[b1, b1]).expect("b1 is live");
+
+        assert_eq!(types, vec!["P1".to_owned(), "P1".to_owned()]);
+    }
+
+    #[test]
+    fn a_stale_bead_is_not_found_by_both_accessors() {
+        let mut cg = CoarseGrain::new();
+        let kept = cg.add_bead("W", 0.0, 0.0, 0.0);
+        let gone = cg.add_bead("P1", 1.0, 0.0, 0.0);
+        cg.remove_bead(gone).expect("fixture removal");
+
+        let err = cg.positions(&[kept, gone]).expect_err("gone is stale");
+        assert!(matches!(err, MolRsError::NotFound { .. }), "{err:?}");
+        let err = cg.bead_types(&[kept, gone]).expect_err("gone is stale");
+        assert!(matches!(err, MolRsError::NotFound { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn a_bead_without_z_is_refused_by_its_integer_handle() {
+        let mut cg = CoarseGrain::new();
+        cg.add_bead("W", 0.0, 0.0, 0.0);
+        let flat = cg.add_bead_bare("P1");
+        for key in [keys::X, keys::Y] {
+            cg.as_molgraph_mut().set_node(flat, key, 1.0).unwrap();
+        }
+
+        let err = cg.positions(&[flat]).expect_err("flat has no z");
+
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        let msg = err.to_string();
+        let handle = flat.data().as_ffi().to_string();
+        assert!(msg.contains(&handle), "names handle {handle}: {msg}");
+        assert!(!msg.contains("NodeId("), "no debug id: {msg}");
+    }
+
+    #[test]
+    fn a_non_finite_coordinate_is_refused() {
+        let mut cg = CoarseGrain::new();
+        let bad = cg.add_bead("W", 0.0, f64::NAN, 0.0);
+
+        let err = cg.positions(&[bad]).expect_err("y is NaN");
+
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
     }
 }

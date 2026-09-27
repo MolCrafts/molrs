@@ -1,54 +1,66 @@
 """The operator's backmap script, run through every seam it crosses.
 
-Regression example (backmap-primitives-07, ac-012). This is the
-operator-ruled exception to "no multi-stage chains under ``tests/``": one
-public-API script composing the backmap primitives exactly as a user writes
-it,
+Regression example (trace-assembly-07, ac-008). This is the operator-ruled
+exception to "no multi-stage chains under ``tests/``" (notes.md 2026-09-26):
+one public-API script composing the backmap classes exactly as the binding
+script ``backmap_pe_pma/backmap.py`` does, steps 1 (the tuple-key coordinate
+write only) and 3-6,
 
-    to_coarsegrain pattern -> subset + from_frame target -> SubgraphMatcher.find
-    -> center -> translate -> merge -> link -> to_atomistic.
+    atoms["x", "y", "z"] = arr -> SubgraphMatcher.find -> Coarsener.coarsen
+    -> Perceive.linear_paths -> Trace(positions) / bead_types
+    -> Assembler(lib, TracePlacer()).assemble
+    -> ElementTypifier().typify(world.to_atomistic()).
 
-The library ships only the primitives; the composition lives here. Every
-number asserted is a hand count on the fixtures below, not a re-derived
-geometry: the centre, the match semantics and the link chemistry are proven
+The library ships only the classes; the composition lives here. Every number
+asserted is a hand count on the fixtures below, not a re-derived geometry:
+matching, coarsening, path walking, placement, linking and typing are proven
 by the Rust suites.
 
 Fixtures, built by hand in process (no third-party software):
 
-- an 8-bead head-to-head CG chain, bead types ``4 1 1 1 1 1 1 4``, bead ``i``
-  at ``x = 4 i`` Å (``y = z = 0``), ``mass = 72.0`` g/mol, all ``mol_id = 1``,
-  bonded ``(i, i + 1)``;
-- the ported monomer ``H0-C0-C1-H1`` with ports ``(C0, H0, ">")`` and
-  ``(C1, H1, "<")``, positions C0 (0, 0, 0), C1 (1.54, 0, 0), H0 (-1, 0, 0),
-  H1 (2.54, 0, 0) Å, masses C 12.011 and H 1.008 g/mol.
+- a CG frame: an 8-bead head-to-head chain, bead types ``4 1 1 1 1 1 1 4``,
+  bead ``i`` at ``x = 4 i`` Å, ``mass = 72.0`` g/mol, bonded ``(i, i + 1)``,
+  plus one type-``2`` bead at ``x = 40`` Å with ``mass = 7.0`` g/mol and no
+  bond; no ``mol_id`` column;
+- the library: the ported monomer ``H0-C0-C1-H1`` (a ``Fragment``, ports
+  ``(C0, H0, ">")`` and ``(C1, H1, "<")``; C 12.011, H 1.008 g/mol) under
+  ``"M"`` and a one-atom Li ``Atomistic`` (6.94 g/mol) under ``"Li"``.
 
-Hand counts: the pattern ``1-1-1-4`` embeds in the chain once from each end,
-so there are 2 groups; merging two 4-atom monomers gives 8 atoms and 4 ports;
-one link removes one leaving hydrogen per port, leaving 6 atoms and 2 ports.
+Hand counts: ``1-1-1-4`` embeds in the chain once from each end (beads 0-3
+and 4-7, disjoint) and ``2`` once, so 3 groups and 3 sites; the chain's
+bond 3-4 joins the two chain sites, so the paths are one 2-site chain and one
+lone site (sorted lengths ``[1, 2]``). Two monomer copies are 8 atoms and 4
+ports; their one link removes one hydrogen per joined port, leaving 6 atoms
+and 2 ports; the Li adds 1 atom: 7 atoms, 2 ports, ``mol_id`` 1 (the chain)
+and 2 (the Li), and every atom type is an element of C, H or Li.
 """
 
 from __future__ import annotations
 
-import molrs
 import numpy as np
-from molrs import CoarseGrain, perceive
-from molrs.io import CGSmilesIR
 
-N_BEADS = 8
+import molrs
+from molrs import CoarseGrain
+from molrs.builder import Assembler, TracePlacer
+from molrs.ff.typifier import ElementTypifier
+from molrs.io import CGSmilesIR
+from molrs.perceive import Coarsener, Perceive, SubgraphMatcher
+
+N_CHAIN = 8
 
 
 def _cg_frame() -> molrs.Frame:
-    """The 8-bead head-to-head CG chain as a frame (Å, g/mol)."""
-    index = np.arange(N_BEADS)
+    """The CG chain plus one lone ``2`` bead, coordinates still zero."""
+    n = N_CHAIN + 1
+    index = np.arange(N_CHAIN)
     return molrs.Frame(
         {
             "atoms": {
-                "type": np.array(["4", "1", "1", "1", "1", "1", "1", "4"]),
-                "x": 4.0 * index.astype(np.float64),
-                "y": np.zeros(N_BEADS, dtype=np.float64),
-                "z": np.zeros(N_BEADS, dtype=np.float64),
-                "mass": np.full(N_BEADS, 72.0, dtype=np.float64),
-                "mol_id": np.ones(N_BEADS, dtype=np.int64),
+                "type": np.array(["4", "1", "1", "1", "1", "1", "1", "4", "2"]),
+                "x": np.zeros(n, dtype=np.float64),
+                "y": np.zeros(n, dtype=np.float64),
+                "z": np.zeros(n, dtype=np.float64),
+                "mass": np.array([72.0] * N_CHAIN + [7.0], dtype=np.float64),
             },
             "bonds": {
                 "atomi": index[:-1],
@@ -58,10 +70,18 @@ def _cg_frame() -> molrs.Frame:
     )
 
 
+def _coordinates() -> np.ndarray:
+    """``(9, 3)``: chain bead ``i`` at ``x = 4 i`` Å, the lone bead at 40 Å."""
+    xyz = np.zeros((N_CHAIN + 1, 3), dtype=np.float64)
+    xyz[:N_CHAIN, 0] = 4.0 * np.arange(N_CHAIN)
+    xyz[N_CHAIN, 0] = 40.0
+    return xyz
+
+
 def _ported_monomer() -> molrs.Fragment:
     """``H0-C0-C1-H1`` with ports ``(C0, H0, ">")`` and ``(C1, H1, "<")``.
 
-    Kept beside the script, not imported from ``test_fragment.py``, so this
+    Kept beside the script, not imported from another test module, so this
     regression example runs on its own.
     """
     fragment = molrs.Fragment()
@@ -77,51 +97,51 @@ def _ported_monomer() -> molrs.Fragment:
     return fragment
 
 
-def test_operator_backmap_composition_crosses_every_seam() -> None:
+def _lithium() -> molrs.Atomistic:
+    mol = molrs.Atomistic()
+    mol.def_atom(element="Li", x=0.0, y=0.0, z=0.0, mass=6.94)
+    return mol
+
+
+def test_operator_backmap_script_crosses_every_seam() -> None:
+    # 1. CG input: coordinates written through the tuple key.
     frame = _cg_frame()
-    monomer = _ported_monomer()
+    atoms = frame["atoms"]
+    atoms["x", "y", "z"] = _coordinates()
+    cg = CoarseGrain.from_frame(frame)
 
-    # 1. The bead-group pattern, from a CGsmiles string.
-    pattern = CGSmilesIR("{[#1][#1][#1][#4]}").to_coarsegrain()
-    # 2. One molecule of the CG frame, as a CoarseGrain.
-    target = CoarseGrain.from_frame(frame.subset(frame["atoms", "mol_id"] == 1))
-    # 3. Every embedding of the pattern, as target bead handles.
-    groups = perceive.SubgraphMatcher(pattern).find(target)
-    assert len(groups) == 2
+    # 2. Library: name -> one molecule, a ported Fragment or a portless
+    #    Atomistic.
+    lib = {"M": _ported_monomer(), "Li": _lithium()}
 
-    # 4. Per group: place a copy of the monomer on the group's centre and
-    #    merge it into the world, keeping each copy's ports as world handles.
-    world = molrs.Fragment()
-    copies: list[dict[str, int]] = []
-    for group in groups:
-        unit = monomer.copy()
-        bead_center = target.center(group)
-        unit_center = unit.center()
-        for center in (bead_center, unit_center):
-            assert isinstance(center, np.ndarray)
-            assert center.dtype == np.float64
-            assert center.shape == (3,)
-        # ``translate`` takes the 1-D ndarray ``center`` returns, unwrapped.
-        unit.translate(bead_center - unit_center)
-        own_ports = {port["port_kind"]: port.handle for port in unit.ports}
+    # 3. Rules: bead-group pattern -> molecule name; each group is one site.
+    rules = {"{[#1][#1][#1][#4]}": "M", "{[#2]}": "Li"}
+    groups: list[list[int]] = []
+    names: list[str] = []
+    for pattern, name in rules.items():
+        found = SubgraphMatcher(CGSmilesIR(pattern).to_coarsegrain()).find(cg)
+        groups += found
+        names += [name] * len(found)
+    assert len(groups) == 3
+    sites = Coarsener(cg).coarsen(groups, names)
+    assert type(sites) is molrs.CoarseGrain
+    assert sites.n_beads == 3
 
-        maps = world.merge(unit)
+    # 4. Sites -> traces: one ordered path per chain.
+    paths = Perceive(sites).linear_paths()
+    assert sorted(len(path) for path in paths) == [1, 2]
+    traces = [molrs.Trace(sites.positions(path)) for path in paths]
+    seqs = [sites.bead_types(path) for path in paths]
 
-        assert isinstance(maps, tuple)
-        assert len(maps) == 2
-        atom_map, port_map = maps
-        assert isinstance(atom_map, dict)
-        assert isinstance(port_map, dict)
-        copies.append({kind: port_map[handle] for kind, handle in own_ports.items()})
-    assert world.n_atoms == 8
-    assert world.n_ports == 4
-
-    # 5. Join copy 1's ">" to copy 2's "<".
-    bond = world.link(copies[0][">"], copies[1]["<"])
-    assert isinstance(bond, int)
-
-    # 6. The finished world as a public Atomistic.
-    atomistic = world.to_atomistic()
-    assert type(atomistic) is molrs.Atomistic
-    assert atomistic.n_atoms == 6
+    # 5. Assemble: one placed copy per site, ports join each chain.
+    world = Assembler(lib, TracePlacer()).assemble(traces, seqs)
+    assert type(world) is molrs.Fragment
+    assert world.n_atoms == 7
     assert world.n_ports == 2
+    mol_id = np.asarray(world.to_frame()["atoms"]["mol_id"])
+    assert set(mol_id.tolist()) == {1, 2}
+
+    # 6. Element types for the writer.
+    typed = ElementTypifier().typify(world.to_atomistic())
+    assert type(typed) is molrs.Atomistic
+    assert set(typed.to_frame()["atoms"]["type"]) <= {"C", "H", "Li"}

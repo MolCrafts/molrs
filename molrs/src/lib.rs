@@ -75,7 +75,8 @@ pub mod core;
 pub use crate::core::system::element::Element;
 pub use crate::core::*;
 
-/// Structure builders (graphene, nanotubes, self-avoiding walks, …).
+/// Structure builders (graphene, nanotubes, self-avoiding walks, trace
+/// assembly, …).
 ///
 /// Builders sit above `core` and produce frames / paths without depending on
 /// feature-gated analysis or force fields; `full` includes them.
@@ -83,8 +84,9 @@ pub use crate::core::*;
 pub mod builder;
 #[cfg(feature = "builder")]
 pub use crate::builder::{
-    CarbonTubeBuilder, CarbonTubeError, FccLattice, GrapheneBuilder, GrapheneError, GrowthStrategy,
-    OccupancyMode, OffLattice, SelfAvoidingWalk, WalkError, WalkOutput,
+    AssembleError, Assembler, CarbonTubeBuilder, CarbonTubeError, FccLattice, GrapheneBuilder,
+    GrapheneError, GrowthStrategy, OccupancyMode, OffLattice, PlaceError, Placer, SelfAvoidingWalk,
+    TracePlacer, WalkError, WalkOutput,
 };
 
 // Chemical perception: one layer above `core`, below `ff` / `io` / `conformer`.
@@ -110,6 +112,7 @@ pub use crate::perceive::stereo::{
     chiral_volume, find_chiral_centers,
 };
 pub use crate::perceive::subgraph::SubgraphMatcher;
+pub use crate::perceive::{CoarsenError, Coarsener, LinearPathError};
 
 #[cfg(feature = "io")]
 pub mod io;

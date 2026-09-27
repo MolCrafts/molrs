@@ -310,6 +310,91 @@ class TestBlockMultiColumnIndexing:
             self._xyz()["x", "id"]
 
 
+class TestBlockMultiColumnAssignment:
+    """``block["x", "y", "z"] = arr`` spreads an ``(N, k)`` array over k columns.
+
+    It is the inverse of the tuple read above, so a write with the same key
+    form lands in the same named columns instead of one stray 2-D column.
+    """
+
+    @staticmethod
+    def _xyz() -> molrs.Block:
+        return molrs.Block(
+            {
+                "x": np.array([0.0, 1.0, 2.0], dtype=np.float64),
+                "y": np.array([3.0, 4.0, 5.0], dtype=np.float64),
+                "z": np.array([6.0, 7.0, 8.0], dtype=np.float64),
+            }
+        )
+
+    @staticmethod
+    def _snapshot(block: molrs.Block) -> dict[str, np.ndarray]:
+        return {k: np.array(block[k], copy=True) for k in block.keys()}
+
+    def _assert_unchanged(
+        self, block: molrs.Block, before: dict[str, np.ndarray]
+    ) -> None:
+        assert block.keys() == list(before)
+        for k, v in before.items():
+            np.testing.assert_array_equal(block[k], v)
+
+    def test_a_tuple_key_spreads_the_columns(self):
+        block = self._xyz()
+        arr = np.arange(9, dtype=np.float64).reshape(3, 3) + 10.0
+        block["x", "y", "z"] = arr
+        assert sorted(block.keys()) == ["x", "y", "z"]
+        for i, name in enumerate(("x", "y", "z")):
+            np.testing.assert_array_equal(block[name], arr[:, i])
+            assert block[name].dtype == np.float64
+
+    def test_a_tuple_write_reads_back_exactly(self):
+        block = self._xyz()
+        arr = np.arange(9, dtype=np.float64).reshape(3, 3) - 4.5
+        block["x", "y", "z"] = arr
+        np.testing.assert_array_equal(block["x", "y", "z"], arr)
+
+    def test_a_list_key_spreads_the_columns(self):
+        block = self._xyz()
+        arr = np.array([[1.5, -1.5], [2.5, -2.5], [3.5, -3.5]], dtype=np.float64)
+        block[["x", "y"]] = arr
+        np.testing.assert_array_equal(block["x"], arr[:, 0])
+        np.testing.assert_array_equal(block["y"], arr[:, 1])
+        np.testing.assert_array_equal(block["z"], [6.0, 7.0, 8.0])
+        assert block["x"].dtype == np.float64
+
+    def test_reading_then_writing_the_same_key_is_identity(self):
+        block = self._xyz()
+        before = self._snapshot(block)
+        block["x", "y", "z"] = block["x", "y", "z"]
+        self._assert_unchanged(block, before)
+
+    def test_a_column_count_mismatch_is_refused_without_writing(self):
+        block = self._xyz()
+        before = self._snapshot(block)
+        with pytest.raises(ValueError, match="3"):
+            block["x", "y", "z"] = np.zeros((3, 2), dtype=np.float64)
+        self._assert_unchanged(block, before)
+
+    def test_a_row_count_mismatch_is_refused_without_writing(self):
+        block = self._xyz()
+        before = self._snapshot(block)
+        with pytest.raises(ValueError, match="4"):
+            block["x", "y", "z"] = np.zeros((4, 3), dtype=np.float64)
+        self._assert_unchanged(block, before)
+
+    def test_an_empty_key_is_a_key_error(self):
+        block = self._xyz()
+        with pytest.raises(KeyError, match="Empty"):
+            block[()] = np.zeros((3, 0), dtype=np.float64)
+
+    def test_a_repeated_name_is_refused_without_writing(self):
+        block = self._xyz()
+        before = self._snapshot(block)
+        with pytest.raises(ValueError, match="x"):
+            block["x", "x"] = np.zeros((3, 2), dtype=np.float64)
+        self._assert_unchanged(block, before)
+
+
 class TestBlockRowIndexRefusals:
     """``block[ndarray]`` refuses the two indices it used to answer wrongly.
 

@@ -56,8 +56,11 @@ Bindings only prove the **seam**:
 They must **not** re-derive numerics the Rust suite proves or run
 multi-stage pipelines. `molrs-python/tests/test_stream.py` is the Python-side
 coverage of the WebSocket publisher and stays. `molrs-python/tests/test_backmap_seam.py`
-is the one operator-ruled multi-stage seam test (find → center → translate →
-merge → link → to_atomistic on hand-built fixtures; notes.md 2026-09-26).
+is the one operator-ruled multi-stage seam test. It runs the binding backmap
+script's shape on hand-built fixtures: tuple-key write → find →
+Coarsener.coarsen → Perceive.linear_paths → Trace → Assembler.assemble →
+ElementTypifier.typify (notes.md 2026-09-26; trace-assembly-07). The exception
+covers that one file only.
 
 ```bash
 uv --directory molrs-python sync --no-install-project --extra dev

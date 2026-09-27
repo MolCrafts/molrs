@@ -23,4 +23,4 @@ pub use bond::{BondNumber, BondType};
 pub use bond_weights::BondDistanceWeights;
 pub use extract::{ExtractedBall, InducedSubgraph};
 pub use fragment::{Fragment, MergeMaps, Port, PortId, PortKind};
-pub use link::LinkError;
+pub use link::{LinkError, LinkManyError};

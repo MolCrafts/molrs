@@ -31,7 +31,8 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use numpy::{PyArray1, PyReadonlyArrayDyn};
+use ndarray::Array2;
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArrayDyn};
 use pyo3::PyClass;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -112,13 +113,19 @@ fn kind_id_checked(mol: &MolGraph, kind: &str) -> PyResult<KindId> {
         .ok_or_else(|| PyValueError::new_err(format!("kind '{kind}' is not registered")))
 }
 
-/// Render a [`CenterError`] as a Python `ValueError`.
+/// Render a [`CenterError`] as a Python `ValueError`, through
+/// [`center_error_message`].
+fn center_error_to_pyerr(e: CenterError) -> PyErr {
+    PyValueError::new_err(center_error_message(e))
+}
+
+/// The message of a [`CenterError`] as Python sees it.
 ///
 /// Node ids cross as the `int` handles Python holds (`node_to_u64`), never as
 /// the Rust debug form `NodeId(3v1)`. Every variant is matched by name, so a
 /// new variant is a compile error here rather than a silent fallback.
-fn center_error_to_pyerr(e: CenterError) -> PyErr {
-    let message = match e {
+pub(crate) fn center_error_message(e: CenterError) -> String {
+    match e {
         CenterError::Empty => "center of an empty node set".to_owned(),
         CenterError::NotFound { node } => {
             format!("node {} is not in this graph", node_to_u64(node))
@@ -136,19 +143,24 @@ fn center_error_to_pyerr(e: CenterError) -> PyErr {
             keys::MASS
         ),
         CenterError::ZeroMass => "total mass is not positive and finite".to_owned(),
-    };
-    PyValueError::new_err(message)
+    }
 }
 
-/// Render a [`LinkError`] as a Python `ValueError`.
+/// Render a [`LinkError`] as a Python `ValueError`, through
+/// [`link_error_message`].
+fn link_error_to_pyerr(e: LinkError) -> PyErr {
+    PyValueError::new_err(link_error_message(e))
+}
+
+/// The message of a [`LinkError`] as Python sees it.
 ///
 /// Port and atom ids cross as the `int` handles Python holds
 /// (`relation_to_u64` / `node_to_u64`), never as `PortId(..)` / `NodeId(..)`.
 /// Every variant is matched by name, with no catch-all arm.
-fn link_error_to_pyerr(e: LinkError) -> PyErr {
+pub(crate) fn link_error_message(e: LinkError) -> String {
     let port = relation_to_u64;
     let atom = node_to_u64;
-    let message = match e {
+    match e {
         LinkError::Port(inner) => format!("port does not read back: {inner}"),
         LinkError::StalePort { port: p } => format!(
             "port {} is stale: its anchor–handle bond no longer exists",
@@ -174,8 +186,7 @@ fn link_error_to_pyerr(e: LinkError) -> PyErr {
             atom(anchor)
         ),
         LinkError::Graph(inner) => format!("graph refused a read: {inner}"),
-    };
-    PyValueError::new_err(message)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1790,6 +1801,60 @@ impl PyCoarseGrain {
         let group: Vec<NodeId> = group.into_iter().map(node_from_u64).collect();
         let center = self.inner.center(&group).map_err(center_error_to_pyerr)?;
         Ok(vector_to_py(py, &center))
+    }
+
+    /// The positions of ``beads``, one row per listed bead, in the listed
+    /// order (a bead listed twice appears twice).
+    ///
+    /// Parameters
+    /// ----------
+    /// beads : Sequence[int]
+    ///     Bead handles, e.g. one path from ``Perceive(cg).linear_paths()``.
+    ///
+    /// Returns
+    /// -------
+    /// numpy.ndarray, shape (k, 3), float64
+    ///     ``x`` / ``y`` / ``z`` as stored (Å).
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If a handle is not a live bead of this graph, or a bead lacks a
+    ///     finite ``x`` / ``y`` / ``z``; the message names its int handle.
+    fn positions<'py>(
+        &self,
+        py: Python<'py>,
+        beads: Vec<u64>,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        let beads: Vec<NodeId> = beads.into_iter().map(node_from_u64).collect();
+        let points = self.inner.positions(&beads).map_err(molrs_error_to_pyerr)?;
+        Ok(
+            Array2::from_shape_fn((points.len(), 3), |(row, axis)| points[row][axis])
+                .into_pyarray(py),
+        )
+    }
+
+    /// The ``bead_type`` of each of ``beads``, in the listed order (a bead
+    /// listed twice appears twice).
+    ///
+    /// Parameters
+    /// ----------
+    /// beads : Sequence[int]
+    ///     Bead handles.
+    ///
+    /// Returns
+    /// -------
+    /// list[str]
+    ///     One type per listed bead.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If a handle is not a live bead of this graph, or a bead carries no
+    ///     ``bead_type``; the message names its int handle.
+    fn bead_types(&self, beads: Vec<u64>) -> PyResult<Vec<String>> {
+        let beads: Vec<NodeId> = beads.into_iter().map(node_from_u64).collect();
+        self.inner.bead_types(&beads).map_err(molrs_error_to_pyerr)
     }
 }
 graph_world_impl!(PyCoarseGrain);

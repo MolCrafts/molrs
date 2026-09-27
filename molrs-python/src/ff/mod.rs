@@ -45,6 +45,7 @@ use pyo3::types::{PyCapsule, PyDict, PyList, PyMapping, PyString, PySuper, PyTup
 
 use molrs::ff::ForceField;
 use molrs::ff::potential::{Member, PotentialCompiler, Potentials, extract_coords, write_coords};
+use molrs::ff::typifier::ElementTypifier;
 use molrs::ff::typifier::mmff::{MMFF94STypifier, MMFF94Typifier};
 use molrs::ff::typifier::opls::OPLSAATypifier;
 use molrs::ff::typifier::{Annotation, Match, Typifier, Typing};
@@ -1208,6 +1209,42 @@ impl PyOPLSAATypifier {
             "OPLSAATypifier(forcefield='{}')",
             slf.as_super().library_name()
         )
+    }
+}
+
+/// Element typing: ``type`` labels from element symbols alone, with no force
+/// field — ``molrs.ff.typifier.ElementTypifier``.
+///
+/// :meth:`typify` returns a typed :class:`Atomistic` whose atoms carry
+/// ``type = element`` (e.g. ``"C"``) and whose bonds, angles and dihedrals
+/// carry their endpoint elements joined with ``-`` in the byte-wise smaller
+/// orientation (bond O–H is ``"H-O"``). It is for writers that need type
+/// labels (LAMMPS data) on a molecule no force field has typed;
+/// :meth:`forcefield` stays empty. Takes no arguments.
+///
+/// Raises
+/// ------
+/// ValueError
+///     From :meth:`typify`, when an atom has no string ``element`` or the
+///     molecule has impropers.
+///
+/// Examples
+/// --------
+/// >>> typed = molrs.ff.typifier.ElementTypifier().typify(water)
+/// >>> list(typed.to_frame()["bonds"]["type"])
+/// ['H-O', 'H-O']
+#[pyclass(module = "molrs.ff.typifier", name = "ElementTypifier", extends = PyTypifier)]
+pub struct PyElementTypifier;
+
+#[pymethods]
+impl PyElementTypifier {
+    #[new]
+    fn new() -> (Self, PyTypifier) {
+        (Self, PyTypifier::native(ElementTypifier::new()))
+    }
+
+    fn __repr__(&self) -> String {
+        "ElementTypifier()".to_owned()
     }
 }
 

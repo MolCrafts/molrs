@@ -702,6 +702,43 @@ class Region:
     def _ffi_regionref_capsule(self) -> object: ...
 
 # ---------------------------------------------------------------------------
+# Trace: an ordered path of 3D points
+# ---------------------------------------------------------------------------
+
+@final
+class Trace:
+    """An ordered path of 3D points, with no chemistry. Frozen.
+
+    A trace says *where* consecutive units of a chain sit (for example the
+    site positions of one coarse-grained chain), not *what* sits there.
+
+    Parameters
+    ----------
+    points : numpy.ndarray, shape (k, 3), float64
+        Every point, in order (Å). ``(0, 3)`` is the empty trace.
+
+    Raises
+    ------
+    ValueError
+        If ``points`` is not ``(k, 3)``.
+    """
+
+    def __init__(self, points: ArrayF) -> None: ...
+    @property
+    def points(self) -> ArrayF:
+        """Every point, in order.
+
+        Returns
+        -------
+        numpy.ndarray, shape (k, 3), float64
+            A copy of the points (Å).
+        """
+        ...
+    def __len__(self) -> int:
+        """The number of points, k."""
+        ...
+
+# ---------------------------------------------------------------------------
 # Molecular graph
 # ---------------------------------------------------------------------------
 
@@ -1175,6 +1212,48 @@ class CoarseGrain(Graph):
         about ``about`` (default: the origin); returns self. Pass
         ``[s, s, s]`` for a uniform scale."""
         ...
+    def positions(self, beads: Sequence[int]) -> ArrayF:
+        """The positions of ``beads``, one row per listed bead, in the listed
+        order (a bead listed twice appears twice).
+
+        Parameters
+        ----------
+        beads : Sequence[int]
+            Bead handles, e.g. one path from ``Perceive(cg).linear_paths()``.
+
+        Returns
+        -------
+        numpy.ndarray, shape (k, 3), float64
+            ``x`` / ``y`` / ``z`` as stored (Å).
+
+        Raises
+        ------
+        ValueError
+            If a handle is not a live bead, or a bead lacks a finite
+            ``x`` / ``y`` / ``z``; the message names its int handle.
+        """
+        ...
+    def bead_types(self, beads: Sequence[int]) -> list[str]:
+        """The ``bead_type`` of each of ``beads``, in the listed order (a bead
+        listed twice appears twice).
+
+        Parameters
+        ----------
+        beads : Sequence[int]
+            Bead handles.
+
+        Returns
+        -------
+        list[str]
+            One type per listed bead.
+
+        Raises
+        ------
+        ValueError
+            If a handle is not a live bead, or a bead carries no
+            ``bead_type``; the message names its int handle.
+        """
+        ...
 
 class Fragment(Graph):
     """Fragment leaf — holds a core ``Fragment`` from construction.
@@ -1491,6 +1570,59 @@ class SubgraphMatcher:
         """
         ...
 
+@final
+class Coarsener:
+    """``molrs.perceive.Coarsener`` — node groups of a held source graph
+    mapped onto the sites of a new :class:`CoarseGrain`. Frozen.
+
+    Site ``I`` stands for ``groups[I]``: it sits at the group's mass-weighted
+    centre (Å; no periodic imaging, so unwrap first), carries the group's
+    summed ``mass`` and ``bead_type = names[I]``, and records the group's
+    handles as its members. Two sites are bonded once when a source bond
+    joins their groups.
+
+    Parameters
+    ----------
+    source : CoarseGrain or Atomistic
+        The graph whose nodes are grouped; held, not copied, and read at each
+        :meth:`coarsen` call.
+
+    Raises
+    ------
+    TypeError
+        If ``source`` is neither a :class:`CoarseGrain` nor an
+        :class:`Atomistic`.
+    """
+
+    def __init__(self, source: Union[CoarseGrain, Atomistic]) -> None: ...
+    def coarsen(
+        self, groups: Sequence[Sequence[int]], names: Sequence[str]
+    ) -> CoarseGrain:
+        """A new :class:`CoarseGrain` with one site per group, in group
+        order. Releases the GIL.
+
+        Parameters
+        ----------
+        groups : Sequence[Sequence[int]]
+            Disjoint, non-empty node-handle groups of the source.
+        names : Sequence[str]
+            One site ``bead_type`` per group.
+
+        Returns
+        -------
+        CoarseGrain
+            The sites; empty when ``groups`` is empty.
+
+        Raises
+        ------
+        ValueError
+            If ``groups`` and ``names`` differ in length, a group is empty, a
+            handle is listed twice, or a group has no centre (a stale handle,
+            a missing coordinate or mass, a non-positive total mass); handles
+            are named by their int value.
+        """
+        ...
+
 # ---------------------------------------------------------------------------
 # Chemical perception — the builder (graph in / graph out, non-mutating)
 # ---------------------------------------------------------------------------
@@ -1507,9 +1639,47 @@ class Perceive:
     ``bond_number`` on bonds; ``find_hydrogens`` → adds H atoms and bonds;
     ``find_stereo`` → ``stereo``; ``find_rotatable`` → ``is_rotatable``;
     ``find_bond_types`` → ``bcc_bond_type``; ``find_equivalence_classes`` →
-    ``equiv_class``."""
+    ``equiv_class``.
 
-    def __init__(self) -> None: ...
+    ``linear_paths`` is the one query that reads a graph held by the builder:
+    construct ``Perceive(cg)`` over a :class:`CoarseGrain`. The ``find_*``
+    methods do not read it."""
+
+    def __init__(self, graph: Optional[CoarseGrain] = None) -> None:
+        """A perception builder, optionally holding the graph
+        :meth:`linear_paths` reads.
+
+        Parameters
+        ----------
+        graph : CoarseGrain, optional
+            Held, not copied.
+
+        Raises
+        ------
+        TypeError
+            If ``graph`` is given and is not a :class:`CoarseGrain`.
+        """
+        ...
+    def linear_paths(self) -> list[list[int]]:
+        """The ordered bead handles of every linear chain of the held graph.
+
+        Only ``bonds`` join beads. Each connected component must be a path
+        graph; a lone bead is a one-handle path. Releases the GIL.
+
+        Returns
+        -------
+        list[list[int]]
+            One list of bead handles per component, walked end to end.
+
+        Raises
+        ------
+        TypeError
+            If the builder holds no graph (``Perceive()``).
+        ValueError
+            If a component branches or is a ring, naming a bead by its int
+            handle.
+        """
+        ...
     def find_rings(self, mol: Atomistic) -> Atomistic: ...
     def find_aromaticity(self, mol: Atomistic) -> Atomistic: ...
     def find_hydrogens(self, mol: Atomistic) -> Atomistic: ...
@@ -1989,6 +2159,78 @@ class GrapheneBuilder:
     def bond_length(self) -> float: ...
     @property
     def periodic_xy(self) -> bool: ...
+
+@final
+class TracePlacer:
+    """``molrs.builder.TracePlacer`` — translation-only placement. Frozen.
+
+    Each copy keeps its template's orientation and its centre of mass (Å,
+    weights ``mass``) lands on its trace point. Orientation and overlap are
+    left to a later relaxation. Takes no arguments.
+    """
+
+    def __init__(self) -> None: ...
+
+@final
+class Assembler:
+    """``molrs.builder.Assembler`` — one placed, linked world from traces and
+    their unit names. Frozen.
+
+    Unit ``k`` of trace ``t`` is a copy of ``library[names[t][k]]`` placed on
+    the trace's point ``k``. In a trace of two or more units, unit ``i``'s one
+    ``>`` port joins unit ``i + 1``'s one ``<`` port; the leaving groups are
+    removed. Every atom gets ``frag_id`` (the unit's trace-major ordinal,
+    0-based) and ``mol_id`` (the trace's ordinal + 1).
+
+    Parameters
+    ----------
+    library : Mapping[str, Fragment | Atomistic]
+        Name → template, copied at construction. An ``Atomistic`` is a
+        template with no ports; it can only fill a one-unit trace.
+    placer : TracePlacer
+        Turns a template and its points into one rigid motion per copy.
+
+    Raises
+    ------
+    TypeError
+        If ``library`` is not a mapping of ``str`` to ``Fragment`` or
+        ``Atomistic``, or ``placer`` is not a :class:`TracePlacer`.
+    ValueError
+        If an ``Atomistic`` value does not convert to a ``Fragment``.
+    """
+
+    def __init__(
+        self,
+        library: _AbcMapping[str, Union[Fragment, Atomistic]],
+        placer: TracePlacer,
+    ) -> None: ...
+    def assemble(
+        self, traces: Sequence[Trace], names: Sequence[Sequence[str]]
+    ) -> Fragment:
+        """Place and link every trace; return the world. Releases the GIL.
+
+        Parameters
+        ----------
+        traces : Sequence[Trace]
+            One trace per molecule; its points are the unit positions (Å).
+        names : Sequence[Sequence[str]]
+            One library name per point of each trace.
+
+        Returns
+        -------
+        Fragment
+            The world; chain-end ports and the ports of one-unit traces stay
+            on it. Empty when ``traces`` is empty.
+
+        Raises
+        ------
+        ValueError
+            Naming the trace, unit and name at fault: the counts differ, a
+            name is not in the library, a unit lacks the one ``>`` / ``<``
+            port a join needs, a template has no centre of mass, or a join
+            is refused.
+        """
+        ...
 
 # ---------------------------------------------------------------------------
 # 3D coordinate generation (embed)
@@ -2502,6 +2744,24 @@ class AtdTypifier(Typifier[Atomistic]):
     def __init__(self, *, parameter_set: AtdParameterSet) -> None: ...
     @property
     def parameter_set(self) -> AtdParameterSet: ...
+
+class ElementTypifier(Typifier[Atomistic]):
+    """``molrs.ff.typifier.ElementTypifier`` — ``type`` labels from element
+    symbols alone, with no force field.
+
+    Atoms get ``type = element`` (e.g. ``"C"``); bonds, angles and dihedrals
+    get their endpoint elements joined with ``-`` in the byte-wise smaller
+    orientation (bond O–H is ``"H-O"``). :meth:`forcefield` stays empty.
+    Exported from :mod:`molrs.ff.typifier` only.
+
+    Raises
+    ------
+    ValueError
+        From :meth:`typify`, when an atom has no string ``element`` or the
+        molecule has impropers.
+    """
+
+    def __init__(self) -> None: ...
 
 # ---------------------------------------------------------------------------
 # Charge models — one calling convention

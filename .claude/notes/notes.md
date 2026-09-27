@@ -968,6 +968,13 @@ compute on a rescaled matrix.
 
 ## 2026-09-26 — backmap is primitives the caller composes (supersedes the assembly builder)
 
+**Superseded in part by 2026-09-27** ("trace assembly: script first, OOP user
+API"): `Placer` / `TracePlacer`, `Assembler` and the Python `Trace` return in
+the new shape, and `link_many` returns as the crate-internal
+`Fragment::link_many`. The rest stands; in particular the single-molecule
+`CoarseGrain::from_frame` bullet (`Frame::subset(block, rows)` plus
+single-molecule `from_frame`) **stays in force**.
+
 **Decision:** molrs ships no assembly engine. Backmapping means replacing each
 group of coarse-grained beads with the all-atom molecule it stands for; the
 caller composes it from these primitives:
@@ -1087,11 +1094,14 @@ amendment 4):
 
 ## 2026-09-26 — `test_backmap_seam.py` chains stages by operator ruling (scoped exception)
 
-`molrs-python/tests/test_backmap_seam.py` runs find → center → translate →
-merge → link → to_atomistic on hand-built fixtures and asserts seam facts and
-hand counts only. It is the one exception to "no multi-stage pipelines"
-(CLAUDE.md § Testing Rules), because it is the operator's expressibility
-criterion and there is no `regressions/` tree.
+`molrs-python/tests/test_backmap_seam.py` runs the binding backmap script's
+shape on hand-built fixtures: tuple-key write → find → Coarsener.coarsen →
+Perceive.linear_paths → Trace → Assembler.assemble → ElementTypifier.typify
+(rewritten in trace-assembly-07; it ran find → center → translate → merge →
+link → to_atomistic before). It asserts seam facts and hand counts only. It is
+the one exception to "no multi-stage pipelines" (CLAUDE.md § Testing Rules),
+because it is the operator's expressibility criterion and there is no
+`regressions/` tree.
 **Status:** locked (scope: that file)
 
 ## 2026-09-26 — `MolGraph::merge` drops a failed relation and panics on a kind-arity conflict (routed `/mol:fix`)
@@ -1173,3 +1183,87 @@ route all sites through it.
 - `Pair Coeffs # hybrid` fails with a misleading message (`unsupported hybrid pair sub-style `10``, the stand-in cutoff) instead of naming the real cause: data-file pair rows carry no per-row sub-style.
 - The accelerator-suffix list (`/kk`, `/gpu`, `/omp`, `/intel`, `/opt`) now lives twice: `ff/forcefield/readers/lammps.rs` and `io/lammps/atom_style.rs:334` (`normalize_atom_style`); `ff` does not depend on `io`, so they cannot share today. Fix: one home both features can reach.
 - **Status:** open.
+
+## 2026-09-27 — typifiers exported under two public names (routed `/mol:fix`)
+
+- Found by trace-assembly-05. Every typifier is public as both `molrs.ff.X` and `molrs.ff.typifier.X`: `molrs-python/python/molrs/ff/__init__.py:78,132` (import and `__all__`) re-export what `molrs-python/python/molrs/ff/typifier.py:21,28` already exports. That breaks `architecture-rules.md:108` (no dual public names for the same symbol).
+- `ElementTypifier` is single-homed under `molrs.ff.typifier` (link 07); it does not add to the debt.
+- Fix: drop the `molrs.ff.X` typifier spellings; downstream molpy imports `molrs.ff.typifier`.
+- **Status:** open.
+
+## 2026-09-27 — trace assembly: script first, OOP user API
+
+**Decision:** the `trace-assembly-*` chain builds the molrs side of the
+operator's binding script `/home/jicli594/work/backmap_pe_pma/backmap.py`
+(molpy only). Operator rulings of 2026-09-27:
+
+- (a) OOP: functional only in `op/`, no free functions under `mp`;
+- (b) `__init__` over classmethods;
+- (c) the output is a LAMMPS data file;
+- (d) script first: only the user-side API the script calls matters.
+
+**User API** (what the script calls):
+
+- `Coarsener(src).coarsen(groups, names)` (`perceive`);
+- `Perceive(g).linear_paths()` (`perceive`);
+- `Trace(points)` and the `CoarseGrain` accessors `positions(beads)` /
+  `bead_types(beads)` (`core`);
+- `Assembler(lib, TracePlacer()).assemble(traces, seqs)` (`builder`);
+- `ElementTypifier().typify(...)` (`ff::typifier`);
+- the Block tuple-key write `atoms["x", "y", "z"] = array`, which spreads an
+  `(N, k)` array across the k named columns.
+
+**Batch join.** `Fragment::link_many` is `pub(crate)`: an internal batch of
+the existing `link` (every check before the first write, one `remove_nodes`),
+not user API. Its only caller is `builder::Assembler`; the script never joins
+ports itself.
+
+**Assembler carve-out.** `assemble` is a composed operation the script
+requires. It supersedes the 2026-09-26 "primitives only" ruling for this one
+concern and no other.
+
+**Ids.** `frag_id` is the unit's global trace-major ordinal; `mol_id` is the
+trace ordinal + 1 (one trace, one molecule). `mol_id` is what lets the LAMMPS
+writer infer a bond-capable style (`Atoms # molecular`).
+
+**Placer mandate (earn-complexity exception).** The operator's words:
+"placement is the assembler's placer's job" (operator, 2026-09-27). `Placer`
+is a trait with one implementor (`TracePlacer`), kept by operator mandate.
+Owner: operator. Review point: the next builder spec decides whether a second
+placer exists or the trait collapses into `TracePlacer`.
+
+**Python `Perceive` held-graph asymmetry (link 07).** Only `linear_paths`
+reads the graph given to `Perceive(graph)`; the `find_*` queries take `mol`.
+This bends the explicit-flow rule. Removal condition: the operator rules
+either that every `find_*` reads the held graph, or that `linear_paths` takes
+the graph as an argument, and the script follows. Owner: operator.
+
+**Partial columns fill 0.0 (routed `/mol:fix`).** Templates differ in their
+optional columns (PMA carries `formal_charge` / `h_count`; PC and Li do not),
+so the assembled world holds those columns for some atoms only, and
+`to_frame` writes 0.0 in the rows without the prop — a guessed value in a
+charge-like column. The LAMMPS writer never reads `formal_charge`, so the
+script's output is unaffected. Fix: the emitted Frame carries null, not 0.0,
+for an absent prop.
+
+**Row order after batch removal (routed `/mol:spec`).** `link_many` removes
+the leaving groups in one `remove_nodes`, which swap-removes rows, so the
+world's rows are grouped by template name, copy-major, only until the removed
+rows are refilled from the end. The follow-up is an order-preserving batch
+removal; changing `remove_nodes` globally would make single-node removal O(N).
+
+**LAMMPS writer refusal (routed `/mol:fix`; link 06-io dropped from this chain
+2026-09-27).** `write_lammps_data` infers `Atoms # atomic` for a frame with
+bonds and no `mol_id`, and still writes a `Bonds` section, which LAMMPS
+rejects. The refusal must land together with its consumers, which write such
+frames today:
+
+- molpy `src/molpy/io/emit/lammps.py:45`;
+- molpy `src/molpy/engine/lammps.py:359`;
+- molpy tests `tests/test_io/test_data/test_lammps.py:392-417` and `:723-764`;
+- molvis `stage/src/io/writer.ts:154` → molrs-wasm `src/io/writer.rs:105`.
+
+Owner: operator. Removal condition: the refusal and those consumers carrying
+`mol_id` land in one change.
+
+**Status:** locked

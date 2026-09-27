@@ -8,7 +8,11 @@
 //! aromatic, which centres are chiral. SMARTS (SMILES Arbitrary Target
 //! Specification) is the substructure query language matched here;
 //! [`SubgraphMatcher`] is its coarse-grained counterpart, finding groups of
-//! beads (one node per group of atoms) by bead type.
+//! beads (one node per group of atoms) by bead type. [`Coarsener`] maps
+//! disjoint node groups onto the sites of a new coarse-grained graph, each at
+//! its group's centre of mass ([`CoarsenError`] names a refusal), and
+//! [`Perceive::linear_paths`] lists the ordered node path of every linear
+//! component, refusing branches and cycles with a [`LinearPathError`].
 //!
 //! Gasteiger charges used to live here. They are a *charge model*, not a
 //! perception, and they now sit with the other charge models in
@@ -28,8 +32,10 @@ mod aromatic_standard;
 pub mod aromaticity;
 pub mod bond_type;
 pub mod builder;
+pub mod coarsen;
 pub mod equivalence;
 pub mod hydrogens;
+pub mod paths;
 pub mod rings;
 pub mod rotatable;
 pub mod smarts;
@@ -37,4 +43,6 @@ pub mod stereo;
 pub mod subgraph;
 
 pub use builder::Perceive;
+pub use coarsen::{CoarsenError, Coarsener};
+pub use paths::LinearPathError;
 pub use subgraph::SubgraphMatcher;

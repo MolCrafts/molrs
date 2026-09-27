@@ -20,12 +20,16 @@ front-end is a format, and lives in :mod:`molrs.io`.
 pattern (a :class:`~molrs.CoarseGrain`, e.g. from
 ``CGSmilesIR(...).to_coarsegrain()``) and lists every occurrence of it in a
 target ``CoarseGrain`` as bead-handle groups. It does not partition
-overlapping groups.
+overlapping groups. :class:`Coarsener` maps disjoint node groups of a held
+``CoarseGrain`` or ``Atomistic`` onto the sites of a new ``CoarseGrain``, and
+``Perceive(cg).linear_paths()`` lists the ordered bead handles of every linear
+chain of the graph the builder holds.
 """
 
 from __future__ import annotations
 
 from ._lib import (
+    Coarsener as Coarsener,
     Perceive as Perceive,
     RingInfo as RingInfo,
     SmartsMatch as SmartsMatch,
@@ -34,6 +38,7 @@ from ._lib import (
 )
 
 __all__ = [
+    "Coarsener",
     "Perceive",
     "RingInfo",
     "SmartsMatch",

@@ -356,6 +356,23 @@ items live under the `cgsmiles-*` topics in `notes.md`).
   subclassed. wasm typifiers wrap `Typing`; `toPotentials` compiles what `typify` wrote.
   Fixed: Python integer props outside the 32-bit range were silently wrapped, and past 64
   bits turned into floats; both now raise `OverflowError`.
+- **New (Rust / Python) — trace assembly (trace-assembly 01–07):** the API the
+  operator's backmap script calls, all constructed through `__init__`:
+  `perceive::Coarsener` (`Coarsener(src).coarsen(groups, names)`),
+  `Perceive::linear_paths` (Python `Perceive(graph).linear_paths()`),
+  `Trace(points)` (Python), `CoarseGrain::positions` / `bead_types` (Python
+  `CoarseGrain.positions` / `bead_types`), `builder::Assembler`
+  (`Assembler(lib, TracePlacer()).assemble(traces, names)`: one placed,
+  linked world, `frag_id` per unit and `mol_id` = trace ordinal + 1),
+  `builder::Placer` / `TracePlacer` (translation only), and
+  `ff::typifier::ElementTypifier` (element / element-pair labels, no force
+  field). `Fragment::link_many` is crate-internal. `Placer` / `TracePlacer`
+  and the Python `Trace` **return**: the cgsmiles-03 retirement list that
+  named them no longer holds for them.
+- **Breaking (Python) — Block tuple-key write (trace-assembly-01):**
+  `block[("x", "y", "z")] = array` now spreads an `(N, k)` array across the k
+  named columns, matching the tuple-key read. It used to store one 2-D column
+  named `"('x', 'y', 'z')"`.
 - Re-deferred: the wasm `NeighborQuery` symmetry gate (`notes.md` § Known
   asymmetries, promised "to 0.15" on 2026-08-25) does not ship in 0.15.0 —
   wasm still has no consumer (facade-first), and deletion stays ruled out

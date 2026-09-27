@@ -32,7 +32,6 @@ Each of those names has exactly one spelling — ``molrs.io.SmilesIR`` and
 nothing else — so there is one thing to learn, document, and grep for.
 """
 
-
 from ._lib import (
     # Public exceptions
     BlockDtypeError,
@@ -71,6 +70,8 @@ from ._lib import (
     Polyhedron,
     SphereUnion,
     Region,
+    # An ordered path of points
+    Trace,
     # Molecular graph hierarchy
     Element,
     Graph,
@@ -198,6 +199,7 @@ __all__ = [
     "Polyhedron",
     "SphereUnion",
     "Region",
+    "Trace",
     "Element",
     "Graph",
     "Atomistic",

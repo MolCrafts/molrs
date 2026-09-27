@@ -14,6 +14,7 @@
 
 pub mod am1bcc;
 pub mod atd;
+pub mod element;
 pub mod estimate;
 pub mod gaff;
 pub mod mmff;
@@ -23,6 +24,7 @@ pub mod uff;
 
 pub use am1bcc::{BCCAtomChargeTypifier, BCCCorrectionTable, BCCCorrector, BccParameterSet};
 pub use atd::{AtdParameterSet, AtdTypifier};
+pub use element::ElementTypifier;
 pub use estimate::{
     BondedTerm, Estimate, ParameterInterpolator, Parmchk2Estimator, TypifierParameterContext,
 };
