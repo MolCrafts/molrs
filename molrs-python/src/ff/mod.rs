@@ -2184,6 +2184,58 @@ pub fn lammps_coeff_params_py(
     Ok(params.iter().map(|(k, v)| (k.to_owned(), v)).collect())
 }
 
+/// Render molrs params as the numbers of one LAMMPS coefficient line.
+///
+/// The inverse of :func:`lammps_coeff_params`, and the same conversion
+/// :func:`write_lammps_forcefield` applies to every ``*_coeff`` line. The
+/// result is the coefficients **after** the type field(s): bond harmonic
+/// ``{"k": 900.0, "r0": 0.9572}`` gives ``[450.0, 0.9572]``.
+///
+/// Parameters
+/// ----------
+/// category : str
+///     ``"bond"``, ``"angle"``, ``"dihedral"``, ``"improper"`` or ``"pair"``.
+/// style : str
+///     The LAMMPS style name: ``harmonic`` (bond / angle / improper / dihedral),
+///     ``opls``, ``fourier``, ``charmm``, ``multi/harmonic`` (dihedral), or any
+///     ``lj/cut...`` pair style (``epsilon``, ``sigma``).
+/// params : dict[str, float]
+///     Native params in molrs store units — Å, kcal/mol, radians (``lj``
+///     stays reduced).
+/// units : str, default ``"real"``
+///     LAMMPS ``units`` keyword to write the values in (``real``, ``metal``,
+///     ``lj``).
+///
+/// Returns
+/// -------
+/// list[float]
+///     Coefficients in LAMMPS file units. Harmonic force constants are
+///     ``K = k/2``, because molrs's harmonic kernels are ``½·k·(x−x₀)²`` and
+///     LAMMPS's are ``K·(x−x₀)²``; angles and phases are written in degrees.
+///     Multiplicities (``n``, fourier ``m``) are integral floats.
+///
+/// Raises
+/// ------
+/// ValueError
+///     On a ``(category, style)`` LAMMPS output has no form for (the message
+///     names both), an unknown ``units`` keyword, a missing param (named), or a
+///     non-integral multiplicity.
+#[pyfunction]
+#[pyo3(name = "lammps_coeff_values", signature = (category, style, params, units = "real"))]
+pub fn lammps_coeff_values_py(
+    category: &str,
+    style: &str,
+    params: HashMap<String, f64>,
+    units: &str,
+) -> PyResult<Vec<f64>> {
+    let mut native = molrs::ff::forcefield::Params::new();
+    for (key, value) in &params {
+        native.set(key, *value);
+    }
+    molrs::ff::forcefield::writers::lammps::lammps_coeff_values(category, style, &native, units)
+        .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
 /// Write a :class:`ForceField` to a LAMMPS force-field include (``*.ff``).
 ///
 /// Coefficient writing, keyed by the system's type labels: ``frame``'s

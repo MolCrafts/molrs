@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from .._lib import ForceField as _RsForceField
 from .._lib import lammps_coeff_params as lammps_coeff_params
+from .._lib import lammps_coeff_values as lammps_coeff_values
 from .._lib import read_amber_prmtop_ff as _rs_read_amber_prmtop_ff
 from .._lib import read_amber_prmtop_ff_str as _rs_read_amber_prmtop_ff_str
 from .._lib import read_forcefield_xml as _rs_read_forcefield_xml

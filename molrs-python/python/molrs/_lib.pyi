@@ -2568,6 +2568,12 @@ def lammps_coeff_params(
     values: Sequence[str],
     units: str = "real",
 ) -> dict[str, float]: ...
+def lammps_coeff_values(
+    category: str,
+    style: str,
+    params: dict[str, float],
+    units: str = "real",
+) -> list[float]: ...
 def write_lammps_forcefield(
     path: str,
     forcefield: ForceField,

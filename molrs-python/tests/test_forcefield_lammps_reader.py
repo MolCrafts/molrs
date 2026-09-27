@@ -243,3 +243,10 @@ def test_lammps_coeff_params_returns_native_params():
     assert params == {"k": 900.0, "r0": 0.9572}
     with pytest.raises(ValueError, match="morse"):
         molrs.ff.lammps_coeff_params("bond", "morse", ["1", "2", "3"], units="real")
+
+
+def test_lammps_coeff_values_renders_lammps_coeffs():
+    values = molrs.ff.lammps_coeff_values("bond", "harmonic", {"k": 900.0, "r0": 0.9572})
+    assert values == [450.0, 0.9572]
+    with pytest.raises(ValueError, match="morse"):
+        molrs.ff.lammps_coeff_values("bond", "morse", {"k": 1.0}, units="real")
