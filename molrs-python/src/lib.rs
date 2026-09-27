@@ -397,6 +397,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ff::write_forcefield_xml_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::write_forcefield_xml_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_lammps_data_coeffs_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::lammps_coeff_params_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::write_lammps_forcefield_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::write_lammps_forcefield_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::write_lammps_data_coeffs_py, m)?)?;

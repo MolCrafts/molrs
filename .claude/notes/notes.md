@@ -1160,3 +1160,10 @@ while `resolve.rs` (two sites) and `instantiate.rs` build
 move `cg_build` to `cgsmiles/mod.rs` or `error.rs` with an optional input and
 route all sites through it.
 **Status:** open
+
+## 2026-09-27 — LAMMPS coefficient conversion drops extra tokens silently (routed `/mol:fix`)
+
+- `ff/forcefield/readers/lammps.rs` `coeff_params` (the one home behind `lammps_coeff_params` and every `*_coeff` line) ignores tokens past the kernel's arity — e.g. a per-pair cutoff in `pair_coeff i j eps sigma rc` is dropped, not stored and not refused.
+- charmm dihedral `w` (1-4 weight) is now stored as a param, but the pair term takes 1-4 weights only from `special_bonds`; nothing consumes `w`.
+- Fix: store per-pair cutoffs where the kernel has one, refuse any other surplus token; decide `w` against `special_bonds`.
+- **Status:** open.

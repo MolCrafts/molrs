@@ -49,6 +49,7 @@ from .forcefield import (
     Parameters,
     Style,
     Type,
+    lammps_coeff_params,
     read_forcefield_xml,
     read_forcefield_xml_str,
     read_lammps_forcefield,
@@ -122,6 +123,7 @@ __all__ = [
     "write_lammps_forcefield",
     "write_lammps_forcefield_str",
     "write_lammps_data_coeffs",
+    "lammps_coeff_params",
     # typifiers
     "Typifier",
     "Match",

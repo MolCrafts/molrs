@@ -236,3 +236,10 @@ def test_ff_file_io_accepts_pathlike(tmp_path):
     out = tmp_path / "hand.ff"
     molrs.ff.write_lammps_forcefield(out, _hand_ff(), _labelled_frame())
     assert "bond_coeff c3-c3" in out.read_text()
+
+
+def test_lammps_coeff_params_returns_native_params():
+    params = molrs.ff.lammps_coeff_params("bond", "harmonic", ["450", "0.9572"])
+    assert params == {"k": 900.0, "r0": 0.9572}
+    with pytest.raises(ValueError, match="morse"):
+        molrs.ff.lammps_coeff_params("bond", "morse", ["1", "2", "3"], units="real")

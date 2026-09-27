@@ -2562,6 +2562,12 @@ def read_lammps_data_coeffs(
     dihedral_labels: dict[int, str] | None = None,
     improper_labels: dict[int, str] | None = None,
 ) -> ForceField: ...
+def lammps_coeff_params(
+    category: str,
+    style: str,
+    values: Sequence[str],
+    units: str = "real",
+) -> dict[str, float]: ...
 def write_lammps_forcefield(
     path: str,
     forcefield: ForceField,

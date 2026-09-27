@@ -2133,6 +2133,57 @@ pub fn read_lammps_data_coeffs_py(
     Ok(PyForceField { inner: forcefield })
 }
 
+/// Convert one LAMMPS coefficient line into the molrs params the reader stores.
+///
+/// The same conversion :func:`read_lammps_forcefield` applies to every
+/// ``*_coeff`` line, for callers that parse LAMMPS input themselves. ``values``
+/// are the coefficient tokens **after** the type field(s): for
+/// ``bond_coeff c3-c3 228.89 1.5354`` pass ``["228.89", "1.5354"]``.
+///
+/// Parameters
+/// ----------
+/// category : str
+///     ``"bond"``, ``"angle"``, ``"dihedral"``, ``"improper"`` or ``"pair"``.
+/// style : str
+///     The LAMMPS style name: ``harmonic`` (bond / angle / improper / dihedral),
+///     ``opls``, ``fourier``, ``charmm``, ``multi/harmonic`` (dihedral), or any
+///     ``lj/cut...`` pair style (``epsilon sigma``).
+/// values : Sequence[str]
+///     Coefficient tokens as written in the file.
+/// units : str, default ``"real"``
+///     LAMMPS ``units`` keyword the tokens are written in (``real``, ``metal``,
+///     ``lj``).
+///
+/// Returns
+/// -------
+/// dict[str, float]
+///     Native params in molrs store units — Å, kcal/mol, radians (``lj`` stays
+///     reduced). Harmonic force constants are ``k = 2K``, because molrs's
+///     harmonic kernels are ``½·k·(x−x₀)²`` and LAMMPS's are ``K·(x−x₀)²``;
+///     angles and phases given in degrees are stored in radians.
+///
+/// Raises
+/// ------
+/// ValueError
+///     On a ``(category, style)`` the LAMMPS reader has no kernel for (the
+///     message names both), an unknown ``units`` keyword, a missing
+///     coefficient, or a non-numeric token.
+#[pyfunction]
+#[pyo3(name = "lammps_coeff_params", signature = (category, style, values, units = "real"))]
+pub fn lammps_coeff_params_py(
+    category: &str,
+    style: &str,
+    values: Vec<String>,
+    units: &str,
+) -> PyResult<std::collections::HashMap<String, f64>> {
+    let tokens: Vec<&str> = values.iter().map(String::as_str).collect();
+    let params = molrs::ff::forcefield::readers::lammps::lammps_coeff_params(
+        category, style, &tokens, units,
+    )
+    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    Ok(params.iter().map(|(k, v)| (k.to_owned(), v)).collect())
+}
+
 /// Write a :class:`ForceField` to a LAMMPS force-field include (``*.ff``).
 ///
 /// Coefficient writing, keyed by the system's type labels: ``frame``'s
