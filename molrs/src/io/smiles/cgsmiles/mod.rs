@@ -16,7 +16,7 @@
 //! step the caller asks for by name, [`CGSmilesIR::to_atomistic`]. Beside it
 //! stands [`CGSmilesIR::to_fragment`], which builds the *pieces* rather than
 //! the whole: one instance-free
-//! [`Fragment`](crate::system::Fragment) **template** per definition of the
+//! ported [`Atomistic`](crate::system::atomistic::Atomistic) **template** per definition of the
 //! last fragment table, each open valence made explicit as a capping hydrogen
 //! carrying a port. Expansion is the molecule the string states; a template is
 //! what a builder places, many times, without re-reading the string. The third

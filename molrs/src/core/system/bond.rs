@@ -188,7 +188,7 @@ impl From<BondNumber> for PropValue {
 /// without a class leaves a renderer no way to tell aromatic from double. It
 /// lives here, beside the vocabulary, because two leaves write it —
 /// [`Atomistic::set_bond_class`](crate::system::atomistic::Atomistic::set_bond_class)
-/// and [`Fragment::add_bond`](crate::system::fragment::Fragment::add_bond).
+/// and the port join's new bonds (`MolGraph::link`).
 ///
 /// # Errors
 ///

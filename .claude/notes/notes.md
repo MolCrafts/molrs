@@ -1267,3 +1267,54 @@ Owner: operator. Removal condition: the refusal and those consumers carrying
 `mol_id` land in one change.
 
 **Status:** locked
+
+## 2026-09-28 — site-graph assembly (supersedes the trace form of 2026-09-27)
+
+Operator rulings, 2026-09-28, validated on a single PMA-TFSI chain before the full melt:
+
+- `Assembler::new(library, placer, orienter).assemble(&sites)` takes the site graph itself,
+  a `CoarseGrain` from `Coarsener::coarsen`: bead type = library name, position, axis, and
+  site bonds. `Trace`, `linear_paths` and the per-trace name lists are gone from assembly,
+  and any topology (chains, branches, rings) is accepted. `Perceive::linear_paths` was
+  removed. It had no other consumer, and a path walk is not chemistry.
+- The placer only translates (`SitePlacer`, centre of mass onto the site); the orienter only
+  rotates (`AxisOrienter`). The two are peers, and `Assembler` composes them
+  (`compose(place, turn)`).
+- A site is a whole matched group at its centre of mass. `coarsen` records the site axis
+  (group's first member → site) as the `axis_x/y/z` columns, read by `CoarseGrain::axes`.
+- Chain sites (`<`/`>` ports only, on a two-port template) use two frames. The site frame is
+  the site axis plus `Σ ±(partner − site)`; the template frame is (`<`/`>` anchor midpoint →
+  centre of mass) plus the anchor line. Branch sites use a symmetrised port-direction
+  `superpose`, as in CG2AT2. Spline smoothing of the tangent was measured and rejected: it
+  only sets the roll, and changed the links by less than noise. Matching the template's size
+  to the site's is the caller's job.
+- Port assignment: each component is walked breadth-first from its lowest-degree site. Each
+  site chooses one accepting port per bond, and ties go to the best port-direction fit (at
+  most 5040 choices).
+- `SelfAvoidingWalk` keeps returning `Trace`/arrays (an op-like algorithm), not a
+  `CoarseGrain`.
+- Measured on one chain (100 × PMA): links median 2.80 Å, max 5.86 Å; 84 inter-unit atom
+  pairs are closer than 1 Å. The full melt has 6.17 M atoms and took 38 s; its links have a
+  median of 2.96 Å and a max of 8.15 Å.
+- Stale consumers, all on the pre-04f0ac35 assembly stack and already broken:
+  molpy `builder/assembly` (the deferred molpy builder link), `molpy/examples/topology/eo_kit.py`,
+  and `molpack/python/examples/pack_peo_*.py`.
+
+## 2026-09-28 — graph types are peers; `Fragment` deleted; ports on every graph
+
+Operator rulings, 2026-09-28:
+
+- `Fragment`, `Atomistic` and `CoarseGrain` are peers, and no graph type converts into another (`Fragment.to_atomistic` is gone). `Fragment` duplicated `Atomistic` except for its ports, so it was deleted. Ports became a capability of every graph (`system::port`):
+  - `MolGraph::{add_port, port, ports, n_ports, port_on, leaving_group, set_frag_id, frag_id, inherit_frag_ids, link}`, with `link_many` crate-internal;
+  - the `ports` kind is registered on the first port.
+  `CGSmilesIR::to_fragment` now returns ported `Atomistic`s; the name keeps the CGsmiles "fragment definition" sense. `MergeMaps` went too: a merged port is found with `port_on(mapped anchor, mapped handle)`.
+- Consumers ask only for the capability they use. `Assembler` takes templates as bare `MolGraph`s with ports, and returns the world as any `G: FromMolGraph` (`MolGraph`, `Atomistic`, `CoarseGrain`). Python: `assemble(sites, cls=None)`, where `None` means `Graph`, and library values may be any graph.
+- `from_frame` reads only what the graph type knows. A frame is open, so a relation block of an unregistered kind is ignored; the `unreadable relation block` refusal is gone. The `ports` block is read by every graph type, since ports are MolGraph vocabulary.
+- A placer gives each copy its whole pose and may rotate ("placer 负责将fragment摆放到某个点，而不是只平移"). `SitePlacer` puts the centre of mass on the site. `GrowthPlacer` grows each copy onto its parent's port, walking breadth-first, and needs no site positions. The orienter is optional.
+- Port assignment:
+  - a lookahead requires that an open partner has an accepting port (labelled ports);
+  - a failed walk is retried from the root's next choice (a chain entered from the wrong end).
+- molpy: `builder/assembly` and `AmberPolymerBuilder` were deleted (molrs-015-align-05). The topology examples 01–06 and their docs were rewritten on `CGSmilesIR(...).to_coarsegrain()` + `Assembler(lib, GrowthPlacer()).assemble(sites, Atomistic)`.
+- Deleted, with their docs: the gel/network examples (07–11) and `06_crosslinked_gel_gaff.py`. Debt: joining sites by proximity is not yet a site-graph primitive. Owner: operator. Route: `/mol:spec` when networks are needed again.
+- molpack: the five `pack_peo_*` examples were ported to the same API and run.
+- Stale docs remain, routed to molpy's deferred docs link (molrs-015-align-09): molpy `docs/user-guide/02_assembly.md`, the 05/06/01 notebooks, `docs/api/*.md`, the glossary and `developer/architecture-overview.md` still describe the old stack.

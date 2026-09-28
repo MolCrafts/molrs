@@ -153,8 +153,8 @@ def test_get_missing_component_returns_none_and_type_conflict_raises():
 # --------------------------------------------------------------------------- #
 
 
-def test_translate_rotate_and_scale_are_methods_of_the_three_leaves():
-    for cls in (molrs.Atomistic, molrs.CoarseGrain, molrs.Fragment):
+def test_translate_rotate_and_scale_are_methods_of_the_two_leaves():
+    for cls in (molrs.Atomistic, molrs.CoarseGrain):
         assert callable(getattr(cls, "translate"))
         assert callable(getattr(cls, "rotate"))
         assert callable(getattr(cls, "scale"))
@@ -164,7 +164,7 @@ def test_translate_rotate_and_scale_are_methods_of_the_three_leaves():
     assert not hasattr(molrs, "scale")
 
 
-LEAVES = [molrs.Atomistic, molrs.CoarseGrain, molrs.Fragment]
+LEAVES = [molrs.Atomistic, molrs.CoarseGrain]
 
 
 def _one_node(cls):
@@ -427,7 +427,7 @@ def _one_weighted_node(cls, position, mass):
 
 
 def _center(mol, handles):
-    # Atomistic and Fragment centre all their own nodes; CoarseGrain centres
+    # Atomistic centres all its own nodes; CoarseGrain centres
     # the bead group it is given.
     if isinstance(mol, molrs.CoarseGrain):
         return mol.center(handles)

@@ -1,14 +1,15 @@
-"""Python surface for the fragment leaf (cgsmiles-02d-python-fragment).
+"""Python surface for ports: named attachment points any graph may carry.
 
-These are FFI-seam tests: they prove that ``molrs.Fragment`` imports and
-constructs, that its three typed writers reach the core ones (so a Python-built
-bond carries its class and a Python-built port is validated), that every
-graph-out path hands back the shadowed public class, and that the port
-vocabulary crosses as the notation glyph.
+These are FFI-seam tests: they prove that ports reach Python on a plain
+``molrs.Atomistic`` (graph types are peers, and ports are a capability of
+every one), that the typed writers reach the core ones (a Python-built bond
+carries its class and a Python-built port is validated), that graph-out paths
+keep the public class and its ports, and that the port vocabulary crosses as
+the notation glyph.
 
 They re-derive no chemistry and no geometry: every claim about ports,
 embedding and ``frag_id`` propagation is owned by the Rust unit tests in
-``molrs/src/core/system/fragment.rs``, ``molrs/src/io/smiles/cgsmiles/`` and
+``molrs/src/core/system/port.rs``, ``molrs/src/io/smiles/cgsmiles/`` and
 ``molrs/src/conformer/``, and is reused here only to show Python sees the same
 answer. Fixtures are built in process; no third-party scientific software runs.
 """
@@ -19,20 +20,19 @@ import math
 
 import molrs
 import pytest
-from molrs import _lib
 
 # An OH-capped PEO trimer: the fragment table names exactly ``OH`` and ``PEO``.
 F2 = "{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}"
 
 
-def _capped_fragment() -> tuple[molrs.Fragment, molrs.Atom, molrs.Atom, molrs.Atom]:
+def _capped_fragment() -> tuple[molrs.Atomistic, molrs.Atom, molrs.Atom, molrs.Atom]:
     """``C–O–H`` with one unnamed ``$`` port on the capping hydrogen.
 
     The smallest graph that can carry a legal port: ``add_port`` requires the
     handle to be a hydrogen *bonded to* its anchor. Returns
     ``(fragment, carbon, oxygen, hydrogen)``.
     """
-    fragment = molrs.Fragment()
+    fragment = molrs.Atomistic()
     carbon = fragment.def_atom(element="C", x=0.0, y=0.0, z=0.0)
     oxygen = fragment.def_atom(element="O", x=1.43, y=0.0, z=0.0)
     hydrogen = fragment.def_atom(element="H", x=2.39, y=0.0, z=0.0)
@@ -43,18 +43,20 @@ def _capped_fragment() -> tuple[molrs.Fragment, molrs.Atom, molrs.Atom, molrs.At
 
 
 # ---------------------------------------------------------------------------
-# The leaf: one shadowed class, both relation kinds registered at construction
+# Ports live on any graph: the kind appears on the first port
 # ---------------------------------------------------------------------------
 
 
-def test_fragment_is_a_shadowed_leaf_with_both_kinds_registered() -> None:
-    fragment = molrs.Fragment()
+def test_the_ports_kind_is_registered_by_the_first_port() -> None:
+    mol = molrs.Atomistic()
+    assert "ports" not in mol.kinds()
+    assert mol.n_ports == 0
+    assert list(mol.ports) == []
 
-    assert type(fragment) is molrs.Fragment
-    assert isinstance(fragment, molrs.Graph)
-    assert isinstance(fragment, molrs.GraphViews)
-    assert set(fragment.kinds()) >= {"bonds", "ports"}
-    assert _lib.Fragment.__module__ == "molrs._lib"
+    fragment, _carbon, _oxygen, _hydrogen = _capped_fragment()
+
+    assert "ports" in fragment.kinds()
+    assert fragment.n_ports == 1
 
 
 def test_fragment_ports_are_interned_live_views() -> None:
@@ -73,7 +75,7 @@ def test_fragment_ports_are_interned_live_views() -> None:
 
 
 def test_def_bond_stamps_bond_class() -> None:
-    fragment = molrs.Fragment()
+    fragment = molrs.Atomistic()
     carbon = fragment.def_atom(element="C", x=0.0, y=0.0, z=0.0)
     oxygen = fragment.def_atom(element="O", x=1.43, y=0.0, z=0.0)
     fragment.def_bond(carbon, oxygen)
@@ -105,8 +107,8 @@ def test_graph_out_paths_keep_the_public_fragment_type() -> None:
     for atom, frag_id in ((carbon, 1), (oxygen, 2), (hydrogen, 3)):
         fragment.set_frag_id(atom.handle, frag_id)
 
-    for result in (fragment.copy(), molrs.Fragment.from_frame(fragment.to_frame())):
-        assert type(result) is molrs.Fragment
+    for result in (fragment.copy(), molrs.Atomistic.from_frame(fragment.to_frame())):
+        assert type(result) is molrs.Atomistic
         assert isinstance(result, molrs.GraphViews)
         assert result.n_atoms == 3
         assert result.n_ports == 1
@@ -134,9 +136,9 @@ def test_translate_moves_fragment_atoms() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_conformer_returns_a_fragment() -> None:
+def test_conformer_keeps_the_ports_of_an_atomistic() -> None:
     # Three heavy atoms plus the capping hydrogen the port needs.
-    fragment = molrs.Fragment()
+    fragment = molrs.Atomistic()
     head = fragment.def_atom(element="C", x=0.0, y=0.0, z=0.0)
     ether = fragment.def_atom(element="O", x=1.43, y=0.0, z=0.0)
     tail = fragment.def_atom(element="C", x=2.86, y=0.0, z=0.0)
@@ -150,7 +152,7 @@ def test_conformer_returns_a_fragment() -> None:
         fragment
     )
 
-    assert type(embedded) is molrs.Fragment
+    assert type(embedded) is molrs.Atomistic
     assert isinstance(report, molrs.conformer.ConformerReport)
     assert embedded.n_ports == 1
     for atom in embedded.atoms:
@@ -164,7 +166,6 @@ def test_conformer_rejects_a_non_graph() -> None:
 
     message = str(excinfo.value)
     assert "Atomistic" in message
-    assert "Fragment" in message
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +194,7 @@ def test_add_port_rejects_an_unknown_kind() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_to_fragment_returns_named_fragments() -> None:
+def test_to_fragment_returns_named_ported_templates() -> None:
     """Read the two fragment bodies of an OH-capped PEO trimer.
 
     Hand-derived from the notation: ``#PEO=[$]COC[$]`` writes two bonding
@@ -205,23 +206,22 @@ def test_to_fragment_returns_named_fragments() -> None:
     assert isinstance(fragments, dict)
     assert set(fragments) == {"OH", "PEO"}
     for fragment in fragments.values():
-        assert type(fragment) is molrs.Fragment
+        assert type(fragment) is molrs.Atomistic
     assert fragments["PEO"].n_ports == 2
     assert fragments["OH"].n_ports == 1
 
 
 # ---------------------------------------------------------------------------
-# merge / link / to_atomistic (backmap-primitives-07)
+# merge / link
 #
 # Seam only: the handle maps, the leaving-group removal and the refusals are
-# proven by ``molrs/src/core/system/fragment.rs`` and ``link.rs``. These tests
-# check the Python shapes (dicts of int handles, an int bond handle, the public
-# ``Atomistic``) and that every refusal is a ``ValueError`` that leaves the
-# fragment as it was.
+# proven by ``molrs/src/core/system/port.rs`` and ``link.rs``. These tests
+# check the Python shapes (a dict of int handles, an int bond handle) and that
+# every refusal is a ``ValueError`` that leaves the graph as it was.
 # ---------------------------------------------------------------------------
 
 
-def _def_ported_monomer(fragment: molrs.Fragment, y: float = 0.0) -> dict[str, int]:
+def _def_ported_monomer(fragment: molrs.Atomistic, y: float = 0.0) -> dict[str, int]:
     """Write ``H0–C0–C1–H1`` with ports ``(C0, H0, ">")`` and ``(C1, H1, "<")``
     into ``fragment`` through the native writers; return the port handles keyed
     by glyph.
@@ -241,38 +241,35 @@ def _def_ported_monomer(fragment: molrs.Fragment, y: float = 0.0) -> dict[str, i
     return {">": head.handle, "<": tail.handle}
 
 
-def _ported_monomer() -> molrs.Fragment:
+def _ported_monomer() -> molrs.Atomistic:
     """One ported monomer (see :func:`_def_ported_monomer`) in its own
     fragment."""
-    fragment = molrs.Fragment()
+    fragment = molrs.Atomistic()
     _def_ported_monomer(fragment)
     return fragment
 
 
-def _two_monomers() -> tuple[molrs.Fragment, dict[str, int], dict[str, int]]:
+def _two_monomers() -> tuple[molrs.Atomistic, dict[str, int], dict[str, int]]:
     """One fragment holding two separate ported monomers, written directly
     (no ``merge``), and each monomer's port handles keyed by glyph.
 
     The second copy sits 10 Å along +y so the two are disjoint in space too.
     """
-    fragment = molrs.Fragment()
+    fragment = molrs.Atomistic()
     first = _def_ported_monomer(fragment, y=0.0)
     second = _def_ported_monomer(fragment, y=10.0)
     return fragment, first, second
 
 
-def test_merge_returns_atom_and_port_maps_and_empties_other() -> None:
+def test_merge_carries_the_ports_across_and_empties_other() -> None:
     world = _ported_monomer()
     other = _ported_monomer()
 
-    atom_map, port_map = world.merge(other)
+    atom_map = world.merge(other)
 
     assert isinstance(atom_map, dict)
-    assert isinstance(port_map, dict)
     assert len(atom_map) == 4
-    assert len(port_map) == 2
     assert set(atom_map.values()) <= set(world.entities())
-    assert set(port_map.values()) <= set(world.relation_ids("ports"))
     assert other.n_atoms == 0
     assert other.n_ports == 0
     assert world.n_atoms == 8
@@ -280,9 +277,9 @@ def test_merge_returns_atom_and_port_maps_and_empties_other() -> None:
 
 
 def test_merge_type_conflict_is_a_value_error() -> None:
-    world = molrs.Fragment()
+    world = molrs.Atomistic()
     world.def_atom(element="C", tag=1.0)
-    other = molrs.Fragment()
+    other = molrs.Atomistic()
     other.def_atom(element="C", tag="one")
 
     with pytest.raises(ValueError):
@@ -334,32 +331,3 @@ def test_link_of_a_stale_port_is_a_value_error_naming_int_handles() -> None:
     assert "NodeId(" not in message
     assert world.n_atoms == n_atoms
     assert world.n_ports == n_ports
-
-
-def test_to_atomistic_returns_a_public_atomistic_and_keeps_the_fragment() -> None:
-    fragment = _ported_monomer()
-    anchor = fragment.atoms[0].handle
-    fragment.set_frag_id(anchor, 3)
-
-    mol = fragment.to_atomistic()
-
-    assert type(mol) is molrs.Atomistic
-    assert mol.n_atoms == 4
-    assert sorted(mol.entities()) == sorted(fragment.entities())
-    assert "ports" in mol.kinds()
-    assert mol.get(anchor, "frag_id") == 3
-    assert fragment.n_atoms == 4
-    assert fragment.n_ports == 2
-
-
-def test_to_atomistic_refusal_is_a_value_error_and_keeps_the_fragment() -> None:
-    fragment = _ported_monomer()
-    bare = fragment.spawn()  # a node with no element cannot be an atom
-    n_nodes = fragment.n_nodes
-
-    with pytest.raises(ValueError):
-        fragment.to_atomistic()
-
-    assert fragment.n_nodes == n_nodes
-    assert fragment.has_entity(bare)
-    assert fragment.n_ports == 2

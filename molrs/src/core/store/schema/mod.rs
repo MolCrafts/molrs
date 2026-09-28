@@ -69,7 +69,7 @@ use crate::units::preset::PresetDim;
 ///
 /// History:
 /// - 2 (assembly-06): the atom keys `site` and `q0` were removed — connection
-///   is port-only, and a leaving group's charge is folded by `Fragment::link`.
+///   is port-only, and a leaving group's charge is folded by `MolGraph::link`.
 ///   Folded into 2, which never shipped.
 /// - Also 2 (backmap-primitives): the atom key `bead` was removed — a whole
 ///   molecule maps onto a bead group, so no atom carries a template-local
@@ -142,6 +142,30 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         Scalar,
         NotAQuantity,
         "Fourth endpoint of a relation (dihedral / improper), 0-indexed."
+    ),
+    col!(
+        "axis_x",
+        "AXIS_X",
+        Float,
+        Scalar,
+        Of(Length),
+        "x-component of a coarse-grained site's axis: from the first member of its group to the site."
+    ),
+    col!(
+        "axis_y",
+        "AXIS_Y",
+        Float,
+        Scalar,
+        Of(Length),
+        "y-component of a coarse-grained site's axis: from the first member of its group to the site."
+    ),
+    col!(
+        "axis_z",
+        "AXIS_Z",
+        Float,
+        Scalar,
+        Of(Length),
+        "z-component of a coarse-grained site's axis: from the first member of its group to the site."
     ),
     col!(
         "bead_type",
@@ -616,6 +640,14 @@ pub mod consts {
     pub const MUZ: &str = "muz";
     /// The three dipole-moment keys, in axis order.
     pub const DIPOLE: [&str; 3] = [MUX, MUY, MUZ];
+    /// x-component of a coarse-grained site's axis (first group member → site).
+    pub const AXIS_X: &str = "axis_x";
+    /// y-component of a coarse-grained site's axis.
+    pub const AXIS_Y: &str = "axis_y";
+    /// z-component of a coarse-grained site's axis.
+    pub const AXIS_Z: &str = "axis_z";
+    /// The three site-axis keys, in axis order.
+    pub const AXIS: [&str; 3] = [AXIS_X, AXIS_Y, AXIS_Z];
     /// Residue identifier.
     pub const RES_ID: &str = "res_id";
     /// Residue name.
@@ -755,6 +787,9 @@ mod tests {
             consts::MUX,
             consts::MUY,
             consts::MUZ,
+            consts::AXIS_X,
+            consts::AXIS_Y,
+            consts::AXIS_Z,
             consts::RES_ID,
             consts::RES_NAME,
             consts::IS_14,

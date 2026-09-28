@@ -15,11 +15,6 @@
 //! Because the output is a graph, the finders compose: the result of one is a
 //! legal input to the next, and earlier facts survive later stages.
 //!
-//! `Perceive` also carries **queries**, which are non-mutating as well but
-//! return a plain answer instead of a graph:
-//! [`Perceive::linear_paths`] (in [`paths`](super::paths)) takes a graph and
-//! returns the ordered node path of every linear component.
-//!
 //! # Props written
 //!
 //! | Method | Atom props | Bond props |
@@ -53,9 +48,7 @@ const STEREO: &str = "stereo";
 ///
 /// Every `find_*` method is graph-in / graph-out and **non-mutating**: it clones
 /// the input, annotates the clone, and returns it. See the [module
-/// docs](self) for the props each method writes. The query
-/// [`linear_paths`](Self::linear_paths) is non-mutating too, but returns node
-/// paths rather than a graph.
+/// docs](self) for the props each method writes.
 ///
 /// The builder currently carries no options; it exists to give the perception
 /// functions one shape (and a place to hang options later).

@@ -133,6 +133,11 @@ impl<'a> Coarsener<'a> {
     ///   affect it. No periodic imaging is applied: a group split across a
     ///   periodic box face averages its split coordinates, so unwrap the source
     ///   first when a group straddles the box.
+    /// - **Axis** A_I = R_I − r_{first}, the vector (Å) from the first listed
+    ///   node of G_I to the site, written as `axis_x/y/z` and read back by
+    ///   [`CoarseGrain::axes`]; zero for a one-node group. It fixes the
+    ///   site's direction when the group's first node is a distinguished end
+    ///   (the head a matched pattern lists first).
     /// - **Type** `site_types[I]`, written as the site's `bead_type`.
     /// - **Members** the handles of G_I, in the listed order, as
     ///   [`CoarseGrain::bead_members`].
@@ -236,7 +241,7 @@ impl<'a> Coarsener<'a> {
         }
 
         let table = self.source.node_table();
-        let mut sites: Vec<([f64; 3], f64)> = Vec::with_capacity(groups.len());
+        let mut sites: Vec<([f64; 3], f64, [f64; 3])> = Vec::with_capacity(groups.len());
         for (group, members) in groups.iter().enumerate() {
             let refuse = |source| CoarsenError::Center { group, source };
             let r = center(self.source, members).map_err(refuse)?;
@@ -247,15 +252,27 @@ impl<'a> Coarsener<'a> {
                     .get_f64(node, keys::MASS)
                     .map_err(|_| refuse(CenterError::BadMass { node }))?;
             }
-            sites.push((r, m));
+            let first = self
+                .source
+                .get_node(members[0])
+                .ok()
+                .and_then(|node| node.position())
+                .ok_or(refuse(CenterError::BadPosition { node: members[0] }))?;
+            sites.push((r, m, [r[0] - first[0], r[1] - first[1], r[2] - first[2]]));
         }
 
         let mut cg = CoarseGrain::new();
         let mut ids: Vec<BeadId> = Vec::with_capacity(groups.len());
-        for ((&site_type, members), &([x, y, z], m)) in site_types.iter().zip(groups).zip(&sites) {
+        for ((&site_type, members), &([x, y, z], m, axis)) in
+            site_types.iter().zip(groups).zip(&sites)
+        {
             let site = cg.add_bead(site_type, x, y, z);
             cg.set_node(site, keys::MASS, m)
                 .expect("a CoarseGrain built here holds `mass` only as f64");
+            for (key, value) in keys::AXIS.into_iter().zip(axis) {
+                cg.set_node(site, key, value)
+                    .expect("a CoarseGrain built here holds the axis only as f64");
+            }
             cg.set_bead_members(site, members.iter().map(|&n| node_to_u64(n)).collect());
             ids.push(site);
         }
@@ -337,6 +354,22 @@ mod tests {
         assert_eq!(
             cg.bead_members(sites[0]),
             [node_to_u64(b[0]), node_to_u64(b[1])]
+        );
+    }
+
+    #[test]
+    fn each_site_axis_runs_from_its_first_member_to_the_site() {
+        let (src, b) = square();
+        // Group {b1, b0}: R = (4·3 + 0·1) / 4 = 3, first member b1 at 4 → −1.
+        // Group {b2}: one member, axis 0.
+        let cg = Coarsener::new(&src)
+            .coarsen(&[vec![b[1], b[0]], vec![b[2]]], &["A", "B"])
+            .unwrap();
+        let sites: Vec<BeadId> = cg.node_ids().collect();
+
+        assert_eq!(
+            cg.axes(&sites).unwrap(),
+            vec![[-1.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
         );
     }
 

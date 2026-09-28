@@ -4,9 +4,8 @@
 //! constructor declares the generation parameters and [`PyConformer::generate`]
 //! runs the pipeline, returning `(mol_3d, report)`.
 //!
-//! The pipeline takes a [`PyAtomistic`] or a [`PyFragment`] molecular graph and
-//! produces realistic 3D coordinates through a multi-stage ETKDGv3 process,
-//! handing back the leaf type it was given:
+//! The pipeline takes a [`PyAtomistic`] molecular graph (ports included) and
+//! produces realistic 3D coordinates through a multi-stage ETKDGv3 process:
 //!
 //! 1. **Preprocess** -- add hydrogens and perceive molecular features.
 //! 2. **Build initial** -- ETKDGv3 distance-geometry embedding.
@@ -23,7 +22,7 @@ use pyo3::prelude::*;
 
 use molrs::conformer::{Conformer, ConformerOptions, ConformerReport, ConformerSpeed, StageKind};
 
-use crate::core::system::molgraph::{PyAtomistic, PyFragment};
+use crate::core::system::molgraph::PyAtomistic;
 use crate::helpers::molrs_error_to_pyerr;
 
 /// Map a `StageKind` enum to a human-readable name.
@@ -243,28 +242,25 @@ impl PyConformer {
     /// Generate 3D coordinates for a molecular graph.
     ///
     /// Runs the full distance-geometry + optimization pipeline. The input
-    /// molecule is not modified, and the result is the **same leaf type** that
-    /// was handed in: an :class:`~molrs.Atomistic` embeds to an ``Atomistic``,
-    /// a :class:`~molrs.Fragment` to a ``Fragment`` that keeps its ports and
-    /// its ``frag_id`` labels.
+    /// molecule is not modified; the result is an :class:`~molrs.Atomistic`
+    /// that keeps the input's ports and its ``frag_id`` labels.
     ///
     /// Parameters
     /// ----------
-    /// mol : Atomistic or Fragment
-    ///     Input molecular graph (heavy atoms and bonds). A ``Fragment``
-    ///     carries its ``ports`` across unchanged; nothing else is accepted.
+    /// mol : Atomistic
+    ///     Input molecular graph (heavy atoms and bonds); its ``ports`` are
+    ///     carried across unchanged.
     ///
     /// Returns
     /// -------
-    /// tuple[Atomistic, ConformerReport] or tuple[Fragment, ConformerReport]
+    /// tuple[Atomistic, ConformerReport]
     ///     The molecule with generated 3D coordinates — positions in ångström
-    ///     (Å) — and a per-stage report. The first element has the class of
-    ///     `mol`.
+    ///     (Å) — and a per-stage report.
     ///
     /// Raises
     /// ------
     /// TypeError
-    ///     If `mol` is neither an ``Atomistic`` nor a ``Fragment``.
+    ///     If `mol` is not an ``Atomistic``.
     /// ValueError
     ///     If the molecular graph is invalid (e.g. missing element symbols).
     ///
@@ -275,12 +271,12 @@ impl PyConformer {
     /// >>> mol_3d.n_atoms   # includes added hydrogens
     /// 9
     ///
-    /// Hydrogens this pipeline adds to a fragment carry no ``frag_id``; the
-    /// caller relabels them, which is one call:
+    /// Hydrogens this pipeline adds to a ported unit carry no ``frag_id``;
+    /// the caller relabels them, which is one call:
     ///
-    /// >>> frag = molrs.io.CGSmilesIR("{[#A]}.{#A=[$]CO}").to_fragment()["A"]
-    /// >>> frag_3d, _ = Conformer(speed="fast", seed=42).generate(frag)
-    /// >>> _ = frag_3d.inherit_frag_ids()
+    /// >>> unit = molrs.io.CGSmilesIR("{[#A]}.{#A=[$]CO}").to_fragment()["A"]
+    /// >>> unit_3d, _ = Conformer(speed="fast", seed=42).generate(unit)
+    /// >>> _ = unit_3d.inherit_frag_ids()
     fn generate(
         &self,
         py: Python<'_>,
@@ -288,16 +284,6 @@ impl PyConformer {
     ) -> PyResult<(Py<PyAny>, PyConformerReport)> {
         // Leaf-first, exactly as the geometry systems dispatch: a leaf must
         // resolve to its own core value, never to the empty base it carries.
-        if let Ok(leaf) = mol.cast::<PyFragment>() {
-            let (out, report) = self
-                .inner
-                .generate(leaf.borrow().core())
-                .map_err(molrs_error_to_pyerr)?;
-            return Ok((
-                PyFragment::from_core(py, out)?.into_any(),
-                report_to_py(report),
-            ));
-        }
         if let Ok(leaf) = mol.cast::<PyAtomistic>() {
             let (out, report) = self
                 .inner
@@ -309,7 +295,7 @@ impl PyConformer {
             ));
         }
         Err(PyTypeError::new_err(format!(
-            "Conformer.generate expects an Atomistic or a Fragment, got {}",
+            "Conformer.generate expects an Atomistic, got {}",
             mol.get_type().name()?
         )))
     }

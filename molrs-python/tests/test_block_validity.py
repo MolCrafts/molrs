@@ -23,13 +23,13 @@ import numpy as np
 import pytest
 
 
-def _partially_labelled_fragment() -> molrs.Fragment:
+def _partially_labelled_fragment() -> molrs.Atomistic:
     """``C–C–H`` with a ``frag_id`` on the first carbon only.
 
     The two unlabelled atoms are the holes under test: ``frag_id`` is a node
     prop, and only one node has it.
     """
-    fragment = molrs.Fragment()
+    fragment = molrs.Atomistic()
     first = fragment.def_atom(element="C", x=0.0, y=0.0, z=0.0)
     second = fragment.def_atom(element="C", x=1.54, y=0.0, z=0.0)
     hydrogen = fragment.def_atom(element="H", x=2.63, y=0.0, z=0.0)
@@ -79,11 +79,11 @@ def test_partial_frag_id_survives_the_frame_round_trip() -> None:
     """The labelled atom keeps its id and the unlabelled ones stay unlabelled.
 
     Today ``to_frame`` drops the whole column when any atom lacks a label
-    (``fragment.rs``: "all or nothing"), so the label is lost.
+    (the old "all or nothing" rule), so the label is lost.
     """
     frame = _partially_labelled_fragment().to_frame()
 
-    restored = molrs.Fragment.from_frame(frame)
+    restored = molrs.Atomistic.from_frame(frame)
 
     assert [restored.frag_id(atom.handle) for atom in restored.atoms] == [
         7,
@@ -207,7 +207,7 @@ def test_validity_of_an_absent_column_raises_key_error() -> None:
 
 def test_insert_nullable_stores_the_mask_it_is_given() -> None:
     """The write side of :meth:`validity`: Python can state which cells are
-    holes instead of having to route through a Fragment to get a mask."""
+    holes instead of having to route through a ported graph to get a mask."""
     block = molrs.Block()
 
     block.insert_nullable(

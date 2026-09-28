@@ -75,6 +75,20 @@ pub fn normalize(vector: Vec3) -> Option<Vec3> {
     Some([vector[0] / norm, vector[1] / norm, vector[2] / norm])
 }
 
+/// A unit vector perpendicular to `axis`: `axis` crossed with the basis vector
+/// least aligned with it. `None` when `axis` is not a direction ([`normalize`]).
+pub fn perpendicular(axis: Vec3) -> Option<Vec3> {
+    let axis = normalize(axis)?;
+    let basis = if axis[0].abs() <= axis[1].abs() && axis[0].abs() <= axis[2].abs() {
+        [1.0, 0.0, 0.0]
+    } else if axis[1].abs() <= axis[2].abs() {
+        [0.0, 1.0, 0.0]
+    } else {
+        [0.0, 0.0, 1.0]
+    };
+    normalize(cross(axis, basis))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,5 +176,29 @@ mod tests {
     #[test]
     fn normalize_refuses_input_whose_squared_length_overflows() {
         assert_eq!(normalize([1e308, 1e308, 1e308]), None);
+    }
+
+    #[test]
+    fn perpendicular_is_a_unit_vector_orthogonal_to_the_axis() {
+        let axis = [1.0, 2.0, 3.0];
+        let p = perpendicular(axis).expect("(1,2,3) is a direction");
+        assert!((dot(p, p) - 1.0).abs() < TOL, "|p|^2 = {}", dot(p, p));
+        assert!(dot(p, axis).abs() < TOL, "p . axis = {}", dot(p, axis));
+    }
+
+    #[test]
+    fn perpendicular_refuses_zero_vector() {
+        assert_eq!(perpendicular([0.0, 0.0, 0.0]), None);
+    }
+
+    #[test]
+    fn perpendicular_refuses_non_finite_components() {
+        assert_eq!(perpendicular([F::NAN, 1.0, 0.0]), None);
+        assert_eq!(perpendicular([F::INFINITY, 0.0, 0.0]), None);
+    }
+
+    #[test]
+    fn perpendicular_refuses_input_whose_squared_length_overflows() {
+        assert_eq!(perpendicular([1e308, 1e308, 1e308]), None);
     }
 }

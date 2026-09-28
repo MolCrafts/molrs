@@ -1,21 +1,21 @@
-//! Port joining: [`Fragment::link`] joins two ports of one world fragment into
-//! a bond.
+//! Port joining: [`MolGraph::link`] joins two ports of one world graph into a
+//! bond.
 //!
-//! The vocabulary is defined in full in [`crate::system::fragment`]. In short:
-//! a **port** is a marked, not-yet-used bonding site on a [`Fragment`]. It
+//! The vocabulary is defined in full in [`crate::system::port`]. In short: a
+//! **port** is a marked, not-yet-used bonding site on a graph. It
 //! names two bonded atoms: the **anchor** `a`, which gains the new bond, and
 //! the **handle** `h`, a real atom (usually a capping hydrogen) standing where
 //! the partner will go. The **world** is the one fragment that holds every unit
-//! being joined; a caller first [`merge`](Fragment::merge)s each unit into it.
+//! being joined; a caller first [`merge`](MolGraph::merge)s each unit into it.
 //! An atom may carry a partial charge `q` (the `charge` property, in units of
 //! the elementary charge e) and a `frag_id`, the index of the unit it came
 //! from.
 //!
 //! A port `p = (a, h)` joins its anchor `a` to a partner's anchor. Its leaving
 //! group `D_p` is the handle's connected component over bonds once the `a`–`h`
-//! bond is cut ([`Fragment::leaving_group`]). Linking `p` (anchor `a`) with `r`
+//! bond is cut ([`MolGraph::leaving_group`]). Linking `p` (anchor `a`) with `r`
 //! (anchor `b`) pairs the two only through
-//! [`Port::accepts`](crate::system::fragment::Port::accepts), removes
+//! [`Port::accepts`](crate::system::port::Port::accepts), removes
 //! `D_p ∪ D_r` (their ports go with them), folds each leaving group's partial
 //! charge (e) onto its own anchor,
 //!
@@ -48,16 +48,17 @@ use slotmap::Key;
 use crate::error::MolRsError;
 use crate::store::keys;
 use crate::system::atomistic::{AtomId, BondId};
-use crate::system::fragment::{Fragment, Port, PortId};
+use crate::system::molgraph::MolGraph;
+use crate::system::port::{Port, PortId};
 
-/// Why [`Fragment::link`] refused to join two ports.
+/// Why [`MolGraph::link`] refused to join two ports.
 #[derive(Debug)]
 pub enum LinkError {
     /// A port did not read back (stale id or malformed descriptor).
     Port(MolRsError),
     /// The port reads back, but its anchor–handle bond no longer exists: the
     /// bond was removed through the inner graph after
-    /// [`Fragment::add_port`] checked it, so the port has no leaving group.
+    /// [`MolGraph::add_port`] checked it, so the port has no leaving group.
     StalePort {
         /// The stale port.
         port: PortId,
@@ -145,14 +146,14 @@ impl std::error::Error for LinkError {
     }
 }
 
-/// Why the crate-internal batch join `Fragment::link_many` refused a batch
+/// Why the crate-internal batch join `MolGraph::link_many` refused a batch
 /// of port pairs.
 ///
 /// Pairs are named by their 0-based index in the slice passed. In the
 /// two-pair variants `first < second`.
 #[derive(Debug)]
 pub enum LinkManyError {
-    /// Pair `pair`, checked alone, is refused as [`Fragment::link`] would
+    /// Pair `pair`, checked alone, is refused as [`MolGraph::link`] would
     /// refuse it.
     Pair {
         /// Index of the refused pair.
@@ -240,7 +241,7 @@ impl LinkPlan {
     }
 }
 
-impl Fragment {
+impl MolGraph {
     /// Join port `a` to port `b` and return the new anchor–anchor bond.
     ///
     /// Both ports are consumed: on success the two anchors are bonded and
@@ -266,12 +267,12 @@ impl Fragment {
     /// (their ports go with them) and bonds the two anchors, classed from the
     /// port order through
     /// [`BondNumber::implied_type`](crate::system::bond::BondNumber::implied_type)
-    /// and written with [`set_bond_class`](Self::set_bond_class). Total charge
+    /// and stamped on the new bond. Total charge
     /// is conserved; per-`frag_id` charge only under the labelling condition
     /// in the [module docs](crate::system::link).
     ///
     /// Several pairs are joined in one pass by the crate-internal batch
-    /// `Fragment::link_many`, which applies these checks to every pair.
+    /// `MolGraph::link_many`, which applies these checks to every pair.
     ///
     /// # Errors
     ///
@@ -292,9 +293,10 @@ impl Fragment {
     /// ```
     /// use molrs::store::keys;
     /// use molrs::system::bond::BondNumber;
-    /// use molrs::system::fragment::{Fragment, PortKind};
+    /// use molrs::system::atomistic::Atomistic;
+    /// use molrs::system::port::PortKind;
     ///
-    /// let mut world = Fragment::new();
+    /// let mut world = Atomistic::new();
     /// let mut unit = |q_c: f64, kind: PortKind| -> Result<_, molrs::MolRsError> {
     ///     let c = world.add_atom_bare("C");
     ///     let h = world.add_atom_bare("H");
@@ -575,12 +577,13 @@ impl Fragment {
     /// Bond a validated plan's two anchors, classed from the port order.
     fn bond_anchors(&mut self, plan: &LinkPlan) -> BondId {
         const VALIDATED: &str = "validated before the first write";
-        let bond = self
-            .add_bond(plan.a.anchor, plan.b.anchor)
-            .expect(VALIDATED);
-        self.set_bond_class(bond, plan.a.order.implied_type(), plan.a.order)
-            .expect(VALIDATED);
-        bond
+        self.add_classed_bond(
+            plan.a.anchor,
+            plan.b.anchor,
+            plan.a.order.implied_type(),
+            plan.a.order,
+        )
+        .expect(VALIDATED)
     }
 }
 
@@ -592,18 +595,19 @@ mod tests {
     use crate::error::MolRsError;
     use crate::store::keys;
     use crate::system::atomistic::AtomId;
+    use crate::system::atomistic::Atomistic;
     use crate::system::bond::BondNumber;
-    use crate::system::fragment::{Fragment, Port, PortId, PortKind};
     use crate::system::molgraph::PropValue;
+    use crate::system::port::{Port, PortId, PortKind};
 
     // ---- fixtures ----------------------------------------------------------
     //
-    // Every fixture is one hand-built world `Fragment` of 2–5 atoms per unit.
+    // Every fixture is one hand-built world `Atomistic` of 2–5 atoms per unit.
     // Charges are dyadic rationals (k / 2^n), so every sum below is exact in
     // binary floating point and the goldens are compared with `==`.
 
     /// Add an atom of `element` carrying `charge` and (when given) `frag_id`.
-    fn atom(world: &mut Fragment, element: &str, charge: Option<f64>, frag: u32) -> AtomId {
+    fn atom(world: &mut Atomistic, element: &str, charge: Option<f64>, frag: u32) -> AtomId {
         let a = world.add_atom_bare(element);
         if let Some(q) = charge {
             world
@@ -618,7 +622,7 @@ mod tests {
     /// `(anchor, H)` of `kind`, label `"p"`, order `Single`.
     /// Returns `(anchor, handle, port)`.
     fn h_unit(
-        world: &mut Fragment,
+        world: &mut Atomistic,
         anchor_element: &str,
         anchor_q: Option<f64>,
         handle_q: Option<f64>,
@@ -634,7 +638,7 @@ mod tests {
         (anchor, handle, port)
     }
 
-    fn charge(world: &Fragment, a: AtomId) -> f64 {
+    fn charge(world: &Atomistic, a: AtomId) -> f64 {
         world
             .get_node(a)
             .expect("live atom")
@@ -642,7 +646,7 @@ mod tests {
             .expect("atom carries a charge")
     }
 
-    fn total_charge(world: &Fragment) -> f64 {
+    fn total_charge(world: &Atomistic) -> f64 {
         world
             .nodes()
             .map(|(_, atom)| atom.get_f64(keys::CHARGE).unwrap_or(0.0))
@@ -650,7 +654,7 @@ mod tests {
     }
 
     /// Per-`frag_id` charge sums (atoms without a charge count as 0).
-    fn frag_sums(world: &Fragment) -> BTreeMap<u32, f64> {
+    fn frag_sums(world: &Atomistic) -> BTreeMap<u32, f64> {
         let mut sums = BTreeMap::new();
         for id in world.node_ids().collect::<Vec<_>>() {
             let frag = world.frag_id(id).expect("fixture atoms carry frag_id");
@@ -664,14 +668,14 @@ mod tests {
         sums
     }
 
-    fn frag_count(world: &Fragment, frag: u32) -> usize {
+    fn frag_count(world: &Atomistic, frag: u32) -> usize {
         world
             .node_ids()
             .filter(|&id| world.frag_id(id) == Some(frag))
             .count()
     }
 
-    fn is_bonded(world: &Fragment, a: AtomId, b: AtomId) -> bool {
+    fn is_bonded(world: &Atomistic, a: AtomId, b: AtomId) -> bool {
         world.bonds().any(|(_, bond)| {
             let n = bond.nodes.as_slice();
             (n[0] == a && n[1] == b) || (n[0] == b && n[1] == a)
@@ -687,7 +691,7 @@ mod tests {
         ports: Vec<(PortId, Option<Port>)>,
     }
 
-    fn snapshot(world: &Fragment) -> Snapshot {
+    fn snapshot(world: &Atomistic) -> Snapshot {
         Snapshot {
             atoms: world
                 .nodes()
@@ -700,7 +704,7 @@ mod tests {
 
     /// Run a link that must be refused, assert the world is unchanged, and
     /// return the refusal.
-    fn refuse(world: &mut Fragment, a: PortId, b: PortId) -> LinkError {
+    fn refuse(world: &mut Atomistic, a: PortId, b: PortId) -> LinkError {
         let before = snapshot(world);
         let err = world.link(a, b).expect_err("this pair must be refused");
         assert_eq!(
@@ -715,7 +719,7 @@ mod tests {
 
     #[test]
     fn c1_single_h_handle_folds_onto_anchor() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         let (a0, h0, p0) = h_unit(&mut world, "C", Some(-0.25), Some(0.125), PortKind::Left, 0);
         let (a1, h1, p1) = h_unit(
             &mut world,
@@ -746,7 +750,7 @@ mod tests {
     /// removed). The handle is the heavy O, the branch is {O, H}.
     #[test]
     fn c2_oh_branch_folds_onto_carbon() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         let c = atom(&mut world, "C", Some(0.5), 0);
         let o = atom(&mut world, "O", Some(-0.625), 0);
         let h = atom(&mut world, "H", Some(0.375), 0);
@@ -780,7 +784,7 @@ mod tests {
 
     #[test]
     fn c3_two_h_handles_both_linked() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         let a = atom(&mut world, "C", Some(-0.5), 0);
         let h1 = atom(&mut world, "H", Some(0.125), 0);
         let h2 = atom(&mut world, "H", Some(0.125), 0);
@@ -825,7 +829,7 @@ mod tests {
 
     #[test]
     fn c4_neutral_units_stay_neutral_per_frag_id() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         // unit 0: C(-0.25) – C anchor(+0.125) – H handle(+0.125); sum 0
         let c0 = atom(&mut world, "C", Some(-0.25), 0);
         let (a0, _, p0) = h_unit(&mut world, "C", Some(0.125), Some(0.125), PortKind::Left, 0);
@@ -845,7 +849,7 @@ mod tests {
 
     #[test]
     fn c5_integer_charged_units_keep_minus_one_per_frag_id() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         // unit 0: O anchor(-1.25) + H handle(+0.25); sum -1
         let (_, _, p0) = h_unit(&mut world, "O", Some(-1.25), Some(0.25), PortKind::Left, 0);
         // unit 1: C anchor(-0.5) + O(-0.625) + H handle(+0.125); sum -1
@@ -865,7 +869,7 @@ mod tests {
 
     #[test]
     fn link_returns_the_anchor_bond_classed_from_the_port_order() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         let a = atom(&mut world, "C", None, 0);
         let ha = atom(&mut world, "H", None, 0);
         let b = atom(&mut world, "C", None, 1);
@@ -901,7 +905,7 @@ mod tests {
 
     #[test]
     fn same_kind_ports_are_incompatible() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         let (_, _, p0) = h_unit(&mut world, "C", Some(-0.25), Some(0.25), PortKind::Left, 0);
         let (_, _, p1) = h_unit(&mut world, "C", Some(-0.25), Some(0.25), PortKind::Left, 1);
         assert!(
@@ -919,7 +923,7 @@ mod tests {
 
     #[test]
     fn label_mismatch_is_incompatible_through_port_accepts() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         let (_, _, p0) = h_unit(&mut world, "C", None, None, PortKind::Left, 0);
         let b = atom(&mut world, "C", None, 1);
         let hb = atom(&mut world, "H", None, 1);
@@ -939,7 +943,7 @@ mod tests {
 
     #[test]
     fn ring_bonded_handle_reaches_its_anchor() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         // Triangle C0–C1–C2–C0; the port handle C1 sits on the ring, so its
         // branch after cutting C0–C1 still reaches C0.
         let c0 = atom(&mut world, "C", None, 0);
@@ -963,7 +967,7 @@ mod tests {
 
     #[test]
     fn shared_handle_branches_overlap() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         // A – X – B, with X the handle of both ports.
         let a = atom(&mut world, "C", None, 0);
         let x = atom(&mut world, "O", None, 0);
@@ -984,7 +988,7 @@ mod tests {
 
     #[test]
     fn anchor_inside_the_other_branch_is_overlap() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         // H1 – A – Y – B: port a = (A, H1), port b = (B, Y). b's branch
         // {Y, A, H1} holds anchor A.
         let h1 = atom(&mut world, "H", None, 0);
@@ -1008,7 +1012,7 @@ mod tests {
 
     #[test]
     fn charged_anchor_with_uncharged_handle_is_one_sided() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         let (a0, _, p0) = h_unit(&mut world, "C", Some(-0.25), None, PortKind::Left, 0);
         let (_, _, p1) = h_unit(
             &mut world,
@@ -1029,7 +1033,7 @@ mod tests {
 
     #[test]
     fn charged_handle_with_uncharged_anchor_is_one_sided() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         let (_, _, p0) = h_unit(
             &mut world,
             "C",
@@ -1052,7 +1056,7 @@ mod tests {
     /// bonded would otherwise gain a duplicate anchor–anchor bond.
     #[test]
     fn link_refuses_anchors_that_are_already_bonded() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         let (a0, _, p0) = h_unit(&mut world, "C", None, None, PortKind::Left, 0);
         let (a1, _, p1) = h_unit(&mut world, "C", None, None, PortKind::Right, 1);
         world
@@ -1075,7 +1079,7 @@ mod tests {
     /// refusal, not a `Graph(Validation)`.
     #[test]
     fn link_refuses_two_ports_on_one_anchor() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         let c = atom(&mut world, "C", None, 0);
         let h1 = atom(&mut world, "H", None, 0);
         let h2 = atom(&mut world, "H", None, 0);
@@ -1105,7 +1109,7 @@ mod tests {
     /// still reads back but is stale.
     #[test]
     fn link_refuses_a_port_whose_handle_bond_is_gone() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         let (a0, h0, p0) = h_unit(&mut world, "C", None, None, PortKind::Left, 0);
         let (_, _, p1) = h_unit(&mut world, "C", None, None, PortKind::Right, 1);
         let bonds = world.kind_id("bonds").expect("'bonds' registered");
@@ -1132,10 +1136,10 @@ mod tests {
     }
 
     /// Refusal step 1: a port whose kind glyph was overwritten through
-    /// `DerefMut` does not read back through `Fragment::port`.
+    /// `DerefMut` does not read back through `MolGraph::port`.
     #[test]
     fn link_refuses_a_port_that_does_not_read_back() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         let (_, _, p0) = h_unit(&mut world, "C", None, None, PortKind::Left, 0);
         let (_, _, p1) = h_unit(&mut world, "C", None, None, PortKind::Right, 1);
         let ports = world.kind_id("ports").expect("'ports' registered");
@@ -1167,7 +1171,7 @@ mod tests {
         right: PortId,
     }
 
-    fn chain(world: &mut Fragment, n: u32) -> Vec<ChainUnit> {
+    fn chain(world: &mut Atomistic, n: u32) -> Vec<ChainUnit> {
         (0..n)
             .map(|frag| {
                 let anchor = atom(world, "C", Some(-0.25), frag);
@@ -1211,7 +1215,7 @@ mod tests {
         ports: Vec<(PortId, Option<Port>)>,
     }
 
-    fn world_state(world: &Fragment) -> WorldState {
+    fn world_state(world: &Atomistic) -> WorldState {
         let mut atoms: Vec<_> = world
             .nodes()
             .map(|(id, atom)| (id, atom.get_f64(keys::CHARGE).map(f64::to_bits)))
@@ -1238,7 +1242,7 @@ mod tests {
 
     /// Run a batch that must be refused, assert the world is unchanged (row
     /// order included), and return the refusal.
-    fn refuse_many(world: &mut Fragment, pairs: &[(PortId, PortId)]) -> LinkManyError {
+    fn refuse_many(world: &mut Atomistic, pairs: &[(PortId, PortId)]) -> LinkManyError {
         let before = snapshot(world);
         let err = world
             .link_many(pairs)
@@ -1253,7 +1257,7 @@ mod tests {
 
     #[test]
     fn link_many_equals_a_loop_of_link_on_a_chain() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         let units = chain(&mut world, 4);
         let pairs = chain_pairs(&units);
         let mut looped = world.clone();
@@ -1280,7 +1284,7 @@ mod tests {
 
     #[test]
     fn link_many_of_an_empty_slice_changes_nothing() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         chain(&mut world, 2);
         let before = snapshot(&world);
 
@@ -1293,7 +1297,7 @@ mod tests {
     /// Golden C3 as one batch: −0.5 + 0.125 + 0.125 on the shared anchor.
     #[test]
     fn link_many_folds_a_shared_anchor_in_pair_order() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         let a = atom(&mut world, "C", Some(-0.5), 0);
         let h1 = atom(&mut world, "H", Some(0.125), 0);
         let h2 = atom(&mut world, "H", Some(0.125), 0);
@@ -1336,7 +1340,7 @@ mod tests {
 
     #[test]
     fn link_many_names_the_pair_link_refuses() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         let units = chain(&mut world, 2);
         let pairs = [
             (units[0].right, units[1].left),
@@ -1359,7 +1363,7 @@ mod tests {
 
     #[test]
     fn link_many_refuses_a_port_used_twice() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         let units = chain(&mut world, 3);
         let pairs = [
             (units[0].right, units[1].left),
@@ -1383,7 +1387,7 @@ mod tests {
 
     #[test]
     fn link_many_refuses_two_pairs_on_one_anchor_couple() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         let a = atom(&mut world, "C", None, 0);
         let b = atom(&mut world, "C", None, 1);
         let mut ports = Vec::new();
@@ -1422,7 +1426,7 @@ mod tests {
     /// pair alone passes, but the two leaving groups share X.
     #[test]
     fn link_many_refuses_leaving_groups_that_share_an_atom() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         let a = atom(&mut world, "C", None, 0);
         let x = atom(&mut world, "O", None, 0);
         let c = atom(&mut world, "C", None, 0);
@@ -1457,7 +1461,7 @@ mod tests {
     /// one way only.
     #[test]
     fn link_many_refuses_an_anchor_inside_another_leaving_group_a_loop_accepts() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         let c = atom(&mut world, "C", None, 0);
         let o = atom(&mut world, "O", None, 0);
         world.add_bond(c, o).unwrap();
@@ -1490,7 +1494,7 @@ mod tests {
 
     #[test]
     fn link_many_leaves_unlinked_end_ports_untouched() {
-        let mut world = Fragment::new();
+        let mut world = Atomistic::new();
         let units = chain(&mut world, 3);
         let head = world.port(units[0].left).expect("head port");
         let tail = world.port(units[2].right).expect("tail port");

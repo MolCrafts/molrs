@@ -37,9 +37,9 @@ use molrs::error::MolRsError;
 
 /// Name of the relation kind whose members mark a fragment attachment point.
 ///
-/// The same kind [`Fragment`](crate::system::fragment::Fragment) registers; it
-/// is matched by name here because a port may ride on a bare
-/// [`Atomistic`] that was never promoted to a fragment.
+/// The kind [`MolGraph::add_port`](crate::system::molgraph::MolGraph::add_port)
+/// registers ([`crate::system::port::PORTS`]); it is matched by name because
+/// any graph may carry ports.
 const PORTS_KIND: &str = "ports";
 
 // ---------------------------------------------------------------------------
@@ -946,8 +946,8 @@ mod tests {
         bond_with_order(&mut g, c0, h3, 1.0);
         bond_with_order(&mut g, o2, h4, 1.0);
 
-        // The `ports` kind rides on the underlying `MolGraph` (a `Fragment`
-        // would own it); this test asserts on that graph and never promotes.
+        // The `ports` kind rides on the bare `MolGraph`; this test asserts on
+        // that graph and never promotes.
         let ports = g.register_kind("ports", 2);
         g.add_relation(ports, &[c0, h3])
             .expect("(anchor, handle) is a 2-ary relation");

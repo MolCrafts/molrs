@@ -925,8 +925,8 @@ class Graph:
     kind-tagged relation API (``register_kind`` / ``add_relation`` / …).
 
     Rigid-body moves (``translate`` / ``rotate`` / ``scale``) and ``center``
-    are methods of the :class:`Atomistic` / :class:`CoarseGrain` /
-    :class:`Fragment` leaves, not of the base; perception lives in
+    are methods of the :class:`Atomistic` / :class:`CoarseGrain` leaves,
+    not of the base; perception lives in
     :mod:`molrs.perceive`. Chemistry vocabulary (``add_atom`` / ``add_bond``
     / ``add_bead``) lives on the :class:`Atomistic` / :class:`CoarseGrain`
     leaves.
@@ -978,6 +978,43 @@ class Graph:
     def relation_ids(self, kind: str) -> List[int]: ...
     # --- adopt (zero-copy move) ---
     def adopt(self, other: "Graph") -> None: ...
+
+    # ---- ports: named attachment points any graph may carry ----
+    def add_port(
+        self,
+        anchor: int,
+        handle: int,
+        kind: str,
+        label: str = "",
+        order: int = 1,
+    ) -> int:
+        """Record a descriptor (``"$"``, ``"<"``, ``">"``, ``"!"``) on the
+        ``(anchor, handle)`` valence; registers the ``ports`` kind on first
+        use. Returns the port's relation handle.
+
+        Raises:
+            ValueError: an unknown glyph, ``handle`` not bonded to
+                ``anchor``, an indefinite order, a valence that already
+                carries a port, or a stale handle.
+        """
+        ...
+    @property
+    def n_ports(self) -> int: ...
+    def set_frag_id(self, node: int, id: int) -> None: ...
+    def frag_id(self, node: int) -> Optional[int]: ...
+    def inherit_frag_ids(self) -> int: ...
+    def link(self, a: int, b: int) -> int:
+        """Join port ``a`` to port ``b``: remove both leaving groups, fold
+        their charge (e) onto the anchors, bond the anchors with the port
+        order. Returns the new bond handle.
+
+        Raises:
+            ValueError: a handle naming no live port, a stale or incompatible
+                port pair, a shared anchor, anchors already bonded, or
+                overlapping leaving groups; the graph is unchanged.
+            OverflowError: a negative handle.
+        """
+        ...
 
 class Atomistic(Graph):
     """All-atom leaf — holds a core ``Atomistic`` from construction.
@@ -1219,7 +1256,7 @@ class CoarseGrain(Graph):
         Parameters
         ----------
         beads : Sequence[int]
-            Bead handles, e.g. one path from ``Perceive(cg).linear_paths()``.
+            Bead handles, e.g. ``list(cg.atoms)``.
 
         Returns
         -------
@@ -1231,6 +1268,23 @@ class CoarseGrain(Graph):
         ValueError
             If a handle is not a live bead, or a bead lacks a finite
             ``x`` / ``y`` / ``z``; the message names its int handle.
+        """
+        ...
+    def axes(self, beads: Sequence[int]) -> ArrayF:
+        """The site axes of ``beads``, one row per listed bead, in the listed
+        order. A site from ``Coarsener.coarsen`` carries the vector from the
+        first bead of its group to the site; a one-bead site's axis is zero.
+
+        Returns
+        -------
+        numpy.ndarray, shape (k, 3), float64
+            ``axis_x`` / ``axis_y`` / ``axis_z`` as stored (Å).
+
+        Raises
+        ------
+        ValueError
+            If a handle is not a live bead of this graph, or a bead lacks a
+            finite axis; the message names its int handle.
         """
         ...
     def bead_types(self, beads: Sequence[int]) -> list[str]:
@@ -1253,125 +1307,6 @@ class CoarseGrain(Graph):
             If a handle is not a live bead, or a bead carries no
             ``bead_type``; the message names its int handle.
         """
-        ...
-
-class Fragment(Graph):
-    """Fragment leaf — holds a core ``Fragment`` from construction.
-
-    A molecular graph with named, unsatisfied valences: registers the ``bonds``
-    and ``ports`` kinds and adds the three validating writers beside the
-    generic :class:`Graph` world API. Ports are ordinary relations, so
-    ``relation_ids("ports")`` reads them and ``remove_relation("ports", h)``
-    removes one. Owns its :meth:`to_frame` / :meth:`from_frame`.
-
-    Unrelated to the CL&Pol ``FragmentScaling`` sense of the word.
-    """
-
-    def __init__(self, *args: object, **kwargs: object) -> None: ...
-    def add_atom(
-        self,
-        symbol: str,
-        x: Optional[float] = None,
-        y: Optional[float] = None,
-        z: Optional[float] = None,
-    ) -> int: ...
-    def add_bond(self, a: int, b: int) -> int: ...
-    def add_port(
-        self,
-        anchor: int,
-        handle: int,
-        kind: str,
-        label: str = "",
-        order: int = 1,
-    ) -> int: ...
-    @property
-    def n_ports(self) -> int: ...
-    @property
-    def n_atoms(self) -> int: ...
-    def set_frag_id(self, atom: int, id: int) -> None: ...
-    def frag_id(self, atom: int) -> Optional[int]: ...
-    def inherit_frag_ids(self) -> int: ...
-    def replicate(
-        self,
-        template: "Fragment",
-        rotations: ArrayF,
-        translations: ArrayF,
-        frag_ids: ArrayI32,
-    ) -> List[int]:
-        """As :meth:`Atomistic.replicate`; every copy keeps the template's
-        ports on its own atoms."""
-        ...
-    def copy(self) -> "Fragment": ...
-    def to_frame(self) -> Frame: ...
-    @staticmethod
-    def from_frame(frame: Frame) -> "Fragment": ...
-    def center(self) -> ArrayF:
-        """Mass-weighted centre ``sum(m_i r_i) / sum(m_i)`` of every atom
-        (port atoms included), from ``x``/``y``/``z`` (Å) and ``mass``
-        (g/mol); a float64 ``(3,)`` array in Å that feeds :meth:`translate`.
-        No periodic imaging: unwrap first (:meth:`Box.unwrap`).
-
-        Raises:
-            ValueError: no atoms; an atom without finite ``x``/``y``/``z`` or
-                a finite, non-negative ``mass`` (names its int handle); a
-                non-positive total mass.
-        """
-        ...
-    def merge(self, other: "Fragment") -> tuple[dict[int, int], dict[int, int]]:
-        """Absorb ``other``, consuming it (left empty, even on refusal);
-        returns ``(atom_map, port_map)``, each ``{old handle: new handle}``.
-        Coordinates (Å) copy unchanged.
-
-        Raises:
-            ValueError: a property of ``other`` contradicts this graph's type
-                for that key; ``other`` has already been emptied.
-            RuntimeError: ``other`` is ``self`` (``f.merge(f)``); ``f`` is
-                unchanged.
-        """
-        ...
-    def link(self, a: int, b: int) -> int:
-        """Join port ``a`` to port ``b``: remove both leaving groups, fold
-        their charge (e) onto the anchors, bond the anchors with the port
-        order. Returns the new bond handle.
-
-        Raises:
-            ValueError: a handle naming no live port, a stale or incompatible
-                port pair, a shared anchor,
-                anchors already bonded, a branch reaching its anchor or the
-                other branch, or one-sided charge; the message names int
-                handles and the fragment is unchanged.
-            OverflowError: a negative handle.
-        """
-        ...
-    def to_atomistic(self) -> Atomistic:
-        """A copy as a public :class:`Atomistic`, ``ports`` and ``frag_id``
-        kept, handles preserved; the fragment is left intact.
-
-        Raises:
-            ValueError: a node carries no ``element``; the fragment is
-                unchanged.
-        """
-        ...
-    def translate(self, delta: Sequence[float] | ArrayF) -> Self:
-        """Translate every node that has coordinates by ``delta``; returns self."""
-        ...
-    def rotate(
-        self, axis: List[float], angle: float, about: Optional[List[float]] = None
-    ) -> Self:
-        """Rotate every node that has coordinates by ``angle`` radians about
-        ``axis``, pivoting on ``about`` (default: the origin); returns self.
-
-        Raises:
-            ValueError: ``axis`` has no direction or ``angle`` is not finite;
-                nothing moves then.
-        """
-        ...
-    def scale(
-        self, factor: List[float], about: Optional[List[float]] = None
-    ) -> Self:
-        """Scale every node that has coordinates by a per-axis ``factor``
-        about ``about`` (default: the origin); returns self. Pass
-        ``[s, s, s]`` for a uniform scale."""
         ...
 
 class op:
@@ -1639,47 +1574,9 @@ class Perceive:
     ``bond_number`` on bonds; ``find_hydrogens`` → adds H atoms and bonds;
     ``find_stereo`` → ``stereo``; ``find_rotatable`` → ``is_rotatable``;
     ``find_bond_types`` → ``bcc_bond_type``; ``find_equivalence_classes`` →
-    ``equiv_class``.
+    ``equiv_class``."""
 
-    ``linear_paths`` is the one query that reads a graph held by the builder:
-    construct ``Perceive(cg)`` over a :class:`CoarseGrain`. The ``find_*``
-    methods do not read it."""
-
-    def __init__(self, graph: Optional[CoarseGrain] = None) -> None:
-        """A perception builder, optionally holding the graph
-        :meth:`linear_paths` reads.
-
-        Parameters
-        ----------
-        graph : CoarseGrain, optional
-            Held, not copied.
-
-        Raises
-        ------
-        TypeError
-            If ``graph`` is given and is not a :class:`CoarseGrain`.
-        """
-        ...
-    def linear_paths(self) -> list[list[int]]:
-        """The ordered bead handles of every linear chain of the held graph.
-
-        Only ``bonds`` join beads. Each connected component must be a path
-        graph; a lone bead is a one-handle path. Releases the GIL.
-
-        Returns
-        -------
-        list[list[int]]
-            One list of bead handles per component, walked end to end.
-
-        Raises
-        ------
-        TypeError
-            If the builder holds no graph (``Perceive()``).
-        ValueError
-            If a component branches or is a ring, naming a bead by its int
-            handle.
-        """
-        ...
+    def __init__(self) -> None: ...
     def find_rings(self, mol: Atomistic) -> Atomistic: ...
     def find_aromaticity(self, mol: Atomistic) -> Atomistic: ...
     def find_hydrogens(self, mol: Atomistic) -> Atomistic: ...
@@ -1938,7 +1835,7 @@ class CGSmilesIR:
     @property
     def pairs(self) -> list[list[ResolvedPair]]: ...
     def to_atomistic(self) -> Atomistic: ...
-    def to_fragment(self) -> dict[str, Fragment]: ...
+    def to_fragment(self) -> dict[str, Atomistic]: ...
     def to_coarsegrain(self) -> CoarseGrain:
         """The coarsest level, ``levels[0]``, as a bead graph: one bead per
         node (``bead_type`` only, no coordinates or mass), one CG bond per
@@ -2161,74 +2058,112 @@ class GrapheneBuilder:
     def periodic_xy(self) -> bool: ...
 
 @final
-class TracePlacer:
-    """``molrs.builder.TracePlacer`` — translation-only placement. Frozen.
+class SitePlacer:
+    """``molrs.builder.SitePlacer`` — translation-only placement. Frozen.
 
-    Each copy keeps its template's orientation and its centre of mass (Å,
-    weights ``mass``) lands on its trace point. Orientation and overlap are
-    left to a later relaxation. Takes no arguments.
+    Each copy's centre of mass (Å, weights ``mass``) lands on its site;
+    rotation is the orienter's job. Takes no arguments.
+    """
+
+    def __init__(self) -> None: ...
+
+@final
+class GrowthPlacer:
+    """``molrs.builder.GrowthPlacer`` — grows each molecule onto its parents'
+    ports. Frozen.
+
+    The first copy of a molecule keeps its template pose (its centre of mass
+    on the site when the site graph has positions); every later copy is
+    rotated and moved so the anchor of its port toward its parent lands on
+    the parent's leaving handle, pointing back along that bond. Needs no site
+    positions; bond lengths and overlaps are left to a later minimisation.
+    Takes no arguments.
+    """
+
+    def __init__(self) -> None: ...
+
+@final
+class AxisOrienter:
+    """``molrs.builder.AxisOrienter`` — turns each copy onto its site. Frozen.
+
+    Turns each copy about its template's centre of mass. A chain site (only
+    ``<`` / ``>`` ports, a two-port template) matches the template's
+    backbone-to-centre direction to the site axis (``CoarseGrain.axes``) and
+    its two joining atoms to the site's bond line. Any other bonded site fits
+    the template's port directions to its bond directions. A site with no
+    bond is not turned. Takes no arguments.
     """
 
     def __init__(self) -> None: ...
 
 @final
 class Assembler:
-    """``molrs.builder.Assembler`` — one placed, linked world from traces and
-    their unit names. Frozen.
+    """``molrs.builder.Assembler`` — one placed, linked world from a site
+    graph. Frozen.
 
-    Unit ``k`` of trace ``t`` is a copy of ``library[names[t][k]]`` placed on
-    the trace's point ``k``. In a trace of two or more units, unit ``i``'s one
-    ``>`` port joins unit ``i + 1``'s one ``<`` port; the leaving groups are
-    removed. Every atom gets ``frag_id`` (the unit's trace-major ordinal,
-    0-based) and ``mol_id`` (the trace's ordinal + 1).
+    Each bead of the site graph is one unit: a copy of ``library[bead_type]``,
+    turned by the orienter (when given) and given its pose by the placer. Each site bond joins one
+    port of each end's copy (``<`` with ``>``, ``$`` with ``$``); the leaving
+    groups are removed. Any topology works: chains, branches, rings. Every
+    atom gets ``frag_id`` (the site's ordinal) and ``mol_id`` (its connected
+    component's ordinal + 1).
 
     Parameters
     ----------
-    library : Mapping[str, Fragment | Atomistic]
-        Name → template, copied at construction. An ``Atomistic`` is a
-        template with no ports; it can only fill a one-unit trace.
-    placer : TracePlacer
-        Turns a template and its points into one rigid motion per copy.
+    library : Mapping[str, Graph]
+        Name → template, copied at construction: any graph (``Graph``,
+        ``Atomistic``, ``CoarseGrain``), with ports where a site bonds. A
+        template without ports can only fill an unbonded site.
+    placer : SitePlacer | GrowthPlacer
+        ``SitePlacer`` moves each copy's centre of mass onto its site;
+        ``GrowthPlacer`` grows each molecule onto its parents' ports and needs
+        no site positions.
+    orienter : AxisOrienter, optional
+        Turns each copy about its centre of mass before it is placed; needs
+        site positions.
 
     Raises
     ------
     TypeError
-        If ``library`` is not a mapping of ``str`` to ``Fragment`` or
-        ``Atomistic``, or ``placer`` is not a :class:`TracePlacer`.
-    ValueError
-        If an ``Atomistic`` value does not convert to a ``Fragment``.
+        If ``library`` is not a mapping of ``str`` to graphs, ``placer`` is
+        not a :class:`SitePlacer` or :class:`GrowthPlacer`, or ``orienter``
+        is not an :class:`AxisOrienter`.
     """
 
     def __init__(
         self,
-        library: _AbcMapping[str, Union[Fragment, Atomistic]],
-        placer: TracePlacer,
+        library: _AbcMapping[str, Graph],
+        placer: Union[SitePlacer, GrowthPlacer],
+        orienter: Optional[AxisOrienter] = None,
     ) -> None: ...
-    def assemble(
-        self, traces: Sequence[Trace], names: Sequence[Sequence[str]]
-    ) -> Fragment:
-        """Place and link every trace; return the world. Releases the GIL.
+    def assemble(self, sites: CoarseGrain, cls: Optional[type] = None) -> Graph:
+        """Place and join one copy per site; return the world. Releases the
+        GIL.
 
         Parameters
         ----------
-        traces : Sequence[Trace]
-            One trace per molecule; its points are the unit positions (Å).
-        names : Sequence[Sequence[str]]
-            One library name per point of each trace.
+        sites : CoarseGrain
+            The site graph: each bead's ``bead_type`` names its template and
+            each bond joins two copies; its optional position (Å) and axis
+            are read by the placer and the orienter.
+
+        cls : type, optional
+            The graph class to build the world as: ``Graph`` (the default),
+            ``Atomistic`` or ``CoarseGrain``, or a subclass of one.
 
         Returns
         -------
-        Fragment
-            The world; chain-end ports and the ports of one-unit traces stay
-            on it. Empty when ``traces`` is empty.
+        Graph
+            The world, an instance of ``cls``; ports without a site bond stay
+            on it. Empty when ``sites`` is empty.
 
         Raises
         ------
         ValueError
-            Naming the trace, unit and name at fault: the counts differ, a
-            name is not in the library, a unit lacks the one ``>`` / ``<``
-            port a join needs, a template has no centre of mass, or a join
-            is refused.
+            Naming the site at fault: a bead lacks its type or position, a
+            name is not in the library, no accepting port exists for every
+            bond of a site, a site cannot be oriented or placed, or a join is
+            refused.
         """
         ...
 
@@ -2275,10 +2210,7 @@ class Conformer:
         add_hydrogens: bool = True,
         seed: Optional[int] = None,
     ) -> None: ...
-    @overload
     def generate(self, mol: Atomistic) -> tuple[Atomistic, ConformerReport]: ...
-    @overload
-    def generate(self, mol: Fragment) -> tuple[Fragment, ConformerReport]: ...
 
 # ---------------------------------------------------------------------------
 # Force field

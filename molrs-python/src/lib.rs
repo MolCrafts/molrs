@@ -29,8 +29,10 @@
 //! | `BccModel`                | `PyBccModel`        | AM1-BCC / ABCG2 bond-charge corrections     |
 //! | `MullikenModel`           | `PyMullikenModel`   | QM Mulliken charges, unchanged              |
 //! | `GasteigerModel`          | `PyGasteigerModel`  | Gasteiger / PEOE charges (no QM input)      |
-//! | `TracePlacer`             | `PyTracePlacer`     | Translation-only placement of copies        |
-//! | `Assembler`               | `PyAssembler`       | Traces + names → one placed, linked world   |
+//! | `SitePlacer`              | `PySitePlacer`      | Centre of mass of each copy on its site     |
+//! | `GrowthPlacer`            | `PyGrowthPlacer`    | Each copy grown onto its parent's port      |
+//! | `AxisOrienter`            | `PyAxisOrienter`    | Template frame onto site axis + bonds       |
+//! | `Assembler`               | `PyAssembler`       | Site graph → one placed, linked world       |
 //! | `PotentialCompiler`       | `PyPotentialCompiler` | ForceField → Potentials / TypedPotentials |
 //! | `Potentials`              | `PyPotentials`      | Compiled energy/force evaluator             |
 //! | `RDF` / `MSD` / `Cluster` |                     | Structural analysis                         |
@@ -52,7 +54,10 @@ mod store;
 // compute/, ff/, conformer/, signal/.
 mod builder;
 mod core;
-use crate::builder::{PyAssembler, PyCarbonTubeBuilder, PyGrapheneBuilder, PyTracePlacer};
+use crate::builder::{
+    PyAssembler, PyAxisOrienter, PyCarbonTubeBuilder, PyGrapheneBuilder, PyGrowthPlacer,
+    PySitePlacer,
+};
 use crate::core::spatial::mesh::PyTriMesh;
 use crate::core::spatial::neighborlist::{
     PyNeighborList, PyNeighborQuery, PyNeighbors, PyVerletSkin,
@@ -69,8 +74,8 @@ use crate::core::store::trajectory::{PyScalarObservable, PyTrajectory, PyVectorO
 use crate::core::system::element::PyElement;
 use crate::core::system::molgraph::PyRingInfo;
 use crate::core::system::molgraph::{
-    PyAtomistic, PyCoarseGrain, PyExtractedSubgraph, PyFragment, PyGraph, PyReaction,
-    PySmartsMatch, PySmartsPattern,
+    PyAtomistic, PyCoarseGrain, PyExtractedSubgraph, PyGraph, PyReaction, PySmartsMatch,
+    PySmartsPattern,
 };
 use crate::core::units::{PyQuantity, PyUnit, PyUnitPreset, PyUnitRegistry};
 
@@ -337,7 +342,6 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGraph>()?;
     m.add_class::<PyAtomistic>()?;
     m.add_class::<PyCoarseGrain>()?;
-    m.add_class::<PyFragment>()?;
     m.add_class::<PyExtractedSubgraph>()?;
     m.add_class::<PySmartsMatch>()?;
     m.add_class::<PySmartsPattern>()?;
@@ -347,12 +351,13 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCarbonTubeBuilder>()?;
     m.add_class::<PyGrapheneBuilder>()?;
 
-    // Trace assembly: place and link one world Fragment
-    m.add_class::<PyTracePlacer>()?;
+    // Site-graph assembly: place and link one world graph
+    m.add_class::<PySitePlacer>()?;
+    m.add_class::<PyGrowthPlacer>()?;
+    m.add_class::<PyAxisOrienter>()?;
     m.add_class::<PyAssembler>()?;
 
-    // translate / rotate / scale are methods on Atomistic, CoarseGrain and
-    // Fragment.
+    // translate / rotate / scale are methods on Atomistic and CoarseGrain.
 
     // Chemical perception, as a builder: graph in / graph out, non-mutating.
     m.add_class::<PyPerceive>()?;

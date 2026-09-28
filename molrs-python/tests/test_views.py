@@ -38,8 +38,8 @@ def test_public_coarse_grain_factories_and_graph_out_paths() -> None:
         assert len(result.beads) == 2
 
 
-def test_public_fragment_factories_and_graph_out_paths() -> None:
-    graph = molrs.Fragment()
+def test_public_atomistic_port_factories_and_graph_out_paths() -> None:
+    graph = molrs.Atomistic()
     anchor = graph.def_atom(element="O", x=0.0, y=0.0, z=0.0)
     handle = graph.def_atom(element="H", x=0.96, y=0.0, z=0.0)
     graph.def_bond(anchor, handle)
@@ -49,8 +49,8 @@ def test_public_fragment_factories_and_graph_out_paths() -> None:
     assert graph.ports[0] is port
     assert port.anchor is anchor
     assert port.handle_atom is handle
-    for result in (graph.copy(), molrs.Fragment.from_frame(graph.to_frame())):
-        assert type(result) is molrs.Fragment
+    for result in (graph.copy(), molrs.Atomistic.from_frame(graph.to_frame())):
+        assert type(result) is molrs.Atomistic
         assert isinstance(result, molrs.GraphViews)
         assert len(result.atoms) == 2
         assert len(result.ports) == 1
@@ -73,9 +73,8 @@ def test_factories_return_interned_live_refs() -> None:
 def test_atomistic_def_bond_stamps_both_bond_facts() -> None:
     """A Python-built bond carries the same two facts a native one does.
 
-    ``Fragment.def_bond`` already routes through the native writer, which
-    stamps ``bond_type = 1`` and ``bond_number = 1``; ``Atomistic.def_bond``
-    owns the same bond kind and must not write a classless bond.
+    The native writer stamps ``bond_type = 1`` and ``bond_number = 1``;
+    ``Atomistic.def_bond`` must not write a classless bond.
     """
     graph = molrs.Atomistic()
     carbon = graph.def_atom(element="C", x=0.0, y=0.0, z=0.0)

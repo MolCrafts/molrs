@@ -5,12 +5,11 @@
 //! ETKDG reads `element` for bond-length estimation, ring geometry and
 //! force-field selection. This module names that requirement once, as a trait,
 //! so the single entry point can hand the caller back the same typed world it
-//! was given — an [`Atomistic`] in, an `Atomistic` out; a [`Fragment`] in, a
-//! `Fragment` out with its ports and `frag_id` properties intact.
+//! was given — an [`Atomistic`] in, an `Atomistic` out, with its ports and
+//! `frag_id` properties intact.
 
 use molrs::error::MolRsError;
 use molrs::system::atomistic::Atomistic;
-use molrs::system::fragment::Fragment;
 use molrs::system::molgraph::MolGraph;
 
 /// A typed wrapper over a [`MolGraph`] whose every node carries an `element`.
@@ -34,7 +33,7 @@ use molrs::system::molgraph::MolGraph;
 ///
 /// # Implementors
 ///
-/// [`Atomistic`] and [`Fragment`], and no one else.
+/// [`Atomistic`], and no one else.
 /// [`CoarseGrain`](crate::system::coarsegrain::CoarseGrain) owns the same pair
 /// of inherent methods and deliberately does **not** implement this trait: its
 /// nodes carry bead types, not elements, so every `element` lookup the
@@ -73,30 +72,20 @@ impl ElementGraph for Atomistic {
     }
 }
 
-impl ElementGraph for Fragment {
-    fn as_molgraph(&self) -> &MolGraph {
-        Fragment::as_molgraph(self)
-    }
-
-    fn try_from_molgraph(mol: MolGraph) -> Result<Self, MolRsError> {
-        Fragment::try_from_molgraph(mol)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::ElementGraph;
     use molrs::error::MolRsError;
     use molrs::system::atomistic::{AtomId, Atomistic};
     use molrs::system::bond::BondNumber;
-    use molrs::system::fragment::{Fragment, PortKind};
     use molrs::system::molgraph::{Atom, MolGraph};
+    use molrs::system::port::PortKind;
 
     /// `H–C–C–H` with a `$` port on each C–H valence and a `frag_id` on every
     /// atom: four atoms, three bonds, two ports, two distinct fragment labels
     /// (so a per-atom check cannot pass by broadcasting a single label).
-    fn ported_pair() -> (Fragment, [AtomId; 4]) {
-        let mut frag = Fragment::new();
+    fn ported_pair() -> (Atomistic, [AtomId; 4]) {
+        let mut frag = Atomistic::new();
         let c0 = frag.add_atom_xyz("C", 0.0, 0.0, 0.0);
         let c1 = frag.add_atom_xyz("C", 1.54, 0.0, 0.0);
         let h0 = frag.add_atom_bare("H");
@@ -114,15 +103,13 @@ mod tests {
         (frag, [c0, c1, h0, h1])
     }
 
-    /// The two conversions `Conformer::generate` performs around the embed,
-    /// with no embed in between: `Fragment -> Atomistic -> MolGraph -> Fragment`.
-    fn round_trip(frag: &Fragment) -> Fragment {
-        let work = <Atomistic as ElementGraph>::try_from_molgraph(
-            <Fragment as ElementGraph>::as_molgraph(frag).clone(),
+    /// The conversions `Conformer::generate` performs around the embed, with
+    /// no embed in between: `Atomistic -> MolGraph -> Atomistic`.
+    fn round_trip(frag: &Atomistic) -> Atomistic {
+        <Atomistic as ElementGraph>::try_from_molgraph(
+            <Atomistic as ElementGraph>::as_molgraph(frag).clone(),
         )
-        .expect("every fragment node carries an element");
-        <Fragment as ElementGraph>::try_from_molgraph(work.into_inner())
-            .expect("the work graph still carries an element on every node")
+        .expect("every node carries an element")
     }
 
     // ---- round trip, no ETKDG ---------------------------------------------
@@ -183,9 +170,8 @@ mod tests {
     fn assert_bound<M: ElementGraph>() {}
 
     #[test]
-    fn atomistic_and_fragment_satisfy_the_bound() {
+    fn atomistic_satisfies_the_bound() {
         assert_bound::<Atomistic>();
-        assert_bound::<Fragment>();
     }
 
     #[test]
@@ -193,7 +179,7 @@ mod tests {
         let (frag, _atoms) = ported_pair();
         assert!(
             std::ptr::eq(
-                <Fragment as ElementGraph>::as_molgraph(&frag),
+                <Atomistic as ElementGraph>::as_molgraph(&frag),
                 frag.as_molgraph()
             ),
             "the trait method is a pure forward to the inherent borrow"

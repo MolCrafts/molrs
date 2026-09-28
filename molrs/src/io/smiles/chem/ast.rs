@@ -390,7 +390,7 @@ impl DescriptorKind {
     /// The notation glyph this operator is written as: `$`, `<`, `>` or `!`.
     ///
     /// This is the same string
-    /// [`core::PortKind::as_str`](crate::core::system::fragment::PortKind::as_str)
+    /// [`core::PortKind::as_str`](crate::core::system::port::PortKind::as_str)
     /// returns for the port role the descriptor is stored as, so a user reads
     /// and writes one spelling per role whether the value came from the
     /// notation side or from the stored side. The two enums stay distinct by

@@ -7,26 +7,25 @@
 //! minimization -> stereo sanity checks.
 //!
 //! [`Conformer::generate`] is generic over [`ElementGraph`], so it returns the
-//! same type it was handed: an [`Atomistic`] in, an `Atomistic` out; a
-//! [`Fragment`](molrs::system::fragment::Fragment) in, a `Fragment` out with
-//! its ports and `frag_id` labels intact. The hydrogens the pipeline adds
-//! belong to no input fragment, so relabelling them is the caller's own step.
+//! same type it was handed: an [`Atomistic`] in, an `Atomistic` out, with its
+//! ports ([`molrs::system::port`]) and `frag_id` labels intact. The hydrogens
+//! the pipeline adds belong to no input unit, so relabelling them is the
+//! caller's own step.
 //!
 //! ```no_run
 //! use molrs::conformer::{Conformer, ConformerOptions};
 //! use molrs::system::atomistic::Atomistic;
-//! use molrs::system::fragment::Fragment;
-//! # fn run(mol: &Atomistic, frag: &Fragment) -> Result<(), molrs::error::MolRsError> {
+//! # fn run(mol: &Atomistic, unit: &Atomistic) -> Result<(), molrs::error::MolRsError> {
 //! let conformer = Conformer::new(ConformerOptions::default());
 //!
 //! // An `Atomistic` in, an `Atomistic` out.
 //! let (mol_3d, report) = conformer.generate(mol)?;
 //! println!("{} atoms, {} stages", mol_3d.n_atoms(), report.stages.len());
 //!
-//! // A `Fragment` in, a `Fragment` out — then label the added hydrogens.
-//! let (mut frag_3d, _report) = conformer.generate(frag)?;
-//! let labelled = frag_3d.inherit_frag_ids();
-//! println!("{labelled} of {} atoms inherited a frag_id", frag_3d.n_atoms());
+//! // A ported unit keeps its ports — then label the added hydrogens.
+//! let (mut unit_3d, _report) = conformer.generate(unit)?;
+//! let labelled = unit_3d.inherit_frag_ids();
+//! println!("{labelled} of {} atoms inherited a frag_id", unit_3d.n_atoms());
 //! # Ok(())
 //! # }
 //! ```
@@ -72,17 +71,15 @@ impl Conformer {
     /// Generate 3D coordinates for an element-bearing molecular graph.
     ///
     /// Generic over [`ElementGraph`], so **the returned type is the input
-    /// type**: an [`Atomistic`] in, an `Atomistic` out; a
-    /// [`Fragment`](molrs::system::fragment::Fragment) in, a `Fragment` out.
-    /// That bound is what the embedding actually requires — every node carries
+    /// type**: an [`Atomistic`] in, an `Atomistic` out. That bound is what the embedding actually requires — every node carries
     /// an `element`, which the pipeline reads for bond-length estimation, ring
     /// geometry and force-field selection. Coordinates are written in Å, and
     /// the input molecule is never modified.
     ///
     /// # What survives
     ///
-    /// Every node, relation and property of the input graph, including a
-    /// `Fragment`'s `ports` relations and its `frag_id` properties: no stage of
+    /// Every node, relation and property of the input graph, including its
+    /// `ports` relations and `frag_id` properties: no stage of
     /// the pipeline removes a node, a relation or a property. The embed only
     /// appends hydrogen atoms and their bonds and writes `x` / `y` / `z`. The
     /// `ports` kind also rides through the MMFF staging `Frame` as an **unread
@@ -95,7 +92,7 @@ impl Conformer {
     /// With hydrogen addition on (the default) the output carries hydrogens
     /// that existed in no input fragment and therefore carry no `frag_id`.
     /// Labelling them is the caller's visible step, not a hidden hook inside
-    /// this method: call `Fragment::inherit_frag_ids` on the result, as the
+    /// this method: call `inherit_frag_ids` on the result, as the
     /// [module example](self) shows.
     ///
     /// # Cost

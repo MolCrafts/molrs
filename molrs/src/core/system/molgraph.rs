@@ -65,7 +65,7 @@ use crate::types::{F, I, Idx};
 
 /// The open node key naming the fragment instance a node belongs to — an
 /// `i32` column that [`MolGraph::replicate`] stamps on every copy and
-/// [`Fragment::set_frag_id`](crate::system::fragment::Fragment::set_frag_id)
+/// [`MolGraph::set_frag_id`]
 /// writes per atom (notes.md 2026-09-21). Not a Frame-schema key: it is spelled
 /// by this one crate-level constant until the schema vocabulary gives it a
 /// validated owner.
@@ -1519,25 +1519,16 @@ impl MolGraph {
     /// via its `atomi`/`atomj`/… columns, with any extra columns read back as
     /// props.
     ///
-    /// # An unreadable relation block is refused, not skipped
+    /// # A graph reads only its own relations
     ///
-    /// A registered kind with no block in the frame is fine — the frame simply
-    /// carries no relations of that kind. The reverse is not: a *relation*
-    /// block (one carrying the endpoint columns
-    /// [`to_frame`](Self::to_frame) emits) whose name matches no registered
-    /// kind has nowhere to go, and reading on would hand back a graph missing
-    /// rows the frame plainly stated. `Atomistic::from_frame` on a
-    /// `Fragment`'s frame used to drop every `ports` row exactly this way and
-    /// return a molecule indistinguishable from one that never had any. Such a
-    /// block is an error naming itself, so the caller can register the kind or
-    /// pick the leaf type that owns it. A block that *does* name a registered
-    /// kind but carries fewer endpoint columns than that kind's arity — an
-    /// `angles` block with `atomi` and `atomj` and no `atomk` — is unreadable
-    /// in the same way and refused in the same way.
-    ///
-    /// Blocks that are not relation blocks — metadata, a box, a grid — carry
-    /// no endpoint column and are left alone: a frame may legitimately hold
-    /// more than a graph reads.
+    /// A [`Frame`] is open and dynamic; a graph type is narrower and reads
+    /// only the kinds it has registered (operator, 2026-09-28). A relation
+    /// block whose name matches no registered kind is ignored, as are blocks
+    /// that are not relation blocks (metadata, a box, a grid). A registered
+    /// kind with no block in the frame is fine too. A block that *does* name
+    /// a registered kind but carries fewer endpoint columns than that kind's
+    /// arity — an `angles` block with `atomi` and `atomj` and no `atomk` —
+    /// cannot be read and is refused.
     ///
     /// # Null cells
     ///
@@ -1554,13 +1545,17 @@ impl MolGraph {
     /// refusal names the block and the column and comes before any node or
     /// relation is added), when a column value does not fit its canonical
     /// type, when a column's dtype contradicts a component `self` already
-    /// holds under that key, or when the frame carries an unreadable relation
-    /// block.
+    /// holds under that key, or when a registered kind's block is unreadable.
     pub(crate) fn read_frame(&mut self, frame: &Frame) -> Result<(), MolRsError> {
         let atoms_block = frame
             .get("atoms")
             .ok_or_else(|| MolRsError::parse("Frame missing 'atoms' block"))?;
 
+        // Ports are a capability of every graph (see `crate::system::port`),
+        // so a `ports` block is read whatever the receiving type.
+        if frame.get(crate::system::port::PORTS).is_some() {
+            self.try_register_kind(crate::system::port::PORTS, 2)?;
+        }
         let kind_specs: Vec<(KindId, String, usize)> = self
             .kind_ids()
             .map(|kid| {
@@ -1585,7 +1580,7 @@ impl MolGraph {
             self.read_relation_block(kid, &block_name, arity, block, &node_ids)?;
         }
 
-        self.reject_unreadable_relation_blocks(frame)
+        Ok(())
     }
 
     /// Refuse `block` if any of its columns is not 1-D.
@@ -1689,41 +1684,25 @@ impl MolGraph {
         }
         Ok(())
     }
+}
 
-    /// Refuse every relation block of `frame` that names no registered kind.
-    ///
-    /// [`to_frame`](Self::to_frame) writes a relation block's endpoints into
-    /// the canonical columns [`atomi`](crate::store::keys::ATOMI),
-    /// `atomj`, … in position order, so a block carrying `atomi` is a relation
-    /// block whoever wrote it — including `ports`, which is outside the
-    /// [`Frame`] vocabulary. That column is therefore the test, rather than a
-    /// lookup in the block schema, which would miss every kind a caller
-    /// registers under a name of its own.
+/// A graph type built from a finished [`MolGraph`]: the output factory of a
+/// builder that assembles a bare graph and hands it back as whatever type the
+/// caller asks for (operator, 2026-09-28: graph types are peers and no graph
+/// type converts into another).
+pub trait FromMolGraph: Sized {
+    /// Wrap `graph` as `Self`, checking the type's invariant.
     ///
     /// # Errors
     ///
-    /// [`MolRsError::Validation`] naming every offending block. The names are
-    /// sorted so the message does not depend on the frame's hash order.
-    fn reject_unreadable_relation_blocks(&self, frame: &Frame) -> Result<(), MolRsError> {
-        let mut unreadable: Vec<&str> = frame
-            .iter()
-            .filter(|(name, block)| {
-                !self.name_to_kind.contains_key(*name)
-                    && block.get_uint(crate::store::keys::ATOMI).is_some()
-            })
-            .map(|(name, _)| name)
-            .collect();
-        if unreadable.is_empty() {
-            return Ok(());
-        }
-        unreadable.sort_unstable();
-        Err(MolRsError::validation(format!(
-            "Frame block(s) [{}] carry relation endpoints but name no relation \
-             kind registered on this graph, so their rows cannot be read; \
-             register the kind first, or read the frame into the leaf type \
-             that owns it",
-            unreadable.join(", ")
-        )))
+    /// The type's own refusal (an `Atomistic` needs an `element` on every
+    /// node, for instance).
+    fn from_molgraph(graph: MolGraph) -> Result<Self, MolRsError>;
+}
+
+impl FromMolGraph for MolGraph {
+    fn from_molgraph(graph: MolGraph) -> Result<Self, MolRsError> {
+        Ok(graph)
     }
 }
 
@@ -2533,13 +2512,14 @@ mod tests {
     // ----- Composition: replicate -----
 
     use crate::op::rigid::Rigid;
+    use crate::system::atomistic::Atomistic;
     use crate::system::bond::BondNumber;
-    use crate::system::fragment::{Fragment, PortKind};
+    use crate::system::port::PortKind;
 
     /// C (0,0,0), O (1,0,0), H handle (-1,0,0); bonds C-O and C-H; one port
     /// (anchor C, handle H). Template node order is C, O, H.
-    fn replicate_template() -> Fragment {
-        let mut frag = Fragment::new();
+    fn replicate_template() -> Atomistic {
+        let mut frag = Atomistic::new();
         let c = frag.add_atom_xyz("C", 0.0, 0.0, 0.0);
         let o = frag.add_atom_xyz("O", 1.0, 0.0, 0.0);
         let h = frag.add_atom_xyz("H", -1.0, 0.0, 0.0);

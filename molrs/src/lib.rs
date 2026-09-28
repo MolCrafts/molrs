@@ -84,9 +84,10 @@ pub use crate::core::*;
 pub mod builder;
 #[cfg(feature = "builder")]
 pub use crate::builder::{
-    AssembleError, Assembler, CarbonTubeBuilder, CarbonTubeError, FccLattice, GrapheneBuilder,
-    GrapheneError, GrowthStrategy, OccupancyMode, OffLattice, PlaceError, Placer, SelfAvoidingWalk,
-    TracePlacer, WalkError, WalkOutput,
+    AssembleError, Assembler, AxisOrienter, CarbonTubeBuilder, CarbonTubeError, FccLattice,
+    GrapheneBuilder, GrapheneError, GrowthPlacer, GrowthStrategy, OccupancyMode, OffLattice,
+    OrientError, Orienter, ParentJoin, PlaceError, PlaceSite, Placer, SelfAvoidingWalk, SiteLink,
+    SitePlacer, SiteView, WalkError, WalkOutput,
 };
 
 // Chemical perception: one layer above `core`, below `ff` / `io` / `conformer`.
@@ -112,7 +113,7 @@ pub use crate::perceive::stereo::{
     chiral_volume, find_chiral_centers,
 };
 pub use crate::perceive::subgraph::SubgraphMatcher;
-pub use crate::perceive::{CoarsenError, Coarsener, LinearPathError};
+pub use crate::perceive::{CoarsenError, Coarsener};
 
 #[cfg(feature = "io")]
 pub mod io;

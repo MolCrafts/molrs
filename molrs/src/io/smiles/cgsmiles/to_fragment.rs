@@ -1,4 +1,4 @@
-//! Atomistic fragment templates: one [`Fragment`] per definition of the last
+//! Atomistic fragment templates: one ported [`Atomistic`] per definition of the last
 //! `CGsmiles` fragment table.
 //!
 //! A template sits beside the expansion
@@ -38,15 +38,15 @@ use molrs::error::MolRsError;
 use molrs::store::keys;
 use molrs::system::atomistic::{AtomId, Atomistic};
 use molrs::system::bond::BondNumber;
-use molrs::system::fragment::{Fragment, PortKind};
+use molrs::system::port::PortKind;
 
 impl CGSmilesIR {
-    /// Build one [`Fragment`] template per definition of the last fragment
-    /// table.
+    /// Build one ported [`Atomistic`] template per definition of the last
+    /// fragment table.
     ///
     /// Each body is converted to its heavy-atom graph, every bonding
     /// descriptor it wrote becomes a **capping hydrogen** bonded to its anchor,
-    /// the graph is promoted to a `Fragment`, and each `(anchor, handle)` pair
+    /// and each `(anchor, handle)` pair
     /// is recorded as a port carrying the descriptor's kind (R4.3), label
     /// (R4.4) and bond order (R4.5). Keys are the names written after `#`, in
     /// name order.
@@ -111,7 +111,7 @@ impl CGSmilesIR {
     /// [`PairEnd::Body::port`](crate::io::smiles::PairEnd::Body::port) uses
     /// against the same body. The *n*-th descriptor of a definition is
     /// therefore the *n*-th port added for it.
-    /// [`Fragment::ports`] promises no iteration order, so read a port back by
+    /// [`ports`](molrs::system::molgraph::MolGraph::ports) promises no iteration order, so read a port back by
     /// its [`Port`](molrs::system::Port) rather than by position.
     ///
     /// # Errors
@@ -145,7 +145,6 @@ impl CGSmilesIR {
     /// use molrs::io::smiles::parse_cgsmiles;
     /// use molrs::perceive::hydrogens::add_hydrogens;
     /// use molrs::system::atomistic::Atomistic;
-    /// use molrs::system::fragment::Fragment;
     ///
     /// let ir = parse_cgsmiles("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")?;
     /// let mut templates = ir.to_fragment()?;
@@ -160,14 +159,12 @@ impl CGSmilesIR {
     /// // The handles are real bonds, so repletion completes each carbon to
     /// // four: C0 has O + handle and gains 2 H, C2 likewise, the ether oxygen
     /// // is already satisfied — 5 + 4 = 9 atoms.
-    /// let skeleton = Atomistic::try_from_molgraph(peo.into_inner())?;
-    /// let repleted = add_hydrogens(&skeleton)?;
-    /// assert_eq!(repleted.n_atoms(), 9);
+    /// let rebuilt = add_hydrogens(&peo)?;
+    /// assert_eq!(rebuilt.n_atoms(), 9);
     ///
-    /// // The ports survive the round trip, and every handle is still terminal.
-    /// let rebuilt = Fragment::try_from_molgraph(repleted.into_inner())?;
+    /// // The ports survive repletion, and every handle is still terminal.
     /// assert_eq!(rebuilt.n_ports(), 2);
-    /// let bonds = rebuilt.kind_id("bonds").expect("a Fragment registers 'bonds'");
+    /// let bonds = rebuilt.kind_id("bonds").expect("an Atomistic registers 'bonds'");
     /// for id in rebuilt.ports() {
     ///     let port = rebuilt.port(id)?;
     ///     let degree = rebuilt
@@ -178,7 +175,7 @@ impl CGSmilesIR {
     /// }
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn to_fragment(&self) -> Result<BTreeMap<String, Fragment>, SmilesError> {
+    pub fn to_fragment(&self) -> Result<BTreeMap<String, Atomistic>, SmilesError> {
         let Some(table) = self.fragments.last() else {
             return Err(SmilesError::new(
                 SmilesErrorKind::CgNotExpandable("base-only string (no fragment table)".to_owned()),
@@ -225,34 +222,32 @@ struct OpenSite<'a> {
     descriptor: &'a BondingDescriptor,
 }
 
-/// Cap every open site of `atomistic` with a hydrogen **handle** and promote
-/// the graph to a [`Fragment`] holding one port per site, in `sites` order.
+/// Cap every open site of `atomistic` with a hydrogen **handle** and record
+/// one port per site, in `sites` order.
 ///
 /// Each handle is a real hydrogen carrying its element and the [`Element`]
 /// table's H mass, bonded to the anchor by a single bond; handles are
 /// appended in `sites` order, so they follow every atom already present. Each
 /// port records the descriptor's kind (R4.3), label (R4.4) and order (R4.5).
-/// Handles and their bonds are written on the `Atomistic`, before promotion:
-/// `Atomistic::add_bond` stamps both bond facts in one call, and
-/// `Fragment::add_port` re-checks that the handle is bonded to its anchor (it
-/// accepts a handle of any element), so the bond must exist by then. The graph is re-wrapped, never
-/// copied atom by atom — a copy would drop `h_count`, `formal_charge`,
-/// `isotope`, `is_aromatic` and the stereo the SMILES builder declared — and
-/// neither `into_inner` nor `try_from_molgraph` renumbers a node, so every
-/// anchor id stays valid.
+/// Handles and their bonds are written first: `Atomistic::add_bond` stamps
+/// both bond facts in one call, and `add_port` re-checks that the handle is
+/// bonded to its anchor (it accepts a handle of any element), so the bond
+/// must exist by then. The graph is edited in place, never copied atom by
+/// atom — a copy would drop `h_count`, `formal_charge`, `isotope`,
+/// `is_aromatic` and the stereo the SMILES builder declared.
 ///
 /// # Errors
 ///
 /// [`SmilesErrorKind::InvalidDescriptorOrder`] (see [`port_order`]) before
 /// anything is written; otherwise [`SmilesErrorKind::CgBuild`], spanned at
-/// `span` and prefixed by `context`, when a handle, its bond, the promotion
-/// or a port cannot be written.
+/// `span` and prefixed by `context`, when a handle, its bond or a port cannot
+/// be written.
 fn cap_open_sites(
     mut atomistic: Atomistic,
     sites: &[OpenSite<'_>],
     context: &str,
     span: Span,
-) -> Result<Fragment, SmilesError> {
+) -> Result<Atomistic, SmilesError> {
     let orders = sites
         .iter()
         .map(|site| port_order(site.descriptor, span))
@@ -274,10 +269,9 @@ fn cap_open_sites(
         atomistic.add_bond(site.anchor, handle).map_err(build)?;
         handles.push(handle);
     }
-    let mut fragment = Fragment::try_from_molgraph(atomistic.into_inner()).map_err(build)?;
     for ((site, handle), order) in sites.iter().zip(handles).zip(orders) {
         let desc = site.descriptor;
-        fragment
+        atomistic
             .add_port(
                 site.anchor,
                 handle,
@@ -287,7 +281,7 @@ fn cap_open_sites(
             )
             .map_err(build)?;
     }
-    Ok(fragment)
+    Ok(atomistic)
 }
 
 /// The stored port role a written descriptor operator denotes.
@@ -371,10 +365,10 @@ mod tests {
         FragmentBody, Notation, SmilesErrorKind, Span, parse_cgsmiles, parse_fragment_smiles,
     };
     use molrs::store::keys;
-    use molrs::system::atomistic::AtomId;
+    use molrs::system::atomistic::{AtomId, Atomistic};
     use molrs::system::bond::{BondNumber, BondType};
-    use molrs::system::fragment::{Fragment, Port, PortKind};
     use molrs::system::molgraph::PropValue;
+    use molrs::system::port::{Port, PortKind};
 
     // Every count below is hand-derived from the fixtures of § Domain basis /
     // § Testing strategy of `.claude/specs/cgsmiles-02b-to-fragment.md`: heavy
@@ -406,7 +400,7 @@ mod tests {
     // -- helpers ------------------------------------------------------------
 
     /// The whole template table of a `CGsmiles` string that must convert.
-    fn templates(text: &str) -> BTreeMap<String, Fragment> {
+    fn templates(text: &str) -> BTreeMap<String, Atomistic> {
         parse_cgsmiles(text)
             .unwrap_or_else(|e| panic!("parse_cgsmiles({text:?}) failed: {e}"))
             .to_fragment()
@@ -414,17 +408,17 @@ mod tests {
     }
 
     /// One named template of a string that must convert.
-    fn template(text: &str, name: &str) -> Fragment {
+    fn template(text: &str, name: &str) -> Atomistic {
         templates(text)
             .remove(name)
             .unwrap_or_else(|| panic!("{text:?} builds no template named {name:?}"))
     }
 
-    /// Every port of a template, read back through `Fragment::port`.
+    /// Every port of a template, read back through `MolGraph::port`.
     ///
-    /// `Fragment::ports()` promises no iteration order (02a), so every
+    /// `MolGraph::ports()` promises no iteration order (02a), so every
     /// assertion below is over the port *set*, never over an index.
-    fn ports_of(frag: &Fragment) -> Vec<Port> {
+    fn ports_of(frag: &Atomistic) -> Vec<Port> {
         frag.ports()
             .map(|id| {
                 frag.port(id)
@@ -434,7 +428,7 @@ mod tests {
     }
 
     /// The element symbol of one atom of a template.
-    fn element(frag: &Fragment, atom: AtomId) -> String {
+    fn element(frag: &Atomistic, atom: AtomId) -> String {
         let props = frag
             .get_node(atom)
             .unwrap_or_else(|e| panic!("atom {atom:?} is missing: {e}"));
@@ -448,10 +442,10 @@ mod tests {
     ///
     /// Not `neighbors`: a port is an arity-2 relation too, so the generic
     /// adjacency would report a handle twice and call a port a bond.
-    fn bonded(frag: &Fragment, atom: AtomId) -> Vec<AtomId> {
+    fn bonded(frag: &Atomistic, atom: AtomId) -> Vec<AtomId> {
         let bonds = frag
             .kind_id("bonds")
-            .expect("'bonds' is registered on every Fragment");
+            .expect("'bonds' is registered on every Atomistic");
         frag.neighbor_relations(atom)
             .filter(|&(kind, _, _)| kind == bonds)
             .map(|(_, _, other)| other)
@@ -460,10 +454,10 @@ mod tests {
 
     /// The `(BondType, BondNumber)` of the bond joining a port's anchor to its
     /// handle.
-    fn handle_bond_class(frag: &Fragment, port: &Port) -> (BondType, BondNumber) {
+    fn handle_bond_class(frag: &Atomistic, port: &Port) -> (BondType, BondNumber) {
         let bonds = frag
             .kind_id("bonds")
-            .expect("'bonds' is registered on every Fragment");
+            .expect("'bonds' is registered on every Atomistic");
         let rid = frag
             .neighbor_relations(port.handle)
             .find(|&(kind, _, other)| kind == bonds && other == port.anchor)

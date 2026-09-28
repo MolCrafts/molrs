@@ -14,7 +14,7 @@
 //! unit axis `k̂` is `q = (cos(θ/2), sin(θ/2) k̂)`.
 
 use crate::op::types::{F, Mat3, Quat, Vec3};
-use crate::op::vec3::{add, dot};
+use crate::op::vec3::{add, cross, dot, norm, normalize, perpendicular, scale, sub};
 
 /// A rigid motion `p' = R p + t`: rotate by `rotation`, then translate by
 /// `translation`.
@@ -102,6 +102,74 @@ pub fn about(rotation: Mat3, center: Vec3) -> Rigid {
     }
 }
 
+/// The rotation, as a unit axis and an angle in radians, that turns `from`
+/// onto `to`.
+///
+/// The angle is in `[0, π]`. Antiparallel directions (cross product shorter
+/// than 1e-8 after normalisation) give a half turn about a perpendicular
+/// ([`perpendicular`]). `None` when the two already point the same way (cross
+/// product at most 1e-15) or either one is not a direction ([`normalize`]).
+pub fn alignment(from: Vec3, to: Vec3) -> Option<(Vec3, F)> {
+    let (a, b) = (normalize(from)?, normalize(to)?);
+    let axis = cross(a, b);
+    let cross_norm = norm(axis);
+    let cos = dot(a, b).clamp(-1.0, 1.0);
+    // Near-antiparallel: `axis` is too short to carry a reliable direction, so
+    // turn half a revolution about any perpendicular instead.
+    if cos < 0.0 && cross_norm < 1e-8 {
+        return Some((perpendicular(a)?, std::f64::consts::PI));
+    }
+    (cross_norm > 1e-15).then(|| {
+        (
+            [
+                axis[0] / cross_norm,
+                axis[1] / cross_norm,
+                axis[2] / cross_norm,
+            ],
+            cross_norm.atan2(cos),
+        )
+    })
+}
+
+/// The right-handed orthonormal frame whose first axis is `primary` and
+/// whose second lies in the plane of `primary` and `secondary`, as the
+/// columns `[e₁ e₂ e₃]` of a proper rotation: `e₁ = p̂`,
+/// `e₂ = normalize(s − (s·e₁) e₁)` (Gram–Schmidt), `e₃ = e₁ × e₂`.
+///
+/// `R = frame(a, b) · frame(a′, b′)ᵀ` is the rotation that takes the
+/// direction `a′` onto `a` and the plane of `(a′, b′)` onto that of
+/// `(a, b)`. `None` when `primary` is not a direction ([`normalize`]) or
+/// `secondary` has no component across it.
+pub fn frame(primary: Vec3, secondary: Vec3) -> Option<Mat3> {
+    let e1 = normalize(primary)?;
+    let e2 = normalize(sub(secondary, scale(e1, dot(secondary, e1))))?;
+    let e3 = cross(e1, e2);
+    Some([
+        [e1[0], e2[0], e3[0]],
+        [e1[1], e2[1], e3[1]],
+        [e1[2], e2[2], e3[2]],
+    ])
+}
+
+/// The motion `outer ∘ inner`: apply `inner`, then `outer`.
+///
+/// `R = R_o R_i`, `t = R_o t_i + t_o`, so `apply(compose(o, i), p)` equals
+/// `apply(o, apply(i, p))` to rounding.
+pub fn compose(outer: &Rigid, inner: &Rigid) -> Rigid {
+    let mut rotation = [[0.0; 3]; 3];
+    for (row, out) in rotation.iter_mut().enumerate() {
+        for (col, cell) in out.iter_mut().enumerate() {
+            *cell = (0..3)
+                .map(|k| outer.rotation[row][k] * inner.rotation[k][col])
+                .sum();
+        }
+    }
+    Rigid {
+        rotation,
+        translation: apply(outer, inner.translation),
+    }
+}
+
 /// Quaternion conjugate `q* = (w, −x, −y, −z)`.
 #[inline]
 pub fn quat_conj(q: Quat) -> Quat {
@@ -179,7 +247,7 @@ pub fn quat_to_matrix(q: Quat) -> Mat3 {
 mod tests {
     use super::*;
     use crate::op::types::{F, Mat3, Quat, Vec3};
-    use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
+    use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
     const TOL: F = 1e-12;
 
@@ -276,6 +344,71 @@ mod tests {
     }
 
     // ---------- quaternion kernels ----------
+
+    // ---------- alignment ----------
+
+    #[test]
+    fn alignment_of_perpendicular_directions_is_a_quarter_turn() {
+        let (axis, angle) = alignment([1.0, 0.0, 0.0], [0.0, 2.0, 0.0]).expect("distinct");
+        assert_vec_close(axis, [0.0, 0.0, 1.0]);
+        assert!((angle - FRAC_PI_2).abs() < TOL, "angle = {angle}");
+    }
+
+    #[test]
+    fn alignment_of_antiparallel_directions_is_a_half_turn_about_a_perpendicular() {
+        let (axis, angle) = alignment([1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]).expect("antiparallel");
+        assert!((angle - PI).abs() < TOL, "angle = {angle}");
+        assert!(axis[0].abs() < TOL, "axis {axis:?} not ⟂ x̂");
+        let len = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
+        assert!((len - 1.0).abs() < TOL, "|axis| = {len}");
+    }
+
+    #[test]
+    fn alignment_of_parallel_directions_is_none() {
+        assert_eq!(alignment([0.0, 1.0, 0.0], [0.0, 3.0, 0.0]), None);
+    }
+
+    #[test]
+    fn alignment_refuses_a_zero_direction() {
+        assert_eq!(alignment([0.0, 0.0, 0.0], [0.0, 1.0, 0.0]), None);
+    }
+
+    // ---------- frame ----------
+
+    #[test]
+    fn frame_takes_the_primary_axis_and_the_secondary_plane() {
+        // primary +y, secondary (1, 1, 0): e1 = ŷ, e2 = x̂, e3 = ŷ × x̂ = −ẑ.
+        let f = frame([0.0, 2.0, 0.0], [1.0, 1.0, 0.0]).expect("a frame");
+        assert_eq!(f, [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, -1.0]]);
+    }
+
+    #[test]
+    fn frame_refuses_a_secondary_along_the_primary() {
+        assert_eq!(frame([1.0, 0.0, 0.0], [-3.0, 0.0, 0.0]), None);
+        assert_eq!(frame([0.0, 0.0, 0.0], [1.0, 0.0, 0.0]), None);
+    }
+
+    // ---------- compose ----------
+
+    #[test]
+    fn compose_applies_inner_then_outer() {
+        // inner: quarter turn about z then +x; outer: shift +z.
+        let inner = Rigid {
+            rotation: RZ90,
+            translation: [1.0, 0.0, 0.0],
+        };
+        let outer = Rigid {
+            rotation: Rigid::IDENTITY.rotation,
+            translation: [0.0, 0.0, 2.0],
+        };
+        // (1, 0, 0) -> RZ90 -> (0, 1, 0) -> +x -> (1, 1, 0) -> +z -> (1, 1, 2).
+        let p = [1.0, 0.0, 0.0];
+        assert_vec_close(apply(&compose(&outer, &inner), p), [1.0, 1.0, 2.0]);
+        assert_vec_close(
+            apply(&compose(&outer, &inner), p),
+            apply(&outer, apply(&inner, p)),
+        );
+    }
 
     #[test]
     fn quat_conj_negates_the_vector_part() {

@@ -1,12 +1,15 @@
-//! [`Assembler`]: one placed, linked world [`Fragment`] from a list of traces
-//! and their unit names.
+//! [`Assembler`]: one placed, linked world graph from a site graph.
 //!
-//! The assembler holds a library (name → one template [`Fragment`], with or
-//! without ports) and a [`Placer`]. Its one verb,
-//! [`assemble`](Assembler::assemble), builds every molecule of the input in a
-//! single O(N) call: one placed template copy per trace point, consecutive
-//! units of a trace joined `>` to `<`, each atom stamped with its unit
-//! (`frag_id`) and its molecule (`mol_id`).
+//! The assembler holds a library (name → one template [`MolGraph`], with or
+//! without ports — any graph type, handed over as its inner graph), a
+//! [`Placer`] and an [`Orienter`]. Its one verb,
+//! [`assemble`](Assembler::assemble), reads a site graph (a [`CoarseGrain`]
+//! whose beads are the sites and whose bonds say which sites join) and
+//! builds every molecule in it in one call: one template copy per site,
+//! turned and placed, the copies of bonded sites joined through their ports,
+//! each atom stamped with its unit (`frag_id`) and its molecule (`mol_id`).
+//! Any topology is accepted: chains, branches and rings (operator,
+//! 2026-09-28).
 //!
 //! `assemble` is a composed operation by operator ruling (notes.md
 //! 2026-09-27): it supersedes the 2026-09-26 "primitives only" ruling for
@@ -15,77 +18,45 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::builder::place::{PlaceError, Placer};
+use crate::builder::orient::{OrientError, Orienter, SiteLink, SiteView, direction_fit};
+use crate::builder::place::{ParentJoin, PlaceError, PlaceSite, Placer};
 use crate::error::MolRsError;
+use crate::op::rigid::{Rigid, apply};
 use crate::op::types::Vec3;
-use crate::spatial::Trace;
+use crate::op::vec3::sub;
 use crate::store::keys;
 use crate::system::atomistic::AtomId;
-use crate::system::fragment::{Fragment, PortId, PortKind};
+use crate::system::coarsegrain::{BeadId, CoarseGrain};
 use crate::system::link::LinkManyError;
+use crate::system::molgraph::{FromMolGraph, MolGraph};
+use crate::system::port::{Port, PortId};
 use crate::types::I;
+
+/// The most port assignments tried at one site before it is refused.
+const MAX_ASSIGNMENTS: usize = 5040;
 
 /// Why [`Assembler::assemble`] refused its input.
 ///
-/// Every variant but [`Replicate`](Self::Replicate) and [`Link`](Self::Link)
-/// is found before the first copy is placed. `trace` is a 0-based index into
-/// the traces passed and `unit` a 0-based position within that trace.
+/// `site` is a 0-based ordinal of the site graph's beads, in
+/// [`node_ids`](crate::system::molgraph::MolGraph::node_ids) order — the
+/// unit's `frag_id`.
 #[derive(Debug)]
 pub enum AssembleError {
-    /// The traces and the name sequences differ in count.
-    LengthMismatch {
-        /// Traces passed.
-        traces: usize,
-        /// Name sequences passed.
-        sequences: usize,
-    },
-    /// Trace `trace` and its name sequence differ in length.
-    SequenceLength {
-        /// The trace.
-        trace: usize,
-        /// Points of the trace.
-        points: usize,
-        /// Names of its sequence.
-        names: usize,
-    },
-    /// The unit count, or the trace count when it is larger, exceeds
-    /// [`i32::MAX`], so `frag_id` or `mol_id` would not fit its `i32` node
-    /// column.
+    /// The site count exceeds [`i32::MAX`], so `frag_id` or `mol_id` would
+    /// not fit its `i32` node column.
     TooManyUnits {
-        /// The larger of the unit count and the trace count.
+        /// The site count.
         units: usize,
     },
-    /// Unit `unit` of trace `trace` names a template the library lacks.
+    /// The site graph does not read back: a site lacks its `bead_type`, its
+    /// position, or (when any site has one) its axis.
+    Sites(MolRsError),
+    /// Site `site` names a template the library lacks.
     UnknownName {
-        /// The trace.
-        trace: usize,
-        /// The unit within the trace.
-        unit: usize,
+        /// The site.
+        site: usize,
         /// The name it carries.
         name: String,
-    },
-    /// Unit `unit` of trace `trace` must join a neighbour, but its template
-    /// has no port of kind `kind`.
-    MissingPort {
-        /// The trace.
-        trace: usize,
-        /// The unit within the trace.
-        unit: usize,
-        /// The unit's template name.
-        name: String,
-        /// The port kind it lacks: [`PortKind::Right`] to join the next unit,
-        /// [`PortKind::Left`] to join the previous one.
-        kind: PortKind,
-    },
-    /// Template `name` has `count` ports of the kind a join needs, so the
-    /// join is ambiguous.
-    AmbiguousPort {
-        /// The template name.
-        name: String,
-        /// The port kind.
-        kind: PortKind,
-        /// How many ports of that kind the template has (at least 2).
-        count: usize,
     },
     /// A port of template `name` does not read back.
     Template {
@@ -94,19 +65,38 @@ pub enum AssembleError {
         /// Why the port does not read back.
         source: MolRsError,
     },
-    /// The placer refused the copies of template `name`; `(trace, unit)` is
-    /// the unit it names, or the group's first unit when the error names no
-    /// point.
+    /// No assignment of template ports to the bonds of site `site` exists:
+    /// too few ports, no port accepting a partner's, or too many choices.
+    Ports {
+        /// The site.
+        site: usize,
+        /// The site's template name.
+        name: String,
+        /// What is missing.
+        reason: String,
+    },
+    /// The orienter refused the copies of template `name`; `site` is the
+    /// site it names, or the group's first site when the error names none.
+    Orient {
+        /// The template name.
+        name: String,
+        /// The site.
+        site: usize,
+        /// The orienter's refusal.
+        source: OrientError,
+    },
+    /// The placer refused the copies of template `name`; `site` is the site
+    /// it names, or the group's first site when the error names none.
     Place {
         /// The template name.
         name: String,
-        /// The trace.
-        trace: usize,
-        /// The unit within the trace.
-        unit: usize,
+        /// The site.
+        site: usize,
         /// The placer's refusal.
         source: PlaceError,
     },
+    /// The finished world is not a valid graph of the requested output type.
+    Output(MolRsError),
     /// The world refused the copies of template `name` (for example a column
     /// type that contradicts another template's), or a copy lost a port.
     Replicate {
@@ -115,15 +105,15 @@ pub enum AssembleError {
         /// The world's refusal.
         source: MolRsError,
     },
-    /// The batch join refused a link; `(trace, unit)` is the left unit of the
-    /// offending link (for a two-pair refusal, of its `first` pair).
+    /// The batch join refused the bond between sites `site` and `partner`
+    /// (for a two-pair refusal, its `first` pair).
     Link {
-        /// The trace.
-        trace: usize,
-        /// The left unit within the trace.
-        unit: usize,
-        /// The batch join's refusal; its pair indices count links in
-        /// trace-major order.
+        /// One end of the bond.
+        site: usize,
+        /// The other end.
+        partner: usize,
+        /// The batch join's refusal; its pair indices count site bonds in
+        /// the site graph's bond order.
         source: LinkManyError,
     },
 }
@@ -131,69 +121,42 @@ pub enum AssembleError {
 impl fmt::Display for AssembleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::LengthMismatch { traces, sequences } => write!(
-                f,
-                "{traces} traces but {sequences} name sequences; they pair one to one"
-            ),
-            Self::SequenceLength {
-                trace,
-                points,
-                names,
-            } => write!(
-                f,
-                "trace {trace} has {points} points but its sequence has {names} names"
-            ),
             Self::TooManyUnits { units } => write!(
                 f,
-                "{units} units or traces exceed {}, the widest id a node column stores",
+                "{units} sites exceed {}, the widest id a node column stores",
                 I::MAX
             ),
-            Self::UnknownName { trace, unit, name } => write!(
-                f,
-                "unit {unit} of trace {trace} names '{name}', which the library lacks"
-            ),
-            Self::MissingPort {
-                trace,
-                unit,
-                name,
-                kind,
-            } => write!(
-                f,
-                "unit {unit} of trace {trace} ('{name}') has no '{}' port to join its neighbour",
-                kind.as_str()
-            ),
-            Self::AmbiguousPort { name, kind, count } => write!(
-                f,
-                "template '{name}' has {count} '{}' ports; a join needs exactly one",
-                kind.as_str()
-            ),
+            Self::Sites(e) => write!(f, "the site graph does not read back: {e}"),
+            Self::UnknownName { site, name } => {
+                write!(f, "site {site} names '{name}', which the library lacks")
+            }
             Self::Template { name, source } => {
                 write!(
                     f,
                     "a port of template '{name}' does not read back: {source}"
                 )
             }
-            Self::Place {
-                name,
-                trace,
-                unit,
-                source,
-            } => write!(
-                f,
-                "unit {unit} of trace {trace} ('{name}') cannot be placed: {source}"
-            ),
+            Self::Ports { site, name, reason } => {
+                write!(
+                    f,
+                    "site {site} ('{name}') has no port for every bond: {reason}"
+                )
+            }
+            Self::Orient { name, site, source } => {
+                write!(f, "site {site} ('{name}') cannot be oriented: {source}")
+            }
+            Self::Place { name, site, source } => {
+                write!(f, "site {site} ('{name}') cannot be placed: {source}")
+            }
+            Self::Output(e) => write!(f, "the world is not a graph of the requested type: {e}"),
             Self::Replicate { name, source } => {
                 write!(f, "the copies of template '{name}' were refused: {source}")
             }
             Self::Link {
-                trace,
-                unit,
+                site,
+                partner,
                 source,
-            } => write!(
-                f,
-                "unit {unit} of trace {trace} cannot join unit {}: {source}",
-                unit + 1
-            ),
+            } => write!(f, "site {site} cannot join site {partner}: {source}"),
         }
     }
 }
@@ -201,58 +164,149 @@ impl fmt::Display for AssembleError {
 impl std::error::Error for AssembleError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Template { source, .. } | Self::Replicate { source, .. } => Some(source),
+            Self::Sites(source)
+            | Self::Output(source)
+            | Self::Template { source, .. }
+            | Self::Replicate { source, .. } => Some(source),
+            Self::Orient { source, .. } => Some(source),
             Self::Place { source, .. } => Some(source),
             Self::Link { source, .. } => Some(source),
-            _ => None,
+            Self::TooManyUnits { .. } | Self::UnknownName { .. } | Self::Ports { .. } => None,
         }
     }
 }
 
-/// `(anchor row, handle row)` of a template's `>` and `<` ports.
-struct TemplatePorts {
-    right: Vec<(usize, usize)>,
-    left: Vec<(usize, usize)>,
+/// One port of a template, read once.
+struct TemplatePort {
+    id: PortId,
+    port: Port,
+    anchor_row: usize,
+    handle_row: usize,
+    /// Anchor and handle positions in the template (Å), when both have them.
+    atoms: Option<(Vec3, Vec3)>,
+    /// Centre of mass → handle (Å); `None` when the template has no centre.
+    direction: Option<Vec3>,
 }
 
-/// The units that use one template: its copies, in trace-major order.
+/// The sites that use one template: its copies, in site order.
 struct Group<'a> {
     name: &'a str,
-    template: &'a Fragment,
-    /// Global trace-major unit ordinals, one per copy.
-    units: Vec<usize>,
-    /// Read on the first unit that needs a join; `None` until then.
-    ports: Option<TemplatePorts>,
+    template: &'a MolGraph,
+    ports: Vec<TemplatePort>,
+    /// Site ordinals, one per copy.
+    sites: Vec<usize>,
 }
 
-/// Builds every molecule of a list of traces as one placed, linked world
-/// [`Fragment`].
+/// The site graph as the assembler reads it.
+struct SiteGraph {
+    names: Vec<String>,
+    /// Site positions (Å), when the site graph carries them.
+    positions: Option<Vec<Vec3>>,
+    axes: Option<Vec<Vec3>>,
+    /// Site bonds as ordinal pairs, in the site graph's bond order.
+    bonds: Vec<(usize, usize)>,
+    /// Per site, its `(partner, bond)` incidences.
+    incident: Vec<Vec<(usize, usize)>>,
+}
+
+impl SiteGraph {
+    fn read(sites: &CoarseGrain) -> Result<Self, AssembleError> {
+        let ids: Vec<BeadId> = sites.node_ids().collect();
+        let n = ids.len();
+        if I::try_from(n).is_err() {
+            return Err(AssembleError::TooManyUnits { units: n });
+        }
+        let names = sites.bead_types(&ids).map_err(AssembleError::Sites)?;
+        let table = sites.node_table();
+        let carried = |key: &str| ids.iter().any(|&id| table.has(id, key));
+        let positions = if carried(keys::X) {
+            Some(sites.positions(&ids).map_err(AssembleError::Sites)?)
+        } else {
+            None
+        };
+        let axes = if carried(keys::AXIS[0]) {
+            Some(sites.axes(&ids).map_err(AssembleError::Sites)?)
+        } else {
+            None
+        };
+        let ordinal: HashMap<BeadId, usize> =
+            ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
+        let mut bonds = Vec::with_capacity(sites.n_bonds());
+        let mut incident = vec![Vec::new(); n];
+        for (_, bond) in sites.bonds() {
+            let (u, v) = (ordinal[&bond.nodes[0]], ordinal[&bond.nodes[1]]);
+            incident[u].push((v, bonds.len()));
+            incident[v].push((u, bonds.len()));
+            bonds.push((u, v));
+        }
+        Ok(Self {
+            names,
+            positions,
+            axes,
+            bonds,
+            incident,
+        })
+    }
+
+    /// Which end (0 or 1) of bond `b` site `u` is.
+    fn end(&self, b: usize, u: usize) -> usize {
+        usize::from(self.bonds[b].0 != u)
+    }
+}
+
+/// One molecule's walk: sites in breadth-first order, each with the
+/// `(parent, bond)` it was reached through.
+type Walk = Vec<(usize, Option<(usize, usize)>)>;
+
+/// Why a site's ports were not chosen.
+enum PortChoice {
+    /// No assignment fits the site.
+    Refused(AssembleError),
+    /// The forced choice index is past the last choice.
+    Missing,
+}
+
+/// Builds every molecule of a site graph as one placed, linked world graph,
+/// returned as the graph type the caller names.
+///
+/// # Sites
+///
+/// Each bead of the site graph is one unit: its `bead_type` names the
+/// library template and each bond joins two units. A position `p` (Å) and an
+/// axis ([`CoarseGrain::axes`]) are optional: a site graph read from a CG
+/// model carries them, one written from a CGsmiles topology
+/// (`CGSmilesIR::to_coarsegrain`) does not.
+///
+/// # Ports
+///
+/// Every site bond joins one port of each end's copy, the two ports
+/// accepting each other ([`Port::accepts`]: `<` with `>`, `$` with `$`,
+/// equal label and order). Each connected component is walked breadth-first
+/// from its lowest-degree site (lowest ordinal on a tie); at each site the
+/// ports of all its bonds are chosen together, one distinct port per bond, a
+/// bond whose partner already chose requiring a port that accepts the
+/// partner's. When several choices remain, the one whose port directions
+/// (centre of mass → handle) best fit the bond directions (site → partner)
+/// is taken — the first in port order on a tie or without positions. When a
+/// walk fails, it is retried from the first site's next choice (a chain
+/// entered from its wrong end), and the first failure is reported once every
+/// choice fails. Ports left without a bond stay on the world, as a chain's
+/// end ports do.
 ///
 /// # Placement
 ///
-/// Unit `k` of a trace sits on the trace's point `p_k` (Å). The placer turns
-/// the unit's template into a rigid motion; with [`TracePlacer`] the copy
-/// moves by `R = I` and `t = p_k − R_c`, `R_c` the template's centre of mass
-/// (Å), so the copy's centre of mass lands on `p_k` and its orientation is
-/// the template's own. Relax the result before use.
-///
-/// # Link rule
-///
-/// In a trace of `n ≥ 2` units, unit `i`'s one `>` port joins unit `i + 1`'s
-/// one `<` port through the port rule of
-/// [`Fragment::link`] (equal label and order; the leaving groups are removed
-/// and their charge folds onto the anchors). All links of all traces run in
-/// one batch. Only `>` / `<` ports are joined: `$` and `!` ports are never
-/// linked and stay on the world, as do the chain-end ports and every port of
-/// a single-point trace.
+/// The optional orienter turns each copy about its template's centre of
+/// mass (it needs positions); the placer then gives each copy its pose,
+/// sites visited in walk order so a copy's parent is placed first.
+/// [`SitePlacer`] puts the centre of mass on the site; [`GrowthPlacer`]
+/// joins each copy to its parent's port and needs no position. Relax the
+/// result before use.
 ///
 /// # Ids
 ///
-/// - `frag_id` = the unit's global ordinal, counted trace-major over all
-///   traces (0-based).
-/// - `mol_id` = the trace's ordinal + 1: one trace is one molecule, and
-///   [`to_frame`](Fragment::to_frame) emits it as the schema's `mol_id`
-///   column.
+/// - `frag_id` = the site's ordinal (0-based).
+/// - `mol_id` = the ordinal of the site's connected component + 1,
+///   components numbered by their lowest site ordinal.
 ///
 /// # World layout
 ///
@@ -261,229 +315,268 @@ struct Group<'a> {
 /// groups and refills their rows from the end. Read a unit's atoms by
 /// `frag_id`, never by row.
 ///
-/// **Partial columns.** Templates may differ in their optional columns (one
-/// carries `formal_charge`, another does not); the world then holds those
-/// columns for some atoms only, and [`to_frame`](Fragment::to_frame) writes
-/// 0.0 in the rows without the prop (routed `/mol:fix`, notes.md
-/// 2026-09-27).
-///
-/// # Known limits
-///
-/// No orientation, overlap removal, relaxation or wrapping; only linear
-/// chains (no `$` / `!` joins, no branches or rings).
+/// **Partial columns.** Templates may differ in their optional columns; the
+/// world then holds those columns for some atoms only, and `to_frame` writes
+/// 0.0 in the rows without the prop
+/// (routed `/mol:fix`, notes.md 2026-09-27).
 ///
 /// # Examples
 ///
 /// ```
 /// use std::collections::HashMap;
 ///
-/// use molrs::builder::{Assembler, TracePlacer};
-/// use molrs::spatial::Trace;
+/// use molrs::builder::{Assembler, GrowthPlacer};
 /// use molrs::store::keys;
 /// use molrs::system::bond::BondNumber;
-/// use molrs::system::fragment::{Fragment, PortKind};
+/// use molrs::system::coarsegrain::CoarseGrain;
+/// use molrs::system::atomistic::Atomistic;
+/// use molrs::system::port::PortKind;
 ///
-/// // A carbon with a `<` hydrogen and a `>` hydrogen.
-/// let mut unit = Fragment::new();
-/// let c = unit.add_atom_xyz("C", 0.0, 0.0, 0.0);
-/// let hl = unit.add_atom_xyz("H", -1.0, 0.0, 0.0);
-/// let hr = unit.add_atom_xyz("H", 1.0, 0.0, 0.0);
-/// for (atom, mass) in [(c, 12.0), (hl, 1.0), (hr, 1.0)] {
-///     unit.set_node(atom, keys::MASS, mass).unwrap();
+/// // Joining carbons C0 (`<`, hydrogen on −x) and C1 (`>`, hydrogen on +x).
+/// let mut unit = Atomistic::new();
+/// let c0 = unit.add_atom_xyz("C", 0.0, 0.0, 0.0);
+/// let c1 = unit.add_atom_xyz("C", 1.5, 0.0, 0.0);
+/// let h0 = unit.add_atom_xyz("H", -1.0, 0.0, 0.0);
+/// let h1 = unit.add_atom_xyz("H", 2.5, 0.0, 0.0);
+/// for (a, b) in [(c0, c1), (c0, h0), (c1, h1)] {
+///     unit.add_bond(a, b).unwrap();
 /// }
-/// unit.add_bond(c, hl).unwrap();
-/// unit.add_bond(c, hr).unwrap();
-/// unit.add_port(c, hl, PortKind::Left, "", BondNumber::Single).unwrap();
-/// unit.add_port(c, hr, PortKind::Right, "", BondNumber::Single).unwrap();
+/// unit.add_port(c0, h0, PortKind::Left, "", BondNumber::Single).unwrap();
+/// unit.add_port(c1, h1, PortKind::Right, "", BondNumber::Single).unwrap();
+///
+/// // A three-site chain with no positions: grown copy by copy.
+/// let mut sites = CoarseGrain::new();
+/// let ids: Vec<_> = (0..3).map(|_| sites.add_bead_bare("U")).collect();
+/// sites.add_bond(ids[0], ids[1]).unwrap();
+/// sites.add_bond(ids[1], ids[2]).unwrap();
 ///
 /// let assembler = Assembler::new(
-///     HashMap::from([("U".to_owned(), unit)]),
-///     Box::new(TracePlacer::new()),
+///     HashMap::from([("U".to_owned(), unit.into_inner())]),
+///     Box::new(GrowthPlacer::new()),
+///     None,
 /// );
-/// let trace = Trace::from_points(vec![[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]]);
-/// let world = assembler
-///     .assemble(&[trace], &[vec!["U".to_owned(), "U".to_owned()]])
-///     .unwrap();
+/// let world: Atomistic = assembler.assemble(&sites).unwrap();
 ///
-/// // Two copies of 3 atoms, one link removes 2 hydrogens.
-/// assert_eq!(world.n_atoms(), 4);
+/// // Three copies of 4 atoms, two links remove 4 hydrogens.
+/// assert_eq!(world.n_atoms(), 8);
 /// assert_eq!(world.n_ports(), 2);
 /// ```
 ///
-/// [`TracePlacer`]: crate::builder::TracePlacer
+/// [`SitePlacer`]: crate::builder::SitePlacer
+/// [`GrowthPlacer`]: crate::builder::GrowthPlacer
 pub struct Assembler {
-    library: HashMap<String, Fragment>,
+    library: HashMap<String, MolGraph>,
     placer: Box<dyn Placer>,
+    orienter: Option<Box<dyn Orienter>>,
 }
 
 impl Assembler {
-    /// An assembler over `library` (name → template), placing copies with
-    /// `placer`. A portless molecule is a template with no ports.
-    pub fn new(library: HashMap<String, Fragment>, placer: Box<dyn Placer>) -> Self {
-        Self { library, placer }
+    /// An assembler over `library` (name → template graph, any graph type's
+    /// inner [`MolGraph`]), giving each copy its pose with `placer` after
+    /// turning it with `orienter`, when given. A portless molecule is a
+    /// template with no ports.
+    pub fn new(
+        library: HashMap<String, MolGraph>,
+        placer: Box<dyn Placer>,
+        orienter: Option<Box<dyn Orienter>>,
+    ) -> Self {
+        Self {
+            library,
+            placer,
+            orienter,
+        }
     }
 
-    /// Place one copy of `names[t][k]`'s template on each point `k` of
-    /// `traces[t]`, join each trace's consecutive units, and return the
-    /// world. See the type docs for the rules.
-    ///
-    /// `traces = []` returns an empty [`Fragment`].
+    /// One copy of `library[bead_type]` per site of `sites`, turned, placed
+    /// and joined along the site bonds; returns the world as a `G` (a
+    /// [`MolGraph`], an `Atomistic`, …). See the type docs for the rules. An
+    /// empty site graph gives an empty world.
     ///
     /// # Errors
     ///
-    /// Checked over the whole input before the first copy is placed, the
-    /// first offender in trace-major order:
-    /// [`LengthMismatch`](AssembleError::LengthMismatch),
-    /// [`SequenceLength`](AssembleError::SequenceLength),
-    /// [`TooManyUnits`](AssembleError::TooManyUnits),
-    /// [`UnknownName`](AssembleError::UnknownName), then the port needs of
-    /// every unit of an `n ≥ 2` trace:
-    /// [`MissingPort`](AssembleError::MissingPort),
-    /// [`AmbiguousPort`](AssembleError::AmbiguousPort) and
-    /// [`Template`](AssembleError::Template). While building:
-    /// [`Place`](AssembleError::Place), [`Replicate`](AssembleError::Replicate)
-    /// and [`Link`](AssembleError::Link).
-    pub fn assemble(
-        &self,
-        traces: &[Trace],
-        names: &[Vec<String>],
-    ) -> Result<Fragment, AssembleError> {
-        // ---- checks: nothing is placed until every one passes ----
-        if traces.len() != names.len() {
-            return Err(AssembleError::LengthMismatch {
-                traces: traces.len(),
-                sequences: names.len(),
-            });
-        }
-        for (trace, (points, seq)) in traces.iter().zip(names).enumerate() {
-            if points.points().len() != seq.len() {
-                return Err(AssembleError::SequenceLength {
-                    trace,
-                    points: points.points().len(),
-                    names: seq.len(),
-                });
-            }
-        }
-        let n_units: usize = names.iter().map(Vec::len).sum();
-        let widest = n_units.max(traces.len());
-        if I::try_from(widest).is_err() {
-            return Err(AssembleError::TooManyUnits { units: widest });
+    /// Checked before the first copy is placed, the first offender in site
+    /// order: [`TooManyUnits`](AssembleError::TooManyUnits),
+    /// [`Sites`](AssembleError::Sites),
+    /// [`UnknownName`](AssembleError::UnknownName),
+    /// [`Template`](AssembleError::Template) and, walking each component,
+    /// [`Ports`](AssembleError::Ports). While building:
+    /// [`Orient`](AssembleError::Orient), [`Place`](AssembleError::Place),
+    /// [`Replicate`](AssembleError::Replicate),
+    /// [`Link`](AssembleError::Link) and, last,
+    /// [`Output`](AssembleError::Output).
+    ///
+    /// # Complexity
+    ///
+    /// O(S + B + A) for S sites, B site bonds and A world atoms, times the
+    /// port choices tried at a site (one along a `<`/`>` chain, at most 5040)
+    /// and the walks retried per component (two for a `<`/`>` chain).
+    pub fn assemble<G: FromMolGraph>(&self, sites: &CoarseGrain) -> Result<G, AssembleError> {
+        let graph = SiteGraph::read(sites)?;
+        let n = graph.names.len();
+
+        // ---- group sites by template ----
+        let mut group_of_name: HashMap<&str, usize> = HashMap::new();
+        let mut groups: Vec<Group<'_>> = Vec::new();
+        let mut group_of: Vec<(usize, usize)> = Vec::with_capacity(n);
+        for (site, name) in graph.names.iter().enumerate() {
+            let g = match group_of_name.get(name.as_str()) {
+                Some(&g) => g,
+                None => {
+                    let (key, template) = self.library.get_key_value(name).ok_or_else(|| {
+                        AssembleError::UnknownName {
+                            site,
+                            name: name.clone(),
+                        }
+                    })?;
+                    group_of_name.insert(key, groups.len());
+                    groups.push(Group {
+                        name: key,
+                        template,
+                        ports: Self::template_ports(key, template)?,
+                        sites: Vec::new(),
+                    });
+                    groups.len() - 1
+                }
+            };
+            group_of.push((g, groups[g].sites.len()));
+            groups[g].sites.push(site);
         }
 
-        let mut group_of: HashMap<&str, usize> = HashMap::new();
-        let mut groups: Vec<Group<'_>> = Vec::new();
-        // By global unit ordinal: (trace, unit within trace) and (group, copy).
-        let mut location: Vec<(usize, usize)> = Vec::with_capacity(n_units);
-        let mut copy_of: Vec<(usize, usize)> = Vec::with_capacity(n_units);
-        for (trace, seq) in names.iter().enumerate() {
-            let n = seq.len();
-            for (unit, name) in seq.iter().enumerate() {
-                let g = match group_of.get(name.as_str()) {
-                    Some(&g) => g,
-                    None => {
-                        let (key, template) =
-                            self.library.get_key_value(name).ok_or_else(|| {
-                                AssembleError::UnknownName {
-                                    trace,
-                                    unit,
-                                    name: name.clone(),
+        // ---- ports: one per bond end, each component walked breadth-first ----
+        let mut chosen: Vec<[Option<usize>; 2]> = vec![[None, None]; graph.bonds.len()];
+        let mut mol_of = vec![usize::MAX; n];
+        let mut walks: Vec<Walk> = Vec::new();
+        for start in 0..n {
+            if mol_of[start] != usize::MAX {
+                continue;
+            }
+            let members = Self::component(start, &graph, &mut mol_of, walks.len());
+            walks.push(Self::walk(
+                &members,
+                &groups,
+                &group_of,
+                &graph,
+                &mut chosen,
+            )?);
+        }
+        let port_of = |u: usize, b: usize| -> &TemplatePort {
+            let p = chosen[b][graph.end(b, u)].expect("every bond end was chosen");
+            &groups[group_of[u].0].ports[p]
+        };
+
+        // ---- orient: one call per name ----
+        let mut turns = vec![Rigid::IDENTITY; n];
+        if let Some(orienter) = self.orienter.as_ref().filter(|_| n > 0) {
+            let positions = graph.positions.as_ref().ok_or_else(|| {
+                AssembleError::Sites(MolRsError::validation(
+                    "the orienter needs site positions; the site graph has none",
+                ))
+            })?;
+            for group in &groups {
+                let link_lists: Vec<Vec<SiteLink>> = group
+                    .sites
+                    .iter()
+                    .map(|&u| {
+                        graph.incident[u]
+                            .iter()
+                            .map(|&(v, b)| SiteLink {
+                                port: port_of(u, b).id,
+                                toward: positions[v],
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let views: Vec<SiteView<'_>> = group
+                    .sites
+                    .iter()
+                    .zip(&link_lists)
+                    .map(|(&u, links)| SiteView {
+                        position: positions[u],
+                        axis: graph.axes.as_ref().map(|a| a[u]),
+                        links,
+                    })
+                    .collect();
+                let group_turns =
+                    orienter
+                        .orient_many(group.template, &views)
+                        .map_err(|source| {
+                            let at = match source {
+                                OrientError::NoAxis { index } | OrientError::Frame { index } => {
+                                    index
                                 }
-                            })?;
-                        group_of.insert(key, groups.len());
-                        groups.push(Group {
-                            name: key,
-                            template,
-                            units: Vec::new(),
-                            ports: None,
-                        });
-                        groups.len() - 1
+                                OrientError::Template(_) | OrientError::Center(_) => 0,
+                            };
+                            AssembleError::Orient {
+                                name: group.name.to_owned(),
+                                site: group.sites.get(at).copied().unwrap_or(group.sites[0]),
+                                source,
+                            }
+                        })?;
+                for (&u, turn) in group.sites.iter().zip(group_turns) {
+                    turns[u] = turn;
+                }
+            }
+        }
+
+        // ---- place: parents before children ----
+        let mut poses = vec![Rigid::IDENTITY; n];
+        for walk in &walks {
+            for &(u, parent) in walk {
+                let group = &groups[group_of[u].0];
+                let place_err = |source| AssembleError::Place {
+                    name: group.name.to_owned(),
+                    site: u,
+                    source,
+                };
+                let parent = match parent {
+                    None => None,
+                    Some((p, b)) => {
+                        let (anchor, handle) = port_of(p, b).atoms.ok_or_else(|| {
+                            place_err(PlaceError::Port(format!(
+                                "the port of site {p} toward site {u} has an atom without x/y/z"
+                            )))
+                        })?;
+                        Some(ParentJoin {
+                            port: port_of(u, b).id,
+                            anchor: apply(&poses[p], anchor),
+                            handle: apply(&poses[p], handle),
+                        })
                     }
                 };
-                let group = &mut groups[g];
-                for (needed, kind) in [(unit + 1 < n, PortKind::Right), (unit > 0, PortKind::Left)]
-                {
-                    if !needed {
-                        continue;
-                    }
-                    if group.ports.is_none() {
-                        group.ports = Some(Self::template_ports(group.name, group.template)?);
-                    }
-                    let ports = group.ports.as_ref().expect("read just above");
-                    let count = match kind {
-                        PortKind::Right => ports.right.len(),
-                        _ => ports.left.len(),
-                    };
-                    match count {
-                        1 => {}
-                        0 => {
-                            return Err(AssembleError::MissingPort {
-                                trace,
-                                unit,
-                                name: name.clone(),
-                                kind,
-                            });
-                        }
-                        count => {
-                            return Err(AssembleError::AmbiguousPort {
-                                name: name.clone(),
-                                kind,
-                                count,
-                            });
-                        }
-                    }
-                }
-                copy_of.push((g, group.units.len()));
-                group.units.push(location.len());
-                location.push((trace, unit));
+                let site = PlaceSite {
+                    position: graph.positions.as_ref().map(|ps| ps[u]),
+                    turn: turns[u],
+                    parent,
+                };
+                poses[u] = self
+                    .placer
+                    .place(group.template, &site)
+                    .map_err(place_err)?;
             }
         }
 
-        // ---- place, replicate and stamp mol_id: one pass per name ----
-        let mut world = Fragment::new();
+        // ---- replicate and stamp mol_id: one pass per name ----
+        let mut world = MolGraph::new();
         let mut copies: Vec<Vec<AtomId>> = Vec::with_capacity(groups.len());
         for group in &groups {
-            let points: Vec<Vec3> = group
-                .units
-                .iter()
-                .map(|&u| {
-                    let (trace, unit) = location[u];
-                    traces[trace].points()[unit]
-                })
-                .collect();
-            let rigids = self
-                .placer
-                .place_many(group.template, &points)
-                .map_err(|source| {
-                    let at = match source {
-                        PlaceError::NonFinitePoint { index } => index,
-                        PlaceError::Template(_) => 0,
-                    };
-                    let (trace, unit) =
-                        location[group.units.get(at).copied().unwrap_or(group.units[0])];
-                    AssembleError::Place {
-                        name: group.name.to_owned(),
-                        trace,
-                        unit,
-                        source,
-                    }
-                })?;
+            let rigids: Vec<Rigid> = group.sites.iter().map(|&u| poses[u]).collect();
             let replicate_err = |source| AssembleError::Replicate {
                 name: group.name.to_owned(),
                 source,
             };
             let frag_ids: Vec<I> = group
-                .units
+                .sites
                 .iter()
-                .map(|&u| I::try_from(u).expect("TooManyUnits bounds every unit ordinal"))
+                .map(|&u| I::try_from(u).expect("TooManyUnits bounds every site ordinal"))
                 .collect();
             let atoms = world
                 .replicate(group.template, &rigids, &frag_ids)
                 .map_err(replicate_err)?;
-            let n = group.template.n_atoms();
-            for (c, &u) in group.units.iter().enumerate() {
-                let mol_id = I::try_from(location[u].0 + 1)
-                    .expect("TooManyUnits bounds every trace ordinal");
-                for &atom in &atoms[c * n..(c + 1) * n] {
+            let per_copy = group.template.n_nodes();
+            for (c, &u) in group.sites.iter().enumerate() {
+                let mol_id =
+                    I::try_from(mol_of[u] + 1).expect("TooManyUnits bounds every component");
+                for &atom in &atoms[c * per_copy..(c + 1) * per_copy] {
                     world
                         .set_node(atom, keys::MOL_ID, mol_id)
                         .map_err(replicate_err)?;
@@ -496,48 +589,32 @@ impl Assembler {
         let mut world_ports: HashMap<(AtomId, AtomId), PortId> =
             HashMap::with_capacity(world.n_ports());
         for id in world.ports() {
-            // A port that does not read back belongs to a unit no join needs
-            // (every needed template port was read at the checks); it stays.
             if let Ok(port) = world.port(id) {
                 world_ports.insert((port.anchor, port.handle), id);
             }
         }
-        let world_port = |u: usize, kind: PortKind| -> Result<PortId, AssembleError> {
-            let (g, c) = copy_of[u];
+        let world_port = |u: usize, b: usize| -> Result<PortId, AssembleError> {
+            let (g, c) = group_of[u];
             let group = &groups[g];
-            let ports = group
-                .ports
-                .as_ref()
-                .expect("a joined unit's ports were read");
-            let (anchor, handle) = match kind {
-                PortKind::Right => ports.right[0],
-                _ => ports.left[0],
-            };
-            let base = c * group.template.n_atoms();
-            let key = (copies[g][base + anchor], copies[g][base + handle]);
+            let tp = port_of(u, b);
+            let base = c * group.template.n_nodes();
+            let key = (
+                copies[g][base + tp.anchor_row],
+                copies[g][base + tp.handle_row],
+            );
             world_ports
                 .get(&key)
                 .copied()
                 .ok_or_else(|| AssembleError::Replicate {
                     name: group.name.to_owned(),
-                    source: MolRsError::validation(format!(
-                        "copy {c} lost its '{}' port in the world",
-                        kind.as_str()
-                    )),
+                    source: MolRsError::validation(format!("copy {c} lost a port in the world")),
                 })
         };
 
-        // ---- one batch join: unit i `>` to unit i + 1 `<` ----
-        let mut pairs: Vec<(PortId, PortId)> = Vec::new();
-        let mut left_unit: Vec<(usize, usize)> = Vec::new();
-        for u in 1..location.len() {
-            if location[u].0 == location[u - 1].0 {
-                pairs.push((
-                    world_port(u - 1, PortKind::Right)?,
-                    world_port(u, PortKind::Left)?,
-                ));
-                left_unit.push(location[u - 1]);
-            }
+        // ---- one batch join along the site bonds ----
+        let mut pairs: Vec<(PortId, PortId)> = Vec::with_capacity(graph.bonds.len());
+        for (b, &(u, v)) in graph.bonds.iter().enumerate() {
+            pairs.push((world_port(u, b)?, world_port(v, b)?));
         }
         world.link_many(&pairs).map_err(|source| {
             let pair = match &source {
@@ -546,19 +623,206 @@ impl Assembler {
                 | LinkManyError::DuplicateBond { first, .. }
                 | LinkManyError::BranchesOverlap { first, .. } => *first,
             };
-            let (trace, unit) = left_unit[pair];
+            let (site, partner) = graph.bonds[pair];
             AssembleError::Link {
-                trace,
-                unit,
+                site,
+                partner,
                 source,
             }
         })?;
 
-        Ok(world)
+        G::from_molgraph(world).map_err(AssembleError::Output)
     }
 
-    /// `(anchor row, handle row)` of each `>` and `<` port of `template`.
-    fn template_ports(name: &str, template: &Fragment) -> Result<TemplatePorts, AssembleError> {
+    /// Every site of `start`'s connected component, each stamped `mol` in
+    /// `mol_of`.
+    fn component(start: usize, graph: &SiteGraph, mol_of: &mut [usize], mol: usize) -> Vec<usize> {
+        let mut members = vec![start];
+        mol_of[start] = mol;
+        let mut i = 0;
+        while i < members.len() {
+            for &(v, _) in &graph.incident[members[i]] {
+                if mol_of[v] == usize::MAX {
+                    mol_of[v] = mol;
+                    members.push(v);
+                }
+            }
+            i += 1;
+        }
+        members
+    }
+
+    /// Assign the ports of one component, walking breadth-first from its
+    /// lowest-degree site. A walk that fails at a later site is retried with
+    /// the first site's next choice; once those run out, or when the first
+    /// site itself has no choice, the first failure is returned.
+    fn walk(
+        members: &[usize],
+        groups: &[Group<'_>],
+        group_of: &[(usize, usize)],
+        graph: &SiteGraph,
+        chosen: &mut [[Option<usize>; 2]],
+    ) -> Result<Walk, AssembleError> {
+        let root = members
+            .iter()
+            .copied()
+            .min_by_key(|&s| (graph.incident[s].len(), s))
+            .expect("a component holds its start");
+        let mut first_error: Option<AssembleError> = None;
+        for pick in 0.. {
+            for &u in members {
+                for &(_, b) in &graph.incident[u] {
+                    chosen[b] = [None, None];
+                }
+            }
+            match Self::try_walk(root, pick, groups, group_of, graph, chosen) {
+                Ok(walk) => return Ok(walk),
+                Err(Some(e)) if pick == 0 || first_error.is_none() => {
+                    let later = matches!(&e, AssembleError::Ports { site, .. } if *site != root);
+                    if !later {
+                        return Err(first_error.unwrap_or(e));
+                    }
+                    first_error.get_or_insert(e);
+                }
+                Err(Some(_)) => {}
+                // The first site has no `pick`-th choice: every choice failed.
+                Err(None) => break,
+            }
+        }
+        Err(first_error.expect("a failed walk left its error"))
+    }
+
+    /// One breadth-first walk from `root`, whose ports take their `pick`-th
+    /// choice. `Err(None)` when `root` has no such choice.
+    fn try_walk(
+        root: usize,
+        pick: usize,
+        groups: &[Group<'_>],
+        group_of: &[(usize, usize)],
+        graph: &SiteGraph,
+        chosen: &mut [[Option<usize>; 2]],
+    ) -> Result<Walk, Option<AssembleError>> {
+        let mut walk: Walk = vec![(root, None)];
+        let mut seen = vec![false; graph.names.len()];
+        seen[root] = true;
+        let mut i = 0;
+        while i < walk.len() {
+            let u = walk[i].0;
+            let pick = (u == root).then_some(pick);
+            match Self::choose_ports(u, groups, group_of, graph, chosen, pick) {
+                Ok(()) => {}
+                Err(PortChoice::Missing) => return Err(None),
+                Err(PortChoice::Refused(e)) => return Err(Some(e)),
+            }
+            for &(v, b) in &graph.incident[u] {
+                if !seen[v] {
+                    seen[v] = true;
+                    walk.push((v, Some((u, b))));
+                }
+            }
+            i += 1;
+        }
+        Ok(walk)
+    }
+
+    /// Choose one distinct port of site `u`'s template for each of its
+    /// bonds, honouring the ports its partners already chose; `pick` forces
+    /// the `pick`-th choice (the walk's first site on a retry).
+    fn choose_ports(
+        u: usize,
+        groups: &[Group<'_>],
+        group_of: &[(usize, usize)],
+        graph: &SiteGraph,
+        chosen: &mut [[Option<usize>; 2]],
+        pick: Option<usize>,
+    ) -> Result<(), PortChoice> {
+        let links = &graph.incident[u];
+        if links.is_empty() {
+            return if pick.unwrap_or(0) == 0 {
+                Ok(())
+            } else {
+                Err(PortChoice::Missing)
+            };
+        }
+        let ports = &groups[group_of[u].0].ports;
+        let refuse = |reason: String| {
+            PortChoice::Refused(AssembleError::Ports {
+                site: u,
+                name: graph.names[u].clone(),
+                reason,
+            })
+        };
+        if links.len() > ports.len() {
+            return Err(refuse(format!(
+                "{} bonds but the template has {} ports",
+                links.len(),
+                ports.len()
+            )));
+        }
+        // Per bond: the partner's chosen port, which this end must accept,
+        // and the partner template's ports, one of which must accept this
+        // end's port when the partner has not chosen yet.
+        let partner: Vec<Partner<'_>> = links
+            .iter()
+            .map(|&(v, b)| {
+                let theirs = &groups[group_of[v].0].ports;
+                match chosen[b][graph.end(b, v)] {
+                    Some(p) => Partner::Chosen(&theirs[p].port),
+                    None => Partner::Open(theirs),
+                }
+            })
+            .collect();
+
+        let mut candidates: Vec<Vec<usize>> = Vec::new();
+        let mut used = vec![false; ports.len()];
+        let mut current = Vec::with_capacity(links.len());
+        if !enumerate(&partner, ports, &mut used, &mut current, &mut candidates) {
+            return Err(refuse(format!(
+                "more than {MAX_ASSIGNMENTS} port choices; label the ports to narrow them"
+            )));
+        }
+        let count = candidates.len();
+        let best = match (count, pick) {
+            (0, _) => {
+                return Err(refuse(
+                    "no distinct ports accept the ports its partners chose".to_owned(),
+                ));
+            }
+            (_, Some(k)) if k >= count => return Err(PortChoice::Missing),
+            (_, Some(k)) => candidates.swap_remove(k),
+            (1, None) => candidates.swap_remove(0),
+            (_, None) => {
+                let targets: Option<Vec<Vec3>> = graph
+                    .positions
+                    .as_ref()
+                    .map(|ps| links.iter().map(|&(v, _)| sub(ps[v], ps[u])).collect());
+                let mut best: Option<(f64, usize)> = None;
+                for (i, cand) in candidates.iter().enumerate() {
+                    let rmsd = targets
+                        .as_ref()
+                        .and_then(|t| {
+                            cand.iter()
+                                .map(|&p| ports[p].direction)
+                                .collect::<Option<Vec<Vec3>>>()
+                                .and_then(|r| direction_fit(&r, t))
+                        })
+                        .map_or(f64::INFINITY, |(_, rmsd)| rmsd);
+                    if best.is_none_or(|(b, _)| rmsd < b) {
+                        best = Some((rmsd, i));
+                    }
+                }
+                candidates.swap_remove(best.expect("two or more candidates").1)
+            }
+        };
+        for (&(_, b), p) in links.iter().zip(best) {
+            chosen[b][graph.end(b, u)] = Some(p);
+        }
+        Ok(())
+    }
+
+    /// Every port of `template`, with its anchor and handle rows and
+    /// positions and its direction from the centre of mass.
+    fn template_ports(name: &str, template: &MolGraph) -> Result<Vec<TemplatePort>, AssembleError> {
         let refuse = |source| AssembleError::Template {
             name: name.to_owned(),
             source,
@@ -570,21 +834,78 @@ impl Assembler {
                 )))
             })
         };
-        let mut ports = TemplatePorts {
-            right: Vec::new(),
-            left: Vec::new(),
-        };
+        let position = |atom: AtomId| template.get_node(atom).ok().and_then(|a| a.position());
+        let center =
+            crate::spatial::geometry::center(template, &template.node_ids().collect::<Vec<_>>())
+                .ok();
+        let mut out = Vec::new();
         for id in template.ports() {
             let port = template.port(id).map_err(refuse)?;
-            let rows = (row(port.anchor)?, row(port.handle)?);
-            match port.kind {
-                PortKind::Right => ports.right.push(rows),
-                PortKind::Left => ports.left.push(rows),
-                PortKind::Symmetric | PortKind::Shared => {}
-            }
+            let handle = position(port.handle);
+            out.push(TemplatePort {
+                id,
+                anchor_row: row(port.anchor)?,
+                handle_row: row(port.handle)?,
+                atoms: position(port.anchor).zip(handle),
+                direction: center.zip(handle).map(|(c, h)| sub(h, c)),
+                port,
+            });
         }
-        Ok(ports)
+        Ok(out)
     }
+}
+
+/// The other end of a bond, as a site choosing its ports sees it.
+enum Partner<'a> {
+    /// The partner already chose this port.
+    Chosen(&'a Port),
+    /// The partner has not chosen; these are its template's ports.
+    Open(&'a [TemplatePort]),
+}
+
+impl Partner<'_> {
+    /// Whether `port` on this end can join the partner.
+    fn admits(&self, port: &Port) -> bool {
+        match self {
+            Self::Chosen(theirs) => port.accepts(theirs),
+            Self::Open(theirs) => theirs.iter().any(|t| port.accepts(&t.port)),
+        }
+    }
+}
+
+/// Collect every injective choice of one port per bond into `out`, bond `k`
+/// taking a port that `partner[k]` admits (the chosen partner port accepts
+/// it, or an open partner has a port that does). `false` when more than
+/// [`MAX_ASSIGNMENTS`] choices exist.
+fn enumerate(
+    partner: &[Partner<'_>],
+    ports: &[TemplatePort],
+    used: &mut [bool],
+    current: &mut Vec<usize>,
+    out: &mut Vec<Vec<usize>>,
+) -> bool {
+    let k = current.len();
+    if k == partner.len() {
+        if out.len() == MAX_ASSIGNMENTS {
+            return false;
+        }
+        out.push(current.clone());
+        return true;
+    }
+    for (p, tp) in ports.iter().enumerate() {
+        if used[p] || !partner[k].admits(&tp.port) {
+            continue;
+        }
+        used[p] = true;
+        current.push(p);
+        let ok = enumerate(partner, ports, used, current, out);
+        current.pop();
+        used[p] = false;
+        if !ok {
+            return false;
+        }
+    }
+    true
 }
 
 #[cfg(test)]
@@ -594,46 +915,47 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::{AssembleError, Assembler};
-    use crate::builder::place::{PlaceError, Placer, TracePlacer};
-    use crate::op::rigid::Rigid;
+    use crate::builder::orient::{AxisOrienter, OrientError, Orienter, SiteView};
+    use crate::builder::place::{GrowthPlacer, PlaceError, PlaceSite, Placer, SitePlacer};
+    use crate::op::rigid::{Rigid, about};
     use crate::op::types::Vec3;
-    use crate::spatial::Trace;
     use crate::store::keys;
     use crate::system::atomistic::AtomId;
+    use crate::system::atomistic::Atomistic;
     use crate::system::bond::BondNumber;
-    use crate::system::fragment::{Fragment, PortKind};
-    use crate::system::link::{LinkError, LinkManyError};
+    use crate::system::coarsegrain::CoarseGrain;
+    use crate::system::molgraph::MolGraph;
+    use crate::system::port::PortKind;
 
-    const TOL: f64 = 1e-12;
+    const TOL: f64 = 1e-9;
 
     // ---- fixtures ----------------------------------------------------------
     //
     // Monomer M: C0 (0,0,0, m 12), C1 (1.5,0,0, m 12), H0 (−1,0,0, m 1),
-    // H1 (2.5,0,0, m 1); bonds C0–C1, C0–H0, C1–H1; ports (C0, H0, `<`) and
-    // (C1, H1, `>`), unlabelled, Single. Hand CoM x = 19.5 / 26 = 0.75, so a
-    // copy placed on x = p has C0 at p − 0.75 and C1 at p + 0.75.
+    // H1 (2.5,0,0, m 1), O (0.75,1.2,0, m 16); bonds C0–C1, C0–H0, C1–H1,
+    // C0–O; ports (C0, H0, `<`) and (C1, H1, `>`), unlabelled, Single.
     //
     // A link removes the two handles (−2 atoms, −2 handle bonds, −2 ports)
-    // and adds one C1–C0 bond. An n-unit M chain therefore has 4n − 2(n−1)
-    // atoms, 3n − 2(n−1) + (n−1) bonds and 2 ports.
+    // and adds one C1–C0 bond. An n-unit M chain therefore has
+    // 5n − 2(n−1) atoms, 4n − 2(n−1) + (n−1) bonds and 2 ports.
 
-    /// Add one atom with a mass.
-    fn atom(f: &mut Fragment, symbol: &str, x: f64, mass: f64) -> AtomId {
-        let id = f.add_atom_xyz(symbol, x, 0.0, 0.0);
+    fn atom(f: &mut Atomistic, symbol: &str, xyz: Vec3, mass: f64) -> AtomId {
+        let id = f.add_atom_xyz(symbol, xyz[0], xyz[1], xyz[2]);
         f.set_node(id, keys::MASS, mass).expect("stamp mass");
         id
     }
 
     /// Monomer M with its `<` port labelled `left` and `>` labelled `right`.
-    fn monomer_labelled(left: &str, right: &str) -> Fragment {
-        let mut m = Fragment::new();
-        let c0 = atom(&mut m, "C", 0.0, 12.0);
-        let c1 = atom(&mut m, "C", 1.5, 12.0);
-        let h0 = atom(&mut m, "H", -1.0, 1.0);
-        let h1 = atom(&mut m, "H", 2.5, 1.0);
-        m.add_bond(c0, c1).expect("C0–C1");
-        m.add_bond(c0, h0).expect("C0–H0");
-        m.add_bond(c1, h1).expect("C1–H1");
+    fn monomer_labelled(left: &str, right: &str) -> Atomistic {
+        let mut m = Atomistic::new();
+        let c0 = atom(&mut m, "C", [0.0, 0.0, 0.0], 12.0);
+        let c1 = atom(&mut m, "C", [1.5, 0.0, 0.0], 12.0);
+        let h0 = atom(&mut m, "H", [-1.0, 0.0, 0.0], 1.0);
+        let h1 = atom(&mut m, "H", [2.5, 0.0, 0.0], 1.0);
+        let o = atom(&mut m, "O", [0.75, 1.2, 0.0], 16.0);
+        for (a, b) in [(c0, c1), (c0, h0), (c1, h1), (c0, o)] {
+            m.add_bond(a, b).expect("bond");
+        }
         m.add_port(c0, h0, PortKind::Left, left, BondNumber::Single)
             .expect("port <");
         m.add_port(c1, h1, PortKind::Right, right, BondNumber::Single)
@@ -641,98 +963,92 @@ mod tests {
         m
     }
 
-    fn monomer() -> Fragment {
-        monomer_labelled("", "")
-    }
-
-    /// Li: one atom, mass 6.94, no port.
-    fn lithium() -> Fragment {
-        let mut li = Fragment::new();
-        atom(&mut li, "Li", 0.0, 6.94);
+    /// Li: one atom, no port.
+    fn lithium() -> Atomistic {
+        let mut li = Atomistic::new();
+        atom(&mut li, "Li", [0.0; 3], 6.94);
         li
     }
 
-    /// Only a `<` port: C with one H handle.
-    fn left_only() -> Fragment {
-        let mut f = Fragment::new();
-        let c = atom(&mut f, "C", 0.0, 12.0);
-        let h = atom(&mut f, "H", -1.0, 1.0);
-        f.add_bond(c, h).expect("C–H");
-        f.add_port(c, h, PortKind::Left, "", BondNumber::Single)
-            .expect("port <");
-        f
+    /// `n` `$` ports on one C, one H handle each, along ±x, ±y, …
+    fn hub(n: usize) -> Atomistic {
+        hub_of(n, PortKind::Symmetric)
     }
 
-    /// Two `>` ports on one C, one per H handle.
-    fn two_right() -> Fragment {
-        let mut f = Fragment::new();
-        let c = atom(&mut f, "C", 0.0, 12.0);
-        for x in [-1.0, 1.0] {
-            let h = atom(&mut f, "H", x, 1.0);
+    /// `n` ports of `kind` on one C, one H handle each, along ±x, ±y, …
+    fn hub_of(n: usize, kind: PortKind) -> Atomistic {
+        let mut f = Atomistic::new();
+        let c = atom(&mut f, "C", [0.0; 3], 12.0);
+        let dirs = [
+            [1.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.0],
+        ];
+        for d in dirs.iter().take(n) {
+            let h = atom(&mut f, "H", *d, 1.0);
             f.add_bond(c, h).expect("C–H");
-            f.add_port(c, h, PortKind::Right, "", BondNumber::Single)
-                .expect("port >");
+            f.add_port(c, h, kind, "", BondNumber::Single)
+                .expect("port");
         }
         f
     }
 
-    /// A – X – C with X the handle of both ports: (A, X, `<`) and
-    /// (C, X, `>`). Each link alone is fine, but in a 3-unit chain the middle
-    /// unit's two leaving groups {X, C} and {X, A} share X.
-    fn shared_handle() -> Fragment {
-        let mut f = Fragment::new();
-        let a = atom(&mut f, "C", 0.0, 12.0);
-        let x = atom(&mut f, "O", 1.4, 16.0);
-        let c = atom(&mut f, "C", 2.8, 12.0);
-        f.add_bond(a, x).expect("A–X");
-        f.add_bond(x, c).expect("X–C");
-        f.add_port(a, x, PortKind::Left, "", BondNumber::Single)
-            .expect("port <");
-        f.add_port(c, x, PortKind::Right, "", BondNumber::Single)
-            .expect("port >");
-        f
-    }
-
-    fn library() -> HashMap<String, Fragment> {
+    fn library() -> HashMap<String, MolGraph> {
         HashMap::from([
-            ("M".to_owned(), monomer()),
-            ("Li".to_owned(), lithium()),
-            ("L".to_owned(), left_only()),
-            ("D".to_owned(), two_right()),
-            ("P".to_owned(), monomer_labelled("x", "y")),
-            ("T".to_owned(), shared_handle()),
+            ("M".to_owned(), monomer_labelled("", "").into_inner()),
+            ("P".to_owned(), monomer_labelled("x", "y").into_inner()),
+            ("Li".to_owned(), lithium().into_inner()),
+            ("E".to_owned(), hub(1).into_inner()),
+            ("S".to_owned(), hub(2).into_inner()),
+            ("X".to_owned(), hub(3).into_inner()),
         ])
     }
 
-    fn assembler() -> Assembler {
-        Assembler::new(library(), Box::new(TracePlacer::new()))
-    }
-
-    /// A trace with one point per x, on the x axis.
-    fn trace(xs: &[f64]) -> Trace {
-        Trace::from_points(xs.iter().map(|&x| [x, 0.0, 0.0]).collect())
-    }
-
-    fn seq(names: &[&str]) -> Vec<String> {
-        names.iter().map(|s| (*s).to_owned()).collect()
-    }
-
-    /// The atom of `world` carrying `frag_id` whose x is `x` (to `TOL`).
-    fn atom_at(world: &Fragment, frag_id: u32, x: f64) -> AtomId {
-        let found: Vec<AtomId> = world
-            .nodes()
-            .filter(|(id, a)| {
-                world.frag_id(*id) == Some(frag_id)
-                    && a.get_f64(keys::X).is_some_and(|ax| (ax - x).abs() < TOL)
+    /// A site graph: `(name, position)` per site, bonds by ordinal, the same
+    /// axis on every site when given.
+    fn graph(beads: &[(&str, Vec3)], bonds: &[(usize, usize)], axis: Option<Vec3>) -> CoarseGrain {
+        let mut cg = CoarseGrain::new();
+        let ids: Vec<_> = beads
+            .iter()
+            .map(|(name, p)| {
+                let id = cg.add_bead(name, p[0], p[1], p[2]);
+                if let Some(a) = axis {
+                    for (key, v) in keys::AXIS.into_iter().zip(a) {
+                        cg.set_node(id, key, v).expect("axis");
+                    }
+                }
+                id
             })
-            .map(|(id, _)| id)
             .collect();
-        assert_eq!(found.len(), 1, "one atom of unit {frag_id} at x = {x}");
-        found[0]
+        for &(i, j) in bonds {
+            cg.add_bond(ids[i], ids[j]).expect("site bond");
+        }
+        cg
     }
 
-    /// `mol_id` of every atom, read from the emitted frame's atoms block.
-    fn mol_ids(world: &Fragment) -> Vec<u64> {
+    /// Turns nothing, so a test of ports, ids or links sees no rotation.
+    struct Unturned;
+
+    impl Orienter for Unturned {
+        fn orient_many(
+            &self,
+            _template: &MolGraph,
+            sites: &[SiteView<'_>],
+        ) -> Result<Vec<Rigid>, OrientError> {
+            Ok(vec![Rigid::IDENTITY; sites.len()])
+        }
+    }
+
+    fn assembler() -> Assembler {
+        Assembler::new(
+            library(),
+            Box::new(SitePlacer::new()),
+            Some(Box::new(Unturned)),
+        )
+    }
+
+    fn mol_ids(world: &Atomistic) -> Vec<u64> {
         let frame = world.to_frame().expect("the world emits a frame");
         let atoms = frame.get("atoms").expect("an atoms block");
         atoms
@@ -746,276 +1062,425 @@ mod tests {
     // ---- builds --------------------------------------------------------------
 
     #[test]
-    fn assemble_links_a_three_unit_chain_into_one_molecule() {
+    fn assemble_links_a_three_site_chain_into_one_molecule() {
+        let sites = graph(
+            &[
+                ("M", [0.0; 3]),
+                ("M", [5.0, 0.0, 0.0]),
+                ("M", [10.0, 0.0, 0.0]),
+            ],
+            &[(0, 1), (1, 2)],
+            None,
+        );
         let world = assembler()
-            .assemble(&[trace(&[0.0, 5.0, 10.0])], &[seq(&["M", "M", "M"])])
-            .expect("a 3-unit M chain assembles");
+            .assemble::<Atomistic>(&sites)
+            .expect("a 3-site chain");
 
-        // 4·3 − 2·2 atoms; 3·3 − 2·2 + 2 bonds; the two end ports.
-        assert_eq!(world.n_atoms(), 8);
-        assert_eq!(world.n_bonds(), 7);
+        assert_eq!(world.n_atoms(), 11);
+        assert_eq!(world.n_bonds(), 10);
         assert_eq!(world.n_ports(), 2);
         let mut frag_ids: Vec<u32> = world
             .node_ids()
-            .map(|id| world.frag_id(id).expect("every atom has a frag_id"))
+            .map(|id| world.frag_id(id).expect("frag_id"))
             .collect();
         frag_ids.sort_unstable();
         frag_ids.dedup();
-        assert_eq!(frag_ids, vec![0, 1, 2]);
-        assert!(mol_ids(&world).iter().all(|&m| m == 1), "one trace, mol 1");
-        // Unit k sits on x = 5k: C0 at 5k − 0.75, C1 at 5k + 0.75.
-        for k in 0..2u32 {
-            let c1 = atom_at(&world, k, 5.0 * f64::from(k) + 0.75);
-            let next_c0 = atom_at(&world, k + 1, 5.0 * f64::from(k + 1) - 0.75);
-            assert!(
-                world.is_bonded(c1, next_c0),
-                "unit {k} C1 – unit {} C0",
-                k + 1
-            );
-        }
-        let c0 = atom_at(&world, 1, 4.25);
-        let x = world.get_node(c0).unwrap().get_f64(keys::X).unwrap();
-        assert!((x - 4.25).abs() < TOL, "unit 1 C0 at x = 4.25, got {x}");
+        assert_eq!(frag_ids, [0, 1, 2]);
+        assert!(mol_ids(&world).iter().all(|&m| m == 1));
     }
 
     #[test]
-    fn assemble_gives_each_trace_its_own_mol_id() {
+    fn assemble_numbers_molecules_by_connected_component() {
+        let sites = graph(
+            &[
+                ("Li", [20.0, 0.0, 0.0]),
+                ("M", [0.0; 3]),
+                ("M", [5.0, 0.0, 0.0]),
+            ],
+            &[(1, 2)],
+            None,
+        );
         let world = assembler()
-            .assemble(
-                &[trace(&[0.0, 5.0]), trace(&[20.0])],
-                &[seq(&["M", "M"]), seq(&["Li"])],
-            )
-            .expect("a 2-unit M chain and a Li assemble");
+            .assemble::<Atomistic>(&sites)
+            .expect("Li and an M pair");
 
-        // 4·2 − 2 + 1 atoms.
-        assert_eq!(world.n_atoms(), 7);
-        let li = atom_at(&world, 2, 20.0);
-        assert_eq!(world.frag_id(li), Some(2));
-        assert_eq!(world.neighbors(li).count(), 0, "Li is bonded to nothing");
-        let frame = world.to_frame().expect("frame");
-        let atoms = frame.get("atoms").expect("atoms");
-        let elements = atoms.get_string(keys::ELEMENT).expect("element column");
-        for (element, mol) in elements.iter().zip(mol_ids(&world)) {
-            let expected = if element == "Li" { 2 } else { 1 };
-            assert_eq!(mol, expected, "{element} is in molecule {expected}");
-        }
+        // Li is component 0 (lowest ordinal), the M pair component 1.
+        assert_eq!(world.n_atoms(), 1 + 8);
+        let ids = mol_ids(&world);
+        assert_eq!(ids.iter().filter(|&&m| m == 1).count(), 1);
+        assert_eq!(ids.iter().filter(|&&m| m == 2).count(), 8);
     }
 
     #[test]
-    fn assemble_keeps_every_port_of_a_single_point_unit() {
-        let world = assembler()
-            .assemble(&[trace(&[3.0])], &[seq(&["M"])])
-            .expect("one M assembles");
+    fn assemble_closes_a_ring() {
+        let sites = graph(
+            &[
+                ("M", [0.0; 3]),
+                ("M", [5.0, 0.0, 0.0]),
+                ("M", [2.5, 4.0, 0.0]),
+            ],
+            &[(0, 1), (1, 2), (2, 0)],
+            None,
+        );
+        let world = assembler().assemble::<Atomistic>(&sites).expect("a 3-ring");
 
+        // Three links: 15 − 6 atoms, no port left.
+        assert_eq!(world.n_atoms(), 9);
+        assert_eq!(world.n_ports(), 0);
+    }
+
+    #[test]
+    fn assemble_joins_a_branch_point_to_each_arm() {
+        // X (three `$`) at the centre, one E (one `$`) on each of three arms.
+        let sites = graph(
+            &[
+                ("E", [4.0, 0.0, 0.0]),
+                ("X", [0.0; 3]),
+                ("E", [-4.0, 0.0, 0.0]),
+                ("E", [0.0, 4.0, 0.0]),
+            ],
+            &[(0, 1), (1, 2), (1, 3)],
+            None,
+        );
+        let world = assembler().assemble::<Atomistic>(&sites).expect("a star");
+
+        // 4 + 3·2 atoms, three links remove 6: 4 atoms, no port left.
         assert_eq!(world.n_atoms(), 4);
+        assert_eq!(world.n_ports(), 0);
+        assert_eq!(world.n_bonds(), 3);
+    }
+
+    #[test]
+    fn assemble_picks_the_hub_ports_whose_angle_fits_the_bonds() {
+        // X has `$` ports along +x, −x and +y. Its partners sit at +x and +y,
+        // 90° apart, so the ±x pair (180°) is not chosen: the first 90° pair
+        // in port order is (+x, +y), and the −x hydrogen stays.
+        let sites = graph(
+            &[
+                ("E", [4.0, 0.0, 0.0]),
+                ("X", [0.0; 3]),
+                ("E", [0.0, 4.0, 0.0]),
+            ],
+            &[(0, 1), (1, 2)],
+            None,
+        );
+        let world = assembler().assemble::<Atomistic>(&sites).expect("E–X–E");
+
+        assert_eq!(world.n_ports(), 1);
+        let kept: Vec<Vec3> = world
+            .nodes()
+            .filter(|(id, a)| {
+                a.get_str(keys::ELEMENT) == Some("H") && world.frag_id(*id) == Some(1)
+            })
+            .map(|(_, a)| a.position().expect("xyz"))
+            .collect();
+        assert_eq!(kept.len(), 1, "one hydrogen of X stays");
+        // The placer moves X's centre of mass (x = 0) onto the site, so the
+        // kept hydrogen stays at x = −1.
+        assert!((kept[0][0] + 1.0).abs() < TOL, "{kept:?}");
+    }
+
+    /// B: M with an extra `>` port labelled `g` on C1 (a third H at y = 1).
+    fn branch_labelled() -> Atomistic {
+        let mut b = monomer_labelled("", "");
+        let c1 = b.node_ids().nth(1).expect("C1");
+        let h = atom(&mut b, "H", [1.5, 1.0, 0.0], 1.0);
+        b.add_bond(c1, h).expect("C1–H");
+        b.add_port(c1, h, PortKind::Right, "g", BondNumber::Single)
+            .expect("port >g");
+        b
+    }
+
+    /// G: one `<` port labelled `g`.
+    fn graft_start() -> Atomistic {
+        let mut g = Atomistic::new();
+        let c = atom(&mut g, "C", [0.0; 3], 12.0);
+        let h = atom(&mut g, "H", [-1.0, 0.0, 0.0], 1.0);
+        g.add_bond(c, h).expect("C–H");
+        g.add_port(c, h, PortKind::Left, "g", BondNumber::Single)
+            .expect("port <g");
+        g
+    }
+
+    #[test]
+    fn assemble_gives_a_labelled_port_only_to_the_partner_that_accepts_it() {
+        // M – B(–G) – M: B's two `>` ports differ only by label, and the first
+        // unconstrained choice must not hand `>g` to the unlabelled M.
+        let mut lib = library();
+        lib.insert("B".to_owned(), branch_labelled().into_inner());
+        lib.insert("G".to_owned(), graft_start().into_inner());
+        let sites = topology(&["M", "B", "G", "M"], &[(0, 1), (1, 2), (1, 3)]);
+        let world = Assembler::new(lib, Box::new(GrowthPlacer::new()), None)
+            .assemble::<Atomistic>(&sites)
+            .expect("a labelled branch");
+
         assert_eq!(world.n_ports(), 2);
     }
 
     #[test]
-    fn assemble_of_no_traces_is_an_empty_fragment() {
-        let world = assembler().assemble(&[], &[]).expect("nothing to build");
-
+    fn assemble_of_no_sites_is_an_empty_fragment() {
+        let world = assembler()
+            .assemble::<Atomistic>(&CoarseGrain::new())
+            .expect("nothing to build");
         assert_eq!(world.n_atoms(), 0);
-        assert_eq!(world.n_ports(), 0);
     }
 
-    /// Counts `place_many` calls, then delegates to `TracePlacer`.
+    /// Counts `place` calls, then delegates to `SitePlacer`.
     struct CountingPlacer(Arc<AtomicUsize>);
 
     impl Placer for CountingPlacer {
-        fn place_many(
-            &self,
-            template: &Fragment,
-            points: &[Vec3],
-        ) -> Result<Vec<Rigid>, PlaceError> {
+        fn place(&self, template: &MolGraph, site: &PlaceSite) -> Result<Rigid, PlaceError> {
             self.0.fetch_add(1, Ordering::SeqCst);
-            TracePlacer::new().place_many(template, points)
+            SitePlacer::new().place(template, site)
         }
     }
 
     #[test]
-    fn assemble_places_once_per_distinct_name() {
+    fn assemble_places_each_site_once() {
         let calls = Arc::new(AtomicUsize::new(0));
-        let assembler = Assembler::new(library(), Box::new(CountingPlacer(calls.clone())));
-
-        assembler
-            .assemble(
-                &[trace(&[0.0, 5.0]), trace(&[20.0]), trace(&[30.0, 35.0])],
-                &[seq(&["M", "M"]), seq(&["Li"]), seq(&["M", "M"])],
-            )
-            .expect("M and Li assemble");
-
-        assert_eq!(
-            calls.load(Ordering::SeqCst),
-            2,
-            "one call for M, one for Li"
+        let assembler = Assembler::new(library(), Box::new(CountingPlacer(calls.clone())), None);
+        let sites = graph(
+            &[
+                ("M", [0.0; 3]),
+                ("M", [5.0, 0.0, 0.0]),
+                ("Li", [20.0, 0.0, 0.0]),
+            ],
+            &[(0, 1)],
+            None,
         );
+        assembler.assemble::<Atomistic>(&sites).expect("M and Li");
+
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    /// A site graph without positions: `(name)` per site and bonds.
+    fn topology(names: &[&str], bonds: &[(usize, usize)]) -> CoarseGrain {
+        let mut cg = CoarseGrain::new();
+        let ids: Vec<_> = names.iter().map(|n| cg.add_bead_bare(n)).collect();
+        for &(i, j) in bonds {
+            cg.add_bond(ids[i], ids[j]).expect("site bond");
+        }
+        cg
+    }
+
+    fn grower() -> Assembler {
+        Assembler::new(library(), Box::new(GrowthPlacer::new()), None)
+    }
+
+    #[test]
+    fn a_grown_chain_joins_each_copy_at_the_parent_handle_distance() {
+        let world = grower()
+            .assemble::<Atomistic>(&topology(&["M", "M", "M"], &[(0, 1), (1, 2)]))
+            .expect("a grown M chain");
+
+        assert_eq!(world.n_atoms(), 3 * 5 - 4);
+        // Each inter-unit C–C bond takes the parent's C–H length, 1.0 Å.
+        let mut joins = Vec::new();
+        for (_, bond) in world.bonds() {
+            let (a, b) = (bond.nodes[0], bond.nodes[1]);
+            if world.frag_id(a) != world.frag_id(b) {
+                let pa = world
+                    .as_molgraph()
+                    .get_node(a)
+                    .expect("a")
+                    .position()
+                    .expect("xyz");
+                let pb = world
+                    .as_molgraph()
+                    .get_node(b)
+                    .expect("b")
+                    .position()
+                    .expect("xyz");
+                joins.push(crate::op::vec3::norm(crate::op::vec3::sub(pa, pb)));
+            }
+        }
+        assert_eq!(joins.len(), 2);
+        for d in joins {
+            assert!((d - 1.0).abs() < TOL, "join length {d}");
+        }
+    }
+
+    #[test]
+    fn a_walk_entered_from_the_wrong_end_is_retried() {
+        // K has three `<` ports; each arm is M–M. The walk starts at an arm
+        // end, whose first choice (`<`) would leave `<` facing K; the retry
+        // takes `>` and every arm then meets K with `>`.
+        let mut lib = library();
+        lib.insert("K".to_owned(), hub_of(3, PortKind::Left).into_inner());
+        let sites = topology(
+            &["K", "M", "M", "M", "M", "M", "M"],
+            &[(0, 1), (1, 2), (0, 3), (3, 4), (0, 5), (5, 6)],
+        );
+        let world = Assembler::new(lib, Box::new(GrowthPlacer::new()), None)
+            .assemble::<Atomistic>(&sites)
+            .expect("a three-arm star");
+
+        // 4 + 6·5 atoms, six links remove 12.
+        assert_eq!(world.n_atoms(), 34 - 12);
+        assert_eq!(world.n_ports(), 3);
+    }
+
+    /// A quarter turn about +z around the template's centre of mass.
+    struct QuarterTurn;
+
+    impl Orienter for QuarterTurn {
+        fn orient_many(
+            &self,
+            template: &MolGraph,
+            sites: &[SiteView<'_>],
+        ) -> Result<Vec<Rigid>, OrientError> {
+            let c = crate::spatial::geometry::center(
+                template,
+                &template.node_ids().collect::<Vec<_>>(),
+            )
+            .map_err(OrientError::Center)?;
+            let rz = [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
+            Ok(vec![about(rz, c); sites.len()])
+        }
+    }
+
+    #[test]
+    fn assemble_turns_each_copy_before_placing_it() {
+        // Li is one atom, so its image is its site whatever the turn; an E
+        // (C at 0, H at +x) turned a quarter about its centre puts its H
+        // straight above (+y) its C.
+        let assembler = Assembler::new(
+            library(),
+            Box::new(SitePlacer::new()),
+            Some(Box::new(QuarterTurn)),
+        );
+        let world = assembler
+            .assemble::<Atomistic>(&graph(&[("E", [7.0, 0.0, 0.0])], &[], None))
+            .expect("one E");
+
+        let xs: Vec<f64> = world
+            .nodes()
+            .map(|(_, a)| a.get_f64(keys::X).expect("x"))
+            .collect();
+        assert!(
+            (xs[0] - xs[1]).abs() < TOL,
+            "C and H share x after the turn: {xs:?}"
+        );
+    }
+
+    #[test]
+    fn assemble_with_the_axis_orienter_turns_chain_units_onto_their_sites() {
+        // Sites along +x with axis +z: each M's joining atoms run along +x
+        // and its side O (backbone → centre, +y in the template) turns to +z.
+        let sites = graph(
+            &[("M", [0.0; 3]), ("M", [2.5, 0.0, 0.0])],
+            &[(0, 1)],
+            Some([0.0, 0.0, 1.0]),
+        );
+        let world = Assembler::new(
+            library(),
+            Box::new(SitePlacer::new()),
+            Some(Box::new(AxisOrienter::new())),
+        )
+        .assemble::<Atomistic>(&sites)
+        .expect("an oriented M pair");
+
+        for (_, a) in world.nodes() {
+            if a.get_str(keys::ELEMENT) == Some("O") {
+                assert!(
+                    a.get_f64(keys::Y).expect("y").abs() < TOL,
+                    "O left the xz plane"
+                );
+                assert!(a.get_f64(keys::Z).expect("z") > 0.5, "O points along +z");
+            }
+        }
     }
 
     // ---- refusals ------------------------------------------------------------
 
     #[test]
-    fn assemble_refuses_a_trace_count_other_than_the_sequence_count() {
+    fn assemble_names_an_unknown_template_by_site() {
         let err = assembler()
-            .assemble(&[trace(&[0.0])], &[seq(&["M"]), seq(&["M"])])
-            .expect_err("1 trace, 2 sequences");
-
-        assert!(
-            matches!(
-                err,
-                AssembleError::LengthMismatch {
-                    traces: 1,
-                    sequences: 2
-                }
-            ),
-            "{err:?}"
-        );
-    }
-
-    #[test]
-    fn assemble_refuses_a_sequence_shorter_than_its_trace() {
-        let err = assembler()
-            .assemble(&[trace(&[0.0, 5.0])], &[seq(&["M"])])
-            .expect_err("2 points, 1 name");
-
-        assert!(
-            matches!(
-                err,
-                AssembleError::SequenceLength {
-                    trace: 0,
-                    points: 2,
-                    names: 1
-                }
-            ),
-            "{err:?}"
-        );
-    }
-
-    #[test]
-    fn assemble_names_an_unknown_template_by_trace_and_unit() {
-        let err = assembler()
-            .assemble(&[trace(&[0.0]), trace(&[5.0])], &[seq(&["M"]), seq(&["Q"])])
+            .assemble::<Atomistic>(&graph(
+                &[("M", [0.0; 3]), ("Q", [1.0, 0.0, 0.0])],
+                &[],
+                None,
+            ))
             .expect_err("Q is not in the library");
-
         assert!(
-            matches!(
-                &err,
-                AssembleError::UnknownName { trace: 1, unit: 0, name } if name == "Q"
-            ),
+            matches!(&err, AssembleError::UnknownName { site: 1, name } if name == "Q"),
             "{err:?}"
         );
     }
 
     #[test]
-    fn assemble_refuses_a_unit_without_the_port_its_neighbour_needs() {
+    fn assemble_refuses_a_site_with_more_bonds_than_ports() {
+        // E has one `$` port but two bonds to `$` hubs.
+        let sites = graph(
+            &[
+                ("S", [-4.0, 0.0, 0.0]),
+                ("E", [0.0; 3]),
+                ("S", [4.0, 0.0, 0.0]),
+            ],
+            &[(0, 1), (1, 2)],
+            None,
+        );
         let err = assembler()
-            .assemble(&[trace(&[0.0, 5.0])], &[seq(&["L", "M"])])
-            .expect_err("L has no `>` port");
-
+            .assemble::<Atomistic>(&sites)
+            .expect_err("E cannot take two bonds");
         assert!(
-            matches!(
-                &err,
-                AssembleError::MissingPort {
-                    trace: 0,
-                    unit: 0,
-                    name,
-                    kind: PortKind::Right,
-                } if name == "L"
-            ),
+            matches!(&err, AssembleError::Ports { site: 1, name, .. } if name == "E"),
             "{err:?}"
         );
     }
 
     #[test]
-    fn assemble_refuses_a_template_with_two_ports_of_the_needed_kind() {
+    fn assemble_refuses_ports_whose_labels_never_accept() {
+        // P's `>` is labelled y and its `<` x: no port of the first P can join
+        // any port of the second, so the walk's first site is refused.
+        let sites = graph(&[("P", [0.0; 3]), ("P", [5.0, 0.0, 0.0])], &[(0, 1)], None);
         let err = assembler()
-            .assemble(&[trace(&[0.0, 5.0])], &[seq(&["D", "M"])])
-            .expect_err("D has two `>` ports");
-
-        assert!(
-            matches!(
-                &err,
-                AssembleError::AmbiguousPort {
-                    name,
-                    kind: PortKind::Right,
-                    count: 2,
-                } if name == "D"
-            ),
-            "{err:?}"
-        );
-    }
-
-    #[test]
-    fn assemble_maps_a_non_finite_point_to_its_unit() {
-        let err = assembler()
-            .assemble(
-                &[trace(&[0.0]), trace(&[5.0, f64::NAN])],
-                &[seq(&["M"]), seq(&["M", "M"])],
-            )
-            .expect_err("a NaN point");
-
-        // The M group is units (0,0), (1,0), (1,1); the NaN is its point 2.
-        assert!(
-            matches!(
-                &err,
-                AssembleError::Place {
-                    name,
-                    trace: 1,
-                    unit: 1,
-                    source: PlaceError::NonFinitePoint { index: 2 },
-                } if name == "M"
-            ),
-            "{err:?}"
-        );
-    }
-
-    #[test]
-    fn assemble_names_the_left_unit_of_a_refused_link() {
-        // P's `>` is labelled y and its `<` x: P–P cannot join.
-        let err = assembler()
-            .assemble(&[trace(&[0.0, 5.0])], &[seq(&["P", "P"])])
+            .assemble::<Atomistic>(&sites)
             .expect_err("mismatched labels");
+        assert!(
+            matches!(err, AssembleError::Ports { site: 0, .. }),
+            "{err:?}"
+        );
+    }
 
+    #[test]
+    fn assemble_maps_an_orient_refusal_to_its_site() {
+        // A chain of M without axes: the AxisOrienter refuses the first
+        // bonded M site.
+        let sites = graph(
+            &[
+                ("Li", [9.0, 0.0, 0.0]),
+                ("M", [0.0; 3]),
+                ("M", [5.0, 0.0, 0.0]),
+            ],
+            &[(1, 2)],
+            None,
+        );
+        let err = Assembler::new(
+            library(),
+            Box::new(SitePlacer::new()),
+            Some(Box::new(AxisOrienter::new())),
+        )
+        .assemble::<Atomistic>(&sites)
+        .expect_err("no axis");
         assert!(
             matches!(
-                err,
-                AssembleError::Link {
-                    trace: 0,
-                    unit: 0,
-                    source: LinkManyError::Pair {
-                        pair: 0,
-                        source: LinkError::Incompatible { .. },
-                    },
-                }
+                &err,
+                AssembleError::Orient { name, site: 1, source: OrientError::NoAxis { index: 0 } }
+                    if name == "M"
             ),
             "{err:?}"
         );
     }
 
     #[test]
-    fn assemble_maps_a_two_pair_link_error_to_its_first_pair() {
-        // Pair 0 joins the M chain; pairs 1 and 2 are the T chain's, whose
-        // middle unit's leaving groups share its X.
+    fn assemble_maps_a_non_finite_position_to_its_site() {
+        let mut sites = graph(&[("M", [0.0; 3]), ("M", [5.0, 0.0, 0.0])], &[], None);
+        let second = sites.node_ids().nth(1).expect("two sites");
+        sites.set_node(second, keys::X, f64::NAN).expect("x");
         let err = assembler()
-            .assemble(
-                &[trace(&[0.0, 5.0]), trace(&[20.0, 25.0, 30.0])],
-                &[seq(&["M", "M"]), seq(&["T", "T", "T"])],
-            )
-            .expect_err("overlapping leaving groups");
-
-        assert!(
-            matches!(
-                err,
-                AssembleError::Link {
-                    trace: 1,
-                    unit: 0,
-                    source: LinkManyError::BranchesOverlap {
-                        first: 1,
-                        second: 2
-                    },
-                }
-            ),
-            "{err:?}"
-        );
+            .assemble::<Atomistic>(&sites)
+            .expect_err("a NaN site");
+        assert!(matches!(err, AssembleError::Sites(_)), "{err:?}");
     }
 }

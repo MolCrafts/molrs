@@ -1,26 +1,27 @@
 //! Python bindings for `molrs::builder`: the structure generators
 //! `CarbonTubeBuilder` and `GrapheneBuilder`, each building a fresh `Frame`,
-//! and trace assembly — `Assembler(library, TracePlacer()).assemble(traces,
-//! names)`, which places and links one world `Fragment`.
+//! and site-graph assembly — `Assembler(library, SitePlacer(),
+//! AxisOrienter()).assemble(sites)`, which orients, places and links one world
+//! `Fragment`.
 
 use std::collections::HashMap;
 
-use molrs::builder::{AssembleError, Assembler, PlaceError, TracePlacer};
-use molrs::spatial::Trace;
-use molrs::system::fragment::Fragment;
+use molrs::builder::{
+    AssembleError, Assembler, AxisOrienter, GrowthPlacer, OrientError, PlaceError, Placer,
+    SitePlacer,
+};
 use molrs::system::link::LinkManyError;
+use molrs::system::molgraph::MolGraph;
 use molrs::{CarbonTubeBuilder, GrapheneBuilder};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyMapping;
 
 use crate::core::spatial::simbox::PyBox;
-use crate::core::spatial::trace::PyTrace;
 use crate::core::store::frame::PyFrame;
 use crate::core::system::molgraph::{
-    PyAtomistic, PyFragment, center_error_message, link_error_message,
+    PyCoarseGrain, center_error_message, graph_as, link_error_message, molgraph_of,
 };
-use crate::helpers::molrs_error_to_pyerr;
 
 /// Exact single-wall carbon nanotube builder.
 #[pyclass(module = "molrs.builder", name = "CarbonTubeBuilder", subclass)]
@@ -212,60 +213,117 @@ impl PyGrapheneBuilder {
     }
 }
 
-/// The translation-only placer — ``molrs.builder.TracePlacer``.
+/// The translation-only placer — ``molrs.builder.SitePlacer``.
 ///
-/// Each copy keeps its template's orientation and its centre of mass (Å,
-/// weights ``mass``) lands on its trace point. Orientation and overlap are
-/// left to a later relaxation. Takes no arguments.
+/// Each copy's centre of mass (Å, weights ``mass``) lands on its site;
+/// rotation is the orienter's job. Takes no arguments.
 ///
 /// Examples
 /// --------
-/// >>> assembler = molrs.builder.Assembler(library, molrs.builder.TracePlacer())
-#[pyclass(module = "molrs.builder", name = "TracePlacer", frozen)]
-pub struct PyTracePlacer;
+/// >>> assembler = molrs.builder.Assembler(
+/// ...     library, molrs.builder.SitePlacer(), molrs.builder.AxisOrienter()
+/// ... )
+#[pyclass(module = "molrs.builder", name = "SitePlacer", frozen)]
+pub struct PySitePlacer;
 
 #[pymethods]
-impl PyTracePlacer {
+impl PySitePlacer {
     #[new]
     fn new() -> Self {
         Self
     }
 
     fn __repr__(&self) -> String {
-        "TracePlacer()".to_owned()
+        "SitePlacer()".to_owned()
     }
 }
 
-/// One placed, linked world from traces and their unit names —
-/// ``molrs.builder.Assembler``.
+/// The growth placer — ``molrs.builder.GrowthPlacer``.
 ///
-/// Unit ``k`` of trace ``t`` is a copy of ``library[names[t][k]]`` placed on
-/// the trace's point ``k``. In a trace of two or more units, unit ``i``'s one
-/// ``>`` port joins unit ``i + 1``'s one ``<`` port; the leaving groups are
-/// removed. Every atom gets ``frag_id`` (the unit's trace-major ordinal,
-/// 0-based) and ``mol_id`` (the trace's ordinal + 1).
+/// Grows each molecule copy by copy in the assembler's walk order: the first
+/// copy keeps its template pose (its centre of mass on the site when the
+/// site graph has positions), and every later copy is rotated and moved so
+/// the anchor of its port toward its parent lands on the parent's leaving
+/// handle, pointing back along that bond. Needs no site positions; bond
+/// lengths and overlaps are left to a later minimisation. Takes no
+/// arguments.
+#[pyclass(module = "molrs.builder", name = "GrowthPlacer", frozen)]
+pub struct PyGrowthPlacer;
+
+#[pymethods]
+impl PyGrowthPlacer {
+    #[new]
+    fn new() -> Self {
+        Self
+    }
+
+    fn __repr__(&self) -> String {
+        "GrowthPlacer()".to_owned()
+    }
+}
+
+/// The axis orienter — ``molrs.builder.AxisOrienter``.
+///
+/// Turns each copy about its template's centre of mass. A chain site (only
+/// ``<`` / ``>`` ports, a two-port template) matches the template's
+/// backbone-to-centre direction to the site axis (``CoarseGrain.axes``) and
+/// its two joining atoms to the site's bond line. Any other bonded site fits
+/// the template's port directions to its bond directions. A site with no
+/// bond is not turned. Takes no arguments.
+#[pyclass(module = "molrs.builder", name = "AxisOrienter", frozen)]
+pub struct PyAxisOrienter;
+
+#[pymethods]
+impl PyAxisOrienter {
+    #[new]
+    fn new() -> Self {
+        Self
+    }
+
+    fn __repr__(&self) -> String {
+        "AxisOrienter()".to_owned()
+    }
+}
+
+/// One placed, linked world from a site graph — ``molrs.builder.Assembler``.
+///
+/// Each bead of the site graph is one unit: a copy of
+/// ``library[bead_type]``, turned by the orienter (when given) and given its
+/// pose by the placer.
+/// Each site bond joins one port of each end's copy (``<`` with ``>``, ``$``
+/// with ``$``); the leaving groups are removed. Any topology works: chains,
+/// branches, rings. Every atom gets ``frag_id`` (the site's ordinal) and
+/// ``mol_id`` (its connected component's ordinal + 1).
 ///
 /// Parameters
 /// ----------
-/// library : Mapping[str, Fragment | Atomistic]
-///     Name → template, copied at construction. An ``Atomistic`` is a
-///     template with no ports; it can only fill a one-unit trace.
-/// placer : TracePlacer
-///     Turns a template and its points into one rigid motion per copy.
+/// library : Mapping[str, Graph]
+///     Name → template, copied at construction: any graph (``Graph``,
+///     ``Atomistic``, ``CoarseGrain``), with ports where a site bonds. A
+///     template without ports can only fill an unbonded site.
+/// placer : SitePlacer | GrowthPlacer
+///     ``SitePlacer`` moves each copy's centre of mass onto its site;
+///     ``GrowthPlacer`` grows each molecule onto its parents' ports and needs
+///     no site positions.
+/// orienter : AxisOrienter, optional
+///     Turns each copy about its centre of mass before it is placed; needs
+///     site positions.
 ///
 /// Raises
 /// ------
 /// TypeError
-///     If ``library`` is not a mapping of ``str`` to ``Fragment`` or
-///     ``Atomistic``, or ``placer`` is not a :class:`TracePlacer`.
-/// ValueError
-///     If an ``Atomistic`` value does not convert to a ``Fragment``.
+///     If ``library`` is not a mapping of ``str`` to graphs, ``placer`` is
+///     not a :class:`SitePlacer` or :class:`GrowthPlacer`, or ``orienter``
+///     is not an :class:`AxisOrienter`.
 ///
 /// Examples
 /// --------
+/// >>> sites = molrs.perceive.Coarsener(cg).coarsen(groups, names)
 /// >>> world = molrs.builder.Assembler(
-/// ...     {"PMA": pma, "Li": li}, molrs.builder.TracePlacer()
-/// ... ).assemble(traces, names)
+/// ...     {"PMA": pma, "Li": li},
+/// ...     molrs.builder.SitePlacer(),
+/// ...     molrs.builder.AxisOrienter(),
+/// ... ).assemble(sites, molrs.Atomistic)
 #[pyclass(module = "molrs.builder", name = "Assembler", frozen)]
 pub struct PyAssembler {
     inner: Assembler,
@@ -274,71 +332,86 @@ pub struct PyAssembler {
 #[pymethods]
 impl PyAssembler {
     #[new]
-    fn new(library: &Bound<'_, PyMapping>, placer: &Bound<'_, PyTracePlacer>) -> PyResult<Self> {
-        // `TracePlacer` carries no state: the argument's type is the whole
-        // choice, checked by the extraction above.
-        let _ = placer;
-        let mut templates = HashMap::new();
+    #[pyo3(signature = (library, placer, orienter=None))]
+    fn new(
+        library: &Bound<'_, PyMapping>,
+        placer: &Bound<'_, PyAny>,
+        orienter: Option<&Bound<'_, PyAxisOrienter>>,
+    ) -> PyResult<Self> {
+        // Neither placer nor orienter carries state: the type is the whole
+        // choice.
+        let placer: Box<dyn Placer> = if placer.cast::<PySitePlacer>().is_ok() {
+            Box::new(SitePlacer::new())
+        } else if placer.cast::<PyGrowthPlacer>().is_ok() {
+            Box::new(GrowthPlacer::new())
+        } else {
+            return Err(PyTypeError::new_err(format!(
+                "placer must be a SitePlacer or a GrowthPlacer, not {}",
+                placer.get_type().name()?
+            )));
+        };
+        let orienter = orienter.map(|_| Box::new(AxisOrienter::new()) as _);
+        let mut templates: HashMap<String, MolGraph> = HashMap::new();
         for item in library.items()?.iter() {
             let (name, value): (String, Bound<'_, PyAny>) = item.extract()?;
-            let template = if let Ok(fragment) = value.cast::<PyFragment>() {
-                fragment.borrow().core().clone()
-            } else if let Ok(mol) = value.cast::<PyAtomistic>() {
-                Fragment::try_from_molgraph(mol.borrow().core().clone().into_inner())
-                    .map_err(molrs_error_to_pyerr)?
-            } else {
-                return Err(PyTypeError::new_err(format!(
-                    "library['{name}'] must be a Fragment or an Atomistic, not {}",
-                    value.get_type().name()?
-                )));
-            };
+            let template = molgraph_of(&value).map_err(|_| {
+                PyTypeError::new_err(format!(
+                    "library['{name}'] must be a graph (Graph, Atomistic, CoarseGrain)"
+                ))
+            })?;
             templates.insert(name, template);
         }
         Ok(Self {
-            inner: Assembler::new(templates, Box::new(TracePlacer::new())),
+            inner: Assembler::new(templates, placer, orienter),
         })
     }
 
-    /// Place and link every trace; return the world.
+    /// Place and join one copy per site; return the world.
     ///
     /// The GIL is released while assembling.
     ///
     /// Parameters
     /// ----------
-    /// traces : Sequence[Trace]
-    ///     One trace per molecule; its points are the unit positions (Å).
-    /// names : Sequence[Sequence[str]]
-    ///     One library name per point of each trace.
+    /// sites : CoarseGrain
+    ///     The site graph: each bead's ``bead_type`` names its template and
+    ///     each bond joins two copies; its optional position (Å) and axis
+    ///     are read by the placer and the orienter.
+    /// cls : type, optional
+    ///     The graph class to build the world as — ``Graph`` (the default),
+    ///     ``Atomistic`` or ``CoarseGrain``, or a subclass of one.
     ///
     /// Returns
     /// -------
-    /// Fragment
-    ///     The world; chain-end ports and the ports of one-unit traces stay
-    ///     on it. Empty when ``traces`` is empty.
+    /// Graph
+    ///     The world, an instance of ``cls``; ports without a site bond stay
+    ///     on it. Empty when ``sites`` is empty.
     ///
     /// Raises
     /// ------
     /// ValueError
-    ///     Naming the trace, unit and name at fault: the counts differ, a
-    ///     name is not in the library, a unit lacks the one ``>`` / ``<``
-    ///     port a join needs, a template has no centre of mass, or a join is
-    ///     refused.
+    ///     Naming the site at fault: a bead lacks its type or position, a name
+    ///     is not in the library, no accepting port exists for every bond of
+    ///     a site, a site cannot be oriented or placed, a join is refused, or
+    ///     the world breaks ``cls``'s invariant.
+    /// TypeError
+    ///     If ``cls`` is not a graph class.
+    #[pyo3(signature = (sites, cls=None))]
     fn assemble(
         &self,
         py: Python<'_>,
-        traces: Vec<PyRef<'_, PyTrace>>,
-        names: Vec<Vec<String>>,
-    ) -> PyResult<Py<PyFragment>> {
-        let traces: Vec<Trace> = traces.iter().map(|trace| trace.inner.clone()).collect();
+        sites: PyRef<'_, PyCoarseGrain>,
+        cls: Option<&Bound<'_, pyo3::types::PyType>>,
+    ) -> PyResult<Py<PyAny>> {
+        let sites = sites.core().clone();
         let assembler = &self.inner;
-        let world = py
-            .detach(|| assembler.assemble(&traces, &names))
+        let world: MolGraph = py
+            .detach(|| assembler.assemble(&sites))
             .map_err(|e| PyValueError::new_err(assemble_error_message(e)))?;
-        PyFragment::from_core(py, world)
+        graph_as(py, world, cls)
     }
 
     fn __repr__(&self) -> String {
-        "Assembler(TracePlacer())".to_owned()
+        "Assembler(...)".to_owned()
     }
 }
 
@@ -347,24 +420,33 @@ impl PyAssembler {
 /// matched by name; the wording of the outer sentence is the core's.
 fn assemble_error_message(e: AssembleError) -> String {
     match e {
-        AssembleError::Place {
-            name,
-            trace,
-            unit,
-            source,
-        } => {
+        AssembleError::Place { name, site, source } => {
             let reason = match source {
                 PlaceError::Template(center) => format!(
                     "the template has no centre of mass: {}",
                     center_error_message(center)
                 ),
-                point @ PlaceError::NonFinitePoint { .. } => point.to_string(),
+                other @ (PlaceError::NoPosition
+                | PlaceError::NonFinitePoint
+                | PlaceError::Port(_)) => other.to_string(),
             };
-            format!("unit {unit} of trace {trace} ('{name}') cannot be placed: {reason}")
+            format!("site {site} ('{name}') cannot be placed: {reason}")
+        }
+        AssembleError::Orient { name, site, source } => {
+            let reason = match source {
+                OrientError::Center(center) => format!(
+                    "the template has no centre of mass: {}",
+                    center_error_message(center)
+                ),
+                other @ (OrientError::Template(_)
+                | OrientError::NoAxis { .. }
+                | OrientError::Frame { .. }) => other.to_string(),
+            };
+            format!("site {site} ('{name}') cannot be oriented: {reason}")
         }
         AssembleError::Link {
-            trace,
-            unit,
+            site,
+            partner,
             source,
         } => {
             let reason = match source {
@@ -375,18 +457,14 @@ fn assemble_error_message(e: AssembleError) -> String {
                 | LinkManyError::DuplicateBond { .. }
                 | LinkManyError::BranchesOverlap { .. }) => batch.to_string(),
             };
-            format!(
-                "unit {unit} of trace {trace} cannot join unit {}: {reason}",
-                unit + 1
-            )
+            format!("site {site} cannot join site {partner}: {reason}")
         }
-        e @ (AssembleError::LengthMismatch { .. }
-        | AssembleError::SequenceLength { .. }
-        | AssembleError::TooManyUnits { .. }
+        e @ (AssembleError::TooManyUnits { .. }
+        | AssembleError::Output(_)
+        | AssembleError::Sites(_)
         | AssembleError::UnknownName { .. }
-        | AssembleError::MissingPort { .. }
-        | AssembleError::AmbiguousPort { .. }
         | AssembleError::Template { .. }
+        | AssembleError::Ports { .. }
         | AssembleError::Replicate { .. }) => e.to_string(),
     }
 }

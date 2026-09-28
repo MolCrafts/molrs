@@ -80,10 +80,10 @@ pub use system::atomistic::{
 pub use system::bond_weights::BondDistanceWeights;
 pub use system::coarsegrain::{CoarseGrain, ExtractedCoarseGrain};
 pub use system::extract::{ExtractedBall, InducedSubgraph};
-pub use system::fragment::{Fragment, MergeMaps, Port, PortId, PortKind};
 pub use system::graph_hash::{canonical_order, is_isomorphic, structural_hash};
 pub use system::link::LinkError;
 pub use system::molgraph::{Atom, Bead, KindId, MolGraph, NodeId, PropValue, Relation};
+pub use system::port::{Port, PortId, PortKind};
 pub use system::topology::{Topology, TopologyRingInfo};
 pub use units::{
     Dimension, Quantity, Unit, UnitDef, UnitPreset, UnitPresetRegistry, UnitRegistry, UnitsError,

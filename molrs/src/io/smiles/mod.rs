@@ -78,7 +78,7 @@
 //! CGsmiles string → parse_cgsmiles() → CGSmilesIR
 //!     → CGSmilesIR::to_coarsegrain() → CoarseGrain
 //! CGsmiles string → parse_cgsmiles() → CGSmilesIR
-//!     → CGSmilesIR::to_fragment() → BTreeMap<String, Fragment>
+//!     → CGSmilesIR::to_fragment() → BTreeMap<String, Atomistic> (ported)
 //! ```
 //!
 //! # Examples

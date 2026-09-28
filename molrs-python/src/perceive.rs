@@ -29,14 +29,6 @@
 //! against `Atomistic`; a `CoarseGrain` leaf is a `TypeError` from PyO3's own
 //! extraction, not a wrong answer.
 //!
-//! `Perceive` also answers one coarse-grained **query**: constructed over a
-//! graph, `Perceive(graph).linear_paths()` lists the ordered bead handles of
-//! every linear chain of that `CoarseGrain`. The builder holds the graph object
-//! it was given and reads it at call time; the `find_*` methods ignore it and
-//! keep taking their `mol` argument. `Perceive().linear_paths()`, with no held
-//! graph, is a `TypeError`. The asymmetry is recorded in notes.md (2026-09-27,
-//! "Python `Perceive` held-graph asymmetry") with its removal condition.
-//!
 //! The coarse-grained classes are [`PySubgraphMatcher`]
 //! (`molrs.perceive.SubgraphMatcher`) and [`PyCoarsener`]
 //! (`molrs.perceive.Coarsener`). `SubgraphMatcher` snapshots a bead pattern and
@@ -50,7 +42,7 @@
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
-use molrs::perceive::{CoarsenError, Coarsener, LinearPathError, Perceive, SubgraphMatcher};
+use molrs::perceive::{CoarsenError, Coarsener, Perceive, SubgraphMatcher};
 use molrs::system::molgraph::{MolGraph, NodeId, node_from_u64, node_to_u64};
 
 use crate::core::system::molgraph::{PyAtomistic, PyCoarseGrain, center_error_message};
@@ -76,20 +68,6 @@ use crate::helpers::molrs_error_to_pyerr;
 /// ``find_equivalence_classes``     ``equiv_class``             —
 /// ===============================  ==========================  ==========================
 ///
-/// ``linear_paths`` is the one query that reads a graph held by the builder:
-/// construct ``Perceive(cg)`` over a :class:`~molrs.CoarseGrain`.
-///
-/// Parameters
-/// ----------
-/// graph : CoarseGrain, optional
-///     The graph :meth:`linear_paths` reads. The object is held, not copied.
-///     The ``find_*`` methods do not read it.
-///
-/// Raises
-/// ------
-/// TypeError
-///     If ``graph`` is given and is not a :class:`~molrs.CoarseGrain`.
-///
 /// Examples
 /// --------
 /// >>> perceived = molrs.perceive.Perceive().find_rings(mol)
@@ -97,8 +75,6 @@ use crate::helpers::molrs_error_to_pyerr;
 /// 1
 /// >>> mol.has(atom, "is_in_ring")   # the input is untouched
 /// False
-/// >>> molrs.perceive.Perceive(cg).linear_paths()
-/// [[0, 1, 2], [3]]
 // `subclass`: molpy layers a thin `Perceive` over this one so its finders
 // return molpy graphs. Without it the base type is final and molpy cannot
 // import at all.
@@ -106,55 +82,16 @@ use crate::helpers::molrs_error_to_pyerr;
 #[derive(Debug)]
 pub struct PyPerceive {
     inner: Perceive,
-    graph: Option<Py<PyCoarseGrain>>,
 }
 
 #[pymethods]
 impl PyPerceive {
-    /// Create a perception builder with default settings, optionally holding
-    /// the graph :meth:`linear_paths` reads.
+    /// Create a perception builder with default settings.
     #[new]
-    #[pyo3(signature = (graph=None))]
-    fn new(graph: Option<Py<PyCoarseGrain>>) -> Self {
+    fn new() -> Self {
         Self {
             inner: Perceive::new(),
-            graph,
         }
-    }
-
-    /// The ordered bead handles of every linear chain of the held graph.
-    ///
-    /// Only ``bonds`` join beads. Each connected component must be a path
-    /// graph (no bead with more than two bonds, no cycle); a lone bead is a
-    /// one-handle path. The GIL is released while walking.
-    ///
-    /// Returns
-    /// -------
-    /// list[list[int]]
-    ///     One list of bead handles per component, walked end to end.
-    ///
-    /// Raises
-    /// ------
-    /// TypeError
-    ///     If this builder holds no graph (``Perceive()``).
-    /// ValueError
-    ///     If a component branches (naming the first bead with more than two
-    ///     bonds) or is a ring (naming a bead on it), by its int handle.
-    fn linear_paths(&self, py: Python<'_>) -> PyResult<Vec<Vec<u64>>> {
-        let graph = self.graph.as_ref().ok_or_else(|| {
-            PyTypeError::new_err(
-                "Perceive() holds no graph; construct Perceive(graph) to call linear_paths",
-            )
-        })?;
-        let graph = graph.bind(py).borrow();
-        let (perceive, graph) = (&self.inner, graph.core().as_molgraph());
-        let paths = py
-            .detach(|| perceive.linear_paths(graph))
-            .map_err(|e: LinearPathError| PyValueError::new_err(e.to_string()))?;
-        Ok(paths
-            .into_iter()
-            .map(|path| path.into_iter().map(node_to_u64).collect())
-            .collect())
     }
 
     /// Perceive rings (SSSR) and project them onto the graph.

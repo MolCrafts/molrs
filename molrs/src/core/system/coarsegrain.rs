@@ -221,9 +221,48 @@ impl CoarseGrain {
     /// # Ok::<(), molrs::MolRsError>(())
     /// ```
     pub fn positions(&self, beads: &[BeadId]) -> Result<Vec<[f64; 3]>, MolRsError> {
+        self.vectors(beads, keys::COORDS, "coordinate")
+    }
+
+    /// The site axes `[axis_x, axis_y, axis_z]` of `beads`, in Å as stored,
+    /// in the order of `beads`. A site made by
+    /// [`Coarsener::coarsen`](crate::perceive::Coarsener::coarsen) carries
+    /// the vector from the first member of its group to the site, which
+    /// fixes the site's direction; a one-member site's axis is zero. O(k) for
+    /// k listed beads.
+    ///
+    /// # Errors
+    ///
+    /// As [`positions`](Self::positions), for the axis columns.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use molrs::store::keys;
+    /// use molrs::system::coarsegrain::CoarseGrain;
+    ///
+    /// let mut cg = CoarseGrain::new();
+    /// let a = cg.add_bead("S", 0.0, 0.0, 0.0);
+    /// for (key, v) in keys::AXIS.into_iter().zip([1.0, 2.0, 3.0]) {
+    ///     cg.set_node(a, key, v)?;
+    /// }
+    /// assert_eq!(cg.axes(&[a])?, vec![[1.0, 2.0, 3.0]]);
+    /// # Ok::<(), molrs::MolRsError>(())
+    /// ```
+    pub fn axes(&self, beads: &[BeadId]) -> Result<Vec<[f64; 3]>, MolRsError> {
+        self.vectors(beads, keys::AXIS, "axis")
+    }
+
+    /// The three f64 columns `columns` of `beads`, each finite.
+    fn vectors(
+        &self,
+        beads: &[BeadId],
+        columns: [&str; 3],
+        what: &str,
+    ) -> Result<Vec<[f64; 3]>, MolRsError> {
         let table = self.graph.node_table();
         // An absent (or non-f64) column reads as "missing" for every bead.
-        let columns = keys::COORDS.map(|key| (key, table.column_f64(key).ok()));
+        let columns = columns.map(|key| (key, table.column_f64(key).ok()));
         beads
             .iter()
             .map(|&bead| {
@@ -234,7 +273,7 @@ impl CoarseGrain {
                         Some((data, valid)) if valid.get(row) && data[row].is_finite() => data[row],
                         _ => {
                             return Err(MolRsError::validation(format!(
-                                "bead {} has no finite '{key}' coordinate",
+                                "bead {} has no finite '{key}' {what}",
                                 bead.data().as_ffi()
                             )));
                         }
@@ -734,6 +773,12 @@ impl CoarseGrain {
     /// Whether `self` and `other` are isomorphic as labeled bead graphs.
     pub fn is_isomorphic(&self, other: &CoarseGrain) -> bool {
         crate::system::graph_hash::is_isomorphic(&self.graph, &other.graph)
+    }
+}
+
+impl crate::system::molgraph::FromMolGraph for CoarseGrain {
+    fn from_molgraph(graph: MolGraph) -> Result<Self, MolRsError> {
+        CoarseGrain::try_from_molgraph(graph)
     }
 }
 

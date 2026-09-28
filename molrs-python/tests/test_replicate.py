@@ -71,15 +71,15 @@ class TestAtomisticReplicate:
         assert world.n_atoms == 0
 
 
-class TestFragmentReplicate:
+class TestPortedReplicate:
     def test_copies_keep_the_template_ports(self):
-        template = molrs.Fragment()
+        template = molrs.Atomistic()
         o = template.def_atom(element="O", x=0.0, y=0.0, z=0.0)
         h = template.def_atom(element="H", x=0.96, y=0.0, z=0.0)
         template.def_bond(o, h)
         template.def_port(o, h, "$")
 
-        world = molrs.Fragment()
+        world = molrs.Atomistic()
         world.replicate(template, TWO_IDENTITIES, TWO_SHIFTS, TWO_FRAG_IDS)
 
         assert world.n_atoms == 4

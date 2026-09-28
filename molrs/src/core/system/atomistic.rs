@@ -867,6 +867,12 @@ fn canonical_path(nodes: &[NodeId]) -> Vec<NodeId> {
     if fwd <= rev { fwd } else { rev }
 }
 
+impl crate::system::molgraph::FromMolGraph for Atomistic {
+    fn from_molgraph(graph: MolGraph) -> Result<Self, MolRsError> {
+        Atomistic::try_from_molgraph(graph)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1254,33 +1260,30 @@ mod tests {
         );
     }
 
-    /// A `Fragment`'s frame carries a `ports` block, and `Atomistic` has no
-    /// such kind: reading the frame anyway would drop every joining site on
-    /// the floor and hand back a molecule that silently is not the fragment.
-    /// The refusal names the block it could not read.
+    /// A frame is open: a relation block of a kind `Atomistic` does not
+    /// register is not its business and is ignored, bonds still read.
     #[test]
-    fn from_frame_refuses_a_frame_carrying_a_ports_block() {
-        use crate::system::bond::BondNumber;
-        use crate::system::fragment::{Fragment, PortKind};
+    fn from_frame_ignores_a_relation_block_of_an_unregistered_kind() {
+        use crate::store::block::Block;
+        use ndarray::Array1;
 
-        let mut frag = Fragment::new();
-        let c0 = frag.add_atom_xyz("C", 0.0, 0.0, 0.0);
-        let c1 = frag.add_atom_xyz("C", 1.54, 0.0, 0.0);
-        let h = frag.add_atom_bare("H");
-        frag.add_bond(c0, c1).unwrap();
-        frag.add_bond(c0, h).unwrap();
-        frag.add_port(c0, h, PortKind::Symmetric, "A", BondNumber::Single)
-            .expect("a bonded H handle on its anchor is a legal port");
+        let mut mol = Atomistic::new();
+        let a = mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
+        let b = mol.add_atom_xyz("C", 1.54, 0.0, 0.0);
+        mol.add_bond(a, b).unwrap();
+        let mut frame = mol.to_frame().expect("a schema-conforming graph converts");
+        let mut widgets = Block::new();
+        widgets
+            .insert("atomi", Array1::from_vec(vec![0_u64]).into_dyn())
+            .unwrap();
+        widgets
+            .insert("atomj", Array1::from_vec(vec![1_u64]).into_dyn())
+            .unwrap();
+        frame.insert("widgets", widgets);
 
-        let frame = frag.to_frame().expect("a schema-conforming graph converts");
-        assert!(frame.contains_key("ports"), "the fixture carries the block");
-
-        let err = Atomistic::from_frame(&frame)
-            .expect_err("a frame with a ports block is not an atomistic frame");
-        assert!(
-            format!("{err}").contains("ports"),
-            "the refusal must name the block it could not read, got {err}"
-        );
+        let back = Atomistic::from_frame(&frame).expect("an unknown block is ignored");
+        assert_eq!(back.n_atoms(), 2);
+        assert_eq!(back.n_bonds(), 1);
     }
 
     #[test]

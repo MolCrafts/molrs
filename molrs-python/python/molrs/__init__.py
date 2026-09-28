@@ -77,7 +77,6 @@ from ._lib import (
     Graph,
     Atomistic,
     CoarseGrain,
-    Fragment,
     ExtractedSubgraph,
     Reaction,
 )
@@ -144,7 +143,6 @@ from .views import (
     CoarseGrain,
     Dihedral,
     DrudeParticle,
-    Fragment,
     GraphViews,
     Improper,
     MasslessSite,
@@ -204,7 +202,6 @@ __all__ = [
     "Graph",
     "Atomistic",
     "CoarseGrain",
-    "Fragment",
     "ExtractedSubgraph",
     "Reaction",
     "NodeRef",

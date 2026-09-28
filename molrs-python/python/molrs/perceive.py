@@ -21,9 +21,8 @@ pattern (a :class:`~molrs.CoarseGrain`, e.g. from
 ``CGSmilesIR(...).to_coarsegrain()``) and lists every occurrence of it in a
 target ``CoarseGrain`` as bead-handle groups. It does not partition
 overlapping groups. :class:`Coarsener` maps disjoint node groups of a held
-``CoarseGrain`` or ``Atomistic`` onto the sites of a new ``CoarseGrain``, and
-``Perceive(cg).linear_paths()`` lists the ordered bead handles of every linear
-chain of the graph the builder holds.
+``CoarseGrain`` or ``Atomistic`` onto the sites of a new ``CoarseGrain``, each
+at its group's centre of mass with an axis from the group's first member.
 """
 
 from __future__ import annotations

@@ -7,9 +7,9 @@
 //! - [`PyGraph`] (`molrs.Graph`) — the domain-agnostic world: stable-handle
 //!   entities, by-name component get/set, and the kind-tagged relation API.
 //! - [`PyAtomistic`] (`molrs.Atomistic`) / [`PyCoarseGrain`]
-//!   (`molrs.CoarseGrain`) / [`PyFragment`] (`molrs.Fragment`) — leaves that
-//!   **hold a core [`Atomistic`] / [`CoarseGrain`] / [`Fragment`] from
-//!   construction** (never converted from a `MolGraph`). They add the
+//!   (`molrs.CoarseGrain`) — peer leaves that **hold a core [`Atomistic`] /
+//!   [`CoarseGrain`] from construction** (never converted from a `MolGraph`,
+//!   never converted into each other). They add the
 //!   domain builders (`add_atom`/`add_bond`/…) and own `to_frame` /
 //!   `from_frame` (`self.inner.to_frame()`, zero conversion). They subclass
 //!   `Graph` in Python; the generic graph API is shared via the
@@ -46,12 +46,12 @@ use molrs::system::atomistic::{Atomistic, ExtractedAtomistic};
 use molrs::system::bond::{BondNumber, BondType};
 use molrs::system::coarsegrain::{CoarseGrain, ExtractedCoarseGrain};
 use molrs::system::entity_table::Cell;
-use molrs::system::fragment::{Fragment, PortKind};
 use molrs::system::link::LinkError;
 use molrs::system::molgraph::{
     KindId, MolGraph, NodeId, PropValue, node_from_u64, node_to_u64, relation_from_u64,
     relation_to_u64,
 };
+use molrs::system::port::PortKind;
 
 use crate::core::store::frame::PyFrame;
 use crate::helpers::molrs_error_to_pyerr;
@@ -201,6 +201,118 @@ macro_rules! graph_world_impl {
     ($ty:ty) => {
         #[pymethods]
         impl $ty {
+            // ---- ports: named attachment points any graph may carry ----
+
+            /// Record a descriptor on the ``(anchor, handle)`` valence; the
+            /// ``ports`` relation kind is registered on first use.
+            ///
+            /// Parameters
+            /// ----------
+            /// anchor : int
+            ///     The node that keeps its place in the product.
+            /// handle : int
+            ///     A node bonded to ``anchor``: the root of the leaving group.
+            ///     Endpoint order is load-bearing.
+            /// kind : str
+            ///     The notation glyph — one of ``"$"``, ``"<"``, ``">"``, ``"!"``.
+            /// label : str, optional
+            ///     Free-form descriptor label; ``""`` (the default) means unnamed.
+            /// order : int, optional
+            ///     Multiplicity of the bond this port will form, ``1`` to ``4``
+            ///     (default ``1``).
+            ///
+            /// Returns
+            /// -------
+            /// int
+            ///     The port's stable relation handle.
+            ///
+            /// Raises
+            /// ------
+            /// ValueError
+            ///     If ``kind`` is not one of the four glyphs, ``handle`` is not
+            ///     bonded to ``anchor``, ``order`` is not a definite bond
+            ///     number, the valence already carries a port, or a handle is
+            ///     stale or unknown.
+            #[pyo3(signature = (anchor, handle, kind, label="", order=1))]
+            fn add_port(
+                &mut self,
+                anchor: u64,
+                handle: u64,
+                kind: &str,
+                label: &str,
+                order: u32,
+            ) -> PyResult<u64> {
+                let kind = PortKind::from_str(kind).map_err(molrs_error_to_pyerr)?;
+                self.mol_mut()
+                    .add_port(
+                        node_from_u64(anchor),
+                        node_from_u64(handle),
+                        kind,
+                        label,
+                        BondNumber::from_code(order),
+                    )
+                    .map(relation_to_u64)
+                    .map_err(molrs_error_to_pyerr)
+            }
+
+            /// Number of ports (``0`` when the graph carries none).
+            #[getter]
+            fn n_ports(&self) -> usize {
+                self.mol().n_ports()
+            }
+
+            /// Record the unit instance ``node`` came from, under ``frag_id``.
+            ///
+            /// Raises
+            /// ------
+            /// ValueError
+            ///     If ``id`` exceeds the widest identifier a node column stores,
+            ///     or ``node`` is stale or unknown.
+            fn set_frag_id(&mut self, node: u64, id: u32) -> PyResult<()> {
+                self.mol_mut()
+                    .set_frag_id(node_from_u64(node), id)
+                    .map_err(molrs_error_to_pyerr)
+            }
+
+            /// The unit instance ``node`` came from, or ``None``.
+            fn frag_id(&self, node: u64) -> Option<u32> {
+                self.mol().frag_id(node_from_u64(node))
+            }
+
+            /// Propagate each ``frag_id`` to the unlabelled degree-1 nodes
+            /// hanging off a labelled one (one pass); returns how many were
+            /// labelled. The relabel step after a conformer added hydrogens.
+            fn inherit_frag_ids(&mut self) -> usize {
+                self.mol_mut().inherit_frag_ids()
+            }
+
+            /// Join port ``a`` to port ``b`` with a new anchor–anchor bond.
+            ///
+            /// Both leaving groups are removed, their partial charge (e) folds
+            /// onto the anchors, and the anchors are bonded with the port
+            /// order. No coordinate moves.
+            ///
+            /// Returns
+            /// -------
+            /// int
+            ///     The new bond's relation handle.
+            ///
+            /// Raises
+            /// ------
+            /// ValueError
+            ///     If a handle names no live port, a port is stale, the two
+            ///     ports do not accept each other, share an anchor, their
+            ///     anchors are already bonded, or the leaving groups overlap or
+            ///     reach an anchor; the graph is unchanged.
+            /// OverflowError
+            ///     If ``a`` or ``b`` is negative.
+            fn link(&mut self, a: u64, b: u64) -> PyResult<u64> {
+                self.mol_mut()
+                    .link(relation_from_u64(a), relation_from_u64(b))
+                    .map(relation_to_u64)
+                    .map_err(link_error_to_pyerr)
+            }
+
             // ---- entities ----
 
             /// Spawn a new entity, returning its stable handle.
@@ -749,6 +861,63 @@ where
     let object: Py<T> = public.call0()?.extract()?;
     *object.borrow_mut(py) = leaf;
     Ok(object)
+}
+
+/// A copy of the graph any Python graph object holds — a `Graph`, an
+/// `Atomistic`, a `CoarseGrain` or a subclass of one — as a bare
+/// [`MolGraph`]. Graph types are peers: this reads the object's own graph, it
+/// converts nothing.
+///
+/// # Errors
+///
+/// `TypeError` when `obj` is no graph.
+pub(crate) fn molgraph_of(obj: &Bound<'_, PyAny>) -> PyResult<MolGraph> {
+    if let Ok(leaf) = obj.cast::<PyAtomistic>() {
+        return Ok(leaf.borrow().inner.as_molgraph().clone());
+    }
+    if let Ok(leaf) = obj.cast::<PyCoarseGrain>() {
+        return Ok(leaf.borrow().mol().clone());
+    }
+    if let Ok(graph) = obj.cast::<PyGraph>() {
+        return Ok(graph.borrow().inner.clone());
+    }
+    Err(PyTypeError::new_err(format!(
+        "expected a graph (Graph, Atomistic, CoarseGrain), not {}",
+        obj.get_type().name()?
+    )))
+}
+
+/// Hand a finished `graph` back as an instance of the graph class `cls`
+/// (`Graph`, `Atomistic`, `CoarseGrain`, or a subclass of one); `None` means
+/// `Graph`. The factory of every graph-producing API.
+///
+/// # Errors
+///
+/// `TypeError` when `cls` is no graph class; `ValueError` when `graph` breaks
+/// the class's invariant (an `Atomistic` node without `element`).
+pub(crate) fn graph_as(
+    py: Python<'_>,
+    graph: MolGraph,
+    cls: Option<&Bound<'_, pyo3::types::PyType>>,
+) -> PyResult<Py<PyAny>> {
+    let Some(cls) = cls else {
+        return Ok(Py::new(py, PyGraph { inner: graph })?.into_any());
+    };
+    if cls.is_subclass_of::<PyAtomistic>()? {
+        let leaf = Atomistic::try_from_molgraph(graph).map_err(molrs_error_to_pyerr)?;
+        return Ok(PyAtomistic::from_core(py, leaf)?.into_any());
+    }
+    if cls.is_subclass_of::<PyCoarseGrain>()? {
+        let leaf = CoarseGrain::try_from_molgraph(graph).map_err(molrs_error_to_pyerr)?;
+        return Ok(PyCoarseGrain::from_core(py, leaf)?.into_any());
+    }
+    if cls.is_subclass_of::<PyGraph>()? {
+        return Ok(Py::new(py, PyGraph { inner: graph })?.into_any());
+    }
+    Err(PyTypeError::new_err(format!(
+        "cls must be a graph class (Graph, Atomistic, CoarseGrain), not {}",
+        cls.name()?
+    )))
 }
 
 // ---------------------------------------------------------------------------
@@ -1809,7 +1978,7 @@ impl PyCoarseGrain {
     /// Parameters
     /// ----------
     /// beads : Sequence[int]
-    ///     Bead handles, e.g. one path from ``Perceive(cg).linear_paths()``.
+    ///     Bead handles.
     ///
     /// Returns
     /// -------
@@ -1832,6 +2001,31 @@ impl PyCoarseGrain {
             Array2::from_shape_fn((points.len(), 3), |(row, axis)| points[row][axis])
                 .into_pyarray(py),
         )
+    }
+
+    /// The site axes of ``beads``, one row per listed bead, in the listed
+    /// order. A site from ``Coarsener.coarsen`` carries the vector from the
+    /// first bead of its group to the site; a one-bead site's axis is zero.
+    ///
+    /// Parameters
+    /// ----------
+    /// beads : Sequence[int]
+    ///     Bead handles.
+    ///
+    /// Returns
+    /// -------
+    /// numpy.ndarray, shape (k, 3), float64
+    ///     ``axis_x`` / ``axis_y`` / ``axis_z`` as stored (Å).
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If a handle is not a live bead of this graph, or a bead lacks a
+    ///     finite axis; the message names its int handle.
+    fn axes<'py>(&self, py: Python<'py>, beads: Vec<u64>) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        let beads: Vec<NodeId> = beads.into_iter().map(node_from_u64).collect();
+        let axes = self.inner.axes(&beads).map_err(molrs_error_to_pyerr)?;
+        Ok(Array2::from_shape_fn((axes.len(), 3), |(row, c)| axes[row][c]).into_pyarray(py))
     }
 
     /// The ``bead_type`` of each of ``beads``, in the listed order (a bead
@@ -1872,438 +2066,7 @@ impl PyCoarseGrain {
     }
 }
 
-// ---------------------------------------------------------------------------
-// PyFragment — molecular graph with ports (holds a core Fragment)
-// ---------------------------------------------------------------------------
-
-/// Molecular graph with named attachment points, exposed as `molrs.Fragment`.
-///
-/// A *fragment* is a molecular graph that is deliberately incomplete: beside
-/// its atoms and bonds it owns a second relation kind, ``ports``, one entry
-/// per unsatisfied valence. A port is the ordered pair
-/// ``(anchor, handle_atom)`` — the anchor keeps its place in the product
-/// molecule, the handle is a real atom bonded to it that roots the leaving
-/// group (usually a capping hydrogen; any element is accepted, e.g. the O of
-/// a leaving hydroxyl) — carrying
-/// three props: ``port_kind`` (the BigSMILES / CGsmiles glyph ``$``, ``<``,
-/// ``>`` or ``!``), ``port_label`` (free-form, ``""`` when unnamed) and
-/// ``port_order`` (the multiplicity the formed bond will have).
-///
-/// Ports are ordinary relations, so the generic world API reads and removes
-/// them: ``frag.relation_ids("ports")``, ``frag.remove_relation("ports", h)``.
-/// Only the three *writers* below are typed, because only they validate.
-///
-/// Notes
-/// -----
-/// This is a molecular graph, and is unrelated to the CL&Pol sense of
-/// "fragment" in :class:`molrs.ff.FragmentScaling` / ``FragmentAtoms``, which
-/// is a polarizability-scaling record. The two senses are disjoint and both
-/// are established, so neither is renamed.
-///
-/// Coordinates are ångström (Å); ``frag_id`` is a dimensionless per-atom
-/// instance ordinal.
-///
-/// Examples
-/// --------
-/// >>> frag = molrs.Fragment()
-/// >>> oxygen = frag.def_atom(element="O", x=0.0, y=0.0, z=0.0)
-/// >>> hydrogen = frag.def_atom(element="H", x=0.96, y=0.0, z=0.0)
-/// >>> _ = frag.def_bond(oxygen, hydrogen)
-/// >>> port = frag.def_port(oxygen, hydrogen, "$")
-/// >>> frag.n_ports
-/// 1
-/// >>> port["port_kind"]
-/// '$'
-#[pyclass(module = "molrs._lib", name = "Fragment", extends = PyGraph, subclass)]
-pub struct PyFragment {
-    inner: Fragment,
-}
-
-impl PyFragment {
-    fn mol(&self) -> &MolGraph {
-        self.inner.as_molgraph()
-    }
-    fn mol_mut(&mut self) -> &mut MolGraph {
-        &mut self.inner
-    }
-}
-
-#[pymethods]
-impl PyFragment {
-    #[new]
-    #[pyo3(signature = (*_args, **_kwargs))]
-    fn new(_args: &Bound<'_, PyAny>, _kwargs: Option<&Bound<'_, PyAny>>) -> (Self, PyGraph) {
-        (
-            PyFragment {
-                inner: Fragment::new(),
-            },
-            PyGraph {
-                inner: MolGraph::new(),
-            },
-        )
-    }
-
-    /// Add an atom with element `symbol` and optional coordinates (Å).
-    ///
-    /// Parameters
-    /// ----------
-    /// symbol : str
-    ///     Element symbol, written under the canonical ``element`` key.
-    /// x, y, z : float, optional
-    ///     Position in Å. All three or none; a partial triple is ignored and
-    ///     the atom is added without coordinates.
-    ///
-    /// Returns
-    /// -------
-    /// int
-    ///     The atom's stable handle.
-    #[pyo3(signature = (symbol, x=None, y=None, z=None))]
-    fn add_atom(&mut self, symbol: &str, x: Option<f64>, y: Option<f64>, z: Option<f64>) -> u64 {
-        let id = match (x, y, z) {
-            (Some(x), Some(y), Some(z)) => self.inner.add_atom_xyz(symbol, x, y, z),
-            _ => self.inner.add_atom_bare(symbol),
-        };
-        node_to_u64(id)
-    }
-
-    /// Add a single bond between two atom handles.
-    ///
-    /// The bond is classed ``bond_type = 1`` / ``bond_number = 1``, as every
-    /// bond built in Rust is — an unclassed bond reads back as *unknown*,
-    /// which a valence count treats as zero.
-    ///
-    /// Parameters
-    /// ----------
-    /// a, b : int
-    ///     Atom handles.
-    ///
-    /// Returns
-    /// -------
-    /// int
-    ///     The bond's stable relation handle.
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If either handle is stale or unknown.
-    fn add_bond(&mut self, a: u64, b: u64) -> PyResult<u64> {
-        self.inner
-            .add_bond(node_from_u64(a), node_from_u64(b))
-            .map(relation_to_u64)
-            .map_err(molrs_error_to_pyerr)
-    }
-
-    /// Record a bonding descriptor on the ``(anchor, handle)`` valence.
-    ///
-    /// Parameters
-    /// ----------
-    /// anchor : int
-    ///     Handle of the atom that keeps its place in the product molecule.
-    /// handle : int
-    ///     Handle of the atom bonded to `anchor` that roots the leaving group
-    ///     a paired descriptor's bond replaces — usually a capping hydrogen,
-    ///     but any element is accepted. Endpoint order is load-bearing.
-    /// kind : str
-    ///     The notation glyph — one of ``"$"``, ``"<"``, ``">"``, ``"!"``.
-    ///     This vocabulary crosses as the glyph, never as an integer code:
-    ///     it is what the notation writes and what ``port_kind`` stores.
-    /// label : str, optional
-    ///     Free-form descriptor label; ``""`` (the default) means unnamed.
-    /// order : int, optional
-    ///     Multiplicity of the bond this port will form, ``1`` to ``4``
-    ///     (default ``1``). Recorded, never interpreted.
-    ///
-    /// Returns
-    /// -------
-    /// int
-    ///     The port's stable relation handle.
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If `kind` is not one of the four glyphs, if `handle` is not bonded
-    ///     to `anchor`, if `order` is not a definite bond number, if the
-    ///     ``(anchor, handle)`` valence already carries a port, or if either
-    ///     handle is stale or unknown.
-    #[pyo3(signature = (anchor, handle, kind, label="", order=1))]
-    fn add_port(
-        &mut self,
-        anchor: u64,
-        handle: u64,
-        kind: &str,
-        label: &str,
-        order: u32,
-    ) -> PyResult<u64> {
-        let kind = PortKind::from_str(kind).map_err(molrs_error_to_pyerr)?;
-        self.inner
-            .add_port(
-                node_from_u64(anchor),
-                node_from_u64(handle),
-                kind,
-                label,
-                BondNumber::from_code(order),
-            )
-            .map(relation_to_u64)
-            .map_err(molrs_error_to_pyerr)
-    }
-
-    /// Number of ports.
-    #[getter]
-    fn n_ports(&self) -> usize {
-        self.inner.n_ports()
-    }
-
-    /// Number of atoms.
-    #[getter]
-    fn n_atoms(&self) -> usize {
-        self.inner.n_atoms()
-    }
-
-    /// Record the fragment instance `atom` came from, under ``frag_id``.
-    ///
-    /// Parameters
-    /// ----------
-    /// atom : int
-    ///     Atom handle.
-    /// id : int
-    ///     Dimensionless instance ordinal.
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If `id` exceeds the widest identifier a node column stores, or if
-    ///     `atom` is stale or unknown.
-    fn set_frag_id(&mut self, atom: u64, id: u32) -> PyResult<()> {
-        self.inner
-            .set_frag_id(node_from_u64(atom), id)
-            .map_err(molrs_error_to_pyerr)
-    }
-
-    /// The fragment instance `atom` came from.
-    ///
-    /// Parameters
-    /// ----------
-    /// atom : int
-    ///     Atom handle.
-    ///
-    /// Returns
-    /// -------
-    /// int or None
-    ///     ``None`` when the atom carries no ``frag_id`` (or is stale).
-    fn frag_id(&self, atom: u64) -> Option<u32> {
-        self.inner.frag_id(node_from_u64(atom))
-    }
-
-    /// Propagate each ``frag_id`` to the unlabelled degree-1 atoms hanging
-    /// off a labelled one.
-    ///
-    /// One pass over the labels this call started with, never a fixpoint, so
-    /// a second call on the result labels nothing. Degree is counted over
-    /// bonds alone — a port does not make its handle a degree-2 atom. This is
-    /// the relabel step a caller runs after a conformer has added hydrogens.
-    ///
-    /// Returns
-    /// -------
-    /// int
-    ///     How many atoms were labelled.
-    fn inherit_frag_ids(&mut self) -> usize {
-        self.inner.inherit_frag_ids()
-    }
-
-    /// Independent deep copy. **Handles are preserved.**
-    ///
-    /// Returns
-    /// -------
-    /// Fragment
-    fn copy(&self, py: Python<'_>) -> PyResult<Py<PyFragment>> {
-        PyFragment::from_core(py, self.inner.clone())
-    }
-
-    /// Export to a tabular :class:`~molrs.Frame` (atoms + bonds + ports).
-    ///
-    /// An atom with no ``frag_id`` is emitted as a null cell of the column
-    /// rather than as fragment instance ``0``, so a partially labelled
-    /// fragment round-trips exactly.
-    ///
-    /// Returns
-    /// -------
-    /// Frame
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If an atom or relation property contradicts the dtype the Frame
-    ///     schema declares for its key (a string under ``"x"``).
-    fn to_frame(&self) -> PyResult<PyFrame> {
-        PyFrame::from_core_frame(self.inner.to_frame().map_err(molrs_error_to_pyerr)?)
-    }
-
-    /// Build a `Fragment` from the :class:`~molrs.Frame` :meth:`to_frame`
-    /// emits. A leaf constructor, not a conversion.
-    ///
-    /// Parameters
-    /// ----------
-    /// frame : Frame
-    ///     Frame carrying an ``atoms`` block, optionally ``bonds`` /
-    ///     ``ports``.
-    ///
-    /// Returns
-    /// -------
-    /// Fragment
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If the frame carries no ``atoms`` block, or an atom row carries no
-    ///     element.
-    #[staticmethod]
-    fn from_frame(py: Python<'_>, frame: &PyFrame) -> PyResult<Py<PyFragment>> {
-        let core = frame.clone_core_frame()?;
-        let inner = Fragment::from_frame(&core).map_err(molrs_error_to_pyerr)?;
-        PyFragment::from_core(py, inner)
-    }
-
-    /// Mass-weighted centre of every atom.
-    ///
-    /// ``R = sum_i m_i r_i / sum_i m_i`` over all atoms, port anchors and
-    /// handles included, reading positions from ``x`` / ``y`` / ``z`` (Å) and
-    /// masses from ``mass`` (g/mol). No periodic imaging: a fragment split
-    /// across a box face must be unwrapped first (:meth:`Box.unwrap`).
-    ///
-    /// Returns
-    /// -------
-    /// numpy.ndarray, shape (3,), float64
-    ///     The centre in Å; it feeds :meth:`translate` directly.
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If the fragment has no atoms; if an atom lacks a finite ``x`` /
-    ///     ``y`` / ``z`` or a finite, non-negative ``mass`` (the message names
-    ///     its int handle); or if the total mass is not positive.
-    fn center<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f64>>> {
-        let center = self.inner.center().map_err(center_error_to_pyerr)?;
-        Ok(vector_to_py(py, &center))
-    }
-
-    /// Structural merge of ``other`` into ``self``, consuming ``other``.
-    ///
-    /// Every atom and port of ``other`` is carried across under a new handle.
-    /// Coordinates (Å) are copied as they are; place ``other`` first.
-    /// ``other`` is consumed: it is left an empty fragment, even when the
-    /// merge is refused.
-    ///
-    /// Parameters
-    /// ----------
-    /// other : Fragment
-    ///     The fragment to absorb; a different object from ``self``.
-    ///
-    /// Returns
-    /// -------
-    /// tuple[dict[int, int], dict[int, int]]
-    ///     ``(atom_map, port_map)``: ``{old_atom: new_atom}`` and
-    ///     ``{old_port: new_port}``, old handles of ``other`` to handles of
-    ///     ``self``.
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If a property of ``other`` contradicts the type this graph holds
-    ///     for that key (a string ``tag`` into a float ``tag`` column);
-    ///     ``other`` has already been emptied then.
-    /// RuntimeError
-    ///     If ``other`` is ``self`` (``f.merge(f)``): a fragment cannot absorb
-    ///     itself. ``f`` is unchanged.
-    fn merge(&mut self, other: &mut Self) -> PyResult<(HashMap<u64, u64>, HashMap<u64, u64>)> {
-        let taken = std::mem::take(&mut other.inner);
-        let (atom_map, port_map) = self.inner.merge(taken).map_err(molrs_error_to_pyerr)?;
-        Ok((
-            atom_map
-                .into_iter()
-                .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
-                .collect(),
-            port_map
-                .into_iter()
-                .map(|(k, v)| (relation_to_u64(k), relation_to_u64(v)))
-                .collect(),
-        ))
-    }
-
-    /// Join port ``a`` to port ``b`` with a new anchor–anchor bond.
-    ///
-    /// Both ports are consumed: each port's leaving group (its handle atom
-    /// and whatever hangs off it) is removed, its partial charge (e) is
-    /// folded onto its own anchor, and the two anchors are bonded with the
-    /// port order. No coordinate is moved.
-    ///
-    /// Parameters
-    /// ----------
-    /// a, b : int
-    ///     Port handles of this fragment, e.g. from the ``port_map`` that
-    ///     :meth:`merge` returns.
-    ///
-    /// Returns
-    /// -------
-    /// int
-    ///     The new bond's relation handle.
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If a handle names no live port or its descriptor does not read
-    ///     back, a port is stale (its anchor–handle bond was removed), the two
-    ///     ports are not complements (``<`` with ``>``, ``$`` with ``$``,
-    ///     ``!`` with ``!``) or disagree on label or order, share an
-    ///     anchor, their anchors are already bonded, a leaving group reaches
-    ///     its own anchor or overlaps the other, or charge is present on only
-    ///     part of an anchor and its leaving group. The message names int
-    ///     handles, and the fragment is unchanged.
-    /// OverflowError
-    ///     If ``a`` or ``b`` is negative (handles are unsigned ints).
-    fn link(&mut self, a: u64, b: u64) -> PyResult<u64> {
-        self.inner
-            .link(relation_from_u64(a), relation_from_u64(b))
-            .map(relation_to_u64)
-            .map_err(link_error_to_pyerr)
-    }
-
-    /// A copy of this fragment as a public :class:`~molrs.Atomistic`.
-    ///
-    /// Every atom, bond and relation kind is kept, ``ports`` and ``frag_id``
-    /// included, and **handles are preserved**. The fragment itself is left
-    /// intact (one O(atoms) copy).
-    ///
-    /// Returns
-    /// -------
-    /// Atomistic
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If a node carries no ``element`` (a bare :meth:`spawn`); the
-    ///     fragment is unchanged.
-    fn to_atomistic(&self, py: Python<'_>) -> PyResult<Py<PyAtomistic>> {
-        let inner = Atomistic::try_from_molgraph(self.inner.clone().into_inner())
-            .map_err(molrs_error_to_pyerr)?;
-        PyAtomistic::from_core(py, inner)
-    }
-}
-graph_world_impl!(PyFragment);
-
-impl PyFragment {
-    /// Wrap an existing core [`Fragment`] as a Python `Fragment` object.
-    pub(crate) fn from_core(py: Python<'_>, inner: Fragment) -> PyResult<Py<PyFragment>> {
-        from_core_shadowed(py, PyFragment { inner })
-    }
-
-    /// Borrow the held core [`Fragment`] (for domain consumers like the
-    /// conformer, which embeds the leaf it was handed).
-    pub(crate) fn core(&self) -> &Fragment {
-        &self.inner
-    }
-}
-
-/// The shared argument seam of the three leaf ``replicate`` methods:
+/// The shared argument seam of the two leaf ``replicate`` methods:
 /// ``rotations (N,3,3)`` + ``translations (N,3)`` as rigid motions, and
 /// ``frag_ids`` as ``i32`` (an ``int32`` array read directly, any other
 /// integer sequence element by element, out-of-range values refused).
@@ -2396,7 +2159,6 @@ macro_rules! replicate_impl {
 
 replicate_impl!(PyAtomistic, "Atomistic", "atom", "");
 replicate_impl!(PyCoarseGrain, "CoarseGrain", "bead", "");
-replicate_impl!(PyFragment, "Fragment", "atom", ", ports included");
 
 // ---------------------------------------------------------------------------
 // Rigid-body moves
@@ -2449,7 +2211,6 @@ macro_rules! rigid_body_impl {
 
 rigid_body_impl!(PyAtomistic);
 rigid_body_impl!(PyCoarseGrain);
-rigid_body_impl!(PyFragment);
 
 /// The ring facts of a molecule: SSSR rings and the systems they fuse into.
 ///

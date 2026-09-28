@@ -63,7 +63,7 @@ use molrs::io::smiles::{
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::core::system::molgraph::{PyAtomistic, PyCoarseGrain, PyFragment};
+use crate::core::system::molgraph::{PyAtomistic, PyCoarseGrain};
 use crate::helpers::smiles_error_to_pyerr;
 use crate::io::PySmilesIR;
 
@@ -94,7 +94,7 @@ fn bond_kind_name(kind: BondKind) -> &'static str {
 /// one a stored port carries in its `port_kind` prop
 /// ([`PortKind::as_str`](molrs::core::system::PortKind::as_str)), so the
 /// boundary adds no third vocabulary: a kind read off a descriptor here can
-/// be handed straight to [`PyFragment::add_port`] or compared against a port
+/// be handed straight to a graph's ``add_port`` or compared against a port
 /// column without a lookup table on the Python side.
 ///
 /// The glyph table itself lives on the enum, as
@@ -121,7 +121,7 @@ fn descriptor_kind_name(kind: DescriptorKind) -> &'static str {
 /// kind : {"$", "<", ">", "!"}
 ///     Which operator was written, as the glyph itself — the same spelling a
 ///     stored port's ``port_kind`` uses, so it needs no translation to reach
-///     :meth:`Fragment.def_port`. A ``"$"`` pairs only with a ``"$"``, a
+///     :meth:`Atomistic.def_port`. A ``"$"`` pairs only with a ``"$"``, a
 ///     ``"<"`` only with a ``">"`` (and the other way round). ``"!"`` is the
 ///     squash operator and never reaches Python: the reader refuses ``[!]``
 ///     outright.
@@ -842,7 +842,7 @@ impl PyCGSmilesIR {
         PyAtomistic::from_core(py, mol)
     }
 
-    /// Read the last fragment table as named :class:`~molrs.Fragment` bodies.
+    /// Read the last fragment table as named, ported :class:`~molrs.Atomistic` templates.
     ///
     /// One entry per fragment the table defines, keyed by the name written
     /// after ``#``. Each body keeps its own atoms and bonds and carries one
@@ -858,8 +858,8 @@ impl PyCGSmilesIR {
     ///
     /// Returns
     /// -------
-    /// dict of (str, Fragment)
-    ///     Fragment bodies in name order.
+    /// dict of (str, Atomistic)
+    ///     One ported template per fragment definition, in name order.
     ///
     /// Raises
     /// ------
@@ -878,8 +878,8 @@ impl PyCGSmilesIR {
     fn to_fragment<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let templates = self.inner.to_fragment().map_err(smiles_error_to_pyerr)?;
         let out = PyDict::new(py);
-        for (name, fragment) in templates {
-            out.set_item(name, PyFragment::from_core(py, fragment)?)?;
+        for (name, template) in templates {
+            out.set_item(name, PyAtomistic::from_core(py, template)?)?;
         }
         Ok(out)
     }
