@@ -2,16 +2,24 @@
 
 from molrs._lib import (
     DescriptorRow as DescriptorRow,
-    Pca2 as Pca2,
-    PcaResult as PcaResult,
+)
+from molrs._lib import (
     KMeans as KMeans,
+)
+from molrs._lib import (
     KMeansResult as KMeansResult,
+)
+from molrs._lib import (
+    Pca2 as Pca2,
+)
+from molrs._lib import (
+    PcaResult as PcaResult,
 )
 
 __all__ = [
     "DescriptorRow",
-    "Pca2",
-    "PcaResult",
     "KMeans",
     "KMeansResult",
+    "Pca2",
+    "PcaResult",
 ]

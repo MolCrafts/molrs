@@ -6,9 +6,9 @@ and a known value. Numerical correctness is covered by the Rust unit
 tests in molrs-compute — these are wiring-level checks.
 """
 
+import molrs
 import numpy as np
 import pytest
-import molrs
 from conftest import make_frame, octahedron_frame
 from molrs.compute.cluster import Cluster, ClusterProperties
 from molrs.compute.density import GaussianDensity, LocalDensity
@@ -78,7 +78,7 @@ class TestNematic:
         ori.insert("atomi", np.array([0, 2, 4, 6, 8], dtype=np.uint32))
         ori.insert("atomj", np.array([1, 3, 5, 7, 9], dtype=np.uint32))
         frame["orientations"] = ori
-        order, eigs, director, q = Nematic().compute(frame)
+        order, eigs, _director, q = Nematic().compute(frame)
         assert abs(order - 1.0) < 1e-10
         assert eigs.shape == (3,)
         assert q.shape == (3, 3)
@@ -131,7 +131,7 @@ class TestBondOrder:
         frame, pts = octahedron_frame()
         nl = _nlist(frame, pts)
         out = BondOrder(8, 8).compute(frame, nl)
-        counts, bo, t_edges, p_edges = out[0]
+        counts, _bo, _t_edges, _p_edges = out[0]
         # 6 unique self-query bonds × 2 (symmetric counterparts) = 12.
         assert counts.sum() == 12
 
@@ -141,7 +141,7 @@ class TestStaticStructureFactorDebye:
         frame, _ = octahedron_frame()
         ssf = StaticStructureFactorDebye([0.0])
         out = ssf.compute(frame)
-        k, sk, n = out[0]
+        _k, sk, n = out[0]
         assert n == 7
         assert abs(sk[0] - 7.0) < 1e-10
 
@@ -156,7 +156,7 @@ class TestPMFTXY:
         f = make_frame(pts, box_len=10.0)
         nl = _nlist(f, pts, cutoff=1.5)
         out = PMFTXY(2.0, 2.0, 8, 8).compute(f, nl)
-        counts, density, pmf = out[0]
+        counts, _density, _pmf = out[0]
         assert counts.sum() == 2  # one each side, self-query symmetric pair
 
 

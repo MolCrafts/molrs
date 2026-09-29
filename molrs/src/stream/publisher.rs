@@ -173,7 +173,7 @@ impl Publisher {
         let url = url.into();
         let buffer_size = config.buffer_size.max(1);
         let format = config.format;
-        let token = config.token.clone();
+        let token = config.token;
 
         let (frame_tx, _) = broadcast::channel::<Bytes>(buffer_size);
         let bcast_tx = frame_tx.clone();
@@ -224,7 +224,7 @@ impl Publisher {
         let addr = addr.into();
         let buffer_size = config.buffer_size.max(1);
         let format = config.format;
-        let token = config.token.clone();
+        let token = config.token;
 
         let (frame_tx, _) = broadcast::channel::<Bytes>(buffer_size);
         let bcast_tx = frame_tx.clone();
@@ -316,11 +316,6 @@ impl Publisher {
     pub fn send(&self, frame: &Frame) -> Result<(), SendError> {
         let bytes = frame_to_bytes(frame, self.shared.format)?;
         self.send_bytes(Bytes::from(bytes))
-    }
-
-    /// Async convenience wrapper around [`send`](Self::send).
-    pub async fn send_async(&self, frame: &Frame) -> Result<(), SendError> {
-        self.send(frame)
     }
 
     /// Wait for the next control command from any client.

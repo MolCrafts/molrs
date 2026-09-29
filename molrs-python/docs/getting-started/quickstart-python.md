@@ -140,11 +140,9 @@ try:
     ff = typifier.forcefield()
     typed_frame["pairs"] = molrs.ff.intramolecular_pairs(typed_frame, ff)
     potentials = molrs.ff.PotentialCompiler(ff).compile(typed_frame)
-    coords = molrs.ff.extract_coords(typed_frame)
-
-    energy, forces = potentials.calc_energy_forces(coords)
+    energy, forces = potentials.calc_energy_forces(typed_frame)
     print("energy:", energy)
-    print("coords shape:", coords.shape)
+    print("coords shape:", typed_frame.coords.shape)
     print("forces shape:", forces.shape)
 except ValueError as exc:
     print("potential build skipped:", exc)

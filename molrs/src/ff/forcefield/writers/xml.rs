@@ -380,17 +380,23 @@ mod tests {
             .unwrap()
             .def_type(
                 "CT",
+                &[],
                 Params::from_pairs(&[("mass", 12.011), ("charge", -0.18)]),
             )
             .unwrap();
         ff.def_style("bond", "harmonic", Params::new())
             .unwrap()
-            .def_type("CT-CT", Params::from_pairs(&[("k", 268.0), ("r0", 1.529)]))
+            .def_type(
+                "CT-CT",
+                &["CT", "CT"],
+                Params::from_pairs(&[("k", 268.0), ("r0", 1.529)]),
+            )
             .unwrap();
         ff.def_style("angle", "harmonic", Params::new())
             .unwrap()
             .def_type(
                 "CT-CT-CT",
+                &["CT", "CT", "CT"],
                 Params::from_pairs(&[("k", 58.35), ("theta0", 1.9670)]),
             )
             .unwrap();
@@ -419,6 +425,7 @@ mod tests {
             .unwrap()
             .def_type(
                 "CT-CT-CT-CT",
+                &["CT", "CT", "CT", "CT"],
                 Params::from_pairs(&[("k1", 1.3), ("k2", -0.05), ("k3", 0.2), ("k4", 0.0)]),
             )
             .unwrap();
@@ -426,6 +433,7 @@ mod tests {
             .unwrap()
             .def_type(
                 "opls_135",
+                &["opls_135"],
                 Params::from_pairs(&[("charge", -0.18), ("sigma", 3.5), ("epsilon", 0.066)]),
             )
             .unwrap();
@@ -474,7 +482,7 @@ mod tests {
         let mut ff = ForceField::new("opls");
         ff.def_style("dihedral", "opls", Params::new())
             .unwrap()
-            .def_type("HC-CT-CT-HC", params)
+            .def_type("HC-CT-CT-HC", &["HC", "CT", "CT", "HC"], params)
             .unwrap();
         ff
     }

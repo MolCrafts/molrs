@@ -30,12 +30,12 @@ Producer::
                 ...
 """
 
-from ._lib import ControlCommand as ControlCommand
+from ._lib import ControlCommand
 
 __all__ = ["ControlCommand"]
 
 try:  # native only — see the module docstring
-    from ._lib import Publisher as Publisher
+    from ._lib import Publisher  # noqa: F401 — appended to __all__ below
 except ImportError:  # pragma: no cover — Pyodide build
     pass
 else:

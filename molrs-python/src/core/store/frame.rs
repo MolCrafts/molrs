@@ -17,7 +17,7 @@
 //! the caller's responsibility (use [`PyFrame::validate`] to check).
 
 use crate::core::spatial::simbox::PyBox;
-use crate::core::store::block::PyBlock;
+use crate::core::store::block::{PyBlock, coords_array, coords_error};
 use crate::helpers::molrs_error_to_pyerr;
 use crate::store::ffi_error_to_pyerr;
 use molrs::store::frame::Frame as CoreFrame;
@@ -603,33 +603,24 @@ impl PyMetaDocument {
 ///
 /// A `Frame` is a dictionary of named [`Block`](crate::core::store::block::PyBlock)s with
 /// optional simulation box and metadata. It is the primary exchange format for
-/// molecular data across the molrs ecosystem.
+/// molecular data across the molrs ecosystem, and the only `Frame` class:
+/// every reader, graph serialiser and builder returns it.
 ///
 /// # Python Examples
 ///
 /// ```python
 /// import numpy as np
-/// from molrs import Frame, Block, Box
+/// from molrs import Frame, Box
 ///
-/// frame = Frame()
-/// atoms = Block()
-/// atoms.insert("symbol", ["O", "H", "H"])
-/// atoms.insert("x", np.array([0.0, 0.76, -0.76], dtype=np.float32))
-/// atoms.insert("y", np.array([0.0, 0.59,  0.59], dtype=np.float32))
-/// atoms.insert("z", np.zeros(3, dtype=np.float32))
-/// frame["atoms"] = atoms
-///
-/// frame.box = Box.cube(10.0)
+/// frame = Frame(
+///     {"atoms": {"element": ["O", "H", "H"], "x": [0.0, 0.76, -0.76]}},
+///     meta={"title": "water"},
+///     box=Box.cube(10.0),
+/// )
+/// frame["atoms"]["y"] = np.zeros(3)   # writes into the stored block
 /// print(frame)          # Frame(blocks=['atoms'], box=yes)
-/// print(frame.keys())   # ['atoms']
 /// ```
-#[pyclass(
-    module = "molrs._lib",
-    name = "Frame",
-    from_py_object,
-    unsendable,
-    subclass
-)]
+#[pyclass(module = "molrs._lib", name = "Frame", from_py_object, unsendable)]
 #[derive(Clone)]
 pub struct PyFrame {
     pub(crate) inner: FrameRef,
@@ -637,21 +628,76 @@ pub struct PyFrame {
 
 #[pymethods]
 impl PyFrame {
-    /// Create an empty frame with no blocks, no simulation box, and empty
-    /// metadata.
+    /// Create a frame from blocks, metadata and a box (all optional).
     ///
-    /// Returns
-    /// -------
-    /// Frame
+    /// Copying an existing frame is :meth:`copy`, not ``Frame(frame)``.
+    ///
+    /// Parameters
+    /// ----------
+    /// blocks : Mapping[str, Block | Mapping[str, ArrayLike]], optional
+    ///     Block name -> block; a mapping value is built as ``Block(value)``.
+    /// meta : Mapping[str, Any], optional
+    ///     Metadata, as for the :attr:`meta` setter.
+    /// box : Box, optional
+    ///     The simulation box.
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If ``blocks`` is a ``Frame`` or not a mapping, or a block name is
+    ///     not a ``str``.
+    ///
+    /// Examples
+    /// --------
+    /// >>> Frame({"atoms": {"x": [0.0, 1.0]}}, meta={"step": 0}).keys()
+    /// ['atoms']
     #[new]
-    #[pyo3(signature = (*_args, **_kwargs))]
-    fn new(_args: &Bound<'_, PyAny>, _kwargs: Option<&Bound<'_, PyAny>>) -> Self {
-        Self {
+    #[pyo3(signature = (blocks = None, *, meta = None, r#box = None))]
+    fn new(
+        blocks: Option<&Bound<'_, PyAny>>,
+        meta: Option<&Bound<'_, PyAny>>,
+        r#box: Option<PyRef<'_, PyBox>>,
+    ) -> PyResult<Self> {
+        let mut frame = Self {
             inner: FrameRef::new_standalone(),
+        };
+        if let Some(blocks) = blocks {
+            if blocks.cast::<PyFrame>().is_ok() {
+                return Err(PyTypeError::new_err(
+                    "Frame() takes a mapping of block name -> block; copy a frame \
+                     with frame.copy()",
+                ));
+            }
+            if !blocks.hasattr("keys")? {
+                return Err(PyTypeError::new_err(format!(
+                    "Frame() takes a mapping of block name -> block, got {}",
+                    blocks.get_type().name()?
+                )));
+            }
+            for name in blocks.call_method0("keys")?.try_iter()? {
+                let name = name?;
+                let block = blocks.get_item(&name)?;
+                let name: String = name
+                    .extract()
+                    .map_err(|_| PyTypeError::new_err("Frame block names must be str"))?;
+                frame.__setitem__(&name, &block)?;
+            }
         }
+        if let Some(meta) = meta {
+            frame.set_meta(meta)?;
+        }
+        if let Some(simbox) = r#box {
+            frame.set_box(Some(&simbox))?;
+        }
+        Ok(frame)
     }
 
-    /// Retrieve a block by name.
+    /// Retrieve a block by name: a handle on the stored block.
+    ///
+    /// Every :class:`Block` member reads and writes this frame's data through
+    /// it (``frame["atoms"]["x"] = …`` lands in the frame). A handle goes
+    /// stale once the block is replaced or restructured through another
+    /// handle; read it again from the frame.
     ///
     /// Parameters
     /// ----------
@@ -679,29 +725,41 @@ impl PyFrame {
 
     /// Assign a block under the given name.
     ///
-    /// If a block with the same key already exists it is replaced.
+    /// If a block with the same key already exists it is replaced. A mapping
+    /// of column name -> array is built as ``Block(value)`` first.
     ///
     /// Parameters
     /// ----------
     /// key : str
     ///     Block name.
-    /// block : Block
+    /// value : Block | Mapping[str, ArrayLike]
     ///     The block to store.
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If ``value`` is neither a ``Block`` nor a mapping.
     ///
     /// Examples
     /// --------
-    /// >>> frame["atoms"] = atoms_block
+    /// >>> frame["atoms"] = {"x": [0.0, 1.0]}
     fn __setitem__(&mut self, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        if let Ok(block) = value.extract::<PyRef<'_, PyBlock>>() {
-            let core_block = block.clone_core_block()?;
-            return self
-                .inner
-                .store
-                .borrow_mut()
-                .set_block(self.inner.id, key, core_block)
-                .map_err(ffi_error_to_pyerr);
-        }
-        Err(PyTypeError::new_err("value must be a Block"))
+        let core_block = if let Ok(block) = value.extract::<PyRef<'_, PyBlock>>() {
+            block.clone_core_block()?
+        } else if value.hasattr("keys")? && value.cast::<PyFrame>().is_err() {
+            PyBlock::from_mapping(value)?.clone_core_block()?
+        } else {
+            return Err(PyTypeError::new_err(format!(
+                "a frame block must be a Block or a mapping of column name -> \
+                 array, got {}",
+                value.get_type().name()?
+            )));
+        };
+        self.inner
+            .store
+            .borrow_mut()
+            .set_block(self.inner.id, key, core_block)
+            .map_err(ffi_error_to_pyerr)
     }
 
     /// Delete a block by name.
@@ -860,15 +918,15 @@ impl PyFrame {
 
     /// Return a deep copy of this frame.
     ///
-    /// All blocks, the simulation box, and typed metadata are cloned into
-    /// a new, independent frame backed by its own store.
+    /// All blocks (new column buffers), the simulation box, and typed metadata
+    /// are copied into a new, independent frame backed by its own store.
     ///
     /// Returns
     /// -------
     /// Frame
     ///     An independent copy.
     fn copy(&self) -> PyResult<Self> {
-        Self::from_core_frame(self.clone_core_frame()?)
+        Self::from_core_frame(self.with_frame(CoreFrame::deep_copy)?)
     }
 
     /// A new frame holding rows ``rows`` of ``block``, with every relation
@@ -883,13 +941,61 @@ impl PyFrame {
     ///
     /// Parameters
     /// ----------
-    /// rows : Sequence[int]
-    ///     Non-negative row indices into ``block``, no repeats. An empty
-    ///     sequence gives zero-row blocks. A ``bool`` item is an ``int`` to
-    ///     Python, so ``True`` / ``False`` are taken as row indices 1 / 0,
-    ///     never as a mask.
+    /// rows : ArrayLike
+    ///     A 1-D bool mask of length ``block.nrows`` (e.g.
+    ///     ``frame["atoms"]["mol_id"] == 1``), which keeps its ``True`` rows in
+    ///     order, or 1-D integer row indices, which may be negative down to
+    ///     ``-nrows``; the ``k``-th selected old row becomes new row ``k``.
     /// block : str, optional
     ///     The block to select from (default ``"atoms"``).
+    ///
+    /// Returns
+    /// -------
+    /// Frame
+    ///     A new, independent frame (no buffer shared with this one).
+    ///
+    /// Raises
+    /// ------
+    /// KeyError
+    ///     If there is no block ``block``.
+    /// IndexError
+    ///     If ``rows`` is not 1-D, a mask has the wrong length, or an index is
+    ///     below ``-nrows``.
+    /// TypeError
+    ///     If ``rows`` is neither bool nor integer.
+    /// ValueError
+    ///     If a row is past the end or repeated, a relation block indexing
+    ///     ``block`` lacks a ``UInt`` endpoint column, or the frame carries a
+    ///     ``members`` block.
+    #[pyo3(signature = (rows, block = "atoms"))]
+    fn subset(&self, rows: &Bound<'_, PyAny>, block: &str) -> PyResult<Self> {
+        let nrows = self
+            .with_frame(|f| f.get(block).map(|b| b.nrows().unwrap_or(0)))?
+            .ok_or_else(|| PyKeyError::new_err(block.to_string()))?;
+        let rows = PyBlock::row_selection(rows, nrows)?;
+        // `Frame::subset` already builds every block on new buffers.
+        let sub = self
+            .with_frame(|f| f.subset(block, &rows))?
+            .map_err(molrs_error_to_pyerr)?;
+        Self::from_core_frame(sub)
+    }
+
+    /// A new frame holding ``count`` copies of this one, concatenated block by
+    /// block — the inverse of :meth:`subset` for ``count`` identical
+    /// molecules.
+    ///
+    /// Copy ``c`` of row ``r`` lands at ``c * nrows + r``. Every endpoint of a
+    /// relation block (``bonds``, ``angles``, …, or any block carrying
+    /// ``atomi``..``atoml``) in copy ``c`` is offset by ``c`` times the row
+    /// count of the block it indexes. Every other column — identifiers
+    /// (``id``, ``mol_id``) included — is copied verbatim; regenerate them if
+    /// the copies need distinct labels. Validity masks travel; ``meta`` and
+    /// the box are copied unchanged. This frame is never modified.
+    ///
+    /// Parameters
+    /// ----------
+    /// count : int
+    ///     Number of copies; ``0`` gives zero-row blocks.
     ///
     /// Returns
     /// -------
@@ -899,17 +1005,86 @@ impl PyFrame {
     /// Raises
     /// ------
     /// ValueError
-    ///     If there is no block ``block``, a row is past its end or repeated,
-    ///     or a relation block indexing it lacks a ``UInt`` endpoint column,
-    ///     or the frame carries a ``members`` block.
-    /// OverflowError
-    ///     If a row is negative.
-    #[pyo3(signature = (rows, block = "atoms"))]
-    fn subset(&self, rows: Vec<usize>, block: &str) -> PyResult<Self> {
-        let sub = self
-            .with_frame(|f| f.subset(block, &rows))?
+    ///     If a relation block indexes a block the frame lacks, lacks a
+    ///     ``UInt`` endpoint column, or the frame carries a ``members`` block.
+    fn replicate(&self, count: usize) -> PyResult<Self> {
+        let copies = self
+            .with_frame(|f| f.replicate(count))?
             .map_err(molrs_error_to_pyerr)?;
-        Self::from_core_frame(sub)
+        Self::from_core_frame(copies)
+    }
+
+    /// The ``atoms`` block's positions as an ``(N, 3)`` float64 array (a
+    /// copy), gathered from its ``x`` / ``y`` / ``z`` columns.
+    ///
+    /// Assigning an ``(N, 3)`` array-like writes it back into ``atoms``
+    /// (created when the frame has none).
+    ///
+    /// Raises
+    /// ------
+    /// KeyError
+    ///     On read, if there is no ``atoms`` block or it lacks ``x``, ``y`` or
+    ///     ``z``.
+    /// ValueError
+    ///     On write, if the array is not ``(N, 3)`` or ``N`` differs from the
+    ///     ``atoms`` row count.
+    #[getter]
+    fn coords<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<Bound<'py, numpy::PyArray2<molrs::types::F>>> {
+        use molrs::store::schema::block_names::ATOMS;
+        use numpy::IntoPyArray;
+        let xyz = self.with_frame(|f| {
+            f.get(ATOMS)
+                .ok_or_else(|| PyKeyError::new_err(ATOMS))
+                .and_then(|atoms| atoms.coords().map_err(coords_error))
+        })??;
+        Ok(xyz.into_pyarray(py))
+    }
+
+    #[setter]
+    fn set_coords(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let xyz = coords_array(value)?;
+        self.inner
+            .with_mut(|f| f.set_coords(xyz.view()))
+            .map_err(ffi_error_to_pyerr)?
+            .map_err(molrs_error_to_pyerr)
+    }
+
+    /// Pickle by logical state: the blocks, the typed metadata and the box.
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyTuple>, Bound<'py, PyDict>)> {
+        let py = slf.py();
+        let this = slf.borrow();
+        let blocks = PyDict::new(py);
+        for key in this.keys()? {
+            blocks.set_item(&key, this.__getitem__(py, &key)?)?;
+        }
+        let state = PyDict::new(py);
+        state.set_item("blocks", blocks)?;
+        // The typed snapshot: `dict(meta)` would drop every dtype tag.
+        state.set_item("meta", this.meta().typed(py)?)?;
+        state.set_item("box", this.get_box()?)?;
+        Ok((slf.get_type().into_any(), PyTuple::empty(py), state))
+    }
+
+    /// Restore the state [`__reduce__`](Self::__reduce__) produced.
+    fn __setstate__(&mut self, state: &Bound<'_, PyDict>) -> PyResult<()> {
+        let field = |name: &str| {
+            state
+                .get_item(name)?
+                .ok_or_else(|| PyKeyError::new_err(format!("Frame state lacks '{name}'")))
+        };
+        let blocks = field("blocks")?;
+        for (key, block) in blocks.cast::<PyDict>()?.iter() {
+            self.__setitem__(&key.extract::<String>()?, &block)?;
+        }
+        self.set_meta(&field("meta")?)?;
+        let simbox = field("box")?;
+        let simbox = simbox.extract::<Option<PyRef<'_, PyBox>>>()?;
+        self.set_box(simbox.as_deref())
     }
 
     fn __repr__(&self) -> PyResult<String> {
@@ -1074,7 +1249,6 @@ fn meta_value_to_py(py: Python<'_>, value: &MetaValue, form: JsonForm) -> PyResu
         MetaValue::I64(v) => scalar!(*v),
         MetaValue::U32(v) => scalar!(*v),
         MetaValue::U64(v) => scalar!(*v),
-        MetaValue::F32(v) => scalar!(*v),
         MetaValue::F64(v) => scalar!(*v),
         MetaValue::String(v) => scalar!(v),
         MetaValue::Bool3(v) => tuple!(v),
@@ -1082,11 +1256,8 @@ fn meta_value_to_py(py: Python<'_>, value: &MetaValue, form: JsonForm) -> PyResu
         MetaValue::I64x3(v) => tuple!(v),
         MetaValue::U32x3(v) => tuple!(v),
         MetaValue::U64x3(v) => tuple!(v),
-        MetaValue::F32x3(v) => tuple!(v),
         MetaValue::F64x3(v) => tuple!(v),
-        MetaValue::F32x6(v) => tuple!(v),
         MetaValue::F64x6(v) => tuple!(v),
-        MetaValue::F32x9(v) => tuple!(v),
         MetaValue::F64x9(v) => tuple!(v),
         MetaValue::Json(v) => json_to_py(py, v, form)?,
     })
@@ -1112,7 +1283,6 @@ fn meta_value_from_dtype(dtype: &str, value: &Bound<'_, PyAny>) -> PyResult<Meta
         "i64" => MetaValue::I64(value.extract()?),
         "u32" => MetaValue::U32(value.extract()?),
         "u64" => MetaValue::U64(value.extract()?),
-        "f32" => MetaValue::F32(value.extract()?),
         "f64" => MetaValue::F64(value.extract()?),
         "string" => MetaValue::String(value.extract()?),
         "bool3" => MetaValue::Bool3(array(value, dtype)?),
@@ -1120,11 +1290,8 @@ fn meta_value_from_dtype(dtype: &str, value: &Bound<'_, PyAny>) -> PyResult<Meta
         "i64x3" => MetaValue::I64x3(array(value, dtype)?),
         "u32x3" => MetaValue::U32x3(array(value, dtype)?),
         "u64x3" => MetaValue::U64x3(array(value, dtype)?),
-        "f32x3" => MetaValue::F32x3(array(value, dtype)?),
         "f64x3" => MetaValue::F64x3(array(value, dtype)?),
-        "f32x6" => MetaValue::F32x6(array(value, dtype)?),
         "f64x6" => MetaValue::F64x6(array(value, dtype)?),
-        "f32x9" => MetaValue::F32x9(array(value, dtype)?),
         "f64x9" => MetaValue::F64x9(array(value, dtype)?),
         "json" => MetaValue::Json(py_to_json(value, 0)?),
         _ => {

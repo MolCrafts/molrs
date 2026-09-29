@@ -22,7 +22,7 @@
 //! ECS refactor; it is generic over the slotmap key type so the same machinery
 //! backs both the node table and each relation-kind table.
 
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 use slotmap::{Key, SlotMap};
 
@@ -298,8 +298,9 @@ pub struct EntityTable<K: Key> {
     keys: SlotMap<K, u32>,
     /// `row index → handle` (iteration / alignment order).
     rows: Vec<K>,
-    /// Component columns, keyed by name; every column has length `rows.len()`.
-    cols: HashMap<String, Column>,
+    /// Component columns, keyed by name, in first-write order; every column
+    /// has length `rows.len()`.
+    cols: IndexMap<String, Column>,
 }
 
 impl<K: Key> Default for EntityTable<K> {
@@ -314,7 +315,7 @@ impl<K: Key> EntityTable<K> {
         Self {
             keys: SlotMap::with_key(),
             rows: Vec::new(),
-            cols: HashMap::new(),
+            cols: IndexMap::new(),
         }
     }
 
@@ -686,6 +687,17 @@ mod tests {
     }
 
     type T = EntityTable<TestId>;
+
+    #[test]
+    fn columns_follow_first_write_order() {
+        let mut t = T::new();
+        let a = t.spawn();
+        t.set_f64(a, "c", 1.0).unwrap();
+        t.set_str(a, "a", "x").unwrap();
+        t.set_i32(a, "b", 2).unwrap();
+        t.set_f64(a, "c", 3.0).unwrap();
+        assert_eq!(t.columns().collect::<Vec<_>>(), ["c", "a", "b"]);
+    }
 
     #[test]
     fn spawn_assigns_rows_in_order() {

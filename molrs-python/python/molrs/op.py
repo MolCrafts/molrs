@@ -16,6 +16,6 @@ centroid = _op.centroid
 __all__ = [
     "DEFAULT_GAP_TOL",
     "Fit",
-    "superpose",
     "centroid",
+    "superpose",
 ]

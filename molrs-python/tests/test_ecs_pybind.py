@@ -10,11 +10,9 @@ core leaf from construction and subclass `Graph`; they are never *converted*
 from a `MolGraph`.
 """
 
+import molrs
 import numpy as np
 import pytest
-
-import molrs
-
 
 # --------------------------------------------------------------------------- #
 # Stable handles                                                              #
@@ -49,7 +47,7 @@ def test_stale_handle_raises():
     g = molrs.Graph()
     e = g.spawn()
     g.despawn(e)
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         g.set(e, "x", 1.0)
 
 
@@ -135,7 +133,9 @@ def test_columns_lists_every_registered_component():
 
     cols = a.columns()
     assert isinstance(cols, list)
-    assert {molrs.keys.X.key, molrs.keys.ELEMENT.key, molrs.keys.CHARGE.key} <= set(cols)
+    assert {molrs.keys.X.key, molrs.keys.ELEMENT.key, molrs.keys.CHARGE.key} <= set(
+        cols
+    )
     assert molrs.Atomistic().columns() == []
 
 
@@ -144,7 +144,7 @@ def test_get_missing_component_returns_none_and_type_conflict_raises():
     e = g.spawn()
     assert g.get(e, molrs.keys.X) is None  # absent
     g.set(e, molrs.keys.CHARGE, 1.0)
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         g.set(e, molrs.keys.CHARGE, "not-a-number")  # type conflict
 
 
@@ -155,9 +155,9 @@ def test_get_missing_component_returns_none_and_type_conflict_raises():
 
 def test_translate_rotate_and_scale_are_methods_of_the_two_leaves():
     for cls in (molrs.Atomistic, molrs.CoarseGrain):
-        assert callable(getattr(cls, "translate"))
-        assert callable(getattr(cls, "rotate"))
-        assert callable(getattr(cls, "scale"))
+        assert callable(cls.translate)
+        assert callable(cls.rotate)
+        assert callable(cls.scale)
     assert not hasattr(molrs, "translate")
     assert not hasattr(molrs, "rotate")
     assert not hasattr(molrs, "align_direction")
@@ -199,8 +199,10 @@ def test_scale_returns_the_leaf_itself(cls):
 @pytest.mark.parametrize("cls", LEAVES, ids=lambda c: c.__name__)
 def test_rigid_body_moves_chain(cls):
     mol, h = _one_node(cls)
-    chained = mol.translate([1.0, 0.0, 0.0]).rotate([0.0, 0.0, 1.0], np.pi).scale(
-        [0.5, 0.5, 0.5]
+    chained = (
+        mol.translate([1.0, 0.0, 0.0])
+        .rotate([0.0, 0.0, 1.0], np.pi)
+        .scale([0.5, 0.5, 0.5])
     )
     assert chained is mol
     assert mol.get(h, "x") == pytest.approx(-1.0, abs=1e-12)
@@ -263,16 +265,9 @@ def test_perceive_aromaticity_pipeline():
 # --------------------------------------------------------------------------- #
 
 
-def test_leaf_is_subclass_and_instantiable():
+def test_leaf_is_a_graph():
     assert issubclass(molrs.Atomistic, molrs.Graph)
     assert issubclass(molrs.CoarseGrain, molrs.Graph)
-
-    class S(molrs.Atomistic):
-        pass
-
-    s = S()  # `subclass` fixes the historical TypeError
-    assert isinstance(s, molrs.Atomistic)
-    assert isinstance(s, molrs.Graph)
 
 
 def test_leaf_generic_api_uses_its_own_graph():
@@ -294,6 +289,26 @@ def test_leaf_frame_round_trip():
     a2 = molrs.Atomistic.from_frame(frame)
     assert a2.n_atoms == 2
     assert a2.n_relations("bonds") == 1
+    assert a2.n_bonds == 1
+
+
+def test_find_rotatable_unknown_bond_policy():
+    # Butane skeleton; the middle bond's class is cleared to "unknown" (0, 0).
+    mol = molrs.Atomistic()
+    c = [mol.add_atom("C", float(i), 0.0, 0.0) for i in range(4)]
+    bonds = [mol.add_bond(c[i], c[i + 1]) for i in range(3)]
+    mol.set_bond_class(bonds[1], 0, 0)
+
+    def middle_flag(out):
+        # A bond handle names a relation: `get` would read the node that
+        # happens to share its slot.
+        return out.get_relation_prop("bonds", bonds[1], "is_rotatable")
+
+    perceive = molrs.perceive.Perceive()
+    assert middle_flag(perceive.find_rotatable(mol)) == 0
+    assert middle_flag(perceive.find_rotatable(mol, unknown_bond="single")) == 1
+    with pytest.raises(ValueError):
+        perceive.find_rotatable(mol, unknown_bond="guess")
 
 
 # --------------------------------------------------------------------------- #
@@ -469,3 +484,12 @@ def test_center_with_a_non_finite_mass_is_a_value_error_naming_the_handle(cls):
     message = str(excinfo.value)
     assert str(h) in message
     assert "NodeId(" not in message
+
+
+def test_to_frame_keeps_only_the_requested_atom_fields():
+    mol = molrs.Atomistic()
+    mol.def_atom(element="O", x=0.0, y=0.0, z=0.0, charge=-0.8)
+    frame = mol.to_frame(atom_fields=["element", "x"])
+    assert set(frame["atoms"].keys()) == {"element", "x"}
+    with pytest.raises(ValueError, match="'mass'"):
+        mol.to_frame(atom_fields=["x", "mass"])

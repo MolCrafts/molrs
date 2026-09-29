@@ -11,8 +11,7 @@
 //! - a chunk-boundary-safe `FrameIndexBuilder` from `molrs-io` that emits
 //!   [`FrameIndexEntry`] records as the source flows through it,
 //! - a frame-by-frame parser that decodes a single byte range from the
-//!   reusable buffer into a [`Frame`] held in
-//!   `WasmLammpsDumpStream::output`.
+//!   reusable buffer and returns it as a [`Frame`].
 //!
 //! Eight wasm classes share this exact shape — `WasmLammpsDumpStream`,
 //! `WasmXyzStream`, `WasmPdbStream`, `WasmLammpsDataStream`,
@@ -23,20 +22,19 @@
 //!
 //! # JS lifetime contract
 //!
-//! Every numeric pointer returned from this module (input buffer,
-//! column data) lives inside WASM linear memory.
-//! `WebAssembly.Memory` may grow on any wasm-bindgen call, which
-//! detaches the previous `ArrayBuffer`. Therefore **callers MUST
-//! re-derive `new <Typed>Array(memory.buffer, ptr, len)` immediately
-//! before each access and MUST NOT hold onto pointers across other
-//! wasm calls.** The caller is also responsible for copying the data
-//! into a JS-owned typed array before invoking [`parseRangeInInput`](
-//! `WasmLammpsDumpStream::parse_range_in_input`) again.
+//! The input-buffer pointer returned by
+//! [`allocInputBuffer`](`WasmLammpsDumpStream::alloc_input_buffer`) lives
+//! inside WASM linear memory. `WebAssembly.Memory` may grow on any
+//! wasm-bindgen call, which detaches the previous `ArrayBuffer`. Therefore
+//! **callers MUST re-derive `new Uint8Array(memory.buffer, ptr, len)`
+//! immediately before writing and MUST NOT hold onto the pointer across
+//! other wasm calls.** The [`Frame`] a parse returns is an owned handle; the
+//! caller frees it.
 
 use molrs::io::streaming::{FrameIndexBuilder, FrameIndexEntry as RsFrameIndexEntry};
-use molrs::store::block::{Column, DType};
-use molrs::store::frame::Frame as RsFrame;
 use wasm_bindgen::prelude::*;
+
+use crate::core::frame::Frame;
 
 // Per-format builders + parsers. We re-import each format's
 // `parse_frame_bytes` under a local alias so the macro can dispatch.
@@ -152,104 +150,6 @@ impl From<RsFrameIndexEntry> for WasmFrameIndexEntry {
 }
 
 // ---------------------------------------------------------------------------
-// Internal column / block enumeration helpers
-// ---------------------------------------------------------------------------
-
-/// Stable, sorted index into a parsed frame.
-///
-/// Block and column ordering inside `molrs::store::frame::Frame` come from
-/// `HashMap`s, which means iteration order is non-deterministic. We
-/// snapshot block keys (sorted) and per-block column keys (sorted) at
-/// parse time so JS can address them by stable integer indices.
-#[derive(Default)]
-struct FrameIndex {
-    blocks: Vec<BlockIndex>,
-}
-
-struct BlockIndex {
-    name: String,
-    columns: Vec<String>,
-}
-
-impl FrameIndex {
-    fn new(frame: &RsFrame) -> Self {
-        let mut blocks: Vec<BlockIndex> = frame
-            .iter()
-            .map(|(name, block)| {
-                let mut columns: Vec<String> = block.keys().map(|k| k.to_string()).collect();
-                columns.sort();
-                BlockIndex {
-                    name: name.to_string(),
-                    columns,
-                }
-            })
-            .collect();
-        blocks.sort_by(|a, b| a.name.cmp(&b.name));
-
-        Self { blocks }
-    }
-}
-
-/// Resolved view onto one column inside a parsed `Frame`.
-struct ColumnAccess<'a> {
-    column: &'a Column,
-    name: &'a str,
-}
-
-fn column_access<'a>(
-    frame: &'a RsFrame,
-    index: &'a FrameIndex,
-    block_idx: usize,
-    col_idx: usize,
-) -> Result<ColumnAccess<'a>, JsValue> {
-    let block_meta = index
-        .blocks
-        .get(block_idx)
-        .ok_or_else(|| JsValue::from_str(&format!("block index {} out of range", block_idx)))?;
-    let col_name = block_meta.columns.get(col_idx).ok_or_else(|| {
-        JsValue::from_str(&format!(
-            "column index {} out of range in block {}",
-            col_idx, block_meta.name
-        ))
-    })?;
-    let block = frame
-        .get(&block_meta.name)
-        .ok_or_else(|| JsValue::from_str(&format!("block {} disappeared", block_meta.name)))?;
-    let column = block
-        .get(col_name)
-        .ok_or_else(|| JsValue::from_str(&format!("column {} disappeared", col_name)))?;
-    Ok(ColumnAccess {
-        column,
-        name: col_name.as_str(),
-    })
-}
-
-fn dtype_str(dtype: DType) -> &'static str {
-    match dtype {
-        DType::Float => "f64",
-        DType::Float16 => "f16",
-        DType::Float32 => "f32",
-        DType::Int => "i32",
-        DType::Int8 => "i8",
-        DType::Int16 => "i16",
-        DType::Int64 => "i64",
-        DType::UInt => "u64",
-        DType::String => "string",
-        DType::Bool => "bool",
-        DType::U8 => "u8",
-        DType::UInt16 => "u16",
-        DType::UInt32 => "u32",
-        DType::Complex64 => "c64",
-        DType::Complex128 => "c128",
-        _ => dtype.name(),
-    }
-}
-
-fn column_total_len(column: &Column) -> usize {
-    column.shape().iter().copied().product()
-}
-
-// ---------------------------------------------------------------------------
 // Macro: generate per-format streaming class
 // ---------------------------------------------------------------------------
 
@@ -270,8 +170,6 @@ macro_rules! impl_wasm_traj_stream {
         pub struct $struct {
             indexer: Option<Box<dyn FrameIndexBuilder>>,
             input_buf: Vec<u8>,
-            output: Option<RsFrame>,
-            output_index: FrameIndex,
             decoder_ctx: Option<Vec<u8>>,
         }
 
@@ -286,8 +184,6 @@ macro_rules! impl_wasm_traj_stream {
                 Self {
                     indexer: Some(indexer),
                     input_buf: Vec::new(),
-                    output: None,
-                    output_index: FrameIndex::default(),
                     decoder_ctx: None,
                 }
             }
@@ -410,16 +306,16 @@ macro_rules! impl_wasm_traj_stream {
             }
 
             /// Decode the byte range `[offset, offset + len)` from the
-            /// reusable input buffer as a single frame. Replaces any
-            /// previously cached output; the caller must extract data
-            /// before the next `parseRangeInInput` (the same buffer can
-            /// be overwritten in between).
+            /// reusable input buffer as a single frame and return it.
+            ///
+            /// The returned [`Frame`] owns its data (the caller frees it);
+            /// the input buffer may be overwritten as soon as this returns.
             #[wasm_bindgen(js_name = parseRangeInInput)]
             pub fn parse_range_in_input(
                 &mut self,
                 offset: usize,
                 len: usize,
-            ) -> Result<(), JsValue> {
+            ) -> Result<Frame, JsValue> {
                 let end = offset.checked_add(len).ok_or_else(|| {
                     JsValue::from_str("parseRangeInInput: offset + len overflowed usize")
                 })?;
@@ -438,234 +334,7 @@ macro_rules! impl_wasm_traj_stream {
                 // (and never copies the frame just to prepend a prefix).
                 let frame = $parse_fn(bytes, self.decoder_ctx.as_deref())
                     .map_err(|e| JsValue::from_str(&format!("parse error: {}", e)))?;
-                self.output_index = FrameIndex::new(&frame);
-                self.output = Some(frame);
-                Ok(())
-            }
-
-            /// Drop the cached output frame, releasing its memory and
-            /// invalidating any outstanding `columnPtr*` pointers.
-            /// pointers. Subsequent extraction calls return 0 / empty
-            /// until the next `parseRangeInInput`.
-            #[wasm_bindgen(js_name = releaseFrame)]
-            pub fn release_frame(&mut self) {
-                self.output = None;
-                self.output_index = FrameIndex::default();
-            }
-
-            // ---------- block / column metadata ----------
-
-            /// Number of blocks in the most recently parsed frame.
-            #[wasm_bindgen(js_name = blockCount)]
-            pub fn block_count(&self) -> usize {
-                self.output_index.blocks.len()
-            }
-
-            /// Name of block `blockIdx`, or empty string if out of range.
-            #[wasm_bindgen(js_name = blockName)]
-            pub fn block_name(&self, block_idx: usize) -> String {
-                self.output_index
-                    .blocks
-                    .get(block_idx)
-                    .map(|b| b.name.clone())
-                    .unwrap_or_default()
-            }
-
-            /// Number of columns in block `blockIdx`.
-            #[wasm_bindgen(js_name = columnCount)]
-            pub fn column_count(&self, block_idx: usize) -> usize {
-                self.output_index
-                    .blocks
-                    .get(block_idx)
-                    .map(|b| b.columns.len())
-                    .unwrap_or(0)
-            }
-
-            /// Column name at `(blockIdx, colIdx)`, or empty string if
-            /// either index is out of range.
-            #[wasm_bindgen(js_name = columnName)]
-            pub fn column_name(&self, block_idx: usize, col_idx: usize) -> String {
-                self.output_index
-                    .blocks
-                    .get(block_idx)
-                    .and_then(|b| b.columns.get(col_idx))
-                    .cloned()
-                    .unwrap_or_default()
-            }
-
-            /// Column dtype string at `(blockIdx, colIdx)`. One of `"f64"`,
-            /// `"u32"`, `"i32"`, `"string"` — or `"bool"` / `"u8"` if a
-            /// future parser emits those (current streaming formats do not).
-            /// Empty string if the index is out of range.
-            #[wasm_bindgen(js_name = columnDtype)]
-            pub fn column_dtype(&self, block_idx: usize, col_idx: usize) -> String {
-                let Some(frame) = self.output.as_ref() else {
-                    return String::new();
-                };
-                let Ok(access) = column_access(frame, &self.output_index, block_idx, col_idx)
-                else {
-                    return String::new();
-                };
-                dtype_str(access.column.dtype()).to_string()
-            }
-
-            /// Total flat element count of the column. For multi-dimensional
-            /// columns (e.g. an Nx3 positions array) this is the product of
-            /// all axes — i.e. the length of the slice the matching
-            /// `columnPtr*` points at.
-            #[wasm_bindgen(js_name = columnLen)]
-            pub fn column_len(&self, block_idx: usize, col_idx: usize) -> usize {
-                let Some(frame) = self.output.as_ref() else {
-                    return 0;
-                };
-                let Ok(access) = column_access(frame, &self.output_index, block_idx, col_idx)
-                else {
-                    return 0;
-                };
-                column_total_len(access.column)
-            }
-
-            // ---------- numeric column pointers ----------
-            //
-            // CALLER MUST COPY the data into a JS-owned typed array before
-            // any other wasm call: a subsequent allocInputBuffer / parse /
-            // anything that triggers a `memory.grow` will detach
-            // `wasm.memory.buffer`.
-
-            /// Pointer to the contiguous `f64` slice backing this column,
-            /// or 0 (null) if the column is missing or has the wrong
-            /// dtype.
-            ///
-            /// **Lifetime**: valid only until the next non-trivial wasm
-            /// call. See the module-level memory-grow contract.
-            #[wasm_bindgen(js_name = columnPtrF64)]
-            pub fn column_ptr_f64(&self, block_idx: usize, col_idx: usize) -> *const f64 {
-                let Some(frame) = self.output.as_ref() else {
-                    return std::ptr::null();
-                };
-                let Ok(access) = column_access(frame, &self.output_index, block_idx, col_idx)
-                else {
-                    return std::ptr::null();
-                };
-                let Some(arr) = access.column.as_float() else {
-                    return std::ptr::null();
-                };
-                arr.as_slice_memory_order()
-                    .map(|s| s.as_ptr())
-                    .unwrap_or(std::ptr::null())
-            }
-
-            /// Pointer to the contiguous `u32` slice backing this column,
-            /// or 0 (null) if the column is missing or has the wrong
-            /// dtype.
-            ///
-            /// **Lifetime**: valid only until the next non-trivial wasm
-            /// call. See the module-level memory-grow contract.
-            #[wasm_bindgen(js_name = columnPtrU32)]
-            pub fn column_ptr_u32(&self, block_idx: usize, col_idx: usize) -> *const u64 {
-                let Some(frame) = self.output.as_ref() else {
-                    return std::ptr::null();
-                };
-                let Ok(access) = column_access(frame, &self.output_index, block_idx, col_idx)
-                else {
-                    return std::ptr::null();
-                };
-                let Some(arr) = access.column.as_uint() else {
-                    return std::ptr::null();
-                };
-                arr.as_slice_memory_order()
-                    .map(|s| s.as_ptr())
-                    .unwrap_or(std::ptr::null())
-            }
-
-            /// Pointer to the contiguous `i32` slice backing this column,
-            /// or 0 (null) if the column is missing or has the wrong
-            /// dtype.
-            ///
-            /// **Lifetime**: valid only until the next non-trivial wasm
-            /// call. See the module-level memory-grow contract.
-            #[wasm_bindgen(js_name = columnPtrI32)]
-            pub fn column_ptr_i32(&self, block_idx: usize, col_idx: usize) -> *const i32 {
-                let Some(frame) = self.output.as_ref() else {
-                    return std::ptr::null();
-                };
-                let Ok(access) = column_access(frame, &self.output_index, block_idx, col_idx)
-                else {
-                    return std::ptr::null();
-                };
-                let Some(arr) = access.column.as_int() else {
-                    return std::ptr::null();
-                };
-                arr.as_slice_memory_order()
-                    .map(|s| s.as_ptr())
-                    .unwrap_or(std::ptr::null())
-            }
-
-            /// Copy a string column out by value. Returns an empty array
-            /// if the column is missing or not a string column.
-            #[wasm_bindgen(js_name = columnStrings)]
-            pub fn column_strings(&self, block_idx: usize, col_idx: usize) -> Vec<String> {
-                let Some(frame) = self.output.as_ref() else {
-                    return Vec::new();
-                };
-                let Ok(access) = column_access(frame, &self.output_index, block_idx, col_idx)
-                else {
-                    return Vec::new();
-                };
-                let Some(arr) = access.column.as_string() else {
-                    return Vec::new();
-                };
-                let _ = access.name; // silence unused-name warning
-                arr.iter().cloned().collect()
-            }
-
-            // ---------- simbox ----------
-
-            /// Box H-matrix as a length-9 `Float64Array` (column-major:
-            /// `[col0_x, col0_y, col0_z, col1_x, col1_y, col1_z, col2_x, col2_y, col2_z]`),
-            /// or `undefined` if the frame has no box.
-            ///
-            /// Returned by VALUE — the typed array is owned by JS and is
-            /// stable across subsequent wasm calls.
-            #[wasm_bindgen(js_name = boxH)]
-            pub fn box_h(&self) -> Option<Vec<f64>> {
-                let frame = self.output.as_ref()?;
-                let sb = frame.simbox.as_ref()?;
-                let h = sb.h_view();
-                // Column-major flatten: H is stored as a 3x3 matrix where
-                // h[[i, j]] is row i, column j. The wire format the spec
-                // uses puts column 0 first.
-                let mut out = Vec::with_capacity(9);
-                for j in 0..3 {
-                    for i in 0..3 {
-                        out.push(h[[i, j]]);
-                    }
-                }
-                Some(out)
-            }
-
-            /// Box origin as a length-3 `Float64Array`, or `undefined` if
-            /// the frame has no box.
-            #[wasm_bindgen(js_name = boxOrigin)]
-            pub fn box_origin(&self) -> Option<Vec<f64>> {
-                let frame = self.output.as_ref()?;
-                let sb = frame.simbox.as_ref()?;
-                Some(sb.origin_view().iter().copied().collect())
-            }
-
-            /// Per-axis PBC flags as a length-3 `Uint8Array` (`1` = periodic,
-            /// `0` = open), or `undefined` if the frame has no box.
-            ///
-            /// (wasm-bindgen does not support `[bool; 3]` returns natively,
-            /// hence the `Uint8Array` wire format. The spec calls for
-            /// `[boolean, boolean, boolean]`; the JS side is expected to
-            /// `Boolean(arr[i])` each entry.)
-            #[wasm_bindgen(js_name = boxPbc)]
-            pub fn box_pbc(&self) -> Option<Vec<u8>> {
-                let frame = self.output.as_ref()?;
-                let sb = frame.simbox.as_ref()?;
-                let pbc = sb.pbc();
-                Some(vec![pbc[0] as u8, pbc[1] as u8, pbc[2] as u8])
+                Frame::from_rs(frame)
             }
         }
     };
@@ -754,8 +423,8 @@ ITEM: ATOMS id type x y z\n\
 1 1 0.5 0.5 0.5\n\
 2 1 1.5 1.5 1.5\n";
 
-    /// End-to-end smoke test for the LAMMPS dump streaming class:
-    /// feed → finish → parse first frame → check block/column metadata.
+    /// Smoke test for the LAMMPS dump streaming class: feed → finish →
+    /// parse the second frame → the returned Frame carries its data.
     #[wasm_bindgen_test]
     fn lammps_dump_stream_indexes_and_parses_two_frames() {
         let mut stream = WasmLammpsDumpStream::new();
@@ -775,32 +444,22 @@ ITEM: ATOMS id type x y z\n\
         all.extend(trailing);
         assert_eq!(all.len(), 2, "expected exactly 2 frames in the fixture");
 
-        // Decode frame 0 and check block/column metadata.
-        let f0 = &all[0];
-        stream
-            .parse_range_in_input(f0.byte_offset() as usize, f0.byte_len() as usize)
+        // Decode frame 1 into a Frame: the dump's own column order, its
+        // rows, and its box.
+        let f1 = &all[1];
+        let frame = stream
+            .parse_range_in_input(f1.byte_offset() as usize, f1.byte_len() as usize)
             .expect("parse_range_in_input");
-        assert_eq!(stream.block_count(), 1);
-        assert_eq!(stream.block_name(0), "atoms");
-        // atoms block has columns id (u32), type (i32), x, y, z (f64) — at least
-        // some of them (columns are sorted alphabetically).
-        let n_cols = stream.column_count(0);
-        assert!(n_cols >= 5, "expected ≥5 columns, got {}", n_cols);
-        // x column has 2 rows (matches NUMBER OF ATOMS).
-        // We don't know the column index of "x" without scanning; do so.
-        let mut x_idx = None;
-        for i in 0..n_cols {
-            if stream.column_name(0, i) == "x" {
-                x_idx = Some(i);
-                break;
-            }
-        }
-        let x_idx = x_idx.expect("missing x column");
-        assert_eq!(stream.column_dtype(0, x_idx), "f64");
-        assert_eq!(stream.column_len(0, x_idx), 2);
-
-        stream.release_frame();
-        assert_eq!(stream.block_count(), 0);
+        assert_eq!(frame.keys(), vec!["atoms".to_string()]);
+        let atoms = frame.get("atoms").expect("atoms block");
+        let keys = atoms.keys().expect("keys");
+        // The dump's `type` column is read as the canonical `type_id`.
+        assert_eq!(keys, ["id", "type_id", "x", "y", "z"]);
+        assert_eq!(atoms.nrows().expect("nrows"), 2);
+        let x: js_sys::Float64Array =
+            wasm_bindgen::JsCast::unchecked_into(JsValue::from(atoms.get("x", None).expect("x")));
+        assert_eq!(x.to_vec(), vec![0.5, 1.5]);
+        assert!(frame.get_box().is_some(), "the dump's box bounds survive");
     }
 
     /// Indexing the same fixture in many small chunks must produce the

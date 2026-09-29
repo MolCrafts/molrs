@@ -76,9 +76,11 @@ impl<'m> MolContext<'m> {
                 || matches!(atom.get("is_aromatic"), Some(PropValue::F64(v)) if *v != 0.0);
             aromatic_atom.insert(id, arom);
 
-            // Total H count = number of neighbour atoms whose element is "H".
+            // Total H count = number of bonded neighbour atoms whose element
+            // is "H" (bonds only: a port is not a bond).
             let h = mol
-                .neighbors(id)
+                .neighbor_bonds(id)
+                .map(|(nb, _)| nb)
                 .filter(|&nb| {
                     mol.get_atom(nb)
                         .is_ok_and(|a| a.get_str("element").is_some_and(element_is_hydrogen))
@@ -86,7 +88,7 @@ impl<'m> MolContext<'m> {
                 .count() as u32;
             h_count.insert(id, h);
 
-            degree.insert(id, mol.neighbors(id).count() as u32);
+            degree.insert(id, mol.neighbor_bonds(id).count() as u32);
         }
 
         // Ring-bond connectivity (`x<n>`): for each ring bond, both endpoints

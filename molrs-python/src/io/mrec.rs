@@ -1,24 +1,27 @@
 //! Scientific-record (`*.mrec`) path doors.
 //!
-//! `Frame` and `Trajectory` are the in-memory objects. These functions and
-//! [`PyMrecTrajectoryReader`] are the filesystem doors, exported to Python as
-//! `molrs.io.mrec`. The class is `MrecTrajectoryReader` on `_lib` so it does
-//! not collide with the dump concatenator `molrs.io.TrajectoryReader`.
+//! `Frame` and `Trajectory` are the in-memory objects. The whole-record
+//! functions are exported at `molrs.io` (`read_mrec`, `write_mrec`, …,
+//! `read_mrec_meta`, `mrec_sections`); the store cursor and writer classes
+//! ([`PyMrecTrajectoryReader`], [`PyMrecSequenceSchema`],
+//! [`PyMrecTrajectoryWriter`]) and [`pack`] are `molrs.io.mrec`'s.
 
-use std::path::Path;
+use std::path::PathBuf;
 
 use crate::core::spatial::simbox::PyBox;
 use crate::core::store::frame::PyFrame;
 use crate::core::store::frame::PyMetaValue;
 use crate::core::store::trajectory::PyTrajectory;
-use crate::helpers::molrs_error_to_pyerr;
+use crate::helpers::{molrs_error_to_pyerr, path_str};
 use molrs::io::mrec::{
     Compression, FrameSequence, FrameSequenceWriter, SequenceSchema, column_dtype, open_packed,
 };
 use molrs::store::meta::MetaValue;
 use pyo3::exceptions::{PyIndexError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
+use pyo3::types::{
+    PyAny, PyBool, PyDict, PyFloat, PyFrozenSet, PyInt, PyList, PyMapping, PyString,
+};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
 /// Write a snapshot as a record whose only state section is ``frame``.
@@ -34,12 +37,13 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 ///         frame fails to encode.
 #[pyfunction]
 #[pyo3(signature = (path, frame, system=None, meta=None))]
-pub fn write_frame(
-    path: &str,
+pub fn write_mrec(
+    path: PathBuf,
     frame: &Bound<'_, PyFrame>,
     system: Option<&Bound<'_, PyFrame>>,
     meta: Option<&Bound<'_, PyDict>>,
 ) -> PyResult<()> {
+    let path = path_str(&path)?;
     let meta_map = meta.map(|meta| dict_to_json_map(meta, 0)).transpose()?;
     let frame = frame.borrow();
     match system {
@@ -66,11 +70,12 @@ pub fn write_frame(
 ///         frame fails to encode.
 #[pyfunction]
 #[pyo3(signature = (path, system, meta=None))]
-pub fn write_system(
-    path: &str,
+pub fn write_mrec_system(
+    path: PathBuf,
     system: &Bound<'_, PyFrame>,
     meta: Option<&Bound<'_, PyDict>>,
 ) -> PyResult<()> {
+    let path = path_str(&path)?;
     let meta_map = meta.map(|meta| dict_to_json_map(meta, 0)).transpose()?;
     system
         .borrow()
@@ -88,7 +93,8 @@ pub fn write_system(
 ///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, or a frame
 ///         fails to encode.
 #[pyfunction]
-pub fn write_trajectory(path: &str, traj: PyRef<'_, PyTrajectory>) -> PyResult<()> {
+pub fn write_mrec_trajectory(path: PathBuf, traj: PyRef<'_, PyTrajectory>) -> PyResult<()> {
+    let path = path_str(&path)?;
     molrs::io::mrec::write_trajectory_file(path, &traj.inner).map_err(molrs_error_to_pyerr)
 }
 
@@ -104,7 +110,8 @@ pub fn write_trajectory(path: &str, traj: PyRef<'_, PyTrajectory>) -> PyResult<(
 ///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, the store
 ///         has no ``frame`` section, or a section fails to decode.
 #[pyfunction]
-pub fn read_frame(path: &str) -> PyResult<PyFrame> {
+pub fn read_mrec(path: PathBuf) -> PyResult<PyFrame> {
+    let path = path_str(&path)?;
     let frame = molrs::io::mrec::read_frame_file(path).map_err(molrs_error_to_pyerr)?;
     PyFrame::from_core_frame(frame)
 }
@@ -121,7 +128,8 @@ pub fn read_frame(path: &str) -> PyResult<PyFrame> {
 ///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, the store
 ///         has no ``system`` section, or a section fails to decode.
 #[pyfunction]
-pub fn read_system(path: &str) -> PyResult<PyFrame> {
+pub fn read_mrec_system(path: PathBuf) -> PyResult<PyFrame> {
+    let path = path_str(&path)?;
     let frame = molrs::io::mrec::read_system_file(path).map_err(molrs_error_to_pyerr)?;
     PyFrame::from_core_frame(frame)
 }
@@ -138,12 +146,14 @@ pub fn read_system(path: &str) -> PyResult<PyFrame> {
 ///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, or a
 ///         section fails to decode.
 #[pyfunction]
-pub fn read_trajectory(path: &str) -> PyResult<PyTrajectory> {
+pub fn read_mrec_trajectory(path: PathBuf) -> PyResult<PyTrajectory> {
+    let path = path_str(&path)?;
     let inner = molrs::io::mrec::read_trajectory_file(path).map_err(molrs_error_to_pyerr)?;
     Ok(PyTrajectory { inner })
 }
 
-/// Read the mandatory ``meta`` document of a ``*.mrec`` store.
+/// Read the ``meta`` document of a ``*.mrec`` store (empty when the producer
+/// wrote none).
 ///
 /// Args:
 ///     path: Filesystem path of the record store.
@@ -155,7 +165,8 @@ pub fn read_trajectory(path: &str) -> PyResult<PyTrajectory> {
 ///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, or ``meta``
 ///         is missing or does not match the mrec contract.
 #[pyfunction]
-pub fn read_meta(py: Python<'_>, path: &str) -> PyResult<Py<PyDict>> {
+pub fn read_mrec_meta(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
+    let path = path_str(&path)?;
     let map = molrs::io::mrec::read_meta_file(path).map_err(molrs_error_to_pyerr)?;
     Ok(json_map_to_dict(py, &map)?.unbind())
 }
@@ -166,25 +177,32 @@ pub fn read_meta(py: Python<'_>, path: &str) -> PyResult<Py<PyDict>> {
 ///     path: Filesystem path of the record store.
 ///
 /// Returns:
-///     Sorted section names. Callers ask which sections are present instead
-///     of probing ``read_frame`` / ``read_system``.
+///     The section names, as a ``frozenset``. Callers ask which sections are
+///     present instead of probing ``read_mrec`` / ``read_mrec_system`` and
+///     catching a missing-section error.
 ///
 /// Raises:
 ///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, or the store
 ///         is not a readable record.
 #[pyfunction]
-pub fn section_names(path: &str) -> PyResult<Vec<String>> {
-    molrs::io::mrec::section_names(path).map_err(molrs_error_to_pyerr)
+pub fn mrec_sections(py: Python<'_>, path: PathBuf) -> PyResult<Bound<'_, PyFrozenSet>> {
+    let path = path_str(&path)?;
+    let names = molrs::io::mrec::section_names(path).map_err(molrs_error_to_pyerr)?;
+    PyFrozenSet::new(py, names)
 }
 
-/// Lazy one-frame cursor over a ``*.mrec`` trajectory.
+/// Lazy one-frame cursor over a ``*.mrec`` trajectory (directory or ``.zip``).
 ///
 /// Wraps the Rust ``FrameSequence`` store cursor: construction opens the
-/// index, and :meth:`read_frame` decodes exactly the asked-for frame.
+/// index only, and each read decodes exactly the asked-for frame, keeping the
+/// last decoded chunk of every column so playback through consecutive frames
+/// is a slice rather than a decode. Supports ``len(reader)``, ``reader[i]``
+/// (negative indices included), iteration, and the ``with`` statement.
 ///
 /// Args:
-///     path: Filesystem path of the record store.
-#[pyclass(module = "molrs.io.mrec", name = "MrecTrajectoryReader", unsendable)]
+///     path: Filesystem path of the record store, or of a packed
+///         ``*.mrec.zip``.
+#[pyclass(module = "molrs.io.mrec", name = "TrajectoryReader", unsendable)]
 pub struct PyMrecTrajectoryReader {
     inner: FrameSequence,
 }
@@ -193,7 +211,8 @@ pub struct PyMrecTrajectoryReader {
 impl PyMrecTrajectoryReader {
     /// Open a ``*.mrec`` directory or a packed ``*.mrec.zip`` for reading.
     #[new]
-    fn py_new(path: &str) -> PyResult<Self> {
+    fn py_new(path: PathBuf) -> PyResult<Self> {
+        let path = path_str(&path)?;
         let inner = if path.ends_with(".zip") {
             let store = open_packed(path).map_err(molrs_error_to_pyerr)?;
             FrameSequence::open(store).map_err(molrs_error_to_pyerr)?
@@ -331,9 +350,9 @@ impl PyMrecTrajectoryReader {
 /// A frame-sequence schema pinned before a run's frames are written.
 ///
 /// The schema fixes every block, column and dtype the run may carry;
-/// :class:`MrecTrajectoryWriter` refuses a frame that steps outside it.
+/// :class:`TrajectoryWriter` refuses a frame that steps outside it.
 /// Declare it column by column, or derive it from representative frames.
-#[pyclass(module = "molrs.io.mrec", name = "MrecSequenceSchema")]
+#[pyclass(module = "molrs.io.mrec", name = "SequenceSchema")]
 pub struct PyMrecSequenceSchema {
     inner: SequenceSchema,
 }
@@ -374,55 +393,71 @@ impl PyMrecSequenceSchema {
     /// ``rows`` sizes the block's frame-aligned inner chunk; ``None`` leaves
     /// the byte floor to decide.
     #[pyo3(signature = (name, rows=None))]
-    fn declare_block(&mut self, name: &str, rows: Option<u64>) -> PyResult<()> {
-        self.inner
+    fn declare_block<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        name: &str,
+        rows: Option<u64>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        slf.inner
             .declare_block(name, rows)
-            .map_err(molrs_error_to_pyerr)
+            .map_err(molrs_error_to_pyerr)?;
+        Ok(slf)
     }
 
     /// Declare a column of ``block`` by dtype tag (``"f64"``, ``"u64"``,
     /// ``"string"``, …) and trailing shape (``[3]`` for an xyz column).
     #[pyo3(signature = (block, column, dtype, trailing=None))]
-    fn declare_column(
-        &mut self,
+    fn declare_column<'py>(
+        mut slf: PyRefMut<'py, Self>,
         block: &str,
         column: &str,
         dtype: &str,
         trailing: Option<Vec<u64>>,
-    ) -> PyResult<()> {
+    ) -> PyResult<PyRefMut<'py, Self>> {
         let dtype = column_dtype(dtype).map_err(molrs_error_to_pyerr)?;
-        self.inner
+        slf.inner
             .declare_column(block, column, dtype, &trailing.unwrap_or_default())
-            .map_err(molrs_error_to_pyerr)
+            .map_err(molrs_error_to_pyerr)?;
+        Ok(slf)
     }
 
     /// Declare the structural shape of ``block`` (a volumetric grid); every
     /// update then carries exactly ``prod(shape)`` rows.
-    fn declare_structural_shape(&mut self, block: &str, shape: Vec<usize>) -> PyResult<()> {
-        self.inner
+    fn declare_structural_shape<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        block: &str,
+        shape: Vec<usize>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        slf.inner
             .declare_structural_shape(block, &shape)
-            .map_err(molrs_error_to_pyerr)
+            .map_err(molrs_error_to_pyerr)?;
+        Ok(slf)
     }
 
     /// Declare a per-step metadata key by dtype tag (``"f64"``, ``"i64"``,
     /// ``"f64x3"``, ``"string"``, ``"json"``, …). A frame that omits it is an
     /// error unless a fill is declared.
-    fn declare_meta(&mut self, key: &str, dtype: &str) -> PyResult<()> {
-        self.inner
+    fn declare_meta<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        key: &str,
+        dtype: &str,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        slf.inner
             .declare_meta(key, dtype)
-            .map_err(molrs_error_to_pyerr)
+            .map_err(molrs_error_to_pyerr)?;
+        Ok(slf)
     }
 
     /// Declare a per-step metadata key with the value written for steps that
-    /// omit it. The dtype is ``dtype`` when given (``"f64x3"``, ``"f32"``, …;
+    /// omit it. The dtype is ``dtype`` when given (``"f64x3"``, ``"f64"``, …;
     /// the fill is read at that width), else the fill's own.
     #[pyo3(signature = (key, fill, dtype=None))]
-    fn declare_meta_with_fill(
-        &mut self,
+    fn declare_meta_with_fill<'py>(
+        mut slf: PyRefMut<'py, Self>,
         key: &str,
         fill: &Bound<'_, PyAny>,
         dtype: Option<&str>,
-    ) -> PyResult<()> {
+    ) -> PyResult<PyRefMut<'py, Self>> {
         let value = if let Ok(meta) = fill.extract::<PyRef<'_, PyMetaValue>>() {
             meta.inner.clone()
         } else if let Some(dtype) = dtype {
@@ -434,9 +469,10 @@ impl PyMrecSequenceSchema {
         } else {
             MetaValue::from_attr_value(&py_to_json(fill, 0)?)
         };
-        self.inner
+        slf.inner
             .declare_meta_with_fill(key, value)
-            .map_err(molrs_error_to_pyerr)
+            .map_err(molrs_error_to_pyerr)?;
+        Ok(slf)
     }
 
     /// The declared block names.
@@ -497,7 +533,7 @@ fn parse_compression(spec: Option<&str>) -> PyResult<Compression> {
 ///
 /// Args:
 ///     path: Destination filesystem path for the store.
-///     schema: The :class:`MrecSequenceSchema` every appended frame is checked
+///     schema: The :class:`SequenceSchema` every appended frame is checked
 ///         against.
 ///     flush_every: Land every this many frames instead of the derived cadence.
 ///     compression: How floating-point columns are compressed: ``None``,
@@ -505,7 +541,7 @@ fn parse_compression(spec: Option<&str>) -> PyResult<Compression> {
 ///         carries gzip level 1.
 ///     durable: Whether ``flush()`` / ``close()`` fsync the touched files.
 ///     meta: The record's identity document, written to ``meta/``.
-#[pyclass(module = "molrs.io.mrec", name = "MrecTrajectoryWriter", unsendable)]
+#[pyclass(module = "molrs.io.mrec", name = "TrajectoryWriter", unsendable)]
 pub struct PyMrecTrajectoryWriter {
     inner: Option<FrameSequenceWriter>,
 }
@@ -513,15 +549,16 @@ pub struct PyMrecTrajectoryWriter {
 #[pymethods]
 impl PyMrecTrajectoryWriter {
     #[new]
-    #[pyo3(signature = (path, schema, flush_every=None, compression=None, durable=true, meta=None))]
+    #[pyo3(signature = (path, schema, *, flush_every=None, compression=None, durable=true, meta=None))]
     fn py_new(
-        path: &str,
+        path: PathBuf,
         schema: &Bound<'_, PyMrecSequenceSchema>,
         flush_every: Option<u64>,
         compression: Option<&str>,
         durable: bool,
         meta: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
+        let path = path_str(&path)?;
         let schema = schema.borrow().inner.clone();
         let mut writer = FrameSequenceWriter::create_at(path, schema)
             .map_err(molrs_error_to_pyerr)?
@@ -547,8 +584,9 @@ impl PyMrecTrajectoryWriter {
     /// committed frame. Anything a crash left past the commit marker is
     /// rolled back first.
     #[staticmethod]
-    #[pyo3(signature = (path, flush_every=None, durable=true))]
-    fn open(path: &str, flush_every: Option<u64>, durable: bool) -> PyResult<Self> {
+    #[pyo3(signature = (path, *, flush_every=None, durable=true))]
+    fn open(path: PathBuf, flush_every: Option<u64>, durable: bool) -> PyResult<Self> {
+        let path = path_str(&path)?;
         let mut writer = FrameSequenceWriter::open_at(path)
             .map_err(molrs_error_to_pyerr)?
             .with_durable(durable);
@@ -648,7 +686,8 @@ impl PyMrecTrajectoryWriter {
 /// Returns:
 ///     The path of the archive.
 #[pyfunction]
-pub fn pack(path: &str) -> PyResult<String> {
+pub fn pack(path: PathBuf) -> PyResult<String> {
+    let path = path_str(&path)?;
     let archive = molrs::io::mrec::pack(path).map_err(molrs_error_to_pyerr)?;
     Ok(archive.to_string_lossy().into_owned())
 }
@@ -661,11 +700,15 @@ pub fn pack(path: &str) -> PyResult<String> {
 /// Raises:
 ///     ValueError: If the path uses a retired suffix.
 #[pyfunction]
-pub fn mrec_validate_path(path: &str) -> PyResult<()> {
-    molrs::io::mrec::schema::validate_path(Path::new(path)).map_err(molrs_error_to_pyerr)
+pub fn mrec_validate_path(path: PathBuf) -> PyResult<()> {
+    molrs::io::mrec::schema::validate_path(&path).map_err(molrs_error_to_pyerr)
 }
 
-/// Validate the mandatory ``meta`` version key against the mrec contract.
+/// Validate the ``meta`` version key against the mrec contract.
+///
+/// ``molrec_version`` is required and must be an integer in
+/// ``1..=MOLREC_VERSION``: every record is stamped on write, so an absent key
+/// means the store predates the stamped format.
 ///
 /// Args:
 ///     meta: Record-level metadata mapping.
@@ -674,8 +717,10 @@ pub fn mrec_validate_path(path: &str) -> PyResult<()> {
 ///     ValueError: If ``molrec_version`` is missing or not a version this
 ///         reader supports.
 #[pyfunction]
-pub fn mrec_validate_meta(meta: &Bound<'_, PyDict>) -> PyResult<()> {
-    let map = dict_to_json_map(meta, 0)?;
+pub fn mrec_validate_meta(meta: &Bound<'_, PyMapping>) -> PyResult<()> {
+    let dict = PyDict::new(meta.py());
+    dict.update(meta)?;
+    let map = dict_to_json_map(&dict, 0)?;
     molrs::io::mrec::schema::validate_meta(&map).map_err(molrs_error_to_pyerr)
 }
 

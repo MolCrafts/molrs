@@ -10,10 +10,9 @@ translation) is hand-checkable.
 
 from __future__ import annotations
 
+import molrs
 import numpy as np
 import pytest
-
-import molrs
 from molrs import _lib
 
 # Position, numerical (tester contract: 1e-8).
@@ -109,7 +108,9 @@ class TestSuperpose:
 class TestCentroid:
     def test_weighted_centroid(self):
         # Hand-derived: (1·0 + 3·2) / 4 = 1.5.
-        c = molrs.op.centroid(np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]]), np.array([1.0, 3.0]))
+        c = molrs.op.centroid(
+            np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]]), np.array([1.0, 3.0])
+        )
         assert c.dtype == np.float64
         np.testing.assert_allclose(c, [1.5, 0.0, 0.0], rtol=0, atol=1e-12)
 

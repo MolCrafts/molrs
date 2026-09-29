@@ -5,12 +5,14 @@
 //!
 //! | Format | Read | Write |
 //! |--------|------|-------|
-//! | PDB | [`read_pdb`] | [`write_pdb`] |
-//! | XYZ | [`read_xyz`], [`read_xyz_traj`] | [`write_xyz`] |
-//! | LAMMPS data | [`read_lammps`] | [`write_lammps`] |
-//! | LAMMPS dump | [`read_lammps_traj`] | [`write_lammps_traj`], [`write_lammps_dump_local`] |
-//! | DCD | [`read_dcd`], [`PyDcdTrajReader`] | [`write_dcd`] |
-//! | GRO | [`read_gro`] | [`write_gro`] |
+//! | PDB | [`read_pdb`], [`read_pdb_trajectory`] | [`write_pdb`], [`write_pdb_trajectory`] |
+//! | XYZ | [`read_xyz`], [`read_xyz_trajectory`], [`PyXYZTrajReader`] | [`write_xyz`], [`write_xyz_trajectory`] |
+//! | LAMMPS data | [`read_lammps_data`] | [`write_lammps_data`] |
+//! | LAMMPS dump | [`read_lammps_trajectory`], [`PyLAMMPSTrajReader`] | [`write_lammps_trajectory`], [`write_lammps_dump_local`] |
+//! | DCD | [`read_dcd_trajectory`], [`PyDcdTrajReader`] | [`write_dcd_trajectory`] |
+//! | TRR | [`read_trr_trajectory`], [`PyTrrTrajReader`] | [`write_trr_trajectory`] |
+//! | XTC | [`read_xtc_trajectory`], [`PyXtcTrajReader`] | [`write_xtc_trajectory`] |
+//! | GRO | [`read_gro`], [`read_gro_trajectory`] | [`write_gro`], [`write_gro_trajectory`] |
 //! | XSF | [`read_xsf`] | [`write_xsf`] |
 //! | AMBER inpcrd | [`read_amber_inpcrd`] | — |
 //! | AMBER prmtop (structure) | [`read_amber_prmtop`] | — |
@@ -30,17 +32,21 @@ use crate::core::spatial::mesh::PyTriMesh;
 use crate::core::store::block::PyBlock;
 use crate::core::store::frame::PyFrame;
 use crate::core::system::molgraph::PyAtomistic;
-use crate::helpers::{io_error_to_pyerr, molrs_error_to_pyerr, smiles_error_to_pyerr};
+use crate::helpers::{io_error_to_pyerr, molrs_error_to_pyerr, path_str, smiles_error_to_pyerr};
 use molrs::io::data::ac::read_ac as read_ac_rs;
-use molrs::io::data::chgcar::read_chgcar;
-use molrs::io::data::cube::{read_cube, write_cube};
+use molrs::io::data::chgcar::read_chgcar as read_chgcar_rs;
+use molrs::io::data::cube::{read_cube as read_cube_rs, write_cube as write_cube_rs};
 use molrs::io::data::frcmod::{
     FrcmodFile, parse_frcmod as parse_frcmod_rs, read_frcmod as read_frcmod_rs,
     write_frcmod as write_frcmod_rs,
 };
-use molrs::io::data::gro::{read_gro as read_gro_rs, write_gro as write_gro_rs};
+use molrs::io::data::gro::{
+    read_gro as read_gro_rs, write_gro as write_gro_rs, write_gro_traj as write_gro_traj_rs,
+};
 use molrs::io::data::inpcrd::read_amber_inpcrd as read_amber_inpcrd_rs;
-use molrs::io::data::lammps_data::{read_lammps_data, write_lammps_data};
+use molrs::io::data::lammps_data::{
+    read_lammps_data as read_lammps_data_rs, write_lammps_data as write_lammps_data_rs,
+};
 use molrs::io::data::lammps_molecule::{
     read_lammps_molecule as read_lammps_molecule_rs,
     write_lammps_molecule as write_lammps_molecule_rs,
@@ -62,7 +68,9 @@ use molrs::io::data::prmtop_tables::{
 };
 use molrs::io::data::top::{read_top as read_top_rs, write_top as write_top_rs};
 use molrs::io::data::xsf::{read_xsf as read_xsf_rs, write_xsf as write_xsf_rs};
-use molrs::io::data::xyz::{XYZReader, read_xyz_frame, read_xyz_traj, write_xyz_frame};
+use molrs::io::data::xyz::{
+    XYZReader, read_xyz_frame, read_xyz_traj, write_xyz_frame, write_xyz_traj,
+};
 #[cfg(feature = "fs")]
 use molrs::io::log::lammps::{
     parse_lammps_log_text as parse_lammps_log_text_rs,
@@ -91,6 +99,7 @@ use pyo3::types::{PyDict, PyList, PySlice, PyType};
 use serde_json::Value as JsonValue;
 use std::fs::File;
 use std::io::BufWriter;
+use std::path::PathBuf;
 
 /// Read a PDB file and return a Frame.
 ///
@@ -115,11 +124,12 @@ use std::io::BufWriter;
 ///
 /// Examples
 /// --------
-/// >>> frame = molrs.read_pdb("molecule.pdb")
+/// >>> frame = molrs.io.read_pdb("molecule.pdb")
 /// >>> atoms = frame["atoms"]
 /// >>> symbols = atoms.view("symbol")
 #[pyfunction]
-pub fn read_pdb(path: &str) -> PyResult<PyFrame> {
+pub fn read_pdb(path: PathBuf) -> PyResult<PyFrame> {
+    let path = path_str(&path)?;
     let frame = read_pdb_frame(path)
         .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{path}: {e}")))?;
     PyFrame::from_core_frame(frame)
@@ -138,7 +148,8 @@ pub fn read_pdb(path: &str) -> PyResult<PyFrame> {
 /// -------
 /// list[Frame]
 #[pyfunction]
-pub fn read_pdb_trajectory(path: &str) -> PyResult<Vec<PyFrame>> {
+pub fn read_pdb_trajectory(path: PathBuf) -> PyResult<Vec<PyFrame>> {
+    let path = path_str(&path)?;
     let frames = read_pdb_traj(path).map_err(io_error_to_pyerr)?;
     frames.into_iter().map(PyFrame::from_core_frame).collect()
 }
@@ -154,7 +165,8 @@ pub fn read_pdb_trajectory(path: &str) -> PyResult<Vec<PyFrame>> {
 /// -------
 /// Frame
 #[pyfunction]
-pub fn read_xyz(path: &str) -> PyResult<PyFrame> {
+pub fn read_xyz(path: PathBuf) -> PyResult<PyFrame> {
+    let path = path_str(&path)?;
     let frame = read_xyz_frame(path).map_err(io_error_to_pyerr)?;
     PyFrame::from_core_frame(frame)
 }
@@ -170,7 +182,8 @@ pub fn read_xyz(path: &str) -> PyResult<PyFrame> {
 /// -------
 /// list[Frame]
 #[pyfunction]
-pub fn read_xyz_trajectory(path: &str) -> PyResult<Vec<PyFrame>> {
+pub fn read_xyz_trajectory(path: PathBuf) -> PyResult<Vec<PyFrame>> {
+    let path = path_str(&path)?;
     let frames = read_xyz_traj(path).map_err(io_error_to_pyerr)?;
     frames.into_iter().map(PyFrame::from_core_frame).collect()
 }
@@ -194,21 +207,23 @@ pub fn read_xyz_trajectory(path: &str) -> PyResult<Vec<PyFrame>> {
 ///
 /// Examples
 /// --------
-/// >>> frame = molrs.read_lammps_data("system.data")
+/// >>> frame = molrs.io.read_lammps_data("system.data")
 /// >>> atoms = frame["atoms"]
 /// Read an STL surface mesh (ASCII or binary) into a [`PyTriMesh`].
 ///
 /// The file's numbers are taken as they are; convert with
 /// ``TriMesh.scaled`` when the file is not in the length unit you work in.
 #[pyfunction]
-pub fn read_stl(path: &str) -> PyResult<PyTriMesh> {
+pub fn read_stl(path: PathBuf) -> PyResult<PyTriMesh> {
+    let path = path_str(&path)?;
     let mesh = molrs::io::mesh::read_stl(path).map_err(io_error_to_pyerr)?;
     Ok(PyTriMesh { inner: mesh })
 }
 
 #[pyfunction]
-pub fn read_lammps(path: &str) -> PyResult<PyFrame> {
-    let frame = read_lammps_data(path).map_err(io_error_to_pyerr)?;
+pub fn read_lammps_data(path: PathBuf) -> PyResult<PyFrame> {
+    let path = path_str(&path)?;
+    let frame = read_lammps_data_rs(path).map_err(io_error_to_pyerr)?;
     PyFrame::from_core_frame(frame)
 }
 
@@ -231,11 +246,12 @@ pub fn read_lammps(path: &str) -> PyResult<PyFrame> {
 ///
 /// Examples
 /// --------
-/// >>> frames = molrs.read_lammps_dump("trajectory.lammpstrj")
+/// >>> frames = molrs.io.raw.read_lammps_trajectory("trajectory.lammpstrj")
 /// >>> len(frames)
 /// 100
 #[pyfunction]
-pub fn read_lammps_traj(path: &str) -> PyResult<Vec<PyFrame>> {
+pub fn read_lammps_trajectory(path: PathBuf) -> PyResult<Vec<PyFrame>> {
+    let path = path_str(&path)?;
     let frames = read_lammps_dump(path).map_err(io_error_to_pyerr)?;
     frames.into_iter().map(PyFrame::from_core_frame).collect()
 }
@@ -275,8 +291,8 @@ fn traj_read_frame<R: TrajectoryReader>(inner: &mut R, index: isize) -> PyResult
     traj_read_idx(inner, idx)
 }
 
-/// Read a frame by step index, returning ``None`` when out of bounds (lenient
-/// variant retained for backward compatibility).
+/// Read the frame at `step`, or `None` past the end — what `__next__` needs to
+/// end an iteration.
 fn traj_read_step<R: TrajectoryReader>(inner: &mut R, step: usize) -> PyResult<Option<PyFrame>> {
     match inner.read_step(step).map_err(io_error_to_pyerr)? {
         Some(f) => Ok(Some(PyFrame::from_core_frame(f)?)),
@@ -370,7 +386,7 @@ fn traj_getitem<R: TrajectoryReader>(inner: &mut R, key: &Bound<'_, PyAny>) -> P
 
 /// Lazy, indexed reader for LAMMPS dump trajectory files.
 ///
-/// Unlike :func:`read_lammps_traj`, this does **not** parse every frame
+/// Unlike :func:`read_lammps_trajectory`, this does **not** parse every frame
 /// upfront. The underlying file stays open and frames are parsed on demand
 /// via byte-offset seeks. Random access (``reader[i]``, ``read_step(i)``)
 /// triggers a one-time index scan for ``ITEM: TIMESTEP`` markers; subsequent
@@ -410,7 +426,8 @@ impl PyLAMMPSTrajReader {
 #[pymethods]
 impl PyLAMMPSTrajReader {
     #[new]
-    fn py_new(path: &str) -> PyResult<Self> {
+    fn py_new(path: PathBuf) -> PyResult<Self> {
+        let path = path_str(&path)?;
         let inner = open_lammps_dump(path).map_err(io_error_to_pyerr)?;
         Ok(Self {
             inner: Some(inner),
@@ -545,19 +562,20 @@ impl PyLAMMPSTrajReader {
 ///
 /// Examples
 /// --------
-/// >>> frames = molrs.read_dcd("trajectory.dcd")
+/// >>> frames = molrs.io.raw.read_dcd_trajectory("trajectory.dcd")
 /// >>> len(frames)
 /// 100
 /// >>> frames[0]["atoms"].view("x")
 #[pyfunction]
-pub fn read_dcd(path: &str) -> PyResult<Vec<PyFrame>> {
+pub fn read_dcd_trajectory(path: PathBuf) -> PyResult<Vec<PyFrame>> {
+    let path = path_str(&path)?;
     let frames = read_dcd_rs(path).map_err(io_error_to_pyerr)?;
     frames.into_iter().map(PyFrame::from_core_frame).collect()
 }
 
 /// Lazy, indexed reader for DCD trajectory files.
 ///
-/// Unlike :func:`read_dcd`, this does **not** load every frame upfront. The
+/// Unlike :func:`read_dcd_trajectory`, this does **not** load every frame upfront. The
 /// underlying file stays open and frames are parsed on demand via byte-offset
 /// seeks computed from the DCD header. The header is parsed lazily on the
 /// first call to ``__len__``, ``__getitem__``, or ``read_step`` (or eagerly
@@ -597,7 +615,8 @@ impl PyDcdTrajReader {
 #[pymethods]
 impl PyDcdTrajReader {
     #[new]
-    fn py_new(path: &str) -> PyResult<Self> {
+    fn py_new(path: PathBuf) -> PyResult<Self> {
+        let path = path_str(&path)?;
         let inner = open_dcd(path).map_err(io_error_to_pyerr)?;
         Ok(Self {
             inner: Some(inner),
@@ -743,7 +762,8 @@ impl PyXYZTrajReader {
 #[pymethods]
 impl PyXYZTrajReader {
     #[new]
-    fn py_new(path: &str) -> PyResult<Self> {
+    fn py_new(path: PathBuf) -> PyResult<Self> {
+        let path = path_str(&path)?;
         let reader = open_seekable(path).map_err(io_error_to_pyerr)?;
         Ok(Self {
             inner: Some(XYZReader::new(reader)),
@@ -844,54 +864,52 @@ impl PyXYZTrajReader {
     }
 }
 
-/// Read all frames from a GROMACS GRO file.
+/// Read the first frame of a GROMACS GRO file.
 ///
-/// GRO is a fixed-column text format used by GROMACS for input structures and
-/// single-precision trajectories. Each frame contains an ``"atoms"`` block
-/// with columns ``resid``, ``resname``, ``atom_name``, ``atom_id``,
-/// ``x``/``y``/``z`` (in nm), and optional ``vx``/``vy``/``vz``. The
-/// simulation box is stored in ``frame.box``.
+/// The ``"atoms"`` block carries ``res_id``, ``resname``, ``atom_name``,
+/// ``element`` (inferred from the atom name), ``id`` and ``x``/``y``/``z`` in
+/// Å (converted from the file's nm), plus ``vx``/``vy``/``vz`` in Å/ps when
+/// the file has velocities. The box is ``frame.box``. Every frame of a
+/// multi-frame file: :func:`read_gro_trajectory`.
 ///
-/// Parameters
-/// ----------
-/// path : str
-///     Path to a ``.gro`` file on disk.
+/// Raises
+/// ------
+/// IOError
+///     If the file cannot be opened or parsed, or holds no frame.
+#[pyfunction]
+pub fn read_gro(path: PathBuf) -> PyResult<PyFrame> {
+    let path = path_str(&path)?;
+    let frame = read_gro_rs(path)
+        .map_err(io_error_to_pyerr)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| {
+            pyo3::exceptions::PyIOError::new_err(format!("{path}: GRO file holds no frame"))
+        })?;
+    PyFrame::from_core_frame(frame)
+}
+
+/// Read every frame of a GROMACS GRO file, in file order.
 ///
-/// Returns
-/// -------
-/// list[Frame]
-///     All frames in the file (single-frame files return a one-element list).
+/// Each frame as :func:`read_gro` describes it; a single-frame file returns a
+/// one-element list. Inverse of :func:`write_gro_trajectory`.
 ///
 /// Raises
 /// ------
 /// IOError
 ///     If the file cannot be opened or parsed.
-///
-/// Examples
-/// --------
-/// >>> frames = molrs.read_gro("system.gro")
-/// >>> frame = frames[0]
-/// >>> atoms = frame["atoms"]
-/// >>> atoms.view("atom_name")
 #[pyfunction]
-pub fn read_gro(path: &str) -> PyResult<Vec<PyFrame>> {
+pub fn read_gro_trajectory(path: PathBuf) -> PyResult<Vec<PyFrame>> {
+    let path = path_str(&path)?;
     let frames = read_gro_rs(path).map_err(io_error_to_pyerr)?;
     frames.into_iter().map(PyFrame::from_core_frame).collect()
 }
 
 /// Write a Frame to a GROMACS GRO file.
 ///
-/// The Frame must contain an ``"atoms"`` block with at least ``x``, ``y``,
-/// ``z`` columns (in nm). Optional columns: ``resid``, ``resname``,
-/// ``atom_name``, ``atom_id``, ``vx``, ``vy``, ``vz``. The box is taken
-/// from ``frame.box``.
-///
-/// Parameters
-/// ----------
-/// path : str
-///     Output file path.
-/// frame : Frame
-///     Frame to write.
+/// Reads ``x``/``y``/``z`` (Å, written as nm) from the ``"atoms"`` block and,
+/// when present, ``res_id``, ``resname``, ``atom_name`` (else ``element``),
+/// ``id`` and ``vx``/``vy``/``vz``. The box is taken from ``frame.box``.
 ///
 /// Raises
 /// ------
@@ -900,8 +918,21 @@ pub fn read_gro(path: &str) -> PyResult<Vec<PyFrame>> {
 /// ValueError
 ///     If the frame is missing the ``"atoms"`` block or coordinate columns.
 #[pyfunction]
-pub fn write_gro(path: &str, frame: &PyFrame) -> PyResult<()> {
+pub fn write_gro(path: PathBuf, frame: &PyFrame) -> PyResult<()> {
+    let path = path_str(&path)?;
     frame.with_frame(|f| write_gro_rs(path, f).map_err(io_error_to_pyerr))?
+}
+
+/// Write Frames as one multi-frame GROMACS GRO trajectory, each as
+/// :func:`write_gro` writes it. Inverse of :func:`read_gro_trajectory`.
+#[pyfunction]
+pub fn write_gro_trajectory(path: PathBuf, frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<()> {
+    let path = path_str(&path)?;
+    let core_frames: Vec<_> = frames
+        .iter()
+        .map(|f| f.clone_core_frame())
+        .collect::<PyResult<_>>()?;
+    write_gro_traj_rs(path, &core_frames).map_err(io_error_to_pyerr)
 }
 
 /// Read a VASP CHGCAR or CHGDIF file.
@@ -934,13 +965,14 @@ pub fn write_gro(path: &str, frame: &PyFrame) -> PyResult<()> {
 ///
 /// Examples
 /// --------
-/// >>> frame = molrs.read_chgcar("CHGCAR")
+/// >>> frame = molrs.io.read_chgcar("CHGCAR")
 /// >>> grid = frame["chgcar"]
 /// >>> total = grid["total"]          # shape (nx, ny, nz)
 /// >>> density = total / frame.box.volume()
 #[pyfunction]
-pub fn read_chgcar_file(path: &str) -> PyResult<PyFrame> {
-    let frame = read_chgcar(path).map_err(molrs_error_to_pyerr)?;
+pub fn read_chgcar(path: PathBuf) -> PyResult<PyFrame> {
+    let path = path_str(&path)?;
+    let frame = read_chgcar_rs(path).map_err(molrs_error_to_pyerr)?;
     PyFrame::from_core_frame(frame)
 }
 
@@ -975,12 +1007,13 @@ pub fn read_chgcar_file(path: &str) -> PyResult<PyFrame> {
 ///
 /// Examples
 /// --------
-/// >>> frame = molrs.read_cube_file("density.cube")
+/// >>> frame = molrs.io.read_cube("density.cube")
 /// >>> grid = frame["cube"]
 /// >>> density = grid["density"]       # shape (nx, ny, nz)
 #[pyfunction]
-pub fn read_cube_file(path: &str) -> PyResult<PyFrame> {
-    let frame = read_cube(path).map_err(molrs_error_to_pyerr)?;
+pub fn read_cube(path: PathBuf) -> PyResult<PyFrame> {
+    let path = path_str(&path)?;
+    let frame = read_cube_rs(path).map_err(molrs_error_to_pyerr)?;
     PyFrame::from_core_frame(frame)
 }
 
@@ -995,8 +1028,9 @@ pub fn read_cube_file(path: &str) -> PyResult<PyFrame> {
 /// frame : Frame
 ///     Frame to write.
 #[pyfunction]
-pub fn write_cube_file(path: &str, frame: &PyFrame) -> PyResult<()> {
-    frame.with_frame(|f| write_cube(path, f).map_err(molrs_error_to_pyerr))?
+pub fn write_cube(path: PathBuf, frame: &PyFrame) -> PyResult<()> {
+    let path = path_str(&path)?;
+    frame.with_frame(|f| write_cube_rs(path, f).map_err(molrs_error_to_pyerr))?
 }
 
 /// Read a Tripos MOL2 file and return the first molecule as a Frame.
@@ -1015,7 +1049,8 @@ pub fn write_cube_file(path: &str, frame: &PyFrame) -> PyResult<()> {
 /// -------
 /// Frame
 #[pyfunction]
-pub fn read_mol2(path: &str) -> PyResult<PyFrame> {
+pub fn read_mol2(path: PathBuf) -> PyResult<PyFrame> {
+    let path = path_str(&path)?;
     let frame = read_mol2_rs(path).map_err(io_error_to_pyerr)?;
     PyFrame::from_core_frame(frame)
 }
@@ -1040,7 +1075,8 @@ pub fn read_mol2(path: &str) -> PyResult<PyFrame> {
 /// IOError
 ///     If the file cannot be opened or parsed.
 #[pyfunction]
-pub fn read_amber_inpcrd(path: &str) -> PyResult<PyFrame> {
+pub fn read_amber_inpcrd(path: PathBuf) -> PyResult<PyFrame> {
+    let path = path_str(&path)?;
     let frame = read_amber_inpcrd_rs(path).map_err(io_error_to_pyerr)?;
     PyFrame::from_core_frame(frame)
 }
@@ -1066,7 +1102,8 @@ pub fn read_amber_inpcrd(path: &str) -> PyResult<PyFrame> {
 /// IOError
 ///     If the file cannot be opened or parsed.
 #[pyfunction]
-pub fn read_amber_prmtop(path: &str) -> PyResult<PyFrame> {
+pub fn read_amber_prmtop(path: PathBuf) -> PyResult<PyFrame> {
+    let path = path_str(&path)?;
     let frame = read_amber_prmtop_rs(path).map_err(io_error_to_pyerr)?;
     PyFrame::from_core_frame(frame)
 }
@@ -1074,8 +1111,9 @@ pub fn read_amber_prmtop(path: &str) -> PyResult<PyFrame> {
 /// Read raw prmtop ``%FLAG`` sections as ``{flag: [lines...]}``.
 #[pyfunction]
 pub fn read_amber_prmtop_sections(
-    path: &str,
+    path: PathBuf,
 ) -> PyResult<std::collections::HashMap<String, Vec<String>>> {
+    let path = path_str(&path)?;
     read_amber_prmtop_sections_rs(path).map_err(io_error_to_pyerr)
 }
 
@@ -1175,21 +1213,24 @@ pub fn prmtop_decode_nonbond_params(
 
 /// Read an Antechamber ``.ac`` file into a Frame.
 #[pyfunction]
-pub fn read_ac(path: &str) -> PyResult<PyFrame> {
+pub fn read_ac(path: PathBuf) -> PyResult<PyFrame> {
+    let path = path_str(&path)?;
     let frame = read_ac_rs(path).map_err(io_error_to_pyerr)?;
     PyFrame::from_core_frame(frame)
 }
 
 /// Read an Amber prep file into a nested dict (serde JSON shape).
 #[pyfunction]
-pub fn read_prep<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyDict>> {
+pub fn read_prep<'py>(py: Python<'py>, path: PathBuf) -> PyResult<Bound<'py, PyDict>> {
+    let path = path_str(&path)?;
     let res = read_prep_rs(path).map_err(io_error_to_pyerr)?;
     prep_residue_to_pydict(py, &res)
 }
 
 /// Write an Amber prep residue from a nested dict.
 #[pyfunction]
-pub fn write_prep(path: &str, residue: &Bound<'_, PyAny>) -> PyResult<()> {
+pub fn write_prep(path: PathBuf, residue: &Bound<'_, PyAny>) -> PyResult<()> {
+    let path = path_str(&path)?;
     let res = py_to_prep_residue(residue)?;
     write_prep_rs(path, &res).map_err(io_error_to_pyerr)
 }
@@ -1279,7 +1320,8 @@ fn prep_residue_to_pydict<'py>(py: Python<'py>, res: &PrepResidue) -> PyResult<B
 
 /// Read an AMBER FRCMOD file into a section dict.
 #[pyfunction]
-pub fn read_frcmod(path: &str) -> PyResult<std::collections::HashMap<String, String>> {
+pub fn read_frcmod(path: PathBuf) -> PyResult<std::collections::HashMap<String, String>> {
+    let path = path_str(&path)?;
     let file = read_frcmod_rs(path).map_err(io_error_to_pyerr)?;
     Ok(frcmod_to_map(file))
 }
@@ -1293,9 +1335,10 @@ pub fn parse_frcmod(text: &str) -> PyResult<std::collections::HashMap<String, St
 /// Write FRCMOD sections (dict with remark/mass/bond/…) to a path.
 #[pyfunction]
 pub fn write_frcmod(
-    path: &str,
+    path: PathBuf,
     sections: std::collections::HashMap<String, String>,
 ) -> PyResult<()> {
+    let path = path_str(&path)?;
     let file = map_to_frcmod(sections);
     write_frcmod_rs(path, &file).map_err(io_error_to_pyerr)
 }
@@ -1342,7 +1385,8 @@ fn map_to_frcmod(sections: std::collections::HashMap<String, String>) -> FrcmodF
 /// frame : Frame
 ///     Frame to write.
 #[pyfunction]
-pub fn write_mol2(path: &str, frame: &PyFrame) -> PyResult<()> {
+pub fn write_mol2(path: PathBuf, frame: &PyFrame) -> PyResult<()> {
+    let path = path_str(&path)?;
     frame.with_frame(|f| write_mol2_rs(path, f).map_err(io_error_to_pyerr))?
 }
 
@@ -1364,7 +1408,8 @@ pub fn write_mol2(path: &str, frame: &PyFrame) -> PyResult<()> {
 /// Frame
 ///     Blocks for atoms and any connectivity sections present.
 #[pyfunction]
-pub fn read_top(path: &str) -> PyResult<PyFrame> {
+pub fn read_top(path: PathBuf) -> PyResult<PyFrame> {
+    let path = path_str(&path)?;
     let frame = read_top_rs(path).map_err(io_error_to_pyerr)?;
     PyFrame::from_core_frame(frame)
 }
@@ -1382,13 +1427,15 @@ pub fn read_top(path: &str) -> PyResult<PyFrame> {
 /// frame : Frame
 ///     Frame to write (atoms + optional bonds/pairs/angles/dihedrals).
 #[pyfunction]
-pub fn write_top(path: &str, frame: &PyFrame) -> PyResult<()> {
+pub fn write_top(path: PathBuf, frame: &PyFrame) -> PyResult<()> {
+    let path = path_str(&path)?;
     frame.with_frame(|f| write_top_rs(path, f).map_err(io_error_to_pyerr))?
 }
 
 /// Read a LAMMPS molecule template (native ``.mol`` or JSON).
 #[pyfunction]
-pub fn read_lammps_molecule(path: &str) -> PyResult<PyFrame> {
+pub fn read_lammps_molecule(path: PathBuf) -> PyResult<PyFrame> {
+    let path = path_str(&path)?;
     let frame = read_lammps_molecule_rs(path).map_err(io_error_to_pyerr)?;
     PyFrame::from_core_frame(frame)
 }
@@ -1413,7 +1460,8 @@ pub fn read_lammps_molecule(path: &str) -> PyResult<PyFrame> {
 /// IOError
 ///     If the file cannot be opened or parsed.
 #[pyfunction]
-pub fn read_xsf(path: &str) -> PyResult<PyFrame> {
+pub fn read_xsf(path: PathBuf) -> PyResult<PyFrame> {
+    let path = path_str(&path)?;
     let frame = read_xsf_rs(path).map_err(io_error_to_pyerr)?;
     PyFrame::from_core_frame(frame)
 }
@@ -1436,7 +1484,8 @@ pub fn read_xsf(path: &str) -> PyResult<PyFrame> {
 /// IOError
 ///     If the file cannot be written.
 #[pyfunction]
-pub fn write_xsf(path: &str, frame: &PyFrame) -> PyResult<()> {
+pub fn write_xsf(path: PathBuf, frame: &PyFrame) -> PyResult<()> {
+    let path = path_str(&path)?;
     frame.with_frame(|f| write_xsf_rs(path, f).map_err(io_error_to_pyerr))?
 }
 
@@ -1468,7 +1517,8 @@ pub fn write_xsf(path: &str, frame: &PyFrame) -> PyResult<()> {
 #[cfg(feature = "fs")]
 #[pyfunction]
 #[pyo3(signature = (path, style = "default"))]
-pub fn read_lammps_log(path: &str, style: &str) -> PyResult<log::PyLammpsLog> {
+pub fn read_lammps_log(path: PathBuf, style: &str) -> PyResult<log::PyLammpsLog> {
+    let path = path_str(&path)?;
     let log = read_lammps_log_rs(path, style).map_err(lammps_log_io_error)?;
     Ok(log::PyLammpsLog::new(log))
 }
@@ -1571,7 +1621,8 @@ fn json_value_to_py(py: Python<'_>, value: &JsonValue) -> PyResult<Py<PyAny>> {
 ///     ``"native"`` or ``"json"`` (default ``"native"``).
 #[pyfunction]
 #[pyo3(signature = (path, frame, format = "native"))]
-pub fn write_lammps_molecule(path: &str, frame: &PyFrame, format: &str) -> PyResult<()> {
+pub fn write_lammps_molecule(path: PathBuf, frame: &PyFrame, format: &str) -> PyResult<()> {
+    let path = path_str(&path)?;
     frame.with_frame(|f| write_lammps_molecule_rs(path, f, format).map_err(io_error_to_pyerr))?
 }
 
@@ -1588,7 +1639,8 @@ pub fn write_lammps_molecule(path: &str, frame: &PyFrame, format: &str) -> PyRes
 /// frame : Frame
 ///     Frame to write.
 #[pyfunction]
-pub fn write_pdb(path: &str, frame: &PyFrame) -> PyResult<()> {
+pub fn write_pdb(path: PathBuf, frame: &PyFrame) -> PyResult<()> {
+    let path = path_str(&path)?;
     frame.with_frame(|f| {
         let file = File::create(path).map_err(io_error_to_pyerr)?;
         let mut buf = BufWriter::new(file);
@@ -1608,7 +1660,8 @@ pub fn write_pdb(path: &str, frame: &PyFrame) -> PyResult<()> {
 /// frames : list[Frame]
 ///     Frames to write, in order.
 #[pyfunction]
-pub fn write_pdb_trajectory(path: &str, frames: Vec<PyFrame>) -> PyResult<()> {
+pub fn write_pdb_trajectory(path: PathBuf, frames: Vec<PyFrame>) -> PyResult<()> {
+    let path = path_str(&path)?;
     let core_frames: Vec<_> = frames
         .iter()
         .map(|f| f.clone_core_frame())
@@ -1627,12 +1680,28 @@ pub fn write_pdb_trajectory(path: &str, frames: Vec<PyFrame>) -> PyResult<()> {
 /// frame : Frame
 ///     Frame to write.
 #[pyfunction]
-pub fn write_xyz(path: &str, frame: &PyFrame) -> PyResult<()> {
+pub fn write_xyz(path: PathBuf, frame: &PyFrame) -> PyResult<()> {
+    let path = path_str(&path)?;
     frame.with_frame(|f| {
         let file = File::create(path).map_err(io_error_to_pyerr)?;
         let mut buf = BufWriter::new(file);
         write_xyz_frame(&mut buf, f).map_err(io_error_to_pyerr)
     })?
+}
+
+/// Write Frames as one multi-frame Extended XYZ trajectory, each as
+/// :func:`write_xyz` writes it. Inverse of :func:`read_xyz_trajectory`.
+#[pyfunction]
+pub fn write_xyz_trajectory(path: PathBuf, frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<()> {
+    let path = path_str(&path)?;
+    let core_frames: Vec<_> = frames
+        .iter()
+        .map(|f| f.clone_core_frame())
+        .collect::<PyResult<_>>()?;
+    let file = File::create(path).map_err(io_error_to_pyerr)?;
+    let mut buf = BufWriter::new(file);
+    write_xyz_traj(&mut buf, &core_frames).map_err(io_error_to_pyerr)?;
+    std::io::Write::flush(&mut buf).map_err(io_error_to_pyerr)
 }
 
 /// Write a Frame to a LAMMPS data file.
@@ -1644,8 +1713,9 @@ pub fn write_xyz(path: &str, frame: &PyFrame) -> PyResult<()> {
 /// frame : Frame
 ///     Frame to write.
 #[pyfunction]
-pub fn write_lammps(path: &str, frame: &PyFrame) -> PyResult<()> {
-    frame.with_frame(|f| write_lammps_data(path, f).map_err(io_error_to_pyerr))?
+pub fn write_lammps_data(path: PathBuf, frame: &PyFrame) -> PyResult<()> {
+    let path = path_str(&path)?;
+    frame.with_frame(|f| write_lammps_data_rs(path, f).map_err(io_error_to_pyerr))?
 }
 
 /// Write Frames to a LAMMPS dump trajectory file.
@@ -1662,11 +1732,12 @@ pub fn write_lammps(path: &str, frame: &PyFrame) -> PyResult<()> {
 ///     block cannot supply raises. Default writes every column it holds.
 #[pyfunction]
 #[pyo3(signature = (path, frames, columns = None))]
-pub fn write_lammps_traj(
-    path: &str,
+pub fn write_lammps_trajectory(
+    path: PathBuf,
     frames: Vec<PyRef<'_, PyFrame>>,
     columns: Option<Vec<String>>,
 ) -> PyResult<()> {
+    let path = path_str(&path)?;
     let core_frames: Vec<_> = frames
         .iter()
         .map(|f| f.clone_core_frame())
@@ -1682,7 +1753,8 @@ pub fn write_lammps_traj(
 /// Emits ``ITEM: NUMBER OF ENTRIES`` + ``ITEM: ENTRIES batom1 batom2 [btype]``.
 /// Rows come from ``entries`` if present, otherwise from canonical ``bonds``.
 #[pyfunction]
-pub fn write_lammps_dump_local(path: &str, frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<()> {
+pub fn write_lammps_dump_local(path: PathBuf, frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<()> {
+    let path = path_str(&path)?;
     let core_frames: Vec<_> = frames
         .iter()
         .map(|f| f.clone_core_frame())
@@ -1709,7 +1781,8 @@ pub fn write_lammps_dump_local(path: &str, frames: Vec<PyRef<'_, PyFrame>>) -> P
 ///     If the file cannot be written, or a frame uses an unsupported feature
 ///     (e.g. 4D dynamics / fixed atoms).
 #[pyfunction]
-pub fn write_dcd(path: &str, frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<()> {
+pub fn write_dcd_trajectory(path: PathBuf, frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<()> {
+    let path = path_str(&path)?;
     let core_frames: Vec<_> = frames
         .iter()
         .map(|f| f.clone_core_frame())
@@ -1741,9 +1814,10 @@ pub fn write_dcd(path: &str, frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<()> {
 ///
 /// Examples
 /// --------
-/// >>> frames = molrs.read_trr("traj.trr")
+/// >>> frames = molrs.io.raw.read_trr_trajectory("traj.trr")
 #[pyfunction]
-pub fn read_trr(path: &str) -> PyResult<Vec<PyFrame>> {
+pub fn read_trr_trajectory(path: PathBuf) -> PyResult<Vec<PyFrame>> {
+    let path = path_str(&path)?;
     let frames = read_trr_rs(path).map_err(io_error_to_pyerr)?;
     frames.into_iter().map(PyFrame::from_core_frame).collect()
 }
@@ -1768,9 +1842,10 @@ pub fn read_trr(path: &str) -> PyResult<Vec<PyFrame>> {
 ///
 /// Examples
 /// --------
-/// >>> frames = molrs.read_xtc("traj.xtc")
+/// >>> frames = molrs.io.raw.read_xtc_trajectory("traj.xtc")
 #[pyfunction]
-pub fn read_xtc(path: &str) -> PyResult<Vec<PyFrame>> {
+pub fn read_xtc_trajectory(path: PathBuf) -> PyResult<Vec<PyFrame>> {
+    let path = path_str(&path)?;
     let frames = read_xtc_rs(path).map_err(io_error_to_pyerr)?;
     frames.into_iter().map(PyFrame::from_core_frame).collect()
 }
@@ -1798,7 +1873,8 @@ impl PyTrrTrajReader {
 #[pymethods]
 impl PyTrrTrajReader {
     #[new]
-    fn py_new(path: &str) -> PyResult<Self> {
+    fn py_new(path: PathBuf) -> PyResult<Self> {
+        let path = path_str(&path)?;
         let inner = open_trr(path).map_err(io_error_to_pyerr)?;
         Ok(Self {
             inner: Some(inner),
@@ -1924,7 +2000,8 @@ impl PyXtcTrajReader {
 #[pymethods]
 impl PyXtcTrajReader {
     #[new]
-    fn py_new(path: &str) -> PyResult<Self> {
+    fn py_new(path: PathBuf) -> PyResult<Self> {
+        let path = path_str(&path)?;
         let inner = open_xtc(path).map_err(io_error_to_pyerr)?;
         Ok(Self {
             inner: Some(inner),
@@ -2036,7 +2113,8 @@ impl PyXtcTrajReader {
 ///     Output file path.
 /// frames : list[Frame]
 #[pyfunction]
-pub fn write_trr(path: &str, frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<()> {
+pub fn write_trr_trajectory(path: PathBuf, frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<()> {
+    let path = path_str(&path)?;
     let core_frames: Vec<_> = frames
         .iter()
         .map(|f| f.clone_core_frame())
@@ -2057,7 +2135,8 @@ pub fn write_trr(path: &str, frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<()> {
 ///     Output file path.
 /// frames : list[Frame]
 #[pyfunction]
-pub fn write_xtc(path: &str, frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<()> {
+pub fn write_xtc_trajectory(path: PathBuf, frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<()> {
+    let path = path_str(&path)?;
     let core_frames: Vec<_> = frames
         .iter()
         .map(|f| f.clone_core_frame())
@@ -2137,6 +2216,64 @@ impl PySmilesIR {
         })
     }
 
+    /// Parse a fragment body — SMILES plus bonding descriptors — into its IR.
+    ///
+    /// The dialect a ``CGsmiles`` fragment table writes its bodies in:
+    /// ``[<]OCC[>]``, ``[$]COC[$]``. Where the plain constructor refuses a
+    /// descriptor, this one keeps it, so the IR can become a ported unit
+    /// through :meth:`to_template`.
+    ///
+    /// Parameters
+    /// ----------
+    /// body : str
+    ///     Fragment body, e.g. ``"[<]OCC[>]"``.
+    ///
+    /// Raises
+    /// ------
+    /// SmilesError
+    ///     (a ``ValueError``) if the body is not valid fragment notation.
+    ///
+    /// Examples
+    /// --------
+    /// >>> molrs.io.SmilesIR.from_fragment("[<]OCC[>]").to_template().n_ports
+    /// 2
+    #[classmethod]
+    fn from_fragment(_cls: &Bound<'_, PyType>, body: &str) -> PyResult<Self> {
+        let inner =
+            molrs::io::smiles::parse_fragment_smiles(body).map_err(smiles_error_to_pyerr)?;
+        Ok(Self {
+            inner,
+            input: body.to_owned(),
+        })
+    }
+
+    /// Build the ported :class:`~molrs.Atomistic` template of this body.
+    ///
+    /// The one-unit form of :meth:`CGSmilesIR.templates`: the heavy atoms of
+    /// the body, plus one capping hydrogen *handle* and one port per bonding
+    /// descriptor (``<``, ``>``, ``$``, with its label and bond order). No
+    /// coordinates, no ``frag_id``; an IR without descriptors gives a
+    /// template without ports.
+    ///
+    /// Returns
+    /// -------
+    /// Atomistic
+    ///
+    /// Raises
+    /// ------
+    /// SmilesError
+    ///     (a ``ValueError``) if the body does not convert.
+    ///
+    /// Examples
+    /// --------
+    /// >>> eo = molrs.io.SmilesIR.from_fragment("[<]OCC[>]").to_template()
+    /// >>> eo.n_atoms, eo.n_ports
+    /// (5, 2)
+    fn to_template(&self, py: Python<'_>) -> PyResult<Py<PyAtomistic>> {
+        let mol = self.inner.to_template().map_err(smiles_error_to_pyerr)?;
+        PyAtomistic::from_core(py, mol)
+    }
+
     /// Number of disconnected molecular components.
     ///
     /// Fragments separated by ``'.'`` in the SMILES string are counted as
@@ -2170,8 +2307,9 @@ impl PySmilesIR {
     ///     reading), or if any node carries a bonding descriptor — the mark a
     ///     `CGsmiles` fragment body writes to say where it may be joined.
     ///     This is the plain conversion and it will not drop a descriptor
-    ///     silently; expand such a body through
-    ///     :meth:`CGSmilesIR.to_atomistic` instead.
+    ///     silently; build such a body's ported unit with
+    ///     :meth:`to_template`, or expand a whole string through
+    ///     :meth:`CGSmilesIR.to_atomistic`.
     ///
     /// Examples
     /// --------

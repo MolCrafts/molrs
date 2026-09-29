@@ -20,6 +20,7 @@ use ndarray::Array1;
 use molrs::spatial::simbox::SimBox;
 use molrs::store::frame::Frame;
 use molrs::store::keys;
+use molrs::store::schema::block_names::ATOMS;
 use molrs::types::{F, FNx3, I};
 
 use super::error::MdError;
@@ -139,7 +140,7 @@ impl MDState {
                 self.images.nrows()
             )));
         }
-        let atoms = frame.get_mut("atoms").ok_or_else(|| {
+        let atoms = frame.get_mut(ATOMS).ok_or_else(|| {
             MdError::Invalid("frame has no \"atoms\" block to write into".to_string())
         })?;
         if let Some(rows) = atoms.nrows()
@@ -150,12 +151,9 @@ impl MDState {
             )));
         }
 
-        for (axis, key) in keys::COORDS.iter().enumerate() {
-            let col: Array1<F> = self.pos.column(axis).to_owned();
-            atoms
-                .insert(*key, col.into_dyn())
-                .map_err(|e| MdError::Invalid(format!("atoms.{key}: {e}")))?;
-        }
+        atoms
+            .set_coords(self.pos.view())
+            .map_err(|e| MdError::Invalid(format!("atoms coordinates: {e}")))?;
         for (axis, key) in keys::IMAGES.iter().enumerate() {
             let col: Array1<I> = self.images.column(axis).to_owned();
             atoms

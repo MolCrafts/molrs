@@ -322,7 +322,7 @@ impl Compute for RDF {
 
 #[cfg(test)]
 mod tests {
-    use super::super::util::get_positions;
+    use super::super::util::get_positions_ref;
     use super::*;
     use crate::compute::test_support::nlist_from_frame;
     use molrs::Frame;
@@ -497,8 +497,8 @@ mod tests {
         frame.simbox = None;
         let nlist = {
             use molrs::spatial::neighbors::NeighborQuery;
-            let (xs, ys, zs) = get_positions(&frame).unwrap();
-            NeighborQuery::free_columns(xs, ys, zs, 4.0).query_self()
+            let (xs, ys, zs) = get_positions_ref(&frame).unwrap();
+            NeighborQuery::free_columns(xs.slice(), ys.slice(), zs.slice(), 4.0).query_self()
         };
         let rdf = RDF::new(10, 4.0, 0.0).unwrap();
         let err = rdf.compute(&[&frame], &[nlist]).unwrap_err();
@@ -545,7 +545,7 @@ mod tests {
         let mut frame = Frame::new();
         frame.insert("atoms", block);
         let simbox = SimBox::cube(10.0, array![0.0 as F, 0.0, 0.0], [true, true, true]).unwrap();
-        frame.simbox = Some(simbox.clone());
+        frame.simbox = Some(simbox);
 
         let nlist = nlist_from_frame(&frame, 2.0);
 
@@ -732,7 +732,7 @@ mod tests {
             [true, true, false],
         )
         .unwrap();
-        frame.simbox = Some(simbox.clone());
+        frame.simbox = Some(simbox);
 
         // Build the neighbor list via the native SoA path (z is identical, so a
         // single-cell column).

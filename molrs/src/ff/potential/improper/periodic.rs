@@ -8,6 +8,7 @@
 //! geometry reuses the shared dihedral routines. (Functionally one CHARMM-form
 //! term, evaluated over the `"impropers"` block.)
 
+use molrs::store::schema::block_names::IMPROPERS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
@@ -120,7 +121,7 @@ pub fn improper_periodic_ctor(
 ) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
-        .get("impropers")
+        .get(IMPROPERS)
         .ok_or("improper_periodic: missing \"impropers\" block")?;
     let ic = block.get_uint("atomi").ok_or("missing atomi")?;
     let jc = block.get_uint("atomj").ok_or("missing atomj")?;

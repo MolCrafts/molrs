@@ -186,8 +186,7 @@ impl SpatialDistribution {
     /// both the serial loop and the frame-parallel fast path.
     ///
     /// The minimum-image convention is resolved **once per frame** here (box kind
-    /// and PBC mask), so the per-target displacement is pure scalar arithmetic — a
-    /// bit-identical replacement for the previous per-target `mic_disp` dispatch.
+    /// and PBC mask), so the per-target displacement is pure scalar arithmetic.
     fn accumulate_frame<FA: FrameAccess>(
         &self,
         frame: &FA,

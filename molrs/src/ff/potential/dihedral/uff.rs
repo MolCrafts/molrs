@@ -1,5 +1,6 @@
 //! UFF torsion: E = V/2 · (1 − cosTerm · cos(n·φ)) (RDKit `TorsionAngleContrib`).
 
+use molrs::store::schema::block_names::DIHEDRALS;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
@@ -228,7 +229,7 @@ pub fn uff_torsion_ctor(
     frame: &Frame,
 ) -> Result<Member, String> {
     let block = frame
-        .get("dihedrals")
+        .get(DIHEDRALS)
         .ok_or("uff_torsion: missing \"dihedrals\" block")?;
     let i = block
         .get_uint("atomi")

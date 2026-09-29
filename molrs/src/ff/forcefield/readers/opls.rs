@@ -249,7 +249,7 @@ fn build_nonbonded(
                     params.set_str(key, value);
                 }
             }
-            atom.def_type(&row.name, params)
+            atom.def_type(&row.name, &[], params)
                 .map_err(|e| e.to_string())?;
         }
     }
@@ -264,7 +264,7 @@ fn build_nonbonded(
             .def_style("pair", "lj/cut", lj_params)
             .map_err(|e| e.to_string())?;
         for r in nonbonded {
-            lj.def_type_at(
+            lj.def_type(
                 &r.ty,
                 &[&r.ty],
                 Params::from_pairs(&[("epsilon", r.epsilon), ("sigma", r.sigma)]),
@@ -353,7 +353,7 @@ fn ensure_class_wildcards(ff: &mut ForceField, atom_rows: &[AtomTypeRow]) -> Res
         if atom.get_atomtype(&class_name).is_some() {
             continue;
         }
-        atom.def_type(&class_name, Params::new())
+        atom.def_type(&class_name, &[], Params::new())
             .map_err(|e| e.to_string())?;
         atom.set_type_str_param(&class_name, "type_", "*");
         atom.set_type_str_param(&class_name, "class_", &class_name);
@@ -362,8 +362,8 @@ fn ensure_class_wildcards(ff: &mut ForceField, atom_rows: &[AtomTypeRow]) -> Res
 }
 
 /// OpenMM packs use either `classN` (chemical class) or `typeN` (atom type name).
-/// Missing both falls back to the wildcard ``*`` so incomplete writers
-/// (e.g. moltemplate XML without endpoint labels) still round-trip.
+/// Missing both falls back to the wildcard ``*`` so XML written without
+/// endpoint labels still round-trips.
 fn class_or_type<'a>(node: &'a Node, n: usize) -> Result<&'a str, String> {
     let class_key = format!("class{n}");
     let type_key = format!("type{n}");
@@ -385,7 +385,7 @@ fn parse_bonds(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
         // kJ/mol/nm² → kcal/mol/Å² : ÷4.184 (energy) ÷100 (nm²→Å²). Same ½ form.
         let k = require_f64(&b, "k")? / (KJ_PER_KCAL * 100.0);
         style
-            .def_type_at(
+            .def_type(
                 TypeName::join(&[c1, c2])?.as_str(),
                 &[c1, c2],
                 Params::from_pairs(&[("k", k), ("r0", r0)]),
@@ -407,7 +407,7 @@ fn parse_angles(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
         let theta0 = require_f64(&a, "angle")?; // already radians
         let k = require_f64(&a, "k")? / KJ_PER_KCAL; // kJ/mol/rad² → kcal/mol/rad²
         style
-            .def_type_at(
+            .def_type(
                 TypeName::join(&[c1, c2, c3])?.as_str(),
                 &[c1, c2, c3],
                 Params::from_pairs(&[("k", k), ("theta0", theta0)]),
@@ -439,7 +439,7 @@ fn parse_dihedrals(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
             .map_err(|e| format!("RBTorsionForce {c1}-{c2}-{c3}-{c4}: {e}"))?
             .map(|f| f / KJ_PER_KCAL);
         style
-            .def_type_at(
+            .def_type(
                 TypeName::join(&[c1, c2, c3, c4])?.as_str(),
                 &[c1, c2, c3, c4],
                 Params::from_pairs(&[("k1", f1), ("k2", f2), ("k3", f3), ("k4", f4)]),
@@ -471,7 +471,7 @@ fn parse_periodic_torsions(ff: &mut ForceField, sec: &Node) -> Result<(), String
         let f3 = opt_f64(&d, "c2")?.unwrap_or(0.0) / KJ_PER_KCAL;
         let f4 = opt_f64(&d, "c3")?.unwrap_or(0.0) / KJ_PER_KCAL;
         style
-            .def_type_at(
+            .def_type(
                 TypeName::join(&[c1, c2, c3, c4])?.as_str(),
                 &[c1, c2, c3, c4],
                 Params::from_pairs(&[("k1", f1), ("k2", f2), ("k3", f3), ("k4", f4)]),

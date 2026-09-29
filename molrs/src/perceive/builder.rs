@@ -225,12 +225,18 @@ impl Perceive {
     /// # Arguments
     ///
     /// * `mol` — the molecule to perceive; left untouched.
+    /// * `unknown` — what a bond with no class written counts as; see
+    ///   [`rotatable::UnknownBondPolicy`].
     ///
     /// # Returns
     ///
     /// A clone of `mol` with `is_rotatable` (`0` / `1`) on every bond.
-    pub fn find_rotatable(&self, mol: &Atomistic) -> Atomistic {
-        let rotatable: HashSet<(AtomId, AtomId)> = rotatable::detect_rotatable_bonds(mol)
+    pub fn find_rotatable(
+        &self,
+        mol: &Atomistic,
+        unknown: rotatable::UnknownBondPolicy,
+    ) -> Atomistic {
+        let rotatable: HashSet<(AtomId, AtomId)> = rotatable::detect_rotatable_bonds(mol, unknown)
             .into_iter()
             .map(|(a, b)| unordered(a, b))
             .collect();

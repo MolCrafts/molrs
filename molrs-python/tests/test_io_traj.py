@@ -5,10 +5,9 @@ Self-contained fixtures written by molrs. No external corpus.
 
 from __future__ import annotations
 
+import molrs
 import numpy as np
 import pytest
-
-import molrs
 
 
 class TestReturnsReaderNotList:
@@ -96,7 +95,7 @@ class TestDumpLocalWrite:
         text = path.read_text()
         assert "ITEM: NUMBER OF ENTRIES" in text
         assert "batom1 batom2" in text
-        loaded = molrs.io.raw.read_lammps_traj(str(path))
+        loaded = molrs.io.raw.read_lammps_trajectory(str(path))
         assert loaded[0]["entries"].nrows == 2
 
 
@@ -118,7 +117,7 @@ class TestDumpColumnChoice:
 
     def test_writes_only_the_named_columns_in_order(self, tmp_path):
         path = tmp_path / "chosen.lammpstrj"
-        molrs.io.write_lammps_traj(
+        molrs.io.write_lammps_trajectory(
             path, [self._frame()], columns=["id", "element", "mol", "x", "y", "z"]
         )
         text = path.read_text()
@@ -127,13 +126,13 @@ class TestDumpColumnChoice:
 
     def test_default_writes_every_column(self, tmp_path):
         path = tmp_path / "all.lammpstrj"
-        molrs.io.write_lammps_traj(path, [self._frame()])
+        molrs.io.write_lammps_trajectory(path, [self._frame()])
         assert "ITEM: ATOMS id element mass mol x y z" in path.read_text()
 
     def test_rejects_a_column_the_frame_lacks(self, tmp_path):
         path = tmp_path / "missing.lammpstrj"
         with pytest.raises(OSError, match="'q'"):
-            molrs.io.write_lammps_traj(path, [self._frame()], columns=["id", "q"])
+            molrs.io.write_lammps_trajectory(path, [self._frame()], columns=["id", "q"])
 
 
 class TestMultiFile:

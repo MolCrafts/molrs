@@ -492,8 +492,11 @@ TEST_F(MolrsTest, ForceFieldPairStyle) {
 
     const char* type_pk[] = {"epsilon", "sigma"};
     double type_pv[] = {0.5, 3.4};
-    ASSERT_MOLRS_OK(molrs_ff_def_type(ff, "pair", "lj/cut", "Ar", type_pk, type_pv, 2));
-    ASSERT_MOLRS_OK(molrs_ff_def_type(ff, "pair", "lj/cut", "Ar-Kr", type_pk, type_pv, 2));
+    const char* ar[] = {"Ar"};
+    const char* ar_kr[] = {"Ar", "Kr"};
+    ASSERT_MOLRS_OK(molrs_ff_def_type(ff, "pair", "lj/cut", "Ar", ar, 1, type_pk, type_pv, 2));
+    ASSERT_MOLRS_OK(
+        molrs_ff_def_type(ff, "pair", "lj/cut", "Ar-Kr", ar_kr, 2, type_pk, type_pv, 2));
 
     size_t count = 0;
     ASSERT_MOLRS_OK(molrs_ff_style_count(ff, &count));
@@ -502,7 +505,7 @@ TEST_F(MolrsTest, ForceFieldPairStyle) {
     ASSERT_MOLRS_OK(molrs_ff_drop(ff));
 }
 
-TEST_F(MolrsTest, ForceFieldDefStyleDefTypeDefTypeAtAreOk) {
+TEST_F(MolrsTest, ForceFieldDefStyleDefTypeAreOk) {
     MolrsForceFieldHandle ff{};
     ASSERT_MOLRS_OK(molrs_ff_new("gtest_primitives", &ff));
 
@@ -510,12 +513,13 @@ TEST_F(MolrsTest, ForceFieldDefStyleDefTypeDefTypeAtAreOk) {
 
     const char* pk[] = {"k0", "r0"};
     double pv[] = {300.0, 1.4};
-    ASSERT_MOLRS_OK(molrs_ff_def_type(ff, "bond", "harmonic", "CT-OH", pk, pv, 2));
+    const char* ct_oh[] = {"CT", "OH"};
+    ASSERT_MOLRS_OK(molrs_ff_def_type(ff, "bond", "harmonic", "CT-OH", ct_oh, 2, pk, pv, 2));
 
-    // MMFF-style name outside the endpoint grammar: endpoints are given.
+    // The name is opaque: MMFF's `0_1_5` is defined on the endpoints given.
     const char* endpoints[] = {"1", "5"};
     ASSERT_MOLRS_OK(
-        molrs_ff_def_type_at(ff, "bond", "harmonic", "0_1_5", endpoints, 2, pk, pv, 2));
+        molrs_ff_def_type(ff, "bond", "harmonic", "0_1_5", endpoints, 2, pk, pv, 2));
 
     ASSERT_MOLRS_OK(molrs_ff_drop(ff));
 }
@@ -536,22 +540,24 @@ TEST_F(MolrsTest, ForceFieldDefTypeOnMissingStyleIsInvalidArgument) {
 
     const char* pk[] = {"k0", "r0"};
     double pv[] = {300.0, 1.4};
+    const char* ct_oh[] = {"CT", "OH"};
     // No style is created implicitly.
-    EXPECT_EQ(molrs_ff_def_type(ff, "bond", "harmonic", "CT-OH", pk, pv, 2),
+    EXPECT_EQ(molrs_ff_def_type(ff, "bond", "harmonic", "CT-OH", ct_oh, 2, pk, pv, 2),
               MOLRS_STATUS_INVALID_ARGUMENT);
 
     ASSERT_MOLRS_OK(molrs_ff_drop(ff));
 }
 
-TEST_F(MolrsTest, ForceFieldDefTypeMalformedNameIsInvalidArgument) {
+TEST_F(MolrsTest, ForceFieldDefTypeWrongEndpointCountIsInvalidArgument) {
     MolrsForceFieldHandle ff{};
     ASSERT_MOLRS_OK(molrs_ff_new("gtest_malformed", &ff));
     ASSERT_MOLRS_OK(molrs_ff_def_style(ff, "bond", "harmonic", nullptr, nullptr, 0));
 
     const char* pk[] = {"k0", "r0"};
     double pv[] = {300.0, 1.4};
-    // A one-part name on a bond style: an error status, never a panic.
-    EXPECT_EQ(molrs_ff_def_type(ff, "bond", "harmonic", "CT", pk, pv, 2),
+    const char* ct[] = {"CT"};
+    // One endpoint on a bond style: an error status, never a panic.
+    EXPECT_EQ(molrs_ff_def_type(ff, "bond", "harmonic", "CT-CT", ct, 1, pk, pv, 2),
               MOLRS_STATUS_INVALID_ARGUMENT);
 
     ASSERT_MOLRS_OK(molrs_ff_drop(ff));
@@ -567,7 +573,8 @@ TEST_F(MolrsTest, ForceFieldJsonRoundtrip) {
 
     const char* tpk[] = {"epsilon", "sigma"};
     double tpv[] = {1.0, 3.4};
-    ASSERT_MOLRS_OK(molrs_ff_def_type(ff, "pair", "lj/cut", "Ar", tpk, tpv, 2));
+    const char* ar[] = {"Ar"};
+    ASSERT_MOLRS_OK(molrs_ff_def_type(ff, "pair", "lj/cut", "Ar", ar, 1, tpk, tpv, 2));
 
     // serialize
     char* json = nullptr;
@@ -629,26 +636,6 @@ TEST_F(MolrsTest, BlockCopyBufferTooSmall) {
     EXPECT_NE(s, MOLRS_STATUS_OK);
 
     ASSERT_MOLRS_OK(molrs_frame_drop(frame));
-}
-
-// ---------------------------------------------------------------------------
-// Frame schema
-//
-// The point of these is that the C surface reports the *same* contract the
-// Rust tables declare — a header that drifts from the library is exactly the
-// duplication the schema exists to remove.
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// ABI handshake
-//
-// A dlopen consumer compares the library's runtime version constant against
-// the MOLRS_C_API_VERSION its header was compiled with — a header/library
-// pair that drifts must be detectable before any other call.
-// ---------------------------------------------------------------------------
-
-TEST(Abi, RuntimeVersionMatchesHeaderConstant) {
-    EXPECT_EQ(molrs_c_api_version(), static_cast<uint32_t>(MOLRS_C_API_VERSION));
 }
 
 TEST(Abi, MolrsVersionIsANonEmptyDottedString) {

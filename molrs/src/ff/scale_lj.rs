@@ -280,11 +280,13 @@ mod tests {
             .unwrap()
             .def_type(
                 "A1-B1",
+                &["A1", "B1"],
                 Params::from_pairs(&[("epsilon", 0.2), ("sigma", 3.0)]),
             )
             .unwrap()
             .def_type(
                 "A1-A2",
+                &["A1", "A2"],
                 Params::from_pairs(&[("epsilon", 0.3), ("sigma", 3.2)]),
             )
             .unwrap();

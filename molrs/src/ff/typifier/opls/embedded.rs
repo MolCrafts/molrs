@@ -49,7 +49,7 @@ fn try_force_field() -> Result<ForceField, DefError> {
     let bonds = ff.def_style("bond", "harmonic", Params::new())?;
     for row in OPLSAA_BONDS {
         let ends = [row.i, row.j];
-        bonds.def_type_at(
+        bonds.def_type(
             TypeName::join(&ends).map_err(DefError::Name)?.as_str(),
             &ends,
             Params::from_pairs(&[("k", row.force_constant), ("r0", row.r0)]),
@@ -59,7 +59,7 @@ fn try_force_field() -> Result<ForceField, DefError> {
     let angles = ff.def_style("angle", "harmonic", Params::new())?;
     for row in OPLSAA_ANGLES {
         let ends = [row.i, row.j, row.k];
-        angles.def_type_at(
+        angles.def_type(
             TypeName::join(&ends).map_err(DefError::Name)?.as_str(),
             &ends,
             Params::from_pairs(&[("k", row.force_constant), ("theta0", row.theta0)]),
@@ -69,7 +69,7 @@ fn try_force_field() -> Result<ForceField, DefError> {
     let dihedrals = ff.def_style("dihedral", "opls", Params::new())?;
     for row in OPLSAA_DIHEDRALS {
         let ends = [row.i, row.j, row.k, row.l];
-        dihedrals.def_type_at(
+        dihedrals.def_type(
             TypeName::join(&ends).map_err(DefError::Name)?.as_str(),
             &ends,
             Params::from_pairs(&[
@@ -94,6 +94,7 @@ fn try_force_field() -> Result<ForceField, DefError> {
     for row in OPLSAA_ATOMS {
         atoms.def_type(
             row.name,
+            &[],
             Params::from_pairs(&[("mass", row.mass), ("charge", row.charge)]),
         )?;
     }
@@ -102,7 +103,7 @@ fn try_force_field() -> Result<ForceField, DefError> {
     lj_params.set_str("mixing", OPLSAA_MIXING);
     let lj = ff.def_style("pair", "lj/cut", lj_params)?;
     for row in OPLSAA_ATOMS {
-        lj.def_type_at(
+        lj.def_type(
             row.name,
             &[row.name],
             Params::from_pairs(&[("epsilon", row.epsilon), ("sigma", row.sigma)]),

@@ -23,9 +23,11 @@ opt-level = 3
 strip = "symbols"
 
 [features]
-# Native default mirrors molrs's own default. The forwards exist so a consumer
-# that must keep molrs's defaults off (molrs-wasm, Pyodide) can pick sub-systems
-# one at a time; nothing here re-states a "feature union".
+# molrs itself defaults to core only; this crate's native default asks for every
+# sub-system (`full`) plus `filesystem` and `rayon`, which is what molrs-capi and
+# molrs-cxxapi link. The forwards exist so a consumer that must keep these off
+# (molrs-wasm, Pyodide) can pick sub-systems one at a time; nothing here
+# re-states a "feature union".
 default = ["ff", "full", "filesystem", "rayon"]
 # Stable handle for `molrs::ff::ForceField` (the `ForceFieldRef` analogue of
 # `FrameRef`). Gates code in THIS crate, so it stays separate from `full` even

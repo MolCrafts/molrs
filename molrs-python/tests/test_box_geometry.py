@@ -1,7 +1,6 @@
+import molrs
 import numpy as np
 import pytest
-
-import molrs
 
 
 def test_box_exposes_native_minimum_image_geometry():
@@ -78,6 +77,39 @@ def test_from_bounds_and_batched_geometry():
         box.pairwise_delta(left, right), [[[1, 0, 0]], [[1.5, 0, 0]]]
     )
     np.testing.assert_allclose(box.pairwise_distances(left, right), [[1.0], [1.5]])
+
+
+def test_from_bounds_takes_a_frame_and_a_scalar_padding():
+    frame = molrs.Frame()
+    atoms = molrs.Block()
+    atoms.insert("x", np.array([0.0, 2.0]))
+    atoms.insert("y", np.array([-1.0, 3.0]))
+    atoms.insert("z", np.array([0.0, 4.0]))
+    frame["atoms"] = atoms
+    points = np.array([[0.0, -1.0, 0.0], [2.0, 3.0, 4.0]])
+
+    from_frame = molrs.Box.from_bounds(frame, 1.0)
+    from_points = molrs.Box.from_bounds(points, np.array([1.0, 1.0, 1.0]))
+    np.testing.assert_allclose(from_frame.origin, [-1.0, -2.0, -1.0])
+    np.testing.assert_allclose(from_frame.lengths, [4.0, 6.0, 6.0])
+    assert from_frame.approx_eq(from_points, 0.0)
+
+
+def test_from_bounds_rejects_a_frame_without_atoms_and_a_bad_padding():
+    with pytest.raises(ValueError, match="atoms"):
+        molrs.Box.from_bounds(molrs.Frame(), 1.0)
+    with pytest.raises(ValueError, match="length 3"):
+        molrs.Box.from_bounds(np.zeros((1, 3)), np.array([1.0, 1.0]))
+
+
+def test_approx_eq_uses_an_absolute_tolerance_and_exact_pbc():
+    a = molrs.Box.cube(10.0)
+    b = molrs.Box.cube(10.0 + 1e-6)
+    assert a.approx_eq(b, 1e-5)
+    assert not a.approx_eq(b, 1e-7)
+    assert not a.approx_eq(molrs.Box.cube(10.0, pbc=np.array([True, True, False])), 1.0)
+    with pytest.raises(ValueError):
+        a.approx_eq(b, -1.0)
 
 
 def test_transformed_preserves_origin_and_pbc():

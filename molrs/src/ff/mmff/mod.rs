@@ -105,7 +105,6 @@ pub struct MmffMolProperties {
     variant: MmffVariant,
     atom_types: Vec<u8>,
     partial_charges: Vec<f64>,
-    valid: bool,
 }
 
 impl MmffMolProperties {
@@ -134,7 +133,6 @@ impl MmffMolProperties {
             variant,
             atom_types,
             partial_charges,
-            valid: true,
         })
     }
 
@@ -152,11 +150,6 @@ impl MmffMolProperties {
     /// MMFF partial charge for atom index `i`.
     pub fn partial_charge(&self, i: usize) -> f64 {
         self.partial_charges[i]
-    }
-
-    /// Whether every atom received a valid MMFF type.
-    pub fn is_setup_complete(&self) -> bool {
-        self.valid
     }
 
     /// Number of atoms.

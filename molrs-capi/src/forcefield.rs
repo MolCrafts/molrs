@@ -16,10 +16,11 @@
 //! double      pv[] = {12.0};
 //! molrs_ff_def_style(ff, "pair", "lj/cut", pk, pv, 1);
 //!
-//! // Define a type under that style
+//! // Define a type under that style: its name, then its endpoints
+//! const char* ow[] = {"OW"};
 //! const char* tk[] = {"epsilon", "sigma"};
 //! double      tv[] = {0.1553, 3.166};
-//! molrs_ff_def_type(ff, "pair", "lj/cut", "OW", tk, tv, 2);
+//! molrs_ff_def_type(ff, "pair", "lj/cut", "OW", ow, 1, tk, tv, 2);
 //!
 //! // Serialize to JSON for storage
 //! char*  json;
@@ -203,7 +204,7 @@ unsafe fn parse_params<'a>(
 }
 
 // ---------------------------------------------------------------------------
-// Definition: def_style / def_type / def_type_at
+// Definition: def_style / def_type
 // ---------------------------------------------------------------------------
 
 /// Read a required C string argument as UTF-8.
@@ -325,10 +326,12 @@ pub unsafe extern "C" fn molrs_ff_def_style(
     })
 }
 
-/// Define a type on an existing style, its endpoints parsed from the name.
+/// Define a type on an existing style: its name and its endpoints.
 ///
 /// The style `(style_category, style_name)` must already exist (see
-/// [`molrs_ff_def_style`]); it is never created implicitly.
+/// [`molrs_ff_def_style`]); it is never created implicitly. The name is an
+/// opaque identifier stored verbatim and never split into endpoints (`CT-OH`
+/// and MMFF's `0_1_5` alike); the endpoints are the ones given.
 ///
 /// # C signature
 ///
@@ -337,6 +340,8 @@ pub unsafe extern "C" fn molrs_ff_def_style(
 ///                                const char* style_category,
 ///                                const char* style_name,
 ///                                const char* type_name,
+///                                const char** endpoints,
+///                                size_t n_endpoints,
 ///                                const char** param_keys,
 ///                                const double* param_values,
 ///                                size_t n_params);
@@ -345,96 +350,11 @@ pub unsafe extern "C" fn molrs_ff_def_style(
 /// # Arguments
 ///
 /// * `ff` -- ForceField handle.
-/// * `style_category` -- One of `"atom"`, `"bond"`, `"angle"`,
-///   `"dihedral"`, `"improper"`, `"pair"`.
-/// * `style_name` -- Name of an existing style (e.g. `"harmonic"`).
-/// * `type_name` -- Type name in the endpoint grammar:
-///   - Atom: `"A"` (single type name)
-///   - Bond: `"A-B"`
-///   - Angle: `"A-B-C"`
-///   - Dihedral / improper: `"A-B-C-D"`
-///   - Pair: `"A"` (self-pair) or `"A-B"`
-///
-///   Endpoints are separated by `::` instead when a label contains `-`.
-///   Names outside this grammar go through [`molrs_ff_def_type_at`].
-/// * `param_keys` / `param_values` / `n_params` -- Numeric type parameters;
-///   the arrays may be `NULL` if `n_params == 0`.
-///
-/// # Returns
-///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if a required pointer is null.
-/// * `MolrsStatus::Utf8Error` if any string is not valid UTF-8.
-/// * `MolrsStatus::InvalidArgument` if the style does not exist,
-///   `type_name` has the wrong number of endpoints for the category, or the
-///   style already defines `type_name` with other endpoints or params (an
-///   identical re-definition is `Ok` and changes nothing).
-/// * `MolrsStatus::InvalidForceFieldHandle` if `ff` is stale.
-///
-/// # Safety
-///
-/// * `ff` must be a live ForceField handle.
-/// * All string arguments must be valid, null-terminated C strings.
-/// * `param_keys` (if non-null) must point to `n_params` valid C string
-///   pointers; `param_values` (if non-null) to `n_params` doubles.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_ff_def_type(
-    ff: MolrsForceFieldHandle,
-    style_category: *const c_char,
-    style_name: *const c_char,
-    type_name: *const c_char,
-    param_keys: *const *const c_char,
-    param_values: *const f64,
-    n_params: usize,
-) -> MolrsStatus {
-    ffi_try!({
-        let category = or_return!(unsafe { arg_str(style_category, "style_category") });
-        let style_name = or_return!(unsafe { arg_str(style_name, "style_name") });
-        let type_name = or_return!(unsafe { arg_str(type_name, "type_name") });
-        let params = or_return!(unsafe { parse_params(param_keys, param_values, n_params) });
-        let mut store = lock_store();
-        let ff = get_ff_mut!(store, ff);
-        let Some(style) = ff.get_style_mut(category, style_name) else {
-            return invalid_argument(DefError::UnknownStyle {
-                category: category.to_owned(),
-                name: style_name.to_owned(),
-            });
-        };
-        match style.def_type(type_name, Params::from_pairs(&params)) {
-            Ok(_) => MolrsStatus::Ok,
-            Err(e) => invalid_argument(e),
-        }
-    })
-}
-
-/// Define a type on an existing style with its endpoints given explicitly.
-///
-/// For type names outside the endpoint grammar of [`molrs_ff_def_type`]
-/// (MMFF's `0_1_5`, custom labels). The name and endpoints are stored
-/// verbatim.
-///
-/// # C signature
-///
-/// ```c
-/// MolrsStatus molrs_ff_def_type_at(MolrsForceFieldHandle ff,
-///                                   const char* style_category,
-///                                   const char* style_name,
-///                                   const char* type_name,
-///                                   const char** endpoints,
-///                                   size_t n_endpoints,
-///                                   const char** param_keys,
-///                                   const double* param_values,
-///                                   size_t n_params);
-/// ```
-///
-/// # Arguments
-///
-/// * `ff` -- ForceField handle.
 /// * `style_category` / `style_name` -- An existing style.
 /// * `type_name` -- The type name, stored as given.
-/// * `endpoints` -- Array of `n_endpoints` atom-type labels. The count must
-///   match the category: atom 0, pair 1 or 2, bond 2, angle 3, dihedral and
-///   improper 4. May be `NULL` if `n_endpoints == 0`.
+/// * `endpoints` -- Array of `n_endpoints` atom-type names. The count must
+///   match the category: atom 0, pair 1 (a self pair) or 2, bond 2, angle 3,
+///   dihedral and improper 4. May be `NULL` if `n_endpoints == 0`.
 /// * `param_keys` / `param_values` / `n_params` -- Numeric type parameters;
 ///   the arrays may be `NULL` if `n_params == 0`.
 ///
@@ -459,7 +379,7 @@ pub unsafe extern "C" fn molrs_ff_def_type(
 ///   pointers; `param_values` (if non-null) to `n_params` doubles.
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn molrs_ff_def_type_at(
+pub unsafe extern "C" fn molrs_ff_def_type(
     ff: MolrsForceFieldHandle,
     style_category: *const c_char,
     style_name: *const c_char,
@@ -484,7 +404,7 @@ pub unsafe extern "C" fn molrs_ff_def_type_at(
                 name: style_name.to_owned(),
             });
         };
-        match style.def_type_at(type_name, &endpoints, Params::from_pairs(&params)) {
+        match style.def_type(type_name, &endpoints, Params::from_pairs(&params)) {
             Ok(_) => MolrsStatus::Ok,
             Err(e) => invalid_argument(e),
         }
@@ -845,7 +765,7 @@ fn type_rows(defs: &StyleDefs) -> Vec<Value> {
 /// Rebuild a force field from the [`ff_to_json_string`] document.
 ///
 /// Every style is defined through `def_style` with its full params, every type
-/// through `def_type_at` with its endpoints. Nothing is skipped: a missing or
+/// through `def_type` with its endpoints. Nothing is skipped: a missing or
 /// unknown key at any level, a non-string `units`, a non-number in `params`, a
 /// non-string in `str_params` or `endpoints`, or a `special_bonds` array whose
 /// length is not 3 is an error. `units` and `special_bonds` are declared
@@ -909,7 +829,7 @@ fn ff_from_json_string(json: &str) -> Result<ForceField, String> {
                 })
                 .collect::<Result<Vec<&str>, String>>()?;
             style
-                .def_type_at(type_obj.str("name")?, &endpoints, type_obj.params()?)
+                .def_type(type_obj.str("name")?, &endpoints, type_obj.params()?)
                 .map_err(|e| format!("{at}: {e}"))?;
         }
     }
@@ -1044,14 +964,14 @@ mod tests {
         assert_eq!(style.params().get("scale"), Some(0.5));
     }
 
-    /// MMFF's `0_1_5` is not in the endpoint grammar, so it comes back only if
-    /// the document carries its endpoints.
+    /// A type's endpoints are data, not its name: MMFF's `0_1_5` comes back
+    /// on `1`, `5` only because the document carries them.
     #[test]
-    fn json_round_trip_keeps_def_type_at_endpoints() {
+    fn json_round_trip_keeps_the_given_endpoints() {
         let mut ff = ForceField::new("rt");
         ff.def_style("bond", "mmff", Params::new())
             .unwrap()
-            .def_type_at("0_1_5", &["1", "5"], Params::from_pairs(&[("kb", 4.258)]))
+            .def_type("0_1_5", &["1", "5"], Params::from_pairs(&[("kb", 4.258)]))
             .unwrap();
 
         let back = round_trip(&ff);
@@ -1164,6 +1084,9 @@ mod tests {
         let bond = CString::new("bond").unwrap();
         let harmonic = CString::new("harmonic").unwrap();
         let ct_oh = CString::new("CT-OH").unwrap();
+        let ct = CString::new("CT").unwrap();
+        let oh = CString::new("OH").unwrap();
+        let ends = [ct.as_ptr(), oh.as_ptr()];
         let k = CString::new("k").unwrap();
         let r0 = CString::new("r0").unwrap();
         let keys = [k.as_ptr(), r0.as_ptr()];
@@ -1192,6 +1115,8 @@ mod tests {
                     bond.as_ptr(),
                     harmonic.as_ptr(),
                     ct_oh.as_ptr(),
+                    ends.as_ptr(),
+                    2,
                     keys.as_ptr(),
                     first.as_ptr(),
                     2
@@ -1203,6 +1128,8 @@ mod tests {
                 bond.as_ptr(),
                 harmonic.as_ptr(),
                 ct_oh.as_ptr(),
+                ends.as_ptr(),
+                2,
                 keys.as_ptr(),
                 second.as_ptr(),
                 2,

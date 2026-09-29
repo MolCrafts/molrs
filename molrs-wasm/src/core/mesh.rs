@@ -21,9 +21,9 @@ use wasm_bindgen::prelude::*;
 /// ```js
 /// const mesh = readSTL(new Uint8Array(await file.arrayBuffer()));
 /// console.log(mesh.nFaces(), mesh.isWatertight());
-/// const vertices = mesh.verticesF32();   // 3 per vertex
-/// const faces    = mesh.faces();         // 3 indices per face
-/// const normals  = mesh.faceNormalsF32(); // 3 per face, from the winding
+/// const vertices = mesh.vertices();    // Float32Array, 3 per vertex
+/// const faces    = mesh.faces();       // Uint32Array, 3 indices per face
+/// const normals  = mesh.faceNormals(); // Float32Array, 3 per face, from the winding
 /// mesh.free();
 /// ```
 #[wasm_bindgen]
@@ -52,8 +52,7 @@ impl Mesh {
     }
 
     /// Vertex coordinates, three per vertex: `[x0, y0, z0, x1, …]`.
-    #[wasm_bindgen(js_name = verticesF32)]
-    pub fn vertices_f32(&self) -> Vec<f32> {
+    pub fn vertices(&self) -> Vec<f32> {
         self.inner
             .vertices()
             .iter()
@@ -71,8 +70,8 @@ impl Mesh {
     /// Not the normal the file recorded: STL writers routinely leave that at
     /// `0 0 0`, so a consumer that lit a surface with it would get a black
     /// mesh.
-    #[wasm_bindgen(js_name = faceNormalsF32)]
-    pub fn face_normals_f32(&self) -> Vec<f32> {
+    #[wasm_bindgen(js_name = faceNormals)]
+    pub fn face_normals(&self) -> Vec<f32> {
         (0..self.inner.n_faces())
             .flat_map(|i| {
                 let n = self.inner.face_normal(i);

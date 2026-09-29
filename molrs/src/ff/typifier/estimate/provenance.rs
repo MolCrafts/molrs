@@ -70,6 +70,13 @@ impl EstimateMethod {
             Self::GenericWildcard => "generic-wildcard",
         }
     }
+
+    /// The method an `estimate_method` string names, or `None`.
+    pub fn parse(text: &str) -> Option<Self> {
+        [Self::Analogy, Self::Empirical, Self::GenericWildcard]
+            .into_iter()
+            .find(|method| method.as_str() == text)
+    }
 }
 
 /// How an estimated term was produced, and what it cost.
@@ -117,12 +124,36 @@ impl Provenance {
         PenaltyTier::of(self.penalty)
     }
 
+    /// The four provenance keys, in the order the module doc lists them.
+    /// Metadata, not parameters: a writer whose format has no column for
+    /// them (a frcmod row) skips exactly these.
+    pub const KEYS: [&'static str; 4] = [
+        "estimated",
+        "estimate_penalty",
+        "estimate_method",
+        "estimate_analog",
+    ];
+
     /// Write the four provenance keys onto an estimated term's params.
     pub fn write_onto(&self, params: &mut Params) {
-        params.set("estimated", 1.0);
-        params.set("estimate_penalty", self.penalty);
-        params.set_str("estimate_method", self.method.as_str());
-        params.set_str("estimate_analog", &self.analog);
+        params.set(Self::KEYS[0], 1.0);
+        params.set(Self::KEYS[1], self.penalty);
+        params.set_str(Self::KEYS[2], self.method.as_str());
+        params.set_str(Self::KEYS[3], &self.analog);
+    }
+
+    /// The provenance `params` carry: the inverse of
+    /// [`write_onto`](Self::write_onto). `None` for a term that was matched,
+    /// not estimated (no `estimated` key), or whose `estimate_method` is not
+    /// one this module writes.
+    pub fn read_from(params: &Params) -> Option<Self> {
+        params.get(Self::KEYS[0])?;
+        let method = EstimateMethod::parse(params.get_str(Self::KEYS[2])?)?;
+        Some(Self {
+            penalty: params.get(Self::KEYS[1]).unwrap_or(0.0),
+            method,
+            analog: params.get_str(Self::KEYS[3]).unwrap_or_default().to_owned(),
+        })
     }
 }
 
@@ -228,6 +259,20 @@ mod tests {
         let params = covered.into_params();
         assert_eq!(params.get("estimated"), Some(1.0));
         assert_eq!(params.get("estimate_penalty"), Some(0.0));
+    }
+
+    #[test]
+    fn read_from_inverts_write_onto() {
+        let written = Provenance::analogy(2.5, "c3-oh");
+        let mut params = Params::from_pairs(&[("k", 300.9)]);
+        written.write_onto(&mut params);
+        assert_eq!(Provenance::read_from(&params), Some(written));
+    }
+
+    #[test]
+    fn a_matched_term_reads_as_no_provenance() {
+        let params = Params::from_pairs(&[("k", 300.9)]);
+        assert_eq!(Provenance::read_from(&params), None);
     }
 
     #[test]

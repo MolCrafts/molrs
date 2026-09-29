@@ -8,8 +8,11 @@
 //! All length quantities are in the same units as the stored coordinates
 //! (typically angstroms).
 
+use crate::core::store::frame::PyFrame;
 use crate::helpers::{NpF, box_error_to_pyerr, parse_origin, parse_pbc};
 use molrs::spatial::simbox::SimBox;
+use molrs::store::keys;
+use molrs::store::schema::block_names;
 use molrs::types::{F, I};
 use ndarray::{Array2, Axis, array};
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3, PyReadonlyArray1, PyReadonlyArray2};
@@ -33,6 +36,33 @@ fn delta_points_nx3(arg: &Bound<'_, PyAny>) -> PyResult<(Array2<F>, bool)> {
         return Ok((view.to_owned().insert_axis(Axis(0)), true));
     }
     Err(PyValueError::new_err("expected shape (N, 3) or (3,)"))
+}
+
+/// Points for [`PyBox::from_bounds`]: an `(N, 3)` array, or a `Frame`'s atom
+/// coordinates.
+fn bounds_points(arg: &Bound<'_, PyAny>) -> PyResult<Array2<F>> {
+    if let Ok(frame) = arg.extract::<PyRef<'_, PyFrame>>() {
+        return frame.with_frame(|f| {
+            if let Some(atoms) = f.get(block_names::ATOMS)
+                && let Some(key) = keys::COORDS
+                    .into_iter()
+                    .find(|k| atoms.validity(k).is_some())
+            {
+                return Err(PyValueError::new_err(format!(
+                    "atoms column '{key}' has missing rows"
+                )));
+            }
+            f.coords().map_err(|e| PyValueError::new_err(e.to_string()))
+        })?;
+    }
+    let arr = arg
+        .extract::<PyReadonlyArray2<'_, NpF>>()
+        .map_err(|_| PyValueError::new_err("points must be an (N,3) float array or a Frame"))?;
+    let view = arr.as_array();
+    if view.ncols() != 3 {
+        return Err(PyValueError::new_err("points must have shape (N,3)"));
+    }
+    Ok(view.to_owned())
 }
 
 /// Simulation box with periodic boundary conditions, exposed to Python as
@@ -205,25 +235,64 @@ impl PyBox {
     }
 
     /// Create a tight orthorhombic box around a point cloud.
+    ///
+    /// Parameters
+    /// ----------
+    /// points : numpy.ndarray, shape (N, 3), or Frame
+    ///     The points to enclose. A ``Frame`` contributes the ``x``/``y``/``z``
+    ///     columns of its ``atoms`` block.
+    /// padding : float or numpy.ndarray, shape (3,)
+    ///     Margin added on each side, one value for all axes or one per axis.
+    ///     Must be non-negative.
+    /// pbc : numpy.ndarray, shape (3,), dtype bool, optional
+    ///     Periodic boundary flags. Defaults to ``[True, True, True]``.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If there are no points, a coordinate column is missing or has
+    ///     holes, ``padding`` is negative or not of length 3, or the box is
+    ///     degenerate.
     #[staticmethod]
     #[pyo3(signature = (points, padding, pbc=None))]
     fn from_bounds(
-        points: PyReadonlyArray2<'_, NpF>,
-        padding: PyReadonlyArray1<'_, NpF>,
+        points: &Bound<'_, PyAny>,
+        padding: &Bound<'_, PyAny>,
         pbc: Option<PyReadonlyArray1<'_, bool>>,
     ) -> PyResult<Self> {
-        let points = points.as_array();
-        if points.ncols() != 3 {
-            return Err(PyValueError::new_err("points must have shape (N,3)"));
-        }
-        let padding = padding.as_slice()?;
-        if padding.len() != 3 {
-            return Err(PyValueError::new_err("padding must have length 3"));
-        }
+        let points = bounds_points(points)?;
+        let padding = if let Ok(scalar) = padding.extract::<F>() {
+            [scalar; 3]
+        } else {
+            // A sequence or a 1-D array alike; numpy arrays iterate as floats.
+            let v = padding.extract::<Vec<F>>().map_err(|_| {
+                PyValueError::new_err("padding must be a float or a sequence of length 3")
+            })?;
+            if v.len() != 3 {
+                return Err(PyValueError::new_err("padding must have length 3"));
+            }
+            [v[0], v[1], v[2]]
+        };
         let pbc = parse_pbc(pbc)?;
-        let inner = SimBox::from_bounds(points, [padding[0], padding[1], padding[2]], pbc)
-            .map_err(box_error_to_pyerr)?;
+        let inner = SimBox::from_bounds(points.view(), padding, pbc).map_err(box_error_to_pyerr)?;
         Ok(Self { inner })
+    }
+
+    /// Whether ``other`` describes the same cell within an absolute tolerance.
+    ///
+    /// True iff every cell-matrix entry and origin component differ by at most
+    /// ``tol`` (length units), the PBC flags are identical and both boxes agree
+    /// on ``cell_defined``. ``tol=0.0`` is exact equality.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If ``tol`` is negative or NaN.
+    fn approx_eq(&self, other: PyRef<'_, PyBox>, tol: F) -> PyResult<bool> {
+        if tol.is_nan() || tol < 0.0 {
+            return Err(PyValueError::new_err("tol must be non-negative"));
+        }
+        Ok(self.inner.approx_eq(&other.inner, tol))
     }
 
     /// Volume of the simulation box.
@@ -348,13 +417,6 @@ impl PyBox {
         Ok(SimBox::restricted_matrix(matrix.as_array())
             .map_err(box_error_to_pyerr)?
             .into_pyarray(py))
-    }
-
-    /// Box matrix with lattice vectors as columns, shape ``(3, 3)``.
-    /// Alias for ``h`` to mirror the molpy API.
-    #[getter]
-    fn matrix<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<NpF>> {
-        self.h(py)
     }
 
     /// LAMMPS-convention tilt factors ``(xy, xz, yz)``. Zero on

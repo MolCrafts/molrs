@@ -36,10 +36,11 @@ default = ["zarr"]
 zarr = ["molrs/filesystem"]
 
 [dependencies]
-# The merged crate, imported under the extern name `molrs`, on its defaults.
-# The explicit io/compute/ff list is additive; it records what this bridge
-# relies on regardless of what `default` happens to carry.
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.15.0", features = ["io", "compute", "ff"] }
+# The merged crate, imported under the extern name `molrs`. molrs defaults to
+# core only, so the set is spelled here: `full` + `rayon` (+ `filesystem` via
+# the `zarr` feature) — the same set molrs-capi links (build 2 in
+# .cargo/config.toml). Never `stream`.
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.15.0", default-features = false, features = ["full", "rayon"] }
 molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.15.0" }
 cxx = "1"
 ndarray = "0.17"

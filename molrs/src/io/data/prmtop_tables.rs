@@ -156,8 +156,12 @@ pub fn decode_angle_params(
 /// Dihedral row: `(type_id, i, j, k, l, K, phase_rad, n)` — atoms **1-based**.
 pub type DihedralParamRow = (i64, i64, i64, i64, i64, f64, f64, i64);
 
-/// Decode dihedral pointer quints. Phase stays radians; periodicity is rounded
-/// to the nearest integer (historical molpy).
+/// Decode dihedral pointer quints, one row per prmtop row — per cosine term,
+/// each with its own `K`/phase/`n` (the structure reader merges the terms of
+/// one quartet into one torsion; this parameter table does not). Phase stays
+/// radians; `n` is `|PN|` rounded half up (a negative PN only flags that more
+/// terms follow). A proper is oriented `j ≤ k`; an improper keeps its prmtop
+/// order, centre third.
 pub fn decode_dihedral_params(
     pointers: &[i64],
     force_k: &[f64],
@@ -185,7 +189,9 @@ pub fn decode_dihedral_params(
         let mut j = b / 3 + 1;
         let mut k = chunk[2].unsigned_abs() as i64 / 3 + 1;
         let mut l = chunk[3].unsigned_abs() as i64 / 3 + 1;
-        if j > k {
+        // A proper reads the same backwards; an improper (negative 4th
+        // pointer) keeps AMBER's order, centre third.
+        if chunk[3] >= 0 && j > k {
             std::mem::swap(&mut i, &mut l);
             std::mem::swap(&mut j, &mut k);
         }
@@ -199,8 +205,9 @@ pub fn decode_dihedral_params(
         let pn = *periodicity
             .get(tid)
             .ok_or_else(|| format!("dihedral type {type_id} out of range"))?;
-        // Match historical molpy: int(0.5 + pn) — truncate toward zero.
-        let n = (0.5 + pn) as i64;
+        // A negative PN only flags "more terms follow"; the term's n is |PN|,
+        // rounded half up.
+        let n = (0.5 + pn.abs()) as i64;
         out.push((type_id, i, j, k, l, fk, ph, n));
     }
     Ok(out)
@@ -259,7 +266,9 @@ pub fn decode_nonbond_params(
     Ok(out)
 }
 
-fn parse_tokens<T: std::str::FromStr>(lines: &[String]) -> Result<Vec<T>, String>
+/// Whitespace-separated tokens of `lines`, each parsed as `T`; `Err` names the
+/// first token that does not parse.
+pub(crate) fn parse_tokens<T: std::str::FromStr>(lines: &[String]) -> Result<Vec<T>, String>
 where
     T::Err: std::fmt::Display,
 {
@@ -301,5 +310,19 @@ mod tests {
         // l=-18 → abs//3+1 = 7
         let rows = decode_dihedral_params(&[0, 6, 12, -18, 1], &[0.5], &[0.0], &[2.0]).unwrap();
         assert_eq!(rows[0].4, 7);
+    }
+
+    #[test]
+    fn an_improper_param_row_keeps_its_prmtop_atom_order() {
+        // `0 9 3 -6`: j=4 > k=2 (1-based); the centre (k) stays third.
+        let rows = decode_dihedral_params(&[0, 9, 3, -6, 1], &[1.1], &[0.0], &[2.0]).unwrap();
+        assert_eq!((rows[0].1, rows[0].2, rows[0].3, rows[0].4), (1, 4, 2, 3));
+    }
+
+    #[test]
+    fn a_multi_term_continuation_row_has_a_positive_periodicity() {
+        // A negative PN only flags "more terms follow"; the term's n is |PN|.
+        let rows = decode_dihedral_params(&[0, 3, 6, 9, 1], &[1.1], &[0.0], &[-2.0]).unwrap();
+        assert_eq!(rows[0].7, 2);
     }
 }

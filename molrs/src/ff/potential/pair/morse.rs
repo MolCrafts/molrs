@@ -3,6 +3,7 @@
 //! Morse non-bonded form (note the `-1` offset vs the Morse bond, so the well
 //! minimum is `-D0` at `r = r0`). Parameters per pair type: `D0`, `alpha`, `r0`.
 
+use molrs::store::schema::block_names::PAIRS;
 use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
@@ -313,7 +314,7 @@ pub fn pair_morse_ctor(
     let scale_14 = style_params.get("lj14scale").unwrap_or(1.0) as F;
 
     let block = frame
-        .get("pairs")
+        .get(PAIRS)
         .ok_or_else(|| "PairMorse: frame missing \"pairs\" block".to_string())?;
     let i_col = block
         .get_uint("atomi")

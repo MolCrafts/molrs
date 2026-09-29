@@ -386,7 +386,7 @@ impl VoronoiIntegration {
 //
 // ponytail: specialized orthorhombic MIC over a precomputed box-length array,
 // called once per voxel (millions of times) in the hot Pass-B loop below;
-// `compute::util::mic_disp` is the general (box-kind-resolving) path used
+// `compute::util::MicHelper` is the general (box-kind-resolving) path used
 // elsewhere. Kept local on purpose to avoid per-iteration box dispatch.
 
 /// Minimum-image displacement for an orthorhombic box.

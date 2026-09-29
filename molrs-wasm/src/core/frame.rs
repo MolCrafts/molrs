@@ -17,26 +17,25 @@
 //! ```js
 //! const frame = new Frame();
 //! const atoms = frame.createBlock("atoms");
-//! atoms.setColStr("symbol", ["C", "C", "O"]);
-//! atoms.setColF("x", xCoords);
-//! atoms.setColF("y", yCoords);
-//! atoms.setColF("z", zCoords);
+//! atoms.set("element", ["C", "C", "O"]);
+//! atoms.set("x", xCoords); // Float64Array
+//! atoms.set("y", yCoords);
+//! atoms.set("z", zCoords);
 //!
 //! const bonds = frame.createBlock("bonds");
-//! bonds.setColU32("atomi", new BigUint64Array([0n, 1n]));
-//! bonds.setColU32("atomj", new BigUint64Array([1n, 2n]));
-//! bonds.setColU32("bond_type", bondTypes);   // 4 = aromatic
-//! bonds.setColU32("bond_number", bondNumbers); // localized 1/2/3
+//! bonds.set("atomi", new BigUint64Array([0n, 1n]));
+//! bonds.set("atomj", new BigUint64Array([1n, 2n]));
+//! bonds.set("bond_type", bondTypes);     // BigUint64Array; 4 = aromatic
+//! bonds.set("bond_number", bondNumbers); // BigUint64Array; localized 1/2/3
+//!
+//! frame.get("atoms").get("x"); // Float64Array, like frame["atoms"]["x"]
 //! ```
 
-use js_sys::{Array as JsArray, BigUint64Array, Float32Array, Int32Array};
 use wasm_bindgen::prelude::*;
 
 use molrs::store::block::Block as RsBlock;
 use molrs::store::meta::MetaValue;
 use molrs_ffi::{BlockRef, FrameRef};
-
-use super::types::JsFloatArray;
 
 use super::block::Block;
 use super::js_err;
@@ -52,16 +51,16 @@ use super::js_err;
 /// - The `"atoms"` block should contain per-atom properties: `symbol`
 ///   (string), `x`/`y`/`z` (F, coordinates in angstrom), and optionally
 ///   `mass` (F, atomic mass units) and `charge` (F, elementary charges).
-/// - The `"bonds"` block should contain bond topology: `atomi`/`atomj` (u32,
-///   zero-based atom indices), `bond_type` (u32: 1 single, 2 double, 3 triple,
-///   4 aromatic) and `bond_number` (u32: the localized Lewis/Kekulé integer).
+/// - The `"bonds"` block should contain bond topology: `atomi`/`atomj` (u64,
+///   zero-based atom indices), `bond_type` (u64: 1 single, 2 double, 3 triple,
+///   4 aromatic) and `bond_number` (u64: the localized Lewis/Kekulé integer).
 ///
 /// # Example (JavaScript)
 ///
 /// ```js
 /// const frame = new Frame();
 /// const atoms = frame.createBlock("atoms");
-/// atoms.setColF("x", xCoords);
+/// atoms.set("x", xCoords);
 /// ```
 #[wasm_bindgen]
 pub struct Frame {
@@ -108,7 +107,7 @@ impl Frame {
     ///
     /// ```js
     /// const atoms = frame.createBlock("atoms");
-    /// atoms.setColF("x", xCoords);
+    /// atoms.set("x", xCoords);
     /// ```
     #[wasm_bindgen(js_name = createBlock)]
     pub fn create_block(&self, key: &str) -> Result<Block, JsValue> {
@@ -129,149 +128,63 @@ impl Frame {
         })
     }
 
-    /// Retrieve an existing [`Block`] by name.
+    /// The [`Block`] named `key`: a live handle, so writes through it land
+    /// in this frame. `frame.get("atoms").get("x")` mirrors Python's
+    /// `frame["atoms"]["x"]`.
     ///
-    /// # Arguments
+    /// # Errors
     ///
-    /// * `key` - Block name to look up
-    ///
-    /// # Returns
-    ///
-    /// The [`Block`] if found, or `undefined` if no block with that key
-    /// exists in this frame.
+    /// Throws if no block is named `key` (test with [`has`](Self::has)), or
+    /// if the frame has been dropped.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const atoms = frame.getBlock("atoms");
-    /// if (atoms) {
-    ///   const x = atoms.copyColF("x");
-    /// }
+    /// const x = frame.get("atoms").get("x");
+    /// const nBonds = frame.has("bonds") ? frame.get("bonds").nrows : 0;
     /// ```
-    #[wasm_bindgen(js_name = getBlock)]
-    pub fn get_block(&self, key: &str) -> Option<Block> {
+    #[wasm_bindgen(js_name = get)]
+    pub fn get(&self, key: &str) -> Result<Block, JsValue> {
+        if !self.has(key) {
+            return Err(JsValue::from_str(&format!("block '{key}' not found")));
+        }
         let handle = self
             .inner
             .store
             .borrow()
             .get_block(self.inner.id, key)
-            .ok()?;
-        Some(Block {
+            .map_err(js_err)?;
+        Ok(Block {
             inner: BlockRef::new(self.inner.store.clone(), handle),
         })
     }
 
-    /// True when `block[key]` exists and is `f32`.
-    #[wasm_bindgen(js_name = hasF32)]
-    pub fn has_f32(&self, block: &str, key: &str) -> bool {
-        self.get_block(block).is_some_and(|b| b.has_f32(key))
+    /// Whether a block named `key` exists.
+    #[wasm_bindgen(js_name = has)]
+    pub fn has(&self, key: &str) -> bool {
+        self.inner
+            .store
+            .borrow()
+            .with_frame(self.inner.id, |f| f.contains_key(key))
+            .unwrap_or(false)
     }
 
-    /// True when `block[key]` exists and is `f64`.
-    #[wasm_bindgen(js_name = hasF64)]
-    pub fn has_f64(&self, block: &str, key: &str) -> bool {
-        self.get_block(block).is_some_and(|b| b.has_f64(key))
-    }
-
-    /// True when `block[key]` exists and is `i32`.
-    #[wasm_bindgen(js_name = hasI32)]
-    pub fn has_i32(&self, block: &str, key: &str) -> bool {
-        self.get_block(block).is_some_and(|b| b.has_i32(key))
-    }
-
-    /// True when `block[key]` exists and is the domain uint (`u64`).
-    #[wasm_bindgen(js_name = hasU32)]
-    pub fn has_u32(&self, block: &str, key: &str) -> bool {
-        self.get_block(block).is_some_and(|b| b.has_u32(key))
-    }
-
-    /// True when `block[key]` exists and is a string column.
-    #[wasm_bindgen(js_name = hasStr)]
-    pub fn has_str(&self, block: &str, key: &str) -> bool {
-        self.get_block(block).is_some_and(|b| b.has_str(key))
-    }
-
-    /// Owned `f32` column from `block`. Missing with no `default` throws.
-    #[wasm_bindgen(js_name = getF32)]
-    pub fn get_f32(
-        &self,
-        block: &str,
-        key: &str,
-        default: Option<Float32Array>,
-    ) -> Result<Float32Array, JsValue> {
-        frame_block(self, block)?.get_f32(key, default)
-    }
-
-    /// Owned `f64` column from `block`. Missing with no `default` throws.
-    #[wasm_bindgen(js_name = getF64)]
-    pub fn get_f64(
-        &self,
-        block: &str,
-        key: &str,
-        default: Option<JsFloatArray>,
-    ) -> Result<JsFloatArray, JsValue> {
-        frame_block(self, block)?.get_f64(key, default)
-    }
-
-    /// Owned i32 column from `block`. Missing with no `default` throws.
-    #[wasm_bindgen(js_name = getI32)]
-    pub fn get_i32(
-        &self,
-        block: &str,
-        key: &str,
-        default: Option<Int32Array>,
-    ) -> Result<Int32Array, JsValue> {
-        frame_block(self, block)?.get_i32(key, default)
-    }
-
-    /// Owned domain-uint (`u64`) column from `block`. Missing with no `default` throws.
-    #[wasm_bindgen(js_name = getU32)]
-    pub fn get_u32(
-        &self,
-        block: &str,
-        key: &str,
-        default: Option<BigUint64Array>,
-    ) -> Result<BigUint64Array, JsValue> {
-        frame_block(self, block)?.get_u32(key, default)
-    }
-
-    /// Owned string column from `block`. Missing with no `default` throws.
-    #[wasm_bindgen(js_name = getStr)]
-    pub fn get_str(
-        &self,
-        block: &str,
-        key: &str,
-        default: Option<JsArray>,
-    ) -> Result<JsArray, JsValue> {
-        frame_block(self, block)?.get_str(key, default)
-    }
-
-    /// Insert a block by deep-copying its data into this frame's store.
+    /// Store a deep copy of `block` under `key`, replacing any block there.
     ///
-    /// This is useful for transferring a block from one frame to another.
-    /// The source block's data is cloned; subsequent modifications to the
-    /// source will not affect this frame.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - Name under which to store the block
-    /// * `block` - The source [`Block`] whose data will be copied
+    /// The source is copied: later writes to `block` do not reach this frame,
+    /// and `block` stays usable.
     ///
     /// # Errors
     ///
-    /// Throws a `JsValue` string if either the source block or the
-    /// destination frame handle is invalid.
+    /// Throws if either the source block or this frame has been dropped.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const otherFrame = new Frame();
-    /// const atoms = otherFrame.createBlock("atoms");
-    /// // ... populate atoms ...
-    /// frame.insertBlock("atoms", atoms);
+    /// frame.set("atoms", other.get("atoms"));
     /// ```
-    #[wasm_bindgen(js_name = insertBlock)]
-    pub fn insert_block(&self, key: &str, block: Block) -> Result<(), JsValue> {
+    #[wasm_bindgen(js_name = set)]
+    pub fn set(&self, key: &str, block: &Block) -> Result<(), JsValue> {
         let rs_block = block.inner.clone_block().map_err(js_err)?;
         self.inner
             .store
@@ -280,24 +193,19 @@ impl Frame {
             .map_err(js_err)
     }
 
-    /// Remove a block by name.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - Block name to remove
+    /// Remove the block named `key`.
     ///
     /// # Errors
     ///
-    /// Throws a `JsValue` string if the frame has been dropped or the
-    /// key does not exist.
+    /// Throws if the frame has been dropped or `key` does not exist.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// frame.removeBlock("bonds");
+    /// frame.remove("bonds");
     /// ```
-    #[wasm_bindgen(js_name = removeBlock)]
-    pub fn remove_block(&self, key: &str) -> Result<(), JsValue> {
+    #[wasm_bindgen(js_name = remove)]
+    pub fn remove(&self, key: &str) -> Result<(), JsValue> {
         self.inner
             .store
             .borrow_mut()
@@ -353,45 +261,6 @@ impl Frame {
             .borrow_mut()
             .with_frame_mut(self.inner.id, |f| f.rename_block(old_key, new_key))
             .map_err(js_err)
-    }
-
-    /// Rename a column within a specific block.
-    ///
-    /// # Arguments
-    ///
-    /// * `block_key` - Name of the block containing the column
-    /// * `old_col` - Current column name
-    /// * `new_col` - New column name
-    ///
-    /// # Returns
-    ///
-    /// `true` if the column was found and renamed, `false` if
-    /// `old_col` did not exist in the block.
-    ///
-    /// # Errors
-    ///
-    /// Throws a `JsValue` string if the frame or block does not exist.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// frame.renameColumn("atoms", "element", "symbol");
-    /// ```
-    #[wasm_bindgen(js_name = renameColumn)]
-    pub fn rename_column(
-        &self,
-        block_key: &str,
-        old_col: &str,
-        new_col: &str,
-    ) -> Result<(), JsValue> {
-        self.inner
-            .store
-            .borrow_mut()
-            .with_frame_mut(self.inner.id, |f| {
-                f.rename_column(block_key, old_col, new_col)
-            })
-            .map_err(js_err)?
-            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Read a per-frame metadata value as a numeric scalar.
@@ -465,7 +334,6 @@ impl Frame {
                     MetaValue::I64(value) => Some(*value as f64),
                     MetaValue::U32(value) => Some(f64::from(*value)),
                     MetaValue::U64(value) => Some(*value as f64),
-                    MetaValue::F32(value) => Some(f64::from(*value)),
                     MetaValue::F64(value) => Some(*value),
                     MetaValue::String(value) => value.parse::<f64>().ok(),
                     _ => None,
@@ -496,20 +364,16 @@ impl Frame {
             .unwrap_or_default()
     }
 
-    /// Return the names of all blocks attached to this frame.
-    ///
-    /// Iteration order matches the underlying `HashMap` and is therefore
-    /// not stable across runs — callers that need a deterministic order
-    /// must sort on the JS side. Returns an empty array if the frame
-    /// has been dropped.
+    /// Names of the blocks in this frame, in insertion order (the order the
+    /// file or the caller added them). Empty if the frame has been dropped.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const names = frame.blockNames(); // e.g. ["atoms", "bonds"]
+    /// const names = frame.keys(); // e.g. ["atoms", "bonds"]
     /// ```
-    #[wasm_bindgen(js_name = blockNames)]
-    pub fn block_names(&self) -> Vec<String> {
+    #[wasm_bindgen(js_name = keys)]
+    pub fn keys(&self) -> Vec<String> {
         self.inner
             .store
             .borrow()
@@ -667,12 +531,6 @@ impl Frame {
     }
 }
 
-fn frame_block(frame: &Frame, block: &str) -> Result<Block, JsValue> {
-    frame
-        .get_block(block)
-        .ok_or_else(|| JsValue::from_str(&format!("block '{block}' not found")))
-}
-
 impl Default for Frame {
     fn default() -> Self {
         Self::new()
@@ -749,6 +607,49 @@ mod tests {
     fn get_meta_scalar_none_for_missing_key() {
         let frame = frame_with_meta();
         assert!(frame.get_meta_scalar("missing").is_none());
+    }
+
+    #[wasm_bindgen_test]
+    fn get_returns_a_live_block_and_throws_when_missing() {
+        use wasm_bindgen::JsCast;
+        let frame = Frame::new();
+        assert!(!frame.has("atoms"));
+        let e = frame.get("atoms").err().expect("missing block throws");
+        assert!(e.as_string().unwrap().contains("'atoms' not found"));
+
+        frame.create_block("atoms").unwrap();
+        assert!(frame.has("atoms"));
+        let mut atoms = frame.get("atoms").unwrap();
+        let x = js_sys::Float64Array::from(&[1.0, 2.0][..]);
+        atoms
+            .set("x", JsValue::from(x).unchecked_into(), None)
+            .unwrap();
+        // A second handle sees the write: `get` is not a copy.
+        assert_eq!(frame.get("atoms").unwrap().nrows().unwrap(), 2);
+    }
+
+    #[wasm_bindgen_test]
+    fn set_copies_and_leaves_the_source_usable() {
+        use wasm_bindgen::JsCast;
+        let src = Frame::new();
+        let mut atoms = src.create_block("atoms").unwrap();
+        let x = js_sys::Float64Array::from(&[1.0][..]);
+        atoms
+            .set("x", JsValue::from(x).unchecked_into(), None)
+            .unwrap();
+
+        let dst = Frame::new();
+        dst.set("atoms", &atoms).unwrap();
+        let y = js_sys::Float64Array::from(&[2.0][..]);
+        atoms
+            .set("y", JsValue::from(y).unchecked_into(), None)
+            .unwrap();
+        assert!(!dst.get("atoms").unwrap().has("y"));
+        assert_eq!(dst.keys(), vec!["atoms".to_string()]);
+
+        dst.remove("atoms").unwrap();
+        assert!(!dst.has("atoms"));
+        assert!(dst.remove("atoms").is_err());
     }
 
     #[wasm_bindgen_test]

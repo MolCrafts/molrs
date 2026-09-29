@@ -12,40 +12,27 @@ Compose yourself (same as Rust):
 """
 
 from molrs._lib import (
-    VACF as VACF,
-    DebyeFit as DebyeFit,
-    DebyeRelaxation as DebyeRelaxation,
-    DipoleRateCross as DipoleRateCross,
-    EinsteinConductivity as EinsteinConductivity,
-    EinsteinDiffusion as EinsteinDiffusion,
-    GreenKuboConductivity as GreenKuboConductivity,
-    GreenKuboDiffusion as GreenKuboDiffusion,
-    transport_onsager_correlation,
-    transport_pair_survival_tcf,
+    VACF,
+    DebyeFit,
+    DebyeRelaxation,
+    DipoleRateCross,
+    EinsteinConductivity,
+    EinsteinDiffusion,
+    GreenKuboConductivity,
+    GreenKuboDiffusion,
+    Onsager,
+    Persist,
 )
-
-
-class Onsager:
-    """Onsager collective mean-displacement cross-correlation (static)."""
-
-    correlation = staticmethod(transport_onsager_correlation)
-
-
-class Persist:
-    """Pair-survival (persistence) time-correlation functions (static)."""
-
-    pair_survival_tcf = staticmethod(transport_pair_survival_tcf)
-
 
 __all__ = [
     "VACF",
-    "GreenKuboDiffusion",
-    "EinsteinDiffusion",
-    "EinsteinConductivity",
-    "GreenKuboConductivity",
+    "DebyeFit",
     "DebyeRelaxation",
     "DipoleRateCross",
-    "DebyeFit",
+    "EinsteinConductivity",
+    "EinsteinDiffusion",
+    "GreenKuboConductivity",
+    "GreenKuboDiffusion",
     "Onsager",
     "Persist",
 ]

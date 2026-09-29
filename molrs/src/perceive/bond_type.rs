@@ -100,6 +100,7 @@
 //! hostile LAMMPS ids, nothing at all — survive perception **byte-identical** and
 //! cannot steer its answer.
 
+use indexmap::IndexMap;
 use std::collections::HashMap;
 
 use crate::perceive::aromaticity::perceive_aromaticity;
@@ -411,7 +412,7 @@ fn has_aromatic_marking(mol: &Atomistic) -> bool {
 /// caller-supplied type 10 into 7 or 8. It reads **our own** key: the bond's
 /// `keys::TYPE` is the caller's, and a LAMMPS bond-type id that happened to be 7
 /// must not make a bond aromatic.
-fn aromatic_marking(props: &HashMap<String, PropValue>) -> bool {
+fn aromatic_marking(props: &IndexMap<String, PropValue>) -> bool {
     BondType::from_prop(props.get(keys::BOND_TYPE)).is_aromatic()
         || props
             .get(BCC_BOND_TYPE)

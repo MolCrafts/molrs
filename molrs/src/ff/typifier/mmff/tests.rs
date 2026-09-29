@@ -3,7 +3,8 @@
 #[cfg(test)]
 #[allow(clippy::module_inception)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet, HashMap};
+    use indexmap::IndexMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use crate::ff::forcefield::ForceField;
     use crate::ff::typifier::mmff::MMFF94Typifier;
@@ -140,7 +141,7 @@ mod tests {
         (mol, c)
     }
 
-    fn str_prop(props: &HashMap<String, PropValue>, key: &str) -> Option<String> {
+    fn str_prop(props: &IndexMap<String, PropValue>, key: &str) -> Option<String> {
         match props.get(key) {
             Some(PropValue::Str(s)) => Some(s.clone()),
             _ => None,
@@ -216,7 +217,7 @@ mod tests {
             .atoms()
             .map(|(_, a)| a.get_str("type").expect("every atom typed").to_owned())
             .collect();
-        let labels = |rows: Vec<HashMap<String, PropValue>>, key: &str| -> BTreeSet<String> {
+        let labels = |rows: Vec<IndexMap<String, PropValue>>, key: &str| -> BTreeSet<String> {
             rows.iter()
                 .map(|p| str_prop(p, key).unwrap_or_else(|| panic!("every row has {key}")))
                 .collect()
@@ -266,7 +267,7 @@ mod tests {
         (mol, [c_co, c_im, c_h2, n])
     }
 
-    fn f64_prop(props: &HashMap<String, PropValue>, key: &str) -> f64 {
+    fn f64_prop(props: &IndexMap<String, PropValue>, key: &str) -> f64 {
         match props.get(key) {
             Some(PropValue::F64(v)) => *v,
             other => panic!("{key} is not an f64: {other:?}"),

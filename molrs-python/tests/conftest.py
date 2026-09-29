@@ -10,10 +10,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import molrs
 import numpy as np
 import pytest
-
-import molrs
 
 
 @pytest.fixture
@@ -99,7 +98,7 @@ def water_gro(tmp_path: Path) -> Path:
 def water_dcd(tmp_path: Path) -> Path:
     path = tmp_path / "water.dcd"
     frame = _water_frame()
-    molrs.io.raw.write_dcd(str(path), [frame, frame])
+    molrs.io.raw.write_dcd_trajectory(str(path), [frame, frame])
     return path
 
 
@@ -107,7 +106,7 @@ def water_dcd(tmp_path: Path) -> Path:
 def water_trr(tmp_path: Path) -> Path:
     path = tmp_path / "water.trr"
     frame = _water_frame()
-    molrs.io.raw.write_trr(str(path), [frame, frame])
+    molrs.io.raw.write_trr_trajectory(str(path), [frame, frame])
     return path
 
 
@@ -115,7 +114,7 @@ def water_trr(tmp_path: Path) -> Path:
 def water_xtc(tmp_path: Path) -> Path:
     path = tmp_path / "water.xtc"
     frame = _water_frame()
-    molrs.io.raw.write_xtc(str(path), [frame, frame])
+    molrs.io.raw.write_xtc_trajectory(str(path), [frame, frame])
     return path
 
 
@@ -123,14 +122,14 @@ def water_xtc(tmp_path: Path) -> Path:
 def water_lammpstrj(tmp_path: Path) -> Path:
     path = tmp_path / "water.lammpstrj"
     frame = _water_frame(for_lammps=True)
-    molrs.io.raw.write_lammps_traj(str(path), [frame, frame])
+    molrs.io.raw.write_lammps_trajectory(str(path), [frame, frame])
     return path
 
 
 @pytest.fixture
 def water_lammps_data(tmp_path: Path) -> Path:
     path = tmp_path / "water.data"
-    molrs.io.raw.write_lammps(str(path), _water_frame(for_lammps=True))
+    molrs.io.raw.write_lammps_data(str(path), _water_frame(for_lammps=True))
     return path
 
 

@@ -62,8 +62,6 @@ pub(crate) fn write_column(
     let chunking = plan(&shape, col.dtype().itemsize());
     let (dt, fill) = dtype_of(col);
     match col {
-        Column::Float16(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::Float32(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
         Column::Float(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
         Column::Int8(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
         Column::Int16(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
@@ -103,8 +101,6 @@ pub(in crate::io::zarr) fn zarr_dtype(
     dtype: DType,
 ) -> (zarrs::array::DataType, zarrs::array::FillValue) {
     let dt = match dtype {
-        DType::Float16 => data_type::float16(),
-        DType::Float32 => data_type::float32(),
         DType::Float => data_type::float64(),
         DType::Int8 => data_type::int8(),
         DType::Int16 => data_type::int16(),
@@ -187,8 +183,9 @@ where
 // Column read
 // ---------------------------------------------------------------------------
 
-/// Read the `subset` of the array at `path` back as a [`Column`], at the width
-/// it was stored in.
+/// Read the `subset` of the array at `path` back as a [`Column`] — at the
+/// width it was stored in. Narrow floats are refused, not widened: the record
+/// has one float ([`F`]).
 ///
 /// The column's shape is the subset's, not the array's: a caller reading one
 /// frame out of a sequence array passes that frame's subset and gets a column
@@ -198,6 +195,7 @@ where
 /// the record doors hold and the read-only one [`FrameSequence`] holds share
 /// this one dtype dispatch.
 ///
+/// [`F`]: crate::types::F
 /// [`FrameSequence`]: super::FrameSequence
 pub(crate) fn read_column<S>(
     store: &Arc<S>,
@@ -225,16 +223,15 @@ where
 
     let dt = arr.data_type();
 
-    if dt.is::<Float16DataType>() {
-        let data: Vec<half::f16> = arr.retrieve_array_subset(subset)?;
-        Ok(Column::from_f16(
-            ArrayD::from_shape_vec(shape, data).map_err(shape_err)?,
-        ))
-    } else if dt.is::<Float32DataType>() {
-        let data: Vec<f32> = arr.retrieve_array_subset(subset)?;
-        Ok(Column::from_f32(
-            ArrayD::from_shape_vec(shape, data).map_err(shape_err)?,
-        ))
+    // Narrow floats are refused, not promoted: the record has one float
+    // (`F = f64`), so a `float16`/`float32` array on disk is an error naming
+    // the array and its stored type. Same rule as `sequence.rs::dtype_of_stored`.
+    if dt.is::<Float16DataType>() || dt.is::<Float32DataType>() {
+        Err(MolRsError::zarr(format!(
+            "{} is stored as {dt:?}: narrow floats are not read; \
+             the record has one float, `F = f64`",
+            arr.path()
+        )))
     } else if dt.is::<Float64DataType>() {
         let data: Vec<f64> = arr.retrieve_array_subset(subset)?;
         Ok(Column::from_float(
@@ -370,7 +367,7 @@ pub(crate) fn read_simbox(
 ) -> Result<SimBox, MolRsError> {
     use ndarray::{Array2, array};
 
-    // Prefer f64 (0.12+); accept legacy f32 stores and promote once.
+    // Narrow float arrays are refused; see `read_simbox_float_path`.
     let vectors_path = format!("{}/vectors", prefix);
     let h_data = read_simbox_float_path(store, &vectors_path)?
         .ok_or_else(|| MolRsError::zarr(format!("box vectors array is missing: {vectors_path}")))?;
@@ -442,8 +439,8 @@ pub(crate) fn read_simbox(
         .map_err(|e| MolRsError::zarr(format!("invalid box: {:?}", e)))
 }
 
-/// Read a simbox float array as `Vec<F>` (Float64 preferred; legacy Float32
-/// promoted), or `None` when the store holds no array at `path`.
+/// Read a simbox float array as `Vec<F>` (narrow float arrays are refused —
+/// the record has one float), or `None` when the store holds no array at `path`.
 ///
 /// Absence is reported to the caller instead of being raised, because the
 /// optional parts of a cell are absent on purpose; every *other* way of failing
@@ -462,12 +459,9 @@ fn read_simbox_float_path(
     if dt.is::<Float64DataType>() {
         let data: Vec<f64> = arr.retrieve_array_subset(&subset)?;
         Ok(Some(data))
-    } else if dt.is::<Float32DataType>() {
-        let data: Vec<f32> = arr.retrieve_array_subset(&subset)?;
-        Ok(Some(data.into_iter().map(|v| v as F).collect()))
     } else {
         Err(MolRsError::zarr(format!(
-            "simbox array expected float32/float64, got {dt:?}"
+            "simbox array expected float64, got {dt:?}: the record has one float, `F = f64`"
         )))
     }
 }
@@ -859,38 +853,7 @@ mod tests {
             .clone()
     }
 
-    // -- the 15-dtype matrix: one test per Column variant -------------------
-
-    #[test]
-    fn f16_column_round_trips_at_arrival_width() {
-        let values = vec![
-            half::f16::from_f32(1.0),
-            half::f16::from_f32(-2.5),
-            half::f16::from_f32(0.5),
-            half::f16::from_f32(65504.0),
-        ];
-        let back = round_trip_column(Column::from_f16(
-            ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
-        ));
-        assert_eq!(back.dtype(), DType::Float16);
-        assert_eq!(
-            *back.as_f16().unwrap(),
-            ArrayD::from_shape_vec(vec![4], values).unwrap()
-        );
-    }
-
-    #[test]
-    fn f32_column_round_trips_at_arrival_width() {
-        let values = vec![1.0f32, -2.5, 3.4028235e38, 1.1754944e-38];
-        let back = round_trip_column(Column::from_f32(
-            ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
-        ));
-        assert_eq!(back.dtype(), DType::Float32);
-        assert_eq!(
-            *back.as_f32().unwrap(),
-            ArrayD::from_shape_vec(vec![4], values).unwrap()
-        );
-    }
+    // -- the 13-dtype matrix: one test per Column variant -------------------
 
     #[test]
     fn f64_column_round_trips_at_arrival_width() {

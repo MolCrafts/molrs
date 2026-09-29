@@ -80,6 +80,8 @@ jobs:
           workspaces: ". -> target"
       - name: Check core and independent features without native defaults
         run: |
+          # The default is core + rayon; `--no-default-features` is core alone.
+          cargo check -p molcrafts-molrs
           cargo check -p molcrafts-molrs --no-default-features
           for feature in io smiles signal compute ff conformer md builder serde stream zarr filesystem voronoi full; do
             cargo check -p molcrafts-molrs --no-default-features --features "$feature"

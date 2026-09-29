@@ -11,10 +11,9 @@ check only that the arrays cross, the graph grows, and bad shapes map to
 
 from __future__ import annotations
 
+import molrs
 import numpy as np
 import pytest
-
-import molrs
 
 TWO_IDENTITIES = np.stack([np.eye(3), np.eye(3)])
 TWO_SHIFTS = np.array([[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]])
@@ -43,7 +42,11 @@ class TestAtomisticReplicate:
         assert world.n_relations("bonds") == 2
         assert sorted(world.get(h, "frag_id") for h in new) == [7, 7, 9, 9]
         # Copy 1 is the template shifted by (10, 0, 0): its carbon sits at x = 10.
-        carbons = {world.get(h, "frag_id"): world.get(h, "x") for h in new if world.get(h, "element") == "C"}
+        carbons = {
+            world.get(h, "frag_id"): world.get(h, "x")
+            for h in new
+            if world.get(h, "element") == "C"
+        }
         assert carbons == {7: 0.0, 9: 10.0}
 
     def test_the_template_is_not_mutated(self):
@@ -60,7 +63,12 @@ class TestAtomisticReplicate:
             (TWO_IDENTITIES, TWO_SHIFTS[:1], TWO_FRAG_IDS),
             (TWO_IDENTITIES, TWO_SHIFTS, np.array([7, 9, 11], dtype=np.int32)),
         ],
-        ids=["rotations-2x3", "translations-2x2", "translations-count", "frag_ids-count"],
+        ids=[
+            "rotations-2x3",
+            "translations-2x2",
+            "translations-count",
+            "frag_ids-count",
+        ],
     )
     def test_a_wrong_shape_is_a_value_error_and_leaves_the_graph_unchanged(
         self, rotations, translations, frag_ids

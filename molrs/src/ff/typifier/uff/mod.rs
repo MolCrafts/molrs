@@ -24,15 +24,17 @@
 //!   unqualified: `K, c0, c1, c2` depend only on the centre element and on
 //!   whether an endpoint is `O_2` / `O_R`.
 //!
-//! Bond, angle and torsion names are [`TypeName::canonical`] — both
+//! A bond, angle or torsion is oriented before it is named: of its forward and
+//! reversed endpoint labels (then qualifier fields, an angle's two bond orders
+//! swapping with its ends) it takes the smaller, slot by slot, so both
 //! orientations of one term share one name and one type. Bond and angle params
-//! are evaluated on that canonical orientation: their force constants multiply
+//! are evaluated on that orientation: their force constants multiply
 //! the two end atoms' `Z*` into a running product, and floating-point products
 //! do not reassociate, so evaluating each term in its own node order could give
 //! one name two params differing in the last bit. (A torsion's params read only
-//! the central pair, symmetrically.) Inversion names are **not**
-//! canonicalised: reversing a 4-atom name moves the centre to position 3 and
-//! names a different term.
+//! the central pair, symmetrically.) Inversions are **not** oriented:
+//! reversing a 4-atom term moves the centre to position 3 and names a different
+//! term.
 //!
 //! # Route
 //!
@@ -102,18 +104,34 @@ impl UFFTypifier {
     }
 }
 
-/// `type` → a type named `name` under `style`, its endpoints read off the
-/// name, with `params`.
-fn typed(style: &str, name: &TypeName, params: Params) -> Vec<(String, Annotation)> {
+/// `type` → a type named `name` on `endpoints` under `style`, with `params`.
+fn typed(
+    style: &str,
+    name: &TypeName,
+    endpoints: &[&str],
+    params: Params,
+) -> Vec<(String, Annotation)> {
     vec![(
         "type".to_owned(),
         Annotation::Type {
             style: style.to_owned(),
             name: name.to_string(),
-            endpoints: Some(name.endpoints().into_iter().map(str::to_owned).collect()),
+            endpoints: endpoints.iter().map(|e| (*e).to_owned()).collect(),
             params,
         },
     )]
+}
+
+/// Whether a term reads in reverse: [`TypeName::reads_reversed`] on its
+/// `labels`, and — when they are a palindrome — `reversed_fields` (the
+/// qualifier fields as they read from the other end) comparing smaller, slot
+/// by slot, than `fields`. A tie keeps the forward orientation.
+fn reads_reversed(labels: &[&str], fields: &[f64], reversed_fields: &[f64]) -> bool {
+    if labels.iter().ne(labels.iter().rev()) {
+        return TypeName::reads_reversed(labels);
+    }
+    let text = |f: &[f64]| f.iter().map(f64::to_string).collect::<Vec<_>>();
+    text(reversed_fields) < text(fields)
 }
 
 /// `name` qualified with `fields`, each in `f64` `Display` form.
@@ -259,8 +277,8 @@ impl Typifier for UFFTypifier {
             params.push(p);
         }
 
-        // Bonds — the effective bond order, then the params on the canonical
-        // orientation of the label.
+        // Bonds — the effective bond order, then the params on the oriented
+        // term.
         let bonds: Vec<(usize, usize)> = graph
             .bonds()
             .map(|(_, b)| (id_to_idx[&b.nodes[0]], id_to_idx[&b.nodes[1]]))
@@ -274,13 +292,18 @@ impl Typifier for UFFTypifier {
             if is_amide_cn(graph, &atom_ids, &id_to_idx, &adj, &labels, i, j) {
                 bo = AMIDE_BOND_ORDER;
             }
-            let forward = qualified(&[&labels[i], &labels[j]], &[bo])?;
-            let name = forward.canonical();
-            let (p, q) = if name == forward { (i, j) } else { (j, i) };
+            let (p, q) = if reads_reversed(&[&labels[i], &labels[j]], &[bo], &[bo]) {
+                (j, i)
+            } else {
+                (i, j)
+            };
+            let ends = [labels[p].as_str(), labels[q].as_str()];
+            let name = qualified(&ends, &[bo])?;
             let (r0, kb) = bond_rest_and_k(params[p], params[q], bo);
             m.bonds.push(typed(
                 "uff_bond",
                 &name,
+                &ends,
                 Params::from_pairs(&[("kb", kb), ("r0", r0)]),
             ));
         }
@@ -315,12 +338,18 @@ impl Typifier for UFFTypifier {
                     };
                 }
             }
-            let forward = qualified(
+            let code = f64::from(order);
+            let (p, q) = if reads_reversed(
                 &[&labels[i], &labels[j], &labels[k]],
-                &[order_of(i, j), order_of(j, k), f64::from(order)],
-            )?;
-            let name = forward.canonical();
-            let (p, q) = if name == forward { (i, k) } else { (k, i) };
+                &[order_of(i, j), order_of(j, k), code],
+                &[order_of(j, k), order_of(i, j), code],
+            ) {
+                (k, i)
+            } else {
+                (i, k)
+            };
+            let ends = [labels[p].as_str(), labels[j].as_str(), labels[q].as_str()];
+            let name = qualified(&ends, &[order_of(p, j), order_of(j, q), code])?;
             let (theta0, order_eff) = match order {
                 30 => (150.0_f64.to_radians(), 0u8),
                 35 => (60.0_f64.to_radians(), 0),
@@ -344,6 +373,7 @@ impl Typifier for UFFTypifier {
             m.angles.push(typed(
                 "uff_angle",
                 &name,
+                &ends,
                 Params::from_pairs(&[
                     ("ka", ka),
                     ("order", f64::from(order_eff)),
@@ -392,14 +422,23 @@ impl Typifier for UFFTypifier {
                 (v / mult, order, cos_term)
             };
             let nphi0 = if cos_term > 0.0 { 0.0 } else { 180.0 };
-            let name = qualified(
-                &[&labels[i], &labels[j], &labels[k], &labels[l]],
-                &[v, f64::from(order), nphi0],
-            )?
-            .canonical();
+            let fields = [v, f64::from(order), nphi0];
+            let forward = [
+                labels[i].as_str(),
+                labels[j].as_str(),
+                labels[k].as_str(),
+                labels[l].as_str(),
+            ];
+            let ends = if reads_reversed(&forward, &fields, &fields) {
+                [forward[3], forward[2], forward[1], forward[0]]
+            } else {
+                forward
+            };
+            let name = qualified(&ends, &fields)?;
             m.dihedrals.push(typed(
                 "uff_torsion",
                 &name,
+                &ends,
                 Params::from_pairs(&[("V", v), ("order", f64::from(order)), ("cosTerm", cos_term)]),
             ));
         }
@@ -432,12 +471,14 @@ impl Typifier for UFFTypifier {
                 let iid = graph
                     .add_improper(atom_ids[a], atom_ids[j], atom_ids[b], atom_ids[c])
                     .map_err(|e| e.to_string())?;
-                let name = TypeName::join(&[&labels[a], &labels[j], &labels[b], &labels[c]])?;
+                let ends = [&*labels[a], &*labels[j], &*labels[b], &*labels[c]];
+                let name = TypeName::join(&ends)?;
                 inversions.insert(
                     iid,
                     typed(
                         "uff_inversion",
                         &name,
+                        &ends,
                         Params::from_pairs(&[("K", k_inv), ("c0", c0), ("c1", c1), ("c2", c2)]),
                     ),
                 );
@@ -758,6 +799,7 @@ fn is_amide_cn(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use indexmap::IndexMap;
     use molrs::store::type_labels::TypeName;
     use molrs::system::atomistic::Atomistic;
     use std::collections::{BTreeMap, BTreeSet};
@@ -819,7 +861,7 @@ mod tests {
     /// list it comes after both ortho carbons: the ipso-centred inversion
     /// `C_R-C_R-P_3+3-C_R` is then generated, which is exactly the reversal of
     /// the P-centred `C_R-P_3+3-C_R-C_R` — the two collide only if impropers
-    /// are wrongly canonicalised.
+    /// are wrongly oriented.
     fn triphenylphosphine() -> Atomistic {
         let mut m = Atomistic::new();
         let mut ipso = Vec::new();
@@ -849,7 +891,7 @@ mod tests {
         (typed, typing)
     }
 
-    fn str_prop(props: &HashMap<String, PropValue>, key: &str) -> Option<String> {
+    fn str_prop(props: &IndexMap<String, PropValue>, key: &str) -> Option<String> {
         match props.get(key) {
             Some(PropValue::Str(s)) => Some(s.clone()),
             _ => None,
@@ -867,7 +909,7 @@ mod tests {
     /// `(nodes, type label)` of every link of `kind` (`bonds`, `angles`,
     /// `dihedrals`, `impropers`); a missing `type` is a failure.
     fn link_labels(typed: &Atomistic, kind: &str) -> Vec<(Vec<AtomId>, String)> {
-        let rows: Vec<(Vec<AtomId>, HashMap<String, PropValue>)> = match kind {
+        let rows: Vec<(Vec<AtomId>, IndexMap<String, PropValue>)> = match kind {
             "bonds" => typed
                 .bonds()
                 .map(|(_, r)| (r.nodes.to_vec(), r.props))
@@ -948,64 +990,64 @@ mod tests {
         assert_output_names_equal_stamped_labels(&n_methylacetamide().0);
     }
 
-    /// Every bond, angle and dihedral label is its own
-    /// `TypeName::canonical()`, and its `endpoints()` are the element's atom
-    /// labels read forward or reversed; no two output rows of those styles
-    /// are reversals of each other.
-    fn assert_proper_labels_are_canonical(mol: &Atomistic) {
+    /// Every bond, angle and dihedral is typed on the smaller (slot by slot)
+    /// of its atom labels read forward and reversed, and its label is the
+    /// `TypeName` join of those endpoints plus a qualifier; no two output rows
+    /// of those styles hold endpoint tuples that are reversals of each other.
+    fn assert_proper_types_are_oriented(mol: &Atomistic) {
         let (typed, typing) = uff_typed(mol);
         let atoms = atom_labels(&typed);
-        for kind in ["bonds", "angles", "dihedrals"] {
-            for (nodes, label) in link_labels(&typed, kind) {
-                let name = TypeName::from(label.clone());
-                assert_eq!(name.canonical().as_str(), label, "{kind} {nodes:?}");
-                let forward: Vec<&str> = nodes.iter().map(|id| atoms[id].as_str()).collect();
-                let reversed: Vec<&str> = forward.iter().rev().copied().collect();
-                let ends = name.endpoints();
-                assert!(
-                    ends == forward || ends == reversed,
-                    "{kind} {label}: endpoints {ends:?} vs atoms {forward:?}"
-                );
-            }
-        }
-        for (category, style) in [
-            ("bond", "uff_bond"),
-            ("angle", "uff_angle"),
-            ("dihedral", "uff_torsion"),
+        for (kind, category, style) in [
+            ("bonds", "bond", "uff_bond"),
+            ("angles", "angle", "uff_angle"),
+            ("dihedrals", "dihedral", "uff_torsion"),
         ] {
-            let names: BTreeSet<String> = typing
+            let defs = typing
                 .forcefield()
                 .get_style(category, style)
-                .map(|s| {
-                    s.defs()
-                        .collect_type_params()
-                        .into_iter()
-                        .map(|(n, _)| n)
-                        .collect()
-                })
-                .unwrap_or_default();
-            for n in &names {
-                let rev = TypeName::from(n.clone()).reversed().to_string();
+                .expect("the UFF style is declared");
+            for (nodes, label) in link_labels(&typed, kind) {
+                let forward: Vec<&str> = nodes.iter().map(|id| atoms[id].as_str()).collect();
+                let reversed: Vec<&str> = forward.iter().rev().copied().collect();
+                let ends = defs
+                    .type_endpoints(&label)
+                    .unwrap_or_else(|| panic!("{kind} {label} is defined"));
+                let ends: Vec<&str> = ends.iter().map(String::as_str).collect();
+                assert_eq!(ends, forward.clone().min(reversed), "{kind} {label}");
+                let joined = TypeName::join(&ends).expect("UFF labels hold no '@'");
                 assert!(
-                    rev == *n || !names.contains(&rev),
-                    "{style} holds both {n} and its reversal {rev}"
+                    label.starts_with(&format!("{joined}@")),
+                    "{kind} {label}: named from its endpoints {ends:?}"
+                );
+            }
+            let rows: BTreeSet<Vec<String>> = defs
+                .defs()
+                .collect_type_params()
+                .into_iter()
+                .map(|(n, _)| defs.type_endpoints(&n).expect("a stored type"))
+                .collect();
+            for e in &rows {
+                let rev: Vec<String> = e.iter().rev().cloned().collect();
+                assert!(
+                    rev == *e || !rows.contains(&rev),
+                    "{style} holds both {e:?} and its reversal"
                 );
             }
         }
     }
 
     #[test]
-    fn typing_ethanol_proper_labels_are_canonical_over_their_atom_labels() {
-        assert_proper_labels_are_canonical(&ethanol());
+    fn typing_ethanol_proper_types_are_oriented_over_their_atom_labels() {
+        assert_proper_types_are_oriented(&ethanol());
     }
 
     #[test]
-    fn typing_n_methylacetamide_proper_labels_are_canonical_over_their_atom_labels() {
-        assert_proper_labels_are_canonical(&n_methylacetamide().0);
+    fn typing_n_methylacetamide_proper_types_are_oriented_over_their_atom_labels() {
+        assert_proper_types_are_oriented(&n_methylacetamide().0);
     }
 
     /// Every improper label is the `TypeName` join of its atom labels in node
-    /// order, unqualified and not canonicalised, and its second node is the
+    /// order, unqualified and not oriented, and its second node is the
     /// centre (bonded to the other three).
     fn assert_improper_labels_keep_node_order(mol: &Atomistic) -> usize {
         let (typed, _) = uff_typed(mol);
@@ -1020,7 +1062,7 @@ mod tests {
             let parts: Vec<&str> = nodes.iter().map(|id| atoms[id].as_str()).collect();
             let expected = TypeName::join(&parts).expect("UFF labels hold no '@'");
             assert_eq!(label, expected.as_str(), "improper {nodes:?}");
-            assert_eq!(TypeName::from(label.clone()).qualifier(), None, "{label}");
+            assert!(!label.contains('@'), "{label} is unqualified");
             for &other in [nodes[0], nodes[2], nodes[3]].iter() {
                 assert!(
                     bonded(nodes[1], other),
@@ -1068,8 +1110,9 @@ mod tests {
     fn assert_labels_follow_the_qualifier_form(mol: &Atomistic) {
         let (typed, _) = uff_typed(mol);
         let fields = |label: &str| -> Vec<String> {
-            TypeName::from(label.to_owned())
-                .qualifier()
+            label
+                .split_once('@')
+                .map(|(_, qualifier)| qualifier)
                 .unwrap_or_else(|| panic!("{label} has a qualifier"))
                 .split('_')
                 .map(str::to_owned)
@@ -1101,7 +1144,7 @@ mod tests {
             );
         }
         for (_, label) in link_labels(&typed, "impropers") {
-            assert_eq!(TypeName::from(label.clone()).qualifier(), None, "{label}");
+            assert!(!label.contains('@'), "{label} is unqualified");
         }
     }
 

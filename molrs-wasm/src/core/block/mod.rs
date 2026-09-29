@@ -5,36 +5,116 @@
 //!
 //! # Column access API
 //!
-//! The API follows a consistent naming convention with type suffixes:
+//! The column's dtype picks the JS array type; no method names a dtype.
 //!
-//! | Method | JS signature | Semantics | Throws on missing key? |
-//! |--------|-------------|-----------|------------------------|
-//! | `hasF32` / `hasF64` / `hasI32` / `hasU32` / `hasStr` | `(key: string) -> boolean` | Typed presence (exists *and* that dtype) | No |
-//! | `getF32` / `getF64` / `getI32` / `getU32` / `getStr` | `(key: string, default?)` | Owned copy; `default` only when the key is absent | Yes, unless `default` given |
-//! | `setColF` | `(key: string, data: Float32Array|Float64Array, shape?: number[])` | Write float column | No |
-//! | `setColI32` | `(key: string, data: Int32Array)` | Write i32 column | No |
-//! | `setColU32` | `(key: string, data: BigUint64Array)` | Write domain-uint (`u64`) column | No |
-//! | `setColStr` | `(key: string, data: string[])` | Write string column | No |
-//! | `viewCol{T}` | `(key: string) -> TypedArray` | Zero-copy view (invalidated on WASM memory growth) | Yes |
-//! | `copyCol{T}` | `(key: string) -> TypedArray` | Owned JS copy (safe to keep) | Yes |
+//! | Method | JS signature | Semantics |
+//! |--------|--------------|-----------|
+//! | `get` | `(key: string, fallback?: Column) -> Column` | Owned copy; `fallback` is returned only when `key` is absent; missing without a fallback throws |
+//! | `view` | `(key: string) -> NumericColumn` | Zero-copy typed-array view of a numeric column (see below) |
+//! | `set` | `(key: string, data: Column, shape?: number[])` | Insert or replace; dtype inferred from `data` |
+//! | `has` | `(key: string) -> boolean` | Presence |
+//! | `dtype` | `(key: string) -> DType` | Dtype name; missing throws |
+//! | `shape` | `(key: string) -> number[]` | Column shape (`[nrows]`, `[nrows, 3]`, ...); missing throws |
+//! | `keys` | `() -> string[]` | Column names in insertion order |
+//! | `nrows` | getter `number` | Shared row count (`0` when empty) |
+//!
+//! # dtype <-> JS type
+//!
+//! | `dtype(key)` | `get` / `view` returns | `set` infers it from |
+//! |--------------|------------------------|----------------------|
+//! | `"f64"` | `Float64Array` | `Float64Array` |
+//! | `"i8"` / `"i16"` / `"i32"` / `"i64"` | `Int8Array` / `Int16Array` / `Int32Array` / `BigInt64Array` | same |
+//! | `"u8"` / `"u16"` / `"u32"` / `"u64"` | `Uint8Array` / `Uint16Array` / `Uint32Array` / `BigUint64Array` | same |
+//! | `"bool"` | `boolean[]` (`get` only) | `boolean[]` |
+//! | `"string"` | `string[]` (`get` only) | `string[]` (also the empty `[]`) |
+//! | `"c64"` / `"c128"` | neither: throws | never |
+//!
+//! Values come back flat in row-major order; `shape(key)` restores the
+//! rank. `bool` is `boolean[]` rather than `Uint8Array` so a `get` -> `set`
+//! round trip keeps the dtype (a `Uint8Array` would come back as `u8`).
+//! `Float32Array` is refused: the store keeps every float as `f64`.
 //!
 //! # Memory safety note
 //!
-//! `viewCol*` methods return zero-copy typed array views backed by WASM
-//! linear memory. These views become **invalid** if WASM memory grows
-//! (e.g., due to any allocation). Use `copyCol*` if you need to keep
-//! the data across allocations.
+//! `view` returns a typed array backed by WASM linear memory. It becomes
+//! **invalid** (detached, length 0) as soon as WASM memory grows, which any
+//! allocation may cause, and it dangles once the column is replaced or the
+//! block is freed. Use it immediately and do not keep it; use `get` for data
+//! you hold on to. Writes through a view land in the column in place.
 
-use js_sys::{Array as JsArray, BigUint64Array, Float32Array, Int32Array, Uint32Array};
-use ndarray::Array1;
+use js_sys::{
+    Array as JsArray, BigInt64Array, BigUint64Array, Float32Array, Float64Array, Int8Array,
+    Int16Array, Int32Array, Uint8Array, Uint8ClampedArray, Uint16Array, Uint32Array,
+};
+use ndarray::{ArrayD, IxDyn};
+use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
-use molrs::store::block::{Block as RsBlock, DType};
-use molrs::types::F;
+use molrs::store::block::{Block as RsBlock, BlockDtype, Column, DType};
 use molrs_ffi::BlockRef;
 
 use super::js_err;
-use super::types::{FLOAT_DTYPE_NAME, JsFloatArray};
+use super::types::FLOAT_DTYPE_NAME;
+
+#[wasm_bindgen(typescript_custom_section)]
+const COLUMN_TYPES: &'static str = r#"
+/**
+ * Column dtype as `Block.dtype` reports it. Each numeric name is the
+ * element type of the typed array `Block.get` and `Block.view` return.
+ */
+export type DType =
+    | "f64" | "i8" | "i16" | "i32" | "i64"
+    | "u8" | "u16" | "u32" | "u64"
+    | "bool" | "string" | "c64" | "c128";
+
+/** A numeric column as a typed array, in the column's own dtype. */
+export type NumericColumn =
+    | Float64Array | Int8Array | Int16Array | Int32Array | BigInt64Array
+    | Uint8Array | Uint16Array | Uint32Array | BigUint64Array;
+
+/** Any column value `Block.get` returns and `Block.set` accepts. */
+export type Column = NumericColumn | boolean[] | string[];
+"#;
+
+#[wasm_bindgen]
+extern "C" {
+    /// A column value: see the `Column` TypeScript type.
+    #[wasm_bindgen(typescript_type = "Column")]
+    pub type JsColumn;
+
+    /// A zero-copy numeric column view: see `NumericColumn`.
+    #[wasm_bindgen(typescript_type = "NumericColumn")]
+    pub type JsNumericColumn;
+
+    /// A dtype name: see `DType`.
+    #[wasm_bindgen(typescript_type = "DType")]
+    pub type JsDType;
+
+    /// An array shape: a plain `number[]`.
+    #[wasm_bindgen(typescript_type = "number[]")]
+    pub type JsShape;
+}
+
+/// The JS-facing name of a column dtype: the element type of the typed
+/// array the column crosses the boundary as.
+pub(crate) fn dtype_name(dt: DType) -> &'static str {
+    match dt {
+        DType::Float => FLOAT_DTYPE_NAME,
+        DType::Int8 => "i8",
+        DType::Int16 => "i16",
+        DType::Int => "i32",
+        DType::Int64 => "i64",
+        DType::UInt => "u64",
+        DType::U8 => "u8",
+        DType::UInt16 => "u16",
+        DType::UInt32 => "u32",
+        DType::Bool => "bool",
+        DType::String => "string",
+        DType::Complex64 => "c64",
+        DType::Complex128 => "c128",
+        _ => dt.name(),
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Block
@@ -42,29 +122,20 @@ use super::types::{FLOAT_DTYPE_NAME, JsFloatArray};
 
 /// Column-oriented data store with typed arrays.
 ///
-/// Each column is identified by a string key and has a fixed data type
-/// (`F`, `i32`, `u64`, `string`). All columns in a block must have
-/// the same number of rows.
-///
-/// # Supported column types
-///
-/// | JS type | Rust type | dtype string | Setter | Getter (copy) | Getter (view) |
-/// |---------|-----------|-------------|--------|---------------|---------------|
-/// | `Float32Array` / `Float64Array` | `F` | `"f32"` / `"f64"` | `setColF` | `copyColF` | `viewColF` |
-/// | `Int32Array` | `i32` | `"i32"` | `setColI32` | `copyColI32` | `viewColI32` |
-/// | `BigUint64Array` | `u64` (`Idx`) | `"u64"` | `setColU32` | `copyColU32` | `viewColU32` |
-/// | `string[]` | `String` | `"string"` | `setColStr` | `copyColStr` | -- |
+/// Each column is identified by a string key and has a fixed dtype. All
+/// columns in a block have the same number of rows. See the module docs for
+/// the dtype <-> JS type table.
 ///
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const block = new Block();
-/// block.setColF("x", coordsX);
-/// block.setColF("y", coordsY);
-/// console.log(block.nrows()); // 3
-/// console.log(block.keys());  // ["x", "y"]
-///
-/// const x = block.copyColF("x"); // owned copy, safe to keep
+/// const atoms = frame.createBlock("atoms");
+/// atoms.set("x", new Float64Array([0, 1, 2]));
+/// atoms.set("element", ["C", "C", "O"]);
+/// atoms.set("id", new BigUint64Array([0n, 1n, 2n]));
+/// atoms.nrows;            // 3
+/// atoms.dtype("id");      // "u64"
+/// const x = atoms.get("x"); // Float64Array, an owned copy
 /// ```
 #[wasm_bindgen]
 pub struct Block {
@@ -84,14 +155,7 @@ impl Block {
     ///
     /// # Errors
     ///
-    /// Throws a `JsValue` string if the internal store allocation fails.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// const block = new Block();
-    /// block.setColF("values", values);
-    /// ```
+    /// Throws if the internal store allocation fails.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Result<Block, JsValue> {
         let store = molrs_ffi::new_shared();
@@ -106,43 +170,30 @@ impl Block {
         })
     }
 
-    // ---- metadata ----
+    // ---- block metadata ----
 
-    /// Return the number of columns in this block.
+    /// Number of columns in this block.
     ///
     /// # Errors
     ///
     /// Throws if the block handle has been invalidated.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// console.log(block.len()); // e.g., 3
-    /// ```
     #[wasm_bindgen(js_name = len)]
     pub fn len(&self) -> Result<usize, JsValue> {
         self.with(|b| b.len())
     }
 
-    /// Check whether this block has zero columns.
+    /// Whether this block has zero columns.
     ///
     /// # Errors
     ///
     /// Throws if the block handle has been invalidated.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// if (block.isEmpty()) { // no columns yet }
-    /// ```
     #[wasm_bindgen(js_name = isEmpty)]
     pub fn is_empty(&self) -> Result<bool, JsValue> {
         Ok(self.len()? == 0)
     }
 
-    /// Return the number of rows (shared across all columns).
-    ///
-    /// Returns `0` if the block has no columns.
+    /// Number of rows, shared across all columns; `0` for a block with no
+    /// columns.
     ///
     /// # Errors
     ///
@@ -151,24 +202,19 @@ impl Block {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// console.log(block.nrows()); // e.g., 100
+    /// const n = atoms.nrows; // e.g. 100
     /// ```
-    #[wasm_bindgen(js_name = nrows)]
+    #[wasm_bindgen(getter)]
     pub fn nrows(&self) -> Result<usize, JsValue> {
         self.with(|b| b.nrows().unwrap_or(0))
     }
 
-    /// Return the structural shape of the block as a `Uint32Array`.
+    /// The declared N-D structural shape (`[Nx, Ny, Nz]` for a volumetric
+    /// grid), or `undefined` for a plain row table.
     ///
-    /// - Plain row tables (atoms, bonds): `[nrows]` — single-axis.
-    /// - Volumetric grids: `[Nx, Ny, Nz]` — explicitly declared via
-    ///   [`setShape`](Self::set_shape).
-    /// - Empty blocks: `[]`.
-    ///
-    /// `block.shape()` is uniform across all block kinds — the rank of
-    /// the returned array is what distinguishes a plain table from a
-    /// volumetric grid. The product of the shape always equals
-    /// `block.nrows()`.
+    /// Set with [`setShape`](Self::set_shape). Its product always equals
+    /// `nrows`. Distinct from [`shape`](Self::shape), which is the shape of
+    /// one column.
     ///
     /// # Errors
     ///
@@ -177,640 +223,269 @@ impl Block {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const atomsShape = atoms.shape();   // Uint32Array([1000])
-    /// const gridShape  = grid.shape();    // Uint32Array([32, 32, 32])
+    /// grid.structuralShape;  // [32, 32, 32]
+    /// atoms.structuralShape; // undefined
     /// ```
-    #[wasm_bindgen(js_name = shape)]
-    pub fn shape(&self) -> Result<Uint32Array, JsValue> {
-        self.with(|b| {
-            let s = b.shape();
-            let arr = Uint32Array::new_with_length(s.len() as u32);
-            for (i, dim) in s.into_iter().enumerate() {
-                arr.set_index(i as u32, dim as u32);
-            }
-            arr
-        })
+    #[wasm_bindgen(getter, js_name = structuralShape)]
+    pub fn structural_shape(&self) -> Result<Option<JsShape>, JsValue> {
+        self.with(|b| b.structural_shape().map(shape_to_js))
     }
 
     /// Declare this block as N-dimensional with the given `shape`.
     ///
-    /// `shape.iter().product()` must equal the block's current `nrows`
-    /// when the block has columns. Pass an empty array to clear the
-    /// shape and revert to plain row-table semantics.
+    /// `shape`'s product must equal the block's current `nrows` when the
+    /// block has columns. Pass `[]` to clear it and revert to plain
+    /// row-table semantics.
     ///
-    /// This does **not** reshape column storage — columns remain
-    /// row-major 1D buffers of length `product(shape)`. `shape` is
-    /// structural metadata; consumers (e.g. the volumetric renderer in
-    /// MolVis) use it to unflatten the row index back into N-D
-    /// coordinates.
+    /// This does **not** reshape column storage: columns remain row-major
+    /// buffers of `product(shape)` rows. The shape is structural metadata
+    /// consumers (e.g. a volumetric renderer) use to unflatten the row index.
     ///
     /// # Errors
     ///
-    /// Throws if `shape.iter().product()` does not match the block's
-    /// existing `nrows`, or if the block handle has been invalidated.
+    /// Throws if `shape` holds anything but non-negative integers, if its
+    /// product does not match `nrows`, or if the handle has been invalidated.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
     /// const grid = frame.createBlock("grid");
-    /// grid.setColF("electron_density", values);  // values.length === 32*32*32
-    /// grid.setShape(new Uint32Array([32, 32, 32]));
+    /// grid.set("electron_density", values); // values.length === 32*32*32
+    /// grid.setShape([32, 32, 32]);
     /// ```
     #[wasm_bindgen(js_name = setShape)]
-    pub fn set_shape(&mut self, shape: &Uint32Array) -> Result<(), JsValue> {
-        let mut buf = vec![0u32; shape.length() as usize];
-        shape.copy_to(&mut buf);
-        let dims: Vec<usize> = buf.into_iter().map(|d| d as usize).collect();
-        self.inner
-            .store
-            .borrow_mut()
-            .with_block_mut(&mut self.inner.handle, |b| b.set_shape(&dims))
-            .map_err(js_err)?
-            .map_err(|e| JsValue::from_str(&e.to_string()))
-    }
-
-    /// Return all column names as a JS `string[]`.
-    ///
-    /// # Errors
-    ///
-    /// Throws if the block handle has been invalidated.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// const names = block.keys(); // ["x", "y", "z", "symbol"]
-    /// ```
-    #[wasm_bindgen(js_name = keys)]
-    pub fn keys(&self) -> Result<JsArray, JsValue> {
-        self.with(|b| {
-            let arr = JsArray::new();
-            for k in b.keys() {
-                arr.push(&JsValue::from_str(k));
-            }
-            arr
+    pub fn set_shape(&mut self, shape: JsShape) -> Result<(), JsValue> {
+        let dims = shape_from_js(&shape)?;
+        self.with_mut(|b| {
+            b.set_shape(&dims)
+                .map_err(|e| JsValue::from_str(&e.to_string()))
         })
     }
 
-    /// Return the data type string for a column.
-    ///
-    /// Possible return values: `"f32"` or `"f64"` for float columns,
-    /// plus `"i32"`, `"u64"` (domain uint / identifiers), `"u32"` (storage
-    /// width), `"bool"`, `"string"`, `"u8"`. Returns `undefined` if the
-    /// column does not exist.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - Column name
-    ///
-    /// # Returns
-    ///
-    /// The dtype string, or `undefined` if the column is not found.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// console.log(block.dtype("x"));      // "f32" or "f64"
-    /// console.log(block.dtype("symbol")); // "string"
-    /// ```
-    #[wasm_bindgen(js_name = dtype)]
-    pub fn dtype(&self, key: &str) -> Option<String> {
-        self.inner
-            .store
-            .borrow()
-            .with_block(&self.inner.handle, |b| {
-                b.dtype(key).map(|dt| {
-                    match dt {
-                        DType::Float => FLOAT_DTYPE_NAME,
-                        DType::Float16 => "f16",
-                        DType::Float32 => "f32",
-                        DType::Int => "i32",
-                        DType::Int8 => "i8",
-                        DType::Int16 => "i16",
-                        DType::Int64 => "i64",
-                        DType::UInt => "u64",
-                        DType::U8 => "u8",
-                        DType::UInt16 => "u16",
-                        DType::UInt32 => "u32",
-                        DType::Bool => "bool",
-                        DType::String => "string",
-                        DType::Complex64 => "c64",
-                        DType::Complex128 => "c128",
-                        _ => dt.name(),
-                    }
-                    .to_string()
-                })
-            })
-            .ok()
-            .flatten()
-    }
-
-    /// True when `key` exists and is `f32`.
-    #[wasm_bindgen(js_name = hasF32)]
-    pub fn has_f32(&self, key: &str) -> bool {
-        self.with(|b| b.has_f32(key)).unwrap_or(false)
-    }
-
-    /// True when `key` exists and is `f64`.
-    #[wasm_bindgen(js_name = hasF64)]
-    pub fn has_f64(&self, key: &str) -> bool {
-        self.with(|b| b.has_f64(key)).unwrap_or(false)
-    }
-
-    /// True when `key` exists and is `i32`.
-    #[wasm_bindgen(js_name = hasI32)]
-    pub fn has_i32(&self, key: &str) -> bool {
-        self.with(|b| b.has_int(key)).unwrap_or(false)
-    }
-
-    /// True when `key` exists and is the domain uint (`u64` / `Idx`).
-    #[wasm_bindgen(js_name = hasU32)]
-    pub fn has_u32(&self, key: &str) -> bool {
-        self.with(|b| b.has_uint(key)).unwrap_or(false)
-    }
-
-    /// True when `key` exists and is a string column.
-    #[wasm_bindgen(js_name = hasStr)]
-    pub fn has_str(&self, key: &str) -> bool {
-        self.with(|b| b.has_string(key)).unwrap_or(false)
-    }
-
-    /// Owned `f32` column. Missing with no `default` throws; wrong dtype throws.
-    ///
-    /// This build stores floats as `f64`, so a present float column is never
-    /// `f32` — `hasF32` is false and this returns `default` or throws.
-    #[wasm_bindgen(js_name = getF32)]
-    pub fn get_f32(
-        &self,
-        key: &str,
-        default: Option<Float32Array>,
-    ) -> Result<Float32Array, JsValue> {
-        typed_or_default(key, "f32", self.dtype(key), default)
-    }
-
-    /// Owned `f64` column. Missing with no `default` throws; wrong dtype throws.
-    #[wasm_bindgen(js_name = getF64)]
-    pub fn get_f64(
-        &self,
-        key: &str,
-        default: Option<JsFloatArray>,
-    ) -> Result<JsFloatArray, JsValue> {
-        if self.has_f64(key) {
-            return self.copy_col_f(key);
-        }
-        typed_or_default(key, "f64", self.dtype(key), default)
-    }
-
-    /// Owned i32 column. Missing with no `default` throws; wrong dtype throws.
-    #[wasm_bindgen(js_name = getI32)]
-    pub fn get_i32(&self, key: &str, default: Option<Int32Array>) -> Result<Int32Array, JsValue> {
-        if self.has_i32(key) {
-            return self.copy_col_i32(key);
-        }
-        typed_or_default(key, "i32", self.dtype(key), default)
-    }
-
-    /// Owned domain-uint (`u64`) column. Missing with no `default` throws;
-    /// wrong dtype throws. The JS name stays `getU32` for the 0.14 cut.
-    #[wasm_bindgen(js_name = getU32)]
-    pub fn get_u32(
-        &self,
-        key: &str,
-        default: Option<BigUint64Array>,
-    ) -> Result<BigUint64Array, JsValue> {
-        if self.has_u32(key) {
-            return self.copy_col_u32(key);
-        }
-        typed_or_default(key, "u64", self.dtype(key), default)
-    }
-
-    /// Owned string column. Missing with no `default` throws; wrong dtype throws.
-    #[wasm_bindgen(js_name = getStr)]
-    pub fn get_str(&self, key: &str, default: Option<JsArray>) -> Result<JsArray, JsValue> {
-        if self.has_str(key) {
-            return self.copy_col_str(key);
-        }
-        typed_or_default(key, "string", self.dtype(key), default)
-    }
-
-    /// Rename a column from `old_key` to `new_key`.
-    ///
-    /// # Arguments
-    ///
-    /// * `old_key` - Current column name
-    /// * `new_key` - New column name
-    ///
-    /// # Returns
-    ///
-    /// `true` if the column was found and renamed, `false` otherwise.
+    /// Column names in insertion order (the order the file or the caller
+    /// wrote the columns).
     ///
     /// # Errors
     ///
     /// Throws if the block handle has been invalidated.
+    #[wasm_bindgen(js_name = keys)]
+    pub fn keys(&self) -> Result<Vec<String>, JsValue> {
+        self.with(|b| b.keys().map(str::to_owned).collect())
+    }
+
+    // ---- per-column metadata ----
+
+    /// Whether column `key` exists (of any dtype).
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// block.renameColumn("element", "symbol");
+    /// if (bonds.has("bond_type") && bonds.dtype("bond_type") === "u64") { … }
+    /// ```
+    #[wasm_bindgen(js_name = has)]
+    pub fn has(&self, key: &str) -> bool {
+        self.with(|b| b.contains_key(key)).unwrap_or(false)
+    }
+
+    /// Dtype of column `key`; see the `DType` type for the names.
+    ///
+    /// # Errors
+    ///
+    /// Throws if the column does not exist, or if the handle has been
+    /// invalidated.
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// atoms.dtype("x");       // "f64"
+    /// atoms.dtype("element"); // "string"
+    /// ```
+    #[wasm_bindgen(js_name = dtype)]
+    pub fn dtype(&self, key: &str) -> Result<JsDType, JsValue> {
+        self.with_col(key, |col| {
+            Ok(JsValue::from_str(dtype_name(col.dtype())).unchecked_into())
+        })
+    }
+
+    /// Shape of column `key`: `[nrows]` for a per-row scalar, `[nrows, 3]`
+    /// for a per-row vector, and so on.
+    ///
+    /// # Errors
+    ///
+    /// Throws if the column does not exist, or if the handle has been
+    /// invalidated.
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// block.set("pos", flat, [n, 3]);
+    /// block.shape("pos"); // [n, 3]
+    /// ```
+    #[wasm_bindgen(js_name = shape)]
+    pub fn shape(&self, key: &str) -> Result<JsShape, JsValue> {
+        self.with_col(key, |col| Ok(shape_to_js(col.shape())))
+    }
+
+    /// Validity mask of column `key`: one byte per row, `1` where the row
+    /// holds a value and `0` where it is null.
+    ///
+    /// A null cell still has a filled value in the column itself (whatever
+    /// the producer wrote there, typically `0` or `""`), so a consumer that
+    /// must tell "no value" from "zero" reads this mask beside the column.
+    /// Masks travel with the block through
+    /// [`readFrameBytes`](crate::io::reader::read_frame_bytes_export).
+    ///
+    /// # Returns
+    ///
+    /// A `Uint8Array` of length `nrows` when at least one row of the column
+    /// is null; `undefined` when the column is fully valid.
+    ///
+    /// # Errors
+    ///
+    /// Throws if the column does not exist, or if the handle has been
+    /// invalidated.
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// const fragId = atoms.get("frag_id");
+    /// const valid = atoms.validity("frag_id"); // undefined → no nulls
+    /// const isNull = (i) => valid !== undefined && valid[i] === 0;
+    /// ```
+    #[wasm_bindgen(js_name = validity)]
+    pub fn validity(&self, key: &str) -> Result<Option<Uint8Array>, JsValue> {
+        self.with(|b| {
+            if !b.contains_key(key) {
+                return Err(missing_column(key));
+            }
+            Ok(b.validity(key).map(|mask| {
+                let bytes: Vec<u8> = mask.iter().map(|&valid| u8::from(valid)).collect();
+                Uint8Array::from(bytes.as_slice())
+            }))
+        })?
+    }
+
+    /// Rename column `old_key` to `new_key`.
+    ///
+    /// # Errors
+    ///
+    /// Throws if `old_key` does not exist, if the moved column violates the
+    /// Frame schema's spec for `new_key`, or if the handle has been
+    /// invalidated.
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// block.renameColumn("symbol", "element");
     /// ```
     #[wasm_bindgen(js_name = renameColumn)]
     pub fn rename_column(&mut self, old_key: &str, new_key: &str) -> Result<(), JsValue> {
         // A rename is a write into `new_key`, so the Frame schema checks the
         // moved column against that key's spec — the error surfaces here
         // rather than a wrong-typed column landing silently.
-        self.inner
-            .store
-            .borrow_mut()
-            .with_block_mut(&mut self.inner.handle, |b| {
-                b.rename_column(old_key, new_key)
-            })
-            .map_err(js_err)?
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+        self.with_mut(|b| {
+            b.rename_column(old_key, new_key)
+                .map_err(|e| JsValue::from_str(&e.to_string()))
+        })
     }
 
-    // ---- Float ----
+    // ---- column data ----
 
-    /// Set a float column from a JS float typed array.
+    /// Owned copy of column `key`, as the JS array its dtype maps to
+    /// (`Float64Array` for `f64`, `BigUint64Array` for `u64`, `string[]` for
+    /// `string`, `boolean[]` for `bool`, …). Values are flat, row-major;
+    /// [`shape`](Self::shape) gives the rank.
     ///
-    /// # Arguments
-    ///
-    /// * `key` - Column name (e.g., `"x"`, `"mass"`, `"charge"`)
-    /// * `data` - JS float typed array with the column values
-    /// * `shape` - Optional shape array for multi-dimensional data
-    ///   (e.g., `[N, 3]` for an Nx3 matrix stored flat). If omitted,
-    ///   the data is stored as a 1D column.
+    /// `fallback` is returned as given when `key` is absent; it is ignored
+    /// when the column exists.
     ///
     /// # Errors
     ///
-    /// Throws if `shape` product does not match `data.length`, or if
-    /// the resulting row count is inconsistent with existing columns.
+    /// Throws if `key` is absent and no `fallback` was passed, if the column
+    /// is complex (`c64` / `c128`, not exposed to JS), or if the handle has
+    /// been invalidated.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// block.setColF("x", xCoords);
-    /// // Multi-dimensional: 2 rows x 3 columns
-    /// block.setColF("pos", positions, [2, 3]);
+    /// const x = atoms.get("x") as Float64Array;
+    /// const charge = atoms.get("charge", new Float64Array(atoms.nrows));
     /// ```
-    #[wasm_bindgen(js_name = setColF)]
-    pub fn set_col_f(
+    #[wasm_bindgen(js_name = get)]
+    pub fn get(&self, key: &str, fallback: Option<JsColumn>) -> Result<JsColumn, JsValue> {
+        let copied = self.with(|b| b.get(key).map(|col| column_to_js(key, col)))?;
+        match (copied, fallback) {
+            (Some(value), _) => value.map(JsCast::unchecked_into),
+            (None, Some(fallback)) => Ok(fallback),
+            (None, None) => Err(missing_column(key)),
+        }
+    }
+
+    /// Zero-copy typed-array view of numeric column `key`, in the column's
+    /// own dtype. Flat, row-major.
+    ///
+    /// **Warning**: the view is backed by WASM linear memory. It is
+    /// invalidated (detached) whenever WASM memory grows — any allocation may
+    /// do that — and dangles once the column is replaced or the block freed.
+    /// Use it immediately; call [`get`](Self::get) for data you keep. Writes
+    /// through the view modify the column in place.
+    ///
+    /// # Errors
+    ///
+    /// Throws if the column does not exist, if it is not numeric (`string`,
+    /// `bool` and complex columns have no typed-array view — use `get`), if
+    /// its storage is not contiguous row-major, or if the handle has been
+    /// invalidated.
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// const x = atoms.view("x"); // Float64Array over WASM memory
+    /// for (let i = 0; i < x.length; i++) x[i] += 1.0; // in-place write
+    /// ```
+    #[wasm_bindgen(js_name = view)]
+    pub fn view(&self, key: &str) -> Result<JsNumericColumn, JsValue> {
+        self.with_col(key, |col| column_view(key, col).map(JsCast::unchecked_into))
+    }
+
+    /// Insert or replace column `key`, with the dtype inferred from `data`:
+    /// each typed array stores as its own dtype (`Float64Array` -> `f64`,
+    /// `Int32Array` -> `i32`, `BigUint64Array` -> `u64`, …), `string[]` ->
+    /// `string`, `boolean[]` -> `bool`. An empty `[]` stores as `string`.
+    ///
+    /// `shape` (row-major) makes a multi-dimensional column, e.g. `[n, 3]`
+    /// for per-row vectors; without it the column is 1-D.
+    ///
+    /// # Errors
+    ///
+    /// Throws if `data` is a `Float32Array` (the store keeps floats as
+    /// `f64`), a `Uint8ClampedArray`, a plain `number[]` or any other value
+    /// with no dtype of its own, or an `Array` mixing element types; if
+    /// `shape`'s product differs from `data.length`; if the row count
+    /// conflicts with existing columns; or if the Frame schema declares a
+    /// different dtype for `key`.
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// atoms.set("x", new Float64Array([0, 1, 2]));
+    /// atoms.set("pos", new Float64Array(9), [3, 3]);
+    /// atoms.set("element", ["C", "C", "O"]);
+    /// bonds.set("atomi", new BigUint64Array([0n, 1n]));
+    /// ```
+    #[wasm_bindgen(js_name = set)]
+    pub fn set(
         &mut self,
         key: &str,
-        data: &JsFloatArray,
-        shape: Option<Box<[usize]>>,
+        data: JsColumn,
+        shape: Option<JsShape>,
     ) -> Result<(), JsValue> {
-        self.insert_float(key, data.to_vec(), shape)
-    }
-
-    /// Zero-copy JS float typed-array view into WASM linear memory.
-    ///
-    /// Returns a view backed directly by the block's storage in WASM
-    /// memory. This avoids copying but the view becomes **invalid**
-    /// if WASM linear memory grows (due to any allocation).
-    ///
-    /// Use [`copyColF`](Block::copy_col_f) for a safe, long-lived copy.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - Column name
-    ///
-    /// # Returns
-    ///
-    /// A JS float typed-array view into WASM memory.
-    ///
-    /// # Errors
-    ///
-    /// Throws if the column does not exist or is not of the active float type.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// const view = block.viewColF("x"); // zero-copy, use immediately
-    /// const copy = block.copyColF("x"); // safe to keep
-    /// ```
-    #[wasm_bindgen(js_name = viewColF)]
-    pub fn view_col_f(&self, key: &str) -> Result<JsFloatArray, JsValue> {
-        self.inner
-            .store
-            .borrow()
-            .borrow_col_F(&self.inner.handle, key, |s, _| unsafe {
-                JsFloatArray::view(s)
-            })
-            .map_err(|e| col_not_found_or(key, FLOAT_DTYPE_NAME, e))
-    }
-
-    /// Owned JS float typed-array copy of a column.
-    ///
-    /// Returns a new JS float typed array that is an independent copy of
-    /// the column data. Safe to store and use across allocations.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - Column name
-    ///
-    /// # Returns
-    ///
-    /// An owned JS float typed-array copy of the column.
-    ///
-    /// # Errors
-    ///
-    /// Throws if the column does not exist or is not of the active float type.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// const x = block.copyColF("x");
-    /// console.log(x[0]); // 1.0
-    /// ```
-    #[wasm_bindgen(js_name = copyColF)]
-    pub fn copy_col_f(&self, key: &str) -> Result<JsFloatArray, JsValue> {
-        self.with(|b| {
-            b.get_float(key)
-                .and_then(|arr| arr.as_slice_memory_order())
-                .map(JsFloatArray::from)
-                .ok_or_else(|| col_err(key, FLOAT_DTYPE_NAME))
-        })?
-    }
-
-    /// Allocate a zero-filled float column at `key` with the given shape.
-    ///
-    /// Pair with [`viewColF`](Block::view_col_f) for zero-copy writes from JS:
-    ///
-    /// ```js
-    /// block.createColF("x", [N]);            // allocate
-    /// const view = block.viewColF("x");      // zero-copy view into the column
-    /// for (let i = 0; i < N; i++) view[i] = src[i]; // direct write
-    /// ```
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - Column name
-    /// * `shape` - Shape of the column (e.g. `[N]` for 1D, `[N, 3]` for Nx3)
-    ///
-    /// # Errors
-    ///
-    /// Throws if the shape is empty, or if the leading dimension conflicts
-    /// with existing columns in this block.
-    #[wasm_bindgen(js_name = createColF)]
-    pub fn create_col_f(&mut self, key: &str, shape: Box<[usize]>) -> Result<(), JsValue> {
-        let dims: Vec<usize> = shape.into_vec();
-        let arr = ndarray::ArrayD::<F>::zeros(ndarray::IxDyn(&dims));
-        self.insert_col(key, arr)
-    }
-
-    // ---- I32 ----
-
-    /// Set a signed integer column from an `Int32Array`.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - Column name
-    /// * `data` - `Int32Array` with the column values
-    ///
-    /// # Errors
-    ///
-    /// Throws if the row count is inconsistent with existing columns.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// block.setColI32("charge_sign", new Int32Array([1, -1, 0]));
-    /// ```
-    #[wasm_bindgen(js_name = setColI32)]
-    pub fn set_col_i32(&mut self, key: &str, data: &Int32Array) -> Result<(), JsValue> {
-        let vec: Vec<i32> = data.to_vec();
-        self.insert_col(key, Array1::from(vec).into_dyn())
-    }
-
-    /// Zero-copy `Int32Array` view into WASM linear memory.
-    ///
-    /// **Warning**: invalidated if WASM linear memory grows.
-    /// Use [`copyColI32`](Block::copy_col_i32) for a safe copy.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - Column name
-    ///
-    /// # Errors
-    ///
-    /// Throws if the column does not exist or is not of type `i32`.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// const view = block.viewColI32("type_id");
-    /// ```
-    #[wasm_bindgen(js_name = viewColI32)]
-    pub fn view_col_i32(&self, key: &str) -> Result<Int32Array, JsValue> {
-        self.inner
-            .store
-            .borrow()
-            .borrow_col_I(&self.inner.handle, key, |s, _| unsafe {
-                Int32Array::view(s)
-            })
-            .map_err(|e| col_not_found_or(key, "i32", e))
-    }
-
-    /// Owned `Int32Array` copy of a column.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - Column name
-    ///
-    /// # Errors
-    ///
-    /// Throws if the column does not exist or is not of type `i32`.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// const types = block.copyColI32("type_id");
-    /// ```
-    #[wasm_bindgen(js_name = copyColI32)]
-    pub fn copy_col_i32(&self, key: &str) -> Result<Int32Array, JsValue> {
-        self.with(|b| {
-            b.get_int(key)
-                .and_then(|arr| arr.as_slice_memory_order())
-                .map(Int32Array::from)
-                .ok_or_else(|| col_err(key, "i32"))
-        })?
-    }
-
-    /// Allocate a zero-filled i32 column at `key` with the given shape.
-    ///
-    /// See [`createColF`](Block::create_col_f) for the zero-copy write pattern.
-    ///
-    /// # Errors
-    ///
-    /// Throws if the shape is empty, or if the leading dimension conflicts
-    /// with existing columns.
-    #[wasm_bindgen(js_name = createColI32)]
-    pub fn create_col_i32(&mut self, key: &str, shape: Box<[usize]>) -> Result<(), JsValue> {
-        let dims: Vec<usize> = shape.into_vec();
-        let arr = ndarray::ArrayD::<i32>::zeros(ndarray::IxDyn(&dims));
-        self.insert_col(key, arr)
-    }
-
-    // ---- domain uint (`u64` / `Idx`); JS names stay `*U32` for the 0.14 cut ----
-
-    /// Set a domain-uint column from a `BigUint64Array`.
-    ///
-    /// Identifiers and relation endpoints (`id`, `atomi`, `atomj`, …) are
-    /// `u64`. The JS name stays `setColU32`.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - Column name (e.g., `"atomi"`, `"atomj"` for bond indices)
-    /// * `data` - `BigUint64Array` with the column values
-    ///
-    /// # Errors
-    ///
-    /// Throws if the row count is inconsistent with existing columns.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// // Bond topology: atom row indices
-    /// bonds.setColU32("atomi", new BigUint64Array([0n, 1n]));
-    /// bonds.setColU32("atomj", new BigUint64Array([1n, 2n]));
-    /// ```
-    #[wasm_bindgen(js_name = setColU32)]
-    pub fn set_col_u32(&mut self, key: &str, data: &BigUint64Array) -> Result<(), JsValue> {
-        let vec: Vec<u64> = data.to_vec();
-        self.insert_col(key, Array1::from(vec).into_dyn())
-    }
-
-    /// Zero-copy `BigUint64Array` view into WASM linear memory.
-    ///
-    /// **Warning**: invalidated if WASM linear memory grows.
-    /// Use [`copyColU32`](Block::copy_col_u32) for a safe copy.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - Column name
-    ///
-    /// # Errors
-    ///
-    /// Throws if the column does not exist or is not the domain uint (`u64`).
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// const view = block.viewColU32("atomi");
-    /// ```
-    #[wasm_bindgen(js_name = viewColU32)]
-    pub fn view_col_u32(&self, key: &str) -> Result<BigUint64Array, JsValue> {
-        self.inner
-            .store
-            .borrow()
-            .borrow_col_U(&self.inner.handle, key, |s, _| unsafe {
-                BigUint64Array::view(s)
-            })
-            .map_err(|e| col_not_found_or(key, "u64", e))
-    }
-
-    /// Owned `BigUint64Array` copy of a domain-uint column.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - Column name
-    ///
-    /// # Errors
-    ///
-    /// Throws if the column does not exist or is not the domain uint (`u64`).
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// const bondI = block.copyColU32("atomi");
-    /// const bondJ = block.copyColU32("atomj");
-    /// ```
-    #[wasm_bindgen(js_name = copyColU32)]
-    pub fn copy_col_u32(&self, key: &str) -> Result<BigUint64Array, JsValue> {
-        self.with(|b| {
-            b.get_uint(key)
-                .and_then(|arr| arr.as_slice_memory_order())
-                .map(BigUint64Array::from)
-                .ok_or_else(|| col_err(key, "u64"))
-        })?
-    }
-
-    /// Allocate a zero-filled u32 column at `key` with the given shape.
-    ///
-    /// See [`createColF`](Block::create_col_f) for the zero-copy write pattern.
-    ///
-    /// # Errors
-    ///
-    /// Throws if the shape is empty, or if the leading dimension conflicts
-    /// with existing columns.
-    #[wasm_bindgen(js_name = createColU32)]
-    pub fn create_col_u32(&mut self, key: &str, shape: Box<[usize]>) -> Result<(), JsValue> {
-        let dims: Vec<usize> = shape.into_vec();
-        let arr = ndarray::ArrayD::<u64>::zeros(ndarray::IxDyn(&dims));
-        self.insert_col(key, arr)
-    }
-
-    // ---- Str ----
-
-    /// Set a string column from a JS `string[]`.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - Column name (e.g., `"symbol"`, `"name"`)
-    /// * `data` - JS `Array` where every element must be a string
-    ///
-    /// # Errors
-    ///
-    /// Throws if any element is not a string, or if the row count is
-    /// inconsistent with existing columns.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// atoms.setColStr("symbol", ["C", "C", "O"]);
-    /// ```
-    #[wasm_bindgen(js_name = setColStr)]
-    pub fn set_col_str(&mut self, key: &str, data: JsArray) -> Result<(), JsValue> {
-        let mut strings = Vec::with_capacity(data.length() as usize);
-        for (i, v) in data.iter().enumerate() {
-            strings.push(v.as_string().ok_or_else(|| {
-                JsValue::from_str(&format!("element at index {i} is not a string"))
-            })?);
-        }
-        self.insert_col(key, Array1::from(strings).into_dyn())
-    }
-
-    /// Owned `string[]` copy of a string column.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - Column name
-    ///
-    /// # Returns
-    ///
-    /// A JS `Array` of strings.
-    ///
-    /// # Errors
-    ///
-    /// Throws if the column does not exist or is not of type `string`.
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// const symbols = block.copyColStr("symbol"); // ["C", "C", "O"]
-    /// ```
-    #[wasm_bindgen(js_name = copyColStr)]
-    pub fn copy_col_str(&self, key: &str) -> Result<JsArray, JsValue> {
-        self.with(|b| {
-            b.get_string(key)
-                .map(|arr| {
-                    let js = JsArray::new();
-                    for s in arr.iter() {
-                        js.push(&JsValue::from_str(s));
-                    }
-                    js
-                })
-                .ok_or_else(|| col_err(key, "string"))
-        })?
+        let dims = shape.as_ref().map(shape_from_js).transpose()?;
+        let col = column_from_js(key, &data, dims.as_deref())?;
+        self.with_mut(|b| {
+            b.insert_column(key, col)
+                .map_err(|e| JsValue::from_str(&e.to_string()))
+        })
     }
 }
 
@@ -821,29 +496,223 @@ impl Default for Block {
 }
 
 // ---------------------------------------------------------------------------
-// Error helpers
+// Column <-> JS conversion
 // ---------------------------------------------------------------------------
 
-fn col_err(key: &str, dtype: &str) -> JsValue {
-    JsValue::from_str(&format!("column '{key}' ({dtype}) is required"))
+fn missing_column(key: &str) -> JsValue {
+    JsValue::from_str(&format!("column '{key}' not found"))
 }
 
-fn typed_or_default<T>(
+fn complex_unsupported(key: &str, dt: DType) -> JsValue {
+    JsValue::from_str(&format!(
+        "column '{key}' is {}: complex columns are not exposed to JS",
+        dtype_name(dt)
+    ))
+}
+
+/// The values of `arr` in logical row-major order: borrowed when the storage
+/// already is standard-layout, collected otherwise.
+fn row_major<T: Clone>(arr: &ArrayD<T>) -> std::borrow::Cow<'_, [T]> {
+    match arr.as_slice() {
+        Some(s) => std::borrow::Cow::Borrowed(s),
+        None => std::borrow::Cow::Owned(arr.iter().cloned().collect()),
+    }
+}
+
+/// Owned JS copy of `col` in its natural JS array type.
+fn column_to_js(key: &str, col: &Column) -> Result<JsValue, JsValue> {
+    macro_rules! typed_copy {
+        ($arr:expr, $js:ty) => {
+            if let Some(arr) = $arr {
+                return Ok(<$js>::from(row_major(arr).as_ref()).into());
+            }
+        };
+    }
+    typed_copy!(col.as_float(), Float64Array);
+    typed_copy!(col.as_i8(), Int8Array);
+    typed_copy!(col.as_i16(), Int16Array);
+    typed_copy!(col.as_int(), Int32Array);
+    typed_copy!(col.as_i64(), BigInt64Array);
+    typed_copy!(col.as_u8(), Uint8Array);
+    typed_copy!(col.as_u16(), Uint16Array);
+    typed_copy!(col.as_u32(), Uint32Array);
+    typed_copy!(col.as_uint(), BigUint64Array);
+    if let Some(arr) = col.as_bool() {
+        return Ok(arr
+            .iter()
+            .map(|&v| JsValue::from_bool(v))
+            .collect::<JsArray>()
+            .into());
+    }
+    if let Some(arr) = col.as_string() {
+        return Ok(arr
+            .iter()
+            .map(|s| JsValue::from_str(s))
+            .collect::<JsArray>()
+            .into());
+    }
+    Err(complex_unsupported(key, col.dtype()))
+}
+
+/// Zero-copy typed-array view over `col`'s storage.
+fn column_view(key: &str, col: &Column) -> Result<JsValue, JsValue> {
+    macro_rules! typed_view {
+        ($arr:expr, $js:ty) => {
+            if let Some(arr) = $arr {
+                let slice = arr.as_slice().ok_or_else(|| {
+                    JsValue::from_str(&format!(
+                        "column '{key}' is not contiguous row-major; use get()"
+                    ))
+                })?;
+                // SAFETY: `slice` lives in WASM linear memory, owned by the
+                // store behind this block. The view is only valid until the
+                // next memory growth or until the column is replaced/freed;
+                // that contract is documented on `Block.view` and is the JS
+                // caller's to keep.
+                return Ok(unsafe { <$js>::view(slice) }.into());
+            }
+        };
+    }
+    typed_view!(col.as_float(), Float64Array);
+    typed_view!(col.as_i8(), Int8Array);
+    typed_view!(col.as_i16(), Int16Array);
+    typed_view!(col.as_int(), Int32Array);
+    typed_view!(col.as_i64(), BigInt64Array);
+    typed_view!(col.as_u8(), Uint8Array);
+    typed_view!(col.as_u16(), Uint16Array);
+    typed_view!(col.as_u32(), Uint32Array);
+    typed_view!(col.as_uint(), BigUint64Array);
+    let dt = col.dtype();
+    match dt {
+        DType::Bool | DType::String => Err(JsValue::from_str(&format!(
+            "column '{key}' is {}: only numeric columns have a typed-array view; use get()",
+            dtype_name(dt)
+        ))),
+        _ => Err(complex_unsupported(key, dt)),
+    }
+}
+
+/// Build a `Column` of `T` from `data`, shaped by `shape` (1-D when `None`).
+fn shaped<T: BlockDtype>(
     key: &str,
-    expected: &str,
-    got: Option<String>,
-    default: Option<T>,
-) -> Result<T, JsValue> {
-    if let Some(dt) = got {
+    data: Vec<T>,
+    shape: Option<&[usize]>,
+) -> Result<Column, JsValue> {
+    let n = data.len();
+    let dims = shape.map_or_else(|| vec![n], <[usize]>::to_vec);
+    let arr = ArrayD::from_shape_vec(IxDyn(&dims), data).map_err(|_| {
+        JsValue::from_str(&format!(
+            "column '{key}': shape {dims:?} does not hold {n} values"
+        ))
+    })?;
+    Ok(T::into_column(arr))
+}
+
+/// Infer the dtype of `data` from its constructor and build the column.
+fn column_from_js(key: &str, data: &JsValue, shape: Option<&[usize]>) -> Result<Column, JsValue> {
+    macro_rules! typed_set {
+        ($js:ty) => {
+            if let Some(arr) = data.dyn_ref::<$js>() {
+                return shaped(key, arr.to_vec(), shape);
+            }
+        };
+    }
+    typed_set!(Float64Array);
+    typed_set!(Int8Array);
+    typed_set!(Int16Array);
+    typed_set!(Int32Array);
+    typed_set!(BigInt64Array);
+    typed_set!(Uint8Array);
+    typed_set!(Uint16Array);
+    typed_set!(Uint32Array);
+    typed_set!(BigUint64Array);
+    if data.is_instance_of::<Float32Array>() {
         return Err(JsValue::from_str(&format!(
-            "column '{key}' must be {expected}, got '{dt}'"
+            "column '{key}': Float32Array is not a stored dtype; floats are stored as f64, pass a Float64Array"
         )));
     }
-    default.ok_or_else(|| col_err(key, expected))
+    if data.is_instance_of::<Uint8ClampedArray>() {
+        return Err(JsValue::from_str(&format!(
+            "column '{key}': Uint8ClampedArray is not a stored dtype; pass a Uint8Array"
+        )));
+    }
+    if let Some(arr) = data.dyn_ref::<JsArray>() {
+        return array_column(key, arr, shape);
+    }
+    Err(JsValue::from_str(&format!(
+        "column '{key}': cannot infer a dtype from {}; pass a typed array, string[] or boolean[]",
+        js_type_name(data)
+    )))
 }
 
-fn col_not_found_or(key: &str, dtype: &str, ffi_err: molrs_ffi::FfiError) -> JsValue {
-    JsValue::from_str(&format!("column '{key}' ({dtype}): {ffi_err}"))
+/// A `string[]` or `boolean[]` column; the first element decides which.
+fn array_column(key: &str, arr: &JsArray, shape: Option<&[usize]>) -> Result<Column, JsValue> {
+    let first = arr.get(0);
+    if arr.length() == 0 || first.is_string() {
+        let values = arr
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                v.as_string()
+                    .ok_or_else(|| mixed_array(key, i, "string", &v))
+            })
+            .collect::<Result<Vec<String>, JsValue>>()?;
+        return shaped(key, values, shape);
+    }
+    if first.as_bool().is_some() {
+        let values = arr
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                v.as_bool()
+                    .ok_or_else(|| mixed_array(key, i, "boolean", &v))
+            })
+            .collect::<Result<Vec<bool>, JsValue>>()?;
+        return shaped(key, values, shape);
+    }
+    Err(JsValue::from_str(&format!(
+        "column '{key}': cannot infer a dtype from an Array of {}; numeric data must be a typed array (e.g. Float64Array)",
+        js_type_name(&first)
+    )))
+}
+
+fn mixed_array(key: &str, index: usize, expected: &str, got: &JsValue) -> JsValue {
+    JsValue::from_str(&format!(
+        "column '{key}': element {index} is {}, expected every element to be a {expected}",
+        js_type_name(got)
+    ))
+}
+
+/// `typeof value`, or the constructor name for objects.
+fn js_type_name(value: &JsValue) -> String {
+    if value.is_object()
+        && let Some(obj) = value.dyn_ref::<js_sys::Object>()
+    {
+        return String::from(obj.constructor().name());
+    }
+    value.js_typeof().as_string().unwrap_or_default()
+}
+
+/// A `number[]` from a Rust shape.
+fn shape_to_js(dims: &[usize]) -> JsShape {
+    dims.iter()
+        .map(|&d| JsValue::from_f64(d as f64))
+        .collect::<JsArray>()
+        .unchecked_into()
+}
+
+/// A Rust shape from a JS `number[]` (any array-like of non-negative
+/// integers is accepted).
+fn shape_from_js(shape: &JsShape) -> Result<Vec<usize>, JsValue> {
+    JsArray::from(shape.as_ref())
+        .iter()
+        .map(|v| match v.as_f64() {
+            Some(d) if d >= 0.0 && d.fract() == 0.0 && d <= u32::MAX as f64 => Ok(d as usize),
+            _ => Err(JsValue::from_str(&format!(
+                "shape entries must be non-negative integers, got {v:?}"
+            ))),
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -859,44 +728,37 @@ impl Block {
             .map_err(js_err)
     }
 
-    fn insert_col<T: molrs::store::block::BlockDtype>(
+    fn with_mut<R>(
         &mut self,
-        key: &str,
-        array: ndarray::ArrayD<T>,
-    ) -> Result<(), JsValue> {
+        f: impl FnOnce(&mut RsBlock) -> Result<R, JsValue>,
+    ) -> Result<R, JsValue> {
         self.inner
             .store
             .borrow_mut()
-            .with_block_mut(&mut self.inner.handle, |b| {
-                b.insert(key, array)
-                    .map_err(|e| JsValue::from_str(&e.to_string()))
-            })
+            .with_block_mut(&mut self.inner.handle, f)
             .map_err(js_err)?
     }
 
-    fn insert_float(
-        &mut self,
+    /// Run `f` on column `key`; a missing column throws.
+    fn with_col<R>(
+        &self,
         key: &str,
-        data: Vec<F>,
-        shape: Option<Box<[usize]>>,
-    ) -> Result<(), JsValue> {
-        let array = if let Some(dims) = shape {
-            let dims_vec = Vec::from(dims);
-            ndarray::ArrayD::from_shape_vec(ndarray::IxDyn(&dims_vec), data)
-                .map_err(|e| JsValue::from_str(&e.to_string()))?
-        } else {
-            Array1::from(data).into_dyn()
-        };
-        self.insert_col(key, array)
+        f: impl FnOnce(&Column) -> Result<R, JsValue>,
+    ) -> Result<R, JsValue> {
+        self.with(|b| b.get(key).map_or_else(|| Err(missing_column(key)), f))?
     }
 
-    pub(crate) fn set_owned_column(
+    /// Insert a Rust-built array as column `key` (the path Rust-side
+    /// producers such as `Box.wrapToBlock` write through).
+    pub(crate) fn insert_array<T: BlockDtype>(
         &mut self,
         key: &str,
-        data: Vec<F>,
-        shape: Box<[usize]>,
+        array: ArrayD<T>,
     ) -> Result<(), JsValue> {
-        self.insert_float(key, data, Some(shape))
+        self.with_mut(|b| {
+            b.insert(key, array)
+                .map_err(|e| JsValue::from_str(&e.to_string()))
+        })
     }
 }
 
@@ -910,149 +772,280 @@ mod tests {
     use crate::core::frame::Frame;
     use wasm_bindgen_test::*;
 
-    #[wasm_bindgen_test]
-    fn test_block_set_copy_f() {
-        let frame = Frame::new();
-        let mut block = frame.create_block("atoms").unwrap();
+    fn block() -> Block {
+        Frame::new().create_block("scratch").unwrap()
+    }
 
-        let data = JsFloatArray::from(&[1.0, 2.0, 3.0][..]);
-        block.set_col_f("x", &data, None).unwrap();
-        let copied = block.copy_col_f("x").unwrap();
-        assert_eq!(copied.length(), 3);
-        assert_eq!(copied.get_index(0), 1.0);
+    fn col(value: impl Into<JsValue>) -> JsColumn {
+        value.into().unchecked_into()
+    }
+
+    fn shape_of(v: &JsShape) -> Vec<usize> {
+        shape_from_js(v).unwrap()
+    }
+
+    fn err_text(e: JsValue) -> String {
+        e.as_string().unwrap_or_default()
+    }
+
+    /// `set` a typed array, then check `dtype`, `get` and `view` hand back the
+    /// same values in the same typed-array type.
+    macro_rules! round_trip {
+        ($name:ident, $js:ty, $t:ty, $dtype:literal, [$($v:expr),*]) => {
+            #[wasm_bindgen_test]
+            fn $name() {
+                let mut b = block();
+                let values: Vec<$t> = vec![$($v),*];
+                b.set("c", col(<$js>::from(values.as_slice())), None).unwrap();
+                assert_eq!(b.dtype("c").unwrap().as_string().unwrap(), $dtype);
+                assert_eq!(shape_of(&b.shape("c").unwrap()), vec![values.len()]);
+                let got: JsValue = b.get("c", None).unwrap().into();
+                assert!(got.is_instance_of::<$js>(), "get returned the wrong type");
+                assert_eq!(got.unchecked_into::<$js>().to_vec(), values);
+                let view: JsValue = b.view("c").unwrap().into();
+                assert!(view.is_instance_of::<$js>(), "view returned the wrong type");
+                assert_eq!(view.unchecked_into::<$js>().to_vec(), values);
+            }
+        };
+    }
+
+    round_trip!(round_trip_f64, Float64Array, f64, "f64", [1.5, -2.0, 3.25]);
+    round_trip!(round_trip_i8, Int8Array, i8, "i8", [-1, 0, 7]);
+    round_trip!(round_trip_i16, Int16Array, i16, "i16", [-300, 0, 300]);
+    round_trip!(round_trip_i32, Int32Array, i32, "i32", [1, -2, 3]);
+    round_trip!(round_trip_i64, BigInt64Array, i64, "i64", [-5, 0, 1 << 40]);
+    round_trip!(round_trip_u8, Uint8Array, u8, "u8", [0, 128, 255]);
+    round_trip!(round_trip_u16, Uint16Array, u16, "u16", [0, 1, 65535]);
+    round_trip!(
+        round_trip_u32,
+        Uint32Array,
+        u32,
+        "u32",
+        [0, 1, 4_000_000_000]
+    );
+    round_trip!(round_trip_u64, BigUint64Array, u64, "u64", [0, 7, 1 << 50]);
+
+    #[wasm_bindgen_test]
+    fn round_trip_string() {
+        let mut b = block();
+        let values: JsArray = ["C", "C", "O"]
+            .iter()
+            .map(|s| JsValue::from_str(s))
+            .collect();
+        b.set("element", col(values), None).unwrap();
+        assert_eq!(b.dtype("element").unwrap().as_string().unwrap(), "string");
+        let got: JsArray = JsValue::from(b.get("element", None).unwrap()).unchecked_into();
+        let got: Vec<String> = got.iter().map(|v| v.as_string().unwrap()).collect();
+        assert_eq!(got, vec!["C", "C", "O"]);
     }
 
     #[wasm_bindgen_test]
-    fn test_block_set_copy_u32() {
-        let frame = Frame::new();
-        let mut block = frame.create_block("atoms").unwrap();
-
-        let ids = BigUint64Array::from(&[7_u64, 8_u64][..]);
-        block.set_col_u32("id", &ids).unwrap();
-        let copied = block.copy_col_u32("id").unwrap();
-        assert_eq!(copied.length(), 2);
+    fn round_trip_bool_keeps_dtype() {
+        let mut b = block();
+        let values: JsArray = [true, false, true]
+            .iter()
+            .map(|&v| JsValue::from_bool(v))
+            .collect();
+        b.set("flag", col(values), None).unwrap();
+        assert_eq!(b.dtype("flag").unwrap().as_string().unwrap(), "bool");
+        let got = b.get("flag", None).unwrap();
+        // boolean[] back, so feeding it to `set` again keeps `bool`.
+        b.set("flag2", got, None).unwrap();
+        assert_eq!(b.dtype("flag2").unwrap().as_string().unwrap(), "bool");
+        let got: JsArray = JsValue::from(b.get("flag2", None).unwrap()).unchecked_into();
+        let got: Vec<bool> = got.iter().map(|v| v.as_bool().unwrap()).collect();
+        assert_eq!(got, vec![true, false, true]);
     }
 
     #[wasm_bindgen_test]
-    fn test_block_set_copy_i32() {
-        let frame = Frame::new();
-        let mut block = frame.create_block("atoms").unwrap();
-
-        // Deliberately a name the Frame schema does not declare. The subject
-        // here is signed-integer storage, not any particular column; using
-        // "charge" made it fail once the schema started enforcing dtypes,
-        // because a partial charge is a float and the schema is right about
-        // that. There is no signed-int column in the schema to borrow.
-        let values = Int32Array::from(&[1_i32, -2][..]);
-        block.set_col_i32("signed_scratch", &values).unwrap();
-        let copied = block.copy_col_i32("signed_scratch").unwrap();
-        assert_eq!(copied.length(), 2);
-        assert_eq!(copied.get_index(0), 1);
-        assert_eq!(copied.get_index(1), -2);
+    fn empty_array_stores_as_string() {
+        let mut b = block();
+        b.set("names", col(JsArray::new()), None).unwrap();
+        assert_eq!(b.dtype("names").unwrap().as_string().unwrap(), "string");
+        assert_eq!(b.nrows().unwrap(), 0);
     }
 
     #[wasm_bindgen_test]
-    fn test_missing_key_throws() {
-        let frame = Frame::new();
-        let block = frame.create_block("atoms").unwrap();
-        assert!(block.copy_col_f("nonexistent").is_err());
+    fn set_with_shape_is_multidimensional() {
+        let mut b = block();
+        let shape: JsShape = col(JsArray::of2(&2.into(), &3.into())).unchecked_into();
+        let data = Float64Array::from(&[0.0, 1.0, 2.0, 3.0, 4.0, 5.0][..]);
+        b.set("pos", col(data), Some(shape)).unwrap();
+        assert_eq!(b.nrows().unwrap(), 2);
+        assert_eq!(shape_of(&b.shape("pos").unwrap()), vec![2, 3]);
+        let got: Float64Array = JsValue::from(b.get("pos", None).unwrap()).unchecked_into();
+        assert_eq!(got.to_vec(), vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0]);
     }
 
     #[wasm_bindgen_test]
-    fn test_has_and_get_typed() {
-        let frame = Frame::new();
-        let mut block = frame.create_block("atoms").unwrap();
-        block
-            .set_col_u32("id", &BigUint64Array::from(&[1_u64, 2_u64][..]))
+    fn set_replaces_with_new_dtype() {
+        let mut b = block();
+        b.set("c", col(Float64Array::from(&[1.0][..])), None)
             .unwrap();
-        block
-            .set_col_i32("signed_scratch", &Int32Array::from(&[3_i32, 4][..]))
-            .unwrap();
-        block
-            .set_col_f("x", &JsFloatArray::from(&[0.0, 1.0][..]), None)
-            .unwrap();
-
-        assert!(block.has_u32("id"));
-        assert!(block.has_i32("signed_scratch"));
-        assert!(block.has_f64("x"));
-        assert!(!block.has_f32("x"));
-        assert!(!block.has_u32("signed_scratch"));
-        assert!(!block.has_i32("id"));
-        assert!(!block.has_str("x"));
-        assert!(!block.has_f64("missing"));
-
-        let ids = block.get_u32("id", None).unwrap();
-        assert_eq!(ids.length(), 2);
-        assert!(block.get_u32("missing", None).is_err());
-        let fallback = BigUint64Array::from(&[9_u64][..]);
-        let got = block.get_u32("missing", Some(fallback)).unwrap();
-        assert_eq!(got.get_index(0), 9);
-        assert!(block.get_u32("signed_scratch", None).is_err());
-
-        assert!(frame.has_u32("atoms", "id"));
-        assert!(!frame.has_i32("atoms", "id"));
-        assert_eq!(frame.get_u32("atoms", "id", None).unwrap().length(), 2);
+        b.set("c", col(Int32Array::from(&[1][..])), None).unwrap();
+        assert_eq!(b.dtype("c").unwrap().as_string().unwrap(), "i32");
+        assert_eq!(b.keys().unwrap(), vec!["c".to_string()]);
     }
 
     #[wasm_bindgen_test]
-    fn test_create_col_f_then_write_via_view_is_zero_copy() {
-        let frame = Frame::new();
-        let mut block = frame.create_block("atoms").unwrap();
-
-        block
-            .create_col_f("x", vec![3_usize].into_boxed_slice())
+    fn view_writes_through_in_place() {
+        let mut b = block();
+        b.set("x", col(Float64Array::new_with_length(3)), None)
             .unwrap();
-        assert_eq!(block.nrows().unwrap(), 3);
-
-        let view = block.view_col_f("x").unwrap();
+        let view: Float64Array = JsValue::from(b.view("x").unwrap()).unchecked_into();
         view.set_index(0, 1.0);
-        view.set_index(1, 2.0);
         view.set_index(2, 3.0);
-
-        let copied = block.copy_col_f("x").unwrap();
-        assert_eq!(copied.length(), 3);
-        assert!((copied.get_index(0) - 1.0).abs() < 1e-9);
-        assert!((copied.get_index(2) - 3.0).abs() < 1e-9);
+        let got: Float64Array = JsValue::from(b.get("x", None).unwrap()).unchecked_into();
+        assert_eq!(got.to_vec(), vec![1.0, 0.0, 3.0]);
     }
 
     #[wasm_bindgen_test]
-    fn test_create_col_i32_then_write_via_view_is_zero_copy() {
-        let frame = Frame::new();
-        let mut block = frame.create_block("atoms").unwrap();
-
-        // See `test_block_set_copy_i32`: an undeclared name, because the
-        // schema legitimately types `charge` as float.
-        block
-            .create_col_i32("signed_scratch", vec![2_usize].into_boxed_slice())
+    fn has_keys_nrows() {
+        let mut b = block();
+        assert!(!b.has("x"));
+        assert_eq!(b.nrows().unwrap(), 0);
+        b.set("x", col(Float64Array::from(&[1.0, 2.0][..])), None)
             .unwrap();
+        b.set("id", col(BigUint64Array::from(&[1_u64, 2][..])), None)
+            .unwrap();
+        assert!(b.has("x"));
+        assert!(!b.has("y"));
+        assert_eq!(b.keys().unwrap(), vec!["x".to_string(), "id".to_string()]);
+        assert_eq!(b.nrows().unwrap(), 2);
+    }
 
-        let view = block.view_col_i32("signed_scratch").unwrap();
-        view.set_index(0, 1);
-        view.set_index(1, -1);
+    // ---- errors ----
 
-        let copied = block.copy_col_i32("signed_scratch").unwrap();
-        assert_eq!(copied.get_index(0), 1);
-        assert_eq!(copied.get_index(1), -1);
+    #[wasm_bindgen_test]
+    fn get_missing_throws_unless_default() {
+        let b = block();
+        assert!(err_text(b.get("nope", None).err().unwrap()).contains("'nope' not found"));
+        let fallback = BigUint64Array::from(&[9_u64][..]);
+        let got: BigUint64Array =
+            JsValue::from(b.get("nope", Some(col(fallback))).unwrap()).unchecked_into();
+        assert_eq!(got.to_vec(), vec![9]);
     }
 
     #[wasm_bindgen_test]
-    fn test_create_col_u32_matrix_shape_preserved() {
-        let frame = Frame::new();
-        let mut block = frame.create_block("bonds").unwrap();
-
-        // 2D shape: 2 rows, 2 cols.
-        block
-            .create_col_u32("ij", vec![2_usize, 2_usize].into_boxed_slice())
+    fn get_ignores_default_when_present() {
+        let mut b = block();
+        b.set("x", col(Float64Array::from(&[1.0][..])), None)
             .unwrap();
-        assert_eq!(block.nrows().unwrap(), 2);
+        let got: JsValue = b
+            .get("x", Some(col(Int32Array::from(&[5][..]))))
+            .unwrap()
+            .into();
+        assert!(got.is_instance_of::<Float64Array>());
+    }
 
-        let view = block.view_col_u32("ij").unwrap();
-        assert_eq!(view.length(), 4);
-        view.set_index(0, 10);
-        view.set_index(3, 40);
+    #[wasm_bindgen_test]
+    fn metadata_on_missing_column_throws() {
+        let b = block();
+        assert!(b.dtype("nope").is_err());
+        assert!(b.shape("nope").is_err());
+        assert!(b.view("nope").is_err());
+        assert!(b.validity("nope").is_err());
+    }
 
-        let copied = block.copy_col_u32("ij").unwrap();
-        assert_eq!(copied.get_index(0), 10);
-        assert_eq!(copied.get_index(3), 40);
+    #[wasm_bindgen_test]
+    fn view_refuses_non_numeric() {
+        let mut b = block();
+        let names: JsArray = ["a"].iter().map(|s| JsValue::from_str(s)).collect();
+        b.set("s", col(names), None).unwrap();
+        let flags: JsArray = [true].iter().map(|&v| JsValue::from_bool(v)).collect();
+        b.set("f", col(flags), None).unwrap();
+        assert!(err_text(b.view("s").err().unwrap()).contains("use get()"));
+        assert!(err_text(b.view("f").err().unwrap()).contains("use get()"));
+    }
+
+    #[wasm_bindgen_test]
+    fn set_refuses_float32_and_clamped() {
+        let mut b = block();
+        let e = b
+            .set("x", col(Float32Array::new_with_length(2)), None)
+            .unwrap_err();
+        assert!(err_text(e).contains("Float64Array"));
+        let e = b
+            .set("x", col(Uint8ClampedArray::new_with_length(2)), None)
+            .unwrap_err();
+        assert!(err_text(e).contains("Uint8ClampedArray"));
+        assert!(!b.has("x"));
+    }
+
+    #[wasm_bindgen_test]
+    fn set_refuses_untyped_numbers_and_mixed_arrays() {
+        let mut b = block();
+        let numbers: JsArray = [1.0, 2.0].iter().map(|&v| JsValue::from_f64(v)).collect();
+        assert!(err_text(b.set("n", col(numbers), None).unwrap_err()).contains("typed array"));
+        let mixed = JsArray::of2(&JsValue::from_str("a"), &JsValue::from_f64(1.0));
+        assert!(err_text(b.set("m", col(mixed), None).unwrap_err()).contains("element 1"));
+        assert!(b.set("o", col(js_sys::Object::new()), None).is_err());
+    }
+
+    #[wasm_bindgen_test]
+    fn set_refuses_shape_mismatch_and_ragged_rows() {
+        let mut b = block();
+        let shape: JsShape = col(JsArray::of2(&2.into(), &2.into())).unchecked_into();
+        let e = b
+            .set("pos", col(Float64Array::new_with_length(3)), Some(shape))
+            .unwrap_err();
+        assert!(err_text(e).contains("does not hold 3 values"));
+        b.set("x", col(Float64Array::new_with_length(2)), None)
+            .unwrap();
+        assert!(
+            b.set("y", col(Float64Array::new_with_length(3)), None)
+                .is_err()
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn set_honours_the_frame_schema() {
+        // `id` is declared u64 by the Frame schema; an i32 column is refused.
+        let mut b = block();
+        assert!(b.set("id", col(Int32Array::from(&[1][..])), None).is_err());
+    }
+
+    #[wasm_bindgen_test]
+    fn structural_shape_round_trip() {
+        let mut b = block();
+        assert!(b.structural_shape().unwrap().is_none());
+        b.set("rho", col(Float64Array::new_with_length(8)), None)
+            .unwrap();
+        let dims: JsShape = col([2, 2, 2]
+            .iter()
+            .map(|&d| JsValue::from(d))
+            .collect::<JsArray>())
+        .unchecked_into();
+        b.set_shape(dims).unwrap();
+        assert_eq!(
+            shape_of(&b.structural_shape().unwrap().unwrap()),
+            vec![2, 2, 2]
+        );
+        let bad: JsShape = col(JsArray::of1(&3.into())).unchecked_into();
+        assert!(b.set_shape(bad).is_err());
+    }
+
+    #[wasm_bindgen_test]
+    fn validity_reports_null_rows() {
+        let mut rs_atoms = RsBlock::new();
+        let frag = ndarray::Array1::from_vec(vec![7_i32, 0, 0]).into_dyn();
+        rs_atoms
+            .insert_nullable("frag_id", frag, vec![true, false, true])
+            .unwrap();
+        let mut rs_frame = molrs::store::frame::Frame::new();
+        rs_frame.insert("atoms", rs_atoms);
+        let frame = Frame::from_rs(rs_frame).unwrap();
+        let block = frame.get("atoms").unwrap();
+
+        let mask = block.validity("frag_id").unwrap().expect("mask");
+        assert_eq!(mask.to_vec(), vec![1_u8, 0, 1]);
+    }
+
+    #[wasm_bindgen_test]
+    fn validity_is_undefined_for_fully_valid_column() {
+        let mut b = block();
+        b.set("x", col(Float64Array::from(&[0.0, 1.0][..])), None)
+            .unwrap();
+        assert!(b.validity("x").unwrap().is_none());
     }
 }

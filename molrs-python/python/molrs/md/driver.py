@@ -23,21 +23,14 @@ _NEIGHBOR_DEFAULTS = {
 }
 
 
-def _stack_xyz(atoms: object) -> NDArray[np.float64]:
-    return np.stack(
-        [np.asarray(atoms["x"], dtype=np.float64),
-         np.asarray(atoms["y"], dtype=np.float64),
-         np.asarray(atoms["z"], dtype=np.float64)],
-        axis=1,
-    )
-
-
 def _stack_vel(atoms: object, shape: tuple[int, int]) -> NDArray[np.float64]:
     if all(name in atoms for name in ("vx", "vy", "vz")):
         return np.stack(
-            [np.asarray(atoms["vx"], dtype=np.float64),
-             np.asarray(atoms["vy"], dtype=np.float64),
-             np.asarray(atoms["vz"], dtype=np.float64)],
+            [
+                np.asarray(atoms["vx"], dtype=np.float64),
+                np.asarray(atoms["vy"], dtype=np.float64),
+                np.asarray(atoms["vz"], dtype=np.float64),
+            ],
             axis=1,
         )
     return np.zeros(shape, dtype=np.float64)
@@ -203,11 +196,7 @@ class MD:
         if config["cutoff"] is not None:
             return float(config["cutoff"])
         ff = self._forcefield
-        declared = [
-            dict(ff.style_params("pair", cat_name.split(":", 1)[1])).get("cutoff")
-            for cat_name in ff.style_names()
-            if cat_name.split(":", 1)[0] == "pair"
-        ]
+        declared = [style["cutoff"] for style in ff.get_styles("pair")]
         found = [float(c) for c in declared if c is not None]
         if found:
             return max(found)
@@ -265,7 +254,11 @@ class MD:
         )
 
     def _assemble(
-        self, frame: object, dt: float, pos: NDArray[np.float64], mass: NDArray[np.float64]
+        self,
+        frame: object,
+        dt: float,
+        pos: NDArray[np.float64],
+        mass: NDArray[np.float64],
     ) -> _md.VelocityVerlet:
         """Wire one run. This single step does exactly:
 
@@ -289,10 +282,7 @@ class MD:
         """
         if self._forcefield is not None:
             ff = self._forcefield
-            has_pair = any(
-                cat_name.split(":", 1)[0] == "pair" for cat_name in ff.style_names()
-            )
-            if has_pair:
+            if ff.get_styles("pair"):
                 # One call decides which kernel each style needs and how its
                 # close neighbours are scaled. The driver used to re-derive both
                 # here, in Python, for `lj/cut` alone and one (epsilon, sigma)
@@ -356,9 +346,11 @@ class MD:
         if self._forcefield is None and self._potential is None:
             raise RuntimeError("set_forcefield or set_potential before run")
         if (thermo is not None or temperature is not None) and kb is None:
-            raise ValueError("MD.run(thermo=...) / temperature= requires an explicit kb=")
+            raise ValueError(
+                "MD.run(thermo=...) / temperature= requires an explicit kb="
+            )
         atoms = frame["atoms"]
-        pos = _stack_xyz(atoms)
+        pos = atoms.coords
         if mass is None:
             if "mass" not in atoms:
                 raise ValueError(

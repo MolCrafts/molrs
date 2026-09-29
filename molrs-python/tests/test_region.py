@@ -1,6 +1,6 @@
+import molrs
 import numpy as np
 import pytest
-import molrs
 
 
 class TestSphere:

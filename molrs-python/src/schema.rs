@@ -162,13 +162,14 @@ impl PyColumnSpec {
         )
     }
 
-    /// The numpy dtype string this column maps to.
+    /// The numpy dtype string this column is stored at (`F` = f64, `I` = i32,
+    /// `Idx` = u64) — the dtype ``block[key] = values`` adopts.
     #[getter]
     fn numpy_dtype(&self) -> &'static str {
         match self.dtype.as_str() {
             "float" => "float64",
             "int" => "int32",
-            "uint" => "uint32",
+            "uint" => "uint64",
             "bool" => "bool",
             "u8" => "uint8",
             _ => "str",
@@ -317,6 +318,20 @@ fn to_markdown() -> String {
     schema::document().to_markdown()
 }
 
+/// The relation a block's rows describe: ``(target block, endpoint columns)``,
+/// or ``None`` when the block is not a relation.
+///
+/// A canonical relation block answers from the vocabulary; any other block is
+/// a relation over ``"atoms"`` iff *columns* holds endpoint columns
+/// (``atomi`` … ``atoml``), which are then listed in position order.
+#[pyfunction]
+fn relation_endpoints(
+    name: &str,
+    columns: Vec<String>,
+) -> Option<(&'static str, Vec<&'static str>)> {
+    schema::relation_endpoints(name, |k| columns.iter().any(|c| c == k))
+}
+
 /// Register `molrs.schema`.
 pub fn register_schema(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "schema")?;
@@ -325,10 +340,29 @@ pub fn register_schema(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("columns", column_specs())?;
     m.add("blocks", block_specs())?;
     m.add("VOCAB_VERSION", schema::FRAME_VOCAB_VERSION)?;
+    {
+        use schema::block_names::*;
+        for (name, value) in [
+            ("ATOMS", ATOMS),
+            ("BONDS", BONDS),
+            ("ANGLES", ANGLES),
+            ("DIHEDRALS", DIHEDRALS),
+            ("IMPROPERS", IMPROPERS),
+            ("PAIRS", PAIRS),
+            ("EXCLUSIONS", EXCLUSIONS),
+        ] {
+            m.add(name, value)?;
+        }
+        m.add(
+            "TOPOLOGY",
+            pyo3::types::PyTuple::new(parent.py(), TOPOLOGY)?,
+        )?;
+    }
     m.add_function(wrap_pyfunction!(py_column, &m)?)?;
     m.add_function(wrap_pyfunction!(py_block, &m)?)?;
     m.add_function(wrap_pyfunction!(to_json, &m)?)?;
     m.add_function(wrap_pyfunction!(to_markdown, &m)?)?;
+    m.add_function(wrap_pyfunction!(relation_endpoints, &m)?)?;
     parent.add_submodule(&m)?;
     Ok(())
 }

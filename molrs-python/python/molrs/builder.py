@@ -12,12 +12,14 @@ topology), and returns the world as the graph class the caller names
 without positions (e.g. ``CGSmilesIR(...).to_coarsegrain()``).
 """
 
-from ._lib import Assembler as Assembler
-from ._lib import AxisOrienter as AxisOrienter
-from ._lib import CarbonTubeBuilder as CarbonTubeBuilder
-from ._lib import GrapheneBuilder as GrapheneBuilder
-from ._lib import GrowthPlacer as GrowthPlacer
-from ._lib import SitePlacer as SitePlacer
+from ._lib import (
+    Assembler,
+    AxisOrienter,
+    CarbonTubeBuilder,
+    GrapheneBuilder,
+    GrowthPlacer,
+    SitePlacer,
+)
 
 __all__ = [
     "Assembler",

@@ -35,6 +35,9 @@
 //!
 //! The empty-endpoint wildcard is written as `X`.
 //!
+//! A pair style's `cutoff` is a run setting (the .mdp's `rvdw` / `rcoulomb`),
+//! not force-field data, so it is not written.
+//!
 //! `pair/coul/cut` has no directive: GROMACS takes Coulomb constants from the
 //! run parameters, so only the constants the reader declares (the real-units
 //! Coulomb constant, dielectric 1) are accepted, and nothing is written.
@@ -282,8 +285,10 @@ impl ForceFieldWriter for GromacsTopFfWriter {
                 | ("angle", "harmonic")
                 | ("dihedral", "periodic" | "opls")
                 | ("improper", "periodic" | "harmonic") => {}
+                // A pair `cutoff` is a run setting (GROMACS keeps it in the
+                // .mdp), not force-field data: it is not written.
                 ("pair", "lj/cut") => {
-                    if let Some((key, _)) = style.params().iter().next() {
+                    if let Some((key, _)) = style.params().iter().find(|(k, _)| *k != "cutoff") {
                         return Err(format!(
                             "pair/lj/cut style param '{key}' has no GROMACS directive"
                         ));
@@ -295,7 +300,7 @@ impl ForceFieldWriter for GromacsTopFfWriter {
                     let extra = style
                         .params()
                         .iter()
-                        .any(|(key, _)| key != "coulomb" && key != "dielectric");
+                        .any(|(key, _)| !matches!(key, "coulomb" | "dielectric" | "cutoff"));
                     if extra
                         || !declared("coulomb", COULOMB_REAL)
                         || !declared("dielectric", VACUUM_DIELECTRIC)
@@ -424,9 +429,9 @@ mod tests {
         let mut ff = ForceField::new("gmx");
         ff.def_style("atom", "full", Params::new())
             .unwrap()
-            .def_type("opls_135", atom_params(12.011, -0.18, 6.0, "CT"))
+            .def_type("opls_135", &[], atom_params(12.011, -0.18, 6.0, "CT"))
             .unwrap()
-            .def_type("opls_140", atom_params(1.008, 0.06, 1.0, "HC"))
+            .def_type("opls_140", &[], atom_params(1.008, 0.06, 1.0, "HC"))
             .unwrap();
         let mut lj_params = Params::new();
         if let Some(rule) = mixing {
@@ -434,13 +439,13 @@ mod tests {
         }
         ff.def_style("pair", "lj/cut", lj_params)
             .unwrap()
-            .def_type_at(
+            .def_type(
                 "opls_135",
                 &["opls_135"],
                 Params::from_pairs(&[("sigma", 3.5), ("epsilon", 0.066)]),
             )
             .unwrap()
-            .def_type_at(
+            .def_type(
                 "opls_140",
                 &["opls_140"],
                 Params::from_pairs(&[("sigma", 2.5), ("epsilon", 0.03)]),
@@ -454,11 +459,17 @@ mod tests {
     }
 
     /// `opls_ff(Some("geometric"))` plus one `category/name` type.
-    fn with_type(category: &str, name: &str, type_name: &str, params: Params) -> ForceField {
+    fn with_type(
+        category: &str,
+        name: &str,
+        type_name: &str,
+        endpoints: &[&str],
+        params: Params,
+    ) -> ForceField {
         let mut ff = opls_ff(Some("geometric"));
         ff.def_style(category, name, Params::new())
             .unwrap()
-            .def_type(type_name, params)
+            .def_type(type_name, endpoints, params)
             .unwrap();
         ff
     }
@@ -620,7 +631,7 @@ mod tests {
         atoms.remove_type("opls_135");
         let mut p = Params::from_pairs(&[("mass", 12.011), ("charge", -0.18)]);
         p.set_str("ptype", "A");
-        atoms.def_type("opls_135", p).unwrap();
+        atoms.def_type("opls_135", &[], p).unwrap();
         let text = write(&ff);
         let r = row(&text, "atomtypes", &["opls_135"]);
         assert_eq!(r.len(), 6, "{r:?}");
@@ -638,7 +649,7 @@ mod tests {
         let mut p =
             Params::from_pairs(&[("mass", 12.011), ("charge", -0.18), ("atomic_number", 6.0)]);
         p.set_str("bond_type", "CT");
-        atoms.def_type("opls_135", p).unwrap();
+        atoms.def_type("opls_135", &[], p).unwrap();
         let text = write(&ff);
         assert_eq!(row(&text, "atomtypes", &["opls_135"])[5], "A");
     }
@@ -667,7 +678,7 @@ mod tests {
         }
         p.set_str("bond_type", "CT");
         p.set_str("ptype", "A");
-        atoms.def_type("opls_135", p).unwrap();
+        atoms.def_type("opls_135", &[], p).unwrap();
         ff
     }
 
@@ -700,7 +711,7 @@ mod tests {
         let mut ff = opls_ff(Some("geometric"));
         ff.get_style_mut("pair", "lj/cut")
             .unwrap()
-            .def_type_at(
+            .def_type(
                 "opls_135-opls_140",
                 &["opls_135", "opls_140"],
                 Params::from_pairs(&[("sigma", 3.0), ("epsilon", 0.05)]),
@@ -719,6 +730,7 @@ mod tests {
             "bond",
             "harmonic",
             "CT-HC",
+            &["CT", "HC"],
             Params::from_pairs(&[("r0", 1.09), ("k", 680.0)]),
         );
         let text = write(&ff);
@@ -734,6 +746,7 @@ mod tests {
             "bond",
             "morse",
             "CT-CT",
+            &["CT", "CT"],
             Params::from_pairs(&[("D", 95.602_294_455_066_9), ("alpha", 2.0), ("r0", 1.529)]),
         );
         let text = write(&ff);
@@ -748,6 +761,7 @@ mod tests {
             "angle",
             "harmonic",
             "HC-CT-HC",
+            &["HC", "CT", "HC"],
             Params::from_pairs(&[("theta0", 107.8 * PI / 180.0), ("k", 66.0)]),
         );
         let text = write(&ff);
@@ -762,6 +776,7 @@ mod tests {
             "dihedral",
             "periodic",
             "CT-CT-CT-CT",
+            &["CT", "CT", "CT", "CT"],
             Params::from_pairs(&[("k", 1.0), ("periodicity", 3.0), ("phase", 0.0)]),
         );
         let text = write(&ff);
@@ -777,11 +792,23 @@ mod tests {
             "dihedral",
             "opls",
             "HC-CT-CT-HC",
+            &["HC", "CT", "CT", "HC"],
             Params::from_pairs(&[("k1", 0.0), ("k2", 0.0), ("k3", 0.3), ("k4", 0.0)]),
         );
         let text = write(&ff);
         let r = row(&text, "dihedraltypes", &["HC", "CT", "CT", "HC"]);
         assert_row_values(&r[4..], "3", &[0.6276, 1.8828, 0.0, -2.5104, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn a_pair_cutoff_is_a_run_setting_and_not_written() {
+        let mut ff = ForceField::new("t");
+        ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+            .unwrap();
+        ff.def_style("pair", "coul/cut", Params::from_pairs(&[("cutoff", 10.0)]))
+            .unwrap();
+        let text = write(&ff);
+        assert!(!text.contains("10"), "{text}");
     }
 
     /// The empty endpoint wildcard is written as GROMACS `X`.
@@ -791,6 +818,7 @@ mod tests {
             "dihedral",
             "opls",
             "-CT-CT-",
+            &["", "CT", "CT", ""],
             Params::from_pairs(&[("k1", 0.0), ("k2", 0.0), ("k3", 0.3), ("k4", 0.0)]),
         );
         let text = write(&ff);
@@ -805,6 +833,7 @@ mod tests {
             "improper",
             "periodic",
             "--CT-HC",
+            &["", "", "CT", "HC"],
             Params::from_pairs(&[("k", 2.5), ("periodicity", 2.0), ("phase", PI)]),
         );
         let text = write(&ff);
@@ -819,6 +848,7 @@ mod tests {
             "improper",
             "harmonic",
             "--CT-HC",
+            &["", "", "CT", "HC"],
             Params::from_pairs(&[("k", 20.0), ("chi0", 0.0)]),
         );
         let text = write(&ff);
@@ -833,12 +863,14 @@ mod tests {
             "bond",
             "harmonic",
             "CT-HC",
+            &["CT", "HC"],
             Params::from_pairs(&[("r0", 1.09), ("k", 680.0)]),
         );
         ff.def_style("angle", "harmonic", Params::new())
             .unwrap()
             .def_type(
                 "HC-CT-HC",
+                &["HC", "CT", "HC"],
                 Params::from_pairs(&[("theta0", 1.9), ("k", 66.0)]),
             )
             .unwrap();
@@ -866,6 +898,7 @@ mod tests {
             "dihedral",
             "charmm",
             "CT-CT-CT-CT",
+            &["CT", "CT", "CT", "CT"],
             Params::from_pairs(&[("k", 1.0), ("periodicity", 3.0), ("phase", 0.0), ("w", 0.5)]),
         );
         let err = write_err(&ff);
@@ -878,6 +911,7 @@ mod tests {
             "dihedral",
             "multi/harmonic",
             "CT-CT-CT-CT",
+            &["CT", "CT", "CT", "CT"],
             Params::from_pairs(&[
                 ("a1", 1.0),
                 ("a2", 0.0),
@@ -897,6 +931,7 @@ mod tests {
             "dihedral",
             "periodic",
             "CT-CT-CT-CT",
+            &["CT", "CT", "CT", "CT"],
             Params::from_pairs(&[
                 ("k1", 1.0),
                 ("periodicity1", 1.0),
@@ -917,6 +952,7 @@ mod tests {
             "bond",
             "harmonic",
             "ZZ-CT",
+            &["ZZ", "CT"],
             Params::from_pairs(&[("r0", 1.09), ("k", 680.0)]),
         );
         let err = write_err(&ff);
@@ -930,6 +966,7 @@ mod tests {
             "bond",
             "harmonic",
             "opls_135-opls_140",
+            &["opls_135", "opls_140"],
             Params::from_pairs(&[("r0", 1.09), ("k", 680.0)]),
         );
         let text = write(&ff);
@@ -948,63 +985,83 @@ mod tests {
             Params::from_pairs(&[("coulomb", COULOMB_REAL), ("dielectric", VACUUM_DIELECTRIC)]),
         )
         .unwrap();
-        // (category, style, type name, params) of one type definition.
-        type TypeDef<'a> = (&'a str, &'a str, &'a str, &'a [(&'a str, f64)]);
+        // (category, style, type name, endpoints, params) of one type definition.
+        type TypeDef<'a> = (
+            &'a str,
+            &'a str,
+            &'a str,
+            &'a [&'a str],
+            &'a [(&'a str, f64)],
+        );
         let defs: [TypeDef; 9] = [
-            ("bond", "harmonic", "CT-HC", &[("r0", 1.09), ("k", 680.0)]),
+            (
+                "bond",
+                "harmonic",
+                "CT-HC",
+                &["CT", "HC"],
+                &[("r0", 1.09), ("k", 680.0)],
+            ),
             (
                 "bond",
                 "morse",
                 "CT-CT",
+                &["CT", "CT"],
                 &[("D", 95.602_294_455_066_9), ("alpha", 2.0), ("r0", 1.529)],
             ),
             (
                 "angle",
                 "harmonic",
                 "HC-CT-HC",
+                &["HC", "CT", "HC"],
                 &[("theta0", 107.8 * PI / 180.0), ("k", 66.0)],
             ),
             (
                 "dihedral",
                 "periodic",
                 "CT-CT-CT-CT",
+                &["CT", "CT", "CT", "CT"],
                 &[("k", 1.0), ("periodicity", 3.0), ("phase", 0.0)],
             ),
             (
                 "dihedral",
                 "opls",
                 "HC-CT-CT-HC",
+                &["HC", "CT", "CT", "HC"],
                 &[("k1", 0.0), ("k2", 0.0), ("k3", 0.3), ("k4", 0.0)],
             ),
             (
                 "dihedral",
                 "opls",
                 "-CT-CT-",
+                &["", "CT", "CT", ""],
                 &[("k1", 1.3), ("k2", -0.05), ("k3", 0.2), ("k4", 0.1)],
             ),
             (
                 "improper",
                 "periodic",
                 "--CT-HC",
+                &["", "", "CT", "HC"],
                 &[("k", 2.5), ("periodicity", 2.0), ("phase", PI)],
             ),
             (
                 "improper",
                 "harmonic",
                 "--HC-CT",
+                &["", "", "HC", "CT"],
                 &[("k", 20.0), ("chi0", 0.0)],
             ),
             (
                 "angle",
                 "harmonic",
                 "CT-CT-HC",
+                &["CT", "CT", "HC"],
                 &[("theta0", 1.9), ("k", 37.5)],
             ),
         ];
-        for (category, style, name, params) in defs {
+        for (category, style, name, endpoints, params) in defs {
             ff.def_style(category, style, Params::new())
                 .unwrap()
-                .def_type(name, Params::from_pairs(params))
+                .def_type(name, endpoints, Params::from_pairs(params))
                 .unwrap();
         }
         ff

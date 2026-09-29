@@ -24,6 +24,7 @@
 //! [`SpecialBonds`]: crate::ff::forcefield::SpecialBonds
 //! [`PotentialCompiler::compile`]: crate::ff::potential::PotentialCompiler::compile
 
+use molrs::store::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
@@ -414,11 +415,11 @@ pub fn mmff_vdw_ctor(sp: &Params, tp: &[(&str, &Params)], frame: &Frame) -> Resu
     let style = VdwStyleParams::from_style(sp);
     let lj_14 = sp.get("lj14scale").unwrap_or(1.0) as F;
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
-    let atoms = frame.get("atoms").ok_or("mmff_vdw: missing \"atoms\"")?;
+    let atoms = frame.get(ATOMS).ok_or("mmff_vdw: missing \"atoms\"")?;
     let atom_types = atoms
         .get_string("type")
         .ok_or("mmff_vdw: missing atom \"type\"")?;
-    let pairs = frame.get("pairs").ok_or("mmff_vdw: missing \"pairs\"")?;
+    let pairs = frame.get(PAIRS).ok_or("mmff_vdw: missing \"pairs\"")?;
     let ic = pairs.get_uint("atomi").ok_or("missing atomi")?;
     let jc = pairs.get_uint("atomj").ok_or("missing atomj")?;
     let is_14 = pairs.get_bool("is_14");

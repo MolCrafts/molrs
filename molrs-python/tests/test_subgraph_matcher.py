@@ -11,6 +11,8 @@ built in process.
 
 from __future__ import annotations
 
+import itertools
+
 import molrs
 import pytest
 from molrs import _lib
@@ -20,7 +22,7 @@ def _chain(*bead_types: str) -> tuple[molrs.CoarseGrain, list[int]]:
     """A linear bead chain of ``bead_types``, and its handles in that order."""
     cg = molrs.CoarseGrain()
     handles = [cg.add_bead(bead_type) for bead_type in bead_types]
-    for a, b in zip(handles, handles[1:]):
+    for a, b in itertools.pairwise(handles):
         cg.add_bond(a, b)
     return cg, handles
 

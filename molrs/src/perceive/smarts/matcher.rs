@@ -144,7 +144,8 @@ fn backtrack(
             // Candidates come from the anchor's image neighbourhood.
             let anchor = anchor_of(query, depth).expect("non-root query atom must have an anchor");
             let anchor_img = assign[anchor].expect("anchor must be assigned");
-            for cand in ctx.mol.neighbors(anchor_img) {
+            // Bonds only: a port (or any other 2-ary kind) is not a bond.
+            for (cand, _) in ctx.mol.neighbor_bonds(anchor_img) {
                 if !try_place(query, ctx, rec, root_fix, depth, cand, assign, full, visit) {
                     return false;
                 }
@@ -275,6 +276,29 @@ mod tests {
                     .collect()
             })
             .collect()
+    }
+
+    /// A port records a joining site on a real bond; it is not a bond. The
+    /// hydroxyl O of `C–C–O–H` with a port on its O–H valence is still
+    /// two-connected with one hydrogen, and the H still one-connected.
+    #[test]
+    fn a_port_is_not_counted_as_a_bond() {
+        use crate::system::bond::BondNumber;
+        use crate::system::port::PortKind;
+        let mut mol = ethanol();
+        let o = mol.atoms().map(|(id, _)| id).nth(2).expect("O");
+        let h = mol.add_atom_bare("H");
+        mol.add_bond(o, h).unwrap();
+        mol.add_port(o, h, PortKind::Left, "", BondNumber::Single)
+            .expect("a bonded H is a legal handle");
+
+        assert_eq!(matches("[OX2H1]", &mol), vec![vec![2]]);
+        assert_eq!(matches("[HX1]O", &mol), vec![vec![3, 2]]);
+        assert_eq!(
+            matches("OC", &mol),
+            vec![vec![2, 1]],
+            "no path through the port"
+        );
     }
 
     #[test]

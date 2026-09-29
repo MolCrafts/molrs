@@ -608,7 +608,7 @@ mod tests {
         let mut ff = ForceField::new("one-row");
         ff.def_style("dihedral", "opls", Params::new())
             .unwrap()
-            .def_type_at(
+            .def_type(
                 "CZ-CT-CT-CW",
                 &["CZ", "CT", "CT", "CW"],
                 Params::from_pairs(&[("k1", 1.0), ("k2", 0.0), ("k3", 0.5), ("k4", 0.0)]),
@@ -749,7 +749,7 @@ mod tests {
         let atoms = ff.def_style("atom", "full", Params::new()).unwrap();
         for (name, _, mass) in atom_types {
             atoms
-                .def_type_at(
+                .def_type(
                     name,
                     &[],
                     Params::from_pairs(&[("mass", *mass), ("charge", 0.0)]),
@@ -774,7 +774,7 @@ mod tests {
         let mut ff = ForceField::new("one-bond-row");
         ff.def_style("bond", "harmonic", Params::new())
             .unwrap()
-            .def_type_at(
+            .def_type(
                 "CA-CT",
                 &["CA", "CT"],
                 Params::from_pairs(&[("k", 634.0), ("r0", 1.51)]),
@@ -810,7 +810,7 @@ mod tests {
         let mut ff = ForceField::new("one-dihedral-row");
         ff.def_style("dihedral", "opls", Params::new())
             .unwrap()
-            .def_type_at("CT-CA-OS-CT", &["CT", "CA", "OS", "CT"], row.clone())
+            .def_type("CT-CA-OS-CT", &["CT", "CA", "OS", "CT"], row.clone())
             .unwrap();
         let estimator = opls_class_estimator(
             ff,

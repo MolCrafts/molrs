@@ -246,8 +246,8 @@ impl CandidateTables {
     ///
     /// A match is `type` → [`Annotation::Type`] named by the winning
     /// candidate, with its endpoint pattern and params. No match asks
-    /// `estimator`: its params become a `Type` named
-    /// [`BondedTerm::type_name`], endpoints read off that name. A term with
+    /// `estimator`: its params become a `Type` on
+    /// [`BondedTerm::endpoints`], named [`BondedTerm::type_name`]. A term with
     /// an untyped endpoint, or that no candidate or estimate covers, follows
     /// `policy`: [`NoMatch::Skip`] gives it no annotation, [`NoMatch::Error`]
     /// is an `Err`.
@@ -277,7 +277,7 @@ impl CandidateTables {
                 Annotation::Type {
                     style: style.to_owned(),
                     name: cand.name.clone(),
-                    endpoints: Some(cand.pattern.clone()),
+                    endpoints: cand.pattern.clone(),
                     params: cand.params.clone(),
                 },
             )]);
@@ -295,13 +295,12 @@ impl CandidateTables {
         if let Some(est) = estimator
             && let Some(params) = est.interpolate(&term)?
         {
-            let name = term.type_name()?;
             return Ok(vec![(
                 "type".to_owned(),
                 Annotation::Type {
                     style: style.to_owned(),
-                    endpoints: Some(name.endpoints().into_iter().map(str::to_owned).collect()),
-                    name: name.to_string(),
+                    endpoints: term.endpoints().into_iter().map(str::to_owned).collect(),
+                    name: term.type_name()?.to_string(),
                     params,
                 },
             )]);
@@ -646,7 +645,7 @@ mod tests {
         let mut ff = ForceField::new("OPLS-AA");
         ff.def_style("bond", "harmonic", Params::new())
             .unwrap()
-            .def_type_at(
+            .def_type(
                 "X-X",
                 &["X", "X"],
                 Params::from_pairs(&[("k", 1.0), ("r0", 1.5)]),

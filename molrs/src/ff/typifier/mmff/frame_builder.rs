@@ -102,7 +102,7 @@ fn typed(
         Annotation::Type {
             style: style.to_owned(),
             name,
-            endpoints: Some(endpoints.iter().map(u32::to_string).collect()),
+            endpoints: endpoints.iter().map(u32::to_string).collect(),
             params,
         },
     )

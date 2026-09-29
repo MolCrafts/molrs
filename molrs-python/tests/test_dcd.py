@@ -1,6 +1,6 @@
 """FFI smoke tests for DCD read/write bindings.
 
-Self-contained: fixtures are written with ``molrs.io.raw.write_dcd``. No chemfiles
+Self-contained: fixtures are written with ``molrs.io.raw.write_dcd_trajectory``. No chemfiles
 corpus and no third-party trajectory software.
 """
 
@@ -9,14 +9,13 @@ from __future__ import annotations
 import os
 import tempfile
 
-import pytest
-
 import molrs
+import pytest
 
 
 class TestReadDcd:
     def test_parses_written_trajectory(self, water_dcd):
-        frames = molrs.io.raw.read_dcd(str(water_dcd))
+        frames = molrs.io.raw.read_dcd_trajectory(str(water_dcd))
         assert len(frames) == 2
         for i, frame in enumerate(frames):
             assert "atoms" in frame, f"frame {i} missing atoms block"
@@ -24,13 +23,13 @@ class TestReadDcd:
 
     def test_missing_file_raises_os_error(self):
         with pytest.raises(OSError):
-            molrs.io.raw.read_dcd("/nonexistent/path.dcd")
+            molrs.io.raw.read_dcd_trajectory("/nonexistent/path.dcd")
 
 
 class TestDcdTrajReader:
     def test_random_access_matches_sequential(self, water_dcd):
         path = str(water_dcd)
-        sequential = molrs.io.raw.read_dcd(path)
+        sequential = molrs.io.raw.read_dcd_trajectory(path)
         reader = molrs.io.raw.DCDTrajReader(path)
         assert len(reader) == len(sequential)
         for n in reversed(range(len(sequential))):
@@ -46,7 +45,7 @@ class TestDcdTrajReader:
     def test_negative_index(self, water_dcd):
         path = str(water_dcd)
         reader = molrs.io.raw.DCDTrajReader(path)
-        eager = molrs.io.raw.read_dcd(path)
+        eager = molrs.io.raw.read_dcd_trajectory(path)
         assert reader[-1]["atoms"].nrows == eager[-1]["atoms"].nrows
 
     def test_index_error(self, water_dcd):
@@ -62,7 +61,7 @@ class TestDcdTrajReaderMolpyAligned:
 
     def test_read_frame_matches_eager(self, water_dcd):
         path = str(water_dcd)
-        eager = molrs.io.raw.read_dcd(path)
+        eager = molrs.io.raw.read_dcd_trajectory(path)
         reader = molrs.io.raw.DCDTrajReader(path)
         assert reader.read_frame(0)["atoms"].nrows == eager[0]["atoms"].nrows
         assert reader.read_frame(-1)["atoms"].nrows == eager[-1]["atoms"].nrows
@@ -80,7 +79,7 @@ class TestDcdTrajReaderMolpyAligned:
 
     def test_read_all_matches_eager(self, water_dcd):
         path = str(water_dcd)
-        eager = molrs.io.raw.read_dcd(path)
+        eager = molrs.io.raw.read_dcd_trajectory(path)
         reader = molrs.io.raw.DCDTrajReader(path)
         assert len(reader.read_all()) == len(eager)
 
@@ -90,8 +89,8 @@ class TestWriteDcd:
         with tempfile.NamedTemporaryFile(suffix=".dcd", delete=False) as tmp:
             tmpname = tmp.name
         try:
-            molrs.io.raw.write_dcd(tmpname, [water_frame, water_frame])
-            frames = molrs.io.raw.read_dcd(tmpname)
+            molrs.io.raw.write_dcd_trajectory(tmpname, [water_frame, water_frame])
+            frames = molrs.io.raw.read_dcd_trajectory(tmpname)
             assert len(frames) == 2
             assert frames[0]["atoms"].nrows == 3
         finally:

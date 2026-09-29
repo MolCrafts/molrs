@@ -8,7 +8,7 @@
 //! prefactors to produce the frequency-dependent permittivity
 //! [`DielectricSpectrumResult`].
 //!
-//! The window + one-sided-FFT machinery (`acf_to_spectrum`,
+//! The window + one-sided-FFT machinery (`piecewise_linear_onesided_ft`,
 //! `taper_derivative_spectrum`, `windowed_acf_spectrum`) was relocated here
 //! from `compute::dielectric` in compute-fit-04-dielectric: windowing +
 //! transforming a raw ACF into ε(ω) is a *fit*, so it belongs in the [`Fit`]
@@ -158,20 +158,6 @@ fn piecewise_linear_onesided_ft(y: &Array1<f64>, dt: f64, pad_factor: usize) -> 
     (frequencies, spec_re, spec_im)
 }
 
-/// Dielectric-path ACF → one-sided continuous FT (piecewise-linear).
-///
-/// The `planner` / `n_pad` arguments are retained for call-site compatibility
-/// with older rectangle-rule code; padding is controlled by
-/// [`DIELECTRIC_PAD_FACTOR`] inside the piecewise-linear kernel.
-fn acf_to_spectrum(
-    _planner: &mut FftPlanner<f64>,
-    acf: &Array1<f64>,
-    dt: f64,
-    _n_pad: usize,
-) -> RawSpectrum {
-    piecewise_linear_onesided_ft(acf, dt, DIELECTRIC_PAD_FACTOR)
-}
-
 /// One-sided cosine² taper → central-difference derivative → one-sided FT of a
 /// raw fluctuation dipole ACF.
 ///
@@ -207,9 +193,7 @@ fn taper_derivative_spectrum(acf: &Array1<f64>, dt: f64) -> RawSpectrum {
         deriv[max_lag] = (tapered[max_lag] - tapered[max_lag - 1]) / dt;
     }
 
-    let n_pad = (2 * (max_lag + 1)).next_power_of_two();
-    let mut planner = FftPlanner::new();
-    acf_to_spectrum(&mut planner, &deriv, dt, n_pad)
+    piecewise_linear_onesided_ft(&deriv, dt, DIELECTRIC_PAD_FACTOR)
 }
 
 fn parse_window_type(s: &str) -> Result<sig::WindowType, ComputeError> {
@@ -255,9 +239,11 @@ fn windowed_acf_spectrum(
     })?;
     let windowed_1d: Array1<f64> = windowed.iter().copied().collect();
 
-    // Piecewise-linear FT; pad factor fixed in the kernel (planner unused).
-    let mut planner = FftPlanner::new();
-    Ok(acf_to_spectrum(&mut planner, &windowed_1d, dt, 0))
+    Ok(piecewise_linear_onesided_ft(
+        &windowed_1d,
+        dt,
+        DIELECTRIC_PAD_FACTOR,
+    ))
 }
 
 // ── Einstein–Helfand ε(ω) transform ──────────────────────────────────────────
@@ -1028,8 +1014,8 @@ mod tests {
         if max_lag >= 1 {
             deriv[max_lag] = (acf[max_lag] - acf[max_lag - 1]) / dt;
         }
-        let n_pad = (2 * (max_lag + 1)).next_power_of_two();
-        let (frequencies, dre, dim) = acf_to_spectrum(&mut planner, &deriv, dt, n_pad);
+        let (frequencies, dre, dim) =
+            piecewise_linear_onesided_ft(&deriv, dt, DIELECTRIC_PAD_FACTOR);
 
         let prefactor = FOUR_PI_OVER_3 * KAPPA / (volume * K_B * temperature);
         let n_freq = frequencies.len();
@@ -1083,10 +1069,8 @@ mod tests {
             ndarray::ArrayD::from_shape_vec(ndarray::IxDyn(&[max_lag + 1]), acf.to_vec()).unwrap();
         let windowed = sig::apply_window(&acf_dyn, wt, 0).unwrap();
         let windowed_1d: Array1<f64> = windowed.iter().copied().collect();
-        let n_pad = (2 * (max_lag + 1)).next_power_of_two();
-        let mut planner = FftPlanner::new();
         let (frequencies, spec_re, spec_im) =
-            acf_to_spectrum(&mut planner, &windowed_1d, dt, n_pad);
+            piecewise_linear_onesided_ft(&windowed_1d, dt, DIELECTRIC_PAD_FACTOR);
 
         let sigma_prefactor = volume / (3.0 * K_B * temperature);
         let eps0_factor = 4.0 * std::f64::consts::PI * KAPPA;

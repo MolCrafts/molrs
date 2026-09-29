@@ -230,14 +230,23 @@ mod tests {
         let y = JsFloatArray::from(&[0.0, 0.0][..]);
         let z = JsFloatArray::from(&[0.0, 0.5][..]);
 
-        atoms.set_col_f("x", &x, None).expect("x");
-        atoms.set_col_f("y", &y, None).expect("y");
-        atoms.set_col_f("z", &z, None).expect("z");
+        use wasm_bindgen::JsCast;
+        atoms
+            .set("x", JsValue::from(x).unchecked_into(), None)
+            .expect("x");
+        atoms
+            .set("y", JsValue::from(y).unchecked_into(), None)
+            .expect("y");
+        atoms
+            .set("z", JsValue::from(z).unchecked_into(), None)
+            .expect("z");
 
         let elements = JsArray::new();
         elements.push(&JsValue::from_str("H"));
         elements.push(&JsValue::from_str("O"));
-        atoms.set_col_str("element", elements).expect("element");
+        atoms
+            .set("element", JsValue::from(elements).unchecked_into(), None)
+            .expect("element");
 
         let xyz_output = write_frame_export(&frame, "xyz").expect("xyz output");
         assert!(xyz_output.lines().next().unwrap_or("").starts_with('2'));

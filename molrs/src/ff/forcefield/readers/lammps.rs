@@ -90,10 +90,6 @@ impl LammpsFfReader {
         Self::default()
     }
 
-    pub fn with_default_units(default_units: &'static str) -> Self {
-        Self { default_units }
-    }
-
     /// Parse data-file `* Coeffs` sections with optional Type Labels maps.
     ///
     /// `coeffs_text` is a fragment containing `Pair Coeffs` / `Bond Coeffs` / …
@@ -582,7 +578,7 @@ fn build_pairs(
         .def_style("pair", "lj/cut", lj_params)
         .map_err(|e| e.to_string())?;
     for (ty, params) in rows {
-        lj.def_type_at(ty, &[ty], params.clone())
+        lj.def_type(ty, &[ty], params.clone())
             .map_err(|e| e.to_string())?;
     }
     let mut coul_params = vec![("coulomb", COULOMB_REAL), ("dielectric", VACUUM_DIELECTRIC)];
@@ -605,10 +601,10 @@ fn add_bond(
     labels: &LammpsTypeLabelMaps,
 ) -> Result<(), String> {
     // bond_coeff <type> K r0  — type is label `a-b` or numeric id
-    let [a, b] = split_types::<2>(rest.first(), "bond", where_, Some(&labels.bond))?;
+    let (name, [a, b]) = label_type::<2>(rest.first(), "bond", where_, Some(&labels.bond))?;
     let params = coeff_params(unit_sys, file_units, "bond", "harmonic", &rest[1..], where_)?;
     style_mut(ff, "bond", "harmonic", "bond_style harmonic", where_)?
-        .def_type_at(TypeName::join(&[&a, &b])?.as_str(), &[&a, &b], params)
+        .def_type(&name, &[&a, &b], params)
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -621,7 +617,7 @@ fn add_angle(
     file_units: &str,
     labels: &LammpsTypeLabelMaps,
 ) -> Result<(), String> {
-    let [a, b, c] = split_types::<3>(rest.first(), "angle", where_, Some(&labels.angle))?;
+    let (name, [a, b, c]) = label_type::<3>(rest.first(), "angle", where_, Some(&labels.angle))?;
     let params = coeff_params(
         unit_sys,
         file_units,
@@ -631,11 +627,7 @@ fn add_angle(
         where_,
     )?;
     style_mut(ff, "angle", "harmonic", "angle_style harmonic", where_)?
-        .def_type_at(
-            TypeName::join(&[&a, &b, &c])?.as_str(),
-            &[&a, &b, &c],
-            params,
-        )
+        .def_type(&name, &[&a, &b, &c], params)
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -649,7 +641,8 @@ fn add_dihedral(
     labels: &LammpsTypeLabelMaps,
     style_name: &str,
 ) -> Result<(), String> {
-    let [a, b, c, d] = split_types::<4>(rest.first(), "dihedral", where_, Some(&labels.dihedral))?;
+    let (name, [a, b, c, d]) =
+        label_type::<4>(rest.first(), "dihedral", where_, Some(&labels.dihedral))?;
     let params = coeff_params(
         unit_sys,
         file_units,
@@ -660,11 +653,7 @@ fn add_dihedral(
     )?;
     let directive = format!("dihedral_style {style_name}");
     style_mut(ff, "dihedral", style_name, &directive, where_)?
-        .def_type_at(
-            TypeName::join(&[&a, &b, &c, &d])?.as_str(),
-            &[&a, &b, &c, &d],
-            params,
-        )
+        .def_type(&name, &[&a, &b, &c, &d], params)
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -677,7 +666,8 @@ fn add_improper(
     file_units: &str,
     labels: &LammpsTypeLabelMaps,
 ) -> Result<(), String> {
-    let [a, b, c, d] = split_types::<4>(rest.first(), "improper", where_, Some(&labels.improper))?;
+    let (name, [a, b, c, d]) =
+        label_type::<4>(rest.first(), "improper", where_, Some(&labels.improper))?;
     let params = coeff_params(
         unit_sys,
         file_units,
@@ -693,11 +683,7 @@ fn add_improper(
         "improper_style harmonic",
         where_,
     )?
-    .def_type_at(
-        TypeName::join(&[&a, &b, &c, &d])?.as_str(),
-        &[&a, &b, &c, &d],
-        params,
-    )
+    .def_type(&name, &[&a, &b, &c, &d], params)
     .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -928,54 +914,33 @@ fn resolve_atom_type(
     Ok(raw.to_owned())
 }
 
-/// Split a type key into `N` endpoint names.
+/// A label-only type key: the type name, and the `N` endpoints it means.
 ///
-/// Accepts:
-/// - hyphen form `a-b` / `a-b-c` (or `::` when labels contain `-`);
-/// - a single numeric id, expanded via `label_map` or synthetic `id-id-…`;
-/// - a full label from the map when `raw` is a numeric id whose map value
-///   already encodes endpoints.
-fn split_types<const N: usize>(
+/// LAMMPS coefficient lines carry a type label and nothing else, so this is
+/// the one place molrs infers endpoints from a name
+/// ([`TypeName::infer_endpoints`]). The name is the label verbatim; a numeric
+/// id is first expanded through `label_map`, or to the synthetic `id-id-…`.
+fn label_type<const N: usize>(
     label: Option<&&str>,
     kind: &str,
     where_: impl Fn() -> String,
     label_map: Option<&BTreeMap<u32, String>>,
-) -> Result<[String; N], String> {
+) -> Result<(String, [String; N]), String> {
     let raw = label.ok_or_else(|| format!("{}: {kind}_coeff missing type label", where_()))?;
-
-    // Numeric type id → map or synthetic.
-    if let Ok(id) = raw.parse::<u32>() {
-        let expanded = label_map
+    let name = match raw.parse::<u32>() {
+        Ok(id) => label_map
             .and_then(|m| m.get(&id).cloned())
             .unwrap_or_else(|| {
                 std::iter::repeat_n(id.to_string(), N)
                     .collect::<Vec<_>>()
                     .join("-")
-            });
-        return split_types_str::<N>(&expanded, kind, &where_);
-    }
-    split_types_str::<N>(raw, kind, &where_)
-}
-
-fn split_types_str<const N: usize>(
-    label: &str,
-    kind: &str,
-    where_: &dyn Fn() -> String,
-) -> Result<[String; N], String> {
-    // Prefer :: when present (labels with embedded '-').
-    let parts: Vec<&str> = if label.contains("::") {
-        label.split("::").collect()
-    } else {
-        label.split('-').collect()
+            }),
+        Err(_) => (*raw).to_owned(),
     };
-    if parts.len() != N {
-        return Err(format!(
-            "{}: {kind} type `{label}` has {} atoms, expected {N}",
-            where_(),
-            parts.len()
-        ));
-    }
-    Ok(std::array::from_fn(|i| parts[i].to_owned()))
+    let parts = TypeName::infer_endpoints(&name, N)
+        .map_err(|e| format!("{}: {kind} type: {e}", where_()))?;
+    let endpoints = std::array::from_fn(|i| parts[i].to_owned());
+    Ok((name, endpoints))
 }
 
 fn get<'a>(

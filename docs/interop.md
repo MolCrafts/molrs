@@ -24,7 +24,7 @@ Downstream packages that co-release with molrs (e.g. molpy) pin the shared
 
 ```toml
 [dependencies]
-molrs = { package = "molcrafts-molrs", version = "0.15", default-features = false, features = ["ff"] }
+molrs = { package = "molcrafts-molrs", version = "0.15", features = ["ff"] }
 ```
 
 Then use the native types directly — no FFI, no copies. For example, building
@@ -184,11 +184,9 @@ store, so treat the library as single-threaded per process).
 
 - **Download**: `molrs-capi-<version>-<platform>.tar.gz` (lib + `molrs.h` +
   LICENSE + sha256) attached to each GitHub Release on `v*` tags.
-- **Handshake**: before any other call, compare `molrs_c_api_version()`
-  against the `MOLRS_C_API_VERSION` your header was compiled with; the
-  constant increments on any breaking signature / handle-semantics change
-  (mirrors molrs-cxxapi's `CXX_API_VERSION`). `molrs_version()` reports the
-  embedded molrs release for diagnostics.
+- **Identity**: `molrs_version()` reports the embedded molrs release for
+  diagnostics. There is no C or CXX API version handshake before 1.0;
+  a breaking signature change ships as a new library, not a version gate.
 
 ### Regions across the boundary
 

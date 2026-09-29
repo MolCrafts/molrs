@@ -5,6 +5,7 @@
 //! separate styles, not implemented here). Parameters per type: `theta0`
 //! (radians; readers normalize to radians at their boundary), `k2`, `k3`, `k4`.
 
+use molrs::store::schema::block_names::ANGLES;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
@@ -144,7 +145,7 @@ pub fn angle_class2_ctor(
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
-        .get("angles")
+        .get(ANGLES)
         .ok_or_else(|| "AngleClass2: frame missing \"angles\" block".to_string())?;
     let i_col = block
         .get_uint("atomi")

@@ -18,6 +18,7 @@ pub use forcefield::readers::{
 };
 pub use forcefield::writers::{
     ForceFieldWriter,
+    frcmod::{AmberFrcmodFfWriter, write_amber_frcmod, write_amber_frcmod_str},
     gromacs::GromacsTopFfWriter,
     lammps::{LammpsFfWriter, LammpsWriteOptions},
     xml::{XmlForceFieldWriter, write_forcefield_xml, write_forcefield_xml_str},

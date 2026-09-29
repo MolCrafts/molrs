@@ -32,9 +32,11 @@
 
 pub mod atd;
 pub mod charge;
+pub mod handles;
 
 use std::collections::HashMap;
 use std::fs;
+use std::path::PathBuf;
 
 use pyo3::exceptions::{
     PyKeyError, PyNotImplementedError, PyRuntimeError, PyTypeError, PyValueError,
@@ -44,7 +46,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyDict, PyList, PyMapping, PyString, PySuper, PyTuple, PyType};
 
 use molrs::ff::ForceField;
-use molrs::ff::potential::{Member, PotentialCompiler, Potentials, extract_coords, write_coords};
+use molrs::ff::potential::{Member, PotentialCompiler, Potentials};
 use molrs::ff::typifier::ElementTypifier;
 use molrs::ff::typifier::mmff::{MMFF94STypifier, MMFF94Typifier};
 use molrs::ff::typifier::opls::OPLSAATypifier;
@@ -55,10 +57,11 @@ use molrs_ffi::ForceFieldRef;
 use crate::core::store::block::PyBlock;
 use crate::core::store::frame::PyFrame;
 use crate::core::system::molgraph::{PyAtomistic, py_to_prop};
-use crate::helpers::{NpF, py_value_err};
+use crate::core::system::views::RelationClass;
+use crate::helpers::{NpF, path_str, py_value_err};
 
-use ndarray::{Array1, Array2, Array3};
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3, PyReadonlyArrayDyn, ToPyArray};
+use ndarray::{Array2, Array3};
+use numpy::{PyArray2, PyArray3, PyReadonlyArrayDyn, ToPyArray};
 
 /// Where a [`PyTypifier`]'s typing state lives.
 enum TypifierState {
@@ -246,7 +249,7 @@ impl PyTypifier {
             TypifierState::Python(_) => None,
         };
         if let Some(typed) = native {
-            return PyAtomistic::from_core(py, typed);
+            return mol.borrow().derive(py, typed);
         }
 
         Self::seed(slf)?;
@@ -316,22 +319,22 @@ impl PyTypifier {
 /// ----------
 /// nodes : sequence of mapping
 ///     One mapping of ``key -> annotation`` per node, positional against
-///     ``graph.nodes``. An empty mapping gives that node nothing.
+///     ``graph.atoms``. An empty mapping gives that node nothing.
 /// links : mapping, optional
 ///     Relation class (``Bond``, ``Angle``, ``Dihedral``, ``Improper``) to a
 ///     sequence of mappings, positional against
 ///     ``graph.links.exact_bucket(cls)`` — the kind's own rows, so an improper
-///     never shifts a dihedral position. The class's ``_kind`` selects the
-///     kind; an unknown kind raises ``TypeError``.
+///     never shifts a dihedral position. Any other key raises ``TypeError``.
 /// styles : sequence of (category, style, params), optional
 ///     Styles to declare, in order.
 /// pairs : sequence of (style, name, endpoints, params), optional
 ///     Pair rows to define.
 ///
 /// An annotation is a ``str``, ``bool``, ``int`` or ``float`` (stamped, defines
-/// nothing), or a type: ``(style, name, params)`` or
-/// ``(style, name, endpoints, params)``, which stamps ``name`` and every param
-/// and defines the type under the style. Param values are numbers or strings.
+/// nothing), or a type: ``(style, name, endpoints, params)``, which stamps
+/// ``name`` and every param and defines the type ``name`` on ``endpoints``
+/// (atom-type names; empty for an atom type) under the style. The name is
+/// never read for endpoints. Param values are numbers or strings.
 #[pyclass(module = "molrs.ff.typifier", name = "Match", frozen)]
 pub struct PyMatch {
     inner: Match,
@@ -363,27 +366,14 @@ impl PyMatch {
         let Ok(tuple) = value.cast::<PyTuple>() else {
             return py_to_prop(value).map(Annotation::Value);
         };
-        let (style, name, endpoints, params) = match tuple.len() {
-            3 => {
-                let (style, name, params): (String, String, Bound<'_, PyDict>) = tuple.extract()?;
-                (style, name, None, params)
-            }
-            4 => {
-                let (style, name, endpoints, params): (
-                    String,
-                    String,
-                    Vec<String>,
-                    Bound<'_, PyDict>,
-                ) = tuple.extract()?;
-                (style, name, Some(endpoints), params)
-            }
-            n => {
-                return Err(PyTypeError::new_err(format!(
-                    "a type annotation is (style, name, params) or (style, name, endpoints, \
-                     params); got a {n}-tuple"
-                )));
-            }
-        };
+        if tuple.len() != 4 {
+            return Err(PyTypeError::new_err(format!(
+                "a type annotation is (style, name, endpoints, params); got a {}-tuple",
+                tuple.len()
+            )));
+        }
+        let (style, name, endpoints, params): (String, String, Vec<String>, Bound<'_, PyDict>) =
+            tuple.extract()?;
         Ok(Annotation::Type {
             style,
             name,
@@ -419,15 +409,12 @@ impl PyMatch {
             let mut seen: Vec<String> = Vec::new();
             for item in links.cast::<PyMapping>()?.items()?.iter() {
                 let (cls, rows): (Bound<'_, PyAny>, Bound<'_, PyAny>) = item.extract()?;
-                let kind: String = cls
-                    .getattr(intern!(cls.py(), "_kind"))
-                    .and_then(|kind| kind.extract())
-                    .map_err(|_| {
-                        PyTypeError::new_err(format!(
-                            "links keys must be relation classes declaring _kind, got {cls}"
-                        ))
-                    })?;
-                let slot = match kind.as_str() {
+                let kind = RelationClass::atomistic_kind(&cls).ok_or_else(|| {
+                    PyTypeError::new_err(format!(
+                        "links keys must be Atomistic relation view classes, got {cls}"
+                    ))
+                })?;
+                let slot = match kind {
                     "bonds" => &mut inner.bonds,
                     "angles" => &mut inner.angles,
                     "dihedrals" => &mut inner.dihedrals,
@@ -439,13 +426,13 @@ impl PyMatch {
                         )));
                     }
                 };
-                if seen.contains(&kind) {
+                if seen.iter().any(|k| k == kind) {
                     return Err(PyValueError::new_err(format!(
                         "links name relation kind '{kind}' more than once"
                     )));
                 }
-                *slot = Self::rows(&rows).map_err(|err| prefix_err(rows.py(), err, &kind))?;
-                seen.push(kind);
+                *slot = Self::rows(&rows).map_err(|err| prefix_err(rows.py(), err, kind))?;
+                seen.push(kind.to_owned());
             }
         }
         for (category, name, params) in styles {
@@ -621,8 +608,11 @@ impl PotBacking {
     }
 }
 
-/// Force-field definition metadata exposed to Python as `molrs.ForceField`.
-#[pyclass(module = "molrs._lib", name = "ForceField", subclass)]
+/// Force-field definition metadata exposed to Python as `molrs.ff.ForceField`.
+///
+/// Not subclassable: this is the one ``ForceField`` class. Styles and types
+/// are read and written through their handles (:mod:`handles`).
+#[pyclass(module = "molrs._lib", name = "ForceField")]
 pub struct PyForceField {
     pub(crate) inner: ForceField,
 }
@@ -785,7 +775,11 @@ impl PyPotentials {
     fn eval_any(&self, arg: &Bound<'_, PyAny>) -> PyResult<(f64, Vec<NpF>)> {
         let ef = if let Ok(frame) = arg.extract::<PyRef<'_, PyFrame>>() {
             let core = frame.clone_core_frame()?;
-            let coords = extract_coords(&core).map_err(PyValueError::new_err)?;
+            let coords: Vec<NpF> = core
+                .coords()
+                .map_err(|e| PyValueError::new_err(e.to_string()))?
+                .into_iter()
+                .collect();
             match &self.inner {
                 PotBacking::Compiled(p) => p.calc_energy_forces(&coords),
                 PotBacking::Deferred(ff) => PotentialCompiler::new(ff)
@@ -960,18 +954,25 @@ impl PyLBFGS {
                 PotBacking::Moved => return Err(potentials_moved_err()),
             };
             // Borrowed one-shot on flat coords extracted from frame, then write back.
-            let mut flat =
-                extract_coords(&core).map_err(pyo3::exceptions::PyValueError::new_err)?;
+            let mut xyz = core
+                .coords()
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+            // `Frame::coords` is a fresh row-major N×3 array: its buffer is the
+            // flat `[x0, y0, z0, …]` the minimizer takes.
+            let flat = xyz
+                .as_slice_mut()
+                .expect("Frame::coords returns a standard-layout array");
             let report = LBFGS::minimize(
                 pot,
-                &mut flat,
+                flat,
                 self.fmax,
                 self.max_steps,
                 self.max_step,
                 self.memory,
             )
             .map_err(pyo3::exceptions::PyValueError::new_err)?;
-            write_coords(&mut core, &flat).map_err(pyo3::exceptions::PyValueError::new_err)?;
+            core.set_coords(xyz.view())
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
             let out_frame = PyFrame::from_core_frame(core)?;
             return Ok((out_frame, PyOptReport::from(report))
                 .into_pyobject(py)?
@@ -1248,48 +1249,11 @@ impl PyElementTypifier {
     }
 }
 
-/// Extract a flat coordinate array from a Frame's ``"atoms"`` block.
-///
-/// Reads the ``x``, ``y``, ``z`` columns from the ``"atoms"`` block and
-/// interleaves them into a flat 1D array: ``[x0, y0, z0, x1, y1, z1, ...]``.
-///
-/// Parameters
-/// ----------
-/// frame : Frame
-///     Frame with an ``"atoms"`` block containing ``x``, ``y``, ``z``
-///     float columns.
-///
-/// Returns
-/// -------
-/// numpy.ndarray, shape (3*N,), dtype float
-///     Flat coordinate array suitable for :meth:`Potentials.eval`.
-///
-/// Raises
-/// ------
-/// ValueError
-///     If the ``"atoms"`` block or required columns are missing.
-///
-/// Examples
-/// --------
-/// >>> coords = extract_coords(frame)
-/// >>> energy, forces = potentials.eval(coords)
-#[pyfunction]
-#[pyo3(name = "extract_coords")]
-pub fn extract_coords_py<'py>(
-    py: Python<'py>,
-    frame: &PyFrame,
-) -> PyResult<Bound<'py, PyArray1<NpF>>> {
-    let coords = frame
-        .with_frame(extract_coords)?
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-    Ok(coords.to_pyarray(py))
-}
-
 /// Read a force-field definition from an XML file.
 #[pyfunction]
 #[pyo3(name = "read_forcefield_xml")]
-pub fn read_forcefield_xml_py(path: &str) -> PyResult<PyForceField> {
-    let forcefield = molrs::ff::read_forcefield_xml(path)
+pub fn read_forcefield_xml_py(path: PathBuf) -> PyResult<PyForceField> {
+    let forcefield = molrs::ff::read_forcefield_xml(path_str(&path)?)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
     Ok(PyForceField { inner: forcefield })
 }
@@ -1309,45 +1273,128 @@ struct ForceFieldRefPtr(*mut ForceFieldRef);
 // SAFETY: GIL-guarded, single-threaded use only — see the type-level doc.
 unsafe impl Send for ForceFieldRefPtr {}
 
-/// A `[1-2, 1-3, 1-4]` weight triple as Python sees it.
-type Weights14 = (f64, f64, f64);
-
 impl PyForceField {
-    /// Wrap a core [`ForceField`] as the public ``molrs.ff.ForceField``, so a
-    /// force field handed out by the native layer carries the Python builder
-    /// methods like every other one.
+    /// A new Python ``ForceField`` holding `inner`.
     pub(crate) fn from_core(py: Python<'_>, inner: ForceField) -> PyResult<Py<PyForceField>> {
-        let public = py.import("molrs.ff")?.getattr("ForceField")?;
-        if public.is(py.get_type::<PyForceField>()) {
-            return Py::new(py, PyForceField { inner });
-        }
-        let object: Py<PyForceField> = public.call1((inner.name.clone(),))?.extract()?;
-        object.borrow_mut(py).inner = inner;
-        Ok(object)
+        Py::new(py, PyForceField { inner })
     }
 
-    /// The existing `(category, style)`; a missing one raises ``ValueError``
-    /// (the type primitives never create a style implicitly).
-    fn existing_style_mut(
-        &mut self,
-        category: &str,
-        style: &str,
-    ) -> PyResult<&mut molrs::ff::forcefield::Style> {
-        self.inner.get_style_mut(category, style).ok_or_else(|| {
-            py_value_err(molrs::ff::forcefield::DefError::UnknownStyle {
-                category: category.to_owned(),
-                name: style.to_owned(),
+    /// Every style handle whose category is one of `categories`, in
+    /// definition order.
+    fn style_handles(
+        slf: &Bound<'_, Self>,
+        categories: &[handles::Category],
+    ) -> PyResult<Vec<Py<PyAny>>> {
+        let py = slf.py();
+        let styles: Vec<(handles::Category, String)> = slf
+            .try_borrow()?
+            .inner
+            .styles()
+            .iter()
+            .filter_map(|style| {
+                let category = handles::Category::of(style.category()).ok()?;
+                categories
+                    .contains(&category)
+                    .then(|| (category, style.name().to_owned()))
             })
-        })
+            .collect();
+        let ff = slf.clone().unbind();
+        styles
+            .iter()
+            .map(|(category, name)| category.style_handle(py, &ff, name))
+            .collect()
     }
+
+    /// The pickled definition: `(name, declared units, declared special
+    /// bonds, [(category, style, params, [(type, endpoints, params)])])`.
+    fn definition<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let styles = PyList::empty(py);
+        for style in self.inner.styles() {
+            let types = PyList::empty(py);
+            for (name, endpoints, params) in style.type_rows() {
+                types.append((name, endpoints, params_to_dict(py, params)?))?;
+            }
+            styles.append((
+                style.category(),
+                style.name(),
+                params_to_dict(py, style.params())?,
+                types,
+            ))?;
+        }
+        let special_bonds = self
+            .inner
+            .declared_special_bonds()
+            .map(|sb| (sb.lj.to_vec(), sb.coul.to_vec()));
+        (
+            self.inner.name.clone(),
+            self.inner.declared_units().map(str::to_owned),
+            special_bonds,
+            styles,
+        )
+            .into_pyobject(py)
+    }
+
+    /// The force field a [`definition`](Self::definition) describes.
+    #[allow(
+        clippy::type_complexity,
+        reason = "the pickled definition, see `definition`"
+    )]
+    fn from_definition(definition: &Bound<'_, PyAny>) -> PyResult<ForceField> {
+        let (name, units, special_bonds, styles): (
+            String,
+            Option<String>,
+            Option<([f64; 3], [f64; 3])>,
+            Vec<(
+                String,
+                String,
+                Bound<'_, PyDict>,
+                Vec<(String, Vec<String>, Bound<'_, PyDict>)>,
+            )>,
+        ) = definition.extract()?;
+        let mut inner = ForceField::new(&name);
+        if let Some(units) = units {
+            inner.set_units(&units);
+        }
+        if let Some((lj, coul)) = special_bonds {
+            inner.set_special_bonds(molrs::ff::forcefield::SpecialBonds { lj, coul });
+        }
+        for (category, style_name, params, types) in styles {
+            let style = inner
+                .def_style(&category, &style_name, params_from_dict(Some(&params))?)
+                .map_err(py_value_err)?;
+            for (type_name, endpoints, params) in types {
+                let endpoints: Vec<&str> = endpoints.iter().map(String::as_str).collect();
+                style
+                    .def_type(&type_name, &endpoints, params_from_dict(Some(&params))?)
+                    .map_err(py_value_err)?;
+            }
+        }
+        Ok(inner)
+    }
+}
+
+/// `params` as a dict: numbers and strings.
+fn params_to_dict<'py>(
+    py: Python<'py>,
+    params: &molrs::ff::forcefield::Params,
+) -> PyResult<Bound<'py, PyDict>> {
+    let out = PyDict::new(py);
+    for (key, value) in params.iter() {
+        out.set_item(key, value)?;
+    }
+    for (key, value) in params.iter_strings() {
+        out.set_item(key, value)?;
+    }
+    Ok(out)
 }
 
 #[pymethods]
 impl PyForceField {
     /// Construct an empty force field. Populate it with :meth:`def_style` and
-    /// the type primitives, or load one with :func:`read_forcefield_xml`.
-    /// ``units`` declares the unit system when given; left out, the force
-    /// field declares none (:meth:`declared_units` is ``None``).
+    /// the style handles' ``def_type``, or load one with a reader
+    /// (:func:`read_forcefield_xml`, …). ``units`` declares the unit system
+    /// when given; left out, the force field declares none and :attr:`units`
+    /// reads ``"real"``.
     #[new]
     #[pyo3(signature = (name = "forcefield", units = None))]
     fn new(name: &str, units: Option<&str>) -> Self {
@@ -1364,31 +1411,10 @@ impl PyForceField {
     }
 
     /// The unit system the parameters are expressed in (a LAMMPS ``units``
-    /// name); ``"real"`` when none is declared. Assigning declares it.
+    /// name); ``"real"`` when none is declared.
     #[getter]
     fn units(&self) -> String {
         self.inner.units().to_owned()
-    }
-
-    #[setter]
-    fn set_units(&mut self, units: &str) {
-        self.inner.set_units(units);
-    }
-
-    /// The declared unit system, or ``None`` when the force field declares none.
-    fn declared_units(&self) -> Option<String> {
-        self.inner.declared_units().map(str::to_owned)
-    }
-
-    /// The declared special-bond weights as ``((lj12, lj13, lj14), (coul12,
-    /// coul13, coul14))``, or ``None`` when the force field declares none.
-    fn declared_special_bonds(&self) -> Option<(Weights14, Weights14)> {
-        self.inner.declared_special_bonds().map(|sb| {
-            (
-                (sb.lj[0], sb.lj[1], sb.lj[2]),
-                (sb.coul[0], sb.coul[1], sb.coul[2]),
-            )
-        })
     }
 
     /// Merge ``other`` into this force field, in place, and return ``self``.
@@ -1415,43 +1441,14 @@ impl PyForceField {
         Ok(slf.clone())
     }
 
-    /// Lennard-Jones 1-2 / 1-3 / 1-4 scale weights (copy of length 3).
+    /// Declare both LJ and Coulomb special-bond triples (1-2, 1-3, 1-4).
     ///
-    /// Entries ``[0]`` and ``[1]`` are stored and round-tripped for format
-    /// fidelity but are never applied by molrs kernels (1-2/1-3 exclusion is
-    /// by omitting pairs from the neighbour list). Index ``[2]`` is the 1-4
-    /// weight kernels consume.
-    #[getter]
-    fn special_bonds_lj<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
-        Array1::from(self.inner.special_bonds().lj.to_vec()).into_pyarray(py)
-    }
-
-    /// Coulomb 1-2 / 1-3 / 1-4 scale weights (copy of length 3).
-    ///
-    /// Entries ``[0]`` and ``[1]`` are stored and round-tripped for format
-    /// fidelity but are never applied by molrs kernels. Index ``[2]`` is the
-    /// 1-4 weight kernels consume.
-    #[getter]
-    fn special_bonds_coul<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
-        Array1::from(self.inner.special_bonds().coul.to_vec()).into_pyarray(py)
-    }
-
-    /// Declare both LJ and Coulomb special-bond triples.
-    ///
-    /// Whole-struct write: to change only Coulomb, read ``special_bonds_lj``
-    /// and pass it back. Length-3 sequences required; a wrong length raises
-    /// ``ValueError``. Entries ``[0]``/``[1]`` are stored but not applied.
+    /// Length-3 sequences required; a wrong length raises ``ValueError``.
+    /// Entries ``[0]``/``[1]`` are stored but not applied (1-2/1-3 exclusion
+    /// is by omitting pairs from the neighbour list).
     fn set_special_bonds(&mut self, lj: [f64; 3], coul: [f64; 3]) {
         self.inner
             .set_special_bonds(molrs::ff::forcefield::SpecialBonds { lj, coul });
-    }
-
-    fn style_names(&self) -> Vec<String> {
-        self.inner
-            .styles()
-            .iter()
-            .map(|style| format!("{}:{}", style.category(), style.name()))
-            .collect()
     }
 
     /// Export this force field's FFI handle as a ``PyCapsule``.
@@ -1486,208 +1483,89 @@ impl PyForceField {
         })
     }
 
-    // -- builder: the three definition primitives ------------------------------
+    // -- styles: defined here, read and written through their handles ----------
 
     /// Define the ``category`` style ``name`` with style-level ``params``
-    /// (numbers and strings, e.g. ``{"cutoff": 10.0, "mixing": "geometric"}``).
-    /// Re-defining it with equal ``params`` keeps the existing style; with
-    /// different ``params`` it raises ``ValueError``, as does an unknown
-    /// category.
+    /// (numbers and strings, e.g. ``{"cutoff": 10.0, "mixing": "geometric"}``)
+    /// and return its handle (``AtomStyle`` … ``PairStyle``), whose typed
+    /// ``def_type`` defines types. Re-defining it with equal ``params`` keeps
+    /// the existing style.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     On different ``params`` for an existing style, or an unknown
+    ///     category.
     #[pyo3(signature = (category, name, params = None))]
     fn def_style(
-        &mut self,
+        slf: &Bound<'_, Self>,
         category: &str,
         name: &str,
         params: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<PyAny>> {
         let params = params_from_dict(params)?;
-        self.inner
+        slf.try_borrow_mut()?
+            .inner
             .def_style(category, name, params)
-            .map(|_| ())
-            .map_err(py_value_err)
+            .map_err(py_value_err)?;
+        handles::Category::of(category)?.style_handle(slf.py(), &slf.clone().unbind(), name)
     }
 
-    /// Define a type on the existing ``(category, style)``, its endpoints parsed
-    /// from ``name``. A missing style, a malformed name or a conflicting
-    /// re-definition raises ``ValueError``.
-    /// Private: the public door is ``Style.def_type`` in ``molrs.ff``.
-    #[pyo3(signature = (category, style, name, params = None))]
-    fn _def_type(
-        &mut self,
-        category: &str,
-        style: &str,
-        name: &str,
-        params: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<()> {
-        let params = params_from_dict(params)?;
-        self.existing_style_mut(category, style)?
-            .def_type(name, params)
-            .map(|_| ())
-            .map_err(py_value_err)
+    /// Every style, in definition order.
+    #[getter(styles)]
+    fn every_style(slf: &Bound<'_, Self>) -> PyResult<Vec<Py<PyAny>>> {
+        Self::style_handles(slf, &handles::Category::ALL)
     }
 
-    /// Define a type named ``name`` with the given ``endpoints`` on the existing
-    /// ``(category, style)``. A missing style, an endpoint count that does not
-    /// match the category or a conflicting re-definition raises ``ValueError``. Private: the public door is
-    /// ``Style.def_type_at`` in ``molrs.ff``.
-    #[pyo3(signature = (category, style, name, endpoints, params = None))]
-    fn _def_type_at(
-        &mut self,
-        category: &str,
-        style: &str,
-        name: &str,
-        endpoints: Vec<String>,
-        params: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<()> {
-        let params = params_from_dict(params)?;
-        let endpoints: Vec<&str> = endpoints.iter().map(String::as_str).collect();
-        self.existing_style_mut(category, style)?
-            .def_type_at(name, &endpoints, params)
-            .map(|_| ())
-            .map_err(py_value_err)
-    }
-
-    // -- read accessors (round-trip + P1-A migration) ------------------------
-
-    /// Style-level params for ``category``/``style``, numeric and string (e.g. a
-    /// pair style's ``cutoff`` and ``mixing``).
-    fn style_params<'py>(
-        &self,
-        py: Python<'py>,
-        category: &str,
-        style: &str,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let s = self
-            .inner
-            .get_style(category, style)
-            .ok_or_else(|| PyValueError::new_err(format!("no {category} style named '{style}'")))?;
-        let d = PyDict::new(py);
-        for (k, v) in s.params().iter() {
-            d.set_item(k, v)?;
+    /// The ``category`` style ``name``, or ``None``.
+    fn get_style(slf: &Bound<'_, Self>, category: &str, name: &str) -> PyResult<Option<Py<PyAny>>> {
+        if slf.try_borrow()?.inner.get_style(category, name).is_none() {
+            return Ok(None);
         }
-        for (k, v) in s.params().iter_strings() {
-            d.set_item(k, v)?;
+        handles::Category::of(category)?
+            .style_handle(slf.py(), &slf.clone().unbind(), name)
+            .map(Some)
+    }
+
+    /// The styles of a category — a name (``"bond"``) or a style class
+    /// (``BondStyle``; ``Style`` selects every category).
+    fn get_styles(slf: &Bound<'_, Self>, category: &Bound<'_, PyAny>) -> PyResult<Vec<Py<PyAny>>> {
+        Self::style_handles(slf, &handles::Category::selected(category)?)
+    }
+
+    /// The types of a category — a name (``"bond"``) or a type class
+    /// (``BondType``; ``Type`` selects every category) — style by style.
+    fn get_types(slf: &Bound<'_, Self>, category: &Bound<'_, PyAny>) -> PyResult<Vec<Py<PyAny>>> {
+        let py = slf.py();
+        let mut types = Vec::new();
+        for style in Self::style_handles(slf, &handles::Category::selected(category)?)? {
+            types.extend(
+                style
+                    .bind(py)
+                    .getattr(intern!(py, "types"))?
+                    .extract::<Vec<Py<PyAny>>>()?,
+            );
         }
-        Ok(d)
+        Ok(types)
     }
 
-    /// List ``(type_name, params)`` tuples for ``category``/``style``.
-    fn types<'py>(
-        &self,
-        py: Python<'py>,
-        category: &str,
-        style: &str,
-    ) -> PyResult<Bound<'py, PyList>> {
-        let s = self
-            .inner
-            .get_style(category, style)
-            .ok_or_else(|| PyValueError::new_err(format!("no {category} style named '{style}'")))?;
-        let out = PyList::empty(py);
-        for (name, params) in s.defs().collect_type_params() {
-            let d = PyDict::new(py);
-            for (k, v) in params.iter() {
-                d.set_item(k, v)?;
-            }
-            for (k, v) in params.iter_strings() {
-                d.set_item(k, v)?;
-            }
-            out.append((name, d))?;
-        }
-        Ok(out)
+    // -- pickling ----------------------------------------------------------------
+
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyType>, Bound<'py, PyTuple>, Bound<'py, PyTuple>)> {
+        let py = slf.py();
+        let definition = slf.try_borrow()?.definition(py)?;
+        Ok((
+            slf.get_type(),
+            PyTuple::empty(py),
+            PyTuple::new(py, [definition])?,
+        ))
     }
 
-    // -- handle-view support (Style/Type live in the Python layer over these) --
-
-    /// Endpoint atom-type names of one type, e.g. ``["CT","CT"]`` for a bond.
-    /// ``None`` if no such type; ``[]`` for atom styles.
-    fn type_endpoints(
-        &self,
-        category: &str,
-        style: &str,
-        name: &str,
-    ) -> PyResult<Option<Vec<String>>> {
-        let s = self
-            .inner
-            .get_style(category, style)
-            .ok_or_else(|| PyValueError::new_err(format!("no {category} style named '{style}'")))?;
-        Ok(s.type_endpoints(name))
-    }
-
-    /// Set (or add) a single param on one type. Raises if the type is absent.
-    fn set_type_param(
-        &mut self,
-        category: &str,
-        style: &str,
-        name: &str,
-        key: &str,
-        value: f64,
-    ) -> PyResult<()> {
-        let s = self
-            .inner
-            .get_style_mut(category, style)
-            .ok_or_else(|| PyValueError::new_err(format!("no {category} style named '{style}'")))?;
-        if s.set_type_param(name, key, value) {
-            Ok(())
-        } else {
-            Err(PyValueError::new_err(format!(
-                "no {category} type named '{name}' in style '{style}'"
-            )))
-        }
-    }
-
-    /// Set (or add) a single **string** param on one type (e.g. ``element``).
-    /// Raises if the type is absent.
-    fn set_type_str_param(
-        &mut self,
-        category: &str,
-        style: &str,
-        name: &str,
-        key: &str,
-        value: &str,
-    ) -> PyResult<()> {
-        let s = self
-            .inner
-            .get_style_mut(category, style)
-            .ok_or_else(|| PyValueError::new_err(format!("no {category} style named '{style}'")))?;
-        if s.set_type_str_param(name, key, value) {
-            Ok(())
-        } else {
-            Err(PyValueError::new_err(format!(
-                "no {category} type named '{name}' in style '{style}'"
-            )))
-        }
-    }
-
-    /// Rename type ``old`` -> ``new`` in ``(category, style)``; returns the
-    /// count renamed (0 or 1). Renaming onto a name already defined with other
-    /// endpoints or params raises ``ValueError`` and changes nothing.
-    fn rename_type(
-        &mut self,
-        category: &str,
-        style: &str,
-        old: &str,
-        new: &str,
-    ) -> PyResult<usize> {
-        let s = self
-            .inner
-            .get_style_mut(category, style)
-            .ok_or_else(|| PyValueError::new_err(format!("no {category} style named '{style}'")))?;
-        let renamed = s.rename_type(old, new).map_err(py_value_err)?;
-        Ok(usize::from(renamed))
-    }
-
-    /// Remove every type ``name`` in ``(category, style)``; returns count.
-    fn remove_type(&mut self, category: &str, style: &str, name: &str) -> PyResult<usize> {
-        let s = self
-            .inner
-            .get_style_mut(category, style)
-            .ok_or_else(|| PyValueError::new_err(format!("no {category} style named '{style}'")))?;
-        Ok(s.remove_type(name))
-    }
-
-    /// Remove a whole style ``(category, name)``; returns whether one was removed.
-    fn remove_style(&mut self, category: &str, name: &str) -> bool {
-        self.inner.remove_style(category, name)
+    fn __setstate__(&mut self, state: (Bound<'_, PyAny>,)) -> PyResult<()> {
+        self.inner = Self::from_definition(&state.0)?;
+        Ok(())
     }
 
     fn __repr__(&self) -> String {
@@ -1854,16 +1732,6 @@ impl PyPotentialCompiler {
     }
 }
 
-/// Parse a force-field definition from an XML string (same schema as
-/// :func:`read_forcefield_xml`).
-#[pyfunction]
-#[pyo3(name = "read_forcefield_xml_str")]
-pub fn read_forcefield_xml_str_py(xml: &str) -> PyResult<PyForceField> {
-    let forcefield = molrs::ff::read_forcefield_xml_str(xml)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-    Ok(PyForceField { inner: forcefield })
-}
-
 /// Read an OPLS-AA / GROMACS force-field XML file into a :class:`ForceField`.
 ///
 /// Parses the OpenMM-style OPLS-AA XML (GROMACS units — nm, kJ/mol,
@@ -1875,7 +1743,7 @@ pub fn read_forcefield_xml_str_py(xml: &str) -> PyResult<PyForceField> {
 ///
 /// Parameters
 /// ----------
-/// path : str
+/// path : str or os.PathLike
 ///     Path to an ``oplsaa.xml`` (OpenMM/GROMACS layout).
 ///
 /// Returns
@@ -1889,22 +1757,10 @@ pub fn read_forcefield_xml_str_py(xml: &str) -> PyResult<PyForceField> {
 ///     required attribute (reading is total — never a silent skip).
 #[pyfunction]
 #[pyo3(name = "read_opls_xml")]
-pub fn read_opls_xml_py(path: &str) -> PyResult<PyForceField> {
+pub fn read_opls_xml_py(path: PathBuf) -> PyResult<PyForceField> {
     use molrs::ff::ForceFieldReader;
     let forcefield = molrs::ff::OplsXmlReader::new()
-        .read(path)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    Ok(PyForceField { inner: forcefield })
-}
-
-/// Parse an OPLS-AA / GROMACS force field from an XML string (same schema and
-/// unit normalization as :func:`read_opls_xml`).
-#[pyfunction]
-#[pyo3(name = "read_opls_xml_str")]
-pub fn read_opls_xml_str_py(xml: &str) -> PyResult<PyForceField> {
-    use molrs::ff::ForceFieldReader;
-    let forcefield = molrs::ff::OplsXmlReader::new()
-        .read_str(xml)
+        .read(path_str(&path)?)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
 }
@@ -1927,7 +1783,7 @@ pub fn read_opls_xml_str_py(xml: &str) -> PyResult<PyForceField> {
 ///
 /// Parameters
 /// ----------
-/// path : str
+/// path : str or os.PathLike
 ///     Path to a LAMMPS force-field include (``*.ff``).
 ///
 /// Returns
@@ -1942,22 +1798,10 @@ pub fn read_opls_xml_str_py(xml: &str) -> PyResult<PyForceField> {
 ///     never a silent skip).
 #[pyfunction]
 #[pyo3(name = "read_lammps_forcefield")]
-pub fn read_lammps_forcefield_py(path: &str) -> PyResult<PyForceField> {
+pub fn read_lammps_forcefield_py(path: PathBuf) -> PyResult<PyForceField> {
     use molrs::ff::ForceFieldReader;
     let forcefield = molrs::ff::LammpsFfReader::new()
-        .read(path)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    Ok(PyForceField { inner: forcefield })
-}
-
-/// Parse a LAMMPS force-field include from a string (same format and unit
-/// normalization as :func:`read_lammps_forcefield`).
-#[pyfunction]
-#[pyo3(name = "read_lammps_forcefield_str")]
-pub fn read_lammps_forcefield_str_py(text: &str) -> PyResult<PyForceField> {
-    use molrs::ff::ForceFieldReader;
-    let forcefield = molrs::ff::LammpsFfReader::new()
-        .read_str(text)
+        .read(path_str(&path)?)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
 }
@@ -1969,20 +1813,9 @@ pub fn read_lammps_forcefield_str_py(text: &str) -> PyResult<PyForceField> {
 /// LJ A/B → σ/ε. Store units are molrs (Å, kcal/mol, radians, e).
 #[pyfunction]
 #[pyo3(name = "read_amber_prmtop_ff")]
-pub fn read_amber_prmtop_ff_py(path: &str) -> PyResult<PyForceField> {
+pub fn read_amber_prmtop_ff_py(path: PathBuf) -> PyResult<PyForceField> {
     let forcefield =
         molrs::ff::read_amber_prmtop_ff(path).map_err(pyo3::exceptions::PyValueError::new_err)?;
-    Ok(PyForceField { inner: forcefield })
-}
-
-/// Parse AMBER prmtop force-field tables from a string.
-#[pyfunction]
-#[pyo3(name = "read_amber_prmtop_ff_str")]
-pub fn read_amber_prmtop_ff_str_py(text: &str) -> PyResult<PyForceField> {
-    use molrs::ff::ForceFieldReader;
-    let forcefield = molrs::ff::AmberPrmtopFfReader::new()
-        .read_str(text)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
 }
 
@@ -2012,42 +1845,18 @@ pub fn read_amber_prmtop_ff_str_py(text: &str) -> PyResult<PyForceField> {
     signature = (path, include = false, *, skip_directives = Vec::new())
 )]
 pub fn read_gromacs_top_ff_py(
-    path: &str,
+    path: PathBuf,
     include: bool,
     skip_directives: Vec<String>,
 ) -> PyResult<PyForceField> {
     use molrs::ff::ForceFieldReader;
     let forcefield = gromacs_top_ff_reader(include, &skip_directives)
-        .read(path)
+        .read(path_str(&path)?)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
 }
 
-/// Parse the force-field directives of GROMACS topology text into a
-/// :class:`ForceField`.
-///
-/// Same directive model as :func:`read_gromacs_top_ff`: the directives read,
-/// the ``ValueError`` refusals (molecule sections included — use
-/// :func:`molrs.io.read_top` or skip them), and ``skip_directives`` all
-/// apply.
-#[pyfunction]
-#[pyo3(
-    name = "read_gromacs_top_ff_str",
-    signature = (text, include = false, *, skip_directives = Vec::new())
-)]
-pub fn read_gromacs_top_ff_str_py(
-    text: &str,
-    include: bool,
-    skip_directives: Vec<String>,
-) -> PyResult<PyForceField> {
-    use molrs::ff::ForceFieldReader;
-    let forcefield = gromacs_top_ff_reader(include, &skip_directives)
-        .read_str(text)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    Ok(PyForceField { inner: forcefield })
-}
-
-/// The GROMACS directive reader both Python entry points configure.
+/// The GROMACS directive reader the Python entry point configures.
 fn gromacs_top_ff_reader(
     include: bool,
     skip_directives: &[String],
@@ -2069,30 +1878,27 @@ fn gromacs_top_ff_reader(
 #[pyfunction]
 #[pyo3(name = "write_gromacs_top_ff", signature = (path, forcefield, precision = 6))]
 pub fn write_gromacs_top_ff_py(
-    path: &str,
+    path: PathBuf,
     forcefield: &PyForceField,
     precision: usize,
 ) -> PyResult<()> {
     use molrs::ff::ForceFieldWriter;
     molrs::ff::GromacsTopFfWriter::new()
         .with_precision(precision)
-        .write(&forcefield.inner, path)
+        .write(&forcefield.inner, path_str(&path)?)
         .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
-/// Serialize a ForceField as GROMACS force-field directives to a string.
+/// Write a ForceField as an AMBER frcmod file.
 ///
-/// Same output and ``ValueError`` refusals as :func:`write_gromacs_top_ff`.
+/// Writes ``MASS``, ``BOND``, ``ANGLE``, ``DIHE``, ``IMPROPER`` and ``NONBON``
+/// in AMBER's conventions (``RK = k/2``, ``TK = k/2``, degrees, ``R*/2`` from
+/// sigma), so tleap can ``loadamberparams`` it. A style or parameter a frcmod
+/// cannot express raises ``ValueError`` naming it.
 #[pyfunction]
-#[pyo3(name = "write_gromacs_top_ff_str", signature = (forcefield, precision = 6))]
-pub fn write_gromacs_top_ff_str_py(
-    forcefield: &PyForceField,
-    precision: usize,
-) -> PyResult<String> {
-    use molrs::ff::ForceFieldWriter;
-    molrs::ff::GromacsTopFfWriter::new()
-        .with_precision(precision)
-        .write_str(&forcefield.inner)
+#[pyo3(name = "write_amber_frcmod", signature = (path, forcefield))]
+pub fn write_amber_frcmod_py(path: PathBuf, forcefield: &PyForceField) -> PyResult<()> {
+    molrs::ff::write_amber_frcmod(path_str(&path)?, &forcefield.inner)
         .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
@@ -2100,22 +1906,11 @@ pub fn write_gromacs_top_ff_str_py(
 #[pyfunction]
 #[pyo3(name = "write_forcefield_xml", signature = (path, forcefield, precision = 6))]
 pub fn write_forcefield_xml_py(
-    path: &str,
+    path: PathBuf,
     forcefield: &PyForceField,
     precision: usize,
 ) -> PyResult<()> {
-    molrs::ff::write_forcefield_xml(path, &forcefield.inner, precision)
-        .map_err(pyo3::exceptions::PyValueError::new_err)
-}
-
-/// Serialize a ForceField to OpenMM-style XML string.
-#[pyfunction]
-#[pyo3(name = "write_forcefield_xml_str", signature = (forcefield, precision = 6))]
-pub fn write_forcefield_xml_str_py(
-    forcefield: &PyForceField,
-    precision: usize,
-) -> PyResult<String> {
-    molrs::ff::write_forcefield_xml_str(&forcefield.inner, precision)
+    molrs::ff::write_forcefield_xml(path_str(&path)?, &forcefield.inner, precision)
         .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
@@ -2170,115 +1965,12 @@ pub fn read_lammps_data_coeffs_py(
     Ok(PyForceField { inner: forcefield })
 }
 
-/// Convert one LAMMPS coefficient line into the molrs params the reader stores.
-///
-/// The same conversion :func:`read_lammps_forcefield` applies to every
-/// ``*_coeff`` line, for callers that parse LAMMPS input themselves. ``values``
-/// are the coefficient tokens **after** the type field(s): for
-/// ``bond_coeff c3-c3 228.89 1.5354`` pass ``["228.89", "1.5354"]``.
-///
-/// Parameters
-/// ----------
-/// category : str
-///     ``"bond"``, ``"angle"``, ``"dihedral"``, ``"improper"`` or ``"pair"``.
-/// style : str
-///     The LAMMPS style name: ``harmonic`` (bond / angle / improper / dihedral),
-///     ``opls``, ``fourier``, ``charmm``, ``multi/harmonic`` (dihedral), or any
-///     ``lj/cut...`` pair style (``epsilon sigma``).
-/// values : Sequence[str]
-///     Coefficient tokens as written in the file.
-/// units : str, default ``"real"``
-///     LAMMPS ``units`` keyword the tokens are written in (``real``, ``metal``,
-///     ``lj``).
-///
-/// Returns
-/// -------
-/// dict[str, float]
-///     Native params in molrs store units — Å, kcal/mol, radians (``lj`` stays
-///     reduced). Harmonic force constants are ``k = 2K``, because molrs's
-///     harmonic kernels are ``½·k·(x−x₀)²`` and LAMMPS's are ``K·(x−x₀)²``;
-///     angles and phases given in degrees are stored in radians.
-///
-/// Raises
-/// ------
-/// ValueError
-///     On a ``(category, style)`` the LAMMPS reader has no kernel for (the
-///     message names both), an unknown ``units`` keyword, a missing
-///     coefficient, or a non-numeric token.
-#[pyfunction]
-#[pyo3(name = "lammps_coeff_params", signature = (category, style, values, units = "real"))]
-pub fn lammps_coeff_params_py(
-    category: &str,
-    style: &str,
-    values: Vec<String>,
-    units: &str,
-) -> PyResult<std::collections::HashMap<String, f64>> {
-    let tokens: Vec<&str> = values.iter().map(String::as_str).collect();
-    let params = molrs::ff::forcefield::readers::lammps::lammps_coeff_params(
-        category, style, &tokens, units,
-    )
-    .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    Ok(params.iter().map(|(k, v)| (k.to_owned(), v)).collect())
-}
-
-/// Render molrs params as the numbers of one LAMMPS coefficient line.
-///
-/// The inverse of :func:`lammps_coeff_params`, and the same conversion
-/// :func:`write_lammps_forcefield` applies to every ``*_coeff`` line. The
-/// result is the coefficients **after** the type field(s): bond harmonic
-/// ``{"k": 900.0, "r0": 0.9572}`` gives ``[450.0, 0.9572]``.
-///
-/// Parameters
-/// ----------
-/// category : str
-///     ``"bond"``, ``"angle"``, ``"dihedral"``, ``"improper"`` or ``"pair"``.
-/// style : str
-///     The LAMMPS style name: ``harmonic`` (bond / angle / improper / dihedral),
-///     ``opls``, ``fourier``, ``charmm``, ``multi/harmonic`` (dihedral), or any
-///     ``lj/cut...`` pair style (``epsilon``, ``sigma``).
-/// params : dict[str, float]
-///     Native params in molrs store units — Å, kcal/mol, radians (``lj``
-///     stays reduced).
-/// units : str, default ``"real"``
-///     LAMMPS ``units`` keyword to write the values in (``real``, ``metal``,
-///     ``lj``).
-///
-/// Returns
-/// -------
-/// list[float]
-///     Coefficients in LAMMPS file units. Harmonic force constants are
-///     ``K = k/2``, because molrs's harmonic kernels are ``½·k·(x−x₀)²`` and
-///     LAMMPS's are ``K·(x−x₀)²``; angles and phases are written in degrees.
-///     Multiplicities (``n``, fourier ``m``) are integral floats.
-///
-/// Raises
-/// ------
-/// ValueError
-///     On a ``(category, style)`` LAMMPS output has no form for (the message
-///     names both), an unknown ``units`` keyword, a missing param (named), or a
-///     non-integral multiplicity.
-#[pyfunction]
-#[pyo3(name = "lammps_coeff_values", signature = (category, style, params, units = "real"))]
-pub fn lammps_coeff_values_py(
-    category: &str,
-    style: &str,
-    params: HashMap<String, f64>,
-    units: &str,
-) -> PyResult<Vec<f64>> {
-    let mut native = molrs::ff::forcefield::Params::new();
-    for (key, value) in &params {
-        native.set(key, *value);
-    }
-    molrs::ff::forcefield::writers::lammps::lammps_coeff_values(category, style, &native, units)
-        .map_err(pyo3::exceptions::PyValueError::new_err)
-}
-
 /// Write a :class:`ForceField` to a LAMMPS force-field include (``*.ff``).
 ///
 /// Coefficient writing, keyed by the system's type labels: ``frame``'s
 /// ``atoms`` / ``bonds`` / ``angles`` / ``dihedrals`` / ``impropers`` type
 /// labels are walked in id order and each is looked up in ``forcefield``
-/// (bond, angle and dihedral labels in either orientation, impropers exactly).
+/// (every label matched to a type name exactly).
 /// Force-field types no label uses are not written.
 ///
 /// Inverse of :func:`read_lammps_forcefield`: molrs store (Å, kcal/mol, radians,
@@ -2332,7 +2024,7 @@ pub fn lammps_coeff_values_py(
     )
 )]
 pub fn write_lammps_forcefield_py(
-    path: &str,
+    path: PathBuf,
     forcefield: &PyForceField,
     frame: &PyFrame,
     precision: usize,
@@ -2357,7 +2049,7 @@ pub fn write_lammps_forcefield_py(
         },
     );
     writer
-        .write(&forcefield.inner, path)
+        .write(&forcefield.inner, path_str(&path)?)
         .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 

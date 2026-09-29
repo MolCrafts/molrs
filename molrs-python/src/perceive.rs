@@ -110,7 +110,7 @@ impl PyPerceive {
     /// Atomistic
     ///     A clone of ``mol`` carrying the ring props.
     fn find_rings(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
-        PyAtomistic::from_core(py, self.inner.find_rings(mol.core()))
+        mol.derive(py, self.inner.find_rings(mol.core()))
     }
 
     /// Bring a molecule to the standard aromatic representation.
@@ -141,7 +141,7 @@ impl PyPerceive {
     /// Atomistic
     ///     A clone of ``mol`` carrying both facts about every bond.
     fn find_aromaticity(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
-        PyAtomistic::from_core(py, self.inner.find_aromaticity(mol.core()))
+        mol.derive(py, self.inner.find_aromaticity(mol.core()))
     }
 
     /// Add the hydrogens implied by each heavy atom's open valence.
@@ -167,7 +167,7 @@ impl PyPerceive {
             .inner
             .find_hydrogens(mol.core())
             .map_err(molrs_error_to_pyerr)?;
-        PyAtomistic::from_core(py, out)
+        mol.derive(py, out)
     }
 
     /// Perceive stereochemistry from 3-D coordinates and project it onto the graph.
@@ -186,7 +186,7 @@ impl PyPerceive {
     ///     A clone of ``mol`` carrying a ``stereo`` prop on each perceived
     ///     stereocentre and stereo bond, and none elsewhere.
     fn find_stereo(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
-        PyAtomistic::from_core(py, self.inner.find_stereo(mol.core()))
+        mol.derive(py, self.inner.find_stereo(mol.core()))
     }
 
     /// Perceive rotatable bonds and project them onto the graph.
@@ -198,13 +198,38 @@ impl PyPerceive {
     /// ----------
     /// mol : Atomistic
     ///     The molecule to perceive; left untouched.
+    /// unknown_bond : {"not_rotatable", "single"}, default "not_rotatable"
+    ///     What a bond with no ``bond_type`` written counts as (a graph read
+    ///     from connectivity alone). ``"not_rotatable"`` never guesses;
+    ///     ``"single"`` lets it rotate under the degree and ring rules.
     ///
     /// Returns
     /// -------
     /// Atomistic
     ///     A clone of ``mol`` with ``is_rotatable`` (0/1) on every bond.
-    fn find_rotatable(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
-        PyAtomistic::from_core(py, self.inner.find_rotatable(mol.core()))
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If ``unknown_bond`` is not one of the two policies.
+    #[pyo3(signature = (mol, *, unknown_bond = "not_rotatable"))]
+    fn find_rotatable(
+        &self,
+        py: Python<'_>,
+        mol: &PyAtomistic,
+        unknown_bond: &str,
+    ) -> PyResult<Py<PyAtomistic>> {
+        use molrs::perceive::rotatable::UnknownBondPolicy;
+        let unknown = match unknown_bond {
+            "not_rotatable" => UnknownBondPolicy::NotRotatable,
+            "single" => UnknownBondPolicy::AsSingle,
+            other => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "unknown_bond must be 'not_rotatable' or 'single', got {other:?}"
+                )));
+            }
+        };
+        mol.derive(py, self.inner.find_rotatable(mol.core(), unknown))
     }
 
     /// Perceive antechamber bond types and project them onto the graph.
@@ -225,7 +250,7 @@ impl PyPerceive {
     /// Atomistic
     ///     A clone of ``mol`` with ``bcc_bond_type`` on every bond.
     fn find_bond_types(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
-        PyAtomistic::from_core(py, self.inner.find_bond_types(mol.core()))
+        mol.derive(py, self.inner.find_bond_types(mol.core()))
     }
 
     /// Assign a localized (Kekulé) ``bond_number`` to every aromatic bond.
@@ -251,7 +276,7 @@ impl PyPerceive {
     ///     A clone of ``mol`` whose aromatic bonds carry a legal localized
     ///     number.
     fn find_kekule_orders(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
-        PyAtomistic::from_core(py, self.inner.find_kekule_orders(mol.core()))
+        mol.derive(py, self.inner.find_kekule_orders(mol.core()))
     }
 
     /// Perceive charge-equivalence classes and project them onto the graph.
@@ -275,7 +300,7 @@ impl PyPerceive {
         py: Python<'_>,
         mol: &PyAtomistic,
     ) -> PyResult<Py<PyAtomistic>> {
-        PyAtomistic::from_core(py, self.inner.find_equivalence_classes(mol.core()))
+        mol.derive(py, self.inner.find_equivalence_classes(mol.core()))
     }
 
     fn __repr__(&self) -> String {

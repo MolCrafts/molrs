@@ -65,10 +65,10 @@ use crate::core::frame::Frame;
 /// const frame2d = ir.toFrame();
 /// const frame3d = generate3D(frame2d, "fast", 42);
 ///
-/// const atoms = frame3d.getBlock("atoms");
-/// const x = atoms.copyColF("x"); // Float32Array or Float64Array with 3D x-coords
-/// const y = atoms.copyColF("y");
-/// const z = atoms.copyColF("z");
+/// const atoms = frame3d.get("atoms");
+/// const x = atoms.get("x"); // Float64Array with 3D x-coords
+/// const y = atoms.get("y");
+/// const z = atoms.get("z");
 /// ```
 #[wasm_bindgen(js_name = generate3D)]
 pub fn generate_3d_wasm(

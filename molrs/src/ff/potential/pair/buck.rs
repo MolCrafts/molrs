@@ -5,6 +5,7 @@
 //! Lowercase is the canonical spelling (spec ff-params-01) and matches molpy;
 //! GROMACS spells the middle one `B = 1/rho`, normalized at that reader.
 
+use molrs::store::schema::block_names::PAIRS;
 use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
@@ -318,7 +319,7 @@ pub fn pair_buck_ctor(
     let scale_14 = style_params.get("lj14scale").unwrap_or(1.0) as F;
 
     let block = frame
-        .get("pairs")
+        .get(PAIRS)
         .ok_or_else(|| "PairBuck: frame missing \"pairs\" block".to_string())?;
     let i_col = block
         .get_uint("atomi")

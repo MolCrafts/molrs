@@ -11,9 +11,10 @@ positional mapping across the boundary, and error mapping.
 
 from __future__ import annotations
 
-import pytest
+import itertools
 
 import molrs
+import pytest
 from molrs import Dihedral, Improper
 from molrs.ff.typifier import Match, MMFF94Typifier, Typifier
 
@@ -42,7 +43,7 @@ def _chain_with_improper() -> molrs.Atomistic:
         mol.def_atom(element="C", name=f"a{i}", x=1.5 * i, y=0.0, z=0.0)
         for i in range(5)
     ]
-    for left, right in zip(atoms, atoms[1:]):
+    for left, right in itertools.pairwise(atoms):
         mol.def_bond(left, right)
     mol.def_dihedral(atoms[0], atoms[1], atoms[2], atoms[3])
     mol.def_improper(atoms[1], atoms[0], atoms[2], atoms[4])
@@ -70,6 +71,23 @@ def _ethane() -> molrs.Atomistic:
     return mol
 
 
+def _atom_rows(ff: molrs.ff.ForceField) -> dict[str, dict]:
+    """``{name: params}`` of the ``atom``/``full`` style of ``ff``."""
+    return {t.name: t.params for t in ff.get_style("atom", "full").types}
+
+
+def _assert_declares_library_special_bonds(ff: molrs.ff.ForceField) -> None:
+    """``ff`` declares exactly ``_SPECIAL_LJ`` / ``_SPECIAL_COUL``: merging an
+    equal declaration is accepted, a different one refused."""
+    same = molrs.ff.ForceField("same")
+    same.set_special_bonds(list(_SPECIAL_LJ), list(_SPECIAL_COUL))
+    assert ff.merge(same) is ff
+    other = molrs.ff.ForceField("other")
+    other.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
+    with pytest.raises(ValueError):
+        ff.merge(other)
+
+
 def _endpoint_label(link: Dihedral) -> str:
     return "-".join(str(atom["name"]) for atom in link.endpoints)
 
@@ -82,7 +100,7 @@ class _FirstAtomX(Typifier):
 
     def match(self, graph: molrs.Atomistic) -> Match:
         return Match(
-            [{"type": ("full", "X", {"mass": self.mass})}, {}],
+            [{"type": ("full", "X", (), {"mass": self.mass})}, {}],
             styles=[("atom", "full", {})],
         )
 
@@ -91,7 +109,7 @@ class _DihedralTagger(Typifier):
     """Stamps each node and each dihedral with a label derived from the element itself."""
 
     def match(self, graph: molrs.Atomistic) -> Match:
-        nodes = [{"seen": str(atom["name"])} for atom in graph.nodes]
+        nodes = [{"seen": str(atom["name"])} for atom in graph.atoms]
         dihedrals = [
             {"tag": _endpoint_label(link)}
             for link in graph.links.exact_bucket(Dihedral)
@@ -108,7 +126,14 @@ class _SpecialBondsLibrary(Typifier):
         return lib
 
     def match(self, graph: molrs.Atomistic) -> Match:
-        return Match([{} for _ in graph.nodes])
+        return Match([{} for _ in graph.atoms])
+
+
+def test_a_type_annotation_without_endpoints_raises_type_error() -> None:
+    """A type annotation carries its endpoints: ``(style, name, params)`` is not
+    a form — a name is never read for endpoints."""
+    with pytest.raises(TypeError, match="endpoints"):
+        Match([{"type": ("harmonic", "C-C", {"k": 1.0})}])
 
 
 class TestTypifierSubclass:
@@ -127,9 +152,7 @@ class TestTypifierSubclass:
         assert "type" not in second
         assert "mass" not in second
         assert [dict(atom.items()) for atom in mol.atoms] == before
-        assert dict(typifier.forcefield().types("atom", "full")) == {
-            "X": {"mass": 1.0}
-        }
+        assert _atom_rows(typifier.forcefield()) == {"X": {"mass": 1.0}}
 
     def test_conflicting_second_typify_raises_value_error(self) -> None:
         typifier = _FirstAtomX(mass=1.0)
@@ -139,9 +162,7 @@ class TestTypifierSubclass:
         with pytest.raises(ValueError):
             typifier.typify(_pair())
 
-        assert dict(typifier.forcefield().types("atom", "full")) == {
-            "X": {"mass": 1.0}
-        }
+        assert _atom_rows(typifier.forcefield()) == {"X": {"mass": 1.0}}
 
     def test_match_positions_follow_nodes_and_exact_bucket(self) -> None:
         typed = _DihedralTagger().typify(_chain_with_improper())
@@ -162,17 +183,14 @@ class TestTypifierSubclass:
 
         typifier.typify(_pair())
 
-        assert typifier.forcefield().declared_special_bonds() == (
-            _SPECIAL_LJ,
-            _SPECIAL_COUL,
-        )
+        _assert_declares_library_special_bonds(typifier.forcefield())
 
     def test_forcefield_before_typify_is_the_seeded_empty_output(self) -> None:
         output = _SpecialBondsLibrary().forcefield()
 
         assert output.name == "lib"
-        assert output.declared_special_bonds() == (_SPECIAL_LJ, _SPECIAL_COUL)
-        assert output.style_names() == []
+        _assert_declares_library_special_bonds(output)
+        assert output.styles == []
 
     def test_subclass_defining_typify_is_rejected_at_class_creation(self) -> None:
         with pytest.raises(TypeError):

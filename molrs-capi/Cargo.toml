@@ -27,9 +27,10 @@ strip = "symbols"
 default = []
 
 [dependencies]
-# The merged crate on its defaults, plus the explicit ff + io + smiles modules
-# this C API exposes (additive; documents what the crate actually needs).
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.15.0", features = ["ff", "io", "smiles"] }
+# molrs defaults to core only, so the set is spelled here: `full` +
+# `filesystem` + `rayon`, the same set molrs-ffi's default links (build 2 in
+# .cargo/config.toml). Never `stream`: no tokio / tungstenite in a C archive.
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.15.0", default-features = false, features = ["full", "filesystem", "rayon"] }
 molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.15.0" }
 slotmap = "1.0"
 ndarray = "0.17"

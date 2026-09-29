@@ -24,7 +24,7 @@ use crate::io::smiles::cgsmiles::ast::{
     CGFragmentDef, CGGraph, CGSmilesIR, FragmentBody, PairEnd, ResolvedPair,
 };
 use crate::io::smiles::cgsmiles::resolve::FragmentCache;
-use crate::io::smiles::cgsmiles::to_fragment::cg_build;
+use crate::io::smiles::cgsmiles::templates::cg_build;
 use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
 use molrs::op::rigid::Rigid;
 use molrs::system::atomistic::{AtomId, Atomistic};
@@ -741,7 +741,7 @@ mod tests {
     }
 
     /// A base-only string names no fragment at all, so the refusal has no
-    /// fragment to name and says so in the phrase `to_fragment` reuses.
+    /// fragment to name and says so in the phrase `templates` reuses.
     #[test]
     fn test_base_only_ir_is_not_expandable() {
         let ir = parse_cgsmiles("{[#PEO][#PEO][#PEO]}").expect("base-only string must parse");

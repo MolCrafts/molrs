@@ -28,6 +28,7 @@
 
 #![cfg(all(test, feature = "smiles"))]
 
+use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 
 use crate::perceive::Perceive;
@@ -108,7 +109,7 @@ fn standardize(smiles: &str) -> Atomistic {
     Perceive::new().find_aromaticity(&parse(smiles))
 }
 
-fn uint_prop(props: &HashMap<String, PropValue>, key: &str) -> Option<u32> {
+fn uint_prop(props: &IndexMap<String, PropValue>, key: &str) -> Option<u32> {
     props.get(key).and_then(PropValue::as_f64).map(|v| {
         assert!(
             v.fract() == 0.0 && v >= 0.0,

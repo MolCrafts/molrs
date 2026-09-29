@@ -462,7 +462,7 @@ mod tests {
                 },
             )
             .unwrap();
-        let nls = vec![nl.clone(), nl.clone()];
+        let nls = vec![nl.clone(), nl];
         let par = p
             .compute(
                 &[&frame, &frame],

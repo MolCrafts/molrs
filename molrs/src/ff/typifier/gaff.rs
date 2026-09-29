@@ -190,13 +190,17 @@ fn try_candidate_forcefield(table: ParmTable) -> Result<ForceField, DefError> {
 
     let atoms = ff.def_style("atom", "full", Params::new())?;
     for row in table.masses {
-        atoms.def_type(row.atom_type, Params::from_pairs(&[("mass", row.mass)]))?;
+        atoms.def_type(
+            row.atom_type,
+            &[],
+            Params::from_pairs(&[("mass", row.mass)]),
+        )?;
     }
 
     let lj = ff.def_style("pair", "lj/cut", Params::new())?;
     for row in table.nonbonded {
         let name = table.name_of(row.atom_type);
-        lj.def_type_at(name, &[name], Params::from_pairs(&lj_params(row)))?;
+        lj.def_type(name, &[name], Params::from_pairs(&lj_params(row)))?;
     }
     // GAFF/AMBER uses the unbuffered Coulomb form. The constant is force-field
     // data (and differs measurably from CODATA and MMFF), while `delta = 0`
@@ -214,7 +218,7 @@ fn try_candidate_forcefield(table: ParmTable) -> Result<ForceField, DefError> {
     let bonds = ff.def_style("bond", "harmonic", Params::new())?;
     for row in table.bonds {
         let ends = [row.i, row.j].map(|ty| table.name_of(ty));
-        bonds.def_type_at(
+        bonds.def_type(
             TypeName::join(&ends).map_err(DefError::Name)?.as_str(),
             &ends,
             Params::from_pairs(&bond_params(row)),
@@ -224,7 +228,7 @@ fn try_candidate_forcefield(table: ParmTable) -> Result<ForceField, DefError> {
     let angles = ff.def_style("angle", "harmonic", Params::new())?;
     for row in table.angles {
         let ends = [row.i, row.j, row.k].map(|ty| table.name_of(ty));
-        angles.def_type_at(
+        angles.def_type(
             TypeName::join(&ends).map_err(DefError::Name)?.as_str(),
             &ends,
             Params::from_pairs(&angle_params(row)),
@@ -245,7 +249,7 @@ fn try_candidate_forcefield(table: ParmTable) -> Result<ForceField, DefError> {
     for (slots, rows) in &groups {
         let ends = slots.map(|slot| slot_name(&table, &slot));
         let params = dihedral_params(rows);
-        dihedrals.def_type_at(
+        dihedrals.def_type(
             TypeName::join(&ends).map_err(DefError::Name)?.as_str(),
             &ends,
             Params::from_pairs(&borrowed(&params)),
@@ -255,7 +259,7 @@ fn try_candidate_forcefield(table: ParmTable) -> Result<ForceField, DefError> {
     let impropers = ff.def_style("improper", "periodic", Params::new())?;
     for row in table.impropers {
         let ends = [row.i, row.j, row.k, row.l].map(|slot| slot_name(&table, &slot));
-        impropers.def_type_at(
+        impropers.def_type(
             TypeName::join(&ends).map_err(DefError::Name)?.as_str(),
             &ends,
             Params::from_pairs(&improper_params(row)),
@@ -514,7 +518,7 @@ impl GaffTypifier {
                     Annotation::Type {
                         style: "full".to_owned(),
                         name: name.to_owned(),
-                        endpoints: Some(Vec::new()),
+                        endpoints: Vec::new(),
                         params: Params::from_pairs(&[("mass", mass)]),
                     },
                 )]
@@ -530,7 +534,7 @@ impl GaffTypifier {
             let (ti, tj) = (type_of[&i], type_of[&j]);
             let resolved = match index.bond(ti, tj) {
                 Some(row) => Some((
-                    index.type_name([row.i, row.j])?,
+                    index.names([row.i, row.j]).to_vec(),
                     Bonded::matched(Params::from_pairs(&bond_params(row))),
                 )),
                 None => {
@@ -544,7 +548,7 @@ impl GaffTypifier {
                     }
                 }
             };
-            m.bonds.push(Bonded::annotation("harmonic", resolved));
+            m.bonds.push(Bonded::annotation("harmonic", resolved)?);
         }
 
         // --- angles ---
@@ -556,7 +560,7 @@ impl GaffTypifier {
             let (ti, tj, tk) = (type_of[&i], type_of[&j], type_of[&k]);
             let resolved = match index.angle(ti, tj, tk) {
                 Some(row) => Some((
-                    index.type_name([row.i, row.j, row.k])?,
+                    index.names([row.i, row.j, row.k]).to_vec(),
                     Bonded::matched(Params::from_pairs(&angle_params(row))),
                 )),
                 None => {
@@ -570,7 +574,7 @@ impl GaffTypifier {
                     }
                 }
             };
-            m.angles.push(Bonded::annotation("harmonic", resolved));
+            m.angles.push(Bonded::annotation("harmonic", resolved)?);
         }
 
         // --- dihedrals ---
@@ -587,7 +591,9 @@ impl GaffTypifier {
                 Some(rows) => {
                     let first = rows[0];
                     Some((
-                        index.type_name(concrete(first.i, first.j, first.k, first.l))?,
+                        index
+                            .names(concrete(first.i, first.j, first.k, first.l))
+                            .to_vec(),
                         Bonded::matched(Params::from_pairs(&borrowed(&dihedral_params(rows)))),
                     ))
                 }
@@ -602,14 +608,14 @@ impl GaffTypifier {
                     }
                 }
             };
-            m.dihedrals.push(Bonded::annotation("periodic", resolved));
+            m.dihedrals.push(Bonded::annotation("periodic", resolved)?);
         }
 
         // --- impropers: positional against the rows `add_impropers` left ---
         let improper_ids: Vec<ImproperId> = graph.impropers().map(|(id, _)| id).collect();
         for id in improper_ids {
             m.impropers
-                .push(Bonded::annotation("periodic", improper_terms.remove(&id)));
+                .push(Bonded::annotation("periodic", improper_terms.remove(&id))?);
         }
 
         let terms = missed.into_terms();
@@ -691,29 +697,34 @@ impl Bonded {
         }
     }
 
-    /// Ask the estimator for `term`: its [`BondedTerm::type_name`] and params,
+    /// Ask the estimator for `term`: its [`BondedTerm::endpoints`] and params,
     /// or `None` when nothing can produce it.
     fn estimate(
         estimator: &Parmchk2Estimator,
         term: &BondedTerm,
-    ) -> Result<Option<(TypeName, Self)>, GaffError> {
+    ) -> Result<Option<(Vec<String>, Self)>, GaffError> {
         let Some(estimate) = estimator.estimate(term) else {
             return Ok(None);
         };
         Ok(Some((
-            term.type_name().map_err(malformed)?,
+            term.endpoints().into_iter().map(str::to_owned).collect(),
             Self::from(estimate),
         )))
     }
 
     /// The annotations of one term: `type` → the term's type under `style`,
-    /// its endpoints read off its name, with the provenance keys written into
-    /// its params when it was estimated. Nothing for an unresolved term (a
-    /// miss, which fails the match).
-    fn annotation(style: &str, resolved: Option<(TypeName, Self)>) -> Vec<(String, Annotation)> {
-        let Some((name, term)) = resolved else {
-            return Vec::new();
+    /// on its endpoints and named by their [`TypeName::join`], with the
+    /// provenance keys written into its params when it was estimated. Nothing
+    /// for an unresolved term (a miss, which fails the match).
+    fn annotation(
+        style: &str,
+        resolved: Option<(Vec<String>, Self)>,
+    ) -> Result<Vec<(String, Annotation)>, GaffError> {
+        let Some((endpoints, term)) = resolved else {
+            return Ok(Vec::new());
         };
+        let ends: Vec<&str> = endpoints.iter().map(String::as_str).collect();
+        let name = TypeName::join(&ends).map_err(malformed)?;
         let Bonded {
             mut params,
             estimate,
@@ -721,15 +732,15 @@ impl Bonded {
         if let Some(provenance) = &estimate {
             provenance.write_onto(&mut params);
         }
-        vec![(
+        Ok(vec![(
             keys::TYPE.to_owned(),
             Annotation::Type {
                 style: style.to_owned(),
-                endpoints: Some(name.endpoints().into_iter().map(str::to_owned).collect()),
                 name: name.to_string(),
+                endpoints,
                 params,
             },
-        )]
+        )])
     }
 }
 
@@ -763,7 +774,7 @@ fn add_impropers(
     index: &TableIndex,
     estimator: &Parmchk2Estimator,
     type_of: &HashMap<AtomId, ParmType>,
-) -> Result<HashMap<ImproperId, (TypeName, Bonded)>, GaffError> {
+) -> Result<HashMap<ImproperId, (Vec<String>, Bonded)>, GaffError> {
     // Rebuild from scratch: a pre-existing improper would survive with a label
     // this force field never defines.
     let existing: Vec<_> = graph.impropers().map(|(id, _)| id).collect();
@@ -791,10 +802,10 @@ fn add_impropers(
 
         // An exact row fixes the atom order itself; anything else is an estimate,
         // and its peripherals are ordered by type name so one improper has one name.
-        let (order, name, term) = match index.improper(type_of[&centre], &peripheral_types) {
+        let (order, endpoints, term) = match index.improper(type_of[&centre], &peripheral_types) {
             Some((row, order)) => (
                 order,
-                index.type_name(concrete(row.i, row.j, row.k, row.l))?,
+                index.names(concrete(row.i, row.j, row.k, row.l)).to_vec(),
                 Bonded::matched(Params::from_pairs(&improper_params(row))),
             ),
             None => {
@@ -817,7 +828,7 @@ fn add_impropers(
                     .expect("an improper always resolves — a row, or parmchk2's default");
                 (
                     order,
-                    term.type_name().map_err(malformed)?,
+                    term.endpoints().into_iter().map(str::to_owned).collect(),
                     Bonded::from(estimate),
                 )
             }
@@ -831,7 +842,7 @@ fn add_impropers(
                 peripherals[order[2]],
             )
             .map_err(malformed)?;
-        terms.insert(id, (name, term));
+        terms.insert(id, (endpoints, term));
     }
     Ok(terms)
 }
@@ -963,11 +974,6 @@ impl TableIndex {
 
     fn name_of(&self, ty: ParmType) -> &'static str {
         self.table.name_of(ty)
-    }
-
-    /// The force-field type name of a row, e.g. `c3-c3-oh`.
-    fn type_name<const N: usize>(&self, types: [ParmType; N]) -> Result<TypeName, GaffError> {
-        TypeName::join(&types.map(|ty| self.name_of(ty))).map_err(malformed)
     }
 
     /// The type names of a term, for a [`MissingTerm`] or a [`BondedTerm`].

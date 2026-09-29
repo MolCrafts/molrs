@@ -1,6 +1,6 @@
+import molrs
 import numpy as np
 import pytest
-import molrs
 
 
 class TestBoxConstruction:
@@ -33,15 +33,11 @@ class TestBoxConstruction:
             molrs.Box.cube(-5.0)
 
     def test_custom_origin(self):
-        b = molrs.Box.cube(
-            10.0, origin=np.array([1.0, 2.0, 3.0], dtype=np.float64)
-        )
+        b = molrs.Box.cube(10.0, origin=np.array([1.0, 2.0, 3.0], dtype=np.float64))
         np.testing.assert_allclose(b.origin, [1.0, 2.0, 3.0], atol=1e-6)
 
     def test_custom_pbc(self):
-        b = molrs.Box.cube(
-            10.0, pbc=np.array([True, False, True])
-        )
+        b = molrs.Box.cube(10.0, pbc=np.array([True, False, True]))
         assert b.pbc[0] == True
         assert b.pbc[1] == False
         assert b.pbc[2] == True

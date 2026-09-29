@@ -136,6 +136,7 @@ use zarrs::array::codec::array_to_bytes::sharding::{
     ShardingCodecBuilder, ShardingCodecOptions, ShardingIndexLocation, SubchunkWriteOrder,
 };
 use zarrs::array::codec::bytes_to_bytes::crc32c::Crc32cCodec;
+use zarrs::array::data_type::{Float16DataType, Float32DataType};
 use zarrs::array::{
     Array, ArrayBuilder, ArraySubset, BytesToBytesCodecTraits, CodecOptions, CodecSpecificOptions,
 };
@@ -386,10 +387,7 @@ fn inner_codecs(
 /// Whether a column width is floating point — the widths whose compression is
 /// the producer's [`Compression`] choice rather than always-`gzip`.
 fn is_float_width(dtype: DType) -> bool {
-    matches!(
-        dtype,
-        DType::Float16 | DType::Float32 | DType::Float | DType::Complex64 | DType::Complex128
-    )
+    matches!(dtype, DType::Float | DType::Complex64 | DType::Complex128)
 }
 
 /// The tag a column's storage width is written as in the schema attributes.
@@ -406,9 +404,7 @@ fn dtype_tag(dtype: DType) -> &'static str {
         DType::Float => "f64",
         DType::Int => "i32",
         DType::UInt => "u64",
-        DType::Float16
-        | DType::Float32
-        | DType::Int8
+        DType::Int8
         | DType::Int16
         | DType::Int64
         | DType::Bool
@@ -422,9 +418,7 @@ fn dtype_tag(dtype: DType) -> &'static str {
 }
 
 /// Every width a column may take, in the order molrec's dtype enum lists them.
-const SCHEMA_WIDTHS: [DType; 15] = [
-    DType::Float16,
-    DType::Float32,
+const SCHEMA_WIDTHS: [DType; 13] = [
     DType::Float,
     DType::Int8,
     DType::Int16,
@@ -441,7 +435,7 @@ const SCHEMA_WIDTHS: [DType; 15] = [
 ];
 
 /// The column width a schema dtype tag names — the public spelling of the
-/// closed dtype set (`f16` … `c128`) for callers that declare a schema from
+/// closed dtype set (`f64` … `c128`) for callers that declare a schema from
 /// text rather than from a frame.
 ///
 /// # Errors
@@ -451,9 +445,9 @@ pub fn column_dtype(tag: &str) -> Result<DType, MolRsError> {
     dtype_from_tag(tag)
 }
 
-/// The column width a schema tag names.
+/// The column width a schema dtype tag names.
 ///
-/// Reads the fifteen concrete-width tags [`dtype_tag`] writes, plus the three
+/// Reads the thirteen concrete-width tags [`dtype_tag`] writes and the three
 /// legacy aliases (`float`, `int`, `uint`) an early store may carry.
 fn dtype_from_tag(tag: &str) -> Result<DType, MolRsError> {
     match tag {
@@ -469,12 +463,27 @@ fn dtype_from_tag(tag: &str) -> Result<DType, MolRsError> {
         .ok_or_else(|| MolRsError::zarr(format!("unknown column dtype tag {tag:?}")))
 }
 
-/// The column width a stored Zarr data type maps to, if any.
-fn dtype_of_stored(stored: &zarrs::array::DataType) -> Option<DType> {
+/// The column width a stored Zarr data type maps to.
+///
+/// Narrow float arrays are refused, not promoted: the record has one float
+/// (`F = f64`), so a `float16`/`float32` array on disk is an error naming
+/// the array and its stored type.
+fn dtype_of_stored(name: &str, stored: &zarrs::array::DataType) -> Result<DType, MolRsError> {
+    if stored.is::<Float16DataType>() || stored.is::<Float32DataType>() {
+        return Err(MolRsError::zarr(format!(
+            "{name} is stored as {stored:?}: narrow floats are not read; \
+             the record has one float, `F = f64`"
+        )));
+    }
     SCHEMA_WIDTHS
         .iter()
         .copied()
         .find(|&dtype| zarr_dtype(dtype).0 == *stored)
+        .ok_or_else(|| {
+            MolRsError::zarr(format!(
+                "{name} is stored as {stored:?}, which is no column width molrs reads"
+            ))
+        })
 }
 
 /// The column width and trailing shape a per-step meta tag is stored as.
@@ -489,7 +498,6 @@ fn meta_layout(tag: &str) -> Option<(DType, Vec<u64>)> {
         "i64" => scalar(DType::Int64),
         "u32" => scalar(DType::UInt32),
         "u64" => scalar(DType::UInt),
-        "f32" => scalar(DType::Float32),
         "f64" => scalar(DType::Float),
         // A JSON document per step rides in a string array; the tag says how
         // to read it back.
@@ -499,11 +507,8 @@ fn meta_layout(tag: &str) -> Option<(DType, Vec<u64>)> {
         "i64x3" => vector(DType::Int64, 3),
         "u32x3" => vector(DType::UInt32, 3),
         "u64x3" => vector(DType::UInt, 3),
-        "f32x3" => vector(DType::Float32, 3),
         "f64x3" => vector(DType::Float, 3),
-        "f32x6" => vector(DType::Float32, 6),
         "f64x6" => vector(DType::Float, 6),
-        "f32x9" => vector(DType::Float32, 9),
         "f64x9" => vector(DType::Float, 9),
         _ => None,
     }
@@ -554,8 +559,6 @@ fn same_column(left: &Column, right: &Column) -> bool {
         };
     }
     match (left, right) {
-        (Column::Float16(a), Column::Float16(b)) => bits!(a, b),
-        (Column::Float32(a), Column::Float32(b)) => bits!(a, b),
         (Column::Float(a), Column::Float(b)) => bits!(a, b),
         (Column::Complex64(a), Column::Complex64(b)) => a
             .iter()
@@ -641,8 +644,6 @@ fn column_rows(column: &Column, start: usize, end: usize) -> Column {
         };
     }
     match column {
-        Column::Float16(h) => slice!(h, from_f16),
-        Column::Float32(h) => slice!(h, from_f32),
         Column::Float(h) => slice!(h, from_float),
         Column::Int8(h) => slice!(h, from_i8),
         Column::Int16(h) => slice!(h, from_i16),
@@ -671,8 +672,6 @@ fn empty_column(dtype: DType, trailing: &[u64]) -> Result<Column, MolRsError> {
         };
     }
     Ok(match dtype {
-        DType::Float16 => empty!(from_f16, half::f16),
-        DType::Float32 => empty!(from_f32, f32),
         DType::Float => empty!(from_float, f64),
         DType::Int8 => empty!(from_i8, i8),
         DType::Int16 => empty!(from_i16, i16),
@@ -714,7 +713,7 @@ struct ColumnSchema {
 /// One declared block: its columns, and the structural shape it declares.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct BlockSchema {
-    columns: BTreeMap<String, ColumnSchema>,
+    columns: IndexMap<String, ColumnSchema>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     structural_shape: Option<Vec<usize>>,
 }
@@ -751,7 +750,7 @@ struct MetaSchema {
 /// count wanders away from it still reads back exactly.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SequenceSchema {
-    blocks: BTreeMap<String, BlockSchema>,
+    blocks: IndexMap<String, BlockSchema>,
     #[serde(default)]
     meta: IndexMap<String, MetaSchema>,
     /// Representative rows per block, for chunk sizing. Never pinned.
@@ -889,7 +888,7 @@ impl SequenceSchema {
         self.blocks
             .entry(name.to_string())
             .or_insert_with(|| BlockSchema {
-                columns: BTreeMap::new(),
+                columns: IndexMap::new(),
                 structural_shape: None,
             });
         if let Some(rows) = rows {
@@ -1014,9 +1013,9 @@ impl SequenceSchema {
     /// Declare a per-step metadata key by its dtype tag.
     ///
     /// The tag is one of the scalar forms `bool`, `i32`, `i64`, `u32`, `u64`,
-    /// `f32`, `f64`, `string`, `json`, the three-component forms `bool3`,
-    /// `i32x3`, `i64x3`, `u32x3`, `u64x3`, `f32x3`, `f64x3`, or the six- and
-    /// nine-component float forms `f32x6`, `f64x6`, `f32x9`, `f64x9`. A
+    /// `f64`, `string`, `json`, the three-component forms `bool3`,
+    /// `i32x3`, `i64x3`, `u32x3`, `u64x3`, `f64x3`, or the six- and
+    /// nine-component float forms `f64x6`, `f64x9`. A
     /// frame that omits a key declared this way is an error at append; declare
     /// a fill with [`declare_meta_with_fill`](Self::declare_meta_with_fill)
     /// to make omission legal.
@@ -1072,12 +1071,13 @@ impl SequenceSchema {
         Ok(())
     }
 
-    /// The declared block names.
+    /// The declared block names, in declaration order.
     pub fn block_names(&self) -> impl Iterator<Item = &str> {
         self.blocks.keys().map(String::as_str)
     }
 
-    /// The declared column names of `block`, or `None` when it is not declared.
+    /// The declared column names of `block` in declaration order, or `None`
+    /// when it is not declared.
     pub fn column_names(&self, block: &str) -> Option<impl Iterator<Item = &str>> {
         self.blocks
             .get(block)
@@ -1202,12 +1202,7 @@ where
             }
             let column_path = join_path(&path, &column);
             let array = Array::open(store.clone(), &column_path)?;
-            let dtype = dtype_of_stored(array.data_type()).ok_or_else(|| {
-                MolRsError::zarr(format!(
-                    "{column_path} is stored as {:?}, which is no column width molrs reads",
-                    array.data_type()
-                ))
-            })?;
+            let dtype = dtype_of_stored(&column_path, array.data_type())?;
             let trailing: Vec<u64> = array.shape().iter().skip(1).copied().collect();
             schema.declare_column(&name, &column, dtype, &trailing)?;
             // A store whose pin was stripped still says which columns are
@@ -1496,8 +1491,6 @@ impl GrowthArray {
             }};
         }
         match dtype {
-            DType::Float16 => landed!(Float16),
-            DType::Float32 => landed!(Float32),
             DType::Float => landed!(Float),
             DType::Int8 => landed!(Int8),
             DType::Int16 => landed!(Int16),
@@ -1560,7 +1553,6 @@ impl GrowthArray {
             "i64" => scalar!(I64, i64),
             "u32" => scalar!(U32, u32),
             "u64" => scalar!(U64, u64),
-            "f32" => scalar!(F32, f32),
             "f64" => scalar!(F64, f64),
             "string" => scalar!(String, String),
             "json" => {
@@ -1578,11 +1570,8 @@ impl GrowthArray {
             "i64x3" => vector!(I64x3, i64),
             "u32x3" => vector!(U32x3, u32),
             "u64x3" => vector!(U64x3, u64),
-            "f32x3" => vector!(F32x3, f32),
             "f64x3" => vector!(F64x3, f64),
-            "f32x6" => vector!(F32x6, f32),
             "f64x6" => vector!(F64x6, f64),
-            "f32x9" => vector!(F32x9, f32),
             "f64x9" => vector!(F64x9, f64),
             other => {
                 return Err(MolRsError::zarr(format!(
@@ -1646,7 +1635,6 @@ where
         "i64" => scalar!(I64, i64),
         "u32" => scalar!(U32, u32),
         "u64" => scalar!(U64, u64),
-        "f32" => scalar!(F32, f32),
         "f64" => scalar!(F64, f64),
         "string" => scalar!(String, String),
         "json" => {
@@ -1660,11 +1648,8 @@ where
         "i64x3" => vector!(I64x3, i64, 3),
         "u32x3" => vector!(U32x3, u32, 3),
         "u64x3" => vector!(U64x3, u64, 3),
-        "f32x3" => vector!(F32x3, f32, 3),
         "f64x3" => vector!(F64x3, f64, 3),
-        "f32x6" => vector!(F32x6, f32, 6),
         "f64x6" => vector!(F64x6, f64, 6),
-        "f32x9" => vector!(F32x9, f32, 9),
         "f64x9" => vector!(F64x9, f64, 9),
         other => {
             return Err(MolRsError::zarr(format!(
@@ -2997,10 +2982,7 @@ fn validate_column(
     path: &str,
     schema: &ColumnSchema,
 ) -> Result<(), MolRsError> {
-    let found = dtype_of_stored(opened.array.data_type()).map_or_else(
-        || format!("{:?}", opened.array.data_type()),
-        |dtype| dtype_tag(dtype).to_string(),
-    );
+    let found = dtype_tag(dtype_of_stored(path, opened.array.data_type())?).to_string();
     if found != schema.dtype {
         return Err(MolRsError::zarr(format!(
             "sequence schema mismatch at {path}: dtype expected {}, found {found}",
@@ -4330,7 +4312,7 @@ pub struct FrameSequence {
     /// Step numbers of the committed frames; its length is `nstep`.
     steps: Vec<i64>,
     times: Option<Vec<F>>,
-    blocks: BTreeMap<String, BlockIndex>,
+    blocks: IndexMap<String, BlockIndex>,
     cell: Option<BoxIndex>,
     state: Mutex<ReadState>,
 }
@@ -4400,7 +4382,7 @@ impl FrameSequence {
             nstep,
         )?;
 
-        let mut blocks = BTreeMap::new();
+        let mut blocks = IndexMap::new();
         for (name, declared) in &schema.blocks {
             let path = join_path(TRAJECTORY_GROUP, name);
             if !group_exists(&store, &path)? {
@@ -5192,6 +5174,26 @@ mod tests {
         }
     }
 
+    /// Blocks and columns read back in the order the frame carried them —
+    /// the pinned schema records declaration order, and the reader walks it.
+    #[test]
+    fn blocks_and_columns_read_back_in_frame_order() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut zeta = Block::new();
+        for column in ["c", "a", "b"] {
+            zeta.insert_column(column, float_column(&[1.0])).unwrap();
+        }
+        let mut frame = Frame::new();
+        frame.insert("zeta", zeta);
+        frame.insert(ATOMS, block_with(X, float_column(&[2.0])));
+        write_all(&store, &[frame]);
+
+        let back = frame_at(&mut open_sequence(&store), 0);
+        assert_eq!(back.keys().collect::<Vec<_>>(), ["zeta", ATOMS]);
+        assert_eq!(back["zeta"].keys().collect::<Vec<_>>(), ["c", "a", "b"]);
+    }
+
     /// A block with no `step_index` entry `<= i` is **absent** at step `i`,
     /// not present-and-empty (ac-014).
     ///
@@ -5871,7 +5873,6 @@ mod tests {
             MetaValue::I64(i64::MIN),
             MetaValue::U32(u32::MAX),
             MetaValue::U64(u64::MAX),
-            MetaValue::F32(f32::MIN_POSITIVE),
             MetaValue::F64(f64::MIN_POSITIVE),
             MetaValue::String("gamma-phase".to_string()),
             MetaValue::Bool3([true, false, true]),
@@ -5879,11 +5880,8 @@ mod tests {
             MetaValue::I64x3([i64::MIN, 0, i64::MAX]),
             MetaValue::U32x3([0, 1, u32::MAX]),
             MetaValue::U64x3([0, 1, u64::MAX]),
-            MetaValue::F32x3([1.0, -0.5, f32::MAX]),
             MetaValue::F64x3([1.0, -0.5, f64::MAX]),
-            MetaValue::F32x6([1.0, 2.0, 3.0, -4.0, 5.5, 6.25]),
             MetaValue::F64x6([1.0, 2.0, 3.0, -4.0, 5.5, 6.25]),
-            MetaValue::F32x9([1.0, 2.0, 3.0, -4.0, 5.5, 6.25, 7.0, -8.0, 9.5]),
             MetaValue::F64x9([1.0, 2.0, 3.0, -4.0, 5.5, 6.25, 7.0, -8.0, 9.5]),
             MetaValue::Json(serde_json::json!({"basis": "def2-TZVP", "scf": [1, 2, 3]})),
         ]
@@ -7228,39 +7226,35 @@ mod tests {
     }
 
     /// A meta value that arrives at another width is re-read at the declared
-    /// width — a JSON list becomes the declared `f64x3`, an `f64` the declared
-    /// `f32` — and one that cannot be is refused naming both.
+    /// width — a JSON list becomes the declared `f64x3` — and one that cannot
+    /// be is refused naming both.
     #[test]
     fn a_meta_value_at_another_width_is_read_at_the_declared_one() {
         let dir = TempDir::new().unwrap();
         let store = store_in(&dir);
         let mut schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
         schema.declare_meta("com", "f64x3").unwrap();
-        schema.declare_meta("scale", "f32").unwrap();
         schema.declare_meta("count", "i64").unwrap();
         let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
         let mut frame = atoms_frame(&[1.0]);
         frame
             .meta
             .insert("com", MetaValue::Json(serde_json::json!([1.0, 2.0, 3.0])));
-        frame.meta.insert("scale", MetaValue::F64(0.5));
         frame.meta.insert("count", MetaValue::I64(3));
         writer.append(&frame).unwrap();
         let mut wrong = atoms_frame(&[2.0]);
         wrong
             .meta
             .insert("com", MetaValue::Json(serde_json::json!([1.0, 2.0])));
-        wrong.meta.insert("scale", MetaValue::F64(0.25));
         wrong.meta.insert("count", MetaValue::I64(4));
         let err = writer.append(&wrong).unwrap_err().to_string();
         assert!(err.contains("com") && err.contains("f64x3"), "{err}");
-        // Declared keys are walked in BTreeMap order, so a bad `com` masks
+        // Declared keys are walked in declaration order, so a bad `com` masks
         // `count`. This frame's `com` fits; its `count` is an f64 under i64.
         let mut refused = atoms_frame(&[3.0]);
         refused
             .meta
             .insert("com", MetaValue::Json(serde_json::json!([4.0, 5.0, 6.0])));
-        refused.meta.insert("scale", MetaValue::F64(0.125));
         refused.meta.insert("count", MetaValue::F64(0.5));
         let err = writer.append(&refused).unwrap_err().to_string();
         assert!(err.contains("count") && err.contains("i64"), "{err}");
@@ -7271,7 +7265,18 @@ mod tests {
             back.meta.get("com"),
             Some(&MetaValue::F64x3([1.0, 2.0, 3.0]))
         );
-        assert_eq!(back.meta.get("scale"), Some(&MetaValue::F32(0.5)));
+    }
+
+    /// The narrow float tags are gone: a per-step meta key declared with one
+    /// is refused, not widened to `f64`. The vector forms share this same
+    /// unknown-dtype arm of [`meta_layout`].
+    #[test]
+    fn declaring_a_narrow_float_meta_tag_is_refused() {
+        let mut schema = SequenceSchema::new();
+        for tag in ["f16", "f32"] {
+            let err = schema.declare_meta("scale", tag).unwrap_err().to_string();
+            assert!(err.contains("unknown dtype"), "accepted `{tag}`: {err}");
+        }
     }
 
     /// A schema declared column by column is the same pin a derived one is.
@@ -7291,10 +7296,10 @@ mod tests {
         assert_eq!(declared, derived);
 
         let err = declared
-            .declare_column(ATOMS, X, DType::Float32, &[])
+            .declare_column(ATOMS, X, DType::Int, &[])
             .unwrap_err()
             .to_string();
-        assert!(err.contains("f64") && err.contains("f32"), "{err}");
+        assert!(err.contains("f64") && err.contains("i32"), "{err}");
         let err = declared
             .declare_column("step", "a", DType::Float, &[])
             .unwrap_err()

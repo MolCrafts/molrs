@@ -82,13 +82,13 @@ pub enum Annotation {
     /// [`PropValue::F64`], string as [`PropValue::Str`]), and define the type
     /// `(category, style, name)` with `params`. The category follows the
     /// [`Match`] vector the annotation sits in (`nodes` → `atom`, `bonds` →
-    /// `bond`, …). `endpoints: None` parses the endpoints from `name`
-    /// ([`Style::def_type`]); `Some` gives them verbatim
-    /// ([`Style::def_type_at`]).
+    /// `bond`, …). `endpoints` are the type's endpoint atom types, given to
+    /// [`Style::def_type`] as they are (none for an atom type); `name` is
+    /// never read for them.
     Type {
         style: String,
         name: String,
-        endpoints: Option<Vec<String>>,
+        endpoints: Vec<String>,
         params: Params,
     },
 }
@@ -176,7 +176,7 @@ impl Match {
     /// 2. **Stamp** every annotation onto `graph`. A write the graph refuses
     ///    (a value contradicting the dtype of a declared key) is an error.
     /// 3. **Commit** through [`ForceField::def_style`] (in `styles` order) and
-    ///    [`Style::def_type_at`] (types in element order — nodes, bonds,
+    ///    [`Style::def_type`] (types in element order — nodes, bonds,
     ///    angles, dihedrals, impropers — then pair rows). Phase 1 makes this
     ///    infallible.
     ///
@@ -264,14 +264,10 @@ impl Match {
                             }
                             let target =
                                 Self::batch_style(&mut batch, forcefield, category, &style)?;
-                            match endpoints {
-                                None => target.def_type(&name, params),
-                                Some(e) => {
-                                    let e: Vec<&str> = e.iter().map(String::as_str).collect();
-                                    target.def_type_at(&name, &e, params)
-                                }
-                            }
-                            .map_err(|e| format!("{}: {e}", stamp.label))?;
+                            let e: Vec<&str> = endpoints.iter().map(String::as_str).collect();
+                            target
+                                .def_type(&name, &e, params)
+                                .map_err(|e| format!("{}: {e}", stamp.label))?;
                             stamp.write(key, PropValue::Str(name))?;
                         }
                     }
@@ -283,7 +279,7 @@ impl Match {
         for (style, name, endpoints, params) in pairs {
             let e: Vec<&str> = endpoints.iter().map(String::as_str).collect();
             Self::batch_style(&mut batch, forcefield, "pair", &style)?
-                .def_type_at(&name, &e, params)
+                .def_type(&name, &e, params)
                 .map_err(|e| format!("match pairs: {e}"))?;
         }
 
@@ -311,7 +307,7 @@ impl Match {
                 .map_err(|e| format!("commit after validation: {e}"))?;
             for (name, endpoints, params) in style.type_rows() {
                 target
-                    .def_type_at(name, &endpoints, params.clone())
+                    .def_type(name, &endpoints, params.clone())
                     .map_err(|e| format!("commit after validation: {e}"))?;
             }
         }
@@ -428,7 +424,8 @@ mod tests {
     //! `Match::write_onto` and `Typing<T>` against hand-written stub typifiers.
     //! Every expectation is written by hand; no native typifier runs here.
 
-    use std::collections::{HashMap, VecDeque};
+    use indexmap::IndexMap;
+    use std::collections::VecDeque;
     use std::sync::Mutex;
 
     use molrs::system::atomistic::Atomistic;
@@ -525,7 +522,7 @@ mod tests {
         key: &str,
         style: &str,
         name: &str,
-        endpoints: Option<&[&str]>,
+        endpoints: &[&str],
         params: Params,
     ) -> (String, Annotation) {
         (
@@ -533,7 +530,7 @@ mod tests {
             Annotation::Type {
                 style: style.to_owned(),
                 name: name.to_owned(),
-                endpoints: endpoints.map(|e| e.iter().map(|s| (*s).to_owned()).collect()),
+                endpoints: endpoints.iter().map(|s| (*s).to_owned()).collect(),
                 params,
             },
         )
@@ -562,7 +559,7 @@ mod tests {
             "type",
             "full",
             name,
-            Some(&[]),
+            &[],
             Params::from_pairs(&[("mass", mass)]),
         )
     }
@@ -575,7 +572,7 @@ mod tests {
         g.atoms().nth(i).expect("atom index").1
     }
 
-    fn nth_bond_props(g: &Atomistic, i: usize) -> HashMap<String, PropValue> {
+    fn nth_bond_props(g: &Atomistic, i: usize) -> IndexMap<String, PropValue> {
         g.bonds().nth(i).expect("bond index").1.props
     }
 
@@ -598,7 +595,7 @@ mod tests {
     }
 
     /// Every atom's and every link's property bag, in row order.
-    type GraphProps = (Vec<Atom>, Vec<Vec<HashMap<String, PropValue>>>);
+    type GraphProps = (Vec<Atom>, Vec<Vec<IndexMap<String, PropValue>>>);
 
     fn graph_props(g: &Atomistic) -> GraphProps {
         let atoms = g.atoms().map(|(_, a)| a).collect();
@@ -650,7 +647,7 @@ mod tests {
         let mut params = Params::from_pairs(&[("mass", 12.011), ("charge", -0.18)]);
         params.set_str("provenance", "hand");
         let m = Match {
-            nodes: vec![vec![ty("type", "full", "CT", Some(&[]), params)], vec![]],
+            nodes: vec![vec![ty("type", "full", "CT", &[], params)], vec![]],
             styles: vec![atom_full_style()],
             ..Match::default()
         };
@@ -678,7 +675,7 @@ mod tests {
                     "type",
                     "harmonic",
                     "C-O",
-                    None,
+                    &["C", "O"],
                     Params::from_pairs(&[("k", 320.0), ("r0", 1.41)]),
                 )],
             ],
@@ -759,14 +756,14 @@ mod tests {
                     "type",
                     "harmonic",
                     "CT-CT",
-                    None,
+                    &["CT", "CT"],
                     Params::from_pairs(&[("k", 268.0), ("r0", 1.529)]),
                 )],
                 vec![ty(
                     "type",
                     "harmonic",
                     "CT-OH",
-                    None,
+                    &["CT", "OH"],
                     Params::from_pairs(&[("k", 320.0), ("r0", 1.41)]),
                 )],
             ],
@@ -805,17 +802,17 @@ mod tests {
         );
     }
 
-    /// `endpoints: Some` goes through `def_type_at` verbatim; `None` parses
-    /// the name (`def_type`).
+    /// The given endpoints are the ones defined, under the name as given:
+    /// `1-6` on `2`, `7` holds `2`, `7` — the name is never read.
     #[test]
-    fn write_onto_defines_given_endpoints_verbatim_and_parses_absent_ones() {
+    fn write_onto_defines_the_given_endpoints_and_never_reads_the_name() {
         let mut g = chain3();
         let mut ff = ForceField::new("out");
         let k = || Params::from_pairs(&[("kb", 4.2)]);
         let m = Match {
             bonds: vec![
-                vec![ty("type", "mmff_bond", "0_1_1", Some(&["1", "1"]), k())],
-                vec![ty("type", "mmff_bond", "1-6", None, k())],
+                vec![ty("type", "mmff_bond", "0_1_1", &["1", "1"], k())],
+                vec![ty("type", "mmff_bond", "1-6", &["2", "7"], k())],
             ],
             styles: vec![style("bond", "mmff_bond", Params::new())],
             ..Match::default()
@@ -830,7 +827,7 @@ mod tests {
         );
         assert_eq!(
             s.type_endpoints("1-6"),
-            Some(vec!["1".to_owned(), "6".to_owned()])
+            Some(vec!["2".to_owned(), "7".to_owned()])
         );
     }
 
@@ -912,7 +909,7 @@ mod tests {
         let mut ff = ForceField::new("out");
         ff.def_style("atom", "full", Params::new())
             .unwrap()
-            .def_type("CT", Params::from_pairs(&[("mass", 12.011)]))
+            .def_type("CT", &[], Params::from_pairs(&[("mass", 12.011)]))
             .unwrap();
         let before = ff.clone();
         let m = Match {
@@ -936,7 +933,7 @@ mod tests {
         let mut ff = ForceField::new("out");
         ff.def_style("atom", "full", Params::new())
             .unwrap()
-            .def_type("CT", Params::from_pairs(&[("mass", 12.011)]))
+            .def_type("CT", &[], Params::from_pairs(&[("mass", 12.011)]))
             .unwrap();
         let before = ff.clone();
         let m = Match {
@@ -1091,7 +1088,7 @@ mod tests {
                         "type",
                         "full",
                         "CT",
-                        Some(&[]),
+                        &[],
                         Params::from_pairs(&[("charge", 0.5)]),
                     ),
                     value("charge", -0.5),
@@ -1121,7 +1118,7 @@ mod tests {
                         "type",
                         "full",
                         "CT",
-                        Some(&[]),
+                        &[],
                         Params::from_pairs(&[("charge", 0.5)]),
                     ),
                     value("charge", 0.5),
@@ -1166,9 +1163,9 @@ mod tests {
         lib.set_special_bonds(SB);
         lib.def_style("atom", "full", Params::new())
             .unwrap()
-            .def_type("CT", Params::from_pairs(&[("mass", 12.011)]))
+            .def_type("CT", &[], Params::from_pairs(&[("mass", 12.011)]))
             .unwrap()
-            .def_type("UNUSED", Params::from_pairs(&[("mass", 1.0)]))
+            .def_type("UNUSED", &[], Params::from_pairs(&[("mass", 1.0)]))
             .unwrap();
         lib
     }

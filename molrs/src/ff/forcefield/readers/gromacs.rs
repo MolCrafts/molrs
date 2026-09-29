@@ -43,7 +43,7 @@
 //! χ = |φ|; the two agree only at ξ₀ = 0. An RB row converts only when
 //! `C₅ = 0` and `ΣCₙ = 0` (see `ff::forcefield::torsion`). Rows repeated
 //! across sections or includes follow the conflict rule of
-//! [`Style::def_type_at`](crate::ff::forcefield::Style::def_type_at): equal
+//! [`Style::def_type`](crate::ff::forcefield::Style::def_type): equal
 //! parameters are one type, different ones an error.
 //!
 //! # Refusals
@@ -442,12 +442,12 @@ impl Scan {
                     })?;
                     let (name, atom, lj) = row.atomtype()?;
                     ff.def_style("atom", "full", Params::new())
-                        .and_then(|s| s.def_type(name, atom))
+                        .and_then(|s| s.def_type(name, &[], atom))
                         .map_err(|e| row.err(&e.to_string()))?;
                     let mut lj_style = Params::new();
                     lj_style.set_str("mixing", mixing.name());
                     ff.def_style("pair", "lj/cut", lj_style)
-                        .and_then(|s| s.def_type_at(name, &[name], lj))
+                        .and_then(|s| s.def_type(name, &[name], lj))
                         .map_err(|e| row.err(&e.to_string()))?;
                     ff.def_style(
                         "pair",
@@ -463,7 +463,7 @@ impl Scan {
                     let (category, style, labels, params) = row.bonded()?;
                     let name = TypeName::join(&labels).map_err(|e| row.err(&e))?;
                     ff.def_style(category, style, Params::new())
-                        .and_then(|s| s.def_type_at(name.as_str(), &labels, params))
+                        .and_then(|s| s.def_type(name.as_str(), &labels, params))
                         .map_err(|e| row.err(&e.to_string()))?;
                 }
             }

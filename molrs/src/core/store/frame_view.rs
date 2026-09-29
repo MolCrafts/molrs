@@ -4,7 +4,7 @@
 //! copying any array data, providing read-only access with the same API surface
 //! as `Frame`.
 
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 use crate::spatial::simbox::SimBox;
 use crate::store::block::block_view::BlockView;
@@ -17,7 +17,7 @@ use crate::store::meta::MetaMap;
 /// Block values are [`BlockView`]s that borrow the underlying column data.
 /// `simbox` and `meta` are borrowed by reference.
 pub struct FrameView<'a> {
-    map: HashMap<&'a str, BlockView<'a>>,
+    map: IndexMap<&'a str, BlockView<'a>>,
     /// Borrowed simulation box, if present.
     pub simbox: Option<&'a SimBox>,
     /// Borrowed metadata map.
@@ -27,7 +27,7 @@ pub struct FrameView<'a> {
 impl<'a> FrameView<'a> {
     /// Construct a FrameView from parts.
     pub fn from_parts(
-        map: HashMap<&'a str, BlockView<'a>>,
+        map: IndexMap<&'a str, BlockView<'a>>,
         simbox: Option<&'a SimBox>,
         meta: &'a MetaMap,
     ) -> Self {
@@ -75,7 +75,7 @@ impl<'a> FrameView<'a> {
 
     /// Creates an owned [`Frame`] by cloning all viewed data.
     pub fn to_owned(&self) -> Frame {
-        let mut block_map = HashMap::with_capacity(self.map.len());
+        let mut block_map = IndexMap::with_capacity(self.map.len());
         for (&key, block_view) in &self.map {
             block_map.insert(key.to_string(), block_view.to_owned());
         }
@@ -88,7 +88,7 @@ impl<'a> FrameView<'a> {
 
 impl<'a> From<&'a Frame> for FrameView<'a> {
     fn from(frame: &'a Frame) -> Self {
-        let mut map = HashMap::with_capacity(frame.len());
+        let mut map = IndexMap::with_capacity(frame.len());
         for (key, block) in frame.iter() {
             map.insert(key, BlockView::from(block));
         }

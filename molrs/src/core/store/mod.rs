@@ -2,7 +2,7 @@
 //! [`Frame`](frame::Frame) hierarchical container, the
 //! [`Trajectory`](trajectory::Trajectory) frame-sequence carrier, the
 //! [`MolRec`](record::MolRec) record aggregate, canonical column keys, and
-//! the type-name grammar and type-id contract ([`type_labels`]).
+//! type-name construction and the type-id contract ([`type_labels`]).
 
 pub mod block;
 pub mod frame;

@@ -12,69 +12,22 @@ use super::violation::{
     InstancePath, MAX_CELL_VIOLATIONS_PER_COLUMN, SchemaReport, Violation, ViolationKind,
 };
 use super::{block, column, relation_endpoints};
-use crate::store::block::{BlockAccess, DType};
+use crate::store::block::BlockAccess;
 use crate::store::frame_access::FrameAccess;
 use std::collections::HashMap;
 
-/// Judges a frame against the canonical vocabulary, plus any caller
-/// annotations layered on top.
+/// Judges a frame against the canonical vocabulary.
 ///
-/// # Annotations may extend, never redefine
-///
-/// A caller can declare keys the vocabulary does not know — format-local
-/// columns, perceived facts, per-instance force-field parameters. It cannot
-/// redefine a key the vocabulary owns: `x` is `Float` and no annotation makes
-/// it otherwise. Were `{"x": Int}` allowed, anyone could route around the
-/// convention by declaring their way out of it, and the enforcement would be
-/// worth nothing.
-#[derive(Debug, Clone, Default)]
-pub struct Validator {
-    annotations: HashMap<String, DType>,
-}
+/// A key the vocabulary does not know is unconstrained (and refused only in a
+/// closed block); a key it owns has one dtype — `x` is `Float` and no caller
+/// makes it otherwise.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Validator;
 
 impl Validator {
-    /// The canonical validator: the committed vocabulary, no annotations.
+    /// The canonical validator: the committed vocabulary.
     pub fn canonical() -> Self {
-        Validator::default()
-    }
-
-    /// Layer caller annotations on top.
-    ///
-    /// Returns [`ViolationKind::AnnotationConflict`] if an annotation names a
-    /// key the canonical vocabulary already defines with a different dtype.
-    /// Re-declaring a canonical key with its *own* dtype is a harmless no-op.
-    pub fn with_annotations<I, S>(mut self, annotations: I) -> Result<Self, Violation>
-    where
-        I: IntoIterator<Item = (S, DType)>,
-        S: Into<String>,
-    {
-        for (key, dtype) in annotations {
-            let key: String = key.into();
-            if let Some(spec) = column(&key)
-                && spec.dtype != dtype
-            {
-                return Err(Violation {
-                    path: InstancePath::Column {
-                        block: "<annotation>".to_string(),
-                        col: key,
-                    },
-                    kind: ViolationKind::AnnotationConflict {
-                        canonical: spec.dtype,
-                        requested: dtype,
-                    },
-                });
-            }
-            self.annotations.insert(key, dtype);
-        }
-        Ok(self)
-    }
-
-    /// Declared dtype for a key: canonical first, then annotations. `None` if
-    /// the key is unconstrained.
-    pub fn dtype_of(&self, key: &str) -> Option<DType> {
-        column(key)
-            .map(|s| s.dtype)
-            .or_else(|| self.annotations.get(key).copied())
+        Validator
     }
 
     /// Every violation in `frame`. Never fails; an empty report means the frame
@@ -131,7 +84,7 @@ impl Validator {
         let Some(cols) = found else { return };
 
         for (col, dtype, shape) in &cols {
-            if let (Some(expected), Some(found)) = (self.dtype_of(col), *dtype)
+            if let (Some(expected), Some(found)) = (column(col).map(|s| s.dtype), *dtype)
                 && found != expected
             {
                 report.push(Violation::column(
@@ -155,7 +108,6 @@ impl Validator {
             if let Some(s) = spec
                 && !s.open
                 && column(col).is_none()
-                && !self.annotations.contains_key(col)
             {
                 report.push(Violation::column(name, col, ViolationKind::UnknownColumn));
             }

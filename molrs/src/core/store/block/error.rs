@@ -59,6 +59,38 @@ pub enum BlockError {
         /// Number of entries the mask carries.
         got: usize,
     },
+    /// A column the operation reads is not in the block.
+    MissingColumn {
+        /// The column that is absent.
+        key: String,
+    },
+    /// Two parts of a [`Block::stack`](super::Block::stack) carry one column
+    /// under different dtypes, so the rows cannot share one column.
+    ///
+    /// molrs never coerces a column's dtype, so a stack does not pick a
+    /// winner: `i32` beside `i64` is refused.
+    StackDtype {
+        /// The column both parts carry.
+        key: String,
+        /// Index of the refused part in the `parts` sequence.
+        part: usize,
+        /// Dtype of the first part that carries the column.
+        expected: crate::store::block::DType,
+        /// Dtype of the refused part's column.
+        got: crate::store::block::DType,
+    },
+    /// Two parts of a [`Block::stack`](super::Block::stack) carry one column
+    /// with different per-row shapes (e.g. `(n, 3)` beside `(n, 2)`).
+    StackShape {
+        /// The column both parts carry.
+        key: String,
+        /// Index of the refused part in the `parts` sequence.
+        part: usize,
+        /// Per-row shape (axes after axis 0) of the first part's column.
+        expected: Vec<usize>,
+        /// Per-row shape of the refused part's column.
+        got: Vec<usize>,
+    },
     /// General validation error
     Validation {
         /// Error message
@@ -93,6 +125,27 @@ impl fmt::Display for BlockError {
                 f,
                 "validity mask for key '{}' has {} entr(ies) but the column has {} row(s)",
                 key, got, expected
+            ),
+            BlockError::MissingColumn { key } => write!(f, "block has no column '{key}'"),
+            BlockError::StackDtype {
+                key,
+                part,
+                expected,
+                got,
+            } => write!(
+                f,
+                "cannot stack column '{key}': part {part} carries it as '{got}', \
+                 an earlier part as '{expected}'"
+            ),
+            BlockError::StackShape {
+                key,
+                part,
+                expected,
+                got,
+            } => write!(
+                f,
+                "cannot stack column '{key}': part {part} has per-row shape {got:?}, \
+                 an earlier part {expected:?}"
             ),
             BlockError::Validation { message } => write!(f, "{}", message),
         }

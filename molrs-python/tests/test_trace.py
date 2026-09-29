@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+import molrs
 import numpy as np
 import pytest
-
-import molrs
 
 
 def test_trace_keeps_the_points_as_float64_in_order() -> None:

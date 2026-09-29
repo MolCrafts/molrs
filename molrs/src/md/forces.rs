@@ -751,12 +751,20 @@ mod tests {
         field
             .def_style("bond", "harmonic", Params::new())
             .unwrap()
-            .def_type("a-a", Params::from_pairs(&[("k", 100.0), ("r0", 1.2)]))
+            .def_type(
+                "a-a",
+                &["a", "a"],
+                Params::from_pairs(&[("k", 100.0), ("r0", 1.2)]),
+            )
             .unwrap();
         field
             .def_style("angle", "harmonic", Params::new())
             .unwrap()
-            .def_type("a-a-a", Params::from_pairs(&[("k", 40.0), ("theta0", 2.0)]))
+            .def_type(
+                "a-a-a",
+                &["a", "a", "a"],
+                Params::from_pairs(&[("k", 40.0), ("theta0", 2.0)]),
+            )
             .unwrap();
 
         let run = |origin: [F; 3]| {
@@ -1174,7 +1182,11 @@ mod tests {
         field
             .def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 6.0_f64)]))
             .unwrap()
-            .def_type("a", Params::from_pairs(&[("epsilon", 0.3), ("sigma", 3.4)]))
+            .def_type(
+                "a",
+                &["a"],
+                Params::from_pairs(&[("epsilon", 0.3), ("sigma", 3.4)]),
+            )
             .unwrap();
         field.set_special_bonds(SpecialBonds {
             lj: [0.0, 1.0, 1.0],

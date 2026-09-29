@@ -22,10 +22,10 @@ use crate::ff::typifier::{Annotation, Match, Typifier};
 /// Every label is written under `type`:
 ///
 /// - an atom: its `element`, e.g. `"C"`;
-/// - a bond, angle or dihedral: the elements of its endpoints, in endpoint
-///   order, through [`TypeName::join`] and then [`TypeName::canonical`] (the
-///   byte-wise smaller orientation). Bond O–H is `"H-O"`, angle H–C–C is
-///   `"C-C-H"`, dihedral O–C–C–H is `"H-C-C-O"`.
+/// - a bond, angle or dihedral: the elements of its endpoints, oriented to
+///   the smaller (slot by slot) of the tuple read forward and reversed, then
+///   [`TypeName::join`]ed. Bond O–H is `"H-O"`, angle H–C–C is `"C-C-H"`,
+///   dihedral O–C–C–H is `"H-C-C-O"`.
 ///
 /// Angles and dihedrals are labelled only when the graph has them; nothing is
 /// generated.
@@ -89,7 +89,8 @@ fn type_value(label: &str) -> Vec<(String, Annotation)> {
 }
 
 /// The label of every row of relation kind `kind`, in row order: the
-/// canonical [`TypeName`] of its endpoint elements, cached per element tuple.
+/// [`TypeName`] of its endpoint elements in [`TypeName::orient`]'s spelling,
+/// cached per element tuple.
 /// Empty when the graph has no such kind or no rows of it.
 fn link_labels(
     graph: &MolGraph,
@@ -118,9 +119,8 @@ fn link_labels(
         let label = match cache.get(&key) {
             Some(label) => label.clone(),
             None => {
-                let label = TypeName::join(&tuple)
+                let label = TypeName::join(&TypeName::orient(&tuple))
                     .map_err(|e| format!("{kind} {position}: {e}"))?
-                    .canonical()
                     .as_str()
                     .to_owned();
                 cache.insert(key, label.clone());
@@ -175,7 +175,6 @@ mod tests {
     //! `ElementTypifier` through `Typing::typify` on hand-built graphs. Every
     //! expected label is written by hand.
 
-    use molrs::store::type_labels::TypeName;
     use molrs::system::molgraph::{Atom, PropValue};
     use molrs::{AtomId, Atomistic};
 
@@ -231,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    fn water_atoms_get_elements_and_bonds_the_canonical_pair() {
+    fn water_atoms_get_elements_and_bonds_the_oriented_pair() {
         let mol = water();
         let atoms_before: Vec<Atom> = mol.atoms().map(|(_, a)| a).collect();
         let bonds_before: Vec<_> = mol.bonds().map(|(_, b)| (b.nodes, b.props)).collect();
@@ -256,7 +255,7 @@ mod tests {
     }
 
     #[test]
-    fn angle_label_is_the_canonical_element_sequence() {
+    fn angle_label_is_the_oriented_element_sequence() {
         let (mut mol, [c1, c2, h]) = cch();
         mol.add_angle(h, c2, c1).unwrap();
         let mut typing = Typing::new(ElementTypifier::default());
@@ -265,12 +264,10 @@ mod tests {
 
         assert_eq!(bond_types(&typed), vec![str_value("C-C"), str_value("C-H")]);
         assert_eq!(angle_types(&typed), vec![str_value("C-C-H")]);
-        let grammar = TypeName::join(&["H", "C", "C"]).unwrap().canonical();
-        assert_eq!(angle_types(&typed), vec![str_value(grammar.as_str())]);
     }
 
     #[test]
-    fn dihedral_label_is_the_canonical_element_sequence() {
+    fn dihedral_label_is_the_oriented_element_sequence() {
         let mut mol = Atomistic::new();
         let o = mol.add_atom_bare("O");
         let c1 = mol.add_atom_bare("C");

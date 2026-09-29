@@ -9,6 +9,7 @@
 //! box vectors from style_params (`box_xx`, `box_yy`, `box_zz`, etc.),
 //! and exclusion pairs from `frame["exclusions"]` (`atomi`, `atomj` columns).
 
+use molrs::store::schema::block_names::{ATOMS, EXCLUSIONS};
 use std::sync::{Arc, Mutex};
 
 use rustfft::num_complex::Complex;
@@ -906,7 +907,7 @@ pub fn pme_ctor(
 
     // Read charges from Frame's "atoms" block
     let atoms = frame
-        .get("atoms")
+        .get(ATOMS)
         .ok_or("PME: Frame missing \"atoms\" block")?;
     let charges: Vec<F> = if let Some(charge_col) = atoms.get_float("charge") {
         charge_col.iter().copied().collect()
@@ -932,7 +933,7 @@ pub fn pme_ctor(
 
     // Read exclusions from Frame's "exclusions" block (optional)
     let mut exclusions = Vec::new();
-    if let Some(block) = frame.get("exclusions")
+    if let Some(block) = frame.get(EXCLUSIONS)
         && let (Some(i_col), Some(j_col)) = (block.get_uint("atomi"), block.get_uint("atomj"))
     {
         for idx in 0..i_col.len() {

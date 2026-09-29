@@ -1,5 +1,6 @@
 //! MMFF94 bond stretching: E = (1/2)*143.9325*kb*dr^2*(1 + cs*dr + 7/12*cs^2*dr^2)
 
+use molrs::store::schema::block_names::BONDS;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
@@ -116,7 +117,7 @@ pub fn mmff_bond_ctor(
     // (table → equivalence fallback → empirical rules). This kernel only reads the
     // columns and evaluates — no force-field-specific resolution lives here.
     let block = frame
-        .get("bonds")
+        .get(BONDS)
         .ok_or("mmff_bond: missing \"bonds\" block")?;
     let i_col = block
         .get_uint("atomi")

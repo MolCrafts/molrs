@@ -26,11 +26,11 @@ from .._lib import (
 )
 
 __all__ = [
-    "Typifier",
-    "Match",
-    "OPLSAATypifier",
-    "MMFF94Typifier",
-    "MMFF94STypifier",
     "AtdTypifier",
     "ElementTypifier",
+    "MMFF94STypifier",
+    "MMFF94Typifier",
+    "Match",
+    "OPLSAATypifier",
+    "Typifier",
 ]

@@ -70,7 +70,7 @@ impl WasmArray {
     ///
     /// # Arguments
     ///
-    /// * `data` - Source float typed array (`Float32Array` or `Float64Array`)
+    /// * `data` - Source float typed array (`Float64Array`)
     /// * `shape` - Optional shape. If omitted, defaults to `[data.length]` (1D).
     ///
     /// # Returns

@@ -1,5 +1,6 @@
 //! MMFF94 torsional rotation: E = 0.5*(V1*(1+cos phi) + V2*(1-cos 2phi) + V3*(1+cos 3phi))
 
+use molrs::store::schema::block_names::DIHEDRALS;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
@@ -116,7 +117,7 @@ pub fn mmff_torsion_ctor(
     // dihedral (table → empirical). This kernel only reads the columns and
     // evaluates — no force-field-specific resolution lives here.
     let block = frame
-        .get("dihedrals")
+        .get(DIHEDRALS)
         .ok_or("mmff_torsion: missing \"dihedrals\"")?;
     let ic = block.get_uint("atomi").ok_or("missing atomi")?;
     let jc = block.get_uint("atomj").ok_or("missing atomj")?;

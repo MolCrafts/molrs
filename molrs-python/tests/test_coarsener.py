@@ -4,9 +4,10 @@ error mapping. The centre-of-mass mapping itself is proven by the Rust suite.
 
 from __future__ import annotations
 
-import pytest
+import itertools
 
 import molrs
+import pytest
 from molrs.perceive import Coarsener
 
 
@@ -16,7 +17,7 @@ def _bead_chain() -> tuple[molrs.CoarseGrain, list[int]]:
     beads = [cg.add_bead("S", float(i), 0.0, 0.0) for i in range(4)]
     for bead in beads:
         cg.set(bead, "mass", 1.0)
-    for a, b in zip(beads, beads[1:]):
+    for a, b in itertools.pairwise(beads):
         cg.add_bond(a, b)
     return cg, beads
 

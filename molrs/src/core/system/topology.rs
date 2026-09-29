@@ -7,9 +7,86 @@
 use std::collections::{HashMap, VecDeque};
 
 use crate::error::MolRsError;
+use crate::store::schema::block_names::{ATOMS, BONDS};
 use crate::store::{frame::Frame, keys};
 use crate::system::bond_weights::BondDistanceWeights;
 use crate::types::F;
+
+/// Why [`Topology::from_frame`] could not read a frame's bond graph.
+///
+/// Each case names the block and, where there is one, the row at fault, so a
+/// caller can branch on the reason instead of matching message text.
+/// Converts into [`MolRsError`] (`MissingBlock` as
+/// [`MolRsError::NotFound`], the rest as [`MolRsError::Validation`]) for
+/// callers that propagate the crate-wide error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TopologyError {
+    /// The frame has no `block` block (`atoms`: there is nothing to count).
+    MissingBlock {
+        /// The absent block.
+        block: &'static str,
+    },
+    /// The `block` block has no row count: it holds no column and was never
+    /// sized, so the number of atoms is unknown.
+    NoRows {
+        /// The block without a row count.
+        block: &'static str,
+    },
+    /// A non-empty relation block lacks one of its endpoint columns (or
+    /// carries it as anything but `UInt`).
+    MissingEndpoint {
+        /// The relation block (`bonds`).
+        block: &'static str,
+        /// The absent endpoint column (`atomi` / `atomj`).
+        column: &'static str,
+    },
+    /// Row `row` of `block` names atom `atom`, outside `0..n_atoms`.
+    EndpointOutOfRange {
+        /// The relation block (`bonds`).
+        block: &'static str,
+        /// The offending row of `block`.
+        row: usize,
+        /// The out-of-range endpoint value.
+        atom: usize,
+        /// Row count of the `atoms` block.
+        n_atoms: usize,
+    },
+}
+
+impl std::fmt::Display for TopologyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TopologyError::MissingBlock { block } => write!(f, "frame has no '{block}' block"),
+            TopologyError::NoRows { block } => {
+                write!(f, "'{block}' block has no nrows (empty block, no columns)")
+            }
+            TopologyError::MissingEndpoint { block, column } => {
+                write!(f, "'{block}' block is missing uint column '{column}'")
+            }
+            TopologyError::EndpointOutOfRange {
+                block,
+                row,
+                atom,
+                n_atoms,
+            } => write!(
+                f,
+                "'{block}' row {row} references atom {atom}, outside the frame \
+                 (n_atoms = {n_atoms})"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for TopologyError {}
+
+impl From<TopologyError> for MolRsError {
+    fn from(err: TopologyError) -> Self {
+        match err {
+            TopologyError::MissingBlock { block } => MolRsError::not_found(block, err.to_string()),
+            other => MolRsError::validation(other.to_string()),
+        }
+    }
+}
 
 /// Graph-based molecular topology.
 ///
@@ -80,42 +157,45 @@ impl Topology {
     ///
     /// # Errors
     ///
-    /// - no `atoms` block → [`MolRsError::NotFound`]
-    /// - `atoms` with `nrows() == None` → [`MolRsError::Validation`]
-    /// - bond endpoint outside the frame, including `(n, n)` → Validation
-    /// - non-empty `bonds` missing `atomi` and/or `atomj` → Validation
-    pub fn from_frame(frame: &Frame) -> Result<Self, MolRsError> {
+    /// - no `atoms` block → [`TopologyError::MissingBlock`]
+    /// - `atoms` with `nrows() == None` → [`TopologyError::NoRows`]
+    /// - bond endpoint outside the frame, including `(n, n)` →
+    ///   [`TopologyError::EndpointOutOfRange`] naming the `bonds` row
+    /// - non-empty `bonds` missing `atomi` or `atomj` →
+    ///   [`TopologyError::MissingEndpoint`]
+    pub fn from_frame(frame: &Frame) -> Result<Self, TopologyError> {
         let atoms = frame
-            .get("atoms")
-            .ok_or_else(|| MolRsError::not_found("atoms", "frame has no atoms block"))?;
-        let n = atoms.nrows().ok_or_else(|| {
-            MolRsError::validation("atoms block has no nrows (empty block, no columns)")
-        })?;
-        let Some(bonds) = frame.get("bonds") else {
+            .get(ATOMS)
+            .ok_or(TopologyError::MissingBlock { block: ATOMS })?;
+        let n = atoms
+            .nrows()
+            .ok_or(TopologyError::NoRows { block: ATOMS })?;
+        let Some(bonds) = frame.get(BONDS) else {
             return Ok(Self::from_edges(n, &[]));
         };
         match bonds.nrows() {
             None | Some(0) => return Ok(Self::from_edges(n, &[])),
             Some(_) => {}
         }
-        let Some(atomi) = bonds.get_uint(keys::ATOMI) else {
-            return Err(MolRsError::validation(
-                "bonds block is missing uint column atomi",
-            ));
+        let endpoint = |column: &'static str| {
+            bonds
+                .get_uint(column)
+                .ok_or(TopologyError::MissingEndpoint {
+                    block: BONDS,
+                    column,
+                })
         };
-        let Some(atomj) = bonds.get_uint(keys::ATOMJ) else {
-            return Err(MolRsError::validation(
-                "bonds block is missing uint column atomj",
-            ));
-        };
+        let (atomi, atomj) = (endpoint(keys::ATOMI)?, endpoint(keys::ATOMJ)?);
         let mut edges = Vec::with_capacity(atomi.len());
-        for (&a, &b) in atomi.iter().zip(atomj.iter()) {
-            let a = a as usize;
-            let b = b as usize;
-            if a >= n || b >= n {
-                return Err(MolRsError::validation(format!(
-                    "bond ({a}, {b}) references an atom outside the frame (n_atoms = {n})"
-                )));
+        for (row, (&a, &b)) in atomi.iter().zip(atomj.iter()).enumerate() {
+            let (a, b) = (a as usize, b as usize);
+            if let Some(atom) = [a, b].into_iter().find(|&x| x >= n) {
+                return Err(TopologyError::EndpointOutOfRange {
+                    block: BONDS,
+                    row,
+                    atom,
+                    n_atoms: n,
+                });
             }
             if a == b {
                 continue;
@@ -704,13 +784,6 @@ impl Topology {
     pub fn add_angle(&mut self, i: usize, j: usize, k: usize) {
         self.add_bond(i, j);
         self.add_bond(j, k);
-    }
-
-    /// Add multiple angles from triplets, ensuring all required bonds exist.
-    pub fn add_angles(&mut self, triplets: &[[usize; 3]]) {
-        for t in triplets {
-            self.add_angle(t[0], t[1], t[2]);
-        }
     }
 }
 
@@ -1558,12 +1631,18 @@ mod tests {
     fn from_frame_missing_atoms_block_is_not_found() {
         let mut frame = Frame::new();
         frame.insert("bonds", bonds_pairs(&[[0, 1]]));
+        assert_eq!(
+            Topology::from_frame(&frame).unwrap_err(),
+            TopologyError::MissingBlock { block: "atoms" }
+        );
+        // Propagated as the crate-wide error it stays NotFound.
+        let err: MolRsError = Topology::from_frame(&frame).unwrap_err().into();
         assert!(matches!(
-            Topology::from_frame(&frame),
-            Err(MolRsError::NotFound {
+            err,
+            MolRsError::NotFound {
                 entity: "atoms",
                 ..
-            })
+            }
         ));
     }
 
@@ -1571,28 +1650,27 @@ mod tests {
     fn from_frame_atoms_without_nrows_is_validation() {
         let mut frame = Frame::new();
         frame.insert("atoms", Block::new());
-        match Topology::from_frame(&frame) {
-            Err(MolRsError::Validation { message }) => {
-                assert!(
-                    message.contains("atoms") && message.contains("nrows"),
-                    "{message}"
-                );
-            }
-            other => panic!("expected Validation, got {other:?}"),
-        }
+        assert_eq!(
+            Topology::from_frame(&frame).unwrap_err(),
+            TopologyError::NoRows { block: "atoms" }
+        );
     }
 
     #[test]
     fn from_frame_out_of_range_bond_is_validation() {
-        match Topology::from_frame(&frame_from_parts(
-            atoms_id_only(12),
-            Some(bonds_pairs(&[[0, 12]])),
-        )) {
-            Err(MolRsError::Validation { message }) => {
-                assert!(message.contains('0') && message.contains("12"), "{message}");
+        assert_eq!(
+            Topology::from_frame(&frame_from_parts(
+                atoms_id_only(12),
+                Some(bonds_pairs(&[[0, 1], [0, 12]])),
+            ))
+            .unwrap_err(),
+            TopologyError::EndpointOutOfRange {
+                block: "bonds",
+                row: 1,
+                atom: 12,
+                n_atoms: 12,
             }
-            other => panic!("expected Validation, got {other:?}"),
-        }
+        );
     }
 
     #[test]
@@ -1602,7 +1680,11 @@ mod tests {
                 atoms_id_only(12),
                 Some(bonds_pairs(&[[12, 12]]))
             )),
-            Err(MolRsError::Validation { .. })
+            Err(TopologyError::EndpointOutOfRange {
+                row: 0,
+                atom: 12,
+                ..
+            })
         ));
     }
 
@@ -1639,15 +1721,13 @@ mod tests {
         bonds
             .insert("j", Array1::from_vec(vec![1u64]).into_dyn())
             .unwrap();
-        match Topology::from_frame(&frame_from_parts(atoms_id_only(2), Some(bonds))) {
-            Err(MolRsError::Validation { message }) => {
-                assert!(
-                    message.contains("atomi") || message.contains("atomj"),
-                    "{message}"
-                );
+        assert_eq!(
+            Topology::from_frame(&frame_from_parts(atoms_id_only(2), Some(bonds))).unwrap_err(),
+            TopologyError::MissingEndpoint {
+                block: "bonds",
+                column: "atomi",
             }
-            other => panic!("expected Validation, got {other:?}"),
-        }
+        );
     }
 
     #[test]

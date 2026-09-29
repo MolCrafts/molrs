@@ -1,5 +1,6 @@
-"""Potential forms (``molrs::ff::potential``)."""
-from . import soft  # noqa: F401
+"""Potential forms (``molrs::ff::potential``): the :class:`Potential` protocol
+every Python-defined force provider satisfies."""
+
 from .protocol import Potential
 
-__all__ = ["Potential", "soft"]
+__all__ = ["Potential"]

@@ -98,8 +98,58 @@ impl SimBox {
         self.cell_defined
     }
 
-    pub fn try_new(h: F3x3, origin: F3, pbc: Pbc3) -> Result<Self, BoxError> {
-        Self::new(h, origin, pbc)
+    /// Construct from a plain `[[F; 3]; 3]` cell matrix.
+    ///
+    /// Same convention as [`new`](Self::new) and as the `ndarray` form:
+    /// `h[row][col]`, lattice vectors are the **columns**, so the first
+    /// lattice vector is `a = (h[0][0], h[1][0], h[2][0])`. This is the inverse
+    /// of [`matrix`](Self::matrix): `SimBox::from_matrix(b.matrix(), ..)`
+    /// rebuilds the cell of `b` exactly.
+    ///
+    /// # Errors
+    /// [`BoxError::SingularCell`] when `h` is singular.
+    pub fn from_matrix(h: [[F; 3]; 3], origin: [F; 3], pbc: Pbc3) -> Result<Self, BoxError> {
+        Self::new(ndarray::arr2(&h), ndarray::arr1(&origin), pbc)
+    }
+
+    /// The cell matrix `H` as a plain `[[F; 3]; 3]`, `h[row][col]`, lattice
+    /// vectors as **columns** — the same layout [`from_matrix`](Self::from_matrix)
+    /// takes and [`h_view`](Self::h_view) borrows.
+    pub fn matrix(&self) -> [[F; 3]; 3] {
+        std::array::from_fn(|r| std::array::from_fn(|c| self.h[[r, c]]))
+    }
+
+    /// Whether two boxes describe the same cell within an **absolute**
+    /// tolerance `tol` (length units).
+    ///
+    /// True iff every entry of the two cell matrices and every origin
+    /// component differ by at most `tol`, the PBC flags are identical, and
+    /// both boxes agree on [`is_cell_defined`](Self::is_cell_defined). The
+    /// flags are compared exactly — periodicity has no "nearly". `tol = 0.0`
+    /// is bitwise equality of the numbers (with `-0.0 == 0.0`); a NaN entry
+    /// never compares equal.
+    ///
+    /// The comparison is per entry, not up to a lattice reduction: two
+    /// matrices that span the same lattice with a different basis are *not*
+    /// equal here.
+    ///
+    /// # Panics
+    /// If `tol` is negative or NaN.
+    pub fn approx_eq(&self, other: &SimBox, tol: F) -> bool {
+        assert!(tol >= 0.0, "tolerance must be non-negative");
+        let close = |a: F, b: F| (a - b).abs() <= tol;
+        self.pbc == other.pbc
+            && self.cell_defined == other.cell_defined
+            && self
+                .h
+                .iter()
+                .zip(other.h.iter())
+                .all(|(a, b)| close(*a, *b))
+            && self
+                .origin
+                .iter()
+                .zip(other.origin.iter())
+                .all(|(a, b)| close(*a, *b))
     }
 
     /// Factory: cubic box with edge length `a` and origin `O`
@@ -342,8 +392,16 @@ impl SimBox {
         self.pbc
     }
 
-    /// Cell volume (|det(H)|)
+    /// Cell volume (|det(H)|); `0.0` for a no-cell box.
+    ///
+    /// A no-cell box carries the identity matrix only so geometry ops are
+    /// no-ops; its determinant (1.0) is not a volume, and reporting it would
+    /// silently normalize densities by a made-up cell. Consumers that need a
+    /// volume (RDF, van Hove) already refuse a non-positive one.
     pub fn volume(&self) -> F {
+        if !self.cell_defined {
+            return 0.0;
+        }
         det3(&to_mat3(self.h.view())).abs()
     }
 
@@ -352,10 +410,12 @@ impl SimBox {
         self.pbc.iter().all(|&p| !p)
     }
 
-    /// Geometry style label: `"free"` (no periodic axis), `"orthogonal"`
-    /// (diagonal H), or `"triclinic"`.
+    /// Geometry style label: `"free"` (no periodic axis, or no cell at all),
+    /// `"orthogonal"` (diagonal H), or `"triclinic"`. A no-cell box is
+    /// `"free"` whatever its pbc flags: its placeholder identity cell is not a
+    /// geometry, so calling it orthogonal would be a claim about nothing.
     pub fn style(&self) -> &'static str {
-        if self.is_free() {
+        if self.is_free() || !self.cell_defined {
             "free"
         } else {
             match self.kind {
@@ -756,14 +816,20 @@ impl SimBox {
         out
     }
 
-    /// Per-row kernel of [`wrap`](Self::wrap) — one point, no allocation.
+    /// Wrap one point and report the integer lattice shift applied — the
+    /// single-point form of [`wrap_shifts`](Self::wrap_shifts), no allocation.
     ///
-    /// Not public: `wrap` is the wrapping API. This exists so single-point hot
-    /// queries inside the crate (region membership, nearest-image search) skip
-    /// the `(1, 3)` array round-trip. It is the *same* arithmetic `wrap` runs
-    /// per row, so the two agree bit for bit by construction, not by luck.
+    /// Returns `(wrapped, m)` with `wrapped = r - H·m`. It is the *same*
+    /// kernel `wrap_shifts` (and [`wrap`](Self::wrap)) runs per row, so the
+    /// one-point and array forms agree bit for bit by construction. Use it on
+    /// hot single-point paths (region membership, per-probe wrapping) that
+    /// would otherwise pay a `(1, 3)` array round-trip.
+    ///
+    /// All the guarantees of `wrap_shifts` hold: a point already inside the
+    /// cell is returned untouched with `m = [0, 0, 0]`, and `m` is the shift
+    /// actually applied (including a snap off the far face).
     #[inline]
-    pub(crate) fn wrap_row_shift(&self, r: [F; 3]) -> ([F; 3], [I; 3]) {
+    pub fn wrap_row_shift(&self, r: [F; 3]) -> ([F; 3], [I; 3]) {
         let f = self.make_fractional_raw_arr3(r);
         let mut n = [0.0; 3];
         let mut crossed = false;
@@ -829,15 +895,18 @@ impl SimBox {
         (snapped, Self::as_images(n))
     }
 
-    /// Per-row kernel of [`wrap`](Self::wrap), discarding the shift.
+    /// Wrap one point into the cell on the periodic axes — the single-point
+    /// form of [`wrap`](Self::wrap), no allocation.
+    ///
+    /// [`wrap_row_shift`](Self::wrap_row_shift) with the shift discarded; bit
+    /// for bit what `wrap` returns for the same row.
     #[inline]
-    pub(crate) fn wrap_row(&self, r: [F; 3]) -> [F; 3] {
+    pub fn wrap_row(&self, r: [F; 3]) -> [F; 3] {
         self.wrap_row_shift(r).0
     }
 
     /// Last-resort clamp for a point the integer refinement could not land
     /// inside: force every escaped periodic axis onto the origin face.
-    #[inline]
     ///
     /// Returns the snapped point **and the integer lattice shift the snap
     /// absorbed**, because the snap is not always a sub-ulp nudge. The case it
@@ -849,6 +918,7 @@ impl SimBox {
     /// back wrong. The adjustment is `round(f)`, not `floor(f)`: `f == 1.0` is
     /// one cell out, while `f == -5e-17` is the origin seen from below and is
     /// zero cells out.
+    #[inline]
     fn snap_to_origin_face(&self, out: [F; 3]) -> ([F; 3], [F; 3]) {
         let g = self.make_fractional_raw_arr3(out);
         let escaped = (0..3).any(|d| self.pbc[d] && !(0.0..1.0).contains(&g[d]));
@@ -1170,6 +1240,9 @@ mod tests {
         )
         .unwrap();
         assert!(!nocell.is_cell_defined());
+        // No cell, no volume: the placeholder identity's det(H) = 1 is not one.
+        assert_eq!(nocell.volume(), 0.0);
+        assert_eq!(nocell.style(), "free");
         // geometry no-ops on the identity cell:
         let pts = array![[1.0, 2.0, 3.0]];
         assert_eq!(nocell.wrap(pts.view()), pts);
@@ -1756,6 +1829,93 @@ mod tests {
             let got = bx.shortest_vector_impl(a, b);
             for d in 0..3 {
                 assert_eq!(got[d], want[d], "component {d} for {a:?} -> {b:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn from_matrix_reads_lattice_vectors_as_columns() {
+        let h = [[2.0, 0.5, 0.25], [0.0, 3.0, 0.75], [0.0, 0.0, 4.0]];
+        let bx = SimBox::from_matrix(h, [1.0, 2.0, 3.0], [true, false, true]).unwrap();
+        assert_eq!(bx.lattice(1).to_vec(), vec![0.5, 3.0, 0.0]);
+        assert_eq!(bx.matrix(), h);
+        assert_eq!(bx.origin_view().to_vec(), vec![1.0, 2.0, 3.0]);
+        assert_eq!(bx.pbc(), [true, false, true]);
+    }
+
+    #[test]
+    fn from_matrix_rejects_a_singular_cell() {
+        let h = [[1.0, 2.0, 0.0], [1.0, 2.0, 0.0], [0.0, 0.0, 1.0]];
+        assert!(matches!(
+            SimBox::from_matrix(h, [0.0; 3], [true; 3]),
+            Err(BoxError::SingularCell)
+        ));
+    }
+
+    #[test]
+    fn matrix_matches_h_view_entry_for_entry() {
+        let bx = SimBox::new(
+            SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [70.0, 80.0, 65.0]).unwrap(),
+            array![0.0, 0.0, 0.0],
+            [true; 3],
+        )
+        .unwrap();
+        for (r, row) in bx.matrix().iter().enumerate() {
+            for (c, v) in row.iter().enumerate() {
+                assert_eq!(*v, bx.h_view()[[r, c]]);
+            }
+        }
+    }
+
+    #[test]
+    fn approx_eq_bounds_every_entry_by_an_absolute_tolerance() {
+        let h = [[10.0, 1.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]];
+        let a = SimBox::from_matrix(h, [0.0; 3], [true; 3]).unwrap();
+        let mut hb = h;
+        hb[0][1] += 1e-3;
+        let b = SimBox::from_matrix(hb, [0.0; 3], [true; 3]).unwrap();
+        assert!(a.approx_eq(&a.clone(), 0.0));
+        assert!(a.approx_eq(&b, 2e-3));
+        assert!(!a.approx_eq(&b, 5e-4));
+        let shifted = SimBox::from_matrix(h, [0.0, 0.0, 1e-3], [true; 3]).unwrap();
+        assert!(a.approx_eq(&shifted, 2e-3));
+        assert!(!a.approx_eq(&shifted, 5e-4));
+    }
+
+    #[test]
+    fn approx_eq_compares_periodicity_and_cell_definition_exactly() {
+        let h = array![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let o = array![0.0, 0.0, 0.0];
+        let a = SimBox::new(h.clone(), o.clone(), [true; 3]).unwrap();
+        let other_pbc = SimBox::new(h.clone(), o.clone(), [true, true, false]).unwrap();
+        let no_cell = SimBox::new_cell(h, o, [true; 3], false).unwrap();
+        assert_eq!(no_cell.volume(), 0.0);
+        assert_eq!(no_cell.style(), "free");
+        assert!(!a.approx_eq(&other_pbc, 1.0));
+        assert!(!a.approx_eq(&no_cell, 1.0));
+    }
+
+    #[test]
+    #[should_panic(expected = "tolerance must be non-negative")]
+    fn approx_eq_rejects_a_negative_tolerance() {
+        let bx = SimBox::cube(1.0, array![0.0, 0.0, 0.0], [true; 3]).unwrap();
+        bx.approx_eq(&bx, -1.0);
+    }
+
+    #[test]
+    fn wrap_row_shift_matches_wrap_shifts_bit_for_bit() {
+        let bx = SimBox::new(
+            SimBox::matrix_from_lengths_angles([10.0, 11.0, 12.0], [70.0, 80.0, 65.0]).unwrap(),
+            array![0.3, -0.2, 1.1],
+            [true, true, false],
+        )
+        .unwrap();
+        for r in [[25.0, -13.0, 40.0], [-1e-17, 0.5, 0.5], [1.0, 1.0, 1.0]] {
+            let (w, m) = bx.wrap_row_shift(r);
+            let (ws, ms) = bx.wrap_shifts(array![[r[0], r[1], r[2]]].view());
+            for d in 0..3 {
+                assert_eq!(w[d], ws[[0, d]], "{r:?} axis {d}");
+                assert_eq!(m[d], ms[[0, d]], "{r:?} axis {d}");
             }
         }
     }

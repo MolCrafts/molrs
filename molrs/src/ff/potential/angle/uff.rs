@@ -3,6 +3,7 @@
 //! Per-instance columns: `ka`, `order` (0–4), and for `order==0` the Fourier
 //! coefficients `c0`/`c1`/`c2` derived from θ₀.
 
+use molrs::store::schema::block_names::ANGLES;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
@@ -140,7 +141,7 @@ pub fn uff_angle_ctor(
     frame: &Frame,
 ) -> Result<Member, String> {
     let block = frame
-        .get("angles")
+        .get(ANGLES)
         .ok_or("uff_angle: missing \"angles\" block")?;
     let i = block.get_uint("atomi").ok_or("uff_angle: missing atomi")?;
     let j = block.get_uint("atomj").ok_or("uff_angle: missing atomj")?;

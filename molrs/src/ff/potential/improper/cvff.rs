@@ -7,6 +7,7 @@
 //! dihedral angle defined by the quadruple I-J-K-L, so the geometry reuses the
 //! shared dihedral routines.
 
+use molrs::store::schema::block_names::IMPROPERS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
@@ -118,7 +119,7 @@ pub fn improper_cvff_ctor(
 ) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
-        .get("impropers")
+        .get(IMPROPERS)
         .ok_or("improper_cvff: missing \"impropers\" block")?;
     let ic = block.get_uint("atomi").ok_or("missing atomi")?;
     let jc = block.get_uint("atomj").ok_or("missing atomj")?;

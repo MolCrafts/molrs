@@ -13,10 +13,9 @@ ports.
 
 from __future__ import annotations
 
+import molrs
 import numpy as np
 import pytest
-
-import molrs
 from molrs.builder import Assembler, AxisOrienter, GrowthPlacer, SitePlacer
 
 
@@ -107,7 +106,9 @@ def test_placers_and_orienter_take_no_arguments() -> None:
 
 def test_growth_placer_builds_a_topology_without_positions() -> None:
     sites = molrs.io.CGSmilesIR("{[#M]|3}").to_coarsegrain()
-    world = Assembler({"M": _monomer()}, GrowthPlacer()).assemble(sites, molrs.Atomistic)
+    world = Assembler({"M": _monomer()}, GrowthPlacer()).assemble(
+        sites, molrs.Atomistic
+    )
 
     # Three copies of 4 atoms, two links remove 4 hydrogens.
     assert world.n_atoms == 8

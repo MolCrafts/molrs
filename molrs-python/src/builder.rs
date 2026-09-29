@@ -20,7 +20,7 @@ use pyo3::types::PyMapping;
 use crate::core::spatial::simbox::PyBox;
 use crate::core::store::frame::PyFrame;
 use crate::core::system::molgraph::{
-    PyCoarseGrain, center_error_message, graph_as, link_error_message, molgraph_of,
+    AnyGraph, GraphClass, PyCoarseGrain, center_error_message, link_error_message,
 };
 
 /// Exact single-wall carbon nanotube builder.
@@ -354,11 +354,13 @@ impl PyAssembler {
         let mut templates: HashMap<String, MolGraph> = HashMap::new();
         for item in library.items()?.iter() {
             let (name, value): (String, Bound<'_, PyAny>) = item.extract()?;
-            let template = molgraph_of(&value).map_err(|_| {
-                PyTypeError::new_err(format!(
-                    "library['{name}'] must be a graph (Graph, Atomistic, CoarseGrain)"
-                ))
-            })?;
+            let template = AnyGraph::of(&value)
+                .map_err(|_| {
+                    PyTypeError::new_err(format!(
+                        "library['{name}'] must be a graph (Graph, Atomistic, CoarseGrain)"
+                    ))
+                })?
+                .to_molgraph()?;
             templates.insert(name, template);
         }
         Ok(Self {
@@ -378,7 +380,7 @@ impl PyAssembler {
     ///     are read by the placer and the orienter.
     /// cls : type, optional
     ///     The graph class to build the world as — ``Graph`` (the default),
-    ///     ``Atomistic`` or ``CoarseGrain``, or a subclass of one.
+    ///     ``Atomistic`` or ``CoarseGrain``.
     ///
     /// Returns
     /// -------
@@ -407,7 +409,7 @@ impl PyAssembler {
         let world: MolGraph = py
             .detach(|| assembler.assemble(&sites))
             .map_err(|e| PyValueError::new_err(assemble_error_message(e)))?;
-        graph_as(py, world, cls)
+        GraphClass::of(py, cls)?.build(py, world)
     }
 
     fn __repr__(&self) -> String {

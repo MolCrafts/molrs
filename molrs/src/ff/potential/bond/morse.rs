@@ -3,6 +3,7 @@
 //! Anharmonic bond with a finite dissociation energy `D`. Parameters per type:
 //! `D` (well depth), `alpha` (steepness), `r0` (equilibrium length).
 
+use molrs::store::schema::block_names::BONDS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
@@ -147,7 +148,7 @@ pub fn bond_morse_ctor(
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
-        .get("bonds")
+        .get(BONDS)
         .ok_or_else(|| "BondMorse: frame missing \"bonds\" block".to_string())?;
     let i_col = block
         .get_uint("atomi")

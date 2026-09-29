@@ -22,8 +22,8 @@
 //! // Compute RDF
 //! const rdf = new RDF(100, 5.0);
 //! const result = rdf.compute(frame, nlist);
-//! const gr = result.rdf();           // Float32Array or Float64Array
-//! const r  = result.binCenters();    // Float32Array or Float64Array
+//! const gr = result.rdf();           // Float64Array
+//! const r  = result.binCenters();    // Float64Array
 //!
 //! // Compute MSD
 //! const msd = new MSD();
@@ -889,9 +889,9 @@ fn apply_volume_override(result: &mut molrs::compute::rdf::RDFResult, volume: F)
 ///
 /// ```js
 /// const result = rdf.compute(frame, nlist);
-/// const r  = result.binCenters();  // Float32Array or Float64Array [0.025, 0.075, ...]
-/// const gr = result.rdf();         // Float32Array or Float64Array, normalized g(r)
-/// const nr = result.pairCounts();  // Float32Array or Float64Array, raw counts
+/// const r  = result.binCenters();  // Float64Array [0.025, 0.075, ...]
+/// const gr = result.rdf();         // Float64Array, normalized g(r)
+/// const nr = result.pairCounts();  // Float64Array, raw counts
 /// console.log("Volume:", result.volume, "A^3");
 /// console.log("N_ref:", result.numPoints);
 /// ```
@@ -1074,7 +1074,7 @@ impl MSD {
 /// ```js
 /// const result = msd.compute(frame);
 /// console.log(result.mean);              // number (A^2)
-/// console.log(result.perParticle());     // Float32Array or Float64Array (A^2)
+/// console.log(result.perParticle());     // Float64Array (A^2)
 /// ```
 #[wasm_bindgen(js_name = MSDResult)]
 pub struct MSDResult {
@@ -1374,7 +1374,7 @@ mod tests {
 ///
 /// ```js
 /// const centers = new ClusterCenters().compute(frame, clusterResult);
-/// // Float32Array or Float64Array [x0,y0,z0, x1,y1,z1, ...]
+/// // Float64Array [x0,y0,z0, x1,y1,z1, ...]
 /// ```
 #[wasm_bindgen(js_name = ClusterCenters)]
 pub struct ClusterCenters {
@@ -1425,8 +1425,8 @@ impl ClusterCenters {
 ///
 /// ```js
 /// const com = new CenterOfMass().compute(frame, clusterResult);
-/// com.centersOfMass();   // Float32Array or Float64Array [x0,y0,z0, ...]
-/// com.clusterMasses();   // Float32Array or Float64Array
+/// com.centersOfMass();   // Float64Array [x0,y0,z0, ...]
+/// com.clusterMasses();   // Float64Array
 /// ```
 #[wasm_bindgen(js_name = CenterOfMassResult)]
 pub struct CenterOfMassResult {

@@ -29,22 +29,16 @@
 //! - `%COMMENT` lines are skipped. Section order is free (flag map).
 
 use std::collections::{BTreeMap, HashMap};
-use std::io::{BufRead, Error, ErrorKind};
 use std::path::Path;
 
 use super::ForceFieldReader;
 use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::params::amber::{AMBER_COULOMB, AMBER_SCEE, AMBER_SCNB};
+use crate::io::data::prmtop::parse_flag_sections;
+use crate::io::data::prmtop_tables::{parse_a4_names, parse_tokens};
 use crate::math::pair_form::lj_ab_to_sigma_epsilon;
 use molrs::store::type_labels::TypeName;
-
-/// Reader default LJ cutoff (Å). A prmtop carries no cutoff (it lives in the
-/// mdin); this is not file data.
-const DEFAULT_CUTOFF_LJ: f64 = 9.0;
-/// Reader default Coulomb cutoff (Å). A prmtop carries no cutoff (it lives in
-/// the mdin); this is not file data.
-const DEFAULT_CUTOFF_COUL: f64 = 10.0;
 
 /// `(type_name, sigma_Å, epsilon_kcal_per_mol)` for one self LJ type.
 type LjSelfRow = (String, f64, f64);
@@ -76,84 +70,6 @@ pub fn read_amber_prmtop_ff(path: impl AsRef<Path>) -> Result<ForceField, String
     let text = std::fs::read_to_string(path.as_ref())
         .map_err(|e| format!("read {}: {e}", path.as_ref().display()))?;
     AmberPrmtopFfReader::new().read_str(&text)
-}
-
-// ---------------------------------------------------------------------------
-// Section parse
-// ---------------------------------------------------------------------------
-
-fn parse_flag_sections<R: BufRead>(mut reader: R) -> std::io::Result<HashMap<String, Vec<String>>> {
-    let mut sections: HashMap<String, Vec<String>> = HashMap::new();
-    let mut flag: Option<String> = None;
-    let mut data: Vec<String> = Vec::new();
-    let mut buf = String::new();
-
-    loop {
-        buf.clear();
-        let n = reader.read_line(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        let line = buf.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if line.starts_with("%FLAG") {
-            if let Some(f) = flag.take() {
-                sections
-                    .entry(f)
-                    .or_default()
-                    .extend(std::mem::take(&mut data));
-            }
-            let name = line
-                .split_whitespace()
-                .nth(1)
-                .ok_or_else(|| Error::new(ErrorKind::InvalidData, "malformed %FLAG"))?
-                .to_string();
-            flag = Some(name);
-            data = Vec::new();
-        } else if line.starts_with("%FORMAT")
-            || line.starts_with("%VERSION")
-            || line.starts_with("%COMMENT")
-        {
-            // ignore
-        } else {
-            data.push(line.to_string());
-        }
-    }
-    if let Some(f) = flag {
-        sections.entry(f).or_default().extend(data);
-    }
-    Ok(sections)
-}
-
-fn parse_tokens<T: std::str::FromStr>(lines: &[String]) -> Result<Vec<T>, String>
-where
-    T::Err: std::fmt::Display,
-{
-    let mut out = Vec::new();
-    for line in lines {
-        for tok in line.split_whitespace() {
-            out.push(
-                tok.parse::<T>()
-                    .map_err(|e| format!("token {tok:?}: {e}"))?,
-            );
-        }
-    }
-    Ok(out)
-}
-
-fn a4_names(lines: &[String]) -> Vec<String> {
-    let mut names = Vec::new();
-    for line in lines {
-        let mut i = 0;
-        while i < line.len() {
-            let end = (i + 4).min(line.len());
-            names.push(line[i..end].trim().to_string());
-            i += 4;
-        }
-    }
-    names
 }
 
 fn section_f64(sections: &HashMap<String, Vec<String>>, key: &str) -> Result<Vec<f64>, String> {
@@ -319,7 +235,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
 
     let mut atom_types = sections
         .get("AMBER_ATOM_TYPE")
-        .map(|l| a4_names(l))
+        .map(|l| parse_a4_names(l))
         .unwrap_or_default();
     if atom_types.len() > n_atom {
         atom_types.truncate(n_atom);
@@ -327,6 +243,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     while atom_types.len() < n_atom {
         atom_types.push(String::new());
     }
+    let type_name = |atom: usize| atom_types.get(atom).map(String::as_str).unwrap_or_default();
 
     let masses: Vec<f64> = sections
         .get("MASS")
@@ -371,14 +288,14 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
                 as f64;
             let mass = masses.get(i).copied().unwrap_or(0.0);
             style
-                .def_type(name, Params::from_pairs(&[("id", id), ("mass", mass)]))
+                .def_type(name, &[], Params::from_pairs(&[("id", id), ("mass", mass)]))
                 .map_err(|e| e.to_string())?;
         }
     }
 
-    // Bonds: one type per sorted endpoint type names; k = 2·RK (LAMMPS→molrs
-    // map). Every bond row defines its type, so two rows under one name with
-    // different k/r0 are a TypeConflict.
+    // Bonds: one type per endpoint type pair in `TypeName::orient`'s spelling;
+    // k = 2·RK (LAMMPS→molrs map). Every bond row defines its type, so two
+    // rows under one name with different k/r0 are a TypeConflict.
     let bond_k = section_f64(sections, "BOND_FORCE_CONSTANT")?;
     let bond_r0 = section_f64(sections, "BOND_EQUIL_VALUE")?;
     let mut bond_ptrs = section_i64(sections, "BONDS_INC_HYDROGEN")?;
@@ -396,17 +313,13 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
             let i = (a / 3) as usize;
             let j = (b / 3) as usize;
             let tid = (chunk[2] - 1) as usize;
-            let mut ends = [
-                atom_types.get(i).cloned().unwrap_or_default(),
-                atom_types.get(j).cloned().unwrap_or_default(),
-            ];
-            ends.sort();
+            let ends = TypeName::orient(&[type_name(i), type_name(j)]);
             let k = 2.0 * bond_k.get(tid).copied().unwrap_or(0.0);
             let r0 = bond_r0.get(tid).copied().unwrap_or(0.0);
             style
-                .def_type_at(
-                    TypeName::join(&[&ends[0], &ends[1]])?.as_str(),
-                    &[&ends[0], &ends[1]],
+                .def_type(
+                    TypeName::join(&ends)?.as_str(),
+                    &ends,
                     Params::from_pairs(&[("k", k), ("r0", r0)]),
                 )
                 .map_err(|e| e.to_string())?;
@@ -434,18 +347,13 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
             let j = (b / 3) as usize;
             let k_idx = (c / 3) as usize;
             let tid = (chunk[3] - 1) as usize;
-            let mut ends_ik = [
-                atom_types.get(i).cloned().unwrap_or_default(),
-                atom_types.get(k_idx).cloned().unwrap_or_default(),
-            ];
-            ends_ik.sort();
-            let jname = atom_types.get(j).cloned().unwrap_or_default();
+            let ends = TypeName::orient(&[type_name(i), type_name(j), type_name(k_idx)]);
             let k = 2.0 * angle_k.get(tid).copied().unwrap_or(0.0);
             let theta0 = angle_eq.get(tid).copied().unwrap_or(0.0);
             style
-                .def_type_at(
-                    TypeName::join(&[&ends_ik[0], &jname, &ends_ik[1]])?.as_str(),
-                    &[&ends_ik[0], &jname, &ends_ik[1]],
+                .def_type(
+                    TypeName::join(&ends)?.as_str(),
+                    &ends,
                     Params::from_pairs(&[("k", k), ("theta0", theta0)]),
                 )
                 .map_err(|e| e.to_string())?;
@@ -490,15 +398,15 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
             used_tids.extend(expand_multiterm_tids(tid, &dih_per));
         }
 
-        let mut i_name = atom_types.get(i).cloned().unwrap_or_default();
-        let mut j_name = atom_types.get(j).cloned().unwrap_or_default();
-        let mut k_name = atom_types.get(k_idx).cloned().unwrap_or_default();
-        let mut l_name = atom_types.get(l).cloned().unwrap_or_default();
-        if j_name > k_name {
-            std::mem::swap(&mut j_name, &mut k_name);
-            std::mem::swap(&mut i_name, &mut l_name);
+        let mut quartet = [type_name(i), type_name(j), type_name(k_idx), type_name(l)];
+        // A proper torsion reads the same backwards, so it is stored in one
+        // orientation (`TypeName::orient`'s, the frame reader's too). An
+        // improper does not: AMBER puts its central atom third, and reversing
+        // it would move the centre to second place.
+        if !is_improper && TypeName::reads_reversed(&quartet) {
+            quartet.reverse();
         }
-        let name = format!("{i_name}-{j_name}-{k_name}-{l_name}");
+        let name = TypeName::join(&quartet)?.to_string();
         let table = if is_improper {
             &mut improper
         } else {
@@ -506,7 +414,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
         };
         let entry = table
             .entry(name)
-            .or_insert_with(|| ([i_name, j_name, k_name, l_name], BTreeMap::new()));
+            .or_insert_with(|| (quartet.map(str::to_owned), BTreeMap::new()));
 
         // Multiterm: FileFormats — negative PN means the *next* PK/PN/PHASE
         // entries continue this torsion until a positive PN is seen.
@@ -538,7 +446,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
             let refs: Vec<(&str, f64)> = owned.iter().map(|(k, v)| (k.as_str(), *v)).collect();
             let ends = [&*handles[0], &*handles[1], &*handles[2], &*handles[3]];
             style
-                .def_type_at(
+                .def_type(
                     TypeName::join(&ends)?.as_str(),
                     &ends,
                     Params::from_pairs(&refs),
@@ -555,7 +463,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
             let (k, n, d) = terms.values().next().copied().unwrap_or((0.0, 0.0, 0.0));
             let ends = [&*handles[0], &*handles[1], &*handles[2], &*handles[3]];
             style
-                .def_type_at(
+                .def_type(
                     TypeName::join(&ends)?.as_str(),
                     &ends,
                     Params::from_pairs(&[("k", k), ("periodicity", n), ("phase", d)]),
@@ -566,6 +474,8 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
 
     // Pair LJ from the full ICO matrix. FileFormats:
     // index = ICO[NTYPES*(IAC(i)-1) + IAC(j)] (1-based Fortran).
+    // Neither pair style gets a `cutoff`: a prmtop carries none (it lives in
+    // the mdin), so the caller declares it.
     let acoef = section_f64(sections, "LENNARD_JONES_ACOEF")?;
     let bcoef = section_f64(sections, "LENNARD_JONES_BCOEF")?;
     let nb_index = section_i64(sections, "NONBONDED_PARM_INDEX")?;
@@ -584,15 +494,11 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     let rows = decode_lj_types(n_types, &atom_types, &type_index, &nb_index, &acoef, &bcoef)?;
     {
         let style = ff
-            .def_style(
-                "pair",
-                "lj/cut",
-                Params::from_pairs(&[("cutoff", DEFAULT_CUTOFF_LJ)]),
-            )
+            .def_style("pair", "lj/cut", Params::new())
             .map_err(|e| e.to_string())?;
         for (tname, sigma, epsilon) in &rows {
             style
-                .def_type_at(
+                .def_type(
                     tname,
                     &[tname],
                     Params::from_pairs(&[("epsilon", *epsilon), ("sigma", *sigma)]),
@@ -606,7 +512,6 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
         Params::from_pairs(&[
             ("coulomb", AMBER_COULOMB),
             ("dielectric", VACUUM_DIELECTRIC),
-            ("cutoff", DEFAULT_CUTOFF_COUL),
         ]),
     )
     .map_err(|e| e.to_string())?;
@@ -800,7 +705,10 @@ c3  c3  c3  hc
     #[test]
     fn pair_styles_are_registered_lj_cut_and_coul_cut() {
         let ff = read_ff(GAFF_MINI);
-        let lj = ff.get_style("pair", "lj/cut").expect("lj/cut pair style");
+        assert!(
+            ff.get_style("pair", "lj/cut").is_some(),
+            "lj/cut pair style"
+        );
         let coul = ff
             .get_style("pair", "coul/cut")
             .expect("coul/cut pair style");
@@ -811,18 +719,20 @@ c3  c3  c3  hc
 
         let coulomb = coul.params.get("coulomb").expect("coulomb");
         let dielectric = coul.params.get("dielectric").expect("dielectric");
-        let coul_cut = coul.params.get("cutoff").expect("coul/cut cutoff");
         assert!(
             (coulomb - 332.052_217_29).abs() < 1e-10,
             "coulomb={coulomb}"
         );
         assert!((dielectric - 1.0).abs() < 1e-12, "dielectric={dielectric}");
-        assert!((coul_cut - 10.0).abs() < 1e-12, "coul cutoff={coul_cut}");
-
-        let lj_cut = lj.params.get("cutoff").expect("lj/cut cutoff");
-        assert!((lj_cut - 9.0).abs() < 1e-12, "lj cutoff={lj_cut}");
 
         for style in ff.get_styles("pair") {
+            // A prmtop carries no cutoff (it lives in the mdin); the caller
+            // declares one.
+            assert!(
+                style.params.get("cutoff").is_none(),
+                "{} carries an invented cutoff",
+                style.name
+            );
             assert!(
                 style.params.get("cutoff_lj").is_none(),
                 "{} still has cutoff_lj",
@@ -932,6 +842,23 @@ c3  c3  c3  hc
         );
         let err = read_err(&text);
         assert!(err.contains("12-6-4"), "error should name 12-6-4: {err}");
+    }
+
+    #[test]
+    fn an_improper_keeps_its_central_atom_third() {
+        // i=C1 (c3), j=H1 (hc), k=C2 (c3, the centre), l=C3 (c3): j > k by
+        // name, which reverses a proper but must not reverse an improper.
+        let text = GAFF_MINI.replace(
+            "       0       3       6       9       1",
+            "       0       9       3      -6       1",
+        );
+        let ff = read_ff(&text);
+        let style = ff
+            .get_style("improper", "periodic")
+            .expect("improper style");
+        let rows = style.type_rows();
+        let names: Vec<&str> = rows.iter().map(|(n, _, _)| n.as_ref()).collect();
+        assert_eq!(names, vec!["c3-hc-c3-c3"]);
     }
 
     #[test]

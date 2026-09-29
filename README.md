@@ -62,13 +62,15 @@ provides a CXX bridge for zero-copy integration with Atomiverse C++.
 cargo add molcrafts-molrs
 ```
 
-The default build enables `full`, `filesystem`, and `rayon`.
-`full` bundles every sub-system, including `builder`, `md` and `voronoi`; it
-does not enable `stream` (opt-in) or filesystem access. For a smaller build, disable
-defaults and select the modules you need:
+The default build is core only (`core`, `perceive`, the `optimize` contract)
+plus `rayon`. Every sub-system is opt-in: name the modules you need, or `full`
+for all of them (`builder`, `io`, `smiles`, `signal`, `compute`, `voronoi`,
+`ff`, `conformer`, `md`). `full` does not enable `stream` or `filesystem`
+(path-backed Zarr); add them explicitly. `default-features = false` also
+drops `rayon` (wasm, Pyodide).
 
 ```toml
-molcrafts-molrs = { version = "0.15", default-features = false, features = ["io", "smiles", "conformer"] }
+molcrafts-molrs = { version = "0.15", features = ["io", "smiles", "conformer"] }
 ```
 
 | Environment | Install | Import / use |
@@ -143,7 +145,7 @@ documentation loop.
 
 ```rust
 use molrs::conformer::{Conformer, ConformerOptions};
-use molrs::smiles::{parse_smiles, to_atomistic};
+use molrs::io::smiles::{parse_smiles, to_atomistic};
 
 let ir = parse_smiles("c1ccccc1").unwrap();          // benzene
 let mol = to_atomistic(&ir).unwrap();
@@ -156,7 +158,6 @@ Python and JavaScript/TypeScript quickstarts live in the documentation.
 
 - [Documentation site](https://docs.molcrafts.org/molrs/) — guides and references
 - [Getting started](https://docs.molcrafts.org/molrs/getting-started/installation/) — Rust, Python, and WASM quickstarts
-- [Migrating to 0.14](https://docs.molcrafts.org/molrs/getting-started/migration-0-14/) — 0.13 → 0.14 spellings
 - [Python reference](https://docs.molcrafts.org/molrs/reference/python/) — the binding surface, rendered from the installed package
 - [Task-oriented guides](https://docs.molcrafts.org/molpy/) — data model, SMILES, neighbor search, 3D embedding, force fields, I/O, trajectory analysis (molpy, the Python library built on molrs)
 - [Rust API reference](https://docs.rs/molcrafts-molrs) — full rustdoc on docs.rs

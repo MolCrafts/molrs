@@ -68,6 +68,8 @@
 //! ```text
 //! fragment body → parse_fragment_smiles() → SmilesIR
 //!     → fragment_to_atomistic() → (Atomistic, descriptor map)
+//! fragment body → parse_fragment_smiles() → SmilesIR
+//!     → SmilesIR::to_template() → Atomistic (ported)
 //! ```
 //!
 //! # Pipeline (CGsmiles)
@@ -78,7 +80,7 @@
 //! CGsmiles string → parse_cgsmiles() → CGSmilesIR
 //!     → CGSmilesIR::to_coarsegrain() → CoarseGrain
 //! CGsmiles string → parse_cgsmiles() → CGSmilesIR
-//!     → CGSmilesIR::to_fragment() → BTreeMap<String, Atomistic> (ported)
+//!     → CGSmilesIR::templates() → BTreeMap<String, Atomistic> (ported)
 //! ```
 //!
 //! # Examples

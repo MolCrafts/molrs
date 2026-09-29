@@ -46,20 +46,6 @@ use pyo3::types::PyDict;
 // Shared: per-particle orientation axes from a frame's `orientations` block
 // ---------------------------------------------------------------------------
 
-/// Read the `atoms` block `x`/`y`/`z` columns of `frame` as three owned `f64`
-/// vectors (indexed by atom index).
-fn atom_positions(frame: &CoreFrame) -> PyResult<(Vec<F>, Vec<F>, Vec<F>)> {
-    let col = |c: &str| -> PyResult<Vec<F>> {
-        frame
-            .get_float("atoms", c)
-            .map(|a| a.iter().copied().collect())
-            .ok_or_else(|| {
-                PyValueError::new_err(format!("frame `atoms` block has no `{c}` column"))
-            })
-    };
-    Ok((col("x")?, col("y")?, col("z")?))
-}
-
 /// Read the per-particle `(head, tail)` orientation-axis pairs from `frame`'s
 /// `"orientations"` topology block (same on-disk schema as `bonds`: the two
 /// endpoint columns `atomi`/`atomj`). Each row is one particle's axis; the
@@ -173,8 +159,8 @@ impl PyNematic {
             .copied()
             .ok_or_else(|| PyValueError::new_err("no frames provided"))?;
         let pairs = orientation_pairs(first)?;
-        let (xs, ys, zs) = atom_positions(first)?;
-        let n = xs.len();
+        let xyz = first.coords().map_err(py_value_err)?;
+        let n = xyz.nrows();
         let mut directors: Vec<[F; 3]> = Vec::with_capacity(pairs.len());
         for (head, tail) in pairs {
             if head >= n || tail >= n {
@@ -182,11 +168,7 @@ impl PyNematic {
                     "orientations atom index out of range",
                 ));
             }
-            directors.push([
-                xs[head] - xs[tail],
-                ys[head] - ys[tail],
-                zs[head] - zs[tail],
-            ]);
+            directors.push(std::array::from_fn(|d| xyz[[head, d]] - xyz[[tail, d]]));
         }
         let mut results = self
             .inner
@@ -621,8 +603,8 @@ impl PyPMFTXY {
             let pairs = orientation_pairs(first)?;
             let mut per_frame = Vec::with_capacity(refs.len());
             for f in &refs {
-                let (xs, ys, _zs) = atom_positions(f)?;
-                let n = xs.len();
+                let xyz = f.coords().map_err(py_value_err)?;
+                let n = xyz.nrows();
                 let mut angles = Vec::with_capacity(pairs.len());
                 for &(head, tail) in &pairs {
                     if head >= n || tail >= n {
@@ -630,7 +612,9 @@ impl PyPMFTXY {
                             "orientations atom index out of range",
                         ));
                     }
-                    angles.push((ys[head] - ys[tail]).atan2(xs[head] - xs[tail]));
+                    angles.push(
+                        (xyz[[head, 1]] - xyz[[tail, 1]]).atan2(xyz[[head, 0]] - xyz[[tail, 0]]),
+                    );
                 }
                 per_frame.push(angles);
             }

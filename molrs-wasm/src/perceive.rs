@@ -16,7 +16,7 @@
 use wasm_bindgen::prelude::*;
 
 use molrs::perceive::Perceive as RsPerceive;
-use molrs::remove_hydrogens;
+use molrs::perceive::hydrogens::remove_hydrogens;
 use molrs::system::atomistic::Atomistic;
 
 use crate::core::frame::Frame;
@@ -124,7 +124,7 @@ impl Perceive {
     /// Remove terminal (degree-1) explicit hydrogen atoms.
     ///
     /// Graph-in / graph-out; non-terminal H is left in place. Uses
-    /// [`molrs::remove_hydrogens`] (not yet on the Rust builder — same contract).
+    /// [`molrs::perceive::hydrogens::remove_hydrogens`] (not yet on the Rust builder — same contract).
     ///
     /// # Errors
     ///

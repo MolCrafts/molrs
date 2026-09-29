@@ -16,15 +16,7 @@ class TestComputeProtocol:
         assert isinstance(OnlyCompute(), Compute)
 
     def test_kernels_satisfy_the_protocol_without_modification(self) -> None:
-        found = 0
-        for name in dir(molrs.compute):
-            obj = getattr(molrs.compute, name)
-            if isinstance(obj, type) and hasattr(obj, "compute") and obj is not Compute:
-                # skip subpackages
-                if getattr(obj, "__module__", "").startswith("molrs.compute"):
-                    found += 1
-        assert found >= 0  # subpackages are modules; kernels live under them
-
+        # Kernels live in the subpackages, one per molrs::compute domain.
         satisfied = 0
         for sub in (
             getattr(molrs.compute, n)

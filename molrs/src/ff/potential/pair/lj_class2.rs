@@ -4,6 +4,7 @@
 //! The COMPASS/class2 non-bonded form. Parameters per pair type: `epsilon`
 //! (energy), `sigma` (length).
 
+use molrs::store::schema::block_names::PAIRS;
 use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
@@ -303,7 +304,7 @@ pub fn pair_lj_class2_ctor(
     let scale_14 = style_params.get("lj14scale").unwrap_or(1.0) as F;
 
     let block = frame
-        .get("pairs")
+        .get(PAIRS)
         .ok_or_else(|| "PairLJClass2: frame missing \"pairs\" block".to_string())?;
     let i_col = block
         .get_uint("atomi")

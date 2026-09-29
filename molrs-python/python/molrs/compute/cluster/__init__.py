@@ -1,26 +1,44 @@
 """Clustering and per-cluster shape descriptors."""
 
 from molrs._lib import (
-    Cluster as Cluster,
-    ClusterResult as ClusterResult,
-    ClusterCenters as ClusterCenters,
-    ClusterCentersResult as ClusterCentersResult,
-    ClusterProperties as ClusterProperties,
     CenterOfMass as CenterOfMass,
+)
+from molrs._lib import (
     CenterOfMassResult as CenterOfMassResult,
+)
+from molrs._lib import (
+    Cluster as Cluster,
+)
+from molrs._lib import (
+    ClusterCenters as ClusterCenters,
+)
+from molrs._lib import (
+    ClusterCentersResult as ClusterCentersResult,
+)
+from molrs._lib import (
+    ClusterProperties as ClusterProperties,
+)
+from molrs._lib import (
+    ClusterResult as ClusterResult,
+)
+from molrs._lib import (
     GyrationTensor as GyrationTensor,
+)
+from molrs._lib import (
     InertiaTensor as InertiaTensor,
+)
+from molrs._lib import (
     RadiusOfGyration as RadiusOfGyration,
 )
 
 __all__ = [
+    "CenterOfMass",
+    "CenterOfMassResult",
     "Cluster",
-    "ClusterResult",
     "ClusterCenters",
     "ClusterCentersResult",
     "ClusterProperties",
-    "CenterOfMass",
-    "CenterOfMassResult",
+    "ClusterResult",
     "GyrationTensor",
     "InertiaTensor",
     "RadiusOfGyration",

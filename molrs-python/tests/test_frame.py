@@ -3,15 +3,14 @@ import subprocess
 import sys
 from collections.abc import ItemsView, KeysView, Mapping, MutableMapping, ValuesView
 
+import molrs
 import numpy as np
 import pytest
-import molrs
-from molrs._lib import Block, Frame, MetaValue  # bare PyO3 cores
+from molrs import Block, Frame, MetaValue
 
 
 class TestFrameConstruction:
     def test_empty(self):
-        assert molrs.FRAME_SCHEMA_VERSION == 2
         f = Frame()
         assert len(f) == 0
         assert f.keys() == []
@@ -35,6 +34,140 @@ class TestFrameConstruction:
         r = repr(Frame())
         assert "Frame" in r
         assert "no" in r  # box=no
+
+
+class TestOneFrame:
+    """There is one ``Frame``: the PyO3 class, constructed and read natively."""
+
+    def test_molrs_frame_is_the_native_class(self):
+        assert molrs.Frame is molrs._lib.Frame
+
+    def test_a_frame_cannot_be_subclassed(self):
+        with pytest.raises(TypeError):
+
+            class Sub(molrs.Frame):
+                pass
+
+    def test_readers_return_the_one_class(self, tmp_path):
+        path = tmp_path / "one.xyz"
+        path.write_text("1\n\nH 0.0 0.0 0.0\n")
+        assert type(molrs.io.read_xyz(str(path))) is Frame
+
+    def test_a_graph_serialises_to_the_one_class(self):
+        mol = molrs.Atomistic()
+        mol.def_atom(element="C", x=0.0, y=0.0, z=0.0)
+        frame = mol.to_frame()
+        assert type(frame) is Frame
+        assert type(frame["atoms"]) is Block
+
+    def test_ctor_takes_blocks_meta_and_box(self):
+        f = Frame(
+            {"atoms": {"x": [1.0, 2.0]}, "bonds": Block({"atomi": [0], "atomj": [1]})},
+            meta={"title": MetaValue("string", "t")},
+            box=molrs.Box.cube(5.0),
+        )
+        assert sorted(f.keys()) == ["atoms", "bonds"]
+        np.testing.assert_array_equal(f["atoms"]["x"], [1.0, 2.0])
+        assert f["bonds"].dtype("atomi") == "uint"
+        assert f.meta["title"] == "t"
+        assert f.box.volume() == pytest.approx(125.0)
+
+    def test_a_frame_is_not_a_blocks_argument(self):
+        # Copying is `frame.copy()`; there is no wrap-an-existing-frame form.
+        with pytest.raises(TypeError, match="copy"):
+            Frame(Frame())
+
+    def test_setitem_accepts_a_mapping(self):
+        f = Frame()
+        f["atoms"] = {"x": [1.0, 2.0], "id": np.array([1, 2], dtype=np.int64)}
+        assert f["atoms"].nrows == 2
+        assert f["atoms"].dtype("id") == "uint"
+
+    def test_setitem_refuses_anything_else(self):
+        with pytest.raises(TypeError):
+            Frame()["atoms"] = 3
+
+    def test_a_block_key_tuple_is_not_column_access(self):
+        f = Frame({"atoms": {"x": [1.0]}})
+        with pytest.raises(TypeError):
+            f["atoms", "x"]
+
+
+class TestFrameBlockHandle:
+    """``frame["name"]`` is a handle on the stored block, not an empty stand-in.
+
+    Every native Block member answers on the stored data (inventory bug 1).
+    """
+
+    @staticmethod
+    def _grid_frame() -> Frame:
+        grid = Block({"rho": np.array([0.0, 1.0, 2.0, 3.0])})
+        grid.set_shape([2, 2])
+        return Frame({"grid": grid, "atoms": {"x": [1.0, 2.0, 3.0]}})
+
+    def test_structural_shape_reads_the_stored_block(self):
+        assert self._grid_frame()["grid"].structural_shape == [2, 2]
+
+    def test_shape_reads_the_stored_block(self):
+        assert self._grid_frame()["atoms"].shape == [3]
+
+    def test_select_rows_reads_the_stored_block(self):
+        rows = self._grid_frame()["atoms"].select_rows([2, 0])
+        np.testing.assert_array_equal(rows["x"], [3.0, 1.0])
+
+    def test_write_block_csv_writes_the_stored_rows(self):
+        text = molrs.io.write_block_csv(self._grid_frame()["atoms"])
+        lines = text.splitlines()
+        assert lines[0] == "x"
+        assert [float(v) for v in lines[1:]] == [1.0, 2.0, 3.0]
+
+    def test_resize_writes_through_to_the_frame(self):
+        f = self._grid_frame()
+        f["atoms"].resize(5)
+        assert f["atoms"].nrows == 5
+        np.testing.assert_array_equal(f["atoms"]["x"], [1.0, 2.0, 3.0, 0.0, 0.0])
+
+    def test_a_column_write_through_the_handle_lands_in_the_frame(self):
+        f = Frame({"atoms": {"x": [1.0, 2.0]}})
+        f["atoms"]["y"] = np.array([3.0, 4.0])
+        np.testing.assert_array_equal(f["atoms"]["y"], [3.0, 4.0])
+
+
+class TestFrameCopy:
+    def test_copy_does_not_share_buffers(self):
+        f = Frame({"atoms": {"x": np.array([1.0, 2.0])}})
+        f.box = molrs.Box.cube(5.0)
+        g = f.copy()
+        assert not np.shares_memory(f["atoms"]["x"], g["atoms"]["x"])
+        g["atoms"]["x"][0] = 9.0
+        np.testing.assert_array_equal(f["atoms"]["x"], [1.0, 2.0])
+        assert g.box is not None
+
+    def test_a_subset_does_not_share_buffers_with_its_source(self):
+        f = Frame(
+            {"atoms": {"x": np.array([1.0, 2.0])}, "extra": {"v": np.array([5.0])}}
+        )
+        sub = f.subset([0])
+        sub["extra"]["v"][0] = 7.0
+        np.testing.assert_array_equal(f["extra"]["v"], [5.0])
+
+
+class TestFramePickle:
+    def test_pickle_keeps_blocks_typed_meta_box_and_masks(self):
+        import pickle
+
+        f = Frame({"atoms": {"x": [1.0, 2.0]}})
+        f["atoms"].insert_nullable(
+            "tag", np.array([4, 0], dtype=np.int32), [True, False]
+        )
+        f.meta["temperature"] = MetaValue("f64", 300.0)
+        f.box = molrs.Box.cube(2.0)
+        restored = pickle.loads(pickle.dumps(f))
+        assert type(restored) is Frame
+        np.testing.assert_array_equal(restored["atoms"]["x"], [1.0, 2.0])
+        np.testing.assert_array_equal(restored["atoms"].validity("tag"), [True, False])
+        assert restored.meta.dtype("temperature") == "f64"
+        assert restored.box.volume() == pytest.approx(8.0)
 
 
 class TestFrameBlockAccess:
@@ -150,7 +283,7 @@ class TestFrameMeta:
         f = Frame()
         f.meta = {
             "tag": MetaValue("i64", 9_007_199_254_740_993),
-            "temperature": MetaValue("f32", 300.0),
+            "temperature": MetaValue("f64", 300.0),
             "stress": MetaValue("f64x6", [1, 2, 3, 4, 5, 6]),
         }
         assert f.meta["tag"] == 9_007_199_254_740_993
@@ -238,10 +371,15 @@ class TestFrameMeta:
         del f.meta["title"]
         assert "title" not in f.meta
 
+    def test_narrow_float_dtypes_are_refused(self):
+        # One float: `f64`. The narrow tags are gone, not promoted.
+        with pytest.raises(TypeError, match="unknown metadata dtype"):
+            MetaValue("f32", 300.0)
+
     def test_a_plain_write_takes_the_values_own_dtype(self):
         f = Frame()
-        f.meta["temperature"] = MetaValue("f32", 300.0)
-        assert f.meta.dtype("temperature") == "f32"
+        f.meta["temperature"] = MetaValue("f64", 300.0)
+        assert f.meta.dtype("temperature") == "f64"
         f.meta["temperature"] = 310.0
         assert f.meta.dtype("temperature") == "f64"
         assert f.meta["temperature"] == pytest.approx(310.0)
@@ -257,9 +395,9 @@ class TestFrameMeta:
             f.meta[key] = f.meta[key]
         assert {k: f.meta.dtype(k) for k in f.meta} == before
         assert f.meta["tag"] == 9_007_199_254_740_993
-        # f32 is not an inferred default: the read value is a Python float,
-        # and a plain write takes f64.
-        f.meta["temperature"] = MetaValue("f32", 300.0)
+        # A plain write re-infers the slot's dtype from the value in hand:
+        # the read value is a Python float, so the slot is f64.
+        f.meta["temperature"] = MetaValue("f64", 300.0)
         f.meta["temperature"] = f.meta["temperature"]
         assert f.meta.dtype("temperature") == "f64"
 
@@ -303,12 +441,12 @@ class TestFrameMeta:
     def test_copying_a_frame_keeps_exact_dtypes(self):
         # dict(meta) drops the tags, so the copy path must not go through it.
         f = Frame()
-        f.meta = {"temperature": MetaValue("f32", 300.0)}
-        rich = molrs.Frame(f)
-        assert rich.meta.dtype("temperature") == "f32"
-        assert rich.meta.copy() == {"temperature": pytest.approx(300.0)}
-        assert set(rich.meta.typed()) == {"temperature"}
-        assert rich.meta.typed()["temperature"].dtype == "f32"
+        f.meta = {"temperature": MetaValue("f64", 300.0)}
+        copied = f.copy()
+        assert copied.meta.dtype("temperature") == "f64"
+        assert copied.meta.copy() == {"temperature": pytest.approx(300.0)}
+        assert set(copied.meta.typed()) == {"temperature"}
+        assert copied.meta.typed()["temperature"].dtype == "f64"
 
     def test_nested_document_is_a_snapshot(self):
         f = Frame()
@@ -325,7 +463,7 @@ class TestFrameMeta:
     def _insertion_order_meta(self):
         # t, a, stress: alphabetical order is the failure mode.
         f = Frame()
-        f.meta["t"] = MetaValue("f32", 300.0)
+        f.meta["t"] = MetaValue("f64", 300.0)
         f.meta["a"] = 1
         f.meta["stress"] = MetaValue("f64x6", [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
         return f.meta
@@ -336,11 +474,18 @@ class TestFrameMeta:
         assert isinstance(keys, KeysView)
         assert isinstance(values, ValuesView)
         assert isinstance(items, ItemsView)
-        assert type(keys).__module__ == "collections.abc" and type(keys).__name__ == "KeysView"
         assert (
-            type(values).__module__ == "collections.abc" and type(values).__name__ == "ValuesView"
+            type(keys).__module__ == "collections.abc"
+            and type(keys).__name__ == "KeysView"
         )
-        assert type(items).__module__ == "collections.abc" and type(items).__name__ == "ItemsView"
+        assert (
+            type(values).__module__ == "collections.abc"
+            and type(values).__name__ == "ValuesView"
+        )
+        assert (
+            type(items).__module__ == "collections.abc"
+            and type(items).__name__ == "ItemsView"
+        )
 
     def test_views_follow_insertion_order(self):
         m = self._insertion_order_meta()
@@ -403,7 +548,7 @@ class TestFrameMeta:
         assert m.get(1) is None
         assert m.get(1, "d") == "d"
         assert m.pop(1, "d") == "d"
-        assert 1 not in m.keys()
+        assert 1 not in m
         assert (1, 2) not in m.items()
         assert m.get([]) is None
         with pytest.raises(KeyError) as missing:
@@ -417,10 +562,10 @@ class TestFrameMeta:
         with pytest.raises(TypeError):
             m.setdefault(1, 2)
 
-    def test_update_self_reinfers_f32_without_panic(self):
+    def test_update_self_reinfers_float_without_panic(self):
         def fresh():
             f = Frame()
-            f.meta["t"] = MetaValue("f32", 300.0)
+            f.meta["t"] = MetaValue("f64", 300.0)
             f.meta["a"] = 1
             return f.meta
 
@@ -430,7 +575,6 @@ class TestFrameMeta:
         assert m["t"] == pytest.approx(300.0)
         assert m["a"] == 1
         assert m.dtype("a") == "i64"
-        # A still-f32 tag would mean the write path read the stored dtype.
         assert m.dtype("t") == "f64"
 
         m = fresh()
@@ -470,11 +614,8 @@ class TestFrameMeta:
         ("i64x3", (1, -2, 3)),
         ("u32x3", (1, 2, 3)),
         ("u64x3", (1, 2, 3)),
-        ("f32x3", (1.0, 2.0, 3.0)),
         ("f64x3", (1.0, 2.0, 3.0)),
-        ("f32x6", (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)),
         ("f64x6", (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)),
-        ("f32x9", tuple(float(i) for i in range(1, 10))),
         ("f64x9", tuple(float(i) for i in range(1, 10))),
     )
 
@@ -489,10 +630,13 @@ class TestFrameMeta:
             got = meta[dtype]
             assert isinstance(got, tuple) and got == payload
             assert isinstance(meta.get(dtype), tuple) and meta.get(dtype) == payload
-            assert isinstance(meta.setdefault(dtype), tuple) and meta.setdefault(dtype) == payload
+            assert (
+                isinstance(meta.setdefault(dtype), tuple)
+                and meta.setdefault(dtype) == payload
+            )
             assert meta.dtype(dtype) == dtype
-            assert isinstance(list(meta.values())[0], tuple)
-            assert isinstance(list(meta.items())[0][1], tuple)
+            assert isinstance(next(iter(meta.values())), tuple)
+            assert isinstance(next(iter(meta.items()))[1], tuple)
             copied = meta.copy()
             assert isinstance(copied[dtype], tuple) and copied[dtype] == payload
 
@@ -553,7 +697,12 @@ class TestMetaDocument:
         assert isinstance(doc["inner"], molrs.MetaDocument)
         assert doc["inner"] == {"step": 1}
         other = Frame()
-        other.meta["run"] = {"tool": "molrec", "run": 3, "tags": [1, 2], "inner": {"step": 1}}
+        other.meta["run"] = {
+            "tool": "molrec",
+            "run": 3,
+            "tags": [1, 2],
+            "inner": {"step": 1},
+        }
         assert doc == other.meta["run"]
         assert (doc != other.meta["run"]) is False
 
@@ -620,7 +769,11 @@ class TestMetaDocument:
         assert json.loads(json.dumps(plain)) == plain
         plain["step"] = 9
         plain["rows"][0]["a"] = 5
-        assert frame.meta["run"] == {"step": 1, "tags": (1, 2), "rows": ({"a": 1}, {"a": None})}
+        assert frame.meta["run"] == {
+            "step": 1,
+            "tags": (1, 2),
+            "rows": ({"a": 1}, {"a": None}),
+        }
         assert isinstance(frame.meta["run"]["rows"], tuple)
         assert isinstance(frame.meta["run"]["rows"][0], molrs.MetaDocument)
 
@@ -653,12 +806,11 @@ class TestFrameValidation:
 
 
 class TestFrameSubset:
-    """Seam of ``molrs.Frame.subset`` and ``(block, key)`` column access.
+    """Seam of ``molrs.Frame.subset``.
 
     Row gathering and relation renumbering are proven by
-    ``molrs/src/core/store/frame.rs``; these check the rich return type, the
-    Python row normaliser (bool mask, int rows, negative wrap) and the error
-    mapping.
+    ``molrs/src/core/store/frame.rs``; these check the return type, the row
+    normaliser (bool mask, int rows, negative wrap) and the error mapping.
     """
 
     @staticmethod
@@ -677,7 +829,7 @@ class TestFrameSubset:
             }
         )
 
-    def test_subset_returns_a_rich_frame_with_the_selected_rows(self):
+    def test_subset_returns_a_frame_with_the_selected_rows(self):
         sub = self._chain().subset([2, 3])
 
         assert type(sub) is molrs.Frame
@@ -702,17 +854,10 @@ class TestFrameSubset:
 
         np.testing.assert_array_equal(sub["atoms"]["x"], [3.0])
 
-    def test_a_block_key_tuple_is_column_access(self):
-        frame = self._chain()
-
-        np.testing.assert_array_equal(
-            frame["atoms", "mol_id"], frame["atoms"]["mol_id"]
-        )
-
     def test_subset_by_a_mol_id_comparison_selects_one_molecule(self):
         frame = self._chain()
 
-        one = frame.subset(frame["atoms", "mol_id"] == 1)
+        one = frame.subset(frame["atoms"]["mol_id"] == 1)
 
         np.testing.assert_array_equal(one["atoms"]["x"], [0.0, 1.0])
         assert one["bonds"].nrows == 1

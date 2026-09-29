@@ -7,7 +7,7 @@ message. They re-derive no chemistry: every ``kind`` asserted here is the
 variant the Rust unit tests in ``molrs/src/io/smiles/`` already pin
 (``parser.rs`` for ``UnclosedBranch``, ``cgsmiles/parser.rs::split_blocks``
 for ``UnexpectedEnd``, ``cgsmiles/to_atomistic.rs`` /
-``cgsmiles/to_fragment.rs`` for ``CgNotExpandable``), reused only to show
+``cgsmiles/templates.rs`` for ``CgNotExpandable``), reused only to show
 Python sees the same answer.
 
 Fixtures are inline strings; no third-party scientific software runs.
@@ -187,9 +187,9 @@ def test_base_only_string_is_not_expandable_to_atomistic() -> None:
     assert excinfo.value.kind == "CgNotExpandable"
 
 
-def test_base_only_string_is_not_expandable_to_fragment() -> None:
+def test_base_only_string_has_no_templates() -> None:
     with pytest.raises(molrs.io.SmilesError) as excinfo:
-        molrs.io.CGSmilesIR(BASE_ONLY).to_fragment()
+        molrs.io.CGSmilesIR(BASE_ONLY).templates()
 
     assert excinfo.value.kind == "CgNotExpandable"
 

@@ -279,10 +279,11 @@ mod tests {
     use super::*;
     use crate::ff::forcefield::Params;
     use crate::ff::typifier::Typing;
+    use indexmap::IndexMap;
     use molrs::Atom;
     use molrs::system::BondType;
     use molrs::system::molgraph::PropValue;
-    use std::collections::{BTreeMap, BTreeSet, HashMap};
+    use std::collections::{BTreeMap, BTreeSet};
 
     /// Methylsilane `H3C-SiH3`, hand-built: C is atom 0, Si is atom 1, the
     /// hydrogens on C are 2..=4 and the hydrogens on Si are 5..=7.
@@ -392,7 +393,7 @@ mod tests {
         let mut ff = ForceField::new("OPLS-AA");
         ff.def_style("bond", "harmonic", Params::new())
             .unwrap()
-            .def_type_at(
+            .def_type(
                 "X-X",
                 &["X", "X"],
                 Params::from_pairs(&[("k", 1.0), ("r0", 1.0)]),
@@ -400,7 +401,7 @@ mod tests {
             .unwrap();
         ff.def_style("angle", "harmonic", Params::new())
             .unwrap()
-            .def_type_at(
+            .def_type(
                 "X-X-X",
                 &["X", "X", "X"],
                 Params::from_pairs(&[("k", 1.0), ("theta0", 1.9)]),
@@ -408,7 +409,7 @@ mod tests {
             .unwrap();
         ff.def_style("dihedral", "opls", Params::new())
             .unwrap()
-            .def_type_at(
+            .def_type(
                 "X-X-X-X",
                 &["X", "X", "X", "X"],
                 Params::from_pairs(&[("k1", 0.0), ("k2", 0.0), ("k3", 0.0), ("k4", 0.0)]),
@@ -500,19 +501,19 @@ mod tests {
         let mut ff = ForceField::new("OPLS-AA");
         ff.def_style("atom", "full", Params::new())
             .unwrap()
-            .def_type_at(
+            .def_type(
                 "opls_135",
                 &[],
                 Params::from_pairs(&[("mass", 12.011), ("charge", -0.18)]),
             )
             .unwrap()
-            .def_type_at(
+            .def_type(
                 "opls_140",
                 &[],
                 Params::from_pairs(&[("mass", 1.008), ("charge", 0.06)]),
             )
             .unwrap()
-            .def_type_at(
+            .def_type(
                 "opls_154",
                 &[],
                 Params::from_pairs(&[("mass", 15.999), ("charge", -0.683)]),
@@ -520,19 +521,19 @@ mod tests {
             .unwrap();
         ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
             .unwrap()
-            .def_type_at(
+            .def_type(
                 "opls_135",
                 &["opls_135"],
                 Params::from_pairs(&[("epsilon", 0.066), ("sigma", 3.5)]),
             )
             .unwrap()
-            .def_type_at(
+            .def_type(
                 "opls_140",
                 &["opls_140"],
                 Params::from_pairs(&[("epsilon", 0.03), ("sigma", 2.5)]),
             )
             .unwrap()
-            .def_type_at(
+            .def_type(
                 "opls_154",
                 &["opls_154"],
                 Params::from_pairs(&[("epsilon", 0.17), ("sigma", 3.12)]),
@@ -542,13 +543,13 @@ mod tests {
             .unwrap();
         ff.def_style("bond", "harmonic", Params::new())
             .unwrap()
-            .def_type_at(
+            .def_type(
                 "CT-HC",
                 &["CT", "HC"],
                 Params::from_pairs(&[("k", 680.0), ("r0", 1.09)]),
             )
             .unwrap()
-            .def_type_at(
+            .def_type(
                 "CT-OH",
                 &["CT", "OH"],
                 Params::from_pairs(&[("k", 640.0), ("r0", 1.41)]),
@@ -556,13 +557,13 @@ mod tests {
             .unwrap();
         ff.def_style("angle", "harmonic", Params::new())
             .unwrap()
-            .def_type_at(
+            .def_type(
                 "HC-CT-HC",
                 &["HC", "CT", "HC"],
                 Params::from_pairs(&[("k", 66.0), ("theta0", 1.881)]),
             )
             .unwrap()
-            .def_type_at(
+            .def_type(
                 "CT-CT-HC",
                 &["CT", "CT", "HC"],
                 Params::from_pairs(&[("k", 75.0), ("theta0", 1.932)]),
@@ -570,7 +571,7 @@ mod tests {
             .unwrap();
         ff.def_style("dihedral", "opls", Params::new())
             .unwrap()
-            .def_type_at(
+            .def_type(
                 "HC-CT-CT-HC",
                 &["HC", "CT", "CT", "HC"],
                 Params::from_pairs(&[("k1", 0.0), ("k2", 0.0), ("k3", 0.6276), ("k4", 0.0)]),
@@ -589,7 +590,7 @@ mod tests {
         (typed, typing)
     }
 
-    fn str_prop(props: &HashMap<String, PropValue>, key: &str) -> Option<String> {
+    fn str_prop(props: &IndexMap<String, PropValue>, key: &str) -> Option<String> {
         match props.get(key) {
             Some(PropValue::Str(s)) => Some(s.clone()),
             _ => None,
@@ -734,7 +735,7 @@ mod tests {
         let atoms = ff.def_style("atom", "full", Params::new()).unwrap();
         for name in ["opls_za", "opls_tb", "opls_tc", "opls_yd"] {
             atoms
-                .def_type_at(
+                .def_type(
                     name,
                     &[],
                     Params::from_pairs(&[("mass", 12.011), ("charge", 0.0)]),
@@ -748,7 +749,7 @@ mod tests {
             ("CT-CY", ["CT", "CY"]),
         ] {
             bonds
-                .def_type_at(
+                .def_type(
                     name,
                     &ends,
                     Params::from_pairs(&[("k", 600.0), ("r0", 1.5)]),
@@ -761,7 +762,7 @@ mod tests {
             ("CT-CT-CY", ["CT", "CT", "CY"]),
         ] {
             angles
-                .def_type_at(
+                .def_type(
                     name,
                     &ends,
                     Params::from_pairs(&[("k", 70.0), ("theta0", 2.0)]),
@@ -770,7 +771,7 @@ mod tests {
         }
         ff.def_style("dihedral", "opls", Params::new())
             .unwrap()
-            .def_type_at(
+            .def_type(
                 "CZ-CT-CT-CW",
                 &["CZ", "CT", "CT", "CW"],
                 Params::from_pairs(&[("k1", 1.0), ("k2", 0.0), ("k3", 0.5), ("k4", 0.0)]),

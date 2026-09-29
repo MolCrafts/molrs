@@ -1,8 +1,8 @@
 //! Type names and the Frame's type-id contract.
 //!
-//! One grammar for the name of a type (atom, pair, bond, angle, dihedral,
-//! improper), [`TypeName`], and one rule for turning a Frame's per-row type
-//! labels into dense 1-based ids, [`TypeLabels`]. Both live in `core` so that
+//! One way to build the name of a type (atom, pair, bond, angle, dihedral,
+//! improper) from endpoint labels, [`TypeName`], and one rule for turning a
+//! Frame's per-row type labels into dense 1-based ids, [`TypeLabels`]. Both live in `core` so that
 //! format writers and force-field code share them without naming each other.
 
 use std::collections::{HashMap, HashSet};
@@ -28,26 +28,31 @@ pub(crate) fn is_int_token(token: &str) -> bool {
     !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
 }
 
-/// The name of a type: its endpoint labels, plus an optional qualifier.
+/// The name of a type, **built** from endpoint labels.
 ///
-/// # Grammar
+/// A type's name is an opaque identifier: a force field stores it verbatim and
+/// never reads endpoints back out of it (they are given when the type is
+/// defined). `TypeName` is only the conventional way to *build* such a name
+/// from endpoint labels, plus [`TypeName::infer_endpoints`] for the one kind of
+/// source that carries labels and nothing else.
+///
+/// # Construction
 ///
 /// `endpoints[@qualifier]`
 ///
 /// - **Endpoints** are joined with `-` (`c3-c3-h1`), or with `::` when any
-///   endpoint label itself contains `-` (`tip3p-O::tip3p-H`). Splitting tries
-///   `::` first, then `-`. An empty endpoint is a position, not noise:
-///   `-CT-CT-` has four endpoints, the outer two empty (a wildcard).
-/// - **Qualifier.** The first `@` starts the qualifier: `_`-separated fields
-///   holding the values a type depends on that are not a function of its
-///   endpoint labels (e.g. bond orders, `C_3-C_R@1.5`).
+///   endpoint label itself contains `-` (`tip3p-O::tip3p-H`). An empty
+///   endpoint is kept as a position: `["", "CT", "CT", ""]` joins to
+///   `-CT-CT-`.
+/// - **Qualifier.** [`TypeName::with_qualifier`] appends `@` and `_`-separated
+///   fields holding the values a type depends on that are not a function of
+///   its endpoint labels (e.g. bond orders, `C_3-C_R@1.5`).
 ///
 /// # Reserved characters
 ///
 /// `@` may not appear in an endpoint label ([`TypeName::join`] and
 /// [`TypeName::pair`] reject it), and neither `_` nor `@` may appear in a
-/// qualifier field ([`TypeName::with_qualifier`] rejects them). `-` and `::`
-/// are separators as described above.
+/// qualifier field ([`TypeName::with_qualifier`] rejects them).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TypeName(String);
 
@@ -55,8 +60,8 @@ impl TypeName {
     /// Join endpoint labels into a name: `-` between them, or `::` when any
     /// label contains `-`.
     ///
-    /// `Err` naming the part when a part contains `@`, which would be read
-    /// back as the start of a qualifier.
+    /// `Err` naming the part when a part contains `@`, which would read as the
+    /// start of a qualifier.
     pub fn join(parts: &[&str]) -> Result<TypeName, String> {
         if let Some(bad) = parts.iter().find(|p| p.contains(QUALIFIER)) {
             return Err(format!(
@@ -86,28 +91,27 @@ impl TypeName {
         &self.0
     }
 
-    /// The endpoint part (before the first `@`) and the qualifier, if any.
-    fn split_qualifier(&self) -> (&str, Option<&str>) {
-        match self.0.split_once(QUALIFIER) {
-            Some((head, qualifier)) => (head, Some(qualifier)),
-            None => (&self.0, None),
-        }
+    /// Whether a reversal-symmetric endpoint tuple reads in reverse: its
+    /// reversed spelling compares smaller than `parts`, slot by slot. A
+    /// palindrome (`c3-c3`, `hc-c3-c3-hc`) does not.
+    ///
+    /// The one orientation rule for a bond, an angle or a proper dihedral —
+    /// `i-j-k-l` and `l-k-j-i` are one term, so one spelling is stored — shared
+    /// by every typifier and reader so that the same physical term gets the
+    /// same name wherever it is named. An improper is not reversal-symmetric
+    /// (its centre has a slot) and never goes through this.
+    pub fn reads_reversed(parts: &[&str]) -> bool {
+        parts.iter().rev().lt(parts.iter())
     }
 
-    /// The endpoint labels, in order: the part before the qualifier, split on
-    /// `::` when it contains `::`, else on `-`. Empty positions are kept.
-    pub fn endpoints(&self) -> Vec<&str> {
-        let (head, _) = self.split_qualifier();
-        if head.contains(WIDE) {
-            head.split(WIDE).collect()
+    /// `parts` in the orientation a reversal-symmetric term is stored in: the
+    /// smaller of the tuple and its reverse ([`reads_reversed`](Self::reads_reversed)).
+    pub fn orient<'a>(parts: &[&'a str]) -> Vec<&'a str> {
+        if Self::reads_reversed(parts) {
+            parts.iter().rev().copied().collect()
         } else {
-            head.split(DASH).collect()
+            parts.to_vec()
         }
-    }
-
-    /// The qualifier: the text after the first `@`, or `None`.
-    pub fn qualifier(&self) -> Option<&str> {
-        self.split_qualifier().1
     }
 
     /// This name with the qualifier `@f1_f2_…` appended.
@@ -115,7 +119,7 @@ impl TypeName {
     /// `Err` when the name already has a qualifier, when `fields` is empty,
     /// or when a field is empty or contains `_` or `@`.
     pub fn with_qualifier(&self, fields: &[&str]) -> Result<TypeName, String> {
-        if self.qualifier().is_some() {
+        if self.0.contains(QUALIFIER) {
             return Err(format!("type name {:?} already has a qualifier", self.0));
         }
         if fields.is_empty() {
@@ -138,60 +142,39 @@ impl TypeName {
         Ok(TypeName(format!("{}{QUALIFIER}{joined}", self.0)))
     }
 
-    /// The same term read from the other end.
+    /// The `arity` endpoint labels a **label-only** source means by `label`.
     ///
-    /// The endpoints are reversed, keeping the separator (`-` or `::`) and
-    /// empty positions. The qualifier is reordered by the endpoint count,
-    /// since `TypeName` carries no category and the count fixes it up to
-    /// dihedral / improper:
+    /// For readers whose input carries a type label and nothing else — a
+    /// LAMMPS `*.ff` include (`bond_coeff CT-CT …`) or a data file's
+    /// `* Coeffs` section — and so have no other place to take endpoints from.
+    /// Everything else is given its endpoints when a type is defined; a
+    /// force field never calls this.
     ///
-    /// - 2 endpoints (bond): the fields are unchanged; they describe the bond
-    ///   as a whole.
-    /// - 3 endpoints (angle): the first two fields are the i–j and j–k bond
-    ///   values, so they swap (`a-b-c@1_1.5_2` → `c-b-a@1.5_1_2`); later
-    ///   fields are unchanged. A qualifier with fewer than two fields is
-    ///   unchanged.
-    /// - 4 endpoints (dihedral, improper): the fields are unchanged; they
-    ///   describe the central bond and the term as a whole.
-    /// - Any other count: the fields are unchanged.
-    pub fn reversed(&self) -> TypeName {
-        let (head, qualifier) = self.split_qualifier();
-        let sep = if head.contains(WIDE) { WIDE } else { DASH };
-        let mut ends: Vec<&str> = head.split(sep).collect();
-        ends.reverse();
-        let mut out = ends.join(sep);
-        if let Some(qualifier) = qualifier {
-            let mut fields: Vec<&str> = qualifier.split(FIELD).collect();
-            if ends.len() == 3 && fields.len() >= 2 {
-                fields.swap(0, 1);
-            }
-            out.push(QUALIFIER);
-            out.push_str(&fields.join(&FIELD.to_string()));
-        }
-        TypeName(out)
-    }
-
-    /// The byte-wise smaller of this name and [`TypeName::reversed`],
-    /// qualifier included, so both orientations of one term share it.
-    pub fn canonical(&self) -> TypeName {
-        let reversed = self.reversed();
-        if reversed.0 < self.0 {
-            reversed
+    /// The inverse of [`TypeName::join`]: the part before the first `@` (the
+    /// qualifier is not an endpoint) is split on `::` when it contains `::`,
+    /// else on `-`. Empty positions are kept (`-CT-CT-` is four endpoints, the
+    /// outer two empty). `Err` naming the label when the split does not give
+    /// exactly `arity` endpoints.
+    pub fn infer_endpoints(label: &str, arity: usize) -> Result<Vec<&str>, String> {
+        let head = label.split_once(QUALIFIER).map_or(label, |(head, _)| head);
+        let parts: Vec<&str> = if head.contains(WIDE) {
+            head.split(WIDE).collect()
         } else {
-            self.clone()
+            head.split(DASH).collect()
+        };
+        if parts.len() != arity {
+            return Err(format!(
+                "type label {label:?} names {} endpoint(s), expected {arity}",
+                parts.len()
+            ));
         }
+        Ok(parts)
     }
 }
 
 impl fmt::Display for TypeName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
-    }
-}
-
-impl From<String> for TypeName {
-    fn from(name: String) -> Self {
-        TypeName(name)
     }
 }
 
@@ -272,7 +255,6 @@ impl BlockTypes {
         frame: &impl FrameAccess,
         block: &str,
         meta_key: &str,
-        collapse: bool,
     ) -> Result<Option<BlockTypes>, String> {
         let n = frame
             .visit_block(block, |b| b.nrows().unwrap_or(0))
@@ -288,13 +270,6 @@ impl BlockTypes {
         };
         let has_inventory = !inventory.is_empty();
         let min_types = if block == "atoms" { 1 } else { 0 };
-        let canonical = |name: &str| -> String {
-            if collapse {
-                TypeName::from(name.to_owned()).canonical().0
-            } else {
-                name.to_owned()
-            }
-        };
 
         if n == 0 {
             if inventory.is_empty() {
@@ -310,7 +285,7 @@ impl BlockTypes {
 
         // String labels take precedence over `type_id`.
         if let Some(col) = frame.get_string(block, keys::TYPE) {
-            let types: Vec<String> = (0..n).map(|i| canonical(&col[[i]])).collect();
+            let types: Vec<String> = (0..n).map(|i| col[[i]].clone()).collect();
             if types.iter().any(|t| t.trim().is_empty()) {
                 return Err(format!(
                     "{block}: empty type label; every row needs a non-empty type"
@@ -339,7 +314,7 @@ impl BlockTypes {
                 }));
             }
 
-            let mut all: HashSet<String> = inventory.iter().map(|t| canonical(t)).collect();
+            let mut all: HashSet<String> = inventory.iter().cloned().collect();
             all.extend(unique);
             let ordered = Self::sorted(all);
             let ids: HashMap<&str, Idx> = ordered
@@ -422,31 +397,29 @@ impl BlockTypes {
 /// - A block with only a numeric `type_id` (or numeric `type`) column is taken
 ///   as is; its inventory, if any, supplies the labels.
 /// - A block with rows but neither `type` nor `type_id` is an error.
-/// - In `bonds`, `angles` and `dihedrals`, a label and its reverse name one
-///   term, so they collapse to one id through [`TypeName::canonical`]
-///   (qualified labels included). `impropers` labels never collapse:
-///   reversing an improper moves its centre and names a different term.
+/// - A label is a type name, matched exactly: `h1-c3` and `c3-h1` are two
+///   labels with two ids. Whoever writes the labels (a typifier, a reader)
+///   writes the name of the type it defined.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TypeLabels {
     blocks: Vec<(&'static str, BlockTypes)>,
 }
 
 impl TypeLabels {
-    /// Blocks covered, with their inventory key and whether reversed labels
-    /// collapse.
-    const BLOCKS: [(&'static str, &'static str, bool); 5] = [
-        ("atoms", keys::ATOM_TYPE_LABELS, false),
-        ("bonds", keys::BOND_TYPE_LABELS, true),
-        ("angles", keys::ANGLE_TYPE_LABELS, true),
-        ("dihedrals", keys::DIHEDRAL_TYPE_LABELS, true),
-        ("impropers", keys::IMPROPER_TYPE_LABELS, false),
+    /// Blocks covered, with their inventory key.
+    const BLOCKS: [(&'static str, &'static str); 5] = [
+        ("atoms", keys::ATOM_TYPE_LABELS),
+        ("bonds", keys::BOND_TYPE_LABELS),
+        ("angles", keys::ANGLE_TYPE_LABELS),
+        ("dihedrals", keys::DIHEDRAL_TYPE_LABELS),
+        ("impropers", keys::IMPROPER_TYPE_LABELS),
     ];
 
     /// Resolve every covered block of `frame` (see the type-level docs).
     pub fn from_frame(frame: &impl FrameAccess) -> Result<TypeLabels, String> {
         let mut blocks = Vec::new();
-        for (block, meta_key, collapse) in Self::BLOCKS {
-            if let Some(types) = BlockTypes::resolve(frame, block, meta_key, collapse)? {
+        for (block, meta_key) in Self::BLOCKS {
+            if let Some(types) = BlockTypes::resolve(frame, block, meta_key)? {
                 blocks.push((block, types));
             }
         }
@@ -505,7 +478,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // TypeName: endpoint grammar
+    // TypeName: building a name from endpoint labels
     // ------------------------------------------------------------------
 
     #[test]
@@ -518,6 +491,12 @@ mod tests {
     fn join_uses_double_colon_when_a_part_contains_hyphen() {
         let name = TypeName::join(&["tip3p-O", "tip3p-H"]).unwrap();
         assert_eq!(name.as_str(), "tip3p-O::tip3p-H");
+    }
+
+    #[test]
+    fn join_keeps_empty_wildcard_positions() {
+        let name = TypeName::join(&["", "CT", "CT", ""]).unwrap();
+        assert_eq!(name.as_str(), "-CT-CT-");
     }
 
     #[test]
@@ -549,82 +528,38 @@ mod tests {
     }
 
     #[test]
-    fn endpoints_split_on_hyphen() {
-        let name = TypeName::from(String::from("c3-c3-h1"));
-        assert_eq!(name.endpoints(), vec!["c3", "c3", "h1"]);
+    fn reads_reversed_when_the_reversed_spelling_is_smaller() {
+        assert!(TypeName::reads_reversed(&["oh", "c3"]));
+        assert!(!TypeName::reads_reversed(&["c3", "oh"]));
+        assert!(TypeName::reads_reversed(&["os", "c3", "ca", "hc"]));
     }
 
     #[test]
-    fn endpoints_split_on_double_colon_first() {
-        let name = TypeName::from(String::from("tip3p-O::tip3p-H"));
-        assert_eq!(name.endpoints(), vec!["tip3p-O", "tip3p-H"]);
+    fn a_palindrome_does_not_read_reversed() {
+        assert!(!TypeName::reads_reversed(&["c3", "c3"]));
+        assert!(!TypeName::reads_reversed(&["hc", "c3", "c3", "hc"]));
     }
 
     #[test]
-    fn endpoints_of_single_type_is_itself() {
-        let name = TypeName::from(String::from("A"));
-        assert_eq!(name.endpoints(), vec!["A"]);
-    }
-
-    #[test]
-    fn endpoints_keep_empty_wildcard_positions() {
-        let name = TypeName::from(String::from("-CT-CT-"));
-        assert_eq!(name.endpoints(), vec!["", "CT", "CT", ""]);
-        assert_eq!(name.endpoints().len(), 4);
-    }
-
-    #[test]
-    fn reversed_reverses_hyphen_endpoints() {
-        let name = TypeName::from(String::from("h1-c3-c3"));
-        assert_eq!(name.reversed().as_str(), "c3-c3-h1");
-    }
-
-    #[test]
-    fn reversed_keeps_double_colon_separator() {
-        let name = TypeName::from(String::from("tip3p-O::tip3p-H"));
-        assert_eq!(name.reversed().as_str(), "tip3p-H::tip3p-O");
-    }
-
-    #[test]
-    fn reversed_keeps_empty_wildcard_positions() {
-        let name = TypeName::from(String::from("X-CT-CT-"));
-        assert_eq!(name.reversed().as_str(), "-CT-CT-X");
-        let wildcard = TypeName::from(String::from("-CT-CT-"));
-        assert_eq!(wildcard.reversed().as_str(), "-CT-CT-");
-        assert_eq!(wildcard.reversed().endpoints().len(), 4);
-    }
-
-    #[test]
-    fn reversed_of_single_type_is_itself() {
-        let name = TypeName::from(String::from("A"));
-        assert_eq!(name.reversed().as_str(), "A");
-    }
-
-    #[test]
-    fn canonical_picks_bytewise_smaller_orientation() {
-        let backward = TypeName::from(String::from("h1-c3-c3"));
-        let forward = TypeName::from(String::from("c3-c3-h1"));
-        assert_eq!(backward.canonical().as_str(), "c3-c3-h1");
-        assert_eq!(forward.canonical().as_str(), "c3-c3-h1");
-    }
-
-    #[test]
-    fn canonical_honours_double_colon() {
-        let name = TypeName::from(String::from("tip3p-O::tip3p-H"));
-        assert_eq!(name.canonical().as_str(), "tip3p-H::tip3p-O");
-    }
-
-    #[test]
-    fn canonical_keeps_four_wildcard_endpoints() {
-        let name = TypeName::from(String::from("-CT-CT-"));
-        let canonical = name.canonical();
-        assert_eq!(canonical.as_str(), "-CT-CT-");
-        assert_eq!(canonical.endpoints(), vec!["", "CT", "CT", ""]);
+    fn orient_gives_one_spelling_for_both_orders() {
+        assert_eq!(TypeName::orient(&["oh", "c3"]), vec!["c3", "oh"]);
+        assert_eq!(TypeName::orient(&["c3", "oh"]), vec!["c3", "oh"]);
+        assert_eq!(
+            TypeName::orient(&["oh", "c3", "hc"]),
+            TypeName::orient(&["hc", "c3", "oh"])
+        );
+        assert_eq!(
+            TypeName::orient(&["hc", "c3", "c3", "hc"]),
+            vec!["hc", "c3", "c3", "hc"]
+        );
     }
 
     #[test]
     fn display_prints_the_whole_name() {
-        let name = TypeName::from(String::from("C_3-C_R@1.5"));
+        let name = TypeName::join(&["C_3", "C_R"])
+            .unwrap()
+            .with_qualifier(&["1.5"])
+            .unwrap();
         assert_eq!(format!("{name}"), "C_3-C_R@1.5");
     }
 
@@ -632,12 +567,14 @@ mod tests {
     // TypeName: `@` qualifier
     // ------------------------------------------------------------------
 
+    /// `C_3-C_R`, the bond every qualifier test starts from.
+    fn c3_cr() -> TypeName {
+        TypeName::join(&["C_3", "C_R"]).unwrap()
+    }
+
     #[test]
     fn with_qualifier_appends_single_field() {
-        let name = TypeName::join(&["C_3", "C_R"])
-            .unwrap()
-            .with_qualifier(&["1.5"])
-            .unwrap();
+        let name = c3_cr().with_qualifier(&["1.5"]).unwrap();
         assert_eq!(name.as_str(), "C_3-C_R@1.5");
     }
 
@@ -652,117 +589,74 @@ mod tests {
 
     #[test]
     fn with_qualifier_rejects_already_qualified_name() {
-        let name = TypeName::from(String::from("C_3-C_R@1.5"));
+        let name = c3_cr().with_qualifier(&["1.5"]).unwrap();
         assert!(name.with_qualifier(&["2"]).is_err());
     }
 
     #[test]
     fn with_qualifier_rejects_no_fields() {
-        let name = TypeName::from(String::from("C_3-C_R"));
-        assert!(name.with_qualifier(&[]).is_err());
+        assert!(c3_cr().with_qualifier(&[]).is_err());
     }
 
     #[test]
     fn with_qualifier_rejects_empty_field() {
-        let name = TypeName::from(String::from("C_3-C_R"));
-        assert!(name.with_qualifier(&[""]).is_err());
-        assert!(name.with_qualifier(&["1", ""]).is_err());
+        assert!(c3_cr().with_qualifier(&[""]).is_err());
+        assert!(c3_cr().with_qualifier(&["1", ""]).is_err());
     }
 
     #[test]
     fn with_qualifier_rejects_field_containing_underscore() {
-        let name = TypeName::from(String::from("C_3-C_R"));
-        assert!(name.with_qualifier(&["1_5"]).is_err());
+        assert!(c3_cr().with_qualifier(&["1_5"]).is_err());
     }
 
     #[test]
     fn with_qualifier_rejects_field_containing_at() {
-        let name = TypeName::from(String::from("C_3-C_R"));
-        assert!(name.with_qualifier(&["1@5"]).is_err());
+        assert!(c3_cr().with_qualifier(&["1@5"]).is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // TypeName::infer_endpoints: label-only sources
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn infer_endpoints_splits_on_hyphen() {
+        assert_eq!(
+            TypeName::infer_endpoints("c3-c3-h1", 3).unwrap(),
+            vec!["c3", "c3", "h1"]
+        );
     }
 
     #[test]
-    fn qualifier_is_text_after_first_at() {
-        let bond = TypeName::from(String::from("C_3-C_R@1.5"));
-        assert_eq!(bond.qualifier(), Some("1.5"));
-        let angle = TypeName::from(String::from("C_3-C_R-O_2@1_1.5_2"));
-        assert_eq!(angle.qualifier(), Some("1_1.5_2"));
-        let odd = TypeName::from(String::from("a-b@c@d"));
-        assert_eq!(odd.qualifier(), Some("c@d"));
-        assert_eq!(odd.endpoints(), vec!["a", "b"]);
+    fn infer_endpoints_splits_on_double_colon_first() {
+        assert_eq!(
+            TypeName::infer_endpoints("tip3p-O::tip3p-H", 2).unwrap(),
+            vec!["tip3p-O", "tip3p-H"]
+        );
     }
 
     #[test]
-    fn qualifier_is_none_for_unqualified_name() {
-        let name = TypeName::from(String::from("C_3-C_R"));
-        assert_eq!(name.qualifier(), None);
+    fn infer_endpoints_leaves_the_qualifier_out() {
+        assert_eq!(
+            TypeName::infer_endpoints("C_3-C_R-O_2@1_1.5_2", 3).unwrap(),
+            vec!["C_3", "C_R", "O_2"]
+        );
     }
 
     #[test]
-    fn endpoints_exclude_qualifier() {
-        let name = TypeName::from(String::from("C_3-C_R@1.5"));
-        assert_eq!(name.endpoints(), vec!["C_3", "C_R"]);
+    fn infer_endpoints_keeps_empty_wildcard_positions() {
+        assert_eq!(
+            TypeName::infer_endpoints("-CT-CT-", 4).unwrap(),
+            vec!["", "CT", "CT", ""]
+        );
     }
 
     #[test]
-    fn endpoints_exclude_qualifier_with_double_colon() {
-        let name = TypeName::from(String::from("tip3p-O::tip3p-H@1"));
-        assert_eq!(name.endpoints(), vec!["tip3p-O", "tip3p-H"]);
-    }
-
-    #[test]
-    fn reversed_bond_keeps_qualifier_fields() {
-        let name = TypeName::from(String::from("C_3-O_R@1.5"));
-        assert_eq!(name.reversed().as_str(), "O_R-C_3@1.5");
-    }
-
-    #[test]
-    fn reversed_qualified_double_colon_bond() {
-        let name = TypeName::from(String::from("tip3p-O::tip3p-H@1"));
-        assert_eq!(name.reversed().as_str(), "tip3p-H::tip3p-O@1");
-    }
-
-    #[test]
-    fn reversed_angle_swaps_first_two_qualifier_fields() {
-        let name = TypeName::from(String::from("C_3-C_R-O_2@1_1.5_2"));
-        assert_eq!(name.reversed().as_str(), "O_2-C_R-C_3@1.5_1_2");
-        assert_eq!(name.reversed().reversed().as_str(), "C_3-C_R-O_2@1_1.5_2");
-    }
-
-    #[test]
-    fn reversed_angle_with_single_field_keeps_it() {
-        let name = TypeName::from(String::from("a-b-c@7"));
-        assert_eq!(name.reversed().as_str(), "c-b-a@7");
-    }
-
-    #[test]
-    fn canonical_is_shared_by_both_angle_orientations() {
-        let forward = TypeName::from(String::from("C_3-C_R-O_2@1_1.5_2"));
-        let backward = TypeName::from(String::from("O_2-C_R-C_3@1.5_1_2"));
-        assert_eq!(forward.canonical().as_str(), "C_3-C_R-O_2@1_1.5_2");
-        assert_eq!(backward.canonical().as_str(), "C_3-C_R-O_2@1_1.5_2");
-    }
-
-    #[test]
-    fn canonical_compares_qualifier_for_symmetric_endpoints() {
-        // Endpoints read the same both ways; only the swapped qualifier differs.
-        let forward = TypeName::from(String::from("a-b-a@1_2_0"));
-        let backward = TypeName::from(String::from("a-b-a@2_1_0"));
-        assert_eq!(forward.reversed().as_str(), "a-b-a@2_1_0");
-        assert_eq!(forward.canonical().as_str(), "a-b-a@1_2_0");
-        assert_eq!(backward.canonical().as_str(), "a-b-a@1_2_0");
-    }
-
-    #[test]
-    fn canonical_of_qualified_bond_includes_qualifier() {
-        let name = TypeName::from(String::from("O_R-C_3@1.5"));
-        assert_eq!(name.canonical().as_str(), "C_3-O_R@1.5");
-    }
-
-    #[test]
-    fn reversed_torsion_keeps_qualifier_fields() {
-        let name = TypeName::from(String::from("H_-C_3-C_3-O_3@0.2_3_0"));
-        assert_eq!(name.reversed().as_str(), "O_3-C_3-C_3-H_@0.2_3_0");
+    fn infer_endpoints_off_the_arity_is_an_error_naming_the_label() {
+        let Err(err) = TypeName::infer_endpoints("c3-h1", 3) else {
+            panic!("two endpoints for an arity of three must be rejected");
+        };
+        assert!(err.contains("c3-h1"), "{err}");
+        assert!(err.contains('3'), "{err}");
     }
 
     // ------------------------------------------------------------------
@@ -856,76 +750,40 @@ mod tests {
         assert!(labels.block("impropers").is_none());
     }
 
+    /// A label is a type name, matched exactly: a bond labelled both ways
+    /// round is two labels with two ids, in sorted order.
     #[test]
-    fn reversed_bond_labels_collapse_including_qualified() {
+    fn reversed_bond_labels_are_two_labels() {
         let mut frame = Frame::new();
-        frame.insert("bonds", label_block(&["C_3-O_R@1.5", "O_R-C_3@1.5"]));
+        frame.insert("bonds", label_block(&["h1-c3", "c3-h1", "h1-c3"]));
         let labels = TypeLabels::from_frame(&frame).unwrap();
         let bonds = labels.block("bonds").expect("bonds resolved");
-        assert_eq!(bonds.type_ids(), &[1, 1][..]);
         assert_eq!(
             bonds.labels().map(|l| l.to_vec()),
-            Some(vec!["C_3-O_R@1.5".to_string()])
+            Some(vec!["c3-h1".to_string(), "h1-c3".to_string()])
         );
-        assert_eq!(bonds.n_types(), 1);
+        assert_eq!(bonds.type_ids(), &[2, 1, 2][..]);
+        assert_eq!(bonds.n_types(), 2);
     }
 
-    /// UFF-style qualified labels in both orientations, bonds and angles in one
-    /// frame: each block collapses to one id, keyed by the canonical label (the
-    /// angle's reversal swaps its two bond-order fields).
+    /// Qualified angle labels in both orientations stay two labels too.
     #[test]
-    fn reversed_uff_qualified_bond_and_angle_labels_give_one_id_each() {
+    fn reversed_qualified_angle_labels_are_two_labels() {
         let mut frame = Frame::new();
-        frame.insert("bonds", label_block(&["C_3-O_R@1.5", "O_R-C_3@1.5"]));
         frame.insert(
             "angles",
             label_block(&["C_3-C_R-O_2@1_1.5_2", "O_2-C_R-C_3@1.5_1_2"]),
         );
-
-        let labels = TypeLabels::from_frame(&frame).unwrap();
-
-        let bonds = labels.block("bonds").expect("bonds resolved");
-        assert_eq!(bonds.type_ids(), &[1, 1][..]);
-        assert_eq!(bonds.n_types(), 1);
-        assert_eq!(
-            bonds.labels().map(|l| l.to_vec()),
-            Some(vec!["C_3-O_R@1.5".to_string()])
-        );
-        let angles = labels.block("angles").expect("angles resolved");
-        assert_eq!(angles.type_ids(), &[1, 1][..]);
-        assert_eq!(angles.n_types(), 1);
-        assert_eq!(
-            angles.labels().map(|l| l.to_vec()),
-            Some(vec!["C_3-C_R-O_2@1_1.5_2".to_string()])
-        );
-    }
-
-    #[test]
-    fn reversed_angle_labels_collapse() {
-        let mut frame = Frame::new();
-        frame.insert("angles", label_block(&["h1-c3-c3", "c3-c3-h1"]));
         let labels = TypeLabels::from_frame(&frame).unwrap();
         let angles = labels.block("angles").expect("angles resolved");
-        assert_eq!(angles.type_ids(), &[1, 1][..]);
         assert_eq!(
             angles.labels().map(|l| l.to_vec()),
-            Some(vec!["c3-c3-h1".to_string()])
+            Some(vec![
+                "C_3-C_R-O_2@1_1.5_2".to_string(),
+                "O_2-C_R-C_3@1.5_1_2".to_string(),
+            ])
         );
-        assert_eq!(angles.n_types(), 1);
-    }
-
-    #[test]
-    fn reversed_dihedral_labels_collapse() {
-        let mut frame = Frame::new();
-        frame.insert("dihedrals", label_block(&["oh-c3-c3-hc", "hc-c3-c3-oh"]));
-        let labels = TypeLabels::from_frame(&frame).unwrap();
-        let dihedrals = labels.block("dihedrals").expect("dihedrals resolved");
-        assert_eq!(dihedrals.type_ids(), &[1, 1][..]);
-        assert_eq!(
-            dihedrals.labels().map(|l| l.to_vec()),
-            Some(vec!["hc-c3-c3-oh".to_string()])
-        );
-        assert_eq!(dihedrals.n_types(), 1);
+        assert_eq!(angles.type_ids(), &[1, 2][..]);
     }
 
     #[test]

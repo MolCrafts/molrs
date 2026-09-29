@@ -285,21 +285,11 @@ impl PyUnitRegistry {
         self.parse_inner(expression)
     }
 
-    #[pyo3(name = "Unit")]
-    fn unit(&self, expression: &str) -> PyResult<PyUnit> {
-        self.parse_inner(expression)
-    }
-
     fn quantity(&self, value: f64, expression: &str) -> PyResult<PyQuantity> {
         self.inner
             .quantity(value, expression)
             .map(PyQuantity::new)
             .map_err(units_error)
-    }
-
-    #[pyo3(name = "Quantity")]
-    fn quantity_alias(&self, value: f64, expression: &str) -> PyResult<PyQuantity> {
-        self.quantity(value, expression)
     }
 
     #[pyo3(signature = (name, factor, dimension, *, aliases = Vec::new(), symbol = None, offset = 0.0, prefixable = false))]

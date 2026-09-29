@@ -933,12 +933,12 @@ mod ghost_path_tests {
             )
             .unwrap(),
             scalar_mass(12.0, pos0.nrows()).unwrap().view(),
-            Some(bx.clone()),
+            Some(bx),
         )
         .unwrap();
 
         let mass = scalar_mass(12.0, pos0.nrows()).unwrap();
-        let mut state = ig.initial(pos0.clone(), vel0).unwrap();
+        let mut state = ig.initial(pos0, vel0).unwrap();
         let total = |st: &MDState| st.energy + kinetic_energy(mass.view(), st.vel.view()).unwrap();
         let e0 = total(&state);
         let scale = e0.abs().max(1.0);

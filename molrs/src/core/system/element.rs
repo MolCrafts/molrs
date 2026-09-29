@@ -1141,45 +1141,6 @@ impl Element {
             .find(|e| e.symbol().eq_ignore_ascii_case(sym))
     }
 
-    /// Whether this element sits to the *left* of carbon in its periodic-table
-    /// row (group 1, 2 and the group-13 triad B/Al/Ga/…).
-    ///
-    /// RDKit calls these "early" (electron-poor) atoms. The distinction matters
-    /// for charged-atom valence: an early atom carrying a positive charge has
-    /// *fewer* electrons available for bonding, while a late atom (N, O, F …)
-    /// carrying a negative charge gains a lone pair it can protonate. Both are
-    /// captured exactly by the `effective_atomic_number` shift below, so this
-    /// predicate is exposed mainly for callers that want the sign explicitly.
-    ///
-    /// Mirrors `RDKit::isEarlyAtom` (`Code/GraphMol/Atom.cpp`).
-    pub const fn is_early_atom(self) -> bool {
-        matches!(
-            self,
-            Element::Li
-                | Element::Be
-                | Element::B
-                | Element::Na
-                | Element::Mg
-                | Element::Al
-                | Element::K
-                | Element::Ca
-                | Element::Sc
-                | Element::Ti
-                | Element::V
-                | Element::Cr
-                | Element::Mn
-                | Element::Rb
-                | Element::Sr
-                | Element::Y
-                | Element::Zr
-                | Element::Nb
-                | Element::Cs
-                | Element::Ba
-                | Element::Fr
-                | Element::Ra
-        )
-    }
-
     /// Effective element after folding a formal charge into the proton count,
     /// per RDKit's `getEffectiveAtomicNum`: `Z_eff = Z − formal_charge`.
     ///

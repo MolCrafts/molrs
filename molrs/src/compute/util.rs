@@ -9,36 +9,12 @@
 //!    views when the underlying columns are contiguous (the common case for
 //!    `Frame` and `FrameView`), avoiding the per-atom copies of an owned `Vec`.
 
-use molrs::Block;
-use molrs::Frame;
 use molrs::spatial::simbox::{BoxKind, SimBox};
-use molrs::store::block::BlockDtype;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 use ndarray::array;
 
 use super::error::ComputeError;
-
-/// Extract a float column from a Block as a contiguous slice,
-/// respecting compile-time precision (`F` = f32 or f64).
-pub fn get_f_slice<'a>(
-    block: &'a Block,
-    block_name: &'static str,
-    col_name: &'static str,
-) -> Result<&'a [F], ComputeError> {
-    let col = block.get(col_name).ok_or(ComputeError::MissingColumn {
-        block: block_name,
-        col: col_name,
-    })?;
-    let arr = <F as BlockDtype>::from_column(col).ok_or(ComputeError::MissingColumn {
-        block: block_name,
-        col: col_name,
-    })?;
-    arr.as_slice().ok_or(ComputeError::MissingColumn {
-        block: block_name,
-        col: col_name,
-    })
-}
 
 // ---------------------------------------------------------------------------
 // MIC helper — hoisted, allocation-free
@@ -117,33 +93,9 @@ impl<'a> MicHelper<'a> {
     }
 }
 
-/// Compute MIC displacement vector from `from` to `to`.
-///
-/// **Prefer [`MicHelper::from_simbox`] + [`MicHelper::disp`] in hot loops** —
-/// this free function resolves the box kind on every call. Kept for
-/// convenience at cold call sites.
-#[inline]
-pub fn mic_disp(simbox: Option<&SimBox>, from: [F; 3], to: [F; 3]) -> [F; 3] {
-    MicHelper::from_simbox(simbox).disp(from, to)
-}
-
 // ---------------------------------------------------------------------------
 // Position access — borrow when contiguous, copy only if forced
 // ---------------------------------------------------------------------------
-
-/// Positional slices: (x, y, z) each of length N.
-pub type PositionSlices<'a> = (&'a [F], &'a [F], &'a [F]);
-
-/// Extract x, y, z slices from the "atoms" block of a Frame.
-pub fn get_positions(frame: &Frame) -> Result<PositionSlices<'_>, ComputeError> {
-    let atoms = frame
-        .get("atoms")
-        .ok_or(ComputeError::MissingBlock { name: "atoms" })?;
-    let xs = get_f_slice(atoms, "atoms", "x")?;
-    let ys = get_f_slice(atoms, "atoms", "y")?;
-    let zs = get_f_slice(atoms, "atoms", "z")?;
-    Ok((xs, ys, zs))
-}
 
 /// Position storage: either a borrow from a contiguous column (zero copy) or
 /// an owned `Vec` (required when the view is non-contiguous). Callers reach

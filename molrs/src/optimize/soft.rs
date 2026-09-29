@@ -16,10 +16,13 @@
 
 use std::collections::HashSet;
 
+use crate::ff::potential::end_pairs;
 use crate::ff::potential::soft::{HarmTerm, NbTerm, SoftPotential};
 use crate::spatial::neighbors::NeighborQuery;
 use crate::spatial::simbox::SimBox;
 use crate::store::frame::Frame;
+use crate::store::schema::block_names::{ANGLES, BONDS};
+use crate::store::schema::consts::{ATOMI, ATOMJ, ATOMK};
 use crate::types::F;
 use ndarray::{ArrayView2, array};
 
@@ -46,8 +49,8 @@ impl SoftSpec {
     /// the robust path for a packed/assembled frame whose connectivity lives in
     /// its topology blocks.
     pub fn from_frame(frame: &Frame) -> Self {
-        let bonds = read_pairs(frame, "bonds", "atomi", "atomj");
-        let angles = read_pairs(frame, "angles", "atomi", "atomk");
+        let bonds = end_pairs(frame, BONDS, ATOMI, ATOMJ);
+        let angles = end_pairs(frame, ANGLES, ATOMI, ATOMK);
         let mut excluded: std::collections::HashSet<(usize, usize)> =
             bonds.iter().copied().collect();
         for &k in &angles {
@@ -66,28 +69,8 @@ impl SoftSpec {
         }
     }
 
-    pub fn with_sigma(mut self, s: F) -> Self {
-        self.sigma = s;
-        self
-    }
-    pub fn with_repulsion(mut self, a: F) -> Self {
-        self.a_rep = a;
-        self
-    }
     pub fn with_attraction(mut self, b: F) -> Self {
         self.b_attract = b;
-        self
-    }
-    pub fn with_rcut(mut self, r: F) -> Self {
-        self.rcut = r;
-        self
-    }
-    pub fn with_bond_k(mut self, k: F) -> Self {
-        self.k_bond = k;
-        self
-    }
-    pub fn with_angle_k(mut self, k: F) -> Self {
-        self.k_ang = k;
         self
     }
 
@@ -230,25 +213,6 @@ fn harm_term(coords: &[[F; 3]], i: usize, j: usize, box_edge: Option<F>) -> Harm
     }
     let r0 = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
     (i, j, r0, shift)
-}
-
-/// Read a topology block's two atom-index columns as canonical `(min, max)`
-/// pairs (empty if the block/columns are absent).
-fn read_pairs(frame: &Frame, block: &str, col_a: &str, col_b: &str) -> Vec<(usize, usize)> {
-    let Some(b) = frame.get(block) else {
-        return Vec::new();
-    };
-    let (Some(a_col), Some(b_col)) = (b.get_uint(col_a), b.get_uint(col_b)) else {
-        return Vec::new();
-    };
-    a_col
-        .iter()
-        .zip(b_col.iter())
-        .map(|(&i, &j)| {
-            let (i, j) = (i as usize, j as usize);
-            (i.min(j), i.max(j))
-        })
-        .collect()
 }
 
 #[cfg(test)]

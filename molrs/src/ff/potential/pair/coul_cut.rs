@@ -38,6 +38,7 @@ use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
+use molrs::store::schema::block_names::{ATOMS, PAIRS};
 use molrs::types::F;
 
 /// Below this squared separation a pair's force has no direction, so only the
@@ -379,13 +380,13 @@ pub fn pair_coul_cut_ctor(
         .unwrap_or(F::INFINITY);
 
     let atoms = frame
-        .get("atoms")
+        .get(ATOMS)
         .ok_or_else(|| "PairCoulCut: frame missing \"atoms\" block".to_string())?;
     let charges = atoms
         .get_float("charge")
         .ok_or_else(|| "PairCoulCut: atoms block missing \"charge\" column".to_string())?;
     let block = frame
-        .get("pairs")
+        .get(PAIRS)
         .ok_or_else(|| "PairCoulCut: frame missing \"pairs\" block".to_string())?;
     let i_col = block
         .get_uint("atomi")
@@ -440,7 +441,7 @@ pub fn pair_coul_cut_typed_ctor(
     // requiring the kernel to know it would be asking it a question it no
     // longer answers.
     let atoms = frame
-        .get("atoms")
+        .get(ATOMS)
         .ok_or_else(|| "PairCoulCut: frame missing \"atoms\" block".to_string())?;
     let charge = atoms
         .get_float("charge")

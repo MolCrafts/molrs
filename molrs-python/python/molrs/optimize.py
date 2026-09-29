@@ -8,8 +8,8 @@ field. Construct the potentials from :mod:`molrs.ff`, hand them here.
 from __future__ import annotations
 
 from ._lib import (
-    LBFGS as LBFGS,
-    OptReport as OptReport,
+    LBFGS,
+    OptReport,
 )
 
 __all__ = [

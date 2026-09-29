@@ -2,13 +2,12 @@
 
 The directive model (what is read, what is refused, what a skip does) is proved
 in Rust (``ff::forcefield::readers::gromacs``). This test only asserts that the
-public ``molrs.ff.read_gromacs_top_ff_str`` maps a refused directive to
+public ``molrs.ff.read_gromacs_top_ff`` maps a refused directive to
 ``ValueError`` and that its ``skip_directives`` keyword reaches the Rust reader.
 """
 
-import pytest
-
 import molrs
+import pytest
 
 # One OPLS-AA atom type (GROMACS v2026.3 ``ffnonbonded.itp`` row) followed by a
 # ``[ constrainttypes ]`` section, which the reader refuses unless skipped.
@@ -27,9 +26,11 @@ CT  HC  1  0.10900
 """
 
 
-def test_constrainttypes_is_refused_without_skip_and_read_past_with_it():
+def test_constrainttypes_is_refused_without_skip_and_read_past_with_it(tmp_path):
+    path = tmp_path / "ff.top"
+    path.write_text(_TOP)
     with pytest.raises(ValueError, match="constrainttypes"):
-        molrs.ff.read_gromacs_top_ff_str(_TOP)
+        molrs.ff.read_gromacs_top_ff(path)
 
-    ff = molrs.ff.read_gromacs_top_ff_str(_TOP, skip_directives=["constrainttypes"])
-    assert isinstance(ff, molrs.ff.ForceField)
+    ff = molrs.ff.read_gromacs_top_ff(path, skip_directives=["constrainttypes"])
+    assert type(ff) is molrs.ff.ForceField

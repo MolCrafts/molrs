@@ -31,7 +31,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use molrs::{AtomId, Atomistic, MatchOptions, SmartsPattern};
+use molrs::perceive::smarts::{MatchOptions, SmartsPattern};
+use molrs::{AtomId, Atomistic};
 
 use super::deps::OplsDependencyAnalyzer;
 use super::meta::OplsTypingMeta;

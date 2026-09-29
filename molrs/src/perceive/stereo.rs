@@ -117,7 +117,7 @@ pub fn chiral_volume(mol: &Atomistic, center: AtomId, neighbor_order: &[AtomId; 
 pub fn find_chiral_centers(mol: &Atomistic) -> Vec<AtomId> {
     let mut centers = Vec::new();
     for (id, _atom) in mol.atoms() {
-        let nbrs: Vec<AtomId> = mol.neighbors(id).collect();
+        let nbrs: Vec<AtomId> = mol.neighbor_bonds(id).map(|(nb, _)| nb).collect();
         if nbrs.len() == 4 {
             // Check all four are distinct
             let mut unique = nbrs.clone();
@@ -139,7 +139,7 @@ pub fn find_chiral_centers(mol: &Atomistic) -> Vec<AtomId> {
 /// coordinates.
 ///
 /// The sign of the chiral volume is computed using the neighbours in the
-/// order they are returned by `mol.neighbors()`.  This gives a
+/// order they are returned by `mol.neighbor_bonds()`.  This gives a
 /// *geometry-based* label (not CIP-ranked), but is stable for a given
 /// molecule and useful for detecting whether two conformers have the same
 /// chirality.
@@ -149,7 +149,7 @@ pub fn find_chiral_centers(mol: &Atomistic) -> Vec<AtomId> {
 pub fn assign_stereo_from_3d(mol: &Atomistic) -> HashMap<AtomId, TetrahedralStereo> {
     let mut result = HashMap::new();
     for center in find_chiral_centers(mol) {
-        let nbrs: Vec<AtomId> = mol.neighbors(center).collect();
+        let nbrs: Vec<AtomId> = mol.neighbor_bonds(center).map(|(nb, _)| nb).collect();
         if nbrs.len() < 4 {
             result.insert(center, TetrahedralStereo::Unspecified);
             continue;
@@ -195,8 +195,16 @@ pub fn assign_bond_stereo_from_3d(mol: &Atomistic) -> HashMap<BondId, BondStereo
         let (a, b) = (bond.nodes[0], bond.nodes[1]);
 
         // Substituents on A (excluding B) and on B (excluding A)
-        let subs_a: Vec<AtomId> = mol.neighbors(a).filter(|&x| x != b).collect();
-        let subs_b: Vec<AtomId> = mol.neighbors(b).filter(|&x| x != a).collect();
+        let subs_a: Vec<AtomId> = mol
+            .neighbor_bonds(a)
+            .map(|(nb, _)| nb)
+            .filter(|&x| x != b)
+            .collect();
+        let subs_b: Vec<AtomId> = mol
+            .neighbor_bonds(b)
+            .map(|(nb, _)| nb)
+            .filter(|&x| x != a)
+            .collect();
 
         if subs_a.is_empty() || subs_b.is_empty() {
             result.insert(bid, BondStereo::None);

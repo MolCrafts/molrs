@@ -2,7 +2,7 @@
 
 **The top level is ``molrs::core``, and nothing else.** Storage (``Frame``,
 ``Block``, ``Trajectory``), the simulation cell and neighbor search, geometric
-regions, the molecular-graph hierarchy and its views, units, and the column
+regions, the molecular-graph hierarchy and its live views, units, and the column
 vocabulary — those are the primitives every other layer is written in terms of,
 so they answer to ``molrs.<Name>`` directly.
 
@@ -32,68 +32,68 @@ Each of those names has exactly one spelling — ``molrs.io.SmilesIR`` and
 nothing else — so there is one thing to learn, document, and grep for.
 """
 
-from ._lib import (
-    # Public exceptions
-    BlockDtypeError,
-    UnitsError,
-    # SimBox + neighbors
-    Box,
-    NeighborList,
-    Neighbors,
-    NeighborQuery,
-    VerletSkin,
-    # Block + Frame
-    Block,
-    MetaValue,
-    MetaDocument,
-    FrameMeta,
-    Frame,
-    FRAME_SCHEMA_VERSION,
-    # FFI ABI handshake (consumed by downstream handle-bridge extensions,
-    # e.g. molpack, at their import time)
-    _ffi_abi_token,
-    Unit,
-    Quantity,
-    UnitRegistry,
-    UnitPreset,
-    Trajectory,
-    ScalarObservable,
-    VectorObservable,
-    # Regions
-    TriMesh,
-    Sphere,
-    Cuboid,
-    Parallelepiped,
-    HalfSpace,
-    Cylinder,
-    Ellipsoid,
-    Polyhedron,
-    SphereUnion,
-    Region,
-    # An ordered path of points
-    Trace,
-    # Molecular graph hierarchy
-    Element,
-    Graph,
-    Atomistic,
-    CoarseGrain,
-    ExtractedSubgraph,
-    Reaction,
-)
-
-# Rich Python Frame/Block layer (pandas-style API; CSV engine in Rust on the
-# core Block). These subclass the bare PyO3 cores and SHADOW the top-level
-# ``molrs.Block`` / ``molrs.Frame`` as the canonical types — every public API
-# (io readers, etc.) yields these. The shadow is safe now that molpy re-exports
-# them instead of subclassing the bare core (chain spec 04). Internal modules
-# that need the raw cores import them from ``._lib`` directly.
 # `collections.abc.Mapping` is aliased so that it is not exported as `molrs.Mapping`.
 from collections.abc import Mapping as _AbcMapping
 from collections.abc import MutableMapping
 
 from . import keys, schema
-from . import frame  # noqa: F401
-from .frame import Block, Frame
+from ._lib import (
+    Angle,
+    Atom,
+    Atomistic,
+    Bead,
+    Block,
+    BlockDtypeError,
+    Bond,
+    Box,
+    CGBond,
+    CoarseGrain,
+    Cuboid,
+    Cylinder,
+    Dihedral,
+    DrudeParticle,
+    Element,
+    Ellipsoid,
+    ExtractedSubgraph,
+    Frame,
+    FrameMeta,
+    Graph,
+    HalfSpace,
+    Improper,
+    MasslessSite,
+    MetaDocument,
+    MetaValue,
+    NeighborList,
+    NeighborQuery,
+    Neighbors,
+    NodeRef,
+    Parallelepiped,
+    Polyhedron,
+    Port,
+    Quantity,
+    Reaction,
+    Refs,
+    Region,
+    RelationBuckets,
+    RelationRef,
+    ScalarObservable,
+    Sphere,
+    SphereUnion,
+    Topology,
+    Trace,
+    Trajectory,
+    TriMesh,
+    Unit,
+    UnitPreset,
+    UnitRegistry,
+    UnitsError,
+    VectorObservable,
+    VerletSkin,
+    VirtualSite,
+    # FFI ABI handshake, read by name by downstream handle-bridge extensions
+    # (molpack) at their import time.
+    _ffi_abi_token,  # noqa: F401
+)
 
 # `frame.meta` implements the full mapping protocol in Rust; this makes
 # `isinstance(frame.meta, MutableMapping)` say so too.
@@ -104,16 +104,18 @@ MutableMapping.register(FrameMeta)
 # molrec/tests/molrs_adapter.py:110-113
 _AbcMapping.register(MetaDocument)
 
-from . import compute  # analysis subpackage — one module per molrs::compute domain
-from . import conformer
-from . import ff
-from . import builder
-from . import io
-from . import stream
-from . import op
-from . import optimize
-from . import perceive
-from . import signal
+from . import (
+    builder,
+    compute,  # analysis subpackage — one module per molrs::compute domain
+    conformer,
+    ff,
+    io,
+    op,
+    optimize,
+    perceive,
+    signal,
+    stream,
+)
 
 
 def __getattr__(name: str):
@@ -133,92 +135,72 @@ def __dir__() -> list[str]:
     return sorted(set(globals()) | {"md"})
 
 
-from .views import (
-    Angle,
-    Atom,
-    Atomistic,
-    Bead,
-    Bond,
-    CGBond,
-    CoarseGrain,
-    Dihedral,
-    DrudeParticle,
-    GraphViews,
-    Improper,
-    MasslessSite,
-    NodeRef,
-    Port,
-    Refs,
-    RelationRef,
-    VirtualSite,
-)
-
 __all__ = [
+    "Angle",
+    "Atom",
+    "Atomistic",
+    "Bead",
+    "Block",
+    # ---- molrs::core ----
+    "BlockDtypeError",
+    "Bond",
+    "Box",
+    "CGBond",
+    "CoarseGrain",
+    "Cuboid",
+    "Cylinder",
+    "Dihedral",
+    "DrudeParticle",
+    "Element",
+    "Ellipsoid",
+    "ExtractedSubgraph",
+    "Frame",
+    "FrameMeta",
+    "Graph",
+    "HalfSpace",
+    "Improper",
+    "MasslessSite",
+    "MetaDocument",
+    "MetaValue",
+    "NeighborList",
+    "NeighborQuery",
+    "Neighbors",
+    "NodeRef",
+    "Parallelepiped",
+    "Polyhedron",
+    "Port",
+    "Quantity",
+    "Reaction",
+    "Refs",
+    "Region",
+    "RelationBuckets",
+    "RelationRef",
+    "ScalarObservable",
+    "Sphere",
+    "SphereUnion",
+    "Topology",
+    "Trace",
+    "Trajectory",
+    "TriMesh",
+    "Unit",
+    "UnitPreset",
+    "UnitRegistry",
+    "UnitsError",
+    "VectorObservable",
+    "VerletSkin",
+    "VirtualSite",
+    "builder",
     # Subpackages — everything above molrs::core is reached through one of these.
     "compute",
     "conformer",
     "ff",
-    "builder",
     "io",
+    "keys",
     "md",
     "op",
-    "stream",
     "optimize",
     "perceive",
-    "signal",
-    # ---- molrs::core ----
-    "BlockDtypeError",
-    "UnitsError",
-    "Box",
-    "NeighborList",
-    "Neighbors",
-    "NeighborQuery",
-    "VerletSkin",
-    "Block",
-    "MetaValue",
-    "MetaDocument",
-    "FrameMeta",
-    "Frame",
-    "FRAME_SCHEMA_VERSION",
-    "Unit",
-    "Quantity",
-    "UnitRegistry",
-    "UnitPreset",
-    "Trajectory",
-    "ScalarObservable",
-    "VectorObservable",
-    "TriMesh",
-    "Sphere",
-    "Cuboid",
-    "Parallelepiped",
-    "HalfSpace",
-    "Cylinder",
-    "Ellipsoid",
-    "Polyhedron",
-    "SphereUnion",
-    "Region",
-    "Trace",
-    "Element",
-    "Graph",
-    "Atomistic",
-    "CoarseGrain",
-    "ExtractedSubgraph",
-    "Reaction",
-    "NodeRef",
-    "RelationRef",
-    "Refs",
-    "GraphViews",
-    "Atom",
-    "VirtualSite",
-    "DrudeParticle",
-    "MasslessSite",
-    "Bond",
-    "Angle",
-    "Dihedral",
-    "Improper",
-    "Bead",
-    "CGBond",
-    "Port",
-    "keys",
     "schema",
+    "signal",
+    "stream",
 ]

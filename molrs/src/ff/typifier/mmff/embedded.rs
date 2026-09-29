@@ -92,7 +92,7 @@ fn try_force_field(name: &str) -> Result<ForceField, DefError> {
                 )?;
                 for row in MMFF_VDW {
                     let atom_type = row.atom_type.to_string();
-                    vdw.def_type_at(
+                    vdw.def_type(
                         &atom_type,
                         &[&atom_type],
                         Params::from_pairs(&[

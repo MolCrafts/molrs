@@ -4,6 +4,7 @@
 //! Centre atom is `atomj` (Wilson / RDKit convention: i–j–k with j central,
 //! fourth atom `atoml`).
 
+use molrs::store::schema::block_names::IMPROPERS;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
@@ -157,7 +158,7 @@ pub fn uff_inversion_ctor(
     _tp: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, String> {
-    let Some(block) = frame.get("impropers") else {
+    let Some(block) = frame.get(IMPROPERS) else {
         return Ok(Member::indexed(UffInversion {
             atom_i: vec![],
             atom_j: vec![],

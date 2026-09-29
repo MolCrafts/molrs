@@ -1,5 +1,6 @@
 //! Harmonic bond potential: E = 0.5 * k * (r - r0)^2
 
+use molrs::store::schema::block_names::BONDS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
@@ -132,7 +133,7 @@ pub fn bond_harmonic_ctor(
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
-        .get("bonds")
+        .get(BONDS)
         .ok_or_else(|| "BondHarmonic: frame missing \"bonds\" block".to_string())?;
     let i_col = block
         .get_uint("atomi")

@@ -1,9 +1,9 @@
 """Python-binding coverage for the native LAMMPS force-field reader.
 
 The parsing/unit logic is exercised in Rust (``ff::forcefield::readers::lammps``);
-these tests only assert the PyO3 surface — that ``read_lammps_forcefield`` /
-``read_lammps_forcefield_str`` yield the rich Python :class:`ForceField` (with the
-FFI capsule a consumer like molpack resolves) and that errors map to ``ValueError``.
+these tests only assert the PyO3 surface — that ``read_lammps_forcefield``
+yields the one :class:`ForceField` (with the FFI capsule a consumer like molpack
+resolves) and that errors map to ``ValueError``.
 """
 
 import math
@@ -34,6 +34,18 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
 _ENDPOINTS = ("atomi", "atomj", "atomk", "atoml")
 
 
+@pytest.fixture
+def read_ff(tmp_path):
+    """Read LAMMPS force-field text through a file, as a caller does."""
+
+    def read(text: str) -> molrs.ff.ForceField:
+        path = tmp_path / "in.ff"
+        path.write_text(text)
+        return molrs.ff.read_lammps_forcefield(path)
+
+    return read
+
+
 def _frame(atom_types: list[str], **blocks: list[str]) -> molrs.Frame:
     """A Frame with ``atoms`` typed ``atom_types`` and one labelled row per
     entry of each topology block (``bonds=[...]``, ``dihedrals=[...]``)."""
@@ -61,16 +73,15 @@ def _ff_frame() -> molrs.Frame:
     )
 
 
-def test_read_lammps_forcefield_str_yields_python_forcefield():
-    ff = molrs.ff.read_lammps_forcefield_str(_FF)
-    # Rich Python ForceField (shadow), not the bare PyO3 core.
-    assert type(ff).__module__ == "molrs.ff.forcefield"
+def test_read_lammps_forcefield_yields_the_one_forcefield(read_ff):
+    ff = read_ff(_FF)
+    assert type(ff) is molrs.ff.ForceField
     # The FFI capsule a consumer (molpack relaxer) resolves zero-copy.
     assert hasattr(ff, "_ffi_forcefield_capsule")
 
 
-def test_lammps_units_pass_through_binding():
-    ff = molrs.ff.read_lammps_forcefield_str(_FF)
+def test_lammps_units_pass_through_binding(read_ff):
+    ff = read_ff(_FF)
     # LAMMPS harmonic K(=228.89) → molrs k = 2K = 457.78 (½k form); r0 unchanged.
     bond = ff.get_style("bond", "harmonic")
     bt = bond.get_type_by_name("c3-c3")
@@ -92,13 +103,14 @@ def test_read_lammps_forcefield_from_path(tmp_path):
     assert len(ff.get_style("dihedral", "fourier").types) == 1
 
 
-def test_unknown_keyword_maps_to_value_error():
+def test_unknown_keyword_maps_to_value_error(read_ff):
     with pytest.raises(ValueError):
-        molrs.ff.read_lammps_forcefield_str("mystery_style foo\n")
+        read_ff("mystery_style foo\n")
 
 
-def test_write_lammps_data_coeffs_collapses_reverse_dihedral_names():
-    """Reverse bonded names share one type id → one coeff row, not two."""
+def test_write_lammps_data_coeffs_keeps_reverse_dihedral_names_apart(read_ff):
+    """A label is a type name: reverse spellings are two types, two ids, one
+    coeff row per id."""
     src = """\
 special_bonds lj 0.0 0.0 0.5 coul 0.0 0.0 0.833333
 pair_style lj/cut 10.0
@@ -108,7 +120,7 @@ dihedral_style fourier
 dihedral_coeff h1-c3-c3-os 2 0.250000 1 0.000000 0.000000 3 0.000000
 dihedral_coeff os-c3-c3-h1 2 0.250000 1 0.000000 0.000000 3 0.000000
 """
-    ff = molrs.ff.read_lammps_forcefield_str(src)
+    ff = read_ff(src)
     frame = _frame(["c3"], dihedrals=["h1-c3-c3-os", "os-c3-c3-h1"])
     text = molrs.ff.write_lammps_data_coeffs(ff, frame)
     body = text.split("Dihedral Coeffs", 1)[1]
@@ -117,11 +129,11 @@ dihedral_coeff os-c3-c3-h1 2 0.250000 1 0.000000 0.000000 3 0.000000
         for line in body.splitlines()
         if line.strip() and line.split()[0].isdigit()
     ]
-    assert ids == [1], text
+    assert ids == [1, 2], text
 
 
-def test_write_lammps_forcefield_skip_units():
-    ff = molrs.ff.read_lammps_forcefield_str(_FF)
+def test_write_lammps_forcefield_skip_units(read_ff):
+    ff = read_ff(_FF)
     text = molrs.ff.write_lammps_forcefield_str(
         ff, _ff_frame(), skip_pair_style=True, skip_units=True
     )
@@ -130,9 +142,9 @@ def test_write_lammps_forcefield_skip_units():
     assert "bond_coeff c3-c3" in text
 
 
-def test_skip_pair_style_omits_special_bonds():
+def test_skip_pair_style_omits_special_bonds(read_ff):
     """Coeff include must not inject Amber coul 1-4 = 1/1.2."""
-    ff = molrs.ff.read_lammps_forcefield_str(_FF)
+    ff = read_ff(_FF)
     text = molrs.ff.write_lammps_forcefield_str(
         ff, _ff_frame(), skip_pair_style=True, skip_units=True
     )
@@ -143,24 +155,24 @@ def test_skip_pair_style_omits_special_bonds():
     assert "0.833333" in full
 
 
-def test_write_lammps_forcefield_str_round_trip():
+def test_write_lammps_forcefield_str_round_trip(read_ff):
     """write_lammps_forcefield_str is the inverse of the reader (units + layout)."""
-    ff = molrs.ff.read_lammps_forcefield_str(_FF)
+    ff = read_ff(_FF)
     text = molrs.ff.write_lammps_forcefield_str(ff, _ff_frame())
     assert "pair_style lj/cut/coul/cut" in text
     assert "hybrid" not in text
     assert "bond_coeff c3-c3 228.890000 1.535400" in text
     assert "angle_coeff c3-c3-oh 76.790000 109.660000" in text
 
-    ff2 = molrs.ff.read_lammps_forcefield_str(text)
+    ff2 = read_ff(text)
     bt = ff2.get_style("bond", "harmonic").get_type_by_name("c3-c3")
     assert bt.params["k"] == pytest.approx(457.78)
     at = ff2.get_style("angle", "harmonic").get_type_by_name("c3-c3-oh")
     assert at.params["theta0"] == pytest.approx(math.radians(109.66))
 
 
-def test_write_lammps_forcefield_to_path(tmp_path):
-    ff = molrs.ff.read_lammps_forcefield_str(_FF)
+def test_write_lammps_forcefield_to_path(tmp_path, read_ff):
+    ff = read_ff(_FF)
     out = tmp_path / "out.ff"
     molrs.ff.write_lammps_forcefield(str(out), ff, _ff_frame())
     assert "bond_coeff c3-c3" in out.read_text()
@@ -174,10 +186,11 @@ def test_write_lammps_forcefield_to_path(tmp_path):
 
 def _hand_ff() -> molrs.ff.ForceField:
     ff = molrs.ff.ForceField("hand")
+    c3 = ff.def_style("atom", "full").def_type("c3", mass=12.011)
     ff.def_style("pair", "lj/cut", {"cutoff": 9.0}).def_type(
-        "c3", {"epsilon": 0.1078, "sigma": 3.39771}
+        "c3", c3, epsilon=0.1078, sigma=3.39771
     )
-    ff.def_style("bond", "harmonic").def_type("c3-c3", {"k": 457.78, "r0": 1.5354})
+    ff.def_style("bond", "harmonic").def_type("c3-c3", c3, c3, k=457.78, r0=1.5354)
     return ff
 
 
@@ -236,17 +249,3 @@ def test_ff_file_io_accepts_pathlike(tmp_path):
     out = tmp_path / "hand.ff"
     molrs.ff.write_lammps_forcefield(out, _hand_ff(), _labelled_frame())
     assert "bond_coeff c3-c3" in out.read_text()
-
-
-def test_lammps_coeff_params_returns_native_params():
-    params = molrs.ff.lammps_coeff_params("bond", "harmonic", ["450", "0.9572"])
-    assert params == {"k": 900.0, "r0": 0.9572}
-    with pytest.raises(ValueError, match="morse"):
-        molrs.ff.lammps_coeff_params("bond", "morse", ["1", "2", "3"], units="real")
-
-
-def test_lammps_coeff_values_renders_lammps_coeffs():
-    values = molrs.ff.lammps_coeff_values("bond", "harmonic", {"k": 900.0, "r0": 0.9572})
-    assert values == [450.0, 0.9572]
-    with pytest.raises(ValueError, match="morse"):
-        molrs.ff.lammps_coeff_values("bond", "morse", {"k": 1.0}, units="real")

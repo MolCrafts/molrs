@@ -3,14 +3,14 @@
 //!
 //! This is the third conversion of a [`CGSmilesIR`], beside
 //! [`to_atomistic`](CGSmilesIR::to_atomistic) (the whole molecule) and
-//! [`to_fragment`](CGSmilesIR::to_fragment) (one template per atomistic
+//! [`templates`](CGSmilesIR::templates) (one template per atomistic
 //! definition). Both of those need a fragment table; this one needs only the
 //! base block, so a base-only string such as `{[#1][#1][#1][#4]}` is its main
 //! input. Its main consumer is a bead-group pattern written as notation
 //! instead of built bead by bead.
 
 use crate::io::smiles::cgsmiles::ast::CGSmilesIR;
-use crate::io::smiles::cgsmiles::to_fragment::cg_build;
+use crate::io::smiles::cgsmiles::templates::cg_build;
 use crate::io::smiles::error::SmilesError;
 use molrs::system::coarsegrain::{BeadId, CoarseGrain};
 

@@ -65,7 +65,7 @@ mod tests {
         assert_eq!(mesh.n_faces(), 1);
         assert_eq!(mesh.n_vertices(), 3);
         assert_eq!(mesh.faces(), vec![0, 1, 2]);
-        assert_eq!(mesh.face_normals_f32(), vec![0.0, 0.0, 1.0]);
+        assert_eq!(mesh.face_normals(), vec![0.0, 0.0, 1.0]);
         assert_eq!(mesh.aabb(), vec![0.0, 0.0, 0.0, 2.0, 2.0, 0.0]);
         assert!(!mesh.is_watertight());
     }

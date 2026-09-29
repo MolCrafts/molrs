@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import itertools
+
 import molrs
 
 
@@ -10,7 +12,7 @@ def _chain(n: int) -> tuple[molrs.Atomistic, list[int]]:
     ids: list[int] = []
     for i in range(n):
         ids.append(mol.add_atom("C", float(i), 0.0, 0.0))
-    for a, b in zip(ids, ids[1:]):
+    for a, b in itertools.pairwise(ids):
         mol.add_bond(a, b)
     return mol, ids
 

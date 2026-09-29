@@ -37,9 +37,8 @@ and 2 (the Li), and every atom type is an element of C, H or Li.
 
 from __future__ import annotations
 
-import numpy as np
-
 import molrs
+import numpy as np
 from molrs import CoarseGrain
 from molrs.builder import Assembler, AxisOrienter, SitePlacer
 from molrs.ff.typifier import ElementTypifier
@@ -128,10 +127,11 @@ def test_operator_backmap_script_crosses_every_seam() -> None:
     assert type(sites) is molrs.CoarseGrain
     assert sites.n_beads == 3
 
-
     # 4. Assemble: each copy turned onto its site and placed on it; ports join
     #    the bonded sites.
-    world = Assembler(lib, SitePlacer(), AxisOrienter()).assemble(sites, molrs.Atomistic)
+    world = Assembler(lib, SitePlacer(), AxisOrienter()).assemble(
+        sites, molrs.Atomistic
+    )
     assert type(world) is molrs.Atomistic
     assert world.n_atoms == 7
     assert world.n_ports == 2

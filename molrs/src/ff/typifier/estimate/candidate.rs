@@ -143,12 +143,17 @@ mod tests {
         let mut ff = ForceField::new("gaff-shaped");
         ff.def_style("bond", "harmonic", Params::new())
             .unwrap()
-            .def_type("c3-hc", Params::from_pairs(&[("k", 330.6), ("r0", 1.0969)]))
+            .def_type(
+                "c3-hc",
+                &["c3", "hc"],
+                Params::from_pairs(&[("k", 330.6), ("r0", 1.0969)]),
+            )
             .unwrap();
         ff.def_style("dihedral", "periodic", Params::new())
             .unwrap()
             .def_type(
                 "X-c3-c3-X",
+                &["X", "c3", "c3", "X"],
                 Params::from_pairs(&[("k1", 0.16), ("periodicity1", 3.0), ("phase1", 0.0)]),
             )
             .unwrap();
@@ -156,6 +161,7 @@ mod tests {
             .unwrap()
             .def_type(
                 "X-X-ca-ha",
+                &["X", "X", "ca", "ha"],
                 Params::from_pairs(&[
                     ("k", 1.1),
                     ("periodicity", 2.0),

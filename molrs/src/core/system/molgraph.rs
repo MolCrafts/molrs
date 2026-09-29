@@ -49,6 +49,7 @@
 //! assert!((g.get_node(o).expect("get node").get_f64("x").unwrap() - 1.0).abs() < 1e-12);
 //! ```
 
+use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 use std::ops::{Index, IndexMut};
 
@@ -166,7 +167,7 @@ impl From<String> for PropValue {
 fn coerce_canonical(key: &str, pv: PropValue) -> Result<PropValue, MolRsError> {
     use crate::store::block::DType;
 
-    let Some(declared) = keys::canonical_dtype(key) else {
+    let Some(declared) = crate::store::schema::column(key).map(|spec| spec.dtype) else {
         return Ok(pv);
     };
     let offered = match &pv {
@@ -208,9 +209,7 @@ fn coerce_canonical(key: &str, pv: PropValue) -> Result<PropValue, MolRsError> {
             PropValue::Bool(_) => Ok(pv),
             PropValue::F64(_) | PropValue::Int(_) | PropValue::Str(_) => refuse(),
         },
-        DType::Float16
-        | DType::Float32
-        | DType::Int8
+        DType::Int8
         | DType::Int16
         | DType::Int64
         | DType::U8
@@ -249,7 +248,7 @@ fn emit_column<K: Key>(
     let inserted = if let Ok((data, valid)) = table.column_f64(key) {
         block.insert_nullable(key, Array1::from_vec(data.to_vec()).into_dyn(), mask(valid))
     } else if let Ok((data, valid)) = table.column_i32(key) {
-        if keys::canonical_dtype(key) == Some(DType::UInt) {
+        if crate::store::schema::column(key).is_some_and(|spec| spec.dtype == DType::UInt) {
             let unsigned: Vec<Idx> = data
                 .iter()
                 .map(|&v| {
@@ -280,95 +279,84 @@ fn mask(valid: &Validity) -> Vec<bool> {
     valid.as_slice().to_vec()
 }
 
-/// A [`Block`]'s columns split by element type, each paired with its validity
-/// mask — the reading counterpart of [`emit_column`].
+/// A [`Block`]'s columns in block order, each typed by element and paired with
+/// its validity mask — the reading counterpart of [`emit_column`].
 ///
 /// Both halves of [`MolGraph::read_frame`] need the same thing: walk a block's
 /// columns once, then ask each row for the properties it actually carries. A
 /// masked-off cell holds the element type's default, which is a value like any
 /// other to the block, so the mask is what keeps an unset `frag_id` from
-/// arriving as instance zero.
+/// arriving as instance zero. Block order is kept so the graph's components
+/// are first written — and later re-emitted by [`MolGraph::to_frame`] — in
+/// the order the frame carried them.
 struct MaskedColumns<'a> {
-    float: Vec<MaskedColumn<'a, F>>,
-    int: Vec<MaskedColumn<'a, I>>,
-    uint: Vec<MaskedColumn<'a, Idx>>,
-    string: Vec<MaskedColumn<'a, String>>,
-    boolean: Vec<MaskedColumn<'a, bool>>,
+    cols: Vec<(&'a str, TypedColumn<'a>, Option<&'a [bool]>)>,
 }
 
-/// One column of a [`Block`] as [`MaskedColumns`] reads it: its key, its dense
-/// values, and its validity mask — `None` when every row holds a value.
-type MaskedColumn<'a, T> = (&'a str, &'a ArrayD<T>, Option<&'a [bool]>);
+/// One block column borrowed at the element type [`MaskedColumns`] reads.
+///
+/// Unsigned columns are kept apart from signed ones because the canonical
+/// `id` / `mol_id` / `type_id` fields are UInt in the Frame schema and the
+/// graph stores them signed: they need narrowing, not a cast.
+enum TypedColumn<'a> {
+    Float(&'a ArrayD<F>),
+    Int(&'a ArrayD<I>),
+    UInt(&'a ArrayD<Idx>),
+    Str(&'a ArrayD<String>),
+    Bool(&'a ArrayD<bool>),
+}
 
 impl<'a> MaskedColumns<'a> {
-    /// Split `block`'s columns, skipping the keys in `skip` (a relation
+    /// Type `block`'s columns, skipping the keys in `skip` (a relation
     /// block's endpoint columns, which are structure rather than properties).
-    ///
-    /// Unsigned columns are kept apart from signed ones because the canonical
-    /// `id` / `mol_id` / `type_id` fields are UInt in the Frame schema and the
-    /// graph stores them signed: they need narrowing, not a cast.
+    /// Columns of any other element type are not graph properties and are
+    /// left out.
     fn of(block: &'a Block, skip: &[String]) -> Self {
-        let mut cols = MaskedColumns {
-            float: Vec::new(),
-            int: Vec::new(),
-            uint: Vec::new(),
-            string: Vec::new(),
-            boolean: Vec::new(),
-        };
+        let mut cols = Vec::with_capacity(block.len());
         for key in block.keys() {
             if skip.iter().any(|s| s == key) {
                 continue;
             }
-            let mask = block.validity(key);
-            if let Some(arr) = block.get_float(key) {
-                cols.float.push((key, arr, mask));
+            let typed = if let Some(arr) = block.get_float(key) {
+                TypedColumn::Float(arr)
             } else if let Some(arr) = block.get_int(key) {
-                cols.int.push((key, arr, mask));
+                TypedColumn::Int(arr)
             } else if let Some(arr) = block.get_uint(key) {
-                cols.uint.push((key, arr, mask));
+                TypedColumn::UInt(arr)
             } else if let Some(arr) = block.get_string(key) {
-                cols.string.push((key, arr, mask));
+                TypedColumn::Str(arr)
             } else if let Some(arr) = block.get_bool(key) {
-                cols.boolean.push((key, arr, mask));
-            }
+                TypedColumn::Bool(arr)
+            } else {
+                continue;
+            };
+            cols.push((key, typed, block.validity(key)));
         }
-        cols
+        MaskedColumns { cols }
     }
 
     /// The properties row `row` carries: one entry per column whose mask marks
-    /// the row as holding a value, in no particular order.
+    /// the row as holding a value, in block column order.
     ///
     /// # Errors
     ///
     /// [`MolRsError::Validation`] when an unsigned value exceeds the signed
     /// range the graph stores it in.
     fn cells(&self, row: usize) -> Result<Vec<(&'a str, PropValue)>, MolRsError> {
-        let mut out: Vec<(&'a str, PropValue)> = Vec::new();
-        for &(key, arr, mask) in &self.float {
-            if is_set(mask, row) {
+        let mut out: Vec<(&'a str, PropValue)> = Vec::with_capacity(self.cols.len());
+        for &(key, ref typed, mask) in &self.cols {
+            if !is_set(mask, row) {
+                continue;
+            }
+            let value = match typed {
                 #[allow(clippy::unnecessary_cast)]
-                out.push((key, PropValue::F64(arr[[row]] as f64)));
-            }
-        }
-        for &(key, arr, mask) in &self.int {
-            if is_set(mask, row) {
-                out.push((key, PropValue::Int(arr[[row]])));
-            }
-        }
-        for &(key, arr, mask) in &self.uint {
-            if is_set(mask, row) {
-                out.push((key, PropValue::Int(narrow_uint(key, arr[[row]])?)));
-            }
-        }
-        for &(key, arr, mask) in &self.string {
-            if is_set(mask, row) {
-                out.push((key, PropValue::Str(arr[[row]].clone())));
-            }
-        }
-        for &(key, arr, mask) in &self.boolean {
-            if is_set(mask, row) {
-                out.push((key, PropValue::Bool(arr[[row]])));
-            }
+                TypedColumn::Float(arr) => PropValue::F64(arr[[row]] as f64),
+                TypedColumn::Int(arr) => PropValue::Int(arr[[row]]),
+                TypedColumn::UInt(arr) => PropValue::Int(narrow_uint(key, arr[[row]])?),
+                TypedColumn::Str(arr) => PropValue::Str(arr[[row]].clone()),
+                TypedColumn::Bool(arr) => PropValue::Bool(arr[[row]]),
+            };
+            out.push((key, value));
         }
         Ok(out)
     }
@@ -416,7 +404,7 @@ fn narrow_uint(key: &str, v: Idx) -> Result<I, MolRsError> {
 /// `MolGraph` treats it purely as an opaque node payload.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Atom {
-    props: HashMap<String, PropValue>,
+    props: IndexMap<String, PropValue>,
 }
 
 impl Atom {
@@ -491,7 +479,7 @@ impl Atom {
 
     /// Remove a property, returning its value if present.
     pub fn remove(&mut self, key: &str) -> Option<PropValue> {
-        self.props.remove(key)
+        self.props.shift_remove(key)
     }
 
     /// Iterate over all property keys.
@@ -587,7 +575,7 @@ pub struct Relation {
     /// The participating node handles, in order (length == kind arity).
     pub nodes: SmallVec<[NodeId; 4]>,
     /// Per-relation property bag (domain meaning, e.g. a bond `"order"`).
-    pub props: HashMap<String, PropValue>,
+    pub props: IndexMap<String, PropValue>,
 }
 
 /// Storage for one relation kind: properties live in the aligned column table
@@ -624,7 +612,7 @@ pub struct Group {
     /// Optional parent group (for nesting).
     pub parent: Option<GroupId>,
     /// Per-group property bag (e.g. `resname`, `resid`).
-    pub props: HashMap<String, PropValue>,
+    pub props: IndexMap<String, PropValue>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1104,6 +1092,13 @@ impl MolGraph {
         self.kinds[kind.0 as usize].props.handles()
     }
 
+    /// The row of relation `id` in `kind`'s table — its position in
+    /// [`relation_ids`](Self::relation_ids) — or `None` if it is not live.
+    /// O(1).
+    pub fn relation_row(&self, kind: KindId, id: RelationId) -> Option<usize> {
+        self.kinds[kind.0 as usize].props.row(id)
+    }
+
     /// Number of relations of a kind.
     pub fn n_relations(&self, kind: KindId) -> usize {
         self.kinds[kind.0 as usize].props.len()
@@ -1113,7 +1108,7 @@ impl MolGraph {
     pub(crate) fn read_relation(&self, kind: KindId, id: RelationId) -> Relation {
         let k = &self.kinds[kind.0 as usize];
         let nodes = k.endpoints.get(id).cloned().unwrap_or_default();
-        let mut props = HashMap::new();
+        let mut props = IndexMap::new();
         for (key, cell) in k.props.row_cells(id) {
             let pv = match cell {
                 Cell::F64(v) => PropValue::F64(v),
@@ -1139,7 +1134,7 @@ impl MolGraph {
         &mut self,
         kind: KindId,
         id: RelationId,
-        props: &HashMap<String, PropValue>,
+        props: &IndexMap<String, PropValue>,
     ) -> Result<(), MolRsError> {
         let k = &mut self.kinds[kind.0 as usize];
         for (key, val) in props {
@@ -1174,7 +1169,9 @@ impl MolGraph {
                     continue;
                 }
                 if let Some(adj) = self.adjacency.get_mut(&ep) {
-                    adj.retain(|(_, rid)| *rid != id);
+                    // Relation handles are per-kind slotmap keys, so a handle
+                    // of another kind can be equal: match the kind too.
+                    adj.retain(|&(k, rid)| !(k == kind && rid == id));
                 }
             }
         }
@@ -1447,12 +1444,10 @@ impl MolGraph {
             .collect();
 
         // ---- atoms (node) block: one column per component (zero-copy reads;
-        // columns are already dense and aligned to node row order) ----
-        let mut all_keys: Vec<String> = self.nodes.columns().map(|s| s.to_owned()).collect();
-        all_keys.sort();
-
+        // columns are already dense and aligned to node row order), in the
+        // order the components were first written ----
         let mut atoms_block = Block::new();
-        for key in &all_keys {
+        for key in self.nodes.columns() {
             emit_column(&mut atoms_block, &self.nodes, key)?;
         }
         if n > 0 {
@@ -1505,10 +1500,9 @@ impl MolGraph {
                 .map_err(|e| MolRsError::validation(e.to_string()))?;
         }
 
-        // Property columns read straight from the column table.
-        let mut prop_keys: Vec<String> = k.props.columns().map(|s| s.to_owned()).collect();
-        prop_keys.sort();
-        for key in &prop_keys {
+        // Property columns read straight from the column table, in the order
+        // they were first written.
+        for key in k.props.columns() {
             emit_column(&mut block, &k.props, key)?;
         }
         Ok(block)
@@ -2367,6 +2361,56 @@ mod tests {
 
     // ----- Contract B: read_frame and the node/relation writers keep data -----
 
+    /// A frame read into a graph comes back out with its columns in the
+    /// order it went in, atoms and relation props alike — never sorted.
+    #[test]
+    fn to_frame_keeps_the_column_order_read_frame_saw() {
+        use ndarray::Array1;
+
+        let mut graph = MolGraph::new();
+        graph.register_kind("bonds", 2);
+        let mut atoms = Block::new();
+        atoms
+            .insert("z", Array1::from_vec(vec![0.0 as F, 1.0]).into_dyn())
+            .unwrap();
+        atoms
+            .insert(
+                "element",
+                Array1::from_vec(vec!["C".to_owned(), "O".to_owned()]).into_dyn(),
+            )
+            .unwrap();
+        atoms
+            .insert("x", Array1::from_vec(vec![2.0 as F, 3.0]).into_dyn())
+            .unwrap();
+        let mut bonds = Block::new();
+        bonds
+            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn())
+            .unwrap();
+        bonds
+            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn())
+            .unwrap();
+        bonds
+            .insert("type", Array1::from_vec(vec!["b".to_owned()]).into_dyn())
+            .unwrap();
+        bonds
+            .insert("order", Array1::from_vec(vec![2.0 as F]).into_dyn())
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert("bonds", bonds);
+
+        graph.read_frame(&frame).unwrap();
+        let out = graph.to_frame().unwrap();
+        assert_eq!(
+            out["atoms"].keys().collect::<Vec<_>>(),
+            ["z", "element", "x"]
+        );
+        assert_eq!(
+            out["bonds"].keys().collect::<Vec<_>>(),
+            ["atomi", "atomj", "type", "order"]
+        );
+    }
+
     /// A relation property column whose dtype contradicts the component the
     /// kind already holds cannot be stored, and dropping the value hands back
     /// a graph whose bonds silently lost the label the frame carried.
@@ -2868,5 +2912,52 @@ mod tests {
         assert_eq!(out.kind_ids().count(), n_kinds, "no kind was registered");
         assert_eq!(sorted_node_columns(&out), cols, "no column was added");
         assert!(out.node_table().column(FRAG_ID).is_none());
+    }
+
+    /// Relation handles are per-kind keys: the first relation of `widgets`
+    /// and the first of `bonds` share a handle value. Removing the widget must
+    /// leave the bond in both endpoints' adjacency.
+    #[test]
+    fn relation_row_is_the_position_in_relation_ids() {
+        let mut g = MolGraph::new();
+        let bonds = g.register_kind("bonds", 2);
+        let a = g.add_node();
+        let b = g.add_node();
+        let c = g.add_node();
+        let ab = g.add_relation(bonds, &[a, b]).expect("ab");
+        let bc = g.add_relation(bonds, &[b, c]).expect("bc");
+        let ca = g.add_relation(bonds, &[c, a]).expect("ca");
+        g.remove_relation(bonds, ab).expect("ab removed");
+
+        let ids: Vec<RelationId> = g.relation_ids(bonds).collect();
+        for (row, id) in ids.iter().enumerate() {
+            assert_eq!(g.relation_row(bonds, *id), Some(row));
+        }
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&bc) && ids.contains(&ca));
+        assert_eq!(g.relation_row(bonds, ab), None);
+    }
+
+    #[test]
+    fn removing_a_relation_keeps_an_equal_handle_of_another_kind() {
+        let mut g = MolGraph::new();
+        let bonds = g.register_kind("bonds", 2);
+        let widgets = g.register_kind("widgets", 2);
+        let a = g.add_node();
+        let b = g.add_node();
+        let bond = g.add_relation(bonds, &[a, b]).expect("bond");
+        let widget = g.add_relation(widgets, &[a, b]).expect("widget");
+        assert_eq!(
+            bond.data().as_ffi(),
+            widget.data().as_ffi(),
+            "fixture shares a handle"
+        );
+
+        g.remove_relation(widgets, widget).expect("widget removed");
+
+        let kinds_at_a: Vec<KindId> = g.neighbor_relations(a).map(|(k, _, _)| k).collect();
+        let kinds_at_b: Vec<KindId> = g.neighbor_relations(b).map(|(k, _, _)| k).collect();
+        assert_eq!(kinds_at_a, vec![bonds]);
+        assert_eq!(kinds_at_b, vec![bonds]);
     }
 }

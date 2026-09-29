@@ -4,9 +4,8 @@
 //! source of truth: a key is declared once, in its
 //! [`ColumnSpec`](crate::store::schema::ColumnSpec), and the constant follows.
 //!
-//! This module used to hold the list itself, plus a `canonical_dtype` lookup
-//! consulted by exactly one caller. Names and dtypes lived in separate tables
-//! and nothing tied them together, so they could — and did — drift apart.
+//! A key's dtype is [`crate::store::schema::column()`]'s answer, never a second
+//! table here.
 //!
 //! # Examples
 //!
@@ -41,13 +40,3 @@ pub const IMPROPER_TYPE_LABELS: &str = "improper_type_labels";
 /// The LAMMPS molecule-JSON reader writes it and its writer emits it back
 /// (`io::data::lammps_molecule`); molrs converts no frame between presets.
 pub const UNITS: &str = "units";
-
-/// Canonical storage dtype for a key, if the vocabulary declares one.
-///
-/// Thin forwarder to [`crate::store::schema::column()`]. Unlike the old
-/// hand-written table, this cannot disagree with what
-/// [`Block::insert`](crate::store::block::Block::insert) enforces: both read the
-/// same specs.
-pub fn canonical_dtype(key: &str) -> Option<crate::store::block::DType> {
-    crate::store::schema::column(key).map(|spec| spec.dtype)
-}

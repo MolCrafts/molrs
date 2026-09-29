@@ -22,7 +22,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use molrs::SmartsPattern;
+use molrs::perceive::smarts::SmartsPattern;
 
 use super::meta::OplsTypingMeta;
 

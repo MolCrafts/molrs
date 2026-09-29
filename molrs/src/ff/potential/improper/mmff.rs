@@ -1,5 +1,6 @@
 //! MMFF94 out-of-plane bending: E = 0.5*143.9325*koop*chi^2 (Wilson angle)
 
+use molrs::store::schema::block_names::IMPROPERS;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
@@ -144,7 +145,7 @@ pub fn mmff_oop_ctor(
     // Per-instance parameters: the MMFF typifier baked koop onto each improper.
     // This kernel only reads the column and evaluates.
     let block = frame
-        .get("impropers")
+        .get(IMPROPERS)
         .ok_or("mmff_oop: missing \"impropers\"")?;
     let ic = block.get_uint("atomi").ok_or("missing atomi")?;
     let jc = block.get_uint("atomj").ok_or("missing atomj")?;

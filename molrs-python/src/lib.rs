@@ -77,6 +77,11 @@ use crate::core::system::molgraph::{
     PyAtomistic, PyCoarseGrain, PyExtractedSubgraph, PyGraph, PyReaction, PySmartsMatch,
     PySmartsPattern,
 };
+use crate::core::system::topology::PyTopology;
+use crate::core::system::views::{
+    PyAngle, PyAtom, PyBead, PyBond, PyCGBond, PyDihedral, PyDrudeParticle, PyImproper,
+    PyMasslessSite, PyNodeRef, PyPort, PyRefs, PyRelationBuckets, PyRelationRef, PyVirtualSite,
+};
 use crate::core::units::{PyQuantity, PyUnit, PyUnitPreset, PyUnitRegistry};
 
 mod io;
@@ -176,10 +181,6 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMetaDocument>()?;
     m.add_class::<PyFrameMeta>()?;
     m.add_class::<PyFrame>()?;
-    m.add(
-        "FRAME_SCHEMA_VERSION",
-        ::molrs::store::frame::FRAME_SCHEMA_VERSION,
-    )?;
 
     // Live Frame streaming
     m.add_class::<PyControlCommand>()?;
@@ -203,20 +204,21 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(io::read_xyz, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_xyz_trajectory, m)?)?;
     m.add_class::<io::PyXYZTrajReader>()?;
-    m.add_function(wrap_pyfunction!(io::read_lammps, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_lammps_data, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_stl, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_lammps_traj, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_lammps_trajectory, m)?)?;
     m.add_class::<io::PyLAMMPSTrajReader>()?;
-    m.add_function(wrap_pyfunction!(io::read_dcd, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_dcd_trajectory, m)?)?;
     m.add_class::<io::PyDcdTrajReader>()?;
-    m.add_function(wrap_pyfunction!(io::read_trr, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_trr_trajectory, m)?)?;
     m.add_class::<io::PyTrrTrajReader>()?;
-    m.add_function(wrap_pyfunction!(io::read_xtc, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_xtc_trajectory, m)?)?;
     m.add_class::<io::PyXtcTrajReader>()?;
     m.add_function(wrap_pyfunction!(io::read_gro, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_chgcar_file, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_cube_file, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_cube_file, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_gro_trajectory, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_chgcar, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_cube, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_cube, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_mol2, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_mol2, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_top, m)?)?;
@@ -262,15 +264,17 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     }
     // Writers
     m.add_function(wrap_pyfunction!(io::write_gro, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_gro_trajectory, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_pdb, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_pdb_trajectory, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_xyz, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_lammps, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_lammps_traj, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_xyz_trajectory, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_lammps_data, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_lammps_trajectory, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_lammps_dump_local, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_dcd, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_trr, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_xtc, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_dcd_trajectory, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_trr_trajectory, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_xtc_trajectory, m)?)?;
     // SMILES
     m.add_class::<io::PySmilesIR>()?;
     m.add_function(wrap_pyfunction!(io::write_smiles_from_atomistic, m)?)?;
@@ -288,18 +292,17 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<io::cgsmiles::PyBondingDescriptor>()?;
 
     // Scientific-record (*.mrec) path doors. Native-only (filesystem store).
-    // Class is MrecTrajectoryReader on _lib so it does not collide with the
-    // dump concatenator; python/molrs/io/mrec.py aliases it TrajectoryReader.
+    // The classes are `molrs.io.mrec`'s; python/molrs/io/mrec re-exports them.
     #[cfg(feature = "fs")]
     {
-        m.add_function(wrap_pyfunction!(io::mrec::read_frame, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::write_frame, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::read_system, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::write_system, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::read_trajectory, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::write_trajectory, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::read_meta, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::section_names, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::read_mrec, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::write_mrec, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::read_mrec_system, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::write_mrec_system, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::read_mrec_trajectory, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::write_mrec_trajectory, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::read_mrec_meta, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::mrec_sections, m)?)?;
         m.add_function(wrap_pyfunction!(io::mrec::pack, m)?)?;
         m.add_function(wrap_pyfunction!(io::mrec::mrec_validate_path, m)?)?;
         m.add_function(wrap_pyfunction!(io::mrec::mrec_validate_meta, m)?)?;
@@ -339,9 +342,26 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Molecular graph hierarchy (base before subclasses)
     m.add_class::<PyElement>()?;
+    m.add_class::<PyTopology>()?;
     m.add_class::<PyGraph>()?;
     m.add_class::<PyAtomistic>()?;
     m.add_class::<PyCoarseGrain>()?;
+    // Live views over the leaves (base before subclasses)
+    m.add_class::<PyNodeRef>()?;
+    m.add_class::<PyAtom>()?;
+    m.add_class::<PyVirtualSite>()?;
+    m.add_class::<PyDrudeParticle>()?;
+    m.add_class::<PyMasslessSite>()?;
+    m.add_class::<PyBead>()?;
+    m.add_class::<PyRelationRef>()?;
+    m.add_class::<PyBond>()?;
+    m.add_class::<PyAngle>()?;
+    m.add_class::<PyDihedral>()?;
+    m.add_class::<PyImproper>()?;
+    m.add_class::<PyPort>()?;
+    m.add_class::<PyCGBond>()?;
+    m.add_class::<PyRefs>()?;
+    m.add_class::<PyRelationBuckets>()?;
     m.add_class::<PyExtractedSubgraph>()?;
     m.add_class::<PySmartsMatch>()?;
     m.add_class::<PySmartsPattern>()?;
@@ -376,6 +396,20 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Force field
     m.add_class::<PyForceField>()?;
+    m.add_class::<ff::handles::PyStyle>()?;
+    m.add_class::<ff::handles::PyAtomStyle>()?;
+    m.add_class::<ff::handles::PyBondStyle>()?;
+    m.add_class::<ff::handles::PyAngleStyle>()?;
+    m.add_class::<ff::handles::PyDihedralStyle>()?;
+    m.add_class::<ff::handles::PyImproperStyle>()?;
+    m.add_class::<ff::handles::PyPairStyle>()?;
+    m.add_class::<ff::handles::PyFfType>()?;
+    m.add_class::<ff::handles::PyAtomType>()?;
+    m.add_class::<ff::handles::PyBondType>()?;
+    m.add_class::<ff::handles::PyAngleType>()?;
+    m.add_class::<ff::handles::PyDihedralType>()?;
+    m.add_class::<ff::handles::PyImproperType>()?;
+    m.add_class::<ff::handles::PyPairType>()?;
     m.add_class::<ff::PyFragmentScaling>()?;
     m.add_class::<PyTypifier>()?;
     m.add_class::<PyMatch>()?;
@@ -404,27 +438,21 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     op::register(&op)?;
     m.add_submodule(&op)?;
     m.add_function(wrap_pyfunction!(ff::read_forcefield_xml_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::read_forcefield_xml_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_opls_xml_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::read_opls_xml_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_lammps_forcefield_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::read_lammps_forcefield_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_amber_prmtop_ff_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::read_amber_prmtop_ff_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_gromacs_top_ff_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::read_gromacs_top_ff_str_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::write_amber_frcmod_py, m)?)?;
+    m.add("AMBER_COULOMB", ::molrs::ff::params::amber::AMBER_COULOMB)?;
+    m.add("AMBER_SCEE", ::molrs::ff::params::amber::AMBER_SCEE)?;
+    m.add("AMBER_SCNB", ::molrs::ff::params::amber::AMBER_SCNB)?;
     m.add_function(wrap_pyfunction!(ff::write_gromacs_top_ff_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::write_gromacs_top_ff_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::write_forcefield_xml_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::write_forcefield_xml_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_lammps_data_coeffs_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::lammps_coeff_params_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::lammps_coeff_values_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::write_lammps_forcefield_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::write_lammps_forcefield_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::write_lammps_data_coeffs_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::intramolecular_pairs_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::extract_coords_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::compute_k_ij_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::fragment_scaling_data_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::scale_lj_py, m)?)?;

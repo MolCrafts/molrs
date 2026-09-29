@@ -820,9 +820,11 @@ fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
         None => None,
     };
     frame.meta.insert("step", hdr.step);
-    frame.meta.insert("time", hdr.time);
+    // XTC stores `time` and `precision` as `f32`; the store has one float
+    // (`F = f64`), so they are widened on the way in.
+    frame.meta.insert("time", hdr.time as f64);
     if precision != 0.0 {
-        frame.meta.insert("precision", precision);
+        frame.meta.insert("precision", precision as f64);
     }
     Ok(Some(frame))
 }
@@ -996,12 +998,13 @@ fn write_xtc_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
         .unwrap_or(0);
     let time = meta
         .get("time")
-        .and_then(|value| value.as_f32())
-        .unwrap_or(0.0);
+        .and_then(|value| value.as_f64())
+        .unwrap_or(0.0) as f32;
     let precision: f32 = meta
         .get("precision")
-        .and_then(|value| value.as_f32())
-        .filter(|&p: &f32| p > 0.0)
+        .and_then(|value| value.as_f64())
+        .filter(|&p| p > 0.0)
+        .map(|p| p as f32)
         .unwrap_or(DEFAULT_PRECISION);
 
     xdr::write_i32(w, XTC_MAGIC)?;

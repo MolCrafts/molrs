@@ -10,33 +10,34 @@
 //!   (`molrs.CoarseGrain`) — peer leaves that **hold a core [`Atomistic`] /
 //!   [`CoarseGrain`] from construction** (never converted from a `MolGraph`,
 //!   never converted into each other). They add the
-//!   domain builders (`add_atom`/`add_bond`/…) and own `to_frame` /
-//!   `from_frame` (`self.inner.to_frame()`, zero conversion). They subclass
-//!   `Graph` in Python; the generic graph API is shared via the
-//!   [`graph_world_impl!`] macro, which always operates on the receiver's *own*
-//!   graph (`self.mol()` / `self.mol_mut()`), so the leaf's graph is the single
-//!   data slot.
+//!   domain builders (`add_atom`/`add_bond`/…), own `to_frame` /
+//!   `from_frame` (`self.inner.to_frame()`, zero conversion), carry the
+//!   graph's `props` and live views ([`super::views`]), and cannot be
+//!   subclassed: each is the one class of its concept. They subclass `Graph`;
+//!   the generic graph API is shared via the [`graph_world_impl!`] macro,
+//!   which always operates on the receiver's *own* graph (`self.mol()` /
+//!   `self.mol_mut()`), so the leaf's graph is the single data slot.
 //!
 //! Handles are stable opaque `int`s (generational slotmap keys); removing one
 //! entity never invalidates another, and a stale handle raises.
 //!
-//! Every leaf hands its core value back to Python through the single helper
-//! [`from_core_shadowed`], which resolves the *public* class the package
-//! installs over the native one. The empty base `MolGraph` such a construction
-//! carries is structural, not waste: PyO3 builds a subclass base-then-subclass
-//! and `PyGraph`'s only field is a `MolGraph`, so an instance of a class
-//! declaring `extends = PyGraph` necessarily has one, and the leaf-first
-//! accessors above make sure nothing ever reads it.
+//! A leaf is built natively ([`PyAtomistic::from_core`] for a new graph,
+//! [`PyAtomistic::derive`] for one derived from another, which keeps its
+//! `props`). The empty base `MolGraph` such a construction carries is
+//! structural, not waste: PyO3 builds a subclass base-then-subclass and
+//! `PyGraph`'s only field is a `MolGraph`, so an instance of a class declaring
+//! `extends = PyGraph` necessarily has one, and the leaf-first accessors above
+//! make sure nothing ever reads it.
 
 use std::collections::HashMap;
 use std::str::FromStr;
 
 use ndarray::Array2;
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArrayDyn};
-use pyo3::PyClass;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::pyclass::boolean_struct::False;
+use pyo3::types::{PyDict, PyList, PyTuple, PyType};
+use pyo3::{PyTraverseError, PyVisit};
 
 use molrs::perceive::rings::max_ring_system_size as core_max_ring_system_size;
 use molrs::perceive::smarts::{MatchOptions, Reaction, RingPrimitive, SmartsPattern};
@@ -53,6 +54,7 @@ use molrs::system::molgraph::{
 };
 use molrs::system::port::PortKind;
 
+use super::views::{BEAD_ATOMS, Leaf, PyNodeRef, PyRefs, PyRelationBuckets, ViewCache};
 use crate::core::store::frame::PyFrame;
 use crate::helpers::molrs_error_to_pyerr;
 use crate::op::vector_to_py;
@@ -89,7 +91,7 @@ pub(crate) fn py_to_prop(value: &Bound<'_, PyAny>) -> PyResult<PropValue> {
     }
 }
 
-fn cell_to_py(py: Python<'_>, cell: Cell<'_>) -> PyResult<Py<PyAny>> {
+pub(crate) fn cell_to_py(py: Python<'_>, cell: Cell<'_>) -> PyResult<Py<PyAny>> {
     Ok(match cell {
         Cell::F64(v) => v.into_pyobject(py)?.into_any().unbind(),
         Cell::I32(v) => v.into_pyobject(py)?.into_any().unbind(),
@@ -98,7 +100,7 @@ fn cell_to_py(py: Python<'_>, cell: Cell<'_>) -> PyResult<Py<PyAny>> {
     })
 }
 
-fn prop_to_py(py: Python<'_>, value: &PropValue) -> PyResult<Py<PyAny>> {
+pub(crate) fn prop_to_py(py: Python<'_>, value: &PropValue) -> PyResult<Py<PyAny>> {
     Ok(match value {
         PropValue::F64(v) => v.into_pyobject(py)?.into_any().unbind(),
         PropValue::Int(v) => v.into_pyobject(py)?.into_any().unbind(),
@@ -645,8 +647,11 @@ macro_rules! graph_world_impl {
             /// (the whole generational slotmap is moved, not reindexed). For
             /// taking ownership of a graph produced elsewhere without a per-node
             /// copy. Defined per leaf so it swaps the leaf's own backing store.
+            /// Views of either graph taken before are stale afterwards.
             fn adopt(&mut self, other: &mut $ty) {
                 self.inner = std::mem::take(&mut other.inner);
+                self.forget_views();
+                other.forget_views();
             }
         }
     };
@@ -741,52 +746,153 @@ impl PyExtractedSubgraph {
 }
 
 impl PyExtractedSubgraph {
-    fn from_atomistic(py: Python<'_>, ext: ExtractedAtomistic) -> PyResult<Self> {
-        let graph = PyAtomistic::from_core(py, ext.graph)?.into_any();
-        Ok(Self {
+    fn from_atomistic(
+        py: Python<'_>,
+        source: &PyAtomistic,
+        ext: ExtractedAtomistic,
+    ) -> PyResult<Self> {
+        let graph = source.derive(py, ext.graph)?.into_any();
+        Ok(Self::with_maps(
             graph,
-            boundary: ext.boundary.into_iter().map(node_to_u64).collect(),
-            parent_of: ext
-                .parent_of
-                .into_iter()
-                .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
-                .collect(),
-            hops: ext
-                .hops
-                .into_iter()
-                .map(|(k, v)| (node_to_u64(k), v))
-                .collect(),
-            node_map: ext
-                .node_map
-                .into_iter()
-                .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
-                .collect(),
-        })
+            ext.boundary,
+            ext.parent_of,
+            ext.hops,
+            ext.node_map,
+        ))
     }
 
-    fn from_coarsegrain(py: Python<'_>, ext: ExtractedCoarseGrain) -> PyResult<Self> {
-        let graph = PyCoarseGrain::from_core(py, ext.graph)?.into_any();
-        Ok(Self {
+    fn from_coarsegrain(
+        py: Python<'_>,
+        source: &PyCoarseGrain,
+        ext: ExtractedCoarseGrain,
+    ) -> PyResult<Self> {
+        let graph = source.derive(py, ext.graph)?.into_any();
+        Ok(Self::with_maps(
             graph,
-            boundary: ext.boundary.into_iter().map(node_to_u64).collect(),
-            parent_of: ext
-                .parent_of
-                .into_iter()
+            ext.boundary,
+            ext.parent_of,
+            ext.hops,
+            ext.node_map,
+        ))
+    }
+
+    fn with_maps(
+        graph: Py<PyAny>,
+        boundary: Vec<NodeId>,
+        parent_of: HashMap<NodeId, NodeId>,
+        hops: HashMap<NodeId, i64>,
+        node_map: HashMap<NodeId, NodeId>,
+    ) -> Self {
+        let pairs = |map: HashMap<NodeId, NodeId>| {
+            map.into_iter()
                 .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
-                .collect(),
-            hops: ext
-                .hops
-                .into_iter()
-                .map(|(k, v)| (node_to_u64(k), v))
-                .collect(),
-            node_map: ext
-                .node_map
-                .into_iter()
-                .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
-                .collect(),
-        })
+                .collect()
+        };
+        Self {
+            graph,
+            boundary: boundary.into_iter().map(node_to_u64).collect(),
+            parent_of: pairs(parent_of),
+            hops: hops.into_iter().map(|(k, v)| (node_to_u64(k), v)).collect(),
+            node_map: pairs(node_map),
+        }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Pickling: a graph's content as plain Python data
+// ---------------------------------------------------------------------------
+
+/// A graph's content as plain Python data — node fields in row order and,
+/// per relation kind, its arity and its relations as endpoint *rows* plus
+/// fields. Handles are not kept (a restored graph mints fresh ones), which
+/// is why a view pickles by row.
+trait GraphContent {
+    fn dump_content<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>>;
+    fn load_content(&mut self, content: &Bound<'_, PyAny>) -> PyResult<()>;
+}
+
+impl GraphContent for MolGraph {
+    fn dump_content<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let table = self.node_table();
+        let nodes = PyList::empty(py);
+        let mut row_of: HashMap<NodeId, usize> = HashMap::new();
+        for (row, id) in self.node_ids().enumerate() {
+            row_of.insert(id, row);
+            let fields = PyDict::new(py);
+            for (key, cell) in table.row_cells(id) {
+                fields.set_item(key, cell_to_py(py, cell)?)?;
+            }
+            nodes.append(fields)?;
+        }
+        let kinds = PyList::empty(py);
+        for kid in self.kind_ids() {
+            let relations = PyList::empty(py);
+            for (_, relation) in self.relations(kid) {
+                let ends: Vec<usize> = relation.nodes.iter().map(|node| row_of[node]).collect();
+                let fields = PyDict::new(py);
+                for (key, value) in &relation.props {
+                    fields.set_item(key, prop_to_py(py, value)?)?;
+                }
+                relations.append((ends, fields))?;
+            }
+            kinds.append((self.kind_name(kid), self.arity(kid), relations))?;
+        }
+        (nodes, kinds).into_pyobject(py)
+    }
+
+    #[allow(
+        clippy::type_complexity,
+        reason = "the pickled kind table: (name, arity, [(endpoint rows, fields)])"
+    )]
+    fn load_content(&mut self, content: &Bound<'_, PyAny>) -> PyResult<()> {
+        let (nodes, kinds): (
+            Vec<Bound<'_, PyDict>>,
+            Vec<(String, usize, Vec<(Vec<usize>, Bound<'_, PyDict>)>)>,
+        ) = content.extract()?;
+        let mut ids = Vec::with_capacity(nodes.len());
+        for fields in nodes {
+            let id = self.add_node();
+            for (key, value) in fields.iter() {
+                self.set_node(id, &key.extract::<String>()?, py_to_prop(&value)?)
+                    .map_err(molrs_error_to_pyerr)?;
+            }
+            ids.push(id);
+        }
+        for (name, arity, relations) in kinds {
+            let kid = match self.kind_id(&name) {
+                Some(kid) => kid,
+                None => self.register_kind(&name, arity),
+            };
+            for (ends, fields) in relations {
+                let nodes = ends
+                    .iter()
+                    .map(|&row| {
+                        ids.get(row).copied().ok_or_else(|| {
+                            PyValueError::new_err(format!("relation endpoint row {row} is no node"))
+                        })
+                    })
+                    .collect::<PyResult<Vec<NodeId>>>()?;
+                let rid = self
+                    .add_relation(kid, &nodes)
+                    .map_err(molrs_error_to_pyerr)?;
+                for (key, value) in fields.iter() {
+                    self.set_relation_prop(
+                        kid,
+                        rid,
+                        &key.extract::<String>()?,
+                        py_to_prop(&value)?,
+                    )
+                    .map_err(molrs_error_to_pyerr)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `(cls, (), state)`: the pickle of a graph object restored by
+/// `__setstate__`.
+type GraphReduce<'py> = (Bound<'py, PyType>, Bound<'py, PyTuple>, Bound<'py, PyTuple>);
 
 // ---------------------------------------------------------------------------
 // PyGraph — the generic world
@@ -805,119 +911,187 @@ impl PyGraph {
     fn mol_mut(&mut self) -> &mut MolGraph {
         &mut self.inner
     }
-}
-
-#[pymethods]
-impl PyGraph {
-    /// Create an empty world. Extra args are accepted/ignored so a Python
-    /// subclass needs no `__new__` shim.
-    #[new]
-    #[pyo3(signature = (*_args, **_kwargs))]
-    fn new(_args: &Bound<'_, PyAny>, _kwargs: Option<&Bound<'_, PyAny>>) -> Self {
+    /// The base every leaf carries (see the module docs).
+    fn base() -> Self {
         Self {
             inner: MolGraph::new(),
         }
     }
+    /// A `Graph` has no views.
+    fn forget_views(&mut self) {}
+}
+
+#[pymethods]
+impl PyGraph {
+    /// Create an empty world.
+    #[new]
+    fn new() -> Self {
+        Self::base()
+    }
+
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<GraphReduce<'py>> {
+        let py = slf.py();
+        let content = slf.borrow().inner.dump_content(py)?;
+        Ok((
+            slf.get_type(),
+            PyTuple::empty(py),
+            PyTuple::new(py, [content])?,
+        ))
+    }
+
+    fn __setstate__(&mut self, state: (Bound<'_, PyAny>,)) -> PyResult<()> {
+        let mut inner = MolGraph::new();
+        inner.load_content(&state.0)?;
+        self.inner = inner;
+        Ok(())
+    }
 }
 graph_world_impl!(PyGraph);
 
-/// Wrap a core graph leaf as the **public** Python class of the same name.
-///
-/// The package shadows each native leaf with a Python subclass that adds live
-/// handle views ([`molrs.views`]), so a graph-out API must construct *that*
-/// class — a bare pyclass instance would satisfy `isinstance` yet have no
-/// `atoms`, no factories and the wrong `type(...)`. `T::NAME` is the
-/// `name = "…"` already written in the `#[pyclass]` attribute, so the public
-/// spelling is not declared a second time.
-///
-/// The `molrs` lookup is deliberately **per call**: `py.import` is a
-/// `sys.modules` hit and `getattr` a type-dict read, whereas caching either
-/// would make a late re-binding of the public class invisible for the life of
-/// the process.
-///
-/// The whole-value assignment `*object.borrow_mut(py) = leaf` replaces the
-/// leaf's single data slot; a leaf that ever grows a second field must assign
-/// that slot by name instead.
-pub(crate) fn from_core_shadowed<T>(py: Python<'_>, leaf: T) -> PyResult<Py<T>>
-where
-    T: PyClass<BaseType = PyGraph, Frozen = False>,
-{
-    // `T::NAME` needs the trait spelled out: the prelude also brings
-    // `PyTypeInfo` into scope, whose `NAME` is the same string by a
-    // different route. Either way it is the `name = "…"` already written in
-    // the `#[pyclass]` attribute, never a second declaration of it.
-    let public = py.import("molrs")?.getattr(<T as PyClass>::NAME)?;
-    if public.is(py.get_type::<T>()) {
-        return Py::new(
-            py,
-            (
-                leaf,
-                PyGraph {
-                    inner: MolGraph::new(),
-                },
-            ),
-        );
-    }
-    let object: Py<T> = public.call0()?.extract()?;
-    *object.borrow_mut(py) = leaf;
-    Ok(object)
+/// Any graph object: a `Graph`, an `Atomistic` or a `CoarseGrain`.
+pub(crate) enum AnyGraph<'py> {
+    Graph(Bound<'py, PyGraph>),
+    Atomistic(Bound<'py, PyAtomistic>),
+    CoarseGrain(Bound<'py, PyCoarseGrain>),
 }
 
-/// A copy of the graph any Python graph object holds — a `Graph`, an
-/// `Atomistic`, a `CoarseGrain` or a subclass of one — as a bare
-/// [`MolGraph`]. Graph types are peers: this reads the object's own graph, it
-/// converts nothing.
-///
-/// # Errors
-///
-/// `TypeError` when `obj` is no graph.
-pub(crate) fn molgraph_of(obj: &Bound<'_, PyAny>) -> PyResult<MolGraph> {
-    if let Ok(leaf) = obj.cast::<PyAtomistic>() {
-        return Ok(leaf.borrow().inner.as_molgraph().clone());
+impl<'py> AnyGraph<'py> {
+    /// The graph `obj` is.
+    ///
+    /// # Errors
+    ///
+    /// `TypeError` when `obj` is no graph.
+    pub(crate) fn of(obj: &Bound<'py, PyAny>) -> PyResult<Self> {
+        // Leaves first: a leaf is also a `Graph` (its empty base).
+        if let Ok(leaf) = obj.cast::<PyAtomistic>() {
+            return Ok(Self::Atomistic(leaf.clone()));
+        }
+        if let Ok(leaf) = obj.cast::<PyCoarseGrain>() {
+            return Ok(Self::CoarseGrain(leaf.clone()));
+        }
+        if let Ok(graph) = obj.cast::<PyGraph>() {
+            return Ok(Self::Graph(graph.clone()));
+        }
+        Err(PyTypeError::new_err(format!(
+            "expected a graph (Graph, Atomistic, CoarseGrain), not {}",
+            obj.get_type().name()?
+        )))
     }
-    if let Ok(leaf) = obj.cast::<PyCoarseGrain>() {
-        return Ok(leaf.borrow().mol().clone());
+
+    /// A copy of the graph this object holds, as a bare [`MolGraph`]. Graph
+    /// types are peers: this reads the object's own graph, it converts
+    /// nothing.
+    pub(crate) fn to_molgraph(&self) -> PyResult<MolGraph> {
+        Ok(match self {
+            Self::Graph(graph) => graph.try_borrow()?.inner.clone(),
+            Self::Atomistic(leaf) => leaf.try_borrow()?.mol().clone(),
+            Self::CoarseGrain(leaf) => leaf.try_borrow()?.mol().clone(),
+        })
     }
-    if let Ok(graph) = obj.cast::<PyGraph>() {
-        return Ok(graph.borrow().inner.clone());
-    }
-    Err(PyTypeError::new_err(format!(
-        "expected a graph (Graph, Atomistic, CoarseGrain), not {}",
-        obj.get_type().name()?
-    )))
 }
 
-/// Hand a finished `graph` back as an instance of the graph class `cls`
-/// (`Graph`, `Atomistic`, `CoarseGrain`, or a subclass of one); `None` means
-/// `Graph`. The factory of every graph-producing API.
-///
-/// # Errors
-///
-/// `TypeError` when `cls` is no graph class; `ValueError` when `graph` breaks
-/// the class's invariant (an `Atomistic` node without `element`).
-pub(crate) fn graph_as(
-    py: Python<'_>,
-    graph: MolGraph,
-    cls: Option<&Bound<'_, pyo3::types::PyType>>,
-) -> PyResult<Py<PyAny>> {
-    let Some(cls) = cls else {
-        return Ok(Py::new(py, PyGraph { inner: graph })?.into_any());
+/// The graph class a graph-producing API is asked to build.
+pub(crate) enum GraphClass {
+    Graph,
+    Atomistic,
+    CoarseGrain,
+}
+
+impl GraphClass {
+    /// `cls` as a graph class; `None` means `Graph`.
+    ///
+    /// # Errors
+    ///
+    /// `TypeError` when `cls` is not `Graph`, `Atomistic` or `CoarseGrain`.
+    pub(crate) fn of(py: Python<'_>, cls: Option<&Bound<'_, PyType>>) -> PyResult<Self> {
+        let Some(cls) = cls else {
+            return Ok(Self::Graph);
+        };
+        if cls.is(py.get_type::<PyAtomistic>()) {
+            Ok(Self::Atomistic)
+        } else if cls.is(py.get_type::<PyCoarseGrain>()) {
+            Ok(Self::CoarseGrain)
+        } else if cls.is(py.get_type::<PyGraph>()) {
+            Ok(Self::Graph)
+        } else {
+            Err(PyTypeError::new_err(format!(
+                "cls must be a graph class (Graph, Atomistic, CoarseGrain), not {}",
+                cls.name()?
+            )))
+        }
+    }
+
+    /// `graph` as an instance of this class.
+    ///
+    /// # Errors
+    ///
+    /// `ValueError` when `graph` breaks the class's invariant (an `Atomistic`
+    /// node without `element`).
+    pub(crate) fn build(self, py: Python<'_>, graph: MolGraph) -> PyResult<Py<PyAny>> {
+        Ok(match self {
+            Self::Graph => Py::new(py, PyGraph { inner: graph })?.into_any(),
+            Self::Atomistic => {
+                let leaf = Atomistic::try_from_molgraph(graph).map_err(molrs_error_to_pyerr)?;
+                PyAtomistic::from_core(py, leaf)?.into_any()
+            }
+            Self::CoarseGrain => {
+                let leaf = CoarseGrain::try_from_molgraph(graph).map_err(molrs_error_to_pyerr)?;
+                PyCoarseGrain::from_core(py, leaf)?.into_any()
+            }
+        })
+    }
+}
+
+/// The keyword arguments of a node factory as one dict: `mapping` (any
+/// mapping, or pairs) updated by `attrs`.
+fn node_fields<'py>(
+    py: Python<'py>,
+    mapping: Option<&Bound<'py, PyAny>>,
+    attrs: Option<&Bound<'py, PyDict>>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let fields = PyDict::new(py);
+    if let Some(mapping) = mapping {
+        fields.call_method1(pyo3::intern!(py, "update"), (mapping,))?;
+    }
+    if let Some(attrs) = attrs {
+        fields.update(attrs.as_mapping())?;
+    }
+    Ok(fields)
+}
+
+/// The members of a graph with views: `props`, `links` and `remove_link`.
+macro_rules! leaf_views_impl {
+    ($ty:ty) => {
+        #[pymethods]
+        impl $ty {
+            /// Whole-graph annotations (a name, a provenance tag): the keyword
+            /// arguments the graph was built with, as a live dict. A copy, a
+            /// pickle and every graph derived from this one (perception,
+            /// typing, conformers, subgraphs) carry them.
+            #[getter]
+            fn props(&self, py: Python<'_>) -> Py<PyDict> {
+                self.props.clone_ref(py)
+            }
+
+            /// The graph's relations, selected by view class
+            /// (``graph.links.exact_bucket(Bond)``).
+            #[getter]
+            fn links(slf: &Bound<'_, Self>) -> PyRelationBuckets {
+                PyRelationBuckets::new(slf.as_any())
+            }
+
+            /// Remove each of ``links`` (relation views of this graph).
+            ///
+            /// Raises
+            /// ------
+            /// ValueError
+            ///     If a relation belongs to another graph.
+            #[pyo3(signature = (*links))]
+            fn remove_link(slf: &Bound<'_, Self>, links: &Bound<'_, PyTuple>) -> PyResult<()> {
+                Leaf::of(slf.as_any())?.remove_links(links)
+            }
+        }
     };
-    if cls.is_subclass_of::<PyAtomistic>()? {
-        let leaf = Atomistic::try_from_molgraph(graph).map_err(molrs_error_to_pyerr)?;
-        return Ok(PyAtomistic::from_core(py, leaf)?.into_any());
-    }
-    if cls.is_subclass_of::<PyCoarseGrain>()? {
-        let leaf = CoarseGrain::try_from_molgraph(graph).map_err(molrs_error_to_pyerr)?;
-        return Ok(PyCoarseGrain::from_core(py, leaf)?.into_any());
-    }
-    if cls.is_subclass_of::<PyGraph>()? {
-        return Ok(Py::new(py, PyGraph { inner: graph })?.into_any());
-    }
-    Err(PyTypeError::new_err(format!(
-        "cls must be a graph class (Graph, Atomistic, CoarseGrain), not {}",
-        cls.name()?
-    )))
 }
 
 // ---------------------------------------------------------------------------
@@ -928,34 +1102,306 @@ pub(crate) fn graph_as(
 ///
 /// Holds a core [`Atomistic`] from construction; it is never converted from a
 /// `MolGraph`. Subclasses `Graph`; the generic API operates on this leaf's own
-/// graph.
-#[pyclass(module = "molrs._lib", name = "Atomistic", extends = PyGraph, subclass)]
+/// graph. ``Atomistic(**props)``: the keywords are the graph's :attr:`props`.
+#[pyclass(module = "molrs._lib", name = "Atomistic", extends = PyGraph)]
 pub struct PyAtomistic {
     inner: Atomistic,
+    props: Py<PyDict>,
+    pub(super) views: ViewCache,
 }
 
 impl PyAtomistic {
-    fn mol(&self) -> &MolGraph {
+    pub(crate) fn mol(&self) -> &MolGraph {
         self.inner.as_molgraph()
     }
-    fn mol_mut(&mut self) -> &mut MolGraph {
+    pub(crate) fn mol_mut(&mut self) -> &mut MolGraph {
         self.inner.as_molgraph_mut()
+    }
+    fn forget_views(&mut self) {
+        self.views.clear();
     }
 }
 
 #[pymethods]
 impl PyAtomistic {
     #[new]
-    #[pyo3(signature = (*_args, **_kwargs))]
-    fn new(_args: &Bound<'_, PyAny>, _kwargs: Option<&Bound<'_, PyAny>>) -> (Self, PyGraph) {
-        (
-            PyAtomistic {
-                inner: Atomistic::new(),
-            },
-            PyGraph {
-                inner: MolGraph::new(),
-            },
-        )
+    #[pyo3(signature = (**props))]
+    fn new(py: Python<'_>, props: Option<Bound<'_, PyDict>>) -> (Self, PyGraph) {
+        let leaf = Self {
+            inner: Atomistic::new(),
+            props: props.unwrap_or_else(|| PyDict::new(py)).unbind(),
+            views: ViewCache::default(),
+        };
+        (leaf, PyGraph::base())
+    }
+
+    // ---- live views ----
+
+    /// Every atom, in row order.
+    #[getter]
+    fn atoms(slf: &Bound<'_, Self>) -> PyResult<PyRefs> {
+        PyRefs::nodes_of(slf.as_any())
+    }
+
+    /// Every bond, in row order.
+    #[getter]
+    fn bonds(slf: &Bound<'_, Self>) -> PyResult<PyRefs> {
+        PyRefs::relations_of(slf.as_any(), "bonds")
+    }
+
+    /// Every angle, in row order.
+    #[getter]
+    fn angles(slf: &Bound<'_, Self>) -> PyResult<PyRefs> {
+        PyRefs::relations_of(slf.as_any(), "angles")
+    }
+
+    /// Every proper dihedral, in row order.
+    #[getter]
+    fn dihedrals(slf: &Bound<'_, Self>) -> PyResult<PyRefs> {
+        PyRefs::relations_of(slf.as_any(), "dihedrals")
+    }
+
+    /// Every improper, in row order.
+    #[getter]
+    fn impropers(slf: &Bound<'_, Self>) -> PyResult<PyRefs> {
+        PyRefs::relations_of(slf.as_any(), "impropers")
+    }
+
+    /// Every port, in row order (empty when the graph carries none).
+    #[getter]
+    fn ports(slf: &Bound<'_, Self>) -> PyResult<PyRefs> {
+        PyRefs::relations_of(slf.as_any(), "ports")
+    }
+
+    /// Add an atom carrying the fields of `mapping` and `attrs` (a ``None``
+    /// value is skipped) and return its view.
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If a value is not a bool, int, float or str; the graph is then
+    ///     unchanged.
+    #[pyo3(signature = (mapping = None, /, **attrs))]
+    fn def_atom<'py>(
+        slf: &Bound<'py, Self>,
+        mapping: Option<&Bound<'py, PyAny>>,
+        attrs: Option<&Bound<'py, PyDict>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        Leaf::of(slf.as_any())?.create_node(&node_fields(slf.py(), mapping, attrs)?)
+    }
+
+    /// Add a virtual site — an atom with a ``vsite`` field naming its kind —
+    /// and return its view, of class `kind` (``VirtualSite`` by default,
+    /// ``DrudeParticle`` or ``MasslessSite``). An explicit ``vsite`` in
+    /// `attrs` wins over the one `kind` implies.
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If `kind` is not one of the three virtual-site classes.
+    #[pyo3(signature = (mapping = None, /, *, kind = None, **attrs))]
+    fn def_virtual_site<'py>(
+        slf: &Bound<'py, Self>,
+        mapping: Option<&Bound<'py, PyAny>>,
+        kind: Option<&Bound<'py, PyType>>,
+        attrs: Option<&Bound<'py, PyDict>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let fields = node_fields(slf.py(), mapping, attrs)?;
+        Leaf::of(slf.as_any())?.create_virtual_site(&fields, kind)
+    }
+
+    /// Add a single bond between two atoms of this graph and return its view.
+    ///
+    /// Routes through the native writer, so the bond carries both bond facts
+    /// — ``bond_type = 1`` and ``bond_number = 1`` — before ``attrs`` are
+    /// applied.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If an endpoint belongs to another graph, or an attr is refused.
+    #[pyo3(signature = (a, b, /, **attrs))]
+    fn def_bond<'py>(
+        slf: &Bound<'py, Self>,
+        a: &Bound<'py, PyNodeRef>,
+        b: &Bound<'py, PyNodeRef>,
+        attrs: Option<&Bound<'py, PyDict>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let leaf = Leaf::of(slf.as_any())?;
+        let (a, b) = (leaf.own_node(a)?, leaf.own_node(b)?);
+        let handle = slf
+            .try_borrow_mut()?
+            .inner
+            .add_bond(node_from_u64(a), node_from_u64(b))
+            .map_err(molrs_error_to_pyerr)?;
+        leaf.adopt_relation("bonds", relation_to_u64(handle), attrs)
+    }
+
+    /// Add an angle ``a–b–c`` (``b`` the vertex) and return its view.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If an endpoint belongs to another graph, or an attr is refused.
+    #[pyo3(signature = (a, b, c, /, **attrs))]
+    fn def_angle<'py>(
+        slf: &Bound<'py, Self>,
+        a: &Bound<'py, PyNodeRef>,
+        b: &Bound<'py, PyNodeRef>,
+        c: &Bound<'py, PyNodeRef>,
+        attrs: Option<&Bound<'py, PyDict>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let leaf = Leaf::of(slf.as_any())?;
+        let ends = [leaf.own_node(a)?, leaf.own_node(b)?, leaf.own_node(c)?].map(node_from_u64);
+        let handle = slf
+            .try_borrow_mut()?
+            .inner
+            .add_angle(ends[0], ends[1], ends[2])
+            .map_err(molrs_error_to_pyerr)?;
+        leaf.adopt_relation("angles", relation_to_u64(handle), attrs)
+    }
+
+    /// Add a proper dihedral ``a–b–c–d`` and return its view.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If an endpoint belongs to another graph, or an attr is refused.
+    #[pyo3(signature = (a, b, c, d, /, **attrs))]
+    fn def_dihedral<'py>(
+        slf: &Bound<'py, Self>,
+        a: &Bound<'py, PyNodeRef>,
+        b: &Bound<'py, PyNodeRef>,
+        c: &Bound<'py, PyNodeRef>,
+        d: &Bound<'py, PyNodeRef>,
+        attrs: Option<&Bound<'py, PyDict>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let leaf = Leaf::of(slf.as_any())?;
+        let [a, b, c, d] = [a, b, c, d].map(|end| leaf.own_node(end).map(node_from_u64));
+        let handle = slf
+            .try_borrow_mut()?
+            .inner
+            .add_dihedral(a?, b?, c?, d?)
+            .map_err(molrs_error_to_pyerr)?;
+        leaf.adopt_relation("dihedrals", relation_to_u64(handle), attrs)
+    }
+
+    /// Add an improper over ``a, b, c, d`` in its style's slot order and
+    /// return its view.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If an endpoint belongs to another graph, or an attr is refused.
+    #[pyo3(signature = (a, b, c, d, /, **attrs))]
+    fn def_improper<'py>(
+        slf: &Bound<'py, Self>,
+        a: &Bound<'py, PyNodeRef>,
+        b: &Bound<'py, PyNodeRef>,
+        c: &Bound<'py, PyNodeRef>,
+        d: &Bound<'py, PyNodeRef>,
+        attrs: Option<&Bound<'py, PyDict>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let leaf = Leaf::of(slf.as_any())?;
+        let [a, b, c, d] = [a, b, c, d].map(|end| leaf.own_node(end).map(node_from_u64));
+        let handle = slf
+            .try_borrow_mut()?
+            .inner
+            .add_improper(a?, b?, c?, d?)
+            .map_err(molrs_error_to_pyerr)?;
+        leaf.adopt_relation("impropers", relation_to_u64(handle), attrs)
+    }
+
+    /// Remove each of `atoms` and every relation touching it. Their views go
+    /// stale: a read raises.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If an atom belongs to another graph or was removed already.
+    #[pyo3(signature = (*atoms))]
+    fn del_atom(slf: &Bound<'_, Self>, atoms: &Bound<'_, PyTuple>) -> PyResult<()> {
+        Leaf::of(slf.as_any())?.remove_nodes(atoms)
+    }
+
+    /// Record a bonding descriptor on the ``(anchor, handle_atom)`` valence
+    /// and return the port's view.
+    ///
+    /// Routes through the native writer, which is where the validation
+    /// lives: the anchor–handle bond check, the one-port-per-valence check,
+    /// the glyph parse and the order check.
+    ///
+    /// Parameters
+    /// ----------
+    /// anchor : Atom
+    ///     The atom that keeps its place in the product molecule.
+    /// handle_atom : Atom
+    ///     The atom bonded to `anchor` that roots the leaving group.
+    /// kind : str
+    ///     The notation glyph -- one of ``"$"``, ``"<"``, ``">"``, ``"!"``.
+    /// label : str, optional
+    ///     Descriptor label; ``""`` (the default) means unnamed.
+    /// order : int, optional
+    ///     Multiplicity of the bond this port will form, ``1`` to ``4``.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If an endpoint belongs to another graph, `kind` is not one of the
+    ///     four glyphs, `handle_atom` is not bonded to `anchor`, that valence
+    ///     already carries a port, or `order` is not a definite bond number.
+    #[pyo3(signature = (anchor, handle_atom, kind, label = "", order = 1))]
+    fn def_port<'py>(
+        slf: &Bound<'py, Self>,
+        anchor: &Bound<'py, PyNodeRef>,
+        handle_atom: &Bound<'py, PyNodeRef>,
+        kind: &str,
+        label: &str,
+        order: u32,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let leaf = Leaf::of(slf.as_any())?;
+        let (anchor, handle_atom) = (leaf.own_node(anchor)?, leaf.own_node(handle_atom)?);
+        let kind = PortKind::from_str(kind).map_err(molrs_error_to_pyerr)?;
+        let handle = slf
+            .try_borrow_mut()?
+            .mol_mut()
+            .add_port(
+                node_from_u64(anchor),
+                node_from_u64(handle_atom),
+                kind,
+                label,
+                BondNumber::from_code(order),
+            )
+            .map_err(molrs_error_to_pyerr)?;
+        leaf.relation("ports", relation_to_u64(handle))
+    }
+
+    // ---- pickling ----
+
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<GraphReduce<'py>> {
+        let py = slf.py();
+        let this = slf.try_borrow()?;
+        let state =
+            (this.props.bind(py).clone(), this.mol().dump_content(py)?).into_pyobject(py)?;
+        Ok((slf.get_type(), PyTuple::empty(py), state))
+    }
+
+    fn __setstate__(&mut self, state: (Bound<'_, PyDict>, Bound<'_, PyAny>)) -> PyResult<()> {
+        let (props, content) = state;
+        let mut inner = Atomistic::new();
+        inner.as_molgraph_mut().load_content(&content)?;
+        self.inner = inner;
+        self.props = props.unbind();
+        self.forget_views();
+        Ok(())
+    }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.props)
+    }
+
+    fn __clear__(&mut self) {
+        self.props = Python::attach(|py| PyDict::new(py).unbind());
     }
 
     // ---- domain builders (operate on the core Atomistic directly) ----
@@ -1060,6 +1506,12 @@ impl PyAtomistic {
         self.inner.n_atoms()
     }
 
+    /// Number of bonds.
+    #[getter]
+    fn n_bonds(&self) -> usize {
+        self.inner.n_bonds()
+    }
+
     /// Atom count of the largest fused/bridged ring system (naphthalene → 10).
     ///
     /// Acyclic molecules → ``0``. Pure structure fact for molpy region typing.
@@ -1075,8 +1527,10 @@ impl PyAtomistic {
     /// ValueError
     ///     If an atom or relation property contradicts the dtype the Frame
     ///     schema declares for its key (a string under ``"x"``).
-    fn to_frame(&self) -> PyResult<PyFrame> {
-        PyFrame::from_core_frame(self.inner.to_frame().map_err(molrs_error_to_pyerr)?)
+    #[pyo3(signature = (atom_fields = None))]
+    fn to_frame(&self, atom_fields: Option<Vec<String>>) -> PyResult<PyFrame> {
+        let frame = self.inner.to_frame().map_err(molrs_error_to_pyerr)?;
+        PyFrame::from_core_frame(select_atom_fields(frame, atom_fields)?)
     }
 
     /// Build an `Atomistic` from a [`Frame`] (registers the chemistry kinds,
@@ -1151,11 +1605,12 @@ impl PyAtomistic {
         self.inner.bond_number(relation_from_u64(handle)).code()
     }
 
-    /// Return an independent deep copy of this `Atomistic`.
+    /// Return an independent deep copy of this `Atomistic`, with a copy of
+    /// its :attr:`props`.
     ///
     /// **Handles are preserved** (same generational keys as in ``self``).
     fn copy(&self, py: Python<'_>) -> PyResult<Py<PyAtomistic>> {
-        PyAtomistic::from_core(py, self.inner.clone())
+        self.derive(py, self.inner.clone())
     }
 
     /// Structural merge of ``other`` into ``self``.
@@ -1170,6 +1625,7 @@ impl PyAtomistic {
     ///     for that key (a string ``tag`` into an int ``tag`` column).
     fn merge(&mut self, other: &mut Self) -> PyResult<HashMap<u64, u64>> {
         let taken = std::mem::take(&mut other.inner);
+        other.forget_views();
         Ok(self
             .inner
             .merge(taken)
@@ -1192,7 +1648,7 @@ impl PyAtomistic {
             .inner
             .induced_subgraph(&ids)
             .map_err(molrs_error_to_pyerr)?;
-        let py_sub = PyAtomistic::from_core(py, sub)?;
+        let py_sub = self.derive(py, sub)?;
         let py_map = map
             .into_iter()
             .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
@@ -1241,7 +1697,7 @@ impl PyAtomistic {
             .inner
             .extract_subgraph(&ids, radius, regenerate_topology, &groups)
             .map_err(molrs_error_to_pyerr)?;
-        PyExtractedSubgraph::from_atomistic(py, ext)
+        PyExtractedSubgraph::from_atomistic(py, self, ext)
     }
 
     // ---- structural graph hash (WL) ----
@@ -1296,13 +1752,32 @@ impl PyAtomistic {
 }
 graph_world_impl!(PyAtomistic);
 
+leaf_views_impl!(PyAtomistic);
+
 impl PyAtomistic {
-    /// Wrap an existing core [`Atomistic`] as a Python `Atomistic` object.
-    ///
-    /// Graph-out APIs (perception, typifiers, copy/from_frame, SMILES) go
-    /// through here so they never silently drop the Python view layer.
+    /// A new `Atomistic` holding `inner`, with no props: the graph-out door
+    /// of every API that builds a graph from something that is not one
+    /// (a reader, a SMILES string, a frame).
     pub(crate) fn from_core(py: Python<'_>, inner: Atomistic) -> PyResult<Py<PyAtomistic>> {
-        from_core_shadowed(py, PyAtomistic { inner })
+        let leaf = Self {
+            inner,
+            props: PyDict::new(py).unbind(),
+            views: ViewCache::default(),
+        };
+        Py::new(py, (leaf, PyGraph::base()))
+    }
+
+    /// A new `Atomistic` holding `inner`, derived from this one: it carries
+    /// a copy of this graph's :attr:`props`. The graph-out door of every API
+    /// that maps a graph to a graph (copy, perception, typing, conformers,
+    /// subgraphs).
+    pub(crate) fn derive(&self, py: Python<'_>, inner: Atomistic) -> PyResult<Py<PyAtomistic>> {
+        let leaf = Self {
+            inner,
+            props: self.props.bind(py).copy()?.unbind(),
+            views: ViewCache::default(),
+        };
+        Py::new(py, (leaf, PyGraph::base()))
     }
 
     /// Borrow the held core [`Atomistic`] (for domain consumers like the
@@ -1716,33 +2191,274 @@ impl PyReaction {
 // ---------------------------------------------------------------------------
 
 /// Coarse-grained molecular graph, exposed to Python as `molrs.CoarseGrain`.
-#[pyclass(module = "molrs._lib", name = "CoarseGrain", extends = PyGraph, subclass)]
+///
+/// ``CoarseGrain(**props)``: the keywords are the graph's :attr:`props`. A
+/// bead built with ``def_bead(atoms=...)`` groups atom views of one source
+/// graph (its *member world*); ``bead["atoms"]`` answers with those views.
+#[pyclass(module = "molrs._lib", name = "CoarseGrain", extends = PyGraph)]
 pub struct PyCoarseGrain {
     inner: CoarseGrain,
+    props: Py<PyDict>,
+    pub(super) views: ViewCache,
+    /// The graph whose atoms the bead memberships name, once one is given.
+    member_world: Option<Py<PyAny>>,
 }
 
 impl PyCoarseGrain {
-    fn mol(&self) -> &MolGraph {
+    pub(crate) fn mol(&self) -> &MolGraph {
         self.inner.as_molgraph()
     }
-    fn mol_mut(&mut self) -> &mut MolGraph {
+    pub(crate) fn mol_mut(&mut self) -> &mut MolGraph {
         self.inner.as_molgraph_mut()
+    }
+    fn forget_views(&mut self) {
+        self.views.clear();
+    }
+
+    /// The atom views bead `bead` groups, or `None` when it groups none or
+    /// no member world was given (raw ``set_bead_members`` handles).
+    pub(crate) fn bead_atoms<'py>(
+        graph: &Bound<'py, Self>,
+        bead: u64,
+    ) -> PyResult<Option<Bound<'py, PyTuple>>> {
+        let py = graph.py();
+        let (members, world) = {
+            let this = graph.try_borrow()?;
+            let members = this.inner.bead_members(node_from_u64(bead)).to_vec();
+            (members, this.member_world.as_ref().map(|w| w.clone_ref(py)))
+        };
+        let Some(world) = world.filter(|_| !members.is_empty()) else {
+            return Ok(None);
+        };
+        let leaf = Leaf::of(world.bind(py))?;
+        let atoms = members
+            .into_iter()
+            .map(|atom| leaf.node(atom))
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Some(PyTuple::new(py, atoms)?))
+    }
+
+    /// The handles of the atom views in `atoms`, which must all come from one
+    /// graph — the member world, which the first membership fixes.
+    fn member_handles(slf: &Bound<'_, Self>, atoms: &Bound<'_, PyAny>) -> PyResult<Vec<u64>> {
+        let py = slf.py();
+        let mut handles = Vec::new();
+        for atom in atoms.try_iter()? {
+            let atom = atom?;
+            let atom = atom.cast::<PyNodeRef>()?.get();
+            let mut this = slf.try_borrow_mut()?;
+            match &this.member_world {
+                None => this.member_world = Some(atom.world(py).clone().unbind()),
+                Some(world) if world.bind(py).is(atom.world(py)) => {}
+                Some(_) => {
+                    return Err(PyValueError::new_err(
+                        "bead membership atoms must all come from the same source world",
+                    ));
+                }
+            }
+            handles.push(atom.handle());
+        }
+        Ok(handles)
     }
 }
 
 #[pymethods]
 impl PyCoarseGrain {
     #[new]
-    #[pyo3(signature = (*_args, **_kwargs))]
-    fn new(_args: &Bound<'_, PyAny>, _kwargs: Option<&Bound<'_, PyAny>>) -> (Self, PyGraph) {
-        (
-            PyCoarseGrain {
-                inner: CoarseGrain::new(),
-            },
-            PyGraph {
-                inner: MolGraph::new(),
-            },
+    #[pyo3(signature = (**props))]
+    fn new(py: Python<'_>, props: Option<Bound<'_, PyDict>>) -> (Self, PyGraph) {
+        let leaf = Self {
+            inner: CoarseGrain::new(),
+            props: props.unwrap_or_else(|| PyDict::new(py)).unbind(),
+            views: ViewCache::default(),
+            member_world: None,
+        };
+        (leaf, PyGraph::base())
+    }
+
+    // ---- live views ----
+
+    /// Every bead, in row order.
+    #[getter]
+    fn beads(slf: &Bound<'_, Self>) -> PyResult<PyRefs> {
+        PyRefs::nodes_of(slf.as_any())
+    }
+
+    /// Every CG bond, in row order.
+    #[getter]
+    fn cgbonds(slf: &Bound<'_, Self>) -> PyResult<PyRefs> {
+        PyRefs::relations_of(slf.as_any(), "bonds")
+    }
+
+    /// Add a bead carrying the fields of `mapping` and `attrs` (a ``None``
+    /// value is skipped) and return its view. An ``atoms`` field is the
+    /// bead's membership: atom views of one source graph.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If the member atoms do not all come from the graph earlier
+    ///     memberships came from.
+    /// TypeError
+    ///     If a value is not a bool, int, float or str.
+    #[pyo3(signature = (mapping = None, /, **attrs))]
+    fn def_bead<'py>(
+        slf: &Bound<'py, Self>,
+        mapping: Option<&Bound<'py, PyAny>>,
+        attrs: Option<&Bound<'py, PyDict>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let fields = node_fields(slf.py(), mapping, attrs)?;
+        let members = match fields.get_item(BEAD_ATOMS)? {
+            Some(atoms) => {
+                fields.del_item(BEAD_ATOMS)?;
+                if atoms.is_none() {
+                    None
+                } else {
+                    Some(Self::member_handles(slf, &atoms)?)
+                }
+            }
+            None => None,
+        };
+        let bead = Leaf::of(slf.as_any())?.create_node(&fields)?;
+        if let Some(members) = members {
+            let handle = bead.cast::<PyNodeRef>()?.get().handle();
+            slf.try_borrow_mut()?
+                .inner
+                .set_bead_members(node_from_u64(handle), members);
+        }
+        Ok(bead)
+    }
+
+    /// Add a CG bond between two beads of this graph and return its view.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If an endpoint belongs to another graph, or an attr is refused.
+    #[pyo3(signature = (a, b, /, **attrs))]
+    fn def_cgbond<'py>(
+        slf: &Bound<'py, Self>,
+        a: &Bound<'py, PyNodeRef>,
+        b: &Bound<'py, PyNodeRef>,
+        attrs: Option<&Bound<'py, PyDict>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let leaf = Leaf::of(slf.as_any())?;
+        let (a, b) = (leaf.own_node(a)?, leaf.own_node(b)?);
+        let handle = slf
+            .try_borrow_mut()?
+            .inner
+            .add_bond(node_from_u64(a), node_from_u64(b))
+            .map_err(molrs_error_to_pyerr)?;
+        leaf.adopt_relation("bonds", relation_to_u64(handle), attrs)
+    }
+
+    // ---- pickling ----
+
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<GraphReduce<'py>> {
+        let py = slf.py();
+        let this = slf.try_borrow()?;
+        let world = this.member_world.as_ref().map(|w| w.bind(py).clone());
+        // Memberships by bead row; each member by its row in the member
+        // world, or as the raw handle when there is none.
+        let member_rows = match &world {
+            Some(world) => Some(Leaf::of(world)?.read(|mol| {
+                mol.node_ids()
+                    .enumerate()
+                    .map(|(row, id)| (node_to_u64(id), row as u64))
+                    .collect::<HashMap<u64, u64>>()
+            })?),
+            None => None,
+        };
+        let mut memberships: Vec<(usize, Vec<u64>)> = Vec::new();
+        for (row, bead) in this.mol().node_ids().enumerate() {
+            let members = this.inner.bead_members(bead);
+            if members.is_empty() {
+                continue;
+            }
+            let members = match &member_rows {
+                Some(rows) => members
+                    .iter()
+                    .map(|atom| {
+                        rows.get(atom).copied().ok_or_else(|| {
+                            PyValueError::new_err(format!(
+                                "bead member {atom} is not an atom of the member world"
+                            ))
+                        })
+                    })
+                    .collect::<PyResult<Vec<u64>>>()?,
+                None => members.to_vec(),
+            };
+            memberships.push((row, members));
+        }
+        let state = (
+            this.props.bind(py).clone(),
+            this.mol().dump_content(py)?,
+            world,
+            memberships,
         )
+            .into_pyobject(py)?;
+        Ok((slf.get_type(), PyTuple::empty(py), state))
+    }
+
+    #[allow(
+        clippy::type_complexity,
+        reason = "the pickled state: (props, content, member world, [(bead row, members)])"
+    )]
+    fn __setstate__(
+        slf: &Bound<'_, Self>,
+        state: (
+            Bound<'_, PyDict>,
+            Bound<'_, PyAny>,
+            Option<Bound<'_, PyAny>>,
+            Vec<(usize, Vec<u64>)>,
+        ),
+    ) -> PyResult<()> {
+        let (props, content, world, memberships) = state;
+        let world_handles: Option<Vec<u64>> = match &world {
+            Some(world) => {
+                Some(Leaf::of(world)?.read(|mol| mol.node_ids().map(node_to_u64).collect())?)
+            }
+            None => None,
+        };
+        let mut inner = CoarseGrain::new();
+        inner.as_molgraph_mut().load_content(&content)?;
+        let beads: Vec<NodeId> = inner.as_molgraph().node_ids().collect();
+        for (row, members) in memberships {
+            let bead = *beads
+                .get(row)
+                .ok_or_else(|| PyValueError::new_err(format!("no bead at row {row}")))?;
+            let members = match &world_handles {
+                Some(handles) => members
+                    .iter()
+                    .map(|&member| {
+                        handles.get(member as usize).copied().ok_or_else(|| {
+                            PyValueError::new_err(format!("no member-world atom at row {member}"))
+                        })
+                    })
+                    .collect::<PyResult<Vec<u64>>>()?,
+                None => members,
+            };
+            inner.set_bead_members(bead, members);
+        }
+        let mut this = slf.try_borrow_mut()?;
+        this.inner = inner;
+        this.props = props.unbind();
+        this.member_world = world.map(Bound::unbind);
+        this.forget_views();
+        Ok(())
+    }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.props)?;
+        if let Some(world) = &self.member_world {
+            visit.call(world)?;
+        }
+        Ok(())
+    }
+
+    fn __clear__(&mut self) {
+        self.member_world = None;
+        self.props = Python::attach(|py| PyDict::new(py).unbind());
     }
 
     /// Add a bead with `bead_type` and optional coordinates. Returns its handle.
@@ -1811,8 +2527,10 @@ impl PyCoarseGrain {
     /// ValueError
     ///     If a bead or bond property contradicts the dtype the Frame schema
     ///     declares for its key (a string under ``"x"``).
-    fn to_frame(&self) -> PyResult<PyFrame> {
-        PyFrame::from_core_frame(self.inner.to_frame().map_err(molrs_error_to_pyerr)?)
+    #[pyo3(signature = (atom_fields = None))]
+    fn to_frame(&self, atom_fields: Option<Vec<String>>) -> PyResult<PyFrame> {
+        let frame = self.inner.to_frame().map_err(molrs_error_to_pyerr)?;
+        PyFrame::from_core_frame(select_atom_fields(frame, atom_fields)?)
     }
 
     /// Build a `CoarseGrain` from a frame holding **one molecule**.
@@ -1876,9 +2594,10 @@ impl PyCoarseGrain {
         self.inner.is_isomorphic(&other.inner)
     }
 
-    /// Independent deep copy. **Handles are preserved**.
+    /// Independent deep copy, with a copy of its :attr:`props` and the same
+    /// member world. **Handles are preserved**.
     fn copy(&self, py: Python<'_>) -> PyResult<Py<PyCoarseGrain>> {
-        PyCoarseGrain::from_core(py, self.inner.clone())
+        self.derive(py, self.inner.clone())
     }
 
     /// Structural merge of ``other`` into ``self``; ``other`` is emptied.
@@ -1891,6 +2610,7 @@ impl PyCoarseGrain {
     ///     for that key (a string ``tag`` into an int ``tag`` column).
     fn merge(&mut self, other: &mut Self) -> PyResult<HashMap<u64, u64>> {
         let taken = std::mem::take(&mut other.inner);
+        other.forget_views();
         Ok(self
             .inner
             .merge(taken)
@@ -1911,7 +2631,7 @@ impl PyCoarseGrain {
             .inner
             .induced_subgraph(&ids)
             .map_err(molrs_error_to_pyerr)?;
-        let py_sub = PyCoarseGrain::from_core(py, sub)?;
+        let py_sub = self.derive(py, sub)?;
         let py_map = map
             .into_iter()
             .map(|(k, v)| (node_to_u64(k), node_to_u64(v)))
@@ -1932,7 +2652,7 @@ impl PyCoarseGrain {
             .inner
             .extract_subgraph(&ids, radius)
             .map_err(molrs_error_to_pyerr)?;
-        PyExtractedSubgraph::from_coarsegrain(py, ext)
+        PyExtractedSubgraph::from_coarsegrain(py, self, ext)
     }
 
     /// Mass-weighted centre of the bead group ``group``.
@@ -2053,10 +2773,31 @@ impl PyCoarseGrain {
 }
 graph_world_impl!(PyCoarseGrain);
 
+leaf_views_impl!(PyCoarseGrain);
+
 impl PyCoarseGrain {
-    /// Wrap an existing core [`CoarseGrain`] as a Python `CoarseGrain` object.
+    /// A new `CoarseGrain` holding `inner`, with no props and no member
+    /// world (see [`PyAtomistic::from_core`]).
     pub(crate) fn from_core(py: Python<'_>, inner: CoarseGrain) -> PyResult<Py<PyCoarseGrain>> {
-        from_core_shadowed(py, PyCoarseGrain { inner })
+        let leaf = Self {
+            inner,
+            props: PyDict::new(py).unbind(),
+            views: ViewCache::default(),
+            member_world: None,
+        };
+        Py::new(py, (leaf, PyGraph::base()))
+    }
+
+    /// A new `CoarseGrain` holding `inner`, derived from this one: a copy of
+    /// its props and the same member world (see [`PyAtomistic::derive`]).
+    pub(crate) fn derive(&self, py: Python<'_>, inner: CoarseGrain) -> PyResult<Py<PyCoarseGrain>> {
+        let leaf = Self {
+            inner,
+            props: self.props.bind(py).copy()?.unbind(),
+            views: ViewCache::default(),
+            member_world: self.member_world.as_ref().map(|w| w.clone_ref(py)),
+        };
+        Py::new(py, (leaf, PyGraph::base()))
     }
 
     /// Borrow the held core [`CoarseGrain`] (for the bead-pattern matcher,
@@ -2294,4 +3035,28 @@ impl PyRingInfo {
             self.inner.ring_sizes()
         )
     }
+}
+
+/// Keep only the `atom_fields` columns of `frame`'s ``atoms`` block; `None`
+/// keeps them all. A requested column the block lacks raises
+/// ``ValueError`` naming it.
+fn select_atom_fields(
+    mut frame: molrs::store::frame::Frame,
+    atom_fields: Option<Vec<String>>,
+) -> PyResult<molrs::store::frame::Frame> {
+    let Some(fields) = atom_fields else {
+        return Ok(frame);
+    };
+    let keys: Vec<&str> = fields.iter().map(String::as_str).collect();
+    if let Some(atoms) = frame.remove("atoms") {
+        let selected = atoms
+            .select_columns(&keys)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        frame.insert("atoms", selected);
+    } else if let Some(first) = keys.first() {
+        return Err(PyValueError::new_err(format!(
+            "column '{first}' not found: the frame has no atoms block"
+        )));
+    }
+    Ok(frame)
 }

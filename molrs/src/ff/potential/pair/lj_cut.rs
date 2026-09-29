@@ -6,6 +6,7 @@
 //!
 //! Arithmetic uses `inv_r2 = 1/r2`. Degenerate pairs `r2 < 1e-24` are skipped.
 
+use molrs::store::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
@@ -646,13 +647,13 @@ pub fn pair_lj_cut_ctor(
     };
 
     let atoms = frame
-        .get("atoms")
+        .get(ATOMS)
         .ok_or_else(|| "LJCut: frame missing \"atoms\" block".to_string())?;
     let atom_types = atoms
         .get_string("type")
         .ok_or_else(|| "LJCut: atoms block missing \"type\" column".to_string())?;
     let block = frame
-        .get("pairs")
+        .get(PAIRS)
         .ok_or_else(|| "LJCut: frame missing \"pairs\" block".to_string())?;
     let i_col = block
         .get_uint("atomi")

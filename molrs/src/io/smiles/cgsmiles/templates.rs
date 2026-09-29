@@ -26,11 +26,18 @@
 //! the table. 01d's per-call `FragmentCache` amortizes cloning a body across
 //! *instances*; a template is definition-level and has no instances, so there
 //! is nothing to amortize and no cache here.
+//!
+//! **One piece without a table.** A unit written on its own — the body
+//! `[<]OCC[>]`, parsed by
+//! [`parse_fragment_smiles`](crate::io::smiles::parse_fragment_smiles) — is
+//! built by [`SmilesIR::to_template`], the same conversion a table entry goes
+//! through; a caller no longer wraps the body in a one-bead `CGsmiles` string
+//! only to index the one template back out.
 
 use std::collections::BTreeMap;
 
 use crate::io::smiles::cgsmiles::ast::{CGSmilesIR, FragmentBody};
-use crate::io::smiles::chem::ast::{BondingDescriptor, DescriptorKind, Span};
+use crate::io::smiles::chem::ast::{BondingDescriptor, DescriptorKind, SmilesIR, Span};
 use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
 use crate::io::smiles::smiles::fragment_to_atomistic;
 use molrs::Element;
@@ -147,7 +154,7 @@ impl CGSmilesIR {
     /// use molrs::system::atomistic::Atomistic;
     ///
     /// let ir = parse_cgsmiles("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")?;
-    /// let mut templates = ir.to_fragment()?;
+    /// let mut templates = ir.templates()?;
     /// let peo = templates.remove("PEO").expect("the table defines #PEO");
     ///
     /// // `[$]COC[$]`: three heavy atoms and two bonds, plus one capping
@@ -175,7 +182,7 @@ impl CGSmilesIR {
     /// }
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn to_fragment(&self) -> Result<BTreeMap<String, Atomistic>, SmilesError> {
+    pub fn templates(&self) -> Result<BTreeMap<String, Atomistic>, SmilesError> {
         let Some(table) = self.fragments.last() else {
             return Err(SmilesError::new(
                 SmilesErrorKind::CgNotExpandable("base-only string (no fragment table)".to_owned()),
@@ -198,20 +205,65 @@ impl CGSmilesIR {
                     Notation::CGsmiles,
                 ));
             };
-            let (atomistic, descriptors) = fragment_to_atomistic(ir)?;
             let context = format!("fragment '{name}'");
-            let sites: Vec<OpenSite<'_>> = descriptors
-                .iter()
-                .map(|(anchor, descriptor)| OpenSite {
-                    anchor: *anchor,
-                    descriptor,
-                })
-                .collect();
-            let fragment = cap_open_sites(atomistic, &sites, &context, def.span)?;
-            templates.insert(name.clone(), fragment);
+            templates.insert(name.clone(), build_template(ir, &context, def.span)?);
         }
         Ok(templates)
     }
+}
+
+impl SmilesIR {
+    /// Build the ported [`Atomistic`] template of one fragment body.
+    ///
+    /// The single-unit form of [`CGSmilesIR::templates`]: `self` is a body as
+    /// [`parse_fragment_smiles`](crate::io::smiles::parse_fragment_smiles)
+    /// reads it (`[<]OCC[>]`), and the result is exactly the template a table
+    /// entry with that body builds — heavy atoms, one capping-hydrogen handle
+    /// and one port per bonding descriptor, no `frag_id`, no coordinates, no
+    /// valence-bearing property written. See [`CGSmilesIR::templates`] for
+    /// what a handle is and why nothing else is written.
+    ///
+    /// An IR without descriptors (a plain [`parse_smiles`] result) builds a
+    /// template with no ports.
+    ///
+    /// [`parse_smiles`]: crate::io::smiles::parse_smiles
+    ///
+    /// # Errors
+    ///
+    /// Whatever converting the body raises, unchanged;
+    /// [`SmilesErrorKind::InvalidDescriptorOrder`] for a hand-built descriptor
+    /// whose bond symbol states no multiplicity; [`SmilesErrorKind::CgBuild`],
+    /// spanned at the whole body, when a handle, its bond or a port cannot be
+    /// written.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use molrs::io::smiles::parse_fragment_smiles;
+    ///
+    /// let eo = parse_fragment_smiles("[<]OCC[>]")?.to_template()?;
+    /// // Three heavy atoms plus one handle per descriptor.
+    /// assert_eq!(eo.n_atoms(), 5);
+    /// assert_eq!(eo.n_ports(), 2);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn to_template(&self) -> Result<Atomistic, SmilesError> {
+        build_template(self, "fragment", self.span)
+    }
+}
+
+/// The one template conversion: walk the body once, then cap every
+/// descriptor it wrote. `context` and `span` locate a build failure.
+fn build_template(ir: &SmilesIR, context: &str, span: Span) -> Result<Atomistic, SmilesError> {
+    let (atomistic, descriptors) = fragment_to_atomistic(ir)?;
+    let sites: Vec<OpenSite<'_>> = descriptors
+        .iter()
+        .map(|(anchor, descriptor)| OpenSite {
+            anchor: *anchor,
+            descriptor,
+        })
+        .collect();
+    cap_open_sites(atomistic, &sites, context, span)
 }
 
 /// One open valence to cap: the anchor atom and the descriptor written on it.
@@ -403,8 +455,8 @@ mod tests {
     fn templates(text: &str) -> BTreeMap<String, Atomistic> {
         parse_cgsmiles(text)
             .unwrap_or_else(|e| panic!("parse_cgsmiles({text:?}) failed: {e}"))
-            .to_fragment()
-            .unwrap_or_else(|e| panic!("to_fragment({text:?}) failed: {e}"))
+            .templates()
+            .unwrap_or_else(|e| panic!("templates({text:?}) failed: {e}"))
     }
 
     /// One named template of a string that must convert.
@@ -509,7 +561,7 @@ mod tests {
     }
 
     /// A hand-built IR whose single (and therefore last) fragment table holds
-    /// `defs`. `to_fragment` reads `fragments.last()` and `span`, so the level
+    /// `defs`. `templates` reads `fragments.last()` and `span`, so the level
     /// and the pair list are present only to make the value well-formed.
     fn ir_over(defs: &[CGFragmentDef]) -> CGSmilesIR {
         CGSmilesIR {
@@ -584,7 +636,7 @@ mod tests {
         assert_eq!(err.notation, Notation::CGsmiles);
     }
 
-    // -- to_fragment: the table it returns ----------------------------------
+    // -- templates: the table it returns ----------------------------------
 
     /// One template per definition of the last table, no more and no fewer —
     /// the key set is the table's own.
@@ -599,7 +651,7 @@ mod tests {
             .cloned()
             .collect();
         let built: Vec<String> = ir
-            .to_fragment()
+            .templates()
             .expect("F2 must build its templates")
             .keys()
             .cloned()
@@ -608,7 +660,39 @@ mod tests {
         assert_eq!(built, defined);
     }
 
-    // -- to_fragment: template shape ----------------------------------------
+    // -- SmilesIR::to_template: one body, no table -----------------------
+
+    /// `[<]OCC[>]` alone: three heavy atoms, two handles, one `<` and one `>`
+    /// port — the same template the table entry `#EO=[<]OCC[>]` builds.
+    #[test]
+    fn to_template_builds_one_unit_from_a_body() {
+        let eo = parse_fragment_smiles("[<]OCC[>]")
+            .expect("a fragment body must parse")
+            .to_template()
+            .expect("a fragment body must build its template");
+        assert_eq!(eo.n_atoms(), 5);
+        assert_eq!(eo.n_bonds(), 4);
+        let mut kinds: Vec<PortKind> = ports_of(&eo).iter().map(|p| p.kind).collect();
+        kinds.sort_by_key(|k| format!("{k:?}"));
+        assert_eq!(kinds, vec![PortKind::Left, PortKind::Right]);
+
+        let from_table = template("{[#EO]}.{#EO=[<]OCC[>]}", "EO");
+        assert_eq!(eo.n_atoms(), from_table.n_atoms());
+        assert_eq!(eo.n_ports(), from_table.n_ports());
+    }
+
+    /// A body with no descriptor builds a template with no port.
+    #[test]
+    fn to_template_of_a_plain_body_has_no_ports() {
+        let mol = parse_fragment_smiles("CCO")
+            .expect("a plain body is a fragment body")
+            .to_template()
+            .expect("a plain body builds");
+        assert_eq!(mol.n_atoms(), 3);
+        assert_eq!(mol.n_ports(), 0);
+    }
+
+    // -- templates: template shape ----------------------------------------
 
     /// `[$]COC[$]` is three heavy atoms and two bonds; each descriptor adds
     /// one capping hydrogen and one bond — 5 atoms, 4 bonds, 2 ports. Both
@@ -747,7 +831,7 @@ mod tests {
         assert_eq!(peo.n_ports(), 2);
     }
 
-    // -- to_fragment: property discipline -----------------------------------
+    // -- templates: property discipline -----------------------------------
 
     /// A handle is added with its element and the hydrogen mass, and nothing
     /// else: no coordinates, no bead stamps, and none of the
@@ -921,7 +1005,7 @@ mod tests {
         }
     }
 
-    // -- to_fragment: refusals ----------------------------------------------
+    // -- templates: refusals ----------------------------------------------
 
     /// A string that never says what its beads are made of has no template to
     /// give, and an empty map would be indistinguishable from a dropped table.
@@ -929,7 +1013,7 @@ mod tests {
     fn rejects_a_base_only_ir() {
         let ir = parse_cgsmiles("{[#EO]|5}").expect("a base-only string must parse");
         let err = ir
-            .to_fragment()
+            .templates()
             .expect_err("a base-only string defines no fragment body");
         assert!(
             matches!(
@@ -961,7 +1045,7 @@ mod tests {
             }),
         )]);
         let err = ir
-            .to_fragment()
+            .templates()
             .expect_err("a coarse body builds no atomistic template");
         assert!(
             matches!(err.kind, SmilesErrorKind::CgNotExpandable(ref name) if name == "A"),
@@ -979,7 +1063,7 @@ mod tests {
         body.components[0].head.descriptors[0] = descriptor(Some(BondKind::Aromatic));
         let ir = ir_over(&[def("A", FragmentBody::Smiles(body))]);
         let err = ir
-            .to_fragment()
+            .templates()
             .expect_err("an aromatic descriptor order is not a port order");
         assert!(
             matches!(err.kind, SmilesErrorKind::InvalidDescriptorOrder(_)),

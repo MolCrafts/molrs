@@ -213,7 +213,7 @@ impl ChargeModel for GasteigerModel {
 ///     mol.add_bond(c, h)?;
 /// }
 ///
-/// let q = molrs::compute_gasteiger_charges(&mol)?;
+/// let q = molrs::ff::charge::compute_gasteiger_charges(&mol)?;
 /// assert_eq!(q.len(), 5, "one charge per atom — hydrogens are atoms");
 /// assert!(q.iter().map(|(_, q)| q).sum::<f64>().abs() < 1e-12, "methane is neutral");
 /// # Ok(())

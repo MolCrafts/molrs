@@ -1,10 +1,10 @@
 """Time-correlated dynamics — Acf, Van Hove."""
 
 from molrs._lib import (
-    Acf as Acf,
-    AcfResult as AcfResult,
-    VanHove as VanHove,
-    VanHoveResult as VanHoveResult,
+    Acf,
+    AcfResult,
+    VanHove,
+    VanHoveResult,
 )
 
 __all__ = [

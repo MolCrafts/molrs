@@ -466,8 +466,6 @@ fn column_to_pyobject(py: Python<'_>, column: &Column) -> PyResult<Py<PyAny>> {
             .into_pyarray(py)
             .into_any()
             .unbind()),
-        Column::Float16(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
-        Column::Float32(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
         Column::Int(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
         Column::Int8(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
         Column::Int16(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),

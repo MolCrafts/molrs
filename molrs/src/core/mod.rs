@@ -55,11 +55,8 @@ pub mod units;
 #[cfg(all(test, feature = "rayon"))]
 pub(crate) mod test_rayon;
 
-// NOTE: chemical perception (rings, aromaticity, hydrogens, stereo, rotatable,
-// Gasteiger, SMARTS) used to live here as `core::chem`. It now sits one layer up
-// in `crate::perceive` — above `core`, below `ff`. Its crate-root re-exports moved
-// with it to `lib.rs`, so `molrs::find_rings`, `molrs::SmartsPattern`, … still
-// resolve unchanged.
+// Chemical perception (rings, aromaticity, hydrogens, stereo, rotatable, SMARTS)
+// sits one layer up in `crate::perceive` — above `core`, below `ff`.
 
 // Public re-exports for common types
 pub use error::MolRsError;
@@ -70,10 +67,8 @@ pub use store::frame::Frame;
 pub use store::frame_access::FrameAccess;
 pub use store::frame_view::FrameView;
 pub use store::meta::{MetaIter, MetaMap, MetaValue};
-pub use store::record::{MOLREC_VERSION, MolRec as Record, Observables, RESERVED_META_KEYS};
-pub use store::trajectory::{
-    ObservableData, ObservableKind, ObservableRecord, SchemaValue, Trajectory,
-};
+pub use store::record::{MOLREC_VERSION, MolRec, Observables, RESERVED_META_KEYS};
+pub use store::trajectory::{ObservableData, ObservableKind, ObservableRecord, Trajectory};
 pub use system::atomistic::{
     AngleId, AtomId, Atomistic, Bond, BondId, DihedralId, ExtractedAtomistic, ImproperId,
 };

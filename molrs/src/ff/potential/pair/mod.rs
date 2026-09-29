@@ -1,5 +1,6 @@
 //! Pair potential kernels.
 
+use molrs::store::schema::block_names::ATOMS;
 use ndarray::{Array2, ArrayView2};
 
 use molrs::spatial::neighbors::Neighbors;
@@ -100,7 +101,7 @@ pub(crate) fn energy_forces((e, f, _): (F, Vec<F>, molrs::math::Virial)) -> (F, 
 /// parameters up once, rather than once per atom.
 pub(crate) fn atom_type_index(frame: &Frame) -> Result<(Vec<u32>, Vec<String>), String> {
     let atoms = frame
-        .get("atoms")
+        .get(ATOMS)
         .ok_or_else(|| "typed pair kernel: frame missing \"atoms\" block".to_string())?;
     let types = atoms
         .get_string("type")

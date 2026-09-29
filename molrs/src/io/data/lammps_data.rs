@@ -1652,6 +1652,25 @@ fn write_lammps_data_frame<W: Write>(
         .get_float("atoms", keys::Z)
         .ok_or_else(|| err_mapper("Missing 'z' column"))?;
 
+    // Bonded sections need a molecular atom style, and every molecular style
+    // carries a molecule ID. The writer never invents one: which atoms form a
+    // molecule is the caller's call.
+    if !frame_has_atom_field(frame, DataField::Mol) {
+        for block in ["bonds", "angles", "dihedrals", "impropers"] {
+            let n = frame
+                .visit_block(block, |b| b.nrows().unwrap_or(0))
+                .unwrap_or(0);
+            if n > 0 {
+                return Err(err_mapper(format!(
+                    "frame['{block}'] has {n} rows but frame['atoms'] has no 'mol_id' \
+                     column; a bonded LAMMPS data file needs a molecule ID per atom \
+                     (e.g. the bond graph's connected components, \
+                     Topology::from_frame(frame).connected_components())"
+                )));
+            }
+        }
+    }
+
     let type_labels = TypeLabels::from_frame(frame).map_err(err_mapper)?;
     let atom_rt = type_labels.block("atoms").ok_or_else(|| {
         err_mapper(
@@ -2244,7 +2263,47 @@ mod atom_style_tests {
     }
 
     #[test]
-    fn write_collapses_reverse_angle_type_labels() {
+    fn write_refuses_bonds_without_mol_id() {
+        use crate::store::block::Block;
+        use crate::store::frame::Frame as CoreFrame;
+        use ndarray::ArrayD;
+
+        let mut frame = CoreFrame::new();
+        let mut atoms = Block::new();
+        atoms
+            .insert(
+                keys::TYPE,
+                ArrayD::from_shape_vec(ndarray::IxDyn(&[2]), vec!["c".to_string(); 2]).unwrap(),
+            )
+            .unwrap();
+        for key in [keys::X, keys::Y, keys::Z] {
+            atoms
+                .insert(
+                    key,
+                    ArrayD::from_shape_vec(ndarray::IxDyn(&[2]), vec![0.0_f64, 1.0]).unwrap(),
+                )
+                .unwrap();
+        }
+        frame.insert("atoms", atoms);
+        let mut bonds = Block::new();
+        for (key, v) in [(keys::ATOMI, 0_u32), (keys::ATOMJ, 1_u32)] {
+            bonds
+                .insert(
+                    key,
+                    ArrayD::from_shape_vec(ndarray::IxDyn(&[1]), vec![v]).unwrap(),
+                )
+                .unwrap();
+        }
+        frame.insert("bonds", bonds);
+
+        let err = write_lammps_data_frame(&mut Vec::new(), &frame).unwrap_err();
+        assert!(err.to_string().contains("mol_id"), "{err}");
+    }
+
+    /// A type label is a type name, matched exactly: `c3-c3-h1` and
+    /// `h1-c3-c3` are two angle types, both written.
+    #[test]
+    fn write_keeps_reverse_angle_type_labels_as_two_types() {
         use crate::store::block::Block;
         use crate::store::frame::Frame as CoreFrame;
         use ndarray::ArrayD;
@@ -2273,6 +2332,12 @@ mod atom_style_tests {
                 )
                 .unwrap();
         }
+        atoms
+            .insert(
+                keys::MOL_ID,
+                ArrayD::from_shape_vec(ndarray::IxDyn(&[3]), vec![1_u32; 3]).unwrap(),
+            )
+            .unwrap();
         frame.insert("atoms", atoms);
 
         let mut angles = Block::new();
@@ -2303,9 +2368,9 @@ mod atom_style_tests {
         let mut buf = Vec::new();
         write_lammps_data_frame(&mut buf, &frame).expect("write");
         let out = String::from_utf8(buf).unwrap();
-        assert!(out.contains("1 angle types"), "{out}");
+        assert!(out.contains("2 angle types"), "{out}");
         assert!(out.contains("c3-c3-h1"), "{out}");
-        assert!(!out.contains("h1-c3-c3"), "{out}");
+        assert!(out.contains("h1-c3-c3"), "{out}");
     }
 
     #[test]

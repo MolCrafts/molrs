@@ -1,9 +1,8 @@
 """``CoarseGrain`` FFI seam: a Rust refusal crosses as a Python exception."""
 
+import molrs
 import numpy as np
 import pytest
-
-import molrs
 
 
 def test_from_frame_refuses_a_2d_atoms_column_with_value_error() -> None:

@@ -14,7 +14,6 @@ binding surface and the acceptance criteria (ac-001..ac-004).
 
 import molrs
 
-
 # ---------------------------------------------------------------------------
 # Builders
 # ---------------------------------------------------------------------------
@@ -101,7 +100,7 @@ def test_element_change_changes_hash():
 
 
 def test_charge_change_changes_hash():
-    a, ha = _ethanol()
+    a, _ha = _ethanol()
     b, hb = _ethanol()
     assert a.structural_hash() == b.structural_hash()
     b.set(hb[2], "charge", -1.0)
@@ -109,7 +108,7 @@ def test_charge_change_changes_hash():
 
 
 def test_aromatic_flag_change_changes_hash():
-    a, ha = _ethanol()
+    a, _ha = _ethanol()
     b, hb = _ethanol()
     assert a.structural_hash() == b.structural_hash()
     b.set(hb[0], "is_aromatic", 1)
@@ -117,7 +116,7 @@ def test_aromatic_flag_change_changes_hash():
 
 
 def test_bond_class_change_changes_hash():
-    a, ha = _ethanol()
+    a, _ha = _ethanol()
     b, hb = _ethanol()
     assert a.structural_hash() == b.structural_hash()
     # Make the C0-C1 bond a double bond via its relation handle.

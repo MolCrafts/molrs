@@ -13,6 +13,7 @@ use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
+use molrs::store::schema::block_names::{ATOMS, PAIRS};
 use molrs::types::F;
 
 /// Where a pair's `(xᵢⱼ, Dᵢⱼ)` comes from.
@@ -270,7 +271,7 @@ pub fn uff_lj_ctor(
     _tp: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, String> {
-    let atoms = frame.get("atoms").ok_or("uff_lj: missing atoms")?;
+    let atoms = frame.get(ATOMS).ok_or("uff_lj: missing atoms")?;
     let x1 = atoms.get_float("x1").ok_or("uff_lj: missing atoms.x1")?;
     let d1 = atoms.get_float("D1").ok_or("uff_lj: missing atoms.D1")?;
     // `PotentialCompiler::compile` projects the force field's `special_bonds` 1-4
@@ -279,7 +280,7 @@ pub fn uff_lj_ctor(
     let scale_14 = style_params.get("lj14scale").unwrap_or(1.0) as F;
 
     let pairs = frame
-        .get("pairs")
+        .get(PAIRS)
         .ok_or("uff_lj: missing pairs (call intramolecular_pairs first)")?;
     let is_14 = pairs.get_bool("is_14");
     if pairs.nrows().unwrap_or(0) == 0 {
@@ -328,7 +329,7 @@ pub fn uff_lj_typed_ctor(
     _type_params: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, String> {
-    let atoms = frame.get("atoms").ok_or("uff_lj: missing atoms")?;
+    let atoms = frame.get(ATOMS).ok_or("uff_lj: missing atoms")?;
     let x1 = atoms.get_float("x1").ok_or("uff_lj: missing atoms.x1")?;
     let d1 = atoms.get_float("D1").ok_or("uff_lj: missing atoms.D1")?;
     Ok(Member::pair(UffVdW::typed(

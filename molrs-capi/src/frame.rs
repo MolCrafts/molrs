@@ -41,7 +41,6 @@ pub enum MolrsMetaType {
     I64 = 2,
     U32 = 3,
     U64 = 4,
-    F32 = 5,
     F64 = 6,
     String = 7,
     Bool3 = 8,
@@ -49,11 +48,8 @@ pub enum MolrsMetaType {
     I64x3 = 10,
     U32x3 = 11,
     U64x3 = 12,
-    F32x3 = 13,
     F64x3 = 14,
-    F32x6 = 15,
     F64x6 = 16,
-    F32x9 = 17,
     F64x9 = 18,
 }
 
@@ -71,7 +67,6 @@ pub struct MolrsMetaValue {
     pub i64_value: i64,
     pub u32_value: u32,
     pub u64_value: u64,
-    pub f32_value: f32,
     pub f64_value: f64,
     pub string_value: *mut c_char,
     pub bool3: [bool; 3],
@@ -79,7 +74,6 @@ pub struct MolrsMetaValue {
     pub i64x3: [i64; 3],
     pub u32x3: [u32; 3],
     pub u64x3: [u64; 3],
-    pub f32x9: [f32; 9],
     pub f64x9: [f64; 9],
 }
 
@@ -92,7 +86,6 @@ impl MolrsMetaValue {
             i64_value: 0,
             u32_value: 0,
             u64_value: 0,
-            f32_value: 0.0,
             f64_value: 0.0,
             string_value: std::ptr::null_mut(),
             bool3: [false; 3],
@@ -100,7 +93,6 @@ impl MolrsMetaValue {
             i64x3: [0; 3],
             u32x3: [0; 3],
             u64x3: [0; 3],
-            f32x9: [0.0; 9],
             f64x9: [0.0; 9],
         }
     }
@@ -110,12 +102,6 @@ impl Default for MolrsMetaValue {
     fn default() -> Self {
         Self::zeroed(MolrsMetaType::Bool)
     }
-}
-
-/// Return the only frame schema version accepted by this library.
-#[unsafe(no_mangle)]
-pub extern "C" fn molrs_frame_schema_version() -> u32 {
-    molrs::store::frame::FRAME_SCHEMA_VERSION
 }
 
 /// Parse a SMILES string and create a frame containing atoms and bonds.
@@ -644,11 +630,6 @@ fn meta_to_c(value: &MetaValue) -> Result<MolrsMetaValue, MolrsStatus> {
             out.u64_value = *v;
             out
         }
-        MetaValue::F32(v) => {
-            let mut out = base!(F32);
-            out.f32_value = *v;
-            out
-        }
         MetaValue::F64(v) => {
             let mut out = base!(F64);
             out.f64_value = *v;
@@ -689,29 +670,14 @@ fn meta_to_c(value: &MetaValue) -> Result<MolrsMetaValue, MolrsStatus> {
             out.u64x3 = *v;
             out
         }
-        MetaValue::F32x3(v) => {
-            let mut out = base!(F32x3);
-            out.f32x9[..3].copy_from_slice(v);
-            out
-        }
         MetaValue::F64x3(v) => {
             let mut out = base!(F64x3);
             out.f64x9[..3].copy_from_slice(v);
             out
         }
-        MetaValue::F32x6(v) => {
-            let mut out = base!(F32x6);
-            out.f32x9[..6].copy_from_slice(v);
-            out
-        }
         MetaValue::F64x6(v) => {
             let mut out = base!(F64x6);
             out.f64x9[..6].copy_from_slice(v);
-            out
-        }
-        MetaValue::F32x9(v) => {
-            let mut out = base!(F32x9);
-            out.f32x9 = *v;
             out
         }
         MetaValue::F64x9(v) => {
@@ -736,7 +702,6 @@ unsafe fn meta_from_c(value: &MolrsMetaValue) -> Result<MetaValue, MolrsStatus> 
         MolrsMetaType::I64 => MetaValue::I64(value.i64_value),
         MolrsMetaType::U32 => MetaValue::U32(value.u32_value),
         MolrsMetaType::U64 => MetaValue::U64(value.u64_value),
-        MolrsMetaType::F32 => MetaValue::F32(value.f32_value),
         MolrsMetaType::F64 => MetaValue::F64(value.f64_value),
         MolrsMetaType::String => {
             if value.string_value.is_null() {
@@ -756,11 +721,8 @@ unsafe fn meta_from_c(value: &MolrsMetaValue) -> Result<MetaValue, MolrsStatus> 
         MolrsMetaType::I64x3 => MetaValue::I64x3(value.i64x3),
         MolrsMetaType::U32x3 => MetaValue::U32x3(value.u32x3),
         MolrsMetaType::U64x3 => MetaValue::U64x3(value.u64x3),
-        MolrsMetaType::F32x3 => MetaValue::F32x3(value.f32x9[..3].try_into().unwrap()),
         MolrsMetaType::F64x3 => MetaValue::F64x3(value.f64x9[..3].try_into().unwrap()),
-        MolrsMetaType::F32x6 => MetaValue::F32x6(value.f32x9[..6].try_into().unwrap()),
         MolrsMetaType::F64x6 => MetaValue::F64x6(value.f64x9[..6].try_into().unwrap()),
-        MolrsMetaType::F32x9 => MetaValue::F32x9(value.f32x9),
         MolrsMetaType::F64x9 => MetaValue::F64x9(value.f64x9),
     })
 }

@@ -37,6 +37,28 @@ async `init()` function that must be awaited before calling the API.
 - **`Block`** — column store with typed arrays. Float columns are `Float64Array` (F = f64).
 - **`Box`** — simulation box with periodic boundary conditions
 
+Columns read like numpy: the column's dtype picks the array type, and no
+method names a dtype.
+
+```js
+const atoms = frame.get("atoms");                 // Block; throws if absent (frame.has)
+atoms.set("x", new Float64Array([0, 1, 2]));      // dtype from the constructor: f64
+atoms.set("element", ["C", "C", "O"]);            // string[] → string
+atoms.set("pos", new Float64Array(9), [3, 3]);    // optional row-major shape
+const x = atoms.get("x");                         // owned Float64Array copy
+const q = atoms.get("charge", new Float64Array(atoms.nrows)); // default if absent
+const v = atoms.view("x");                        // zero-copy; invalid after WASM memory grows
+atoms.dtype("x"); atoms.shape("pos"); atoms.has("x"); atoms.keys();
+```
+
+| dtype | `get` / `view` | `set` accepts |
+|-------|----------------|---------------|
+| `f64` | `Float64Array` | `Float64Array` (`Float32Array` is refused) |
+| `i8` `i16` `i32` `i64` | `Int8Array` `Int16Array` `Int32Array` `BigInt64Array` | same |
+| `u8` `u16` `u32` `u64` | `Uint8Array` `Uint16Array` `Uint32Array` `BigUint64Array` | same |
+| `bool` | `boolean[]` (no `view`) | `boolean[]` |
+| `string` | `string[]` (no `view`) | `string[]` (and `[]`) |
+
 ### I/O
 
 - `parseSMILES(smiles)` → `SmilesIR` → `.toFrame()`

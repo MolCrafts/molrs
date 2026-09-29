@@ -7,12 +7,9 @@ Python-side overflow dict. Supported dtypes coerce, store, and expose zero-copy
 views unchanged.
 """
 
+import molrs
 import numpy as np
 import pytest
-
-import molrs
-from molrs.frame import Block as RichBlock, Frame as RichFrame
-
 
 # --- ac-008: BlockDtypeError is a public, documented symbol ------------------
 
@@ -57,8 +54,8 @@ class TestRejection:
         with pytest.raises(molrs.BlockDtypeError):
             b.insert("o", np.empty(3, dtype=object))
 
-    def test_rich_block_setitem_rejects_object(self):
-        b = RichBlock()
+    def test_setitem_rejects_object(self):
+        b = molrs.Block()
         with pytest.raises(molrs.BlockDtypeError):
             b["mixed"] = np.array(["a", 1, None], dtype=object)
 

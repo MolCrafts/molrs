@@ -62,9 +62,9 @@ VelocityVerlet = _md.VelocityVerlet
 from .driver import MD
 
 __all__ = [
+    "MD",
     "LJCut",
     "Langevin",
-    "MD",
     "MDState",
     "MaxwellBoltzmann",
     "Potential",

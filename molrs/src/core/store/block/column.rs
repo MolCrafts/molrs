@@ -37,8 +37,6 @@ use crate::types::{F, I, Idx};
 macro_rules! map_column {
     ($col:expr, $holder:ident => $body:expr) => {
         match $col {
-            Column::Float16($holder) => $body,
-            Column::Float32($holder) => $body,
             Column::Float($holder) => $body,
             Column::Int8($holder) => $body,
             Column::Int16($holder) => $body,
@@ -180,10 +178,6 @@ impl<T: std::fmt::Debug> std::fmt::Debug for ColumnHolder<T> {
 /// returned `&mut ArrayD<T>` always refers to Rust-owned memory.
 #[derive(Clone)]
 pub enum Column {
-    /// IEEE binary16.
-    Float16(Arc<ColumnHolder<half::f16>>),
-    /// IEEE binary32.
-    Float32(Arc<ColumnHolder<f32>>),
     /// Floating point column using the compute scalar [`F`] (`f64`).
     Float(Arc<ColumnHolder<F>>),
     /// Signed 8-bit integer column.
@@ -233,16 +227,6 @@ impl Column {
     /// Wrap an owned float ndarray in a Rust-owned `Column`.
     pub fn from_float(arr: ArrayD<F>) -> Self {
         Column::Float(Arc::new(ColumnHolder::from_owned(arr)))
-    }
-
-    /// Wrap an owned `f16` ndarray in a Rust-owned `Column`.
-    pub fn from_f16(arr: ArrayD<half::f16>) -> Self {
-        Column::Float16(Arc::new(ColumnHolder::from_owned(arr)))
-    }
-
-    /// Wrap an owned `f32` ndarray in a Rust-owned `Column`.
-    pub fn from_f32(arr: ArrayD<f32>) -> Self {
-        Column::Float32(Arc::new(ColumnHolder::from_owned(arr)))
     }
 
     /// Wrap an owned int ndarray in a Rust-owned `Column`.
@@ -310,16 +294,6 @@ impl Column {
     /// [`ColumnHolder::from_foreign`]).
     pub fn from_float_holder(holder: ColumnHolder<F>) -> Self {
         Column::Float(Arc::new(holder))
-    }
-
-    /// See [`Column::from_float_holder`].
-    pub fn from_f16_holder(holder: ColumnHolder<half::f16>) -> Self {
-        Column::Float16(Arc::new(holder))
-    }
-
-    /// See [`Column::from_float_holder`].
-    pub fn from_f32_holder(holder: ColumnHolder<f32>) -> Self {
-        Column::Float32(Arc::new(holder))
     }
 
     /// See [`Column::from_float_holder`].
@@ -393,8 +367,6 @@ impl Column {
     /// Returns the data type of this column.
     pub fn dtype(&self) -> DType {
         match self {
-            Column::Float16(_) => DType::Float16,
-            Column::Float32(_) => DType::Float32,
             Column::Float(_) => DType::Float,
             Column::Int8(_) => DType::Int8,
             Column::Int16(_) => DType::Int16,
@@ -438,8 +410,6 @@ impl Column {
             out
         }
         match self {
-            Column::Float16(h) => Some(le_numeric(h, |v| v.to_le_bytes())),
-            Column::Float32(h) => Some(le_numeric(h, |v| v.to_le_bytes())),
             Column::Float(h) => Some(le_numeric(h, |v| v.to_le_bytes())),
             Column::Int8(h) => Some(le_numeric(h, |v| v.to_le_bytes())),
             Column::Int16(h) => Some(le_numeric(h, |v| v.to_le_bytes())),
@@ -478,8 +448,6 @@ impl Column {
     pub fn select_rows(&self, indices: &[usize]) -> Column {
         use ndarray::Axis;
         match self {
-            Column::Float16(h) => Column::from_f16(h.array().select(Axis(0), indices)),
-            Column::Float32(h) => Column::from_f32(h.array().select(Axis(0), indices)),
             Column::Float(h) => Column::from_float(h.array().select(Axis(0), indices)),
             Column::Int8(h) => Column::from_i8(h.array().select(Axis(0), indices)),
             Column::Int16(h) => Column::from_i16(h.array().select(Axis(0), indices)),
@@ -499,6 +467,34 @@ impl Column {
     /// Is this column backed by a foreign (non-Rust) buffer?
     pub fn is_foreign(&self) -> bool {
         map_column!(self, a => a.is_foreign())
+    }
+
+    /// A copy that shares no buffer with `self` or with a foreign owner.
+    ///
+    /// [`Clone`] is an `Arc` bump, which is a copy for every Rust writer
+    /// (writes go through copy-on-write) but not for a writer that holds the
+    /// buffer itself — a numpy view handed out by a binding, or the numpy array
+    /// a foreign-backed column was forged from. This copies the elements into a
+    /// new Rust-owned buffer.
+    pub fn deep_copy(&self) -> Column {
+        fn owned<T: Clone>(holder: &Arc<ColumnHolder<T>>) -> Arc<ColumnHolder<T>> {
+            Arc::new(ColumnHolder::clone(holder))
+        }
+        match self {
+            Column::Float(h) => Column::Float(owned(h)),
+            Column::Int8(h) => Column::Int8(owned(h)),
+            Column::Int16(h) => Column::Int16(owned(h)),
+            Column::Int(h) => Column::Int(owned(h)),
+            Column::Int64(h) => Column::Int64(owned(h)),
+            Column::Bool(h) => Column::Bool(owned(h)),
+            Column::UInt(h) => Column::UInt(owned(h)),
+            Column::U8(h) => Column::U8(owned(h)),
+            Column::UInt16(h) => Column::UInt16(owned(h)),
+            Column::UInt32(h) => Column::UInt32(owned(h)),
+            Column::String(h) => Column::String(owned(h)),
+            Column::Complex64(h) => Column::Complex64(owned(h)),
+            Column::Complex128(h) => Column::Complex128(owned(h)),
+        }
     }
 
     /// Format one row as EXTXYZ property tokens.
@@ -627,38 +623,6 @@ impl Column {
     pub fn as_string_mut(&mut self) -> Option<&mut ArrayD<String>> {
         match self {
             Column::String(a) => Some(realize_owned_mut(a)),
-            _ => None,
-        }
-    }
-
-    /// Returns a reference to the `f16` data, or `None` if not `Float16`.
-    pub fn as_f16(&self) -> Option<&ArrayD<half::f16>> {
-        match self {
-            Column::Float16(a) => Some(a.array()),
-            _ => None,
-        }
-    }
-
-    /// Returns a mutable reference to the `f16` data, or `None` if not `Float16`.
-    pub fn as_f16_mut(&mut self) -> Option<&mut ArrayD<half::f16>> {
-        match self {
-            Column::Float16(a) => Some(realize_owned_mut(a)),
-            _ => None,
-        }
-    }
-
-    /// Returns a reference to the `f32` data, or `None` if not `Float32`.
-    pub fn as_f32(&self) -> Option<&ArrayD<f32>> {
-        match self {
-            Column::Float32(a) => Some(a.array()),
-            _ => None,
-        }
-    }
-
-    /// Returns a mutable reference to the `f32` data, or `None` if not `Float32`.
-    pub fn as_f32_mut(&mut self) -> Option<&mut ArrayD<f32>> {
-        match self {
-            Column::Float32(a) => Some(realize_owned_mut(a)),
             _ => None,
         }
     }
@@ -835,8 +799,6 @@ impl Column {
             return;
         }
         match self {
-            Column::Float16(a) => resize_holder(a, current, new_nrows),
-            Column::Float32(a) => resize_holder(a, current, new_nrows),
             Column::Float(a) => resize_holder(a, current, new_nrows),
             Column::Int8(a) => resize_holder(a, current, new_nrows),
             Column::Int16(a) => resize_holder(a, current, new_nrows),
@@ -908,6 +870,27 @@ mod tests {
 
     fn string_col(n: usize) -> Column {
         Column::from_string(Array1::from_vec(vec![String::new(); n]).into_dyn())
+    }
+
+    // ---- deep_copy ----
+
+    #[test]
+    fn deep_copy_shares_no_buffer_and_keeps_the_values() {
+        let col = Column::from_float(Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn());
+        let shallow = col.clone();
+        let deep = col.deep_copy();
+
+        let (Column::Float(a), Column::Float(s), Column::Float(d)) = (&col, &shallow, &deep) else {
+            panic!("float columns stay float");
+        };
+        assert!(Arc::ptr_eq(a, s), "clone is the Arc bump");
+        assert!(!Arc::ptr_eq(a, d), "deep_copy owns a new holder");
+        assert_ne!(a.array().as_ptr(), d.array().as_ptr());
+        assert_eq!(
+            d.array().as_slice_memory_order(),
+            Some(&[1.0 as F, 2.0][..])
+        );
+        assert_eq!(deep.dtype(), DType::Float);
     }
 
     // ---- nrows / dtype / shape ----
@@ -1109,8 +1092,8 @@ mod tests {
             let vec = Vec::from_raw_parts(ptr, len, len);
             ArrayD::from_shape_vec(ndarray::IxDyn(&[len]), vec).unwrap()
         };
-        let source_clone = source.clone();
-        let holder = unsafe { ColumnHolder::from_foreign(forged, source_clone) };
+        // The keepalive is the buffer the forged view points into.
+        let holder = unsafe { ColumnHolder::from_foreign(forged, source) };
         // Clone produces a Rust-owned holder.
         let holder_clone = holder.clone();
         assert!(holder.is_foreign());

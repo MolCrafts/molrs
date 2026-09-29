@@ -62,13 +62,6 @@ fn mat3_from_slice(v: &[F]) -> ndarray::Array2<F> {
     ndarray::arr2(&[[v[0], v[1], v[2]], [v[3], v[4], v[5]], [v[6], v[7], v[8]]])
 }
 
-#[inline]
-fn array2_into_parts(arr: ndarray::Array2<F>) -> (Vec<F>, std::boxed::Box<[usize]>) {
-    let shape = std::boxed::Box::new([arr.nrows(), arr.ncols()]);
-    let (data, _offset) = arr.into_raw_vec_and_offset();
-    (data, shape)
-}
-
 #[wasm_bindgen]
 impl Box {
     /// Create a new box from a 3x3 cell matrix and origin.
@@ -241,7 +234,7 @@ impl Box {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const o = box.origin().toCopy(); // Float32Array or Float64Array [0, 0, 0]
+    /// const o = box.origin().toCopy(); // Float64Array [0, 0, 0]
     /// ```
     pub fn origin(&self) -> WasmArray {
         let o = self.inner.origin_view();
@@ -292,7 +285,7 @@ impl Box {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const L = box.lengths().toCopy(); // Float32Array or Float64Array [10, 10, 10]
+    /// const L = box.lengths().toCopy(); // Float64Array [10, 10, 10]
     /// ```
     /// Return the per-axis periodic boundary flags as a `Uint8Array`
     /// of length 3 (`[px, py, pz]`, 1 = periodic, 0 = open).
@@ -336,7 +329,7 @@ impl Box {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const t = box.tilts().toCopy(); // Float32Array or Float64Array [0, 0, 0]
+    /// const t = box.tilts().toCopy(); // Float64Array [0, 0, 0]
     /// ```
     pub fn tilts(&self) -> WasmArray {
         let t = self.inner.tilts();
@@ -498,8 +491,7 @@ impl Box {
             .as_array2(n_atoms, 3)
             .map_err(|e| JsValue::from_str(&e))?;
         let result = self.inner.wrap(coords_arr);
-        let (data, shape) = array2_into_parts(result);
-        out_block.set_owned_column(out_key, data, shape)
+        out_block.insert_array(out_key, result.into_dyn())
     }
 
     /// Calculate displacement vectors between two sets of coordinates.
@@ -609,8 +601,7 @@ impl Box {
         let a_arr = a.as_array2(n_atoms, 3).map_err(|e| JsValue::from_str(&e))?;
         let b_arr = b.as_array2(n_atoms, 3).map_err(|e| JsValue::from_str(&e))?;
         let result = self.inner.delta(a_arr, b_arr, minimum_image);
-        let (data, shape) = array2_into_parts(result);
-        out_block.set_owned_column(out_key, data, shape)
+        out_block.insert_array(out_key, result.into_dyn())
     }
 
     /// Convert Cartesian to fractional coordinates and write the result
@@ -647,8 +638,7 @@ impl Box {
             .as_array2(n_atoms, 3)
             .map_err(|e| JsValue::from_str(&e))?;
         let result = self.inner.to_frac(coords_arr);
-        let (data, shape) = array2_into_parts(result);
-        out_block.set_owned_column(out_key, data, shape)
+        out_block.insert_array(out_key, result.into_dyn())
     }
 
     /// Convert fractional to Cartesian coordinates and write the result
@@ -685,8 +675,7 @@ impl Box {
             .as_array2(n_atoms, 3)
             .map_err(|e| JsValue::from_str(&e))?;
         let result = self.inner.to_cart(coords_arr);
-        let (data, shape) = array2_into_parts(result);
-        out_block.set_owned_column(out_key, data, shape)
+        out_block.insert_array(out_key, result.into_dyn())
     }
 
     /// Return the 8 corner vertices of the parallelepiped.
@@ -795,7 +784,8 @@ mod tests {
         let mut out = frame.create_block("out").expect("create out");
         cube.wrap_to_block(&wrap_view, &mut out, "wrapped")
             .expect("wrapToBlock");
-        let wrapped_out = out.copy_col_f("wrapped").expect("copyColF");
+        let wrapped_out: JsFloatArray =
+            wasm_bindgen::JsValue::from(out.get("wrapped", None).expect("get")).unchecked_into();
         assert_eq_array(&wrapped_out, &[2.5, 3.5, 4.5]);
     }
 }

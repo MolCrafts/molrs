@@ -1,6 +1,5 @@
-import pytest
-
 import molrs
+import pytest
 
 
 def test_registry_parses_and_converts_molecular_units():
@@ -34,7 +33,7 @@ def test_custom_definition_is_registry_local():
     units.define("smoot", 1.7018, units.meter.dimension)
     assert (1.0 * units.smoot).to(units.meter).magnitude == pytest.approx(1.7018)
     with pytest.raises(AttributeError):
-        getattr(molrs.UnitRegistry(), "smoot")
+        _ = molrs.UnitRegistry().smoot
 
 
 def test_affine_temperature_conversion():
@@ -45,7 +44,9 @@ def test_affine_temperature_conversion():
 def test_define_lj_sigma_defines_the_reduced_length_unit_alone():
     units = molrs.UnitRegistry()
     units.define_lj_sigma(units.quantity(4.2, "angstrom"))
-    assert units.parse("lj_sigma").factor_to(units.angstrom) == pytest.approx(4.2, rel=1e-12)
+    assert units.parse("lj_sigma").factor_to(units.angstrom) == pytest.approx(
+        4.2, rel=1e-12
+    )
     # Only sigma is known, so no reduced mass exists.
     with pytest.raises(molrs.UnitsError):
         units.parse("lj_mass")

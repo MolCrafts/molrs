@@ -274,7 +274,7 @@ impl PyConformer {
     /// Hydrogens this pipeline adds to a ported unit carry no ``frag_id``;
     /// the caller relabels them, which is one call:
     ///
-    /// >>> unit = molrs.io.CGSmilesIR("{[#A]}.{#A=[$]CO}").to_fragment()["A"]
+    /// >>> unit = molrs.io.SmilesIR.from_fragment("[$]CO").to_template()
     /// >>> unit_3d, _ = Conformer(speed="fast", seed=42).generate(unit)
     /// >>> _ = unit_3d.inherit_frag_ids()
     fn generate(
@@ -290,7 +290,7 @@ impl PyConformer {
                 .generate(leaf.borrow().core())
                 .map_err(molrs_error_to_pyerr)?;
             return Ok((
-                PyAtomistic::from_core(py, out)?.into_any(),
+                leaf.borrow().derive(py, out)?.into_any(),
                 report_to_py(report),
             ));
         }

@@ -12,9 +12,9 @@ stage gave up rather than returning coordinates nobody should trust.
 from __future__ import annotations
 
 from ._lib import (
-    Conformer as Conformer,
-    ConformerReport as ConformerReport,
-    ConformerStageReport as ConformerStageReport,
+    Conformer,
+    ConformerReport,
+    ConformerStageReport,
 )
 
 __all__ = [

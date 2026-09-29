@@ -5,7 +5,7 @@
 //! re-expressed against `MolGraph`. It perceives aromaticity from scratch
 //! (Kekulé bond orders + element + formal charge), writing back an
 //! `is_aromatic` atom property and a `bond_type` of `Aromatic` so that
-//! [`crate::SmartsPattern`]'s `a` / `c` / `:` primitives match RDKit after
+//! [`crate::perceive::smarts::SmartsPattern`]'s `a` / `c` / `:` primitives match RDKit after
 //! native perception (rather than relying on transplanted flags).
 //!
 //! # Algorithm (RDKit `aromaticityHelper(mol, srings, 0, 0, true)`)
@@ -222,7 +222,7 @@ fn total_degree(mol: &Atomistic, id: AtomId) -> i32 {
 /// the drawn degree, and swapping them makes every aromatic carbon look
 /// saturated.
 fn explicit_degree(mol: &Atomistic, id: AtomId) -> i32 {
-    mol.neighbors(id).count() as i32
+    mol.neighbor_bonds(id).count() as i32
 }
 
 /// Hydrogens the graph implies but does not draw (RDKit `getNumImplicitHs`).

@@ -1,9 +1,8 @@
 import copy
 import pickle
 
-import numpy as np
-
 import molrs
+import numpy as np
 from molrs import _lib
 
 
@@ -16,17 +15,22 @@ def _unit_cube_mesh() -> "molrs.TriMesh":
     # vertex index = x + 2*y + 4*z
     faces = np.array(
         [
-            [0, 4, 6], [0, 6, 2],  # -x
-            [1, 3, 7], [1, 7, 5],  # +x
-            [0, 1, 5], [0, 5, 4],  # -y
-            [2, 6, 7], [2, 7, 3],  # +y
-            [0, 2, 3], [0, 3, 1],  # -z
-            [4, 5, 7], [4, 7, 6],  # +z
+            [0, 4, 6],
+            [0, 6, 2],  # -x
+            [1, 3, 7],
+            [1, 7, 5],  # +x
+            [0, 1, 5],
+            [0, 5, 4],  # -y
+            [2, 6, 7],
+            [2, 7, 3],  # +y
+            [0, 2, 3],
+            [0, 3, 1],  # -z
+            [4, 5, 7],
+            [4, 7, 6],  # +z
         ],
         dtype=np.uint32,
     )
     return molrs.TriMesh(v, faces)
-
 
 
 def roundtrip(value):
@@ -34,17 +38,16 @@ def roundtrip(value):
 
 
 def test_storage_units_and_observables_pickle_by_logical_state() -> None:
-    for block_type in (_lib.Block, molrs.Block):
-        block = block_type()
-        block.insert("sample", np.array([1, 2], dtype=np.int16))
-        block.insert("label", ["left", "right"])
-        block.set_shape([1, 2])
-        restored = roundtrip(block)
-        assert type(restored) is block_type
-        assert restored.dtype("sample") == "i16"
-        assert restored.view("sample").tolist() == [1, 2]
-        assert np.asarray(restored.view("label")).tolist() == ["left", "right"]
-        assert restored.structural_shape == [1, 2]
+    block = molrs.Block()
+    block.insert("sample", np.array([1, 2], dtype=np.int16))
+    block.insert("label", ["left", "right"])
+    block.set_shape([1, 2])
+    restored = roundtrip(block)
+    assert type(restored) is molrs.Block
+    assert restored.dtype("sample") == "i16"
+    assert restored.view("sample").tolist() == [1, 2]
+    assert np.asarray(restored.view("label")).tolist() == ["left", "right"]
+    assert restored.structural_shape == [1, 2]
 
     empty_rows = molrs.Block()
     empty_rows.resize(3)
@@ -252,18 +255,7 @@ def test_graphs_views_and_extraction_pickle_as_one_object_graph() -> None:
 
     assert type(roundtrip(_lib.Atomistic())) is _lib.Atomistic
     assert type(roundtrip(_lib.CoarseGrain())) is _lib.CoarseGrain
-    assert type(roundtrip(molrs.GraphViews())) is molrs.GraphViews
     assert roundtrip(molrs.Reaction("[C:1]>>[C:1]")).forming_bonds == []
-
-    restored_links = roundtrip(molecule.links)
-    assert type(restored_links) is type(molecule.links)
-    assert {type(ref).__name__ for ref in restored_links.all()} == {
-        "Bond",
-        "Angle",
-        "Dihedral",
-        "Improper",
-    }
-    assert all(ref.world is restored_links.world for ref in restored_links.all())
 
 
 def test_schema_and_metadata_pickle_as_value_types() -> None:
@@ -346,8 +338,7 @@ def test_a_meta_document_deep_copies_by_content() -> None:
     assert copy.deepcopy(doc) == {"ok": True, "tags": (1, 2), "inner": {"a": 1}}
 
 
-def test_a_frame_dict_snapshot_with_a_document_pickles() -> None:
+def test_a_meta_dict_snapshot_with_a_document_pickles() -> None:
     frame = molrs.Frame(meta={"doc": {"ok": True, "tags": [1, 2]}, "step": 3})
-    restored = roundtrip(frame.to_dict())
-    assert restored["blocks"] == {}
-    assert restored["meta"] == {"doc": {"ok": True, "tags": (1, 2)}, "step": 3}
+    restored = roundtrip(dict(frame.meta))
+    assert restored == {"doc": {"ok": True, "tags": (1, 2)}, "step": 3}

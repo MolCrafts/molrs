@@ -22,10 +22,10 @@
 //! # SMARTS reuse
 //!
 //! Matching uses the always-compiled molrs SMARTS engine
-//! ([`SmartsPattern`](molrs::SmartsPattern)) with standard Daylight semantics
+//! ([`SmartsPattern`](molrs::perceive::smarts::SmartsPattern)) with standard Daylight semantics
 //! (an unmarked bond is single-or-aromatic, `[#1]` is a hydrogen atom, `H<n>`
 //! a hydrogen count, `r<n>` the smallest ring) plus the context-label
-//! extension ([`MatchOptions::labels`](molrs::MatchOptions::labels)): the
+//! extension ([`MatchOptions::labels`](molrs::perceive::smarts::MatchOptions::labels)): the
 //! engine feeds back the current assignment map as the label context so
 //! `%opls_NNN` predicates can read it. Each `def` is the SMARTS for the type's
 //! *target* atom: by RDKit convention the engine roots a match at query atom 0,
@@ -116,7 +116,7 @@ pub(crate) fn typify_atoms(
                 Some(row) => Annotation::Type {
                     style: "full".to_owned(),
                     name: type_name.clone(),
-                    endpoints: Some(Vec::new()),
+                    endpoints: Vec::new(),
                     params: Params::from_pairs(&row.params.iter().collect::<Vec<_>>()),
                 },
                 None => Annotation::Value(PropValue::Str(type_name.clone())),
@@ -251,6 +251,7 @@ mod tests {
             .unwrap()
             .def_type(
                 "opls_140",
+                &[],
                 Params::from_pairs(&[("mass", 1.008), ("charge", 0.06)]),
             )
             .unwrap();

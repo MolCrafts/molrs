@@ -663,7 +663,7 @@ mod remap_tests {
     fn a_crossing_bond_is_rewritten_to_its_closest_copy() {
         let bx = SimBox::cube(10.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         let owned = array![[9.5_f64, 5.0, 5.0], [0.5, 5.0, 5.0]];
-        let comm = Comm::new(bx.clone(), owned.view(), 2.0, 0.0).unwrap();
+        let comm = Comm::new(bx, owned.view(), 2.0, 0.0).unwrap();
 
         let pot = BondHarmonic::new(vec![0], vec![1], vec![100.0], vec![1.0]);
         let terms = resolve_one(Member::indexed(pot), owned.view(), &comm).unwrap();
@@ -692,7 +692,7 @@ mod remap_tests {
         let bx = SimBox::cube(10.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         // Vertex just inside the low face; the arms straddle it.
         let owned = array![[9.3_f64, 5.0, 5.0], [0.2, 5.0, 5.0], [1.2, 5.0, 5.0]];
-        let comm = Comm::new(bx.clone(), owned.view(), 3.0, 0.0).unwrap();
+        let comm = Comm::new(bx, owned.view(), 3.0, 0.0).unwrap();
 
         let pot = AngleHarmonic::new(vec![0], vec![1], vec![2], vec![50.0], vec![2.9]);
         let terms = resolve_one(Member::indexed(pot), owned.view(), &comm).unwrap();
@@ -812,7 +812,11 @@ mod owned_potential_tests {
         field
             .def_style("bond", "harmonic", Params::new())
             .unwrap()
-            .def_type("a-a", Params::from_pairs(&[("k", 100.0), ("r0", 1.0)]))
+            .def_type(
+                "a-a",
+                &["a", "a"],
+                Params::from_pairs(&[("k", 100.0), ("r0", 1.0)]),
+            )
             .unwrap();
 
         // A small skin, so drifting forces several rebuilds over the run.
@@ -917,7 +921,11 @@ mod owned_potential_tests {
         field
             .def_style("bond", "harmonic", Params::new())
             .unwrap()
-            .def_type("a-a", Params::from_pairs(&[("k", 100.0), ("r0", 1.0)]))
+            .def_type(
+                "a-a",
+                &["a", "a"],
+                Params::from_pairs(&[("k", 100.0), ("r0", 1.0)]),
+            )
             .unwrap();
 
         let mut comm = Comm::new(bx.clone(), owned.view(), 3.0, 0.2).unwrap();

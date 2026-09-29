@@ -56,11 +56,6 @@ use crate::units::preset::PresetDim;
 /// Version of the **vocabulary** — what block and column names mean, and what
 /// dtype each carries.
 ///
-/// Distinct from
-/// [`FRAME_SCHEMA_VERSION`](crate::store::frame::FRAME_SCHEMA_VERSION), which
-/// versions the *serialization envelope* (how bytes are laid out). One can
-/// change without the other; conflating them is why this doc paragraph exists.
-///
 /// Bump when: a spec's `dtype` or `shape` changes, a canonical key is renamed
 /// or removed, or a block's `required` set grows. Do **not** bump when: a new
 /// key is added, a new optional column is added, or a doc/unit string changes.
@@ -214,6 +209,14 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         Scalar,
         NotAQuantity,
         "Whether this torsion's 1-4 non-bonded term is suppressed (AMBER negative 3rd pointer)"
+    ),
+    col!(
+        "free",
+        "FREE",
+        DType::Bool,
+        Scalar,
+        NotAQuantity,
+        "Whether an atom may move when the coordinates are optimized: `false` pins the atom where it is. A frame without the column has every atom free."
     ),
     col!(
         "id",
@@ -399,10 +402,10 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
 /// Every canonical block, sorted by name.
 pub static SCHEMA_BLOCKS: &[BlockSpec] = &[
     BlockSpec {
-        name: "angles",
+        name: block_names::ANGLES,
         row_kind: RowKind::Relation { arity: 3 },
         endpoints: Some(EndpointSpec {
-            target: "atoms",
+            target: block_names::ATOMS,
             columns: &["atomi", "atomj", "atomk"],
         }),
         required: &["atomi", "atomj", "atomk"],
@@ -411,7 +414,7 @@ pub static SCHEMA_BLOCKS: &[BlockSpec] = &[
         doc: "Three-body angle terms; `atomj` is the vertex.",
     },
     BlockSpec {
-        name: "atoms",
+        name: block_names::ATOMS,
         row_kind: RowKind::Node,
         endpoints: None,
         required: &[],
@@ -434,15 +437,16 @@ pub static SCHEMA_BLOCKS: &[BlockSpec] = &[
             "vx",
             "vy",
             "vz",
+            "free",
         ],
         open: true,
         doc: "Per-atom properties. The node table relation blocks index into.",
     },
     BlockSpec {
-        name: "bonds",
+        name: block_names::BONDS,
         row_kind: RowKind::Relation { arity: 2 },
         endpoints: Some(EndpointSpec {
-            target: "atoms",
+            target: block_names::ATOMS,
             columns: &["atomi", "atomj"],
         }),
         required: &["atomi", "atomj"],
@@ -451,10 +455,10 @@ pub static SCHEMA_BLOCKS: &[BlockSpec] = &[
         doc: "Two-body bond terms.",
     },
     BlockSpec {
-        name: "dihedrals",
+        name: block_names::DIHEDRALS,
         row_kind: RowKind::Relation { arity: 4 },
         endpoints: Some(EndpointSpec {
-            target: "atoms",
+            target: block_names::ATOMS,
             columns: &["atomi", "atomj", "atomk", "atoml"],
         }),
         required: &["atomi", "atomj", "atomk", "atoml"],
@@ -463,10 +467,10 @@ pub static SCHEMA_BLOCKS: &[BlockSpec] = &[
         doc: "Four-body proper torsion terms.",
     },
     BlockSpec {
-        name: "exclusions",
+        name: block_names::EXCLUSIONS,
         row_kind: RowKind::Relation { arity: 2 },
         endpoints: Some(EndpointSpec {
-            target: "atoms",
+            target: block_names::ATOMS,
             columns: &["atomi", "atomj"],
         }),
         required: &["atomi", "atomj"],
@@ -475,10 +479,10 @@ pub static SCHEMA_BLOCKS: &[BlockSpec] = &[
         doc: "Pairs excluded from non-bonded interaction (PME real-space correction).",
     },
     BlockSpec {
-        name: "impropers",
+        name: block_names::IMPROPERS,
         row_kind: RowKind::Relation { arity: 4 },
         endpoints: Some(EndpointSpec {
-            target: "atoms",
+            target: block_names::ATOMS,
             columns: &["atomi", "atomj", "atomk", "atoml"],
         }),
         required: &["atomi", "atomj", "atomk", "atoml"],
@@ -487,10 +491,10 @@ pub static SCHEMA_BLOCKS: &[BlockSpec] = &[
         doc: "Four-body improper terms enforcing planarity or chirality.",
     },
     BlockSpec {
-        name: "pairs",
+        name: block_names::PAIRS,
         row_kind: RowKind::Relation { arity: 2 },
         endpoints: Some(EndpointSpec {
-            target: "atoms",
+            target: block_names::ATOMS,
             columns: &["atomi", "atomj"],
         }),
         required: &["atomi", "atomj"],
@@ -531,10 +535,29 @@ pub fn block(name: &str) -> Option<&'static BlockSpec> {
 ///   per relation kind, and those carry no spec.
 /// - `None` when that column list is empty: the block is not a relation.
 ///
-/// The one rule both [`Validator`] (range checks) and
-/// [`Frame::subset`](crate::store::frame::Frame::subset) (reindexing) follow,
-/// so the two cannot disagree on what an endpoint is.
-pub(crate) fn relation_endpoints(
+/// The one rule [`Validator`] (range checks),
+/// [`Frame::subset`](crate::store::frame::Frame::subset) (reindexing) and
+/// [`Frame::replicate`](crate::store::frame::Frame::replicate) (offsetting)
+/// follow, so none of them can disagree on what an endpoint is. A downstream
+/// crate that rewrites endpoint indices asks this function rather than keeping
+/// its own list of relation blocks.
+///
+/// # Examples
+///
+/// ```
+/// use molrs::store::schema::{block_names, relation_endpoints};
+///
+/// // A canonical relation answers from its spec.
+/// assert_eq!(
+///     relation_endpoints(block_names::BONDS, |_| false),
+///     Some((block_names::ATOMS, vec!["atomi", "atomj"])),
+/// );
+/// // An unspecified block is a relation iff it carries endpoint columns.
+/// let has = |k: &str| k == "atomi";
+/// assert_eq!(relation_endpoints("ports", has), Some(("atoms", vec!["atomi"])));
+/// assert_eq!(relation_endpoints("cell", |_| false), None);
+/// ```
+pub fn relation_endpoints(
     name: &str,
     has_column: impl Fn(&str) -> bool,
 ) -> Option<(&'static str, Vec<&'static str>)> {
@@ -544,7 +567,7 @@ pub(crate) fn relation_endpoints(
             (e.target, e.columns.to_vec())
         }
         _ => (
-            "atoms",
+            block_names::ATOMS,
             consts::ENDPOINTS
                 .iter()
                 .copied()
@@ -557,6 +580,40 @@ pub(crate) fn relation_endpoints(
     } else {
         Some((target, columns))
     }
+}
+
+/// Canonical block names — the `name` of every [`SCHEMA_BLOCKS`] entry.
+///
+/// The table is built from these constants and the unit test
+/// `block_names_agree_with_the_table` checks that every spec has one, so a
+/// caller that writes `block_names::BONDS` names the block the schema
+/// declares, not a string that happens to match it today.
+///
+/// # Examples
+///
+/// ```
+/// use molrs::store::schema::{self, block_names};
+///
+/// assert_eq!(block_names::ATOMS, "atoms");
+/// assert!(schema::block(block_names::DIHEDRALS).is_some());
+/// ```
+pub mod block_names {
+    /// Per-atom node table; every canonical relation indexes its rows.
+    pub const ATOMS: &str = "atoms";
+    /// Two-body bond terms.
+    pub const BONDS: &str = "bonds";
+    /// Three-body angle terms.
+    pub const ANGLES: &str = "angles";
+    /// Four-body proper torsion terms.
+    pub const DIHEDRALS: &str = "dihedrals";
+    /// Four-body improper terms.
+    pub const IMPROPERS: &str = "impropers";
+    /// Intramolecular non-bonded pair list.
+    pub const PAIRS: &str = "pairs";
+    /// Pairs excluded from non-bonded interaction.
+    pub const EXCLUSIONS: &str = "exclusions";
+    /// The bonded-topology relation blocks, in increasing arity.
+    pub const TOPOLOGY: [&str; 4] = [BONDS, ANGLES, DIHEDRALS, IMPROPERS];
 }
 
 /// Canonical string constants for the keys of [`SCHEMA_COLUMNS`].
@@ -656,6 +713,8 @@ pub mod consts {
     pub const IS_14: &str = "is_14";
     /// Whether this torsion's 1-4 non-bonded term is suppressed.
     pub const EXCLUDE_14: &str = "exclude_14";
+    /// Per-atom optimizer mobility (Bool): `false` pins the atom in place.
+    pub const FREE: &str = "free";
     /// First relation endpoint, 0-indexed.
     pub const ATOMI: &str = "atomi";
     /// Second relation endpoint, 0-indexed.
@@ -794,6 +853,7 @@ mod tests {
             consts::RES_NAME,
             consts::IS_14,
             consts::EXCLUDE_14,
+            consts::FREE,
             consts::ATOMI,
             consts::ATOMJ,
             consts::ATOMK,
@@ -851,6 +911,38 @@ mod tests {
                 c.dtype
             );
         }
+    }
+
+    #[test]
+    fn block_names_agree_with_the_table() {
+        use block_names::*;
+        let consts = [
+            ATOMS, BONDS, ANGLES, DIHEDRALS, IMPROPERS, PAIRS, EXCLUSIONS,
+        ];
+        let mut table: Vec<&str> = SCHEMA_BLOCKS.iter().map(|b| b.name).collect();
+        let mut named: Vec<&str> = consts.to_vec();
+        table.sort_unstable();
+        named.sort_unstable();
+        assert_eq!(table, named, "every BlockSpec has exactly one constant");
+        for name in TOPOLOGY {
+            assert!(matches!(
+                block(name).map(|b| b.row_kind),
+                Some(RowKind::Relation { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn free_is_a_bool_atom_column() {
+        let spec = column(consts::FREE).expect("free is canonical");
+        assert_eq!(spec.dtype, DType::Bool);
+        assert_eq!(spec.shape, ColShape::Scalar);
+        assert!(
+            block(block_names::ATOMS)
+                .unwrap()
+                .optional
+                .contains(&"free")
+        );
     }
 
     // ---- relation_endpoints ----

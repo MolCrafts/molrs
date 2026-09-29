@@ -88,7 +88,7 @@ mod tests {
         let mut builder = CarbonTubeBuilder::new(6, 0).unwrap();
         builder.set_cells(2).unwrap();
         let frame = builder.build().unwrap();
-        assert!(frame.get_block("atoms").is_some());
-        assert!(frame.get_block("bonds").is_some());
+        assert!(frame.has("atoms"));
+        assert!(frame.has("bonds"));
     }
 }

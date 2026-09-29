@@ -26,7 +26,8 @@ target-dir = "target"
 #     scripts/test-scope.sh                # the modules the working tree touched
 #
 # Legitimate builds of molcrafts-molrs in this repo, and no others:
-#   1. this set — `full,filesystem,stream` (+ default `rayon`) for every root
+#   1. this set — `full,filesystem,stream` (+ molrs's default `rayon`; molrs
+#      itself defaults to core only, so the sub-systems are named here) for every root
 #      workspace command: build, check, clippy, test, doc, and `mrs-gen-opls`.
 #      The generator links this same library unit; it adds exactly one example
 #      unit (`example-gen_opls_params`), and `mrs-check` / `mrs-clippy

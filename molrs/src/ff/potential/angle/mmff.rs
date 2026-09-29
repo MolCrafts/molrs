@@ -14,6 +14,7 @@
 //! stretch-bend coupling entirely. The typifier bakes a `linear` flag on each
 //! angle row (from the *central* atom's `linh`) and both kernels below read it.
 
+use molrs::store::schema::block_names::ANGLES;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
@@ -169,7 +170,7 @@ pub fn mmff_angle_ctor(
     // onto each angle (table → equivalence → empirical). This kernel only reads
     // the columns and evaluates — no force-field-specific resolution lives here.
     let block = frame
-        .get("angles")
+        .get(ANGLES)
         .ok_or("mmff_angle: missing \"angles\" block")?;
     let ic = block.get_uint("atomi").ok_or("missing atomi")?;
     let jc = block.get_uint("atomj").ok_or("missing atomj")?;
@@ -364,7 +365,7 @@ pub fn mmff_stbn_ctor(
     // constants (kba_ijk/kba_kji, via the dfsb period-row default-row fallback
     // that the shared-table path lacked) plus the two reference bond lengths and
     // theta0 (radians) onto each angle. This kernel only reads the columns.
-    let block = frame.get("angles").ok_or("mmff_stbn: missing \"angles\"")?;
+    let block = frame.get(ANGLES).ok_or("mmff_stbn: missing \"angles\"")?;
     let ic = block.get_uint("atomi").ok_or("missing atomi")?;
     let jc = block.get_uint("atomj").ok_or("missing atomj")?;
     let kc = block.get_uint("atomk").ok_or("missing atomk")?;

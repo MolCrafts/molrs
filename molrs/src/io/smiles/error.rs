@@ -956,7 +956,7 @@ mod tests {
         );
     }
 
-    /// The second shape, the phrase `to_fragment` (link 02b) reuses for a
+    /// The second shape, the phrase `templates` (link 02b) reuses for a
     /// string that names no fragment at all. The same arm has to read
     /// correctly for it, which is why the payload is a whole phrase rather
     /// than a name the arm decorates.

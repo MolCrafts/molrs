@@ -9,16 +9,13 @@ use crate::types::{F, I, Idx};
 /// Supported data types for Block columns.
 ///
 /// Domain aliases [`F`] / [`I`] / [`Idx`] stay on [`DType::Float`] /
-/// [`DType::Int`] / [`DType::UInt`]. Every other variant is a storage width:
-/// a column that arrived as `f32` or `i64` has to leave as that width, not as
-/// the compute scalar.
+/// [`DType::Int`] / [`DType::UInt`]. Floats are always the compute scalar [`F`]
+/// (`f64`): there is no `f16`/`f32` variant, and a narrow float on disk is
+/// **refused**, not promoted. Every other variant is a storage width: a column
+/// that arrived as `i64` has to leave as that width, not as the compute scalar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum DType {
-    /// IEEE binary16.
-    Float16,
-    /// IEEE binary32.
-    Float32,
     /// Floating point using the compute scalar [`F`] (`f64`).
     Float,
     /// Signed 8-bit integer.
@@ -51,8 +48,6 @@ impl DType {
     /// Returns the name of the data type as a string.
     pub fn name(&self) -> &'static str {
         match self {
-            DType::Float16 => "f16",
-            DType::Float32 => "f32",
             DType::Float => "float",
             DType::Int8 => "i8",
             DType::Int16 => "i16",
@@ -81,8 +76,6 @@ impl DType {
     /// [`Column::raw_bytes`]: super::column::Column::raw_bytes
     pub fn itemsize(&self) -> Option<usize> {
         match self {
-            DType::Float16 => Some(2),
-            DType::Float32 => Some(4),
             DType::Float => Some(8),
             DType::Int8 => Some(1),
             DType::Int16 => Some(2),
@@ -143,8 +136,6 @@ macro_rules! impl_block_dtype {
     };
 }
 
-impl_block_dtype!(half::f16, DType::Float16, from_f16, as_f16, as_f16_mut);
-impl_block_dtype!(f32, DType::Float32, from_f32, as_f32, as_f32_mut);
 impl_block_dtype!(F, DType::Float, from_float, as_float, as_float_mut);
 impl_block_dtype!(i8, DType::Int8, from_i8, as_i8, as_i8_mut);
 impl_block_dtype!(i16, DType::Int16, from_i16, as_i16, as_i16_mut);
@@ -178,9 +169,7 @@ mod tests {
     /// (8), `I = i32` (4), `Idx = u64` (8) — not the width their name suggests.
     ///
     /// [`Column::raw_bytes`]: super::column::Column::raw_bytes
-    const FIXED_WIDTH: [(DType, usize); 14] = [
-        (DType::Float16, 2),
-        (DType::Float32, 4),
+    const FIXED_WIDTH: [(DType, usize); 12] = [
         (DType::Float, 8),
         (DType::Int8, 1),
         (DType::Int16, 2),
@@ -218,9 +207,7 @@ mod tests {
         fn is_fixed_width(dtype: DType) -> bool {
             match dtype {
                 DType::String => false,
-                DType::Float16
-                | DType::Float32
-                | DType::Float
+                DType::Float
                 | DType::Int8
                 | DType::Int16
                 | DType::Int
@@ -246,7 +233,7 @@ mod tests {
         for (dtype, _) in FIXED_WIDTH {
             assert!(is_fixed_width(dtype), "{dtype} is not a fixed-width dtype");
         }
-        // 14 fixed-width rows plus `String` is the whole enum, so a variant
+        // 12 fixed-width rows plus `String` is the whole enum, so a variant
         // missing from the table cannot hide behind the loop above.
         assert!(!is_fixed_width(DType::String));
     }

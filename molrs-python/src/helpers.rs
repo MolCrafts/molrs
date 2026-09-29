@@ -214,3 +214,11 @@ pub(crate) fn collect_neighbors(
     let list: Vec<PyRef<'_, PyNeighbors>> = arg.extract()?;
     Ok(list.iter().map(|n| n.inner.clone()).collect())
 }
+
+/// A path argument (a ``str`` or any ``os.PathLike``, extracted as a
+/// [`std::path::PathBuf`]) as the `&str` the core readers and writers take.
+pub(crate) fn path_str(path: &std::path::Path) -> PyResult<&str> {
+    path.to_str().ok_or_else(|| {
+        PyValueError::new_err(format!("path is not valid UTF-8: {}", path.display()))
+    })
+}

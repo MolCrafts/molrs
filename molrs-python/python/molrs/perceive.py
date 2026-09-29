@@ -28,12 +28,12 @@ at its group's centre of mass with an axis from the group's first member.
 from __future__ import annotations
 
 from ._lib import (
-    Coarsener as Coarsener,
-    Perceive as Perceive,
-    RingInfo as RingInfo,
-    SmartsMatch as SmartsMatch,
-    SmartsPattern as SmartsPattern,
-    SubgraphMatcher as SubgraphMatcher,
+    Coarsener,
+    Perceive,
+    RingInfo,
+    SmartsMatch,
+    SmartsPattern,
+    SubgraphMatcher,
 )
 
 __all__ = [

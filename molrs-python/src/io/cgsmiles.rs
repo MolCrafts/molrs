@@ -871,12 +871,16 @@ impl PyCGSmilesIR {
     /// Examples
     /// --------
     /// >>> ir = molrs.io.CGSmilesIR("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
-    /// >>> sorted(ir.to_fragment())
+    /// >>> sorted(ir.templates())
     /// ['OH', 'PEO']
-    /// >>> ir.to_fragment()["PEO"].n_ports
+    /// >>> ir.templates()["PEO"].n_ports
     /// 2
-    fn to_fragment<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let templates = self.inner.to_fragment().map_err(smiles_error_to_pyerr)?;
+    ///
+    /// A single unit needs no table:
+    /// ``SmilesIR.from_fragment("[<]OCC[>]").to_template()`` builds the same
+    /// template from the body alone.
+    fn templates<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let templates = self.inner.templates().map_err(smiles_error_to_pyerr)?;
         let out = PyDict::new(py);
         for (name, template) in templates {
             out.set_item(name, PyAtomistic::from_core(py, template)?)?;

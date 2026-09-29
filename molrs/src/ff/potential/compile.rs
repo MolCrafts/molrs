@@ -21,6 +21,7 @@ use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
 use crate::ff::potential::registry::{self, ParamSource};
 use crate::ff::potential::{Member, Potentials, TypedKernel, TypedMember};
 use molrs::store::frame::Frame;
+use molrs::store::schema::block_names::{ANGLES, ATOMS, BONDS, DIHEDRALS, IMPROPERS, PAIRS};
 
 /// Compiles one [`ForceField`] against typed [`Frame`]s.
 ///
@@ -36,7 +37,7 @@ use molrs::store::frame::Frame;
 /// let mut ff = ForceField::new("example");
 /// ff.def_style("bond", "harmonic", Params::new())
 ///     .unwrap()
-///     .def_type("A-B", Params::from_pairs(&[("k", 300.0), ("r0", 1.5)]))
+///     .def_type("A-B", &["A", "B"], Params::from_pairs(&[("k", 300.0), ("r0", 1.5)]))
 ///     .unwrap();
 ///
 /// // A frame without a `bonds` block has nothing for the bond style to read.
@@ -76,30 +77,16 @@ impl<'a> PotentialCompiler<'a> {
         self.ff.special_bonds().compiled_inclusion()?;
         let mut pots = Potentials::new();
         for style in self.ff.styles() {
-            // A style whose topology block is entirely absent contributes nothing
-            // (the molecule simply has no bonds/angles/… of that kind) — skip it,
-            // rather than error. A *present* block with an unknown type label is a
-            // real error and still propagates from the kernel constructor.
-            let block = match style.category() {
-                "bond" => Some("bonds"),
-                "angle" => Some("angles"),
-                "dihedral" => Some("dihedrals"),
-                "improper" => Some("impropers"),
-                "pair" => Some("pairs"),
-                _ => None,
-            };
-            if let Some(b) = block
-                && frame.get(b).is_none()
-            {
-                continue;
-            }
+            // `member` skips a style whose topology block is absent or empty; a
+            // *present* block with an unknown type label is a real error and
+            // propagates from the kernel constructor.
             if let Some(pot) = self.member(style, frame, self.ff.special_bonds())? {
                 pots.push(pot);
             }
         }
         // Record the atom count so callers (e.g. the geometry optimizer's batch
         // path) can validate coordinate shapes against this topology.
-        pots.set_n_atoms(frame.get("atoms").and_then(|b| b.nrows()).unwrap_or(0));
+        pots.set_n_atoms(frame.get(ATOMS).and_then(|b| b.nrows()).unwrap_or(0));
         Ok(pots)
     }
 
@@ -131,20 +118,9 @@ impl<'a> PotentialCompiler<'a> {
         let mut out = Vec::new();
         for style in self.ff.styles() {
             // A bonded style contributes nothing when the molecule carries no
-            // topology of its kind. A pair style is never skipped: which pairs
-            // exist is the neighbour search's answer, not the frame's.
-            let block = match style.category() {
-                "bond" => Some("bonds"),
-                "angle" => Some("angles"),
-                "dihedral" => Some("dihedrals"),
-                "improper" => Some("impropers"),
-                _ => None,
-            };
-            if let Some(b) = block
-                && frame.get(b).is_none()
-            {
-                continue;
-            }
+            // topology of its kind (`member` skips it). A pair style is never
+            // skipped: which pairs exist is the neighbour search's answer, not
+            // the frame's.
             if let Some((pot, special)) = self.typed_member(style, frame)? {
                 let weights = special.map(|c| match c {
                     registry::SpecialClass::Vdw => self.ff.special_bonds().lj_weights(),
@@ -184,7 +160,7 @@ impl<'a> PotentialCompiler<'a> {
         }
         // No `pairs` gate: a typed pair kernel is built from the atoms, and a
         // frame with atoms always has those.
-        let type_params = style.defs().collect_type_params();
+        let type_params = style.defs().kernel_type_params()?;
         let param_source =
             registry::lookup_param_source(category, style.name()).unwrap_or(ParamSource::TypeRows);
         if type_params.is_empty() && param_source == ParamSource::TypeRows {
@@ -247,11 +223,11 @@ impl<'a> PotentialCompiler<'a> {
             == registry::RowSource::CategoryBlock;
         let topo_block = match category {
             _ if !gated => None,
-            "bond" => Some("bonds"),
-            "angle" => Some("angles"),
-            "dihedral" => Some("dihedrals"),
-            "improper" => Some("impropers"),
-            "pair" => Some("pairs"),
+            "bond" => Some(BONDS),
+            "angle" => Some(ANGLES),
+            "dihedral" => Some(DIHEDRALS),
+            "improper" => Some(IMPROPERS),
+            "pair" => Some(PAIRS),
             _ => None,
         };
         if let Some(block_name) = topo_block {
@@ -260,7 +236,7 @@ impl<'a> PotentialCompiler<'a> {
                 return Ok(None);
             }
         }
-        let type_params = style.defs().collect_type_params();
+        let type_params = style.defs().kernel_type_params()?;
         // A style whose kernel resolves its parameters from type rows
         // (`ParamSource::TypeRows`) can resolve nothing without them — so no rows
         // is an error, not a silently-zero potential. A `PerInstance` style
@@ -348,7 +324,11 @@ mod tests {
         let mut ff = ForceField::new("t");
         ff.def_style("bond", "harmonic", Params::new())
             .unwrap()
-            .def_type("CT-CT", Params::from_pairs(&[("k", 300.0), ("r0", 1.5)]))
+            .def_type(
+                "CT-CT",
+                &["CT", "CT"],
+                Params::from_pairs(&[("k", 300.0), ("r0", 1.5)]),
+            )
             .unwrap();
         ff
     }
@@ -358,7 +338,7 @@ mod tests {
         let mut ff = ForceField::new("t");
         ff.def_style("atom", "full", Params::new())
             .unwrap()
-            .def_type("CT", Params::from_pairs(&[("mass", 12.0)]))
+            .def_type("CT", &[], Params::from_pairs(&[("mass", 12.0)]))
             .unwrap();
         let frame = two_atoms();
         let compiler = PotentialCompiler::new(&ff);
