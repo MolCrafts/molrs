@@ -38,8 +38,8 @@ use wasm_bindgen::prelude::*;
 /// console.log(ir.nComponents); // 1
 ///
 /// const frame = ir.toFrame();
-/// const atoms = frame.getBlock("atoms");
-/// console.log(atoms.copyColStr("element")); // ["C", "C", "O", "H", ...]
+/// const atoms = frame.get("atoms");
+/// console.log(atoms.get("element")); // ["C", "C", "O", "H", ...]
 /// ```
 #[wasm_bindgen(js_name = SmilesIR)]
 pub struct WasmSmilesIR {
@@ -71,9 +71,9 @@ impl WasmSmilesIR {
     /// - `"atoms"` block: `symbol` (string), and implicit hydrogens
     ///   are added. No 3D coordinates are present -- use
     ///   [`generate3D`](crate::generate_3d_wasm) to embed coordinates.
-    /// - `"bonds"` block: `i`, `j` (u32, zero-based atom indices),
-    ///   `bond_type` (u32: 1 single, 2 double, 3 triple, 4 aromatic) and
-    ///   `bond_number` (u32: the localized Lewis/Kekulé integer, 0 when the
+    /// - `"bonds"` block: `i`, `j` (u64, zero-based atom indices),
+    ///   `bond_type` (u64: 1 single, 2 double, 3 triple, 4 aromatic) and
+    ///   `bond_number` (u64: the localized Lewis/Kekulé integer, 0 when the
     ///   notation declared aromaticity without a phase — call
     ///   `new Perceive().findAromaticity(frame)` to fill it in).
     ///
@@ -83,22 +83,26 @@ impl WasmSmilesIR {
     ///
     /// # Errors
     ///
-    /// Throws a `JsValue` string if the conversion fails (e.g.,
-    /// invalid valence).
+    /// Throws a `JsValue` string if the conversion fails (e.g., invalid
+    /// valence), or if a property of the result contradicts the Frame schema
+    /// on the way out.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
     /// const frame = ir.toFrame();
-    /// const bonds = frame.getBlock("bonds");
-    /// const types = bonds.copyColU("bond_type");
-    /// const numbers = bonds.copyColU("bond_number");
+    /// const bonds = frame.get("bonds");
+    /// const types = bonds.get("bond_type");
+    /// const numbers = bonds.get("bond_number");
     /// ```
     #[wasm_bindgen(js_name = toFrame)]
     pub fn to_frame(&self) -> Result<Frame, JsValue> {
         let mol = molrs::io::smiles::to_atomistic(&self.inner)
             .map_err(|e| JsValue::from_str(&format!("IR -> Atomistic: {e}")))?;
-        Frame::from_rs(mol.to_frame())
+        Frame::from_rs(
+            mol.to_frame()
+                .map_err(|e| JsValue::from_str(&format!("toFrame: {e}")))?,
+        )
     }
 }
 

@@ -137,7 +137,6 @@ pub mod ffi {
         I64,
         U32,
         U64,
-        F32,
         F64,
         String,
         Bool3,
@@ -145,11 +144,8 @@ pub mod ffi {
         I64x3,
         U32x3,
         U64x3,
-        F32x3,
         F64x3,
-        F32x6,
         F64x6,
-        F32x9,
         F64x9,
     }
 
@@ -162,7 +158,6 @@ pub mod ffi {
         i64_value: i64,
         u32_value: u32,
         u64_value: u64,
-        f32_value: f32,
         f64_value: f64,
         string_value: String,
         bool_values: Vec<u8>,
@@ -170,16 +165,13 @@ pub mod ffi {
         i64_values: Vec<i64>,
         u32_values: Vec<u32>,
         u64_values: Vec<u64>,
-        f32_values: Vec<f32>,
         f64_values: Vec<f64>,
     }
 
     extern "Rust" {
         // ── Exact consumer contract ───────────────────────────────
-        // Version changes whenever an existing declaration, semantic dtype,
-        // or ownership rule changes incompatibly. Capabilities let consumers
-        // fail loudly when a required surface was compiled out or omitted.
-        fn cxx_api_version() -> u32;
+        // Capabilities let consumers fail loudly when a required surface was
+        // compiled out or omitted.
         fn cxx_api_capabilities() -> u64;
 
         // ── Frame bridge (molrs.Frame via molrs-ffi FrameRef) ─────
@@ -210,7 +202,6 @@ pub mod ffi {
         fn region_contains(rref: &RegionRef, points: &[f64]) -> Vec<u8>;
         fn region_bounds(rref: &RegionRef) -> Vec<f64>;
 
-        fn frame_schema_version() -> u32;
         fn frame_new() -> Box<FrameRef>;
 
         // Cross-extension ingress: rebuild a bridge handle from the raw

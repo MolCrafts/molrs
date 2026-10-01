@@ -7,8 +7,6 @@ Python with map-keyed results, plus the graph-edit conveniences
 only assert the PyO3 surface and Daylight atom-map semantics.
 """
 
-import pytest
-
 import molrs
 
 
@@ -162,7 +160,7 @@ def test_map_label_and_num_query_atoms():
 
 def test_remove_atom_cascades():
     """remove_atom drops the atom and its incident bonds."""
-    mol, c, o, ho = _methanol()
+    mol, _c, o, _ho = _methanol()
     n_bonds_before = mol.n_relations("bonds")
     assert mol.n_atoms == 6
     mol.remove_atom(o)  # O is bonded to C and to H → 2 incident bonds cascade
@@ -173,7 +171,7 @@ def test_remove_atom_cascades():
 
 def test_remove_bond():
     """remove_bond removes just the bond, leaving atoms intact."""
-    mol, c, o, ho = _methanol()
+    mol, c, _o, _ho = _methanol()
     # Bond handle from the C-O bond via incident relations.
     (bond_handle, _other) = mol.incident_relations(c, "bonds")[0]
     n_atoms_before = mol.n_atoms
@@ -185,7 +183,7 @@ def test_remove_bond():
 
 def test_set_bond_type():
     """set_bond_type writes both facts: the class and its implied number."""
-    mol, c, o, ho = _methanol()
+    mol, c, _o, _ho = _methanol()
     (bond_handle, _other) = mol.incident_relations(c, "bonds")[0]
     mol.set_bond_type(bond_handle, 2)
     # A plain class implies its own number, and both are written — a class with
@@ -196,7 +194,7 @@ def test_set_bond_type():
 
 def test_copy_is_independent():
     """copy() yields an independent graph — mutating the copy leaves the original."""
-    mol, c, o, ho = _methanol()
+    mol, c, _o, _ho = _methanol()
     n_atoms = mol.n_atoms
     n_bonds = mol.n_relations("bonds")
     dup = mol.copy()

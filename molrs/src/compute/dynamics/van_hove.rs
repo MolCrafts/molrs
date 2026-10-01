@@ -334,17 +334,4 @@ pub struct VanHoveResult {
     pub has_distinct: bool,
 }
 
-impl VanHoveResult {
-    /// Second moment `∫ r² g_self(r,t) dr` at row `li` — equals the MSD at that
-    /// lag (the dynamical bridge to [`msd`](crate::compute::msd)).
-    pub fn self_second_moment(&self, li: usize) -> F {
-        let mut m = 0.0;
-        for k in 0..self.r_centers.len() {
-            let r = self.r_centers[k];
-            m += r * r * self.g_self[[li, k]] * self.dr;
-        }
-        m
-    }
-}
-
 impl ComputeResult for VanHoveResult {}

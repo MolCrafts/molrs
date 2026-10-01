@@ -1,5 +1,6 @@
 //! UFF bond stretch: E = ½ · kb · (r − r0)² (RDKit `BondStretchContrib`).
 
+use molrs::store::schema::block_names::BONDS;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
@@ -101,7 +102,7 @@ pub fn uff_bond_ctor(
     frame: &Frame,
 ) -> Result<Member, String> {
     let block = frame
-        .get("bonds")
+        .get(BONDS)
         .ok_or("uff_bond: missing \"bonds\" block")?;
     let i = block.get_uint("atomi").ok_or("uff_bond: missing atomi")?;
     let j = block.get_uint("atomj").ok_or("uff_bond: missing atomj")?;

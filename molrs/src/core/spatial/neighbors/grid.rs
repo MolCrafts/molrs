@@ -72,6 +72,74 @@ impl CellGrid {
         }
     }
 
+    /// [`for_cutoff`](Self::for_cutoff) with a ceiling on the total cell
+    /// count: never more than `max_cells` cells.
+    ///
+    /// If the cutoff-sized grid already fits, it is returned unchanged.
+    /// Otherwise every axis is coarsened by one **common** factor `s`,
+    /// `celldim[k] = max(1, floor(fine[k] / s))`, with `s` chosen so the
+    /// product fits the budget. An axis the common factor would drive below one
+    /// cell is pinned at one and the factor is re-derived over the remaining
+    /// axes, so a very flat box keeps its resolution along the long directions
+    /// instead of blowing the budget. A final trim of the longest axis absorbs
+    /// floating-point rounding in `s`, so `n_cells() <= max_cells` holds
+    /// exactly, not approximately.
+    ///
+    /// Coarsening only widens cells, so the width guarantee of `for_cutoff`
+    /// (cell width ≥ `cutoff` wherever the box allows it) still holds and a
+    /// ±1 stencil still finds every pair: a cap costs search selectivity,
+    /// never correctness. Use it when the box is large relative to the cutoff
+    /// and the point count (e.g. a free-boundary bounding box), where the raw
+    /// grid would allocate far more cells than there are points to bin.
+    ///
+    /// # Panics
+    ///
+    /// If `cutoff` is not strictly positive or `max_cells` is zero.
+    pub fn for_cutoff_capped(bx: &SimBox, cutoff: F, max_cells: usize) -> Self {
+        assert!(max_cells > 0, "max_cells must be positive");
+        let fine = Self::for_cutoff(bx, cutoff);
+        if fine.n_cells() <= max_cells {
+            return fine;
+        }
+        let raw = fine.celldim.map(|d| d as F);
+        let mut dims = [1u32; 3];
+        // Axes still coarsened by the common factor; the others are pinned at 1.
+        let mut free = [true; 3];
+        loop {
+            let nfree = free.iter().filter(|f| **f).count();
+            if nfree == 0 {
+                break;
+            }
+            // Pinned axes contribute one cell each, so the whole budget goes
+            // to the free ones: prod(raw[free]) / s^nfree = max_cells.
+            let raw_free: F = (0..3).filter(|k| free[*k]).map(|k| raw[k]).product();
+            let s = (raw_free / max_cells as F).powf(1.0 / nfree as F).max(1.0);
+            let mut pinned = false;
+            for k in 0..3 {
+                if free[k] {
+                    let d = (raw[k] / s).floor();
+                    if d < 1.0 {
+                        free[k] = false;
+                        dims[k] = 1;
+                        pinned = true;
+                    } else {
+                        dims[k] = d as u32;
+                    }
+                }
+            }
+            if !pinned {
+                break;
+            }
+        }
+        // Rounding in `s` can leave the product a hair over budget.
+        let total = |d: &[u32; 3]| d.iter().map(|v| *v as usize).product::<usize>();
+        while total(&dims) > max_cells {
+            let k = (0..3).max_by_key(|k| dims[*k]).expect("three axes");
+            dims[k] -= 1;
+        }
+        Self::with_dims(dims, fine.pbc)
+    }
+
     /// Partition with explicit dimensions and periodicity.
     ///
     /// # Panics
@@ -440,6 +508,66 @@ mod tests {
         let bx = ortho(5.0, [true; 3]);
         let g = CellGrid::for_cutoff(&bx, 9.0);
         assert_eq!(g.celldim(), [1, 1, 1]);
+    }
+
+    // -- for_cutoff_capped -------------------------------------------------
+
+    #[test]
+    fn for_cutoff_capped_returns_the_fine_grid_when_it_fits() {
+        let bx = ortho(10.0, [true; 3]);
+        assert_eq!(
+            CellGrid::for_cutoff_capped(&bx, 2.5, 64),
+            CellGrid::for_cutoff(&bx, 2.5)
+        );
+    }
+
+    #[test]
+    fn for_cutoff_capped_coarsens_every_axis_by_one_factor() {
+        // Fine grid 100^3; a budget of 1000 is a common factor of 10.
+        let bx = ortho(100.0, [false; 3]);
+        let g = CellGrid::for_cutoff_capped(&bx, 1.0, 1000);
+        assert_eq!(g.celldim(), [10, 10, 10]);
+        assert_eq!(g.pbc(), [false; 3]);
+    }
+
+    #[test]
+    fn for_cutoff_capped_never_exceeds_the_budget() {
+        let bx = ortho(97.0, [true; 3]);
+        for cap in [1, 2, 7, 26, 27, 28, 999, 1000, 1001, 50_000] {
+            let g = CellGrid::for_cutoff_capped(&bx, 1.0, cap);
+            assert!(g.n_cells() <= cap, "cap {cap}: {:?}", g.celldim());
+        }
+    }
+
+    #[test]
+    fn for_cutoff_capped_pins_a_thin_axis_and_spends_the_budget_elsewhere() {
+        // Fine grid [1000, 1000, 1]: a naive common factor cbrt(1e6/100) = 21.5
+        // would give [46, 46, 1] = 2116 cells, far over a budget of 100. The
+        // thin axis is pinned and the factor re-derived over the other two.
+        let bx = SimBox::ortho(
+            array![1000.0, 1000.0, 1.0],
+            array![0.0, 0.0, 0.0],
+            [false; 3],
+        )
+        .expect("slab");
+        let g = CellGrid::for_cutoff_capped(&bx, 1.0, 100);
+        assert_eq!(g.celldim(), [10, 10, 1]);
+    }
+
+    #[test]
+    fn for_cutoff_capped_cells_stay_at_least_one_cutoff_wide() {
+        let bx = ortho(50.0, [true; 3]);
+        let cutoff = 3.0;
+        let g = CellGrid::for_cutoff_capped(&bx, cutoff, 20);
+        for k in 0..3 {
+            assert!(50.0 / g.celldim()[k] as F >= cutoff);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "max_cells must be positive")]
+    fn for_cutoff_capped_rejects_a_zero_budget() {
+        CellGrid::for_cutoff_capped(&ortho(10.0, [true; 3]), 1.0, 0);
     }
 
     // -- AC-003 / AC-002: stencils ----------------------------------------

@@ -6,9 +6,11 @@
 //! boundary pair and never leaks into kernels or call sites.
 //!
 //! Concrete writers: [`LammpsFfWriter`](lammps::LammpsFfWriter),
+//! [`AmberFrcmodFfWriter`](frcmod::AmberFrcmodFfWriter),
 //! [`GromacsTopFfWriter`](gromacs::GromacsTopFfWriter),
 //! [`XmlForceFieldWriter`](xml::XmlForceFieldWriter).
 
+pub mod frcmod;
 pub mod gromacs;
 pub mod lammps;
 pub mod xml;

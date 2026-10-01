@@ -50,7 +50,7 @@ impl ForceFieldRef {
     /// This is the consumer entry point that mirrors
     /// [`FrameRef::with`](crate::FrameRef::with): a downstream binding resolves a
     /// capsule to a `ForceFieldRef` and calls, e.g.,
-    /// `ffref.with_forcefield(|ff| ff.to_potentials(frame))`.
+    /// `ffref.with_forcefield(|ff| PotentialCompiler::new(ff).compile(frame))`.
     pub fn with_forcefield<R>(&self, f: impl FnOnce(&ForceField) -> R) -> R {
         f(&self.ff)
     }

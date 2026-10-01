@@ -4,7 +4,7 @@
 //! copying any array data, providing read-only access with the same API surface
 //! as `Block`.
 
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 use ndarray::ArrayViewD;
 
@@ -19,7 +19,11 @@ use crate::types::{F, I, Idx};
 /// Keys are `&str` references into the original `Block`'s key strings.
 /// Values are [`ColumnView`]s that borrow the underlying array data.
 pub struct BlockView<'a> {
-    map: HashMap<&'a str, ColumnView<'a>>,
+    map: IndexMap<&'a str, ColumnView<'a>>,
+    /// Borrowed validity masks of the viewed block's nullable columns.
+    validity: IndexMap<&'a str, &'a [bool]>,
+    /// Borrowed structural shape of the viewed block, if it declares one.
+    shape: Option<&'a [usize]>,
     nrows: Option<usize>,
 }
 
@@ -27,7 +31,9 @@ impl<'a> BlockView<'a> {
     /// Creates an empty `BlockView`.
     pub fn new() -> Self {
         Self {
-            map: HashMap::new(),
+            map: IndexMap::new(),
+            validity: IndexMap::new(),
+            shape: None,
             nrows: None,
         }
     }
@@ -124,12 +130,19 @@ impl<'a> BlockView<'a> {
         self.get(key).map(|c| c.dtype())
     }
 
-    /// Creates an owned [`Block`] by cloning all viewed data.
+    /// Creates an owned [`Block`] by cloning all viewed data, validity masks
+    /// and structural shape included.
     pub fn to_owned(&self) -> Block {
         let mut block = Block::new();
         for (&key, col_view) in &self.map {
             let col: Column = col_view.to_owned();
             let _ = block.insert_column(key, col);
+        }
+        for (&key, &mask) in &self.validity {
+            block.put_validity(key.to_owned(), mask.to_vec());
+        }
+        if let Some(shape) = self.shape {
+            let _ = block.set_shape(shape);
         }
         block
     }
@@ -144,11 +157,16 @@ impl<'a> Default for BlockView<'a> {
 impl<'a> From<&'a Block> for BlockView<'a> {
     fn from(block: &'a Block) -> Self {
         let mut view = BlockView {
-            map: HashMap::with_capacity(block.len()),
+            map: IndexMap::with_capacity(block.len()),
+            validity: IndexMap::new(),
+            shape: block.structural_shape(),
             nrows: block.nrows(),
         };
         for (key, col) in block.iter() {
             view.map.insert(key, ColumnView::from(col));
+            if let Some(mask) = block.validity(key) {
+                view.validity.insert(key, mask);
+            }
         }
         view
     }
@@ -169,6 +187,27 @@ mod tests {
     use super::*;
     use crate::types::Idx;
     use ndarray::Array1;
+
+    #[test]
+    fn to_owned_keeps_column_order_masks_and_structural_shape() {
+        let mut block = Block::new();
+        block
+            .insert("c", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn())
+            .unwrap();
+        block
+            .insert_nullable(
+                "a",
+                Array1::from_vec(vec![0.0 as F, 4.0]).into_dyn(),
+                vec![false, true],
+            )
+            .unwrap();
+        block.set_shape(&[1, 2]).unwrap();
+
+        let owned = BlockView::from(&block).to_owned();
+        assert_eq!(owned.keys().collect::<Vec<_>>(), ["c", "a"]);
+        assert_eq!(owned.validity("a"), Some(&[false, true][..]));
+        assert_eq!(owned.structural_shape(), Some(&[1, 2][..]));
+    }
 
     #[test]
     fn test_from_block() {

@@ -6,6 +6,7 @@
 //! rule that only exists inside the Rust type system.
 
 use super::{FRAME_VOCAB_VERSION, SCHEMA_BLOCKS, SCHEMA_COLUMNS};
+use crate::units::UnitPreset;
 use serde::{Deserialize, Serialize};
 
 /// A canonical column, as data.
@@ -20,7 +21,14 @@ pub struct ColumnDoc {
     pub dtype: String,
     /// `scalar`, or `vec(n)`.
     pub shape: String,
-    /// Unit symbol, or empty for dimensionless / unit-free.
+    /// Physical dimension as lower-case preset names joined by `" * "`
+    /// (`"length"`, `"charge * length"`), `"dimensionless"`, or empty for a
+    /// column that is not a physical quantity.
+    pub dimension: String,
+    /// The dimension's unit in the `real` preset — the convention molrs's
+    /// readers normalise to. Empty for a dimensionless column and for one
+    /// that is not a physical quantity; [`dimension`](Self::dimension) tells
+    /// the two apart.
     pub unit: String,
     /// One-line meaning.
     pub doc: String,
@@ -68,6 +76,7 @@ pub struct SchemaDocument {
 
 /// Borrow the compile-time tables into an owned document.
 pub fn document() -> SchemaDocument {
+    let real = UnitPreset::real();
     SchemaDocument {
         id: "https://molcrafts.org/schema/frame/v1".to_string(),
         vocab_version: FRAME_VOCAB_VERSION,
@@ -78,7 +87,8 @@ pub fn document() -> SchemaDocument {
                 const_name: c.const_name.to_string(),
                 dtype: c.dtype.name().to_string(),
                 shape: c.shape.to_string(),
-                unit: c.unit.to_string(),
+                dimension: c.dimension.to_string(),
+                unit: c.dimension.unit_in(&real).unwrap_or_default(),
                 doc: c.doc.to_string(),
             })
             .collect(),
@@ -111,12 +121,20 @@ impl SchemaDocument {
             "# Frame schema (vocabulary v{})\n\n`{}`\n\n## Columns\n\n",
             self.vocab_version, self.id
         ));
-        out.push_str("| key | dtype | shape | unit | meaning |\n|---|---|---|---|---|\n");
+        out.push_str(
+            "| key | dtype | shape | dimension | unit (real) | meaning |\n\
+             |---|---|---|---|---|---|\n",
+        );
         for c in &self.columns {
+            let dimension = if c.dimension.is_empty() {
+                "—"
+            } else {
+                &c.dimension
+            };
             let unit = if c.unit.is_empty() { "—" } else { &c.unit };
             out.push_str(&format!(
-                "| `{}` | {} | {} | {} | {} |\n",
-                c.key, c.dtype, c.shape, unit, c.doc
+                "| `{}` | {} | {} | {} | {} | {} |\n",
+                c.key, c.dtype, c.shape, dimension, unit, c.doc
             ));
         }
         out.push_str("\n## Blocks\n\n");
@@ -172,6 +190,37 @@ mod tests {
     #[test]
     fn json_is_stable_across_runs() {
         assert_eq!(document().to_json(), document().to_json());
+    }
+
+    fn column_doc(key: &str) -> ColumnDoc {
+        document()
+            .columns
+            .into_iter()
+            .find(|c| c.key == key)
+            .unwrap_or_else(|| panic!("`{key}` missing from the document"))
+    }
+
+    #[test]
+    fn x_has_dimension_length_and_real_unit_angstrom() {
+        let x = column_doc("x");
+        assert_eq!(x.dimension, "length");
+        assert_eq!(x.unit, "angstrom");
+    }
+
+    #[test]
+    fn mux_has_dimension_charge_times_length_and_its_real_unit() {
+        let mux = column_doc("mux");
+        assert_eq!(mux.dimension, "charge * length");
+        assert_eq!(mux.unit, "elementary_charge * angstrom");
+    }
+
+    #[test]
+    fn markdown_header_names_dimension_and_real_unit() {
+        assert!(
+            document()
+                .to_markdown()
+                .contains("| key | dtype | shape | dimension | unit (real) | meaning |")
+        );
     }
 
     #[test]

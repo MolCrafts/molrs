@@ -7,8 +7,13 @@
 //!
 //! On-wire shape (the general MolRec model, no privileged fields):
 //!
-//! - `Frame`  -> `{ version: 2, blocks: { <name>: Block }, meta: { k: {dtype,value} }, box?: SimBox }`
-//! - `Block`  -> `{ shape: [usize], columns: { <name>: Column } }`
+//! - `Frame`  -> `{ blocks: { <name>: Block }, meta: { k: {dtype,value} }, box?: SimBox }`
+//! - `Block`  -> `{ shape: [usize], columns: { <name>: Column },
+//!   validity?: { <name>: [bool] } }` — `validity` carries the per-row masks
+//!   of the nullable columns only, and is omitted when no column has one, so
+//!   a payload without it reads back as a block whose every cell is filled.
+//!   Blocks, columns and meta keys are written and read back in insertion
+//!   order; nothing is sorted.
 //! - `Column` -> `{ dtype, shape: [usize], data }` — `data` is raw
 //!   little-endian bytes for numeric dtypes, or a string list for `string`.
 //! - `SimBox` -> `{ vectors: [[f64;3];3], origin, boundary, cell_defined }`
@@ -17,7 +22,7 @@
 //! deserialization scaffolding (derive needs owned fields); they are not part
 //! of the public model.
 
-use std::collections::BTreeMap;
+use indexmap::IndexMap;
 
 use ndarray::{ArrayD, IxDyn};
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
@@ -26,7 +31,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::core::spatial::simbox::SimBox;
 use crate::core::store::block::{Block, Column, DType};
-use crate::core::store::frame::{FRAME_SCHEMA_VERSION, Frame};
+use crate::core::store::frame::Frame;
 use crate::core::store::meta::{MetaMap, MetaValue};
 
 // ===== MetaValue ===========================================================
@@ -80,8 +85,6 @@ impl Serialize for Column {
 fn dtype_from_tag(tag: &str) -> Option<DType> {
     Some(match tag {
         "float" | "f64" => DType::Float,
-        "f16" => DType::Float16,
-        "f32" => DType::Float32,
         "int" | "i32" => DType::Int,
         "i8" => DType::Int8,
         "i16" => DType::Int16,
@@ -267,20 +270,11 @@ fn build_column(dtype: DType, shape: &[usize], data: ColData) -> Result<Column, 
     let shape_err = |ty: &str| format!("{ty} column: element count does not match shape {shape:?}");
     match (dtype, data) {
         (DType::Float, ColData::Bytes(b)) => {
+            if b.len() != n * 8 {
+                return Err(format!("float column: {} byte(s) is not {n} × 8", b.len()));
+            }
             let v = le::<8, _>(&b, n, f64::from_le_bytes)?;
             Ok(Column::from_float(
-                ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
-            ))
-        }
-        (DType::Float16, ColData::Bytes(b)) => {
-            let v = le::<2, _>(&b, n, half::f16::from_le_bytes)?;
-            Ok(Column::from_f16(
-                ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
-            ))
-        }
-        (DType::Float32, ColData::Bytes(b)) => {
-            let v = le::<4, _>(&b, n, f32::from_le_bytes)?;
-            Ok(Column::from_f32(
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
@@ -400,10 +394,23 @@ fn le<const N: usize, T>(
 
 impl Serialize for Block {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        let mut st = s.serialize_struct("Block", 2)?;
+        // A validity mask is part of the column's data: dropping it here would
+        // turn "this cell holds nothing" into the filled default on the far
+        // side. The field is written only when some column carries a mask, so
+        // a payload from a block with none is byte-for-byte what it was before
+        // nullable columns existed — and a payload written then still reads,
+        // because an absent `validity` means no masks.
+        let masks: IndexMap<&str, &[bool]> = self
+            .keys()
+            .filter_map(|key| self.validity(key).map(|mask| (key, mask)))
+            .collect();
+        let mut st = s.serialize_struct("Block", if masks.is_empty() { 2 } else { 3 })?;
         st.serialize_field("shape", &self.shape())?;
-        let columns: BTreeMap<&str, &Column> = self.iter().collect();
+        let columns: IndexMap<&str, &Column> = self.iter().collect();
         st.serialize_field("columns", &columns)?;
+        if !masks.is_empty() {
+            st.serialize_field("validity", &masks)?;
+        }
         st.end()
     }
 }
@@ -413,7 +420,9 @@ struct BlockRepr {
     #[serde(default)]
     shape: Vec<usize>,
     #[serde(default)]
-    columns: BTreeMap<String, Column>,
+    columns: IndexMap<String, Column>,
+    #[serde(default)]
+    validity: IndexMap<String, Vec<bool>>,
 }
 
 impl<'de> Deserialize<'de> for Block {
@@ -431,6 +440,11 @@ impl<'de> Deserialize<'de> for Block {
         if !shape.is_empty() && (!has_columns || shape.len() > 1) {
             block.set_shape(&shape).map_err(de::Error::custom)?;
         }
+        // Masks are restored after the columns, which is what `set_validity`
+        // exists for: the decoder holds `Column` values, not typed arrays.
+        for (name, mask) in r.validity {
+            block.set_validity(&name, mask).map_err(de::Error::custom)?;
+        }
         Ok(block)
     }
 }
@@ -439,15 +453,9 @@ impl<'de> Deserialize<'de> for Block {
 
 impl Serialize for SimBox {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        let h = self.h_view();
-        let vectors = [
-            [h[[0, 0]], h[[0, 1]], h[[0, 2]]],
-            [h[[1, 0]], h[[1, 1]], h[[1, 2]]],
-            [h[[2, 0]], h[[2, 1]], h[[2, 2]]],
-        ];
         let o = self.origin_view();
         let mut st = s.serialize_struct("SimBox", 4)?;
-        st.serialize_field("vectors", &vectors)?;
+        st.serialize_field("vectors", &self.matrix())?;
         st.serialize_field("origin", &[o[0], o[1], o[2]])?;
         st.serialize_field("boundary", &self.pbc())?;
         st.serialize_field("cell_defined", &self.is_cell_defined())?;
@@ -481,11 +489,10 @@ impl<'de> Deserialize<'de> for SimBox {
 impl Serialize for Frame {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         let has_box = self.simbox.is_some();
-        let mut st = s.serialize_struct("Frame", 3 + has_box as usize)?;
-        st.serialize_field("version", &FRAME_SCHEMA_VERSION)?;
-        let blocks: BTreeMap<&str, &Block> = self.iter().collect();
+        let mut st = s.serialize_struct("Frame", 2 + has_box as usize)?;
+        let blocks: IndexMap<&str, &Block> = self.iter().collect();
         st.serialize_field("blocks", &blocks)?;
-        let meta: BTreeMap<&str, &MetaValue> =
+        let meta: IndexMap<&str, &MetaValue> =
             self.meta.iter().map(|(k, v)| (k.as_str(), v)).collect();
         st.serialize_field("meta", &meta)?;
         if let Some(sb) = &self.simbox {
@@ -497,11 +504,10 @@ impl Serialize for Frame {
 
 #[derive(Deserialize)]
 struct FrameRepr {
-    version: u32,
     #[serde(default)]
-    blocks: BTreeMap<String, Block>,
+    blocks: IndexMap<String, Block>,
     #[serde(default)]
-    meta: BTreeMap<String, MetaValue>,
+    meta: IndexMap<String, MetaValue>,
     #[serde(default, rename = "box")]
     simbox: Option<SimBox>,
 }
@@ -509,12 +515,6 @@ struct FrameRepr {
 impl<'de> Deserialize<'de> for Frame {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Frame, D::Error> {
         let r = FrameRepr::deserialize(d)?;
-        if r.version != FRAME_SCHEMA_VERSION {
-            return Err(de::Error::custom(format!(
-                "unsupported frame schema version {}; expected {}",
-                r.version, FRAME_SCHEMA_VERSION
-            )));
-        }
         let mut frame = Frame::with_capacity(r.blocks.len());
         for (name, block) in r.blocks {
             frame.insert(name, block);
@@ -571,6 +571,9 @@ mod tests {
             Some(SimBox::cube(10.0, array![1.0, 2.0, 3.0], [true, true, false]).unwrap());
 
         let json = serde_json::to_string(&frame).unwrap();
+        // The envelope carries no version field: nothing gates compatibility
+        // before 1.0.0.
+        assert!(!json.contains("\"version\""));
         let back: Frame = serde_json::from_str(&json).unwrap();
         assert_eq!(back.get("atoms").unwrap().nrows(), Some(3));
         assert_eq!(back.meta.get("timestep"), Some(&MetaValue::I64(42)));
@@ -584,9 +587,70 @@ mod tests {
         assert_eq!(bx.lengths(), array![10.0, 10.0, 10.0]);
     }
 
+    /// A validity mask is part of the column's data, not a view over it: a
+    /// frame that travelled through the transport encoding must still spell
+    /// "this cell holds nothing" the same way.
+    #[test]
+    fn a_nullable_column_keeps_its_validity_mask() {
+        let mut block = Block::new();
+        block
+            .insert_nullable(
+                "x",
+                Array1::from_vec(vec![0.5, 0.0, 3.0]).into_dyn(),
+                vec![true, false, true],
+            )
+            .unwrap();
+        let json = serde_json::to_string(&block).unwrap();
+        let back: Block = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.validity("x"), Some(&[true, false, true][..]));
+    }
+
     #[test]
     fn a_column_with_a_bad_dtype_tag_is_refused() {
         let json = r#"{"dtype":"quaternion","shape":[1],"data":[0]}"#;
         assert!(serde_json::from_str::<crate::core::store::block::Column>(json).is_err());
+    }
+
+    /// Column order is the file's order; a round trip must not sort it.
+    #[test]
+    fn a_block_round_trips_columns_in_insertion_order() {
+        let mut block = Block::new();
+        for key in ["c", "a", "b"] {
+            block
+                .insert(key, Array1::from_vec(vec![0.0]).into_dyn())
+                .unwrap();
+        }
+        let json = serde_json::to_string(&block).unwrap();
+        let back: Block = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.keys().collect::<Vec<_>>(), ["c", "a", "b"]);
+    }
+
+    /// Block order is the file's order too.
+    #[test]
+    fn a_frame_round_trips_blocks_in_insertion_order() {
+        let mut frame = Frame::new();
+        for key in ["z", "a", "m"] {
+            frame.insert(key, Block::new());
+        }
+        let json = serde_json::to_string(&frame).unwrap();
+        let back: Frame = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.keys().collect::<Vec<_>>(), ["z", "a", "m"]);
+    }
+
+    /// Meta keys are part of the frame document, and a round trip must not
+    /// reshuffle them into alphabetical or hash order.
+    #[test]
+    fn a_frame_round_trips_meta_keys_in_insertion_order() {
+        let mut frame = Frame::new();
+        frame.meta.insert("z", MetaValue::String("Z".into()));
+        frame.meta.insert("a", MetaValue::String("A".into()));
+        frame.meta.insert("m", MetaValue::String("M".into()));
+
+        let json = serde_json::to_string(&frame).unwrap();
+        let back: Frame = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            back.meta.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["z", "a", "m"]
+        );
     }
 }

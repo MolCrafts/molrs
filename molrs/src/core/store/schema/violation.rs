@@ -97,13 +97,6 @@ pub enum ViolationKind {
         /// The other block's row count.
         other_rows: usize,
     },
-    /// A user annotation redefined a key the canonical vocabulary already owns.
-    AnnotationConflict {
-        /// Dtype the vocabulary declares.
-        canonical: DType,
-        /// Dtype the annotation asked for.
-        requested: DType,
-    },
     /// More offending cells than the per-column report cap; `extra` were elided.
     TruncatedCells {
         /// Number of offending rows not individually reported.
@@ -140,13 +133,6 @@ impl std::fmt::Display for ViolationKind {
             } => write!(
                 f,
                 "row count {this_rows} disagrees with '{other}' ({other_rows})"
-            ),
-            ViolationKind::AnnotationConflict {
-                canonical,
-                requested,
-            } => write!(
-                f,
-                "annotation asks for '{requested}' but the vocabulary defines '{canonical}'"
             ),
             ViolationKind::TruncatedCells { extra } => {
                 write!(f, "and {extra} more offending rows (report capped)")

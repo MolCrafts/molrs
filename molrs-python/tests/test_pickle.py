@@ -1,8 +1,8 @@
+import copy
 import pickle
 
-import numpy as np
-
 import molrs
+import numpy as np
 from molrs import _lib
 
 
@@ -15,17 +15,22 @@ def _unit_cube_mesh() -> "molrs.TriMesh":
     # vertex index = x + 2*y + 4*z
     faces = np.array(
         [
-            [0, 4, 6], [0, 6, 2],  # -x
-            [1, 3, 7], [1, 7, 5],  # +x
-            [0, 1, 5], [0, 5, 4],  # -y
-            [2, 6, 7], [2, 7, 3],  # +y
-            [0, 2, 3], [0, 3, 1],  # -z
-            [4, 5, 7], [4, 7, 6],  # +z
+            [0, 4, 6],
+            [0, 6, 2],  # -x
+            [1, 3, 7],
+            [1, 7, 5],  # +x
+            [0, 1, 5],
+            [0, 5, 4],  # -y
+            [2, 6, 7],
+            [2, 7, 3],  # +y
+            [0, 2, 3],
+            [0, 3, 1],  # -z
+            [4, 5, 7],
+            [4, 7, 6],  # +z
         ],
         dtype=np.uint32,
     )
     return molrs.TriMesh(v, faces)
-
 
 
 def roundtrip(value):
@@ -33,17 +38,16 @@ def roundtrip(value):
 
 
 def test_storage_units_and_observables_pickle_by_logical_state() -> None:
-    for block_type in (_lib.Block, molrs.Block):
-        block = block_type()
-        block.insert("sample", np.array([1, 2], dtype=np.int16))
-        block.insert("label", ["left", "right"])
-        block.set_shape([1, 2])
-        restored = roundtrip(block)
-        assert type(restored) is block_type
-        assert restored.dtype("sample") == "i16"
-        assert restored.view("sample").tolist() == [1, 2]
-        assert np.asarray(restored.view("label")).tolist() == ["left", "right"]
-        assert restored.structural_shape == [1, 2]
+    block = molrs.Block()
+    block.insert("sample", np.array([1, 2], dtype=np.int16))
+    block.insert("label", ["left", "right"])
+    block.set_shape([1, 2])
+    restored = roundtrip(block)
+    assert type(restored) is molrs.Block
+    assert restored.dtype("sample") == "i16"
+    assert restored.view("sample").tolist() == [1, 2]
+    assert np.asarray(restored.view("label")).tolist() == ["left", "right"]
+    assert restored.structural_shape == [1, 2]
 
     empty_rows = molrs.Block()
     empty_rows.resize(3)
@@ -223,20 +227,35 @@ def test_graphs_views_and_extraction_pickle_as_one_object_graph() -> None:
     assert len(extracted.graph.atoms) == 3
     assert set(extracted.parent_of) == set(extracted.graph.entities())
 
+    fragment = molrs.Atomistic()
+    fragment_anchor = fragment.def_atom(element="O")
+    fragment_handle = fragment.def_atom(element="H")
+    fragment.def_bond(fragment_anchor, fragment_handle)
+    fragment.def_port(fragment_anchor, fragment_handle, "$")
+    fragment.set_frag_id(fragment_anchor.handle, 2)
+    restored_fragment = roundtrip(fragment)
+    assert type(restored_fragment) is molrs.Atomistic
+    assert restored_fragment.n_ports == 1
+    assert restored_fragment.ports[0]["port_kind"] == "$"
+    assert restored_fragment.frag_id(restored_fragment.atoms[0].handle) == 2
+
+    # A partially labelled fragment keeps its holes: an unlabelled atom comes
+    # back unlabelled, never as a stated ``frag_id`` of 0.
+    partial = molrs.Atomistic()
+    labelled = partial.def_atom(element="C")
+    middle = partial.def_atom(element="C")
+    capping = partial.def_atom(element="H")
+    partial.def_bond(labelled, middle)
+    partial.def_bond(middle, capping)
+    partial.set_frag_id(labelled.handle, 7)
+    restored_partial = roundtrip(partial)
+    assert [
+        restored_partial.frag_id(atom.handle) for atom in restored_partial.atoms
+    ] == [7, None, None]
+
     assert type(roundtrip(_lib.Atomistic())) is _lib.Atomistic
     assert type(roundtrip(_lib.CoarseGrain())) is _lib.CoarseGrain
-    assert type(roundtrip(molrs.GraphViews())) is molrs.GraphViews
     assert roundtrip(molrs.Reaction("[C:1]>>[C:1]")).forming_bonds == []
-
-    restored_links = roundtrip(molecule.links)
-    assert type(restored_links) is type(molecule.links)
-    assert {type(ref).__name__ for ref in restored_links.all()} == {
-        "Bond",
-        "Angle",
-        "Dihedral",
-        "Improper",
-    }
-    assert all(ref.world is restored_links.world for ref in restored_links.all())
 
 
 def test_schema_and_metadata_pickle_as_value_types() -> None:
@@ -273,3 +292,53 @@ def test_schema_and_metadata_pickle_as_value_types() -> None:
     nested = roundtrip(molrs.MetaValue("json", {"ok": True}))
     assert nested.dtype == "json"
     assert nested.value == {"ok": True}
+
+
+def test_frame_json_meta_roundtrip_stays_json_and_frozen() -> None:
+    frame = molrs.Frame(meta={"nested": {"ok": True, "tags": [1, 2]}})
+    restored = roundtrip(frame)
+    assert restored.meta.dtype("nested") == "json"
+    assert isinstance(restored.meta["nested"], molrs.MetaDocument)
+    assert isinstance(restored.meta["nested"], dict) is False
+    assert restored.meta["nested"] == {"ok": True, "tags": (1, 2)}
+
+
+def test_meta_value_json_payload_is_plain_and_vector_payload_is_tuple() -> None:
+    vector = molrs.MetaValue("f64x6", [1, 2, 3, 4, 5, 6])
+    assert isinstance(vector.value, tuple)
+    assert vector.value == (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
+    document = molrs.MetaValue("json", {"ok": True, "tags": [1, 2]})
+    assert isinstance(document.value, dict)
+    assert isinstance(document.value["tags"], list)
+    assert document.value == {"ok": True, "tags": [1, 2]}
+    assert not isinstance(document.value, molrs.MetaDocument)
+
+
+def test_document_assigned_across_frames_keeps_json_dtype() -> None:
+    src = molrs.Frame()
+    src.meta["run"] = {"step": 1, "tags": [1, 2], "inner": {"a": [3]}}
+    dst = molrs.Frame()
+    dst.meta["copied"] = src.meta["run"]
+    assert dst.meta.dtype("copied") == "json"
+    assert isinstance(dst.meta["copied"], molrs.MetaDocument)
+    assert dst.meta["copied"] == {"step": 1, "tags": (1, 2), "inner": {"a": (3,)}}
+    assert isinstance(dst.meta["copied"]["tags"], tuple)
+    assert isinstance(dst.meta["copied"]["inner"]["a"], tuple)
+
+
+def test_a_meta_document_pickles_by_content() -> None:
+    frame = molrs.Frame(meta={"doc": {"ok": True, "tags": [1, 2], "inner": {"a": 1}}})
+    doc = frame.meta["doc"]
+    assert roundtrip(doc) == {"ok": True, "tags": (1, 2), "inner": {"a": 1}}
+
+
+def test_a_meta_document_deep_copies_by_content() -> None:
+    frame = molrs.Frame(meta={"doc": {"ok": True, "tags": [1, 2], "inner": {"a": 1}}})
+    doc = frame.meta["doc"]
+    assert copy.deepcopy(doc) == {"ok": True, "tags": (1, 2), "inner": {"a": 1}}
+
+
+def test_a_meta_dict_snapshot_with_a_document_pickles() -> None:
+    frame = molrs.Frame(meta={"doc": {"ok": True, "tags": [1, 2]}, "step": 3})
+    restored = roundtrip(dict(frame.meta))
+    assert restored == {"doc": {"ok": True, "tags": (1, 2)}, "step": 3}

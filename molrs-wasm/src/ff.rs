@@ -3,14 +3,17 @@
 //! ```js
 //! const typifier = new UFFTypifier();
 //! const typed    = typifier.typify(frame);
-//! const pots     = typifier.toPotentials(typed);   // no .ff()
+//! const pots     = typifier.toPotentials(typed);   // no .forcefield()
 //! const nl       = new NeighborList(12.5);         // or NeighborList.bruteForce
 //! nl.build(typed);
 //! const report   = new LBFGS(pots, nl.neighbors()).run(typed, 200);
 //! // omitting the neighbor table → full topology nonbonded pairs (small molecules only)
 //! ```
 //!
-//! No `typifyUff` / `insertIntramolecularPairs` / `typifier.ff()` façades.
+//! No `typifyUff` / `insertIntramolecularPairs` façades, and no force-field
+//! handle: each typifier class wraps a native `Typing<…>` whose accumulated
+//! output (`forcefield()`) and library (`library()`) stay private. This is a
+//! known asymmetry with Python, which exposes both as copies.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -20,8 +23,10 @@ use wasm_bindgen::prelude::*;
 
 use molrs::ff::forcefield::ForceField as RsForceField;
 use molrs::ff::potential::{
-    Potential, Potentials as RsPotentials, intramolecular_pairs as topology_pairs,
+    Potential, PotentialCompiler, Potentials as RsPotentials,
+    intramolecular_pairs as topology_pairs,
 };
+use molrs::ff::typifier::Typing;
 use molrs::ff::typifier::mmff::{MMFF94STypifier as RsMMFF94S, MMFF94Typifier as RsMMFF94};
 use molrs::ff::typifier::uff::UFFTypifier as RsUFF;
 use molrs::optimize::{LBFGS as RsLBFGS, Optimizer, set_free_mask};
@@ -44,20 +49,25 @@ macro_rules! wasm_typifier {
         $(#[$meta])*
         #[wasm_bindgen(js_name = $JsName)]
         pub struct $JsName {
-            inner: $RsType,
+            inner: Typing<$RsType>,
         }
 
         #[wasm_bindgen(js_class = $JsName)]
         impl $JsName {
             #[wasm_bindgen(constructor)]
             pub fn new() -> $JsName {
-                $JsName { inner: $ctor }
+                $JsName {
+                    inner: Typing::new($ctor),
+                }
             }
 
-            /// Typify a molecular [`Frame`]. Returns a **new** labeled frame.
+            /// Typify a molecular [`Frame`]. Returns a **new** labeled frame;
+            /// `frame` is untouched. Every call accumulates its definitions
+            /// into this typifier's private output force field; a conflicting
+            /// definition is an error and leaves the output unchanged.
             ///
-            /// Native: `typifier.typify(&mol)?.to_frame()`.
-            pub fn typify(&self, frame: &Frame) -> Result<Frame, JsValue> {
+            /// Native: `Typing::new(typifier).typify(&mol)?.to_frame()?`.
+            pub fn typify(&mut self, frame: &Frame) -> Result<Frame, JsValue> {
                 let mol = frame.with_frame(|rs| {
                     Atomistic::from_frame(rs).map_err(|e| {
                         JsValue::from_str(&format!("Frame → Atomistic: {e}"))
@@ -67,10 +77,16 @@ macro_rules! wasm_typifier {
                     .inner
                     .typify(&mol)
                     .map_err(|e| JsValue::from_str(&e))?;
-                Frame::from_rs(typed.to_frame())
+                Frame::from_rs(
+                    typed.to_frame().map_err(|e| {
+                        JsValue::from_str(&format!("toFrame: {e}"))
+                    })?,
+                )
             }
 
-            /// Compile molecule-bound potentials from a **typed** frame.
+            /// Compile molecule-bound potentials from a **typed** frame, using
+            /// the output force field accumulated by [`typify`](Self::typify)
+            /// (only the definitions typing has assigned — call `typify` first).
             ///
             /// Non-bonded terms need a `pairs` block; [`LBFGS::run`] installs
             /// that list (from a caller-supplied [`Neighbors`] table or an
@@ -78,18 +94,18 @@ macro_rules! wasm_typifier {
             /// minimizing.
             /// Calling this alone with no `pairs` yields bonded-only kernels.
             ///
-            /// Native: `typifier.ff().to_potentials(&frame)?` — the FF handle
-            /// stays private; WASM collapses that to one method on the typifier.
+            /// Native: `PotentialCompiler::new(typing.forcefield()).compile(&frame)?` —
+            /// the FF handle stays private, and WASM exposes no `PotentialCompiler`
+            /// class; it collapses that to one method on the typifier.
             #[wasm_bindgen(js_name = toPotentials)]
             pub fn to_potentials(&self, frame: &Frame) -> Result<Potentials, JsValue> {
                 let pots = frame.with_frame(|rs| {
-                    self.inner
-                        .ff()
-                        .to_potentials(rs)
-                        .map_err(|e| JsValue::from_str(&format!("to_potentials: {e}")))
+                    PotentialCompiler::new(self.inner.forcefield())
+                        .compile(rs)
+                        .map_err(|e| JsValue::from_str(&format!("toPotentials: {e}")))
                 })?;
                 Ok(Potentials {
-                    ff: self.inner.ff().clone(),
+                    ff: self.inner.forcefield().clone(),
                     inner: Arc::new(pots),
                 })
             }
@@ -245,10 +261,9 @@ impl LBFGS {
             .inner
             .with_mut(|rs| -> Result<molrs::optimize::OptReport, String> {
                 install_pairs(rs, &self.pairs, self.ff.special_bonds())?;
-                let compiled = self
-                    .ff
-                    .to_potentials(rs)
-                    .map_err(|e| format!("to_potentials: {e}"))?;
+                let compiled = PotentialCompiler::new(&self.ff)
+                    .compile(rs)
+                    .map_err(|e| format!("compile: {e}"))?;
                 self.pots = Arc::new(compiled);
 
                 if let Some(ref fixed) = fixed {

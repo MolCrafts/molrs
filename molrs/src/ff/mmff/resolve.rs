@@ -207,8 +207,12 @@ pub(crate) fn angle_type(topo: &Topo, types: &[u8], i: usize, j: usize, k: usize
     at
 }
 
-/// RDKit `getMMFFStretchBendType`.
-fn stretch_bend_type(angle_type: u8, bt1: u8, bt2: u8) -> u8 {
+/// RDKit `getMMFFStretchBendType`: the stretch-bend class (SBT 0–11) of an
+/// angle of type `angle_type` whose i–j bond has type `bt1` and j–k bond type
+/// `bt2`. For the classes that tell the two bonds apart (angle types 1, 5
+/// and 7), which bond is the type-1 bond depends on the order `bt1`, `bt2`
+/// are given in.
+pub(crate) fn stretch_bend_type(angle_type: u8, bt1: u8, bt2: u8) -> u8 {
     match angle_type {
         1 => {
             if bt1 != 0 || bt1 == bt2 {
@@ -331,7 +335,9 @@ fn oop_lookup(variant: MmffVariant, i: u8, j: u8, k: u8, l: u8) -> Option<(Strin
     None
 }
 
-/// RDKit `MMFFTorCollection::getMMFFTorParams`. Returns `(matched_type, params)`.
+/// RDKit `MMFFTorCollection::getMMFFTorParams`. Returns `(secondary, params)`,
+/// `secondary` telling whether the row was found only on the restart under the
+/// secondary torsion type.
 ///
 /// Like the Oop collection, RDKit picks `defaultMMFFsTor` vs `defaultMMFFTor`
 /// wholesale on `isMMFFs`; the `_S` table shares every key with the base
@@ -344,10 +350,11 @@ fn torsion_lookup(
     j: u8,
     k: u8,
     l: u8,
-) -> Option<(u8, TorParams)> {
+) -> Option<(bool, TorParams)> {
     let mut iter: i32 = 0;
     let mut max_iter = 5i32;
     let mut can_tor = tor_type.0;
+    let mut secondary = false;
     // Mirrors the RDKit `while` guard: keep iterating while we have not yet
     // found a hit (we return on the first), with the special last-resort
     // restart when torType is (5, secondary).
@@ -360,6 +367,7 @@ fn torsion_lookup(
             max_iter = 4;
             iter = 0;
             can_tor = tor_type.1;
+            secondary = true;
         }
         let (mut i_wild, mut l_wild) = (iter as usize, iter as usize);
         if iter == 1 {
@@ -387,7 +395,7 @@ fn torsion_lookup(
         };
         if let Some(t) = hit {
             return Some((
-                can_tor,
+                secondary,
                 TorParams {
                     v1: t.v1,
                     v2: t.v2,
@@ -641,7 +649,61 @@ pub(crate) fn oop_params(
 
 // --- torsion (explicit + empirical) --------------------------------------
 
-/// RDKit `getMMFFTorsionParams`. Returns `None` when all coefficients vanish.
+/// Which rule produced a torsion's `(v1, v2, v3)`, carrying every input that
+/// rule reads beyond the principal torsion type and the four atom types.
+///
+/// Whether the principal pass hits is itself fixed by `(principal, i, j, k, l)`
+/// and the variant, so a label that names the source together with those five
+/// names exactly one parameter set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TorSource {
+    /// A table row under the principal torsion type.
+    Principal,
+    /// No row under the principal type; a row found on the restart under this
+    /// secondary torsion type.
+    Secondary(u8),
+    /// No row under either type: the MMFF.V empirical rules, which read the j–k
+    /// bond class (the atom types of `j` and `k` fix the rest — element,
+    /// `crd` / `val` / `pilp` / `mltb` / `linh` and the aromatic-type flag).
+    Empirical(JkBond),
+}
+
+/// The j–k bond as the empirical torsion rules tell it apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum JkBond {
+    /// SINGLE.
+    Single,
+    /// DOUBLE.
+    Double,
+    /// AROMATIC between two aromatic MMFF types on perceived-aromatic atoms —
+    /// rule (b).
+    Aromatic,
+    /// Anything else (triple, or an aromatic bond rule (b) does not accept):
+    /// the rules treat these alike.
+    Other,
+}
+
+/// The empirical rules' reading of the j–k bond — the one place it is derived,
+/// so the parameters and the typifier's label cannot disagree about it.
+fn jk_bond(topo: &Topo, types: &[u8], j: usize, k: usize) -> JkBond {
+    match topo.bond_order(j, k) {
+        Some(BondOrder::Single) => JkBond::Single,
+        Some(BondOrder::Double) => JkBond::Double,
+        Some(BondOrder::Aromatic)
+            if crate::ff::params::mmff::mmff_is_arom(types[j])
+                && crate::ff::params::mmff::mmff_is_arom(types[k])
+                && topo.is_aromatic[j]
+                && topo.is_aromatic[k] =>
+        {
+            JkBond::Aromatic
+        }
+        _ => JkBond::Other,
+    }
+}
+
+/// RDKit `getMMFFTorsionParams`, with the [`TorSource`] the numbers came from.
+/// The params are `None` when all coefficients vanish (or the empirical rules
+/// know neither central type).
 pub(crate) fn torsion_params(
     variant: MmffVariant,
     topo: &Topo,
@@ -650,32 +712,35 @@ pub(crate) fn torsion_params(
     j: usize,
     k: usize,
     l: usize,
-) -> Option<TorParams> {
+) -> (TorSource, Option<TorParams>) {
     let tt = torsion_type(topo, types, i, j, k, l);
-    let p = match torsion_lookup(variant, tt, types[i], types[j], types[k], types[l]) {
-        Some((_, p)) => p,
-        None => torsion_empirical(topo, types, j, k)?,
+    let (source, p) = match torsion_lookup(variant, tt, types[i], types[j], types[k], types[l]) {
+        Some((false, p)) => (TorSource::Principal, Some(p)),
+        Some((true, p)) => (TorSource::Secondary(tt.1), Some(p)),
+        None => {
+            let bond = jk_bond(topo, types, j, k);
+            (
+                TorSource::Empirical(bond),
+                torsion_empirical(topo, types, j, k, bond),
+            )
+        }
     };
-    if is_zero(p.v1) && is_zero(p.v2) && is_zero(p.v3) {
-        None
-    } else {
-        Some(p)
-    }
+    let p = p.filter(|p| !(is_zero(p.v1) && is_zero(p.v2) && is_zero(p.v3)));
+    (source, p)
 }
 
-/// RDKit `getMMFFTorsionEmpiricalRuleParams` (MMFF.V rules a-h, p.632).
-fn torsion_empirical(topo: &Topo, types: &[u8], j: usize, k: usize) -> Option<TorParams> {
+/// RDKit `getMMFFTorsionEmpiricalRuleParams` (MMFF.V rules a-h, p.632), for
+/// the j–k bond class `bond` ([`jk_bond`]).
+fn torsion_empirical(
+    topo: &Topo,
+    types: &[u8],
+    j: usize,
+    k: usize,
+    bond: JkBond,
+) -> Option<TorParams> {
     let jp = mmff_prop(types[j])?;
     let kp = mmff_prop(types[k])?;
-    let jt = types[j];
-    let kt = types[k];
     let atno = [topo.atno[j], topo.atno[k]];
-    let bond = topo.bond_order(j, k);
-    let aromatic = crate::ff::params::mmff::mmff_is_arom(jt)
-        && crate::ff::params::mmff::mmff_is_arom(kt)
-        && topo.is_aromatic[j]
-        && topo.is_aromatic[k]
-        && bond == Some(BondOrder::Aromatic);
 
     let mut u = [0.0f64; 2];
     let mut v = [0.0f64; 2];
@@ -723,7 +788,7 @@ fn torsion_empirical(topo: &Topo, types: &[u8], j: usize, k: usize) -> Option<To
 
     if jp.linh != 0 || kp.linh != 0 {
         // rule (a): all zero
-    } else if aromatic {
+    } else if bond == JkBond::Aromatic {
         // rule (b)
         beta = if (jp.val == 3 && kp.val == 4) || (jp.val == 4 && kp.val == 3) {
             3.0
@@ -736,7 +801,7 @@ fn torsion_empirical(topo: &Topo, types: &[u8], j: usize, k: usize) -> Option<To
             0.3
         };
         tor.v2 = beta * pi_jk * (u[0] * u[1]).sqrt();
-    } else if bond == Some(BondOrder::Double) {
+    } else if bond == JkBond::Double {
         // rule (c)
         beta = 6.0;
         pi_jk = if jp.mltb == 2 && kp.mltb == 2 {
@@ -766,7 +831,7 @@ fn torsion_empirical(topo: &Topo, types: &[u8], j: usize, k: usize) -> Option<To
         } else {
             tor.v3 = (v[0] * v[1]).sqrt() / n_jk;
         }
-    } else if (bond == Some(BondOrder::Single) && jp.mltb != 0 && kp.mltb != 0)
+    } else if (bond == JkBond::Single && jp.mltb != 0 && kp.mltb != 0)
         || (jp.mltb != 0 && kp.pilp != 0)
         || (jp.pilp != 0 && kp.mltb != 0)
     {

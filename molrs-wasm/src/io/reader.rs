@@ -65,8 +65,8 @@ use wasm_bindgen::prelude::*;
 /// console.log(reader.len()); // number of frames
 ///
 /// const frame = reader.read(0); // first frame
-/// const atoms = frame.getBlock("atoms");
-/// const x = atoms.copyColF("x");
+/// const atoms = frame.get("atoms");
+/// const x = atoms.get("x");
 /// ```
 #[wasm_bindgen(js_name = XYZReader)]
 pub struct XyzReader {
@@ -114,7 +114,7 @@ impl XyzReader {
     /// ```js
     /// const frame = reader.read(0);
     /// if (frame) {
-    ///   const atoms = frame.getBlock("atoms");
+    ///   const atoms = frame.get("atoms");
     /// }
     /// ```
     #[wasm_bindgen]
@@ -175,9 +175,9 @@ impl XyzReader {
 /// ```js
 /// const reader = new PDBReader(pdbContent);
 /// const frame = reader.read(0);
-/// const atoms = frame.getBlock("atoms");
-/// const names = atoms.copyColStr("name"); // ["CA", "CB", ...]
-/// const x = atoms.copyColF("x");
+/// const atoms = frame.get("atoms");
+/// const names = atoms.get("name"); // ["CA", "CB", ...]
+/// const x = atoms.get("x");
 /// ```
 #[wasm_bindgen(js_name = PDBReader)]
 pub struct PdbReader {
@@ -289,8 +289,8 @@ impl PdbReader {
 /// ```js
 /// const reader = new LAMMPSReader(dataFileContent);
 /// const frame = reader.read(0);
-/// const atoms = frame.getBlock("atoms");
-/// const bonds = frame.getBlock("bonds");
+/// const atoms = frame.get("atoms");
+/// const bonds = frame.get("bonds");
 /// const box   = frame.simbox;
 /// ```
 #[wasm_bindgen(js_name = LAMMPSReader)]
@@ -403,7 +403,7 @@ impl LammpsReader {
 /// const reader = new LAMMPSTrajReader(dumpContent);
 /// console.log(reader.len()); // number of timesteps
 /// const frame = reader.read(0);
-/// const atoms = frame.getBlock("atoms");
+/// const atoms = frame.get("atoms");
 /// ```
 #[wasm_bindgen(js_name = LAMMPSTrajReader)]
 pub struct LammpsDumpReader {
@@ -471,8 +471,8 @@ impl LammpsDumpReader {
 /// ```js
 /// const reader = new SDFReader(sdfContent);
 /// const frame = reader.read(0);
-/// const atoms = frame.getBlock("atoms");
-/// const x = atoms.copyColF("x");
+/// const atoms = frame.get("atoms");
+/// const x = atoms.get("x");
 /// ```
 #[wasm_bindgen(js_name = SDFReader)]
 pub struct SdfReader {
@@ -554,8 +554,8 @@ impl SdfReader {
 /// console.log(reader.len()); // number of frames
 ///
 /// const frame = reader.read(0); // first frame
-/// const atoms = frame.getBlock("atoms");
-/// const x = atoms.copyColF("x");
+/// const atoms = frame.get("atoms");
+/// const x = atoms.get("x");
 /// ```
 #[wasm_bindgen(js_name = DCDReader)]
 pub struct DcdReader {
@@ -662,7 +662,7 @@ impl DcdReader {
 /// const content = await file.text();
 /// const reader = new CIFReader(content);
 /// const frame  = reader.read(0);
-/// const atoms  = frame.getBlock("atoms");
+/// const atoms  = frame.get("atoms");
 /// const box    = frame.simbox;        // populated from the unit cell
 /// ```
 #[wasm_bindgen(js_name = CIFReader)]
@@ -767,8 +767,8 @@ impl CifReader {
 /// const content = await file.text();
 /// const reader  = new CubeReader(content);
 /// const frame   = reader.read(0);
-/// const grid    = frame.getBlock("grid");   // shape [nx, ny, nz]
-/// const density = grid.copyColF("density"); // owned Float64Array
+/// const grid    = frame.get("grid");   // shape [nx, ny, nz]
+/// const density = grid.get("density"); // owned Float64Array
 /// ```
 #[wasm_bindgen(js_name = CubeReader)]
 pub struct CubeReader {
@@ -838,8 +838,8 @@ impl CubeReader {
 /// const content = await file.text();
 /// const reader  = new CHGCARReader(content);
 /// const frame   = reader.read(0);
-/// const grid    = frame.getBlock("grid");
-/// const total   = grid.copyColF("total");
+/// const grid    = frame.get("grid");
+/// const total   = grid.get("total");
 /// ```
 #[wasm_bindgen(js_name = CHGCARReader)]
 pub struct ChgcarReader {
@@ -1360,6 +1360,11 @@ mod tests {
     use super::*;
     use wasm_bindgen_test::*;
 
+    /// Owned `f64` column `key` of `block`.
+    fn float_col(block: &crate::core::Block, key: &str) -> js_sys::Float64Array {
+        wasm_bindgen::JsCast::unchecked_into(JsValue::from(block.get(key, None).expect(key)))
+    }
+
     #[wasm_bindgen_test]
     fn test_lammps_reader_len_then_read() {
         // Regression: `len()` used to call `read(0)` which flipped the
@@ -1374,8 +1379,8 @@ mod tests {
         let mut reader = LammpsReader::new(data);
         assert_eq!(reader.len().expect("len"), 1);
         let frame = reader.read(0).expect("read").expect("frame");
-        let atoms = frame.get_block("atoms").expect("atoms");
-        assert_eq!(atoms.copy_col_f("x").expect("x").length(), 2);
+        let atoms = frame.get("atoms").expect("atoms");
+        assert_eq!(float_col(&atoms, "x").length(), 2);
     }
 
     #[wasm_bindgen_test]
@@ -1388,9 +1393,9 @@ END"#;
 
         let frame = reader.read(0).expect("read failed").expect("no frame");
 
-        let block = frame.get_block("atoms").expect("no atoms block");
+        let block = frame.get("atoms").expect("no atoms block");
 
-        let x = block.copy_col_f("x").expect("no x column");
+        let x = float_col(&block, "x");
         assert_eq!(x.length(), 2);
         assert_eq!(x.get_index(0), 1.0);
         assert_eq!(x.get_index(1), 4.0);
@@ -1403,18 +1408,19 @@ END"#;
 
         let frame = Frame::new();
         let mut atoms = frame.create_block("atoms").expect("atoms block");
+        let x = JsFloatArray::from(&[1.0, 4.0][..]);
         atoms
-            .set_col_f("x", &JsFloatArray::from(&[1.0, 4.0][..]), None)
+            .set(
+                "x",
+                wasm_bindgen::JsCast::unchecked_into(JsValue::from(x)),
+                None,
+            )
             .expect("x");
 
         for fmt in ["msgpack", "json"] {
             let bytes = write_frame_bytes_export(&frame, fmt).expect("encode");
             let back = read_frame_bytes_export(&bytes, fmt).expect("decode");
-            let x = back
-                .get_block("atoms")
-                .expect("atoms")
-                .copy_col_f("x")
-                .expect("x column");
+            let x = float_col(&back.get("atoms").expect("atoms"), "x");
             assert_eq!(x.length(), 2);
             assert_eq!(x.get_index(0), 1.0);
             assert_eq!(x.get_index(1), 4.0);

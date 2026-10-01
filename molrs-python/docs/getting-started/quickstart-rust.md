@@ -8,14 +8,13 @@ minimal dependency set or enable `full` while exploring.
 
 ```toml
 [dependencies]
-molrs = { package = "molcrafts-molrs", version = "0.14", features = ["full"] }
+molrs = { package = "molcrafts-molrs", version = "0.15", features = ["full"] }
 ```
 
 The `full` feature enables I/O, SMILES, compute, force-field, conformer, MD,
 Voronoi, and signal subsystems. Once you know which layers your application
 uses, replace `full` with a narrower feature list. (`full` does not enable
-`stream` or `filesystem`; the crate's *default* features are `full`,
-`filesystem`, `rayon`.)
+`stream` or `filesystem`; the crate's *default* is core only plus `rayon`.)
 
 ## 2. Parse Topology and Generate Coordinates
 

@@ -90,6 +90,7 @@
 
 use std::collections::HashMap;
 
+use crate::op::vec3::{cross, dot, sub};
 use crate::store::keys;
 use crate::system::atomistic::{AtomId, Atomistic};
 use crate::system::bond::BondType;
@@ -639,25 +640,6 @@ fn dihedral_deg(i: [f64; 3], j: [f64; 3], k: [f64; 3], l: [f64; 3]) -> f64 {
     let x = dot(n1, n2);
     let y = dot(m, n2) / b2_len;
     (-y).atan2(x).to_degrees()
-}
-
-/// `a - b`.
-fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-
-/// `a · b`.
-fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-
-/// `a × b`.
-fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
 }
 
 #[cfg(test)]

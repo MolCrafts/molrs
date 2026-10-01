@@ -9,11 +9,10 @@ intact, and fail loudly instead of guessing.
 import socket
 import threading
 
+import molrs
+import molrs.io as mio
 import numpy as np
 import pytest
-
-import molrs.io as mio
-import molrs
 from molrs.stream import ControlCommand
 
 pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
@@ -51,7 +50,7 @@ class TestFrameWireCodec:
         frame.box = molrs.Box(np.eye(3) * 10.0)
         back = mio.read_frame_bytes(mio.write_frame_bytes(frame))
         assert back.box is not None
-        np.testing.assert_allclose(back.box.matrix, frame.box.matrix)
+        np.testing.assert_allclose(back.box.h, frame.box.h)
 
     @pytest.mark.parametrize("fmt", ["msgpack", "json"])
     def test_both_formats_round_trip(self, fmt):
@@ -156,9 +155,8 @@ class TestFrameServer:
 
     @pytest.mark.parametrize("timeout", [-1.0, float("nan")])
     def test_nonsense_timeout_raises(self, timeout):
-        with molrs.stream.Publisher("127.0.0.1:0") as server:
-            with pytest.raises(ValueError):
-                server.recv_command(timeout=timeout)
+        with molrs.stream.Publisher("127.0.0.1:0") as server, pytest.raises(ValueError):
+            server.recv_command(timeout=timeout)
 
     def test_zero_buffer_size_raises(self):
         with pytest.raises(ValueError, match="buffer_size"):

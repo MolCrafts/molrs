@@ -1,107 +1,444 @@
-"""Tests for the ``molrs.ff.ForceField`` programmatic builder PyO3 surface.
+"""Seam tests for the ``molrs.ff.ForceField`` construction primitives.
 
-The Rust builder semantics (idempotent ``def_*style``, type naming, ``def_type``
-arity rules) are covered by unit tests in ``molrs-ff/src/forcefield/mod.rs``.
-These tests verify the binding is wired end-to-end: a force field built entirely
-from Python via ``def_*style`` / ``def_*type`` / ``def_type`` reads back through
-``style_names`` / ``types`` / ``style_params`` and compiles into evaluable
-``Potentials`` that produce the closed-form energy.
-
-This is the P0-B enabler that lets molpy drop its parallel Python ForceField
-hierarchy and inherit ``molrs.ff.ForceField`` directly.
+A force field is built through two doors: ``ForceField.def_style(category,
+name, params=None)`` and the per-category ``def_type`` of the returned style
+handle — the type's name, then its endpoints (``AtomType`` handles), then
+keyword params — which returns the type's handle. The Rust builder semantics
+(style identity, arity, the conflict rule, names never split) are unit-tested
+in ``molrs/src/ff/forcefield/mod.rs``. These tests prove only the binding
+seam: the typed doors, the str/float split of params, and error mapping.
 """
 
-import numpy as np
-import pytest
+import pickle
 
 import molrs
+import numpy as np
+import pytest
+from molrs import _lib
+
+HANDLE_CLASSES = (
+    "ForceField",
+    "Style",
+    "AtomStyle",
+    "BondStyle",
+    "AngleStyle",
+    "DihedralStyle",
+    "ImproperStyle",
+    "PairStyle",
+    "Type",
+    "AtomType",
+    "BondType",
+    "AngleType",
+    "DihedralType",
+    "ImproperType",
+    "PairType",
+)
+
+
+def _rows(style) -> list[tuple[str, dict]]:
+    """``(name, params)`` of every type of ``style``, in definition order."""
+    return [(t.name, t.params) for t in style.types]
+
+
+@pytest.mark.parametrize("name", HANDLE_CLASSES)
+def test_the_force_field_classes_are_the_native_classes(name):
+    assert getattr(molrs.ff, name) is getattr(_lib, name)
+
+
+def test_the_force_field_class_cannot_be_subclassed():
+    with pytest.raises(TypeError):
+        type("Sub", (molrs.ff.ForceField,), {})
 
 
 def test_empty_forcefield_constructs():
     ff = molrs.ff.ForceField("scratch")
     assert ff.name == "scratch"
-    assert ff.style_names() == []
+    assert ff.styles == []
 
 
-def test_def_bondtype_creates_style_and_type():
-    ff = molrs.ff.ForceField("bond-only")
-    ff.def_bondtype("harmonic", "CT", "CT", {"k": 300.0, "r0": 1.5})
-    assert ff.style_names() == ["bond:harmonic"]
-    ((name, params),) = ff.types("bond", "harmonic")
-    assert name == "CT-CT"
-    assert params == {"k": 300.0, "r0": 1.5}
+def _atoms(ff: molrs.ff.ForceField, *names: str) -> list[molrs.ff.AtomType]:
+    atom_style = ff.def_style("atom", "full")
+    return [atom_style.def_type(name, mass=1.0) for name in names]
 
 
-def test_def_pairstyle_carries_style_level_params():
-    ff = molrs.ff.ForceField("lj")
-    ff.def_pairstyle("lj/cut", {"cutoff": 10.0})
-    ff.def_pairtype("lj/cut", "CT", None, {"epsilon": 0.066, "sigma": 3.5})
-    assert ff.style_params("pair", "lj/cut") == {"cutoff": 10.0}
-    ((name, params),) = ff.types("pair", "lj/cut")
-    assert name == "CT"  # self-pair name is just the single atom type
-    assert params == {"epsilon": 0.066, "sigma": 3.5}
+def test_atom_def_type_returns_the_atom_type_handle():
+    ff = molrs.ff.ForceField("atoms")
+    ct = ff.def_style("atom", "full").def_type("CT", mass=12.011, element="C")
+    assert isinstance(ct, molrs.ff.AtomType)
+    assert ct.name == "CT"
+    assert _rows(ff.get_style("atom", "full")) == [
+        ("CT", {"mass": 12.011, "element": "C"})
+    ]
 
 
-def test_def_style_is_idempotent():
-    ff = molrs.ff.ForceField("dup")
-    ff.def_bondtype("harmonic", "A", "B", {"k": 1.0, "r0": 1.0})
-    ff.def_bondtype("harmonic", "A", "C", {"k": 2.0, "r0": 1.1})
-    # one style, two types
-    assert ff.style_names() == ["bond:harmonic"]
-    assert len(ff.types("bond", "harmonic")) == 2
+def test_bond_def_type_stores_name_and_endpoints_as_given():
+    ff = molrs.ff.ForceField("bonds")
+    ct, oh = _atoms(ff, "CT", "OH")
+    bond = ff.def_style("bond", "harmonic").def_type(
+        "anything", ct, oh, k=300.0, r0=1.4
+    )
+    assert isinstance(bond, molrs.ff.BondType)
+    assert bond.name == "anything"
+    assert (bond.itom.name, bond.jtom.name) == ("CT", "OH")
+    assert _rows(ff.get_style("bond", "harmonic")) == [
+        ("anything", {"k": 300.0, "r0": 1.4})
+    ]
 
 
-def test_unified_def_type_matches_typed_methods():
-    ff = molrs.ff.ForceField("unified")
-    ff.def_type("bond", "harmonic", "CT-CT", {"k": 300.0, "r0": 1.5})
-    ff.def_type("angle", "harmonic", "CT-CT-CT", {"k": 40.0, "theta0": 1.9})
-    assert set(ff.style_names()) == {"bond:harmonic", "angle:harmonic"}
-    assert ff.types("angle", "harmonic")[0][0] == "CT-CT-CT"
+def test_a_dashed_name_is_never_split():
+    ff = molrs.ff.ForceField("names")
+    hc, os_ = _atoms(ff, "HC", "OS")
+    bond = ff.def_style("bond", "harmonic").def_type("CT-OH", hc, os_, k=1.0, r0=1.0)
+    assert bond.endpoints == (hc, os_)
+
+
+def test_angle_dihedral_improper_def_type_return_typed_handles():
+    ff = molrs.ff.ForceField("bonded")
+    hc, ct, oh = _atoms(ff, "HC", "CT", "OH")
+    angle = ff.def_style("angle", "harmonic").def_type(
+        "HC-CT-OH", hc, ct, oh, k=70.0, theta0=1.9
+    )
+    dihedral = ff.def_style("dihedral", "opls").def_type(
+        "HC-CT-CT-OH", hc, ct, ct, oh, k1=0.0, k2=0.0, k3=0.3, k4=0.0
+    )
+    improper = ff.def_style("improper", "harmonic").def_type(
+        "HC-OH-CT-HC", hc, oh, ct, hc, k=2.0, chi0=0.0
+    )
+    assert isinstance(angle, molrs.ff.AngleType)
+    assert [e.name for e in angle.endpoints] == ["HC", "CT", "OH"]
+    assert isinstance(dihedral, molrs.ff.DihedralType)
+    assert [e.name for e in dihedral.endpoints] == ["HC", "CT", "CT", "OH"]
+    assert isinstance(improper, molrs.ff.ImproperType)
+    assert [e.name for e in improper.endpoints] == ["HC", "OH", "CT", "HC"]
+    # Every slot `def_type` names has its accessor.
+    assert (angle.itom, angle.jtom, angle.ktom) == (hc, ct, oh)
+    assert (dihedral.ktom, dihedral.ltom) == (ct, oh)
+    assert (improper.ktom, improper.ltom) == (ct, hc)
+
+
+def test_pair_def_type_without_jtom_is_the_self_pair():
+    ff = molrs.ff.ForceField("pairs")
+    ct, oh = _atoms(ff, "CT", "OH")
+    pair_style = ff.def_style("pair", "lj/cut")
+    self_pair = pair_style.def_type("CT", ct, epsilon=0.066, sigma=3.5)
+    cross = pair_style.def_type("CT-OH", ct, oh, epsilon=0.1, sigma=3.3)
+    assert isinstance(self_pair, molrs.ff.PairType)
+    assert (self_pair.itom.name, self_pair.jtom.name) == ("CT", "CT")
+    assert (cross.itom.name, cross.jtom.name) == ("CT", "OH")
+
+
+def test_an_endpoint_that_is_not_an_atom_type_raises_type_error():
+    ff = molrs.ff.ForceField("guard")
+    (ct,) = _atoms(ff, "CT")
+    with pytest.raises(TypeError, match="AtomType"):
+        ff.def_style("bond", "harmonic").def_type("CT-OH", ct, "OH", k=1.0)
+
+
+def test_an_existing_types_endpoints_are_handles_def_type_accepts():
+    ff = molrs.ff.ForceField("reuse")
+    ct, oh = _atoms(ff, "CT", "OH")
+    bond = ff.def_style("bond", "harmonic").def_type("CT-OH", ct, oh, k=1.0, r0=1.0)
+    again = ff.def_style("bond", "morse").def_type("CT-OH", *bond.endpoints, d0=1.0)
+    assert [e.name for e in again.endpoints] == ["CT", "OH"]
 
 
 @pytest.mark.parametrize(
-    "category,name",
-    [("bond", "A-B-C"), ("angle", "A-B"), ("dihedral", "A-B-C")],
+    "cls", [molrs.ff.Style, molrs.ff.BondStyle, molrs.ff.PairStyle]
 )
-def test_def_type_arity_raises_not_panics(category, name):
-    ff = molrs.ff.ForceField("guard")
-    with pytest.raises(ValueError):
-        ff.def_type(category, "s", name, {"k": 1.0})
+def test_there_is_no_def_type_at(cls):
+    assert not hasattr(cls, "def_type_at")
+
+
+def test_the_generic_style_has_no_def_type():
+    assert not hasattr(molrs.ff.Style, "def_type")
+
+
+def test_def_style_returns_the_category_handle():
+    ff = molrs.ff.ForceField("handle")
+    assert isinstance(ff.def_style("pair", "lj/cut"), molrs.ff.PairStyle)
+
+
+def test_style_params_exposes_mixing():
+    ff = molrs.ff.ForceField("lj")
+    style = ff.def_style("pair", "lj/cut", {"cutoff": 10.0, "mixing": "geometric"})
+    assert style.params == {"cutoff": 10.0, "mixing": "geometric"}
+
+
+def test_forcefield_has_no_def_bondstyle():
+    assert not hasattr(molrs.ff.ForceField, "def_bondstyle")
 
 
 def test_kspace_is_not_a_category():
-    from molrs._lib import ForceField as RsForceField
-
-    assert not hasattr(RsForceField, "def_kspacestyle")
+    assert not hasattr(molrs.ff.ForceField, "def_kspacestyle")
     ff = molrs.ff.ForceField("guard")
     with pytest.raises(ValueError, match="unknown"):
-        ff.def_type("kspace", "pme", "X", {"k": 1.0})
+        ff.def_style("kspace", "pme")
 
 
-def test_types_on_missing_style_raises():
+def test_a_missing_style_is_none():
     ff = molrs.ff.ForceField("empty")
+    assert ff.get_style("bond", "nope") is None
+
+
+def test_conflicting_def_type_raises_value_error():
+    ff = molrs.ff.ForceField("conflict")
+    ct, oh = _atoms(ff, "CT", "OH")
+    style = ff.def_style("bond", "harmonic")
+    style.def_type("CT-OH", ct, oh, k=300.0, r0=1.4)
     with pytest.raises(ValueError):
-        ff.types("bond", "nope")
+        style.def_type("CT-OH", ct, oh, k=310.0, r0=1.4)
 
 
-def test_builder_compiles_and_evaluates():
-    """Built FF -> to_potentials -> calc_energy gives the closed-form value."""
-    ff = molrs.ff.ForceField("bond-only")
-    ff.def_bondtype("harmonic", "CT", "CT", {"k": 300.0, "r0": 1.5})
+def test_conflicting_def_style_raises_value_error():
+    ff = molrs.ff.ForceField("conflict")
+    ff.def_style("pair", "lj/cut", {"cutoff": 10.0})
+    with pytest.raises(ValueError):
+        ff.def_style("pair", "lj/cut", {"cutoff": 12.0})
 
-    frame = molrs.Frame()
+
+# ---- merge: one Rust implementation behind the Python seam ----
+
+
+def test_merge_returns_self():
+    ff = molrs.ff.ForceField("target")
+    other = molrs.ff.ForceField("source")
+    ct, oh = _atoms(other, "CT", "OH")
+    other.def_style("bond", "harmonic").def_type("CT-OH", ct, oh, k=300.0, r0=1.4)
+    assert ff.merge(other) is ff
+    assert _rows(ff.get_style("bond", "harmonic")) == [
+        ("CT-OH", {"k": 300.0, "r0": 1.4})
+    ]
+
+
+def test_conflicting_merge_raises_value_error():
+    ff = molrs.ff.ForceField("target")
+    ct, oh = _atoms(ff, "CT", "OH")
+    ff.def_style("bond", "harmonic").def_type("CT-OH", ct, oh, k=300.0, r0=1.4)
+    other = molrs.ff.ForceField("source")
+    ct, oh = _atoms(other, "CT", "OH")
+    other.def_style("bond", "harmonic").def_type("CT-OH", ct, oh, k=310.0, r0=1.4)
+    with pytest.raises(ValueError):
+        ff.merge(other)
+
+
+# ---- units ----
+
+
+def test_units_default_to_real():
+    assert molrs.ff.ForceField("plain").units == "real"
+
+
+def test_units_ctor_arg_declares_units():
+    assert molrs.ff.ForceField("reduced", units="lj").units == "lj"
+
+
+# ---- readers return the one class, with full style params ----
+
+_OPLS_GEOMETRIC = """<ForceField name="OPLS-AA" combining_rule="geometric">
+  <AtomTypes>
+    <Type name="opls_001" class="opls_001" element="C" mass="12.011"/>
+  </AtomTypes>
+  <NonbondedForce coulomb14scale="0.5" lj14scale="0.5">
+    <Atom type="opls_001" charge="0.0" sigma="0.375" epsilon="0.43932"/>
+  </NonbondedForce>
+</ForceField>"""
+
+
+def test_read_opls_xml_returns_the_force_field_with_its_mixing(tmp_path):
+    path = tmp_path / "opls.xml"
+    path.write_text(_OPLS_GEOMETRIC)
+    ff = molrs.ff.read_opls_xml(path)
+    assert type(ff) is molrs.ff.ForceField
+    assert ff.get_style("pair", "lj/cut")["mixing"] == "geometric"
+
+
+def test_a_written_force_field_reads_back_through_a_pathlike(tmp_path):
+    ff = molrs.ff.ForceField("round")
+    (ct,) = _atoms(ff, "CT")
+    ff.def_style("bond", "harmonic").def_type("CT-CT", ct, ct, k=300.0, r0=1.5)
+    path = tmp_path / "ff.xml"
+    molrs.ff.write_forcefield_xml(path, ff)
+    back = molrs.ff.read_forcefield_xml(path)
+    assert type(back) is molrs.ff.ForceField
+    assert _rows(back.get_style("bond", "harmonic")) == [
+        ("CT-CT", {"k": 300.0, "r0": 1.5})
+    ]
+
+
+# ---- handles: queries, params, equality ----
+
+
+def test_get_styles_and_get_types_select_by_category_or_class():
+    ff = molrs.ff.ForceField("select")
+    ct, oh = _atoms(ff, "CT", "OH")
+    ff.def_style("bond", "harmonic").def_type("CT-OH", ct, oh, k=1.0, r0=1.0)
+    ff.def_style("bond", "morse").def_type("CT-OH", ct, oh, d0=1.0)
+    assert [s.name for s in ff.get_styles("bond")] == ["harmonic", "morse"]
+    assert [s.name for s in ff.get_styles(molrs.ff.BondStyle)] == ["harmonic", "morse"]
+    assert len(ff.get_styles(molrs.ff.Style)) == 3
+    assert [t.name for t in ff.get_types("atom")] == ["CT", "OH"]
+    assert len(ff.get_types(molrs.ff.BondType)) == 2
+    assert len(ff.get_types(molrs.ff.Type)) == 4
+
+
+def test_type_equality_includes_the_style():
+    ff = molrs.ff.ForceField("styles")
+    ct, oh = _atoms(ff, "CT", "OH")
+    harmonic = ff.def_style("bond", "harmonic").def_type("CT-OH", ct, oh, k=1.0, r0=1.0)
+    morse = ff.def_style("bond", "morse").def_type("CT-OH", ct, oh, d0=1.0)
+    assert harmonic != morse
+    assert len({harmonic, morse}) == 2
+    assert harmonic == ff.get_style("bond", "harmonic").get_type_by_name("CT-OH")
+
+
+def test_handle_equality_includes_the_force_field():
+    a, b = molrs.ff.ForceField("a"), molrs.ff.ForceField("b")
+    (ct_a,) = _atoms(a, "CT")
+    (ct_b,) = _atoms(b, "CT")
+    style_a = a.def_style("bond", "harmonic")
+    style_b = b.def_style("bond", "harmonic")
+    assert style_a != style_b and len({style_a, style_b}) == 2
+    assert ct_a != ct_b and len({ct_a, ct_b}) == 2
+    assert style_a == a.get_style("bond", "harmonic")
+
+
+def test_a_type_param_can_be_a_string():
+    ff = molrs.ff.ForceField("strings")
+    (ct,) = _atoms(ff, "CT")
+    ct["element"] = "C"
+    ct["charge"] = -0.5
+    assert ct.params == {"mass": 1.0, "element": "C", "charge": -0.5}
+    with pytest.raises(TypeError, match="number or a str"):
+        ct["tags"] = [1, 2]
+
+
+def test_endpoints_are_the_defined_atom_types():
+    ff = molrs.ff.ForceField("ends")
+    ct, oh = _atoms(ff, "CT", "OH")
+    bond = ff.def_style("bond", "harmonic").def_type("CT-OH", ct, oh, k=1.0, r0=1.0)
+    assert bond.endpoints == (ct, oh)
+    assert bond.itom.params == {"mass": 1.0}
+
+
+# ---- pickle ----
+
+
+def test_a_force_field_pickles_with_its_whole_definition():
+    ff = molrs.ff.ForceField("full", units="metal")
+    ff.set_special_bonds([0.0, 0.0, 0.5], [0.0, 0.0, 0.75])
+    ct, oh = _atoms(ff, "CT", "OH")
+    ct["element"] = "C"
+    ff.def_style("bond", "harmonic").def_type("CT-OH", ct, oh, k=300.0, r0=1.4)
+    ff.def_style("pair", "lj/cut", {"cutoff": 10.0, "mixing": "geometric"}).def_type(
+        "CT", ct, epsilon=0.1, sigma=3.5
+    )
+    back = pickle.loads(pickle.dumps(ff))
+    assert type(back) is molrs.ff.ForceField
+    assert (back.name, back.units) == ("full", "metal")
+    assert [(s.category, s.name, s.params) for s in back.styles] == [
+        (s.category, s.name, s.params) for s in ff.styles
+    ]
+    assert [
+        (t.name, t.params, [e.name for e in t.endpoints])
+        for t in back.get_types(molrs.ff.Type)
+    ] == [
+        (t.name, t.params, [e.name for e in t.endpoints])
+        for t in ff.get_types(molrs.ff.Type)
+    ]
+    # The special bonds survive: merging the original into the copy agrees.
+    assert back.merge(ff) is back
+
+
+# ---- PotentialCompiler: the one door from a ForceField to kernels ----
+#
+# The compile semantics (skipping absent blocks, the 1.5 kcal/mol closed form,
+# refusals) are unit-tested in ``molrs/src/ff/potential/compile.rs``. These
+# tests prove only the binding seam: construction, the three doors, their
+# return types, error mapping and the single public path.
+
+
+def _bond_ff() -> molrs.ff.ForceField:
+    ff = molrs.ff.ForceField("compile")
+    (ct,) = _atoms(ff, "CT")
+    ff.def_style("bond", "harmonic").def_type("CT-CT", ct, ct, k=300.0, r0=1.5)
+    return ff
+
+
+def _bonded_pair(label: str = "CT-CT") -> molrs.Frame:
     atoms = molrs.Block()
-    atoms.insert("x", np.array([0.0, 2.0]))
-    atoms.insert("y", np.array([0.0, 0.0]))
-    atoms.insert("z", np.array([0.0, 0.0]))
-    frame["atoms"] = atoms
+    for key, values in (("x", [0.0, 1.6]), ("y", [0.0, 0.0]), ("z", [0.0, 0.0])):
+        atoms.insert(key, np.array(values))
     bonds = molrs.Block()
     bonds.insert("atomi", np.array([0], dtype=np.uint32))
     bonds.insert("atomj", np.array([1], dtype=np.uint32))
-    bonds.insert("type", np.array(["CT-CT"], dtype=str))
+    bonds.insert("type", [label])
+    frame = molrs.Frame()
+    frame["atoms"] = atoms
     frame["bonds"] = bonds
+    return frame
 
-    pots = ff.to_potentials(frame)
-    energy = pots.calc_energy(molrs.ff.extract_coords(frame))
-    # r = 2.0, dr = 0.5 -> E = 0.5 * 300 * 0.25 = 37.5
-    assert abs(energy - 37.5) < 1e-9
+
+def test_potential_compiler_constructs_from_a_forcefield():
+    compiler = molrs.ff.PotentialCompiler(_bond_ff())
+    assert isinstance(compiler, molrs.ff.PotentialCompiler)
+
+
+def test_compile_returns_potentials():
+    pots = molrs.ff.PotentialCompiler(_bond_ff()).compile(_bonded_pair())
+    assert isinstance(pots, molrs.ff.Potentials)
+    assert len(pots) == 1
+
+
+def test_compile_none_raises_type_error():
+    compiler = molrs.ff.PotentialCompiler(_bond_ff())
+    with pytest.raises(TypeError):
+        compiler.compile(None)  # type: ignore[arg-type]
+
+
+def test_defer_returns_empty_potentials_that_bind_on_evaluation():
+    compiler = molrs.ff.PotentialCompiler(_bond_ff())
+    deferred = compiler.defer()
+    assert isinstance(deferred, molrs.ff.Potentials)
+    assert len(deferred) == 0
+    frame = _bonded_pair()
+    assert deferred.calc_energy(frame) == compiler.compile(frame).calc_energy(frame)
+
+
+def test_compile_typed_returns_typed_potentials():
+    from molrs._lib import TypedPotentials
+
+    typed = molrs.ff.PotentialCompiler(_bond_ff()).compile_typed(_bonded_pair())
+    assert isinstance(typed, TypedPotentials)
+    assert len(typed) == 1
+
+
+def test_compile_unknown_type_label_raises_value_error():
+    compiler = molrs.ff.PotentialCompiler(_bond_ff())
+    with pytest.raises(ValueError):
+        compiler.compile(_bonded_pair("XX-XX"))
+
+
+def test_potential_compiler_has_one_public_path():
+    assert hasattr(molrs.ff, "PotentialCompiler")
+    assert not hasattr(molrs.ff.potential, "PotentialCompiler")
+
+
+@pytest.mark.parametrize("method", ["to_potentials", "to_typed_potentials"])
+def test_forcefield_has_no_compile_method(method):
+    assert not hasattr(molrs.ff.ForceField, method)
+
+
+def test_style_setitem_declares_a_cutoff():
+    ff = molrs.ff.ForceField("t")
+    style = ff.def_style("pair", "lj/cut")
+    style["cutoff"] = 12.0
+    assert ff.get_style("pair", "lj/cut")["cutoff"] == 12.0
+
+
+def test_style_setitem_takes_a_string_param():
+    ff = molrs.ff.ForceField("t")
+    style = ff.def_style("pair", "lj/cut")
+    style["mixing"] = "geometric"
+    assert ff.get_style("pair", "lj/cut")["mixing"] == "geometric"
+    with pytest.raises(TypeError, match="number or a str"):
+        style["mixing"] = ["geometric"]

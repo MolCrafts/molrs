@@ -24,7 +24,7 @@ Downstream packages that co-release with molrs (e.g. molpy) pin the shared
 
 ```toml
 [dependencies]
-molrs = { package = "molcrafts-molrs", version = "0.14", default-features = false, features = ["ff"] }
+molrs = { package = "molcrafts-molrs", version = "0.15", features = ["ff"] }
 ```
 
 Then use the native types directly — no FFI, no copies. For example, building
@@ -32,19 +32,23 @@ evaluable MMFF94 potentials from a molecule (the pattern molpack's relaxer follo
 
 ```rust,no_run
 use molrs::Atomistic;
-use molrs::ff::potential::intramolecular_pairs;
+use molrs::ff::potential::{PotentialCompiler, intramolecular_pairs};
+use molrs::ff::typifier::Typing;
 use molrs::ff::typifier::mmff::MMFF94Typifier;
 // UFF: use molrs::ff::typifier::uff::UFFTypifier  (same composition)
 
 let mol = Atomistic::new();                              // build or load your molecule
-let typifier = MMFF94Typifier::new();
+let mut typing = Typing::new(MMFF94Typifier::new());
 
-let ff = typifier.ff();
-let mut frame = typifier.typify(&mol)?.to_frame();       // labels + charges
+let mut frame = typing
+    .typify(&mol)?
+    .to_frame()
+    .map_err(|e| e.to_string())?;                        // labels + charges
+let ff = typing.forcefield();                            // exactly the types assigned
 // The consumer's neighbour list — built from the force field's own
 // special_bonds, which decide whether 1-2 / 1-3 neighbours belong in it.
 frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds())?);
-let potentials = ff.to_potentials(&frame)?;              // the standard compile path
+let potentials = PotentialCompiler::new(ff).compile(&frame)?; // the standard compile path
 
 let coords: Vec<f64> = Vec::new();                       // flat [x,y,z, ...]
 let (energy, _forces) = potentials.calc_energy_forces(&coords);
@@ -53,8 +57,11 @@ println!("MMFF94 energy = {energy} kcal/mol");
 ```
 
 There is no MMFF/UFF shortcut, and that is the point: a force field read from a
-file is consumed by exactly these three lines. The typifier's contract is
-`typify` — labels and charges — and compiling is `ForceField::to_potentials(&frame)`.
+file is consumed by exactly these three lines. A typifier implements only
+`match`; `Typing` wraps it, and `Typing::typify` — labels and charges — is the
+only writer of the output `Typing::forcefield()`, which holds exactly the
+definitions typing assigned. Compiling is
+`PotentialCompiler::new(ff).compile(&frame)`.
 The neighbour list is *yours* because you are the one who knows when it goes
 stale: a minimizer that moves atoms decides when to rebuild it, and molrs will
 not guess. (WASM `LBFGS` may install a topology pair list when no neighbor list
@@ -177,11 +184,9 @@ store, so treat the library as single-threaded per process).
 
 - **Download**: `molrs-capi-<version>-<platform>.tar.gz` (lib + `molrs.h` +
   LICENSE + sha256) attached to each GitHub Release on `v*` tags.
-- **Handshake**: before any other call, compare `molrs_c_api_version()`
-  against the `MOLRS_C_API_VERSION` your header was compiled with; the
-  constant increments on any breaking signature / handle-semantics change
-  (mirrors molrs-cxxapi's `CXX_API_VERSION`). `molrs_version()` reports the
-  embedded molrs release for diagnostics.
+- **Identity**: `molrs_version()` reports the embedded molrs release for
+  diagnostics. There is no C or CXX API version handshake before 1.0;
+  a breaking signature change ships as a new library, not a version gate.
 
 ### Regions across the boundary
 
@@ -249,12 +254,12 @@ Whichever path you take, molrs data follows these conventions:
 - **The neighbour list is the consumer's job.** `ForceField` holds parameters +
   `special_bonds` only; the optimizer / integrator builds the intramolecular pair
   list (`molrs::ff::potential::intramolecular_pairs(&frame, ff.special_bonds())
-  → atomi/atomj/is_14`) and inserts it before calling `to_potentials`. The
+  → atomi/atomj/is_14`) and inserts it before calling `PotentialCompiler::compile`. The
   weights are an argument because they decide the rows: `special_bonds fene`
   (`[0, 1, 1]`) keeps 1-3 pairs. A list of rows expresses a 1-2 / 1-3 weight of
   `0` or `1` and nothing else, so a force field that *scales* those classes —
   or scales them differently for van der Waals and Coulomb — is an `Err` here
-  and belongs on `to_typed_potentials`, which carries a per-pair weight.
+  and belongs on `PotentialCompiler::compile_typed`, which carries a per-pair weight.
 
 ## Which path?
 

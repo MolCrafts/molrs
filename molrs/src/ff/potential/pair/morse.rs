@@ -3,10 +3,10 @@
 //! Morse non-bonded form (note the `-1` offset vs the Morse bond, so the well
 //! minimum is `-D0` at `r = r0`). Parameters per pair type: `D0`, `alpha`, `r0`.
 
+use molrs::store::schema::block_names::PAIRS;
 use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
-use crate::ff::forcefield::pair_type_name;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::atom_type_index;
@@ -17,6 +17,7 @@ use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
+use molrs::store::type_labels::TypeName;
 use molrs::types::F;
 
 /// Where a pair's Morse `(D₀, α, r₀)` comes from.
@@ -307,13 +308,13 @@ pub fn pair_morse_ctor(
     frame: &Frame,
 ) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
-    // `Style::to_potential` projects the force field's `special_bonds` 1-4
+    // `PotentialCompiler::compile` projects the force field's `special_bonds` 1-4
     // weight here. The energy is linear in this parameter, so scaling it is
     // exactly scaling the pair.
     let scale_14 = style_params.get("lj14scale").unwrap_or(1.0) as F;
 
     let block = frame
-        .get("pairs")
+        .get(PAIRS)
         .ok_or_else(|| "PairMorse: frame missing \"pairs\" block".to_string())?;
     let i_col = block
         .get_uint("atomi")
@@ -373,8 +374,8 @@ pub fn pair_morse_typed_ctor(
         for tj in 0..ntypes {
             // A cross-pair may be declared either way round; a self-pair is
             // named by the atom type alone.
-            let forward = pair_type_name(&labels[ti], &labels[tj]);
-            let reverse = pair_type_name(&labels[tj], &labels[ti]);
+            let forward = TypeName::pair(&labels[ti], &labels[tj])?;
+            let reverse = TypeName::pair(&labels[tj], &labels[ti])?;
             let p = type_map
                 .get(forward.as_str())
                 .or_else(|| type_map.get(reverse.as_str()))

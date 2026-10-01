@@ -75,14 +75,6 @@ pub struct DgConstraints {
     pub improper: Vec<ImproperConstraint>,
 }
 
-/// Assign ETKDGv3 experimental torsions to `mol` with table provenance, for
-/// validation against RDKit `getExperimentalTorsions`. Perceives aromaticity /
-/// rings internally, then drives the full SMARTS-table matcher.
-pub fn experimental_torsions_with_provenance(mol: &Atomistic) -> Vec<AssignedTorsion> {
-    let p = mol_features::perceive(mol);
-    assign_with_provenance(mol, &p)
-}
-
 impl BoundsMatrix {
     /// The unsmoothed topological bounds matrix for `mol`
     /// (RDKit `setTopolBounds`, `set15bounds=true, scaleVDW=false`).

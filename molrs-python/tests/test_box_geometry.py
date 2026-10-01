@@ -1,7 +1,6 @@
+import molrs
 import numpy as np
 import pytest
-
-import molrs
 
 
 def test_box_exposes_native_minimum_image_geometry():
@@ -31,6 +30,37 @@ def test_images_and_unwrap_round_trip_natively():
     np.testing.assert_allclose(box.unwrap(wrapped, images), unwrapped)
 
 
+def test_images_are_int32_like_the_frame_image_columns():
+    box = molrs.Box.cube(10.0)
+    images = box.images(np.array([[21.0, -9.0, 5.0]]))
+    assert images.dtype == np.int32
+    np.testing.assert_array_equal(images, [[2, -1, 0]])
+
+
+def test_unwrap_accepts_the_int32_image_columns_of_a_frame():
+    # ix/iy/iz are the schema's integer type (int32), as a LAMMPS reader
+    # stores them; unwrap must take them without a cast.
+    atoms = molrs.Block(
+        {
+            "x": np.array([1.0, 9.0]),
+            "y": np.array([2.0, 5.0]),
+            "z": np.array([3.0, 0.5]),
+            "ix": np.array([1, 0], dtype=np.int32),
+            "iy": np.array([0, -1], dtype=np.int32),
+            "iz": np.array([0, 2], dtype=np.int32),
+        }
+    )
+    frame = molrs.Frame({"atoms": atoms}, box=molrs.Box.cube(10.0))
+    atoms = frame["atoms"]
+
+    unwrapped = frame.box.unwrap(atoms["x", "y", "z"], atoms["ix", "iy", "iz"])
+
+    # xyz + L * image, L = 10 on every axis.
+    np.testing.assert_allclose(
+        unwrapped, [[11.0, 2.0, 3.0], [9.0, -5.0, 20.5]], atol=1e-12
+    )
+
+
 def test_from_bounds_and_batched_geometry():
     points = np.array([[0.0, -1.0, 0.0], [2.0, 3.0, 4.0]])
     box = molrs.Box.from_bounds(
@@ -47,6 +77,39 @@ def test_from_bounds_and_batched_geometry():
         box.pairwise_delta(left, right), [[[1, 0, 0]], [[1.5, 0, 0]]]
     )
     np.testing.assert_allclose(box.pairwise_distances(left, right), [[1.0], [1.5]])
+
+
+def test_from_bounds_takes_a_frame_and_a_scalar_padding():
+    frame = molrs.Frame()
+    atoms = molrs.Block()
+    atoms.insert("x", np.array([0.0, 2.0]))
+    atoms.insert("y", np.array([-1.0, 3.0]))
+    atoms.insert("z", np.array([0.0, 4.0]))
+    frame["atoms"] = atoms
+    points = np.array([[0.0, -1.0, 0.0], [2.0, 3.0, 4.0]])
+
+    from_frame = molrs.Box.from_bounds(frame, 1.0)
+    from_points = molrs.Box.from_bounds(points, np.array([1.0, 1.0, 1.0]))
+    np.testing.assert_allclose(from_frame.origin, [-1.0, -2.0, -1.0])
+    np.testing.assert_allclose(from_frame.lengths, [4.0, 6.0, 6.0])
+    assert from_frame.approx_eq(from_points, 0.0)
+
+
+def test_from_bounds_rejects_a_frame_without_atoms_and_a_bad_padding():
+    with pytest.raises(ValueError, match="atoms"):
+        molrs.Box.from_bounds(molrs.Frame(), 1.0)
+    with pytest.raises(ValueError, match="length 3"):
+        molrs.Box.from_bounds(np.zeros((1, 3)), np.array([1.0, 1.0]))
+
+
+def test_approx_eq_uses_an_absolute_tolerance_and_exact_pbc():
+    a = molrs.Box.cube(10.0)
+    b = molrs.Box.cube(10.0 + 1e-6)
+    assert a.approx_eq(b, 1e-5)
+    assert not a.approx_eq(b, 1e-7)
+    assert not a.approx_eq(molrs.Box.cube(10.0, pbc=np.array([True, True, False])), 1.0)
+    with pytest.raises(ValueError):
+        a.approx_eq(b, -1.0)
 
 
 def test_transformed_preserves_origin_and_pbc():

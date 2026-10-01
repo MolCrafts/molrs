@@ -1,7 +1,7 @@
 //! Kernel registry: maps `(category, style_name)` → [`KernelConstructor`] plus
 //! the [`ParamSource`] that says **where that kernel's parameters come from**.
 //!
-//! `ForceField::to_potentials` resolves each style's kernel through this
+//! `PotentialCompiler` resolves each style's kernel through this
 //! registry instead of a hard-coded match, so a new potential is added by
 //! *registering* its constructor rather than editing core dispatch. The
 //! built-ins are seeded on first use; [`register_kernel`] adds or overrides
@@ -21,12 +21,14 @@
 //!
 //! That is correct — but until [`ParamSource`] existed there was no way to *say*
 //! it, so those styles registered as table-driven anyway and
-//! [`Style::to_potential`](crate::ff::forcefield::Style::to_potential)'s
+//! [`PotentialCompiler`](crate::ff::potential::PotentialCompiler)'s
 //! "has type definitions" guard had to be bribed with 4,065 rows of MMFF XML that
 //! no code reads. Naming the distinction is what lets the guard ask the right
-//! question, and `tests/ff/potential/param_source_gate.rs` holds the two halves
-//! together: **a ctor ignores `tp` if and only if it is registered
-//! [`ParamSource::PerInstance`]**.
+//! question. The invariant is **a ctor ignores `tp` if and only if it is
+//! registered [`ParamSource::PerInstance`]** — and no test checks it: the
+//! bidirectional gate that would hold the two halves together does not exist
+//! yet (there is no `param_source_gate` test anywhere in the tree), so today it
+//! is kept by review alone.
 
 use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
@@ -50,7 +52,7 @@ pub type KernelConstructor = fn(&Params, &[(&str, &Params)], &Frame) -> Result<M
 /// registered [`PerInstance`](ParamSource::PerInstance).
 /// Which `Frame` block decides whether a style has any rows to act on.
 ///
-/// `Style::to_potential` skips a style whose topology is absent — a bond style
+/// `PotentialCompiler::compile` skips a style whose topology is absent — a bond style
 /// with no bonds contributes nothing, and letting the kernel fault on the
 /// missing block instead would be a worse way to say so. Which block that is,
 /// is a property of the **kernel**, not of its category.
@@ -150,7 +152,7 @@ impl KernelRegistry {
         source: ParamSource,
     ) {
         // A registration is one unit. Keeping the previous `typed` across an
-        // override would leave `to_potentials` and `to_typed_potentials`
+        // override would leave `compile` and `compile_typed`
         // evaluating *different force fields* for the same style name, with
         // nothing to say so — so an override clears it and the caller
         // re-registers both.
@@ -168,7 +170,7 @@ impl KernelRegistry {
     /// Register the neighbour-driven form of an already-registered pair style.
     ///
     /// A style without one cannot be evaluated over a neighbour table at all,
-    /// and [`ForceField::to_typed_potentials`](crate::ff::forcefield::ForceField::to_typed_potentials)
+    /// and [`PotentialCompiler::compile_typed`](crate::ff::potential::PotentialCompiler::compile_typed)
     /// says so rather than quietly falling back to the compiled form, whose
     /// parameters would belong to a pair list nobody is evaluating.
     /// # Panics
@@ -176,7 +178,7 @@ impl KernelRegistry {
     /// If `(category, name)` has no compiled registration. A neighbour-driven
     /// form is an *alternative* way to build a style that already exists, so a
     /// silent no-op here would leave the caller believing their style works
-    /// under MD when `to_typed_potential` will refuse it.
+    /// under MD when `PotentialCompiler::compile_typed` will refuse it.
     /// Declare where a registered style's rows come from.
     ///
     /// Only needed to say [`RowSource::Atoms`]; the default is the category's
@@ -476,13 +478,13 @@ fn global() -> &'static RwLock<KernelRegistry> {
 ///
 /// Nothing in molrs, molpack or any binder calls this; only its own unit test
 /// does. That is what an extension point looks like, and it is load-bearing
-/// rather than speculative: [`Style::to_potential`] resolves its kernel through
+/// rather than speculative: [`PotentialCompiler`] resolves its kernel through
 /// [`lookup_kernel`] on the **global** registry, and no API accepts a
 /// [`KernelRegistry`] of the caller's own, so an out-of-tree kernel has no
 /// other door. `architecture-rules.md` names this registry as the project's
 /// open-dispatch mechanism.
 ///
-/// [`Style::to_potential`]: crate::ff::forcefield::Style::to_potential
+/// [`PotentialCompiler`]: crate::ff::potential::PotentialCompiler
 pub fn register_kernel(category: &str, name: &str, ctor: KernelConstructor) {
     global().write().unwrap().register(category, name, ctor);
 }
@@ -561,10 +563,10 @@ mod tests {
     ///
     /// Re-registering a style clears its typed entry on purpose — an override
     /// replaces the force law, and a stale neighbour-driven form would make
-    /// `to_potentials` and `to_typed_potentials` evaluate different physics for
+    /// `compile` and `compile_typed` evaluate different physics for
     /// the same name. That makes registration **order-sensitive**: a
     /// `register_typed` followed later by a `register` for the same key drops
-    /// the typed form silently, and the only symptom is `to_typed_potentials`
+    /// the typed form silently, and the only symptom is `compile_typed`
     /// reporting a style it was told about as unknown. This pins the order.
     #[test]
     fn every_typed_registration_survives_builtin() {
@@ -599,7 +601,7 @@ mod tests {
     /// PME survives a frame with no `pairs` block.
     ///
     /// It is registered under `pair` because that is where an electrostatic
-    /// style belongs, and `Style::to_potential` skips a pair style whose
+    /// style belongs, and `PotentialCompiler::compile` skips a pair style whose
     /// `pairs` block is absent or empty — a rule that is right for every other
     /// pair kernel and deleted PME outright. The symptom was a system with
     /// zero long-range electrostatics and no error: the style was declared,

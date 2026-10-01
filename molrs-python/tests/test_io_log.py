@@ -8,9 +8,8 @@ from __future__ import annotations
 
 import json
 
-import numpy as np
-
 import molrs
+import numpy as np
 
 _LOG = """\
 LAMMPS (1 Jan 2026)

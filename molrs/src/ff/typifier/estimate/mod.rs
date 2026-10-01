@@ -12,10 +12,10 @@
 //!
 //! * **as an interpolation seam** — it implements [`ParameterInterpolator`] for
 //!   [`BondedTerm`] and is injected into the OPLS bonded matcher via
-//!   [`typify_bonded_with`](super::opls::assign::typify_bonded_with). Exact matches
+//!   [`OPLSAATypifier::with_estimator`](super::opls::OPLSAATypifier::with_estimator). Exact matches
 //!   always win first; with `strict=true` the interpolator is never consulted; with
 //!   none attached the assign path is byte-identical to pre-interpolator behaviour.
-//! * **as a table reader** — [`forcefield::gaff`](crate::ff::forcefield::gaff)
+//! * **as a table reader** — [`typifier::gaff`](crate::ff::typifier::gaff)
 //!   builds it over `gaff.dat` / `gaff2.dat` and asks it for every term the tables'
 //!   wildcard-free rows do not cover. That path needs the
 //!   [`Covered`](Estimate::Covered) / [`Estimated`](Estimate::Estimated)
@@ -141,6 +141,11 @@ impl TypifierParameterContext {
     /// by nearest standard-atomic-mass match ([`molrs::Element`]). This is
     /// force-field agnostic, and the analogy cascade itself never needs an element —
     /// it works on type / class names.
+    ///
+    /// A class-keyed force field's bonded rows name **classes** (`CA`, `OS`), and a
+    /// class is never an atom type with a mass. So every class already known to this
+    /// context also takes the mass-derived element of its member types; a class with
+    /// no member type falls back on reading its name (`element_from_token`).
     pub fn with_forcefield_elements(mut self, ff: &ForceField) -> Self {
         for at in ff.get_atomtypes() {
             if let Some(mass) = at.params.get("mass")
@@ -148,6 +153,21 @@ impl TypifierParameterContext {
             {
                 self.type_to_element.insert(at.name.clone(), sym);
             }
+        }
+        let mut class_elements: HashMap<String, String> = HashMap::new();
+        for (name, class) in &self.type_to_class {
+            if let Some(element) = self.type_to_element.get(name) {
+                let first = class_elements
+                    .entry(class.clone())
+                    .or_insert_with(|| element.clone());
+                debug_assert_eq!(
+                    first, element,
+                    "class {class} has member types of different elements"
+                );
+            }
+        }
+        for (class, element) in class_elements {
+            self.type_to_element.entry(class).or_insert(element);
         }
         self
     }
@@ -211,7 +231,7 @@ impl Parmchk2Estimator {
     /// Build an estimator from a force field and an explicit interpolation context.
     ///
     /// This is the constructor a non-OPLS typifier uses — it is how
-    /// [`forcefield::gaff`](crate::ff::forcefield::gaff) builds the estimator over
+    /// [`typifier::gaff`](crate::ff::typifier::gaff) builds the estimator over
     /// `gaff.dat`.
     ///
     /// The candidate rows are flattened out of every bonded style the force field
@@ -378,7 +398,9 @@ fn element_from_mass(mass: f64) -> Option<String> {
 /// written two-letter (`cl` → Cl, `br` → Br). So the single leading letter is tried
 /// first (correctly mapping `os` → O, not Osmium); the two-letter form is the
 /// fallback for tokens whose single letter is not an element. Type names that are
-/// real element symbols (`Cl`, `Br`) still resolve.
+/// real element symbols (`Cl`, `Br`) still resolve. All-caps tokens (OPLS classes
+/// `CA`, `OS`, `NB`) follow the same leading-letter rule: `CA` is carbon, not
+/// calcium. The answer is always the canonical [`Element::symbol`] spelling.
 fn element_from_token(token: &str) -> Option<String> {
     let base: String = token
         .chars()
@@ -387,19 +409,17 @@ fn element_from_token(token: &str) -> Option<String> {
     if base.is_empty() {
         return None;
     }
-    let title = |s: &str| -> String {
-        let mut c = s.chars();
-        let first = c.next().unwrap_or_default().to_ascii_uppercase();
-        let rest: String = c.flat_map(|ch| ch.to_lowercase()).collect();
-        format!("{first}{rest}")
-    };
     // An explicitly title-cased multi-letter token (`Cl`, `Br`) is a real element
-    // symbol — honour it before the GAFF leading-letter convention.
-    if base.len() >= 2
-        && base.chars().nth(1).is_some_and(|c| c.is_ascii_uppercase())
-        && Element::from_str(&base).is_ok()
+    // symbol — honour it before the GAFF leading-letter convention. Only title
+    // case qualifies: `Element::from_str` is case-insensitive, so an all-caps
+    // `CA` would otherwise read as calcium.
+    let bytes = base.as_bytes();
+    if bytes.len() >= 2
+        && bytes[0].is_ascii_uppercase()
+        && bytes[1].is_ascii_lowercase()
+        && let Ok(element) = Element::from_str(&base)
     {
-        return Some(base);
+        return Some(element.symbol().to_string());
     }
     // GAFF writes the genuine two-letter halogens lowercase (`cl` / `br`); these
     // must win over the leading-letter rule (which would read `cl` as carbon).
@@ -410,17 +430,16 @@ fn element_from_token(token: &str) -> Option<String> {
     if lower == "br" {
         return Some("Br".to_string());
     }
-    // GAFF convention: the leading letter is the element (`c3` / `os` / `hc`).
-    let one = title(&base[..1]);
-    if Element::from_str(&one).is_ok() {
-        return Some(one);
+    // GAFF / OPLS convention: the leading letter is the element (`c3` / `os` /
+    // `CA`).
+    if let Ok(element) = Element::from_str(&base[..1]) {
+        return Some(element.symbol().to_string());
     }
-    // Fallback: any other genuine lowercase two-letter element.
-    if base.len() >= 2 {
-        let two = title(&base[..2]);
-        if Element::from_str(&two).is_ok() {
-            return Some(two);
-        }
+    // Fallback: any other genuine two-letter element.
+    if base.len() >= 2
+        && let Ok(element) = Element::from_str(&base[..2])
+    {
+        return Some(element.symbol().to_string());
     }
     None
 }
@@ -428,7 +447,7 @@ fn element_from_token(token: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::forcefield::gaff::{GaffParameterSet, gaff_estimator};
+    use crate::ff::typifier::gaff::{GaffParameterSet, gaff_estimator};
 
     /// The estimator over `gaff.dat`, exactly as the force-field builder makes it.
     fn gaff() -> &'static Parmchk2Estimator {
@@ -579,6 +598,61 @@ mod tests {
         assert!(!estimator.is_improper_centre("n3"), "methylamine's amine N");
     }
 
+    // --- orientation symmetry of a dihedral estimate ------------------------
+
+    /// A one-row OPLS-shaped library, `CZ-CT-CT-CW` under `dihedral/opls`,
+    /// and a context for four carbon types: `ta` (class `CZ`), `tb` / `tc`
+    /// (class `CT`) and `td` (class `CY`). No class is a GAFF type, so every
+    /// substitution is priced by element compatibility at `DEFAULT_TOR`.
+    fn one_row_dihedral_estimator() -> Parmchk2Estimator {
+        let mut ff = ForceField::new("one-row");
+        ff.def_style("dihedral", "opls", Params::new())
+            .unwrap()
+            .def_type(
+                "CZ-CT-CT-CW",
+                &["CZ", "CT", "CT", "CW"],
+                Params::from_pairs(&[("k1", 1.0), ("k2", 0.0), ("k3", 0.5), ("k4", 0.0)]),
+            )
+            .unwrap();
+        let mut context = TypifierParameterContext::from_type_classes([
+            ("ta", "CZ"),
+            ("tb", "CT"),
+            ("tc", "CT"),
+            ("td", "CY"),
+        ]);
+        for name in ["ta", "tb", "tc", "td"] {
+            context.insert_element(name, "C");
+        }
+        Parmchk2Estimator::with_context(&ff, context)
+    }
+
+    /// A proper torsion reads the same backwards (`BondedTerm::Dihedral`'s
+    /// contract, and why `type_name` canonicalises it), so `ta-tb-tc-td` and
+    /// `td-tc-tb-ta` must get one estimate — provenance included.
+    ///
+    /// Hand-derived: against `CZ-CT-CT-CW` the forward query needs one
+    /// substitution (`CW` for `td`), the row read backwards two (`CW` for `ta`,
+    /// `CZ` for `td`); both leave the inner pair untouched, so they tie on the
+    /// inner score the tier-4 search ranks by. The cheaper reading (one
+    /// substitution) is the same torsion whichever end the query starts from.
+    #[test]
+    fn a_dihedral_estimate_is_the_same_read_from_either_end() {
+        let estimator = one_row_dihedral_estimator();
+        let forward = estimator
+            .estimate_dihedral(&types(["ta", "tb", "tc", "td"]))
+            .expect("estimated");
+        let backward = estimator
+            .estimate_dihedral(&types(["td", "tc", "tb", "ta"]))
+            .expect("estimated");
+        assert_eq!(
+            forward,
+            backward,
+            "one torsion, one estimate: penalty {:?} vs {:?}",
+            forward.get("estimate_penalty"),
+            backward.get("estimate_penalty")
+        );
+    }
+
     // --- element inference -------------------------------------------------
 
     #[test]
@@ -595,5 +669,176 @@ mod tests {
         assert_eq!(element_from_token("hc").as_deref(), Some("H"));
         assert_eq!(element_from_token("cl").as_deref(), Some("Cl"));
         assert_eq!(element_from_token("os").as_deref(), Some("O"));
+    }
+
+    /// OPLS row classes are written all-caps (`CA`, `OS`, `NB`). A class is never a
+    /// key of the mass map, so it resolves through `element_from_token`, and the
+    /// OPLS convention is the same as GAFF's: the leading letter is the element.
+    /// `CA` is aromatic carbon, not calcium; `OS` ether oxygen, not osmium.
+    #[test]
+    fn element_from_token_reads_all_caps_opls_classes_by_their_leading_letter() {
+        for class in ["CA", "CM", "CN", "CO", "CR", "CS", "CU"] {
+            assert_eq!(
+                element_from_token(class).as_deref(),
+                Some("C"),
+                "OPLS class {class} is a carbon"
+            );
+        }
+        for class in ["NA", "NB", "NO"] {
+            assert_eq!(
+                element_from_token(class).as_deref(),
+                Some("N"),
+                "OPLS class {class} is a nitrogen"
+            );
+        }
+        assert_eq!(
+            element_from_token("OS").as_deref(),
+            Some("O"),
+            "OPLS class OS is an oxygen"
+        );
+        for class in ["HO", "HS"] {
+            assert_eq!(
+                element_from_token(class).as_deref(),
+                Some("H"),
+                "OPLS class {class} is a hydrogen"
+            );
+        }
+    }
+
+    #[test]
+    fn element_from_token_keeps_title_case_symbols_and_gaff_types() {
+        assert_eq!(element_from_token("Cl").as_deref(), Some("Cl"));
+        assert_eq!(element_from_token("Br").as_deref(), Some("Br"));
+        assert_eq!(element_from_token("ca").as_deref(), Some("C"));
+        assert_eq!(element_from_token("cl").as_deref(), Some("Cl"));
+        assert_eq!(element_from_token("na").as_deref(), Some("N"));
+        assert_eq!(element_from_token("os").as_deref(), Some("O"));
+    }
+
+    /// Whatever the token's spelling, the answer is an element symbol as
+    /// `Element` spells it — the cascade compares symbols with `==`, so a raw
+    /// `CA` against a canonical `C` is a false element mismatch.
+    #[test]
+    fn element_from_token_returns_only_canonical_symbols() {
+        let tokens = [
+            "CA", "CM", "CN", "CO", "CR", "CS", "CU", "CT", "CW", "NA", "NB", "NO", "OS", "OH",
+            "HO", "HS", "Cl", "Br", "ca", "cl", "br", "na", "os", "c3", "hc",
+        ];
+        for token in tokens {
+            if let Some(symbol) = element_from_token(token) {
+                let canonical = Element::from_str(&symbol)
+                    .unwrap_or_else(|()| panic!("{token} → {symbol}: not an element"))
+                    .symbol();
+                assert_eq!(
+                    symbol, canonical,
+                    "{token} resolved to a non-canonical spelling"
+                );
+            }
+        }
+    }
+
+    // --- all-caps OPLS classes through the cascade ---------------------------
+
+    /// An OPLS-shaped estimator: `ff` carries the bonded rows, and each
+    /// `(type, class, mass)` becomes an `atom/full` type whose element the context
+    /// infers from its mass — exactly how [`Parmchk2Estimator::new`] builds it.
+    fn opls_class_estimator(
+        mut ff: ForceField,
+        atom_types: &[(&str, &str, f64)],
+    ) -> Parmchk2Estimator {
+        let atoms = ff.def_style("atom", "full", Params::new()).unwrap();
+        for (name, _, mass) in atom_types {
+            atoms
+                .def_type(
+                    name,
+                    &[],
+                    Params::from_pairs(&[("mass", *mass), ("charge", 0.0)]),
+                )
+                .unwrap();
+        }
+        let context = TypifierParameterContext::from_type_classes(
+            atom_types.iter().map(|(name, class, _)| (*name, *class)),
+        )
+        .with_forcefield_elements(&ff);
+        Parmchk2Estimator::with_context(&ff, context)
+    }
+
+    /// One bond row `CA-CT`; types `ta` (class `CW`) and `tb` (class `CT`), both
+    /// carbon by mass. Hand-derived: `tb` matches `CT` by class (0); `ta` against
+    /// `CA` is carbon for carbon with nothing tabulated, so it costs `DEFAULT_BL`
+    /// (`PARMCHK.DAT`: 20.0). The reversed reading pays that twice. So the bond is
+    /// an analogy off `CA-CT` at 20.0 — never the empirical formula, which is what
+    /// reading `CA` as calcium forces.
+    #[test]
+    fn an_all_caps_opls_bond_row_is_reached_by_element_analogy() {
+        let mut ff = ForceField::new("one-bond-row");
+        ff.def_style("bond", "harmonic", Params::new())
+            .unwrap()
+            .def_type(
+                "CA-CT",
+                &["CA", "CT"],
+                Params::from_pairs(&[("k", 634.0), ("r0", 1.51)]),
+            )
+            .unwrap();
+        let estimator = opls_class_estimator(ff, &[("ta", "CW", 12.011), ("tb", "CT", 12.011)]);
+
+        let estimate = estimator
+            .estimate(&BondedTerm::Bond(types(["ta", "tb"])))
+            .expect("a carbon-carbon bond has an analog");
+        let provenance = estimate.provenance().expect("estimated, not covered");
+        assert_eq!(provenance.method, EstimateMethod::Analogy);
+        assert_eq!(provenance.analog, "CA-CT");
+        assert!(
+            (provenance.penalty - 20.0).abs() < 1e-12,
+            "one element substitution at DEFAULT_BL = 20.0, got {}",
+            provenance.penalty
+        );
+        assert!((estimate.params().get("r0").expect("r0") - 1.51).abs() < 1e-12);
+        assert!((estimate.params().get("k").expect("k") - 634.0).abs() < 1e-10);
+    }
+
+    /// One dihedral row `CT-CA-OS-CT`; query types of classes `CT-CW-OH-CT`
+    /// (carbon, carbon, oxygen, carbon by mass). Hand-derived: the outer `CT`s match
+    /// by class; the inner `CW` for `CA` and `OH` for `OS` are element-compatible
+    /// non-GAFF substitutions at `DEFAULT_TOR` (87.0) each → 174.0. The reversed
+    /// row puts `OS` against a carbon and is refused. Reading `CA` as calcium and
+    /// `OS` as osmium refuses both inner slots and hands back the `no_torsion`
+    /// placeholder instead.
+    #[test]
+    fn an_all_caps_opls_torsion_row_is_reached_by_element_analogy() {
+        let row = Params::from_pairs(&[("k1", 0.0), ("k2", 3.0), ("k3", 0.0), ("k4", 0.0)]);
+        let mut ff = ForceField::new("one-dihedral-row");
+        ff.def_style("dihedral", "opls", Params::new())
+            .unwrap()
+            .def_type("CT-CA-OS-CT", &["CT", "CA", "OS", "CT"], row.clone())
+            .unwrap();
+        let estimator = opls_class_estimator(
+            ff,
+            &[
+                ("t1", "CT", 12.011),
+                ("t2", "CW", 12.011),
+                ("t3", "OH", 15.999),
+                ("t4", "CT", 12.011),
+            ],
+        );
+
+        let estimate = estimator
+            .estimate(&BondedTerm::Dihedral(types(["t1", "t2", "t3", "t4"])))
+            .expect("an element-compatible analog exists: not the no_torsion placeholder");
+        let provenance = estimate.provenance().expect("estimated, not covered");
+        assert_eq!(provenance.method, EstimateMethod::Analogy);
+        assert_eq!(provenance.analog, "CT-CA-OS-CT");
+        assert!(
+            (provenance.penalty - 174.0).abs() < 1e-12,
+            "two inner substitutions at DEFAULT_TOR = 87.0, got {}",
+            provenance.penalty
+        );
+        for key in ["k1", "k2", "k3", "k4"] {
+            assert_eq!(
+                estimate.params().get(key),
+                row.get(key),
+                "the row's {key} is copied, not a near-zero barrier"
+            );
+        }
     }
 }

@@ -4,7 +4,7 @@
 //! interpreter: [`AtdTypifier`] is that interpreter, and [`AtdParameterSet`]
 //! chooses the table it walks. The tables are `&'static` Rust data generated
 //! from the upstream `.DEF` files (see [`crate::ff::params`]), so a typifier
-//! carries no state beyond which table it names, and `typify()` parses nothing.
+//! carries no state beyond which table it names, and matching parses nothing.
 //!
 //! The engine holds **no** per-table knowledge. That is a testable claim rather
 //! than a stylistic one: the three tables disagree exactly where typing is hard
@@ -14,12 +14,14 @@
 //!
 //! ```no_run
 //! use molrs::Atomistic;
-//! use molrs::ff::typifier::Typifier;
+//! use molrs::ff::typifier::Typing;
 //! use molrs::ff::typifier::atd::{AtdParameterSet, AtdTypifier};
 //!
 //! # fn main() -> Result<(), String> {
 //! let mol = Atomistic::new();
-//! let typed = AtdTypifier::new(AtdParameterSet::Bcc).typify(&mol)?;
+//! let mut typing = Typing::new(AtdTypifier::new(AtdParameterSet::Bcc));
+//! let typed = typing.typify(&mol)?;       // every atom's `type` stamped
+//! assert!(typing.forcefield().styles().is_empty()); // ATD defines no type
 //! # Ok(())
 //! # }
 //! ```
@@ -37,16 +39,20 @@ mod rules;
 
 pub(crate) use facts::antechamber_bond_type;
 
+use std::sync::OnceLock;
+
 use molrs::perceive::Perceive;
 use molrs::store::keys;
+use molrs::system::molgraph::PropValue;
 use molrs::{AtomId, Atomistic};
 
 use self::facts::MolFacts;
-use super::Typifier;
+use crate::ff::forcefield::ForceField;
 use crate::ff::params::{
     ATOMTYPE_ABCG2, ATOMTYPE_AMBER, ATOMTYPE_BCC, ATOMTYPE_GAS, ATOMTYPE_GFF, ATOMTYPE_GFF2,
     ATOMTYPE_SYBYL, AtdRule, AtdTable,
 };
+use crate::ff::typifier::{Annotation, Match, Typifier};
 
 /// Which `ATOMTYPE_*.DEF` table an [`AtdTypifier`] walks.
 ///
@@ -100,7 +106,8 @@ pub(crate) const DUMMY_TYPE: &str = "DU";
 
 /// Why the engine could not type a molecule.
 ///
-/// The typed twin of the `String` that [`Typifier::typify`] returns. A charge model
+/// The typed twin of the `String` that [`AtdTypifier`]'s
+/// `r#match` ([`Typifier`]) returns. A charge model
 /// has to tell "no rule covers this atom" (a permanent property of the table — boron
 /// and bare sulfur are the real cases) apart from "this graph is malformed", because
 /// the C++ and Python bridges have to report them differently.
@@ -137,9 +144,9 @@ impl std::fmt::Display for AtdError {
 
 /// The ATD rule engine, bound to one atom-type table.
 ///
-/// [`typify`](Typifier::typify) perceives antechamber bond types, derives the
-/// facts each rule can ask about, and labels every atom with the first rule of
-/// the table that matches it. An atom no rule matches is an **error**, not an
+/// Its `r#match` ([`Typifier`]) perceives antechamber bond types, derives
+/// the facts each rule can ask about, and labels every atom with the first rule
+/// of the table that matches it. An atom no rule matches is an **error**, not an
 /// untyped or defaulted atom.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AtdTypifier {
@@ -159,7 +166,7 @@ impl AtdTypifier {
 
     /// The types this table assigns, in graph atom order — **computed, not written**.
     ///
-    /// The half of [`typify`](Typifier::typify) that a charge model wants: the atom
+    /// The half of `r#match` ([`Typifier`]) that a charge model wants: the atom
     /// types come back as a `Vec`, so the model can look its corrections up without
     /// ever putting a BCC code into the caller's [`keys::TYPE`] column (where their
     /// GAFF / OPLS force-field types live).
@@ -206,17 +213,81 @@ impl AtdTypifier {
 }
 
 impl Typifier for AtdTypifier {
-    type Mol = Atomistic;
+    /// Perceive antechamber bond types onto `graph`, then label every atom
+    /// from the table's rules: `type` → a plain value on every atom. Defines
+    /// no style, type or pair, so the typing output stays empty.
+    ///
+    /// # Errors
+    ///
+    /// A message naming the atom no rule of the table matched.
+    fn r#match(&self, graph: &mut Atomistic) -> Result<Match, String> {
+        *graph = Perceive::new().find_bond_types(graph);
+        let types = self.types_of(graph).map_err(|e| e.to_string())?;
+        Ok(Match {
+            nodes: types
+                .into_iter()
+                .map(|t| {
+                    vec![(
+                        keys::TYPE.to_owned(),
+                        Annotation::Value(PropValue::Str(t.to_owned())),
+                    )]
+                })
+                .collect(),
+            ..Match::default()
+        })
+    }
 
-    fn typify(&self, mol: &Atomistic) -> Result<Atomistic, String> {
-        let mut out = Perceive::new().find_bond_types(mol);
-        let types = self.types_of(&out).map_err(|e| e.to_string())?;
+    /// An empty force field named `ATD`: the ATD rules assign labels, not
+    /// parameters, so there is nothing to match against. Built once.
+    fn library(&self) -> &ForceField {
+        static LIBRARY: OnceLock<ForceField> = OnceLock::new();
+        LIBRARY.get_or_init(|| ForceField::new("ATD"))
+    }
+}
 
-        let atom_ids: Vec<AtomId> = out.atoms().map(|(aid, _)| aid).collect();
-        for (aid, atom_type) in atom_ids.iter().zip(types) {
-            out.set_atom(*aid, keys::TYPE, atom_type)
-                .map_err(|e| e.to_string())?;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ff::typifier::Typing;
+
+    /// Methane, hand-built: C is atom 0, the four hydrogens follow.
+    fn methane() -> Atomistic {
+        let mut m = Atomistic::new();
+        let c = m.add_atom_bare("C");
+        for _ in 0..4 {
+            let h = m.add_atom_bare("H");
+            m.add_bond(c, h).unwrap();
         }
-        Ok(out)
+        m
+    }
+
+    /// Typing through the base stamps a non-empty `type` on every atom and
+    /// defines nothing: the match is stamp-only, so the output holds no type.
+    #[test]
+    fn typing_stamps_every_atom_and_defines_no_type() {
+        let mut typing = Typing::new(AtdTypifier::new(AtdParameterSet::Bcc));
+        let typed = typing.typify(&methane()).expect("methane types");
+
+        assert_eq!(typed.atoms().count(), 5);
+        for (id, atom) in typed.atoms() {
+            let t = atom.get_str(keys::TYPE);
+            assert!(t.is_some_and(|t| !t.is_empty()), "atom {id:?}: {t:?}");
+        }
+        assert!(
+            typing
+                .forcefield()
+                .styles()
+                .iter()
+                .all(|s| s.defs().collect_type_params().is_empty()),
+            "output holds no type: {:?}",
+            typing.forcefield()
+        );
+    }
+
+    /// The library an ATD typifier matches against is empty: no styles.
+    #[test]
+    fn library_is_an_empty_forcefield() {
+        let typing = Typing::new(AtdTypifier::new(AtdParameterSet::Bcc));
+        assert!(typing.library().styles().is_empty());
     }
 }

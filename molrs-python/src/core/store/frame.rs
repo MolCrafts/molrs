@@ -17,15 +17,15 @@
 //! the caller's responsibility (use [`PyFrame::validate`] to check).
 
 use crate::core::spatial::simbox::PyBox;
-use crate::core::store::block::PyBlock;
+use crate::core::store::block::{PyBlock, coords_array, coords_error};
 use crate::helpers::molrs_error_to_pyerr;
 use crate::store::ffi_error_to_pyerr;
 use molrs::store::frame::Frame as CoreFrame;
 use molrs::store::meta::{MetaMap, MetaValue};
 use molrs_ffi::FrameRef;
-use pyo3::exceptions::{PyKeyError, PyTypeError};
+use pyo3::exceptions::{PyKeyError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyCapsule, PyDict, PyFloat, PyInt, PyList, PyString};
+use pyo3::types::{PyBool, PyCapsule, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
 use serde_json::Value as JsonValue;
 
 /// Exact-dtype frame metadata value.
@@ -59,7 +59,9 @@ impl PyMetaValue {
 
     #[getter]
     fn value(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        meta_value_to_py(py, &self.inner)
+        // Plain, not frozen: this payload is what `__reduce__` pickles, and a
+        // `MetaDocument` has no constructor. `.value` is not a `frame.meta` door.
+        meta_value_to_py(py, &self.inner, JsonForm::Plain)
     }
 
     fn __repr__(&self) -> String {
@@ -73,13 +75,19 @@ impl PyMetaValue {
 
 /// Collect a mapping (or an iterable of pairs) into a fresh [`MetaMap`].
 ///
-/// Used by the wholesale `frame.meta = ...` replacement, where no slot exists
-/// yet, so every dtype is either pinned by a [`MetaValue`] or inferred.
+/// A plain value is re-inferred. [`MetaValue`](PyMetaValue) fixes the dtype of
+/// that one value — it does not pin the key. A tag survives a round trip only
+/// through a declared sequence schema or the serde frame document; outside
+/// those two it is re-inferred on read. Another frame's metadata copies across
+/// whole, tags and all.
 fn mapping_to_meta_map(source: &Bound<'_, PyAny>) -> PyResult<MetaMap> {
     // Another frame's metadata copies across whole, tags and all: going through
     // plain values would silently widen every non-default dtype.
     if let Ok(view) = source.extract::<PyRef<'_, PyFrameMeta>>() {
-        return view.map();
+        return view
+            .inner
+            .with(|f| f.meta.clone())
+            .map_err(ffi_error_to_pyerr);
     }
     let mut map = MetaMap::new();
     if source.hasattr("keys")? {
@@ -99,30 +107,58 @@ fn mapping_to_meta_map(source: &Bound<'_, PyAny>) -> PyResult<MetaMap> {
 
 /// Live, write-through view of a frame's metadata.
 ///
-/// An ordinary Python mapping: reading a key yields a plain value — scalars
-/// unwrap, fixed-length vectors become lists, JSON documents become the decoded
-/// object — and writing one lands in the frame.
+/// Every door hands back a frozen value. Scalars unwrap, a fixed-length vector
+/// is a `tuple` (not a `list`), a JSON array — including one nested inside a
+/// document — is a `tuple`, and a JSON object is a [`MetaDocument`](PyMetaDocument).
+/// Writing a value lands in the frame. [`copy`](Self::copy) is the only mutable
+/// container this surface hands out; its values are still frozen, and
+/// [`MetaDocument::copy`](PyMetaDocument::copy) is that unfreeze one level down.
 ///
-/// **The dtype belongs to the key, not to the value handed in.** That is how
-/// `mrec` already models metadata (`SequenceSchema.declare_meta(key, dtype)`),
-/// so writing a plain value to a key that already exists keeps that key's
-/// dtype and refuses a value it cannot hold; `frame.meta["t"] = frame.meta["t"]`
-/// is therefore an identity. [`MetaValue`](PyMetaValue) is how a key is given a
-/// dtype other than the inferred default, and [`dtype`](Self::dtype) reads the
-/// tag back.
+/// [`dtype`](Self::dtype) reports the tag of the value stored right now; any
+/// plain write re-infers it. [`MetaValue`](PyMetaValue) fixes the dtype of that
+/// write only — it does not pin the key. A tag survives a round trip only
+/// through a declared sequence schema or the serde frame document; outside
+/// those two it is re-inferred on read.
 ///
-/// A JSON document is handed back decoded, which makes it a **snapshot**:
-/// `frame.meta["run"]["step"] = 3` mutates a copy. Read, modify, write back.
+/// `frame.meta["run"]["step"] = 3` raises `TypeError`. Read, unfreeze, write
+/// back: `doc = frame.meta["run"].copy(); doc["step"] = 3; frame.meta["run"] = doc`.
+/// `json.dumps` accepts a tuple and rejects a document; the idiom is
+/// `json.dumps(frame.meta["run"].copy())`.
+///
+/// Iteration order of this mapping is insertion order. Order inside a nested
+/// [`MetaDocument`](PyMetaDocument) is unspecified.
+///
+/// [`keys`](Self::keys), [`values`](Self::values), and [`items`](Self::items)
+/// are live `collections.abc` views in insertion order. A non-`str` lookup is
+/// absent; a non-`str` write raises `TypeError`. Deleting a not-yet-visited
+/// key while iterating `values()` or `items()` raises `KeyError`.
 #[pyclass(module = "molrs._lib", name = "FrameMeta", unsendable)]
 pub struct PyFrameMeta {
     inner: FrameRef,
 }
 
+/// A lookup key this map cannot hold is absent, not a type error.
+fn lookup_key(key: &Bound<'_, PyAny>) -> Option<String> {
+    if key.cast::<PyString>().is_err() {
+        return None;
+    }
+    key.extract::<String>().ok()
+}
+
+fn missing_key(key: &Bound<'_, PyAny>) -> PyErr {
+    PyKeyError::new_err(key.clone().unbind())
+}
+
 impl PyFrameMeta {
-    fn map(&self) -> PyResult<MetaMap> {
-        self.inner
-            .with(|f| f.meta.clone())
-            .map_err(ffi_error_to_pyerr)
+    /// `collections.abc` is imported on every call so a later rebinding is visible.
+    fn abc_view<'py>(
+        slf: &Bound<'py, Self>,
+        py: Python<'py>,
+        class_name: &str,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        py.import("collections.abc")?
+            .getattr(class_name)?
+            .call1((slf,))
     }
 
     fn tag_of(&self, key: &str) -> PyResult<Option<&'static str>> {
@@ -131,95 +167,121 @@ impl PyFrameMeta {
             .map_err(ffi_error_to_pyerr)
     }
 
-    /// Typed-slot write: an existing key keeps its dtype, a new key infers one.
-    fn typed_for(&self, key: &str, value: &Bound<'_, PyAny>) -> PyResult<MetaValue> {
-        if value.extract::<PyRef<'_, PyMetaValue>>().is_ok() {
-            return infer_meta_value(value);
-        }
-        match self.tag_of(key)? {
-            Some(dtype) => meta_value_from_dtype(dtype, value).map_err(|err| {
-                PyTypeError::new_err(format!(
-                    "metadata key '{key}' is {dtype}; assign a MetaValue to change it ({err})"
-                ))
-            }),
-            None => infer_meta_value(value),
-        }
-    }
-
     fn store(&mut self, key: &str, value: MetaValue) -> PyResult<()> {
         self.inner
-            .with_mut(|f| {
-                f.meta.insert(key, value);
+            .with_meta_mut(|meta| {
+                meta.insert(key, value);
             })
             .map_err(ffi_error_to_pyerr)
     }
 
     fn take(&mut self, key: &str) -> PyResult<Option<MetaValue>> {
         self.inner
-            .with_mut(|f| f.meta.remove(key))
+            .with_meta_mut(|meta| meta.remove(key))
+            .map_err(ffi_error_to_pyerr)
+    }
+
+    fn snapshot(&self) -> PyResult<Vec<(String, MetaValue)>> {
+        self.inner
+            .with(|f| {
+                f.meta
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect()
+            })
             .map_err(ffi_error_to_pyerr)
     }
 
     fn as_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new(py);
-        for (key, value) in self.map()?.iter() {
-            dict.set_item(key, meta_value_to_py(py, value)?)?;
+        for (key, value) in self.snapshot()? {
+            dict.set_item(key, meta_value_to_py(py, &value, JsonForm::Frozen)?)?;
         }
         Ok(dict)
     }
 
-    /// Absorb a mapping or an iterable of `(key, value)` pairs.
-    fn absorb(&mut self, other: &Bound<'_, PyAny>) -> PyResult<()> {
+    /// Infer with no borrow held, then one `extend`. `update(self)` re-enters
+    /// this mapping; a `&mut self` or `with_mut` held across that read panics.
+    fn absorb(slf: &Bound<'_, Self>, other: &Bound<'_, PyAny>) -> PyResult<()> {
+        let mut pairs = Vec::new();
         if other.hasattr("keys")? {
             for key in other.call_method0("keys")?.try_iter()? {
                 let key = key?;
                 let name: String = key.extract()?;
                 let value = other.get_item(&key)?;
-                let typed = self.typed_for(&name, &value)?;
-                self.store(&name, typed)?;
+                pairs.push((name, infer_meta_value(&value)?));
             }
-            return Ok(());
+        } else {
+            for pair in other.try_iter()? {
+                let (name, value): (String, Bound<'_, PyAny>) = pair?.extract()?;
+                pairs.push((name, infer_meta_value(&value)?));
+            }
         }
-        for pair in other.try_iter()? {
-            let (name, value): (String, Bound<'_, PyAny>) = pair?.extract()?;
-            let typed = self.typed_for(&name, &value)?;
-            self.store(&name, typed)?;
-        }
-        Ok(())
+        slf.borrow()
+            .inner
+            .with_meta_mut(|meta| {
+                meta.extend(pairs);
+            })
+            .map_err(ffi_error_to_pyerr)
     }
 }
 
 #[pymethods]
 impl PyFrameMeta {
-    fn __getitem__(&self, py: Python<'_>, key: &str) -> PyResult<Py<PyAny>> {
-        match self.map()?.get(key) {
-            Some(value) => meta_value_to_py(py, value),
-            None => Err(PyKeyError::new_err(key.to_owned())),
+    #[classattr]
+    const __hash__: Option<Py<PyAny>> = None;
+
+    fn __getitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let Some(name) = lookup_key(key) else {
+            return Err(missing_key(key));
+        };
+        match self
+            .inner
+            .with(|f| f.meta.get(&name).cloned())
+            .map_err(ffi_error_to_pyerr)?
+        {
+            Some(value) => meta_value_to_py(py, &value, JsonForm::Frozen),
+            None => Err(PyKeyError::new_err(name)),
         }
     }
 
     fn __setitem__(&mut self, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        let typed = self.typed_for(key, value)?;
+        let typed = infer_meta_value(value)?;
         self.store(key, typed)
     }
 
-    fn __delitem__(&mut self, key: &str) -> PyResult<()> {
-        match self.take(key)? {
+    fn __delitem__(&mut self, key: &Bound<'_, PyAny>) -> PyResult<()> {
+        let Some(name) = lookup_key(key) else {
+            return Err(missing_key(key));
+        };
+        match self.take(&name)? {
             Some(_) => Ok(()),
-            None => Err(PyKeyError::new_err(key.to_owned())),
+            None => Err(PyKeyError::new_err(name)),
         }
     }
 
-    fn __contains__(&self, key: &str) -> PyResult<bool> {
-        Ok(self.map()?.get(key).is_some())
+    fn __contains__(&self, key: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let Some(name) = lookup_key(key) else {
+            return Ok(false);
+        };
+        self.inner
+            .with(|f| f.meta.contains_key(&name))
+            .map_err(ffi_error_to_pyerr)
     }
 
     fn __len__(&self) -> PyResult<usize> {
-        Ok(self.map()?.len())
+        self.inner
+            .with(|f| f.meta.len())
+            .map_err(ffi_error_to_pyerr)
     }
 
     fn __iter__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyIterator>> {
-        PyList::new(py, self.keys()?)?.try_iter()
+        // `KeysView` iterates the mapping, so this must not call `keys()`.
+        let keys = self
+            .inner
+            .with(|f| f.meta.keys().cloned().collect::<Vec<String>>())
+            .map_err(ffi_error_to_pyerr)?;
+        PyList::new(py, keys)?.try_iter()
     }
 
     fn __eq__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> PyResult<bool> {
@@ -235,35 +297,34 @@ impl PyFrameMeta {
         self.tag_of(key)
     }
 
-    fn keys(&self) -> PyResult<Vec<String>> {
-        let mut names: Vec<String> = self.map()?.keys().cloned().collect();
-        names.sort_unstable();
-        Ok(names)
+    fn keys<'py>(slf: &Bound<'py, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        Self::abc_view(slf, py, "KeysView")
     }
 
-    fn values(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
-        let map = self.map()?;
-        self.keys()?
-            .iter()
-            .map(|key| meta_value_to_py(py, map.get(key).expect("key from this map")))
-            .collect()
+    fn values<'py>(slf: &Bound<'py, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        Self::abc_view(slf, py, "ValuesView")
     }
 
-    fn items(&self, py: Python<'_>) -> PyResult<Vec<(String, Py<PyAny>)>> {
-        let map = self.map()?;
-        self.keys()?
-            .into_iter()
-            .map(|key| {
-                let value = meta_value_to_py(py, map.get(&key).expect("key from this map"))?;
-                Ok((key, value))
-            })
-            .collect()
+    fn items<'py>(slf: &Bound<'py, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        Self::abc_view(slf, py, "ItemsView")
     }
 
     #[pyo3(signature = (key, default=None))]
-    fn get(&self, py: Python<'_>, key: &str, default: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
-        match self.map()?.get(key) {
-            Some(value) => meta_value_to_py(py, value),
+    fn get(
+        &self,
+        py: Python<'_>,
+        key: &Bound<'_, PyAny>,
+        default: Option<Py<PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let Some(name) = lookup_key(key) else {
+            return Ok(default.unwrap_or_else(|| py.None()));
+        };
+        match self
+            .inner
+            .with(|f| f.meta.get(&name).cloned())
+            .map_err(ffi_error_to_pyerr)?
+        {
+            Some(value) => meta_value_to_py(py, &value, JsonForm::Frozen),
             None => Ok(default.unwrap_or_else(|| py.None())),
         }
     }
@@ -272,28 +333,44 @@ impl PyFrameMeta {
     fn pop(
         &mut self,
         py: Python<'_>,
-        key: &str,
+        key: &Bound<'_, PyAny>,
         default: &Bound<'_, pyo3::types::PyTuple>,
     ) -> PyResult<Py<PyAny>> {
-        match self.take(key)? {
-            Some(value) => meta_value_to_py(py, &value),
+        let Some(name) = lookup_key(key) else {
+            return if default.len() == 1 {
+                Ok(default.get_item(0)?.unbind())
+            } else {
+                Err(missing_key(key))
+            };
+        };
+        match self.take(&name)? {
+            Some(value) => meta_value_to_py(py, &value, JsonForm::Frozen),
             None if default.len() == 1 => Ok(default.get_item(0)?.unbind()),
-            None => Err(PyKeyError::new_err(key.to_owned())),
+            None => Err(PyKeyError::new_err(name)),
         }
     }
 
     fn popitem(&mut self, py: Python<'_>) -> PyResult<(String, Py<PyAny>)> {
-        let key = self
-            .keys()?
-            .pop()
-            .ok_or_else(|| PyKeyError::new_err("popitem(): metadata is empty"))?;
-        let value = self.take(&key)?.expect("key came from this map");
-        Ok((key, meta_value_to_py(py, &value)?))
+        let popped = self
+            .inner
+            .with_meta_mut(|meta| -> Option<(String, MetaValue)> {
+                let (key, value) = meta
+                    .iter()
+                    .next_back()
+                    .map(|(key, value)| (key.clone(), value.clone()))?;
+                let _ = meta.remove(&key);
+                Some((key, value))
+            })
+            .map_err(ffi_error_to_pyerr)?;
+        match popped {
+            Some((key, value)) => Ok((key, meta_value_to_py(py, &value, JsonForm::Frozen)?)),
+            None => Err(PyKeyError::new_err("popitem(): metadata is empty")),
+        }
     }
 
     fn clear(&mut self) -> PyResult<()> {
         self.inner
-            .with_mut(|f| f.meta.clear())
+            .with_meta_mut(|meta| meta.clear())
             .map_err(ffi_error_to_pyerr)
     }
 
@@ -304,8 +381,12 @@ impl PyFrameMeta {
         key: &str,
         default: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        if let Some(value) = self.map()?.get(key) {
-            return meta_value_to_py(py, value);
+        if let Some(value) = self
+            .inner
+            .with(|f| f.meta.get(key).cloned())
+            .map_err(ffi_error_to_pyerr)?
+        {
+            return meta_value_to_py(py, &value, JsonForm::Frozen);
         }
         // `dict.setdefault(k)` inserts None; so does this, now that None is a
         // JSON null rather than a rejection.
@@ -313,22 +394,22 @@ impl PyFrameMeta {
             Some(value) => value,
             None => py.None().into_bound(py),
         };
-        let typed = self.typed_for(key, &value)?;
-        self.store(key, typed)?;
-        self.__getitem__(py, key)
+        let typed = infer_meta_value(&value)?;
+        self.store(key, typed.clone())?;
+        meta_value_to_py(py, &typed, JsonForm::Frozen)
     }
 
     #[pyo3(signature = (other=None, **kwargs))]
     fn update(
-        &mut self,
+        slf: &Bound<'_, Self>,
         other: Option<&Bound<'_, PyAny>>,
         kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<()> {
         if let Some(other) = other {
-            self.absorb(other)?;
+            Self::absorb(slf, other)?;
         }
         if let Some(kwargs) = kwargs {
-            self.absorb(kwargs.as_any())?;
+            Self::absorb(slf, kwargs.as_any())?;
         }
         Ok(())
     }
@@ -344,16 +425,8 @@ impl PyFrameMeta {
     /// reading; this is what a copy or a pickle has to carry instead.
     fn typed<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new(py);
-        for (key, value) in self.map()?.iter() {
-            dict.set_item(
-                key,
-                Py::new(
-                    py,
-                    PyMetaValue {
-                        inner: value.clone(),
-                    },
-                )?,
-            )?;
+        for (key, value) in self.snapshot()? {
+            dict.set_item(key, Py::new(py, PyMetaValue { inner: value })?)?;
         }
         Ok(dict)
     }
@@ -378,8 +451,151 @@ impl PyFrameMeta {
         Ok(merged)
     }
 
-    fn __ior__(&mut self, other: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.absorb(other)
+    fn __ior__(slf: &Bound<'_, Self>, other: &Bound<'_, PyAny>) -> PyResult<()> {
+        Self::absorb(slf, other)
+    }
+}
+
+/// Frozen JSON object returned by every ``frame.meta`` door.
+///
+/// A fixed-length vector comes back as a ``tuple`` and a JSON object as a
+/// ``MetaDocument``. Nested arrays are tuples; nested objects are documents.
+/// Item assignment raises ``TypeError`` — the snapshot does not write through.
+/// ``copy()`` is the unfreeze: a deep plain ``dict`` whose nested documents are
+/// dicts and whose nested arrays are lists. ``json.dumps`` rejects a document
+/// and accepts that copy: ``json.dumps(frame.meta["run"].copy())``.
+///
+/// Iteration order is unspecified. ``frame.meta`` itself enumerates in
+/// insertion order; the two levels differ.
+#[pyclass(module = "molrs", name = "MetaDocument", frozen)]
+pub struct PyMetaDocument {
+    inner: serde_json::Map<String, JsonValue>,
+}
+
+impl PyMetaDocument {
+    fn decode<'py>(&self, py: Python<'py>, form: JsonForm) -> PyResult<Bound<'py, PyDict>> {
+        let dict = PyDict::new(py);
+        for (key, item) in &self.inner {
+            dict.set_item(key, json_to_py(py, item, form)?)?;
+        }
+        Ok(dict)
+    }
+
+    /// `collections.abc` is imported on every call so a later rebinding is visible.
+    fn abc_view<'py>(
+        slf: &Bound<'py, Self>,
+        py: Python<'py>,
+        class_name: &str,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        py.import("collections.abc")?
+            .getattr(class_name)?
+            .call1((slf,))
+    }
+}
+
+#[pymethods]
+impl PyMetaDocument {
+    #[classattr]
+    const __hash__: Option<Py<PyAny>> = None;
+
+    fn __getitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let Some(name) = lookup_key(key) else {
+            return Err(missing_key(key));
+        };
+        match self.inner.get(&name) {
+            Some(value) => json_to_py(py, value, JsonForm::Frozen),
+            None => Err(PyKeyError::new_err(name)),
+        }
+    }
+
+    fn __len__(&self) -> usize {
+        self.inner.len()
+    }
+
+    fn __iter__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyIterator>> {
+        let keys: Vec<String> = self.inner.keys().cloned().collect();
+        PyList::new(py, keys)?.try_iter()
+    }
+
+    fn __contains__(&self, key: &Bound<'_, PyAny>) -> bool {
+        lookup_key(key).is_some_and(|name| self.inner.contains_key(&name))
+    }
+
+    fn keys<'py>(slf: &Bound<'py, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        Self::abc_view(slf, py, "KeysView")
+    }
+
+    fn values<'py>(slf: &Bound<'py, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        Self::abc_view(slf, py, "ValuesView")
+    }
+
+    fn items<'py>(slf: &Bound<'py, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        Self::abc_view(slf, py, "ItemsView")
+    }
+
+    #[pyo3(signature = (key, default=None))]
+    fn get(
+        &self,
+        py: Python<'_>,
+        key: &Bound<'_, PyAny>,
+        default: Option<Py<PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let Some(name) = lookup_key(key) else {
+            return Ok(default.unwrap_or_else(|| py.None()));
+        };
+        match self.inner.get(&name) {
+            Some(value) => json_to_py(py, value, JsonForm::Frozen),
+            None => Ok(default.unwrap_or_else(|| py.None())),
+        }
+    }
+
+    /// Frozen-side: one level of [`JsonForm::Frozen`], then `dict.__eq__`.
+    ///
+    /// A nested document compares through the same method. An array member
+    /// equals a tuple and not a list. When `other` is a document, `dict.__eq__`
+    /// returns `NotImplemented` and the reflected call lands here with a plain
+    /// dict on the right.
+    fn __eq__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+        self.decode(py, JsonForm::Frozen)?.as_any().eq(other)
+    }
+
+    /// Written out: a slot that answers only `==` makes `!=` fall back to identity.
+    fn __ne__(&self, py: Python<'_>, other: &Bound<'_, PyAny>) -> PyResult<bool> {
+        self.decode(py, JsonForm::Frozen)?.as_any().ne(other)
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        Ok(format!(
+            "MetaDocument({})",
+            self.decode(py, JsonForm::Frozen)?
+        ))
+    }
+
+    /// Deep plain decode. Nested documents become dicts, nested arrays lists.
+    fn copy<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        self.decode(py, JsonForm::Plain)
+    }
+
+    /// Pickle by content: the plain [`copy`](Self::copy), rebuilt through
+    /// [`_from_plain`](Self::_from_plain) — a document has no constructor.
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+        py: Python<'py>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyTuple>)> {
+        let plain = slf.get().decode(py, JsonForm::Plain)?;
+        Ok((
+            slf.get_type().getattr("_from_plain")?,
+            PyTuple::new(py, [plain])?,
+        ))
+    }
+
+    /// Freeze a plain dict back into a document; the pickle reconstructor.
+    #[staticmethod]
+    fn _from_plain(plain: &Bound<'_, PyDict>) -> PyResult<Self> {
+        match py_to_json(plain.as_any(), 0)? {
+            JsonValue::Object(inner) => Ok(Self { inner }),
+            _ => Err(PyTypeError::new_err("MetaDocument needs a dict")),
+        }
     }
 }
 
@@ -387,33 +603,24 @@ impl PyFrameMeta {
 ///
 /// A `Frame` is a dictionary of named [`Block`](crate::core::store::block::PyBlock)s with
 /// optional simulation box and metadata. It is the primary exchange format for
-/// molecular data across the molrs ecosystem.
+/// molecular data across the molrs ecosystem, and the only `Frame` class:
+/// every reader, graph serialiser and builder returns it.
 ///
 /// # Python Examples
 ///
 /// ```python
 /// import numpy as np
-/// from molrs import Frame, Block, Box
+/// from molrs import Frame, Box
 ///
-/// frame = Frame()
-/// atoms = Block()
-/// atoms.insert("symbol", ["O", "H", "H"])
-/// atoms.insert("x", np.array([0.0, 0.76, -0.76], dtype=np.float32))
-/// atoms.insert("y", np.array([0.0, 0.59,  0.59], dtype=np.float32))
-/// atoms.insert("z", np.zeros(3, dtype=np.float32))
-/// frame["atoms"] = atoms
-///
-/// frame.box = Box.cube(10.0)
+/// frame = Frame(
+///     {"atoms": {"element": ["O", "H", "H"], "x": [0.0, 0.76, -0.76]}},
+///     meta={"title": "water"},
+///     box=Box.cube(10.0),
+/// )
+/// frame["atoms"]["y"] = np.zeros(3)   # writes into the stored block
 /// print(frame)          # Frame(blocks=['atoms'], box=yes)
-/// print(frame.keys())   # ['atoms']
 /// ```
-#[pyclass(
-    module = "molrs._lib",
-    name = "Frame",
-    from_py_object,
-    unsendable,
-    subclass
-)]
+#[pyclass(module = "molrs._lib", name = "Frame", from_py_object, unsendable)]
 #[derive(Clone)]
 pub struct PyFrame {
     pub(crate) inner: FrameRef,
@@ -421,21 +628,76 @@ pub struct PyFrame {
 
 #[pymethods]
 impl PyFrame {
-    /// Create an empty frame with no blocks, no simulation box, and empty
-    /// metadata.
+    /// Create a frame from blocks, metadata and a box (all optional).
     ///
-    /// Returns
-    /// -------
-    /// Frame
+    /// Copying an existing frame is :meth:`copy`, not ``Frame(frame)``.
+    ///
+    /// Parameters
+    /// ----------
+    /// blocks : Mapping[str, Block | Mapping[str, ArrayLike]], optional
+    ///     Block name -> block; a mapping value is built as ``Block(value)``.
+    /// meta : Mapping[str, Any], optional
+    ///     Metadata, as for the :attr:`meta` setter.
+    /// box : Box, optional
+    ///     The simulation box.
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If ``blocks`` is a ``Frame`` or not a mapping, or a block name is
+    ///     not a ``str``.
+    ///
+    /// Examples
+    /// --------
+    /// >>> Frame({"atoms": {"x": [0.0, 1.0]}}, meta={"step": 0}).keys()
+    /// ['atoms']
     #[new]
-    #[pyo3(signature = (*_args, **_kwargs))]
-    fn new(_args: &Bound<'_, PyAny>, _kwargs: Option<&Bound<'_, PyAny>>) -> Self {
-        Self {
+    #[pyo3(signature = (blocks = None, *, meta = None, r#box = None))]
+    fn new(
+        blocks: Option<&Bound<'_, PyAny>>,
+        meta: Option<&Bound<'_, PyAny>>,
+        r#box: Option<PyRef<'_, PyBox>>,
+    ) -> PyResult<Self> {
+        let mut frame = Self {
             inner: FrameRef::new_standalone(),
+        };
+        if let Some(blocks) = blocks {
+            if blocks.cast::<PyFrame>().is_ok() {
+                return Err(PyTypeError::new_err(
+                    "Frame() takes a mapping of block name -> block; copy a frame \
+                     with frame.copy()",
+                ));
+            }
+            if !blocks.hasattr("keys")? {
+                return Err(PyTypeError::new_err(format!(
+                    "Frame() takes a mapping of block name -> block, got {}",
+                    blocks.get_type().name()?
+                )));
+            }
+            for name in blocks.call_method0("keys")?.try_iter()? {
+                let name = name?;
+                let block = blocks.get_item(&name)?;
+                let name: String = name
+                    .extract()
+                    .map_err(|_| PyTypeError::new_err("Frame block names must be str"))?;
+                frame.__setitem__(&name, &block)?;
+            }
         }
+        if let Some(meta) = meta {
+            frame.set_meta(meta)?;
+        }
+        if let Some(simbox) = r#box {
+            frame.set_box(Some(&simbox))?;
+        }
+        Ok(frame)
     }
 
-    /// Retrieve a block by name.
+    /// Retrieve a block by name: a handle on the stored block.
+    ///
+    /// Every :class:`Block` member reads and writes this frame's data through
+    /// it (``frame["atoms"]["x"] = …`` lands in the frame). A handle goes
+    /// stale once the block is replaced or restructured through another
+    /// handle; read it again from the frame.
     ///
     /// Parameters
     /// ----------
@@ -463,29 +725,41 @@ impl PyFrame {
 
     /// Assign a block under the given name.
     ///
-    /// If a block with the same key already exists it is replaced.
+    /// If a block with the same key already exists it is replaced. A mapping
+    /// of column name -> array is built as ``Block(value)`` first.
     ///
     /// Parameters
     /// ----------
     /// key : str
     ///     Block name.
-    /// block : Block
+    /// value : Block | Mapping[str, ArrayLike]
     ///     The block to store.
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If ``value`` is neither a ``Block`` nor a mapping.
     ///
     /// Examples
     /// --------
-    /// >>> frame["atoms"] = atoms_block
+    /// >>> frame["atoms"] = {"x": [0.0, 1.0]}
     fn __setitem__(&mut self, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        if let Ok(block) = value.extract::<PyRef<'_, PyBlock>>() {
-            let core_block = block.clone_core_block()?;
-            return self
-                .inner
-                .store
-                .borrow_mut()
-                .set_block(self.inner.id, key, core_block)
-                .map_err(ffi_error_to_pyerr);
-        }
-        Err(PyTypeError::new_err("value must be a Block"))
+        let core_block = if let Ok(block) = value.extract::<PyRef<'_, PyBlock>>() {
+            block.clone_core_block()?
+        } else if value.hasattr("keys")? && value.cast::<PyFrame>().is_err() {
+            PyBlock::from_mapping(value)?.clone_core_block()?
+        } else {
+            return Err(PyTypeError::new_err(format!(
+                "a frame block must be a Block or a mapping of column name -> \
+                 array, got {}",
+                value.get_type().name()?
+            )));
+        };
+        self.inner
+            .store
+            .borrow_mut()
+            .set_block(self.inner.id, key, core_block)
+            .map_err(ffi_error_to_pyerr)
     }
 
     /// Delete a block by name.
@@ -589,11 +863,21 @@ impl PyFrame {
 
     /// Live, write-through view of this frame's metadata.
     ///
+    /// Every door hands back a frozen value: scalars unwrap, a fixed-length
+    /// vector is a ``tuple``, a JSON array is a ``tuple``, and a JSON object
+    /// is a :class:`MetaDocument`. ``frame.meta["run"]["step"] = 3`` raises
+    /// ``TypeError``. ``json.dumps`` rejects a document; use
+    /// ``json.dumps(frame.meta["run"].copy())``. Order inside a nested
+    /// document is unspecified.
+    ///
     /// Returns
     /// -------
     /// FrameMeta
-    ///     A mapping of plain Python values. Mutations persist; the dtype of an
-    ///     existing key is kept (assign a :class:`MetaValue` to change it).
+    ///     Mutations of the mapping persist. ``dtype(k)`` reports the tag
+    ///     stored right now; a plain write re-infers it, and a
+    ///     :class:`MetaValue` fixes the dtype of that one write. A tag
+    ///     survives a round trip only through a declared sequence schema or
+    ///     the serde frame document.
     #[getter]
     fn meta(&self) -> PyFrameMeta {
         PyFrameMeta {
@@ -603,16 +887,17 @@ impl PyFrame {
 
     /// Replace the metadata dictionary.
     ///
-    /// Values may be :class:`MetaValue` or any JSON-serializable object
-    /// (``str``, ``int``, ``float``, ``bool``, ``list``, ``dict``).
+    /// Values may be :class:`MetaValue`, a :class:`MetaDocument`, a ``tuple``,
+    /// or any JSON-serializable object (``str``, ``int``, ``float``, ``bool``,
+    /// ``list``, ``dict``).
     #[setter]
     fn set_meta(&mut self, meta: &Bound<'_, PyAny>) -> PyResult<()> {
         // Build the replacement first: `frame.meta = frame.meta` and
         // `Frame.copy` both read the map they are about to overwrite.
         let map = mapping_to_meta_map(meta)?;
         self.inner
-            .with_mut(|f| {
-                f.meta = map;
+            .with_meta_mut(|meta| {
+                *meta = map;
             })
             .map_err(ffi_error_to_pyerr)
     }
@@ -633,15 +918,173 @@ impl PyFrame {
 
     /// Return a deep copy of this frame.
     ///
-    /// All blocks, the simulation box, and typed metadata are cloned into
-    /// a new, independent frame backed by its own store.
+    /// All blocks (new column buffers), the simulation box, and typed metadata
+    /// are copied into a new, independent frame backed by its own store.
     ///
     /// Returns
     /// -------
     /// Frame
     ///     An independent copy.
     fn copy(&self) -> PyResult<Self> {
-        Self::from_core_frame(self.clone_core_frame()?)
+        Self::from_core_frame(self.with_frame(CoreFrame::deep_copy)?)
+    }
+
+    /// A new frame holding rows ``rows`` of ``block``, with every relation
+    /// block that indexes it cut down and renumbered.
+    ///
+    /// Old row ``rows[k]`` becomes new row ``k``; every column travels. A
+    /// relation block whose endpoints index ``block`` (``bonds``, ``angles``,
+    /// …, or any block carrying ``atomi``..``atoml``) keeps only the rows whose
+    /// endpoints all lie in the selection, in their original order, with each
+    /// endpoint rewritten. Every other block, the box and ``meta`` are copied
+    /// unchanged. Values keep their units. This frame is never modified.
+    ///
+    /// Parameters
+    /// ----------
+    /// rows : ArrayLike
+    ///     A 1-D bool mask of length ``block.nrows`` (e.g.
+    ///     ``frame["atoms"]["mol_id"] == 1``), which keeps its ``True`` rows in
+    ///     order, or 1-D integer row indices, which may be negative down to
+    ///     ``-nrows``; the ``k``-th selected old row becomes new row ``k``.
+    /// block : str, optional
+    ///     The block to select from (default ``"atoms"``).
+    ///
+    /// Returns
+    /// -------
+    /// Frame
+    ///     A new, independent frame (no buffer shared with this one).
+    ///
+    /// Raises
+    /// ------
+    /// KeyError
+    ///     If there is no block ``block``.
+    /// IndexError
+    ///     If ``rows`` is not 1-D, a mask has the wrong length, or an index is
+    ///     below ``-nrows``.
+    /// TypeError
+    ///     If ``rows`` is neither bool nor integer.
+    /// ValueError
+    ///     If a row is past the end or repeated, a relation block indexing
+    ///     ``block`` lacks a ``UInt`` endpoint column, or the frame carries a
+    ///     ``members`` block.
+    #[pyo3(signature = (rows, block = "atoms"))]
+    fn subset(&self, rows: &Bound<'_, PyAny>, block: &str) -> PyResult<Self> {
+        let nrows = self
+            .with_frame(|f| f.get(block).map(|b| b.nrows().unwrap_or(0)))?
+            .ok_or_else(|| PyKeyError::new_err(block.to_string()))?;
+        let rows = PyBlock::row_selection(rows, nrows)?;
+        // `Frame::subset` already builds every block on new buffers.
+        let sub = self
+            .with_frame(|f| f.subset(block, &rows))?
+            .map_err(molrs_error_to_pyerr)?;
+        Self::from_core_frame(sub)
+    }
+
+    /// A new frame holding ``count`` copies of this one, concatenated block by
+    /// block — the inverse of :meth:`subset` for ``count`` identical
+    /// molecules.
+    ///
+    /// Copy ``c`` of row ``r`` lands at ``c * nrows + r``. Every endpoint of a
+    /// relation block (``bonds``, ``angles``, …, or any block carrying
+    /// ``atomi``..``atoml``) in copy ``c`` is offset by ``c`` times the row
+    /// count of the block it indexes. Every other column — identifiers
+    /// (``id``, ``mol_id``) included — is copied verbatim; regenerate them if
+    /// the copies need distinct labels. Validity masks travel; ``meta`` and
+    /// the box are copied unchanged. This frame is never modified.
+    ///
+    /// Parameters
+    /// ----------
+    /// count : int
+    ///     Number of copies; ``0`` gives zero-row blocks.
+    ///
+    /// Returns
+    /// -------
+    /// Frame
+    ///     A new, independent frame.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If a relation block indexes a block the frame lacks, lacks a
+    ///     ``UInt`` endpoint column, or the frame carries a ``members`` block.
+    fn replicate(&self, count: usize) -> PyResult<Self> {
+        let copies = self
+            .with_frame(|f| f.replicate(count))?
+            .map_err(molrs_error_to_pyerr)?;
+        Self::from_core_frame(copies)
+    }
+
+    /// The ``atoms`` block's positions as an ``(N, 3)`` float64 array (a
+    /// copy), gathered from its ``x`` / ``y`` / ``z`` columns.
+    ///
+    /// Assigning an ``(N, 3)`` array-like writes it back into ``atoms``
+    /// (created when the frame has none).
+    ///
+    /// Raises
+    /// ------
+    /// KeyError
+    ///     On read, if there is no ``atoms`` block or it lacks ``x``, ``y`` or
+    ///     ``z``.
+    /// ValueError
+    ///     On write, if the array is not ``(N, 3)`` or ``N`` differs from the
+    ///     ``atoms`` row count.
+    #[getter]
+    fn coords<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<Bound<'py, numpy::PyArray2<molrs::types::F>>> {
+        use molrs::store::schema::block_names::ATOMS;
+        use numpy::IntoPyArray;
+        let xyz = self.with_frame(|f| {
+            f.get(ATOMS)
+                .ok_or_else(|| PyKeyError::new_err(ATOMS))
+                .and_then(|atoms| atoms.coords().map_err(coords_error))
+        })??;
+        Ok(xyz.into_pyarray(py))
+    }
+
+    #[setter]
+    fn set_coords(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let xyz = coords_array(value)?;
+        self.inner
+            .with_mut(|f| f.set_coords(xyz.view()))
+            .map_err(ffi_error_to_pyerr)?
+            .map_err(molrs_error_to_pyerr)
+    }
+
+    /// Pickle by logical state: the blocks, the typed metadata and the box.
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyTuple>, Bound<'py, PyDict>)> {
+        let py = slf.py();
+        let this = slf.borrow();
+        let blocks = PyDict::new(py);
+        for key in this.keys()? {
+            blocks.set_item(&key, this.__getitem__(py, &key)?)?;
+        }
+        let state = PyDict::new(py);
+        state.set_item("blocks", blocks)?;
+        // The typed snapshot: `dict(meta)` would drop every dtype tag.
+        state.set_item("meta", this.meta().typed(py)?)?;
+        state.set_item("box", this.get_box()?)?;
+        Ok((slf.get_type().into_any(), PyTuple::empty(py), state))
+    }
+
+    /// Restore the state [`__reduce__`](Self::__reduce__) produced.
+    fn __setstate__(&mut self, state: &Bound<'_, PyDict>) -> PyResult<()> {
+        let field = |name: &str| {
+            state
+                .get_item(name)?
+                .ok_or_else(|| PyKeyError::new_err(format!("Frame state lacks '{name}'")))
+        };
+        let blocks = field("blocks")?;
+        for (key, block) in blocks.cast::<PyDict>()?.iter() {
+            self.__setitem__(&key.extract::<String>()?, &block)?;
+        }
+        self.set_meta(&field("meta")?)?;
+        let simbox = field("box")?;
+        let simbox = simbox.extract::<Option<PyRef<'_, PyBox>>>()?;
+        self.set_box(simbox.as_deref())
     }
 
     fn __repr__(&self) -> PyResult<String> {
@@ -778,17 +1221,26 @@ impl PyFrame {
     }
 }
 
-/// The plain Python counterpart of a stored value: scalars unwrap, fixed-length
-/// vectors become lists, and a JSON document becomes the decoded object.
-fn meta_value_to_py(py: Python<'_>, value: &MetaValue) -> PyResult<Py<PyAny>> {
+/// `Frozen` is every `frame.meta` door. `Plain` is [`PyMetaValue::value`]
+/// (and therefore pickle) and [`PyMetaDocument::copy`]: JSON comes back as
+/// dicts and lists, which a reducer can pack.
+#[derive(Clone, Copy)]
+enum JsonForm {
+    Frozen,
+    Plain,
+}
+
+/// Scalars unwrap. Fixed-length vectors are tuples either way. `form` applies
+/// to JSON only.
+fn meta_value_to_py(py: Python<'_>, value: &MetaValue, form: JsonForm) -> PyResult<Py<PyAny>> {
     macro_rules! scalar {
         ($value:expr) => {
             $value.into_pyobject(py)?.into_any().unbind()
         };
     }
-    macro_rules! list {
+    macro_rules! tuple {
         ($value:expr) => {
-            PyList::new(py, $value)?.into_any().unbind()
+            PyTuple::new(py, $value)?.into_any().unbind()
         };
     }
     Ok(match value {
@@ -797,28 +1249,22 @@ fn meta_value_to_py(py: Python<'_>, value: &MetaValue) -> PyResult<Py<PyAny>> {
         MetaValue::I64(v) => scalar!(*v),
         MetaValue::U32(v) => scalar!(*v),
         MetaValue::U64(v) => scalar!(*v),
-        MetaValue::F32(v) => scalar!(*v),
         MetaValue::F64(v) => scalar!(*v),
         MetaValue::String(v) => scalar!(v),
-        MetaValue::Bool3(v) => list!(v),
-        MetaValue::I32x3(v) => list!(v),
-        MetaValue::I64x3(v) => list!(v),
-        MetaValue::U32x3(v) => list!(v),
-        MetaValue::U64x3(v) => list!(v),
-        MetaValue::F32x3(v) => list!(v),
-        MetaValue::F64x3(v) => list!(v),
-        MetaValue::F32x6(v) => list!(v),
-        MetaValue::F64x6(v) => list!(v),
-        MetaValue::F32x9(v) => list!(v),
-        MetaValue::F64x9(v) => list!(v),
-        MetaValue::Json(v) => json_to_py(py, v)?,
+        MetaValue::Bool3(v) => tuple!(v),
+        MetaValue::I32x3(v) => tuple!(v),
+        MetaValue::I64x3(v) => tuple!(v),
+        MetaValue::U32x3(v) => tuple!(v),
+        MetaValue::U64x3(v) => tuple!(v),
+        MetaValue::F64x3(v) => tuple!(v),
+        MetaValue::F64x6(v) => tuple!(v),
+        MetaValue::F64x9(v) => tuple!(v),
+        MetaValue::Json(v) => json_to_py(py, v, form)?,
     })
 }
 
 /// Build a [`MetaValue`] carrying an explicit dtype tag, coercing `value` into it.
 ///
-/// This is the one place a tag becomes storage, so a tag read back off an
-/// existing slot ([`MetaValue::dtype`]) round-trips through it exactly.
 /// Coercion never truncates: a value the tag cannot hold raises.
 fn meta_value_from_dtype(dtype: &str, value: &Bound<'_, PyAny>) -> PyResult<MetaValue> {
     fn array<T, const N: usize>(value: &Bound<'_, PyAny>, dtype: &str) -> PyResult<[T; N]>
@@ -837,7 +1283,6 @@ fn meta_value_from_dtype(dtype: &str, value: &Bound<'_, PyAny>) -> PyResult<Meta
         "i64" => MetaValue::I64(value.extract()?),
         "u32" => MetaValue::U32(value.extract()?),
         "u64" => MetaValue::U64(value.extract()?),
-        "f32" => MetaValue::F32(value.extract()?),
         "f64" => MetaValue::F64(value.extract()?),
         "string" => MetaValue::String(value.extract()?),
         "bool3" => MetaValue::Bool3(array(value, dtype)?),
@@ -845,13 +1290,10 @@ fn meta_value_from_dtype(dtype: &str, value: &Bound<'_, PyAny>) -> PyResult<Meta
         "i64x3" => MetaValue::I64x3(array(value, dtype)?),
         "u32x3" => MetaValue::U32x3(array(value, dtype)?),
         "u64x3" => MetaValue::U64x3(array(value, dtype)?),
-        "f32x3" => MetaValue::F32x3(array(value, dtype)?),
         "f64x3" => MetaValue::F64x3(array(value, dtype)?),
-        "f32x6" => MetaValue::F32x6(array(value, dtype)?),
         "f64x6" => MetaValue::F64x6(array(value, dtype)?),
-        "f32x9" => MetaValue::F32x9(array(value, dtype)?),
         "f64x9" => MetaValue::F64x9(array(value, dtype)?),
-        "json" => MetaValue::Json(py_to_json(value)?),
+        "json" => MetaValue::Json(py_to_json(value, 0)?),
         _ => {
             return Err(PyTypeError::new_err(format!(
                 "unknown metadata dtype '{dtype}'"
@@ -860,12 +1302,14 @@ fn meta_value_from_dtype(dtype: &str, value: &Bound<'_, PyAny>) -> PyResult<Meta
     })
 }
 
-/// Pick a dtype for a value written to a key that has none yet.
+/// Pick a dtype for a written value.
 ///
-/// Scalars take their exact Python counterpart; a numeric sequence of 3, 6 or 9
-/// becomes the matching fixed-length vector — the shapes `mrec` declares — and
-/// everything else (objects, ragged or non-numeric sequences, `None`) is a JSON
-/// document. A [`MetaValue`](PyMetaValue) passes through with its tag intact.
+/// Scalars take their exact Python counterpart; a numeric list or tuple of 3,
+/// 6 or 9 becomes the matching fixed-length vector — the shapes `mrec`
+/// declares — and everything else (objects, ragged or non-numeric sequences,
+/// `None`) is a JSON document. A [`MetaValue`](PyMetaValue) passes through
+/// with its tag intact. The tuple arm is the list arm widened: a 6-tuple read
+/// off an `f64x6` key must not fall through into JSON.
 fn infer_meta_value(value: &Bound<'_, PyAny>) -> PyResult<MetaValue> {
     if let Ok(typed) = value.extract::<PyRef<'_, PyMetaValue>>() {
         return Ok(typed.inner.clone());
@@ -891,23 +1335,31 @@ fn infer_meta_value(value: &Bound<'_, PyAny>) -> PyResult<MetaValue> {
     if let Ok(v) = value.cast::<PyString>() {
         return Ok(MetaValue::String(v.extract()?));
     }
-    if let Ok(list) = value.cast::<PyList>() {
-        let vector = match list.len() {
-            3 => Some("f64x3"),
-            6 => Some("f64x6"),
-            9 => Some("f64x9"),
-            _ => None,
-        };
-        if let Some(dtype) = vector
-            && let Ok(typed) = meta_value_from_dtype(dtype, value)
-        {
-            return Ok(typed);
-        }
+    if let Some(typed) = infer_fixed_vector(value)? {
+        return Ok(typed);
     }
-    Ok(MetaValue::Json(py_to_json(value)?))
+    Ok(MetaValue::Json(py_to_json(value, 0)?))
 }
 
-fn json_to_py(py: Python<'_>, value: &JsonValue) -> PyResult<Py<PyAny>> {
+/// A list or tuple of 3, 6 or 9 numbers, or `None` when this is not one.
+fn infer_fixed_vector(value: &Bound<'_, PyAny>) -> PyResult<Option<MetaValue>> {
+    let len = if let Ok(list) = value.cast::<PyList>() {
+        list.len()
+    } else if let Ok(tuple) = value.cast::<PyTuple>() {
+        tuple.len()
+    } else {
+        return Ok(None);
+    };
+    let dtype = match len {
+        3 => "f64x3",
+        6 => "f64x6",
+        9 => "f64x9",
+        _ => return Ok(None),
+    };
+    Ok(meta_value_from_dtype(dtype, value).ok())
+}
+
+fn json_to_py(py: Python<'_>, value: &JsonValue, form: JsonForm) -> PyResult<Py<PyAny>> {
     Ok(match value {
         JsonValue::Null => py.None(),
         JsonValue::Bool(b) => b.into_pyobject(py)?.to_owned().into_any().unbind(),
@@ -926,23 +1378,39 @@ fn json_to_py(py: Python<'_>, value: &JsonValue) -> PyResult<Py<PyAny>> {
         }
         JsonValue::String(s) => s.into_pyobject(py)?.into_any().unbind(),
         JsonValue::Array(items) => {
-            let list = PyList::empty(py);
+            let mut decoded = Vec::with_capacity(items.len());
             for item in items {
-                list.append(json_to_py(py, item)?)?;
+                decoded.push(json_to_py(py, item, form)?);
             }
-            list.into_any().unbind()
-        }
-        JsonValue::Object(map) => {
-            let dict = PyDict::new(py);
-            for (key, item) in map {
-                dict.set_item(key, json_to_py(py, item)?)?;
+            match form {
+                JsonForm::Frozen => PyTuple::new(py, decoded)?.into_any().unbind(),
+                JsonForm::Plain => PyList::new(py, decoded)?.into_any().unbind(),
             }
-            dict.into_any().unbind()
         }
+        JsonValue::Object(map) => match form {
+            JsonForm::Frozen => Py::new(py, PyMetaDocument { inner: map.clone() })?.into_any(),
+            JsonForm::Plain => {
+                let dict = PyDict::new(py);
+                for (key, item) in map {
+                    dict.set_item(key, json_to_py(py, item, JsonForm::Plain)?)?;
+                }
+                dict.into_any().unbind()
+            }
+        },
     })
 }
 
-fn py_to_json(value: &Bound<'_, PyAny>) -> PyResult<JsonValue> {
+/// Deepest container nesting a written value may have. Past it the value is
+/// refused rather than recursed into: a self-referencing list or dict would
+/// otherwise overflow the stack and kill the interpreter.
+const MAX_JSON_DEPTH: usize = 128;
+
+fn py_to_json(value: &Bound<'_, PyAny>, depth: usize) -> PyResult<JsonValue> {
+    if depth > MAX_JSON_DEPTH {
+        return Err(PyValueError::new_err(format!(
+            "meta value nests deeper than {MAX_JSON_DEPTH} levels (cyclic?)"
+        )));
+    }
     if value.is_none() {
         return Ok(JsonValue::Null);
     }
@@ -960,22 +1428,35 @@ fn py_to_json(value: &Bound<'_, PyAny>) -> PyResult<JsonValue> {
     if let Ok(s) = value.cast::<PyString>() {
         return Ok(JsonValue::String(s.extract::<String>()?));
     }
+    if let Ok(doc) = value.extract::<PyRef<'_, PyMetaDocument>>() {
+        return Ok(JsonValue::Object(doc.inner.clone()));
+    }
     if let Ok(dict) = value.cast::<PyDict>() {
         let mut map = serde_json::Map::new();
         for (k, v) in dict.iter() {
             let key: String = k.extract()?;
-            map.insert(key, py_to_json(&v)?);
+            map.insert(key, py_to_json(&v, depth + 1)?);
         }
         return Ok(JsonValue::Object(map));
     }
     if let Ok(list) = value.cast::<PyList>() {
-        let mut items = Vec::with_capacity(list.len());
-        for item in list.iter() {
-            items.push(py_to_json(&item)?);
-        }
-        return Ok(JsonValue::Array(items));
+        return py_sequence_to_json(list.iter(), depth);
+    }
+    if let Ok(tuple) = value.cast::<PyTuple>() {
+        return py_sequence_to_json(tuple.iter(), depth);
     }
     Err(PyTypeError::new_err(format!(
         "metadata value is not JSON-serializable: {value}"
     )))
+}
+
+fn py_sequence_to_json<'py>(
+    items: impl IntoIterator<Item = Bound<'py, PyAny>>,
+    depth: usize,
+) -> PyResult<JsonValue> {
+    let mut decoded = Vec::new();
+    for item in items {
+        decoded.push(py_to_json(&item, depth + 1)?);
+    }
+    Ok(JsonValue::Array(decoded))
 }

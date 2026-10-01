@@ -1,32 +1,15 @@
 //! Shared geometry helpers for potential kernels.
 //!
-//! Provides 3D vector operations, angle/dihedral computation, and
-//! Cartesian force projection routines used by multiple kernel families.
+//! Provides the flat-index [`sub3`] adapter, angle/dihedral computation, and
+//! Cartesian force projection routines used by multiple kernel families. The
+//! vector arithmetic itself is [`crate::op::vec3`].
 
+use crate::op::vec3::{cross, dot, norm};
 use molrs::types::F;
 
 // ---------------------------------------------------------------------------
-// 3D vector primitives
+// Flat-index adapter
 // ---------------------------------------------------------------------------
-
-#[inline]
-pub fn cross3(a: [F; 3], b: [F; 3]) -> [F; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
-
-#[inline]
-pub fn dot3(a: [F; 3], b: [F; 3]) -> F {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-
-#[inline]
-pub fn mag3(a: [F; 3]) -> F {
-    dot3(a, a).sqrt()
-}
 
 /// Compute the vector from atom `bi` to atom `ai`: `a[ai] - b[bi]`.
 #[inline]
@@ -57,7 +40,7 @@ pub fn validate_coords(coords: &[F]) -> usize {
 pub fn compute_angle(coords: &[F], i: usize, j: usize, k: usize) -> F {
     let rji = sub3(coords, i, coords, j);
     let rjk = sub3(coords, k, coords, j);
-    let cos_theta = dot3(rji, rjk) / (mag3(rji) * mag3(rjk));
+    let cos_theta = dot(rji, rjk) / (norm(rji) * norm(rjk));
     cos_theta.clamp(-1.0, 1.0).acos()
 }
 
@@ -72,12 +55,12 @@ pub fn accumulate_angle_forces(
 ) {
     let rji = sub3(coords, i, coords, j);
     let rjk = sub3(coords, k, coords, j);
-    let d_ji = mag3(rji);
-    let d_jk = mag3(rjk);
+    let d_ji = norm(rji);
+    let d_jk = norm(rjk);
     if d_ji < 1e-12 as F || d_jk < 1e-12 as F {
         return;
     }
-    let cos_theta = (dot3(rji, rjk) / (d_ji * d_jk)).clamp(-1.0, 1.0);
+    let cos_theta = (dot(rji, rjk) / (d_ji * d_jk)).clamp(-1.0, 1.0);
     let sin_theta = (1.0 - cos_theta * cos_theta).sqrt().max(1e-12 as F);
     let prefactor = de_dth / sin_theta;
 
@@ -100,13 +83,13 @@ pub fn compute_dihedral(coords: &[F], i: usize, j: usize, k: usize, l: usize) ->
     let b1 = sub3(coords, j, coords, i);
     let b2 = sub3(coords, k, coords, j);
     let b3 = sub3(coords, l, coords, k);
-    let n1 = cross3(b1, b2);
-    let n2 = cross3(b2, b3);
+    let n1 = cross(b1, b2);
+    let n2 = cross(b2, b3);
     // Standard signed dihedral: y = |b2|·(b1·n2), x = n1·n2. The earlier form
     // used y = (n1×b2)·n2 = −|b2|²·(b1·n2), whose extra |b2| factor distorts
     // the angle (and its gradient at the central atoms) whenever |b2| ≠ 1.
-    let x = dot3(n1, n2);
-    let y = mag3(b2) * dot3(b1, n2);
+    let x = dot(n1, n2);
+    let y = norm(b2) * dot(b1, n2);
     y.atan2(x)
 }
 
@@ -123,11 +106,11 @@ pub fn accumulate_dihedral_forces(
     let b1 = sub3(coords, j, coords, i);
     let b2 = sub3(coords, k, coords, j);
     let b3 = sub3(coords, l, coords, k);
-    let n1 = cross3(b1, b2);
-    let n2 = cross3(b2, b3);
-    let n1_sq = dot3(n1, n1);
-    let n2_sq = dot3(n2, n2);
-    let b2_mag = mag3(b2);
+    let n1 = cross(b1, b2);
+    let n2 = cross(b2, b3);
+    let n1_sq = dot(n1, n1);
+    let n2_sq = dot(n2, n2);
+    let b2_mag = norm(b2);
 
     if n1_sq < 1e-24 as F || n2_sq < 1e-24 as F || b2_mag < 1e-12 as F {
         return;
@@ -147,8 +130,8 @@ pub fn accumulate_dihedral_forces(
         -de_dphi * b2_mag / n2_sq * n2[2],
     ];
 
-    let p_ij = dot3(b1, b2) / (b2_mag * b2_mag);
-    let p_kl = dot3(b3, b2) / (b2_mag * b2_mag);
+    let p_ij = dot(b1, b2) / (b2_mag * b2_mag);
+    let p_kl = dot(b3, b2) / (b2_mag * b2_mag);
 
     for dim in 0..3 {
         // Blondel-Karplus / GROMACS `do_dih_fup` middle-atom redistribution.

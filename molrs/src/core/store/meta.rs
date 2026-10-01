@@ -4,7 +4,7 @@
 //! exact scalar or fixed-vector dtype; metadata is never routed through a
 //! string representation.
 
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 /// Exact metadata value stored on a frame.
 #[derive(Clone, Debug, PartialEq)]
@@ -14,7 +14,6 @@ pub enum MetaValue {
     I64(i64),
     U32(u32),
     U64(u64),
-    F32(f32),
     F64(f64),
     String(String),
     Bool3([bool; 3]),
@@ -22,14 +21,9 @@ pub enum MetaValue {
     I64x3([i64; 3]),
     U32x3([u32; 3]),
     U64x3([u64; 3]),
-    F32x3([f32; 3]),
     F64x3([f64; 3]),
     /// Symmetric stress tensor in `(xx, yy, zz, xy, xz, yz)` order.
-    F32x6([f32; 6]),
-    /// Symmetric stress tensor in `(xx, yy, zz, xy, xz, yz)` order.
     F64x6([f64; 6]),
-    /// Row-major 3x3 tensor.
-    F32x9([f32; 9]),
     /// Row-major 3x3 tensor.
     F64x9([f64; 9]),
     /// Nested JSON document value. Frame group attributes are a document,
@@ -46,7 +40,6 @@ impl MetaValue {
             Self::I64(_) => "i64",
             Self::U32(_) => "u32",
             Self::U64(_) => "u64",
-            Self::F32(_) => "f32",
             Self::F64(_) => "f64",
             Self::String(_) => "string",
             Self::Bool3(_) => "bool3",
@@ -54,11 +47,8 @@ impl MetaValue {
             Self::I64x3(_) => "i64x3",
             Self::U32x3(_) => "u32x3",
             Self::U64x3(_) => "u64x3",
-            Self::F32x3(_) => "f32x3",
             Self::F64x3(_) => "f64x3",
-            Self::F32x6(_) => "f32x6",
             Self::F64x6(_) => "f64x6",
-            Self::F32x9(_) => "f32x9",
             Self::F64x9(_) => "f64x9",
             Self::Json(_) => "json",
         }
@@ -99,13 +89,6 @@ impl MetaValue {
             None
         }
     }
-    pub const fn as_f32(&self) -> Option<f32> {
-        if let Self::F32(value) = self {
-            Some(*value)
-        } else {
-            None
-        }
-    }
     pub const fn as_f64(&self) -> Option<f64> {
         if let Self::F64(value) = self {
             Some(*value)
@@ -130,7 +113,6 @@ impl MetaValue {
             Self::I64(v) => json!(v),
             Self::U32(v) => json!(v),
             Self::U64(v) => json!(v),
-            Self::F32(v) => json!(v),
             Self::F64(v) => json!(v),
             Self::String(v) => Value::String(v.clone()),
             Self::Bool3(v) => json!(v),
@@ -138,11 +120,8 @@ impl MetaValue {
             Self::I64x3(v) => json!(v),
             Self::U32x3(v) => json!(v),
             Self::U64x3(v) => json!(v),
-            Self::F32x3(v) => json!(v),
             Self::F64x3(v) => json!(v),
-            Self::F32x6(v) => json!(v),
             Self::F64x6(v) => json!(v),
-            Self::F32x9(v) => json!(v),
             Self::F64x9(v) => json!(v),
             Self::Json(v) => v.clone(),
         };
@@ -159,7 +138,6 @@ impl MetaValue {
             Self::I64(v) => json!(v),
             Self::U32(v) => json!(v),
             Self::U64(v) => json!(v),
-            Self::F32(v) => json!(v),
             Self::F64(v) => json!(v),
             Self::String(v) => Value::String(v.clone()),
             Self::Bool3(v) => json!(v),
@@ -167,11 +145,8 @@ impl MetaValue {
             Self::I64x3(v) => json!(v),
             Self::U32x3(v) => json!(v),
             Self::U64x3(v) => json!(v),
-            Self::F32x3(v) => json!(v),
             Self::F64x3(v) => json!(v),
-            Self::F32x6(v) => json!(v),
             Self::F64x6(v) => json!(v),
-            Self::F32x9(v) => json!(v),
             Self::F64x9(v) => json!(v),
             Self::Json(v) => v.clone(),
         }
@@ -236,14 +211,6 @@ impl MetaValue {
                     .map_err(|_| "u32 metadata out of range".into())
             }),
             "u64" => payload.as_u64().map(Self::U64).ok_or_else(wrong_type),
-            "f32" => payload.as_f64().ok_or_else(wrong_type).and_then(|raw| {
-                let narrowed = raw as f32;
-                if raw.is_finite() && !narrowed.is_finite() {
-                    Err("f32 metadata out of range".into())
-                } else {
-                    Ok(Self::F32(narrowed))
-                }
-            }),
             "f64" => payload.as_f64().map(Self::F64).ok_or_else(wrong_type),
             "string" => payload
                 .as_str()
@@ -254,11 +221,8 @@ impl MetaValue {
             "i64x3" => array!(i64, 3, I64x3),
             "u32x3" => array!(u32, 3, U32x3),
             "u64x3" => array!(u64, 3, U64x3),
-            "f32x3" => array!(f32, 3, F32x3),
             "f64x3" => array!(f64, 3, F64x3),
-            "f32x6" => array!(f32, 6, F32x6),
             "f64x6" => array!(f64, 6, F64x6),
-            "f32x9" => array!(f32, 9, F32x9),
             "f64x9" => array!(f64, 9, F64x9),
             "json" => Ok(Self::Json(payload.clone())),
             other => Err(format!("unknown metadata dtype `{other}`")),
@@ -280,7 +244,6 @@ impl_from_meta!(i32, I32);
 impl_from_meta!(i64, I64);
 impl_from_meta!(u32, U32);
 impl_from_meta!(u64, U64);
-impl_from_meta!(f32, F32);
 impl_from_meta!(f64, F64);
 impl_from_meta!(String, String);
 impl_from_meta!([bool; 3], Bool3);
@@ -288,11 +251,8 @@ impl_from_meta!([i32; 3], I32x3);
 impl_from_meta!([i64; 3], I64x3);
 impl_from_meta!([u32; 3], U32x3);
 impl_from_meta!([u64; 3], U64x3);
-impl_from_meta!([f32; 3], F32x3);
 impl_from_meta!([f64; 3], F64x3);
-impl_from_meta!([f32; 6], F32x6);
 impl_from_meta!([f64; 6], F64x6);
-impl_from_meta!([f32; 9], F32x9);
 impl_from_meta!([f64; 9], F64x9);
 
 impl From<&str> for MetaValue {
@@ -302,15 +262,62 @@ impl From<&str> for MetaValue {
 }
 
 /// The unique metadata map used by owned and borrowed frames.
+///
+/// Iteration is insertion-ordered. [`Self::remove`] drops one key and keeps
+/// the remaining keys in their original relative order. Inserting a key that
+/// is already present updates its value and leaves it where it was.
+///
+/// # Examples
+///
+/// ```
+/// use molrs::MetaMap;
+///
+/// let mut meta = MetaMap::new();
+/// meta.insert("z", "Z");
+/// meta.insert("a", "A");
+/// meta.insert("m", "M");
+/// meta.remove("a");
+/// assert_eq!(
+///     meta.keys().map(String::as_str).collect::<Vec<_>>(),
+///     ["z", "m"]
+/// );
+/// ```
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct MetaMap(HashMap<String, MetaValue>);
+pub struct MetaMap(IndexMap<String, MetaValue>);
+
+/// Borrowed iterator over a [`MetaMap`], in insertion order.
+pub struct MetaIter<'a>(indexmap::map::Iter<'a, String, MetaValue>);
+
+impl<'a> Iterator for MetaIter<'a> {
+    type Item = (&'a String, &'a MetaValue);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+}
+
+impl ExactSizeIterator for MetaIter<'_> {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl DoubleEndedIterator for MetaIter<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.0.next_back()
+    }
+}
 
 impl MetaMap {
     pub fn new() -> Self {
         Self::default()
     }
     pub fn with_capacity(capacity: usize) -> Self {
-        Self(HashMap::with_capacity(capacity))
+        Self(IndexMap::with_capacity(capacity))
     }
     pub fn len(&self) -> usize {
         self.0.len()
@@ -337,11 +344,12 @@ impl MetaMap {
     ) -> Option<MetaValue> {
         self.0.insert(key.into(), value.into())
     }
+    /// Removes `key`, shifting later keys down so their relative order holds.
     pub fn remove(&mut self, key: &str) -> Option<MetaValue> {
-        self.0.remove(key)
+        self.0.shift_remove(key)
     }
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &MetaValue)> {
-        self.0.iter()
+    pub fn iter(&self) -> MetaIter<'_> {
+        MetaIter(self.0.iter())
     }
     pub fn keys(&self) -> impl Iterator<Item = &String> {
         self.0.keys()
@@ -354,19 +362,11 @@ impl MetaMap {
     }
 }
 
-impl IntoIterator for MetaMap {
-    type Item = (String, MetaValue);
-    type IntoIter = std::collections::hash_map::IntoIter<String, MetaValue>;
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
-    }
-}
-
 impl<'a> IntoIterator for &'a MetaMap {
     type Item = (&'a String, &'a MetaValue);
-    type IntoIter = std::collections::hash_map::Iter<'a, String, MetaValue>;
+    type IntoIter = MetaIter<'a>;
     fn into_iter(self) -> Self::IntoIter {
-        self.0.iter()
+        self.iter()
     }
 }
 
@@ -382,7 +382,6 @@ mod tests {
             MetaValue::I64(i64::MIN + 7),
             MetaValue::U32(9),
             MetaValue::U64(u64::MAX - 7),
-            MetaValue::F32(1.25),
             MetaValue::F64(-2.5),
             MetaValue::String("x".into()),
             MetaValue::F64x3([1.0, 2.0, 3.0]),
@@ -433,13 +432,89 @@ mod tests {
     }
 
     #[test]
-    fn overflowing_f32_json_is_rejected() {
-        assert!(
-            MetaValue::from_json_value(&serde_json::json!({
-                "dtype": "f32",
-                "value": f64::MAX,
-            }))
-            .is_err()
+    fn narrow_float_tags_are_refused() {
+        // The narrow vector tags fall through this same unknown-dtype arm.
+        for tag in ["f16", "f32"] {
+            let raw = serde_json::json!({"dtype": tag, "value": 1.5});
+            assert!(
+                MetaValue::from_json_value(&raw).is_err(),
+                "accepted `{tag}`"
+            );
+        }
+    }
+
+    #[test]
+    fn keys_iter_and_values_follow_insertion_order() {
+        let mut meta = MetaMap::new();
+        meta.insert("z", "Z");
+        meta.insert("a", "A");
+        meta.insert("m", "M");
+
+        assert_eq!(
+            meta.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["z", "a", "m"]
+        );
+        assert_eq!(
+            meta.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+            vec!["z", "a", "m"]
+        );
+        assert_eq!(
+            meta.values()
+                .map(|v| v.as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["Z", "A", "M"]
+        );
+    }
+
+    #[test]
+    fn remove_of_the_second_key_keeps_the_order_of_the_survivors() {
+        let mut meta = MetaMap::new();
+        meta.insert("z", "Z");
+        meta.insert("a", "A");
+        meta.insert("m", "M");
+        meta.insert("q", "Q");
+
+        let removed = meta.remove("a");
+        assert_eq!(removed.as_ref().and_then(MetaValue::as_str), Some("A"));
+        // Four keys, second removed: shift_remove leaves [z, m, q].
+        // swap_remove would park the last key in the hole: [z, q, m].
+        assert_eq!(
+            meta.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["z", "m", "q"]
+        );
+    }
+
+    #[test]
+    fn reinserting_a_key_keeps_its_position_and_updates_the_value() {
+        let mut meta = MetaMap::new();
+        meta.insert("z", "Z");
+        meta.insert("a", "A");
+        meta.insert("m", "M");
+
+        let replaced = meta.insert("a", "A2");
+        assert_eq!(replaced.as_ref().and_then(MetaValue::as_str), Some("A"));
+        assert_eq!(meta.get("a").and_then(MetaValue::as_str), Some("A2"));
+        assert_eq!(
+            meta.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["z", "a", "m"]
+        );
+    }
+
+    #[test]
+    fn clear_then_insert_restarts_insertion_order() {
+        let mut meta = MetaMap::new();
+        meta.insert("z", "Z");
+        meta.insert("a", "A");
+        meta.insert("m", "M");
+        meta.clear();
+        meta.insert("m", "M");
+        meta.insert("z", "Z");
+        meta.insert("a", "A");
+        meta.insert("q", "Q");
+
+        assert_eq!(
+            meta.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["m", "z", "a", "q"]
         );
     }
 }

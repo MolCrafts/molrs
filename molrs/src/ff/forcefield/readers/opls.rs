@@ -40,8 +40,9 @@
 //! - bond `k` kJ/mol/nm² → kcal/mol/Å² (÷ 4.184 ÷ 100). molrs and GROMACS both
 //!   use the `½k(r−r₀)²` form, so no extra ½ factor (unlike a LAMMPS target).
 //! - angle `k` kJ/mol/rad² → kcal/mol/rad² (÷ 4.184); `angle` already in radians.
-//! - RB `c0..c5` → OPLS 4-cosine `f1..f4` via the private `rb_to_opls` helper
-//!   (GROMACS Eqs. 200–201), in kcal/mol — matching the `dihedral:opls` kernel.
+//! - RB `c0..c5` (kJ/mol) → OPLS 4-cosine `k1..k4` (kcal/mol) through
+//!   `ff::forcefield::torsion::rb_to_opls` (GROMACS Eqs. 200–201), then ÷ 4.184.
+//!   A row with `C5 ≠ 0` or `ΣCₙ ≠ 0` has no OPLS form and is an error.
 //! - charge `e`, mass `amu`: unchanged.
 
 use roxmltree::Node;
@@ -49,7 +50,9 @@ use roxmltree::Node;
 use super::ForceFieldReader;
 use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::mixing::Mixing;
-use crate::ff::forcefield::{ForceField, SpecialBonds};
+use crate::ff::forcefield::torsion::rb_to_opls;
+use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
+use molrs::store::type_labels::TypeName;
 use molrs::units::constants::COULOMB_REAL;
 
 /// kJ/mol → kcal/mol.
@@ -156,7 +159,7 @@ impl ForceFieldReader for OplsXmlReader {
         // the kernel default rather than invent a rule the file never stated.
         let combining_rule = root.attribute("combining_rule");
         build_nonbonded(&mut ff, &atom_rows, &nonbonded, combining_rule)?;
-        ensure_class_wildcards(&mut ff, &atom_rows);
+        ensure_class_wildcards(&mut ff, &atom_rows)?;
         // OPLS excludes 1-2/1-3 and scales 1-4 by the <NonbondedForce> values
         // (commonly 0.5 / 0.5). Owned by the ForceField, consumed by the pair
         // kernels.
@@ -208,50 +211,72 @@ fn build_nonbonded(
     combining_rule: Option<&str>,
 ) -> Result<(), String> {
     if !atom_rows.is_empty() {
-        let atom = ff.def_atomstyle("full");
+        let atom = ff
+            .def_style("atom", "full", Params::new())
+            .map_err(|e| e.to_string())?;
         for row in atom_rows {
-            let charge = nonbonded
+            // One definition per row, numeric and string params together, so a
+            // repeated identical row is the same definition (a no-op) and a
+            // different one is a TypeConflict.
+            let mut charges = nonbonded
                 .iter()
-                .find(|r| r.ty == row.name)
-                .and_then(|r| r.charge);
-            let mut numeric: Vec<(&str, f64)> = vec![("mass", row.mass)];
+                .filter(|r| r.ty == row.name)
+                .filter_map(|r| r.charge);
+            let charge = charges.next();
+            if let Some(q) = charge
+                && charges.any(|other| other != q)
+            {
+                return Err(format!(
+                    "<NonbondedForce> rows for type \"{}\" give different charges",
+                    row.name
+                ));
+            }
+            let mut params = Params::from_pairs(&[("mass", row.mass)]);
             if let Some(q) = charge {
-                numeric.push(("charge", q));
+                params.set("charge", q);
             }
-            atom.def_atomtype(&row.name, &numeric);
             // type_ / class_ / element / def_ are string params used by typifiers.
-            atom.set_type_str_param(&row.name, "type_", &row.name);
-            if let Some(ref class) = row.class {
-                atom.set_type_str_param(&row.name, "class_", class);
+            params.set_str("type_", &row.name);
+            let strings = [
+                ("class_", &row.class),
+                ("element", &row.element),
+                ("def_", &row.def),
+                ("desc", &row.desc),
+                ("overrides", &row.overrides),
+            ];
+            for (key, value) in strings {
+                if let Some(value) = value {
+                    params.set_str(key, value);
+                }
             }
-            if let Some(ref element) = row.element {
-                atom.set_type_str_param(&row.name, "element", element);
-            }
-            if let Some(ref def) = row.def {
-                atom.set_type_str_param(&row.name, "def_", def);
-            }
-            if let Some(ref desc) = row.desc {
-                atom.set_type_str_param(&row.name, "desc", desc);
-            }
-            if let Some(ref overrides) = row.overrides {
-                atom.set_type_str_param(&row.name, "overrides", overrides);
-            }
+            atom.def_type(&row.name, &[], params)
+                .map_err(|e| e.to_string())?;
         }
     }
 
     if !nonbonded.is_empty() {
-        let lj = ff.def_pairstyle("lj/cut", &[]);
+        let mut lj_params = Params::new();
         if let Some(rule) = combining_rule {
             Mixing::parse(rule).map_err(|e| format!("<ForceField combining_rule>: {e}"))?;
-            lj.params.set_str("mixing", rule);
+            lj_params.set_str("mixing", rule);
         }
+        let lj = ff
+            .def_style("pair", "lj/cut", lj_params)
+            .map_err(|e| e.to_string())?;
         for r in nonbonded {
-            lj.def_pairtype(&r.ty, None, &[("epsilon", r.epsilon), ("sigma", r.sigma)]);
+            lj.def_type(
+                &r.ty,
+                &[&r.ty],
+                Params::from_pairs(&[("epsilon", r.epsilon), ("sigma", r.sigma)]),
+            )
+            .map_err(|e| e.to_string())?;
         }
-        ff.def_pairstyle(
+        ff.def_style(
+            "pair",
             "coul/cut",
-            &[("coulomb", COULOMB_REAL), ("dielectric", VACUUM_DIELECTRIC)],
-        );
+            Params::from_pairs(&[("coulomb", COULOMB_REAL), ("dielectric", VACUUM_DIELECTRIC)]),
+        )
+        .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -259,11 +284,14 @@ fn build_nonbonded(
 /// Class-only bond/angle endpoints need a placeholder AtomType with
 /// ``type_="*"`` and ``class_=<class>`` so TypeClassIndex / class-keyed
 /// matching can resolve them (molpy XML reader parity).
-fn ensure_class_wildcards(ff: &mut ForceField, atom_rows: &[AtomTypeRow]) {
-    use std::collections::HashSet;
+///
+/// Placeholders are inserted in ascending class-name order (byte-wise `str`
+/// ordering), so the resulting atom-type order is identical on every read.
+fn ensure_class_wildcards(ff: &mut ForceField, atom_rows: &[AtomTypeRow]) -> Result<(), String> {
+    use std::collections::{BTreeSet, HashSet};
 
     let real_names: HashSet<String> = atom_rows.iter().map(|r| r.name.clone()).collect();
-    let mut endpoint_classes: HashSet<String> = HashSet::new();
+    let mut endpoint_classes: BTreeSet<String> = BTreeSet::new();
 
     // Classes declared on AtomTypes that are not themselves type names.
     for row in atom_rows {
@@ -298,27 +326,25 @@ fn ensure_class_wildcards(ff: &mut ForceField, atom_rows: &[AtomTypeRow]) {
     }
 
     if endpoint_classes.is_empty() {
-        return;
+        return Ok(());
     }
 
     // Prefer the existing "full" atom style; create one only if needed.
     if ff.get_style("atom", "full").is_none() && ff.get_styles("atom").is_empty() {
-        ff.def_atomstyle("full");
+        ff.def_style("atom", "full", Params::new())
+            .map_err(|e| e.to_string())?;
     }
     let style_name = if ff.get_style("atom", "full").is_some() {
         "full".to_owned()
     } else {
         ff.get_styles("atom")
             .first()
-            .map(|s| s.name.clone())
+            .map(|s| s.name().to_owned())
             .unwrap_or_else(|| "full".to_owned())
     };
-    if ff.get_style("atom", &style_name).is_none() {
-        ff.def_atomstyle(&style_name);
-    }
     let atom = ff
-        .get_style_mut("atom", &style_name)
-        .expect("atom style just ensured");
+        .def_style("atom", &style_name, Params::new())
+        .map_err(|e| e.to_string())?;
 
     for class_name in endpoint_classes {
         if real_names.contains(&class_name) {
@@ -327,15 +353,17 @@ fn ensure_class_wildcards(ff: &mut ForceField, atom_rows: &[AtomTypeRow]) {
         if atom.get_atomtype(&class_name).is_some() {
             continue;
         }
-        atom.def_atomtype(&class_name, &[]);
+        atom.def_type(&class_name, &[], Params::new())
+            .map_err(|e| e.to_string())?;
         atom.set_type_str_param(&class_name, "type_", "*");
         atom.set_type_str_param(&class_name, "class_", &class_name);
     }
+    Ok(())
 }
 
 /// OpenMM packs use either `classN` (chemical class) or `typeN` (atom type name).
-/// Missing both falls back to the wildcard ``*`` so incomplete writers
-/// (e.g. moltemplate XML without endpoint labels) still round-trip.
+/// Missing both falls back to the wildcard ``*`` so XML written without
+/// endpoint labels still round-trips.
 fn class_or_type<'a>(node: &'a Node, n: usize) -> Result<&'a str, String> {
     let class_key = format!("class{n}");
     let type_key = format!("type{n}");
@@ -346,7 +374,9 @@ fn class_or_type<'a>(node: &'a Node, n: usize) -> Result<&'a str, String> {
 }
 
 fn parse_bonds(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
-    let style = ff.def_bondstyle("harmonic");
+    let style = ff
+        .def_style("bond", "harmonic", Params::new())
+        .map_err(|e| e.to_string())?;
     for b in sec.children().filter(Node::is_element) {
         require_tag(&b, "Bond")?;
         let c1 = class_or_type(&b, 1)?;
@@ -354,13 +384,21 @@ fn parse_bonds(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
         let r0 = require_f64(&b, "length")? * NM_TO_ANGSTROM;
         // kJ/mol/nm² → kcal/mol/Å² : ÷4.184 (energy) ÷100 (nm²→Å²). Same ½ form.
         let k = require_f64(&b, "k")? / (KJ_PER_KCAL * 100.0);
-        style.def_bondtype(c1, c2, &[("k", k), ("r0", r0)]);
+        style
+            .def_type(
+                TypeName::join(&[c1, c2])?.as_str(),
+                &[c1, c2],
+                Params::from_pairs(&[("k", k), ("r0", r0)]),
+            )
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
 fn parse_angles(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
-    let style = ff.def_anglestyle("harmonic");
+    let style = ff
+        .def_style("angle", "harmonic", Params::new())
+        .map_err(|e| e.to_string())?;
     for a in sec.children().filter(Node::is_element) {
         require_tag(&a, "Angle")?;
         let c1 = class_or_type(&a, 1)?;
@@ -368,13 +406,21 @@ fn parse_angles(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
         let c3 = class_or_type(&a, 3)?;
         let theta0 = require_f64(&a, "angle")?; // already radians
         let k = require_f64(&a, "k")? / KJ_PER_KCAL; // kJ/mol/rad² → kcal/mol/rad²
-        style.def_angletype(c1, c2, c3, &[("k", k), ("theta0", theta0)]);
+        style
+            .def_type(
+                TypeName::join(&[c1, c2, c3])?.as_str(),
+                &[c1, c2, c3],
+                Params::from_pairs(&[("k", k), ("theta0", theta0)]),
+            )
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
 fn parse_dihedrals(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
-    let style = ff.def_dihedralstyle("opls");
+    let style = ff
+        .def_style("dihedral", "opls", Params::new())
+        .map_err(|e| e.to_string())?;
     for d in sec.children().filter(Node::is_element) {
         require_tag(&d, "Proper")?;
         let c1 = require_str(&d, "class1")?;
@@ -389,14 +435,16 @@ fn parse_dihedrals(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
             opt_f64(&d, "c4")?.unwrap_or(0.0),
             opt_f64(&d, "c5")?.unwrap_or(0.0),
         ];
-        let [f1, f2, f3, f4] = rb_to_opls(rb);
-        style.def_dihedraltype(
-            c1,
-            c2,
-            c3,
-            c4,
-            &[("k1", f1), ("k2", f2), ("k3", f3), ("k4", f4)],
-        );
+        let [f1, f2, f3, f4] = rb_to_opls(rb)
+            .map_err(|e| format!("RBTorsionForce {c1}-{c2}-{c3}-{c4}: {e}"))?
+            .map(|f| f / KJ_PER_KCAL);
+        style
+            .def_type(
+                TypeName::join(&[c1, c2, c3, c4])?.as_str(),
+                &[c1, c2, c3, c4],
+                Params::from_pairs(&[("k1", f1), ("k2", f2), ("k3", f3), ("k4", f4)]),
+            )
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -405,7 +453,9 @@ fn parse_dihedrals(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
 /// ``c0..c3`` in kJ/mol (not the OpenMM k/periodicity/phase form). Convert
 /// to kcal/mol ``f1..f4`` on the `opls` dihedral style.
 fn parse_periodic_torsions(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
-    let style = ff.def_dihedralstyle("opls");
+    let style = ff
+        .def_style("dihedral", "opls", Params::new())
+        .map_err(|e| e.to_string())?;
     for d in sec.children().filter(Node::is_element) {
         if d.tag_name().name() != "Proper" {
             // Improper children under PeriodicTorsionForce are rare; skip.
@@ -420,45 +470,15 @@ fn parse_periodic_torsions(ff: &mut ForceField, sec: &Node) -> Result<(), String
         let f2 = opt_f64(&d, "c1")?.unwrap_or(0.0) / KJ_PER_KCAL;
         let f3 = opt_f64(&d, "c2")?.unwrap_or(0.0) / KJ_PER_KCAL;
         let f4 = opt_f64(&d, "c3")?.unwrap_or(0.0) / KJ_PER_KCAL;
-        style.def_dihedraltype(
-            c1,
-            c2,
-            c3,
-            c4,
-            &[("k1", f1), ("k2", f2), ("k3", f3), ("k4", f4)],
-        );
+        style
+            .def_type(
+                TypeName::join(&[c1, c2, c3, c4])?.as_str(),
+                &[c1, c2, c3, c4],
+                Params::from_pairs(&[("k1", f1), ("k2", f2), ("k3", f3), ("k4", f4)]),
+            )
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
-}
-
-/// Convert Ryckaert–Bellemans coefficients `[c0..c5]` (kJ/mol) to OPLS 4-cosine
-/// Fourier coefficients `[f1, f2, f3, f4]` (kcal/mol).
-///
-/// The OPLS torsion is
-/// `V = ½[F1(1+cosφ) + F2(1−cos2φ) + F3(1+cos3φ) + F4(1−cos4φ)]`, the RB form is
-/// `V = Σ Cₙ(cosψ)ⁿ`, ψ = φ − π. GROMACS manual Eqs. 200–201 give the exact
-/// analytic inversion (independent of `c0` and `c5`):
-///
-/// ```text
-/// F1 = −2·C1 − 1.5·C3
-/// F2 =   −C2 −     C4
-/// F3 =        −0.5·C3
-/// F4 =       −0.25·C4
-/// ```
-///
-/// The kJ/mol → kcal/mol factor (÷ 4.184) is applied here, matching molpy's
-/// `rb_to_opls(..., units="kJ")`.
-fn rb_to_opls([_c0, c1, c2, c3, c4, _c5]: [f64; 6]) -> [f64; 4] {
-    let f1 = -2.0 * c1 - 1.5 * c3;
-    let f2 = -c2 - c4;
-    let f3 = -0.5 * c3;
-    let f4 = -0.25 * c4;
-    [
-        f1 / KJ_PER_KCAL,
-        f2 / KJ_PER_KCAL,
-        f3 / KJ_PER_KCAL,
-        f4 / KJ_PER_KCAL,
-    ]
 }
 
 // --- attribute helpers (total: missing/malformed → Err) -------------------
@@ -535,18 +555,49 @@ mod tests {
   </NonbondedForce>
 </ForceField>"#;
 
+    /// `<RBTorsionForce>` with the given `c0..c5` (kJ/mol) on Br-C-CT-HC.
+    fn rb_row(c: [&str; 6]) -> String {
+        format!(
+            r#"<ForceField name="x"><RBTorsionForce>
+    <Proper class1="Br" class2="C" class3="CT" class4="HC" c0="{}" c1="{}" c2="{}" c3="{}" c4="{}" c5="{}"/>
+</RBTorsionForce></ForceField>"#,
+            c[0], c[1], c[2], c[3], c[4], c[5]
+        )
+    }
+
+    /// C5 = 0.1 kJ/mol with ΣC = 0 (C0 = −0.1): cos⁵ has no OPLS Fourier
+    /// counterpart, so the row is refused rather than silently dropped.
     #[test]
-    fn rb_to_opls_matches_gromacs_inversion() {
-        // c1=2.25936, c3=-3.01248 (kJ); others 0.
-        let [f1, f2, f3, f4] = rb_to_opls([0.75312, 2.25936, 0.0, -3.01248, 0.0, 0.0]);
-        // F1 = -2*c1 - 1.5*c3 = -4.51872 + 4.51872 = 0  → /4.184 = 0
-        assert!((f1 - 0.0).abs() < 1e-12, "f1 {f1}");
-        // F2 = -c2 - c4 = 0
-        assert!((f2 - 0.0).abs() < 1e-12, "f2 {f2}");
-        // F3 = -0.5*c3 = 1.50624 kJ → /4.184 = 0.360 kcal
-        assert!((f3 - (1.50624 / 4.184)).abs() < 1e-12, "f3 {f3}");
-        // F4 = -0.25*c4 = 0
-        assert!((f4 - 0.0).abs() < 1e-12, "f4 {f4}");
+    fn rb_row_with_nonzero_c5_is_an_error() {
+        let xml = rb_row(["-0.1", "0.0", "0.0", "0.0", "0.0", "0.1"]);
+        let err = OplsXmlReader::new()
+            .read_str(&xml)
+            .expect_err("C5 = 0.1 is not representable");
+        assert!(
+            err.contains("0.1"),
+            "error should name the coefficients: {err}"
+        );
+    }
+
+    /// ΣC = 1 kJ/mol is a constant offset the OPLS form (V(180°) = 0) cannot
+    /// hold, so the row is refused rather than silently dropped.
+    #[test]
+    fn rb_row_with_nonzero_sum_is_an_error() {
+        let xml = rb_row(["1.0", "0.0", "0.0", "0.0", "0.0", "0.0"]);
+        assert!(OplsXmlReader::new().read_str(&xml).is_err());
+    }
+
+    /// The MINI row (ΣC = 0.75312 + 2.25936 − 3.01248 = 0) is representable:
+    /// F3 = 3.01248/2 = 1.50624 kJ/mol ÷ 4.184 = 0.36 kcal/mol, F1 = F2 = F4 = 0.
+    #[test]
+    fn representable_rb_row_reads_as_opls_fourier_terms_in_kcal() {
+        let ff = OplsXmlReader::new().read_str(MINI).unwrap();
+        let dih = ff.get_style("dihedral", "opls").unwrap();
+        let p = &dihedral_types(dih)[0].params;
+        for (key, want) in [("k1", 0.0), ("k2", 0.0), ("k3", 0.36), ("k4", 0.0)] {
+            let got = p.get(key).unwrap();
+            assert!((got - want).abs() < 1e-12, "{key}: got {got}, want {want}");
+        }
     }
 
     #[test]
@@ -626,8 +677,82 @@ mod tests {
         assert!(err.contains("unknown OPLS section"), "err: {err}");
     }
 
+    /// Two `<NonbondedForce>` rows for one type with different charges: the
+    /// per-type charge is ambiguous, so the read fails and names the type
+    /// rather than silently keeping the first row.
+    #[test]
+    fn conflicting_nonbonded_charges_for_one_type_error() {
+        let row = r#"    <Atom type="opls_001" charge="0.5" sigma="0.375" epsilon="0.43932"/>
+"#;
+        assert_eq!(MINI.matches(row).count(), 1, "fixture edit must be unique");
+        let xml = MINI.replacen(
+            row,
+            r#"    <Atom type="opls_001" charge="0.5" sigma="0.375" epsilon="0.43932"/>
+    <Atom type="opls_001" charge="0.25" sigma="0.375" epsilon="0.43932"/>
+"#,
+            1,
+        );
+        let err = OplsXmlReader::new().read_str(&xml).unwrap_err();
+        assert!(
+            err.contains("opls_001"),
+            "error should name the type: {err}"
+        );
+        assert!(err.contains("charge"), "error should mention charge: {err}");
+    }
+
+    /// Class-only bond endpoints get one `type_="*"` placeholder AtomType per
+    /// class. The contract: placeholders are appended in ascending class-name
+    /// order, identically on every read (no HashSet iteration order leaking
+    /// into the ForceField). Ten classes, listed in a deliberately unsorted
+    /// order, so a coincidentally sorted hash order is ~1/10! per read; the
+    /// 20 repeated reads each get a freshly seeded `RandomState`.
+    #[test]
+    fn class_wildcard_placeholders_are_sorted_by_class_name() {
+        let xml = r#"<ForceField name="x">
+  <AtomTypes>
+    <Type name="opls_900" class="opls_900" element="C" mass="12.011"/>
+  </AtomTypes>
+  <HarmonicBondForce>
+    <Bond class1="zz" class2="CT" length="0.1" k="1.0"/>
+    <Bond class1="OH" class2="a1" length="0.1" k="1.0"/>
+    <Bond class1="Q9" class2="br" length="0.1" k="1.0"/>
+    <Bond class1="M" class2="cl" length="0.1" k="1.0"/>
+    <Bond class1="HC" class2="Na" length="0.1" k="1.0"/>
+  </HarmonicBondForce>
+</ForceField>"#;
+        // Byte-wise (String Ord) ascending order, written out by hand.
+        let expected: Vec<&str> = vec!["CT", "HC", "M", "Na", "OH", "Q9", "a1", "br", "cl", "zz"];
+
+        let placeholder_names = |text: &str| -> Vec<String> {
+            let ff = OplsXmlReader::new().read_str(text).unwrap();
+            let atom = ff.get_style("atom", "full").unwrap();
+            atom_types(atom)
+                .iter()
+                .filter(|t| t.params.get_str("type_") == Some("*"))
+                .map(|t| t.name.clone())
+                .collect()
+        };
+
+        let first = placeholder_names(xml);
+        assert_eq!(first, expected, "placeholders not in ascending class order");
+
+        for i in 0..20 {
+            let again = placeholder_names(xml);
+            assert_eq!(
+                again, first,
+                "read #{i} produced a different placeholder order"
+            );
+        }
+    }
+
     // -- small helpers to reach into StyleDefs for assertions --
-    use crate::ff::forcefield::{AngleType, DihedralType, Style, StyleDefs};
+    use crate::ff::forcefield::{AngleType, AtomType, DihedralType, Style, StyleDefs};
+    fn atom_types(s: &Style) -> &[AtomType] {
+        match &s.defs {
+            StyleDefs::Atom(v) => v,
+            _ => unreachable!(),
+        }
+    }
     fn angle_types(s: &Style) -> &[AngleType] {
         match &s.defs {
             StyleDefs::Angle(v) => v,

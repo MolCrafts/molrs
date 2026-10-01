@@ -18,22 +18,24 @@
 //! MMFF scales the 1-4 **electrostatic** interaction by 0.75 and does **not**
 //! scale the 1-4 **van der Waals** interaction at all (Halgren 1996; RDKit
 //! `Nonbonded.cpp`). Both weights arrive through [`SpecialBonds`], which
-//! [`Style::to_potential`] projects into the pair params as `coulomb14scale` /
+//! [`PotentialCompiler::compile`] projects into the pair params as `coulomb14scale` /
 //! `lj14scale` — so neither kernel hardcodes a scale factor.
 //!
 //! [`SpecialBonds`]: crate::ff::forcefield::SpecialBonds
-//! [`Style::to_potential`]: crate::ff::forcefield::Style::to_potential
+//! [`PotentialCompiler::compile`]: crate::ff::potential::PotentialCompiler::compile
 
+use molrs::store::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
 use crate::ff::mmff::da::{DA_ACCEPTOR, DA_DONOR, DA_NEITHER};
 use crate::ff::potential::gather_copies;
-use crate::ff::potential::geometry::{mag3, sub3, validate_coords};
+use crate::ff::potential::geometry::{sub3, validate_coords};
 use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::{Member, PairDriven, Potential};
+use crate::op::vec3::norm;
 use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
@@ -118,7 +120,7 @@ impl MMFFVdW {
 
     /// The pair term for one already-reduced separation (Halgren buffered 14-7).
     fn pair_kernel(&self, d: [F; 3], rs: F, eps: F) -> Option<(F, [F; 3])> {
-        let r = mag3(d);
+        let r = norm(d);
         if r < 1e-12 as F {
             return None;
         }
@@ -394,7 +396,7 @@ fn vdw_combining(pi: &VdwAtomParams, pj: &VdwAtomParams, sp: &VdwStyleParams) ->
 /// Build the buffered-14-7 van der Waals potential.
 ///
 /// Style params (`sp`, from `<VdWParams>`): `B`, `Beta`, `DARAD`, `DAEPS`, plus
-/// the `lj14scale` weight [`Style::to_potential`] projects out of the force
+/// the `lj14scale` weight [`PotentialCompiler::compile`] projects out of the force
 /// field's [`SpecialBonds`]. Type params (`tp`, from `<VdW>`): `alpha`, `n_eff`,
 /// `a_i`, `g_i`, `da`.
 ///
@@ -408,16 +410,16 @@ fn vdw_combining(pi: &VdwAtomParams, pj: &VdwAtomParams, sp: &VdwStyleParams) ->
 /// *does* scale can reuse this kernel, and so the 1.0 is visible as a choice.
 ///
 /// [`SpecialBonds`]: crate::ff::forcefield::SpecialBonds
-/// [`Style::to_potential`]: crate::ff::forcefield::Style::to_potential
+/// [`PotentialCompiler::compile`]: crate::ff::potential::PotentialCompiler::compile
 pub fn mmff_vdw_ctor(sp: &Params, tp: &[(&str, &Params)], frame: &Frame) -> Result<Member, String> {
     let style = VdwStyleParams::from_style(sp);
     let lj_14 = sp.get("lj14scale").unwrap_or(1.0) as F;
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
-    let atoms = frame.get("atoms").ok_or("mmff_vdw: missing \"atoms\"")?;
+    let atoms = frame.get(ATOMS).ok_or("mmff_vdw: missing \"atoms\"")?;
     let atom_types = atoms
         .get_string("type")
         .ok_or("mmff_vdw: missing atom \"type\"")?;
-    let pairs = frame.get("pairs").ok_or("mmff_vdw: missing \"pairs\"")?;
+    let pairs = frame.get(PAIRS).ok_or("mmff_vdw: missing \"pairs\"")?;
     let ic = pairs.get_uint("atomi").ok_or("missing atomi")?;
     let jc = pairs.get_uint("atomj").ok_or("missing atomj")?;
     let is_14 = pairs.get_bool("is_14");

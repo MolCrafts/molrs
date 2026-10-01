@@ -28,22 +28,17 @@
 //!   the FileFormats `parm.dat` section. We follow FileFormats + OpenMM.
 //! - `%COMMENT` lines are skipped. Section order is free (flag map).
 
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::io::{BufRead, Error, ErrorKind};
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use super::ForceFieldReader;
 use crate::ff::constants::VACUUM_DIELECTRIC;
-use crate::ff::forcefield::{ForceField, SpecialBonds};
+use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::params::amber::{AMBER_COULOMB, AMBER_SCEE, AMBER_SCNB};
+use crate::io::data::prmtop::parse_flag_sections;
+use crate::io::data::prmtop_tables::{parse_a4_names, parse_tokens};
 use crate::math::pair_form::lj_ab_to_sigma_epsilon;
-
-/// Reader default LJ cutoff (Å). A prmtop carries no cutoff (it lives in the
-/// mdin); this is not file data.
-const DEFAULT_CUTOFF_LJ: f64 = 9.0;
-/// Reader default Coulomb cutoff (Å). A prmtop carries no cutoff (it lives in
-/// the mdin); this is not file data.
-const DEFAULT_CUTOFF_COUL: f64 = 10.0;
+use molrs::store::type_labels::TypeName;
 
 /// `(type_name, sigma_Å, epsilon_kcal_per_mol)` for one self LJ type.
 type LjSelfRow = (String, f64, f64);
@@ -75,84 +70,6 @@ pub fn read_amber_prmtop_ff(path: impl AsRef<Path>) -> Result<ForceField, String
     let text = std::fs::read_to_string(path.as_ref())
         .map_err(|e| format!("read {}: {e}", path.as_ref().display()))?;
     AmberPrmtopFfReader::new().read_str(&text)
-}
-
-// ---------------------------------------------------------------------------
-// Section parse
-// ---------------------------------------------------------------------------
-
-fn parse_flag_sections<R: BufRead>(mut reader: R) -> std::io::Result<HashMap<String, Vec<String>>> {
-    let mut sections: HashMap<String, Vec<String>> = HashMap::new();
-    let mut flag: Option<String> = None;
-    let mut data: Vec<String> = Vec::new();
-    let mut buf = String::new();
-
-    loop {
-        buf.clear();
-        let n = reader.read_line(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        let line = buf.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if line.starts_with("%FLAG") {
-            if let Some(f) = flag.take() {
-                sections
-                    .entry(f)
-                    .or_default()
-                    .extend(std::mem::take(&mut data));
-            }
-            let name = line
-                .split_whitespace()
-                .nth(1)
-                .ok_or_else(|| Error::new(ErrorKind::InvalidData, "malformed %FLAG"))?
-                .to_string();
-            flag = Some(name);
-            data = Vec::new();
-        } else if line.starts_with("%FORMAT")
-            || line.starts_with("%VERSION")
-            || line.starts_with("%COMMENT")
-        {
-            // ignore
-        } else {
-            data.push(line.to_string());
-        }
-    }
-    if let Some(f) = flag {
-        sections.entry(f).or_default().extend(data);
-    }
-    Ok(sections)
-}
-
-fn parse_tokens<T: std::str::FromStr>(lines: &[String]) -> Result<Vec<T>, String>
-where
-    T::Err: std::fmt::Display,
-{
-    let mut out = Vec::new();
-    for line in lines {
-        for tok in line.split_whitespace() {
-            out.push(
-                tok.parse::<T>()
-                    .map_err(|e| format!("token {tok:?}: {e}"))?,
-            );
-        }
-    }
-    Ok(out)
-}
-
-fn a4_names(lines: &[String]) -> Vec<String> {
-    let mut names = Vec::new();
-    for line in lines {
-        let mut i = 0;
-        while i < line.len() {
-            let end = (i + 4).min(line.len());
-            names.push(line[i..end].trim().to_string());
-            i += 4;
-        }
-    }
-    names
 }
 
 fn section_f64(sections: &HashMap<String, Vec<String>>, key: &str) -> Result<Vec<f64>, String> {
@@ -226,8 +143,12 @@ fn first_name_for_type(atom_types: &[String], type_index: &[i64], itype: i64) ->
     format!("type{itype}")
 }
 
-/// Full-ICO LJ decode: self terms in first-appearance name order; off-diagonal
+/// Full-ICO LJ decode: one self term per atom, in atom order; off-diagonal
 /// entries must match Lorentz–Berthelot or the topology is refused.
+///
+/// Atoms sharing a type name share its LJ class (the atom-type definition
+/// makes a second class under one name a `TypeConflict`), so their rows are
+/// equal and the definition rule collapses them to one pair type.
 fn decode_lj_types(
     n_types: usize,
     atom_types: &[String],
@@ -283,10 +204,9 @@ fn decode_lj_types(
             }
         }
     }
-    let mut seen: HashSet<String> = HashSet::new();
     let mut out = Vec::new();
     for (i, name) in atom_types.iter().enumerate() {
-        if name.is_empty() || !seen.insert(name.clone()) {
+        if name.is_empty() {
             continue;
         }
         let itype = type_index.get(i).copied().unwrap_or(1) as usize;
@@ -315,7 +235,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
 
     let mut atom_types = sections
         .get("AMBER_ATOM_TYPE")
-        .map(|l| a4_names(l))
+        .map(|l| parse_a4_names(l))
         .unwrap_or_default();
     if atom_types.len() > n_atom {
         atom_types.truncate(n_atom);
@@ -323,13 +243,18 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     while atom_types.len() < n_atom {
         atom_types.push(String::new());
     }
+    let type_name = |atom: usize| atom_types.get(atom).map(String::as_str).unwrap_or_default();
 
     let masses: Vec<f64> = sections
         .get("MASS")
         .map(|l| parse_tokens(l))
         .transpose()?
         .unwrap_or_default();
-    let type_index: Vec<i64> = section_i64(sections, "ATOM_TYPE_INDEX")?;
+    let type_index: Vec<i64> = parse_tokens(
+        sections
+            .get("ATOM_TYPE_INDEX")
+            .ok_or_else(|| "%FLAG ATOM_TYPE_INDEX section missing".to_string())?,
+    )?;
 
     if sections.contains_key("LENNARD_JONES_CCOEF") {
         return Err("12-6-4 Lennard-Jones prmtop files are not supported".into());
@@ -342,29 +267,43 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     let scnb = section_f64(sections, "SCNB_SCALE_FACTOR")?;
 
     let mut ff = ForceField::new("AMBER");
+    // prmtop stores Å, kcal/mol and e: LAMMPS `real`.
+    ff.set_units("real");
 
-    // Atom types (unique by name; id from ATOM_TYPE_INDEX).
+    // Atom types: one per name; id from ATOM_TYPE_INDEX (the LJ class). Every
+    // atom defines its type, so two atoms of one name with a different class
+    // or mass are a TypeConflict.
     {
-        let style = ff.def_atomstyle("full");
-        let mut seen: HashSet<String> = HashSet::new();
+        let style = ff
+            .def_style("atom", "full", Params::new())
+            .map_err(|e| e.to_string())?;
         for (i, name) in atom_types.iter().enumerate() {
-            if name.is_empty() || !seen.insert(name.clone()) {
+            if name.is_empty() {
                 continue;
             }
-            let id = type_index.get(i).copied().unwrap_or((i + 1) as i64) as f64;
+            let id = type_index
+                .get(i)
+                .copied()
+                .ok_or_else(|| format!("ATOM_TYPE_INDEX has no entry for atom {}", i + 1))?
+                as f64;
             let mass = masses.get(i).copied().unwrap_or(0.0);
-            style.def_atomtype(name, &[("id", id), ("mass", mass)]);
+            style
+                .def_type(name, &[], Params::from_pairs(&[("id", id), ("mass", mass)]))
+                .map_err(|e| e.to_string())?;
         }
     }
 
-    // Bonds: unique by sorted endpoint type names; k = 2·RK (LAMMPS→molrs map).
+    // Bonds: one type per endpoint type pair in `TypeName::orient`'s spelling;
+    // k = 2·RK (LAMMPS→molrs map). Every bond row defines its type, so two
+    // rows under one name with different k/r0 are a TypeConflict.
     let bond_k = section_f64(sections, "BOND_FORCE_CONSTANT")?;
     let bond_r0 = section_f64(sections, "BOND_EQUIL_VALUE")?;
     let mut bond_ptrs = section_i64(sections, "BONDS_INC_HYDROGEN")?;
     bond_ptrs.extend(section_i64(sections, "BONDS_WITHOUT_HYDROGEN")?);
     {
-        let style = ff.def_bondstyle("harmonic");
-        let mut seen: HashSet<String> = HashSet::new();
+        let style = ff
+            .def_style("bond", "harmonic", Params::new())
+            .map_err(|e| e.to_string())?;
         for chunk in bond_ptrs.as_chunks::<3>().0 {
             let a = chunk[0];
             let b = chunk[1];
@@ -374,33 +313,29 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
             let i = (a / 3) as usize;
             let j = (b / 3) as usize;
             let tid = (chunk[2] - 1) as usize;
-            let mut ends = [
-                atom_types.get(i).cloned().unwrap_or_default(),
-                atom_types.get(j).cloned().unwrap_or_default(),
-            ];
-            ends.sort();
-            let name = format!("{}-{}", ends[0], ends[1]);
-            if !seen.insert(name.clone()) {
-                continue;
-            }
+            let ends = TypeName::orient(&[type_name(i), type_name(j)]);
             let k = 2.0 * bond_k.get(tid).copied().unwrap_or(0.0);
             let r0 = bond_r0.get(tid).copied().unwrap_or(0.0);
-            style.def_bondtype(
-                &ends[0],
-                &ends[1],
-                &[("k", k), ("r0", r0), ("id", (tid + 1) as f64)],
-            );
+            style
+                .def_type(
+                    TypeName::join(&ends)?.as_str(),
+                    &ends,
+                    Params::from_pairs(&[("k", k), ("r0", r0)]),
+                )
+                .map_err(|e| e.to_string())?;
         }
     }
 
-    // Angles: k = 2·TK, theta0 already radians in prmtop.
+    // Angles: k = 2·TK, theta0 already radians in prmtop. As for bonds, every
+    // angle row defines its type.
     let angle_k = section_f64(sections, "ANGLE_FORCE_CONSTANT")?;
     let angle_eq = section_f64(sections, "ANGLE_EQUIL_VALUE")?;
     let mut angle_ptrs = section_i64(sections, "ANGLES_INC_HYDROGEN")?;
     angle_ptrs.extend(section_i64(sections, "ANGLES_WITHOUT_HYDROGEN")?);
     {
-        let style = ff.def_anglestyle("harmonic");
-        let mut seen: HashSet<String> = HashSet::new();
+        let style = ff
+            .def_style("angle", "harmonic", Params::new())
+            .map_err(|e| e.to_string())?;
         for chunk in angle_ptrs.as_chunks::<4>().0 {
             let a = chunk[0];
             let b = chunk[1];
@@ -412,24 +347,16 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
             let j = (b / 3) as usize;
             let k_idx = (c / 3) as usize;
             let tid = (chunk[3] - 1) as usize;
-            let mut ends_ik = [
-                atom_types.get(i).cloned().unwrap_or_default(),
-                atom_types.get(k_idx).cloned().unwrap_or_default(),
-            ];
-            ends_ik.sort();
-            let jname = atom_types.get(j).cloned().unwrap_or_default();
-            let name = format!("{}-{}-{}", ends_ik[0], jname, ends_ik[1]);
-            if !seen.insert(name) {
-                continue;
-            }
+            let ends = TypeName::orient(&[type_name(i), type_name(j), type_name(k_idx)]);
             let k = 2.0 * angle_k.get(tid).copied().unwrap_or(0.0);
             let theta0 = angle_eq.get(tid).copied().unwrap_or(0.0);
-            style.def_angletype(
-                &ends_ik[0],
-                &jname,
-                &ends_ik[1],
-                &[("k", k), ("theta0", theta0), ("id", (tid + 1) as f64)],
-            );
+            style
+                .def_type(
+                    TypeName::join(&ends)?.as_str(),
+                    &ends,
+                    Params::from_pairs(&[("k", k), ("theta0", theta0)]),
+                )
+                .map_err(|e| e.to_string())?;
         }
     }
 
@@ -471,15 +398,15 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
             used_tids.extend(expand_multiterm_tids(tid, &dih_per));
         }
 
-        let mut i_name = atom_types.get(i).cloned().unwrap_or_default();
-        let mut j_name = atom_types.get(j).cloned().unwrap_or_default();
-        let mut k_name = atom_types.get(k_idx).cloned().unwrap_or_default();
-        let mut l_name = atom_types.get(l).cloned().unwrap_or_default();
-        if j_name > k_name {
-            std::mem::swap(&mut j_name, &mut k_name);
-            std::mem::swap(&mut i_name, &mut l_name);
+        let mut quartet = [type_name(i), type_name(j), type_name(k_idx), type_name(l)];
+        // A proper torsion reads the same backwards, so it is stored in one
+        // orientation (`TypeName::orient`'s, the frame reader's too). An
+        // improper does not: AMBER puts its central atom third, and reversing
+        // it would move the centre to second place.
+        if !is_improper && TypeName::reads_reversed(&quartet) {
+            quartet.reverse();
         }
-        let name = format!("{i_name}-{j_name}-{k_name}-{l_name}");
+        let name = TypeName::join(&quartet)?.to_string();
         let table = if is_improper {
             &mut improper
         } else {
@@ -487,7 +414,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
         };
         let entry = table
             .entry(name)
-            .or_insert_with(|| ([i_name, j_name, k_name, l_name], BTreeMap::new()));
+            .or_insert_with(|| (quartet.map(str::to_owned), BTreeMap::new()));
 
         // Multiterm: FileFormats — negative PN means the *next* PK/PN/PHASE
         // entries continue this torsion until a positive PN is seen.
@@ -511,30 +438,44 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     });
 
     {
-        let style = ff.def_dihedralstyle("fourier");
+        let style = ff
+            .def_style("dihedral", "fourier", Params::new())
+            .map_err(|e| e.to_string())?;
         for (handles, terms) in proper.values() {
             let owned = terms_to_fourier_params(terms);
             let refs: Vec<(&str, f64)> = owned.iter().map(|(k, v)| (k.as_str(), *v)).collect();
-            style.def_dihedraltype(&handles[0], &handles[1], &handles[2], &handles[3], &refs);
+            let ends = [&*handles[0], &*handles[1], &*handles[2], &*handles[3]];
+            style
+                .def_type(
+                    TypeName::join(&ends)?.as_str(),
+                    &ends,
+                    Params::from_pairs(&refs),
+                )
+                .map_err(|e| e.to_string())?;
         }
     }
 
     if !improper.is_empty() {
-        let style = ff.def_improperstyle("periodic");
+        let style = ff
+            .def_style("improper", "periodic", Params::new())
+            .map_err(|e| e.to_string())?;
         for (handles, terms) in improper.values() {
             let (k, n, d) = terms.values().next().copied().unwrap_or((0.0, 0.0, 0.0));
-            style.def_impropertype(
-                &handles[0],
-                &handles[1],
-                &handles[2],
-                &handles[3],
-                &[("k", k), ("periodicity", n), ("phase", d)],
-            );
+            let ends = [&*handles[0], &*handles[1], &*handles[2], &*handles[3]];
+            style
+                .def_type(
+                    TypeName::join(&ends)?.as_str(),
+                    &ends,
+                    Params::from_pairs(&[("k", k), ("periodicity", n), ("phase", d)]),
+                )
+                .map_err(|e| e.to_string())?;
         }
     }
 
     // Pair LJ from the full ICO matrix. FileFormats:
     // index = ICO[NTYPES*(IAC(i)-1) + IAC(j)] (1-based Fortran).
+    // Neither pair style gets a `cutoff`: a prmtop carries none (it lives in
+    // the mdin), so the caller declares it.
     let acoef = section_f64(sections, "LENNARD_JONES_ACOEF")?;
     let bcoef = section_f64(sections, "LENNARD_JONES_BCOEF")?;
     let nb_index = section_i64(sections, "NONBONDED_PARM_INDEX")?;
@@ -552,19 +493,28 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
 
     let rows = decode_lj_types(n_types, &atom_types, &type_index, &nb_index, &acoef, &bcoef)?;
     {
-        let style = ff.def_pairstyle("lj/cut", &[("cutoff", DEFAULT_CUTOFF_LJ)]);
+        let style = ff
+            .def_style("pair", "lj/cut", Params::new())
+            .map_err(|e| e.to_string())?;
         for (tname, sigma, epsilon) in &rows {
-            style.def_pairtype(tname, None, &[("epsilon", *epsilon), ("sigma", *sigma)]);
+            style
+                .def_type(
+                    tname,
+                    &[tname],
+                    Params::from_pairs(&[("epsilon", *epsilon), ("sigma", *sigma)]),
+                )
+                .map_err(|e| e.to_string())?;
         }
     }
-    ff.def_pairstyle(
+    ff.def_style(
+        "pair",
         "coul/cut",
-        &[
+        Params::from_pairs(&[
             ("coulomb", AMBER_COULOMB),
             ("dielectric", VACUUM_DIELECTRIC),
-            ("cutoff", DEFAULT_CUTOFF_COUL),
-        ],
-    );
+        ]),
+    )
+    .map_err(|e| e.to_string())?;
 
     Ok(ff)
 }
@@ -602,8 +552,6 @@ fn terms_to_fourier_params(terms: &BTreeMap<i64, (f64, f64, f64)>) -> Vec<(Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::forcefield::writers::ForceFieldWriter;
-    use crate::ff::forcefield::writers::lammps::{LammpsFfWriter, LammpsWriteOptions};
 
     #[test]
     fn empty_prmtop_errors() {
@@ -723,13 +671,6 @@ c3  c3  c3  hc
        0       3       6       9       1
 ";
 
-    /// Pre-change `LammpsFfWriter` pair_coeff lines for [`GAFF_MINI`]
-    /// (precision 6, captured 2026-09-04 from the current reader).
-    const GAFF_MINI_PAIR_COEFF: &[&str] = &[
-        "pair_coeff c3 c3 0.109400 3.399670",
-        "pair_coeff hc hc 0.015700 2.649533",
-    ];
-
     fn read_ff(text: &str) -> ForceField {
         AmberPrmtopFfReader::new()
             .read_str(text)
@@ -757,35 +698,17 @@ c3  c3  c3  hc
         out
     }
 
-    fn pair_coeff_lines(text: &str) -> Vec<&str> {
-        text.lines()
-            .filter(|l| l.starts_with("pair_coeff "))
-            .collect()
-    }
-
     fn rel_close(got: f64, expected: f64, tol: f64) -> bool {
         (got - expected).abs() <= tol * expected.abs()
-    }
-
-    fn write_lammps(ff: &ForceField) -> String {
-        LammpsFfWriter::new()
-            .write_str(ff)
-            .unwrap_or_else(|e| panic!("write_str: {e}"))
-    }
-
-    fn write_lammps_skip_pair_style(ff: &ForceField) -> String {
-        LammpsFfWriter::with_options(LammpsWriteOptions {
-            skip_pair_style: true,
-            ..Default::default()
-        })
-        .write_str(ff)
-        .unwrap_or_else(|e| panic!("write_str: {e}"))
     }
 
     #[test]
     fn pair_styles_are_registered_lj_cut_and_coul_cut() {
         let ff = read_ff(GAFF_MINI);
-        let lj = ff.get_style("pair", "lj/cut").expect("lj/cut pair style");
+        assert!(
+            ff.get_style("pair", "lj/cut").is_some(),
+            "lj/cut pair style"
+        );
         let coul = ff
             .get_style("pair", "coul/cut")
             .expect("coul/cut pair style");
@@ -796,18 +719,20 @@ c3  c3  c3  hc
 
         let coulomb = coul.params.get("coulomb").expect("coulomb");
         let dielectric = coul.params.get("dielectric").expect("dielectric");
-        let coul_cut = coul.params.get("cutoff").expect("coul/cut cutoff");
         assert!(
             (coulomb - 332.052_217_29).abs() < 1e-10,
             "coulomb={coulomb}"
         );
         assert!((dielectric - 1.0).abs() < 1e-12, "dielectric={dielectric}");
-        assert!((coul_cut - 10.0).abs() < 1e-12, "coul cutoff={coul_cut}");
-
-        let lj_cut = lj.params.get("cutoff").expect("lj/cut cutoff");
-        assert!((lj_cut - 9.0).abs() < 1e-12, "lj cutoff={lj_cut}");
 
         for style in ff.get_styles("pair") {
+            // A prmtop carries no cutoff (it lives in the mdin); the caller
+            // declares one.
+            assert!(
+                style.params.get("cutoff").is_none(),
+                "{} carries an invented cutoff",
+                style.name
+            );
             assert!(
                 style.params.get("cutoff_lj").is_none(),
                 "{} still has cutoff_lj",
@@ -830,30 +755,6 @@ c3  c3  c3  hc
             (sb.coul[2] - 1.0 / 1.2).abs() < 1e-12,
             "coul_14={}",
             sb.coul[2]
-        );
-    }
-
-    #[test]
-    fn pair_coeff_text_is_pinned() {
-        let ff = read_ff(GAFF_MINI);
-        let text = write_lammps(&ff);
-        assert_eq!(pair_coeff_lines(&text), GAFF_MINI_PAIR_COEFF);
-
-        let skipped = write_lammps_skip_pair_style(&ff);
-        assert!(
-            !skipped.contains("pair_style"),
-            "skip_pair_style still has pair_style:\n{skipped}"
-        );
-        assert!(
-            !skipped.contains("special_bonds"),
-            "coeff include must not inject Amber 1-4:\n{skipped}"
-        );
-        assert_eq!(pair_coeff_lines(&skipped), GAFF_MINI_PAIR_COEFF);
-
-        assert!(
-            text.lines()
-                .any(|l| l == "pair_style lj/cut/coul/cut 9.000000 10.000000"),
-            "expected pair_style lj/cut/coul/cut 9.000000 10.000000, got:\n{text}"
         );
     }
 
@@ -944,6 +845,23 @@ c3  c3  c3  hc
     }
 
     #[test]
+    fn an_improper_keeps_its_central_atom_third() {
+        // i=C1 (c3), j=H1 (hc), k=C2 (c3, the centre), l=C3 (c3): j > k by
+        // name, which reverses a proper but must not reverse an improper.
+        let text = GAFF_MINI.replace(
+            "       0       3       6       9       1",
+            "       0       9       3      -6       1",
+        );
+        let ff = read_ff(&text);
+        let style = ff
+            .get_style("improper", "periodic")
+            .expect("improper style");
+        let rows = style.type_rows();
+        let names: Vec<&str> = rows.iter().map(|(n, _, _)| n.as_ref()).collect();
+        assert_eq!(names, vec!["c3-hc-c3-c3"]);
+    }
+
+    #[test]
     fn rejects_multiterm_improper() {
         let text = GAFF_MINI
             .replace(
@@ -1029,6 +947,119 @@ c3  c3  c3  hc
                 "unexpected cross pair type {}-{}",
                 pt.itom, pt.jtom
             );
+        }
+    }
+
+    /// `text` with the single occurrence of `from` replaced by `to`.
+    fn replaced_once(text: &str, from: &str, to: &str) -> String {
+        assert_eq!(
+            text.matches(from).count(),
+            1,
+            "fixture edit must be unique: {from:?}"
+        );
+        text.replacen(from, to, 1)
+    }
+
+    /// [`GAFF_MINI`] with a third bond-parameter row equal to row 1
+    /// (`RK = 300`, `r₀ = 1.535`), and the second c3–c3 bond pointing at it.
+    /// Two table rows, one parameter set, one type name.
+    fn gaff_mini_with_equal_bond_rows_under_one_name() -> String {
+        let text = replaced_once(
+            GAFF_MINI,
+            "  3.00000000E+02  3.40000000E+02\n",
+            "  3.00000000E+02  3.40000000E+02  3.00000000E+02\n",
+        );
+        let text = replaced_once(
+            &text,
+            "  1.53500000E+00  1.09000000E+00\n",
+            "  1.53500000E+00  1.09000000E+00  1.53500000E+00\n",
+        );
+        replaced_once(
+            &text,
+            "       0       3       1       3       6       1\n",
+            "       0       3       1       3       6       3\n",
+        )
+    }
+
+    #[test]
+    fn two_bond_rows_with_equal_k_and_r0_under_one_name_define_one_type() {
+        let ff = read_ff(&gaff_mini_with_equal_bond_rows_under_one_name());
+        let c3c3: Vec<_> = ff
+            .get_bondtypes()
+            .into_iter()
+            .filter(|t| t.name == "c3-c3")
+            .collect();
+        assert_eq!(c3c3.len(), 1);
+        // k = 2·RK
+        assert_eq!(c3c3[0].params.get("k"), Some(600.0));
+        assert_eq!(c3c3[0].params.get("r0"), Some(1.535));
+    }
+
+    /// The second c3–c3 bond points at row 2 (`RK = 340`, `r₀ = 1.09`): two
+    /// parameter sets under one type name is a conflict, not a silent
+    /// first-wins drop.
+    #[test]
+    fn two_bond_rows_with_unequal_params_under_one_name_are_an_error() {
+        let text = replaced_once(
+            GAFF_MINI,
+            "       0       3       1       3       6       1\n",
+            "       0       3       1       3       6       2\n",
+        );
+        let err = read_err(&text);
+        assert!(err.contains("c3-c3"), "error should name the type: {err}");
+    }
+
+    /// No `%FLAG ATOM_TYPE_INDEX` at all is a malformed file, reported as a
+    /// missing section, not as a per-atom gap.
+    #[test]
+    fn absent_atom_type_index_section_is_reported_missing() {
+        let err = read_err(&without_flag(GAFF_MINI, "ATOM_TYPE_INDEX"));
+        assert!(
+            err.contains("%FLAG ATOM_TYPE_INDEX"),
+            "error should name the section: {err}"
+        );
+        assert!(err.contains("missing"), "error should say missing: {err}");
+    }
+
+    /// A present `ATOM_TYPE_INDEX` with fewer entries than atoms names the
+    /// first atom lacking an entry, and is a different error from the absent
+    /// section.
+    #[test]
+    fn short_atom_type_index_names_the_atom_without_entry() {
+        let text = replaced_once(
+            GAFF_MINI,
+            "%FLAG ATOM_TYPE_INDEX\n%FORMAT(10I8)\n       1       1       1       2\n",
+            "%FLAG ATOM_TYPE_INDEX\n%FORMAT(10I8)\n       1       1       1\n",
+        );
+        let err = read_err(&text);
+        assert!(err.contains("atom 4"), "error should name atom 4: {err}");
+
+        let missing = read_err(&without_flag(GAFF_MINI, "ATOM_TYPE_INDEX"));
+        assert_ne!(
+            err, missing,
+            "short section and absent section must be distinct errors"
+        );
+    }
+
+    /// The bond table row number is file layout, not a parameter.
+    #[test]
+    fn bond_types_carry_no_row_id() {
+        let ff = read_ff(GAFF_MINI);
+        let bonds = ff.get_bondtypes();
+        assert!(!bonds.is_empty());
+        for bt in bonds {
+            assert_eq!(bt.params.get("id"), None, "{} carries an id", bt.name);
+        }
+    }
+
+    /// The angle table row number is file layout, not a parameter.
+    #[test]
+    fn angle_types_carry_no_row_id() {
+        let ff = read_ff(GAFF_MINI);
+        let angles = ff.get_angletypes();
+        assert!(!angles.is_empty());
+        for at in angles {
+            assert_eq!(at.params.get("id"), None, "{} carries an id", at.name);
         }
     }
 

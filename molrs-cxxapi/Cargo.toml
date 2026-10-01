@@ -5,7 +5,7 @@ publish = false
 # [workspace] below), so there is no workspace.package to inherit from. Keep
 # these in step with ../Cargo.toml's [workspace.package] by hand — same rule the
 # other standalone binder roots already live by.
-version = "0.14.0"
+version = "0.15.0"
 edition = "2024"
 rust-version = "1.91"
 authors = ["MolCrafts"]
@@ -36,13 +36,24 @@ default = ["zarr"]
 zarr = ["molrs/filesystem"]
 
 [dependencies]
-# The merged crate, imported under the extern name `molrs`, on its defaults.
-# The explicit io/compute/ff list is additive; it records what this bridge
-# relies on regardless of what `default` happens to carry.
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.14.0", features = ["io", "compute", "ff"] }
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.14.0" }
+# The merged crate, imported under the extern name `molrs`. molrs defaults to
+# core only, so the set is spelled here: `full` + `rayon` (+ `filesystem` via
+# the `zarr` feature) — the same set molrs-capi links (build 2 in
+# .cargo/config.toml). Never `stream`.
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.15.0", default-features = false, features = ["full", "rayon"] }
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.15.0" }
 cxx = "1"
 ndarray = "0.17"
 
 [build-dependencies]
 cxx-build = "1"
+
+# Standalone workspace root: does NOT inherit the repo root's [profile.dev].
+# Keep these two keys identical to ../Cargo.toml -- they are what keeps the
+# shared target/ small enough to stay fast on Lustre (see ../Cargo.toml for the
+# measurement).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

@@ -1,6 +1,6 @@
 [package]
 name = "molcrafts-molrs-ffi"
-version = "0.14.0"
+version = "0.15.0"
 edition = "2024"
 authors = ["MolCrafts"]
 description = "FFI layer for molrs with handle-based abstractions"
@@ -23,9 +23,11 @@ opt-level = 3
 strip = "symbols"
 
 [features]
-# Native default mirrors molrs's own default. The forwards exist so a consumer
-# that must keep molrs's defaults off (molrs-wasm, Pyodide) can pick sub-systems
-# one at a time; nothing here re-states a "feature union".
+# molrs itself defaults to core only; this crate's native default asks for every
+# sub-system (`full`) plus `filesystem` and `rayon`, which is what molrs-capi and
+# molrs-cxxapi link. The forwards exist so a consumer that must keep these off
+# (molrs-wasm, Pyodide) can pick sub-systems one at a time; nothing here
+# re-states a "feature union".
 default = ["ff", "full", "filesystem", "rayon"]
 # Stable handle for `molrs::ff::ForceField` (the `ForceFieldRef` analogue of
 # `FrameRef`). Gates code in THIS crate, so it stays separate from `full` even
@@ -38,8 +40,18 @@ rayon      = ["molrs/rayon"]
 
 [dependencies]
 # Defaults off, then re-enabled through the forwards above — see [features].
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.14.0", default-features = false }
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.15.0", default-features = false }
 slotmap = "1.0"
 
 [dev-dependencies]
 ndarray = "0.17"
+
+# Standalone workspace root: does NOT inherit the repo root's [profile.dev].
+# Keep these two keys identical to ../Cargo.toml -- they are what keeps the
+# shared target/ small enough to stay fast on Lustre (see ../Cargo.toml for the
+# measurement).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

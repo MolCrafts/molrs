@@ -41,8 +41,7 @@ pub unsafe extern "C" fn molrs_schema_json() -> *mut c_char {
 
 /// Vocabulary version — what the names and dtypes *mean*.
 ///
-/// Distinct from the serialization envelope version. A caller that persists
-/// frames should record this alongside the data.
+/// A caller that persists frames should record this alongside the data.
 ///
 /// # C signature
 ///

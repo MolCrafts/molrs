@@ -6,33 +6,38 @@ is the freshness guard: every compiled `_lib` export must be declared here, with
 the same parameter names as the compiled signature.
 """
 
+import os
+from collections.abc import (
+    ItemsView,
+    Iterable,
+    Iterator,
+    KeysView,
+    Sequence,
+    ValuesView,
+)
+from collections.abc import Mapping as _AbcMapping
 from typing import (
     Any,
-    Dict,
-    Generic,
-    Iterable,
-    List,
+    ClassVar,
     Literal,
-    Optional,
-    Protocol,
-    Sequence,
-    Tuple,
+    Self,
     TypeVar,
-    Union,
+    final,
     overload,
 )
+
 import numpy as np
 import numpy.typing as npt
 
 # Type aliases — `F = f64` is invariant in molrs-core; Python side must match.
-ArrayF = npt.ArrayF
-ArrayBool = npt.NDArray[np.bool_]
-ArrayU8 = npt.NDArray[np.uint8]
-ArrayU32 = npt.NDArray[np.uint32]
-ArrayI64 = npt.NDArray[np.int64]
-TGraph = TypeVar("TGraph", bound="Graph")
-
-FRAME_SCHEMA_VERSION: int
+type ArrayF = npt.NDArray[np.float64]
+type ArrayI32 = npt.NDArray[np.int32]
+type ArrayBool = npt.NDArray[np.bool_]
+type ArrayU8 = npt.NDArray[np.uint8]
+type ArrayU32 = npt.NDArray[np.uint32]
+type ArrayI64 = npt.NDArray[np.int64]
+type PathInput = str | os.PathLike[str]
+_TGraph = TypeVar("_TGraph", bound=Graph)
 
 def _ffi_abi_token() -> tuple[str, str, str, str, str]:
     """FFI ABI handshake: (abi_line, version, frameref_name, forcefield_name,
@@ -60,24 +65,40 @@ class Box:
     def __init__(
         self,
         h: ArrayF,
-        origin: Optional[ArrayF] = None,
-        pbc: Optional[ArrayBool] = None,
+        origin: ArrayF | None = None,
+        pbc: ArrayBool | None = None,
         cell_defined: bool = True,
     ) -> None: ...
     @staticmethod
     def cube(
         a: float,
-        origin: Optional[ArrayF] = None,
-        pbc: Optional[ArrayBool] = None,
+        origin: ArrayF | None = None,
+        pbc: ArrayBool | None = None,
     ) -> Box: ...
     @staticmethod
     def ortho(
         lengths: Sequence[float] | ArrayF,
-        origin: Optional[ArrayF] = None,
-        pbc: Optional[ArrayBool] = None,
+        origin: ArrayF | None = None,
+        pbc: ArrayBool | None = None,
     ) -> Box: ...
     @staticmethod
-    def from_bounds(points: ArrayF, padding: ArrayF, pbc: Optional[ArrayBool] = None) -> Box: ...
+    def from_bounds(
+        points: ArrayF | Frame,
+        padding: float | Sequence[float] | ArrayF,
+        pbc: ArrayBool | None = None,
+    ) -> Box:
+        """Tight orthorhombic box around ``points`` (``(N, 3)``, or a Frame's
+        atoms ``x``/``y``/``z``), grown by ``padding`` on each side (one value
+        for every axis, or one per axis; non-negative)."""
+    def approx_eq(self, other: Box, tol: float) -> bool:
+        """Same cell within absolute ``tol``: every matrix entry and origin
+        component within ``tol``, identical ``pbc`` and ``cell_defined``."""
+    @property
+    def cell_defined(self) -> bool: ...
+    @property
+    def is_free(self) -> bool: ...
+    @property
+    def style(self) -> str: ...
     def volume(self) -> float: ...
     def lattice(self, index: int) -> ArrayF: ...
     @property
@@ -93,11 +114,17 @@ class Box:
     @property
     def angles(self) -> ArrayF: ...
     @staticmethod
-    def matrix_from_lengths_angles(lengths: Sequence[float] | ArrayF, angles: ArrayF) -> ArrayF: ...
+    def matrix_from_lengths_angles(
+        lengths: Sequence[float] | ArrayF, angles: ArrayF
+    ) -> ArrayF: ...
     @staticmethod
-    def matrix_from_lengths_tilts(lengths: Sequence[float] | ArrayF, tilts: ArrayF) -> ArrayF: ...
+    def matrix_from_lengths_tilts(
+        lengths: Sequence[float] | ArrayF, tilts: ArrayF
+    ) -> ArrayF: ...
     @staticmethod
     def restricted_matrix(matrix: ArrayF) -> ArrayF: ...
+    @property
+    def tilts(self) -> ArrayF: ...
     @property
     def nearest_plane_distance(self) -> ArrayF: ...
     @property
@@ -109,8 +136,8 @@ class Box:
     def to_frac(self, xyz: ArrayF) -> ArrayF: ...
     def to_cart(self, xyzs: ArrayF) -> ArrayF: ...
     def wrap(self, xyzu: ArrayF) -> ArrayF: ...
-    def images(self, xyz: ArrayF) -> ArrayI64: ...
-    def unwrap(self, xyz: ArrayF, images: ArrayI64) -> ArrayF: ...
+    def images(self, xyz: ArrayF) -> ArrayI32: ...
+    def unwrap(self, xyz: ArrayF, images: ArrayI32) -> ArrayF: ...
     def delta(
         self, xyzu1: ArrayF, xyzu2: ArrayF, minimum_image: bool = False
     ) -> ArrayF:
@@ -120,7 +147,6 @@ class Box:
         shape ``(3,)`` (returns ``(3,)``). Mixed ranks raise ``ValueError``.
         ``minimum_image`` defaults to ``False``.
         """
-        ...
     def distances(self, points1: ArrayF, points2: ArrayF) -> ArrayF: ...
     def pairwise_delta(self, points1: ArrayF, points2: ArrayF) -> ArrayF: ...
     def pairwise_distances(self, points1: ArrayF, points2: ArrayF) -> ArrayF: ...
@@ -232,34 +258,157 @@ class VerletSkin:
 # Block / Frame
 # ---------------------------------------------------------------------------
 
+# A column key: a plain name or a ``molrs.keys.Key``.
+type ColumnKey = str | Any
+
+@final
 class Block:
-    """Heterogeneous column store (dict of typed numpy arrays)."""
+    """Heterogeneous column store (dict of typed numpy arrays) — the one Block.
+
+    Columns are dense. A per-row component that only some rows carry is stored
+    with a validity mask beside it, read back with :meth:`validity`. Every
+    column-key argument accepts a ``str`` or a ``molrs.keys.Key``. A block read
+    from a frame (``frame["atoms"]``) is a handle on the stored block.
+    """
 
     def __init__(
+        self, data: _AbcMapping[ColumnKey, npt.ArrayLike] | None = None
+    ) -> None:
+        """Build from a mapping of column name -> array (each value goes through
+        ``__setitem__``, so a canonical key adopts its schema dtype). Copying a
+        block is :meth:`copy`; ``Block(block)`` raises ``TypeError``."""
+    def insert(self, key: ColumnKey, array: npt.NDArray | Sequence[str]) -> None:
+        """Store a column at the given width. Raises ``BlockDtypeError`` for
+        object/None/ragged."""
+    def insert_nullable(
         self,
-        columns: dict[str, Any] | None = None,
-        nrows: int | None = None,
-        shape: list[int] | None = None,
-    ) -> None: ...
-    def insert(self, key: str, array: npt.NDArray | Sequence[str]) -> None:
-        """Store a column. Raises ``BlockDtypeError`` for object/None/ragged."""
-        ...
-    def view(self, key: str) -> npt.NDArray | list[str]: ...
-    def __getitem__(self, key: str) -> npt.NDArray | list[str]: ...
-    def __setitem__(self, key: str, array: npt.NDArray | Sequence[str]) -> None: ...
-    def __delitem__(self, key: str) -> None: ...
+        key: ColumnKey,
+        array: npt.NDArray | Sequence[str],
+        validity: ArrayBool | Sequence[bool],
+    ) -> None:
+        """Store a column together with a per-row validity mask.
+
+        The write side of :meth:`validity`, and otherwise :meth:`insert`: same
+        dtypes, same row-count rule.
+
+        Parameters
+        ----------
+        key : str | Key
+            Column name.
+        array : numpy.ndarray | Sequence[str]
+            Column data.
+        validity : numpy.ndarray | Sequence[bool]
+            1-D bool mask, one entry per row of *array*; ``False`` marks a row
+            that holds no value. An all-``True`` mask states nothing
+            :meth:`insert` does not and is dropped.
+
+        Raises
+        ------
+        TypeError
+            If the array dtype is unsupported, or *validity* is neither a 1-D
+            bool array nor a sequence of bools.
+        ValueError
+            If the row count does not match existing columns, or *validity*
+            does not cover exactly the rows of *array*.
+        """
+    def set_validity(self, key: ColumnKey, mask: ArrayBool | Sequence[bool]) -> None:
+        """Attach a validity mask to an existing column of any dtype.
+
+        ``mask[i]`` is ``False`` where row ``i`` holds no value; the mask
+        replaces any the column had, and an all-``True`` mask clears it.
+
+        Raises
+        ------
+        KeyError
+            If ``key`` names no column.
+        TypeError
+            If *mask* is neither a 1-D bool array nor a sequence of bools.
+        ValueError
+            If *mask* does not have exactly one entry per row.
+        """
+    @staticmethod
+    def stack(parts: Sequence[Block]) -> Block:
+        """Row-wise union of *parts* under the union of their columns
+        (first-seen order). A column a part lacks is filled with the dtype's
+        default for that part's rows and marked null in its validity mask.
+
+        Raises
+        ------
+        ValueError
+            If two parts carry one column under different dtypes or per-row
+            shapes.
+        """
     @property
-    def nrows(self) -> Optional[int]: ...
+    def coords(self) -> ArrayF:
+        """``(nrows, 3)`` float64 copy of the ``x`` / ``y`` / ``z`` columns.
+        Raises ``KeyError`` if one is missing."""
+    @coords.setter
+    def coords(self, value: npt.ArrayLike) -> None:
+        """Write an ``(N, 3)`` array into ``x`` / ``y`` / ``z`` (float64).
+        Raises ``ValueError`` for a non-``(N, 3)`` array or a row mismatch."""
+    def view(self, key: ColumnKey) -> npt.NDArray: ...
+    def validity(self, key: ColumnKey) -> ArrayBool | None:
+        """The validity mask of a column, or ``None`` when it has no holes.
+
+        Returns
+        -------
+        numpy.ndarray | None
+            A 1-D ``bool`` array in row order — ``True`` where the cell holds a
+            real value, ``False`` where it is a hole — or ``None`` when the
+            column carries no mask. ``None`` means "every cell is a stated
+            value", not "every cell is a hole".
+
+        Raises
+        ------
+        KeyError
+            If ``key`` names no column of this block — the same answer
+            :meth:`view` and :meth:`dtype` give, so a misspelled key cannot
+            read as a dense column.
+        """
+    @overload
+    def __getitem__(self, key: ColumnKey) -> npt.NDArray: ...
+    @overload
+    def __getitem__(
+        self, key: tuple[ColumnKey, ...] | list[ColumnKey]
+    ) -> npt.NDArray: ...
+    @overload
+    def __getitem__(
+        self, key: slice | npt.NDArray[np.bool_] | npt.NDArray[np.integer]
+    ) -> Block: ...
+    def __setitem__(
+        self,
+        key: ColumnKey | tuple[ColumnKey, ...] | list[ColumnKey],
+        value: npt.ArrayLike,
+    ) -> None:
+        """Store a column (schema dtype adopted; a scalar is refused), or spread
+        an ``(N, k)`` array over ``k`` named columns."""
+    def __delitem__(self, key: ColumnKey) -> None: ...
+    def __iter__(self) -> Iterator[str]: ...
     def __len__(self) -> int: ...
+    def __contains__(self, key: object) -> bool: ...
+    @property
+    def nrows(self) -> int: ...
+    @property
+    def shape(self) -> list[int]: ...
+    @property
+    def structural_shape(self) -> list[int] | None: ...
+    def resize(self, nrows: int) -> None: ...
+    def set_shape(self, shape: Sequence[int]) -> None: ...
     def keys(self) -> list[str]: ...
-    def __contains__(self, key: str) -> bool: ...
-    def remove(self, key: str) -> None: ...
-    def dtype(self, key: str) -> str: ...
-    def has_f32(self, key: str) -> bool: ...
-    def has_f64(self, key: str) -> bool: ...
-    def has_int(self, key: str) -> bool: ...
-    def has_uint(self, key: str) -> bool: ...
-    def has_string(self, key: str) -> bool: ...
+    def remove(self, key: ColumnKey) -> None: ...
+    def rename(self, old_key: ColumnKey, new_key: ColumnKey) -> None:
+        """Rename in place; a canonical ``new_key`` adopts its schema dtype."""
+    def select_rows(self, indices: Sequence[int]) -> Block: ...
+    def sort(self, key: ColumnKey, reverse: bool = False) -> Block: ...
+    def copy(self) -> Block:
+        """Deep copy: no buffer shared with this block."""
+    def dtype(self, key: ColumnKey) -> str: ...
+    def has_f64(self, key: ColumnKey) -> bool: ...
+    def has_int(self, key: ColumnKey) -> bool: ...
+    def has_uint(self, key: ColumnKey) -> bool: ...
+    def has_string(self, key: ColumnKey) -> bool: ...
+    def __reduce__(self) -> tuple[Any, ...]: ...
+    def __setstate__(self, state: dict[str, Any]) -> None: ...
 
 class MetaValue:
     """Exact-dtype frame metadata value."""
@@ -268,68 +417,177 @@ class MetaValue:
     @property
     def dtype(self) -> str: ...
     @property
-    def value(self) -> bool | int | float | str | list[bool | int | float]: ...
+    def value(
+        self,
+    ) -> (
+        bool
+        | int
+        | float
+        | str
+        | None
+        | tuple[bool | int | float, ...]
+        | dict[str, Any]
+        | list[Any]
+    ):
+        """Stored payload.
 
-class FrameMeta:
-    """Live, write-through ``frame.meta`` mapping of plain Python values.
+        Fixed-length vectors are tuples. A ``json`` payload stays plain
+        (``dict`` / ``list`` / scalar) — this is the pickle argument, not a
+        ``frame.meta`` door.
+        """
 
-    The dtype belongs to the key, not to the value: writing a plain value to an
-    existing key keeps that key's dtype and refuses one it cannot hold, so
-    ``m[k] = m[k]`` is an identity. Assign a :class:`MetaValue` to give a key a
-    dtype other than the inferred default; ``dtype(k)`` reads the tag back.
+# A value handed out by ``frame.meta``: scalars unwrap, fixed-length vectors
+# and JSON arrays are tuples, a JSON object is a MetaDocument.
+type FrozenMetaValue = bool | int | float | str | None | tuple[Any, ...] | MetaDocument
 
-    A JSON document is returned decoded, and therefore as a snapshot: mutating
-    it in place does not reach the frame.
+class MetaDocument:
+    """Frozen JSON object read from ``frame.meta``.
+
+    Every door of ``frame.meta`` hands back a frozen value: a fixed-length
+    vector is a ``tuple``, and a JSON object is a ``MetaDocument``. Nested
+    arrays are tuples; nested objects are documents. Item assignment raises
+    ``TypeError``. ``copy()`` is a deep plain ``dict`` (nested documents become
+    dicts, nested arrays become lists). ``json.dumps`` rejects a document; use
+    ``json.dumps(frame.meta["run"].copy())``.
+
+    Iteration order is unspecified. ``frame.meta`` itself enumerates in
+    insertion order; the two levels differ.
     """
 
-    def __getitem__(self, key: str) -> Any: ...
+    __hash__: ClassVar[None]
+    def __getitem__(self, key: object) -> FrozenMetaValue: ...
+    def __len__(self) -> int: ...
+    def __iter__(self) -> Any: ...
+    def __contains__(self, key: object) -> bool: ...
+    def keys(self) -> KeysView[str]: ...
+    def values(self) -> ValuesView[FrozenMetaValue]: ...
+    def items(self) -> ItemsView[str, FrozenMetaValue]: ...
+    def get(self, key: object, default: Any = None) -> Any: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __ne__(self, other: object) -> bool: ...
+    def copy(self) -> dict[str, Any]: ...
+
+class FrameMeta:
+    """Live, write-through ``frame.meta`` mapping.
+
+    Every door hands back a frozen value: scalars unwrap, a fixed-length
+    vector is a ``tuple``, a JSON array is a ``tuple``, and a JSON object is
+    a :class:`MetaDocument`. ``frame.meta["run"]["step"] = 3`` raises
+    ``TypeError``. ``json.dumps`` rejects a document; use
+    ``json.dumps(frame.meta["run"].copy())``. ``copy()``, ``|``, and ``|=``'s
+    merge partner return a plain ``dict``; values inside it are still frozen.
+    :meth:`MetaDocument.copy` is the deep plain unfreeze one level down.
+
+    ``dtype(k)`` reports the tag of the value stored right now; any plain write
+    re-infers it. :class:`MetaValue` fixes the dtype of that write only — it
+    does not pin the key. A tag survives a round trip only through a declared
+    sequence schema or the serde frame document; outside those two it is
+    re-inferred on read.
+
+    Enumeration follows insertion order. ``popitem`` returns the last-inserted
+    key. Order inside a nested :class:`MetaDocument` is unspecified.
+
+    ``keys``, ``values``, and ``items`` are live ``collections.abc`` views in
+    insertion order. A non-``str`` lookup is absent; a non-``str`` write raises
+    ``TypeError``. Deleting a not-yet-visited key while iterating ``values()``
+    or ``items()`` raises ``KeyError``.
+    """
+
+    def __getitem__(self, key: object) -> FrozenMetaValue: ...
     def __setitem__(self, key: str, value: Any) -> None: ...
-    def __delitem__(self, key: str) -> None: ...
+    def __delitem__(self, key: object) -> None: ...
     def __contains__(self, key: object) -> bool: ...
     def __len__(self) -> int: ...
     def __iter__(self) -> Any: ...
     def __eq__(self, other: object) -> bool: ...
-    def __repr__(self) -> str: ...
-    def dtype(self, key: str) -> Optional[str]: ...
-    def keys(self) -> list[str]: ...
-    def values(self) -> list[Any]: ...
-    def items(self) -> list[tuple[str, Any]]: ...
-    def get(self, key: str, default: Any = None) -> Any: ...
-    def pop(self, key: str, *default: Any) -> Any: ...
-    def popitem(self) -> tuple[str, Any]: ...
+    def dtype(self, key: str) -> str | None: ...
+    def keys(self) -> KeysView[str]: ...
+    def values(self) -> ValuesView[FrozenMetaValue]: ...
+    def items(self) -> ItemsView[str, FrozenMetaValue]: ...
+    def get(self, key: object, default: Any = None) -> FrozenMetaValue | Any: ...
+    def pop(self, key: object, *default: Any) -> FrozenMetaValue | Any: ...
+    def popitem(self) -> tuple[str, FrozenMetaValue]: ...
     def clear(self) -> None: ...
-    def setdefault(self, key: str, default: Any = None) -> Any: ...
+    def setdefault(self, key: str, default: Any = None) -> FrozenMetaValue | Any: ...
     def update(self, other: Any = None, **kwargs: Any) -> None: ...
     def copy(self) -> dict[str, Any]: ...
     def typed(self) -> dict[str, MetaValue]: ...
     def __or__(self, other: Any) -> dict[str, Any]: ...
     def __ror__(self, other: Any) -> dict[str, Any]: ...
-    def __ior__(self, other: Any) -> FrameMeta: ...
+    def __ior__(self, other: Any) -> Self: ...
 
+@final
 class Frame:
-    """Dictionary of Blocks with optional ``box`` and typed ``meta``."""
+    """Dictionary of Blocks with optional ``box`` and typed ``meta`` — the one Frame."""
 
     def __init__(
         self,
-        blocks: dict[str, Block] | None = None,
-        meta: dict[str, Any] | None = None,
+        blocks: _AbcMapping[str, Block | _AbcMapping[ColumnKey, npt.ArrayLike]]
+        | None = None,
+        *,
+        meta: _AbcMapping[str, Any] | None = None,
         box: Box | None = None,
+    ) -> None:
+        """Copying a frame is :meth:`copy`; ``Frame(frame)`` raises ``TypeError``."""
+    def __getitem__(self, key: str) -> Block:
+        """A handle on the stored block: its members read and write this frame."""
+    def __setitem__(
+        self, key: str, value: Block | _AbcMapping[ColumnKey, npt.ArrayLike]
     ) -> None: ...
-    def __getitem__(self, key: str) -> Block: ...
-    def __setitem__(self, key: str, value: Block) -> None: ...
     def __delitem__(self, key: str) -> None: ...
     def __contains__(self, key: str) -> bool: ...
     def __len__(self) -> int: ...
     def keys(self) -> list[str]: ...
     @property
-    def box(self) -> Optional[Box]: ...
+    def box(self) -> Box | None: ...
     @box.setter
-    def box(self, value: Optional[Box]) -> None: ...
+    def box(self, value: Box | None) -> None: ...
     @property
     def meta(self) -> FrameMeta: ...
     @meta.setter
     def meta(self, value: Any) -> None: ...
     def validate(self) -> None: ...
+    def copy(self) -> Frame:
+        """Deep copy: blocks (new buffers), box and typed meta."""
+    def subset(self, rows: npt.ArrayLike, block: str = "atoms") -> Frame:
+        """A new frame holding the selected rows of ``block``: a 1-D bool mask
+        (``True`` rows, in order) or 1-D int rows (``-nrows <= i`` wraps). Every
+        relation block indexing ``block`` keeps only the rows whose endpoints
+        are all selected, renumbered. Other blocks, the box and ``meta`` are
+        copied; values keep their units (Å). This frame is never modified.
+
+        Raises:
+            KeyError: no block ``block``.
+            IndexError: a mask of the wrong length, an index below ``-nrows``,
+                a selector that is not 1-D.
+            TypeError: a selector that is neither bool nor integer.
+            ValueError: a row past the end or repeated; a relation block
+                without ``UInt`` endpoints; a ``members`` block.
+        """
+    def replicate(self, count: int) -> Frame:
+        """``count`` copies of this frame, concatenated block by block (the
+        inverse of :meth:`subset`). Relation endpoints of copy ``c`` are offset
+        by ``c`` times the row count of the block they index; every other
+        column — ``id`` / ``mol_id`` included — is copied verbatim. Validity
+        masks, ``meta`` and the box travel. This frame is never modified.
+
+        Raises:
+            ValueError: a relation block indexing a missing block or lacking
+                ``UInt`` endpoints; a ``members`` block.
+        """
+    @property
+    def coords(self) -> ArrayF:
+        """``(N, 3)`` float64 copy of ``atoms`` ``x`` / ``y`` / ``z``. Raises
+        ``KeyError`` without an ``atoms`` block or one of the columns."""
+    @coords.setter
+    def coords(self, value: npt.ArrayLike) -> None:
+        """Write an ``(N, 3)`` array into ``atoms`` (created if absent).
+        Raises ``ValueError`` for a non-``(N, 3)`` array or a row mismatch."""
+    def __reduce__(self) -> tuple[Any, ...]: ...
+    def __setstate__(self, state: dict[str, Any]) -> None: ...
+    def _ffi_frameref_capsule(self) -> object: ...
+    @staticmethod
+    def _from_ffi_frameref_capsule(capsule: object) -> Frame: ...
 
 # ---------------------------------------------------------------------------
 # Live Frame streaming (molrs::stream)
@@ -339,28 +597,30 @@ class ControlCommand:
     """A control message from a streaming viewer back to the producer."""
 
     @staticmethod
-    def pause() -> "ControlCommand": ...
+    def pause() -> ControlCommand: ...
     @staticmethod
-    def resume() -> "ControlCommand": ...
+    def resume() -> ControlCommand: ...
     @staticmethod
-    def set_frame_rate(hz: float) -> "ControlCommand": ...
+    def set_frame_rate(hz: float) -> ControlCommand: ...
     @staticmethod
-    def set_subset(atom_ids: Sequence[int]) -> "ControlCommand": ...
+    def set_subset(atom_ids: Sequence[int]) -> ControlCommand: ...
     @staticmethod
-    def request_key_frame() -> "ControlCommand": ...
+    def request_key_frame() -> ControlCommand: ...
     @property
     def kind(
         self,
-    ) -> Literal["pause", "resume", "set_frame_rate", "set_subset", "request_key_frame"]: ...
+    ) -> Literal[
+        "pause", "resume", "set_frame_rate", "set_subset", "request_key_frame"
+    ]: ...
     @property
-    def hz(self) -> Optional[float]: ...
+    def hz(self) -> float | None: ...
     @property
-    def atom_ids(self) -> Optional[List[int]]: ...
+    def atom_ids(self) -> list[int] | None: ...
     def to_bytes(self, format: Literal["json", "msgpack"] = "json") -> bytes: ...
     @staticmethod
     def from_bytes(
         data: bytes, format: Literal["json", "msgpack"] = "json"
-    ) -> "ControlCommand": ...
+    ) -> ControlCommand: ...
 
 class Publisher:
     """WebSocket server broadcasting frames to connected viewers.
@@ -375,17 +635,17 @@ class Publisher:
         *,
         format: Literal["msgpack", "json"] = "msgpack",
         buffer_size: int = 4,
-        token: Optional[str] = None,
+        token: str | None = None,
     ) -> None: ...
     @property
     def address(self) -> str: ...
     @property
     def client_count(self) -> int: ...
     def send(self, frame: Frame) -> None: ...
-    def recv_command(self, timeout: float = 0.0) -> Optional[ControlCommand]: ...
+    def recv_command(self, timeout: float = 0.0) -> ControlCommand | None: ...
     def close(self) -> None: ...
-    def __enter__(self) -> "Publisher": ...
-    def __exit__(self, *exc: Any) -> bool: ...
+    def __enter__(self) -> Self: ...
+    def __exit__(self, *exc: object) -> bool: ...
 
 # ---------------------------------------------------------------------------
 # Regions: solids with a signed distance, composed with &, |, ~
@@ -436,7 +696,9 @@ class Cuboid:
     every axis.
     """
 
-    def __init__(self, origin: Sequence[float] | ArrayF, lengths: Sequence[float] | ArrayF) -> None: ...
+    def __init__(
+        self, origin: Sequence[float] | ArrayF, lengths: Sequence[float] | ArrayF
+    ) -> None: ...
     def contains(self, points: ArrayF) -> ArrayBool: ...
     def distance(self, points: ArrayF) -> ArrayF: ...
     def bounds(self) -> ArrayF: ...
@@ -455,7 +717,9 @@ class Parallelepiped:
 
     def __init__(self, h: ArrayF, origin: Sequence[float] | ArrayF) -> None: ...
     @staticmethod
-    def ortho(lengths: Sequence[float] | ArrayF, origin: Sequence[float] | ArrayF) -> Parallelepiped: ...
+    def ortho(
+        lengths: Sequence[float] | ArrayF, origin: Sequence[float] | ArrayF
+    ) -> Parallelepiped: ...
     @staticmethod
     def cube(a: float, origin: Sequence[float] | ArrayF) -> Parallelepiped: ...
     def contains(self, points: ArrayF) -> ArrayBool: ...
@@ -470,7 +734,9 @@ class Parallelepiped:
 class HalfSpace:
     """One side of a plane: inside where ``normal · (x - point) <= 0``."""
 
-    def __init__(self, normal: Sequence[float] | ArrayF, point: Sequence[float] | ArrayF) -> None: ...
+    def __init__(
+        self, normal: Sequence[float] | ArrayF, point: Sequence[float] | ArrayF
+    ) -> None: ...
     def normal(self) -> ArrayF: ...
     def contains(self, points: ArrayF) -> ArrayBool: ...
     def distance(self, points: ArrayF) -> ArrayF: ...
@@ -484,7 +750,11 @@ class Cylinder:
     """Finite capped cylinder from ``base`` along ``axis``."""
 
     def __init__(
-        self, base: Sequence[float] | ArrayF, axis: Sequence[float] | ArrayF, radius: float, length: float
+        self,
+        base: Sequence[float] | ArrayF,
+        axis: Sequence[float] | ArrayF,
+        radius: float,
+        length: float,
     ) -> None: ...
     def contains(self, points: ArrayF) -> ArrayBool: ...
     def distance(self, points: ArrayF) -> ArrayF: ...
@@ -497,7 +767,9 @@ class Cylinder:
 class Ellipsoid:
     """Axis-aligned ellipsoid with semi-axes along x, y, z."""
 
-    def __init__(self, center: Sequence[float] | ArrayF, semi_axes: Sequence[float] | ArrayF) -> None: ...
+    def __init__(
+        self, center: Sequence[float] | ArrayF, semi_axes: Sequence[float] | ArrayF
+    ) -> None: ...
     def contains(self, points: ArrayF) -> ArrayBool: ...
     def distance(self, points: ArrayF) -> ArrayF: ...
     def bounds(self) -> ArrayF: ...
@@ -554,8 +826,65 @@ class Region:
     def _ffi_regionref_capsule(self) -> object: ...
 
 # ---------------------------------------------------------------------------
+# Trace: an ordered path of 3D points
+# ---------------------------------------------------------------------------
+
+@final
+class Trace:
+    """An ordered path of 3D points, with no chemistry. Frozen.
+
+    A trace says *where* consecutive units of a chain sit (for example the
+    site positions of one coarse-grained chain), not *what* sits there.
+
+    Parameters
+    ----------
+    points : numpy.ndarray, shape (k, 3), float64
+        Every point, in order (Å). ``(0, 3)`` is the empty trace.
+
+    Raises
+    ------
+    ValueError
+        If ``points`` is not ``(k, 3)``.
+    """
+
+    def __init__(self, points: ArrayF) -> None: ...
+    @property
+    def points(self) -> ArrayF:
+        """Every point, in order.
+
+        Returns
+        -------
+        numpy.ndarray, shape (k, 3), float64
+            A copy of the points (Å).
+        """
+    def __len__(self) -> int:
+        """The number of points, k."""
+
+# ---------------------------------------------------------------------------
 # Molecular graph
 # ---------------------------------------------------------------------------
+
+class Topology:
+    """Bond graph of a frame: atoms are rows ``0..n`` of ``frame["atoms"]``,
+    edges the ``atomi`` / ``atomj`` rows of ``frame["bonds"]``."""
+
+    @classmethod
+    def from_frame(cls, frame: Frame) -> Topology:
+        """Read the bond graph of ``frame``.
+
+        Raises:
+            ValueError: ``frame`` has no atoms, the bonds block lacks
+                ``atomi`` / ``atomj``, or a bond names a row outside the frame.
+        """
+    @property
+    def n_atoms(self) -> int: ...
+    @property
+    def n_bonds(self) -> int: ...
+    @property
+    def n_components(self) -> int: ...
+    def connected_components(self) -> npt.NDArray[np.uint32]:
+        """Per-atom connected-component label, ``0..n_components`` in order
+        of each component's first atom."""
 
 class Element:
     """Immutable chemical-element record backed by the Rust periodic table."""
@@ -574,11 +903,40 @@ class Element:
     @property
     def covalent(self) -> float: ...
     @classmethod
-    def get_symbols(cls, identifiers: Iterable[str | int]) -> List[str]: ...
+    def get_symbols(cls, identifiers: Iterable[str | int]) -> list[str]: ...
     @classmethod
     def get_atomic_number(cls, identifier: str | int) -> int: ...
 
 class UnitsError(ValueError): ...
+
+class SmilesError(ValueError):
+    """Raised when a SMILES / SMARTS / CGsmiles string is refused.
+
+    Subclasses ``ValueError``; ``str(e)`` is the message the Rust error
+    renders, caret line included. The four attributes are set on every
+    instance.
+
+    Attributes
+    ----------
+    kind : str
+        Variant name of the rule that was broken, payload dropped —
+        ``"UnclosedBranch"``, ``"UnexpectedEnd"``, ``"CgNotExpandable"``, ...
+    span : tuple[int, int]
+        Byte range of the offending text within ``input``; the end is clamped
+        to ``len(input)``, since the scanner reports end-of-input one byte
+        past the text.
+    input : str
+        The offending string, empty for errors raised past the parser (the
+        expansion and emit stages are handed an IR, not the text).
+    notation : str
+        Which notation was being read or written: ``"smiles"``, ``"smarts"``
+        or ``"cgsmiles"``.
+    """
+
+    kind: str
+    span: tuple[int, int]
+    input: str
+    notation: str
 
 class Unit:
     def __init__(
@@ -593,9 +951,9 @@ class Unit:
     @property
     def dimensionality(self) -> tuple[int, int, int, int, int, int, int]: ...
     def is_affine(self) -> bool: ...
-    def factor_to(self, other: "Unit") -> float: ...
-    def __rmul__(self, value: float) -> "Quantity": ...
-    def __mul__(self, value: float) -> "Quantity": ...
+    def factor_to(self, other: Unit) -> float: ...
+    def __rmul__(self, value: float) -> Quantity: ...
+    def __mul__(self, value: float) -> Quantity: ...
 
 class Quantity:
     def __init__(self, magnitude: float, unit: Unit) -> None: ...
@@ -607,13 +965,13 @@ class Quantity:
     def units(self) -> Unit: ...
     @property
     def unit(self) -> Unit: ...
-    def to(self, target: Unit | str) -> "Quantity": ...
-    def to_base_units(self) -> "Quantity": ...
-    def __add__(self, rhs: "Quantity") -> "Quantity": ...
-    def __sub__(self, rhs: "Quantity") -> "Quantity": ...
-    def __mul__(self, rhs: "Quantity" | float) -> "Quantity": ...
-    def __rmul__(self, lhs: float) -> "Quantity": ...
-    def __truediv__(self, rhs: "Quantity" | float) -> "Quantity": ...
+    def to(self, target: Unit | str) -> Quantity: ...
+    def to_base_units(self) -> Quantity: ...
+    def __add__(self, rhs: Quantity) -> Quantity: ...
+    def __sub__(self, rhs: Quantity) -> Quantity: ...
+    def __mul__(self, rhs: Quantity | float) -> Quantity: ...
+    def __rmul__(self, lhs: float) -> Quantity: ...
+    def __truediv__(self, rhs: Quantity | float) -> Quantity: ...
 
 class UnitPreset:
     def __init__(self, name: str) -> None: ...
@@ -638,16 +996,22 @@ class UnitRegistry:
     def __init__(
         self,
         definitions: list[
-            tuple[str, list[str], str, float, float, tuple[int, int, int, int, int, int, int], bool]
+            tuple[
+                str,
+                list[str],
+                str,
+                float,
+                float,
+                tuple[int, int, int, int, int, int, int],
+                bool,
+            ]
         ]
         | None = None,
         *,
         empty: bool = False,
     ) -> None: ...
     def parse(self, expression: str) -> Unit: ...
-    def Unit(self, expression: str) -> Unit: ...
     def quantity(self, value: float, expression: str) -> Quantity: ...
-    def Quantity(self, value: float, expression: str) -> Quantity: ...
     def define(
         self,
         name: str,
@@ -659,6 +1023,13 @@ class UnitRegistry:
         offset: float = 0.0,
         prefixable: bool = False,
     ) -> None: ...
+    def define_lj_sigma(self, sigma: Quantity) -> None:
+        """Define the reduced-LJ length unit ``lj_sigma`` alone.
+
+        Raises:
+            UnitsError: ``sigma`` is not a finite positive length, or
+                ``lj_sigma`` is already defined.
+        """
     def define_lj_units(
         self, mass: Quantity, sigma: Quantity, epsilon: Quantity
     ) -> None: ...
@@ -693,6 +1064,7 @@ def scale_lj(
     frag_data: dict[str, FragmentScaling] | None = None,
     scale_sigma: bool = False,
 ) -> ForceField: ...
+
 class Graph:
     """Domain-agnostic ECS *world*. Base of the hierarchy.
 
@@ -702,58 +1074,95 @@ class Graph:
     :data:`keys`); ``column`` exposes a zero-copy numpy view. Topology is a
     kind-tagged relation API (``register_kind`` / ``add_relation`` / …).
 
-    Algorithms are **module-level free functions** (``translate`` / ``rotate`` /
-    ``perceive_aromaticity`` / …), not methods. Chemistry vocabulary
-    (``add_atom`` / ``add_bond`` / ``add_bead``) lives on the :class:`Atomistic`
-    / :class:`CoarseGrain` leaves.
+    Rigid-body moves (``translate`` / ``rotate`` / ``scale``) and ``center``
+    are methods of the :class:`Atomistic` / :class:`CoarseGrain` leaves,
+    not of the base; perception lives in
+    :mod:`molrs.perceive`. Chemistry vocabulary (``add_atom`` / ``add_bond``
+    / ``add_bead``) lives on the :class:`Atomistic` / :class:`CoarseGrain`
+    leaves.
 
-    Subclassable from Python — ``__new__`` accepts and ignores
-    ``*args``/``**kwargs``.
+    Pickles by content: a restored graph has fresh handles in the same row
+    order.
     """
 
-    def __init__(self, *args: object, **kwargs: object) -> None: ...
+    def __init__(self) -> None: ...
+    def __reduce__(self) -> tuple[type, tuple[()], tuple[Any, ...]]: ...
+    def __setstate__(self, state: tuple[Any, ...]) -> None: ...
     # --- entities ---
     def spawn(self) -> int: ...
     def despawn(self, h: int) -> None: ...
-    def entities(self) -> List[int]: ...
+    def entities(self) -> list[int]: ...
     def has_entity(self, h: int) -> bool: ...
     @property
     def n_nodes(self) -> int: ...
     # --- components (convention keys; typed; missing/type-mismatch raises) ---
-    def get(self, h: int, key: str) -> Union[int, float, str, None]: ...
-    def set(self, h: int, key: str, value: Union[int, float, str]) -> None: ...
+    def get(self, h: int, key: str) -> int | float | str | None: ...
+    def set(self, h: int, key: str, value: float | str) -> None: ...
     def has(self, h: int, key: str) -> bool: ...
     def delete(self, h: int, key: str) -> None: ...
-    def node_keys(self, h: int) -> List[str]: ...
+    def node_keys(self, h: int) -> list[str]: ...
     def column(self, key: str) -> npt.NDArray[Any]:
         """Column ``key`` over every entity, typed as the component (``f64`` is a
         zero-copy write-through view; ``i32``/``bool``/``str`` are copies).
         ``KeyError`` when any entity lacks the component — never zero-filled."""
-        ...
     def columns(self) -> list[str]:
         """Names of every component column registered on the node table."""
-        ...
     def validity(self, key: str) -> ArrayBool: ...
     # --- relations (generic, kind-tagged) ---
     def register_kind(self, kind: str, arity: int) -> None: ...
-    def kinds(self) -> List[str]: ...
+    def kinds(self) -> list[str]: ...
     def kind_arity(self, kind: str) -> int: ...
-    def add_relation(self, kind: str, nodes: List[int]) -> int: ...
-    def relation_nodes(self, kind: str, rh: int) -> List[int]: ...
-    def incident_relations(self, nh: int, kind: str) -> List[Tuple[int, int]]: ...
+    def add_relation(self, kind: str, nodes: list[int]) -> int: ...
+    def relation_nodes(self, kind: str, rh: int) -> list[int]: ...
+    def incident_relations(self, nh: int, kind: str) -> list[tuple[int, int]]: ...
     def get_relation_prop(
         self, kind: str, rh: int, key: str
-    ) -> Union[int, float, str, None]: ...
+    ) -> int | float | str | None: ...
     def set_relation_prop(
-        self, kind: str, rh: int, key: str, value: Union[int, float, str]
+        self, kind: str, rh: int, key: str, value: float | str
     ) -> None: ...
-    def relation_keys(self, kind: str, rh: int) -> List[str]: ...
+    def relation_keys(self, kind: str, rh: int) -> list[str]: ...
     def delete_relation_prop(self, kind: str, rh: int, key: str) -> None: ...
     def remove_relation(self, kind: str, rh: int) -> None: ...
     def n_relations(self, kind: str) -> int: ...
-    def relation_ids(self, kind: str) -> List[int]: ...
+    def relation_ids(self, kind: str) -> list[int]: ...
     # --- adopt (zero-copy move) ---
-    def adopt(self, other: "Graph") -> None: ...
+    def adopt(self, other: Graph) -> None: ...
+
+    # ---- ports: named attachment points any graph may carry ----
+    def add_port(
+        self,
+        anchor: int,
+        handle: int,
+        kind: str,
+        label: str = "",
+        order: int = 1,
+    ) -> int:
+        """Record a descriptor (``"$"``, ``"<"``, ``">"``, ``"!"``) on the
+        ``(anchor, handle)`` valence; registers the ``ports`` kind on first
+        use. Returns the port's relation handle.
+
+        Raises:
+            ValueError: an unknown glyph, ``handle`` not bonded to
+                ``anchor``, an indefinite order, a valence that already
+                carries a port, or a stale handle.
+        """
+    @property
+    def n_ports(self) -> int: ...
+    def set_frag_id(self, node: int, id: int) -> None: ...
+    def frag_id(self, node: int) -> int | None: ...
+    def inherit_frag_ids(self) -> int: ...
+    def link(self, a: int, b: int) -> int:
+        """Join port ``a`` to port ``b``: remove both leaving groups, fold
+        their charge (e) onto the anchors, bond the anchors with the port
+        order. Returns the new bond handle.
+
+        Raises:
+            ValueError: a handle naming no live port, a stale or incompatible
+                port pair, a shared anchor, anchors already bonded, or
+                overlapping leaving groups; the graph is unchanged.
+            OverflowError: a negative handle.
+        """
 
 class Atomistic(Graph):
     """All-atom leaf — holds a core ``Atomistic`` from construction.
@@ -762,16 +1171,68 @@ class Atomistic(Graph):
     exposes the atom/bond/angle/dihedral/improper builders. The generic
     :class:`Graph` API operates on this leaf's own graph. Owns its
     :meth:`to_frame` / :meth:`from_frame` (domain conversions); it is never
-    *converted* from a bare :class:`Graph`.
+    *converted* from a bare :class:`Graph`. Not subclassable: this is the one
+    ``Atomistic`` class.
+
+    ``Atomistic(**props)`` — the keywords are :attr:`props`. Nodes and
+    relations are read and edited through live views (:attr:`atoms`,
+    :meth:`def_atom`, …).
     """
 
-    def __init__(self, *args: object, **kwargs: object) -> None: ...
+    def __init__(self, **props: Any) -> None: ...
+    def __reduce__(self) -> tuple[type, tuple[()], tuple[Any, ...]]: ...
+    def __setstate__(self, state: tuple[Any, ...]) -> None: ...
+    @property
+    def props(self) -> dict[str, Any]:
+        """Whole-graph annotations; carried by copies, pickles and every graph
+        derived from this one."""
+    @property
+    def links(self) -> RelationBuckets: ...
+    def remove_link(self, *links: RelationRef) -> None: ...
+    @property
+    def atoms(self) -> Refs[Atom]: ...
+    @property
+    def bonds(self) -> Refs[Bond]: ...
+    @property
+    def angles(self) -> Refs[Angle]: ...
+    @property
+    def dihedrals(self) -> Refs[Dihedral]: ...
+    @property
+    def impropers(self) -> Refs[Improper]: ...
+    @property
+    def ports(self) -> Refs[Port]: ...
+    def def_atom(self, mapping: Any = None, /, **attrs: Any) -> Atom: ...
+    def def_virtual_site(
+        self,
+        mapping: Any = None,
+        /,
+        *,
+        kind: type[VirtualSite] | None = None,
+        **attrs: Any,
+    ) -> VirtualSite: ...
+    def def_bond(self, a: Atom, b: Atom, /, **attrs: Any) -> Bond: ...
+    def def_angle(self, a: Atom, b: Atom, c: Atom, /, **attrs: Any) -> Angle: ...
+    def def_dihedral(
+        self, a: Atom, b: Atom, c: Atom, d: Atom, /, **attrs: Any
+    ) -> Dihedral: ...
+    def def_improper(
+        self, a: Atom, b: Atom, c: Atom, d: Atom, /, **attrs: Any
+    ) -> Improper: ...
+    def del_atom(self, *atoms: Atom) -> None: ...
+    def def_port(
+        self,
+        anchor: Atom,
+        handle_atom: Atom,
+        kind: str,
+        label: str = "",
+        order: int = 1,
+    ) -> Port: ...
     def add_atom(
         self,
         symbol: str,
-        x: Optional[float] = None,
-        y: Optional[float] = None,
-        z: Optional[float] = None,
+        x: float | None = None,
+        y: float | None = None,
+        z: float | None = None,
     ) -> int: ...
     def add_bond(self, a: int, b: int) -> int: ...
     def add_angle(self, i: int, j: int, k: int) -> int: ...
@@ -785,36 +1246,98 @@ class Atomistic(Graph):
         clear_existing: bool = False,
     ) -> tuple[int, int, int]: ...
     def topo_distances(
-        self, source: int, max_hops: Optional[int] = None
-    ) -> List[Tuple[int, int]]: ...
+        self, source: int, max_hops: int | None = None
+    ) -> list[tuple[int, int]]: ...
     @property
     def n_atoms(self) -> int: ...
+    @property
+    def n_bonds(self) -> int: ...
     def max_ring_system_size(self) -> int: ...
-    def to_frame(self) -> Frame: ...
+    def to_frame(self, atom_fields: Sequence[str] | None = None) -> Frame:
+        """Export to a :class:`Frame`; ``atom_fields`` keeps only those
+        ``atoms`` columns (a missing one raises ``ValueError``)."""
     @staticmethod
-    def from_frame(frame: Frame) -> "Atomistic": ...
+    def from_frame(frame: Frame) -> Atomistic: ...
     # --- graph-edit conveniences ---
     def remove_atom(self, handle: int) -> None: ...
     def remove_bond(self, handle: int) -> None: ...
-    def set_bond_order(self, handle: int, order: float) -> None: ...
-    def copy(self) -> "Atomistic": ...
-    def merge(self, other: "Atomistic") -> Dict[int, int]: ...
-    def replicate(self, n: int) -> "Atomistic": ...
+    def set_bond_class(self, handle: int, bond_type: int, bond_number: int) -> None:
+        """Set a bond's chemical class (0 unknown, 1 single, 2 double,
+        3 triple, 4 aromatic) and its localized bond number (0 unknown,
+        1-4) together.
+
+        Raises:
+            ValueError: ``handle`` is stale.
+        """
+    def set_bond_type(self, handle: int, bond_type: int) -> None:
+        """Set a plain (non-aromatic) bond class, whose class implies its
+        number. Aromatic (4) implies none and leaves the number ``0``; set it
+        through :meth:`set_bond_class` instead.
+
+        Raises:
+            ValueError: ``handle`` is stale.
+        """
+    def bond_type(self, handle: int) -> int:
+        """The bond's chemical class code; ``0`` when it has none."""
+    def bond_number(self, handle: int) -> int:
+        """The bond's localized (Kekulé) bond number; ``0`` when it has none."""
+    def copy(self) -> Atomistic: ...
+    def merge(self, other: Atomistic) -> dict[int, int]: ...
+    def replicate(
+        self,
+        template: Atomistic,
+        rotations: ArrayF,
+        translations: ArrayF,
+        frag_ids: ArrayI32,
+    ) -> list[int]:
+        """Grow this graph by one rigid copy of ``template`` per transform
+        (``rotations (N,3,3)``, ``translations (N,3)``), copy ``c`` stamped
+        ``frag_id = frag_ids[c]``; returns the new handles, copy-major.
+
+        Raises:
+            ValueError: a wrong shape or count; this graph is unchanged.
+        """
     def induced_subgraph(
-        self, nodes: List[int]
-    ) -> Tuple["Atomistic", Dict[int, int]]: ...
+        self, nodes: list[int]
+    ) -> tuple[Atomistic, dict[int, int]]: ...
     def extract_subgraph(
         self,
-        centers: List[int],
+        centers: list[int],
         radius: int,
         *,
         regenerate_topology: bool = False,
         max_ring_size: int | None = None,
-    ) -> "ExtractedSubgraph": ...
+    ) -> ExtractedSubgraph: ...
     # --- structural graph hash (Weisfeiler-Lehman) ---
     def structural_hash(self) -> int: ...
     def canonical_order(self) -> list[int]: ...
-    def is_isomorphic(self, other: "Atomistic") -> bool: ...
+    def is_isomorphic(self, other: Atomistic) -> bool: ...
+    def center(self) -> ArrayF:
+        """Mass-weighted centre ``sum(m_i r_i) / sum(m_i)`` of every atom, from
+        ``x``/``y``/``z`` (Å) and ``mass`` (g/mol); a float64 ``(3,)`` array
+        in Å. No periodic imaging: unwrap first (:meth:`Box.unwrap`).
+
+        Raises:
+            ValueError: no atoms; an atom without finite ``x``/``y``/``z`` or
+                a finite, non-negative ``mass`` (names its int handle); a
+                non-positive total mass.
+        """
+    def translate(self, delta: Sequence[float] | ArrayF) -> Self:
+        """Translate every node that has coordinates by ``delta``; returns self."""
+    def rotate(
+        self, axis: list[float], angle: float, about: list[float] | None = None
+    ) -> Self:
+        """Rotate every node that has coordinates by ``angle`` radians about
+        ``axis``, pivoting on ``about`` (default: the origin); returns self.
+
+        Raises:
+            ValueError: ``axis`` has no direction or ``angle`` is not finite;
+                nothing moves then.
+        """
+    def scale(self, factor: list[float], about: list[float] | None = None) -> Self:
+        """Scale every node that has coordinates by a per-axis ``factor``
+        about ``about`` (default: the origin); returns self. Pass
+        ``[s, s, s]`` for a uniform scale."""
 
 class ExtractedSubgraph:
     """Result of :meth:`Atomistic.extract_subgraph` / :meth:`CoarseGrain.extract_subgraph`."""
@@ -828,53 +1351,329 @@ class ExtractedSubgraph:
         node_map: dict[int, int],
     ) -> None: ...
     @property
-    def graph(self) -> Union["Atomistic", "CoarseGrain"]: ...
+    def graph(self) -> Atomistic | CoarseGrain: ...
     @property
-    def boundary(self) -> List[int]: ...
+    def boundary(self) -> list[int]: ...
     @property
-    def parent_of(self) -> Dict[int, int]: ...
+    def parent_of(self) -> dict[int, int]: ...
     @property
-    def hops(self) -> Dict[int, int]: ...
+    def hops(self) -> dict[int, int]: ...
     @property
-    def node_map(self) -> Dict[int, int]: ...
+    def node_map(self) -> dict[int, int]: ...
 
 class CoarseGrain(Graph):
     """Coarse-grained leaf — holds a core ``CoarseGrain`` from construction.
 
     ``add_bead`` writes ``bead_type``; registers the CG ``bonds`` kind. Owns its
-    :meth:`to_frame` / :meth:`from_frame`.
+    :meth:`to_frame` / :meth:`from_frame`. Not subclassable.
+
+    ``CoarseGrain(**props)`` — the keywords are :attr:`props`. A bead made by
+    ``def_bead(atoms=...)`` groups atom views of one source graph;
+    ``bead["atoms"]`` answers with them.
     """
 
-    def __init__(self, *args: object, **kwargs: object) -> None: ...
+    def __init__(self, **props: Any) -> None: ...
+    def __reduce__(self) -> tuple[type, tuple[()], tuple[Any, ...]]: ...
+    def __setstate__(self, state: tuple[Any, ...]) -> None: ...
+    @property
+    def props(self) -> dict[str, Any]: ...
+    @property
+    def links(self) -> RelationBuckets: ...
+    def remove_link(self, *links: RelationRef) -> None: ...
+    @property
+    def beads(self) -> Refs[Bead]: ...
+    @property
+    def cgbonds(self) -> Refs[CGBond]: ...
+    def def_bead(self, mapping: Any = None, /, **attrs: Any) -> Bead: ...
+    def def_cgbond(self, a: Bead, b: Bead, /, **attrs: Any) -> CGBond: ...
     def add_bead(
         self,
         bead_type: str,
-        x: Optional[float] = None,
-        y: Optional[float] = None,
-        z: Optional[float] = None,
+        x: float | None = None,
+        y: float | None = None,
+        z: float | None = None,
     ) -> int: ...
     def add_bond(self, a: int, b: int) -> int: ...
     @property
     def n_beads(self) -> int: ...
-    def to_frame(self) -> Frame: ...
+    def to_frame(self, atom_fields: Sequence[str] | None = None) -> Frame:
+        """Export to a :class:`Frame`; ``atom_fields`` keeps only those
+        ``atoms`` columns (a missing one raises ``ValueError``)."""
     @staticmethod
-    def from_frame(frame: Frame) -> "CoarseGrain": ...
-    def set_bead_members(self, bead: int, atoms: List[int]) -> None: ...
-    def bead_members(self, bead: int) -> List[int]: ...
-    def beads_of_atom(self, atom: int) -> List[int]: ...
-    def copy(self) -> "CoarseGrain": ...
-    def merge(self, other: "CoarseGrain") -> Dict[int, int]: ...
-    def replicate(self, n: int) -> "CoarseGrain": ...
+    def from_frame(frame: Frame) -> CoarseGrain: ...
+    def set_bead_members(self, bead: int, atoms: list[int]) -> None: ...
+    def bead_members(self, bead: int) -> list[int]: ...
+    def beads_of_atom(self, atom: int) -> list[int]: ...
+    def copy(self) -> CoarseGrain: ...
+    def merge(self, other: CoarseGrain) -> dict[int, int]: ...
+    def replicate(
+        self,
+        template: CoarseGrain,
+        rotations: ArrayF,
+        translations: ArrayF,
+        frag_ids: ArrayI32,
+    ) -> list[int]:
+        """As :meth:`Atomistic.replicate`; bead membership is not copied."""
     def induced_subgraph(
-        self, nodes: List[int]
-    ) -> Tuple["CoarseGrain", Dict[int, int]]: ...
+        self, nodes: list[int]
+    ) -> tuple[CoarseGrain, dict[int, int]]: ...
     def extract_subgraph(
-        self, centers: List[int], radius: int
-    ) -> "ExtractedSubgraph": ...
+        self, centers: list[int], radius: int
+    ) -> ExtractedSubgraph: ...
     # --- structural graph hash (Weisfeiler-Lehman) ---
     def structural_hash(self) -> int: ...
     def canonical_order(self) -> list[int]: ...
-    def is_isomorphic(self, other: "CoarseGrain") -> bool: ...
+    def is_isomorphic(self, other: CoarseGrain) -> bool: ...
+    def center(self, group: Sequence[int]) -> ArrayF:
+        """Mass-weighted centre ``sum(m_i r_i) / sum(m_i)`` of the bead group
+        ``group`` (a bead listed twice counts twice), from ``x``/``y``/``z``
+        (Å) and ``mass`` (g/mol); a float64 ``(3,)`` array in Å. ``add_bead``
+        writes no ``mass``; set one first. No periodic imaging: a group
+        straddling a box face must be unwrapped first (:meth:`Box.unwrap`).
+
+        Raises:
+            ValueError: an empty group; a handle that is not a live bead, or a
+                bead without finite ``x``/``y``/``z`` or a finite,
+                non-negative ``mass`` (names its int handle); a non-positive
+                total mass.
+            OverflowError: a negative handle.
+        """
+    def translate(self, delta: Sequence[float] | ArrayF) -> Self:
+        """Translate every node that has coordinates by ``delta``; returns self."""
+    def rotate(
+        self, axis: list[float], angle: float, about: list[float] | None = None
+    ) -> Self:
+        """Rotate every node that has coordinates by ``angle`` radians about
+        ``axis``, pivoting on ``about`` (default: the origin); returns self.
+
+        Raises:
+            ValueError: ``axis`` has no direction or ``angle`` is not finite;
+                nothing moves then.
+        """
+    def scale(self, factor: list[float], about: list[float] | None = None) -> Self:
+        """Scale every node that has coordinates by a per-axis ``factor``
+        about ``about`` (default: the origin); returns self. Pass
+        ``[s, s, s]`` for a uniform scale."""
+    def positions(self, beads: Sequence[int]) -> ArrayF:
+        """The positions of ``beads``, one row per listed bead, in the listed
+        order (a bead listed twice appears twice).
+
+        Parameters
+        ----------
+        beads : Sequence[int]
+            Bead handles, e.g. ``list(cg.atoms)``.
+
+        Returns
+        -------
+        numpy.ndarray, shape (k, 3), float64
+            ``x`` / ``y`` / ``z`` as stored (Å).
+
+        Raises
+        ------
+        ValueError
+            If a handle is not a live bead, or a bead lacks a finite
+            ``x`` / ``y`` / ``z``; the message names its int handle.
+        """
+    def axes(self, beads: Sequence[int]) -> ArrayF:
+        """The site axes of ``beads``, one row per listed bead, in the listed
+        order. A site from ``Coarsener.coarsen`` carries the vector from the
+        first bead of its group to the site; a one-bead site's axis is zero.
+
+        Returns
+        -------
+        numpy.ndarray, shape (k, 3), float64
+            ``axis_x`` / ``axis_y`` / ``axis_z`` as stored (Å).
+
+        Raises
+        ------
+        ValueError
+            If a handle is not a live bead of this graph, or a bead lacks a
+            finite axis; the message names its int handle.
+        """
+    def bead_types(self, beads: Sequence[int]) -> list[str]:
+        """The ``bead_type`` of each of ``beads``, in the listed order (a bead
+        listed twice appears twice).
+
+        Parameters
+        ----------
+        beads : Sequence[int]
+            Bead handles.
+
+        Returns
+        -------
+        list[str]
+            One type per listed bead.
+
+        Raises
+        ------
+        ValueError
+            If a handle is not a live bead, or a bead carries no
+            ``bead_type``; the message names its int handle.
+        """
+
+_TRef = TypeVar("_TRef")
+
+class NodeRef:
+    """Live view of one node: its fields as a mapping. Made by the graph,
+    never constructed directly; interned while alive."""
+
+    @property
+    def world(self) -> Atomistic | CoarseGrain: ...
+    @property
+    def handle(self) -> int: ...
+    def __getitem__(self, key: str | tuple[str, ...]) -> Any: ...
+    def __setitem__(self, key: str | tuple[str, ...], value: Any) -> None: ...
+    def __delitem__(self, key: str) -> None: ...
+    def __contains__(self, key: object) -> bool: ...
+    def __iter__(self) -> Iterator[str]: ...
+    def __len__(self) -> int: ...
+    def keys(self) -> list[str]: ...
+    def values(self) -> list[Any]: ...
+    def items(self) -> list[tuple[str, Any]]: ...
+    def get(self, key: str, default: Any = None) -> Any: ...
+    def update(self, *args: Any, **kwargs: Any) -> None: ...
+    @classmethod
+    def _restore(cls, world: Graph, row: int) -> NodeRef: ...
+
+class Atom(NodeRef): ...
+class VirtualSite(Atom): ...
+class DrudeParticle(VirtualSite): ...
+class MasslessSite(VirtualSite): ...
+class Bead(NodeRef): ...
+
+class RelationRef:
+    """Live view of one relation: interned endpoint views plus its fields as a
+    mapping. Made by the graph, never constructed directly."""
+
+    @property
+    def world(self) -> Atomistic | CoarseGrain: ...
+    @property
+    def kind(self) -> str: ...
+    @property
+    def handle(self) -> int: ...
+    @property
+    def endpoints(self) -> tuple[NodeRef, ...]: ...
+    def __getitem__(self, key: str | tuple[str, ...]) -> Any: ...
+    def __setitem__(self, key: str | tuple[str, ...], value: Any) -> None: ...
+    def __delitem__(self, key: str) -> None: ...
+    def __contains__(self, key: object) -> bool: ...
+    def __iter__(self) -> Iterator[str]: ...
+    def __len__(self) -> int: ...
+    def keys(self) -> list[str]: ...
+    def values(self) -> list[Any]: ...
+    def items(self) -> list[tuple[str, Any]]: ...
+    def get(self, key: str, default: Any = None) -> Any: ...
+    def update(self, *args: Any, **kwargs: Any) -> None: ...
+    @classmethod
+    def _restore(cls, world: Graph, kind: str, row: int) -> RelationRef: ...
+
+class Bond(RelationRef):
+    @property
+    def itom(self) -> Atom: ...
+    @property
+    def jtom(self) -> Atom: ...
+
+class Angle(RelationRef): ...
+class Dihedral(RelationRef): ...
+class Improper(Dihedral): ...
+class CGBond(RelationRef): ...
+
+class Port(RelationRef):
+    @property
+    def anchor(self) -> Atom: ...
+    @property
+    def handle_atom(self) -> Atom: ...
+
+class Refs[TRef]:
+    """Ordered views of one kind of one graph; ``refs["x"]`` is a column."""
+
+    def __len__(self) -> int: ...
+    @overload
+    def __getitem__(self, key: int) -> _TRef: ...
+    @overload
+    def __getitem__(self, key: slice) -> Refs[_TRef]: ...
+    @overload
+    def __getitem__(self, key: str | tuple[str, ...]) -> npt.NDArray[Any]: ...
+    def __iter__(self) -> Iterator[_TRef]: ...
+    def __contains__(self, item: object) -> bool: ...
+    @classmethod
+    def _restore(cls, world: Graph, kind: str | None, rows: list[int]) -> Refs[Any]: ...
+
+class RelationBuckets:
+    """A graph's relations selected by view class (``graph.links``)."""
+
+    def exact_bucket(self, cls: type[_TRef]) -> Refs[_TRef]: ...
+
+class op:
+    """``molrs::op`` — superposition and centroids.
+
+    Superposition finds the rotation ``R`` and translation ``t`` that best lay
+    matched points ``reference[i]`` onto ``target[i]`` (weighted least
+    squares, Horn's quaternion method).
+    Coordinates are in the caller's length unit (Å in molrs).
+    ``DEFAULT_GAP_TOL`` is the default ``gap_tol``: below this scale-free
+    eigen-gap the rotation is reported ``"spin"`` (under-determined).
+    """
+
+    DEFAULT_GAP_TOL: float
+
+    class Fit:
+        """Best-fit proper rigid motion ``target ≈ rotation @ reference +
+        translation`` from :func:`molrs.op.superpose`. Frozen."""
+
+        @property
+        def rotation(self) -> ArrayF:
+            """Shape ``(3, 3)``, a proper rotation (determinant +1)."""
+        @property
+        def translation(self) -> ArrayF:
+            """Shape ``(3,)``, in the coordinates' length unit (Å)."""
+        @property
+        def rmsd(self) -> float:
+            """Weighted root-mean-square deviation of the fit, in the
+            coordinates' length unit (Å)."""
+        @property
+        def rho(self) -> float:
+            """Scale-free eigen-gap (dimensionless); 0 when ``freedom == "free"``."""
+        @property
+        def center(self) -> ArrayF:
+            """Weighted target centroid (Å): the point a spin axis passes through."""
+        @property
+        def freedom(self) -> Literal["unique", "spin", "free"]:
+            """``"unique"``; ``"spin"`` (rotation about :attr:`axis` is
+            undetermined); ``"free"`` (no rotation determined, ``rotation`` is
+            the identity)."""
+        @property
+        def axis(self) -> ArrayF | None:
+            """The unit spin axis; ``None`` unless ``freedom == "spin"``."""
+
+    @staticmethod
+    def superpose(
+        reference: ArrayF,
+        target: ArrayF,
+        weights: ArrayF | None = None,
+        *,
+        gap_tol: float = ...,
+    ) -> Fit:
+        """Best-fit proper rigid motion mapping ``reference`` onto ``target``
+        (both shape ``(k, 3)``); ``weights`` shape ``(k,)``, uniform when
+        omitted, zero-weight points dropped.
+
+        Raises:
+            ValueError: a shape other than ``(k, 3)``, a length mismatch, a
+                negative or non-finite weight, a non-finite coordinate, or no
+                positive weight.
+        """
+    @staticmethod
+    def centroid(points: ArrayF, weights: ArrayF | None = None) -> ArrayF | None:
+        """Weighted centroid ``Σ wᵢ pᵢ / Σ wᵢ`` (uniform weights when
+        omitted), in the length unit of ``points`` (Å in molrs); ``None``
+        when the lengths differ or the total weight is not positive and
+        finite.
+
+        Raises:
+            ValueError: ``points`` is not shape ``(k, 3)`` or ``weights`` is
+                not 1-D.
+        """
 
 class SmartsMatch:
     """One SMARTS embedding."""
@@ -899,36 +1698,36 @@ class SmartsPattern:
         self,
         mol: Atomistic,
         *,
-        labels: Optional[dict[int, str]] = None,
-        root: Optional[int] = None,
+        labels: dict[int, str] | None = None,
+        root: int | None = None,
     ) -> bool: ...
     @overload
     def find_matches(
         self,
         mol: Atomistic,
         *,
-        labels: Optional[dict[int, str]] = None,
-        root: Optional[int] = None,
+        labels: dict[int, str] | None = None,
+        root: int | None = None,
         mapped: Literal[False] = False,
-        limit: Optional[int] = None,
-    ) -> List[SmartsMatch]: ...
+        limit: int | None = None,
+    ) -> list[SmartsMatch]: ...
     @overload
     def find_matches(
         self,
         mol: Atomistic,
         *,
-        labels: Optional[dict[int, str]] = None,
-        root: Optional[int] = None,
+        labels: dict[int, str] | None = None,
+        root: int | None = None,
         mapped: Literal[True],
-        limit: Optional[int] = None,
-    ) -> List[dict[int, int]]: ...
+        limit: int | None = None,
+    ) -> list[dict[int, int]]: ...
     @property
     def num_query_atoms(self) -> int: ...
-    def map_label(self, query_atom: int) -> Optional[int]: ...
+    def map_label(self, query_atom: int) -> int | None: ...
     @property
     def max_bond_depth(self) -> int: ...
     @property
-    def ring_primitives(self) -> List[Tuple[str, Optional[int]]]: ...
+    def ring_primitives(self) -> list[tuple[str, int | None]]: ...
 
 class Reaction:
     """Compiled Daylight reaction SMARTS (SMIRKS) transform.
@@ -941,46 +1740,105 @@ class Reaction:
 
     def __init__(self, reaction_smarts: str) -> None: ...
     @property
-    def reactant_patterns(self) -> List[SmartsPattern]: ...
+    def reactant_patterns(self) -> list[SmartsPattern]: ...
     @property
-    def forming_bonds(self) -> List[Tuple[int, int]]: ...
+    def forming_bonds(self) -> list[tuple[int, int]]: ...
     def apply(
         self,
         mol: Atomistic,
         binding: dict[int, int],
-        labels: Optional[dict[int, str]] = None,
+        labels: dict[int, str] | None = None,
         refresh: bool = True,
-    ) -> List[int]: ...
+    ) -> list[int]: ...
     def apply_many(
         self,
         mol: Atomistic,
         bindings: list[dict[int, int]],
-        labels: Optional[dict[int, str]] = None,
+        labels: dict[int, str] | None = None,
         refresh: bool = True,
     ) -> list[list[int]]: ...
     def apply_many_detailed(
         self,
         mol: Atomistic,
         bindings: list[dict[int, int]],
-        labels: Optional[dict[int, str]] = None,
+        labels: dict[int, str] | None = None,
         refresh: bool = True,
     ) -> tuple[list[list[int]], list[list[int]]]: ...
 
-# ---------------------------------------------------------------------------
-# Systems — module-level free functions over a graph world
-# ---------------------------------------------------------------------------
+@final
+class SubgraphMatcher:
+    """``molrs.perceive.SubgraphMatcher`` — bead-pattern occurrences in a
+    :class:`CoarseGrain`. Beads match on equal ``bead_type``. ``find`` does
+    not partition: overlapping groups are all returned. Frozen.
+    """
 
-def translate(mol: Graph, delta: List[float]) -> None: ...
-def rotate(
-    mol: Graph, axis: List[float], angle: float, about: Optional[List[float]] = None
-) -> None: ...
-def scale(
-    mol: Graph, factor: List[float], about: Optional[List[float]] = None
-) -> None:
-    """Scale node coordinates by a per-axis `factor` about an optional center
-    (defaults to the origin). Pass `[s, s, s]` for a uniform scale. Generic
-    geometry system."""
-    ...
+    def __init__(self, pattern: CoarseGrain) -> None:
+        """Snapshot ``pattern`` (copied; later edits do not affect it).
+
+        Raises:
+            TypeError: ``pattern`` is not a :class:`CoarseGrain`.
+        """
+    def find(self, target: CoarseGrain) -> list[list[int]]:
+        """Every induced occurrence, one group of target bead handles per
+        distinct bead set, in pattern bead order; ``[]`` when none. Releases
+        the GIL.
+
+        Raises:
+            TypeError: ``target`` is not a :class:`CoarseGrain`.
+        """
+
+@final
+class Coarsener:
+    """``molrs.perceive.Coarsener`` — node groups of a held source graph
+    mapped onto the sites of a new :class:`CoarseGrain`. Frozen.
+
+    Site ``I`` stands for ``groups[I]``: it sits at the group's mass-weighted
+    centre (Å; no periodic imaging, so unwrap first), carries the group's
+    summed ``mass`` and ``bead_type = names[I]``, and records the group's
+    handles as its members. Two sites are bonded once when a source bond
+    joins their groups.
+
+    Parameters
+    ----------
+    source : CoarseGrain or Atomistic
+        The graph whose nodes are grouped; held, not copied, and read at each
+        :meth:`coarsen` call.
+
+    Raises
+    ------
+    TypeError
+        If ``source`` is neither a :class:`CoarseGrain` nor an
+        :class:`Atomistic`.
+    """
+
+    def __init__(self, source: CoarseGrain | Atomistic) -> None: ...
+    def coarsen(
+        self, groups: Sequence[Sequence[int]], names: Sequence[str]
+    ) -> CoarseGrain:
+        """A new :class:`CoarseGrain` with one site per group, in group
+        order. Releases the GIL.
+
+        Parameters
+        ----------
+        groups : Sequence[Sequence[int]]
+            Disjoint, non-empty node-handle groups of the source.
+        names : Sequence[str]
+            One site ``bead_type`` per group.
+
+        Returns
+        -------
+        CoarseGrain
+            The sites; empty when ``groups`` is empty.
+
+        Raises
+        ------
+        ValueError
+            If ``groups`` and ``names`` differ in length, a group is empty, a
+            handle is listed twice, or a group has no centre (a stale handle,
+            a missing coordinate or mass, a non-positive total mass); handles
+            are named by their int value.
+        """
+
 # ---------------------------------------------------------------------------
 # Chemical perception — the builder (graph in / graph out, non-mutating)
 # ---------------------------------------------------------------------------
@@ -1004,7 +1862,15 @@ class Perceive:
     def find_aromaticity(self, mol: Atomistic) -> Atomistic: ...
     def find_hydrogens(self, mol: Atomistic) -> Atomistic: ...
     def find_stereo(self, mol: Atomistic) -> Atomistic: ...
-    def find_rotatable(self, mol: Atomistic) -> Atomistic: ...
+    def find_rotatable(
+        self,
+        mol: Atomistic,
+        *,
+        unknown_bond: Literal["not_rotatable", "single"] = "not_rotatable",
+    ) -> Atomistic:
+        """Flag ``is_rotatable`` (0/1) on every bond. ``unknown_bond`` says
+        what a bond with no ``bond_type`` counts as: ``"not_rotatable"``
+        (never guess) or ``"single"``."""
     def find_bond_types(self, mol: Atomistic) -> Atomistic: ...
     def find_equivalence_classes(self, mol: Atomistic) -> Atomistic: ...
 
@@ -1024,11 +1890,12 @@ class keys:
     BOND_NUMBER: str
     BOND_TYPE: str
     CHARGE: str
-    COORDS: List[str]
-    DIPOLE: List[str]
+    COORDS: list[str]
+    DIPOLE: list[str]
     ELEMENT: str
-    ENDPOINTS: List[str]
+    ENDPOINTS: list[str]
     EXCLUDE_14: str
+    FREE: str
     ID: str
     IS_14: str
     MASS: str
@@ -1037,7 +1904,7 @@ class keys:
     MUY: str
     MUZ: str
     NAME: str
-    QUAT: List[str]
+    QUAT: list[str]
     QUATI: str
     QUATJ: str
     QUATK: str
@@ -1046,7 +1913,7 @@ class keys:
     RES_NAME: str
     TYPE: str
     TYPE_ID: str
-    VELOCITIES: List[str]
+    VELOCITIES: list[str]
     VX: str
     VY: str
     VZ: str
@@ -1059,42 +1926,258 @@ class keys:
 # ---------------------------------------------------------------------------
 
 class SmilesIR:
-    """Intermediate representation of a parsed SMILES string."""
+    """Intermediate representation of a parsed SMILES or SMARTS string.
 
+    ``to_atomistic()`` is the plain conversion: it refuses SMARTS query atoms
+    and, since it will not drop them silently, any node carrying a bonding
+    descriptor — which is what a ``CGFragmentDef.body`` from the last CGsmiles
+    block holds. Build such a body's ported unit with ``to_template()``
+    (parse it with ``SmilesIR.from_fragment``), or expand a whole string
+    through ``CGSmilesIR.to_atomistic``.
+    """
+
+    def __init__(self, smiles: str) -> None: ...
+    @classmethod
+    def from_fragment(cls, body: str) -> SmilesIR:
+        """Parse a CGsmiles fragment body (SMILES plus bonding descriptors,
+        e.g. ``"[<]OCC[>]"``); the plain constructor refuses descriptors."""
+    def to_template(self) -> Atomistic:
+        """The ported unit of this body: heavy atoms plus one hydrogen handle
+        and one port per bonding descriptor; no coordinates, no ``frag_id``.
+        ``SmilesIR.from_fragment("[<]OCC[>]").to_template()`` equals
+        ``CGSmilesIR("{[#EO]}.{#EO=[<]OCC[>]}").templates()["EO"]``."""
     @property
     def n_components(self) -> int: ...
     def to_atomistic(self) -> Atomistic: ...
+    def components(self) -> list[Atomistic]: ...
+    def write_smiles(self) -> str: ...
+    def write_smarts(self) -> str: ...
+    @classmethod
+    def from_atomistic(
+        cls,
+        mol: Atomistic,
+        *,
+        canonical: bool = True,
+        root: int | None = None,
+        aromatic: Literal["as_marked", "kekule_only"] = "as_marked",
+        hydrogens: Literal[
+            "organic_subset", "explicit_all", "as_stored"
+        ] = "organic_subset",
+        include_stereo: bool = False,
+        multi_component: Literal[
+            "error_if_multiple", "join_dot", "first_only"
+        ] = "error_if_multiple",
+        organic_subset: bool = True,
+    ) -> SmilesIR: ...
+
+# ---------------------------------------------------------------------------
+# CGsmiles — one front door plus the read-only records it hands out
+#
+# `CGSmilesIR` parses; every other class here is a read-only view over one
+# record of the value it returns and has no constructor of its own. There is
+# no `CGSmilesReader`: "Reader" here means a lazy, path-backed trajectory
+# cursor, and a text-in / IR-out parser is not that — see the `molrs.io`
+# module docstring.
+#
+# Every enum crosses as a name, not as its numeric storage code: those codes
+# are not injective over these enums, so a number could not be read back as
+# what the notation wrote. The exception is a coarse edge's multiplicity,
+# which *is* a count and crosses as one.
+#
+# A descriptor kind crosses as its grammar glyph (`$`, `<`, `>`, `!`) — the
+# spelling a user writes and the one a stored port's `port_kind` holds, so
+# there is no third vocabulary between notation, column and boundary. The
+# enums the notation does not spell out (`BondingDescriptor.order`,
+# `ResolvedPair.kind`, `PairEnd.end`) cross as the lowercase spelling of their
+# Rust variant.
+# ---------------------------------------------------------------------------
+
+# The nine lowercase `BondKind` spellings — shared by `BondingDescriptor.order`
+# and `ResolvedPair.kind`, which name the same enum.
+type BondKindName = Literal[
+    "single", "double", "triple", "quadruple", "aromatic", "up", "down", "any", "ring"
+]
+
+class BondingDescriptor:
+    """One bonding descriptor: a site at which a fragment may later be joined.
+
+    ``kind`` is the operator written, as the glyph itself — the same spelling
+    a stored port's ``port_kind`` uses. A ``"<"`` pairs only with a ``">"``, a
+    ``"$"`` only with a ``"$"``, and the labels must match exactly. ``order``
+    is the bond order written beside the bracket, ``None`` when none was —
+    which counts as ``"single"`` for pairing.
+    """
+
+    @property
+    def kind(self) -> Literal["$", "<", ">", "!"]: ...
+    @property
+    def label(self) -> str: ...
+    @property
+    def order(self) -> BondKindName | None: ...
+
+class CGNode:
+    """One coarse-grained node: ``[#PEO]``, ``[#A;q=-0.5]``.
+
+    ``charge`` is a *partial* charge in elementary-charge units ``e`` (the
+    ``q`` annotation), never a formal charge. ``parent`` indexes the previous
+    level's ``nodes``, and is ``None`` in ``levels[0]`` and in a fragment body.
+    """
+
+    @property
+    def name(self) -> str: ...
+    @property
+    def charge(self) -> float | None: ...
+    @property
+    def annotations(self) -> list[tuple[str, str]]: ...
+    @property
+    def descriptors(self) -> list[BondingDescriptor]: ...
+    @property
+    def parent(self) -> int | None: ...
+
+class CGEdge:
+    """One coarse edge, joining ``nodes[i]`` and ``nodes[j]`` of its level.
+
+    ``multiplicity`` is how many bonds the edge stands for (1–4, from ``-``
+    ``=`` ``#`` ``$``), never a bond kind. ``derived_from`` is the
+    ``(level, pair)`` of the resolved pair that induced the edge, or ``None``
+    when the notation wrote it; a derived edge always has multiplicity 1.
+    """
+
+    @property
+    def i(self) -> int: ...
+    @property
+    def j(self) -> int: ...
+    @property
+    def multiplicity(self) -> int: ...
+    @property
+    def derived_from(self) -> tuple[int, int] | None: ...
+
+class CGGraph:
+    """One resolution level: coarse-grained nodes and the edges between them.
+
+    Both lists are in parse order — nodes as their brackets were read, edges
+    as the notation formed them, with every derived edge appended after the
+    written ones. A node is addressed by its index in ``nodes``.
+    """
+
+    @property
+    def nodes(self) -> list[CGNode]: ...
+    @property
+    def edges(self) -> list[CGEdge]: ...
+
+class CGFragmentDef:
+    """One entry of a fragment block: ``#PEO=[$]COC[$]``.
+
+    ``body`` is a ``CGGraph`` in an intermediate block and a ``SmilesIR`` in
+    the last one — the Python type is the tag, so dispatch with ``isinstance``.
+    A ``SmilesIR`` body keeps its bonding descriptors, so its own
+    ``to_atomistic()`` refuses it; expand through ``CGSmilesIR.to_atomistic``.
+    Its ``repr`` echoes the fragment-table entry as written —
+    ``#PEO=[$]COC[$]``, name and ``=`` included — not a bare SMILES, because
+    the entry's span is the text the IR records.
+    """
+
+    @property
+    def name(self) -> str: ...
+    @property
+    def body(self) -> CGGraph | SmilesIR: ...
+
+class PairEnd:
+    """One end of a :class:`ResolvedPair`: the port, and who offered it.
+
+    For a pair read from ``ir.pairs[k]``: when ``end == "sub"`` ``index``
+    indexes ``levels[k + 1].nodes`` (the child node carrying the port) and
+    ``port`` indexes that node's ``descriptors``; when ``end == "body"``
+    ``index`` indexes ``levels[k].nodes`` and ``port`` indexes that node's
+    atomistic body's descriptor map.
+    """
+
+    @property
+    def end(self) -> Literal["sub", "body"]: ...
+    @property
+    def index(self) -> int: ...
+    @property
+    def port(self) -> int: ...
+
+class ResolvedPair:
+    """One bond a written coarse edge stands for, with the ports it consumed.
+
+    ``kind`` is the chemistry of that bond as a lowercase bond-kind name: the
+    order written on either descriptor, ``"aromatic"`` when neither wrote one
+    and both port atoms are written aromatic, ``"single"`` otherwise.
+    """
+
+    @property
+    def edge(self) -> int: ...
+    @property
+    def bond(self) -> int: ...
+    @property
+    def src(self) -> PairEnd: ...
+    @property
+    def dst(self) -> PairEnd: ...
+    @property
+    def kind(self) -> BondKindName: ...
+
+class CGSmilesIR:
+    """Intermediate representation of a parsed CGsmiles string.
+
+    Constructing it parses, validates, expands and resolves the whole string;
+    the value is then read, not built. ``levels`` are the resolution levels
+    (coarsest first), ``fragments[k]`` resolves the names of ``levels[k]``, and
+    ``to_atomistic()`` expands the lowest level into a topology-only graph
+    whose atoms carry ``frag_id``.
+    """
+
+    def __init__(self, text: str) -> None: ...
+    @property
+    def levels(self) -> list[CGGraph]: ...
+    @property
+    def fragments(self) -> list[dict[str, CGFragmentDef]]: ...
+    @property
+    def pairs(self) -> list[list[ResolvedPair]]: ...
+    def to_atomistic(self) -> Atomistic: ...
+    def templates(self) -> dict[str, Atomistic]:
+        """One ported :class:`Atomistic` template per definition of the last
+        fragment table, keyed by name. One body alone:
+        ``SmilesIR.from_fragment(body).to_template()``."""
+    def to_coarsegrain(self) -> CoarseGrain:
+        """The coarsest level, ``levels[0]``, as a bead graph: one bead per
+        node (``bead_type`` only, no coordinates or mass), one CG bond per
+        edge.
+
+        Raises:
+            SmilesError: (a ``ValueError``) the IR breaks a reader invariant;
+                no parsed string reaches this.
+        """
 
 # ---------------------------------------------------------------------------
 # I/O — readers and writers
 # ---------------------------------------------------------------------------
 
 def read_block_csv(
-    text: str, delimiter: str = ",", header: Optional[list[str]] = None
+    text: str, delimiter: str = ",", header: list[str] | None = None
 ) -> Block: ...
-def write_block_csv(
-    block: Block, delimiter: str = ",", header: bool = True
-) -> str: ...
+def write_block_csv(block: Block, delimiter: str = ",", header: bool = True) -> str: ...
 def read_frame_bytes(
     data: bytes, format: Literal["msgpack", "json"] = "msgpack"
 ) -> Frame: ...
 def write_frame_bytes(
     frame: Frame, format: Literal["msgpack", "json"] = "msgpack"
 ) -> bytes: ...
-def read_pdb(path: str) -> Frame: ...
-def read_pdb_trajectory(path: str) -> list[Frame]:
+def read_pdb(path: PathInput) -> Frame: ...
+def read_pdb_trajectory(path: PathInput) -> list[Frame]:
     """Read every MODEL of a PDB file as a trajectory (one Frame per MODEL)."""
-    ...
 
-def read_xyz(path: str) -> Frame: ...
-def read_xyz_trajectory(path: str) -> list[Frame]: ...
-def read_lammps(path: str) -> Frame: ...
-def read_stl(path: str) -> TriMesh: ...
-def read_lammps_traj(path: str) -> list[Frame]: ...
-def read_gro(path: str) -> list[Frame]: ...
-def read_xsf(path: str) -> Frame: ...
-def read_amber_inpcrd(path: str) -> Frame: ...
-def read_amber_prmtop(path: str) -> Frame: ...
+def read_xyz(path: PathInput) -> Frame: ...
+def read_xyz_trajectory(path: PathInput) -> list[Frame]: ...
+def read_lammps_data(path: PathInput) -> Frame: ...
+def read_stl(path: PathInput) -> TriMesh: ...
+def read_lammps_trajectory(path: PathInput) -> list[Frame]: ...
+def read_gro(path: PathInput) -> Frame: ...
+def read_gro_trajectory(path: PathInput) -> list[Frame]: ...
+def read_xsf(path: PathInput) -> Frame: ...
+def read_amber_inpcrd(path: PathInput) -> Frame: ...
+def read_amber_prmtop(path: PathInput) -> Frame: ...
 
 class LAMMPSTrajReader:
     """Lazy, indexed reader for LAMMPS dump trajectory files.
@@ -1108,14 +2191,14 @@ class LAMMPSTrajReader:
     ``close()``, and use as a context manager.
     """
 
-    def __init__(self, path: str) -> None: ...
+    def __init__(self, path: PathInput) -> None: ...
     @property
     def n_frames(self) -> int: ...
     def build_index(self) -> None: ...
     def read_frame(self, index: int) -> Frame: ...
     def read_frames(self, indices: Sequence[int]) -> list[Frame]: ...
     def read_range(
-        self, start: int = ..., stop: Optional[int] = ..., step: int = ...
+        self, start: int = ..., stop: int | None = ..., step: int = ...
     ) -> list[Frame]: ...
     def read_all(self) -> list[Frame]: ...
     def close(self) -> None: ...
@@ -1124,12 +2207,12 @@ class LAMMPSTrajReader:
     def __getitem__(self, key: int) -> Frame: ...
     @overload
     def __getitem__(self, key: slice) -> list[Frame]: ...
-    def __iter__(self) -> "LAMMPSTrajReader": ...
+    def __iter__(self) -> LAMMPSTrajReader: ...
     def __next__(self) -> Frame: ...
-    def __enter__(self) -> "LAMMPSTrajReader": ...
-    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> bool: ...
+    def __enter__(self) -> Self: ...
+    def __exit__(self, *exc: object) -> bool: ...
 
-def read_dcd(path: str) -> list[Frame]: ...
+def read_dcd_trajectory(path: PathInput) -> list[Frame]: ...
 
 class DCDTrajReader:
     """Lazy, indexed reader for DCD trajectory files.
@@ -1143,14 +2226,14 @@ class DCDTrajReader:
     ``close()``, and use as a context manager.
     """
 
-    def __init__(self, path: str) -> None: ...
+    def __init__(self, path: PathInput) -> None: ...
     @property
     def n_frames(self) -> int: ...
     def build_index(self) -> None: ...
     def read_frame(self, index: int) -> Frame: ...
     def read_frames(self, indices: Sequence[int]) -> list[Frame]: ...
     def read_range(
-        self, start: int = ..., stop: Optional[int] = ..., step: int = ...
+        self, start: int = ..., stop: int | None = ..., step: int = ...
     ) -> list[Frame]: ...
     def read_all(self) -> list[Frame]: ...
     def close(self) -> None: ...
@@ -1159,10 +2242,10 @@ class DCDTrajReader:
     def __getitem__(self, key: int) -> Frame: ...
     @overload
     def __getitem__(self, key: slice) -> list[Frame]: ...
-    def __iter__(self) -> "DCDTrajReader": ...
+    def __iter__(self) -> DCDTrajReader: ...
     def __next__(self) -> Frame: ...
-    def __enter__(self) -> "DCDTrajReader": ...
-    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> bool: ...
+    def __enter__(self) -> Self: ...
+    def __exit__(self, *exc: object) -> bool: ...
 
 class XYZTrajReader:
     """Lazy, indexed reader for multi-frame XYZ trajectory files.
@@ -1174,14 +2257,14 @@ class XYZTrajReader:
     as a context manager.
     """
 
-    def __init__(self, path: str) -> None: ...
+    def __init__(self, path: PathInput) -> None: ...
     @property
     def n_frames(self) -> int: ...
     def build_index(self) -> None: ...
     def read_frame(self, index: int) -> Frame: ...
     def read_frames(self, indices: Sequence[int]) -> list[Frame]: ...
     def read_range(
-        self, start: int = ..., stop: Optional[int] = ..., step: int = ...
+        self, start: int = ..., stop: int | None = ..., step: int = ...
     ) -> list[Frame]: ...
     def read_all(self) -> list[Frame]: ...
     def close(self) -> None: ...
@@ -1190,28 +2273,29 @@ class XYZTrajReader:
     def __getitem__(self, key: int) -> Frame: ...
     @overload
     def __getitem__(self, key: slice) -> list[Frame]: ...
-    def __iter__(self) -> "XYZTrajReader": ...
+    def __iter__(self) -> XYZTrajReader: ...
     def __next__(self) -> Frame: ...
-    def __enter__(self) -> "XYZTrajReader": ...
-    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> bool: ...
+    def __enter__(self) -> Self: ...
+    def __exit__(self, *exc: object) -> bool: ...
 
-def read_chgcar_file(path: str) -> Frame: ...
-def read_cube_file(path: str) -> Frame: ...
-def write_cube_file(path: str, frame: Frame) -> None: ...
-def write_pdb(path: str, frame: Frame) -> None: ...
-def write_pdb_trajectory(path: str, frames: list[Frame]) -> None:
+def read_chgcar(path: PathInput) -> Frame: ...
+def read_cube(path: PathInput) -> Frame: ...
+def write_cube(path: PathInput, frame: Frame) -> None: ...
+def write_pdb(path: PathInput, frame: Frame) -> None: ...
+def write_pdb_trajectory(path: PathInput, frames: list[Frame]) -> None:
     """Write a list of Frames to a multi-MODEL PDB trajectory."""
-    ...
 
-def write_xyz(path: str, frame: Frame) -> None: ...
-def write_lammps(path: str, frame: Frame) -> None: ...
-def write_lammps_traj(
-    path: str, frames: Sequence[Frame], columns: Sequence[str] | None = None
+def write_xyz(path: PathInput, frame: Frame) -> None: ...
+def write_xyz_trajectory(path: PathInput, frames: Sequence[Frame]) -> None: ...
+def write_lammps_data(path: PathInput, frame: Frame) -> None: ...
+def write_lammps_trajectory(
+    path: PathInput, frames: Sequence[Frame], columns: Sequence[str] | None = None
 ) -> None: ...
-def write_lammps_dump_local(path: str, frames: Sequence[Frame]) -> None: ...
-def write_dcd(path: str, frames: Sequence[Frame]) -> None: ...
-def write_gro(path: str, frame: Frame) -> None: ...
-def write_xsf(path: str, frame: Frame) -> None: ...
+def write_lammps_dump_local(path: PathInput, frames: Sequence[Frame]) -> None: ...
+def write_dcd_trajectory(path: PathInput, frames: Sequence[Frame]) -> None: ...
+def write_gro(path: PathInput, frame: Frame) -> None: ...
+def write_gro_trajectory(path: PathInput, frames: Sequence[Frame]) -> None: ...
+def write_xsf(path: PathInput, frame: Frame) -> None: ...
 
 # ---------------------------------------------------------------------------
 # Signal processing
@@ -1231,16 +2315,14 @@ class CarbonTubeBuilder:
         n: int,
         m: int,
         *,
-        length: Optional[float] = None,
-        cells: Optional[int] = None,
+        length: float | None = None,
+        cells: int | None = None,
         bond_length: float = 1.42,
         periodic: bool = False,
         vacuum: float = 10.0,
     ) -> None: ...
-    def build(
-        self, *, atom_type: Optional[str] = None, charge: float = 0.0
-    ) -> Frame: ...
-    def cell(self, *, vacuum: Optional[float] = None) -> Box: ...
+    def build(self, *, atom_type: str | None = None, charge: float = 0.0) -> Frame: ...
+    def cell(self, *, vacuum: float | None = None) -> Box: ...
     @property
     def n(self) -> int: ...
     @property
@@ -1262,10 +2344,8 @@ class GrapheneBuilder:
         vacuum: float = 10.0,
         periodic_xy: bool = True,
     ) -> None: ...
-    def build(
-        self, *, atom_type: Optional[str] = None, charge: float = 0.0
-    ) -> Frame: ...
-    def cell(self, *, vacuum: Optional[float] = None) -> Box: ...
+    def build(self, *, atom_type: str | None = None, charge: float = 0.0) -> Frame: ...
+    def cell(self, *, vacuum: float | None = None) -> Box: ...
     @property
     def nx(self) -> int: ...
     @property
@@ -1274,6 +2354,118 @@ class GrapheneBuilder:
     def bond_length(self) -> float: ...
     @property
     def periodic_xy(self) -> bool: ...
+
+@final
+class SitePlacer:
+    """``molrs.builder.SitePlacer`` — translation-only placement. Frozen.
+
+    Each copy's centre of mass (Å, weights ``mass``) lands on its site;
+    rotation is the orienter's job. Takes no arguments.
+    """
+
+    def __init__(self) -> None: ...
+
+@final
+class GrowthPlacer:
+    """``molrs.builder.GrowthPlacer`` — grows each molecule onto its parents'
+    ports. Frozen.
+
+    The first copy of a molecule keeps its template pose (its centre of mass
+    on the site when the site graph has positions); every later copy is
+    rotated and moved so the anchor of its port toward its parent lands on
+    the parent's leaving handle, pointing back along that bond. Needs no site
+    positions; bond lengths and overlaps are left to a later minimisation.
+    Takes no arguments.
+    """
+
+    def __init__(self) -> None: ...
+
+@final
+class AxisOrienter:
+    """``molrs.builder.AxisOrienter`` — turns each copy onto its site. Frozen.
+
+    Turns each copy about its template's centre of mass. A chain site (only
+    ``<`` / ``>`` ports, a two-port template) matches the template's
+    backbone-to-centre direction to the site axis (``CoarseGrain.axes``) and
+    its two joining atoms to the site's bond line. Any other bonded site fits
+    the template's port directions to its bond directions. A site with no
+    bond is not turned. Takes no arguments.
+    """
+
+    def __init__(self) -> None: ...
+
+@final
+class Assembler:
+    """``molrs.builder.Assembler`` — one placed, linked world from a site
+    graph. Frozen.
+
+    Each bead of the site graph is one unit: a copy of ``library[bead_type]``,
+    turned by the orienter (when given) and given its pose by the placer. Each site bond joins one
+    port of each end's copy (``<`` with ``>``, ``$`` with ``$``); the leaving
+    groups are removed. Any topology works: chains, branches, rings. Every
+    atom gets ``frag_id`` (the site's ordinal) and ``mol_id`` (its connected
+    component's ordinal + 1).
+
+    Parameters
+    ----------
+    library : Mapping[str, Graph]
+        Name → template, copied at construction: any graph (``Graph``,
+        ``Atomistic``, ``CoarseGrain``), with ports where a site bonds. A
+        template without ports can only fill an unbonded site.
+    placer : SitePlacer | GrowthPlacer
+        ``SitePlacer`` moves each copy's centre of mass onto its site;
+        ``GrowthPlacer`` grows each molecule onto its parents' ports and needs
+        no site positions.
+    orienter : AxisOrienter, optional
+        Turns each copy about its centre of mass before it is placed; needs
+        site positions.
+
+    Raises
+    ------
+    TypeError
+        If ``library`` is not a mapping of ``str`` to graphs, ``placer`` is
+        not a :class:`SitePlacer` or :class:`GrowthPlacer`, or ``orienter``
+        is not an :class:`AxisOrienter`.
+    """
+
+    def __init__(
+        self,
+        library: _AbcMapping[str, Graph],
+        placer: SitePlacer | GrowthPlacer,
+        orienter: AxisOrienter | None = None,
+    ) -> None: ...
+    @overload
+    def assemble(self, sites: CoarseGrain, cls: None = None) -> Graph: ...
+    @overload
+    def assemble(self, sites: CoarseGrain, cls: type[_TGraph]) -> _TGraph:
+        """Place and join one copy per site; return the world. Releases the
+        GIL.
+
+        Parameters
+        ----------
+        sites : CoarseGrain
+            The site graph: each bead's ``bead_type`` names its template and
+            each bond joins two copies; its optional position (Å) and axis
+            are read by the placer and the orienter.
+
+        cls : type, optional
+            The graph class to build the world as: ``Graph`` (the default),
+            ``Atomistic`` or ``CoarseGrain``.
+
+        Returns
+        -------
+        Graph
+            The world, an instance of ``cls``; ports without a site bond stay
+            on it. Empty when ``sites`` is empty.
+
+        Raises
+        ------
+        ValueError
+            Naming the site at fault: a bead lacks its type or position, a
+            name is not in the library, no accepting port exists for every
+            bond of a site, a site cannot be oriented or placed, or a join is
+            refused.
+        """
 
 # ---------------------------------------------------------------------------
 # 3D coordinate generation (embed)
@@ -1285,9 +2477,9 @@ class ConformerStageReport:
     @property
     def stage(self) -> str: ...
     @property
-    def energy_before(self) -> Optional[float]: ...
+    def energy_before(self) -> float | None: ...
     @property
-    def energy_after(self) -> Optional[float]: ...
+    def energy_after(self) -> float | None: ...
     @property
     def steps(self) -> int: ...
     @property
@@ -1299,7 +2491,7 @@ class ConformerReport:
     """Aggregate report from a conformer generation run."""
 
     @property
-    def final_energy(self) -> Optional[float]: ...
+    def final_energy(self) -> float | None: ...
     @property
     def warnings(self) -> list[str]: ...
     @property
@@ -1316,128 +2508,47 @@ class Conformer:
         self,
         speed: str = "medium",
         add_hydrogens: bool = True,
-        seed: Optional[int] = None,
+        seed: int | None = None,
     ) -> None: ...
     def generate(self, mol: Atomistic) -> tuple[Atomistic, ConformerReport]: ...
 
-def align_direction(
-    mol: Graph,
-    from_: Sequence[float],
-    to: Sequence[float],
-    from_dir: Optional[Sequence[float]] = None,
-    to_dir: Optional[Sequence[float]] = None,
-    flip: bool = False,
-) -> None: ...
-
 # ---------------------------------------------------------------------------
-# Force field — Style / Type / Parameters model
+# Force field
 #
-# A ForceField owns category-keyed Styles; each Style owns named Types; each
-# Type carries a Parameters view. The classes below are handle *views* over a
-# parent ForceField — they read/write through to it rather than holding owned
-# state.
+# Only the native handle is declared here. The style and parameter views a
+# caller reaches through it are pure Python and are declared in
+# `molrs/ff/forcefield.py`, beside the code that defines them.
 # ---------------------------------------------------------------------------
 
-class Parameters:
-    """The parameter view of a :class:`Type` — keyword access plus the
-    ``.kwargs`` mapping consumers read. The model is keyword-only, so ``.args``
-    is always empty.
-    """
+class ForceField:
+    """A force field: styles and their types. Not subclassable; pickles by
+    content. Styles and types are read and written through their handles."""
 
-    @property
-    def args(self) -> list[Any]: ...
-    @property
-    def kwargs(self) -> dict[str, Any]: ...
-    def get(self, key: str) -> Any: ...
-    def keys(self) -> list[str]: ...
-    def values(self) -> list[Any]: ...
-    def items(self) -> list[tuple[str, Any]]: ...
-
-class Type:
-    """Handle view of one force-field type over a :class:`ForceField`."""
-
+    def __init__(self, name: str = "forcefield", units: str | None = None) -> None: ...
     @property
     def name(self) -> str: ...
     @property
-    def category(self) -> str: ...
+    def units(self) -> str: ...
+    def merge(self, other: ForceField) -> Self: ...
+    def set_special_bonds(self, lj: Sequence[float], coul: Sequence[float]) -> None: ...
+    def _ffi_forcefield_capsule(self) -> Any: ...
+    def def_style(
+        self,
+        category: str,
+        name: str,
+        params: dict[str, float | str] | None = None,
+    ) -> Style: ...
     @property
-    def endpoints(self) -> tuple["AtomType", ...]: ...
-    @property
-    def params(self) -> Parameters: ...
-    def get(self, key: str) -> Any: ...
-    def keys(self) -> list[str]: ...
-    def items(self) -> list[tuple[str, Any]]: ...
-
-class AtomType(Type):
-    """A single atom type (endpoints only — no bonded arity)."""
-
-class BondType(Type):
-    """A bond type spanning two atom-type endpoints ``itom``-``jtom``."""
-
-    @property
-    def itom(self) -> AtomType: ...
-    @property
-    def jtom(self) -> AtomType: ...
-    def matches(self, at1: str, at2: str) -> bool:
-        """Test whether endpoint atom-type names ``at1``-``at2`` match this type."""
-        ...
-
-class AngleType(Type):
-    """An angle type spanning three atom-type endpoints ``itom``-``jtom``-``ktom``."""
-
-    @property
-    def itom(self) -> AtomType: ...
-    @property
-    def jtom(self) -> AtomType: ...
-    @property
-    def ktom(self) -> AtomType: ...
-    def matches(self, at1: str, at2: str, at3: str) -> bool:
-        """Test whether endpoint atom-type names match this type."""
-        ...
-
-class DihedralType(Type):
-    """A dihedral type spanning four atom-type endpoints ``itom``-``jtom``-``ktom``-``ltom``."""
-
-    @property
-    def itom(self) -> AtomType: ...
-    @property
-    def jtom(self) -> AtomType: ...
-    @property
-    def ktom(self) -> AtomType: ...
-    @property
-    def ltom(self) -> AtomType: ...
-    def matches(self, at1: str, at2: str, at3: str, at4: str) -> bool:
-        """Test whether endpoint atom-type names match this type."""
-        ...
-
-class ImproperType(Type):
-    """An improper type spanning four atom-type endpoints ``itom``-``jtom``-``ktom``-``ltom``."""
-
-    @property
-    def itom(self) -> AtomType: ...
-    @property
-    def jtom(self) -> AtomType: ...
-    @property
-    def ktom(self) -> AtomType: ...
-    @property
-    def ltom(self) -> AtomType: ...
-    def matches(self, at1: str, at2: str, at3: str, at4: str) -> bool:
-        """Test whether endpoint atom-type names match this type."""
-        ...
-
-class PairType(Type):
-    """A pair (non-bonded) type spanning two atom-type endpoints ``itom``-``jtom``."""
-
-    @property
-    def itom(self) -> AtomType: ...
-    @property
-    def jtom(self) -> AtomType: ...
-    def matches(self, at1: str, at2: str) -> bool:
-        """Test whether endpoint atom-type names ``at1``-``at2`` match this type."""
-        ...
+    def styles(self) -> list[Style]: ...
+    def get_style(self, category: str, name: str) -> Style | None: ...
+    def get_styles(self, category: str | type[Style]) -> list[Style]: ...
+    def get_types(self, category: str | type[Type]) -> list[Type]: ...
+    def __reduce__(self) -> tuple[type, tuple[()], tuple[Any, ...]]: ...
+    def __setstate__(self, state: tuple[Any, ...]) -> None: ...
 
 class Style:
-    """Handle view of one style over a :class:`ForceField`."""
+    """Handle of one style of a :class:`ForceField`; equal handles name the
+    same category and style of one force field."""
 
     @property
     def name(self) -> str: ...
@@ -1445,99 +2556,122 @@ class Style:
     def category(self) -> str: ...
     @property
     def types(self) -> list[Type]: ...
-    def get_types(self) -> list[Type]: ...
-    def get_type_by_name(self, name: str) -> Optional[Type]: ...
+    def get_types(self, type_cls: type[Type] | None = None) -> list[Type]: ...
+    def get_type_by_name(self, name: str) -> Type | None: ...
+    @property
+    def params(self) -> dict[str, float | str]: ...
+    def __getitem__(self, key: str) -> float | str | None: ...
+    def __setitem__(self, key: str, value: float | str) -> None: ...
 
 class AtomStyle(Style):
-    """Atom style — defines :class:`AtomType` entries.
-
-    ``types`` / ``get_types`` / ``get_type_by_name`` are inherited from
-    :class:`Style` and yield :class:`AtomType` instances at runtime.
-    """
-
-    def def_type(
-        self, name: str, params: Optional[dict[str, Any]] = None
-    ) -> AtomType: ...
+    def def_type(self, name: str, **params: float | str) -> AtomType: ...
 
 class BondStyle(Style):
-    """Bond style — defines :class:`BondType` entries.
-
-    ``types`` / ``get_types`` / ``get_type_by_name`` are inherited from
-    :class:`Style` and yield :class:`BondType` instances at runtime.
-    """
-
     def def_type(
-        self, itom: str, jtom: str, params: Optional[dict[str, Any]] = None
+        self, name: str, itom: AtomType, jtom: AtomType, **params: float | str
     ) -> BondType: ...
 
 class AngleStyle(Style):
-    """Angle style — defines :class:`AngleType` entries.
-
-    ``types`` / ``get_types`` / ``get_type_by_name`` are inherited from
-    :class:`Style` and yield :class:`AngleType` instances at runtime.
-    """
-
     def def_type(
-        self, itom: str, jtom: str, ktom: str, params: Optional[dict[str, Any]] = None
+        self,
+        name: str,
+        itom: AtomType,
+        jtom: AtomType,
+        ktom: AtomType,
+        **params: float | str,
     ) -> AngleType: ...
 
 class DihedralStyle(Style):
-    """Dihedral style — defines :class:`DihedralType` entries.
-
-    ``types`` / ``get_types`` / ``get_type_by_name`` are inherited from
-    :class:`Style` and yield :class:`DihedralType` instances at runtime.
-    """
-
     def def_type(
         self,
-        itom: str,
-        jtom: str,
-        ktom: str,
-        ltom: str,
-        params: Optional[dict[str, Any]] = None,
+        name: str,
+        itom: AtomType,
+        jtom: AtomType,
+        ktom: AtomType,
+        ltom: AtomType,
+        **params: float | str,
     ) -> DihedralType: ...
 
 class ImproperStyle(Style):
-    """Improper style — defines :class:`ImproperType` entries.
-
-    ``types`` / ``get_types`` / ``get_type_by_name`` are inherited from
-    :class:`Style` and yield :class:`ImproperType` instances at runtime.
-    """
-
     def def_type(
         self,
-        itom: str,
-        jtom: str,
-        ktom: str,
-        ltom: str,
-        params: Optional[dict[str, Any]] = None,
+        name: str,
+        itom: AtomType,
+        jtom: AtomType,
+        ktom: AtomType,
+        ltom: AtomType,
+        **params: float | str,
     ) -> ImproperType: ...
 
 class PairStyle(Style):
-    """Pair (non-bonded) style — defines :class:`PairType` entries.
-
-    ``types`` / ``get_types`` / ``get_type_by_name`` are inherited from
-    :class:`Style` and yield :class:`PairType` instances at runtime.
-    """
-
     def def_type(
         self,
-        itom: str,
-        jtom: Optional[str] = None,
-        params: Optional[dict[str, Any]] = None,
+        name: str,
+        itom: AtomType,
+        jtom: AtomType | None = None,
+        **params: float | str,
     ) -> PairType: ...
 
-class ForceField:
+class Type:
+    """Handle of one type of a :class:`ForceField`; equal handles name the
+    same category, style and type of one force field."""
+
     @property
     def name(self) -> str: ...
     @property
-    def special_bonds_lj(self) -> Any: ...
+    def category(self) -> str: ...
     @property
-    def special_bonds_coul(self) -> Any: ...
-    def set_special_bonds(self, lj: Any, coul: Any) -> None: ...
-    def style_names(self) -> list[str]: ...
-    def to_potentials(self, frame: Frame) -> Potentials: ...
-    def to_typed_potentials(self, frame: Frame) -> TypedPotentials: ...
+    def params(self) -> dict[str, float | str]: ...
+    def __getitem__(self, key: str) -> float | str | None: ...
+    def get(self, key: str, default: Any = None) -> Any: ...
+    def __contains__(self, key: str) -> bool: ...
+    def __setitem__(self, key: str, value: float | str) -> None: ...
+    def keys(self) -> list[str]: ...
+    def items(self) -> list[tuple[str, float | str]]: ...
+    @property
+    def endpoints(self) -> tuple[AtomType, ...]: ...
+
+class AtomType(Type): ...
+
+class BondType(Type):
+    @property
+    def itom(self) -> AtomType: ...
+    @property
+    def jtom(self) -> AtomType: ...
+
+class AngleType(Type):
+    @property
+    def itom(self) -> AtomType: ...
+    @property
+    def jtom(self) -> AtomType: ...
+    @property
+    def ktom(self) -> AtomType: ...
+
+class DihedralType(Type):
+    @property
+    def itom(self) -> AtomType: ...
+    @property
+    def jtom(self) -> AtomType: ...
+    @property
+    def ktom(self) -> AtomType: ...
+    @property
+    def ltom(self) -> AtomType: ...
+
+class ImproperType(Type):
+    @property
+    def itom(self) -> AtomType: ...
+    @property
+    def jtom(self) -> AtomType: ...
+    @property
+    def ktom(self) -> AtomType: ...
+    @property
+    def ltom(self) -> AtomType: ...
+
+class PairType(Type):
+    @property
+    def itom(self) -> AtomType: ...
+    @property
+    def jtom(self) -> AtomType: ...
 
 class LammpsLogHeader:
     """Header lines that precede the first run of a LAMMPS log."""
@@ -1757,7 +2891,6 @@ class OptReport:
     def final_fmax(self) -> float: ...
 
 class TypedPotentials:
-
     """Kernels for a neighbour-driven evaluation, each with its special-bonds weights.
 
 
@@ -1765,13 +2898,11 @@ class TypedPotentials:
 
     re-deciding which member is which and how its close neighbours are
 
-    scaled -- the two things ``to_typed_potentials`` decides once.
+    scaled -- the two things ``PotentialCompiler.compile_typed`` decides once.
 
     """
 
-
     def __len__(self) -> int: ...
-
 
 class Potentials:
     """Composite of the one ``Potential`` concept — itself a potential.
@@ -1785,15 +2916,28 @@ class Potentials:
 
     def __init__(self) -> None: ...
     def __len__(self) -> int: ...
-    def push(self, potential: Union["md.LJCut", "md.Potential", "Potentials"]) -> None: ...
+    def push(self, potential: md.LJCut | md.Potential | Potentials) -> None: ...
     def set_energy_scale(self, scale: float) -> None: ...
     @property
     def energy_scale(self) -> float: ...
-    def calc_energy_forces(
-        self, arg: Union[Frame, ArrayF]
-    ) -> tuple[float, ArrayF]: ...
-    def calc_energy(self, arg: Union[Frame, ArrayF]) -> float: ...
-    def calc_forces(self, arg: Union[Frame, ArrayF]) -> ArrayF: ...
+    def calc_energy_forces(self, arg: Frame | ArrayF) -> tuple[float, ArrayF]: ...
+    def calc_energy(self, arg: Frame | ArrayF) -> float: ...
+    def calc_forces(self, arg: Frame | ArrayF) -> ArrayF: ...
+
+class PotentialCompiler:
+    """Compiles a ``ForceField`` into evaluable kernels.
+
+    Owns a copy of the force field taken at construction; later edits to that
+    ``ForceField`` do not reach it. ``compile(frame)`` binds a typed frame now;
+    ``defer()`` returns ``Potentials`` that bind the frame they are evaluated
+    on; ``compile_typed(frame)`` builds the kernels of a neighbour-driven (MD)
+    evaluation.
+    """
+
+    def __init__(self, forcefield: ForceField) -> None: ...
+    def compile(self, frame: Frame) -> Potentials: ...
+    def defer(self) -> Potentials: ...
+    def compile_typed(self, frame: Frame) -> TypedPotentials: ...
 
 class LBFGS:
     """L-BFGS geometry optimizer over a force-field Potential.
@@ -1819,8 +2963,76 @@ class LBFGS:
     @overload
     def run(self, coords: ArrayF) -> tuple[ArrayF, list[OptReport]]: ...
 
-class Typifier(Generic[TGraph]):
-    def typify(self, mol: TGraph) -> TGraph: ...
+#: A param value of a type annotation or style: numbers to the numeric side,
+#: strings to the string side.
+type ParamValue = float | int | str
+
+#: What a ``Match`` writes under one key of one graph element: a scalar is
+#: stamped and defines nothing; ``(style, name, endpoints, params)`` stamps
+#: ``name`` and every param and defines the type ``name`` on ``endpoints``
+#: (atom-type names; empty for an atom type) under the style.
+type Annotation = (
+    str | bool | int | float | tuple[str, str, Sequence[str], dict[str, ParamValue]]
+)
+
+class Match:
+    """What a typifier's ``match`` assigns to one graph.
+
+    ``nodes`` is positional against ``graph.nodes``; ``links`` maps a relation
+    class (``Bond``, ``Angle``, ``Dihedral``, ``Improper``) to rows positional
+    against ``graph.links.exact_bucket(cls)`` — the kind's own rows, so an
+    improper never shifts a dihedral position. An unknown kind raises
+    ``TypeError``. ``styles`` are ``(category, style, params)`` to declare, in
+    order; ``pairs`` are ``(style, name, endpoints, params)`` pair rows."""
+
+    def __init__(
+        self,
+        nodes: Sequence[_AbcMapping[str, Annotation]],
+        links: _AbcMapping[type, Sequence[_AbcMapping[str, Annotation]]] | None = None,
+        *,
+        styles: Sequence[tuple[str, str, dict[str, ParamValue]]] = (),
+        pairs: Sequence[tuple[str, str, Sequence[str], dict[str, ParamValue]]] = (),
+    ) -> None: ...
+
+class Typifier[TGraph: Graph]:
+    """The base of every graph typifier: one ``match`` hook plus the output
+    force field its typing accumulates.
+
+    A subclass implements ``match`` (and optionally ``library``) and nothing
+    else; defining ``typify`` on a subclass raises ``TypeError`` at class
+    creation. The native classes extend this base and only construct."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None: ...
+    def match(self, graph: _TGraph) -> Match:
+        """Match ``graph`` and return what it assigns.
+
+        ``match`` may write intermediate results (generated topology, perceived
+        bond types) onto the graph it is given; ``typify`` always gives it a
+        private copy. The base raises ``NotImplementedError``; a native class
+        runs its Rust matcher."""
+    @final
+    def typify(self, mol: _TGraph) -> _TGraph:
+        """Do not override; the only writer of ``forcefield()``.
+
+        Copies ``mol``, calls ``match`` on the copy, and writes the match onto
+        the copy and the output. Returns the typed copy; ``mol`` is untouched.
+        ``mol`` must be an ``Atomistic`` (anything else raises ``TypeError``).
+        Raises ``NotImplementedError`` without a ``match`` and ``ValueError``
+        when the match does not fit the graph or contradicts the output (which
+        is then unchanged)."""
+    def forcefield(self) -> ForceField:
+        """The accumulated output — exactly the definitions ``typify`` has
+        assigned — returned as a copy.
+
+        Edits to the copy do not reach the typifier; ``typify`` is the only
+        writer. Before the first ``typify`` it is the seeded empty output."""
+    def library(self) -> ForceField:
+        """The force field this typifier matches against, returned as a copy.
+
+        The output starts as its empty likeness (name, declared units and
+        special_bonds). A Python subclass that does not override it raises
+        ``NotImplementedError``, and its output starts as an empty force field
+        named after the class."""
 
 class MMFF94Typifier(Typifier[Atomistic]):
     """MMFF94 (Halgren 1996) atom types, charges and bonded parameters.
@@ -1828,13 +3040,11 @@ class MMFF94Typifier(Typifier[Atomistic]):
     The variant is the class, never a flag. See ``MMFF94STypifier`` for the
     "static" parameter set.
 
-    ``typify`` labels the graph; ``forcefield().to_potentials(frame)`` compiles
-    it. There is no one-step ``build`` — MMFF walks the same route as every other
+    ``typify`` labels the graph; ``PotentialCompiler(forcefield()).compile(frame)``
+    compiles it. There is no one-step ``build`` — MMFF walks the same route as every other
     force field."""
 
     def __init__(self) -> None: ...
-    def typify(self, mol: Atomistic) -> Atomistic: ...
-    def forcefield(self) -> ForceField: ...
 
 class MMFF94STypifier(Typifier[Atomistic]):
     """MMFF94s (Halgren 1999) — the "static" set, for energy minimization.
@@ -1849,15 +3059,11 @@ class MMFF94STypifier(Typifier[Atomistic]):
     MMFF94."""
 
     def __init__(self) -> None: ...
-    def typify(self, mol: Atomistic) -> Atomistic: ...
-    def forcefield(self) -> ForceField: ...
 
 class OPLSAATypifier(Typifier[Atomistic]):
     def __init__(self, source: Any = None, *, strict: bool = True) -> None: ...
-    def typify(self, mol: Atomistic) -> Atomistic: ...
-    def forcefield(self) -> ForceField: ...
 
-AtdParameterSet = Literal["bcc", "abcg2", "gas", "gaff", "gaff2", "amber", "sybyl"]
+type AtdParameterSet = Literal["bcc", "abcg2", "gas", "gaff", "gaff2", "amber", "sybyl"]
 
 class AtdTypifier(Typifier[Atomistic]):
     """antechamber atom types — one rule engine over seven ``ATOMTYPE_*.DEF`` tables.
@@ -1869,21 +3075,37 @@ class AtdTypifier(Typifier[Atomistic]):
     def __init__(self, *, parameter_set: AtdParameterSet) -> None: ...
     @property
     def parameter_set(self) -> AtdParameterSet: ...
-    def typify(self, mol: Atomistic) -> Atomistic: ...
+
+class ElementTypifier(Typifier[Atomistic]):
+    """``molrs.ff.typifier.ElementTypifier`` — ``type`` labels from element
+    symbols alone, with no force field.
+
+    Atoms get ``type = element`` (e.g. ``"C"``); bonds, angles and dihedrals
+    get their endpoint elements joined with ``-`` in the byte-wise smaller
+    orientation (bond O–H is ``"H-O"``). :meth:`forcefield` stays empty.
+    Exported from :mod:`molrs.ff.typifier` only.
+
+    Raises
+    ------
+    ValueError
+        From :meth:`typify`, when an atom has no string ``element`` or the
+        molecule has impropers.
+    """
+
+    def __init__(self) -> None: ...
 
 # ---------------------------------------------------------------------------
-# Charge models — one trait, one calling convention
+# Charge models — one calling convention
+#
+# Each model below takes a molecule (and optionally QM base charges) and
+# returns one float64 charge per atom: `needs_equivalencing()` then
+# `assign(mol, qm=None)`. That is a shared shape, not a shared base — the
+# native classes inherit from nothing.
 # ---------------------------------------------------------------------------
 
-BccParameterSet = Literal["bcc", "abcg2"]
+type BccParameterSet = Literal["bcc", "abcg2"]
 
-class ChargeModel(Protocol):
-    """molecule (and optionally QM base charges) in, one float64 charge per atom out."""
-
-    def needs_equivalencing(self) -> bool: ...
-    def assign(self, mol: Atomistic, qm: Optional[ArrayF] = None) -> ArrayF: ...
-
-class BccModel(ChargeModel):
+class BccModel:
     """AM1-BCC / ABCG2 bond-charge corrections.
 
     ``assign`` is the whole model: it averages the raw QM charges over the
@@ -1896,17 +3118,17 @@ class BccModel(ChargeModel):
     @property
     def parameter_set(self) -> BccParameterSet: ...
     def needs_equivalencing(self) -> bool: ...
-    def assign(self, mol: Atomistic, qm: Optional[ArrayF] = None) -> ArrayF: ...
+    def assign(self, mol: Atomistic, qm: ArrayF | None = None) -> ArrayF: ...
     def correct(self, mol: Atomistic, am1: ArrayF) -> ArrayF: ...
 
-class MullikenModel(ChargeModel):
+class MullikenModel:
     """The pass-through: the QM charges it was handed, bit for bit."""
 
     def __init__(self) -> None: ...
     def needs_equivalencing(self) -> bool: ...
-    def assign(self, mol: Atomistic, qm: Optional[ArrayF] = None) -> ArrayF: ...
+    def assign(self, mol: Atomistic, qm: ArrayF | None = None) -> ArrayF: ...
 
-class GasteigerModel(ChargeModel):
+class GasteigerModel:
     """Gasteiger / PEOE charges (``antechamber -c gas``) — no QM input needed.
 
     ``qm`` is accepted and ignored, so that a caller holding an unknown model can
@@ -1914,14 +3136,11 @@ class GasteigerModel(ChargeModel):
 
     def __init__(self) -> None: ...
     def needs_equivalencing(self) -> bool: ...
-    def assign(self, mol: Atomistic, qm: Optional[ArrayF] = None) -> ArrayF: ...
+    def assign(self, mol: Atomistic, qm: ArrayF | None = None) -> ArrayF: ...
 
-def read_forcefield_xml(path: str) -> ForceField: ...
-def read_forcefield_xml_str(xml: str) -> ForceField: ...
-def read_opls_xml(path: str) -> ForceField: ...
-def read_opls_xml_str(xml: str) -> ForceField: ...
-def read_lammps_forcefield(path: str) -> ForceField: ...
-def read_lammps_forcefield_str(text: str) -> ForceField: ...
+def read_forcefield_xml(path: PathInput) -> ForceField: ...
+def read_opls_xml(path: PathInput) -> ForceField: ...
+def read_lammps_forcefield(path: PathInput) -> ForceField: ...
 def read_lammps_data_coeffs(
     coeffs_text: str,
     units: str = "real",
@@ -1932,47 +3151,34 @@ def read_lammps_data_coeffs(
     improper_labels: dict[int, str] | None = None,
 ) -> ForceField: ...
 def write_lammps_forcefield(
-    path: str,
+    path: PathInput,
     forcefield: ForceField,
+    frame: Frame,
+    *,
     precision: int = 6,
     skip_pair_style: bool = False,
     skip_units: bool = False,
     units: str = "real",
-    atom_types: set[str] | None = None,
-    bond_types: set[str] | None = None,
-    angle_types: set[str] | None = None,
-    dihedral_types: set[str] | None = None,
-    improper_types: set[str] | None = None,
-    type_ids: dict[str, int] | None = None,
 ) -> None: ...
 def write_lammps_forcefield_str(
     forcefield: ForceField,
+    frame: Frame,
+    *,
     precision: int = 6,
     skip_pair_style: bool = False,
     skip_units: bool = False,
     units: str = "real",
-    atom_types: set[str] | None = None,
-    bond_types: set[str] | None = None,
-    angle_types: set[str] | None = None,
-    dihedral_types: set[str] | None = None,
-    improper_types: set[str] | None = None,
-    type_ids: dict[str, int] | None = None,
 ) -> str: ...
 def write_lammps_data_coeffs(
     forcefield: ForceField,
+    frame: Frame,
+    *,
     precision: int = 6,
     units: str = "real",
-    atom_types: set[str] | None = None,
-    bond_types: set[str] | None = None,
-    angle_types: set[str] | None = None,
-    dihedral_types: set[str] | None = None,
-    improper_types: set[str] | None = None,
-    type_ids: dict[str, int] | None = None,
 ) -> str: ...
 def intramolecular_pairs(
     frame: Frame, forcefield: ForceField | None = None
 ) -> Block: ...
-def extract_coords(frame: Frame) -> ArrayF: ...
 
 # ---------------------------------------------------------------------------
 # Record / Trajectory / Observables
@@ -1982,25 +3188,25 @@ class Trajectory:
     def __init__(
         self,
         frames: Sequence[Frame],
-        step: Optional[ArrayI64] = None,
-        time: Optional[ArrayF] = None,
+        step: ArrayI64 | None = None,
+        time: ArrayF | None = None,
     ) -> None: ...
     @staticmethod
     def from_frames(
         frames: Sequence[Frame],
-        step: Optional[ArrayI64] = None,
-        time: Optional[ArrayF] = None,
+        step: ArrayI64 | None = None,
+        time: ArrayF | None = None,
     ) -> Trajectory: ...
     def __len__(self) -> int: ...
     def __getitem__(self, index: int) -> Frame: ...
     @property
     def frames(self) -> list[Frame]: ...
     @property
-    def step(self) -> Optional[ArrayI64]: ...
+    def step(self) -> ArrayI64 | None: ...
     @property
-    def time(self) -> Optional[ArrayF]: ...
+    def time(self) -> ArrayF | None: ...
 
-_ObservableScalarData = npt.NDArray | float | int | bool | str | list[str]
+type _ObservableScalarData = npt.NDArray | float | int | bool | str | list[str]
 
 class ScalarObservable:
     def __init__(
@@ -2008,12 +3214,12 @@ class ScalarObservable:
         name: str,
         data: _ObservableScalarData,
         description: str = "",
-        unit: Optional[str] = None,
-        axes: Optional[list[str]] = None,
+        unit: str | None = None,
+        axes: list[str] | None = None,
         time_dependent: bool = False,
-        sampling: Optional[str] = None,
-        domain: Optional[str] = None,
-        target: Optional[str] = None,
+        sampling: str | None = None,
+        domain: str | None = None,
+        target: str | None = None,
     ) -> None: ...
     @property
     def name(self) -> str: ...
@@ -2024,17 +3230,17 @@ class ScalarObservable:
     @property
     def description(self) -> str: ...
     @property
-    def unit(self) -> Optional[str]: ...
+    def unit(self) -> str | None: ...
     @property
     def axes(self) -> list[str]: ...
     @property
     def time_dependent(self) -> bool: ...
     @property
-    def sampling(self) -> Optional[str]: ...
+    def sampling(self) -> str | None: ...
     @property
-    def domain(self) -> Optional[str]: ...
+    def domain(self) -> str | None: ...
     @property
-    def target(self) -> Optional[str]: ...
+    def target(self) -> str | None: ...
 
 class VectorObservable:
     def __init__(
@@ -2042,12 +3248,12 @@ class VectorObservable:
         name: str,
         data: _ObservableScalarData,
         description: str = "",
-        unit: Optional[str] = None,
-        axes: Optional[list[str]] = None,
+        unit: str | None = None,
+        axes: list[str] | None = None,
         time_dependent: bool = False,
-        sampling: Optional[str] = None,
-        domain: Optional[str] = None,
-        target: Optional[str] = None,
+        sampling: str | None = None,
+        domain: str | None = None,
+        target: str | None = None,
     ) -> None: ...
     @property
     def name(self) -> str: ...
@@ -2058,98 +3264,98 @@ class VectorObservable:
     @property
     def description(self) -> str: ...
     @property
-    def unit(self) -> Optional[str]: ...
+    def unit(self) -> str | None: ...
     @property
     def axes(self) -> list[str]: ...
     @property
     def time_dependent(self) -> bool: ...
     @property
-    def sampling(self) -> Optional[str]: ...
+    def sampling(self) -> str | None: ...
     @property
-    def domain(self) -> Optional[str]: ...
+    def domain(self) -> str | None: ...
     @property
-    def target(self) -> Optional[str]: ...
+    def target(self) -> str | None: ...
 
-_AnyObservable = ScalarObservable | VectorObservable
-
-def write_frame(
-    path: str,
+def write_mrec(
+    path: PathInput,
     frame: Frame,
     system: Frame | None = None,
     meta: dict[str, Any] | None = None,
 ) -> None: ...
-def write_system(
-    path: str, system: Frame, meta: dict[str, Any] | None = None
+def write_mrec_system(
+    path: PathInput, system: Frame, meta: dict[str, Any] | None = None
 ) -> None: ...
-def write_trajectory(path: str, traj: Trajectory) -> None: ...
-def read_frame(path: str) -> Frame: ...
-def read_system(path: str) -> Frame: ...
-def read_trajectory(path: str) -> Trajectory: ...
-def read_meta(path: str) -> dict[str, Any]: ...
-def section_names(path: str) -> list[str]: ...
-def mrec_validate_path(path: str) -> None: ...
-def mrec_validate_meta(meta: dict[str, Any]) -> None: ...
+def write_mrec_trajectory(path: PathInput, traj: Trajectory) -> None: ...
+def read_mrec(path: PathInput) -> Frame: ...
+def read_mrec_system(path: PathInput) -> Frame: ...
+def read_mrec_trajectory(path: PathInput) -> Trajectory: ...
+def read_mrec_meta(path: PathInput) -> dict[str, Any]: ...
+def mrec_sections(path: PathInput) -> frozenset[str]: ...
+def mrec_validate_path(path: PathInput) -> None: ...
+def mrec_validate_meta(meta: _AbcMapping[str, Any]) -> None: ...
 def mrec_validate_frame(frame: Frame) -> None: ...
 
 MREC_MOLREC_VERSION: int
 MREC_RESERVED_META_KEYS: tuple[str, ...]
 
-class MrecTrajectoryReader:
+class TrajectoryReader:
     """Lazy one-frame cursor over a ``*.mrec`` trajectory (directory or zip).
 
-    Exported from ``molrs.io.mrec`` as ``TrajectoryReader``.
+    ``molrs.io.mrec.TrajectoryReader``; iterating it walks every frame.
     """
 
-    def __init__(self, path: str) -> None: ...
+    def __init__(self, path: PathInput) -> None: ...
     def read_frame(self, index: int) -> Frame: ...
     def read_columns(self, index: int, columns: list[tuple[str, str]]) -> Frame: ...
     def block_update_at(self, name: str, index: int) -> int | None: ...
     def box_at(self, index: int) -> Box | None: ...
     def __len__(self) -> int: ...
     def __getitem__(self, index: int) -> Frame: ...
+    def __iter__(self) -> Iterator[Frame]: ...
     @property
     def step(self) -> list[int]: ...
     @property
     def time(self) -> list[float] | None: ...
     def has_block(self, name: str) -> bool: ...
     def block_names(self) -> list[str]: ...
-    def __enter__(self) -> MrecTrajectoryReader: ...
+    def __enter__(self) -> Self: ...
     def __exit__(self, *exc: object) -> bool: ...
 
-class MrecSequenceSchema:
+class SequenceSchema:
     """A frame-sequence schema pinned before a run's frames are written.
 
-    Exported from ``molrs.io.mrec`` as ``SequenceSchema``.
+    ``molrs.io.mrec.SequenceSchema``; every ``declare_*`` returns the schema.
     """
 
     def __init__(self) -> None: ...
     @staticmethod
-    def from_frame(frame: Frame) -> MrecSequenceSchema: ...
+    def from_frame(frame: Frame) -> SequenceSchema: ...
     @staticmethod
-    def from_frames(frames: list[Frame]) -> MrecSequenceSchema: ...
-    def declare_block(self, name: str, rows: int | None = ...) -> None: ...
+    def from_frames(frames: Sequence[Frame]) -> SequenceSchema: ...
+    def declare_block(self, name: str, rows: int | None = ...) -> Self: ...
     def declare_column(
         self, block: str, column: str, dtype: str, trailing: list[int] | None = ...
-    ) -> None: ...
-    def declare_structural_shape(self, block: str, shape: list[int]) -> None: ...
-    def declare_meta(self, key: str, dtype: str) -> None: ...
+    ) -> Self: ...
+    def declare_structural_shape(self, block: str, shape: list[int]) -> Self: ...
+    def declare_meta(self, key: str, dtype: str) -> Self: ...
     def declare_meta_with_fill(
         self, key: str, fill: Any, dtype: str | None = ...
-    ) -> None: ...
+    ) -> Self: ...
     def block_names(self) -> list[str]: ...
     def column_names(self, block: str) -> list[str] | None: ...
     def meta_keys(self) -> list[tuple[str, str]]: ...
 
-class MrecTrajectoryWriter:
+class TrajectoryWriter:
     """Append-first writer for a ``*.mrec`` trajectory store.
 
-    Exported from ``molrs.io.mrec`` as ``TrajectoryWriter``.
+    ``molrs.io.mrec.TrajectoryWriter``.
     """
 
     def __init__(
         self,
-        path: str,
-        schema: MrecSequenceSchema,
+        path: PathInput,
+        schema: SequenceSchema,
+        *,
         flush_every: int | None = ...,
         compression: str | None = ...,
         durable: bool = ...,
@@ -2157,8 +3363,8 @@ class MrecTrajectoryWriter:
     ) -> None: ...
     @staticmethod
     def open(
-        path: str, flush_every: int | None = ..., durable: bool = ...
-    ) -> MrecTrajectoryWriter: ...
+        path: PathInput, *, flush_every: int | None = ..., durable: bool = ...
+    ) -> TrajectoryWriter: ...
     def append(
         self, frame: Frame, step: int | None = ..., time: float | None = ...
     ) -> None: ...
@@ -2168,17 +3374,19 @@ class MrecTrajectoryWriter:
     def flush_every(self) -> int: ...
     @property
     def committed(self) -> int: ...
-    def __enter__(self) -> MrecTrajectoryWriter: ...
+    def __enter__(self) -> Self: ...
     def __exit__(self, *exc: object) -> bool: ...
 
-def pack(path: str) -> str: ...
+def pack(path: PathInput) -> str: ...
 
 # ---------------------------------------------------------------------------
 # Analysis (compute)
 #
-# The Rust crate's unified `Compute` trait consumes batches of frames. Python
-# wrappers accept either a single `Frame` or a `list[Frame]`; single-frame
-# arguments return single results, lists return lists of results (aligned).
+# Every analysis below answers one call, `compute(...)`, over batches of
+# frames: it accepts either a single `Frame` or a `list[Frame]`; a single-frame
+# argument returns a single result, a list returns a list of results (aligned).
+# The structural protocol stating that contract is pure Python and is declared
+# in `molrs/compute/protocol.py`.
 # ---------------------------------------------------------------------------
 
 class RDFResult:
@@ -2200,11 +3408,6 @@ class RDFResult:
     def n_points(self) -> int: ...
     @property
     def n_frames(self) -> int: ...
-
-class Compute(Protocol):
-    """The one analysis contract: ``compute(...)``. Presence-only (PEP 544)."""
-
-    def compute(self, *args: Any, **kwargs: Any) -> Any: ...
 
 class RDF:
     def __init__(self, n_bins: int, r_max: float, r_min: float = 0.0) -> None: ...
@@ -2281,7 +3484,7 @@ class CenterOfMassResult:
 class CenterOfMass:
     """Mass-weighted cluster centers."""
 
-    def __init__(self, masses: Optional[ArrayF] = None) -> None: ...
+    def __init__(self, masses: ArrayF | None = None) -> None: ...
     def compute(
         self,
         frames: Frame | Sequence[Frame],
@@ -2302,7 +3505,7 @@ class GyrationTensor:
 class InertiaTensor:
     """Inertia tensor per cluster; requires COM results."""
 
-    def __init__(self, masses: Optional[ArrayF] = None) -> None: ...
+    def __init__(self, masses: ArrayF | None = None) -> None: ...
     def compute(
         self,
         frames: Frame | Sequence[Frame],
@@ -2313,7 +3516,7 @@ class InertiaTensor:
 class RadiusOfGyration:
     """Radius of gyration per cluster; requires COM results."""
 
-    def __init__(self, masses: Optional[ArrayF] = None) -> None: ...
+    def __init__(self, masses: ArrayF | None = None) -> None: ...
     def compute(
         self,
         frames: Frame | Sequence[Frame],
@@ -2451,9 +3654,7 @@ class StaticStructureFactorDebye:
 class PMFTXY:
     """2-D (x, y) Pair Mode Fourier Transform."""
 
-    def __init__(
-        self, x_max: float, y_max: float, n_x: int, n_y: int
-    ) -> None: ...
+    def __init__(self, x_max: float, y_max: float, n_x: int, n_y: int) -> None: ...
     def compute(
         self,
         frames: Frame | Sequence[Frame],
@@ -2476,7 +3677,7 @@ class DistributionResult:
     @property
     def density(self) -> ArrayF: ...
     @property
-    def density_sin_corrected(self) -> Optional[ArrayF]: ...
+    def density_sin_corrected(self) -> ArrayF | None: ...
     @property
     def bin_width(self) -> float: ...
     @property
@@ -2499,7 +3700,7 @@ class AngleDistribution:
     """
 
     def __init__(
-        self, n_bins: int, min: Optional[float] = None, max: Optional[float] = None
+        self, n_bins: int, min: float | None = None, max: float | None = None
     ) -> None: ...
     def compute(self, frames: Frame | Sequence[Frame]) -> DistributionResult: ...
 
@@ -2513,7 +3714,7 @@ class DihedralDistribution:
     """
 
     def __init__(
-        self, n_bins: int, min: Optional[float] = None, max: Optional[float] = None
+        self, n_bins: int, min: float | None = None, max: float | None = None
     ) -> None: ...
     def compute(self, frames: Frame | Sequence[Frame]) -> DistributionResult: ...
 
@@ -2535,7 +3736,7 @@ class VanHoveResult:
     @property
     def r_centers(self) -> ArrayF: ...
     @property
-    def lags(self) -> List[int]: ...
+    def lags(self) -> list[int]: ...
     @property
     def g_self(self) -> ArrayF: ...
     @property
@@ -2575,7 +3776,7 @@ class LegendreReorientationResult:
     """First/second Legendre reorientational TCFs C1(t), C2(t)."""
 
     @property
-    def lags(self) -> List[int]: ...
+    def lags(self) -> list[int]: ...
     @property
     def c1(self) -> ArrayF: ...
     @property
@@ -2603,9 +3804,9 @@ class HBondsResult:
     """Per-frame hydrogen bonds."""
 
     @property
-    def per_frame(self) -> List[List[Tuple[int, int, int, float, float]]]: ...
+    def per_frame(self) -> list[list[tuple[int, int, int, float, float]]]: ...
     @property
-    def counts(self) -> List[int]: ...
+    def counts(self) -> list[int]: ...
 
 class HBonds:
     """Detect hydrogen bonds per frame from explicit donors/acceptors."""
@@ -2614,7 +3815,7 @@ class HBonds:
         self,
         donors: ArrayI64,
         acceptors: ArrayI64,
-        criterion: Optional[HBondCriterion] = None,
+        criterion: HBondCriterion | None = None,
     ) -> None: ...
     def compute(self, frames: Frame | Sequence[Frame]) -> HBondsResult: ...
 
@@ -2626,13 +3827,13 @@ class SpatialDistributionResult:
     @property
     def density(self) -> ArrayF: ...
     @property
-    def g_sdf(self) -> Optional[ArrayF]: ...
+    def g_sdf(self) -> ArrayF | None: ...
     @property
-    def orientation(self) -> Optional[ArrayF]: ...
+    def orientation(self) -> ArrayF | None: ...
     @property
-    def n(self) -> Tuple[int, int, int]: ...
+    def n(self) -> tuple[int, int, int]: ...
     @property
-    def extent(self) -> Tuple[float, float, float]: ...
+    def extent(self) -> tuple[float, float, float]: ...
     @property
     def voxel_volume(self) -> float: ...
     @property
@@ -2646,13 +3847,11 @@ class SpatialDistribution:
         reference: Sequence[int],
         template: ArrayF,
         target: Sequence[int],
-        n: Tuple[int, int, int],
-        extent: Tuple[float, float, float],
-        bulk_density: Optional[float] = None,
+        n: tuple[int, int, int],
+        extent: tuple[float, float, float],
+        bulk_density: float | None = None,
     ) -> None: ...
-    def compute(
-        self, frames: Frame | Sequence[Frame]
-    ) -> SpatialDistributionResult: ...
+    def compute(self, frames: Frame | Sequence[Frame]) -> SpatialDistributionResult: ...
 
 class VoronoiCells:
     """Per-cell radical-Voronoi tessellation."""
@@ -2662,7 +3861,7 @@ class VoronoiCells:
     @property
     def total_volume(self) -> float: ...
     def __len__(self) -> int: ...
-    def neighbors(self, i: int) -> List[int]: ...
+    def neighbors(self, i: int) -> list[int]: ...
 
 class RadicalVoronoi:
     """Radical (Laguerre) Voronoi tessellation — native periodic builder."""
@@ -2670,9 +3869,7 @@ class RadicalVoronoi:
     def __init__(self) -> None: ...
     def build(self, positions: ArrayF, radii: ArrayF, box_: Box) -> VoronoiCells: ...
 
-def voronoi_domains(
-    cells: VoronoiCells, labels: Sequence[int]
-) -> dict[str, Any]: ...
+def voronoi_domains(cells: VoronoiCells, labels: Sequence[int]) -> dict[str, Any]: ...
 def voronoi_voids(
     cells: VoronoiCells, is_void: Sequence[bool], box_volume: float
 ) -> dict[str, Any]: ...
@@ -2713,9 +3910,9 @@ class CombinedDistributionResult:
     """Joint multi-axis distribution (flat row-major counts/density)."""
 
     @property
-    def edges(self) -> List[ArrayF]: ...
+    def edges(self) -> list[ArrayF]: ...
     @property
-    def centers(self) -> List[ArrayF]: ...
+    def centers(self) -> list[ArrayF]: ...
     @property
     def counts(self) -> ArrayF: ...
     @property
@@ -2738,9 +3935,7 @@ class CombinedDistribution:
     ``"distance"`` / ``"angle"`` / ``"dihedral"``.
     """
 
-    def __init__(
-        self, axes: Sequence[Tuple[str, int, float, float, bool]]
-    ) -> None: ...
+    def __init__(self, axes: Sequence[tuple[str, int, float, float, bool]]) -> None: ...
     def compute(
         self, frames: Frame | Sequence[Frame]
     ) -> CombinedDistributionResult: ...
@@ -2752,7 +3947,7 @@ class DensityGrid:
         self,
         origin: Sequence[float] | ArrayF,
         basis: ArrayF,
-        dims: Tuple[int, int, int],
+        dims: tuple[int, int, int],
         density: ArrayF,
     ) -> None: ...
 
@@ -2847,9 +4042,9 @@ class md:
             one member declining makes the whole sum ``None``.
             """
         @property
-        def images(self) -> ArrayI64: ...
+        def images(self) -> ArrayI32: ...
         @images.setter
-        def images(self, value: ArrayI64) -> None: ...
+        def images(self, value: ArrayI32) -> None: ...
         def pressure(self, kinetic: float, volume: float) -> float | None: ...
         @property
         def energy(self) -> float: ...
@@ -2886,29 +4081,25 @@ class md:
         def shifted(self) -> bool: ...
         @property
         def smeared(self) -> bool: ...
-        def pair_energy(
-            self, r2: float, disp: Sequence[float]
-        ) -> Optional[float]: ...
+        def pair_energy(self, r2: float, disp: Sequence[float]) -> float | None: ...
         def pair_force(
             self, r2: float, disp: Sequence[float]
-        ) -> Optional[list[float]]: ...
+        ) -> list[float] | None: ...
         def pair_eval(
             self, r2: float, disp: Sequence[float]
-        ) -> Optional[Tuple[float, list[float]]]: ...
-        def eval(
-            self, neighbors: VerletSkin, pos: ArrayF
-        ) -> Tuple[float, ArrayF]: ...
+        ) -> tuple[float, list[float]] | None: ...
+        def eval(self, neighbors: VerletSkin, pos: ArrayF) -> tuple[float, ArrayF]: ...
         def eval_table(
             self, n_atoms: int, neighbors: Neighbors
-        ) -> Tuple[float, ArrayF]: ...
+        ) -> tuple[float, ArrayF]: ...
         def eval_pairs(
             self,
             n_atoms: int,
             i: ArrayU32,
             j: ArrayU32,
             disp: ArrayF,
-            dist_sq: Optional[ArrayF] = None,
-        ) -> Tuple[float, ArrayF]: ...
+            dist_sq: ArrayF | None = None,
+        ) -> tuple[float, ArrayF]: ...
 
     class Potential:
         """Abstract base class for user potentials: subclass it
@@ -2919,7 +4110,7 @@ class md:
         method raises ``NotImplementedError``."""
 
         def __init__(self, *args: Any, **kwargs: Any) -> None: ...
-        def calc_energy_forces(self, pos: ArrayF) -> Tuple[float, ArrayF]: ...
+        def calc_energy_forces(self, pos: ArrayF) -> tuple[float, ArrayF]: ...
 
     class VelocityVerlet:
         """NVE velocity-Verlet. ``potential`` (``LJCut`` / ``Potentials`` /
@@ -2931,24 +4122,24 @@ class md:
             self,
             dt: float,
             *,
-            potential: Union["md.LJCut", Potentials, TypedPotentials, "md.Potential"],
-            neighbors: Optional[VerletSkin] = None,
-            mass: Union[float, ArrayF],
-            simbox: Optional[Box] = None,
+            potential: md.LJCut | Potentials | TypedPotentials | md.Potential,
+            neighbors: VerletSkin | None = None,
+            mass: float | ArrayF,
+            simbox: Box | None = None,
         ) -> None: ...
         @property
         def dt(self) -> float: ...
         @property
         def removed_dof(self) -> int: ...
         @property
-        def num_edges(self) -> Optional[int]: ...
+        def num_edges(self) -> int | None: ...
         @property
-        def rebuild_count(self) -> Optional[int]: ...
+        def rebuild_count(self) -> int | None: ...
         @property
-        def ago(self) -> Optional[int]: ...
-        def initial(self, pos: ArrayF, vel: ArrayF) -> "md.MDState": ...
-        def advance(self, state: Any) -> "md.MDState": ...
-        def advance_n(self, state: Any, n_steps: int) -> "md.MDState": ...
+        def ago(self) -> int | None: ...
+        def initial(self, pos: ArrayF, vel: ArrayF) -> md.MDState: ...
+        def advance(self, state: Any) -> md.MDState: ...
+        def advance_n(self, state: Any, n_steps: int) -> md.MDState: ...
 
     class Langevin:
         """BAOAB Langevin; ``kbt`` is an energy in your unit system
@@ -2963,11 +4154,11 @@ class md:
             *,
             gamma: float,
             kbt: float,
-            potential: Union["md.LJCut", Potentials, TypedPotentials, "md.Potential"],
-            neighbors: Optional[VerletSkin] = None,
-            mass: Union[float, ArrayF],
+            potential: md.LJCut | Potentials | TypedPotentials | md.Potential,
+            neighbors: VerletSkin | None = None,
+            mass: float | ArrayF,
             seed: int = 0,
-            simbox: Optional[Box] = None,
+            simbox: Box | None = None,
         ) -> None: ...
         @property
         def dt(self) -> float: ...
@@ -2984,15 +4175,15 @@ class md:
         @property
         def removed_dof(self) -> int: ...
         @property
-        def num_edges(self) -> Optional[int]: ...
+        def num_edges(self) -> int | None: ...
         @property
-        def rebuild_count(self) -> Optional[int]: ...
+        def rebuild_count(self) -> int | None: ...
         @property
-        def ago(self) -> Optional[int]: ...
-        def initial(self, pos: ArrayF, vel: ArrayF) -> "md.MDState": ...
-        def step(self, state: Any, noise: ArrayF) -> "md.MDState": ...
-        def advance(self, state: Any) -> "md.MDState": ...
-        def advance_n(self, state: Any, n_steps: int) -> "md.MDState": ...
+        def ago(self) -> int | None: ...
+        def initial(self, pos: ArrayF, vel: ArrayF) -> md.MDState: ...
+        def step(self, state: Any, noise: ArrayF) -> md.MDState: ...
+        def advance(self, state: Any) -> md.MDState: ...
+        def advance_n(self, state: Any, n_steps: int) -> md.MDState: ...
         def draw_noise(self, n_atoms: int) -> ArrayF: ...
 
     class MaxwellBoltzmann:
@@ -3011,10 +4202,7 @@ class md:
         def seed(self) -> int: ...
         @property
         def remove_com(self) -> bool: ...
-        def velocities(
-            self, pos: ArrayF, mass: Union[float, ArrayF]
-        ) -> ArrayF: ...
-
+        def velocities(self, pos: ArrayF, mass: float | ArrayF) -> ArrayF: ...
 
 class DipoleAutocorrelationSpectrum:
     """ε(ω) from the fluctuation dipole ACF via ``χ = A [C(0) − iω Ĉ(ω)]``."""
@@ -3053,8 +4241,6 @@ class DipoleRateCrossSpectrum:
 
 def signal_xcorr_fft(a: ArrayF, b: ArrayF, max_lag: int) -> ArrayF:
     """Cross-correlation via FFT: ``C[k] = sum_t a[t]*b[t+k]`` (Wiener-Khinchin)."""
-    ...
-
 
 # ---------------------------------------------------------------------------
 # Exports declared from the compiled module's own signatures.
@@ -3090,7 +4276,7 @@ class DebyeRelaxation:
     metadata the Debye amplitude needs (invariants b, c). The relaxation *shape*
     τ comes from [`DebyeFit`](PyDebyeFit) applied to the **normalized** ACF.
     """
-    def __init__(self, volume, temperature, boundary='tinfoil') -> None: ...
+    def __init__(self, volume, temperature, boundary="tinfoil") -> None: ...
     def compute(self, /, dipole_moments, dt, max_correlation_time): ...
 
 class EinsteinConductivity:
@@ -3120,7 +4306,9 @@ class EinsteinHelfandSpectrum:
     `einstein_helfand_spectrum` bit-for-bit on the raw ACF that function built
     internally.
     """
-    def __init__(self, dt, volume, temperature, epsilon_inf, zero_lag_variance) -> None: ...
+    def __init__(
+        self, dt, volume, temperature, epsilon_inf, zero_lag_variance
+    ) -> None: ...
     def fit(self, /, acf): ...
 
 class GreenKuboConductivity:
@@ -3150,7 +4338,9 @@ class GreenKuboSpectrum:
     `green_kubo_spectrum` bit-for-bit on the raw ACF that function built
     internally.
     """
-    def __init__(self, dt, volume, temperature, epsilon_inf, window_type='hann') -> None: ...
+    def __init__(
+        self, dt, volume, temperature, epsilon_inf, window_type="hann"
+    ) -> None: ...
     def fit(self, /, acf): ...
 
 class IRSpectrum:
@@ -3194,7 +4384,9 @@ class RamanSpectrum:
     (one CosineSq window per ACF, FFT both, then the cross-section + Bose
     prefactors). Reproduces the legacy `raman_spectrum` bit-for-bit.
     """
-    def __init__(self, incident_frequency_cm1=0.0, temperature_k=0.0, averaged=False) -> None: ...
+    def __init__(
+        self, incident_frequency_cm1=0.0, temperature_k=0.0, averaged=False
+    ) -> None: ...
     def fit(self, /, acf_iso, acf_aniso, dt_fs): ...
 
 class RingInfo:
@@ -3209,7 +4401,7 @@ class RingInfo:
 
     Examples
     --------
-    >>> rings = molrs.RingInfo(molrs.SmilesIR("c1ccccc1").to_atomistic())
+    >>> rings = molrs.perceive.RingInfo(molrs.io.SmilesIR("c1ccccc1").to_atomistic())
     >>> rings.num_rings()
     1
     >>> rings.ring_sizes()
@@ -3269,173 +4461,211 @@ class XTCTrajReader:
     def read_frames(self, /, indices): ...
     def read_range(self, /, start=0, stop=None, step=1): ...
 
-def check_conductivity_sum_rule(frequency, conductivity, current_sq_mean, volume: float, temperature: float):
-    ...
+def check_conductivity_sum_rule(
+    frequency, conductivity, current_sq_mean, volume: float, temperature: float
+): ...
+def check_kramers_kronig(frequency, eps_real, eps_imag, eps_inf): ...
+def check_route_agreement(results): ...
 
-def check_kramers_kronig(frequency, eps_real, eps_imag, eps_inf):
-    ...
+class Dielectric:
+    """Raw dielectric kernels (static methods)."""
 
-def check_route_agreement(results):
-    ...
-
-def dielectric_compute_current_density(dipole_moments, dt: float, volume: float):
-    ...
-
-def dielectric_compute_dipole_moment(charges, positions):
-    ...
-
-def dielectric_decompose_current(per_particle_current, water_mask):
-    ...
-
-def dielectric_static_dielectric_constant(dipole_moments, volume: float, temperature: float, epsilon_inf: float):
-    ...
-
-def lammps_type_ids_from_frame(frame):
-    """ForceField type-name → LAMMPS type id, matching the data-file writer."""
-    ...
+    @staticmethod
+    def compute_dipole_moment(charges: ArrayF, positions: ArrayF) -> ArrayF: ...
+    @staticmethod
+    def compute_current_density(
+        dipole_moments: ArrayF, dt: float, volume: float
+    ) -> ArrayF: ...
+    @staticmethod
+    def static_dielectric_constant(
+        dipole_moments: ArrayF, volume: float, temperature: float, epsilon_inf: float
+    ) -> float: ...
+    @staticmethod
+    def decompose_current(
+        per_particle_current: ArrayF, water_mask: ArrayBool
+    ) -> tuple[ArrayF, ArrayF]: ...
 
 def parse_frcmod(text: str):
     """Parse FRCMOD text into a section dict."""
-    ...
 
-def parse_lammps_log_text(text: str, path: str = '<string>', style: str = 'default') -> LammpsLog:
+def parse_lammps_log_text(
+    text: str, path: str = "<string>", style: str = "default"
+) -> LammpsLog:
     """Parse a LAMMPS log from an in-memory string (no filesystem access)."""
-    ...
 
 def prmtop_decode_angle_params(pointers, force_k, equil_rad):
     """Decode angle pointer tables → ``(type, i, j, k, K, theta0_deg)`` (1-based)."""
-    ...
 
 def prmtop_decode_bond_params(pointers, force_k, equil):
     """Decode bond pointer tables → ``(type, i, j, K, r0)`` (atoms 1-based)."""
-    ...
 
 def prmtop_decode_dihedral_params(pointers, force_k, phase, periodicity):
     """Decode dihedral pointer tables → ``(type, i, j, k, l, K, phase, n)`` (1-based)."""
-    ...
 
-def prmtop_decode_nonbond_params(n_atom, n_types, atom_type_index, nonbonded_parm_index, acoef, bcoef, hbond_a= ..., hbond_b= ...):
+def prmtop_decode_nonbond_params(
+    n_atom,
+    n_types,
+    atom_type_index,
+    nonbonded_parm_index,
+    acoef,
+    bcoef,
+    hbond_a=...,
+    hbond_b=...,
+):
     """Per-atom LJ ``(atom_1based, sigma, epsilon)`` from ICO + A/B."""
-    ...
 
 def prmtop_parse_a4_names(lines: Sequence[str]):
     """Parse Fortran ``20a4`` name fields from section lines."""
-    ...
 
 def prmtop_parse_pointers(lines: Sequence[str]):
     """Parse POINTERS lines into the historical meta map (raw + derived counts)."""
-    ...
 
-def read_ac(path: str):
+def read_ac(path: PathInput):
     """Read an Antechamber ``.ac`` file into a Frame."""
-    ...
 
-def read_amber_prmtop_ff(path: str):
+def read_amber_prmtop_ff(path: PathInput) -> ForceField:
     """Read AMBER prmtop force-field parameter tables into a :class:`ForceField`."""
-    ...
 
-def read_amber_prmtop_ff_str(text: str):
-    """Parse AMBER prmtop force-field tables from a string."""
-    ...
-
-def read_amber_prmtop_sections(path: str):
+def read_amber_prmtop_sections(path: PathInput):
     """Read raw prmtop ``%FLAG`` sections as ``{flag: [lines...]}``."""
-    ...
 
-def read_frcmod(path: str):
+def read_frcmod(path: PathInput):
     """Read an AMBER FRCMOD file into a section dict."""
-    ...
 
-def read_gromacs_top_ff(path: str, include: bool = False):
-    """Read a GROMACS ``.top`` / ``.itp`` into a :class:`ForceField`."""
-    ...
+def read_gromacs_top_ff(
+    path: PathInput,
+    include: bool = False,
+    *,
+    skip_directives: Sequence[str] = (),
+) -> ForceField:
+    """Read the force-field directives of a GROMACS topology into a :class:`ForceField`.
 
-def read_gromacs_top_ff_str(text: str, include: bool = False):
-    """Parse GROMACS topology force-field tables from a string."""
-    ...
+    Reads ``[ defaults ]``, ``[ atomtypes ]``, ``[ bondtypes ]``,
+    ``[ angletypes ]`` and ``[ dihedraltypes ]``. Unmodelled directives and
+    every molecule section raise ``ValueError`` naming them; molecule sections
+    need :func:`molrs.io.read_top` or a skip. Each name in ``skip_directives``
+    is read past instead of refused.
+    """
 
-def read_lammps_log(path: str, style: str = 'default') -> LammpsLog:
+def read_lammps_log(path: PathInput, style: str = "default") -> LammpsLog:
     """Read a LAMMPS log file into a structured ``LammpsLog``."""
-    ...
 
-def read_lammps_molecule(path: str):
+def read_lammps_molecule(path: PathInput):
     """Read a LAMMPS molecule template (native ``.mol`` or JSON)."""
-    ...
 
-def read_mol2(path: str):
+def read_mol2(path: PathInput):
     """Read a Tripos MOL2 file and return the first molecule as a Frame."""
-    ...
 
-def read_prep(path: str):
+def read_prep(path: PathInput):
     """Read an Amber prep file into a nested dict (serde JSON shape)."""
-    ...
 
-def read_top(path: str):
+def read_top(path: PathInput):
     """Read a GROMACS topology (``.top`` / ``.itp``) **structure** file."""
-    ...
 
-def read_trr(path: str):
+def read_trr_trajectory(path: PathInput) -> list[Frame]:
     """Read every frame of a GROMACS TRR trajectory and return a list of Frames."""
-    ...
 
-def read_xtc(path: str):
+def read_xtc_trajectory(path: PathInput) -> list[Frame]:
     """Read every frame of a GROMACS XTC trajectory and return a list of Frames."""
-    ...
 
-def transport_onsager_correlation(p_i, p_j, dt: float, max_correlation_time: int):
-    ...
+class Onsager:
+    """Onsager collective mean-displacement cross-correlation (static)."""
 
-def transport_pair_survival_tcf(coords_i, coords_j, box_lengths, r0: float, r1: float, method: str, dt: float, max_correlation_time: int, exclude_self: bool = False):
-    ...
+    @staticmethod
+    def correlation(
+        p_i: ArrayF, p_j: ArrayF, dt: float, max_correlation_time: int
+    ) -> dict[str, ArrayF]: ...
 
-def write_forcefield_xml(path: str, forcefield, precision: int = 6):
+class Persist:
+    """Pair-survival (persistence) time-correlation functions (static)."""
+
+    @staticmethod
+    def pair_survival_tcf(
+        coords_i: ArrayF,
+        coords_j: ArrayF,
+        box_lengths: ArrayF,
+        r0: float,
+        r1: float,
+        method: str,
+        dt: float,
+        max_correlation_time: int,
+        exclude_self: bool = False,
+    ) -> dict[str, ArrayF]: ...
+
+def write_forcefield_xml(
+    path: PathInput, forcefield: ForceField, precision: int = 6
+) -> None:
     """Write a ForceField to OpenMM-style XML."""
-    ...
 
-def write_forcefield_xml_str(forcefield, precision: int = 6):
-    """Serialize a ForceField to OpenMM-style XML string."""
-    ...
-
-def write_frcmod(path: str, sections: Dict[str, Any]):
+def write_frcmod(path: PathInput, sections: dict[str, Any]):
     """Write FRCMOD sections (dict with remark/mass/bond/…) to a path."""
-    ...
 
-def write_gromacs_top_ff(path: str, forcefield, precision: int = 6):
-    """Write a ForceField to GROMACS ``.top`` / ``.itp`` force-field tables."""
-    ...
+#: AMBER's Coulomb constant (kcal·Å/(mol·e²)), the 1-4 electrostatic divisor
+#: (``coul_14 = 1 / AMBER_SCEE``) and the 1-4 LJ divisor (``lj_14 = 1 / AMBER_SCNB``).
+AMBER_COULOMB: float
+AMBER_SCEE: float
+AMBER_SCNB: float
 
-def write_gromacs_top_ff_str(forcefield, precision: int = 6):
-    """Serialize a ForceField to a GROMACS topology force-field string."""
-    ...
+def write_amber_frcmod(path: PathInput, forcefield: ForceField) -> None:
+    """Write a ForceField as an AMBER frcmod file.
 
-def write_lammps_molecule(path: str, frame, format: str = 'native'):
+    A style or parameter a frcmod cannot express raises ``ValueError``.
+    """
+
+def write_gromacs_top_ff(
+    path: PathInput, forcefield: ForceField, precision: int = 6
+) -> None:
+    """Write a ForceField as GROMACS force-field directives (no molecule sections).
+
+    A style or parameter the directives cannot express raises ``ValueError``.
+    """
+
+def write_lammps_molecule(path: PathInput, frame, format: str = "native"):
     """Write a Frame as a LAMMPS molecule template."""
-    ...
 
-def write_mol2(path: str, frame):
+def write_mol2(path: PathInput, frame):
     """Write a Frame to a Tripos MOL2 file."""
-    ...
 
-def write_prep(path: str, residue: Dict[str, Any]):
+def write_prep(path: PathInput, residue: dict[str, Any]):
     """Write an Amber prep residue from a nested dict."""
-    ...
 
-def write_smarts(mol, center, *, reach=1, atomic_number=True, include_degree=True, include_h_count=True, include_charge=True, include_aromatic=True, include_ring_membership=False, include_ring_size=False, include_explicit_h_atoms=False, include_bond_orders=True, neighbor_style='chain', canonical_neighbor_order=True):
+def write_smarts(
+    mol,
+    center,
+    *,
+    reach=1,
+    atomic_number=True,
+    include_degree=True,
+    include_h_count=True,
+    include_charge=True,
+    include_aromatic=True,
+    include_ring_membership=False,
+    include_ring_size=False,
+    include_explicit_h_atoms=False,
+    include_bond_orders=True,
+    neighbor_style="chain",
+    canonical_neighbor_order=True,
+):
     """Encode the local topology around ``center`` as a SMARTS string."""
-    ...
 
-def write_smiles(mol, *, canonical=True, root=None, aromatic='as_marked', hydrogens='organic_subset', include_stereo=False, multi_component='error_if_multiple', organic_subset=True):
+def write_smiles(
+    mol,
+    *,
+    canonical=True,
+    root=None,
+    aromatic="as_marked",
+    hydrogens="organic_subset",
+    include_stereo=False,
+    multi_component="error_if_multiple",
+    organic_subset=True,
+):
     """Write an :class:`~molrs.Atomistic` to a SMILES string (io surface, not a core method)."""
-    ...
 
-def write_top(path: str, frame):
+def write_top(path: PathInput, frame):
     """Write a Frame as a minimal GROMACS topology structure file."""
-    ...
 
-def write_trr(path: str, frames):
+def write_trr_trajectory(path: PathInput, frames: Sequence[Frame]) -> None:
     """Write Frames to a GROMACS TRR trajectory file (single precision)."""
-    ...
 
-def write_xtc(path: str, frames):
+def write_xtc_trajectory(path: PathInput, frames: Sequence[Frame]) -> None:
     """Write Frames to a GROMACS XTC trajectory file (lossy compression)."""
-    ...

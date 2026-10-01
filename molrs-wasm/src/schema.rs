@@ -12,6 +12,8 @@ use wasm_bindgen::prelude::*;
 
 use molrs::store::schema;
 
+use crate::core::block::{JsDType, dtype_name};
+
 /// The whole Frame vocabulary as a JS object.
 ///
 /// ```js
@@ -40,14 +42,18 @@ pub fn schema_vocab_version() -> u32 {
     schema::FRAME_VOCAB_VERSION
 }
 
-/// Declared dtype of a canonical column.
+/// Declared dtype of a canonical column, named as `Block.dtype` names it
+/// (`"f64"`, `"u64"`, `"string"`, …), so the two compare directly.
+///
+/// `schemaDocument()` keeps the language-neutral vocabulary names
+/// (`"float"`, `"uint"`, …) it shares with every binding.
 ///
 /// Returns `undefined` when the key carries no declared dtype. That means the
 /// key is **unconstrained**, not invalid: the column vocabulary is closed but
 /// unspecified keys are the documented extension point.
 #[wasm_bindgen(js_name = schemaColumnDtype)]
-pub fn schema_column_dtype(key: &str) -> Option<String> {
-    schema::column(key).map(|spec| spec.dtype.name().to_string())
+pub fn schema_column_dtype(key: &str) -> Option<JsDType> {
+    schema::column(key).map(|spec| JsValue::from_str(dtype_name(spec.dtype)).unchecked_into())
 }
 
 /// Whether a block name is part of the canonical vocabulary.

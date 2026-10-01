@@ -62,8 +62,6 @@ pub(crate) fn write_column(
     let chunking = plan(&shape, col.dtype().itemsize());
     let (dt, fill) = dtype_of(col);
     match col {
-        Column::Float16(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::Float32(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
         Column::Float(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
         Column::Int8(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
         Column::Int16(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
@@ -103,8 +101,6 @@ pub(in crate::io::zarr) fn zarr_dtype(
     dtype: DType,
 ) -> (zarrs::array::DataType, zarrs::array::FillValue) {
     let dt = match dtype {
-        DType::Float16 => data_type::float16(),
-        DType::Float32 => data_type::float32(),
         DType::Float => data_type::float64(),
         DType::Int8 => data_type::int8(),
         DType::Int16 => data_type::int16(),
@@ -187,8 +183,9 @@ where
 // Column read
 // ---------------------------------------------------------------------------
 
-/// Read the `subset` of the array at `path` back as a [`Column`], at the width
-/// it was stored in.
+/// Read the `subset` of the array at `path` back as a [`Column`] — at the
+/// width it was stored in. Narrow floats are refused, not widened: the record
+/// has one float ([`F`]).
 ///
 /// The column's shape is the subset's, not the array's: a caller reading one
 /// frame out of a sequence array passes that frame's subset and gets a column
@@ -198,6 +195,7 @@ where
 /// the record doors hold and the read-only one [`FrameSequence`] holds share
 /// this one dtype dispatch.
 ///
+/// [`F`]: crate::types::F
 /// [`FrameSequence`]: super::FrameSequence
 pub(crate) fn read_column<S>(
     store: &Arc<S>,
@@ -225,16 +223,15 @@ where
 
     let dt = arr.data_type();
 
-    if dt.is::<Float16DataType>() {
-        let data: Vec<half::f16> = arr.retrieve_array_subset(subset)?;
-        Ok(Column::from_f16(
-            ArrayD::from_shape_vec(shape, data).map_err(shape_err)?,
-        ))
-    } else if dt.is::<Float32DataType>() {
-        let data: Vec<f32> = arr.retrieve_array_subset(subset)?;
-        Ok(Column::from_f32(
-            ArrayD::from_shape_vec(shape, data).map_err(shape_err)?,
-        ))
+    // Narrow floats are refused, not promoted: the record has one float
+    // (`F = f64`), so a `float16`/`float32` array on disk is an error naming
+    // the array and its stored type. Same rule as `sequence.rs::dtype_of_stored`.
+    if dt.is::<Float16DataType>() || dt.is::<Float32DataType>() {
+        Err(MolRsError::zarr(format!(
+            "{} is stored as {dt:?}: narrow floats are not read; \
+             the record has one float, `F = f64`",
+            arr.path()
+        )))
     } else if dt.is::<Float64DataType>() {
         let data: Vec<f64> = arr.retrieve_array_subset(subset)?;
         Ok(Column::from_float(
@@ -370,7 +367,7 @@ pub(crate) fn read_simbox(
 ) -> Result<SimBox, MolRsError> {
     use ndarray::{Array2, array};
 
-    // Prefer f64 (0.12+); accept legacy f32 stores and promote once.
+    // Narrow float arrays are refused; see `read_simbox_float_path`.
     let vectors_path = format!("{}/vectors", prefix);
     let h_data = read_simbox_float_path(store, &vectors_path)?
         .ok_or_else(|| MolRsError::zarr(format!("box vectors array is missing: {vectors_path}")))?;
@@ -442,8 +439,8 @@ pub(crate) fn read_simbox(
         .map_err(|e| MolRsError::zarr(format!("invalid box: {:?}", e)))
 }
 
-/// Read a simbox float array as `Vec<F>` (Float64 preferred; legacy Float32
-/// promoted), or `None` when the store holds no array at `path`.
+/// Read a simbox float array as `Vec<F>` (narrow float arrays are refused —
+/// the record has one float), or `None` when the store holds no array at `path`.
 ///
 /// Absence is reported to the caller instead of being raised, because the
 /// optional parts of a cell are absent on purpose; every *other* way of failing
@@ -462,12 +459,9 @@ fn read_simbox_float_path(
     if dt.is::<Float64DataType>() {
         let data: Vec<f64> = arr.retrieve_array_subset(&subset)?;
         Ok(Some(data))
-    } else if dt.is::<Float32DataType>() {
-        let data: Vec<f32> = arr.retrieve_array_subset(&subset)?;
-        Ok(Some(data.into_iter().map(|v| v as F).collect()))
     } else {
         Err(MolRsError::zarr(format!(
-            "simbox array expected float32/float64, got {dt:?}"
+            "simbox array expected float64, got {dt:?}: the record has one float, `F = f64`"
         )))
     }
 }
@@ -479,6 +473,15 @@ fn read_simbox_float_path(
 /// outside Rust source has that problem, so the stored name is `box`.
 pub(crate) const BOX_GROUP: &str = "box";
 
+/// The one reserved child name of a *block* group: the subgroup holding the
+/// validity masks of that block's nullable columns.
+///
+/// One leading underscore, not two: Zarr V3 reserves the `__` prefix for node
+/// names and `zarrs` enforces it, so `__validity__` is a name no store can
+/// carry. A single underscore is legal everywhere and still says, to a reader
+/// scanning a block, that this is not a chemistry column.
+pub(crate) const VALIDITY_GROUP: &str = "_validity";
+
 // Frame (system) write / read — writes all blocks under `{prefix}/`
 // ---------------------------------------------------------------------------
 
@@ -488,6 +491,28 @@ pub(crate) const BOX_GROUP: &str = "box";
 /// The group carries **no** schema-version attribute: `meta/molrec_version`
 /// at the record root is the sole version key of the MolRec contract, and a
 /// parallel per-frame version is forbidden by it.
+///
+/// # A nullable column carries its mask beside its values
+///
+/// A block column may carry a [validity
+/// mask](crate::store::block::Block::validity), and the mask is data: without
+/// it a row that holds *nothing* reads back as the default filled under it.
+/// Each masked column of a block therefore writes one `bool` array, one flag
+/// per row, at `<block>/`[`_validity`](VALIDITY_GROUP)`/<column>` — a
+/// reserved **subgroup** of the block group, holding the masks of that block
+/// and nothing else.
+///
+/// The subgroup is the reason the layout stays backward compatible in both
+/// directions. [`read_frame_group`] skips every non-Array child of a block,
+/// so a reader that predates masks — molrs <= 0.15, molrec, molvis — walks
+/// past the group instead of taking it for a column; and a block no column
+/// of which is masked writes no subgroup at all, so its store is
+/// byte-identical to one written before masks existed. A store written then
+/// reads now as fully valid, which is exactly what it was.
+///
+/// `_validity` is reserved among a block group's children the way `box` is
+/// among a frame group's: a block carrying a column of that name is refused
+/// here rather than silently merged with the masks.
 pub(crate) fn write_frame_group(
     store: &ReadableWritableListableStorage,
     prefix: &str,
@@ -523,6 +548,12 @@ pub(crate) fn write_frame_group(
     // and still has a count, so it gets a group and an attribute rather than
     // being dropped -- silently losing it would be data loss.
     for (block_name, block) in frame.iter() {
+        if block.contains_key(VALIDITY_GROUP) {
+            return Err(MolRsError::zarr(format!(
+                "{VALIDITY_GROUP:?} names the validity masks of a block group; a column cannot \
+                 take it"
+            )));
+        }
         let group_path = format!("{}/{}", prefix, block_name);
         let mut block_attrs = serde_json::Map::new();
         block_attrs.insert(
@@ -549,8 +580,44 @@ pub(crate) fn write_frame_group(
             let arr_path = format!("{}/{}/{}", prefix, block_name, col_name);
             write_column(store, &arr_path, col)?;
         }
+        write_validity_group(store, &group_path, block)?;
     }
 
+    Ok(())
+}
+
+/// Write the validity masks of `block` into its reserved `_validity`
+/// subgroup, or write nothing at all when no column of it is masked.
+///
+/// One `bool` array per masked column, named after that column and carrying
+/// one flag per row — the same leading row axis as the values it qualifies,
+/// and no trailing axes, because a mask marks a *row* null whatever shape the
+/// row has.
+#[cfg(feature = "zarr")]
+fn write_validity_group(
+    store: &ReadableWritableListableStorage,
+    block_path: &str,
+    block: &Block,
+) -> Result<(), MolRsError> {
+    let masked: Vec<(&str, &[bool])> = block
+        .iter()
+        .filter_map(|(column, _)| block.validity(column).map(|mask| (column, mask)))
+        .collect();
+    if masked.is_empty() {
+        return Ok(());
+    }
+    let group_path = format!("{}/{}", block_path, VALIDITY_GROUP);
+    GroupBuilder::new()
+        .build(store.clone(), &group_path)?
+        .store_metadata()?;
+    for (column, mask) in masked {
+        let flags = ArrayD::from_shape_vec(vec![mask.len()], mask.to_vec()).map_err(shape_err)?;
+        write_column(
+            store,
+            &format!("{}/{}", group_path, column),
+            &Column::from_bool(flags),
+        )?;
+    }
     Ok(())
 }
 
@@ -627,10 +694,66 @@ pub(crate) fn read_frame_group(
                 }
             }
         }
+        read_validity_group(store, child.path().as_str(), child_name, &mut block)?;
         frame.insert(child_name, block);
     }
 
     Ok(frame)
+}
+
+/// Restore the validity masks [`write_validity_group`] wrote for `block`.
+///
+/// A block group with no `_validity` child is fully valid, which is what
+/// every store written before masks were persisted is.
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] naming block and column when the mask is not a
+/// `bool` array, when it names no column of the block, or when it does not
+/// carry exactly one flag per row. A mask that disagrees with its column is a
+/// corrupt store: padding or truncating it would invent the very answer the
+/// mask exists to give.
+fn read_validity_group(
+    store: &ReadableWritableListableStorage,
+    block_path: &str,
+    block_name: &str,
+    block: &mut Block,
+) -> Result<(), MolRsError> {
+    let group_path = format!("{}/{}", block_path, VALIDITY_GROUP);
+    if zarrs::group::Group::open(store.clone(), &group_path).is_err() {
+        return Ok(());
+    }
+    let rows = block.nrows().unwrap_or(0);
+    for child in Node::open(store, &group_path)?.children() {
+        if !matches!(child.metadata(), NodeMetadata::Array(_)) {
+            continue;
+        }
+        let path = child.path().as_str();
+        let column = path.rsplit('/').next().unwrap_or("");
+        let array = Array::open(store.clone(), path)?;
+        let dtype = array.data_type();
+        if !dtype.is::<BoolDataType>() {
+            return Err(MolRsError::zarr(format!(
+                "validity mask of column {column:?} of block {block_name:?} is stored as \
+                 {dtype:?}, and a mask is one bool per row"
+            )));
+        }
+        let subset = ArraySubset::new_with_shape(array.shape().to_vec());
+        let mask: Vec<bool> = array.retrieve_array_subset(&subset)?;
+        if mask.len() != rows {
+            return Err(MolRsError::zarr(format!(
+                "validity mask of column {column:?} of block {block_name:?} carries {} flags for \
+                 {rows} rows",
+                mask.len()
+            )));
+        }
+        block.set_validity(column, mask).map_err(|e| {
+            MolRsError::zarr(format!(
+                "validity mask of column {column:?} of block {block_name:?}: {e}"
+            ))
+        })?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -730,38 +853,7 @@ mod tests {
             .clone()
     }
 
-    // -- the 15-dtype matrix: one test per Column variant -------------------
-
-    #[test]
-    fn f16_column_round_trips_at_arrival_width() {
-        let values = vec![
-            half::f16::from_f32(1.0),
-            half::f16::from_f32(-2.5),
-            half::f16::from_f32(0.5),
-            half::f16::from_f32(65504.0),
-        ];
-        let back = round_trip_column(Column::from_f16(
-            ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
-        ));
-        assert_eq!(back.dtype(), DType::Float16);
-        assert_eq!(
-            *back.as_f16().unwrap(),
-            ArrayD::from_shape_vec(vec![4], values).unwrap()
-        );
-    }
-
-    #[test]
-    fn f32_column_round_trips_at_arrival_width() {
-        let values = vec![1.0f32, -2.5, 3.4028235e38, 1.1754944e-38];
-        let back = round_trip_column(Column::from_f32(
-            ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
-        ));
-        assert_eq!(back.dtype(), DType::Float32);
-        assert_eq!(
-            *back.as_f32().unwrap(),
-            ArrayD::from_shape_vec(vec![4], values).unwrap()
-        );
-    }
+    // -- the 13-dtype matrix: one test per Column variant -------------------
 
     #[test]
     fn f64_column_round_trips_at_arrival_width() {
@@ -1257,6 +1349,306 @@ mod tests {
                 .unwrap(),
             ArrayD::from_shape_vec(vec![ROWS], values).unwrap(),
             "every row must come back bit exact through the shard"
+        );
+    }
+
+    // -- nullable columns: the mask is data, not a view --------------------
+
+    /// The reserved child name of a block group that holds its masks.
+    ///
+    /// Spelled out rather than imported from `super`: this is a name on disk
+    /// that molrec and molvis read, so a rename of the Rust constant must
+    /// break these tests rather than travel silently into them — the same
+    /// reading `sequence`'s `SCHEMA_ATTRIBUTE` takes on its own name.
+    ///
+    /// **Blocked as spelled.** Zarr V3 reserves the `__` prefix for node
+    /// names, and `zarrs` enforces it (`NodeName::validate`): every `Array` /
+    /// `Group` / `Node` door refuses `/frame/atoms/__validity__` with a
+    /// `NodePathError`, so the masks cannot be written under this name at all.
+    /// The reserved name has to be one Zarr admits — `validity` or
+    /// `_validity` — and this constant is the single place to change.
+    const VALIDITY_GROUP: &str = "_validity";
+
+    /// The one mask every nullable fixture carries: three rows, the first
+    /// valid and the last two null. Asymmetric on purpose — a reversed or
+    /// all-false mask cannot match it by accident.
+    const MASK: [bool; 3] = [true, false, false];
+
+    /// Write `block` as the sole block of a frame and read that frame back.
+    fn round_trip_block(block: Block) -> Block {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = Frame::new();
+        frame.insert(BLOCK, block);
+        write_frame_group(&store, FRAME, &frame).unwrap();
+        read_frame_group(&store, FRAME)
+            .unwrap()
+            .get(BLOCK)
+            .expect("the frame carries its block")
+            .clone()
+    }
+
+    /// The names of a block group's children, enumerated the way
+    /// [`read_frame_group`] enumerates them.
+    fn block_child_names(store: &ReadableWritableListableStorage, block: &str) -> Vec<String> {
+        Node::open(store, &format!("{FRAME}/{block}"))
+            .expect("the block group exists")
+            .children()
+            .iter()
+            .map(|child| {
+                child
+                    .path()
+                    .as_str()
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .collect()
+    }
+
+    /// A three-row `Int` column whose last two rows hold nothing.
+    fn masked_int_block() -> Block {
+        let mut block = Block::new();
+        block
+            .insert_nullable(
+                COLUMN,
+                ArrayD::from_shape_vec(vec![3], vec![7i32, 0, 0]).unwrap(),
+                MASK.to_vec(),
+            )
+            .unwrap();
+        block
+    }
+
+    /// A three-row `F64` column whose last two rows hold nothing.
+    fn masked_f64_block() -> Block {
+        let mut block = Block::new();
+        block
+            .insert_nullable(
+                COLUMN,
+                ArrayD::from_shape_vec(vec![3], vec![0.5f64, 0.0, 0.0]).unwrap(),
+                MASK.to_vec(),
+            )
+            .unwrap();
+        block
+    }
+
+    /// A three-row `Str` column whose last two rows hold nothing.
+    fn masked_string_block() -> Block {
+        let mut block = Block::new();
+        block
+            .insert_nullable(
+                COLUMN,
+                ArrayD::from_shape_vec(
+                    vec![3],
+                    vec!["C".to_string(), String::new(), String::new()],
+                )
+                .unwrap(),
+                MASK.to_vec(),
+            )
+            .unwrap();
+        block
+    }
+
+    #[test]
+    fn int_column_keeps_its_validity_mask_across_the_frame_round_trip() {
+        let back = round_trip_block(masked_int_block());
+        assert_eq!(back.validity(COLUMN), Some(&MASK[..]));
+    }
+
+    #[test]
+    fn int_column_keeps_its_values_beside_its_mask() {
+        let back = round_trip_block(masked_int_block());
+        assert_eq!(
+            *back.get(COLUMN).unwrap().as_int().unwrap(),
+            ArrayD::from_shape_vec(vec![3], vec![7i32, 0, 0]).unwrap()
+        );
+    }
+
+    #[test]
+    fn f64_column_keeps_its_validity_mask_across_the_frame_round_trip() {
+        let back = round_trip_block(masked_f64_block());
+        assert_eq!(back.validity(COLUMN), Some(&MASK[..]));
+    }
+
+    #[test]
+    fn f64_column_keeps_its_values_beside_its_mask() {
+        let back = round_trip_block(masked_f64_block());
+        assert_eq!(
+            *back.get(COLUMN).unwrap().as_float().unwrap(),
+            ArrayD::from_shape_vec(vec![3], vec![0.5f64, 0.0, 0.0]).unwrap()
+        );
+    }
+
+    #[test]
+    fn string_column_keeps_its_validity_mask_across_the_frame_round_trip() {
+        let back = round_trip_block(masked_string_block());
+        assert_eq!(back.validity(COLUMN), Some(&MASK[..]));
+    }
+
+    #[test]
+    fn string_column_keeps_its_values_beside_its_mask() {
+        let back = round_trip_block(masked_string_block());
+        assert_eq!(
+            *back.get(COLUMN).unwrap().as_string().unwrap(),
+            ArrayD::from_shape_vec(vec![3], vec!["C".to_string(), String::new(), String::new()])
+                .unwrap()
+        );
+    }
+
+    /// A column nobody masked stays unmasked: `validity` says `Some` **iff**
+    /// a row is null, so a round trip that invented an all-true mask would be
+    /// a different block than the one written.
+    #[test]
+    fn a_fully_valid_column_reads_back_with_no_mask() {
+        let mut block = Block::new();
+        block
+            .insert_column(
+                COLUMN,
+                Column::from_float(ArrayD::from_shape_vec(vec![3], vec![1.0, 2.0, 3.0]).unwrap()),
+            )
+            .unwrap();
+        let back = round_trip_block(block);
+        assert_eq!(back.validity(COLUMN), None);
+    }
+
+    /// No mask, no subgroup: a store written by a molrs that never masked a
+    /// column is byte-identical to one written now, so it keeps reading.
+    #[test]
+    fn a_frame_with_no_masked_column_writes_no_validity_child() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut block = Block::new();
+        block
+            .insert_column(
+                COLUMN,
+                Column::from_float(ArrayD::from_shape_vec(vec![3], vec![1.0, 2.0, 3.0]).unwrap()),
+            )
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert(BLOCK, block);
+        write_frame_group(&store, FRAME, &frame).unwrap();
+
+        assert_eq!(block_child_names(&store, BLOCK), vec![COLUMN.to_string()]);
+    }
+
+    /// The mask lives in a reserved **subgroup**, not in a sibling array: a
+    /// reader that predates masks skips non-Array children of a block group,
+    /// so it ignores the subgroup instead of taking it for a column.
+    #[test]
+    fn a_masked_column_writes_its_mask_into_a_validity_subgroup() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = Frame::new();
+        frame.insert(BLOCK, masked_int_block());
+        write_frame_group(&store, FRAME, &frame).unwrap();
+
+        let child = Node::open(&store, &format!("{FRAME}/{BLOCK}/{VALIDITY_GROUP}"))
+            .expect("the mask subgroup exists");
+        assert!(
+            matches!(child.metadata(), NodeMetadata::Group(_)),
+            "{VALIDITY_GROUP} must be a group, so an older reader skips it"
+        );
+    }
+
+    /// Inside that subgroup the mask is a boolean array under the column's
+    /// own name — one mask per masked column, addressable without an index.
+    #[test]
+    fn a_mask_is_stored_as_a_bool_array_named_after_its_column() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = Frame::new();
+        frame.insert(BLOCK, masked_int_block());
+        write_frame_group(&store, FRAME, &frame).unwrap();
+
+        let path = format!("{FRAME}/{BLOCK}/{VALIDITY_GROUP}/{COLUMN}");
+        let arr = Array::open(store.clone(), &path).expect("the mask array exists");
+        assert!(arr.data_type().is::<BoolDataType>());
+        let subset = ArraySubset::new_with_shape(arr.shape().to_vec());
+        let stored: Vec<bool> = arr.retrieve_array_subset(&subset).unwrap();
+        assert_eq!(stored, MASK.to_vec());
+    }
+
+    /// The mask subgroup's name is reserved among a block group's children
+    /// exactly as `box` is among a frame group's: a column of that name would
+    /// collide with the masks, so the write is refused rather than silently
+    /// reshaped.
+    ///
+    /// Passes today only because Zarr refuses the `__` prefix outright (see
+    /// [`VALIDITY_GROUP`]) — it becomes a real assertion the moment the
+    /// reserved name is one Zarr admits.
+    #[test]
+    fn a_block_column_named_validity_is_refused_on_write() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut block = Block::new();
+        block
+            .insert_column(
+                VALIDITY_GROUP,
+                Column::from_float(ArrayD::from_shape_vec(vec![3], vec![1.0, 2.0, 3.0]).unwrap()),
+            )
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert(BLOCK, block);
+
+        let err = write_frame_group(&store, FRAME, &frame)
+            .expect_err("a column named __validity__ collides with the mask subgroup")
+            .to_string();
+        assert!(err.contains(VALIDITY_GROUP), "{err}");
+    }
+
+    /// A mask that does not cover its column's rows is a corrupt store, not a
+    /// mask to pad or truncate — and the error has to say which column of
+    /// which block, because that is all the operator can act on.
+    #[test]
+    fn a_mask_of_the_wrong_length_is_a_read_error_naming_block_and_column() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = Frame::new();
+        frame.insert(BLOCK, masked_int_block());
+        write_frame_group(&store, FRAME, &frame).unwrap();
+
+        // Two flags for a three-row column: the one damage no reader can
+        // resolve on its own.
+        let path = format!("{FRAME}/{BLOCK}/{VALIDITY_GROUP}/{COLUMN}");
+        store.erase_prefix(&node_prefix(&path).unwrap()).unwrap();
+        write_column(
+            &store,
+            &path,
+            &Column::from_bool(ArrayD::from_shape_vec(vec![2], vec![true, false]).unwrap()),
+        )
+        .unwrap();
+
+        let err = read_frame_group(&store, FRAME)
+            .expect_err("a mask that does not cover its column must not read")
+            .to_string();
+        assert!(err.contains(BLOCK) && err.contains(COLUMN), "{err}");
+    }
+
+    #[test]
+    fn frame_group_attributes_round_trip_meta_keys_in_insertion_order() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = Frame::new();
+        frame.meta.insert("z", "Z");
+        frame.meta.insert("a", "A");
+        frame.meta.insert("m", "M");
+        write_frame_group(&store, FRAME, &frame).unwrap();
+
+        let group = zarrs::group::Group::open(store.clone(), FRAME).unwrap();
+        assert_eq!(
+            group
+                .attributes()
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["z", "a", "m"]
+        );
+
+        let back = read_frame_group(&store, FRAME).unwrap();
+        assert_eq!(
+            back.meta.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["z", "a", "m"]
         );
     }
 }

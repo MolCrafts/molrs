@@ -1,7 +1,8 @@
 //! Columnar data containers: [`Block`](block::Block) column store,
 //! [`Frame`](frame::Frame) hierarchical container, the
 //! [`Trajectory`](trajectory::Trajectory) frame-sequence carrier, the
-//! [`MolRec`](record::MolRec) record aggregate, and canonical column keys.
+//! [`MolRec`](record::MolRec) record aggregate, canonical column keys, and
+//! type-name construction and the type-id contract ([`type_labels`]).
 
 pub mod block;
 pub mod frame;
@@ -12,3 +13,4 @@ pub mod meta;
 pub mod record;
 pub mod schema;
 pub mod trajectory;
+pub mod type_labels;

@@ -3,6 +3,7 @@
 //!
 //! The COMPASS/class2 anharmonic bond. Parameters per type: `r0`, `k2`, `k3`, `k4`.
 
+use molrs::store::schema::block_names::BONDS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
@@ -151,7 +152,7 @@ pub fn bond_class2_ctor(
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
-        .get("bonds")
+        .get(BONDS)
         .ok_or_else(|| "BondClass2: frame missing \"bonds\" block".to_string())?;
     let i_col = block
         .get_uint("atomi")

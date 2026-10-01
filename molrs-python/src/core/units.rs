@@ -236,7 +236,7 @@ type UnitDefTuple = (String, Vec<String>, String, f64, f64, [i32; 7], bool);
 
 #[pyclass(module = "molrs", name = "UnitRegistry", subclass, dict)]
 pub struct PyUnitRegistry {
-    inner: UnitRegistry,
+    pub(crate) inner: UnitRegistry,
 }
 
 impl PyUnitRegistry {
@@ -285,21 +285,11 @@ impl PyUnitRegistry {
         self.parse_inner(expression)
     }
 
-    #[pyo3(name = "Unit")]
-    fn unit(&self, expression: &str) -> PyResult<PyUnit> {
-        self.parse_inner(expression)
-    }
-
     fn quantity(&self, value: f64, expression: &str) -> PyResult<PyQuantity> {
         self.inner
             .quantity(value, expression)
             .map(PyQuantity::new)
             .map_err(units_error)
-    }
-
-    #[pyo3(name = "Quantity")]
-    fn quantity_alias(&self, value: f64, expression: &str) -> PyResult<PyQuantity> {
-        self.quantity(value, expression)
     }
 
     #[pyo3(signature = (name, factor, dimension, *, aliases = Vec::new(), symbol = None, offset = 0.0, prefixable = false))]
@@ -324,6 +314,22 @@ impl PyUnitRegistry {
                 dimension: Dimension::from_exponents(dimension),
                 prefixable,
             })
+            .map_err(units_error)
+    }
+
+    /// Define the reduced-LJ length unit ``lj_sigma`` alone.
+    ///
+    /// Only quantities of pure length dimension then have a reduced scale;
+    /// every other ``lj_*`` unit stays unknown.
+    ///
+    /// Raises
+    /// ------
+    /// UnitsError
+    ///     If ``sigma`` is not a finite positive length, or ``lj_sigma`` is
+    ///     already defined.
+    fn define_lj_sigma(&mut self, sigma: &PyQuantity) -> PyResult<()> {
+        self.inner
+            .define_lj_sigma(&sigma.inner)
             .map_err(units_error)
     }
 
@@ -379,7 +385,7 @@ impl PyUnitRegistry {
 #[pyclass(module = "molrs", name = "UnitPreset", frozen, from_py_object)]
 #[derive(Clone)]
 pub struct PyUnitPreset {
-    inner: UnitPreset,
+    pub(crate) inner: UnitPreset,
 }
 
 #[pymethods]

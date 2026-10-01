@@ -8,13 +8,13 @@ with ``DebyeRelaxation`` in :mod:`molrs.compute.transport`, because compute,
 fit and check for one quantity belong in one place."""
 
 from molrs._lib import (
-    LinearFit as LinearFit,
-    CumulativeTrapezoid as CumulativeTrapezoid,
-    Plateau as Plateau,
+    CumulativeTrapezoid,
+    LinearFit,
+    Plateau,
 )
 
 __all__ = [
-    "LinearFit",
     "CumulativeTrapezoid",
+    "LinearFit",
     "Plateau",
 ]

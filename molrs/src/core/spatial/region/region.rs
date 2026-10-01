@@ -17,7 +17,8 @@
 //! - Points: N×3 row-major [`FNx3`], each row is `(x, y, z)`, Å.
 //! - Bounds: 3×2 [`FNx3`], col 0 = min, col 1 = max, rows = x/y/z.
 
-use crate::math;
+use crate::op::linalg::{det3, inv3};
+use crate::op::types::to_mat3;
 use crate::types::{F, F3, F3x3, FNx3};
 use ndarray::{Array1, Array2, array};
 use std::sync::Arc;
@@ -279,8 +280,10 @@ impl Parallelepiped {
     ///
     /// Returns `Err` if `H` is singular (zero volume) or not finite.
     pub fn new(h: F3x3, origin: F3) -> Result<Self, String> {
-        let inv = math::inv3(&h)
-            .ok_or_else(|| "Parallelepiped: singular edge matrix H (zero volume)".to_string())?;
+        let inv: F3x3 =
+            ndarray::arr2(&inv3(&to_mat3(h.view())).ok_or_else(|| {
+                "Parallelepiped: singular edge matrix H (zero volume)".to_string()
+            })?);
         let mut spacing = [0.0; 3];
         let mut normal = [[0.0; 3]; 3];
         for k in 0..3 {
@@ -365,7 +368,7 @@ impl Parallelepiped {
 
     /// Signed volume `det(H)`, Å³.
     pub fn volume(&self) -> F {
-        math::det3(&self.h)
+        det3(&to_mat3(self.h.view()))
     }
 
     fn frac_of(&self, point: &[F; 3]) -> [F; 3] {

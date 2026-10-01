@@ -15,6 +15,7 @@
 //! embedder constrains. When the molecule has no coordinates the sign is left
 //! `Unknown` and only the volume magnitude bounds are emitted.
 
+use crate::op::vec3::{cross, dot, sub};
 use molrs::system::atomistic::{AtomId, Atomistic};
 
 use super::mol_features::{Hybridization, Perceived};
@@ -65,15 +66,7 @@ fn coord(mol: &Atomistic, id: AtomId) -> Option<[f64; 3]> {
 
 /// Signed tetrahedral volume of `(p0-p3)·((p1-p3)×(p2-p3))`.
 fn signed_volume(p0: [f64; 3], p1: [f64; 3], p2: [f64; 3], p3: [f64; 3]) -> f64 {
-    let a = [p0[0] - p3[0], p0[1] - p3[1], p0[2] - p3[2]];
-    let b = [p1[0] - p3[0], p1[1] - p3[1], p1[2] - p3[2]];
-    let c = [p2[0] - p3[0], p2[1] - p3[1], p2[2] - p3[2]];
-    let cross = [
-        b[1] * c[2] - b[2] * c[1],
-        b[2] * c[0] - b[0] * c[2],
-        b[0] * c[1] - b[1] * c[0],
-    ];
-    a[0] * cross[0] + a[1] * cross[1] + a[2] * cross[2]
+    dot(sub(p0, p3), cross(sub(p1, p3), sub(p2, p3)))
 }
 
 impl Perceived {

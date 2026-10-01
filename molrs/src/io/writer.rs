@@ -52,8 +52,11 @@ impl ToFrame for Frame {
 impl ToFrame for crate::system::atomistic::Atomistic {
     fn to_frame(&self) -> Result<Frame> {
         // Disambiguate from the inherent `Atomistic::to_frame`, which this
-        // wraps; calling `self.to_frame()` here would recurse.
-        Ok(crate::system::atomistic::Atomistic::to_frame(self))
+        // wraps; calling `self.to_frame()` here would recurse. The inherent
+        // method reports a schema conflict as a `MolRsError`; this trait
+        // speaks `io::Error`, as `FromFrame` does on the read side.
+        crate::system::atomistic::Atomistic::to_frame(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
     }
 }
 

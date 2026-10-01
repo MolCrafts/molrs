@@ -8,10 +8,8 @@ transform to one matched occurrence in place. The transform compilation itself
 these tests assert the PyO3 surface and Daylight atom-map semantics.
 """
 
-import pytest
-
 import molrs
-
+import pytest
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -109,7 +107,7 @@ def test_one_sided_map_is_an_error():
 
 def test_apply_amide_forms_bond_and_drops_leaving_group():
     rxn = molrs.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
-    mol, h = _amine_plus_ester()
+    mol, _h = _amine_plus_ester()
     n_before = mol.n_atoms
     assert not molrs.perceive.SmartsPattern("[N][C]=O").has_match(mol)
 
@@ -130,7 +128,7 @@ def test_apply_amide_forms_bond_and_drops_leaving_group():
 
 def test_apply_reuses_core_and_leaves_binding_atoms_alive():
     rxn = molrs.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
-    mol, h = _amine_plus_ester()
+    mol, _h = _amine_plus_ester()
     binding = _bind(rxn, mol)
     touched = rxn.apply(mol, binding)
     assert isinstance(touched, list)

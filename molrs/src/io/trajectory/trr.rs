@@ -550,12 +550,12 @@ fn write_trr_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
         .unwrap_or(0);
     let time = meta
         .get("time")
-        .and_then(|value| value.as_f32())
-        .unwrap_or(0.0);
+        .and_then(|value| value.as_f64())
+        .unwrap_or(0.0) as f32;
     let lambda: f32 = meta
         .get("lambda")
-        .and_then(|value| value.as_f32())
-        .unwrap_or(0.0);
+        .and_then(|value| value.as_f64())
+        .unwrap_or(0.0) as f32;
 
     const RSIZE: usize = 4; // single precision
     let rvec_bytes = (natoms * DIM * RSIZE) as i32;

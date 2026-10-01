@@ -123,36 +123,10 @@ pub unsafe extern "C" fn molrs_init() {
     drop(lock_store());
 }
 
-/// C API version of this library — the handshake constant.
-///
-/// Incremented on any breaking change to a function signature, a handle's
-/// semantics, or a `repr(C)` type in this header (mirrors molrs-cxxapi's
-/// `CXX_API_VERSION`). A dlopen consumer compares
-/// [`molrs_c_api_version`]`()` against the `MOLRS_C_API_VERSION` its header
-/// was compiled with before calling anything else.
-pub const MOLRS_C_API_VERSION: u32 = 1;
-
-/// Report the C API version compiled into this library.
-///
-/// # C signature
-///
-/// ```c
-/// uint32_t molrs_c_api_version(void);
-/// ```
-///
-/// # Safety
-///
-/// No pointer arguments; returns a constant.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_c_api_version() -> u32 {
-    MOLRS_C_API_VERSION
-}
-
 /// Report the `molcrafts-molrs` core version compiled into this library.
 ///
 /// Returns a pointer to a static null-terminated UTF-8 string, e.g.
-/// `"0.14.0"`. Informational — the compatibility gate is
-/// [`molrs_c_api_version`]; this identifies the exact molrs release for
+/// `"0.14.0"`. Informational — this identifies the exact molrs release for
 /// diagnostics.
 ///
 /// # C signature

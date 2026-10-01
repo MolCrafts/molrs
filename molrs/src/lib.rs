@@ -1,11 +1,13 @@
 //! # molrs
 //!
 //! Unified molecular simulation toolkit. A single crate whose sub-systems are
-//! feature-gated modules: `core` (always on) plus `io`, `compute`, `smiles`,
-//! `ff`, `conformer`, and `signal`.
+//! modules. Four are always compiled — `op`, `core`, `perceive` and
+//! `optimize` (whose force-field optimizers need `ff`) — and the rest are
+//! feature-gated: `builder`, `io`, `signal`, `compute`, `ff`, `md`, `smiles`,
+//! `conformer`, and `stream`.
 //!
 //! ```toml
-//! molcrafts-molrs = { version = "0.14", default-features = false, features = ["io", "smiles"] }
+//! molcrafts-molrs = { version = "0.15", features = ["io", "smiles"] }
 //! ```
 //!
 //! Then:
@@ -13,7 +15,7 @@
 //! ```
 //! # #[cfg(feature = "smiles")]
 //! # {
-//! use molrs::smiles::{parse_smiles, to_atomistic};
+//! use molrs::io::smiles::{parse_smiles, to_atomistic};
 //!
 //! let ir = parse_smiles("CCO")?;
 //! let molecule = to_atomistic(&ir)?;
@@ -35,8 +37,9 @@
 //! - `full`      — everything above
 //! - `stream`    — MessagePack/JSON frames and native WebSocket streaming (not in `full`)
 //!
-//! Defaults: `full`, `filesystem`, `rayon`. Use
-//! `default-features = false` to select a smaller build.
+//! Default: core only, plus `rayon`. Every sub-system is opt-in; name the
+//! ones you use, or `full` for all of them. `default-features = false` also
+//! drops `rayon` (wasm, Pyodide).
 //! Storage and compute flags: `serde`, `rayon`, `zarr`, `zarr-codecs`,
 //! `filesystem`.
 //!
@@ -63,6 +66,10 @@ extern crate self as molrs;
 /// line.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+// Op is always compiled: the numeric base beneath core (vector, rigid-motion,
+// linear-algebra kernels); it names no other molrs module.
+pub mod op;
+
 // Core is always compiled and its public surface is re-exported at the crate
 // root, so `molrs::Frame`, `molrs::system::…`, `molrs::error::…` resolve exactly
 // as they did when core was a separate crate.
@@ -70,7 +77,8 @@ pub mod core;
 pub use crate::core::system::element::Element;
 pub use crate::core::*;
 
-/// Structure builders (graphene, nanotubes, self-avoiding walks, …).
+/// Structure builders (graphene, nanotubes, self-avoiding walks, trace
+/// assembly, …).
 ///
 /// Builders sit above `core` and produce frames / paths without depending on
 /// feature-gated analysis or force fields; `full` includes them.
@@ -78,8 +86,10 @@ pub use crate::core::*;
 pub mod builder;
 #[cfg(feature = "builder")]
 pub use crate::builder::{
-    CarbonTubeBuilder, CarbonTubeError, FccLattice, GrapheneBuilder, GrapheneError, GrowthStrategy,
-    OccupancyMode, OffLattice, SelfAvoidingWalk, WalkError, WalkOutput,
+    AssembleError, Assembler, AxisOrienter, CarbonTubeBuilder, CarbonTubeError, FccLattice,
+    GrapheneBuilder, GrapheneError, GrowthPlacer, GrowthStrategy, OccupancyMode, OffLattice,
+    OrientError, Orienter, ParentJoin, PlaceError, PlaceSite, Placer, SelfAvoidingWalk, SiteLink,
+    SitePlacer, SiteView, WalkError, WalkOutput,
 };
 
 // Chemical perception: one layer above `core`, below `ff` / `io` / `conformer`.
@@ -88,22 +98,6 @@ pub use crate::builder::{
 // existing build graph exactly (feature-gating them would be a behaviour change,
 // not a refactor).
 pub mod perceive;
-
-// The crate-root surface that this layer used to publish via `pub use core::*`.
-// It moves here verbatim, retargeted at `perceive`, so `molrs::find_rings`,
-// `molrs::SmartsPattern`, `molrs::add_hydrogens`, … keep resolving. Deleting it
-// would silently break 13 call sites — four of them in `ff/`, two of those only
-// visible under `clippy -D warnings` as broken intra-doc links.
-pub use crate::perceive::aromaticity::perceive_aromaticity;
-pub use crate::perceive::hydrogens::{add_hydrogens, implicit_h_count, remove_hydrogens};
-pub use crate::perceive::rings::{RingInfo, find_rings, max_ring_system_size};
-pub use crate::perceive::smarts::{
-    MatchOptions, Reaction, RingPrimitive, SmartsMatch, SmartsPattern,
-};
-pub use crate::perceive::stereo::{
-    BondStereo, TetrahedralStereo, assign_bond_stereo_from_3d, assign_stereo_from_3d,
-    chiral_volume, find_chiral_centers,
-};
 
 #[cfg(feature = "io")]
 pub mod io;
@@ -114,15 +108,10 @@ pub mod signal;
 #[cfg(feature = "compute")]
 pub mod compute;
 
-// Force fields first: `optimize` depends on `ff::potential::Potential`.
 #[cfg(feature = "ff")]
 pub mod ff;
 
-/// Geometry optimizers over [`ff::potential::Potential`].
-///
-/// Gated on `ff` — the optimizer depends on the force-field potential trait,
-/// never the reverse.
-#[cfg(feature = "ff")]
+// Geometry optimization; always compiled (its module docs say what needs `ff`).
 pub mod optimize;
 
 /// In-process MD: velocity-Verlet / Langevin and shifted Lennard-Jones.
@@ -133,16 +122,6 @@ pub mod optimize;
 /// wiring lives in molpy / molrs-python.
 #[cfg(feature = "md")]
 pub mod md;
-
-/// Gasteiger/PEOE partial charges, at the crate root — `molrs::compute_gasteiger_charges`.
-///
-/// The name predates the charge models and the binders still reach for it here, so it
-/// keeps resolving; it is a re-export of the **one** Gasteiger in the tree
-/// ([`ff::charge::GasteigerModel`], `antechamber -c gas`), not a second one. It moved
-/// out of `perceive` because a charge model belongs with the charge models, which is
-/// also why it is now gated on `ff` — the layer that owns `GASPARM.DAT`.
-#[cfg(feature = "ff")]
-pub use crate::ff::charge::compute_gasteiger_charges;
 
 #[cfg(feature = "conformer")]
 pub mod conformer;
@@ -158,7 +137,3 @@ mod serialize;
 /// pulls third-party runtime dependencies that `io` must not acquire.
 #[cfg(feature = "stream")]
 pub mod stream;
-
-// `smiles` is a sub-module of `io`; expose it at the top level for ergonomics.
-#[cfg(feature = "smiles")]
-pub use crate::io::smiles;

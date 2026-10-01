@@ -8,14 +8,12 @@
 //! | [`SpatialDistribution`] | 3-D number density of a target species in a reference molecule's body-fixed frame ([`GridSpec`]) |
 //! | [`SphereVoxelization`] | boolean voxel rasterisation of particles as hard spheres |
 //!
-//! [`kabsch`] hosts the shared BLAS-free Kabsch superposition helper.
 //! [`crate::compute::RDF`] (the radial distribution function) lives in `crate::compute::rdf`
 //! and is the prototypical member of this family; the others reuse the same
 //! histogram and SimBox conventions.
 
 pub mod correlation_function;
 pub mod gaussian_density;
-pub mod kabsch;
 pub mod local_density;
 pub mod spatial;
 pub mod sphere_voxelization;

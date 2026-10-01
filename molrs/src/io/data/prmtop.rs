@@ -17,12 +17,18 @@
 //!   unregistered columns — a debt, not a licence, with no cross-format
 //!   consumer: `tree` (`TREE_CHAIN_CLASSIFICATION`), `gb_radius` (Å, `RADII`),
 //!   `gb_screen` (`SCREEN`). Each is absent when its section is absent.
-//! - `"bonds"` / `"angles"` / `"dihedrals"`: connectivity (`atomi`/… 0-based
-//!   uint), `type` (str label from atom types), `type_id` (uint, prmtop index),
-//!   `id` (uint, 1-based row id). `"dihedrals"` also carries `exclude_14`
-//!   (bool: negative 3rd pointer). Empty systems still get schema-typed empty
-//!   blocks. Amber impropers (negative 4th pointer) are mirrored into
-//!   `"impropers"` from the same builder, so `exclude_14` cannot diverge.
+//! - `"bonds"` / `"angles"`: connectivity (`atomi`/… 0-based uint), `type`
+//!   (the force-field reader's type name: the end atom types in sorted order,
+//!   an angle's vertex in the middle), `type_id` (uint, prmtop index), `id`
+//!   (uint, 1-based row id).
+//! - `"dihedrals"` (propers) / `"impropers"` (negative 4th pointer):
+//!   connectivity, `type` (the force-field reader's type name), `id` and
+//!   `exclude_14` (bool: every merged row had a negative 3rd pointer). One row
+//!   per torsion, not per cosine term: the prmtop rows of a multi-term torsion
+//!   share one atom quartet and become one row, and the prmtop parameter index
+//!   (`type_id`) is dropped because such a torsion has none. An improper keeps
+//!   its prmtop atom order (centre third). Empty systems still get
+//!   schema-typed empty blocks; `"impropers"` is absent when there are none.
 //! - `"exclusions"`: `atomi`/`atomj` (uint, 0-based, `atomi < atomj`), the
 //!   Ewald real-space correction set from `NUMBER_EXCLUDED_ATOMS` /
 //!   `EXCLUDED_ATOMS_LIST`. `0` placeholders are dropped. An all-placeholder
@@ -63,6 +69,7 @@ use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::keys;
+use molrs::store::type_labels::TypeName;
 use molrs::types::{F, Idx};
 
 use super::prmtop_tables;
@@ -121,16 +128,7 @@ fn parse_tokens<T: std::str::FromStr>(lines: &[String]) -> Result<Vec<T>>
 where
     T::Err: std::fmt::Display,
 {
-    let mut out = Vec::new();
-    for line in lines {
-        for tok in line.split_whitespace() {
-            let v: T = tok
-                .parse()
-                .map_err(|e| invalid_data(format!("bad token {tok:?}: {e}")))?;
-            out.push(v);
-        }
-    }
-    Ok(out)
+    prmtop_tables::parse_tokens(lines).map_err(invalid_data)
 }
 
 fn unsupported(what: &str) -> Error {
@@ -200,41 +198,13 @@ pub fn parse_flag_sections<R: BufRead>(mut reader: R) -> Result<HashMap<String, 
 // POINTERS
 // ---------------------------------------------------------------------------
 
-const POINTER_FIELDS: &[&str] = &[
-    "NATOM", "NTYPES", "NBONH", "MBONA", "NTHETH", "MTHETA", "NPHIH", "MPHIA", "NHPARM", "NPARM",
-    "NNB", "NRES", "NBONA", "NTHETA", "NPHIA", "NUMBND", "NUMANG", "NPTRA", "NATYP", "NPHB",
-    "IFPERT", "NBPER", "NGPER", "NDPER", "MBPER", "MGPER", "MDPER", "IFBOX", "NMXRS", "IFCAP",
-    "NUMEXTRA", "NCOPY",
-];
-
+/// The POINTERS map ([`parse_pointers`](prmtop_tables::parse_pointers)),
+/// which a structure read needs to name `NATOM`.
 fn read_pointers(lines: &[String]) -> Result<HashMap<String, i64>> {
-    let values: Vec<i64> = parse_tokens(lines)?;
-    let mut meta = HashMap::new();
-    for (name, val) in POINTER_FIELDS.iter().zip(values.iter()) {
-        meta.insert((*name).to_string(), *val);
+    let meta = prmtop_tables::parse_pointers(lines).map_err(invalid_data)?;
+    if !meta.contains_key("NATOM") {
+        return Err(invalid_data("POINTERS missing NATOM"));
     }
-    let natom = *meta
-        .get("NATOM")
-        .ok_or_else(|| invalid_data("POINTERS missing NATOM"))?;
-    let nbonh = meta.get("NBONH").copied().unwrap_or(0);
-    let mbona = meta.get("MBONA").copied().unwrap_or(0);
-    let ntheth = meta.get("NTHETH").copied().unwrap_or(0);
-    let mtheta = meta.get("MTHETA").copied().unwrap_or(0);
-    let nphih = meta.get("NPHIH").copied().unwrap_or(0);
-    let mphia = meta.get("MPHIA").copied().unwrap_or(0);
-    let natyp = meta.get("NATYP").copied().unwrap_or(0);
-    let numbnd = meta.get("NUMBND").copied().unwrap_or(0);
-    let numang = meta.get("NUMANG").copied().unwrap_or(0);
-    let nptra = meta.get("NPTRA").copied().unwrap_or(0);
-
-    meta.insert("n_atoms".into(), natom);
-    meta.insert("n_bonds".into(), nbonh + mbona);
-    meta.insert("n_angles".into(), ntheth + mtheta);
-    meta.insert("n_dihedrals".into(), nphih + mphia);
-    meta.insert("n_atomtypes".into(), natyp);
-    meta.insert("n_bondtypes".into(), numbnd);
-    meta.insert("n_angletypes".into(), numang);
-    meta.insert("n_dihedraltypes".into(), nptra);
     Ok(meta)
 }
 
@@ -261,7 +231,6 @@ struct AngleRow {
 
 #[derive(Debug, Clone)]
 struct DihedralRow {
-    type_id: Idx,
     atomi: Idx,
     atomj: Idx,
     atomk: Idx,
@@ -269,7 +238,8 @@ struct DihedralRow {
     type_name: String,
     /// True when the raw 4th pointer was negative (Amber improper flag).
     is_improper: bool,
-    /// True when the raw 3rd pointer was negative (Amber 1-4 suppression).
+    /// True when every merged row's raw 3rd pointer was negative (Amber 1-4
+    /// suppression).
     exclude_14: bool,
 }
 
@@ -301,9 +271,9 @@ fn decode_bonds(pointers: &[i64], atom_types: &[String]) -> Result<Vec<BondRow>>
         let tj = atom_types
             .get(j as usize)
             .ok_or_else(|| invalid_data(format!("bond atom index {j} out of range")))?;
-        let mut pair = [ti.as_str(), tj.as_str()];
-        pair.sort();
-        let type_name = format!("{}-{}", pair[0], pair[1]);
+        let type_name = TypeName::join(&TypeName::orient(&[ti, tj]))
+            .map_err(invalid_data)?
+            .to_string();
         out.push(BondRow {
             type_id,
             atomi: i,
@@ -347,7 +317,12 @@ fn decode_angles(pointers: &[i64], atom_types: &[String]) -> Result<Vec<AngleRow
         let tk = atom_types
             .get(k as usize)
             .ok_or_else(|| invalid_data(format!("angle atom index {k} out of range")))?;
-        let type_name = format!("{ti}-{tj}-{tk}");
+        // The label is the force-field reader's type name: the types in
+        // `TypeName::orient`'s spelling. An angle reads the same both ways,
+        // so the row's atom order stays as it is.
+        let type_name = TypeName::join(&TypeName::orient(&[ti, tj, tk]))
+            .map_err(invalid_data)?
+            .to_string();
         out.push(AngleRow {
             type_id,
             atomi: i,
@@ -359,6 +334,24 @@ fn decode_angles(pointers: &[i64], atom_types: &[String]) -> Result<Vec<AngleRow
     Ok(out)
 }
 
+/// One torsion per atom quartet from the raw `DIHEDRALS_*` pointer rows.
+///
+/// A multi-term torsion is stored as one prmtop row per cosine term, all on
+/// the same four atoms; those rows are one torsion, whose force-field type
+/// (the force-field reader's merged `dihedral/fourier` type) already holds
+/// every term. Counts therefore match the torsions, not the cosine terms.
+///
+/// - A proper is oriented as the force-field reader names it: reversed when
+///   [`TypeName::reads_reversed`] says its types are, atoms and name together,
+///   so the label is the fourier type's name. Rows are merged by atom quartet
+///   in either direction.
+/// - An improper (negative 4th pointer) keeps its prmtop atom order: AMBER
+///   puts the central atom third, and reversing it names a different term.
+///   Rows are merged by exact atom order.
+/// - `exclude_14` of a merged torsion is set only when every merged row set
+///   it: AMBER flags all but one term so the 1-4 pair is counted once.
+///
+/// Rows keep the order of their quartet's first prmtop row.
 fn decode_dihedrals(pointers: &[i64], atom_types: &[String]) -> Result<Vec<DihedralRow>> {
     if !pointers.len().is_multiple_of(5) {
         return Err(invalid_data(format!(
@@ -366,7 +359,9 @@ fn decode_dihedrals(pointers: &[i64], atom_types: &[String]) -> Result<Vec<Dihed
             pointers.len()
         )));
     }
-    let mut out = Vec::with_capacity(pointers.len() / 5);
+    let mut out: Vec<DihedralRow> = Vec::with_capacity(pointers.len() / 5);
+    // (is_improper, quartet key) → index into `out`.
+    let mut seen: HashMap<(bool, [Idx; 4]), usize> = HashMap::new();
     for chunk in pointers.as_chunks::<5>().0 {
         let a = chunk[0];
         let b = chunk[1];
@@ -376,37 +371,42 @@ fn decode_dihedrals(pointers: &[i64], atom_types: &[String]) -> Result<Vec<Dihed
                 chunk[2], chunk[3]
             )));
         }
-        let type_id = chunk[4] as Idx;
         let is_improper = chunk[3] < 0;
         let exclude_14 = chunk[2] < 0;
-        let mut i = (a / 3) as Idx;
-        let mut j = (b / 3) as Idx;
-        let mut k = (chunk[2].unsigned_abs() / 3) as Idx;
-        let mut l = (chunk[3].unsigned_abs() / 3) as Idx;
-        // Canonicalise so type name is direction-independent (j ≤ k).
-        if j > k {
-            std::mem::swap(&mut i, &mut l);
-            std::mem::swap(&mut j, &mut k);
+        let mut atoms = [
+            (a / 3) as Idx,
+            (b / 3) as Idx,
+            (chunk[2].unsigned_abs() / 3) as Idx,
+            (chunk[3].unsigned_abs() / 3) as Idx,
+        ];
+        let mut types = [""; 4];
+        for (t, &atom) in types.iter_mut().zip(&atoms) {
+            *t = atom_types
+                .get(atom as usize)
+                .ok_or_else(|| invalid_data(format!("dihedral atom index {atom} out of range")))?;
         }
-        let ti = atom_types
-            .get(i as usize)
-            .ok_or_else(|| invalid_data(format!("dihedral atom index {i} out of range")))?;
-        let tj = atom_types
-            .get(j as usize)
-            .ok_or_else(|| invalid_data(format!("dihedral atom index {j} out of range")))?;
-        let tk = atom_types
-            .get(k as usize)
-            .ok_or_else(|| invalid_data(format!("dihedral atom index {k} out of range")))?;
-        let tl = atom_types
-            .get(l as usize)
-            .ok_or_else(|| invalid_data(format!("dihedral atom index {l} out of range")))?;
-        let type_name = format!("{ti}-{tj}-{tk}-{tl}");
+        if !is_improper && TypeName::reads_reversed(&types) {
+            atoms.reverse();
+            types.reverse();
+        }
+        let key = if is_improper {
+            atoms
+        } else {
+            let mut reversed = atoms;
+            reversed.reverse();
+            atoms.min(reversed)
+        };
+        if let Some(&row) = seen.get(&(is_improper, key)) {
+            out[row].exclude_14 &= exclude_14;
+            continue;
+        }
+        let type_name = TypeName::join(&types).map_err(invalid_data)?.to_string();
+        seen.insert((is_improper, key), out.len());
         out.push(DihedralRow {
-            type_id,
-            atomi: i,
-            atomj: j,
-            atomk: k,
-            atoml: l,
+            atomi: atoms[0],
+            atomj: atoms[1],
+            atomk: atoms[2],
+            atoml: atoms[3],
             type_name,
             is_improper,
             exclude_14,
@@ -503,7 +503,6 @@ fn build_angle_block(rows: &[AngleRow]) -> Result<Block> {
 fn build_dihedral_block(rows: &[DihedralRow]) -> Result<Block> {
     let n = rows.len();
     let mut block = Block::new();
-    let mut type_id = Vec::with_capacity(n);
     let mut atomi = Vec::with_capacity(n);
     let mut atomj = Vec::with_capacity(n);
     let mut atomk = Vec::with_capacity(n);
@@ -512,7 +511,6 @@ fn build_dihedral_block(rows: &[DihedralRow]) -> Result<Block> {
     let mut id = Vec::with_capacity(n);
     let mut exclude_14 = Vec::with_capacity(n);
     for (idx, r) in rows.iter().enumerate() {
-        type_id.push(r.type_id);
         atomi.push(r.atomi);
         atomj.push(r.atomj);
         atomk.push(r.atomk);
@@ -521,7 +519,6 @@ fn build_dihedral_block(rows: &[DihedralRow]) -> Result<Block> {
         id.push((idx as Idx) + 1);
         exclude_14.push(r.exclude_14);
     }
-    insert_uint_col(&mut block, "type_id", type_id)?;
     insert_uint_col(&mut block, "atomi", atomi)?;
     insert_uint_col(&mut block, "atomj", atomj)?;
     insert_uint_col(&mut block, "atomk", atomk)?;
@@ -978,15 +975,12 @@ fn build_frame(sections: HashMap<String, Vec<String>>) -> Result<Frame> {
     frame.insert("atoms", atoms);
     frame.insert("bonds", build_bond_block(&bonds)?);
     frame.insert("angles", build_angle_block(&angles)?);
-    // Keep full list in "dihedrals" so meta n_dihedrals (NPHIH+MPHIA) still
-    // matches historical Frame contracts. Amber impropers (4th pointer
-    // negative) are *also* mirrored into "impropers" for LAMMPS-style consumers.
-    frame.insert("dihedrals", build_dihedral_block(&dihedrals)?);
-    let impropers: Vec<DihedralRow> = dihedrals
-        .iter()
-        .filter(|r| r.is_improper)
-        .cloned()
-        .collect();
+    // One row per torsion, not per cosine term (meta `n_dihedrals` stays the
+    // POINTERS row count NPHIH+MPHIA). Propers and impropers are separate
+    // terms of separate styles, so each lives in its own block only.
+    let (impropers, propers): (Vec<DihedralRow>, Vec<DihedralRow>) =
+        dihedrals.into_iter().partition(|r| r.is_improper);
+    frame.insert("dihedrals", build_dihedral_block(&propers)?);
     if !impropers.is_empty() {
         frame.insert("impropers", build_dihedral_block(&impropers)?);
     }
@@ -1043,9 +1037,10 @@ mod tests {
     /// (Li+) isolated, so the 1-2/1-3/1-4 exclusion counts are
     /// `7 7 5 4 7 3 2 7 6 5 4 3 2 1 1 1`, which sum to exactly 65 with the two
     /// trailing `0` placeholders (atoms 14 and 15 exclude nothing) — hence 63
-    /// exclusion rows. `DIHEDRALS_INC_HYDROGEN` is empty, so the 27 torsions
-    /// keep `WITHOUT_HYDROGEN` order and the three negative 3rd pointers
-    /// (`12 21 -24 …`) land at rows 12, 14 and 16.
+    /// exclusion rows. `DIHEDRALS_INC_HYDROGEN` is empty, so the 27 torsion
+    /// rows keep `WITHOUT_HYDROGEN` order. Rows 11–16 are three two-term
+    /// torsions (`12 21 24 {27,30,33} 3` then `12 21 -24 {27,30,33} 4`), so
+    /// the 27 rows are 24 torsions.
     const LITFSI_HEAD: &str = "\
 %VERSION  VERSION_STAMP = V0001.000
 %FLAG TITLE
@@ -1207,8 +1202,33 @@ modified Bondi radii (mbondi2)
         assert_eq!(bonds.nrows(), Some(14));
         let angles = frame.get("angles").unwrap();
         assert_eq!(angles.nrows(), Some(25));
+        // 27 prmtop rows (meta, from POINTERS) are 24 torsions (rows).
         let dihedrals = frame.get("dihedrals").unwrap();
-        assert_eq!(dihedrals.nrows(), Some(27));
+        assert_eq!(dihedrals.nrows(), Some(24));
+    }
+
+    /// An angle's `type` is the force-field reader's type name: its end atom
+    /// types in sorted order around the vertex, so a frame label finds its
+    /// type by exact name. The row's atom order is untouched. Rows and types
+    /// read by hand from the fixture: row 3 is atoms 10-8-11 (`o`, `sy`,
+    /// `c3`), row 6 is 8-11-12 (`sy`, `c3`, `f`), row 11 is 7-8-11 (`ne`,
+    /// `sy`, `c3`), row 12 is 6-4-7 (`o`, `s6`, `ne`).
+    #[test]
+    fn an_angle_label_names_its_end_types_in_sorted_order() {
+        let frame = frame_from(LITFSI_HEAD);
+        let angles = frame.get("angles").unwrap();
+        let labels = angles.get_string("type").unwrap();
+        let (i, j, k) = (
+            angles.get_uint("atomi").unwrap(),
+            angles.get_uint("atomj").unwrap(),
+            angles.get_uint("atomk").unwrap(),
+        );
+        assert_eq!((i[[3]], j[[3]], k[[3]]), (10, 8, 11));
+        assert_eq!(labels[[3]], "c3-sy-o");
+        assert_eq!(labels[[6]], "f-c3-sy");
+        assert_eq!(labels[[11]], "c3-sy-ne");
+        assert_eq!(labels[[12]], "ne-s6-o");
+        assert_eq!(labels[[0]], "f-c3-f");
     }
 
     #[test]
@@ -1647,57 +1667,31 @@ c3  c3  c3  c3
 
     #[test]
     fn dihedral_exclude_14_marks_the_negative_third_pointer() {
-        let frame = frame_from(LITFSI_HEAD);
-        let dihedrals = frame.get("dihedrals").unwrap();
-        assert_eq!(dihedrals.nrows(), Some(27));
-        let flag = dihedrals
+        let frame = frame_from(&chain5_prmtop(
+            "       0       3      -6       9       1       3       6       9      12       1",
+        ));
+        let flag = frame
+            .get("dihedrals")
+            .unwrap()
             .get_bool("exclude_14")
             .expect("dihedrals must carry exclude_14");
-        let flagged: Vec<usize> = (0..27).filter(|&i| flag[[i]]).collect();
-        // DIHEDRALS_INC_HYDROGEN is empty, so WITHOUT_HYDROGEN order stands:
-        // rows 12, 14 and 16 are `12 21 -24 {27,30,33} 4`.
-        assert_eq!(flagged, vec![12, 14, 16]);
+        assert_eq!((flag[[0]], flag[[1]]), (true, false));
     }
 
     #[test]
-    fn improper_exclude_14_matches_its_dihedral_row() {
+    fn improper_exclude_14_is_its_own_rows_flag() {
+        // star4: `0 3 6 9 1` is the one proper; `0 3 -6 -9 2` and
+        // `3 0 6 -9 2` are impropers, only the first with a negative 3rd pointer.
         let frame = frame_from(&star4());
-        let dihedrals = frame.get("dihedrals").unwrap();
+        assert_eq!(frame.get("dihedrals").unwrap().nrows(), Some(1));
         let impropers = frame
             .get("impropers")
-            .expect("a negative 4th pointer mirrors the row into impropers");
-        assert_eq!(dihedrals.nrows(), Some(3));
-        assert_eq!(impropers.nrows(), Some(2));
-
-        let key = |b: &Block, row: usize| {
-            (
-                b.get_uint("atomi").unwrap()[[row]],
-                b.get_uint("atomj").unwrap()[[row]],
-                b.get_uint("atomk").unwrap()[[row]],
-                b.get_uint("atoml").unwrap()[[row]],
-                b.get_uint("type_id").unwrap()[[row]],
-            )
-        };
-        let d_flag = dihedrals
+            .expect("a negative 4th pointer puts the row in impropers");
+        assert_eq!(quartets(impropers), vec![[0, 1, 2, 3], [1, 0, 2, 3]]);
+        let flag = impropers
             .get_bool("exclude_14")
-            .expect("dihedrals must carry exclude_14");
-        let i_flag = impropers
-            .get_bool("exclude_14")
-            .expect("impropers must carry exclude_14 from the same builder");
-        for irow in 0..impropers.nrows().unwrap() {
-            let k = key(impropers, irow);
-            let drow = (0..dihedrals.nrows().unwrap())
-                .find(|&d| key(dihedrals, d) == k)
-                .unwrap_or_else(|| panic!("improper row {irow} has no matching dihedral row"));
-            assert_eq!(
-                i_flag[[irow]],
-                d_flag[[drow]],
-                "exclude_14 diverged between the two homes of improper row {irow}"
-            );
-        }
-        // The fixture pins the values, so the parity check cannot pass vacuously.
-        assert!(i_flag[[0]], "row `0 3 -6 -9 2` suppresses its 1-4 term");
-        assert!(!i_flag[[1]], "row `3 0 6 -9 2` keeps its 1-4 term");
+            .expect("impropers must carry exclude_14");
+        assert_eq!((flag[[0]], flag[[1]]), (true, false));
     }
 
     #[test]
@@ -1712,6 +1706,194 @@ c3  c3  c3  c3
             .get_bool("exclude_14")
             .expect("build_dihedral_block must emit exclude_14");
         assert!(!flag[[0]], "a literal 0 pointer is not a negative pointer");
+    }
+
+    // -----------------------------------------------------------------
+    // One dihedral per quartet (ff-endpoints-01)
+    // -----------------------------------------------------------------
+
+    /// A 5-atom `H1–C1–O1–C2–H2` chain (types `hc c3 os c3 hc`), one molecule,
+    /// whose `DIHEDRALS_INC_HYDROGEN` table is `torsions` (raw prmtop pointers,
+    /// 5 per row). Its two proper quartets are `0-1-2-3` and `1-2-3-4`.
+    ///
+    /// Both quartets carry the type name `hc-c3-os-c3`: the force-field reader
+    /// orients a proper so that its second type is not after its third
+    /// (`c3 ≤ os`), so `1-2-3-4` (`c3-os-c3-hc`) reads as `4-3-2-1`.
+    fn chain5_prmtop(torsions: &str) -> String {
+        let nphih = torsions.split_whitespace().count() / 5;
+        format!(
+            "\
+%VERSION  VERSION_STAMP = V0001.000
+%FLAG TITLE
+%FORMAT(20a4)
+CHAIN
+%FLAG POINTERS
+%FORMAT(10I8)
+       5       2       2       2       2       1{nphih:>8}       0       0       0
+       0       1       2       1       0       2       2       2       2       0
+       0       0       0       0       0       0       0       0       5       0
+       0
+%FLAG ATOM_NAME
+%FORMAT(20a4)
+H1  C1  O1  C2  H2
+%FLAG CHARGE
+%FORMAT(5E16.8)
+  0.00000000E+00  0.00000000E+00  0.00000000E+00  0.00000000E+00  0.00000000E+00
+%FLAG MASS
+%FORMAT(5E16.8)
+  1.00800000E+00  1.20100000E+01  1.60000000E+01  1.20100000E+01  1.00800000E+00
+%FLAG AMBER_ATOM_TYPE
+%FORMAT(20a4)
+hc  c3  os  c3  hc
+%FLAG RESIDUE_LABEL
+%FORMAT(20a4)
+MOL
+%FLAG RESIDUE_POINTER
+%FORMAT(10I8)
+       1
+%FLAG ATOMS_PER_MOLECULE
+%FORMAT(10I8)
+       5
+%FLAG BONDS_INC_HYDROGEN
+%FORMAT(10I8)
+       0       3       1       9      12       1
+%FLAG BONDS_WITHOUT_HYDROGEN
+%FORMAT(10I8)
+       3       6       2       6       9       2
+%FLAG ANGLES_INC_HYDROGEN
+%FORMAT(10I8)
+       0       3       6       1       6       9      12       1
+%FLAG ANGLES_WITHOUT_HYDROGEN
+%FORMAT(10I8)
+       3       6       9       2
+%FLAG DIHEDRALS_INC_HYDROGEN
+%FORMAT(10I8)
+{torsions}
+%FLAG DIHEDRALS_WITHOUT_HYDROGEN
+%FORMAT(10I8)
+"
+        )
+    }
+
+    /// The `(atomi, atomj, atomk, atoml)` rows of `block`.
+    fn quartets(block: &Block) -> Vec<[Idx; 4]> {
+        let col = |k: &str| block.get_uint(k).unwrap_or_else(|| panic!("{k} column"));
+        let (i, j, k, l) = (col("atomi"), col("atomj"), col("atomk"), col("atoml"));
+        (0..block.nrows().unwrap_or(0))
+            .map(|r| [i[[r]], j[[r]], k[[r]], l[[r]]])
+            .collect()
+    }
+
+    #[test]
+    fn a_multi_term_torsion_is_one_dihedral_named_by_its_quartet() {
+        // Quartet 0-1-2-3 carries two cosine terms (types 1 and 2); AMBER
+        // flags the second row's 3rd pointer so its 1-4 pair is counted once.
+        let frame = frame_from(&chain5_prmtop(
+            "       0       3       6       9       1       0       3      -6       9       2",
+        ));
+        let dihedrals = frame.get("dihedrals").unwrap();
+        // `hc-c3-os-c3` reads reversed (`c3-os-c3-hc` is the smaller spelling),
+        // so the row is stored the other way round, atoms and label together.
+        assert_eq!(quartets(dihedrals), vec![[3, 2, 1, 0]]);
+        assert_eq!(
+            dihedrals.get_string("type").unwrap()[[0]],
+            "c3-os-c3-hc",
+            "the label is the quartet's type name"
+        );
+        assert!(
+            !dihedrals.get_bool("exclude_14").unwrap()[[0]],
+            "one term keeps the 1-4 pair, so the torsion keeps it"
+        );
+    }
+
+    #[test]
+    fn a_torsion_whose_every_row_is_flagged_excludes_its_1_4_pair() {
+        let frame = frame_from(&chain5_prmtop(
+            "       0       3      -6       9       1       0       3      -6       9       2",
+        ));
+        let dihedrals = frame.get("dihedrals").unwrap();
+        assert_eq!(dihedrals.nrows(), Some(1));
+        assert!(dihedrals.get_bool("exclude_14").unwrap()[[0]]);
+    }
+
+    #[test]
+    fn distinct_quartets_stay_distinct_dihedrals() {
+        let frame = frame_from(&chain5_prmtop(
+            "       0       3       6       9       1       3       6       9      12       1",
+        ));
+        let dihedrals = frame.get("dihedrals").unwrap();
+        // One spelling for both: the first quartet reads reversed, the second
+        // (`c3-os-c3-hc` in atom order) already reads forward.
+        assert_eq!(quartets(dihedrals), vec![[3, 2, 1, 0], [1, 2, 3, 4]]);
+        let types = dihedrals.get_string("type").unwrap();
+        assert_eq!(types[[0]], "c3-os-c3-hc");
+        assert_eq!(types[[1]], "c3-os-c3-hc");
+    }
+
+    #[test]
+    fn a_merged_dihedral_carries_no_prmtop_parameter_index() {
+        // `type_id` was the prmtop row's parameter index; a torsion of several
+        // rows has no single one, so the block labels by `type` only.
+        let frame = frame_from(&chain5_prmtop(
+            "       0       3       6       9       1       0       3      -6       9       2",
+        ));
+        assert!(
+            frame
+                .get("dihedrals")
+                .unwrap()
+                .get_uint("type_id")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn an_improper_keeps_its_prmtop_atom_order() {
+        // `0 9 3 -6`: i=H1, j=C2, k=C1 (j > k by index and by name order is
+        // irrelevant), l=O1. AMBER's centre is the third atom; reversing the
+        // row would move it to second place.
+        let frame = frame_from(&chain5_prmtop(
+            "       0       3       6       9       1       0       9       3      -6       1",
+        ));
+        let impropers = frame.get("impropers").expect("impropers block");
+        assert_eq!(quartets(impropers), vec![[0, 3, 1, 2]]);
+        assert_eq!(impropers.get_string("type").unwrap()[[0]], "hc-c3-c3-os");
+    }
+
+    #[test]
+    fn an_improper_is_not_a_proper_dihedral() {
+        let frame = frame_from(&chain5_prmtop(
+            "       0       3       6       9       1       0       9       3      -6       1",
+        ));
+        assert_eq!(
+            quartets(frame.get("dihedrals").unwrap()),
+            vec![[3, 2, 1, 0]]
+        );
+    }
+
+    #[test]
+    fn a_multi_term_torsion_writes_one_lammps_dihedral() {
+        use crate::io::data::lammps_data::{LAMMPSDataWriter, parse_frame_bytes};
+        use crate::io::writer::FrameWriter;
+
+        let mut frame = frame_from(&chain5_prmtop(
+            "       0       3       6       9       1       0       3      -6       9       2",
+        ));
+        let atoms = frame.get_mut("atoms").unwrap();
+        for (key, vals) in [
+            (keys::X, vec![0.0, 1.0, 2.0, 3.0, 4.0]),
+            (keys::Y, vec![0.0, 1.0, 0.0, 1.0, 0.0]),
+            (keys::Z, vec![0.0; 5]),
+        ] {
+            insert_float_col(atoms, key, vals).unwrap();
+        }
+        let mut buf = Vec::new();
+        LAMMPSDataWriter::new(&mut buf)
+            .write(&frame)
+            .expect("write LAMMPS data");
+        let text = String::from_utf8(buf).unwrap();
+        assert!(text.contains("\n1 dihedrals\n"), "{text}");
+        let back = parse_frame_bytes(text.as_bytes()).expect("read back");
+        assert_eq!(back.get("dihedrals").unwrap().nrows(), Some(1));
     }
 
     // -----------------------------------------------------------------

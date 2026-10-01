@@ -491,6 +491,18 @@ pub fn write_gro<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
     w.flush()
 }
 
+/// Write `frames` as one multi-frame `.gro` trajectory at `path`, one
+/// [`write_gro_frame`] block per frame — the inverse of [`read_gro`]. An empty
+/// slice creates an empty file.
+pub fn write_gro_traj<P: AsRef<Path>>(path: P, frames: &[Frame]) -> Result<()> {
+    let file = std::fs::File::create(path.as_ref())?;
+    let mut w = BufWriter::new(file);
+    for frame in frames {
+        write_gro_frame(&mut w, frame)?;
+    }
+    w.flush()
+}
+
 /// Write a single frame in GRO format.
 pub fn write_gro_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     let atoms = frame
@@ -631,6 +643,20 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    /// Two frames written as one trajectory read back as two frames.
+    #[test]
+    fn write_gro_traj_round_trips_every_frame() {
+        let frame = read_gro_frame(&mut Cursor::new(water_gro().into_bytes()))
+            .unwrap()
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("traj.gro");
+        write_gro_traj(&path, &[frame.clone(), frame]).expect("write GRO trajectory");
+        let back = read_gro(&path).expect("read GRO trajectory");
+        assert_eq!(back.len(), 2);
+        assert_eq!(back[1].get("atoms").unwrap().nrows(), Some(3));
     }
 
     #[test]

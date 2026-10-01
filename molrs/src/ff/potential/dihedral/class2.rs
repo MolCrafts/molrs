@@ -10,6 +10,7 @@
 //! as separate LAMMPS coeff lines and not part of this style's per-type params,
 //! are out of scope here.
 
+use molrs::store::schema::block_names::DIHEDRALS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
@@ -124,7 +125,7 @@ pub fn dihedral_class2_ctor(
 ) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
-        .get("dihedrals")
+        .get(DIHEDRALS)
         .ok_or("dihedral_class2: missing \"dihedrals\" block")?;
     let ic = block.get_uint("atomi").ok_or("missing atomi")?;
     let jc = block.get_uint("atomj").ok_or("missing atomj")?;

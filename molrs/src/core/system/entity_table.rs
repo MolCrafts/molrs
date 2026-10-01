@@ -22,7 +22,7 @@
 //! ECS refactor; it is generic over the slotmap key type so the same machinery
 //! backs both the node table and each relation-kind table.
 
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 use slotmap::{Key, SlotMap};
 
@@ -53,6 +53,12 @@ impl Validity {
     }
     fn swap_remove(&mut self, row: usize) {
         self.0.swap_remove(row);
+    }
+    fn extend_null(&mut self, count: usize) {
+        self.0.resize(self.0.len() + count, false);
+    }
+    fn set_range(&mut self, rows: std::ops::Range<usize>, v: bool) {
+        self.0[rows].fill(v);
     }
     /// The mask as a contiguous slice (zero-copy mappable).
     pub fn as_slice(&self) -> &[bool] {
@@ -163,6 +169,76 @@ impl Column {
         }
     }
 
+    /// Append `count` null slots (default values, validity unset).
+    fn extend_null(&mut self, count: usize) {
+        match self {
+            Column::F64(d, v) => {
+                d.resize(d.len() + count, 0.0);
+                v.extend_null(count);
+            }
+            Column::I32(d, v) => {
+                d.resize(d.len() + count, 0);
+                v.extend_null(count);
+            }
+            Column::Str(d, v) => {
+                d.resize(d.len() + count, String::new());
+                v.extend_null(count);
+            }
+            Column::Bool(d, v) => {
+                d.resize(d.len() + count, false);
+                v.extend_null(count);
+            }
+        }
+    }
+
+    /// An all-null column of `len` rows with the element type of `like`.
+    fn null_like(like: &Column, len: usize) -> Column {
+        let mut col = match like {
+            Column::F64(..) => Column::F64(Vec::new(), Validity::default()),
+            Column::I32(..) => Column::I32(Vec::new(), Validity::default()),
+            Column::Str(..) => Column::Str(Vec::new(), Validity::default()),
+            Column::Bool(..) => Column::Bool(Vec::new(), Validity::default()),
+        };
+        col.extend_null(len);
+        col
+    }
+
+    /// Whether `self` and `other` hold the same element type.
+    fn same_type(&self, other: &Column) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+
+    /// Append `src` (data and validity) `times` times over. The element types
+    /// must agree; a mismatch is a type conflict and appends nothing.
+    fn extend_repeated(&mut self, key: &str, src: &Column, times: usize) -> Result<(), MolRsError> {
+        fn repeat<T: Clone>(dst: &mut Vec<T>, src: &[T], times: usize) {
+            dst.reserve(src.len() * times);
+            for _ in 0..times {
+                dst.extend_from_slice(src);
+            }
+        }
+        match (self, src) {
+            (Column::F64(d, v), Column::F64(sd, sv)) => {
+                repeat(d, sd, times);
+                repeat(&mut v.0, &sv.0, times);
+            }
+            (Column::I32(d, v), Column::I32(sd, sv)) => {
+                repeat(d, sd, times);
+                repeat(&mut v.0, &sv.0, times);
+            }
+            (Column::Str(d, v), Column::Str(sd, sv)) => {
+                repeat(d, sd, times);
+                repeat(&mut v.0, &sv.0, times);
+            }
+            (Column::Bool(d, v), Column::Bool(sd, sv)) => {
+                repeat(d, sd, times);
+                repeat(&mut v.0, &sv.0, times);
+            }
+            (dst, src) => return Err(type_conflict(key, src.type_name(), dst.type_name())),
+        }
+        Ok(())
+    }
+
     fn set_valid(&mut self, row: usize, v: bool) {
         match self {
             Column::F64(_, mask) => mask.set(row, v),
@@ -222,8 +298,9 @@ pub struct EntityTable<K: Key> {
     keys: SlotMap<K, u32>,
     /// `row index → handle` (iteration / alignment order).
     rows: Vec<K>,
-    /// Component columns, keyed by name; every column has length `rows.len()`.
-    cols: HashMap<String, Column>,
+    /// Component columns, keyed by name, in first-write order; every column
+    /// has length `rows.len()`.
+    cols: IndexMap<String, Column>,
 }
 
 impl<K: Key> Default for EntityTable<K> {
@@ -238,7 +315,7 @@ impl<K: Key> EntityTable<K> {
         Self {
             keys: SlotMap::with_key(),
             rows: Vec::new(),
-            cols: HashMap::new(),
+            cols: IndexMap::new(),
         }
     }
 
@@ -356,6 +433,107 @@ impl<K: Key> EntityTable<K> {
             }
             Some((name.as_str(), cell_at(col, row)))
         })
+    }
+
+    /// Check that every column of `source` can be appended to `self`: a column
+    /// both tables hold must have one element type in both. Writes nothing.
+    ///
+    /// This is the check [`extend_repeated`](Self::extend_repeated) runs before
+    /// its first write, exposed so a caller appending to several tables can run
+    /// every check before touching any of them.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] naming the first key whose element type in
+    /// `source` contradicts the one `self` holds.
+    pub(crate) fn check_extend(&self, source: &EntityTable<K>) -> Result<(), MolRsError> {
+        for (key, src) in &source.cols {
+            if let Some(dst) = self.cols.get(key)
+                && !dst.same_type(src)
+            {
+                return Err(type_conflict(key, src.type_name(), dst.type_name()));
+            }
+        }
+        Ok(())
+    }
+
+    /// Append `times` copies of every row of `source`, returning the new
+    /// handles copy-major: source row `r` of copy `c` is at index
+    /// `c * source.len() + r`, and the new rows follow the existing ones in
+    /// that order.
+    ///
+    /// Column-wise: each column is extended in one pass by the source column
+    /// (data and validity) repeated `times` times; a column only `self` holds
+    /// is extended by nulls, and a column only `source` holds is created, null
+    /// for the pre-existing rows. No per-row setter runs.
+    ///
+    /// Atomic: [`check_extend`](Self::check_extend) runs first, so on an error
+    /// `self` is unchanged.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when a column of `source` contradicts the
+    /// element type `self` holds for that key.
+    pub(crate) fn extend_repeated(
+        &mut self,
+        source: &EntityTable<K>,
+        times: usize,
+    ) -> Result<Vec<K>, MolRsError> {
+        self.check_extend(source)?;
+        let old = self.rows.len();
+        let added = source.len() * times;
+        let mut handles = Vec::with_capacity(added);
+        self.rows.reserve(added);
+        for i in 0..added {
+            let k = self.keys.insert((old + i) as u32);
+            self.rows.push(k);
+            handles.push(k);
+        }
+        for (key, dst) in self.cols.iter_mut() {
+            match source.cols.get(key) {
+                Some(src) => dst
+                    .extend_repeated(key, src, times)
+                    .expect("check_extend ran before the first write"),
+                None => dst.extend_null(added),
+            }
+        }
+        for (key, src) in &source.cols {
+            if !self.cols.contains_key(key) {
+                let mut col = Column::null_like(src, old);
+                col.extend_repeated(key, src, times)
+                    .expect("a null_like column shares its source's element type");
+                self.cols.insert(key.clone(), col);
+            }
+        }
+        Ok(handles)
+    }
+
+    /// Set the `i32` component `key` to `val` over the contiguous row range
+    /// `rows`, creating the column on first use. One pass over the range.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when `key` is held at another element type;
+    /// nothing is written then.
+    pub(crate) fn fill_i32(
+        &mut self,
+        key: &str,
+        rows: std::ops::Range<usize>,
+        val: I,
+    ) -> Result<(), MolRsError> {
+        let n = self.rows.len();
+        let col = self
+            .cols
+            .entry(key.to_owned())
+            .or_insert_with(|| Column::I32(vec![0; n], Validity::with_len(n)));
+        match col {
+            Column::I32(data, valid) => {
+                data[rows.clone()].fill(val);
+                valid.set_range(rows, true);
+                Ok(())
+            }
+            other => Err(type_conflict(key, "i32", other.type_name())),
+        }
     }
 
     /// Clear component `key` for entity `k` (set null). No-op if the column or
@@ -511,6 +689,17 @@ mod tests {
     type T = EntityTable<TestId>;
 
     #[test]
+    fn columns_follow_first_write_order() {
+        let mut t = T::new();
+        let a = t.spawn();
+        t.set_f64(a, "c", 1.0).unwrap();
+        t.set_str(a, "a", "x").unwrap();
+        t.set_i32(a, "b", 2).unwrap();
+        t.set_f64(a, "c", 3.0).unwrap();
+        assert_eq!(t.columns().collect::<Vec<_>>(), ["c", "a", "b"]);
+    }
+
+    #[test]
     fn spawn_assigns_rows_in_order() {
         let mut t = T::new();
         let a = t.spawn();
@@ -664,5 +853,143 @@ mod tests {
         assert!(t.get_f64(a, "charge").is_err());
         // Column still exists (other entities may use it).
         assert!(t.column_f64("charge").is_ok());
+    }
+
+    // ----- bulk append: check_extend / extend_repeated -----
+
+    fn sorted_columns(t: &T) -> Vec<String> {
+        let mut cols: Vec<String> = t.columns().map(str::to_owned).collect();
+        cols.sort();
+        cols
+    }
+
+    #[test]
+    fn extend_repeated_creates_a_source_only_column_null_on_old_rows() {
+        let mut t = T::new();
+        let a = t.spawn();
+        let b = t.spawn();
+        let mut src = T::new();
+        let s0 = src.spawn();
+        let s1 = src.spawn();
+        src.set_str(s0, "el", "C").unwrap();
+        src.set_str(s1, "el", "O").unwrap();
+
+        let handles = t.extend_repeated(&src, 2).unwrap();
+
+        assert_eq!(handles.len(), 4);
+        assert_eq!(t.len(), 6);
+        for (i, &h) in handles.iter().enumerate() {
+            assert_eq!(t.row(h), Some(2 + i), "new rows follow the old ones");
+        }
+        assert!(!t.has(a, "el") && !t.has(b, "el"), "old rows read null");
+        let (data, valid) = t.column_str("el").unwrap();
+        assert_eq!(valid.as_slice(), &[false, false, true, true, true, true]);
+        assert_eq!(&data[2..], &["C", "O", "C", "O"], "copy-major repetition");
+    }
+
+    #[test]
+    fn extend_repeated_nulls_a_self_only_column_on_new_rows() {
+        let mut t = T::new();
+        let a = t.spawn();
+        let b = t.spawn();
+        t.set_f64(a, "x", 1.0).unwrap();
+        t.set_f64(b, "x", 2.0).unwrap();
+        let mut src = T::new();
+        let s = src.spawn();
+        src.set_str(s, "el", "N").unwrap();
+
+        let handles = t.extend_repeated(&src, 3).unwrap();
+
+        assert_eq!(handles.len(), 3);
+        let (data, valid) = t.column_f64("x").unwrap();
+        assert_eq!(data.len(), 5);
+        assert_eq!(valid.as_slice(), &[true, true, false, false, false]);
+        assert_eq!(&data[..2], &[1.0, 2.0], "old rows unchanged");
+        for &h in &handles {
+            assert!(!t.has(h, "x"));
+        }
+    }
+
+    #[test]
+    fn check_extend_refuses_a_column_type_conflict_and_writes_nothing() {
+        let mut t = T::new();
+        let a = t.spawn();
+        t.set_f64(a, "k", 1.0).unwrap();
+        let mut src = T::new();
+        let s = src.spawn();
+        src.set_str(s, "k", "x").unwrap();
+        src.set_i32(s, "extra", 4).unwrap();
+
+        let err = t.check_extend(&src).expect_err("f64 'k' vs str 'k'");
+
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        assert_eq!(t.len(), 1);
+        assert_eq!(sorted_columns(&t), vec!["k".to_owned()]);
+        assert_eq!(t.get_f64(a, "k").unwrap(), 1.0);
+    }
+
+    #[test]
+    fn extend_repeated_refuses_a_column_type_conflict_and_writes_nothing() {
+        let mut t = T::new();
+        let a = t.spawn();
+        t.set_f64(a, "k", 1.0).unwrap();
+        let mut src = T::new();
+        let s = src.spawn();
+        src.set_str(s, "k", "x").unwrap();
+        src.set_i32(s, "extra", 4).unwrap();
+
+        let err = t.extend_repeated(&src, 2).expect_err("f64 'k' vs str 'k'");
+
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        assert_eq!(t.len(), 1);
+        assert_eq!(sorted_columns(&t), vec!["k".to_owned()]);
+        assert_eq!(t.column_f64("k").unwrap().0.len(), 1);
+    }
+
+    // ----- fill_i32 -----
+
+    #[test]
+    fn fill_i32_writes_only_the_given_row_range() {
+        let mut t = T::new();
+        let a = t.spawn();
+        for _ in 0..3 {
+            t.spawn();
+        }
+        t.set_i32(a, "fid", 5).unwrap();
+
+        t.fill_i32("fid", 1..3, 9).unwrap();
+
+        let (data, valid) = t.column_i32("fid").unwrap();
+        assert_eq!(valid.as_slice(), &[true, true, true, false]);
+        assert_eq!(&data[..3], &[5, 9, 9]);
+    }
+
+    #[test]
+    fn fill_i32_creates_the_column_null_outside_the_range() {
+        let mut t = T::new();
+        for _ in 0..4 {
+            t.spawn();
+        }
+
+        t.fill_i32("fid", 2..4, 7).unwrap();
+
+        let (data, valid) = t.column_i32("fid").unwrap();
+        assert_eq!(valid.as_slice(), &[false, false, true, true]);
+        assert_eq!(&data[2..], &[7, 7]);
+    }
+
+    #[test]
+    fn fill_i32_refuses_a_non_i32_column_and_writes_nothing() {
+        let mut t = T::new();
+        let a = t.spawn();
+        t.spawn();
+        t.set_f64(a, "fid", 0.5).unwrap();
+
+        let err = t.fill_i32("fid", 0..2, 3).expect_err("'fid' is f64");
+
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        let (data, valid) = t.column_f64("fid").unwrap();
+        assert_eq!(valid.as_slice(), &[true, false]);
+        assert_eq!(data[0], 0.5);
     }
 }

@@ -1,14 +1,17 @@
-//! Python wrapper for `Block`, a heterogeneous column store backed by the
+//! Python class `molrs.Block`, a heterogeneous column store backed by the
 //! shared FFI store.
 //!
 //! A [`PyBlock`] holds typed columns keyed by name. Each column is a
 //! contiguous ndarray that maps directly to a numpy array on the Python side.
+//! This is the only `Block` class: construction from a mapping, schema-dtype
+//! adoption, row / multi-column indexing, rename, deep copy, sort and pickling
+//! are all implemented here, once.
 //!
 //! # Supported Column Types
 //!
 //! | Rust type        | numpy dtype (default) | Typical usage                |
 //! |------------------|-----------------------|------------------------------|
-//! | `F`  (f32/f64)   | `float32` / `float64` | positions, masses, charges   |
+//! | `F`  (f64)       | `float64` (narrow float input widened here) | positions, masses, charges |
 //! | `I`  (i32/i64)   | `int32`   / `int64`   | atom type IDs                |
 //! | `U`  (u32/u64)   | `uint32`  / `uint64`  | bond indices                 |
 //! | `bool`           | `bool`                | selection masks               |
@@ -16,35 +19,34 @@
 
 use std::sync::Arc;
 
-use half::f16;
-use molrs::store::block::{Block as CoreBlock, BlockDtype, Column, ColumnHolder};
+use molrs::store::block::{
+    Block as CoreBlock, BlockDtype, BlockError, Column, ColumnHolder, DType,
+};
 use molrs::types::{F, I, Idx};
 use molrs_ffi::BlockRef;
 use ndarray::{Array1, ArrayD, IxDyn};
 use num_complex::Complex;
-use numpy::{PyArrayDyn, PyArrayMethods, PyUntypedArrayMethods};
-use pyo3::exceptions::{PyKeyError, PyValueError};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayDyn, PyArrayMethods, PyUntypedArrayMethods};
+use pyo3::exceptions::{PyIndexError, PyKeyError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyIterator, PyList, PySlice, PyTuple};
 
+use crate::schema::extract_column_key;
 use crate::store::ffi_error_to_pyerr;
 
-/// Internal owner that holds an `Arc` reference to the column's backing
-/// ndarray while a numpy view is alive.
-///
-/// The `Arc` shares storage with the Rust-side `Column`, so the numpy view is
-/// a true zero-copy view into the Block's data. The owner keeps the buffer
-/// alive for as long as Python holds the numpy array (numpy's `.base` field).
-///
-/// # Safety
-///
-/// The `borrow_from_array` call in each `*_array_view` helper below creates a
-/// numpy view whose lifetime is tied to this owner object. The `unsendable`
-/// marker ensures the owner (and therefore the view) never crosses threads.
 /// Heterogeneous column store exposed to Python as `molrs.Block`.
 ///
 /// Each column is a named, typed array. All columns share the same number of
 /// rows (axis-0 length). The underlying storage lives in an FFI `Store` and is
-/// accessed through a version-tracked [`BlockHandle`].
+/// accessed through a version-tracked [`BlockHandle`]; a block read from a
+/// frame (``frame["atoms"]``) is a handle on the frame's stored block, so every
+/// method below reads and writes the frame's data.
+///
+/// A column is dense, so a per-row component that only some rows carry is
+/// stored alongside a validity mask: `Block.validity(key)` returns it, or
+/// `None` when every cell of that column is a real value.
+///
+/// Every column-key argument accepts a ``str`` or a :class:`molrs.keys.Key`.
 ///
 /// # Python Examples
 ///
@@ -52,20 +54,15 @@ use crate::store::ffi_error_to_pyerr;
 /// import numpy as np
 /// from molrs import Block
 ///
-/// b = Block()
-/// b.insert("x", np.array([1.0, 2.0, 3.0], dtype=np.float32))
-/// b.insert("symbol", ["C", "H", "H"])
+/// b = Block({"x": [1.0, 2.0, 3.0], "element": ["C", "H", "H"]})
 /// assert b.nrows == 3
 /// assert "x" in b
-/// arr = b.view("x")        # zero-copy numpy view
+/// arr = b["x"]                # zero-copy numpy view
+/// xyz = b["x", "x", "x"]      # (3, 3) stacked columns
+/// sub = b[b["x"] > 1.5]       # a new Block of the selected rows
+/// assert b.validity("x") is None   # no holes in that column
 /// ```
-#[pyclass(
-    module = "molrs._lib",
-    name = "Block",
-    from_py_object,
-    unsendable,
-    subclass
-)]
+#[pyclass(module = "molrs._lib", name = "Block", from_py_object, unsendable)]
 #[derive(Clone)]
 pub struct PyBlock {
     pub(crate) inner: BlockRef,
@@ -73,40 +70,57 @@ pub struct PyBlock {
 
 #[pymethods]
 impl PyBlock {
-    /// Create an empty standalone `Block`.
+    /// Create a block, optionally from a mapping of column name -> array.
     ///
-    /// The block starts with zero columns and zero rows.
-    ///
-    /// Returns
-    /// -------
-    /// Block
-    ///     A new empty block.
-    ///
-    /// Examples
-    /// --------
-    /// >>> b = Block()
-    /// >>> len(b)
-    /// 0
-    #[new]
-    #[pyo3(signature = (*_args, **_kwargs))]
-    fn new(_args: &Bound<'_, PyAny>, _kwargs: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
-        Self::from_core_block(CoreBlock::new())
-    }
-
-    /// Insert a numpy array (or list of strings) as a named column.
-    ///
-    /// If a column with the same key already exists it is replaced. The array
-    /// length must match the row count of existing columns, or the block must
-    /// be empty.
+    /// Each value goes through :meth:`__setitem__`, so a canonical key adopts
+    /// the dtype the Frame schema declares for it. Copying an existing block
+    /// is :meth:`copy`, not ``Block(block)``.
     ///
     /// Parameters
     /// ----------
-    /// key : str
-    ///     Column name (e.g. ``"x"``, ``"symbol"``).
+    /// data : Mapping[str | Key, ArrayLike], optional
+    ///     Column name -> array. Every column must have the same length.
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If ``data`` is a ``Block`` or not a mapping.
+    /// ValueError
+    ///     If a value is not array-like, the lengths differ, or a canonical
+    ///     column's values do not survive the schema dtype.
+    ///
+    /// Examples
+    /// --------
+    /// >>> Block().nrows
+    /// 0
+    /// >>> Block({"id": [1, 2]}).dtype("id")
+    /// 'uint'
+    #[new]
+    #[pyo3(signature = (data = None))]
+    fn new(data: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let mut block = Self::from_core_block(CoreBlock::new())?;
+        if let Some(data) = data {
+            block.absorb_mapping(data)?;
+        }
+        Ok(block)
+    }
+
+    /// Insert a numpy array (or list of strings) as a named column, at the
+    /// width given.
+    ///
+    /// The typed write: unlike ``block[key] = array`` it does not convert to
+    /// the schema dtype (an ``i64`` column stays ``i64``; a narrow float is
+    /// promoted to ``float64``, the one float width); a dtype the schema
+    /// refuses raises. If a column with the same key already exists it is
+    /// replaced. The array length must match the row count of existing
+    /// columns, or the block must be empty.
+    ///
+    /// Parameters
+    /// ----------
+    /// key : str | Key
+    ///     Column name (e.g. ``"x"``, ``"element"``).
     /// array : numpy.ndarray | list[str]
-    ///     Column data. Accepted dtypes: ``float32``, ``float64``, ``int32``,
-    ///     ``int64``, ``uint32``, ``uint64``, ``bool``, or a Python
-    ///     ``list[str]``.
+    ///     Column data.
     ///
     /// Raises
     /// ------
@@ -119,71 +133,66 @@ impl PyBlock {
     /// --------
     /// >>> b = Block()
     /// >>> b.insert("x", np.zeros(10, dtype=np.float32))
-    /// >>> b.insert("y", np.ones(10, dtype=np.float32))
-    fn insert(&mut self, key: &str, array: &Bound<'_, pyo3::types::PyAny>) -> PyResult<()> {
-        // numpy-only Store contract: reject object-kind arrays (object dtype,
-        // None-bearing, ragged/mixed — numpy renders all of these as kind 'O')
-        // up front, before the typed-cast / Vec<String> extraction below, so
-        // even an empty object array fails fast instead of slipping through as
-        // an empty string column. Python lists (the list[str] path) carry no
-        // `.dtype` and are untouched here.
-        if let Ok(dtype) = array.getattr("dtype")
-            && let Ok(kind) = dtype.getattr("kind").and_then(|k| k.extract::<String>())
-            && kind == "O"
-        {
-            return Err(crate::error::dtype_reject(key, array));
-        }
+    fn insert(&mut self, key: &Bound<'_, PyAny>, array: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.insert_any(&extract_column_key(key)?, array, None)
+    }
 
-        // Matched-dtype, C-contiguous numpy arrays get forged into a
-        // foreign-backed Column (zero memcpy). When the layout forbids
-        // forging, the same numpy array is copied into a Rust-owned column.
-        // Widths are preserved: f32 stays f32, i64 stays i64.
-        macro_rules! try_exact {
-            ($t:ty, $holder:expr) => {
-                if let Ok(pyarr) = array.cast::<PyArrayDyn<$t>>() {
-                    if let Some(col) = try_forge_foreign_column(pyarr, $holder) {
-                        return self.insert_column(key, col);
-                    }
-                    return self.insert_array::<$t>(key, pyarr.readonly().as_array().to_owned());
-                }
-            };
-        }
-        try_exact!(F, Column::from_float_holder);
-        try_exact!(f32, Column::from_f32_holder);
-        try_exact!(f16, Column::from_f16_holder);
-        try_exact!(I, Column::from_int_holder);
-        try_exact!(i64, Column::from_i64_holder);
-        try_exact!(i16, Column::from_i16_holder);
-        try_exact!(i8, Column::from_i8_holder);
-        try_exact!(Idx, Column::from_uint_holder);
-        try_exact!(u32, Column::from_u32_holder);
-        try_exact!(u16, Column::from_u16_holder);
-        try_exact!(u8, Column::from_u8_holder);
-        try_exact!(bool, Column::from_bool_holder);
-        try_exact!(Complex<f64>, Column::from_c128_holder);
-        try_exact!(Complex<f32>, Column::from_c64_holder);
-
-        if let Ok(strings) = array.extract::<Vec<String>>() {
-            return self.insert_array::<String>(key, Array1::from(strings).into_dyn());
-        }
-        Err(crate::error::dtype_reject(key, array))
+    /// Insert a named column together with a per-row validity mask.
+    ///
+    /// The write side of :meth:`validity`. ``validity[i]`` is ``False`` where
+    /// row ``i`` of ``array`` is a hole: the array still carries something
+    /// there — whatever the caller put in, typically a zero — and the mask is
+    /// the only place that says it is not a stated value.
+    ///
+    /// An all-``True`` mask states nothing :meth:`insert` does not, so it is
+    /// dropped rather than stored and :meth:`validity` keeps answering
+    /// ``None``. Apart from the mask this is :meth:`insert`, with the same
+    /// accepted dtypes and the same row-count rule.
+    ///
+    /// Parameters
+    /// ----------
+    /// key : str | Key
+    ///     Column name (e.g. ``"frag_id"``).
+    /// array : numpy.ndarray | list[str]
+    ///     Column data; see :meth:`insert` for the accepted dtypes.
+    /// validity : numpy.ndarray | Sequence[bool]
+    ///     1-D boolean mask in row order, one entry per row of ``array``.
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If the array dtype is not supported, or ``validity`` is not a 1-D
+    ///     bool array or a sequence of bools.
+    /// ValueError
+    ///     If the row count does not match existing columns, or ``validity``
+    ///     does not have exactly one entry per row of ``array``.
+    ///
+    /// Examples
+    /// --------
+    /// >>> b = Block()
+    /// >>> b.insert_nullable("frag_id", np.array([7, 0, 0]), [True, False, False])
+    /// >>> b.validity("frag_id")
+    /// array([ True, False, False])
+    fn insert_nullable(
+        &mut self,
+        key: &Bound<'_, PyAny>,
+        array: &Bound<'_, PyAny>,
+        validity: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let key = extract_column_key(key)?;
+        let mask = bool_mask(&key, validity)?;
+        self.insert_any(&key, array, Some(mask))
     }
 
     /// Return a zero-copy numpy view of the column data.
     ///
     /// The returned array shares memory with the internal Rust storage.
-    /// For string columns a Python ``list[str]`` is returned instead.
+    /// A string column comes back as a numpy ``str`` array (a copy).
     ///
     /// Parameters
     /// ----------
-    /// key : str
+    /// key : str | Key
     ///     Column name to retrieve.
-    ///
-    /// Returns
-    /// -------
-    /// numpy.ndarray | list[str]
-    ///     Array view for numeric/bool columns, or a Python list for string
-    ///     columns.
     ///
     /// Raises
     /// ------
@@ -193,59 +202,162 @@ impl PyBlock {
     /// Examples
     /// --------
     /// >>> arr = block.view("x")  # numpy float64 view (`F = f64`)
-    /// >>> syms = block.view("symbol")  # list of str
-    fn view<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Py<pyo3::types::PyAny>> {
-        // Zero-copy path: cloning an Arc<ArrayD<T>> inside the closure is an
-        // O(1) refcount bump. The owner struct carries that Arc out of the
-        // store borrow so the numpy view stays valid even after the closure
-        // returns.
-        self.inner
-            .with(|b| -> PyResult<Py<pyo3::types::PyAny>> {
-                let col = b.get(key).ok_or_else(|| {
-                    let names: Vec<&str> = b.keys().collect();
-                    PyKeyError::new_err(format!(
-                        "no column {key:?}; available: {}",
-                        names.join(", ")
-                    ))
-                })?;
-                match col {
-                    Column::Float(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::Float16(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::Float32(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::Int(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::Int8(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::Int16(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::Int64(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::Bool(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::UInt(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::U8(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::UInt16(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::UInt32(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::Complex64(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::Complex128(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::String(a) => {
-                        // Return an ndarray (not a list) so string columns match
-                        // numeric columns and molpy's convention — callers can
-                        // rely on ``.dtype`` uniformly across every column.
-                        let list: Vec<String> = a.iter().cloned().collect();
-                        let arr = py
-                            .import("numpy")?
-                            .call_method1("asarray", (pyo3::types::PyList::new(py, &list)?,))?;
-                        Ok(arr.unbind())
-                    }
-                }
-            })
-            .map_err(ffi_error_to_pyerr)?
+    fn view(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        self.column_view(py, &extract_column_key(key)?)
     }
 
-    /// Number of rows (axis-0 length), or ``None`` if the block has no columns.
+    /// The validity mask of a column, or ``None`` when the column has no holes.
+    ///
+    /// A block column is dense, so a component that only some rows carry —
+    /// ``frag_id`` on a partially labelled molecule, ``h_count`` declared on
+    /// one bracket atom — needs a second array saying which cells are real.
+    /// ``None`` is the common case and means "every cell is a stated value";
+    /// it is not an all-``True`` array, and a caller must not read a missing
+    /// mask as "all holes". A key that names no column is a different question
+    /// and raises ``KeyError``, as :meth:`view` and :meth:`dtype` do — were it
+    /// to answer ``None``, a misspelled key would read as a dense column.
+    ///
+    /// Parameters
+    /// ----------
+    /// key : str | Key
+    ///     Column name.
     ///
     /// Returns
     /// -------
-    /// int | None
+    /// numpy.ndarray | None
+    ///     A 1-D ``bool`` array in row order — ``True`` where the cell holds a
+    ///     real value, ``False`` where it is a hole — or ``None`` when the
+    ///     column carries no mask.
+    ///
+    /// Raises
+    /// ------
+    /// KeyError
+    ///     If ``key`` does not exist in this block.
+    fn validity<'py>(
+        &self,
+        py: Python<'py>,
+        key: &Bound<'py, PyAny>,
+    ) -> PyResult<Option<Bound<'py, PyArray1<bool>>>> {
+        let key = extract_column_key(key)?;
+        // The mask is borrowed from inside the store, so it is copied out
+        // before the borrow ends; it is one byte per row and, unlike a column,
+        // has no `Arc` to hand numpy for a zero-copy view.
+        let mask = self.with_block(|b| {
+            if !b.contains_key(&key) {
+                return Err(missing_column(b, &key));
+            }
+            Ok(b.validity(&key).map(<[bool]>::to_vec))
+        })??;
+        Ok(mask.map(|m| Array1::from(m).into_pyarray(py)))
+    }
+
+    /// Attach a validity mask to an existing column, whatever its dtype.
+    ///
+    /// ``mask[i]`` is ``False`` where row ``i`` holds no value. The mask
+    /// replaces any the column had; an all-``True`` mask clears it, so
+    /// :meth:`validity` answers ``None`` afterwards.
+    ///
+    /// Parameters
+    /// ----------
+    /// key : str | Key
+    ///     Column name.
+    /// mask : numpy.ndarray | Sequence[bool]
+    ///     1-D boolean mask, one entry per row.
+    ///
+    /// Raises
+    /// ------
+    /// KeyError
+    ///     If ``key`` does not exist in this block.
+    /// TypeError
+    ///     If ``mask`` is not a 1-D bool array or a sequence of bools.
+    /// ValueError
+    ///     If ``mask`` does not have exactly one entry per row.
+    fn set_validity(&mut self, key: &Bound<'_, PyAny>, mask: &Bound<'_, PyAny>) -> PyResult<()> {
+        let key = extract_column_key(key)?;
+        let mask = bool_mask(&key, mask)?;
+        self.inner
+            .with_mut(|b| b.set_validity(&key, mask))
+            .map_err(ffi_error_to_pyerr)?
+            .map_err(|e| match e {
+                BlockError::MissingColumn { key } => PyKeyError::new_err(key),
+                other => PyValueError::new_err(other.to_string()),
+            })
+    }
+
+    /// Row-wise union of ``parts``: their rows in order, under the union of
+    /// their columns (first-seen order).
+    ///
+    /// A column a part lacks is filled with the dtype's default for that
+    /// part's rows and marked null in the column's validity mask. A part's
+    /// own masks travel with its rows. The parts are not modified.
+    ///
+    /// Parameters
+    /// ----------
+    /// parts : Sequence[Block]
+    ///
+    /// Returns
+    /// -------
+    /// Block
+    ///     A new block (new buffers).
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If two parts carry one column under different dtypes or per-row
+    ///     shapes.
+    ///
+    /// Examples
+    /// --------
+    /// >>> s = Block.stack([Block({"x": [0.0]}), Block({"x": [1.0], "q": [2.0]})])
+    /// >>> s.validity("q")
+    /// array([False,  True])
+    #[staticmethod]
+    fn stack(parts: Vec<PyRef<'_, PyBlock>>) -> PyResult<PyBlock> {
+        let blocks = parts
+            .iter()
+            .map(|p| p.clone_core_block())
+            .collect::<PyResult<Vec<_>>>()?;
+        let stacked =
+            CoreBlock::stack(&blocks).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        PyBlock::from_core_block(stacked)
+    }
+
+    /// Positions as an ``(nrows, 3)`` float64 array, gathered from the
+    /// ``x`` / ``y`` / ``z`` columns (a copy).
+    ///
+    /// Assigning an ``(N, 3)`` array-like writes it back into ``x`` / ``y`` /
+    /// ``z`` (each replaced as a float64 column; a missing one is added).
+    ///
+    /// Raises
+    /// ------
+    /// KeyError
+    ///     On read, if ``x``, ``y`` or ``z`` is missing.
+    /// ValueError
+    ///     On write, if the array is not ``(N, 3)`` or ``N`` differs from the
+    ///     block's row count.
     #[getter]
-    fn nrows(&self) -> PyResult<Option<usize>> {
-        self.with_block(|b| b.nrows())
+    fn coords<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<F>>> {
+        let xyz = self.with_block(CoreBlock::coords)?.map_err(coords_error)?;
+        Ok(xyz.into_pyarray(py))
+    }
+
+    #[setter]
+    fn set_coords(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let xyz = coords_array(value)?;
+        self.inner
+            .with_mut(|b| b.set_coords(xyz.view()))
+            .map_err(ffi_error_to_pyerr)?
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    /// Number of rows (axis-0 length); ``0`` for a block with no rows.
+    ///
+    /// Returns
+    /// -------
+    /// int
+    #[getter]
+    fn nrows(&self) -> PyResult<usize> {
+        self.with_block(|b| b.nrows().unwrap_or(0))
     }
 
     /// Axis-0 length of an empty block, or reshape every column.
@@ -265,7 +377,8 @@ impl PyBlock {
             .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
-    /// Reported shape: ``[nrows]`` for a table, the declared N-D shape for a grid.
+    /// Reported shape: ``[nrows]`` for a table, the declared N-D shape for a
+    /// grid, ``[]`` for an empty block.
     #[getter]
     fn shape(&self) -> PyResult<Vec<usize>> {
         self.with_block(|b| b.shape())
@@ -278,245 +391,364 @@ impl PyBlock {
     }
 
     /// Number of columns in this block.
-    ///
-    /// Returns
-    /// -------
-    /// int
     fn __len__(&self) -> PyResult<usize> {
         self.with_block(|b| b.len())
     }
 
     /// List all column names.
-    ///
-    /// Returns
-    /// -------
-    /// list[str]
     fn keys(&self) -> PyResult<Vec<String>> {
         self.with_block(|b| b.keys().map(|s| s.to_string()).collect())
     }
 
-    /// Check whether a column name exists in this block.
-    ///
-    /// Parameters
-    /// ----------
-    /// key : str
-    ///     Column name to test.
-    ///
-    /// Returns
-    /// -------
-    /// bool
-    fn __contains__(&self, key: &str) -> PyResult<bool> {
-        self.with_block(|b| b.contains_key(key))
+    /// Iterate over the column names, so ``dict(block)`` is its columns.
+    fn __iter__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyIterator>> {
+        PyList::new(py, self.keys()?)?.try_iter()
     }
 
-    /// Mapping-style column access (alias for ``view``).
-    ///
-    /// Parameters
-    /// ----------
-    /// key : str
-    ///     Column name.
-    ///
-    /// Returns
-    /// -------
-    /// numpy.ndarray | list[str]
-    fn __getitem__<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Py<pyo3::types::PyAny>> {
-        self.view(py, key)
+    /// Whether a column exists; a key that is not a ``str`` or ``Key`` is
+    /// absent.
+    fn __contains__(&self, key: &Bound<'_, PyAny>) -> PyResult<bool> {
+        match extract_column_key(key) {
+            Ok(key) => self.with_block(|b| b.contains_key(&key)),
+            Err(_) => Ok(false),
+        }
     }
 
-    /// Set a column by name — ``block["x"] = array``.
+    /// Read a column, several stacked columns, or a selection of rows.
     ///
-    /// The subscript counterpart of :meth:`__getitem__`, and the same operation
-    /// as :meth:`insert`: an existing column of that name is replaced, and the
-    /// length must match the block's row count unless the block is empty.
-    ///
-    /// Parameters
-    /// ----------
-    /// key : str
-    ///     Column name.
-    /// array : numpy.ndarray | list[str]
-    ///     Column data; see :meth:`insert` for accepted dtypes.
+    /// * ``block["x"]`` (``str`` or ``Key``) — the column, a zero-copy view.
+    /// * ``block["x", "y", "z"]`` / ``block[["x", "y", "z"]]`` — equal-shaped,
+    ///   equal-dtype columns side by side, one ``(nrows, k)`` array.
+    /// * ``block[mask]`` (1-D bool array, one entry per row) or
+    ///   ``block[indices]`` (1-D int array; ``-nrows <= i < 0`` wraps) — a new
+    ///   ``Block`` of those rows, in order, validity masks included.
+    /// * ``block[a:b:c]`` — a new ``Block`` of the sliced rows.
     ///
     /// Raises
     /// ------
-    /// TypeError
-    ///     If the array dtype is not supported.
+    /// KeyError
+    ///     A missing column, or an empty name list.
     /// ValueError
-    ///     If the row count does not match existing columns.
-    ///
-    /// Examples
-    /// --------
-    /// >>> b = Block()
-    /// >>> b["x"] = np.zeros(10, dtype=np.float64)
-    /// >>> b["x"] is not None
-    /// True
-    fn __setitem__(&mut self, key: &str, array: &Bound<'_, pyo3::types::PyAny>) -> PyResult<()> {
-        self.insert(key, array)
+    ///     Stacked columns differ in shape or dtype; a row index past the end.
+    /// IndexError
+    ///     A mask of the wrong length, an index below ``-nrows``, or a
+    ///     selector that is not 1-D.
+    /// TypeError
+    ///     Any other key, including a float row array.
+    fn __getitem__(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        if let Ok(name) = extract_column_key(key) {
+            return self.column_view(py, &name);
+        }
+        if key.cast::<PyTuple>().is_ok() || key.cast::<PyList>().is_ok() {
+            return self.stacked_columns(py, key);
+        }
+        if let Ok(slice) = key.cast::<PySlice>() {
+            let n = isize::try_from(self.nrows()?)
+                .map_err(|_| PyValueError::new_err("row count overflows isize"))?;
+            let span = slice.indices(n)?;
+            let rows = (0..span.slicelength)
+                .map(|k| (span.start + k as isize * span.step) as usize)
+                .collect();
+            return Ok(Py::new(py, self.gather_rows(rows)?)?.into_any());
+        }
+        if key.is_instance(&py.import("numpy")?.getattr("ndarray")?)? {
+            let rows = Self::row_selection(key, self.nrows()?)?;
+            return Ok(Py::new(py, self.gather_rows(rows)?)?.into_any());
+        }
+        Err(PyTypeError::new_err(format!(
+            "a Block is indexed by a column name, a tuple or list of names, a \
+             slice, or a 1-D bool/int row array; got {}",
+            key.get_type().name()?
+        )))
     }
 
-    /// Remove a column by name — ``del block["x"]``.
+    /// Store a column, or spread an array over several columns.
     ///
-    /// The same operation as :meth:`remove`. Defining it is not optional once
-    /// ``__setitem__`` exists: CPython routes both through one slot
-    /// (``mp_ass_subscript``), so a block with only ``__setitem__`` answers
-    /// ``hasattr(block, "__delitem__")`` with ``True`` and then raises
-    /// ``NotImplementedError`` when you use it.
+    /// ``block["x"] = values`` stores one column (``values`` goes through
+    /// ``numpy.asarray``), replacing a column already under that name. A key
+    /// the Frame schema declares adopts the declared dtype when the values
+    /// survive the conversion (``np.arange(n)`` under ``id`` is stored
+    /// ``uint``) and is refused when they do not (``-1`` under ``id``).
+    ///
+    /// ``block["x", "y", "z"] = arr`` spreads an ``(N, k)`` array over the
+    /// ``k`` named columns, column ``i`` receiving ``arr[:, i]``; it is the
+    /// inverse of the stacked read. Every check runs before the first column
+    /// is written, so a refusal leaves the block unchanged.
+    ///
+    /// Raises
+    /// ------
+    /// KeyError
+    ///     An empty name list.
+    /// ValueError
+    ///     A scalar value; values the schema dtype cannot hold; a row count
+    ///     that does not match; a repeated name or an array that is not
+    ///     ``(N, k)``.
+    /// BlockDtypeError
+    ///     An object / None-bearing / ragged column.
+    fn __setitem__(&mut self, key: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        if let Ok(name) = extract_column_key(key) {
+            return self.set_column(&name, value);
+        }
+        if key.cast::<PyTuple>().is_ok() || key.cast::<PyList>().is_ok() {
+            return self.spread_columns(key, value);
+        }
+        Err(PyTypeError::new_err(format!(
+            "a Block column is set by a name or a tuple/list of names; got {}",
+            key.get_type().name()?
+        )))
+    }
+
+    /// Remove a column by name — ``del block["x"]``; the same operation as
+    /// :meth:`remove`.
     ///
     /// Raises
     /// ------
     /// KeyError
     ///     If no column of that name exists.
-    fn __delitem__(&mut self, key: &str) -> PyResult<()> {
+    fn __delitem__(&mut self, key: &Bound<'_, PyAny>) -> PyResult<()> {
         self.remove(key)
     }
 
     /// Remove a column by name.
     ///
-    /// Parameters
-    /// ----------
-    /// key : str
-    ///     Column name to remove.
-    ///
     /// Raises
     /// ------
     /// KeyError
     ///     If ``key`` does not exist.
-    fn remove(&mut self, key: &str) -> PyResult<()> {
+    fn remove(&mut self, key: &Bound<'_, PyAny>) -> PyResult<()> {
+        let key = extract_column_key(key)?;
         let removed = self
             .inner
-            .with_mut(|b| b.remove(key).is_some())
+            .with_mut(|b| b.remove(&key).is_some())
             .map_err(ffi_error_to_pyerr)?;
         if removed {
             Ok(())
         } else {
-            Err(PyKeyError::new_err(key.to_string()))
+            Err(PyKeyError::new_err(key))
         }
     }
 
-    /// Rename a column in place, preserving its data and position.
+    /// Rename a column in place, keeping its data and validity mask.
+    ///
+    /// Renaming is a write into ``new_key``: when the Frame schema declares
+    /// ``new_key`` with a different dtype, the column adopts it if the values
+    /// survive the conversion (a file's ``int64`` serial renamed onto ``id``
+    /// becomes ``uint``), and the rename is refused otherwise.
     ///
     /// Parameters
     /// ----------
-    /// old_key : str
+    /// old_key : str | Key
     ///     Existing column name.
-    /// new_key : str
+    /// new_key : str | Key
     ///     New column name.
     ///
     /// Raises
     /// ------
     /// KeyError
-    ///     If ``old_key`` does not exist.
-    fn rename(&mut self, old_key: &str, new_key: &str) -> PyResult<()> {
-        // A rename is a write into `new_key`, so the schema checks the moved
-        // column against that key's spec — a dtype mismatch surfaces here as a
-        // ValueError rather than silently landing a wrong-typed column.
+    ///     If ``old_key`` does not exist or ``new_key`` already does.
+    /// ValueError
+    ///     If the values do not survive the schema dtype of ``new_key``.
+    fn rename(
+        &mut self,
+        py: Python<'_>,
+        old_key: &Bound<'_, PyAny>,
+        new_key: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let old_key = extract_column_key(old_key)?;
+        let new_key = extract_column_key(new_key)?;
+        let (index, taken, mask) = self.with_block(|b| {
+            (
+                b.keys().position(|k| k == old_key),
+                b.contains_key(&new_key),
+                b.validity(&old_key).map(<[bool]>::to_vec),
+            )
+        })?;
+        let Some(index) = index else {
+            return Err(PyKeyError::new_err(old_key));
+        };
+        if taken {
+            return Err(PyKeyError::new_err(format!(
+                "cannot rename '{old_key}' to '{new_key}': column already exists"
+            )));
+        }
+        let column = self.column_view(py, &old_key)?.into_bound(py);
+        let adopted = adopt_schema_dtype(&new_key, &column)?;
+        if !adopted.is(&column) {
+            // Write the converted column first: a refusal leaves the block
+            // as it was. It lands at the end, so it is then moved into the
+            // old column's slot — a rename keeps the column in place.
+            self.insert_any(&new_key, &adopted, mask)?;
+            self.inner
+                .with_mut(|b| {
+                    b.remove(&old_key);
+                    b.move_column(&new_key, index)
+                })
+                .map_err(ffi_error_to_pyerr)?
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            return Ok(());
+        }
         self.inner
-            .with_mut(|b| b.rename_column(old_key, new_key))
+            .with_mut(|b| b.rename_column(&old_key, &new_key))
             .map_err(ffi_error_to_pyerr)?
             .map_err(|e| match e {
                 molrs::store::block::BlockError::Validation { .. } => {
-                    PyKeyError::new_err(old_key.to_string())
+                    PyKeyError::new_err(old_key.clone())
                 }
-                other => pyo3::exceptions::PyValueError::new_err(other.to_string()),
+                other => PyValueError::new_err(other.to_string()),
             })
     }
 
-    /// Return a new Block with rows gathered at ``indices`` (Rust-native row
-    /// select/gather; preserves the column set and dtypes).
-    ///
-    /// Parameters
-    /// ----------
-    /// indices : Sequence[int]
-    ///     Row indices to gather, in order.
+    /// Return a new Block with rows gathered at ``indices`` (preserves the
+    /// column set, dtypes and validity masks).
     ///
     /// Raises
     /// ------
     /// ValueError
     ///     If any index is out of range.
     fn select_rows(&self, indices: Vec<usize>) -> PyResult<PyBlock> {
-        let core = self.clone_core_block()?;
-        let out = core
-            .select_rows(&indices)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        PyBlock::from_core_block(out)
+        self.gather_rows(indices)
     }
 
     /// Return a new Block sorted by the ``key`` column (original unchanged).
     ///
     /// Parameters
     /// ----------
-    /// key : str
+    /// key : str | Key
     ///     Column to sort by.
     /// reverse : bool, optional
     ///     Descending order (the ascending order reversed). Default ``False``.
     ///
     /// Raises
     /// ------
-    /// ValueError
+    /// KeyError
     ///     If ``key`` is not a column.
     #[pyo3(signature = (key, reverse = false))]
-    fn sort(&self, key: &str, reverse: bool) -> PyResult<PyBlock> {
-        let core = self.clone_core_block()?;
-        let out = core
-            .sort_by(key, reverse)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        PyBlock::from_core_block(out)
+    fn sort(&self, key: &Bound<'_, PyAny>, reverse: bool) -> PyResult<PyBlock> {
+        let key = extract_column_key(key)?;
+        let sorted = self.with_block(|b| {
+            if !b.contains_key(&key) {
+                return Err(missing_column(b, &key));
+            }
+            b.sort_by(&key, reverse)
+                .map_err(|e| PyValueError::new_err(e.to_string()))
+        })??;
+        PyBlock::from_core_block(sorted)
+    }
+
+    /// A deep copy: new buffers for every column, masks and shape included.
+    ///
+    /// Writing into the copy's columns (through numpy) never reaches this
+    /// block, nor the numpy array a column was built from.
+    fn copy(&self) -> PyResult<PyBlock> {
+        PyBlock::from_core_block(self.with_block(CoreBlock::deep_copy)?)
     }
 
     /// Return the dtype string for the given column.
     ///
-    /// Parameters
-    /// ----------
-    /// key : str
-    ///     Column name.
-    ///
     /// Returns
     /// -------
     /// str
-    ///     One of ``"float"``, ``"int"``, ``"uint"``, ``"bool"``,
-    ///     ``"u8"``, ``"string"``.
+    ///     ``"float"``, ``"int"``, ``"i64"``, ``"uint"``,
+    ///     ``"bool"``, ``"u8"``, ``"string"``, …
     ///
     /// Raises
     /// ------
     /// KeyError
     ///     If ``key`` does not exist.
-    fn dtype(&self, key: &str) -> PyResult<String> {
+    fn dtype(&self, key: &Bound<'_, PyAny>) -> PyResult<String> {
+        let key = extract_column_key(key)?;
         self.with_block(|b| {
             let col = b
-                .get(key)
-                .ok_or_else(|| PyKeyError::new_err(key.to_string()))?;
+                .get(&key)
+                .ok_or_else(|| PyKeyError::new_err(key.clone()))?;
             Ok::<String, PyErr>(format!("{}", col.dtype()))
         })?
     }
 
-    /// True when ``key`` exists and is ``f32``.
-    fn has_f32(&self, key: &str) -> PyResult<bool> {
-        self.with_block(|b| b.has_f32(key))
-    }
-
     /// True when ``key`` exists and is ``f64``.
-    fn has_f64(&self, key: &str) -> PyResult<bool> {
-        self.with_block(|b| b.has_f64(key))
+    fn has_f64(&self, key: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let key = extract_column_key(key)?;
+        self.with_block(|b| b.has_f64(&key))
     }
 
     /// True when ``key`` exists and is a signed-int column.
-    fn has_int(&self, key: &str) -> PyResult<bool> {
-        self.with_block(|b| b.has_int(key))
+    fn has_int(&self, key: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let key = extract_column_key(key)?;
+        self.with_block(|b| b.has_int(&key))
     }
 
     /// True when ``key`` exists and is an unsigned-int column.
-    fn has_uint(&self, key: &str) -> PyResult<bool> {
-        self.with_block(|b| b.has_uint(key))
+    fn has_uint(&self, key: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let key = extract_column_key(key)?;
+        self.with_block(|b| b.has_uint(&key))
     }
 
     /// True when ``key`` exists and is a string column.
-    fn has_string(&self, key: &str) -> PyResult<bool> {
-        self.with_block(|b| b.has_string(key))
+    fn has_string(&self, key: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let key = extract_column_key(key)?;
+        self.with_block(|b| b.has_string(&key))
+    }
+
+    /// Pickle by logical state: columns, validity masks, row count and
+    /// structural shape.
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyTuple>, Bound<'py, PyDict>)> {
+        let py = slf.py();
+        let this = slf.borrow();
+        let columns = PyDict::new(py);
+        let masks = PyDict::new(py);
+        for key in this.keys()? {
+            columns.set_item(&key, this.column_view(py, &key)?)?;
+            if let Some(mask) = this.with_block(|b| b.validity(&key).map(<[bool]>::to_vec))? {
+                masks.set_item(&key, mask)?;
+            }
+        }
+        let state = PyDict::new(py);
+        state.set_item("columns", columns)?;
+        state.set_item("validity", masks)?;
+        state.set_item("nrows", this.with_block(|b| b.nrows())?)?;
+        state.set_item(
+            "shape",
+            this.with_block(|b| b.structural_shape().map(<[usize]>::to_vec))?,
+        )?;
+        Ok((slf.get_type().into_any(), PyTuple::empty(py), state))
+    }
+
+    /// Restore the state [`__reduce__`](Self::__reduce__) produced.
+    fn __setstate__(&mut self, state: &Bound<'_, PyDict>) -> PyResult<()> {
+        let field = |name: &str| {
+            state
+                .get_item(name)?
+                .ok_or_else(|| PyKeyError::new_err(format!("Block state lacks '{name}'")))
+        };
+        let columns = field("columns")?;
+        let columns = columns.cast::<PyDict>()?;
+        let masks = field("validity")?;
+        let masks = masks.cast::<PyDict>()?;
+        for (key, array) in columns.iter() {
+            let key: String = key.extract()?;
+            let mask = masks
+                .get_item(&key)?
+                .map(|mask| mask.extract::<Vec<bool>>())
+                .transpose()?;
+            self.insert_any(&key, &array, mask)?;
+        }
+        if columns.is_empty()
+            && let Some(nrows) = field("nrows")?.extract::<Option<usize>>()?
+        {
+            self.resize(nrows)?;
+        }
+        if let Some(shape) = field("shape")?.extract::<Option<Vec<usize>>>()? {
+            self.set_shape(shape)?;
+        }
+        Ok(())
     }
 
     fn __repr__(&self) -> PyResult<String> {
         self.with_block(|b| {
             let keys: Vec<&str> = b.keys().collect();
-            format!("Block(nrows={:?}, keys={:?})", b.nrows(), keys)
+            format!("Block(nrows={}, keys={:?})", b.nrows().unwrap_or(0), keys)
         })
     }
 }
@@ -540,7 +772,16 @@ impl PyBlock {
         })
     }
 
-    /// Clone the underlying `CoreBlock` out of the store (deep copy).
+    /// A standalone block built from a mapping of column name -> array — the
+    /// constructor body, shared with ``frame[name] = {...}``.
+    pub(crate) fn from_mapping(data: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let mut block = Self::from_core_block(CoreBlock::new())?;
+        block.absorb_mapping(data)?;
+        Ok(block)
+    }
+
+    /// Clone the underlying `CoreBlock` out of the store. Columns are shared
+    /// (`Arc`); see [`CoreBlock::deep_copy`] for an independent copy.
     pub(crate) fn clone_core_block(&self) -> PyResult<CoreBlock> {
         self.inner.clone_block().map_err(ffi_error_to_pyerr)
     }
@@ -550,16 +791,319 @@ impl PyBlock {
         self.inner.with(f).map_err(ffi_error_to_pyerr)
     }
 
-    /// Insert a typed ndarray column, validating row count.
+    /// Normalise a row selector over `nrows` rows to row indices.
+    ///
+    /// The selector goes through ``numpy.asarray``. A bool mask of length
+    /// `nrows` selects its ``True`` rows in order; integer indices in
+    /// ``-nrows..-1`` wrap to ``nrows + i`` and non-negative ones pass through
+    /// (the upper bound is the gather's to check); an empty selector selects
+    /// nothing whatever its dtype. Shared by ``Block[...]`` and
+    /// ``Frame.subset``.
+    pub(crate) fn row_selection(selector: &Bound<'_, PyAny>, nrows: usize) -> PyResult<Vec<usize>> {
+        let py = selector.py();
+        let arr = py.import("numpy")?.call_method1("asarray", (selector,))?;
+        let shape: Vec<usize> = arr.getattr("shape")?.extract()?;
+        let [len] = shape[..] else {
+            return Err(PyIndexError::new_err(format!(
+                "row selector must be 1-D, got shape {shape:?}"
+            )));
+        };
+        let dtype = arr.getattr("dtype")?;
+        let kind: String = dtype.getattr("kind")?.extract()?;
+        if kind == "b" {
+            if len != nrows {
+                return Err(PyIndexError::new_err(format!(
+                    "boolean index did not match block: block has {nrows} rows \
+                     but mask has length {len}"
+                )));
+            }
+            let mask: Vec<bool> = arr.call_method0("tolist")?.extract()?;
+            return Ok(mask
+                .iter()
+                .enumerate()
+                .filter_map(|(row, &keep)| keep.then_some(row))
+                .collect());
+        }
+        if len == 0 {
+            return Ok(Vec::new());
+        }
+        if kind != "i" && kind != "u" {
+            return Err(PyTypeError::new_err(format!(
+                "row indices must be bool or integer, got dtype {}",
+                dtype.str()?
+            )));
+        }
+        let n = i64::try_from(nrows).map_err(|_| PyValueError::new_err("row count overflows"))?;
+        let indices: Vec<i64> = arr.call_method0("tolist")?.extract()?;
+        indices
+            .into_iter()
+            .map(|i| match i {
+                i if i < -n => Err(PyIndexError::new_err(format!(
+                    "row index {i} is out of range for {nrows} rows"
+                ))),
+                i if i < 0 => Ok((i + n) as usize),
+                i => Ok(i as usize),
+            })
+            .collect()
+    }
+
+    /// A new block of rows `indices`, masks included.
+    fn gather_rows(&self, indices: Vec<usize>) -> PyResult<PyBlock> {
+        let rows = self.with_block(|b| {
+            b.select_rows(&indices)
+                .map_err(|e| PyValueError::new_err(e.to_string()))
+        })??;
+        PyBlock::from_core_block(rows)
+    }
+
+    /// Store every entry of a mapping through [`set_column`](Self::set_column).
+    fn absorb_mapping(&mut self, data: &Bound<'_, PyAny>) -> PyResult<()> {
+        if data.cast::<PyBlock>().is_ok() {
+            return Err(PyTypeError::new_err(
+                "Block() takes a mapping of column name -> array; copy a block \
+                 with block.copy()",
+            ));
+        }
+        if !data.hasattr("keys")? {
+            return Err(PyTypeError::new_err(format!(
+                "Block() takes a mapping of column name -> array, got {}",
+                data.get_type().name()?
+            )));
+        }
+        for key in data.call_method0("keys")?.try_iter()? {
+            let key = key?;
+            let value = data.get_item(&key)?;
+            self.set_column(&extract_column_key(&key)?, &value)?;
+        }
+        Ok(())
+    }
+
+    /// Zero-copy numpy view of one column (a numpy ``str`` array for strings).
+    fn column_view(&self, py: Python<'_>, key: &str) -> PyResult<Py<PyAny>> {
+        // Zero-copy path: cloning an Arc<ArrayD<T>> inside the closure is an
+        // O(1) refcount bump. The owner struct carries that Arc out of the
+        // store borrow so the numpy view stays valid even after the closure
+        // returns.
+        self.inner
+            .with(|b| -> PyResult<Py<PyAny>> {
+                let col = b.get(key).ok_or_else(|| missing_column(b, key))?;
+                match col {
+                    Column::Float(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::Int(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::Int8(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::Int16(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::Int64(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::Bool(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::UInt(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::U8(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::UInt16(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::UInt32(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::Complex64(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::Complex128(a) => typed_array_view(py, Arc::clone(a)),
+                    Column::String(a) => {
+                        // An ndarray (not a list) so string columns match
+                        // numeric ones — callers rely on ``.dtype`` uniformly.
+                        let list: Vec<String> = a.iter().cloned().collect();
+                        let arr = py
+                            .import("numpy")?
+                            .call_method1("asarray", (PyList::new(py, &list)?,))?;
+                        Ok(arr.unbind())
+                    }
+                }
+            })
+            .map_err(ffi_error_to_pyerr)?
+    }
+
+    /// ``block["x", "y", "z"]``: equal-shaped, equal-dtype columns stacked
+    /// side by side into one ``(nrows, k)`` array.
+    fn stacked_columns(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let names = column_names(key)?;
+        let arrays = names
+            .iter()
+            .map(|name| Ok(self.column_view(py, name)?.into_bound(py)))
+            .collect::<PyResult<Vec<_>>>()?;
+        let (first_shape, first_dtype) = (arrays[0].getattr("shape")?, arrays[0].getattr("dtype")?);
+        for (name, array) in names.iter().zip(&arrays).skip(1) {
+            let shape = array.getattr("shape")?;
+            if !shape.eq(&first_shape)? {
+                return Err(PyValueError::new_err(format!(
+                    "stacked columns must share one shape: '{}' has shape {}, \
+                     '{name}' has shape {}",
+                    names[0],
+                    first_shape.str()?,
+                    shape.str()?
+                )));
+            }
+            let dtype = array.getattr("dtype")?;
+            if !dtype.eq(&first_dtype)? {
+                return Err(PyValueError::new_err(format!(
+                    "stacked columns must share one dtype: '{}' is {}, '{name}' \
+                     is {}",
+                    names[0],
+                    first_dtype.str()?,
+                    dtype.str()?
+                )));
+            }
+        }
+        Ok(py
+            .import("numpy")?
+            .call_method1("column_stack", (PyList::new(py, arrays)?,))?
+            .unbind())
+    }
+
+    /// ``block[name] = values`` — the one schema-adopting column write.
+    fn set_column(&mut self, name: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let array = value
+            .py()
+            .import("numpy")?
+            .call_method1("asarray", (value,))?;
+        if array.getattr("ndim")?.extract::<usize>()? == 0 {
+            return Err(PyValueError::new_err(format!(
+                "Block column '{name}' must be an array-like of at least 1-D; got \
+                 a scalar ({}). Wrap it in a sequence or broadcast it to the \
+                 column length.",
+                value.repr()?
+            )));
+        }
+        let array = adopt_schema_dtype(name, &array)?;
+        self.insert_any(name, &array, None)
+    }
+
+    /// ``block["x", "y", "z"] = arr`` — every check first, then one
+    /// [`insert_any`](Self::insert_any) per column.
+    fn spread_columns(&mut self, key: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let py = value.py();
+        let names = column_names(key)?;
+        let mut seen = std::collections::HashSet::new();
+        if !names.iter().all(|name| seen.insert(name)) {
+            return Err(PyValueError::new_err(format!(
+                "Block column names {names:?} repeat a name"
+            )));
+        }
+        let numpy = py.import("numpy")?;
+        let array = numpy.call_method1("asarray", (value,))?;
+        let shape: Vec<usize> = array.getattr("shape")?.extract()?;
+        let k = names.len();
+        if shape.len() != 2 || shape[1] != k {
+            return Err(PyValueError::new_err(format!(
+                "Writing {k} columns {names:?} needs an (N, {k}) array; got shape {shape:?}"
+            )));
+        }
+        let (len, nrows) = self.with_block(|b| (b.len(), b.nrows().unwrap_or(0)))?;
+        if len > 0 && shape[0] != nrows {
+            return Err(PyValueError::new_err(format!(
+                "Writing columns {names:?} needs {nrows} rows, the block's row \
+                 count; got {}",
+                shape[0]
+            )));
+        }
+        let all_rows = PySlice::full(py);
+        let columns = names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let column = array.get_item((&all_rows, i))?;
+                let column = numpy.call_method1("ascontiguousarray", (column,))?;
+                adopt_schema_dtype(name, &column)
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        for (name, column) in names.iter().zip(&columns) {
+            self.insert_any(name, column, None)?;
+        }
+        Ok(())
+    }
+
+    /// Shared body of [`insert`](Self::insert),
+    /// [`insert_nullable`](Self::insert_nullable) and the subscript write:
+    /// dispatch a Python value to its typed column, optionally carrying a
+    /// validity mask.
+    ///
+    /// A masked insert takes the same zero-copy forge path as a plain one: the
+    /// mask is attached to the installed column by `Block::set_validity`,
+    /// which accepts a column of any dtype.
+    fn insert_any(
+        &mut self,
+        key: &str,
+        array: &Bound<'_, PyAny>,
+        validity: Option<Vec<bool>>,
+    ) -> PyResult<()> {
+        // numpy-only Store contract: reject object-kind arrays (object dtype,
+        // None-bearing, ragged/mixed — numpy renders all of these as kind 'O')
+        // up front, before the typed-cast / Vec<String> extraction below, so
+        // even an empty object array fails fast instead of slipping through as
+        // an empty string column. Python lists (the list[str] path) carry no
+        // `.dtype` and are untouched here.
+        if let Ok(dtype) = array.getattr("dtype")
+            && let Ok(kind) = dtype.getattr("kind").and_then(|k| k.extract::<String>())
+            && kind == "O"
+        {
+            return Err(crate::error::dtype_reject(key, array));
+        }
+
+        // Matched-dtype, C-contiguous numpy arrays get forged into a
+        // foreign-backed Column (zero memcpy). When the layout forbids
+        // forging, the same numpy array is copied into a Rust-owned column.
+        // Integer widths are preserved: i64 stays i64. A float column is
+        // always stored as `F` (f64), so a narrow float **array handed in
+        // here** is widened to f64 — that is input normalization at the
+        // boundary, the same thing the trajectory readers do for a
+        // float32-on-disk `time`. It is not the same as reading a store whose
+        // arrays are *physically* float16/float32: those are refused.
+        if let Ok(dtype) = array.getattr("dtype")
+            && dtype.getattr("kind")?.extract::<String>()? == "f"
+            && dtype.getattr("itemsize")?.extract::<usize>()? < std::mem::size_of::<F>()
+        {
+            let promoted = array.call_method1("astype", ("float64",))?;
+            return self.insert_any(key, &promoted, validity);
+        }
+        macro_rules! try_exact {
+            ($t:ty, $holder:expr) => {
+                if let Ok(pyarr) = array.cast::<PyArrayDyn<$t>>() {
+                    if let Some(col) = try_forge_foreign_column(pyarr, $holder) {
+                        return self.insert_column(key, col, validity);
+                    }
+                    return self.insert_array::<$t>(
+                        key,
+                        pyarr.readonly().as_array().to_owned(),
+                        validity,
+                    );
+                }
+            };
+        }
+        try_exact!(F, Column::from_float_holder);
+        try_exact!(I, Column::from_int_holder);
+        try_exact!(i64, Column::from_i64_holder);
+        try_exact!(i16, Column::from_i16_holder);
+        try_exact!(i8, Column::from_i8_holder);
+        try_exact!(Idx, Column::from_uint_holder);
+        try_exact!(u32, Column::from_u32_holder);
+        try_exact!(u16, Column::from_u16_holder);
+        try_exact!(u8, Column::from_u8_holder);
+        try_exact!(bool, Column::from_bool_holder);
+        try_exact!(Complex<f64>, Column::from_c128_holder);
+        try_exact!(Complex<f32>, Column::from_c64_holder);
+
+        if let Ok(strings) = array.extract::<Vec<String>>() {
+            return self.insert_array::<String>(key, Array1::from(strings).into_dyn(), validity);
+        }
+        Err(crate::error::dtype_reject(key, array))
+    }
+
+    /// Insert a typed ndarray column, validating row count and — when a
+    /// validity mask is given — that the mask covers exactly those rows.
     fn insert_array<T: BlockDtype>(
         &mut self,
         key: &str,
         array: ndarray::ArrayD<T>,
+        validity: Option<Vec<bool>>,
     ) -> PyResult<()> {
         self.inner
             .with_mut(|b| {
-                b.insert(key, array)
-                    .map_err(|e| PyValueError::new_err(e.to_string()))
+                match validity {
+                    Some(mask) => b.insert_nullable(key, array, mask),
+                    None => b.insert(key, array),
+                }
+                .map_err(|e| PyValueError::new_err(e.to_string()))
             })
             .map_err(ffi_error_to_pyerr)??;
         Ok(())
@@ -571,15 +1115,147 @@ impl PyBlock {
     /// `ArrayD<T>` and wraps it into a Rust-owned Column. Use this when the
     /// caller already holds a Column (typically a foreign-backed one from
     /// [`try_forge_foreign_column`]).
-    fn insert_column(&mut self, key: &str, col: Column) -> PyResult<()> {
+    ///
+    /// A `validity` mask is checked against the column's rows before anything
+    /// is installed, so a refused mask leaves the block unchanged.
+    fn insert_column(
+        &mut self,
+        key: &str,
+        col: Column,
+        validity: Option<Vec<bool>>,
+    ) -> PyResult<()> {
         self.inner
             .with_mut(|b| {
-                b.insert_column(key, col)
-                    .map_err(|e| PyValueError::new_err(e.to_string()))
+                let rows = col.nrows().unwrap_or(0);
+                if let Some(mask) = &validity
+                    && mask.len() != rows
+                {
+                    return Err(BlockError::ValidityLength {
+                        key: key.to_owned(),
+                        expected: rows,
+                        got: mask.len(),
+                    });
+                }
+                b.insert_column(key, col)?;
+                match validity {
+                    Some(mask) => b.set_validity(key, mask),
+                    None => Ok(()),
+                }
             })
-            .map_err(ffi_error_to_pyerr)??;
-        Ok(())
+            .map_err(ffi_error_to_pyerr)?
+            .map_err(|e| PyValueError::new_err(e.to_string()))
     }
+}
+
+/// A validity mask from a 1-D bool numpy array or a sequence of bools.
+///
+/// numpy hands out `np.bool_`, which is not a Python `bool`, so the array
+/// cast is tried before the generic sequence extraction.
+fn bool_mask(key: &str, mask: &Bound<'_, PyAny>) -> PyResult<Vec<bool>> {
+    if let Ok(arr) = mask.cast::<PyArray1<bool>>() {
+        return Ok(arr.readonly().as_array().to_vec());
+    }
+    mask.extract::<Vec<bool>>().map_err(|_| {
+        PyTypeError::new_err(format!(
+            "validity for column '{key}' must be a 1-D bool array or a \
+             sequence of bools"
+        ))
+    })
+}
+
+/// An `(N, 3)` float64 array from any array-like, for a coordinate write.
+pub(crate) fn coords_array(value: &Bound<'_, PyAny>) -> PyResult<ndarray::Array2<F>> {
+    let numpy = value.py().import("numpy")?;
+    let array = numpy.call_method1("asarray", (value, numpy.getattr("float64")?))?;
+    let array = array.cast::<PyArray2<F>>().map_err(|_| {
+        PyValueError::new_err(format!(
+            "coordinates must be an (N, 3) array, got shape {}",
+            array
+                .getattr("shape")
+                .and_then(|s| s.str())
+                .map(|s| s.to_string())
+                .unwrap_or_default()
+        ))
+    })?;
+    Ok(array.readonly().as_array().to_owned())
+}
+
+/// A coordinate read's error: a missing axis column is a `KeyError`.
+pub(crate) fn coords_error(e: BlockError) -> PyErr {
+    match e {
+        BlockError::MissingColumn { key } => PyKeyError::new_err(key),
+        other => PyValueError::new_err(other.to_string()),
+    }
+}
+
+/// The `KeyError` for a column `key` the block lacks, naming what it has.
+fn missing_column(block: &CoreBlock, key: &str) -> PyErr {
+    let names: Vec<&str> = block.keys().collect();
+    PyKeyError::new_err(format!(
+        "no column {key:?}; available: {}",
+        names.join(", ")
+    ))
+}
+
+/// The names of a tuple / list key; empty is a `KeyError`.
+fn column_names(key: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
+    let names = key
+        .try_iter()?
+        .map(|name| extract_column_key(&name?))
+        .collect::<PyResult<Vec<_>>>()?;
+    if names.is_empty() {
+        return Err(PyKeyError::new_err("Empty list not allowed for indexing"));
+    }
+    Ok(names)
+}
+
+/// Store a canonical column at the dtype the Frame schema declares.
+///
+/// Width is not semantics: ``np.arange(n)`` yields int64 because that is
+/// numpy's default, not because the caller meant a signed 64-bit id. When the
+/// values are representable in the declared dtype (`F`, `I` or `Idx`), adopt
+/// it. When they are not — a negative under an unsigned key, a fractional
+/// value under an integer one — that *is* semantics, and it raises. A key the
+/// schema does not declare, and a non-numeric array, pass through untouched.
+fn adopt_schema_dtype<'py>(key: &str, array: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    let Some(spec) = molrs::store::schema::column(key) else {
+        return Ok(array.clone());
+    };
+    let py = array.py();
+    let want = match spec.dtype {
+        DType::Float => numpy::dtype::<F>(py),
+        DType::Int => numpy::dtype::<I>(py),
+        DType::UInt => numpy::dtype::<Idx>(py),
+        _ => return Ok(array.clone()),
+    };
+    let have = array.getattr("dtype")?;
+    let kind: String = have.getattr("kind")?.extract()?;
+    if !matches!(kind.as_str(), "u" | "i" | "f" | "b") || have.eq(&want)? {
+        return Ok(array.clone());
+    }
+    let kwargs = PyDict::new(py);
+    kwargs.set_item("casting", "unsafe")?;
+    let converted = array.call_method("astype", (&want,), Some(&kwargs))?;
+    // Both directions: a value that wraps (-1 under u64) compares unequal to
+    // its conversion, and one the target rounds (2**53 + 1 under f64) does
+    // not come back.
+    let back = converted.call_method1("astype", (&have,))?;
+    let numpy = py.import("numpy")?;
+    let survives = numpy
+        .call_method1("array_equal", (&converted, array))?
+        .is_truthy()?
+        && numpy
+            .call_method1("array_equal", (back, array))?
+            .is_truthy()?;
+    if !survives {
+        return Err(PyValueError::new_err(format!(
+            "column {key:?} is declared {:?} by the Frame schema, and the given {} \
+             values do not survive the conversion",
+            spec.dtype.to_string(),
+            have.str()?
+        )));
+    }
+    Ok(converted)
 }
 
 /// Forge a foreign-backed [`Column`] from a numpy array without copying its

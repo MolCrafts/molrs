@@ -354,8 +354,8 @@ mod tests {
                 },
             )
             .unwrap();
-        let nls = vec![nl.clone(), nl.clone()];
-        let vs = vec![vals.clone(), vals.clone()];
+        let nls = vec![nl.clone(), nl];
+        let vs = vec![vals.clone(), vals];
         let par = cf
             .compute(
                 &[&frame, &frame],

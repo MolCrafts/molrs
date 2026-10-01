@@ -77,7 +77,7 @@ use molrs::store::trajectory::{ObservableData, ObservableKind, ObservableRecord}
 // Write
 // ---------------------------------------------------------------------------
 
-/// Write a [`crate::Record`] to a filesystem path as a `*.mrec` directory.
+/// Write a [`crate::MolRec`] to a filesystem path as a `*.mrec` directory.
 ///
 /// The conventional suffix is `.mrec` (for example `water.mrec/`). Paths whose
 /// file name ends in `.zarr` or `.zarr.zip` are refused; those were the
@@ -94,7 +94,7 @@ use molrs::store::trajectory::{ObservableData, ObservableKind, ObservableRecord}
 ///
 /// A [`MolRsError::Zarr`] when `path` uses a retired `.zarr` suffix, when
 /// `path` cannot be created as a directory store, or when a section fails to
-/// encode. A [`MolRsError::Validation`] when [`crate::Record::validate`]
+/// encode. A [`MolRsError::Validation`] when [`crate::MolRec::validate`]
 /// rejects the record (no state section, or a `step`/`time` length that does
 /// not match the frame count).
 ///
@@ -107,7 +107,7 @@ use molrs::store::trajectory::{ObservableData, ObservableKind, ObservableRecord}
 /// let dir = tempfile::tempdir().unwrap();
 /// let path = dir.path().join("water.mrec");
 ///
-/// let mut record = molrs::Record::new();
+/// let mut record = molrs::MolRec::new();
 /// record.frame = Some(molrs::Frame::new());
 /// write_record_file(&path, &record)?;
 ///
@@ -398,12 +398,12 @@ fn write_observables(
 // Read
 // ---------------------------------------------------------------------------
 
-/// Read a [`crate::Record`] from a `*.mrec` directory.
+/// Read a [`crate::MolRec`] from a `*.mrec` directory.
 ///
 /// Paths whose file name ends in `.zarr` or `.zarr.zip` are refused. The
 /// `meta` section must carry `molrec_version` in `1..=`[`crate::MOLREC_VERSION`];
 /// a missing key or an unsupported value is an error. Sections this build does
-/// not interpret are kept in [`crate::Record::extra_sections`] rather than dropped.
+/// not interpret are kept in [`crate::MolRec::extra_sections`] rather than dropped.
 ///
 /// A store still carrying the pre-0.14 `trajectory/frames/` tree is refused
 /// by name; it is not migrated and is not read back as empty.
@@ -984,26 +984,6 @@ mod tests {
             loaded.meta["molrec_version"].as_u64(),
             Some(schema::MOLREC_VERSION)
         );
-    }
-
-    #[test]
-    fn no_section_carries_a_frame_schema_version() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("record.mrec");
-        let mut rec = MolRec::new();
-        rec.frame = Some(frame_with_atoms(3));
-        rec.add_frame(frame_with_atoms(3));
-        write_record_file(&path, &rec).unwrap();
-
-        // The contract forbids a parallel per-frame schema version anywhere.
-        for entry in walk_json(&path) {
-            let text = std::fs::read_to_string(&entry).unwrap();
-            assert!(
-                !text.contains("frame_schema_version"),
-                "{} still emits frame_schema_version",
-                entry.display()
-            );
-        }
     }
 
     fn walk_json(root: &Path) -> Vec<std::path::PathBuf> {

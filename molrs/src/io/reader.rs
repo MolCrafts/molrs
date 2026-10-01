@@ -8,19 +8,6 @@ use std::path::Path;
 pub trait ReadSeek: BufRead + Seek {}
 impl<T: BufRead + Seek> ReadSeek for T {}
 
-/// Open a plain text file and return a buffered reader.
-pub fn open_txt(path: &str) -> Result<BufReader<File>> {
-    let file = File::open(path)?;
-    Ok(BufReader::new(file))
-}
-
-/// Open a gzip-compressed file and return a buffered reader over the decompressed stream.
-pub fn open_gz(path: &str) -> Result<BufReader<GzDecoder<File>>> {
-    let file = File::open(path)?;
-    let decoder = GzDecoder::new(file);
-    Ok(BufReader::new(decoder))
-}
-
 /// Reader for data sources returning frame-like records.
 pub trait Reader {
     /// Underlying buffered reader type.
@@ -84,7 +71,10 @@ pub trait FromFrame: Sized {
     ///
     /// [`Atomistic`]: crate::system::atomistic::Atomistic
     fn from_atomistic(mol: crate::system::atomistic::Atomistic) -> Result<Self> {
-        Self::from_frame(&mol.to_frame())
+        let frame = mol
+            .to_frame()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+        Self::from_frame(&frame)
     }
 }
 

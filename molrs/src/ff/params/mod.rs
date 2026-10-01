@@ -5,7 +5,11 @@
 //! tables are transcribed into the `const`s in the sibling modules here by
 //! `scripts/gen_param_tables.py`, which reads them from `$AMBERHOME`; [`mmff`]
 //! is ported from RDKit's `Params.cpp` and merged with what MMFF's retired XML
-//! carried; [`oplsaa`] is the retired `oplsaa.xml`. [`amber`] is a
+//! carried; [`oplsaa`] is generated from GROMACS `share/top/oplsaa.ff` (a
+//! pinned release, LGPL-2.1-or-later) by `cargo mrs-gen-opls --gromacs <dir>`,
+//! through molrs's own GROMACS reader, while the OPLS-AA SMARTS typing rules in
+//! [`oplsaa_typing`] are molrs-owned and hand-maintained — GROMACS has none,
+//! and the generator never touches them. [`amber`] is a
 //! hand-maintained sibling (like [`mmff`] / [`clpol`] / [`uff`]): AMBER
 //! file-format constants that are neither `gaff.dat` rows nor properties of
 //! the universe. The committed `.rs` is the
@@ -38,9 +42,9 @@
 //! DIHE / IMPROPER / NONBON rows. Values are kept in the **upstream's own units
 //! and conventions** — degrees, and AMBER's un-halved force constants — because
 //! the table is a transcription of the file, not a force field: converting to
-//! molrs's radians-and-half-k kernel convention is the job of the reader that
+//! molrs's radians-and-half-k kernel convention is the job of the code that
 //! populates a [`ForceField`](crate::ff::forcefield::ForceField) from it (see
-//! [`crate::ff::forcefield::gaff`]).
+//! [`crate::ff::typifier::gaff`]).
 
 pub mod amber;
 pub mod atomtype_abcg2;
@@ -60,6 +64,7 @@ pub mod gaff_equiv;
 pub mod gasparm;
 pub mod mmff;
 pub mod oplsaa;
+pub mod oplsaa_typing;
 pub mod uff;
 
 pub use atomtype_abcg2::ATOMTYPE_ABCG2;
@@ -78,6 +83,7 @@ pub use gaff_equiv::{PARMCHK, PARMCHK_TYPES, PARMCHK_WEIGHTS};
 pub use gaff2::GAFF2;
 pub use gasparm::GASTEIGER_PARAMS;
 pub use oplsaa::{OPLSAA_ANGLES, OPLSAA_ATOMS, OPLSAA_BONDS, OPLSAA_DIHEDRALS};
+pub use oplsaa_typing::OPLSAA_TYPING;
 
 /// One oriented bond charge correction from a `BCCPARM*.DAT` table.
 ///
@@ -403,7 +409,7 @@ pub struct ParmMassRow {
 /// That is **AMBER's** convention and it carries no ½ — unlike molrs's
 /// [`BondHarmonic`](crate::ff::potential::bond::harmonic::BondHarmonic), whose
 /// `k` is `2 · force_constant`. The factor is applied where the units are
-/// normalised (the [`gaff`](crate::ff::forcefield::gaff) reader), never here:
+/// normalised (the [`gaff`](crate::ff::typifier::gaff) candidate library), never here:
 /// this row is what the file says.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ParmBondRow {
@@ -772,49 +778,62 @@ impl ParmTable {
 // ---------------------------------------------------------------------------
 //
 // The rows of [`oplsaa`], in **molrs units** (Å, kcal/mol, radians, e) — the
-// units the kernels read. `oplsaa.xml` was a GROMACS-flavoured OpenMM file (nm,
-// kJ/mol, Ryckaert–Bellemans torsions) and molrs converted it on every parse;
-// the conversion now happens once, in the generator, and its result is what is
-// committed. The two vocabularies of the source survive intact: bonded rows key
-// on the chemical **class** (`CT`, `HC`), atoms and pairs on the **type**
-// (`opls_NNN`).
+// units the kernels read. GROMACS's `oplsaa.ff` speaks nm, kJ/mol and
+// Ryckaert–Bellemans torsions; the conversion happens once, in the generator
+// (through `GromacsTopFfReader`), and its result is what is committed. The two
+// vocabularies of the source survive intact: bonded rows key on the GROMACS
+// `bond_type` (the **class**, `CT`, `HC`), atoms and pairs on the **type**
+// (`opls_NNN`). The typing rules are not GROMACS's and live apart, in
+// [`oplsaa_typing`].
 
-/// One OPLS-AA atom type: its potential parameters **and** its typing metadata.
+/// One OPLS-AA atom type: its potential parameters, as GROMACS
+/// `ffnonbonded.itp` `[ atomtypes ]` states them.
 ///
-/// The source file spelled these across two sections (`<AtomTypes>` for
-/// mass/class/SMARTS, `<NonbondedForce>` for charge/σ/ε) in the same order, over
-/// the same 813 names. They are one row here because they are one atom type.
-///
-/// `def` / `overrides` / `priority` / `layer` never enter an energy — they decide
-/// what gets *typed*: `def` is the SMARTS the typifier matches, `overrides` and
-/// `priority` settle which of several matching types wins, and `layer` is what
-/// lets CL&P / CL&Pol overlay OPLS at all.
+/// Parameters only. Whether and how an atom is *typed* as this type is the
+/// molrs-owned [`OplsRuleRow`] of the same `name`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OplsAtomRow {
     /// Type name (`opls_135`) — the nonbonded / atom-style key.
     pub name: &'static str,
-    /// Chemical class (`CT`) — the bonded-table key.
+    /// Chemical class — the GROMACS `bond_type` column (`CT`), and the key of
+    /// every bonded table. A row without a `bond_type` column is its own class.
     pub class: &'static str,
     /// Atomic mass (amu).
     pub mass: f64,
     /// Partial charge (e).
     pub charge: f64,
-    /// Lennard-Jones σ (Å).
+    /// Lennard-Jones σ (Å); `0` for the ε = 0 types, as GROMACS writes it.
     pub sigma: f64,
     /// Lennard-Jones ε (kcal/mol).
     pub epsilon: f64,
-    /// SMARTS pattern for automatic typing; `None` for the legacy rows
-    /// (`opls_001`–`opls_134`) that are excluded from it.
-    pub def: Option<&'static str>,
-    /// Type names this one outranks when both match.
-    pub overrides: &'static [&'static str],
-    /// Explicit typing priority, if the source declared one.
-    pub priority: Option<i64>,
-    /// Overlay layer (0 = base OPLS).
-    pub layer: u32,
 }
 
-/// One `<HarmonicBondForce>` row: `½k₀(r − r₀)²`.
+/// One OPLS-AA typing rule — the **static, compile-time** rule record.
+///
+/// Its runtime counterpart is
+/// [`OplsTypeRow`](crate::ff::typifier::opls::OplsTypeRow): owned strings, plus
+/// the class, an explicit priority and an overlay layer. The embedded OPLS-AA
+/// typifier builds one `OplsTypeRow` from each `OplsRuleRow`, taking the class
+/// from the [`OplsAtomRow`] of the same `name` and layer 0; an XML force field
+/// builds them from its `<Type>` attributes instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OplsRuleRow {
+    /// Type name (`opls_135`) the rule assigns; names an [`OplsAtomRow`].
+    pub name: &'static str,
+    /// Daylight SMARTS for the typed atom (query atom 0), read with standard
+    /// semantics against a graph with **explicit hydrogens** whose aromaticity
+    /// the typifier perceives first: every bond written (`-`, `=`, `#`, `:`),
+    /// hydrogen atoms as `[#1]`, `H<n>` a hydrogen count, aromatic atoms
+    /// lowercase, `r<n>` the smallest ring. A `%opls_NNN` predicate (a molrs
+    /// extension) reads the type already assigned to that neighbour.
+    pub def: &'static str,
+    /// Type names this one dominates when both match on the same layer —
+    /// directly, and through their own overrides transitively; each names
+    /// another rule.
+    pub overrides: &'static [&'static str],
+}
+
+/// One GROMACS `[ bondtypes ]` funct-1 row: `½k₀(r − r₀)²`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OplsBondRow {
     /// Class of the first atom.
@@ -828,7 +847,7 @@ pub struct OplsBondRow {
     pub r0: f64,
 }
 
-/// One `<HarmonicAngleForce>` row: `½k₀(θ − θ₀)²`.
+/// One GROMACS `[ angletypes ]` funct-1 row: `½k₀(θ − θ₀)²`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OplsAngleRow {
     /// Class of the first atom.
@@ -845,13 +864,14 @@ pub struct OplsAngleRow {
     pub theta0: f64,
 }
 
-/// One `<RBTorsionForce>` row, as the OPLS 4-cosine Fourier series the
-/// `dihedral:opls` kernel evaluates:
+/// One GROMACS `[ dihedraltypes ]` funct-3 row, as the OPLS 4-cosine Fourier
+/// series the `dihedral:opls` kernel evaluates:
 /// `V = ½[f₁(1+cosφ) + f₂(1−cos2φ) + f₃(1+cos3φ) + f₄(1−cos4φ)]`.
 ///
 /// The source stated it in Ryckaert–Bellemans form (`c0..c5`, kJ/mol); the
 /// generator applies GROMACS Eqs. 200–201 — the exact analytic inversion, which
-/// is independent of `c0` and `c5` — and the kcal/mol conversion.
+/// is independent of `c0` and `c5` — and the kcal/mol conversion. A GROMACS `X`
+/// endpoint is the empty-string wildcard.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OplsDihedralRow {
     /// Class of the first atom.

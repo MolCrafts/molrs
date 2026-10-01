@@ -25,6 +25,20 @@ create_exception!(
     "Raised when unit parsing, definition, arithmetic, or conversion fails."
 );
 
+create_exception!(
+    molrs,
+    SmilesError,
+    pyo3::exceptions::PyValueError,
+    "Raised when a SMILES / SMARTS / CGsmiles string is refused, by the \
+     parser or by a later stage (expansion, emit). Carries the four facts \
+     the Rust `SmilesError` owns: `kind` (the `SmilesErrorKind` variant \
+     name), `span` (byte range into `input`, end clamped to its length), \
+     `input` (the offending text, empty when the error was raised away from \
+     the scanner) and `notation` (`'smiles' | 'smarts' | 'cgsmiles'`). \
+     Subclasses Python `ValueError`, so broad `except ValueError` handlers \
+     keep catching it."
+);
+
 /// Preserve the native units error message at the Python boundary.
 pub fn units_error(error: ::molrs::units::UnitsError) -> PyErr {
     UnitsError::new_err(error.to_string())

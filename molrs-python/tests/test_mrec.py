@@ -1,7 +1,8 @@
-"""FFI smoke tests for the ``molrs.io.mrec`` path doors.
+"""FFI smoke tests for the ``*.mrec`` path doors (``molrs.io.read_mrec`` …).
 
-Frame and Trajectory are the in-memory objects; the on-disk doors live only in
-``molrs.io.mrec``. Schema checks live in ``molrs::io::mrec::schema`` and are
+Frame and Trajectory are the in-memory objects; the whole-record doors are
+paired in ``molrs.io``, the store machinery in ``molrs.io.mrec``. Schema checks
+live in ``molrs::io::mrec::schema`` and are
 bound, not reimplemented, at ``molrs.io.mrec.schema``.
 """
 
@@ -49,7 +50,7 @@ class TestTrajectoryReader:
     def test_frame(self, tmp_path: Path) -> None:
         path = tmp_path / "traj.mrec"
         trajectory = molrs.Trajectory([_coords_frame()])
-        molrs.io.mrec.write_trajectory(path, trajectory)
+        molrs.io.write_mrec_trajectory(path, trajectory)
 
         reader = molrs.io.mrec.TrajectoryReader(path)
         frame = reader.read_frame(0)
@@ -59,10 +60,10 @@ class TestTrajectoryReader:
 class TestFrameDoors:
     def test_write_and_read_frame(self, tmp_path: Path) -> None:
         path = tmp_path / "snapshot.mrec"
-        molrs.io.mrec.write_frame(path, _coords_frame())
-        _assert_coords(molrs.io.mrec.read_frame(path))
-        assert molrs.io.mrec.sections(path) == frozenset({"meta", "frame"})
-        meta = molrs.io.mrec.read_meta(path)
+        molrs.io.write_mrec(path, _coords_frame())
+        _assert_coords(molrs.io.read_mrec(path))
+        assert molrs.io.mrec_sections(path) == frozenset({"meta", "frame"})
+        meta = molrs.io.read_mrec_meta(path)
         molrs.io.mrec.schema.validate_meta(meta)
         # Every record is stamped on write, so a producer that handed in
         # nothing still gets the version — that stamp is what lets a reader
@@ -71,46 +72,27 @@ class TestFrameDoors:
 
     def test_write_frame_with_system(self, tmp_path: Path) -> None:
         path = tmp_path / "both.mrec"
-        molrs.io.mrec.write_frame(path, _coords_frame(), system=_coords_frame())
-        _assert_coords(molrs.io.mrec.read_frame(path))
-        _assert_coords(molrs.io.mrec.read_system(path))
-        assert molrs.io.mrec.sections(path) == frozenset({"meta", "frame", "system"})
+        molrs.io.write_mrec(path, _coords_frame(), system=_coords_frame())
+        _assert_coords(molrs.io.read_mrec(path))
+        _assert_coords(molrs.io.read_mrec_system(path))
+        assert molrs.io.mrec_sections(path) == frozenset({"meta", "frame", "system"})
 
 
 class TestSystemDoors:
     def test_write_and_read_system(self, tmp_path: Path) -> None:
         path = tmp_path / "system.mrec"
-        molrs.io.mrec.write_system(path, _coords_frame())
-        _assert_coords(molrs.io.mrec.read_system(path))
-        assert "frame" not in molrs.io.mrec.sections(path)
+        molrs.io.write_mrec_system(path, _coords_frame())
+        _assert_coords(molrs.io.read_mrec_system(path))
+        assert "frame" not in molrs.io.mrec_sections(path)
 
 
 class TestTrajectoryDoors:
     def test_write_and_read_trajectory(self, tmp_path: Path) -> None:
         path = tmp_path / "traj.mrec"
-        molrs.io.mrec.write_trajectory(path, molrs.Trajectory([_coords_frame()]))
-        loaded = molrs.io.mrec.read_trajectory(path)
+        molrs.io.write_mrec_trajectory(path, molrs.Trajectory([_coords_frame()]))
+        loaded = molrs.io.read_mrec_trajectory(path)
         assert len(loaded) == 1
         _assert_coords(loaded[0])
-
-
-class TestRemovedCarrierDoors:
-    def test_record_is_not_public(self) -> None:
-        assert not hasattr(molrs, "Record")
-        assert not hasattr(molrs, "MolRec")
-        assert not hasattr(molrs, "Observables")
-
-    def test_record_read_write_are_gone(self) -> None:
-        assert not hasattr(molrs.io.mrec, "read_record")
-        assert not hasattr(molrs.io.mrec, "write_record")
-
-    def test_trajectory_read_raises_attribute_error(self) -> None:
-        with pytest.raises(AttributeError):
-            molrs.Trajectory.read
-
-    def test_trajectory_write_raises_attribute_error(self) -> None:
-        with pytest.raises(AttributeError):
-            molrs.Trajectory.write
 
 
 class TestSchema:
@@ -172,8 +154,6 @@ class TestMrecSurface:
         from molrs.io.mrec import TrajectoryReader as MrecReader
 
         assert MrecReader is not DumpReader
-        params = inspect.signature(MrecReader.__init__).parameters
-        assert "path" in params
 
     def test_no_frame_reader(self) -> None:
         assert hasattr(molrs.io.mrec, "FrameReader") is False

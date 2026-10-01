@@ -25,6 +25,9 @@ jobs:
       - name: Lint C bindings
         run: cargo clippy --manifest-path molrs-capi/Cargo.toml --all-targets -- -D warnings
 
+      - name: Rust unit tests
+        run: cargo test --manifest-path molrs-capi/Cargo.toml
+
       - name: Build molrs-capi (generates header via cbindgen)
         run: cargo build --manifest-path molrs-capi/Cargo.toml
 

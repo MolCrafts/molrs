@@ -1,10 +1,12 @@
-//! MMFF atom typing — annotates an [`Atomistic`] with MMFF type labels, partial
-//! charges, and the per-instance force constants the kernels read.
+//! MMFF atom typing — the [`Match`] of an [`Atomistic`]: MMFF type labels,
+//! partial charges, and the per-instance force constants the kernels read.
 //!
 //! This is the **typifier** half of MMFF: it takes a molecular graph and returns
-//! a *labeled* graph (atoms typed + charged; bonds/angles/dihedrals/impropers
-//! labeled). Materializing that graph into a [`Frame`](molrs::store::frame::Frame)
-//! for the generic `ForceField::to_potentials` path is the caller's job (via
+//! its annotations (atoms typed + charged; bonds/angles/dihedrals/impropers
+//! labeled, each distinct parameter set one type named by its label). The
+//! typing base stamps them and defines the types. Materializing the typed
+//! graph into a [`Frame`](molrs::store::frame::Frame) for the generic
+//! `PotentialCompiler::compile` path is the caller's job (via
 //! [`Atomistic::to_frame`]); building the neighbour list is the consumer's. Atom
 //! types + partial charges are reused from the RDKit-validated MMFF front-end
 //! ([`MmffMolProperties`]).
@@ -23,9 +25,11 @@
 //! membership at all, so a cyclopropane C-C-C angle could never reach its true
 //! type 3. It is deleted.
 //!
-//! The labels are now only provenance — the per-instance kernels
-//! ([`ParamSource::PerInstance`](crate::ff::potential::ParamSource)) read Frame
-//! *columns*, not labels — but "only provenance" is not a licence to be wrong.
+//! The labels are only provenance and conflict records — the per-instance
+//! kernels ([`ParamSource::PerInstance`](crate::ff::potential::ParamSource)) read
+//! Frame *columns*, not type rows — but "only provenance" is not a licence to be
+//! wrong: one label must name one parameter set, or the output force field
+//! refuses the second definition.
 //!
 //! # The variant is a parameter, never a constant
 //!
@@ -35,18 +39,23 @@
 //! variant here silently produces MMFF94 numbers no matter which typifier the user
 //! constructed — the exact bug `MMFF94STypifier` exists to make impossible.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use molrs::system::molgraph::PropValue;
 use molrs::{AtomId, Atomistic};
 
+use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::mmff::resolve as eparams;
 use crate::ff::mmff::topo::Topo;
 use crate::ff::mmff::{MmffMolProperties, MmffVariant};
+use crate::ff::typifier::{Annotation, Match};
 
 use super::params::MMFFParams;
 
-/// Everything the six annotation steps below share: the molecule's atom order,
+/// Positional annotations of one kind of graph element.
+type Annotations = Vec<Vec<(String, Annotation)>>;
+
+/// Everything the annotation steps below share: the molecule's atom order,
 /// the MMFF topology (with aromaticity perceived) and numeric atom types the
 /// resolver keys off, and the caller's variant.
 ///
@@ -79,22 +88,50 @@ impl MmffContext<'_> {
     }
 }
 
-/// Annotate `mol` with MMFF type labels + partial charges for `variant`,
-/// returning the labeled [`Atomistic`]:
-/// - atoms: `type` (MMFF numeric type as string) + `charge` (MMFF partial charge)
-/// - bonds: `type` (e.g. `"0_1_5"`) + `kb` / `r0`
-/// - angles: `type` / `stbn_type` (e.g. `"0_1_2_1"`) — enumerated — + `ka` /
-///   `theta0` (radians) / `kba_ijk` / `kba_kji` / `r0_ij` / `r0_kj` / `linear`
-///   (0/1: the central atom is a linear centre, `linh != 0`)
-/// - dihedrals: `type` (e.g. `"0_5_1_1_5"`) — enumerated — + the Fourier
-///   coefficients `v1` / `v2` / `v3` (kcal·mol⁻¹), **variant-dependent**
-/// - impropers: `type` = canonical MMFF out-of-plane key (e.g. `"0_37_37_37"`) +
-///   `koop` (md·Å·rad⁻², **variant-dependent**); three Wilson rows per trigonal
-///   centre, centre in the `atomj` position, sharing one `koop`
+/// `key` → a type named `name` under `style`, with the MMFF atom types
+/// `endpoints` and `params`.
+fn typed(
+    key: &str,
+    style: &str,
+    name: String,
+    endpoints: &[u32],
+    params: Params,
+) -> (String, Annotation) {
+    (
+        key.to_owned(),
+        Annotation::Type {
+            style: style.to_owned(),
+            name,
+            endpoints: endpoints.iter().map(u32::to_string).collect(),
+            params,
+        },
+    )
+}
+
+/// The MMFF [`Match`] of `graph` for `variant`:
+/// - atoms: `type` (MMFF numeric type as string) + `charge` (MMFF partial
+///   charge), both plain values — MMFF declares no atom style and its charges
+///   are per-instance;
+/// - bonds: `type` (e.g. `"0_1_5"`) → `mmff_bond {kb, r0}`
+/// - angles: `type` (e.g. `"0_1_2_1"`) → `mmff_angle {ka, theta0}` (radians);
+///   `stbn_type` → `mmff_stbn {kba_ijk, kba_kji, r0_ij, r0_kj}`, named
+///   `{sbt}_{i}_{j}_{k}` by the MMFF stretch-bend class of the angle read in its
+///   own node order; `linear` (0/1: the central atom is a linear centre,
+///   `linh != 0`) as an integer value
+/// - dihedrals: `type` (e.g. `"0_5_1_1_5"`) → `mmff_torsion {v1, v2, v3}`
+///   (kcal·mol⁻¹, **variant-dependent**); the type code carries an `@`
+///   qualifier (`{tt}@{sec}` / `{tt}@{bond}`) when the principal lookup missed
+///   (grammar in `annotate_dihedrals`)
+/// - impropers: `type` = canonical MMFF out-of-plane key (e.g. `"0_37_37_37"`)
+///   → `mmff_oop {koop}` (md·Å·rad⁻², **variant-dependent**); three Wilson rows
+///   per trigonal centre, centre in the `atomj` position, sharing one `koop`
+/// - styles: every style of `library`, in its order (compiled member order is
+///   unchanged); pairs: the `mmff_vdw` rows of the atom types used.
 ///
-/// The label grammar is `{type_code}_{atom_types...}` — the MMFF type code first,
-/// then the atom types the row resolved through. Both halves come from the same
-/// resolver call as the row's numbers.
+/// Angles, dihedrals and impropers are enumerated onto `graph`. Every bonded
+/// type is defined with explicit endpoints (the MMFF atom types its label
+/// resolved through); the label grammar is `{type_code}_{atom_types...}`, and
+/// both halves come from the same resolver call as the row's numbers.
 ///
 /// `variant` is supplied by the typifier front door
 /// ([`MMFF94Typifier`](super::MMFF94Typifier) /
@@ -102,29 +139,32 @@ impl MmffContext<'_> {
 /// parameter lookup below. Atom types and charges are variant-independent by
 /// construction (MMFF94 and MMFF94s share all 95 types); `koop` and `(v1, v2, v3)`
 /// are not.
-///
-/// The caller converts the result with [`Atomistic::to_frame`], builds the
-/// neighbour list, and calls `to_potentials`.
 pub(crate) fn annotate_mmff(
-    mol: &Atomistic,
+    graph: &mut Atomistic,
     params: &MMFFParams,
+    library: &ForceField,
     variant: MmffVariant,
-) -> Result<Atomistic, String> {
-    let ctx = build_context(mol, params, variant)?;
-    let mut out = mol.clone();
-
-    annotate_atoms(&mut out, &ctx)?;
-    annotate_bonds(&mut out, &ctx)?;
+) -> Result<Match, String> {
+    let ctx = build_context(graph, params, variant)?;
+    let mut m = Match {
+        nodes: annotate_atoms(&ctx),
+        bonds: annotate_bonds(graph, &ctx),
+        ..Match::default()
+    };
 
     // Enumerate angles + dihedrals on the graph (impropers are MMFF-specific and
     // are enumerated by `annotate_impropers` below).
-    crate::ff::typifier::topology::typify_bonded_topology(&mut out)?;
+    crate::ff::typifier::topology::typify_bonded_topology(graph)?;
 
-    annotate_angles(&mut out, &ctx)?;
-    annotate_dihedrals(&mut out, &ctx)?;
-    annotate_impropers(&mut out, &ctx)?;
+    m.angles = annotate_angles(graph, &ctx);
+    m.dihedrals = annotate_dihedrals(graph, &ctx);
+    m.impropers = annotate_impropers(graph, &ctx)?;
 
-    Ok(out)
+    m.declare_styles_of(library);
+    let used: Vec<String> = ctx.types.iter().map(u8::to_string).collect();
+    let used: HashSet<&str> = used.iter().map(String::as_str).collect();
+    m.add_pairs_among(library, &used);
+    Ok(m)
 }
 
 /// The shared front-end: atom types, partial charges, MMFF topology.
@@ -166,123 +206,138 @@ fn build_context<'a>(
 // --- 1. Atoms ------------------------------------------------------------
 
 /// Validated MMFF numeric type + MMFF partial charge on every atom.
-fn annotate_atoms(out: &mut Atomistic, ctx: &MmffContext) -> Result<(), String> {
-    for (i, &aid) in ctx.atom_ids.iter().enumerate() {
-        out.set_atom(aid, "type", format!("{}", ctx.props.atom_type(i)))
-            .map_err(|e| e.to_string())?;
-        out.set_atom(aid, "charge", ctx.props.partial_charge(i))
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
+fn annotate_atoms(ctx: &MmffContext) -> Annotations {
+    (0..ctx.atom_ids.len())
+        .map(|i| {
+            vec![
+                (
+                    "type".to_owned(),
+                    Annotation::Value(PropValue::Str(ctx.props.atom_type(i).to_string())),
+                ),
+                (
+                    "charge".to_owned(),
+                    Annotation::Value(PropValue::F64(ctx.props.partial_charge(i))),
+                ),
+            ]
+        })
+        .collect()
 }
 
 // --- 2. Bonds ------------------------------------------------------------
 
 /// MMFF bond type + the per-bond `kb` / `r0` (table → equivalence → empirical).
-fn annotate_bonds(out: &mut Atomistic, ctx: &MmffContext) -> Result<(), String> {
-    let bond_rows: Vec<(_, AtomId, AtomId)> = out
+fn annotate_bonds(graph: &Atomistic, ctx: &MmffContext) -> Annotations {
+    graph
         .bonds()
-        .map(|(bid, bond)| (bid, bond.nodes[0], bond.nodes[1]))
-        .collect();
+        .map(|(_, bond)| {
+            let (a, b) = (bond.nodes[0], bond.nodes[1]);
+            let (ia, ib) = (ctx.idx(a), ctx.idx(b));
+            let (t1, t2) = (ctx.type_of(a), ctx.type_of(b));
+            let (lo, hi) = if t1 <= t2 { (t1, t2) } else { (t2, t1) };
+            let bt = eparams::bond_type(&ctx.topo, &ctx.types, ia, ib);
 
-    for (bid, a, b) in bond_rows {
-        let (ia, ib) = (ctx.idx(a), ctx.idx(b));
-        let (t1, t2) = (ctx.type_of(a), ctx.type_of(b));
-        let (lo, hi) = if t1 <= t2 { (t1, t2) } else { (t2, t1) };
-        let bt = eparams::bond_type(&ctx.topo, &ctx.types, ia, ib);
-
-        out.set_bond_prop(bid, "type", format!("{bt}_{lo}_{hi}"))
-            .map_err(|e| e.to_string())?;
-
-        let (kb, r0) = eparams::bond_params(&ctx.topo, &ctx.types, ia, ib)
-            .map(|bp| (bp.kb, bp.r0))
-            .unwrap_or((0.0, 0.0));
-        out.set_bond_prop(bid, "kb", kb)
-            .map_err(|e| e.to_string())?;
-        out.set_bond_prop(bid, "r0", r0)
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
+            let (kb, r0) = eparams::bond_params(&ctx.topo, &ctx.types, ia, ib)
+                .map(|bp| (bp.kb, bp.r0))
+                .unwrap_or((0.0, 0.0));
+            vec![typed(
+                "type",
+                "mmff_bond",
+                format!("{bt}_{lo}_{hi}"),
+                &[lo, hi],
+                Params::from_pairs(&[("kb", kb), ("r0", r0)]),
+            )]
+        })
+        .collect()
 }
 
 // --- 3. Angles (+ stretch-bend) ------------------------------------------
 
 /// MMFF angle type + `ka` / `theta0` / the stretch-bend constants and their two
 /// reference bond lengths, plus the linear-centre flag.
-///
-/// Collected first: `set_angle_prop` borrows `out` mutably while `angles()`
-/// borrows it immutably.
-fn annotate_angles(out: &mut Atomistic, ctx: &MmffContext) -> Result<(), String> {
-    let angle_rows: Vec<_> = out
+fn annotate_angles(graph: &Atomistic, ctx: &MmffContext) -> Annotations {
+    graph
         .angles()
-        .map(|(id, a)| (id, a.nodes[0], a.nodes[1], a.nodes[2]))
-        .collect();
+        .map(|(_, angle)| {
+            let (a, b, c) = (angle.nodes[0], angle.nodes[1], angle.nodes[2]);
+            let (ia, ib, ic) = (ctx.idx(a), ctx.idx(b), ctx.idx(c));
+            let ends = [ctx.type_of(a), ctx.type_of(b), ctx.type_of(c)];
+            let [ta, tb, tc] = ends;
+            // The ring-aware angle type: an angle inside a 3-/4-membered ring is
+            // promoted to 3..8, which is exactly what a `(bt_ij, bt_jk)` signature
+            // could never express.
+            let at = eparams::angle_type(&ctx.topo, &ctx.types, ia, ib, ic);
+            // The stretch-bend class of this angle read in its OWN node order:
+            // it says which of the two bonds is the type-1 bond, so the label
+            // tells the two orientations of `(kba, r0)` apart. (The resolver's
+            // own class swaps its bond types by atom-type order to find the
+            // table row; for `ti == tk` both orientations get one class there.)
+            let sbt = eparams::stretch_bend_type(
+                at,
+                eparams::bond_type(&ctx.topo, &ctx.types, ia, ib),
+                eparams::bond_type(&ctx.topo, &ctx.types, ib, ic),
+            );
 
-    for (id, a, b, c) in angle_rows {
-        let (ia, ib, ic) = (ctx.idx(a), ctx.idx(b), ctx.idx(c));
-        // The ring-aware angle type: an angle inside a 3-/4-membered ring is
-        // promoted to 3..8, which is exactly what a `(bt_ij, bt_jk)` signature
-        // could never express.
-        let at = eparams::angle_type(&ctx.topo, &ctx.types, ia, ib, ic);
-        let label = format!(
-            "{at}_{}_{}_{}",
-            ctx.type_of(a),
-            ctx.type_of(b),
-            ctx.type_of(c)
-        );
-        out.set_angle_prop(id, "type", label.clone())
-            .map_err(|e| e.to_string())?;
-        out.set_angle_prop(id, "stbn_type", label)
-            .map_err(|e| e.to_string())?;
+            // Linear-centre flag, from the CENTRAL atom's `linh` property (nitrile,
+            // alkyne, allene, isocyanate…). It selects a different functional form for
+            // the bend — `E = 143.9325·ka·(1 + cos θ)` instead of the cubic expansion
+            // about theta0 — and suppresses the stretch-bend term at that centre; both
+            // kernels (`mmff_angle`, `mmff_stbn`) read this one column. Baked as 0/1
+            // rather than a bool because `MolGraph::to_frame` carries only f64 / i32 /
+            // string columns into the Frame; a bool would be silently dropped.
+            let linear = ctx
+                .params
+                .get_prop(tb)
+                .map(|p| p.linh != 0)
+                .unwrap_or(false);
 
-        // Linear-centre flag, from the CENTRAL atom's `linh` property (nitrile,
-        // alkyne, allene, isocyanate…). It selects a different functional form for
-        // the bend — `E = 143.9325·ka·(1 + cos θ)` instead of the cubic expansion
-        // about theta0 — and suppresses the stretch-bend term at that centre; both
-        // kernels (`mmff_angle`, `mmff_stbn`) read this one column. Baked as 0/1
-        // rather than a bool because `MolGraph::to_frame` carries only f64 / i32 /
-        // string columns into the Frame; a bool would be silently dropped.
-        let linear = ctx
-            .params
-            .get_prop(ctx.type_of(b))
-            .map(|p| p.linh != 0)
-            .unwrap_or(false);
-        out.set_angle_prop(id, "linear", PropValue::Int(i32::from(linear)))
-            .map_err(|e| e.to_string())?;
+            // `theta0` comes back in degrees; the angle / stretch-bend kernels consume
+            // radians (molrs internal-radians convention).
+            let (ka, theta0) = eparams::angle_params(&ctx.topo, &ctx.types, ia, ib, ic)
+                .map(|p| (p.ka, p.theta0.to_radians()))
+                .unwrap_or((0.0, 0.0));
 
-        // `theta0` comes back in degrees; the angle / stretch-bend kernels consume
-        // radians (molrs internal-radians convention).
-        let (ka, theta0) = eparams::angle_params(&ctx.topo, &ctx.types, ia, ib, ic)
-            .map(|p| (p.ka, p.theta0.to_radians()))
-            .unwrap_or((0.0, 0.0));
-        out.set_angle_prop(id, "ka", ka)
-            .map_err(|e| e.to_string())?;
-        out.set_angle_prop(id, "theta0", theta0)
-            .map_err(|e| e.to_string())?;
+            // Stretch-bend force constants — `stretch_bend_params` carries the `dfsb`
+            // period-row default fallback that a table-keyed path lacks (the benzene
+            // `mmff_stbn: unknown` blocker). The two reference bond lengths are the
+            // per-bond r0, taken straight from the bond resolver.
+            let (kba_ijk, kba_kji) =
+                eparams::stretch_bend_params(&ctx.topo, &ctx.types, ia, ib, ic)
+                    .map(|(s, _, _, _)| (s.kba_ijk, s.kba_kji))
+                    .unwrap_or((0.0, 0.0));
+            let r0_ij = eparams::bond_params(&ctx.topo, &ctx.types, ia, ib)
+                .map(|b| b.r0)
+                .unwrap_or(0.0);
+            let r0_kj = eparams::bond_params(&ctx.topo, &ctx.types, ic, ib)
+                .map(|b| b.r0)
+                .unwrap_or(0.0);
 
-        // Stretch-bend force constants — `stretch_bend_params` carries the `dfsb`
-        // period-row default fallback that a table-keyed path lacks (the benzene
-        // `mmff_stbn: unknown` blocker). The two reference bond lengths are the
-        // per-bond r0, taken straight from the bond resolver.
-        let (kba_ijk, kba_kji) = eparams::stretch_bend_params(&ctx.topo, &ctx.types, ia, ib, ic)
-            .map(|(s, _, _, _)| (s.kba_ijk, s.kba_kji))
-            .unwrap_or((0.0, 0.0));
-        let r0_ij = eparams::bond_params(&ctx.topo, &ctx.types, ia, ib)
-            .map(|b| b.r0)
-            .unwrap_or(0.0);
-        let r0_kj = eparams::bond_params(&ctx.topo, &ctx.types, ic, ib)
-            .map(|b| b.r0)
-            .unwrap_or(0.0);
-        out.set_angle_prop(id, "kba_ijk", kba_ijk)
-            .map_err(|e| e.to_string())?;
-        out.set_angle_prop(id, "kba_kji", kba_kji)
-            .map_err(|e| e.to_string())?;
-        out.set_angle_prop(id, "r0_ij", r0_ij)
-            .map_err(|e| e.to_string())?;
-        out.set_angle_prop(id, "r0_kj", r0_kj)
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
+            vec![
+                typed(
+                    "type",
+                    "mmff_angle",
+                    format!("{at}_{ta}_{tb}_{tc}"),
+                    &ends,
+                    Params::from_pairs(&[("ka", ka), ("theta0", theta0)]),
+                ),
+                typed(
+                    "stbn_type",
+                    "mmff_stbn",
+                    format!("{sbt}_{ta}_{tb}_{tc}"),
+                    &ends,
+                    Params::from_pairs(&[
+                        ("kba_ijk", kba_ijk),
+                        ("kba_kji", kba_kji),
+                        ("r0_ij", r0_ij),
+                        ("r0_kj", r0_kj),
+                    ]),
+                ),
+                (
+                    "linear".to_owned(),
+                    Annotation::Value(PropValue::Int(i32::from(linear))),
+                ),
+            ]
+        })
+        .collect()
 }
 
 // --- 4. Dihedrals --------------------------------------------------------
@@ -291,39 +346,76 @@ fn annotate_angles(out: &mut Atomistic, ctx: &MmffContext) -> Result<(), String>
 ///
 /// 42 of the torsion rows are re-parameterised by MMFF94s, all on delocalised
 /// trivalent nitrogen — which is why the variant has to reach this lookup.
-fn annotate_dihedrals(out: &mut Atomistic, ctx: &MmffContext) -> Result<(), String> {
-    let dih_rows: Vec<_> = out
+///
+/// # The torsion label
+///
+/// The label names the rule the numbers came from
+/// ([`TorSource`](eparams::TorSource)) together with every input that rule
+/// reads, so one label names one parameter set:
+///
+/// - `{tt}_{i}_{j}_{k}_{l}` — a table row under the principal torsion type
+///   `tt`. Whether this pass hits is fixed by `tt`, the four MMFF atom types
+///   and the variant, so this form never collides with the two below.
+/// - `{tt}@{sec}_{i}_{j}_{k}_{l}` — no row under `tt`; a row found on the
+///   restart under the secondary torsion type `sec` (the one a 4-/5-ring
+///   promotion displaced). Two ring torsions with equal atom types but
+///   different `sec` resolve to different rows.
+/// - `{tt}@{b}_{i}_{j}_{k}_{l}` — no row under either type: the MMFF.V
+///   empirical rules, which read the central types (they fix the element and
+///   every MMFF atom property the rules use) and the j–k bond class `b`,
+///   written as a SMILES bond symbol: `-` single, `=` double, `:` aromatic
+///   (both central atoms aromatic MMFF types on a perceived-aromatic bond —
+///   rule (b)), `~` anything else (the rules treat triple and a non-rule-(b)
+///   aromatic bond alike). `sec` is omitted — the rules do not read it.
+///
+/// The qualifier appears only when the principal lookup missed, so every
+/// label a table hit on the principal type produced is unchanged.
+fn annotate_dihedrals(graph: &Atomistic, ctx: &MmffContext) -> Annotations {
+    graph
         .dihedrals()
-        .map(|(id, d)| (id, d.nodes[0], d.nodes[1], d.nodes[2], d.nodes[3]))
-        .collect();
-
-    for (id, a, b, c, d) in dih_rows {
-        let (ia, ib, ic, il) = (ctx.idx(a), ctx.idx(b), ctx.idx(c), ctx.idx(d));
-        // `torsion_type` returns `(principal, secondary)`; the principal code is
-        // the one that names the row, and the 4-/5-ring promotions live in it.
-        let (tt, _secondary) = eparams::torsion_type(&ctx.topo, &ctx.types, ia, ib, ic, il);
-        let label = format!(
-            "{tt}_{}_{}_{}_{}",
-            ctx.type_of(a),
-            ctx.type_of(b),
-            ctx.type_of(c),
-            ctx.type_of(d)
-        );
-        out.set_dihedral_prop(id, "type", label)
-            .map_err(|e| e.to_string())?;
-
-        let (v1, v2, v3) =
-            eparams::torsion_params(ctx.variant, &ctx.topo, &ctx.types, ia, ib, ic, il)
-                .map(|t| (t.v1, t.v2, t.v3))
-                .unwrap_or((0.0, 0.0, 0.0));
-        out.set_dihedral_prop(id, "v1", v1)
-            .map_err(|e| e.to_string())?;
-        out.set_dihedral_prop(id, "v2", v2)
-            .map_err(|e| e.to_string())?;
-        out.set_dihedral_prop(id, "v3", v3)
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
+        .map(|(_, dihedral)| {
+            let [a, b, c, d] = [
+                dihedral.nodes[0],
+                dihedral.nodes[1],
+                dihedral.nodes[2],
+                dihedral.nodes[3],
+            ];
+            let (ia, ib, ic, il) = (ctx.idx(a), ctx.idx(b), ctx.idx(c), ctx.idx(d));
+            let ends = [
+                ctx.type_of(a),
+                ctx.type_of(b),
+                ctx.type_of(c),
+                ctx.type_of(d),
+            ];
+            // `torsion_type` returns `(principal, secondary)`; the principal code
+            // leads the label (the 4-/5-ring promotions live in it), and the
+            // secondary one enters through the source when the lookup reads it.
+            let (tt, _) = eparams::torsion_type(&ctx.topo, &ctx.types, ia, ib, ic, il);
+            let (source, p) =
+                eparams::torsion_params(ctx.variant, &ctx.topo, &ctx.types, ia, ib, ic, il);
+            let (v1, v2, v3) = p.map(|t| (t.v1, t.v2, t.v3)).unwrap_or((0.0, 0.0, 0.0));
+            let code = match source {
+                eparams::TorSource::Principal => tt.to_string(),
+                eparams::TorSource::Secondary(sec) => format!("{tt}@{sec}"),
+                eparams::TorSource::Empirical(bond) => {
+                    let symbol = match bond {
+                        eparams::JkBond::Single => '-',
+                        eparams::JkBond::Double => '=',
+                        eparams::JkBond::Aromatic => ':',
+                        eparams::JkBond::Other => '~',
+                    };
+                    format!("{tt}@{symbol}")
+                }
+            };
+            vec![typed(
+                "type",
+                "mmff_torsion",
+                format!("{code}_{}_{}_{}_{}", ends[0], ends[1], ends[2], ends[3]),
+                &ends,
+                Params::from_pairs(&[("v1", v1), ("v2", v2), ("v3", v3)]),
+            )]
+        })
+        .collect()
 }
 
 // --- 5. Out-of-plane (Wilson) --------------------------------------------
@@ -335,17 +427,22 @@ fn annotate_dihedrals(out: &mut Atomistic, ctx: &MmffContext) -> Result<(), Stri
 /// placed in the second (`atomj`) position to match the `mmff_oop` kernel, which
 /// treats `atomj` as the centre. The `type` label is the canonical OOP key that
 /// [`eparams::oop_params`] matched on (peripherals equivalence-degraded and
-/// sorted), so the label names the row the `koop` came from; centres for which
-/// MMFF defines no out-of-plane term are skipped.
-fn annotate_impropers(out: &mut Atomistic, ctx: &MmffContext) -> Result<(), String> {
+/// sorted, centre second), so the label names the row the `koop` came from and
+/// its four fields are the type's endpoints; centres for which MMFF defines no
+/// out-of-plane term are skipped.
+///
+/// The impropers are added to `graph`; the returned annotations are positional
+/// against all of its impropers, a pre-existing one getting none.
+fn annotate_impropers(graph: &mut Atomistic, ctx: &MmffContext) -> Result<Annotations, String> {
     let n = ctx.atom_ids.len();
     let mut adjacency: Vec<Vec<usize>> = vec![Vec::new(); n];
-    for (_, bond) in out.bonds() {
+    for (_, bond) in graph.bonds() {
         let (a, b) = (ctx.idx(bond.nodes[0]), ctx.idx(bond.nodes[1]));
         adjacency[a].push(b);
         adjacency[b].push(a);
     }
 
+    let mut added = HashMap::new();
     for (center, neighbours) in adjacency.iter().enumerate() {
         // Exactly three neighbours — the definition of a trigonal centre — said as
         // a pattern, so the arity check and the destructuring cannot disagree.
@@ -362,17 +459,34 @@ fn annotate_impropers(out: &mut Atomistic, ctx: &MmffContext) -> Result<(), Stri
         else {
             continue;
         };
+        let ends: Vec<u32> = label
+            .split('_')
+            .map(|t| {
+                t.parse::<u32>()
+                    .map_err(|_| format!("MMFF out-of-plane key {label:?} is not four atom types"))
+            })
+            .collect::<Result<_, _>>()?;
 
         let center_id = ctx.atom_ids[center];
         for &(i, k, l) in &[(a, b, c), (a, c, b), (b, c, a)] {
-            let id = out
+            let id = graph
                 .add_improper(ctx.atom_ids[i], center_id, ctx.atom_ids[k], ctx.atom_ids[l])
                 .map_err(|e| e.to_string())?;
-            out.set_improper_prop(id, "type", label.clone())
-                .map_err(|e| e.to_string())?;
-            out.set_improper_prop(id, "koop", koop)
-                .map_err(|e| e.to_string())?;
+            added.insert(
+                id,
+                vec![typed(
+                    "type",
+                    "mmff_oop",
+                    label.clone(),
+                    &ends,
+                    Params::from_pairs(&[("koop", koop)]),
+                )],
+            );
         }
     }
-    Ok(())
+
+    Ok(graph
+        .impropers()
+        .map(|(id, _)| added.remove(&id).unwrap_or_default())
+        .collect())
 }

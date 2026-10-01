@@ -82,9 +82,80 @@ pub fn molrs_error_to_pyerr(e: molrs::MolRsError) -> PyErr {
     PyValueError::new_err(e.to_string())
 }
 
-/// Convert a [`molrs::io::smiles::SmilesError`] to a Python `ValueError`.
+/// Convert a [`molrs::io::smiles::SmilesError`] to a Python
+/// [`SmilesError`](crate::error::SmilesError).
+///
+/// The rendered Rust message stays `args[0]`, so `str(e)` is unchanged and the
+/// class subclasses `ValueError`; on top of it the four facts the Rust error
+/// owns cross as plain attributes — `kind`, `span`, `input`, `notation` — so a
+/// caller can branch on the reason instead of matching message text.
+///
+/// The helper takes no [`Python`] token (it is used as a bare `map_err`
+/// argument all over the io bindings), so it attaches to the interpreter
+/// itself. Nothing here can panic across the seam: if the interpreter refuses
+/// to carry the attributes — only reachable under allocation failure or
+/// interpreter shutdown — that failure is returned as the raised error rather
+/// than unwrapped.
 pub fn smiles_error_to_pyerr(e: molrs::io::smiles::SmilesError) -> PyErr {
-    PyValueError::new_err(e.to_string())
+    let message = e.to_string();
+    // A span is a byte range into `input`, and the scanner reports
+    // end-of-input one byte past the text (`Span::new(len, len + 1)`), which
+    // is not a valid slice bound of the string published alongside it — so the
+    // end is clamped here. The start is clamped to that end so the pair stays
+    // an ordered range for errors raised away from the scanner, which carry a
+    // span into text they do not publish (`input` is then empty).
+    let end = e.span.end.min(e.input.len());
+    let start = e.span.start.min(end);
+
+    Python::attach(|py| {
+        let err = crate::error::SmilesError::new_err(message);
+        let value = err.value(py);
+        let attached = (|| -> PyResult<()> {
+            value.setattr("kind", smiles_error_kind_name(&e.kind))?;
+            value.setattr("span", (start, end))?;
+            value.setattr("input", e.input.as_str())?;
+            value.setattr("notation", notation_name(e.notation))?;
+            Ok(())
+        })();
+        match attached {
+            Ok(()) => err,
+            Err(failed) => failed,
+        }
+    })
+}
+
+/// The bare variant name of a [`SmilesErrorKind`], payload dropped.
+///
+/// Derived from the derived [`Debug`] rendering rather than from a hand-written
+/// table: a table would have to be extended every time the Rust enum grows a
+/// variant, and a forgotten row is a wrong `kind` at the seam rather than a
+/// compile error. `Debug` writes the variant name first in all three shapes —
+/// `UnexpectedEnd`, `UnexpectedChar('X')`, `RingBondConflict { rnum: 1 }` — so
+/// cutting at the first `(` or space leaves exactly the name.
+///
+/// [`SmilesErrorKind`]: molrs::io::smiles::SmilesErrorKind
+fn smiles_error_kind_name(kind: &molrs::io::smiles::SmilesErrorKind) -> String {
+    let rendered = format!("{kind:?}");
+    rendered
+        .split(['(', ' '])
+        .next()
+        .unwrap_or(rendered.as_str())
+        .to_owned()
+}
+
+/// The lowercase name of a [`Notation`], matching how every other enum crosses
+/// this seam (bond kinds, pair ends).
+///
+/// Matched totally: a new notation in Rust must be spelled here, not silently
+/// rendered as some fallback.
+///
+/// [`Notation`]: molrs::io::smiles::Notation
+fn notation_name(notation: molrs::io::smiles::Notation) -> &'static str {
+    match notation {
+        molrs::io::smiles::Notation::Smiles => "smiles",
+        molrs::io::smiles::Notation::Smarts => "smarts",
+        molrs::io::smiles::Notation::CGsmiles => "cgsmiles",
+    }
 }
 
 /// Convert any `Display` error (typically a `molrs-compute` / `molrs-signal`
@@ -142,4 +213,12 @@ pub(crate) fn collect_neighbors(
     }
     let list: Vec<PyRef<'_, PyNeighbors>> = arg.extract()?;
     Ok(list.iter().map(|n| n.inner.clone()).collect())
+}
+
+/// A path argument (a ``str`` or any ``os.PathLike``, extracted as a
+/// [`std::path::PathBuf`]) as the `&str` the core readers and writers take.
+pub(crate) fn path_str(path: &std::path::Path) -> PyResult<&str> {
+    path.to_str().ok_or_else(|| {
+        PyValueError::new_err(format!("path is not valid UTF-8: {}", path.display()))
+    })
 }

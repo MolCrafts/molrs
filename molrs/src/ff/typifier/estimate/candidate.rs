@@ -85,7 +85,7 @@ impl CandidateSet {
     pub fn from_forcefield(ff: &ForceField) -> Self {
         let mut out = Self::default();
         for style in ff.styles() {
-            match &style.defs {
+            match style.defs() {
                 StyleDefs::Bond(types) => out.bonds.extend(
                     types
                         .iter()
@@ -141,26 +141,34 @@ mod tests {
         // A GAFF-shaped force field: dihedral style `periodic`, not `opls`. The
         // old by-name extractor saw nothing here.
         let mut ff = ForceField::new("gaff-shaped");
-        ff.def_bondstyle("harmonic")
-            .def_bondtype("c3", "hc", &[("k", 330.6), ("r0", 1.0969)]);
-        ff.def_dihedralstyle("periodic").def_dihedraltype(
-            "X",
-            "c3",
-            "c3",
-            "X",
-            &[("k1", 0.16), ("periodicity1", 3.0), ("phase1", 0.0)],
-        );
-        ff.def_improperstyle("periodic").def_impropertype(
-            "X",
-            "X",
-            "ca",
-            "ha",
-            &[
-                ("k", 1.1),
-                ("periodicity", 2.0),
-                ("phase", std::f64::consts::PI),
-            ],
-        );
+        ff.def_style("bond", "harmonic", Params::new())
+            .unwrap()
+            .def_type(
+                "c3-hc",
+                &["c3", "hc"],
+                Params::from_pairs(&[("k", 330.6), ("r0", 1.0969)]),
+            )
+            .unwrap();
+        ff.def_style("dihedral", "periodic", Params::new())
+            .unwrap()
+            .def_type(
+                "X-c3-c3-X",
+                &["X", "c3", "c3", "X"],
+                Params::from_pairs(&[("k1", 0.16), ("periodicity1", 3.0), ("phase1", 0.0)]),
+            )
+            .unwrap();
+        ff.def_style("improper", "periodic", Params::new())
+            .unwrap()
+            .def_type(
+                "X-X-ca-ha",
+                &["X", "X", "ca", "ha"],
+                Params::from_pairs(&[
+                    ("k", 1.1),
+                    ("periodicity", 2.0),
+                    ("phase", std::f64::consts::PI),
+                ]),
+            )
+            .unwrap();
 
         let set = CandidateSet::from_forcefield(&ff);
         assert_eq!(set.bonds.len(), 1);

@@ -31,16 +31,14 @@
 //! frame.meta.insert("title", "My Molecule");
 //! ```
 
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::ops::{Index, IndexMut};
 
 use crate::error::MolRsError;
 use crate::spatial::simbox::SimBox;
 use crate::store::block::Block;
 use crate::store::meta::MetaMap;
-
-/// Exact schema version of serialized frames and per-frame Zarr groups.
-pub const FRAME_SCHEMA_VERSION: u32 = 2;
+use crate::store::schema::block_names::ATOMS;
 
 /// A dictionary from string keys to [`Block`]s.
 ///
@@ -48,9 +46,14 @@ pub const FRAME_SCHEMA_VERSION: u32 = 2;
 /// typically representing different aspects of a molecular system (e.g., atoms,
 /// bonds, velocities). Each block can have different numbers of rows and different
 /// column types.
+///
+/// Blocks iterate in insertion order, with the same rules as a
+/// [`Block`]'s columns: re-inserting a key keeps its position,
+/// [`remove`](Self::remove) keeps the others in order, and
+/// [`rename_block`](Self::rename_block) keeps the renamed block in place.
 #[derive(Default, Clone)]
 pub struct Frame {
-    map: HashMap<String, Block>,
+    map: IndexMap<String, Block>,
     /// Exact-dtype metadata associated with the frame.
     pub meta: MetaMap,
     /// Simulation box defining periodic boundary conditions.
@@ -58,7 +61,7 @@ pub struct Frame {
 }
 
 /// Type alias for the result of into_inner().
-type IntoInnerResult = (HashMap<String, Block>, MetaMap, Option<SimBox>);
+type IntoInnerResult = (IndexMap<String, Block>, MetaMap, Option<SimBox>);
 
 impl std::fmt::Debug for Frame {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -93,7 +96,7 @@ impl Frame {
     /// ```
     pub fn new() -> Self {
         Self {
-            map: HashMap::new(),
+            map: IndexMap::new(),
             meta: MetaMap::new(),
             simbox: None,
         }
@@ -111,36 +114,55 @@ impl Frame {
     /// ```
     pub fn with_capacity(cap: usize) -> Self {
         Self {
-            map: HashMap::with_capacity(cap),
+            map: IndexMap::with_capacity(cap),
             meta: MetaMap::new(),
             simbox: None,
         }
     }
 
-    /// Creates a Frame from an existing HashMap of blocks.
+    /// A copy whose blocks share no column buffer with this frame.
+    ///
+    /// Every block goes through [`Block::deep_copy`]; `meta` and the box are
+    /// cloned (they hold no shared buffers).
+    pub fn deep_copy(&self) -> Frame {
+        Frame {
+            map: self
+                .map
+                .iter()
+                .map(|(key, block)| (key.clone(), block.deep_copy()))
+                .collect(),
+            meta: self.meta.clone(),
+            simbox: self.simbox.clone(),
+        }
+    }
+
+    /// Creates a Frame from `(name, block)` pairs, in their iteration order.
+    ///
+    /// Takes an [`IndexMap`], a `HashMap` (in that map's own order), a `Vec`
+    /// of pairs — anything that iterates named blocks.
     ///
     /// # Examples
     ///
     /// ```
     /// use molrs::store::frame::Frame;
     /// use molrs::store::block::Block;
-    /// use std::collections::HashMap;
+    /// use indexmap::IndexMap;
     ///
-    /// let mut map = HashMap::new();
+    /// let mut map = IndexMap::new();
     /// map.insert("atoms".to_string(), Block::new());
     ///
     /// let frame = Frame::from_map(map);
     /// assert_eq!(frame.len(), 1);
     /// ```
-    pub fn from_map(map: HashMap<String, Block>) -> Self {
+    pub fn from_map(map: impl IntoIterator<Item = (String, Block)>) -> Self {
         Self {
-            map,
+            map: map.into_iter().collect(),
             meta: MetaMap::new(),
             simbox: None,
         }
     }
 
-    /// Consumes the Frame and returns the inner HashMap of blocks, metadata, and simbox.
+    /// Consumes the Frame and returns the inner map of blocks, metadata, and simbox.
     ///
     /// # Examples
     ///
@@ -231,7 +253,7 @@ impl Frame {
 
     /// Removes and returns the block for `key`, if present.
     pub fn remove(&mut self, key: &str) -> Option<Block> {
-        self.map.remove(key)
+        self.map.shift_remove(key)
     }
 
     /// Clears the frame, removing all blocks.
@@ -342,9 +364,9 @@ impl Frame {
             return false;
         }
 
-        // Remove the old key and re-insert with new key
-        if let Some(block) = self.map.remove(old_key) {
-            self.map.insert(new_key.to_string(), block);
+        // Remove the old key and re-insert the block at the same position.
+        if let Some((index, _, block)) = self.map.shift_remove_full(old_key) {
+            self.map.shift_insert(index, new_key.to_string(), block);
             true
         } else {
             false
@@ -431,6 +453,308 @@ impl Frame {
             .map_err(|report| MolRsError::validation(report.to_string()))
     }
 
+    /// A new frame holding the rows `rows` of `block`, with every relation
+    /// block that indexes `block` cut down to the selection and renumbered.
+    ///
+    /// A *relation block* is one whose rows name rows of another block by
+    /// index: each `bonds` row names two `atoms` rows in its 0-based endpoint
+    /// columns `atomi` / `atomj`, an `angles` row three. Selecting atoms must
+    /// therefore also drop the bonds that leave the selection and rewrite the
+    /// surviving endpoints to the new row numbers.
+    ///
+    /// - `block` is gathered in the order `rows` gives: old row `rows[k]`
+    ///   becomes new row `k`. Every column and its validity mask (the per-row
+    ///   flag that marks a null cell, see
+    ///   [`Block::validity`](crate::store::block::Block::validity)) travel.
+    /// - A relation block whose endpoints index `block` (canonical `bonds`,
+    ///   `angles`, …, and any unspecified block carrying `atomi`..`atoml`)
+    ///   keeps only the rows whose endpoints all lie in `rows`, in their
+    ///   original order, with each endpoint rewritten to its new row.
+    ///   Endpoints are assumed valid (run [`validate`](Self::validate)
+    ///   first); a relation row whose endpoint is out of range is dropped.
+    /// - Every other block is copied unchanged, into new buffers, as are the
+    ///   box and `meta`: the subset shares no buffer with this frame.
+    ///
+    /// An empty `rows` is legal and gives zero-row blocks.
+    ///
+    /// # Errors
+    ///
+    /// The frame itself is never modified.
+    ///
+    /// - [`MolRsError::NotFound`] if there is no block `block`.
+    /// - [`MolRsError::Validation`] if a row is past the end of `block`, if a
+    ///   row is repeated, or if a relation block indexing `block` lacks one of
+    ///   its declared endpoint columns (or carries it as anything but a 1-D
+    ///   `UInt` column) — copying it would leave stale indices.
+    /// - [`MolRsError::Validation`] naming `members` if the frame carries a
+    ///   `members` block. Its `ibead` column indexes `atoms` rows but is not
+    ///   a schema endpoint, so it cannot be renumbered, and a copy would
+    ///   attach in-range but stale rows to the wrong beads. The refusal
+    ///   stands until `members` is declared in the schema.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use molrs::store::frame::Frame;
+    /// use molrs::store::block::Block;
+    /// use molrs::types::{F, Idx};
+    /// use ndarray::Array1;
+    ///
+    /// // 4 atoms at x = 0..3, bonded as a chain (0,1), (1,2), (2,3).
+    /// let mut atoms = Block::new();
+    /// atoms.insert("x", Array1::from_vec(vec![0.0 as F, 1.0, 2.0, 3.0]).into_dyn()).unwrap();
+    /// let mut bonds = Block::new();
+    /// bonds.insert("atomi", Array1::from_vec(vec![0 as Idx, 1, 2]).into_dyn()).unwrap();
+    /// bonds.insert("atomj", Array1::from_vec(vec![1 as Idx, 2, 3]).into_dyn()).unwrap();
+    /// bonds.insert("type_id", Array1::from_vec(vec![10 as Idx, 11, 12]).into_dyn()).unwrap();
+    /// let mut frame = Frame::new();
+    /// frame.insert("atoms", atoms);
+    /// frame.insert("bonds", bonds);
+    ///
+    /// // Old atom 2 becomes row 0 and old atom 1 row 1; only bond (1,2) lies
+    /// // inside the selection, and it becomes (1,0).
+    /// let one = frame.subset("atoms", &[2, 1]).unwrap();
+    ///
+    /// let x: Vec<F> = one["atoms"].get_float("x").unwrap().iter().copied().collect();
+    /// assert_eq!(x, vec![2.0, 1.0]);
+    /// assert_eq!(one["bonds"].nrows(), Some(1));
+    /// assert_eq!(one["bonds"].get_uint("atomi").unwrap()[[0]], 1);
+    /// assert_eq!(one["bonds"].get_uint("atomj").unwrap()[[0]], 0);
+    /// assert_eq!(one["bonds"].get_uint("type_id").unwrap()[[0]], 11);
+    /// ```
+    pub fn subset(&self, block: &str, rows: &[usize]) -> Result<Frame, MolRsError> {
+        let target = self.get(block).ok_or_else(|| {
+            MolRsError::not_found("block", format!("frame has no '{block}' block"))
+        })?;
+        if self.contains_key("members") {
+            return Err(MolRsError::validation(
+                "cannot subset a frame carrying a 'members' block: members.ibead \
+                 is not a schema endpoint and cannot be renumbered",
+            ));
+        }
+        let nrows = target.nrows().unwrap_or(0);
+        // new_row[old] = Some(new) for a selected row.
+        let mut new_row: Vec<Option<usize>> = vec![None; nrows];
+        for (k, &r) in rows.iter().enumerate() {
+            if r >= nrows {
+                return Err(MolRsError::validation(format!(
+                    "subset row {r} is past the end of '{block}' ({nrows} rows)"
+                )));
+            }
+            if new_row[r].is_some() {
+                return Err(MolRsError::validation(format!(
+                    "subset row {r} of '{block}' is selected twice"
+                )));
+            }
+            new_row[r] = Some(k);
+        }
+
+        let mut out = Frame::with_capacity(self.len());
+        out.meta = self.meta.clone();
+        out.simbox = self.simbox.clone();
+
+        // Blocks keep the order this frame carries them in.
+        for (name, b) in self.iter() {
+            if name == block {
+                out.insert(name, target.select_rows(rows)?);
+                continue;
+            }
+            let endpoints = crate::store::schema::relation_endpoints(name, |k| b.contains_key(k))
+                .filter(|(t, _)| *t == block);
+            let Some((_, columns)) = endpoints else {
+                out.insert(name, b.deep_copy());
+                continue;
+            };
+            let mut ends = Vec::with_capacity(columns.len());
+            for col in &columns {
+                let values = b.get_uint(col).filter(|v| v.ndim() == 1).ok_or_else(|| {
+                    MolRsError::validation(format!(
+                        "cannot subset '{block}': relation block '{name}' has no 1-D \
+                         UInt endpoint column '{col}'"
+                    ))
+                })?;
+                ends.push(values);
+            }
+            let kept: Vec<usize> = (0..b.nrows().unwrap_or(0))
+                .filter(|&i| {
+                    ends.iter()
+                        .all(|e| new_row.get(e[[i]] as usize).is_some_and(|n| n.is_some()))
+                })
+                .collect();
+            let mut cut = b.select_rows(&kept)?;
+            for col in &columns {
+                let values = cut
+                    .get_uint_mut(col)
+                    .expect("select_rows keeps every column and its dtype");
+                for v in values.iter_mut() {
+                    let new = new_row[*v as usize].expect("kept rows lie in the selection");
+                    *v = new as crate::types::Idx;
+                }
+            }
+            out.insert(name, cut);
+        }
+        Ok(out)
+    }
+
+    /// A new frame holding `count` copies of this one, concatenated block by
+    /// block — the inverse of [`subset`](Self::subset) for a frame that is
+    /// `count` identical molecules.
+    ///
+    /// - Every block becomes its rows repeated `count` times, copy after copy
+    ///   (copy `c` of row `r` lands at `c * nrows + r`). Every column and its
+    ///   validity mask travel; a structural N-D shape does not (the result is
+    ///   a row table, as with [`Block::merge`]).
+    /// - A relation block (canonical `bonds`, `angles`, …, or any block
+    ///   carrying `atomi`..`atoml`, per
+    ///   [`relation_endpoints`](crate::store::schema::relation_endpoints))
+    ///   has each endpoint of copy `c` offset by `c` times the row count of
+    ///   the block it indexes, so copy `c`'s bonds join copy `c`'s atoms.
+    /// - Every other column is copied verbatim — **including identifier
+    ///   columns** (`id`, `mol_id`, `type_id`): the copies carry the same
+    ///   labels. Regenerate them if the copies need distinct ones.
+    /// - `meta` and the box are cloned unchanged. The result shares no buffer
+    ///   with this frame.
+    ///
+    /// `count == 0` gives zero-row blocks.
+    ///
+    /// # Errors
+    ///
+    /// The frame itself is never modified.
+    ///
+    /// - [`MolRsError::NotFound`] if a relation block's target block (`atoms`)
+    ///   is absent, so there is no row count to offset by.
+    /// - [`MolRsError::Validation`] if a non-empty relation block lacks one of
+    ///   its declared endpoint columns, or carries it as anything but a 1-D
+    ///   `UInt` column — copying it would leave every copy pointing at the
+    ///   first.
+    /// - [`MolRsError::Validation`] naming `members` if the frame carries a
+    ///   `members` block, whose `ibead` column indexes `atoms` without being a
+    ///   schema endpoint (the same refusal as [`subset`](Self::subset)).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use molrs::store::frame::Frame;
+    /// use molrs::store::block::Block;
+    /// use molrs::types::{F, Idx};
+    /// use ndarray::Array1;
+    ///
+    /// // A diatomic: atoms 0-1 bonded.
+    /// let mut atoms = Block::new();
+    /// atoms.insert("x", Array1::from_vec(vec![0.0 as F, 1.0]).into_dyn()).unwrap();
+    /// let mut bonds = Block::new();
+    /// bonds.insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn()).unwrap();
+    /// bonds.insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn()).unwrap();
+    /// let mut frame = Frame::new();
+    /// frame.insert("atoms", atoms);
+    /// frame.insert("bonds", bonds);
+    ///
+    /// let three = frame.replicate(3).unwrap();
+    /// assert_eq!(three["atoms"].nrows(), Some(6));
+    /// let i: Vec<Idx> = three["bonds"].get_uint("atomi").unwrap().iter().copied().collect();
+    /// let j: Vec<Idx> = three["bonds"].get_uint("atomj").unwrap().iter().copied().collect();
+    /// assert_eq!((i, j), (vec![0, 2, 4], vec![1, 3, 5]));
+    /// ```
+    pub fn replicate(&self, count: usize) -> Result<Frame, MolRsError> {
+        if self.contains_key("members") {
+            return Err(MolRsError::validation(
+                "cannot replicate a frame carrying a 'members' block: members.ibead \
+                 is not a schema endpoint and cannot be offset",
+            ));
+        }
+        let mut out = Frame::with_capacity(self.len());
+        out.meta = self.meta.clone();
+        out.simbox = self.simbox.clone();
+        for (name, b) in self.iter() {
+            let rows = b.nrows().unwrap_or(0);
+            let tile: Vec<usize> = (0..count).flat_map(|_| 0..rows).collect();
+            let mut tiled = b.select_rows(&tile)?;
+            if b.is_empty() {
+                // No column to gather: carry the declared row count alone.
+                tiled.resize(rows * count)?;
+            }
+            let endpoints = crate::store::schema::relation_endpoints(name, |k| b.contains_key(k));
+            if let Some((target, columns)) = endpoints.filter(|_| rows > 0) {
+                let span = self
+                    .get(target)
+                    .ok_or_else(|| {
+                        MolRsError::not_found(
+                            "block",
+                            format!(
+                                "cannot replicate '{name}': it indexes '{target}', which \
+                                 the frame lacks"
+                            ),
+                        )
+                    })?
+                    .nrows()
+                    .unwrap_or(0);
+                for col in &columns {
+                    let values = tiled
+                        .get_uint_mut(col)
+                        .filter(|v| v.ndim() == 1)
+                        .ok_or_else(|| {
+                            MolRsError::validation(format!(
+                                "cannot replicate: relation block '{name}' has no 1-D \
+                                 UInt endpoint column '{col}'"
+                            ))
+                        })?;
+                    for (i, v) in values.iter_mut().enumerate() {
+                        *v += ((i / rows) * span) as crate::types::Idx;
+                    }
+                }
+            }
+            out.insert(name, tiled);
+        }
+        Ok(out)
+    }
+
+    /// The `atoms` block's positions as one `N × 3` array — see
+    /// [`Block::coords`].
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::NotFound`] without an `atoms` block, and
+    /// [`MolRsError::Block`] ([`BlockError::MissingColumn`](crate::store::block::BlockError::MissingColumn))
+    /// when it lacks `x`, `y` or `z`.
+    pub fn coords(&self) -> Result<crate::types::FNx3, MolRsError> {
+        let atoms = self.get(ATOMS).ok_or_else(|| {
+            MolRsError::not_found("block", format!("frame has no '{ATOMS}' block"))
+        })?;
+        Ok(atoms.coords()?)
+    }
+
+    /// Write an `N × 3` array into the `atoms` block's `x` / `y` / `z` — see
+    /// [`Block::set_coords`]. A frame without an `atoms` block gets one
+    /// holding just the coordinates.
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Block`] when `coords` is not `N × 3` or `N` differs from
+    /// the `atoms` row count. The frame is unchanged on error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use molrs::store::frame::Frame;
+    /// use molrs::types::F;
+    /// use ndarray::array;
+    ///
+    /// let mut frame = Frame::new();
+    /// frame.set_coords(array![[1.0 as F, 2.0, 3.0]].view()).unwrap();
+    /// assert_eq!(frame.coords().unwrap(), array![[1.0, 2.0, 3.0]]);
+    /// ```
+    pub fn set_coords(&mut self, coords: crate::types::FNx3View<'_>) -> Result<(), MolRsError> {
+        match self.get_mut(ATOMS) {
+            Some(atoms) => atoms.set_coords(coords)?,
+            None => {
+                let mut atoms = Block::new();
+                atoms.set_coords(coords)?;
+                self.insert(ATOMS, atoms);
+            }
+        }
+        Ok(())
+    }
+
     /// Checks if the frame is consistent without returning an error.
     ///
     /// This is a non-panicking version of `validate()` that returns a boolean.
@@ -471,6 +795,80 @@ mod tests {
     use super::*;
     use crate::types::{F, I};
     use ndarray::Array1;
+
+    #[test]
+    fn keys_follow_insertion_order_and_survive_remove_and_rename() {
+        let mut frame = Frame::new();
+        for key in ["c", "a", "b", "d"] {
+            frame.insert(key, Block::new());
+        }
+        assert_eq!(frame.keys().collect::<Vec<_>>(), ["c", "a", "b", "d"]);
+        frame.remove("a");
+        assert_eq!(frame.keys().collect::<Vec<_>>(), ["c", "b", "d"]);
+        assert!(frame.rename_block("b", "y"));
+        assert_eq!(frame.keys().collect::<Vec<_>>(), ["c", "y", "d"]);
+    }
+
+    /// A subset keeps the frame's block order: selecting from `atoms` does
+    /// not move it in front of a block inserted before it.
+    #[test]
+    fn subset_keeps_the_block_order() {
+        let mut frame = Frame::new();
+        frame.insert("cell", Block::new());
+        let mut atoms = Block::new();
+        atoms
+            .insert("x", Array1::from_vec(vec![0.0 as F, 1.0]).into_dyn())
+            .unwrap();
+        frame.insert("atoms", atoms);
+        frame.insert("tail", Block::new());
+
+        let sub = frame.subset("atoms", &[1]).unwrap();
+        assert_eq!(sub.keys().collect::<Vec<_>>(), ["cell", "atoms", "tail"]);
+    }
+
+    /// A pass-through block (one that does not index the selected block) is a
+    /// new buffer too: a subset shares nothing with its source.
+    #[test]
+    fn subset_shares_no_buffer_with_the_source() {
+        let mut cell = Block::new();
+        cell.insert("lx", Array1::from_vec(vec![10.0 as F]).into_dyn())
+            .unwrap();
+        let mut atoms = Block::new();
+        atoms
+            .insert("x", Array1::from_vec(vec![0.0 as F, 1.0]).into_dyn())
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("cell", cell);
+        frame.insert("atoms", atoms);
+
+        let sub = frame.subset("atoms", &[1]).unwrap();
+
+        let src = frame["cell"].get_float("lx").unwrap();
+        let dst = sub["cell"].get_float("lx").unwrap();
+        assert_ne!(src.as_ptr(), dst.as_ptr());
+        assert_eq!(dst[[0]], 10.0);
+    }
+
+    #[test]
+    fn deep_copy_gives_every_block_new_buffers() {
+        let mut block = Block::new();
+        block
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn())
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", block);
+        frame
+            .meta
+            .insert("step", crate::store::meta::MetaValue::I64(3));
+
+        let copy = frame.deep_copy();
+
+        let src = frame.get("atoms").unwrap().get_float("x").unwrap();
+        let dst = copy.get("atoms").unwrap().get_float("x").unwrap();
+        assert_ne!(src.as_ptr(), dst.as_ptr());
+        assert_eq!(dst.as_slice_memory_order(), Some(&[1.0 as F, 2.0][..]));
+        assert_eq!(copy.meta.get("step"), frame.meta.get("step"));
+    }
 
     #[test]
     fn test_frame_new() {
@@ -579,7 +977,7 @@ mod tests {
 
     #[test]
     fn test_frame_from_map() {
-        let mut map = HashMap::new();
+        let mut map = IndexMap::new();
         map.insert("atoms".to_string(), Block::new());
         map.insert("bonds".to_string(), Block::new());
 
@@ -587,6 +985,20 @@ mod tests {
         assert_eq!(frame.len(), 2);
         assert!(frame.contains_key("atoms"));
         assert!(frame.contains_key("bonds"));
+    }
+
+    #[test]
+    fn from_map_takes_any_iterator_of_named_blocks() {
+        let map = std::collections::HashMap::from([("atoms".to_string(), Block::new())]);
+        assert_eq!(Frame::from_map(map).len(), 1);
+        let pairs = vec![
+            ("b".to_string(), Block::new()),
+            ("a".to_string(), Block::new()),
+        ];
+        assert_eq!(
+            Frame::from_map(pairs).keys().collect::<Vec<_>>(),
+            ["b", "a"]
+        );
     }
 
     #[test]
@@ -721,5 +1133,350 @@ mod tests {
             .unwrap();
         frame.insert("bonds", bonds);
         assert!(!frame.rename_block("molecules", "bonds"));
+    }
+
+    // ---- subset ----
+
+    use crate::spatial::simbox::SimBox;
+    use crate::types::Idx;
+    use ndarray::array;
+
+    fn float_col(values: &[F]) -> ndarray::ArrayD<F> {
+        Array1::from_vec(values.to_vec()).into_dyn()
+    }
+
+    fn uint_col(values: &[Idx]) -> ndarray::ArrayD<Idx> {
+        Array1::from_vec(values.to_vec()).into_dyn()
+    }
+
+    fn uint_block(cols: &[(&str, &[Idx])]) -> Block {
+        let mut b = Block::new();
+        for (key, values) in cols {
+            b.insert(*key, uint_col(values)).unwrap();
+        }
+        b
+    }
+
+    /// 4 atoms at x = 0..3, and the chain bonds (0,1), (1,2), (2,3) with
+    /// `type_id` 10, 11, 12.
+    fn chain_of_four() -> Frame {
+        let mut atoms = Block::new();
+        atoms.insert("x", float_col(&[0.0, 1.0, 2.0, 3.0])).unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert(
+            "bonds",
+            uint_block(&[
+                ("atomi", &[0, 1, 2]),
+                ("atomj", &[1, 2, 3]),
+                ("type_id", &[10, 11, 12]),
+            ]),
+        );
+        frame
+    }
+
+    fn uint_values(frame: &Frame, block: &str, col: &str) -> Vec<Idx> {
+        frame[block]
+            .get_uint(col)
+            .unwrap_or_else(|| panic!("{block}.{col} is a UInt column"))
+            .iter()
+            .copied()
+            .collect()
+    }
+
+    fn float_values(frame: &Frame, block: &str, col: &str) -> Vec<F> {
+        frame[block]
+            .get_float(col)
+            .unwrap_or_else(|| panic!("{block}.{col} is a Float column"))
+            .iter()
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn subset_gathers_atoms_in_order_and_reindexes_the_bonds_inside() {
+        // rows [2, 1]: old 2 -> new 0, old 1 -> new 1. Only bond (1,2) lies
+        // inside; it becomes (1,0) and keeps type_id 11.
+        let out = chain_of_four().subset("atoms", &[2, 1]).unwrap();
+
+        assert_eq!(float_values(&out, "atoms", "x"), vec![2.0, 1.0]);
+        assert_eq!(out["bonds"].nrows(), Some(1));
+        assert_eq!(uint_values(&out, "bonds", "atomi"), vec![1]);
+        assert_eq!(uint_values(&out, "bonds", "atomj"), vec![0]);
+        assert_eq!(uint_values(&out, "bonds", "type_id"), vec![11]);
+    }
+
+    #[test]
+    fn subset_keeps_only_the_angles_inside_the_selection() {
+        // rows [1, 2, 3]: angle (0,1,2) touches atom 0 and is dropped;
+        // angle (1,2,3) becomes (0,1,2).
+        let mut frame = chain_of_four();
+        frame.insert(
+            "angles",
+            uint_block(&[("atomi", &[0, 1]), ("atomj", &[1, 2]), ("atomk", &[2, 3])]),
+        );
+
+        let out = frame.subset("atoms", &[1, 2, 3]).unwrap();
+
+        assert_eq!(out["angles"].nrows(), Some(1));
+        assert_eq!(uint_values(&out, "angles", "atomi"), vec![0]);
+        assert_eq!(uint_values(&out, "angles", "atomj"), vec![1]);
+        assert_eq!(uint_values(&out, "angles", "atomk"), vec![2]);
+    }
+
+    #[test]
+    fn subset_reindexes_a_relation_block_without_a_spec() {
+        // `ports` has no BlockSpec; its atomi/atomj still index atoms.
+        // rows [2, 3]: port (3,2) becomes (1,0); port (0,3) leaves the
+        // selection and is dropped.
+        let mut frame = chain_of_four();
+        frame.insert(
+            "ports",
+            uint_block(&[("atomi", &[3, 0]), ("atomj", &[2, 3])]),
+        );
+
+        let out = frame.subset("atoms", &[2, 3]).unwrap();
+
+        assert_eq!(out["ports"].nrows(), Some(1));
+        assert_eq!(uint_values(&out, "ports", "atomi"), vec![1]);
+        assert_eq!(uint_values(&out, "ports", "atomj"), vec![0]);
+    }
+
+    #[test]
+    fn subset_copies_the_box_meta_and_a_non_relation_block_unchanged() {
+        let mut frame = chain_of_four();
+        let mut labels = Block::new();
+        labels
+            .insert("weight", float_col(&[0.5, 1.5, 2.5]))
+            .unwrap();
+        frame.insert("labels", labels);
+        frame.simbox = Some(
+            SimBox::ortho(
+                array![10.0 as F, 20.0, 30.0],
+                array![1.0 as F, 2.0, 3.0],
+                [true, false, true],
+            )
+            .unwrap(),
+        );
+        frame.meta.insert("title", "melt");
+
+        let out = frame.subset("atoms", &[0, 1]).unwrap();
+
+        assert_eq!(out.meta, frame.meta);
+        let (before, after) = (frame.simbox.as_ref().unwrap(), out.simbox.as_ref().unwrap());
+        assert_eq!(after.h_view(), before.h_view());
+        assert_eq!(after.origin_view(), before.origin_view());
+        assert_eq!(after.pbc(), before.pbc());
+        assert_eq!(out["labels"].nrows(), Some(3));
+        assert_eq!(float_values(&out, "labels", "weight"), vec![0.5, 1.5, 2.5]);
+    }
+
+    #[test]
+    fn subset_refuses_a_frame_carrying_a_members_block() {
+        // `members.ibead` is not a schema endpoint, so it cannot be remapped;
+        // copying it would leave in-range but stale bead rows.
+        let mut frame = chain_of_four();
+        frame.insert(
+            "members",
+            uint_block(&[("ibead", &[0, 3]), ("atom", &[10, 11])]),
+        );
+
+        let err = frame
+            .subset("atoms", &[3, 2])
+            .expect_err("a members block cannot be remapped");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        assert!(err.to_string().contains("members"), "{err}");
+    }
+
+    #[test]
+    fn subset_of_bonds_selects_bond_rows_and_leaves_the_atoms_unchanged() {
+        // No block's endpoints index `bonds`, so nothing is renumbered.
+        let out = chain_of_four().subset("bonds", &[1]).unwrap();
+
+        assert_eq!(uint_values(&out, "bonds", "atomi"), vec![1]);
+        assert_eq!(uint_values(&out, "bonds", "atomj"), vec![2]);
+        assert_eq!(uint_values(&out, "bonds", "type_id"), vec![11]);
+        assert_eq!(float_values(&out, "atoms", "x"), vec![0.0, 1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn subset_with_no_rows_gives_zero_row_atoms_and_bonds() {
+        let out = chain_of_four().subset("atoms", &[]).unwrap();
+
+        assert_eq!(out["atoms"].nrows(), Some(0));
+        assert_eq!(out["bonds"].nrows(), Some(0));
+    }
+
+    #[test]
+    fn subset_refuses_a_missing_block() {
+        let err = chain_of_four()
+            .subset("residues", &[0])
+            .expect_err("there is no residues block");
+        assert!(matches!(err, MolRsError::NotFound { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn subset_refuses_a_row_past_the_block() {
+        let err = chain_of_four()
+            .subset("atoms", &[4])
+            .expect_err("4 atoms are rows 0..=3");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn subset_refuses_a_repeated_row() {
+        let err = chain_of_four()
+            .subset("atoms", &[1, 1])
+            .expect_err("row 1 is selected twice");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn subset_refuses_a_bond_block_missing_an_endpoint_column() {
+        let mut frame = chain_of_four();
+        frame.insert("bonds", uint_block(&[("atomi", &[0, 1])]));
+
+        let err = frame
+            .subset("atoms", &[0, 1])
+            .expect_err("bonds without atomj cannot be reindexed");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        assert!(err.to_string().contains("atomj"), "{err}");
+    }
+
+    // ---- replicate ----
+
+    #[test]
+    fn replicate_offsets_endpoints_by_the_target_row_count_per_copy() {
+        let two = chain_of_four().replicate(2).unwrap();
+        assert_eq!(two["atoms"].nrows(), Some(8));
+        assert_eq!(uint_values(&two, "bonds", "atomi"), [0, 1, 2, 4, 5, 6]);
+        assert_eq!(uint_values(&two, "bonds", "atomj"), [1, 2, 3, 5, 6, 7]);
+        // Non-endpoint columns (identifiers included) are copied verbatim.
+        assert_eq!(
+            uint_values(&two, "bonds", "type_id"),
+            [10, 11, 12, 10, 11, 12]
+        );
+    }
+
+    #[test]
+    fn replicate_offsets_an_unspecified_relation_block_too() {
+        let mut frame = chain_of_four();
+        frame.insert("ports", uint_block(&[("atomi", &[3])]));
+        let three = frame.replicate(3).unwrap();
+        assert_eq!(uint_values(&three, "ports", "atomi"), [3, 7, 11]);
+    }
+
+    #[test]
+    fn replicate_tiles_validity_masks_with_their_rows() {
+        let mut frame = chain_of_four();
+        frame
+            .get_mut("atoms")
+            .unwrap()
+            .set_validity("x", vec![true, false, true, true])
+            .unwrap();
+        let two = frame.replicate(2).unwrap();
+        assert_eq!(
+            two["atoms"].validity("x"),
+            Some(&[true, false, true, true, true, false, true, true][..])
+        );
+    }
+
+    #[test]
+    fn replicate_zero_times_gives_zero_row_blocks() {
+        let none = chain_of_four().replicate(0).unwrap();
+        assert_eq!(none["atoms"].nrows(), Some(0));
+        assert_eq!(none["bonds"].nrows(), Some(0));
+    }
+
+    #[test]
+    fn replicate_carries_the_row_count_of_a_columnless_block() {
+        let mut frame = chain_of_four();
+        let mut marker = Block::new();
+        marker.resize(2).unwrap();
+        frame.insert("marker", marker);
+        assert_eq!(frame.replicate(3).unwrap()["marker"].nrows(), Some(6));
+    }
+
+    #[test]
+    fn replicate_refuses_a_relation_without_its_target_block() {
+        let mut frame = chain_of_four();
+        frame.remove("atoms");
+        let err = frame.replicate(2).expect_err("bonds index a missing block");
+        assert!(matches!(err, MolRsError::NotFound { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn replicate_refuses_a_relation_missing_an_endpoint_column() {
+        let mut frame = chain_of_four();
+        frame.insert("bonds", uint_block(&[("atomi", &[0])]));
+        let err = frame.replicate(2).expect_err("bonds without atomj");
+        assert!(err.to_string().contains("atomj"), "{err}");
+    }
+
+    #[test]
+    fn replicate_refuses_a_members_block() {
+        let mut frame = chain_of_four();
+        frame.insert("members", uint_block(&[("ibead", &[0])]));
+        assert!(frame.replicate(2).is_err());
+    }
+
+    #[test]
+    fn replicate_shares_no_buffer_with_the_source() {
+        let frame = chain_of_four();
+        let one = frame.replicate(1).unwrap();
+        assert_ne!(
+            frame["atoms"].get_float("x").unwrap().as_ptr(),
+            one["atoms"].get_float("x").unwrap().as_ptr()
+        );
+    }
+
+    // ---- coords ----
+
+    #[test]
+    fn coords_round_trip_through_the_atoms_block() {
+        let mut frame = chain_of_four();
+        let xyz = ndarray::array![
+            [0.0 as F, 1.0, 2.0],
+            [3.0, 4.0, 5.0],
+            [6.0, 7.0, 8.0],
+            [9.0, 10.0, 11.0]
+        ];
+        frame.set_coords(xyz.view()).unwrap();
+        assert_eq!(frame.coords().unwrap(), xyz);
+        // `x` kept its place in front of the appended `y` / `z`.
+        assert_eq!(frame["atoms"].keys().collect::<Vec<_>>(), ["x", "y", "z"]);
+    }
+
+    #[test]
+    fn set_coords_creates_an_atoms_block_when_there_is_none() {
+        let mut frame = Frame::new();
+        frame
+            .set_coords(ndarray::array![[1.0 as F, 2.0, 3.0]].view())
+            .unwrap();
+        assert_eq!(frame["atoms"].nrows(), Some(1));
+    }
+
+    #[test]
+    fn set_coords_with_the_wrong_row_count_leaves_the_frame_unchanged() {
+        let mut frame = chain_of_four();
+        let err = frame
+            .set_coords(ndarray::array![[1.0 as F, 2.0, 3.0]].view())
+            .expect_err("4 atoms, 1 row");
+        assert!(
+            matches!(
+                err,
+                MolRsError::Block(crate::store::block::BlockError::RaggedAxis0 { .. })
+            ),
+            "{err:?}"
+        );
+        assert_eq!(frame["atoms"].keys().collect::<Vec<_>>(), ["x"]);
+    }
+
+    #[test]
+    fn coords_without_an_atoms_block_is_not_found() {
+        assert!(matches!(
+            Frame::new().coords(),
+            Err(MolRsError::NotFound { .. })
+        ));
     }
 }

@@ -13,9 +13,10 @@
 use std::collections::{HashMap, HashSet};
 
 use molrs::perceive::bond_type::BCC_BOND_TYPE;
+use molrs::perceive::rings::find_rings;
 use molrs::store::keys;
 use molrs::system::molgraph::PropValue;
-use molrs::{AtomId, Atomistic, Bond, BondId, Element, find_rings};
+use molrs::{AtomId, Atomistic, Bond, BondId, Element};
 
 use crate::ff::params::AtomProp;
 

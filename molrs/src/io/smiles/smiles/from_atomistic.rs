@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::io::smiles::chem::ast::*;
-use crate::io::smiles::error::{SmilesError, SmilesErrorKind};
+use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
 use crate::io::smiles::smiles::options::{
     AromaticEmit, HydrogenEmit, MultiComponentEmit, SmilesEmitOptions,
 };
@@ -91,7 +91,12 @@ pub fn write_atomistic_smiles(
 }
 
 fn emit_err(msg: impl Into<String>) -> SmilesError {
-    SmilesError::new(SmilesErrorKind::Emit(msg.into()), Span::new(0, 0), "")
+    SmilesError::new(
+        SmilesErrorKind::Emit(msg.into()),
+        Span::new(0, 0),
+        "",
+        Notation::Smiles,
+    )
 }
 
 fn is_hydrogen(mol: &Atomistic, id: AtomId) -> bool {
@@ -480,12 +485,14 @@ fn atom_node(
     Ok(AtomNode {
         spec,
         span: Span::new(0, 0),
+        descriptors: Vec::new(),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::smiles::chem::test_support::atom_nodes;
     use crate::io::smiles::smiles::parse_smiles;
     use crate::io::smiles::smiles::to_atomistic::to_atomistic;
 
@@ -554,5 +561,24 @@ mod tests {
         let opts = SmilesEmitOptions::default(); // include_stereo = false
         let s = write_atomistic_smiles(&mol, &opts).unwrap();
         assert!(!s.contains('@'), "got {s}");
+    }
+
+    #[test]
+    fn emitted_nodes_carry_no_descriptors() {
+        // An `Atomistic` never stored bonding descriptors, so the IR built from
+        // one has none to emit — the graph → IR direction stays plain SMILES.
+        let mol = to_atomistic(&parse_smiles("CCO").unwrap()).unwrap();
+        let ir = from_atomistic(&mol, &SmilesEmitOptions::default()).unwrap();
+        for node in atom_nodes(&ir) {
+            assert!(node.descriptors.is_empty(), "node {:?}", node.spec);
+        }
+    }
+
+    #[test]
+    fn ethanol_writes_the_unchanged_smiles_string() {
+        // The descriptor field must not perturb what the plain writer emits.
+        let mol = to_atomistic(&parse_smiles("CCO").unwrap()).unwrap();
+        let ir = from_atomistic(&mol, &SmilesEmitOptions::default()).unwrap();
+        assert_eq!(write_smiles(&ir).unwrap(), "CCO");
     }
 }

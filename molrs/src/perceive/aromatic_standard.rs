@@ -28,6 +28,7 @@
 
 #![cfg(all(test, feature = "smiles"))]
 
+use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 
 use crate::perceive::Perceive;
@@ -108,7 +109,7 @@ fn standardize(smiles: &str) -> Atomistic {
     Perceive::new().find_aromaticity(&parse(smiles))
 }
 
-fn uint_prop(props: &HashMap<String, PropValue>, key: &str) -> Option<u32> {
+fn uint_prop(props: &IndexMap<String, PropValue>, key: &str) -> Option<u32> {
     props.get(key).and_then(PropValue::as_f64).map(|v| {
         assert!(
             v.fract() == 0.0 && v >= 0.0,
@@ -619,7 +620,10 @@ fn perception_alone_never_needs_hydrogens_added() {
     let p = Perceive::new();
     for (name, smiles) in MATRIX {
         let heavy = standardize(smiles);
-        let with_h = p.find_aromaticity(&p.find_hydrogens(&parse(smiles)));
+        let repleted = p
+            .find_hydrogens(&parse(smiles))
+            .expect("repletion succeeds on a well-formed graph");
+        let with_h = p.find_aromaticity(&repleted);
         assert_eq!(
             aromatic_bonds(&heavy).len(),
             aromatic_bonds(&with_h).len(),

@@ -1,6 +1,6 @@
 [package]
 name = "molrs"
-version = "0.14.0"
+version = "0.15.0"
 edition = "2024"
 authors = ["MolCrafts"]
 description = "WASM bindings for molrs"
@@ -13,6 +13,17 @@ crate-type = ["cdylib", "rlib"]
 name = "molwasm"
 
 [workspace]
+
+# Standalone workspace root: does NOT inherit the repo root's [profile.release].
+# Keep the four keys identical to ../Cargo.toml so every root ships the same
+# optimisation. This block was missing until 2026-09-22, so every published
+# wasm bundle before then was built without lto/opt-level/codegen-units while
+# the other four binder roots had them.
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+strip = "symbols"
 
 [features]
 # Default build = full (all subsystems). Each forwards to the merged crate's
@@ -44,8 +55,8 @@ web-sys = { version = "0.3", features = ["console"] }
 # Both `default-features = false` below are deliberate: this crate ships bytes
 # over the wire, so it must not pull `filesystem` (host zlib), `rayon` (no
 # threads here) or any sub-system it does not bind (bundle weight).
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.14.0", default-features = false, features = ["zarr"] }
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.14.0", default-features = false }
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.15.0", default-features = false, features = ["zarr"] }
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.15.0", default-features = false }
 
 ndarray = "0.17"
 zarrs = { version = "0.23", default-features = false }
@@ -64,4 +75,16 @@ wasm-bindgen-test = "0.3"
 # Binaryen wasm-opt after wasm-bindgen. -O1: ~19% smaller than rustc-only
 # release on Apple M4 (~4s); ABI/smoke-tested locally. Requires `wasm-opt` on PATH
 # (e.g. `brew install binaryen`).
-wasm-opt = ["-O1"]
+# rustc enables bulk-memory and nontrapping-fptoint for wasm32 by default;
+# older binaryen releases reject them unless the features are named.
+wasm-opt = ["-O1", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
+
+# Standalone workspace root: does NOT inherit the repo root's [profile.dev].
+# Keep these two keys identical to ../Cargo.toml -- they are what keeps the
+# shared target/ small enough to stay fast on Lustre (see ../Cargo.toml for the
+# measurement).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

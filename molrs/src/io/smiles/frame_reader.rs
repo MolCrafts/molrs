@@ -61,7 +61,9 @@ impl<R: BufRead> FrameReader for SmilesReader<R> {
     fn read(&mut self) -> Result<Option<Frame>> {
         match self.next_record()? {
             Some(s) => {
-                let frame = parse_atomistic(&s)?.to_frame();
+                let frame = parse_atomistic(&s)?.to_frame().map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+                })?;
                 crate::io::reader::validated(Some(frame))
             }
             None => Ok(None),
@@ -135,5 +137,18 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(mol.atoms().count(), 3);
+    }
+
+    #[test]
+    fn descriptor_line_is_refused_and_names_the_fragment_entry_point() {
+        // A `.smi` line must never read into an `Atomistic` that silently lost
+        // its descriptors; the surfaced message is how the caller finds the
+        // fragment entry point.
+        let err = reader("[>]COC[<]\n").read().unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(
+            err.to_string().contains("parse_fragment_smiles"),
+            "got {err}"
+        );
     }
 }

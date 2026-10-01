@@ -347,6 +347,13 @@ impl Parmchk2Estimator {
 
     /// The cheaper of a torsion row's two orientations against `quartet`, if either
     /// is a valid substitution under `rule`.
+    ///
+    /// "Cheaper" is the whole outcome — inner-pair score, then total score, then
+    /// the number of substitutions — never the inner score alone with the
+    /// forward reading kept on a tie. Reading the quartet from its other end
+    /// swaps the two orientations, so only a comparison over everything an
+    /// orientation reports picks the same outcome either way: when all three
+    /// tie, the two readings report identical values and either may win.
     fn torsion_orientations(
         &self,
         group: &Candidate,
@@ -359,7 +366,7 @@ impl Parmchk2Estimator {
         [forward, reversed]
             .into_iter()
             .filter_map(|oriented| self.torsion_orientation(&oriented, quartet, rule))
-            .min_by(|a, b| ordered(a.1.inner).cmp(&ordered(b.1.inner)))
+            .min_by_key(|(subs, score)| (ordered(score.inner), ordered(score.total), *subs))
     }
 
     /// One orientation: the number of substitutions and what they cost, or `None`
@@ -460,7 +467,7 @@ impl Parmchk2Estimator {
     /// penalty that says so. Never a fabricated barrier.
     ///
     /// Only the interpolation seam reaches this: a caller reading a parameter table
-    /// directly ([`forcefield::gaff`](crate::ff::forcefield::gaff)) wants to hear
+    /// directly ([`typifier::gaff`](crate::ff::typifier::gaff)) wants to hear
     /// that the torsion is missing, not to be handed a placeholder for it.
     pub(super) fn no_torsion(&self) -> Params {
         Params::from_pairs(&[("k1", 0.0), ("k2", 0.0), ("k3", 0.0), ("k4", 0.0)])

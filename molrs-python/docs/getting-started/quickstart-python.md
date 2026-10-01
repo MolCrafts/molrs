@@ -136,22 +136,47 @@ print("typed blocks:", typed_frame.keys())
 
 try:
     # Non-bonded terms need an explicit pairs block (no optimizeGeometry sugar).
+    # forcefield() is a copy of exactly the types typify assigned.
     ff = typifier.forcefield()
     typed_frame["pairs"] = molrs.ff.intramolecular_pairs(typed_frame, ff)
-    potentials = ff.to_potentials(typed_frame)
-    coords = molrs.ff.extract_coords(typed_frame)
-
-    energy, forces = potentials.calc_energy_forces(coords)
+    potentials = molrs.ff.PotentialCompiler(ff).compile(typed_frame)
+    energy, forces = potentials.calc_energy_forces(typed_frame)
     print("energy:", energy)
-    print("coords shape:", coords.shape)
+    print("coords shape:", typed_frame.coords.shape)
     print("forces shape:", forces.shape)
 except ValueError as exc:
     print("potential build skipped:", exc)
 ```
 
 MMFF94 typing and potential compilation are separate steps on purpose. Typing
-gives a labeled graph; `forcefield().to_potentials(frame)` is the shared
-compile path every force field uses (including UFF on Rust/WASM). Potential
+gives a labeled graph and accumulates the definitions it assigned in the
+typifier's output: `forcefield()` returns a copy of it (`library()` is the full
+parameter set it matched against), and `typify` is its only writer.
+`PotentialCompiler(forcefield()).compile(frame)` is the shared compile path
+every force field uses (including UFF on Rust/WASM).
+
+A typifier of your own subclasses `molrs.ff.typifier.Typifier` and implements
+only `match(graph)`, returning a `Match` of per-atom and per-link annotations;
+the base's `typify` copies the graph, stamps the match onto the copy and defines
+its types in the output:
+
+```python
+from molrs.ff.typifier import Match, Typifier
+
+
+class EveryAtomX(Typifier):
+    def match(self, graph):
+        return Match(
+            [{"type": ("full", "X", {"mass": 12.0})} for _ in graph.nodes],
+            styles=[("atom", "full", {})],
+        )
+
+
+typed = EveryAtomX().typify(mol3d)
+```
+`PotentialCompiler.defer()` returns potentials that bind the frame they are
+evaluated on, and `compile_typed(frame)` builds the neighbour-driven kernels MD
+runs on. Potential
 compilation is stricter because every term must resolve to a supported
 parameter — some molecules can typify successfully while compilation still
 reports incomplete coverage.

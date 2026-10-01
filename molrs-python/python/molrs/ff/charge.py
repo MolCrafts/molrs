@@ -10,9 +10,9 @@ interchangeable at a call site.
 from __future__ import annotations
 
 from .._lib import (
-    BccModel as BccModel,
-    GasteigerModel as GasteigerModel,
-    MullikenModel as MullikenModel,
+    BccModel,
+    GasteigerModel,
+    MullikenModel,
 )
 
 __all__ = [

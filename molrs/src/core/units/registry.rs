@@ -258,44 +258,104 @@ impl UnitRegistry {
         Ok(Quantity::new(value, self.parse(expr)?))
     }
 
+    /// Define the reduced-LJ length unit `lj_sigma` alone.
+    ///
+    /// **Reduced Lennard-Jones (LJ) units** measure every quantity in multiples
+    /// of the three parameters of the LJ pair potential
+    /// `E(r) = 4ε[(σ/r)¹² − (σ/r)⁶]`: the length σ (where `E` crosses zero),
+    /// the energy ε (the well depth) and a particle mass m. `lj_sigma` is the
+    /// unit whose size is `sigma`.
+    ///
+    /// With only σ known, exactly the quantities of dimension L^a (no mass,
+    /// no time) have a defined reduced scale; every other `lj_*` unit stays
+    /// unknown, so a conversion that needs one is refused by the parser.
+    ///
+    /// # Errors
+    ///
+    /// - [`UnitsError::DimensionMismatch`] — `sigma` is not a length.
+    /// - [`UnitsError::Parse`] — `sigma` is not finite and positive.
+    /// - [`UnitsError::Redefinition`] — `lj_sigma` is already defined.
+    pub fn define_lj_sigma(&mut self, sigma: &Quantity) -> Result<(), UnitsError> {
+        let definition = self.lj_sigma_def(sigma)?;
+        self.define(definition)
+    }
+
+    /// The `lj_sigma` definition for `sigma`, validated but not yet defined.
+    fn lj_sigma_def(&self, sigma: &Quantity) -> Result<UnitDef, UnitsError> {
+        let sigma_m = sigma.to(&self.parse("m")?)?.value();
+        if !sigma_m.is_finite() || sigma_m <= 0.0 {
+            return Err(UnitsError::Parse {
+                expr: "Lennard-Jones sigma".to_string(),
+                message: "sigma must be finite and positive".to_string(),
+            });
+        }
+        Ok(def(
+            "lj_sigma",
+            "lj_sigma",
+            &[],
+            sigma_m,
+            0.0,
+            Dimension::LENGTH,
+            false,
+        ))
+    }
+
     /// Define Lennard-Jones reduced units from physical mass, length, and energy scales.
     ///
-    /// The derived time and temperature scales are
-    /// `tau = sqrt(mass * sigma^2 / epsilon)` and `epsilon / k_B`.
+    /// Defines `lj_sigma` (as [`define_lj_sigma`](Self::define_lj_sigma) does),
+    /// `lj_mass`, `lj_epsilon`, `lj_tau`, `lj_epsilon_over_kB` and
+    /// `lj_charge`, following the LAMMPS `lj` relations
+    /// (<https://docs.lammps.org/units.html>):
+    ///
+    /// - time `tau = sigma * sqrt(mass / epsilon)`;
+    /// - temperature `epsilon / k_B` (`k_B` the Boltzmann constant);
+    /// - charge `sqrt(4 pi eps0 sigma epsilon)` (`eps0` the vacuum
+    ///   permittivity), evaluated as
+    ///   `e * sqrt(sigma[Å] * epsilon[kcal/mol] / COULOMB_REAL)` with
+    ///   [`COULOMB_REAL`](super::constants::COULOMB_REAL) and stored in
+    ///   coulomb.
+    ///
     /// The definitions retain their physical dimensions, so normal checked
     /// conversion works without a separate context engine.
+    ///
+    /// # Errors
+    ///
+    /// - [`UnitsError::DimensionMismatch`] — a scale has the wrong dimension.
+    /// - [`UnitsError::Parse`] — a scale is not finite and positive.
+    /// - [`UnitsError::Redefinition`] — an `lj_*` name is already defined
+    ///   (including `lj_sigma` from an earlier `define_lj_sigma`).
     pub fn define_lj_units(
         &mut self,
         mass: &Quantity,
         sigma: &Quantity,
         epsilon: &Quantity,
     ) -> Result<(), UnitsError> {
+        let sigma_def = self.lj_sigma_def(sigma)?;
+        let sigma_m = sigma_def.factor;
         let mass_kg = mass.to(&self.parse("kg")?)?.value();
-        let sigma_m = sigma.to(&self.parse("m")?)?.value();
+        let sigma_angstrom = sigma.to(&self.parse("angstrom")?)?.value();
         let epsilon_j = epsilon.to(&self.parse("J")?)?.value();
-        if !mass_kg.is_finite()
-            || !sigma_m.is_finite()
-            || !epsilon_j.is_finite()
-            || mass_kg <= 0.0
-            || sigma_m <= 0.0
-            || epsilon_j <= 0.0
-        {
+        let epsilon_kcal_mol = epsilon.to(&self.parse("kilocalorie_per_mole")?)?.value();
+        if !mass_kg.is_finite() || !epsilon_j.is_finite() || mass_kg <= 0.0 || epsilon_j <= 0.0 {
             return Err(UnitsError::Parse {
                 expr: "Lennard-Jones scales".to_string(),
-                message: "mass, sigma, and epsilon must be finite and positive".to_string(),
+                message: "mass and epsilon must be finite and positive".to_string(),
             });
         }
 
         let tau_s = (mass_kg * sigma_m * sigma_m / epsilon_j).sqrt();
         let temperature_k = epsilon_j / super::constants::BOLTZMANN;
-        for definition in [
+        let charge_c = super::constants::ELEMENTARY_CHARGE
+            * (sigma_angstrom * epsilon_kcal_mol / super::constants::COULOMB_REAL).sqrt();
+        let definitions = [
+            sigma_def,
             def(
-                "lj_sigma",
-                "lj_sigma",
+                "lj_mass",
+                "lj_mass",
                 &[],
-                sigma_m,
+                mass_kg,
                 0.0,
-                Dimension::LENGTH,
+                Dimension::MASS,
                 false,
             ),
             def(
@@ -317,7 +377,28 @@ impl UnitRegistry {
                 Dimension::TEMPERATURE,
                 false,
             ),
-        ] {
+            def(
+                "lj_charge",
+                "lj_charge",
+                &[],
+                charge_c,
+                0.0,
+                Dimension::CHARGE,
+                false,
+            ),
+        ];
+        // Refuse a clash before defining anything, so a failed call leaves
+        // the registry unchanged. Each `lj_*` def has no alias and its
+        // symbol is its name, so the name is its only index key.
+        if let Some(clash) = definitions
+            .iter()
+            .find(|d| self.index.contains_key(&d.name))
+        {
+            return Err(UnitsError::Redefinition {
+                name: clash.name.clone(),
+            });
+        }
+        for definition in definitions {
             self.define(definition)?;
         }
         Ok(())
@@ -752,5 +833,120 @@ mod tests {
         assert!(r.definitions().any(|d| d.name == "smoot"));
         // preloaded registry strictly larger than base set
         assert!(UnitRegistry::new().definitions().count() > base_count);
+    }
+
+    // ---- Reduced LJ units -------------------------------------------------
+    //
+    // Goldens hand-derived (spec assembly-02 Domain basis) for sigma = 4.2 A,
+    // m = 100 g/mol, epsilon = 1 kcal/mol, from the LAMMPS `lj` relations
+    // (docs.lammps.org/units.html): tau = sigma*sqrt(m/eps), T = eps/k_B,
+    // q = sqrt(4 pi eps0 sigma eps) = e*sqrt(sigma[A]*eps[kcal/mol]/332.06371),
+    // v = sigma/tau, p = eps/sigma^3, rho = m/sigma^3, f = eps/sigma.
+
+    fn lj_registry() -> UnitRegistry {
+        let mut r = UnitRegistry::new();
+        let mass = r.quantity(100.0, "gram_per_mole").unwrap();
+        let sigma = r.quantity(4.2, "angstrom").unwrap();
+        let epsilon = r.quantity(1.0, "kilocalorie_per_mole").unwrap();
+        r.define_lj_units(&mass, &sigma, &epsilon).unwrap();
+        r
+    }
+
+    /// Value in `target` of one reduced unit of preset dimension `dim`.
+    fn one_lj(dim: &str, target: &str) -> F {
+        let r = lj_registry();
+        let lj = crate::units::UnitPreset::lj();
+        let from = r.parse(lj.unit(dim).unwrap()).unwrap();
+        from.factor_to(&r.parse(target).unwrap()).unwrap()
+    }
+
+    fn assert_rel(got: F, want: F) {
+        let rel = ((got - want) / want).abs();
+        assert!(rel < 1e-6, "got {got}, want {want} (rel {rel:e})");
+    }
+
+    #[test]
+    fn lj_length_golden() {
+        assert_rel(1.5 * one_lj("length", "angstrom"), 6.3);
+    }
+
+    #[test]
+    fn lj_time_golden() {
+        assert_rel(one_lj("time", "femtosecond"), 2053.3049);
+    }
+
+    #[test]
+    fn lj_temperature_golden() {
+        assert_rel(one_lj("temperature", "kelvin"), 503.21953);
+    }
+
+    #[test]
+    fn lj_charge_golden() {
+        assert_rel(one_lj("charge", "elementary_charge"), 0.1124641);
+    }
+
+    #[test]
+    fn lj_velocity_golden() {
+        assert_rel(one_lj("velocity", "angstrom / femtosecond"), 2.045483e-3);
+    }
+
+    #[test]
+    fn lj_pressure_golden() {
+        assert_rel(one_lj("pressure", "atmosphere"), 925.4997);
+    }
+
+    #[test]
+    fn lj_density_golden() {
+        assert_rel(one_lj("density", "gram / centimeter ** 3"), 2.241306);
+    }
+
+    #[test]
+    fn lj_force_golden() {
+        assert_rel(
+            one_lj("force", "kilocalorie_per_mole / angstrom"),
+            0.2380952,
+        );
+    }
+
+    #[test]
+    fn lj_mass_golden() {
+        assert_rel(one_lj("mass", "gram_per_mole"), 100.0);
+    }
+
+    #[test]
+    fn define_lj_units_defines_mass_and_charge_with_their_dimensions() {
+        let r = lj_registry();
+        assert_eq!(r.parse("lj_mass").unwrap().dimension(), Dimension::MASS);
+        assert_eq!(r.parse("lj_charge").unwrap().dimension(), Dimension::CHARGE);
+    }
+
+    #[test]
+    fn define_lj_sigma_alone_defines_only_sigma() {
+        let mut r = UnitRegistry::new();
+        let sigma = r.quantity(4.2, "angstrom").unwrap();
+        r.define_lj_sigma(&sigma).unwrap();
+        let s = r.parse("lj_sigma").unwrap();
+        assert_eq!(s.dimension(), Dimension::LENGTH);
+        assert_rel(s.factor_to(&r.parse("angstrom").unwrap()).unwrap(), 4.2);
+        for absent in ["lj_mass", "lj_epsilon", "lj_tau", "lj_charge"] {
+            assert!(
+                matches!(r.parse(absent), Err(UnitsError::UnknownUnit { .. })),
+                "`{absent}` must stay unknown after define_lj_sigma"
+            );
+        }
+    }
+
+    #[test]
+    fn define_lj_units_after_define_lj_sigma_is_a_redefinition() {
+        let mut r = UnitRegistry::new();
+        let mass = r.quantity(100.0, "gram_per_mole").unwrap();
+        let sigma = r.quantity(4.2, "angstrom").unwrap();
+        let epsilon = r.quantity(1.0, "kilocalorie_per_mole").unwrap();
+        r.define_lj_sigma(&sigma).unwrap();
+        let err = r.define_lj_units(&mass, &sigma, &epsilon).unwrap_err();
+        assert!(
+            matches!(err, UnitsError::Redefinition { ref name } if name == "lj_sigma"),
+            "got {err:?}"
+        );
     }
 }

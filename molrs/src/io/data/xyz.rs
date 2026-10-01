@@ -168,7 +168,7 @@ pub fn parse_comment_line(line: &str) -> std::result::Result<XYZComment, String>
         let mut kv = HashMap::new();
         kv.insert(
             "comment".to_string(),
-            ExtValue::Primitive(Primitive::Str(original.clone())),
+            ExtValue::Primitive(Primitive::Str(original)),
         );
         return Ok(XYZComment {
             kv,
@@ -273,7 +273,7 @@ pub fn parse_comment_line(line: &str) -> std::result::Result<XYZComment, String>
     if properties.is_none() {
         kv.insert(
             "comment".to_string(),
-            ExtValue::Primitive(Primitive::Str(original.clone())),
+            ExtValue::Primitive(Primitive::Str(original)),
         );
         Ok(XYZComment {
             kv,
@@ -295,7 +295,13 @@ fn expand_property_columns(props: &[PropertySpec]) -> Vec<(String, PropType)> {
     let mut cols = Vec::new();
     for p in props {
         if p.m == 1 {
-            cols.push((p.name.clone(), p.ty));
+            // ExtXYZ `type:I` is a numeric ordinal; Frame stores those as `type_id`.
+            let name = if p.name.eq_ignore_ascii_case("type") && p.ty == PropType::I {
+                molrs::store::schema::consts::TYPE_ID.to_string()
+            } else {
+                p.name.clone()
+            };
+            cols.push((name, p.ty));
         } else {
             // Special-case: map pos:R:3 -> x,y,z (LAMMPS naming)
             if p.name.eq_ignore_ascii_case("pos") && p.ty == PropType::R && p.m == 3 {
@@ -854,7 +860,6 @@ fn meta_to_extxyz(value: &MetaValue) -> String {
         MetaValue::I64(v) => v.to_string(),
         MetaValue::U32(v) => v.to_string(),
         MetaValue::U64(v) => v.to_string(),
-        MetaValue::F32(v) => v.to_string(),
         MetaValue::F64(v) => v.to_string(),
         MetaValue::String(v) => v.clone(),
         MetaValue::Bool3(v) => joined!(v),
@@ -862,11 +867,8 @@ fn meta_to_extxyz(value: &MetaValue) -> String {
         MetaValue::I64x3(v) => joined!(v),
         MetaValue::U32x3(v) => joined!(v),
         MetaValue::U64x3(v) => joined!(v),
-        MetaValue::F32x3(v) => joined!(v),
         MetaValue::F64x3(v) => joined!(v),
-        MetaValue::F32x6(v) => joined!(v),
         MetaValue::F64x6(v) => joined!(v),
-        MetaValue::F32x9(v) => joined!(v),
         MetaValue::F64x9(v) => joined!(v),
         MetaValue::Json(v) => v.to_string(),
     };
@@ -1325,6 +1327,37 @@ mod tests {
         assert_eq!(simbox.lattice(2).to_vec(), vec![3.0, 4.0, 12.0]);
     }
 
+    /// ExtXYZ `type:I:1` is a numeric ordinal; the Frame schema stores those
+    /// in `type_id`. `type` is reserved for string labels.
+    #[test]
+    fn extxyz_integer_type_column_lands_as_type_id() {
+        let frame =
+            parse_xyz_frame_str("1\nProperties=species:S:1:pos:R:3:type:I:1\nC 0.0 0.0 0.0 3\n")
+                .expect("parse XYZ");
+        let atoms = frame.get("atoms").expect("atoms block");
+        assert_eq!(
+            atoms.get_uint("type_id").unwrap().as_slice().unwrap(),
+            &[3_u64]
+        );
+        assert!(atoms.get_string("type").is_none());
+        assert!(!atoms.contains_key("type"));
+    }
+
+    /// ExtXYZ `type:S:1` is already a label; it stays `type`.
+    #[test]
+    fn extxyz_string_type_column_stays_type() {
+        let frame =
+            parse_xyz_frame_str("1\nProperties=species:S:1:pos:R:3:type:S:1\nC 0.0 0.0 0.0 C_3\n")
+                .expect("parse XYZ");
+        let atoms = frame.get("atoms").expect("atoms block");
+        assert_eq!(
+            atoms.get_string("type").unwrap().as_slice().unwrap(),
+            &["C_3".to_string()]
+        );
+        assert!(atoms.get_uint("type_id").is_none());
+        assert!(!atoms.contains_key("type_id"));
+    }
+
     #[test]
     fn writer_lists_the_lattice_vectors_in_sequence() {
         let mut frame = parse_xyz_frame_str(
@@ -1507,6 +1540,40 @@ mod tests {
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
         frame
+    }
+
+    /// Two frames written as one trajectory read back as two frames, in
+    /// order, each with its own coordinates.
+    #[test]
+    fn write_xyz_traj_round_trips_every_frame() {
+        let first = gro_shaped_frame();
+        let mut second = gro_shaped_frame();
+        second
+            .get_mut("atoms")
+            .unwrap()
+            .insert(
+                "x",
+                ndarray::Array1::from_vec(vec![5.0, 6.0, 7.0]).into_dyn(),
+            )
+            .unwrap();
+        let mut out = Vec::new();
+        write_xyz_traj(&mut out, &[first, second]).expect("write XYZ trajectory");
+
+        let frames: Vec<Frame> = XYZReader::new(std::io::Cursor::new(out))
+            .iter()
+            .collect::<std::io::Result<_>>()
+            .expect("read XYZ trajectory");
+        assert_eq!(frames.len(), 2);
+        let x1 = frames[1].get("atoms").unwrap().get_float("x").unwrap();
+        assert_eq!(x1[[0]], 5.0);
+        assert_eq!(x1[[2]], 7.0);
+    }
+
+    #[test]
+    fn write_xyz_traj_of_no_frames_writes_nothing() {
+        let mut out = Vec::new();
+        write_xyz_traj::<_, Frame>(&mut out, &[]).expect("write nothing");
+        assert!(out.is_empty());
     }
 
     #[test]
@@ -1733,6 +1800,19 @@ impl<W: Write> FrameWriter for XYZFrameWriter<W> {
     }
 }
 
+/// Write `frames` to `writer` as one multi-frame Extended XYZ trajectory,
+/// one [`write_xyz_frame`] block after another — the inverse of
+/// [`read_xyz_traj`]. An empty slice writes nothing.
+pub fn write_xyz_traj<W: Write, FA: FrameAccess>(
+    writer: &mut W,
+    frames: &[FA],
+) -> std::io::Result<()> {
+    for frame in frames {
+        write_xyz_frame(writer, frame)?;
+    }
+    Ok(())
+}
+
 /// Write a single frame to the writer in Extended XYZ format.
 ///
 /// Accepts any type implementing [`FrameAccess`], including both [`Frame`] and
@@ -1796,11 +1876,7 @@ pub fn write_xyz_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> st
 
         let dtype_to_char = |dt: DType| -> &'static str {
             match dt {
-                DType::Float
-                | DType::Float16
-                | DType::Float32
-                | DType::Complex64
-                | DType::Complex128 => "R",
+                DType::Float | DType::Complex64 | DType::Complex128 => "R",
                 DType::Int
                 | DType::Int8
                 | DType::Int16

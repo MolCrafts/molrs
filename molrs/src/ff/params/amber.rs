@@ -17,7 +17,7 @@
 /// value to printed precision. molrs's CODATA constant `COULOMB_REAL =
 /// 332.06371` differs by a relative 3.46e-5 — a documented cross-engine
 /// offset, not an error.
-pub(crate) const AMBER_COULOMB: f64 = 332.052_217_29;
+pub const AMBER_COULOMB: f64 = 332.052_217_29;
 
 /// AMBER 1-4 Coulomb **divisor** (`SCEE`).
 ///
@@ -27,11 +27,11 @@ pub(crate) const AMBER_COULOMB: f64 = 332.052_217_29;
 /// default). A prmtop that *carries* the section never touches this fallback,
 /// so a GLYCAM file (`SCEE = 1.0`) reads correctly. Changing the GAFF role
 /// must keep the format-default role.
-pub(crate) const AMBER_SCEE: f64 = 1.2;
+pub const AMBER_SCEE: f64 = 1.2;
 
 /// AMBER 1-4 Lennard-Jones **divisor** (`SCNB`).
 ///
 /// Two roles, one number: (i) the GAFF/GAFF2 typifier force field's 1-4 LJ
 /// parameter (`lj_14 = 1 / AMBER_SCNB`); (ii) the prmtop reader's fallback
 /// when `SCNB_SCALE_FACTOR` is absent (the format's pre-Amber-11 default).
-pub(crate) const AMBER_SCNB: f64 = 2.0;
+pub const AMBER_SCNB: f64 = 2.0;

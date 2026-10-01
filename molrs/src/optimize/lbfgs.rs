@@ -1,7 +1,7 @@
 //! Limited-memory BFGS (L-BFGS) core, force-field agnostic.
 //!
 //! This is the shared minimization engine consumed both by the public
-//! geometry optimizer (`optimize::minimize` / `optimize::minimize_batch`) and by
+//! geometry optimizer (`optimize::LBFGS::minimize` / `LBFGS::minimize_batch`) and by
 //! the ETKDG conformer pipeline (via [`minimize_lbfgs_rms`]). It operates on a
 //! flat `3·n_atoms` coordinate buffer and any `(energy, forces = -grad)`
 //! evaluator, exactly the contract that `crate::ff::potential::Potential`
@@ -39,7 +39,8 @@ pub(crate) enum Converge {
     GradRms(f64),
     /// Stop when the maximum per-atom force magnitude `max_i ‖F_i‖` drops below
     /// the tolerance (kcal/mol/Å). The ASE / molpy convention used by the
-    /// public geometry optimizer.
+    /// public geometry optimizer. Only the `ff`-gated optimizers construct it.
+    #[cfg_attr(not(feature = "ff"), allow(dead_code))]
     Fmax(f64),
 }
 

@@ -25,7 +25,7 @@ use molrs::ff::potential::Member;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::spatial::periodic::{GhostError, GhostSet};
 use molrs::spatial::simbox::SimBox;
-use molrs::types::{F, FNx3, FNx3View};
+use molrs::types::{F, FNx3, FNx3View, I};
 
 use molrs::math::Virial;
 
@@ -166,7 +166,7 @@ impl Comm {
     fn reimage(
         &mut self,
         owned: FNx3View<'_>,
-        wrap_shifts: ArrayView2<'_, i64>,
+        wrap_shifts: ArrayView2<'_, I>,
     ) -> Result<(), MdError> {
         let n_owned = self.set.n_owned();
         let folded: Vec<bool> = (0..n_owned)
@@ -215,7 +215,7 @@ impl Comm {
     pub fn advance(
         &mut self,
         owned: FNx3View<'_>,
-        wrap_shifts: ArrayView2<'_, i64>,
+        wrap_shifts: ArrayView2<'_, I>,
     ) -> Result<(), MdError> {
         self.set
             .forward_comm(&self.bx, owned, wrap_shifts)
@@ -464,7 +464,7 @@ impl BondedLists {
         &mut self,
         comm: &Comm,
         owned: FNx3View<'_>,
-        wrap_shifts: ArrayView2<'_, i64>,
+        wrap_shifts: ArrayView2<'_, I>,
     ) -> Result<(), MdError> {
         let stale = self.generation != Some(comm.ghosts().generation());
         if stale {
@@ -611,7 +611,7 @@ mod remap_tests {
     fn resolve_one(pot: Member, owned: FNx3View<'_>, comm: &Comm) -> Result<Array2<u32>, MdError> {
         let members = vec![pot];
         let mut lists = BondedLists::new(&members);
-        let no_fold = Array2::<i64>::zeros((owned.nrows(), 3));
+        let no_fold = Array2::<I>::zeros((owned.nrows(), 3));
         lists.refresh(comm, owned, no_fold.view())?;
         Ok(lists
             .current(0)
@@ -663,7 +663,7 @@ mod remap_tests {
     fn a_crossing_bond_is_rewritten_to_its_closest_copy() {
         let bx = SimBox::cube(10.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         let owned = array![[9.5_f64, 5.0, 5.0], [0.5, 5.0, 5.0]];
-        let comm = Comm::new(bx.clone(), owned.view(), 2.0, 0.0).unwrap();
+        let comm = Comm::new(bx, owned.view(), 2.0, 0.0).unwrap();
 
         let pot = BondHarmonic::new(vec![0], vec![1], vec![100.0], vec![1.0]);
         let terms = resolve_one(Member::indexed(pot), owned.view(), &comm).unwrap();
@@ -692,7 +692,7 @@ mod remap_tests {
         let bx = SimBox::cube(10.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         // Vertex just inside the low face; the arms straddle it.
         let owned = array![[9.3_f64, 5.0, 5.0], [0.2, 5.0, 5.0], [1.2, 5.0, 5.0]];
-        let comm = Comm::new(bx.clone(), owned.view(), 3.0, 0.0).unwrap();
+        let comm = Comm::new(bx, owned.view(), 3.0, 0.0).unwrap();
 
         let pot = AngleHarmonic::new(vec![0], vec![1], vec![2], vec![50.0], vec![2.9]);
         let terms = resolve_one(Member::indexed(pot), owned.view(), &comm).unwrap();
@@ -744,7 +744,7 @@ mod remap_tests {
         let members: Vec<Member> = vec![Member::plain(molrs::ff::potential::Potentials::new())];
         let mut lists = BondedLists::new(&members);
         assert_eq!(lists.bound(), 0, "an aggregate keeps no atom indices");
-        let no_fold = Array2::<i64>::zeros((owned.nrows(), 3));
+        let no_fold = Array2::<I>::zeros((owned.nrows(), 3));
         lists.refresh(&comm, owned.view(), no_fold.view()).unwrap();
         assert!(lists.current(0).is_none());
     }
@@ -753,7 +753,8 @@ mod remap_tests {
 #[cfg(test)]
 mod owned_potential_tests {
     use super::*;
-    use molrs::ff::forcefield::ForceField;
+    use molrs::ff::forcefield::{ForceField, Params};
+    use molrs::ff::potential::PotentialCompiler;
     use molrs::spatial::simbox::SimBox;
     use molrs::store::block::Block;
     use molrs::store::frame::Frame;
@@ -808,14 +809,24 @@ mod owned_potential_tests {
         // length, so a correctly-resolved bond has zero energy and a
         // mis-resolved one does not.
         let mut field = ForceField::new("probe");
-        let bs = field.def_bondstyle("harmonic");
-        bs.def_bondtype("a", "a", &[("k", 100.0), ("r0", 1.0)]);
+        field
+            .def_style("bond", "harmonic", Params::new())
+            .unwrap()
+            .def_type(
+                "a-a",
+                &["a", "a"],
+                Params::from_pairs(&[("k", 100.0), ("r0", 1.0)]),
+            )
+            .unwrap();
 
         // A small skin, so drifting forces several rebuilds over the run.
         let mut comm = Comm::new(bx.clone(), owned.view(), 3.0, 0.2).unwrap();
         // The force field compiles once, here. Nothing below names it again:
         // what MD carries forward is the kernels and their index lists.
-        let members = field.to_potentials(&frame).unwrap().into_members();
+        let members = PotentialCompiler::new(&field)
+            .compile(&frame)
+            .unwrap()
+            .into_members();
         let mut lists = BondedLists::new(&members);
 
         let mut seen_rebuild = false;
@@ -907,11 +918,21 @@ mod owned_potential_tests {
         frame.insert("atoms", atoms);
 
         let mut field = ForceField::new("probe");
-        let bs = field.def_bondstyle("harmonic");
-        bs.def_bondtype("a", "a", &[("k", 100.0), ("r0", 1.0)]);
+        field
+            .def_style("bond", "harmonic", Params::new())
+            .unwrap()
+            .def_type(
+                "a-a",
+                &["a", "a"],
+                Params::from_pairs(&[("k", 100.0), ("r0", 1.0)]),
+            )
+            .unwrap();
 
         let mut comm = Comm::new(bx.clone(), owned.view(), 3.0, 0.2).unwrap();
-        let members = field.to_potentials(&frame).unwrap().into_members();
+        let members = PotentialCompiler::new(&field)
+            .compile(&frame)
+            .unwrap()
+            .into_members();
         let mut lists = BondedLists::new(&members);
 
         let mut generations: Vec<u64> = vec![comm.ghosts().generation()];

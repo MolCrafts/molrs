@@ -14,6 +14,7 @@
 //! - Rycroft, *Chaos* **2009**, 19, 041111 (voro++ cell-by-cell algorithm).
 //! - Aurenhammer, *SIAM J. Comput.* **1987**, 16, 78 (power diagrams).
 
+use crate::op::vec3::{cross, dot, norm, sub};
 use molrs::types::F;
 
 /// One bounding face of a cell: its area and the index of the neighbour cell
@@ -69,26 +70,6 @@ impl VoronoiCells {
         v.dedup();
         v
     }
-}
-
-fn dot(a: [F; 3], b: [F; 3]) -> F {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-
-fn cross(a: [F; 3], b: [F; 3]) -> [F; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
-
-fn sub(a: [F; 3], b: [F; 3]) -> [F; 3] {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-
-fn norm(a: [F; 3]) -> F {
-    dot(a, a).sqrt()
 }
 
 /// A convex polyhedron as vertices + outward-oriented face loops (vertex

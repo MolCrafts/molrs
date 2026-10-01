@@ -21,6 +21,7 @@
 //! DOI 10.1016/0301-0104(81)85176-2; as emitted by the paduagroup/clandpol
 //! polarizer (LAMMPS `pair_style thole`).
 
+use molrs::store::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
@@ -307,20 +308,20 @@ pub fn pair_thole_ctor(
     frame: &Frame,
 ) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
-    // `Style::to_potential` projects the force field's `special_bonds` 1-4
+    // `PotentialCompiler::compile` projects the force field's `special_bonds` 1-4
     // weight here. The energy is linear in the charge product, so scaling it
     // is exactly scaling the pair.
     let scale_14 = style_params.get("coulomb14scale").unwrap_or(1.0) as F;
 
     let atoms = frame
-        .get("atoms")
+        .get(ATOMS)
         .ok_or_else(|| "PairThole: frame missing \"atoms\" block".to_string())?;
     let atom_types = atoms
         .get_string("type")
         .ok_or_else(|| "PairThole: atoms block missing \"type\" column".to_string())?;
 
     let block = frame
-        .get("pairs")
+        .get(PAIRS)
         .ok_or_else(|| "PairThole: frame missing \"pairs\" block".to_string())?;
     let i_col = block
         .get_uint("atomi")

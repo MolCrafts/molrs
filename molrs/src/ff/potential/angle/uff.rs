@@ -3,12 +3,14 @@
 //! Per-instance columns: `ka`, `order` (0–4), and for `order==0` the Fourier
 //! coefficients `c0`/`c1`/`c2` derived from θ₀.
 
+use molrs::store::schema::block_names::ANGLES;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
 use crate::ff::potential::angle::accumulate_angle_forces;
-use crate::ff::potential::geometry::{dot3, mag3, sub3, term_table, validate_coords};
+use crate::ff::potential::geometry::{sub3, term_table, validate_coords};
 use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::op::vec3::{dot, norm};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -43,12 +45,12 @@ impl UffAngle {
             let (i, j, k) = atoms(idx);
             let rji = sub3(coords, i, coords, j);
             let rjk = sub3(coords, k, coords, j);
-            let d1 = mag3(rji);
-            let d2 = mag3(rjk);
+            let d1 = norm(rji);
+            let d2 = norm(rjk);
             if d1 < 1e-12 as F || d2 < 1e-12 as F {
                 continue;
             }
-            let cos_t = (dot3(rji, rjk) / (d1 * d2)).clamp(-1.0, 1.0);
+            let cos_t = (dot(rji, rjk) / (d1 * d2)).clamp(-1.0, 1.0);
             let sin_sq = (1.0 - cos_t * cos_t).max(0.0);
             let sin_t = sin_sq.sqrt().max(1e-8 as F);
             let cos2 = cos_t * cos_t - sin_sq;
@@ -139,7 +141,7 @@ pub fn uff_angle_ctor(
     frame: &Frame,
 ) -> Result<Member, String> {
     let block = frame
-        .get("angles")
+        .get(ANGLES)
         .ok_or("uff_angle: missing \"angles\" block")?;
     let i = block.get_uint("atomi").ok_or("uff_angle: missing atomi")?;
     let j = block.get_uint("atomj").ok_or("uff_angle: missing atomj")?;

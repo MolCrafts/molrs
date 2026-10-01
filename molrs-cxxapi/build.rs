@@ -27,7 +27,6 @@ __MOLRS_ELEMENT_VARIANTS__    }
         I64,
         U32,
         U64,
-        F32,
         F64,
         String,
         Bool3,
@@ -35,11 +34,8 @@ __MOLRS_ELEMENT_VARIANTS__    }
         I64x3,
         U32x3,
         U64x3,
-        F32x3,
         F64x3,
-        F32x6,
         F64x6,
-        F32x9,
         F64x9,
     }
 
@@ -52,7 +48,6 @@ __MOLRS_ELEMENT_VARIANTS__    }
         i64_value: i64,
         u32_value: u32,
         u64_value: u64,
-        f32_value: f32,
         f64_value: f64,
         string_value: String,
         bool_values: Vec<u8>,
@@ -60,16 +55,13 @@ __MOLRS_ELEMENT_VARIANTS__    }
         i64_values: Vec<i64>,
         u32_values: Vec<u32>,
         u64_values: Vec<u64>,
-        f32_values: Vec<f32>,
         f64_values: Vec<f64>,
     }
 
     extern "Rust" {
         // ── Exact consumer contract ───────────────────────────────
-        // Version changes whenever an existing declaration, semantic dtype,
-        // or ownership rule changes incompatibly. Capabilities let consumers
-        // fail loudly when a required surface was compiled out or omitted.
-        fn cxx_api_version() -> u32;
+        // Capabilities let consumers fail loudly when a required surface was
+        // compiled out or omitted.
         fn cxx_api_capabilities() -> u64;
 
         // ── Frame bridge (molrs.Frame via molrs-ffi FrameRef) ─────
@@ -100,7 +92,6 @@ __MOLRS_ELEMENT_VARIANTS__    }
         fn region_contains(rref: &RegionRef, points: &[f64]) -> Vec<u8>;
         fn region_bounds(rref: &RegionRef) -> Vec<f64>;
 
-        fn frame_schema_version() -> u32;
         fn frame_new() -> Box<FrameRef>;
 
         // Cross-extension ingress: rebuild a bridge handle from the raw
@@ -401,16 +392,6 @@ fn cxx_element_variants(element_source: &str) -> String {
 fn main() {
     // molcrafts-molrs hardcodes F = f64.  No precision substitution needed.
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
-    let api_version_path = manifest_dir.join("CXX_API_VERSION");
-    let api_version_source = std::fs::read_to_string(&api_version_path)
-        .unwrap_or_else(|err| panic!("read {}: {err}", api_version_path.display()));
-    let api_version: u32 = api_version_source.trim().parse().unwrap_or_else(|_| {
-        panic!(
-            "{} must contain one unsigned decimal CXX API version",
-            api_version_path.display()
-        )
-    });
-    assert!(api_version > 0, "CXX API version zero is reserved");
     let element_path = manifest_dir
         .join("..")
         .join("molrs")
@@ -432,11 +413,6 @@ fn main() {
     );
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
-    std::fs::write(
-        out_dir.join("cxx_api_version.rs"),
-        format!("const MOLRS_CXX_API_VERSION: u32 = {api_version};\n"),
-    )
-    .unwrap();
     let bridge_path = out_dir.join("bridge.rs");
     std::fs::write(&bridge_path, &bridge_src).unwrap();
 
@@ -449,6 +425,5 @@ fn main() {
         .compile("molrs_cxxapi");
 
     println!("cargo::rerun-if-changed=build.rs");
-    println!("cargo::rerun-if-changed={}", api_version_path.display());
     println!("cargo::rerun-if-changed={}", element_path.display());
 }

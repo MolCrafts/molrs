@@ -4,8 +4,8 @@
 //! constructor declares the generation parameters and [`PyConformer::generate`]
 //! runs the pipeline, returning `(mol_3d, report)`.
 //!
-//! The pipeline takes an [`PyAtomistic`] molecular graph and produces realistic
-//! 3D coordinates through a multi-stage ETKDGv3 process:
+//! The pipeline takes a [`PyAtomistic`] molecular graph (ports included) and
+//! produces realistic 3D coordinates through a multi-stage ETKDGv3 process:
 //!
 //! 1. **Preprocess** -- add hydrogens and perceive molecular features.
 //! 2. **Build initial** -- ETKDGv3 distance-geometry embedding.
@@ -17,9 +17,10 @@
 //!
 //! - Riniker, S.; Landrum, G.A. (2015). J. Chem. Inf. Model. 55, 2562-2574.
 
+use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 
-use molrs::conformer::{Conformer, ConformerOptions, ConformerSpeed, StageKind};
+use molrs::conformer::{Conformer, ConformerOptions, ConformerReport, ConformerSpeed, StageKind};
 
 use crate::core::system::molgraph::PyAtomistic;
 use crate::helpers::molrs_error_to_pyerr;
@@ -32,6 +33,30 @@ fn stage_kind_name(kind: StageKind) -> &'static str {
         StageKind::CoarseOptimize => "coarse_optimize",
         StageKind::FinalOptimize => "final_optimize",
         StageKind::StereoCheck => "stereo_check",
+    }
+}
+
+/// Project a core [`ConformerReport`] onto its Python shape.
+///
+/// Both `generate` arms reach this, which is why it is a function rather than
+/// an inline block: the per-stage mapping is one fact and is written once.
+fn report_to_py(report: ConformerReport) -> PyConformerReport {
+    let stages = report
+        .stages
+        .iter()
+        .map(|s| PyConformerStageReport {
+            stage: stage_kind_name(s.stage).to_string(),
+            energy_before: s.energy_before,
+            energy_after: s.energy_after,
+            steps: s.steps,
+            converged: s.converged,
+            elapsed_ms: s.elapsed_ms,
+        })
+        .collect();
+    PyConformerReport {
+        final_energy: report.final_energy,
+        warnings: report.warnings,
+        stages_inner: stages,
     }
 }
 
@@ -217,61 +242,62 @@ impl PyConformer {
     /// Generate 3D coordinates for a molecular graph.
     ///
     /// Runs the full distance-geometry + optimization pipeline. The input
-    /// molecule is not modified.
+    /// molecule is not modified; the result is an :class:`~molrs.Atomistic`
+    /// that keeps the input's ports and its ``frag_id`` labels.
     ///
     /// Parameters
     /// ----------
     /// mol : Atomistic
-    ///     Input molecular graph (heavy atoms and bonds).
+    ///     Input molecular graph (heavy atoms and bonds); its ``ports`` are
+    ///     carried across unchanged.
     ///
     /// Returns
     /// -------
     /// tuple[Atomistic, ConformerReport]
-    ///     The molecule with generated 3D coordinates and a per-stage report.
+    ///     The molecule with generated 3D coordinates — positions in ångström
+    ///     (Å) — and a per-stage report.
     ///
     /// Raises
     /// ------
+    /// TypeError
+    ///     If `mol` is not an ``Atomistic``.
     /// ValueError
     ///     If the molecular graph is invalid (e.g. missing element symbols).
     ///
     /// Examples
     /// --------
-    /// >>> mol = parse_smiles("CCO").to_atomistic()
+    /// >>> mol = molrs.io.SmilesIR("CCO").to_atomistic()
     /// >>> mol_3d, report = Conformer(speed="fast", seed=42).generate(mol)
     /// >>> mol_3d.n_atoms   # includes added hydrogens
     /// 9
+    ///
+    /// Hydrogens this pipeline adds to a ported unit carry no ``frag_id``;
+    /// the caller relabels them, which is one call:
+    ///
+    /// >>> unit = molrs.io.SmilesIR.from_fragment("[$]CO").to_template()
+    /// >>> unit_3d, _ = Conformer(speed="fast", seed=42).generate(unit)
+    /// >>> _ = unit_3d.inherit_frag_ids()
     fn generate(
         &self,
         py: Python<'_>,
-        mol: &PyAtomistic,
-    ) -> PyResult<(Py<PyAtomistic>, PyConformerReport)> {
-        let (result_mol, report) = self
-            .inner
-            .generate(mol.core())
-            .map_err(molrs_error_to_pyerr)?;
-
-        let stages: Vec<PyConformerStageReport> = report
-            .stages
-            .iter()
-            .map(|s| PyConformerStageReport {
-                stage: stage_kind_name(s.stage).to_string(),
-                energy_before: s.energy_before,
-                energy_after: s.energy_after,
-                steps: s.steps,
-                converged: s.converged,
-                elapsed_ms: s.elapsed_ms,
-            })
-            .collect();
-
-        let py_report = PyConformerReport {
-            final_energy: report.final_energy,
-            warnings: report.warnings,
-            stages_inner: stages,
-        };
-
-        let py_mol = PyAtomistic::from_core(py, result_mol)?;
-
-        Ok((py_mol, py_report))
+        mol: &Bound<'_, PyAny>,
+    ) -> PyResult<(Py<PyAny>, PyConformerReport)> {
+        // Leaf-first, exactly as the geometry systems dispatch: a leaf must
+        // resolve to its own core value, never to the empty base it carries.
+        if let Ok(leaf) = mol.cast::<PyAtomistic>() {
+            let (out, report) = self
+                .inner
+                .generate(leaf.borrow().core())
+                .map_err(molrs_error_to_pyerr)?;
+            return Ok((
+                leaf.borrow().derive(py, out)?.into_any(),
+                report_to_py(report),
+            ));
+        }
+        Err(PyTypeError::new_err(format!(
+            "Conformer.generate expects an Atomistic, got {}",
+            mol.get_type().name()?
+        )))
     }
 
     fn __repr__(&self) -> String {

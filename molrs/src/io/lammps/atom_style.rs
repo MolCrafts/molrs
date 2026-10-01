@@ -7,6 +7,8 @@
 //! Each style is a sequence of [`DataField`]s; optional trailing image flags
 //! (`nx ny nz`) are handled separately by the parser.
 
+pub(crate) use molrs::store::type_labels::is_int_token;
+
 /// One column in a data-file Atoms line (excluding optional image flags).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DataField {
@@ -406,15 +408,6 @@ pub(crate) fn layout_from_column_count(n: usize) -> std::io::Result<AtomStyleLay
              hint such as `Atoms # angle`)"
         ))),
     }
-}
-
-/// True if `token` looks like a signed integer (image flag / mol / type).
-pub(crate) fn is_int_token(token: &str) -> bool {
-    !token.is_empty()
-        && token
-            .bytes()
-            .enumerate()
-            .all(|(i, b)| b.is_ascii_digit() || (i == 0 && (b == b'+' || b == b'-')))
 }
 
 /// True if the token looks like a non-integer float (charge disambiguation).

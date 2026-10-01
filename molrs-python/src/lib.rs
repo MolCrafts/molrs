@@ -2,34 +2,45 @@
 //!
 //! This crate provides PyO3-based Python bindings (`import molrs`) exposing
 //! the core data model, I/O, neighbor search, force-field evaluation,
-//! 3D coordinate generation, molecular packing, and analysis routines.
+//! 3D coordinate generation, and analysis routines.
 //!
 //! # Module Layout
 //!
-//! | Python class         | Rust wrapper      | Purpose                                    |
-//! |----------------------|-------------------|--------------------------------------------|
-//! | `Block`              | [`PyBlock`]       | Heterogeneous column store (numpy arrays)  |
-//! | `Frame`              | [`PyFrame`]       | Collection of named `Block`s + `SimBox`    |
-//! | `Box`                | [`PyBox`]         | Simulation box / periodic boundaries       |
-//! | `NeighborList`       | [`PyNeighborList`]| Neighbor-search engine (build / update)    |
-//! | `Neighbors`          | [`PyNeighbors`]   | Materialized pair table (read-only columns)|
-//! | `NeighborQuery`      | [`PyNeighborQuery`]| Cross-query against a reference point set |
-//! | `Atomistic`          | [`PyAtomistic`]   | All-atom molecular graph                   |
-//! | `Perceive`           | [`PyPerceive`]    | Chemical perception (graph in / graph out) |
-//! | `MMFF94Typifier`     | [`PyMMFF94Typifier`]| MMFF94 atom-type assignment              |
-//! | `MMFF94STypifier`    | [`PyMMFF94STypifier`]| MMFF94s (static) atom-type assignment   |
-//! | `OPLSAATypifier`     | [`PyOPLSAATypifier`]| OPLS-AA atom-type + bonded assignment    |
-//! | `AtdTypifier`        | [`PyAtdTypifier`] | antechamber atom types (7 `-at` tables)    |
-//! | `BccModel`           | [`PyBccModel`]    | AM1-BCC / ABCG2 bond-charge corrections    |
-//! | `MullikenModel`      | [`PyMullikenModel`]| QM Mulliken charges, unchanged            |
-//! | `GasteigerModel`     | [`PyGasteigerModel`]| Gasteiger / PEOE charges (no QM input)   |
-//! | `Potentials`         | [`PyPotentials`]  | Compiled energy/force evaluator            |
-//! | `RDF` / `MSD` / `Cluster` |              | Structural analysis                        |
+//! | Python class              | Rust wrapper        | Purpose                                     |
+//! |---------------------------|---------------------|---------------------------------------------|
+//! | `Block`                   | `PyBlock`           | Heterogeneous column store (numpy arrays)   |
+//! | `Frame`                   | `PyFrame`           | Collection of named `Block`s + `SimBox`     |
+//! | `Box`                     | `PyBox`             | Simulation box / periodic boundaries        |
+//! | `Trace`                   | `PyTrace`           | Ordered path of 3D points (no chemistry)    |
+//! | `NeighborList`            | `PyNeighborList`    | Neighbor-search engine (build / update)     |
+//! | `Neighbors`               | `PyNeighbors`       | Materialized pair table (read-only columns) |
+//! | `NeighborQuery`           | `PyNeighborQuery`   | Cross-query against a reference point set   |
+//! | `Atomistic`               | `PyAtomistic`       | All-atom molecular graph                    |
+//! | `Perceive`                | `PyPerceive`        | Chemical perception (graph in / graph out)  |
+//! | `SubgraphMatcher`         | `PySubgraphMatcher` | Bead-pattern occurrences in a CoarseGrain   |
+//! | `Coarsener`               | `PyCoarsener`       | Node groups → sites of a new CoarseGrain    |
+//! | `Typifier`                | `PyTypifier`        | Typifier base: `match` hook, owned output   |
+//! | `Match`                   | `PyMatch`           | What a typifier's `match` assigns           |
+//! | `MMFF94Typifier`          | `PyMMFF94Typifier`  | MMFF94 atom-type assignment                 |
+//! | `MMFF94STypifier`         | `PyMMFF94STypifier` | MMFF94s (static) atom-type assignment       |
+//! | `OPLSAATypifier`          | `PyOPLSAATypifier`  | OPLS-AA atom-type + bonded assignment       |
+//! | `AtdTypifier`             | `PyAtdTypifier`     | antechamber atom types (7 `-at` tables)     |
+//! | `ElementTypifier`         | `PyElementTypifier` | Element-symbol type labels, no force field  |
+//! | `BccModel`                | `PyBccModel`        | AM1-BCC / ABCG2 bond-charge corrections     |
+//! | `MullikenModel`           | `PyMullikenModel`   | QM Mulliken charges, unchanged              |
+//! | `GasteigerModel`          | `PyGasteigerModel`  | Gasteiger / PEOE charges (no QM input)      |
+//! | `SitePlacer`              | `PySitePlacer`      | Centre of mass of each copy on its site     |
+//! | `GrowthPlacer`            | `PyGrowthPlacer`    | Each copy grown onto its parent's port      |
+//! | `AxisOrienter`            | `PyAxisOrienter`    | Template frame onto site axis + bonds       |
+//! | `Assembler`               | `PyAssembler`       | Site graph → one placed, linked world       |
+//! | `PotentialCompiler`       | `PyPotentialCompiler` | ForceField → Potentials / TypedPotentials |
+//! | `Potentials`              | `PyPotentials`      | Compiled energy/force evaluator             |
+//! | `RDF` / `MSD` / `Cluster` |                     | Structural analysis                         |
 //!
 //! # Float Precision
 //!
-//! By default all floating-point arrays use `f32` (numpy `float32`).
-//! Enable the `f64` feature for double precision (`float64`).
+//! Every floating-point array crosses as `f64` (numpy `float64`): molrs fixes
+//! `F = f64`, and there is no precision feature.
 
 use pyo3::prelude::*;
 
@@ -43,7 +54,10 @@ mod store;
 // compute/, ff/, conformer/, signal/.
 mod builder;
 mod core;
-use crate::builder::{PyCarbonTubeBuilder, PyGrapheneBuilder};
+use crate::builder::{
+    PyAssembler, PyAxisOrienter, PyCarbonTubeBuilder, PyGrapheneBuilder, PyGrowthPlacer,
+    PySitePlacer,
+};
 use crate::core::spatial::mesh::PyTriMesh;
 use crate::core::spatial::neighborlist::{
     PyNeighborList, PyNeighborQuery, PyNeighbors, PyVerletSkin,
@@ -53,22 +67,28 @@ use crate::core::spatial::region::{
     PySphere, PySphereUnion,
 };
 use crate::core::spatial::simbox::PyBox;
+use crate::core::spatial::trace::PyTrace;
 use crate::core::store::block::PyBlock;
-use crate::core::store::frame::{PyFrame, PyFrameMeta, PyMetaValue};
+use crate::core::store::frame::{PyFrame, PyFrameMeta, PyMetaDocument, PyMetaValue};
 use crate::core::store::trajectory::{PyScalarObservable, PyTrajectory, PyVectorObservable};
 use crate::core::system::element::PyElement;
+use crate::core::system::molgraph::PyRingInfo;
 use crate::core::system::molgraph::{
     PyAtomistic, PyCoarseGrain, PyExtractedSubgraph, PyGraph, PyReaction, PySmartsMatch,
     PySmartsPattern,
 };
-use crate::core::system::molgraph::{PyRingInfo, align_direction, rotate, scale, translate};
+use crate::core::system::topology::PyTopology;
+use crate::core::system::views::{
+    PyAngle, PyAtom, PyBead, PyBond, PyCGBond, PyDihedral, PyDrudeParticle, PyImproper,
+    PyMasslessSite, PyNodeRef, PyPort, PyRefs, PyRelationBuckets, PyRelationRef, PyVirtualSite,
+};
 use crate::core::units::{PyQuantity, PyUnit, PyUnitPreset, PyUnitRegistry};
 
 mod io;
 
 // Chemical perception: one layer above `core`, mirroring `molrs::perceive`.
 mod perceive;
-use crate::perceive::PyPerceive;
+use crate::perceive::{PyCoarsener, PyPerceive, PySubgraphMatcher};
 
 mod conformer;
 use conformer::{PyConformer, PyConformerReport, PyConformerStageReport};
@@ -77,8 +97,9 @@ mod ff;
 use ff::atd::PyAtdTypifier;
 use ff::charge::{PyBccModel, PyGasteigerModel, PyMullikenModel};
 use ff::{
-    PyForceField, PyLBFGS, PyMMFF94STypifier, PyMMFF94Typifier, PyOPLSAATypifier, PyOptReport,
-    PyPotentials, PyTypedPotentials, PyTypifier,
+    PyElementTypifier, PyForceField, PyLBFGS, PyMMFF94STypifier, PyMMFF94Typifier, PyMatch,
+    PyOPLSAATypifier, PyOptReport, PyPotentialCompiler, PyPotentials, PyTypedPotentials,
+    PyTypifier,
 };
 
 mod compute;
@@ -90,6 +111,7 @@ use compute::{
 };
 
 mod md;
+mod op;
 mod signal;
 
 // Live Frame streaming (`molrs::stream`). `ControlCommand` is portable;
@@ -151,16 +173,14 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.py().get_type::<error::BlockDtypeError>(),
     )?;
     m.add("UnitsError", m.py().get_type::<error::UnitsError>())?;
+    m.add("SmilesError", m.py().get_type::<error::SmilesError>())?;
 
     // Block + Frame
     m.add_class::<PyBlock>()?;
     m.add_class::<PyMetaValue>()?;
+    m.add_class::<PyMetaDocument>()?;
     m.add_class::<PyFrameMeta>()?;
     m.add_class::<PyFrame>()?;
-    m.add(
-        "FRAME_SCHEMA_VERSION",
-        ::molrs::store::frame::FRAME_SCHEMA_VERSION,
-    )?;
 
     // Live Frame streaming
     m.add_class::<PyControlCommand>()?;
@@ -184,20 +204,21 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(io::read_xyz, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_xyz_trajectory, m)?)?;
     m.add_class::<io::PyXYZTrajReader>()?;
-    m.add_function(wrap_pyfunction!(io::read_lammps, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_lammps_data, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_stl, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_lammps_traj, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_lammps_trajectory, m)?)?;
     m.add_class::<io::PyLAMMPSTrajReader>()?;
-    m.add_function(wrap_pyfunction!(io::read_dcd, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_dcd_trajectory, m)?)?;
     m.add_class::<io::PyDcdTrajReader>()?;
-    m.add_function(wrap_pyfunction!(io::read_trr, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_trr_trajectory, m)?)?;
     m.add_class::<io::PyTrrTrajReader>()?;
-    m.add_function(wrap_pyfunction!(io::read_xtc, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_xtc_trajectory, m)?)?;
     m.add_class::<io::PyXtcTrajReader>()?;
     m.add_function(wrap_pyfunction!(io::read_gro, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_chgcar_file, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_cube_file, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_cube_file, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_gro_trajectory, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_chgcar, m)?)?;
+    m.add_function(wrap_pyfunction!(io::read_cube, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_cube, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_mol2, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_mol2, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_top, m)?)?;
@@ -243,34 +264,45 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     }
     // Writers
     m.add_function(wrap_pyfunction!(io::write_gro, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_gro_trajectory, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_pdb, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_pdb_trajectory, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_xyz, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_lammps, m)?)?;
-    m.add_function(wrap_pyfunction!(io::lammps_type_ids_from_frame, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_lammps_traj, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_xyz_trajectory, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_lammps_data, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_lammps_trajectory, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_lammps_dump_local, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_dcd, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_trr, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_xtc, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_dcd_trajectory, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_trr_trajectory, m)?)?;
+    m.add_function(wrap_pyfunction!(io::write_xtc_trajectory, m)?)?;
     // SMILES
     m.add_class::<io::PySmilesIR>()?;
     m.add_function(wrap_pyfunction!(io::write_smiles_from_atomistic, m)?)?;
     m.add_function(wrap_pyfunction!(io::write_smarts, m)?)?;
 
+    // CGsmiles. One front door (`CGSmilesIR`) plus the read-only records it
+    // hands out; no reader class and no free parse function.
+    m.add_class::<io::cgsmiles::PyCGSmilesIR>()?;
+    m.add_class::<io::cgsmiles::PyCGGraph>()?;
+    m.add_class::<io::cgsmiles::PyCGNode>()?;
+    m.add_class::<io::cgsmiles::PyCGEdge>()?;
+    m.add_class::<io::cgsmiles::PyCGFragmentDef>()?;
+    m.add_class::<io::cgsmiles::PyResolvedPair>()?;
+    m.add_class::<io::cgsmiles::PyPairEnd>()?;
+    m.add_class::<io::cgsmiles::PyBondingDescriptor>()?;
+
     // Scientific-record (*.mrec) path doors. Native-only (filesystem store).
-    // Class is MrecTrajectoryReader on _lib so it does not collide with the
-    // dump concatenator; python/molrs/io/mrec.py aliases it TrajectoryReader.
+    // The classes are `molrs.io.mrec`'s; python/molrs/io/mrec re-exports them.
     #[cfg(feature = "fs")]
     {
-        m.add_function(wrap_pyfunction!(io::mrec::read_frame, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::write_frame, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::read_system, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::write_system, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::read_trajectory, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::write_trajectory, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::read_meta, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::section_names, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::read_mrec, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::write_mrec, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::read_mrec_system, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::write_mrec_system, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::read_mrec_trajectory, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::write_mrec_trajectory, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::read_mrec_meta, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::mrec_sections, m)?)?;
         m.add_function(wrap_pyfunction!(io::mrec::pack, m)?)?;
         m.add_function(wrap_pyfunction!(io::mrec::mrec_validate_path, m)?)?;
         m.add_function(wrap_pyfunction!(io::mrec::mrec_validate_meta, m)?)?;
@@ -305,11 +337,31 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySphereUnion>()?;
     m.add_class::<PyRegion>()?;
 
+    // An ordered path of points (the sites of one chain)
+    m.add_class::<PyTrace>()?;
+
     // Molecular graph hierarchy (base before subclasses)
     m.add_class::<PyElement>()?;
+    m.add_class::<PyTopology>()?;
     m.add_class::<PyGraph>()?;
     m.add_class::<PyAtomistic>()?;
     m.add_class::<PyCoarseGrain>()?;
+    // Live views over the leaves (base before subclasses)
+    m.add_class::<PyNodeRef>()?;
+    m.add_class::<PyAtom>()?;
+    m.add_class::<PyVirtualSite>()?;
+    m.add_class::<PyDrudeParticle>()?;
+    m.add_class::<PyMasslessSite>()?;
+    m.add_class::<PyBead>()?;
+    m.add_class::<PyRelationRef>()?;
+    m.add_class::<PyBond>()?;
+    m.add_class::<PyAngle>()?;
+    m.add_class::<PyDihedral>()?;
+    m.add_class::<PyImproper>()?;
+    m.add_class::<PyPort>()?;
+    m.add_class::<PyCGBond>()?;
+    m.add_class::<PyRefs>()?;
+    m.add_class::<PyRelationBuckets>()?;
     m.add_class::<PyExtractedSubgraph>()?;
     m.add_class::<PySmartsMatch>()?;
     m.add_class::<PySmartsPattern>()?;
@@ -319,15 +371,19 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCarbonTubeBuilder>()?;
     m.add_class::<PyGrapheneBuilder>()?;
 
-    // Systems = module-level free functions (no algorithm methods on the classes)
-    m.add_function(wrap_pyfunction!(translate, m)?)?;
-    m.add_function(wrap_pyfunction!(rotate, m)?)?;
-    m.add_function(wrap_pyfunction!(scale, m)?)?;
-    m.add_function(wrap_pyfunction!(align_direction, m)?)?;
+    // Site-graph assembly: place and link one world graph
+    m.add_class::<PySitePlacer>()?;
+    m.add_class::<PyGrowthPlacer>()?;
+    m.add_class::<PyAxisOrienter>()?;
+    m.add_class::<PyAssembler>()?;
+
+    // translate / rotate / scale are methods on Atomistic and CoarseGrain.
 
     // Chemical perception, as a builder: graph in / graph out, non-mutating.
     m.add_class::<PyPerceive>()?;
     m.add_class::<PyRingInfo>()?;
+    m.add_class::<PySubgraphMatcher>()?;
+    m.add_class::<PyCoarsener>()?;
 
     // Field-name convention (`molrs.keys.X`, `molrs.keys.ELEMENT`, …)
     schema::register_keys(m)?;
@@ -340,12 +396,29 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Force field
     m.add_class::<PyForceField>()?;
+    m.add_class::<ff::handles::PyStyle>()?;
+    m.add_class::<ff::handles::PyAtomStyle>()?;
+    m.add_class::<ff::handles::PyBondStyle>()?;
+    m.add_class::<ff::handles::PyAngleStyle>()?;
+    m.add_class::<ff::handles::PyDihedralStyle>()?;
+    m.add_class::<ff::handles::PyImproperStyle>()?;
+    m.add_class::<ff::handles::PyPairStyle>()?;
+    m.add_class::<ff::handles::PyFfType>()?;
+    m.add_class::<ff::handles::PyAtomType>()?;
+    m.add_class::<ff::handles::PyBondType>()?;
+    m.add_class::<ff::handles::PyAngleType>()?;
+    m.add_class::<ff::handles::PyDihedralType>()?;
+    m.add_class::<ff::handles::PyImproperType>()?;
+    m.add_class::<ff::handles::PyPairType>()?;
     m.add_class::<ff::PyFragmentScaling>()?;
     m.add_class::<PyTypifier>()?;
+    m.add_class::<PyMatch>()?;
     m.add_class::<PyMMFF94Typifier>()?;
     m.add_class::<PyMMFF94STypifier>()?;
     m.add_class::<PyOPLSAATypifier>()?;
     m.add_class::<PyAtdTypifier>()?;
+    m.add_class::<PyElementTypifier>()?;
+    m.add_class::<PyPotentialCompiler>()?;
     m.add_class::<PyPotentials>()?;
     m.add_class::<PyTypedPotentials>()?;
 
@@ -360,26 +433,26 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let md = PyModule::new(m.py(), "md")?;
     md::register(&md)?;
     m.add_submodule(&md)?;
+    // Pure numeric base; `Fit` lives only in `_lib.op`.
+    let op = PyModule::new(m.py(), "op")?;
+    op::register(&op)?;
+    m.add_submodule(&op)?;
     m.add_function(wrap_pyfunction!(ff::read_forcefield_xml_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::read_forcefield_xml_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_opls_xml_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::read_opls_xml_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_lammps_forcefield_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::read_lammps_forcefield_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_amber_prmtop_ff_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::read_amber_prmtop_ff_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_gromacs_top_ff_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::read_gromacs_top_ff_str_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::write_amber_frcmod_py, m)?)?;
+    m.add("AMBER_COULOMB", ::molrs::ff::params::amber::AMBER_COULOMB)?;
+    m.add("AMBER_SCEE", ::molrs::ff::params::amber::AMBER_SCEE)?;
+    m.add("AMBER_SCNB", ::molrs::ff::params::amber::AMBER_SCNB)?;
     m.add_function(wrap_pyfunction!(ff::write_gromacs_top_ff_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::write_gromacs_top_ff_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::write_forcefield_xml_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::write_forcefield_xml_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_lammps_data_coeffs_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::write_lammps_forcefield_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::write_lammps_forcefield_str_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::write_lammps_data_coeffs_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::intramolecular_pairs_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::extract_coords_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::compute_k_ij_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::fragment_scaling_data_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::scale_lj_py, m)?)?;

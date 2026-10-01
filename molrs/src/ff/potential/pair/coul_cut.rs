@@ -38,6 +38,7 @@ use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
+use molrs::store::schema::block_names::{ATOMS, PAIRS};
 use molrs::types::F;
 
 /// Below this squared separation a pair's force has no direction, so only the
@@ -325,7 +326,7 @@ impl PairDriven for PairCoulCut {
 /// `dielectric` is a kernel answering a question only the force field can answer: it
 /// computes plausible numbers from constants nobody handed it, and every energy test
 /// still passes. (`coulomb14scale` is projected out of the force field's
-/// `SpecialBonds` by `Style::to_potential`, so through the documented route it is
+/// `SpecialBonds` by `PotentialCompiler::compile`, so through the documented route it is
 /// always present — which is exactly why defaulting it here would be invisible.)
 fn required(style_params: &Params, key: &str) -> Result<F, String> {
     style_params.get(key).map(|v| v as F).ok_or_else(|| {
@@ -351,7 +352,7 @@ fn required(style_params: &Params, key: &str) -> Result<F, String> {
 /// |---|---|---|
 /// | `coulomb` | Coulomb constant `k` | **`Err`** — the force field's to choose |
 /// | `dielectric` | dielectric `D` | **`Err`** — a property of the medium, not of the kernel |
-/// | `coulomb14scale` | 1-4 weight | **`Err`** — projected from `special_bonds` by `Style::to_potential` |
+/// | `coulomb14scale` | 1-4 weight | **`Err`** — projected from `special_bonds` by `PotentialCompiler::compile` |
 /// | `delta` | buffering distance δ (Å) | `0.0` — *semantic* default: no buffer, the textbook Coulomb |
 /// | `cutoff` | cutoff (Å) | `∞` — *semantic* default: do not truncate |
 ///
@@ -379,13 +380,13 @@ pub fn pair_coul_cut_ctor(
         .unwrap_or(F::INFINITY);
 
     let atoms = frame
-        .get("atoms")
+        .get(ATOMS)
         .ok_or_else(|| "PairCoulCut: frame missing \"atoms\" block".to_string())?;
     let charges = atoms
         .get_float("charge")
         .ok_or_else(|| "PairCoulCut: atoms block missing \"charge\" column".to_string())?;
     let block = frame
-        .get("pairs")
+        .get(PAIRS)
         .ok_or_else(|| "PairCoulCut: frame missing \"pairs\" block".to_string())?;
     let i_col = block
         .get_uint("atomi")
@@ -440,7 +441,7 @@ pub fn pair_coul_cut_typed_ctor(
     // requiring the kernel to know it would be asking it a question it no
     // longer answers.
     let atoms = frame
-        .get("atoms")
+        .get(ATOMS)
         .ok_or_else(|| "PairCoulCut: frame missing \"atoms\" block".to_string())?;
     let charge = atoms
         .get_float("charge")

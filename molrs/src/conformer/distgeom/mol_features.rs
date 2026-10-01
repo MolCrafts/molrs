@@ -126,7 +126,7 @@ pub fn perceive(mol: &Atomistic) -> Perceived {
         .collect();
 
     // Aromaticity: delegate to the shared RDKit-aligned model in molrs-core
-    // (`molrs::perceive_aromaticity`, a port of
+    // (`molrs::perceive::aromaticity::perceive_aromaticity`, a port of
     // `setAromaticity(AROMATICITY_RDKIT)`) instead of re-deriving it here. It
     // annotates a *clone* of the graph with an `is_aromatic = 1` flag per
     // aromatic atom; we read those flags back, index-aligned.
@@ -138,7 +138,7 @@ pub fn perceive(mol: &Atomistic) -> Perceived {
     let mut aromatic_atom = vec![false; n];
     {
         let mut probe = mol.clone();
-        molrs::perceive_aromaticity(&mut probe);
+        molrs::perceive::aromaticity::perceive_aromaticity(&mut probe);
         for (i, (_, atom)) in probe.atoms().enumerate().take(n) {
             if atom.get_int("is_aromatic") == Some(1) {
                 aromatic_atom[i] = true;

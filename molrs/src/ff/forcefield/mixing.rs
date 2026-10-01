@@ -29,6 +29,20 @@ pub enum Mixing {
 }
 
 impl Mixing {
+    /// The rule an `lj/cut` style that declares no `mixing` is evaluated
+    /// under: Lorentz-Berthelot, which every reader that declares none
+    /// (AMBER prmtop, GAFF) means.
+    pub(crate) const UNDECLARED: Mixing = Mixing::Arithmetic;
+
+    /// The canonical spelling, the one [`Mixing::parse`] maps back to `self`.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Arithmetic => "arithmetic",
+            Self::Geometric => "geometric",
+            Self::SixthPower => "sixthpower",
+        }
+    }
+
     /// Parse the canonical spelling, accepting LAMMPS' and foyer's synonyms.
     pub fn parse(name: &str) -> Result<Self, String> {
         match name {
@@ -36,7 +50,7 @@ impl Mixing {
             "geometric" => Ok(Self::Geometric),
             "sixthpower" => Ok(Self::SixthPower),
             other => Err(format!(
-                "unknown mixing rule '{other}'                  (expected arithmetic | geometric | sixthpower)"
+                "unknown mixing rule '{other}' (expected arithmetic | geometric | sixthpower)"
             )),
         }
     }
@@ -57,5 +71,42 @@ impl Mixing {
                 (eps, (0.5 * denom).powf(1.0 / 6.0))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ALL: [Mixing; 3] = [Mixing::Arithmetic, Mixing::Geometric, Mixing::SixthPower];
+
+    #[test]
+    fn name_is_the_canonical_spelling_of_every_rule() {
+        assert_eq!(Mixing::Arithmetic.name(), "arithmetic");
+        assert_eq!(Mixing::Geometric.name(), "geometric");
+        assert_eq!(Mixing::SixthPower.name(), "sixthpower");
+    }
+
+    #[test]
+    fn parse_inverts_name() {
+        for m in ALL {
+            assert_eq!(Mixing::parse(m.name()), Ok(m), "{m:?}");
+        }
+    }
+
+    /// An `lj/cut` style that declares no rule is evaluated Lorentz-Berthelot.
+    #[test]
+    fn undeclared_rule_is_arithmetic() {
+        assert_eq!(Mixing::UNDECLARED, Mixing::Arithmetic);
+    }
+
+    /// The refusal names the rule and lists the choices without a run of
+    /// stray spaces from a line continuation.
+    #[test]
+    fn unknown_rule_message_names_the_rule_without_stray_spaces() {
+        let err = Mixing::parse("bogus").expect_err("unknown rule");
+        assert!(err.contains("'bogus'"), "{err}");
+        assert!(err.contains("arithmetic | geometric | sixthpower"), "{err}");
+        assert!(!err.contains("  "), "run of spaces in: {err:?}");
     }
 }

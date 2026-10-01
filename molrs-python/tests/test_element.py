@@ -1,6 +1,5 @@
-import pytest
-
 import molrs
+import pytest
 
 
 @pytest.mark.parametrize(

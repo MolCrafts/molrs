@@ -6,35 +6,41 @@ spectra in this same module. compute, fit and check for one physical quantity
 belong together."""
 
 from molrs._lib import (
+    DipoleAutocorrelationSpectrum,
+    DipoleRateCrossSpectrum,
+    EinsteinHelfandSpectrum,
+    GreenKuboSpectrum,
+    IRSpectrum,
+    PowerSpectrum,
+    RamanSpectrum,
+    ResonanceRamanSpectrum,
+    RoaSpectrum,
+    VcdSpectrum,
+    polarizability_finite_field,
+)
+from molrs._lib import (
     check_conductivity_sum_rule as conductivity_sum_rule,
+)
+from molrs._lib import (
     check_kramers_kronig as kramers_kronig,
+)
+from molrs._lib import (
     check_route_agreement as route_agreement,
-    PowerSpectrum as PowerSpectrum,
-    IRSpectrum as IRSpectrum,
-    RamanSpectrum as RamanSpectrum,
-    EinsteinHelfandSpectrum as EinsteinHelfandSpectrum,
-    GreenKuboSpectrum as GreenKuboSpectrum,
-    DipoleRateCrossSpectrum as DipoleRateCrossSpectrum,
-    DipoleAutocorrelationSpectrum as DipoleAutocorrelationSpectrum,
-    VcdSpectrum as VcdSpectrum,
-    RoaSpectrum as RoaSpectrum,
-    ResonanceRamanSpectrum as ResonanceRamanSpectrum,
-    polarizability_finite_field as polarizability_finite_field,
 )
 
 __all__ = [
-    "conductivity_sum_rule",
-    "kramers_kronig",
-    "route_agreement",
-    "PowerSpectrum",
-    "IRSpectrum",
-    "RamanSpectrum",
+    "DipoleAutocorrelationSpectrum",
+    "DipoleRateCrossSpectrum",
     "EinsteinHelfandSpectrum",
     "GreenKuboSpectrum",
-    "DipoleRateCrossSpectrum",
-    "DipoleAutocorrelationSpectrum",
-    "VcdSpectrum",
-    "RoaSpectrum",
+    "IRSpectrum",
+    "PowerSpectrum",
+    "RamanSpectrum",
     "ResonanceRamanSpectrum",
+    "RoaSpectrum",
+    "VcdSpectrum",
+    "conductivity_sum_rule",
+    "kramers_kronig",
     "polarizability_finite_field",
+    "route_agreement",
 ]

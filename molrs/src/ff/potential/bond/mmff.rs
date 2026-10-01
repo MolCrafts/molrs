@@ -1,10 +1,12 @@
 //! MMFF94 bond stretching: E = (1/2)*143.9325*kb*dr^2*(1 + cs*dr + 7/12*cs^2*dr^2)
 
+use molrs::store::schema::block_names::BONDS;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{mag3, sub3, term_table, validate_coords};
+use crate::ff::potential::geometry::{sub3, term_table, validate_coords};
 use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::op::vec3::norm;
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
@@ -40,7 +42,7 @@ impl MMFFBondStretch {
         for idx in 0..n_terms {
             let (i, j) = atoms(idx);
             let d = sub3(coords, j, coords, i);
-            let r = mag3(d);
+            let r = norm(d);
             let dr = r - self.r0[idx];
             let cs2 = cs * cs;
 
@@ -115,7 +117,7 @@ pub fn mmff_bond_ctor(
     // (table → equivalence fallback → empirical rules). This kernel only reads the
     // columns and evaluates — no force-field-specific resolution lives here.
     let block = frame
-        .get("bonds")
+        .get(BONDS)
         .ok_or("mmff_bond: missing \"bonds\" block")?;
     let i_col = block
         .get_uint("atomi")

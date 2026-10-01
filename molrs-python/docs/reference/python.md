@@ -24,11 +24,21 @@ keeps signatures visible to static tools and the docs build.
 
 ::: molrs.MetaValue
 
+Every door of `frame.meta` hands back a frozen value: a fixed-length vector
+is a `tuple`, and a JSON object is a `MetaDocument`. Nested arrays are
+tuples. `json.dumps` accepts a tuple and rejects a document — use
+`json.dumps(frame.meta["run"].copy())`. Order inside a nested document is
+unspecified.
+
+::: molrs.MetaDocument
+
 ## Topology and SMILES
 
 ::: molrs.Atomistic
 
 ::: molrs.CoarseGrain
+
+::: molrs.Fragment
 
 ::: molrs.Graph
 
@@ -44,51 +54,92 @@ keeps signatures visible to static tools and the docs build.
 
 ## Transforms
 
-::: molrs.rotate
-
-::: molrs.translate
-
-::: molrs.scale
+Rigid-body moves are methods of `Atomistic`, `CoarseGrain` and `Fragment`, not
+module functions: `translate(delta)`, `rotate(axis, angle, about=None)` and
+`scale(factor, about=None)`. Each moves every node that has coordinates in
+place and returns the graph itself, so moves chain:
+`mol.translate([1, 0, 0]).rotate([0, 0, 1], 0.5).scale([2, 2, 2])`.
 
 ## I/O
 
+Reader and writer names pair: `read_X` / `write_X` for one frame,
+`read_X_trajectory` / `write_X_trajectory` for a sequence. `molrs.io` returns
+canonical field names; `molrs.io.raw` keeps the format-native ones and reads
+trajectories eagerly.
+
 ::: molrs.io.read_pdb
+
+::: molrs.io.write_pdb
+
+::: molrs.io.read_pdb_trajectory
+
+::: molrs.io.write_pdb_trajectory
 
 ::: molrs.io.read_xyz
 
+::: molrs.io.write_xyz
+
 ::: molrs.io.read_xyz_trajectory
 
-::: molrs.io.raw.read_lammps
+::: molrs.io.write_xyz_trajectory
 
-::: molrs.io.raw.read_lammps_traj
+::: molrs.io.read_gro
+
+::: molrs.io.write_gro
+
+::: molrs.io.read_gro_trajectory
+
+::: molrs.io.write_gro_trajectory
+
+::: molrs.io.read_lammps_data
+
+::: molrs.io.write_lammps_data
+
+::: molrs.io.read_lammps_trajectory
+
+::: molrs.io.write_lammps_trajectory
+
+::: molrs.io.write_lammps_dump_local
+
+::: molrs.io.read_dcd_trajectory
+
+::: molrs.io.write_dcd_trajectory
+
+::: molrs.io.read_trr_trajectory
+
+::: molrs.io.write_trr_trajectory
+
+::: molrs.io.read_xtc_trajectory
+
+::: molrs.io.write_xtc_trajectory
+
+::: molrs.io.read_mrec
+
+::: molrs.io.write_mrec
+
+::: molrs.io.read_mrec_system
+
+::: molrs.io.write_mrec_system
+
+::: molrs.io.read_mrec_trajectory
+
+::: molrs.io.write_mrec_trajectory
+
+::: molrs.io.mrec_sections
+
+::: molrs.io.read_mrec_meta
+
+::: molrs.io.read_chgcar
+
+::: molrs.io.read_cube
+
+::: molrs.io.write_cube
 
 ::: molrs.io.raw.LAMMPSTrajReader
-
-::: molrs.io.raw.read_dcd
 
 ::: molrs.io.raw.DCDTrajReader
 
 ::: molrs.io.raw.XYZTrajReader
-
-::: molrs.io.read_gro
-
-::: molrs.io.raw.read_chgcar_file
-
-::: molrs.io.raw.read_cube_file
-
-::: molrs.io.raw.write_cube_file
-
-::: molrs.io.write_pdb
-
-::: molrs.io.write_xyz
-
-::: molrs.io.raw.write_lammps
-
-::: molrs.io.write_lammps_traj
-
-::: molrs.io.write_lammps_dump_local
-
-::: molrs.io.write_dcd
 
 ## Regions and Neighbor Search
 
@@ -137,8 +188,9 @@ what `molrs.io.read_stl` reads (the WASM binding reads the same file with
 
 ## Force Fields
 
-The native force-field model exposes a `Style`/`Type` hierarchy
-(`BondStyle`/`BondType`, `PairStyle`/`PairType`, …) and `Parameters`.
+The native force-field model exposes a `Style`/`Type` handle hierarchy
+(`BondStyle`/`BondType`, `PairStyle`/`PairType`, …); a handle's `params`
+is a plain dict.
 
 ::: molrs.ff.ForceField
 
@@ -170,8 +222,6 @@ The native force-field model exposes a `Style`/`Type` hierarchy
 
 ::: molrs.ff.PairType
 
-::: molrs.ff.Parameters
-
 ::: molrs.ff.MMFF94Typifier
 
 ::: molrs.ff.MMFF94STypifier
@@ -179,6 +229,10 @@ The native force-field model exposes a `Style`/`Type` hierarchy
 ::: molrs.ff.OPLSAATypifier
 
 ::: molrs.ff.typifier.Typifier
+
+::: molrs.ff.typifier.Match
+
+::: molrs.ff.PotentialCompiler
 
 ::: molrs.ff.Potentials
 
@@ -189,8 +243,6 @@ The native force-field model exposes a `Style`/`Type` hierarchy
 ::: molrs.ff.read_forcefield_xml
 
 ::: molrs.ff.read_opls_xml
-
-::: molrs.ff.extract_coords
 
 ## Trajectory
 

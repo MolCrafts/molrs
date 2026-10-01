@@ -12,9 +12,6 @@ use crate::store::block::Column;
 use crate::store::frame::Frame;
 use crate::types::F;
 
-/// Hierarchical schema node used by observable/provenance metadata.
-pub type SchemaValue = JsonValue;
-
 /// Trajectory-like list of frame states plus shared indexing arrays.
 #[derive(Debug, Clone, Default)]
 pub struct Trajectory {

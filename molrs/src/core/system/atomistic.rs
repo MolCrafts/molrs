@@ -6,8 +6,10 @@
 //! convenience API (`add_bond`, `bonds`, `get_bond`, …). `MolGraph` itself knows
 //! nothing of bonds — the chemistry lives here.
 //!
-//! Generic graph methods (`nodes`, `neighbors`, `translate`, `add_relation`, …)
-//! remain available via `Deref`/`DerefMut`.
+//! Generic graph methods (`nodes`, `neighbors`, `add_relation`, …) remain
+//! available via `Deref`/`DerefMut`; the coordinate transforms and
+//! [`Atomistic::center`] are inherent methods delegating to
+//! [`crate::spatial::geometry`].
 //!
 //! # Examples
 //!
@@ -29,12 +31,13 @@ use std::ops::{Deref, DerefMut};
 use crate::error::MolRsError;
 use crate::store::frame::Frame;
 use crate::store::keys;
-use crate::system::bond::{BondNumber, BondType};
+use crate::system::bond::{BondNumber, BondType, write_bond_class};
 use crate::system::molgraph::{Atom, KindId, MolGraph, NodeId, PropValue, Relation, RelationId};
 
 /// Result of [`Atomistic::extract_subgraph`].
 #[derive(Debug, Clone)]
 pub struct ExtractedAtomistic {
+    /// The extracted all-atom graph.
     pub graph: Atomistic,
     /// Selected parent atoms with a bond-neighbor outside the ball.
     pub boundary: Vec<AtomId>,
@@ -118,23 +121,46 @@ impl Atomistic {
     // ---- atoms (nodes) ----
 
     /// Add an atom carrying a property bag.
+    ///
+    /// # Panics
+    ///
+    /// Panics when a value of `atom` contradicts the element type an existing
+    /// atom column holds for that key (a string `charge` into an `f64`
+    /// `charge` column). The caller of this constructor *built* the bag, so
+    /// that is a defect in the caller and not a data condition; callers
+    /// holding a **foreign** bag reach
+    /// [`MolGraph::add_node_with`](crate::system::molgraph::MolGraph::add_node_with)
+    /// through [`as_molgraph_mut`](Self::as_molgraph_mut), which returns the
+    /// conflict instead.
     pub fn add_atom(&mut self, atom: Atom) -> AtomId {
-        self.graph.add_node_with(atom)
+        self.graph
+            .add_node_with(atom)
+            .expect("caller-built atom bag contradicts an existing atom column")
     }
 
     /// Add an atom with element symbol and 3D coordinates.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the `element` / `x` / `y` / `z` columns already hold a
+    /// different element type — see [`add_atom`](Self::add_atom).
     pub fn add_atom_xyz(&mut self, symbol: &str, x: f64, y: f64, z: f64) -> AtomId {
-        self.graph.add_node_with(Atom::xyz(symbol, x, y, z))
+        self.add_atom(Atom::xyz(symbol, x, y, z))
     }
 
     /// Add an atom with element symbol only (no coordinates).
     ///
     /// Writes the chemical identity under the canonical [`keys::ELEMENT`] field
     /// (not a format alias such as `"symbol"`).
+    ///
+    /// # Panics
+    ///
+    /// Panics when the `element` column already holds a different element
+    /// type — see [`add_atom`](Self::add_atom).
     pub fn add_atom_bare(&mut self, symbol: &str) -> AtomId {
         let mut a = Atom::new();
         a.set(keys::ELEMENT, symbol);
-        self.graph.add_node_with(a)
+        self.add_atom(a)
     }
 
     /// Remove an atom and all incident bonds / angles / dihedrals / impropers.
@@ -203,14 +229,17 @@ impl Atomistic {
     /// They are set together because they are only meaningful together: a class
     /// without a number leaves the bond un-standardized, and a number without a
     /// class leaves a renderer no way to tell aromatic from double.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MolRsError::NotFound`] when `id` names no live bond.
     pub fn set_bond_class(
         &mut self,
         id: BondId,
         bond_type: BondType,
         bond_number: BondNumber,
     ) -> Result<(), MolRsError> {
-        self.set_bond_prop(id, keys::BOND_TYPE, bond_type)?;
-        self.set_bond_prop(id, keys::BOND_NUMBER, bond_number)
+        write_bond_class(&mut self.graph, self.bond, id, bond_type, bond_number)
     }
 
     /// Set a plain (non-aromatic) bond, whose class implies its number.
@@ -572,7 +601,15 @@ impl Atomistic {
 
     /// Export to a tabular [`Frame`] (atoms / bonds / angles / dihedrals /
     /// impropers blocks).
-    pub fn to_frame(&self) -> Frame {
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when an atom or relation property
+    /// contradicts the dtype the Frame schema declares for its key; the
+    /// message names the refused column. [`set_atom`](Self::set_atom) accepts
+    /// any value under a key the graph has no column for, so a string written
+    /// under `"x"` is legal in the graph and only refused here.
+    pub fn to_frame(&self) -> Result<Frame, MolRsError> {
         self.graph.to_frame()
     }
 
@@ -602,8 +639,20 @@ impl Atomistic {
     // ---- conversions ----
 
     /// Promote from a [`MolGraph`], validating all atoms have [`keys::ELEMENT`].
-    /// The graph's relation kinds are re-registered to the standard set.
-    pub fn try_from_molgraph(mol: MolGraph) -> Result<Self, MolRsError> {
+    ///
+    /// The graph's relation kinds are re-registered to the standard set **by
+    /// name**: an existing `bonds` / `angles` / `dihedrals` / `impropers` kind
+    /// of the right arity keeps its id, and a missing one is registered fresh.
+    /// Resolving by dense id instead would report a foreign kind's relations as
+    /// this molecule's bonds whenever the graph registered something else first
+    /// (a `ports` kind, say), and the next `add_bond` would write into it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MolRsError::Validation`] when an atom carries no
+    /// [`keys::ELEMENT`], and when the graph already spells one of the standard
+    /// kind names at a different arity (naming the kind and both arities).
+    pub fn try_from_molgraph(mut mol: MolGraph) -> Result<Self, MolRsError> {
         for (id, atom) in mol.nodes() {
             if atom.get_str(keys::ELEMENT).is_none() {
                 return Err(MolRsError::validation(format!(
@@ -613,10 +662,10 @@ impl Atomistic {
                 )));
             }
         }
-        let bond = mol.kind_id("bonds").unwrap_or(KindId(0));
-        let angle = mol.kind_id("angles").unwrap_or(KindId(1));
-        let dihedral = mol.kind_id("dihedrals").unwrap_or(KindId(2));
-        let improper = mol.kind_id("impropers").unwrap_or(KindId(3));
+        let bond = mol.try_register_kind("bonds", 2)?;
+        let angle = mol.try_register_kind("angles", 3)?;
+        let dihedral = mol.try_register_kind("dihedrals", 4)?;
+        let improper = mol.try_register_kind("impropers", 4)?;
         Ok(Self {
             graph: mol,
             bond,
@@ -639,6 +688,65 @@ impl Atomistic {
     /// Mutably borrow the inner [`MolGraph`].
     pub fn as_molgraph_mut(&mut self) -> &mut MolGraph {
         &mut self.graph
+    }
+
+    /// Translate every atom that has coordinates by `delta` (Å).
+    pub fn translate(&mut self, delta: [f64; 3]) {
+        crate::spatial::geometry::translate(self.as_molgraph_mut(), delta);
+    }
+
+    /// Scale every atom that has coordinates by a per-axis `factor`
+    /// (dimensionless) about `about` (Å; the origin when `None`). Pass
+    /// `[s, s, s]` for a uniform scale.
+    pub fn scale(&mut self, factor: [f64; 3], about: Option<[f64; 3]>) {
+        crate::spatial::geometry::scale(self.as_molgraph_mut(), factor, about);
+    }
+
+    /// Rotate every atom that has coordinates by `angle` radians about `axis`.
+    /// `about` (Å) defaults to the origin when `None`.
+    ///
+    /// # Errors
+    ///
+    /// The error of [`crate::spatial::geometry::rotate`] — `axis` has no
+    /// direction or `angle` is not finite; nothing moves then.
+    pub fn rotate(
+        &mut self,
+        axis: [f64; 3],
+        angle: f64,
+        about: Option<[f64; 3]>,
+    ) -> Result<(), crate::error::MolRsError> {
+        crate::spatial::geometry::rotate(self.as_molgraph_mut(), axis, angle, about)
+    }
+
+    /// Centre of mass `Σ mᵢ rᵢ / Σ mᵢ` over every atom, in the coordinates'
+    /// length unit (Å) — see [`crate::spatial::geometry::center`]. No periodic
+    /// imaging: unwrap a molecule split across the box first.
+    ///
+    /// # Errors
+    ///
+    /// The [`CenterError`](crate::spatial::geometry::CenterError) of
+    /// [`crate::spatial::geometry::center`]; an atomless molecule is
+    /// [`CenterError::Empty`](crate::spatial::geometry::CenterError::Empty).
+    pub fn center(&self) -> Result<[f64; 3], crate::spatial::geometry::CenterError> {
+        crate::spatial::geometry::center(self.as_molgraph(), &self.node_ids().collect::<Vec<_>>())
+    }
+
+    /// Place `transforms.len()` rigid copies of `template`, copy `c` moved by
+    /// `transforms[c]` and stamped `frag_id = frag_ids[c]`; returns the new
+    /// atoms copy-major. Column-wise and atomic — see
+    /// [`MolGraph::replicate`](crate::system::molgraph::MolGraph::replicate).
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`MolGraph::replicate`](crate::system::molgraph::MolGraph::replicate);
+    /// `self` is unchanged then.
+    pub fn replicate(
+        &mut self,
+        template: &Atomistic,
+        transforms: &[crate::op::rigid::Rigid],
+        frag_ids: &[crate::types::I],
+    ) -> Result<Vec<AtomId>, MolRsError> {
+        self.graph.replicate(&template.graph, transforms, frag_ids)
     }
 
     // ---- subgraph extraction (see [`crate::system::extract`]) ----
@@ -693,7 +801,14 @@ impl Atomistic {
 
     /// Structural merge of `other` into `self`. Returns `handle in other → handle
     /// in self`. Handles are remapped (not identity-preserving).
-    pub fn merge(&mut self, other: Atomistic) -> HashMap<AtomId, AtomId> {
+    ///
+    /// # Errors
+    ///
+    /// [`MolRsError::Validation`] when an atom or bond property of `other`
+    /// contradicts the element type `self` holds for that key — see
+    /// [`MolGraph::merge`](crate::system::molgraph::MolGraph::merge), whose
+    /// partial-write contract this inherits.
+    pub fn merge(&mut self, other: Atomistic) -> Result<HashMap<AtomId, AtomId>, MolRsError> {
         self.graph.merge(other.graph)
     }
 
@@ -752,10 +867,19 @@ fn canonical_path(nodes: &[NodeId]) -> Vec<NodeId> {
     if fwd <= rev { fwd } else { rev }
 }
 
+impl crate::system::molgraph::FromMolGraph for Atomistic {
+    fn from_molgraph(graph: MolGraph) -> Result<Self, MolRsError> {
+        Atomistic::try_from_molgraph(graph)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::block::Block;
     use crate::system::molgraph::Atom;
+    use crate::types::{I, Idx};
+    use ndarray::Array1;
     use std::collections::HashSet;
 
     #[test]
@@ -770,7 +894,7 @@ mod tests {
         let h = b.add_atom_bare("H");
         b.add_bond(o, h).unwrap();
 
-        let map = a.merge(b);
+        let map = a.merge(b).expect("merge succeeds on compatible graphs");
         assert_eq!(map.len(), 2);
         assert_eq!(a.n_atoms(), 4);
         assert_eq!(a.n_bonds(), 2);
@@ -1053,7 +1177,7 @@ mod tests {
         mol.add_bond(a, b).unwrap();
         mol.add_angle(a, b, c).unwrap();
         mol.add_improper(a, b, c, d).unwrap();
-        let frame = mol.to_frame();
+        let frame = mol.to_frame().expect("a schema-conforming graph converts");
         let mol2 = Atomistic::from_frame(&frame).unwrap();
         assert_eq!(mol2.n_atoms(), 4);
         assert_eq!(mol2.n_bonds(), 1);
@@ -1136,11 +1260,37 @@ mod tests {
         );
     }
 
+    /// A frame is open: a relation block of a kind `Atomistic` does not
+    /// register is not its business and is ignored, bonds still read.
+    #[test]
+    fn from_frame_ignores_a_relation_block_of_an_unregistered_kind() {
+        use crate::store::block::Block;
+        use ndarray::Array1;
+
+        let mut mol = Atomistic::new();
+        let a = mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
+        let b = mol.add_atom_xyz("C", 1.54, 0.0, 0.0);
+        mol.add_bond(a, b).unwrap();
+        let mut frame = mol.to_frame().expect("a schema-conforming graph converts");
+        let mut widgets = Block::new();
+        widgets
+            .insert("atomi", Array1::from_vec(vec![0_u64]).into_dyn())
+            .unwrap();
+        widgets
+            .insert("atomj", Array1::from_vec(vec![1_u64]).into_dyn())
+            .unwrap();
+        frame.insert("widgets", widgets);
+
+        let back = Atomistic::from_frame(&frame).expect("an unknown block is ignored");
+        assert_eq!(back.n_atoms(), 2);
+        assert_eq!(back.n_bonds(), 1);
+    }
+
     #[test]
     fn test_try_from_molgraph_missing_element() {
         let mut g = MolGraph::new();
         g.register_kind("bonds", 2);
-        g.add_node_with(Atom::new()); // no element
+        g.add_node_with(Atom::new()).expect("fixture node"); // no element
         assert!(Atomistic::try_from_molgraph(g).is_err());
     }
 
@@ -1153,5 +1303,307 @@ mod tests {
         // generic MolGraph methods via Deref
         assert_eq!(mol.n_nodes(), 2);
         assert_eq!(mol.neighbors(c1).count(), 1);
+    }
+
+    /// A graph whose *first* registered kind is not `bonds` — what a fragment
+    /// graph looks like — must not have that foreign kind's relations reported
+    /// as its bonds, nor be written into by the next `add_bond`.
+    #[test]
+    fn try_from_molgraph_resolves_bonds_by_name_not_kind_zero() {
+        let mut graph = MolGraph::new();
+        let ports = graph.register_kind("ports", 2);
+        let c = graph
+            .add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0))
+            .expect("fixture node");
+        let h = graph
+            .add_node_with(Atom::xyz("H", 1.09, 0.0, 0.0))
+            .expect("fixture node");
+        graph.add_relation(ports, &[c, h]).unwrap();
+
+        let mut mol = Atomistic::try_from_molgraph(graph).expect("elements are present");
+        let ports = mol.kind_id("ports").expect("the foreign kind survives");
+        assert_eq!(mol.n_bonds(), 0, "a port relation is not a bond");
+
+        mol.add_bond(c, h).expect("a bond can still be added");
+        assert_eq!(mol.n_bonds(), 1);
+        assert_eq!(
+            mol.n_relations(ports),
+            1,
+            "add_bond must not write into the foreign kind"
+        );
+    }
+
+    // ---- nullable columns: a partially set component keeps its mask ----
+
+    /// Three atoms, one of them labelled: the column is emitted with the
+    /// mask the entity table holds, so the two unlabelled atoms read as
+    /// "no value" rather than as fragment instance zero.
+    fn partly_labelled() -> (Atomistic, AtomId) {
+        let mut mol = Atomistic::new();
+        let a0 = mol.add_atom_bare("C");
+        mol.add_atom_bare("C");
+        mol.add_atom_bare("C");
+        (mol, a0)
+    }
+
+    #[test]
+    fn to_frame_masks_a_partially_set_int_column() {
+        let (mut mol, a0) = partly_labelled();
+        mol.set_atom(a0, "frag_id", PropValue::Int(7 as I)).unwrap();
+        let frame = mol.to_frame().expect("a schema-conforming graph converts");
+        let atoms = frame.get("atoms").expect("atoms block");
+        assert_eq!(atoms.validity("frag_id"), Some(&[true, false, false][..]));
+    }
+
+    #[test]
+    fn to_frame_masks_a_partially_set_float_column() {
+        let (mut mol, a0) = partly_labelled();
+        mol.set_atom(a0, "charge", -0.5_f64).unwrap();
+        let frame = mol.to_frame().expect("a schema-conforming graph converts");
+        let atoms = frame.get("atoms").expect("atoms block");
+        assert_eq!(atoms.validity("charge"), Some(&[true, false, false][..]));
+    }
+
+    #[test]
+    fn to_frame_masks_a_partially_set_string_column() {
+        let (mut mol, a0) = partly_labelled();
+        mol.set_atom(a0, "name", "CA").unwrap();
+        let frame = mol.to_frame().expect("a schema-conforming graph converts");
+        let atoms = frame.get("atoms").expect("atoms block");
+        assert_eq!(atoms.validity("name"), Some(&[true, false, false][..]));
+    }
+
+    /// `set_atom` is the door an `Atomistic` caller reaches, and it carries
+    /// the same schema opinion as the graph underneath: a string under the
+    /// float key `x` never becomes an atom property.
+    #[test]
+    fn set_atom_refuses_a_str_under_a_schema_float_key() {
+        use crate::store::block::DType;
+        let mut mol = Atomistic::new();
+        let a = mol.add_atom_bare("C");
+
+        let err = mol
+            .set_atom(a, "x", "left")
+            .expect_err("a str cannot be stored at a schema-float key");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        let msg = err.to_string();
+        assert!(msg.contains("'x'"), "the error names the key, got {msg}");
+        assert!(
+            msg.contains(DType::Float.name()) && msg.contains(DType::String.name()),
+            "the error names both dtypes, got {msg}"
+        );
+    }
+
+    /// The sequence that made the infallible constructors panic —
+    /// store a str `x`, then add an atom carrying a real float `x` — cannot be
+    /// assembled any more: it already ends at its first step, so the
+    /// `add_atom_xyz` that used to meet a str `x` column meets a float one and
+    /// the frame it produces is the schema-conforming one.
+    #[test]
+    fn set_atom_refusal_leaves_add_atom_xyz_a_float_x_column() {
+        let mut mol = Atomistic::new();
+        let a = mol.add_atom_bare("C");
+
+        mol.set_atom(a, "x", "left")
+            .expect_err("step one of the panicking sequence is refused");
+
+        let b = mol.add_atom_xyz("O", 1.0, 2.0, 3.0);
+        assert_eq!(
+            mol.get_atom(b).expect("atom exists").get_f64("x"),
+            Some(1.0)
+        );
+        let frame = mol
+            .to_frame()
+            .expect("no str 'x' was ever stored, so the frame converts");
+        assert!(
+            frame
+                .get("atoms")
+                .expect("atoms block")
+                .get_float("x")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn to_frame_leaves_a_fully_populated_column_unmasked() {
+        let (mol, _a0) = partly_labelled();
+        let frame = mol.to_frame().expect("a schema-conforming graph converts");
+        let atoms = frame.get("atoms").expect("atoms block");
+        assert_eq!(atoms.validity("element"), None);
+    }
+
+    #[test]
+    fn from_frame_leaves_a_masked_int_cell_unset() {
+        let (mut mol, a0) = partly_labelled();
+        mol.set_atom(a0, "frag_id", PropValue::Int(7 as I)).unwrap();
+        let back =
+            Atomistic::from_frame(&mol.to_frame().expect("a schema-conforming graph converts"))
+                .expect("an atomistic frame reads back");
+        let read: Vec<Option<I>> = back.atoms().map(|(_, a)| a.get_int("frag_id")).collect();
+        assert_eq!(read, vec![Some(7 as I), None, None]);
+    }
+
+    #[test]
+    fn from_frame_leaves_a_masked_float_cell_unset() {
+        let (mut mol, a0) = partly_labelled();
+        mol.set_atom(a0, "charge", -0.5_f64).unwrap();
+        let back =
+            Atomistic::from_frame(&mol.to_frame().expect("a schema-conforming graph converts"))
+                .expect("an atomistic frame reads back");
+        let read: Vec<Option<f64>> = back.atoms().map(|(_, a)| a.get_f64("charge")).collect();
+        assert_eq!(read, vec![Some(-0.5), None, None]);
+    }
+
+    #[test]
+    fn from_frame_leaves_a_masked_string_cell_unset() {
+        let (mut mol, a0) = partly_labelled();
+        mol.set_atom(a0, "name", "CA").unwrap();
+        let back =
+            Atomistic::from_frame(&mol.to_frame().expect("a schema-conforming graph converts"))
+                .expect("an atomistic frame reads back");
+        let read: Vec<Option<String>> = back
+            .atoms()
+            .map(|(_, a)| a.get_str("name").map(str::to_owned))
+            .collect();
+        assert_eq!(read, vec![Some("CA".to_owned()), None, None]);
+    }
+
+    // ---- Contract B: a relation block that cannot be read is refused ----
+
+    /// An `angles` block carrying only two of the kind's three endpoint
+    /// columns is unreadable, and skipping it hands back a molecule whose
+    /// angle the frame plainly stated. The error names the block and the
+    /// column that is missing.
+    #[test]
+    fn from_frame_rejects_a_relation_block_missing_an_endpoint_column() {
+        let mut atoms = Block::new();
+        atoms
+            .insert(
+                "element",
+                Array1::from_vec(vec!["C".to_owned(), "C".to_owned(), "C".to_owned()]).into_dyn(),
+            )
+            .unwrap();
+        let mut angles = Block::new();
+        angles
+            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn())
+            .unwrap();
+        angles
+            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn())
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert("angles", angles);
+
+        let err = Atomistic::from_frame(&frame)
+            .expect_err("an angles block without 'atomk' cannot be read, so it is not skipped");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        let msg = err.to_string();
+        assert!(msg.contains("angles"), "{msg}");
+        assert!(msg.contains("atomk"), "{msg}");
+    }
+
+    /// A `bonds` row whose endpoint addresses an atom past the end of the
+    /// `atoms` block states a bond over an atom the frame never gave — a
+    /// truncated file, or a 1-based index written into a 0-based column. The
+    /// row cannot be read, and dropping it hands back a molecule missing a
+    /// bond the frame plainly stated, so the read is refused. The error names
+    /// the block and the offending index.
+    #[test]
+    fn from_frame_rejects_a_relation_row_addressing_a_missing_atom() {
+        let mut atoms = Block::new();
+        atoms
+            .insert(
+                "element",
+                Array1::from_vec(vec!["C".to_owned(), "C".to_owned()]).into_dyn(),
+            )
+            .unwrap();
+        let mut bonds = Block::new();
+        bonds
+            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn())
+            .unwrap();
+        bonds
+            .insert("atomj", Array1::from_vec(vec![5 as Idx]).into_dyn())
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert("bonds", bonds);
+
+        let err = Atomistic::from_frame(&frame).expect_err(
+            "a bond onto atom 5 of a 2-atom frame cannot be read, so it is not skipped",
+        );
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("bonds"),
+            "the refusal must name the block: {msg}"
+        );
+        assert!(
+            msg.contains('5'),
+            "the refusal must name the endpoint index it could not resolve: {msg}"
+        );
+    }
+
+    /// A caller-supplied graph that spells `bonds` at another arity is a data
+    /// condition, so the promotion returns an error instead of aborting the
+    /// process inside `register_kind`.
+    #[test]
+    fn try_from_molgraph_rejects_conflicting_arity() {
+        let mut graph = MolGraph::new();
+        graph.register_kind("bonds", 3);
+        let err = Atomistic::try_from_molgraph(graph)
+            .expect_err("a 3-ary 'bonds' kind conflicts with the standard set");
+        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn scale_multiplies_offsets_from_the_centre_per_axis() {
+        // p' = (p - c) * f + c. Point (1, 2, 3), factor (2, 3, 0.5):
+        //   about c = (1, 1, 1) -> (1, 4, 2);  about the origin -> (2, 6, 1.5).
+        let factor = [2.0, 3.0, 0.5];
+        let cases: [(Option<[f64; 3]>, [f64; 3]); 2] = [
+            (Some([1.0, 1.0, 1.0]), [1.0, 4.0, 2.0]),
+            (None, [2.0, 6.0, 1.5]),
+        ];
+        for (about, expected) in cases {
+            let mut sys = Atomistic::new();
+            let id = sys.add_atom_xyz("C", 1.0, 2.0, 3.0);
+            let fixed = sys.add_atom_xyz("C", 1.0, 1.0, 1.0);
+            sys.scale(factor, about);
+            let moved = sys.get_atom(id).expect("live handle");
+            for (key, want) in ["x", "y", "z"].into_iter().zip(expected) {
+                let got = moved.get_f64(key).expect("coordinate kept");
+                assert!(
+                    (got - want).abs() < 1e-12,
+                    "{about:?} {key}: {got} != {want}"
+                );
+            }
+            if about.is_some() {
+                // The centre itself is a fixed point of the map.
+                let centre = sys.get_atom(fixed).expect("live handle");
+                for key in ["x", "y", "z"] {
+                    let got = centre.get_f64(key).expect("coordinate kept");
+                    assert!((got - 1.0).abs() < 1e-12, "centre {key} moved to {got}");
+                }
+            }
+        }
+    }
+
+    // ---- center ----
+
+    /// Every atom enters: masses 1 and 3 at x = 0 and 4 give (3,0,0); an
+    /// atomless molecule has no centre.
+    #[test]
+    fn center_covers_every_atom_and_an_empty_molecule_is_empty() {
+        let mut mol = Atomistic::new();
+        let light = mol.add_atom_xyz("H", 0.0, 0.0, 0.0);
+        let heavy = mol.add_atom_xyz("Li", 4.0, 0.0, 0.0);
+        mol.set_atom(light, crate::store::keys::MASS, 1.0).unwrap();
+        mol.set_atom(heavy, crate::store::keys::MASS, 3.0).unwrap();
+        assert_eq!(mol.center(), Ok([3.0, 0.0, 0.0]));
+
+        assert_eq!(
+            Atomistic::new().center(),
+            Err(crate::spatial::geometry::CenterError::Empty)
+        );
     }
 }

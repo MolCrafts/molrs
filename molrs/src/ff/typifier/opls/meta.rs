@@ -1,32 +1,45 @@
-//! OPLS-AA typing metadata: per-type SMARTS definition, overrides, and
-//! specificity-priority inputs.
+//! OPLS-AA typing metadata: per-type SMARTS definition, overrides, explicit
+//! priority and overlay layer.
 //!
-//! This is the typing-metadata half of an OPLS-AA force field, read *separately*
+//! This is the typing-metadata half of an OPLS-AA force field, kept separate
 //! from the potential parameters (mirroring
 //! [`MMFFParams`](crate::ff::typifier::mmff::MMFFParams) versus the
-//! [`ForceField`](crate::ff::forcefield::ForceField)). The OPLS potential reader
+//! [`ForceField`](crate::ff::forcefield::ForceField)). The shipped table is
+//! joined from the molrs-owned rules of
+//! [`crate::ff::params::oplsaa_typing`]; for a caller's own OPLS / CL&P XML, the
+//! potential reader
 //! ([`OplsXmlReader`](crate::ff::forcefield::readers::opls::OplsXmlReader))
-//! deliberately drops the `def` / `overrides` / `priority` / `layer` attributes;
+//! drops the `def` / `overrides` / `priority` / `layer` attributes and
 //! [`read_opls_typing_xml_str`](crate::ff::forcefield::xml::read_opls_typing_xml_str)
 //! reads them into the [`OplsTypingMeta`] table here.
+//!
+//! # How the fields rank candidates
+//!
+//! The table carries the inputs; the
+//! [`LayeredTypingEngine`](super::layered::LayeredTypingEngine) ranks with
+//! them. `layer` and `overrides` define a pairwise *dominance*: a type on a
+//! higher layer, or on the same layer and overriding another (directly or
+//! transitively), always wins over it. `priority` (absent = 0) only orders
+//! candidates that nothing dominates. No field is folded into a single score.
 //!
 //! # Scope
 //!
 //! Only types carrying a SMARTS `def` participate in automatic SMARTS typing.
-//! Legacy OPLS rows (the `opls_001`–`opls_134` block in `oplsaa.xml`) have no
-//! `def` and are **out of scope** for auto-typing — they can only be assigned by
-//! hand or read back from a LAMMPS data file.
+//! Rows with no `def` (the united-atom `opls_001`–`opls_134` block, for one)
+//! can only be assigned by hand or read back from a LAMMPS data file.
 
 use std::collections::HashMap;
 
-/// Layer-priority stride. A type tagged `layer=L` adds `L * STRIDE` to its
-/// priority so it strictly outranks every lower-layer type regardless of
-/// specificity (CL&P / CL&Pol overlays read on top of OPLS-AA). Mirrors molpy's
-/// `_LAYER_PRIORITY_STRIDE`.
-pub const LAYER_PRIORITY_STRIDE: i64 = 1000;
-
 /// One `<Type>` row of an OPLS-AA `<AtomTypes>` section, holding the typing
 /// metadata (not the potential parameters).
+///
+/// This is the **runtime** typing record. Its static, compile-time counterpart
+/// is [`OplsRuleRow`](crate::ff::params::OplsRuleRow): the shipped OPLS-AA
+/// typifier builds one `OplsTypeRow` from each `OplsRuleRow`, taking `class`
+/// from the matching [`OplsAtomRow`](crate::ff::params::OplsAtomRow) and
+/// `layer` 0, while
+/// [`read_opls_typing_xml_str`](crate::ff::forcefield::xml::read_opls_typing_xml_str)
+/// builds them from XML attributes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OplsTypeRow {
     /// Chemical class (the `class` attribute, e.g. `"CT"`). Bonded forces key on
@@ -38,8 +51,8 @@ pub struct OplsTypeRow {
     /// Type names this row overrides (parsed from a comma-separated `overrides`
     /// attribute); empty when absent.
     pub overrides: Vec<String>,
-    /// Explicit `priority` attribute, if present. When set it wins outright over
-    /// the overrides-derived priority.
+    /// Explicit `priority` attribute, if present (absent reads as 0). It orders
+    /// only candidates that no other candidate dominates.
     pub priority: Option<i64>,
     /// Overlay layer (the `layer` attribute); `0` (base force field) when absent.
     pub layer: u32,
@@ -90,124 +103,5 @@ impl OplsTypingMeta {
     /// Iterate `(name, row)` pairs.
     pub fn iter(&self) -> impl Iterator<Item = (&String, &OplsTypeRow)> {
         self.rows.iter()
-    }
-
-    /// Compute the specificity priority for every type, replicating molpy's
-    /// `_OplsAtomTypifier._extract_patterns`:
-    ///
-    /// - an explicit `priority` attribute wins outright;
-    /// - otherwise `priority = (number of other types this row overrides)
-    ///   − (number of types that override this row)`;
-    /// - plus `layer * LAYER_PRIORITY_STRIDE`.
-    ///
-    /// Higher priority wins when an atom matches multiple defs. Returns a map
-    /// from `opls_NNN` name to its integer priority.
-    pub fn priorities(&self) -> HashMap<String, i64> {
-        // Names that each row overrides (the row is the "overrider").
-        let mut out = HashMap::with_capacity(self.rows.len());
-        for (name, row) in &self.rows {
-            if let Some(p) = row.priority {
-                // Explicit priority wins outright (the layer boost is folded into
-                // the explicit value upstream if intended — molpy `continue`s here).
-                out.insert(name.clone(), p);
-                continue;
-            }
-            let mut priority: i64 = 0;
-            // −1 for every other row that overrides this one.
-            for other in self.rows.values() {
-                if other.overrides.iter().any(|o| o == name) {
-                    priority -= 1;
-                }
-            }
-            // +len(overrides) for the rows this one overrides.
-            priority += row.overrides.len() as i64;
-            // Overlay-layer boost (lifts an overlay strictly above lower layers).
-            priority += i64::from(row.layer) * LAYER_PRIORITY_STRIDE;
-            out.insert(name.clone(), priority);
-        }
-        out
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn row(
-        class: &str,
-        def: Option<&str>,
-        overrides: &[&str],
-        priority: Option<i64>,
-        layer: u32,
-    ) -> OplsTypeRow {
-        OplsTypeRow {
-            class: class.to_string(),
-            def: def.map(str::to_string),
-            overrides: overrides.iter().map(|s| s.to_string()).collect(),
-            priority,
-            layer,
-        }
-    }
-
-    #[test]
-    fn priority_explicit_wins() {
-        // An explicit `priority` is taken verbatim, ignoring overrides/layer.
-        let mut m = OplsTypingMeta::new();
-        m.insert(
-            "opls_900",
-            row("CT", Some("[C]"), &["opls_135"], Some(42), 3),
-        );
-        let p = m.priorities();
-        assert_eq!(p["opls_900"], 42);
-    }
-
-    #[test]
-    fn priority_from_overrides() {
-        // opls_146 overrides opls_144; so opls_146 gets +1, opls_144 gets -1.
-        let mut m = OplsTypingMeta::new();
-        m.insert("opls_144", row("HA", Some("[H][C;X3]"), &[], None, 0));
-        m.insert(
-            "opls_146",
-            row("HA", Some("[H][c]"), &["opls_144"], None, 0),
-        );
-        let p = m.priorities();
-        assert_eq!(p["opls_146"], 1, "overrider gains +len(overrides)");
-        assert_eq!(p["opls_144"], -1, "overridden loses 1");
-    }
-
-    #[test]
-    fn priority_overrides_multiple() {
-        // A row that overrides two types gains +2; each overridden loses 1.
-        let mut m = OplsTypingMeta::new();
-        m.insert("opls_a", row("X", Some("[*]"), &[], None, 0));
-        m.insert("opls_b", row("X", Some("[*]"), &[], None, 0));
-        m.insert(
-            "opls_c",
-            row("X", Some("[*]"), &["opls_a", "opls_b"], None, 0),
-        );
-        let p = m.priorities();
-        assert_eq!(p["opls_c"], 2);
-        assert_eq!(p["opls_a"], -1);
-        assert_eq!(p["opls_b"], -1);
-    }
-
-    #[test]
-    fn priority_layer_stride() {
-        // layer=2 with no overrides => 2 * STRIDE.
-        let mut m = OplsTypingMeta::new();
-        m.insert("opls_overlay", row("CT", Some("[C]"), &[], None, 2));
-        let p = m.priorities();
-        assert_eq!(p["opls_overlay"], 2 * LAYER_PRIORITY_STRIDE);
-    }
-
-    #[test]
-    fn priority_layer_plus_overrides() {
-        // layer boost adds to (not replaces) the overrides-derived priority.
-        let mut m = OplsTypingMeta::new();
-        m.insert("opls_base", row("X", Some("[*]"), &[], None, 0));
-        m.insert("opls_hi", row("X", Some("[*]"), &["opls_base"], None, 1));
-        let p = m.priorities();
-        assert_eq!(p["opls_hi"], 1 + LAYER_PRIORITY_STRIDE);
-        assert_eq!(p["opls_base"], -1);
     }
 }

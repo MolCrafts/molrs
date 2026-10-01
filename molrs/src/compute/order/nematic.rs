@@ -26,11 +26,10 @@
 //! vs bond directions), so the caller passes them in directly.
 
 use crate::compute::result::ComputeResult;
-use ndarray::array;
+use crate::op::linalg::eigh_sym_3x3;
 
-use molrs::math::diagonalize::eigh_sym_3x3;
 use molrs::store::frame_access::FrameAccess;
-use molrs::types::{F, F3, F3x3};
+use molrs::types::F;
 
 use crate::compute::error::ComputeError;
 use crate::compute::traits::Compute;
@@ -78,13 +77,9 @@ impl Nematic {
             }
         }
 
-        let q_arr: F3x3 = array![
-            [q[0][0], q[0][1], q[0][2]],
-            [q[1][0], q[1][1], q[1][2]],
-            [q[2][0], q[2][1], q[2][2]]
-        ];
-        let (vals, vecs) = eigh_sym_3x3(&q_arr);
-        let dir: F3 = array![vecs[[0, 0]], vecs[[1, 0]], vecs[[2, 0]]];
+        // Eigenvalues descending; the director is the column of the largest.
+        let (vals, vecs) = eigh_sym_3x3(&q);
+        let dir = [vecs[0][0], vecs[1][0], vecs[2][0]];
 
         Ok(NematicResult {
             order: vals[0],

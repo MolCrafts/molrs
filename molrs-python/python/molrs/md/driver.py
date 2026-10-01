@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
-from .._lib import NeighborList, Potentials, VerletSkin
+from .._lib import ForceField, NeighborList, PotentialCompiler, Potentials, VerletSkin
 from .._lib import md as _md
 
 _NEIGHBOR_DEFAULTS = {
@@ -23,21 +23,14 @@ _NEIGHBOR_DEFAULTS = {
 }
 
 
-def _stack_xyz(atoms: object) -> NDArray[np.float64]:
-    return np.stack(
-        [np.asarray(atoms["x"], dtype=np.float64),
-         np.asarray(atoms["y"], dtype=np.float64),
-         np.asarray(atoms["z"], dtype=np.float64)],
-        axis=1,
-    )
-
-
 def _stack_vel(atoms: object, shape: tuple[int, int]) -> NDArray[np.float64]:
     if all(name in atoms for name in ("vx", "vy", "vz")):
         return np.stack(
-            [np.asarray(atoms["vx"], dtype=np.float64),
-             np.asarray(atoms["vy"], dtype=np.float64),
-             np.asarray(atoms["vz"], dtype=np.float64)],
+            [
+                np.asarray(atoms["vx"], dtype=np.float64),
+                np.asarray(atoms["vy"], dtype=np.float64),
+                np.asarray(atoms["vz"], dtype=np.float64),
+            ],
             axis=1,
         )
     return np.zeros(shape, dtype=np.float64)
@@ -85,7 +78,7 @@ class MD:
 
     def set_forcefield(self, forcefield: object) -> MD:
         """Attach a ``ForceField``; each :meth:`run` compiles it per frame."""
-        if not hasattr(forcefield, "to_potentials"):
+        if not isinstance(forcefield, ForceField):
             raise TypeError(
                 f"set_forcefield expects a ForceField, got {type(forcefield).__name__}"
             )
@@ -107,7 +100,7 @@ class MD:
         if isinstance(potential, Potentials) and len(potential) == 0:
             raise ValueError(
                 "Potentials is still deferred (len==0); compile with "
-                "ff.to_potentials(frame) first"
+                "PotentialCompiler(ff).compile(frame) first"
             )
         self._potential = potential
         self._forcefield = None
@@ -197,17 +190,13 @@ class MD:
 
         First of: ``set_neighbors(cutoff=…)``, the largest style-level
         ``cutoff`` the force field declares, a prebuilt skin's own cutoff.
-        A neighbour-driven pair style must declare one — ``to_typed_potentials``
+        A neighbour-driven pair style must declare one — ``compile_typed``
         refuses it otherwise — so the second of those is normally the answer.
         """
         if config["cutoff"] is not None:
             return float(config["cutoff"])
         ff = self._forcefield
-        declared = [
-            dict(ff.style_params("pair", cat_name.split(":", 1)[1])).get("cutoff")
-            for cat_name in ff.style_names()
-            if cat_name.split(":", 1)[0] == "pair"
-        ]
+        declared = [style["cutoff"] for style in ff.get_styles("pair")]
         found = [float(c) for c in declared if c is not None]
         if found:
             return max(found)
@@ -265,15 +254,20 @@ class MD:
         )
 
     def _assemble(
-        self, frame: object, dt: float, pos: NDArray[np.float64], mass: NDArray[np.float64]
+        self,
+        frame: object,
+        dt: float,
+        pos: NDArray[np.float64],
+        mass: NDArray[np.float64],
     ) -> _md.VelocityVerlet:
         """Wire one run. This single step does exactly:
 
         1. **Compile the potential.** ``set_forcefield`` path with a pair
-           style: ``to_typed_potentials(frame)`` — kernels keyed on the atoms
-           rather than on a ``pairs`` block, each carrying the force field's
-           own ``special_bonds`` weights. Without a pair style:
-           ``to_potentials(frame)``, which is the bonded-only case.
+           style: ``PotentialCompiler(ff).compile_typed(frame)`` — kernels
+           keyed on the atoms rather than on a ``pairs`` block, each carrying
+           the force field's own ``special_bonds`` weights. Without a pair
+           style: ``PotentialCompiler(ff).compile(frame)``, which is the
+           bonded-only case.
            ``set_potential`` path: adopt the attached potential as-is (caller
            owns units).
         2. **Build the neighbour state.** With a nonbond term: a fresh
@@ -288,23 +282,21 @@ class MD:
         """
         if self._forcefield is not None:
             ff = self._forcefield
-            has_pair = any(
-                cat_name.split(":", 1)[0] == "pair" for cat_name in ff.style_names()
-            )
-            if has_pair:
+            if ff.get_styles("pair"):
                 # One call decides which kernel each style needs and how its
                 # close neighbours are scaled. The driver used to re-derive both
                 # here, in Python, for `lj/cut` alone and one (epsilon, sigma)
                 # set — and refused a bonded topology outright because it had no
                 # way to apply special_bonds to a neighbour table.
                 config = self._neighbor_config or dict(_NEIGHBOR_DEFAULTS)
-                pots = ff.to_typed_potentials(frame)
+                pots = PotentialCompiler(ff).compile_typed(frame)
                 neighbors = self._build_skin(frame, pos, self._force_cutoff(config))
             else:
-                pots = ff.to_potentials(frame)
+                pots = PotentialCompiler(ff).compile(frame)
                 if len(pots) == 0:
                     raise ValueError(
-                        "forcefield.to_potentials(frame) produced empty Potentials"
+                        "PotentialCompiler(forcefield).compile(frame) produced "
+                        "empty Potentials"
                     )
                 neighbors = None
         elif self._potential is not None:
@@ -354,9 +346,11 @@ class MD:
         if self._forcefield is None and self._potential is None:
             raise RuntimeError("set_forcefield or set_potential before run")
         if (thermo is not None or temperature is not None) and kb is None:
-            raise ValueError("MD.run(thermo=...) / temperature= requires an explicit kb=")
+            raise ValueError(
+                "MD.run(thermo=...) / temperature= requires an explicit kb="
+            )
         atoms = frame["atoms"]
-        pos = _stack_xyz(atoms)
+        pos = atoms.coords
         if mass is None:
             if "mass" not in atoms:
                 raise ValueError(

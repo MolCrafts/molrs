@@ -1,10 +1,12 @@
-//! OPLS-AA typing dependency analysis for `%opls_NNN` layered defs.
+//! OPLS-AA typing dependency analysis for `%label` layered defs.
 //!
 //! A SMARTS `def` may reference an atom's *previously-assigned* OPLS type via
-//! the `%opls_NNN` context-label token (e.g. benzene's aromatic-H type
-//! `opls_146` is `[H][C;%opls_145]` — "an H bonded to a carbon already typed
-//! `opls_145`"). Such a def therefore **depends** on `opls_145` being resolved
-//! first.
+//! a `%<type name>` context-label token (e.g. benzene's aromatic-H type
+//! `opls_146` is `[#1]-[c;%opls_145]` — "a hydrogen bonded to a carbon already
+//! typed `opls_145`"). Such a def therefore **depends** on `opls_145` being
+//! resolved first. A label is a dependency iff it names a def-carrying type of
+//! the metadata, whatever its spelling: a rule set whose types are not named
+//! `opls_*` layers the same way.
 //!
 //! [`OplsDependencyAnalyzer`] extracts these per-def dependencies, then assigns
 //! a topological **level** to every type via Kahn's algorithm (no-dep types →
@@ -14,19 +16,17 @@
 //! `max_level + 1` as a *circular group*, to be resolved by fixed-point
 //! iteration in the [`LayeredTypingEngine`](super::layered::LayeredTypingEngine).
 //!
-//! This mirrors molpy's `DependencyAnalyzer`
-//! (`molpy/typifier/dependency_analyzer.py`) exactly, including:
-//! - dependencies restricted to type names that themselves carry a def
-//!   (a `%opls_NNN` reference to a legacy no-def type is not a dependency);
-//! - SCCs recorded only when they contain more than one type (a true cycle).
+//! Dependencies are restricted to type names that themselves carry a def (a
+//! reference to a no-def type is not a dependency), and an SCC is recorded only
+//! when it contains more than one type (a true cycle).
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use molrs::SmartsPattern;
+use molrs::perceive::smarts::SmartsPattern;
 
 use super::meta::OplsTypingMeta;
 
-/// Topological dependency analysis over the `%opls_NNN`-referencing OPLS defs.
+/// Topological dependency analysis over the `%label`-referencing OPLS defs.
 ///
 /// Only types carrying a SMARTS `def` are nodes; a dependency edge `A → B`
 /// means "A's def references `%B`" (and `B` itself has a def). Levels and
@@ -45,9 +45,9 @@ pub struct OplsDependencyAnalyzer {
 impl OplsDependencyAnalyzer {
     /// Build the analyzer from the typing metadata.
     ///
-    /// Each def is parsed once to collect its `%opls_NNN` context-label
-    /// references; unparseable defs are skipped here (they fail-fast later in
-    /// [`typify_atoms`](super::typing::typify_atoms) / engine compilation).
+    /// Each def is parsed once to collect its `%label` context-label
+    /// references; unparseable defs are skipped here (they fail-fast later, at
+    /// [`LayeredTypingEngine::build`](super::layered::LayeredTypingEngine::build)).
     /// A def with no `def` string is not a node.
     pub fn new(meta: &OplsTypingMeta) -> Self {
         // Node set: every type carrying a (parseable) def.
@@ -65,20 +65,16 @@ impl OplsDependencyAnalyzer {
                 continue;
             };
             pattern_types.insert(name.clone());
-            // Context labels in OPLS are the dependency type names directly
-            // (the parser already stripped the leading `%`). Keep only labels
-            // shaped like an OPLS type reference (`opls_*`), mirroring molpy's
-            // `startswith("%opls_")` filter.
-            let deps: HashSet<String> = pat
-                .context_labels()
-                .into_iter()
-                .filter(|l| l.starts_with("opls_"))
-                .collect();
+            // In OPLS-style typing a context label is only ever a type name
+            // (the parser already stripped the leading `%`). Whether it names
+            // a type of this metadata is decided below, whatever the name
+            // looks like.
+            let deps: HashSet<String> = pat.context_labels().into_iter().collect();
             raw_deps.insert(name.clone(), deps);
         }
 
-        // Restrict each dependency set to nodes that actually carry a def
-        // (a reference to a legacy no-def type is not a dependency).
+        // A label is a dependency iff it names a type of the metadata that
+        // carries a def (a reference to a no-def type is not a dependency).
         let dependencies: HashMap<String, HashSet<String>> = raw_deps
             .into_iter()
             .map(|(name, deps)| {
@@ -98,7 +94,7 @@ impl OplsDependencyAnalyzer {
         }
     }
 
-    /// The dependency set of a type (the types it references via `%opls_NNN`).
+    /// The dependency set of a type (the types it references via `%label`).
     pub fn dependencies_of(&self, name: &str) -> Option<&HashSet<String>> {
         self.dependencies.get(name)
     }
@@ -388,5 +384,18 @@ mod tests {
         assert_eq!(a.level("opls_135"), Some(0));
         assert_eq!(a.level("opls_140"), Some(0));
         assert_eq!(a.max_level(), Some(0));
+    }
+
+    /// A context label is a dependency iff it names a type in the metadata,
+    /// whatever the name looks like: `HX = [#1]-[#6;%CX]` depends on `CX`
+    /// (no `opls_` prefix) and so sits at level 1.
+    #[test]
+    fn any_type_name_label_is_a_dependency() {
+        let meta = meta_with(&[("CX", Some("[#6;X4]")), ("HX", Some("[#1]-[#6;%CX]"))]);
+        let a = OplsDependencyAnalyzer::new(&meta);
+        let deps = a.dependencies_of("HX").expect("HX is a node");
+        assert!(deps.contains("CX"), "HX depends on CX: {deps:?}");
+        assert_eq!(a.level("CX"), Some(0));
+        assert_eq!(a.level("HX"), Some(1));
     }
 }

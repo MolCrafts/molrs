@@ -38,6 +38,7 @@ use std::rc::Rc;
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::{Block, DType};
 use molrs::store::frame::Frame;
+use molrs::store::meta::MetaMap;
 use molrs::types::{F, I, Idx};
 
 use crate::error::FfiError;
@@ -94,6 +95,14 @@ impl FrameRef {
     /// modifications.
     pub fn with_mut<R>(&self, f: impl FnOnce(&mut Frame) -> R) -> Result<R, FfiError> {
         self.store.borrow_mut().with_frame_mut(self.id, f)
+    }
+
+    /// Run a closure with mutable access to the frame's metadata only.
+    ///
+    /// Unlike [`with_mut`](Self::with_mut), block handles on this frame stay
+    /// valid: the closure cannot reach a block.
+    pub fn with_meta_mut<R>(&self, f: impl FnOnce(&mut MetaMap) -> R) -> Result<R, FfiError> {
+        self.store.borrow_mut().with_frame_meta_mut(self.id, f)
     }
 
     /// Resolve a child block key into a [`BlockRef`]. Returns

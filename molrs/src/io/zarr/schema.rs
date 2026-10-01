@@ -10,7 +10,6 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 use molrs::MolRsError;
 use molrs::store::frame::Frame;
 use molrs::store::record::MOLREC_VERSION as RECORD_MOLREC_VERSION;
-use molrs::store::trajectory::Trajectory;
 
 /// Sole version key of a record, stamped into `meta.molrec_version`.
 pub const MOLREC_VERSION: u64 = RECORD_MOLREC_VERSION;
@@ -103,15 +102,6 @@ pub(crate) fn stamped_meta(
 /// Judge a snapshot or system-definition frame against the Frame vocabulary.
 pub fn validate_frame(frame: &Frame) -> Result<(), MolRsError> {
     frame.validate()
-}
-
-/// Judge a trajectory's axes, then each frame against the Frame vocabulary.
-pub fn validate_trajectory(trajectory: &Trajectory) -> Result<(), MolRsError> {
-    trajectory.validate()?;
-    for frame in &trajectory.frames {
-        frame.validate()?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

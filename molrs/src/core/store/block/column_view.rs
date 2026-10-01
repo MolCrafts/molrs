@@ -13,8 +13,6 @@ use crate::types::{F, I, Idx};
 macro_rules! map_view {
     ($view:expr, $arr:ident => $body:expr) => {
         match $view {
-            ColumnView::Float16($arr) => $body,
-            ColumnView::Float32($arr) => $body,
             ColumnView::Float($arr) => $body,
             ColumnView::Int8($arr) => $body,
             ColumnView::Int16($arr) => $body,
@@ -37,10 +35,6 @@ macro_rules! map_view {
 /// Each variant holds an `ArrayViewD` that borrows from the corresponding
 /// `ArrayD` inside an owned `Column`. No data is copied.
 pub enum ColumnView<'a> {
-    /// Borrowed `f16` column.
-    Float16(ArrayViewD<'a, half::f16>),
-    /// Borrowed `f32` column.
-    Float32(ArrayViewD<'a, f32>),
     /// Borrowed float column.
     Float(ArrayViewD<'a, F>),
     /// Borrowed `i8` column.
@@ -80,8 +74,6 @@ impl<'a> ColumnView<'a> {
     /// Returns the data type of this column view.
     pub fn dtype(&self) -> DType {
         match self {
-            ColumnView::Float16(_) => DType::Float16,
-            ColumnView::Float32(_) => DType::Float32,
             ColumnView::Float(_) => DType::Float,
             ColumnView::Int8(_) => DType::Int8,
             ColumnView::Int16(_) => DType::Int16,
@@ -173,8 +165,6 @@ impl<'a> ColumnView<'a> {
 
     pub fn to_owned(&self) -> Column {
         match self {
-            ColumnView::Float16(a) => Column::from_f16(a.to_owned()),
-            ColumnView::Float32(a) => Column::from_f32(a.to_owned()),
             ColumnView::Float(a) => Column::from_float(a.to_owned()),
             ColumnView::Int8(a) => Column::from_i8(a.to_owned()),
             ColumnView::Int16(a) => Column::from_i16(a.to_owned()),
@@ -195,8 +185,6 @@ impl<'a> ColumnView<'a> {
 impl<'a> From<&'a Column> for ColumnView<'a> {
     fn from(col: &'a Column) -> Self {
         match col {
-            Column::Float16(a) => ColumnView::Float16(a.view()),
-            Column::Float32(a) => ColumnView::Float32(a.view()),
             Column::Float(a) => ColumnView::Float(a.view()),
             Column::Int8(a) => ColumnView::Int8(a.view()),
             Column::Int16(a) => ColumnView::Int16(a.view()),

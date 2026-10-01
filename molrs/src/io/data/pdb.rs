@@ -11,7 +11,7 @@ use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::{F, I, Idx};
 use ndarray::{Array1, IxDyn, array};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
@@ -42,9 +42,6 @@ pub struct AtomRecord {
     pub charge: String,
 }
 
-/// HETATM record - non-polymer chemical atoms (same fields as ATOM)
-pub type HetAtmRecord = AtomRecord;
-
 /// CONECT record - bond connectivity
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConectRecord {
@@ -65,12 +62,6 @@ pub struct Cryst1Record {
     pub z: i32,
 }
 
-/// MODEL record
-#[derive(Debug, Clone, PartialEq)]
-pub struct ModelRecord {
-    pub serial: i32,
-}
-
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -88,6 +79,19 @@ fn substr(s: &str, start: usize, end: usize) -> &str {
     }
     let end = end.min(len);
     &s[start..end]
+}
+
+/// The periodic-table spelling of a PDB element field: surrounding blanks
+/// dropped, first letter upper case, the rest lower case (`" C"` → `"C"`,
+/// `"FE"` → `"Fe"`). Empty when the field is blank.
+fn element_symbol(field: &str) -> String {
+    let mut chars = field.trim().chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+    let mut symbol = first.to_ascii_uppercase().to_string();
+    symbol.extend(chars.map(|c| c.to_ascii_lowercase()));
+    symbol
 }
 
 fn infer_element_from_atom_name(name_raw: &str) -> Option<String> {
@@ -191,9 +195,11 @@ fn parse_atom_or_hetatm_impl(
         return Err(err_mapper("temp_factor negative in ".to_string() + line));
     }
 
-    // Element (columns 77-78, 0-indexed: 76-78)
+    // Element (columns 77-78, 0-indexed: 76-78): right-justified and upper
+    // case in the file (" C", "FE"), stored as the periodic-table spelling
+    // ("C", "Fe") so no caller has to trim or re-case it.
     let mut element = if line.len() >= 78 {
-        substr(line, 76, 78).trim().to_string()
+        element_symbol(substr(line, 76, 78))
     } else {
         String::new()
     };
@@ -236,7 +242,7 @@ pub fn parse_atom_record(line: &str) -> std::io::Result<Option<AtomRecord>> {
 }
 
 /// Parse HETATM record from line (same format as ATOM)
-pub fn parse_hetatm_record(line: &str) -> std::io::Result<Option<HetAtmRecord>> {
+pub fn parse_hetatm_record(line: &str) -> std::io::Result<Option<AtomRecord>> {
     parse_atom_or_hetatm_impl(line, "HETATM")
 }
 
@@ -306,16 +312,6 @@ pub fn parse_cryst1_record(line: &str) -> Option<Cryst1Record> {
     })
 }
 
-/// Parse MODEL record
-pub fn parse_model_record(line: &str) -> Option<ModelRecord> {
-    if !line.starts_with("MODEL") {
-        return None;
-    }
-
-    let serial = substr(line, 10, 14).trim().parse::<i32>().unwrap_or(1);
-    Some(ModelRecord { serial })
-}
-
 /// Check if line is ENDMDL
 pub fn is_endmdl(line: &str) -> bool {
     line.trim().starts_with("ENDMDL")
@@ -324,11 +320,6 @@ pub fn is_endmdl(line: &str) -> bool {
 /// Check if line is END
 pub fn is_end(line: &str) -> bool {
     line.trim() == "END"
-}
-
-/// Check if line is TER
-pub fn is_ter(line: &str) -> bool {
-    line.trim().starts_with("TER")
 }
 
 // ============================================================================
@@ -456,13 +447,19 @@ fn build_bonds_block(
         return Ok(None);
     }
 
+    // A CONECT pair is listed once from each end (and some writers repeat a
+    // partner to mark a multiple bond); a bond is the undirected pair, kept
+    // once, at its first listing.
+    let mut seen: HashSet<(Idx, Idx)> = HashSet::new();
     let mut i_indices: Vec<Idx> = Vec::new();
     let mut j_indices: Vec<Idx> = Vec::new();
 
     for conect in conects {
         if let Some(&idx1) = serial_map.get(&conect.serial) {
             for &bonded_serial in &conect.bonded {
-                if let Some(&idx2) = serial_map.get(&bonded_serial) {
+                if let Some(&idx2) = serial_map.get(&bonded_serial)
+                    && seen.insert((idx1.min(idx2), idx1.max(idx2)))
+                {
                     i_indices.push(idx1);
                     j_indices.push(idx2);
                 }
@@ -1137,6 +1134,25 @@ mod tests {
     }
 
     #[test]
+    fn element_field_is_trimmed_and_cased() {
+        assert_eq!(element_symbol(" C"), "C");
+        assert_eq!(element_symbol("FE"), "Fe");
+        assert_eq!(element_symbol("cl"), "Cl");
+        assert_eq!(element_symbol("  "), "");
+    }
+
+    #[test]
+    fn two_letter_element_column_reads_as_its_symbol() {
+        // An iron HETATM: columns 77-78 hold "FE", as the PDB format writes it.
+        let line =
+            "HETATM  100 FE   HEM A 501      10.000  20.000  30.000  1.00  0.00          FE  ";
+        let atom = parse_hetatm_record(line)
+            .expect("parse HETATM")
+            .expect("a HETATM record");
+        assert_eq!(atom.element, "Fe");
+    }
+
+    #[test]
     fn test_parse_hetatm_record() {
         let atom = parse_hetatm_record(SAMPLE_HETATM_LINE)
             .expect("Failed to parse HETATM")
@@ -1343,6 +1359,25 @@ END
             frames.push(f);
         }
         frames
+    }
+
+    #[test]
+    fn a_conect_pair_listed_from_both_ends_is_one_bond() {
+        let conects = [
+            ConectRecord {
+                serial: 1,
+                bonded: vec![2, 2],
+            },
+            ConectRecord {
+                serial: 2,
+                bonded: vec![1, 3],
+            },
+        ];
+        let serial_map: HashMap<i32, Idx> = [(1, 0), (2, 1), (3, 2)].into_iter().collect();
+        let bonds = build_bonds_block(&conects, &serial_map).unwrap().unwrap();
+        let i: Vec<Idx> = bonds.get_uint("atomi").unwrap().iter().copied().collect();
+        let j: Vec<Idx> = bonds.get_uint("atomj").unwrap().iter().copied().collect();
+        assert_eq!((i, j), (vec![0, 1], vec![1, 2]));
     }
 
     #[test]

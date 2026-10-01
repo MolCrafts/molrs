@@ -8,7 +8,7 @@
 //! 2. Call `typify` to assign atom types + bonded parameters, producing a typed
 //!    [`PyAtomistic`] (materialize it with `to_frame()` for a [`PyFrame`]).
 //! 3. Build the neighbour list (`molrs.intramolecular_pairs`) and compile with
-//!    `typifier.forcefield().to_potentials(frame)` — the same route every other
+//!    `PotentialCompiler(typifier.forcefield()).compile(frame)` — the same route every other
 //!    force field in molrs uses.
 //! 4. Use [`PyPotentials::eval`] to evaluate energy and forces on flat
 //!    coordinate arrays.
@@ -18,7 +18,7 @@
 //! with nothing to tell them apart, and one of them silently omitted the entire
 //! electrostatic term (150 kcal/mol on caffeine) because no `ForceField` ever
 //! defined `pair/mmff_ele`. A typifier's contract is `typify`; compiling
-//! potentials is `ForceField.to_potentials`.
+//! potentials is `PotentialCompiler.compile`.
 //!
 //! The antechamber-derived bindings live in their own modules rather than here:
 //! [`atd`] (the ATD atom typifier, one engine over seven `ATOMTYPE_*.DEF` tables)
@@ -32,57 +32,433 @@
 
 pub mod atd;
 pub mod charge;
+pub mod handles;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
+use std::path::PathBuf;
 
-use pyo3::exceptions::{PyKeyError, PyNotImplementedError, PyValueError};
+use pyo3::exceptions::{
+    PyKeyError, PyNotImplementedError, PyRuntimeError, PyTypeError, PyValueError,
+};
+use pyo3::intern;
 use pyo3::prelude::*;
-use pyo3::types::{PyCapsule, PyDict, PyList, PyTuple};
+use pyo3::types::{PyCapsule, PyDict, PyList, PyMapping, PyString, PySuper, PyTuple, PyType};
 
 use molrs::ff::ForceField;
-use molrs::ff::potential::{Member, Potentials, extract_coords, write_coords};
+use molrs::ff::potential::{Member, PotentialCompiler, Potentials};
+use molrs::ff::typifier::ElementTypifier;
 use molrs::ff::typifier::mmff::{MMFF94STypifier, MMFF94Typifier};
 use molrs::ff::typifier::opls::OPLSAATypifier;
+use molrs::ff::typifier::{Annotation, Match, Typifier, Typing};
 use molrs::optimize::{LBFGS, OptReport};
 use molrs_ffi::ForceFieldRef;
 
 use crate::core::store::block::PyBlock;
 use crate::core::store::frame::PyFrame;
-use crate::core::system::molgraph::PyAtomistic;
-use crate::helpers::{NpF, py_value_err};
+use crate::core::system::molgraph::{PyAtomistic, py_to_prop};
+use crate::core::system::views::RelationClass;
+use crate::helpers::{NpF, path_str, py_value_err};
 
-use ndarray::{Array1, Array2, Array3};
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3, PyReadonlyArrayDyn, ToPyArray};
+use ndarray::{Array2, Array3};
+use numpy::{PyArray2, PyArray3, PyReadonlyArrayDyn, ToPyArray};
 
-/// Nominal Python base for every graph typifier.
+/// Where a [`PyTypifier`]'s typing state lives.
+enum TypifierState {
+    /// A native typifier class: the Rust base owns the matcher and the output.
+    Native(Typing<Box<dyn Typifier + Send + Sync>>),
+    /// A Python subclass: the matcher is its ``match`` method and this base
+    /// holds the output, unset until first seeded (see [`PyTypifier::seed`]).
+    Python(Option<ForceField>),
+}
+
+fn unseeded_output() -> PyErr {
+    PyRuntimeError::new_err("typifier output accessed before it was seeded")
+}
+
+/// The base of every graph typifier: one ``match`` hook plus the output force
+/// field its typing accumulates.
 ///
-/// The algorithm contract already lives in the Rust
-/// `molrs::ff::typifier::Typifier` trait. This is its Python nominal
-/// counterpart: native typifiers extend it and downstream Python typifiers may
-/// subclass it.
+/// Exposed to Python as ``molrs.ff.typifier.Typifier`` and subclassable. A
+/// subclass implements :meth:`match` (and optionally :meth:`library`) and
+/// nothing else; :meth:`typify` is the one execution path and the only writer
+/// of :meth:`forcefield`. Defining ``typify`` on a subclass raises
+/// ``TypeError`` at class creation.
+///
+/// The native typifier classes (``MMFF94Typifier``, ``MMFF94STypifier``,
+/// ``OPLSAATypifier``, ``AtdTypifier``) extend this base and only construct:
+/// their ``match`` runs the Rust matcher and their ``typify`` the Rust
+/// ``Typing::typify``.
 #[pyclass(module = "molrs.ff.typifier", name = "Typifier", subclass)]
-pub struct PyTypifier;
+pub struct PyTypifier {
+    state: TypifierState,
+}
+
+impl PyTypifier {
+    /// The base of a native typifier class: `typifier` wrapped in [`Typing`],
+    /// whose output starts as `typifier.library().empty_like()`.
+    pub(crate) fn native(typifier: impl Typifier + Send + Sync + 'static) -> Self {
+        Self {
+            state: TypifierState::Native(Typing::new(Box::new(typifier))),
+        }
+    }
+
+    /// The library's name, for the native classes' `__repr__`; empty for a
+    /// Python subclass, whose library is whatever its `library()` returns.
+    pub(crate) fn library_name(&self) -> &str {
+        match &self.state {
+            TypifierState::Native(typing) => &typing.library().name,
+            TypifierState::Python(_) => "",
+        }
+    }
+
+    /// Seed a Python subclass's output on first access, exactly as
+    /// [`Typing::new`] does: `self.library().empty_like()` — the library's
+    /// name and declared units and special_bonds. A subclass without a
+    /// `library()` (it raises `NotImplementedError`) gets an empty force field
+    /// named after its class. A no-op once seeded, and for a native typifier.
+    fn seed(slf: &Bound<'_, Self>) -> PyResult<()> {
+        if !matches!(slf.borrow().state, TypifierState::Python(None)) {
+            return Ok(());
+        }
+        let py = slf.py();
+        // `library()` is dispatched through Python (a subclass overrides it),
+        // so no borrow of `slf` is held across the call.
+        let seed = match slf.call_method0(intern!(py, "library")) {
+            Ok(library) => {
+                let library = library.cast_into::<PyForceField>().map_err(|err| {
+                    PyTypeError::new_err(format!("library() must return a ForceField: {err}"))
+                })?;
+                library.borrow().inner.empty_like()
+            }
+            Err(err) if err.is_instance_of::<PyNotImplementedError>(py) => {
+                ForceField::new(&slf.get_type().name()?.to_string())
+            }
+            Err(err) => return Err(err),
+        };
+        if let TypifierState::Python(output) = &mut slf.borrow_mut().state {
+            // `library()` may itself have reached `forcefield()` and seeded.
+            output.get_or_insert(seed);
+        }
+        Ok(())
+    }
+}
 
 #[pymethods]
 impl PyTypifier {
+    /// A Python-subclass base with an unset output.
+    ///
+    /// Accepts and ignores any arguments, as ``object.__new__`` does, so a
+    /// subclass's own ``__init__(...)`` signature is left to the subclass.
     #[new]
     #[pyo3(signature = (*_args, **_kwargs))]
     fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
-        // Python typifiers inherit this native nominal base and commonly expose
-        // their own ``__init__(engine, ...)``.  ``object.__new__`` accepts those
-        // subclass constructor arguments; the native base must do the same and
-        // leave interpretation to the Python ``__init__``.
-        Self
+        Self {
+            state: TypifierState::Python(None),
+        }
     }
 
-    // The parameter is unused here, but it is the public keyword name every
-    // concrete typifier and the docs spell `mol` — so the base declares it too.
-    fn typify(&self, mol: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        let _ = mol;
-        Err(PyNotImplementedError::new_err(
-            "Typifier.typify must be implemented by a concrete typifier",
-        ))
+    /// Reject a subclass that defines ``typify`` in its own body.
+    ///
+    /// ``typify`` is the only writer of :meth:`forcefield`; an override would
+    /// silently bypass the output. ``typing.final`` is only a static check.
+    #[classmethod]
+    #[pyo3(signature = (**kwargs))]
+    fn __init_subclass__(
+        cls: &Bound<'_, PyType>,
+        kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<()> {
+        let py = cls.py();
+        if cls
+            .getattr(intern!(py, "__dict__"))?
+            .contains(intern!(py, "typify"))?
+        {
+            return Err(PyTypeError::new_err(format!(
+                "{} defines typify; a Typifier subclass implements match (and optionally \
+                 library) only — typify is the base's and the only writer of forcefield()",
+                cls.name()?
+            )));
+        }
+        PySuper::new(&py.get_type::<Self>(), cls.as_any())?.call_method(
+            intern!(py, "__init_subclass__"),
+            (),
+            kwargs,
+        )?;
+        Ok(())
+    }
+
+    /// Match ``graph`` and return what it assigns, as a :class:`Match`.
+    ///
+    /// The one hook a subclass implements. ``match`` may write intermediate
+    /// results (generated topology, perceived bond types) onto the graph it is
+    /// given; :meth:`typify` always gives it a private copy. On a native
+    /// typifier this runs the Rust matcher on ``graph``.
+    ///
+    /// Raises
+    /// ------
+    /// NotImplementedError
+    ///     On the base, when a subclass does not implement ``match``.
+    /// ValueError
+    ///     If a native matcher cannot match the graph.
+    #[pyo3(name = "match")]
+    fn r#match(&self, graph: &Bound<'_, PyAny>) -> PyResult<PyMatch> {
+        match &self.state {
+            TypifierState::Native(typing) => {
+                let graph = graph.cast::<PyAtomistic>()?;
+                let inner = typing
+                    .typifier()
+                    .r#match(graph.borrow_mut().core_mut())
+                    .map_err(PyValueError::new_err)?;
+                Ok(PyMatch { inner })
+            }
+            TypifierState::Python(_) => Err(PyNotImplementedError::new_err(
+                "Typifier.match must be implemented by a concrete typifier",
+            )),
+        }
+    }
+
+    /// Type ``mol``: do not override; the only writer of :meth:`forcefield`.
+    ///
+    /// Copies ``mol`` (``mol.copy()``), calls :meth:`match` on the copy and
+    /// writes the returned :class:`Match` onto the copy and the output force
+    /// field — stamping every annotation and defining every type. ``mol`` is
+    /// never touched.
+    ///
+    /// Returns
+    /// -------
+    /// Atomistic
+    ///     The typed copy.
+    ///
+    /// Raises
+    /// ------
+    /// NotImplementedError
+    ///     If the typifier has no ``match``.
+    /// TypeError
+    ///     If ``match`` returns something other than a :class:`Match`.
+    /// ValueError
+    ///     If the match does not fit the graph or contradicts a definition the
+    ///     output already holds. The output is then unchanged.
+    fn typify(slf: &Bound<'_, Self>, mol: &Bound<'_, PyAtomistic>) -> PyResult<Py<PyAtomistic>> {
+        let py = slf.py();
+        let native = match &mut slf.borrow_mut().state {
+            TypifierState::Native(typing) => Some(
+                typing
+                    .typify(mol.borrow().core())
+                    .map_err(PyValueError::new_err)?,
+            ),
+            TypifierState::Python(_) => None,
+        };
+        if let Some(typed) = native {
+            return mol.borrow().derive(py, typed);
+        }
+
+        Self::seed(slf)?;
+        let typed = mol
+            .call_method0(intern!(py, "copy"))?
+            .cast_into::<PyAtomistic>()?;
+        let returned = slf.call_method1(intern!(py, "match"), (&typed,))?;
+        let matched = returned
+            .cast::<PyMatch>()
+            .map_err(|_| {
+                PyTypeError::new_err(format!(
+                    "match must return a Match, got {}",
+                    returned.get_type()
+                ))
+            })?
+            .get()
+            .inner
+            .clone();
+        match &mut slf.borrow_mut().state {
+            TypifierState::Python(Some(output)) => matched
+                .write_onto(typed.borrow_mut().core_mut(), output)
+                .map_err(PyValueError::new_err)?,
+            TypifierState::Native(_) | TypifierState::Python(None) => {
+                return Err(unseeded_output());
+            }
+        }
+        Ok(typed.unbind())
+    }
+
+    /// The accumulated output — exactly the definitions :meth:`typify` has
+    /// assigned — as an independent copy.
+    ///
+    /// Edits to the returned force field do not reach the typifier;
+    /// :meth:`typify` is the only writer. Before the first ``typify`` this is
+    /// the seeded empty output (see :meth:`library`).
+    fn forcefield(slf: &Bound<'_, Self>) -> PyResult<Py<PyForceField>> {
+        Self::seed(slf)?;
+        let output = match &slf.borrow().state {
+            TypifierState::Native(typing) => typing.forcefield().clone(),
+            TypifierState::Python(Some(output)) => output.clone(),
+            TypifierState::Python(None) => return Err(unseeded_output()),
+        };
+        PyForceField::from_core(slf.py(), output)
+    }
+
+    /// The force field this typifier matches against, as an independent copy.
+    ///
+    /// The output starts as its empty likeness: the library's name and
+    /// declared units and special_bonds, no styles or types. A Python subclass
+    /// may override it; one that does not has no library (this raises
+    /// ``NotImplementedError``), and its output starts as an empty force field
+    /// named after the class, with nothing declared.
+    fn library(&self, py: Python<'_>) -> PyResult<Py<PyForceField>> {
+        match &self.state {
+            TypifierState::Native(typing) => PyForceField::from_core(py, typing.library().clone()),
+            TypifierState::Python(_) => Err(PyNotImplementedError::new_err(
+                "Typifier.library is not implemented by this typifier",
+            )),
+        }
+    }
+}
+
+/// What a typifier's ``match`` assigns to one graph, exposed to Python as
+/// ``molrs.ff.typifier.Match`` (the Rust `Match`).
+///
+/// Parameters
+/// ----------
+/// nodes : sequence of mapping
+///     One mapping of ``key -> annotation`` per node, positional against
+///     ``graph.atoms``. An empty mapping gives that node nothing.
+/// links : mapping, optional
+///     Relation class (``Bond``, ``Angle``, ``Dihedral``, ``Improper``) to a
+///     sequence of mappings, positional against
+///     ``graph.links.exact_bucket(cls)`` — the kind's own rows, so an improper
+///     never shifts a dihedral position. Any other key raises ``TypeError``.
+/// styles : sequence of (category, style, params), optional
+///     Styles to declare, in order.
+/// pairs : sequence of (style, name, endpoints, params), optional
+///     Pair rows to define.
+///
+/// An annotation is a ``str``, ``bool``, ``int`` or ``float`` (stamped, defines
+/// nothing), or a type: ``(style, name, endpoints, params)``, which stamps
+/// ``name`` and every param and defines the type ``name`` on ``endpoints``
+/// (atom-type names; empty for an atom type) under the style. The name is
+/// never read for endpoints. Param values are numbers or strings.
+#[pyclass(module = "molrs.ff.typifier", name = "Match", frozen)]
+pub struct PyMatch {
+    inner: Match,
+}
+
+impl PyMatch {
+    /// One positional vector: a sequence of `key -> annotation` mappings.
+    fn rows(rows: &Bound<'_, PyAny>) -> PyResult<Vec<Vec<(String, Annotation)>>> {
+        rows.try_iter()?
+            .map(|row| {
+                let row = row?;
+                let row = row.cast::<PyMapping>()?;
+                row.items()?
+                    .iter()
+                    .map(|item| {
+                        let (key, value): (String, Bound<'_, PyAny>) = item.extract()?;
+                        let annotation = Self::annotation(&value).map_err(|err| {
+                            prefix_err(value.py(), err, &format!("annotation '{key}'"))
+                        })?;
+                        Ok((key, annotation))
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// A tuple is a type; anything else a stamped value (`bool` before `int`).
+    fn annotation(value: &Bound<'_, PyAny>) -> PyResult<Annotation> {
+        let Ok(tuple) = value.cast::<PyTuple>() else {
+            return py_to_prop(value).map(Annotation::Value);
+        };
+        if tuple.len() != 4 {
+            return Err(PyTypeError::new_err(format!(
+                "a type annotation is (style, name, endpoints, params); got a {}-tuple",
+                tuple.len()
+            )));
+        }
+        let (style, name, endpoints, params): (String, String, Vec<String>, Bound<'_, PyDict>) =
+            tuple.extract()?;
+        Ok(Annotation::Type {
+            style,
+            name,
+            endpoints,
+            params: params_from_dict(Some(&params))?,
+        })
+    }
+}
+
+/// `err` with `context` prepended to its message, same exception type.
+fn prefix_err(py: Python<'_>, err: PyErr, context: &str) -> PyErr {
+    PyErr::from_type(err.get_type(py), format!("{context}: {}", err.value(py)))
+}
+
+#[pymethods]
+impl PyMatch {
+    #[new]
+    #[pyo3(
+        signature = (nodes, links = None, *, styles = Vec::new(), pairs = Vec::new()),
+        text_signature = "(nodes, links=None, *, styles=(), pairs=())"
+    )]
+    fn new(
+        nodes: &Bound<'_, PyAny>,
+        links: Option<&Bound<'_, PyAny>>,
+        styles: Vec<(String, String, Bound<'_, PyDict>)>,
+        pairs: Vec<(String, String, Vec<String>, Bound<'_, PyDict>)>,
+    ) -> PyResult<Self> {
+        let mut inner = Match {
+            nodes: Self::rows(nodes)?,
+            ..Match::default()
+        };
+        if let Some(links) = links {
+            let mut seen: Vec<String> = Vec::new();
+            for item in links.cast::<PyMapping>()?.items()?.iter() {
+                let (cls, rows): (Bound<'_, PyAny>, Bound<'_, PyAny>) = item.extract()?;
+                let kind = RelationClass::atomistic_kind(&cls).ok_or_else(|| {
+                    PyTypeError::new_err(format!(
+                        "links keys must be Atomistic relation view classes, got {cls}"
+                    ))
+                })?;
+                let slot = match kind {
+                    "bonds" => &mut inner.bonds,
+                    "angles" => &mut inner.angles,
+                    "dihedrals" => &mut inner.dihedrals,
+                    "impropers" => &mut inner.impropers,
+                    other => {
+                        return Err(PyTypeError::new_err(format!(
+                            "{cls}: a Match carries bonds, angles, dihedrals and impropers, \
+                             not relation kind '{other}'"
+                        )));
+                    }
+                };
+                if seen.iter().any(|k| k == kind) {
+                    return Err(PyValueError::new_err(format!(
+                        "links name relation kind '{kind}' more than once"
+                    )));
+                }
+                *slot = Self::rows(&rows).map_err(|err| prefix_err(rows.py(), err, kind))?;
+                seen.push(kind.to_owned());
+            }
+        }
+        for (category, name, params) in styles {
+            let params = params_from_dict(Some(&params))?;
+            inner.styles.push((category, name, params));
+        }
+        for (style, name, endpoints, params) in pairs {
+            let params = params_from_dict(Some(&params))?;
+            inner.pairs.push((style, name, endpoints, params));
+        }
+        Ok(Self { inner })
+    }
+
+    fn __repr__(&self) -> String {
+        let m = &self.inner;
+        format!(
+            "Match(nodes={}, bonds={}, angles={}, dihedrals={}, impropers={}, styles={}, \
+             pairs={})",
+            m.nodes.len(),
+            m.bonds.len(),
+            m.angles.len(),
+            m.dihedrals.len(),
+            m.impropers.len(),
+            m.styles.len(),
+            m.pairs.len()
+        )
     }
 }
 
@@ -140,27 +516,13 @@ impl From<OptReport> for PyOptReport {
     }
 }
 
-/// Compiled force-field potentials for energy and force evaluation.
-///
-/// Exposed to Python as `molrs.ff.Potentials`.
-///
-/// Operates on flat coordinate arrays in the layout
-/// ``[x0, y0, z0, x1, y1, z1, ...]`` (length 3N).
-///
-/// Examples
-/// --------
-/// >>> typifier = MMFF94Typifier()
-/// >>> frame = typifier.typify(mol).to_frame()
-/// >>> frame["pairs"] = molrs.intramolecular_pairs(frame)
-/// >>> potentials = typifier.forcefield().to_potentials(frame)
-/// >>> energy, forces = potentials.eval(coords)
 /// The kernels of a neighbour-driven force evaluation, each with the
 /// special-bonds weights that scale it.
 ///
 /// Opaque on purpose: what a caller does with this is hand it to an
 /// integrator. Taking it apart in Python would mean re-deciding which member
 /// is which and how its close neighbours are scaled — the two things
-/// :meth:`ForceField.to_typed_potentials` exists to decide once.
+/// :meth:`PotentialCompiler.compile_typed` exists to decide once.
 #[pyclass(name = "TypedPotentials", module = "molrs.ff")]
 pub struct PyTypedPotentials {
     /// Taken by the integrator that consumes it; `None` afterwards.
@@ -175,6 +537,20 @@ impl PyTypedPotentials {
     }
 }
 
+/// Compiled force-field potentials for energy and force evaluation.
+///
+/// Exposed to Python as `molrs.ff.Potentials`.
+///
+/// Operates on flat coordinate arrays in the layout
+/// ``[x0, y0, z0, x1, y1, z1, ...]`` (length 3N).
+///
+/// Examples
+/// --------
+/// >>> typifier = MMFF94Typifier()
+/// >>> frame = typifier.typify(mol).to_frame()
+/// >>> frame["pairs"] = molrs.intramolecular_pairs(frame)
+/// >>> potentials = molrs.ff.PotentialCompiler(typifier.forcefield()).compile(frame)
+/// >>> energy, forces = potentials.eval(coords)
 #[pyclass(module = "molrs.ff", name = "Potentials")]
 pub struct PyPotentials {
     inner: PotBacking,
@@ -186,8 +562,8 @@ pub struct PyPotentials {
 /// A [`PyPotentials`] is either already compiled against a molecule's topology
 /// (the MMFF / pre-bound path), *deferred* (it holds the force field and binds
 /// the topology lazily from the `Frame` passed to
-/// ``calc_energy``/``calc_forces`` — what ``ForceField.to_potentials()`` with
-/// no frame returns, matching the molpy evaluation model), or *moved*: the
+/// ``calc_energy``/``calc_forces`` — what ``PotentialCompiler.defer()``
+/// returns, matching the molpy evaluation model), or *moved*: the
 /// Rust `Potentials` has been moved into an MD integrator or another
 /// collection.
 enum PotBacking {
@@ -199,7 +575,7 @@ enum PotBacking {
 fn potentials_moved_err() -> PyErr {
     PyValueError::new_err(
         "this Potentials has been moved into an integrator or another \
-         Potentials; rebuild with to_potentials(frame)",
+         Potentials; rebuild with PotentialCompiler.compile(frame)",
     )
 }
 
@@ -232,8 +608,11 @@ impl PotBacking {
     }
 }
 
-/// Force-field definition metadata exposed to Python as `molrs.ForceField`.
-#[pyclass(module = "molrs._lib", name = "ForceField", subclass)]
+/// Force-field definition metadata exposed to Python as `molrs.ff.ForceField`.
+///
+/// Not subclassable: this is the one ``ForceField`` class. Styles and types
+/// are read and written through their handles (:mod:`handles`).
+#[pyclass(module = "molrs._lib", name = "ForceField")]
 pub struct PyForceField {
     pub(crate) inner: ForceField,
 }
@@ -358,32 +737,32 @@ pub fn scale_lj_py(
         }
         other => py_value_err(other),
     })?;
-    let public = py.import("molrs.ff")?.getattr("ForceField")?;
-    let native = py.get_type::<PyForceField>();
-    if public.is(&native) {
-        return Py::new(py, PyForceField { inner });
-    }
-    let name = inner.name.clone();
-    let object: Py<PyForceField> = public.call1((name,))?.extract()?;
-    object.borrow_mut(py).inner = inner;
-    Ok(object)
+    PyForceField::from_core(py, inner)
 }
 
-/// Convert an optional Python ``dict[str, float]`` of parameters into owned
-/// ``(key, value)`` pairs. A missing dict yields no params.
-fn params_from_dict(params: Option<&Bound<'_, PyDict>>) -> PyResult<Vec<(String, f64)>> {
-    let mut out = Vec::new();
-    if let Some(d) = params {
-        for (k, v) in d.iter() {
-            out.push((k.extract::<String>()?, v.extract::<f64>()?));
+/// Convert an optional Python ``dict[str, float | str]`` of parameters into
+/// [`Params`](molrs::ff::forcefield::Params). A ``str`` value goes to the string
+/// side, a number to the numeric side; anything else raises ``TypeError``. A
+/// missing dict yields no params.
+fn params_from_dict(params: Option<&Bound<'_, PyDict>>) -> PyResult<molrs::ff::forcefield::Params> {
+    let mut out = molrs::ff::forcefield::Params::new();
+    let Some(d) = params else {
+        return Ok(out);
+    };
+    for (k, v) in d.iter() {
+        let key = k.extract::<String>()?;
+        if let Ok(text) = v.cast::<PyString>() {
+            out.set_str(&key, text.to_str()?);
+        } else if let Ok(number) = v.extract::<f64>() {
+            out.set(&key, number);
+        } else {
+            return Err(PyTypeError::new_err(format!(
+                "param '{key}' must be a number or a str, got {}",
+                v.get_type().name()?
+            )));
         }
     }
     Ok(out)
-}
-
-/// Borrow owned param pairs as the `&[(&str, f64)]` the builder API expects.
-fn as_pairs(owned: &[(String, f64)]) -> Vec<(&str, f64)> {
-    owned.iter().map(|(k, v)| (k.as_str(), *v)).collect()
 }
 
 impl PyPotentials {
@@ -396,11 +775,15 @@ impl PyPotentials {
     fn eval_any(&self, arg: &Bound<'_, PyAny>) -> PyResult<(f64, Vec<NpF>)> {
         let ef = if let Ok(frame) = arg.extract::<PyRef<'_, PyFrame>>() {
             let core = frame.clone_core_frame()?;
-            let coords = extract_coords(&core).map_err(PyValueError::new_err)?;
+            let coords: Vec<NpF> = core
+                .coords()
+                .map_err(|e| PyValueError::new_err(e.to_string()))?
+                .into_iter()
+                .collect();
             match &self.inner {
                 PotBacking::Compiled(p) => p.calc_energy_forces(&coords),
-                PotBacking::Deferred(ff) => ff
-                    .to_potentials(&core)
+                PotBacking::Deferred(ff) => PotentialCompiler::new(ff)
+                    .compile(&core)
                     .map_err(PyValueError::new_err)?
                     .calc_energy_forces(&coords),
                 PotBacking::Moved => return Err(potentials_moved_err()),
@@ -424,7 +807,7 @@ impl PyPotentials {
                 self.inner = deferred;
                 Err(PyValueError::new_err(
                     "this Potentials is not bound to a molecule; \
-                     compile with to_potentials(frame) before moving it into \
+                     compile with PotentialCompiler.compile(frame) before moving it into \
                      an integrator",
                 ))
             }
@@ -514,7 +897,7 @@ impl PyPotentials {
 ///
 /// Examples
 /// --------
-/// >>> pots = molrs.MMFF94Typifier().forcefield().to_potentials(frame)
+/// >>> pots = molrs.ff.PotentialCompiler(molrs.MMFF94Typifier().forcefield()).compile(frame)
 /// >>> opt = molrs.LBFGS(pots, fmax=0.05, max_steps=500)
 /// >>> frame, report = opt.run(frame)
 /// >>> coords, report = opt.run(coords)         # (N, 3)
@@ -563,26 +946,33 @@ impl PyLBFGS {
             let pot: &dyn molrs::ff::potential::Potential = match &pots.inner {
                 PotBacking::Compiled(p) => p,
                 PotBacking::Deferred(ff) => {
-                    compiled = ff
-                        .to_potentials(&core)
+                    compiled = PotentialCompiler::new(ff)
+                        .compile(&core)
                         .map_err(pyo3::exceptions::PyValueError::new_err)?;
                     &compiled
                 }
                 PotBacking::Moved => return Err(potentials_moved_err()),
             };
             // Borrowed one-shot on flat coords extracted from frame, then write back.
-            let mut flat =
-                extract_coords(&core).map_err(pyo3::exceptions::PyValueError::new_err)?;
+            let mut xyz = core
+                .coords()
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+            // `Frame::coords` is a fresh row-major N×3 array: its buffer is the
+            // flat `[x0, y0, z0, …]` the minimizer takes.
+            let flat = xyz
+                .as_slice_mut()
+                .expect("Frame::coords returns a standard-layout array");
             let report = LBFGS::minimize(
                 pot,
-                &mut flat,
+                flat,
                 self.fmax,
                 self.max_steps,
                 self.max_step,
                 self.memory,
             )
             .map_err(pyo3::exceptions::PyValueError::new_err)?;
-            write_coords(&mut core, &flat).map_err(pyo3::exceptions::PyValueError::new_err)?;
+            core.set_coords(xyz.view())
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
             let out_frame = PyFrame::from_core_frame(core)?;
             return Ok((out_frame, PyOptReport::from(report))
                 .into_pyobject(py)?
@@ -679,9 +1069,7 @@ macro_rules! py_mmff_front_door {
     ) => {
         $(#[$doc])*
         #[pyclass(module = "molrs", name = $name, extends = PyTypifier)]
-        pub struct $py_ty {
-            inner: $core,
-        }
+        pub struct $py_ty;
 
         #[pymethods]
         impl $py_ty {
@@ -690,59 +1078,11 @@ macro_rules! py_mmff_front_door {
             /// Never fails: the parameter set is compiled into the extension module.
             #[new]
             fn new() -> (Self, PyTypifier) {
-                (
-                    Self {
-                        inner: <$core>::new(),
-                    },
-                    PyTypifier,
-                )
+                (Self, PyTypifier::native(<$core>::new()))
             }
 
-            /// Assign MMFF atom types (and this variant's bonded parameters) to a
-            /// molecular graph.
-            ///
-            /// Parameters
-            /// ----------
-            /// mol : Atomistic
-            ///     Molecular graph with element symbols and bonds.
-            ///
-            /// Returns
-            /// -------
-            /// Atomistic
-            ///     Typed molecular graph. Call ``typed.to_frame()`` explicitly when a
-            ///     tabular representation is needed. The improper rows carry ``koop``
-            ///     (md*A*rad^-2) and the dihedral rows ``v1``/``v2``/``v3``, both
-            ///     resolved from *this* class's parameter set.
-            ///
-            /// Raises
-            /// ------
-            /// ValueError
-            ///     If atom types cannot be determined (e.g. unsupported elements).
-            fn typify(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
-                let typed = self
-                    .inner
-                    .typify(mol.core())
-                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-                PyAtomistic::from_core(py, typed)
-            }
-
-            /// Return the underlying force-field definition.
-            ///
-            /// This is the seam to the standard compile path — the typifier
-            /// labels the graph, the force field compiles it::
-            ///
-            ///     typed = typifier.typify(mol)
-            ///     frame = typed.to_frame()
-            ///     frame["pairs"] = molrs.intramolecular_pairs(frame)
-            ///     pots  = typifier.forcefield().to_potentials(frame)
-            fn forcefield(&self) -> PyForceField {
-                PyForceField {
-                    inner: self.inner.ff().clone(),
-                }
-            }
-
-            fn __repr__(&self) -> String {
-                format!("{}(forcefield='{}')", $name, self.inner.ff().name)
+            fn __repr__(slf: PyRef<'_, Self>) -> String {
+                format!("{}(forcefield='{}')", $name, slf.as_super().library_name())
             }
         }
     };
@@ -755,9 +1095,12 @@ py_mmff_front_door! {
     ///
     /// Loads the embedded MMFF94 parameter tables at construction time. Use
     /// :meth:`typify` to label a molecular graph (atom types, partial charges, and
-    /// the per-instance force constants the kernels read), then compile it through
-    /// :meth:`forcefield` — the standard route, shared with every other force
-    /// field in molrs.
+    /// the per-instance force constants the kernels read: ``koop`` (md*A*rad^-2)
+    /// on the improper rows, ``v1``/``v2``/``v3`` on the dihedral rows), then
+    /// compile it through :meth:`forcefield` — the definitions typing assigned —
+    /// the standard route, shared with every other force field in molrs.
+    /// :meth:`typify` raises ``ValueError`` when atom types cannot be determined
+    /// (e.g. unsupported elements).
     ///
     /// See :class:`MMFF94STypifier` for the "static" variant used in energy
     /// minimization.
@@ -771,7 +1114,7 @@ py_mmff_front_door! {
     /// >>> typifier = MMFF94Typifier()
     /// >>> frame = typifier.typify(mol).to_frame()          # labels + charges
     /// >>> frame["pairs"] = molrs.intramolecular_pairs(frame)
-    /// >>> pots = typifier.forcefield().to_potentials(frame)
+    /// >>> pots = molrs.ff.PotentialCompiler(typifier.forcefield()).compile(frame)
     PyMMFF94Typifier, MMFF94Typifier, "MMFF94Typifier"
 }
 
@@ -828,8 +1171,8 @@ fn oplsaa_source_xml(source: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Strin
 ///
 /// Exposed to Python as `molrs.ff.OPLSAATypifier`. It loads the embedded canonical
 /// OPLS-AA parameter set by default, or reads one XML source at construction.
-/// :meth:`typify` returns a typed :class:`Atomistic`; use :meth:`build` for the
-/// one-step potential compilation path.
+/// :meth:`typify` returns a typed :class:`Atomistic` (``ValueError`` when atom
+/// typing fails); :meth:`forcefield` holds the definitions it assigned.
 ///
 /// Parameters
 /// ----------
@@ -844,11 +1187,9 @@ fn oplsaa_source_xml(source: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Strin
 /// --------
 /// >>> typifier = OPLSAATypifier()
 /// >>> typed = typifier.typify(mol)        # typed Atomistic
-/// >>> # compose: typify → to_frame → intramolecular_pairs → forcefield().to_potentials
+/// >>> # compose: typify → to_frame → intramolecular_pairs → PotentialCompiler(forcefield()).compile
 #[pyclass(module = "molrs.ff.typifier", name = "OPLSAATypifier", extends = PyTypifier)]
-pub struct PyOPLSAATypifier {
-    inner: OPLSAATypifier,
-}
+pub struct PyOPLSAATypifier;
 
 #[pymethods]
 impl PyOPLSAATypifier {
@@ -857,86 +1198,62 @@ impl PyOPLSAATypifier {
     #[pyo3(signature = (source = None, *, strict = true))]
     fn new(source: Option<&Bound<'_, PyAny>>, strict: bool) -> PyResult<(Self, PyTypifier)> {
         let typifier = match oplsaa_source_xml(source)? {
-            Some(xml) => OPLSAATypifier::from_xml_str(&xml)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
-            None => OPLSAATypifier::oplsaa().map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "failed to initialize OPLS-AA: {e}"
-                ))
-            })?,
+            Some(xml) => OPLSAATypifier::from_xml_str(&xml).map_err(PyValueError::new_err)?,
+            None => OPLSAATypifier::oplsaa(),
         }
         .with_strict(strict);
-        Ok((Self { inner: typifier }, PyTypifier))
+        Ok((Self, PyTypifier::native(typifier)))
     }
 
-    /// Assign OPLS-AA atom and bonded-term types to a molecular graph.
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If atom typing fails.
-    fn typify(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
-        let labeled = self
-            .inner
-            .typify(mol.core())
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        PyAtomistic::from_core(py, labeled)
-    }
-
-    /// Return the underlying force-field definition.
-    fn forcefield(&self) -> PyForceField {
-        PyForceField {
-            inner: self.inner.ff().clone(),
-        }
-    }
-
-    fn __repr__(&self) -> String {
-        format!("OPLSAATypifier(forcefield='{}')", self.inner.ff().name)
+    fn __repr__(slf: PyRef<'_, Self>) -> String {
+        format!(
+            "OPLSAATypifier(forcefield='{}')",
+            slf.as_super().library_name()
+        )
     }
 }
 
-/// Extract a flat coordinate array from a Frame's ``"atoms"`` block.
+/// Element typing: ``type`` labels from element symbols alone, with no force
+/// field — ``molrs.ff.typifier.ElementTypifier``.
 ///
-/// Reads the ``x``, ``y``, ``z`` columns from the ``"atoms"`` block and
-/// interleaves them into a flat 1D array: ``[x0, y0, z0, x1, y1, z1, ...]``.
-///
-/// Parameters
-/// ----------
-/// frame : Frame
-///     Frame with an ``"atoms"`` block containing ``x``, ``y``, ``z``
-///     float columns.
-///
-/// Returns
-/// -------
-/// numpy.ndarray, shape (3*N,), dtype float
-///     Flat coordinate array suitable for :meth:`Potentials.eval`.
+/// :meth:`typify` returns a typed :class:`Atomistic` whose atoms carry
+/// ``type = element`` (e.g. ``"C"``) and whose bonds, angles and dihedrals
+/// carry their endpoint elements joined with ``-`` in the byte-wise smaller
+/// orientation (bond O–H is ``"H-O"``). It is for writers that need type
+/// labels (LAMMPS data) on a molecule no force field has typed;
+/// :meth:`forcefield` stays empty. Takes no arguments.
 ///
 /// Raises
 /// ------
 /// ValueError
-///     If the ``"atoms"`` block or required columns are missing.
+///     From :meth:`typify`, when an atom has no string ``element`` or the
+///     molecule has impropers.
 ///
 /// Examples
 /// --------
-/// >>> coords = extract_coords(frame)
-/// >>> energy, forces = potentials.eval(coords)
-#[pyfunction]
-#[pyo3(name = "extract_coords")]
-pub fn extract_coords_py<'py>(
-    py: Python<'py>,
-    frame: &PyFrame,
-) -> PyResult<Bound<'py, PyArray1<NpF>>> {
-    let core_frame = frame.clone_core_frame()?;
-    let coords = extract_coords(&core_frame)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-    Ok(coords.to_pyarray(py))
+/// >>> typed = molrs.ff.typifier.ElementTypifier().typify(water)
+/// >>> list(typed.to_frame()["bonds"]["type"])
+/// ['H-O', 'H-O']
+#[pyclass(module = "molrs.ff.typifier", name = "ElementTypifier", extends = PyTypifier)]
+pub struct PyElementTypifier;
+
+#[pymethods]
+impl PyElementTypifier {
+    #[new]
+    fn new() -> (Self, PyTypifier) {
+        (Self, PyTypifier::native(ElementTypifier::new()))
+    }
+
+    fn __repr__(&self) -> String {
+        "ElementTypifier()".to_owned()
+    }
 }
 
 /// Read a force-field definition from an XML file.
 #[pyfunction]
 #[pyo3(name = "read_forcefield_xml")]
-pub fn read_forcefield_xml_py(path: &str) -> PyResult<PyForceField> {
-    let forcefield = molrs::ff::read_forcefield_xml(path)
+pub fn read_forcefield_xml_py(path: PathBuf) -> PyResult<PyForceField> {
+    let forcefield = molrs::ff::read_forcefield_xml(path_str(&path)?)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
     Ok(PyForceField { inner: forcefield })
 }
@@ -956,19 +1273,136 @@ struct ForceFieldRefPtr(*mut ForceFieldRef);
 // SAFETY: GIL-guarded, single-threaded use only — see the type-level doc.
 unsafe impl Send for ForceFieldRefPtr {}
 
+impl PyForceField {
+    /// A new Python ``ForceField`` holding `inner`.
+    pub(crate) fn from_core(py: Python<'_>, inner: ForceField) -> PyResult<Py<PyForceField>> {
+        Py::new(py, PyForceField { inner })
+    }
+
+    /// Every style handle whose category is one of `categories`, in
+    /// definition order.
+    fn style_handles(
+        slf: &Bound<'_, Self>,
+        categories: &[handles::Category],
+    ) -> PyResult<Vec<Py<PyAny>>> {
+        let py = slf.py();
+        let styles: Vec<(handles::Category, String)> = slf
+            .try_borrow()?
+            .inner
+            .styles()
+            .iter()
+            .filter_map(|style| {
+                let category = handles::Category::of(style.category()).ok()?;
+                categories
+                    .contains(&category)
+                    .then(|| (category, style.name().to_owned()))
+            })
+            .collect();
+        let ff = slf.clone().unbind();
+        styles
+            .iter()
+            .map(|(category, name)| category.style_handle(py, &ff, name))
+            .collect()
+    }
+
+    /// The pickled definition: `(name, declared units, declared special
+    /// bonds, [(category, style, params, [(type, endpoints, params)])])`.
+    fn definition<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let styles = PyList::empty(py);
+        for style in self.inner.styles() {
+            let types = PyList::empty(py);
+            for (name, endpoints, params) in style.type_rows() {
+                types.append((name, endpoints, params_to_dict(py, params)?))?;
+            }
+            styles.append((
+                style.category(),
+                style.name(),
+                params_to_dict(py, style.params())?,
+                types,
+            ))?;
+        }
+        let special_bonds = self
+            .inner
+            .declared_special_bonds()
+            .map(|sb| (sb.lj.to_vec(), sb.coul.to_vec()));
+        (
+            self.inner.name.clone(),
+            self.inner.declared_units().map(str::to_owned),
+            special_bonds,
+            styles,
+        )
+            .into_pyobject(py)
+    }
+
+    /// The force field a [`definition`](Self::definition) describes.
+    #[allow(
+        clippy::type_complexity,
+        reason = "the pickled definition, see `definition`"
+    )]
+    fn from_definition(definition: &Bound<'_, PyAny>) -> PyResult<ForceField> {
+        let (name, units, special_bonds, styles): (
+            String,
+            Option<String>,
+            Option<([f64; 3], [f64; 3])>,
+            Vec<(
+                String,
+                String,
+                Bound<'_, PyDict>,
+                Vec<(String, Vec<String>, Bound<'_, PyDict>)>,
+            )>,
+        ) = definition.extract()?;
+        let mut inner = ForceField::new(&name);
+        if let Some(units) = units {
+            inner.set_units(&units);
+        }
+        if let Some((lj, coul)) = special_bonds {
+            inner.set_special_bonds(molrs::ff::forcefield::SpecialBonds { lj, coul });
+        }
+        for (category, style_name, params, types) in styles {
+            let style = inner
+                .def_style(&category, &style_name, params_from_dict(Some(&params))?)
+                .map_err(py_value_err)?;
+            for (type_name, endpoints, params) in types {
+                let endpoints: Vec<&str> = endpoints.iter().map(String::as_str).collect();
+                style
+                    .def_type(&type_name, &endpoints, params_from_dict(Some(&params))?)
+                    .map_err(py_value_err)?;
+            }
+        }
+        Ok(inner)
+    }
+}
+
+/// `params` as a dict: numbers and strings.
+fn params_to_dict<'py>(
+    py: Python<'py>,
+    params: &molrs::ff::forcefield::Params,
+) -> PyResult<Bound<'py, PyDict>> {
+    let out = PyDict::new(py);
+    for (key, value) in params.iter() {
+        out.set_item(key, value)?;
+    }
+    for (key, value) in params.iter_strings() {
+        out.set_item(key, value)?;
+    }
+    Ok(out)
+}
+
 #[pymethods]
 impl PyForceField {
-    /// Construct an empty force field. Populate it with the ``def_*style`` /
-    /// ``def_*type`` builder methods, or load one with :func:`read_forcefield_xml`.
+    /// Construct an empty force field. Populate it with :meth:`def_style` and
+    /// the style handles' ``def_type``, or load one with a reader
+    /// (:func:`read_forcefield_xml`, …). ``units`` declares the unit system
+    /// when given; left out, the force field declares none and :attr:`units`
+    /// reads ``"real"``.
     #[new]
-    #[pyo3(signature = (name = "forcefield", units = "real"))]
-    fn new(name: &str, units: &str) -> Self {
-        // ``units`` is carried by the Python ergonomic layer (``molrs.ForceField``),
-        // accepted here so subclasses can forward their ``(name, units)`` ctor.
-        let _ = units;
-        Self {
-            inner: ForceField::new(name),
+    #[pyo3(signature = (name = "forcefield", units = None))]
+    fn new(name: &str, units: Option<&str>) -> Self {
+        let mut inner = ForceField::new(name);
+        if let Some(units) = units {
+            inner.set_units(units);
         }
+        Self { inner }
     }
 
     #[getter]
@@ -976,43 +1410,45 @@ impl PyForceField {
         self.inner.name.clone()
     }
 
-    /// Lennard-Jones 1-2 / 1-3 / 1-4 scale weights (copy of length 3).
-    ///
-    /// Entries ``[0]`` and ``[1]`` are stored and round-tripped for format
-    /// fidelity but are never applied by molrs kernels (1-2/1-3 exclusion is
-    /// by omitting pairs from the neighbour list). Index ``[2]`` is the 1-4
-    /// weight kernels consume.
+    /// The unit system the parameters are expressed in (a LAMMPS ``units``
+    /// name); ``"real"`` when none is declared.
     #[getter]
-    fn special_bonds_lj<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
-        Array1::from(self.inner.special_bonds().lj.to_vec()).into_pyarray(py)
+    fn units(&self) -> String {
+        self.inner.units().to_owned()
     }
 
-    /// Coulomb 1-2 / 1-3 / 1-4 scale weights (copy of length 3).
+    /// Merge ``other`` into this force field, in place, and return ``self``.
     ///
-    /// Entries ``[0]`` and ``[1]`` are stored and round-tripped for format
-    /// fidelity but are never applied by molrs kernels. Index ``[2]`` is the
-    /// 1-4 weight kernels consume.
-    #[getter]
-    fn special_bonds_coul<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
-        Array1::from(self.inner.special_bonds().coul.to_vec()).into_pyarray(py)
+    /// The union of both definitions: ``other``'s styles and types are defined
+    /// through the same primitives, so an identical re-definition is a no-op
+    /// and a different one raises ``ValueError``. Declared ``units`` and
+    /// ``special_bonds`` are adopted when this force field declares none; two
+    /// declared values that differ raise ``ValueError``. On error nothing
+    /// changes.
+    fn merge<'py>(
+        slf: &Bound<'py, Self>,
+        other: &Bound<'py, PyForceField>,
+    ) -> PyResult<Bound<'py, Self>> {
+        // Merging a force field into itself is the identical overlap: a no-op
+        // (and borrowing it both ways at once would fail).
+        if !slf.is(other) {
+            let other = other.borrow();
+            slf.borrow_mut()
+                .inner
+                .merge(&other.inner)
+                .map_err(py_value_err)?;
+        }
+        Ok(slf.clone())
     }
 
-    /// Replace both LJ and Coulomb special-bond triples.
+    /// Declare both LJ and Coulomb special-bond triples (1-2, 1-3, 1-4).
     ///
-    /// Whole-struct write: to change only Coulomb, read ``special_bonds_lj``
-    /// and pass it back. Length-3 sequences required; a wrong length raises
-    /// ``ValueError``. Entries ``[0]``/``[1]`` are stored but not applied.
+    /// Length-3 sequences required; a wrong length raises ``ValueError``.
+    /// Entries ``[0]``/``[1]`` are stored but not applied (1-2/1-3 exclusion
+    /// is by omitting pairs from the neighbour list).
     fn set_special_bonds(&mut self, lj: [f64; 3], coul: [f64; 3]) {
         self.inner
             .set_special_bonds(molrs::ff::forcefield::SpecialBonds { lj, coul });
-    }
-
-    fn style_names(&self) -> Vec<String> {
-        self.inner
-            .styles()
-            .iter()
-            .map(|style| format!("{}:{}", style.category(), style.name))
-            .collect()
     }
 
     /// Export this force field's FFI handle as a ``PyCapsule``.
@@ -1047,327 +1483,154 @@ impl PyForceField {
         })
     }
 
-    // -- builder: styles (idempotent find-or-create) -------------------------
+    // -- styles: defined here, read and written through their handles ----------
 
-    /// Ensure an atom style ``name`` exists.
-    fn def_atomstyle(&mut self, name: &str) {
-        self.inner.def_atomstyle(name);
-    }
-
-    /// Ensure a bond style ``name`` exists.
-    fn def_bondstyle(&mut self, name: &str) {
-        self.inner.def_bondstyle(name);
-    }
-
-    /// Ensure an angle style ``name`` exists.
-    fn def_anglestyle(&mut self, name: &str) {
-        self.inner.def_anglestyle(name);
-    }
-
-    /// Ensure a dihedral style ``name`` exists.
-    fn def_dihedralstyle(&mut self, name: &str) {
-        self.inner.def_dihedralstyle(name);
-    }
-
-    /// Ensure an improper style ``name`` exists.
-    fn def_improperstyle(&mut self, name: &str) {
-        self.inner.def_improperstyle(name);
-    }
-
-    /// Ensure a pair style ``name`` exists, with optional style-level params
-    /// (e.g. ``{"cutoff": 10.0}``).
-    #[pyo3(signature = (name, params = None))]
-    fn def_pairstyle(&mut self, name: &str, params: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
-        let owned = params_from_dict(params)?;
-        self.inner.def_pairstyle(name, &as_pairs(&owned));
-        Ok(())
-    }
-
-    // -- builder: types ------------------------------------------------------
-
-    /// Define an atom type under atom style ``style``.
-    #[pyo3(signature = (style, name, params = None))]
-    fn def_atomtype(
-        &mut self,
-        style: &str,
-        name: &str,
-        params: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<()> {
-        let owned = params_from_dict(params)?;
-        self.inner
-            .def_atomstyle(style)
-            .def_atomtype(name, &as_pairs(&owned));
-        Ok(())
-    }
-
-    /// Define a bond type ``itom-jtom`` under bond style ``style``.
-    #[pyo3(signature = (style, itom, jtom, params = None))]
-    fn def_bondtype(
-        &mut self,
-        style: &str,
-        itom: &str,
-        jtom: &str,
-        params: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<()> {
-        let owned = params_from_dict(params)?;
-        self.inner
-            .def_bondstyle(style)
-            .def_bondtype(itom, jtom, &as_pairs(&owned));
-        Ok(())
-    }
-
-    /// Define an angle type ``itom-jtom-ktom`` under angle style ``style``.
-    #[pyo3(signature = (style, itom, jtom, ktom, params = None))]
-    fn def_angletype(
-        &mut self,
-        style: &str,
-        itom: &str,
-        jtom: &str,
-        ktom: &str,
-        params: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<()> {
-        let owned = params_from_dict(params)?;
-        self.inner
-            .def_anglestyle(style)
-            .def_angletype(itom, jtom, ktom, &as_pairs(&owned));
-        Ok(())
-    }
-
-    /// Define a dihedral type ``itom-jtom-ktom-ltom`` under dihedral style ``style``.
-    #[pyo3(signature = (style, itom, jtom, ktom, ltom, params = None))]
-    fn def_dihedraltype(
-        &mut self,
-        style: &str,
-        itom: &str,
-        jtom: &str,
-        ktom: &str,
-        ltom: &str,
-        params: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<()> {
-        let owned = params_from_dict(params)?;
-        self.inner.def_dihedralstyle(style).def_dihedraltype(
-            itom,
-            jtom,
-            ktom,
-            ltom,
-            &as_pairs(&owned),
-        );
-        Ok(())
-    }
-
-    /// Define an improper type ``itom-jtom-ktom-ltom`` under improper style ``style``.
-    #[pyo3(signature = (style, itom, jtom, ktom, ltom, params = None))]
-    fn def_impropertype(
-        &mut self,
-        style: &str,
-        itom: &str,
-        jtom: &str,
-        ktom: &str,
-        ltom: &str,
-        params: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<()> {
-        let owned = params_from_dict(params)?;
-        self.inner.def_improperstyle(style).def_impropertype(
-            itom,
-            jtom,
-            ktom,
-            ltom,
-            &as_pairs(&owned),
-        );
-        Ok(())
-    }
-
-    /// Define a pair type under pair style ``style``. ``jtom`` defaults to a
-    /// self-pair (``itom`` against itself).
-    #[pyo3(signature = (style, itom, jtom = None, params = None))]
-    fn def_pairtype(
-        &mut self,
-        style: &str,
-        itom: &str,
-        jtom: Option<&str>,
-        params: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<()> {
-        let owned = params_from_dict(params)?;
-        self.inner
-            .def_pairstyle(style, &[])
-            .def_pairtype(itom, jtom, &as_pairs(&owned));
-        Ok(())
-    }
-
-    /// Unified type definition. ``category`` is one of ``atom``/``bond``/
-    /// ``angle``/``dihedral``/``improper``/``pair``; ``name`` encodes the atom
-    /// types in the dash form for that category (``"A"``, ``"A-B"``,
-    /// ``"A-B-C"``, ``"A-B-C-D"``). The name grammar and arity validation live
-    /// in ``molrs-ff`` (``ForceField::def_type``); a malformed name raises
-    /// ``ValueError`` rather than panicking across the FFI boundary.
-    #[pyo3(signature = (category, style, name, params = None))]
-    fn def_type(
-        &mut self,
-        category: &str,
-        style: &str,
-        name: &str,
-        params: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<()> {
-        let owned = params_from_dict(params)?;
-        let pairs = as_pairs(&owned);
-        self.inner
-            .def_type(category, style, name, &pairs)
-            .map_err(py_value_err)
-    }
-
-    // -- read accessors (round-trip + P1-A migration) ------------------------
-
-    /// Style-level params for ``category``/``style`` (e.g. a pair style's cutoff).
-    fn style_params<'py>(
-        &self,
-        py: Python<'py>,
-        category: &str,
-        style: &str,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        let s = self
-            .inner
-            .get_style(category, style)
-            .ok_or_else(|| PyValueError::new_err(format!("no {category} style named '{style}'")))?;
-        let d = PyDict::new(py);
-        for (k, v) in s.params.iter() {
-            d.set_item(k, v)?;
-        }
-        Ok(d)
-    }
-
-    /// List ``(type_name, params)`` tuples for ``category``/``style``.
-    fn types<'py>(
-        &self,
-        py: Python<'py>,
-        category: &str,
-        style: &str,
-    ) -> PyResult<Bound<'py, PyList>> {
-        let s = self
-            .inner
-            .get_style(category, style)
-            .ok_or_else(|| PyValueError::new_err(format!("no {category} style named '{style}'")))?;
-        let out = PyList::empty(py);
-        for (name, params) in s.defs.collect_type_params() {
-            let d = PyDict::new(py);
-            for (k, v) in params.iter() {
-                d.set_item(k, v)?;
-            }
-            for (k, v) in params.iter_strings() {
-                d.set_item(k, v)?;
-            }
-            out.append((name, d))?;
-        }
-        Ok(out)
-    }
-
-    // -- handle-view support (Style/Type live in the Python layer over these) --
-
-    /// Endpoint atom-type names of one type, e.g. ``["CT","CT"]`` for a bond.
-    /// ``None`` if no such type; ``[]`` for atom styles.
-    fn type_endpoints(
-        &self,
-        category: &str,
-        style: &str,
-        name: &str,
-    ) -> PyResult<Option<Vec<String>>> {
-        let s = self
-            .inner
-            .get_style(category, style)
-            .ok_or_else(|| PyValueError::new_err(format!("no {category} style named '{style}'")))?;
-        Ok(s.type_endpoints(name))
-    }
-
-    /// Set (or add) a single param on one type. Raises if the type is absent.
-    fn set_type_param(
-        &mut self,
-        category: &str,
-        style: &str,
-        name: &str,
-        key: &str,
-        value: f64,
-    ) -> PyResult<()> {
-        let s = self
-            .inner
-            .get_style_mut(category, style)
-            .ok_or_else(|| PyValueError::new_err(format!("no {category} style named '{style}'")))?;
-        if s.set_type_param(name, key, value) {
-            Ok(())
-        } else {
-            Err(PyValueError::new_err(format!(
-                "no {category} type named '{name}' in style '{style}'"
-            )))
-        }
-    }
-
-    /// Set (or add) a single **string** param on one type (e.g. ``element``).
-    /// Raises if the type is absent.
-    fn set_type_str_param(
-        &mut self,
-        category: &str,
-        style: &str,
-        name: &str,
-        key: &str,
-        value: &str,
-    ) -> PyResult<()> {
-        let s = self
-            .inner
-            .get_style_mut(category, style)
-            .ok_or_else(|| PyValueError::new_err(format!("no {category} style named '{style}'")))?;
-        if s.set_type_str_param(name, key, value) {
-            Ok(())
-        } else {
-            Err(PyValueError::new_err(format!(
-                "no {category} type named '{name}' in style '{style}'"
-            )))
-        }
-    }
-
-    /// Rename every type ``old`` -> ``new`` in ``(category, style)``; returns count.
-    fn rename_type(
-        &mut self,
-        category: &str,
-        style: &str,
-        old: &str,
-        new: &str,
-    ) -> PyResult<usize> {
-        let s = self
-            .inner
-            .get_style_mut(category, style)
-            .ok_or_else(|| PyValueError::new_err(format!("no {category} style named '{style}'")))?;
-        Ok(s.rename_type(old, new))
-    }
-
-    /// Remove every type ``name`` in ``(category, style)``; returns count.
-    fn remove_type(&mut self, category: &str, style: &str, name: &str) -> PyResult<usize> {
-        let s = self
-            .inner
-            .get_style_mut(category, style)
-            .ok_or_else(|| PyValueError::new_err(format!("no {category} style named '{style}'")))?;
-        Ok(s.remove_type(name))
-    }
-
-    /// Remove a whole style ``(category, name)``; returns whether one was removed.
-    fn remove_style(&mut self, category: &str, name: &str) -> bool {
-        self.inner.remove_style(category, name)
-    }
-
-    /// Build evaluable :class:`Potentials` from this force field.
+    /// Define the ``category`` style ``name`` with style-level ``params``
+    /// (numbers and strings, e.g. ``{"cutoff": 10.0, "mixing": "geometric"}``)
+    /// and return its handle (``AtomStyle`` … ``PairStyle``), whose typed
+    /// ``def_type`` defines types. Re-defining it with equal ``params`` keeps
+    /// the existing style.
     ///
-    /// Called with no argument, the result is *deferred*: it captures the force
-    /// field and binds a molecule's topology + coordinates later, from the
-    /// :class:`Frame` passed to ``calc_energy(frame)`` / ``calc_forces(frame)``
-    /// (the molpy evaluation model). Optionally pass a typed ``frame`` here to
-    /// bind eagerly.
-    ///
-    /// The frame (here or at eval) must carry the topology + ``type`` columns
-    /// each style resolves (``atoms``/``bonds``/``angles``/``dihedrals``/
-    /// ``impropers``/``pairs``), as produced by a typifier or external emitter.
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     On different ``params`` for an existing style, or an unknown
+    ///     category.
+    #[pyo3(signature = (category, name, params = None))]
+    fn def_style(
+        slf: &Bound<'_, Self>,
+        category: &str,
+        name: &str,
+        params: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Py<PyAny>> {
+        let params = params_from_dict(params)?;
+        slf.try_borrow_mut()?
+            .inner
+            .def_style(category, name, params)
+            .map_err(py_value_err)?;
+        handles::Category::of(category)?.style_handle(slf.py(), &slf.clone().unbind(), name)
+    }
+
+    /// Every style, in definition order.
+    #[getter(styles)]
+    fn every_style(slf: &Bound<'_, Self>) -> PyResult<Vec<Py<PyAny>>> {
+        Self::style_handles(slf, &handles::Category::ALL)
+    }
+
+    /// The ``category`` style ``name``, or ``None``.
+    fn get_style(slf: &Bound<'_, Self>, category: &str, name: &str) -> PyResult<Option<Py<PyAny>>> {
+        if slf.try_borrow()?.inner.get_style(category, name).is_none() {
+            return Ok(None);
+        }
+        handles::Category::of(category)?
+            .style_handle(slf.py(), &slf.clone().unbind(), name)
+            .map(Some)
+    }
+
+    /// The styles of a category — a name (``"bond"``) or a style class
+    /// (``BondStyle``; ``Style`` selects every category).
+    fn get_styles(slf: &Bound<'_, Self>, category: &Bound<'_, PyAny>) -> PyResult<Vec<Py<PyAny>>> {
+        Self::style_handles(slf, &handles::Category::selected(category)?)
+    }
+
+    /// The types of a category — a name (``"bond"``) or a type class
+    /// (``BondType``; ``Type`` selects every category) — style by style.
+    fn get_types(slf: &Bound<'_, Self>, category: &Bound<'_, PyAny>) -> PyResult<Vec<Py<PyAny>>> {
+        let py = slf.py();
+        let mut types = Vec::new();
+        for style in Self::style_handles(slf, &handles::Category::selected(category)?)? {
+            types.extend(
+                style
+                    .bind(py)
+                    .getattr(intern!(py, "types"))?
+                    .extract::<Vec<Py<PyAny>>>()?,
+            );
+        }
+        Ok(types)
+    }
+
+    // -- pickling ----------------------------------------------------------------
+
+    fn __reduce__<'py>(
+        slf: &Bound<'py, Self>,
+    ) -> PyResult<(Bound<'py, PyType>, Bound<'py, PyTuple>, Bound<'py, PyTuple>)> {
+        let py = slf.py();
+        let definition = slf.try_borrow()?.definition(py)?;
+        Ok((
+            slf.get_type(),
+            PyTuple::empty(py),
+            PyTuple::new(py, [definition])?,
+        ))
+    }
+
+    fn __setstate__(&mut self, state: (Bound<'_, PyAny>,)) -> PyResult<()> {
+        self.inner = Self::from_definition(&state.0)?;
+        Ok(())
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ForceField(name='{}', styles={})",
+            self.inner.name,
+            self.inner.styles().len()
+        )
+    }
+}
+
+/// Compiles a :class:`ForceField` into evaluable kernels.
+///
+/// Exposed to Python as ``molrs.ff.PotentialCompiler``. It owns a **copy** of
+/// the force field, taken at construction: later edits to that
+/// :class:`ForceField` do not reach a compiler that already exists — make a
+/// new one.
+///
+/// Three doors, each doing one thing:
+///
+/// * :meth:`compile` — bind a typed :class:`Frame` now;
+/// * :meth:`defer` — a :class:`Potentials` that binds the topology of the
+///   :class:`Frame` it is evaluated on;
+/// * :meth:`compile_typed` — the kernels of a neighbour-driven evaluation,
+///   for MD.
+///
+/// Examples
+/// --------
+/// >>> compiler = molrs.ff.PotentialCompiler(typifier.forcefield())
+/// >>> potentials = compiler.compile(frame)
+/// >>> energy = potentials.calc_energy(frame)
+#[pyclass(module = "molrs.ff", name = "PotentialCompiler")]
+pub struct PyPotentialCompiler {
+    ff: ForceField,
+}
+
+#[pymethods]
+impl PyPotentialCompiler {
+    /// Copy ``forcefield`` into a new compiler.
     ///
     /// Parameters
     /// ----------
-    /// frame : Frame, optional
-    ///     Typed molecular data to bind eagerly. If omitted, binding is deferred
-    ///     to evaluation time.
+    /// forcefield : ForceField
+    ///     The force field to compile. Copied; later edits do not reach this
+    ///     compiler.
+    #[new]
+    fn new(forcefield: PyRef<'_, PyForceField>) -> Self {
+        Self {
+            ff: forcefield.inner.clone(),
+        }
+    }
+
+    /// Build evaluable :class:`Potentials` against a typed ``frame``.
+    ///
+    /// The frame must carry the topology + ``type`` columns each style
+    /// resolves (``atoms``/``bonds``/``angles``/``dihedrals``/``impropers``/
+    /// ``pairs``), as produced by a typifier or an external emitter. Every
+    /// pair style is resolved against the frame's ``pairs`` block — a fixed
+    /// list with no spatial cutoff, right for a molecule in free space.
+    ///
+    /// Parameters
+    /// ----------
+    /// frame : Frame
+    ///     Typed molecular data. Required; for potentials that bind at
+    ///     evaluation time use :meth:`defer`.
     ///
     /// Returns
     /// -------
@@ -1375,15 +1638,45 @@ impl PyForceField {
     ///
     /// Raises
     /// ------
+    /// TypeError
+    ///     If ``frame`` is not a :class:`Frame` (``None`` included).
     /// ValueError
-    ///     If (when binding) a style has no registered kernel, a topology block
-    ///     is missing, or a type label is unknown.
+    ///     If a style has no registered kernel, a type label is unknown, or
+    ///     the force field's 1-2 / 1-3 weights are not 0 or 1.
+    fn compile(&self, frame: &PyFrame) -> PyResult<PyPotentials> {
+        let potentials = frame
+            .with_frame(|core| PotentialCompiler::new(&self.ff).compile(core))?
+            .map_err(PyValueError::new_err)?;
+        Ok(PyPotentials {
+            inner: PotBacking::Compiled(potentials),
+            err_slots: Vec::new(),
+        })
+    }
+
+    /// A :class:`Potentials` that compiles when it is evaluated.
+    ///
+    /// It holds this compiler's force field and binds the topology and
+    /// coordinates of the :class:`Frame` passed to ``calc_energy(frame)`` /
+    /// ``calc_forces(frame)`` (the molpy evaluation model). It has no members
+    /// until then, so ``len`` is ``0``, and it cannot be evaluated on a bare
+    /// coordinate array or moved into an integrator.
+    ///
+    /// Returns
+    /// -------
+    /// Potentials
+    fn defer(&self) -> PyPotentials {
+        PyPotentials {
+            inner: PotBacking::Deferred(self.ff.clone()),
+            err_slots: Vec::new(),
+        }
+    }
+
     /// Build the kernels for a **neighbour-driven** evaluation, with the
     /// special-bonds weights each one takes.
     ///
-    /// The counterpart of :meth:`to_potentials`, and what periodic MD needs.
-    /// That one resolves every pair style against the frame's ``pairs`` block —
-    /// a fixed list with no spatial cutoff, right for a free-boundary molecule
+    /// The counterpart of :meth:`compile`, and what periodic MD needs. That
+    /// one resolves every pair style against the frame's ``pairs`` block — a
+    /// fixed list with no spatial cutoff, right for a free-boundary molecule
     /// and wrong for a periodic system. This one resolves them against the
     /// **atoms**, reads no ``pairs`` block, and requires the style's declared
     /// cutoff.
@@ -1392,14 +1685,30 @@ impl PyForceField {
     /// the frame's bond graph. Without them a neighbour table would count a
     /// bonded pair twice: once by the bond term and once at full non-bonded
     /// strength, at bond length.
-    fn to_typed_potentials(&self, frame: &PyFrame) -> PyResult<PyTypedPotentials> {
-        let core = frame.clone_core_frame()?;
-        let topo = molrs::Topology::from_frame(&core)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        let members = self
-            .inner
-            .to_typed_potentials(&core)
-            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    ///
+    /// Parameters
+    /// ----------
+    /// frame : Frame
+    ///     Typed molecular data.
+    ///
+    /// Returns
+    /// -------
+    /// TypedPotentials
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If a style cannot be built, or a pair style has no
+    ///     neighbour-driven form.
+    fn compile_typed(&self, frame: &PyFrame) -> PyResult<PyTypedPotentials> {
+        let (topo, members) = frame.with_frame(|core| -> PyResult<_> {
+            let topo = molrs::Topology::from_frame(core)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            let members = PotentialCompiler::new(&self.ff)
+                .compile_typed(core)
+                .map_err(PyValueError::new_err)?;
+            Ok((topo, members))
+        })??;
         let bound = members
             .into_iter()
             .map(|(pot, weights)| {
@@ -1414,81 +1723,13 @@ impl PyForceField {
         })
     }
 
-    #[pyo3(signature = (frame = None))]
-    fn to_potentials(&self, frame: Option<&PyFrame>) -> PyResult<PyPotentials> {
-        match frame {
-            None => Ok(PyPotentials {
-                inner: PotBacking::Deferred(self.inner.clone()),
-                err_slots: Vec::new(),
-            }),
-            Some(frame) => {
-                let core = frame.clone_core_frame()?;
-                let potentials = self
-                    .inner
-                    .to_potentials(&core)
-                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
-                Ok(PyPotentials {
-                    inner: PotBacking::Compiled(potentials),
-                    err_slots: Vec::new(),
-                })
-            }
-        }
-    }
-
-    /// Project this force field onto the types a typed :class:`Frame` uses.
-    ///
-    /// Reading a full force field yields every type it defines, but a concrete
-    /// typed structure references only a fraction of them. ``subset`` returns a
-    /// new, smaller :class:`ForceField` restricted to exactly the types named
-    /// in the frame's per-block ``type`` columns
-    /// (``atoms``/``bonds``/``angles``/``dihedrals``/``impropers``), leaving the
-    /// original force field unchanged. A ``PairType`` is kept iff both of its
-    /// endpoint atom types are used; styles left with no types are dropped; type
-    /// names are preserved verbatim (no renumbering).
-    ///
-    /// Parameters
-    /// ----------
-    /// frame : Frame
-    ///     Typed molecular data, as produced by a typifier or an emitter.
-    ///
-    /// Returns
-    /// -------
-    /// ForceField
-    ///     A new force field containing only the types ``frame`` references.
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If the frame's blocks cannot be read.
-    ///
-    /// Examples
-    /// --------
-    /// >>> mini = ff.subset(typed_frame)
-    /// >>> len(mini.style_names()) <= len(ff.style_names())
-    /// True
-    fn subset(&self, frame: &PyFrame) -> PyResult<PyForceField> {
-        let core = frame.clone_core_frame()?;
-        let pruned = self.inner.subset(&core);
-        Ok(PyForceField { inner: pruned })
-    }
-
     fn __repr__(&self) -> String {
         format!(
-            "ForceField(name='{}', styles={})",
-            self.inner.name,
-            self.inner.styles().len()
+            "PotentialCompiler(forcefield='{}', styles={})",
+            self.ff.name,
+            self.ff.styles().len()
         )
     }
-}
-
-/// Parse a force-field definition from an XML string (same schema as
-/// :func:`read_forcefield_xml`).
-#[pyfunction]
-#[pyo3(name = "read_forcefield_xml_str")]
-pub fn read_forcefield_xml_str_py(xml: &str) -> PyResult<PyForceField> {
-    let forcefield = molrs::ff::read_forcefield_xml_str(xml)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-    Ok(PyForceField { inner: forcefield })
 }
 
 /// Read an OPLS-AA / GROMACS force-field XML file into a :class:`ForceField`.
@@ -1502,7 +1743,7 @@ pub fn read_forcefield_xml_str_py(xml: &str) -> PyResult<PyForceField> {
 ///
 /// Parameters
 /// ----------
-/// path : str
+/// path : str or os.PathLike
 ///     Path to an ``oplsaa.xml`` (OpenMM/GROMACS layout).
 ///
 /// Returns
@@ -1516,22 +1757,10 @@ pub fn read_forcefield_xml_str_py(xml: &str) -> PyResult<PyForceField> {
 ///     required attribute (reading is total — never a silent skip).
 #[pyfunction]
 #[pyo3(name = "read_opls_xml")]
-pub fn read_opls_xml_py(path: &str) -> PyResult<PyForceField> {
+pub fn read_opls_xml_py(path: PathBuf) -> PyResult<PyForceField> {
     use molrs::ff::ForceFieldReader;
     let forcefield = molrs::ff::OplsXmlReader::new()
-        .read(path)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    Ok(PyForceField { inner: forcefield })
-}
-
-/// Parse an OPLS-AA / GROMACS force field from an XML string (same schema and
-/// unit normalization as :func:`read_opls_xml`).
-#[pyfunction]
-#[pyo3(name = "read_opls_xml_str")]
-pub fn read_opls_xml_str_py(xml: &str) -> PyResult<PyForceField> {
-    use molrs::ff::ForceFieldReader;
-    let forcefield = molrs::ff::OplsXmlReader::new()
-        .read_str(xml)
+        .read(path_str(&path)?)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
 }
@@ -1554,7 +1783,7 @@ pub fn read_opls_xml_str_py(xml: &str) -> PyResult<PyForceField> {
 ///
 /// Parameters
 /// ----------
-/// path : str
+/// path : str or os.PathLike
 ///     Path to a LAMMPS force-field include (``*.ff``).
 ///
 /// Returns
@@ -1569,22 +1798,10 @@ pub fn read_opls_xml_str_py(xml: &str) -> PyResult<PyForceField> {
 ///     never a silent skip).
 #[pyfunction]
 #[pyo3(name = "read_lammps_forcefield")]
-pub fn read_lammps_forcefield_py(path: &str) -> PyResult<PyForceField> {
+pub fn read_lammps_forcefield_py(path: PathBuf) -> PyResult<PyForceField> {
     use molrs::ff::ForceFieldReader;
     let forcefield = molrs::ff::LammpsFfReader::new()
-        .read(path)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    Ok(PyForceField { inner: forcefield })
-}
-
-/// Parse a LAMMPS force-field include from a string (same format and unit
-/// normalization as :func:`read_lammps_forcefield`).
-#[pyfunction]
-#[pyo3(name = "read_lammps_forcefield_str")]
-pub fn read_lammps_forcefield_str_py(text: &str) -> PyResult<PyForceField> {
-    use molrs::ff::ForceFieldReader;
-    let forcefield = molrs::ff::LammpsFfReader::new()
-        .read_str(text)
+        .read(path_str(&path)?)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
 }
@@ -1596,72 +1813,92 @@ pub fn read_lammps_forcefield_str_py(text: &str) -> PyResult<PyForceField> {
 /// LJ A/B → σ/ε. Store units are molrs (Å, kcal/mol, radians, e).
 #[pyfunction]
 #[pyo3(name = "read_amber_prmtop_ff")]
-pub fn read_amber_prmtop_ff_py(path: &str) -> PyResult<PyForceField> {
+pub fn read_amber_prmtop_ff_py(path: PathBuf) -> PyResult<PyForceField> {
     let forcefield =
         molrs::ff::read_amber_prmtop_ff(path).map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
 }
 
-/// Parse AMBER prmtop force-field tables from a string.
-#[pyfunction]
-#[pyo3(name = "read_amber_prmtop_ff_str")]
-pub fn read_amber_prmtop_ff_str_py(text: &str) -> PyResult<PyForceField> {
-    use molrs::ff::ForceFieldReader;
-    let forcefield = molrs::ff::AmberPrmtopFfReader::new()
-        .read_str(text)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    Ok(PyForceField { inner: forcefield })
-}
-
-/// Read a GROMACS ``.top`` / ``.itp`` into a :class:`ForceField`.
+/// Read the force-field directives of a GROMACS topology into a
+/// :class:`ForceField`.
 ///
-/// Parses ``[ atoms ]`` / ``[ bonds ]`` / ``[ angles ]`` / ``[ dihedrals ]`` /
-/// ``[ pairs ]`` tables. Bonded parameters (when present) are converted from
-/// GROMACS units (nm, kJ/mol, degrees) to molrs store units. ``include``
-/// controls ``#include`` expansion (default false).
+/// Reads ``[ defaults ]`` (nbfunc 1, gen-pairs ``yes``, comb-rule 2 or 3 →
+/// ``lj/cut`` ``mixing`` ``arithmetic`` / ``geometric``), ``[ atomtypes ]``,
+/// ``[ bondtypes ]``, ``[ angletypes ]`` and ``[ dihedraltypes ]``, converting
+/// GROMACS units (nm, kJ/mol, degrees) to molrs store units (Å, kcal/mol, rad).
+///
+/// Anything the reader does not model raises ``ValueError`` naming it: an
+/// unsupported function code or comb-rule, ``[ pairtypes ]``,
+/// ``[ nonbond_params ]``, ``[ constrainttypes ]``, ``[ cmaptypes ]``,
+/// ``[ implicit_genborn_params ]``, any unknown section, and every molecule
+/// section (``[ moleculetype ]``, ``[ atoms ]``, ``[ bonds ]``, ``[ system ]``,
+/// ``[ molecules ]``, …). Molecule sections are topology: read them with
+/// :func:`molrs.io.read_top`, or skip them here.
+///
+/// ``include`` follows ``#include`` relative to the including file (default
+/// false: ignored). Each name in ``skip_directives`` (bracket-less,
+/// case-insensitive, e.g. ``"constrainttypes"``) is read past, rows and all,
+/// instead of refused.
 #[pyfunction]
-#[pyo3(name = "read_gromacs_top_ff", signature = (path, include = false))]
-pub fn read_gromacs_top_ff_py(path: &str, include: bool) -> PyResult<PyForceField> {
+#[pyo3(
+    name = "read_gromacs_top_ff",
+    signature = (path, include = false, *, skip_directives = Vec::new())
+)]
+pub fn read_gromacs_top_ff_py(
+    path: PathBuf,
+    include: bool,
+    skip_directives: Vec<String>,
+) -> PyResult<PyForceField> {
     use molrs::ff::ForceFieldReader;
-    let forcefield = molrs::ff::GromacsTopFfReader::new()
-        .with_include(include)
-        .read(path)
+    let forcefield = gromacs_top_ff_reader(include, &skip_directives)
+        .read(path_str(&path)?)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
 }
 
-/// Parse GROMACS topology force-field tables from a string.
-#[pyfunction]
-#[pyo3(name = "read_gromacs_top_ff_str", signature = (text, include = false))]
-pub fn read_gromacs_top_ff_str_py(text: &str, include: bool) -> PyResult<PyForceField> {
-    use molrs::ff::ForceFieldReader;
-    let forcefield = molrs::ff::GromacsTopFfReader::new()
-        .with_include(include)
-        .read_str(text)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    Ok(PyForceField { inner: forcefield })
+/// The GROMACS directive reader the Python entry point configures.
+fn gromacs_top_ff_reader(
+    include: bool,
+    skip_directives: &[String],
+) -> molrs::ff::GromacsTopFfReader {
+    skip_directives.iter().fold(
+        molrs::ff::GromacsTopFfReader::new().with_include(include),
+        |reader, name| reader.with_skipped_directive(name),
+    )
 }
 
-/// Write a ForceField to GROMACS ``.top`` / ``.itp`` force-field tables.
+/// Write a ForceField as GROMACS force-field directives.
+///
+/// Writes ``[ defaults ]``, ``[ atomtypes ]``, ``[ bondtypes ]``,
+/// ``[ angletypes ]`` and ``[ dihedraltypes ]`` in GROMACS units (nm, kJ/mol,
+/// degrees) — the inverse of :func:`read_gromacs_top_ff`. No molecule section
+/// is written: a force field holds no molecule. A style or parameter GROMACS
+/// directives cannot express raises ``ValueError`` naming it. ``precision`` is
+/// the number of decimal places for floating coefficients.
 #[pyfunction]
 #[pyo3(name = "write_gromacs_top_ff", signature = (path, forcefield, precision = 6))]
 pub fn write_gromacs_top_ff_py(
-    path: &str,
+    path: PathBuf,
     forcefield: &PyForceField,
     precision: usize,
 ) -> PyResult<()> {
-    molrs::ff::write_gromacs_top_ff(path, &forcefield.inner, precision)
+    use molrs::ff::ForceFieldWriter;
+    molrs::ff::GromacsTopFfWriter::new()
+        .with_precision(precision)
+        .write(&forcefield.inner, path_str(&path)?)
         .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
-/// Serialize a ForceField to a GROMACS topology force-field string.
+/// Write a ForceField as an AMBER frcmod file.
+///
+/// Writes ``MASS``, ``BOND``, ``ANGLE``, ``DIHE``, ``IMPROPER`` and ``NONBON``
+/// in AMBER's conventions (``RK = k/2``, ``TK = k/2``, degrees, ``R*/2`` from
+/// sigma), so tleap can ``loadamberparams`` it. A style or parameter a frcmod
+/// cannot express raises ``ValueError`` naming it.
 #[pyfunction]
-#[pyo3(name = "write_gromacs_top_ff_str", signature = (forcefield, precision = 6))]
-pub fn write_gromacs_top_ff_str_py(
-    forcefield: &PyForceField,
-    precision: usize,
-) -> PyResult<String> {
-    molrs::ff::write_gromacs_top_ff_str(&forcefield.inner, precision)
+#[pyo3(name = "write_amber_frcmod", signature = (path, forcefield))]
+pub fn write_amber_frcmod_py(path: PathBuf, forcefield: &PyForceField) -> PyResult<()> {
+    molrs::ff::write_amber_frcmod(path_str(&path)?, &forcefield.inner)
         .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
@@ -1669,22 +1906,11 @@ pub fn write_gromacs_top_ff_str_py(
 #[pyfunction]
 #[pyo3(name = "write_forcefield_xml", signature = (path, forcefield, precision = 6))]
 pub fn write_forcefield_xml_py(
-    path: &str,
+    path: PathBuf,
     forcefield: &PyForceField,
     precision: usize,
 ) -> PyResult<()> {
-    molrs::ff::write_forcefield_xml(path, &forcefield.inner, precision)
-        .map_err(pyo3::exceptions::PyValueError::new_err)
-}
-
-/// Serialize a ForceField to OpenMM-style XML string.
-#[pyfunction]
-#[pyo3(name = "write_forcefield_xml_str", signature = (forcefield, precision = 6))]
-pub fn write_forcefield_xml_str_py(
-    forcefield: &PyForceField,
-    precision: usize,
-) -> PyResult<String> {
-    molrs::ff::write_forcefield_xml_str(&forcefield.inner, precision)
+    molrs::ff::write_forcefield_xml(path_str(&path)?, &forcefield.inner, precision)
         .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
@@ -1741,6 +1967,12 @@ pub fn read_lammps_data_coeffs_py(
 
 /// Write a :class:`ForceField` to a LAMMPS force-field include (``*.ff``).
 ///
+/// Coefficient writing, keyed by the system's type labels: ``frame``'s
+/// ``atoms`` / ``bonds`` / ``angles`` / ``dihedrals`` / ``impropers`` type
+/// labels are walked in id order and each is looked up in ``forcefield``
+/// (every label matched to a type name exactly).
+/// Force-field types no label uses are not written.
+///
 /// Inverse of :func:`read_lammps_forcefield`: molrs store (Å, kcal/mol, radians,
 /// ``½k`` harmonic form for physical styles) → LAMMPS file units
 /// (``K = k/2``, angles in degrees). Energy/length conversion for
@@ -1756,6 +1988,8 @@ pub fn read_lammps_data_coeffs_py(
 ///     Destination path for the include.
 /// forcefield : ForceField
 ///     Force field in molrs store units.
+/// frame : Frame
+///     The system whose type labels select the coefficients.
 /// precision : int, optional
 ///     Decimal places for floating coefficients (default 6).
 /// skip_pair_style : bool, optional
@@ -1768,116 +2002,96 @@ pub fn read_lammps_data_coeffs_py(
 /// units : str, optional
 ///     LAMMPS ``units`` style for the written file: ``"real"`` (default),
 ///     ``"metal"``, or ``"lj"``.
-/// atom_types : set[str] | None, optional
-///     If given, only pair coeffs whose atom types are a subset of this set.
-/// bond_types, angle_types, dihedral_types, improper_types : set[str] | None
-///     Optional name whitelists for bonded coefficients.
 ///
 /// Raises
 /// ------
 /// ValueError
-///     On an unsupported style, units keyword, or missing required parameters.
+///     On a frame type label the force field does not define (the message
+///     names the block and the label), an unsupported style holding a used
+///     type, a bad units keyword, or missing required parameters.
 #[pyfunction]
 #[pyo3(
     name = "write_lammps_forcefield",
     signature = (
         path,
         forcefield,
+        frame,
+        *,
         precision = 6,
         skip_pair_style = false,
         skip_units = false,
         units = "real",
-        atom_types = None,
-        bond_types = None,
-        angle_types = None,
-        dihedral_types = None,
-        improper_types = None,
-        type_ids = None,
     )
 )]
-#[allow(clippy::too_many_arguments)]
 pub fn write_lammps_forcefield_py(
-    path: &str,
+    path: PathBuf,
     forcefield: &PyForceField,
+    frame: &PyFrame,
     precision: usize,
     skip_pair_style: bool,
     skip_units: bool,
     units: &str,
-    atom_types: Option<HashSet<String>>,
-    bond_types: Option<HashSet<String>>,
-    angle_types: Option<HashSet<String>>,
-    dihedral_types: Option<HashSet<String>>,
-    improper_types: Option<HashSet<String>>,
-    type_ids: Option<std::collections::HashMap<String, u32>>,
 ) -> PyResult<()> {
     use molrs::ff::forcefield::lammps_units::parse_style;
     use molrs::ff::{ForceFieldWriter, LammpsFfWriter, LammpsWriteOptions};
+    use molrs::store::type_labels::TypeLabels;
     let units = parse_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
-    let writer = LammpsFfWriter::with_options(LammpsWriteOptions {
-        precision,
-        skip_pair_style,
-        skip_units,
-        units,
-        atom_types,
-        bond_types,
-        angle_types,
-        dihedral_types,
-        improper_types,
-        type_ids,
-    });
+    let labels = frame
+        .with_frame(TypeLabels::from_frame)?
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let writer = LammpsFfWriter::with_options(
+        &labels,
+        LammpsWriteOptions {
+            precision,
+            skip_pair_style,
+            skip_units,
+            units,
+        },
+    );
     writer
-        .write(&forcefield.inner, path)
+        .write(&forcefield.inner, path_str(&path)?)
         .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
 /// Serialize a :class:`ForceField` to a LAMMPS force-field include string
-/// (same format and unit conversion as :func:`write_lammps_forcefield`).
+/// (same labels, format and unit conversion as :func:`write_lammps_forcefield`).
 #[pyfunction]
 #[pyo3(
     name = "write_lammps_forcefield_str",
     signature = (
         forcefield,
+        frame,
+        *,
         precision = 6,
         skip_pair_style = false,
         skip_units = false,
         units = "real",
-        atom_types = None,
-        bond_types = None,
-        angle_types = None,
-        dihedral_types = None,
-        improper_types = None,
-        type_ids = None,
     )
 )]
-#[allow(clippy::too_many_arguments)]
 pub fn write_lammps_forcefield_str_py(
     forcefield: &PyForceField,
+    frame: &PyFrame,
     precision: usize,
     skip_pair_style: bool,
     skip_units: bool,
     units: &str,
-    atom_types: Option<HashSet<String>>,
-    bond_types: Option<HashSet<String>>,
-    angle_types: Option<HashSet<String>>,
-    dihedral_types: Option<HashSet<String>>,
-    improper_types: Option<HashSet<String>>,
-    type_ids: Option<std::collections::HashMap<String, u32>>,
 ) -> PyResult<String> {
     use molrs::ff::forcefield::lammps_units::parse_style;
     use molrs::ff::{ForceFieldWriter, LammpsFfWriter, LammpsWriteOptions};
+    use molrs::store::type_labels::TypeLabels;
     let units = parse_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
-    let writer = LammpsFfWriter::with_options(LammpsWriteOptions {
-        precision,
-        skip_pair_style,
-        skip_units,
-        units,
-        atom_types,
-        bond_types,
-        angle_types,
-        dihedral_types,
-        improper_types,
-        type_ids,
-    });
+    let labels = frame
+        .with_frame(TypeLabels::from_frame)?
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let writer = LammpsFfWriter::with_options(
+        &labels,
+        LammpsWriteOptions {
+            precision,
+            skip_pair_style,
+            skip_units,
+            units,
+        },
+    );
     writer
         .write_str(&forcefield.inner)
         .map_err(pyo3::exceptions::PyValueError::new_err)
@@ -1885,52 +2099,43 @@ pub fn write_lammps_forcefield_str_py(
 
 /// Serialize a :class:`ForceField` to LAMMPS data-file ``* Coeffs`` sections.
 ///
-/// Same form map and ``units`` conversion as :func:`write_lammps_forcefield`,
-/// but emits ``Pair Coeffs`` / ``Bond Coeffs`` / … blocks (integer type ids),
-/// not input-script ``*_coeff`` lines. Pass ``type_ids`` (Frame-derived
-/// name→id) when type names are non-integer labels.
+/// Same labels, form map and ``units`` conversion as
+/// :func:`write_lammps_forcefield`, but emits ``Pair Coeffs`` / ``Bond Coeffs``
+/// / … blocks whose integer ids are ``frame``'s type-label ids, not
+/// input-script ``*_coeff`` lines. ``Pair Coeffs`` holds self pairs only; a
+/// used explicit cross pair raises ``ValueError``.
 #[pyfunction]
 #[pyo3(
     name = "write_lammps_data_coeffs",
     signature = (
         forcefield,
+        frame,
+        *,
         precision = 6,
         units = "real",
-        atom_types = None,
-        bond_types = None,
-        angle_types = None,
-        dihedral_types = None,
-        improper_types = None,
-        type_ids = None,
     )
 )]
-#[allow(clippy::too_many_arguments)]
 pub fn write_lammps_data_coeffs_py(
     forcefield: &PyForceField,
+    frame: &PyFrame,
     precision: usize,
     units: &str,
-    atom_types: Option<HashSet<String>>,
-    bond_types: Option<HashSet<String>>,
-    angle_types: Option<HashSet<String>>,
-    dihedral_types: Option<HashSet<String>>,
-    improper_types: Option<HashSet<String>>,
-    type_ids: Option<std::collections::HashMap<String, u32>>,
 ) -> PyResult<String> {
     use molrs::ff::forcefield::lammps_units::parse_style;
     use molrs::ff::{LammpsFfWriter, LammpsWriteOptions};
+    use molrs::store::type_labels::TypeLabels;
     let units = parse_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
-    let writer = LammpsFfWriter::with_options(LammpsWriteOptions {
-        precision,
-        skip_pair_style: true,
-        skip_units: false,
-        units,
-        atom_types,
-        bond_types,
-        angle_types,
-        dihedral_types,
-        improper_types,
-        type_ids,
-    });
+    let labels = frame
+        .with_frame(TypeLabels::from_frame)?
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let writer = LammpsFfWriter::with_options(
+        &labels,
+        LammpsWriteOptions {
+            precision,
+            units,
+            ..LammpsWriteOptions::default()
+        },
+    );
     writer
         .write_data_coeffs_str(&forcefield.inner)
         .map_err(pyo3::exceptions::PyValueError::new_err)
@@ -1939,7 +2144,7 @@ pub fn write_lammps_data_coeffs_py(
 /// Build the intramolecular non-bonded neighbour list for a typed frame.
 ///
 /// Returns a :class:`Block` with ``atomi`` / ``atomj`` / ``is_14`` columns — the
-/// exact list :meth:`ForceField.to_potentials` consumes for the pair (van der
+/// exact list :meth:`PotentialCompiler.compile` consumes for the pair (van der
 /// Waals + Coulomb) kernels. 1-4 pairs (from ``dihedrals``) are flagged so the
 /// kernels apply the force field's 1-4 scaling.
 ///
@@ -1951,9 +2156,9 @@ pub fn write_lammps_data_coeffs_py(
 /// did before it could be told otherwise.
 ///
 /// Insert the result as the frame's ``"pairs"`` block before
-/// :meth:`ForceField.to_potentials` when you need the non-bonded terms — e.g. a
+/// :meth:`PotentialCompiler.compile` when you need the non-bonded terms — e.g. a
 /// single-molecule geometry optimization where intramolecular van der Waals
-/// drives chain collapse. (``to_potentials`` silently drops the pair styles when
+/// drives chain collapse. (``compile`` silently drops the pair styles when
 /// no ``"pairs"`` block is present, so bonded-only optimizations need nothing.)
 ///
 /// Parameters
@@ -1974,7 +2179,7 @@ pub fn write_lammps_data_coeffs_py(
 /// ValueError
 ///     The force field scales 1-2 or 1-3 neighbours by a fraction, or scales
 ///     them differently for van der Waals and Coulomb. A list of rows cannot
-///     say either; use :meth:`ForceField.to_typed_potentials`, which carries a
+///     say either; use :meth:`PotentialCompiler.compile_typed`, which carries a
 ///     per-pair weight.
 #[pyfunction]
 #[pyo3(name = "intramolecular_pairs", signature = (frame, forcefield = None))]
@@ -1982,7 +2187,6 @@ pub fn intramolecular_pairs_py(
     frame: &PyFrame,
     forcefield: Option<&PyForceField>,
 ) -> PyResult<PyBlock> {
-    let core = frame.clone_core_frame()?;
     let owned;
     let special = match forcefield {
         Some(ff) => ff.inner.special_bonds(),
@@ -1991,7 +2195,8 @@ pub fn intramolecular_pairs_py(
             &owned
         }
     };
-    let block = molrs::ff::potential::intramolecular_pairs(&core, special)
+    let block = frame
+        .with_frame(|core| molrs::ff::potential::intramolecular_pairs(core, special))?
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     PyBlock::from_core_block(block)
 }

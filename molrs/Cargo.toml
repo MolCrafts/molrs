@@ -11,8 +11,11 @@ homepage.workspace = true
 readme = "../README.md"
 keywords = ["molecular-modeling", "chemistry", "simulation", "molecular-dynamics"]
 categories = ["science"]
-# No integration-test, bench or example targets: behaviour is tested in
-# `#[cfg(test)]` modules next to the code (`cargo test --lib`).
+# The generator example is a repository tool, not part of the published crate.
+exclude = ["examples/"]
+# No integration-test or bench targets: behaviour is tested in `#[cfg(test)]`
+# modules next to the code (`cargo test --lib`). One example target: the OPLS
+# parameter generator, a tool, not a test; excluded from the package.
 autotests = false
 autobenches = false
 autoexamples = false
@@ -24,15 +27,28 @@ features = ["full"]
 [lib]
 name = "molrs"
 
+# `cargo mrs-gen-opls --gromacs <dir>` regenerates src/ff/params/oplsaa.rs.
+[[example]]
+name = "gen_opls_params"
+required-features = ["ff"]
+
 [dev-dependencies]
 tempfile = "3.0"
+# The OPLS generator's input pin (shares `digest 0.10` with the lockfile).
+sha2 = "0.10"
 
 [features]
-# Native default: every sub-system plus filesystem-backed zarr and rayon.
-# `stream` (tokio + WebSocket) is opt-in — molrs-python turns it on itself.
-# wasm / Pyodide opt down with `default-features = false`.
-default = ["full", "filesystem", "rayon"]
-# Full bundle (every sub-system).
+# Default = core only (`op`, `core`, `perceive`, `optimize`'s engine) plus
+# `rayon`. Every sub-system is opt-in: a downstream crate compiles what it names
+# and nothing else, instead of all of molrs unless it remembers
+# `default-features = false`. `rayon` stays on because it is a pure-Rust
+# performance knob with no API surface; `filesystem` does not, because it links
+# the C zstd/blosc codecs and `zip`. wasm / Pyodide opt out of `rayon` with
+# `default-features = false`. The binders turn on `full` (and `filesystem`,
+# `stream`) themselves.
+default = ["rayon"]
+# Full bundle (every sub-system). Not `stream` (tokio + WebSocket) and not the
+# `filesystem` / `rayon` knobs.
 full = ["io", "compute", "smiles", "ff", "conformer", "signal", "voronoi", "md", "builder"]
 
 # Sub-system modules (each gates its module + its unique optional deps).
@@ -47,7 +63,8 @@ compute   = ["signal"]
 # Radical (Laguerre) Voronoi tessellation + domain/void analysis. Native
 # pure-Rust (WASM-clean); lives in the `compute` module.
 voronoi   = ["compute"]
-ff        = ["dep:rustfft", "dep:roxmltree"]
+# `ff` reads force-field files through `io`'s format parsers (prmtop sections).
+ff        = ["io", "dep:rustfft", "dep:roxmltree"]
 # `conformer` depends on the `ff` module.
 conformer = ["ff"]
 # In-process MD (integrators, shifted LJ). Science only; pair search is
@@ -83,7 +100,13 @@ ndarray    = "0.17"
 slotmap    = "1"
 smallvec   = "1"
 serde      = { version = "1", features = ["derive"] }
-serde_json = "1"
+# `preserve_order`: the Zarr schema pin and group attributes are JSON objects
+# whose key order is the declared block / column / meta order.
+serde_json = { version = "1", features = ["preserve_order"] }
+# Insertion order of frame blocks, block columns and metadata (`Frame`,
+# `Block`, `MetaMap`, graph components). Always-on because `core` is.
+# `serde` so the frame wire form carries keys in that order.
+indexmap   = { version = "2", features = ["serde"] }
 # `lgamma` (Wigner / spherical harmonics) and `erf`/`erfc` (PME) — none of
 # them is in Rust's std on any target.
 libm       = "0.2"

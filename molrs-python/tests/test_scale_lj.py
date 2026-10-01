@@ -1,22 +1,20 @@
-import pytest
-
 import molrs
+import pytest
 
 
 def _forcefield():
     ff = molrs.ff.ForceField()
-    ff.def_atomstyle("full").def_type("CR", type_=1.0)
-    ff.def_atomstyle("full").def_type("B", type_=2.0)
-    pairs = ff.def_pairstyle("lj/cut")
-    cr = ff.def_atomstyle("full").types[0]
-    b = ff.def_atomstyle("full").types[1]
-    pairs.def_type(cr, b, epsilon=1.0, sigma=3.5)
-    pairs.def_type(cr, cr, epsilon=2.0, sigma=3.6)
+    atom_style = ff.def_style("atom", "full")
+    cr = atom_style.def_type("CR", type_=1.0)
+    b = atom_style.def_type("B", type_=2.0)
+    pair_style = ff.def_style("pair", "lj/cut")
+    pair_style.def_type("CR-B", cr, b, epsilon=1.0, sigma=3.5)
+    pair_style.def_type("CR", cr, epsilon=2.0, sigma=3.6)
     return ff
 
 
 def _epsilon(ff, name):
-    return dict(ff.types("pair", "lj/cut"))[name]["epsilon"]
+    return ff.get_style("pair", "lj/cut").get_type_by_name(name)["epsilon"]
 
 
 def test_native_scale_lj_clones_and_scales_cross_pair():

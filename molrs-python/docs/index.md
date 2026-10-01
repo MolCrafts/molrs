@@ -76,7 +76,6 @@ the hosted site reserves `/reference/wasm/` for that generated reference.
 
 ## What lives here
 
-- [Migrating to 0.14](getting-started/migration-0-14.md): 0.13 → 0.14
   spellings (`UnitPreset`, `MD(dtype=)`, the `Record` removal, `meta`).
 
 These docs cover the molrs **binding surface** only — the per-language

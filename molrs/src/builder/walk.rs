@@ -15,9 +15,10 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 
 use super::occupancy::{OccupancyGrid, OccupancyMode};
+use crate::spatial::Trace;
 use crate::spatial::simbox::BoxError;
 use crate::spatial::simbox::SimBox;
-use crate::types::{F, F3, Pbc3};
+use crate::types::{F, Pbc3};
 
 /// How many attempts a strategy gets to seed the first monomer of a chain
 /// before reporting a dead-end for that placement.
@@ -63,11 +64,6 @@ impl From<BoxError> for WalkError {
     fn from(e: BoxError) -> Self {
         WalkError::BoxError(format!("{e:?}"))
     }
-}
-
-/// Convert a fixed `[F; 3]` point to the public [`F3`] (`Array1<f64>`) form.
-pub(crate) fn to_f3(p: [F; 3]) -> F3 {
-    Array1::from_vec(vec![p[0], p[1], p[2]])
 }
 
 /// Apply per-axis boundary conditions to a raw candidate grown from `tip`.
@@ -138,7 +134,7 @@ pub trait GrowthStrategy {
 ///     strategy: OffLattice { excluded_radius: 1.0 },
 /// };
 /// let out = walk.generate().unwrap();
-/// assert_eq!(out.paths.len(), 2);
+/// assert_eq!(out.traces.len(), 2);
 /// ```
 ///
 /// `target_density` is in **monomers per unit volume** — mass is out of scope,
@@ -161,13 +157,15 @@ pub struct SelfAvoidingWalk<S: GrowthStrategy> {
     pub strategy: S,
 }
 
-/// The result of [`SelfAvoidingWalk::generate`]: one point list per chain plus
+/// The result of [`SelfAvoidingWalk::generate`]: one [`Trace`] per chain plus
 /// the box that was used. No topology, chemistry, or IO.
+///
+/// The walk is the generator. Each chain it grew is a [`Trace`].
 pub struct WalkOutput {
-    /// One inner vector per chain, each holding `chain_length` 3D points, all
-    /// inside the box (periodic axes wrapped, reflective axes reflected).
-    pub paths: Vec<Vec<F3>>,
-    /// The cubic periodic/reflective box the paths were grown in.
+    /// One trace per chain, each holding `chain_length` samples, all inside
+    /// the box (periodic axes wrapped, reflective axes reflected).
+    pub traces: Vec<Trace>,
+    /// The cubic periodic/reflective box the traces were grown in.
     pub simbox: SimBox,
 }
 
@@ -210,7 +208,7 @@ impl<S: GrowthStrategy> SelfAvoidingWalk<S> {
         let mode = self.strategy.occupancy_mode(self.bond_length);
         let mut grid = OccupancyGrid::new(mode, &simbox, self.pbc);
         let mut rng = StdRng::seed_from_u64(self.seed);
-        let mut paths: Vec<Vec<F3>> = Vec::with_capacity(self.n_chains);
+        let mut traces: Vec<Trace> = Vec::with_capacity(self.n_chains);
 
         let max_backtrack = 50 * self.chain_length + 1000;
         const MAX_CHAIN_RESTARTS: usize = 8;
@@ -235,10 +233,10 @@ impl<S: GrowthStrategy> SelfAvoidingWalk<S> {
                 chain: c,
                 monomer: best_reached,
             })?;
-            paths.push(chain.iter().map(|p| to_f3(*p)).collect());
+            traces.push(Trace::from_points(chain));
         }
 
-        Ok(WalkOutput { paths, simbox })
+        Ok(WalkOutput { traces, simbox })
     }
 
     /// Grow a single chain with per-step backtracking against the shared grid.
@@ -311,6 +309,7 @@ impl<S: GrowthStrategy> SelfAvoidingWalk<S> {
 mod tests {
     use super::*;
     use crate::builder::{FccLattice, OffLattice};
+    use crate::op::types::Vec3;
 
     const B: F = 1.53;
 
@@ -361,11 +360,11 @@ mod tests {
         fcc().generate().unwrap()
     }
 
-    fn pt(v: &F3) -> [F; 3] {
+    fn pt(v: &Vec3) -> [F; 3] {
         [v[0], v[1], v[2]]
     }
 
-    fn min_image_dist(sb: &SimBox, x: &F3, y: &F3) -> F {
+    fn min_image_dist(sb: &SimBox, x: &Vec3, y: &Vec3) -> F {
         let d = sb.shortest_vector_impl(pt(x), pt(y));
         (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
     }
@@ -373,10 +372,10 @@ mod tests {
     // ac-005: exact chain count and per-chain length, both strategies.
     #[test]
     fn shape_is_exact() {
-        for paths in [out_off().paths, out_fcc().paths] {
-            assert_eq!(paths.len(), 3);
-            for chain in &paths {
-                assert_eq!(chain.len(), 20usize);
+        for out in [out_off(), out_fcc()] {
+            assert_eq!(out.traces.len(), 3);
+            for trace in &out.traces {
+                assert_eq!(trace.points().len(), 20usize);
             }
         }
     }
@@ -388,8 +387,8 @@ mod tests {
             (off().generate().unwrap(), off().generate().unwrap()),
             (fcc().generate().unwrap(), fcc().generate().unwrap()),
         ] {
-            for (ca, cb) in a.paths.iter().zip(b.paths.iter()) {
-                for (pa, pb) in ca.iter().zip(cb.iter()) {
+            for (ca, cb) in a.traces.iter().zip(b.traces.iter()) {
+                for (pa, pb) in ca.points().iter().zip(cb.points().iter()) {
                     assert_eq!(pt(pa), pt(pb), "coordinates must match exactly");
                 }
             }
@@ -408,8 +407,8 @@ mod tests {
             (fcc_reflective().generate().unwrap(), 1e-9),
         ];
         for (out, tol) in cases {
-            for chain in &out.paths {
-                for w in chain.windows(2) {
+            for trace in &out.traces {
+                for w in trace.points().windows(2) {
                     let d = min_image_dist(&out.simbox, &w[0], &w[1]);
                     assert!((d - B).abs() <= tol, "bond {d} != {B} (tol {tol})");
                 }
@@ -423,7 +422,7 @@ mod tests {
     fn offlattice_excluded_volume() {
         let r = 1.0;
         let out = out_off();
-        let all: Vec<&F3> = out.paths.iter().flatten().collect();
+        let all: Vec<&Vec3> = out.traces.iter().flat_map(Trace::points).collect();
         for i in 0..all.len() {
             for j in (i + 1)..all.len() {
                 let d = min_image_dist(&out.simbox, all[i], all[j]);
@@ -437,7 +436,7 @@ mod tests {
     #[test]
     fn fcc_no_collision() {
         for out in [out_fcc(), fcc_reflective().generate().unwrap()] {
-            let all: Vec<&F3> = out.paths.iter().flatten().collect();
+            let all: Vec<&Vec3> = out.traces.iter().flat_map(Trace::points).collect();
             for i in 0..all.len() {
                 for j in (i + 1)..all.len() {
                     let d = min_image_dist(&out.simbox, all[i], all[j]);
@@ -475,13 +474,9 @@ mod tests {
             fcc_reflective().generate().unwrap(),
         ] {
             let edge = out.simbox.lengths()[0];
-            for p in out.paths.iter().flatten() {
-                for k in 0..3 {
-                    assert!(
-                        p[k] >= 0.0 && p[k] < edge,
-                        "coord {} out of [0,{edge})",
-                        p[k]
-                    );
+            for p in out.traces.iter().flat_map(Trace::points) {
+                for c in p {
+                    assert!(*c >= 0.0 && *c < edge, "coord {c} out of [0,{edge})");
                 }
             }
         }
@@ -541,7 +536,7 @@ mod tests {
         }
         .generate()
         .unwrap();
-        let _paths: &Vec<Vec<F3>> = &out.paths;
+        let _traces: &Vec<Trace> = &out.traces;
         let _box: &SimBox = &out.simbox;
     }
 }

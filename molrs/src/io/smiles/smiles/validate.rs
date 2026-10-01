@@ -10,13 +10,20 @@
 
 use crate::io::smiles::chem::ast::*;
 use crate::io::smiles::chem::validation::validate_ring_closures;
-use crate::io::smiles::error::{SmilesError, SmilesErrorKind};
-use crate::io::smiles::smiles::canonical_element_symbol;
-use molrs::Element;
+use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
+use crate::io::smiles::smiles::is_element_symbol;
 
 /// Validate a parsed SMILES molecule.
 ///
 /// Returns `Ok(())` if valid, or the first validation error found.
+///
+/// # Errors
+///
+/// Returns [`SmilesErrorKind::UnmatchedRingClosure`] for an unpaired ring
+/// digit, [`SmilesErrorKind::InvalidElement`] for a symbol that is not an
+/// element, and [`SmilesErrorKind::DescriptorInPlainSmiles`] for a node
+/// carrying a bonding descriptor: this is the plain-SMILES validator, and a
+/// fragment body belongs to the fragment dialect.
 pub fn validate_smiles(mol: &SmilesIR, input: &str) -> Result<(), SmilesError> {
     validate_ring_closures(mol, input)?;
     validate_elements(mol, input)?;
@@ -28,6 +35,11 @@ pub fn validate_smiles(mol: &SmilesIR, input: &str) -> Result<(), SmilesError> {
 // ---------------------------------------------------------------------------
 
 /// Validate that all element symbols refer to real elements.
+///
+/// [`parse_smiles`](crate::io::smiles::parse_smiles) refuses an unknown
+/// symbol itself, by this same lookup, so on a parsed IR this pass has
+/// nothing left to find; it stands for the IRs nobody parsed — built by hand
+/// or edited after parsing.
 fn validate_elements(mol: &SmilesIR, input: &str) -> Result<(), SmilesError> {
     for component in &mol.components {
         validate_chain_elements(component, input)?;
@@ -52,6 +64,19 @@ fn validate_chain_elements(chain: &Chain, input: &str) -> Result<(), SmilesError
 }
 
 fn validate_atom_element(atom: &AtomNode, input: &str) -> Result<(), SmilesError> {
+    // Plain SMILES has no bonding-descriptor notation, so a node carrying one
+    // reached this validator through the fragment dialect (or a hand-built
+    // IR). Refusing here keeps `validate_smiles` symmetric with
+    // `to_atomistic`: neither plain-path stage ever drops a descriptor.
+    if !atom.descriptors.is_empty() {
+        return Err(SmilesError::new(
+            SmilesErrorKind::DescriptorInPlainSmiles,
+            atom.span,
+            input,
+            Notation::Smiles,
+        ));
+    }
+
     match &atom.spec {
         AtomSpec::Organic { symbol, .. } => {
             validate_symbol(symbol, atom.span, input)?;
@@ -72,13 +97,12 @@ fn validate_atom_element(atom: &AtomNode, input: &str) -> Result<(), SmilesError
 }
 
 fn validate_symbol(symbol: &str, span: Span, input: &str) -> Result<(), SmilesError> {
-    let lookup = Element::by_symbol(&canonical_element_symbol(symbol));
-
-    if lookup.is_none() {
+    if !is_element_symbol(symbol) {
         return Err(SmilesError::new(
             SmilesErrorKind::InvalidElement(symbol.to_owned()),
             span,
             input,
+            Notation::Smiles,
         ));
     }
     Ok(())
@@ -99,11 +123,98 @@ mod tests {
         assert!(validate_smiles(&mol, "C1CCCCC1").is_ok());
     }
 
+    /// Hand-built IR for `CCCC1` — a chain of four carbons whose last element
+    /// is a ring digit that never closes.
+    ///
+    /// The parser refuses an unmatched ring closure itself, so this unit can
+    /// only be reached with an IR built directly.
+    fn unmatched_ring_ir() -> SmilesIR {
+        fn carbon(start: usize) -> AtomNode {
+            AtomNode {
+                spec: AtomSpec::Organic {
+                    symbol: "C".to_owned(),
+                    aromatic: false,
+                },
+                span: Span::new(start, start + 1),
+                descriptors: Vec::new(),
+            }
+        }
+
+        SmilesIR {
+            components: vec![Chain {
+                head: carbon(0),
+                tail: vec![
+                    ChainElement::BondedAtom {
+                        bond: None,
+                        atom: carbon(1),
+                    },
+                    ChainElement::BondedAtom {
+                        bond: None,
+                        atom: carbon(2),
+                    },
+                    ChainElement::BondedAtom {
+                        bond: None,
+                        atom: carbon(3),
+                    },
+                    ChainElement::RingClosure {
+                        bond: None,
+                        rnum: 1,
+                        span: Span::new(4, 5),
+                    },
+                ],
+            }],
+            span: Span::new(0, 5),
+        }
+    }
+
     #[test]
     fn test_unmatched_ring_closure() {
-        let mol = parse_smiles("CC1CC").unwrap();
-        let err = validate_smiles(&mol, "CC1CC").unwrap_err();
+        let mol = unmatched_ring_ir();
+        let err = validate_smiles(&mol, "CCCC1").unwrap_err();
         assert!(matches!(err.kind, SmilesErrorKind::UnmatchedRingClosure(1)));
+    }
+
+    /// Hand-built IR for `[Xx]` — a bracket atom whose symbol is not an
+    /// element.
+    ///
+    /// `parse_smiles` refuses this string itself, so this unit is reached
+    /// only with an IR built directly (as a hand-built IR or a future
+    /// notation could still carry one).
+    fn unknown_element_ir() -> SmilesIR {
+        SmilesIR {
+            components: vec![Chain {
+                head: AtomNode {
+                    spec: AtomSpec::Bracket {
+                        isotope: None,
+                        symbol: BracketSymbol::Element {
+                            symbol: "Xx".to_owned(),
+                            aromatic: false,
+                        },
+                        chirality: None,
+                        hcount: None,
+                        charge: None,
+                        atom_class: None,
+                    },
+                    span: Span::new(0, 4),
+                    descriptors: Vec::new(),
+                },
+                tail: Vec::new(),
+            }],
+            span: Span::new(0, 4),
+        }
+    }
+
+    /// The payload is the symbol exactly as written, which is the same kind
+    /// and payload `parse_smiles` reports for the same rule
+    /// (`parser.rs::test_unknown_bracket_element_is_refused_by_parse_smiles`).
+    #[test]
+    fn test_unknown_bracket_element_is_an_invalid_element() {
+        let mol = unknown_element_ir();
+        let err = validate_smiles(&mol, "[Xx]").unwrap_err();
+        match &err.kind {
+            SmilesErrorKind::InvalidElement(symbol) => assert_eq!(symbol, "Xx"),
+            other => panic!("expected InvalidElement, got {other:?}"),
+        }
     }
 
     #[test]
@@ -128,5 +239,17 @@ mod tests {
     fn test_disconnected_valid() {
         let mol = parse_smiles("[Na+].[Cl-]").unwrap();
         assert!(validate_smiles(&mol, "[Na+].[Cl-]").is_ok());
+    }
+
+    #[test]
+    fn test_descriptor_bearing_ir_is_rejected_by_the_plain_validator() {
+        let mut mol = parse_smiles("CCO").unwrap();
+        mol.components[0].head.descriptors.push(BondingDescriptor {
+            kind: DescriptorKind::Symmetric,
+            label: String::new(),
+            order: None,
+        });
+        let err = validate_smiles(&mol, "CCO").unwrap_err();
+        assert!(matches!(err.kind, SmilesErrorKind::DescriptorInPlainSmiles));
     }
 }

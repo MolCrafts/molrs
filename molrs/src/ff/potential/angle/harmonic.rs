@@ -1,5 +1,6 @@
 //! Harmonic angle potential: E = 0.5 * k * (theta - theta0)^2
 
+use molrs::store::schema::block_names::ANGLES;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
@@ -129,7 +130,7 @@ pub fn angle_harmonic_ctor(
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
-        .get("angles")
+        .get(ANGLES)
         .ok_or_else(|| "AngleHarmonic: frame missing \"angles\" block".to_string())?;
     let i_col = block
         .get_uint("atomi")

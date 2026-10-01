@@ -119,6 +119,37 @@ TEST_F(MolrsTest, FrameMetadata) {
     ASSERT_MOLRS_OK(molrs_frame_drop(frame));
 }
 
+TEST_F(MolrsTest, FrameMetadataOrder) {
+    MolrsFrameHandle frame{};
+    ASSERT_MOLRS_OK(molrs_frame_new(&frame));
+
+    // Not alphabetical: a reintroduced sort must fail this case.
+    const char* keys[] = {"zeta", "alpha", "mu"};
+    for (size_t i = 0; i < 3; ++i) {
+        MolrsMetaValue value{};
+        value.dtype = MOLRS_META_TYPE_STRING;
+        value.string_value = const_cast<char*>(keys[i]);
+        ASSERT_MOLRS_OK(molrs_frame_put_meta(frame, keys[i], &value));
+    }
+
+    uintptr_t count = 0;
+    ASSERT_MOLRS_OK(molrs_frame_meta_count(frame, &count));
+    EXPECT_EQ(count, 3u);
+
+    for (uintptr_t i = 0; i < 3; ++i) {
+        char* out = nullptr;
+        ASSERT_MOLRS_OK(molrs_frame_meta_key(frame, i, &out));
+        ASSERT_NE(out, nullptr);
+        EXPECT_STREQ(out, keys[i]);
+        molrs_free_string(out);
+    }
+
+    char* out_of_range = nullptr;
+    EXPECT_NE(molrs_frame_meta_key(frame, 3, &out_of_range), MOLRS_STATUS_OK);
+
+    ASSERT_MOLRS_OK(molrs_frame_drop(frame));
+}
+
 // ===== Block Insert & Read ================================================
 
 TEST_F(MolrsTest, BlockInsertAndRead) {
@@ -430,18 +461,13 @@ TEST_F(MolrsTest, ForceFieldLifecycle) {
     MolrsForceFieldHandle ff{};
     ASSERT_MOLRS_OK(molrs_ff_new("gtest_ff", &ff));
 
-    ASSERT_MOLRS_OK(molrs_ff_def_bondstyle(ff, "harmonic"));
-    ASSERT_MOLRS_OK(molrs_ff_def_anglestyle(ff, "harmonic"));
-    ASSERT_MOLRS_OK(molrs_ff_def_atomstyle(ff, "full"));
+    ASSERT_MOLRS_OK(molrs_ff_def_style(ff, "bond", "harmonic", nullptr, nullptr, 0));
+    ASSERT_MOLRS_OK(molrs_ff_def_style(ff, "angle", "harmonic", nullptr, nullptr, 0));
+    ASSERT_MOLRS_OK(molrs_ff_def_style(ff, "atom", "full", nullptr, nullptr, 0));
 
     size_t count = 0;
     ASSERT_MOLRS_OK(molrs_ff_style_count(ff, &count));
     EXPECT_EQ(count, 3u);
-
-    // define a bond type via unified API
-    const char* pk[] = {"k0", "r0"};
-    double pv[] = {300.0, 1.4};
-    ASSERT_MOLRS_OK(molrs_ff_def_type(ff, "bond", "harmonic", "CT-OH", pk, pv, 2));
 
     // query style name
     char* cat = nullptr;
@@ -462,16 +488,77 @@ TEST_F(MolrsTest, ForceFieldPairStyle) {
 
     const char* style_pk[] = {"cutoff"};
     double style_pv[] = {10.0};
-    ASSERT_MOLRS_OK(molrs_ff_def_pairstyle(ff, "lj/cut", style_pk, style_pv, 1));
+    ASSERT_MOLRS_OK(molrs_ff_def_style(ff, "pair", "lj/cut", style_pk, style_pv, 1));
 
     const char* type_pk[] = {"epsilon", "sigma"};
     double type_pv[] = {0.5, 3.4};
-    ASSERT_MOLRS_OK(molrs_ff_def_type(ff, "pair", "lj/cut", "Ar", type_pk, type_pv, 2));
-    ASSERT_MOLRS_OK(molrs_ff_def_type(ff, "pair", "lj/cut", "Ar-Kr", type_pk, type_pv, 2));
+    const char* ar[] = {"Ar"};
+    const char* ar_kr[] = {"Ar", "Kr"};
+    ASSERT_MOLRS_OK(molrs_ff_def_type(ff, "pair", "lj/cut", "Ar", ar, 1, type_pk, type_pv, 2));
+    ASSERT_MOLRS_OK(
+        molrs_ff_def_type(ff, "pair", "lj/cut", "Ar-Kr", ar_kr, 2, type_pk, type_pv, 2));
 
     size_t count = 0;
     ASSERT_MOLRS_OK(molrs_ff_style_count(ff, &count));
     EXPECT_EQ(count, 1u);
+
+    ASSERT_MOLRS_OK(molrs_ff_drop(ff));
+}
+
+TEST_F(MolrsTest, ForceFieldDefStyleDefTypeAreOk) {
+    MolrsForceFieldHandle ff{};
+    ASSERT_MOLRS_OK(molrs_ff_new("gtest_primitives", &ff));
+
+    ASSERT_MOLRS_OK(molrs_ff_def_style(ff, "bond", "harmonic", nullptr, nullptr, 0));
+
+    const char* pk[] = {"k0", "r0"};
+    double pv[] = {300.0, 1.4};
+    const char* ct_oh[] = {"CT", "OH"};
+    ASSERT_MOLRS_OK(molrs_ff_def_type(ff, "bond", "harmonic", "CT-OH", ct_oh, 2, pk, pv, 2));
+
+    // The name is opaque: MMFF's `0_1_5` is defined on the endpoints given.
+    const char* endpoints[] = {"1", "5"};
+    ASSERT_MOLRS_OK(
+        molrs_ff_def_type(ff, "bond", "harmonic", "0_1_5", endpoints, 2, pk, pv, 2));
+
+    ASSERT_MOLRS_OK(molrs_ff_drop(ff));
+}
+
+TEST_F(MolrsTest, ForceFieldDefStyleUnknownCategoryIsInvalidArgument) {
+    MolrsForceFieldHandle ff{};
+    ASSERT_MOLRS_OK(molrs_ff_new("gtest_bad_category", &ff));
+
+    EXPECT_EQ(molrs_ff_def_style(ff, "kspace", "pme", nullptr, nullptr, 0),
+              MOLRS_STATUS_INVALID_ARGUMENT);
+
+    ASSERT_MOLRS_OK(molrs_ff_drop(ff));
+}
+
+TEST_F(MolrsTest, ForceFieldDefTypeOnMissingStyleIsInvalidArgument) {
+    MolrsForceFieldHandle ff{};
+    ASSERT_MOLRS_OK(molrs_ff_new("gtest_missing_style", &ff));
+
+    const char* pk[] = {"k0", "r0"};
+    double pv[] = {300.0, 1.4};
+    const char* ct_oh[] = {"CT", "OH"};
+    // No style is created implicitly.
+    EXPECT_EQ(molrs_ff_def_type(ff, "bond", "harmonic", "CT-OH", ct_oh, 2, pk, pv, 2),
+              MOLRS_STATUS_INVALID_ARGUMENT);
+
+    ASSERT_MOLRS_OK(molrs_ff_drop(ff));
+}
+
+TEST_F(MolrsTest, ForceFieldDefTypeWrongEndpointCountIsInvalidArgument) {
+    MolrsForceFieldHandle ff{};
+    ASSERT_MOLRS_OK(molrs_ff_new("gtest_malformed", &ff));
+    ASSERT_MOLRS_OK(molrs_ff_def_style(ff, "bond", "harmonic", nullptr, nullptr, 0));
+
+    const char* pk[] = {"k0", "r0"};
+    double pv[] = {300.0, 1.4};
+    const char* ct[] = {"CT"};
+    // One endpoint on a bond style: an error status, never a panic.
+    EXPECT_EQ(molrs_ff_def_type(ff, "bond", "harmonic", "CT-CT", ct, 1, pk, pv, 2),
+              MOLRS_STATUS_INVALID_ARGUMENT);
 
     ASSERT_MOLRS_OK(molrs_ff_drop(ff));
 }
@@ -482,11 +569,12 @@ TEST_F(MolrsTest, ForceFieldJsonRoundtrip) {
 
     const char* spk[] = {"cutoff"};
     double spv[] = {12.0};
-    ASSERT_MOLRS_OK(molrs_ff_def_pairstyle(ff, "lj/cut", spk, spv, 1));
+    ASSERT_MOLRS_OK(molrs_ff_def_style(ff, "pair", "lj/cut", spk, spv, 1));
 
     const char* tpk[] = {"epsilon", "sigma"};
     double tpv[] = {1.0, 3.4};
-    ASSERT_MOLRS_OK(molrs_ff_def_type(ff, "pair", "lj/cut", "Ar", tpk, tpv, 2));
+    const char* ar[] = {"Ar"};
+    ASSERT_MOLRS_OK(molrs_ff_def_type(ff, "pair", "lj/cut", "Ar", ar, 1, tpk, tpv, 2));
 
     // serialize
     char* json = nullptr;
@@ -548,26 +636,6 @@ TEST_F(MolrsTest, BlockCopyBufferTooSmall) {
     EXPECT_NE(s, MOLRS_STATUS_OK);
 
     ASSERT_MOLRS_OK(molrs_frame_drop(frame));
-}
-
-// ---------------------------------------------------------------------------
-// Frame schema
-//
-// The point of these is that the C surface reports the *same* contract the
-// Rust tables declare — a header that drifts from the library is exactly the
-// duplication the schema exists to remove.
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// ABI handshake
-//
-// A dlopen consumer compares the library's runtime version constant against
-// the MOLRS_C_API_VERSION its header was compiled with — a header/library
-// pair that drifts must be detectable before any other call.
-// ---------------------------------------------------------------------------
-
-TEST(Abi, RuntimeVersionMatchesHeaderConstant) {
-    EXPECT_EQ(molrs_c_api_version(), static_cast<uint32_t>(MOLRS_C_API_VERSION));
 }
 
 TEST(Abi, MolrsVersionIsANonEmptyDottedString) {

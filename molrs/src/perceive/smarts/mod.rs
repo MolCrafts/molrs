@@ -52,7 +52,7 @@
 //! g.add_bond(c1, n).unwrap();
 //!
 //! let pat = SmartsPattern::parse("[$([CX3]=[OX1]):1]~[*:2]").unwrap();
-//! assert!(pat.has_match(&g, molrs::MatchOptions::default()));
+//! assert!(pat.has_match(&g, molrs::perceive::smarts::MatchOptions::default()));
 //! assert_eq!(pat.map_label(0), Some(1));
 //! ```
 

@@ -3,7 +3,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use crate::io::smiles::chem::ast::*;
-use crate::io::smiles::error::{SmilesError, SmilesErrorKind};
+use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
 use crate::io::smiles::smiles::options::{LocalSmartsOptions, NeighborStyle};
 use crate::io::smiles::smiles::write::write_smarts;
 use crate::perceive::rings::find_rings;
@@ -75,7 +75,12 @@ pub fn write_local_smarts(
 }
 
 fn emit_err(msg: impl Into<String>) -> SmilesError {
-    SmilesError::new(SmilesErrorKind::Emit(msg.into()), Span::new(0, 0), "")
+    SmilesError::new(
+        SmilesErrorKind::Emit(msg.into()),
+        Span::new(0, 0),
+        "",
+        Notation::Smarts,
+    )
 }
 
 fn is_h(mol: &Atomistic, id: AtomId) -> bool {
@@ -285,6 +290,7 @@ fn build_chain_env(
         let head = AtomNode {
             spec: AtomSpec::Query(q),
             span: Span::new(0, 0),
+            descriptors: Vec::new(),
         };
         let nbs = ordered_neighbors(mol, id, depth, opts, parent);
         if nbs.is_empty() {
@@ -369,6 +375,7 @@ fn build_recursive_env(
                 head: AtomNode {
                     spec: AtomSpec::Query(leaf),
                     span: Span::new(0, 0),
+                    descriptors: Vec::new(),
                 },
                 tail: vec![],
             }
@@ -392,6 +399,7 @@ fn build_recursive_env(
         head: AtomNode {
             spec: AtomSpec::Query(q),
             span: Span::new(0, 0),
+            descriptors: Vec::new(),
         },
         tail: vec![],
     })

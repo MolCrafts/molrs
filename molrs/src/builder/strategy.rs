@@ -13,6 +13,7 @@ use rand::rngs::StdRng;
 
 use super::occupancy::OccupancyMode;
 use super::walk::GrowthStrategy;
+use crate::op::so3::unit_vector_from_uniform;
 use crate::spatial::simbox::SimBox;
 use crate::types::F;
 
@@ -101,14 +102,6 @@ pub struct OffLattice {
     pub excluded_radius: F,
 }
 
-/// Sample a unit vector uniformly on the sphere from two uniforms.
-fn random_unit(rng: &mut StdRng) -> [F; 3] {
-    let z = 2.0 * rng.random::<f64>() - 1.0;
-    let phi = 2.0 * std::f64::consts::PI * rng.random::<f64>();
-    let r = (1.0 - z * z).max(0.0).sqrt();
-    [r * phi.cos(), r * phi.sin(), z]
-}
-
 impl GrowthStrategy for OffLattice {
     fn occupancy_mode(&self, _bond_length: F) -> OccupancyMode {
         OccupancyMode::BlockClear {
@@ -126,7 +119,10 @@ impl GrowthStrategy for OffLattice {
     }
 
     fn propose_step(&self, tip: [F; 3], bond_length: F, rng: &mut StdRng) -> [F; 3] {
-        let d = random_unit(rng);
+        // Two draws in the fixed order z, then φ, so a seed replays the walk.
+        let u0 = rng.random::<f64>();
+        let u1 = rng.random::<f64>();
+        let d = unit_vector_from_uniform([u0, u1]);
         [
             tip[0] + d[0] * bond_length,
             tip[1] + d[1] * bond_length,
@@ -159,16 +155,5 @@ mod tests {
             "edge not a cell multiple"
         );
         assert!(edge >= 10.63);
-    }
-
-    #[test]
-    fn random_unit_is_normalized() {
-        use rand::SeedableRng;
-        let mut rng = StdRng::seed_from_u64(42);
-        for _ in 0..1000 {
-            let v = random_unit(&mut rng);
-            let mag = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-            assert!((mag - 1.0).abs() < 1e-12, "‖unit‖ = {mag}");
-        }
     }
 }

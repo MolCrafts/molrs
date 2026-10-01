@@ -237,22 +237,6 @@ pub(crate) fn displacement(
     mic.disp(from, to)
 }
 
-pub(crate) fn norm(v: [F; 3]) -> F {
-    (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
-}
-
-pub(crate) fn dot(a: [F; 3], b: [F; 3]) -> F {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-
-pub(crate) fn cross(a: [F; 3], b: [F; 3]) -> [F; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

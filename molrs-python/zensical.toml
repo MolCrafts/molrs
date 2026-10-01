@@ -15,7 +15,6 @@ nav = [
     { "Installation" = "getting-started/installation.md" },
     { "Rust Quickstart" = "getting-started/quickstart-rust.md" },
     { "Python Quickstart" = "getting-started/quickstart-python.md" },
-    { "Migrating to 0.14" = "getting-started/migration-0-14.md" },
     { "WASM Quickstart" = "getting-started/quickstart-wasm.md" },
   ] },
   { "Reference" = [

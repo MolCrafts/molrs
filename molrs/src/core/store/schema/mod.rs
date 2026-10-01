@@ -43,7 +43,7 @@ pub mod validator;
 pub mod violation;
 
 pub use block::{BlockSpec, EndpointSpec, RowKind};
-pub use column::{ColShape, ColumnSpec};
+pub use column::{ColShape, ColumnDim, ColumnSpec};
 pub use document::{BlockDoc, ColumnDoc, SchemaDocument, document};
 pub use validator::Validator;
 pub use violation::{
@@ -51,36 +51,43 @@ pub use violation::{
 };
 
 use crate::store::block::DType;
+use crate::units::preset::PresetDim;
 
 /// Version of the **vocabulary** — what block and column names mean, and what
 /// dtype each carries.
-///
-/// Distinct from
-/// [`FRAME_SCHEMA_VERSION`](crate::store::frame::FRAME_SCHEMA_VERSION), which
-/// versions the *serialization envelope* (how bytes are laid out). One can
-/// change without the other; conflating them is why this doc paragraph exists.
 ///
 /// Bump when: a spec's `dtype` or `shape` changes, a canonical key is renamed
 /// or removed, or a block's `required` set grows. Do **not** bump when: a new
 /// key is added, a new optional column is added, or a doc/unit string changes.
 /// Adding a key is forward-compatible — old data simply lacks it; changing what
 /// an existing key means is not.
-pub const FRAME_VOCAB_VERSION: u32 = 1;
+///
+/// History:
+/// - 2 (assembly-06): the atom keys `site` and `q0` were removed — connection
+///   is port-only, and a leaving group's charge is folded by `MolGraph::link`.
+///   Folded into 2, which never shipped.
+/// - Also 2 (backmap-primitives): the atom key `bead` was removed — a whole
+///   molecule maps onto a bead group, so no atom carries a template-local
+///   bead index — and the `beads` block was removed: a coarse-grained frame
+///   stores its beads as `atoms` rows and its bonds in `bonds`.
+pub const FRAME_VOCAB_VERSION: u32 = 2;
 
 macro_rules! col {
-    ($key:literal, $const_name:literal, $dtype:expr, $shape:expr, $unit:literal, $doc:literal) => {
+    ($key:literal, $const_name:literal, $dtype:expr, $shape:expr, $dimension:expr, $doc:literal) => {
         ColumnSpec {
             key: $key,
             const_name: $const_name,
             dtype: $dtype,
             shape: $shape,
-            unit: $unit,
+            dimension: $dimension,
             doc: $doc,
         }
     };
 }
 
 use ColShape::Scalar;
+use ColumnDim::{Dimensionless, NotAQuantity, Of, Product};
+use PresetDim::{Charge, Length, Mass, Velocity};
 // Identifiers are unsigned and physical quantities are float. `Int` is here for
 // the one kind of value that is neither: a periodic image flag, which counts
 // cell crossings and must be able to count them backwards.
@@ -96,7 +103,7 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "ATOMI",
         UInt,
         Scalar,
-        "",
+        NotAQuantity,
         "First endpoint of a relation, 0-indexed into the target node block."
     ),
     col!(
@@ -104,7 +111,7 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "ATOMIC_NUMBER",
         UInt,
         Scalar,
-        "",
+        NotAQuantity,
         "Atomic number Z."
     ),
     col!(
@@ -112,7 +119,7 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "ATOMJ",
         UInt,
         Scalar,
-        "",
+        NotAQuantity,
         "Second endpoint of a relation, 0-indexed."
     ),
     col!(
@@ -120,7 +127,7 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "ATOMK",
         UInt,
         Scalar,
-        "",
+        NotAQuantity,
         "Third endpoint of a relation (angle terminus / dihedral), 0-indexed; the angle vertex is `atomj`."
     ),
     col!(
@@ -128,15 +135,39 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "ATOML",
         UInt,
         Scalar,
-        "",
+        NotAQuantity,
         "Fourth endpoint of a relation (dihedral / improper), 0-indexed."
+    ),
+    col!(
+        "axis_x",
+        "AXIS_X",
+        Float,
+        Scalar,
+        Of(Length),
+        "x-component of a coarse-grained site's axis: from the first member of its group to the site."
+    ),
+    col!(
+        "axis_y",
+        "AXIS_Y",
+        Float,
+        Scalar,
+        Of(Length),
+        "y-component of a coarse-grained site's axis: from the first member of its group to the site."
+    ),
+    col!(
+        "axis_z",
+        "AXIS_Z",
+        Float,
+        Scalar,
+        Of(Length),
+        "z-component of a coarse-grained site's axis: from the first member of its group to the site."
     ),
     col!(
         "bead_type",
         "BEAD_TYPE",
         Str,
         Scalar,
-        "",
+        NotAQuantity,
         "Coarse-grained bead type label."
     ),
     col!(
@@ -144,7 +175,7 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "BOND_NUMBER",
         UInt,
         Scalar,
-        "",
+        NotAQuantity,
         "Integer bond number of the localized Lewis/Kekule structure: 0 unknown, 1 single, 2 double, 3 triple, 4 quadruple. Never fractional - aromaticity is a bond type, not a number."
     ),
     col!(
@@ -152,16 +183,23 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "BOND_TYPE",
         UInt,
         Scalar,
-        "",
+        NotAQuantity,
         "Chemical bond class: 0 unknown, 1 single, 2 double, 3 triple, 4 aromatic. Orthogonal to `bond_number`: an aromatic bond is `bond_type = 4` carrying a `bond_number` of 1 or 2."
     ),
-    col!("charge", "CHARGE", Float, Scalar, "e", "Partial charge."),
+    col!(
+        "charge",
+        "CHARGE",
+        Float,
+        Scalar,
+        Of(Charge),
+        "Partial charge."
+    ),
     col!(
         "element",
         "ELEMENT",
         Str,
         Scalar,
-        "",
+        NotAQuantity,
         "IUPAC element symbol (e.g. \"C\")."
     ),
     col!(
@@ -169,15 +207,23 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "EXCLUDE_14",
         DType::Bool,
         Scalar,
-        "",
+        NotAQuantity,
         "Whether this torsion's 1-4 non-bonded term is suppressed (AMBER negative 3rd pointer)"
+    ),
+    col!(
+        "free",
+        "FREE",
+        DType::Bool,
+        Scalar,
+        NotAQuantity,
+        "Whether an atom may move when the coordinates are optimized: `false` pins the atom where it is. A frame without the column has every atom free."
     ),
     col!(
         "id",
         "ID",
         UInt,
         Scalar,
-        "",
+        NotAQuantity,
         "Identifier carried by the source file. Never an index — endpoints are 0-based row indices and a reader that must map labels to rows does so locally."
     ),
     col!(
@@ -185,7 +231,7 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "IS_14",
         DType::Bool,
         Scalar,
-        "",
+        NotAQuantity,
         "Whether a non-bonded pair is a 1-4 (third-neighbour) pair."
     ),
     col!(
@@ -193,7 +239,7 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "IX",
         Int,
         Scalar,
-        "",
+        NotAQuantity,
         "Periodic image flag along the first lattice vector: how many cells this atom has crossed. The continuous position is `xyz + H·(ix, iy, iz)`; the stored coordinate itself stays wrapped. Signed, because an atom can cross back."
     ),
     col!(
@@ -201,7 +247,7 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "IY",
         Int,
         Scalar,
-        "",
+        NotAQuantity,
         "Periodic image flag along the second lattice vector. See `ix`."
     ),
     col!(
@@ -209,16 +255,16 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "IZ",
         Int,
         Scalar,
-        "",
+        NotAQuantity,
         "Periodic image flag along the third lattice vector. See `ix`."
     ),
-    col!("mass", "MASS", Float, Scalar, "amu", "Atomic mass."),
+    col!("mass", "MASS", Float, Scalar, Of(Mass), "Atomic mass."),
     col!(
         "mol_id",
         "MOL_ID",
         UInt,
         Scalar,
-        "",
+        NotAQuantity,
         "Molecule identifier grouping atoms into molecules."
     ),
     col!(
@@ -226,7 +272,7 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "MUX",
         Float,
         Scalar,
-        "e*angstrom",
+        Product(Charge, Length),
         "x-component of a per-atom electric dipole moment."
     ),
     col!(
@@ -234,7 +280,7 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "MUY",
         Float,
         Scalar,
-        "e*angstrom",
+        Product(Charge, Length),
         "y-component of a per-atom electric dipole moment."
     ),
     col!(
@@ -242,7 +288,7 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "MUZ",
         Float,
         Scalar,
-        "e*angstrom",
+        Product(Charge, Length),
         "z-component of a per-atom electric dipole moment."
     ),
     col!(
@@ -250,7 +296,7 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "NAME",
         Str,
         Scalar,
-        "",
+        NotAQuantity,
         "Human-readable atom name (e.g. \"CA\")."
     ),
     col!(
@@ -258,7 +304,7 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "QUATI",
         Float,
         Scalar,
-        "",
+        Dimensionless,
         "First imaginary component of a per-atom orientation quaternion."
     ),
     col!(
@@ -266,7 +312,7 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "QUATJ",
         Float,
         Scalar,
-        "",
+        Dimensionless,
         "Second imaginary component of a per-atom orientation quaternion."
     ),
     col!(
@@ -274,7 +320,7 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "QUATK",
         Float,
         Scalar,
-        "",
+        Dimensionless,
         "Third imaginary component of a per-atom orientation quaternion."
     ),
     col!(
@@ -282,7 +328,7 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "QUATW",
         Float,
         Scalar,
-        "",
+        Dimensionless,
         "Real part of a per-atom orientation quaternion."
     ),
     col!(
@@ -290,7 +336,7 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "RES_ID",
         UInt,
         Scalar,
-        "",
+        NotAQuantity,
         "Residue identifier. Unsigned like every other id in the vocabulary; a file with negative residue numbers is renumbered at the reader boundary, not accommodated by the schema."
     ),
     col!(
@@ -298,7 +344,7 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "RES_NAME",
         Str,
         Scalar,
-        "",
+        NotAQuantity,
         "Residue name (e.g. \"ALA\")."
     ),
     col!(
@@ -306,7 +352,7 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "TYPE",
         Str,
         Scalar,
-        "",
+        NotAQuantity,
         "Force-field type label. Always a String: a label is what survives a round trip through a force field. Numeric ordinals live in `type_id`."
     ),
     col!(
@@ -314,7 +360,7 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "TYPE_ID",
         UInt,
         Scalar,
-        "",
+        NotAQuantity,
         "Numeric type ordinal as used by formats that number their types (LAMMPS). Format-local; the force field reads `type`."
     ),
     col!(
@@ -322,30 +368,44 @@ pub static SCHEMA_COLUMNS: &[ColumnSpec] = &[
         "VX",
         Float,
         Scalar,
-        "",
+        Of(Velocity),
         "x-velocity. Unit follows the force field's `units` setting; molrs stores raw numbers."
     ),
-    col!("vy", "VY", Float, Scalar, "", "y-velocity."),
-    col!("vz", "VZ", Float, Scalar, "", "z-velocity."),
+    col!("vy", "VY", Float, Scalar, Of(Velocity), "y-velocity."),
+    col!("vz", "VZ", Float, Scalar, Of(Velocity), "z-velocity."),
     col!(
         "x",
         "X",
         Float,
         Scalar,
-        "",
+        Of(Length),
         "Cartesian x-coordinate. Unit follows the force field / file format; molrs stores raw numbers."
     ),
-    col!("y", "Y", Float, Scalar, "", "Cartesian y-coordinate."),
-    col!("z", "Z", Float, Scalar, "", "Cartesian z-coordinate."),
+    col!(
+        "y",
+        "Y",
+        Float,
+        Scalar,
+        Of(Length),
+        "Cartesian y-coordinate."
+    ),
+    col!(
+        "z",
+        "Z",
+        Float,
+        Scalar,
+        Of(Length),
+        "Cartesian z-coordinate."
+    ),
 ];
 
 /// Every canonical block, sorted by name.
 pub static SCHEMA_BLOCKS: &[BlockSpec] = &[
     BlockSpec {
-        name: "angles",
+        name: block_names::ANGLES,
         row_kind: RowKind::Relation { arity: 3 },
         endpoints: Some(EndpointSpec {
-            target: "atoms",
+            target: block_names::ATOMS,
             columns: &["atomi", "atomj", "atomk"],
         }),
         required: &["atomi", "atomj", "atomk"],
@@ -354,7 +414,7 @@ pub static SCHEMA_BLOCKS: &[BlockSpec] = &[
         doc: "Three-body angle terms; `atomj` is the vertex.",
     },
     BlockSpec {
-        name: "atoms",
+        name: block_names::ATOMS,
         row_kind: RowKind::Node,
         endpoints: None,
         required: &[],
@@ -367,6 +427,7 @@ pub static SCHEMA_BLOCKS: &[BlockSpec] = &[
             "type_id",
             "element",
             "atomic_number",
+            "bead_type",
             "mass",
             "charge",
             "mol_id",
@@ -376,24 +437,16 @@ pub static SCHEMA_BLOCKS: &[BlockSpec] = &[
             "vx",
             "vy",
             "vz",
+            "free",
         ],
         open: true,
         doc: "Per-atom properties. The node table relation blocks index into.",
     },
     BlockSpec {
-        name: "beads",
-        row_kind: RowKind::Node,
-        endpoints: None,
-        required: &[],
-        optional: &["x", "y", "z", "id", "bead_type", "mass", "charge", "mol_id"],
-        open: true,
-        doc: "Per-bead properties of a coarse-grained system.",
-    },
-    BlockSpec {
-        name: "bonds",
+        name: block_names::BONDS,
         row_kind: RowKind::Relation { arity: 2 },
         endpoints: Some(EndpointSpec {
-            target: "atoms",
+            target: block_names::ATOMS,
             columns: &["atomi", "atomj"],
         }),
         required: &["atomi", "atomj"],
@@ -402,10 +455,10 @@ pub static SCHEMA_BLOCKS: &[BlockSpec] = &[
         doc: "Two-body bond terms.",
     },
     BlockSpec {
-        name: "dihedrals",
+        name: block_names::DIHEDRALS,
         row_kind: RowKind::Relation { arity: 4 },
         endpoints: Some(EndpointSpec {
-            target: "atoms",
+            target: block_names::ATOMS,
             columns: &["atomi", "atomj", "atomk", "atoml"],
         }),
         required: &["atomi", "atomj", "atomk", "atoml"],
@@ -414,10 +467,10 @@ pub static SCHEMA_BLOCKS: &[BlockSpec] = &[
         doc: "Four-body proper torsion terms.",
     },
     BlockSpec {
-        name: "exclusions",
+        name: block_names::EXCLUSIONS,
         row_kind: RowKind::Relation { arity: 2 },
         endpoints: Some(EndpointSpec {
-            target: "atoms",
+            target: block_names::ATOMS,
             columns: &["atomi", "atomj"],
         }),
         required: &["atomi", "atomj"],
@@ -426,10 +479,10 @@ pub static SCHEMA_BLOCKS: &[BlockSpec] = &[
         doc: "Pairs excluded from non-bonded interaction (PME real-space correction).",
     },
     BlockSpec {
-        name: "impropers",
+        name: block_names::IMPROPERS,
         row_kind: RowKind::Relation { arity: 4 },
         endpoints: Some(EndpointSpec {
-            target: "atoms",
+            target: block_names::ATOMS,
             columns: &["atomi", "atomj", "atomk", "atoml"],
         }),
         required: &["atomi", "atomj", "atomk", "atoml"],
@@ -438,10 +491,10 @@ pub static SCHEMA_BLOCKS: &[BlockSpec] = &[
         doc: "Four-body improper terms enforcing planarity or chirality.",
     },
     BlockSpec {
-        name: "pairs",
+        name: block_names::PAIRS,
         row_kind: RowKind::Relation { arity: 2 },
         endpoints: Some(EndpointSpec {
-            target: "atoms",
+            target: block_names::ATOMS,
             columns: &["atomi", "atomj"],
         }),
         required: &["atomi", "atomj"],
@@ -471,10 +524,104 @@ pub fn block(name: &str) -> Option<&'static BlockSpec> {
         .map(|i| &SCHEMA_BLOCKS[i])
 }
 
-/// Canonical string constants, generated from [`SCHEMA_COLUMNS`].
+/// The relation-endpoint rule: which columns of block `name` are endpoints,
+/// and which node block they index.
 ///
-/// Supersedes the hand-written `store::keys` table: a key is declared once, in
-/// the spec, and the constant follows.
+/// - A canonical [`RowKind::Relation`] block answers from its [`BlockSpec`]
+///   (`target`, `columns`) without consulting `has_column`.
+/// - Any other block (unspecified, or a non-relation spec) is read as a
+///   relation over `atoms` whose endpoints are the present subset of
+///   [`consts::ENDPOINTS`], in position order — `MolGraph` mints one block
+///   per relation kind, and those carry no spec.
+/// - `None` when that column list is empty: the block is not a relation.
+///
+/// The one rule [`Validator`] (range checks),
+/// [`Frame::subset`](crate::store::frame::Frame::subset) (reindexing) and
+/// [`Frame::replicate`](crate::store::frame::Frame::replicate) (offsetting)
+/// follow, so none of them can disagree on what an endpoint is. A downstream
+/// crate that rewrites endpoint indices asks this function rather than keeping
+/// its own list of relation blocks.
+///
+/// # Examples
+///
+/// ```
+/// use molrs::store::schema::{block_names, relation_endpoints};
+///
+/// // A canonical relation answers from its spec.
+/// assert_eq!(
+///     relation_endpoints(block_names::BONDS, |_| false),
+///     Some((block_names::ATOMS, vec!["atomi", "atomj"])),
+/// );
+/// // An unspecified block is a relation iff it carries endpoint columns.
+/// let has = |k: &str| k == "atomi";
+/// assert_eq!(relation_endpoints("ports", has), Some(("atoms", vec!["atomi"])));
+/// assert_eq!(relation_endpoints("cell", |_| false), None);
+/// ```
+pub fn relation_endpoints(
+    name: &str,
+    has_column: impl Fn(&str) -> bool,
+) -> Option<(&'static str, Vec<&'static str>)> {
+    let (target, columns) = match block(name) {
+        Some(spec) if matches!(spec.row_kind, RowKind::Relation { .. }) => {
+            let e = spec.endpoints.expect("relation spec carries endpoints");
+            (e.target, e.columns.to_vec())
+        }
+        _ => (
+            block_names::ATOMS,
+            consts::ENDPOINTS
+                .iter()
+                .copied()
+                .filter(|k| has_column(k))
+                .collect(),
+        ),
+    };
+    if columns.is_empty() {
+        None
+    } else {
+        Some((target, columns))
+    }
+}
+
+/// Canonical block names — the `name` of every [`SCHEMA_BLOCKS`] entry.
+///
+/// The table is built from these constants and the unit test
+/// `block_names_agree_with_the_table` checks that every spec has one, so a
+/// caller that writes `block_names::BONDS` names the block the schema
+/// declares, not a string that happens to match it today.
+///
+/// # Examples
+///
+/// ```
+/// use molrs::store::schema::{self, block_names};
+///
+/// assert_eq!(block_names::ATOMS, "atoms");
+/// assert!(schema::block(block_names::DIHEDRALS).is_some());
+/// ```
+pub mod block_names {
+    /// Per-atom node table; every canonical relation indexes its rows.
+    pub const ATOMS: &str = "atoms";
+    /// Two-body bond terms.
+    pub const BONDS: &str = "bonds";
+    /// Three-body angle terms.
+    pub const ANGLES: &str = "angles";
+    /// Four-body proper torsion terms.
+    pub const DIHEDRALS: &str = "dihedrals";
+    /// Four-body improper terms.
+    pub const IMPROPERS: &str = "impropers";
+    /// Intramolecular non-bonded pair list.
+    pub const PAIRS: &str = "pairs";
+    /// Pairs excluded from non-bonded interaction.
+    pub const EXCLUSIONS: &str = "exclusions";
+    /// The bonded-topology relation blocks, in increasing arity.
+    pub const TOPOLOGY: [&str; 4] = [BONDS, ANGLES, DIHEDRALS, IMPROPERS];
+}
+
+/// Canonical string constants for the keys of [`SCHEMA_COLUMNS`].
+///
+/// Written by hand beside the table and checked against it by the unit test
+/// `consts_agree_with_the_table`, so a renamed key cannot leave a constant
+/// pointing at nothing. `store::keys` re-exports this module; it no longer
+/// keeps a list of its own.
 pub mod consts {
     /// Cartesian x-coordinate component.
     pub const X: &str = "x";
@@ -550,6 +697,14 @@ pub mod consts {
     pub const MUZ: &str = "muz";
     /// The three dipole-moment keys, in axis order.
     pub const DIPOLE: [&str; 3] = [MUX, MUY, MUZ];
+    /// x-component of a coarse-grained site's axis (first group member → site).
+    pub const AXIS_X: &str = "axis_x";
+    /// y-component of a coarse-grained site's axis.
+    pub const AXIS_Y: &str = "axis_y";
+    /// z-component of a coarse-grained site's axis.
+    pub const AXIS_Z: &str = "axis_z";
+    /// The three site-axis keys, in axis order.
+    pub const AXIS: [&str; 3] = [AXIS_X, AXIS_Y, AXIS_Z];
     /// Residue identifier.
     pub const RES_ID: &str = "res_id";
     /// Residue name.
@@ -558,6 +713,8 @@ pub mod consts {
     pub const IS_14: &str = "is_14";
     /// Whether this torsion's 1-4 non-bonded term is suppressed.
     pub const EXCLUDE_14: &str = "exclude_14";
+    /// Per-atom optimizer mobility (Bool): `false` pins the atom in place.
+    pub const FREE: &str = "free";
     /// First relation endpoint, 0-indexed.
     pub const ATOMI: &str = "atomi";
     /// Second relation endpoint, 0-indexed.
@@ -689,10 +846,14 @@ mod tests {
             consts::MUX,
             consts::MUY,
             consts::MUZ,
+            consts::AXIS_X,
+            consts::AXIS_Y,
+            consts::AXIS_Z,
             consts::RES_ID,
             consts::RES_NAME,
             consts::IS_14,
             consts::EXCLUDE_14,
+            consts::FREE,
             consts::ATOMI,
             consts::ATOMJ,
             consts::ATOMK,
@@ -711,7 +872,7 @@ mod tests {
         assert_eq!(spec.const_name, "EXCLUDE_14");
         assert_eq!(spec.dtype, DType::Bool);
         assert_eq!(spec.shape, ColShape::Scalar);
-        assert_eq!(spec.unit, "");
+        assert!(matches!(spec.dimension, ColumnDim::NotAQuantity));
         for name in ["dihedrals", "impropers"] {
             let b = block(name).expect("block must be in the vocabulary");
             assert!(
@@ -750,5 +911,70 @@ mod tests {
                 c.dtype
             );
         }
+    }
+
+    #[test]
+    fn block_names_agree_with_the_table() {
+        use block_names::*;
+        let consts = [
+            ATOMS, BONDS, ANGLES, DIHEDRALS, IMPROPERS, PAIRS, EXCLUSIONS,
+        ];
+        let mut table: Vec<&str> = SCHEMA_BLOCKS.iter().map(|b| b.name).collect();
+        let mut named: Vec<&str> = consts.to_vec();
+        table.sort_unstable();
+        named.sort_unstable();
+        assert_eq!(table, named, "every BlockSpec has exactly one constant");
+        for name in TOPOLOGY {
+            assert!(matches!(
+                block(name).map(|b| b.row_kind),
+                Some(RowKind::Relation { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn free_is_a_bool_atom_column() {
+        let spec = column(consts::FREE).expect("free is canonical");
+        assert_eq!(spec.dtype, DType::Bool);
+        assert_eq!(spec.shape, ColShape::Scalar);
+        assert!(
+            block(block_names::ATOMS)
+                .unwrap()
+                .optional
+                .contains(&"free")
+        );
+    }
+
+    // ---- relation_endpoints ----
+
+    #[test]
+    fn relation_endpoints_reads_a_spec_relation_without_consulting_columns() {
+        // A canonical relation answers from its BlockSpec: `has_column` says
+        // nothing is present, and the declared endpoints come back anyway.
+        assert_eq!(
+            relation_endpoints("bonds", |_| false),
+            Some(("atoms", vec!["atomi", "atomj"]))
+        );
+        assert_eq!(
+            relation_endpoints("angles", |_| false),
+            Some(("atoms", vec!["atomi", "atomj", "atomk"]))
+        );
+    }
+
+    #[test]
+    fn relation_endpoints_infers_atoms_endpoints_for_an_unspecified_block() {
+        // `ports` has no BlockSpec: the endpoints are the present subset of
+        // atomi..atoml, in position order, indexing `atoms`.
+        let present = |k: &str| matches!(k, "atomi" | "atomj" | "port_kind");
+        assert_eq!(
+            relation_endpoints("ports", present),
+            Some(("atoms", vec!["atomi", "atomj"]))
+        );
+    }
+
+    #[test]
+    fn relation_endpoints_is_none_without_endpoint_columns() {
+        let present = |k: &str| matches!(k, "ibead" | "atom");
+        assert_eq!(relation_endpoints("members", present), None);
     }
 }

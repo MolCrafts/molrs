@@ -1,4 +1,5 @@
-//! Recursive-descent parser for SMILES and SMARTS notation.
+//! Recursive-descent parser for the three line-notation dialects: SMILES,
+//! SMARTS, and the SMILES fragment body.
 //!
 //! The parser directly mirrors the LL(1) grammar:
 //!
@@ -15,19 +16,33 @@
 //! bond         → '-' | '=' | '#' | '$' | '/' | '\' | ':' | '~' | '@'
 //! rnum         → digit | '%' digit digit
 //! ```
+//!
+//! The fragment dialect adds one production and two placements for it,
+//! accepted only by [`parse_fragment_smiles`]:
+//!
+//! ```text
+//! descriptor   → '[' ('$' | '<' | '>' | '!') label? ']'
+//! label        → alnum*
+//! leading_run  → descriptor+ bond?     // before the chain's first atom
+//! anchored_run → bond? descriptor+     // anywhere after it
+//! ```
+//!
+//! A descriptor is not a node: it binds to the atom written before it (or, at
+//! the start of a chain, to that chain's head), so it is consumed at the
+//! `atom` call sites and folded into [`AtomNode::descriptors`] rather than
+//! appearing in the tree on its own. The optional `bond` in each run is the
+//! order that descriptor annotates, and it takes the only side available: in
+//! a leading run there is no atom yet to write it in front of, so it follows
+//! the bracket (`[$]=CCC`); everywhere else it precedes it (`CC=[$]`), and a
+//! bond written after the bracket is an ordinary bond to the next atom.
 
+use crate::io::smiles::chem::Dialect;
 use crate::io::smiles::chem::ast::*;
 use crate::io::smiles::chem::scanner::Scanner;
+use crate::io::smiles::chem::validation::{validate_descriptor, validate_ring_closures};
 use crate::io::smiles::error::{SmilesError, SmilesErrorKind};
-
-/// Controls which grammar extensions are enabled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ParserMode {
-    /// Standard SMILES — only concrete atoms and bonds.
-    Smiles,
-    /// SMARTS — adds query primitives, logical operators, wildcard/ring bonds.
-    Smarts,
-}
+use crate::io::smiles::smiles::is_element_symbol;
+use molrs::Element;
 
 /// Maximum recursion depth for SMARTS `$(...)` expressions.
 const MAX_RECURSION_DEPTH: usize = 16;
@@ -39,14 +54,133 @@ const ORGANIC_SUBSET: &[&str] = &[
     "B", "C", "N", "O", "P", "S", "F", "Cl", "Br", "I", "At", "Ts", "b", "c", "n", "o", "p", "s",
 ];
 
-/// Parse a SMILES string into an AST.
+/// Parse a plain SMILES string into the shared IR.
+///
+/// Strict by design: only concrete notation — atoms, bonds, branches and ring
+/// closures — is accepted. SMARTS query brackets and the fragment dialect's
+/// bonding descriptors are refused rather than reinterpreted.
+///
+/// Everything the string itself decides is decided here, by the stage that
+/// read it, rather than surviving into an IR that only callers running
+/// [`validate_smiles`](crate::io::smiles::validate_smiles) would reject: a
+/// ring-closure digit opened and never closed (`C1CC`), and a bracket symbol
+/// that names no element (`[Xx]`) — the same lookup `validate_smiles` uses,
+/// so the two agree on every symbol. `validate_smiles` keeps both checks for
+/// the IRs nobody parsed, built by hand or edited afterwards.
+///
+/// # Errors
+///
+/// Returns a [`SmilesError`] for anything the plain grammar does not accept:
+/// [`SmilesErrorKind::EmptyInput`], [`SmilesErrorKind::UnexpectedChar`],
+/// [`SmilesErrorKind::UnexpectedEnd`], [`SmilesErrorKind::UnclosedBracket`],
+/// [`SmilesErrorKind::UnclosedBranch`],
+/// [`SmilesErrorKind::InvalidRingMarker`] for a `%` not followed by two
+/// digits, [`SmilesErrorKind::UnmatchedRingClosure`] for a ring digit opened
+/// and never closed, [`SmilesErrorKind::TrailingCharacters`],
+/// [`SmilesErrorKind::InvalidElement`] for a letter outside the organic
+/// subset or a bracket symbol that names no element (`[Xx]`, payload `"Xx"`,
+/// span covering the bracket atom), and
+/// [`SmilesErrorKind::DescriptorInPlainSmiles`] for a bonding descriptor,
+/// whose message points at [`parse_fragment_smiles`].
 pub fn parse_smiles(input: &str) -> Result<SmilesIR, SmilesError> {
-    Parser::new(input, ParserMode::Smiles).parse_molecule()
+    parse_paired(input, Dialect::Smiles)
 }
 
-/// Parse a SMARTS string into an AST.
+/// Parse `input` as `dialect` and pair the ring closures of the result.
+///
+/// The body of both SMILES-family entry points: the fragment dialect is plain
+/// SMILES widened with descriptors, so the two pair ring markers by the same
+/// rule at the same stage. SMARTS is not routed here — a recursive `$(...)`
+/// sub-pattern is parsed as a molecule of its own and may legitimately leave a
+/// marker for the enclosing pattern to close.
+fn parse_paired(input: &str, dialect: Dialect) -> Result<SmilesIR, SmilesError> {
+    let mol = Parser::new(input, dialect).parse_molecule()?;
+    validate_ring_closures(&mol, input)?;
+    Ok(mol)
+}
+
+/// Parse a SMARTS pattern into the shared IR.
+///
+/// This yields SMARTS *syntax* as an IR, for callers that want the pattern as
+/// a tree. It is not the frontend of the substructure-matching engine in
+/// [`crate::perceive::smarts`], which has a parser of its own and never
+/// consumes this one.
+///
+/// # Errors
+///
+/// Returns a [`SmilesError`] for anything the SMARTS grammar does not accept:
+/// [`SmilesErrorKind::EmptyInput`], [`SmilesErrorKind::UnexpectedChar`],
+/// [`SmilesErrorKind::UnexpectedEnd`], [`SmilesErrorKind::UnclosedBracket`],
+/// [`SmilesErrorKind::UnclosedBranch`],
+/// [`SmilesErrorKind::TrailingCharacters`],
+/// [`SmilesErrorKind::InvalidQueryPrimitive`] for an unrecognised query atom,
+/// [`SmilesErrorKind::UnclosedRecursive`] for a `$(` with no `)`, and
+/// [`SmilesErrorKind::RecursionLimit`] when `$(...)` nests deeper than the
+/// parser's limit.
 pub fn parse_smarts(input: &str) -> Result<SmilesIR, SmilesError> {
-    Parser::new(input, ParserMode::Smarts).parse_molecule()
+    Parser::new(input, Dialect::Smarts).parse_molecule()
+}
+
+/// Parse a SMILES fragment body with `CGsmiles` / `BigSMILES` bonding
+/// descriptors into an AST.
+///
+/// A *fragment body* is one SMILES string standing for a piece of a larger
+/// molecule — a monomer, a bead, a building block — with the sites at which it
+/// will later be joined to other pieces marked by bonding descriptors. The
+/// dialect is therefore plain SMILES plus the descriptor brackets `[$]`,
+/// `[<]`, `[>]` and `[!]`, each optionally labelled (`[$a]`) and optionally
+/// carrying a bond order written outside the bracket (`CC=[$]`).
+///
+/// [`parse_smiles`] is the plain sibling of this function and stays strict: it
+/// refuses descriptor brackets outright, so no `.smi` line can silently lose
+/// one.
+///
+/// # Where a descriptor lands
+///
+/// A descriptor is not a node of the chain; it binds to a node and is stored
+/// in [`AtomNode::descriptors`](crate::io::smiles::AtomNode). The atom it
+/// binds to is the one written immediately before it, or — when it is written
+/// before any atom of its chain — that chain's head atom, so `[$]COC[$]`
+/// carries a `$` on the first carbon and another on the last. A `(` is not a
+/// node either, so a descriptor just inside a branch binds to the atom before
+/// the `(`: `N([>])C` puts `>` on the nitrogen. Several descriptors may sit on
+/// one atom and are kept in written order: `[>][$1]COC[<]` gives the first
+/// carbon the list `[>, $1]`. No valence check is made.
+///
+/// # Where the bond order is read from
+///
+/// The order a descriptor annotates is written next to its bracket, not inside
+/// it, and which side counts depends on whether any atom of the chain has been
+/// parsed yet. Before the first atom there is nothing to the left, so a bond
+/// symbol *after* the bracket is the descriptor's order: `[$]=CCC` is a
+/// double-bond-annotated `$` on the first carbon over an otherwise single
+/// C-C-C chain. Once an atom exists the symbol before the bracket is the
+/// order and a symbol after it is an ordinary bond to the next atom, so
+/// `CC=[$]` is a double-annotated `$` while `C[$]=CC` is an unannotated `$` on
+/// the first carbon plus a double C=C bond. Of a run of brackets only the one
+/// the symbol is written against takes the order, so `[>][$1]=CCC` annotates
+/// `$1` and `CC=[$][>]` annotates `$`; the rest of the run carries none. The
+/// leading form is strictly the less expressive of the two — it cannot spell
+/// `C[$]=CC` — which is why
+/// [`write_fragment_smiles`](crate::io::smiles::write_fragment_smiles) emits
+/// the trailing form only.
+///
+/// # Errors
+///
+/// Returns a [`SmilesError`] for any syntax the dialect does not accept,
+/// including [`SmilesErrorKind::DanglingDescriptor`] for a descriptor with no
+/// atom to bind to, [`SmilesErrorKind::BondInsideDescriptor`] for the
+/// `BigSMILES` in-bracket order (`[<=1]`),
+/// [`SmilesErrorKind::InvalidDescriptorLabel`],
+/// [`SmilesErrorKind::InvalidDescriptorOrder`], and
+/// [`SmilesErrorKind::AtomAnnotationUnsupported`] for a `CGsmiles` atom-level
+/// annotation (`[C;0.5]`), and — as in [`parse_smiles`], whose ring grammar
+/// this dialect shares unchanged — [`SmilesErrorKind::UnmatchedRingClosure`]
+/// for a marker opened and never closed and
+/// [`SmilesErrorKind::InvalidElement`] for a bracket symbol that names no
+/// element.
+pub fn parse_fragment_smiles(input: &str) -> Result<SmilesIR, SmilesError> {
+    parse_paired(input, Dialect::FragmentSmiles)
 }
 
 // ---------------------------------------------------------------------------
@@ -55,15 +189,31 @@ pub fn parse_smarts(input: &str) -> Result<SmilesIR, SmilesError> {
 
 struct Parser<'a> {
     scanner: Scanner<'a>,
-    mode: ParserMode,
+    dialect: Dialect,
     depth: usize,
 }
 
+/// Which bracket of a descriptor run the out-of-bracket bond symbol touches.
+///
+/// The order is written outside the brackets, so in a run (`[>][$1]`) only the
+/// bracket the symbol is written against takes it: `First` for a symbol before
+/// the run (`CC=[$][>]`), `Last` for one after a leading run (`[>][$1]=CCC`).
+/// The reader this mirrors processes brackets one at a time, which is the same
+/// rule stated position by position.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum AdjacentBracket {
+    First,
+    Last,
+}
+
 impl<'a> Parser<'a> {
-    fn new(input: &'a str, mode: ParserMode) -> Self {
+    fn new(input: &'a str, dialect: Dialect) -> Self {
         Self {
-            scanner: Scanner::new(input),
-            mode,
+            // The notation every diagnostic of this parse is labelled with is
+            // the dialect's own (`Dialect::notation`), so it is stated once,
+            // here, and the parser keeps no second field for it.
+            scanner: Scanner::new(input, dialect.notation()),
+            dialect,
             depth: 0,
         }
     }
@@ -91,6 +241,169 @@ impl<'a> Parser<'a> {
     /// True if `ch` can start an atom.
     fn is_atom_start(ch: char) -> bool {
         ch == '[' || ch == '*' || ch.is_ascii_alphabetic()
+    }
+
+    /// The plain bond kind a parsed bond slot holds, if it holds one.
+    ///
+    /// A SMARTS bond query (`!-`, `-,=`) has no single kind; it also never
+    /// annotates a descriptor, since the SMARTS dialect has no descriptors.
+    fn bond_query_kind(bond: Option<&BondQuery>) -> Option<BondKind> {
+        match bond {
+            Some(BondQuery::Kind(kind)) => Some(*kind),
+            _ => None,
+        }
+    }
+
+    // -- bonding descriptors (fragment dialect) ------------------------------
+
+    /// True when the cursor sits on a bonding-descriptor bracket: `[`
+    /// followed by one of `$ < > !`.
+    ///
+    /// The lookahead itself runs in every dialect — what to do with it is
+    /// [`Parser::take_descriptor_run`]'s decision. Running it in
+    /// `Dialect::Smiles` too is what lets plain SMILES name the fragment entry
+    /// point, instead of dying on an unexpected `$` inside the bracket parser.
+    fn at_descriptor(&self) -> bool {
+        self.scanner.peek() == Some('[')
+            && matches!(self.scanner.peek_next(), Some('$' | '<' | '>' | '!'))
+    }
+
+    /// Consume the run of descriptor brackets at the cursor, if one starts
+    /// there.
+    ///
+    /// Each descriptor comes back with the span of its bracket and with no
+    /// order yet: the order is written *outside* the bracket, and whether the
+    /// symbol next to the run is one depends on the call site, so
+    /// [`Parser::finish_descriptor_run`] applies and validates it.
+    ///
+    /// `Ok(None)` means there is nothing here to consume — either the cursor
+    /// is not on a descriptor bracket, or the dialect is SMARTS, where
+    /// `[$(...)]` is recursive SMARTS and `[!C]` is negation and both belong
+    /// to the bracket-query parser.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SmilesErrorKind::DescriptorInPlainSmiles`] in
+    /// `Dialect::Smiles`, which has no descriptor notation.
+    fn take_descriptor_run(
+        &mut self,
+    ) -> Result<Option<Vec<(BondingDescriptor, Span)>>, SmilesError> {
+        if !self.at_descriptor() {
+            return Ok(None);
+        }
+        match self.dialect {
+            Dialect::Smarts => Ok(None),
+            Dialect::Smiles => Err(self.error(SmilesErrorKind::DescriptorInPlainSmiles)),
+            Dialect::FragmentSmiles => {
+                let mut run = vec![self.parse_descriptor()?];
+                while self.at_descriptor() {
+                    run.push(self.parse_descriptor()?);
+                }
+                Ok(Some(run))
+            }
+        }
+    }
+
+    /// Anchor `order` on the descriptor `adjacent` names and validate the run.
+    ///
+    /// The order belongs to the one bracket the bond symbol is written against,
+    /// and which end of the run that is depends on the side the symbol sits on:
+    /// a symbol *before* the run annotates its first bracket (`CC=[$][>]`
+    /// carries the double on `$`), one *after* a leading run annotates its last
+    /// (`[>][$1]=CCC` carries it on `$1`). Every other descriptor of the run
+    /// keeps `order: None`. This is the single construction site of every
+    /// [`BondingDescriptor`] the parser emits, so `validate_descriptor` runs
+    /// here and nowhere else.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever `validate_descriptor` rejects: an invalid label or an
+    /// order no created bond can take.
+    fn finish_descriptor_run(
+        &self,
+        run: Vec<(BondingDescriptor, Span)>,
+        order: Option<BondKind>,
+        adjacent: AdjacentBracket,
+    ) -> Result<Vec<BondingDescriptor>, SmilesError> {
+        let ordered = match adjacent {
+            AdjacentBracket::First => 0,
+            AdjacentBracket::Last => run.len().saturating_sub(1),
+        };
+        let mut descriptors = Vec::with_capacity(run.len());
+        for (index, (mut desc, span)) in run.into_iter().enumerate() {
+            if index == ordered {
+                desc.order = order;
+            }
+            validate_descriptor(&desc, span, self.scanner.input(), self.dialect.notation())?;
+            descriptors.push(desc);
+        }
+        Ok(descriptors)
+    }
+
+    /// Parse one descriptor bracket: `[` glyph label? `]`.
+    fn parse_descriptor(&mut self) -> Result<(BondingDescriptor, Span), SmilesError> {
+        let start = self.scanner.pos();
+        self.scanner.expect('[')?;
+
+        let kind = match self.scanner.advance() {
+            Some('$') => DescriptorKind::Symmetric,
+            Some('<') => DescriptorKind::Left,
+            Some('>') => DescriptorKind::Right,
+            Some('!') => DescriptorKind::Shared,
+            Some(c) => return Err(self.error(SmilesErrorKind::UnexpectedChar(c))),
+            None => return Err(self.error(SmilesErrorKind::UnexpectedEnd)),
+        };
+
+        let label_start = self.scanner.pos();
+        loop {
+            match self.scanner.peek() {
+                Some(']') => break,
+                // The order is written outside the bracket (`CC=[$]`);
+                // accepting the `BigSMILES` in-bracket spelling `[<=1]` would
+                // make two notations mean one thing.
+                Some(c) if Self::is_bond_char(c) => {
+                    return Err(self.error(SmilesErrorKind::BondInsideDescriptor));
+                }
+                Some(_) => {
+                    self.scanner.advance();
+                }
+                None => {
+                    return Err(self.error_at(
+                        SmilesErrorKind::UnclosedBracket,
+                        self.scanner.span_from(start),
+                    ));
+                }
+            }
+        }
+        // The whole run up to `]` is the label; `validate_descriptor` decides
+        // whether it is one, so `[$a+]` names the bad label rather than the
+        // character.
+        let label = self.scanner.input()[label_start..self.scanner.pos()].to_owned();
+        self.scanner.advance(); // consume ']'
+
+        Ok((
+            BondingDescriptor {
+                kind,
+                label,
+                order: None,
+            },
+            self.scanner.span_from(start),
+        ))
+    }
+
+    /// The atom a mid-chain descriptor binds to: the most recent bonded atom,
+    /// else the chain head.
+    ///
+    /// `Branch` and `RingClosure` do not advance it — in `CC(=O)[<]` the `<`
+    /// belongs to the carbonyl carbon, not to the branch oxygen — mirroring
+    /// how the IR → graph walker tracks its current atom.
+    fn anchor<'c>(head: &'c mut AtomNode, tail: &'c mut [ChainElement]) -> &'c mut AtomNode {
+        for elem in tail.iter_mut().rev() {
+            if let ChainElement::BondedAtom { atom, .. } = elem {
+                return atom;
+            }
+        }
+        head
     }
 
     // -- molecule -----------------------------------------------------------
@@ -121,21 +434,110 @@ impl<'a> Parser<'a> {
 
     // -- chain --------------------------------------------------------------
 
+    /// Parse the descriptor run written before any atom of a chain (R4.2).
+    ///
+    /// Returns the descriptors that bind to the chain's head atom, empty when
+    /// the chain does not open with a run. No atom of the chain exists yet, so
+    /// a bond symbol *after* the run is an order (`[$]=CCC` is a double-bonded
+    /// `$` on the first carbon over a single C-C chain), not a bond to the
+    /// head — the mirror image of the mid-chain rule. It annotates the bracket
+    /// it is written against, which here is the run's **last**: `[>][$1]=CCC`
+    /// puts the double on `$1` and leaves `>` unannotated.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SmilesErrorKind::DanglingDescriptor`] when no atom follows the
+    /// run, plus whatever [`Parser::finish_descriptor_run`] rejects.
+    fn parse_leading_descriptors(&mut self) -> Result<Vec<BondingDescriptor>, SmilesError> {
+        let Some(run) = self.take_descriptor_run()? else {
+            return Ok(Vec::new());
+        };
+        let order = if self.scanner.peek().is_some_and(Self::is_bond_char) {
+            self.parse_bond_kind()?
+        } else {
+            None
+        };
+        let descriptors = self.finish_descriptor_run(run, order, AdjacentBracket::Last)?;
+        if !self.scanner.peek().is_some_and(Self::is_atom_start) {
+            return Err(self.error(SmilesErrorKind::DanglingDescriptor));
+        }
+        Ok(descriptors)
+    }
+
+    /// Consume a mid-chain descriptor run, if one starts at the cursor, and
+    /// fold it onto the atom it binds to.
+    ///
+    /// `order` is the bond kind written *before* the run (`CC=[$]`, R4.4), or
+    /// `None` where no bond symbol preceded it. Written before, it annotates
+    /// the bracket it touches, which is the run's **first**: `CC=[$][>]` puts
+    /// the double on `$` and leaves `>` unannotated. The returned flag says
+    /// whether a run was consumed, which is what tells the chain loop to go
+    /// round again instead of reading the cursor as a bond, a branch or an
+    /// atom.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever [`Parser::take_descriptor_run`] and
+    /// [`Parser::finish_descriptor_run`] reject.
+    fn take_anchored_descriptors(
+        &mut self,
+        head: &mut AtomNode,
+        tail: &mut [ChainElement],
+        order: Option<BondKind>,
+    ) -> Result<bool, SmilesError> {
+        let Some(run) = self.take_descriptor_run()? else {
+            return Ok(false);
+        };
+        let descriptors = self.finish_descriptor_run(run, order, AdjacentBracket::First)?;
+        Self::anchor(head, tail).descriptors.extend(descriptors);
+        Ok(true)
+    }
+
     fn parse_chain(&mut self) -> Result<Chain, SmilesError> {
-        let head = self.parse_atom()?;
+        // R4.2: descriptors written before any atom of this chain bind to its
+        // head atom.
+        let leading = self.parse_leading_descriptors()?;
+
+        let mut head = self.parse_atom()?;
+        head.descriptors = leading;
         let mut tail = Vec::new();
 
         loop {
+            // Mid-chain descriptor: any order was written before the bracket
+            // and is therefore consumed by the bond arm below, not here.
+            if self.take_anchored_descriptors(&mut head, &mut tail, None)? {
+                continue;
+            }
             match self.scanner.peek() {
-                Some('(') => tail.push(self.parse_branch()?),
+                Some('(') => {
+                    let (parent, element) = self.parse_branch()?;
+                    if let Some(element) = element {
+                        tail.push(element);
+                    }
+                    // `(` is not a node, so the branch's leading descriptors
+                    // belong to this chain's anchor — which a branch never
+                    // advances, so pushing first changes nothing.
+                    Self::anchor(&mut head, &mut tail)
+                        .descriptors
+                        .extend(parent);
+                }
                 Some(c) if c.is_ascii_digit() || c == '%' => {
                     tail.push(self.parse_ring_closure(None)?);
                 }
                 Some(c)
                     if Self::is_bond_char(c)
-                        || (self.mode == ParserMode::Smarts && Self::is_bond_char_smarts(c)) =>
+                        || (self.dialect == Dialect::Smarts && Self::is_bond_char_smarts(c)) =>
                 {
                     let bond = self.parse_bond()?;
+                    // A bond symbol immediately before a descriptor bracket is
+                    // that descriptor's order (`CC=[$]`, R4.4).
+                    if self.take_anchored_descriptors(
+                        &mut head,
+                        &mut tail,
+                        Self::bond_query_kind(bond.as_ref()),
+                    )? {
+                        continue;
+                    }
                     // After a bond: expect atom, ring closure, or (rare) another bond
                     match self.scanner.peek() {
                         Some(c) if c.is_ascii_digit() || c == '%' => {
@@ -163,19 +565,69 @@ impl<'a> Parser<'a> {
 
     // -- branch -------------------------------------------------------------
 
-    fn parse_branch(&mut self) -> Result<ChainElement, SmilesError> {
+    /// Parse a parenthesised branch.
+    ///
+    /// Returns the descriptors that belong to the **parent** chain's anchor,
+    /// and the branch element itself when the branch held anything besides
+    /// them. `(` is not a node, so a descriptor written straight after it
+    /// binds to the atom before the `(` (R4.2): `N([>])C` puts `>` on the
+    /// nitrogen and leaves no branch element at all, while `C([>]N)C` puts it
+    /// on the first carbon and still branches to N. An empty branch `C()` is
+    /// the error it has always been.
+    ///
+    /// The order of such a run is written *before* it — `C(=[>])C` is a
+    /// double-bonded `>` on the first carbon. A bond symbol written *after* a
+    /// branch-leading run is **not** accepted (`C([$]=N)C` is an error), a
+    /// deliberate narrowing relative to the `CGsmiles` reference, which reads
+    /// that `=` as the run's order. Both readings are spellable here anyway:
+    /// `C(=[$]N)C` annotates the descriptor, `C(=N)[$]` bonds the branch.
+    ///
+    /// # Errors
+    ///
+    /// [`SmilesErrorKind::UnclosedBranch`], spanned at the `(` that was
+    /// opened, both when the input simply ends inside the branch (`CC(`) and
+    /// when it ends after some of the branch was read (`CC(O`) — the complaint
+    /// is the branch that never closes, not the atom that never came.
+    fn parse_branch(
+        &mut self,
+    ) -> Result<(Vec<BondingDescriptor>, Option<ChainElement>), SmilesError> {
         let start = self.scanner.pos();
         self.scanner.expect('(')?;
 
         // Optional bond at the start of a branch.
-        let bond = if self.scanner.peek().is_some_and(|c| {
+        let mut bond = if self.scanner.peek().is_some_and(|c| {
             Self::is_bond_char(c)
-                || (self.mode == ParserMode::Smarts && Self::is_bond_char_smarts(c))
+                || (self.dialect == Dialect::Smarts && Self::is_bond_char_smarts(c))
         }) {
             self.parse_bond()?
         } else {
             None
         };
+
+        let mut parent = Vec::new();
+        if let Some(run) = self.take_descriptor_run()? {
+            // That opening bond annotates the descriptor, not the branch:
+            // `C(=[>])C` is a double-bonded `>` on the first carbon.
+            parent = self.finish_descriptor_run(
+                run,
+                Self::bond_query_kind(bond.as_ref()),
+                AdjacentBracket::First,
+            )?;
+            bond = None;
+            if self.scanner.peek() == Some(')') {
+                self.scanner.advance(); // consume ')'
+                return Ok((parent, None));
+            }
+        }
+
+        // End of input here is the branch that never closed, not a missing
+        // atom, so it takes the same arm as the unbalanced `)` check below.
+        if self.scanner.is_done() {
+            return Err(self.error_at(
+                SmilesErrorKind::UnclosedBranch,
+                self.scanner.span_from(start),
+            ));
+        }
 
         let chain = self.parse_chain()?;
 
@@ -187,11 +639,14 @@ impl<'a> Parser<'a> {
         }
         self.scanner.advance(); // consume ')'
 
-        Ok(ChainElement::Branch {
-            bond,
-            chain,
-            span: self.scanner.span_from(start),
-        })
+        Ok((
+            parent,
+            Some(ChainElement::Branch {
+                bond,
+                chain,
+                span: self.scanner.span_from(start),
+            }),
+        ))
     }
 
     // -- ring closure -------------------------------------------------------
@@ -206,18 +661,28 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Read a ring-closure number: a single digit, or `%` followed by exactly
+    /// two (OpenSMILES §3.4).
+    ///
+    /// A `%` with fewer than two digits after it is
+    /// [`SmilesErrorKind::InvalidRingMarker`], spanned at the `%` rather than
+    /// at wherever the digits ran out: the rule that was broken is the
+    /// marker's, and `C%1C` has not exhausted its input at all, so
+    /// `UnexpectedEnd` would be a false report. `CGsmiles` reads `%` by a
+    /// different rule and has its own kind.
     fn parse_rnum(&mut self) -> Result<u16, SmilesError> {
         match self.scanner.peek() {
             Some('%') => {
+                let marker_start = self.scanner.pos();
                 self.scanner.advance(); // consume '%'
-                let d1 = self
-                    .scanner
-                    .eat_digit()
-                    .ok_or_else(|| self.error(SmilesErrorKind::UnexpectedEnd))?;
-                let d2 = self
-                    .scanner
-                    .eat_digit()
-                    .ok_or_else(|| self.error(SmilesErrorKind::UnexpectedEnd))?;
+                let invalid = |this: &Self| {
+                    this.error_at(
+                        SmilesErrorKind::InvalidRingMarker,
+                        this.scanner.span_from(marker_start),
+                    )
+                };
+                let d1 = self.scanner.eat_digit().ok_or_else(|| invalid(self))?;
+                let d2 = self.scanner.eat_digit().ok_or_else(|| invalid(self))?;
                 Ok(u16::from(d1) * 10 + u16::from(d2))
             }
             Some(c) if c.is_ascii_digit() => {
@@ -239,6 +704,7 @@ impl<'a> Parser<'a> {
                 Ok(AtomNode {
                     spec: AtomSpec::Wildcard,
                     span: self.scanner.span_from(start),
+                    descriptors: Vec::new(),
                 })
             }
             Some(c) if c.is_ascii_alphabetic() => self.parse_organic_atom(start),
@@ -252,7 +718,7 @@ impl<'a> Parser<'a> {
         let first = self.scanner.advance().unwrap();
 
         // Check two-character organic symbols.
-        if let Some(&second) = self.scanner.peek_byte() {
+        if let Some(second) = self.scanner.peek_byte() {
             let two = format!("{first}{}", second as char);
             if ORGANIC_SUBSET.contains(&two.as_str()) {
                 self.scanner.advance();
@@ -263,6 +729,7 @@ impl<'a> Parser<'a> {
                         aromatic,
                     },
                     span: self.scanner.span_from(start),
+                    descriptors: Vec::new(),
                 });
             }
         }
@@ -277,6 +744,7 @@ impl<'a> Parser<'a> {
                     aromatic,
                 },
                 span: self.scanner.span_from(start),
+                descriptors: Vec::new(),
             });
         }
 
@@ -289,7 +757,7 @@ impl<'a> Parser<'a> {
     fn parse_bracket_atom(&mut self, start: usize) -> Result<AtomNode, SmilesError> {
         self.scanner.expect('[')?;
 
-        if self.mode == ParserMode::Smarts {
+        if self.dialect == Dialect::Smarts {
             return self.parse_bracket_atom_smarts(start);
         }
 
@@ -302,12 +770,40 @@ impl<'a> Parser<'a> {
         let atom_class = self.parse_atom_class()?;
 
         if self.scanner.peek() != Some(']') {
+            // `CGsmiles` hangs atom-level annotations off a `;` here — weights
+            // `[C;0.5]`, chirality `[C;1;S]`, wildcard overloading
+            // `[*;s=C,0]`. The fragment dialect does not support them, and
+            // this parser is the one place that has already lexed the bracket,
+            // so it names the feature rather than claiming a missing `]`.
+            if self.dialect == Dialect::FragmentSmiles && self.scanner.peek() == Some(';') {
+                self.scanner.advance(); // consume ';'
+                let text_start = self.scanner.pos();
+                while self.scanner.peek().is_some_and(|c| c != ']') {
+                    self.scanner.advance();
+                }
+                let text = self.scanner.input()[text_start..self.scanner.pos()].to_owned();
+                return Err(self.error_at(
+                    SmilesErrorKind::AtomAnnotationUnsupported(text),
+                    self.scanner.span_from(start),
+                ));
+            }
             return Err(self.error_at(
                 SmilesErrorKind::UnclosedBracket,
                 self.scanner.span_from(start),
             ));
         }
         self.scanner.advance(); // consume ']'
+
+        let span = self.scanner.span_from(start);
+        // What the brackets hold is the parser's business: it read the symbol,
+        // so it is the stage that knows `Xx` names no element. The span covers
+        // the whole bracket atom, which is the token the writer must fix.
+        if let BracketSymbol::Element { symbol, .. } = &symbol
+            && !is_element_symbol(symbol)
+        {
+            let kind = SmilesErrorKind::InvalidElement(symbol.clone());
+            return Err(self.error_at(kind, span));
+        }
 
         Ok(AtomNode {
             spec: AtomSpec::Bracket {
@@ -318,7 +814,8 @@ impl<'a> Parser<'a> {
                 charge,
                 atom_class,
             },
-            span: self.scanner.span_from(start),
+            span,
+            descriptors: Vec::new(),
         })
     }
 
@@ -473,11 +970,11 @@ impl<'a> Parser<'a> {
                 self.scanner.advance();
                 Ok(Some(BondKind::Down))
             }
-            Some('~') if self.mode == ParserMode::Smarts => {
+            Some('~') if self.dialect == Dialect::Smarts => {
                 self.scanner.advance();
                 Ok(Some(BondKind::Any))
             }
-            Some('@') if self.mode == ParserMode::Smarts => {
+            Some('@') if self.dialect == Dialect::Smarts => {
                 self.scanner.advance();
                 Ok(Some(BondKind::Ring))
             }
@@ -490,7 +987,7 @@ impl<'a> Parser<'a> {
     /// represented faithfully; SMILES inputs always yield
     /// `Some(BondQuery::Kind(_))` or `None`.
     fn parse_bond(&mut self) -> Result<Option<BondQuery>, SmilesError> {
-        if self.mode == ParserMode::Smarts {
+        if self.dialect == Dialect::Smarts {
             self.parse_bond_or()
         } else {
             Ok(self.parse_bond_kind()?.map(BondQuery::Kind))
@@ -574,6 +1071,7 @@ impl<'a> Parser<'a> {
         Ok(AtomNode {
             spec,
             span: self.scanner.span_from(start),
+            descriptors: Vec::new(),
         })
     }
 
@@ -695,241 +1193,311 @@ impl<'a> Parser<'a> {
             || ch == ':'
     }
 
+    /// Parse the SMARTS atomic-number primitive `#<n>` (Daylight §3.1).
+    ///
+    /// The number names an element, so it is resolved here through
+    /// [`Element::by_number`] and stored as that element's own symbol: `[#6]`
+    /// and `[C]` are the same element, and a consumer of the IR must not have
+    /// to re-parse the notation text `"#6"` to learn so. Aromaticity is not
+    /// part of the spelling — `[#6]` matches an aromatic carbon too — so the
+    /// stored primitive is the aliphatic-cased symbol with `aromatic: false`,
+    /// exactly as an unqualified query element.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SmilesErrorKind::InvalidQueryPrimitive`] naming the written
+    /// primitive when the digits are absent, do not fit an atomic number, or
+    /// name no element (`[#0]`, `[#200]`): the periodic table runs 1..=118.
+    fn parse_atomic_number_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        self.scanner.advance(); // consume '#'
+        let digits = self.scanner.eat_digits();
+        let element = digits
+            .parse::<u8>()
+            .ok()
+            .and_then(Element::by_number)
+            .ok_or_else(|| {
+                self.error(SmilesErrorKind::InvalidQueryPrimitive(format!("#{digits}")))
+            })?;
+        Ok(AtomPrimitive::Element {
+            symbol: element.symbol().to_owned(),
+            aromatic: false,
+        })
+    }
+
+    /// Dispatch one SMARTS bracket primitive (Daylight §3.1) to the helper
+    /// owning its family; each helper consumes exactly the primitive it reads.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the family helper's error, or reports
+    /// [`SmilesErrorKind::UnexpectedChar`] / [`SmilesErrorKind::UnclosedBracket`]
+    /// when the next character starts no primitive at all.
     fn parse_atom_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
         match self.scanner.peek() {
-            Some(':') => {
-                // Atom class / map number — Daylight `[atom:<n>]`.
-                self.scanner.advance();
-                let digits = self.scanner.eat_digits();
-                let n: u16 = digits.parse().map_err(|_| {
-                    self.error(SmilesErrorKind::InvalidQueryPrimitive(format!(":{digits}")))
-                })?;
-                Ok(AtomPrimitive::AtomClass(n))
-            }
+            Some(':') => self.parse_atom_class_primitive(),
             Some('*') => {
                 self.scanner.advance();
                 Ok(AtomPrimitive::Wildcard)
             }
-            Some('#') => {
-                // Atomic number: #6 means carbon
-                self.scanner.advance();
-                let digits = self.scanner.eat_digits();
-                let _num: u8 = digits.parse().map_err(|_| {
-                    self.error(SmilesErrorKind::InvalidQueryPrimitive(format!("#{digits}")))
-                })?;
-                // Resolve to element symbol (would need Element::by_number).
-                // For now, store as element with the number.
+            Some('#') => self.parse_atomic_number_primitive(),
+            Some('$') => self.parse_recursive_primitive(),
+            Some('@') => self.parse_chirality_primitive(),
+            Some(sign @ ('+' | '-')) => self.parse_charge_primitive(sign),
+            Some(c) if c.is_ascii_digit() => self.parse_isotope_primitive(),
+            Some(c) if c.is_ascii_uppercase() => self.parse_uppercase_primitive(c),
+            Some(c) if c.is_ascii_lowercase() => self.parse_lowercase_primitive(c),
+            Some(c) => Err(self.error(SmilesErrorKind::UnexpectedChar(c))),
+            None => Err(self.error(SmilesErrorKind::UnclosedBracket)),
+        }
+    }
+
+    /// Parse the atom-class / map-number primitive `:<n>` (Daylight
+    /// `[atom:<n>]`).
+    fn parse_atom_class_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        self.scanner.advance();
+        let digits = self.scanner.eat_digits();
+        let n: u16 = digits.parse().map_err(|_| {
+            self.error(SmilesErrorKind::InvalidQueryPrimitive(format!(":{digits}")))
+        })?;
+        Ok(AtomPrimitive::AtomClass(n))
+    }
+
+    /// Parse the recursive-SMARTS primitive `$(...)`, which nests a whole
+    /// molecule pattern and so shares the parser's recursion budget.
+    fn parse_recursive_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        self.scanner.advance();
+        if self.scanner.peek() != Some('(') {
+            return Err(self.error(SmilesErrorKind::UnexpectedChar(
+                self.scanner.peek().unwrap_or('\0'),
+            )));
+        }
+        self.scanner.advance(); // consume '('
+        self.depth += 1;
+        if self.depth > MAX_RECURSION_DEPTH {
+            return Err(self.error(SmilesErrorKind::RecursionLimit));
+        }
+        let mol = self.parse_molecule()?;
+        self.depth -= 1;
+        if self.scanner.peek() != Some(')') {
+            return Err(self.error(SmilesErrorKind::UnclosedRecursive));
+        }
+        self.scanner.advance(); // consume ')'
+        Ok(AtomPrimitive::Recursive(Box::new(mol)))
+    }
+
+    /// Parse the tetrahedral-chirality primitive `@` / `@@`.
+    fn parse_chirality_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        self.scanner.advance();
+        if self.scanner.peek() == Some('@') {
+            self.scanner.advance();
+            Ok(AtomPrimitive::Chirality(Chirality::Clockwise))
+        } else {
+            Ok(AtomPrimitive::Chirality(Chirality::CounterClockwise))
+        }
+    }
+
+    /// Parse the formal-charge primitive `+`/`-`, in either the doubled
+    /// (`++`, `--`) or the digit-suffixed (`+2`, `-2`) spelling; a bare sign
+    /// is ±1.
+    fn parse_charge_primitive(&mut self, sign: char) -> Result<AtomPrimitive, SmilesError> {
+        self.scanner.advance();
+        let magnitude = if self.scanner.peek() == Some(sign) {
+            self.scanner.advance();
+            2
+        } else if let Some(d) = self.scanner.eat_digit() {
+            d as i8
+        } else {
+            1
+        };
+        Ok(AtomPrimitive::Charge(if sign == '-' {
+            -magnitude
+        } else {
+            magnitude
+        }))
+    }
+
+    /// Parse the isotope primitive: a bare mass number leading the bracket.
+    fn parse_isotope_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        let digits = self.scanner.eat_digits();
+        let iso: u16 = digits
+            .parse()
+            .map_err(|_| self.error(SmilesErrorKind::InvalidQueryPrimitive(digits.to_owned())))?;
+        Ok(AtomPrimitive::Isotope(iso))
+    }
+
+    /// Dispatch an uppercase-initial primitive: the counter letters `D`, `H`,
+    /// `R`, `X` and the aliphatic wildcard `A` each shadow an element symbol,
+    /// every other letter is an aliphatic element symbol.
+    fn parse_uppercase_primitive(&mut self, c: char) -> Result<AtomPrimitive, SmilesError> {
+        match c {
+            'A' => self.parse_aliphatic_primitive(),
+            'D' => self.parse_degree_primitive(),
+            'H' => self.parse_hcount_primitive(),
+            'R' => self.parse_ring_membership_primitive(),
+            'X' => self.parse_total_connections_primitive(),
+            _ => {
+                // Generic uppercase: element symbol
+                let sym = self.consume_element_symbol();
                 Ok(AtomPrimitive::Element {
-                    symbol: format!("#{digits}"),
+                    symbol: sym,
                     aromatic: false,
                 })
             }
-            Some('$') => {
-                // Recursive SMARTS: $(...)
-                self.scanner.advance();
-                if self.scanner.peek() != Some('(') {
-                    return Err(self.error(SmilesErrorKind::UnexpectedChar(
-                        self.scanner.peek().unwrap_or('\0'),
-                    )));
-                }
-                self.scanner.advance(); // consume '('
-                self.depth += 1;
-                if self.depth > MAX_RECURSION_DEPTH {
-                    return Err(self.error(SmilesErrorKind::RecursionLimit));
-                }
-                let mol = self.parse_molecule()?;
-                self.depth -= 1;
-                if self.scanner.peek() != Some(')') {
-                    return Err(self.error(SmilesErrorKind::UnclosedRecursive));
-                }
-                self.scanner.advance(); // consume ')'
-                Ok(AtomPrimitive::Recursive(Box::new(mol)))
+        }
+    }
+
+    /// Parse `A` — the aliphatic wildcard, unless the next character makes it
+    /// one of the two-letter elements Al, Ag, Ar, As, Au, Ac, At, Am.
+    fn parse_aliphatic_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        self.scanner.advance();
+        if let Some(c2) = self.scanner.peek() {
+            if c2.is_ascii_lowercase()
+                && c2 != 'l'
+                && c2 != 'g'
+                && c2 != 'r'
+                && c2 != 's'
+                && c2 != 'u'
+                && c2 != 'c'
+                && c2 != 't'
+                && c2 != 'm'
+            {
+                // Not a known two-letter element starting with A
+                return Ok(AtomPrimitive::Aliphatic);
             }
-            Some('@') => {
+            if c2.is_ascii_lowercase() {
+                // Two-letter element: Al, Ag, Ar, As, Au, Ac, At, Am
+                let mut sym = String::from('A');
+                sym.push(c2);
                 self.scanner.advance();
-                if self.scanner.peek() == Some('@') {
-                    self.scanner.advance();
-                    Ok(AtomPrimitive::Chirality(Chirality::Clockwise))
+                return Ok(AtomPrimitive::Element {
+                    symbol: sym,
+                    aromatic: false,
+                });
+            }
+        }
+        Ok(AtomPrimitive::Aliphatic)
+    }
+
+    /// Parse the explicit-connection counter `D<n>`, or the two-letter
+    /// elements Dy, Db, Ds that share its letter.
+    fn parse_degree_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        self.scanner.advance();
+        if let Some(d) = self.scanner.eat_digit() {
+            Ok(AtomPrimitive::Degree(d))
+        } else if self.scanner.peek().is_some_and(|c| c.is_ascii_lowercase()) {
+            // Dy, Db, Ds — two-letter elements
+            let c2 = self.scanner.advance().unwrap();
+            Ok(AtomPrimitive::Element {
+                symbol: format!("D{c2}"),
+                aromatic: false,
+            })
+        } else {
+            Ok(AtomPrimitive::Degree(1))
+        }
+    }
+
+    /// Parse the total-hydrogen counter `H<n>`, or the elements He, Hf, Hg,
+    /// Hs, Ho that share its letter.
+    fn parse_hcount_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        self.scanner.advance();
+        if let Some(d) = self.scanner.eat_digit() {
+            Ok(AtomPrimitive::HCount(d))
+        } else if self
+            .scanner
+            .peek()
+            .is_some_and(|c| c == 'e' || c == 'f' || c == 'g' || c == 's' || c == 'o')
+        {
+            let c2 = self.scanner.advance().unwrap();
+            Ok(AtomPrimitive::Element {
+                symbol: format!("H{c2}"),
+                aromatic: false,
+            })
+        } else {
+            Ok(AtomPrimitive::HCount(1))
+        }
+    }
+
+    /// Parse the ring-membership counter `R<n>`, or a two-letter element
+    /// starting with R (Rb, Ru, Rh, ...).
+    fn parse_ring_membership_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        self.scanner.advance();
+        if let Some(d) = self.scanner.eat_digit() {
+            Ok(AtomPrimitive::RingMembership(Some(d)))
+        } else if self.scanner.peek().is_some_and(|c| c.is_ascii_lowercase()) {
+            let c2 = self.scanner.advance().unwrap();
+            Ok(AtomPrimitive::Element {
+                symbol: format!("R{c2}"),
+                aromatic: false,
+            })
+        } else {
+            Ok(AtomPrimitive::RingMembership(None))
+        }
+    }
+
+    /// Parse the total-connection counter `X<n>`, or a two-letter element
+    /// starting with X (Xe).
+    fn parse_total_connections_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        self.scanner.advance();
+        if let Some(d) = self.scanner.eat_digit() {
+            Ok(AtomPrimitive::TotalConnections(d))
+        } else if self.scanner.peek().is_some_and(|c| c.is_ascii_lowercase()) {
+            let c2 = self.scanner.advance().unwrap();
+            Ok(AtomPrimitive::Element {
+                symbol: format!("X{c2}"),
+                aromatic: false,
+            })
+        } else {
+            Ok(AtomPrimitive::TotalConnections(1))
+        }
+    }
+
+    /// Dispatch a lowercase-initial primitive: the counters `h`, `r`, `v` and
+    /// the aromatic element symbols `c`, `n`, `o`, `s`, `p`.
+    ///
+    /// # Errors
+    ///
+    /// Any other lowercase letter is no primitive at all and yields
+    /// [`SmilesErrorKind::InvalidQueryPrimitive`] naming the letter.
+    fn parse_lowercase_primitive(&mut self, c: char) -> Result<AtomPrimitive, SmilesError> {
+        match c {
+            'h' => {
+                self.scanner.advance();
+                if let Some(d) = self.scanner.eat_digit() {
+                    Ok(AtomPrimitive::ImplicitH(d))
                 } else {
-                    Ok(AtomPrimitive::Chirality(Chirality::CounterClockwise))
+                    Ok(AtomPrimitive::ImplicitH(1))
                 }
             }
-            Some('+') => {
+            'r' => {
                 self.scanner.advance();
-                if self.scanner.peek() == Some('+') {
-                    self.scanner.advance();
-                    Ok(AtomPrimitive::Charge(2))
-                } else if let Some(d) = self.scanner.eat_digit() {
-                    Ok(AtomPrimitive::Charge(d as i8))
+                if let Some(d) = self.scanner.eat_digit() {
+                    Ok(AtomPrimitive::RingSize(d))
                 } else {
-                    Ok(AtomPrimitive::Charge(1))
+                    // Bare 'r' means "in a ring" — same as R but lowercase
+                    Ok(AtomPrimitive::RingMembership(None))
                 }
             }
-            Some('-') => {
+            'v' => {
                 self.scanner.advance();
-                if self.scanner.peek() == Some('-') {
-                    self.scanner.advance();
-                    Ok(AtomPrimitive::Charge(-2))
-                } else if let Some(d) = self.scanner.eat_digit() {
-                    Ok(AtomPrimitive::Charge(-(d as i8)))
+                if let Some(d) = self.scanner.eat_digit() {
+                    Ok(AtomPrimitive::Valence(d))
                 } else {
-                    Ok(AtomPrimitive::Charge(-1))
+                    Ok(AtomPrimitive::Valence(1))
                 }
             }
-            Some(c) if c.is_ascii_digit() => {
-                // Isotope: bare number
-                let digits = self.scanner.eat_digits();
-                let iso: u16 = digits.parse().map_err(|_| {
-                    self.error(SmilesErrorKind::InvalidQueryPrimitive(digits.to_owned()))
-                })?;
-                Ok(AtomPrimitive::Isotope(iso))
+            // Aromatic element symbols: c, n, o, s, p
+            'c' | 'n' | 'o' | 's' | 'p' => {
+                self.scanner.advance();
+                Ok(AtomPrimitive::Element {
+                    symbol: c.to_string(),
+                    aromatic: true,
+                })
             }
-            Some(c) if c.is_ascii_uppercase() => {
-                // Uppercase: element symbol or SMARTS primitive letter
-                match c {
-                    'A' => {
-                        // Could be 'A' (aliphatic wildcard) or element like 'Al', 'Ag', etc.
-                        self.scanner.advance();
-                        if let Some(c2) = self.scanner.peek() {
-                            if c2.is_ascii_lowercase()
-                                && c2 != 'l'
-                                && c2 != 'g'
-                                && c2 != 'r'
-                                && c2 != 's'
-                                && c2 != 'u'
-                                && c2 != 'c'
-                                && c2 != 't'
-                                && c2 != 'm'
-                            {
-                                // Not a known two-letter element starting with A
-                                return Ok(AtomPrimitive::Aliphatic);
-                            }
-                            if c2.is_ascii_lowercase() {
-                                // Two-letter element: Al, Ag, Ar, As, Au, Ac, At, Am
-                                let mut sym = String::from('A');
-                                sym.push(c2);
-                                self.scanner.advance();
-                                return Ok(AtomPrimitive::Element {
-                                    symbol: sym,
-                                    aromatic: false,
-                                });
-                            }
-                        }
-                        Ok(AtomPrimitive::Aliphatic)
-                    }
-                    'D' => {
-                        self.scanner.advance();
-                        if let Some(d) = self.scanner.eat_digit() {
-                            Ok(AtomPrimitive::Degree(d))
-                        } else if self.scanner.peek().is_some_and(|c| c.is_ascii_lowercase()) {
-                            // Dy, Db, Ds — two-letter elements
-                            let c2 = self.scanner.advance().unwrap();
-                            Ok(AtomPrimitive::Element {
-                                symbol: format!("D{c2}"),
-                                aromatic: false,
-                            })
-                        } else {
-                            Ok(AtomPrimitive::Degree(1))
-                        }
-                    }
-                    'H' => {
-                        self.scanner.advance();
-                        if let Some(d) = self.scanner.eat_digit() {
-                            Ok(AtomPrimitive::HCount(d))
-                        } else if self.scanner.peek().is_some_and(|c| {
-                            c == 'e' || c == 'f' || c == 'g' || c == 's' || c == 'o'
-                        }) {
-                            let c2 = self.scanner.advance().unwrap();
-                            Ok(AtomPrimitive::Element {
-                                symbol: format!("H{c2}"),
-                                aromatic: false,
-                            })
-                        } else {
-                            Ok(AtomPrimitive::HCount(1))
-                        }
-                    }
-                    'R' => {
-                        self.scanner.advance();
-                        if let Some(d) = self.scanner.eat_digit() {
-                            Ok(AtomPrimitive::RingMembership(Some(d)))
-                        } else if self.scanner.peek().is_some_and(|c| c.is_ascii_lowercase()) {
-                            let c2 = self.scanner.advance().unwrap();
-                            Ok(AtomPrimitive::Element {
-                                symbol: format!("R{c2}"),
-                                aromatic: false,
-                            })
-                        } else {
-                            Ok(AtomPrimitive::RingMembership(None))
-                        }
-                    }
-                    'X' => {
-                        self.scanner.advance();
-                        if let Some(d) = self.scanner.eat_digit() {
-                            Ok(AtomPrimitive::TotalConnections(d))
-                        } else if self.scanner.peek().is_some_and(|c| c.is_ascii_lowercase()) {
-                            let c2 = self.scanner.advance().unwrap();
-                            Ok(AtomPrimitive::Element {
-                                symbol: format!("X{c2}"),
-                                aromatic: false,
-                            })
-                        } else {
-                            Ok(AtomPrimitive::TotalConnections(1))
-                        }
-                    }
-                    _ => {
-                        // Generic uppercase: element symbol
-                        let sym = self.consume_element_symbol();
-                        Ok(AtomPrimitive::Element {
-                            symbol: sym,
-                            aromatic: false,
-                        })
-                    }
-                }
+            _ => {
+                let sym = c.to_string();
+                self.scanner.advance();
+                Err(self.error(SmilesErrorKind::InvalidQueryPrimitive(sym)))
             }
-            Some(c) if c.is_ascii_lowercase() => {
-                match c {
-                    'h' => {
-                        self.scanner.advance();
-                        if let Some(d) = self.scanner.eat_digit() {
-                            Ok(AtomPrimitive::ImplicitH(d))
-                        } else {
-                            Ok(AtomPrimitive::ImplicitH(1))
-                        }
-                    }
-                    'r' => {
-                        self.scanner.advance();
-                        if let Some(d) = self.scanner.eat_digit() {
-                            Ok(AtomPrimitive::RingSize(d))
-                        } else {
-                            // Bare 'r' means "in a ring" — same as R but lowercase
-                            Ok(AtomPrimitive::RingMembership(None))
-                        }
-                    }
-                    'v' => {
-                        self.scanner.advance();
-                        if let Some(d) = self.scanner.eat_digit() {
-                            Ok(AtomPrimitive::Valence(d))
-                        } else {
-                            Ok(AtomPrimitive::Valence(1))
-                        }
-                    }
-                    // Aromatic element symbols: c, n, o, s, p
-                    'c' | 'n' | 'o' | 's' | 'p' => {
-                        self.scanner.advance();
-                        Ok(AtomPrimitive::Element {
-                            symbol: c.to_string(),
-                            aromatic: true,
-                        })
-                    }
-                    _ => {
-                        let sym = c.to_string();
-                        self.scanner.advance();
-                        Err(self.error(SmilesErrorKind::InvalidQueryPrimitive(sym)))
-                    }
-                }
-            }
-            Some(c) => Err(self.error(SmilesErrorKind::UnexpectedChar(c))),
-            None => Err(self.error(SmilesErrorKind::UnclosedBracket)),
         }
     }
 }
@@ -941,6 +1509,8 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::smiles::chem::test_support::atom_nodes;
+    use crate::io::smiles::error::Notation;
 
     // -- helpers ------------------------------------------------------------
 
@@ -1227,10 +1797,98 @@ mod tests {
         assert!(matches!(err.kind, SmilesErrorKind::UnclosedBranch));
     }
 
+    /// Input that ends right after the `(`: the complaint is the branch that
+    /// never closed, not the atom that never came, and it is spanned at the
+    /// `(` — the same reading `CC(O` gets.
+    #[test]
+    fn test_unclosed_branch_at_end_of_input_reports_unclosed_branch() {
+        let err = parse_smiles("CC(").unwrap_err();
+        assert!(
+            matches!(err.kind, SmilesErrorKind::UnclosedBranch),
+            "kind was {:?}",
+            err.kind
+        );
+        assert_eq!(err.span.start, 2, "span was {:?}", err.span);
+    }
+
+    /// The fragment dialect reads the same branch production, so `CC(` is
+    /// refused there with the same kind at the same offset.
+    #[test]
+    fn test_fragment_unclosed_branch_at_end_of_input() {
+        let err = parse_fragment_smiles("CC(").unwrap_err();
+        assert!(
+            matches!(err.kind, SmilesErrorKind::UnclosedBranch),
+            "kind was {:?}",
+            err.kind
+        );
+        assert_eq!(err.span.start, 2, "span was {:?}", err.span);
+    }
+
     #[test]
     fn test_trailing_characters() {
         let err = parse_smiles("CC)").unwrap_err();
         assert!(matches!(err.kind, SmilesErrorKind::TrailingCharacters));
+    }
+
+    // -- bracket element symbols --------------------------------------------
+
+    /// A bracket symbol that is not an element is a fact about the string,
+    /// not about the graph built from it: the parser reads it, so the parser
+    /// refuses it. Before this, `[Xx]` parsed into an IR and only a caller
+    /// that also ran `validate_smiles` ever learnt that `Xx` is not an
+    /// element — `to_atomistic` happily built an atom with that element.
+    ///
+    /// Kind and payload are the ones `validate_smiles` already uses for the
+    /// same rule (`smiles/validate.rs::validate_symbol`): the symbol exactly
+    /// as it was written.
+    #[test]
+    fn test_unknown_bracket_element_is_refused_by_parse_smiles() {
+        let err = parse_smiles("[Xx]").expect_err("Xx is not an element");
+        match &err.kind {
+            SmilesErrorKind::InvalidElement(symbol) => {
+                assert_eq!(symbol, "Xx", "payload names the offending symbol");
+            }
+            other => panic!("expected InvalidElement, got {other:?}"),
+        }
+    }
+
+    /// The span locates the bracket atom that carries the bad symbol, not the
+    /// whole string: `CC[Xx]O` points at `[Xx]`, four bytes in.
+    #[test]
+    fn test_unknown_bracket_element_span_covers_the_bracket_atom() {
+        const INPUT: &str = "CC[Xx]O";
+        let err = parse_smiles(INPUT).expect_err("Xx is not an element");
+        let text = &INPUT[err.span.start..err.span.end];
+        assert!(
+            text.starts_with('[') && text.contains("Xx"),
+            "span {:?} selected {text:?}",
+            err.span
+        );
+    }
+
+    /// The fragment dialect is plain SMILES widened with descriptors, so it
+    /// reads bracket symbols by the same rule and refuses the same ones.
+    #[test]
+    fn test_unknown_bracket_element_is_refused_by_parse_fragment_smiles() {
+        let err = parse_fragment_smiles("[$][Xx]").expect_err("Xx is not an element");
+        match &err.kind {
+            SmilesErrorKind::InvalidElement(symbol) => {
+                assert_eq!(symbol, "Xx", "payload names the offending symbol");
+            }
+            other => panic!("expected InvalidElement, got {other:?}"),
+        }
+    }
+
+    /// The element check must not narrow what a bracket atom may hold: an
+    /// isotope, a charge, an aromatic lowercase symbol and the `*` wildcard
+    /// (which names no element at all) all stay acceptable.
+    #[test]
+    fn test_valid_bracket_symbols_still_parse() {
+        for input in ["[Na+]", "[13CH4]", "[se]", "[*]"] {
+            let mol = parse_smiles(input)
+                .unwrap_or_else(|e| panic!("parse_smiles({input:?}) must succeed, got {e}"));
+            assert_eq!(atom_count(&mol), 1, "{input}: one bracket atom");
+        }
     }
 
     // -- real molecules -----------------------------------------------------
@@ -1266,6 +1924,53 @@ mod tests {
     fn test_smarts_wildcard_atom() {
         let mol = smarts("[*]");
         assert_eq!(atom_count(&mol), 1);
+    }
+
+    /// The element symbol a one-primitive SMARTS bracket resolved to,
+    /// whichever of the two shapes the bracket parser left it in: a single
+    /// concrete element is simplified to `AtomSpec::Bracket`, anything else
+    /// stays an `AtomSpec::Query`. The symbol is the behaviour under test; the
+    /// shape is not.
+    fn bracket_element_symbol(mol: &SmilesIR) -> String {
+        match &mol.components[0].head.spec {
+            AtomSpec::Bracket {
+                symbol: BracketSymbol::Element { symbol, .. },
+                ..
+            } => symbol.clone(),
+            AtomSpec::Query(AtomQuery::Primitive(AtomPrimitive::Element { symbol, .. })) => {
+                symbol.clone()
+            }
+            other => panic!("expected a concrete element, got {other:?}"),
+        }
+    }
+
+    /// `[#6]` is the atomic-number spelling of carbon, so it resolves through
+    /// `Element::by_number` to the element's own symbol. Storing the notation
+    /// text `"#6"` as a symbol would leave every consumer to re-parse it, and
+    /// `[#6]` and `[C]` would name two different elements.
+    #[test]
+    fn test_smarts_atomic_number_six_is_stored_as_carbon() {
+        assert_eq!(bracket_element_symbol(&smarts("[#6]")), "C");
+    }
+
+    /// The same rule at a second number, so the table is a lookup and not a
+    /// special case for carbon.
+    #[test]
+    fn test_smarts_atomic_number_eight_is_stored_as_oxygen() {
+        assert_eq!(bracket_element_symbol(&smarts("[#8]")), "O");
+    }
+
+    /// `Element::by_number` is defined on 1..=118; a number past it names no
+    /// element, so the primitive is refused rather than stored as text.
+    #[test]
+    fn test_smarts_atomic_number_past_the_periodic_table_is_refused() {
+        let err = parse_smarts("[#200]").expect_err("200 is not an atomic number");
+        match &err.kind {
+            SmilesErrorKind::InvalidQueryPrimitive(text) => {
+                assert!(text.contains("200"), "primitive text was {text:?}");
+            }
+            other => panic!("expected InvalidQueryPrimitive, got {other:?}"),
+        }
     }
 
     #[test]
@@ -1354,5 +2059,490 @@ mod tests {
             }
             _ => panic!("expected Recursive"),
         }
+    }
+
+    // -- fragment dialect: helpers ------------------------------------------
+
+    fn fragment(input: &str) -> SmilesIR {
+        parse_fragment_smiles(input)
+            .unwrap_or_else(|e| panic!("parse_fragment_smiles({input:?}) failed: {e}"))
+    }
+
+    fn descriptor(kind: DescriptorKind, label: &str, order: Option<BondKind>) -> BondingDescriptor {
+        BondingDescriptor {
+            kind,
+            label: label.to_owned(),
+            order,
+        }
+    }
+
+    // -- fragment dialect: anchoring (R4.2 / R4.3) --------------------------
+
+    #[test]
+    fn test_fragment_symmetric_descriptors_anchor_on_first_and_last_atom() {
+        let mol = fragment("[$]COC[$]");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 3);
+        let expected = vec![descriptor(DescriptorKind::Symmetric, "", None)];
+        assert_eq!(nodes[0].descriptors, expected);
+        assert!(nodes[1].descriptors.is_empty());
+        assert_eq!(nodes[2].descriptors, expected);
+    }
+
+    #[test]
+    fn test_fragment_directional_descriptors_anchor_on_chain_atoms() {
+        // head N, C, carbonyl C (the anchor the trailing `[<]` binds to), O.
+        let mol = fragment("[>]NCC(=O)[<]");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 4);
+        assert_eq!(
+            nodes[0].descriptors,
+            vec![descriptor(DescriptorKind::Right, "", None)]
+        );
+        assert!(nodes[1].descriptors.is_empty());
+        assert_eq!(
+            nodes[2].descriptors,
+            vec![descriptor(DescriptorKind::Left, "", None)]
+        );
+        assert!(nodes[3].descriptors.is_empty());
+    }
+
+    #[test]
+    fn test_fragment_descriptor_labels_are_kept_per_atom() {
+        let mol = fragment("Clc[$a]c[$b]");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(
+            nodes[1].descriptors,
+            vec![descriptor(DescriptorKind::Symmetric, "a", None)]
+        );
+        assert_eq!(
+            nodes[2].descriptors,
+            vec![descriptor(DescriptorKind::Symmetric, "b", None)]
+        );
+    }
+
+    #[test]
+    fn test_fragment_multiple_descriptors_keep_written_order() {
+        let mol = fragment("[>][$1]COC[<]");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(
+            nodes[0].descriptors,
+            vec![
+                descriptor(DescriptorKind::Right, "", None),
+                descriptor(DescriptorKind::Symmetric, "1", None),
+            ]
+        );
+    }
+
+    // -- fragment dialect: out-of-bracket bond order (R4.4) -----------------
+
+    #[test]
+    fn test_fragment_bond_before_descriptor_is_the_descriptor_order() {
+        let mol = fragment("CC=[$]");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(
+            nodes[1].descriptors,
+            vec![descriptor(
+                DescriptorKind::Symmetric,
+                "",
+                Some(BondKind::Double)
+            )]
+        );
+    }
+
+    #[test]
+    fn test_fragment_preceding_run_order_goes_to_the_adjacent_bracket() {
+        // A run written *after* the bond symbol: `=` is adjacent to `[$]`, the
+        // first bracket of the run, so `$` carries the order and `>` none.
+        let mol = fragment("CC=[$][>]");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(
+            nodes[1].descriptors,
+            vec![
+                descriptor(DescriptorKind::Symmetric, "", Some(BondKind::Double)),
+                descriptor(DescriptorKind::Right, "", None),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_fragment_bond_after_leading_descriptor_is_the_descriptor_order() {
+        let mol = fragment("[$]=CCC");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(
+            nodes[0].descriptors,
+            vec![descriptor(
+                DescriptorKind::Symmetric,
+                "",
+                Some(BondKind::Double)
+            )]
+        );
+    }
+
+    #[test]
+    fn test_fragment_leading_run_order_goes_to_the_adjacent_bracket() {
+        // A leading run written *before* the bond symbol: `=` is adjacent to
+        // `[$1]`, the last bracket of the run, so `$1` carries the order and
+        // `>` none.
+        let mol = fragment("[>][$1]=CCC");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(
+            nodes[0].descriptors,
+            vec![
+                descriptor(DescriptorKind::Right, "", None),
+                descriptor(DescriptorKind::Symmetric, "1", Some(BondKind::Double)),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_fragment_leading_descriptor_order_leaves_chain_bonds_single() {
+        let mol = fragment("[$]=CCC");
+        for elem in &mol.components[0].tail {
+            match elem {
+                ChainElement::BondedAtom { bond, .. } => assert!(
+                    matches!(bond, None | Some(BondQuery::Kind(BondKind::Single))),
+                    "expected a single C-C bond, got {bond:?}"
+                ),
+                other => panic!("expected BondedAtom, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_fragment_midchain_descriptor_takes_no_order_from_following_bond() {
+        // Spec-local disambiguation: mid-chain, a bond after the bracket is an
+        // ordinary bond to the next atom, not the descriptor's order.
+        let mol = fragment("C[$]=CC");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(
+            nodes[0].descriptors,
+            vec![descriptor(DescriptorKind::Symmetric, "", None)]
+        );
+    }
+
+    #[test]
+    fn test_fragment_midchain_bond_after_descriptor_bonds_the_next_atom() {
+        let mol = fragment("C[$]=CC");
+        match &mol.components[0].tail[0] {
+            ChainElement::BondedAtom { bond, .. } => {
+                assert_eq!(*bond, Some(BondQuery::Kind(BondKind::Double)));
+            }
+            other => panic!("expected BondedAtom, got {other:?}"),
+        }
+    }
+
+    // -- fragment dialect: branches -----------------------------------------
+
+    #[test]
+    fn test_fragment_branch_descriptor_anchors_on_the_parent_atom() {
+        let mol = fragment("N([>])C");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(
+            nodes[0].descriptors,
+            vec![descriptor(DescriptorKind::Right, "", None)]
+        );
+        assert!(nodes[1].descriptors.is_empty());
+    }
+
+    #[test]
+    fn test_fragment_descriptor_only_branch_emits_no_chain_element() {
+        let mol = fragment("N([>])C");
+        let tail = &mol.components[0].tail;
+        assert_eq!(tail.len(), 1);
+        assert!(matches!(tail[0], ChainElement::BondedAtom { .. }));
+    }
+
+    #[test]
+    fn test_fragment_symmetric_branch_descriptor_anchors_on_the_parent_atom() {
+        let mol = fragment("C([$])O");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(
+            nodes[0].descriptors,
+            vec![descriptor(DescriptorKind::Symmetric, "", None)]
+        );
+    }
+
+    #[test]
+    fn test_fragment_descriptor_in_mixed_branch_anchors_on_the_parent_atom() {
+        // `>` lands on the first C, not on the branch atom N.
+        let mol = fragment("C([>]N)C");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(
+            nodes[0].descriptors,
+            vec![descriptor(DescriptorKind::Right, "", None)]
+        );
+        assert!(nodes[1].descriptors.is_empty());
+    }
+
+    #[test]
+    fn test_fragment_branch_bond_before_descriptor_is_the_descriptor_order() {
+        let mol = fragment("C(=[>])C");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(
+            nodes[0].descriptors,
+            vec![descriptor(
+                DescriptorKind::Right,
+                "",
+                Some(BondKind::Double)
+            )]
+        );
+    }
+
+    #[test]
+    fn test_fragment_empty_branch_is_still_an_error() {
+        assert!(parse_fragment_smiles("C()").is_err());
+    }
+
+    // -- fragment dialect: the `$` glyph overload ---------------------------
+
+    #[test]
+    fn test_fragment_quadruple_bond_is_not_a_descriptor() {
+        let mol = fragment("C$C");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 2);
+        assert!(nodes.iter().all(|n| n.descriptors.is_empty()));
+        match &mol.components[0].tail[0] {
+            ChainElement::BondedAtom { bond, .. } => {
+                assert_eq!(*bond, Some(BondQuery::Kind(BondKind::Quadruple)));
+            }
+            other => panic!("expected BondedAtom, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_plain_smiles_quadruple_bond_is_unchanged() {
+        let mol = smiles("C$C");
+        assert_eq!(atom_count(&mol), 2);
+        match &mol.components[0].tail[0] {
+            ChainElement::BondedAtom { bond, .. } => {
+                assert_eq!(*bond, Some(BondQuery::Kind(BondKind::Quadruple)));
+            }
+            other => panic!("expected BondedAtom, got {other:?}"),
+        }
+    }
+
+    // -- dialect isolation ---------------------------------------------------
+
+    #[test]
+    fn test_plain_smiles_rejects_descriptors() {
+        let err = parse_smiles("[$]COC[$]").unwrap_err();
+        assert!(matches!(err.kind, SmilesErrorKind::DescriptorInPlainSmiles));
+    }
+
+    #[test]
+    fn test_plain_smiles_rejects_recursive_smarts_bracket_as_descriptor() {
+        let err = parse_smiles("[$(C)]").unwrap_err();
+        assert!(matches!(err.kind, SmilesErrorKind::DescriptorInPlainSmiles));
+    }
+
+    #[test]
+    fn test_plain_smiles_bracket_atom_unchanged_by_descriptor_lookahead() {
+        let mol = smiles("[NH4+]");
+        assert_eq!(atom_count(&mol), 1);
+        match &mol.components[0].head.spec {
+            AtomSpec::Bracket {
+                symbol,
+                hcount,
+                charge,
+                ..
+            } => {
+                assert!(matches!(symbol, BracketSymbol::Element { symbol, .. } if symbol == "N"));
+                assert_eq!(*hcount, Some(4));
+                assert_eq!(*charge, Some(1));
+            }
+            other => panic!("expected Bracket, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_smarts_negation_unchanged_by_descriptor_lookahead() {
+        let mol = smarts("[!C]");
+        assert!(matches!(
+            &mol.components[0].head.spec,
+            AtomSpec::Query(AtomQuery::Not(_))
+        ));
+    }
+
+    #[test]
+    fn test_smarts_recursive_unchanged_by_descriptor_lookahead() {
+        let mol = smarts("[$(C)]");
+        assert!(matches!(
+            &mol.components[0].head.spec,
+            AtomSpec::Query(AtomQuery::Primitive(AtomPrimitive::Recursive(_)))
+        ));
+    }
+
+    // -- fragment dialect: rejections ---------------------------------------
+
+    #[test]
+    fn test_fragment_bigsmiles_in_bracket_order_is_rejected() {
+        let err = parse_fragment_smiles("[<=1]").unwrap_err();
+        assert!(matches!(err.kind, SmilesErrorKind::BondInsideDescriptor));
+    }
+
+    #[test]
+    fn test_fragment_in_bracket_single_bond_is_rejected() {
+        let err = parse_fragment_smiles("[$-]").unwrap_err();
+        assert!(matches!(err.kind, SmilesErrorKind::BondInsideDescriptor));
+    }
+
+    #[test]
+    fn test_fragment_descriptor_without_any_atom_is_dangling() {
+        let err = parse_fragment_smiles("[$]").unwrap_err();
+        assert!(matches!(err.kind, SmilesErrorKind::DanglingDescriptor));
+    }
+
+    #[test]
+    fn test_fragment_descriptor_in_empty_component_is_dangling() {
+        let err = parse_fragment_smiles("C.[$]").unwrap_err();
+        assert!(matches!(err.kind, SmilesErrorKind::DanglingDescriptor));
+    }
+
+    #[test]
+    fn test_fragment_non_alphanumeric_label_is_rejected() {
+        let err = parse_fragment_smiles("[$a+]").unwrap_err();
+        assert!(matches!(
+            err.kind,
+            SmilesErrorKind::InvalidDescriptorLabel(_)
+        ));
+    }
+
+    #[test]
+    fn test_fragment_aromatic_descriptor_order_is_rejected() {
+        let err = parse_fragment_smiles("c:[$]").unwrap_err();
+        assert!(matches!(
+            err.kind,
+            SmilesErrorKind::InvalidDescriptorOrder(BondKind::Aromatic)
+        ));
+    }
+
+    #[test]
+    fn test_fragment_atom_weight_annotation_is_unsupported() {
+        let err = parse_fragment_smiles("[C;0.5]").unwrap_err();
+        match &err.kind {
+            SmilesErrorKind::AtomAnnotationUnsupported(text) => assert_eq!(text, "0.5"),
+            other => panic!("expected AtomAnnotationUnsupported, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_fragment_wildcard_overloading_annotation_is_unsupported() {
+        let err = parse_fragment_smiles("[*;s=C,0]").unwrap_err();
+        assert!(matches!(
+            err.kind,
+            SmilesErrorKind::AtomAnnotationUnsupported(_)
+        ));
+    }
+
+    #[test]
+    fn test_plain_smiles_annotation_still_reports_unclosed_bracket() {
+        let err = parse_smiles("[C;0.5]").unwrap_err();
+        assert!(matches!(err.kind, SmilesErrorKind::UnclosedBracket));
+    }
+
+    #[test]
+    fn test_fragment_shared_descriptor_is_representable() {
+        // `[!]` is the shared (kind-agnostic) descriptor: it anchors on its
+        // neighbouring atom exactly like `$`/`<`/`>`, with or without a label.
+        let mol = fragment("[!]C");
+        let nodes = atom_nodes(&mol);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(
+            nodes[0].descriptors,
+            vec![descriptor(DescriptorKind::Shared, "", None)]
+        );
+
+        let labelled = fragment("C[!a]");
+        let nodes = atom_nodes(&labelled);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(
+            nodes[0].descriptors,
+            vec![descriptor(DescriptorKind::Shared, "a", None)]
+        );
+    }
+
+    // -- malformed ring markers ---------------------------------------------
+
+    /// `%` opens the two-digit spelling of a ring marker, so `%1` names no
+    /// marker: the string is malformed, not exhausted, and `UnexpectedEnd`
+    /// would be a false report about text that has not run out.
+    #[test]
+    fn test_percent_ring_marker_with_one_digit_is_an_invalid_ring_marker() {
+        let err = parse_smiles("C%1C").expect_err("'%1' is not a two-digit ring marker");
+        assert!(
+            matches!(err.kind, SmilesErrorKind::InvalidRingMarker),
+            "kind was {:?}",
+            err.kind
+        );
+        assert_eq!(err.span.start, 1, "the marker starts at the '%'");
+    }
+
+    /// The same rule where the input really does end: the complaint is still
+    /// about the marker, which is the rule that was broken.
+    #[test]
+    fn test_trailing_percent_is_an_invalid_ring_marker() {
+        let err = parse_smiles("C%").expect_err("a bare '%' names no ring marker");
+        assert!(
+            matches!(err.kind, SmilesErrorKind::InvalidRingMarker),
+            "kind was {:?}",
+            err.kind
+        );
+        assert_eq!(err.span.start, 1, "the marker starts at the '%'");
+    }
+
+    // -- ring closures are paired by the parser ------------------------------
+
+    /// A ring marker opened and never closed is a syntax error of the string,
+    /// so the parser that read the marker is the one that reports it — not a
+    /// later validation pass some callers run and some do not.
+    #[test]
+    fn test_unclosed_ring_marker_is_refused_by_parse_smiles() {
+        let err = parse_smiles("C1CC").expect_err("ring 1 is opened and never closed");
+        assert!(
+            matches!(err.kind, SmilesErrorKind::UnmatchedRingClosure(1)),
+            "kind was {:?}",
+            err.kind
+        );
+    }
+
+    /// The fragment dialect is plain SMILES widened with descriptors, so it
+    /// pairs ring markers by exactly the same rule and at the same stage.
+    #[test]
+    fn test_unclosed_ring_marker_is_refused_by_parse_fragment_smiles() {
+        let err = parse_fragment_smiles("[$]C1CC").expect_err("ring 1 is never closed");
+        assert!(
+            matches!(err.kind, SmilesErrorKind::UnmatchedRingClosure(1)),
+            "kind was {:?}",
+            err.kind
+        );
+    }
+
+    // -- notation stamped at the entry point --------------------------------
+
+    #[test]
+    fn test_parse_smiles_error_is_stamped_smiles() {
+        let err = parse_smiles("CC(").expect_err("an unclosed branch must be refused");
+        assert_eq!(err.notation, Notation::Smiles);
+    }
+
+    #[test]
+    fn test_parse_fragment_smiles_error_is_stamped_smiles() {
+        let err = parse_fragment_smiles("[$]").expect_err("a dangling descriptor must be refused");
+        assert_eq!(err.notation, Notation::Smiles);
+    }
+
+    #[test]
+    fn test_parse_smarts_error_is_stamped_smarts() {
+        let err = parse_smarts("[C").expect_err("an unclosed bracket must be refused");
+        assert_eq!(err.notation, Notation::Smarts);
     }
 }

@@ -1,29 +1,62 @@
 //! Universal Force Field typifier.
 //!
 //! Assigns RDKit-style UFF atom labels, generates bond/angle/dihedral topology,
-//! and bakes per-instance force constants onto the graph so
-//! [`ForceField::to_potentials`](crate::ff::forcefield::ForceField::to_potentials)
+//! and resolves per-instance force constants so
+//! [`PotentialCompiler::compile`](crate::ff::potential::PotentialCompiler::compile)
 //! can compile `uff_bond` / `uff_angle` / `uff_torsion` / `uff_lj` kernels.
+//!
+//! # Labels
+//!
+//! Every bonded term is one type, named by a [`TypeName`] over the UFF atom
+//! labels of its atoms, qualified with the values its parameters depend on
+//! that are not a function of those labels (Rappé et al., JACS 114, 10024
+//! (1992)); each field is an `f64` in Rust `Display` form:
+//!
+//! - bond `{ti}-{tj}@{bo}` — the effective bond order used (`1`, `1.5`, `2`,
+//!   `3`, `1.41` for an amide C–N);
+//! - angle `{ti}-{tj}-{tk}@{bo_ij}_{bo_jk}_{code}` — `code` is the RDKit
+//!   coordination code before the effective map (`0`, `1`, `2`, `3`, `4`,
+//!   `30`, `35`, `40`, `45`), which fixes `theta0` and the Fourier/order form;
+//! - torsion `{ti}-{tj}-{tk}-{tl}@{V}_{n}_{nphi0}` — `V` the barrier after
+//!   division by the torsion count about the central bond, `n` the
+//!   periodicity, `nphi0` `0` for `cosTerm = +1` and `180` for `cosTerm = -1`;
+//! - inversion `{ta}-{tj}-{tb}-{tc}` in improper node order (centre second),
+//!   unqualified: `K, c0, c1, c2` depend only on the centre element and on
+//!   whether an endpoint is `O_2` / `O_R`.
+//!
+//! A bond, angle or torsion is oriented before it is named: of its forward and
+//! reversed endpoint labels (then qualifier fields, an angle's two bond orders
+//! swapping with its ends) it takes the smaller, slot by slot, so both
+//! orientations of one term share one name and one type. Bond and angle params
+//! are evaluated on that orientation: their force constants multiply
+//! the two end atoms' `Z*` into a running product, and floating-point products
+//! do not reassociate, so evaluating each term in its own node order could give
+//! one name two params differing in the last bit. (A torsion's params read only
+//! the central pair, symmetrically.) Inversions are **not** oriented:
+//! reversing a 4-atom term moves the centre to position 3 and names a different
+//! term.
 //!
 //! # Route
 //!
 //! ```ignore
-//! let t = UFFTypifier::new();
-//! let mut frame = t.typify(&mol)?.to_frame();
-//! frame.insert("pairs", intramolecular_pairs(&frame, t.ff().special_bonds())?);
-//! let pots = t.ff().to_potentials(&frame)?;
+//! let mut typing = Typing::new(UFFTypifier::new());
+//! let mut frame = typing.typify(&mol)?.to_frame()?;
+//! let ff = typing.forcefield();
+//! frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds())?);
+//! let pots = PotentialCompiler::new(ff).compile(&frame)?;
 //! ```
 //!
 //! Organic / main-group subset only (see [`crate::ff::params::uff`]). No GFN-FF.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+use molrs::store::type_labels::TypeName;
 use molrs::system::molgraph::PropValue;
 use molrs::{AtomId, Atomistic, Element};
 
-use crate::ff::forcefield::{ForceField, SpecialBonds};
+use crate::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
 use crate::ff::params::uff::{AMIDE_BOND_ORDER, AtomicParams, G, LAMBDA, params_for_label};
-use crate::ff::typifier::Typifier;
+use crate::ff::typifier::{Annotation, Match, Typifier};
 use crate::perceive::rings::find_rings;
 
 /// Universal Force Field typifier (Rappé 1992, RDKit-aligned).
@@ -39,32 +72,91 @@ impl Default for UFFTypifier {
 
 impl UFFTypifier {
     /// Infallible: parameters are compile-time constants.
+    ///
+    /// An input-free constructor over the `ff/params` UFF table: the one
+    /// definition result it can meet is its own five literal styles, and
+    /// `tests::new_defines_without_conflict` proves it `Ok`.
     pub fn new() -> Self {
+        Self::try_new().expect(
+            "UFF styles define without conflict — proved by \
+             ff::typifier::uff::tests::new_defines_without_conflict",
+        )
+    }
+
+    /// The fallible body of [`new`](Self::new).
+    fn try_new() -> Result<Self, DefError> {
         let mut ff = ForceField::new("UFF");
-        ff.def_bondstyle("uff_bond");
-        ff.def_anglestyle("uff_angle");
-        ff.def_dihedralstyle("uff_torsion");
-        ff.def_improperstyle("uff_inversion");
-        ff.def_pairstyle("uff_lj", &[]);
+        for (category, name) in [
+            ("bond", "uff_bond"),
+            ("angle", "uff_angle"),
+            ("dihedral", "uff_torsion"),
+            ("improper", "uff_inversion"),
+            ("pair", "uff_lj"),
+        ] {
+            ff.def_style(category, name, Params::new())?;
+        }
         // UFF has no electrostatics; 1-4 LJ at full strength (RDKit).
         ff.set_special_bonds(SpecialBonds {
             lj: [0.0, 0.0, 1.0],
             coul: [0.0, 0.0, 0.0],
         });
-        Self { ff }
+        Ok(Self { ff })
     }
+}
 
-    pub fn ff(&self) -> &ForceField {
-        &self.ff
+/// `type` → a type named `name` on `endpoints` under `style`, with `params`.
+fn typed(
+    style: &str,
+    name: &TypeName,
+    endpoints: &[&str],
+    params: Params,
+) -> Vec<(String, Annotation)> {
+    vec![(
+        "type".to_owned(),
+        Annotation::Type {
+            style: style.to_owned(),
+            name: name.to_string(),
+            endpoints: endpoints.iter().map(|e| (*e).to_owned()).collect(),
+            params,
+        },
+    )]
+}
+
+/// Whether a term reads in reverse: [`TypeName::reads_reversed`] on its
+/// `labels`, and — when they are a palindrome — `reversed_fields` (the
+/// qualifier fields as they read from the other end) comparing smaller, slot
+/// by slot, than `fields`. A tie keeps the forward orientation.
+fn reads_reversed(labels: &[&str], fields: &[f64], reversed_fields: &[f64]) -> bool {
+    if labels.iter().ne(labels.iter().rev()) {
+        return TypeName::reads_reversed(labels);
     }
+    let text = |f: &[f64]| f.iter().map(f64::to_string).collect::<Vec<_>>();
+    text(reversed_fields) < text(fields)
+}
 
-    /// Label + bake per-instance UFF parameters.
-    pub fn typify(&self, mol: &Atomistic) -> Result<Atomistic, String> {
-        let mut out = mol.clone();
-        out.generate_topology(true, true, false, true)
+/// `name` qualified with `fields`, each in `f64` `Display` form.
+fn qualified(labels: &[&str], fields: &[f64]) -> Result<TypeName, String> {
+    let fields: Vec<String> = fields.iter().map(f64::to_string).collect();
+    let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
+    TypeName::join(labels)?.with_qualifier(&fields)
+}
+
+impl Typifier for UFFTypifier {
+    /// Label atoms and resolve per-instance UFF parameters.
+    ///
+    /// Angles, dihedrals (regenerated) and inversions (added) are enumerated
+    /// onto `graph`. Atoms get `type` (the UFF label), `x1` and `D1` as plain
+    /// values; every bond, angle, dihedral and generated improper gets `type`
+    /// — its label (see the [module docs](self#labels)) — as a type defined
+    /// under `uff_bond` / `uff_angle` / `uff_torsion` / `uff_inversion` with
+    /// the params the kernels read. The `uff_lj` rows `{x1, D1}` of the labels
+    /// used are pairs; every library style is declared.
+    fn r#match(&self, graph: &mut Atomistic) -> Result<Match, String> {
+        graph
+            .generate_topology(true, true, false, true)
             .map_err(|e| e.to_string())?;
 
-        let atom_ids: Vec<AtomId> = out.atoms().map(|(id, _)| id).collect();
+        let atom_ids: Vec<AtomId> = graph.atoms().map(|(id, _)| id).collect();
         let id_to_idx: HashMap<AtomId, usize> = atom_ids
             .iter()
             .enumerate()
@@ -76,16 +168,16 @@ impl UFFTypifier {
         let mut adj: Vec<Vec<usize>> = vec![vec![]; n];
         let mut bond_order: HashMap<(usize, usize), f64> = HashMap::new();
         for (i, &aid) in atom_ids.iter().enumerate() {
-            for (nid, bid) in out.neighbor_bonds(aid) {
+            for (nid, bid) in graph.neighbor_bonds(aid) {
                 if let Some(&j) = id_to_idx.get(&nid) {
                     adj[i].push(j);
                     // UFF's bond-order term is the localized count; an
                     // aromatic bond is conventionally 1.5 *here*, as a UFF
                     // parameter, not as a molrs bond order.
-                    let ord = if out.bond_type(bid).is_aromatic() {
+                    let ord = if graph.bond_type(bid).is_aromatic() {
                         1.5
                     } else {
-                        out.bond_number(bid).count().max(1) as f64
+                        graph.bond_number(bid).count().max(1) as f64
                     };
                     bond_order.insert(if i < j { (i, j) } else { (j, i) }, ord);
                 }
@@ -93,8 +185,14 @@ impl UFFTypifier {
             adj[i].sort_unstable();
             adj[i].dedup();
         }
+        let order_of = |i: usize, j: usize| {
+            bond_order
+                .get(&(i.min(j), i.max(j)))
+                .copied()
+                .unwrap_or(1.0)
+        };
 
-        let rings = find_rings(&out);
+        let rings = find_rings(graph);
         let mut aromatic_atom = vec![false; n];
         for ring in rings.rings() {
             if ring.len() == 5 || ring.len() == 6 {
@@ -105,7 +203,7 @@ impl UFFTypifier {
                     .collect();
                 let mut aromatic_like = true;
                 for &i in &idxs {
-                    let el = element_of(&out, atom_ids[i]);
+                    let el = element_of(graph, atom_ids[i]);
                     if !matches!(el.symbol(), "C" | "N" | "O" | "S" | "B") {
                         aromatic_like = false;
                         break;
@@ -115,15 +213,9 @@ impl UFFTypifier {
                     for &i in &idxs {
                         // mark if any bond order ≈ 1.5 in ring
                         for &j in &adj[i] {
-                            if idxs.contains(&j) {
-                                let o = bond_order
-                                    .get(&(i.min(j), i.max(j)))
-                                    .copied()
-                                    .unwrap_or(1.0);
-                                if (o - 1.5).abs() < 0.1 {
-                                    aromatic_atom[i] = true;
-                                    aromatic_atom[j] = true;
-                                }
+                            if idxs.contains(&j) && (order_of(i, j) - 1.5).abs() < 0.1 {
+                                aromatic_atom[i] = true;
+                                aromatic_atom[j] = true;
                             }
                         }
                     }
@@ -132,7 +224,7 @@ impl UFFTypifier {
         }
         // Also honor is_aromatic property if present
         for (i, &aid) in atom_ids.iter().enumerate() {
-            if let Ok(atom) = out.get_atom(aid)
+            if let Ok(atom) = graph.get_atom(aid)
                 && atom.get_f64("is_aromatic").unwrap_or(0.0) > 0.5
             {
                 aromatic_atom[i] = true;
@@ -144,18 +236,17 @@ impl UFFTypifier {
         let mut params: Vec<&'static AtomicParams> = Vec::with_capacity(n);
         let mut hyb: Vec<Hyb> = Vec::with_capacity(n);
         let mut z: Vec<u8> = Vec::with_capacity(n);
+        let mut m = Match::default();
+        let mut lj_used: HashSet<String> = HashSet::new();
 
         for (i, &aid) in atom_ids.iter().enumerate() {
-            let el = element_of(&out, aid);
+            let el = element_of(graph, aid);
             z.push(el.z());
             let degree = adj[i].len();
             let mut max_order = 1.0_f64;
             let mut valence = 0.0_f64;
             for &j in &adj[i] {
-                let o = bond_order
-                    .get(&(i.min(j), i.max(j)))
-                    .copied()
-                    .unwrap_or(1.0);
+                let o = order_of(i, j);
                 max_order = max_order.max(o);
                 valence += o;
             }
@@ -166,57 +257,65 @@ impl UFFTypifier {
             })?;
             let p = params_for_label(&label)
                 .ok_or_else(|| format!("UFF: parameters missing for label '{label}'"))?;
-            labels.push(label.clone());
+            if lj_used.insert(label.clone()) {
+                m.pairs.push((
+                    "uff_lj".to_owned(),
+                    label.clone(),
+                    vec![label.clone()],
+                    Params::from_pairs(&[("x1", p.x1), ("D1", p.d1)]),
+                ));
+            }
+            m.nodes.push(vec![
+                (
+                    "type".to_owned(),
+                    Annotation::Value(PropValue::Str(label.clone())),
+                ),
+                ("x1".to_owned(), Annotation::Value(PropValue::F64(p.x1))),
+                ("D1".to_owned(), Annotation::Value(PropValue::F64(p.d1))),
+            ]);
+            labels.push(label);
             params.push(p);
-            out.set_atom(aid, "type", PropValue::Str(label))
-                .map_err(|e| e.to_string())?;
-            out.set_atom(aid, "x1", PropValue::F64(p.x1))
-                .map_err(|e| e.to_string())?;
-            out.set_atom(aid, "D1", PropValue::F64(p.d1))
-                .map_err(|e| e.to_string())?;
         }
 
-        // Bonds
-        for (bid, bond) in out.bonds().collect::<Vec<_>>() {
-            let (a, b) = (bond.nodes[0], bond.nodes[1]);
-            let i = id_to_idx[&a];
-            let j = id_to_idx[&b];
-            let mut bo = bond_order
-                .get(&(i.min(j), i.max(j)))
-                .copied()
-                .unwrap_or(1.0);
+        // Bonds — the effective bond order, then the params on the oriented
+        // term.
+        let bonds: Vec<(usize, usize)> = graph
+            .bonds()
+            .map(|(_, b)| (id_to_idx[&b.nodes[0]], id_to_idx[&b.nodes[1]]))
+            .collect();
+        for (i, j) in bonds {
+            let mut bo = order_of(i, j);
             if aromatic_atom[i] && aromatic_atom[j] && (bo - 1.5).abs() < 0.2 {
                 bo = 1.5;
             }
             // amide C-N: N next to carbonyl-ish C_R/C_2 with O
-            if is_amide_cn(&out, &atom_ids, &id_to_idx, &adj, &labels, i, j) {
+            if is_amide_cn(graph, &atom_ids, &id_to_idx, &adj, &labels, i, j) {
                 bo = AMIDE_BOND_ORDER;
             }
-            let (r0, kb) = bond_rest_and_k(params[i], params[j], bo);
-            out.set_bond_prop(bid, "kb", PropValue::F64(kb))
-                .map_err(|e| e.to_string())?;
-            out.set_bond_prop(bid, "r0", PropValue::F64(r0))
-                .map_err(|e| e.to_string())?;
-            out.set_bond_prop(
-                bid,
-                "type",
-                PropValue::Str(format!("{}-{}", labels[i], labels[j])),
-            )
-            .map_err(|e| e.to_string())?;
+            let (p, q) = if reads_reversed(&[&labels[i], &labels[j]], &[bo], &[bo]) {
+                (j, i)
+            } else {
+                (i, j)
+            };
+            let ends = [labels[p].as_str(), labels[q].as_str()];
+            let name = qualified(&ends, &[bo])?;
+            let (r0, kb) = bond_rest_and_k(params[p], params[q], bo);
+            m.bonds.push(typed(
+                "uff_bond",
+                &name,
+                &ends,
+                Params::from_pairs(&[("kb", kb), ("r0", r0)]),
+            ));
         }
 
         // Angles
-        for (aid, angle) in out.angles().collect::<Vec<_>>() {
-            let (ai, aj, ak) = (angle.nodes[0], angle.nodes[1], angle.nodes[2]);
-            let (i, j, k) = (id_to_idx[&ai], id_to_idx[&aj], id_to_idx[&ak]);
-            let bo_ij = bond_order
-                .get(&(i.min(j), i.max(j)))
-                .copied()
-                .unwrap_or(1.0);
-            let bo_jk = bond_order
-                .get(&(j.min(k), j.max(k)))
-                .copied()
-                .unwrap_or(1.0);
+        let in_ring3 = |aid: AtomId| rings.rings_of_size(3).iter().any(|r| r.contains(&aid));
+        let in_ring4 = |aid: AtomId| rings.rings_of_size(4).iter().any(|r| r.contains(&aid));
+        let angles: Vec<[usize; 3]> = graph
+            .angles()
+            .map(|(_, a)| std::array::from_fn(|n| id_to_idx[&a.nodes[n]]))
+            .collect();
+        for [i, j, k] in angles {
             let mut order = match hyb[j] {
                 Hyb::Sp => 1u8,
                 Hyb::Sp2 => 3,
@@ -224,8 +323,6 @@ impl UFFTypifier {
                 _ => 0,
             };
             // Ring hacks for sp2 (RDKit Builder) — simplified
-            let in_ring3 = |aid: AtomId| rings.rings_of_size(3).iter().any(|r| r.contains(&aid));
-            let in_ring4 = |aid: AtomId| rings.rings_of_size(4).iter().any(|r| r.contains(&aid));
             if hyb[j] == Hyb::Sp2 {
                 if in_ring3(atom_ids[j]) {
                     order = if in_ring3(atom_ids[i]) && in_ring3(atom_ids[k]) {
@@ -241,6 +338,18 @@ impl UFFTypifier {
                     };
                 }
             }
+            let code = f64::from(order);
+            let (p, q) = if reads_reversed(
+                &[&labels[i], &labels[j], &labels[k]],
+                &[order_of(i, j), order_of(j, k), code],
+                &[order_of(j, k), order_of(i, j), code],
+            ) {
+                (k, i)
+            } else {
+                (i, k)
+            };
+            let ends = [labels[p].as_str(), labels[j].as_str(), labels[q].as_str()];
+            let name = qualified(&ends, &[order_of(p, j), order_of(j, q), code])?;
             let (theta0, order_eff) = match order {
                 30 => (150.0_f64.to_radians(), 0u8),
                 35 => (60.0_f64.to_radians(), 0),
@@ -248,78 +357,94 @@ impl UFFTypifier {
                 45 => (90.0_f64.to_radians(), 0),
                 o => (params[j].theta0_rad(), o),
             };
-            let ka = angle_force_constant(theta0, bo_ij, bo_jk, params[i], params[j], params[k]);
+            let ka = angle_force_constant(
+                theta0,
+                order_of(p, j),
+                order_of(j, q),
+                params[p],
+                params[j],
+                params[q],
+            );
             let (c0, c1, c2) = if order_eff == 0 {
                 fourier_coeffs(theta0)
             } else {
                 (0.0, 0.0, 0.0)
             };
-            out.set_angle_prop(aid, "ka", PropValue::F64(ka))
-                .map_err(|e| e.to_string())?;
-            out.set_angle_prop(aid, "order", PropValue::F64(f64::from(order_eff)))
-                .map_err(|e| e.to_string())?;
-            out.set_angle_prop(aid, "c0", PropValue::F64(c0))
-                .map_err(|e| e.to_string())?;
-            out.set_angle_prop(aid, "c1", PropValue::F64(c1))
-                .map_err(|e| e.to_string())?;
-            out.set_angle_prop(aid, "c2", PropValue::F64(c2))
-                .map_err(|e| e.to_string())?;
-            out.set_angle_prop(aid, "theta0", PropValue::F64(theta0))
-                .map_err(|e| e.to_string())?;
+            m.angles.push(typed(
+                "uff_angle",
+                &name,
+                &ends,
+                Params::from_pairs(&[
+                    ("ka", ka),
+                    ("order", f64::from(order_eff)),
+                    ("c0", c0),
+                    ("c1", c1),
+                    ("c2", c2),
+                    ("theta0", theta0),
+                ]),
+            ));
         }
 
         // Dihedrals — scale V by multiplicity about the central bond
-        let mut dih_list: Vec<(molrs::system::atomistic::DihedralId, [usize; 4])> = Vec::new();
-        for (did, dih) in out.dihedrals() {
-            let idxs = [
-                id_to_idx[&dih.nodes[0]],
-                id_to_idx[&dih.nodes[1]],
-                id_to_idx[&dih.nodes[2]],
-                id_to_idx[&dih.nodes[3]],
-            ];
-            dih_list.push((did, idxs));
-        }
+        let dihedrals: Vec<[usize; 4]> = graph
+            .dihedrals()
+            .map(|(_, d)| std::array::from_fn(|n| id_to_idx[&d.nodes[n]]))
+            .collect();
         let mut bond_counts: HashMap<(usize, usize), usize> = HashMap::new();
-        for &(_, idx) in &dih_list {
+        for idx in &dihedrals {
             let key = (idx[1].min(idx[2]), idx[1].max(idx[2]));
             *bond_counts.entry(key).or_insert(0) += 1;
         }
-        for (did, idx) in dih_list {
-            let (i, j, k, l) = (idx[0], idx[1], idx[2], idx[3]);
-            // Only SP2/SP3 central atoms (RDKit)
-            if !matches!(hyb[j], Hyb::Sp2 | Hyb::Sp3) || !matches!(hyb[k], Hyb::Sp2 | Hyb::Sp3) {
-                // leave zeros — energy 0
-                out.set_dihedral_prop(did, "V", PropValue::F64(0.0))
-                    .map_err(|e| e.to_string())?;
-                out.set_dihedral_prop(did, "order", PropValue::F64(3.0))
-                    .map_err(|e| e.to_string())?;
-                out.set_dihedral_prop(did, "cosTerm", PropValue::F64(-1.0))
-                    .map_err(|e| e.to_string())?;
-                continue;
-            }
-            let bo = bond_order
-                .get(&(j.min(k), j.max(k)))
-                .copied()
-                .unwrap_or(1.0);
-            let end_sp2 = hyb[i] == Hyb::Sp2 || hyb[l] == Hyb::Sp2;
-            let (mut v, order, cos_term) = torsion_params(
-                bo, z[j], z[k], hyb[j], hyb[k], params[j], params[k], end_sp2,
-            );
-            let mult = bond_counts
-                .get(&(j.min(k), j.max(k)))
-                .copied()
-                .unwrap_or(1)
-                .max(1) as f64;
-            v /= mult;
-            out.set_dihedral_prop(did, "V", PropValue::F64(v))
-                .map_err(|e| e.to_string())?;
-            out.set_dihedral_prop(did, "order", PropValue::F64(f64::from(order)))
-                .map_err(|e| e.to_string())?;
-            out.set_dihedral_prop(did, "cosTerm", PropValue::F64(cos_term))
-                .map_err(|e| e.to_string())?;
+        for [i, j, k, l] in dihedrals {
+            // Only SP2/SP3 central atoms (RDKit); any other centre gets a zero
+            // barrier — energy 0.
+            let (v, order, cos_term) = if !matches!(hyb[j], Hyb::Sp2 | Hyb::Sp3)
+                || !matches!(hyb[k], Hyb::Sp2 | Hyb::Sp3)
+            {
+                (0.0, 3u8, -1.0)
+            } else {
+                let end_sp2 = hyb[i] == Hyb::Sp2 || hyb[l] == Hyb::Sp2;
+                let (v, order, cos_term) = torsion_params(
+                    order_of(j, k),
+                    z[j],
+                    z[k],
+                    hyb[j],
+                    hyb[k],
+                    params[j],
+                    params[k],
+                    end_sp2,
+                );
+                let mult = bond_counts
+                    .get(&(j.min(k), j.max(k)))
+                    .copied()
+                    .unwrap_or(1)
+                    .max(1) as f64;
+                (v / mult, order, cos_term)
+            };
+            let nphi0 = if cos_term > 0.0 { 0.0 } else { 180.0 };
+            let fields = [v, f64::from(order), nphi0];
+            let forward = [
+                labels[i].as_str(),
+                labels[j].as_str(),
+                labels[k].as_str(),
+                labels[l].as_str(),
+            ];
+            let ends = if reads_reversed(&forward, &fields, &fields) {
+                [forward[3], forward[2], forward[1], forward[0]]
+            } else {
+                forward
+            };
+            let name = qualified(&ends, &fields)?;
+            m.dihedrals.push(typed(
+                "uff_torsion",
+                &name,
+                &ends,
+                Params::from_pairs(&[("V", v), ("order", f64::from(order)), ("cosTerm", cos_term)]),
+            ));
         }
 
         // Inversions (RDKit Tools::addInversions) — three Wilson rows per centre.
+        let mut inversions = HashMap::new();
         for j in 0..n {
             if adj[j].len() != 3 {
                 continue;
@@ -343,28 +468,37 @@ impl UFFTypifier {
                 (nbrs[1], nbrs[2], nbrs[0]),
             ];
             for (a, b, c) in perms {
-                let iid = out
+                let iid = graph
                     .add_improper(atom_ids[a], atom_ids[j], atom_ids[b], atom_ids[c])
                     .map_err(|e| e.to_string())?;
-                out.set_improper_prop(iid, "K", PropValue::F64(k_inv))
-                    .map_err(|e| e.to_string())?;
-                out.set_improper_prop(iid, "c0", PropValue::F64(c0))
-                    .map_err(|e| e.to_string())?;
-                out.set_improper_prop(iid, "c1", PropValue::F64(c1))
-                    .map_err(|e| e.to_string())?;
-                out.set_improper_prop(iid, "c2", PropValue::F64(c2))
-                    .map_err(|e| e.to_string())?;
+                let ends = [&*labels[a], &*labels[j], &*labels[b], &*labels[c]];
+                let name = TypeName::join(&ends)?;
+                inversions.insert(
+                    iid,
+                    typed(
+                        "uff_inversion",
+                        &name,
+                        &ends,
+                        Params::from_pairs(&[("K", k_inv), ("c0", c0), ("c1", c1), ("c2", c2)]),
+                    ),
+                );
             }
         }
+        // Positional against every improper of the graph; one the input
+        // already carried gets nothing.
+        m.impropers = graph
+            .impropers()
+            .map(|(id, _)| inversions.remove(&id).unwrap_or_default())
+            .collect();
 
-        Ok(out)
+        m.declare_styles_of(&self.ff);
+        Ok(m)
     }
-}
 
-impl Typifier for UFFTypifier {
-    type Mol = Atomistic;
-    fn typify(&self, mol: &Self::Mol) -> Result<Self::Mol, String> {
-        self.typify(mol)
+    /// The UFF style skeleton: five styles, no rows (every UFF parameter is
+    /// resolved per instance), and UFF's special_bonds.
+    fn library(&self) -> &ForceField {
+        &self.ff
     }
 }
 
@@ -665,7 +799,10 @@ fn is_amide_cn(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use indexmap::IndexMap;
+    use molrs::store::type_labels::TypeName;
     use molrs::system::atomistic::Atomistic;
+    use std::collections::{BTreeMap, BTreeSet};
 
     fn ethanol() -> Atomistic {
         // Build C-C-O + hydrogens with rough coords
@@ -692,10 +829,347 @@ mod tests {
         m
     }
 
+    // -- Typing<UFFTypifier> output (system-forcefield-07) --------------------
+
+    /// N-methylacetamide `CH3-C(=O)-NH-CH3`, hand-built: methyl C is atom 0,
+    /// carbonyl C atom 1, O atom 2 (C=O double), amide N atom 3, N-methyl C
+    /// atom 4; hydrogens follow. Returns the graph and the carbonyl C and N.
+    fn n_methylacetamide() -> (Atomistic, AtomId, AtomId) {
+        let mut m = Atomistic::new();
+        let c_me = m.add_atom_bare("C");
+        let c_co = m.add_atom_bare("C");
+        let o = m.add_atom_bare("O");
+        let n = m.add_atom_bare("N");
+        let c_nme = m.add_atom_bare("C");
+        m.add_bond(c_me, c_co).unwrap();
+        let co = m.add_bond(c_co, o).unwrap();
+        m.set_bond_type(co, molrs::system::BondType::Double)
+            .unwrap();
+        m.add_bond(c_co, n).unwrap();
+        m.add_bond(n, c_nme).unwrap();
+        for (heavy, n_h) in [(c_me, 3), (n, 1), (c_nme, 3)] {
+            for _ in 0..n_h {
+                let h = m.add_atom_bare("H");
+                m.add_bond(heavy, h).unwrap();
+            }
+        }
+        (m, c_co, n)
+    }
+
+    /// Triphenylphosphine `P(C6H5)3`, hand-built with aromatic ring bonds.
+    /// The P is the **last** atom, so in an ipso carbon's sorted neighbour
+    /// list it comes after both ortho carbons: the ipso-centred inversion
+    /// `C_R-C_R-P_3+3-C_R` is then generated, which is exactly the reversal of
+    /// the P-centred `C_R-P_3+3-C_R-C_R` — the two collide only if impropers
+    /// are wrongly oriented.
+    fn triphenylphosphine() -> Atomistic {
+        let mut m = Atomistic::new();
+        let mut ipso = Vec::new();
+        for _ in 0..3 {
+            let ring: Vec<AtomId> = (0..6).map(|_| m.add_atom_bare("C")).collect();
+            for k in 0..6 {
+                let b = m.add_bond(ring[k], ring[(k + 1) % 6]).unwrap();
+                m.set_bond_type(b, molrs::system::BondType::Aromatic)
+                    .unwrap();
+            }
+            for &c in &ring[1..] {
+                let h = m.add_atom_bare("H");
+                m.add_bond(c, h).unwrap();
+            }
+            ipso.push(ring[0]);
+        }
+        let p = m.add_atom_bare("P");
+        for c in ipso {
+            m.add_bond(p, c).unwrap();
+        }
+        m
+    }
+
+    fn uff_typed(mol: &Atomistic) -> (Atomistic, crate::ff::typifier::Typing<UFFTypifier>) {
+        let mut typing = crate::ff::typifier::Typing::new(UFFTypifier::new());
+        let typed = typing.typify(mol).expect("UFF types the molecule");
+        (typed, typing)
+    }
+
+    fn str_prop(props: &IndexMap<String, PropValue>, key: &str) -> Option<String> {
+        match props.get(key) {
+            Some(PropValue::Str(s)) => Some(s.clone()),
+            _ => None,
+        }
+    }
+
+    /// The UFF atom label (`type`) of every atom, by id.
+    fn atom_labels(typed: &Atomistic) -> HashMap<AtomId, String> {
+        typed
+            .atoms()
+            .map(|(id, a)| (id, a.get_str("type").expect("every atom typed").to_owned()))
+            .collect()
+    }
+
+    /// `(nodes, type label)` of every link of `kind` (`bonds`, `angles`,
+    /// `dihedrals`, `impropers`); a missing `type` is a failure.
+    fn link_labels(typed: &Atomistic, kind: &str) -> Vec<(Vec<AtomId>, String)> {
+        let rows: Vec<(Vec<AtomId>, IndexMap<String, PropValue>)> = match kind {
+            "bonds" => typed
+                .bonds()
+                .map(|(_, r)| (r.nodes.to_vec(), r.props))
+                .collect(),
+            "angles" => typed
+                .angles()
+                .map(|(_, r)| (r.nodes.to_vec(), r.props))
+                .collect(),
+            "dihedrals" => typed
+                .dihedrals()
+                .map(|(_, r)| (r.nodes.to_vec(), r.props))
+                .collect(),
+            "impropers" => typed
+                .impropers()
+                .map(|(_, r)| (r.nodes.to_vec(), r.props))
+                .collect(),
+            other => panic!("no link kind {other}"),
+        };
+        rows.into_iter()
+            .map(|(nodes, props)| {
+                let label = str_prop(&props, "type")
+                    .unwrap_or_else(|| panic!("{kind} {nodes:?} has no type"));
+                (nodes, label)
+            })
+            .collect()
+    }
+
+    /// Per `(category, style)` of `ff`, the set of type names; styles holding
+    /// no type are left out.
+    fn output_names(ff: &ForceField) -> BTreeMap<(String, String), BTreeSet<String>> {
+        ff.styles()
+            .iter()
+            .filter_map(|s| {
+                let names: BTreeSet<String> = s
+                    .defs()
+                    .collect_type_params()
+                    .into_iter()
+                    .map(|(name, _)| name)
+                    .collect();
+                (!names.is_empty()).then(|| ((s.category().to_owned(), s.name().to_owned()), names))
+            })
+            .collect()
+    }
+
+    /// Output name sets per `(category, style)` equal the stamped label sets:
+    /// bonded `type`s under `uff_bond` / `uff_angle` / `uff_torsion` /
+    /// `uff_inversion`, atom `type`s as the `uff_lj` pair rows.
+    fn assert_output_names_equal_stamped_labels(mol: &Atomistic) {
+        let (typed, typing) = uff_typed(mol);
+        let set = |kind: &str| -> BTreeSet<String> {
+            link_labels(&typed, kind)
+                .into_iter()
+                .map(|(_, label)| label)
+                .collect()
+        };
+        let key = |c: &str, s: &str| (c.to_owned(), s.to_owned());
+        let mut expected = BTreeMap::from([
+            (
+                key("pair", "uff_lj"),
+                atom_labels(&typed).into_values().collect(),
+            ),
+            (key("bond", "uff_bond"), set("bonds")),
+            (key("angle", "uff_angle"), set("angles")),
+            (key("dihedral", "uff_torsion"), set("dihedrals")),
+            (key("improper", "uff_inversion"), set("impropers")),
+        ]);
+        expected.retain(|_, names| !names.is_empty());
+        assert_eq!(output_names(typing.forcefield()), expected);
+    }
+
+    #[test]
+    fn typing_ethanol_output_names_equal_the_stamped_labels() {
+        assert_output_names_equal_stamped_labels(&ethanol());
+    }
+
+    #[test]
+    fn typing_n_methylacetamide_output_names_equal_the_stamped_labels() {
+        assert_output_names_equal_stamped_labels(&n_methylacetamide().0);
+    }
+
+    /// Every bond, angle and dihedral is typed on the smaller (slot by slot)
+    /// of its atom labels read forward and reversed, and its label is the
+    /// `TypeName` join of those endpoints plus a qualifier; no two output rows
+    /// of those styles hold endpoint tuples that are reversals of each other.
+    fn assert_proper_types_are_oriented(mol: &Atomistic) {
+        let (typed, typing) = uff_typed(mol);
+        let atoms = atom_labels(&typed);
+        for (kind, category, style) in [
+            ("bonds", "bond", "uff_bond"),
+            ("angles", "angle", "uff_angle"),
+            ("dihedrals", "dihedral", "uff_torsion"),
+        ] {
+            let defs = typing
+                .forcefield()
+                .get_style(category, style)
+                .expect("the UFF style is declared");
+            for (nodes, label) in link_labels(&typed, kind) {
+                let forward: Vec<&str> = nodes.iter().map(|id| atoms[id].as_str()).collect();
+                let reversed: Vec<&str> = forward.iter().rev().copied().collect();
+                let ends = defs
+                    .type_endpoints(&label)
+                    .unwrap_or_else(|| panic!("{kind} {label} is defined"));
+                let ends: Vec<&str> = ends.iter().map(String::as_str).collect();
+                assert_eq!(ends, forward.clone().min(reversed), "{kind} {label}");
+                let joined = TypeName::join(&ends).expect("UFF labels hold no '@'");
+                assert!(
+                    label.starts_with(&format!("{joined}@")),
+                    "{kind} {label}: named from its endpoints {ends:?}"
+                );
+            }
+            let rows: BTreeSet<Vec<String>> = defs
+                .defs()
+                .collect_type_params()
+                .into_iter()
+                .map(|(n, _)| defs.type_endpoints(&n).expect("a stored type"))
+                .collect();
+            for e in &rows {
+                let rev: Vec<String> = e.iter().rev().cloned().collect();
+                assert!(
+                    rev == *e || !rows.contains(&rev),
+                    "{style} holds both {e:?} and its reversal"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn typing_ethanol_proper_types_are_oriented_over_their_atom_labels() {
+        assert_proper_types_are_oriented(&ethanol());
+    }
+
+    #[test]
+    fn typing_n_methylacetamide_proper_types_are_oriented_over_their_atom_labels() {
+        assert_proper_types_are_oriented(&n_methylacetamide().0);
+    }
+
+    /// Every improper label is the `TypeName` join of its atom labels in node
+    /// order, unqualified and not oriented, and its second node is the
+    /// centre (bonded to the other three).
+    fn assert_improper_labels_keep_node_order(mol: &Atomistic) -> usize {
+        let (typed, _) = uff_typed(mol);
+        let atoms = atom_labels(&typed);
+        let bonded = |a: AtomId, b: AtomId| {
+            typed
+                .bonds()
+                .any(|(_, r)| r.nodes.contains(&a) && r.nodes.contains(&b))
+        };
+        let impropers = link_labels(&typed, "impropers");
+        for (nodes, label) in &impropers {
+            let parts: Vec<&str> = nodes.iter().map(|id| atoms[id].as_str()).collect();
+            let expected = TypeName::join(&parts).expect("UFF labels hold no '@'");
+            assert_eq!(label, expected.as_str(), "improper {nodes:?}");
+            assert!(!label.contains('@'), "{label} is unqualified");
+            for &other in [nodes[0], nodes[2], nodes[3]].iter() {
+                assert!(
+                    bonded(nodes[1], other),
+                    "improper {label}: centre is second"
+                );
+            }
+        }
+        impropers.len()
+    }
+
+    #[test]
+    fn typing_n_methylacetamide_improper_labels_keep_node_order_centre_second() {
+        let n = assert_improper_labels_keep_node_order(&n_methylacetamide().0);
+        assert!(n > 0, "the carbonyl C is an inversion centre");
+    }
+
+    /// Triphenylphosphine types without a `TypeConflict`: the P-centred and
+    /// ipso-C-centred inversions keep distinct names (group-15 vs sp2-C
+    /// params), and their labels keep node order with the centre second.
+    #[test]
+    fn typing_triphenylphosphine_has_no_type_conflict() {
+        let mut typing = crate::ff::typifier::Typing::new(UFFTypifier::new());
+        let result = typing.typify(&triphenylphosphine());
+        assert!(result.is_ok(), "{:?}", result.err());
+        let n = assert_improper_labels_keep_node_order(&triphenylphosphine());
+        assert!(n > 0, "P and the ring carbons are inversion centres");
+    }
+
+    /// The amide C-N bond uses UFF's amide bond order 1.41, and the label
+    /// carries it in the qualifier.
+    #[test]
+    fn typing_n_methylacetamide_amide_bond_label_ends_in_amide_order() {
+        let (mol, c_co, n) = n_methylacetamide();
+        let (typed, _) = uff_typed(&mol);
+        let (_, label) = link_labels(&typed, "bonds")
+            .into_iter()
+            .find(|(nodes, _)| nodes.contains(&c_co) && nodes.contains(&n))
+            .expect("the amide C-N bond");
+        assert!(label.ends_with("@1.41"), "{label}");
+    }
+
+    /// Every label has the documented qualifier: bonds `@{bo}`; angles
+    /// `@{bo_ij}_{bo_jk}_{code}` with `code` an RDKit coordination code;
+    /// torsions `@{V}_{n}_{0|180}`; inversions none.
+    fn assert_labels_follow_the_qualifier_form(mol: &Atomistic) {
+        let (typed, _) = uff_typed(mol);
+        let fields = |label: &str| -> Vec<String> {
+            label
+                .split_once('@')
+                .map(|(_, qualifier)| qualifier)
+                .unwrap_or_else(|| panic!("{label} has a qualifier"))
+                .split('_')
+                .map(str::to_owned)
+                .collect()
+        };
+        let is_f64 = |s: &str| s.parse::<f64>().is_ok();
+        for (_, label) in link_labels(&typed, "bonds") {
+            let f = fields(&label);
+            assert!(f.len() == 1 && is_f64(&f[0]), "bond {label}");
+        }
+        for (_, label) in link_labels(&typed, "angles") {
+            let f = fields(&label);
+            assert!(
+                f.len() == 3
+                    && is_f64(&f[0])
+                    && is_f64(&f[1])
+                    && ["0", "1", "2", "3", "4", "30", "35", "40", "45"].contains(&f[2].as_str()),
+                "angle {label}"
+            );
+        }
+        for (_, label) in link_labels(&typed, "dihedrals") {
+            let f = fields(&label);
+            assert!(
+                f.len() == 3
+                    && is_f64(&f[0])
+                    && f[1].parse::<u32>().is_ok()
+                    && (f[2] == "0" || f[2] == "180"),
+                "dihedral {label}"
+            );
+        }
+        for (_, label) in link_labels(&typed, "impropers") {
+            assert!(!label.contains('@'), "{label} is unqualified");
+        }
+    }
+
+    #[test]
+    fn typing_ethanol_labels_follow_the_qualifier_form() {
+        assert_labels_follow_the_qualifier_form(&ethanol());
+    }
+
+    #[test]
+    fn typing_n_methylacetamide_labels_follow_the_qualifier_form() {
+        assert_labels_follow_the_qualifier_form(&n_methylacetamide().0);
+    }
+
+    /// The five UFF styles define without a conflict. `new` `expect`s this
+    /// result and names this test.
+    #[test]
+    fn new_defines_without_conflict() {
+        assert_eq!(UFFTypifier::try_new().err(), None);
+    }
+
     #[test]
     fn uff_types_ethanol() {
-        let t = UFFTypifier::new();
-        let typed = t.typify(&ethanol()).unwrap();
+        let typed = crate::ff::typifier::Typing::new(UFFTypifier::new())
+            .typify(&ethanol())
+            .unwrap();
         let mut c3 = 0;
         let mut o3 = 0;
         for (_, a) in typed.atoms() {

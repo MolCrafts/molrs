@@ -14,22 +14,18 @@ Ask the schema for a column's dtype::
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import ClassVar
-
-import numpy as np
 
 # Import from the compiled leaf, not the package: `molrs/__init__` imports
 # `io`, which imports this module, so a package-level import would cycle.
-from ._lib import schema as _schema
 
 __all__ = [
     "FieldFormatter",
     "GroFieldFormatter",
-    "PdbFieldFormatter",
     "LammpsFieldFormatter",
-    "XyzFieldFormatter",
     "Mol2FieldFormatter",
+    "PdbFieldFormatter",
+    "XyzFieldFormatter",
 ]
 
 
@@ -79,13 +75,16 @@ class FieldFormatter:
 
 
 class GroFieldFormatter(FieldFormatter):
-    """GRO ↔ canonical names."""
+    """GRO ↔ canonical names.
+
+    Only the two string columns: the native GRO reader already writes the
+    canonical ``res_id`` and ``id``, and the writer reads those, so mapping
+    them to ``resid`` / ``atom_id`` would hide them from the writer.
+    """
 
     _field_formatters: ClassVar[dict[str, str]] = {
-        "resid": "res_id",
         "resname": "res_name",
         "atom_name": "name",
-        "atom_id": "id",
     }
 
 

@@ -22,6 +22,7 @@ use ndarray::Array2;
 use crate::compute::error::ComputeError;
 use crate::compute::require_disp;
 use crate::compute::traits::Compute;
+use crate::op::rigid::rotate_by_quat;
 
 /// `LocalBondProjection` analyzer.
 #[derive(Debug, Clone, Default)]
@@ -53,21 +54,6 @@ pub struct LocalBondProjectionArgs<'a> {
     /// Optional per-frame, per-query-point quaternions `(w, x, y, z)`.
     /// Required iff `use_orientations = true`.
     pub query_orientations: Option<&'a [Vec<[F; 4]>]>,
-}
-
-#[inline]
-fn rotate_by_quat(q: [F; 4], v: [F; 3]) -> [F; 3] {
-    // Standard q · v · q* rotation. `q = (w, x, y, z)`.
-    let (w, x, y, z) = (q[0], q[1], q[2], q[3]);
-    // Hamilton product trick: r = v + 2 q_vec × (q_vec × v + w · v)
-    let tx = 2.0 * (y * v[2] - z * v[1]);
-    let ty = 2.0 * (z * v[0] - x * v[2]);
-    let tz = 2.0 * (x * v[1] - y * v[0]);
-    [
-        v[0] + w * tx + (y * tz - z * ty),
-        v[1] + w * ty + (z * tx - x * tz),
-        v[2] + w * tz + (x * ty - y * tx),
-    ]
 }
 
 impl Compute for LocalBondProjection {

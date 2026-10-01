@@ -56,6 +56,7 @@ use crate::core::frame::Frame;
 /// - The frame has no `"atoms"` block or is missing required columns
 /// - The molecular graph has invalid valences or topology
 /// - The 3D embedding fails to converge
+/// - A property of the result contradicts the Frame schema on the way out
 ///
 /// # Example (JavaScript)
 ///
@@ -64,10 +65,10 @@ use crate::core::frame::Frame;
 /// const frame2d = ir.toFrame();
 /// const frame3d = generate3D(frame2d, "fast", 42);
 ///
-/// const atoms = frame3d.getBlock("atoms");
-/// const x = atoms.copyColF("x"); // Float32Array or Float64Array with 3D x-coords
-/// const y = atoms.copyColF("y");
-/// const z = atoms.copyColF("z");
+/// const atoms = frame3d.get("atoms");
+/// const x = atoms.get("x"); // Float64Array with 3D x-coords
+/// const y = atoms.get("y");
+/// const z = atoms.get("z");
 /// ```
 #[wasm_bindgen(js_name = generate3D)]
 pub fn generate_3d_wasm(
@@ -85,7 +86,11 @@ pub fn generate_3d_wasm(
         .generate(&atomistic)
         .map_err(|e| JsValue::from_str(&format!("conformer: {e}")))?;
 
-    Frame::from_rs(result.to_frame())
+    Frame::from_rs(
+        result
+            .to_frame()
+            .map_err(|e| JsValue::from_str(&format!("toFrame: {e}")))?,
+    )
 }
 
 fn parse_opts(speed: Option<&str>, seed: Option<u32>) -> Result<ConformerOptions, JsValue> {

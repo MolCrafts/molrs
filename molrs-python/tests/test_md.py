@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import warnings
 
+import molrs
 import numpy as np
 import pytest
-
-import molrs
 from molrs.ff.potential import Potential as FfPotential
-from molrs.md import LJCut, MD, MDState, MaxwellBoltzmann, Potential, VelocityVerlet
+from molrs.md import MD, LJCut, MaxwellBoltzmann, Potential, VelocityVerlet
 
 
 class Harmonic:
@@ -50,9 +49,15 @@ class TestMDDtype:
 
 class TestAbsence:
     def test_deleted_precision_names_are_gone(self) -> None:
-        import molrs.md as md
+        from molrs import md
 
-        for name in ("PRECISIONS", "resolve_prec", "FrameVelocityVerlet", "kb_md", "MD_ENERGY"):
+        for name in (
+            "PRECISIONS",
+            "resolve_prec",
+            "FrameVelocityVerlet",
+            "kb_md",
+            "MD_ENERGY",
+        ):
             assert not hasattr(md, name)
 
 

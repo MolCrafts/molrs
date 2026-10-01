@@ -15,6 +15,7 @@
 //! Reference: Tang & Toennies, J. Chem. Phys. 80 (1984) 3726,
 //! DOI 10.1063/1.447150; as emitted by paduagroup/clandpol `coul_tt`.
 
+use molrs::store::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
@@ -284,20 +285,20 @@ pub fn pair_tang_toennies_ctor(
     let b = style_params.get("b").unwrap_or(4.5) as F;
     let n = style_params.get("order").unwrap_or(4.0).round() as usize;
     let c = style_params.get("c").unwrap_or(1.0) as F;
-    // `Style::to_potential` projects the force field's `special_bonds` 1-4
+    // `PotentialCompiler::compile` projects the force field's `special_bonds` 1-4
     // weight here. The energy is linear in the charge product, so scaling it
     // is exactly scaling the pair.
     let scale_14 = style_params.get("coulomb14scale").unwrap_or(1.0) as F;
 
     let atoms = frame
-        .get("atoms")
+        .get(ATOMS)
         .ok_or_else(|| "PairTangToennies: frame missing \"atoms\" block".to_string())?;
     let atom_types = atoms
         .get_string("type")
         .ok_or_else(|| "PairTangToennies: atoms block missing \"type\" column".to_string())?;
 
     let block = frame
-        .get("pairs")
+        .get(PAIRS)
         .ok_or_else(|| "PairTangToennies: frame missing \"pairs\" block".to_string())?;
     let i_col = block
         .get_uint("atomi")

@@ -10,6 +10,7 @@
 //! GAFF default), keeping the form identical to one CHARMM term. This is the
 //! canonical encoding the molpy → molrs ForceField bridge emits.
 
+use molrs::store::schema::block_names::DIHEDRALS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
@@ -174,7 +175,7 @@ pub fn dihedral_periodic_ctor(
 ) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
-        .get("dihedrals")
+        .get(DIHEDRALS)
         .ok_or("dihedral_periodic: missing \"dihedrals\" block")?;
     let ic = block.get_uint("atomi").ok_or("missing atomi")?;
     let jc = block.get_uint("atomj").ok_or("missing atomj")?;

@@ -29,16 +29,19 @@ from molrs.conformer import Conformer
 mol, report = Conformer().generate(mol)
 
 # Force field: typify → pairs → potentials
-from molrs.ff import MMFF94Typifier, extract_coords, intramolecular_pairs
+from molrs.ff import (
+    MMFF94Typifier,
+    PotentialCompiler,
+    intramolecular_pairs,
+)
 
 typifier = MMFF94Typifier()
 typed = typifier.typify(mol)
 frame = typed.to_frame()
-ff = typifier.forcefield()
+ff = typifier.forcefield()  # a copy of exactly the types typify assigned
 frame["pairs"] = intramolecular_pairs(frame, ff)
-pots = ff.to_potentials(frame)
-coords = extract_coords(frame)
-energy, forces = pots.calc_energy_forces(coords)
+pots = PotentialCompiler(ff).compile(frame)
+energy, forces = pots.calc_energy_forces(frame)
 assert forces.shape == (frame["atoms"].nrows, 3)
 ```
 

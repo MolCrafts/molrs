@@ -100,6 +100,7 @@
 //! hostile LAMMPS ids, nothing at all — survive perception **byte-identical** and
 //! cannot steer its answer.
 
+use indexmap::IndexMap;
 use std::collections::HashMap;
 
 use crate::perceive::aromaticity::perceive_aromaticity;
@@ -114,9 +115,9 @@ use molrs::Element;
 /// `{1, 2, 3, 6, 7, 8, 9}`.
 ///
 /// Written by [`find_bond_types`] and read by everything keyed on the antechamber
-/// alphabet — the `ATOMTYPE_*.DEF` rule engine
-/// ([`AtdTypifier`](crate::ff::typifier::AtdTypifier)) and the `BCCPARM.DAT`
-/// corrector ([`BCCCorrector`](crate::ff::typifier::am1bcc::BCCCorrector)).
+/// alphabet — the `ATOMTYPE_*.DEF` rule engine (`ff::typifier::AtdTypifier`)
+/// and the `BCCPARM.DAT` corrector (`ff::typifier::am1bcc::BCCCorrector`);
+/// `perceive` sits below `ff` and names no item of it.
 ///
 /// Deliberately **not** [`keys::TYPE`]: that key is the caller's, and holds the
 /// force-field type *name*. See the [module docs](self).
@@ -306,13 +307,13 @@ pub fn find_kekule_orders(mol: &Atomistic) -> Atomistic {
 ///
 /// Returns whether every aromatic bond came out with a legal number.
 pub fn assign_kekule_numbers(mol: &mut Atomistic) -> bool {
-    if mol.n_bonds() == 0 {
+    // Nothing to assign without an aromatic bond. Checked on the bonds
+    // directly: `BondGraph::new` perceives rings and implicit hydrogens for
+    // every atom, which is the whole cost of this call.
+    if !has_aromatic_marking(mol) {
         return true;
     }
     let graph = BondGraph::new(mol);
-    if !graph.aromatic.iter().any(|a| *a) {
-        return true;
-    }
 
     // Conservative: a legal assignment already on the graph is *the* answer.
     // Re-deriving one would rewrite the phase an input stated for itself, so a
@@ -411,7 +412,7 @@ fn has_aromatic_marking(mol: &Atomistic) -> bool {
 /// caller-supplied type 10 into 7 or 8. It reads **our own** key: the bond's
 /// `keys::TYPE` is the caller's, and a LAMMPS bond-type id that happened to be 7
 /// must not make a bond aromatic.
-fn aromatic_marking(props: &HashMap<String, PropValue>) -> bool {
+fn aromatic_marking(props: &IndexMap<String, PropValue>) -> bool {
     BondType::from_prop(props.get(keys::BOND_TYPE)).is_aromatic()
         || props
             .get(BCC_BOND_TYPE)
@@ -1130,5 +1131,23 @@ mod tests {
                 assert!(!is_double, "double placed on the pyrrole N: ({i}, {j})");
             }
         }
+    }
+
+    #[test]
+    fn a_ring_free_chain_keeps_every_bond_number() {
+        // No aromatic bond, so nothing to assign: the call succeeds and every
+        // localized number -- single, double and triple alike -- is the one
+        // the input stated.
+        let mut mol =
+            to_atomistic(&parse_smiles("C=CC#CCCCC").expect("parse")).expect("to_atomistic");
+        let numbers = |m: &Atomistic| -> Vec<BondNumber> {
+            m.bonds().map(|(id, _)| m.bond_number(id)).collect()
+        };
+        let before = numbers(&mol);
+        assert!(before.contains(&BondNumber::Double) && before.contains(&BondNumber::Triple));
+
+        assert!(assign_kekule_numbers(&mut mol));
+
+        assert_eq!(numbers(&mol), before);
     }
 }
