@@ -292,9 +292,9 @@ Simple 3-atom system
             frame.meta.get("title").and_then(|v| v.as_str()),
             Some("Simple 3-atom system")
         );
-        let x = atoms.get_float("x").unwrap();
-        let y = atoms.get_float("y").unwrap();
-        let z = atoms.get_float("z").unwrap();
+        let x = atoms.get("x").and_then(|c| c.as_float()).unwrap();
+        let y = atoms.get("y").and_then(|c| c.as_float()).unwrap();
+        let z = atoms.get("z").and_then(|c| c.as_float()).unwrap();
         assert!((x[[0]] - 0.0).abs() < 1e-9);
         assert!((y[[1]] - 4.0).abs() < 1e-9);
         assert!((z[[2]] - 8.0).abs() < 1e-9);
@@ -325,7 +325,10 @@ Test with velocities
 ";
         let frame = frame_from(text);
         let atoms = frame.get("atoms").unwrap();
-        let vel = atoms.get_float("vel").expect("vel column");
+        let vel = atoms
+            .get("vel")
+            .and_then(|c| c.as_float())
+            .expect("vel column");
         assert_eq!(vel.shape(), &[2, 3]);
         assert!((vel[[0, 0]] - 0.1).abs() < 1e-9);
         assert!((vel[[1, 2]] - 0.6).abs() < 1e-9);
@@ -354,9 +357,9 @@ Test with box
         let text = format!("Abutting negatives\n  2\n{abutting}\n");
         let frame = frame_from(&text);
         let atoms = frame.get("atoms").unwrap();
-        let x = atoms.get_float("x").unwrap();
-        let y = atoms.get_float("y").unwrap();
-        let z = atoms.get_float("z").unwrap();
+        let x = atoms.get("x").and_then(|c| c.as_float()).unwrap();
+        let y = atoms.get("y").and_then(|c| c.as_float()).unwrap();
+        let z = atoms.get("z").and_then(|c| c.as_float()).unwrap();
         assert!((x[[0]] - 50.5413286).abs() < 1e-6);
         assert!((y[[0]] + 100.7101036).abs() < 1e-6);
         assert!((z[[0]] - 12.3456789).abs() < 1e-6);

@@ -172,14 +172,25 @@ pub fn mmff_angle_ctor(
     let block = frame
         .get(ANGLES)
         .ok_or("mmff_angle: missing \"angles\" block")?;
-    let ic = block.get_uint("atomi").ok_or("missing atomi")?;
-    let jc = block.get_uint("atomj").ok_or("missing atomj")?;
-    let kc = block.get_uint("atomk").ok_or("missing atomk")?;
+    let ic = block
+        .get("atomi")
+        .and_then(|c| c.as_uint())
+        .ok_or("missing atomi")?;
+    let jc = block
+        .get("atomj")
+        .and_then(|c| c.as_uint())
+        .ok_or("missing atomj")?;
+    let kc = block
+        .get("atomk")
+        .and_then(|c| c.as_uint())
+        .ok_or("missing atomk")?;
     let kac = block
-        .get_float("ka")
+        .get("ka")
+        .and_then(|c| c.as_float())
         .ok_or("mmff_angle: missing \"ka\" column (typifier did not bake angle params)")?;
     let th0c = block
-        .get_float("theta0")
+        .get("theta0")
+        .and_then(|c| c.as_float())
         .ok_or("mmff_angle: missing \"theta0\" column (typifier did not bake angle params)")?;
     let linc = linear_column(block, "mmff_angle")?;
 
@@ -223,7 +234,7 @@ fn linear_column<'a>(
     block: &'a molrs::store::block::Block,
     style: &str,
 ) -> Result<&'a ndarray::ArrayD<molrs::types::I>, String> {
-    block.get_int("linear").ok_or_else(|| {
+    block.get("linear").and_then(|c| c.as_int()).ok_or_else(|| {
         format!(
             "{style}: missing \"linear\" column (typifier did not bake the linear-centre flag); \
              without it every nitrile / alkyne / allene angle silently uses the cubic bend form"
@@ -366,22 +377,33 @@ pub fn mmff_stbn_ctor(
     // that the shared-table path lacked) plus the two reference bond lengths and
     // theta0 (radians) onto each angle. This kernel only reads the columns.
     let block = frame.get(ANGLES).ok_or("mmff_stbn: missing \"angles\"")?;
-    let ic = block.get_uint("atomi").ok_or("missing atomi")?;
-    let jc = block.get_uint("atomj").ok_or("missing atomj")?;
-    let kc = block.get_uint("atomk").ok_or("missing atomk")?;
-    let kba_ijk_c = block.get_float("kba_ijk").ok_or(
+    let ic = block
+        .get("atomi")
+        .and_then(|c| c.as_uint())
+        .ok_or("missing atomi")?;
+    let jc = block
+        .get("atomj")
+        .and_then(|c| c.as_uint())
+        .ok_or("missing atomj")?;
+    let kc = block
+        .get("atomk")
+        .and_then(|c| c.as_uint())
+        .ok_or("missing atomk")?;
+    let kba_ijk_c = block.get("kba_ijk").and_then(|c| c.as_float()).ok_or(
         "mmff_stbn: missing \"kba_ijk\" column (typifier did not bake stretch-bend params)",
     )?;
-    let kba_kji_c = block.get_float("kba_kji").ok_or(
+    let kba_kji_c = block.get("kba_kji").and_then(|c| c.as_float()).ok_or(
         "mmff_stbn: missing \"kba_kji\" column (typifier did not bake stretch-bend params)",
     )?;
     let r0ij = block
-        .get_float("r0_ij")
+        .get("r0_ij")
+        .and_then(|c| c.as_float())
         .ok_or("mmff_stbn: missing \"r0_ij\" column (typifier did not bake stretch-bend params)")?;
     let r0kj = block
-        .get_float("r0_kj")
+        .get("r0_kj")
+        .and_then(|c| c.as_float())
         .ok_or("mmff_stbn: missing \"r0_kj\" column (typifier did not bake stretch-bend params)")?;
-    let th0 = block.get_float("theta0").ok_or(
+    let th0 = block.get("theta0").and_then(|c| c.as_float()).ok_or(
         "mmff_stbn: missing \"theta0\" column (typifier did not bake stretch-bend params)",
     )?;
     let linc = linear_column(block, "mmff_stbn")?;

@@ -164,7 +164,7 @@ TEST_F(MolrsTest, BlockInsertAndRead) {
     MolrsBlockHandle block{};
     ASSERT_MOLRS_OK(molrs_frame_get_block(frame, atoms_id, &block));
 
-    // Insert 3x3 F column (F = float by default)
+    // Insert 3x3 F column (F is f64).
     F data[9] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
     size_t shape[2] = {3, 3};
     ASSERT_MOLRS_OK(molrs_block_set_F(&block, pos_id, data, shape, 2));
@@ -193,17 +193,21 @@ TEST_F(MolrsTest, BlockInsertAndRead) {
     EXPECT_EQ(col_shape[1], 3u);
 
     // zero-copy read
-    const F* ptr = nullptr;
+    const uint8_t* bytes = nullptr;
     size_t len = 0;
-    ASSERT_MOLRS_OK(molrs_block_get_F(block, pos_id, &ptr, &len));
+    MolrsDType got = MOLRS_D_TYPE_STRING;
+    ASSERT_MOLRS_OK(molrs_block_get(block, pos_id, &bytes, &len, &got));
+    EXPECT_EQ(got, MOLRS_D_TYPE_FLOAT);
     ASSERT_EQ(len, 9u);
+    const F* ptr = reinterpret_cast<const F*>(bytes);
     for (size_t i = 0; i < 9; ++i) {
         EXPECT_FLOAT_EQ(ptr[i], data[i]);
     }
 
-    // copy read
+    // copy read. buf_bytes is a byte capacity.
     F buf[9] = {};
-    ASSERT_MOLRS_OK(molrs_block_copy_F(block, pos_id, buf, 9));
+    ASSERT_MOLRS_OK(molrs_block_copy(
+        block, pos_id, reinterpret_cast<uint8_t*>(buf), sizeof(buf)));
     for (size_t i = 0; i < 9; ++i) {
         EXPECT_FLOAT_EQ(buf[i], data[i]);
     }
@@ -225,7 +229,7 @@ TEST_F(MolrsTest, BlockInsertMultipleTypes) {
     MolrsBlockHandle block{};
     ASSERT_MOLRS_OK(molrs_frame_get_block(frame, blk_id, &block));
 
-    // F column (float by default)
+    // F column (f64)
     F f_data[3] = {-1.5f, 2.7f, 3.14f};
     size_t shape1[1] = {3};
     ASSERT_MOLRS_OK(molrs_block_set_F(&block, f_id, f_data, shape1, 1));
@@ -255,18 +259,23 @@ TEST_F(MolrsTest, BlockInsertMultipleTypes) {
     EXPECT_EQ(dt, MOLRS_D_TYPE_U_INT);
 
     // zero-copy read F
-    const F* f_ptr = nullptr;
-    size_t f_len = 0;
-    ASSERT_MOLRS_OK(molrs_block_get_F(block, f_id, &f_ptr, &f_len));
-    ASSERT_EQ(f_len, 3u);
-    EXPECT_FLOAT_EQ(f_ptr[2], 3.14f);
+    const uint8_t* raw = nullptr;
+    size_t n = 0;
+    MolrsDType got = MOLRS_D_TYPE_STRING;
+    ASSERT_MOLRS_OK(molrs_block_get(block, f_id, &raw, &n, &got));
+    EXPECT_EQ(got, MOLRS_D_TYPE_FLOAT);
+    ASSERT_EQ(n, 3u);
+    EXPECT_FLOAT_EQ(reinterpret_cast<const F*>(raw)[2], 3.14f);
 
     // zero-copy read I
-    const int32_t* i_ptr = nullptr;
-    size_t i_len = 0;
-    ASSERT_MOLRS_OK(molrs_block_get_I(block, i_id, &i_ptr, &i_len));
-    ASSERT_EQ(i_len, 3u);
-    EXPECT_EQ(i_ptr[1], 200);
+    ASSERT_MOLRS_OK(molrs_block_get(block, i_id, &raw, &n, &got));
+    EXPECT_EQ(got, MOLRS_D_TYPE_INT);
+    ASSERT_EQ(n, 3u);
+    EXPECT_EQ(reinterpret_cast<const int32_t*>(raw)[1], 200);
+
+    // a missing column is not a dtype mismatch
+    uint32_t missing = intern("gt_missing_col");
+    EXPECT_EQ(molrs_block_get(block, missing, &raw, &n, &got), MOLRS_STATUS_KEY_NOT_FOUND);
 
     ASSERT_MOLRS_OK(molrs_frame_drop(frame));
 }
@@ -290,10 +299,13 @@ TEST_F(MolrsTest, BlockMutablePointer) {
     ASSERT_MOLRS_OK(molrs_block_set_F(&block, x_id, data, shape, 1));
 
     // get mutable pointer
-    F* ptr = nullptr;
+    uint8_t* raw = nullptr;
     size_t len = 0;
-    ASSERT_MOLRS_OK(molrs_block_get_F_mut(&block, x_id, &ptr, &len));
+    MolrsDType got = MOLRS_D_TYPE_STRING;
+    ASSERT_MOLRS_OK(molrs_block_get_mut(&block, x_id, &raw, &len, &got));
+    EXPECT_EQ(got, MOLRS_D_TYPE_FLOAT);
     ASSERT_EQ(len, 4u);
+    F* ptr = reinterpret_cast<F*>(raw);
 
     // modify in-place
     for (size_t i = 0; i < len; ++i) {
@@ -303,7 +315,8 @@ TEST_F(MolrsTest, BlockMutablePointer) {
 
     // verify via copy
     F buf[4] = {};
-    ASSERT_MOLRS_OK(molrs_block_copy_F(block, x_id, buf, 4));
+    ASSERT_MOLRS_OK(molrs_block_copy(
+        block, x_id, reinterpret_cast<uint8_t*>(buf), sizeof(buf)));
     EXPECT_FLOAT_EQ(buf[0], 10.0f);
     EXPECT_FLOAT_EQ(buf[1], 20.0f);
     EXPECT_FLOAT_EQ(buf[2], 30.0f);
@@ -630,10 +643,11 @@ TEST_F(MolrsTest, BlockCopyBufferTooSmall) {
     size_t shape[1] = {5};
     ASSERT_MOLRS_OK(molrs_block_set_F(&block, col_id, data, shape, 1));
 
-    // buffer too small
+    // buffer too small: two elements, counted in bytes
     F small_buf[2] = {};
-    MolrsStatus s = molrs_block_copy_F(block, col_id, small_buf, 2);
-    EXPECT_NE(s, MOLRS_STATUS_OK);
+    MolrsStatus s = molrs_block_copy(
+        block, col_id, reinterpret_cast<uint8_t*>(small_buf), sizeof(small_buf));
+    EXPECT_EQ(s, MOLRS_STATUS_INVALID_ARGUMENT);
 
     ASSERT_MOLRS_OK(molrs_frame_drop(frame));
 }

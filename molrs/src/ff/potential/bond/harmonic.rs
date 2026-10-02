@@ -136,13 +136,16 @@ pub fn bond_harmonic_ctor(
         .get(BONDS)
         .ok_or_else(|| "BondHarmonic: frame missing \"bonds\" block".to_string())?;
     let i_col = block
-        .get_uint("atomi")
+        .get("atomi")
+        .and_then(|c| c.as_uint())
         .ok_or_else(|| "BondHarmonic: bonds block missing \"atomi\" column".to_string())?;
     let j_col = block
-        .get_uint("atomj")
+        .get("atomj")
+        .and_then(|c| c.as_uint())
         .ok_or_else(|| "BondHarmonic: bonds block missing \"atomj\" column".to_string())?;
     let type_col = block
-        .get_string("type")
+        .get("type")
+        .and_then(|c| c.as_string())
         .ok_or_else(|| "BondHarmonic: bonds block missing \"type\" column".to_string())?;
 
     let mut atom_i = Vec::with_capacity(i_col.len());

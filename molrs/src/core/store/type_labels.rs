@@ -284,7 +284,7 @@ impl BlockTypes {
         }
 
         // String labels take precedence over `type_id`.
-        if let Some(col) = frame.get_string(block, keys::TYPE) {
+        if let Some(col) = frame.column(block, keys::TYPE).and_then(|c| c.as_string()) {
             let types: Vec<String> = (0..n).map(|i| col[[i]].clone()).collect();
             if types.iter().any(|t| t.trim().is_empty()) {
                 return Err(format!(
@@ -339,17 +339,19 @@ impl BlockTypes {
         }
 
         // Numeric ids (unsigned or signed; `type_id`, else a numeric `type`).
-        let type_ids: Option<Vec<Idx>> = if let Some(col) = frame.get_uint(block, keys::TYPE_ID) {
-            Some((0..n).map(|i| col[[i]]).collect())
-        } else if let Some(col) = frame.get_int(block, keys::TYPE_ID) {
-            Some((0..n).map(|i| col[[i]] as Idx).collect())
-        } else if let Some(col) = frame.get_uint(block, keys::TYPE) {
-            Some((0..n).map(|i| col[[i]]).collect())
-        } else {
-            frame
-                .get_int(block, keys::TYPE)
-                .map(|col| (0..n).map(|i| col[[i]] as Idx).collect())
-        };
+        let type_ids: Option<Vec<Idx>> =
+            if let Some(col) = frame.column(block, keys::TYPE_ID).and_then(|c| c.as_uint()) {
+                Some((0..n).map(|i| col[[i]]).collect())
+            } else if let Some(col) = frame.column(block, keys::TYPE_ID).and_then(|c| c.as_int()) {
+                Some((0..n).map(|i| col[[i]] as Idx).collect())
+            } else if let Some(col) = frame.column(block, keys::TYPE).and_then(|c| c.as_uint()) {
+                Some((0..n).map(|i| col[[i]]).collect())
+            } else {
+                frame
+                    .column(block, keys::TYPE)
+                    .and_then(|c| c.as_int())
+                    .map(|col| (0..n).map(|i| col[[i]] as Idx).collect())
+            };
         let Some(type_ids) = type_ids else {
             return Err(format!(
                 "frame[{block:?}] has {n} rows but neither 'type' nor 'type_id'; \

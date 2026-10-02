@@ -56,6 +56,46 @@ pub struct BlockDoc {
     pub doc: String,
 }
 
+/// One constant projected for another language: a column, a block, or a meta key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NamedValue {
+    /// Rust constant name (`"ATOMI"`, `"ATOMS"`, `"UNITS"`).
+    pub const_name: String,
+    /// The string that constant holds.
+    pub value: String,
+}
+
+/// An ordered group of key strings (`COORDS`, `TOPOLOGY`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NamedGroup {
+    /// Rust constant name (`"COORDS"`).
+    pub const_name: String,
+    /// Member keys, in group order.
+    pub values: Vec<String>,
+}
+
+/// Every name the bindings export, projected from the compile-time tables.
+///
+/// Columns, groups, block names, block groups, and frame-meta keys. This is
+/// the document `keysDocument()` hands to JavaScript; it is not a second
+/// vocabulary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeysDocument {
+    /// Scalar column constants, vocabulary order.
+    pub columns: Vec<NamedValue>,
+    /// Column groups (`COORDS`, `ENDPOINTS`, …).
+    pub groups: Vec<NamedGroup>,
+    /// Scalar block-name constants.
+    pub blocks: Vec<NamedValue>,
+    /// Block groups (`TOPOLOGY`). Not themselves blocks.
+    pub block_groups: Vec<NamedGroup>,
+    /// Frame-meta keys. Not columns.
+    pub meta: Vec<NamedValue>,
+}
+
 /// The whole vocabulary, owned and serializable.
 ///
 /// Two runs produce byte-identical JSON — the tables are sorted and the

@@ -220,14 +220,15 @@ mod persistence_tests {
 
         let atoms = frame.get("atoms").unwrap();
         for (axis, key) in keys::COORDS.iter().enumerate() {
-            let col = atoms.get_float(key).unwrap();
+            let col = atoms.get(key).and_then(|c| c.as_float()).unwrap();
             for i in 0..2 {
                 assert_eq!(col[[i]], state.pos[[i, axis]], "{key}[{i}]");
             }
         }
         for (axis, key) in keys::IMAGES.iter().enumerate() {
             let col = atoms
-                .get_int(key)
+                .get(key)
+                .and_then(|c| c.as_int())
                 .unwrap_or_else(|| panic!("atoms block is missing {key}"));
             for i in 0..2 {
                 assert_eq!(col[[i]], state.images[[i, axis]], "{key}[{i}]");
@@ -258,8 +259,8 @@ mod persistence_tests {
 
         // Read it back the way an analysis would, from the frame alone.
         let atoms = frame.get("atoms").unwrap();
-        let x = atoms.get_float("x").unwrap()[[0]];
-        let ix = atoms.get_int("ix").unwrap()[[0]] as F;
+        let x = atoms.get("x").and_then(|c| c.as_float()).unwrap()[[0]];
+        let ix = atoms.get("ix").and_then(|c| c.as_int()).unwrap()[[0]] as F;
         assert!(
             (x + ix * 10.0 - 32.0).abs() < 1e-12,
             "reconstructed {} from the frame, expected 32",

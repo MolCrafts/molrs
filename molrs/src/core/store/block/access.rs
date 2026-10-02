@@ -1,130 +1,21 @@
-//! Unified access traits for owned and borrowed column/block types.
+//! Unified access trait for owned and borrowed block types.
 //!
-//! [`ColumnAccess`] and [`BlockAccess`] provide a common read-only interface
-//! that is implemented by both the owned types ([`Column`], [`Block`]) and
-//! their zero-copy view counterparts ([`ColumnView`], [`BlockView`]).
-
-use ndarray::ArrayViewD;
+//! [`BlockAccess`] is the read-only surface shared by [`Block`] and [`BlockView`].
+//! A column comes back whole; project a dtype with [`ColumnView::as_float`] and
+//! the other `as_*` methods.
 
 use super::Block;
 use super::block_view::BlockView;
-use super::column::Column;
 use super::column_view::ColumnView;
 use super::dtype::DType;
-use crate::types::{F, I, Idx};
-
-/// Unified read-only access for [`Column`] and [`ColumnView`].
-pub trait ColumnAccess {
-    /// Returns a float array view, or `None` if the column is not `Float`.
-    fn as_float_view(&self) -> Option<ArrayViewD<'_, F>>;
-    /// Returns an int array view, or `None` if the column is not `Int`.
-    fn as_int_view(&self) -> Option<ArrayViewD<'_, I>>;
-    /// Returns a bool array view, or `None` if the column is not `Bool`.
-    fn as_bool_view(&self) -> Option<ArrayViewD<'_, bool>>;
-    /// Returns a uint array view, or `None` if the column is not `UInt`.
-    fn as_uint_view(&self) -> Option<ArrayViewD<'_, Idx>>;
-    /// Returns a u8 array view, or `None` if the column is not `U8`.
-    fn as_u8_view(&self) -> Option<ArrayViewD<'_, u8>>;
-    /// Returns a string array view, or `None` if the column is not `String`.
-    fn as_string_view(&self) -> Option<ArrayViewD<'_, String>>;
-    /// Returns the number of rows (axis-0 length), or `None` if rank 0.
-    fn nrows(&self) -> Option<usize>;
-    /// Returns the data type of this column.
-    fn dtype(&self) -> DType;
-    /// Returns the shape of the underlying array as an owned `Vec`.
-    fn shape(&self) -> Vec<usize>;
-}
-
-impl ColumnAccess for Column {
-    fn as_float_view(&self) -> Option<ArrayViewD<'_, F>> {
-        self.as_float().map(|a| a.view())
-    }
-
-    fn as_int_view(&self) -> Option<ArrayViewD<'_, I>> {
-        self.as_int().map(|a| a.view())
-    }
-
-    fn as_bool_view(&self) -> Option<ArrayViewD<'_, bool>> {
-        self.as_bool().map(|a| a.view())
-    }
-
-    fn as_uint_view(&self) -> Option<ArrayViewD<'_, Idx>> {
-        self.as_uint().map(|a| a.view())
-    }
-
-    fn as_u8_view(&self) -> Option<ArrayViewD<'_, u8>> {
-        self.as_u8().map(|a| a.view())
-    }
-
-    fn as_string_view(&self) -> Option<ArrayViewD<'_, String>> {
-        self.as_string().map(|a| a.view())
-    }
-
-    fn nrows(&self) -> Option<usize> {
-        Column::nrows(self)
-    }
-
-    fn dtype(&self) -> DType {
-        Column::dtype(self)
-    }
-
-    fn shape(&self) -> Vec<usize> {
-        Column::shape(self).to_vec()
-    }
-}
-
-impl ColumnAccess for ColumnView<'_> {
-    fn as_float_view(&self) -> Option<ArrayViewD<'_, F>> {
-        self.as_float()
-    }
-
-    fn as_int_view(&self) -> Option<ArrayViewD<'_, I>> {
-        self.as_int()
-    }
-
-    fn as_bool_view(&self) -> Option<ArrayViewD<'_, bool>> {
-        self.as_bool()
-    }
-
-    fn as_uint_view(&self) -> Option<ArrayViewD<'_, Idx>> {
-        self.as_uint()
-    }
-
-    fn as_u8_view(&self) -> Option<ArrayViewD<'_, u8>> {
-        self.as_u8()
-    }
-
-    fn as_string_view(&self) -> Option<ArrayViewD<'_, String>> {
-        self.as_string()
-    }
-
-    fn nrows(&self) -> Option<usize> {
-        ColumnView::nrows(self)
-    }
-
-    fn dtype(&self) -> DType {
-        ColumnView::dtype(self)
-    }
-
-    fn shape(&self) -> Vec<usize> {
-        ColumnView::shape(self).to_vec()
-    }
-}
 
 /// Unified read-only access for [`Block`] and [`BlockView`].
 pub trait BlockAccess {
-    /// Gets a float array view for `key` if present and of correct type.
-    fn get_float_view(&self, key: &str) -> Option<ArrayViewD<'_, F>>;
-    /// Gets an int array view for `key` if present and of correct type.
-    fn get_int_view(&self, key: &str) -> Option<ArrayViewD<'_, I>>;
-    /// Gets a bool array view for `key` if present and of correct type.
-    fn get_bool_view(&self, key: &str) -> Option<ArrayViewD<'_, bool>>;
-    /// Gets a uint array view for `key` if present and of correct type.
-    fn get_uint_view(&self, key: &str) -> Option<ArrayViewD<'_, Idx>>;
-    /// Gets a u8 array view for `key` if present and of correct type.
-    fn get_u8_view(&self, key: &str) -> Option<ArrayViewD<'_, u8>>;
-    /// Gets a string array view for `key` if present and of correct type.
-    fn get_string_view(&self, key: &str) -> Option<ArrayViewD<'_, String>>;
+    /// The column for `key`, or `None` when the key is absent.
+    ///
+    /// `None` from a later `as_*` projection means the column has a different
+    /// dtype, which is not the same as a missing key.
+    fn column<'a>(&'a self, key: &str) -> Option<ColumnView<'a>>;
     /// Returns the common axis-0 length, or `None` if empty.
     fn nrows(&self) -> Option<usize>;
     /// Number of columns.
@@ -144,28 +35,8 @@ pub trait BlockAccess {
 }
 
 impl BlockAccess for Block {
-    fn get_float_view(&self, key: &str) -> Option<ArrayViewD<'_, F>> {
-        self.get_float(key).map(|a| a.view())
-    }
-
-    fn get_int_view(&self, key: &str) -> Option<ArrayViewD<'_, I>> {
-        self.get_int(key).map(|a| a.view())
-    }
-
-    fn get_bool_view(&self, key: &str) -> Option<ArrayViewD<'_, bool>> {
-        self.get_bool(key).map(|a| a.view())
-    }
-
-    fn get_uint_view(&self, key: &str) -> Option<ArrayViewD<'_, Idx>> {
-        self.get_uint(key).map(|a| a.view())
-    }
-
-    fn get_u8_view(&self, key: &str) -> Option<ArrayViewD<'_, u8>> {
-        self.get_u8(key).map(|a| a.view())
-    }
-
-    fn get_string_view(&self, key: &str) -> Option<ArrayViewD<'_, String>> {
-        self.get_string(key).map(|a| a.view())
+    fn column<'a>(&'a self, key: &str) -> Option<ColumnView<'a>> {
+        self.get(key).map(ColumnView::from)
     }
 
     fn nrows(&self) -> Option<usize> {
@@ -202,28 +73,8 @@ impl BlockAccess for Block {
 }
 
 impl BlockAccess for BlockView<'_> {
-    fn get_float_view(&self, key: &str) -> Option<ArrayViewD<'_, F>> {
-        self.get_float(key)
-    }
-
-    fn get_int_view(&self, key: &str) -> Option<ArrayViewD<'_, I>> {
-        self.get_int(key)
-    }
-
-    fn get_bool_view(&self, key: &str) -> Option<ArrayViewD<'_, bool>> {
-        self.get_bool(key)
-    }
-
-    fn get_uint_view(&self, key: &str) -> Option<ArrayViewD<'_, Idx>> {
-        self.get_uint(key)
-    }
-
-    fn get_u8_view(&self, key: &str) -> Option<ArrayViewD<'_, u8>> {
-        self.get_u8(key)
-    }
-
-    fn get_string_view(&self, key: &str) -> Option<ArrayViewD<'_, String>> {
-        self.get_string(key)
+    fn column<'a>(&'a self, key: &str) -> Option<ColumnView<'a>> {
+        self.get(key).map(ColumnView::reborrow)
     }
 
     fn nrows(&self) -> Option<usize> {
@@ -262,7 +113,8 @@ impl BlockAccess for BlockView<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Idx;
+    use crate::store::block::Column;
+    use crate::types::{F, Idx};
     use ndarray::Array1;
 
     fn make_block() -> Block {
@@ -277,30 +129,30 @@ mod tests {
     }
 
     #[test]
-    fn test_column_access_on_column() {
+    fn test_column_projection_on_column() {
         let col = Column::from_float(Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn());
-        assert!(ColumnAccess::as_float_view(&col).is_some());
-        assert!(ColumnAccess::as_int_view(&col).is_none());
-        assert_eq!(ColumnAccess::nrows(&col), Some(2));
-        assert_eq!(ColumnAccess::dtype(&col), DType::Float);
-        assert_eq!(ColumnAccess::shape(&col), vec![2]);
+        assert!(col.as_float().is_some());
+        assert!(col.as_int().is_none());
+        assert_eq!(col.nrows(), Some(2));
+        assert_eq!(col.dtype(), DType::Float);
+        assert_eq!(col.shape(), &[2]);
     }
 
     #[test]
-    fn test_column_access_on_column_view() {
-        let col = Column::from_int(Array1::from_vec(vec![1 as I, 2, 3]).into_dyn());
+    fn test_column_projection_on_column_view() {
+        let col = Column::from_int(Array1::from_vec(vec![1, 2, 3]).into_dyn());
         let view = ColumnView::from(&col);
-        assert!(ColumnAccess::as_int_view(&view).is_some());
-        assert!(ColumnAccess::as_float_view(&view).is_none());
-        assert_eq!(ColumnAccess::nrows(&view), Some(3));
-        assert_eq!(ColumnAccess::dtype(&view), DType::Int);
+        assert!(view.as_int().is_some());
+        assert!(view.as_float().is_none());
+        assert_eq!(view.nrows(), Some(3));
+        assert_eq!(view.dtype(), DType::Int);
     }
 
     #[test]
     fn test_block_access_on_block() {
         let block = make_block();
-        assert!(BlockAccess::get_float_view(&block, "x").is_some());
-        assert!(BlockAccess::get_uint_view(&block, "id").is_some());
+        assert!(block.column("x").and_then(|c| c.as_float()).is_some());
+        assert!(block.column("id").and_then(|c| c.as_uint()).is_some());
         assert_eq!(BlockAccess::nrows(&block), Some(3));
         assert_eq!(BlockAccess::len(&block), 2);
         assert!(!BlockAccess::is_empty(&block));
@@ -312,8 +164,8 @@ mod tests {
     fn test_block_access_on_block_view() {
         let block = make_block();
         let view = BlockView::from(&block);
-        assert!(BlockAccess::get_float_view(&view, "x").is_some());
-        assert!(BlockAccess::get_uint_view(&view, "id").is_some());
+        assert!(view.column("x").and_then(|c| c.as_float()).is_some());
+        assert!(view.column("id").and_then(|c| c.as_uint()).is_some());
         assert_eq!(BlockAccess::nrows(&view), Some(3));
         assert_eq!(BlockAccess::len(&view), 2);
         assert!(!BlockAccess::is_empty(&view));
@@ -325,7 +177,7 @@ mod tests {
         fn count_float_columns(b: &impl BlockAccess) -> usize {
             b.column_keys()
                 .iter()
-                .filter(|k| b.get_float_view(k).is_some())
+                .filter(|k| b.column(k).and_then(|c| c.as_float()).is_some())
                 .count()
         }
 

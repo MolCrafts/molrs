@@ -484,7 +484,7 @@ pub fn write_mol2_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     writeln!(writer, "{}", title)?;
     writeln!(writer, "{} {} 0 0 0", n, n_bonds)?;
     writeln!(writer, "SMALL")?;
-    let charge_col = atoms.get_float("charge");
+    let charge_col = atoms.get("charge").and_then(|c| c.as_float());
     writeln!(
         writer,
         "{}",
@@ -498,20 +498,23 @@ pub fn write_mol2_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     writeln!(writer)?;
 
     writeln!(writer, "@<TRIPOS>ATOM")?;
-    let id_col = atoms.get_uint("id");
-    let name_col = atoms.get_string("name");
+    let id_col = atoms.get("id").and_then(|c| c.as_uint());
+    let name_col = atoms.get("name").and_then(|c| c.as_string());
     let xs = atoms
-        .get_float("x")
+        .get("x")
+        .and_then(|c| c.as_float())
         .ok_or_else(|| invalid_data("atoms.x missing"))?;
     let ys = atoms
-        .get_float("y")
+        .get("y")
+        .and_then(|c| c.as_float())
         .ok_or_else(|| invalid_data("atoms.y missing"))?;
     let zs = atoms
-        .get_float("z")
+        .get("z")
+        .and_then(|c| c.as_float())
         .ok_or_else(|| invalid_data("atoms.z missing"))?;
-    let type_col = atoms.get_string("atom_type");
-    let subst_id_col = atoms.get_int("subst_id");
-    let subst_name_col = atoms.get_string("subst_name");
+    let type_col = atoms.get("atom_type").and_then(|c| c.as_string());
+    let subst_id_col = atoms.get("subst_id").and_then(|c| c.as_int());
+    let subst_name_col = atoms.get("subst_name").and_then(|c| c.as_string());
     for i in 0..n {
         let id = id_col.map(|c| c[[i]]).unwrap_or((i as Idx) + 1);
         let name = name_col.map(|c| c[[i]].as_str()).unwrap_or("X");
@@ -541,12 +544,14 @@ pub fn write_mol2_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     {
         writeln!(writer, "@<TRIPOS>BOND")?;
         let atomi = b
-            .get_uint("atomi")
+            .get("atomi")
+            .and_then(|c| c.as_uint())
             .ok_or_else(|| invalid_data("bonds.atomi missing"))?;
         let atomj = b
-            .get_uint("atomj")
+            .get("atomj")
+            .and_then(|c| c.as_uint())
             .ok_or_else(|| invalid_data("bonds.atomj missing"))?;
-        let btype_col = b.get_string("sybyl_bond_type");
+        let btype_col = b.get("sybyl_bond_type").and_then(|c| c.as_string());
         for i in 0..n_bonds {
             let bt = btype_col.map(|c| c[[i]].as_str()).unwrap_or("1");
             writeln!(
@@ -600,12 +605,12 @@ mod tests {
         let frame = reader.read().unwrap().unwrap();
         let atoms = frame.get("atoms").unwrap();
         assert_eq!(atoms.nrows(), Some(2));
-        let xs = atoms.get_float("x").unwrap();
+        let xs = atoms.get("x").and_then(|c| c.as_float()).unwrap();
         assert!((xs[[1]] - 1.5).abs() < 1e-9);
         let bonds = frame.get("bonds").unwrap();
         assert_eq!(bonds.nrows(), Some(1));
-        let atomi = bonds.get_uint("atomi").unwrap();
-        let atomj = bonds.get_uint("atomj").unwrap();
+        let atomi = bonds.get("atomi").and_then(|c| c.as_uint()).unwrap();
+        let atomj = bonds.get("atomj").and_then(|c| c.as_uint()).unwrap();
         assert_eq!(atomi[[0]], 0);
         assert_eq!(atomj[[0]], 1);
     }
@@ -620,8 +625,18 @@ mod tests {
         write_mol2_frame(&mut buf, &frame).unwrap();
         let mut reader2 = Mol2Reader::new(Cursor::new(&buf));
         let frame2 = reader2.read().unwrap().unwrap();
-        let xs1 = frame.get("atoms").unwrap().get_float("x").unwrap();
-        let xs2 = frame2.get("atoms").unwrap().get_float("x").unwrap();
+        let xs1 = frame
+            .get("atoms")
+            .unwrap()
+            .get("x")
+            .and_then(|c| c.as_float())
+            .unwrap();
+        let xs2 = frame2
+            .get("atoms")
+            .unwrap()
+            .get("x")
+            .and_then(|c| c.as_float())
+            .unwrap();
         for i in 0..xs1.len() {
             assert!((xs1[[i]] - xs2[[i]]).abs() < 1e-3);
         }

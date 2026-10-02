@@ -1419,7 +1419,8 @@ mod tests {
             frame
                 .get("atoms")
                 .expect("atoms block")
-                .get_float("x")
+                .get("x")
+                .and_then(|c| c.as_float())
                 .is_some()
         );
     }

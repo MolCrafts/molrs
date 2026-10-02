@@ -18,10 +18,11 @@ use molrs::store::schema;
 
 // ── Key ──────────────────────────────────────────────────────────────────────
 
-/// Canonical Frame / Block column name.
+/// Canonical name projected from the Rust key tables.
 ///
-/// Projected from the Rust schema tables as ``molrs.keys.<CONST>``. Use
-/// ``.key`` (or ``str(key)``) wherever an API still takes a plain string.
+/// A column key, or a frame-meta key. Ordered groups are tuples of these.
+/// Block names are :mod:`molrs.schema`, not keys. Use ``.key`` (or
+/// ``str(key)``) wherever an API still takes a plain string.
 #[pyclass(module = "molrs.keys", name = "Key", frozen, from_py_object)]
 #[derive(Clone, Copy)]
 pub struct PyKey {
@@ -340,22 +341,13 @@ pub fn register_schema(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("columns", column_specs())?;
     m.add("blocks", block_specs())?;
     m.add("VOCAB_VERSION", schema::FRAME_VOCAB_VERSION)?;
-    {
-        use schema::block_names::*;
-        for (name, value) in [
-            ("ATOMS", ATOMS),
-            ("BONDS", BONDS),
-            ("ANGLES", ANGLES),
-            ("DIHEDRALS", DIHEDRALS),
-            ("IMPROPERS", IMPROPERS),
-            ("PAIRS", PAIRS),
-            ("EXCLUSIONS", EXCLUSIONS),
-        ] {
-            m.add(name, value)?;
-        }
+    for spec in schema::BLOCK_NAMES {
+        m.add(spec.const_name, spec.value)?;
+    }
+    for group in schema::BLOCK_GROUPS {
         m.add(
-            "TOPOLOGY",
-            pyo3::types::PyTuple::new(parent.py(), TOPOLOGY)?,
+            group.const_name,
+            pyo3::types::PyTuple::new(parent.py(), group.keys.iter().copied())?,
         )?;
     }
     m.add_function(wrap_pyfunction!(py_column, &m)?)?;
@@ -369,13 +361,12 @@ pub fn register_schema(parent: &Bound<'_, PyModule>) -> PyResult<()> {
 
 /// Register `molrs.keys`, projected from the same tables.
 ///
-/// A loop, not a hand-written list: adding a column to the Rust table adds
-/// `molrs.keys.<CONST>` with no edit here, so the two cannot drift.
+/// A loop over the Rust tables, not a hand-written list: a new column, group,
+/// or frame-meta key appears as `molrs.keys.<CONST>` with no edit here.
 ///
-/// Each constant is a :class:`Key`. Ordered groups (`COORDS`, …) are tuples of
-/// :class:`Key`.
+/// Each scalar is a :class:`Key`. Ordered groups (`COORDS`, …) are lists of
+/// :class:`Key`. Block names are :mod:`molrs.schema`.
 pub fn register_keys(parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    use molrs::store::keys;
     let py = parent.py();
     let m = PyModule::new(py, "keys")?;
     m.add_class::<PyKey>()?;
@@ -383,16 +374,13 @@ pub fn register_keys(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     for spec in schema::SCHEMA_COLUMNS {
         m.add(spec.const_name, PyKey::new(spec.key))?;
     }
-
-    fn key_tuple(names: &[&'static str]) -> Vec<PyKey> {
-        names.iter().map(|n| PyKey::new(n)).collect()
+    for group in schema::KEY_GROUPS {
+        let keys: Vec<PyKey> = group.keys.iter().copied().map(PyKey::new).collect();
+        m.add(group.const_name, keys)?;
     }
-
-    m.add("COORDS", key_tuple(&keys::COORDS))?;
-    m.add("VELOCITIES", key_tuple(&keys::VELOCITIES))?;
-    m.add("QUAT", key_tuple(&keys::QUAT))?;
-    m.add("DIPOLE", key_tuple(&keys::DIPOLE))?;
-    m.add("ENDPOINTS", key_tuple(&keys::ENDPOINTS))?;
+    for spec in molrs::store::keys::META_KEYS {
+        m.add(spec.const_name, PyKey::new(spec.value))?;
+    }
 
     parent.add_submodule(&m)?;
     parent.setattr("keys", &m)?;

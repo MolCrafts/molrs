@@ -489,13 +489,16 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
         writeln!(w, "Coords")?;
         writeln!(w)?;
         let x = atoms
-            .get_float("x")
+            .get("x")
+            .and_then(|c| c.as_float())
             .ok_or_else(|| invalid_data("x missing"))?;
         let y = atoms
-            .get_float("y")
+            .get("y")
+            .and_then(|c| c.as_float())
             .ok_or_else(|| invalid_data("y missing"))?;
         let z = atoms
-            .get_float("z")
+            .get("z")
+            .and_then(|c| c.as_float())
             .ok_or_else(|| invalid_data("z missing"))?;
         for i in 0..n {
             writeln!(w, "{} {:.6} {:.6} {:.6}", ids[i], x[[i]], y[[i]], z[[i]])?;
@@ -513,11 +516,11 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
     if atoms.contains_key("mol_id") {
         writeln!(w, "Molecules")?;
         writeln!(w)?;
-        if let Some(vals) = atoms.get_uint("mol_id") {
+        if let Some(vals) = atoms.get("mol_id").and_then(|c| c.as_uint()) {
             for i in 0..n {
                 writeln!(w, "{} {}", ids[i], vals[[i]])?;
             }
-        } else if let Some(vals) = atoms.get_int("mol_id") {
+        } else if let Some(vals) = atoms.get("mol_id").and_then(|c| c.as_int()) {
             for i in 0..n {
                 writeln!(w, "{} {}", ids[i], vals[[i]])?;
             }
@@ -536,7 +539,10 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
         }
         writeln!(w, "{heading}")?;
         writeln!(w)?;
-        let vals = atoms.get_float(col).ok_or_else(|| invalid_data(col))?;
+        let vals = atoms
+            .get(col)
+            .and_then(|c| c.as_float())
+            .ok_or_else(|| invalid_data(col))?;
         for i in 0..n {
             writeln!(w, "{} {:.6}", ids[i], vals[[i]])?;
         }
@@ -561,9 +567,9 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
         writeln!(w, "{}", capitalize(name))?;
         writeln!(w)?;
         let item_ids: Vec<Idx> = if block.contains_key("id") {
-            if let Some(col) = block.get_uint("id") {
+            if let Some(col) = block.get("id").and_then(|c| c.as_uint()) {
                 (0..nb).map(|i| col[[i]]).collect()
-            } else if let Some(col) = block.get_int("id") {
+            } else if let Some(col) = block.get("id").and_then(|c| c.as_int()) {
                 (0..nb).map(|i| col[[i]] as Idx).collect()
             } else {
                 return Err(invalid_data("id"));
@@ -575,7 +581,10 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
         let member_keys = ["atomi", "atomj", "atomk", "atoml"];
         let mut member_cols = Vec::new();
         for key in member_keys.iter().take(arity) {
-            let col = block.get_uint(key).ok_or_else(|| invalid_data(*key))?;
+            let col = block
+                .get(key)
+                .and_then(|c| c.as_uint())
+                .ok_or_else(|| invalid_data(*key))?;
             member_cols.push(col);
         }
         for i in 0..nb {
@@ -605,10 +614,10 @@ fn capitalize(s: &str) -> String {
 
 fn atom_ids(atoms: &Block) -> Vec<Idx> {
     let n = atoms.nrows().unwrap_or(0);
-    if let Some(col) = atoms.get_uint("id") {
+    if let Some(col) = atoms.get("id").and_then(|c| c.as_uint()) {
         return (0..n).map(|i| col[[i]]).collect();
     }
-    if let Some(col) = atoms.get_int("id") {
+    if let Some(col) = atoms.get("id").and_then(|c| c.as_int()) {
         return (0..n).map(|i| col[[i]] as Idx).collect();
     }
     (1..=n as Idx).collect()
@@ -616,13 +625,13 @@ fn atom_ids(atoms: &Block) -> Vec<Idx> {
 
 fn type_ids_for_block(block: &Block) -> Result<Vec<I>> {
     let n = block.nrows().ok_or_else(|| invalid_data("empty block"))?;
-    if let Some(col) = block.get_int("type_id") {
+    if let Some(col) = block.get("type_id").and_then(|c| c.as_int()) {
         return Ok((0..n).map(|i| col[[i]]).collect());
     }
-    if let Some(col) = block.get_uint("type_id") {
+    if let Some(col) = block.get("type_id").and_then(|c| c.as_uint()) {
         return Ok((0..n).map(|i| col[[i]] as I).collect());
     }
-    if let Some(col) = block.get_string("type") {
+    if let Some(col) = block.get("type").and_then(|c| c.as_string()) {
         let labels: Vec<String> = (0..n).map(|i| col[[i]].clone()).collect();
         let mut uniq = labels.clone();
         uniq.sort();
@@ -640,7 +649,7 @@ fn type_ids_for_block(block: &Block) -> Result<Vec<I>> {
             .collect();
         return Ok(labels.iter().map(|s| map[s.as_str()]).collect());
     }
-    if let Some(col) = block.get_int("type") {
+    if let Some(col) = block.get("type").and_then(|c| c.as_int()) {
         return Ok((0..n).map(|i| col[[i]]).collect());
     }
     Err(invalid_data("block has no type / type_id"))
@@ -837,7 +846,8 @@ fn write_lammps_molecule_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<
         .nrows()
         .ok_or_else(|| invalid_data("Frame must contain atoms data"))?;
     let ids = atom_ids(atoms);
-    let type_labels: Vec<String> = if let Some(col) = atoms.get_string("type") {
+    let type_labels: Vec<String> = if let Some(col) = atoms.get("type").and_then(|c| c.as_string())
+    {
         (0..n).map(|i| col[[i]].clone()).collect()
     } else {
         type_ids_for_block(atoms)?
@@ -882,26 +892,35 @@ fn write_lammps_molecule_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<
     }
 
     if atoms.contains_key("x") && atoms.contains_key("y") && atoms.contains_key("z") {
-        let x = atoms.get_float("x").ok_or_else(|| invalid_data("x"))?;
-        let y = atoms.get_float("y").ok_or_else(|| invalid_data("y"))?;
-        let z = atoms.get_float("z").ok_or_else(|| invalid_data("z"))?;
+        let x = atoms
+            .get("x")
+            .and_then(|c| c.as_float())
+            .ok_or_else(|| invalid_data("x"))?;
+        let y = atoms
+            .get("y")
+            .and_then(|c| c.as_float())
+            .ok_or_else(|| invalid_data("y"))?;
+        let z = atoms
+            .get("z")
+            .and_then(|c| c.as_float())
+            .ok_or_else(|| invalid_data("z"))?;
         let coords: Vec<JsonValue> = (0..n)
             .map(|i| json!([ids[i], x[[i]], y[[i]], z[[i]]]))
             .collect();
         data["coords"] = json!({ "format": ["atom-id", "x", "y", "z"], "data": coords });
     }
-    if let Some(c) = atoms.get_float("charge") {
+    if let Some(c) = atoms.get("charge").and_then(|c| c.as_float()) {
         let rows: Vec<JsonValue> = (0..n).map(|i| json!([ids[i], c[[i]]])).collect();
         data["charges"] = json!({ "format": ["atom-id", "charge"], "data": rows });
     }
-    if let Some(m) = atoms.get_float("mass") {
+    if let Some(m) = atoms.get("mass").and_then(|c| c.as_float()) {
         let rows: Vec<JsonValue> = (0..n).map(|i| json!([ids[i], m[[i]]])).collect();
         data["masses"] = json!({ "format": ["atom-id", "mass"], "data": rows });
     }
-    if let Some(m) = atoms.get_uint("mol_id") {
+    if let Some(m) = atoms.get("mol_id").and_then(|c| c.as_uint()) {
         let rows: Vec<JsonValue> = (0..n).map(|i| json!([ids[i], m[[i]]])).collect();
         data["molecule"] = json!({ "format": ["atom-id", "molecule-id"], "data": rows });
-    } else if let Some(m) = atoms.get_int("mol_id") {
+    } else if let Some(m) = atoms.get("mol_id").and_then(|c| c.as_int()) {
         let rows: Vec<JsonValue> = (0..n).map(|i| json!([ids[i], m[[i]]])).collect();
         data["molecule"] = json!({ "format": ["atom-id", "molecule-id"], "data": rows });
     }
@@ -925,7 +944,12 @@ fn write_lammps_molecule_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<
         let keys = ["atomi", "atomj", "atomk", "atoml"];
         let mut members = Vec::new();
         for key in keys.iter().take(arity) {
-            members.push(block.get_uint(key).ok_or_else(|| invalid_data(*key))?);
+            members.push(
+                block
+                    .get(key)
+                    .and_then(|c| c.as_uint())
+                    .ok_or_else(|| invalid_data(*key))?,
+            );
         }
         let mut rows = Vec::new();
         let mut format = vec![type_label.to_string()];
@@ -1004,7 +1028,10 @@ Angles
         assert_eq!(atoms.nrows(), Some(3));
         assert_eq!(frame.get("bonds").unwrap().nrows(), Some(2));
         assert_eq!(frame.get("angles").unwrap().nrows(), Some(1));
-        let charge = atoms.get_float("charge").expect("Charges section");
+        let charge = atoms
+            .get("charge")
+            .and_then(|c| c.as_float())
+            .expect("Charges section");
         assert_eq!(
             charge.iter().copied().collect::<Vec<_>>(),
             vec![-0.834, 0.417, 0.417]
@@ -1023,7 +1050,12 @@ Angles
         for (block, rows) in [("atoms", 3), ("bonds", 2), ("angles", 1)] {
             assert_eq!(back.get(block).unwrap().nrows(), Some(rows), "{block}");
         }
-        let charge = back.get("atoms").unwrap().get_float("charge").unwrap();
+        let charge = back
+            .get("atoms")
+            .unwrap()
+            .get("charge")
+            .and_then(|c| c.as_float())
+            .unwrap();
         assert_eq!(
             charge.iter().copied().collect::<Vec<_>>(),
             vec![-0.834, 0.417, 0.417]

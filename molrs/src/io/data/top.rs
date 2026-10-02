@@ -510,18 +510,19 @@ pub fn write_top_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
             ";  nr  type  resnr  residu  atom  cgnr  charge  mass"
         )?;
 
-        let id_col = atoms.get_uint("id");
-        let type_col = atoms.get_string("type");
+        let id_col = atoms.get("id").and_then(|c| c.as_uint());
+        let type_col = atoms.get("type").and_then(|c| c.as_string());
         // Free-form `resnr` (int) preferred; canonical `res_id` (uint) as fallback.
-        let resnr_i = atoms.get_int("resnr");
-        let resnr_u = atoms.get_uint("res_id");
+        let resnr_i = atoms.get("resnr").and_then(|c| c.as_int());
+        let resnr_u = atoms.get("res_id").and_then(|c| c.as_uint());
         let residu_col = atoms
-            .get_string("residu")
-            .or_else(|| atoms.get_string("res_name"));
-        let name_col = atoms.get_string("name");
-        let cgnr_col = atoms.get_int("cgnr");
-        let charge_col = atoms.get_float("charge");
-        let mass_col = atoms.get_float("mass");
+            .get("residu")
+            .and_then(|c| c.as_string())
+            .or_else(|| atoms.get("res_name").and_then(|c| c.as_string()));
+        let name_col = atoms.get("name").and_then(|c| c.as_string());
+        let cgnr_col = atoms.get("cgnr").and_then(|c| c.as_int());
+        let charge_col = atoms.get("charge").and_then(|c| c.as_float());
+        let mass_col = atoms.get("mass").and_then(|c| c.as_float());
 
         for i in 0..n {
             let aid = id_col.map(|c| c[[i]]).unwrap_or((i as Idx) + 1);
@@ -598,13 +599,14 @@ fn write_index_section<W: Write>(
         .iter()
         .map(|c| {
             block
-                .get_uint(c)
+                .get(c)
+                .and_then(|c| c.as_uint())
                 .ok_or_else(|| invalid_data(format!("{block_key}.{c} missing or not uint")))
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let type_str = block.get_string("type");
-    let type_id = block.get_uint("type_id");
+    let type_str = block.get("type").and_then(|c| c.as_string());
+    let type_id = block.get("type_id").and_then(|c| c.as_uint());
 
     for i in 0..n {
         let vals: Vec<String> = col_views.iter().map(|c| c[[i]].to_string()).collect();
@@ -690,14 +692,20 @@ lig  3
         let pairs = frame.get("pairs").expect("pairs block");
         assert_eq!(pairs.nrows(), Some(2));
         let is_14 = pairs
-            .get_bool("is_14")
+            .get("is_14")
+            .and_then(|c| c.as_bool())
             .expect("`[ pairs ]` is the 1-4 list, so the flag must be there");
         assert!(
             is_14.iter().all(|&b| b),
             "every row of the section is a 1-4 pair by definition"
         );
         assert!(
-            frame.get("bonds").unwrap().get_bool("is_14").is_none(),
+            frame
+                .get("bonds")
+                .unwrap()
+                .get("is_14")
+                .and_then(|c| c.as_bool())
+                .is_none(),
             "bonds share the parser but not the meaning"
         );
     }
@@ -707,14 +715,34 @@ lig  3
         let frame = read_top_frame(&mut Cursor::new(BENZENE_ATOMS.as_bytes())).unwrap();
         let atoms = frame.get("atoms").unwrap();
         assert_eq!(atoms.nrows(), Some(2));
-        assert_eq!(atoms.get_string("type").unwrap()[[0]], "opls_145");
-        assert!((atoms.get_float("charge").unwrap()[[0]] + 0.115).abs() < 1e-9);
+        assert_eq!(
+            atoms.get("type").and_then(|c| c.as_string()).unwrap()[[0]],
+            "opls_145"
+        );
+        assert!(
+            (atoms.get("charge").and_then(|c| c.as_float()).unwrap()[[0]] + 0.115).abs() < 1e-9
+        );
         let bonds = frame.get("bonds").unwrap();
         assert_eq!(bonds.nrows(), Some(1));
-        assert_eq!(bonds.get_uint("atomi").unwrap()[[0]], 1);
-        assert_eq!(bonds.get_uint("atomj").unwrap()[[0]], 2);
-        assert_eq!(bonds.get_string("type").unwrap()[[0]], "1");
-        assert_eq!(atoms.get_uint("atomic_number").unwrap()[[0]], 6);
+        assert_eq!(
+            bonds.get("atomi").and_then(|c| c.as_uint()).unwrap()[[0]],
+            1
+        );
+        assert_eq!(
+            bonds.get("atomj").and_then(|c| c.as_uint()).unwrap()[[0]],
+            2
+        );
+        assert_eq!(
+            bonds.get("type").and_then(|c| c.as_string()).unwrap()[[0]],
+            "1"
+        );
+        assert_eq!(
+            atoms
+                .get("atomic_number")
+                .and_then(|c| c.as_uint())
+                .unwrap()[[0]],
+            6
+        );
     }
 
     #[test]
@@ -748,7 +776,12 @@ MOL  3
         assert_eq!(frame2.get("atoms").unwrap().nrows(), Some(2));
         assert_eq!(frame2.get("bonds").unwrap().nrows(), Some(1));
         assert_eq!(
-            frame2.get("bonds").unwrap().get_uint("atomi").unwrap()[[0]],
+            frame2
+                .get("bonds")
+                .unwrap()
+                .get("atomi")
+                .and_then(|c| c.as_uint())
+                .unwrap()[[0]],
             1
         );
     }

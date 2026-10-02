@@ -501,12 +501,12 @@ pub fn write_cube_to_writer<W: Write>(writer: &mut W, frame: &Frame) -> Result<(
     }
 
     // Atom lines (positions in writer's unit).
-    let atom_x = atoms.get_float("x");
-    let atom_y = atoms.get_float("y");
-    let atom_z = atoms.get_float("z");
-    let atom_z_num = atoms.get_uint("atomic_number");
-    let atom_charge = atoms.get_float("charge");
-    let atom_symbol = atoms.get_string("element");
+    let atom_x = atoms.get("x").and_then(|c| c.as_float());
+    let atom_y = atoms.get("y").and_then(|c| c.as_float());
+    let atom_z = atoms.get("z").and_then(|c| c.as_float());
+    let atom_z_num = atoms.get("atomic_number").and_then(|c| c.as_uint());
+    let atom_charge = atoms.get("charge").and_then(|c| c.as_float());
+    let atom_symbol = atoms.get("element").and_then(|c| c.as_string());
 
     for i in 0..n_atoms {
         let z_num = atom_z_num
@@ -542,7 +542,8 @@ pub fn write_cube_to_writer<W: Write>(writer: &mut W, frame: &Frame) -> Result<(
             .iter()
             .map(|idx| {
                 grid_block
-                    .get_float(&format!("mo_{}", idx))
+                    .get(&format!("mo_{}", idx))
+                    .and_then(|c| c.as_float())
                     .map(|a| a.iter().copied().collect::<Vec<_>>())
                     .unwrap_or_default()
             })
@@ -565,7 +566,8 @@ pub fn write_cube_to_writer<W: Write>(writer: &mut W, frame: &Frame) -> Result<(
     } else {
         // Single density field
         let data = grid_block
-            .get_float("density")
+            .get("density")
+            .and_then(|c| c.as_float())
             .ok_or_else(|| MolRsError::validation("cube grid has no 'density' column"))?;
         let mut col = 0;
         for v in data.iter() {

@@ -787,16 +787,19 @@ pub fn write_cif_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     writeln!(writer, "_atom_site_Cartn_z")?;
 
     let xs = atoms
-        .get_float("x")
+        .get("x")
+        .and_then(|c| c.as_float())
         .ok_or_else(|| invalid_data("atoms.x missing"))?;
     let ys = atoms
-        .get_float("y")
+        .get("y")
+        .and_then(|c| c.as_float())
         .ok_or_else(|| invalid_data("atoms.y missing"))?;
     let zs = atoms
-        .get_float("z")
+        .get("z")
+        .and_then(|c| c.as_float())
         .ok_or_else(|| invalid_data("atoms.z missing"))?;
-    let labels = atoms.get_string("name");
-    let symbols = atoms.get_string("element");
+    let labels = atoms.get("name").and_then(|c| c.as_string());
+    let symbols = atoms.get("element").and_then(|c| c.as_string());
 
     for i in 0..n {
         let label = labels
@@ -884,7 +887,7 @@ C2 C 0.5 0.5 0.5
         let frame = reader.read().unwrap().unwrap();
         let atoms = frame.get("atoms").unwrap();
         assert_eq!(atoms.nrows(), Some(2));
-        let xs = atoms.get_float("x").unwrap();
+        let xs = atoms.get("x").and_then(|c| c.as_float()).unwrap();
         assert!((xs[[1]] - 2.5).abs() < 1e-9, "got {}", xs[[1]]);
         assert!(frame.simbox.is_some());
     }
@@ -899,8 +902,18 @@ C2 C 0.5 0.5 0.5
         write_cif_frame(&mut buf, &frame).unwrap();
         let mut reader2 = CifReader::new(Cursor::new(&buf));
         let frame2 = reader2.read().unwrap().unwrap();
-        let xs1 = frame.get("atoms").unwrap().get_float("x").unwrap();
-        let xs2 = frame2.get("atoms").unwrap().get_float("x").unwrap();
+        let xs1 = frame
+            .get("atoms")
+            .unwrap()
+            .get("x")
+            .and_then(|c| c.as_float())
+            .unwrap();
+        let xs2 = frame2
+            .get("atoms")
+            .unwrap()
+            .get("x")
+            .and_then(|c| c.as_float())
+            .unwrap();
         for i in 0..xs1.len() {
             assert!((xs1[[i]] - xs2[[i]]).abs() < 1e-4);
         }

@@ -6,33 +6,9 @@ const MACRO_GENERATED_DECLS: &str = r#"
 extern "C" {
 #endif
 
-/* --- Block column accessors (macro-generated) --- */
-/* Function names use the type alias names: F, I, U.                       */
+/* --- Block column insert (macro-generated) --- */
 /* Widths are fixed: F=double (f64), I=int32_t (i32), U=uint64_t (Idx).    */
-
-/* Zero-copy read */
-enum MolrsStatus molrs_block_get_F(struct MolrsBlockHandle block, uint32_t col_key_id,
-                                    const F **out_ptr, uintptr_t *out_len);
-enum MolrsStatus molrs_block_get_I(struct MolrsBlockHandle block, uint32_t col_key_id,
-                                    const int32_t **out_ptr, uintptr_t *out_len);
-enum MolrsStatus molrs_block_get_U(struct MolrsBlockHandle block, uint32_t col_key_id,
-                                    const uint64_t **out_ptr, uintptr_t *out_len);
-
-/* Zero-copy write */
-enum MolrsStatus molrs_block_get_F_mut(struct MolrsBlockHandle *block, uint32_t col_key_id,
-                                        F **out_ptr, uintptr_t *out_len);
-enum MolrsStatus molrs_block_get_I_mut(struct MolrsBlockHandle *block, uint32_t col_key_id,
-                                        int32_t **out_ptr, uintptr_t *out_len);
-enum MolrsStatus molrs_block_get_U_mut(struct MolrsBlockHandle *block, uint32_t col_key_id,
-                                        uint64_t **out_ptr, uintptr_t *out_len);
-
-/* Copy path */
-enum MolrsStatus molrs_block_copy_F(struct MolrsBlockHandle block, uint32_t col_key_id,
-                                     F *out_buf, uintptr_t buf_len);
-enum MolrsStatus molrs_block_copy_I(struct MolrsBlockHandle block, uint32_t col_key_id,
-                                     int32_t *out_buf, uintptr_t buf_len);
-enum MolrsStatus molrs_block_copy_U(struct MolrsBlockHandle block, uint32_t col_key_id,
-                                     uint64_t *out_buf, uintptr_t buf_len);
+/* molrs_block_get / get_mut / copy are real functions and come from cbindgen. */
 
 /* Insert (set) columns */
 enum MolrsStatus molrs_block_set_F(struct MolrsBlockHandle *block, uint32_t col_key_id,

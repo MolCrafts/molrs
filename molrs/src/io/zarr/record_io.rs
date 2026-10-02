@@ -938,7 +938,8 @@ mod tests {
         frame
             .get("atoms")
             .expect("the frame carries an atoms block")
-            .get_float("x")
+            .get("x")
+            .and_then(|c| c.as_float())
             .expect("column x arrived as f64")
             .iter()
             .copied()

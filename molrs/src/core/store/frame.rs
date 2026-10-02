@@ -395,7 +395,7 @@ impl Frame {
     ///
     /// for (_name, block) in frame.iter_mut() {
     ///     // Can mutate blocks
-    ///     if let Some(x) = block.get_float_mut("x") {
+    ///     if let Some(x) = block.get_mut("x").and_then(|c| c.as_float_mut()) {
     ///         x[[0]] = 99.0 as F;
     ///     }
     /// }
@@ -515,12 +515,12 @@ impl Frame {
     /// // inside the selection, and it becomes (1,0).
     /// let one = frame.subset("atoms", &[2, 1]).unwrap();
     ///
-    /// let x: Vec<F> = one["atoms"].get_float("x").unwrap().iter().copied().collect();
+    /// let x: Vec<F> = one["atoms"].get("x").and_then(|c| c.as_float()).unwrap().iter().copied().collect();
     /// assert_eq!(x, vec![2.0, 1.0]);
     /// assert_eq!(one["bonds"].nrows(), Some(1));
-    /// assert_eq!(one["bonds"].get_uint("atomi").unwrap()[[0]], 1);
-    /// assert_eq!(one["bonds"].get_uint("atomj").unwrap()[[0]], 0);
-    /// assert_eq!(one["bonds"].get_uint("type_id").unwrap()[[0]], 11);
+    /// assert_eq!(one["bonds"].get("atomi").and_then(|c| c.as_uint()).unwrap()[[0]], 1);
+    /// assert_eq!(one["bonds"].get("atomj").and_then(|c| c.as_uint()).unwrap()[[0]], 0);
+    /// assert_eq!(one["bonds"].get("type_id").and_then(|c| c.as_uint()).unwrap()[[0]], 11);
     /// ```
     pub fn subset(&self, block: &str, rows: &[usize]) -> Result<Frame, MolRsError> {
         let target = self.get(block).ok_or_else(|| {
@@ -567,12 +567,16 @@ impl Frame {
             };
             let mut ends = Vec::with_capacity(columns.len());
             for col in &columns {
-                let values = b.get_uint(col).filter(|v| v.ndim() == 1).ok_or_else(|| {
-                    MolRsError::validation(format!(
-                        "cannot subset '{block}': relation block '{name}' has no 1-D \
+                let values = b
+                    .get(col)
+                    .and_then(|c| c.as_uint())
+                    .filter(|v| v.ndim() == 1)
+                    .ok_or_else(|| {
+                        MolRsError::validation(format!(
+                            "cannot subset '{block}': relation block '{name}' has no 1-D \
                          UInt endpoint column '{col}'"
-                    ))
-                })?;
+                        ))
+                    })?;
                 ends.push(values);
             }
             let kept: Vec<usize> = (0..b.nrows().unwrap_or(0))
@@ -584,7 +588,8 @@ impl Frame {
             let mut cut = b.select_rows(&kept)?;
             for col in &columns {
                 let values = cut
-                    .get_uint_mut(col)
+                    .get_mut(col)
+                    .and_then(|c| c.as_uint_mut())
                     .expect("select_rows keeps every column and its dtype");
                 for v in values.iter_mut() {
                     let new = new_row[*v as usize].expect("kept rows lie in the selection");
@@ -651,8 +656,8 @@ impl Frame {
     ///
     /// let three = frame.replicate(3).unwrap();
     /// assert_eq!(three["atoms"].nrows(), Some(6));
-    /// let i: Vec<Idx> = three["bonds"].get_uint("atomi").unwrap().iter().copied().collect();
-    /// let j: Vec<Idx> = three["bonds"].get_uint("atomj").unwrap().iter().copied().collect();
+    /// let i: Vec<Idx> = three["bonds"].get("atomi").and_then(|c| c.as_uint()).unwrap().iter().copied().collect();
+    /// let j: Vec<Idx> = three["bonds"].get("atomj").and_then(|c| c.as_uint()).unwrap().iter().copied().collect();
     /// assert_eq!((i, j), (vec![0, 2, 4], vec![1, 3, 5]));
     /// ```
     pub fn replicate(&self, count: usize) -> Result<Frame, MolRsError> {
@@ -690,7 +695,8 @@ impl Frame {
                     .unwrap_or(0);
                 for col in &columns {
                     let values = tiled
-                        .get_uint_mut(col)
+                        .get_mut(col)
+                        .and_then(|c| c.as_uint_mut())
                         .filter(|v| v.ndim() == 1)
                         .ok_or_else(|| {
                             MolRsError::validation(format!(
@@ -843,8 +849,8 @@ mod tests {
 
         let sub = frame.subset("atoms", &[1]).unwrap();
 
-        let src = frame["cell"].get_float("lx").unwrap();
-        let dst = sub["cell"].get_float("lx").unwrap();
+        let src = frame["cell"].get("lx").and_then(|c| c.as_float()).unwrap();
+        let dst = sub["cell"].get("lx").and_then(|c| c.as_float()).unwrap();
         assert_ne!(src.as_ptr(), dst.as_ptr());
         assert_eq!(dst[[0]], 10.0);
     }
@@ -863,8 +869,18 @@ mod tests {
 
         let copy = frame.deep_copy();
 
-        let src = frame.get("atoms").unwrap().get_float("x").unwrap();
-        let dst = copy.get("atoms").unwrap().get_float("x").unwrap();
+        let src = frame
+            .get("atoms")
+            .unwrap()
+            .get("x")
+            .and_then(|c| c.as_float())
+            .unwrap();
+        let dst = copy
+            .get("atoms")
+            .unwrap()
+            .get("x")
+            .and_then(|c| c.as_float())
+            .unwrap();
         assert_ne!(src.as_ptr(), dst.as_ptr());
         assert_eq!(dst.as_slice_memory_order(), Some(&[1.0 as F, 2.0][..]));
         assert_eq!(copy.meta.get("step"), frame.meta.get("step"));
@@ -908,10 +924,13 @@ mod tests {
 
         // Mutable index
         let atoms_mut = &mut frame["atoms"];
-        if let Some(x) = atoms_mut.get_float_mut("x") {
+        if let Some(x) = atoms_mut.get_mut("x").and_then(|c| c.as_float_mut()) {
             x[[0]] = 99.0;
         }
-        assert_eq!(frame["atoms"].get_float("x").unwrap()[[0]], 99.0);
+        assert_eq!(
+            frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap()[[0]],
+            99.0
+        );
     }
 
     #[test]
@@ -949,12 +968,15 @@ mod tests {
         frame.insert("atoms", block);
 
         for (_name, block) in frame.iter_mut() {
-            if let Some(x) = block.get_float_mut("x") {
+            if let Some(x) = block.get_mut("x").and_then(|c| c.as_float_mut()) {
                 x[[0]] = 42.0;
             }
         }
 
-        assert_eq!(frame["atoms"].get_float("x").unwrap()[[0]], 42.0);
+        assert_eq!(
+            frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap()[[0]],
+            42.0
+        );
     }
 
     #[test]
@@ -967,12 +989,15 @@ mod tests {
         frame.insert("atoms", block);
 
         for block in frame.values_mut() {
-            if let Some(x) = block.get_float_mut("x") {
+            if let Some(x) = block.get_mut("x").and_then(|c| c.as_float_mut()) {
                 x[[0]] = 77.0;
             }
         }
 
-        assert_eq!(frame["atoms"].get_float("x").unwrap()[[0]], 77.0);
+        assert_eq!(
+            frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap()[[0]],
+            77.0
+        );
     }
 
     #[test]
@@ -1080,7 +1105,8 @@ mod tests {
         assert!(frame["atoms"].contains_key("position_x"));
         assert_eq!(
             frame["atoms"]
-                .get_float("position_x")
+                .get("position_x")
+                .and_then(|c| c.as_float())
                 .unwrap()
                 .as_slice_memory_order()
                 .unwrap(),
@@ -1116,7 +1142,8 @@ mod tests {
         assert!(frame.contains_key("molecules"));
         assert_eq!(
             frame["molecules"]
-                .get_float("x")
+                .get("x")
+                .and_then(|c| c.as_float())
                 .unwrap()
                 .as_slice_memory_order()
                 .unwrap(),
@@ -1177,7 +1204,8 @@ mod tests {
 
     fn uint_values(frame: &Frame, block: &str, col: &str) -> Vec<Idx> {
         frame[block]
-            .get_uint(col)
+            .get(col)
+            .and_then(|c| c.as_uint())
             .unwrap_or_else(|| panic!("{block}.{col} is a UInt column"))
             .iter()
             .copied()
@@ -1186,7 +1214,8 @@ mod tests {
 
     fn float_values(frame: &Frame, block: &str, col: &str) -> Vec<F> {
         frame[block]
-            .get_float(col)
+            .get(col)
+            .and_then(|c| c.as_float())
             .unwrap_or_else(|| panic!("{block}.{col} is a Float column"))
             .iter()
             .copied()
@@ -1425,8 +1454,16 @@ mod tests {
         let frame = chain_of_four();
         let one = frame.replicate(1).unwrap();
         assert_ne!(
-            frame["atoms"].get_float("x").unwrap().as_ptr(),
-            one["atoms"].get_float("x").unwrap().as_ptr()
+            frame["atoms"]
+                .get("x")
+                .and_then(|c| c.as_float())
+                .unwrap()
+                .as_ptr(),
+            one["atoms"]
+                .get("x")
+                .and_then(|c| c.as_float())
+                .unwrap()
+                .as_ptr()
         );
     }
 

@@ -147,12 +147,25 @@ pub fn mmff_oop_ctor(
     let block = frame
         .get(IMPROPERS)
         .ok_or("mmff_oop: missing \"impropers\"")?;
-    let ic = block.get_uint("atomi").ok_or("missing atomi")?;
-    let jc = block.get_uint("atomj").ok_or("missing atomj")?;
-    let kc = block.get_uint("atomk").ok_or("missing atomk")?;
-    let lc = block.get_uint("atoml").ok_or("missing atoml")?;
+    let ic = block
+        .get("atomi")
+        .and_then(|c| c.as_uint())
+        .ok_or("missing atomi")?;
+    let jc = block
+        .get("atomj")
+        .and_then(|c| c.as_uint())
+        .ok_or("missing atomj")?;
+    let kc = block
+        .get("atomk")
+        .and_then(|c| c.as_uint())
+        .ok_or("missing atomk")?;
+    let lc = block
+        .get("atoml")
+        .and_then(|c| c.as_uint())
+        .ok_or("missing atoml")?;
     let koopc = block
-        .get_float("koop")
+        .get("koop")
+        .and_then(|c| c.as_float())
         .ok_or("mmff_oop: missing \"koop\" column (typifier did not bake oop params)")?;
 
     let n = ic.len();

@@ -45,8 +45,8 @@ def test_storage_units_and_observables_pickle_by_logical_state() -> None:
     restored = roundtrip(block)
     assert type(restored) is molrs.Block
     assert restored.dtype("sample") == "i16"
-    assert restored.view("sample").tolist() == [1, 2]
-    assert np.asarray(restored.view("label")).tolist() == ["left", "right"]
+    assert restored["sample"].tolist() == [1, 2]
+    assert restored["label"].tolist() == ["left", "right"]
     assert restored.structural_shape == [1, 2]
 
     empty_rows = molrs.Block()

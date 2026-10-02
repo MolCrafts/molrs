@@ -66,7 +66,7 @@ use wasm_bindgen::prelude::*;
 ///
 /// const frame = reader.read(0); // first frame
 /// const atoms = frame.get("atoms");
-/// const x = atoms.get("x");
+/// const x = atoms.view("x"); // zero-copy Float64Array
 /// ```
 #[wasm_bindgen(js_name = XYZReader)]
 pub struct XyzReader {
@@ -176,8 +176,8 @@ impl XyzReader {
 /// const reader = new PDBReader(pdbContent);
 /// const frame = reader.read(0);
 /// const atoms = frame.get("atoms");
-/// const names = atoms.get("name"); // ["CA", "CB", ...]
-/// const x = atoms.get("x");
+/// const names = atoms.copy("name"); // ["CA", "CB", ...], an owned string[]
+/// const x = atoms.view("x"); // zero-copy Float64Array
 /// ```
 #[wasm_bindgen(js_name = PDBReader)]
 pub struct PdbReader {
@@ -472,7 +472,7 @@ impl LammpsDumpReader {
 /// const reader = new SDFReader(sdfContent);
 /// const frame = reader.read(0);
 /// const atoms = frame.get("atoms");
-/// const x = atoms.get("x");
+/// const x = atoms.view("x"); // zero-copy Float64Array
 /// ```
 #[wasm_bindgen(js_name = SDFReader)]
 pub struct SdfReader {
@@ -555,7 +555,7 @@ impl SdfReader {
 ///
 /// const frame = reader.read(0); // first frame
 /// const atoms = frame.get("atoms");
-/// const x = atoms.get("x");
+/// const x = atoms.view("x"); // zero-copy Float64Array
 /// ```
 #[wasm_bindgen(js_name = DCDReader)]
 pub struct DcdReader {

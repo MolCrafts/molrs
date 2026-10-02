@@ -177,11 +177,26 @@ pub fn dihedral_periodic_ctor(
     let block = frame
         .get(DIHEDRALS)
         .ok_or("dihedral_periodic: missing \"dihedrals\" block")?;
-    let ic = block.get_uint("atomi").ok_or("missing atomi")?;
-    let jc = block.get_uint("atomj").ok_or("missing atomj")?;
-    let kc = block.get_uint("atomk").ok_or("missing atomk")?;
-    let lc = block.get_uint("atoml").ok_or("missing atoml")?;
-    let tc = block.get_string("type").ok_or("missing type")?;
+    let ic = block
+        .get("atomi")
+        .and_then(|c| c.as_uint())
+        .ok_or("missing atomi")?;
+    let jc = block
+        .get("atomj")
+        .and_then(|c| c.as_uint())
+        .ok_or("missing atomj")?;
+    let kc = block
+        .get("atomk")
+        .and_then(|c| c.as_uint())
+        .ok_or("missing atomk")?;
+    let lc = block
+        .get("atoml")
+        .and_then(|c| c.as_uint())
+        .ok_or("missing atoml")?;
+    let tc = block
+        .get("type")
+        .and_then(|c| c.as_string())
+        .ok_or("missing type")?;
 
     let n = ic.len();
     let (mut ai, mut aj, mut ak, mut al, mut terms) = (

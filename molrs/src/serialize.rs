@@ -554,11 +554,25 @@ mod tests {
         let back: Block = serde_json::from_str(&json).unwrap();
         assert_eq!(back.nrows(), Some(3));
         assert_eq!(
-            back.get_float("x").unwrap().as_slice().unwrap(),
+            back.get("x")
+                .and_then(|c| c.as_float())
+                .unwrap()
+                .as_slice()
+                .unwrap(),
             &[0.5, -1.25, 3.0]
         );
-        assert_eq!(back.get_int("seq").unwrap().as_slice().unwrap(), &[1, 2, 3]);
-        assert_eq!(back.get_string("name").unwrap()[2], "Ω");
+        assert_eq!(
+            back.get("seq")
+                .and_then(|c| c.as_int())
+                .unwrap()
+                .as_slice()
+                .unwrap(),
+            &[1, 2, 3]
+        );
+        assert_eq!(
+            back.get("name").and_then(|c| c.as_string()).unwrap()[2],
+            "Ω"
+        );
     }
 
     #[test]

@@ -973,7 +973,8 @@ const DEFAULT_PRECISION: f32 = 1000.0;
 
 fn axis<FA: FrameAccess>(frame: &FA, key: &str) -> Option<Vec<f64>> {
     frame
-        .get_float("atoms", key)
+        .column("atoms", key)
+        .and_then(|c| c.as_float())
         .map(|view| view.iter().copied().collect::<Vec<f64>>())
 }
 
@@ -1374,9 +1375,21 @@ mod tests {
                 let hi = lo + entry.byte_len as usize;
                 let parsed = parse_frame_bytes(&bytes[lo..hi]).expect("parse xtc");
                 assert_eq!(parsed.get("atoms").unwrap().nrows().unwrap(), natoms);
-                let x = parsed.get("atoms").unwrap().get_float("x").unwrap();
+                let x = parsed
+                    .get("atoms")
+                    .unwrap()
+                    .get("x")
+                    .and_then(|c| c.as_float())
+                    .unwrap();
                 assert!(
-                    (x[0] - frames[i].get("atoms").unwrap().get_float("x").unwrap()[0]).abs()
+                    (x[0]
+                        - frames[i]
+                            .get("atoms")
+                            .unwrap()
+                            .get("x")
+                            .and_then(|c| c.as_float())
+                            .unwrap()[0])
+                        .abs()
                         < 0.02,
                     "xtc coord drift"
                 );

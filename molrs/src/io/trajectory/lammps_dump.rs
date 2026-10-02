@@ -995,32 +995,33 @@ fn write_lammps_dump_frame<W: Write>(
                 for (ci, name) in ordered.iter().map(String::as_str).enumerate() {
                     let s = match col_types[ci] {
                         ColumnType::Unsigned => {
-                            if let Some(arr) = atoms.get_uint_view(name) {
+                            if let Some(arr) = atoms.column(name).and_then(|c| c.as_uint()) {
                                 format!("{}", arr[row])
                             } else {
                                 String::new()
                             }
                         }
                         ColumnType::Integer => {
-                            if let Some(arr) = atoms.get_int_view(name) {
+                            if let Some(arr) = atoms.column(name).and_then(|c| c.as_int()) {
                                 format!("{}", arr[row])
-                            } else if let Some(arr) = atoms.get_float_view(name) {
+                            } else if let Some(arr) = atoms.column(name).and_then(|c| c.as_float())
+                            {
                                 format!("{}", arr[row] as I)
                             } else {
                                 "0".to_string()
                             }
                         }
                         ColumnType::Float => {
-                            if let Some(arr) = atoms.get_float_view(name) {
+                            if let Some(arr) = atoms.column(name).and_then(|c| c.as_float()) {
                                 format!("{:.6}", arr[row])
-                            } else if let Some(arr) = atoms.get_int_view(name) {
+                            } else if let Some(arr) = atoms.column(name).and_then(|c| c.as_int()) {
                                 format!("{:.6}", arr[row] as F)
                             } else {
                                 "0.000000".to_string()
                             }
                         }
                         ColumnType::String => {
-                            if let Some(arr) = atoms.get_string_view(name) {
+                            if let Some(arr) = atoms.column(name).and_then(|c| c.as_string()) {
                                 arr[row].clone()
                             } else {
                                 "X".to_string()
@@ -1123,10 +1124,12 @@ fn write_lammps_dump_local_frame<W: Write>(
     }
 
     let atomi = frame
-        .get_uint("bonds", "atomi")
+        .column("bonds", "atomi")
+        .and_then(|c| c.as_uint())
         .ok_or_else(|| err_mapper("bonds block missing atomi"))?;
     let atomj = frame
-        .get_uint("bonds", "atomj")
+        .column("bonds", "atomj")
+        .and_then(|c| c.as_uint())
         .ok_or_else(|| err_mapper("bonds block missing atomj"))?;
     let atomi = atomi
         .as_slice()
@@ -1135,10 +1138,12 @@ fn write_lammps_dump_local_frame<W: Write>(
         .as_slice()
         .ok_or_else(|| err_mapper("bonds.atomj is not contiguous"))?;
     let btype = frame
-        .get_uint("bonds", "type_id")
+        .column("bonds", "type_id")
+        .and_then(|c| c.as_uint())
         .and_then(|a| a.as_slice().map(|s| s.to_vec()));
     let atom_ids = frame
-        .get_uint("atoms", "id")
+        .column("atoms", "id")
+        .and_then(|c| c.as_uint())
         .and_then(|a| a.as_slice().map(|s| s.to_vec()));
 
     let id_of = |idx: Idx| -> Idx {
@@ -1185,29 +1190,31 @@ fn dump_block_lines(
         for (ci, &name) in ordered.iter().enumerate() {
             let s = match col_types[ci] {
                 ColumnType::Unsigned => block
-                    .get_uint_view(name)
+                    .column(name)
+                    .and_then(|c| c.as_uint())
                     .map(|arr| format!("{}", arr[row]))
                     .unwrap_or_default(),
                 ColumnType::Integer => {
-                    if let Some(arr) = block.get_int_view(name) {
+                    if let Some(arr) = block.column(name).and_then(|c| c.as_int()) {
                         format!("{}", arr[row])
-                    } else if let Some(arr) = block.get_float_view(name) {
+                    } else if let Some(arr) = block.column(name).and_then(|c| c.as_float()) {
                         format!("{}", arr[row] as I)
                     } else {
                         "0".to_string()
                     }
                 }
                 ColumnType::Float => {
-                    if let Some(arr) = block.get_float_view(name) {
+                    if let Some(arr) = block.column(name).and_then(|c| c.as_float()) {
                         format!("{:.6}", arr[row])
-                    } else if let Some(arr) = block.get_int_view(name) {
+                    } else if let Some(arr) = block.column(name).and_then(|c| c.as_int()) {
                         format!("{:.6}", arr[row] as F)
                     } else {
                         "0.000000".to_string()
                     }
                 }
                 ColumnType::String => block
-                    .get_string_view(name)
+                    .column(name)
+                    .and_then(|c| c.as_string())
                     .map(|arr| arr[row].clone())
                     .unwrap_or_else(|| "X".to_string()),
             };
@@ -1714,8 +1721,11 @@ ITEM: ATOMS id type x y z
         let mut reader = LAMMPSTrajReader::new(cursor(dump));
         let frames = crate::io::reader::collect_frames(&mut reader).unwrap();
         let atoms = frames[0].get("atoms").expect("atoms block");
-        let ids = atoms.get_uint("id").expect("id column");
-        let xs = atoms.get_float("x").expect("x column");
+        let ids = atoms
+            .get("id")
+            .and_then(|c| c.as_uint())
+            .expect("id column");
+        let xs = atoms.get("x").and_then(|c| c.as_float()).expect("x column");
         // File order preserved: 3, 1, 2 (matching x: 9.0, 1.0, 5.0).
         assert_eq!(ids.as_slice().unwrap(), &[3, 1, 2]);
         assert_eq!(xs.as_slice().unwrap(), &[9.0, 1.0, 5.0]);
@@ -1743,7 +1753,10 @@ ITEM: ENTRIES batom1 batom2 btype
         let mut reader = LAMMPSTrajReader::new(cursor(dump));
         let frames = crate::io::reader::collect_frames(&mut reader).unwrap();
         let entries = frames[0].get("entries").expect("entries block");
-        let batom1 = entries.get_int("batom1").expect("batom1");
+        let batom1 = entries
+            .get("batom1")
+            .and_then(|c| c.as_int())
+            .expect("batom1");
         // File order: 3, 1, 2 (no sort applied).
         assert_eq!(batom1.as_slice().unwrap(), &[3, 1, 2]);
     }
@@ -1802,14 +1815,23 @@ ITEM: ATOMS id type x y z vx vy vz q c_pe
 
         // Custom columns should be float. LAMMPS's `q` is renamed to the
         // canonical `charge` on the way out of the reader.
-        let q = atoms.get_float(keys::CHARGE).expect("charge column");
+        let q = atoms
+            .get(keys::CHARGE)
+            .and_then(|c| c.as_float())
+            .expect("charge column");
         assert!((q[0] - (-0.5)).abs() < 1e-6);
 
-        let pe = atoms.get_float("c_pe").expect("c_pe column");
+        let pe = atoms
+            .get("c_pe")
+            .and_then(|c| c.as_float())
+            .expect("c_pe column");
         assert!((pe[0] - (-10.5)).abs() < 1e-4);
 
         // Velocities should be float
-        let vx = atoms.get_float("vx").expect("vx column");
+        let vx = atoms
+            .get("vx")
+            .and_then(|c| c.as_float())
+            .expect("vx column");
         assert!((vx[0] - 0.1).abs() < 1e-6);
     }
 
@@ -1832,15 +1854,15 @@ ITEM: ATOMS id type xu yu zu
         let frame = reader.read().unwrap().expect("parse");
         let atoms = frame.get("atoms").expect("atoms");
 
-        let x = atoms.get_float("xu").expect("xu");
-        let y = atoms.get_float("yu").expect("yu");
-        let z = atoms.get_float("zu").expect("zu");
+        let x = atoms.get("xu").and_then(|c| c.as_float()).expect("xu");
+        let y = atoms.get("yu").and_then(|c| c.as_float()).expect("yu");
+        let z = atoms.get("zu").and_then(|c| c.as_float()).expect("zu");
 
         assert_eq!(x.iter().copied().collect::<Vec<_>>(), vec![1.0, 4.0]);
         assert_eq!(y.iter().copied().collect::<Vec<_>>(), vec![2.0, 5.0]);
         assert_eq!(z.iter().copied().collect::<Vec<_>>(), vec![3.0, 6.0]);
         assert!(
-            atoms.get_float("x").is_none(),
+            atoms.get("x").and_then(|c| c.as_float()).is_none(),
             "reader should not synthesize x/y/z from xu/yu/zu"
         );
     }
@@ -1864,15 +1886,15 @@ ITEM: ATOMS id type xs ys zs
         let frame = reader.read().unwrap().expect("parse");
         let atoms = frame.get("atoms").expect("atoms");
 
-        let x = atoms.get_float("xs").expect("xs");
-        let y = atoms.get_float("ys").expect("ys");
-        let z = atoms.get_float("zs").expect("zs");
+        let x = atoms.get("xs").and_then(|c| c.as_float()).expect("xs");
+        let y = atoms.get("ys").and_then(|c| c.as_float()).expect("ys");
+        let z = atoms.get("zs").and_then(|c| c.as_float()).expect("zs");
 
         assert_eq!(x.iter().copied().collect::<Vec<_>>(), vec![0.0, 0.5]);
         assert_eq!(y.iter().copied().collect::<Vec<_>>(), vec![0.0, 0.5]);
         assert_eq!(z.iter().copied().collect::<Vec<_>>(), vec![0.0, 0.5]);
         assert!(
-            atoms.get_float("x").is_none(),
+            atoms.get("x").and_then(|c| c.as_float()).is_none(),
             "reader should preserve source columns only"
         );
     }
@@ -1895,9 +1917,9 @@ ITEM: ATOMS id type xs ys zs
         let frame = reader.read().unwrap().expect("parse");
         let atoms = frame.get("atoms").expect("atoms");
 
-        let x = atoms.get_float("xs").expect("xs");
-        let y = atoms.get_float("ys").expect("ys");
-        let z = atoms.get_float("zs").expect("zs");
+        let x = atoms.get("xs").and_then(|c| c.as_float()).expect("xs");
+        let y = atoms.get("ys").and_then(|c| c.as_float()).expect("ys");
+        let z = atoms.get("zs").and_then(|c| c.as_float()).expect("zs");
 
         assert!((x[0] - 0.25).abs() < 1e-6);
         assert!((y[0] - 0.5).abs() < 1e-6);
@@ -1921,9 +1943,18 @@ ITEM: ATOMS id type xs yu zu
         let mut reader = LAMMPSTrajReader::new(cursor(dump));
         let frame = reader.read().unwrap().expect("mixed coords parse");
         let atoms = frame.get("atoms").expect("atoms");
-        assert_eq!(atoms.get_float("xs").expect("xs")[0], 0.5);
-        assert_eq!(atoms.get_float("yu").expect("yu")[0], 5.0);
-        assert_eq!(atoms.get_float("zu").expect("zu")[0], 5.0);
+        assert_eq!(
+            atoms.get("xs").and_then(|c| c.as_float()).expect("xs")[0],
+            0.5
+        );
+        assert_eq!(
+            atoms.get("yu").and_then(|c| c.as_float()).expect("yu")[0],
+            5.0
+        );
+        assert_eq!(
+            atoms.get("zu").and_then(|c| c.as_float()).expect("zu")[0],
+            5.0
+        );
     }
 
     #[test]
@@ -1943,7 +1974,13 @@ ITEM: ATOMS id type q
         let mut reader = LAMMPSTrajReader::new(cursor(dump));
         let frame = reader.read().unwrap().expect("parse");
         let atoms = frame.get("atoms").expect("atoms");
-        assert_eq!(atoms.get_float(keys::CHARGE).expect("charge")[0], -0.5);
+        assert_eq!(
+            atoms
+                .get(keys::CHARGE)
+                .and_then(|c| c.as_float())
+                .expect("charge")[0],
+            -0.5
+        );
     }
 
     #[test]
@@ -1965,8 +2002,20 @@ ITEM: ATOMS id type mol q x y z
         let frame = reader.read().unwrap().expect("parse");
         let atoms = frame.get("atoms").expect("atoms");
 
-        assert_eq!(atoms.get_float(keys::CHARGE).expect("charge")[0], -0.5);
-        assert_eq!(atoms.get_uint(keys::MOL_ID).expect("mol_id")[0], 7);
+        assert_eq!(
+            atoms
+                .get(keys::CHARGE)
+                .and_then(|c| c.as_float())
+                .expect("charge")[0],
+            -0.5
+        );
+        assert_eq!(
+            atoms
+                .get(keys::MOL_ID)
+                .and_then(|c| c.as_uint())
+                .expect("mol_id")[0],
+            7
+        );
         assert!(
             atoms.get("q").is_none(),
             "raw `q` must not survive the reader"

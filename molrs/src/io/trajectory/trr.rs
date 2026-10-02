@@ -498,7 +498,8 @@ impl<R: BufRead + Seek> TrajectoryReader for TrrReader<R> {
 
 fn axis<FA: FrameAccess>(frame: &FA, key: &str) -> Option<Vec<f64>> {
     frame
-        .get_float("atoms", key)
+        .column("atoms", key)
+        .and_then(|c| c.as_float())
         .map(|view| view.iter().copied().collect::<Vec<f64>>())
 }
 
@@ -859,9 +860,22 @@ mod tests {
             let lo = entry.byte_offset as usize;
             let hi = lo + entry.byte_len as usize;
             let parsed = parse_frame_bytes(&bytes[lo..hi]).expect("parse trr");
-            let x = parsed.get("atoms").unwrap().get_float("x").unwrap();
+            let x = parsed
+                .get("atoms")
+                .unwrap()
+                .get("x")
+                .and_then(|c| c.as_float())
+                .unwrap();
             assert!(
-                (x[0] - frames[i].get("atoms").unwrap().get_float("x").unwrap()[0]).abs() < 1e-5
+                (x[0]
+                    - frames[i]
+                        .get("atoms")
+                        .unwrap()
+                        .get("x")
+                        .and_then(|c| c.as_float())
+                        .unwrap()[0])
+                    .abs()
+                    < 1e-5
             );
         }
     }

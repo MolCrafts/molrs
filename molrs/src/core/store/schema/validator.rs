@@ -159,7 +159,7 @@ impl Validator {
         // `check_columns`. Reading it as uint here would return None and
         // silently skip the range check — which is exactly the failure this
         // module exists to remove, so the dtype report is what covers it.
-        let Some(values) = frame.get_uint(name, col) else {
+        let Some(values) = frame.column(name, col).and_then(|c| c.as_uint()) else {
             return;
         };
         let mut reported = 0usize;

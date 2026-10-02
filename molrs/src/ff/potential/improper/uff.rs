@@ -183,21 +183,37 @@ pub fn uff_inversion_ctor(
         }));
     }
     let i = block
-        .get_uint("atomi")
+        .get("atomi")
+        .and_then(|c| c.as_uint())
         .ok_or("uff_inversion: missing atomi")?;
     let j = block
-        .get_uint("atomj")
+        .get("atomj")
+        .and_then(|c| c.as_uint())
         .ok_or("uff_inversion: missing atomj")?;
     let k = block
-        .get_uint("atomk")
+        .get("atomk")
+        .and_then(|c| c.as_uint())
         .ok_or("uff_inversion: missing atomk")?;
     let l = block
-        .get_uint("atoml")
+        .get("atoml")
+        .and_then(|c| c.as_uint())
         .ok_or("uff_inversion: missing atoml")?;
-    let kk = block.get_float("K").ok_or("uff_inversion: missing K")?;
-    let c0 = block.get_float("c0").ok_or("uff_inversion: missing c0")?;
-    let c1 = block.get_float("c1").ok_or("uff_inversion: missing c1")?;
-    let c2 = block.get_float("c2").ok_or("uff_inversion: missing c2")?;
+    let kk = block
+        .get("K")
+        .and_then(|c| c.as_float())
+        .ok_or("uff_inversion: missing K")?;
+    let c0 = block
+        .get("c0")
+        .and_then(|c| c.as_float())
+        .ok_or("uff_inversion: missing c0")?;
+    let c1 = block
+        .get("c1")
+        .and_then(|c| c.as_float())
+        .ok_or("uff_inversion: missing c1")?;
+    let c2 = block
+        .get("c2")
+        .and_then(|c| c.as_float())
+        .ok_or("uff_inversion: missing c2")?;
     let n = i.len();
     Ok(Member::indexed(UffInversion {
         atom_i: (0..n).map(|t| i[t] as usize).collect(),

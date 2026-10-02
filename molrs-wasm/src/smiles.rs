@@ -39,7 +39,7 @@ use wasm_bindgen::prelude::*;
 ///
 /// const frame = ir.toFrame();
 /// const atoms = frame.get("atoms");
-/// console.log(atoms.get("element")); // ["C", "C", "O", "H", ...]
+/// console.log(atoms.copy("element")); // ["C", "C", "O", "H", ...], an owned copy
 /// ```
 #[wasm_bindgen(js_name = SmilesIR)]
 pub struct WasmSmilesIR {

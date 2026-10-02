@@ -121,7 +121,8 @@ fn column_to_positions<'a, FA: FrameAccess>(
     col: &'static str,
 ) -> Result<Positions<'a>, ComputeError> {
     let view = frame
-        .get_float("atoms", col)
+        .column("atoms", col)
+        .and_then(|c| c.as_float())
         .ok_or(ComputeError::MissingColumn {
             block: "atoms",
             col,

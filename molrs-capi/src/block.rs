@@ -2,26 +2,25 @@
 //!
 //! A **Block** is a heterogeneous column store: each column is a
 //! contiguous, typed ndarray keyed by an interned string.  This module
-//! provides three access patterns for every supported type (`F`, `I`, `U`):
+//! One read returns the column's bytes. The dtype is an out-parameter,
+//! not part of the function name.
 //!
-//! | Pattern   | Functions           | Semantics |
-//! |-----------|---------------------|-----------|
-//! | **Pointer (read)**  | `molrs_block_get_F/I/U` | Zero-copy read; pointer valid while store lock held |
-//! | **Pointer (write)** | `molrs_block_get_F/I/U_mut` | Zero-copy mutable access; version bumped |
-//! | **Copy**  | `molrs_block_copy_F/I/U` | Copies data into a caller-provided buffer |
+//! | Pattern   | Function | Semantics |
+//! |-----------|----------|-----------|
+//! | **Pointer (read)**  | `molrs_block_get` | Zero-copy bytes; `out_dtype` is the stored variant |
+//! | **Pointer (write)** | `molrs_block_get_mut` | Zero-copy mutable bytes; version bumped |
+//! | **Copy**  | `molrs_block_copy` | Copies the column's bytes into a caller buffer |
 //! | **Insert**| `molrs_block_set_F/I/U` | Copies caller data into a new column |
 //!
-//! Additional query functions: [`molrs_block_nrows`], [`molrs_block_ncols`],
-//! [`molrs_block_col_dtype`], [`molrs_block_col_shape`].
+//! `get`, `get_mut`, and `copy` succeed for every fixed-width dtype the
+//! store holds. A string column has no flat scalar buffer and returns
+//! `TypeMismatch`, which is not `KeyNotFound`. Shape and dtype stay on
+//! [`molrs_block_col_shape`] and [`molrs_block_col_dtype`].
 //!
-//! # Type mapping
-//!
-//! | Rust type | C typedef (default) | C typedef (wide features) |
-//! |-----------|---------------------|---------------------------|
-//! | `F`       | `float`             | `double`                  |
-//! | `I`       | `int32_t`           | `int64_t`                 |
-//! | `Idx`     | `uint64_t`          | —                         |
+//! `F` is `f64`, `I` is `i32`, `Idx` is `u64`. `out_len` is an element
+//! count. `molrs_block_copy`'s `buf_bytes` is a byte capacity.
 
+use molrs::store::block::{Column, DType};
 use molrs::types::{F, I, Idx};
 use ndarray::ArrayD;
 
@@ -156,8 +155,8 @@ pub unsafe extern "C" fn molrs_block_ncols(
 
 /// Query the data type of a column.
 ///
-/// The returned [`MolrsDType`] tells the caller which accessor family
-/// to use (e.g. `molrs_block_get_F` for `Float`).
+/// The returned [`MolrsDType`] is the stored variant. An `i64` column is
+/// `Int64`, not `Int`. Pair it with [`molrs_block_get`](crate::molrs_block_get).
 ///
 /// # C signature
 ///
@@ -285,326 +284,288 @@ pub unsafe extern "C" fn molrs_block_col_shape(
 }
 
 // ---------------------------------------------------------------------------
-// Zero-copy READ
+// Zero-copy read, mutable read, and copy
 // ---------------------------------------------------------------------------
 
-/// Macro to generate typed zero-copy read functions.
-///
-/// Each generated function returns a read-only pointer into the column's
-/// contiguous storage.
-///
-/// # Generated C signatures
-///
-/// ```c
-/// MolrsStatus molrs_block_get_F(MolrsBlockHandle block, uint32_t col_key_id,
-///                                const molrs_float_t** out_ptr, size_t* out_len);
-/// MolrsStatus molrs_block_get_I(MolrsBlockHandle block, uint32_t col_key_id,
-///                                const molrs_int_t** out_ptr, size_t* out_len);
-/// MolrsStatus molrs_block_get_U(MolrsBlockHandle block, uint32_t col_key_id,
-///                                const molrs_uint_t** out_ptr, size_t* out_len);
-/// ```
-///
-/// # Safety (all generated functions)
-///
-/// * `block` must be a live block handle.
-/// * `out_ptr` and `out_len` must be valid, non-null, writable pointers.
-/// * The returned data pointer is valid only while the global store lock
-///   is held.  In practice, because the lock is released before the
-///   function returns, the pointer is valid until the block is mutated
-///   or the frame is dropped.  The caller must not use the pointer after
-///   calling any mutating `molrs_*` function on the same block/frame.
-macro_rules! impl_col_ptr {
-    ($fn_name:ident, $ty:ty, $getter:ident, $dtype_name:expr) => {
-        #[doc = concat!("Get a read-only pointer to a contiguous `", $dtype_name, "` column.")]
-        ///
-        /// On success, `*out_ptr` points to the first element and
-        /// `*out_len` is set to the total number of elements (product of
-        /// all shape dimensions).
-        ///
-        /// The pointer is valid until the block is mutated or the frame
-        /// is dropped.
-        ///
-        /// # Returns
-        ///
-        /// * `MolrsStatus::Ok` on success.
-        /// * `MolrsStatus::NullPointer` if `out_ptr` or `out_len` is null.
-        /// * `MolrsStatus::KeyNotFound` if the column does not exist.
-        /// * `MolrsStatus::NonContiguous` if the column is not contiguous.
-        /// * `MolrsStatus::InvalidBlockHandle` if `block` is stale.
-        #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $fn_name(
-            block: MolrsBlockHandle,
-            col_key_id: u32,
-            out_ptr: *mut *const $ty,
-            out_len: *mut usize,
-        ) -> MolrsStatus {
-            ffi_try!({
-                null_check!(out_ptr);
-                null_check!(out_len);
-                let store = lock_store();
-                let bh = resolve_block!(store, &block);
-                let col_key = resolve_col_key!(store, col_key_id);
-                let result = store.inner.with_block(&bh, |b| {
-                    let arr = b.$getter(&col_key).ok_or(MolrsStatus::KeyNotFound)?;
-                    let slice = arr
-                        .as_slice_memory_order()
-                        .ok_or(MolrsStatus::NonContiguous)?;
-                    Ok((slice.as_ptr(), slice.len()))
-                });
-                match result {
-                    Ok(Ok((ptr, len))) => {
-                        unsafe {
-                            *out_ptr = ptr;
-                            *out_len = len;
-                        }
-                        MolrsStatus::Ok
-                    }
-                    Ok(Err(status)) => {
-                        error::set_last_error(format!(
-                            "column '{}': {}",
-                            col_key,
-                            if status == MolrsStatus::KeyNotFound {
-                                "not found"
-                            } else {
-                                "not contiguous"
-                            }
-                        ));
-                        status
-                    }
-                    Err(e) => ffi_err_to_status(&e),
-                }
-            })
-        }
-    };
+#[derive(Debug)]
+enum ReadFail {
+    Missing,
+    String,
+    NonContiguous,
+    TooSmall,
 }
 
-impl_col_ptr!(molrs_block_get_F, F, get_float, "float");
-impl_col_ptr!(molrs_block_get_I, I, get_int, "int");
-impl_col_ptr!(molrs_block_get_U, Idx, get_uint, "uint");
-
-// ---------------------------------------------------------------------------
-// Zero-copy WRITE
-// ---------------------------------------------------------------------------
-
-/// Macro to generate typed zero-copy mutable pointer functions.
-///
-/// Each generated function returns a mutable pointer into the column's
-/// contiguous storage and bumps the block version.
-///
-/// # Generated C signatures
-///
-/// ```c
-/// MolrsStatus molrs_block_get_F_mut(MolrsBlockHandle* block, uint32_t col_key_id,
-///                                    molrs_float_t** out_ptr, size_t* out_len);
-/// MolrsStatus molrs_block_get_I_mut(MolrsBlockHandle* block, uint32_t col_key_id,
-///                                    molrs_int_t** out_ptr, size_t* out_len);
-/// MolrsStatus molrs_block_get_U_mut(MolrsBlockHandle* block, uint32_t col_key_id,
-///                                    molrs_uint_t** out_ptr, size_t* out_len);
-/// ```
-///
-/// # Safety (all generated functions)
-///
-/// * `block` must point to a live, writable `MolrsBlockHandle`.  Its
-///   `block_version` field is updated in place after the call.
-/// * `out_ptr` and `out_len` must be valid, non-null, writable pointers.
-/// * The returned data pointer is valid until another mutating call is
-///   made to the same block or the frame is dropped.
-/// * The caller should call [`molrs_block_col_commit`] after writing
-///   (currently a no-op, but reserved for future validation).
-macro_rules! impl_col_ptr_mut {
-    ($fn_name:ident, $ty:ty, $getter_mut:ident, $dtype_name:expr) => {
-        #[doc = concat!("Get a mutable pointer to a contiguous `", $dtype_name, "` column.")]
-        ///
-        /// On success, `*out_ptr` points to the first element, `*out_len`
-        /// is set to the total element count, and the `block_version`
-        /// inside `*block` is updated.
-        ///
-        /// After writing through the pointer, call
-        /// [`molrs_block_col_commit`] to finalize changes (currently a
-        /// no-op but reserved for future use).
-        ///
-        /// # Returns
-        ///
-        /// * `MolrsStatus::Ok` on success.
-        /// * `MolrsStatus::NullPointer` if any pointer argument is null.
-        /// * `MolrsStatus::KeyNotFound` if the column does not exist.
-        /// * `MolrsStatus::NonContiguous` if the column is not contiguous.
-        /// * `MolrsStatus::InvalidBlockHandle` if the block handle is stale.
-        #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $fn_name(
-            block: *mut MolrsBlockHandle,
-            col_key_id: u32,
-            out_ptr: *mut *mut $ty,
-            out_len: *mut usize,
-        ) -> MolrsStatus {
-            ffi_try!({
-                null_check!(block);
-                null_check!(out_ptr);
-                null_check!(out_len);
-                let c_handle = unsafe { &*block };
-                let mut store = lock_store();
-                let col_key = resolve_col_key!(store, col_key_id);
-                let mut bh = resolve_block!(store, c_handle);
-                let result = store.inner.with_block_mut(&mut bh, |b| {
-                    let arr = b.$getter_mut(&col_key).ok_or(MolrsStatus::KeyNotFound)?;
-                    let slice = arr
-                        .as_slice_memory_order_mut()
-                        .ok_or(MolrsStatus::NonContiguous)?;
-                    Ok((slice.as_mut_ptr(), slice.len()))
-                });
-                match result {
-                    Ok(Ok((ptr, len))) => {
-                        let c_block = unsafe { &mut *block };
-                        c_block.block_version = bh.version();
-                        unsafe {
-                            *out_ptr = ptr;
-                            *out_len = len;
-                        }
-                        MolrsStatus::Ok
-                    }
-                    Ok(Err(status)) => {
-                        let msg = match status {
-                            MolrsStatus::KeyNotFound => "column not found",
-                            MolrsStatus::NonContiguous => "column not contiguous",
-                            _ => "unknown error",
-                        };
-                        error::set_last_error(msg);
-                        status
-                    }
-                    Err(e) => ffi_err_to_status(&e),
-                }
-            })
-        }
+fn fail_status(fail: ReadFail, key: &str) -> MolrsStatus {
+    let (status, msg) = match fail {
+        ReadFail::Missing => (
+            MolrsStatus::KeyNotFound,
+            format!("column '{key}' not found"),
+        ),
+        ReadFail::String => (
+            MolrsStatus::TypeMismatch,
+            format!("column '{key}' is string; a string column has no flat scalar buffer"),
+        ),
+        ReadFail::NonContiguous => (
+            MolrsStatus::NonContiguous,
+            format!("column '{key}' is not contiguous"),
+        ),
+        ReadFail::TooSmall => (MolrsStatus::InvalidArgument, "buffer too small".to_string()),
     };
+    error::set_last_error(msg);
+    status
 }
 
-impl_col_ptr_mut!(molrs_block_get_F_mut, F, get_float_mut, "float");
-impl_col_ptr_mut!(molrs_block_get_I_mut, I, get_int_mut, "int");
-impl_col_ptr_mut!(molrs_block_get_U_mut, Idx, get_uint_mut, "uint");
+fn scalar_view(col: &Column) -> Result<(*const u8, usize, MolrsDType), ReadFail> {
+    if col.dtype() == DType::String {
+        return Err(ReadFail::String);
+    }
+    let dtype = MolrsDType::from(col.dtype());
+    macro_rules! arm {
+        ($method:ident) => {
+            if let Some(arr) = col.$method() {
+                let slice = arr.as_slice_memory_order().ok_or(ReadFail::NonContiguous)?;
+                return Ok((slice.as_ptr() as *const u8, slice.len(), dtype));
+            }
+        };
+    }
+    arm!(as_float);
+    arm!(as_i8);
+    arm!(as_i16);
+    arm!(as_int);
+    arm!(as_i64);
+    arm!(as_bool);
+    arm!(as_u8);
+    arm!(as_u16);
+    arm!(as_u32);
+    arm!(as_uint);
+    arm!(as_c64);
+    arm!(as_c128);
+    Err(ReadFail::String)
+}
 
-/// Finalize changes after writing through a mutable column pointer.
+fn scalar_view_mut(col: &mut Column) -> Result<(*mut u8, usize, MolrsDType), ReadFail> {
+    if col.dtype() == DType::String {
+        return Err(ReadFail::String);
+    }
+    let dtype = MolrsDType::from(col.dtype());
+    macro_rules! arm {
+        ($method:ident) => {
+            if let Some(arr) = col.$method() {
+                let slice = arr
+                    .as_slice_memory_order_mut()
+                    .ok_or(ReadFail::NonContiguous)?;
+                return Ok((slice.as_mut_ptr() as *mut u8, slice.len(), dtype));
+            }
+        };
+    }
+    arm!(as_float_mut);
+    arm!(as_i8_mut);
+    arm!(as_i16_mut);
+    arm!(as_int_mut);
+    arm!(as_i64_mut);
+    arm!(as_bool_mut);
+    arm!(as_u8_mut);
+    arm!(as_u16_mut);
+    arm!(as_u32_mut);
+    arm!(as_uint_mut);
+    arm!(as_c64_mut);
+    arm!(as_c128_mut);
+    Err(ReadFail::String)
+}
+
+fn scalar_bytes(col: &Column) -> Result<Vec<u8>, ReadFail> {
+    let (ptr, len, _) = scalar_view(col)?;
+    let width = col.dtype().itemsize().ok_or(ReadFail::String)?;
+    let nbytes = len.saturating_mul(width);
+    // `ptr` addresses `len` elements of `width` bytes still owned by `col`.
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, nbytes) }.to_vec();
+    Ok(bytes)
+}
+
+/// Byte pointer and element count for one column.
 ///
-/// In the current implementation this is a no-op because the block
-/// version is already bumped by the `_mut` accessor.  It exists for
-/// API completeness and for future validation hooks.
+/// `*out_len` is the number of elements. The byte length is `*out_len` times
+/// the dtype's item size (`Bool` is 1, `Complex64` is 8, `Complex128` is 16).
+/// `*out_dtype` is the stored variant.
 ///
-/// # C signature
-///
-/// ```c
-/// MolrsStatus molrs_block_col_commit(MolrsBlockHandle* block);
-/// ```
-///
-/// # Arguments
-///
-/// * `block` -- Pointer to the block handle that was used with a
-///   `_mut` accessor.
-///
-/// # Returns
-///
-/// * `MolrsStatus::Ok` always (unless `block` is null).
-/// * `MolrsStatus::NullPointer` if `block` is null.
+/// A missing column is `KeyNotFound`. A string column is `TypeMismatch`:
+/// a string has no flat scalar buffer. Those are different statuses.
 ///
 /// # Safety
 ///
-/// `block` must point to a valid `MolrsBlockHandle` (the same one
-/// passed to the corresponding `_mut` call).
+/// * `block` must be a live block handle.
+/// * `out_ptr`, `out_len`, and `out_dtype` must be non-null and writable.
+/// * The returned pointer is valid until the block is mutated or the frame
+///   is dropped.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn molrs_block_get(
+    block: MolrsBlockHandle,
+    col_key_id: u32,
+    out_ptr: *mut *const u8,
+    out_len: *mut usize,
+    out_dtype: *mut MolrsDType,
+) -> MolrsStatus {
+    ffi_try!({
+        null_check!(out_ptr);
+        null_check!(out_len);
+        null_check!(out_dtype);
+        let store = lock_store();
+        let bh = resolve_block!(store, &block);
+        let col_key = resolve_col_key!(store, col_key_id);
+        let result = store.inner.with_block(&bh, |b| match b.get(&col_key) {
+            None => Err(ReadFail::Missing),
+            Some(col) => scalar_view(col),
+        });
+        match result {
+            Ok(Ok((ptr, len, dtype))) => {
+                unsafe {
+                    *out_ptr = ptr;
+                    *out_len = len;
+                    *out_dtype = dtype;
+                }
+                MolrsStatus::Ok
+            }
+            Ok(Err(fail)) => fail_status(fail, &col_key),
+            Err(e) => ffi_err_to_status(&e),
+        }
+    })
+}
+
+/// Mutable byte pointer for one column. Bumps `block->block_version`.
+///
+/// Same dtype and status rules as [`molrs_block_get`]. Call
+/// [`molrs_block_col_commit`] after writing. The version is already bumped;
+/// commit is currently a no-op.
+///
+/// # Safety
+///
+/// * `block` must point to a live, writable `MolrsBlockHandle`.
+/// * `out_ptr`, `out_len`, and `out_dtype` must be non-null and writable.
+/// * The returned pointer is valid until another mutating call on the same
+///   block, or until the frame is dropped.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn molrs_block_get_mut(
+    block: *mut MolrsBlockHandle,
+    col_key_id: u32,
+    out_ptr: *mut *mut u8,
+    out_len: *mut usize,
+    out_dtype: *mut MolrsDType,
+) -> MolrsStatus {
+    ffi_try!({
+        null_check!(block);
+        null_check!(out_ptr);
+        null_check!(out_len);
+        null_check!(out_dtype);
+        let c_handle = unsafe { &*block };
+        let mut store = lock_store();
+        let col_key = resolve_col_key!(store, col_key_id);
+        let mut bh = resolve_block!(store, c_handle);
+        let result = store
+            .inner
+            .with_block_mut(&mut bh, |b| match b.get_mut(&col_key) {
+                None => Err(ReadFail::Missing),
+                Some(col) => scalar_view_mut(col),
+            });
+        match result {
+            Ok(Ok((ptr, len, dtype))) => {
+                let c_block = unsafe { &mut *block };
+                c_block.block_version = bh.version();
+                unsafe {
+                    *out_ptr = ptr;
+                    *out_len = len;
+                    *out_dtype = dtype;
+                }
+                MolrsStatus::Ok
+            }
+            Ok(Err(fail)) => fail_status(fail, &col_key),
+            Err(e) => ffi_err_to_status(&e),
+        }
+    })
+}
+
+/// Copy one column's bytes into `out_buf`.
+///
+/// `buf_bytes` is the buffer's capacity in bytes, not elements. A buffer
+/// shorter than `n_elements * itemsize` returns `InvalidArgument`.
+/// A missing column is `KeyNotFound`. A string column is `TypeMismatch`.
+///
+/// # Safety
+///
+/// * `block` must be a live block handle.
+/// * `out_buf` must point at `buf_bytes` writable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn molrs_block_copy(
+    block: MolrsBlockHandle,
+    col_key_id: u32,
+    out_buf: *mut u8,
+    buf_bytes: usize,
+) -> MolrsStatus {
+    ffi_try!({
+        null_check!(out_buf);
+        let store = lock_store();
+        let bh = resolve_block!(store, &block);
+        let col_key = resolve_col_key!(store, col_key_id);
+        let result = store.inner.with_block(&bh, |b| {
+            let Some(col) = b.get(&col_key) else {
+                return Err(ReadFail::Missing);
+            };
+            let bytes = scalar_bytes(col)?;
+            if buf_bytes < bytes.len() {
+                return Err(ReadFail::TooSmall);
+            }
+            Ok(bytes)
+        });
+        match result {
+            Ok(Ok(data)) => {
+                let out_slice = unsafe { std::slice::from_raw_parts_mut(out_buf, data.len()) };
+                out_slice.copy_from_slice(&data);
+                MolrsStatus::Ok
+            }
+            Ok(Err(fail)) => fail_status(fail, &col_key),
+            Err(e) => ffi_err_to_status(&e),
+        }
+    })
+}
+
+/// No-op kept for callers that write through [`molrs_block_get_mut`].
+///
+/// The mutable read already bumps `block->block_version`. This call does
+/// not bump it again.
+///
+/// # Safety
+///
+/// `block` must point at a live `MolrsBlockHandle`, or be null (which
+/// returns `NullPointer`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn molrs_block_col_commit(block: *mut MolrsBlockHandle) -> MolrsStatus {
     ffi_try!({
         null_check!(block);
-        // Version was already bumped in _mut. Nothing to do.
         MolrsStatus::Ok
     })
 }
 
-// ---------------------------------------------------------------------------
-// Copy path
-// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod scalar_view_tests {
+    use super::*;
+    use ndarray::Array1;
 
-/// Macro to generate typed copy functions.
-///
-/// Each generated function copies column data into a caller-owned buffer.
-/// This is the safest access pattern because the caller controls the
-/// buffer lifetime.
-///
-/// # Generated C signatures
-///
-/// ```c
-/// MolrsStatus molrs_block_copy_F(MolrsBlockHandle block, uint32_t col_key_id,
-///                                 molrs_float_t* out_buf, size_t buf_len);
-/// MolrsStatus molrs_block_copy_I(MolrsBlockHandle block, uint32_t col_key_id,
-///                                 molrs_int_t* out_buf, size_t buf_len);
-/// MolrsStatus molrs_block_copy_U(MolrsBlockHandle block, uint32_t col_key_id,
-///                                 molrs_uint_t* out_buf, size_t buf_len);
-/// ```
-///
-/// # Safety (all generated functions)
-///
-/// * `block` must be a live block handle.
-/// * `out_buf` must point to a buffer of at least `buf_len` elements of
-///   the corresponding type.
-macro_rules! impl_col_copy {
-    ($fn_name:ident, $ty:ty, $getter:ident, $dtype_name:expr) => {
-        #[doc = concat!("Copy a `", $dtype_name, "` column into a caller-provided buffer.")]
-        ///
-        /// # Returns
-        ///
-        /// * `MolrsStatus::Ok` on success.
-        /// * `MolrsStatus::NullPointer` if `out_buf` is null.
-        /// * `MolrsStatus::KeyNotFound` if the column does not exist.
-        /// * `MolrsStatus::NonContiguous` if the column is not contiguous.
-        /// * `MolrsStatus::InvalidArgument` if `buf_len` is smaller than
-        ///   the column length.
-        /// * `MolrsStatus::InvalidBlockHandle` if `block` is stale.
-        #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $fn_name(
-            block: MolrsBlockHandle,
-            col_key_id: u32,
-            out_buf: *mut $ty,
-            buf_len: usize,
-        ) -> MolrsStatus {
-            ffi_try!({
-                null_check!(out_buf);
-                let store = lock_store();
-                let bh = resolve_block!(store, &block);
-                let col_key = resolve_col_key!(store, col_key_id);
-                let result = store.inner.with_block(&bh, |b| {
-                    let arr = b.$getter(&col_key).ok_or(MolrsStatus::KeyNotFound)?;
-                    let slice = arr
-                        .as_slice_memory_order()
-                        .ok_or(MolrsStatus::NonContiguous)?;
-                    if buf_len < slice.len() {
-                        return Err(MolrsStatus::InvalidArgument);
-                    }
-                    Ok(slice.to_vec())
-                });
-                match result {
-                    Ok(Ok(data)) => {
-                        let out_slice =
-                            unsafe { std::slice::from_raw_parts_mut(out_buf, data.len()) };
-                        out_slice.copy_from_slice(&data);
-                        MolrsStatus::Ok
-                    }
-                    Ok(Err(status)) => {
-                        let msg = match status {
-                            MolrsStatus::KeyNotFound => "column not found",
-                            MolrsStatus::NonContiguous => "column not contiguous",
-                            MolrsStatus::InvalidArgument => "buffer too small",
-                            _ => "unknown error",
-                        };
-                        error::set_last_error(msg);
-                        status
-                    }
-                    Err(e) => ffi_err_to_status(&e),
-                }
-            })
-        }
-    };
+    #[test]
+    fn i64_view_reports_int64_and_the_elements() {
+        let col = Column::from_i64(Array1::from_vec(vec![7_i64, 8]).into_dyn());
+        let (ptr, len, dtype) = scalar_view(&col).unwrap();
+        assert_eq!(len, 2);
+        assert_eq!(dtype, MolrsDType::Int64);
+        let vals = unsafe { std::slice::from_raw_parts(ptr as *const i64, len) };
+        assert_eq!(vals, &[7, 8]);
+    }
+
+    #[test]
+    fn string_is_not_a_missing_column() {
+        let col = Column::from_string(Array1::from_vec(vec!["a".to_string()]).into_dyn());
+        assert!(matches!(scalar_view(&col), Err(ReadFail::String)));
+        assert!(matches!(scalar_bytes(&col), Err(ReadFail::String)));
+    }
 }
-
-impl_col_copy!(molrs_block_copy_F, F, get_float, "float");
-impl_col_copy!(molrs_block_copy_I, I, get_int, "int");
-impl_col_copy!(molrs_block_copy_U, Idx, get_uint, "uint");
 
 // ---------------------------------------------------------------------------
 // Insert columns

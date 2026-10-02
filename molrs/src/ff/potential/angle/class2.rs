@@ -148,16 +148,20 @@ pub fn angle_class2_ctor(
         .get(ANGLES)
         .ok_or_else(|| "AngleClass2: frame missing \"angles\" block".to_string())?;
     let i_col = block
-        .get_uint("atomi")
+        .get("atomi")
+        .and_then(|c| c.as_uint())
         .ok_or_else(|| "AngleClass2: angles block missing \"atomi\" column".to_string())?;
     let j_col = block
-        .get_uint("atomj")
+        .get("atomj")
+        .and_then(|c| c.as_uint())
         .ok_or_else(|| "AngleClass2: angles block missing \"atomj\" column".to_string())?;
     let k_col = block
-        .get_uint("atomk")
+        .get("atomk")
+        .and_then(|c| c.as_uint())
         .ok_or_else(|| "AngleClass2: angles block missing \"atomk\" column".to_string())?;
     let type_col = block
-        .get_string("type")
+        .get("type")
+        .and_then(|c| c.as_string())
         .ok_or_else(|| "AngleClass2: angles block missing \"type\" column".to_string())?;
 
     let (mut ai, mut aj, mut ak) = (Vec::new(), Vec::new(), Vec::new());

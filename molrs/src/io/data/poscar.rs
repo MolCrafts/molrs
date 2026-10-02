@@ -307,7 +307,7 @@ pub fn write_poscar_to_writer<W: Write>(writer: &mut W, frame: &Frame) -> Result
     }
 
     // Group atoms by symbol so we can emit POSCAR's per-element runs.
-    let symbol_col = atoms.get_string("symbol");
+    let symbol_col = atoms.get("symbol").and_then(|c| c.as_string());
     let (symbols_line, counts_line, order) = group_by_symbol(n, symbol_col);
 
     if let Some(syms) = &symbols_line {
@@ -332,13 +332,16 @@ pub fn write_poscar_to_writer<W: Write>(writer: &mut W, frame: &Frame) -> Result
     writeln!(writer, "{}", if direct { "Direct" } else { "Cartesian" })?;
 
     let xs = atoms
-        .get_float("x")
+        .get("x")
+        .and_then(|c| c.as_float())
         .ok_or_else(|| invalid_data("atoms.x missing"))?;
     let ys = atoms
-        .get_float("y")
+        .get("y")
+        .and_then(|c| c.as_float())
         .ok_or_else(|| invalid_data("atoms.y missing"))?;
     let zs = atoms
-        .get_float("z")
+        .get("z")
+        .and_then(|c| c.as_float())
         .ok_or_else(|| invalid_data("atoms.z missing"))?;
 
     if direct {
@@ -473,7 +476,7 @@ Direct\n\
         assert_eq!(atoms.nrows(), Some(2));
         assert!(frame.simbox.is_some());
 
-        let xs = atoms.get_float("x").unwrap();
+        let xs = atoms.get("x").and_then(|c| c.as_float()).unwrap();
         // (0.5, 0.5, 0.5) fractional with 2.5Å cube → (1.25, 1.25, 1.25)
         assert!((xs[[1]] - 1.25).abs() < 1e-10);
     }
@@ -485,8 +488,18 @@ Direct\n\
         write_poscar_to_writer(&mut buf, &frame).unwrap();
         let frame2 = read_poscar_from_reader(Cursor::new(&buf)).unwrap();
 
-        let xs1 = frame.get("atoms").unwrap().get_float("x").unwrap();
-        let xs2 = frame2.get("atoms").unwrap().get_float("x").unwrap();
+        let xs1 = frame
+            .get("atoms")
+            .unwrap()
+            .get("x")
+            .and_then(|c| c.as_float())
+            .unwrap();
+        let xs2 = frame2
+            .get("atoms")
+            .unwrap()
+            .get("x")
+            .and_then(|c| c.as_float())
+            .unwrap();
         for i in 0..xs1.len() {
             assert!(
                 (xs1[[i]] - xs2[[i]]).abs() < 1e-6,

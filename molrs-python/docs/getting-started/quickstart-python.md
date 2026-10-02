@@ -64,7 +64,7 @@ atoms = frame["atoms"]
 print("frame blocks:", frame.keys())
 print("atom columns:", atoms.keys())
 print("rows:", atoms.nrows)
-print("first x values:", atoms.view("x")[:3])
+print("first x values:", atoms["x"][:3])
 ```
 
 You should see an `atoms` block and usually a `bonds` block. Coordinate columns
@@ -100,7 +100,7 @@ and the neighbor list rather than doing its own distance search.
 
 ```python
 points = np.column_stack(
-    [atoms.view("x"), atoms.view("y"), atoms.view("z")]
+    [atoms["x"], atoms["y"], atoms["z"]]
 ).astype(np.float64, copy=False)
 
 nl = molrs.NeighborList(6.0)
