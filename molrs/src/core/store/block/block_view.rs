@@ -6,13 +6,10 @@
 
 use indexmap::IndexMap;
 
-use ndarray::ArrayViewD;
-
 use super::Block;
 use super::column::Column;
 use super::column_view::ColumnView;
 use super::dtype::DType;
-use crate::types::{F, I, Idx};
 
 /// A borrowed, read-only view of a [`Block`].
 ///
@@ -74,40 +71,13 @@ impl<'a> BlockView<'a> {
         self.map.contains_key(key)
     }
 
-    /// Gets an immutable reference to the column view for `key` if present.
+    /// The column view for `key`, or `None` when the key is absent.
+    ///
+    /// Project a dtype with [`ColumnView::as_float`] and the other `as_*`
+    /// methods. `None` from a projection means the column has a different dtype.
     #[inline]
     pub fn get(&self, key: &str) -> Option<&ColumnView<'a>> {
         self.map.get(key)
-    }
-
-    /// Gets a float array view for `key` if present and of correct type.
-    pub fn get_float(&self, key: &str) -> Option<ArrayViewD<'a, F>> {
-        self.get(key).and_then(|c| c.as_float())
-    }
-
-    /// Gets an int array view for `key` if present and of correct type.
-    pub fn get_int(&self, key: &str) -> Option<ArrayViewD<'a, I>> {
-        self.get(key).and_then(|c| c.as_int())
-    }
-
-    /// Gets a bool array view for `key` if present and of correct type.
-    pub fn get_bool(&self, key: &str) -> Option<ArrayViewD<'a, bool>> {
-        self.get(key).and_then(|c| c.as_bool())
-    }
-
-    /// Gets a uint array view for `key` if present and of correct type.
-    pub fn get_uint(&self, key: &str) -> Option<ArrayViewD<'a, Idx>> {
-        self.get(key).and_then(|c| c.as_uint())
-    }
-
-    /// Gets a u8 array view for `key` if present and of correct type.
-    pub fn get_u8(&self, key: &str) -> Option<ArrayViewD<'a, u8>> {
-        self.get(key).and_then(|c| c.as_u8())
-    }
-
-    /// Gets a string array view for `key` if present and of correct type.
-    pub fn get_string(&self, key: &str) -> Option<ArrayViewD<'a, String>> {
-        self.get(key).and_then(|c| c.as_string())
     }
 
     /// Returns an iterator over `(&str, &ColumnView)`.
@@ -185,7 +155,7 @@ impl std::fmt::Debug for BlockView<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Idx;
+    use crate::types::{F, Idx};
     use ndarray::Array1;
 
     #[test]
@@ -240,15 +210,15 @@ mod tests {
         let view = BlockView::from(&block);
 
         // Correct type
-        assert!(view.get_float("x").is_some());
-        assert!(view.get_uint("id").is_some());
+        assert!(view.get("x").and_then(|c| c.as_float()).is_some());
+        assert!(view.get("id").and_then(|c| c.as_uint()).is_some());
 
         // Wrong type
-        assert!(view.get_int("x").is_none());
-        assert!(view.get_float("id").is_none());
+        assert!(view.get("x").and_then(|c| c.as_int()).is_none());
+        assert!(view.get("id").and_then(|c| c.as_float()).is_none());
 
         // Missing key
-        assert!(view.get_float("missing").is_none());
+        assert!(view.get("missing").and_then(|c| c.as_float()).is_none());
     }
 
     #[test]
@@ -268,7 +238,8 @@ mod tests {
         assert_eq!(owned.len(), 2);
         assert_eq!(
             owned
-                .get_float("x")
+                .get("x")
+                .and_then(|c| c.as_float())
                 .unwrap()
                 .as_slice_memory_order()
                 .unwrap(),
@@ -276,7 +247,8 @@ mod tests {
         );
         assert_eq!(
             owned
-                .get_uint("id")
+                .get("id")
+                .and_then(|c| c.as_uint())
                 .unwrap()
                 .as_slice_memory_order()
                 .unwrap(),
@@ -292,8 +264,8 @@ mod tests {
             .unwrap();
 
         let view = BlockView::from(&block);
-        let orig_ptr = block.get_float("x").unwrap().as_ptr();
-        let view_ptr = view.get_float("x").unwrap().as_ptr();
+        let orig_ptr = block.get("x").and_then(|c| c.as_float()).unwrap().as_ptr();
+        let view_ptr = view.get("x").and_then(|c| c.as_float()).unwrap().as_ptr();
         assert_eq!(orig_ptr, view_ptr);
     }
 

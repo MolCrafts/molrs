@@ -317,15 +317,15 @@ impl<'a> MaskedColumns<'a> {
             if skip.iter().any(|s| s == key) {
                 continue;
             }
-            let typed = if let Some(arr) = block.get_float(key) {
+            let typed = if let Some(arr) = block.get(key).and_then(|c| c.as_float()) {
                 TypedColumn::Float(arr)
-            } else if let Some(arr) = block.get_int(key) {
+            } else if let Some(arr) = block.get(key).and_then(|c| c.as_int()) {
                 TypedColumn::Int(arr)
-            } else if let Some(arr) = block.get_uint(key) {
+            } else if let Some(arr) = block.get(key).and_then(|c| c.as_uint()) {
                 TypedColumn::UInt(arr)
-            } else if let Some(arr) = block.get_string(key) {
+            } else if let Some(arr) = block.get(key).and_then(|c| c.as_string()) {
                 TypedColumn::Str(arr)
-            } else if let Some(arr) = block.get_bool(key) {
+            } else if let Some(arr) = block.get(key).and_then(|c| c.as_bool()) {
                 TypedColumn::Bool(arr)
             } else {
                 continue;
@@ -1645,7 +1645,7 @@ impl MolGraph {
         let endpoint_names: Vec<String> = (0..arity).map(rel_col_name).collect();
         let mut endpoint_cols: Vec<&ndarray::ArrayD<Idx>> = Vec::with_capacity(arity);
         for name in &endpoint_names {
-            let col = block.get_uint(name).ok_or_else(|| {
+            let col = block.get(name).and_then(|c| c.as_uint()).ok_or_else(|| {
                 MolRsError::validation(format!(
                     "Frame block '{block_name}' names the relation kind '{block_name}' of arity \
                      {arity} but carries no '{name}' endpoint column, so its rows cannot be read"
@@ -2043,7 +2043,8 @@ mod tests {
         let atoms = &g.to_frame().expect("a schema-conforming graph converts")["atoms"];
         assert_eq!(
             atoms
-                .get_uint("id")
+                .get("id")
+                .and_then(|c| c.as_uint())
                 .expect("'id' reaches the frame")
                 .iter()
                 .copied()
@@ -2052,7 +2053,8 @@ mod tests {
         );
         assert_eq!(
             atoms
-                .get_uint("mol_id")
+                .get("mol_id")
+                .and_then(|c| c.as_uint())
                 .expect("'mol_id' reaches the frame")
                 .iter()
                 .copied()
@@ -2075,7 +2077,8 @@ mod tests {
 
         assert_eq!(
             g.to_frame().expect("a schema-conforming graph converts")["atoms"]
-                .get_bool("frozen")
+                .get("frozen")
+                .and_then(|c| c.as_bool())
                 .expect("bool column reaches the frame")
                 .iter()
                 .copied()

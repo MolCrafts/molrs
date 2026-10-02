@@ -458,9 +458,12 @@ impl CoarseGrain {
                      molecule",
                 ));
             }
-            let mol_id = atoms.get_uint(keys::MOL_ID).ok_or_else(|| {
-                MolRsError::validation("Frame 'atoms' column 'mol_id' is not UInt")
-            })?;
+            let mol_id = atoms
+                .get(keys::MOL_ID)
+                .and_then(|c| c.as_uint())
+                .ok_or_else(|| {
+                    MolRsError::validation("Frame 'atoms' column 'mol_id' is not UInt")
+                })?;
             let mut ids = mol_id.iter();
             if let Some(&first) = ids.next()
                 && let Some(&other) = ids.find(|&&id| id != first)
@@ -493,13 +496,22 @@ impl CoarseGrain {
         };
         // `None`: the source already is a Str `bead_type`.
         let bead_type: Option<Vec<String>> = if source == keys::BEAD_TYPE {
-            atoms.get_string(source).ok_or_else(|| wrong_dtype("Str"))?;
+            atoms
+                .get(source)
+                .and_then(|c| c.as_string())
+                .ok_or_else(|| wrong_dtype("Str"))?;
             None
         } else if source == keys::TYPE {
-            let col = atoms.get_string(source).ok_or_else(|| wrong_dtype("Str"))?;
+            let col = atoms
+                .get(source)
+                .and_then(|c| c.as_string())
+                .ok_or_else(|| wrong_dtype("Str"))?;
             Some(col.iter().cloned().collect())
         } else {
-            let col = atoms.get_uint(source).ok_or_else(|| wrong_dtype("UInt"))?;
+            let col = atoms
+                .get(source)
+                .and_then(|c| c.as_uint())
+                .ok_or_else(|| wrong_dtype("UInt"))?;
             Some(col.iter().map(ToString::to_string).collect())
         };
 
@@ -540,7 +552,7 @@ impl CoarseGrain {
     /// twice in its bead.
     fn read_members(&mut self, members: &Block) -> Result<(), MolRsError> {
         let column = |key: &str| {
-            members.get_uint(key).ok_or_else(|| {
+            members.get(key).and_then(|c| c.as_uint()).ok_or_else(|| {
                 MolRsError::validation(format!("Frame 'members' block has no UInt '{key}' column"))
             })
         };
@@ -817,7 +829,8 @@ mod tests {
         names.sort_unstable();
         assert_eq!(names, vec!["atoms", "bonds"]);
         let bead_type: Vec<String> = frame["atoms"]
-            .get_string("bead_type")
+            .get("bead_type")
+            .and_then(|c| c.as_string())
             .expect("atoms carries a Str bead_type")
             .iter()
             .cloned()
@@ -825,7 +838,8 @@ mod tests {
         assert_eq!(bead_type, vec!["W", "P1"]);
         let endpoint = |col: &str| -> Vec<Idx> {
             frame["bonds"]
-                .get_uint(col)
+                .get(col)
+                .and_then(|c| c.as_uint())
                 .expect("bonds carries UInt endpoints")
                 .iter()
                 .copied()

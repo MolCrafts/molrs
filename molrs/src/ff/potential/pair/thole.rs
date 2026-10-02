@@ -317,17 +317,20 @@ pub fn pair_thole_ctor(
         .get(ATOMS)
         .ok_or_else(|| "PairThole: frame missing \"atoms\" block".to_string())?;
     let atom_types = atoms
-        .get_string("type")
+        .get("type")
+        .and_then(|c| c.as_string())
         .ok_or_else(|| "PairThole: atoms block missing \"type\" column".to_string())?;
 
     let block = frame
         .get(PAIRS)
         .ok_or_else(|| "PairThole: frame missing \"pairs\" block".to_string())?;
     let i_col = block
-        .get_uint("atomi")
+        .get("atomi")
+        .and_then(|c| c.as_uint())
         .ok_or_else(|| "PairThole: pairs block missing \"atomi\" column".to_string())?;
     let j_col = block
-        .get_uint("atomj")
+        .get("atomj")
+        .and_then(|c| c.as_uint())
         .ok_or_else(|| "PairThole: pairs block missing \"atomj\" column".to_string())?;
 
     let lookup = |type_name: &str| -> Result<(F, F, F), String> {
@@ -351,7 +354,7 @@ pub fn pair_thole_ctor(
 
     let mut atom_i = Vec::with_capacity(i_col.len());
     let mut atom_j = Vec::with_capacity(i_col.len());
-    let is_14 = block.get_bool("is_14");
+    let is_14 = block.get("is_14").and_then(|c| c.as_bool());
     let mut s_vec = Vec::with_capacity(i_col.len());
     let mut qq_vec = Vec::with_capacity(i_col.len());
 

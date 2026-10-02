@@ -8,7 +8,7 @@
 //! ```
 //! use molrs::store::block::Block;
 //! use molrs::types::{F, Idx};
-//! use ndarray::{Array1, ArrayD};
+//! use ndarray::Array1;
 //!
 //! let mut block = Block::new();
 //!
@@ -19,9 +19,9 @@
 //! block.insert("pos", pos).unwrap();
 //! block.insert("id", ids).unwrap();
 //!
-//! // Type-safe retrieval
-//! let pos_ref = block.get_float("pos").unwrap();
-//! let ids_ref = block.get_uint("id").unwrap();
+//! // The column comes back whole. dtype is a property of that column.
+//! let pos_ref = block.get("pos").and_then(|c| c.as_float()).unwrap();
+//! let ids_ref = block.get("id").and_then(|c| c.as_uint()).unwrap();
 //!
 //! assert_eq!(block.nrows(), Some(3));
 //! assert_eq!(block.len(), 2);
@@ -35,7 +35,7 @@ pub mod access;
 pub mod block_view;
 pub mod column_view;
 
-pub use access::{BlockAccess, ColumnAccess};
+pub use access::BlockAccess;
 pub use block_view::BlockView;
 pub use column::{Column, ColumnHolder};
 pub use column_view::ColumnView;
@@ -323,7 +323,7 @@ impl Block {
     ///
     /// assert_eq!(block.validity("frag_id"), Some(&[true, false, false][..]));
     /// // The values stay readable: row 1 reads as the filled 0.
-    /// assert_eq!(block.get_int("frag_id").unwrap()[[1]], 0);
+    /// assert_eq!(block.get("frag_id").and_then(|c| c.as_int()).unwrap()[[1]], 0);
     /// ```
     pub fn insert_nullable<T: BlockDtype>(
         &mut self,
@@ -517,17 +517,20 @@ impl Block {
         self.select_rows(&order)
     }
 
-    /// Gets an immutable reference to the column for `key` if present.
+    /// The column for `key`, or `None` when the key is absent.
     ///
-    /// For type-safe access, prefer using `get_float()`, `get_int()`, etc.
+    /// Project a dtype with [`Column::as_float`] and the other `as_*` methods.
+    /// `None` from a projection means the column has a different dtype, which is
+    /// not the same as a missing key.
     #[inline]
     pub fn get(&self, key: &str) -> Option<&Column> {
         self.map.get(key)
     }
 
-    /// Gets a mutable reference to the column for `key` if present.
+    /// A mutable column for `key`, or `None` when the key is absent.
     ///
-    /// For type-safe access, prefer using `get_float_mut()`, `get_int_mut()`, etc.
+    /// Project a dtype with [`Column::as_float_mut`] and the other `as_*_mut`
+    /// methods. `None` from a projection means the column has a different dtype.
     ///
     /// # Warning
     ///
@@ -538,100 +541,34 @@ impl Block {
         self.map.get_mut(key)
     }
 
-    // Type-specific getters for the compile-time float scalar.
-
-    /// Gets an immutable reference to a float array for `key` if present and of correct type.
-    pub fn get_float(&self, key: &str) -> Option<&ArrayD<crate::types::F>> {
-        self.get(key).and_then(|c| c.as_float())
-    }
-
-    /// Gets a mutable reference to a float array for `key` if present and of correct type.
-    pub fn get_float_mut(&mut self, key: &str) -> Option<&mut ArrayD<crate::types::F>> {
-        self.get_mut(key).and_then(|c| c.as_float_mut())
-    }
-
-    // Type-specific getters for the compile-time signed integer scalar.
-
-    /// Gets an immutable reference to an int array for `key` if present and of correct type.
-    pub fn get_int(&self, key: &str) -> Option<&ArrayD<crate::types::I>> {
-        self.get(key).and_then(|c| c.as_int())
-    }
-
-    /// Gets a mutable reference to an int array for `key` if present and of correct type.
-    pub fn get_int_mut(&mut self, key: &str) -> Option<&mut ArrayD<crate::types::I>> {
-        self.get_mut(key).and_then(|c| c.as_int_mut())
-    }
-
-    // Type-specific getters for bool
-
-    /// Gets an immutable reference to a bool array for `key` if present and of correct type.
-    pub fn get_bool(&self, key: &str) -> Option<&ArrayD<bool>> {
-        self.get(key).and_then(|c| c.as_bool())
-    }
-
-    /// Gets a mutable reference to a bool array for `key` if present and of correct type.
-    pub fn get_bool_mut(&mut self, key: &str) -> Option<&mut ArrayD<bool>> {
-        self.get_mut(key).and_then(|c| c.as_bool_mut())
-    }
-
-    // Type-specific getters for the compile-time unsigned integer scalar.
-
-    /// Gets an immutable reference to a uint array for `key` if present and of correct type.
-    pub fn get_uint(&self, key: &str) -> Option<&ArrayD<crate::types::Idx>> {
-        self.get(key).and_then(|c| c.as_uint())
-    }
-
-    /// Gets a mutable reference to a uint array for `key` if present and of correct type.
-    pub fn get_uint_mut(&mut self, key: &str) -> Option<&mut ArrayD<crate::types::Idx>> {
-        self.get_mut(key).and_then(|c| c.as_uint_mut())
-    }
-
-    // Type-specific getters for u8
-
-    /// Gets an immutable reference to a u8 array for `key` if present and of correct type.
-    pub fn get_u8(&self, key: &str) -> Option<&ArrayD<u8>> {
-        self.get(key).and_then(|c| c.as_u8())
-    }
-
-    /// Gets a mutable reference to a u8 array for `key` if present and of correct type.
-    pub fn get_u8_mut(&mut self, key: &str) -> Option<&mut ArrayD<u8>> {
-        self.get_mut(key).and_then(|c| c.as_u8_mut())
-    }
-
-    // Type-specific getters for String
-
-    /// Gets an immutable reference to a String array for `key` if present and of correct type.
-    pub fn get_string(&self, key: &str) -> Option<&ArrayD<String>> {
-        self.get(key).and_then(|c| c.as_string())
-    }
-
-    /// `key` exists and is an `f64` storage column.
+    /// `key` exists and is an `f64` column.
     #[inline]
     pub fn has_f64(&self, key: &str) -> bool {
-        matches!(self.get(key), Some(Column::Float(_)))
+        self.get(key).is_some_and(|c| c.dtype() == DType::Float)
     }
 
-    /// `key` exists and is a signed-int column.
+    /// `key` exists and is a signed integer column (`i8`, `i16`, `i32`, or `i64`).
     #[inline]
     pub fn has_int(&self, key: &str) -> bool {
-        self.get_int(key).is_some()
+        matches!(
+            self.get(key).map(|c| c.dtype()),
+            Some(DType::Int | DType::Int8 | DType::Int16 | DType::Int64)
+        )
     }
 
-    /// `key` exists and is an unsigned-int column.
+    /// `key` exists and is an unsigned integer column (`u8`, `u16`, `u32`, or `u64`).
     #[inline]
     pub fn has_uint(&self, key: &str) -> bool {
-        self.get_uint(key).is_some()
+        matches!(
+            self.get(key).map(|c| c.dtype()),
+            Some(DType::UInt | DType::U8 | DType::UInt16 | DType::UInt32)
+        )
     }
 
     /// `key` exists and is a string column.
     #[inline]
     pub fn has_string(&self, key: &str) -> bool {
-        self.get_string(key).is_some()
-    }
-
-    /// Gets a mutable reference to a String array for `key` if present and of correct type.
-    pub fn get_string_mut(&mut self, key: &str) -> Option<&mut ArrayD<String>> {
-        self.get_mut(key).and_then(|c| c.as_string_mut())
+        self.get(key).is_some_and(|c| c.dtype() == DType::String)
     }
 
     /// Removes and returns the column for `key`, if present.
@@ -795,7 +732,7 @@ impl Block {
     ///
     /// block.resize(4).unwrap();
     /// assert_eq!(block.nrows(), Some(4));
-    /// let x = block.get_float("x").unwrap();
+    /// let x = block.get("x").and_then(|c| c.as_float()).unwrap();
     /// assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0, 0.0, 0.0]);
     /// ```
     pub fn resize(&mut self, new_nrows: usize) -> Result<(), crate::error::MolRsError> {
@@ -931,7 +868,7 @@ impl Block {
     /// assert_eq!(s.nrows(), Some(3));
     /// assert_eq!(s.keys().collect::<Vec<_>>(), ["x", "type"]);
     /// // `b` had no `type`: its row is filled with "" and marked null.
-    /// assert_eq!(s.get_string("type").unwrap()[[2]], "");
+    /// assert_eq!(s.get("type").and_then(|c| c.as_string()).unwrap()[[2]], "");
     /// assert_eq!(s.validity("type"), Some(&[true, true, false][..]));
     /// assert_eq!(s.validity("x"), None);
     /// ```
@@ -1278,7 +1215,7 @@ fn concat_columns(key: &str, pieces: &[Column]) -> Result<Column, BlockError> {
 /// two keys.
 /// Identifiers (`id`, `atomi`, `type_id`, …) are [`Idx`]. A caller that
 /// hands us a narrower unsigned array is naming the same quantity; store it
-/// at identifier width so `get_uint` and the writers that consume it agree.
+/// at identifier width so `Column::as_uint` and the writers that consume it agree.
 fn promote_canonical_uint(key: &str, col: Column) -> Column {
     use crate::types::Idx;
     let Some(spec) = crate::store::schema::column(key) else {
@@ -1435,11 +1372,14 @@ mod tests {
         assert_eq!(copy.nrows(), Some(4));
         assert_eq!(copy.structural_shape(), Some(&[2, 2][..]));
         assert_ne!(
-            b.get_int("tag").unwrap().as_ptr(),
-            copy.get_int("tag").unwrap().as_ptr()
+            b.get("tag").and_then(|c| c.as_int()).unwrap().as_ptr(),
+            copy.get("tag").and_then(|c| c.as_int()).unwrap().as_ptr()
         );
         assert_eq!(
-            copy.get_int("tag").unwrap().as_slice_memory_order(),
+            copy.get("tag")
+                .and_then(|c| c.as_int())
+                .unwrap()
+                .as_slice_memory_order(),
             Some(&[1 as I, 0, 3, 0][..])
         );
     }
@@ -1475,7 +1415,8 @@ mod tests {
         // select_rows gathers in order.
         let sel = b.select_rows(&[2, 0]).unwrap();
         assert_eq!(
-            sel.get_uint("id")
+            sel.get("id")
+                .and_then(|c| c.as_uint())
                 .unwrap()
                 .iter()
                 .copied()
@@ -1489,7 +1430,8 @@ mod tests {
         // sort by id ascending reorders all columns.
         let s = b.sort_by("id", false).unwrap();
         assert_eq!(
-            s.get_uint("id")
+            s.get("id")
+                .and_then(|c| c.as_uint())
                 .unwrap()
                 .iter()
                 .copied()
@@ -1497,7 +1439,8 @@ mod tests {
             vec![1, 2, 3]
         );
         assert_eq!(
-            s.get_float("x")
+            s.get("x")
+                .and_then(|c| c.as_float())
                 .unwrap()
                 .iter()
                 .copied()
@@ -1508,7 +1451,8 @@ mod tests {
         // reverse = ascending reversed.
         let r = b.sort_by("id", true).unwrap();
         assert_eq!(
-            r.get_uint("id")
+            r.get("id")
+                .and_then(|c| c.as_uint())
                 .unwrap()
                 .iter()
                 .copied()
@@ -1569,18 +1513,21 @@ mod tests {
         block.insert("count", arr_i64).unwrap();
 
         // Correct type access
-        assert!(block.get_float("x").is_some());
-        assert!(block.get_int("count").is_some());
+        assert!(block.get("x").and_then(|c| c.as_float()).is_some());
+        assert!(block.get("count").and_then(|c| c.as_int()).is_some());
 
         // Wrong type access returns None
-        assert!(block.get_int("x").is_none());
-        assert!(block.get_float("count").is_none());
+        assert!(block.get("x").and_then(|c| c.as_int()).is_none());
+        assert!(block.get("count").and_then(|c| c.as_float()).is_none());
 
         // Mutable access
-        if let Some(x_mut) = block.get_float_mut("x") {
+        if let Some(x_mut) = block.get_mut("x").and_then(|c| c.as_float_mut()) {
             x_mut[[0]] = 99.0;
         }
-        assert_eq!(block.get_float("x").unwrap()[[0]], 99.0);
+        assert_eq!(
+            block.get("x").and_then(|c| c.as_float()).unwrap()[[0]],
+            99.0
+        );
     }
 
     #[test]
@@ -1599,7 +1546,10 @@ mod tests {
         if let Some(arr_mut) = col_mut.as_float_mut() {
             arr_mut[[0]] = 42.0;
         }
-        assert_eq!(block.get_float("x").unwrap()[[0]], 42.0);
+        assert_eq!(
+            block.get("x").and_then(|c| c.as_float()).unwrap()[[0]],
+            42.0
+        );
     }
 
     #[test]
@@ -1689,7 +1639,7 @@ mod tests {
         block1.merge(&block2).unwrap();
 
         assert_eq!(block1.nrows(), Some(4));
-        let x = block1.get_float("x").unwrap();
+        let x = block1.get("x").and_then(|c| c.as_float()).unwrap();
         assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0, 3.0, 4.0]);
     }
 
@@ -1766,9 +1716,9 @@ mod tests {
         block1.merge(&block2).unwrap();
 
         assert_eq!(block1.nrows(), Some(4));
-        let x = block1.get_float("x").unwrap();
+        let x = block1.get("x").and_then(|c| c.as_float()).unwrap();
         assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0, 3.0, 4.0]);
-        let id = block1.get_uint("id").unwrap();
+        let id = block1.get("id").and_then(|c| c.as_uint()).unwrap();
         assert_eq!(id.as_slice_memory_order().unwrap(), &[10, 20, 30, 40]);
     }
 
@@ -1788,7 +1738,8 @@ mod tests {
         assert!(block.contains_key("position_x"));
         assert_eq!(
             block
-                .get_float("position_x")
+                .get("position_x")
+                .and_then(|c| c.as_float())
                 .unwrap()
                 .as_slice_memory_order()
                 .unwrap(),
@@ -1821,9 +1772,15 @@ mod tests {
             )
             .unwrap();
 
+        block
+            .insert("charge_i64", Array1::from_vec(vec![1_i64, 2]).into_dyn())
+            .unwrap();
+
         assert!(block.has_f64("x"));
         assert!(block.has_uint("id"));
         assert!(block.has_int("res_seq"));
+        assert!(block.has_int("charge_i64"));
+        assert!(!block.has_f64("charge_i64"));
         assert!(block.has_string("name"));
         assert!(!block.has_uint("res_seq"));
         assert!(!block.has_int("id"));
@@ -1850,9 +1807,9 @@ mod tests {
         block.resize(2).unwrap();
 
         assert_eq!(block.nrows(), Some(2));
-        let x = block.get_float("x").unwrap();
+        let x = block.get("x").and_then(|c| c.as_float()).unwrap();
         assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0]);
-        let id = block.get_uint("id").unwrap();
+        let id = block.get("id").and_then(|c| c.as_uint()).unwrap();
         assert_eq!(id.as_slice_memory_order().unwrap(), &[10, 20]);
     }
 
@@ -1869,10 +1826,10 @@ mod tests {
         block.resize(4).unwrap();
 
         assert_eq!(block.nrows(), Some(4));
-        let x = block.get_float("x").unwrap();
+        let x = block.get("x").and_then(|c| c.as_float()).unwrap();
         // Original data preserved, new rows are 0.0
         assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0, 0.0, 0.0]);
-        let id = block.get_uint("id").unwrap();
+        let id = block.get("id").and_then(|c| c.as_uint()).unwrap();
         // Original data preserved, new rows are 0
         assert_eq!(id.as_slice_memory_order().unwrap(), &[10, 20, 0, 0]);
     }
@@ -1887,7 +1844,7 @@ mod tests {
         block.resize(3).unwrap();
 
         assert_eq!(block.nrows(), Some(3));
-        let x = block.get_float("x").unwrap();
+        let x = block.get("x").and_then(|c| c.as_float()).unwrap();
         assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0, 3.0]);
     }
 
@@ -1919,7 +1876,7 @@ mod tests {
         // Shrink 4x3 -> 2x3
         block.resize(2).unwrap();
         assert_eq!(block.nrows(), Some(2));
-        let pos = block.get_float("pos").unwrap();
+        let pos = block.get("pos").and_then(|c| c.as_float()).unwrap();
         assert_eq!(pos.shape(), &[2, 3]);
         assert_eq!(
             pos.as_slice_memory_order().unwrap(),
@@ -1929,7 +1886,7 @@ mod tests {
         // Grow 2x3 -> 5x3
         block.resize(5).unwrap();
         assert_eq!(block.nrows(), Some(5));
-        let pos = block.get_float("pos").unwrap();
+        let pos = block.get("pos").and_then(|c| c.as_float()).unwrap();
         assert_eq!(pos.shape(), &[5, 3]);
         // Original data followed by zeros
         assert_eq!(
@@ -1964,19 +1921,19 @@ mod tests {
         block.resize(5).unwrap();
         assert_eq!(block.nrows(), Some(5));
 
-        let x = block.get_float("x").unwrap();
+        let x = block.get("x").and_then(|c| c.as_float()).unwrap();
         assert_eq!(
             x.as_slice_memory_order().unwrap(),
             &[1.0, 2.0, 3.0, 0.0, 0.0]
         );
-        let id = block.get_uint("id").unwrap();
+        let id = block.get("id").and_then(|c| c.as_uint()).unwrap();
         assert_eq!(id.as_slice_memory_order().unwrap(), &[10, 20, 30, 0, 0]);
-        let mask = block.get_bool("mask").unwrap();
+        let mask = block.get("mask").and_then(|c| c.as_bool()).unwrap();
         assert_eq!(
             mask.as_slice_memory_order().unwrap(),
             &[true, false, true, false, false]
         );
-        let name = block.get_string("name").unwrap();
+        let name = block.get("name").and_then(|c| c.as_string()).unwrap();
         assert_eq!(name[[0]], "a");
         assert_eq!(name[[1]], "b");
         assert_eq!(name[[2]], "c");
@@ -1987,13 +1944,13 @@ mod tests {
         block.resize(2).unwrap();
         assert_eq!(block.nrows(), Some(2));
 
-        let x = block.get_float("x").unwrap();
+        let x = block.get("x").and_then(|c| c.as_float()).unwrap();
         assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0]);
-        let id = block.get_uint("id").unwrap();
+        let id = block.get("id").and_then(|c| c.as_uint()).unwrap();
         assert_eq!(id.as_slice_memory_order().unwrap(), &[10, 20]);
-        let mask = block.get_bool("mask").unwrap();
+        let mask = block.get("mask").and_then(|c| c.as_bool()).unwrap();
         assert_eq!(mask.as_slice_memory_order().unwrap(), &[true, false]);
-        let name = block.get_string("name").unwrap();
+        let name = block.get("name").and_then(|c| c.as_string()).unwrap();
         assert_eq!(name[[0]], "a");
         assert_eq!(name[[1]], "b");
     }
@@ -2105,7 +2062,10 @@ mod tests {
         let s = Block::stack([&a, &b]).unwrap();
         assert_eq!(s.keys().collect::<Vec<_>>(), ["x", "q"]);
         assert_eq!(
-            s.get_float("q").unwrap().as_slice_memory_order(),
+            s.get("q")
+                .and_then(|c| c.as_float())
+                .unwrap()
+                .as_slice_memory_order(),
             Some(&[0.0, 0.0, -1.0][..])
         );
         assert_eq!(s.validity("q"), Some(&[false, false, true][..]));
@@ -2145,7 +2105,10 @@ mod tests {
         let mut b = Block::new();
         b.insert("x", floats(&[1.0, 2.0])).unwrap();
         let s = Block::stack([&a, &b]).unwrap();
-        assert_eq!(s.get_float("v").unwrap().shape(), &[3, 3]);
+        assert_eq!(
+            s.get("v").and_then(|c| c.as_float()).unwrap().shape(),
+            &[3, 3]
+        );
     }
 
     #[test]

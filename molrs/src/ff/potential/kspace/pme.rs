@@ -909,7 +909,7 @@ pub fn pme_ctor(
     let atoms = frame
         .get(ATOMS)
         .ok_or("PME: Frame missing \"atoms\" block")?;
-    let charges: Vec<F> = if let Some(charge_col) = atoms.get_float("charge") {
+    let charges: Vec<F> = if let Some(charge_col) = atoms.get("charge").and_then(|c| c.as_float()) {
         charge_col.iter().copied().collect()
     } else {
         return Err("PME: atoms block missing \"charge\" float column".into());
@@ -934,7 +934,10 @@ pub fn pme_ctor(
     // Read exclusions from Frame's "exclusions" block (optional)
     let mut exclusions = Vec::new();
     if let Some(block) = frame.get(EXCLUSIONS)
-        && let (Some(i_col), Some(j_col)) = (block.get_uint("atomi"), block.get_uint("atomj"))
+        && let (Some(i_col), Some(j_col)) = (
+            block.get("atomi").and_then(|c| c.as_uint()),
+            block.get("atomj").and_then(|c| c.as_uint()),
+        )
     {
         for idx in 0..i_col.len() {
             exclusions.push([i_col[idx] as usize, j_col[idx] as usize]);

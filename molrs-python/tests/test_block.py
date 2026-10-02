@@ -108,44 +108,44 @@ class TestBlockInsert:
         b = Block()
         b.insert("x", np.array([1.0, 2.0], dtype=np.float64))
         b.insert("x", np.array([3.0, 4.0], dtype=np.float64))
-        np.testing.assert_allclose(b.view("x"), [3.0, 4.0])
+        np.testing.assert_allclose(b["x"], [3.0, 4.0])
 
 
 class TestBlockGet:
     def test_roundtrip_f64(self):
         b = Block()
         b.insert("x", np.array([1.1, 2.2], dtype=np.float64))
-        np.testing.assert_allclose(b.view("x"), [1.1, 2.2], atol=1e-12)
+        np.testing.assert_allclose(b["x"], [1.1, 2.2], atol=1e-12)
 
     def test_roundtrip_uint(self):
         b = Block()
         b.insert("id", np.array([10, 20], dtype=np.uint32))
-        np.testing.assert_array_equal(b.view("id"), [10, 20])
+        np.testing.assert_array_equal(b["id"], [10, 20])
 
     def test_roundtrip_bool(self):
         b = Block()
         b.insert("m", np.array([True, False]))
-        np.testing.assert_array_equal(b.view("m"), [True, False])
+        np.testing.assert_array_equal(b["m"], [True, False])
 
     def test_missing_key_raises_key_error(self):
         with pytest.raises(KeyError):
-            Block().view("nonexistent")
+            Block()["nonexistent"]
 
     def test_missing_column_lists_candidates(self):
         b = Block()
         b.insert("x", np.array([1.0, 2.0], dtype=np.float64))
         with pytest.raises(KeyError, match="x"):
-            b.view("xx")
+            b["xx"]
 
     def test_roundtrip_2d(self):
         b = Block()
         data = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float64)
         b.insert("pos", data)
-        np.testing.assert_allclose(b.view("pos"), data)
+        np.testing.assert_allclose(b["pos"], data)
 
     def test_view_is_a_zero_copy_numpy_array(self):
         b = Block({"pos": np.arange(9.0).reshape(3, 3)})
-        view = b.view("pos")
+        view = b["pos"]
         assert isinstance(view, np.ndarray)
         assert view.base is not None
 
@@ -175,7 +175,7 @@ class TestBlockKeys:
         assert z in b
         assert "atomic_number" in b
         np.testing.assert_array_equal(b[z], [1, 8])
-        np.testing.assert_array_equal(b.view(z), [1, 8])
+        np.testing.assert_array_equal(b[z], [1, 8])
         assert b.dtype(z) == "uint"
         del b[z]
         assert z not in b
@@ -259,6 +259,21 @@ class TestBlockSubscriptAssignment:
         b["name"] = ["C", "H", "O"]
         assert list(b["name"]) == ["C", "H", "O"]
 
+    def test_a_string_column_indexes_like_a_numeric_one(self):
+        b = Block({"name": ["C", "H", "O"]})
+        out = b["name"]
+        assert out.shape == (3,)
+        assert out.dtype.kind == "U"
+        assert out.tolist() == ["C", "H", "O"]
+        # Numpy strings are fixed-width, so this is a copy: writing it does
+        # not change the column.
+        out[0] = "N"
+        assert b["name"].tolist() == ["C", "H", "O"]
+        copied = b.copy_column("name")
+        assert copied.tolist() == ["C", "H", "O"]
+        copied[0] = "X"
+        assert b["name"].tolist() == ["C", "H", "O"]
+
     def test_setitem_replaces_an_existing_column(self):
         b = Block()
         b["x"] = np.zeros(3, dtype=np.float64)
@@ -333,6 +348,12 @@ class TestBlockMultiColumnIndexing:
         block = Block({"a": np.zeros((2, 3)), "b": np.zeros((2, 2))})
         with pytest.raises(ValueError, match="shape"):
             block["a", "b"]
+
+    def test_string_columns_stack_like_numeric_ones(self):
+        block = Block({"a": ["C", "H"], "b": ["O", "N"]})
+        stacked = block["a", "b"]
+        assert stacked.shape == (2, 2)
+        assert stacked.tolist() == [["C", "O"], ["H", "N"]]
 
 
 class TestBlockMultiColumnAssignment:

@@ -831,9 +831,12 @@ fn xyz_read_first_frame(path: &str) -> Result<Box<FrameRef>, String> {
     let atoms = frame
         .get_mut("atoms")
         .ok_or_else(|| "xyz_read_first_frame: frame has no atoms block".to_string())?;
-    let species = atoms.get_string("species").ok_or_else(|| {
-        "xyz_read_first_frame: atoms block has no ExtXYZ species column".to_string()
-    })?;
+    let species = atoms
+        .get("species")
+        .and_then(|c| c.as_string())
+        .ok_or_else(|| {
+            "xyz_read_first_frame: atoms block has no ExtXYZ species column".to_string()
+        })?;
     let zs: Result<Vec<u64>, String> = species
         .iter()
         .map(|symbol| z_for_symbol(symbol).map(|z| z as u64))

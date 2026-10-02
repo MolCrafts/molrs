@@ -104,13 +104,21 @@ pub fn uff_bond_ctor(
     let block = frame
         .get(BONDS)
         .ok_or("uff_bond: missing \"bonds\" block")?;
-    let i = block.get_uint("atomi").ok_or("uff_bond: missing atomi")?;
-    let j = block.get_uint("atomj").ok_or("uff_bond: missing atomj")?;
+    let i = block
+        .get("atomi")
+        .and_then(|c| c.as_uint())
+        .ok_or("uff_bond: missing atomi")?;
+    let j = block
+        .get("atomj")
+        .and_then(|c| c.as_uint())
+        .ok_or("uff_bond: missing atomj")?;
     let kb = block
-        .get_float("kb")
+        .get("kb")
+        .and_then(|c| c.as_float())
         .ok_or("uff_bond: missing kb (typifier must bake)")?;
     let r0 = block
-        .get_float("r0")
+        .get("r0")
+        .and_then(|c| c.as_float())
         .ok_or("uff_bond: missing r0 (typifier must bake)")?;
     let n = i.len();
     Ok(Member::indexed(UffBond {

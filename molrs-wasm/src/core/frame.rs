@@ -28,7 +28,7 @@
 //! bonds.set("bond_type", bondTypes);     // BigUint64Array; 4 = aromatic
 //! bonds.set("bond_number", bondNumbers); // BigUint64Array; localized 1/2/3
 //!
-//! frame.get("atoms").get("x"); // Float64Array, like frame["atoms"]["x"]
+//! frame.get("atoms").view("x"); // zero-copy Float64Array
 //! ```
 
 use wasm_bindgen::prelude::*;
@@ -129,8 +129,8 @@ impl Frame {
     }
 
     /// The [`Block`] named `key`: a live handle, so writes through it land
-    /// in this frame. `frame.get("atoms").get("x")` mirrors Python's
-    /// `frame["atoms"]["x"]`.
+    /// in this frame. `frame.get("atoms")` is the block. `view("x")` is the
+    /// zero-copy numeric column; `copy("x")` is the owned column.
     ///
     /// # Errors
     ///

@@ -322,15 +322,18 @@ pub fn pair_buck_ctor(
         .get(PAIRS)
         .ok_or_else(|| "PairBuck: frame missing \"pairs\" block".to_string())?;
     let i_col = block
-        .get_uint("atomi")
+        .get("atomi")
+        .and_then(|c| c.as_uint())
         .ok_or_else(|| "PairBuck: pairs block missing \"atomi\" column".to_string())?;
     let j_col = block
-        .get_uint("atomj")
+        .get("atomj")
+        .and_then(|c| c.as_uint())
         .ok_or_else(|| "PairBuck: pairs block missing \"atomj\" column".to_string())?;
     let type_col = block
-        .get_string("type")
+        .get("type")
+        .and_then(|c| c.as_string())
         .ok_or_else(|| "PairBuck: pairs block missing \"type\" column".to_string())?;
-    let is_14 = block.get_bool("is_14");
+    let is_14 = block.get("is_14").and_then(|c| c.as_bool());
 
     let mut atom_i = Vec::with_capacity(i_col.len());
     let mut atom_j = Vec::with_capacity(i_col.len());

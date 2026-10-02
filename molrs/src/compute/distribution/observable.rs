@@ -70,7 +70,8 @@ impl AtomGroups {
         let mut columns: Vec<Vec<Idx>> = Vec::with_capacity(arity);
         for &col in &keys::ENDPOINTS[..arity] {
             let view = frame
-                .get_uint(block, col)
+                .column(block, col)
+                .and_then(|c| c.as_uint())
                 .ok_or(ComputeError::MissingColumn { block, col })?;
             columns.push(view.iter().copied().collect());
         }

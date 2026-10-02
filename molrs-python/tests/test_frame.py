@@ -26,8 +26,8 @@ class TestFrameConstruction:
 
         assert sorted(f.keys()) == ["atoms"]
         assert f["atoms"].nrows == 2
-        assert list(f["atoms"].view("symbol")) == ["C", "H"]
-        np.testing.assert_allclose(f["atoms"].view("x"), [0.0, 1.0])
+        assert list(f["atoms"]["symbol"]) == ["C", "H"]
+        np.testing.assert_allclose(f["atoms"]["x"], [0.0, 1.0])
         assert f.meta["source"] == "pytest"
 
     def test_repr_empty(self):
@@ -191,7 +191,7 @@ class TestFrameBlockAccess:
         atoms = f["atoms"]
         atoms.insert("y", np.array([3.0, 4.0], dtype=np.float64))
 
-        np.testing.assert_allclose(f["atoms"].view("y"), [3.0, 4.0])
+        np.testing.assert_allclose(f["atoms"]["y"], [3.0, 4.0])
 
     @pytest.mark.parametrize(
         "touch_meta",
@@ -212,7 +212,7 @@ class TestFrameBlockAccess:
         atoms = f["atoms"]
         touch_meta(f.meta)
 
-        np.testing.assert_allclose(atoms.view("x"), [1.0, 2.0])
+        np.testing.assert_allclose(atoms["x"], [1.0, 2.0])
 
     def test_getitem_missing_raises_key_error(self):
         f = Frame()

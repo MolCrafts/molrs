@@ -146,33 +146,33 @@ mod tests {
         assert!(a.contains_key("bonds"));
         assert!(b.contains_key("bonds"));
 
-        let ax = a["atoms"].get_float("x").unwrap();
-        let bx = b["atoms"].get_float("x").unwrap();
+        let ax = a["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
+        let bx = b["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
         assert_eq!(ax.len(), bx.len());
         for (u, v) in ax.iter().zip(bx.iter()) {
             assert!((u - v).abs() < f64::EPSILON);
         }
-        let ay = a["atoms"].get_float("y").unwrap();
-        let by = b["atoms"].get_float("y").unwrap();
+        let ay = a["atoms"].get("y").and_then(|c| c.as_float()).unwrap();
+        let by = b["atoms"].get("y").and_then(|c| c.as_float()).unwrap();
         for (u, v) in ay.iter().zip(by.iter()) {
             assert!((u - v).abs() < f64::EPSILON);
         }
-        let az = a["atoms"].get_float("z").unwrap();
-        let bz = b["atoms"].get_float("z").unwrap();
+        let az = a["atoms"].get("z").and_then(|c| c.as_float()).unwrap();
+        let bz = b["atoms"].get("z").and_then(|c| c.as_float()).unwrap();
         for (u, v) in az.iter().zip(bz.iter()) {
             assert!((u - v).abs() < f64::EPSILON);
         }
 
-        let aserial = a["atoms"].get_int("serial").unwrap();
-        let bserial = b["atoms"].get_int("serial").unwrap();
+        let aserial = a["atoms"].get("serial").and_then(|c| c.as_int()).unwrap();
+        let bserial = b["atoms"].get("serial").and_then(|c| c.as_int()).unwrap();
         assert_eq!(aserial.as_slice().unwrap(), bserial.as_slice().unwrap());
 
-        let atype = a["atoms"].get_u8("atype").unwrap();
-        let btype = b["atoms"].get_u8("atype").unwrap();
+        let atype = a["atoms"].get("atype").and_then(|c| c.as_u8()).unwrap();
+        let btype = b["atoms"].get("atype").and_then(|c| c.as_u8()).unwrap();
         assert_eq!(atype.as_slice().unwrap(), btype.as_slice().unwrap());
 
-        let bi = a["bonds"].get_uint("i").unwrap();
-        let bj = b["bonds"].get_uint("i").unwrap();
+        let bi = a["bonds"].get("i").and_then(|c| c.as_uint()).unwrap();
+        let bj = b["bonds"].get("i").and_then(|c| c.as_uint()).unwrap();
         assert_eq!(bi.as_slice().unwrap(), bj.as_slice().unwrap());
 
         assert!(a.simbox.is_some());

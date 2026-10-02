@@ -346,7 +346,14 @@ class Block:
     def coords(self, value: npt.ArrayLike) -> None:
         """Write an ``(N, 3)`` array into ``x`` / ``y`` / ``z`` (float64).
         Raises ``ValueError`` for a non-``(N, 3)`` array or a row mismatch."""
-    def view(self, key: ColumnKey) -> npt.NDArray: ...
+    def copy_column(self, key: ColumnKey) -> npt.NDArray:
+        """Owned copy of one column, shape included.
+
+        ``block[key]`` returns the column for every dtype. Numeric, bool and
+        complex columns are a zero-copy view there, so this copies them. A
+        string column is already a copy under ``block[key]`` (numpy ``str``,
+        the column's shape), and this returns another one.
+        """
     def validity(self, key: ColumnKey) -> ArrayBool | None:
         """The validity mask of a column, or ``None`` when it has no holes.
 
@@ -362,7 +369,7 @@ class Block:
         ------
         KeyError
             If ``key`` names no column of this block — the same answer
-            :meth:`view` and :meth:`dtype` give, so a misspelled key cannot
+            indexing and :meth:`dtype` give, so a misspelled key cannot
             read as a dense column.
         """
     @overload

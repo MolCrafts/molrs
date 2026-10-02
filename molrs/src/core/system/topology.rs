@@ -179,7 +179,8 @@ impl Topology {
         }
         let endpoint = |column: &'static str| {
             bonds
-                .get_uint(column)
+                .get(column)
+                .and_then(|c| c.as_uint())
                 .ok_or(TopologyError::MissingEndpoint {
                     block: BONDS,
                     column,

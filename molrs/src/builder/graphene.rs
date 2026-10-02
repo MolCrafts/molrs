@@ -249,10 +249,10 @@ mod tests {
         assert_eq!(bonds.nrows(), Some(3 * n / 2));
 
         let mut degree = vec![0; n];
-        for &i in bonds.get_uint("atomi").unwrap() {
+        for &i in bonds.get("atomi").and_then(|c| c.as_uint()).unwrap() {
             degree[i as usize] += 1;
         }
-        for &j in bonds.get_uint("atomj").unwrap() {
+        for &j in bonds.get("atomj").and_then(|c| c.as_uint()).unwrap() {
             degree[j as usize] += 1;
         }
         assert!(degree.into_iter().all(|d| d == 3));

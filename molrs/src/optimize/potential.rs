@@ -343,7 +343,7 @@ fn frame_free_mask(frame: &Frame, n_atoms: usize) -> Result<Option<Vec<bool>>, S
     let Some(atoms) = frame.get(ATOMS) else {
         return Ok(None);
     };
-    let Some(col) = atoms.get_bool(FREE) else {
+    let Some(col) = atoms.get(FREE).and_then(|c| c.as_bool()) else {
         return Ok(None);
     };
     if col.len() != n_atoms {
@@ -451,7 +451,12 @@ mod tests {
         let mut frame = frame_from_coords(&[0.0, 0.0, 0.0, 1.5, 0.0, 0.0]);
         let report = opt(pot).run(&mut frame).unwrap();
         assert!(report.converged);
-        let x = frame.get("atoms").unwrap().get_float("x").unwrap();
+        let x = frame
+            .get("atoms")
+            .unwrap()
+            .get("x")
+            .and_then(|c| c.as_float())
+            .unwrap();
         assert!((x[[1]] - x[[0]] - 1.0).abs() < 1e-6);
     }
 
@@ -462,7 +467,12 @@ mod tests {
         let mut frame = frame_from_coords(&[0.0, 0.0, 0.0, 1.5, 0.0, 0.0]);
         set_free_mask(&mut frame, &[false, true]).unwrap();
         opt(pot).run(&mut frame).unwrap();
-        let x = frame.get("atoms").unwrap().get_float("x").unwrap();
+        let x = frame
+            .get("atoms")
+            .unwrap()
+            .get("x")
+            .and_then(|c| c.as_float())
+            .unwrap();
         assert!(x[[0]].abs() < 1e-9, "fixed atom moved: {}", x[[0]]);
         assert!((x[[1]] - 1.0).abs() < 1e-5, "free atom should sit at r0");
     }

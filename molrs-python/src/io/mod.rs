@@ -126,7 +126,7 @@ use std::path::PathBuf;
 /// --------
 /// >>> frame = molrs.io.read_pdb("molecule.pdb")
 /// >>> atoms = frame["atoms"]
-/// >>> symbols = atoms.view("symbol")
+/// >>> symbols = atoms["symbol"]
 #[pyfunction]
 pub fn read_pdb(path: PathBuf) -> PyResult<PyFrame> {
     let path = path_str(&path)?;
@@ -565,7 +565,7 @@ impl PyLAMMPSTrajReader {
 /// >>> frames = molrs.io.raw.read_dcd_trajectory("trajectory.dcd")
 /// >>> len(frames)
 /// 100
-/// >>> frames[0]["atoms"].view("x")
+/// >>> frames[0]["atoms"]["x"]
 #[pyfunction]
 pub fn read_dcd_trajectory(path: PathBuf) -> PyResult<Vec<PyFrame>> {
     let path = path_str(&path)?;
@@ -744,7 +744,7 @@ impl PyDcdTrajReader {
 /// >>> reader = molrs.XYZTrajReader("traj.xyz")
 /// >>> reader.n_frames
 /// 50
-/// >>> reader[-1]["atoms"].view("x")
+/// >>> reader[-1]["atoms"]["x"]
 #[pyclass(module = "molrs.io.raw", name = "XYZTrajReader", unsendable)]
 pub struct PyXYZTrajReader {
     inner: Option<XYZReader<Box<dyn ReadSeek>>>,

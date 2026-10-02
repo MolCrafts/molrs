@@ -19,7 +19,7 @@ class TestTopLevelEagerReaders:
         atoms = frames[0]["atoms"]
         assert atoms.nrows > 0
         for axis in ("x", "y", "z"):
-            assert np.all(np.isfinite(atoms.view(axis)))
+            assert np.all(np.isfinite(atoms[axis]))
 
     def test_read_xtc_returns_list_of_frames(self, water_xtc):
         frames = molrs.io.raw.read_xtc_trajectory(str(water_xtc))
@@ -43,8 +43,8 @@ class TestLazyFacadeReaders:
         reader = mio.read_trr_trajectory(path)
         eager = molrs.io.raw.read_trr_trajectory(path)
         assert reader.n_frames == len(eager)
-        last = reader.read_frame(-1)["atoms"].view("x")
-        assert np.allclose(last, eager[-1]["atoms"].view("x"))
+        last = reader.read_frame(-1)["atoms"]["x"]
+        assert np.allclose(last, eager[-1]["atoms"]["x"])
 
     def test_out_of_range_raises(self, water_xtc):
         reader = mio.read_xtc_trajectory(str(water_xtc))
@@ -66,7 +66,7 @@ class TestWriteRoundTrip:
         back = molrs.io.raw.read_trr_trajectory(str(out))
         assert len(back) == len(frames)
         for a, b in zip(frames, back):
-            assert np.allclose(a["atoms"].view("x"), b["atoms"].view("x"), atol=1e-5)
+            assert np.allclose(a["atoms"]["x"], b["atoms"]["x"], atol=1e-5)
 
     def test_xtc_roundtrip_within_precision(self, water_xtc, tmp_path):
         frames = molrs.io.raw.read_xtc_trajectory(str(water_xtc))
@@ -76,4 +76,4 @@ class TestWriteRoundTrip:
         assert len(back) == len(frames)
         for a, b in zip(frames, back):
             # XTC is lossy at 1/precision (default 1000 → 1e-3 nm).
-            assert np.allclose(a["atoms"].view("x"), b["atoms"].view("x"), atol=2e-3)
+            assert np.allclose(a["atoms"]["x"], b["atoms"]["x"], atol=2e-3)

@@ -648,13 +648,16 @@ fn write_atom_conect_records<W: Write>(
     frame: &impl FrameAccess,
 ) -> std::io::Result<()> {
     let x = frame
-        .get_float("atoms", "x")
+        .column("atoms", "x")
+        .and_then(|c| c.as_float())
         .ok_or_else(|| err_mapper("Missing 'x' column"))?;
     let y = frame
-        .get_float("atoms", "y")
+        .column("atoms", "y")
+        .and_then(|c| c.as_float())
         .ok_or_else(|| err_mapper("Missing 'y' column"))?;
     let z = frame
-        .get_float("atoms", "z")
+        .column("atoms", "z")
+        .and_then(|c| c.as_float())
         .ok_or_else(|| err_mapper("Missing 'z' column"))?;
     let n = x
         .shape()
@@ -675,7 +678,8 @@ fn write_atom_conect_records<W: Write>(
     // Optional per-atom string columns (snake_case, as emitted by the reader).
     let owned_str = |col: &str| -> Vec<String> {
         frame
-            .get_string("atoms", col)
+            .column("atoms", col)
+            .and_then(|c| c.as_string())
             .as_ref()
             .and_then(|arr| arr.as_slice().map(|s| s.to_vec()))
             .unwrap_or_default()
@@ -686,13 +690,15 @@ fn write_atom_conect_records<W: Write>(
     let elements = owned_str("element");
 
     let res_seqs: Vec<Idx> = frame
-        .get_uint("atoms", "res_id")
+        .column("atoms", "res_id")
+        .and_then(|c| c.as_uint())
         .as_ref()
         .and_then(|arr| arr.as_slice().map(|s| s.to_vec()))
         .unwrap_or_default();
 
     let ids: Vec<Idx> = frame
-        .get_uint("atoms", "id")
+        .column("atoms", "id")
+        .and_then(|c| c.as_uint())
         .as_ref()
         .and_then(|arr| arr.as_slice().map(|s| s.to_vec()))
         .unwrap_or_default();
@@ -779,10 +785,12 @@ fn write_atom_conect_records<W: Write>(
                 }
 
                 let i_arr = bonds
-                    .get_uint_view("atomi")
+                    .column("atomi")
+                    .and_then(|c| c.as_uint())
                     .ok_or_else(|| err_mapper("Bonds block missing 'atomi' column"))?;
                 let j_arr = bonds
-                    .get_uint_view("atomj")
+                    .column("atomj")
+                    .and_then(|c| c.as_uint())
                     .ok_or_else(|| err_mapper("Bonds block missing 'atomj' column"))?;
 
                 let i_slice = i_arr
@@ -1263,7 +1271,10 @@ END
         let frame = reader.read().expect("IO error").expect("No frame");
 
         let atom_block = frame.get("atoms").expect("No atoms block");
-        let elements = atom_block.get_string("element").expect("No element column");
+        let elements = atom_block
+            .get("element")
+            .and_then(|c| c.as_string())
+            .expect("No element column");
         assert_eq!(elements[[0]], "C");
         assert_eq!(elements[[1]], "Fe");
     }
@@ -1375,8 +1386,20 @@ END
         ];
         let serial_map: HashMap<i32, Idx> = [(1, 0), (2, 1), (3, 2)].into_iter().collect();
         let bonds = build_bonds_block(&conects, &serial_map).unwrap().unwrap();
-        let i: Vec<Idx> = bonds.get_uint("atomi").unwrap().iter().copied().collect();
-        let j: Vec<Idx> = bonds.get_uint("atomj").unwrap().iter().copied().collect();
+        let i: Vec<Idx> = bonds
+            .get("atomi")
+            .and_then(|c| c.as_uint())
+            .unwrap()
+            .iter()
+            .copied()
+            .collect();
+        let j: Vec<Idx> = bonds
+            .get("atomj")
+            .and_then(|c| c.as_uint())
+            .unwrap()
+            .iter()
+            .copied()
+            .collect();
         assert_eq!((i, j), (vec![0, 1], vec![1, 2]));
     }
 

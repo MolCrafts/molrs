@@ -142,7 +142,10 @@ pub(crate) fn end_pairs(
     let Some(b) = frame.get(block) else {
         return Vec::new();
     };
-    let (Some(a_col), Some(b_col)) = (b.get_uint(col_a), b.get_uint(col_b)) else {
+    let (Some(a_col), Some(b_col)) = (
+        b.get(col_a).and_then(|c| c.as_uint()),
+        b.get(col_b).and_then(|c| c.as_uint()),
+    ) else {
         return Vec::new();
     };
     a_col

@@ -436,16 +436,25 @@ mod tests {
         let mut reader = SDFReader::new(Cursor::new(WATER_SDF.as_bytes()));
         let frame = reader.read().expect("read ok").expect("frame present");
 
-        let x = frame.get_float("atoms", "x").expect("x column");
+        let x = frame
+            .column("atoms", "x")
+            .and_then(|c| c.as_float())
+            .expect("x column");
         assert_eq!(x.shape(), &[3]);
         assert!((x[[0]] - 0.0).abs() < 1e-6);
         assert!((x[[1]] - 0.7572).abs() < 1e-6);
 
-        let atomi = frame.get_uint("bonds", "atomi").expect("atomi column");
+        let atomi = frame
+            .column("bonds", "atomi")
+            .and_then(|c| c.as_uint())
+            .expect("atomi column");
         assert_eq!(atomi.shape(), &[2]);
         assert_eq!(atomi[[0]], 0); // 1-based -> 0-based
         assert_eq!(atomi[[1]], 0);
-        let atomj = frame.get_uint("bonds", "atomj").expect("atomj column");
+        let atomj = frame
+            .column("bonds", "atomj")
+            .and_then(|c| c.as_uint())
+            .expect("atomj column");
         assert_eq!(atomj[[0]], 1);
         assert_eq!(atomj[[1]], 2);
     }

@@ -96,12 +96,12 @@ impl DensityGrid {
             });
         }
         let dims = [shape[0], shape[1], shape[2]];
-        let grid = grid_block
-            .get_float("density")
-            .ok_or(ComputeError::MissingColumn {
+        let grid = grid_block.get("density").and_then(|c| c.as_float()).ok_or(
+            ComputeError::MissingColumn {
                 block: "grid",
                 col: "density",
-            })?;
+            },
+        )?;
         let simbox = frame.simbox.as_ref().ok_or(ComputeError::MissingSimBox)?;
         // h column j = voxel_axis_j × dim_j (cube reader); recover the per-voxel
         // basis by dividing the cell column by the dimension.

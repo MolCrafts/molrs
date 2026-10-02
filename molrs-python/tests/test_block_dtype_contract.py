@@ -76,14 +76,14 @@ class TestSupportedDtypes:
     def test_round_trip(self, arr, kind):
         b = molrs.Block()
         b.insert("value", arr)
-        out = b.view("value")
+        out = b["value"]
         np.testing.assert_array_equal(out, arr)
         assert b.dtype("value") == kind
 
     def test_str_round_trip(self):
         b = molrs.Block()
         b.insert("name", ["a", "b", "c"])
-        assert list(b.view("name")) == ["a", "b", "c"]
+        assert list(b["name"]) == ["a", "b", "c"]
 
 
 # --- ac-005: zero-copy views ------------------------------------------------
@@ -93,7 +93,7 @@ class TestZeroCopy:
     def test_float_view_shares_memory(self):
         b = molrs.Block()
         b.insert("x", np.array([1.0, 2.0, 3.0], dtype=np.float64))
-        v = b.view("x")
+        v = b["x"]
         assert v.base is not None  # Arc-backed window, not a defensive copy
 
 
@@ -104,7 +104,7 @@ class TestEmptyColumn:
     def test_empty_float_stores(self):
         b = molrs.Block()
         b.insert("x", np.array([], dtype=np.float64))
-        out = b.view("x")
+        out = b["x"]
         assert out.shape == (0,)
         assert b.dtype("x") == "float"
 
