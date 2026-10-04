@@ -80,6 +80,16 @@ short "Also new" list at the end of each section.
     fails the record read. It is carried as `ObservableKind::Other(String)`
     and written back unchanged. Observable data with no
     `observables/meta/<name>` entry is still refused.
+  - A root section the reader does not know is ignored. 0.14 read every
+    unknown section as a frame group: arrays directly under it were dropped,
+    and a sequence-shaped one could fail the read.
+  - The frame, system and trajectory doors (`read_frame_file`,
+    `read_system_file`, `read_trajectory_file`; Python `read_mrec`,
+    `read_mrec_system`, `read_mrec_trajectory`) decode only `meta` and their
+    own section. A broken trajectory or observables section no longer fails
+    `read_mrec`. The lazy trajectory reader (`FrameSequence::open`, Python
+    `TrajectoryReader`) and the WASM readers now validate
+    `meta.molrec_version` too.
 
 ### Rust crate (`molcrafts-molrs`)
 
@@ -157,6 +167,9 @@ short "Also new" list at the end of each section.
   - `FrameView::from_parts` takes an `IndexMap`.
   - `Relation.props` is an `IndexMap`.
 - **`store::frame::FRAME_SCHEMA_VERSION` is removed**, with no replacement.
+- **`MolRec::extra_sections` is removed.** Unknown root sections are ignored
+  on read, so nothing fills it. To read a producer's own frame-shaped section,
+  call `io::mrec::read_frame_section_store(store, name)`.
 - **`ObservableKind` gains `Other(String)`** and is no longer `Copy`.
   `ObservableKind::parse(s) -> Option<Self>` is replaced by
   `ObservableKind::from(s)`, which never fails, and `as_str` now returns a

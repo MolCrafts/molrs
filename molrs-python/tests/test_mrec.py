@@ -189,3 +189,23 @@ class TestCanonicalWidths:
         molrs.io.write_mrec(path, frame)
         back = molrs.io.read_mrec(path)
         assert np.asarray(back["bonds"]["atomi"]).dtype == np.uint64
+
+
+class TestUnknownSections:
+    def test_an_unknown_root_section_is_ignored(self, tmp_path: Path) -> None:
+        import json
+        import shutil
+
+        path = tmp_path / "foreign.mrec"
+        molrs.io.write_mrec(path, _coords_frame())
+        # A section this build does not know, which would not even decode as
+        # a frame group: its block claims more rows than its columns hold.
+        shutil.copytree(path / "frame", path / "future")
+        block_json = path / "future" / "atoms" / "zarr.json"
+        doc = json.loads(block_json.read_text())
+        doc.setdefault("attributes", {})["count"] = 99
+        block_json.write_text(json.dumps(doc))
+
+        assert "future" in molrs.io.mrec_sections(path)
+        _assert_coords(molrs.io.read_mrec(path))
+        assert len(molrs.io.read_mrec_trajectory(path)) == 0

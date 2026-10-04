@@ -26,8 +26,11 @@
 //! is a **closed catalog / summary**. Readers that need the full curve MUST
 //! open dense series arrays when present, else fall back to the JSONL WAL.
 //!
-//! Sections the reader does not interpret are preserved verbatim into
-//! [`MolRec::extra_sections`] rather than dropped.
+//! Root sections the reader does not interpret are ignored: they are never
+//! reinterpreted as frame groups, and they never fail a read. The typed doors
+//! ([`read_frame_file`], [`read_system_file`], [`read_trajectory_file`]) decode
+//! only the section they name, so a section they were not asked for cannot
+//! break them either.
 //!
 //! ## The `trajectory/` section has one owner
 //!
@@ -40,7 +43,6 @@
 
 #[cfg(feature = "filesystem")]
 use std::path::Path;
-#[cfg(feature = "filesystem")]
 use std::sync::Arc;
 
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -50,9 +52,9 @@ use zarrs::filesystem::FilesystemStore;
 #[cfg(feature = "zarr")]
 use zarrs::group::GroupBuilder;
 use zarrs::node::{Node, NodeMetadata};
-use zarrs::storage::ReadableWritableListableStorage;
 #[cfg(feature = "zarr")]
 use zarrs::storage::WritableStorageTraits;
+use zarrs::storage::{ReadableStorageTraits, ReadableWritableListableStorage};
 
 use crate::io::zarr::frame_io::{join_path, read_column, read_frame_group};
 #[cfg(feature = "zarr")]
@@ -186,9 +188,6 @@ pub fn write_record_store(
     }
     if !record.metrics.is_empty() || !record.metrics_series.is_empty() {
         write_metrics(&store, &join_path(prefix, "metrics"), record)?;
-    }
-    for (name, frame) in &record.extra_sections {
-        write_frame_group(&store, &join_path(prefix, name), frame)?;
     }
 
     Ok(())
@@ -400,8 +399,7 @@ fn write_observables(
 /// Paths whose file name ends in `.zarr` or `.zarr.zip` are refused. A
 /// `molrec_version` in `meta` is validated when present — it must be an integer
 /// in `1..=`[`crate::MOLREC_VERSION`] — and an absent one is no version check.
-/// Sections this build does not interpret are kept in
-/// [`crate::MolRec::extra_sections`] rather than dropped.
+/// Root sections this build does not interpret are ignored, never misread.
 ///
 /// A store still carrying the pre-0.14 `trajectory/frames/` tree is refused
 /// by name; it is not migrated and is not read back as empty.
@@ -414,11 +412,7 @@ fn write_observables(
 /// decode — including a legacy `trajectory/frames/` layout.
 #[cfg(feature = "filesystem")]
 pub fn read_record_file(path: impl AsRef<Path>) -> Result<MolRec, MolRsError> {
-    let path = path.as_ref();
-    schema::validate_path(path)?;
-    let store: ReadableWritableListableStorage =
-        Arc::new(FilesystemStore::new(path).map_err(zerr)?);
-    read_record_store(store)
+    read_record_store(open_record_store(path.as_ref())?)
 }
 
 /// Read **one** `Frame`-shaped section of a record from an open store.
@@ -430,27 +424,26 @@ pub fn read_record_file(path: impl AsRef<Path>) -> Result<MolRec, MolRsError> {
 /// for "give me the topology out of this run".
 ///
 /// `section` is a top-level group name (`"frame"`, `"system"`, or a producer's
-/// own). `Ok(None)` when the record has no such section; the store is listed,
-/// not decoded, to find that out.
+/// own frame-shaped group). `Ok(None)` when the record has no such section; the
+/// store is listed, not decoded, to find that out. The `meta` version is
+/// validated; no other section is touched.
 ///
 /// # Errors
 ///
-/// The same store errors as [`read_record_store`].
+/// A [`MolRsError::Zarr`] when `meta` carries an unsupported `molrec_version`
+/// or the section fails to decode.
 pub fn read_frame_section_store(
     store: ReadableWritableListableStorage,
     section: &str,
 ) -> Result<Option<Frame>, MolRsError> {
-    let root = Node::open(&store, "/")?;
-    for child in root.children() {
-        if !matches!(child.metadata(), NodeMetadata::Group(_)) {
-            continue;
-        }
-        let path = child.path().as_str().to_string();
-        if path.rsplit('/').next().unwrap_or("") == section {
-            return Ok(Some(read_frame_group(&store, &path)?));
-        }
+    read_meta(&store)?;
+    if !section_names_store(store.clone())?
+        .iter()
+        .any(|name| name == section)
+    {
+        return Ok(None);
     }
-    Ok(None)
+    Ok(Some(read_frame_group(&store, &join_path("/", section))?))
 }
 
 /// The record's top-level section names, without decoding any of them.
@@ -489,7 +482,7 @@ pub fn read_record_store(store: ReadableWritableListableStorage) -> Result<MolRe
     let prefix = "/";
     let mut record = MolRec::new();
 
-    record.meta = read_meta(&store, &join_path(prefix, "meta"))?;
+    record.meta = read_meta(&store)?;
 
     let root = Node::open(&store, prefix)?;
     for child in root.children() {
@@ -522,30 +515,30 @@ pub fn read_record_store(store: ReadableWritableListableStorage) -> Result<MolRe
                 record.metrics = read_json_group(&store, &path)?;
                 read_metrics_series(&store, &path, &mut record)?;
             }
-            _ => {
-                // Preserve the unknown: keep foreign sections rather than
-                // silently dropping a newer producer's data on round-trip.
-                record
-                    .extra_sections
-                    .insert(name, read_frame_group(&store, &path)?);
-            }
+            // A root section this build does not interpret is ignored. Its
+            // layout is unknown — it may hold arrays directly, or be shaped
+            // like a sequence — so reading it as a frame group would misread
+            // it or fail the whole record over data nobody asked for.
+            _ => {}
         }
     }
 
     Ok(record)
 }
 
-/// Read and validate the `meta` section.
+/// Read and validate the `meta` section of the record rooted at `/`.
 ///
 /// Every writer creates the group, but a reader tolerates its absence — an
 /// empty document — so a store a foreign tool assembled without one still
 /// opens. A present `molrec_version` is validated; an absent one is not
-/// required.
-fn read_meta(
-    store: &ReadableWritableListableStorage,
-    path: &str,
-) -> Result<JsonMap<String, JsonValue>, MolRsError> {
-    let attrs = match zarrs::group::Group::open(store.clone(), path) {
+/// required. Every read door runs this, whichever section it decodes.
+pub(in crate::io::zarr) fn read_meta<S>(
+    store: &Arc<S>,
+) -> Result<JsonMap<String, JsonValue>, MolRsError>
+where
+    S: ?Sized + ReadableStorageTraits + 'static,
+{
+    let attrs = match zarrs::group::Group::open(store.clone(), "/meta") {
         Ok(group) => group.attributes().clone(),
         Err(zarrs::group::GroupCreateError::MissingMetadata) => JsonMap::new(),
         Err(e) => return Err(e.into()),
@@ -757,26 +750,46 @@ pub fn write_system_file(
 
 /// Read the `frame` section of a record at `path`.
 ///
+/// Decodes `meta` (for its version) and the `frame` section only: a
+/// trajectory, observables, or a section this build does not know cannot
+/// fail this read.
+///
 /// # Errors
 ///
-/// The same errors as [`read_record_file`], plus a missing `frame` section.
+/// The path and `meta` errors of [`read_record_file`], a `frame` section that
+/// fails to decode, or a missing `frame` section.
 #[cfg(feature = "filesystem")]
 pub fn read_frame_file(path: impl AsRef<Path>) -> Result<Frame, MolRsError> {
-    read_record_file(path)?
-        .frame
-        .ok_or_else(|| MolRsError::zarr("record has no 'frame' section"))
+    read_section_file(path.as_ref(), "frame")
 }
 
 /// Read the `system` section of a record at `path`.
 ///
+/// Decodes `meta` (for its version) and the `system` section only, like
+/// [`read_frame_file`].
+///
 /// # Errors
 ///
-/// The same errors as [`read_record_file`], plus a missing `system` section.
+/// The path and `meta` errors of [`read_record_file`], a `system` section that
+/// fails to decode, or a missing `system` section.
 #[cfg(feature = "filesystem")]
 pub fn read_system_file(path: impl AsRef<Path>) -> Result<Frame, MolRsError> {
-    read_record_file(path)?
-        .system
-        .ok_or_else(|| MolRsError::zarr("record has no 'system' section"))
+    read_section_file(path.as_ref(), "system")
+}
+
+/// One frame-shaped section of the record at `path`, through
+/// [`read_frame_section_store`].
+#[cfg(feature = "filesystem")]
+fn read_section_file(path: &Path, section: &str) -> Result<Frame, MolRsError> {
+    read_frame_section_store(open_record_store(path)?, section)?
+        .ok_or_else(|| MolRsError::zarr(format!("record has no '{section}' section")))
+}
+
+/// Open the directory store at `path` for reading, refusing a retired suffix.
+#[cfg(feature = "filesystem")]
+fn open_record_store(path: &Path) -> Result<ReadableWritableListableStorage, MolRsError> {
+    schema::validate_path(path)?;
+    Ok(Arc::new(FilesystemStore::new(path).map_err(zerr)?))
 }
 
 /// Read the mandatory `meta` document of a record at `path`.
@@ -786,11 +799,7 @@ pub fn read_system_file(path: impl AsRef<Path>) -> Result<Frame, MolRsError> {
 /// The same path and brand errors as [`read_record_file`].
 #[cfg(feature = "filesystem")]
 pub fn read_meta_file(path: impl AsRef<Path>) -> Result<JsonMap<String, JsonValue>, MolRsError> {
-    let path = path.as_ref();
-    schema::validate_path(path)?;
-    let store: ReadableWritableListableStorage =
-        Arc::new(FilesystemStore::new(path).map_err(zerr)?);
-    read_meta(&store, &join_path("/", "meta"))
+    read_meta(&open_record_store(path.as_ref())?)
 }
 
 /// Child group names at the record root (`meta`, `frame`, `system`, …).
@@ -804,29 +813,7 @@ pub fn read_meta_file(path: impl AsRef<Path>) -> Result<JsonMap<String, JsonValu
 /// The same path errors as [`read_record_file`].
 #[cfg(feature = "filesystem")]
 pub fn section_names(path: impl AsRef<Path>) -> Result<Vec<String>, MolRsError> {
-    let path = path.as_ref();
-    schema::validate_path(path)?;
-    let store: ReadableWritableListableStorage =
-        Arc::new(FilesystemStore::new(path).map_err(zerr)?);
-    let root = Node::open(&store, "/")?;
-    let mut names = Vec::new();
-    for child in root.children() {
-        if !matches!(child.metadata(), NodeMetadata::Group(_)) {
-            continue;
-        }
-        let name = child
-            .path()
-            .as_str()
-            .rsplit('/')
-            .next()
-            .unwrap_or("")
-            .to_string();
-        if !name.is_empty() {
-            names.push(name);
-        }
-    }
-    names.sort();
-    Ok(names)
+    section_names_store(open_record_store(path.as_ref())?)
 }
 
 /// Read the `trajectory` section of a record at `path`.
@@ -834,14 +821,24 @@ pub fn section_names(path: impl AsRef<Path>) -> Result<Vec<String>, MolRsError> 
 /// Same path rules as [`read_record_file`]. A store with no `trajectory`
 /// section returns an empty [`crate::Trajectory`], not an error. A store still
 /// carrying the pre-0.14 `trajectory/frames/` tree is refused by name — the
-/// same failure [`crate::io::mrec::FrameSequence::open`] reports.
+/// same failure [`crate::io::mrec::FrameSequence::open`] reports. Only `meta`
+/// and the `trajectory` section are decoded.
 ///
 /// # Errors
 ///
-/// The same errors as [`read_record_file`].
+/// The path and `meta` errors of [`read_record_file`], or a `trajectory`
+/// section that fails to decode.
 #[cfg(feature = "filesystem")]
 pub fn read_trajectory_file(path: impl AsRef<Path>) -> Result<Trajectory, MolRsError> {
-    Ok(read_record_file(path)?.trajectory.unwrap_or_default())
+    let store = open_record_store(path.as_ref())?;
+    read_meta(&store)?;
+    if !section_names_store(store.clone())?
+        .iter()
+        .any(|name| name == "trajectory")
+    {
+        return Ok(Trajectory::default());
+    }
+    FrameSequence::open(store.readable_listable())?.to_trajectory()
 }
 
 /// Open a lazy [`FrameSequence`] cursor on a filesystem path.
@@ -1103,24 +1100,131 @@ mod tests {
         assert!(err.contains("energy") && err.contains("meta"), "{err}");
     }
 
-    #[test]
-    fn unknown_sections_survive_a_round_trip() {
+    /// A record carrying a frame, plus a root section this build does not
+    /// know whose arrays sit directly under it and which is shaped like a
+    /// sequence (`step` array, CSR-ish children).
+    fn record_with_foreign_section() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("record.mrec");
         let mut rec = MolRec::new();
-        rec.frame = Some(Frame::new());
-        rec.extra_sections
-            .insert("future_section".into(), frame_with_atoms(3));
+        rec.frame = Some(frame_with_atoms(3));
+        write_record_file(&path, &rec).unwrap();
+        let store: ReadableWritableListableStorage =
+            Arc::new(PositionalWriteStore::new(&path).unwrap());
+        for group in ["/future", "/future/atoms"] {
+            GroupBuilder::new()
+                .build(store.clone(), group)
+                .unwrap()
+                .store_metadata()
+                .unwrap();
+        }
+        let steps = Column::from_i64(ArrayD::from_shape_vec(vec![2], vec![0_i64, 1]).unwrap());
+        write_column(&store, "/future/step", &steps).unwrap();
+        write_column(&store, "/future/atoms/x", &float_column(&[1.0, 2.0])).unwrap();
+        write_column(
+            &store,
+            "/future/atoms/offset",
+            &Column::from_uint(ArrayD::from_shape_vec(vec![3], vec![0_u64, 1, 5]).unwrap()),
+        )
+        .unwrap();
+        (dir, path)
+    }
 
-        let loaded = write_then_read(&rec);
+    /// Unknown root sections are ignored by every typed reader: never
+    /// reinterpreted as a frame group, never a reason to fail.
+    #[test]
+    fn unknown_root_sections_are_ignored() {
+        let (_dir, path) = record_with_foreign_section();
+        assert!(
+            section_names(&path)
+                .unwrap()
+                .contains(&"future".to_string())
+        );
+
+        let record = read_record_file(&path).unwrap();
+        assert_eq!(record.frame.unwrap().get("atoms").unwrap().nrows(), Some(3));
         assert_eq!(
-            loaded
-                .extra_sections
-                .get("future_section")
+            read_frame_file(&path)
                 .unwrap()
                 .get("atoms")
                 .unwrap()
                 .nrows(),
             Some(3)
         );
+        assert!(read_trajectory_file(&path).unwrap().is_empty());
+    }
+
+    /// The frame and system doors decode only their own section, so a broken
+    /// trajectory or observables section does not stop them; the whole-record
+    /// reader still reports it.
+    #[test]
+    fn a_broken_sibling_section_does_not_fail_the_frame_or_system_door() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("record.mrec");
+        let mut rec = MolRec::new();
+        rec.frame = Some(frame_with_atoms(3));
+        rec.system = Some(frame_with_atoms(2));
+        rec.add_frame(frame_with_atoms(3));
+        rec.observables
+            .insert(ObservableRecord::scalar("energy", float_column(&[1.0])))
+            .unwrap();
+        write_record_file(&path, &rec).unwrap();
+        // Break both: observable data without its meta, and a trajectory
+        // whose schema pin is not a schema.
+        std::fs::remove_dir_all(path.join("observables/meta/energy")).unwrap();
+        let trajectory_path = path.join("trajectory/zarr.json");
+        let mut trajectory: JsonValue =
+            serde_json::from_slice(&std::fs::read(&trajectory_path).unwrap()).unwrap();
+        trajectory["attributes"]["sequence_schema"] = "not a schema".into();
+        std::fs::write(&trajectory_path, serde_json::to_vec(&trajectory).unwrap()).unwrap();
+
+        assert!(read_record_file(&path).is_err());
+        assert!(read_trajectory_file(&path).is_err());
+        assert_eq!(
+            read_frame_file(&path)
+                .unwrap()
+                .get("atoms")
+                .unwrap()
+                .nrows(),
+            Some(3)
+        );
+        assert_eq!(
+            read_system_file(&path)
+                .unwrap()
+                .get("atoms")
+                .unwrap()
+                .nrows(),
+            Some(2)
+        );
+    }
+
+    /// Every door validates the `meta` version, whichever section it reads.
+    #[test]
+    fn every_read_door_refuses_an_unsupported_molrec_version() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("record.mrec");
+        let mut rec = MolRec::new();
+        rec.frame = Some(frame_with_atoms(3));
+        rec.system = Some(frame_with_atoms(3));
+        rec.add_frame(frame_with_atoms(3));
+        write_record_file(&path, &rec).unwrap();
+        let metadata_path = path.join("meta/zarr.json");
+        let mut metadata: JsonValue =
+            serde_json::from_slice(&std::fs::read(&metadata_path).unwrap()).unwrap();
+        metadata["attributes"]["molrec_version"] = 99.into();
+        std::fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+
+        for result in [
+            read_frame_file(&path).map(|_| ()),
+            read_system_file(&path).map(|_| ()),
+            read_trajectory_file(&path).map(|_| ()),
+            open_trajectory_sequence(&path).map(|_| ()),
+            read_meta_file(&path).map(|_| ()),
+            read_record_file(&path).map(|_| ()),
+        ] {
+            let err = result.unwrap_err().to_string();
+            assert!(err.contains("molrec_version"), "{err}");
+        }
     }
 
     /// A deleted `meta/` group still reads as an empty document: a foreign

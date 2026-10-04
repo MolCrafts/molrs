@@ -4354,6 +4354,8 @@ impl FrameSequence {
     ///
     /// Every case is a [`MolRsError::Zarr`] naming the path it failed on:
     ///
+    /// - the record's `meta` carries a `molrec_version` this build does not
+    ///   support;
     /// - the store holds the `trajectory/frames/<i>/` layout written by molrs
     ///   <= 0.13;
     /// - a schema pin is present but is not a schema this build can
@@ -4370,6 +4372,7 @@ impl FrameSequence {
         // `Arc<dyn ReadableListableStorageTraits>`, so the read-only view is
         // taken here.
         let store: ReadableListableStorage = Arc::new(StorageHandle::new(store));
+        super::record_io::read_meta(&store)?;
         ensure_not_legacy(&store)?;
         let schema = match pinned_schema(&store)? {
             Some(pinned) => pinned,

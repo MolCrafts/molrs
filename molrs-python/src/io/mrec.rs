@@ -100,6 +100,10 @@ pub fn write_mrec_trajectory(path: PathBuf, traj: PyRef<'_, PyTrajectory>) -> Py
 
 /// Read the ``frame`` section of a ``*.mrec`` store.
 ///
+/// Only ``meta`` (for its version) and the ``frame`` section are decoded, so
+/// another section — a trajectory, observables, one this build does not know —
+/// cannot fail the read.
+///
 /// Args:
 ///     path: Filesystem path of the record store.
 ///
@@ -107,8 +111,9 @@ pub fn write_mrec_trajectory(path: PathBuf, traj: PyRef<'_, PyTrajectory>) -> Py
 ///     The in-memory :class:`~molrs.Frame`.
 ///
 /// Raises:
-///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, the store
-///         has no ``frame`` section, or a section fails to decode.
+///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, ``meta``
+///         carries an unsupported ``molrec_version``, the store has no
+///         ``frame`` section, or that section fails to decode.
 #[pyfunction]
 pub fn read_mrec(path: PathBuf) -> PyResult<PyFrame> {
     let path = path_str(&path)?;
@@ -118,6 +123,8 @@ pub fn read_mrec(path: PathBuf) -> PyResult<PyFrame> {
 
 /// Read the ``system`` section of a ``*.mrec`` store.
 ///
+/// Only ``meta`` (for its version) and the ``system`` section are decoded.
+///
 /// Args:
 ///     path: Filesystem path of the record store.
 ///
@@ -125,8 +132,9 @@ pub fn read_mrec(path: PathBuf) -> PyResult<PyFrame> {
 ///     The in-memory :class:`~molrs.Frame`.
 ///
 /// Raises:
-///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, the store
-///         has no ``system`` section, or a section fails to decode.
+///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, ``meta``
+///         carries an unsupported ``molrec_version``, the store has no
+///         ``system`` section, or that section fails to decode.
 #[pyfunction]
 pub fn read_mrec_system(path: PathBuf) -> PyResult<PyFrame> {
     let path = path_str(&path)?;
@@ -136,6 +144,9 @@ pub fn read_mrec_system(path: PathBuf) -> PyResult<PyFrame> {
 
 /// Read the ``trajectory`` section of a ``*.mrec`` store.
 ///
+/// Only ``meta`` (for its version) and the ``trajectory`` section are
+/// decoded. A store without one reads as an empty trajectory.
+///
 /// Args:
 ///     path: Filesystem path of the record store.
 ///
@@ -143,7 +154,8 @@ pub fn read_mrec_system(path: PathBuf) -> PyResult<PyFrame> {
 ///     The in-memory :class:`~molrs.Trajectory`.
 ///
 /// Raises:
-///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, or a
+///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, ``meta``
+///         carries an unsupported ``molrec_version``, or the ``trajectory``
 ///         section fails to decode.
 #[pyfunction]
 pub fn read_mrec_trajectory(path: PathBuf) -> PyResult<PyTrajectory> {

@@ -90,8 +90,8 @@ impl Observables {
 /// One self-describing record: the unit of interchange between MolCrafts tools.
 ///
 /// Sections map one-to-one onto the contract's root layout. `meta` is always
-/// written; the remaining sections are optional, and a reader preserves sections
-/// it does not interpret in [`extra_sections`](Self::extra_sections).
+/// written; the remaining sections are optional. A root section the reader does
+/// not interpret is ignored, never reinterpreted.
 #[derive(Debug, Clone, Default)]
 pub struct MolRec {
     /// Record-level metadata. The writer adds the reserved contract keys
@@ -117,9 +117,6 @@ pub struct MolRec {
     pub trajectory: Option<Trajectory>,
     /// Named scientific results.
     pub observables: Observables,
-    /// Sections this build does not interpret, kept verbatim so a round-trip
-    /// through an older reader does not delete a newer producer's data.
-    pub extra_sections: BTreeMap<String, Frame>,
 }
 
 impl MolRec {
