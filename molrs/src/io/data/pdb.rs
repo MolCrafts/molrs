@@ -358,7 +358,11 @@ fn build_atoms_block(atoms: &[AtomRecord]) -> std::io::Result<(Block, String, Ha
     let mut names: Vec<String> = Vec::with_capacity(n);
     let mut res_names: Vec<String> = Vec::with_capacity(n);
     let mut res_seqs: Vec<I> = Vec::with_capacity(n);
-    let mut chain_ids: Vec<String> = Vec::with_capacity(n);
+    let mut chains: Vec<String> = Vec::with_capacity(n);
+    let mut altlocs: Vec<String> = Vec::with_capacity(n);
+    let mut icodes: Vec<String> = Vec::with_capacity(n);
+    let mut occupancies: Vec<F> = Vec::with_capacity(n);
+    let mut b_factors: Vec<F> = Vec::with_capacity(n);
     let mut serial_map: HashMap<i32, Idx> = HashMap::with_capacity(n);
 
     for (i, atom) in atoms.iter().enumerate() {
@@ -378,7 +382,11 @@ fn build_atoms_block(atoms: &[AtomRecord]) -> std::io::Result<(Block, String, Ha
         // as a String so the block schema is uniform across formats and so
         // mmCIF files (multi-char chain IDs) can drop in later without
         // breaking downstream consumers.
-        chain_ids.push(atom.chain_id.to_string());
+        chains.push(blank_as_empty(atom.chain_id));
+        altlocs.push(blank_as_empty(atom.alt_loc));
+        icodes.push(blank_as_empty(atom.i_code));
+        occupancies.push(atom.occupancy as F);
+        b_factors.push(atom.temp_factor as F);
         serial_map.insert(atom.serial, i as Idx);
     }
 
@@ -423,10 +431,32 @@ fn build_atoms_block(atoms: &[AtomRecord]) -> std::io::Result<(Block, String, Ha
         .insert("res_id", to_array_uint(res_ids, n)?)
         .map_err(err_mapper)?;
     block
-        .insert("chain_id", to_array_string(chain_ids, n)?)
+        .insert("chain", to_array_string(chains, n)?)
+        .map_err(err_mapper)?;
+    block
+        .insert("icode", to_array_string(icodes, n)?)
+        .map_err(err_mapper)?;
+    block
+        .insert("altloc", to_array_string(altlocs, n)?)
+        .map_err(err_mapper)?;
+    block
+        .insert("occupancy", to_array_float(occupancies, n)?)
+        .map_err(err_mapper)?;
+    block
+        .insert("b_factor", to_array_float(b_factors, n)?)
         .map_err(err_mapper)?;
 
     Ok((block, unique_elements, serial_map))
+}
+
+/// A one-character PDB field as a string, `""` for the blank that means
+/// "none" (chain, altLoc, iCode).
+fn blank_as_empty(c: char) -> String {
+    if c == ' ' {
+        String::new()
+    } else {
+        c.to_string()
+    }
 }
 
 fn collect_unique_elements(elements: &[String]) -> String {
@@ -686,7 +716,19 @@ fn write_atom_conect_records<W: Write>(
     };
     let names = owned_str("name");
     let res_names = owned_str("res_name");
-    let chain_ids = owned_str("chain_id");
+    let chains = owned_str("chain");
+    let altlocs = owned_str("altloc");
+    let icodes = owned_str("icode");
+    let owned_f64 = |col: &str| -> Vec<F> {
+        frame
+            .column("atoms", col)
+            .and_then(|c| c.as_float())
+            .as_ref()
+            .and_then(|arr| arr.as_slice().map(|s| s.to_vec()))
+            .unwrap_or_default()
+    };
+    let occupancies = owned_f64("occupancy");
+    let b_factors = owned_f64("b_factor");
     let elements = owned_str("element");
 
     let res_seqs: Vec<Idx> = frame
@@ -737,10 +779,17 @@ fn write_atom_conect_records<W: Write>(
             .take(3)
             .collect();
 
-        let chain = chain_ids
-            .get(i)
-            .and_then(|s| s.trim().chars().next())
-            .unwrap_or(' ');
+        let one_char = |values: &[String]| {
+            values
+                .get(i)
+                .and_then(|s| s.trim().chars().next())
+                .unwrap_or(' ')
+        };
+        let chain = one_char(&chains);
+        let altloc = one_char(&altlocs);
+        let icode = one_char(&icodes);
+        let occupancy = occupancies.get(i).copied().unwrap_or(1.0);
+        let b_factor = b_factors.get(i).copied().unwrap_or(0.0);
 
         let res_seq = res_seqs.get(i).copied().unwrap_or(1);
 
@@ -750,21 +799,24 @@ fn write_atom_conect_records<W: Write>(
             .collect::<String>()
             .to_ascii_uppercase();
 
-        // PDB v3.3 ATOM record. occupancy/tempFactor default to 1.00/0.00.
-        // Element right-justified in cols 77-78, then one charge pad space;
+        // PDB v3.3 ATOM record. occupancy/tempFactor default to 1.00/0.00
+        // when the frame carries no `occupancy` / `b_factor`. Element
+        // right-justified in cols 77-78, then one charge pad space;
         // historical molpy lines are 79 printable columns + newline.
         let mut line = format!(
-            "ATOM  {:>5} {} {:<3} {}{:>4}    {:>8.3}{:>8.3}{:>8.3}{:>6.2}{:>6.2}          {:>2}  ",
+            "ATOM  {:>5} {}{}{:<3} {}{:>4}{}   {:>8.3}{:>8.3}{:>8.3}{:>6.2}{:>6.2}          {:>2}  ",
             serial,
             name_field,
+            altloc,
             res_name,
             chain,
             res_seq,
+            icode,
             x_slice[i],
             y_slice[i],
             z_slice[i],
-            1.0_f64,
-            0.0_f64,
+            occupancy,
+            b_factor,
             elem_field,
         );
         if line.len() < 79 {
@@ -1492,7 +1544,7 @@ END
             .unwrap();
         atoms
             .insert(
-                "chain_id",
+                "chain",
                 Array1::from_vec(vec!["B".to_string()])
                     .into_shape_with_order(IxDyn(&[n]))
                     .unwrap()
@@ -1533,5 +1585,64 @@ END
             atom_line.len()
         );
         assert_eq!(atom_line[76..78].trim(), "C", "element: {atom_line:?}");
+    }
+
+    #[test]
+    fn chain_icode_altloc_occupancy_and_b_factor_round_trip() {
+        let pdb = concat!(
+            "ATOM      1  CA AALA B  12A     11.104   6.134  -6.504  0.50 17.25           C\n",
+            "ATOM      2  CB  ALA B  13      12.104   6.134  -6.504  1.00  0.00           C\n",
+            "END\n",
+        );
+        let frame = PDBReader::new(std::io::Cursor::new(pdb.as_bytes()))
+            .read_single_frame()
+            .unwrap()
+            .unwrap();
+        let atoms = &frame["atoms"];
+        let strings = |key: &str| -> Vec<String> {
+            atoms
+                .get(key)
+                .and_then(|c| c.as_string())
+                .unwrap()
+                .iter()
+                .cloned()
+                .collect()
+        };
+        let floats = |key: &str| -> Vec<F> {
+            atoms
+                .get(key)
+                .and_then(|c| c.as_float())
+                .unwrap()
+                .iter()
+                .copied()
+                .collect()
+        };
+        assert_eq!(strings("chain"), ["B", "B"]);
+        assert_eq!(strings("altloc"), ["A", ""]);
+        assert_eq!(strings("icode"), ["A", ""]);
+        assert_eq!(floats("occupancy"), [0.5, 1.0]);
+        assert_eq!(floats("b_factor"), [17.25, 0.0]);
+        assert!(atoms.get("chain_id").is_none());
+
+        let mut out = Vec::new();
+        write_pdb_frame(&mut out, &frame).unwrap();
+        let back = PDBReader::new(std::io::Cursor::new(out.as_slice()))
+            .read_single_frame()
+            .unwrap()
+            .unwrap();
+        for key in ["chain", "altloc", "icode"] {
+            assert_eq!(
+                back["atoms"].get(key).and_then(|c| c.as_string()).unwrap(),
+                atoms.get(key).and_then(|c| c.as_string()).unwrap(),
+                "{key}"
+            );
+        }
+        for key in ["occupancy", "b_factor"] {
+            assert_eq!(
+                back["atoms"].get(key).and_then(|c| c.as_float()).unwrap(),
+                atoms.get(key).and_then(|c| c.as_float()).unwrap(),
+                "{key}"
+            );
+        }
     }
 }

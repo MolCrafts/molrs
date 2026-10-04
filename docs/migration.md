@@ -57,6 +57,45 @@ short "Also new" list at the end of each section.
   no label uses are not written. A label with no matching type is refused, and
   so is an explicit cross pair in data-file `Pair Coeffs` (write it in the
   `*.ff` include instead).
+- **Topology vocabulary (molrec conventions).** New canonical keys: `fx`
+  `fy` `fz` (`f64`), `formal_charge` (`i64`), `atom_map` (`u64`), `chain`
+  `icode` `altloc` `style` (`string`), `occupancy` `b_factor` (`f64`), `ibead`
+  (`u64`); key group `FORCES`. New blocks `constraints`, `drudes`,
+  `virtual_sites` (null trailing endpoints allowed) and `members`
+  (`ibead` → `atoms`, `atom` → declared). Readers moved to them:
+  - PDB: `chain_id` → `chain`; the reader now also stores `altloc`, `icode`,
+    `occupancy` and `b_factor` (a blank field is `""`), and the writer
+    writes all five back.
+  - mmCIF: `chain_id` → `chain`; `res_seq` (`i32`) → `res_id` (`u64`,
+    nullable: `.`/`?` are null, a negative number is refused); `b_iso` →
+    `b_factor`; also `icode` and `altloc`.
+  - GRO: `resname` → `res_name`, `atom_name` → `name` (reader and writer).
+  - extxyz: the `resname` property reads as `res_name` and is written back
+    as `resname`.
+  - LAMMPS molecule JSON: frame meta `units` is the units object
+    `{"preset": "real"}`; a bare string is still accepted on write.
+  Since `formal_charge` is canonical `i64`, a graph property of that name
+  must be an integer (an integral float is accepted) and `to_frame` emits it
+  as `i64`.
+- **Row references (`targets`).** A `u64` column may declare the block its
+  values index (`Block::set_target`, `"<block>"` or `"/<section>/<block>"`;
+  `/trajectory/…` is refused). It is persisted as the block group's
+  `targets` attribute (frame/system) or in `sequence_schema` (trajectory),
+  and writers and readers refuse a reference that does not resolve (missing
+  block, value past its rows; null rows reference nothing). Absolute targets
+  are checked against the record's `frame` / `system` when present.
+- **`schema::relation_endpoints(name, has_column, declared)`** returns
+  `Vec<RowReference { column, target }>` (empty when none) instead of
+  `Option<(target, Vec<column>)>`, honouring a block's declared targets;
+  `EndpointSpec` is `{ columns: &[(column, EndpointTarget)] }` and
+  `BlockSpec::endpoint_columns()` returns a `Vec`. Python
+  `molrs.schema.relation_endpoints(name, columns, targets=None)` returns
+  `[(column, target), …]` (empty, not `None`). `BlockDoc` / Python
+  `BlockSpec` gain `declared_endpoints`. `Validator` range-checks declared
+  targets, reports `ViolationKind::MissingTarget`, and skips null rows.
+- **`Frame::subset` / `Frame::replicate` accept `members`** (it was refused):
+  `members.ibead` and every declared same-frame reference are renumbered or
+  offset; absolute and undeclared references are copied unchanged.
 - **`to_frame` can fail.** A node property whose dtype contradicts the
   schema, for example `set_atom(i, "x", "left")`, used to abort the process.
   It is now an error on every surface.
@@ -589,7 +628,10 @@ short "Also new" list at the end of each section.
     `write_mrec_trajectory`
   - `read_meta` → `read_mrec_meta`
   - `sections` → `mrec_sections`
-- **`GroFieldFormatter` no longer maps `resid` / `atom_id`.**
+- **`GroFieldFormatter` is removed.** The native GRO reader and writer use
+  the canonical `res_name` / `name`, so `molrs.io.read_gro` /
+  `write_gro` pass frames through unchanged and `molrs.io.raw.read_gro*`
+  return canonical names too.
 - **`meta=` takes what `frame.meta` hands out.** `write_mrec`,
   `write_mrec_system`, `write_mrec_trajectory` (which gains `meta=`) and
   `TrajectoryWriter(meta=)` accept a `dict`, a `MetaDocument`, or any mapping
@@ -831,6 +873,11 @@ short "Also new" list at the end of each section.
   - `lammps_coeff_params` / `lammps_coeff_values`; the frcmod writer.
 - **Store:** nullable columns (`insert_nullable`, `validity`; persisted in
   zarr); Python `MetaDocument`.
+- **Row references:** `Block::{set_target, target, clear_target, targets}`,
+  `SequenceSchema::{declare_target, target}`, `schema::{RowReference,
+  check_target, EndpointTarget}`; Python `Block.set_target` / `target` /
+  `targets` (pickled), `SequenceSchema.declare_target` / `target`; WASM
+  `Block.target`. `keys::units_preset`.
 - **Declared precision:** `store::precision::{quantum, quantize,
   quantize_in_place, check_precision, PRECISION_MIN, PRECISION_MAX}`;
   `Block::{set_precision, precision, clear_precision, precisions}`;

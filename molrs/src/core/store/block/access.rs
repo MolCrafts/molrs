@@ -32,6 +32,10 @@ pub trait BlockAccess {
     fn column_shape(&self, key: &str) -> Option<Vec<usize>>;
     /// EXTXYZ tokens for one row of `key`.
     fn xyz_row_tokens(&self, key: &str, row: usize) -> Option<Vec<String>>;
+    /// The validity mask of column `key`, or `None` when it has no nulls.
+    fn validity(&self, key: &str) -> Option<&[bool]>;
+    /// The declared row-reference targets, as `(column, target)`.
+    fn targets(&self) -> Vec<(&str, &str)>;
 }
 
 impl BlockAccess for Block {
@@ -70,6 +74,12 @@ impl BlockAccess for Block {
     fn xyz_row_tokens(&self, key: &str, row: usize) -> Option<Vec<String>> {
         self.get(key).map(|col| col.xyz_tokens(row))
     }
+    fn validity(&self, key: &str) -> Option<&[bool]> {
+        Block::validity(self, key)
+    }
+    fn targets(&self) -> Vec<(&str, &str)> {
+        Block::targets(self).collect()
+    }
 }
 
 impl BlockAccess for BlockView<'_> {
@@ -107,6 +117,14 @@ impl BlockAccess for BlockView<'_> {
 
     fn xyz_row_tokens(&self, key: &str, row: usize) -> Option<Vec<String>> {
         self.get(key).map(|col_view| col_view.xyz_tokens(row))
+    }
+
+    fn validity(&self, key: &str) -> Option<&[bool]> {
+        BlockView::validity(self, key)
+    }
+
+    fn targets(&self) -> Vec<(&str, &str)> {
+        BlockView::targets(self)
     }
 }
 

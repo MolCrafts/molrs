@@ -234,9 +234,7 @@ class TestMetaArgument:
         assert meta["seeds"] == [1, 2]
 
         path = tmp_path / "nested.mrec"
-        molrs.io.write_mrec(
-            path, frame, meta={"run": run, "cell": frame.meta["cell"]}
-        )
+        molrs.io.write_mrec(path, frame, meta={"run": run, "cell": frame.meta["cell"]})
         meta = molrs.io.read_mrec_meta(path)
         assert meta["run"] == {"engine": "md", "seeds": [1, 2]}
         assert meta["cell"] == [1.0, 2.0, 3.0]
@@ -386,3 +384,42 @@ class TestTypedFrameMeta:
             writer.append(_coords_frame())
         frame = molrs.io.mrec.TrajectoryReader(path).read_frame(0)
         assert np.isnan(frame.meta["temp"])
+
+
+class TestRowReferences:
+    """molrec F4: declared targets persist and are held to their rows."""
+
+    def _frame(self, ibead: list[int]) -> molrs.Frame:
+        frame = _coords_frame()
+        members = molrs.Block(
+            {
+                "ibead": np.array(ibead, dtype=np.uint64),
+                "atom": np.array([1] * len(ibead), dtype=np.uint64),
+            }
+        )
+        members.set_target("atom", "/frame/atoms")
+        frame["members"] = members
+        return frame
+
+    def test_targets_round_trip_and_renumber(self, tmp_path: Path) -> None:
+        frame = self._frame([0, 2])
+        assert frame["members"].targets() == {"atom": "/frame/atoms"}
+        path = tmp_path / "t.mrec"
+        molrs.io.write_mrec(path, frame)
+        back = molrs.io.read_mrec(path)["members"]
+        assert back.target("atom") == "/frame/atoms"
+        assert back.target("ibead") is None
+        with pytest.raises(ValueError):
+            back.set_target("atom", "/trajectory/atoms")
+
+    def test_a_broken_reference_is_refused(self, tmp_path: Path) -> None:
+        frame = self._frame([5])
+        frame["members"].set_target("ibead", "atoms")
+        with pytest.raises(Exception):
+            molrs.io.write_mrec(tmp_path / "bad.mrec", frame)
+
+    def test_sequence_schema_declares_a_target(self) -> None:
+        schema = molrs.io.mrec.SequenceSchema.from_frame(self._frame([0]))
+        assert schema.target("members", "atom") == "/frame/atoms"
+        with pytest.raises(ValueError):
+            schema.declare_target("members", "atom", "atoms")

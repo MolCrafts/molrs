@@ -342,6 +342,23 @@ class Block:
             If the column is not ``float64`` or *precision* is not finite and
             within ``[2**-1000, 2**1000]``.
         """
+    def set_target(self, key: ColumnKey, target: str | None) -> None:
+        """Declare (``None``: withdraw) that a ``uint64`` column holds row
+        indices into *target* (``"<block>"`` or ``"/<section>/<block>"``).
+
+        Raises
+        ------
+        KeyError
+            If ``key`` names no column.
+        ValueError
+            If the column is not ``uint64`` or *target* is malformed or names
+            a trajectory block.
+        """
+    def target(self, key: ColumnKey) -> str | None:
+        """The declared target of a column, or ``None``. ``KeyError`` for an
+        absent column."""
+    def targets(self) -> dict[str, str]:
+        """Every declared target, ``{column: target}``."""
     def precision(self, key: ColumnKey) -> float | None:
         """The declared precision of a column, or ``None``.
 
@@ -3374,6 +3391,10 @@ class SequenceSchema:
         """Pin the precision of an ``f64`` column: every frame's values are
         rounded to its binary grid before the change check and the landing."""
     def precision(self, block: str, column: str) -> float | None: ...
+    def declare_target(self, block: str, column: str, target: str) -> Self:
+        """Pin a ``u64`` column as a row reference into *target*; the writer
+        refuses a frame whose resolved blocks break it."""
+    def target(self, block: str, column: str) -> str | None: ...
     def declare_meta(self, key: str, dtype: str) -> Self: ...
     def declare_meta_with_fill(
         self, key: str, fill: Any, dtype: str | None = ...

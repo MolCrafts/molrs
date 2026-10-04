@@ -178,7 +178,8 @@ fn is_aromatic_atom(atom: &molrs::system::molgraph::Atom) -> bool {
 }
 
 fn formal_charge(atom: &molrs::system::molgraph::Atom) -> Option<i8> {
-    atom.get_f64("formal_charge")
+    atom.get("formal_charge")
+        .and_then(PropValue::as_f64)
         .or_else(|| atom.get_f64("charge"))
         .map(|v| v as i8)
 }

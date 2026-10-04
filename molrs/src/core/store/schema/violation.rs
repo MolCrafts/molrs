@@ -88,6 +88,12 @@ pub enum ViolationKind {
         /// Row count of that block.
         target_nrows: usize,
     },
+    /// A declared row-reference target names a block the frame lacks while
+    /// the referencing block has rows.
+    MissingTarget {
+        /// The declared target.
+        target: String,
+    },
     /// Two node blocks that must align disagree on row count.
     RowCountMismatch {
         /// The other block.
@@ -126,6 +132,9 @@ impl std::fmt::Display for ViolationKind {
                 f,
                 "index {value} out of range for '{target}' (nrows={target_nrows})"
             ),
+            ViolationKind::MissingTarget { target } => {
+                write!(f, "declared target '{target}' is not a block of this frame")
+            }
             ViolationKind::RowCountMismatch {
                 other,
                 this_rows,

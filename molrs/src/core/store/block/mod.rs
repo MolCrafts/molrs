@@ -85,6 +85,9 @@ pub struct Block {
     /// Declared [precision](crate::store::precision) per `f64` column. A
     /// column absent from this map is stored as given.
     precision: IndexMap<String, f64>,
+    /// Declared row-reference target per `u64` column (`targets`): the block
+    /// its values index, `<block>` or `/<section>/<block>`.
+    targets: IndexMap<String, String>,
     nrows: Option<usize>,
     shape: Option<Vec<usize>>,
 }
@@ -116,6 +119,7 @@ impl Block {
             map: IndexMap::new(),
             validity: IndexMap::new(),
             precision: IndexMap::new(),
+            targets: IndexMap::new(),
             nrows: None,
             shape: None,
         }
@@ -127,6 +131,7 @@ impl Block {
             map: IndexMap::with_capacity(cap),
             validity: IndexMap::new(),
             precision: IndexMap::new(),
+            targets: IndexMap::new(),
             nrows: None,
             shape: None,
         }
@@ -296,6 +301,7 @@ impl Block {
         // rows it describes are gone.
         self.validity.shift_remove(&key);
         self.keep_precision_if_float(&key, col.dtype());
+        self.keep_target_if_uint(&key, col.dtype());
         self.map.insert(key, col);
         Ok(())
     }
@@ -461,6 +467,7 @@ impl Block {
 
         self.validity.shift_remove(&key);
         self.keep_precision_if_float(&key, col.dtype());
+        self.keep_target_if_uint(&key, col.dtype());
         self.map.insert(key, col);
         Ok(())
     }
@@ -472,6 +479,75 @@ impl Block {
         if dtype != DType::Float {
             self.precision.shift_remove(key);
         }
+    }
+
+    /// A declared target survives a column being replaced by another `u64`
+    /// column; any other dtype drops it.
+    fn keep_target_if_uint(&mut self, key: &str, dtype: DType) {
+        if dtype != DType::UInt {
+            self.targets.shift_remove(key);
+        }
+    }
+
+    /// Declare that the `u64` column `key` holds 0-based row indices into
+    /// `target`: `<block>` of the same frame, or `/<section>/<block>` of a
+    /// frame-shaped section of the same record (molrec "row references").
+    ///
+    /// The relation endpoints `atomi` … `atoml` reference `atoms` without a
+    /// declaration; a declaration overrides that default, and names the
+    /// target of any other referencing column (`members.atom`). The
+    /// declaration follows the column like a [precision](Self::set_precision)
+    /// does, and is persisted as the block group's `targets` attribute.
+    ///
+    /// # Errors
+    ///
+    /// - [`BlockError::MissingColumn`] when the block has no column `key`;
+    /// - [`BlockError::Validation`] when the column is not `u64`, or `target`
+    ///   is neither `<block>` nor `/<section>/<block>`, or names a trajectory
+    ///   block (`/trajectory/…`), whose row count is not fixed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use molrs::store::block::Block;
+    /// use ndarray::Array1;
+    ///
+    /// let mut members = Block::new();
+    /// members.insert("ibead", Array1::from_vec(vec![0_u64, 0]).into_dyn()).unwrap();
+    /// members.insert("atom", Array1::from_vec(vec![3_u64, 4]).into_dyn()).unwrap();
+    /// members.set_target("atom", "/frame/atoms").unwrap();
+    /// assert_eq!(members.target("atom"), Some("/frame/atoms"));
+    /// assert!(members.set_target("atom", "/trajectory/atoms").is_err());
+    /// ```
+    pub fn set_target(&mut self, key: &str, target: &str) -> Result<(), BlockError> {
+        let col = self.map.get(key).ok_or_else(|| BlockError::MissingColumn {
+            key: key.to_owned(),
+        })?;
+        if col.dtype() != DType::UInt {
+            return Err(BlockError::validation(format!(
+                "column '{key}' is {}; a row reference is a u64 column",
+                col.dtype()
+            )));
+        }
+        crate::store::schema::check_target(target)
+            .map_err(|e| BlockError::validation(format!("column '{key}': {e}")))?;
+        self.targets.insert(key.to_owned(), target.to_owned());
+        Ok(())
+    }
+
+    /// The declared target of column `key`, or `None` when it declares none.
+    pub fn target(&self, key: &str) -> Option<&str> {
+        self.targets.get(key).map(String::as_str)
+    }
+
+    /// Withdraw the declared target of column `key`, returning it.
+    pub fn clear_target(&mut self, key: &str) -> Option<String> {
+        self.targets.shift_remove(key)
+    }
+
+    /// Every declared target, as `(column, target)` in declaration order.
+    pub fn targets(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.targets.iter().map(|(k, t)| (k.as_str(), t.as_str()))
     }
 
     /// Declare the [precision](crate::store::precision) of the `f64` column
@@ -559,6 +635,7 @@ impl Block {
             out.put_validity(k.clone(), indices.iter().map(|&i| mask[i]).collect());
         }
         out.precision = self.precision.clone();
+        out.targets = self.targets.clone();
         Ok(out)
     }
 
@@ -577,6 +654,9 @@ impl Block {
             }
             if let Some(&p) = self.precision.get(key) {
                 out.precision.insert(key.to_owned(), p);
+            }
+            if let Some(target) = self.targets.get(key) {
+                out.targets.insert(key.to_owned(), target.clone());
             }
         }
         Ok(out)
@@ -667,6 +747,7 @@ impl Block {
     pub fn remove(&mut self, key: &str) -> Option<Column> {
         self.validity.shift_remove(key);
         self.precision.shift_remove(key);
+        self.targets.shift_remove(key);
         let out = self.map.shift_remove(key);
         if self.map.is_empty() {
             self.nrows = None;
@@ -721,6 +802,10 @@ impl Block {
         if let Some((index, _, p)) = self.precision.shift_remove_full(old_key) {
             self.precision.shift_insert(index, new_key.to_string(), p);
         }
+        if let Some((index, _, target)) = self.targets.shift_remove_full(old_key) {
+            self.targets
+                .shift_insert(index, new_key.to_string(), target);
+        }
         Ok(())
     }
 
@@ -762,6 +847,7 @@ impl Block {
                 .collect(),
             validity: self.validity.clone(),
             precision: self.precision.clone(),
+            targets: self.targets.clone(),
             nrows: self.nrows,
             shape: self.shape.clone(),
         }
@@ -772,6 +858,7 @@ impl Block {
         self.map.clear();
         self.validity.clear();
         self.precision.clear();
+        self.targets.clear();
         self.nrows = None;
         self.shape = None;
     }
@@ -1031,6 +1118,9 @@ impl Block {
             if let Some(p) = parts.iter().find_map(|part| part.precision(key)) {
                 out.precision.insert(key.to_owned(), p);
             }
+            if let Some(target) = parts.iter().find_map(|part| part.target(key)) {
+                out.targets.insert(key.to_owned(), target.to_owned());
+            }
         }
         if out.is_empty() && !parts.is_empty() {
             out.nrows = Some(total);
@@ -1119,6 +1209,7 @@ impl Block {
         self.map = other.map.clone();
         self.validity = other.validity.clone();
         self.precision = other.precision.clone();
+        self.targets = other.targets.clone();
         self.nrows = other.nrows;
         self.shape = other.shape.clone();
     }
@@ -2336,5 +2427,32 @@ mod tests {
         // Removing the column drops it.
         block.remove("y");
         assert_eq!(block.precision("y"), None);
+    }
+
+    // ---- targets ----
+
+    #[test]
+    fn set_target_declares_on_a_u64_column_with_a_well_formed_target() {
+        let mut block = Block::new();
+        block
+            .insert("site", Array1::from_vec(vec![0 as Idx, 1]).into_dyn())
+            .unwrap();
+        block.insert("x", floats(&[1.0, 2.0])).unwrap();
+        block.set_target("site", "sites").unwrap();
+        assert_eq!(block.target("site"), Some("sites"));
+        assert!(block.set_target("x", "atoms").is_err());
+        assert!(block.set_target("nope", "atoms").is_err());
+        for bad in ["", "a/b", "/trajectory/atoms", "/frame"] {
+            assert!(block.set_target("site", bad).is_err(), "{bad}");
+        }
+        block.rename_column("site", "ref").unwrap();
+        assert_eq!(block.target("ref"), Some("sites"));
+        assert_eq!(
+            block.select_rows(&[1]).unwrap().target("ref"),
+            Some("sites")
+        );
+        assert_eq!(block.deep_copy().target("ref"), Some("sites"));
+        block.insert("ref", floats(&[0.0, 1.0])).unwrap();
+        assert_eq!(block.target("ref"), None);
     }
 }

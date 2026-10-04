@@ -339,6 +339,68 @@ impl PyBlock {
             })
     }
 
+    /// Declare (or, with ``None``, withdraw) that a ``uint64`` column holds
+    /// 0-based row indices into *target*: ``"<block>"`` of the same frame, or
+    /// ``"/<section>/<block>"`` of a frame-shaped section of the record
+    /// (``"/frame/atoms"``).
+    ///
+    /// The relation endpoints ``atomi`` … ``atoml`` reference ``atoms``
+    /// without one; a declaration overrides that, and names what any other
+    /// referencing column (``members.atom``) points into. Subsetting and
+    /// replicating renumber same-frame references; a ``*.mrec`` writer and
+    /// reader refuse a reference that does not resolve.
+    ///
+    /// Raises
+    /// ------
+    /// KeyError
+    ///     If ``key`` does not exist in this block.
+    /// ValueError
+    ///     If the column is not ``uint64`` or *target* is malformed or names a
+    ///     trajectory block (``"/trajectory/…"``).
+    #[pyo3(signature = (key, target))]
+    fn set_target(&mut self, key: &Bound<'_, PyAny>, target: Option<&str>) -> PyResult<()> {
+        let key = extract_column_key(key)?;
+        self.inner
+            .with_mut(|b| match target {
+                Some(target) => b.set_target(&key, target),
+                None if b.contains_key(&key) => {
+                    b.clear_target(&key);
+                    Ok(())
+                }
+                None => Err(BlockError::MissingColumn { key: key.clone() }),
+            })
+            .map_err(ffi_error_to_pyerr)?
+            .map_err(|e| match e {
+                BlockError::MissingColumn { key } => PyKeyError::new_err(key),
+                other => PyValueError::new_err(other.to_string()),
+            })
+    }
+
+    /// The declared target of a column, or ``None``.
+    ///
+    /// Raises
+    /// ------
+    /// KeyError
+    ///     If ``key`` does not exist in this block.
+    fn target(&self, key: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
+        let key = extract_column_key(key)?;
+        self.with_block(|b| {
+            if !b.contains_key(&key) {
+                return Err(missing_column(b, &key));
+            }
+            Ok(b.target(&key).map(str::to_string))
+        })?
+    }
+
+    /// Every declared target, as ``{column: target}``.
+    fn targets(&self) -> PyResult<std::collections::BTreeMap<String, String>> {
+        self.with_block(|b| {
+            b.targets()
+                .map(|(k, t)| (k.to_string(), t.to_string()))
+                .collect()
+        })
+    }
+
     /// The declared precision of a column, or ``None`` when it declares none.
     ///
     /// Raises
@@ -794,6 +856,7 @@ impl PyBlock {
         state.set_item("columns", columns)?;
         state.set_item("validity", masks)?;
         state.set_item("precision", precisions)?;
+        state.set_item("targets", this.targets()?)?;
         state.set_item("nrows", this.with_block(|b| b.nrows())?)?;
         state.set_item(
             "shape",
@@ -828,6 +891,16 @@ impl PyBlock {
         }
         if let Some(shape) = field("shape")?.extract::<Option<Vec<usize>>>()? {
             self.set_shape(shape)?;
+        }
+        if let Some(targets) = state.get_item("targets")? {
+            for (key, target) in targets.cast::<PyDict>()?.iter() {
+                let key: String = key.extract()?;
+                let target: String = target.extract()?;
+                self.inner
+                    .with_mut(|b| b.set_target(&key, &target))
+                    .map_err(ffi_error_to_pyerr)?
+                    .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            }
         }
         // Absent from a state pickled before precisions were carried.
         let precisions = match state.get_item("precision")? {
@@ -1356,6 +1429,7 @@ fn adopt_schema_dtype<'py>(key: &str, array: &Bound<'py, PyAny>) -> PyResult<Bou
         DType::Float => numpy::dtype::<F>(py),
         DType::Int => numpy::dtype::<I>(py),
         DType::UInt => numpy::dtype::<Idx>(py),
+        DType::Int64 => numpy::dtype::<i64>(py),
         _ => return Ok(array.clone()),
     };
     let have = array.getattr("dtype")?;

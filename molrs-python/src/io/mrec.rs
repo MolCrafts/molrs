@@ -475,6 +475,28 @@ impl PyMrecSequenceSchema {
         Ok(slf)
     }
 
+    /// Declare that ``column`` of ``block`` (``u64``) holds row indices into
+    /// *target*: ``"<block>"`` of the same resolved frame, or
+    /// ``"/<section>/<block>"``. Pinned with the schema; the writer refuses a
+    /// frame whose resolved blocks break it. :meth:`from_frames` takes each
+    /// column's :meth:`Block.target`.
+    fn declare_target<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        block: &str,
+        column: &str,
+        target: &str,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        slf.inner
+            .declare_target(block, column, target)
+            .map_err(molrs_error_to_pyerr)?;
+        Ok(slf)
+    }
+
+    /// The declared target of ``column`` of ``block``, or ``None``.
+    fn target(&self, block: &str, column: &str) -> Option<String> {
+        self.inner.target(block, column).map(str::to_string)
+    }
+
     /// The declared precision of ``column`` of ``block``, or ``None``.
     fn precision(&self, block: &str, column: &str) -> Option<f64> {
         self.inner.precision(block, column)

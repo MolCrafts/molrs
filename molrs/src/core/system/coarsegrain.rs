@@ -397,6 +397,10 @@ impl CoarseGrain {
             members
                 .insert("ibead", Array1::from_vec(ibead).into_dyn())
                 .and_then(|()| members.insert("atom", Array1::from_vec(atom).into_dyn()))
+                // `ibead` indexes this frame's bead rows; stated, not only
+                // conventional. `atom` is a handle into the all-atom side,
+                // which only the caller can name as a target.
+                .and_then(|()| members.set_target("ibead", "atoms"))
                 .map_err(|e| MolRsError::validation(format!("Frame 'members' block: {e}")))?;
             frame.insert("members", members);
         }

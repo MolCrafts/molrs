@@ -129,20 +129,44 @@ impl Validator {
     ) {
         // A block with no spec is legal (MolGraph mints one per relation
         // kind); `relation_endpoints` infers its endpoints from the columns
-        // it carries, so those get range-checked too.
-        let Some((target, endpoint_cols)) = frame
-            .visit_block(name, |b: &dyn BlockAccess| {
-                relation_endpoints(name, |k| b.contains_key(k))
-            })
-            .flatten()
-        else {
+        // it carries, and adds every reference the block declares
+        // (`targets`), so those get range-checked too.
+        let Some((refs, declared, rows)) = frame.visit_block(name, |b: &dyn BlockAccess| {
+            let declared: Vec<(&str, &str)> = b.targets();
+            let refs = relation_endpoints(name, |k| b.contains_key(k), &declared);
+            let declared: Vec<String> = declared.iter().map(|(c, _)| c.to_string()).collect();
+            (refs, declared, b.nrows().unwrap_or(0))
+        }) else {
             return;
         };
-        let Some(&target_rows) = nrows.get(target) else {
-            return;
-        };
-        for col in endpoint_cols {
-            self.check_range(frame, name, col, target, target_rows, report);
+        for reference in refs {
+            // An absolute target (`/frame/atoms`) lies outside this frame; the
+            // record that holds both sections checks it.
+            if !reference.is_local() {
+                continue;
+            }
+            let Some(&target_rows) = nrows.get(&reference.target) else {
+                // The default `atoms` rule is a convention; a declared target
+                // must exist wherever the referencing block has rows.
+                if rows > 0 && declared.contains(&reference.column) {
+                    report.push(Violation::column(
+                        name,
+                        &reference.column,
+                        ViolationKind::MissingTarget {
+                            target: reference.target.clone(),
+                        },
+                    ));
+                }
+                continue;
+            };
+            self.check_range(
+                frame,
+                name,
+                &reference.column,
+                &reference.target,
+                target_rows,
+                report,
+            );
         }
     }
 
@@ -162,10 +186,17 @@ impl Validator {
         let Some(values) = frame.column(name, col).and_then(|c| c.as_uint()) else {
             return;
         };
+        // A null row references nothing (a `virtual_sites` row built from
+        // fewer atoms leaves its trailing endpoints null).
+        let mask: Option<Vec<bool>> = frame
+            .visit_block(name, |b: &dyn BlockAccess| {
+                b.validity(col).map(<[bool]>::to_vec)
+            })
+            .flatten();
         let mut reported = 0usize;
         let mut extra = 0usize;
         for (row, &v) in values.iter().enumerate() {
-            if (v as usize) < target_rows {
+            if (v as usize) < target_rows || mask.as_ref().is_some_and(|m| !m[row]) {
                 continue;
             }
             if reported < MAX_CELL_VIOLATIONS_PER_COLUMN {
@@ -262,13 +293,56 @@ mod tests {
     }
 
     #[test]
-    fn check_ignores_a_block_without_endpoint_columns() {
-        // `members` carries no atomi..atoml, so ibead = 9 is never read as an
-        // index into the 2 atoms.
+    fn check_reads_members_ibead_into_atoms_and_leaves_an_undeclared_atom_alone() {
+        // `members.ibead` references `atoms`; `atom` is an opaque handle until
+        // a target is declared for it.
         let mut frame = Frame::new();
         frame.insert("atoms", atoms(2));
         frame.insert("members", uint_block(&[("ibead", &[9]), ("atom", &[10])]));
 
+        let report = Validator::canonical().check(&frame);
+        let found: Vec<&Violation> = report.iter().collect();
+        assert_eq!(found, vec![&out_of_range("members", "ibead", 9, 2)]);
+    }
+
+    #[test]
+    fn check_range_checks_a_declared_target_and_reports_a_missing_one() {
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms(2));
+        let mut sites = uint_block(&[("site", &[1, 3])]);
+        sites.set_target("site", "atoms").unwrap();
+        frame.insert("refs", sites);
+        let report = Validator::canonical().check(&frame);
+        assert_eq!(report.iter().count(), 1, "{report}");
+        assert!(report.to_string().contains("site"), "{report}");
+
+        let mut frame = Frame::new();
+        let mut sites = uint_block(&[("site", &[0])]);
+        sites.set_target("site", "sites").unwrap();
+        frame.insert("refs", sites);
+        let report = Validator::canonical().check(&frame);
+        assert!(report.to_string().contains("sites"), "{report}");
+    }
+
+    #[test]
+    fn check_skips_a_null_endpoint() {
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms(3));
+        let mut sites = uint_block(&[
+            ("atomi", &[0]),
+            ("atomj", &[1]),
+            ("atomk", &[2]),
+            ("atoml", &[0]),
+        ]);
+        // atoml is null on the one row, its filler pointing past the atoms.
+        sites
+            .insert_nullable(
+                "atoml",
+                Array1::from_vec(vec![99 as Idx]).into_dyn(),
+                vec![false],
+            )
+            .unwrap();
+        frame.insert("virtual_sites", sites);
         let report = Validator::canonical().check(&frame);
         assert!(report.is_empty(), "{report}");
     }

@@ -794,6 +794,10 @@ pub(crate) fn write_frame_group(
     prefix: &str,
     frame: &Frame,
 ) -> Result<(), MolRsError> {
+    // A declared row reference must resolve inside this frame: refused before
+    // anything is erased or written.
+    check_local_references(frame, prefix)?;
+
     // Erase before writing: this group is the target node, so whatever it held
     // before is not part of the frame being written.
     store.erase_prefix(&node_prefix(prefix)?)?;
@@ -862,6 +866,16 @@ pub(crate) fn write_frame_group(
                         .map(|n| serde_json::Value::from(*n as u64))
                         .collect(),
                 ),
+            );
+        }
+        let targets: serde_json::Map<String, serde_json::Value> = block
+            .targets()
+            .map(|(column, target)| (column.to_string(), serde_json::Value::from(target)))
+            .collect();
+        if !targets.is_empty() {
+            block_attrs.insert(
+                TARGETS_ATTRIBUTE.to_string(),
+                serde_json::Value::Object(targets),
             );
         }
         GroupBuilder::new()
@@ -1012,10 +1026,29 @@ pub(crate) fn read_frame_group(
                 })?;
             }
         }
+        if let Some(targets) = attrs.get(TARGETS_ATTRIBUTE) {
+            let targets = targets.as_object().ok_or_else(|| {
+                MolRsError::zarr(format!(
+                    "block {child_name:?}: {TARGETS_ATTRIBUTE} must be an object, found {targets}"
+                ))
+            })?;
+            for (column, target) in targets {
+                let target = target.as_str().ok_or_else(|| {
+                    MolRsError::zarr(format!(
+                        "block {child_name:?}: target of {column:?} must be a string, found \
+                         {target}"
+                    ))
+                })?;
+                block
+                    .set_target(column, target)
+                    .map_err(|e| MolRsError::zarr(format!("block {child_name:?} targets: {e}")))?;
+            }
+        }
         read_validity_group(store, child.path().as_str(), child_name, &mut block)?;
         frame.insert(child_name, block);
     }
 
+    check_local_references(&frame, prefix)?;
     Ok(frame)
 }
 
@@ -1064,6 +1097,69 @@ pub(crate) fn read_meta_document(
         meta.insert(key.clone(), typed);
     }
     Ok(meta)
+}
+
+/// The block-group attribute holding a block's declared row-reference
+/// targets (`{column: target}`), written only when the block declares one.
+pub(crate) const TARGETS_ATTRIBUTE: &str = "targets";
+
+/// Check every declared row reference of `frame` whose target
+/// `rows_of` can resolve: `rows_of(target)` is `None` when the target cannot
+/// be checked here (an absolute target, or a section the caller lacks),
+/// `Some(None)` when it names a block that does not exist, and
+/// `Some(Some(n))` for a block of `n` rows.
+///
+/// A missing target is refused wherever the referencing block has rows; a
+/// non-null value at or past the target's row count is refused. A null row
+/// references nothing.
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] naming `what`, block, column and target.
+pub(crate) fn check_declared_references(
+    frame: &Frame,
+    what: &str,
+    rows_of: &dyn Fn(&str) -> Option<Option<usize>>,
+) -> Result<(), MolRsError> {
+    for (name, block) in frame.iter() {
+        let rows = block.nrows().unwrap_or(0);
+        for (column, target) in block.targets() {
+            let Some(target_rows) = rows_of(target) else {
+                continue;
+            };
+            let Some(target_rows) = target_rows else {
+                if rows > 0 {
+                    return Err(MolRsError::zarr(format!(
+                        "{what}: column {column:?} of block {name:?} references {target:?}, \
+                         which is not there"
+                    )));
+                }
+                continue;
+            };
+            let Some(values) = block.get(column).and_then(|c| c.as_uint()) else {
+                continue;
+            };
+            let mask = block.validity(column);
+            if let Some((row, value)) = values
+                .iter()
+                .enumerate()
+                .find(|&(row, &v)| mask.is_none_or(|m| m[row]) && v as usize >= target_rows)
+            {
+                return Err(MolRsError::zarr(format!(
+                    "{what}: row {row} of column {column:?} of block {name:?} references row \
+                     {value} of {target:?}, which has {target_rows} rows"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// [`check_declared_references`] for the targets inside `frame` itself.
+pub(crate) fn check_local_references(frame: &Frame, what: &str) -> Result<(), MolRsError> {
+    check_declared_references(frame, what, &|target| {
+        (!target.starts_with('/')).then(|| frame.get(target).map(|b| b.nrows().unwrap_or(0)))
+    })
 }
 
 /// Restore the validity masks [`write_validity_group`] wrote for `block`.
@@ -2541,5 +2637,161 @@ mod tests {
         group.store_metadata().unwrap();
         let err = read_frame_group(&store, FRAME).unwrap_err().to_string();
         assert!(err.contains("\"ix\"") && err.contains("int"), "{err}");
+    }
+
+    // -- row references and topology conventions (molrec F4) ---------------
+
+    fn uints(values: &[u64]) -> Column {
+        Column::from_uint(ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap())
+    }
+
+    fn strings(values: &[&str]) -> Column {
+        Column::from_string(
+            ArrayD::from_shape_vec(
+                vec![values.len()],
+                values.iter().map(|s| (*s).to_string()).collect(),
+            )
+            .unwrap(),
+        )
+    }
+
+    fn atoms_of(n: usize) -> Block {
+        let mut atoms = Block::new();
+        atoms
+            .insert_column("x", Column::from_float(ArrayD::from_elem(vec![n], 0.5)))
+            .unwrap();
+        atoms
+    }
+
+    #[test]
+    fn declared_targets_round_trip_as_the_block_attribute() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms_of(3));
+        let mut members = Block::new();
+        members.insert_column("ibead", uints(&[0, 2])).unwrap();
+        members.insert_column("atom", uints(&[10, 11])).unwrap();
+        members.set_target("ibead", "atoms").unwrap();
+        members.set_target("atom", "/frame/atoms").unwrap();
+        frame.insert("members", members);
+        write_frame_group(&store, FRAME, &frame).unwrap();
+
+        let attrs = zarrs::group::Group::open(store.clone(), &format!("{FRAME}/members"))
+            .unwrap()
+            .attributes()
+            .clone();
+        assert_eq!(
+            attrs[TARGETS_ATTRIBUTE],
+            serde_json::json!({"ibead": "atoms", "atom": "/frame/atoms"})
+        );
+        let back = read_frame_group(&store, FRAME).unwrap();
+        assert_eq!(back["members"].target("ibead"), Some("atoms"));
+        assert_eq!(back["members"].target("atom"), Some("/frame/atoms"));
+    }
+
+    #[test]
+    fn a_broken_same_frame_reference_is_refused_both_ways() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        // Out of range: ibead 5 with 3 atoms.
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms_of(3));
+        let mut members = Block::new();
+        members.insert_column("ibead", uints(&[5])).unwrap();
+        members.set_target("ibead", "atoms").unwrap();
+        frame.insert("members", members);
+        assert!(write_frame_group(&store, FRAME, &frame).is_err());
+
+        // Missing target block.
+        let mut frame = Frame::new();
+        let mut refs = Block::new();
+        refs.insert_column("site", uints(&[0])).unwrap();
+        refs.set_target("site", "sites").unwrap();
+        frame.insert("refs", refs);
+        let err = write_frame_group(&store, FRAME, &frame)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("sites"), "{err}");
+
+        // A store that breaks it (tampered) is refused on read.
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms_of(3));
+        let mut refs = Block::new();
+        refs.insert_column("site", uints(&[2])).unwrap();
+        frame.insert("refs", refs);
+        write_frame_group(&store, FRAME, &frame).unwrap();
+        let mut group = zarrs::group::Group::open(store.clone(), &format!("{FRAME}/refs")).unwrap();
+        group.attributes_mut().insert(
+            TARGETS_ATTRIBUTE.into(),
+            serde_json::json!({"site": "nope"}),
+        );
+        group.store_metadata().unwrap();
+        assert!(read_frame_group(&store, FRAME).is_err());
+
+        // A target on a non-u64 column is refused on read.
+        group
+            .attributes_mut()
+            .insert(TARGETS_ATTRIBUTE.into(), serde_json::json!({"x": "atoms"}));
+        group.store_metadata().unwrap();
+        assert!(read_frame_group(&store, FRAME).is_err());
+    }
+
+    /// Every new canonical atom column and relation block at its canonical
+    /// dtype round-trips, a `virtual_sites` row with a null `atoml` included.
+    #[test]
+    fn the_canonical_topology_round_trips() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut atoms = atoms_of(3);
+        for key in ["fx", "fy", "fz", "occupancy", "b_factor"] {
+            atoms
+                .insert_column(key, Column::from_float(ArrayD::from_elem(vec![3], 0.25)))
+                .unwrap();
+        }
+        atoms
+            .insert_column(
+                "formal_charge",
+                Column::from_i64(ArrayD::from_shape_vec(vec![3], vec![-1, 0, 1]).unwrap()),
+            )
+            .unwrap();
+        atoms.insert_column("atom_map", uints(&[1, 0, 2])).unwrap();
+        for key in ["chain", "icode", "altloc"] {
+            atoms.insert_column(key, strings(&["A", "", "B"])).unwrap();
+        }
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        let mut sites = Block::new();
+        for (key, v) in [("atomi", 0), ("atomj", 1), ("atomk", 2)] {
+            sites.insert_column(key, uints(&[v])).unwrap();
+        }
+        sites
+            .insert_nullable(
+                "atoml",
+                ndarray::Array1::from_vec(vec![0_u64]).into_dyn(),
+                vec![false],
+            )
+            .unwrap();
+        frame.insert("virtual_sites", sites);
+        for name in ["constraints", "drudes"] {
+            let mut pair = Block::new();
+            pair.insert_column("atomi", uints(&[0])).unwrap();
+            pair.insert_column("atomj", uints(&[1])).unwrap();
+            pair.insert_column("style", strings(&["harmonic"])).unwrap();
+            frame.insert(name, pair);
+        }
+        assert!(
+            molrs::store::schema::Validator::canonical()
+                .check(&frame)
+                .is_empty()
+        );
+        write_frame_group(&store, FRAME, &frame).unwrap();
+        let back = read_frame_group(&store, FRAME).unwrap();
+        let atoms = &back["atoms"];
+        assert_eq!(atoms.dtype("formal_charge"), Some(DType::Int64));
+        assert_eq!(atoms.dtype("atom_map"), Some(DType::UInt));
+        assert_eq!(atoms.dtype("chain"), Some(DType::String));
+        assert_eq!(back["virtual_sites"].validity("atoml"), Some(&[false][..]));
+        assert_eq!(back["drudes"].nrows(), Some(1));
     }
 }

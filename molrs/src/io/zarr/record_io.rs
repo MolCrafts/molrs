@@ -56,7 +56,9 @@ use zarrs::node::{Node, NodeMetadata};
 use zarrs::storage::WritableStorageTraits;
 use zarrs::storage::{ReadableStorageTraits, ReadableWritableListableStorage};
 
-use crate::io::zarr::frame_io::{join_path, read_column, read_frame_group};
+use crate::io::zarr::frame_io::{
+    check_declared_references, join_path, read_column, read_frame_group,
+};
 #[cfg(feature = "zarr")]
 use crate::io::zarr::frame_io::{node_prefix, write_column, write_frame_group};
 use crate::io::zarr::schema;
@@ -133,6 +135,7 @@ pub fn write_record_store(
     record: &MolRec,
 ) -> Result<(), MolRsError> {
     record.validate()?;
+    check_absolute_references(record)?;
     let prefix = "/";
 
     // Erase before writing: this record is the whole content of the store root,
@@ -542,7 +545,36 @@ pub fn read_record_store(store: ReadableWritableListableStorage) -> Result<MolRe
         }
     }
 
+    check_absolute_references(&record)?;
     Ok(record)
+}
+
+/// Check every absolute row reference (`/frame/atoms`, `/system/atoms`) of
+/// the record's `frame`, `system` and trajectory frames against the section
+/// it names, when that section is present: the block must exist and every
+/// non-null value must be below its row count. A reference into a section
+/// the record lacks cannot be checked and is left alone.
+fn check_absolute_references(record: &MolRec) -> Result<(), MolRsError> {
+    let rows_of = |target: &str| -> Option<Option<usize>> {
+        let (section, block) = target.strip_prefix('/')?.split_once('/')?;
+        let frame = match section {
+            "frame" => record.frame.as_ref(),
+            "system" => record.system.as_ref(),
+            _ => None,
+        }?;
+        Some(frame.get(block).map(|b| b.nrows().unwrap_or(0)))
+    };
+    for (what, frame) in [("frame", &record.frame), ("system", &record.system)] {
+        if let Some(frame) = frame {
+            check_declared_references(frame, what, &rows_of)?;
+        }
+    }
+    if let Some(trajectory) = &record.trajectory {
+        for (index, frame) in trajectory.frames.iter().enumerate() {
+            check_declared_references(frame, &format!("trajectory frame {index}"), &rows_of)?;
+        }
+    }
+    Ok(())
 }
 
 /// Read and validate the `meta` section of the record rooted at `/`.
@@ -1827,5 +1859,51 @@ mod tests {
             assert_eq!(atoms_x(&frame), rounded(values));
             assert_eq!(frame.get("atoms").unwrap().precision("x"), Some(1e-3));
         }
+    }
+
+    // -- absolute row references (molrec F4) -------------------------------
+
+    fn members_into_frame(atom: u64) -> Frame {
+        let mut members = Block::new();
+        members
+            .insert_column(
+                "ibead",
+                Column::from_uint(ArrayD::from_shape_vec(vec![1], vec![0_u64]).unwrap()),
+            )
+            .unwrap();
+        members
+            .insert_column(
+                "atom",
+                Column::from_uint(ArrayD::from_shape_vec(vec![1], vec![atom]).unwrap()),
+            )
+            .unwrap();
+        members.set_target("atom", "/frame/atoms").unwrap();
+        let mut system = frame_with_atoms(1);
+        system.insert("members", members);
+        system
+    }
+
+    #[test]
+    fn an_absolute_target_is_range_checked_against_its_section() {
+        let mut record = MolRec::new();
+        record.frame = Some(frame_with_atoms(3));
+        record.system = Some(members_into_frame(2));
+        let back = write_then_read(&record);
+        assert_eq!(
+            back.system.unwrap()["members"].target("atom"),
+            Some("/frame/atoms")
+        );
+
+        record.system = Some(members_into_frame(3));
+        let dir = tempdir().unwrap();
+        let err = write_record_file(dir.path().join("r.mrec"), &record)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("/frame/atoms"), "{err}");
+
+        // Without a `frame` section the reference cannot be checked: kept.
+        record.frame = None;
+        let back = write_then_read(&record);
+        assert!(back.system.is_some());
     }
 }

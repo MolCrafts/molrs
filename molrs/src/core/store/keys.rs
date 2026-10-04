@@ -54,12 +54,30 @@ meta_keys! {
     pub const DIHEDRAL_TYPE_LABELS: &str = "dihedral_type_labels";
     /// Frame meta key: the improper-type inventory, packed as `"id:label,…"`.
     pub const IMPROPER_TYPE_LABELS: &str = "improper_type_labels";
-    /// Frame meta key: the unit-preset name (`"real"`, `"lj"`, …) the frame's
-    /// numbers are in. Absent means the file or caller stated none.
+    /// Frame meta key: the unit system the frame's numbers are in, as the
+    /// force-field `units` object — `{"preset": "real"}`, or quantities such
+    /// as `{"length": "nm", "energy": "kJ/mol"}` (molrec `conventions.md`,
+    /// "Units on a frame"). A bare string reads as `{"preset": <string>}`
+    /// ([`units_preset`]). Absent means the file or
+    /// caller stated none.
     ///
     /// The LAMMPS molecule-JSON reader writes it and its writer emits it back
     /// (`io::data::lammps_molecule`); molrs converts no frame between presets.
     pub const UNITS: &str = "units";
+}
+
+/// The preset a frame's [`UNITS`] meta value names: the
+/// `preset` of a units object, or a bare preset string (the form molrs wrote
+/// before the object). `None` for a value that names no preset.
+pub fn units_preset(value: &crate::store::meta::MetaValue) -> Option<&str> {
+    use crate::store::meta::MetaValue;
+    match value {
+        MetaValue::String(preset) => Some(preset),
+        MetaValue::Json(serde_json::Value::Object(object)) => {
+            object.get("preset").and_then(serde_json::Value::as_str)
+        }
+        _ => None,
+    }
 }
 
 /// Column keys, groups, block names, and frame-meta keys, from the tables.

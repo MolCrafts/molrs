@@ -379,6 +379,28 @@ impl Block {
         })?
     }
 
+    /// The declared row-reference target of column `key`: the block its
+    /// values index (`"atoms"`, or `"/frame/atoms"` in another section of the
+    /// record), as the store declared it (molrec `targets`).
+    ///
+    /// # Returns
+    ///
+    /// The target, or `undefined` when the column declares none.
+    ///
+    /// # Errors
+    ///
+    /// Throws if the column does not exist, or if the handle has been
+    /// invalidated.
+    #[wasm_bindgen(js_name = target)]
+    pub fn target(&self, key: &str) -> Result<Option<String>, JsValue> {
+        self.with(|b| {
+            if !b.contains_key(key) {
+                return Err(missing_column(key));
+            }
+            Ok(b.target(key).map(str::to_string))
+        })?
+    }
+
     /// The declared precision of column `key`: the absolute tolerance its
     /// stored values were rounded to (molrec "declared precision").
     ///

@@ -160,9 +160,9 @@ use crate::io::reader::TrajectoryReader;
 
 use super::frame_io::{
     BOX_GROUP, GZIP_LEVEL, VALIDITY_GROUP, canonical_width, check_canonical_dtype,
-    check_storable_cell, default_precision_compressor, gzip, insert_column_into_block, join_path,
-    node_prefix, precision_shuffle, quantized, read_column_array, resolve_boundary, stored_dtype,
-    zarr_dtype,
+    check_local_references, check_storable_cell, default_precision_compressor, gzip,
+    insert_column_into_block, join_path, node_prefix, precision_shuffle, quantized,
+    read_column_array, resolve_boundary, stored_dtype, zarr_dtype,
 };
 use super::record_io::zerr;
 
@@ -664,10 +664,42 @@ fn stored_presentation<'a>(
         }
         target.set_precision(column, precision)?;
     }
+    // The pinned row-reference targets travel on the stored block, so the
+    // resolved-frame check sees them whether the frame stated them or not.
+    if declared
+        .targets
+        .iter()
+        .any(|(column, target)| block.contains_key(column) && block.target(column) != Some(target))
+    {
+        let target_block = stored.get_or_insert_with(|| block.clone());
+        for (column, target) in &declared.targets {
+            if target_block.contains_key(column) {
+                target_block.set_target(column, target)?;
+            }
+        }
+    }
     Ok(match stored {
         Some(block) => std::borrow::Cow::Owned(block),
         None => std::borrow::Cow::Borrowed(block),
     })
+}
+
+/// Check a resolved trajectory frame against the rules that span blocks:
+/// every same-frame row reference the schema pins resolves.
+/// `resolve(name)` is the block at this ordinal, or `None` where it is
+/// absent.
+fn check_resolved_frame<'a>(
+    schema: &SequenceSchema,
+    resolve: impl Fn(&str) -> Option<&'a Block>,
+    ordinal: u64,
+) -> Result<(), MolRsError> {
+    let mut resolved = Frame::new();
+    for name in schema.blocks.keys() {
+        if let Some(block) = resolve(name) {
+            resolved.insert(name.clone(), block.clone());
+        }
+    }
+    check_local_references(&resolved, &format!("trajectory frame {ordinal}"))
 }
 
 /// Whether two cells are the same cell, bit for bit.
@@ -793,6 +825,11 @@ struct BlockSchema {
     columns: IndexMap<String, ColumnSchema>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     structural_shape: Option<Vec<usize>>,
+    /// The block's row references (molrec `targets`): column → `<block>`
+    /// of the same resolved frame or `/<section>/<block>`. On a trajectory
+    /// they are pinned here and nowhere else. Absent while empty.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    targets: IndexMap<String, String>,
 }
 
 /// One declared per-step metadata key.
@@ -959,6 +996,9 @@ impl SequenceSchema {
                     if let Some(precision) = block.precision(column) {
                         schema.declare_precision(name, column, precision)?;
                     }
+                    if let Some(target) = block.target(column) {
+                        schema.declare_target(name, column, target)?;
+                    }
                 }
             }
 
@@ -997,6 +1037,7 @@ impl SequenceSchema {
             .or_insert_with(|| BlockSchema {
                 columns: IndexMap::new(),
                 structural_shape: None,
+                targets: IndexMap::new(),
             });
         if let Some(rows) = rows {
             let hint = self.rows_hint.entry(name.to_string()).or_insert(0);
@@ -1144,6 +1185,70 @@ impl SequenceSchema {
                 Ok(())
             }
         }
+    }
+
+    /// Declare that `column` of `block` holds row indices into `target`:
+    /// `<block>` of the same resolved frame, or `/<section>/<block>` of a
+    /// frame-shaped section of the record (molrec "row references").
+    ///
+    /// Pinned with the schema. The writer refuses a frame whose resolved
+    /// blocks break a same-frame reference (target absent while the
+    /// referencing block has rows, or a non-null value past its row count),
+    /// and the reader refuses a store that does.
+    /// [`from_frames`](Self::from_frames) declares every
+    /// [`Block::target`](molrs::store::block::Block::target) it sees.
+    ///
+    /// # Errors
+    ///
+    /// A [`MolRsError::Zarr`] when the column is not declared, is not `u64`,
+    /// already declares another target, or `target` is malformed or names a
+    /// trajectory block absolutely (`/trajectory/…`).
+    pub fn declare_target(
+        &mut self,
+        block: &str,
+        column: &str,
+        target: &str,
+    ) -> Result<(), MolRsError> {
+        let declared = self.blocks.get_mut(block).ok_or_else(|| {
+            MolRsError::zarr(format!(
+                "cannot declare a target for column {column:?} of block {block:?}: the block is \
+                 not declared"
+            ))
+        })?;
+        let pinned = declared.columns.get(column).ok_or_else(|| {
+            MolRsError::zarr(format!(
+                "cannot declare a target for column {column:?} of block {block:?}: it is not \
+                 declared"
+            ))
+        })?;
+        if pinned.dtype != dtype_tag(DType::UInt) {
+            return Err(MolRsError::zarr(format!(
+                "column {column:?} of block {block:?} is {}; a row reference is u64",
+                pinned.dtype
+            )));
+        }
+        molrs::store::schema::check_target(target)
+            .map_err(|e| MolRsError::zarr(format!("column {column:?} of block {block:?}: {e}")))?;
+        match declared.targets.get(column) {
+            Some(existing) if existing != target => Err(MolRsError::zarr(format!(
+                "sequence schema conflict: column {column:?} of block {block:?} references \
+                 {existing:?} and {target:?}"
+            ))),
+            _ => {
+                declared
+                    .targets
+                    .insert(column.to_string(), target.to_string());
+                Ok(())
+            }
+        }
+    }
+
+    /// The declared target of `column` of `block`, or `None`.
+    pub fn target(&self, block: &str, column: &str) -> Option<&str> {
+        self.blocks
+            .get(block)
+            .and_then(|declared| declared.targets.get(column))
+            .map(String::as_str)
     }
 
     /// The declared precision of `column` of `block`, or `None` when it
@@ -3602,6 +3707,11 @@ impl FrameSequenceWriter {
                     )?;
                 }
                 apply_structural_shape(&mut landed, declared, &path)?;
+                for (column, target) in &declared.targets {
+                    if landed.contains_key(column) {
+                        landed.set_target(column, target)?;
+                    }
+                }
                 landed
             } else {
                 empty_block(declared)?
@@ -3856,24 +3966,31 @@ impl FrameSequenceWriter {
         let meta = self.resolve_meta(frame)?;
         self.ensure_arrays()?;
 
-        let mut blocks = BTreeMap::new();
+        // What would be stored, not what was presented: a precision column
+        // is rounded first, so a change below half its quantum is no change
+        // and earns no update. An omitted block carries forward.
+        let mut presented: BTreeMap<String, Block> = BTreeMap::new();
         for (name, declared) in &self.schema.blocks {
-            // An omitted block carries forward: no update, no state change.
-            let Some(block) = frame.get(name) else {
-                continue;
-            };
-            // What would be stored, not what was presented: a precision
-            // column is rounded first, so a change below half its quantum is
-            // no change and earns no update.
-            let block = stored_presentation(declared, block)?;
+            if let Some(block) = frame.get(name) {
+                presented.insert(
+                    name.clone(),
+                    stored_presentation(declared, block)?.into_owned(),
+                );
+            }
+        }
+        // The frame as a reader will resolve it, checked before any state
+        // moves: a refused frame leaves the writer as it was.
+        self.check_resolved(&presented, self.committed + self.pending.len() as u64)?;
+
+        let mut blocks = BTreeMap::new();
+        for (name, block) in presented {
             let changed = self
                 .landed_blocks
-                .get(name)
+                .get(&name)
                 .is_none_or(|landed| !same_block(landed, &block));
             if changed {
-                let block = block.into_owned();
                 blocks.insert(name.clone(), block.clone());
-                self.landed_blocks.insert(name.clone(), block);
+                self.landed_blocks.insert(name, block);
             }
         }
 
@@ -3958,6 +4075,19 @@ impl FrameSequenceWriter {
                             .map_or_else(|| "none".to_string(), |p| p.to_string())
                     )));
                 }
+                if let Some(presented) = block.target(column)
+                    && declared.targets.get(column).map(String::as_str) != Some(presented)
+                {
+                    return Err(MolRsError::zarr(format!(
+                        "column {column:?} of block {name:?} references {presented:?} but this \
+                         sequence pins {}: a trajectory states a block's targets once, in its \
+                         schema",
+                        declared
+                            .targets
+                            .get(column)
+                            .map_or_else(|| "none".to_string(), |t| format!("{t:?}"))
+                    )));
+                }
                 if block.validity(column).is_some() && !pinned.nullable {
                     return Err(MolRsError::zarr(format!(
                         "column {column:?} of block {name:?} carries a validity mask but is \
@@ -3995,6 +4125,21 @@ impl FrameSequenceWriter {
             }
         }
         Ok(())
+    }
+
+    /// Check the frame at `ordinal` as a reader resolves it — each declared
+    /// block presented now, else carried forward from its latest update —
+    /// against the rules that span blocks.
+    fn check_resolved(
+        &self,
+        presented: &BTreeMap<String, Block>,
+        ordinal: u64,
+    ) -> Result<(), MolRsError> {
+        check_resolved_frame(
+            &self.schema,
+            |name| presented.get(name).or_else(|| self.landed_blocks.get(name)),
+            ordinal,
+        )
     }
 
     /// Resolve every declared meta key to the value this step stores.
@@ -4903,8 +5048,15 @@ impl FrameSequence {
                         .rows(start, rows, &declared.trailing)?
                 };
                 insert_column_into_block(&mut block, column, values)?;
-                // The pinned precision travels with the column read back, so a
-                // trajectory read and written again declares the same one.
+                // The pinned precision and target travel with the column read
+                // back, so a trajectory read and written again declares them.
+                if let Some(target) = schema.targets.get(column) {
+                    block.set_target(column, target).map_err(|e| {
+                        MolRsError::zarr(format!(
+                            "target of column {column:?} of block {name:?}: {e}"
+                        ))
+                    })?;
+                }
                 if let Some(precision) = declared.precision {
                     block.set_precision(column, precision).map_err(|e| {
                         MolRsError::zarr(format!(
@@ -4956,6 +5108,11 @@ impl FrameSequence {
             );
         }
 
+        // A whole frame is the resolved frame: its pinned row references
+        // must resolve, or the store is refused.
+        if wanted.is_none() {
+            check_local_references(&frame, &format!("trajectory frame {index}"))?;
+        }
         Ok(Some(frame))
     }
 
@@ -8488,5 +8645,80 @@ mod tests {
         assert!(centi_net < 6.5, "p=1e-2: {centi_net}");
         assert!(milli < lossless / 2.5, "p=1e-3: {milli} vs {lossless}");
         assert!(centi < milli, "p=1e-2: {centi} vs {milli}");
+    }
+
+    // -- row references (molrec F4) -----------------------------------------
+
+    /// `atoms` with `n` rows and a `refs` block whose `site` references them.
+    fn referencing_frame(n: usize, site: &[u64]) -> Frame {
+        let mut frame = atoms_frame(&vec![0.5; n]);
+        let mut refs = block_with("site", uint_column(site));
+        refs.set_target("site", ATOMS).unwrap();
+        frame.insert("refs", refs);
+        frame
+    }
+
+    #[test]
+    fn targets_are_pinned_and_hold_per_resolved_frame() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let first = referencing_frame(3, &[2]);
+        let schema = SequenceSchema::from_frame(&first).unwrap();
+        assert_eq!(schema.target("refs", "site"), Some(ATOMS));
+        let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
+        writer.append(&first).unwrap();
+        // `atoms` shrinks to 2 rows while `refs` carries forward pointing at
+        // row 2: the resolved frame breaks the reference.
+        let err = writer
+            .append(&atoms_frame(&[1.0, 2.0]))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("site") && err.contains("trajectory frame 1"),
+            "{err}"
+        );
+        // Restating `refs` in range is fine; a refused frame changed nothing.
+        let mut second = atoms_frame(&[1.0, 2.0]);
+        second.insert("refs", block_with("site", uint_column(&[1])));
+        writer.append(&second).unwrap();
+        writer.close().unwrap();
+
+        let pin = Group::open(store.clone(), TRAJ).unwrap().attributes()[SCHEMA_ATTRIBUTE].clone();
+        assert_eq!(
+            pin["blocks"]["refs"]["targets"],
+            serde_json::json!({"site": ATOMS})
+        );
+        let mut seq = open_sequence(&store);
+        assert_eq!(committed_len(&mut seq), 2);
+        let back = frame_at(&mut seq, 1);
+        assert_eq!(back["refs"].target("site"), Some(ATOMS));
+
+        // Tamper the pin to a target the store breaks: the read refuses.
+        let mut group = Group::open(store.clone(), TRAJ).unwrap();
+        group.attributes_mut()[SCHEMA_ATTRIBUTE]["blocks"]["refs"]["targets"]["site"] =
+            serde_json::json!("ghost");
+        group.store_metadata().unwrap();
+        assert!(open_sequence(&store).frame(0).is_err());
+    }
+
+    #[test]
+    fn declare_target_refuses_what_cannot_be_a_reference() {
+        let mut schema = SequenceSchema::new();
+        schema.declare_column(ATOMS, X, DType::Float, &[]).unwrap();
+        schema
+            .declare_column("refs", "site", DType::UInt, &[])
+            .unwrap();
+        assert!(schema.declare_target("refs", "nope", ATOMS).is_err());
+        assert!(schema.declare_target(ATOMS, X, ATOMS).is_err());
+        assert!(
+            schema
+                .declare_target("refs", "site", "/trajectory/atoms")
+                .is_err()
+        );
+        assert!(schema.declare_target("refs", "site", "a/b").is_err());
+        schema
+            .declare_target("refs", "site", "/system/atoms")
+            .unwrap();
+        assert!(schema.declare_target("refs", "site", ATOMS).is_err());
     }
 }

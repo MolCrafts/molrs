@@ -21,6 +21,8 @@ pub struct BlockView<'a> {
     validity: IndexMap<&'a str, &'a [bool]>,
     /// Declared precisions of the viewed block's `f64` columns.
     precision: IndexMap<&'a str, f64>,
+    /// Declared row-reference targets of the viewed block.
+    targets: IndexMap<&'a str, &'a str>,
     /// Borrowed structural shape of the viewed block, if it declares one.
     shape: Option<&'a [usize]>,
     nrows: Option<usize>,
@@ -33,6 +35,7 @@ impl<'a> BlockView<'a> {
             map: IndexMap::new(),
             validity: IndexMap::new(),
             precision: IndexMap::new(),
+            targets: IndexMap::new(),
             shape: None,
             nrows: None,
         }
@@ -98,13 +101,23 @@ impl<'a> BlockView<'a> {
         self.map.values()
     }
 
+    /// The validity mask of column `key`, if it carries one.
+    pub fn validity(&self, key: &str) -> Option<&'a [bool]> {
+        self.validity.get(key).copied()
+    }
+
+    /// Every declared row-reference target, as `(column, target)`.
+    pub fn targets(&self) -> Vec<(&'a str, &'a str)> {
+        self.targets.iter().map(|(&k, &t)| (k, t)).collect()
+    }
+
     /// Returns the data type of the column with the given key, if it exists.
     pub fn dtype(&self, key: &str) -> Option<DType> {
         self.get(key).map(|c| c.dtype())
     }
 
     /// Creates an owned [`Block`] by cloning all viewed data, validity masks,
-    /// declared precisions and structural shape included.
+    /// declared precisions and targets, and structural shape included.
     pub fn to_owned(&self) -> Block {
         let mut block = Block::new();
         for (&key, col_view) in &self.map {
@@ -116,6 +129,9 @@ impl<'a> BlockView<'a> {
         }
         for (&key, &p) in &self.precision {
             let _ = block.set_precision(key, p);
+        }
+        for (&key, &target) in &self.targets {
+            let _ = block.set_target(key, target);
         }
         if let Some(shape) = self.shape {
             let _ = block.set_shape(shape);
@@ -136,6 +152,7 @@ impl<'a> From<&'a Block> for BlockView<'a> {
             map: IndexMap::with_capacity(block.len()),
             validity: IndexMap::new(),
             precision: block.precisions().collect(),
+            targets: block.targets().collect(),
             shape: block.structural_shape(),
             nrows: block.nrows(),
         };

@@ -679,7 +679,12 @@ fn read_lammps_molecule_json(path: &Path) -> Result<Frame> {
                 "JSON molecule field `{JSON_UNITS}` must be a string, got {units}"
             ))
         })?;
-        frame.meta.insert(keys::UNITS, units);
+        // The frame's `units` is the force-field units object
+        // (`{"preset": …}`), not a bare string.
+        frame.meta.insert(
+            keys::UNITS,
+            MetaValue::Json(serde_json::json!({ "preset": units })),
+        );
     }
     frame.meta.insert(
         "revision",
@@ -881,14 +886,14 @@ fn write_lammps_molecule_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<
     // `units` is optional in the molecule schema: written only when the frame
     // states it, and refused when the frame states it as anything but a string.
     if let Some(units) = frame.meta.get(keys::UNITS) {
-        let units = units.as_str().ok_or_else(|| {
+        let preset = keys::units_preset(units).ok_or_else(|| {
             invalid_data(format!(
-                "frame meta `{}` must be a string to write the JSON `{JSON_UNITS}` \
-                 field, got {units:?}",
+                "frame meta `{}` must name a preset (`{{\"preset\": …}}`, or a preset string) \
+                 to write the JSON `{JSON_UNITS}` field, got {units:?}",
                 keys::UNITS
             ))
         })?;
-        data[JSON_UNITS] = json!(units);
+        data[JSON_UNITS] = json!(preset);
     }
 
     if atoms.contains_key("x") && atoms.contains_key("y") && atoms.contains_key("z") {
@@ -1088,5 +1093,30 @@ Angles
             .expect_err("a non-string units meta must be refused");
         assert_eq!(err.kind(), ErrorKind::InvalidData, "{err}");
         assert!(err.to_string().contains("units"), "{err}");
+    }
+
+    #[test]
+    fn json_units_read_as_the_units_object_and_write_back_as_the_preset() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("atom.json");
+        std::fs::write(
+            &path,
+            r#"{"format": "molecule", "units": "real",
+                "types": {"format": ["atom-id", "type"], "data": [[1, 1]]}}"#,
+        )
+        .unwrap();
+        let mut frame = read_lammps_molecule(&path).unwrap();
+        assert_eq!(
+            frame.meta.get(keys::UNITS),
+            Some(&MetaValue::Json(serde_json::json!({"preset": "real"})))
+        );
+        let out = dir.path().join("back.json");
+        write_lammps_molecule(&out, &frame, "json").unwrap();
+        let text = std::fs::read_to_string(&out).unwrap();
+        assert!(text.contains("\"units\": \"real\""), "{text}");
+        // A legacy string `units` still writes.
+        frame.meta.insert(keys::UNITS, "metal");
+        write_lammps_molecule(&out, &frame, "json").unwrap();
+        assert!(std::fs::read_to_string(&out).unwrap().contains("\"metal\""));
     }
 }

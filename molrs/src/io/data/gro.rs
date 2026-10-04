@@ -35,7 +35,7 @@
 //!
 //! ## Output Frame
 //!
-//! - `"atoms"` block: `res_id` (uint), `resname` (str), `atom_name` (str),
+//! - `"atoms"` block: `res_id` (uint), `res_name` (str), `name` (str),
 //!   `element` (str, inferred from the atom name), `id` (uint),
 //!   `x`/`y`/`z` (F, **Å**), and optional `vx`/`vy`/`vz` (F, **Å/ps**).
 //! - `frame.simbox`: triclinic [`SimBox`] from the box-vector line, in Å.
@@ -430,8 +430,8 @@ pub fn read_gro_frame<R: BufRead>(reader: &mut R) -> Result<Option<Frame>> {
         }
     }
     insert_uint_col(&mut block, "res_id", resid)?;
-    insert_str_col(&mut block, "resname", resname)?;
-    insert_str_col(&mut block, "atom_name", atom_name)?;
+    insert_str_col(&mut block, "res_name", resname)?;
+    insert_str_col(&mut block, "name", atom_name)?;
     insert_str_col(&mut block, "element", element)?;
     insert_uint_col(&mut block, "id", atom_id)?;
     insert_float_col(&mut block, "x", x)?;
@@ -536,8 +536,8 @@ pub fn write_gro_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     let vy = atoms.get("vy").and_then(|c| c.as_float());
     let vz = atoms.get("vz").and_then(|c| c.as_float());
     let resid = atoms.get("res_id").and_then(|c| c.as_uint());
-    let resname = atoms.get("resname").and_then(|c| c.as_string());
-    let atom_name = atoms.get("atom_name").and_then(|c| c.as_string());
+    let resname = atoms.get("res_name").and_then(|c| c.as_string());
+    let atom_name = atoms.get("name").and_then(|c| c.as_string());
     let element = atoms.get("element").and_then(|c| c.as_string());
     let atom_id = atoms.get("id").and_then(|c| c.as_uint());
 
@@ -671,7 +671,7 @@ mod tests {
         assert_eq!(atoms.nrows(), Some(3));
         let xs = atoms.get("x").and_then(|c| c.as_float()).unwrap();
         assert!((xs[[1]] - 1.0).abs() < 1e-9); // 0.100 nm → 1.0 Å
-        let names = atoms.get("atom_name").and_then(|c| c.as_string()).unwrap();
+        let names = atoms.get("name").and_then(|c| c.as_string()).unwrap();
         assert_eq!(names[[0]], "OW");
         assert_eq!(names[[1]], "HW1");
         assert!(frame.simbox.is_some());

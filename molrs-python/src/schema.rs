@@ -196,6 +196,8 @@ pub struct PyBlockSpec {
     pub endpoint_target: Option<String>,
     /// Endpoint column keys, in position order.
     pub endpoint_columns: Vec<String>,
+    /// Endpoint columns whose target is declared per block (``targets``).
+    pub declared_endpoints: Vec<String>,
     /// Columns that must be present.
     pub required: Vec<String>,
     /// Conventional but optional columns.
@@ -219,12 +221,14 @@ impl PyBlockSpec {
         optional: Vec<String>,
         open: bool,
         doc: String,
+        declared_endpoints: Vec<String>,
     ) -> Self {
         Self {
             name,
             row_kind,
             endpoint_target,
             endpoint_columns,
+            declared_endpoints,
             required,
             optional,
             open,
@@ -251,6 +255,7 @@ impl PyBlockSpec {
                 this.optional.clone(),
                 this.open,
                 this.doc.clone(),
+                this.declared_endpoints.clone(),
             ),
         )
     }
@@ -281,6 +286,7 @@ fn block_specs() -> Vec<PyBlockSpec> {
             row_kind: b.row_kind,
             endpoint_target: b.endpoint_target,
             endpoint_columns: b.endpoint_columns,
+            declared_endpoints: b.declared_endpoints,
             required: b.required,
             optional: b.optional,
             open: b.open,
@@ -319,18 +325,32 @@ fn to_markdown() -> String {
     schema::document().to_markdown()
 }
 
-/// The relation a block's rows describe: ``(target block, endpoint columns)``,
-/// or ``None`` when the block is not a relation.
+/// The row references of a block: ``[(column, target block), …]``, empty
+/// when the block references nothing.
 ///
-/// A canonical relation block answers from the vocabulary; any other block is
-/// a relation over ``"atoms"`` iff *columns* holds endpoint columns
-/// (``atomi`` … ``atoml``), which are then listed in position order.
+/// A canonical relation block answers from the vocabulary; any other block
+/// references ``"atoms"`` through the endpoint columns (``atomi`` …
+/// ``atoml``) *columns* holds, in position order. *targets* — the block's
+/// declared ``targets`` (``Block.targets()``) — overrides those defaults and
+/// adds every other referencing column (``members.atom`` references nothing
+/// until it is declared). A target is ``"<block>"`` of the same frame or
+/// ``"/<section>/<block>"``.
 #[pyfunction]
+#[pyo3(signature = (name, columns, targets = None))]
 fn relation_endpoints(
     name: &str,
     columns: Vec<String>,
-) -> Option<(&'static str, Vec<&'static str>)> {
-    schema::relation_endpoints(name, |k| columns.iter().any(|c| c == k))
+    targets: Option<std::collections::BTreeMap<String, String>>,
+) -> Vec<(String, String)> {
+    let targets = targets.unwrap_or_default();
+    let declared: Vec<(&str, &str)> = targets
+        .iter()
+        .map(|(c, t)| (c.as_str(), t.as_str()))
+        .collect();
+    schema::relation_endpoints(name, |k| columns.iter().any(|c| c == k), &declared)
+        .into_iter()
+        .map(|r| (r.column, r.target))
+        .collect()
 }
 
 /// Register `molrs.schema`.

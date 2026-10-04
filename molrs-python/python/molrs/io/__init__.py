@@ -182,7 +182,6 @@ from .._lib import write_gro_trajectory as _write_gro_trajectory
 from .._lib import write_mol2 as _write_mol2
 from ..fields import (
     FieldFormatter,
-    GroFieldFormatter,
     LammpsFieldFormatter,
     Mol2FieldFormatter,
     PdbFieldFormatter,
@@ -192,7 +191,6 @@ from . import mrec, raw
 
 PathInput = str | PathLike[str]
 
-_gro_fmt = GroFieldFormatter()
 _pdb_fmt = PdbFieldFormatter()
 _lammps_fmt = LammpsFieldFormatter()
 _xyz_fmt = XyzFieldFormatter()
@@ -260,9 +258,7 @@ def read_gro(file: PathInput) -> Frame:
     Raises:
         OSError: If the file cannot be opened or parsed, or holds no frame.
     """
-    result = _read_gro(file)
-    _gro_fmt.canonicalize_frame(result)
-    return result
+    return _read_gro(file)
 
 
 def read_gro_trajectory(file: PathInput) -> list[Frame]:
@@ -271,10 +267,7 @@ def read_gro_trajectory(file: PathInput) -> list[Frame]:
     Each frame is canonicalized like :func:`read_gro`; a single-frame file
     returns a one-element list. Inverse of :func:`write_gro_trajectory`.
     """
-    frames = _read_gro_trajectory(file)
-    for frame in frames:
-        _gro_fmt.canonicalize_frame(frame)
-    return frames
+    return _read_gro_trajectory(file)
 
 
 def read_mol2(file: PathInput) -> Frame:
@@ -311,28 +304,13 @@ def read_lammps_molecule(file: PathInput) -> Frame:
     return result
 
 
-def _write_localized_gro(frames: Sequence[Frame], write: Any) -> None:
-    """Localize each frame to GRO spellings, run ``write``, restore them.
-
-    The native writer reads ``resname`` / ``atom_name``; the frames go back to
-    canonical names afterwards, so a write never mutates what the caller holds.
-    """
-    for frame in frames:
-        _gro_fmt.localize_frame(frame)
-    try:
-        write()
-    finally:
-        for frame in frames:
-            _gro_fmt.canonicalize_frame(frame)
-
-
 def write_gro(file: PathInput, frame: Frame) -> None:
     """Write a single Frame to a GROMACS GRO file.
 
     Expects canonical columns (``res_id``, ``res_name``, ``name``, ``id``);
     coordinates in Å, written as nm. *frame* is left as it was passed.
     """
-    _write_localized_gro([frame], lambda: _write_gro(file, frame))
+    _write_gro(file, frame)
 
 
 def write_gro_trajectory(file: PathInput, frames: Sequence[Frame]) -> None:
@@ -341,8 +319,7 @@ def write_gro_trajectory(file: PathInput, frames: Sequence[Frame]) -> None:
     Each frame as :func:`write_gro` writes it; inverse of
     :func:`read_gro_trajectory`.
     """
-    frames = list(frames)
-    _write_localized_gro(frames, lambda: _write_gro_trajectory(file, frames))
+    _write_gro_trajectory(file, list(frames))
 
 
 # ===================================================================

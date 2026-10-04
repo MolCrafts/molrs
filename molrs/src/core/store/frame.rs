@@ -486,11 +486,16 @@ impl Frame {
     ///   row is repeated, or if a relation block indexing `block` lacks one of
     ///   its declared endpoint columns (or carries it as anything but a 1-D
     ///   `UInt` column) — copying it would leave stale indices.
-    /// - [`MolRsError::Validation`] naming `members` if the frame carries a
-    ///   `members` block. Its `ibead` column indexes `atoms` rows but is not
-    ///   a schema endpoint, so it cannot be renumbered, and a copy would
-    ///   attach in-range but stale rows to the wrong beads. The refusal
-    ///   stands until `members` is declared in the schema.
+    /// - [`MolRsError::Validation`] if a row reference of `block` into itself
+    ///   points outside the selection.
+    ///
+    /// Row references follow
+    /// [`relation_endpoints`](crate::store::schema::relation_endpoints):
+    /// every reference into `block` of the same frame — a relation endpoint,
+    /// `members.ibead`, or any column a block's `targets` declares — is
+    /// renumbered, a null row references nothing, and a reference into
+    /// another section (`/frame/atoms`) or an undeclared handle
+    /// (`members.atom`) is copied unchanged.
     ///
     /// # Examples
     ///
@@ -526,12 +531,6 @@ impl Frame {
         let target = self.get(block).ok_or_else(|| {
             MolRsError::not_found("block", format!("frame has no '{block}' block"))
         })?;
-        if self.contains_key("members") {
-            return Err(MolRsError::validation(
-                "cannot subset a frame carrying a 'members' block: members.ibead \
-                 is not a schema endpoint and cannot be renumbered",
-            ));
-        }
         let nrows = target.nrows().unwrap_or(0);
         // new_row[old] = Some(new) for a selected row.
         let mut new_row: Vec<Option<usize>> = vec![None; nrows];
@@ -555,16 +554,18 @@ impl Frame {
 
         // Blocks keep the order this frame carries them in.
         for (name, b) in self.iter() {
-            if name == block {
-                out.insert(name, target.select_rows(rows)?);
+            let columns = local_references(name, b, block);
+            if columns.is_empty() {
+                out.insert(
+                    name,
+                    if name == block {
+                        target.select_rows(rows)?
+                    } else {
+                        b.deep_copy()
+                    },
+                );
                 continue;
             }
-            let endpoints = crate::store::schema::relation_endpoints(name, |k| b.contains_key(k))
-                .filter(|(t, _)| *t == block);
-            let Some((_, columns)) = endpoints else {
-                out.insert(name, b.deep_copy());
-                continue;
-            };
             let mut ends = Vec::with_capacity(columns.len());
             for col in &columns {
                 let values = b
@@ -573,25 +574,40 @@ impl Frame {
                     .filter(|v| v.ndim() == 1)
                     .ok_or_else(|| {
                         MolRsError::validation(format!(
-                            "cannot subset '{block}': relation block '{name}' has no 1-D \
-                         UInt endpoint column '{col}'"
+                            "cannot subset '{block}': block '{name}' has no 1-D UInt reference \
+                             column '{col}'"
                         ))
                     })?;
-                ends.push(values);
+                ends.push((values, b.validity(col)));
             }
-            let kept: Vec<usize> = (0..b.nrows().unwrap_or(0))
-                .filter(|&i| {
-                    ends.iter()
-                        .all(|e| new_row.get(e[[i]] as usize).is_some_and(|n| n.is_some()))
+            let set = |mask: Option<&[bool]>, i: usize| mask.is_none_or(|m| m[i]);
+            let inside = |i: usize| {
+                ends.iter().all(|(e, mask)| {
+                    !set(*mask, i) || new_row.get(e[[i]] as usize).is_some_and(|n| n.is_some())
                 })
-                .collect();
+            };
+            let kept: Vec<usize> = if name == block {
+                if let Some(&bad) = rows.iter().find(|&&i| !inside(i)) {
+                    return Err(MolRsError::validation(format!(
+                        "cannot subset '{block}': its row {bad} references a row outside the \
+                         selection"
+                    )));
+                }
+                rows.to_vec()
+            } else {
+                (0..b.nrows().unwrap_or(0)).filter(|&i| inside(i)).collect()
+            };
             let mut cut = b.select_rows(&kept)?;
             for col in &columns {
+                let mask = cut.validity(col).map(<[bool]>::to_vec);
                 let values = cut
                     .get_mut(col)
                     .and_then(|c| c.as_uint_mut())
                     .expect("select_rows keeps every column and its dtype");
-                for v in values.iter_mut() {
+                for (i, v) in values.iter_mut().enumerate() {
+                    if !set(mask.as_deref(), i) {
+                        continue;
+                    }
                     let new = new_row[*v as usize].expect("kept rows lie in the selection");
                     *v = new as crate::types::Idx;
                 }
@@ -632,9 +648,10 @@ impl Frame {
     ///   its declared endpoint columns, or carries it as anything but a 1-D
     ///   `UInt` column — copying it would leave every copy pointing at the
     ///   first.
-    /// - [`MolRsError::Validation`] naming `members` if the frame carries a
-    ///   `members` block, whose `ibead` column indexes `atoms` without being a
-    ///   schema endpoint (the same refusal as [`subset`](Self::subset)).
+    ///
+    /// Every row reference into a block of the same frame (relation
+    /// endpoints, `members.ibead`, declared `targets`) is offset; a reference
+    /// into another section and an undeclared handle are copied unchanged.
     ///
     /// # Examples
     ///
@@ -661,12 +678,6 @@ impl Frame {
     /// assert_eq!((i, j), (vec![0, 2, 4], vec![1, 3, 5]));
     /// ```
     pub fn replicate(&self, count: usize) -> Result<Frame, MolRsError> {
-        if self.contains_key("members") {
-            return Err(MolRsError::validation(
-                "cannot replicate a frame carrying a 'members' block: members.ibead \
-                 is not a schema endpoint and cannot be offset",
-            ));
-        }
         let mut out = Frame::with_capacity(self.len());
         out.meta = self.meta.clone();
         out.simbox = self.simbox.clone();
@@ -678,8 +689,12 @@ impl Frame {
                 // No column to gather: carry the declared row count alone.
                 tiled.resize(rows * count)?;
             }
-            let endpoints = crate::store::schema::relation_endpoints(name, |k| b.contains_key(k));
-            if let Some((target, columns)) = endpoints.filter(|_| rows > 0) {
+            let references = if rows > 0 {
+                local_reference_targets(name, b)
+            } else {
+                Vec::new()
+            };
+            for (col, target) in &references {
                 let span = self
                     .get(target)
                     .ok_or_else(|| {
@@ -693,20 +708,18 @@ impl Frame {
                     })?
                     .nrows()
                     .unwrap_or(0);
-                for col in &columns {
-                    let values = tiled
-                        .get_mut(col)
-                        .and_then(|c| c.as_uint_mut())
-                        .filter(|v| v.ndim() == 1)
-                        .ok_or_else(|| {
-                            MolRsError::validation(format!(
-                                "cannot replicate: relation block '{name}' has no 1-D \
-                                 UInt endpoint column '{col}'"
-                            ))
-                        })?;
-                    for (i, v) in values.iter_mut().enumerate() {
-                        *v += ((i / rows) * span) as crate::types::Idx;
-                    }
+                let values = tiled
+                    .get_mut(col)
+                    .and_then(|c| c.as_uint_mut())
+                    .filter(|v| v.ndim() == 1)
+                    .ok_or_else(|| {
+                        MolRsError::validation(format!(
+                            "cannot replicate: block '{name}' has no 1-D UInt reference \
+                             column '{col}'"
+                        ))
+                    })?;
+                for (i, v) in values.iter_mut().enumerate() {
+                    *v += ((i / rows) * span) as crate::types::Idx;
                 }
             }
             out.insert(name, tiled);
@@ -777,6 +790,27 @@ impl Frame {
     pub fn is_consistent(&self) -> bool {
         self.validate().is_ok()
     }
+}
+
+/// The row references of block `name` into blocks of the same frame, as
+/// `(column, target)` — declared `targets` honoured, absolute targets and
+/// undeclared handles left out.
+fn local_reference_targets(name: &str, block: &Block) -> Vec<(String, String)> {
+    let declared: Vec<(&str, &str)> = block.targets().collect();
+    crate::store::schema::relation_endpoints(name, |k| block.contains_key(k), &declared)
+        .into_iter()
+        .filter(|r| r.is_local())
+        .map(|r| (r.column, r.target))
+        .collect()
+}
+
+/// The columns of block `name` that reference rows of block `target`.
+fn local_references(name: &str, block: &Block, target: &str) -> Vec<String> {
+    local_reference_targets(name, block)
+        .into_iter()
+        .filter(|(_, t)| t == target)
+        .map(|(column, _)| column)
+        .collect()
 }
 
 // Index trait for convenient access: frame["atoms"]
@@ -1301,20 +1335,31 @@ mod tests {
     }
 
     #[test]
-    fn subset_refuses_a_frame_carrying_a_members_block() {
-        // `members.ibead` is not a schema endpoint, so it cannot be remapped;
-        // copying it would leave in-range but stale bead rows.
+    fn subset_renumbers_members_ibead_and_leaves_the_atom_handle() {
+        // `members.ibead` references `atoms`; `atom` (undeclared, or into
+        // another section) is copied unchanged.
         let mut frame = chain_of_four();
-        frame.insert(
-            "members",
-            uint_block(&[("ibead", &[0, 3]), ("atom", &[10, 11])]),
-        );
+        let mut members = uint_block(&[("ibead", &[0, 3, 2]), ("atom", &[10, 11, 12])]);
+        members.set_target("atom", "/frame/atoms").unwrap();
+        frame.insert("members", members);
 
-        let err = frame
-            .subset("atoms", &[3, 2])
-            .expect_err("a members block cannot be remapped");
-        assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
-        assert!(err.to_string().contains("members"), "{err}");
+        let out = frame.subset("atoms", &[3, 2]).unwrap();
+        assert_eq!(uint_values(&out, "members", "ibead"), vec![0, 1]);
+        assert_eq!(uint_values(&out, "members", "atom"), vec![11, 12]);
+        assert_eq!(out["members"].target("atom"), Some("/frame/atoms"));
+    }
+
+    #[test]
+    fn subset_follows_a_declared_target_and_skips_null_references() {
+        let mut frame = chain_of_four();
+        let mut refs = uint_block(&[("site", &[1, 3, 0])]);
+        refs.set_target("site", "atoms").unwrap();
+        refs.set_validity("site", vec![true, true, false]).unwrap();
+        frame.insert("refs", refs);
+        let out = frame.subset("atoms", &[3, 1]).unwrap();
+        // Row 0 (site 1 -> 1), row 1 (site 3 -> 0), row 2 null: kept as is.
+        assert_eq!(uint_values(&out, "refs", "site"), vec![1, 0, 0]);
+        assert_eq!(out["refs"].validity("site"), Some(&[true, true, false][..]));
     }
 
     #[test]
@@ -1443,10 +1488,14 @@ mod tests {
     }
 
     #[test]
-    fn replicate_refuses_a_members_block() {
+    fn replicate_offsets_members_ibead_and_leaves_an_absolute_target() {
         let mut frame = chain_of_four();
-        frame.insert("members", uint_block(&[("ibead", &[0])]));
-        assert!(frame.replicate(2).is_err());
+        let mut members = uint_block(&[("ibead", &[0]), ("atom", &[7])]);
+        members.set_target("atom", "/frame/atoms").unwrap();
+        frame.insert("members", members);
+        let two = frame.replicate(2).unwrap();
+        assert_eq!(uint_values(&two, "members", "ibead"), vec![0, 4]);
+        assert_eq!(uint_values(&two, "members", "atom"), vec![7, 7]);
     }
 
     #[test]

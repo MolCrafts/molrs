@@ -208,9 +208,19 @@ fn coerce_canonical(key: &str, pv: PropValue) -> Result<PropValue, MolRsError> {
             PropValue::Bool(_) => Ok(pv),
             PropValue::F64(_) | PropValue::Int(_) | PropValue::Str(_) => refuse(),
         },
+        // A wide signed key (`formal_charge`) holds any integer the graph's
+        // `Int` holds, and an integral float (SMILES stores charges as f64);
+        // `to_frame` widens either to the declared `i64`.
+        DType::Int64 => match pv {
+            PropValue::Int(_) => Ok(pv),
+            PropValue::F64(v) if v.is_finite() && v.fract() == 0.0 => Ok(pv),
+            PropValue::F64(v) => Err(MolRsError::validation(format!(
+                "'{key}' is declared i64 by the Frame schema; got {v}, not an integer"
+            ))),
+            PropValue::Str(_) | PropValue::Bool(_) => refuse(),
+        },
         DType::Int8
         | DType::Int16
-        | DType::Int64
         | DType::U8
         | DType::UInt16
         | DType::UInt32
@@ -244,6 +254,23 @@ fn emit_column<K: Key>(
     use crate::store::block::DType;
     use ndarray::Array1;
 
+    let declared = crate::store::schema::column(key).map(|spec| spec.dtype);
+    if declared == Some(DType::Int64) {
+        // A wide signed key: the table holds it as `Int` or as an integral
+        // `F64` (see `coerce_canonical`); the frame column is `i64`.
+        let (wide, valid): (Vec<i64>, Vec<bool>) = if let Ok((data, valid)) = table.column_f64(key)
+        {
+            (data.iter().map(|&v| v as i64).collect(), mask(valid))
+        } else if let Ok((data, valid)) = table.column_i32(key) {
+            (data.iter().map(|&v| i64::from(v)).collect(), mask(valid))
+        } else {
+            return Ok(false);
+        };
+        block
+            .insert_nullable(key, Array1::from_vec(wide).into_dyn(), valid)
+            .map_err(|e| MolRsError::validation(e.to_string()))?;
+        return Ok(true);
+    }
     let inserted = if let Ok((data, valid)) = table.column_f64(key) {
         block.insert_nullable(key, Array1::from_vec(data.to_vec()).into_dyn(), mask(valid))
     } else if let Ok((data, valid)) = table.column_i32(key) {
@@ -300,6 +327,7 @@ struct MaskedColumns<'a> {
 enum TypedColumn<'a> {
     Float(&'a ArrayD<F>),
     Int(&'a ArrayD<I>),
+    Int64(&'a ArrayD<i64>),
     UInt(&'a ArrayD<Idx>),
     Str(&'a ArrayD<String>),
     Bool(&'a ArrayD<bool>),
@@ -320,6 +348,8 @@ impl<'a> MaskedColumns<'a> {
                 TypedColumn::Float(arr)
             } else if let Some(arr) = block.get(key).and_then(|c| c.as_int()) {
                 TypedColumn::Int(arr)
+            } else if let Some(arr) = block.get(key).and_then(|c| c.as_i64()) {
+                TypedColumn::Int64(arr)
             } else if let Some(arr) = block.get(key).and_then(|c| c.as_uint()) {
                 TypedColumn::UInt(arr)
             } else if let Some(arr) = block.get(key).and_then(|c| c.as_string()) {
@@ -351,6 +381,7 @@ impl<'a> MaskedColumns<'a> {
                 #[allow(clippy::unnecessary_cast)]
                 TypedColumn::Float(arr) => PropValue::F64(arr[[row]] as f64),
                 TypedColumn::Int(arr) => PropValue::Int(arr[[row]]),
+                TypedColumn::Int64(arr) => PropValue::Int(narrow_i64(key, arr[[row]])?),
                 TypedColumn::UInt(arr) => PropValue::Int(narrow_uint(key, arr[[row]])?),
                 TypedColumn::Str(arr) => PropValue::Str(arr[[row]].clone()),
                 TypedColumn::Bool(arr) => PropValue::Bool(arr[[row]]),
@@ -379,6 +410,16 @@ fn endpoints_at(
         nodes.push(*node_ids.get(col[[row]] as usize)?);
     }
     Some(nodes)
+}
+
+/// Narrow one value of a frame's `i64` column to the [`I`] the entity table
+/// stores, refusing a value it cannot hold.
+fn narrow_i64(key: &str, v: i64) -> Result<I, MolRsError> {
+    I::try_from(v).map_err(|_| {
+        MolRsError::validation(format!(
+            "'{key}' value {v} exceeds the range the graph stores"
+        ))
+    })
 }
 
 /// Narrow one value of a frame's unsigned column to the signed [`I`] the entity

@@ -67,7 +67,7 @@ class TestReadGro:
         # The reader emits canonical names directly; `resid`/`atom_id` were
         # format-native spellings that something downstream had to rename, and
         # that rename is now a write into a UInt key an Int column cannot pass.
-        for col in ["res_id", "resname", "atom_name", "id", "x", "y", "z"]:
+        for col in ["res_id", "res_name", "name", "id", "x", "y", "z"]:
             assert col in atoms, f"missing column: {col}"
 
     def test_facade_canonical_columns(self, water_gro):

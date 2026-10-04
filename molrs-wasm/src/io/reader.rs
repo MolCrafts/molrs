@@ -12,7 +12,7 @@
 //! | JS class | Format | Multi-frame? | Produces |
 //! |----------|--------|-------------|----------|
 //! | `XYZReader` | XYZ / ExtXYZ | Yes | `"atoms"` block with `element`, `x`, `y`, `z` |
-//! | `PDBReader` | Protein Data Bank | No (step=0 only) | `"atoms"` block with `name`, `resname`, `x`, `y`, `z`, etc. |
+//! | `PDBReader` | Protein Data Bank | No (step=0 only) | `"atoms"` block with `name`, `res_name`, `chain`, `x`, `y`, `z`, etc. |
 //! | `CIFReader` | Crystallographic Information File | Yes (per `data_` block) | `"atoms"` block + box from unit cell |
 //! | `LAMMPSReader` | LAMMPS data file | No (step=0 only) | `"atoms"` block + `"bonds"` block + box |
 //! | `LAMMPSTrajReader` | LAMMPS dump trajectory | Yes | `"atoms"` block with columns from dump header |
@@ -167,7 +167,7 @@ impl XyzReader {
 ///
 /// PDB files contain a single molecular structure. The reader produces
 /// a [`Frame`] with an `"atoms"` block containing columns such as
-/// `name` (string), `resname` (string), `x`, `y`, `z` (F, angstrom),
+/// `name` (string), `res_name` (string), `x`, `y`, `z` (F, angstrom),
 /// and optionally `occupancy` and `bfactor` (F).
 ///
 /// # Example (JavaScript)
@@ -897,7 +897,7 @@ impl ChgcarReader {
 /// `read(step)`. Coordinates and box are GROMACS-native nm in the file and
 /// arrive in angstrom — the molrs GRO reader normalises at its own boundary,
 /// so this binder scales nothing. Each frame produces an `"atoms"` block
-/// (`res_id`, `resname`, `atom_name`, `element`, `id`, `x`/`y`/`z`, optional
+/// (`res_id`, `res_name`, `name`, `element`, `id`, `x`/`y`/`z`, optional
 /// `vx`/`vy`/`vz`) and a `box` from the box-vector line.
 #[wasm_bindgen(js_name = GROReader)]
 pub struct GroReader {
