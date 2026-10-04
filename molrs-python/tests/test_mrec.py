@@ -275,3 +275,75 @@ class TestMetaArgument:
     def test_a_non_mapping_meta_is_refused(self, tmp_path: Path) -> None:
         with pytest.raises(TypeError, match="mapping"):
             molrs.io.write_mrec(tmp_path / "bad.mrec", _coords_frame(), meta=[1, 2])
+
+
+class TestDeclaredPrecision:
+    """molrec F1: a precision rounds an f64 column onto a binary grid."""
+
+    _VALUES = np.array([0.123456789, -12.3456, 39.99991, 1e-7])
+    _Q = 2.0**-10  # quantum of p = 1e-3
+
+    def _stored(self) -> np.ndarray:
+        return np.round(self._VALUES / self._Q) * self._Q
+
+    def _frame(self, precision: float | None = 1e-3) -> molrs.Frame:
+        atoms = molrs.Block({"x": self._VALUES.copy()})
+        atoms.set_precision("x", precision)
+        frame = molrs.Frame()
+        frame["atoms"] = atoms
+        return frame
+
+    def test_block_declares_and_withdraws(self) -> None:
+        block = molrs.Block({"x": self._VALUES.copy(), "n": np.array([1, 2, 3, 4])})
+        assert block.precision("x") is None
+        block.set_precision("x", 1e-3)
+        assert block.precision("x") == 1e-3
+        block.set_precision("x", None)
+        assert block.precision("x") is None
+        with pytest.raises(ValueError):
+            block.set_precision("n", 1e-3)
+        with pytest.raises(ValueError):
+            block.set_precision("x", 0.0)
+        with pytest.raises(KeyError):
+            block.set_precision("nope", 1e-3)
+        with pytest.raises(KeyError):
+            block.precision("nope")
+
+    def test_frame_round_trip_rounds_and_keeps_the_declaration(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "p.mrec"
+        frame = self._frame()
+        molrs.io.write_mrec(path, frame)
+        # Memory is untouched; the store holds the rounded values.
+        np.testing.assert_array_equal(np.asarray(frame["atoms"]["x"]), self._VALUES)
+        back = molrs.io.read_mrec(path)["atoms"]
+        np.testing.assert_array_equal(np.asarray(back["x"]), self._stored())
+        assert back.precision("x") == 1e-3
+
+    def test_trajectory_pins_the_precision(self, tmp_path: Path) -> None:
+        path = tmp_path / "t.mrec"
+        molrs.io.write_mrec_trajectory(path, molrs.Trajectory([self._frame()]))
+        reader = molrs.io.mrec.TrajectoryReader(path)
+        atoms = reader.read_frame(0)["atoms"]
+        np.testing.assert_array_equal(np.asarray(atoms["x"]), self._stored())
+        assert atoms.precision("x") == 1e-3
+
+    def test_sequence_schema_declares_a_precision(self, tmp_path: Path) -> None:
+        schema = molrs.io.mrec.SequenceSchema.from_frame(self._frame(None))
+        assert schema.precision("atoms", "x") is None
+        schema.declare_precision("atoms", "x", 1e-3)
+        assert schema.precision("atoms", "x") == 1e-3
+        with pytest.raises(ValueError):
+            schema.declare_precision("atoms", "x", 1e-2)
+        path = tmp_path / "w.mrec"
+        with molrs.io.mrec.TrajectoryWriter(path, schema) as writer:
+            writer.append(self._frame(None))
+        frame = molrs.io.mrec.TrajectoryReader(path).read_frame(0)
+        np.testing.assert_array_equal(np.asarray(frame["atoms"]["x"]), self._stored())
+
+    def test_pickle_keeps_the_precision(self) -> None:
+        import pickle
+
+        block = pickle.loads(pickle.dumps(self._frame()["atoms"]))
+        assert block.precision("x") == 1e-3

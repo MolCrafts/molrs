@@ -13,7 +13,11 @@ use zarrs::array::data_type::{
 };
 use zarrs::array::{Array, ArraySubset};
 #[cfg(feature = "zarr")]
-use zarrs::array::{ArrayBuilder, BytesToBytesCodecTraits, codec::GzipCodec, data_type};
+use zarrs::array::{
+    ArrayBuilder, BytesToBytesCodecTraits,
+    codec::{GzipCodec, ShuffleCodec},
+    data_type,
+};
 #[cfg(feature = "zarr")]
 use zarrs::group::GroupBuilder;
 use zarrs::node::{Node, NodeMetadata};
@@ -42,40 +46,178 @@ use super::chunking::{ChunkPlan, plan};
 /// string columns. Level 1 — these compress by structure, not by effort.
 ///
 /// Floating-point columns are stored raw: 52 random mantissa bits gzip to
-/// about 95 % of their size at a real CPU cost, and a precision study admits
-/// no lossy codec that would do better. Every array carries `crc32c` so a torn
-/// chunk is a checksum error rather than garbage rows.
+/// about 95 % of their size at a real CPU cost. No lossy codec is admitted;
+/// what makes a float column compress is a [declared
+/// precision](molrs::store::precision), which rounds the values onto a binary
+/// grid *before* they reach the pipeline (see [`frame_codecs`]). Every array
+/// carries `crc32c` so a torn chunk is a checksum error rather than garbage
+/// rows.
 #[cfg(feature = "zarr")]
 pub(in crate::io::zarr) const GZIP_LEVEL: u32 = 1;
+
+/// `zstd` level of a precision column's pipeline (`numcodecs.shuffle`, then
+/// `zstd`, then `crc32c`): molrec's reference writer setting.
+#[cfg(feature = "zarr-codecs")]
+pub(in crate::io::zarr) const PRECISION_ZSTD_LEVEL: i32 = 3;
+
+/// The array attribute a frame-shaped section's precision column carries its
+/// declared precision in. On the trajectory path the precision lives in the
+/// pinned `sequence_schema` only.
+pub(crate) const PRECISION_ATTRIBUTE: &str = "precision";
+
+/// The byte shuffle every precision column's pipeline opens with: its
+/// element size is the width of an `f64`, so the zero low-order mantissa
+/// bytes of the rounded values land in runs the compressor removes.
+#[cfg(feature = "zarr")]
+pub(in crate::io::zarr) fn precision_shuffle() -> Arc<dyn BytesToBytesCodecTraits> {
+    Arc::new(ShuffleCodec::new(std::mem::size_of::<f64>()))
+}
+
+/// The compressor of a precision column when the producer chose none:
+/// `zstd` level 3 where this build can encode `zstd` (`zarr-codecs`), else
+/// `gzip` level 1 — the wasm32 writer's fallback, which every reader decodes.
+#[cfg(feature = "zarr")]
+pub(in crate::io::zarr) fn default_precision_compressor()
+-> Result<Arc<dyn BytesToBytesCodecTraits>, MolRsError> {
+    #[cfg(feature = "zarr-codecs")]
+    {
+        Ok(Arc::new(
+            zarrs::array::codec::bytes_to_bytes::zstd::ZstdCodec::new(PRECISION_ZSTD_LEVEL, false),
+        ))
+    }
+    #[cfg(not(feature = "zarr-codecs"))]
+    {
+        gzip(GZIP_LEVEL)
+    }
+}
+
+/// A `gzip` codec at `level`.
+#[cfg(feature = "zarr")]
+pub(in crate::io::zarr) fn gzip(
+    level: u32,
+) -> Result<Arc<dyn BytesToBytesCodecTraits>, MolRsError> {
+    Ok(Arc::new(GzipCodec::new(level).map_err(|e| {
+        MolRsError::zarr(format!("gzip level {level}: {e}"))
+    })?))
+}
+
+/// The bytes-to-bytes codecs of one frame-path array of `dtype`, every list
+/// closed by `crc32c`:
+///
+/// | array | codecs |
+/// |-------|--------|
+/// | `f64` column with a declared precision | `numcodecs.shuffle` (8), `zstd` 3 (`gzip` 1 without `zarr-codecs`) |
+/// | any other float column (`f64`, `c64`, `c128`) | none |
+/// | everything else | `gzip` 1 |
+#[cfg(feature = "zarr")]
+pub(in crate::io::zarr) fn frame_codecs(
+    dtype: DType,
+    precision: bool,
+) -> Result<Vec<Arc<dyn BytesToBytesCodecTraits>>, MolRsError> {
+    let mut codecs: Vec<Arc<dyn BytesToBytesCodecTraits>> = Vec::with_capacity(3);
+    if precision {
+        codecs.push(precision_shuffle());
+        codecs.push(default_precision_compressor()?);
+    } else if !matches!(dtype, DType::Float | DType::Complex64 | DType::Complex128) {
+        codecs.push(gzip(GZIP_LEVEL)?);
+    }
+    codecs.push(Arc::new(Crc32cCodec::new()));
+    Ok(codecs)
+}
 
 // ---------------------------------------------------------------------------
 // Column write
 // ---------------------------------------------------------------------------
 
+/// Write one column as the array at `path`.
+///
+/// `precision` is the column's [declared precision](molrs::store::precision):
+/// when set, the column must be `f64`, a rounded copy of its values is what
+/// lands (`stored(x)`, exactly), the pipeline opens with the byte shuffle and
+/// a compressor ([`frame_codecs`]), and the array carries the declaration as
+/// its `precision` attribute. The caller's column is not touched.
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] naming the array when a precision is declared on a
+/// column that is not `f64` or is not admissible; any storage or codec error.
 #[cfg(feature = "zarr")]
 pub(crate) fn write_column(
     store: &ReadableWritableListableStorage,
     path: &str,
     col: &Column,
+    precision: Option<f64>,
 ) -> Result<(), MolRsError> {
     let shape: Vec<u64> = col.shape().iter().map(|&s| s as u64).collect();
     let chunking = plan(&shape, col.dtype().itemsize());
     let (dt, fill) = dtype_of(col);
-    match col {
-        Column::Float(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::Int8(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::Int16(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::Int(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::Int64(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::UInt(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::U8(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::UInt16(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::UInt32(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::Bool(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::String(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::Complex64(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::Complex128(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
+    let codecs = frame_codecs(col.dtype(), precision.is_some())?;
+    let mut attributes = serde_json::Map::new();
+    if let Some(p) = precision {
+        let Column::Float(a) = col else {
+            return Err(MolRsError::zarr(format!(
+                "{path} is {}; only an f64 column declares a precision",
+                col.dtype()
+            )));
+        };
+        let rounded = quantized(a, p).map_err(|e| MolRsError::zarr(format!("{path}: {e}")))?;
+        attributes.insert(PRECISION_ATTRIBUTE.to_string(), serde_json::Value::from(p));
+        return write_typed_array(
+            store,
+            path,
+            rounded.view(),
+            dt,
+            fill,
+            chunking,
+            codecs,
+            attributes,
+        );
     }
+    macro_rules! land {
+        ($a:expr) => {
+            write_typed_array(
+                store,
+                path,
+                $a.view(),
+                dt,
+                fill,
+                chunking,
+                codecs,
+                attributes,
+            )
+        };
+    }
+    match col {
+        Column::Float(a) => land!(a),
+        Column::Int8(a) => land!(a),
+        Column::Int16(a) => land!(a),
+        Column::Int(a) => land!(a),
+        Column::Int64(a) => land!(a),
+        Column::UInt(a) => land!(a),
+        Column::U8(a) => land!(a),
+        Column::UInt16(a) => land!(a),
+        Column::UInt32(a) => land!(a),
+        Column::Bool(a) => land!(a),
+        Column::String(a) => land!(a),
+        Column::Complex64(a) => land!(a),
+        Column::Complex128(a) => land!(a),
+    }
+}
+
+/// `stored(x)` of every value of `values` under precision `p`: the rounded
+/// copy a writer lands for a precision column.
+///
+/// # Errors
+///
+/// [`molrs::store::precision::quantum`]'s, for an inadmissible `p`.
+pub(in crate::io::zarr) fn quantized(
+    values: &ArrayD<f64>,
+    p: f64,
+) -> Result<ArrayD<f64>, MolRsError> {
+    let q = molrs::store::precision::quantum(p)?;
+    let mut rounded = values.as_standard_layout().into_owned();
+    rounded.mapv_inplace(|x| molrs::store::precision::quantize(x, q));
+    Ok(rounded)
 }
 
 /// The Zarr data type and fill value a column of this dtype is stored as.
@@ -120,15 +262,17 @@ pub(in crate::io::zarr) fn zarr_dtype(
 }
 
 /// The one array writer: every array this backend stores is created and filled
-/// here, laid out by `chunking` and compressed losslessly.
+/// here, laid out by `chunking` and encoded by `codecs` (from
+/// [`frame_codecs`]), with `attributes` on the array.
 ///
 /// `chunking.chunks` of `None` — a variable-width dtype or an empty leading
 /// axis, both of which molrec declines to size — keeps the pre-plan layout of
 /// one chunk spanning the whole array. `chunking.shards` of `Some` packs those
-/// chunks into one shard file per shard extent, with `gzip` on the inner
-/// chunks and the shard index at the end (zarrs' default); `None` gzips the
-/// chunks directly.
+/// chunks into one shard file per shard extent, with `codecs` on the inner
+/// chunks and the shard index at the end (zarrs' default); `None` applies
+/// them to the chunks directly.
 #[cfg(feature = "zarr")]
+#[allow(clippy::too_many_arguments)]
 pub(in crate::io::zarr) fn write_typed_array<T>(
     store: &ReadableWritableListableStorage,
     path: &str,
@@ -136,6 +280,8 @@ pub(in crate::io::zarr) fn write_typed_array<T>(
     dt: zarrs::array::DataType,
     fill: impl Into<zarrs::array::builder::ArrayBuilderFillValue>,
     chunking: ChunkPlan,
+    codecs: Vec<Arc<dyn BytesToBytesCodecTraits>>,
+    attributes: serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), MolRsError>
 where
     T: zarrs::array::Element + Clone,
@@ -149,24 +295,12 @@ where
         Some(shards) => (shards, Some(chunk)),
         None => (chunk, None),
     };
-    let is_float = dt.is::<Float16DataType>()
-        || dt.is::<Float32DataType>()
-        || dt.is::<Float64DataType>()
-        || dt.is::<Complex64DataType>()
-        || dt.is::<Complex128DataType>();
     let mut builder = ArrayBuilder::new(shape.clone(), extent, dt, fill);
-    // Lossless throughout: integers, booleans and strings gzip (they compress
-    // by structure); floating-point payloads stay raw (they do not); every
-    // chunk ends in `crc32c`. Under sharding these codecs encode the
-    // subchunks, inside the shard.
-    let mut codecs: Vec<Arc<dyn BytesToBytesCodecTraits>> = Vec::with_capacity(2);
-    if !is_float {
-        codecs.push(Arc::new(GzipCodec::new(GZIP_LEVEL).map_err(|e| {
-            MolRsError::zarr(format!("gzip level {GZIP_LEVEL}: {e}"))
-        })?));
-    }
-    codecs.push(Arc::new(Crc32cCodec::new()));
+    // Under sharding these codecs encode the subchunks, inside the shard.
     builder.bytes_to_bytes_codecs(codecs);
+    if !attributes.is_empty() {
+        builder.attributes(attributes);
+    }
     if let Some(subchunk) = subchunk {
         builder.subchunk_shape(subchunk);
     }
@@ -386,6 +520,7 @@ pub(crate) fn write_simbox(
             store,
             &format!("{}/boundary", prefix),
             &Column::from_bool(flags),
+            None,
         )?;
     }
 
@@ -617,7 +752,7 @@ pub(crate) fn write_frame_group(
 
         for (col_name, col) in block.iter() {
             let arr_path = format!("{}/{}/{}", prefix, block_name, col_name);
-            write_column(store, &arr_path, col)?;
+            write_column(store, &arr_path, col, block.precision(col_name))?;
         }
         write_validity_group(store, &group_path, block)?;
     }
@@ -655,6 +790,7 @@ fn write_validity_group(
             store,
             &format!("{}/{}", group_path, column),
             &Column::from_bool(flags),
+            None,
         )?;
     }
     Ok(())
@@ -699,10 +835,23 @@ pub(crate) fn read_frame_group(
             let col_path = col_child.path().as_str();
             let col_name = col_path.rsplit('/').next().unwrap_or("");
             // A frame group's column is read whole: the array *is* the column.
-            let whole =
-                ArraySubset::new_with_shape(Array::open(store.clone(), col_path)?.shape().to_vec());
-            let col = read_column(store, col_path, &whole)?;
+            let array = Array::open(store.clone(), col_path)?;
+            let whole = ArraySubset::new_with_shape(array.shape().to_vec());
+            let col = read_column_array(&array, &whole)?;
             insert_column_into_block(&mut block, col_name, col)?;
+            // The declared precision rides on the array. The values are read
+            // as stored: a reader neither re-rounds nor checks the grid.
+            if let Some(p) = array.attributes().get(PRECISION_ATTRIBUTE) {
+                let p = p.as_f64().ok_or_else(|| {
+                    MolRsError::zarr(format!(
+                        "{col_path} carries a {PRECISION_ATTRIBUTE} attribute that is not a \
+                         number: {p}"
+                    ))
+                })?;
+                block
+                    .set_precision(col_name, p)
+                    .map_err(|e| MolRsError::zarr(format!("{col_path}: {e}")))?;
+            }
         }
         if let Ok(group) = zarrs::group::Group::open(store.clone(), child.path().as_str()) {
             let attrs = group.attributes();
@@ -816,6 +965,8 @@ pub(crate) fn write_f64_array(
         data_type::float64(),
         0.0f64,
         plan(shape, DType::Float.itemsize()),
+        frame_codecs(DType::Float, false)?,
+        serde_json::Map::new(),
     )
 }
 
@@ -947,7 +1098,7 @@ mod tests {
                     .store_metadata()
                     .unwrap();
             }
-            write_column(&store, &format!("/f/b/{key}"), &column).unwrap();
+            write_column(&store, &format!("/f/b/{key}"), &column, None).unwrap();
             let err = read_frame_group(&store, "/f").unwrap_err().to_string();
             assert!(
                 err.contains(key) && err.contains(column.dtype().name()),
@@ -955,7 +1106,7 @@ mod tests {
             );
 
             // The same array under a non-canonical name reads at its width.
-            write_column(&store, "/f/b/label", &column).unwrap();
+            write_column(&store, "/f/b/label", &column, None).unwrap();
             std::fs::remove_dir_all(dir.path().join("f/b").join(key)).unwrap();
             let back = read_frame_group(&store, "/f").unwrap();
             assert_eq!(
@@ -1752,6 +1903,7 @@ mod tests {
             &store,
             &path,
             &Column::from_bool(ArrayD::from_shape_vec(vec![2], vec![true, false]).unwrap()),
+            None,
         )
         .unwrap();
 
@@ -1786,5 +1938,156 @@ mod tests {
             back.meta.keys().map(String::as_str).collect::<Vec<_>>(),
             vec!["z", "a", "m"]
         );
+    }
+
+    // -- declared precision (molrec F1) ------------------------------------
+
+    /// Write one `f64` column of `values` declaring precision `p`, and read
+    /// the frame back.
+    fn round_trip_precise(values: &[f64], p: f64) -> (Block, Vec<String>) {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut block = Block::new();
+        block
+            .insert_column(
+                COLUMN,
+                Column::from_float(
+                    ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap(),
+                ),
+            )
+            .unwrap();
+        block.set_precision(COLUMN, p).unwrap();
+        let mut frame = Frame::new();
+        frame.insert(BLOCK, block);
+        write_frame_group(&store, FRAME, &frame).unwrap();
+
+        let array = Array::open(store.clone(), &format!("{FRAME}/{BLOCK}/{COLUMN}")).unwrap();
+        let metadata = serde_json::to_value(array.metadata()).unwrap();
+        let mut codecs: Vec<String> = Vec::new();
+        let mut collect = |list: &serde_json::Value| {
+            for codec in list.as_array().unwrap() {
+                // A codec without configuration may be spelled by name alone.
+                let name = codec.as_str().or_else(|| codec["name"].as_str()).unwrap();
+                codecs.push(name.to_string());
+            }
+        };
+        match metadata["codecs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|codec| codec["name"] == "sharding_indexed")
+        {
+            Some(sharding) => collect(&sharding["configuration"]["codecs"]),
+            None => collect(&metadata["codecs"]),
+        }
+        let back = read_frame_group(&store, FRAME).unwrap();
+        (back.get(BLOCK).unwrap().clone(), codecs)
+    }
+
+    fn values_of(block: &Block) -> Vec<f64> {
+        block
+            .get(COLUMN)
+            .unwrap()
+            .as_float()
+            .unwrap()
+            .iter()
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn a_precision_column_lands_rounded_shuffled_and_zstd_compressed() {
+        let p = 1e-3;
+        let q = molrs::store::precision::quantum(p).unwrap();
+        let values = [0.123_456_7, -12.345_678, 39.999_9, 1.0e-7];
+        let (back, codecs) = round_trip_precise(&values, p);
+        let expected: Vec<f64> = values
+            .iter()
+            .map(|&x| molrs::store::precision::quantize(x, q))
+            .collect();
+        assert_eq!(values_of(&back), expected);
+        assert_eq!(back.precision(COLUMN), Some(p));
+        assert_eq!(codecs, ["bytes", "numcodecs.shuffle", "zstd", "crc32c"]);
+        for (x, stored) in values.iter().zip(&expected) {
+            assert!((x - stored).abs() <= q / 2.0);
+        }
+    }
+
+    #[test]
+    fn precision_edge_values_land_as_the_spec_says() {
+        let p = 1e-3;
+        let q = molrs::store::precision::quantum(p).unwrap();
+        let huge = 2f64.powi(52) * q * 1.5;
+        let values = [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            -0.0,
+            -0.1 * q,
+            huge,
+            2.5 * q,
+            3.5 * q,
+        ];
+        let (back, _) = round_trip_precise(&values, p);
+        let back = values_of(&back);
+        assert!(back[0].is_nan());
+        assert_eq!(back[1], f64::INFINITY);
+        assert_eq!(back[2], f64::NEG_INFINITY);
+        assert!(back[3] == 0.0 && back[3].is_sign_negative());
+        assert!(back[4] == 0.0 && back[4].is_sign_negative());
+        assert_eq!(back[5].to_bits(), huge.to_bits());
+        assert_eq!(back[6], 2.0 * q);
+        assert_eq!(back[7], 4.0 * q);
+    }
+
+    #[test]
+    fn a_column_without_a_precision_stays_raw_and_declares_none() {
+        let back = round_trip_column(Column::from_float(
+            ArrayD::from_shape_vec(vec![2], vec![0.123_456_7, 2.0]).unwrap(),
+        ));
+        assert_eq!(
+            back.as_float().unwrap().as_slice().unwrap(),
+            &[0.123_456_7, 2.0]
+        );
+    }
+
+    #[test]
+    fn a_precision_on_a_non_f64_column_is_refused_at_write() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let column = Column::from_i64(ArrayD::from_shape_vec(vec![1], vec![3_i64]).unwrap());
+        let err = write_column(&store, "/f/b/n", &column, Some(1e-3))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("f64"), "{err}");
+        for bad in [0.0, -1.0, f64::INFINITY] {
+            let float = Column::from_float(ArrayD::from_shape_vec(vec![1], vec![1.0]).unwrap());
+            assert!(write_column(&store, "/f/b/x", &float, Some(bad)).is_err());
+        }
+    }
+
+    #[test]
+    fn a_malformed_precision_attribute_is_refused_on_read() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = Frame::new();
+        let mut block = Block::new();
+        block
+            .insert_column(
+                COLUMN,
+                Column::from_i64(ArrayD::from_shape_vec(vec![1], vec![3_i64]).unwrap()),
+            )
+            .unwrap();
+        frame.insert(BLOCK, block);
+        write_frame_group(&store, FRAME, &frame).unwrap();
+        // Tamper: an i64 array claiming a precision.
+        let path = format!("{FRAME}/{BLOCK}/{COLUMN}");
+        let mut array = Array::open(store.clone(), &path).unwrap();
+        array
+            .attributes_mut()
+            .insert(PRECISION_ATTRIBUTE.to_string(), serde_json::json!(1e-3));
+        array.store_metadata().unwrap();
+        let err = read_frame_group(&store, FRAME).unwrap_err().to_string();
+        assert!(err.contains(COLUMN) && err.contains("f64"), "{err}");
     }
 }

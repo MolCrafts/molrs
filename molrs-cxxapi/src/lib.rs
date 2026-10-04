@@ -1099,6 +1099,33 @@ fn frame_set_meta_entry(fref: &mut FrameRef, entry: bridge::ffi::MetaEntry) -> R
         .map_err(|err| err.to_string())
 }
 
+/// Declare the precision of an existing `f64` column: an absolute tolerance
+/// in the column's units. A `*.mrec` writer (`write_frame`, a trajectory
+/// writer minted from this frame) stores the column rounded to the largest
+/// power of two not above it, shuffled and compressed; the in-memory values
+/// are untouched.
+///
+/// @param fref      frame handle
+/// @param block     block key
+/// @param col       column key (must exist and be `f64`)
+/// @param precision finite, within `[2^-1000, 2^1000]`
+fn frame_set_precision(
+    fref: &mut FrameRef,
+    block: &str,
+    col: &str,
+    precision: f64,
+) -> Result<(), String> {
+    fref.0
+        .with_mut(|frame| {
+            frame
+                .get_mut(block)
+                .ok_or_else(|| format!("frame_set_precision: no block {block:?}"))?
+                .set_precision(col, precision)
+                .map_err(|e| format!("frame_set_precision {col}: {e}"))
+        })
+        .map_err(|e| format!("frame_set_precision: {e}"))?
+}
+
 /// Copy an `f64` column out of a block.
 ///
 /// @param fref  frame handle
@@ -1536,6 +1563,32 @@ fn region_bounds(rref: &RegionRef) -> Vec<f64> {
 mod tests {
     use super::*;
     use std::rc::Rc;
+
+    #[cfg(feature = "zarr")]
+    #[test]
+    fn a_trajectory_writer_minted_from_a_precise_frame_rounds_its_column() {
+        let dir = std::env::temp_dir().join(format!(
+            "molrs-cxxapi-precision-{}.mrec",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut fref = frame_new();
+        frame_set_column_f64(&mut fref, "atoms", "x", &[0.123_456, 1.000_49]).unwrap();
+        assert!(frame_set_precision(&mut fref, "atoms", "nope", 1e-3).is_err());
+        assert!(frame_set_precision(&mut fref, "atoms", "x", 0.0).is_err());
+        frame_set_precision(&mut fref, "atoms", "x", 1e-3).unwrap();
+        let path = dir.to_str().unwrap();
+        let mut writer = trajectory_writer_create(path, &fref, 0, false).unwrap();
+        trajectory_writer_append(&mut writer, &fref, 0, 0.0, false).unwrap();
+        trajectory_writer_close(writer).unwrap();
+        let back = read_first_frame(path).unwrap();
+        let q = 2f64.powi(-10);
+        assert_eq!(
+            frame_column_f64(&back, "atoms", "x"),
+            vec![(0.123_456 / q).round() * q, (1.000_49 / q).round() * q]
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn element_symbols_are_the_canonical_rust_table() {

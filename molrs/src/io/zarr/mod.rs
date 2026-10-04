@@ -100,6 +100,10 @@ pub mod schema;
 mod sequence;
 #[cfg(feature = "filesystem")]
 mod store;
+// Built where it is registered (no C `zstd`), and for the tests that hold it
+// to the C encoder's frames.
+#[cfg(any(test, not(feature = "zarr-codecs")))]
+mod zstd_decode;
 
 #[cfg(feature = "filesystem")]
 pub use pack::{open_packed, pack};

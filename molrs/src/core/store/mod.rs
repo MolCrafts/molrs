@@ -10,6 +10,7 @@ pub mod frame_access;
 pub mod frame_view;
 pub mod keys;
 pub mod meta;
+pub mod precision;
 pub mod record;
 pub mod schema;
 pub mod trajectory;

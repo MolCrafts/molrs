@@ -82,6 +82,9 @@ pub struct Block {
     /// Per-column validity masks, each of length `nrows`. A column absent from
     /// this map is fully valid; see [`Block::insert_nullable`].
     validity: IndexMap<String, Vec<bool>>,
+    /// Declared [precision](crate::store::precision) per `f64` column. A
+    /// column absent from this map is stored as given.
+    precision: IndexMap<String, f64>,
     nrows: Option<usize>,
     shape: Option<Vec<usize>>,
 }
@@ -90,7 +93,10 @@ impl std::fmt::Debug for Block {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut map = f.debug_map();
         for (k, v) in &self.map {
-            let dtype_shape = format!("{}(shape={:?})", v.dtype(), v.shape());
+            let mut dtype_shape = format!("{}(shape={:?})", v.dtype(), v.shape());
+            if let Some(p) = self.precision.get(k) {
+                dtype_shape.push_str(&format!(" precision={p}"));
+            }
             match self.validity.get(k) {
                 Some(mask) => {
                     let nulls = mask.iter().filter(|&&valid| !valid).count();
@@ -109,6 +115,7 @@ impl Block {
         Self {
             map: IndexMap::new(),
             validity: IndexMap::new(),
+            precision: IndexMap::new(),
             nrows: None,
             shape: None,
         }
@@ -119,6 +126,7 @@ impl Block {
         Self {
             map: IndexMap::with_capacity(cap),
             validity: IndexMap::new(),
+            precision: IndexMap::new(),
             nrows: None,
             shape: None,
         }
@@ -287,6 +295,7 @@ impl Block {
         // A plain insert replaces the column outright, mask included: the
         // rows it describes are gone.
         self.validity.shift_remove(&key);
+        self.keep_precision_if_float(&key, col.dtype());
         self.map.insert(key, col);
         Ok(())
     }
@@ -451,8 +460,82 @@ impl Block {
         }
 
         self.validity.shift_remove(&key);
+        self.keep_precision_if_float(&key, col.dtype());
         self.map.insert(key, col);
         Ok(())
+    }
+
+    /// A declared precision survives a column being replaced by another `f64`
+    /// column (the declaration is about the key's values, and a precision
+    /// column rewritten in place is still one); any other dtype drops it.
+    fn keep_precision_if_float(&mut self, key: &str, dtype: DType) {
+        if dtype != DType::Float {
+            self.precision.shift_remove(key);
+        }
+    }
+
+    /// Declare the [precision](crate::store::precision) of the `f64` column
+    /// `key`: an absolute tolerance in the column's own units. A writer rounds
+    /// the column's values to the binary grid it implies before storing them;
+    /// the in-memory values are not touched.
+    ///
+    /// The declaration follows the column: a rename carries it, removing the
+    /// column drops it, and replacing the column with one of another dtype
+    /// drops it.
+    ///
+    /// # Errors
+    ///
+    /// - [`BlockError::MissingColumn`] when the block has no column `key`;
+    /// - [`BlockError::Validation`] when the column is not `f64`, or when
+    ///   `precision` is not finite and within `[2^-1000, 2^1000]`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use molrs::store::block::Block;
+    /// use ndarray::Array1;
+    ///
+    /// let mut block = Block::new();
+    /// block.insert("x", Array1::from_vec(vec![0.1234_f64, 1.5]).into_dyn()).unwrap();
+    /// block.set_precision("x", 1e-3).unwrap();
+    /// assert_eq!(block.precision("x"), Some(1e-3));
+    /// assert!(block.set_precision("x", 0.0).is_err());
+    /// ```
+    pub fn set_precision(&mut self, key: &str, precision: f64) -> Result<(), BlockError> {
+        let col = self.map.get(key).ok_or_else(|| BlockError::MissingColumn {
+            key: key.to_owned(),
+        })?;
+        if col.dtype() != DType::Float {
+            return Err(BlockError::validation(format!(
+                "column '{key}' is {}; only an f64 column declares a precision",
+                col.dtype()
+            )));
+        }
+        if !crate::store::precision::is_admissible(precision) {
+            return Err(BlockError::validation(format!(
+                "column '{key}': {}",
+                crate::store::precision::inadmissible(precision)
+            )));
+        }
+        self.precision.insert(key.to_owned(), precision);
+        Ok(())
+    }
+
+    /// The declared precision of column `key`, or `None` when it declares
+    /// none (or is absent).
+    pub fn precision(&self, key: &str) -> Option<f64> {
+        self.precision.get(key).copied()
+    }
+
+    /// Withdraw the declared precision of column `key`, returning it.
+    pub fn clear_precision(&mut self, key: &str) -> Option<f64> {
+        self.precision.shift_remove(key)
+    }
+
+    /// Every declared precision, as `(column, precision)` in declaration
+    /// order.
+    pub fn precisions(&self) -> impl Iterator<Item = (&str, f64)> {
+        self.precision.iter().map(|(k, &p)| (k.as_str(), p))
     }
 
     /// New Block with rows gathered at `indices` (along axis 0), preserving the
@@ -475,6 +558,7 @@ impl Block {
         for (k, mask) in &self.validity {
             out.put_validity(k.clone(), indices.iter().map(|&i| mask[i]).collect());
         }
+        out.precision = self.precision.clone();
         Ok(out)
     }
 
@@ -490,6 +574,9 @@ impl Block {
             out.insert_column(key.to_owned(), col.clone())?;
             if let Some(mask) = self.validity.get(key) {
                 out.put_validity(key.to_owned(), mask.clone());
+            }
+            if let Some(&p) = self.precision.get(key) {
+                out.precision.insert(key.to_owned(), p);
             }
         }
         Ok(out)
@@ -579,6 +666,7 @@ impl Block {
     /// `shape` to `None`.
     pub fn remove(&mut self, key: &str) -> Option<Column> {
         self.validity.shift_remove(key);
+        self.precision.shift_remove(key);
         let out = self.map.shift_remove(key);
         if self.map.is_empty() {
             self.nrows = None;
@@ -630,6 +718,9 @@ impl Block {
         if let Some((index, _, mask)) = self.validity.shift_remove_full(old_key) {
             self.validity.shift_insert(index, new_key.to_string(), mask);
         }
+        if let Some((index, _, p)) = self.precision.shift_remove_full(old_key) {
+            self.precision.shift_insert(index, new_key.to_string(), p);
+        }
         Ok(())
     }
 
@@ -670,6 +761,7 @@ impl Block {
                 .map(|(key, col)| (key.clone(), col.deep_copy()))
                 .collect(),
             validity: self.validity.clone(),
+            precision: self.precision.clone(),
             nrows: self.nrows,
             shape: self.shape.clone(),
         }
@@ -679,6 +771,7 @@ impl Block {
     pub fn clear(&mut self) {
         self.map.clear();
         self.validity.clear();
+        self.precision.clear();
         self.nrows = None;
         self.shape = None;
     }
@@ -933,6 +1026,11 @@ impl Block {
             if let Some(mask) = mask {
                 out.put_validity(key.to_owned(), mask);
             }
+            // The first part that declares a precision for the column speaks
+            // for the stacked one.
+            if let Some(p) = parts.iter().find_map(|part| part.precision(key)) {
+                out.precision.insert(key.to_owned(), p);
+            }
         }
         if out.is_empty() && !parts.is_empty() {
             out.nrows = Some(total);
@@ -1020,6 +1118,7 @@ impl Block {
     fn adopt(&mut self, other: &Block) {
         self.map = other.map.clone();
         self.validity = other.validity.clone();
+        self.precision = other.precision.clone();
         self.nrows = other.nrows;
         self.shape = other.shape.clone();
     }
@@ -2177,5 +2276,65 @@ mod tests {
         let two = ndarray::Array2::<F>::zeros((2, 2));
         assert!(block.set_coords(two.view()).is_err());
         assert!(block.is_empty());
+    }
+
+    // ---- precision ----
+
+    #[test]
+    fn set_precision_declares_on_an_f64_column_only() {
+        let mut block = Block::new();
+        block.insert("x", floats(&[1.0, 2.0])).unwrap();
+        block
+            .insert("id", Array1::from_vec(vec![1 as Idx, 2]).into_dyn())
+            .unwrap();
+        block.set_precision("x", 1e-3).unwrap();
+        assert_eq!(block.precision("x"), Some(1e-3));
+        assert!(block.set_precision("id", 1e-3).is_err());
+        assert_eq!(
+            block.set_precision("nope", 1e-3).unwrap_err(),
+            BlockError::MissingColumn { key: "nope".into() }
+        );
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY, 2f64.powi(1001)] {
+            assert!(block.set_precision("x", bad).is_err(), "accepted {bad}");
+        }
+        assert_eq!(block.precision("x"), Some(1e-3));
+        assert_eq!(block.clear_precision("x"), Some(1e-3));
+        assert_eq!(block.precision("x"), None);
+    }
+
+    #[test]
+    fn precision_follows_its_column() {
+        let mut block = Block::new();
+        block.insert("x", floats(&[1.0, 2.0])).unwrap();
+        block.insert("y", floats(&[3.0, 4.0])).unwrap();
+        block.set_precision("x", 1e-3).unwrap();
+        block.set_precision("y", 1e-2).unwrap();
+
+        // A rename carries it.
+        block.rename_column("x", "px").unwrap();
+        assert_eq!(block.precision("px"), Some(1e-3));
+        assert_eq!(block.precision("x"), None);
+
+        // Replacing with another f64 column keeps it; another dtype drops it.
+        block.insert("px", floats(&[5.0, 6.0])).unwrap();
+        assert_eq!(block.precision("px"), Some(1e-3));
+        block
+            .insert("px", Array1::from_vec(vec![1 as I, 2]).into_dyn())
+            .unwrap();
+        assert_eq!(block.precision("px"), None);
+
+        // Row selection, column selection and copies keep it.
+        assert_eq!(block.select_rows(&[1]).unwrap().precision("y"), Some(1e-2));
+        assert_eq!(
+            block.select_columns(&["y"]).unwrap().precision("y"),
+            Some(1e-2)
+        );
+        assert_eq!(block.deep_copy().precision("y"), Some(1e-2));
+        let stacked = Block::stack([&block, &block]).unwrap();
+        assert_eq!(stacked.precision("y"), Some(1e-2));
+
+        // Removing the column drops it.
+        block.remove("y");
+        assert_eq!(block.precision("y"), None);
     }
 }

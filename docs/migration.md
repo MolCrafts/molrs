@@ -90,6 +90,25 @@ short "Also new" list at the end of each section.
     `read_mrec`. The lazy trajectory reader (`FrameSequence::open`, Python
     `TrajectoryReader`) and the WASM readers now validate
     `meta.molrec_version` too.
+  - **Every reader decodes `zstd` and `numcodecs.shuffle`**, the wasm32
+    build included (molrec's must-decode set). A build without
+    `zarr-codecs` decodes `zstd` through a pure-Rust decoder (`ruzstd`), so
+    the `zarr` feature now pulls `ruzstd` and `inventory`. It still cannot
+    *encode* `zstd`. A store holding such an array — every `f64` column with
+    a declared precision — cannot be read by molrs 0.14 or by any reader
+    without the two codecs.
+  - **Declared precision.** An `f64` column may declare a precision `p`
+    (`Block::set_precision`, Python `Block.set_precision`). Writers then
+    store `round_half_even(x / q) · q` with `q` the largest power of two
+    `≤ p` (error `≤ p/2`), pipe the column through `numcodecs.shuffle` +
+    `zstd` level 3 (`gzip` level 1 without `zarr-codecs`), and record `p`:
+    as the array attribute `precision` on `frame` / `system`, and in the
+    column's `sequence_schema` entry on a trajectory. Readers hand back the
+    stored values and the declaration (`Block::precision`). A trajectory
+    compares the *rounded* values with the previous update, so a change
+    below `q/2` writes no update; a frame stating a precision other than the
+    pinned one is refused. Coordinates go from 24 to about 7.6 B/atom/frame
+    at `p = 1e-3` Å. The default is unchanged: no precision, raw floats.
 
 ### Rust crate (`molcrafts-molrs`)
 
@@ -771,3 +790,10 @@ short "Also new" list at the end of each section.
   - `lammps_coeff_params` / `lammps_coeff_values`; the frcmod writer.
 - **Store:** nullable columns (`insert_nullable`, `validity`; persisted in
   zarr); Python `MetaDocument`.
+- **Declared precision:** `store::precision::{quantum, quantize,
+  quantize_in_place, check_precision, PRECISION_MIN, PRECISION_MAX}`;
+  `Block::{set_precision, precision, clear_precision, precisions}`;
+  `SequenceSchema::{declare_precision, precision}`. Python
+  `Block.set_precision` / `Block.precision` (pickled with the block) and
+  `SequenceSchema.declare_precision` / `precision`; WASM `Block.precision`;
+  C++ `frame_set_precision`.

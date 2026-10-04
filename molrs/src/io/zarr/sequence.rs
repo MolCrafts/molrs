@@ -131,7 +131,6 @@ use std::sync::{Arc, Mutex, Once};
 use indexmap::IndexMap;
 use ndarray::{Array1, Array2, ArrayD, Axis, Slice};
 use serde::{Deserialize, Serialize};
-use zarrs::array::codec::GzipCodec;
 use zarrs::array::codec::array_to_bytes::sharding::{
     ShardingCodecBuilder, ShardingCodecOptions, ShardingIndexLocation, SubchunkWriteOrder,
 };
@@ -160,8 +159,9 @@ use molrs::types::F;
 use crate::io::reader::TrajectoryReader;
 
 use super::frame_io::{
-    BOX_GROUP, VALIDITY_GROUP, check_canonical_width, insert_column_into_block, join_path,
-    node_prefix, read_column_array, zarr_dtype,
+    BOX_GROUP, GZIP_LEVEL, VALIDITY_GROUP, check_canonical_width, default_precision_compressor,
+    gzip, insert_column_into_block, join_path, node_prefix, precision_shuffle, quantized,
+    read_column_array, zarr_dtype,
 };
 use super::record_io::zerr;
 
@@ -262,11 +262,6 @@ const MAX_FLUSH_EVERY: u64 = 4096;
 /// and nothing else.
 const ASSUMED_STRING_ITEMSIZE: u64 = 16;
 
-/// `gzip` level for the columns and arrays that compress (integers, booleans,
-/// strings, every index array). Level 1: these compress by structure, not by
-/// effort, and the write path pays the codec on every landing.
-const GZIP_LEVEL: u32 = 1;
-
 /// Inner chunks a column reader keeps decoded per column.
 ///
 /// Playback reads the same chunk `frames_per_chunk` times in a row; a small
@@ -280,7 +275,14 @@ const CHUNK_CACHE_ENTRIES: usize = 2;
 /// `gzip` level 1: they compress by structure. Floating-point coordinates do
 /// not — 52 random mantissa bits gzip to about 95 % of their size at a real
 /// CPU cost — so their compression is a producer's choice, `None` by default.
-/// Every choice is lossless; a precision study admits nothing else.
+///
+/// A column with a [declared precision](molrs::store::precision) is the
+/// exception: its values are rounded onto a binary grid, its pipeline opens
+/// with a byte shuffle, and it is compressed whatever this says — `None`
+/// selects the reference compressor (`zstd` level 3, or `gzip` level 1 in a
+/// build that cannot encode `zstd`), `Gzip` / `Zstd` replace it, and the
+/// shuffle stays. Every choice is lossless: the rounding is the writer's,
+/// before the pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Compression {
     /// Raw little-endian bytes. The default for floating-point columns.
@@ -288,11 +290,28 @@ pub enum Compression {
     None,
     /// `gzip` at this level (1–9). Every reader of these stores decodes it.
     Gzip(u32),
-    /// `zstd` at this level. Native builds only (`zarr-codecs`); wasm32
-    /// readers do not decode it, so a store meant for the browser stays on
-    /// `None` or `Gzip`.
+    /// `zstd` at this level. Encoding needs a native build (`zarr-codecs`);
+    /// every reader decodes it, wasm32 included.
     #[cfg(feature = "zarr-codecs")]
     Zstd(i32),
+}
+
+/// The bytes-to-bytes pipeline of one growth array: a compressor, and
+/// whether a byte shuffle precedes it (a precision column's pipeline).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Pipeline {
+    compression: Compression,
+    shuffle: bool,
+}
+
+impl Pipeline {
+    /// A pipeline with no shuffle.
+    const fn plain(compression: Compression) -> Self {
+        Self {
+            compression,
+            shuffle: false,
+        }
+    }
 }
 
 /// The frozen extents of one growth array.
@@ -363,18 +382,21 @@ fn quiet_zarrs_metadata() {
     });
 }
 
-/// The bytes-to-bytes codecs of one inner chunk: the optional compressor, then
-/// `crc32c` so a torn chunk is a checksum error rather than garbage rows.
-fn inner_codecs(
-    compression: Compression,
-) -> Result<Vec<Arc<dyn BytesToBytesCodecTraits>>, MolRsError> {
-    let mut codecs: Vec<Arc<dyn BytesToBytesCodecTraits>> = Vec::with_capacity(2);
-    match compression {
+/// The bytes-to-bytes codecs of one inner chunk: the byte shuffle of a
+/// precision column, the compressor, then `crc32c` so a torn chunk is a
+/// checksum error rather than garbage rows.
+///
+/// Behind a shuffle, [`Compression::None`] means the reference compressor
+/// ([`default_precision_compressor`]): a shuffle exists to feed one.
+fn inner_codecs(pipeline: Pipeline) -> Result<Vec<Arc<dyn BytesToBytesCodecTraits>>, MolRsError> {
+    let mut codecs: Vec<Arc<dyn BytesToBytesCodecTraits>> = Vec::with_capacity(3);
+    if pipeline.shuffle {
+        codecs.push(precision_shuffle());
+    }
+    match pipeline.compression {
+        Compression::None if pipeline.shuffle => codecs.push(default_precision_compressor()?),
         Compression::None => {}
-        Compression::Gzip(level) => codecs
-            .push(Arc::new(GzipCodec::new(level).map_err(|e| {
-                MolRsError::zarr(format!("gzip level {level}: {e}"))
-            })?)),
+        Compression::Gzip(level) => codecs.push(gzip(level)?),
         #[cfg(feature = "zarr-codecs")]
         Compression::Zstd(level) => codecs.push(Arc::new(
             zarrs::array::codec::bytes_to_bytes::zstd::ZstdCodec::new(level, false),
@@ -599,6 +621,39 @@ fn same_block(left: &Block, right: &Block) -> bool {
         })
 }
 
+/// `block` as a writer stores it under `declared`: every column whose
+/// precision is declared rounded to its grid ([`quantized`]), carrying the
+/// declaration; every other column as presented. Borrowed when the block
+/// declares no precision.
+fn stored_presentation<'a>(
+    declared: &BlockSchema,
+    block: &'a Block,
+) -> Result<std::borrow::Cow<'a, Block>, MolRsError> {
+    let mut stored: Option<Block> = None;
+    for (column, schema) in &declared.columns {
+        let Some(precision) = schema.precision else {
+            continue;
+        };
+        let Some(values) = block.get(column).and_then(Column::as_float) else {
+            continue;
+        };
+        let rounded = Column::from_float(quantized(values, precision)?);
+        let target = stored.get_or_insert_with(|| block.clone());
+        // `insert_column` drops the mask with the old column; the rows did not
+        // move, so it goes back on.
+        let mask = target.validity(column).map(<[bool]>::to_vec);
+        target.insert_column(column.as_str(), rounded)?;
+        if let Some(mask) = mask {
+            target.set_validity(column, mask)?;
+        }
+        target.set_precision(column, precision)?;
+    }
+    Ok(match stored {
+        Some(block) => std::borrow::Cow::Owned(block),
+        None => std::borrow::Cow::Borrowed(block),
+    })
+}
+
 /// Whether two cells are the same cell, bit for bit.
 fn same_simbox(left: &SimBox, right: &SimBox) -> bool {
     left.is_cell_defined() == right.is_cell_defined()
@@ -692,9 +747,9 @@ fn empty_column(dtype: DType, trailing: &[u64]) -> Result<Column, MolRsError> {
 // Schema
 // ---------------------------------------------------------------------------
 
-/// One declared column: the width and trailing shape it arrived with, and
-/// whether its rows may be null.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// One declared column: the width and trailing shape it arrived with,
+/// whether its rows may be null, and its declared precision.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct ColumnSchema {
     /// [`dtype_tag`] of the column's storage width.
     dtype: String,
@@ -708,10 +763,16 @@ struct ColumnSchema {
     /// a run of plain columns -- which is what it is.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     nullable: bool,
+    /// The column's [declared precision](molrs::store::precision) — on a
+    /// trajectory, stated here and nowhere else. Every presented value is
+    /// rounded to its grid before the change detection and the landing.
+    /// Absent while undeclared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    precision: Option<f64>,
 }
 
 /// One declared block: its columns, and the structural shape it declares.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct BlockSchema {
     columns: IndexMap<String, ColumnSchema>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -823,6 +884,7 @@ impl SequenceSchema {
     /// - a column named `offset` or `step_index`;
     /// - the same block declaring two different structural shapes;
     /// - the same column declaring two different dtypes or trailing shapes;
+    /// - the same column declaring two different precisions;
     /// - the same `meta` key carrying two different `MetaValue` dtypes.
     pub fn from_frames(frames: &[Frame]) -> Result<Self, MolRsError> {
         let mut schema = Self::new();
@@ -851,6 +913,9 @@ impl SequenceSchema {
                     schema.declare_column(name, column, values.dtype(), &trailing)?;
                     if block.validity(column).is_some() {
                         schema.declare_nullable(name, column)?;
+                    }
+                    if let Some(precision) = block.precision(column) {
+                        schema.declare_precision(name, column, precision)?;
                     }
                 }
             }
@@ -927,6 +992,7 @@ impl SequenceSchema {
             dtype: dtype_tag(dtype).to_string(),
             trailing: trailing.to_vec(),
             nullable: false,
+            precision: None,
         };
         let entry = self
             .blocks
@@ -980,6 +1046,71 @@ impl SequenceSchema {
                     "cannot declare column {column:?} of block {block:?} nullable: it is not declared"
                 ))
             })
+    }
+
+    /// Declare the [precision](molrs::store::precision) of `column` of
+    /// `block`: an absolute tolerance in the column's units.
+    ///
+    /// Every frame's values of the column are rounded to the binary grid the
+    /// precision implies before they are compared with the previous update
+    /// (a change below half the quantum is no change) and before they land;
+    /// the column's pipeline opens with a byte shuffle and a compressor. The
+    /// declaration is pinned with the schema and is the only place a
+    /// trajectory states it. [`from_frames`](Self::from_frames) declares the
+    /// precision every presented column carries
+    /// ([`Block::precision`](molrs::store::block::Block::precision)).
+    ///
+    /// # Errors
+    ///
+    /// A [`MolRsError::Zarr`] when the column is not declared, is not `f64`,
+    /// is already declared with another precision, or when `precision` is
+    /// not finite and within `[2^-1000, 2^1000]`.
+    pub fn declare_precision(
+        &mut self,
+        block: &str,
+        column: &str,
+        precision: f64,
+    ) -> Result<(), MolRsError> {
+        let declared = self
+            .blocks
+            .get_mut(block)
+            .and_then(|declared| declared.columns.get_mut(column))
+            .ok_or_else(|| {
+                MolRsError::zarr(format!(
+                    "cannot declare a precision for column {column:?} of block {block:?}: it is \
+                     not declared"
+                ))
+            })?;
+        if declared.dtype != dtype_tag(DType::Float) {
+            return Err(MolRsError::zarr(format!(
+                "column {column:?} of block {block:?} is {}; only an f64 column declares a \
+                 precision",
+                declared.dtype
+            )));
+        }
+        molrs::store::precision::check_precision(precision)
+            .map_err(|e| MolRsError::zarr(format!("column {column:?} of block {block:?}: {e}")))?;
+        match declared.precision {
+            Some(existing) if existing.to_bits() != precision.to_bits() => {
+                Err(MolRsError::zarr(format!(
+                    "sequence schema conflict: column {column:?} of block {block:?} declares \
+                     precision {existing} and {precision}"
+                )))
+            }
+            _ => {
+                declared.precision = Some(precision);
+                Ok(())
+            }
+        }
+    }
+
+    /// The declared precision of `column` of `block`, or `None` when it
+    /// declares none (or is not declared).
+    pub fn precision(&self, block: &str, column: &str) -> Option<f64> {
+        self.blocks
+            .get(block)
+            .and_then(|declared| declared.columns.get(column))
+            .and_then(|declared| declared.precision)
     }
 
     /// Declare the structural shape of `block` (a volumetric `[nx][ny][nz]`).
@@ -1379,8 +1510,8 @@ impl GrowthArray {
     ///
     /// Every growth array is a `sharding_indexed` array with its index at the
     /// **start** of the shard, so appending a chunk is a tail write plus an
-    /// in-place index rewrite. The inner chunk carries the compressor
-    /// `compression` names, then `crc32c`.
+    /// in-place index rewrite. The inner chunk carries the codecs `pipeline`
+    /// names ([`inner_codecs`]), ending in `crc32c`.
     fn create(
         store: &ReadableWritableListableStorage,
         path: &str,
@@ -1388,7 +1519,7 @@ impl GrowthArray {
         trailing: &[u64],
         extents: Extents,
         attributes: serde_json::Map<String, serde_json::Value>,
-        compression: Compression,
+        pipeline: Pipeline,
     ) -> Result<Self, MolRsError> {
         quiet_zarrs_metadata();
         let (data_type, fill) = zarr_dtype(dtype);
@@ -1408,7 +1539,7 @@ impl GrowthArray {
             .collect();
         let mut sharding = ShardingCodecBuilder::new(subchunk, &data_type);
         sharding
-            .bytes_to_bytes_codecs(inner_codecs(compression)?)
+            .bytes_to_bytes_codecs(inner_codecs(pipeline)?)
             .index_location(ShardingIndexLocation::Start);
 
         let mut builder = ArrayBuilder::new(shape, shard, data_type, fill);
@@ -1848,8 +1979,8 @@ impl Knobs {
     }
 }
 
-/// The compression every dense array carries.
-const DENSE_COMPRESSION: Compression = Compression::Gzip(GZIP_LEVEL);
+/// The pipeline every dense array carries.
+const DENSE_PIPELINE: Pipeline = Pipeline::plain(Compression::Gzip(GZIP_LEVEL));
 
 /// The arrays of one block section.
 ///
@@ -1943,7 +2074,7 @@ fn create_mask_array(
         &[],
         Extents::for_column(rows_per_chunk, 1, knobs.chunks_per_shard),
         serde_json::Map::new(),
-        DENSE_COMPRESSION,
+        DENSE_PIPELINE,
     )
 }
 
@@ -2039,7 +2170,7 @@ impl IndexArrays {
             &[],
             knobs.dense(),
             serde_json::Map::new(),
-            DENSE_COMPRESSION,
+            DENSE_PIPELINE,
         )?;
         let mut step_index = GrowthArray::create(
             store,
@@ -2048,7 +2179,7 @@ impl IndexArrays {
             &[],
             knobs.dense(),
             serde_json::Map::new(),
-            DENSE_COMPRESSION,
+            DENSE_PIPELINE,
         )?;
         // The CSR row pointer opens at zero; every regular update added
         // `rows` rows at the ordinal equal to its own index.
@@ -2112,7 +2243,7 @@ impl BoxArrays {
             trailing,
             knobs.dense(),
             serde_json::Map::new(),
-            DENSE_COMPRESSION,
+            DENSE_PIPELINE,
         )
     }
 
@@ -2536,7 +2667,7 @@ impl<T: Series> Track<T> {
                 &[],
                 knobs.dense(),
                 serde_json::Map::new(),
-                DENSE_COMPRESSION,
+                DENSE_PIPELINE,
             )?;
             if *count > 0 {
                 let history = progression
@@ -2665,7 +2796,7 @@ impl SequenceArrays {
                 trailing,
                 knobs.dense(),
                 attributes,
-                DENSE_COMPRESSION,
+                DENSE_PIPELINE,
             )
         };
 
@@ -2731,10 +2862,15 @@ impl SequenceArrays {
             let mut columns = BTreeMap::new();
             for ((column, column_schema), width) in declared.columns.iter().zip(widths) {
                 let dtype = dtype_from_tag(&column_schema.dtype)?;
-                let compression = if is_float_width(dtype) {
-                    compression
+                let pipeline = if column_schema.precision.is_some() {
+                    Pipeline {
+                        compression,
+                        shuffle: true,
+                    }
+                } else if is_float_width(dtype) {
+                    Pipeline::plain(compression)
                 } else {
-                    Compression::Gzip(GZIP_LEVEL)
+                    Pipeline::plain(Compression::Gzip(GZIP_LEVEL))
                 };
                 columns.insert(
                     column.clone(),
@@ -2745,7 +2881,7 @@ impl SequenceArrays {
                         &column_schema.trailing,
                         Extents::for_column(rows_per_chunk, width, knobs.chunks_per_shard),
                         serde_json::Map::new(),
-                        compression,
+                        pipeline,
                     )?,
                 );
             }
@@ -3365,7 +3501,7 @@ impl FrameSequenceWriter {
     /// Legal only before the first append, which freezes the extents. Left
     /// unset, block columns are frame-aligned and dense arrays take
     /// [`DENSE_ROWS_PER_CHUNK`].
-    #[cfg(test)]
+    #[cfg(all(test, feature = "filesystem"))]
     pub(crate) fn with_rows_per_chunk(mut self, rows: u64) -> Result<Self, MolRsError> {
         self.refuse_after_first_append("with_rows_per_chunk")?;
         if rows == 0 {
@@ -3378,7 +3514,7 @@ impl FrameSequenceWriter {
     /// Inner chunks one shard file holds — a test knob.
     ///
     /// Legal only before the first append.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "filesystem"))]
     pub(crate) fn with_chunks_per_shard(mut self, chunks: u64) -> Result<Self, MolRsError> {
         self.refuse_after_first_append("with_chunks_per_shard")?;
         if chunks == 0 {
@@ -3583,18 +3719,23 @@ impl FrameSequenceWriter {
         self.ensure_arrays()?;
 
         let mut blocks = BTreeMap::new();
-        for name in self.schema.blocks.keys() {
+        for (name, declared) in &self.schema.blocks {
             // An omitted block carries forward: no update, no state change.
             let Some(block) = frame.get(name) else {
                 continue;
             };
+            // What would be stored, not what was presented: a precision
+            // column is rounded first, so a change below half its quantum is
+            // no change and earns no update.
+            let block = stored_presentation(declared, block)?;
             let changed = self
                 .landed_blocks
                 .get(name)
-                .is_none_or(|landed| !same_block(landed, block));
+                .is_none_or(|landed| !same_block(landed, &block));
             if changed {
+                let block = block.into_owned();
                 blocks.insert(name.clone(), block.clone());
-                self.landed_blocks.insert(name.clone(), block.clone());
+                self.landed_blocks.insert(name.clone(), block);
             }
         }
 
@@ -3662,6 +3803,18 @@ impl FrameSequenceWriter {
                         "column {column:?} of block {name:?} is declared {} but this frame carries \
                          {dtype}",
                         pinned.dtype
+                    )));
+                }
+                if let Some(presented) = block.precision(column)
+                    && pinned.precision.map(f64::to_bits) != Some(presented.to_bits())
+                {
+                    return Err(MolRsError::zarr(format!(
+                        "column {column:?} of block {name:?} declares precision {presented} but \
+                         this sequence pins {}: a trajectory states a column's precision once, in \
+                         its schema",
+                        pinned
+                            .precision
+                            .map_or_else(|| "none".to_string(), |p| p.to_string())
                     )));
                 }
                 if block.validity(column).is_some() && !pinned.nullable {
@@ -4609,6 +4762,15 @@ impl FrameSequence {
                         .rows(start, rows, &declared.trailing)?
                 };
                 insert_column_into_block(&mut block, column, values)?;
+                // The pinned precision travels with the column read back, so a
+                // trajectory read and written again declares the same one.
+                if let Some(precision) = declared.precision {
+                    block.set_precision(column, precision).map_err(|e| {
+                        MolRsError::zarr(format!(
+                            "precision of column {column:?} of block {name:?}: {e}"
+                        ))
+                    })?;
+                }
                 if declared.nullable
                     && rows > 0
                     && let Some(mask) = self.mask_rows(&mut state, name, column, start, rows)?
@@ -7746,5 +7908,235 @@ mod tests {
             err.contains(BONDS) && err.contains(&format!("{I:?}")),
             "{err}"
         );
+    }
+
+    // -- declared precision (molrec F1) ------------------------------------
+
+    /// The inner codec names of the sharded growth array at `path`.
+    fn inner_codec_names(store: &ReadableWritableListableStorage, path: &str) -> Vec<String> {
+        let arr = Array::open(store.clone(), path).unwrap();
+        let metadata = serde_json::to_value(arr.metadata()).unwrap();
+        metadata["codecs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|codec| codec["name"] == "sharding_indexed")
+            .unwrap()["configuration"]["codecs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|codec| codec["name"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    /// An atoms frame whose `x` declares precision `p`.
+    fn precise_frame(values: &[f64], p: f64) -> Frame {
+        let mut frame = atoms_frame(values);
+        frame.get_mut(ATOMS).unwrap().set_precision(X, p).unwrap();
+        frame
+    }
+
+    fn stored(values: &[f64], p: f64) -> Vec<f64> {
+        let q = molrs::store::precision::quantum(p).unwrap();
+        values
+            .iter()
+            .map(|&x| molrs::store::precision::quantize(x, q))
+            .collect()
+    }
+
+    #[test]
+    fn a_precision_is_pinned_and_every_frame_reads_back_rounded() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let p = 1e-3;
+        let frames = [
+            precise_frame(&[0.123_456, -1.000_49, 2.5], p),
+            precise_frame(&[0.2, 7.777_7, -3.0], p),
+        ];
+        let schema = SequenceSchema::from_frames(&frames).unwrap();
+        assert_eq!(schema.precision(ATOMS, X), Some(p));
+        write_all(&store, &frames);
+
+        let pin = Group::open(store.clone(), TRAJ).unwrap().attributes()[SCHEMA_ATTRIBUTE].clone();
+        assert_eq!(
+            pin["blocks"][ATOMS]["columns"][X]["precision"],
+            serde_json::json!(p)
+        );
+        // Declared on the trajectory path in the pin only: no array attribute.
+        let array = Array::open(store.clone(), &format!("{TRAJ}/{ATOMS}/{X}")).unwrap();
+        assert!(array.attributes().get("precision").is_none());
+        assert_eq!(
+            inner_codec_names(&store, &format!("{TRAJ}/{ATOMS}/{X}")),
+            ["bytes", "numcodecs.shuffle", "zstd", "crc32c"]
+        );
+
+        let mut seq = open_sequence(&store);
+        for (index, frame) in frames.iter().enumerate() {
+            let back = frame_at(&mut seq, index as u64);
+            let presented = atoms_x(frame);
+            assert_eq!(atoms_x(&back), stored(&presented, p));
+            // The pinned precision travels with the column read back.
+            assert_eq!(back.get(ATOMS).unwrap().precision(X), Some(p));
+        }
+    }
+
+    #[test]
+    fn a_change_below_half_a_quantum_carries_forward() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let p = 1e-3;
+        let q = molrs::store::precision::quantum(p).unwrap();
+        let first = [1.0, 2.0, 3.0];
+        let nudged: Vec<f64> = first.iter().map(|x| x + 0.4 * q).collect();
+        write_all(
+            &store,
+            &[precise_frame(&first, p), precise_frame(&nudged, p)],
+        );
+
+        let mut seq = open_sequence(&store);
+        assert_eq!(seq.block_update_at(ATOMS, 0).unwrap(), Some(0));
+        assert_eq!(seq.block_update_at(ATOMS, 1).unwrap(), Some(0));
+        assert_eq!(atoms_x(&frame_at(&mut seq, 1)), first);
+    }
+
+    #[test]
+    fn a_frame_stating_another_precision_than_the_pin_is_refused() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let schema = SequenceSchema::from_frame(&precise_frame(&[1.0], 1e-3)).unwrap();
+        let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
+        // No precision stated: the pin rounds it.
+        writer.append(&atoms_frame(&[1.000_1])).unwrap();
+        let err = writer
+            .append(&precise_frame(&[1.0], 1e-2))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("precision") && err.contains(X), "{err}");
+
+        // A pin without a precision refuses a frame that states one.
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
+        let mut writer = FrameSequenceWriter::create(store, schema).unwrap();
+        assert!(writer.append(&precise_frame(&[1.0], 1e-3)).is_err());
+    }
+
+    #[test]
+    fn declare_precision_refuses_what_cannot_carry_one() {
+        let mut schema = SequenceSchema::new();
+        schema.declare_column(ATOMS, X, DType::Float, &[]).unwrap();
+        schema.declare_column(BONDS, I, DType::UInt, &[]).unwrap();
+        assert!(schema.declare_precision(ATOMS, "nope", 1e-3).is_err());
+        assert!(schema.declare_precision(BONDS, I, 1e-3).is_err());
+        for bad in [0.0, -1e-3, f64::NAN, f64::INFINITY] {
+            assert!(schema.declare_precision(ATOMS, X, bad).is_err(), "{bad}");
+        }
+        schema.declare_precision(ATOMS, X, 1e-3).unwrap();
+        schema.declare_precision(ATOMS, X, 1e-3).unwrap();
+        assert!(schema.declare_precision(ATOMS, X, 1e-2).is_err());
+        assert_eq!(schema.precision(ATOMS, X), Some(1e-3));
+
+        // Two frames declaring two precisions conflict at mint.
+        let err = SequenceSchema::from_frames(&[
+            precise_frame(&[1.0], 1e-3),
+            precise_frame(&[1.0], 1e-2),
+        ])
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("precision"), "{err}");
+    }
+
+    #[test]
+    fn the_compression_knob_replaces_the_precision_compressor_and_the_shuffle_stays() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let frame = precise_frame(&[1.0, 2.0], 1e-3);
+        let mut writer =
+            FrameSequenceWriter::create(store.clone(), SequenceSchema::from_frame(&frame).unwrap())
+                .unwrap()
+                .with_compression(super::Compression::Gzip(5))
+                .unwrap();
+        writer.append(&frame).unwrap();
+        writer.close().unwrap();
+        assert_eq!(
+            inner_codec_names(&store, &format!("{TRAJ}/{ATOMS}/{X}")),
+            ["bytes", "numcodecs.shuffle", "gzip", "crc32c"]
+        );
+    }
+
+    /// The design's density measurement, on a small synthetic run: 3000
+    /// atoms uniform in a 40 Å box, 40 frames of a 0.05 Å random walk, one
+    /// inner chunk per column per frame. Prints bytes per atom per frame of
+    /// the three coordinate columns, lossless and at two precisions: the
+    /// shard files as written, and the chunk payload net of the fixed-size
+    /// shard index (`16 B × chunks_per_shard + 4` per shard, written whole
+    /// at the start of the shard, so a 40-frame run pays it unamortized).
+    #[test]
+    fn a_declared_precision_cuts_the_coordinate_bytes() {
+        const ATOMS_N: usize = 3000;
+        const FRAMES: usize = 40;
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut uniform = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut xyz: Vec<[f64; 3]> = (0..ATOMS_N)
+            .map(|_| [40.0 * uniform(), 40.0 * uniform(), 40.0 * uniform()])
+            .collect();
+        let mut run = Vec::with_capacity(FRAMES);
+        for _ in 0..FRAMES {
+            run.push(xyz.clone());
+            for atom in &mut xyz {
+                for axis in atom.iter_mut() {
+                    *axis += 0.05 * (2.0 * uniform() - 1.0);
+                }
+            }
+        }
+        let bytes_per_atom_frame = |precision: Option<f64>| -> (f64, f64) {
+            let dir = TempDir::new().unwrap();
+            let store = store_in(&dir);
+            let frames: Vec<Frame> = run
+                .iter()
+                .map(|positions| {
+                    let mut block = Block::new();
+                    for (axis, key) in ["x", "y", "z"].into_iter().enumerate() {
+                        let values: Vec<f64> = positions.iter().map(|p| p[axis]).collect();
+                        block.insert_column(key, float_column(&values)).unwrap();
+                        if let Some(p) = precision {
+                            block.set_precision(key, p).unwrap();
+                        }
+                    }
+                    let mut frame = Frame::new();
+                    frame.insert(ATOMS, block);
+                    frame
+                })
+                .collect();
+            write_all(&store, &frames);
+            let mut bytes = 0u64;
+            let mut index = 0u64;
+            for key in ["x", "y", "z"] {
+                let files = chunk_files(&dir.path().join("trajectory").join(ATOMS).join(key));
+                let (shard, inner) = extents(&store, &format!("{TRAJ}/{ATOMS}/{key}"));
+                bytes += files.values().map(|v| v.len() as u64).sum::<u64>();
+                index += files.len() as u64 * (16 * (shard[0] / inner[0]) + 4);
+            }
+            let per = (ATOMS_N * FRAMES) as f64;
+            (bytes as f64 / per, (bytes - index) as f64 / per)
+        };
+        let (lossless, lossless_net) = bytes_per_atom_frame(None);
+        let (milli, milli_net) = bytes_per_atom_frame(Some(1e-3));
+        let (centi, centi_net) = bytes_per_atom_frame(Some(1e-2));
+        eprintln!(
+            "B/atom/frame (files / net of shard index): lossless {lossless:.2} / \
+             {lossless_net:.2}, p=1e-3 {milli:.2} / {milli_net:.2}, p=1e-2 {centi:.2} / \
+             {centi_net:.2}"
+        );
+        assert!(lossless_net > 23.9, "lossless is raw f64: {lossless_net}");
+        assert!(milli_net < 8.0, "p=1e-3: {milli_net}");
+        assert!(centi_net < 6.5, "p=1e-2: {centi_net}");
+        assert!(milli < lossless / 2.5, "p=1e-3: {milli} vs {lossless}");
+        assert!(centi < milli, "p=1e-2: {centi} vs {milli}");
     }
 }

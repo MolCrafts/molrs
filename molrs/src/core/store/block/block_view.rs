@@ -19,6 +19,8 @@ pub struct BlockView<'a> {
     map: IndexMap<&'a str, ColumnView<'a>>,
     /// Borrowed validity masks of the viewed block's nullable columns.
     validity: IndexMap<&'a str, &'a [bool]>,
+    /// Declared precisions of the viewed block's `f64` columns.
+    precision: IndexMap<&'a str, f64>,
     /// Borrowed structural shape of the viewed block, if it declares one.
     shape: Option<&'a [usize]>,
     nrows: Option<usize>,
@@ -30,6 +32,7 @@ impl<'a> BlockView<'a> {
         Self {
             map: IndexMap::new(),
             validity: IndexMap::new(),
+            precision: IndexMap::new(),
             shape: None,
             nrows: None,
         }
@@ -100,8 +103,8 @@ impl<'a> BlockView<'a> {
         self.get(key).map(|c| c.dtype())
     }
 
-    /// Creates an owned [`Block`] by cloning all viewed data, validity masks
-    /// and structural shape included.
+    /// Creates an owned [`Block`] by cloning all viewed data, validity masks,
+    /// declared precisions and structural shape included.
     pub fn to_owned(&self) -> Block {
         let mut block = Block::new();
         for (&key, col_view) in &self.map {
@@ -110,6 +113,9 @@ impl<'a> BlockView<'a> {
         }
         for (&key, &mask) in &self.validity {
             block.put_validity(key.to_owned(), mask.to_vec());
+        }
+        for (&key, &p) in &self.precision {
+            let _ = block.set_precision(key, p);
         }
         if let Some(shape) = self.shape {
             let _ = block.set_shape(shape);
@@ -129,6 +135,7 @@ impl<'a> From<&'a Block> for BlockView<'a> {
         let mut view = BlockView {
             map: IndexMap::with_capacity(block.len()),
             validity: IndexMap::new(),
+            precision: block.precisions().collect(),
             shape: block.structural_shape(),
             nrows: block.nrows(),
         };
@@ -172,10 +179,12 @@ mod tests {
             )
             .unwrap();
         block.set_shape(&[1, 2]).unwrap();
+        block.set_precision("c", 1e-3).unwrap();
 
         let owned = BlockView::from(&block).to_owned();
         assert_eq!(owned.keys().collect::<Vec<_>>(), ["c", "a"]);
         assert_eq!(owned.validity("a"), Some(&[false, true][..]));
+        assert_eq!(owned.precision("c"), Some(1e-3));
         assert_eq!(owned.structural_shape(), Some(&[1, 2][..]));
     }
 

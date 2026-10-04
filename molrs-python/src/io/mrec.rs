@@ -455,6 +455,31 @@ impl PyMrecSequenceSchema {
         Ok(slf)
     }
 
+    /// Declare the precision of ``column`` of ``block``: an absolute tolerance
+    /// in the column's units (``1e-3`` keeps Å coordinates to a thousandth).
+    ///
+    /// Every frame's values are rounded to the largest power of two not above
+    /// it (ties to even) before the change check and before they land, so a
+    /// change below half that step is no change, and the column is stored
+    /// shuffled and compressed. Pinned with the schema. A schema derived with
+    /// :meth:`from_frames` takes each column's :meth:`Block.precision`.
+    fn declare_precision<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        block: &str,
+        column: &str,
+        precision: f64,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        slf.inner
+            .declare_precision(block, column, precision)
+            .map_err(molrs_error_to_pyerr)?;
+        Ok(slf)
+    }
+
+    /// The declared precision of ``column`` of ``block``, or ``None``.
+    fn precision(&self, block: &str, column: &str) -> Option<f64> {
+        self.inner.precision(block, column)
+    }
+
     /// Declare the structural shape of ``block`` (a volumetric grid); every
     /// update then carries exactly ``prod(shape)`` rows.
     fn declare_structural_shape<'py>(
@@ -572,7 +597,9 @@ fn parse_compression(spec: Option<&str>) -> PyResult<Compression> {
 ///     flush_every: Land every this many frames instead of the derived cadence.
 ///     compression: How floating-point columns are compressed: ``None``,
 ///         ``"gzip[:level]"`` or ``"zstd[:level]"``. Everything else always
-///         carries gzip level 1.
+///         carries gzip level 1. A column with a declared precision is
+///         byte-shuffled and compressed whatever this says: ``None`` means
+///         zstd level 3, and a named compressor replaces it.
 ///     durable: Whether ``flush()`` / ``close()`` fsync the touched files.
 ///     meta: The record's identity document, written to ``meta/`` with
 ///         ``molrec_version`` stamped in: a ``dict``, a

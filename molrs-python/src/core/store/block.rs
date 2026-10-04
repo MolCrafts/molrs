@@ -289,6 +289,72 @@ impl PyBlock {
             })
     }
 
+    /// Declare (or, with ``None``, withdraw) the precision of an ``f64``
+    /// column: an absolute tolerance in the column's own units.
+    ///
+    /// A record writer rounds the column to the largest power of two not
+    /// above ``precision`` (ties to even) before storing it, so the stored
+    /// values are within ``precision / 2`` of these and compress several
+    /// times better; the values in memory are not touched. The declaration
+    /// is stored with the column (``frame`` / ``system``) or in the
+    /// trajectory's schema, and reads back. A rename keeps it; replacing the
+    /// column with another dtype, or removing it, drops it.
+    ///
+    /// Parameters
+    /// ----------
+    /// key : str | Key
+    ///     Column name.
+    /// precision : float | None
+    ///     Finite, within ``[2**-1000, 2**1000]``; ``None`` withdraws it.
+    ///
+    /// Raises
+    /// ------
+    /// KeyError
+    ///     If ``key`` does not exist in this block.
+    /// ValueError
+    ///     If the column is not ``float64`` or ``precision`` is out of bounds.
+    ///
+    /// Examples
+    /// --------
+    /// >>> b = molrs.Block({"x": np.array([0.12345, 1.5])})
+    /// >>> b.set_precision("x", 1e-3)
+    /// >>> b.precision("x")
+    /// 0.001
+    #[pyo3(signature = (key, precision))]
+    fn set_precision(&mut self, key: &Bound<'_, PyAny>, precision: Option<f64>) -> PyResult<()> {
+        let key = extract_column_key(key)?;
+        self.inner
+            .with_mut(|b| match precision {
+                Some(p) => b.set_precision(&key, p),
+                None if b.contains_key(&key) => {
+                    b.clear_precision(&key);
+                    Ok(())
+                }
+                None => Err(BlockError::MissingColumn { key: key.clone() }),
+            })
+            .map_err(ffi_error_to_pyerr)?
+            .map_err(|e| match e {
+                BlockError::MissingColumn { key } => PyKeyError::new_err(key),
+                other => PyValueError::new_err(other.to_string()),
+            })
+    }
+
+    /// The declared precision of a column, or ``None`` when it declares none.
+    ///
+    /// Raises
+    /// ------
+    /// KeyError
+    ///     If ``key`` does not exist in this block.
+    fn precision(&self, key: &Bound<'_, PyAny>) -> PyResult<Option<f64>> {
+        let key = extract_column_key(key)?;
+        self.with_block(|b| {
+            if !b.contains_key(&key) {
+                return Err(missing_column(b, &key));
+            }
+            Ok(b.precision(&key))
+        })?
+    }
+
     /// Row-wise union of ``parts``: their rows in order, under the union of
     /// their columns (first-seen order).
     ///
@@ -700,8 +766,8 @@ impl PyBlock {
         self.with_block(|b| b.has_string(&key))
     }
 
-    /// Pickle by logical state: columns, validity masks, row count and
-    /// structural shape.
+    /// Pickle by logical state: columns, validity masks, declared precisions,
+    /// row count and structural shape.
     fn __reduce__<'py>(
         slf: &Bound<'py, Self>,
     ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyTuple>, Bound<'py, PyDict>)> {
@@ -716,9 +782,18 @@ impl PyBlock {
                 masks.set_item(&key, mask)?;
             }
         }
+        let precisions = PyDict::new(py);
+        for (key, p) in this.with_block(|b| {
+            b.precisions()
+                .map(|(k, p)| (k.to_string(), p))
+                .collect::<Vec<_>>()
+        })? {
+            precisions.set_item(key, p)?;
+        }
         let state = PyDict::new(py);
         state.set_item("columns", columns)?;
         state.set_item("validity", masks)?;
+        state.set_item("precision", precisions)?;
         state.set_item("nrows", this.with_block(|b| b.nrows())?)?;
         state.set_item(
             "shape",
@@ -753,6 +828,19 @@ impl PyBlock {
         }
         if let Some(shape) = field("shape")?.extract::<Option<Vec<usize>>>()? {
             self.set_shape(shape)?;
+        }
+        // Absent from a state pickled before precisions were carried.
+        let precisions = match state.get_item("precision")? {
+            Some(precisions) => precisions,
+            None => PyDict::new(state.py()).into_any(),
+        };
+        for (key, p) in precisions.cast::<PyDict>()?.iter() {
+            let key: String = key.extract()?;
+            let p: f64 = p.extract()?;
+            self.inner
+                .with_mut(|b| b.set_precision(&key, p))
+                .map_err(ffi_error_to_pyerr)?
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
         }
         Ok(())
     }

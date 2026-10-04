@@ -326,6 +326,30 @@ class Block:
         ValueError
             If *mask* does not have exactly one entry per row.
         """
+    def set_precision(self, key: ColumnKey, precision: float | None) -> None:
+        """Declare (``None``: withdraw) the precision of a ``float64`` column.
+
+        An absolute tolerance in the column's units. A record writer stores
+        the column rounded to the largest power of two not above it (ties to
+        even), within ``precision / 2`` of the values; memory is untouched.
+        The declaration reads back from ``*.mrec``.
+
+        Raises
+        ------
+        KeyError
+            If ``key`` names no column.
+        ValueError
+            If the column is not ``float64`` or *precision* is not finite and
+            within ``[2**-1000, 2**1000]``.
+        """
+    def precision(self, key: ColumnKey) -> float | None:
+        """The declared precision of a column, or ``None``.
+
+        Raises
+        ------
+        KeyError
+            If ``key`` names no column.
+        """
     @staticmethod
     def stack(parts: Sequence[Block]) -> Block:
         """Row-wise union of *parts* under the union of their columns
@@ -3346,6 +3370,10 @@ class SequenceSchema:
         self, block: str, column: str, dtype: str, trailing: list[int] | None = ...
     ) -> Self: ...
     def declare_structural_shape(self, block: str, shape: list[int]) -> Self: ...
+    def declare_precision(self, block: str, column: str, precision: float) -> Self:
+        """Pin the precision of an ``f64`` column: every frame's values are
+        rounded to its binary grid before the change check and the landing."""
+    def precision(self, block: str, column: str) -> float | None: ...
     def declare_meta(self, key: str, dtype: str) -> Self: ...
     def declare_meta_with_fill(
         self, key: str, fill: Any, dtype: str | None = ...

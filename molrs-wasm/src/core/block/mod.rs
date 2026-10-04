@@ -379,6 +379,33 @@ impl Block {
         })?
     }
 
+    /// The declared precision of column `key`: the absolute tolerance its
+    /// stored values were rounded to (molrec "declared precision").
+    ///
+    /// # Returns
+    ///
+    /// The precision, or `undefined` when the column declares none.
+    ///
+    /// # Errors
+    ///
+    /// Throws if the column does not exist, or if the handle has been
+    /// invalidated.
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// const p = atoms.precision("x"); // e.g. 0.001, or undefined
+    /// ```
+    #[wasm_bindgen(js_name = precision)]
+    pub fn precision(&self, key: &str) -> Result<Option<f64>, JsValue> {
+        self.with(|b| {
+            if !b.contains_key(key) {
+                return Err(missing_column(key));
+            }
+            Ok(b.precision(key))
+        })?
+    }
+
     /// Rename column `old_key` to `new_key`.
     ///
     /// # Errors

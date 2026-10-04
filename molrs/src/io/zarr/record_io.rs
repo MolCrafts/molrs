@@ -296,6 +296,7 @@ fn write_metrics(
             store,
             &join_path(&series_path, &safe_series_name(name)),
             &column,
+            None,
         )?;
     }
     Ok(())
@@ -385,7 +386,7 @@ fn write_observables(
         write_json_group(store, &join_path(&meta_path, name), &attrs)?;
 
         let ObservableData::Column(column) = &obs.data;
-        write_column(store, &join_path(prefix, name), column)?;
+        write_column(store, &join_path(prefix, name), column, None)?;
     }
     Ok(())
 }
@@ -1124,12 +1125,13 @@ mod tests {
                 .unwrap();
         }
         let steps = Column::from_i64(ArrayD::from_shape_vec(vec![2], vec![0_i64, 1]).unwrap());
-        write_column(&store, "/future/step", &steps).unwrap();
-        write_column(&store, "/future/atoms/x", &float_column(&[1.0, 2.0])).unwrap();
+        write_column(&store, "/future/step", &steps, None).unwrap();
+        write_column(&store, "/future/atoms/x", &float_column(&[1.0, 2.0]), None).unwrap();
         write_column(
             &store,
             "/future/atoms/offset",
             &Column::from_uint(ArrayD::from_shape_vec(vec![3], vec![0_u64, 1, 5]).unwrap()),
+            None,
         )
         .unwrap();
         (dir, path)
@@ -1473,6 +1475,7 @@ mod tests {
             &store,
             "/metrics/series/steps",
             &Column::from_uint(ndarray::ArrayD::from_shape_vec(vec![2], vec![1u64, 2]).unwrap()),
+            None,
         )
         .unwrap();
 
@@ -1711,5 +1714,70 @@ mod tests {
             message.contains("0.13); re-write with 0.13"),
             "must say which writer produced it and how to migrate: {message}"
         );
+    }
+
+    // -- the wasm32 precision fixture ---------------------------------------
+
+    /// The packed record molrs-wasm reads to prove a wasm32 reader decodes a
+    /// precision column (`numcodecs.shuffle` + `zstd`, written here by the C
+    /// encoder) through the pure-Rust `zstd` plugin.
+    const WASM_PRECISION_FIXTURE: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../molrs-wasm/tests/fixtures/precision.mrec.zip"
+    );
+
+    /// The values the fixture's `x` columns were presented with; the wasm
+    /// test rounds them with the same rule and compares bit for bit.
+    const FIXTURE_X: [[F; 3]; 2] = [[0.123_456_789, -1.000_488, 7.3], [0.2, 1.75, -3.062_57]];
+
+    fn precision_fixture_record() -> MolRec {
+        let precise = |values: &[F]| {
+            let mut frame = frame_with_x(values);
+            frame
+                .get_mut("atoms")
+                .unwrap()
+                .set_precision("x", 1e-3)
+                .unwrap();
+            frame
+        };
+        let mut record = MolRec::new();
+        record.frame = Some(precise(&FIXTURE_X[0]));
+        record.trajectory = Some(Trajectory::from_frames(
+            FIXTURE_X.iter().map(|values| precise(values)).collect(),
+        ));
+        record
+    }
+
+    /// `cargo mrs-test -- --ignored regenerate_the_wasm_precision_fixture`
+    /// rewrites the checked-in fixture.
+    #[test]
+    #[ignore = "rewrites a checked-in fixture"]
+    fn regenerate_the_wasm_precision_fixture() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("precision.mrec");
+        write_record_file(&path, &precision_fixture_record()).unwrap();
+        let packed = crate::io::zarr::pack(&path).unwrap();
+        std::fs::copy(packed, WASM_PRECISION_FIXTURE).unwrap();
+    }
+
+    #[test]
+    fn the_wasm_precision_fixture_is_a_shuffled_zstd_precision_record() {
+        let store = crate::io::zarr::open_packed(WASM_PRECISION_FIXTURE).unwrap();
+        let q = molrs::store::precision::quantum(1e-3).unwrap();
+        let rounded = |values: &[F]| -> Vec<F> {
+            values
+                .iter()
+                .map(|&x| molrs::store::precision::quantize(x, q))
+                .collect()
+        };
+        let array = Array::open(store.clone(), "/frame/atoms/x").unwrap();
+        let metadata = serde_json::to_string(array.metadata()).unwrap();
+        assert!(metadata.contains("numcodecs.shuffle") && metadata.contains("zstd"));
+        let sequence = FrameSequence::open(store).unwrap();
+        for (index, values) in FIXTURE_X.iter().enumerate() {
+            let frame = sequence.frame(index as u64).unwrap().unwrap();
+            assert_eq!(atoms_x(&frame), rounded(values));
+            assert_eq!(frame.get("atoms").unwrap().precision("x"), Some(1e-3));
+        }
     }
 }
