@@ -347,3 +347,42 @@ class TestDeclaredPrecision:
 
         block = pickle.loads(pickle.dumps(self._frame()["atoms"]))
         assert block.precision("x") == 1e-3
+
+
+class TestTypedFrameMeta:
+    """molrec F3: a frame's meta reads back at its tag, NaN included."""
+
+    def test_every_value_keeps_its_tag(self, tmp_path: Path) -> None:
+        path = tmp_path / "m.mrec"
+        frame = _coords_frame()
+        frame.meta["n32"] = molrs.MetaValue("i32", 7)
+        frame.meta["big"] = 2**64 - 1
+        frame.meta["one"] = 1.0
+        frame.meta["nan"] = float("nan")
+        frame.meta["inf"] = float("-inf")
+        frame.meta["vec"] = molrs.MetaValue("f64x3", (1.0, float("inf"), 2.0))
+        frame.meta["doc"] = {"a": [1, 2]}
+        molrs.io.write_mrec(path, frame)
+        meta = molrs.io.read_mrec(path).meta
+        assert meta.dtype("n32") == "i32" and meta["n32"] == 7
+        assert meta.dtype("big") == "u64" and meta["big"] == 2**64 - 1
+        assert meta.dtype("one") == "f64" and meta["one"] == 1.0
+        assert meta.dtype("nan") == "f64" and np.isnan(meta["nan"])
+        assert meta["inf"] == float("-inf")
+        assert meta.dtype("vec") == "f64x3" and meta["vec"][1] == float("inf")
+        assert meta.dtype("doc") == "json"
+        assert "_meta_types" not in meta
+
+    def test_a_non_finite_number_inside_a_document_is_refused(self) -> None:
+        frame = molrs.Frame()
+        with pytest.raises(ValueError):
+            frame.meta["doc"] = {"t": float("nan")}
+
+    def test_a_nan_fill_survives_the_pin(self, tmp_path: Path) -> None:
+        schema = molrs.io.mrec.SequenceSchema.from_frame(_coords_frame())
+        schema.declare_meta_with_fill("temp", float("nan"))
+        path = tmp_path / "f.mrec"
+        with molrs.io.mrec.TrajectoryWriter(path, schema) as writer:
+            writer.append(_coords_frame())
+        frame = molrs.io.mrec.TrajectoryReader(path).read_frame(0)
+        assert np.isnan(frame.meta["temp"])

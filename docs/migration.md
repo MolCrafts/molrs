@@ -97,6 +97,17 @@ short "Also new" list at the end of each section.
     *encode* `zstd`. A store holding such an array — every `f64` column with
     a declared precision — cannot be read by molrs 0.14 or by any reader
     without the two codecs.
+  - **Frame meta is typed on disk.** A `frame` / `system` group writes each
+    meta value in its typed JSON form and adds the attribute `_meta_types`
+    (`{key: tag}`), so a value reads back at its tag: an `i32` stays `i32`,
+    an `f64x3` stays a vector, `1.0` stays `f64`. NaN and ±∞ are stored as
+    `"NaN"` / `"Infinity"` / `"-Infinity"` (0.14 wrote JSON `null`, losing
+    them), and a `u64`/`i64` beyond ±2⁵³ as a decimal string. A store without
+    `_meta_types` is inferred as before. A meta key named `_meta_types` is
+    refused at write, and a typed value in any other form is refused at
+    read. The same forms are used for `sequence_schema` fills (a NaN fill is
+    now storable; a `null` fill is refused) and for the `{dtype, value}`
+    envelope of the `serde` / `stream` wire form.
   - **Declared precision.** An `f64` column may declare a precision `p`
     (`Block::set_precision`, Python `Block.set_precision`). Writers then
     store `round_half_even(x / q) · q` with `q` the largest power of two
@@ -284,6 +295,11 @@ short "Also new" list at the end of each section.
 - **`LAMMPSDataReader` refuses unknown sections.** Opt out per section with
   `.with_skipped_section("Ellipsoids")`.
 - **`stream::Publisher::send_async` → `send`.**
+- **`MetaValue::to_attr_value` is removed.** Use
+  `MetaValue::to_typed_json` (typed JSON form) and
+  `MetaValue::from_typed_json(tag, value)`; `from_attr_value` stays, as the
+  inference of an untyped value. `MetaValue::from_json_value` now reads the
+  typed JSON payload forms (`"NaN"`, decimal strings beyond 2⁵³).
 - **`io::mrec::write_trajectory_file(path, trajectory)` →
   `write_trajectory_file(path, trajectory, meta)`.** `meta` is an
   `Option<&JsonMap>`, like `write_frame_file` and `write_system_file`. Pass
@@ -559,6 +575,11 @@ short "Also new" list at the end of each section.
   `TrajectoryWriter(meta=)` accept a `dict`, a `MetaDocument`, or any mapping
   (`frame.meta` included), with nested tuples and documents. 0.14 took only a
   `dict` of lists and dicts, and raised `TypeError` for anything else.
+- **A non-finite float inside a JSON meta document raises `ValueError`.**
+  `frame.meta["doc"] = {"t": float("nan")}` used to store `null`. A
+  top-level `float("nan")` is an `f64` value and is kept.
+  `SequenceSchema.declare_meta_with_fill` infers an untagged fill the way
+  `frame.meta` does, so a NaN fill is an `f64` fill.
 - **Trajectory `time` has no unit.** The `TrajectoryReader.time` and
   `TrajectoryWriter.append(time=)` docs no longer say fs. A record does not
   store a unit for time; the producer's convention applies.

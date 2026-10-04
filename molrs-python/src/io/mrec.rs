@@ -10,14 +10,14 @@ use std::path::PathBuf;
 
 use crate::core::spatial::simbox::PyBox;
 use crate::core::store::frame::{
-    PyFrame, PyMetaValue, json_map_to_plain_dict, meta_document_arg, py_to_json,
+    PyFrame, PyMetaValue, infer_meta_value, json_map_to_plain_dict, meta_document_arg,
+    meta_value_from_dtype,
 };
 use crate::core::store::trajectory::PyTrajectory;
 use crate::helpers::{molrs_error_to_pyerr, path_str};
 use molrs::io::mrec::{
     Compression, FrameSequence, FrameSequenceWriter, SequenceSchema, column_dtype, open_packed,
 };
-use molrs::store::meta::MetaValue;
 use pyo3::exceptions::{PyIndexError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyFrozenSet};
@@ -517,16 +517,12 @@ impl PyMrecSequenceSchema {
         fill: &Bound<'_, PyAny>,
         dtype: Option<&str>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let value = if let Ok(meta) = fill.extract::<PyRef<'_, PyMetaValue>>() {
-            meta.inner.clone()
-        } else if let Some(dtype) = dtype {
-            MetaValue::from_json_value(&serde_json::json!({
-                "dtype": dtype,
-                "value": py_to_json(fill, 0)?,
-            }))
-            .map_err(|e| PyValueError::new_err(format!("meta key {key:?} fill: {e}")))?
-        } else {
-            MetaValue::from_attr_value(&py_to_json(fill, 0)?)
+        let value = match dtype {
+            Some(dtype) if fill.extract::<PyRef<'_, PyMetaValue>>().is_err() => {
+                meta_value_from_dtype(dtype, fill)
+                    .map_err(|e| PyValueError::new_err(format!("meta key {key:?} fill: {e}")))?
+            }
+            _ => infer_meta_value(fill)?,
         };
         slf.inner
             .declare_meta_with_fill(key, value)

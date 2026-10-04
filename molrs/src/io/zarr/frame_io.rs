@@ -36,7 +36,7 @@ use molrs::spatial::simbox::SimBox;
 use molrs::store::block::DType;
 use molrs::store::block::{Block, Column};
 use molrs::store::frame::Frame;
-use molrs::store::meta::MetaValue;
+use molrs::store::meta::{META_TYPES_ATTR, MetaMap, MetaValue};
 use molrs::types::F;
 
 #[cfg(feature = "zarr")]
@@ -699,9 +699,26 @@ pub(crate) fn write_frame_group(
     // The frame's meta document is this group's attribute map, not a child
     // group: the contract binds document sections as attributes, and a `meta`
     // child would also steal a name from the block namespace.
+    //
+    // Every value is written in its typed JSON form (a NaN is `"NaN"`, a
+    // `u64` past 2^53 a decimal string), and `_meta_types` maps every key to
+    // its tag, so a frame reads back with each value at its tag.
+    if frame.meta.contains_key(META_TYPES_ATTR) {
+        return Err(MolRsError::zarr(format!(
+            "{META_TYPES_ATTR:?} types a frame group's meta document; a meta key cannot take it"
+        )));
+    }
     let mut meta_attrs = serde_json::Map::new();
+    let mut meta_types = serde_json::Map::new();
     for (k, v) in &frame.meta {
-        meta_attrs.insert(k.clone(), v.to_attr_value());
+        meta_attrs.insert(k.clone(), v.to_typed_json());
+        meta_types.insert(k.clone(), serde_json::Value::from(v.dtype()));
+    }
+    if !meta_types.is_empty() {
+        meta_attrs.insert(
+            META_TYPES_ATTR.to_string(),
+            serde_json::Value::Object(meta_types),
+        );
     }
     GroupBuilder::new()
         .attributes(meta_attrs)
@@ -805,9 +822,7 @@ pub(crate) fn read_frame_group(
 
     // Meta lives in this group's own attributes.
     if let Ok(frame_group) = zarrs::group::Group::open(store.clone(), prefix) {
-        for (k, v) in frame_group.attributes() {
-            frame.meta.insert(k.clone(), MetaValue::from_attr_value(v));
-        }
+        frame.meta = read_meta_document(frame_group.attributes(), prefix)?;
     }
 
     // The cell.
@@ -887,6 +902,53 @@ pub(crate) fn read_frame_group(
     }
 
     Ok(frame)
+}
+
+/// A frame-shaped group's `meta` document from its attribute map.
+///
+/// `_meta_types` is taken off the map and never surfaces as a key. A key it
+/// types is decoded under its tag and refused in any other form; a key it
+/// does not type is inferred ([`MetaValue::from_attr_value`] — a store
+/// written before typed meta reads as it always did); a tag whose key is
+/// absent is ignored.
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] naming the group and key when `_meta_types` is not
+/// an object of tag strings, or a typed value is not its tag's form.
+pub(crate) fn read_meta_document(
+    attrs: &serde_json::Map<String, serde_json::Value>,
+    path: &str,
+) -> Result<MetaMap, MolRsError> {
+    let types = match attrs.get(META_TYPES_ATTR) {
+        None => None,
+        Some(serde_json::Value::Object(types)) => Some(types),
+        Some(other) => {
+            return Err(MolRsError::zarr(format!(
+                "{path}: {META_TYPES_ATTR} must be an object of tags, found {other}"
+            )));
+        }
+    };
+    let mut meta = MetaMap::with_capacity(attrs.len());
+    for (key, value) in attrs {
+        if key == META_TYPES_ATTR {
+            continue;
+        }
+        let typed = match types.and_then(|types| types.get(key)) {
+            None => MetaValue::from_attr_value(value),
+            Some(tag) => {
+                let tag = tag.as_str().ok_or_else(|| {
+                    MolRsError::zarr(format!(
+                        "{path}: {META_TYPES_ATTR}[{key:?}] must be a tag string, found {tag}"
+                    ))
+                })?;
+                MetaValue::from_typed_json(tag, value)
+                    .map_err(|e| MolRsError::zarr(format!("{path}: meta key {key:?}: {e}")))?
+            }
+        };
+        meta.insert(key.clone(), typed);
+    }
+    Ok(meta)
 }
 
 /// Restore the validity masks [`write_validity_group`] wrote for `block`.
@@ -1930,7 +1992,7 @@ mod tests {
                 .keys()
                 .map(String::as_str)
                 .collect::<Vec<_>>(),
-            vec!["z", "a", "m"]
+            vec!["z", "a", "m", META_TYPES_ATTR]
         );
 
         let back = read_frame_group(&store, FRAME).unwrap();
@@ -2089,5 +2151,160 @@ mod tests {
         array.store_metadata().unwrap();
         let err = read_frame_group(&store, FRAME).unwrap_err().to_string();
         assert!(err.contains(COLUMN) && err.contains("f64"), "{err}");
+    }
+
+    // -- typed frame meta (molrec F3) ---------------------------------------
+
+    /// One value of every tag, with the edges the typed JSON forms exist for.
+    fn every_tag() -> Vec<(&'static str, MetaValue)> {
+        vec![
+            ("b", MetaValue::Bool(true)),
+            ("i32", MetaValue::I32(-7)),
+            ("i64", MetaValue::I64(i64::MIN)),
+            ("u32", MetaValue::U32(u32::MAX)),
+            ("u64", MetaValue::U64(u64::MAX)),
+            ("u64_53", MetaValue::U64((1 << 53) + 1)),
+            ("f64", MetaValue::F64(1.0)),
+            ("inf", MetaValue::F64(f64::INFINITY)),
+            ("ninf", MetaValue::F64(f64::NEG_INFINITY)),
+            ("s", MetaValue::String("NaN".into())),
+            ("b3", MetaValue::Bool3([true, false, true])),
+            ("i32x3", MetaValue::I32x3([1, -2, 3])),
+            ("i64x3", MetaValue::I64x3([i64::MIN, 0, i64::MAX])),
+            ("u32x3", MetaValue::U32x3([0, 1, 2])),
+            ("u64x3", MetaValue::U64x3([0, 1, u64::MAX])),
+            ("f64x3", MetaValue::F64x3([1.0, f64::INFINITY, 2.5])),
+            ("f64x6", MetaValue::F64x6([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])),
+            ("f64x9", MetaValue::F64x9([0.5; 9])),
+            (
+                "doc",
+                MetaValue::Json(serde_json::json!({"k": [1, 2], "n": null})),
+            ),
+        ]
+    }
+
+    fn meta_round_trip(frame: &Frame) -> Frame {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        write_frame_group(&store, FRAME, frame).unwrap();
+        read_frame_group(&store, FRAME).unwrap()
+    }
+
+    #[test]
+    fn every_meta_tag_round_trips_at_its_tag() {
+        let mut frame = Frame::new();
+        for (key, value) in every_tag() {
+            frame.meta.insert(key, value);
+        }
+        frame.meta.insert("nan", f64::NAN);
+        let back = meta_round_trip(&frame);
+        for (key, value) in every_tag() {
+            assert_eq!(back.meta.get(key), Some(&value), "{key}");
+        }
+        assert!(back.meta.get("nan").unwrap().as_f64().unwrap().is_nan());
+        assert!(!back.meta.contains_key(META_TYPES_ATTR));
+    }
+
+    #[test]
+    fn meta_is_stored_in_typed_json_with_a_tag_per_key() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = Frame::new();
+        frame.meta.insert("t", f64::NAN);
+        frame.meta.insert("n", u64::MAX);
+        frame.meta.insert("k", MetaValue::I32(3));
+        write_frame_group(&store, FRAME, &frame).unwrap();
+        let attrs = zarrs::group::Group::open(store.clone(), FRAME)
+            .unwrap()
+            .attributes()
+            .clone();
+        assert_eq!(attrs["t"], serde_json::json!("NaN"));
+        assert_eq!(attrs["n"], serde_json::json!("18446744073709551615"));
+        assert_eq!(
+            attrs[META_TYPES_ATTR],
+            serde_json::json!({"t": "f64", "n": "u64", "k": "i32"})
+        );
+        // An empty document writes no `_meta_types`.
+        write_frame_group(&store, FRAME, &Frame::new()).unwrap();
+        let attrs = zarrs::group::Group::open(store, FRAME)
+            .unwrap()
+            .attributes()
+            .clone();
+        assert!(attrs.is_empty());
+    }
+
+    /// Write `frame`, then let `tamper` edit the group attributes.
+    fn tampered(
+        frame: &Frame,
+        tamper: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>),
+    ) -> Result<Frame, MolRsError> {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        write_frame_group(&store, FRAME, frame).unwrap();
+        let mut group = zarrs::group::Group::open(store.clone(), FRAME).unwrap();
+        tamper(group.attributes_mut());
+        group.store_metadata().unwrap();
+        read_frame_group(&store, FRAME)
+    }
+
+    fn one_key(key: &str, value: impl Into<MetaValue>) -> Frame {
+        let mut frame = Frame::new();
+        frame.meta.insert(key, value);
+        frame
+    }
+
+    #[test]
+    fn untyped_meta_is_inferred_and_a_stale_tag_is_ignored() {
+        let back = tampered(&one_key("x", MetaValue::I32(4)), |attrs| {
+            attrs.remove(META_TYPES_ATTR);
+            attrs.insert("big".into(), serde_json::json!(u64::MAX));
+            attrs.insert("f".into(), serde_json::json!(2.5));
+            attrs.insert("s".into(), serde_json::json!("NaN"));
+        })
+        .unwrap();
+        assert_eq!(back.meta.get("x"), Some(&MetaValue::I64(4)));
+        assert_eq!(back.meta.get("big"), Some(&MetaValue::U64(u64::MAX)));
+        assert_eq!(back.meta.get("f"), Some(&MetaValue::F64(2.5)));
+        assert_eq!(back.meta.get("s"), Some(&MetaValue::String("NaN".into())));
+
+        let back = tampered(&one_key("x", 1.0), |attrs| {
+            attrs[META_TYPES_ATTR]["gone"] = serde_json::json!("i32");
+        })
+        .unwrap();
+        assert_eq!(back.meta.get("x"), Some(&MetaValue::F64(1.0)));
+        assert!(!back.meta.contains_key("gone"));
+    }
+
+    #[test]
+    fn a_value_off_its_tag_is_refused() {
+        for (value, tag) in [
+            (serde_json::json!(1.5), "i32"),
+            (serde_json::json!(1_i64 << 40), "i32"),
+            (serde_json::Value::Null, "f64"),
+            (serde_json::json!([1, 2]), "f64x3"),
+        ] {
+            let err = tampered(&one_key("x", 1.0), |attrs| {
+                attrs.insert("x".into(), value.clone());
+                attrs[META_TYPES_ATTR]["x"] = serde_json::json!(tag);
+            })
+            .unwrap_err()
+            .to_string();
+            assert!(err.contains("\"x\""), "{err}");
+        }
+        let err = tampered(&one_key("x", 1.0), |attrs| {
+            attrs.insert(META_TYPES_ATTR.into(), serde_json::json!(["f64"]));
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains(META_TYPES_ATTR), "{err}");
+    }
+
+    #[test]
+    fn a_meta_key_named_like_the_tag_map_is_refused_at_write() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let err = write_frame_group(&store, FRAME, &one_key(META_TYPES_ATTR, 1.0))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(META_TYPES_ATTR), "{err}");
     }
 }

@@ -511,9 +511,9 @@ class FrameMeta:
 
     ``dtype(k)`` reports the tag of the value stored right now; any plain write
     re-infers it. :class:`MetaValue` fixes the dtype of that write only — it
-    does not pin the key. A tag survives a round trip only through a declared
-    sequence schema or the serde frame document; outside those two it is
-    re-inferred on read.
+    does not pin the key. A tag survives a round trip through a ``*.mrec``
+    frame or system (stored in ``_meta_types``), a declared sequence schema
+    and the serde frame document. NaN and infinities survive as ``f64``.
 
     Enumeration follows insertion order. ``popitem`` returns the last-inserted
     key. Order inside a nested :class:`MetaDocument` is unspecified.

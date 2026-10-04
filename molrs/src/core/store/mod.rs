@@ -15,3 +15,4 @@ pub mod record;
 pub mod schema;
 pub mod trajectory;
 pub mod type_labels;
+pub mod typed_json;

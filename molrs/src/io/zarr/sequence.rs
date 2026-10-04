@@ -784,11 +784,29 @@ struct BlockSchema {
 struct MetaSchema {
     /// The [`MetaValue::dtype`] tag every step must carry.
     dtype: String,
-    /// Value written for a step that omits the key, as the plain JSON value
-    /// ([`MetaValue::to_attr_value`]) — `dtype` beside it says how to read it
-    /// back. `None` makes the omission an error — there is no implicit fill.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Value written for a step that omits the key, in its typed JSON form
+    /// ([`MetaValue::to_typed_json`], so a NaN fill is `"NaN"`) — `dtype`
+    /// beside it says how to read it back. `None` makes the omission an
+    /// error — there is no implicit fill.
+    ///
+    /// A present `null` is kept as `Some(Null)` — not folded into "no fill" —
+    /// so a pin whose numeric fill a writer lost to `null` is refused as the
+    /// broken value it is rather than read as a run without a fill.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
     fill: Option<serde_json::Value>,
+}
+
+/// Deserialize a field that is present, `null` included, as `Some`; an absent
+/// field takes the `#[serde(default)]` `None`.
+fn present_value<'de, D>(deserializer: D) -> Result<Option<serde_json::Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    serde_json::Value::deserialize(deserializer).map(Some)
 }
 
 /// The blocks, columns, dtypes and trailing shapes a sequence is pinned to.
@@ -1203,7 +1221,7 @@ impl SequenceSchema {
         self.meta
             .get_mut(key)
             .expect("declare_meta just inserted it")
-            .fill = Some(fill.to_attr_value());
+            .fill = Some(fill.to_typed_json());
         Ok(())
     }
 
@@ -1273,9 +1291,20 @@ where
     let Some(attribute) = group.attributes().get(SCHEMA_ATTRIBUTE) else {
         return Ok(None);
     };
-    serde_json::from_value(attribute.clone())
-        .map(Some)
-        .map_err(zerr)
+    let schema: SequenceSchema = serde_json::from_value(attribute.clone()).map_err(zerr)?;
+    // A fill is a typed JSON value of its key's tag; one that is not (a NaN
+    // a writer lost to `null`) is a malformed pin, refused here.
+    for (key, declared) in &schema.meta {
+        if let Some(fill) = &declared.fill {
+            MetaValue::from_typed_json(&declared.dtype, fill).map_err(|e| {
+                MolRsError::zarr(format!(
+                    "{SCHEMA_ATTRIBUTE}: the fill of meta key {key:?} is not a {}: {e}",
+                    declared.dtype
+                ))
+            })?;
+        }
+    }
+    Ok(Some(schema))
 }
 
 /// [`pinned_schema`], requiring the pin — the writer's half of the seam:
@@ -3877,17 +3906,14 @@ impl FrameSequenceWriter {
                 // declared `f32`, a JSON list for a declared `f64x3` — is
                 // re-read at the declared width, exactly; a value that cannot
                 // be is the error.
-                Some(value) => MetaValue::from_json_value(&serde_json::json!({
-                    "dtype": declared.dtype,
-                    "value": value.to_attr_value(),
-                }))
-                .map_err(|e| {
-                    MolRsError::zarr(format!(
-                        "meta key {key:?} is declared {} but this frame carries {}: {e}",
-                        declared.dtype,
-                        value.dtype()
-                    ))
-                })?,
+                Some(value) => MetaValue::from_typed_json(&declared.dtype, &value.to_typed_json())
+                    .map_err(|e| {
+                        MolRsError::zarr(format!(
+                            "meta key {key:?} is declared {} but this frame carries {}: {e}",
+                            declared.dtype,
+                            value.dtype()
+                        ))
+                    })?,
                 None => {
                     let fill = declared.fill.as_ref().ok_or_else(|| {
                         MolRsError::zarr(format!(
@@ -3895,13 +3921,10 @@ impl FrameSequenceWriter {
                              declared for it; there is no implicit fill"
                         ))
                     })?;
-                    // The pin stores the plain value; the declared tag says
-                    // how to read it back.
-                    MetaValue::from_json_value(&serde_json::json!({
-                        "dtype": declared.dtype,
-                        "value": fill,
-                    }))
-                    .map_err(|e| MolRsError::zarr(format!("meta key {key:?} fill: {e}")))?
+                    // The pin stores the typed JSON form; the declared tag
+                    // says how to read it back.
+                    MetaValue::from_typed_json(&declared.dtype, fill)
+                        .map_err(|e| MolRsError::zarr(format!("meta key {key:?} fill: {e}")))?
                 }
             };
             resolved.insert(key.clone(), value);
@@ -6272,6 +6295,47 @@ mod tests {
             Some(&MetaValue::F64(300.0)),
             "and the step that carried a value keeps it"
         );
+    }
+
+    /// A NaN fill is pinned as `"NaN"` and lands as NaN; a pin whose fill a
+    /// writer lost to `null` is refused, not read as a run without a fill.
+    #[test]
+    fn a_nan_fill_is_storable_and_a_null_fill_is_refused() {
+        const KEY: &str = "temperature";
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
+        schema
+            .declare_meta_with_fill(KEY, MetaValue::F64(f64::NAN))
+            .unwrap();
+        schema
+            .declare_meta_with_fill("count", MetaValue::U64(u64::MAX))
+            .unwrap();
+        let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
+        writer.append(&atoms_frame(&[1.0])).unwrap();
+        writer.close().unwrap();
+
+        let pin = Group::open(store.clone(), TRAJ).unwrap().attributes()[SCHEMA_ATTRIBUTE].clone();
+        assert_eq!(pin["meta"][KEY]["fill"], serde_json::json!("NaN"));
+        assert_eq!(
+            pin["meta"]["count"]["fill"],
+            serde_json::json!("18446744073709551615")
+        );
+        let mut seq = open_sequence(&store);
+        let frame = frame_at(&mut seq, 0);
+        assert!(frame.meta.get(KEY).unwrap().as_f64().unwrap().is_nan());
+        assert_eq!(frame.meta.get("count"), Some(&MetaValue::U64(u64::MAX)));
+
+        // Tamper: the fill as the `null` molrs used to write.
+        let mut group = Group::open(store.clone(), TRAJ).unwrap();
+        group.attributes_mut()[SCHEMA_ATTRIBUTE]["meta"][KEY]["fill"] = serde_json::Value::Null;
+        group.store_metadata().unwrap();
+        let err = FrameSequence::open(store.clone())
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(err.contains(KEY), "{err}");
+        assert!(FrameSequenceWriter::open(store).is_err());
     }
 
     /// Declared meta keys read back in `declare_meta` order, not the order the
