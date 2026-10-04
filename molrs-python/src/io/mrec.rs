@@ -497,6 +497,28 @@ impl PyMrecSequenceSchema {
         self.inner.target(block, column).map(str::to_string)
     }
 
+    /// Declare ``block`` aligned with ``target``: its rows are ``target``'s
+    /// rows, one for one, at every frame after carry-forward. A frame whose
+    /// ``target`` changes row count must restate ``block``; one that keeps
+    /// it may let ``block`` carry forward. The two blocks keep disjoint
+    /// columns, alignments do not chain, and the aligned block declares no
+    /// structural shape. A reader hands back the two blocks.
+    fn declare_aligned<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        block: &str,
+        target: &str,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        slf.inner
+            .declare_aligned(block, target)
+            .map_err(molrs_error_to_pyerr)?;
+        Ok(slf)
+    }
+
+    /// The block ``block`` is aligned with, or ``None``.
+    fn aligned_with(&self, block: &str) -> Option<String> {
+        self.inner.aligned_with(block).map(str::to_string)
+    }
+
     /// The declared precision of ``column`` of ``block``, or ``None``.
     fn precision(&self, block: &str, column: &str) -> Option<f64> {
         self.inner.precision(block, column)

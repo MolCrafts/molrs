@@ -423,3 +423,41 @@ class TestRowReferences:
         assert schema.target("members", "atom") == "/frame/atoms"
         with pytest.raises(ValueError):
             schema.declare_target("members", "atom", "atoms")
+
+
+class TestAlignedBlocks:
+    """molrec F5: an aligned block keeps its target's row count."""
+
+    def _frame(self, n: int, types: list[str] | None) -> molrs.Frame:
+        frame = molrs.Frame()
+        frame["atoms"] = molrs.Block({"x": np.arange(n, dtype=np.float64)})
+        if types is not None:
+            frame["atom_types"] = molrs.Block({"type": np.array(types)})
+        return frame
+
+    def _schema(self) -> molrs.io.mrec.SequenceSchema:
+        schema = molrs.io.mrec.SequenceSchema()
+        schema.declare_column("atoms", "x", "f64")
+        schema.declare_column("atom_types", "type", "string")
+        return schema.declare_aligned("atom_types", "atoms")
+
+    def test_carry_forward_and_restate_on_growth(self, tmp_path: Path) -> None:
+        path = tmp_path / "a.mrec"
+        with molrs.io.mrec.TrajectoryWriter(path, self._schema()) as writer:
+            writer.append(self._frame(2, ["A", "B"]))
+            writer.append(self._frame(2, None))
+            writer.append(self._frame(3, ["A", "B", "C"]))
+        reader = molrs.io.mrec.TrajectoryReader(path)
+        assert list(reader.read_frame(1)["atom_types"]["type"]) == ["A", "B"]
+        assert reader.read_frame(2)["atom_types"].nrows == 3
+
+    def test_a_frame_that_breaks_the_alignment_is_refused(self, tmp_path: Path) -> None:
+        schema = self._schema()
+        assert schema.aligned_with("atom_types") == "atoms"
+        writer = molrs.io.mrec.TrajectoryWriter(tmp_path / "b.mrec", schema)
+        writer.append(self._frame(2, ["A", "B"]))
+        with pytest.raises(ValueError):
+            writer.append(self._frame(3, None))
+        writer.close()
+        with pytest.raises(ValueError):
+            molrs.io.mrec.SequenceSchema().declare_aligned("a", "b")

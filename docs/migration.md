@@ -93,6 +93,15 @@ short "Also new" list at the end of each section.
   `[(column, target), …]` (empty, not `None`). `BlockDoc` / Python
   `BlockSpec` gain `declared_endpoints`. `Validator` range-checks declared
   targets, reports `ViolationKind::MissingTarget`, and skips null rows.
+- **Aligned trajectory blocks.** `SequenceSchema::declare_aligned(block,
+  target)` (Python `declare_aligned`) pins a block's rows to another's at
+  every resolved frame (`aligned_with` in `sequence_schema`): the writer
+  refuses a frame where the aligned block is present and its target absent
+  or of another row count (restate it when the target's count changes), the
+  reader refuses such a store, and both refuse an aligned block named like a
+  `system` block. Declared only: a schema derived with `from_frames` (and so
+  the record door `write_record_file` / `write_mrec_trajectory`) declares no
+  alignment.
 - **`Frame::subset` / `Frame::replicate` accept `members`** (it was refused):
   `members.ibead` and every declared same-frame reference are renumbered or
   offset; absolute and undeclared references are copied unchanged.
@@ -873,6 +882,8 @@ short "Also new" list at the end of each section.
   - `lammps_coeff_params` / `lammps_coeff_values`; the frcmod writer.
 - **Store:** nullable columns (`insert_nullable`, `validity`; persisted in
   zarr); Python `MetaDocument`.
+- **Aligned blocks:** `SequenceSchema::{declare_aligned, aligned_with}`
+  (Python too).
 - **Row references:** `Block::{set_target, target, clear_target, targets}`,
   `SequenceSchema::{declare_target, target}`, `schema::{RowReference,
   check_target, EndpointTarget}`; Python `Block.set_target` / `target` /

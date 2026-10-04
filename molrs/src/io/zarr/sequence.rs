@@ -174,6 +174,9 @@ use super::record_io::zerr;
 const ROOT_GROUP: &str = "/";
 /// The identity document's group.
 const META_ROOT_GROUP: &str = "/meta";
+/// The record's `system` section, whose block names an aligned trajectory
+/// block may not take.
+const SYSTEM_GROUP: &str = "/system";
 /// The sequence root. Absolute, because every array path is built from it.
 const TRAJECTORY_GROUP: &str = "/trajectory";
 /// The commit marker: `i64[nstep]`, extended last.
@@ -685,7 +688,8 @@ fn stored_presentation<'a>(
 }
 
 /// Check a resolved trajectory frame against the rules that span blocks:
-/// every same-frame row reference the schema pins resolves.
+/// every aligned block present there has its target present with the same
+/// row count, and every same-frame row reference the schema pins resolves.
 /// `resolve(name)` is the block at this ordinal, or `None` where it is
 /// absent.
 fn check_resolved_frame<'a>(
@@ -693,6 +697,29 @@ fn check_resolved_frame<'a>(
     resolve: impl Fn(&str) -> Option<&'a Block>,
     ordinal: u64,
 ) -> Result<(), MolRsError> {
+    for (aligned, target) in schema.aligned_pairs() {
+        let Some(block) = resolve(aligned) else {
+            continue;
+        };
+        let rows = block.nrows().unwrap_or(0);
+        match resolve(target) {
+            None => {
+                return Err(MolRsError::zarr(format!(
+                    "trajectory frame {ordinal}: block {aligned:?} ({rows} rows) is aligned with \
+                     {target:?}, which is absent there"
+                )));
+            }
+            Some(with) if with.nrows().unwrap_or(0) != rows => {
+                return Err(MolRsError::zarr(format!(
+                    "trajectory frame {ordinal}: block {aligned:?} has {rows} rows but the block \
+                     it is aligned with, {target:?}, has {}; restate {aligned:?} when \
+                     {target:?} changes its row count",
+                    with.nrows().unwrap_or(0)
+                )));
+            }
+            Some(_) => {}
+        }
+    }
     let mut resolved = Frame::new();
     for name in schema.blocks.keys() {
         if let Some(block) = resolve(name) {
@@ -830,6 +857,11 @@ struct BlockSchema {
     /// they are pinned here and nowhere else. Absent while empty.
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     targets: IndexMap<String, String>,
+    /// The block this one is [aligned with](SequenceSchema::declare_aligned):
+    /// its rows are that block's rows, one for one, at every resolved frame.
+    /// Declared only, never derived. Absent while unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    aligned_with: Option<String>,
 }
 
 /// One declared per-step metadata key.
@@ -1038,6 +1070,7 @@ impl SequenceSchema {
                 columns: IndexMap::new(),
                 structural_shape: None,
                 targets: IndexMap::new(),
+                aligned_with: None,
             });
         if let Some(rows) = rows {
             let hint = self.rows_hint.entry(name.to_string()).or_insert(0);
@@ -1083,6 +1116,21 @@ impl SequenceSchema {
             .expect("declare_block just inserted it");
         match entry.columns.get(column) {
             None => {
+                // An aligned pair's column sets are disjoint, so a column
+                // added to either one may not name a column of the other.
+                if let Some(partner) = self.aligned_partner(block)
+                    && self.blocks[&partner].columns.contains_key(column)
+                {
+                    return Err(MolRsError::zarr(format!(
+                        "column {column:?} cannot be declared on block {block:?}: it is aligned \
+                         with block {partner:?}, which has a column of that name, and an aligned \
+                         pair's columns are disjoint"
+                    )));
+                }
+                let entry = self
+                    .blocks
+                    .get_mut(block)
+                    .expect("declare_block just inserted it");
                 entry.columns.insert(column.to_string(), declared);
             }
             Some(existing) if existing.dtype != declared.dtype => {
@@ -1279,6 +1327,11 @@ impl SequenceSchema {
                 "block {block:?} is not declared; declare it before its structural shape"
             ))
         })?;
+        if entry.aligned_with.is_some() {
+            return Err(MolRsError::zarr(format!(
+                "block {block:?} is aligned with another block and declares no structural shape"
+            )));
+        }
         match &entry.structural_shape {
             Some(existing) if existing.as_slice() != shape => Err(MolRsError::zarr(format!(
                 "sequence schema conflict: block {block:?} declares structural shape {existing:?} \
@@ -1291,6 +1344,118 @@ impl SequenceSchema {
                 Ok(())
             }
         }
+    }
+
+    /// Declare `block` aligned with `target` (molrec `ragged.md`, "Aligned
+    /// blocks"): its rows are `target`'s rows, one for one, at every
+    /// resolved frame — a sparse companion of a block that changes more
+    /// often (atom types beside coordinates under proton hopping).
+    ///
+    /// Wherever `block` is present (or empty) after carry-forward, `target`
+    /// must be present with the same row count; so a frame whose `target`
+    /// changes row count restates `block`, and one that keeps it may let
+    /// `block` carry forward. `block` may be absent while `target` is
+    /// present, never the reverse. The writer refuses a frame that breaks
+    /// this; the reader refuses a store that does. A reader hands back two
+    /// blocks.
+    ///
+    /// # Errors
+    ///
+    /// A [`MolRsError::Zarr`] when either block is not declared, `target` is
+    /// `block`, either one is already part of another alignment (no chains),
+    /// `block` declares a structural shape, the two share a column name, or
+    /// `block` is already aligned with another target.
+    pub fn declare_aligned(&mut self, block: &str, target: &str) -> Result<(), MolRsError> {
+        let refuse = |why: String| {
+            Err(MolRsError::zarr(format!(
+                "cannot align block {block:?} with {target:?}: {why}"
+            )))
+        };
+        let (Some(aligned), Some(with)) = (self.blocks.get(block), self.blocks.get(target)) else {
+            return refuse("both blocks must be declared".into());
+        };
+        if block == target {
+            return refuse("a block is not aligned with itself".into());
+        }
+        match &aligned.aligned_with {
+            Some(existing) if existing == target => return Ok(()),
+            Some(existing) => return refuse(format!("it is already aligned with {existing:?}")),
+            None => {}
+        }
+        if with.aligned_with.is_some() {
+            return refuse(format!(
+                "{target:?} is itself aligned; alignments do not chain"
+            ));
+        }
+        if self
+            .blocks
+            .values()
+            .any(|other| other.aligned_with.as_deref() == Some(block))
+        {
+            return refuse(format!(
+                "{block:?} is the target of another alignment; alignments do not chain"
+            ));
+        }
+        if aligned.structural_shape.is_some() {
+            return refuse("an aligned block declares no structural shape".into());
+        }
+        if let Some(shared) = aligned
+            .columns
+            .keys()
+            .find(|column| with.columns.contains_key(*column))
+        {
+            return refuse(format!(
+                "both declare column {shared:?}, and an aligned pair's columns are disjoint"
+            ));
+        }
+        self.blocks
+            .get_mut(block)
+            .expect("checked above")
+            .aligned_with = Some(target.to_string());
+        Ok(())
+    }
+
+    /// The block `block` is aligned with, or `None`.
+    pub fn aligned_with(&self, block: &str) -> Option<&str> {
+        self.blocks
+            .get(block)
+            .and_then(|declared| declared.aligned_with.as_deref())
+    }
+
+    /// The other half of the aligned pair `block` belongs to, either way
+    /// round.
+    fn aligned_partner(&self, block: &str) -> Option<String> {
+        if let Some(target) = self.aligned_with(block) {
+            return Some(target.to_string());
+        }
+        self.blocks
+            .iter()
+            .find(|(_, declared)| declared.aligned_with.as_deref() == Some(block))
+            .map(|(name, _)| name.clone())
+    }
+
+    /// Every aligned pair, as `(aligned block, target)`.
+    fn aligned_pairs(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.blocks.iter().filter_map(|(name, declared)| {
+            declared
+                .aligned_with
+                .as_deref()
+                .map(|target| (name.as_str(), target))
+        })
+    }
+
+    /// Re-check every pinned alignment against the rules
+    /// [`declare_aligned`](Self::declare_aligned) enforces — what a pin read
+    /// from a store has to satisfy.
+    fn check_alignments(&self) -> Result<(), MolRsError> {
+        let mut fresh = self.clone();
+        for declared in fresh.blocks.values_mut() {
+            declared.aligned_with = None;
+        }
+        for (block, target) in self.aligned_pairs() {
+            fresh.declare_aligned(block, target)?;
+        }
+        Ok(())
     }
 
     /// Declare a per-step metadata key by its dtype tag.
@@ -3568,6 +3733,8 @@ impl FrameSequenceWriter {
                 )));
             }
         }
+        schema.check_alignments()?;
+        check_aligned_not_in_system(&store, &schema)?;
         ensure_root_and_meta(&store, None)?;
         // This writer's target node is `trajectory/`, so whatever it held
         // before is not part of the sequence being minted.
@@ -3652,6 +3819,8 @@ impl FrameSequenceWriter {
     ) -> Result<Self, MolRsError> {
         ensure_not_legacy(&store)?;
         let schema = schema_of(&store)?;
+        schema.check_alignments()?;
+        check_aligned_not_in_system(&store, &schema)?;
         if trajectory_attributes(&store)?.nstep.is_none()
             && !array_exists(&store, &join_path(TRAJECTORY_GROUP, STEP_ARRAY))?
         {
@@ -4890,6 +5059,10 @@ impl FrameSequence {
             }
         }
 
+        schema.check_alignments()?;
+        check_aligned_indexes(&schema, &blocks, nstep)?;
+        check_aligned_not_in_system(&store, &schema)?;
+
         let box_prefix = join_path(TRAJECTORY_GROUP, BOX_GROUP);
         let vectors_path = join_path(&box_prefix, VECTORS_ARRAY);
         let cell = if array_exists(&store, &vectors_path)? {
@@ -5259,6 +5432,78 @@ impl FrameSequence {
     pub fn block_names(&self) -> impl Iterator<Item = &str> {
         self.blocks.keys().map(String::as_str)
     }
+}
+
+/// Refuse a store whose aligned blocks break the rule at some resolved frame,
+/// checked from the indexes alone: at every ordinal where either block of a
+/// pair has an update, the aligned block, when it resolves, has its target
+/// resolving with the same row count.
+fn check_aligned_indexes(
+    schema: &SequenceSchema,
+    blocks: &IndexMap<String, BlockIndex>,
+    nstep: u64,
+) -> Result<(), MolRsError> {
+    let ordinals = |name: &str| -> Vec<u64> {
+        match blocks.get(name) {
+            None => Vec::new(),
+            Some(BlockIndex::Sparse { step_index, .. }) => step_index.clone(),
+            Some(BlockIndex::Regular { updates, .. }) => (0..*updates).collect(),
+        }
+    };
+    for (aligned, target) in schema.aligned_pairs() {
+        let mut at: Vec<u64> = ordinals(aligned);
+        at.extend(ordinals(target));
+        at.sort_unstable();
+        at.dedup();
+        for ordinal in at.into_iter().filter(|&o| o < nstep) {
+            let Some((_, _, rows)) = blocks
+                .get(aligned)
+                .map(|index| index.resolve(ordinal))
+                .transpose()?
+                .flatten()
+            else {
+                continue;
+            };
+            let with = blocks
+                .get(target)
+                .map(|index| index.resolve(ordinal))
+                .transpose()?
+                .flatten();
+            match with {
+                Some((_, _, target_rows)) if target_rows == rows => {}
+                Some((_, _, target_rows)) => {
+                    return Err(MolRsError::zarr(format!(
+                        "trajectory frame {ordinal}: aligned block {aligned:?} resolves to {rows} \
+                         rows but its target {target:?} to {target_rows}"
+                    )));
+                }
+                None => {
+                    return Err(MolRsError::zarr(format!(
+                        "trajectory frame {ordinal}: aligned block {aligned:?} is present but its \
+                         target {target:?} is absent"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Refuse an aligned trajectory block named like a block of the record's
+/// `system` section: the name would mean two different row sets.
+fn check_aligned_not_in_system<S>(store: &Arc<S>, schema: &SequenceSchema) -> Result<(), MolRsError>
+where
+    S: ?Sized + ReadableStorageTraits + 'static,
+{
+    for (aligned, _) in schema.aligned_pairs() {
+        if group_exists(store, &join_path(SYSTEM_GROUP, aligned))? {
+            return Err(MolRsError::zarr(format!(
+                "aligned trajectory block {aligned:?} shares its name with a system block; an \
+                 aligned block never does"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Index of the latest entry at or before frame `index`, or `None` when the
@@ -8720,5 +8965,205 @@ mod tests {
             .declare_target("refs", "site", "/system/atoms")
             .unwrap();
         assert!(schema.declare_target("refs", "site", ATOMS).is_err());
+    }
+
+    // -- aligned blocks (molrec F5) -----------------------------------------
+
+    const TYPES: &str = "atom_types";
+
+    fn string_column(values: &[&str]) -> Column {
+        Column::from_string(
+            ArrayD::from_shape_vec(
+                vec![values.len()],
+                values.iter().map(|s| (*s).to_string()).collect(),
+            )
+            .unwrap(),
+        )
+    }
+
+    /// `atoms` (x) and, when `types` is given, the aligned `atom_types`.
+    fn aligned_frame(x: &[f64], types: Option<&[&str]>) -> Frame {
+        let mut frame = atoms_frame(x);
+        if let Some(types) = types {
+            frame.insert(TYPES, block_with("type", string_column(types)));
+        }
+        frame
+    }
+
+    fn aligned_schema() -> SequenceSchema {
+        let mut schema = SequenceSchema::new();
+        schema.declare_column(ATOMS, X, DType::Float, &[]).unwrap();
+        schema
+            .declare_column(TYPES, "type", DType::String, &[])
+            .unwrap();
+        schema.declare_aligned(TYPES, ATOMS).unwrap();
+        schema
+    }
+
+    fn write_aligned(frames: &[Frame]) -> (TempDir, ReadableWritableListableStorage) {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut writer = FrameSequenceWriter::create(store.clone(), aligned_schema()).unwrap();
+        for frame in frames {
+            writer.append(frame).unwrap();
+        }
+        writer.close().unwrap();
+        (dir, store)
+    }
+
+    fn types_at(seq: &mut FrameSequence, index: u64) -> Option<Vec<String>> {
+        frame_at(seq, index).get(TYPES).map(|b| {
+            b.get("type")
+                .and_then(|c| c.as_string())
+                .unwrap()
+                .iter()
+                .cloned()
+                .collect()
+        })
+    }
+
+    #[test]
+    fn an_aligned_block_carries_forward_while_its_target_moves() {
+        let frames = [
+            aligned_frame(&[0.0, 1.0, 2.0], Some(&["A", "B", "C"])),
+            aligned_frame(&[0.1, 1.1, 2.1], None),
+            aligned_frame(&[0.2, 1.2, 2.2], None),
+            aligned_frame(&[0.3, 1.3, 2.3], Some(&["A", "A", "C"])),
+        ];
+        let (_dir, store) = write_aligned(&frames);
+        let pin = Group::open(store.clone(), TRAJ).unwrap().attributes()[SCHEMA_ATTRIBUTE].clone();
+        assert_eq!(
+            pin["blocks"][TYPES]["aligned_with"],
+            serde_json::json!(ATOMS)
+        );
+        let mut seq = open_sequence(&store);
+        assert_eq!(types_at(&mut seq, 2).unwrap(), ["A", "B", "C"]);
+        assert_eq!(types_at(&mut seq, 3).unwrap(), ["A", "A", "C"]);
+        assert_eq!(seq.block_update_at(TYPES, 2).unwrap(), Some(0));
+        assert_eq!(seq.schema().aligned_with(TYPES), Some(ATOMS));
+    }
+
+    #[test]
+    fn an_aligned_block_is_restated_on_growth_and_may_appear_late_or_empty() {
+        let frames = [
+            aligned_frame(&[0.0, 1.0, 2.0], None),
+            aligned_frame(&[0.0, 1.0, 2.0], Some(&["A", "B", "C"])),
+            aligned_frame(&[0.0, 1.0, 2.0, 3.0], Some(&["A", "B", "C", "D"])),
+            aligned_frame(&[], Some(&[])),
+        ];
+        let (_dir, store) = write_aligned(&frames);
+        let mut seq = open_sequence(&store);
+        assert_eq!(types_at(&mut seq, 0), None);
+        assert_eq!(types_at(&mut seq, 2).unwrap().len(), 4);
+        assert_eq!(types_at(&mut seq, 3).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn a_writer_refuses_a_frame_that_breaks_the_alignment() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut writer = FrameSequenceWriter::create(store.clone(), aligned_schema()).unwrap();
+        writer
+            .append(&aligned_frame(&[0.0, 1.0, 2.0], Some(&["A", "B", "C"])))
+            .unwrap();
+        // `atoms` grows and `atom_types` is not restated.
+        let err = writer
+            .append(&aligned_frame(&[0.0, 1.0, 2.0, 3.0], None))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(TYPES) && err.contains("trajectory frame 1"),
+            "{err}"
+        );
+        // Restated with another count: refused too.
+        assert!(
+            writer
+                .append(&aligned_frame(&[0.0, 1.0, 2.0, 3.0], Some(&["A"])))
+                .is_err()
+        );
+        // Nothing moved: a good frame still lands at ordinal 1.
+        writer
+            .append(&aligned_frame(
+                &[0.0, 1.0, 2.0, 3.0],
+                Some(&["A", "B", "C", "D"]),
+            ))
+            .unwrap();
+        writer.close().unwrap();
+        assert_eq!(committed_len(&mut open_sequence(&store)), 2);
+
+        // The aligned block presented before its target exists.
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut writer = FrameSequenceWriter::create(store, aligned_schema()).unwrap();
+        let mut types_only = Frame::new();
+        types_only.insert(TYPES, block_with("type", string_column(&["A"])));
+        assert!(writer.append(&types_only).is_err());
+    }
+
+    #[test]
+    fn a_store_whose_aligned_counts_disagree_is_refused() {
+        let frames = [
+            aligned_frame(&[0.0, 1.0, 2.0], Some(&["A", "B", "C"])),
+            aligned_frame(&[0.0, 1.0], Some(&["A", "B"])),
+        ];
+        let (_dir, store) = write_aligned(&frames);
+        assert!(FrameSequence::open(store.clone()).is_ok());
+        // Tamper: `atom_types/offset` so update 1 holds 1 row instead of 2.
+        let offsets = u64_array(&store, &format!("{TRAJ}/{TYPES}/offset"));
+        assert_eq!(offsets, [0, 3, 5]);
+        let array = Array::open(store.clone(), &format!("{TRAJ}/{TYPES}/offset")).unwrap();
+        array
+            .store_array_subset(&ArraySubset::new_with_shape(vec![3]), &[0_u64, 3, 4][..])
+            .unwrap();
+        array.store_metadata().unwrap();
+        let err = FrameSequence::open(store).err().unwrap().to_string();
+        assert!(err.contains(TYPES), "{err}");
+    }
+
+    #[test]
+    fn declare_aligned_refuses_what_cannot_align() {
+        let mut schema = aligned_schema();
+        schema
+            .declare_column("other", "flag", DType::Bool, &[])
+            .unwrap();
+        schema
+            .declare_column("cells", "v", DType::Float, &[])
+            .unwrap();
+        // Undeclared target, self, chain either way.
+        assert!(schema.declare_aligned("other", "nope").is_err());
+        assert!(schema.declare_aligned("other", "other").is_err());
+        assert!(schema.declare_aligned("other", TYPES).is_err());
+        assert!(schema.declare_aligned(ATOMS, "other").is_err());
+        // Shared column, either at declaration or added afterwards.
+        schema.declare_column("more", X, DType::Float, &[]).unwrap();
+        assert!(schema.declare_aligned("more", ATOMS).is_err());
+        assert!(schema.declare_column(TYPES, X, DType::Float, &[]).is_err());
+        assert!(
+            schema
+                .declare_column(ATOMS, "type", DType::String, &[])
+                .is_err()
+        );
+        // A shaped block cannot align, nor an aligned one take a shape.
+        schema.declare_structural_shape("cells", &[1]).unwrap();
+        assert!(schema.declare_aligned("cells", ATOMS).is_err());
+        assert!(schema.declare_structural_shape(TYPES, &[3]).is_err());
+    }
+
+    #[test]
+    fn an_aligned_block_may_not_share_a_name_with_a_system_block() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        for group in ["/", "/system", "/system/atom_types"] {
+            GroupBuilder::new()
+                .build(store.clone(), group)
+                .unwrap()
+                .store_metadata()
+                .unwrap();
+        }
+        let err = FrameSequenceWriter::create(store, aligned_schema())
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(err.contains("system"), "{err}");
     }
 }
