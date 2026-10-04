@@ -777,6 +777,10 @@ short "Also new" list at the end of each section.
 
 ### C API (`molrs.h`)
 
+- **`molrs_schema_column_dtype` names every dtype.** It answered `"string"`
+  for any width outside `float`/`int`/`uint`/`bool`/`u8`; it now returns
+  the dtype's own name (`"i64"` for `formal_charge`, `"u16"`, `"c64"`, …).
+
 - **`MolrsDType` reports the stored variant.** Values 0–4 keep their names and
   numbers, but each now means exactly one type; 5–12 are new.
 
