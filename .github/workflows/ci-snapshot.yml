@@ -37,12 +37,14 @@ jobs:
         with:
           persist-credentials: false
       # The suite and its molrs adapter live in molrec, not in this repo.
-      # Pinned to a molrec `dev` commit: a floating ref would run whatever
-      # lands there. Bump deliberately when molrec's adapter moves.
+      # Pinned to a commit: a floating ref would run whatever lands there.
+      # This is the head of MolCrafts/molrec#4, which speaks the 0.15
+      # molrs.io surface; switch to MolCrafts/molrec and its merged commit
+      # once #4 lands.
       - uses: actions/checkout@v7
         with:
-          repository: MolCrafts/molrec
-          ref: 8048532590093fa6df4fd511fe9c9d96f60f00e2
+          repository: Roy-Kid/molrec
+          ref: 35c4da48228e5d04f246439804c21657252bbf76
           path: .ci-out/molrec
           persist-credentials: false
 
@@ -125,7 +127,7 @@ jobs:
           source .ci-out/venv/bin/activate
           python -m pip install \
             maturin \
-            "./.ci-out/molrec[zarr]" \
+            "./.ci-out/molrec" \
             "molcrafts-ci @ git+https://github.com/MolCrafts/molcrafts-ci@master"
 
       # `--track` marks master pushes. Whether the records are actually pushed
@@ -150,14 +152,9 @@ jobs:
 
       # molrs.io.mrec is the Rust core's path door. Building the extension
       # is how the suite reaches that door. The Python test suite is not run.
-      # Non-blocking until molrec's adapter (tests/molrs_adapter.py) speaks the
-      # 0.15 molrs.io.mrec surface: the pinned commit still calls the removed
-      # molrs.Record, and molrec dev calls the renamed mrec.read_frame. Bump
-      # the pin to a molrec commit that passes, then drop continue-on-error.
-      # The record is still written and published red.
+      # A red suite fails this job; its record is still written and published.
       - name: Run the mrec suite
         if: ${{ !cancelled() }}
-        continue-on-error: true
         run: |
           set -euo pipefail
           # shellcheck disable=SC1091
