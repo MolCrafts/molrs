@@ -296,9 +296,6 @@ struct HeaderPartial {
     byte_order: ByteOrder,
     marker_size: MarkerSize,
     charmm_ver: i32,
-    /// Parsed for header fidelity; the frame count comes from the file scan.
-    #[allow(dead_code)]
-    nset_hint: u32,
     istart: i32,
     nsavc: i32,
     natoms: u32,
@@ -423,7 +420,6 @@ fn parse_header_records<R: Read + Seek>(reader: &mut R) -> std::io::Result<Heade
         read_i32(&buf, byte_order)
     };
 
-    let nset_hint = read_i32_at(4) as u32;
     let istart = read_i32_at(8);
     let nsavc = read_i32_at(12);
     let namnf = read_i32_at(36) as u32;
@@ -520,7 +516,6 @@ fn parse_header_records<R: Read + Seek>(reader: &mut R) -> std::io::Result<Heade
         byte_order,
         marker_size,
         charmm_ver,
-        nset_hint,
         istart,
         nsavc,
         natoms,

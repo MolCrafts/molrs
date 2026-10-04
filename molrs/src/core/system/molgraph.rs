@@ -26,9 +26,8 @@
 //! a coarse-grained bead owning its atoms) is variable-size, nested, directed
 //! ownership — **not** a fixed-arity peer relation — and is therefore **not**
 //! modeled as a relation kind (doing so would put group handles into the node
-//! arena and contaminate every consumer that iterates [`MolGraph::nodes`]). The
-//! [`GroupId`] / [`Group`] / `MolGraph::groups` field is **reserved** for a
-//! future, independent containment axis; it carries no behavior in this module.
+//! arena and contaminate every consumer that iterates [`MolGraph::nodes`]). When
+//! containment lands it is a separate axis beside nodes and relations.
 //!
 //! # Examples
 //!
@@ -54,7 +53,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::{Index, IndexMut};
 
 use ndarray::ArrayD;
-use slotmap::{Key, KeyData, SecondaryMap, SlotMap, new_key_type};
+use slotmap::{Key, KeyData, SecondaryMap, new_key_type};
 use smallvec::SmallVec;
 
 use crate::error::MolRsError;
@@ -533,8 +532,6 @@ new_key_type! {
     pub struct NodeId;
     /// Stable handle to a relation (any kind) in a [`MolGraph`].
     pub struct RelationId;
-    /// Stable handle to a reserved containment group (see module docs).
-    pub struct GroupId;
 }
 
 /// Convert a [`NodeId`] to/from a stable opaque `u64` handle (the generational
@@ -600,22 +597,6 @@ impl RelationKind {
 }
 
 // ---------------------------------------------------------------------------
-// Group (reserved containment axis — no behavior in this module)
-// ---------------------------------------------------------------------------
-
-/// Reserved container for the future containment axis (residue ⊃ atoms,
-/// chain ⊃ residues, bead ⊃ atoms). Carries no behavior yet; see module docs.
-#[derive(Debug, Clone, Default)]
-pub struct Group {
-    /// Member node handles owned by this group.
-    pub members: Vec<NodeId>,
-    /// Optional parent group (for nesting).
-    pub parent: Option<GroupId>,
-    /// Per-group property bag (e.g. `resname`, `resid`).
-    pub props: IndexMap<String, PropValue>,
-}
-
-// ---------------------------------------------------------------------------
 // MolGraph
 // ---------------------------------------------------------------------------
 
@@ -636,10 +617,6 @@ pub struct MolGraph {
     name_to_kind: HashMap<String, KindId>,
     /// Adjacency over arity-2 relations: node → list of `(kind, relation)`.
     adjacency: HashMap<NodeId, Vec<(KindId, RelationId)>>,
-    /// Reserved containment axis — see module docs. Unused by all behavior here;
-    /// carried so the future containment spec is additive, not a re-key.
-    #[allow(dead_code)]
-    groups: SlotMap<GroupId, Group>,
 }
 
 impl Default for MolGraph {
@@ -658,7 +635,6 @@ impl MolGraph {
             kind_name: Vec::new(),
             name_to_kind: HashMap::new(),
             adjacency: HashMap::new(),
-            groups: SlotMap::with_key(),
         }
     }
 
@@ -2546,14 +2522,6 @@ mod tests {
             .merge(src)
             .expect_err("a str 'tag' cannot enter an int 'tag' component");
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
-    }
-
-    // ----- Reserved containment axis -----
-
-    #[test]
-    fn test_groups_reserved_empty() {
-        let g = MolGraph::new();
-        assert_eq!(g.groups.len(), 0);
     }
 
     // ----- Composition: replicate -----
