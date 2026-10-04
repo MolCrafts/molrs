@@ -3,19 +3,14 @@
 //! The language-neutral JSON Schema is published by molrec
 //! (`schema/core/record.schema.json`). This module is the executable form
 //! molrs runs on every `*.mrec` door: path suffix, the `meta` version key,
-//! and the reserved names. Re-exported as [`crate::io::mrec::schema`].
+//! and the reserved names. Writers always stamp `molrec_version`; readers
+//! validate it only when it is present. Re-exported as [`crate::io::mrec::schema`].
 
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use molrs::MolRsError;
 use molrs::store::frame::Frame;
-use molrs::store::record::MOLREC_VERSION as RECORD_MOLREC_VERSION;
-
-/// Sole version key of a record, stamped into `meta.molrec_version`.
-pub const MOLREC_VERSION: u64 = RECORD_MOLREC_VERSION;
-
-/// Reserved `meta` keys owned by the contract, not the producer.
-pub const RESERVED_META_KEYS: [&str; 1] = ["molrec_version"];
+pub use molrs::store::record::{MOLREC_VERSION, RESERVED_META_KEYS};
 
 /// Refuse the retired scientific path brand `.zarr` / `.zarr.zip`.
 ///
@@ -34,31 +29,15 @@ pub fn validate_path(path: &std::path::Path) -> Result<(), MolRsError> {
 
 /// Validate the `meta` version key against the mrec contract.
 ///
-/// `molrec_version` is **required**, and must be an integer in
-/// `1..=`[`MOLREC_VERSION`]. Identity of a record is the `*.mrec/` path suffix
-/// plus a Zarr root, not this key; the key says which contract wrote it.
-///
-/// It was optional while the format was being built, which cost more than it
-/// saved: a reader could not tell an old store from a producer that forgot, and
-/// the writer stamped nothing, so *no* store had a version and the check never
-/// ran. The record writer now stamps every record it writes, so an
-/// absent key is a real signal — the store predates the stamp — and saying so is
-/// more useful than silently skipping the check.
+/// `molrec_version` is **optional on read**: an absent key performs no
+/// version check, so a foreign store — or one written before molrs stamped the
+/// key — opens. A present key must be an integer in `1..=`[`MOLREC_VERSION`];
+/// anything else (`0`, a newer version, a string, `null`, a float) is refused.
+/// Identity of a record is the `*.mrec/` path suffix plus a Zarr root, not this
+/// key; the key says which contract wrote it.
 pub fn validate_meta(attrs: &JsonMap<String, JsonValue>) -> Result<(), MolRsError> {
-    // No metadata at all stays tolerated. A foreign store may carry no `meta/`
-    // group — molrs writers always create one — and "this store has no metadata"
-    // is a different claim from "this metadata forgot its version". Refusing the
-    // first would lock out readable foreign records to catch a bug that can only
-    // occur in the second.
-    if attrs.is_empty() {
-        return Ok(());
-    }
     let Some(value) = attrs.get("molrec_version") else {
-        return Err(MolRsError::zarr(format!(
-            "meta carries no molrec_version; every record is written with one \
-             (current {MOLREC_VERSION}), so this store predates the stamped format \
-             and must be rewritten"
-        )));
+        return Ok(());
     };
     let version = value.as_u64().ok_or_else(|| {
         MolRsError::zarr(format!(
@@ -79,15 +58,10 @@ pub fn validate_meta(attrs: &JsonMap<String, JsonValue>) -> Result<(), MolRsErro
 /// The producer's `meta` with `molrec_version` stamped in, validated.
 ///
 /// Every record molrs writes carries the version it was written at, so a
-/// reader never has to guess — that stamp is exactly what lets
-/// [`validate_meta`] *require* the key. A producer that set it keeps its
+/// reader that checks it never has to guess. A producer that set it keeps its
 /// value, which is how a writer for an older contract stays expressible.
 ///
-/// Shared by the whole-record writer and the streaming one. It was the
-/// record writer's private helper while the streaming writer stored the
-/// producer's map verbatim, so handing `meta` to a `TrajectoryWriter` produced
-/// a store that `read_meta` then refused — metadata written and unreadable, in
-/// the one writer whose whole point is a long run you cannot repeat.
+/// Shared by the whole-record writer and the streaming one.
 pub(crate) fn stamped_meta(
     meta: &JsonMap<String, JsonValue>,
 ) -> Result<JsonMap<String, JsonValue>, MolRsError> {
@@ -121,38 +95,60 @@ mod tests {
         validate_meta(&meta(1)).unwrap();
     }
 
-    /// Metadata that carries keys must carry its version: the writer stamps one,
-    /// so its absence means the store predates the stamp.
+    /// An absent version is no version check: a foreign store, or one written
+    /// before molrs stamped the key, opens.
     #[test]
-    fn missing_molrec_version_is_refused_when_other_keys_are_present() {
-        let mut attrs = meta(1);
-        attrs.remove("molrec_version");
-        attrs.insert("producer".into(), "test".into());
-        let err = validate_meta(&attrs).unwrap_err().to_string();
-        assert!(err.contains("molrec_version"), "{err}");
-    }
-
-    /// Empty metadata is not the same claim, and stays accepted — a foreign store
-    /// may carry no `meta/` group at all.
-    #[test]
-    fn empty_meta_is_accepted() {
+    fn missing_molrec_version_is_accepted() {
+        let attrs = json!({ "producer": "test" }).as_object().cloned().unwrap();
+        validate_meta(&attrs).unwrap();
         validate_meta(&JsonMap::new()).unwrap();
     }
 
-    /// The retired `format_name`/`record_schema_version` keys are still neither
-    /// checked nor honoured — they do not stand in for `molrec_version`, so
-    /// metadata carrying only those is refused for the version, not for them.
+    /// The retired `format_name`/`record_schema_version` keys are neither
+    /// checked nor honoured: they do not stand in for `molrec_version`, and a
+    /// bogus value under them does not fail the read.
     #[test]
-    fn retired_brand_keys_do_not_substitute_for_the_version() {
+    fn retired_brand_keys_are_neither_checked_nor_honoured() {
         let attrs = json!({
             "format_name": "mrec",
-            "record_schema_version": 1,
+            "record_schema_version": 99,
         })
         .as_object()
         .cloned()
         .unwrap();
+        validate_meta(&attrs).unwrap();
+    }
+
+    /// `null` is not a version: present means validated.
+    #[test]
+    fn a_null_molrec_version_is_refused() {
+        let attrs = json!({ "molrec_version": null })
+            .as_object()
+            .cloned()
+            .unwrap();
         let err = validate_meta(&attrs).unwrap_err().to_string();
         assert!(err.contains("molrec_version"), "{err}");
+    }
+
+    #[test]
+    fn a_float_molrec_version_is_refused() {
+        let attrs = json!({ "molrec_version": 1.0 })
+            .as_object()
+            .cloned()
+            .unwrap();
+        let err = validate_meta(&attrs).unwrap_err().to_string();
+        assert!(err.contains("molrec_version"), "{err}");
+    }
+
+    /// The writer stamps the current version, and keeps a producer's own.
+    #[test]
+    fn stamped_meta_adds_the_version_and_keeps_a_producer_one() {
+        let stamped = stamped_meta(&JsonMap::new()).unwrap();
+        assert_eq!(stamped["molrec_version"].as_u64(), Some(MOLREC_VERSION));
+        let mut own = meta(1);
+        own.insert("producer".into(), "test".into());
+        assert_eq!(stamped_meta(&own).unwrap(), own);
+        assert!(stamped_meta(&meta(2)).is_err());
     }
 
     #[test]

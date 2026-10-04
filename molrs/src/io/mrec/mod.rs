@@ -44,14 +44,12 @@
 //! `molrec_version` there when the producer supplied none — so every record
 //! written by this version carries the contract it was written at. A producer
 //! that set the key keeps its value, which is how a writer for an older contract
-//! stays expressible. The key must be a positive integer no newer than
-//! [`schema::MOLREC_VERSION`].
+//! stays expressible.
 //!
-//! Metadata that carries any key must carry the version: the stamp makes an
-//! absent one mean "this store predates the stamp", which is worth reporting.
-//! **Empty** metadata is a different claim and stays accepted — a foreign store
-//! may have written no `meta/` group at all, and refusing to read it would cost
-//! more than the check buys.
+//! Readers validate the key only when it is present: an absent key performs no
+//! version check (a foreign store, or one written before the stamp, opens), and
+//! a present key must be an integer `>= 1` no newer than
+//! [`schema::MOLREC_VERSION`].
 //!
 //! Identity of a store is the `*.mrec/` path suffix plus a Zarr root, not this
 //! key; the key says which contract wrote it.

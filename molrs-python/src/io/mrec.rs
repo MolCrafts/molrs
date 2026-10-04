@@ -159,11 +159,12 @@ pub fn read_mrec_trajectory(path: PathBuf) -> PyResult<PyTrajectory> {
 ///     path: Filesystem path of the record store.
 ///
 /// Returns:
-///     The record-level metadata mapping, including the stamped brand keys.
+///     The record-level metadata mapping, including ``molrec_version`` when
+///     the writer stamped it.
 ///
 /// Raises:
 ///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, or ``meta``
-///         is missing or does not match the mrec contract.
+///         carries a ``molrec_version`` this reader does not support.
 #[pyfunction]
 pub fn read_mrec_meta(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
     let path = path_str(&path)?;
@@ -706,15 +707,15 @@ pub fn mrec_validate_path(path: PathBuf) -> PyResult<()> {
 
 /// Validate the ``meta`` version key against the mrec contract.
 ///
-/// ``molrec_version`` is required and must be an integer in
-/// ``1..=MOLREC_VERSION``: every record is stamped on write, so an absent key
-/// means the store predates the stamped format.
+/// Every record is stamped on write, but a reader validates
+/// ``molrec_version`` only when it is present: an absent key is no version
+/// check, and a present one must be an integer in ``1..=MOLREC_VERSION``.
 ///
 /// Args:
 ///     meta: Record-level metadata mapping.
 ///
 /// Raises:
-///     ValueError: If ``molrec_version`` is missing or not a version this
+///     ValueError: If ``molrec_version`` is present and not a version this
 ///         reader supports.
 #[pyfunction]
 pub fn mrec_validate_meta(meta: &Bound<'_, PyMapping>) -> PyResult<()> {

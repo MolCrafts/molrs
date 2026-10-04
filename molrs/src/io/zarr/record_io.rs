@@ -200,9 +200,6 @@ pub fn write_record_store(
 /// reader never has to guess. A producer that set the key keeps its value — that
 /// is how a writer for an older version of the contract stays expressible — and
 /// [`schema::validate_meta`] judges whatever ends up there.
-///
-/// The stamp is the reason `validate_meta` can now *require* the key: a store
-/// without one was written before the format stamped it.
 #[cfg(feature = "zarr")]
 fn write_meta(
     store: &ReadableWritableListableStorage,
@@ -400,10 +397,11 @@ fn write_observables(
 
 /// Read a [`crate::MolRec`] from a `*.mrec` directory.
 ///
-/// Paths whose file name ends in `.zarr` or `.zarr.zip` are refused. The
-/// `meta` section must carry `molrec_version` in `1..=`[`crate::MOLREC_VERSION`];
-/// a missing key or an unsupported value is an error. Sections this build does
-/// not interpret are kept in [`crate::MolRec::extra_sections`] rather than dropped.
+/// Paths whose file name ends in `.zarr` or `.zarr.zip` are refused. A
+/// `molrec_version` in `meta` is validated when present — it must be an integer
+/// in `1..=`[`crate::MOLREC_VERSION`] — and an absent one is no version check.
+/// Sections this build does not interpret are kept in
+/// [`crate::MolRec::extra_sections`] rather than dropped.
 ///
 /// A store still carrying the pre-0.14 `trajectory/frames/` tree is refused
 /// by name; it is not migrated and is not read back as empty.
@@ -411,8 +409,8 @@ fn write_observables(
 /// # Errors
 ///
 /// A [`MolRsError::Zarr`] when `path` uses a retired `.zarr` suffix, when
-/// `path` is not a readable record store, when `meta` is missing or does not
-/// carry a supported `molrec_version`, or when a section fails to
+/// `path` is not a readable record store, when `meta` carries a
+/// `molrec_version` this reader does not support, or when a section fails to
 /// decode — including a legacy `trajectory/frames/` layout.
 #[cfg(feature = "filesystem")]
 pub fn read_record_file(path: impl AsRef<Path>) -> Result<MolRec, MolRsError> {
@@ -541,7 +539,8 @@ pub fn read_record_store(store: ReadableWritableListableStorage) -> Result<MolRe
 ///
 /// Every writer creates the group, but a reader tolerates its absence — an
 /// empty document — so a store a foreign tool assembled without one still
-/// opens. A present `molrec_version` is validated.
+/// opens. A present `molrec_version` is validated; an absent one is not
+/// required.
 fn read_meta(
     store: &ReadableWritableListableStorage,
     path: &str,
@@ -1083,11 +1082,8 @@ mod tests {
         );
     }
 
-    /// A deleted `meta/` group still reads as an empty document. The name said
-    /// "rejected" while the body asserted the opposite; what it pins is the
-    /// tolerance for a foreign store that wrote no metadata group at all, which
-    /// survives the version becoming mandatory — "no metadata" is not
-    /// "metadata that forgot its version".
+    /// A deleted `meta/` group still reads as an empty document: a foreign
+    /// store may write no metadata group at all.
     #[test]
     fn a_deleted_meta_group_reads_as_an_empty_document() {
         let dir = tempdir().unwrap();
@@ -1100,29 +1096,52 @@ mod tests {
         assert!(loaded.meta.is_empty());
     }
 
-    /// A version outside `1..=MOLREC_VERSION` is refused.
+    /// A version outside `1..=MOLREC_VERSION` is refused; an absent one is
+    /// accepted even beside other producer keys.
     #[test]
     fn a_present_molrec_version_outside_the_supported_range_is_rejected() {
-        for version in [None, Some(0_u64), Some(2), Some(99)] {
+        let unsupported = [
+            JsonValue::from(0_u64),
+            JsonValue::from(2_u64),
+            JsonValue::from(99_u64),
+            JsonValue::Null,
+            JsonValue::from("1"),
+            JsonValue::from(1.5),
+        ];
+        for version in std::iter::once(None).chain(unsupported.into_iter().map(Some)) {
             let dir = tempdir().unwrap();
             let path = dir.path().join("record.mrec");
             let mut rec = MolRec::new();
             rec.frame = Some(Frame::new());
+            rec.meta.insert("producer".into(), "unit-test".into());
             write_record_file(&path, &rec).unwrap();
 
             let metadata_path = path.join("meta/zarr.json");
             let mut metadata: JsonValue =
                 serde_json::from_slice(&std::fs::read(&metadata_path).unwrap()).unwrap();
-            // The writer stamps no version, so `None` is the store as written;
-            // the other three overwrite the (absent) key.
-            if let Some(v) = version {
-                metadata["attributes"]["molrec_version"] = v.into();
-            }
+            let attributes = metadata["attributes"].as_object_mut().unwrap();
+            // The writer stamped the current version; `None` removes it.
+            match &version {
+                Some(v) => attributes.insert("molrec_version".into(), v.clone()),
+                None => attributes.remove("molrec_version"),
+            };
             std::fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
             let result = read_record_file(&path);
+            let meta_result = read_meta_file(&path);
             match version {
-                None => assert!(result.is_ok(), "refused a store without molrec_version"),
-                Some(_) => assert!(result.is_err(), "accepted molrec_version {version:?}"),
+                None => {
+                    let loaded = result.expect("a store without molrec_version opens");
+                    assert_eq!(loaded.meta["producer"], "unit-test");
+                    assert!(!loaded.meta.contains_key("molrec_version"));
+                    meta_result.expect("and so does its meta");
+                }
+                Some(v) => {
+                    assert!(result.is_err(), "accepted molrec_version {v}");
+                    assert!(
+                        meta_result.is_err(),
+                        "read_meta accepted molrec_version {v}"
+                    );
+                }
             }
         }
     }

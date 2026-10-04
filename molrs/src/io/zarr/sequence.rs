@@ -3419,9 +3419,9 @@ impl FrameSequenceWriter {
 
     /// Write `meta` as the record's identity document (`meta/` attributes).
     ///
-    /// Replaces whatever the group held. A record needs no particular key
-    /// here during development; `molrec_version`, when present, must be a
-    /// positive integer.
+    /// Replaces whatever the group held. `molrec_version` is stamped when the
+    /// producer supplied none; a producer's own value must be an integer in
+    /// `1..=`[`crate::MOLREC_VERSION`].
     ///
     /// # Errors
     ///
@@ -6950,8 +6950,8 @@ mod tests {
     // =======================================================================
 
     /// The streaming writer mints a record, not a bare `trajectory/`: the
-    /// root group and an (empty) `meta/` group exist before the first append,
-    /// and no version key is stamped.
+    /// root group and a `meta/` group exist before the first append, and the
+    /// group carries the stamped `molrec_version` and nothing else.
     #[test]
     fn create_writes_the_root_and_a_stamped_meta_group() {
         let dir = TempDir::new().unwrap();
@@ -6960,10 +6960,7 @@ mod tests {
         let writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
         assert!(dir.path().join("zarr.json").is_file(), "root group");
         let meta = Group::open(store.clone(), "/meta").expect("meta group exists");
-        // This used to assert the group was *empty* — the streaming writer
-        // stamped nothing, which is what made a trajectory written with
-        // metadata unreadable: `validate_meta` refuses an unstamped non-empty
-        // map, so `read_meta` rejected the writer's own output.
+        // Every writer stamps the version, the streaming one included.
         assert_eq!(
             meta.attributes()
                 .get("molrec_version")

@@ -60,6 +60,12 @@ short "Also new" list at the end of each section.
 - **`to_frame` can fail.** A node property whose dtype contradicts the
   schema, for example `set_atom(i, "x", "left")`, used to abort the process.
   It is now an error on every surface.
+- **`*.mrec` records follow the molrec contract.**
+  - `meta.molrec_version` is checked only when it is present. 0.14 refused a
+    non-empty `meta` without it; 0.15 opens such a store. A present value must
+    still be an integer in `1..=MOLREC_VERSION`, and `null`, `0`, a string, a
+    float or a newer version is refused. Writers still stamp
+    `molrec_version: 1` on every record.
 
 ### Rust crate (`molcrafts-molrs`)
 

@@ -19,11 +19,10 @@ use crate::store::frame::Frame;
 use crate::store::trajectory::{ObservableRecord, Trajectory};
 
 /// Sole version key of a MolRec record (root layout + L1 encoding), stored as
-/// `meta.molrec_version`. The public writer
-/// (`molrs::io::mrec::write_record_file`) stamps this key; the public reader
-/// (`molrs::io::mrec::read_record_file`) returns an error for a missing key or
-/// an unsupported value. Identity of a store is this key plus the `*.mrec/`
-/// path suffix; there is no separate brand key.
+/// `meta.molrec_version`. Every molrs writer stamps this key. The readers
+/// validate it only when present: an absent key is no version check, and a
+/// present key must be an integer in `1..=MOLREC_VERSION`. Identity of a store
+/// is the `*.mrec/` path suffix plus a Zarr root; there is no separate brand key.
 pub const MOLREC_VERSION: u64 = 1;
 
 /// Reserved `meta` keys owned by the contract rather than by the producer.

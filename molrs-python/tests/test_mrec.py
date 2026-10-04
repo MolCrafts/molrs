@@ -66,8 +66,7 @@ class TestFrameDoors:
         meta = molrs.io.read_mrec_meta(path)
         molrs.io.mrec.schema.validate_meta(meta)
         # Every record is stamped on write, so a producer that handed in
-        # nothing still gets the version — that stamp is what lets a reader
-        # tell a current store from one it must refuse.
+        # nothing still gets the version.
         assert meta == {"molrec_version": molrs.io.mrec.schema.MOLREC_VERSION}
 
     def test_write_frame_with_system(self, tmp_path: Path) -> None:
@@ -101,28 +100,32 @@ class TestSchema:
         assert molrs.io.mrec.schema.MOLREC_VERSION == molrs._lib.MREC_MOLREC_VERSION
         assert molrs.io.mrec.schema.RESERVED_META_KEYS == ["molrec_version"]
 
-    def test_a_missing_molrec_version_is_refused(self) -> None:
-        # Every record is written with the stamp, so meta without one is a
-        # store from before the format was stamped — refused, rather than read
-        # on the assumption that it means version 1. The retired brand keys do
-        # not stand in for it.
-        with pytest.raises(ValueError, match="molrec_version"):
-            molrs.io.mrec.schema.validate_meta(
-                {"record_schema_version": 1, "format_name": "mrec"}
-            )
-        # An *empty* map still passes, and deliberately: "this store carries no
-        # metadata" is a different claim from "this metadata forgot its
-        # version", and a foreign record may legitimately have no meta group at
-        # all. Refusing it would lock out readable stores to catch a bug that
-        # can only happen in the second case.
+    def test_a_missing_molrec_version_is_accepted(self) -> None:
+        # Absent means no version check: a foreign store, or one written
+        # before molrs stamped the key, opens. The retired brand keys are
+        # neither checked nor a stand-in for the version.
+        molrs.io.mrec.schema.validate_meta(
+            {"record_schema_version": 99, "format_name": "mrec"}
+        )
         molrs.io.mrec.schema.validate_meta({})
 
     def test_a_present_molrec_version_out_of_range_is_refused(self) -> None:
-        with pytest.raises(Exception, match="molrec_version"):
-            molrs.io.mrec.schema.validate_meta({"molrec_version": 0})
-        with pytest.raises(Exception, match="molrec_version"):
-            molrs.io.mrec.schema.validate_meta({"molrec_version": "1"})
+        for bad in (0, 2, "1", None, 1.5):
+            with pytest.raises(ValueError, match="molrec_version"):
+                molrs.io.mrec.schema.validate_meta({"molrec_version": bad})
         molrs.io.mrec.schema.validate_meta({"molrec_version": 1})
+
+    def test_a_store_without_molrec_version_reads(self, tmp_path: Path) -> None:
+        import json
+
+        path = tmp_path / "foreign.mrec"
+        molrs.io.write_mrec(path, _coords_frame(), meta={"producer": "other"})
+        meta_json = path / "meta" / "zarr.json"
+        doc = json.loads(meta_json.read_text())
+        del doc["attributes"]["molrec_version"]
+        meta_json.write_text(json.dumps(doc))
+        assert molrs.io.read_mrec_meta(path) == {"producer": "other"}
+        _assert_coords(molrs.io.read_mrec(path))
 
     def test_retired_path_is_refused(self) -> None:
         with pytest.raises(Exception, match="\\.mrec"):
