@@ -223,21 +223,39 @@ fn write_json_group(
 
 /// Percent-encode a metrics series name into a legal array name
 /// (`train/loss` → `train%2Floss`): every byte outside `[A-Za-z0-9._-]`
-/// becomes `%XX` with uppercase hex. Mirrors molrec's `safe_name` — the two
-/// implementations must mangle identically or produce stores neither can
-/// read back.
-fn safe_series_name(name: &str) -> String {
+/// becomes `%XX` with uppercase hex. A name Zarr forbids as a node — `.`,
+/// `..`, or one starting with `__` — has its first byte escaped too (`.` →
+/// `%2E`, `..` → `%2E.`, `__x` → `%5F_x`). Mirrors molrec's `safe_name`
+/// (`metrics.md`) — the two implementations must mangle identically or
+/// produce stores neither can read back.
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] for the empty name, which is not a series key.
+fn safe_series_name(name: &str) -> Result<String, MolRsError> {
+    use std::fmt::Write as _;
+    if name.is_empty() {
+        return Err(MolRsError::zarr(
+            "a metrics series needs a name: the empty string is not a series key",
+        ));
+    }
     let mut out = String::with_capacity(name.len());
     for byte in name.bytes() {
         match byte {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-' => out.push(byte as char),
             _ => {
-                use std::fmt::Write as _;
                 let _ = write!(out, "%{byte:02X}");
             }
         }
     }
-    out
+    if out == "." || out == ".." || out.starts_with("__") {
+        let first = out.as_bytes()[0];
+        let mut escaped = String::with_capacity(out.len() + 2);
+        let _ = write!(escaped, "%{first:02X}");
+        escaped.push_str(&out[1..]);
+        out = escaped;
+    }
+    Ok(out)
 }
 
 /// The inverse of [`safe_series_name`].
@@ -294,7 +312,7 @@ fn write_metrics(
         );
         write_column(
             store,
-            &join_path(&series_path, &safe_series_name(name)),
+            &join_path(&series_path, &safe_series_name(name)?),
             &column,
             None,
         )?;
@@ -1430,6 +1448,36 @@ mod tests {
         // the preserve-the-unknown guarantee for densified curves.
         let again = write_then_read(&loaded);
         assert_eq!(again.metrics_series, rec.metrics_series);
+    }
+
+    /// Names Zarr forbids as nodes have their first byte escaped too, and
+    /// every name reads back; the empty name is not a series key.
+    #[test]
+    fn series_names_zarr_forbids_are_escaped_and_read_back() {
+        for (name, safe) in [
+            (".", "%2E"),
+            ("..", "%2E."),
+            ("__x", "%5F_x"),
+            ("__", "%5F_"),
+            ("_x", "_x"),
+            ("a.b", "a.b"),
+            ("train/loss", "train%2Floss"),
+        ] {
+            assert_eq!(safe_series_name(name).unwrap(), safe, "{name}");
+            assert_eq!(original_series_name(safe).unwrap(), name);
+        }
+        assert!(safe_series_name("").is_err());
+
+        let mut rec = MolRec::new();
+        rec.frame = Some(Frame::new());
+        for name in [".", "..", "__dunder"] {
+            rec.metrics_series.insert(name.into(), vec![1.0]);
+        }
+        assert_eq!(write_then_read(&rec).metrics_series, rec.metrics_series);
+
+        rec.metrics_series.insert(String::new(), vec![1.0]);
+        let dir = tempdir().unwrap();
+        assert!(write_record_file(dir.path().join("r.mrec"), &rec).is_err());
     }
 
     /// A live host WAL (`metrics/metrics.jsonl`) is a stray text file inside

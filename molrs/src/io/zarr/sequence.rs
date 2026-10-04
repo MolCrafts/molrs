@@ -159,9 +159,10 @@ use molrs::types::F;
 use crate::io::reader::TrajectoryReader;
 
 use super::frame_io::{
-    BOX_GROUP, GZIP_LEVEL, VALIDITY_GROUP, check_canonical_width, default_precision_compressor,
-    gzip, insert_column_into_block, join_path, node_prefix, precision_shuffle, quantized,
-    read_column_array, zarr_dtype,
+    BOX_GROUP, GZIP_LEVEL, VALIDITY_GROUP, canonical_width, check_canonical_dtype,
+    check_storable_cell, default_precision_compressor, gzip, insert_column_into_block, join_path,
+    node_prefix, precision_shuffle, quantized, read_column_array, resolve_boundary, stored_dtype,
+    zarr_dtype,
 };
 use super::record_io::zerr;
 
@@ -630,6 +631,21 @@ fn stored_presentation<'a>(
     block: &'a Block,
 ) -> Result<std::borrow::Cow<'a, Block>, MolRsError> {
     let mut stored: Option<Block> = None;
+    // A canonical key at another width of its family lands at its declared
+    // dtype.
+    for column in declared.columns.keys() {
+        let Some(values) = block.get(column) else {
+            continue;
+        };
+        if let Some(converted) = canonical_width(column, values)? {
+            let target = stored.get_or_insert_with(|| block.clone());
+            let mask = target.validity(column).map(<[bool]>::to_vec);
+            target.insert_column(column.as_str(), converted)?;
+            if let Some(mask) = mask {
+                target.set_validity(column, mask)?;
+            }
+        }
+    }
     for (column, schema) in &declared.columns {
         let Some(precision) = schema.precision else {
             continue;
@@ -928,7 +944,15 @@ impl SequenceSchema {
                 for (column, values) in block.iter() {
                     let trailing: Vec<u64> =
                         values.shape().iter().skip(1).map(|&n| n as u64).collect();
-                    schema.declare_column(name, column, values.dtype(), &trailing)?;
+                    // A canonical key is pinned at its declared dtype; the
+                    // writer stores a column of another width of the family
+                    // converted ([`canonical_width`]).
+                    schema.declare_column(
+                        name,
+                        column,
+                        stored_dtype(column, values.dtype()),
+                        &trailing,
+                    )?;
                     if block.validity(column).is_some() {
                         schema.declare_nullable(name, column)?;
                     }
@@ -1002,9 +1026,9 @@ impl SequenceSchema {
         trailing: &[u64],
     ) -> Result<(), MolRsError> {
         check_column_name(column)?;
-        // A canonical identifier declared narrower than `u64` could never be
-        // appended to (the in-memory block widens it) and is refused on read.
-        check_canonical_width(column, dtype)?;
+        // A canonical key declared at another dtype than the vocabulary's
+        // could never be read back: a store holds the declared one.
+        check_canonical_dtype(column, dtype)?;
         self.declare_block(block, None)?;
         let declared = ColumnSchema {
             dtype: dtype_tag(dtype).to_string(),
@@ -1974,6 +1998,64 @@ where
     ))
 }
 
+/// The elision markers of a block section with no index arrays: `Some(N)`
+/// for a well-formed `uniform_rows: N` / `dense_updates: true` pair, `None`
+/// when it carries neither (a declared block never updated, absent at every
+/// ordinal).
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] naming the section for one marker without the
+/// other, a `uniform_rows` that is not a positive integer, a
+/// `dense_updates` that is not `true`, or markers on a block that declares
+/// no columns (it has no length to count its updates by).
+fn elision_markers<S>(
+    store: &Arc<S>,
+    path: &str,
+    has_columns: bool,
+) -> Result<Option<u64>, MolRsError>
+where
+    S: ?Sized + ReadableStorageTraits + 'static,
+{
+    let group = Group::open(store.clone(), path)?;
+    let attributes = group.attributes();
+    let rows = match (
+        attributes.get(UNIFORM_ROWS_ATTRIBUTE),
+        attributes.get(DENSE_UPDATES_ATTRIBUTE),
+    ) {
+        (None, None) => return Ok(None),
+        (Some(rows), Some(dense)) => {
+            if dense != &serde_json::Value::Bool(true) {
+                return Err(MolRsError::zarr(format!(
+                    "{path}: {DENSE_UPDATES_ATTRIBUTE} must be true, found {dense}"
+                )));
+            }
+            match rows.as_u64() {
+                Some(rows) if rows > 0 => rows,
+                _ => {
+                    return Err(MolRsError::zarr(format!(
+                        "{path}: {UNIFORM_ROWS_ATTRIBUTE} must be a positive integer, found \
+                         {rows}"
+                    )));
+                }
+            }
+        }
+        _ => {
+            return Err(MolRsError::zarr(format!(
+                "{path}: {UNIFORM_ROWS_ATTRIBUTE} and {DENSE_UPDATES_ATTRIBUTE} are a pair; \
+                 this section carries one without the other"
+            )));
+        }
+    };
+    if !has_columns {
+        return Err(MolRsError::zarr(format!(
+            "{path}: elision markers on a block with no columns, which has no length to \
+             count its updates by"
+        )));
+    }
+    Ok(Some(rows))
+}
+
 /// Rewrite a block section's group attributes.
 fn store_block_attributes(
     store: &ReadableWritableListableStorage,
@@ -2463,22 +2545,29 @@ fn cell_from_attributes(
             .collect(),
         None => vec![0.0, 0.0, 0.0],
     };
-    let boundary: Vec<bool> = match attributes.get(BOUNDARY_ARRAY).and_then(|v| v.as_array()) {
-        Some(values) => values
-            .iter()
-            .filter_map(serde_json::Value::as_bool)
-            .collect(),
-        None => vec![true, true, true],
-    };
-    if origin.len() != 3 || boundary.len() != 3 {
+    let boundary: Option<Vec<bool>> = attributes
+        .get(BOUNDARY_ARRAY)
+        .and_then(|v| v.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(serde_json::Value::as_bool)
+                .collect()
+        });
+    if origin.len() != 3 || boundary.as_ref().is_some_and(|flags| flags.len() != 3) {
         return Err(MolRsError::zarr(
             "box attributes origin / boundary must hold three values each".to_string(),
         ));
     }
+    let pbc = resolve_boundary(
+        boundary.map(|flags| [flags[0], flags[1], flags[2]]),
+        cell_defined,
+        "trajectory box attributes",
+    )?;
     SimBox::new_cell(
         Array2::from_shape_vec((3, 3), flat).map_err(zerr)?,
         Array1::from(origin),
-        [boundary[0], boundary[1], boundary[2]],
+        pbc,
         cell_defined,
     )
     .map(Some)
@@ -2768,7 +2857,27 @@ where
 {
     let group = Group::open(store.clone(), TRAJECTORY_GROUP)?;
     let all = group.attributes().clone();
-    let nstep = all.get(NSTEP_ATTRIBUTE).and_then(serde_json::Value::as_u64);
+    let nstep = match all.get(NSTEP_ATTRIBUTE) {
+        None => None,
+        Some(value) => Some(value.as_u64().ok_or_else(|| {
+            MolRsError::zarr(format!(
+                "{TRAJECTORY_GROUP}: {NSTEP_ATTRIBUTE} must be a non-negative integer, found \
+                 {value}"
+            ))
+        })?),
+    };
+    // A progression is only ever written in the same metadata update as the
+    // commit marker, so one without it is a malformed store.
+    if nstep.is_none() {
+        for progression in [STEP_PROGRESSION_ATTRIBUTE, TIME_PROGRESSION_ATTRIBUTE] {
+            if all.contains_key(progression) {
+                return Err(MolRsError::zarr(format!(
+                    "{TRAJECTORY_GROUP} carries {progression} without {NSTEP_ATTRIBUTE}: a \
+                     progression is written with the commit marker, never alone"
+                )));
+            }
+        }
+    }
     Ok(TrajectoryAttributes { nstep, all })
 }
 
@@ -3026,8 +3135,8 @@ impl SequenceArrays {
                         BlockHints::from_index(&ordinals[..updates], &offsets),
                     )
                 } else {
-                    match stored {
-                        (Some(rows), true) if rows > 0 && !columns.is_empty() => {
+                    match elision_markers(store, &path, !declared.columns.is_empty())? {
+                        Some(rows) if !columns.is_empty() => {
                             let landed = columns.values().map(|c| c.rows).min().unwrap_or(0);
                             let updates = (landed / rows).min(nstep);
                             let mut hints = BlockHints::fresh();
@@ -3812,6 +3921,9 @@ impl FrameSequenceWriter {
     /// rather than dropped: the pin is a contract, and a writer that silently
     /// forgot which rows hold nothing is the data loss this check exists for.
     fn validate(&self, frame: &Frame) -> Result<(), MolRsError> {
+        if let Some(simbox) = &frame.simbox {
+            check_storable_cell(simbox)?;
+        }
         for (name, block) in frame.iter() {
             let Some(declared) = self.schema.blocks.get(name) else {
                 return Err(MolRsError::zarr(format!(
@@ -3826,7 +3938,7 @@ impl FrameSequenceWriter {
                          schema is pinned at create and cannot grow mid-run"
                     )));
                 };
-                let dtype = dtype_tag(values.dtype());
+                let dtype = dtype_tag(stored_dtype(column, values.dtype()));
                 if pinned.dtype != dtype {
                     return Err(MolRsError::zarr(format!(
                         "column {column:?} of block {name:?} is declared {} but this frame carries \
@@ -4377,23 +4489,28 @@ impl BoxReader {
             Some(array) => array.retrieve_array_subset(&rows_subset(index, 1, &[3])?)?,
             None => vec![0.0, 0.0, 0.0],
         };
-        let boundary: Vec<bool> = match &self.boundary {
-            Some(array) => array.retrieve_array_subset(&rows_subset(index, 1, &[3])?)?,
-            None => vec![true, true, true],
+        let boundary: Option<Vec<bool>> = match &self.boundary {
+            Some(array) => Some(array.retrieve_array_subset(&rows_subset(index, 1, &[3])?)?),
+            None => None,
         };
-        if cell.len() != 9 || origin.len() != 3 || boundary.len() != 3 {
+        let flags = boundary.as_ref().map_or(3, Vec::len);
+        if cell.len() != 9 || origin.len() != 3 || flags != 3 {
             return Err(MolRsError::zarr(format!(
-                "box update {index} is malformed: {} cell values, {} origin values, {} boundary \
-                 flags",
+                "box update {index} is malformed: {} cell values, {} origin values, {flags} \
+                 boundary flags",
                 cell.len(),
                 origin.len(),
-                boundary.len()
             )));
         }
+        let pbc = resolve_boundary(
+            boundary.map(|flags| [flags[0], flags[1], flags[2]]),
+            cell_defined,
+            &format!("box update {index}"),
+        )?;
         let simbox = SimBox::new_cell(
             Array2::from_shape_vec((3, 3), cell).map_err(zerr)?,
             Array1::from(origin),
-            [boundary[0], boundary[1], boundary[2]],
+            pbc,
             cell_defined,
         )
         .map_err(|e| MolRsError::zarr(format!("box update {index} is not a valid cell: {e:?}")))?;
@@ -4598,13 +4715,14 @@ impl FrameSequence {
                 offset.truncate(if updates == 0 { 0 } else { updates + 1 });
                 BlockIndex::Sparse { step_index, offset }
             } else {
-                match stored_hints(&store, &path)? {
-                    (Some(rows), true) if rows > 0 => {
+                match elision_markers(&store, &path, !declared.columns.is_empty())? {
+                    Some(rows) => {
                         // Regular: the columns' own length says how many
                         // updates landed; the marker bounds them.
-                        let Some(column) = declared.columns.keys().next() else {
-                            continue;
-                        };
+                        let column =
+                            declared.columns.keys().next().expect(
+                                "elision_markers refuses markers on a block with no columns",
+                            );
                         let landed = Array::open(store.clone(), &join_path(&path, column))?
                             .shape()
                             .first()
@@ -5531,6 +5649,165 @@ mod tests {
             assert_eq!(back.h_view(), ndarray::Array2::<f64>::eye(3));
             assert_eq!(back.origin_view()[0], x);
         }
+    }
+
+    /// Rewrite the attributes of the group at `path` through `edit`.
+    fn edit_attributes(
+        store: &ReadableWritableListableStorage,
+        path: &str,
+        edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>),
+    ) {
+        let mut group = Group::open(store.clone(), path).unwrap();
+        edit(group.attributes_mut());
+        group.store_metadata().unwrap();
+    }
+
+    /// A regular three-frame run: `atoms` carries both elision markers and
+    /// `step` is a progression.
+    fn regular_store(dir: &TempDir) -> ReadableWritableListableStorage {
+        let store = store_in(dir);
+        write_all(
+            &store,
+            &[
+                atoms_frame(&[1.0]),
+                atoms_frame(&[2.0]),
+                atoms_frame(&[3.0]),
+            ],
+        );
+        let attrs = Group::open(store.clone(), &format!("{TRAJ}/{ATOMS}"))
+            .unwrap()
+            .attributes()
+            .clone();
+        assert_eq!(attrs["uniform_rows"], serde_json::json!(1));
+        assert_eq!(attrs["dense_updates"], serde_json::json!(true));
+        store
+    }
+
+    #[test]
+    fn malformed_elision_markers_are_refused() {
+        let section = format!("{TRAJ}/{ATOMS}");
+        for edit in [
+            |a: &mut serde_json::Map<String, serde_json::Value>| {
+                a.remove("dense_updates");
+            },
+            |a: &mut serde_json::Map<String, serde_json::Value>| {
+                a.remove("uniform_rows");
+            },
+            |a: &mut serde_json::Map<String, serde_json::Value>| {
+                a.insert("uniform_rows".into(), serde_json::json!(0));
+            },
+            |a: &mut serde_json::Map<String, serde_json::Value>| {
+                a.insert("dense_updates".into(), serde_json::json!(false));
+            },
+        ] {
+            let dir = TempDir::new().unwrap();
+            let store = regular_store(&dir);
+            edit_attributes(&store, &section, edit);
+            let err = FrameSequence::open(store.clone())
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(err.contains(ATOMS), "{err}");
+            assert!(FrameSequenceWriter::open(store).is_err());
+        }
+    }
+
+    #[test]
+    fn markers_on_a_block_with_no_columns_are_refused_and_a_bare_declared_block_reads_absent() {
+        let dir = TempDir::new().unwrap();
+        let store = regular_store(&dir);
+        edit_attributes(&store, TRAJ, |a| {
+            a[SCHEMA_ATTRIBUTE]["blocks"]["ghost"] = serde_json::json!({"columns": {}});
+        });
+        GroupBuilder::new()
+            .build(store.clone(), &format!("{TRAJ}/ghost"))
+            .unwrap()
+            .store_metadata()
+            .unwrap();
+        // Declared, never updated: absent everywhere, and not refused.
+        let seq = open_sequence(&store);
+        assert!(!seq.has_block("ghost"));
+        assert!(!frame_at(&mut open_sequence(&store), 1).contains_key("ghost"));
+        drop(seq);
+
+        edit_attributes(&store, &format!("{TRAJ}/ghost"), |a| {
+            a.insert("uniform_rows".into(), serde_json::json!(1));
+            a.insert("dense_updates".into(), serde_json::json!(true));
+        });
+        let err = FrameSequence::open(store).err().unwrap().to_string();
+        assert!(err.contains("ghost") && err.contains("no columns"), "{err}");
+    }
+
+    #[test]
+    fn a_progression_without_the_commit_marker_is_refused() {
+        let dir = TempDir::new().unwrap();
+        let store = regular_store(&dir);
+        let attrs = Group::open(store.clone(), TRAJ)
+            .unwrap()
+            .attributes()
+            .clone();
+        assert!(attrs.contains_key("step_progression"));
+        edit_attributes(&store, TRAJ, |a| {
+            a.remove("nstep");
+        });
+        let err = FrameSequence::open(store.clone())
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(err.contains("nstep"), "{err}");
+        edit_attributes(&store, TRAJ, |a| {
+            a.insert("nstep".into(), serde_json::json!(-1));
+        });
+        assert!(FrameSequence::open(store).is_err());
+    }
+
+    /// An undefined trajectory cell is periodic on no axis: a writer refuses
+    /// one with a periodic flag, an omitted boundary reads all-false, and a
+    /// periodic flag in the store is refused.
+    #[test]
+    fn an_undefined_trajectory_cell_is_periodic_on_no_axis() {
+        let undefined = |pbc| {
+            SimBox::new_cell(ndarray::Array2::eye(3), array![0.0, 0.0, 0.0], pbc, false).unwrap()
+        };
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = atoms_frame(&[1.0]);
+        frame.simbox = Some(undefined([false, false, true]));
+        let mut writer =
+            FrameSequenceWriter::create(store.clone(), SequenceSchema::from_frame(&frame).unwrap())
+                .unwrap();
+        assert!(writer.append(&frame).is_err());
+
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        frame.simbox = Some(undefined([false; 3]));
+        write_all(&store, &[frame]);
+        let box_path = format!("{TRAJ}/box");
+        let mut group = Group::open(store.clone(), &box_path).unwrap();
+        assert_eq!(
+            group.attributes()["boundary"],
+            serde_json::json!([false, false, false])
+        );
+        group.attributes_mut().remove("boundary");
+        group.store_metadata().unwrap();
+        assert_eq!(
+            open_sequence(&store).box_at(0).unwrap().unwrap().pbc(),
+            [false; 3]
+        );
+
+        let mut group = Group::open(store.clone(), &box_path).unwrap();
+        group
+            .attributes_mut()
+            .insert("boundary".into(), serde_json::json!([true, false, false]));
+        group.store_metadata().unwrap();
+        let refused = match FrameSequence::open(store.clone()) {
+            Err(_) => true,
+            Ok(seq) => seq.box_at(0).is_err(),
+        };
+        assert!(
+            refused,
+            "a periodic flag on an undefined cell must be refused"
+        );
     }
 
     /// A canonical identifier key cannot be declared narrower than `u64`:
@@ -7624,8 +7901,17 @@ mod tests {
         declared.declare_meta("energy", "f64").unwrap();
         assert_eq!(declared, derived);
 
+        // A canonical key is pinned at its vocabulary dtype.
         let err = declared
             .declare_column(ATOMS, X, DType::Int, &[])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("canonical") && err.contains("float"), "{err}");
+        declared
+            .declare_column(ATOMS, PROBE, DType::Float, &[])
+            .unwrap();
+        let err = declared
+            .declare_column(ATOMS, PROBE, DType::Int, &[])
             .unwrap_err()
             .to_string();
         assert!(err.contains("f64") && err.contains("i32"), "{err}");

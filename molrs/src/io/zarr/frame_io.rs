@@ -439,46 +439,144 @@ where
 /// Insert a column read from a store into `block`.
 ///
 /// The store read path is strict where the in-memory API is lenient:
-/// [`Block::insert_column`] widens a narrow unsigned array under a canonical
-/// identifier key to `u64`, but a store that holds one at another width is
-/// refused here (see [`check_canonical_width`]) rather than silently widened.
+/// [`Block::insert_column`] admits a canonical key at another width of its
+/// family (and widens a narrow unsigned identifier to `u64`), but a store
+/// that holds a canonical key at any dtype but its declared one is refused
+/// here (see [`check_canonical_dtype`]) rather than silently converted.
 pub(crate) fn insert_column_into_block(
     block: &mut Block,
     name: &str,
     col: Column,
 ) -> Result<(), MolRsError> {
-    check_canonical_width(name, col.dtype())?;
+    check_canonical_dtype(name, col.dtype())?;
     // Zero-copy insert: hand the Arc-backed Column directly to the Block.
     block.insert_column(name, col).map_err(MolRsError::Block)
 }
 
-/// Refuse a canonical identifier / endpoint key (`id`, `atomic_number`,
-/// `mol_id`, `res_id`, `type_id`, `atomi` … `atoml`, `bond_type`,
-/// `bond_number`) stored at any width but `u64`.
+/// Refuse a canonical key (every key of the schema tables: `x` `f64`, `ix`
+/// `i32`, `id` `u64`, `element` `string`, …) stored at any dtype but the one
+/// the vocabulary declares.
 ///
-/// Every molrs writer stores those keys as `u64` — the in-memory block widens
-/// them on insert — so a narrower stored array came from a producer that broke
-/// the contract, and reading it back as `u64` would hide that.
-pub(crate) fn check_canonical_width(
+/// Every molrs writer stores those keys at their declared dtype
+/// ([`canonical_width`] converts an in-memory column of another width of the
+/// family on the way out), so another stored dtype came from a producer that
+/// broke the contract, and converting it on read would hide that.
+pub(crate) fn check_canonical_dtype(
     name: &str,
     stored: molrs::store::block::DType,
 ) -> Result<(), MolRsError> {
-    use molrs::store::block::DType;
     match molrs::store::schema::column(name) {
-        Some(spec) if spec.dtype == DType::UInt && stored != DType::UInt => {
-            Err(MolRsError::zarr(format!(
-                "column {name:?} is stored as {}; the canonical key {name:?} is u64, \
-                 and a store is not widened on read",
-                stored.name()
-            )))
-        }
+        Some(spec) if spec.dtype != stored => Err(MolRsError::zarr(format!(
+            "column {name:?} is stored as {}; the canonical key {name:?} is {}, and a store is \
+             not converted on read",
+            stored.name(),
+            spec.dtype.name()
+        ))),
         _ => Ok(()),
     }
+}
+
+/// The dtype a column under `name` is stored at: the canonical key's
+/// declared dtype, or the column's own for any other key.
+pub(crate) fn stored_dtype(name: &str, dtype: DType) -> DType {
+    molrs::store::schema::column(name).map_or(dtype, |spec| spec.dtype)
+}
+
+/// `col` at the dtype a canonical key `name` is stored at, or `None` when it
+/// already is (or `name` is not canonical).
+///
+/// The in-memory block admits a canonical signed key at any signed width
+/// (`ix` as `i64`) and a canonical unsigned one at any unsigned width; a
+/// store holds exactly the declared dtype. The conversion is exact or
+/// refused.
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] naming the key when a value does not fit the
+/// declared dtype, or the column's family is not the declared one.
+pub(crate) fn canonical_width(name: &str, col: &Column) -> Result<Option<Column>, MolRsError> {
+    let Some(spec) = molrs::store::schema::column(name) else {
+        return Ok(None);
+    };
+    if spec.dtype == col.dtype() {
+        return Ok(None);
+    }
+    fn narrow<T: Copy + std::fmt::Display, U: TryFrom<T>>(
+        name: &str,
+        values: &ArrayD<T>,
+    ) -> Result<ArrayD<U>, MolRsError> {
+        let mut out = Vec::with_capacity(values.len());
+        for &v in values.iter() {
+            out.push(U::try_from(v).map_err(|_| {
+                MolRsError::zarr(format!(
+                    "column {name:?}: {v} does not fit the canonical dtype of {name:?}"
+                ))
+            })?);
+        }
+        ArrayD::from_shape_vec(values.shape(), out).map_err(shape_err)
+    }
+    let converted = match (spec.dtype, col) {
+        (DType::Int, Column::Int8(h)) => Column::from_int(h.array().mapv(i32::from)),
+        (DType::Int, Column::Int16(h)) => Column::from_int(h.array().mapv(i32::from)),
+        (DType::Int, Column::Int64(h)) => Column::from_int(narrow::<i64, i32>(name, h.array())?),
+        (DType::Int64, Column::Int8(h)) => Column::from_i64(h.array().mapv(i64::from)),
+        (DType::Int64, Column::Int16(h)) => Column::from_i64(h.array().mapv(i64::from)),
+        (DType::Int64, Column::Int(h)) => Column::from_i64(h.array().mapv(i64::from)),
+        (DType::UInt, Column::U8(h)) => Column::from_uint(h.array().mapv(u64::from)),
+        (DType::UInt, Column::UInt16(h)) => Column::from_uint(h.array().mapv(u64::from)),
+        (DType::UInt, Column::UInt32(h)) => Column::from_uint(h.array().mapv(u64::from)),
+        (expected, other) => {
+            return Err(MolRsError::zarr(format!(
+                "column {name:?} is {}; the canonical key {name:?} is stored as {}",
+                other.dtype().name(),
+                expected.name()
+            )));
+        }
+    };
+    Ok(Some(converted))
 }
 
 // ---------------------------------------------------------------------------
 // SimBox write / read
 // ---------------------------------------------------------------------------
+
+/// Refuse a cell a writer cannot store: an undefined cell is periodic on no
+/// axis (molrec `frame.md`, "An undefined cell"), so one carrying a periodic
+/// flag contradicts itself.
+pub(crate) fn check_storable_cell(simbox: &SimBox) -> Result<(), MolRsError> {
+    if !simbox.is_cell_defined() && simbox.pbc().iter().any(|&periodic| periodic) {
+        return Err(MolRsError::zarr(format!(
+            "an undefined cell (cell_defined = false) is periodic on no axis, but this one \
+             carries boundary {:?}",
+            simbox.pbc()
+        )));
+    }
+    Ok(())
+}
+
+/// The boundary flags of a cell read back: `stored` when the store carries
+/// them, else the default — all-periodic for a defined cell, all-`false` for
+/// an undefined one, which is periodic on no axis.
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] naming `what` when an undefined cell carries a
+/// periodic flag: the store is malformed.
+pub(crate) fn resolve_boundary(
+    stored: Option<[bool; 3]>,
+    cell_defined: bool,
+    what: &str,
+) -> Result<[bool; 3], MolRsError> {
+    match stored {
+        None => Ok([cell_defined; 3]),
+        Some(flags) if !cell_defined && flags.iter().any(|&periodic| periodic) => {
+            Err(MolRsError::zarr(format!(
+                "{what}: an undefined cell is periodic on no axis, but its boundary is {flags:?}"
+            )))
+        }
+        Some(flags) => Ok(flags),
+    }
+}
 
 #[cfg(feature = "zarr")]
 pub(crate) fn write_simbox(
@@ -486,6 +584,7 @@ pub(crate) fn write_simbox(
     prefix: &str,
     simbox: &SimBox,
 ) -> Result<(), MolRsError> {
+    check_storable_cell(simbox)?;
     let mut attrs = serde_json::Map::new();
     // `cell_defined` is written only when it is *false*: absent means a
     // defined cell.
@@ -512,7 +611,8 @@ pub(crate) fn write_simbox(
     }
 
     // boundary: [3] bool, the same array form the trajectory path writes;
-    // omitted for the all-periodic default.
+    // omitted for the all-periodic default. An undefined cell writes its
+    // all-false flags explicitly, since the omitted default is periodic.
     let pbc = simbox.pbc();
     if pbc != [true, true, true] {
         let flags = ndarray::ArrayD::from_shape_vec(vec![3], pbc.to_vec()).map_err(shape_err)?;
@@ -577,12 +677,13 @@ pub(crate) fn read_simbox(
     let origin = array![o_data[0], o_data[1], o_data[2]];
 
     // Boundary flags are a `bool[3]` array. An absent array is fully
-    // periodic, the normative default -- reading it as vacuum would make one
-    // store two different physical systems depending on which implementation
-    // opened it. A store from before the array form carried the flags as a
-    // group attribute; that is still honoured.
+    // periodic on a defined cell -- the normative default; reading it as
+    // vacuum would make one store two different physical systems depending
+    // on which implementation opened it -- and periodic on no axis on an
+    // undefined one. A store from before the array form carried the flags as
+    // a group attribute; that is still honoured.
     let boundary_path = format!("{}/boundary", prefix);
-    let pbc = match Array::open(store.clone(), &boundary_path) {
+    let stored = match Array::open(store.clone(), &boundary_path) {
         Ok(arr) => {
             let flags: Vec<bool> =
                 arr.retrieve_array_subset(&ArraySubset::new_with_shape(arr.shape().to_vec()))?;
@@ -592,22 +693,23 @@ pub(crate) fn read_simbox(
                     flags.len()
                 )));
             }
-            [flags[0], flags[1], flags[2]]
+            Some([flags[0], flags[1], flags[2]])
         }
         Err(zarrs::array::ArrayCreateError::MissingMetadata) => match group
             .attributes()
             .get("boundary")
             .and_then(|v| v.as_array())
         {
-            Some(flags) if flags.len() == 3 => [
+            Some(flags) if flags.len() == 3 => Some([
                 flags[0].as_bool().unwrap_or(true),
                 flags[1].as_bool().unwrap_or(true),
                 flags[2].as_bool().unwrap_or(true),
-            ],
-            _ => [true, true, true],
+            ]),
+            _ => None,
         },
         Err(e) => return Err(e.into()),
     };
+    let pbc = resolve_boundary(stored, cell_defined, prefix)?;
 
     SimBox::new_cell(h, origin, pbc, cell_defined)
         .map_err(|e| MolRsError::zarr(format!("invalid box: {:?}", e)))
@@ -769,6 +871,8 @@ pub(crate) fn write_frame_group(
 
         for (col_name, col) in block.iter() {
             let arr_path = format!("{}/{}/{}", prefix, block_name, col_name);
+            let canonical = canonical_width(col_name, col)?;
+            let col = canonical.as_ref().unwrap_or(col);
             write_column(store, &arr_path, col, block.precision(col_name))?;
         }
         write_validity_group(store, &group_path, block)?;
@@ -868,33 +972,44 @@ pub(crate) fn read_frame_group(
                     .map_err(|e| MolRsError::zarr(format!("{col_path}: {e}")))?;
             }
         }
-        if let Ok(group) = zarrs::group::Group::open(store.clone(), child.path().as_str()) {
-            let attrs = group.attributes();
-            if let Some(count) = attrs.get("count").and_then(|v| v.as_u64()) {
-                let count = count as usize;
-                if block.is_empty() {
-                    block.resize(count).map_err(|e| {
-                        MolRsError::zarr(format!("block {child_name:?} count={count}: {e}"))
-                    })?;
-                } else if block.nrows() != Some(count) {
-                    return Err(MolRsError::zarr(format!(
-                        "row_count_mismatch: block {child_name:?} count={count}, columns have {}",
-                        block.nrows().unwrap_or(0)
-                    )));
-                }
+        // `count` is required: a block with no columns still has a row count,
+        // and the columns must agree with it.
+        let group = zarrs::group::Group::open(store.clone(), child.path().as_str())?;
+        let attrs = group.attributes();
+        let count = match attrs.get("count") {
+            Some(count) => count.as_u64().ok_or_else(|| {
+                MolRsError::zarr(format!(
+                    "block {child_name:?}: count must be a non-negative integer, found {count}"
+                ))
+            })? as usize,
+            None => {
+                return Err(MolRsError::zarr(format!(
+                    "block {child_name:?} carries no count attribute; a block group states its \
+                     row count"
+                )));
             }
-            if let Some(shape) = attrs.get("structural_shape").and_then(|v| v.as_array()) {
-                let shape: Vec<usize> = shape
-                    .iter()
-                    .filter_map(|v| v.as_u64().map(|n| n as usize))
-                    .collect();
-                if !shape.is_empty() {
-                    block.set_shape(&shape).map_err(|e| {
-                        MolRsError::zarr(format!(
-                            "block {child_name:?} structural_shape {shape:?}: {e}"
-                        ))
-                    })?;
-                }
+        };
+        if block.is_empty() {
+            block.resize(count).map_err(|e| {
+                MolRsError::zarr(format!("block {child_name:?} count={count}: {e}"))
+            })?;
+        } else if block.nrows() != Some(count) {
+            return Err(MolRsError::zarr(format!(
+                "row_count_mismatch: block {child_name:?} count={count}, columns have {}",
+                block.nrows().unwrap_or(0)
+            )));
+        }
+        if let Some(shape) = attrs.get("structural_shape").and_then(|v| v.as_array()) {
+            let shape: Vec<usize> = shape
+                .iter()
+                .filter_map(|v| v.as_u64().map(|n| n as usize))
+                .collect();
+            if !shape.is_empty() {
+                block.set_shape(&shape).map_err(|e| {
+                    MolRsError::zarr(format!(
+                        "block {child_name:?} structural_shape {shape:?}: {e}"
+                    ))
+                })?;
             }
         }
         read_validity_group(store, child.path().as_str(), child_name, &mut block)?;
@@ -1153,13 +1268,19 @@ mod tests {
         ] {
             let dir = TempDir::new().unwrap();
             let store = store_in(&dir);
-            for group in ["/f", "/f/b"] {
-                GroupBuilder::new()
-                    .build(store.clone(), group)
-                    .unwrap()
-                    .store_metadata()
-                    .unwrap();
-            }
+            GroupBuilder::new()
+                .build(store.clone(), "/f")
+                .unwrap()
+                .store_metadata()
+                .unwrap();
+            let mut count = serde_json::Map::new();
+            count.insert("count".into(), serde_json::json!(2));
+            GroupBuilder::new()
+                .attributes(count)
+                .build(store.clone(), "/f/b")
+                .unwrap()
+                .store_metadata()
+                .unwrap();
             write_column(&store, &format!("/f/b/{key}"), &column, None).unwrap();
             let err = read_frame_group(&store, "/f").unwrap_err().to_string();
             assert!(
@@ -1522,7 +1643,7 @@ mod tests {
         let simbox = SimBox::new_cell(
             array![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             array![0.0, 0.0, 0.0],
-            [true, false, true],
+            [false, false, false],
             false,
         )
         .unwrap();
@@ -1567,6 +1688,41 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(written, vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
+    }
+
+    /// An undefined cell is periodic on no axis: its all-false boundary is
+    /// written explicitly, an omitted one reads all-false, and a periodic flag
+    /// is refused both ways.
+    #[test]
+    fn an_undefined_cell_is_periodic_on_no_axis() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let cell =
+            |pbc| SimBox::new_cell(ndarray::Array2::eye(3), array![0.0, 0.0, 0.0], pbc, false);
+
+        let err = write_simbox(&store, "/p", &cell([true, false, false]).unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("undefined cell"), "{err}");
+
+        write_simbox(&store, "/box", &cell([false; 3]).unwrap()).unwrap();
+        assert!(Array::open(store.clone(), "/box/boundary").is_ok());
+        assert_eq!(read_simbox(&store, "/box").unwrap().pbc(), [false; 3]);
+
+        // Omitted boundary on an undefined cell: all-false, not periodic.
+        std::fs::remove_dir_all(dir.path().join("box/boundary")).unwrap();
+        assert_eq!(read_simbox(&store, "/box").unwrap().pbc(), [false; 3]);
+
+        // A periodic flag stored on an undefined cell is malformed.
+        write_column(
+            &store,
+            "/box/boundary",
+            &Column::from_bool(ArrayD::from_shape_vec(vec![3], vec![false, true, false]).unwrap()),
+            None,
+        )
+        .unwrap();
+        let err = read_simbox(&store, "/box").unwrap_err().to_string();
+        assert!(err.contains("undefined cell"), "{err}");
     }
 
     /// A *defined* cell with a singular matrix is still refused.
@@ -2306,5 +2462,84 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains(META_TYPES_ATTR), "{err}");
+    }
+
+    #[test]
+    fn a_block_group_without_its_count_is_refused() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = Frame::new();
+        let mut block = Block::new();
+        block
+            .insert_column(
+                COLUMN,
+                Column::from_float(ArrayD::from_shape_vec(vec![2], vec![1.0, 2.0]).unwrap()),
+            )
+            .unwrap();
+        frame.insert(BLOCK, block);
+        write_frame_group(&store, FRAME, &frame).unwrap();
+        let mut group =
+            zarrs::group::Group::open(store.clone(), &format!("{FRAME}/{BLOCK}")).unwrap();
+        group.attributes_mut().remove("count");
+        group.store_metadata().unwrap();
+        let err = read_frame_group(&store, FRAME).unwrap_err().to_string();
+        assert!(err.contains("count") && err.contains(BLOCK), "{err}");
+        group
+            .attributes_mut()
+            .insert("count".into(), serde_json::json!(-1));
+        group.store_metadata().unwrap();
+        assert!(read_frame_group(&store, FRAME).is_err());
+    }
+
+    /// Every canonical key is held to its declared dtype on read, not only the
+    /// u64 identifiers; a writer converts a column of another width of the
+    /// family on the way out.
+    #[test]
+    fn every_canonical_key_is_held_to_its_dtype_on_read_and_converted_on_write() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut block = Block::new();
+        block
+            .insert_column(
+                "ix",
+                Column::from_i64(ArrayD::from_shape_vec(vec![2], vec![-1_i64, 3]).unwrap()),
+            )
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert(BLOCK, block);
+        write_frame_group(&store, FRAME, &frame).unwrap();
+        let back = read_frame_group(&store, FRAME).unwrap();
+        let ix = back.get(BLOCK).unwrap().get("ix").unwrap();
+        assert_eq!(ix.dtype(), DType::Int);
+        assert_eq!(ix.as_int().unwrap().as_slice().unwrap(), &[-1, 3]);
+
+        // An i64 `ix` that does not fit i32 is refused at write.
+        let mut block = Block::new();
+        block
+            .insert_column(
+                "ix",
+                Column::from_i64(ArrayD::from_shape_vec(vec![1], vec![1_i64 << 40]).unwrap()),
+            )
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert(BLOCK, block);
+        assert!(write_frame_group(&store, FRAME, &frame).is_err());
+
+        // A store holding `ix` as i64 (a foreign writer) is refused on read.
+        write_column(
+            &store,
+            &format!("{FRAME}/{BLOCK}/ix"),
+            &Column::from_i64(ArrayD::from_shape_vec(vec![2], vec![-1_i64, 3]).unwrap()),
+            None,
+        )
+        .unwrap();
+        let mut group =
+            zarrs::group::Group::open(store.clone(), &format!("{FRAME}/{BLOCK}")).unwrap();
+        group
+            .attributes_mut()
+            .insert("count".into(), serde_json::json!(2));
+        group.store_metadata().unwrap();
+        let err = read_frame_group(&store, FRAME).unwrap_err().to_string();
+        assert!(err.contains("\"ix\"") && err.contains("int"), "{err}");
     }
 }

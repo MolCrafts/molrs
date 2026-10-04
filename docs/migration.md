@@ -90,6 +90,26 @@ short "Also new" list at the end of each section.
     `read_mrec`. The lazy trajectory reader (`FrameSequence::open`, Python
     `TrajectoryReader`) and the WASM readers now validate
     `meta.molrec_version` too.
+  - **Stricter reads of malformed stores** (molrec `storage.md`,
+    `ragged.md`): a frame/system block group without an integer `count`
+    attribute is refused; a canonical column (`x`, `ix`, `element`, …, not
+    only the `u64` identifiers) stored at any dtype but its declared one is
+    refused, while writers convert an in-memory column of another width of
+    the family (`ix` as `i64`) to the declared one, refusing a value that
+    does not fit; `SequenceSchema::declare_column` refuses a canonical key at
+    another dtype. A trajectory with one elision marker (`uniform_rows` /
+    `dense_updates`) without the other, a non-positive `uniform_rows`,
+    markers on a block with no columns, a `step_progression` /
+    `time_progression` without `nstep`, or a non-integer `nstep` is
+    refused. A declared block with neither index nor markers still reads as
+    absent.
+  - **An undefined cell is periodic on no axis.** With
+    `cell_defined: false` an omitted `boundary` reads all-`false` (0.14 read
+    it all-periodic), a stored periodic flag is refused, and writers refuse
+    an undefined `SimBox` with a periodic flag.
+  - **Metrics series names** that Zarr forbids as nodes are escaped on their
+    first byte (`.` → `%2E`, `..` → `%2E.`, `__x` → `%5F_x`); the empty name
+    is refused at write.
   - **Every reader decodes `zstd` and `numcodecs.shuffle`**, the wasm32
     build included (molrec's must-decode set). A build without
     `zarr-codecs` decodes `zstd` through a pure-Rust decoder (`ruzstd`), so
