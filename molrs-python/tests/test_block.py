@@ -259,6 +259,13 @@ class TestBlockSubscriptAssignment:
         b["name"] = ["C", "H", "O"]
         assert list(b["name"]) == ["C", "H", "O"]
 
+    def test_an_empty_string_column_is_still_a_string_array(self):
+        b = Block()
+        b["name"] = np.array([], dtype=str)
+        assert b.dtype("name") == "string"
+        assert b["name"].dtype.kind == "U"
+        assert b.copy_column("name").dtype.kind == "U"
+
     def test_a_string_column_indexes_like_a_numeric_one(self):
         b = Block({"name": ["C", "H", "O"]})
         out = b["name"]

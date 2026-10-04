@@ -1385,9 +1385,11 @@ pub(crate) fn coords_error(e: BlockError) -> PyErr {
 /// Built outside the store borrow. ``reshape`` keeps a rank above 1; it does
 /// not flatten the column down to a vector.
 fn numpy_string_array(py: Python<'_>, flat: &[String], shape: Vec<usize>) -> PyResult<Py<PyAny>> {
-    let arr = py
-        .import("numpy")?
-        .call_method1("asarray", (PyList::new(py, flat)?,))?;
+    // The dtype is explicit: numpy reads an empty list as float64.
+    let numpy = py.import("numpy")?;
+    let kwargs = PyDict::new(py);
+    kwargs.set_item("dtype", numpy.getattr("str_")?)?;
+    let arr = numpy.call_method("asarray", (PyList::new(py, flat)?,), Some(&kwargs))?;
     Ok(arr.call_method1("reshape", (shape,))?.unbind())
 }
 
