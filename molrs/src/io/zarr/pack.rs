@@ -86,6 +86,7 @@ const MREC_SUFFIX: &str = "mrec";
 /// write_trajectory_file(
 ///     &store,
 ///     &Trajectory::from_frames(vec![molrs::Frame::new()]),
+///     None,
 /// )?;
 ///
 /// let zip = pack(&store)?;
@@ -283,7 +284,7 @@ mod tests {
     /// Write [`trajectory`] into a fresh directory store `name` under `parent`.
     fn write_store(parent: &Path, name: &str) -> PathBuf {
         let path = parent.join(name);
-        write_trajectory_file(&path, &trajectory()).expect("the fixture store writes");
+        write_trajectory_file(&path, &trajectory(), None).expect("the fixture store writes");
         path
     }
 

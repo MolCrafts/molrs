@@ -666,7 +666,8 @@ fn read_observables(
 /// Same path rules as [`write_record_file`]: conventional suffix `.mrec`,
 /// retired `.zarr` / `.zarr.zip` refused, a second write replaces the first.
 /// The frames are encoded by [`crate::io::mrec::FrameSequenceWriter`]; no
-/// duplicate `frame/` snapshot is written beside them.
+/// duplicate `frame/` snapshot is written beside them. `meta` is the record's
+/// identity document, stamped with `molrec_version` like every record's.
 ///
 /// # Errors
 ///
@@ -684,7 +685,7 @@ fn read_observables(
 /// let path = dir.path().join("run.mrec");
 ///
 /// let traj = Trajectory::from_frames(vec![molrs::Frame::new()]);
-/// write_trajectory_file(&path, &traj)?;
+/// write_trajectory_file(&path, &traj, None)?;
 ///
 /// let loaded = read_trajectory_file(&path)?;
 /// assert_eq!(loaded.len(), 1);
@@ -695,9 +696,13 @@ fn read_observables(
 pub fn write_trajectory_file(
     path: impl AsRef<Path>,
     trajectory: &Trajectory,
+    meta: Option<&JsonMap<String, JsonValue>>,
 ) -> Result<(), MolRsError> {
     let mut record = MolRec::new();
     record.trajectory = Some(trajectory.clone());
+    if let Some(meta) = meta {
+        record.meta = meta.clone();
+    }
     write_record_file(path, &record)
 }
 
@@ -869,7 +874,7 @@ pub fn read_trajectory_file(path: impl AsRef<Path>) -> Result<Trajectory, MolRsE
 /// let path = dir.path().join("run.mrec");
 ///
 /// let traj = Trajectory::from_frames(vec![molrs::Frame::new()]);
-/// write_trajectory_file(&path, &traj)?;
+/// write_trajectory_file(&path, &traj, None)?;
 ///
 /// let mut seq = open_trajectory_sequence(&path)?;
 /// assert!(seq.frame(0)?.is_some());
@@ -1299,6 +1304,26 @@ mod tests {
     }
 
     #[test]
+    fn trajectory_door_writes_the_producer_meta() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("record.mrec");
+        let mut meta = JsonMap::new();
+        meta.insert("creator".into(), serde_json::json!({"name": "unit-test"}));
+        write_trajectory_file(
+            &path,
+            &Trajectory::from_frames(vec![frame_with_atoms(2)]),
+            Some(&meta),
+        )
+        .unwrap();
+        let back = read_meta_file(&path).unwrap();
+        assert_eq!(back["creator"]["name"], "unit-test");
+        assert_eq!(
+            back["molrec_version"].as_u64(),
+            Some(schema::MOLREC_VERSION)
+        );
+    }
+
+    #[test]
     fn trajectory_door_round_trips_through_the_record_layout() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("record.mrec");
@@ -1306,7 +1331,7 @@ mod tests {
         frame.meta.insert("key", "value");
         let traj = Trajectory::from_frames(vec![frame]);
 
-        write_trajectory_file(&path, &traj).unwrap();
+        write_trajectory_file(&path, &traj, None).unwrap();
         let loaded = read_trajectory_file(&path).unwrap();
         assert_eq!(loaded.frames.len(), 1);
         assert_eq!(
@@ -1550,7 +1575,7 @@ mod tests {
             step: Some(vec![0, 1]),
             time: None,
         };
-        write_trajectory_file(&path, &traj).unwrap();
+        write_trajectory_file(&path, &traj, None).unwrap();
 
         let nodes = node_paths(&path);
         let frame_nodes: Vec<&String> = nodes
@@ -1620,7 +1645,7 @@ mod tests {
             step: Some(vec![0, 1]),
             time: None,
         };
-        write_trajectory_file(&path, &first).unwrap();
+        write_trajectory_file(&path, &first, None).unwrap();
 
         // Different in every axis the layout carries: fewer rows per frame,
         // more frames, other step numbers, and times where there were none.
@@ -1633,7 +1658,7 @@ mod tests {
             step: Some(vec![7, 8, 9]),
             time: Some(vec![0.25, 0.5, 0.75]),
         };
-        write_trajectory_file(&path, &second).unwrap();
+        write_trajectory_file(&path, &second, None).unwrap();
 
         let loaded = read_trajectory_file(&path).unwrap();
         assert_eq!(
@@ -1660,6 +1685,7 @@ mod tests {
         write_trajectory_file(
             &path,
             &Trajectory::from_frames(vec![frame_with_x(&[1.0, 2.0])]),
+            None,
         )
         .unwrap();
 

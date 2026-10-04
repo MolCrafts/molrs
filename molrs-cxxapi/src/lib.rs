@@ -667,7 +667,7 @@ fn write_frame(
         }
     }
     let traj = Trajectory::from_frames(vec![frame]);
-    write_trajectory_file(path, &traj).map_err(|e| format!("write_frame: {e}"))
+    write_trajectory_file(path, &traj, None).map_err(|e| format!("write_frame: {e}"))
 }
 
 /// Read the first frame of a store into a fresh `FrameRef`.

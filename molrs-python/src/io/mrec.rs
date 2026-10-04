@@ -9,20 +9,18 @@
 use std::path::PathBuf;
 
 use crate::core::spatial::simbox::PyBox;
-use crate::core::store::frame::PyFrame;
-use crate::core::store::frame::PyMetaValue;
+use crate::core::store::frame::{
+    PyFrame, PyMetaValue, json_map_to_plain_dict, meta_document_arg, py_to_json,
+};
 use crate::core::store::trajectory::PyTrajectory;
 use crate::helpers::{molrs_error_to_pyerr, path_str};
 use molrs::io::mrec::{
     Compression, FrameSequence, FrameSequenceWriter, SequenceSchema, column_dtype, open_packed,
 };
 use molrs::store::meta::MetaValue;
-use pyo3::exceptions::{PyIndexError, PyTypeError, PyValueError};
+use pyo3::exceptions::{PyIndexError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{
-    PyAny, PyBool, PyDict, PyFloat, PyFrozenSet, PyInt, PyList, PyMapping, PyString,
-};
-use serde_json::{Map as JsonMap, Value as JsonValue};
+use pyo3::types::{PyAny, PyDict, PyFrozenSet};
 
 /// Write a snapshot as a record whose only state section is ``frame``.
 ///
@@ -31,20 +29,25 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 ///     frame: In-memory :class:`~molrs.Frame` to persist.
 ///     system: Optional system-definition :class:`~molrs.Frame` written
 ///         beside the snapshot as the ``system/`` section.
+///     meta: The record's identity document, written to ``meta/`` with
+///         ``molrec_version`` stamped in: a ``dict``, a
+///         :class:`~molrs.MetaDocument`, or any mapping (``frame.meta``
+///         included). Nested tuples and documents are JSON arrays and objects.
 ///
 /// Raises:
 ///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, or the
 ///         frame fails to encode.
+///     TypeError: If ``meta`` is not a mapping or holds a value JSON cannot.
 #[pyfunction]
 #[pyo3(signature = (path, frame, system=None, meta=None))]
 pub fn write_mrec(
     path: PathBuf,
     frame: &Bound<'_, PyFrame>,
     system: Option<&Bound<'_, PyFrame>>,
-    meta: Option<&Bound<'_, PyDict>>,
+    meta: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<()> {
     let path = path_str(&path)?;
-    let meta_map = meta.map(|meta| dict_to_json_map(meta, 0)).transpose()?;
+    let meta_map = meta.map(meta_document_arg).transpose()?;
     let frame = frame.borrow();
     match system {
         None => frame.with_frame(|core| {
@@ -64,19 +67,24 @@ pub fn write_mrec(
 /// Args:
 ///     path: Destination filesystem path.
 ///     system: In-memory :class:`~molrs.Frame` to persist as ``system/``.
+///     meta: The record's identity document, written to ``meta/`` with
+///         ``molrec_version`` stamped in: a ``dict``, a
+///         :class:`~molrs.MetaDocument`, or any mapping (``frame.meta``
+///         included). Nested tuples and documents are JSON arrays and objects.
 ///
 /// Raises:
 ///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, or the
 ///         frame fails to encode.
+///     TypeError: If ``meta`` is not a mapping or holds a value JSON cannot.
 #[pyfunction]
 #[pyo3(signature = (path, system, meta=None))]
 pub fn write_mrec_system(
     path: PathBuf,
     system: &Bound<'_, PyFrame>,
-    meta: Option<&Bound<'_, PyDict>>,
+    meta: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<()> {
     let path = path_str(&path)?;
-    let meta_map = meta.map(|meta| dict_to_json_map(meta, 0)).transpose()?;
+    let meta_map = meta.map(meta_document_arg).transpose()?;
     system
         .borrow()
         .with_frame(|core| molrs::io::mrec::write_system_file(path, core, meta_map.as_ref()))?
@@ -88,14 +96,26 @@ pub fn write_mrec_system(
 /// Args:
 ///     path: Destination filesystem path.
 ///     traj: In-memory :class:`~molrs.Trajectory` to persist.
+///     meta: The record's identity document, written to ``meta/`` with
+///         ``molrec_version`` stamped in: a ``dict``, a
+///         :class:`~molrs.MetaDocument`, or any mapping (``frame.meta``
+///         included). Nested tuples and documents are JSON arrays and objects.
 ///
 /// Raises:
 ///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, or a frame
 ///         fails to encode.
+///     TypeError: If ``meta`` is not a mapping or holds a value JSON cannot.
 #[pyfunction]
-pub fn write_mrec_trajectory(path: PathBuf, traj: PyRef<'_, PyTrajectory>) -> PyResult<()> {
+#[pyo3(signature = (path, traj, meta=None))]
+pub fn write_mrec_trajectory(
+    path: PathBuf,
+    traj: PyRef<'_, PyTrajectory>,
+    meta: Option<&Bound<'_, PyAny>>,
+) -> PyResult<()> {
     let path = path_str(&path)?;
-    molrs::io::mrec::write_trajectory_file(path, &traj.inner).map_err(molrs_error_to_pyerr)
+    let meta_map = meta.map(meta_document_arg).transpose()?;
+    molrs::io::mrec::write_trajectory_file(path, &traj.inner, meta_map.as_ref())
+        .map_err(molrs_error_to_pyerr)
 }
 
 /// Read the ``frame`` section of a ``*.mrec`` store.
@@ -181,7 +201,7 @@ pub fn read_mrec_trajectory(path: PathBuf) -> PyResult<PyTrajectory> {
 pub fn read_mrec_meta(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
     let path = path_str(&path)?;
     let map = molrs::io::mrec::read_meta_file(path).map_err(molrs_error_to_pyerr)?;
-    Ok(json_map_to_dict(py, &map)?.unbind())
+    Ok(json_map_to_plain_dict(py, &map)?.unbind())
 }
 
 /// Child group names at the record root (``meta``, ``frame``, ``system``, …).
@@ -316,7 +336,8 @@ impl PyMrecTrajectoryReader {
         self.inner.steps().to_vec()
     }
 
-    /// Physical times (fs) of the committed frames, when the run wrote any.
+    /// Time of each committed frame, when the run wrote any. The record
+    /// carries no unit for it; the producer's convention applies.
     #[getter]
     fn time(&self) -> Option<Vec<f64>> {
         self.inner.times().map(<[f64]>::to_vec)
@@ -553,7 +574,10 @@ fn parse_compression(spec: Option<&str>) -> PyResult<Compression> {
 ///         ``"gzip[:level]"`` or ``"zstd[:level]"``. Everything else always
 ///         carries gzip level 1.
 ///     durable: Whether ``flush()`` / ``close()`` fsync the touched files.
-///     meta: The record's identity document, written to ``meta/``.
+///     meta: The record's identity document, written to ``meta/`` with
+///         ``molrec_version`` stamped in: a ``dict``, a
+///         :class:`~molrs.MetaDocument`, or any mapping (``frame.meta``
+///         included). Nested tuples and documents are JSON arrays and objects.
 #[pyclass(module = "molrs.io.mrec", name = "TrajectoryWriter", unsendable)]
 pub struct PyMrecTrajectoryWriter {
     inner: Option<FrameSequenceWriter>,
@@ -569,7 +593,7 @@ impl PyMrecTrajectoryWriter {
         flush_every: Option<u64>,
         compression: Option<&str>,
         durable: bool,
-        meta: Option<&Bound<'_, PyDict>>,
+        meta: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let path = path_str(&path)?;
         let schema = schema.borrow().inner.clone();
@@ -585,7 +609,7 @@ impl PyMrecTrajectoryWriter {
         }
         if let Some(meta) = meta {
             writer = writer
-                .with_meta(&dict_to_json_map(meta, 0)?)
+                .with_meta(&meta_document_arg(meta)?)
                 .map_err(molrs_error_to_pyerr)?;
         }
         Ok(Self {
@@ -614,7 +638,8 @@ impl PyMrecTrajectoryWriter {
     }
 
     /// Buffer a frame. With no ``step`` the writer numbers frames 0, 1, 2, …;
-    /// pass ``step`` (and optionally ``time`` in fs) for real MD numbering, or
+    /// pass ``step`` (and optionally ``time``, in the producer's own unit — the
+    /// record stores none) for real MD numbering, or
     /// ``time`` alone to keep the automatic numbering and still record times.
     ///
     /// Raises:
@@ -730,11 +755,8 @@ pub fn mrec_validate_path(path: PathBuf) -> PyResult<()> {
 ///     ValueError: If ``molrec_version`` is present and not a version this
 ///         reader supports.
 #[pyfunction]
-pub fn mrec_validate_meta(meta: &Bound<'_, PyMapping>) -> PyResult<()> {
-    let dict = PyDict::new(meta.py());
-    dict.update(meta)?;
-    let map = dict_to_json_map(&dict, 0)?;
-    molrs::io::mrec::schema::validate_meta(&map).map_err(molrs_error_to_pyerr)
+pub fn mrec_validate_meta(meta: &Bound<'_, PyAny>) -> PyResult<()> {
+    molrs::io::mrec::schema::validate_meta(&meta_document_arg(meta)?).map_err(molrs_error_to_pyerr)
 }
 
 /// Judge a snapshot or system-definition frame against the Frame vocabulary.
@@ -750,102 +772,4 @@ pub fn mrec_validate_frame(frame: &Bound<'_, PyFrame>) -> PyResult<()> {
         .borrow()
         .with_frame(molrs::io::mrec::schema::validate_frame)?
         .map_err(molrs_error_to_pyerr)
-}
-
-fn json_map_to_dict<'py>(
-    py: Python<'py>,
-    map: &JsonMap<String, JsonValue>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let dict = PyDict::new(py);
-    for (key, value) in map {
-        dict.set_item(key, json_to_py(py, value)?)?;
-    }
-    Ok(dict)
-}
-
-fn json_to_py(py: Python<'_>, value: &JsonValue) -> PyResult<Py<PyAny>> {
-    Ok(match value {
-        JsonValue::Null => py.None(),
-        JsonValue::Bool(b) => b.into_pyobject(py)?.to_owned().into_any().unbind(),
-        JsonValue::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                i.into_pyobject(py)?.into_any().unbind()
-            } else if let Some(u) = n.as_u64() {
-                u.into_pyobject(py)?.into_any().unbind()
-            } else {
-                n.as_f64()
-                    .unwrap_or(f64::NAN)
-                    .into_pyobject(py)?
-                    .into_any()
-                    .unbind()
-            }
-        }
-        JsonValue::String(s) => s.into_pyobject(py)?.into_any().unbind(),
-        JsonValue::Array(items) => {
-            let list = PyList::empty(py);
-            for item in items {
-                list.append(json_to_py(py, item)?)?;
-            }
-            list.into_any().unbind()
-        }
-        JsonValue::Object(map) => json_map_to_dict(py, map)?.into_any().unbind(),
-    })
-}
-
-fn dict_to_json_map(
-    dict: &Bound<'_, PyDict>,
-    depth: usize,
-) -> PyResult<JsonMap<String, JsonValue>> {
-    let mut map = JsonMap::new();
-    for (key, value) in dict.iter() {
-        let key: String = key
-            .extract()
-            .map_err(|_| PyTypeError::new_err("record metadata keys must be strings"))?;
-        map.insert(key, py_to_json(&value, depth + 1)?);
-    }
-    Ok(map)
-}
-
-/// Deepest container nesting accepted from Python. Past it the value is
-/// refused rather than recursed into: a self-referencing list or dict would
-/// otherwise overflow the stack and kill the interpreter.
-const MAX_JSON_DEPTH: usize = 128;
-
-fn py_to_json(value: &Bound<'_, PyAny>, depth: usize) -> PyResult<JsonValue> {
-    if depth > MAX_JSON_DEPTH {
-        return Err(PyValueError::new_err(format!(
-            "metadata nests deeper than {MAX_JSON_DEPTH} levels (cyclic?)"
-        )));
-    }
-    if value.is_none() {
-        return Ok(JsonValue::Null);
-    }
-    if let Ok(b) = value.cast::<PyBool>() {
-        return Ok(JsonValue::Bool(b.is_true()));
-    }
-    if let Ok(i) = value.cast::<PyInt>() {
-        return Ok(JsonValue::from(i.extract::<i64>()?));
-    }
-    if let Ok(f) = value.cast::<PyFloat>() {
-        return Ok(serde_json::Number::from_f64(f.extract::<f64>()?)
-            .map(JsonValue::Number)
-            .unwrap_or(JsonValue::Null));
-    }
-    if let Ok(s) = value.cast::<PyString>() {
-        return Ok(JsonValue::String(s.extract::<String>()?));
-    }
-    if let Ok(dict) = value.cast::<PyDict>() {
-        return Ok(JsonValue::Object(dict_to_json_map(dict, depth)?));
-    }
-    if let Ok(list) = value.cast::<PyList>() {
-        let mut items = Vec::with_capacity(list.len());
-        for item in list.iter() {
-            items.push(py_to_json(&item, depth + 1)?);
-        }
-        return Ok(JsonValue::Array(items));
-    }
-    Err(PyTypeError::new_err(format!(
-        "unsupported metadata value type: {}",
-        value.get_type().name()?
-    )))
 }

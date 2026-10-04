@@ -1359,6 +1359,45 @@ fn infer_fixed_vector(value: &Bound<'_, PyAny>) -> PyResult<Option<MetaValue>> {
     Ok(meta_value_from_dtype(dtype, value).ok())
 }
 
+/// A record-level `meta` argument as a JSON object.
+///
+/// Takes a `dict`, a [`MetaDocument`](PyMetaDocument), or any other
+/// `collections.abc.Mapping` (`frame.meta` among them). Nested values may be
+/// anything a `frame.meta` door hands out — tuples and documents included —
+/// so what the bindings give a caller round-trips back in.
+pub(crate) fn meta_document_arg(
+    meta: &Bound<'_, PyAny>,
+) -> PyResult<serde_json::Map<String, JsonValue>> {
+    let plain = if meta.cast::<PyDict>().is_ok() || meta.is_instance_of::<PyMetaDocument>() {
+        meta.clone()
+    } else if let Ok(mapping) = meta.cast::<pyo3::types::PyMapping>() {
+        let dict = PyDict::new(meta.py());
+        dict.update(mapping)?;
+        dict.into_any()
+    } else {
+        return Err(PyTypeError::new_err(format!(
+            "meta must be a mapping, got {}",
+            meta.get_type().name()?
+        )));
+    };
+    match py_to_json(&plain, 0)? {
+        JsonValue::Object(map) => Ok(map),
+        _ => unreachable!("a dict or a document converts to a JSON object"),
+    }
+}
+
+/// A JSON object as a plain `dict`: nested objects are dicts, arrays lists.
+pub(crate) fn json_map_to_plain_dict<'py>(
+    py: Python<'py>,
+    map: &serde_json::Map<String, JsonValue>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+    for (key, item) in map {
+        dict.set_item(key, json_to_py(py, item, JsonForm::Plain)?)?;
+    }
+    Ok(dict)
+}
+
 fn json_to_py(py: Python<'_>, value: &JsonValue, form: JsonForm) -> PyResult<Py<PyAny>> {
     Ok(match value {
         JsonValue::Null => py.None(),
@@ -1405,7 +1444,9 @@ fn json_to_py(py: Python<'_>, value: &JsonValue, form: JsonForm) -> PyResult<Py<
 /// otherwise overflow the stack and kill the interpreter.
 const MAX_JSON_DEPTH: usize = 128;
 
-fn py_to_json(value: &Bound<'_, PyAny>, depth: usize) -> PyResult<JsonValue> {
+/// A Python value as JSON: `None`, bools, ints, floats, strings, dicts,
+/// documents, lists and tuples.
+pub(crate) fn py_to_json(value: &Bound<'_, PyAny>, depth: usize) -> PyResult<JsonValue> {
     if depth > MAX_JSON_DEPTH {
         return Err(PyValueError::new_err(format!(
             "meta value nests deeper than {MAX_JSON_DEPTH} levels (cyclic?)"

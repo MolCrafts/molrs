@@ -3287,12 +3287,14 @@ def write_mrec(
     path: PathInput,
     frame: Frame,
     system: Frame | None = None,
-    meta: dict[str, Any] | None = None,
+    meta: _AbcMapping[str, Any] | None = None,
 ) -> None: ...
 def write_mrec_system(
-    path: PathInput, system: Frame, meta: dict[str, Any] | None = None
+    path: PathInput, system: Frame, meta: _AbcMapping[str, Any] | None = None
 ) -> None: ...
-def write_mrec_trajectory(path: PathInput, traj: Trajectory) -> None: ...
+def write_mrec_trajectory(
+    path: PathInput, traj: Trajectory, meta: _AbcMapping[str, Any] | None = None
+) -> None: ...
 def read_mrec(path: PathInput) -> Frame: ...
 def read_mrec_system(path: PathInput) -> Frame: ...
 def read_mrec_trajectory(path: PathInput) -> Trajectory: ...
@@ -3366,7 +3368,7 @@ class TrajectoryWriter:
         flush_every: int | None = ...,
         compression: str | None = ...,
         durable: bool = ...,
-        meta: dict[str, Any] | None = ...,
+        meta: _AbcMapping[str, Any] | None = ...,
     ) -> None: ...
     @staticmethod
     def open(

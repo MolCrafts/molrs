@@ -265,6 +265,10 @@ short "Also new" list at the end of each section.
 - **`LAMMPSDataReader` refuses unknown sections.** Opt out per section with
   `.with_skipped_section("Ellipsoids")`.
 - **`stream::Publisher::send_async` → `send`.**
+- **`io::mrec::write_trajectory_file(path, trajectory)` →
+  `write_trajectory_file(path, trajectory, meta)`.** `meta` is an
+  `Option<&JsonMap>`, like `write_frame_file` and `write_system_file`. Pass
+  `None` to keep the old behaviour.
 
 #### Force field: construction
 
@@ -531,6 +535,14 @@ short "Also new" list at the end of each section.
   - `read_meta` → `read_mrec_meta`
   - `sections` → `mrec_sections`
 - **`GroFieldFormatter` no longer maps `resid` / `atom_id`.**
+- **`meta=` takes what `frame.meta` hands out.** `write_mrec`,
+  `write_mrec_system`, `write_mrec_trajectory` (which gains `meta=`) and
+  `TrajectoryWriter(meta=)` accept a `dict`, a `MetaDocument`, or any mapping
+  (`frame.meta` included), with nested tuples and documents. 0.14 took only a
+  `dict` of lists and dicts, and raised `TypeError` for anything else.
+- **Trajectory `time` has no unit.** The `TrajectoryReader.time` and
+  `TrajectoryWriter.append(time=)` docs no longer say fs. A record does not
+  store a unit for time; the producer's convention applies.
 
 #### `molrs.ff`
 

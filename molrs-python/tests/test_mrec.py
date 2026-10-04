@@ -209,3 +209,69 @@ class TestUnknownSections:
         assert "future" in molrs.io.mrec_sections(path)
         _assert_coords(molrs.io.read_mrec(path))
         assert len(molrs.io.read_mrec_trajectory(path)) == 0
+
+
+class TestMetaArgument:
+    """``meta=`` takes back every form ``frame.meta`` hands out."""
+
+    @staticmethod
+    def _frame_with_meta() -> molrs.Frame:
+        frame = _coords_frame()
+        frame.meta["run"] = {"engine": "md", "seeds": [1, 2]}
+        frame.meta["cell"] = [1.0, 2.0, 3.0]
+        return frame
+
+    def test_write_mrec_accepts_a_document_and_tuples(self, tmp_path: Path) -> None:
+        frame = self._frame_with_meta()
+        run = frame.meta["run"]
+        assert isinstance(run, molrs.MetaDocument)
+        assert isinstance(frame.meta["cell"], tuple)
+
+        path = tmp_path / "doc.mrec"
+        molrs.io.write_mrec(path, frame, meta=run)
+        meta = molrs.io.read_mrec_meta(path)
+        assert meta["engine"] == "md"
+        assert meta["seeds"] == [1, 2]
+
+        path = tmp_path / "nested.mrec"
+        molrs.io.write_mrec(
+            path, frame, meta={"run": run, "cell": frame.meta["cell"]}
+        )
+        meta = molrs.io.read_mrec_meta(path)
+        assert meta["run"] == {"engine": "md", "seeds": [1, 2]}
+        assert meta["cell"] == [1.0, 2.0, 3.0]
+
+    def test_write_mrec_accepts_frame_meta_itself(self, tmp_path: Path) -> None:
+        frame = self._frame_with_meta()
+        path = tmp_path / "frame_meta.mrec"
+        molrs.io.write_mrec_system(path, frame, meta=frame.meta)
+        meta = molrs.io.read_mrec_meta(path)
+        assert meta["run"]["engine"] == "md"
+        assert meta["cell"] == [1.0, 2.0, 3.0]
+
+    def test_write_mrec_trajectory_takes_meta(self, tmp_path: Path) -> None:
+        frame = self._frame_with_meta()
+        path = tmp_path / "traj.mrec"
+        molrs.io.write_mrec_trajectory(
+            path, molrs.Trajectory([frame]), meta=frame.meta["run"]
+        )
+        meta = molrs.io.read_mrec_meta(path)
+        assert meta["engine"] == "md"
+        assert meta["molrec_version"] == molrs.io.mrec.schema.MOLREC_VERSION
+        assert len(molrs.io.read_mrec_trajectory(path)) == 1
+
+    def test_trajectory_writer_accepts_a_document(self, tmp_path: Path) -> None:
+        frame = self._frame_with_meta()
+        path = tmp_path / "stream.mrec"
+        schema = molrs.io.mrec.SequenceSchema.from_frame(frame)
+        with molrs.io.mrec.TrajectoryWriter(
+            path, schema, meta={"run": frame.meta["run"], "cell": frame.meta["cell"]}
+        ) as writer:
+            writer.append(frame)
+        meta = molrs.io.read_mrec_meta(path)
+        assert meta["run"]["seeds"] == [1, 2]
+        assert meta["cell"] == [1.0, 2.0, 3.0]
+
+    def test_a_non_mapping_meta_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(TypeError, match="mapping"):
+            molrs.io.write_mrec(tmp_path / "bad.mrec", _coords_frame(), meta=[1, 2])
