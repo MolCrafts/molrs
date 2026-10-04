@@ -167,3 +167,25 @@ class TestMrecSurface:
 
     def test_no_god_reader(self) -> None:
         assert not hasattr(molrs.io.mrec, "Reader")
+
+
+class TestCanonicalWidths:
+    def test_a_narrow_canonical_identifier_cannot_be_declared(self) -> None:
+        schema = molrs.io.mrec.SequenceSchema()
+        with pytest.raises(ValueError, match="atomi"):
+            schema.declare_column("bonds", "atomi", "u32")
+        schema.declare_column("bonds", "atomi", "u64")
+        schema.declare_column("bonds", "label", "u32")
+
+    def test_a_narrow_insert_is_widened_and_round_trips_as_u64(
+        self, tmp_path: Path
+    ) -> None:
+        bonds = molrs.Block()
+        bonds["atomi"] = np.array([0, 1], dtype=np.uint32)
+        bonds["atomj"] = np.array([1, 2], dtype=np.uint32)
+        frame = _coords_frame()
+        frame["bonds"] = bonds
+        path = tmp_path / "bonds.mrec"
+        molrs.io.write_mrec(path, frame)
+        back = molrs.io.read_mrec(path)
+        assert np.asarray(back["bonds"]["atomi"]).dtype == np.uint64

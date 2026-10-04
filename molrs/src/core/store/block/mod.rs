@@ -1216,6 +1216,10 @@ fn concat_columns(key: &str, pieces: &[Column]) -> Result<Column, BlockError> {
 /// Identifiers (`id`, `atomi`, `type_id`, …) are [`Idx`]. A caller that
 /// hands us a narrower unsigned array is naming the same quantity; store it
 /// at identifier width so `Column::as_uint` and the writers that consume it agree.
+///
+/// This leniency is for the in-memory API only. The `*.mrec` store readers
+/// refuse a canonical identifier stored at another width before it reaches
+/// here, so a non-conforming store is reported rather than silently widened.
 fn promote_canonical_uint(key: &str, col: Column) -> Column {
     use crate::types::Idx;
     let Some(spec) = crate::store::schema::column(key) else {

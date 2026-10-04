@@ -160,8 +160,8 @@ use molrs::types::F;
 use crate::io::reader::TrajectoryReader;
 
 use super::frame_io::{
-    BOX_GROUP, VALIDITY_GROUP, insert_column_into_block, join_path, node_prefix, read_column_array,
-    zarr_dtype,
+    BOX_GROUP, VALIDITY_GROUP, check_canonical_width, insert_column_into_block, join_path,
+    node_prefix, read_column_array, zarr_dtype,
 };
 use super::record_io::zerr;
 
@@ -906,9 +906,11 @@ impl SequenceSchema {
     /// # Errors
     ///
     /// A [`MolRsError::Zarr`] when `column` is `offset` or `step_index`, when
-    /// `block` takes a reserved name, or when the column is already declared
-    /// with another width or trailing shape — a declaration is a pin, and one
-    /// column cannot mean two widths in one sequence.
+    /// `block` takes a reserved name, when a canonical identifier key
+    /// (`atomi`, `id`, `type_id`, …) is declared at a width other than `u64`,
+    /// or when the column is already declared with another width or trailing
+    /// shape — a declaration is a pin, and one column cannot mean two widths
+    /// in one sequence.
     pub fn declare_column(
         &mut self,
         block: &str,
@@ -917,6 +919,9 @@ impl SequenceSchema {
         trailing: &[u64],
     ) -> Result<(), MolRsError> {
         check_column_name(column)?;
+        // A canonical identifier declared narrower than `u64` could never be
+        // appended to (the in-memory block widens it) and is refused on read.
+        check_canonical_width(column, dtype)?;
         self.declare_block(block, None)?;
         let declared = ColumnSchema {
             dtype: dtype_tag(dtype).to_string(),
@@ -5338,6 +5343,28 @@ mod tests {
             assert_eq!(back.h_view(), ndarray::Array2::<f64>::eye(3));
             assert_eq!(back.origin_view()[0], x);
         }
+    }
+
+    /// A canonical identifier key cannot be declared narrower than `u64`:
+    /// the in-memory block widens it, so nothing could be appended, and a
+    /// store holding one is refused on read.
+    #[test]
+    fn a_canonical_identifier_cannot_be_declared_narrow() {
+        let mut schema = SequenceSchema::new();
+        for dtype in [DType::U8, DType::UInt16, DType::UInt32] {
+            let err = schema
+                .declare_column("bonds", "atomi", dtype, &[])
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("atomi") && err.contains(dtype.name()), "{err}");
+        }
+        schema
+            .declare_column("bonds", "atomi", DType::UInt, &[])
+            .unwrap();
+        // A non-canonical name keeps its arrival width.
+        schema
+            .declare_column("bonds", "my_label", DType::UInt32, &[])
+            .unwrap();
     }
 
     /// A non-default origin is recorded — as a `box/` attribute while the

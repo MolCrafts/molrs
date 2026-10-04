@@ -70,6 +70,12 @@ short "Also new" list at the end of each section.
     `vectors`. Readers accept any matrix there, zeros included, and do not
     invert it; writers write the identity. 0.14 refused a singular matrix
     even for an undefined cell.
+  - A canonical identifier column (`id`, `atomic_number`, `mol_id`, `res_id`,
+    `type_id`, `atomi`…`atoml`, `bond_type`, `bond_number`) stored at a width
+    other than `u64` is refused on read, naming the column and its width. 0.14
+    widened it silently. Inserting a narrow unsigned array in memory still
+    widens it to `u64`. `SequenceSchema::declare_column` (Python
+    `SequenceSchema.declare_column`) refuses such a key at a narrower width.
 
 ### Rust crate (`molcrafts-molrs`)
 

@@ -302,13 +302,44 @@ where
     }
 }
 
+/// Insert a column read from a store into `block`.
+///
+/// The store read path is strict where the in-memory API is lenient:
+/// [`Block::insert_column`] widens a narrow unsigned array under a canonical
+/// identifier key to `u64`, but a store that holds one at another width is
+/// refused here (see [`check_canonical_width`]) rather than silently widened.
 pub(crate) fn insert_column_into_block(
     block: &mut Block,
     name: &str,
     col: Column,
 ) -> Result<(), MolRsError> {
+    check_canonical_width(name, col.dtype())?;
     // Zero-copy insert: hand the Arc-backed Column directly to the Block.
     block.insert_column(name, col).map_err(MolRsError::Block)
+}
+
+/// Refuse a canonical identifier / endpoint key (`id`, `atomic_number`,
+/// `mol_id`, `res_id`, `type_id`, `atomi` … `atoml`, `bond_type`,
+/// `bond_number`) stored at any width but `u64`.
+///
+/// Every molrs writer stores those keys as `u64` — the in-memory block widens
+/// them on insert — so a narrower stored array came from a producer that broke
+/// the contract, and reading it back as `u64` would hide that.
+pub(crate) fn check_canonical_width(
+    name: &str,
+    stored: molrs::store::block::DType,
+) -> Result<(), MolRsError> {
+    use molrs::store::block::DType;
+    match molrs::store::schema::column(name) {
+        Some(spec) if spec.dtype == DType::UInt && stored != DType::UInt => {
+            Err(MolRsError::zarr(format!(
+                "column {name:?} is stored as {}; the canonical key {name:?} is u64, \
+                 and a store is not widened on read",
+                stored.name()
+            )))
+        }
+        _ => Ok(()),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -887,6 +918,61 @@ mod tests {
             *back.as_i8().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
         );
+    }
+
+    /// A canonical identifier stored narrower than `u64` is refused on read,
+    /// not widened — the in-memory insert widens, the store read does not.
+    #[test]
+    fn a_narrow_canonical_identifier_is_refused_on_read() {
+        for (key, column) in [
+            (
+                "atomi",
+                Column::from_u32(ArrayD::from_shape_vec(vec![2], vec![0u32, 1]).unwrap()),
+            ),
+            (
+                "type_id",
+                Column::from_u8(ArrayD::from_shape_vec(vec![2], vec![0u8, 1]).unwrap()),
+            ),
+            (
+                "bond_type",
+                Column::from_u16(ArrayD::from_shape_vec(vec![2], vec![1u16, 4]).unwrap()),
+            ),
+        ] {
+            let dir = TempDir::new().unwrap();
+            let store = store_in(&dir);
+            for group in ["/f", "/f/b"] {
+                GroupBuilder::new()
+                    .build(store.clone(), group)
+                    .unwrap()
+                    .store_metadata()
+                    .unwrap();
+            }
+            write_column(&store, &format!("/f/b/{key}"), &column).unwrap();
+            let err = read_frame_group(&store, "/f").unwrap_err().to_string();
+            assert!(
+                err.contains(key) && err.contains(column.dtype().name()),
+                "{err}"
+            );
+
+            // The same array under a non-canonical name reads at its width.
+            write_column(&store, "/f/b/label", &column).unwrap();
+            std::fs::remove_dir_all(dir.path().join("f/b").join(key)).unwrap();
+            let back = read_frame_group(&store, "/f").unwrap();
+            assert_eq!(
+                back.get("b").unwrap().get("label").unwrap().dtype(),
+                column.dtype()
+            );
+        }
+
+        // In memory the same insert widens to u64.
+        let mut block = Block::new();
+        block
+            .insert_column(
+                "atomi",
+                Column::from_u32(ArrayD::from_shape_vec(vec![1], vec![7u32]).unwrap()),
+            )
+            .unwrap();
+        assert_eq!(block.get("atomi").unwrap().dtype(), DType::UInt);
     }
 
     #[test]
