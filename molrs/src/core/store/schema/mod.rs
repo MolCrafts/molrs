@@ -127,7 +127,7 @@ macro_rules! columns {
         /// Canonical string constants for the keys of [`SCHEMA_COLUMNS`].
         ///
         /// Emitted by the `columns!` table macro from the same tokens as the table.
-        /// [`store::keys`](crate::store::keys) re-exports this module. Groups
+        /// [`crate::store::keys`] re-exports this module. Groups
         /// name these constants; they do not spell the strings again.
         pub mod consts {
             $(
@@ -249,7 +249,7 @@ macro_rules! blocks {
             )*
         ];
 
-        /// `(const name, value)` for every [`block_names`](block_names) scalar.
+        /// `(const name, value)` for every [`block_names`] scalar.
         ///
         /// The bindings loop this instead of naming `ATOMS`, `BONDS`, … again.
         pub static BLOCK_NAMES: &[NamedConst] = &[

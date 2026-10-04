@@ -24,7 +24,7 @@ use molrs::store::schema;
 /// Block names are :mod:`molrs.schema`, not keys. Use ``.key`` (or
 /// ``str(key)``) wherever an API still takes a plain string.
 #[pyclass(module = "molrs.keys", name = "Key", frozen, from_py_object)]
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct PyKey {
     name: &'static str,
 }
