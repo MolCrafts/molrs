@@ -590,12 +590,13 @@ fn read_observables(
             .attributes()
             .clone();
 
-        let kind_str = attrs
+        // A kind this build does not define is carried through as
+        // `ObservableKind::Other` and written back unchanged.
+        let kind = attrs
             .get("kind")
             .and_then(JsonValue::as_str)
+            .map(ObservableKind::from)
             .ok_or_else(|| MolRsError::zarr(format!("observable '{name}' is missing 'kind'")))?;
-        let kind = ObservableKind::parse(kind_str)
-            .ok_or_else(|| MolRsError::zarr(format!("unknown observable kind '{kind_str}'")))?;
 
         let mut extra = attrs.clone();
         for key in [
@@ -1060,6 +1061,46 @@ mod tests {
         assert_eq!(got.axes, vec!["timestep".to_string()]);
         assert!(got.time_dependent);
         assert_eq!(got.domain.as_deref(), Some("trajectory"));
+    }
+
+    /// A kind this build does not define is carried through and written back
+    /// unchanged, rather than failing the whole record read.
+    #[test]
+    fn an_unknown_observable_kind_round_trips() {
+        let mut rec = MolRec::new();
+        rec.frame = Some(Frame::new());
+        let mut obs = ObservableRecord::scalar("spectrum", float_column(&[0.5, 0.25]));
+        obs.kind = ObservableKind::from("spectrum_density");
+        obs.description = "From a producer module".into();
+        rec.observables.insert(obs).unwrap();
+
+        let loaded = write_then_read(&rec);
+        let got = loaded.observables.get("spectrum").unwrap();
+        assert_eq!(got.kind, ObservableKind::Other("spectrum_density".into()));
+        assert_eq!(got.description, "From a producer module");
+
+        let again = write_then_read(&loaded);
+        assert_eq!(
+            again.observables.get("spectrum").unwrap().kind.as_str(),
+            "spectrum_density"
+        );
+    }
+
+    /// Observable data without its `observables/meta/<name>` entry is still
+    /// refused: the pairing is mandatory.
+    #[test]
+    fn observable_data_without_meta_is_refused() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("record.mrec");
+        let mut rec = MolRec::new();
+        rec.frame = Some(Frame::new());
+        rec.observables
+            .insert(ObservableRecord::scalar("energy", float_column(&[1.0])))
+            .unwrap();
+        write_record_file(&path, &rec).unwrap();
+        std::fs::remove_dir_all(path.join("observables/meta/energy")).unwrap();
+        let err = read_record_file(&path).unwrap_err().to_string();
+        assert!(err.contains("energy") && err.contains("meta"), "{err}");
     }
 
     #[test]

@@ -76,6 +76,10 @@ short "Also new" list at the end of each section.
     widened it silently. Inserting a narrow unsigned array in memory still
     widens it to `u64`. `SequenceSchema::declare_column` (Python
     `SequenceSchema.declare_column`) refuses such a key at a narrower width.
+  - An observable whose `kind` is neither `scalar` nor `vector` no longer
+    fails the record read. It is carried as `ObservableKind::Other(String)`
+    and written back unchanged. Observable data with no
+    `observables/meta/<name>` entry is still refused.
 
 ### Rust crate (`molcrafts-molrs`)
 
@@ -153,6 +157,10 @@ short "Also new" list at the end of each section.
   - `FrameView::from_parts` takes an `IndexMap`.
   - `Relation.props` is an `IndexMap`.
 - **`store::frame::FRAME_SCHEMA_VERSION` is removed**, with no replacement.
+- **`ObservableKind` gains `Other(String)`** and is no longer `Copy`.
+  `ObservableKind::parse(s) -> Option<Self>` is replaced by
+  `ObservableKind::from(s)`, which never fails, and `as_str` now returns a
+  `&str` borrowed from the kind. Exhaustive `match`es must handle `Other`.
 
 #### Schema and units
 
