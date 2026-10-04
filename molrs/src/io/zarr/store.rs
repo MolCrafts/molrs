@@ -158,7 +158,8 @@ impl PositionalWriteStore {
         };
         let mut directories = BTreeSet::new();
         for path in &paths {
-            match File::open(path) {
+            // Write access: Windows' FlushFileBuffers refuses a read-only handle.
+            match OpenOptions::new().write(true).open(path) {
                 Ok(file) => file
                     .sync_data()
                     .map_err(|e| MolRsError::zarr(format!("fsync {}: {e}", path.display())))?,
