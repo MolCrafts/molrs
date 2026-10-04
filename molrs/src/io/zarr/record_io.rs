@@ -459,13 +459,34 @@ pub fn read_frame_section_store(
     section: &str,
 ) -> Result<Option<Frame>, MolRsError> {
     read_meta(&store)?;
-    if !section_names_store(store.clone())?
-        .iter()
-        .any(|name| name == section)
-    {
+    let sections = section_names_store(store.clone())?;
+    if !sections.iter().any(|name| name == section) {
         return Ok(None);
     }
-    Ok(Some(read_frame_group(&store, &join_path("/", section))?))
+    let frame = read_frame_group(&store, &join_path("/", section))?;
+    // An absolute reference into another section is checked against that
+    // block's `count` attribute, without decoding the section.
+    let rows_of = |target: &str| -> Option<Option<usize>> {
+        let (target_section, block) = target.strip_prefix('/')?.split_once('/')?;
+        if !matches!(target_section, "frame" | "system") {
+            return None;
+        }
+        if target_section == section {
+            return Some(frame.get(block).map(|b| b.nrows().unwrap_or(0)));
+        }
+        if !sections.iter().any(|name| name == target_section) {
+            return None;
+        }
+        let path = join_path(&join_path("/", target_section), block);
+        Some(
+            zarrs::group::Group::open(store.clone(), &path)
+                .ok()
+                .and_then(|group| group.attributes().get("count").and_then(|n| n.as_u64()))
+                .map(|n| n as usize),
+        )
+    };
+    check_declared_references(&frame, section, &rows_of)?;
+    Ok(Some(frame))
 }
 
 /// The record's top-level section names, without decoding any of them.
@@ -1905,5 +1926,27 @@ mod tests {
         record.frame = None;
         let back = write_then_read(&record);
         assert!(back.system.is_some());
+    }
+
+    /// The typed door reads only its own section, but still range-checks an
+    /// absolute reference against the target block's `count`.
+    #[test]
+    fn the_system_door_range_checks_an_absolute_target() {
+        let mut record = MolRec::new();
+        record.frame = Some(frame_with_atoms(3));
+        record.system = Some(members_into_frame(2));
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("r.mrec");
+        write_record_file(&path, &record).unwrap();
+        assert!(read_system_file(&path).is_ok());
+
+        let store: ReadableWritableListableStorage = Arc::new(FilesystemStore::new(&path).unwrap());
+        let mut atoms = zarrs::group::Group::open(store, "/frame/atoms").unwrap();
+        atoms
+            .attributes_mut()
+            .insert("count".into(), serde_json::json!(2));
+        atoms.store_metadata().unwrap();
+        let err = read_system_file(&path).unwrap_err().to_string();
+        assert!(err.contains("/frame/atoms"), "{err}");
     }
 }
