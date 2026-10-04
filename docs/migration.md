@@ -66,6 +66,10 @@ short "Also new" list at the end of each section.
     still be an integer in `1..=MOLREC_VERSION`, and `null`, `0`, a string, a
     float or a newer version is refused. Writers still stamp
     `molrec_version: 1` on every record.
+  - An undefined cell (`box` with `cell_defined: false`) ignores its
+    `vectors`. Readers accept any matrix there, zeros included, and do not
+    invert it; writers write the identity. 0.14 refused a singular matrix
+    even for an undefined cell.
 
 ### Rust crate (`molcrafts-molrs`)
 
@@ -184,6 +188,9 @@ short "Also new" list at the end of each section.
   ```
 - **`SimBox::try_new` is removed.** Use `SimBox::new` (same arguments) or
   `SimBox::from_matrix(h, origin, pbc)`.
+- **`SimBox::new_cell(h, …, cell_defined: false)` ignores `h`.** The box
+  carries the identity matrix, so `h_view()` / `matrix()` return the identity
+  and a singular `h` is no longer an error. A defined cell is unchanged.
 - **Image flags are `I` (i32), not `i64`.** This affects
   `SimBox::{wrap_shifts, images, unwrap}`, `periodic::ghosts::…::forward_comm`,
   `MDState.images`, and the `wrap_shifts` argument of `ForceProvider::compute` /

@@ -367,17 +367,35 @@ pub(crate) fn read_simbox(
 ) -> Result<SimBox, MolRsError> {
     use ndarray::{Array2, array};
 
-    // Narrow float arrays are refused; see `read_simbox_float_path`.
-    let vectors_path = format!("{}/vectors", prefix);
-    let h_data = read_simbox_float_path(store, &vectors_path)?
-        .ok_or_else(|| MolRsError::zarr(format!("box vectors array is missing: {vectors_path}")))?;
-    if h_data.len() != 9 {
-        return Err(MolRsError::zarr(format!(
-            "box vectors expected 9 values, got {}",
-            h_data.len()
-        )));
-    }
-    let h = Array2::from_shape_vec((3, 3), h_data).map_err(shape_err)?;
+    let group = zarrs::group::Group::open(store.clone(), prefix)?;
+
+    // `cell_defined` is optional and only ever written when false, so absent
+    // means a defined cell.
+    let cell_defined = group
+        .attributes()
+        .get("cell_defined")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    // An undefined cell's `vectors` mean nothing, so they are not read:
+    // whatever a store holds there (zeros included) is accepted, never
+    // inverted, and `SimBox::new_cell` carries the identity instead.
+    let h = if cell_defined {
+        // Narrow float arrays are refused; see `read_simbox_float_path`.
+        let vectors_path = format!("{}/vectors", prefix);
+        let h_data = read_simbox_float_path(store, &vectors_path)?.ok_or_else(|| {
+            MolRsError::zarr(format!("box vectors array is missing: {vectors_path}"))
+        })?;
+        if h_data.len() != 9 {
+            return Err(MolRsError::zarr(format!(
+                "box vectors expected 9 values, got {}",
+                h_data.len()
+            )));
+        }
+        Array2::from_shape_vec((3, 3), h_data).map_err(shape_err)?
+    } else {
+        Array2::eye(3)
+    };
 
     // An absent `origin` array is the zero origin: molrec's codec omits it for
     // a cell anchored at the coordinate origin, and that store is a well-formed
@@ -391,8 +409,6 @@ pub(crate) fn read_simbox(
         )));
     }
     let origin = array![o_data[0], o_data[1], o_data[2]];
-
-    let group = zarrs::group::Group::open(store.clone(), prefix)?;
 
     // Boundary flags are a `bool[3]` array. An absent array is fully
     // periodic, the normative default -- reading it as vacuum would make one
@@ -426,14 +442,6 @@ pub(crate) fn read_simbox(
         },
         Err(e) => return Err(e.into()),
     };
-
-    // `cell_defined` is optional and only ever written when false, so absent
-    // means a defined cell.
-    let cell_defined = group
-        .attributes()
-        .get("cell_defined")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
 
     SimBox::new_cell(h, origin, pbc, cell_defined)
         .map_err(|e| MolRsError::zarr(format!("invalid box: {:?}", e)))
@@ -1232,6 +1240,48 @@ mod tests {
 
         let back = read_simbox(&store, "/box").unwrap();
         assert!(!back.is_cell_defined());
+    }
+
+    /// An undefined cell's `vectors` are ignored on read: a zero matrix (or
+    /// any other) is accepted, never inverted, and comes back as the identity
+    /// — which is also what the writer emits for it.
+    #[test]
+    fn undefined_cell_accepts_any_vectors_and_writes_the_identity() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut attrs = serde_json::Map::new();
+        attrs.insert("cell_defined".into(), false.into());
+        GroupBuilder::new()
+            .attributes(attrs)
+            .build(store.clone(), "/box")
+            .unwrap()
+            .store_metadata()
+            .unwrap();
+        write_f64_array(&store, "/box/vectors", &[3, 3], &[0.0; 9]).unwrap();
+
+        let back = read_simbox(&store, "/box").unwrap();
+        assert!(!back.is_cell_defined());
+        assert_eq!(back.h_view(), ndarray::Array2::<F>::eye(3));
+
+        write_simbox(&store, "/rewritten", &back).unwrap();
+        let written = read_simbox_float_path(&store, "/rewritten/vectors")
+            .unwrap()
+            .unwrap();
+        assert_eq!(written, vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
+    }
+
+    /// A *defined* cell with a singular matrix is still refused.
+    #[test]
+    fn a_defined_singular_cell_is_refused() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        GroupBuilder::new()
+            .build(store.clone(), "/box")
+            .unwrap()
+            .store_metadata()
+            .unwrap();
+        write_f64_array(&store, "/box/vectors", &[3, 3], &[0.0; 9]).unwrap();
+        assert!(read_simbox(&store, "/box").is_err());
     }
 
     #[test]

@@ -2263,17 +2263,28 @@ fn cell_from_attributes(
     let Some(vectors) = attributes.get(VECTORS_ARRAY) else {
         return Ok(None);
     };
-    let flat: Vec<F> = match vectors.as_array() {
-        Some(rows) if rows.len() == 3 && rows.iter().all(serde_json::Value::is_array) => rows
-            .iter()
-            .flat_map(|row| row.as_array().into_iter().flatten())
-            .filter_map(serde_json::Value::as_f64)
-            .collect(),
-        Some(values) => values
-            .iter()
-            .filter_map(serde_json::Value::as_f64)
-            .collect(),
-        None => Vec::new(),
+    let cell_defined = attributes
+        .get(CELL_DEFINED_ATTRIBUTE)
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true);
+    // An undefined cell's `vectors` mean nothing: whatever is there is
+    // accepted and never parsed or inverted; `SimBox::new_cell` carries the
+    // identity in its place.
+    let flat: Vec<F> = if !cell_defined {
+        vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+    } else {
+        match vectors.as_array() {
+            Some(rows) if rows.len() == 3 && rows.iter().all(serde_json::Value::is_array) => rows
+                .iter()
+                .flat_map(|row| row.as_array().into_iter().flatten())
+                .filter_map(serde_json::Value::as_f64)
+                .collect(),
+            Some(values) => values
+                .iter()
+                .filter_map(serde_json::Value::as_f64)
+                .collect(),
+            None => Vec::new(),
+        }
     };
     if flat.len() != 9 {
         return Err(MolRsError::zarr(format!(
@@ -2299,10 +2310,6 @@ fn cell_from_attributes(
             "box attributes origin / boundary must hold three values each".to_string(),
         ));
     }
-    let cell_defined = attributes
-        .get(CELL_DEFINED_ATTRIBUTE)
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(true);
     SimBox::new_cell(
         Array2::from_shape_vec((3, 3), flat).map_err(zerr)?,
         Array1::from(origin),
@@ -4178,7 +4185,13 @@ impl BoxReader {
             .vectors
             .as_ref()
             .ok_or_else(|| MolRsError::zarr("box section has neither a fixed cell nor arrays"))?;
-        let cell: Vec<F> = vectors.retrieve_array_subset(&rows_subset(index, 1, &[3, 3])?)?;
+        // An undefined cell's `vectors` row is never read: its numbers mean
+        // nothing, and `SimBox::new_cell` carries the identity instead.
+        let cell: Vec<F> = if cell_defined {
+            vectors.retrieve_array_subset(&rows_subset(index, 1, &[3, 3])?)?
+        } else {
+            vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+        };
         let origin: Vec<F> = match &self.origin {
             Some(array) => array.retrieve_array_subset(&rows_subset(index, 1, &[3])?)?,
             None => vec![0.0, 0.0, 0.0],
@@ -5262,6 +5275,69 @@ mod tests {
             vec![0.0, 0.0, 0.0]
         );
         assert_eq!(cell.pbc(), [true, true, true]);
+    }
+
+    /// An undefined cell's `vectors` are ignored on read, in both box
+    /// layouts: zeros in the fixed-cell attributes, and an all-zero (fill
+    /// value) `vectors` array, read back as the identity instead of failing
+    /// to invert.
+    #[test]
+    fn an_undefined_cell_reads_whatever_vectors_it_carries() {
+        let undefined = |x: f64| {
+            SimBox::new_cell(
+                ndarray::Array2::eye(3),
+                array![x, 0.0, 0.0],
+                [false, false, false],
+                false,
+            )
+            .unwrap()
+        };
+
+        // Fixed cell: `vectors` is a group attribute.
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = atoms_frame(&[1.0]);
+        frame.simbox = Some(undefined(0.0));
+        write_all(&store, &[frame]);
+        let box_path = format!("{TRAJ}/box");
+        let mut attributes = Group::open(store.clone(), &box_path)
+            .unwrap()
+            .attributes()
+            .clone();
+        assert_eq!(attributes["cell_defined"], serde_json::json!(false));
+        attributes.insert(
+            "vectors".into(),
+            serde_json::json!([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]),
+        );
+        GroupBuilder::new()
+            .attributes(attributes)
+            .build(store.clone(), &box_path)
+            .unwrap()
+            .store_metadata()
+            .unwrap();
+        let back = open_sequence(&store).box_at(0).unwrap().unwrap();
+        assert!(!back.is_cell_defined());
+        assert_eq!(back.h_view(), ndarray::Array2::<f64>::eye(3));
+
+        // Changing origin: the cell lives in arrays. Dropping the `vectors`
+        // chunks makes every row the zero fill value.
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut first = atoms_frame(&[1.0]);
+        first.simbox = Some(undefined(0.0));
+        let mut second = atoms_frame(&[2.0]);
+        second.simbox = Some(undefined(1.0));
+        write_all(&store, &[first, second]);
+        let chunks = dir.path().join("trajectory/box/vectors/c");
+        assert!(chunks.is_dir(), "the cell moved into arrays");
+        std::fs::remove_dir_all(chunks).unwrap();
+        let seq = open_sequence(&store);
+        for (index, x) in [(0, 0.0), (1, 1.0)] {
+            let back = seq.box_at(index).unwrap().unwrap();
+            assert!(!back.is_cell_defined());
+            assert_eq!(back.h_view(), ndarray::Array2::<f64>::eye(3));
+            assert_eq!(back.origin_view()[0], x);
+        }
     }
 
     /// A non-default origin is recorded — as a `box/` attribute while the
