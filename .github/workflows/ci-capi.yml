@@ -8,37 +8,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      # The committed .cargo/config.toml routes this build into <repo>/target,
-      # which is what this entry caches (it previously cached a dir the build
-      # never wrote to — molrs-capi/target was the real location).
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      # The committed .cargo/config.toml routes this build into <repo>/target.
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: capi
           workspaces: ". -> target"
-
-      - name: Lint C bindings
-        run: cargo clippy --manifest-path molrs-capi/Cargo.toml --all-targets -- -D warnings
-
-      - name: Rust unit tests
-        run: cargo test --manifest-path molrs-capi/Cargo.toml
-
-      - name: Build molrs-capi (generates header via cbindgen)
-        run: cargo build --manifest-path molrs-capi/Cargo.toml
-
-      - name: Configure C++ integration tests
-        working-directory: molrs-capi
-        run: cmake -S tests/cpp -B build-test
-
-      - name: Build C++ integration tests
-        working-directory: molrs-capi
-        run: cmake --build build-test
-
-      - name: Run C++ integration tests
-        working-directory: molrs-capi
-        run: ctest --test-dir build-test --output-on-failure
+      - run: scripts/check.sh capi

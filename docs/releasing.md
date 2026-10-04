@@ -8,49 +8,23 @@ GitHub Releases.
 
 ## Local verification
 
-Run from the repository root with the toolchain in `rust-toolchain.toml`:
+Run every CI gate from the repository root:
 
 ```bash
-for manifest in Cargo.toml molrs-ffi/Cargo.toml molrs-python/Cargo.toml \
-  molrs-wasm/Cargo.toml molrs-capi/Cargo.toml molrs-cxxapi/Cargo.toml; do
-  cargo fmt --manifest-path "$manifest" --check || exit 1
-done
-cargo mrs-clippy -- -D warnings
-cargo clippy --manifest-path molrs-cxxapi/Cargo.toml --all-targets -- -D warnings
-cargo clippy --manifest-path molrs-python/Cargo.toml --all-targets -- -D warnings
-cargo clippy --manifest-path molrs-capi/Cargo.toml --all-targets -- -D warnings
-cargo clippy --manifest-path molrs-wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings
-RUSTDOCFLAGS="-D warnings" cargo mrs-doc
-cargo mrs-test
-cargo mrs-doctest
-cargo test --manifest-path molrs-ffi/Cargo.toml
-cargo test --manifest-path molrs-cxxapi/Cargo.toml
-cargo package --manifest-path molrs/Cargo.toml
+scripts/check.sh all
 ```
 
-`cargo package` compiles the unpacked archive, catching files accidentally
-omitted from the release. Inspect `cargo package --list --manifest-path
-molrs/Cargo.toml` as well.
-
-Verify the installed Python wheel, browser bindings, and C ABI:
-
-```bash
-uv --directory molrs-python sync --no-install-project --extra dev
-uv --directory molrs-python run --no-sync tox -e py
-(cd molrs-wasm && wasm-pack build --release --target bundler --scope molcrafts --out-name molrs)
-(cd molrs-wasm && wasm-pack test --node)
-cmake -S molrs-capi/tests/cpp -B molrs-capi/build-test -DCARGO_PROFILE=release
-cmake --build molrs-capi/build-test
-ctest --test-dir molrs-capi/build-test --output-on-failure
-```
-
-CI additionally checks each independent feature with defaults disabled. Check
-version metadata across all manifests before tagging; downstream molpy pins the
-major.minor ABI line and must be released after molrs.
+It is the same script, on the same pinned `rust-toolchain.toml` compiler, that
+the prek hooks and the CI workflows call. The `package` gate compiles the
+unpacked crates.io archive, catching files accidentally omitted from the
+release; inspect `cargo package --list --manifest-path molrs/Cargo.toml` as
+well. Check version metadata across all manifests before tagging; downstream
+molpy pins the major.minor ABI line and must be released after molrs.
 
 ## Publishing
 
-1. Finish the checks and review the release diff, including API migrations.
+1. Finish the checks and review the release diff, including API migrations;
+   add every breaking change to [`docs/migration.md`](migration.md).
 2. Run **Publish** manually on a branch for a build rehearsal. It runs CI and
    builds artifacts without uploading to registries or creating a release.
 3. Merge the reviewed revision into `master`, then create and push `vX.Y.Z`,

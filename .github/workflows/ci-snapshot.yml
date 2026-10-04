@@ -46,11 +46,12 @@ jobs:
           path: .ci-out/molrec
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          # Ships llvm-profdata and llvm-cov next to rustc. They are not on
-          # PATH; the measure step calls them by their sysroot path.
-          components: llvm-tools-preview
+      # Pinned by rust-toolchain.toml. llvm-tools ships llvm-profdata and
+      # llvm-cov next to rustc. They are not on PATH; the measure step calls
+      # them by their sysroot path.
+      - run: |
+          rustup toolchain install
+          rustup component add llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: snapshot
@@ -149,9 +150,11 @@ jobs:
 
       # molrs.io.mrec is the Rust core's path door. Building the extension
       # is how the suite reaches that door. The Python test suite is not run.
-      # Non-blocking until the pinned molrec adapter reads frame.meta's
-      # MetaDocument values (molrec zarr.py json.dumps). The record is still
-      # written and published red.
+      # Non-blocking until molrec's adapter (tests/molrs_adapter.py) speaks the
+      # 0.15 molrs.io.mrec surface: the pinned commit still calls the removed
+      # molrs.Record, and molrec dev calls the renamed mrec.read_frame. Bump
+      # the pin to a molrec commit that passes, then drop continue-on-error.
+      # The record is still written and published red.
       - name: Run the mrec suite
         if: ${{ !cancelled() }}
         continue-on-error: true

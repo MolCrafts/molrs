@@ -10,60 +10,27 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-
-      # Single entry: the committed .cargo/config.toml routes molrs-wasm's
-      # build into <repo>/target too.
+      - uses: actions/checkout@v7
+      # rust-toolchain.toml carries the wasm32-unknown-unknown target.
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: wasm
           workspaces: ". -> target"
-
-      - name: Setup Node
-        uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
-
       # Binary install — never `cargo install wasm-pack` (cold compile ~1–2 min).
-      - name: Install wasm-pack
-        uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@v2
         with:
           tool: wasm-pack
-
-      # apt binaryen is too old for current rustc wasm (misc opcode 17).
-      # Latest GitHub release — same policy as rust-toolchain.toml `stable`.
+      # apt binaryen is too old for current rustc wasm (misc opcode 17). The
+      # version is the one scripts/check.sh pins.
       - name: Install binaryen (wasm-opt)
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          VER=$(gh api repos/WebAssembly/binaryen/releases/latest --jq .tag_name)
-          case "$(uname -m)" in
-            x86_64) BIN=x86_64-linux ;;
-            aarch64|arm64) BIN=aarch64-linux ;;
-            *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
-          esac
-          curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/${VER}/binaryen-${VER}-${BIN}.tar.gz" \
+          VER=$(sed -n 's/^BINARYEN_VERSION=//p' scripts/check.sh)
+          curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/${VER}/binaryen-${VER}-x86_64-linux.tar.gz" \
             | sudo tar -xz -C /usr/local --strip-components=1
           wasm-opt --version
-
-      - name: Lint WASM bindings
-        run: cargo clippy --manifest-path molrs-wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings
-
-      - name: Build wasm
-        working-directory: molrs-wasm
-        run: wasm-pack build --release --target bundler --scope molcrafts --out-name molrs
-
-      # The suite runs under Node — nothing configures `run_in_browser`, so no
-      # headless browser or webdriver is needed. It was absent until two
-      # `core::block` tests had been failing unnoticed: building the wasm
-      # proves it compiles, not that it works.
-      - name: Test wasm
-        working-directory: molrs-wasm
-        run: wasm-pack test --node
+      - run: scripts/check.sh wasm

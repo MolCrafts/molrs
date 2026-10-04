@@ -56,7 +56,7 @@ jobs:
     environment: release
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup toolchain install
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
       - name: Publish molcrafts-molrs
@@ -94,9 +94,7 @@ jobs:
     environment: release
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: publish-wasm
@@ -111,19 +109,11 @@ jobs:
         with:
           tool: wasm-pack
       # apt binaryen is too old for current rustc wasm (misc opcode 17).
-      # Latest GitHub release — same policy as rust-toolchain.toml `stable`.
       - name: Install binaryen (wasm-opt)
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          VER=$(gh api repos/WebAssembly/binaryen/releases/latest --jq .tag_name)
-          case "$(uname -m)" in
-            x86_64) BIN=x86_64-linux ;;
-            aarch64|arm64) BIN=aarch64-linux ;;
-            *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;;
-          esac
-          curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/${VER}/binaryen-${VER}-${BIN}.tar.gz" \
+          VER=$(sed -n 's/^BINARYEN_VERSION=//p' scripts/check.sh)
+          curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/${VER}/binaryen-${VER}-x86_64-linux.tar.gz" \
             | sudo tar -xz -C /usr/local --strip-components=1
           wasm-opt --version
       - working-directory: molrs-wasm
@@ -208,9 +198,9 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-emscripten
+      - run: |
+          rustup toolchain install
+          rustup target add wasm32-unknown-emscripten
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: publish-py-pyodide
@@ -280,9 +270,10 @@ jobs:
           - { os: windows-latest, target: "", artifact: windows-x64 }
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+      - shell: bash
+        run: |
+          rustup toolchain install
+          [ -z "${{ matrix.target }}" ] || rustup target add "${{ matrix.target }}"
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: publish-capi-${{ matrix.artifact }}
@@ -346,5 +337,6 @@ jobs:
           set -euo pipefail
           ls -la capi
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
-            || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+            || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes \
+                 --notes "Migration guide: https://github.com/MolCrafts/molrs/blob/$GITHUB_REF_NAME/docs/migration.md"
           gh release upload "$GITHUB_REF_NAME" capi/* --clobber

@@ -1,4 +1,8 @@
+# One exact toolchain for every local build, prek hook and CI job. A floating
+# `stable` let CI pick up a newer clippy/rustdoc than the machine that ran the
+# hooks, so CI failed on lints the hooks never saw. Bump this line (and fix
+# what the new lints flag) in its own commit.
 [toolchain]
-channel = "stable"
+channel = "1.99.0"
 components = ["rustfmt", "clippy"]
 targets = ["wasm32-unknown-unknown"]
