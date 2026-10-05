@@ -13,8 +13,7 @@
 //! # Example (JavaScript)
 //!
 //! ```js
-//! import init, { Sphere } from "@molcrafts/molrs";
-//! await init();
+//! import { Sphere } from "@molcrafts/molrs";
 //!
 //! const ball  = Sphere.create([0, 0, 0], 3.0);
 //! const shell = ball.and(Sphere.create([0, 0, 0], 2.0).not());

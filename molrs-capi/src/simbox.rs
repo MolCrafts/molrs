@@ -33,8 +33,8 @@ use crate::{ffi_try, null_check};
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_box_new(const molrs_float_t h9[9],
-///                               const molrs_float_t origin3[3],
+/// MolrsStatus molrs_box_new(const F h9[9],
+///                               const F origin3[3],
 ///                               const bool pbc3[3],
 ///                               MolrsBoxHandle* out);
 /// ```
@@ -56,8 +56,8 @@ use crate::{ffi_try, null_check};
 ///
 /// # Safety
 ///
-/// * `h9` must point to at least 9 readable `molrs_float_t` values.
-/// * `origin3` must point to at least 3 readable `molrs_float_t` values.
+/// * `h9` must point to at least 9 readable `F` values.
+/// * `origin3` must point to at least 3 readable `F` values.
 /// * `pbc3` must point to at least 3 readable `bool` values.
 /// * `out` must point to a writable `MolrsBoxHandle`.
 #[unsafe(no_mangle)]
@@ -108,8 +108,8 @@ pub unsafe extern "C" fn molrs_box_new(
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_box_cube(molrs_float_t a,
-///                                const molrs_float_t origin3[3],
+/// MolrsStatus molrs_box_cube(F a,
+///                                const F origin3[3],
 ///                                const bool pbc3[3],
 ///                                MolrsBoxHandle* out);
 /// ```
@@ -171,8 +171,8 @@ pub unsafe extern "C" fn molrs_box_cube(
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_box_ortho(const molrs_float_t lengths3[3],
-///                                 const molrs_float_t origin3[3],
+/// MolrsStatus molrs_box_ortho(const F lengths3[3],
+///                                 const F origin3[3],
 ///                                 const bool pbc3[3],
 ///                                 MolrsBoxHandle* out);
 /// ```
@@ -288,7 +288,7 @@ macro_rules! get_simbox {
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_box_h(MolrsBoxHandle h, molrs_float_t out9[9]);
+/// MolrsStatus molrs_box_h(MolrsBoxHandle h, F out9[9]);
 /// ```
 ///
 /// # Arguments
@@ -305,7 +305,7 @@ macro_rules! get_simbox {
 /// # Safety
 ///
 /// * `h` must be a live SimBox handle.
-/// * `out9` must point to at least 9 writable `molrs_float_t` values.
+/// * `out9` must point to at least 9 writable `F` values.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn molrs_box_h(h: MolrsBoxHandle, out9: *mut F) -> MolrsStatus {
     ffi_try!({
@@ -327,7 +327,7 @@ pub unsafe extern "C" fn molrs_box_h(h: MolrsBoxHandle, out9: *mut F) -> MolrsSt
 ///
 /// ```c
 /// MolrsStatus molrs_box_origin(MolrsBoxHandle h,
-///                                  molrs_float_t out3[3]);
+///                                  F out3[3]);
 /// ```
 ///
 /// # Arguments
@@ -406,7 +406,7 @@ pub unsafe extern "C" fn molrs_box_pbc(h: MolrsBoxHandle, out3: *mut bool) -> Mo
 ///
 /// ```c
 /// MolrsStatus molrs_box_volume(MolrsBoxHandle h,
-///                                  molrs_float_t* out);
+///                                  F* out);
 /// ```
 ///
 /// # Arguments
@@ -441,7 +441,7 @@ pub unsafe extern "C" fn molrs_box_volume(h: MolrsBoxHandle, out: *mut F) -> Mol
 ///
 /// ```c
 /// MolrsStatus molrs_box_lengths(MolrsBoxHandle h,
-///                                   molrs_float_t out3[3]);
+///                                   F out3[3]);
 /// ```
 ///
 /// # Arguments
@@ -483,7 +483,7 @@ pub unsafe extern "C" fn molrs_box_lengths(h: MolrsBoxHandle, out3: *mut F) -> M
 ///
 /// ```c
 /// MolrsStatus molrs_box_tilts(MolrsBoxHandle h,
-///                                 molrs_float_t out3[3]);
+///                                 F out3[3]);
 /// ```
 ///
 /// # Arguments
@@ -529,8 +529,8 @@ pub unsafe extern "C" fn molrs_box_tilts(h: MolrsBoxHandle, out3: *mut F) -> Mol
 ///
 /// ```c
 /// MolrsStatus molrs_box_wrap(MolrsBoxHandle h,
-///                                const molrs_float_t* xyz_in,
-///                                molrs_float_t* xyz_out,
+///                                const F* xyz_in,
+///                                F* xyz_out,
 ///                                size_t n_atoms);
 /// ```
 ///
@@ -599,9 +599,9 @@ pub unsafe extern "C" fn molrs_box_wrap(
 /// ```c
 /// MolrsStatus molrs_box_shortest_vector(
 ///     MolrsBoxHandle h,
-///     const molrs_float_t* r1,
-///     const molrs_float_t* r2,
-///     molrs_float_t* dr_out,
+///     const F* r1,
+///     const F* r2,
+///     F* dr_out,
 ///     size_t n_pairs);
 /// ```
 ///

@@ -17,18 +17,23 @@
 //! * **Panic safety** -- every `extern "C"` body is wrapped in
 //!   `catch_unwind` so Rust panics never unwind across the FFI boundary.
 //!
-//! # Float / integer precision
+//! # Float / integer widths
 //!
-//! | C typedef        | Default  | Wide (`f64` / `i64` / `u64` features) |
-//! |------------------|----------|---------------------------------------|
-//! | `molrs_float_t`  | `float`  | `double`                              |
-//! | `molrs_int_t`    | `int32_t`| `int64_t`                             |
-//! | `molrs_uint_t`   | `uint64_t` (Idx) | —                             |
+//! Widths are fixed. The header declares `typedef double F;`.
+//!
+//! | Rust | C type     | Column dtype                    |
+//! |------|------------|---------------------------------|
+//! | `F`  | `F` (`double`) | `MOLRS_D_TYPE_FLOAT` (f64)  |
+//! | `I`  | `int32_t`  | `MOLRS_D_TYPE_INT` (i32)        |
+//! | `Idx`| `uint64_t` | `MOLRS_D_TYPE_U_INT` (u64)      |
+//!
+//! Columns of every other stored dtype are read through `molrs_block_get`,
+//! which reports the dtype as a `MolrsDType`.
 //!
 //! # Typical C usage
 //!
 //! ```c
-//! #include "molrs_capi.h"
+//! #include "molrs.h"
 //!
 //! molrs_init();
 //!
@@ -67,7 +72,7 @@ pub use handle::{MolrsBlockHandle, MolrsBoxHandle, MolrsForceFieldHandle, MolrsF
 
 use store::lock_store;
 
-/// Primary floating-point scalar (`molrs_float_t` in the C header) — always `f64`.
+/// Primary floating-point scalar (`F` in the C header, `typedef double F`) — always `f64`.
 pub type F = f64;
 
 // ---------------------------------------------------------------------------
@@ -126,7 +131,7 @@ pub unsafe extern "C" fn molrs_init() {
 /// Report the `molcrafts-molrs` core version compiled into this library.
 ///
 /// Returns a pointer to a static null-terminated UTF-8 string, e.g.
-/// `"0.14.0"`. Informational — this identifies the exact molrs release for
+/// `"0.15.0"`. Informational — this identifies the exact molrs release for
 /// diagnostics.
 ///
 /// # C signature

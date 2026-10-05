@@ -27,7 +27,8 @@ use crate::helpers::{molrs_error_to_pyerr, py_value_err};
 /// tables every block, and no number is converted to another unit.
 /// :meth:`molrs.ff.ForceField.to_section` builds one from a force field;
 /// :meth:`molrs.ff.ForceField.from_section` turns one into a force field
-/// molrs can compile.
+/// molrs can compile. Nothing is checked on construction; :meth:`validate`
+/// checks the chapter's rules, and every writer runs it.
 ///
 /// Parameters
 /// ----------
@@ -37,9 +38,6 @@ use crate::helpers::{molrs_error_to_pyerr, py_value_err};
 /// tables
 ///     Block name → :class:`~molrs.Block` (the style tables, at
 ///     :meth:`block_name` of their style, and any other block).
-///
-/// Nothing is checked on construction; :meth:`validate` checks the chapter's
-/// rules, and every writer runs it.
 #[pyclass(module = "molrs.io.mrec", name = "ForceFieldSection", unsendable)]
 pub struct PyForceFieldSection {
     pub(crate) inner: ForceFieldSection,

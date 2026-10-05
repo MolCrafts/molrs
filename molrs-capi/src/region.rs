@@ -89,8 +89,8 @@ fn triple(ptr: *const F) -> [F; 3] {
 /// Ball of `radius` about `center3`.
 ///
 /// ```c
-/// MolrsStatus molrs_region_sphere(const molrs_float_t center3[3],
-///                                 molrs_float_t radius,
+/// MolrsStatus molrs_region_sphere(const F center3[3],
+///                                 F radius,
 ///                                 MolrsRegionHandle* out);
 /// ```
 ///
