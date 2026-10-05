@@ -135,6 +135,43 @@ class TestDumpColumnChoice:
             molrs.io.write_lammps_trajectory(path, [self._frame()], columns=["id", "q"])
 
 
+class TestDumpTypeField:
+    @staticmethod
+    def _atoms(**extra):
+        return {
+            "id": [1, 2, 3],
+            "x": [0.0, 1.0, 2.0],
+            "y": [0.0, 0.5, 0.0],
+            "z": [0.0, 0.0, 0.25],
+            **extra,
+        }
+
+    def test_string_type_labels_round_trip(self, tmp_path):
+        path = tmp_path / "labels.lammpstrj"
+        frame = molrs.Frame(
+            {"atoms": self._atoms(type=["OW", "HW", "HW"])}, box=molrs.Box.cube(10.0)
+        )
+        molrs.io.write_lammps_trajectory(path, [frame])
+        text = path.read_text()
+        assert "ITEM: ATOMS id type x y z\n1 OW " in text
+        atoms = molrs.io.raw.read_lammps_trajectory(str(path))[0]["atoms"]
+        assert list(atoms["type"]) == ["OW", "HW", "HW"]
+        assert "type_id" not in atoms
+
+    def test_type_id_wins_the_type_field(self, tmp_path):
+        path = tmp_path / "both.lammpstrj"
+        frame = molrs.Frame(
+            {"atoms": self._atoms(type=["OW", "HW", "HW"], type_id=[1, 2, 2])},
+            box=molrs.Box.cube(10.0),
+        )
+        molrs.io.write_lammps_trajectory(path, [frame])
+        text = path.read_text()
+        assert "ITEM: ATOMS id type x y z\n1 1 " in text
+        atoms = molrs.io.raw.read_lammps_trajectory(str(path))[0]["atoms"]
+        assert list(atoms["type_id"]) == [1, 2, 2]
+        assert "type" not in atoms
+
+
 class TestMultiFile:
     def test_concatenates_frame_counts(self, water_dcd):
         path = str(water_dcd)

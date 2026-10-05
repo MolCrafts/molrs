@@ -1732,6 +1732,14 @@ pub fn write_lammps_data(path: PathBuf, frame: &PyFrame) -> PyResult<()> {
 ///     The ``dump custom`` column line, e.g. ``["id", "element", "mol", "x",
 ///     "y", "z"]``. Written in the order given; a name the frame's ``atoms``
 ///     block cannot supply raises. Default writes every column it holds.
+///
+/// Notes
+/// -----
+/// The dump's ``type`` field is ``type_id`` when the block has it, otherwise
+/// the string ``type`` labels (which read back as ``type``). With both, only
+/// ``type_id`` is written. Values are formatted from each column's stored
+/// dtype; a complex column, one with more than one value per row, or a string
+/// that is empty or contains whitespace raises.
 #[pyfunction]
 #[pyo3(signature = (path, frames, columns = None))]
 pub fn write_lammps_trajectory(

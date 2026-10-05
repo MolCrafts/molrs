@@ -176,7 +176,9 @@ const DUMP_COLUMN_ALIASES: &[(&str, &str)] = &[
     ("mol", keys::MOL_ID),
     // A dump's `type` column holds LAMMPS' numeric type ordinal, not the
     // force-field label — the vocabulary keeps those apart as `type_id` and
-    // `type`, so the rename happens here at the format boundary.
+    // `type`, so the rename happens here at the format boundary. A `type`
+    // field holding type *labels* is the exception the dump reader and writer
+    // handle themselves: it is the canonical string `type`.
     ("type", keys::TYPE_ID),
     // Legacy / alternate spellings we normalise on read
     ("molecule", keys::MOL_ID),
@@ -186,28 +188,6 @@ const DUMP_COLUMN_ALIASES: &[(&str, &str)] = &[
     ("spin", "espin"),
     // SPH package energy attribute `e` is ambiguous; leave as "e"
 ];
-
-/// Integer-typed dump attributes (writer format + promote-on-demand hints).
-///
-/// From dump custom + property/atom integer attributes.
-pub(crate) fn is_integer_dump_column(name: &str) -> bool {
-    matches!(
-        name,
-        // ids / types / images / ownership
-        "id" | "type" | "typelabel" | "mol" | keys::MOL_ID | "proc" | "procp1"
-            | "ix" | "iy" | "iz"
-            // flags / discrete
-            | "bodyflag" | "espin" | "spin" | "status" | "shape_flag"
-            | "template_index" | "template_atom" | "nbonds"
-            // dump local index
-            | "index"
-    )
-}
-
-/// String-typed dump attributes.
-pub(crate) fn is_string_dump_column(name: &str) -> bool {
-    name == "element"
-}
 
 /// Reader exit: rename a LAMMPS-native dump column to its canonical field name.
 pub(crate) fn canonical_dump_column(name: &str) -> String {
