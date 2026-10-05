@@ -37,5 +37,5 @@ __all__ = [
     "relation_endpoints",
     "to_json",
     "to_markdown",
-    *_CONSTS,
 ]
+__all__.extend(_CONSTS)

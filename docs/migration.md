@@ -907,7 +907,11 @@ short "Also new" list at the end of each section.
 - **Force-field section:** `ForceFieldSection` (`store::forcefield_section`,
   with `style_block_name`, `parse_style_block_name`, `unit_preset`),
   `MolRec::forcefield`, and the doors `io::mrec::write_forcefield_file` /
-  `read_forcefield_file`; a `*.mrec` carries a `forcefield/` group.
+  `read_forcefield_file`; a `*.mrec` carries a `forcefield/` group. Python:
+  `molrs.io.mrec.ForceFieldSection`, `ForceField.to_section` /
+  `ForceField.from_section`, `forcefield=` on `molrs.io.write_mrec` /
+  `write_mrec_system`, and `molrs.io.write_mrec_forcefield` /
+  `read_mrec_forcefield` (which returns the section, or `None`).
 - **Store:** nullable columns (`insert_nullable`, `validity`; persisted in
   zarr); Python `MetaDocument`.
 - **Aligned blocks:** `SequenceSchema::{declare_aligned, aligned_with}`

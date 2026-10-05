@@ -415,7 +415,7 @@ class TestRowReferences:
     def test_a_broken_reference_is_refused(self, tmp_path: Path) -> None:
         frame = self._frame([5])
         frame["members"].set_target("ibead", "atoms")
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError, match="atoms"):
             molrs.io.write_mrec(tmp_path / "bad.mrec", frame)
 
     def test_sequence_schema_declares_a_target(self) -> None:
@@ -461,3 +461,97 @@ class TestAlignedBlocks:
         writer.close()
         with pytest.raises(ValueError):
             molrs.io.mrec.SequenceSchema().declare_aligned("a", "b")
+
+
+class TestForceFieldSection:
+    """The ``forcefield`` root section (molrec ``forcefield.md``)."""
+
+    @staticmethod
+    def _forcefield() -> molrs.ff.ForceField:
+        ff = molrs.ff.ForceField("water", units="real")
+        atoms = ff.def_style("atom", "full")
+        ow = atoms.def_type("OW", mass=15.999, charge=-0.834)
+        hw = atoms.def_type("HW", mass=1.008, charge=0.417)
+        ff.def_style("bond", "harmonic").def_type(
+            "OW-HW", ow, hw, k=1059.162, r0=0.9572
+        )
+        ff.def_style(
+            "pair", "lj/cut", {"cutoff": 10.0, "mixing": "geometric"}
+        ).def_type("OW", ow, epsilon=0.1521, sigma=3.1507)
+        ff.set_special_bonds([0.0, 0.0, 0.5], [0.0, 0.0, 0.8333])
+        return ff
+
+    def test_a_force_field_round_trips_through_its_section(
+        self, tmp_path: Path
+    ) -> None:
+        ff = self._forcefield()
+        section = ff.to_section()
+        assert isinstance(section, molrs.io.mrec.ForceFieldSection)
+        assert section.name == "water"
+        assert section.document["units"]["preset"] == "real"
+        assert section.document["styles"][2]["params"] == {
+            "cutoff": 10.0,
+            "mixing": "geometric",
+        }
+        assert sorted(section.tables) == ["atom.full", "bond.harmonic", "pair.lj%2Fcut"]
+
+        path = tmp_path / "ff.mrec"
+        molrs.io.write_mrec_forcefield(path, ff, meta={"producer": "test"})
+        assert "forcefield" in molrs.io.mrec_sections(path)
+        back = molrs.io.read_mrec_forcefield(path)
+        assert back.document == section.document
+        bonds = back.table("bond", "harmonic")
+        assert list(bonds["name"]) == ["OW-HW"]
+        assert bonds["k"][0] == 1059.162
+        again = molrs.ff.ForceField.from_section(back)
+        assert again.name == "water"
+        assert again.get_style("pair", "lj/cut") is not None
+
+    def test_a_section_is_kept_whole_units_unconverted(self, tmp_path: Path) -> None:
+        bonds = molrs.Block(
+            {
+                "name": np.array(["CT-HC"]),
+                "itom": np.array(["CT"]),
+                "jtom": np.array(["HC"]),
+                "r0": np.array([0.1090]),
+                "k": np.array([284512.0]),
+            }
+        )
+        notes = molrs.Block({"text": np.array(["kept"])})
+        document = {
+            "name": "nm",
+            "units": {"length": "nm", "energy": "kJ/mol", "angle": "radian"},
+            "styles": [{"category": "bond", "style": "harmonic"}],
+            "aromaticity_model": "OEAroModel_MDL",
+        }
+        section = molrs.io.mrec.ForceFieldSection(
+            document, {"bond.harmonic": bonds, "notes.free%20text": notes}
+        )
+        section.validate()
+        path = tmp_path / "nm.mrec"
+        molrs.io.write_mrec_system(path, _coords_frame(), forcefield=section)
+        back = molrs.io.read_mrec_forcefield(path)
+        assert back.document == document
+        assert sorted(back.tables) == ["bond.harmonic", "notes.free%20text"]
+        assert back.table("bond", "harmonic")["k"][0] == 284512.0
+        # nm / kJ/mol is no molrs preset: refused, not converted.
+        with pytest.raises(ValueError, match="units"):
+            molrs.ff.ForceField.from_section(back)
+
+    def test_no_forcefield_reads_none_and_a_bad_one_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "frame.mrec"
+        molrs.io.write_mrec(path, _coords_frame())
+        assert molrs.io.read_mrec_forcefield(path) is None
+        section = molrs.io.mrec.ForceFieldSection({"name": "x", "units": {}})
+        with pytest.raises(ValueError, match="units"):
+            section.validate()
+        with pytest.raises(ValueError):
+            molrs.io.write_mrec(path, _coords_frame(), forcefield=section)
+        with pytest.raises(TypeError):
+            molrs.io.write_mrec(path, _coords_frame(), forcefield={"name": "x"})
+
+    def test_block_name_percent_encodes_the_style(self) -> None:
+        name = molrs.io.mrec.ForceFieldSection.block_name("pair", "lj/cut/coul/long")
+        assert name == "pair.lj%2Fcut%2Fcoul%2Flong"

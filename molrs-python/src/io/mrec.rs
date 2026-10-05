@@ -14,6 +14,7 @@ use crate::core::store::frame::{
     meta_value_from_dtype,
 };
 use crate::core::store::trajectory::PyTrajectory;
+use crate::ff::section::PyForceFieldSection;
 use crate::helpers::{molrs_error_to_pyerr, path_str};
 use molrs::io::mrec::{
     Compression, FrameSequence, FrameSequenceWriter, SequenceSchema, column_dtype, open_packed,
@@ -33,33 +34,31 @@ use pyo3::types::{PyAny, PyDict, PyFrozenSet};
 ///         ``molrec_version`` stamped in: a ``dict``, a
 ///         :class:`~molrs.MetaDocument`, or any mapping (``frame.meta``
 ///         included). Nested tuples and documents are JSON arrays and objects.
+///     forcefield: Optional force field written beside them as the
+///         ``forcefield/`` section: a :class:`~molrs.io.mrec.ForceFieldSection`
+///         as given, or a :class:`~molrs.ff.ForceField` through its
+///         :meth:`~molrs.ff.ForceField.to_section`.
 ///
 /// Raises:
-///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, or the
-///         frame fails to encode.
-///     TypeError: If ``meta`` is not a mapping or holds a value JSON cannot.
+///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, a section
+///         fails to encode, or the force field is invalid or has no section
+///         form.
+///     TypeError: If ``meta`` is not a mapping or holds a value JSON cannot,
+///         or ``forcefield`` is neither a ``ForceField`` nor a
+///         ``ForceFieldSection``.
 #[pyfunction]
-#[pyo3(signature = (path, frame, system=None, meta=None))]
+#[pyo3(signature = (path, frame, system=None, meta=None, forcefield=None))]
 pub fn write_mrec(
     path: PathBuf,
     frame: &Bound<'_, PyFrame>,
     system: Option<&Bound<'_, PyFrame>>,
     meta: Option<&Bound<'_, PyAny>>,
+    forcefield: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<()> {
-    let path = path_str(&path)?;
-    let meta_map = meta.map(meta_document_arg).transpose()?;
-    let frame = frame.borrow();
-    match system {
-        None => frame.with_frame(|core| {
-            molrs::io::mrec::write_frame_file(path, core, None, meta_map.as_ref())
-        })?,
-        Some(system) => system.borrow().with_frame(|system_core| {
-            frame.with_frame(|core| {
-                molrs::io::mrec::write_frame_file(path, core, Some(system_core), meta_map.as_ref())
-            })
-        })??,
-    }
-    .map_err(molrs_error_to_pyerr)
+    let mut record = record_arg(meta, forcefield)?;
+    record.frame = Some(frame.borrow().clone_core_frame()?);
+    record.system = system.map(|s| s.borrow().clone_core_frame()).transpose()?;
+    write_record(&path, &record)
 }
 
 /// Write a topology as a record whose only state section is ``system``.
@@ -71,24 +70,73 @@ pub fn write_mrec(
 ///         ``molrec_version`` stamped in: a ``dict``, a
 ///         :class:`~molrs.MetaDocument`, or any mapping (``frame.meta``
 ///         included). Nested tuples and documents are JSON arrays and objects.
+///     forcefield: Optional force field the system's types link into,
+///         written as the ``forcefield/`` section: a
+///         :class:`~molrs.io.mrec.ForceFieldSection` or a
+///         :class:`~molrs.ff.ForceField`.
 ///
 /// Raises:
-///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, or the
-///         frame fails to encode.
-///     TypeError: If ``meta`` is not a mapping or holds a value JSON cannot.
+///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, a section
+///         fails to encode, or the force field is invalid or has no section
+///         form.
+///     TypeError: If ``meta`` is not a mapping or holds a value JSON cannot,
+///         or ``forcefield`` is neither a ``ForceField`` nor a
+///         ``ForceFieldSection``.
 #[pyfunction]
-#[pyo3(signature = (path, system, meta=None))]
+#[pyo3(signature = (path, system, meta=None, forcefield=None))]
 pub fn write_mrec_system(
     path: PathBuf,
     system: &Bound<'_, PyFrame>,
     meta: Option<&Bound<'_, PyAny>>,
+    forcefield: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<()> {
-    let path = path_str(&path)?;
-    let meta_map = meta.map(meta_document_arg).transpose()?;
-    system
-        .borrow()
-        .with_frame(|core| molrs::io::mrec::write_system_file(path, core, meta_map.as_ref()))?
-        .map_err(molrs_error_to_pyerr)
+    let mut record = record_arg(meta, forcefield)?;
+    record.system = Some(system.borrow().clone_core_frame()?);
+    write_record(&path, &record)
+}
+
+/// Write a force field as a record whose only state section is
+/// ``forcefield``: a force-field package (``meta`` + ``forcefield/``).
+///
+/// Args:
+///     path: Destination filesystem path.
+///     forcefield: A :class:`~molrs.io.mrec.ForceFieldSection`, written as
+///         given, or a :class:`~molrs.ff.ForceField`, written through its
+///         :meth:`~molrs.ff.ForceField.to_section`.
+///     meta: The record's identity document (see :func:`write_mrec`).
+///
+/// Raises:
+///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, or the force
+///         field is invalid or has no section form.
+///     TypeError: If ``meta`` is not a mapping, or ``forcefield`` is neither a
+///         ``ForceField`` nor a ``ForceFieldSection``.
+#[pyfunction]
+#[pyo3(signature = (path, forcefield, meta=None))]
+pub fn write_mrec_forcefield(
+    path: PathBuf,
+    forcefield: &Bound<'_, PyAny>,
+    meta: Option<&Bound<'_, PyAny>>,
+) -> PyResult<()> {
+    let record = record_arg(meta, Some(forcefield))?;
+    write_record(&path, &record)
+}
+
+/// A record holding only `meta` and the `forcefield` argument, for the
+/// writing doors to add their state sections to.
+fn record_arg(
+    meta: Option<&Bound<'_, PyAny>>,
+    forcefield: Option<&Bound<'_, PyAny>>,
+) -> PyResult<molrs::MolRec> {
+    let mut record = molrs::MolRec::new();
+    if let Some(meta) = meta {
+        record.meta = meta_document_arg(meta)?;
+    }
+    record.forcefield = forcefield.map(PyForceFieldSection::from_arg).transpose()?;
+    Ok(record)
+}
+
+fn write_record(path: &std::path::Path, record: &molrs::MolRec) -> PyResult<()> {
+    molrs::io::mrec::write_record_file(path_str(path)?, record).map_err(molrs_error_to_pyerr)
 }
 
 /// Write a trajectory as a record whose only state section is ``trajectory``.
@@ -202,6 +250,31 @@ pub fn read_mrec_meta(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
     let path = path_str(&path)?;
     let map = molrs::io::mrec::read_meta_file(path).map_err(molrs_error_to_pyerr)?;
     Ok(json_map_to_plain_dict(py, &map)?.unbind())
+}
+
+/// Read the ``forcefield`` section of a ``*.mrec`` store.
+///
+/// Only ``meta`` (for its version) and the ``forcefield`` section are
+/// decoded. The section comes back whole — every document key, every table,
+/// units as stored; :meth:`molrs.ff.ForceField.from_section` turns it into a
+/// force field molrs can compile.
+///
+/// Args:
+///     path: Filesystem path of the record store.
+///
+/// Returns:
+///     The :class:`~molrs.io.mrec.ForceFieldSection`, or ``None`` when the
+///     record carries no force field.
+///
+/// Raises:
+///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, ``meta``
+///         carries an unsupported ``molrec_version``, or the section is
+///         malformed (the ``forcefield`` chapter's refusals).
+#[pyfunction]
+pub fn read_mrec_forcefield(path: PathBuf) -> PyResult<Option<PyForceFieldSection>> {
+    let path = path_str(&path)?;
+    let section = molrs::io::mrec::read_forcefield_file(path).map_err(molrs_error_to_pyerr)?;
+    Ok(section.map(|inner| PyForceFieldSection { inner }))
 }
 
 /// Child group names at the record root (``meta``, ``frame``, ``system``, …).
