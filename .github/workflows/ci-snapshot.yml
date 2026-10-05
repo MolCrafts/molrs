@@ -37,14 +37,12 @@ jobs:
         with:
           persist-credentials: false
       # The suite and its molrs adapter live in molrec, not in this repo.
-      # Pinned to a commit: a floating ref would run whatever lands there.
-      # This is the head of MolCrafts/molrec#4, which speaks the 0.15
-      # molrs.io surface; switch to MolCrafts/molrec and its merged commit
-      # once #4 lands.
+      # Pinned to a molrec commit: a floating ref would run whatever lands
+      # there. Bump deliberately when molrec's adapter moves.
       - uses: actions/checkout@v7
         with:
-          repository: Roy-Kid/molrec
-          ref: 71bc71a1f9164ecc7ffff441f36d82bc95d7af9f
+          repository: MolCrafts/molrec
+          ref: 1fc2e262e4b72fa92f44b5bca711c8876866415d
           path: .ci-out/molrec
           persist-credentials: false
 
