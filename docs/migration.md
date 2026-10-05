@@ -37,6 +37,8 @@ short "Also new" list at the end of each section.
   The XML and GROMACS writers read the new names. Code that looked the old
   keys up (`params.get_str("class_")`, `Type.params["def_"]`, …) must use the
   new ones; `type_` is unchanged.
+- **The MMFF `pair/mmff_vdw` rows lose their numeric `type` param.** It
+  repeated the row's name (the MMFF atom type) and no kernel read it.
 - **Frame meta keeps insertion order.** It used to be sorted by key, so every
   meta iterator and index-based accessor now returns keys in insertion order.
 - **CoarseGrain frame layout.** A CoarseGrain frame now uses
@@ -900,6 +902,12 @@ short "Also new" list at the end of each section.
     `Typing<T>` / `Match`; `ElementTypifier`.
   - `core::store::type_labels::{TypeName, TypeLabels}`.
   - `lammps_coeff_params` / `lammps_coeff_values`; the frcmod writer.
+  - `ForceField::to_section` / `from_section`: a force field as molrec's
+    `forcefield` record section (units declared, never converted).
+- **Force-field section:** `ForceFieldSection` (`store::forcefield_section`,
+  with `style_block_name`, `parse_style_block_name`, `unit_preset`),
+  `MolRec::forcefield`, and the doors `io::mrec::write_forcefield_file` /
+  `read_forcefield_file`; a `*.mrec` carries a `forcefield/` group.
 - **Store:** nullable columns (`insert_nullable`, `validity`; persisted in
   zarr); Python `MetaDocument`.
 - **Aligned blocks:** `SequenceSchema::{declare_aligned, aligned_with}`
