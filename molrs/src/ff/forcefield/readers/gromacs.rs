@@ -19,7 +19,8 @@
 //!   (`ptype` one of `A S V D B`); the one to three leading tokens are `name`,
 //!   an optional `bond_type` and an optional integer `at.num`. Each row defines
 //!   - an `atom/full` type with `mass` (amu), `charge` (e), `atomic_number`
-//!     (when present) and string `ptype` / `bond_type` (when present);
+//!     (when present) and string `ptype` and `class` (= `bond_type`, when
+//!     present);
 //!   - a `pair/lj/cut` self row with `sigma` = V·10 (Å) and
 //!     `epsilon` = W/4.184 (kcal/mol) — V/W are σ/ε under comb-rules 2 and 3,
 //!     so `[ atomtypes ]` requires `[ defaults ]`;
@@ -568,7 +569,7 @@ impl Row {
         }
         atom.set_str("ptype", ptype);
         if let Some(bond_type) = bond_type {
-            atom.set_str("bond_type", bond_type);
+            atom.set_str("class", bond_type);
         }
         let lj = Params::from_pairs(&[
             ("sigma", number(tail[3], "V (sigma)")? * NM_TO_ANGSTROM),
@@ -899,7 +900,7 @@ mod tests {
         assert_eq!(a.get("mass"), Some(12.011));
         assert_eq!(a.get("charge"), Some(-0.18));
         assert_eq!(a.get("atomic_number"), Some(6.0));
-        assert_eq!(a.get_str("bond_type"), Some("CT"));
+        assert_eq!(a.get_str("class"), Some("CT"));
         assert_eq!(a.get_str("ptype"), Some("A"));
         assert_eq!(a.get("sigma"), None, "σ belongs on lj/cut");
         assert_eq!(a.get("epsilon"), None, "ε belongs on lj/cut");
@@ -929,7 +930,7 @@ mod tests {
             "opls_135  12.011  -0.18  A  0.35  0.276144",
         ));
         let p = &atom_type(&ff, "opls_135").params;
-        assert_eq!(p.get_str("bond_type"), None);
+        assert_eq!(p.get_str("class"), None);
         assert_eq!(p.get("atomic_number"), None);
         assert_param(&lj_self_row(&ff, "opls_135").params, "sigma", 3.5, 1e-12);
     }
@@ -943,7 +944,7 @@ mod tests {
         ));
         let p = &atom_type(&ff, "opls_135").params;
         assert_eq!(p.get("atomic_number"), Some(6.0));
-        assert_eq!(p.get_str("bond_type"), None);
+        assert_eq!(p.get_str("class"), None);
         assert_eq!(p.get("mass"), Some(12.011));
     }
 
@@ -955,7 +956,7 @@ mod tests {
             "opls_135  CT  12.011  -0.18  A  0.35  0.276144",
         ));
         let p = &atom_type(&ff, "opls_135").params;
-        assert_eq!(p.get_str("bond_type"), Some("CT"));
+        assert_eq!(p.get_str("class"), Some("CT"));
         assert_eq!(p.get("atomic_number"), None);
         assert_eq!(p.get("mass"), Some(12.011));
     }

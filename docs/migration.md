@@ -30,6 +30,13 @@ short "Also new" list at the end of each section.
   LAMMPS-read impropers halve, and a force field whose impropers were built
   with the kernel's `k` writes a `K` twice the 0.14 value. The GROMACS
   reader and writer were already right (`k = k_ξ/2`).
+- **Force-field string params have one name per fact.** The atom-type string
+  params the readers set are renamed to the names molrec's `forcefield`
+  section uses: OpenMM/OPLS `class_` → `class` and `def_` → `smarts` (the
+  XML `def` SMARTS), and the GROMACS `[ atomtypes ]` `bond_type` → `class`.
+  The XML and GROMACS writers read the new names. Code that looked the old
+  keys up (`params.get_str("class_")`, `Type.params["def_"]`, …) must use the
+  new ones; `type_` is unchanged.
 - **Frame meta keeps insertion order.** It used to be sorted by key, so every
   meta iterator and index-based accessor now returns keys in insertion order.
 - **CoarseGrain frame layout.** A CoarseGrain frame now uses

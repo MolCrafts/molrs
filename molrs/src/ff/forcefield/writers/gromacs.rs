@@ -15,8 +15,8 @@
 //!   when none is declared, the rule an undeclared `lj/cut` is evaluated under
 //!   (arithmetic, 2). fudgeLJ / fudgeQQ are the 1-4 special-bond weights.
 //! - **`[ atomtypes ]`** `name [bond_type] [at.num] mass charge ptype V W`, one
-//!   row per `atom/full` type: `mass` (amu), `charge` (e), `bond_type` and
-//!   `atomic_number` from the atom type (choosing the 6-, 7- or 8-column form),
+//!   row per `atom/full` type: `mass` (amu), `charge` (e), `bond_type` (the
+//!   type's string param `class`) and `atomic_number` from the atom type (choosing the 6-, 7- or 8-column form),
 //!   `ptype` as declared or `A` (an `atom/full` type is a real atom), and
 //!   V = σ/10 (nm), W = ε·4.184 (kJ/mol) from the type's `pair/lj/cut` self
 //!   row.
@@ -54,7 +54,7 @@
 //!   explicit `lj/cut` cross row (that needs `[ nonbond_params ]`); an
 //!   `lj/cut` self row whose type is not an `atom/full` type;
 //! - a bonded type missing a parameter, carrying one with no column, or with
-//!   an endpoint label that is neither an atom-type name nor a `bond_type`;
+//!   an endpoint label that is neither an atom-type name nor a `class`;
 //!   `improper/harmonic` with `chi0 ≠ 0`.
 //!
 //! # Whole-FF serialization, not coefficient writing
@@ -167,7 +167,7 @@ impl GromacsTopFfWriter {
         let (sigma, epsilon) = (lj_need("sigma")?, lj_need("epsilon")?);
 
         let mut cols = vec![name.clone()];
-        if let Some(bond_type) = p.get_str("bond_type") {
+        if let Some(bond_type) = p.get_str("class") {
             cols.push(bond_type.to_owned());
         }
         if let Some(z) = p.get("atomic_number") {
@@ -354,13 +354,10 @@ impl ForceFieldWriter for GromacsTopFfWriter {
             out.push('\n');
         }
 
-        // A bonded endpoint is the wildcard, an atom-type name or a bond_type.
+        // A bonded endpoint is the wildcard, an atom-type name or a class
+        // (GROMACS `bond_type`).
         let mut labels = type_names;
-        labels.extend(
-            atom_types
-                .iter()
-                .filter_map(|t| t.params.get_str("bond_type")),
-        );
+        labels.extend(atom_types.iter().filter_map(|t| t.params.get_str("class")));
         for (directive, categories, header) in [
             ("bondtypes", &["bond"][..], "; i  j  func  b0  kb"),
             ("angletypes", &["angle"][..], "; i  j  k  func  th0  cth"),
@@ -418,7 +415,7 @@ mod tests {
 
     fn atom_params(mass: f64, charge: f64, z: f64, bond_type: &str) -> Params {
         let mut p = Params::from_pairs(&[("mass", mass), ("charge", charge), ("atomic_number", z)]);
-        p.set_str("bond_type", bond_type);
+        p.set_str("class", bond_type);
         p.set_str("ptype", "A");
         p
     }
@@ -648,7 +645,7 @@ mod tests {
         atoms.remove_type("opls_135");
         let mut p =
             Params::from_pairs(&[("mass", 12.011), ("charge", -0.18), ("atomic_number", 6.0)]);
-        p.set_str("bond_type", "CT");
+        p.set_str("class", "CT");
         atoms.def_type("opls_135", &[], p).unwrap();
         let text = write(&ff);
         assert_eq!(row(&text, "atomtypes", &["opls_135"])[5], "A");
@@ -676,7 +673,7 @@ mod tests {
                 p.set(k, v);
             }
         }
-        p.set_str("bond_type", "CT");
+        p.set_str("class", "CT");
         p.set_str("ptype", "A");
         atoms.def_type("opls_135", &[], p).unwrap();
         ff
@@ -945,7 +942,7 @@ mod tests {
         assert_names(&err, &["periodic", "CT-CT-CT-CT"]);
     }
 
-    /// `ZZ` is neither an atom-type name nor any type's `bond_type`.
+    /// `ZZ` is neither an atom-type name nor any type's `class`.
     #[test]
     fn unresolvable_bonded_endpoint_is_an_error() {
         let ff = with_type(
