@@ -1408,10 +1408,10 @@ fn write_type_label_section<W: Write>(
 
 /// Per-row atom IDs: existing ``id`` column, else 1..N (file artifact).
 fn resolve_atom_ids(frame: &impl FrameAccess, n: usize) -> Vec<Idx> {
-    if let Some(col) = frame.get_uint("atoms", keys::ID) {
+    if let Some(col) = frame.column("atoms", keys::ID).and_then(|c| c.as_uint()) {
         return (0..n).map(|i| col[[i]]).collect();
     }
-    if let Some(col) = frame.get_int("atoms", keys::ID) {
+    if let Some(col) = frame.column("atoms", keys::ID).and_then(|c| c.as_int()) {
         return (0..n).map(|i| col[[i]] as Idx).collect();
     }
     (1..=n as Idx).collect()
@@ -1421,12 +1421,16 @@ fn resolve_atom_ids(frame: &impl FrameAccess, n: usize) -> Vec<Idx> {
 ///
 /// Unknown symbols (e.g. Drude shell ``"D"``) keep the stored mass, or 1.0.
 fn resolve_row_masses(frame: &impl FrameAccess, n: usize) -> Vec<F> {
-    let mut masses: Vec<F> = if let Some(col) = frame.get_float("atoms", keys::MASS) {
-        (0..n).map(|i| col[[i]]).collect()
-    } else {
-        vec![1.0; n]
-    };
-    if let Some(el) = frame.get_string("atoms", keys::ELEMENT) {
+    let mut masses: Vec<F> =
+        if let Some(col) = frame.column("atoms", keys::MASS).and_then(|c| c.as_float()) {
+            (0..n).map(|i| col[[i]]).collect()
+        } else {
+            vec![1.0; n]
+        };
+    if let Some(el) = frame
+        .column("atoms", keys::ELEMENT)
+        .and_then(|c| c.as_string())
+    {
         // One periodic-table lookup per distinct symbol, not per row.
         let mut memo: HashMap<&str, Option<F>> = HashMap::new();
         for (i, mass) in masses.iter_mut().enumerate() {
@@ -1447,29 +1451,65 @@ fn frame_has_atom_field(frame: &impl FrameAccess, field: DataField) -> bool {
     let key = field_column_key(field);
     // Core fields checked separately; mol accepts legacy name.
     if field == DataField::Mol {
-        return frame.get_uint("atoms", keys::MOL_ID).is_some()
-            || frame.get_int("atoms", "molecule_id").is_some();
+        return frame
+            .column("atoms", keys::MOL_ID)
+            .and_then(|c| c.as_uint())
+            .is_some()
+            || frame
+                .column("atoms", "molecule_id")
+                .and_then(|c| c.as_int())
+                .is_some();
     }
     // Mass may be resolved from element without a mass column.
     if field == DataField::Mass {
-        return frame.get_float("atoms", keys::MASS).is_some()
-            || frame.get_string("atoms", keys::ELEMENT).is_some();
+        return frame
+            .column("atoms", keys::MASS)
+            .and_then(|c| c.as_float())
+            .is_some()
+            || frame
+                .column("atoms", keys::ELEMENT)
+                .and_then(|c| c.as_string())
+                .is_some();
     }
     // Type is always present when write proceeds (resolved separately).
     if field == DataField::Type {
-        return frame.get_uint("atoms", keys::TYPE_ID).is_some()
-            || frame.get_int("atoms", keys::TYPE_ID).is_some()
-            || frame.get_string("atoms", keys::TYPE).is_some()
-            || frame.get_uint("atoms", keys::TYPE).is_some()
-            || frame.get_int("atoms", keys::TYPE).is_some();
+        return frame
+            .column("atoms", keys::TYPE_ID)
+            .and_then(|c| c.as_uint())
+            .is_some()
+            || frame
+                .column("atoms", keys::TYPE_ID)
+                .and_then(|c| c.as_int())
+                .is_some()
+            || frame
+                .column("atoms", keys::TYPE)
+                .and_then(|c| c.as_string())
+                .is_some()
+            || frame
+                .column("atoms", keys::TYPE)
+                .and_then(|c| c.as_uint())
+                .is_some()
+            || frame
+                .column("atoms", keys::TYPE)
+                .and_then(|c| c.as_int())
+                .is_some();
     }
     if field == DataField::Id {
         // Always writable (1..N if missing).
         return true;
     }
-    frame.get_int("atoms", key).is_some()
-        || frame.get_uint("atoms", key).is_some()
-        || frame.get_float("atoms", key).is_some()
+    frame
+        .column("atoms", key)
+        .and_then(|c| c.as_int())
+        .is_some()
+        || frame
+            .column("atoms", key)
+            .and_then(|c| c.as_uint())
+            .is_some()
+        || frame
+            .column("atoms", key)
+            .and_then(|c| c.as_float())
+            .is_some()
 }
 
 /// One ``Atoms`` column, resolved once before the row loop.
@@ -1500,25 +1540,32 @@ impl<'a> AtomColumn<'a> {
             | DataField::Espin
             | DataField::Status
             | DataField::TemplateIndex
-            | DataField::TemplateAtom => match frame.get_uint("atoms", key) {
+            | DataField::TemplateAtom => match frame.column("atoms", key).and_then(|c| c.as_uint())
+            {
                 Some(col) => Self::Uint(col),
                 None => Self::Int(
                     frame
-                        .get_int("atoms", key)
+                        .column("atoms", key)
+                        .and_then(|c| c.as_int())
                         .ok_or_else(|| err_mapper(format!("Missing integer column '{key}'")))?,
                 ),
             },
-            DataField::Mol => match frame.get_uint("atoms", keys::MOL_ID) {
+            DataField::Mol => match frame
+                .column("atoms", keys::MOL_ID)
+                .and_then(|c| c.as_uint())
+            {
                 Some(col) => Self::Uint(col),
                 None => Self::Int(
                     frame
-                        .get_int("atoms", "molecule_id")
+                        .column("atoms", "molecule_id")
+                        .and_then(|c| c.as_int())
                         .ok_or_else(|| err_mapper("Missing mol_id column"))?,
                 ),
             },
             _ => Self::Float(
                 frame
-                    .get_float("atoms", key)
+                    .column("atoms", key)
+                    .and_then(|c| c.as_float())
                     .ok_or_else(|| err_mapper(format!("Missing float column '{key}'")))?,
             ),
         };
@@ -1547,9 +1594,9 @@ fn write_atoms_section<W: Write>(
     row_masses: &[F],
 ) -> std::io::Result<()> {
     let images = match (
-        frame.get_int("atoms", keys::IX),
-        frame.get_int("atoms", keys::IY),
-        frame.get_int("atoms", keys::IZ),
+        frame.column("atoms", keys::IX).and_then(|c| c.as_int()),
+        frame.column("atoms", keys::IY).and_then(|c| c.as_int()),
+        frame.column("atoms", keys::IZ).and_then(|c| c.as_int()),
     ) {
         (Some(ix), Some(iy), Some(iz)) => Some([ix, iy, iz]),
         _ => None,
@@ -1602,7 +1649,8 @@ fn write_topology_section<W: Write>(
     for k in keys_ep {
         cols.push(
             frame
-                .get_uint(block, k)
+                .column(block, k)
+                .and_then(|c| c.as_uint())
                 .ok_or_else(|| err_mapper(format!("Missing '{block}.{k}'")))?,
         );
     }
@@ -1643,13 +1691,16 @@ fn write_lammps_data_frame<W: Write>(
 
     // Ensure core coords exist (required for every write style).
     let _x = frame
-        .get_float("atoms", keys::X)
+        .column("atoms", keys::X)
+        .and_then(|c| c.as_float())
         .ok_or_else(|| err_mapper("Missing 'x' column"))?;
     let _y = frame
-        .get_float("atoms", keys::Y)
+        .column("atoms", keys::Y)
+        .and_then(|c| c.as_float())
         .ok_or_else(|| err_mapper("Missing 'y' column"))?;
     let _z = frame
-        .get_float("atoms", keys::Z)
+        .column("atoms", keys::Z)
+        .and_then(|c| c.as_float())
         .ok_or_else(|| err_mapper("Missing 'z' column"))?;
 
     // Bonded sections need a molecular atom style, and every molecular style
@@ -1821,9 +1872,9 @@ fn write_lammps_data_frame<W: Write>(
 
     // Velocities section when all three components exist.
     if let (Some(vx), Some(vy), Some(vz)) = (
-        frame.get_float("atoms", keys::VX),
-        frame.get_float("atoms", keys::VY),
-        frame.get_float("atoms", keys::VZ),
+        frame.column("atoms", keys::VX).and_then(|c| c.as_float()),
+        frame.column("atoms", keys::VY).and_then(|c| c.as_float()),
+        frame.column("atoms", keys::VZ).and_then(|c| c.as_float()),
     ) {
         writeln!(writer, "Velocities")?;
         writeln!(writer)?;
@@ -1998,9 +2049,18 @@ mod atom_style_tests {
 
     fn xyz(frame: &Frame, i: usize) -> (f64, f64, f64) {
         (
-            frame.get_float("atoms", keys::X).unwrap()[i],
-            frame.get_float("atoms", keys::Y).unwrap()[i],
-            frame.get_float("atoms", keys::Z).unwrap()[i],
+            frame
+                .column("atoms", keys::X)
+                .and_then(|c| c.as_float())
+                .unwrap()[i],
+            frame
+                .column("atoms", keys::Y)
+                .and_then(|c| c.as_float())
+                .unwrap()[i],
+            frame
+                .column("atoms", keys::Z)
+                .and_then(|c| c.as_float())
+                .unwrap()[i],
         )
     }
 
@@ -2054,10 +2114,27 @@ mod atom_style_tests {
             "2 0 2 4.0 5.0 6.0 1 -1 0\n",
         );
         let frame = parse_text(text);
-        assert_eq!(frame.get_uint("atoms", keys::MOL_ID).unwrap()[0], 42);
+        assert_eq!(
+            frame
+                .column("atoms", keys::MOL_ID)
+                .and_then(|c| c.as_uint())
+                .unwrap()[0],
+            42
+        );
         assert_eq!(xyz(&frame, 0), (1.5, 2.5, 3.5));
-        assert_eq!(frame.get_int("atoms", keys::IZ).unwrap()[0], 1);
-        assert!(frame.get_float("atoms", keys::CHARGE).is_none());
+        assert_eq!(
+            frame
+                .column("atoms", keys::IZ)
+                .and_then(|c| c.as_int())
+                .unwrap()[0],
+            1
+        );
+        assert!(
+            frame
+                .column("atoms", keys::CHARGE)
+                .and_then(|c| c.as_float())
+                .is_none()
+        );
     }
 
     #[test]
@@ -2069,7 +2146,13 @@ mod atom_style_tests {
                  Atoms # {style}\n\n7 3 2 0.1 0.2 0.3\n"
             );
             let frame = parse_text(&text);
-            assert_eq!(frame.get_uint("atoms", keys::MOL_ID).unwrap()[0], 3);
+            assert_eq!(
+                frame
+                    .column("atoms", keys::MOL_ID)
+                    .and_then(|c| c.as_uint())
+                    .unwrap()[0],
+                3
+            );
             assert_eq!(xyz(&frame, 0), (0.1, 0.2, 0.3));
         }
     }
@@ -2082,9 +2165,19 @@ mod atom_style_tests {
             "Atoms # full\n\n1 2 3 -0.8 1.0 2.0 3.0 1 0 -1\n",
         );
         let f = parse_text(full);
-        assert!((f.get_float("atoms", keys::CHARGE).unwrap()[0] + 0.8).abs() < 1e-12);
+        assert!(
+            (f.column("atoms", keys::CHARGE)
+                .and_then(|c| c.as_float())
+                .unwrap()[0]
+                + 0.8)
+                .abs()
+                < 1e-12
+        );
         assert_eq!(xyz(&f, 0), (1.0, 2.0, 3.0));
-        assert_eq!(f.get_int("atoms", "ix").unwrap()[0], 1);
+        assert_eq!(
+            f.column("atoms", "ix").and_then(|c| c.as_int()).unwrap()[0],
+            1
+        );
 
         let charge = concat!(
             "LAMMPS data file\n\n1 atoms\n1 atom types\n\n",
@@ -2101,7 +2194,14 @@ mod atom_style_tests {
         );
         let f = parse_text(sphere);
         assert_eq!(xyz(&f, 0), (3.0, 4.0, 5.0));
-        assert!((f.get_float("atoms", "diameter").unwrap()[0] - 1.0).abs() < 1e-12);
+        assert!(
+            (f.column("atoms", "diameter")
+                .and_then(|c| c.as_float())
+                .unwrap()[0]
+                - 1.0)
+                .abs()
+                < 1e-12
+        );
 
         let body = concat!(
             "LAMMPS data file\n\n1 atoms\n1 atom types\n\n",
@@ -2109,7 +2209,14 @@ mod atom_style_tests {
             "Atoms # body\n\n1 1 1 6.0 -1.5 -2.5 0.0 1 2 0\n",
         );
         let f = parse_text(body);
-        assert!((f.get_float("atoms", keys::MASS).unwrap()[0] - 6.0).abs() < 1e-12);
+        assert!(
+            (f.column("atoms", keys::MASS)
+                .and_then(|c| c.as_float())
+                .unwrap()[0]
+                - 6.0)
+                .abs()
+                < 1e-12
+        );
         assert_eq!(xyz(&f, 0), (-1.5, -2.5, 0.0));
 
         let dipole = concat!(
@@ -2118,7 +2225,14 @@ mod atom_style_tests {
             "Atoms # dipole\n\n1 1 0.5 1.0 2.0 3.0 0.1 0.2 0.3\n",
         );
         let f = parse_text(dipole);
-        assert!((f.get_float("atoms", keys::MUX).unwrap()[0] - 0.1).abs() < 1e-12);
+        assert!(
+            (f.column("atoms", keys::MUX)
+                .and_then(|c| c.as_float())
+                .unwrap()[0]
+                - 0.1)
+                .abs()
+                < 1e-12
+        );
         assert_eq!(xyz(&f, 0), (1.0, 2.0, 3.0));
     }
 
@@ -2133,9 +2247,31 @@ mod atom_style_tests {
             "10 0 2 0.5 0.5 0.5 0 0 0\n",
         );
         let frame = parse_text(text);
-        assert_eq!(frame.get_uint("atoms", keys::MOL_ID).unwrap()[0], 45539);
-        assert!((frame.get_float("atoms", keys::MASS).unwrap()[0] - 12.0).abs() < 1e-12);
-        assert!((frame.get_float("atoms", keys::MASS).unwrap()[1] - 1.0).abs() < 1e-12);
+        assert_eq!(
+            frame
+                .column("atoms", keys::MOL_ID)
+                .and_then(|c| c.as_uint())
+                .unwrap()[0],
+            45539
+        );
+        assert!(
+            (frame
+                .column("atoms", keys::MASS)
+                .and_then(|c| c.as_float())
+                .unwrap()[0]
+                - 12.0)
+                .abs()
+                < 1e-12
+        );
+        assert!(
+            (frame
+                .column("atoms", keys::MASS)
+                .and_then(|c| c.as_float())
+                .unwrap()[1]
+                - 1.0)
+                .abs()
+                < 1e-12
+        );
     }
 
     #[test]
@@ -2153,8 +2289,14 @@ mod atom_style_tests {
         assert_eq!(frame.get("bonds").unwrap().nrows().unwrap(), 2);
         assert_eq!(
             (
-                frame.get_uint("bonds", keys::ATOMI).unwrap()[0],
-                frame.get_uint("bonds", keys::ATOMJ).unwrap()[0]
+                frame
+                    .column("bonds", keys::ATOMI)
+                    .and_then(|c| c.as_uint())
+                    .unwrap()[0],
+                frame
+                    .column("bonds", keys::ATOMJ)
+                    .and_then(|c| c.as_uint())
+                    .unwrap()[0]
             ),
             (0, 1)
         );
@@ -2168,7 +2310,13 @@ mod atom_style_tests {
             "Atoms\n\n1 42 1 1.5 2.5 3.5 0 0 1\n",
         );
         let frame = parse_text(text);
-        assert_eq!(frame.get_uint("atoms", keys::MOL_ID).unwrap()[0], 42);
+        assert_eq!(
+            frame
+                .column("atoms", keys::MOL_ID)
+                .and_then(|c| c.as_uint())
+                .unwrap()[0],
+            42
+        );
         assert_eq!(xyz(&frame, 0), (1.5, 2.5, 3.5));
     }
 
@@ -2197,9 +2345,31 @@ mod atom_style_tests {
 
         let frame2 = parse_frame_bytes(out.as_bytes()).expect("re-read");
         assert_eq!(frame2.get("atoms").unwrap().nrows().unwrap(), 2);
-        assert!((frame2.get_float("atoms", keys::CHARGE).unwrap()[0] + 0.5).abs() < 1e-12);
-        assert!((frame2.get_float("atoms", keys::VX).unwrap()[0] - 0.1).abs() < 1e-12);
-        assert_eq!(frame2.get_int("atoms", "iz").unwrap()[0], 1);
+        assert!(
+            (frame2
+                .column("atoms", keys::CHARGE)
+                .and_then(|c| c.as_float())
+                .unwrap()[0]
+                + 0.5)
+                .abs()
+                < 1e-12
+        );
+        assert!(
+            (frame2
+                .column("atoms", keys::VX)
+                .and_then(|c| c.as_float())
+                .unwrap()[0]
+                - 0.1)
+                .abs()
+                < 1e-12
+        );
+        assert_eq!(
+            frame2
+                .column("atoms", "iz")
+                .and_then(|c| c.as_int())
+                .unwrap()[0],
+            1
+        );
     }
 
     #[test]
@@ -2215,12 +2385,25 @@ mod atom_style_tests {
         let out = String::from_utf8(buf).unwrap();
         assert!(out.contains("Atoms # sphere"), "{out}");
         let f2 = parse_frame_bytes(out.as_bytes()).unwrap();
-        assert!((f2.get_float("atoms", "diameter").unwrap()[0] - 1.0).abs() < 1e-12);
+        assert!(
+            (f2.column("atoms", "diameter")
+                .and_then(|c| c.as_float())
+                .unwrap()[0]
+                - 1.0)
+                .abs()
+                < 1e-12
+        );
         assert_eq!(
             (
-                f2.get_float("atoms", keys::X).unwrap()[0],
-                f2.get_float("atoms", keys::Y).unwrap()[0],
-                f2.get_float("atoms", keys::Z).unwrap()[0],
+                f2.column("atoms", keys::X)
+                    .and_then(|c| c.as_float())
+                    .unwrap()[0],
+                f2.column("atoms", keys::Y)
+                    .and_then(|c| c.as_float())
+                    .unwrap()[0],
+                f2.column("atoms", keys::Z)
+                    .and_then(|c| c.as_float())
+                    .unwrap()[0],
             ),
             (3.0, 4.0, 5.0)
         );
@@ -2236,7 +2419,14 @@ mod atom_style_tests {
         let out = String::from_utf8(buf).unwrap();
         assert!(out.contains("Atoms # dipole"), "{out}");
         let f2 = parse_frame_bytes(out.as_bytes()).unwrap();
-        assert!((f2.get_float("atoms", keys::MUX).unwrap()[0] - 0.1).abs() < 1e-12);
+        assert!(
+            (f2.column("atoms", keys::MUX)
+                .and_then(|c| c.as_float())
+                .unwrap()[0]
+                - 0.1)
+                .abs()
+                < 1e-12
+        );
     }
 
     #[test]
@@ -2478,7 +2668,8 @@ mod atom_style_tests {
         let text = three_bond_atoms_then("Charges\n\n3 0.5\n1 -0.25\n2 -0.25\n");
         let frame = parse_text(&text);
         let q = frame
-            .get_float("atoms", keys::CHARGE)
+            .column("atoms", keys::CHARGE)
+            .and_then(|c| c.as_float())
             .expect("Charges must create the charge column");
         let expected = [-0.25, -0.25, 0.5];
         for (i, want) in expected.iter().enumerate() {
@@ -2496,7 +2687,10 @@ mod atom_style_tests {
             "Charges\n\n1 0.4\n2 -0.8\n3 0.4\n",
         );
         let frame = parse_text(text);
-        let q = frame.get_float("atoms", keys::CHARGE).unwrap();
+        let q = frame
+            .column("atoms", keys::CHARGE)
+            .and_then(|c| c.as_float())
+            .unwrap();
         let expected = [0.4, -0.8, 0.4];
         for (i, want) in expected.iter().enumerate() {
             assert!((q[i] - want).abs() < 1e-12, "row {i}: {} != {want}", q[i]);
@@ -2583,7 +2777,8 @@ mod atom_style_tests {
         );
         let frame = parse_text(text);
         let mass = frame
-            .get_float("atoms", keys::MASS)
+            .column("atoms", keys::MASS)
+            .and_then(|c| c.as_float())
             .expect("the CA mass row must yield a mass column");
         for i in 0..3 {
             assert!((mass[i] - 12.011).abs() < 1e-12, "row {i}: {}", mass[i]);

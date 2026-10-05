@@ -120,16 +120,20 @@ pub fn mmff_bond_ctor(
         .get(BONDS)
         .ok_or("mmff_bond: missing \"bonds\" block")?;
     let i_col = block
-        .get_uint("atomi")
+        .get("atomi")
+        .and_then(|c| c.as_uint())
         .ok_or("mmff_bond: missing \"atomi\"")?;
     let j_col = block
-        .get_uint("atomj")
+        .get("atomj")
+        .and_then(|c| c.as_uint())
         .ok_or("mmff_bond: missing \"atomj\"")?;
     let kb_col = block
-        .get_float("kb")
+        .get("kb")
+        .and_then(|c| c.as_float())
         .ok_or("mmff_bond: missing \"kb\" column (typifier did not bake bond params)")?;
     let r0_col = block
-        .get_float("r0")
+        .get("r0")
+        .and_then(|c| c.as_float())
         .ok_or("mmff_bond: missing \"r0\" column (typifier did not bake bond params)")?;
 
     let n = i_col.len();

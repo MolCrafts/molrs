@@ -66,9 +66,9 @@ use crate::core::frame::Frame;
 /// const frame3d = generate3D(frame2d, "fast", 42);
 ///
 /// const atoms = frame3d.get("atoms");
-/// const x = atoms.get("x"); // Float64Array with 3D x-coords
-/// const y = atoms.get("y");
-/// const z = atoms.get("z");
+/// const x = atoms.view("x"); // zero-copy Float64Array of the 3D x-coords
+/// const y = atoms.view("y");
+/// const z = atoms.view("z");
 /// ```
 #[wasm_bindgen(js_name = generate3D)]
 pub fn generate_3d_wasm(

@@ -326,6 +326,47 @@ class Block:
         ValueError
             If *mask* does not have exactly one entry per row.
         """
+    def set_precision(self, key: ColumnKey, precision: float | None) -> None:
+        """Declare (``None``: withdraw) the precision of a ``float64`` column.
+
+        An absolute tolerance in the column's units. A record writer stores
+        the column rounded to the largest power of two not above it (ties to
+        even), within ``precision / 2`` of the values; memory is untouched.
+        The declaration reads back from ``*.mrec``.
+
+        Raises
+        ------
+        KeyError
+            If ``key`` names no column.
+        ValueError
+            If the column is not ``float64`` or *precision* is not finite and
+            within ``[2**-1000, 2**1000]``.
+        """
+    def set_target(self, key: ColumnKey, target: str | None) -> None:
+        """Declare (``None``: withdraw) that a ``uint64`` column holds row
+        indices into *target* (``"<block>"`` or ``"/<section>/<block>"``).
+
+        Raises
+        ------
+        KeyError
+            If ``key`` names no column.
+        ValueError
+            If the column is not ``uint64`` or *target* is malformed or names
+            a trajectory block.
+        """
+    def target(self, key: ColumnKey) -> str | None:
+        """The declared target of a column, or ``None``. ``KeyError`` for an
+        absent column."""
+    def targets(self) -> dict[str, str]:
+        """Every declared target, ``{column: target}``."""
+    def precision(self, key: ColumnKey) -> float | None:
+        """The declared precision of a column, or ``None``.
+
+        Raises
+        ------
+        KeyError
+            If ``key`` names no column.
+        """
     @staticmethod
     def stack(parts: Sequence[Block]) -> Block:
         """Row-wise union of *parts* under the union of their columns
@@ -346,7 +387,14 @@ class Block:
     def coords(self, value: npt.ArrayLike) -> None:
         """Write an ``(N, 3)`` array into ``x`` / ``y`` / ``z`` (float64).
         Raises ``ValueError`` for a non-``(N, 3)`` array or a row mismatch."""
-    def view(self, key: ColumnKey) -> npt.NDArray: ...
+    def copy_column(self, key: ColumnKey) -> npt.NDArray:
+        """Owned copy of one column, shape included.
+
+        ``block[key]`` returns the column for every dtype. Numeric, bool and
+        complex columns are a zero-copy view there, so this copies them. A
+        string column is already a copy under ``block[key]`` (numpy ``str``,
+        the column's shape), and this returns another one.
+        """
     def validity(self, key: ColumnKey) -> ArrayBool | None:
         """The validity mask of a column, or ``None`` when it has no holes.
 
@@ -362,7 +410,7 @@ class Block:
         ------
         KeyError
             If ``key`` names no column of this block — the same answer
-            :meth:`view` and :meth:`dtype` give, so a misspelled key cannot
+            indexing and :meth:`dtype` give, so a misspelled key cannot
             read as a dense column.
         """
     @overload
@@ -480,9 +528,9 @@ class FrameMeta:
 
     ``dtype(k)`` reports the tag of the value stored right now; any plain write
     re-infers it. :class:`MetaValue` fixes the dtype of that write only — it
-    does not pin the key. A tag survives a round trip only through a declared
-    sequence schema or the serde frame document; outside those two it is
-    re-inferred on read.
+    does not pin the key. A tag survives a round trip through a ``*.mrec``
+    frame or system (stored in ``_meta_types``), a declared sequence schema
+    and the serde frame document. NaN and infinities survive as ``f64``.
 
     Enumeration follows insertion order. ``popitem`` returns the last-inserted
     key. Order inside a nested :class:`MetaDocument` is unspecified.
@@ -2531,6 +2579,9 @@ class ForceField:
     def units(self) -> str: ...
     def merge(self, other: ForceField) -> Self: ...
     def set_special_bonds(self, lj: Sequence[float], coul: Sequence[float]) -> None: ...
+    def to_section(self) -> ForceFieldSection: ...
+    @staticmethod
+    def from_section(section: ForceFieldSection) -> ForceField: ...
     def _ffi_forcefield_capsule(self) -> Any: ...
     def def_style(
         self,
@@ -3276,16 +3327,48 @@ class VectorObservable:
     @property
     def target(self) -> str | None: ...
 
+class ForceFieldSection:
+    """The ``forcefield`` section of a ``*.mrec`` record: the document and one
+    :class:`Block` per style table, kept whole (molrec ``forcefield.md``)."""
+
+    def __init__(
+        self,
+        document: _AbcMapping[str, Any],
+        tables: _AbcMapping[str, Block] | None = None,
+    ) -> None: ...
+    @property
+    def document(self) -> dict[str, Any]: ...
+    @property
+    def tables(self) -> dict[str, Block]: ...
+    @property
+    def name(self) -> str | None: ...
+    def table(self, category: str, style: str) -> Block | None: ...
+    @staticmethod
+    def block_name(category: str, style: str) -> str: ...
+    def validate(self) -> None: ...
+
 def write_mrec(
     path: PathInput,
     frame: Frame,
     system: Frame | None = None,
-    meta: dict[str, Any] | None = None,
+    meta: _AbcMapping[str, Any] | None = None,
+    forcefield: ForceField | ForceFieldSection | None = None,
 ) -> None: ...
 def write_mrec_system(
-    path: PathInput, system: Frame, meta: dict[str, Any] | None = None
+    path: PathInput,
+    system: Frame,
+    meta: _AbcMapping[str, Any] | None = None,
+    forcefield: ForceField | ForceFieldSection | None = None,
 ) -> None: ...
-def write_mrec_trajectory(path: PathInput, traj: Trajectory) -> None: ...
+def write_mrec_forcefield(
+    path: PathInput,
+    forcefield: ForceField | ForceFieldSection,
+    meta: _AbcMapping[str, Any] | None = None,
+) -> None: ...
+def read_mrec_forcefield(path: PathInput) -> ForceFieldSection | None: ...
+def write_mrec_trajectory(
+    path: PathInput, traj: Trajectory, meta: _AbcMapping[str, Any] | None = None
+) -> None: ...
 def read_mrec(path: PathInput) -> Frame: ...
 def read_mrec_system(path: PathInput) -> Frame: ...
 def read_mrec_trajectory(path: PathInput) -> Trajectory: ...
@@ -3337,6 +3420,19 @@ class SequenceSchema:
         self, block: str, column: str, dtype: str, trailing: list[int] | None = ...
     ) -> Self: ...
     def declare_structural_shape(self, block: str, shape: list[int]) -> Self: ...
+    def declare_precision(self, block: str, column: str, precision: float) -> Self:
+        """Pin the precision of an ``f64`` column: every frame's values are
+        rounded to its binary grid before the change check and the landing."""
+    def precision(self, block: str, column: str) -> float | None: ...
+    def declare_target(self, block: str, column: str, target: str) -> Self:
+        """Pin a ``u64`` column as a row reference into *target*; the writer
+        refuses a frame whose resolved blocks break it."""
+    def target(self, block: str, column: str) -> str | None: ...
+    def declare_aligned(self, block: str, target: str) -> Self:
+        """Pin *block*'s rows to *target*'s rows at every resolved frame; the
+        writer refuses a frame that breaks it (restate *block* when *target*
+        changes its row count)."""
+    def aligned_with(self, block: str) -> str | None: ...
     def declare_meta(self, key: str, dtype: str) -> Self: ...
     def declare_meta_with_fill(
         self, key: str, fill: Any, dtype: str | None = ...
@@ -3359,7 +3455,7 @@ class TrajectoryWriter:
         flush_every: int | None = ...,
         compression: str | None = ...,
         durable: bool = ...,
-        meta: dict[str, Any] | None = ...,
+        meta: _AbcMapping[str, Any] | None = ...,
     ) -> None: ...
     @staticmethod
     def open(

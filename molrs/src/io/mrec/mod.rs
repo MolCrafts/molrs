@@ -2,8 +2,9 @@
 //!
 //! A **scientific record** is one self-describing package on disk: `meta`
 //! plus at least one of a snapshot (`frame`), a topology (`system`), a
-//! time-ordered frame sequence (`trajectory`), or a run `status`. This
-//! module is how a [`crate::Frame`] or [`crate::Trajectory`] becomes that
+//! time-ordered frame sequence (`trajectory`), a force field (`forcefield`),
+//! or a run `status`. This module is how a [`crate::Frame`],
+//! [`crate::Trajectory`] or [`crate::ForceFieldSection`] becomes that
 //! package, and how the package becomes those objects again.
 //!
 //! The in-memory codec working set that holds every section at once is
@@ -12,6 +13,8 @@
 //! - [`write_frame_file`] / [`read_frame_file`] — Structure (`meta` + `frame/`)
 //! - [`write_system_file`] / [`read_system_file`] — System-def (`meta` + `system/`)
 //! - [`write_trajectory_file`] / [`read_trajectory_file`] — Trajectory shape
+//! - [`write_forcefield_file`] / [`read_forcefield_file`] — Force-field
+//!   package (`meta` + `forcefield/`)
 //!
 //! On disk a record is a **directory** whose name conventionally ends in
 //! `.mrec` (for example `water.mrec/`). Inside, arrays are stored with
@@ -31,6 +34,9 @@
 //! - A snapshot: [`read_frame_file`] / [`write_frame_file`].
 //! - A topology: [`read_system_file`] / [`write_system_file`].
 //! - A trajectory: [`read_trajectory_file`] / [`write_trajectory_file`].
+//! - A force field: [`read_forcefield_file`] / [`write_forcefield_file`], or
+//!   [`crate::MolRec::forcefield`] beside other sections through
+//!   [`write_record_file`].
 //! - A run too large to hold in memory: pin a [`SequenceSchema`], append with
 //!   [`FrameSequenceWriter`], read one frame at a time with [`FrameSequence`].
 //!   [`FrameSequence::open`] takes any already-open store (including an
@@ -44,14 +50,12 @@
 //! `molrec_version` there when the producer supplied none — so every record
 //! written by this version carries the contract it was written at. A producer
 //! that set the key keeps its value, which is how a writer for an older contract
-//! stays expressible. The key must be a positive integer no newer than
-//! [`schema::MOLREC_VERSION`].
+//! stays expressible.
 //!
-//! Metadata that carries any key must carry the version: the stamp makes an
-//! absent one mean "this store predates the stamp", which is worth reporting.
-//! **Empty** metadata is a different claim and stays accepted — a foreign store
-//! may have written no `meta/` group at all, and refusing to read it would cost
-//! more than the check buys.
+//! Readers validate the key only when it is present: an absent key performs no
+//! version check (a foreign store, or one written before the stamp, opens), and
+//! a present key must be an integer `>= 1` no newer than
+//! [`schema::MOLREC_VERSION`].
 //!
 //! Identity of a store is the `*.mrec/` path suffix plus a Zarr root, not this
 //! key; the key says which contract wrote it.
@@ -90,9 +94,9 @@ pub use super::zarr::schema;
 #[cfg(feature = "filesystem")]
 #[doc(inline)]
 pub use super::zarr::{
-    open_trajectory_sequence, read_frame_file, read_meta_file, read_record_file, read_system_file,
-    read_trajectory_file, section_names, write_frame_file, write_record_file, write_system_file,
-    write_trajectory_file,
+    open_trajectory_sequence, read_forcefield_file, read_frame_file, read_meta_file,
+    read_record_file, read_system_file, read_trajectory_file, section_names, write_forcefield_file,
+    write_frame_file, write_record_file, write_system_file, write_trajectory_file,
 };
 
 #[cfg(feature = "filesystem")]

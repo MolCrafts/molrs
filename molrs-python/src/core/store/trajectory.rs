@@ -163,9 +163,10 @@ impl PyScalarObservable {
         observable_data_to_pyobject(py, &self.inner.data)
     }
 
+    /// The contract spelling of the observable's kind.
     #[getter]
-    fn kind(&self) -> &'static str {
-        "scalar"
+    fn kind(&self) -> &str {
+        self.inner.kind.as_str()
     }
 
     #[getter]
@@ -262,9 +263,10 @@ impl PyVectorObservable {
         observable_data_to_pyobject(py, &self.inner.data)
     }
 
+    /// The contract spelling of the observable's kind.
     #[getter]
-    fn kind(&self) -> &'static str {
-        "vector"
+    fn kind(&self) -> &str {
+        self.inner.kind.as_str()
     }
 
     #[getter]

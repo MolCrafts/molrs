@@ -296,9 +296,6 @@ struct HeaderPartial {
     byte_order: ByteOrder,
     marker_size: MarkerSize,
     charmm_ver: i32,
-    /// Parsed for header fidelity; the frame count comes from the file scan.
-    #[allow(dead_code)]
-    nset_hint: u32,
     istart: i32,
     nsavc: i32,
     natoms: u32,
@@ -423,7 +420,6 @@ fn parse_header_records<R: Read + Seek>(reader: &mut R) -> std::io::Result<Heade
         read_i32(&buf, byte_order)
     };
 
-    let nset_hint = read_i32_at(4) as u32;
     let istart = read_i32_at(8);
     let nsavc = read_i32_at(12);
     let namnf = read_i32_at(36) as u32;
@@ -520,7 +516,6 @@ fn parse_header_records<R: Read + Seek>(reader: &mut R) -> std::io::Result<Heade
         byte_order,
         marker_size,
         charmm_ver,
-        nset_hint,
         istart,
         nsavc,
         natoms,
@@ -1097,7 +1092,9 @@ fn write_dcd_frame<W: Write + Seek>(
 ) -> std::io::Result<()> {
     // Reject 4D / fixed-atom frames eagerly.
     let has_w = frame
-        .visit_block("atoms", |a| a.get_float_view("w").is_some())
+        .visit_block("atoms", |a| {
+            a.column("w").and_then(|c| c.as_float()).is_some()
+        })
         .unwrap_or(false);
     if has_w {
         return Err(unsupported(
@@ -1266,7 +1263,8 @@ fn write_frame_payload<W: Write>(
 
     let extract_axis = |key: &str| -> std::io::Result<Vec<f64>> {
         frame
-            .get_float("atoms", key)
+            .column("atoms", key)
+            .and_then(|c| c.as_float())
             .map(|view| view.iter().copied().collect::<Vec<f64>>())
             .ok_or_else(|| err_mapper(format!("atoms.{} missing or not float", key)))
     };
@@ -2192,9 +2190,22 @@ mod tests {
             let lo = entry.byte_offset as usize;
             let hi = lo + entry.byte_len as usize;
             let parsed = parse_frame_bytes(&bytes[lo..hi]).expect("parse dcd frame");
-            let x = parsed.get("atoms").unwrap().get_float("x").unwrap();
+            let x = parsed
+                .get("atoms")
+                .unwrap()
+                .get("x")
+                .and_then(|c| c.as_float())
+                .unwrap();
             assert!(
-                (x[0] - frames[i].get("atoms").unwrap().get_float("x").unwrap()[0]).abs() < 1e-5
+                (x[0]
+                    - frames[i]
+                        .get("atoms")
+                        .unwrap()
+                        .get("x")
+                        .and_then(|c| c.as_float())
+                        .unwrap()[0])
+                    .abs()
+                    < 1e-5
             );
         }
     }

@@ -99,10 +99,9 @@ impl std::fmt::Display for ColumnDim {
 pub struct ColumnSpec {
     /// Canonical key as it appears in a `Block` (`"x"`, `"atomi"`).
     pub key: &'static str,
-    /// Rust/Python constant name (`"X"`, `"ATOMI"`). The Python binding
-    /// generates `molrs.keys.X` from this table; the Rust `keys::X` is the
-    /// hand-written [`consts`](super::consts) entry, checked against the table
-    /// by a unit test.
+    /// Rust/Python constant name (`"X"`, `"ATOMI"`). Emitted with the column
+    /// table from the same declaration (`stringify!` of that identifier), and
+    /// exported as `molrs.keys.<CONST>` by the Python binding.
     pub const_name: &'static str,
     /// The one admissible storage dtype. Not a set — see the module doc on
     /// [`super`] for why a key that needs two dtypes is two keys.

@@ -26,9 +26,8 @@
 //! a coarse-grained bead owning its atoms) is variable-size, nested, directed
 //! ownership — **not** a fixed-arity peer relation — and is therefore **not**
 //! modeled as a relation kind (doing so would put group handles into the node
-//! arena and contaminate every consumer that iterates [`MolGraph::nodes`]). The
-//! [`GroupId`] / [`Group`] / `MolGraph::groups` field is **reserved** for a
-//! future, independent containment axis; it carries no behavior in this module.
+//! arena and contaminate every consumer that iterates [`MolGraph::nodes`]). When
+//! containment lands it is a separate axis beside nodes and relations.
 //!
 //! # Examples
 //!
@@ -54,7 +53,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::{Index, IndexMut};
 
 use ndarray::ArrayD;
-use slotmap::{Key, KeyData, SecondaryMap, SlotMap, new_key_type};
+use slotmap::{Key, KeyData, SecondaryMap, new_key_type};
 use smallvec::SmallVec;
 
 use crate::error::MolRsError;
@@ -209,9 +208,19 @@ fn coerce_canonical(key: &str, pv: PropValue) -> Result<PropValue, MolRsError> {
             PropValue::Bool(_) => Ok(pv),
             PropValue::F64(_) | PropValue::Int(_) | PropValue::Str(_) => refuse(),
         },
+        // A wide signed key (`formal_charge`) holds any integer the graph's
+        // `Int` holds, and an integral float (SMILES stores charges as f64);
+        // `to_frame` widens either to the declared `i64`.
+        DType::Int64 => match pv {
+            PropValue::Int(_) => Ok(pv),
+            PropValue::F64(v) if v.is_finite() && v.fract() == 0.0 => Ok(pv),
+            PropValue::F64(v) => Err(MolRsError::validation(format!(
+                "'{key}' is declared i64 by the Frame schema; got {v}, not an integer"
+            ))),
+            PropValue::Str(_) | PropValue::Bool(_) => refuse(),
+        },
         DType::Int8
         | DType::Int16
-        | DType::Int64
         | DType::U8
         | DType::UInt16
         | DType::UInt32
@@ -245,6 +254,23 @@ fn emit_column<K: Key>(
     use crate::store::block::DType;
     use ndarray::Array1;
 
+    let declared = crate::store::schema::column(key).map(|spec| spec.dtype);
+    if declared == Some(DType::Int64) {
+        // A wide signed key: the table holds it as `Int` or as an integral
+        // `F64` (see `coerce_canonical`); the frame column is `i64`.
+        let (wide, valid): (Vec<i64>, Vec<bool>) = if let Ok((data, valid)) = table.column_f64(key)
+        {
+            (data.iter().map(|&v| v as i64).collect(), mask(valid))
+        } else if let Ok((data, valid)) = table.column_i32(key) {
+            (data.iter().map(|&v| i64::from(v)).collect(), mask(valid))
+        } else {
+            return Ok(false);
+        };
+        block
+            .insert_nullable(key, Array1::from_vec(wide).into_dyn(), valid)
+            .map_err(|e| MolRsError::validation(e.to_string()))?;
+        return Ok(true);
+    }
     let inserted = if let Ok((data, valid)) = table.column_f64(key) {
         block.insert_nullable(key, Array1::from_vec(data.to_vec()).into_dyn(), mask(valid))
     } else if let Ok((data, valid)) = table.column_i32(key) {
@@ -301,6 +327,7 @@ struct MaskedColumns<'a> {
 enum TypedColumn<'a> {
     Float(&'a ArrayD<F>),
     Int(&'a ArrayD<I>),
+    Int64(&'a ArrayD<i64>),
     UInt(&'a ArrayD<Idx>),
     Str(&'a ArrayD<String>),
     Bool(&'a ArrayD<bool>),
@@ -317,15 +344,17 @@ impl<'a> MaskedColumns<'a> {
             if skip.iter().any(|s| s == key) {
                 continue;
             }
-            let typed = if let Some(arr) = block.get_float(key) {
+            let typed = if let Some(arr) = block.get(key).and_then(|c| c.as_float()) {
                 TypedColumn::Float(arr)
-            } else if let Some(arr) = block.get_int(key) {
+            } else if let Some(arr) = block.get(key).and_then(|c| c.as_int()) {
                 TypedColumn::Int(arr)
-            } else if let Some(arr) = block.get_uint(key) {
+            } else if let Some(arr) = block.get(key).and_then(|c| c.as_i64()) {
+                TypedColumn::Int64(arr)
+            } else if let Some(arr) = block.get(key).and_then(|c| c.as_uint()) {
                 TypedColumn::UInt(arr)
-            } else if let Some(arr) = block.get_string(key) {
+            } else if let Some(arr) = block.get(key).and_then(|c| c.as_string()) {
                 TypedColumn::Str(arr)
-            } else if let Some(arr) = block.get_bool(key) {
+            } else if let Some(arr) = block.get(key).and_then(|c| c.as_bool()) {
                 TypedColumn::Bool(arr)
             } else {
                 continue;
@@ -352,6 +381,7 @@ impl<'a> MaskedColumns<'a> {
                 #[allow(clippy::unnecessary_cast)]
                 TypedColumn::Float(arr) => PropValue::F64(arr[[row]] as f64),
                 TypedColumn::Int(arr) => PropValue::Int(arr[[row]]),
+                TypedColumn::Int64(arr) => PropValue::Int(narrow_i64(key, arr[[row]])?),
                 TypedColumn::UInt(arr) => PropValue::Int(narrow_uint(key, arr[[row]])?),
                 TypedColumn::Str(arr) => PropValue::Str(arr[[row]].clone()),
                 TypedColumn::Bool(arr) => PropValue::Bool(arr[[row]]),
@@ -380,6 +410,16 @@ fn endpoints_at(
         nodes.push(*node_ids.get(col[[row]] as usize)?);
     }
     Some(nodes)
+}
+
+/// Narrow one value of a frame's `i64` column to the [`I`] the entity table
+/// stores, refusing a value it cannot hold.
+fn narrow_i64(key: &str, v: i64) -> Result<I, MolRsError> {
+    I::try_from(v).map_err(|_| {
+        MolRsError::validation(format!(
+            "'{key}' value {v} exceeds the range the graph stores"
+        ))
+    })
 }
 
 /// Narrow one value of a frame's unsigned column to the signed [`I`] the entity
@@ -533,8 +573,6 @@ new_key_type! {
     pub struct NodeId;
     /// Stable handle to a relation (any kind) in a [`MolGraph`].
     pub struct RelationId;
-    /// Stable handle to a reserved containment group (see module docs).
-    pub struct GroupId;
 }
 
 /// Convert a [`NodeId`] to/from a stable opaque `u64` handle (the generational
@@ -600,22 +638,6 @@ impl RelationKind {
 }
 
 // ---------------------------------------------------------------------------
-// Group (reserved containment axis — no behavior in this module)
-// ---------------------------------------------------------------------------
-
-/// Reserved container for the future containment axis (residue ⊃ atoms,
-/// chain ⊃ residues, bead ⊃ atoms). Carries no behavior yet; see module docs.
-#[derive(Debug, Clone, Default)]
-pub struct Group {
-    /// Member node handles owned by this group.
-    pub members: Vec<NodeId>,
-    /// Optional parent group (for nesting).
-    pub parent: Option<GroupId>,
-    /// Per-group property bag (e.g. `resname`, `resid`).
-    pub props: IndexMap<String, PropValue>,
-}
-
-// ---------------------------------------------------------------------------
 // MolGraph
 // ---------------------------------------------------------------------------
 
@@ -636,10 +658,6 @@ pub struct MolGraph {
     name_to_kind: HashMap<String, KindId>,
     /// Adjacency over arity-2 relations: node → list of `(kind, relation)`.
     adjacency: HashMap<NodeId, Vec<(KindId, RelationId)>>,
-    /// Reserved containment axis — see module docs. Unused by all behavior here;
-    /// carried so the future containment spec is additive, not a re-key.
-    #[allow(dead_code)]
-    groups: SlotMap<GroupId, Group>,
 }
 
 impl Default for MolGraph {
@@ -658,7 +676,6 @@ impl MolGraph {
             kind_name: Vec::new(),
             name_to_kind: HashMap::new(),
             adjacency: HashMap::new(),
-            groups: SlotMap::with_key(),
         }
     }
 
@@ -1645,7 +1662,7 @@ impl MolGraph {
         let endpoint_names: Vec<String> = (0..arity).map(rel_col_name).collect();
         let mut endpoint_cols: Vec<&ndarray::ArrayD<Idx>> = Vec::with_capacity(arity);
         for name in &endpoint_names {
-            let col = block.get_uint(name).ok_or_else(|| {
+            let col = block.get(name).and_then(|c| c.as_uint()).ok_or_else(|| {
                 MolRsError::validation(format!(
                     "Frame block '{block_name}' names the relation kind '{block_name}' of arity \
                      {arity} but carries no '{name}' endpoint column, so its rows cannot be read"
@@ -2043,7 +2060,8 @@ mod tests {
         let atoms = &g.to_frame().expect("a schema-conforming graph converts")["atoms"];
         assert_eq!(
             atoms
-                .get_uint("id")
+                .get("id")
+                .and_then(|c| c.as_uint())
                 .expect("'id' reaches the frame")
                 .iter()
                 .copied()
@@ -2052,7 +2070,8 @@ mod tests {
         );
         assert_eq!(
             atoms
-                .get_uint("mol_id")
+                .get("mol_id")
+                .and_then(|c| c.as_uint())
                 .expect("'mol_id' reaches the frame")
                 .iter()
                 .copied()
@@ -2075,7 +2094,8 @@ mod tests {
 
         assert_eq!(
             g.to_frame().expect("a schema-conforming graph converts")["atoms"]
-                .get_bool("frozen")
+                .get("frozen")
+                .and_then(|c| c.as_bool())
                 .expect("bool column reaches the frame")
                 .iter()
                 .copied()
@@ -2543,14 +2563,6 @@ mod tests {
             .merge(src)
             .expect_err("a str 'tag' cannot enter an int 'tag' component");
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
-    }
-
-    // ----- Reserved containment axis -----
-
-    #[test]
-    fn test_groups_reserved_empty() {
-        let g = MolGraph::new();
-        assert_eq!(g.groups.len(), 0);
     }
 
     // ----- Composition: replicate -----

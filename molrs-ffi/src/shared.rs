@@ -222,7 +222,10 @@ impl BlockRef {
             match b.dtype(key) {
                 None => Ok(None),
                 Some(DType::Float) => {
-                    let arr = b.get_float(key).ok_or(FfiError::InvalidBlockHandle)?;
+                    let arr = b
+                        .get(key)
+                        .and_then(|c| c.as_float())
+                        .ok_or(FfiError::InvalidBlockHandle)?;
                     let slice =
                         arr.as_slice_memory_order()
                             .ok_or_else(|| FfiError::NonContiguous {
@@ -249,7 +252,10 @@ impl BlockRef {
             match b.dtype(key) {
                 None => Ok(None),
                 Some(DType::Int) => {
-                    let arr = b.get_int(key).ok_or(FfiError::InvalidBlockHandle)?;
+                    let arr = b
+                        .get(key)
+                        .and_then(|c| c.as_int())
+                        .ok_or(FfiError::InvalidBlockHandle)?;
                     let slice =
                         arr.as_slice_memory_order()
                             .ok_or_else(|| FfiError::NonContiguous {
@@ -276,7 +282,10 @@ impl BlockRef {
             match b.dtype(key) {
                 None => Ok(None),
                 Some(DType::UInt) => {
-                    let arr = b.get_uint(key).ok_or(FfiError::InvalidBlockHandle)?;
+                    let arr = b
+                        .get(key)
+                        .and_then(|c| c.as_uint())
+                        .ok_or(FfiError::InvalidBlockHandle)?;
                     let slice =
                         arr.as_slice_memory_order()
                             .ok_or_else(|| FfiError::NonContiguous {
@@ -303,7 +312,10 @@ impl BlockRef {
             match b.dtype(key) {
                 None => Ok(None),
                 Some(DType::String) => {
-                    let arr = b.get_string(key).ok_or(FfiError::InvalidBlockHandle)?;
+                    let arr = b
+                        .get(key)
+                        .and_then(|c| c.as_string())
+                        .ok_or(FfiError::InvalidBlockHandle)?;
                     Ok(Some(arr.iter().cloned().collect()))
                 }
                 Some(actual) => Err(FfiError::DTypeMismatch {

@@ -101,7 +101,6 @@ fn try_force_field(name: &str) -> Result<ForceField, DefError> {
                             ("a_i", row.a_i),
                             ("g_i", row.g_i),
                             ("da", encode_da_byte(row.da)),
-                            ("type", f64::from(row.atom_type)),
                         ]),
                     )?;
                 }

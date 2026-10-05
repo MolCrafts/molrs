@@ -251,6 +251,14 @@ pub mod ffi {
         ) -> Result<()>;
         fn frame_set_box(fref: &mut FrameRef, h: &[f64]) -> Result<()>;
         fn frame_set_meta_entry(fref: &mut FrameRef, entry: MetaEntry) -> Result<()>;
+        // declared precision of an f64 column: a `*.mrec` writer stores it
+        // rounded to the largest power of two <= precision (molrec)
+        fn frame_set_precision(
+            fref: &mut FrameRef,
+            block: &str,
+            col: &str,
+            precision: f64,
+        ) -> Result<()>;
 
         // AM1-BCC: Atomiverse supplies AM1 base charges; molrs owns BCC typing.
         //

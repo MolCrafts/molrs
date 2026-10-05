@@ -5,7 +5,7 @@
 //! it, publish it, diff two releases of it — from every binding, rather than a
 //! rule that only exists inside the Rust type system.
 
-use super::{FRAME_VOCAB_VERSION, SCHEMA_BLOCKS, SCHEMA_COLUMNS};
+use super::{EndpointTarget, FRAME_VOCAB_VERSION, SCHEMA_BLOCKS, SCHEMA_COLUMNS};
 use crate::units::UnitPreset;
 use serde::{Deserialize, Serialize};
 
@@ -42,10 +42,13 @@ pub struct BlockDoc {
     pub name: String,
     /// `node`, `relation(k)`, or `grid`.
     pub row_kind: String,
-    /// Block the endpoints index into, for relation blocks.
+    /// Block the endpoints index into by default, for relation blocks.
     pub endpoint_target: Option<String>,
     /// Endpoint column keys, in position order.
     pub endpoint_columns: Vec<String>,
+    /// The endpoint columns whose target is declared per block (`targets`)
+    /// rather than defaulted (`members.atom`).
+    pub declared_endpoints: Vec<String>,
     /// Columns that must be present.
     pub required: Vec<String>,
     /// Conventional but optional columns.
@@ -54,6 +57,46 @@ pub struct BlockDoc {
     pub open: bool,
     /// One-line meaning.
     pub doc: String,
+}
+
+/// One constant projected for another language: a column, a block, or a meta key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NamedValue {
+    /// Rust constant name (`"ATOMI"`, `"ATOMS"`, `"UNITS"`).
+    pub const_name: String,
+    /// The string that constant holds.
+    pub value: String,
+}
+
+/// An ordered group of key strings (`COORDS`, `TOPOLOGY`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NamedGroup {
+    /// Rust constant name (`"COORDS"`).
+    pub const_name: String,
+    /// Member keys, in group order.
+    pub values: Vec<String>,
+}
+
+/// Every name the bindings export, projected from the compile-time tables.
+///
+/// Columns, groups, block names, block groups, and frame-meta keys. This is
+/// the document `keysDocument()` hands to JavaScript; it is not a second
+/// vocabulary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeysDocument {
+    /// Scalar column constants, vocabulary order.
+    pub columns: Vec<NamedValue>,
+    /// Column groups (`COORDS`, `ENDPOINTS`, …).
+    pub groups: Vec<NamedGroup>,
+    /// Scalar block-name constants.
+    pub blocks: Vec<NamedValue>,
+    /// Block groups (`TOPOLOGY`). Not themselves blocks.
+    pub block_groups: Vec<NamedGroup>,
+    /// Frame-meta keys. Not columns.
+    pub meta: Vec<NamedValue>,
 }
 
 /// The whole vocabulary, owned and serializable.
@@ -97,8 +140,23 @@ pub fn document() -> SchemaDocument {
             .map(|b| BlockDoc {
                 name: b.name.to_string(),
                 row_kind: b.row_kind.to_string(),
-                endpoint_target: b.endpoints.map(|e| e.target.to_string()),
+                endpoint_target: b.endpoints.and_then(|e| {
+                    e.columns.iter().find_map(|(_, target)| match target {
+                        EndpointTarget::Block(block) => Some(block.to_string()),
+                        EndpointTarget::Declared => None,
+                    })
+                }),
                 endpoint_columns: b.endpoint_columns().iter().map(|s| s.to_string()).collect(),
+                declared_endpoints: b
+                    .endpoints
+                    .map(|e| {
+                        e.columns
+                            .iter()
+                            .filter(|(_, target)| *target == EndpointTarget::Declared)
+                            .map(|(column, _)| column.to_string())
+                            .collect()
+                    })
+                    .unwrap_or_default(),
                 required: b.required.iter().map(|s| s.to_string()).collect(),
                 optional: b.optional.iter().map(|s| s.to_string()).collect(),
                 open: b.open,
@@ -142,10 +200,22 @@ impl SchemaDocument {
             "| block | rows | endpoints → | required | meaning |\n|---|---|---|---|---|\n",
         );
         for b in &self.blocks {
-            let ep = match &b.endpoint_target {
-                Some(t) => format!("`{}` → `{}`", b.endpoint_columns.join("`, `"), t),
+            let defaulted: Vec<&str> = b
+                .endpoint_columns
+                .iter()
+                .filter(|c| !b.declared_endpoints.contains(c))
+                .map(String::as_str)
+                .collect();
+            let mut ep = match &b.endpoint_target {
+                Some(t) => format!("`{}` → `{}`", defaulted.join("`, `"), t),
                 None => "—".to_string(),
             };
+            if !b.declared_endpoints.is_empty() {
+                ep.push_str(&format!(
+                    "; `{}` → declared",
+                    b.declared_endpoints.join("`, `")
+                ));
+            }
             let req = if b.required.is_empty() {
                 "—".to_string()
             } else {

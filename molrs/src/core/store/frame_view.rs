@@ -163,7 +163,7 @@ mod tests {
 
         let atoms = view.get("atoms").unwrap();
         assert_eq!(atoms.nrows(), Some(3));
-        assert!(atoms.get_float("x").is_some());
+        assert!(atoms.get("x").and_then(|c| c.as_float()).is_some());
     }
 
     #[test]
@@ -195,7 +195,8 @@ mod tests {
         assert_eq!(atoms.nrows(), Some(3));
         assert_eq!(
             atoms
-                .get_float("x")
+                .get("x")
+                .and_then(|c| c.as_float())
                 .unwrap()
                 .as_slice_memory_order()
                 .unwrap(),
@@ -223,8 +224,20 @@ mod tests {
         let frame = make_frame();
         let view = FrameView::from(&frame);
 
-        let orig_ptr = frame.get("atoms").unwrap().get_float("x").unwrap().as_ptr();
-        let view_ptr = view.get("atoms").unwrap().get_float("x").unwrap().as_ptr();
+        let orig_ptr = frame
+            .get("atoms")
+            .unwrap()
+            .get("x")
+            .and_then(|c| c.as_float())
+            .unwrap()
+            .as_ptr();
+        let view_ptr = view
+            .get("atoms")
+            .unwrap()
+            .get("x")
+            .and_then(|c| c.as_float())
+            .unwrap()
+            .as_ptr();
         assert_eq!(orig_ptr, view_ptr);
     }
 }

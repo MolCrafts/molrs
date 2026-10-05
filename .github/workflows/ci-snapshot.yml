@@ -37,20 +37,21 @@ jobs:
         with:
           persist-credentials: false
       # The suite and its molrs adapter live in molrec, not in this repo.
-      # Pinned to a molrec `dev` commit: a floating ref would run whatever
-      # lands there. Bump deliberately when molrec's adapter moves.
+      # Pinned to a molrec commit: a floating ref would run whatever lands
+      # there. Bump deliberately when molrec's adapter moves.
       - uses: actions/checkout@v7
         with:
           repository: MolCrafts/molrec
-          ref: 8048532590093fa6df4fd511fe9c9d96f60f00e2
+          ref: 1fc2e262e4b72fa92f44b5bca711c8876866415d
           path: .ci-out/molrec
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          # Ships llvm-profdata and llvm-cov next to rustc. They are not on
-          # PATH; the measure step calls them by their sysroot path.
-          components: llvm-tools-preview
+      # Pinned by rust-toolchain.toml. llvm-tools ships llvm-profdata and
+      # llvm-cov next to rustc. They are not on PATH; the measure step calls
+      # them by their sysroot path.
+      - run: |
+          rustup toolchain install
+          rustup component add llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: snapshot
@@ -124,7 +125,7 @@ jobs:
           source .ci-out/venv/bin/activate
           python -m pip install \
             maturin \
-            "./.ci-out/molrec[zarr]" \
+            "./.ci-out/molrec" \
             "molcrafts-ci @ git+https://github.com/MolCrafts/molcrafts-ci@master"
 
       # `--track` marks master pushes. Whether the records are actually pushed
@@ -149,12 +150,9 @@ jobs:
 
       # molrs.io.mrec is the Rust core's path door. Building the extension
       # is how the suite reaches that door. The Python test suite is not run.
-      # Non-blocking until the pinned molrec adapter reads frame.meta's
-      # MetaDocument values (molrec zarr.py json.dumps). The record is still
-      # written and published red.
+      # A red suite fails this job; its record is still written and published.
       - name: Run the mrec suite
         if: ${{ !cancelled() }}
-        continue-on-error: true
         run: |
           set -euo pipefail
           # shellcheck disable=SC1091

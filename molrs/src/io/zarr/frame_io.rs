@@ -13,7 +13,11 @@ use zarrs::array::data_type::{
 };
 use zarrs::array::{Array, ArraySubset};
 #[cfg(feature = "zarr")]
-use zarrs::array::{ArrayBuilder, BytesToBytesCodecTraits, codec::GzipCodec, data_type};
+use zarrs::array::{
+    ArrayBuilder, BytesToBytesCodecTraits,
+    codec::{GzipCodec, ShuffleCodec},
+    data_type,
+};
 #[cfg(feature = "zarr")]
 use zarrs::group::GroupBuilder;
 use zarrs::node::{Node, NodeMetadata};
@@ -32,7 +36,7 @@ use molrs::spatial::simbox::SimBox;
 use molrs::store::block::DType;
 use molrs::store::block::{Block, Column};
 use molrs::store::frame::Frame;
-use molrs::store::meta::MetaValue;
+use molrs::store::meta::{META_TYPES_ATTR, MetaMap, MetaValue};
 use molrs::types::F;
 
 #[cfg(feature = "zarr")]
@@ -42,40 +46,178 @@ use super::chunking::{ChunkPlan, plan};
 /// string columns. Level 1 — these compress by structure, not by effort.
 ///
 /// Floating-point columns are stored raw: 52 random mantissa bits gzip to
-/// about 95 % of their size at a real CPU cost, and a precision study admits
-/// no lossy codec that would do better. Every array carries `crc32c` so a torn
-/// chunk is a checksum error rather than garbage rows.
+/// about 95 % of their size at a real CPU cost. No lossy codec is admitted;
+/// what makes a float column compress is a [declared
+/// precision](molrs::store::precision), which rounds the values onto a binary
+/// grid *before* they reach the pipeline (see [`frame_codecs`]). Every array
+/// carries `crc32c` so a torn chunk is a checksum error rather than garbage
+/// rows.
 #[cfg(feature = "zarr")]
 pub(in crate::io::zarr) const GZIP_LEVEL: u32 = 1;
+
+/// `zstd` level of a precision column's pipeline (`numcodecs.shuffle`, then
+/// `zstd`, then `crc32c`): molrec's reference writer setting.
+#[cfg(feature = "zarr-codecs")]
+pub(in crate::io::zarr) const PRECISION_ZSTD_LEVEL: i32 = 3;
+
+/// The array attribute a frame-shaped section's precision column carries its
+/// declared precision in. On the trajectory path the precision lives in the
+/// pinned `sequence_schema` only.
+pub(crate) const PRECISION_ATTRIBUTE: &str = "precision";
+
+/// The byte shuffle every precision column's pipeline opens with: its
+/// element size is the width of an `f64`, so the zero low-order mantissa
+/// bytes of the rounded values land in runs the compressor removes.
+#[cfg(feature = "zarr")]
+pub(in crate::io::zarr) fn precision_shuffle() -> Arc<dyn BytesToBytesCodecTraits> {
+    Arc::new(ShuffleCodec::new(std::mem::size_of::<f64>()))
+}
+
+/// The compressor of a precision column when the producer chose none:
+/// `zstd` level 3 where this build can encode `zstd` (`zarr-codecs`), else
+/// `gzip` level 1 — the wasm32 writer's fallback, which every reader decodes.
+#[cfg(feature = "zarr")]
+pub(in crate::io::zarr) fn default_precision_compressor()
+-> Result<Arc<dyn BytesToBytesCodecTraits>, MolRsError> {
+    #[cfg(feature = "zarr-codecs")]
+    {
+        Ok(Arc::new(
+            zarrs::array::codec::bytes_to_bytes::zstd::ZstdCodec::new(PRECISION_ZSTD_LEVEL, false),
+        ))
+    }
+    #[cfg(not(feature = "zarr-codecs"))]
+    {
+        gzip(GZIP_LEVEL)
+    }
+}
+
+/// A `gzip` codec at `level`.
+#[cfg(feature = "zarr")]
+pub(in crate::io::zarr) fn gzip(
+    level: u32,
+) -> Result<Arc<dyn BytesToBytesCodecTraits>, MolRsError> {
+    Ok(Arc::new(GzipCodec::new(level).map_err(|e| {
+        MolRsError::zarr(format!("gzip level {level}: {e}"))
+    })?))
+}
+
+/// The bytes-to-bytes codecs of one frame-path array of `dtype`, every list
+/// closed by `crc32c`:
+///
+/// | array | codecs |
+/// |-------|--------|
+/// | `f64` column with a declared precision | `numcodecs.shuffle` (8), `zstd` 3 (`gzip` 1 without `zarr-codecs`) |
+/// | any other float column (`f64`, `c64`, `c128`) | none |
+/// | everything else | `gzip` 1 |
+#[cfg(feature = "zarr")]
+pub(in crate::io::zarr) fn frame_codecs(
+    dtype: DType,
+    precision: bool,
+) -> Result<Vec<Arc<dyn BytesToBytesCodecTraits>>, MolRsError> {
+    let mut codecs: Vec<Arc<dyn BytesToBytesCodecTraits>> = Vec::with_capacity(3);
+    if precision {
+        codecs.push(precision_shuffle());
+        codecs.push(default_precision_compressor()?);
+    } else if !matches!(dtype, DType::Float | DType::Complex64 | DType::Complex128) {
+        codecs.push(gzip(GZIP_LEVEL)?);
+    }
+    codecs.push(Arc::new(Crc32cCodec::new()));
+    Ok(codecs)
+}
 
 // ---------------------------------------------------------------------------
 // Column write
 // ---------------------------------------------------------------------------
 
+/// Write one column as the array at `path`.
+///
+/// `precision` is the column's [declared precision](molrs::store::precision):
+/// when set, the column must be `f64`, a rounded copy of its values is what
+/// lands (`stored(x)`, exactly), the pipeline opens with the byte shuffle and
+/// a compressor ([`frame_codecs`]), and the array carries the declaration as
+/// its `precision` attribute. The caller's column is not touched.
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] naming the array when a precision is declared on a
+/// column that is not `f64` or is not admissible; any storage or codec error.
 #[cfg(feature = "zarr")]
 pub(crate) fn write_column(
     store: &ReadableWritableListableStorage,
     path: &str,
     col: &Column,
+    precision: Option<f64>,
 ) -> Result<(), MolRsError> {
     let shape: Vec<u64> = col.shape().iter().map(|&s| s as u64).collect();
     let chunking = plan(&shape, col.dtype().itemsize());
     let (dt, fill) = dtype_of(col);
-    match col {
-        Column::Float(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::Int8(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::Int16(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::Int(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::Int64(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::UInt(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::U8(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::UInt16(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::UInt32(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::Bool(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::String(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::Complex64(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
-        Column::Complex128(a) => write_typed_array(store, path, a.view(), dt, fill, chunking),
+    let codecs = frame_codecs(col.dtype(), precision.is_some())?;
+    let mut attributes = serde_json::Map::new();
+    if let Some(p) = precision {
+        let Column::Float(a) = col else {
+            return Err(MolRsError::zarr(format!(
+                "{path} is {}; only an f64 column declares a precision",
+                col.dtype()
+            )));
+        };
+        let rounded = quantized(a, p).map_err(|e| MolRsError::zarr(format!("{path}: {e}")))?;
+        attributes.insert(PRECISION_ATTRIBUTE.to_string(), serde_json::Value::from(p));
+        return write_typed_array(
+            store,
+            path,
+            rounded.view(),
+            dt,
+            fill,
+            chunking,
+            codecs,
+            attributes,
+        );
     }
+    macro_rules! land {
+        ($a:expr) => {
+            write_typed_array(
+                store,
+                path,
+                $a.view(),
+                dt,
+                fill,
+                chunking,
+                codecs,
+                attributes,
+            )
+        };
+    }
+    match col {
+        Column::Float(a) => land!(a),
+        Column::Int8(a) => land!(a),
+        Column::Int16(a) => land!(a),
+        Column::Int(a) => land!(a),
+        Column::Int64(a) => land!(a),
+        Column::UInt(a) => land!(a),
+        Column::U8(a) => land!(a),
+        Column::UInt16(a) => land!(a),
+        Column::UInt32(a) => land!(a),
+        Column::Bool(a) => land!(a),
+        Column::String(a) => land!(a),
+        Column::Complex64(a) => land!(a),
+        Column::Complex128(a) => land!(a),
+    }
+}
+
+/// `stored(x)` of every value of `values` under precision `p`: the rounded
+/// copy a writer lands for a precision column.
+///
+/// # Errors
+///
+/// [`molrs::store::precision::quantum`]'s, for an inadmissible `p`.
+pub(in crate::io::zarr) fn quantized(
+    values: &ArrayD<f64>,
+    p: f64,
+) -> Result<ArrayD<f64>, MolRsError> {
+    let q = molrs::store::precision::quantum(p)?;
+    let mut rounded = values.as_standard_layout().into_owned();
+    rounded.mapv_inplace(|x| molrs::store::precision::quantize(x, q));
+    Ok(rounded)
 }
 
 /// The Zarr data type and fill value a column of this dtype is stored as.
@@ -120,15 +262,17 @@ pub(in crate::io::zarr) fn zarr_dtype(
 }
 
 /// The one array writer: every array this backend stores is created and filled
-/// here, laid out by `chunking` and compressed losslessly.
+/// here, laid out by `chunking` and encoded by `codecs` (from
+/// [`frame_codecs`]), with `attributes` on the array.
 ///
 /// `chunking.chunks` of `None` — a variable-width dtype or an empty leading
 /// axis, both of which molrec declines to size — keeps the pre-plan layout of
 /// one chunk spanning the whole array. `chunking.shards` of `Some` packs those
-/// chunks into one shard file per shard extent, with `gzip` on the inner
-/// chunks and the shard index at the end (zarrs' default); `None` gzips the
-/// chunks directly.
+/// chunks into one shard file per shard extent, with `codecs` on the inner
+/// chunks and the shard index at the end (zarrs' default); `None` applies
+/// them to the chunks directly.
 #[cfg(feature = "zarr")]
+#[allow(clippy::too_many_arguments)]
 pub(in crate::io::zarr) fn write_typed_array<T>(
     store: &ReadableWritableListableStorage,
     path: &str,
@@ -136,37 +280,31 @@ pub(in crate::io::zarr) fn write_typed_array<T>(
     dt: zarrs::array::DataType,
     fill: impl Into<zarrs::array::builder::ArrayBuilderFillValue>,
     chunking: ChunkPlan,
+    codecs: Vec<Arc<dyn BytesToBytesCodecTraits>>,
+    attributes: serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), MolRsError>
 where
     T: zarrs::array::Element + Clone,
 {
     let data = a.as_standard_layout();
     let shape: Vec<u64> = data.shape().iter().map(|&s| s as u64).collect();
-    let chunk = chunking.chunks.unwrap_or_else(|| shape.clone());
+    // Unplanned, the array is one chunk. A chunk extent is nonzero, so an
+    // empty axis (a table of no rows) still gets a chunk of one.
+    let chunk = chunking
+        .chunks
+        .unwrap_or_else(|| shape.iter().map(|&n| n.max(1)).collect());
     // Sharding makes the array's own chunk extent the *shard*, and the planned
     // chunk the subchunk inside it.
     let (extent, subchunk) = match chunking.shards {
         Some(shards) => (shards, Some(chunk)),
         None => (chunk, None),
     };
-    let is_float = dt.is::<Float16DataType>()
-        || dt.is::<Float32DataType>()
-        || dt.is::<Float64DataType>()
-        || dt.is::<Complex64DataType>()
-        || dt.is::<Complex128DataType>();
     let mut builder = ArrayBuilder::new(shape.clone(), extent, dt, fill);
-    // Lossless throughout: integers, booleans and strings gzip (they compress
-    // by structure); floating-point payloads stay raw (they do not); every
-    // chunk ends in `crc32c`. Under sharding these codecs encode the
-    // subchunks, inside the shard.
-    let mut codecs: Vec<Arc<dyn BytesToBytesCodecTraits>> = Vec::with_capacity(2);
-    if !is_float {
-        codecs.push(Arc::new(GzipCodec::new(GZIP_LEVEL).map_err(|e| {
-            MolRsError::zarr(format!("gzip level {GZIP_LEVEL}: {e}"))
-        })?));
-    }
-    codecs.push(Arc::new(Crc32cCodec::new()));
+    // Under sharding these codecs encode the subchunks, inside the shard.
     builder.bytes_to_bytes_codecs(codecs);
+    if !attributes.is_empty() {
+        builder.attributes(attributes);
+    }
     if let Some(subchunk) = subchunk {
         builder.subchunk_shape(subchunk);
     }
@@ -302,18 +440,147 @@ where
     }
 }
 
+/// Insert a column read from a store into `block`.
+///
+/// The store read path is strict where the in-memory API is lenient:
+/// [`Block::insert_column`] admits a canonical key at another width of its
+/// family (and widens a narrow unsigned identifier to `u64`), but a store
+/// that holds a canonical key at any dtype but its declared one is refused
+/// here (see [`check_canonical_dtype`]) rather than silently converted.
 pub(crate) fn insert_column_into_block(
     block: &mut Block,
     name: &str,
     col: Column,
 ) -> Result<(), MolRsError> {
+    check_canonical_dtype(name, col.dtype())?;
     // Zero-copy insert: hand the Arc-backed Column directly to the Block.
     block.insert_column(name, col).map_err(MolRsError::Block)
+}
+
+/// Refuse a canonical key (every key of the schema tables: `x` `f64`, `ix`
+/// `i32`, `id` `u64`, `element` `string`, …) stored at any dtype but the one
+/// the vocabulary declares.
+///
+/// Every molrs writer stores those keys at their declared dtype
+/// ([`canonical_width`] converts an in-memory column of another width of the
+/// family on the way out), so another stored dtype came from a producer that
+/// broke the contract, and converting it on read would hide that.
+pub(crate) fn check_canonical_dtype(
+    name: &str,
+    stored: molrs::store::block::DType,
+) -> Result<(), MolRsError> {
+    match molrs::store::schema::column(name) {
+        Some(spec) if spec.dtype != stored => Err(MolRsError::zarr(format!(
+            "column {name:?} is stored as {}; the canonical key {name:?} is {}, and a store is \
+             not converted on read",
+            stored.name(),
+            spec.dtype.name()
+        ))),
+        _ => Ok(()),
+    }
+}
+
+/// The dtype a column under `name` is stored at: the canonical key's
+/// declared dtype, or the column's own for any other key.
+pub(crate) fn stored_dtype(name: &str, dtype: DType) -> DType {
+    molrs::store::schema::column(name).map_or(dtype, |spec| spec.dtype)
+}
+
+/// `col` at the dtype a canonical key `name` is stored at, or `None` when it
+/// already is (or `name` is not canonical).
+///
+/// The in-memory block admits a canonical signed key at any signed width
+/// (`ix` as `i64`) and a canonical unsigned one at any unsigned width; a
+/// store holds exactly the declared dtype. The conversion is exact or
+/// refused.
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] naming the key when a value does not fit the
+/// declared dtype, or the column's family is not the declared one.
+pub(crate) fn canonical_width(name: &str, col: &Column) -> Result<Option<Column>, MolRsError> {
+    let Some(spec) = molrs::store::schema::column(name) else {
+        return Ok(None);
+    };
+    if spec.dtype == col.dtype() {
+        return Ok(None);
+    }
+    fn narrow<T: Copy + std::fmt::Display, U: TryFrom<T>>(
+        name: &str,
+        values: &ArrayD<T>,
+    ) -> Result<ArrayD<U>, MolRsError> {
+        let mut out = Vec::with_capacity(values.len());
+        for &v in values.iter() {
+            out.push(U::try_from(v).map_err(|_| {
+                MolRsError::zarr(format!(
+                    "column {name:?}: {v} does not fit the canonical dtype of {name:?}"
+                ))
+            })?);
+        }
+        ArrayD::from_shape_vec(values.shape(), out).map_err(shape_err)
+    }
+    let converted = match (spec.dtype, col) {
+        (DType::Int, Column::Int8(h)) => Column::from_int(h.array().mapv(i32::from)),
+        (DType::Int, Column::Int16(h)) => Column::from_int(h.array().mapv(i32::from)),
+        (DType::Int, Column::Int64(h)) => Column::from_int(narrow::<i64, i32>(name, h.array())?),
+        (DType::Int64, Column::Int8(h)) => Column::from_i64(h.array().mapv(i64::from)),
+        (DType::Int64, Column::Int16(h)) => Column::from_i64(h.array().mapv(i64::from)),
+        (DType::Int64, Column::Int(h)) => Column::from_i64(h.array().mapv(i64::from)),
+        (DType::UInt, Column::U8(h)) => Column::from_uint(h.array().mapv(u64::from)),
+        (DType::UInt, Column::UInt16(h)) => Column::from_uint(h.array().mapv(u64::from)),
+        (DType::UInt, Column::UInt32(h)) => Column::from_uint(h.array().mapv(u64::from)),
+        (expected, other) => {
+            return Err(MolRsError::zarr(format!(
+                "column {name:?} is {}; the canonical key {name:?} is stored as {}",
+                other.dtype().name(),
+                expected.name()
+            )));
+        }
+    };
+    Ok(Some(converted))
 }
 
 // ---------------------------------------------------------------------------
 // SimBox write / read
 // ---------------------------------------------------------------------------
+
+/// Refuse a cell a writer cannot store: an undefined cell is periodic on no
+/// axis (molrec `frame.md`, "An undefined cell"), so one carrying a periodic
+/// flag contradicts itself.
+pub(crate) fn check_storable_cell(simbox: &SimBox) -> Result<(), MolRsError> {
+    if !simbox.is_cell_defined() && simbox.pbc().iter().any(|&periodic| periodic) {
+        return Err(MolRsError::zarr(format!(
+            "an undefined cell (cell_defined = false) is periodic on no axis, but this one \
+             carries boundary {:?}",
+            simbox.pbc()
+        )));
+    }
+    Ok(())
+}
+
+/// The boundary flags of a cell read back: `stored` when the store carries
+/// them, else the default — all-periodic for a defined cell, all-`false` for
+/// an undefined one, which is periodic on no axis.
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] naming `what` when an undefined cell carries a
+/// periodic flag: the store is malformed.
+pub(crate) fn resolve_boundary(
+    stored: Option<[bool; 3]>,
+    cell_defined: bool,
+    what: &str,
+) -> Result<[bool; 3], MolRsError> {
+    match stored {
+        None => Ok([cell_defined; 3]),
+        Some(flags) if !cell_defined && flags.iter().any(|&periodic| periodic) => {
+            Err(MolRsError::zarr(format!(
+                "{what}: an undefined cell is periodic on no axis, but its boundary is {flags:?}"
+            )))
+        }
+        Some(flags) => Ok(flags),
+    }
+}
 
 #[cfg(feature = "zarr")]
 pub(crate) fn write_simbox(
@@ -321,6 +588,7 @@ pub(crate) fn write_simbox(
     prefix: &str,
     simbox: &SimBox,
 ) -> Result<(), MolRsError> {
+    check_storable_cell(simbox)?;
     let mut attrs = serde_json::Map::new();
     // `cell_defined` is written only when it is *false*: absent means a
     // defined cell.
@@ -347,7 +615,8 @@ pub(crate) fn write_simbox(
     }
 
     // boundary: [3] bool, the same array form the trajectory path writes;
-    // omitted for the all-periodic default.
+    // omitted for the all-periodic default. An undefined cell writes its
+    // all-false flags explicitly, since the omitted default is periodic.
     let pbc = simbox.pbc();
     if pbc != [true, true, true] {
         let flags = ndarray::ArrayD::from_shape_vec(vec![3], pbc.to_vec()).map_err(shape_err)?;
@@ -355,6 +624,7 @@ pub(crate) fn write_simbox(
             store,
             &format!("{}/boundary", prefix),
             &Column::from_bool(flags),
+            None,
         )?;
     }
 
@@ -367,17 +637,35 @@ pub(crate) fn read_simbox(
 ) -> Result<SimBox, MolRsError> {
     use ndarray::{Array2, array};
 
-    // Narrow float arrays are refused; see `read_simbox_float_path`.
-    let vectors_path = format!("{}/vectors", prefix);
-    let h_data = read_simbox_float_path(store, &vectors_path)?
-        .ok_or_else(|| MolRsError::zarr(format!("box vectors array is missing: {vectors_path}")))?;
-    if h_data.len() != 9 {
-        return Err(MolRsError::zarr(format!(
-            "box vectors expected 9 values, got {}",
-            h_data.len()
-        )));
-    }
-    let h = Array2::from_shape_vec((3, 3), h_data).map_err(shape_err)?;
+    let group = zarrs::group::Group::open(store.clone(), prefix)?;
+
+    // `cell_defined` is optional and only ever written when false, so absent
+    // means a defined cell.
+    let cell_defined = group
+        .attributes()
+        .get("cell_defined")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    // An undefined cell's `vectors` mean nothing, so they are not read:
+    // whatever a store holds there (zeros included) is accepted, never
+    // inverted, and `SimBox::new_cell` carries the identity instead.
+    let h = if cell_defined {
+        // Narrow float arrays are refused; see `read_simbox_float_path`.
+        let vectors_path = format!("{}/vectors", prefix);
+        let h_data = read_simbox_float_path(store, &vectors_path)?.ok_or_else(|| {
+            MolRsError::zarr(format!("box vectors array is missing: {vectors_path}"))
+        })?;
+        if h_data.len() != 9 {
+            return Err(MolRsError::zarr(format!(
+                "box vectors expected 9 values, got {}",
+                h_data.len()
+            )));
+        }
+        Array2::from_shape_vec((3, 3), h_data).map_err(shape_err)?
+    } else {
+        Array2::eye(3)
+    };
 
     // An absent `origin` array is the zero origin: molrec's codec omits it for
     // a cell anchored at the coordinate origin, and that store is a well-formed
@@ -392,15 +680,14 @@ pub(crate) fn read_simbox(
     }
     let origin = array![o_data[0], o_data[1], o_data[2]];
 
-    let group = zarrs::group::Group::open(store.clone(), prefix)?;
-
     // Boundary flags are a `bool[3]` array. An absent array is fully
-    // periodic, the normative default -- reading it as vacuum would make one
-    // store two different physical systems depending on which implementation
-    // opened it. A store from before the array form carried the flags as a
-    // group attribute; that is still honoured.
+    // periodic on a defined cell -- the normative default; reading it as
+    // vacuum would make one store two different physical systems depending
+    // on which implementation opened it -- and periodic on no axis on an
+    // undefined one. A store from before the array form carried the flags as
+    // a group attribute; that is still honoured.
     let boundary_path = format!("{}/boundary", prefix);
-    let pbc = match Array::open(store.clone(), &boundary_path) {
+    let stored = match Array::open(store.clone(), &boundary_path) {
         Ok(arr) => {
             let flags: Vec<bool> =
                 arr.retrieve_array_subset(&ArraySubset::new_with_shape(arr.shape().to_vec()))?;
@@ -410,30 +697,23 @@ pub(crate) fn read_simbox(
                     flags.len()
                 )));
             }
-            [flags[0], flags[1], flags[2]]
+            Some([flags[0], flags[1], flags[2]])
         }
         Err(zarrs::array::ArrayCreateError::MissingMetadata) => match group
             .attributes()
             .get("boundary")
             .and_then(|v| v.as_array())
         {
-            Some(flags) if flags.len() == 3 => [
+            Some(flags) if flags.len() == 3 => Some([
                 flags[0].as_bool().unwrap_or(true),
                 flags[1].as_bool().unwrap_or(true),
                 flags[2].as_bool().unwrap_or(true),
-            ],
-            _ => [true, true, true],
+            ]),
+            _ => None,
         },
         Err(e) => return Err(e.into()),
     };
-
-    // `cell_defined` is optional and only ever written when false, so absent
-    // means a defined cell.
-    let cell_defined = group
-        .attributes()
-        .get("cell_defined")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
+    let pbc = resolve_boundary(stored, cell_defined, prefix)?;
 
     SimBox::new_cell(h, origin, pbc, cell_defined)
         .map_err(|e| MolRsError::zarr(format!("invalid box: {:?}", e)))
@@ -518,6 +798,10 @@ pub(crate) fn write_frame_group(
     prefix: &str,
     frame: &Frame,
 ) -> Result<(), MolRsError> {
+    // A declared row reference must resolve inside this frame: refused before
+    // anything is erased or written.
+    check_local_references(frame, prefix)?;
+
     // Erase before writing: this group is the target node, so whatever it held
     // before is not part of the frame being written.
     store.erase_prefix(&node_prefix(prefix)?)?;
@@ -525,9 +809,26 @@ pub(crate) fn write_frame_group(
     // The frame's meta document is this group's attribute map, not a child
     // group: the contract binds document sections as attributes, and a `meta`
     // child would also steal a name from the block namespace.
+    //
+    // Every value is written in its typed JSON form (a NaN is `"NaN"`, a
+    // `u64` past 2^53 a decimal string), and `_meta_types` maps every key to
+    // its tag, so a frame reads back with each value at its tag.
+    if frame.meta.contains_key(META_TYPES_ATTR) {
+        return Err(MolRsError::zarr(format!(
+            "{META_TYPES_ATTR:?} types a frame group's meta document; a meta key cannot take it"
+        )));
+    }
     let mut meta_attrs = serde_json::Map::new();
+    let mut meta_types = serde_json::Map::new();
     for (k, v) in &frame.meta {
-        meta_attrs.insert(k.clone(), v.to_attr_value());
+        meta_attrs.insert(k.clone(), v.to_typed_json());
+        meta_types.insert(k.clone(), serde_json::Value::from(v.dtype()));
+    }
+    if !meta_types.is_empty() {
+        meta_attrs.insert(
+            META_TYPES_ATTR.to_string(),
+            serde_json::Value::Object(meta_types),
+        );
     }
     GroupBuilder::new()
         .attributes(meta_attrs)
@@ -548,42 +849,69 @@ pub(crate) fn write_frame_group(
     // and still has a count, so it gets a group and an attribute rather than
     // being dropped -- silently losing it would be data loss.
     for (block_name, block) in frame.iter() {
-        if block.contains_key(VALIDITY_GROUP) {
-            return Err(MolRsError::zarr(format!(
-                "{VALIDITY_GROUP:?} names the validity masks of a block group; a column cannot \
-                 take it"
-            )));
-        }
-        let group_path = format!("{}/{}", prefix, block_name);
-        let mut block_attrs = serde_json::Map::new();
-        block_attrs.insert(
-            "count".to_string(),
-            serde_json::Value::from(block.nrows().unwrap_or(0)),
-        );
-        if let Some(shape) = block.structural_shape() {
-            block_attrs.insert(
-                "structural_shape".to_string(),
-                serde_json::Value::Array(
-                    shape
-                        .iter()
-                        .map(|n| serde_json::Value::from(*n as u64))
-                        .collect(),
-                ),
-            );
-        }
-        GroupBuilder::new()
-            .attributes(block_attrs)
-            .build(store.clone(), &group_path)?
-            .store_metadata()?;
-
-        for (col_name, col) in block.iter() {
-            let arr_path = format!("{}/{}/{}", prefix, block_name, col_name);
-            write_column(store, &arr_path, col)?;
-        }
-        write_validity_group(store, &group_path, block)?;
+        write_block_group(store, &join_path(prefix, block_name), block)?;
     }
 
     Ok(())
+}
+
+/// Write one [`Block`] as the block group at `group_path`: its `count` (and
+/// `structural_shape`, `targets`) attributes, one array per column carrying
+/// its declared precision, and the `_validity` masks.
+///
+/// The one description of a block group every frame-shaped section shares —
+/// `frame`, `system` and the `forcefield` style tables
+/// ([`crate::io::zarr::forcefield_io`]).
+#[cfg(feature = "zarr")]
+pub(crate) fn write_block_group(
+    store: &ReadableWritableListableStorage,
+    group_path: &str,
+    block: &Block,
+) -> Result<(), MolRsError> {
+    if block.contains_key(VALIDITY_GROUP) {
+        return Err(MolRsError::zarr(format!(
+            "{VALIDITY_GROUP:?} names the validity masks of a block group; a column cannot \
+             take it"
+        )));
+    }
+    let mut block_attrs = serde_json::Map::new();
+    block_attrs.insert(
+        "count".to_string(),
+        serde_json::Value::from(block.nrows().unwrap_or(0)),
+    );
+    if let Some(shape) = block.structural_shape() {
+        block_attrs.insert(
+            "structural_shape".to_string(),
+            serde_json::Value::Array(
+                shape
+                    .iter()
+                    .map(|n| serde_json::Value::from(*n as u64))
+                    .collect(),
+            ),
+        );
+    }
+    let targets: serde_json::Map<String, serde_json::Value> = block
+        .targets()
+        .map(|(column, target)| (column.to_string(), serde_json::Value::from(target)))
+        .collect();
+    if !targets.is_empty() {
+        block_attrs.insert(
+            TARGETS_ATTRIBUTE.to_string(),
+            serde_json::Value::Object(targets),
+        );
+    }
+    GroupBuilder::new()
+        .attributes(block_attrs)
+        .build(store.clone(), group_path)?
+        .store_metadata()?;
+
+    for (col_name, col) in block.iter() {
+        let arr_path = join_path(group_path, col_name);
+        let canonical = canonical_width(col_name, col)?;
+        let col = canonical.as_ref().unwrap_or(col);
+        write_column(store, &arr_path, col, block.precision(col_name))?;
+    }
+    write_validity_group(store, group_path, block)
 }
 
 /// Write the validity masks of `block` into its reserved `_validity`
@@ -616,6 +944,7 @@ fn write_validity_group(
             store,
             &format!("{}/{}", group_path, column),
             &Column::from_bool(flags),
+            None,
         )?;
     }
     Ok(())
@@ -630,9 +959,7 @@ pub(crate) fn read_frame_group(
 
     // Meta lives in this group's own attributes.
     if let Ok(frame_group) = zarrs::group::Group::open(store.clone(), prefix) {
-        for (k, v) in frame_group.attributes() {
-            frame.meta.insert(k.clone(), MetaValue::from_attr_value(v));
-        }
+        frame.meta = read_meta_document(frame_group.attributes(), prefix)?;
     }
 
     // The cell.
@@ -651,54 +978,218 @@ pub(crate) fn read_frame_group(
         if !matches!(child.metadata(), NodeMetadata::Group(_)) {
             continue;
         }
-        let mut block = Block::new();
-        let block_node = Node::open(store, child.path().as_str())?;
-        for col_child in block_node.children() {
-            if !matches!(col_child.metadata(), NodeMetadata::Array(_)) {
-                continue;
-            }
-            let col_path = col_child.path().as_str();
-            let col_name = col_path.rsplit('/').next().unwrap_or("");
-            // A frame group's column is read whole: the array *is* the column.
-            let whole =
-                ArraySubset::new_with_shape(Array::open(store.clone(), col_path)?.shape().to_vec());
-            let col = read_column(store, col_path, &whole)?;
-            insert_column_into_block(&mut block, col_name, col)?;
-        }
-        if let Ok(group) = zarrs::group::Group::open(store.clone(), child.path().as_str()) {
-            let attrs = group.attributes();
-            if let Some(count) = attrs.get("count").and_then(|v| v.as_u64()) {
-                let count = count as usize;
-                if block.is_empty() {
-                    block.resize(count).map_err(|e| {
-                        MolRsError::zarr(format!("block {child_name:?} count={count}: {e}"))
-                    })?;
-                } else if block.nrows() != Some(count) {
-                    return Err(MolRsError::zarr(format!(
-                        "row_count_mismatch: block {child_name:?} count={count}, columns have {}",
-                        block.nrows().unwrap_or(0)
-                    )));
-                }
-            }
-            if let Some(shape) = attrs.get("structural_shape").and_then(|v| v.as_array()) {
-                let shape: Vec<usize> = shape
-                    .iter()
-                    .filter_map(|v| v.as_u64().map(|n| n as usize))
-                    .collect();
-                if !shape.is_empty() {
-                    block.set_shape(&shape).map_err(|e| {
-                        MolRsError::zarr(format!(
-                            "block {child_name:?} structural_shape {shape:?}: {e}"
-                        ))
-                    })?;
-                }
-            }
-        }
-        read_validity_group(store, child.path().as_str(), child_name, &mut block)?;
+        let block = read_block_group(store, child.path().as_str(), child_name)?;
         frame.insert(child_name, block);
     }
 
+    check_local_references(&frame, prefix)?;
     Ok(frame)
+}
+
+/// Read the block group at `group_path` (named `child_name` in messages)
+/// back into a [`Block`]: the inverse of [`write_block_group`].
+pub(crate) fn read_block_group(
+    store: &ReadableWritableListableStorage,
+    group_path: &str,
+    child_name: &str,
+) -> Result<Block, MolRsError> {
+    let mut block = Block::new();
+    let block_node = Node::open(store, group_path)?;
+    for col_child in block_node.children() {
+        if !matches!(col_child.metadata(), NodeMetadata::Array(_)) {
+            continue;
+        }
+        let col_path = col_child.path().as_str();
+        let col_name = col_path.rsplit('/').next().unwrap_or("");
+        // A frame group's column is read whole: the array *is* the column.
+        let array = Array::open(store.clone(), col_path)?;
+        let whole = ArraySubset::new_with_shape(array.shape().to_vec());
+        let col = read_column_array(&array, &whole)?;
+        insert_column_into_block(&mut block, col_name, col)?;
+        // The declared precision rides on the array. The values are read
+        // as stored: a reader neither re-rounds nor checks the grid.
+        if let Some(p) = array.attributes().get(PRECISION_ATTRIBUTE) {
+            let p = p.as_f64().ok_or_else(|| {
+                MolRsError::zarr(format!(
+                    "{col_path} carries a {PRECISION_ATTRIBUTE} attribute that is not a \
+                     number: {p}"
+                ))
+            })?;
+            block
+                .set_precision(col_name, p)
+                .map_err(|e| MolRsError::zarr(format!("{col_path}: {e}")))?;
+        }
+    }
+    // `count` is required: a block with no columns still has a row count,
+    // and the columns must agree with it.
+    let group = zarrs::group::Group::open(store.clone(), group_path)?;
+    let attrs = group.attributes();
+    let count = match attrs.get("count") {
+        Some(count) => count.as_u64().ok_or_else(|| {
+            MolRsError::zarr(format!(
+                "block {child_name:?}: count must be a non-negative integer, found {count}"
+            ))
+        })? as usize,
+        None => {
+            return Err(MolRsError::zarr(format!(
+                "block {child_name:?} carries no count attribute; a block group states its \
+                 row count"
+            )));
+        }
+    };
+    if block.is_empty() {
+        block
+            .resize(count)
+            .map_err(|e| MolRsError::zarr(format!("block {child_name:?} count={count}: {e}")))?;
+    } else if block.nrows() != Some(count) {
+        return Err(MolRsError::zarr(format!(
+            "row_count_mismatch: block {child_name:?} count={count}, columns have {}",
+            block.nrows().unwrap_or(0)
+        )));
+    }
+    if let Some(shape) = attrs.get("structural_shape").and_then(|v| v.as_array()) {
+        let shape: Vec<usize> = shape
+            .iter()
+            .filter_map(|v| v.as_u64().map(|n| n as usize))
+            .collect();
+        if !shape.is_empty() {
+            block.set_shape(&shape).map_err(|e| {
+                MolRsError::zarr(format!(
+                    "block {child_name:?} structural_shape {shape:?}: {e}"
+                ))
+            })?;
+        }
+    }
+    if let Some(targets) = attrs.get(TARGETS_ATTRIBUTE) {
+        let targets = targets.as_object().ok_or_else(|| {
+            MolRsError::zarr(format!(
+                "block {child_name:?}: {TARGETS_ATTRIBUTE} must be an object, found {targets}"
+            ))
+        })?;
+        for (column, target) in targets {
+            let target = target.as_str().ok_or_else(|| {
+                MolRsError::zarr(format!(
+                    "block {child_name:?}: target of {column:?} must be a string, found \
+                     {target}"
+                ))
+            })?;
+            block
+                .set_target(column, target)
+                .map_err(|e| MolRsError::zarr(format!("block {child_name:?} targets: {e}")))?;
+        }
+    }
+    read_validity_group(store, group_path, child_name, &mut block)?;
+    Ok(block)
+}
+
+/// A frame-shaped group's `meta` document from its attribute map.
+///
+/// `_meta_types` is taken off the map and never surfaces as a key. A key it
+/// types is decoded under its tag and refused in any other form; a key it
+/// does not type is inferred ([`MetaValue::from_attr_value`] — a store
+/// written before typed meta reads as it always did); a tag whose key is
+/// absent is ignored.
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] naming the group and key when `_meta_types` is not
+/// an object of tag strings, or a typed value is not its tag's form.
+pub(crate) fn read_meta_document(
+    attrs: &serde_json::Map<String, serde_json::Value>,
+    path: &str,
+) -> Result<MetaMap, MolRsError> {
+    let types = match attrs.get(META_TYPES_ATTR) {
+        None => None,
+        Some(serde_json::Value::Object(types)) => Some(types),
+        Some(other) => {
+            return Err(MolRsError::zarr(format!(
+                "{path}: {META_TYPES_ATTR} must be an object of tags, found {other}"
+            )));
+        }
+    };
+    let mut meta = MetaMap::with_capacity(attrs.len());
+    for (key, value) in attrs {
+        if key == META_TYPES_ATTR {
+            continue;
+        }
+        let typed = match types.and_then(|types| types.get(key)) {
+            None => MetaValue::from_attr_value(value),
+            Some(tag) => {
+                let tag = tag.as_str().ok_or_else(|| {
+                    MolRsError::zarr(format!(
+                        "{path}: {META_TYPES_ATTR}[{key:?}] must be a tag string, found {tag}"
+                    ))
+                })?;
+                MetaValue::from_typed_json(tag, value)
+                    .map_err(|e| MolRsError::zarr(format!("{path}: meta key {key:?}: {e}")))?
+            }
+        };
+        meta.insert(key.clone(), typed);
+    }
+    Ok(meta)
+}
+
+/// The block-group attribute holding a block's declared row-reference
+/// targets (`{column: target}`), written only when the block declares one.
+pub(crate) const TARGETS_ATTRIBUTE: &str = "targets";
+
+/// Check every declared row reference of `frame` whose target
+/// `rows_of` can resolve: `rows_of(target)` is `None` when the target cannot
+/// be checked here (an absolute target, or a section the caller lacks),
+/// `Some(None)` when it names a block that does not exist, and
+/// `Some(Some(n))` for a block of `n` rows.
+///
+/// A missing target is refused wherever the referencing block has rows; a
+/// non-null value at or past the target's row count is refused. A null row
+/// references nothing.
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] naming `what`, block, column and target.
+pub(crate) fn check_declared_references(
+    frame: &Frame,
+    what: &str,
+    rows_of: &dyn Fn(&str) -> Option<Option<usize>>,
+) -> Result<(), MolRsError> {
+    for (name, block) in frame.iter() {
+        let rows = block.nrows().unwrap_or(0);
+        for (column, target) in block.targets() {
+            let Some(target_rows) = rows_of(target) else {
+                continue;
+            };
+            let Some(target_rows) = target_rows else {
+                if rows > 0 {
+                    return Err(MolRsError::zarr(format!(
+                        "{what}: column {column:?} of block {name:?} references {target:?}, \
+                         which is not there"
+                    )));
+                }
+                continue;
+            };
+            let Some(values) = block.get(column).and_then(|c| c.as_uint()) else {
+                continue;
+            };
+            let mask = block.validity(column);
+            if let Some((row, value)) = values
+                .iter()
+                .enumerate()
+                .find(|&(row, &v)| mask.is_none_or(|m| m[row]) && v as usize >= target_rows)
+            {
+                return Err(MolRsError::zarr(format!(
+                    "{what}: row {row} of column {column:?} of block {name:?} references row \
+                     {value} of {target:?}, which has {target_rows} rows"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// [`check_declared_references`] for the targets inside `frame` itself.
+pub(crate) fn check_local_references(frame: &Frame, what: &str) -> Result<(), MolRsError> {
+    check_declared_references(frame, what, &|target| {
+        (!target.starts_with('/')).then(|| frame.get(target).map(|b| b.nrows().unwrap_or(0)))
+    })
 }
 
 /// Restore the validity masks [`write_validity_group`] wrote for `block`.
@@ -777,6 +1268,8 @@ pub(crate) fn write_f64_array(
         data_type::float64(),
         0.0f64,
         plan(shape, DType::Float.itemsize()),
+        frame_codecs(DType::Float, false)?,
+        serde_json::Map::new(),
     )
 }
 
@@ -879,6 +1372,67 @@ mod tests {
             *back.as_i8().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
         );
+    }
+
+    /// A canonical identifier stored narrower than `u64` is refused on read,
+    /// not widened — the in-memory insert widens, the store read does not.
+    #[test]
+    fn a_narrow_canonical_identifier_is_refused_on_read() {
+        for (key, column) in [
+            (
+                "atomi",
+                Column::from_u32(ArrayD::from_shape_vec(vec![2], vec![0u32, 1]).unwrap()),
+            ),
+            (
+                "type_id",
+                Column::from_u8(ArrayD::from_shape_vec(vec![2], vec![0u8, 1]).unwrap()),
+            ),
+            (
+                "bond_type",
+                Column::from_u16(ArrayD::from_shape_vec(vec![2], vec![1u16, 4]).unwrap()),
+            ),
+        ] {
+            let dir = TempDir::new().unwrap();
+            let store = store_in(&dir);
+            GroupBuilder::new()
+                .build(store.clone(), "/f")
+                .unwrap()
+                .store_metadata()
+                .unwrap();
+            let mut count = serde_json::Map::new();
+            count.insert("count".into(), serde_json::json!(2));
+            GroupBuilder::new()
+                .attributes(count)
+                .build(store.clone(), "/f/b")
+                .unwrap()
+                .store_metadata()
+                .unwrap();
+            write_column(&store, &format!("/f/b/{key}"), &column, None).unwrap();
+            let err = read_frame_group(&store, "/f").unwrap_err().to_string();
+            assert!(
+                err.contains(key) && err.contains(column.dtype().name()),
+                "{err}"
+            );
+
+            // The same array under a non-canonical name reads at its width.
+            write_column(&store, "/f/b/label", &column, None).unwrap();
+            std::fs::remove_dir_all(dir.path().join("f/b").join(key)).unwrap();
+            let back = read_frame_group(&store, "/f").unwrap();
+            assert_eq!(
+                back.get("b").unwrap().get("label").unwrap().dtype(),
+                column.dtype()
+            );
+        }
+
+        // In memory the same insert widens to u64.
+        let mut block = Block::new();
+        block
+            .insert_column(
+                "atomi",
+                Column::from_u32(ArrayD::from_shape_vec(vec![1], vec![7u32]).unwrap()),
+            )
+            .unwrap();
+        assert_eq!(block.get("atomi").unwrap().dtype(), DType::UInt);
     }
 
     #[test]
@@ -1215,7 +1769,7 @@ mod tests {
         let simbox = SimBox::new_cell(
             array![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             array![0.0, 0.0, 0.0],
-            [true, false, true],
+            [false, false, false],
             false,
         )
         .unwrap();
@@ -1232,6 +1786,83 @@ mod tests {
 
         let back = read_simbox(&store, "/box").unwrap();
         assert!(!back.is_cell_defined());
+    }
+
+    /// An undefined cell's `vectors` are ignored on read: a zero matrix (or
+    /// any other) is accepted, never inverted, and comes back as the identity
+    /// — which is also what the writer emits for it.
+    #[test]
+    fn undefined_cell_accepts_any_vectors_and_writes_the_identity() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut attrs = serde_json::Map::new();
+        attrs.insert("cell_defined".into(), false.into());
+        GroupBuilder::new()
+            .attributes(attrs)
+            .build(store.clone(), "/box")
+            .unwrap()
+            .store_metadata()
+            .unwrap();
+        write_f64_array(&store, "/box/vectors", &[3, 3], &[0.0; 9]).unwrap();
+
+        let back = read_simbox(&store, "/box").unwrap();
+        assert!(!back.is_cell_defined());
+        assert_eq!(back.h_view(), ndarray::Array2::<F>::eye(3));
+
+        write_simbox(&store, "/rewritten", &back).unwrap();
+        let written = read_simbox_float_path(&store, "/rewritten/vectors")
+            .unwrap()
+            .unwrap();
+        assert_eq!(written, vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
+    }
+
+    /// An undefined cell is periodic on no axis: its all-false boundary is
+    /// written explicitly, an omitted one reads all-false, and a periodic flag
+    /// is refused both ways.
+    #[test]
+    fn an_undefined_cell_is_periodic_on_no_axis() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let cell =
+            |pbc| SimBox::new_cell(ndarray::Array2::eye(3), array![0.0, 0.0, 0.0], pbc, false);
+
+        let err = write_simbox(&store, "/p", &cell([true, false, false]).unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("undefined cell"), "{err}");
+
+        write_simbox(&store, "/box", &cell([false; 3]).unwrap()).unwrap();
+        assert!(Array::open(store.clone(), "/box/boundary").is_ok());
+        assert_eq!(read_simbox(&store, "/box").unwrap().pbc(), [false; 3]);
+
+        // Omitted boundary on an undefined cell: all-false, not periodic.
+        std::fs::remove_dir_all(dir.path().join("box/boundary")).unwrap();
+        assert_eq!(read_simbox(&store, "/box").unwrap().pbc(), [false; 3]);
+
+        // A periodic flag stored on an undefined cell is malformed.
+        write_column(
+            &store,
+            "/box/boundary",
+            &Column::from_bool(ArrayD::from_shape_vec(vec![3], vec![false, true, false]).unwrap()),
+            None,
+        )
+        .unwrap();
+        let err = read_simbox(&store, "/box").unwrap_err().to_string();
+        assert!(err.contains("undefined cell"), "{err}");
+    }
+
+    /// A *defined* cell with a singular matrix is still refused.
+    #[test]
+    fn a_defined_singular_cell_is_refused() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        GroupBuilder::new()
+            .build(store.clone(), "/box")
+            .unwrap()
+            .store_metadata()
+            .unwrap();
+        write_f64_array(&store, "/box/vectors", &[3, 3], &[0.0; 9]).unwrap();
+        assert!(read_simbox(&store, "/box").is_err());
     }
 
     #[test]
@@ -1616,6 +2247,7 @@ mod tests {
             &store,
             &path,
             &Column::from_bool(ArrayD::from_shape_vec(vec![2], vec![true, false]).unwrap()),
+            None,
         )
         .unwrap();
 
@@ -1642,7 +2274,7 @@ mod tests {
                 .keys()
                 .map(String::as_str)
                 .collect::<Vec<_>>(),
-            vec!["z", "a", "m"]
+            vec!["z", "a", "m", META_TYPES_ATTR]
         );
 
         let back = read_frame_group(&store, FRAME).unwrap();
@@ -1650,5 +2282,546 @@ mod tests {
             back.meta.keys().map(String::as_str).collect::<Vec<_>>(),
             vec!["z", "a", "m"]
         );
+    }
+
+    // -- declared precision (molrec F1) ------------------------------------
+
+    /// Write one `f64` column of `values` declaring precision `p`, and read
+    /// the frame back.
+    fn round_trip_precise(values: &[f64], p: f64) -> (Block, Vec<String>) {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut block = Block::new();
+        block
+            .insert_column(
+                COLUMN,
+                Column::from_float(
+                    ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap(),
+                ),
+            )
+            .unwrap();
+        block.set_precision(COLUMN, p).unwrap();
+        let mut frame = Frame::new();
+        frame.insert(BLOCK, block);
+        write_frame_group(&store, FRAME, &frame).unwrap();
+
+        let array = Array::open(store.clone(), &format!("{FRAME}/{BLOCK}/{COLUMN}")).unwrap();
+        let metadata = serde_json::to_value(array.metadata()).unwrap();
+        let mut codecs: Vec<String> = Vec::new();
+        let mut collect = |list: &serde_json::Value| {
+            for codec in list.as_array().unwrap() {
+                // A codec without configuration may be spelled by name alone.
+                let name = codec.as_str().or_else(|| codec["name"].as_str()).unwrap();
+                codecs.push(name.to_string());
+            }
+        };
+        match metadata["codecs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|codec| codec["name"] == "sharding_indexed")
+        {
+            Some(sharding) => collect(&sharding["configuration"]["codecs"]),
+            None => collect(&metadata["codecs"]),
+        }
+        let back = read_frame_group(&store, FRAME).unwrap();
+        (back.get(BLOCK).unwrap().clone(), codecs)
+    }
+
+    fn values_of(block: &Block) -> Vec<f64> {
+        block
+            .get(COLUMN)
+            .unwrap()
+            .as_float()
+            .unwrap()
+            .iter()
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn a_precision_column_lands_rounded_shuffled_and_zstd_compressed() {
+        let p = 1e-3;
+        let q = molrs::store::precision::quantum(p).unwrap();
+        let values = [0.123_456_7, -12.345_678, 39.999_9, 1.0e-7];
+        let (back, codecs) = round_trip_precise(&values, p);
+        let expected: Vec<f64> = values
+            .iter()
+            .map(|&x| molrs::store::precision::quantize(x, q))
+            .collect();
+        assert_eq!(values_of(&back), expected);
+        assert_eq!(back.precision(COLUMN), Some(p));
+        assert_eq!(codecs, ["bytes", "numcodecs.shuffle", "zstd", "crc32c"]);
+        for (x, stored) in values.iter().zip(&expected) {
+            assert!((x - stored).abs() <= q / 2.0);
+        }
+    }
+
+    #[test]
+    fn precision_edge_values_land_as_the_spec_says() {
+        let p = 1e-3;
+        let q = molrs::store::precision::quantum(p).unwrap();
+        let huge = 2f64.powi(52) * q * 1.5;
+        let values = [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            -0.0,
+            -0.1 * q,
+            huge,
+            2.5 * q,
+            3.5 * q,
+        ];
+        let (back, _) = round_trip_precise(&values, p);
+        let back = values_of(&back);
+        assert!(back[0].is_nan());
+        assert_eq!(back[1], f64::INFINITY);
+        assert_eq!(back[2], f64::NEG_INFINITY);
+        assert!(back[3] == 0.0 && back[3].is_sign_negative());
+        assert!(back[4] == 0.0 && back[4].is_sign_negative());
+        assert_eq!(back[5].to_bits(), huge.to_bits());
+        assert_eq!(back[6], 2.0 * q);
+        assert_eq!(back[7], 4.0 * q);
+    }
+
+    #[test]
+    fn a_column_without_a_precision_stays_raw_and_declares_none() {
+        let back = round_trip_column(Column::from_float(
+            ArrayD::from_shape_vec(vec![2], vec![0.123_456_7, 2.0]).unwrap(),
+        ));
+        assert_eq!(
+            back.as_float().unwrap().as_slice().unwrap(),
+            &[0.123_456_7, 2.0]
+        );
+    }
+
+    #[test]
+    fn a_precision_on_a_non_f64_column_is_refused_at_write() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let column = Column::from_i64(ArrayD::from_shape_vec(vec![1], vec![3_i64]).unwrap());
+        let err = write_column(&store, "/f/b/n", &column, Some(1e-3))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("f64"), "{err}");
+        for bad in [0.0, -1.0, f64::INFINITY] {
+            let float = Column::from_float(ArrayD::from_shape_vec(vec![1], vec![1.0]).unwrap());
+            assert!(write_column(&store, "/f/b/x", &float, Some(bad)).is_err());
+        }
+    }
+
+    #[test]
+    fn a_malformed_precision_attribute_is_refused_on_read() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = Frame::new();
+        let mut block = Block::new();
+        block
+            .insert_column(
+                COLUMN,
+                Column::from_i64(ArrayD::from_shape_vec(vec![1], vec![3_i64]).unwrap()),
+            )
+            .unwrap();
+        frame.insert(BLOCK, block);
+        write_frame_group(&store, FRAME, &frame).unwrap();
+        // Tamper: an i64 array claiming a precision.
+        let path = format!("{FRAME}/{BLOCK}/{COLUMN}");
+        let mut array = Array::open(store.clone(), &path).unwrap();
+        array
+            .attributes_mut()
+            .insert(PRECISION_ATTRIBUTE.to_string(), serde_json::json!(1e-3));
+        array.store_metadata().unwrap();
+        let err = read_frame_group(&store, FRAME).unwrap_err().to_string();
+        assert!(err.contains(COLUMN) && err.contains("f64"), "{err}");
+    }
+
+    // -- typed frame meta (molrec F3) ---------------------------------------
+
+    /// One value of every tag, with the edges the typed JSON forms exist for.
+    fn every_tag() -> Vec<(&'static str, MetaValue)> {
+        vec![
+            ("b", MetaValue::Bool(true)),
+            ("i32", MetaValue::I32(-7)),
+            ("i64", MetaValue::I64(i64::MIN)),
+            ("u32", MetaValue::U32(u32::MAX)),
+            ("u64", MetaValue::U64(u64::MAX)),
+            ("u64_53", MetaValue::U64((1 << 53) + 1)),
+            ("f64", MetaValue::F64(1.0)),
+            ("inf", MetaValue::F64(f64::INFINITY)),
+            ("ninf", MetaValue::F64(f64::NEG_INFINITY)),
+            ("s", MetaValue::String("NaN".into())),
+            ("b3", MetaValue::Bool3([true, false, true])),
+            ("i32x3", MetaValue::I32x3([1, -2, 3])),
+            ("i64x3", MetaValue::I64x3([i64::MIN, 0, i64::MAX])),
+            ("u32x3", MetaValue::U32x3([0, 1, 2])),
+            ("u64x3", MetaValue::U64x3([0, 1, u64::MAX])),
+            ("f64x3", MetaValue::F64x3([1.0, f64::INFINITY, 2.5])),
+            ("f64x6", MetaValue::F64x6([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])),
+            ("f64x9", MetaValue::F64x9([0.5; 9])),
+            (
+                "doc",
+                MetaValue::Json(serde_json::json!({"k": [1, 2], "n": null})),
+            ),
+        ]
+    }
+
+    fn meta_round_trip(frame: &Frame) -> Frame {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        write_frame_group(&store, FRAME, frame).unwrap();
+        read_frame_group(&store, FRAME).unwrap()
+    }
+
+    #[test]
+    fn every_meta_tag_round_trips_at_its_tag() {
+        let mut frame = Frame::new();
+        for (key, value) in every_tag() {
+            frame.meta.insert(key, value);
+        }
+        frame.meta.insert("nan", f64::NAN);
+        let back = meta_round_trip(&frame);
+        for (key, value) in every_tag() {
+            assert_eq!(back.meta.get(key), Some(&value), "{key}");
+        }
+        assert!(back.meta.get("nan").unwrap().as_f64().unwrap().is_nan());
+        assert!(!back.meta.contains_key(META_TYPES_ATTR));
+    }
+
+    #[test]
+    fn meta_is_stored_in_typed_json_with_a_tag_per_key() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = Frame::new();
+        frame.meta.insert("t", f64::NAN);
+        frame.meta.insert("n", u64::MAX);
+        frame.meta.insert("k", MetaValue::I32(3));
+        write_frame_group(&store, FRAME, &frame).unwrap();
+        let attrs = zarrs::group::Group::open(store.clone(), FRAME)
+            .unwrap()
+            .attributes()
+            .clone();
+        assert_eq!(attrs["t"], serde_json::json!("NaN"));
+        assert_eq!(attrs["n"], serde_json::json!("18446744073709551615"));
+        assert_eq!(
+            attrs[META_TYPES_ATTR],
+            serde_json::json!({"t": "f64", "n": "u64", "k": "i32"})
+        );
+        // An empty document writes no `_meta_types`.
+        write_frame_group(&store, FRAME, &Frame::new()).unwrap();
+        let attrs = zarrs::group::Group::open(store, FRAME)
+            .unwrap()
+            .attributes()
+            .clone();
+        assert!(attrs.is_empty());
+    }
+
+    /// Write `frame`, then let `tamper` edit the group attributes.
+    fn tampered(
+        frame: &Frame,
+        tamper: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>),
+    ) -> Result<Frame, MolRsError> {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        write_frame_group(&store, FRAME, frame).unwrap();
+        let mut group = zarrs::group::Group::open(store.clone(), FRAME).unwrap();
+        tamper(group.attributes_mut());
+        group.store_metadata().unwrap();
+        read_frame_group(&store, FRAME)
+    }
+
+    fn one_key(key: &str, value: impl Into<MetaValue>) -> Frame {
+        let mut frame = Frame::new();
+        frame.meta.insert(key, value);
+        frame
+    }
+
+    #[test]
+    fn untyped_meta_is_inferred_and_a_stale_tag_is_ignored() {
+        let back = tampered(&one_key("x", MetaValue::I32(4)), |attrs| {
+            attrs.remove(META_TYPES_ATTR);
+            attrs.insert("big".into(), serde_json::json!(u64::MAX));
+            attrs.insert("f".into(), serde_json::json!(2.5));
+            attrs.insert("s".into(), serde_json::json!("NaN"));
+        })
+        .unwrap();
+        assert_eq!(back.meta.get("x"), Some(&MetaValue::I64(4)));
+        assert_eq!(back.meta.get("big"), Some(&MetaValue::U64(u64::MAX)));
+        assert_eq!(back.meta.get("f"), Some(&MetaValue::F64(2.5)));
+        assert_eq!(back.meta.get("s"), Some(&MetaValue::String("NaN".into())));
+
+        let back = tampered(&one_key("x", 1.0), |attrs| {
+            attrs[META_TYPES_ATTR]["gone"] = serde_json::json!("i32");
+        })
+        .unwrap();
+        assert_eq!(back.meta.get("x"), Some(&MetaValue::F64(1.0)));
+        assert!(!back.meta.contains_key("gone"));
+    }
+
+    #[test]
+    fn a_value_off_its_tag_is_refused() {
+        for (value, tag) in [
+            (serde_json::json!(1.5), "i32"),
+            (serde_json::json!(1_i64 << 40), "i32"),
+            (serde_json::Value::Null, "f64"),
+            (serde_json::json!([1, 2]), "f64x3"),
+        ] {
+            let err = tampered(&one_key("x", 1.0), |attrs| {
+                attrs.insert("x".into(), value.clone());
+                attrs[META_TYPES_ATTR]["x"] = serde_json::json!(tag);
+            })
+            .unwrap_err()
+            .to_string();
+            assert!(err.contains("\"x\""), "{err}");
+        }
+        let err = tampered(&one_key("x", 1.0), |attrs| {
+            attrs.insert(META_TYPES_ATTR.into(), serde_json::json!(["f64"]));
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains(META_TYPES_ATTR), "{err}");
+    }
+
+    #[test]
+    fn a_meta_key_named_like_the_tag_map_is_refused_at_write() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let err = write_frame_group(&store, FRAME, &one_key(META_TYPES_ATTR, 1.0))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(META_TYPES_ATTR), "{err}");
+    }
+
+    #[test]
+    fn a_block_group_without_its_count_is_refused() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = Frame::new();
+        let mut block = Block::new();
+        block
+            .insert_column(
+                COLUMN,
+                Column::from_float(ArrayD::from_shape_vec(vec![2], vec![1.0, 2.0]).unwrap()),
+            )
+            .unwrap();
+        frame.insert(BLOCK, block);
+        write_frame_group(&store, FRAME, &frame).unwrap();
+        let mut group =
+            zarrs::group::Group::open(store.clone(), &format!("{FRAME}/{BLOCK}")).unwrap();
+        group.attributes_mut().remove("count");
+        group.store_metadata().unwrap();
+        let err = read_frame_group(&store, FRAME).unwrap_err().to_string();
+        assert!(err.contains("count") && err.contains(BLOCK), "{err}");
+        group
+            .attributes_mut()
+            .insert("count".into(), serde_json::json!(-1));
+        group.store_metadata().unwrap();
+        assert!(read_frame_group(&store, FRAME).is_err());
+    }
+
+    /// Every canonical key is held to its declared dtype on read, not only the
+    /// u64 identifiers; a writer converts a column of another width of the
+    /// family on the way out.
+    #[test]
+    fn every_canonical_key_is_held_to_its_dtype_on_read_and_converted_on_write() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut block = Block::new();
+        block
+            .insert_column(
+                "ix",
+                Column::from_i64(ArrayD::from_shape_vec(vec![2], vec![-1_i64, 3]).unwrap()),
+            )
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert(BLOCK, block);
+        write_frame_group(&store, FRAME, &frame).unwrap();
+        let back = read_frame_group(&store, FRAME).unwrap();
+        let ix = back.get(BLOCK).unwrap().get("ix").unwrap();
+        assert_eq!(ix.dtype(), DType::Int);
+        assert_eq!(ix.as_int().unwrap().as_slice().unwrap(), &[-1, 3]);
+
+        // An i64 `ix` that does not fit i32 is refused at write.
+        let mut block = Block::new();
+        block
+            .insert_column(
+                "ix",
+                Column::from_i64(ArrayD::from_shape_vec(vec![1], vec![1_i64 << 40]).unwrap()),
+            )
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert(BLOCK, block);
+        assert!(write_frame_group(&store, FRAME, &frame).is_err());
+
+        // A store holding `ix` as i64 (a foreign writer) is refused on read.
+        write_column(
+            &store,
+            &format!("{FRAME}/{BLOCK}/ix"),
+            &Column::from_i64(ArrayD::from_shape_vec(vec![2], vec![-1_i64, 3]).unwrap()),
+            None,
+        )
+        .unwrap();
+        let mut group =
+            zarrs::group::Group::open(store.clone(), &format!("{FRAME}/{BLOCK}")).unwrap();
+        group
+            .attributes_mut()
+            .insert("count".into(), serde_json::json!(2));
+        group.store_metadata().unwrap();
+        let err = read_frame_group(&store, FRAME).unwrap_err().to_string();
+        assert!(err.contains("\"ix\"") && err.contains("int"), "{err}");
+    }
+
+    // -- row references and topology conventions (molrec F4) ---------------
+
+    fn uints(values: &[u64]) -> Column {
+        Column::from_uint(ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap())
+    }
+
+    fn strings(values: &[&str]) -> Column {
+        Column::from_string(
+            ArrayD::from_shape_vec(
+                vec![values.len()],
+                values.iter().map(|s| (*s).to_string()).collect(),
+            )
+            .unwrap(),
+        )
+    }
+
+    fn atoms_of(n: usize) -> Block {
+        let mut atoms = Block::new();
+        atoms
+            .insert_column("x", Column::from_float(ArrayD::from_elem(vec![n], 0.5)))
+            .unwrap();
+        atoms
+    }
+
+    #[test]
+    fn declared_targets_round_trip_as_the_block_attribute() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms_of(3));
+        let mut members = Block::new();
+        members.insert_column("ibead", uints(&[0, 2])).unwrap();
+        members.insert_column("atom", uints(&[10, 11])).unwrap();
+        members.set_target("ibead", "atoms").unwrap();
+        members.set_target("atom", "/frame/atoms").unwrap();
+        frame.insert("members", members);
+        write_frame_group(&store, FRAME, &frame).unwrap();
+
+        let attrs = zarrs::group::Group::open(store.clone(), &format!("{FRAME}/members"))
+            .unwrap()
+            .attributes()
+            .clone();
+        assert_eq!(
+            attrs[TARGETS_ATTRIBUTE],
+            serde_json::json!({"ibead": "atoms", "atom": "/frame/atoms"})
+        );
+        let back = read_frame_group(&store, FRAME).unwrap();
+        assert_eq!(back["members"].target("ibead"), Some("atoms"));
+        assert_eq!(back["members"].target("atom"), Some("/frame/atoms"));
+    }
+
+    #[test]
+    fn a_broken_same_frame_reference_is_refused_both_ways() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        // Out of range: ibead 5 with 3 atoms.
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms_of(3));
+        let mut members = Block::new();
+        members.insert_column("ibead", uints(&[5])).unwrap();
+        members.set_target("ibead", "atoms").unwrap();
+        frame.insert("members", members);
+        assert!(write_frame_group(&store, FRAME, &frame).is_err());
+
+        // Missing target block.
+        let mut frame = Frame::new();
+        let mut refs = Block::new();
+        refs.insert_column("site", uints(&[0])).unwrap();
+        refs.set_target("site", "sites").unwrap();
+        frame.insert("refs", refs);
+        let err = write_frame_group(&store, FRAME, &frame)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("sites"), "{err}");
+
+        // A store that breaks it (tampered) is refused on read.
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms_of(3));
+        let mut refs = Block::new();
+        refs.insert_column("site", uints(&[2])).unwrap();
+        frame.insert("refs", refs);
+        write_frame_group(&store, FRAME, &frame).unwrap();
+        let mut group = zarrs::group::Group::open(store.clone(), &format!("{FRAME}/refs")).unwrap();
+        group.attributes_mut().insert(
+            TARGETS_ATTRIBUTE.into(),
+            serde_json::json!({"site": "nope"}),
+        );
+        group.store_metadata().unwrap();
+        assert!(read_frame_group(&store, FRAME).is_err());
+
+        // A target on a non-u64 column is refused on read.
+        group
+            .attributes_mut()
+            .insert(TARGETS_ATTRIBUTE.into(), serde_json::json!({"x": "atoms"}));
+        group.store_metadata().unwrap();
+        assert!(read_frame_group(&store, FRAME).is_err());
+    }
+
+    /// Every new canonical atom column and relation block at its canonical
+    /// dtype round-trips, a `virtual_sites` row with a null `atoml` included.
+    #[test]
+    fn the_canonical_topology_round_trips() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut atoms = atoms_of(3);
+        for key in ["fx", "fy", "fz", "occupancy", "b_factor"] {
+            atoms
+                .insert_column(key, Column::from_float(ArrayD::from_elem(vec![3], 0.25)))
+                .unwrap();
+        }
+        atoms
+            .insert_column(
+                "formal_charge",
+                Column::from_i64(ArrayD::from_shape_vec(vec![3], vec![-1, 0, 1]).unwrap()),
+            )
+            .unwrap();
+        atoms.insert_column("atom_map", uints(&[1, 0, 2])).unwrap();
+        for key in ["chain", "icode", "altloc"] {
+            atoms.insert_column(key, strings(&["A", "", "B"])).unwrap();
+        }
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        let mut sites = Block::new();
+        for (key, v) in [("atomi", 0), ("atomj", 1), ("atomk", 2)] {
+            sites.insert_column(key, uints(&[v])).unwrap();
+        }
+        sites
+            .insert_nullable(
+                "atoml",
+                ndarray::Array1::from_vec(vec![0_u64]).into_dyn(),
+                vec![false],
+            )
+            .unwrap();
+        frame.insert("virtual_sites", sites);
+        for name in ["constraints", "drudes"] {
+            let mut pair = Block::new();
+            pair.insert_column("atomi", uints(&[0])).unwrap();
+            pair.insert_column("atomj", uints(&[1])).unwrap();
+            pair.insert_column("style", strings(&["harmonic"])).unwrap();
+            frame.insert(name, pair);
+        }
+        assert!(
+            molrs::store::schema::Validator::canonical()
+                .check(&frame)
+                .is_empty()
+        );
+        write_frame_group(&store, FRAME, &frame).unwrap();
+        let back = read_frame_group(&store, FRAME).unwrap();
+        let atoms = &back["atoms"];
+        assert_eq!(atoms.dtype("formal_charge"), Some(DType::Int64));
+        assert_eq!(atoms.dtype("atom_map"), Some(DType::UInt));
+        assert_eq!(atoms.dtype("chain"), Some(DType::String));
+        assert_eq!(back["virtual_sites"].validity("atoml"), Some(&[false][..]));
+        assert_eq!(back["drudes"].nrows(), Some(1));
     }
 }

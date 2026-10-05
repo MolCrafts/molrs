@@ -104,61 +104,113 @@ impl MetaValue {
         }
     }
 
-    /// Lossless JSON object used by Zarr attributes.
-    pub fn to_json_value(&self) -> serde_json::Value {
-        use serde_json::{Value, json};
-        let value = match self {
-            Self::Bool(v) => json!(v),
-            Self::I32(v) => json!(v),
-            Self::I64(v) => json!(v),
-            Self::U32(v) => json!(v),
-            Self::U64(v) => json!(v),
-            Self::F64(v) => json!(v),
-            Self::String(v) => Value::String(v.clone()),
-            Self::Bool3(v) => json!(v),
-            Self::I32x3(v) => json!(v),
-            Self::I64x3(v) => json!(v),
-            Self::U32x3(v) => json!(v),
-            Self::U64x3(v) => json!(v),
-            Self::F64x3(v) => json!(v),
-            Self::F64x6(v) => json!(v),
-            Self::F64x9(v) => json!(v),
-            Self::Json(v) => v.clone(),
-        };
-        json!({ "dtype": self.dtype(), "value": value })
-    }
-
-    /// JSON as stored on a Zarr group attribute: the payload, not the typed
-    /// `{dtype, value}` envelope. The MolRec document contract is raw JSON.
-    pub fn to_attr_value(&self) -> serde_json::Value {
-        use serde_json::{Value, json};
+    /// The value in its [typed JSON form](crate::store::typed_json): NaN and
+    /// ±∞ as `"NaN"` / `"Infinity"` / `"-Infinity"`, integers beyond ±2⁵³
+    /// as decimal strings, vectors as arrays of element forms, `json`
+    /// verbatim. [`Self::dtype`] says how to read it back
+    /// ([`Self::from_typed_json`]).
+    ///
+    /// This is the one encoder of a typed meta value: a frame group's
+    /// attributes (beside `_meta_types`), a `sequence_schema` fill, and the
+    /// payload of the `{dtype, value}` envelope all use it.
+    pub fn to_typed_json(&self) -> serde_json::Value {
+        use crate::store::typed_json::{encode_f64, encode_i64, encode_u64};
+        use serde_json::Value;
+        fn array<T: Copy>(values: &[T], encode: impl Fn(T) -> Value) -> Value {
+            Value::Array(values.iter().map(|&v| encode(v)).collect())
+        }
         match self {
-            Self::Bool(v) => json!(v),
-            Self::I32(v) => json!(v),
-            Self::I64(v) => json!(v),
-            Self::U32(v) => json!(v),
-            Self::U64(v) => json!(v),
-            Self::F64(v) => json!(v),
+            Self::Bool(v) => Value::Bool(*v),
+            Self::I32(v) => Value::from(*v),
+            Self::I64(v) => encode_i64(*v),
+            Self::U32(v) => Value::from(*v),
+            Self::U64(v) => encode_u64(*v),
+            Self::F64(v) => encode_f64(*v),
             Self::String(v) => Value::String(v.clone()),
-            Self::Bool3(v) => json!(v),
-            Self::I32x3(v) => json!(v),
-            Self::I64x3(v) => json!(v),
-            Self::U32x3(v) => json!(v),
-            Self::U64x3(v) => json!(v),
-            Self::F64x3(v) => json!(v),
-            Self::F64x6(v) => json!(v),
-            Self::F64x9(v) => json!(v),
+            Self::Bool3(v) => array(v, Value::Bool),
+            Self::I32x3(v) => array(v, Value::from),
+            Self::I64x3(v) => array(v, encode_i64),
+            Self::U32x3(v) => array(v, Value::from),
+            Self::U64x3(v) => array(v, encode_u64),
+            Self::F64x3(v) => array(v, encode_f64),
+            Self::F64x6(v) => array(v, encode_f64),
+            Self::F64x9(v) => array(v, encode_f64),
             Self::Json(v) => v.clone(),
         }
     }
 
-    /// Decode a document attribute: raw JSON only.
+    /// Decode `value` as a value of tag `dtype`, exactly: the inverse of
+    /// [`Self::to_typed_json`].
+    ///
+    /// Accepts the typed JSON forms and an exact JSON integer beyond 2⁵³;
+    /// refuses every other form — `null` where a number is declared, a real
+    /// where an integer is, an `i32` / `u32` out of range, a vector of the
+    /// wrong length.
+    ///
+    /// # Errors
+    ///
+    /// A message naming the tag and what was found.
+    pub fn from_typed_json(dtype: &str, value: &serde_json::Value) -> Result<Self, String> {
+        use crate::store::typed_json::{
+            decode_bool, decode_f64, decode_i64, decode_signed, decode_string, decode_u64,
+            decode_unsigned,
+        };
+        fn array<T, const N: usize>(
+            value: &serde_json::Value,
+            dtype: &str,
+            decode: impl Fn(&serde_json::Value) -> Result<T, String>,
+        ) -> Result<[T; N], String> {
+            let items = value
+                .as_array()
+                .ok_or_else(|| format!("expects an array of {N}, found {value}"))?;
+            let decoded = items
+                .iter()
+                .map(decode)
+                .collect::<Result<Vec<T>, String>>()?;
+            decoded
+                .try_into()
+                .map_err(|v: Vec<T>| format!("expects {N} values, got {}", v.len()))
+                .map_err(|e| format!("{dtype} {e}"))
+        }
+        let typed = match dtype {
+            "bool" => decode_bool(value).map(Self::Bool),
+            "i32" => decode_signed(value, "i32").map(Self::I32),
+            "i64" => decode_i64(value).map(Self::I64),
+            "u32" => decode_unsigned(value, "u32").map(Self::U32),
+            "u64" => decode_u64(value).map(Self::U64),
+            "f64" => decode_f64(value).map(Self::F64),
+            "string" => decode_string(value).map(Self::String),
+            "bool3" => array(value, dtype, decode_bool).map(Self::Bool3),
+            "i32x3" => array(value, dtype, |v| decode_signed(v, "i32")).map(Self::I32x3),
+            "i64x3" => array(value, dtype, decode_i64).map(Self::I64x3),
+            "u32x3" => array(value, dtype, |v| decode_unsigned(v, "u32")).map(Self::U32x3),
+            "u64x3" => array(value, dtype, decode_u64).map(Self::U64x3),
+            "f64x3" => array(value, dtype, decode_f64).map(Self::F64x3),
+            "f64x6" => array(value, dtype, decode_f64).map(Self::F64x6),
+            "f64x9" => array(value, dtype, decode_f64).map(Self::F64x9),
+            "json" => Ok(Self::Json(value.clone())),
+            other => return Err(format!("unknown metadata dtype `{other}`")),
+        };
+        typed.map_err(|e| format!("metadata `{dtype}`: {e}"))
+    }
+
+    /// The typed `{dtype, value}` envelope (the stream wire form and the
+    /// `serde` form), its payload in the typed JSON form.
+    pub fn to_json_value(&self) -> serde_json::Value {
+        serde_json::json!({ "dtype": self.dtype(), "value": self.to_typed_json() })
+    }
+
+    /// Decode an untagged document value by inference — the reading of a key
+    /// a frame group's `_meta_types` does not type (a store written before
+    /// typed meta, or by a tool that writes plain JSON).
+    ///
+    /// JSON `true`/`false` → `bool`; an integer in `[−2⁶³, 2⁶³)` → `i64`, in
+    /// `[2⁶³, 2⁶⁴)` → `u64`; any other number → `f64`; a string → `string`
+    /// (a `"NaN"` stays a string: only a tag makes it a float); an array,
+    /// object or `null` → `json`.
     ///
     /// The typed `{dtype, value}` envelope is [`Self::from_json_value`]'s
-    /// alone. A document attribute that happens to be shaped like the
-    /// envelope is still ordinary user JSON, so every JSON object arriving
-    /// here becomes [`Self::Json`] verbatim rather than being speculatively
-    /// unwrapped into a scalar.
+    /// alone: a document value shaped like it is ordinary user JSON.
     pub fn from_attr_value(value: &serde_json::Value) -> Self {
         match value {
             serde_json::Value::Bool(v) => Self::Bool(*v),
@@ -171,6 +223,11 @@ impl MetaValue {
     }
 
     /// Decode the exact JSON object emitted by [`Self::to_json_value`].
+    ///
+    /// # Errors
+    ///
+    /// A message when `value` is not exactly `{dtype, value}`, or the payload
+    /// is not its tag's typed JSON form ([`Self::from_typed_json`]).
     pub fn from_json_value(value: &serde_json::Value) -> Result<Self, String> {
         let object = value
             .as_object()
@@ -181,54 +238,14 @@ impl MetaValue {
         let dtype = object["dtype"]
             .as_str()
             .ok_or_else(|| "metadata dtype must be a string".to_string())?;
-        let payload = &object["value"];
-        let wrong_type = || format!("metadata `{dtype}` payload has the wrong JSON type");
-        macro_rules! array {
-            ($ty:ty, $len:expr, $variant:ident) => {{
-                let values: Vec<$ty> = serde_json::from_value(payload.clone())
-                    .map_err(|e| format!("metadata `{dtype}` payload: {e}"))?;
-                let values: [$ty; $len] = values.try_into().map_err(|v: Vec<$ty>| {
-                    format!(
-                        "metadata `{dtype}` expects {} values, got {}",
-                        $len,
-                        v.len()
-                    )
-                })?;
-                Ok(Self::$variant(values))
-            }};
-        }
-        match dtype {
-            "bool" => payload.as_bool().map(Self::Bool).ok_or_else(wrong_type),
-            "i32" => payload.as_i64().ok_or_else(wrong_type).and_then(|raw| {
-                i32::try_from(raw)
-                    .map(Self::I32)
-                    .map_err(|_| "i32 metadata out of range".into())
-            }),
-            "i64" => payload.as_i64().map(Self::I64).ok_or_else(wrong_type),
-            "u32" => payload.as_u64().ok_or_else(wrong_type).and_then(|raw| {
-                u32::try_from(raw)
-                    .map(Self::U32)
-                    .map_err(|_| "u32 metadata out of range".into())
-            }),
-            "u64" => payload.as_u64().map(Self::U64).ok_or_else(wrong_type),
-            "f64" => payload.as_f64().map(Self::F64).ok_or_else(wrong_type),
-            "string" => payload
-                .as_str()
-                .map(|v| Self::String(v.to_owned()))
-                .ok_or_else(|| "string metadata payload has the wrong JSON type".into()),
-            "bool3" => array!(bool, 3, Bool3),
-            "i32x3" => array!(i32, 3, I32x3),
-            "i64x3" => array!(i64, 3, I64x3),
-            "u32x3" => array!(u32, 3, U32x3),
-            "u64x3" => array!(u64, 3, U64x3),
-            "f64x3" => array!(f64, 3, F64x3),
-            "f64x6" => array!(f64, 6, F64x6),
-            "f64x9" => array!(f64, 9, F64x9),
-            "json" => Ok(Self::Json(payload.clone())),
-            other => Err(format!("unknown metadata dtype `{other}`")),
-        }
+        Self::from_typed_json(dtype, &object["value"])
     }
 }
+
+/// The attribute of a frame-shaped group that maps every key of its `meta`
+/// document to its tag ([`MetaValue::dtype`]). One leading underscore, as
+/// `_validity`: binding-owned, legal in every store, and never a meta key.
+pub const META_TYPES_ATTR: &str = "_meta_types";
 
 macro_rules! impl_from_meta {
     ($ty:ty, $variant:ident) => {
@@ -394,6 +411,76 @@ mod tests {
                 value
             );
         }
+    }
+
+    #[test]
+    fn typed_json_round_trips_every_tag_and_the_edges() {
+        let values = [
+            MetaValue::Bool(true),
+            MetaValue::I32(i32::MIN),
+            MetaValue::I64(i64::MIN),
+            MetaValue::U32(u32::MAX),
+            MetaValue::U64(u64::MAX),
+            MetaValue::U64((1 << 53) + 1),
+            MetaValue::F64(f64::INFINITY),
+            MetaValue::F64(f64::NEG_INFINITY),
+            MetaValue::F64(1.0),
+            MetaValue::String("NaN".into()),
+            MetaValue::Bool3([true, false, true]),
+            MetaValue::I32x3([-1, 0, 1]),
+            MetaValue::I64x3([i64::MIN, 0, i64::MAX]),
+            MetaValue::U32x3([0, 1, u32::MAX]),
+            MetaValue::U64x3([0, 1, u64::MAX]),
+            MetaValue::F64x3([1.0, f64::INFINITY, -0.5]),
+            MetaValue::F64x6([1.0; 6]),
+            MetaValue::F64x9([2.0; 9]),
+            MetaValue::Json(serde_json::json!({"a": [1, null]})),
+        ];
+        for value in values {
+            let back = MetaValue::from_typed_json(value.dtype(), &value.to_typed_json()).unwrap();
+            assert_eq!(back, value);
+        }
+        let nan = MetaValue::from_typed_json("f64", &MetaValue::F64(f64::NAN).to_typed_json());
+        assert!(nan.unwrap().as_f64().unwrap().is_nan());
+        assert_eq!(
+            MetaValue::F64(f64::NAN).to_typed_json(),
+            serde_json::json!("NaN")
+        );
+        assert_eq!(
+            MetaValue::U64(u64::MAX).to_typed_json(),
+            serde_json::json!("18446744073709551615")
+        );
+    }
+
+    #[test]
+    fn typed_json_refuses_other_forms() {
+        for (tag, raw) in [
+            ("i32", serde_json::json!(1.5)),
+            ("i32", serde_json::json!(1_i64 << 40)),
+            ("u64", serde_json::json!(-1)),
+            ("f64", serde_json::Value::Null),
+            ("f64", serde_json::json!("nan")),
+            ("bool", serde_json::json!(1)),
+            ("f64x3", serde_json::json!([1.0, 2.0])),
+            ("i64x3", serde_json::json!([1, 2, 3.5])),
+            ("f128", serde_json::json!(1.0)),
+        ] {
+            assert!(
+                MetaValue::from_typed_json(tag, &raw).is_err(),
+                "{tag} {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_envelope_carries_nan_and_wide_integers() {
+        let nan = MetaValue::from_json_value(&MetaValue::F64(f64::NAN).to_json_value()).unwrap();
+        assert!(nan.as_f64().unwrap().is_nan());
+        let wide = MetaValue::from_json_value(&serde_json::json!({
+            "dtype": "u64", "value": "18446744073709551615"
+        }))
+        .unwrap();
+        assert_eq!(wide, MetaValue::U64(u64::MAX));
     }
 
     #[test]

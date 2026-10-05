@@ -9,20 +9,19 @@
 use std::path::PathBuf;
 
 use crate::core::spatial::simbox::PyBox;
-use crate::core::store::frame::PyFrame;
-use crate::core::store::frame::PyMetaValue;
+use crate::core::store::frame::{
+    PyFrame, PyMetaValue, infer_meta_value, json_map_to_plain_dict, meta_document_arg,
+    meta_value_from_dtype,
+};
 use crate::core::store::trajectory::PyTrajectory;
+use crate::ff::section::PyForceFieldSection;
 use crate::helpers::{molrs_error_to_pyerr, path_str};
 use molrs::io::mrec::{
     Compression, FrameSequence, FrameSequenceWriter, SequenceSchema, column_dtype, open_packed,
 };
-use molrs::store::meta::MetaValue;
-use pyo3::exceptions::{PyIndexError, PyTypeError, PyValueError};
+use pyo3::exceptions::{PyIndexError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{
-    PyAny, PyBool, PyDict, PyFloat, PyFrozenSet, PyInt, PyList, PyMapping, PyString,
-};
-use serde_json::{Map as JsonMap, Value as JsonValue};
+use pyo3::types::{PyAny, PyDict, PyFrozenSet};
 
 /// Write a snapshot as a record whose only state section is ``frame``.
 ///
@@ -31,32 +30,35 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 ///     frame: In-memory :class:`~molrs.Frame` to persist.
 ///     system: Optional system-definition :class:`~molrs.Frame` written
 ///         beside the snapshot as the ``system/`` section.
+///     meta: The record's identity document, written to ``meta/`` with
+///         ``molrec_version`` stamped in: a ``dict``, a
+///         :class:`~molrs.MetaDocument`, or any mapping (``frame.meta``
+///         included). Nested tuples and documents are JSON arrays and objects.
+///     forcefield: Optional force field written beside them as the
+///         ``forcefield/`` section: a :class:`~molrs.io.mrec.ForceFieldSection`
+///         as given, or a :class:`~molrs.ff.ForceField` through its
+///         :meth:`~molrs.ff.ForceField.to_section`.
 ///
 /// Raises:
-///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, or the
-///         frame fails to encode.
+///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, a section
+///         fails to encode, or the force field is invalid or has no section
+///         form.
+///     TypeError: If ``meta`` is not a mapping or holds a value JSON cannot,
+///         or ``forcefield`` is neither a ``ForceField`` nor a
+///         ``ForceFieldSection``.
 #[pyfunction]
-#[pyo3(signature = (path, frame, system=None, meta=None))]
+#[pyo3(signature = (path, frame, system=None, meta=None, forcefield=None))]
 pub fn write_mrec(
     path: PathBuf,
     frame: &Bound<'_, PyFrame>,
     system: Option<&Bound<'_, PyFrame>>,
-    meta: Option<&Bound<'_, PyDict>>,
+    meta: Option<&Bound<'_, PyAny>>,
+    forcefield: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<()> {
-    let path = path_str(&path)?;
-    let meta_map = meta.map(|meta| dict_to_json_map(meta, 0)).transpose()?;
-    let frame = frame.borrow();
-    match system {
-        None => frame.with_frame(|core| {
-            molrs::io::mrec::write_frame_file(path, core, None, meta_map.as_ref())
-        })?,
-        Some(system) => system.borrow().with_frame(|system_core| {
-            frame.with_frame(|core| {
-                molrs::io::mrec::write_frame_file(path, core, Some(system_core), meta_map.as_ref())
-            })
-        })??,
-    }
-    .map_err(molrs_error_to_pyerr)
+    let mut record = record_arg(meta, forcefield)?;
+    record.frame = Some(frame.borrow().clone_core_frame()?);
+    record.system = system.map(|s| s.borrow().clone_core_frame()).transpose()?;
+    write_record(&path, &record)
 }
 
 /// Write a topology as a record whose only state section is ``system``.
@@ -64,23 +66,77 @@ pub fn write_mrec(
 /// Args:
 ///     path: Destination filesystem path.
 ///     system: In-memory :class:`~molrs.Frame` to persist as ``system/``.
+///     meta: The record's identity document, written to ``meta/`` with
+///         ``molrec_version`` stamped in: a ``dict``, a
+///         :class:`~molrs.MetaDocument`, or any mapping (``frame.meta``
+///         included). Nested tuples and documents are JSON arrays and objects.
+///     forcefield: Optional force field the system's types link into,
+///         written as the ``forcefield/`` section: a
+///         :class:`~molrs.io.mrec.ForceFieldSection` or a
+///         :class:`~molrs.ff.ForceField`.
 ///
 /// Raises:
-///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, or the
-///         frame fails to encode.
+///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, a section
+///         fails to encode, or the force field is invalid or has no section
+///         form.
+///     TypeError: If ``meta`` is not a mapping or holds a value JSON cannot,
+///         or ``forcefield`` is neither a ``ForceField`` nor a
+///         ``ForceFieldSection``.
 #[pyfunction]
-#[pyo3(signature = (path, system, meta=None))]
+#[pyo3(signature = (path, system, meta=None, forcefield=None))]
 pub fn write_mrec_system(
     path: PathBuf,
     system: &Bound<'_, PyFrame>,
-    meta: Option<&Bound<'_, PyDict>>,
+    meta: Option<&Bound<'_, PyAny>>,
+    forcefield: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<()> {
-    let path = path_str(&path)?;
-    let meta_map = meta.map(|meta| dict_to_json_map(meta, 0)).transpose()?;
-    system
-        .borrow()
-        .with_frame(|core| molrs::io::mrec::write_system_file(path, core, meta_map.as_ref()))?
-        .map_err(molrs_error_to_pyerr)
+    let mut record = record_arg(meta, forcefield)?;
+    record.system = Some(system.borrow().clone_core_frame()?);
+    write_record(&path, &record)
+}
+
+/// Write a force field as a record whose only state section is
+/// ``forcefield``: a force-field package (``meta`` + ``forcefield/``).
+///
+/// Args:
+///     path: Destination filesystem path.
+///     forcefield: A :class:`~molrs.io.mrec.ForceFieldSection`, written as
+///         given, or a :class:`~molrs.ff.ForceField`, written through its
+///         :meth:`~molrs.ff.ForceField.to_section`.
+///     meta: The record's identity document (see :func:`write_mrec`).
+///
+/// Raises:
+///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, or the force
+///         field is invalid or has no section form.
+///     TypeError: If ``meta`` is not a mapping, or ``forcefield`` is neither a
+///         ``ForceField`` nor a ``ForceFieldSection``.
+#[pyfunction]
+#[pyo3(signature = (path, forcefield, meta=None))]
+pub fn write_mrec_forcefield(
+    path: PathBuf,
+    forcefield: &Bound<'_, PyAny>,
+    meta: Option<&Bound<'_, PyAny>>,
+) -> PyResult<()> {
+    let record = record_arg(meta, Some(forcefield))?;
+    write_record(&path, &record)
+}
+
+/// A record holding only `meta` and the `forcefield` argument, for the
+/// writing doors to add their state sections to.
+fn record_arg(
+    meta: Option<&Bound<'_, PyAny>>,
+    forcefield: Option<&Bound<'_, PyAny>>,
+) -> PyResult<molrs::MolRec> {
+    let mut record = molrs::MolRec::new();
+    if let Some(meta) = meta {
+        record.meta = meta_document_arg(meta)?;
+    }
+    record.forcefield = forcefield.map(PyForceFieldSection::from_arg).transpose()?;
+    Ok(record)
+}
+
+fn write_record(path: &std::path::Path, record: &molrs::MolRec) -> PyResult<()> {
+    molrs::io::mrec::write_record_file(path_str(path)?, record).map_err(molrs_error_to_pyerr)
 }
 
 /// Write a trajectory as a record whose only state section is ``trajectory``.
@@ -88,17 +144,33 @@ pub fn write_mrec_system(
 /// Args:
 ///     path: Destination filesystem path.
 ///     traj: In-memory :class:`~molrs.Trajectory` to persist.
+///     meta: The record's identity document, written to ``meta/`` with
+///         ``molrec_version`` stamped in: a ``dict``, a
+///         :class:`~molrs.MetaDocument`, or any mapping (``frame.meta``
+///         included). Nested tuples and documents are JSON arrays and objects.
 ///
 /// Raises:
 ///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, or a frame
 ///         fails to encode.
+///     TypeError: If ``meta`` is not a mapping or holds a value JSON cannot.
 #[pyfunction]
-pub fn write_mrec_trajectory(path: PathBuf, traj: PyRef<'_, PyTrajectory>) -> PyResult<()> {
+#[pyo3(signature = (path, traj, meta=None))]
+pub fn write_mrec_trajectory(
+    path: PathBuf,
+    traj: PyRef<'_, PyTrajectory>,
+    meta: Option<&Bound<'_, PyAny>>,
+) -> PyResult<()> {
     let path = path_str(&path)?;
-    molrs::io::mrec::write_trajectory_file(path, &traj.inner).map_err(molrs_error_to_pyerr)
+    let meta_map = meta.map(meta_document_arg).transpose()?;
+    molrs::io::mrec::write_trajectory_file(path, &traj.inner, meta_map.as_ref())
+        .map_err(molrs_error_to_pyerr)
 }
 
 /// Read the ``frame`` section of a ``*.mrec`` store.
+///
+/// Only ``meta`` (for its version) and the ``frame`` section are decoded, so
+/// another section — a trajectory, observables, one this build does not know —
+/// cannot fail the read.
 ///
 /// Args:
 ///     path: Filesystem path of the record store.
@@ -107,8 +179,9 @@ pub fn write_mrec_trajectory(path: PathBuf, traj: PyRef<'_, PyTrajectory>) -> Py
 ///     The in-memory :class:`~molrs.Frame`.
 ///
 /// Raises:
-///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, the store
-///         has no ``frame`` section, or a section fails to decode.
+///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, ``meta``
+///         carries an unsupported ``molrec_version``, the store has no
+///         ``frame`` section, or that section fails to decode.
 #[pyfunction]
 pub fn read_mrec(path: PathBuf) -> PyResult<PyFrame> {
     let path = path_str(&path)?;
@@ -118,6 +191,8 @@ pub fn read_mrec(path: PathBuf) -> PyResult<PyFrame> {
 
 /// Read the ``system`` section of a ``*.mrec`` store.
 ///
+/// Only ``meta`` (for its version) and the ``system`` section are decoded.
+///
 /// Args:
 ///     path: Filesystem path of the record store.
 ///
@@ -125,8 +200,9 @@ pub fn read_mrec(path: PathBuf) -> PyResult<PyFrame> {
 ///     The in-memory :class:`~molrs.Frame`.
 ///
 /// Raises:
-///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, the store
-///         has no ``system`` section, or a section fails to decode.
+///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, ``meta``
+///         carries an unsupported ``molrec_version``, the store has no
+///         ``system`` section, or that section fails to decode.
 #[pyfunction]
 pub fn read_mrec_system(path: PathBuf) -> PyResult<PyFrame> {
     let path = path_str(&path)?;
@@ -136,6 +212,9 @@ pub fn read_mrec_system(path: PathBuf) -> PyResult<PyFrame> {
 
 /// Read the ``trajectory`` section of a ``*.mrec`` store.
 ///
+/// Only ``meta`` (for its version) and the ``trajectory`` section are
+/// decoded. A store without one reads as an empty trajectory.
+///
 /// Args:
 ///     path: Filesystem path of the record store.
 ///
@@ -143,7 +222,8 @@ pub fn read_mrec_system(path: PathBuf) -> PyResult<PyFrame> {
 ///     The in-memory :class:`~molrs.Trajectory`.
 ///
 /// Raises:
-///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, or a
+///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, ``meta``
+///         carries an unsupported ``molrec_version``, or the ``trajectory``
 ///         section fails to decode.
 #[pyfunction]
 pub fn read_mrec_trajectory(path: PathBuf) -> PyResult<PyTrajectory> {
@@ -159,16 +239,42 @@ pub fn read_mrec_trajectory(path: PathBuf) -> PyResult<PyTrajectory> {
 ///     path: Filesystem path of the record store.
 ///
 /// Returns:
-///     The record-level metadata mapping, including the stamped brand keys.
+///     The record-level metadata mapping, including ``molrec_version`` when
+///     the writer stamped it.
 ///
 /// Raises:
 ///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, or ``meta``
-///         is missing or does not match the mrec contract.
+///         carries a ``molrec_version`` this reader does not support.
 #[pyfunction]
 pub fn read_mrec_meta(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
     let path = path_str(&path)?;
     let map = molrs::io::mrec::read_meta_file(path).map_err(molrs_error_to_pyerr)?;
-    Ok(json_map_to_dict(py, &map)?.unbind())
+    Ok(json_map_to_plain_dict(py, &map)?.unbind())
+}
+
+/// Read the ``forcefield`` section of a ``*.mrec`` store.
+///
+/// Only ``meta`` (for its version) and the ``forcefield`` section are
+/// decoded. The section comes back whole — every document key, every table,
+/// units as stored; :meth:`molrs.ff.ForceField.from_section` turns it into a
+/// force field molrs can compile.
+///
+/// Args:
+///     path: Filesystem path of the record store.
+///
+/// Returns:
+///     The :class:`~molrs.io.mrec.ForceFieldSection`, or ``None`` when the
+///     record carries no force field.
+///
+/// Raises:
+///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, ``meta``
+///         carries an unsupported ``molrec_version``, or the section is
+///         malformed (the ``forcefield`` chapter's refusals).
+#[pyfunction]
+pub fn read_mrec_forcefield(path: PathBuf) -> PyResult<Option<PyForceFieldSection>> {
+    let path = path_str(&path)?;
+    let section = molrs::io::mrec::read_forcefield_file(path).map_err(molrs_error_to_pyerr)?;
+    Ok(section.map(|inner| PyForceFieldSection { inner }))
 }
 
 /// Child group names at the record root (``meta``, ``frame``, ``system``, …).
@@ -303,7 +409,8 @@ impl PyMrecTrajectoryReader {
         self.inner.steps().to_vec()
     }
 
-    /// Physical times (fs) of the committed frames, when the run wrote any.
+    /// Time of each committed frame, when the run wrote any. The record
+    /// carries no unit for it; the producer's convention applies.
     #[getter]
     fn time(&self) -> Option<Vec<f64>> {
         self.inner.times().map(<[f64]>::to_vec)
@@ -421,6 +528,75 @@ impl PyMrecSequenceSchema {
         Ok(slf)
     }
 
+    /// Declare the precision of ``column`` of ``block``: an absolute tolerance
+    /// in the column's units (``1e-3`` keeps Å coordinates to a thousandth).
+    ///
+    /// Every frame's values are rounded to the largest power of two not above
+    /// it (ties to even) before the change check and before they land, so a
+    /// change below half that step is no change, and the column is stored
+    /// shuffled and compressed. Pinned with the schema. A schema derived with
+    /// :meth:`from_frames` takes each column's :meth:`Block.precision`.
+    fn declare_precision<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        block: &str,
+        column: &str,
+        precision: f64,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        slf.inner
+            .declare_precision(block, column, precision)
+            .map_err(molrs_error_to_pyerr)?;
+        Ok(slf)
+    }
+
+    /// Declare that ``column`` of ``block`` (``u64``) holds row indices into
+    /// *target*: ``"<block>"`` of the same resolved frame, or
+    /// ``"/<section>/<block>"``. Pinned with the schema; the writer refuses a
+    /// frame whose resolved blocks break it. :meth:`from_frames` takes each
+    /// column's :meth:`Block.target`.
+    fn declare_target<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        block: &str,
+        column: &str,
+        target: &str,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        slf.inner
+            .declare_target(block, column, target)
+            .map_err(molrs_error_to_pyerr)?;
+        Ok(slf)
+    }
+
+    /// The declared target of ``column`` of ``block``, or ``None``.
+    fn target(&self, block: &str, column: &str) -> Option<String> {
+        self.inner.target(block, column).map(str::to_string)
+    }
+
+    /// Declare ``block`` aligned with ``target``: its rows are ``target``'s
+    /// rows, one for one, at every frame after carry-forward. A frame whose
+    /// ``target`` changes row count must restate ``block``; one that keeps
+    /// it may let ``block`` carry forward. The two blocks keep disjoint
+    /// columns, alignments do not chain, and the aligned block declares no
+    /// structural shape. A reader hands back the two blocks.
+    fn declare_aligned<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        block: &str,
+        target: &str,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        slf.inner
+            .declare_aligned(block, target)
+            .map_err(molrs_error_to_pyerr)?;
+        Ok(slf)
+    }
+
+    /// The block ``block`` is aligned with, or ``None``.
+    fn aligned_with(&self, block: &str) -> Option<String> {
+        self.inner.aligned_with(block).map(str::to_string)
+    }
+
+    /// The declared precision of ``column`` of ``block``, or ``None``.
+    fn precision(&self, block: &str, column: &str) -> Option<f64> {
+        self.inner.precision(block, column)
+    }
+
     /// Declare the structural shape of ``block`` (a volumetric grid); every
     /// update then carries exactly ``prod(shape)`` rows.
     fn declare_structural_shape<'py>(
@@ -458,16 +634,12 @@ impl PyMrecSequenceSchema {
         fill: &Bound<'_, PyAny>,
         dtype: Option<&str>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        let value = if let Ok(meta) = fill.extract::<PyRef<'_, PyMetaValue>>() {
-            meta.inner.clone()
-        } else if let Some(dtype) = dtype {
-            MetaValue::from_json_value(&serde_json::json!({
-                "dtype": dtype,
-                "value": py_to_json(fill, 0)?,
-            }))
-            .map_err(|e| PyValueError::new_err(format!("meta key {key:?} fill: {e}")))?
-        } else {
-            MetaValue::from_attr_value(&py_to_json(fill, 0)?)
+        let value = match dtype {
+            Some(dtype) if fill.extract::<PyRef<'_, PyMetaValue>>().is_err() => {
+                meta_value_from_dtype(dtype, fill)
+                    .map_err(|e| PyValueError::new_err(format!("meta key {key:?} fill: {e}")))?
+            }
+            _ => infer_meta_value(fill)?,
         };
         slf.inner
             .declare_meta_with_fill(key, value)
@@ -538,9 +710,14 @@ fn parse_compression(spec: Option<&str>) -> PyResult<Compression> {
 ///     flush_every: Land every this many frames instead of the derived cadence.
 ///     compression: How floating-point columns are compressed: ``None``,
 ///         ``"gzip[:level]"`` or ``"zstd[:level]"``. Everything else always
-///         carries gzip level 1.
+///         carries gzip level 1. A column with a declared precision is
+///         byte-shuffled and compressed whatever this says: ``None`` means
+///         zstd level 3, and a named compressor replaces it.
 ///     durable: Whether ``flush()`` / ``close()`` fsync the touched files.
-///     meta: The record's identity document, written to ``meta/``.
+///     meta: The record's identity document, written to ``meta/`` with
+///         ``molrec_version`` stamped in: a ``dict``, a
+///         :class:`~molrs.MetaDocument`, or any mapping (``frame.meta``
+///         included). Nested tuples and documents are JSON arrays and objects.
 #[pyclass(module = "molrs.io.mrec", name = "TrajectoryWriter", unsendable)]
 pub struct PyMrecTrajectoryWriter {
     inner: Option<FrameSequenceWriter>,
@@ -556,7 +733,7 @@ impl PyMrecTrajectoryWriter {
         flush_every: Option<u64>,
         compression: Option<&str>,
         durable: bool,
-        meta: Option<&Bound<'_, PyDict>>,
+        meta: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let path = path_str(&path)?;
         let schema = schema.borrow().inner.clone();
@@ -572,7 +749,7 @@ impl PyMrecTrajectoryWriter {
         }
         if let Some(meta) = meta {
             writer = writer
-                .with_meta(&dict_to_json_map(meta, 0)?)
+                .with_meta(&meta_document_arg(meta)?)
                 .map_err(molrs_error_to_pyerr)?;
         }
         Ok(Self {
@@ -601,7 +778,8 @@ impl PyMrecTrajectoryWriter {
     }
 
     /// Buffer a frame. With no ``step`` the writer numbers frames 0, 1, 2, …;
-    /// pass ``step`` (and optionally ``time`` in fs) for real MD numbering, or
+    /// pass ``step`` (and optionally ``time``, in the producer's own unit — the
+    /// record stores none) for real MD numbering, or
     /// ``time`` alone to keep the automatic numbering and still record times.
     ///
     /// Raises:
@@ -706,22 +884,19 @@ pub fn mrec_validate_path(path: PathBuf) -> PyResult<()> {
 
 /// Validate the ``meta`` version key against the mrec contract.
 ///
-/// ``molrec_version`` is required and must be an integer in
-/// ``1..=MOLREC_VERSION``: every record is stamped on write, so an absent key
-/// means the store predates the stamped format.
+/// Every record is stamped on write, but a reader validates
+/// ``molrec_version`` only when it is present: an absent key is no version
+/// check, and a present one must be an integer in ``1..=MOLREC_VERSION``.
 ///
 /// Args:
 ///     meta: Record-level metadata mapping.
 ///
 /// Raises:
-///     ValueError: If ``molrec_version`` is missing or not a version this
+///     ValueError: If ``molrec_version`` is present and not a version this
 ///         reader supports.
 #[pyfunction]
-pub fn mrec_validate_meta(meta: &Bound<'_, PyMapping>) -> PyResult<()> {
-    let dict = PyDict::new(meta.py());
-    dict.update(meta)?;
-    let map = dict_to_json_map(&dict, 0)?;
-    molrs::io::mrec::schema::validate_meta(&map).map_err(molrs_error_to_pyerr)
+pub fn mrec_validate_meta(meta: &Bound<'_, PyAny>) -> PyResult<()> {
+    molrs::io::mrec::schema::validate_meta(&meta_document_arg(meta)?).map_err(molrs_error_to_pyerr)
 }
 
 /// Judge a snapshot or system-definition frame against the Frame vocabulary.
@@ -737,102 +912,4 @@ pub fn mrec_validate_frame(frame: &Bound<'_, PyFrame>) -> PyResult<()> {
         .borrow()
         .with_frame(molrs::io::mrec::schema::validate_frame)?
         .map_err(molrs_error_to_pyerr)
-}
-
-fn json_map_to_dict<'py>(
-    py: Python<'py>,
-    map: &JsonMap<String, JsonValue>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let dict = PyDict::new(py);
-    for (key, value) in map {
-        dict.set_item(key, json_to_py(py, value)?)?;
-    }
-    Ok(dict)
-}
-
-fn json_to_py(py: Python<'_>, value: &JsonValue) -> PyResult<Py<PyAny>> {
-    Ok(match value {
-        JsonValue::Null => py.None(),
-        JsonValue::Bool(b) => b.into_pyobject(py)?.to_owned().into_any().unbind(),
-        JsonValue::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                i.into_pyobject(py)?.into_any().unbind()
-            } else if let Some(u) = n.as_u64() {
-                u.into_pyobject(py)?.into_any().unbind()
-            } else {
-                n.as_f64()
-                    .unwrap_or(f64::NAN)
-                    .into_pyobject(py)?
-                    .into_any()
-                    .unbind()
-            }
-        }
-        JsonValue::String(s) => s.into_pyobject(py)?.into_any().unbind(),
-        JsonValue::Array(items) => {
-            let list = PyList::empty(py);
-            for item in items {
-                list.append(json_to_py(py, item)?)?;
-            }
-            list.into_any().unbind()
-        }
-        JsonValue::Object(map) => json_map_to_dict(py, map)?.into_any().unbind(),
-    })
-}
-
-fn dict_to_json_map(
-    dict: &Bound<'_, PyDict>,
-    depth: usize,
-) -> PyResult<JsonMap<String, JsonValue>> {
-    let mut map = JsonMap::new();
-    for (key, value) in dict.iter() {
-        let key: String = key
-            .extract()
-            .map_err(|_| PyTypeError::new_err("record metadata keys must be strings"))?;
-        map.insert(key, py_to_json(&value, depth + 1)?);
-    }
-    Ok(map)
-}
-
-/// Deepest container nesting accepted from Python. Past it the value is
-/// refused rather than recursed into: a self-referencing list or dict would
-/// otherwise overflow the stack and kill the interpreter.
-const MAX_JSON_DEPTH: usize = 128;
-
-fn py_to_json(value: &Bound<'_, PyAny>, depth: usize) -> PyResult<JsonValue> {
-    if depth > MAX_JSON_DEPTH {
-        return Err(PyValueError::new_err(format!(
-            "metadata nests deeper than {MAX_JSON_DEPTH} levels (cyclic?)"
-        )));
-    }
-    if value.is_none() {
-        return Ok(JsonValue::Null);
-    }
-    if let Ok(b) = value.cast::<PyBool>() {
-        return Ok(JsonValue::Bool(b.is_true()));
-    }
-    if let Ok(i) = value.cast::<PyInt>() {
-        return Ok(JsonValue::from(i.extract::<i64>()?));
-    }
-    if let Ok(f) = value.cast::<PyFloat>() {
-        return Ok(serde_json::Number::from_f64(f.extract::<f64>()?)
-            .map(JsonValue::Number)
-            .unwrap_or(JsonValue::Null));
-    }
-    if let Ok(s) = value.cast::<PyString>() {
-        return Ok(JsonValue::String(s.extract::<String>()?));
-    }
-    if let Ok(dict) = value.cast::<PyDict>() {
-        return Ok(JsonValue::Object(dict_to_json_map(dict, depth)?));
-    }
-    if let Ok(list) = value.cast::<PyList>() {
-        let mut items = Vec::with_capacity(list.len());
-        for item in list.iter() {
-            items.push(py_to_json(&item, depth + 1)?);
-        }
-        return Ok(JsonValue::Array(items));
-    }
-    Err(PyTypeError::new_err(format!(
-        "unsupported metadata value type: {}",
-        value.get_type().name()?
-    )))
 }

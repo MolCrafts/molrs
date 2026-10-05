@@ -11,6 +11,7 @@
 
 use std::ffi::{CStr, CString, c_char};
 
+use molrs::store::block::DType;
 use molrs::store::schema;
 
 /// The whole Frame vocabulary as a JSON document.
@@ -87,8 +88,8 @@ pub extern "C" fn molrs_schema_block_count() -> usize {
 ///
 /// # Returns
 ///
-/// One of `"float"`, `"int"`, `"uint"`, `"bool"`, `"u8"`, `"string"`, or
-/// `NULL` when `key` is not in the vocabulary. A `NULL` return means the key
+/// The dtype's name (`"float"`, `"int"`, `"i64"`, `"uint"`, `"bool"`,
+/// `"string"`, …), or `NULL` when `key` is not in the vocabulary. A `NULL` return means the key
 /// is **unconstrained**, not that it is invalid — unspecified keys are the
 /// documented extension point.
 ///
@@ -109,13 +110,26 @@ pub unsafe extern "C" fn molrs_schema_column_dtype(key: *const c_char) -> *const
         // Every DType name is a `&'static str` with no interior NUL, and the
         // table is `'static`, so a static C string can be handed out without
         // an allocation the caller would have to free.
-        Some(spec) => match spec.dtype.name() {
-            "float" => c"float".as_ptr(),
-            "int" => c"int".as_ptr(),
-            "uint" => c"uint".as_ptr(),
-            "bool" => c"bool".as_ptr(),
-            "u8" => c"u8".as_ptr(),
-            _ => c"string".as_ptr(),
+        // Exhaustive over `DType`: a canonical key at a width this table
+        // missed used to be reported as "string" (`formal_charge`, `i64`).
+        Some(spec) => match spec.dtype {
+            DType::Float => c"float".as_ptr(),
+            DType::Int8 => c"i8".as_ptr(),
+            DType::Int16 => c"i16".as_ptr(),
+            DType::Int => c"int".as_ptr(),
+            DType::Int64 => c"i64".as_ptr(),
+            DType::Bool => c"bool".as_ptr(),
+            DType::UInt => c"uint".as_ptr(),
+            DType::U8 => c"u8".as_ptr(),
+            DType::UInt16 => c"u16".as_ptr(),
+            DType::UInt32 => c"u32".as_ptr(),
+            DType::String => c"string".as_ptr(),
+            DType::Complex64 => c"c64".as_ptr(),
+            DType::Complex128 => c"c128".as_ptr(),
+            // `DType` is non-exhaustive across crates; a width added to it
+            // fails `dtype_lookup_matches_the_table_for_every_key` once a
+            // canonical key uses it, before this arm can be reached.
+            _ => std::ptr::null(),
         },
         None => std::ptr::null(),
     }

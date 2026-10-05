@@ -85,7 +85,7 @@ pub(crate) struct AtomTyping {
 /// - `type` → [`Annotation::Type`] under the `atom/full` style of `ff`, named
 ///   by the `opls_NNN` type, with that row's numeric params (`mass`, `charge`)
 ///   — or a plain [`Annotation::Value`] when `ff` has no such row. The row's
-///   string metadata (`type_`, `def_`, …, from the XML reader) is typing input
+///   string metadata (`type_`, `smarts`, …, from the XML reader) is typing input
 ///   and is neither stamped nor defined;
 /// - `class` → [`Annotation::Value`] of the type's class, when `meta` has one.
 ///

@@ -103,9 +103,11 @@ use std::path::PathBuf;
 
 /// Read a PDB file and return a Frame.
 ///
-/// The resulting frame contains an ``"atoms"`` block with columns ``symbol``
-/// (str), ``x``/``y``/``z`` (float), ``name`` (str), ``resname`` (str), and
-/// ``resid`` (int). If CRYST1 records are present a ``Box`` is also attached.
+/// The resulting frame contains an ``"atoms"`` block with columns ``element``
+/// (str), ``x``/``y``/``z`` (float), ``id`` and ``res_id`` (uint), ``name``,
+/// ``res_name``, ``chain``, ``icode`` and ``altloc`` (str; ``""`` for none),
+/// ``occupancy`` and ``b_factor`` (float). If CRYST1 records are present a
+/// ``Box`` is also attached.
 ///
 /// Parameters
 /// ----------
@@ -126,7 +128,7 @@ use std::path::PathBuf;
 /// --------
 /// >>> frame = molrs.io.read_pdb("molecule.pdb")
 /// >>> atoms = frame["atoms"]
-/// >>> symbols = atoms.view("symbol")
+/// >>> symbols = atoms["symbol"]
 #[pyfunction]
 pub fn read_pdb(path: PathBuf) -> PyResult<PyFrame> {
     let path = path_str(&path)?;
@@ -565,7 +567,7 @@ impl PyLAMMPSTrajReader {
 /// >>> frames = molrs.io.raw.read_dcd_trajectory("trajectory.dcd")
 /// >>> len(frames)
 /// 100
-/// >>> frames[0]["atoms"].view("x")
+/// >>> frames[0]["atoms"]["x"]
 #[pyfunction]
 pub fn read_dcd_trajectory(path: PathBuf) -> PyResult<Vec<PyFrame>> {
     let path = path_str(&path)?;
@@ -744,7 +746,7 @@ impl PyDcdTrajReader {
 /// >>> reader = molrs.XYZTrajReader("traj.xyz")
 /// >>> reader.n_frames
 /// 50
-/// >>> reader[-1]["atoms"].view("x")
+/// >>> reader[-1]["atoms"]["x"]
 #[pyclass(module = "molrs.io.raw", name = "XYZTrajReader", unsendable)]
 pub struct PyXYZTrajReader {
     inner: Option<XYZReader<Box<dyn ReadSeek>>>,
@@ -866,7 +868,7 @@ impl PyXYZTrajReader {
 
 /// Read the first frame of a GROMACS GRO file.
 ///
-/// The ``"atoms"`` block carries ``res_id``, ``resname``, ``atom_name``,
+/// The ``"atoms"`` block carries ``res_id``, ``res_name``, ``name``,
 /// ``element`` (inferred from the atom name), ``id`` and ``x``/``y``/``z`` in
 /// Å (converted from the file's nm), plus ``vx``/``vy``/``vz`` in Å/ps when
 /// the file has velocities. The box is ``frame.box``. Every frame of a
@@ -908,7 +910,7 @@ pub fn read_gro_trajectory(path: PathBuf) -> PyResult<Vec<PyFrame>> {
 /// Write a Frame to a GROMACS GRO file.
 ///
 /// Reads ``x``/``y``/``z`` (Å, written as nm) from the ``"atoms"`` block and,
-/// when present, ``res_id``, ``resname``, ``atom_name`` (else ``element``),
+/// when present, ``res_id``, ``res_name``, ``name`` (else ``element``),
 /// ``id`` and ``vx``/``vy``/``vz``. The box is taken from ``frame.box``.
 ///
 /// Raises

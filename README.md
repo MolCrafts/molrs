@@ -98,10 +98,10 @@ import molrs
 
 ## Build from source
 
-Building from source needs the Rust toolchain. The channel is `stable` (always
-the latest rustc / rustfmt / clippy), plus the `wasm32-unknown-unknown` target,
-all declared in `rust-toolchain.toml`, so [`rustup`](https://rustup.rs/) selects
-them automatically on the first build.
+Building from source needs the Rust toolchain. `rust-toolchain.toml` pins one
+exact rustc / rustfmt / clippy release plus the `wasm32-unknown-unknown`
+target, so [`rustup`](https://rustup.rs/) selects them automatically on the
+first build, and local builds, the prek hooks and CI all use the same compiler.
 
 ```bash
 git clone https://github.com/MolCrafts/molrs.git
@@ -112,6 +112,7 @@ cd molrs
 cargo mrs-build   # compile the Rust library
 cargo mrs-test    # unit tests
 cargo mrs-doctest # rustdoc examples
+scripts/check.sh all  # every CI gate (prek runs the same script)
 ```
 
 Binding crates are standalone workspaces. Build each with

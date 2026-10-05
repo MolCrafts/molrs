@@ -74,29 +74,67 @@ impl Trajectory {
 }
 
 /// Observable kind aligned with the observable metadata contract.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+///
+/// `scalar` and `vector` are the contract's kinds. A producer may declare
+/// another one (in a `meta/modules` module); this build carries such a kind
+/// verbatim as [`Other`](Self::Other) and writes it back unchanged rather than
+/// refusing the record. Serialized as its contract spelling, a plain string.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
 pub enum ObservableKind {
+    /// One value per sample.
     Scalar,
+    /// An ordered tuple of components per sample.
     Vector,
+    /// A kind this build does not define, kept as written.
+    Other(String),
 }
 
 impl ObservableKind {
     /// Contract spelling of the kind, as written to `observables/meta/<name>/kind`.
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             Self::Scalar => "scalar",
             Self::Vector => "vector",
+            Self::Other(kind) => kind,
         }
     }
+}
 
-    /// Parse the contract spelling; `None` for a kind this build does not define.
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "scalar" => Some(Self::Scalar),
-            "vector" => Some(Self::Vector),
-            _ => None,
+impl From<&str> for ObservableKind {
+    /// Parse the contract spelling. A spelling this build does not define is
+    /// [`Other`](Self::Other), never an error.
+    fn from(kind: &str) -> Self {
+        match kind {
+            "scalar" => Self::Scalar,
+            "vector" => Self::Vector,
+            other => Self::Other(other.to_string()),
         }
+    }
+}
+
+impl From<String> for ObservableKind {
+    fn from(kind: String) -> Self {
+        match kind.as_str() {
+            "scalar" => Self::Scalar,
+            "vector" => Self::Vector,
+            _ => Self::Other(kind),
+        }
+    }
+}
+
+impl From<ObservableKind> for String {
+    fn from(kind: ObservableKind) -> Self {
+        match kind {
+            ObservableKind::Other(kind) => kind,
+            known => known.as_str().to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for ObservableKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -159,9 +197,12 @@ impl ObservableRecord {
     }
 
     /// Validate the observable payload against the declared kind.
+    ///
+    /// Every kind, an [`ObservableKind::Other`] included, is carried as one
+    /// column; the contract fixes no shape per kind.
     pub fn validate(&self) -> Result<(), MolRsError> {
-        match (&self.kind, &self.data) {
-            (ObservableKind::Scalar | ObservableKind::Vector, ObservableData::Column(_)) => Ok(()),
+        match &self.data {
+            ObservableData::Column(_) => Ok(()),
         }
     }
 }
@@ -183,6 +224,28 @@ mod tests {
         assert_eq!(traj.len(), 2);
         assert!(!traj.is_empty());
         traj.validate().unwrap();
+    }
+
+    #[test]
+    fn observable_kind_parses_known_and_keeps_unknown_spellings() {
+        assert_eq!(ObservableKind::from("scalar"), ObservableKind::Scalar);
+        assert_eq!(ObservableKind::from("vector"), ObservableKind::Vector);
+        let other = ObservableKind::from("spectrum");
+        assert_eq!(other, ObservableKind::Other("spectrum".into()));
+        assert_eq!(other.as_str(), "spectrum");
+        assert_eq!(String::from(other.clone()), "spectrum");
+        assert_eq!(
+            ObservableKind::from(String::from("scalar")),
+            ObservableKind::Scalar
+        );
+        assert_eq!(
+            serde_json::to_value(&other).unwrap(),
+            serde_json::json!("spectrum")
+        );
+        assert_eq!(
+            serde_json::from_value::<ObservableKind>(serde_json::json!("vector")).unwrap(),
+            ObservableKind::Vector
+        );
     }
 
     #[test]

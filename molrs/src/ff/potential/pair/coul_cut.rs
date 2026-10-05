@@ -383,18 +383,21 @@ pub fn pair_coul_cut_ctor(
         .get(ATOMS)
         .ok_or_else(|| "PairCoulCut: frame missing \"atoms\" block".to_string())?;
     let charges = atoms
-        .get_float("charge")
+        .get("charge")
+        .and_then(|c| c.as_float())
         .ok_or_else(|| "PairCoulCut: atoms block missing \"charge\" column".to_string())?;
     let block = frame
         .get(PAIRS)
         .ok_or_else(|| "PairCoulCut: frame missing \"pairs\" block".to_string())?;
     let i_col = block
-        .get_uint("atomi")
+        .get("atomi")
+        .and_then(|c| c.as_uint())
         .ok_or_else(|| "PairCoulCut: pairs block missing \"atomi\" column".to_string())?;
     let j_col = block
-        .get_uint("atomj")
+        .get("atomj")
+        .and_then(|c| c.as_uint())
         .ok_or_else(|| "PairCoulCut: pairs block missing \"atomj\" column".to_string())?;
-    let is_14 = block.get_bool("is_14");
+    let is_14 = block.get("is_14").and_then(|c| c.as_bool());
 
     let n = i_col.len();
     let mut atom_i = Vec::with_capacity(n);
@@ -444,7 +447,8 @@ pub fn pair_coul_cut_typed_ctor(
         .get(ATOMS)
         .ok_or_else(|| "PairCoulCut: frame missing \"atoms\" block".to_string())?;
     let charge = atoms
-        .get_float("charge")
+        .get("charge")
+        .and_then(|c| c.as_float())
         .ok_or_else(|| "PairCoulCut: atoms block missing \"charge\" column".to_string())?;
     let q: Vec<F> = charge.iter().map(|&c| c as F).collect();
     Ok(Member::pair(PairCoulCut::typed(

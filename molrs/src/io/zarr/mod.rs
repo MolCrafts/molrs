@@ -92,6 +92,7 @@
 
 mod chunking;
 mod error;
+mod forcefield_io;
 mod frame_io;
 #[cfg(feature = "filesystem")]
 mod pack;
@@ -100,14 +101,18 @@ pub mod schema;
 mod sequence;
 #[cfg(feature = "filesystem")]
 mod store;
+// Built where it is registered (no C `zstd`), and for the tests that hold it
+// to the C encoder's frames.
+#[cfg(any(test, not(feature = "zarr-codecs")))]
+mod zstd_decode;
 
 #[cfg(feature = "filesystem")]
 pub use pack::{open_packed, pack};
 #[cfg(feature = "filesystem")]
 pub use record_io::{
-    open_trajectory_sequence, read_frame_file, read_meta_file, read_record_file, read_system_file,
-    read_trajectory_file, section_names, write_frame_file, write_record_file, write_system_file,
-    write_trajectory_file,
+    open_trajectory_sequence, read_forcefield_file, read_frame_file, read_meta_file,
+    read_record_file, read_system_file, read_trajectory_file, section_names, write_forcefield_file,
+    write_frame_file, write_record_file, write_system_file, write_trajectory_file,
 };
 // The store-taking record doors need no filesystem: an in-memory or host
 // store (wasm) writes and reads a whole record through them.

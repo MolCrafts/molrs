@@ -90,7 +90,13 @@ rayon      = ["dep:rayon"]
 #
 # `sharding` is in the base tier deliberately: molrec bounds a store's file
 # count with it, and a reader that cannot open a shard cannot open the store.
-zarr       = ["dep:zarrs", "zarrs/gzip", "zarrs/crc32c", "zarrs/sharding", "zarrs/transpose"]
+#
+# `zstd` is in molrec's must-decode set, so the base tier decodes it too: a
+# pure-Rust decoder (`ruzstd`) registered with zarrs as the `zstd` codec
+# (`io/zarr/zstd_decode.rs`). It is registered only without `zarr-codecs`,
+# whose C-backed codec owns the name and also encodes. `numcodecs.shuffle`
+# needs nothing: zarrs builds it on every target.
+zarr       = ["dep:zarrs", "zarrs/gzip", "zarrs/crc32c", "zarrs/sharding", "zarrs/transpose", "dep:ruzstd", "dep:inventory"]
 zarr-codecs = ["zarr", "zarrs/zstd", "zarrs/blosc"]
 filesystem = ["zarr", "zarr-codecs", "zarrs/filesystem", "dep:zip", "dep:zarrs_zip"]
 
@@ -123,6 +129,8 @@ rand       = "0.10"
 # that sub-system's unique dependency.
 rayon          = { version = "1.12", optional = true }                                              # core/ff/compute parallelism (default)
 zarrs          = { version = "0.23", optional = true, default-features = false, features = ["ndarray"] }  # zarr trajectories (core+io)
+ruzstd         = { version = "0.9", optional = true, default-features = false, features = ["std"] }    # zarr: pure-Rust zstd decode (wasm32)
+inventory      = { version = "0.3", optional = true }                                               # zarr: registers the ruzstd codec with zarrs
 flate2         = { version = "1.1", optional = true, features = ["rust_backend"] }                  # io (compressed formats)
 rustfft        = { version = "6", optional = true }                                                 # signal + ff + compute
 roxmltree      = { version = "0.21", optional = true }                                              # ff (XML force-field readers)

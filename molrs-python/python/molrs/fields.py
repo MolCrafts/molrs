@@ -21,7 +21,6 @@ from typing import ClassVar
 
 __all__ = [
     "FieldFormatter",
-    "GroFieldFormatter",
     "LammpsFieldFormatter",
     "Mol2FieldFormatter",
     "PdbFieldFormatter",
@@ -72,20 +71,6 @@ class FieldFormatter:
         for key in list(frame.keys()):
             self.localize(frame[key])
         return frame
-
-
-class GroFieldFormatter(FieldFormatter):
-    """GRO ↔ canonical names.
-
-    Only the two string columns: the native GRO reader already writes the
-    canonical ``res_id`` and ``id``, and the writer reads those, so mapping
-    them to ``resid`` / ``atom_id`` would hide them from the writer.
-    """
-
-    _field_formatters: ClassVar[dict[str, str]] = {
-        "resname": "res_name",
-        "atom_name": "name",
-    }
 
 
 class PdbFieldFormatter(FieldFormatter):

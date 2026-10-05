@@ -1,11 +1,13 @@
 //! Python class `molrs.Block`, a heterogeneous column store backed by the
 //! shared FFI store.
 //!
-//! A [`PyBlock`] holds typed columns keyed by name. Each column is a
-//! contiguous ndarray that maps directly to a numpy array on the Python side.
-//! This is the only `Block` class: construction from a mapping, schema-dtype
-//! adoption, row / multi-column indexing, rename, deep copy, sort and pickling
-//! are all implemented here, once.
+//! A [`PyBlock`] holds typed columns keyed by name. Numeric, bool and complex
+//! columns are contiguous ndarrays and index to a zero-copy numpy view. A
+//! string column indexes the same way, to a numpy ``str`` array of the
+//! column's shape; that array is a copy, because a Rust ``String`` has no
+//! zero-copy numpy view. This is the only `Block` class: construction from a
+//! mapping, schema-dtype adoption, row / multi-column indexing, rename, deep
+//! copy, sort and pickling are all implemented here, once.
 //!
 //! # Supported Column Types
 //!
@@ -13,9 +15,9 @@
 //! |------------------|-----------------------|------------------------------|
 //! | `F`  (f64)       | `float64` (narrow float input widened here) | positions, masses, charges |
 //! | `I`  (i32/i64)   | `int32`   / `int64`   | atom type IDs                |
-//! | `U`  (u32/u64)   | `uint32`  / `uint64`  | bond indices                 |
+//! | `Idx` (u64), `u8`/`u16`/`u32` | `uint64` / `uint8` / `uint16` / `uint32` | bond indices |
 //! | `bool`           | `bool`                | selection masks               |
-//! | `String`         | `list[str]`           | element symbols               |
+//! | `String`         | numpy ``str`` on index (a copy); shape preserved | element symbols |
 
 use std::sync::Arc;
 
@@ -57,8 +59,9 @@ use crate::store::ffi_error_to_pyerr;
 /// b = Block({"x": [1.0, 2.0, 3.0], "element": ["C", "H", "H"]})
 /// assert b.nrows == 3
 /// assert "x" in b
-/// arr = b["x"]                # zero-copy numpy view
-/// xyz = b["x", "x", "x"]      # (3, 3) stacked columns
+/// arr = b["x"]                 # zero-copy numpy view
+/// names = b["element"]         # numpy str array; a copy, shape preserved
+/// xyz = b["x", "x", "x"]             # (3, 3) stacked columns
 /// sub = b[b["x"] > 1.5]       # a new Block of the selected rows
 /// assert b.validity("x") is None   # no holes in that column
 /// ```
@@ -184,15 +187,17 @@ impl PyBlock {
         self.insert_any(&key, array, Some(mask))
     }
 
-    /// Return a zero-copy numpy view of the column data.
+    /// Owned numpy array of one column, shape included.
     ///
-    /// The returned array shares memory with the internal Rust storage.
-    /// A string column comes back as a numpy ``str`` array (a copy).
+    /// Numeric, bool and complex columns are copies of the zero-copy view
+    /// ``block[key]`` returns. A string column is already a copy under
+    /// ``block[key]`` — a numpy ``str`` array of the column's shape — and
+    /// this returns another one.
     ///
     /// Parameters
     /// ----------
     /// key : str | Key
-    ///     Column name to retrieve.
+    ///     Column name.
     ///
     /// Raises
     /// ------
@@ -201,9 +206,9 @@ impl PyBlock {
     ///
     /// Examples
     /// --------
-    /// >>> arr = block.view("x")  # numpy float64 view (`F = f64`)
-    fn view(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        self.column_view(py, &extract_column_key(key)?)
+    /// >>> names = block.copy_column("element")
+    fn copy_column(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        self.copy_column_named(py, &extract_column_key(key)?)
     }
 
     /// The validity mask of a column, or ``None`` when the column has no holes.
@@ -214,7 +219,7 @@ impl PyBlock {
     /// ``None`` is the common case and means "every cell is a stated value";
     /// it is not an all-``True`` array, and a caller must not read a missing
     /// mask as "all holes". A key that names no column is a different question
-    /// and raises ``KeyError``, as :meth:`view` and :meth:`dtype` do — were it
+    /// and raises ``KeyError``, as indexing and :meth:`dtype` do — were it
     /// to answer ``None``, a misspelled key would read as a dense column.
     ///
     /// Parameters
@@ -282,6 +287,134 @@ impl PyBlock {
                 BlockError::MissingColumn { key } => PyKeyError::new_err(key),
                 other => PyValueError::new_err(other.to_string()),
             })
+    }
+
+    /// Declare (or, with ``None``, withdraw) the precision of an ``f64``
+    /// column: an absolute tolerance in the column's own units.
+    ///
+    /// A record writer rounds the column to the largest power of two not
+    /// above ``precision`` (ties to even) before storing it, so the stored
+    /// values are within ``precision / 2`` of these and compress several
+    /// times better; the values in memory are not touched. The declaration
+    /// is stored with the column (``frame`` / ``system``) or in the
+    /// trajectory's schema, and reads back. A rename keeps it; replacing the
+    /// column with another dtype, or removing it, drops it.
+    ///
+    /// Parameters
+    /// ----------
+    /// key : str | Key
+    ///     Column name.
+    /// precision : float | None
+    ///     Finite, within ``[2**-1000, 2**1000]``; ``None`` withdraws it.
+    ///
+    /// Raises
+    /// ------
+    /// KeyError
+    ///     If ``key`` does not exist in this block.
+    /// ValueError
+    ///     If the column is not ``float64`` or ``precision`` is out of bounds.
+    ///
+    /// Examples
+    /// --------
+    /// >>> b = molrs.Block({"x": np.array([0.12345, 1.5])})
+    /// >>> b.set_precision("x", 1e-3)
+    /// >>> b.precision("x")
+    /// 0.001
+    #[pyo3(signature = (key, precision))]
+    fn set_precision(&mut self, key: &Bound<'_, PyAny>, precision: Option<f64>) -> PyResult<()> {
+        let key = extract_column_key(key)?;
+        self.inner
+            .with_mut(|b| match precision {
+                Some(p) => b.set_precision(&key, p),
+                None if b.contains_key(&key) => {
+                    b.clear_precision(&key);
+                    Ok(())
+                }
+                None => Err(BlockError::MissingColumn { key: key.clone() }),
+            })
+            .map_err(ffi_error_to_pyerr)?
+            .map_err(|e| match e {
+                BlockError::MissingColumn { key } => PyKeyError::new_err(key),
+                other => PyValueError::new_err(other.to_string()),
+            })
+    }
+
+    /// Declare (or, with ``None``, withdraw) that a ``uint64`` column holds
+    /// 0-based row indices into *target*: ``"<block>"`` of the same frame, or
+    /// ``"/<section>/<block>"`` of a frame-shaped section of the record
+    /// (``"/frame/atoms"``).
+    ///
+    /// The relation endpoints ``atomi`` … ``atoml`` reference ``atoms``
+    /// without one; a declaration overrides that, and names what any other
+    /// referencing column (``members.atom``) points into. Subsetting and
+    /// replicating renumber same-frame references; a ``*.mrec`` writer and
+    /// reader refuse a reference that does not resolve.
+    ///
+    /// Raises
+    /// ------
+    /// KeyError
+    ///     If ``key`` does not exist in this block.
+    /// ValueError
+    ///     If the column is not ``uint64`` or *target* is malformed or names a
+    ///     trajectory block (``"/trajectory/…"``).
+    #[pyo3(signature = (key, target))]
+    fn set_target(&mut self, key: &Bound<'_, PyAny>, target: Option<&str>) -> PyResult<()> {
+        let key = extract_column_key(key)?;
+        self.inner
+            .with_mut(|b| match target {
+                Some(target) => b.set_target(&key, target),
+                None if b.contains_key(&key) => {
+                    b.clear_target(&key);
+                    Ok(())
+                }
+                None => Err(BlockError::MissingColumn { key: key.clone() }),
+            })
+            .map_err(ffi_error_to_pyerr)?
+            .map_err(|e| match e {
+                BlockError::MissingColumn { key } => PyKeyError::new_err(key),
+                other => PyValueError::new_err(other.to_string()),
+            })
+    }
+
+    /// The declared target of a column, or ``None``.
+    ///
+    /// Raises
+    /// ------
+    /// KeyError
+    ///     If ``key`` does not exist in this block.
+    fn target(&self, key: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
+        let key = extract_column_key(key)?;
+        self.with_block(|b| {
+            if !b.contains_key(&key) {
+                return Err(missing_column(b, &key));
+            }
+            Ok(b.target(&key).map(str::to_string))
+        })?
+    }
+
+    /// Every declared target, as ``{column: target}``.
+    fn targets(&self) -> PyResult<std::collections::BTreeMap<String, String>> {
+        self.with_block(|b| {
+            b.targets()
+                .map(|(k, t)| (k.to_string(), t.to_string()))
+                .collect()
+        })
+    }
+
+    /// The declared precision of a column, or ``None`` when it declares none.
+    ///
+    /// Raises
+    /// ------
+    /// KeyError
+    ///     If ``key`` does not exist in this block.
+    fn precision(&self, key: &Bound<'_, PyAny>) -> PyResult<Option<f64>> {
+        let key = extract_column_key(key)?;
+        self.with_block(|b| {
+            if !b.contains_key(&key) {
+                return Err(missing_column(b, &key));
+            }
+            Ok(b.precision(&key))
+        })?
     }
 
     /// Row-wise union of ``parts``: their rows in order, under the union of
@@ -416,7 +549,11 @@ impl PyBlock {
 
     /// Read a column, several stacked columns, or a selection of rows.
     ///
-    /// * ``block["x"]`` (``str`` or ``Key``) — the column, a zero-copy view.
+    /// * ``block["x"]`` (``str`` or ``Key``) — the column as a numpy array of
+    ///   its stored shape. Numeric, bool and complex columns are a zero-copy
+    ///   view. A string column is a numpy ``str`` array and a copy: a Rust
+    ///   string has no zero-copy numpy view, and writing the array does not
+    ///   change the column.
     /// * ``block["x", "y", "z"]`` / ``block[["x", "y", "z"]]`` — equal-shaped,
     ///   equal-dtype columns side by side, one ``(nrows, k)`` array.
     /// * ``block[mask]`` (1-D bool array, one entry per row) or
@@ -671,13 +808,15 @@ impl PyBlock {
         self.with_block(|b| b.has_f64(&key))
     }
 
-    /// True when ``key`` exists and is a signed-int column.
+    /// True when ``key`` exists and is a signed integer column
+    /// (``i8``, ``i16``, ``i32``, or ``i64``).
     fn has_int(&self, key: &Bound<'_, PyAny>) -> PyResult<bool> {
         let key = extract_column_key(key)?;
         self.with_block(|b| b.has_int(&key))
     }
 
-    /// True when ``key`` exists and is an unsigned-int column.
+    /// True when ``key`` exists and is an unsigned integer column
+    /// (``u8``, ``u16``, ``u32``, or ``u64``).
     fn has_uint(&self, key: &Bound<'_, PyAny>) -> PyResult<bool> {
         let key = extract_column_key(key)?;
         self.with_block(|b| b.has_uint(&key))
@@ -689,8 +828,8 @@ impl PyBlock {
         self.with_block(|b| b.has_string(&key))
     }
 
-    /// Pickle by logical state: columns, validity masks, row count and
-    /// structural shape.
+    /// Pickle by logical state: columns, validity masks, declared precisions,
+    /// row count and structural shape.
     fn __reduce__<'py>(
         slf: &Bound<'py, Self>,
     ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyTuple>, Bound<'py, PyDict>)> {
@@ -699,14 +838,25 @@ impl PyBlock {
         let columns = PyDict::new(py);
         let masks = PyDict::new(py);
         for key in this.keys()? {
-            columns.set_item(&key, this.column_view(py, &key)?)?;
+            let value = this.column_view(py, &key)?;
+            columns.set_item(&key, value)?;
             if let Some(mask) = this.with_block(|b| b.validity(&key).map(<[bool]>::to_vec))? {
                 masks.set_item(&key, mask)?;
             }
         }
+        let precisions = PyDict::new(py);
+        for (key, p) in this.with_block(|b| {
+            b.precisions()
+                .map(|(k, p)| (k.to_string(), p))
+                .collect::<Vec<_>>()
+        })? {
+            precisions.set_item(key, p)?;
+        }
         let state = PyDict::new(py);
         state.set_item("columns", columns)?;
         state.set_item("validity", masks)?;
+        state.set_item("precision", precisions)?;
+        state.set_item("targets", this.targets()?)?;
         state.set_item("nrows", this.with_block(|b| b.nrows())?)?;
         state.set_item(
             "shape",
@@ -741,6 +891,29 @@ impl PyBlock {
         }
         if let Some(shape) = field("shape")?.extract::<Option<Vec<usize>>>()? {
             self.set_shape(shape)?;
+        }
+        if let Some(targets) = state.get_item("targets")? {
+            for (key, target) in targets.cast::<PyDict>()?.iter() {
+                let key: String = key.extract()?;
+                let target: String = target.extract()?;
+                self.inner
+                    .with_mut(|b| b.set_target(&key, &target))
+                    .map_err(ffi_error_to_pyerr)?
+                    .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            }
+        }
+        // Absent from a state pickled before precisions were carried.
+        let precisions = match state.get_item("precision")? {
+            Some(precisions) => precisions,
+            None => PyDict::new(state.py()).into_any(),
+        };
+        for (key, p) in precisions.cast::<PyDict>()?.iter() {
+            let key: String = key.extract()?;
+            let p: f64 = p.extract()?;
+            self.inner
+                .with_mut(|b| b.set_precision(&key, p))
+                .map_err(ffi_error_to_pyerr)?
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
         }
         Ok(())
     }
@@ -789,6 +962,19 @@ impl PyBlock {
     /// Run a read-only closure on the underlying `CoreBlock`.
     pub(crate) fn with_block<R>(&self, f: impl FnOnce(&CoreBlock) -> R) -> PyResult<R> {
         self.inner.with(f).map_err(ffi_error_to_pyerr)
+    }
+
+    /// Owned numpy array of column `key`, with the column's shape.
+    ///
+    /// A string read is already that owned array (`column_view` copies it,
+    /// because a Rust ``String`` has no zero-copy numpy view). Every other
+    /// dtype is ``column_view(key).copy()``.
+    pub(crate) fn copy_column_named(&self, py: Python<'_>, key: &str) -> PyResult<Py<PyAny>> {
+        let array = self.column_view(py, key)?;
+        if self.with_block(|b| matches!(b.get(key), Some(Column::String(_))))? {
+            return Ok(array);
+        }
+        Ok(array.into_bound(py).call_method0("copy")?.unbind())
     }
 
     /// Normalise a row selector over `nrows` rows to row indices.
@@ -878,40 +1064,46 @@ impl PyBlock {
         Ok(())
     }
 
-    /// Zero-copy numpy view of one column (a numpy ``str`` array for strings).
+    /// Numpy array of one column, with the column's stored shape.
+    ///
+    /// Numeric, bool and complex columns are a zero-copy view: cloning an
+    /// `Arc<ArrayD<T>>` inside the closure is an O(1) refcount bump, and the
+    /// owner struct carries that Arc out of the store borrow so the view stays
+    /// valid after the closure returns. A string column is a numpy ``str``
+    /// array built after the borrow ends. Numpy strings are fixed-width, so
+    /// that array is a copy; its shape is the column's, not a flattened vector.
     fn column_view(&self, py: Python<'_>, key: &str) -> PyResult<Py<PyAny>> {
-        // Zero-copy path: cloning an Arc<ArrayD<T>> inside the closure is an
-        // O(1) refcount bump. The owner struct carries that Arc out of the
-        // store borrow so the numpy view stays valid even after the closure
-        // returns.
-        self.inner
-            .with(|b| -> PyResult<Py<PyAny>> {
+        enum Read {
+            View(Py<PyAny>),
+            String(Vec<String>, Vec<usize>),
+        }
+        let read = self
+            .inner
+            .with(|b| -> PyResult<Read> {
                 let col = b.get(key).ok_or_else(|| missing_column(b, key))?;
-                match col {
-                    Column::Float(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::Int(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::Int8(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::Int16(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::Int64(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::Bool(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::UInt(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::U8(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::UInt16(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::UInt32(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::Complex64(a) => typed_array_view(py, Arc::clone(a)),
-                    Column::Complex128(a) => typed_array_view(py, Arc::clone(a)),
+                Ok(match col {
+                    Column::Float(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
+                    Column::Int(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
+                    Column::Int8(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
+                    Column::Int16(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
+                    Column::Int64(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
+                    Column::Bool(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
+                    Column::UInt(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
+                    Column::U8(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
+                    Column::UInt16(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
+                    Column::UInt32(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
+                    Column::Complex64(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
+                    Column::Complex128(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
                     Column::String(a) => {
-                        // An ndarray (not a list) so string columns match
-                        // numeric ones — callers rely on ``.dtype`` uniformly.
-                        let list: Vec<String> = a.iter().cloned().collect();
-                        let arr = py
-                            .import("numpy")?
-                            .call_method1("asarray", (PyList::new(py, &list)?,))?;
-                        Ok(arr.unbind())
+                        Read::String(a.iter().cloned().collect(), a.shape().to_vec())
                     }
-                }
+                })
             })
-            .map_err(ffi_error_to_pyerr)?
+            .map_err(ffi_error_to_pyerr)??;
+        match read {
+            Read::View(array) => Ok(array),
+            Read::String(flat, shape) => numpy_string_array(py, &flat, shape),
+        }
     }
 
     /// ``block["x", "y", "z"]``: equal-shaped, equal-dtype columns stacked
@@ -1188,6 +1380,19 @@ pub(crate) fn coords_error(e: BlockError) -> PyErr {
     }
 }
 
+/// Numpy ``str`` array of a string column's row-major values, at `shape`.
+///
+/// Built outside the store borrow. ``reshape`` keeps a rank above 1; it does
+/// not flatten the column down to a vector.
+fn numpy_string_array(py: Python<'_>, flat: &[String], shape: Vec<usize>) -> PyResult<Py<PyAny>> {
+    // The dtype is explicit: numpy reads an empty list as float64.
+    let numpy = py.import("numpy")?;
+    let kwargs = PyDict::new(py);
+    kwargs.set_item("dtype", numpy.getattr("str_")?)?;
+    let arr = numpy.call_method("asarray", (PyList::new(py, flat)?,), Some(&kwargs))?;
+    Ok(arr.call_method1("reshape", (shape,))?.unbind())
+}
+
 /// The `KeyError` for a column `key` the block lacks, naming what it has.
 fn missing_column(block: &CoreBlock, key: &str) -> PyErr {
     let names: Vec<&str> = block.keys().collect();
@@ -1226,6 +1431,7 @@ fn adopt_schema_dtype<'py>(key: &str, array: &Bound<'py, PyAny>) -> PyResult<Bou
         DType::Float => numpy::dtype::<F>(py),
         DType::Int => numpy::dtype::<I>(py),
         DType::UInt => numpy::dtype::<Idx>(py),
+        DType::Int64 => numpy::dtype::<i64>(py),
         _ => return Ok(array.clone()),
     };
     let have = array.getattr("dtype")?;

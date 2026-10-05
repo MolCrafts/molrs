@@ -131,7 +131,6 @@ use std::sync::{Arc, Mutex, Once};
 use indexmap::IndexMap;
 use ndarray::{Array1, Array2, ArrayD, Axis, Slice};
 use serde::{Deserialize, Serialize};
-use zarrs::array::codec::GzipCodec;
 use zarrs::array::codec::array_to_bytes::sharding::{
     ShardingCodecBuilder, ShardingCodecOptions, ShardingIndexLocation, SubchunkWriteOrder,
 };
@@ -160,8 +159,10 @@ use molrs::types::F;
 use crate::io::reader::TrajectoryReader;
 
 use super::frame_io::{
-    BOX_GROUP, VALIDITY_GROUP, insert_column_into_block, join_path, node_prefix, read_column_array,
-    zarr_dtype,
+    BOX_GROUP, GZIP_LEVEL, VALIDITY_GROUP, canonical_width, check_canonical_dtype,
+    check_local_references, check_storable_cell, default_precision_compressor, gzip,
+    insert_column_into_block, join_path, node_prefix, precision_shuffle, quantized,
+    read_column_array, resolve_boundary, stored_dtype, zarr_dtype,
 };
 use super::record_io::zerr;
 
@@ -173,6 +174,9 @@ use super::record_io::zerr;
 const ROOT_GROUP: &str = "/";
 /// The identity document's group.
 const META_ROOT_GROUP: &str = "/meta";
+/// The record's `system` section, whose block names an aligned trajectory
+/// block may not take.
+const SYSTEM_GROUP: &str = "/system";
 /// The sequence root. Absolute, because every array path is built from it.
 const TRAJECTORY_GROUP: &str = "/trajectory";
 /// The commit marker: `i64[nstep]`, extended last.
@@ -262,11 +266,6 @@ const MAX_FLUSH_EVERY: u64 = 4096;
 /// and nothing else.
 const ASSUMED_STRING_ITEMSIZE: u64 = 16;
 
-/// `gzip` level for the columns and arrays that compress (integers, booleans,
-/// strings, every index array). Level 1: these compress by structure, not by
-/// effort, and the write path pays the codec on every landing.
-const GZIP_LEVEL: u32 = 1;
-
 /// Inner chunks a column reader keeps decoded per column.
 ///
 /// Playback reads the same chunk `frames_per_chunk` times in a row; a small
@@ -280,7 +279,14 @@ const CHUNK_CACHE_ENTRIES: usize = 2;
 /// `gzip` level 1: they compress by structure. Floating-point coordinates do
 /// not — 52 random mantissa bits gzip to about 95 % of their size at a real
 /// CPU cost — so their compression is a producer's choice, `None` by default.
-/// Every choice is lossless; a precision study admits nothing else.
+///
+/// A column with a [declared precision](molrs::store::precision) is the
+/// exception: its values are rounded onto a binary grid, its pipeline opens
+/// with a byte shuffle, and it is compressed whatever this says — `None`
+/// selects the reference compressor (`zstd` level 3, or `gzip` level 1 in a
+/// build that cannot encode `zstd`), `Gzip` / `Zstd` replace it, and the
+/// shuffle stays. Every choice is lossless: the rounding is the writer's,
+/// before the pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Compression {
     /// Raw little-endian bytes. The default for floating-point columns.
@@ -288,11 +294,28 @@ pub enum Compression {
     None,
     /// `gzip` at this level (1–9). Every reader of these stores decodes it.
     Gzip(u32),
-    /// `zstd` at this level. Native builds only (`zarr-codecs`); wasm32
-    /// readers do not decode it, so a store meant for the browser stays on
-    /// `None` or `Gzip`.
+    /// `zstd` at this level. Encoding needs a native build (`zarr-codecs`);
+    /// every reader decodes it, wasm32 included.
     #[cfg(feature = "zarr-codecs")]
     Zstd(i32),
+}
+
+/// The bytes-to-bytes pipeline of one growth array: a compressor, and
+/// whether a byte shuffle precedes it (a precision column's pipeline).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Pipeline {
+    compression: Compression,
+    shuffle: bool,
+}
+
+impl Pipeline {
+    /// A pipeline with no shuffle.
+    const fn plain(compression: Compression) -> Self {
+        Self {
+            compression,
+            shuffle: false,
+        }
+    }
 }
 
 /// The frozen extents of one growth array.
@@ -363,18 +386,21 @@ fn quiet_zarrs_metadata() {
     });
 }
 
-/// The bytes-to-bytes codecs of one inner chunk: the optional compressor, then
-/// `crc32c` so a torn chunk is a checksum error rather than garbage rows.
-fn inner_codecs(
-    compression: Compression,
-) -> Result<Vec<Arc<dyn BytesToBytesCodecTraits>>, MolRsError> {
-    let mut codecs: Vec<Arc<dyn BytesToBytesCodecTraits>> = Vec::with_capacity(2);
-    match compression {
+/// The bytes-to-bytes codecs of one inner chunk: the byte shuffle of a
+/// precision column, the compressor, then `crc32c` so a torn chunk is a
+/// checksum error rather than garbage rows.
+///
+/// Behind a shuffle, [`Compression::None`] means the reference compressor
+/// ([`default_precision_compressor`]): a shuffle exists to feed one.
+fn inner_codecs(pipeline: Pipeline) -> Result<Vec<Arc<dyn BytesToBytesCodecTraits>>, MolRsError> {
+    let mut codecs: Vec<Arc<dyn BytesToBytesCodecTraits>> = Vec::with_capacity(3);
+    if pipeline.shuffle {
+        codecs.push(precision_shuffle());
+    }
+    match pipeline.compression {
+        Compression::None if pipeline.shuffle => codecs.push(default_precision_compressor()?),
         Compression::None => {}
-        Compression::Gzip(level) => codecs
-            .push(Arc::new(GzipCodec::new(level).map_err(|e| {
-                MolRsError::zarr(format!("gzip level {level}: {e}"))
-            })?)),
+        Compression::Gzip(level) => codecs.push(gzip(level)?),
         #[cfg(feature = "zarr-codecs")]
         Compression::Zstd(level) => codecs.push(Arc::new(
             zarrs::array::codec::bytes_to_bytes::zstd::ZstdCodec::new(level, false),
@@ -599,6 +625,110 @@ fn same_block(left: &Block, right: &Block) -> bool {
         })
 }
 
+/// `block` as a writer stores it under `declared`: every column whose
+/// precision is declared rounded to its grid ([`quantized`]), carrying the
+/// declaration; every other column as presented. Borrowed when the block
+/// declares no precision.
+fn stored_presentation<'a>(
+    declared: &BlockSchema,
+    block: &'a Block,
+) -> Result<std::borrow::Cow<'a, Block>, MolRsError> {
+    let mut stored: Option<Block> = None;
+    // A canonical key at another width of its family lands at its declared
+    // dtype.
+    for column in declared.columns.keys() {
+        let Some(values) = block.get(column) else {
+            continue;
+        };
+        if let Some(converted) = canonical_width(column, values)? {
+            let target = stored.get_or_insert_with(|| block.clone());
+            let mask = target.validity(column).map(<[bool]>::to_vec);
+            target.insert_column(column.as_str(), converted)?;
+            if let Some(mask) = mask {
+                target.set_validity(column, mask)?;
+            }
+        }
+    }
+    for (column, schema) in &declared.columns {
+        let Some(precision) = schema.precision else {
+            continue;
+        };
+        let Some(values) = block.get(column).and_then(Column::as_float) else {
+            continue;
+        };
+        let rounded = Column::from_float(quantized(values, precision)?);
+        let target = stored.get_or_insert_with(|| block.clone());
+        // `insert_column` drops the mask with the old column; the rows did not
+        // move, so it goes back on.
+        let mask = target.validity(column).map(<[bool]>::to_vec);
+        target.insert_column(column.as_str(), rounded)?;
+        if let Some(mask) = mask {
+            target.set_validity(column, mask)?;
+        }
+        target.set_precision(column, precision)?;
+    }
+    // The pinned row-reference targets travel on the stored block, so the
+    // resolved-frame check sees them whether the frame stated them or not.
+    if declared
+        .targets
+        .iter()
+        .any(|(column, target)| block.contains_key(column) && block.target(column) != Some(target))
+    {
+        let target_block = stored.get_or_insert_with(|| block.clone());
+        for (column, target) in &declared.targets {
+            if target_block.contains_key(column) {
+                target_block.set_target(column, target)?;
+            }
+        }
+    }
+    Ok(match stored {
+        Some(block) => std::borrow::Cow::Owned(block),
+        None => std::borrow::Cow::Borrowed(block),
+    })
+}
+
+/// Check a resolved trajectory frame against the rules that span blocks:
+/// every aligned block present there has its target present with the same
+/// row count, and every same-frame row reference the schema pins resolves.
+/// `resolve(name)` is the block at this ordinal, or `None` where it is
+/// absent.
+fn check_resolved_frame<'a>(
+    schema: &SequenceSchema,
+    resolve: impl Fn(&str) -> Option<&'a Block>,
+    ordinal: u64,
+) -> Result<(), MolRsError> {
+    for (aligned, target) in schema.aligned_pairs() {
+        let Some(block) = resolve(aligned) else {
+            continue;
+        };
+        let rows = block.nrows().unwrap_or(0);
+        match resolve(target) {
+            None => {
+                return Err(MolRsError::zarr(format!(
+                    "trajectory frame {ordinal}: block {aligned:?} ({rows} rows) is aligned with \
+                     {target:?}, which is absent there"
+                )));
+            }
+            Some(with) if with.nrows().unwrap_or(0) != rows => {
+                return Err(MolRsError::zarr(format!(
+                    "trajectory frame {ordinal}: block {aligned:?} has {rows} rows but the block \
+                     it is aligned with, {target:?}, has {}; restate {aligned:?} when \
+                     {target:?} changes its row count",
+                    with.nrows().unwrap_or(0)
+                )));
+            }
+            Some(_) => {}
+        }
+    }
+    let mut resolved = Frame::new();
+    for name in schema.blocks.keys() {
+        if let Some(block) = resolve(name) {
+            resolved.insert(name.clone(), block.clone());
+        }
+    }
+    check_local_references(&resolved, &format!("trajectory frame {ordinal}"))
+}
+
 /// Whether two cells are the same cell, bit for bit.
 fn same_simbox(left: &SimBox, right: &SimBox) -> bool {
     left.is_cell_defined() == right.is_cell_defined()
@@ -692,9 +822,9 @@ fn empty_column(dtype: DType, trailing: &[u64]) -> Result<Column, MolRsError> {
 // Schema
 // ---------------------------------------------------------------------------
 
-/// One declared column: the width and trailing shape it arrived with, and
-/// whether its rows may be null.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// One declared column: the width and trailing shape it arrived with,
+/// whether its rows may be null, and its declared precision.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct ColumnSchema {
     /// [`dtype_tag`] of the column's storage width.
     dtype: String,
@@ -708,14 +838,30 @@ struct ColumnSchema {
     /// a run of plain columns -- which is what it is.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     nullable: bool,
+    /// The column's [declared precision](molrs::store::precision) — on a
+    /// trajectory, stated here and nowhere else. Every presented value is
+    /// rounded to its grid before the change detection and the landing.
+    /// Absent while undeclared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    precision: Option<f64>,
 }
 
 /// One declared block: its columns, and the structural shape it declares.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct BlockSchema {
     columns: IndexMap<String, ColumnSchema>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     structural_shape: Option<Vec<usize>>,
+    /// The block's row references (molrec `targets`): column → `<block>`
+    /// of the same resolved frame or `/<section>/<block>`. On a trajectory
+    /// they are pinned here and nowhere else. Absent while empty.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    targets: IndexMap<String, String>,
+    /// The block this one is [aligned with](SequenceSchema::declare_aligned):
+    /// its rows are that block's rows, one for one, at every resolved frame.
+    /// Declared only, never derived. Absent while unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    aligned_with: Option<String>,
 }
 
 /// One declared per-step metadata key.
@@ -723,11 +869,29 @@ struct BlockSchema {
 struct MetaSchema {
     /// The [`MetaValue::dtype`] tag every step must carry.
     dtype: String,
-    /// Value written for a step that omits the key, as the plain JSON value
-    /// ([`MetaValue::to_attr_value`]) — `dtype` beside it says how to read it
-    /// back. `None` makes the omission an error — there is no implicit fill.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Value written for a step that omits the key, in its typed JSON form
+    /// ([`MetaValue::to_typed_json`], so a NaN fill is `"NaN"`) — `dtype`
+    /// beside it says how to read it back. `None` makes the omission an
+    /// error — there is no implicit fill.
+    ///
+    /// A present `null` is kept as `Some(Null)` — not folded into "no fill" —
+    /// so a pin whose numeric fill a writer lost to `null` is refused as the
+    /// broken value it is rather than read as a run without a fill.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
     fill: Option<serde_json::Value>,
+}
+
+/// Deserialize a field that is present, `null` included, as `Some`; an absent
+/// field takes the `#[serde(default)]` `None`.
+fn present_value<'de, D>(deserializer: D) -> Result<Option<serde_json::Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    serde_json::Value::deserialize(deserializer).map(Some)
 }
 
 /// The blocks, columns, dtypes and trailing shapes a sequence is pinned to.
@@ -823,6 +987,7 @@ impl SequenceSchema {
     /// - a column named `offset` or `step_index`;
     /// - the same block declaring two different structural shapes;
     /// - the same column declaring two different dtypes or trailing shapes;
+    /// - the same column declaring two different precisions;
     /// - the same `meta` key carrying two different `MetaValue` dtypes.
     pub fn from_frames(frames: &[Frame]) -> Result<Self, MolRsError> {
         let mut schema = Self::new();
@@ -848,9 +1013,23 @@ impl SequenceSchema {
                 for (column, values) in block.iter() {
                     let trailing: Vec<u64> =
                         values.shape().iter().skip(1).map(|&n| n as u64).collect();
-                    schema.declare_column(name, column, values.dtype(), &trailing)?;
+                    // A canonical key is pinned at its declared dtype; the
+                    // writer stores a column of another width of the family
+                    // converted ([`canonical_width`]).
+                    schema.declare_column(
+                        name,
+                        column,
+                        stored_dtype(column, values.dtype()),
+                        &trailing,
+                    )?;
                     if block.validity(column).is_some() {
                         schema.declare_nullable(name, column)?;
+                    }
+                    if let Some(precision) = block.precision(column) {
+                        schema.declare_precision(name, column, precision)?;
+                    }
+                    if let Some(target) = block.target(column) {
+                        schema.declare_target(name, column, target)?;
                     }
                 }
             }
@@ -890,6 +1069,8 @@ impl SequenceSchema {
             .or_insert_with(|| BlockSchema {
                 columns: IndexMap::new(),
                 structural_shape: None,
+                targets: IndexMap::new(),
+                aligned_with: None,
             });
         if let Some(rows) = rows {
             let hint = self.rows_hint.entry(name.to_string()).or_insert(0);
@@ -906,9 +1087,11 @@ impl SequenceSchema {
     /// # Errors
     ///
     /// A [`MolRsError::Zarr`] when `column` is `offset` or `step_index`, when
-    /// `block` takes a reserved name, or when the column is already declared
-    /// with another width or trailing shape — a declaration is a pin, and one
-    /// column cannot mean two widths in one sequence.
+    /// `block` takes a reserved name, when a canonical identifier key
+    /// (`atomi`, `id`, `type_id`, …) is declared at a width other than `u64`,
+    /// or when the column is already declared with another width or trailing
+    /// shape — a declaration is a pin, and one column cannot mean two widths
+    /// in one sequence.
     pub fn declare_column(
         &mut self,
         block: &str,
@@ -917,11 +1100,15 @@ impl SequenceSchema {
         trailing: &[u64],
     ) -> Result<(), MolRsError> {
         check_column_name(column)?;
+        // A canonical key declared at another dtype than the vocabulary's
+        // could never be read back: a store holds the declared one.
+        check_canonical_dtype(column, dtype)?;
         self.declare_block(block, None)?;
         let declared = ColumnSchema {
             dtype: dtype_tag(dtype).to_string(),
             trailing: trailing.to_vec(),
             nullable: false,
+            precision: None,
         };
         let entry = self
             .blocks
@@ -929,6 +1116,21 @@ impl SequenceSchema {
             .expect("declare_block just inserted it");
         match entry.columns.get(column) {
             None => {
+                // An aligned pair's column sets are disjoint, so a column
+                // added to either one may not name a column of the other.
+                if let Some(partner) = self.aligned_partner(block)
+                    && self.blocks[&partner].columns.contains_key(column)
+                {
+                    return Err(MolRsError::zarr(format!(
+                        "column {column:?} cannot be declared on block {block:?}: it is aligned \
+                         with block {partner:?}, which has a column of that name, and an aligned \
+                         pair's columns are disjoint"
+                    )));
+                }
+                let entry = self
+                    .blocks
+                    .get_mut(block)
+                    .expect("declare_block just inserted it");
                 entry.columns.insert(column.to_string(), declared);
             }
             Some(existing) if existing.dtype != declared.dtype => {
@@ -977,6 +1179,135 @@ impl SequenceSchema {
             })
     }
 
+    /// Declare the [precision](molrs::store::precision) of `column` of
+    /// `block`: an absolute tolerance in the column's units.
+    ///
+    /// Every frame's values of the column are rounded to the binary grid the
+    /// precision implies before they are compared with the previous update
+    /// (a change below half the quantum is no change) and before they land;
+    /// the column's pipeline opens with a byte shuffle and a compressor. The
+    /// declaration is pinned with the schema and is the only place a
+    /// trajectory states it. [`from_frames`](Self::from_frames) declares the
+    /// precision every presented column carries
+    /// ([`Block::precision`](molrs::store::block::Block::precision)).
+    ///
+    /// # Errors
+    ///
+    /// A [`MolRsError::Zarr`] when the column is not declared, is not `f64`,
+    /// is already declared with another precision, or when `precision` is
+    /// not finite and within `[2^-1000, 2^1000]`.
+    pub fn declare_precision(
+        &mut self,
+        block: &str,
+        column: &str,
+        precision: f64,
+    ) -> Result<(), MolRsError> {
+        let declared = self
+            .blocks
+            .get_mut(block)
+            .and_then(|declared| declared.columns.get_mut(column))
+            .ok_or_else(|| {
+                MolRsError::zarr(format!(
+                    "cannot declare a precision for column {column:?} of block {block:?}: it is \
+                     not declared"
+                ))
+            })?;
+        if declared.dtype != dtype_tag(DType::Float) {
+            return Err(MolRsError::zarr(format!(
+                "column {column:?} of block {block:?} is {}; only an f64 column declares a \
+                 precision",
+                declared.dtype
+            )));
+        }
+        molrs::store::precision::check_precision(precision)
+            .map_err(|e| MolRsError::zarr(format!("column {column:?} of block {block:?}: {e}")))?;
+        match declared.precision {
+            Some(existing) if existing.to_bits() != precision.to_bits() => {
+                Err(MolRsError::zarr(format!(
+                    "sequence schema conflict: column {column:?} of block {block:?} declares \
+                     precision {existing} and {precision}"
+                )))
+            }
+            _ => {
+                declared.precision = Some(precision);
+                Ok(())
+            }
+        }
+    }
+
+    /// Declare that `column` of `block` holds row indices into `target`:
+    /// `<block>` of the same resolved frame, or `/<section>/<block>` of a
+    /// frame-shaped section of the record (molrec "row references").
+    ///
+    /// Pinned with the schema. The writer refuses a frame whose resolved
+    /// blocks break a same-frame reference (target absent while the
+    /// referencing block has rows, or a non-null value past its row count),
+    /// and the reader refuses a store that does.
+    /// [`from_frames`](Self::from_frames) declares every
+    /// [`Block::target`](molrs::store::block::Block::target) it sees.
+    ///
+    /// # Errors
+    ///
+    /// A [`MolRsError::Zarr`] when the column is not declared, is not `u64`,
+    /// already declares another target, or `target` is malformed or names a
+    /// trajectory block absolutely (`/trajectory/…`).
+    pub fn declare_target(
+        &mut self,
+        block: &str,
+        column: &str,
+        target: &str,
+    ) -> Result<(), MolRsError> {
+        let declared = self.blocks.get_mut(block).ok_or_else(|| {
+            MolRsError::zarr(format!(
+                "cannot declare a target for column {column:?} of block {block:?}: the block is \
+                 not declared"
+            ))
+        })?;
+        let pinned = declared.columns.get(column).ok_or_else(|| {
+            MolRsError::zarr(format!(
+                "cannot declare a target for column {column:?} of block {block:?}: it is not \
+                 declared"
+            ))
+        })?;
+        if pinned.dtype != dtype_tag(DType::UInt) {
+            return Err(MolRsError::zarr(format!(
+                "column {column:?} of block {block:?} is {}; a row reference is u64",
+                pinned.dtype
+            )));
+        }
+        molrs::store::schema::check_target(target)
+            .map_err(|e| MolRsError::zarr(format!("column {column:?} of block {block:?}: {e}")))?;
+        match declared.targets.get(column) {
+            Some(existing) if existing != target => Err(MolRsError::zarr(format!(
+                "sequence schema conflict: column {column:?} of block {block:?} references \
+                 {existing:?} and {target:?}"
+            ))),
+            _ => {
+                declared
+                    .targets
+                    .insert(column.to_string(), target.to_string());
+                Ok(())
+            }
+        }
+    }
+
+    /// The declared target of `column` of `block`, or `None`.
+    pub fn target(&self, block: &str, column: &str) -> Option<&str> {
+        self.blocks
+            .get(block)
+            .and_then(|declared| declared.targets.get(column))
+            .map(String::as_str)
+    }
+
+    /// The declared precision of `column` of `block`, or `None` when it
+    /// declares none (or is not declared).
+    pub fn precision(&self, block: &str, column: &str) -> Option<f64> {
+        self.blocks
+            .get(block)
+            .and_then(|declared| declared.columns.get(column))
+            .and_then(|declared| declared.precision)
+    }
+
     /// Declare the structural shape of `block` (a volumetric `[nx][ny][nz]`).
     ///
     /// A block with a structural shape carries exactly `product(shape)` rows
@@ -996,6 +1327,11 @@ impl SequenceSchema {
                 "block {block:?} is not declared; declare it before its structural shape"
             ))
         })?;
+        if entry.aligned_with.is_some() {
+            return Err(MolRsError::zarr(format!(
+                "block {block:?} is aligned with another block and declares no structural shape"
+            )));
+        }
         match &entry.structural_shape {
             Some(existing) if existing.as_slice() != shape => Err(MolRsError::zarr(format!(
                 "sequence schema conflict: block {block:?} declares structural shape {existing:?} \
@@ -1008,6 +1344,118 @@ impl SequenceSchema {
                 Ok(())
             }
         }
+    }
+
+    /// Declare `block` aligned with `target` (molrec `ragged.md`, "Aligned
+    /// blocks"): its rows are `target`'s rows, one for one, at every
+    /// resolved frame — a sparse companion of a block that changes more
+    /// often (atom types beside coordinates under proton hopping).
+    ///
+    /// Wherever `block` is present (or empty) after carry-forward, `target`
+    /// must be present with the same row count; so a frame whose `target`
+    /// changes row count restates `block`, and one that keeps it may let
+    /// `block` carry forward. `block` may be absent while `target` is
+    /// present, never the reverse. The writer refuses a frame that breaks
+    /// this; the reader refuses a store that does. A reader hands back two
+    /// blocks.
+    ///
+    /// # Errors
+    ///
+    /// A [`MolRsError::Zarr`] when either block is not declared, `target` is
+    /// `block`, either one is already part of another alignment (no chains),
+    /// `block` declares a structural shape, the two share a column name, or
+    /// `block` is already aligned with another target.
+    pub fn declare_aligned(&mut self, block: &str, target: &str) -> Result<(), MolRsError> {
+        let refuse = |why: String| {
+            Err(MolRsError::zarr(format!(
+                "cannot align block {block:?} with {target:?}: {why}"
+            )))
+        };
+        let (Some(aligned), Some(with)) = (self.blocks.get(block), self.blocks.get(target)) else {
+            return refuse("both blocks must be declared".into());
+        };
+        if block == target {
+            return refuse("a block is not aligned with itself".into());
+        }
+        match &aligned.aligned_with {
+            Some(existing) if existing == target => return Ok(()),
+            Some(existing) => return refuse(format!("it is already aligned with {existing:?}")),
+            None => {}
+        }
+        if with.aligned_with.is_some() {
+            return refuse(format!(
+                "{target:?} is itself aligned; alignments do not chain"
+            ));
+        }
+        if self
+            .blocks
+            .values()
+            .any(|other| other.aligned_with.as_deref() == Some(block))
+        {
+            return refuse(format!(
+                "{block:?} is the target of another alignment; alignments do not chain"
+            ));
+        }
+        if aligned.structural_shape.is_some() {
+            return refuse("an aligned block declares no structural shape".into());
+        }
+        if let Some(shared) = aligned
+            .columns
+            .keys()
+            .find(|column| with.columns.contains_key(*column))
+        {
+            return refuse(format!(
+                "both declare column {shared:?}, and an aligned pair's columns are disjoint"
+            ));
+        }
+        self.blocks
+            .get_mut(block)
+            .expect("checked above")
+            .aligned_with = Some(target.to_string());
+        Ok(())
+    }
+
+    /// The block `block` is aligned with, or `None`.
+    pub fn aligned_with(&self, block: &str) -> Option<&str> {
+        self.blocks
+            .get(block)
+            .and_then(|declared| declared.aligned_with.as_deref())
+    }
+
+    /// The other half of the aligned pair `block` belongs to, either way
+    /// round.
+    fn aligned_partner(&self, block: &str) -> Option<String> {
+        if let Some(target) = self.aligned_with(block) {
+            return Some(target.to_string());
+        }
+        self.blocks
+            .iter()
+            .find(|(_, declared)| declared.aligned_with.as_deref() == Some(block))
+            .map(|(name, _)| name.clone())
+    }
+
+    /// Every aligned pair, as `(aligned block, target)`.
+    fn aligned_pairs(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.blocks.iter().filter_map(|(name, declared)| {
+            declared
+                .aligned_with
+                .as_deref()
+                .map(|target| (name.as_str(), target))
+        })
+    }
+
+    /// Re-check every pinned alignment against the rules
+    /// [`declare_aligned`](Self::declare_aligned) enforces — what a pin read
+    /// from a store has to satisfy.
+    fn check_alignments(&self) -> Result<(), MolRsError> {
+        let mut fresh = self.clone();
+        for declared in fresh.blocks.values_mut() {
+            declared.aligned_with = None;
+        }
+        for (block, target) in self.aligned_pairs() {
+            fresh.declare_aligned(block, target)?;
+        }
+        Ok(())
     }
 
     /// Declare a per-step metadata key by its dtype tag.
@@ -1067,7 +1515,7 @@ impl SequenceSchema {
         self.meta
             .get_mut(key)
             .expect("declare_meta just inserted it")
-            .fill = Some(fill.to_attr_value());
+            .fill = Some(fill.to_typed_json());
         Ok(())
     }
 
@@ -1137,9 +1585,20 @@ where
     let Some(attribute) = group.attributes().get(SCHEMA_ATTRIBUTE) else {
         return Ok(None);
     };
-    serde_json::from_value(attribute.clone())
-        .map(Some)
-        .map_err(zerr)
+    let schema: SequenceSchema = serde_json::from_value(attribute.clone()).map_err(zerr)?;
+    // A fill is a typed JSON value of its key's tag; one that is not (a NaN
+    // a writer lost to `null`) is a malformed pin, refused here.
+    for (key, declared) in &schema.meta {
+        if let Some(fill) = &declared.fill {
+            MetaValue::from_typed_json(&declared.dtype, fill).map_err(|e| {
+                MolRsError::zarr(format!(
+                    "{SCHEMA_ATTRIBUTE}: the fill of meta key {key:?} is not a {}: {e}",
+                    declared.dtype
+                ))
+            })?;
+        }
+    }
+    Ok(Some(schema))
 }
 
 /// [`pinned_schema`], requiring the pin — the writer's half of the seam:
@@ -1374,8 +1833,8 @@ impl GrowthArray {
     ///
     /// Every growth array is a `sharding_indexed` array with its index at the
     /// **start** of the shard, so appending a chunk is a tail write plus an
-    /// in-place index rewrite. The inner chunk carries the compressor
-    /// `compression` names, then `crc32c`.
+    /// in-place index rewrite. The inner chunk carries the codecs `pipeline`
+    /// names ([`inner_codecs`]), ending in `crc32c`.
     fn create(
         store: &ReadableWritableListableStorage,
         path: &str,
@@ -1383,7 +1842,7 @@ impl GrowthArray {
         trailing: &[u64],
         extents: Extents,
         attributes: serde_json::Map<String, serde_json::Value>,
-        compression: Compression,
+        pipeline: Pipeline,
     ) -> Result<Self, MolRsError> {
         quiet_zarrs_metadata();
         let (data_type, fill) = zarr_dtype(dtype);
@@ -1403,7 +1862,7 @@ impl GrowthArray {
             .collect();
         let mut sharding = ShardingCodecBuilder::new(subchunk, &data_type);
         sharding
-            .bytes_to_bytes_codecs(inner_codecs(compression)?)
+            .bytes_to_bytes_codecs(inner_codecs(pipeline)?)
             .index_location(ShardingIndexLocation::Start);
 
         let mut builder = ArrayBuilder::new(shape, shard, data_type, fill);
@@ -1809,6 +2268,64 @@ where
     ))
 }
 
+/// The elision markers of a block section with no index arrays: `Some(N)`
+/// for a well-formed `uniform_rows: N` / `dense_updates: true` pair, `None`
+/// when it carries neither (a declared block never updated, absent at every
+/// ordinal).
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] naming the section for one marker without the
+/// other, a `uniform_rows` that is not a positive integer, a
+/// `dense_updates` that is not `true`, or markers on a block that declares
+/// no columns (it has no length to count its updates by).
+fn elision_markers<S>(
+    store: &Arc<S>,
+    path: &str,
+    has_columns: bool,
+) -> Result<Option<u64>, MolRsError>
+where
+    S: ?Sized + ReadableStorageTraits + 'static,
+{
+    let group = Group::open(store.clone(), path)?;
+    let attributes = group.attributes();
+    let rows = match (
+        attributes.get(UNIFORM_ROWS_ATTRIBUTE),
+        attributes.get(DENSE_UPDATES_ATTRIBUTE),
+    ) {
+        (None, None) => return Ok(None),
+        (Some(rows), Some(dense)) => {
+            if dense != &serde_json::Value::Bool(true) {
+                return Err(MolRsError::zarr(format!(
+                    "{path}: {DENSE_UPDATES_ATTRIBUTE} must be true, found {dense}"
+                )));
+            }
+            match rows.as_u64() {
+                Some(rows) if rows > 0 => rows,
+                _ => {
+                    return Err(MolRsError::zarr(format!(
+                        "{path}: {UNIFORM_ROWS_ATTRIBUTE} must be a positive integer, found \
+                         {rows}"
+                    )));
+                }
+            }
+        }
+        _ => {
+            return Err(MolRsError::zarr(format!(
+                "{path}: {UNIFORM_ROWS_ATTRIBUTE} and {DENSE_UPDATES_ATTRIBUTE} are a pair; \
+                 this section carries one without the other"
+            )));
+        }
+    };
+    if !has_columns {
+        return Err(MolRsError::zarr(format!(
+            "{path}: elision markers on a block with no columns, which has no length to \
+             count its updates by"
+        )));
+    }
+    Ok(Some(rows))
+}
+
 /// Rewrite a block section's group attributes.
 fn store_block_attributes(
     store: &ReadableWritableListableStorage,
@@ -1843,8 +2360,8 @@ impl Knobs {
     }
 }
 
-/// The compression every dense array carries.
-const DENSE_COMPRESSION: Compression = Compression::Gzip(GZIP_LEVEL);
+/// The pipeline every dense array carries.
+const DENSE_PIPELINE: Pipeline = Pipeline::plain(Compression::Gzip(GZIP_LEVEL));
 
 /// The arrays of one block section.
 ///
@@ -1938,7 +2455,7 @@ fn create_mask_array(
         &[],
         Extents::for_column(rows_per_chunk, 1, knobs.chunks_per_shard),
         serde_json::Map::new(),
-        DENSE_COMPRESSION,
+        DENSE_PIPELINE,
     )
 }
 
@@ -2034,7 +2551,7 @@ impl IndexArrays {
             &[],
             knobs.dense(),
             serde_json::Map::new(),
-            DENSE_COMPRESSION,
+            DENSE_PIPELINE,
         )?;
         let mut step_index = GrowthArray::create(
             store,
@@ -2043,7 +2560,7 @@ impl IndexArrays {
             &[],
             knobs.dense(),
             serde_json::Map::new(),
-            DENSE_COMPRESSION,
+            DENSE_PIPELINE,
         )?;
         // The CSR row pointer opens at zero; every regular update added
         // `rows` rows at the ordinal equal to its own index.
@@ -2107,7 +2624,7 @@ impl BoxArrays {
             trailing,
             knobs.dense(),
             serde_json::Map::new(),
-            DENSE_COMPRESSION,
+            DENSE_PIPELINE,
         )
     }
 
@@ -2263,17 +2780,28 @@ fn cell_from_attributes(
     let Some(vectors) = attributes.get(VECTORS_ARRAY) else {
         return Ok(None);
     };
-    let flat: Vec<F> = match vectors.as_array() {
-        Some(rows) if rows.len() == 3 && rows.iter().all(serde_json::Value::is_array) => rows
-            .iter()
-            .flat_map(|row| row.as_array().into_iter().flatten())
-            .filter_map(serde_json::Value::as_f64)
-            .collect(),
-        Some(values) => values
-            .iter()
-            .filter_map(serde_json::Value::as_f64)
-            .collect(),
-        None => Vec::new(),
+    let cell_defined = attributes
+        .get(CELL_DEFINED_ATTRIBUTE)
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true);
+    // An undefined cell's `vectors` mean nothing: whatever is there is
+    // accepted and never parsed or inverted; `SimBox::new_cell` carries the
+    // identity in its place.
+    let flat: Vec<F> = if !cell_defined {
+        vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+    } else {
+        match vectors.as_array() {
+            Some(rows) if rows.len() == 3 && rows.iter().all(serde_json::Value::is_array) => rows
+                .iter()
+                .flat_map(|row| row.as_array().into_iter().flatten())
+                .filter_map(serde_json::Value::as_f64)
+                .collect(),
+            Some(values) => values
+                .iter()
+                .filter_map(serde_json::Value::as_f64)
+                .collect(),
+            None => Vec::new(),
+        }
     };
     if flat.len() != 9 {
         return Err(MolRsError::zarr(format!(
@@ -2287,26 +2815,29 @@ fn cell_from_attributes(
             .collect(),
         None => vec![0.0, 0.0, 0.0],
     };
-    let boundary: Vec<bool> = match attributes.get(BOUNDARY_ARRAY).and_then(|v| v.as_array()) {
-        Some(values) => values
-            .iter()
-            .filter_map(serde_json::Value::as_bool)
-            .collect(),
-        None => vec![true, true, true],
-    };
-    if origin.len() != 3 || boundary.len() != 3 {
+    let boundary: Option<Vec<bool>> = attributes
+        .get(BOUNDARY_ARRAY)
+        .and_then(|v| v.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(serde_json::Value::as_bool)
+                .collect()
+        });
+    if origin.len() != 3 || boundary.as_ref().is_some_and(|flags| flags.len() != 3) {
         return Err(MolRsError::zarr(
             "box attributes origin / boundary must hold three values each".to_string(),
         ));
     }
-    let cell_defined = attributes
-        .get(CELL_DEFINED_ATTRIBUTE)
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(true);
+    let pbc = resolve_boundary(
+        boundary.map(|flags| [flags[0], flags[1], flags[2]]),
+        cell_defined,
+        "trajectory box attributes",
+    )?;
     SimBox::new_cell(
         Array2::from_shape_vec((3, 3), flat).map_err(zerr)?,
         Array1::from(origin),
-        [boundary[0], boundary[1], boundary[2]],
+        pbc,
         cell_defined,
     )
     .map(Some)
@@ -2524,7 +3055,7 @@ impl<T: Series> Track<T> {
                 &[],
                 knobs.dense(),
                 serde_json::Map::new(),
-                DENSE_COMPRESSION,
+                DENSE_PIPELINE,
             )?;
             if *count > 0 {
                 let history = progression
@@ -2596,7 +3127,27 @@ where
 {
     let group = Group::open(store.clone(), TRAJECTORY_GROUP)?;
     let all = group.attributes().clone();
-    let nstep = all.get(NSTEP_ATTRIBUTE).and_then(serde_json::Value::as_u64);
+    let nstep = match all.get(NSTEP_ATTRIBUTE) {
+        None => None,
+        Some(value) => Some(value.as_u64().ok_or_else(|| {
+            MolRsError::zarr(format!(
+                "{TRAJECTORY_GROUP}: {NSTEP_ATTRIBUTE} must be a non-negative integer, found \
+                 {value}"
+            ))
+        })?),
+    };
+    // A progression is only ever written in the same metadata update as the
+    // commit marker, so one without it is a malformed store.
+    if nstep.is_none() {
+        for progression in [STEP_PROGRESSION_ATTRIBUTE, TIME_PROGRESSION_ATTRIBUTE] {
+            if all.contains_key(progression) {
+                return Err(MolRsError::zarr(format!(
+                    "{TRAJECTORY_GROUP} carries {progression} without {NSTEP_ATTRIBUTE}: a \
+                     progression is written with the commit marker, never alone"
+                )));
+            }
+        }
+    }
     Ok(TrajectoryAttributes { nstep, all })
 }
 
@@ -2653,7 +3204,7 @@ impl SequenceArrays {
                 trailing,
                 knobs.dense(),
                 attributes,
-                DENSE_COMPRESSION,
+                DENSE_PIPELINE,
             )
         };
 
@@ -2719,10 +3270,15 @@ impl SequenceArrays {
             let mut columns = BTreeMap::new();
             for ((column, column_schema), width) in declared.columns.iter().zip(widths) {
                 let dtype = dtype_from_tag(&column_schema.dtype)?;
-                let compression = if is_float_width(dtype) {
-                    compression
+                let pipeline = if column_schema.precision.is_some() {
+                    Pipeline {
+                        compression,
+                        shuffle: true,
+                    }
+                } else if is_float_width(dtype) {
+                    Pipeline::plain(compression)
                 } else {
-                    Compression::Gzip(GZIP_LEVEL)
+                    Pipeline::plain(Compression::Gzip(GZIP_LEVEL))
                 };
                 columns.insert(
                     column.clone(),
@@ -2733,7 +3289,7 @@ impl SequenceArrays {
                         &column_schema.trailing,
                         Extents::for_column(rows_per_chunk, width, knobs.chunks_per_shard),
                         serde_json::Map::new(),
-                        compression,
+                        pipeline,
                     )?,
                 );
             }
@@ -2849,8 +3405,8 @@ impl SequenceArrays {
                         BlockHints::from_index(&ordinals[..updates], &offsets),
                     )
                 } else {
-                    match stored {
-                        (Some(rows), true) if rows > 0 && !columns.is_empty() => {
+                    match elision_markers(store, &path, !declared.columns.is_empty())? {
+                        Some(rows) if !columns.is_empty() => {
                             let landed = columns.values().map(|c| c.rows).min().unwrap_or(0);
                             let updates = (landed / rows).min(nstep);
                             let mut hints = BlockHints::fresh();
@@ -3177,6 +3733,8 @@ impl FrameSequenceWriter {
                 )));
             }
         }
+        schema.check_alignments()?;
+        check_aligned_not_in_system(&store, &schema)?;
         ensure_root_and_meta(&store, None)?;
         // This writer's target node is `trajectory/`, so whatever it held
         // before is not part of the sequence being minted.
@@ -3261,6 +3819,8 @@ impl FrameSequenceWriter {
     ) -> Result<Self, MolRsError> {
         ensure_not_legacy(&store)?;
         let schema = schema_of(&store)?;
+        schema.check_alignments()?;
+        check_aligned_not_in_system(&store, &schema)?;
         if trajectory_attributes(&store)?.nstep.is_none()
             && !array_exists(&store, &join_path(TRAJECTORY_GROUP, STEP_ARRAY))?
         {
@@ -3316,6 +3876,11 @@ impl FrameSequenceWriter {
                     )?;
                 }
                 apply_structural_shape(&mut landed, declared, &path)?;
+                for (column, target) in &declared.targets {
+                    if landed.contains_key(column) {
+                        landed.set_target(column, target)?;
+                    }
+                }
                 landed
             } else {
                 empty_block(declared)?
@@ -3353,7 +3918,7 @@ impl FrameSequenceWriter {
     /// Legal only before the first append, which freezes the extents. Left
     /// unset, block columns are frame-aligned and dense arrays take
     /// [`DENSE_ROWS_PER_CHUNK`].
-    #[cfg(test)]
+    #[cfg(all(test, feature = "filesystem"))]
     pub(crate) fn with_rows_per_chunk(mut self, rows: u64) -> Result<Self, MolRsError> {
         self.refuse_after_first_append("with_rows_per_chunk")?;
         if rows == 0 {
@@ -3366,7 +3931,7 @@ impl FrameSequenceWriter {
     /// Inner chunks one shard file holds — a test knob.
     ///
     /// Legal only before the first append.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "filesystem"))]
     pub(crate) fn with_chunks_per_shard(mut self, chunks: u64) -> Result<Self, MolRsError> {
         self.refuse_after_first_append("with_chunks_per_shard")?;
         if chunks == 0 {
@@ -3419,9 +3984,9 @@ impl FrameSequenceWriter {
 
     /// Write `meta` as the record's identity document (`meta/` attributes).
     ///
-    /// Replaces whatever the group held. A record needs no particular key
-    /// here during development; `molrec_version`, when present, must be a
-    /// positive integer.
+    /// Replaces whatever the group held. `molrec_version` is stamped when the
+    /// producer supplied none; a producer's own value must be an integer in
+    /// `1..=`[`crate::MOLREC_VERSION`].
     ///
     /// # Errors
     ///
@@ -3570,19 +4135,31 @@ impl FrameSequenceWriter {
         let meta = self.resolve_meta(frame)?;
         self.ensure_arrays()?;
 
+        // What would be stored, not what was presented: a precision column
+        // is rounded first, so a change below half its quantum is no change
+        // and earns no update. An omitted block carries forward.
+        let mut presented: BTreeMap<String, Block> = BTreeMap::new();
+        for (name, declared) in &self.schema.blocks {
+            if let Some(block) = frame.get(name) {
+                presented.insert(
+                    name.clone(),
+                    stored_presentation(declared, block)?.into_owned(),
+                );
+            }
+        }
+        // The frame as a reader will resolve it, checked before any state
+        // moves: a refused frame leaves the writer as it was.
+        self.check_resolved(&presented, self.committed + self.pending.len() as u64)?;
+
         let mut blocks = BTreeMap::new();
-        for name in self.schema.blocks.keys() {
-            // An omitted block carries forward: no update, no state change.
-            let Some(block) = frame.get(name) else {
-                continue;
-            };
+        for (name, block) in presented {
             let changed = self
                 .landed_blocks
-                .get(name)
-                .is_none_or(|landed| !same_block(landed, block));
+                .get(&name)
+                .is_none_or(|landed| !same_block(landed, &block));
             if changed {
                 blocks.insert(name.clone(), block.clone());
-                self.landed_blocks.insert(name.clone(), block.clone());
+                self.landed_blocks.insert(name, block);
             }
         }
 
@@ -3630,6 +4207,9 @@ impl FrameSequenceWriter {
     /// rather than dropped: the pin is a contract, and a writer that silently
     /// forgot which rows hold nothing is the data loss this check exists for.
     fn validate(&self, frame: &Frame) -> Result<(), MolRsError> {
+        if let Some(simbox) = &frame.simbox {
+            check_storable_cell(simbox)?;
+        }
         for (name, block) in frame.iter() {
             let Some(declared) = self.schema.blocks.get(name) else {
                 return Err(MolRsError::zarr(format!(
@@ -3644,12 +4224,37 @@ impl FrameSequenceWriter {
                          schema is pinned at create and cannot grow mid-run"
                     )));
                 };
-                let dtype = dtype_tag(values.dtype());
+                let dtype = dtype_tag(stored_dtype(column, values.dtype()));
                 if pinned.dtype != dtype {
                     return Err(MolRsError::zarr(format!(
                         "column {column:?} of block {name:?} is declared {} but this frame carries \
                          {dtype}",
                         pinned.dtype
+                    )));
+                }
+                if let Some(presented) = block.precision(column)
+                    && pinned.precision.map(f64::to_bits) != Some(presented.to_bits())
+                {
+                    return Err(MolRsError::zarr(format!(
+                        "column {column:?} of block {name:?} declares precision {presented} but \
+                         this sequence pins {}: a trajectory states a column's precision once, in \
+                         its schema",
+                        pinned
+                            .precision
+                            .map_or_else(|| "none".to_string(), |p| p.to_string())
+                    )));
+                }
+                if let Some(presented) = block.target(column)
+                    && declared.targets.get(column).map(String::as_str) != Some(presented)
+                {
+                    return Err(MolRsError::zarr(format!(
+                        "column {column:?} of block {name:?} references {presented:?} but this \
+                         sequence pins {}: a trajectory states a block's targets once, in its \
+                         schema",
+                        declared
+                            .targets
+                            .get(column)
+                            .map_or_else(|| "none".to_string(), |t| format!("{t:?}"))
                     )));
                 }
                 if block.validity(column).is_some() && !pinned.nullable {
@@ -3691,6 +4296,21 @@ impl FrameSequenceWriter {
         Ok(())
     }
 
+    /// Check the frame at `ordinal` as a reader resolves it — each declared
+    /// block presented now, else carried forward from its latest update —
+    /// against the rules that span blocks.
+    fn check_resolved(
+        &self,
+        presented: &BTreeMap<String, Block>,
+        ordinal: u64,
+    ) -> Result<(), MolRsError> {
+        check_resolved_frame(
+            &self.schema,
+            |name| presented.get(name).or_else(|| self.landed_blocks.get(name)),
+            ordinal,
+        )
+    }
+
     /// Resolve every declared meta key to the value this step stores.
     fn resolve_meta(&self, frame: &Frame) -> Result<MetaMap, MolRsError> {
         for key in frame.meta.keys() {
@@ -3712,17 +4332,14 @@ impl FrameSequenceWriter {
                 // declared `f32`, a JSON list for a declared `f64x3` — is
                 // re-read at the declared width, exactly; a value that cannot
                 // be is the error.
-                Some(value) => MetaValue::from_json_value(&serde_json::json!({
-                    "dtype": declared.dtype,
-                    "value": value.to_attr_value(),
-                }))
-                .map_err(|e| {
-                    MolRsError::zarr(format!(
-                        "meta key {key:?} is declared {} but this frame carries {}: {e}",
-                        declared.dtype,
-                        value.dtype()
-                    ))
-                })?,
+                Some(value) => MetaValue::from_typed_json(&declared.dtype, &value.to_typed_json())
+                    .map_err(|e| {
+                        MolRsError::zarr(format!(
+                            "meta key {key:?} is declared {} but this frame carries {}: {e}",
+                            declared.dtype,
+                            value.dtype()
+                        ))
+                    })?,
                 None => {
                     let fill = declared.fill.as_ref().ok_or_else(|| {
                         MolRsError::zarr(format!(
@@ -3730,13 +4347,10 @@ impl FrameSequenceWriter {
                              declared for it; there is no implicit fill"
                         ))
                     })?;
-                    // The pin stores the plain value; the declared tag says
-                    // how to read it back.
-                    MetaValue::from_json_value(&serde_json::json!({
-                        "dtype": declared.dtype,
-                        "value": fill,
-                    }))
-                    .map_err(|e| MolRsError::zarr(format!("meta key {key:?} fill: {e}")))?
+                    // The pin stores the typed JSON form; the declared tag
+                    // says how to read it back.
+                    MetaValue::from_typed_json(&declared.dtype, fill)
+                        .map_err(|e| MolRsError::zarr(format!("meta key {key:?} fill: {e}")))?
                 }
             };
             resolved.insert(key.clone(), value);
@@ -4178,28 +4792,39 @@ impl BoxReader {
             .vectors
             .as_ref()
             .ok_or_else(|| MolRsError::zarr("box section has neither a fixed cell nor arrays"))?;
-        let cell: Vec<F> = vectors.retrieve_array_subset(&rows_subset(index, 1, &[3, 3])?)?;
+        // An undefined cell's `vectors` row is never read: its numbers mean
+        // nothing, and `SimBox::new_cell` carries the identity instead.
+        let cell: Vec<F> = if cell_defined {
+            vectors.retrieve_array_subset(&rows_subset(index, 1, &[3, 3])?)?
+        } else {
+            vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+        };
         let origin: Vec<F> = match &self.origin {
             Some(array) => array.retrieve_array_subset(&rows_subset(index, 1, &[3])?)?,
             None => vec![0.0, 0.0, 0.0],
         };
-        let boundary: Vec<bool> = match &self.boundary {
-            Some(array) => array.retrieve_array_subset(&rows_subset(index, 1, &[3])?)?,
-            None => vec![true, true, true],
+        let boundary: Option<Vec<bool>> = match &self.boundary {
+            Some(array) => Some(array.retrieve_array_subset(&rows_subset(index, 1, &[3])?)?),
+            None => None,
         };
-        if cell.len() != 9 || origin.len() != 3 || boundary.len() != 3 {
+        let flags = boundary.as_ref().map_or(3, Vec::len);
+        if cell.len() != 9 || origin.len() != 3 || flags != 3 {
             return Err(MolRsError::zarr(format!(
-                "box update {index} is malformed: {} cell values, {} origin values, {} boundary \
-                 flags",
+                "box update {index} is malformed: {} cell values, {} origin values, {flags} \
+                 boundary flags",
                 cell.len(),
                 origin.len(),
-                boundary.len()
             )));
         }
+        let pbc = resolve_boundary(
+            boundary.map(|flags| [flags[0], flags[1], flags[2]]),
+            cell_defined,
+            &format!("box update {index}"),
+        )?;
         let simbox = SimBox::new_cell(
             Array2::from_shape_vec((3, 3), cell).map_err(zerr)?,
             Array1::from(origin),
-            [boundary[0], boundary[1], boundary[2]],
+            pbc,
             cell_defined,
         )
         .map_err(|e| MolRsError::zarr(format!("box update {index} is not a valid cell: {e:?}")))?;
@@ -4336,6 +4961,8 @@ impl FrameSequence {
     ///
     /// Every case is a [`MolRsError::Zarr`] naming the path it failed on:
     ///
+    /// - the record's `meta` carries a `molrec_version` this build does not
+    ///   support;
     /// - the store holds the `trajectory/frames/<i>/` layout written by molrs
     ///   <= 0.13;
     /// - a schema pin is present but is not a schema this build can
@@ -4352,6 +4979,7 @@ impl FrameSequence {
         // `Arc<dyn ReadableListableStorageTraits>`, so the read-only view is
         // taken here.
         let store: ReadableListableStorage = Arc::new(StorageHandle::new(store));
+        super::record_io::read_meta(&store)?;
         ensure_not_legacy(&store)?;
         let schema = match pinned_schema(&store)? {
             Some(pinned) => pinned,
@@ -4401,13 +5029,14 @@ impl FrameSequence {
                 offset.truncate(if updates == 0 { 0 } else { updates + 1 });
                 BlockIndex::Sparse { step_index, offset }
             } else {
-                match stored_hints(&store, &path)? {
-                    (Some(rows), true) if rows > 0 => {
+                match elision_markers(&store, &path, !declared.columns.is_empty())? {
+                    Some(rows) => {
                         // Regular: the columns' own length says how many
                         // updates landed; the marker bounds them.
-                        let Some(column) = declared.columns.keys().next() else {
-                            continue;
-                        };
+                        let column =
+                            declared.columns.keys().next().expect(
+                                "elision_markers refuses markers on a block with no columns",
+                            );
                         let landed = Array::open(store.clone(), &join_path(&path, column))?
                             .shape()
                             .first()
@@ -4429,6 +5058,10 @@ impl FrameSequence {
                 blocks.insert(name.clone(), index);
             }
         }
+
+        schema.check_alignments()?;
+        check_aligned_indexes(&schema, &blocks, nstep)?;
+        check_aligned_not_in_system(&store, &schema)?;
 
         let box_prefix = join_path(TRAJECTORY_GROUP, BOX_GROUP);
         let vectors_path = join_path(&box_prefix, VECTORS_ARRAY);
@@ -4588,6 +5221,22 @@ impl FrameSequence {
                         .rows(start, rows, &declared.trailing)?
                 };
                 insert_column_into_block(&mut block, column, values)?;
+                // The pinned precision and target travel with the column read
+                // back, so a trajectory read and written again declares them.
+                if let Some(target) = schema.targets.get(column) {
+                    block.set_target(column, target).map_err(|e| {
+                        MolRsError::zarr(format!(
+                            "target of column {column:?} of block {name:?}: {e}"
+                        ))
+                    })?;
+                }
+                if let Some(precision) = declared.precision {
+                    block.set_precision(column, precision).map_err(|e| {
+                        MolRsError::zarr(format!(
+                            "precision of column {column:?} of block {name:?}: {e}"
+                        ))
+                    })?;
+                }
                 if declared.nullable
                     && rows > 0
                     && let Some(mask) = self.mask_rows(&mut state, name, column, start, rows)?
@@ -4632,6 +5281,11 @@ impl FrameSequence {
             );
         }
 
+        // A whole frame is the resolved frame: its pinned row references
+        // must resolve, or the store is refused.
+        if wanted.is_none() {
+            check_local_references(&frame, &format!("trajectory frame {index}"))?;
+        }
         Ok(Some(frame))
     }
 
@@ -4778,6 +5432,78 @@ impl FrameSequence {
     pub fn block_names(&self) -> impl Iterator<Item = &str> {
         self.blocks.keys().map(String::as_str)
     }
+}
+
+/// Refuse a store whose aligned blocks break the rule at some resolved frame,
+/// checked from the indexes alone: at every ordinal where either block of a
+/// pair has an update, the aligned block, when it resolves, has its target
+/// resolving with the same row count.
+fn check_aligned_indexes(
+    schema: &SequenceSchema,
+    blocks: &IndexMap<String, BlockIndex>,
+    nstep: u64,
+) -> Result<(), MolRsError> {
+    let ordinals = |name: &str| -> Vec<u64> {
+        match blocks.get(name) {
+            None => Vec::new(),
+            Some(BlockIndex::Sparse { step_index, .. }) => step_index.clone(),
+            Some(BlockIndex::Regular { updates, .. }) => (0..*updates).collect(),
+        }
+    };
+    for (aligned, target) in schema.aligned_pairs() {
+        let mut at: Vec<u64> = ordinals(aligned);
+        at.extend(ordinals(target));
+        at.sort_unstable();
+        at.dedup();
+        for ordinal in at.into_iter().filter(|&o| o < nstep) {
+            let Some((_, _, rows)) = blocks
+                .get(aligned)
+                .map(|index| index.resolve(ordinal))
+                .transpose()?
+                .flatten()
+            else {
+                continue;
+            };
+            let with = blocks
+                .get(target)
+                .map(|index| index.resolve(ordinal))
+                .transpose()?
+                .flatten();
+            match with {
+                Some((_, _, target_rows)) if target_rows == rows => {}
+                Some((_, _, target_rows)) => {
+                    return Err(MolRsError::zarr(format!(
+                        "trajectory frame {ordinal}: aligned block {aligned:?} resolves to {rows} \
+                         rows but its target {target:?} to {target_rows}"
+                    )));
+                }
+                None => {
+                    return Err(MolRsError::zarr(format!(
+                        "trajectory frame {ordinal}: aligned block {aligned:?} is present but its \
+                         target {target:?} is absent"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Refuse an aligned trajectory block named like a block of the record's
+/// `system` section: the name would mean two different row sets.
+fn check_aligned_not_in_system<S>(store: &Arc<S>, schema: &SequenceSchema) -> Result<(), MolRsError>
+where
+    S: ?Sized + ReadableStorageTraits + 'static,
+{
+    for (aligned, _) in schema.aligned_pairs() {
+        if group_exists(store, &join_path(SYSTEM_GROUP, aligned))? {
+            return Err(MolRsError::zarr(format!(
+                "aligned trajectory block {aligned:?} shares its name with a system block; an \
+                 aligned block never does"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Index of the latest entry at or before frame `index`, or `None` when the
@@ -5262,6 +5988,250 @@ mod tests {
             vec![0.0, 0.0, 0.0]
         );
         assert_eq!(cell.pbc(), [true, true, true]);
+    }
+
+    /// An undefined cell's `vectors` are ignored on read, in both box
+    /// layouts: zeros in the fixed-cell attributes, and an all-zero (fill
+    /// value) `vectors` array, read back as the identity instead of failing
+    /// to invert.
+    #[test]
+    fn an_undefined_cell_reads_whatever_vectors_it_carries() {
+        let undefined = |x: f64| {
+            SimBox::new_cell(
+                ndarray::Array2::eye(3),
+                array![x, 0.0, 0.0],
+                [false, false, false],
+                false,
+            )
+            .unwrap()
+        };
+
+        // Fixed cell: `vectors` is a group attribute.
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = atoms_frame(&[1.0]);
+        frame.simbox = Some(undefined(0.0));
+        write_all(&store, &[frame]);
+        let box_path = format!("{TRAJ}/box");
+        let mut attributes = Group::open(store.clone(), &box_path)
+            .unwrap()
+            .attributes()
+            .clone();
+        assert_eq!(attributes["cell_defined"], serde_json::json!(false));
+        attributes.insert(
+            "vectors".into(),
+            serde_json::json!([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]),
+        );
+        GroupBuilder::new()
+            .attributes(attributes)
+            .build(store.clone(), &box_path)
+            .unwrap()
+            .store_metadata()
+            .unwrap();
+        let back = open_sequence(&store).box_at(0).unwrap().unwrap();
+        assert!(!back.is_cell_defined());
+        assert_eq!(back.h_view(), ndarray::Array2::<f64>::eye(3));
+
+        // Changing origin: the cell lives in arrays. Dropping the `vectors`
+        // chunks makes every row the zero fill value.
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut first = atoms_frame(&[1.0]);
+        first.simbox = Some(undefined(0.0));
+        let mut second = atoms_frame(&[2.0]);
+        second.simbox = Some(undefined(1.0));
+        write_all(&store, &[first, second]);
+        let chunks = dir.path().join("trajectory/box/vectors/c");
+        assert!(chunks.is_dir(), "the cell moved into arrays");
+        std::fs::remove_dir_all(chunks).unwrap();
+        let seq = open_sequence(&store);
+        for (index, x) in [(0, 0.0), (1, 1.0)] {
+            let back = seq.box_at(index).unwrap().unwrap();
+            assert!(!back.is_cell_defined());
+            assert_eq!(back.h_view(), ndarray::Array2::<f64>::eye(3));
+            assert_eq!(back.origin_view()[0], x);
+        }
+    }
+
+    /// Rewrite the attributes of the group at `path` through `edit`.
+    fn edit_attributes(
+        store: &ReadableWritableListableStorage,
+        path: &str,
+        edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>),
+    ) {
+        let mut group = Group::open(store.clone(), path).unwrap();
+        edit(group.attributes_mut());
+        group.store_metadata().unwrap();
+    }
+
+    /// A regular three-frame run: `atoms` carries both elision markers and
+    /// `step` is a progression.
+    fn regular_store(dir: &TempDir) -> ReadableWritableListableStorage {
+        let store = store_in(dir);
+        write_all(
+            &store,
+            &[
+                atoms_frame(&[1.0]),
+                atoms_frame(&[2.0]),
+                atoms_frame(&[3.0]),
+            ],
+        );
+        let attrs = Group::open(store.clone(), &format!("{TRAJ}/{ATOMS}"))
+            .unwrap()
+            .attributes()
+            .clone();
+        assert_eq!(attrs["uniform_rows"], serde_json::json!(1));
+        assert_eq!(attrs["dense_updates"], serde_json::json!(true));
+        store
+    }
+
+    #[test]
+    fn malformed_elision_markers_are_refused() {
+        let section = format!("{TRAJ}/{ATOMS}");
+        for edit in [
+            |a: &mut serde_json::Map<String, serde_json::Value>| {
+                a.remove("dense_updates");
+            },
+            |a: &mut serde_json::Map<String, serde_json::Value>| {
+                a.remove("uniform_rows");
+            },
+            |a: &mut serde_json::Map<String, serde_json::Value>| {
+                a.insert("uniform_rows".into(), serde_json::json!(0));
+            },
+            |a: &mut serde_json::Map<String, serde_json::Value>| {
+                a.insert("dense_updates".into(), serde_json::json!(false));
+            },
+        ] {
+            let dir = TempDir::new().unwrap();
+            let store = regular_store(&dir);
+            edit_attributes(&store, &section, edit);
+            let err = FrameSequence::open(store.clone())
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(err.contains(ATOMS), "{err}");
+            assert!(FrameSequenceWriter::open(store).is_err());
+        }
+    }
+
+    #[test]
+    fn markers_on_a_block_with_no_columns_are_refused_and_a_bare_declared_block_reads_absent() {
+        let dir = TempDir::new().unwrap();
+        let store = regular_store(&dir);
+        edit_attributes(&store, TRAJ, |a| {
+            a[SCHEMA_ATTRIBUTE]["blocks"]["ghost"] = serde_json::json!({"columns": {}});
+        });
+        GroupBuilder::new()
+            .build(store.clone(), &format!("{TRAJ}/ghost"))
+            .unwrap()
+            .store_metadata()
+            .unwrap();
+        // Declared, never updated: absent everywhere, and not refused.
+        let seq = open_sequence(&store);
+        assert!(!seq.has_block("ghost"));
+        assert!(!frame_at(&mut open_sequence(&store), 1).contains_key("ghost"));
+        drop(seq);
+
+        edit_attributes(&store, &format!("{TRAJ}/ghost"), |a| {
+            a.insert("uniform_rows".into(), serde_json::json!(1));
+            a.insert("dense_updates".into(), serde_json::json!(true));
+        });
+        let err = FrameSequence::open(store).err().unwrap().to_string();
+        assert!(err.contains("ghost") && err.contains("no columns"), "{err}");
+    }
+
+    #[test]
+    fn a_progression_without_the_commit_marker_is_refused() {
+        let dir = TempDir::new().unwrap();
+        let store = regular_store(&dir);
+        let attrs = Group::open(store.clone(), TRAJ)
+            .unwrap()
+            .attributes()
+            .clone();
+        assert!(attrs.contains_key("step_progression"));
+        edit_attributes(&store, TRAJ, |a| {
+            a.remove("nstep");
+        });
+        let err = FrameSequence::open(store.clone())
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(err.contains("nstep"), "{err}");
+        edit_attributes(&store, TRAJ, |a| {
+            a.insert("nstep".into(), serde_json::json!(-1));
+        });
+        assert!(FrameSequence::open(store).is_err());
+    }
+
+    /// An undefined trajectory cell is periodic on no axis: a writer refuses
+    /// one with a periodic flag, an omitted boundary reads all-false, and a
+    /// periodic flag in the store is refused.
+    #[test]
+    fn an_undefined_trajectory_cell_is_periodic_on_no_axis() {
+        let undefined = |pbc| {
+            SimBox::new_cell(ndarray::Array2::eye(3), array![0.0, 0.0, 0.0], pbc, false).unwrap()
+        };
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = atoms_frame(&[1.0]);
+        frame.simbox = Some(undefined([false, false, true]));
+        let mut writer =
+            FrameSequenceWriter::create(store.clone(), SequenceSchema::from_frame(&frame).unwrap())
+                .unwrap();
+        assert!(writer.append(&frame).is_err());
+
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        frame.simbox = Some(undefined([false; 3]));
+        write_all(&store, &[frame]);
+        let box_path = format!("{TRAJ}/box");
+        let mut group = Group::open(store.clone(), &box_path).unwrap();
+        assert_eq!(
+            group.attributes()["boundary"],
+            serde_json::json!([false, false, false])
+        );
+        group.attributes_mut().remove("boundary");
+        group.store_metadata().unwrap();
+        assert_eq!(
+            open_sequence(&store).box_at(0).unwrap().unwrap().pbc(),
+            [false; 3]
+        );
+
+        let mut group = Group::open(store.clone(), &box_path).unwrap();
+        group
+            .attributes_mut()
+            .insert("boundary".into(), serde_json::json!([true, false, false]));
+        group.store_metadata().unwrap();
+        let refused = match FrameSequence::open(store.clone()) {
+            Err(_) => true,
+            Ok(seq) => seq.box_at(0).is_err(),
+        };
+        assert!(
+            refused,
+            "a periodic flag on an undefined cell must be refused"
+        );
+    }
+
+    /// A canonical identifier key cannot be declared narrower than `u64`:
+    /// the in-memory block widens it, so nothing could be appended, and a
+    /// store holding one is refused on read.
+    #[test]
+    fn a_canonical_identifier_cannot_be_declared_narrow() {
+        let mut schema = SequenceSchema::new();
+        for dtype in [DType::U8, DType::UInt16, DType::UInt32] {
+            let err = schema
+                .declare_column("bonds", "atomi", dtype, &[])
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("atomi") && err.contains(dtype.name()), "{err}");
+        }
+        schema
+            .declare_column("bonds", "atomi", DType::UInt, &[])
+            .unwrap();
+        // A non-canonical name keeps its arrival width.
+        schema
+            .declare_column("bonds", "my_label", DType::UInt32, &[])
+            .unwrap();
     }
 
     /// A non-default origin is recorded — as a `box/` attribute while the
@@ -6004,6 +6974,47 @@ mod tests {
             Some(&MetaValue::F64(300.0)),
             "and the step that carried a value keeps it"
         );
+    }
+
+    /// A NaN fill is pinned as `"NaN"` and lands as NaN; a pin whose fill a
+    /// writer lost to `null` is refused, not read as a run without a fill.
+    #[test]
+    fn a_nan_fill_is_storable_and_a_null_fill_is_refused() {
+        const KEY: &str = "temperature";
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
+        schema
+            .declare_meta_with_fill(KEY, MetaValue::F64(f64::NAN))
+            .unwrap();
+        schema
+            .declare_meta_with_fill("count", MetaValue::U64(u64::MAX))
+            .unwrap();
+        let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
+        writer.append(&atoms_frame(&[1.0])).unwrap();
+        writer.close().unwrap();
+
+        let pin = Group::open(store.clone(), TRAJ).unwrap().attributes()[SCHEMA_ATTRIBUTE].clone();
+        assert_eq!(pin["meta"][KEY]["fill"], serde_json::json!("NaN"));
+        assert_eq!(
+            pin["meta"]["count"]["fill"],
+            serde_json::json!("18446744073709551615")
+        );
+        let mut seq = open_sequence(&store);
+        let frame = frame_at(&mut seq, 0);
+        assert!(frame.meta.get(KEY).unwrap().as_f64().unwrap().is_nan());
+        assert_eq!(frame.meta.get("count"), Some(&MetaValue::U64(u64::MAX)));
+
+        // Tamper: the fill as the `null` molrs used to write.
+        let mut group = Group::open(store.clone(), TRAJ).unwrap();
+        group.attributes_mut()[SCHEMA_ATTRIBUTE]["meta"][KEY]["fill"] = serde_json::Value::Null;
+        group.store_metadata().unwrap();
+        let err = FrameSequence::open(store.clone())
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(err.contains(KEY), "{err}");
+        assert!(FrameSequenceWriter::open(store).is_err());
     }
 
     /// Declared meta keys read back in `declare_meta` order, not the order the
@@ -6950,8 +7961,8 @@ mod tests {
     // =======================================================================
 
     /// The streaming writer mints a record, not a bare `trajectory/`: the
-    /// root group and an (empty) `meta/` group exist before the first append,
-    /// and no version key is stamped.
+    /// root group and a `meta/` group exist before the first append, and the
+    /// group carries the stamped `molrec_version` and nothing else.
     #[test]
     fn create_writes_the_root_and_a_stamped_meta_group() {
         let dir = TempDir::new().unwrap();
@@ -6960,10 +7971,7 @@ mod tests {
         let writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
         assert!(dir.path().join("zarr.json").is_file(), "root group");
         let meta = Group::open(store.clone(), "/meta").expect("meta group exists");
-        // This used to assert the group was *empty* — the streaming writer
-        // stamped nothing, which is what made a trajectory written with
-        // metadata unreadable: `validate_meta` refuses an unstamped non-empty
-        // map, so `read_meta` rejected the writer's own output.
+        // Every writer stamps the version, the streaming one included.
         assert_eq!(
             meta.attributes()
                 .get("molrec_version")
@@ -7295,8 +8303,17 @@ mod tests {
         declared.declare_meta("energy", "f64").unwrap();
         assert_eq!(declared, derived);
 
+        // A canonical key is pinned at its vocabulary dtype.
         let err = declared
             .declare_column(ATOMS, X, DType::Int, &[])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("canonical") && err.contains("float"), "{err}");
+        declared
+            .declare_column(ATOMS, PROBE, DType::Float, &[])
+            .unwrap();
+        let err = declared
+            .declare_column(ATOMS, PROBE, DType::Int, &[])
             .unwrap_err()
             .to_string();
         assert!(err.contains("f64") && err.contains("i32"), "{err}");
@@ -7643,5 +8660,510 @@ mod tests {
             err.contains(BONDS) && err.contains(&format!("{I:?}")),
             "{err}"
         );
+    }
+
+    // -- declared precision (molrec F1) ------------------------------------
+
+    /// The inner codec names of the sharded growth array at `path`.
+    fn inner_codec_names(store: &ReadableWritableListableStorage, path: &str) -> Vec<String> {
+        let arr = Array::open(store.clone(), path).unwrap();
+        let metadata = serde_json::to_value(arr.metadata()).unwrap();
+        metadata["codecs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|codec| codec["name"] == "sharding_indexed")
+            .unwrap()["configuration"]["codecs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|codec| codec["name"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    /// An atoms frame whose `x` declares precision `p`.
+    fn precise_frame(values: &[f64], p: f64) -> Frame {
+        let mut frame = atoms_frame(values);
+        frame.get_mut(ATOMS).unwrap().set_precision(X, p).unwrap();
+        frame
+    }
+
+    fn stored(values: &[f64], p: f64) -> Vec<f64> {
+        let q = molrs::store::precision::quantum(p).unwrap();
+        values
+            .iter()
+            .map(|&x| molrs::store::precision::quantize(x, q))
+            .collect()
+    }
+
+    #[test]
+    fn a_precision_is_pinned_and_every_frame_reads_back_rounded() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let p = 1e-3;
+        let frames = [
+            precise_frame(&[0.123_456, -1.000_49, 2.5], p),
+            precise_frame(&[0.2, 7.777_7, -3.0], p),
+        ];
+        let schema = SequenceSchema::from_frames(&frames).unwrap();
+        assert_eq!(schema.precision(ATOMS, X), Some(p));
+        write_all(&store, &frames);
+
+        let pin = Group::open(store.clone(), TRAJ).unwrap().attributes()[SCHEMA_ATTRIBUTE].clone();
+        assert_eq!(
+            pin["blocks"][ATOMS]["columns"][X]["precision"],
+            serde_json::json!(p)
+        );
+        // Declared on the trajectory path in the pin only: no array attribute.
+        let array = Array::open(store.clone(), &format!("{TRAJ}/{ATOMS}/{X}")).unwrap();
+        assert!(array.attributes().get("precision").is_none());
+        assert_eq!(
+            inner_codec_names(&store, &format!("{TRAJ}/{ATOMS}/{X}")),
+            ["bytes", "numcodecs.shuffle", "zstd", "crc32c"]
+        );
+
+        let mut seq = open_sequence(&store);
+        for (index, frame) in frames.iter().enumerate() {
+            let back = frame_at(&mut seq, index as u64);
+            let presented = atoms_x(frame);
+            assert_eq!(atoms_x(&back), stored(&presented, p));
+            // The pinned precision travels with the column read back.
+            assert_eq!(back.get(ATOMS).unwrap().precision(X), Some(p));
+        }
+    }
+
+    #[test]
+    fn a_change_below_half_a_quantum_carries_forward() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let p = 1e-3;
+        let q = molrs::store::precision::quantum(p).unwrap();
+        let first = [1.0, 2.0, 3.0];
+        let nudged: Vec<f64> = first.iter().map(|x| x + 0.4 * q).collect();
+        write_all(
+            &store,
+            &[precise_frame(&first, p), precise_frame(&nudged, p)],
+        );
+
+        let mut seq = open_sequence(&store);
+        assert_eq!(seq.block_update_at(ATOMS, 0).unwrap(), Some(0));
+        assert_eq!(seq.block_update_at(ATOMS, 1).unwrap(), Some(0));
+        assert_eq!(atoms_x(&frame_at(&mut seq, 1)), first);
+    }
+
+    #[test]
+    fn a_frame_stating_another_precision_than_the_pin_is_refused() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let schema = SequenceSchema::from_frame(&precise_frame(&[1.0], 1e-3)).unwrap();
+        let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
+        // No precision stated: the pin rounds it.
+        writer.append(&atoms_frame(&[1.000_1])).unwrap();
+        let err = writer
+            .append(&precise_frame(&[1.0], 1e-2))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("precision") && err.contains(X), "{err}");
+
+        // A pin without a precision refuses a frame that states one.
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
+        let mut writer = FrameSequenceWriter::create(store, schema).unwrap();
+        assert!(writer.append(&precise_frame(&[1.0], 1e-3)).is_err());
+    }
+
+    #[test]
+    fn declare_precision_refuses_what_cannot_carry_one() {
+        let mut schema = SequenceSchema::new();
+        schema.declare_column(ATOMS, X, DType::Float, &[]).unwrap();
+        schema.declare_column(BONDS, I, DType::UInt, &[]).unwrap();
+        assert!(schema.declare_precision(ATOMS, "nope", 1e-3).is_err());
+        assert!(schema.declare_precision(BONDS, I, 1e-3).is_err());
+        for bad in [0.0, -1e-3, f64::NAN, f64::INFINITY] {
+            assert!(schema.declare_precision(ATOMS, X, bad).is_err(), "{bad}");
+        }
+        schema.declare_precision(ATOMS, X, 1e-3).unwrap();
+        schema.declare_precision(ATOMS, X, 1e-3).unwrap();
+        assert!(schema.declare_precision(ATOMS, X, 1e-2).is_err());
+        assert_eq!(schema.precision(ATOMS, X), Some(1e-3));
+
+        // Two frames declaring two precisions conflict at mint.
+        let err = SequenceSchema::from_frames(&[
+            precise_frame(&[1.0], 1e-3),
+            precise_frame(&[1.0], 1e-2),
+        ])
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("precision"), "{err}");
+    }
+
+    #[test]
+    fn the_compression_knob_replaces_the_precision_compressor_and_the_shuffle_stays() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let frame = precise_frame(&[1.0, 2.0], 1e-3);
+        let mut writer =
+            FrameSequenceWriter::create(store.clone(), SequenceSchema::from_frame(&frame).unwrap())
+                .unwrap()
+                .with_compression(super::Compression::Gzip(5))
+                .unwrap();
+        writer.append(&frame).unwrap();
+        writer.close().unwrap();
+        assert_eq!(
+            inner_codec_names(&store, &format!("{TRAJ}/{ATOMS}/{X}")),
+            ["bytes", "numcodecs.shuffle", "gzip", "crc32c"]
+        );
+    }
+
+    /// The design's density measurement, on a small synthetic run: 3000
+    /// atoms uniform in a 40 Å box, 40 frames of a 0.05 Å random walk, one
+    /// inner chunk per column per frame. Prints bytes per atom per frame of
+    /// the three coordinate columns, lossless and at two precisions: the
+    /// shard files as written, and the chunk payload net of the fixed-size
+    /// shard index (`16 B × chunks_per_shard + 4` per shard, written whole
+    /// at the start of the shard, so a 40-frame run pays it unamortized).
+    #[test]
+    fn a_declared_precision_cuts_the_coordinate_bytes() {
+        const ATOMS_N: usize = 3000;
+        const FRAMES: usize = 40;
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut uniform = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut xyz: Vec<[f64; 3]> = (0..ATOMS_N)
+            .map(|_| [40.0 * uniform(), 40.0 * uniform(), 40.0 * uniform()])
+            .collect();
+        let mut run = Vec::with_capacity(FRAMES);
+        for _ in 0..FRAMES {
+            run.push(xyz.clone());
+            for atom in &mut xyz {
+                for axis in atom.iter_mut() {
+                    *axis += 0.05 * (2.0 * uniform() - 1.0);
+                }
+            }
+        }
+        let bytes_per_atom_frame = |precision: Option<f64>| -> (f64, f64) {
+            let dir = TempDir::new().unwrap();
+            let store = store_in(&dir);
+            let frames: Vec<Frame> = run
+                .iter()
+                .map(|positions| {
+                    let mut block = Block::new();
+                    for (axis, key) in ["x", "y", "z"].into_iter().enumerate() {
+                        let values: Vec<f64> = positions.iter().map(|p| p[axis]).collect();
+                        block.insert_column(key, float_column(&values)).unwrap();
+                        if let Some(p) = precision {
+                            block.set_precision(key, p).unwrap();
+                        }
+                    }
+                    let mut frame = Frame::new();
+                    frame.insert(ATOMS, block);
+                    frame
+                })
+                .collect();
+            write_all(&store, &frames);
+            let mut bytes = 0u64;
+            let mut index = 0u64;
+            for key in ["x", "y", "z"] {
+                let files = chunk_files(&dir.path().join("trajectory").join(ATOMS).join(key));
+                let (shard, inner) = extents(&store, &format!("{TRAJ}/{ATOMS}/{key}"));
+                bytes += files.values().map(|v| v.len() as u64).sum::<u64>();
+                index += files.len() as u64 * (16 * (shard[0] / inner[0]) + 4);
+            }
+            let per = (ATOMS_N * FRAMES) as f64;
+            (bytes as f64 / per, (bytes - index) as f64 / per)
+        };
+        let (lossless, lossless_net) = bytes_per_atom_frame(None);
+        let (milli, milli_net) = bytes_per_atom_frame(Some(1e-3));
+        let (centi, centi_net) = bytes_per_atom_frame(Some(1e-2));
+        eprintln!(
+            "B/atom/frame (files / net of shard index): lossless {lossless:.2} / \
+             {lossless_net:.2}, p=1e-3 {milli:.2} / {milli_net:.2}, p=1e-2 {centi:.2} / \
+             {centi_net:.2}"
+        );
+        assert!(lossless_net > 23.9, "lossless is raw f64: {lossless_net}");
+        assert!(milli_net < 8.0, "p=1e-3: {milli_net}");
+        assert!(centi_net < 6.5, "p=1e-2: {centi_net}");
+        assert!(milli < lossless / 2.5, "p=1e-3: {milli} vs {lossless}");
+        assert!(centi < milli, "p=1e-2: {centi} vs {milli}");
+    }
+
+    // -- row references (molrec F4) -----------------------------------------
+
+    /// `atoms` with `n` rows and a `refs` block whose `site` references them.
+    fn referencing_frame(n: usize, site: &[u64]) -> Frame {
+        let mut frame = atoms_frame(&vec![0.5; n]);
+        let mut refs = block_with("site", uint_column(site));
+        refs.set_target("site", ATOMS).unwrap();
+        frame.insert("refs", refs);
+        frame
+    }
+
+    #[test]
+    fn targets_are_pinned_and_hold_per_resolved_frame() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let first = referencing_frame(3, &[2]);
+        let schema = SequenceSchema::from_frame(&first).unwrap();
+        assert_eq!(schema.target("refs", "site"), Some(ATOMS));
+        let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
+        writer.append(&first).unwrap();
+        // `atoms` shrinks to 2 rows while `refs` carries forward pointing at
+        // row 2: the resolved frame breaks the reference.
+        let err = writer
+            .append(&atoms_frame(&[1.0, 2.0]))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("site") && err.contains("trajectory frame 1"),
+            "{err}"
+        );
+        // Restating `refs` in range is fine; a refused frame changed nothing.
+        let mut second = atoms_frame(&[1.0, 2.0]);
+        second.insert("refs", block_with("site", uint_column(&[1])));
+        writer.append(&second).unwrap();
+        writer.close().unwrap();
+
+        let pin = Group::open(store.clone(), TRAJ).unwrap().attributes()[SCHEMA_ATTRIBUTE].clone();
+        assert_eq!(
+            pin["blocks"]["refs"]["targets"],
+            serde_json::json!({"site": ATOMS})
+        );
+        let mut seq = open_sequence(&store);
+        assert_eq!(committed_len(&mut seq), 2);
+        let back = frame_at(&mut seq, 1);
+        assert_eq!(back["refs"].target("site"), Some(ATOMS));
+
+        // Tamper the pin to a target the store breaks: the read refuses.
+        let mut group = Group::open(store.clone(), TRAJ).unwrap();
+        group.attributes_mut()[SCHEMA_ATTRIBUTE]["blocks"]["refs"]["targets"]["site"] =
+            serde_json::json!("ghost");
+        group.store_metadata().unwrap();
+        assert!(open_sequence(&store).frame(0).is_err());
+    }
+
+    #[test]
+    fn declare_target_refuses_what_cannot_be_a_reference() {
+        let mut schema = SequenceSchema::new();
+        schema.declare_column(ATOMS, X, DType::Float, &[]).unwrap();
+        schema
+            .declare_column("refs", "site", DType::UInt, &[])
+            .unwrap();
+        assert!(schema.declare_target("refs", "nope", ATOMS).is_err());
+        assert!(schema.declare_target(ATOMS, X, ATOMS).is_err());
+        assert!(
+            schema
+                .declare_target("refs", "site", "/trajectory/atoms")
+                .is_err()
+        );
+        assert!(schema.declare_target("refs", "site", "a/b").is_err());
+        schema
+            .declare_target("refs", "site", "/system/atoms")
+            .unwrap();
+        assert!(schema.declare_target("refs", "site", ATOMS).is_err());
+    }
+
+    // -- aligned blocks (molrec F5) -----------------------------------------
+
+    const TYPES: &str = "atom_types";
+
+    fn string_column(values: &[&str]) -> Column {
+        Column::from_string(
+            ArrayD::from_shape_vec(
+                vec![values.len()],
+                values.iter().map(|s| (*s).to_string()).collect(),
+            )
+            .unwrap(),
+        )
+    }
+
+    /// `atoms` (x) and, when `types` is given, the aligned `atom_types`.
+    fn aligned_frame(x: &[f64], types: Option<&[&str]>) -> Frame {
+        let mut frame = atoms_frame(x);
+        if let Some(types) = types {
+            frame.insert(TYPES, block_with("type", string_column(types)));
+        }
+        frame
+    }
+
+    fn aligned_schema() -> SequenceSchema {
+        let mut schema = SequenceSchema::new();
+        schema.declare_column(ATOMS, X, DType::Float, &[]).unwrap();
+        schema
+            .declare_column(TYPES, "type", DType::String, &[])
+            .unwrap();
+        schema.declare_aligned(TYPES, ATOMS).unwrap();
+        schema
+    }
+
+    fn write_aligned(frames: &[Frame]) -> (TempDir, ReadableWritableListableStorage) {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut writer = FrameSequenceWriter::create(store.clone(), aligned_schema()).unwrap();
+        for frame in frames {
+            writer.append(frame).unwrap();
+        }
+        writer.close().unwrap();
+        (dir, store)
+    }
+
+    fn types_at(seq: &mut FrameSequence, index: u64) -> Option<Vec<String>> {
+        frame_at(seq, index).get(TYPES).map(|b| {
+            b.get("type")
+                .and_then(|c| c.as_string())
+                .unwrap()
+                .iter()
+                .cloned()
+                .collect()
+        })
+    }
+
+    #[test]
+    fn an_aligned_block_carries_forward_while_its_target_moves() {
+        let frames = [
+            aligned_frame(&[0.0, 1.0, 2.0], Some(&["A", "B", "C"])),
+            aligned_frame(&[0.1, 1.1, 2.1], None),
+            aligned_frame(&[0.2, 1.2, 2.2], None),
+            aligned_frame(&[0.3, 1.3, 2.3], Some(&["A", "A", "C"])),
+        ];
+        let (_dir, store) = write_aligned(&frames);
+        let pin = Group::open(store.clone(), TRAJ).unwrap().attributes()[SCHEMA_ATTRIBUTE].clone();
+        assert_eq!(
+            pin["blocks"][TYPES]["aligned_with"],
+            serde_json::json!(ATOMS)
+        );
+        let mut seq = open_sequence(&store);
+        assert_eq!(types_at(&mut seq, 2).unwrap(), ["A", "B", "C"]);
+        assert_eq!(types_at(&mut seq, 3).unwrap(), ["A", "A", "C"]);
+        assert_eq!(seq.block_update_at(TYPES, 2).unwrap(), Some(0));
+        assert_eq!(seq.schema().aligned_with(TYPES), Some(ATOMS));
+    }
+
+    #[test]
+    fn an_aligned_block_is_restated_on_growth_and_may_appear_late_or_empty() {
+        let frames = [
+            aligned_frame(&[0.0, 1.0, 2.0], None),
+            aligned_frame(&[0.0, 1.0, 2.0], Some(&["A", "B", "C"])),
+            aligned_frame(&[0.0, 1.0, 2.0, 3.0], Some(&["A", "B", "C", "D"])),
+            aligned_frame(&[], Some(&[])),
+        ];
+        let (_dir, store) = write_aligned(&frames);
+        let mut seq = open_sequence(&store);
+        assert_eq!(types_at(&mut seq, 0), None);
+        assert_eq!(types_at(&mut seq, 2).unwrap().len(), 4);
+        assert_eq!(types_at(&mut seq, 3).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn a_writer_refuses_a_frame_that_breaks_the_alignment() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut writer = FrameSequenceWriter::create(store.clone(), aligned_schema()).unwrap();
+        writer
+            .append(&aligned_frame(&[0.0, 1.0, 2.0], Some(&["A", "B", "C"])))
+            .unwrap();
+        // `atoms` grows and `atom_types` is not restated.
+        let err = writer
+            .append(&aligned_frame(&[0.0, 1.0, 2.0, 3.0], None))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(TYPES) && err.contains("trajectory frame 1"),
+            "{err}"
+        );
+        // Restated with another count: refused too.
+        assert!(
+            writer
+                .append(&aligned_frame(&[0.0, 1.0, 2.0, 3.0], Some(&["A"])))
+                .is_err()
+        );
+        // Nothing moved: a good frame still lands at ordinal 1.
+        writer
+            .append(&aligned_frame(
+                &[0.0, 1.0, 2.0, 3.0],
+                Some(&["A", "B", "C", "D"]),
+            ))
+            .unwrap();
+        writer.close().unwrap();
+        assert_eq!(committed_len(&mut open_sequence(&store)), 2);
+
+        // The aligned block presented before its target exists.
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut writer = FrameSequenceWriter::create(store, aligned_schema()).unwrap();
+        let mut types_only = Frame::new();
+        types_only.insert(TYPES, block_with("type", string_column(&["A"])));
+        assert!(writer.append(&types_only).is_err());
+    }
+
+    #[test]
+    fn a_store_whose_aligned_counts_disagree_is_refused() {
+        let frames = [
+            aligned_frame(&[0.0, 1.0, 2.0], Some(&["A", "B", "C"])),
+            aligned_frame(&[0.0, 1.0], Some(&["A", "B"])),
+        ];
+        let (_dir, store) = write_aligned(&frames);
+        assert!(FrameSequence::open(store.clone()).is_ok());
+        // Tamper: `atom_types/offset` so update 1 holds 1 row instead of 2.
+        let offsets = u64_array(&store, &format!("{TRAJ}/{TYPES}/offset"));
+        assert_eq!(offsets, [0, 3, 5]);
+        let array = Array::open(store.clone(), &format!("{TRAJ}/{TYPES}/offset")).unwrap();
+        array
+            .store_array_subset(&ArraySubset::new_with_shape(vec![3]), &[0_u64, 3, 4][..])
+            .unwrap();
+        array.store_metadata().unwrap();
+        let err = FrameSequence::open(store).err().unwrap().to_string();
+        assert!(err.contains(TYPES), "{err}");
+    }
+
+    #[test]
+    fn declare_aligned_refuses_what_cannot_align() {
+        let mut schema = aligned_schema();
+        schema
+            .declare_column("other", "flag", DType::Bool, &[])
+            .unwrap();
+        schema
+            .declare_column("cells", "v", DType::Float, &[])
+            .unwrap();
+        // Undeclared target, self, chain either way.
+        assert!(schema.declare_aligned("other", "nope").is_err());
+        assert!(schema.declare_aligned("other", "other").is_err());
+        assert!(schema.declare_aligned("other", TYPES).is_err());
+        assert!(schema.declare_aligned(ATOMS, "other").is_err());
+        // Shared column, either at declaration or added afterwards.
+        schema.declare_column("more", X, DType::Float, &[]).unwrap();
+        assert!(schema.declare_aligned("more", ATOMS).is_err());
+        assert!(schema.declare_column(TYPES, X, DType::Float, &[]).is_err());
+        assert!(
+            schema
+                .declare_column(ATOMS, "type", DType::String, &[])
+                .is_err()
+        );
+        // A shaped block cannot align, nor an aligned one take a shape.
+        schema.declare_structural_shape("cells", &[1]).unwrap();
+        assert!(schema.declare_aligned("cells", ATOMS).is_err());
+        assert!(schema.declare_structural_shape(TYPES, &[3]).is_err());
+    }
+
+    #[test]
+    fn an_aligned_block_may_not_share_a_name_with_a_system_block() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        for group in ["/", "/system", "/system/atom_types"] {
+            GroupBuilder::new()
+                .build(store.clone(), group)
+                .unwrap()
+                .store_metadata()
+                .unwrap();
+        }
+        let err = FrameSequenceWriter::create(store, aligned_schema())
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(err.contains("system"), "{err}");
     }
 }

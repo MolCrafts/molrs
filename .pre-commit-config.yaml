@@ -1,20 +1,21 @@
-# prek: pre-commit = rustfmt + clippy of molcrafts-molrs only (one build
-# configuration). pre-push = rustdoc + binder/wasm clippy + unit + python + wasm
-# + capi. Each binder links molrs under its own feature set / target, i.e. one
-# more full compile of molrs, so none of them runs at commit time (operator
-# ruling 2026-09-25). Mirrors ci.yml (rust / wasm / python / capi) at push.
+# prek. Every gate is a `scripts/check.sh <gate>` call, the same call the CI
+# workflows make, on the toolchain rust-toolchain.toml pins for both. Change a
+# gate in check.sh, never here or in a workflow.
 #
-# Two rules hold this file together:
+# Three tiers, cheapest first:
+#   pre-commit  fmt + clippy of molcrafts-molrs: one incremental build, seconds.
+#   pre-push    doc + test, plus only the binder gates whose files changed.
+#               Each binder links molrs under its own feature set / target,
+#               i.e. one more full compile, so none runs at commit time
+#               (operator ruling 2026-09-25).
+#   CI only     `features` (16 extra feature-set compiles) and `package`.
+#               They rarely break and cost the most; run them by hand with
+#               `scripts/check.sh features package` when touching Cargo
+#               features or the crate's file list.
 #
-# 1. Every cargo invocation against the root workspace goes through a
-#    `cargo mrs-*` alias (.cargo/config.toml). Spelling the feature list by
-#    hand resolves a different feature set, which recompiles all 293k lines of
-#    molcrafts-molrs into a second ~420 MB incremental cache.
-# 2. Hooks are scoped with `files:` instead of `always_run: true`, so a change
-#    confined to one binder does not build the other four. `molrs/` (and the
-#    root build config) is in every scope, because every binder links it.
-#    `prek run --all-files` — what /mol:ship runs at the push tier — matches
-#    every scope, so the full CI-parity gate is unchanged.
+# Hooks are scoped with `files:` so a change confined to one binder does not
+# build the other four. `molrs/` and the root build config are in every scope,
+# because every binder links molrs. Full CI parity is `scripts/check.sh all`.
 
 default_install_hook_types: [pre-commit, pre-push]
 default_stages: [pre-commit, pre-push]
@@ -33,143 +34,85 @@ repos:
 
   - repo: local
     hooks:
-      # Formatting is cheap and root-independent, so it stays unconditional.
-      - id: cargo-fmt
-        name: rustfmt
-        entry: >-
-          bash -c 'set -euo pipefail;
-          cargo fmt --all --check;
-          for crate in molrs-ffi molrs-python molrs-wasm molrs-capi molrs-cxxapi; do
-          cargo fmt --manifest-path "$crate/Cargo.toml" --check;
-          done'
+      - id: fmt
+        name: check fmt
+        entry: scripts/check.sh fmt
         language: system
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
 
-      - id: clippy-molrs
-        name: clippy (molcrafts-molrs)
-        entry: cargo mrs-clippy -- -D warnings
+      - id: clippy
+        name: check clippy (molcrafts-molrs)
+        entry: scripts/check.sh clippy
         language: system
         pass_filenames: false
-        files: ^(molrs/|Cargo\.toml|\.cargo/|rust-toolchain\.toml)
+        files: &core ^(molrs/|Cargo\.toml|\.cargo/|rust-toolchain\.toml|scripts/check\.sh)
         stages: [pre-commit]
 
-      - id: rustdoc-molrs
-        name: rustdoc (molcrafts-molrs)
-        entry: sh -c 'RUSTDOCFLAGS="-D warnings" cargo mrs-doc'
+      - id: core
+        name: check doc test (molcrafts-molrs)
+        entry: scripts/check.sh doc test
         language: system
         pass_filenames: false
-        files: ^(molrs/|Cargo\.toml|\.cargo/|rust-toolchain\.toml)
+        files: *core
         stages: [pre-push]
 
-      - id: clippy-binders
-        name: clippy (ffi consumers)
-        entry: >-
-          sh -c 'cargo clippy --manifest-path molrs-cxxapi/Cargo.toml --all-targets -- -D warnings
-          && cargo clippy --manifest-path molrs-python/Cargo.toml --all-targets -- -D warnings
-          && cargo clippy --manifest-path molrs-capi/Cargo.toml --all-targets -- -D warnings'
+      - id: ffi
+        name: check ffi
+        entry: scripts/check.sh ffi
         language: system
         pass_filenames: false
-        files: ^(molrs/|molrs-ffi/|molrs-cxxapi/|molrs-python/|molrs-capi/|Cargo\.toml|\.cargo/|rust-toolchain\.toml)
+        files: ^(molrs/|molrs-ffi/|Cargo\.toml|\.cargo/|rust-toolchain\.toml|scripts/check\.sh)
         stages: [pre-push]
 
-      - id: clippy-wasm
-        name: clippy (wasm32)
-        entry: cargo clippy --manifest-path molrs-wasm/Cargo.toml --target wasm32-unknown-unknown --all-targets -- -D warnings
+      - id: cxx
+        name: check cxx
+        entry: scripts/check.sh cxx
         language: system
         pass_filenames: false
-        files: ^(molrs/|molrs-ffi/|molrs-wasm/|Cargo\.toml|\.cargo/|rust-toolchain\.toml)
+        files: ^(molrs/|molrs-ffi/|molrs-cxxapi/|Cargo\.toml|\.cargo/|rust-toolchain\.toml|scripts/check\.sh)
         stages: [pre-push]
 
-      # target/ is a cache, and a bloated one is slower than none: at 101 GB a
-      # one-file rebuild cost 44-79 s where a clean tree costs 6-7 s, because a
-      # 1.4 GB incremental cache has to come back over Lustre. The `du` is ~2 s,
-      # and cargo-sweep only touches artifacts nothing has read for two weeks.
+      - id: python
+        name: check python
+        entry: scripts/check.sh python
+        language: system
+        pass_filenames: false
+        files: ^(molrs/|molrs-ffi/|molrs-python/|Cargo\.toml|\.cargo/|rust-toolchain\.toml|scripts/check\.sh)
+        stages: [pre-push]
+
+      - id: capi
+        name: check capi
+        entry: scripts/check.sh capi
+        language: system
+        pass_filenames: false
+        files: ^(molrs/|molrs-ffi/|molrs-capi/|Cargo\.toml|\.cargo/|rust-toolchain\.toml|scripts/check\.sh)
+        stages: [pre-push]
+
+      - id: wasm
+        name: check wasm
+        entry: scripts/check.sh wasm
+        language: system
+        pass_filenames: false
+        files: ^(molrs/|molrs-ffi/|molrs-wasm/|Cargo\.toml|\.cargo/|rust-toolchain\.toml|scripts/check\.sh)
+        stages: [pre-push]
+
+      # Local housekeeping, not a gate. target/ is a cache, and a bloated one is
+      # slower than none: at 101 GB a one-file rebuild cost 44-79 s where a
+      # clean tree costs 6-7 s. cargo-sweep only touches artifacts nothing has
+      # read for two weeks.
       - id: target-sweep
         name: prune target/ past 20 GB
         entry: >-
           bash -c 'set -euo pipefail;
           [ -d target ] || exit 0;
-          size=$(du -sx --block-size=1G target | cut -f1);
+          size=$(du -sx --block-size=1G target/ | cut -f1);
           if [ "$size" -ge 20 ]; then
           echo "target/ is ${size}G - sweeping artifacts unread for 14 days";
           cargo sweep -t 14;
-          else
-          echo "target/ is ${size}G - under the 20G threshold";
           fi'
         language: system
         pass_filenames: false
         always_run: true
-        stages: [pre-push]
-
-      - id: cargo-test-unit
-        name: Rust tests (core)
-        # --lib does not run rustdoc examples, so a renamed public item would
-        # otherwise rot in a doc comment until someone opens docs.rs.
-        entry: sh -c 'cargo mrs-test && cargo mrs-doctest'
-        language: system
-        pass_filenames: false
-        files: ^(molrs/|Cargo\.toml|\.cargo/|rust-toolchain\.toml)
-        stages: [pre-push]
-
-      - id: cargo-test-binders
-        name: Rust tests (FFI + CXX + C API)
-        entry: >-
-          sh -c 'cargo test --manifest-path molrs-ffi/Cargo.toml
-          && cargo test --manifest-path molrs-cxxapi/Cargo.toml
-          && cargo test --manifest-path molrs-capi/Cargo.toml'
-        language: system
-        pass_filenames: false
-        files: ^(molrs/|molrs-ffi/|molrs-cxxapi/|molrs-capi/|Cargo\.toml|\.cargo/|rust-toolchain\.toml)
-        stages: [pre-push]
-
-      - id: python-tox
-        name: tox -e py
-        entry: >-
-          sh -c 'uv --directory molrs-python sync --no-install-project --extra dev
-          && uv --directory molrs-python run --no-sync tox -e py'
-        language: system
-        pass_filenames: false
-        files: ^(molrs/|molrs-ffi/|molrs-python/|Cargo\.toml|\.cargo/|rust-toolchain\.toml)
-        stages: [pre-push]
-
-      - id: wasm-pack
-        name: wasm-pack build
-        entry: >
-          bash -c 'set -euo pipefail;
-          command -v wasm-pack >/dev/null || cargo install wasm-pack;
-          command -v wasm-opt >/dev/null || {
-            echo "wasm-opt not found (needed for molrs-wasm release). Install: brew install binaryen" >&2;
-            exit 1;
-          };
-          rustup target add wasm32-unknown-unknown 2>/dev/null || true;
-          cd molrs-wasm;
-          wasm-pack build --release --target bundler --scope molcrafts --out-name molrs'
-        language: system
-        pass_filenames: false
-        files: ^(molrs/|molrs-ffi/|molrs-wasm/|Cargo\.toml|\.cargo/|rust-toolchain\.toml)
-        stages: [pre-push]
-
-      # The `;` after every line are load-bearing, not style: `>-` folds this
-      # block onto ONE line, so without them the whole thing became a single
-      # `set -euo pipefail cargo build … ctest …` command — `set` with a pile of
-      # positional arguments, which compiles nothing, runs no ctest, and exits 0
-      # unconditionally. This gate could not fail from the day it was written
-      # until 2026-08-23. Reproduce the old shape with:
-      #   sh -c 'set -euo pipefail echo NOPE false'; echo $?   # -> 0, no NOPE
-      # Profile and target dir are passed explicitly: CMake caches both, so a
-      # build-test/ configured once with CARGO_PROFILE=release kept rebuilding
-      # the release C library (~2 min) on every gate after that.
-      - id: capi-tests
-        name: C API ctest
-        entry: >-
-          bash -c 'set -euo pipefail;
-          cargo build --manifest-path molrs-capi/Cargo.toml;
-          cmake -S molrs-capi/tests/cpp -B molrs-capi/build-test -DCARGO_PROFILE=debug -DCARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}";
-          cmake --build molrs-capi/build-test;
-          ctest --test-dir molrs-capi/build-test --output-on-failure'
-        language: system
-        pass_filenames: false
-        files: ^(molrs/|molrs-ffi/|molrs-capi/|Cargo\.toml|\.cargo/|rust-toolchain\.toml)
         stages: [pre-push]

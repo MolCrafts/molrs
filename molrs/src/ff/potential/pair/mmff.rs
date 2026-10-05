@@ -417,12 +417,19 @@ pub fn mmff_vdw_ctor(sp: &Params, tp: &[(&str, &Params)], frame: &Frame) -> Resu
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let atoms = frame.get(ATOMS).ok_or("mmff_vdw: missing \"atoms\"")?;
     let atom_types = atoms
-        .get_string("type")
+        .get("type")
+        .and_then(|c| c.as_string())
         .ok_or("mmff_vdw: missing atom \"type\"")?;
     let pairs = frame.get(PAIRS).ok_or("mmff_vdw: missing \"pairs\"")?;
-    let ic = pairs.get_uint("atomi").ok_or("missing atomi")?;
-    let jc = pairs.get_uint("atomj").ok_or("missing atomj")?;
-    let is_14 = pairs.get_bool("is_14");
+    let ic = pairs
+        .get("atomi")
+        .and_then(|c| c.as_uint())
+        .ok_or("missing atomi")?;
+    let jc = pairs
+        .get("atomj")
+        .and_then(|c| c.as_uint())
+        .ok_or("missing atomj")?;
+    let is_14 = pairs.get("is_14").and_then(|c| c.as_bool());
 
     let n = ic.len();
     let (mut ai, mut aj, mut rs_vec, mut eps_vec) = (

@@ -35,7 +35,7 @@
 //!
 //! ## Output Frame
 //!
-//! - `"atoms"` block: `res_id` (uint), `resname` (str), `atom_name` (str),
+//! - `"atoms"` block: `res_id` (uint), `res_name` (str), `name` (str),
 //!   `element` (str, inferred from the atom name), `id` (uint),
 //!   `x`/`y`/`z` (F, **Å**), and optional `vx`/`vy`/`vz` (F, **Å/ps**).
 //! - `frame.simbox`: triclinic [`SimBox`] from the box-vector line, in Å.
@@ -430,8 +430,8 @@ pub fn read_gro_frame<R: BufRead>(reader: &mut R) -> Result<Option<Frame>> {
         }
     }
     insert_uint_col(&mut block, "res_id", resid)?;
-    insert_str_col(&mut block, "resname", resname)?;
-    insert_str_col(&mut block, "atom_name", atom_name)?;
+    insert_str_col(&mut block, "res_name", resname)?;
+    insert_str_col(&mut block, "name", atom_name)?;
     insert_str_col(&mut block, "element", element)?;
     insert_uint_col(&mut block, "id", atom_id)?;
     insert_float_col(&mut block, "x", x)?;
@@ -521,22 +521,25 @@ pub fn write_gro_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     writeln!(writer, "{:>5}", n)?;
 
     let xs = atoms
-        .get_float("x")
+        .get("x")
+        .and_then(|c| c.as_float())
         .ok_or_else(|| invalid_data("atoms.x missing"))?;
     let ys = atoms
-        .get_float("y")
+        .get("y")
+        .and_then(|c| c.as_float())
         .ok_or_else(|| invalid_data("atoms.y missing"))?;
     let zs = atoms
-        .get_float("z")
+        .get("z")
+        .and_then(|c| c.as_float())
         .ok_or_else(|| invalid_data("atoms.z missing"))?;
-    let vx = atoms.get_float("vx");
-    let vy = atoms.get_float("vy");
-    let vz = atoms.get_float("vz");
-    let resid = atoms.get_uint("res_id");
-    let resname = atoms.get_string("resname");
-    let atom_name = atoms.get_string("atom_name");
-    let element = atoms.get_string("element");
-    let atom_id = atoms.get_uint("id");
+    let vx = atoms.get("vx").and_then(|c| c.as_float());
+    let vy = atoms.get("vy").and_then(|c| c.as_float());
+    let vz = atoms.get("vz").and_then(|c| c.as_float());
+    let resid = atoms.get("res_id").and_then(|c| c.as_uint());
+    let resname = atoms.get("res_name").and_then(|c| c.as_string());
+    let atom_name = atoms.get("name").and_then(|c| c.as_string());
+    let element = atoms.get("element").and_then(|c| c.as_string());
+    let atom_id = atoms.get("id").and_then(|c| c.as_uint());
 
     for i in 0..n {
         let r = resid.map(|c| c[[i]]).unwrap_or(1);
@@ -666,9 +669,9 @@ mod tests {
             .unwrap();
         let atoms = frame.get("atoms").unwrap();
         assert_eq!(atoms.nrows(), Some(3));
-        let xs = atoms.get_float("x").unwrap();
+        let xs = atoms.get("x").and_then(|c| c.as_float()).unwrap();
         assert!((xs[[1]] - 1.0).abs() < 1e-9); // 0.100 nm → 1.0 Å
-        let names = atoms.get_string("atom_name").unwrap();
+        let names = atoms.get("name").and_then(|c| c.as_string()).unwrap();
         assert_eq!(names[[0]], "OW");
         assert_eq!(names[[1]], "HW1");
         assert!(frame.simbox.is_some());
@@ -682,7 +685,12 @@ mod tests {
         let frame = read_gro_frame(&mut Cursor::new(water_gro().into_bytes()))
             .unwrap()
             .unwrap();
-        let xs = frame.get("atoms").unwrap().get_float("x").unwrap();
+        let xs = frame
+            .get("atoms")
+            .unwrap()
+            .get("x")
+            .and_then(|c| c.as_float())
+            .unwrap();
         assert!((xs[[1]] - 1.0).abs() < 1e-9, "x[1] = {}", xs[[1]]);
         let h = frame.simbox.as_ref().unwrap().h_view().to_owned();
         assert!((h[[0, 0]] - 20.0).abs() < 1e-9, "box = {}", h[[0, 0]]);
@@ -700,7 +708,12 @@ mod tests {
         let frame = read_gro_frame(&mut Cursor::new(with_v.as_bytes().to_vec()))
             .unwrap()
             .unwrap();
-        let vx = frame.get("atoms").unwrap().get_float("vx").unwrap();
+        let vx = frame
+            .get("atoms")
+            .unwrap()
+            .get("vx")
+            .and_then(|c| c.as_float())
+            .unwrap();
         assert!((vx[[0]] - 1.0).abs() < 1e-9, "vx = {}", vx[[0]]);
     }
 
@@ -711,7 +724,12 @@ mod tests {
         let frame = read_gro_frame(&mut Cursor::new(water_gro().into_bytes()))
             .unwrap()
             .unwrap();
-        let elements = frame.get("atoms").unwrap().get_string("element").unwrap();
+        let elements = frame
+            .get("atoms")
+            .unwrap()
+            .get("element")
+            .and_then(|c| c.as_string())
+            .unwrap();
         assert_eq!(elements[[0]], "O", "OW is water oxygen");
         assert_eq!(elements[[1]], "H", "HW1 is a water hydrogen");
         assert_eq!(elements[[2]], "H");
@@ -736,7 +754,12 @@ mod tests {
         let frame = read_gro_frame(&mut Cursor::new(ions.as_bytes().to_vec()))
             .unwrap()
             .unwrap();
-        let elements = frame.get("atoms").unwrap().get_string("element").unwrap();
+        let elements = frame
+            .get("atoms")
+            .unwrap()
+            .get("element")
+            .and_then(|c| c.as_string())
+            .unwrap();
         assert_eq!(elements[[0]], "N");
         assert_eq!(elements[[1]], "C", "CA inside a residue is the C-alpha");
         assert_eq!(elements[[2]], "C");
@@ -787,8 +810,18 @@ mod tests {
         let mut buf = Vec::new();
         write_gro_frame(&mut buf, &frame).unwrap();
         let frame2 = read_gro_frame(&mut Cursor::new(&buf)).unwrap().unwrap();
-        let xs1 = frame.get("atoms").unwrap().get_float("x").unwrap();
-        let xs2 = frame2.get("atoms").unwrap().get_float("x").unwrap();
+        let xs1 = frame
+            .get("atoms")
+            .unwrap()
+            .get("x")
+            .and_then(|c| c.as_float())
+            .unwrap();
+        let xs2 = frame2
+            .get("atoms")
+            .unwrap()
+            .get("x")
+            .and_then(|c| c.as_float())
+            .unwrap();
         assert_eq!(xs1.len(), xs2.len());
         for i in 0..xs1.len() {
             assert!((xs1[[i]] - xs2[[i]]).abs() < 1e-3);

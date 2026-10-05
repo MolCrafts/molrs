@@ -37,8 +37,8 @@ pub struct SimBox {
     /// box (an undefined / zero-volume cell) — distinct from `pbc`, which only
     /// describes periodicity. A defined non-periodic box (e.g. a free-boundary
     /// bounding box) keeps `cell_defined = true`; only a box with no meaningful
-    /// cell at all (carrying the identity matrix purely so geometry ops are
-    /// no-ops) sets it `false`.
+    /// cell at all sets it `false`, and such a box always carries the identity
+    /// matrix (see [`SimBox::new_cell`]).
     cell_defined: bool,
 }
 
@@ -70,10 +70,29 @@ impl SimBox {
     }
 
     /// Construct a box, explicitly marking whether the cell is geometrically
-    /// defined. Pass `cell_defined = false` for a "no-cell" box (undefined /
-    /// zero-volume): supply the identity matrix so geometry ops degrade to
-    /// no-ops, and `volume` / `is_cell_defined` reflect the undefined cell.
+    /// defined.
+    ///
+    /// With `cell_defined = false` (a "no-cell" box) `h` is **ignored**: the
+    /// box carries the identity matrix, so it is never inverted and a writer
+    /// emits the identity. Any `h` is accepted there, a zero matrix included —
+    /// a reader hands over whatever `vectors` a store carries for an undefined
+    /// cell, and those numbers mean nothing. `volume` / `is_cell_defined`
+    /// reflect the undefined cell.
+    ///
+    /// # Errors
+    /// [`BoxError::SingularCell`] when the cell is defined and `h` is singular.
     pub fn new_cell(h: F3x3, origin: F3, pbc: Pbc3, cell_defined: bool) -> Result<Self, BoxError> {
+        if !cell_defined {
+            let identity = F3x3::eye(3);
+            return Ok(Self {
+                kind: detect_box_kind(&identity),
+                inv: identity.clone(),
+                h: identity,
+                origin,
+                pbc,
+                cell_defined,
+            });
+        }
         if let Some(inv) = inv3(&to_mat3(h.view())) {
             let inv: F3x3 = ndarray::arr2(&inv);
             let kind = detect_box_kind(&h);
@@ -1246,6 +1265,34 @@ mod tests {
         // geometry no-ops on the identity cell:
         let pts = array![[1.0, 2.0, 3.0]];
         assert_eq!(nocell.wrap(pts.view()), pts);
+    }
+
+    /// An undefined cell ignores its matrix: a zero (singular) or arbitrary
+    /// one is accepted, never inverted, and replaced by the identity.
+    #[test]
+    fn an_undefined_cell_ignores_its_vectors() {
+        for h in [
+            ndarray::Array2::zeros((3, 3)),
+            array![[5.0, 1.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 7.0]],
+        ] {
+            let nocell =
+                SimBox::new_cell(h, array![1.0, 2.0, 3.0], [true, true, true], false).unwrap();
+            assert!(!nocell.is_cell_defined());
+            assert_eq!(nocell.h_view(), ndarray::Array2::<F>::eye(3));
+            assert_eq!(nocell.inv_view(), ndarray::Array2::<F>::eye(3));
+            assert_eq!(nocell.origin_view(), array![1.0, 2.0, 3.0]);
+            assert_eq!(nocell.volume(), 0.0);
+        }
+        // A *defined* singular cell is still refused.
+        assert!(matches!(
+            SimBox::new_cell(
+                ndarray::Array2::zeros((3, 3)),
+                array![0.0, 0.0, 0.0],
+                [true, true, true],
+                true
+            ),
+            Err(BoxError::SingularCell)
+        ));
     }
 
     #[test]

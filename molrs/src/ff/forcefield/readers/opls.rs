@@ -198,7 +198,8 @@ struct NonbondedRow {
 /// recorded as the `lj/cut` style's `mixing` param for the kernel to apply.
 ///
 /// String metadata on each atom type matches molpy's reader contract:
-/// ``type_`` (type name), ``class_`` (chemical class), ``element``, ``def_``.
+/// ``type_`` (type name), ``class`` (chemical class), ``element``, ``smarts``
+/// (the XML ``def``).
 /// :class:`~molpy.typifier._matching.TypeClassIndex` keys bonded matching off
 /// these.
 ///
@@ -235,12 +236,12 @@ fn build_nonbonded(
             if let Some(q) = charge {
                 params.set("charge", q);
             }
-            // type_ / class_ / element / def_ are string params used by typifiers.
+            // type_ / class / element / smarts are string params used by typifiers.
             params.set_str("type_", &row.name);
             let strings = [
-                ("class_", &row.class),
+                ("class", &row.class),
                 ("element", &row.element),
-                ("def_", &row.def),
+                ("smarts", &row.def),
                 ("desc", &row.desc),
                 ("overrides", &row.overrides),
             ];
@@ -282,7 +283,7 @@ fn build_nonbonded(
 }
 
 /// Class-only bond/angle endpoints need a placeholder AtomType with
-/// ``type_="*"`` and ``class_=<class>`` so TypeClassIndex / class-keyed
+/// ``type_="*"`` and ``class=<class>`` so TypeClassIndex / class-keyed
 /// matching can resolve them (molpy XML reader parity).
 ///
 /// Placeholders are inserted in ascending class-name order (byte-wise `str`
@@ -356,7 +357,7 @@ fn ensure_class_wildcards(ff: &mut ForceField, atom_rows: &[AtomTypeRow]) -> Res
         atom.def_type(&class_name, &[], Params::new())
             .map_err(|e| e.to_string())?;
         atom.set_type_str_param(&class_name, "type_", "*");
-        atom.set_type_str_param(&class_name, "class_", &class_name);
+        atom.set_type_str_param(&class_name, "class", &class_name);
     }
     Ok(())
 }

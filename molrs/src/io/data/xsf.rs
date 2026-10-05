@@ -312,16 +312,19 @@ pub fn write_xsf_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     if let Some(atoms) = frame.get("atoms") {
         let n = atoms.nrows().unwrap_or(0);
         let xs = atoms
-            .get_float("x")
+            .get("x")
+            .and_then(|c| c.as_float())
             .ok_or_else(|| invalid_data("XSF write: atoms.x missing"))?;
         let ys = atoms
-            .get_float("y")
+            .get("y")
+            .and_then(|c| c.as_float())
             .ok_or_else(|| invalid_data("XSF write: atoms.y missing"))?;
         let zs = atoms
-            .get_float("z")
+            .get("z")
+            .and_then(|c| c.as_float())
             .ok_or_else(|| invalid_data("XSF write: atoms.z missing"))?;
-        let z_u = atoms.get_uint("atomic_number");
-        let z_i = atoms.get_int("atomic_number");
+        let z_u = atoms.get("atomic_number").and_then(|c| c.as_uint());
+        let z_i = atoms.get("atomic_number").and_then(|c| c.as_int());
 
         writeln!(writer, "PRIMCOORD")?;
         writeln!(writer, "       {n} 1")?;
@@ -375,7 +378,10 @@ PRIMCOORD
         let frame = read_xsf_from_reader(Cursor::new(text)).expect("parse");
         let atoms = frame.get("atoms").expect("atoms");
         assert_eq!(atoms.nrows(), Some(2));
-        let z = atoms.get_uint("atomic_number").unwrap();
+        let z = atoms
+            .get("atomic_number")
+            .and_then(|c| c.as_uint())
+            .unwrap();
         assert_eq!(z[[0]], 1);
         assert_eq!(z[[1]], 8);
         let sb = frame.simbox.as_ref().unwrap();
@@ -428,12 +434,14 @@ PRIMCOORD
         let z0 = frame
             .get("atoms")
             .unwrap()
-            .get_uint("atomic_number")
+            .get("atomic_number")
+            .and_then(|c| c.as_uint())
             .unwrap();
         let z1 = back
             .get("atoms")
             .unwrap()
-            .get_uint("atomic_number")
+            .get("atomic_number")
+            .and_then(|c| c.as_uint())
             .unwrap();
         assert_eq!(z0[[0]], z1[[0]]);
         assert_eq!(z0[[1]], z1[[1]]);

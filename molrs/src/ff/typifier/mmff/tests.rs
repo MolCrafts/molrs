@@ -88,7 +88,8 @@ mod tests {
         let types = frame
             .get("atoms")
             .unwrap()
-            .get_string("type")
+            .get("type")
+            .and_then(|c| c.as_string())
             .expect("atoms.type column");
         assert_eq!(types[0], "1", "C1 should be MMFF type 1 (CR)");
         assert_eq!(types[1], "1", "C2 should be MMFF type 1 (CR)");

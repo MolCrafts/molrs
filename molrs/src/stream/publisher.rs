@@ -746,7 +746,10 @@ mod tests {
         };
         let decoded = bytes_to_frame(&bytes, MessageFormat::MessagePack).expect("decode");
         assert!(decoded.contains_key("atoms"));
-        let x = decoded["atoms"].get_float("x").unwrap();
+        let x = decoded["atoms"]
+            .get("x")
+            .and_then(|c| c.as_float())
+            .unwrap();
         assert!((x[2] - 7.0).abs() < 1e-12);
 
         ws.close(None).await.ok();
@@ -826,7 +829,9 @@ mod tests {
             match tokio::time::timeout(Duration::from_millis(200), ws.next()).await {
                 Ok(Some(Ok(Message::Binary(b)))) => {
                     if let Ok(decoded) = bytes_to_frame(b.as_ref(), MessageFormat::MessagePack)
-                        && let Some(x) = decoded.get("atoms").and_then(|a| a.get_float("x"))
+                        && let Some(x) = decoded
+                            .get("atoms")
+                            .and_then(|a| a.get("x").and_then(|c| c.as_float()))
                         && (x[2] - 3.0).abs() < 1e-12
                     {
                         saw_latest = true;
@@ -872,7 +877,7 @@ mod tests {
 
         let msg = ws.next().await.expect("frame").expect("frame ok");
         let frame = bytes_to_frame(&msg.into_data(), MessageFormat::MessagePack).expect("decode");
-        let x = frame["atoms"].get_float("x").unwrap();
+        let x = frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
         assert!((x[2] - 7.0).abs() < 1e-12);
     }
 
@@ -931,7 +936,7 @@ mod tests {
         server.send(&sample_frame(3)).expect("send");
         let msg = ws.next().await.expect("frame").expect("frame ok");
         let frame = bytes_to_frame(&msg.into_data(), MessageFormat::MessagePack).expect("decode");
-        let x = frame["atoms"].get_float("x").unwrap();
+        let x = frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
         assert!((x[2] - 3.0).abs() < 1e-12);
     }
 
@@ -965,7 +970,7 @@ mod tests {
 
         let msg = ws.next().await.expect("frame").expect("frame ok");
         let frame = bytes_to_frame(&msg.into_data(), MessageFormat::MessagePack).expect("decode");
-        let x = frame["atoms"].get_float("x").unwrap();
+        let x = frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
         assert!((x[2] - 11.0).abs() < 1e-12);
 
         publisher.shutdown();
@@ -1032,7 +1037,7 @@ mod tests {
             .expect("frame")
             .expect("frame ok");
         let frame = bytes_to_frame(&msg.into_data(), MessageFormat::MessagePack).expect("decode");
-        let x = frame["atoms"].get_float("x").unwrap();
+        let x = frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
         assert!((x[2] - 5.0).abs() < 1e-12);
 
         publisher.shutdown();

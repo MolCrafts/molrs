@@ -1,0 +1,37 @@
+# The lock files are committed so a local gate and CI resolve the same
+# dependency versions. Dependabot keeps them current: one grouped PR per
+# ecosystem per week, gated by the same CI as any other change.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directories:
+      - "/"
+      - "/molrs-ffi"
+      - "/molrs-python"
+      - "/molrs-wasm"
+      - "/molrs-capi"
+      - "/molrs-cxxapi"
+    schedule:
+      interval: weekly
+    target-branch: dev
+    groups:
+      cargo:
+        patterns: ["*"]
+
+  - package-ecosystem: uv
+    directory: "/molrs-python"
+    schedule:
+      interval: weekly
+    target-branch: dev
+    groups:
+      uv:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    target-branch: dev
+    groups:
+      actions:
+        patterns: ["*"]

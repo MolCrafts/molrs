@@ -272,8 +272,14 @@ pub fn uff_lj_ctor(
     frame: &Frame,
 ) -> Result<Member, String> {
     let atoms = frame.get(ATOMS).ok_or("uff_lj: missing atoms")?;
-    let x1 = atoms.get_float("x1").ok_or("uff_lj: missing atoms.x1")?;
-    let d1 = atoms.get_float("D1").ok_or("uff_lj: missing atoms.D1")?;
+    let x1 = atoms
+        .get("x1")
+        .and_then(|c| c.as_float())
+        .ok_or("uff_lj: missing atoms.x1")?;
+    let d1 = atoms
+        .get("D1")
+        .and_then(|c| c.as_float())
+        .ok_or("uff_lj: missing atoms.D1")?;
     // `PotentialCompiler::compile` projects the force field's `special_bonds` 1-4
     // weight here. `E = D·((x/r)¹² − 2(x/r)⁶)` is linear in `D`, so scaling
     // the well depth is exactly scaling the pair.
@@ -282,7 +288,7 @@ pub fn uff_lj_ctor(
     let pairs = frame
         .get(PAIRS)
         .ok_or("uff_lj: missing pairs (call intramolecular_pairs first)")?;
-    let is_14 = pairs.get_bool("is_14");
+    let is_14 = pairs.get("is_14").and_then(|c| c.as_bool());
     if pairs.nrows().unwrap_or(0) == 0 {
         return Ok(Member::pair(UffVdW::compiled(
             vec![],
@@ -292,10 +298,12 @@ pub fn uff_lj_ctor(
         )));
     }
     let pi = pairs
-        .get_uint("atomi")
+        .get("atomi")
+        .and_then(|c| c.as_uint())
         .ok_or("uff_lj: pairs missing atomi")?;
     let pj = pairs
-        .get_uint("atomj")
+        .get("atomj")
+        .and_then(|c| c.as_uint())
         .ok_or("uff_lj: pairs missing atomj")?;
     let n = pi.len();
     let mut atom_i = Vec::with_capacity(n);
@@ -330,8 +338,14 @@ pub fn uff_lj_typed_ctor(
     frame: &Frame,
 ) -> Result<Member, String> {
     let atoms = frame.get(ATOMS).ok_or("uff_lj: missing atoms")?;
-    let x1 = atoms.get_float("x1").ok_or("uff_lj: missing atoms.x1")?;
-    let d1 = atoms.get_float("D1").ok_or("uff_lj: missing atoms.D1")?;
+    let x1 = atoms
+        .get("x1")
+        .and_then(|c| c.as_float())
+        .ok_or("uff_lj: missing atoms.x1")?;
+    let d1 = atoms
+        .get("D1")
+        .and_then(|c| c.as_float())
+        .ok_or("uff_lj: missing atoms.D1")?;
     Ok(Member::pair(UffVdW::typed(
         x1.iter().map(|&v| v as F).collect(),
         d1.iter().map(|&v| v as F).collect(),

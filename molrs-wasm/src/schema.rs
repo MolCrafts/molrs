@@ -82,3 +82,19 @@ pub fn schema_block_names() -> Vec<String> {
         .map(|b| b.name.to_string())
         .collect()
 }
+
+/// Column keys, groups, block names, and frame-meta keys.
+///
+/// The same tables as [`schema_document`], projected as constant names rather
+/// than dtypes. JavaScript reads this instead of transcribing the strings.
+///
+/// ```js
+/// const keys = molrs.keysDocument();
+/// keys.columns.find(c => c.constName === "ATOMI").value; // "atomi"
+/// keys.blocks.find(b => b.constName === "BONDS").value;  // "bonds"
+/// ```
+#[wasm_bindgen(js_name = keysDocument)]
+pub fn keys_document() -> Result<JsValue, JsValue> {
+    serde_wasm_bindgen::to_value(&molrs::store::keys::keys_document())
+        .map_err(|e| JsValue::from_str(&format!("keys: {e}")))
+}

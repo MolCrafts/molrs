@@ -125,6 +125,10 @@ trajectories eagerly.
 
 ::: molrs.io.write_mrec_trajectory
 
+::: molrs.io.read_mrec_forcefield
+
+::: molrs.io.write_mrec_forcefield
+
 ::: molrs.io.mrec_sections
 
 ::: molrs.io.read_mrec_meta

@@ -1052,7 +1052,8 @@ mod tests {
         let frame = world.to_frame().expect("the world emits a frame");
         let atoms = frame.get("atoms").expect("an atoms block");
         atoms
-            .get_uint(keys::MOL_ID)
+            .get(keys::MOL_ID)
+            .and_then(|c| c.as_uint())
             .expect("a uint mol_id column")
             .iter()
             .copied()
