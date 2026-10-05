@@ -703,3 +703,30 @@ TEST(Schema, KnownBlocksAreReportedAndTheBlockSetStaysOpen) {
     EXPECT_FALSE(molrs_schema_has_block("my_relation"));
     EXPECT_FALSE(molrs_schema_has_block(nullptr));
 }
+
+// ===== Regions ==============================================================
+
+TEST_F(MolrsTest, RegionCompositionIsDeclaredAndComposes) {
+    // and / or / not are declared in molrs.h, so a C++ caller links them.
+    const F origin[3] = {0, 0, 0};
+    MolrsRegionHandle outer, inner, hole, shell, both;
+    ASSERT_MOLRS_OK(molrs_region_sphere(origin, 3.0, &outer));
+    ASSERT_MOLRS_OK(molrs_region_sphere(origin, 2.0, &inner));
+    ASSERT_MOLRS_OK(molrs_region_not(inner, &hole));
+    ASSERT_MOLRS_OK(molrs_region_and(outer, hole, &shell));
+    ASSERT_MOLRS_OK(molrs_region_or(inner, shell, &both));
+
+    const F points[6] = {2.5, 0, 0, 1.0, 0, 0};
+    bool in_shell[2] = {false, false};
+    bool in_both[2] = {false, false};
+    ASSERT_MOLRS_OK(molrs_region_contains(shell, points, 2, in_shell));
+    ASSERT_MOLRS_OK(molrs_region_contains(both, points, 2, in_both));
+    EXPECT_TRUE(in_shell[0]);
+    EXPECT_FALSE(in_shell[1]);
+    EXPECT_TRUE(in_both[0]);
+    EXPECT_TRUE(in_both[1]);
+
+    for (MolrsRegionHandle h : {both, shell, hole, inner, outer}) {
+        EXPECT_MOLRS_OK(molrs_region_drop(h));
+    }
+}
