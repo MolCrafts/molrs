@@ -1,18 +1,27 @@
 # Rust Reference
 
-Rust API reference is built and hosted by docs.rs. The Zensical site links to
-those pages instead of copying signatures or rustdoc text.
+The Rust API reference is built and hosted by docs.rs. This site links to it
+instead of copying signatures or rustdoc text.
 
 | Crate | Reference |
 | --- | --- |
 | Library (single crate) | [`molcrafts-molrs`](https://docs.rs/molcrafts-molrs) |
-| CXX bridge (source / Atomiverse) | `molcrafts-molrs-cxxapi` (not on crates.io as a separate science package) |
+| C API (`libmolrs_capi` + `molrs.h`) | archives on [GitHub Releases](https://github.com/MolCrafts/molrs/releases); see [Path C](https://github.com/MolCrafts/molrs/blob/master/docs/interop.md#path-c--c-abi-libmolrs_capi) |
+| CXX bridge (Atomiverse) | `molcrafts-molrs-cxxapi`, built from source; not published to crates.io |
 
-Always compiled inside `molcrafts-molrs`: `core`, `perceive`, `builder`.
-Feature-gated modules: `io`, `smiles` (inside `io`), `ff`, `conformer`,
-`compute`, `voronoi`, `signal`, `md`, `stream`. `full` bundles every one of
-those except `stream`; the crate defaults are `full`, `stream`, `filesystem`,
-`rayon`.
+Always compiled inside `molcrafts-molrs`: `core`, `perceive`, `op` and the
+`optimize` engine. Feature-gated modules: `builder`, `io` (with `smiles`
+inside it), `ff`, `conformer`, `compute`, `voronoi`, `signal`, `md` and
+`stream`. `full` bundles every one of those except `stream`. Record files
+(`io::mrec`) need `zarr`, and their path-based doors need `filesystem`.
+The crate's default features are `rayon` only, so name what you use:
+
+```toml
+molrs = { package = "molcrafts-molrs", version = "0.15", features = ["full", "filesystem"] }
+```
+
+The docs.rs build enables `full`, `filesystem` and `stream`, so every module
+appears there.
 
 The Packmol-aligned packing workflow lives in the separate
 [`molpack`](https://github.com/MolCrafts/molpack) repository.

@@ -127,7 +127,7 @@ PyCapsules. That is a pointer bridge, so both sides must embed a
 `molrs_ffi::abi` is the single source of the contract; **never hard-code the
 capsule names**:
 
-- `abi::abi_line()` — `major.minor` of the embedded molrs (e.g. `"0.14"`).
+- `abi::abi_line()` — `major.minor` of the embedded molrs (e.g. `"0.15"`).
 - `abi::frameref_capsule_name()` / `abi::forcefield_capsule_name()` /
   `abi::regionref_capsule_name()` — `molrs.FrameRef/<line>` /
   `molrs.ForceFieldRef/<line>` / `molrs.RegionRef/<line>`. Versioned since
@@ -200,13 +200,13 @@ compiled.
 
 ```c
 MolrsRegionHandle outer, inner, hole, shell;
-molrs_region_sphere((const molrs_float_t[3]){0, 0, 0}, 3.0, &outer);
-molrs_region_sphere((const molrs_float_t[3]){0, 0, 0}, 2.0, &inner);
+molrs_region_sphere((const double[3]){0, 0, 0}, 3.0, &outer);
+molrs_region_sphere((const double[3]){0, 0, 0}, 2.0, &inner);
 molrs_region_not(inner, &hole);
 molrs_region_and(outer, hole, &shell);          /* a shell */
 
 bool inside[1];
-molrs_region_contains(shell, (const molrs_float_t[3]){2.5, 0, 0}, 1, inside);
+molrs_region_contains(shell, (const double[3]){2.5, 0, 0}, 1, inside);
 
 molrs_region_drop(shell);                       /* operands stay alive */
 molrs_region_drop(hole);
@@ -237,10 +237,11 @@ statically.
 
 Whichever path you take, molrs data follows these conventions:
 
-- **Atom indices are unsigned** (`u32`, the `UInt` dtype). Index columns —
+- **Atom indices are unsigned** (`u64`, the `UInt` dtype). Index columns —
   `atoms.id`, the `atomi`/`atomj`/`atomk`/`atoml` columns on bond/angle/dihedral
-  blocks — are read via `get_uint` (native) / `borrow_u` (handle). Do **not** read
-  them as signed.
+  blocks — are read via `block.get(key).and_then(|c| c.as_uint())` (native) /
+  `borrow_u` (handle). Do **not** read them as signed. Record readers refuse
+  one stored at a narrower width.
 - **Pairs block schema.** A non-bonded pair list is a block with `atomi`, `atomj`
   (uint) and `is_14` (bool) columns. This is the single pairs convention across the
   force field.
