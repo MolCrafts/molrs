@@ -131,6 +131,22 @@ trajectories eagerly.
 
 ::: molrs.io.read_mrec_meta
 
+### Record files (`molrs.io.mrec`)
+
+The [Record files guide](../guides/records.md) shows these in use.
+
+::: molrs.io.mrec.SequenceSchema
+
+::: molrs.io.mrec.TrajectoryWriter
+
+::: molrs.io.mrec.TrajectoryReader
+
+::: molrs.io.mrec.ForceFieldSection
+
+::: molrs.io.mrec.pack
+
+### Other formats
+
 ::: molrs.io.read_chgcar
 
 ::: molrs.io.read_cube

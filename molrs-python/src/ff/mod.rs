@@ -331,6 +331,8 @@ impl PyTypifier {
 /// pairs : sequence of (style, name, endpoints, params), optional
 ///     Pair rows to define.
 ///
+/// Notes
+/// -----
 /// An annotation is a ``str``, ``bool``, ``int`` or ``float`` (stamped, defines
 /// nothing), or a type: ``(style, name, endpoints, params)``, which stamps
 /// ``name`` and every param and defines the type ``name`` on ``endpoints``

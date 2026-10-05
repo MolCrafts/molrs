@@ -581,13 +581,13 @@ mod scalar_view_tests {
 ///
 /// ```c
 /// MolrsStatus molrs_block_set_F(MolrsBlockHandle* block, uint32_t col_key_id,
-///                                const molrs_float_t* data,
+///                                const F* data,
 ///                                const size_t* shape, size_t ndim);
 /// MolrsStatus molrs_block_set_I(MolrsBlockHandle* block, uint32_t col_key_id,
-///                                const molrs_int_t* data,
+///                                const int32_t* data,
 ///                                const size_t* shape, size_t ndim);
 /// MolrsStatus molrs_block_set_U(MolrsBlockHandle* block, uint32_t col_key_id,
-///                                const molrs_uint_t* data,
+///                                const uint64_t* data,
 ///                                const size_t* shape, size_t ndim);
 /// ```
 ///
@@ -686,11 +686,10 @@ impl_block_insert!(molrs_block_set_U, Idx, "uint");
 // Runtime width queries
 // ---------------------------------------------------------------------------
 
-/// Return the byte size of the primary float type (`molrs_float_t`).
+/// Return the byte size of the primary float type (`F`, `double`).
 ///
-/// Returns `4` by default (`f32`) or `8` with the `f64` feature.
-/// Use this at runtime to verify that the calling C code was compiled
-/// with matching type widths.
+/// Returns `8`: floats are `f64` only. Use this at runtime to verify that
+/// the calling C code was compiled against a header with matching widths.
 ///
 /// # C signature
 ///
@@ -702,9 +701,9 @@ pub extern "C" fn molrs_sizeof_F() -> usize {
     std::mem::size_of::<F>()
 }
 
-/// Return the byte size of the primary signed integer type (`molrs_int_t`).
+/// Return the byte size of the primary signed integer type (`int32_t`).
 ///
-/// Returns `4` by default (`i32`) or `8` with the `i64` feature.
+/// Returns `4` (`I` = `i32`).
 ///
 /// # C signature
 ///
@@ -716,7 +715,7 @@ pub extern "C" fn molrs_sizeof_I() -> usize {
     std::mem::size_of::<I>()
 }
 
-/// Return the byte size of the primary unsigned integer type (`molrs_uint_t`).
+/// Return the byte size of the primary unsigned integer type (`uint64_t`).
 ///
 /// Returns `8` (`Idx` = `u64`).
 ///

@@ -3070,7 +3070,7 @@ type Annotation = (
 class Match:
     """What a typifier's ``match`` assigns to one graph.
 
-    ``nodes`` is positional against ``graph.nodes``; ``links`` maps a relation
+    ``nodes`` is positional against ``graph.atoms``; ``links`` maps a relation
     class (``Bond``, ``Angle``, ``Dihedral``, ``Improper``) to rows positional
     against ``graph.links.exact_bucket(cls)`` — the kind's own rows, so an
     improper never shifts a dihedral position. An unknown kind raises

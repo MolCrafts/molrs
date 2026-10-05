@@ -2,7 +2,8 @@
 
 This quickstart follows a complete Python workflow: parse a molecule, generate
 three-dimensional coordinates, convert to a `Frame`, attach a simulation box,
-build a neighbor list, run RDF, evaluate MMFF94 energy, and write an XYZ file.
+build a neighbor list, run RDF, evaluate MMFF94 energy, and write the result
+to an XYZ file and a `*.mrec` record.
 
 The goal is not to memorize every class. The goal is to see the boundary
 between the graph representation (`Atomistic`) and the table representation
@@ -124,9 +125,10 @@ neighbor lists with the same cutoff and boundary assumptions for each frame.
 ## 6. Evaluate MMFF94 Energy
 
 Force-field evaluation starts from the molecular graph, not from arbitrary
-coordinate tables. The typifier creates a compiled potential set compatible
-with the graph. Coordinates are then extracted from the frame as a flat `3N`
-array.
+coordinate tables. It takes three steps: a typifier labels the graph and
+collects the parameters it assigned, the caller adds the non-bonded pair list,
+and `PotentialCompiler` turns the force field and the typed frame into
+potentials that can be evaluated.
 
 ```python
 typifier = molrs.ff.MMFF94Typifier()
@@ -134,31 +136,43 @@ typed = typifier.typify(mol3d)
 typed_frame = typed.to_frame()
 print("typed blocks:", typed_frame.keys())
 
-try:
-    # Non-bonded terms need an explicit pairs block (no optimizeGeometry sugar).
-    # forcefield() is a copy of exactly the types typify assigned.
-    ff = typifier.forcefield()
-    typed_frame["pairs"] = molrs.ff.intramolecular_pairs(typed_frame, ff)
-    potentials = molrs.ff.PotentialCompiler(ff).compile(typed_frame)
-    energy, forces = potentials.calc_energy_forces(typed_frame)
-    print("energy:", energy)
-    print("coords shape:", typed_frame.coords.shape)
-    print("forces shape:", forces.shape)
-except ValueError as exc:
-    print("potential build skipped:", exc)
+# forcefield() is a copy of exactly the types typify assigned.
+ff = typifier.forcefield()
+# Non-bonded terms need an explicit pairs block; the caller owns it.
+typed_frame["pairs"] = molrs.ff.intramolecular_pairs(typed_frame, ff)
+potentials = molrs.ff.PotentialCompiler(ff).compile(typed_frame)
+
+energy, forces = potentials.calc_energy_forces(typed_frame)
+print("energy:", energy)
+print("coords shape:", typed_frame.coords.shape)
+print("forces shape:", forces.shape)
 ```
 
-MMFF94 typing and potential compilation are separate steps on purpose. Typing
-gives a labeled graph and accumulates the definitions it assigned in the
-typifier's output: `forcefield()` returns a copy of it (`library()` is the full
-parameter set it matched against), and `typify` is its only writer.
-`PotentialCompiler(forcefield()).compile(frame)` is the shared compile path
-every force field uses (including UFF on Rust/WASM).
+Typing and compiling are separate steps on purpose. Typing gives a labeled
+graph and accumulates the definitions it assigned in the typifier's output:
+`forcefield()` returns a copy of it, `library()` is the full parameter set it
+matched against, and `typify` is its only writer.
+`PotentialCompiler(ff).compile(frame)` is the one compile path every force
+field uses, whether it came from a typifier or from a file.
+`PotentialCompiler(ff).defer()` returns potentials that bind the frame they
+are evaluated on, and `compile_typed(frame)` builds the neighbor-driven
+kernels MD runs on. Compiling is stricter than typing: every term must resolve
+to a supported parameter, so a molecule can type successfully while
+compilation still reports incomplete coverage.
+
+Coordinates and forces are both `(n_atoms, 3)`, so forces sum per atom
+directly. For an isolated molecule they cancel:
+
+```python
+print("force balance:", np.abs(forces.sum(axis=0)).max())
+```
 
 A typifier of your own subclasses `molrs.ff.typifier.Typifier` and implements
-only `match(graph)`, returning a `Match` of per-atom and per-link annotations;
-the base's `typify` copies the graph, stamps the match onto the copy and defines
-its types in the output:
+only `match(graph)`. It returns a `Match` with one mapping of annotations per
+atom (and optionally per bond, angle, …). A type annotation is
+`(style, name, endpoints, params)`; endpoints are empty for an atom type. The
+base class's `typify` copies the graph, stamps the match onto the copy and
+defines the types in its output force field:
 
 ```python
 from molrs.ff.typifier import Match, Typifier
@@ -167,29 +181,17 @@ from molrs.ff.typifier import Match, Typifier
 class EveryAtomX(Typifier):
     def match(self, graph):
         return Match(
-            [{"type": ("full", "X", {"mass": 12.0})} for _ in graph.nodes],
+            [{"type": ("full", "X", (), {"mass": 12.0})} for _ in graph.atoms],
             styles=[("atom", "full", {})],
         )
 
 
-typed = EveryAtomX().typify(mol3d)
-```
-`PotentialCompiler.defer()` returns potentials that bind the frame they are
-evaluated on, and `compile_typed(frame)` builds the neighbour-driven kernels MD
-runs on. Potential
-compilation is stricter because every term must resolve to a supported
-parameter — some molecules can typify successfully while compilation still
-reports incomplete coverage.
-
-When potential compilation succeeds, the two arrays have different shapes on
-purpose: coordinates go in flat as `(3 * n_atoms,)`, and forces come back as
-`(n_atoms, 3)`, ready to sum per atom:
-
-```python
-print("force balance:", np.abs(forces.sum(axis=0)).max())
+custom = EveryAtomX()
+custom.typify(mol3d)
+print([(s.category, s.name) for s in custom.forcefield().styles])
 ```
 
-## 7. Write an XYZ File
+## 7. Write Files
 
 The I/O layer writes frames. This is the final boundary where the graph-based
 work has become a portable coordinate table.
@@ -201,8 +203,15 @@ print("roundtrip atoms:", roundtrip["atoms"].nrows)
 ```
 
 The XYZ format stores coordinates and element symbols, but it does not preserve
-the full force-field state or every topology detail. Use richer formats or
-frame-sequence Zarr when a workflow needs trajectory data.
+the full force-field state or every topology detail. A
+[record file](../guides/records.md) (`*.mrec`) keeps all of it — every block
+and column at its dtype, typed metadata, the box, the force field, and whole
+trajectories:
+
+```python
+molrs.io.write_mrec("ethanol.mrec", typed_frame, forcefield=ff)
+print(sorted(molrs.io.mrec_sections("ethanol.mrec")))
+```
 
 ## Summary
 
@@ -213,4 +222,6 @@ This quickstart crossed the main molrs boundaries:
 - `to_frame` produced the columnar representation used by I/O and analysis.
 - `Box` supplied the boundary model for neighbor search.
 - `RDF` consumed an explicit neighbor list.
-- `MMFF94Typifier` compiled potentials for energy and force evaluation.
+- `MMFF94Typifier` typed the graph, and `PotentialCompiler` compiled its
+  force field into potentials for energy and force evaluation.
+- `write_xyz` and `write_mrec` wrote the result to disk.

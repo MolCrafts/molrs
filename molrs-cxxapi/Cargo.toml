@@ -40,7 +40,7 @@ zarr = ["molrs/filesystem"]
 # core only, so the set is spelled here: `full` + `rayon` (+ `filesystem` via
 # the `zarr` feature) — the same set molrs-capi links (build 2 in
 # .cargo/config.toml). Never `stream`.
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.15.0", default-features = false, features = ["full", "rayon"] }
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.15.0", default-features = false, features = ["full", "filesystem", "rayon"] }
 molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.15.0" }
 cxx = "1"
 ndarray = "0.17"

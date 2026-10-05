@@ -4,8 +4,11 @@
 
 WebAssembly bindings for the [molrs](https://github.com/MolCrafts/molrs) molecular modeling toolkit.
 
-Full documentation lives at <https://docs.molcrafts.org/molrs/>. The WASM
-reference is published at <https://docs.molcrafts.org/molrs/reference/wasm/>.
+Full documentation lives at <https://docs.molcrafts.org/molrs/>. The package
+ships its TypeScript declarations (`molrs.d.ts`); the
+[WASM reference page](https://docs.molcrafts.org/molrs/reference/wasm/) maps
+the main exports. Upgrading from 0.14? See the
+[migration guide](https://docs.molcrafts.org/molrs/migration/).
 
 ## Install
 
@@ -134,6 +137,13 @@ The Rust and Python bindings print the vocabulary with `schema.to_markdown()`.
 
 ## Trajectory stores (`*.mrec`)
 
+Records written by molrs in Python or Rust (see
+[Record files](https://docs.molcrafts.org/molrs/guides/records/)) read here
+from bytes. `readMrecFrame(files)` / `readMrecFrameFromZip(bytes)` return the
+`frame` section (or `undefined`), and `mrecSections(files)` lists the
+sections. Every reader decodes `zstd` and `shuffle`, so columns written with
+a declared precision read as they do natively.
+
 `TrajectoryReader` opens a MolRec trajectory (Zarr V3) and decodes one frame
 per call; consecutive frames of the same chunk are slices, not decodes.
 
@@ -185,7 +195,7 @@ needed.
 
 ### Variants (optional)
 
-Default features are `smiles`, `io`, `compute`, `conformer`, `voronoi`, and `stream`. To
+Default features are `smiles`, `io`, `compute`, `conformer`, `voronoi`, `stream`, and `builder`. To
 build a smaller wasm containing only a subset, use Cargo features:
 
 ```bash
