@@ -38,8 +38,6 @@ unspecified.
 
 ::: molrs.CoarseGrain
 
-::: molrs.Fragment
-
 ::: molrs.Graph
 
 ::: molrs.io.SmilesIR
@@ -54,8 +52,8 @@ unspecified.
 
 ## Transforms
 
-Rigid-body moves are methods of `Atomistic`, `CoarseGrain` and `Fragment`, not
-module functions: `translate(delta)`, `rotate(axis, angle, about=None)` and
+Rigid-body moves are methods of `Atomistic` and `CoarseGrain`, not module
+functions: `translate(delta)`, `rotate(axis, angle, about=None)` and
 `scale(factor, about=None)`. Each moves every node that has coordinates in
 place and returns the graph itself, so moves chain:
 `mol.translate([1, 0, 0]).rotate([0, 0, 1], 0.5).scale([2, 2, 2])`.
