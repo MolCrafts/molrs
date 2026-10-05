@@ -9,6 +9,7 @@
 //! ├── system/        frame-shaped group (topology / types)
 //! ├── frame/         frame-shaped group (snapshot)
 //! ├── trajectory/    the frame sequence — see [`crate::io::zarr::sequence`]
+//! ├── forcefield/    document attrs + one block group per style table
 //! ├── observables/   meta/<name> (semantics) + <name> (data)
 //! ├── method/        JSON attributes
 //! ├── status/        JSON attributes
@@ -56,6 +57,9 @@ use zarrs::node::{Node, NodeMetadata};
 use zarrs::storage::WritableStorageTraits;
 use zarrs::storage::{ReadableStorageTraits, ReadableWritableListableStorage};
 
+#[cfg(feature = "zarr")]
+use crate::io::zarr::forcefield_io::write_forcefield_group;
+use crate::io::zarr::forcefield_io::{FORCEFIELD_GROUP, read_forcefield_group};
 use crate::io::zarr::frame_io::{
     check_declared_references, join_path, read_column, read_frame_group,
 };
@@ -69,6 +73,7 @@ use crate::io::zarr::sequence::{FrameSequenceWriter, SequenceSchema};
 use crate::io::zarr::store::PositionalWriteStore;
 use molrs::MolRsError;
 use molrs::store::block::Column;
+use molrs::store::forcefield_section::ForceFieldSection;
 // Not `filesystem`-gated: the store-taking section door below names it in
 // every configuration, wasm included.
 use molrs::store::frame::Frame;
@@ -180,6 +185,9 @@ pub fn write_record_store(
             }
         }
         writer.close()?;
+    }
+    if let Some(forcefield) = &record.forcefield {
+        write_forcefield_group(&store, &join_path(prefix, FORCEFIELD_GROUP), forcefield)?;
     }
     if !record.observables.is_empty() {
         write_observables(&store, &join_path(prefix, "observables"), record)?;
@@ -551,6 +559,9 @@ pub fn read_record_store(store: ReadableWritableListableStorage) -> Result<MolRe
                 let sequence = FrameSequence::open(store.clone().readable_listable())?;
                 record.trajectory = Some(sequence.to_trajectory()?);
             }
+            FORCEFIELD_GROUP => {
+                record.forcefield = Some(read_forcefield_group(&store, &path)?);
+            }
             "observables" => read_observables(&store, &path, &mut record)?,
             "method" => record.method = read_json_group(&store, &path)?,
             "status" => record.status = read_json_group(&store, &path)?,
@@ -823,6 +834,78 @@ pub fn write_system_file(
         record.meta = meta.clone();
     }
     write_record_file(path, &record)
+}
+
+/// Write a force field as a record whose only state section is
+/// `forcefield`: a force-field package (`meta` + `forcefield/`).
+///
+/// Same path rules as [`write_record_file`]. The section is written as given —
+/// document verbatim, units unconverted — after
+/// [`ForceFieldSection::validate`] accepts it.
+///
+/// # Errors
+///
+/// The same errors as [`write_record_file`], and whatever
+/// [`ForceFieldSection::validate`] refuses.
+#[cfg(feature = "filesystem")]
+pub fn write_forcefield_file(
+    path: impl AsRef<Path>,
+    forcefield: &ForceFieldSection,
+    meta: Option<&JsonMap<String, JsonValue>>,
+) -> Result<(), MolRsError> {
+    let mut record = MolRec::new();
+    record.forcefield = Some(forcefield.clone());
+    if let Some(meta) = meta {
+        record.meta = meta.clone();
+    }
+    write_record_file(path, &record)
+}
+
+/// Read the `forcefield` section of a record at `path`, or `None` when the
+/// record carries none.
+///
+/// Decodes `meta` (for its version) and the `forcefield` section only. The
+/// section is validated ([`ForceFieldSection::validate`]); a table no style
+/// names, and a document key this build does not know, are kept.
+///
+/// # Errors
+///
+/// The path and `meta` errors of [`read_record_file`], a table that fails to
+/// decode, or a section the validation refuses.
+///
+/// # Examples
+///
+/// ```
+/// # fn main() -> Result<(), molrs::MolRsError> {
+/// use molrs::io::mrec::{read_forcefield_file, write_forcefield_file};
+///
+/// let dir = tempfile::tempdir().unwrap();
+/// let path = dir.path().join("ff.mrec");
+///
+/// let mut ff = molrs::ForceFieldSection::default();
+/// ff.document.insert("name".into(), "empty".into());
+/// ff.document.insert("units".into(), serde_json::json!({"preset": "real"}));
+/// ff.document.insert("styles".into(), serde_json::json!([]));
+/// write_forcefield_file(&path, &ff, None)?;
+///
+/// let loaded = read_forcefield_file(&path)?.expect("a forcefield section");
+/// assert_eq!(loaded.name(), Some("empty"));
+/// # Ok(())
+/// # }
+/// ```
+#[cfg(feature = "filesystem")]
+pub fn read_forcefield_file(
+    path: impl AsRef<Path>,
+) -> Result<Option<ForceFieldSection>, MolRsError> {
+    let store = open_record_store(path.as_ref())?;
+    read_meta(&store)?;
+    if !section_names_store(store.clone())?
+        .iter()
+        .any(|name| name == FORCEFIELD_GROUP)
+    {
+        return Ok(None);
+    }
+    read_forcefield_group(&store, &join_path("/", FORCEFIELD_GROUP)).map(Some)
 }
 
 /// Read the `frame` section of a record at `path`.
@@ -1948,5 +2031,188 @@ mod tests {
         atoms.store_metadata().unwrap();
         let err = read_system_file(&path).unwrap_err().to_string();
         assert!(err.contains("/frame/atoms"), "{err}");
+    }
+
+    fn string_column(values: &[&str]) -> Column {
+        Column::from_string(
+            ArrayD::from_shape_vec(
+                vec![values.len()],
+                values.iter().map(|v| v.to_string()).collect(),
+            )
+            .unwrap(),
+        )
+    }
+
+    /// A force field that exercises every corner of the layout: an
+    /// unconverted unit system, a percent-encoded style, a wildcard
+    /// endpoint, an absent parameter, string parameters, a zero-row table,
+    /// an unknown document key and a table no style names.
+    fn awkward_forcefield() -> ForceFieldSection {
+        let document = serde_json::json!({
+            "name": "awkward",
+            "units": {"length": "nm", "energy": "kJ/mol", "angle": "radian"},
+            "source": {"format": "gromacs-top", "uri": "ff.itp"},
+            "special_bonds": {"lj": [0.0, 0.0, 0.5], "coul": [0.0, 0.0, 0.8333]},
+            "styles": [
+                {"category": "atom", "style": "full"},
+                {"category": "dihedral", "style": "periodic"},
+                {"category": "pair", "style": "lj/cut/coul/long",
+                 "params": {"cutoff": 1.2, "mixing": "arithmetic"}},
+                {"category": "bond", "style": "mmff_bond"},
+            ],
+            "aromaticity_model": "OEAroModel_MDL",
+        });
+        let mut atoms = Block::new();
+        atoms
+            .insert_column("name", string_column(&["CT", "HC"]))
+            .unwrap();
+        atoms
+            .insert_column("class", string_column(&["CT", "HC"]))
+            .unwrap();
+        atoms
+            .insert_column("smarts", string_column(&["[C;X4]", ""]))
+            .unwrap();
+        atoms.set_validity("smarts", vec![true, false]).unwrap();
+        atoms
+            .insert_column("mass", float_column(&[12.011, 1.008]))
+            .unwrap();
+        atoms
+            .insert_column(
+                "atomic_number",
+                Column::from_uint(ArrayD::from_shape_vec(vec![2], vec![6u64, 1]).unwrap()),
+            )
+            .unwrap();
+        let mut dihedrals = Block::new();
+        for (column, values) in [
+            ("name", ["X-CT-CT-X", "HC-CT-CT-HC"]),
+            ("itom", ["", "HC"]),
+            ("jtom", ["CT", "CT"]),
+            ("ktom", ["CT", "CT"]),
+            ("ltom", ["", "HC"]),
+        ] {
+            dihedrals
+                .insert_column(column, string_column(&values))
+                .unwrap();
+        }
+        dihedrals
+            .insert_column("k1", float_column(&[0.6276, 0.8]))
+            .unwrap();
+        dihedrals
+            .insert_column("k2", float_column(&[0.25, 0.0]))
+            .unwrap();
+        dihedrals.set_validity("k2", vec![true, false]).unwrap();
+        let mut pairs = Block::new();
+        for (column, values) in [("name", ["CT"]), ("itom", ["CT"]), ("jtom", ["CT"])] {
+            pairs.insert_column(column, string_column(&values)).unwrap();
+        }
+        pairs.insert_column("sigma", float_column(&[0.35])).unwrap();
+        pairs
+            .insert_column("epsilon", float_column(&[0.276144]))
+            .unwrap();
+        let mut per_instance = Block::new();
+        for column in ["name", "itom", "jtom"] {
+            per_instance
+                .insert_column(column, string_column(&[]))
+                .unwrap();
+        }
+        let mut notes = Block::new();
+        notes
+            .insert_column("text", string_column(&["kept as unknown content"]))
+            .unwrap();
+
+        let mut tables = indexmap::IndexMap::new();
+        tables.insert("atom.full".to_owned(), atoms);
+        tables.insert("dihedral.periodic".to_owned(), dihedrals);
+        tables.insert("pair.lj%2Fcut%2Fcoul%2Flong".to_owned(), pairs);
+        tables.insert("bond.mmff_bond".to_owned(), per_instance);
+        tables.insert("notes.free%20text".to_owned(), notes);
+        ForceFieldSection {
+            document: document.as_object().unwrap().clone(),
+            tables,
+        }
+    }
+
+    fn same_block(a: &Block, b: &Block, what: &str) {
+        assert_eq!(a.nrows(), b.nrows(), "{what}: rows");
+        let mut keys_a: Vec<&str> = a.keys().collect();
+        let mut keys_b: Vec<&str> = b.keys().collect();
+        keys_a.sort_unstable();
+        keys_b.sort_unstable();
+        assert_eq!(keys_a, keys_b, "{what}: columns");
+        for key in keys_a {
+            assert_eq!(a.dtype(key), b.dtype(key), "{what}.{key}: dtype");
+            assert_eq!(a.validity(key), b.validity(key), "{what}.{key}: validity");
+            let (ca, cb) = (a.get(key).unwrap(), b.get(key).unwrap());
+            if let (Some(x), Some(y)) = (ca.as_float(), cb.as_float()) {
+                let bits = |v: &ArrayD<F>| v.iter().map(|f| f.to_bits()).collect::<Vec<_>>();
+                assert_eq!(bits(x), bits(y), "{what}.{key}: values, bit for bit");
+            }
+            if let (Some(x), Some(y)) = (ca.as_string(), cb.as_string()) {
+                assert_eq!(x, y, "{what}.{key}: strings");
+            }
+            if let (Some(x), Some(y)) = (ca.as_uint(), cb.as_uint()) {
+                assert_eq!(x, y, "{what}.{key}: u64");
+            }
+        }
+    }
+
+    #[test]
+    fn a_forcefield_section_round_trips_through_a_record() {
+        let ff = awkward_forcefield();
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("ff.mrec");
+        write_forcefield_file(&path, &ff, None).unwrap();
+
+        assert!(
+            section_names(&path)
+                .unwrap()
+                .contains(&"forcefield".to_owned())
+        );
+        let back = read_forcefield_file(&path).unwrap().unwrap();
+        assert_eq!(back.document, ff.document, "the document, key for key");
+        assert_eq!(
+            serde_json::to_string(&back.document).unwrap(),
+            serde_json::to_string(&ff.document).unwrap(),
+            "and in the stored key order"
+        );
+        let mut names: Vec<&String> = back.tables.keys().collect();
+        names.sort();
+        let mut want: Vec<&String> = ff.tables.keys().collect();
+        want.sort();
+        assert_eq!(names, want);
+        for (name, table) in &ff.tables {
+            same_block(table, &back.tables[name], name);
+        }
+
+        // The whole-record door carries it too, beside a system.
+        let mut record = MolRec::new();
+        record.system = Some(frame_with_atoms(2));
+        record.forcefield = Some(ff.clone());
+        let back = write_then_read(&record);
+        assert_eq!(back.forcefield.unwrap().document, ff.document);
+    }
+
+    #[test]
+    fn a_record_without_a_forcefield_reads_none() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("frame.mrec");
+        write_frame_file(&path, &frame_with_atoms(1), None, None).unwrap();
+        assert!(read_forcefield_file(&path).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_malformed_forcefield_is_refused_on_write_and_on_read() {
+        let mut ff = awkward_forcefield();
+        ff.tables.shift_remove("dihedral.periodic");
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("ff.mrec");
+        let err = write_forcefield_file(&path, &ff, None).unwrap_err();
+        assert!(err.to_string().contains("dihedral.periodic"), "{err}");
+
+        // Laid down behind the writer's back, the reader refuses it too.
+        write_forcefield_file(&path, &awkward_forcefield(), None).unwrap();
+        std::fs::remove_dir_all(path.join("forcefield").join("dihedral.periodic")).unwrap();
+        let err = read_forcefield_file(&path).unwrap_err();
+        assert!(err.to_string().contains("dihedral.periodic"), "{err}");
     }
 }

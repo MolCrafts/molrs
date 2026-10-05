@@ -1,7 +1,7 @@
 //! MolRec record aggregate — L2 of the MolRec contract.
 //!
 //! A [`MolRec`] is one openable root carrying `meta` plus at least one of
-//! `frame`, `system`, `trajectory`, or `status`. It is backend-neutral: this
+//! `frame`, `system`, `trajectory`, `forcefield`, or `status`. It is backend-neutral: this
 //! module is the in-memory aggregate, not a file format. Reading and writing
 //! a record as a `*.mrec` directory is `molrs::io::mrec` (feature `zarr`).
 //!
@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::MolRsError;
+use crate::store::forcefield_section::ForceFieldSection;
 use crate::store::frame::Frame;
 use crate::store::trajectory::{ObservableRecord, Trajectory};
 
@@ -115,6 +116,9 @@ pub struct MolRec {
     pub frame: Option<Frame>,
     /// Ordered frame sequence.
     pub trajectory: Option<Trajectory>,
+    /// The force field the record's types link into, as data: the document
+    /// and one table per style (molrec `docs/spec/forcefield.md`).
+    pub forcefield: Option<ForceFieldSection>,
     /// Named scientific results.
     pub observables: Observables,
 }
@@ -144,10 +148,11 @@ impl MolRec {
 
     /// Check the contract's minimum record shape.
     ///
-    /// A record must carry at least one of `frame`, `system`, `trajectory`, or
-    /// `status`; a Run-shaped record (`meta` + `status`) needs no frame, and a
-    /// trajectory is a state section in its own right — a sequence of frames
-    /// stands alone, without a snapshot beside it.
+    /// A record must carry at least one of `frame`, `system`, `trajectory`,
+    /// `forcefield`, or `status`; a Run-shaped record (`meta` + `status`) needs
+    /// no frame, a trajectory is a state section in its own right — a sequence
+    /// of frames stands alone, without a snapshot beside it — and `meta` +
+    /// `forcefield` is a force-field package.
     ///
     /// Shape only. This does not check that the sections agree with the Frame
     /// schema — that is `crate::store::schema::Validator`'s job, and the read
@@ -155,8 +160,9 @@ impl MolRec {
     ///
     /// # Errors
     ///
-    /// A [`MolRsError::Validation`] when all four of those sections are absent
-    /// (`status` counts as absent when it is empty). The check is transitive,
+    /// A [`MolRsError::Validation`] when all five of those sections are absent
+    /// (`status` counts as absent when it is empty), or whatever
+    /// [`ForceFieldSection::validate`] reports about the force field. The check is transitive,
     /// so it also returns whatever [`Trajectory::validate`] reports — a `step`
     /// or `time` axis whose length does not match the frame count, in a message
     /// naming that axis — and whatever each stored [`ObservableRecord`] reports
@@ -166,11 +172,16 @@ impl MolRec {
         if self.frame.is_none()
             && self.system.is_none()
             && self.trajectory.is_none()
+            && self.forcefield.is_none()
             && self.status.is_empty()
         {
             return Err(MolRsError::validation(
-                "record must carry at least one of 'frame', 'system', 'trajectory', or 'status'",
+                "record must carry at least one of 'frame', 'system', 'trajectory', \
+                 'forcefield', or 'status'",
             ));
+        }
+        if let Some(forcefield) = &self.forcefield {
+            forcefield.validate()?;
         }
         if let Some(traj) = &self.trajectory {
             traj.validate()?;
@@ -232,6 +243,25 @@ mod tests {
         assert!(rec.status.is_empty(), "no status section");
         rec.validate()
             .expect("a record whose only state section is a trajectory is valid");
+    }
+
+    #[test]
+    fn a_forcefield_only_record_validates_and_its_forcefield_is_checked() {
+        let mut rec = MolRec::new();
+        let mut ff = ForceFieldSection::default();
+        ff.document.insert("name".into(), "pkg".into());
+        rec.forcefield = Some(ff);
+        assert!(
+            rec.validate().is_err(),
+            "a document with no units is refused"
+        );
+        rec.forcefield
+            .as_mut()
+            .unwrap()
+            .document
+            .insert("units".into(), serde_json::json!({"preset": "real"}));
+        rec.validate()
+            .expect("meta + forcefield is a force-field package");
     }
 
     #[test]

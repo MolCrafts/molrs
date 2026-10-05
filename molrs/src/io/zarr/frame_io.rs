@@ -288,7 +288,11 @@ where
 {
     let data = a.as_standard_layout();
     let shape: Vec<u64> = data.shape().iter().map(|&s| s as u64).collect();
-    let chunk = chunking.chunks.unwrap_or_else(|| shape.clone());
+    // Unplanned, the array is one chunk. A chunk extent is nonzero, so an
+    // empty axis (a table of no rows) still gets a chunk of one.
+    let chunk = chunking
+        .chunks
+        .unwrap_or_else(|| shape.iter().map(|&n| n.max(1)).collect());
     // Sharding makes the array's own chunk extent the *shard*, and the planned
     // chunk the subchunk inside it.
     let (extent, subchunk) = match chunking.shards {
@@ -845,54 +849,69 @@ pub(crate) fn write_frame_group(
     // and still has a count, so it gets a group and an attribute rather than
     // being dropped -- silently losing it would be data loss.
     for (block_name, block) in frame.iter() {
-        if block.contains_key(VALIDITY_GROUP) {
-            return Err(MolRsError::zarr(format!(
-                "{VALIDITY_GROUP:?} names the validity masks of a block group; a column cannot \
-                 take it"
-            )));
-        }
-        let group_path = format!("{}/{}", prefix, block_name);
-        let mut block_attrs = serde_json::Map::new();
-        block_attrs.insert(
-            "count".to_string(),
-            serde_json::Value::from(block.nrows().unwrap_or(0)),
-        );
-        if let Some(shape) = block.structural_shape() {
-            block_attrs.insert(
-                "structural_shape".to_string(),
-                serde_json::Value::Array(
-                    shape
-                        .iter()
-                        .map(|n| serde_json::Value::from(*n as u64))
-                        .collect(),
-                ),
-            );
-        }
-        let targets: serde_json::Map<String, serde_json::Value> = block
-            .targets()
-            .map(|(column, target)| (column.to_string(), serde_json::Value::from(target)))
-            .collect();
-        if !targets.is_empty() {
-            block_attrs.insert(
-                TARGETS_ATTRIBUTE.to_string(),
-                serde_json::Value::Object(targets),
-            );
-        }
-        GroupBuilder::new()
-            .attributes(block_attrs)
-            .build(store.clone(), &group_path)?
-            .store_metadata()?;
-
-        for (col_name, col) in block.iter() {
-            let arr_path = format!("{}/{}/{}", prefix, block_name, col_name);
-            let canonical = canonical_width(col_name, col)?;
-            let col = canonical.as_ref().unwrap_or(col);
-            write_column(store, &arr_path, col, block.precision(col_name))?;
-        }
-        write_validity_group(store, &group_path, block)?;
+        write_block_group(store, &join_path(prefix, block_name), block)?;
     }
 
     Ok(())
+}
+
+/// Write one [`Block`] as the block group at `group_path`: its `count` (and
+/// `structural_shape`, `targets`) attributes, one array per column carrying
+/// its declared precision, and the `_validity` masks.
+///
+/// The one description of a block group every frame-shaped section shares —
+/// `frame`, `system` and the `forcefield` style tables
+/// ([`crate::io::zarr::forcefield_io`]).
+#[cfg(feature = "zarr")]
+pub(crate) fn write_block_group(
+    store: &ReadableWritableListableStorage,
+    group_path: &str,
+    block: &Block,
+) -> Result<(), MolRsError> {
+    if block.contains_key(VALIDITY_GROUP) {
+        return Err(MolRsError::zarr(format!(
+            "{VALIDITY_GROUP:?} names the validity masks of a block group; a column cannot \
+             take it"
+        )));
+    }
+    let mut block_attrs = serde_json::Map::new();
+    block_attrs.insert(
+        "count".to_string(),
+        serde_json::Value::from(block.nrows().unwrap_or(0)),
+    );
+    if let Some(shape) = block.structural_shape() {
+        block_attrs.insert(
+            "structural_shape".to_string(),
+            serde_json::Value::Array(
+                shape
+                    .iter()
+                    .map(|n| serde_json::Value::from(*n as u64))
+                    .collect(),
+            ),
+        );
+    }
+    let targets: serde_json::Map<String, serde_json::Value> = block
+        .targets()
+        .map(|(column, target)| (column.to_string(), serde_json::Value::from(target)))
+        .collect();
+    if !targets.is_empty() {
+        block_attrs.insert(
+            TARGETS_ATTRIBUTE.to_string(),
+            serde_json::Value::Object(targets),
+        );
+    }
+    GroupBuilder::new()
+        .attributes(block_attrs)
+        .build(store.clone(), group_path)?
+        .store_metadata()?;
+
+    for (col_name, col) in block.iter() {
+        let arr_path = join_path(group_path, col_name);
+        let canonical = canonical_width(col_name, col)?;
+        let col = canonical.as_ref().unwrap_or(col);
+        write_column(store, &arr_path, col, block.precision(col_name))?;
+    }
+    write_validity_group(store, group_path, block)
 }
 
 /// Write the validity masks of `block` into its reserved `_validity`
@@ -959,97 +978,108 @@ pub(crate) fn read_frame_group(
         if !matches!(child.metadata(), NodeMetadata::Group(_)) {
             continue;
         }
-        let mut block = Block::new();
-        let block_node = Node::open(store, child.path().as_str())?;
-        for col_child in block_node.children() {
-            if !matches!(col_child.metadata(), NodeMetadata::Array(_)) {
-                continue;
-            }
-            let col_path = col_child.path().as_str();
-            let col_name = col_path.rsplit('/').next().unwrap_or("");
-            // A frame group's column is read whole: the array *is* the column.
-            let array = Array::open(store.clone(), col_path)?;
-            let whole = ArraySubset::new_with_shape(array.shape().to_vec());
-            let col = read_column_array(&array, &whole)?;
-            insert_column_into_block(&mut block, col_name, col)?;
-            // The declared precision rides on the array. The values are read
-            // as stored: a reader neither re-rounds nor checks the grid.
-            if let Some(p) = array.attributes().get(PRECISION_ATTRIBUTE) {
-                let p = p.as_f64().ok_or_else(|| {
-                    MolRsError::zarr(format!(
-                        "{col_path} carries a {PRECISION_ATTRIBUTE} attribute that is not a \
-                         number: {p}"
-                    ))
-                })?;
-                block
-                    .set_precision(col_name, p)
-                    .map_err(|e| MolRsError::zarr(format!("{col_path}: {e}")))?;
-            }
-        }
-        // `count` is required: a block with no columns still has a row count,
-        // and the columns must agree with it.
-        let group = zarrs::group::Group::open(store.clone(), child.path().as_str())?;
-        let attrs = group.attributes();
-        let count = match attrs.get("count") {
-            Some(count) => count.as_u64().ok_or_else(|| {
-                MolRsError::zarr(format!(
-                    "block {child_name:?}: count must be a non-negative integer, found {count}"
-                ))
-            })? as usize,
-            None => {
-                return Err(MolRsError::zarr(format!(
-                    "block {child_name:?} carries no count attribute; a block group states its \
-                     row count"
-                )));
-            }
-        };
-        if block.is_empty() {
-            block.resize(count).map_err(|e| {
-                MolRsError::zarr(format!("block {child_name:?} count={count}: {e}"))
-            })?;
-        } else if block.nrows() != Some(count) {
-            return Err(MolRsError::zarr(format!(
-                "row_count_mismatch: block {child_name:?} count={count}, columns have {}",
-                block.nrows().unwrap_or(0)
-            )));
-        }
-        if let Some(shape) = attrs.get("structural_shape").and_then(|v| v.as_array()) {
-            let shape: Vec<usize> = shape
-                .iter()
-                .filter_map(|v| v.as_u64().map(|n| n as usize))
-                .collect();
-            if !shape.is_empty() {
-                block.set_shape(&shape).map_err(|e| {
-                    MolRsError::zarr(format!(
-                        "block {child_name:?} structural_shape {shape:?}: {e}"
-                    ))
-                })?;
-            }
-        }
-        if let Some(targets) = attrs.get(TARGETS_ATTRIBUTE) {
-            let targets = targets.as_object().ok_or_else(|| {
-                MolRsError::zarr(format!(
-                    "block {child_name:?}: {TARGETS_ATTRIBUTE} must be an object, found {targets}"
-                ))
-            })?;
-            for (column, target) in targets {
-                let target = target.as_str().ok_or_else(|| {
-                    MolRsError::zarr(format!(
-                        "block {child_name:?}: target of {column:?} must be a string, found \
-                         {target}"
-                    ))
-                })?;
-                block
-                    .set_target(column, target)
-                    .map_err(|e| MolRsError::zarr(format!("block {child_name:?} targets: {e}")))?;
-            }
-        }
-        read_validity_group(store, child.path().as_str(), child_name, &mut block)?;
+        let block = read_block_group(store, child.path().as_str(), child_name)?;
         frame.insert(child_name, block);
     }
 
     check_local_references(&frame, prefix)?;
     Ok(frame)
+}
+
+/// Read the block group at `group_path` (named `child_name` in messages)
+/// back into a [`Block`]: the inverse of [`write_block_group`].
+pub(crate) fn read_block_group(
+    store: &ReadableWritableListableStorage,
+    group_path: &str,
+    child_name: &str,
+) -> Result<Block, MolRsError> {
+    let mut block = Block::new();
+    let block_node = Node::open(store, group_path)?;
+    for col_child in block_node.children() {
+        if !matches!(col_child.metadata(), NodeMetadata::Array(_)) {
+            continue;
+        }
+        let col_path = col_child.path().as_str();
+        let col_name = col_path.rsplit('/').next().unwrap_or("");
+        // A frame group's column is read whole: the array *is* the column.
+        let array = Array::open(store.clone(), col_path)?;
+        let whole = ArraySubset::new_with_shape(array.shape().to_vec());
+        let col = read_column_array(&array, &whole)?;
+        insert_column_into_block(&mut block, col_name, col)?;
+        // The declared precision rides on the array. The values are read
+        // as stored: a reader neither re-rounds nor checks the grid.
+        if let Some(p) = array.attributes().get(PRECISION_ATTRIBUTE) {
+            let p = p.as_f64().ok_or_else(|| {
+                MolRsError::zarr(format!(
+                    "{col_path} carries a {PRECISION_ATTRIBUTE} attribute that is not a \
+                     number: {p}"
+                ))
+            })?;
+            block
+                .set_precision(col_name, p)
+                .map_err(|e| MolRsError::zarr(format!("{col_path}: {e}")))?;
+        }
+    }
+    // `count` is required: a block with no columns still has a row count,
+    // and the columns must agree with it.
+    let group = zarrs::group::Group::open(store.clone(), group_path)?;
+    let attrs = group.attributes();
+    let count = match attrs.get("count") {
+        Some(count) => count.as_u64().ok_or_else(|| {
+            MolRsError::zarr(format!(
+                "block {child_name:?}: count must be a non-negative integer, found {count}"
+            ))
+        })? as usize,
+        None => {
+            return Err(MolRsError::zarr(format!(
+                "block {child_name:?} carries no count attribute; a block group states its \
+                 row count"
+            )));
+        }
+    };
+    if block.is_empty() {
+        block
+            .resize(count)
+            .map_err(|e| MolRsError::zarr(format!("block {child_name:?} count={count}: {e}")))?;
+    } else if block.nrows() != Some(count) {
+        return Err(MolRsError::zarr(format!(
+            "row_count_mismatch: block {child_name:?} count={count}, columns have {}",
+            block.nrows().unwrap_or(0)
+        )));
+    }
+    if let Some(shape) = attrs.get("structural_shape").and_then(|v| v.as_array()) {
+        let shape: Vec<usize> = shape
+            .iter()
+            .filter_map(|v| v.as_u64().map(|n| n as usize))
+            .collect();
+        if !shape.is_empty() {
+            block.set_shape(&shape).map_err(|e| {
+                MolRsError::zarr(format!(
+                    "block {child_name:?} structural_shape {shape:?}: {e}"
+                ))
+            })?;
+        }
+    }
+    if let Some(targets) = attrs.get(TARGETS_ATTRIBUTE) {
+        let targets = targets.as_object().ok_or_else(|| {
+            MolRsError::zarr(format!(
+                "block {child_name:?}: {TARGETS_ATTRIBUTE} must be an object, found {targets}"
+            ))
+        })?;
+        for (column, target) in targets {
+            let target = target.as_str().ok_or_else(|| {
+                MolRsError::zarr(format!(
+                    "block {child_name:?}: target of {column:?} must be a string, found \
+                     {target}"
+                ))
+            })?;
+            block
+                .set_target(column, target)
+                .map_err(|e| MolRsError::zarr(format!("block {child_name:?} targets: {e}")))?;
+        }
+    }
+    read_validity_group(store, group_path, child_name, &mut block)?;
+    Ok(block)
 }
 
 /// A frame-shaped group's `meta` document from its attribute map.
