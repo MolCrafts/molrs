@@ -380,6 +380,15 @@ short "Also new" list at the end of each section.
   literals.
 - **`LAMMPSDataReader` refuses unknown sections.** Opt out per section with
   `.with_skipped_section("Ellipsoids")`.
+- **A LAMMPS dump `type` field holding type labels reads as `type`.** A
+  numeric `type` field is still the `type_id` column; a non-numeric one
+  (`dump_modify … types labels`) is now the string `type` column, where 0.14
+  stored the strings under `type_id`. `write_lammps_dump` writes the `type`
+  field from `type_id` when the frame has it and from the `type` labels
+  otherwise, never both, and puts it after `id`. It formats each value from
+  its column's stored dtype and refuses a column a dump field cannot hold
+  (complex, more than one value per row, a string that is empty or contains
+  whitespace) instead of writing a blank or placeholder.
 - **`stream::Publisher::send_async` → `send`.**
 - **`MetaValue::to_attr_value` is removed.** Use
   `MetaValue::to_typed_json` (typed JSON form) and
@@ -669,6 +678,9 @@ short "Also new" list at the end of each section.
   top-level `float("nan")` is an `f64` value and is kept.
   `SequenceSchema.declare_meta_with_fill` infers an untagged fill the way
   `frame.meta` does, so a NaN fill is an `f64` fill.
+- **A labelled LAMMPS dump `type` field reads as `atoms["type"]`**, not
+  `atoms["type_id"]`; see the Rust crate's I/O entry, which also covers
+  `write_lammps_trajectory`.
 - **Trajectory `time` has no unit.** The `TrajectoryReader.time` and
   `TrajectoryWriter.append(time=)` docs no longer say fs. A record does not
   store a unit for time; the producer's convention applies.

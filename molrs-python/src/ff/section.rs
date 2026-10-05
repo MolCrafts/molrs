@@ -29,11 +29,14 @@ use crate::helpers::{molrs_error_to_pyerr, py_value_err};
 /// :meth:`molrs.ff.ForceField.from_section` turns one into a force field
 /// molrs can compile.
 ///
-/// Args:
-///     document: The document (``name``, ``units``, ``styles``, …) — a
-///         ``dict`` or any mapping of JSON values.
-///     tables: Block name → :class:`~molrs.Block` (the style tables, at
-///         :meth:`block_name` of their style, and any other block).
+/// Parameters
+/// ----------
+/// document
+///     The document (``name``, ``units``, ``styles``, …) — a
+///     ``dict`` or any mapping of JSON values.
+/// tables
+///     Block name → :class:`~molrs.Block` (the style tables, at
+///     :meth:`block_name` of their style, and any other block).
 ///
 /// Nothing is checked on construction; :meth:`validate` checks the chapter's
 /// rules, and every writer runs it.
@@ -119,10 +122,12 @@ impl PyForceFieldSection {
 
     /// Check the section against the ``forcefield`` chapter.
     ///
-    /// Raises:
-    ///     ValueError: Naming the first rule broken (units, a duplicate
-    ///         style, a missing table, a duplicate or null type name, the
-    ///         wrong endpoint columns, a parameter dtype, …).
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     Naming the first rule broken (units, a duplicate
+    ///     style, a missing table, a duplicate or null type name, the
+    ///     wrong endpoint columns, a parameter dtype, …).
     fn validate(&self) -> PyResult<()> {
         self.inner.validate().map_err(molrs_error_to_pyerr)
     }
@@ -143,10 +148,12 @@ impl PyForceField {
     /// The units are the declared (or default ``real``) preset, stated
     /// beside its quantities; each style's types become its table's rows.
     ///
-    /// Raises:
-    ///     ValueError: When the force field has no section form (units that
-    ///         are no preset, a param that is a number in one type and a
-    ///         string in another, …).
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     When the force field has no section form (units that
+    ///     are no preset, a param that is a number in one type and a
+    ///     string in another, …).
     fn to_section(&self) -> PyResult<PyForceFieldSection> {
         let inner = self.inner.to_section().map_err(py_value_err)?;
         Ok(PyForceFieldSection { inner })
@@ -155,10 +162,12 @@ impl PyForceField {
     /// The force field a ``forcefield`` section describes. Its units become
     /// the force field's declared units; nothing is converted.
     ///
-    /// Raises:
-    ///     ValueError: When the section is invalid, or molrs cannot hold it:
-    ///         a category outside atom/bond/angle/dihedral/improper/pair,
-    ///         units that are no preset, a smirks-keyed style.
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     When the section is invalid, or molrs cannot hold it:
+    ///     a category outside atom/bond/angle/dihedral/improper/pair,
+    ///     units that are no preset, a smirks-keyed style.
     #[staticmethod]
     fn from_section(section: PyRef<'_, PyForceFieldSection>) -> PyResult<PyForceField> {
         let inner = ForceField::from_section(&section.inner).map_err(py_value_err)?;

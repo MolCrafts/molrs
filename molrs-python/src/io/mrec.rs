@@ -25,27 +25,36 @@ use pyo3::types::{PyAny, PyDict, PyFrozenSet};
 
 /// Write a snapshot as a record whose only state section is ``frame``.
 ///
-/// Args:
-///     path: Destination filesystem path.
-///     frame: In-memory :class:`~molrs.Frame` to persist.
-///     system: Optional system-definition :class:`~molrs.Frame` written
-///         beside the snapshot as the ``system/`` section.
-///     meta: The record's identity document, written to ``meta/`` with
-///         ``molrec_version`` stamped in: a ``dict``, a
-///         :class:`~molrs.MetaDocument`, or any mapping (``frame.meta``
-///         included). Nested tuples and documents are JSON arrays and objects.
-///     forcefield: Optional force field written beside them as the
-///         ``forcefield/`` section: a :class:`~molrs.io.mrec.ForceFieldSection`
-///         as given, or a :class:`~molrs.ff.ForceField` through its
-///         :meth:`~molrs.ff.ForceField.to_section`.
+/// Parameters
+/// ----------
+/// path
+///     Destination filesystem path.
+/// frame
+///     In-memory :class:`~molrs.Frame` to persist.
+/// system
+///     Optional system-definition :class:`~molrs.Frame` written
+///     beside the snapshot as the ``system/`` section.
+/// meta
+///     The record's identity document, written to ``meta/`` with
+///     ``molrec_version`` stamped in: a ``dict``, a
+///     :class:`~molrs.MetaDocument`, or any mapping (``frame.meta``
+///     included). Nested tuples and documents are JSON arrays and objects.
+/// forcefield
+///     Optional force field written beside them as the
+///     ``forcefield/`` section: a :class:`~molrs.io.mrec.ForceFieldSection`
+///     as given, or a :class:`~molrs.ff.ForceField` through its
+///     :meth:`~molrs.ff.ForceField.to_section`.
 ///
-/// Raises:
-///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, a section
-///         fails to encode, or the force field is invalid or has no section
-///         form.
-///     TypeError: If ``meta`` is not a mapping or holds a value JSON cannot,
-///         or ``forcefield`` is neither a ``ForceField`` nor a
-///         ``ForceFieldSection``.
+/// Raises
+/// ------
+/// ValueError
+///     If ``path`` uses a retired ``.zarr`` suffix, a section
+///     fails to encode, or the force field is invalid or has no section
+///     form.
+/// TypeError
+///     If ``meta`` is not a mapping or holds a value JSON cannot,
+///     or ``forcefield`` is neither a ``ForceField`` nor a
+///     ``ForceFieldSection``.
 #[pyfunction]
 #[pyo3(signature = (path, frame, system=None, meta=None, forcefield=None))]
 pub fn write_mrec(
@@ -63,25 +72,33 @@ pub fn write_mrec(
 
 /// Write a topology as a record whose only state section is ``system``.
 ///
-/// Args:
-///     path: Destination filesystem path.
-///     system: In-memory :class:`~molrs.Frame` to persist as ``system/``.
-///     meta: The record's identity document, written to ``meta/`` with
-///         ``molrec_version`` stamped in: a ``dict``, a
-///         :class:`~molrs.MetaDocument`, or any mapping (``frame.meta``
-///         included). Nested tuples and documents are JSON arrays and objects.
-///     forcefield: Optional force field the system's types link into,
-///         written as the ``forcefield/`` section: a
-///         :class:`~molrs.io.mrec.ForceFieldSection` or a
-///         :class:`~molrs.ff.ForceField`.
+/// Parameters
+/// ----------
+/// path
+///     Destination filesystem path.
+/// system
+///     In-memory :class:`~molrs.Frame` to persist as ``system/``.
+/// meta
+///     The record's identity document, written to ``meta/`` with
+///     ``molrec_version`` stamped in: a ``dict``, a
+///     :class:`~molrs.MetaDocument`, or any mapping (``frame.meta``
+///     included). Nested tuples and documents are JSON arrays and objects.
+/// forcefield
+///     Optional force field the system's types link into,
+///     written as the ``forcefield/`` section: a
+///     :class:`~molrs.io.mrec.ForceFieldSection` or a
+///     :class:`~molrs.ff.ForceField`.
 ///
-/// Raises:
-///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, a section
-///         fails to encode, or the force field is invalid or has no section
-///         form.
-///     TypeError: If ``meta`` is not a mapping or holds a value JSON cannot,
-///         or ``forcefield`` is neither a ``ForceField`` nor a
-///         ``ForceFieldSection``.
+/// Raises
+/// ------
+/// ValueError
+///     If ``path`` uses a retired ``.zarr`` suffix, a section
+///     fails to encode, or the force field is invalid or has no section
+///     form.
+/// TypeError
+///     If ``meta`` is not a mapping or holds a value JSON cannot,
+///     or ``forcefield`` is neither a ``ForceField`` nor a
+///     ``ForceFieldSection``.
 #[pyfunction]
 #[pyo3(signature = (path, system, meta=None, forcefield=None))]
 pub fn write_mrec_system(
@@ -98,18 +115,25 @@ pub fn write_mrec_system(
 /// Write a force field as a record whose only state section is
 /// ``forcefield``: a force-field package (``meta`` + ``forcefield/``).
 ///
-/// Args:
-///     path: Destination filesystem path.
-///     forcefield: A :class:`~molrs.io.mrec.ForceFieldSection`, written as
-///         given, or a :class:`~molrs.ff.ForceField`, written through its
-///         :meth:`~molrs.ff.ForceField.to_section`.
-///     meta: The record's identity document (see :func:`write_mrec`).
+/// Parameters
+/// ----------
+/// path
+///     Destination filesystem path.
+/// forcefield
+///     A :class:`~molrs.io.mrec.ForceFieldSection`, written as
+///     given, or a :class:`~molrs.ff.ForceField`, written through its
+///     :meth:`~molrs.ff.ForceField.to_section`.
+/// meta
+///     The record's identity document (see :func:`write_mrec`).
 ///
-/// Raises:
-///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, or the force
-///         field is invalid or has no section form.
-///     TypeError: If ``meta`` is not a mapping, or ``forcefield`` is neither a
-///         ``ForceField`` nor a ``ForceFieldSection``.
+/// Raises
+/// ------
+/// ValueError
+///     If ``path`` uses a retired ``.zarr`` suffix, or the force
+///     field is invalid or has no section form.
+/// TypeError
+///     If ``meta`` is not a mapping, or ``forcefield`` is neither a
+///     ``ForceField`` nor a ``ForceFieldSection``.
 #[pyfunction]
 #[pyo3(signature = (path, forcefield, meta=None))]
 pub fn write_mrec_forcefield(
@@ -141,18 +165,25 @@ fn write_record(path: &std::path::Path, record: &molrs::MolRec) -> PyResult<()> 
 
 /// Write a trajectory as a record whose only state section is ``trajectory``.
 ///
-/// Args:
-///     path: Destination filesystem path.
-///     traj: In-memory :class:`~molrs.Trajectory` to persist.
-///     meta: The record's identity document, written to ``meta/`` with
-///         ``molrec_version`` stamped in: a ``dict``, a
-///         :class:`~molrs.MetaDocument`, or any mapping (``frame.meta``
-///         included). Nested tuples and documents are JSON arrays and objects.
+/// Parameters
+/// ----------
+/// path
+///     Destination filesystem path.
+/// traj
+///     In-memory :class:`~molrs.Trajectory` to persist.
+/// meta
+///     The record's identity document, written to ``meta/`` with
+///     ``molrec_version`` stamped in: a ``dict``, a
+///     :class:`~molrs.MetaDocument`, or any mapping (``frame.meta``
+///     included). Nested tuples and documents are JSON arrays and objects.
 ///
-/// Raises:
-///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, or a frame
-///         fails to encode.
-///     TypeError: If ``meta`` is not a mapping or holds a value JSON cannot.
+/// Raises
+/// ------
+/// ValueError
+///     If ``path`` uses a retired ``.zarr`` suffix, or a frame
+///     fails to encode.
+/// TypeError
+///     If ``meta`` is not a mapping or holds a value JSON cannot.
 #[pyfunction]
 #[pyo3(signature = (path, traj, meta=None))]
 pub fn write_mrec_trajectory(
@@ -172,16 +203,22 @@ pub fn write_mrec_trajectory(
 /// another section — a trajectory, observables, one this build does not know —
 /// cannot fail the read.
 ///
-/// Args:
-///     path: Filesystem path of the record store.
+/// Parameters
+/// ----------
+/// path
+///     Filesystem path of the record store.
 ///
-/// Returns:
+/// Returns
+/// -------
+/// molrs.Frame
 ///     The in-memory :class:`~molrs.Frame`.
 ///
-/// Raises:
-///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, ``meta``
-///         carries an unsupported ``molrec_version``, the store has no
-///         ``frame`` section, or that section fails to decode.
+/// Raises
+/// ------
+/// ValueError
+///     If ``path`` uses a retired ``.zarr`` suffix, ``meta``
+///     carries an unsupported ``molrec_version``, the store has no
+///     ``frame`` section, or that section fails to decode.
 #[pyfunction]
 pub fn read_mrec(path: PathBuf) -> PyResult<PyFrame> {
     let path = path_str(&path)?;
@@ -193,16 +230,22 @@ pub fn read_mrec(path: PathBuf) -> PyResult<PyFrame> {
 ///
 /// Only ``meta`` (for its version) and the ``system`` section are decoded.
 ///
-/// Args:
-///     path: Filesystem path of the record store.
+/// Parameters
+/// ----------
+/// path
+///     Filesystem path of the record store.
 ///
-/// Returns:
+/// Returns
+/// -------
+/// molrs.Frame
 ///     The in-memory :class:`~molrs.Frame`.
 ///
-/// Raises:
-///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, ``meta``
-///         carries an unsupported ``molrec_version``, the store has no
-///         ``system`` section, or that section fails to decode.
+/// Raises
+/// ------
+/// ValueError
+///     If ``path`` uses a retired ``.zarr`` suffix, ``meta``
+///     carries an unsupported ``molrec_version``, the store has no
+///     ``system`` section, or that section fails to decode.
 #[pyfunction]
 pub fn read_mrec_system(path: PathBuf) -> PyResult<PyFrame> {
     let path = path_str(&path)?;
@@ -215,16 +258,22 @@ pub fn read_mrec_system(path: PathBuf) -> PyResult<PyFrame> {
 /// Only ``meta`` (for its version) and the ``trajectory`` section are
 /// decoded. A store without one reads as an empty trajectory.
 ///
-/// Args:
-///     path: Filesystem path of the record store.
+/// Parameters
+/// ----------
+/// path
+///     Filesystem path of the record store.
 ///
-/// Returns:
+/// Returns
+/// -------
+/// molrs.Trajectory
 ///     The in-memory :class:`~molrs.Trajectory`.
 ///
-/// Raises:
-///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, ``meta``
-///         carries an unsupported ``molrec_version``, or the ``trajectory``
-///         section fails to decode.
+/// Raises
+/// ------
+/// ValueError
+///     If ``path`` uses a retired ``.zarr`` suffix, ``meta``
+///     carries an unsupported ``molrec_version``, or the ``trajectory``
+///     section fails to decode.
 #[pyfunction]
 pub fn read_mrec_trajectory(path: PathBuf) -> PyResult<PyTrajectory> {
     let path = path_str(&path)?;
@@ -235,16 +284,22 @@ pub fn read_mrec_trajectory(path: PathBuf) -> PyResult<PyTrajectory> {
 /// Read the ``meta`` document of a ``*.mrec`` store (empty when the producer
 /// wrote none).
 ///
-/// Args:
-///     path: Filesystem path of the record store.
+/// Parameters
+/// ----------
+/// path
+///     Filesystem path of the record store.
 ///
-/// Returns:
+/// Returns
+/// -------
+/// dict
 ///     The record-level metadata mapping, including ``molrec_version`` when
 ///     the writer stamped it.
 ///
-/// Raises:
-///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, or ``meta``
-///         carries a ``molrec_version`` this reader does not support.
+/// Raises
+/// ------
+/// ValueError
+///     If ``path`` uses a retired ``.zarr`` suffix, or ``meta``
+///     carries a ``molrec_version`` this reader does not support.
 #[pyfunction]
 pub fn read_mrec_meta(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
     let path = path_str(&path)?;
@@ -259,17 +314,23 @@ pub fn read_mrec_meta(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
 /// units as stored; :meth:`molrs.ff.ForceField.from_section` turns it into a
 /// force field molrs can compile.
 ///
-/// Args:
-///     path: Filesystem path of the record store.
+/// Parameters
+/// ----------
+/// path
+///     Filesystem path of the record store.
 ///
-/// Returns:
+/// Returns
+/// -------
+/// molrs.io.mrec.ForceFieldSection or None
 ///     The :class:`~molrs.io.mrec.ForceFieldSection`, or ``None`` when the
 ///     record carries no force field.
 ///
-/// Raises:
-///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, ``meta``
-///         carries an unsupported ``molrec_version``, or the section is
-///         malformed (the ``forcefield`` chapter's refusals).
+/// Raises
+/// ------
+/// ValueError
+///     If ``path`` uses a retired ``.zarr`` suffix, ``meta``
+///     carries an unsupported ``molrec_version``, or the section is
+///     malformed (the ``forcefield`` chapter's refusals).
 #[pyfunction]
 pub fn read_mrec_forcefield(path: PathBuf) -> PyResult<Option<PyForceFieldSection>> {
     let path = path_str(&path)?;
@@ -279,17 +340,23 @@ pub fn read_mrec_forcefield(path: PathBuf) -> PyResult<Option<PyForceFieldSectio
 
 /// Child group names at the record root (``meta``, ``frame``, ``system``, …).
 ///
-/// Args:
-///     path: Filesystem path of the record store.
+/// Parameters
+/// ----------
+/// path
+///     Filesystem path of the record store.
 ///
-/// Returns:
+/// Returns
+/// -------
+/// frozenset[str]
 ///     The section names, as a ``frozenset``. Callers ask which sections are
 ///     present instead of probing ``read_mrec`` / ``read_mrec_system`` and
 ///     catching a missing-section error.
 ///
-/// Raises:
-///     ValueError: If ``path`` uses a retired ``.zarr`` suffix, or the store
-///         is not a readable record.
+/// Raises
+/// ------
+/// ValueError
+///     If ``path`` uses a retired ``.zarr`` suffix, or the store
+///     is not a readable record.
 #[pyfunction]
 pub fn mrec_sections(py: Python<'_>, path: PathBuf) -> PyResult<Bound<'_, PyFrozenSet>> {
     let path = path_str(&path)?;
@@ -305,9 +372,11 @@ pub fn mrec_sections(py: Python<'_>, path: PathBuf) -> PyResult<Bound<'_, PyFroz
 /// is a slice rather than a decode. Supports ``len(reader)``, ``reader[i]``
 /// (negative indices included), iteration, and the ``with`` statement.
 ///
-/// Args:
-///     path: Filesystem path of the record store, or of a packed
-///         ``*.mrec.zip``.
+/// Parameters
+/// ----------
+/// path
+///     Filesystem path of the record store, or of a packed
+///     ``*.mrec.zip``.
 #[pyclass(module = "molrs.io.mrec", name = "TrajectoryReader", unsendable)]
 pub struct PyMrecTrajectoryReader {
     inner: FrameSequence,
@@ -330,15 +399,22 @@ impl PyMrecTrajectoryReader {
 
     /// Decode one committed frame.
     ///
-    /// Args:
-    ///     index: Zero-based frame index; negative counts from the end.
+    /// Parameters
+    /// ----------
+    /// index
+    ///     Zero-based frame index; negative counts from the end.
     ///
-    /// Returns:
+    /// Returns
+    /// -------
+    /// molrs.Frame
     ///     The frame at ``index``.
     ///
-    /// Raises:
-    ///     IndexError: If ``index`` is past the commit marker.
-    ///     ValueError: If a section fails to decode.
+    /// Raises
+    /// ------
+    /// IndexError
+    ///     If ``index`` is past the commit marker.
+    /// ValueError
+    ///     If a section fails to decode.
     fn read_frame(&self, index: isize) -> PyResult<PyFrame> {
         let resolved = self.resolve_index(index)?;
         let frame = self
@@ -703,21 +779,28 @@ fn parse_compression(spec: Option<&str>) -> PyResult<Compression> {
 /// derived from the frame size (or ``flush_every``); ``flush()`` and
 /// ``close()`` commit whatever is buffered, durably unless ``durable=False``.
 ///
-/// Args:
-///     path: Destination filesystem path for the store.
-///     schema: The :class:`SequenceSchema` every appended frame is checked
-///         against.
-///     flush_every: Land every this many frames instead of the derived cadence.
-///     compression: How floating-point columns are compressed: ``None``,
-///         ``"gzip[:level]"`` or ``"zstd[:level]"``. Everything else always
-///         carries gzip level 1. A column with a declared precision is
-///         byte-shuffled and compressed whatever this says: ``None`` means
-///         zstd level 3, and a named compressor replaces it.
-///     durable: Whether ``flush()`` / ``close()`` fsync the touched files.
-///     meta: The record's identity document, written to ``meta/`` with
-///         ``molrec_version`` stamped in: a ``dict``, a
-///         :class:`~molrs.MetaDocument`, or any mapping (``frame.meta``
-///         included). Nested tuples and documents are JSON arrays and objects.
+/// Parameters
+/// ----------
+/// path
+///     Destination filesystem path for the store.
+/// schema
+///     The :class:`SequenceSchema` every appended frame is checked
+///     against.
+/// flush_every
+///     Land every this many frames instead of the derived cadence.
+/// compression
+///     How floating-point columns are compressed: ``None``,
+///     ``"gzip[:level]"`` or ``"zstd[:level]"``. Everything else always
+///     carries gzip level 1. A column with a declared precision is
+///     byte-shuffled and compressed whatever this says: ``None`` means
+///     zstd level 3, and a named compressor replaces it.
+/// durable
+///     Whether ``flush()`` / ``close()`` fsync the touched files.
+/// meta
+///     The record's identity document, written to ``meta/`` with
+///     ``molrec_version`` stamped in: a ``dict``, a
+///     :class:`~molrs.MetaDocument`, or any mapping (``frame.meta``
+///     included). Nested tuples and documents are JSON arrays and objects.
 #[pyclass(module = "molrs.io.mrec", name = "TrajectoryWriter", unsendable)]
 pub struct PyMrecTrajectoryWriter {
     inner: Option<FrameSequenceWriter>,
@@ -782,9 +865,11 @@ impl PyMrecTrajectoryWriter {
     /// record stores none) for real MD numbering, or
     /// ``time`` alone to keep the automatic numbering and still record times.
     ///
-    /// Raises:
-    ///     ValueError: If the writer is closed, the frame steps outside the
-    ///         pinned schema, or ``step`` does not strictly increase.
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If the writer is closed, the frame steps outside the
+    ///     pinned schema, or ``step`` does not strictly increase.
     #[pyo3(signature = (frame, step=None, time=None))]
     fn append(
         &mut self,
@@ -861,7 +946,9 @@ impl PyMrecTrajectoryWriter {
 /// entry stored, byte-identical to the files it replaces) and remove the
 /// directory.
 ///
-/// Returns:
+/// Returns
+/// -------
+/// str
 ///     The path of the archive.
 #[pyfunction]
 pub fn pack(path: PathBuf) -> PyResult<String> {
@@ -872,11 +959,15 @@ pub fn pack(path: PathBuf) -> PyResult<String> {
 
 /// Refuse the retired ``.zarr`` / ``.zarr.zip`` scientific suffixes.
 ///
-/// Args:
-///     path: Filesystem path of a record store.
+/// Parameters
+/// ----------
+/// path
+///     Filesystem path of a record store.
 ///
-/// Raises:
-///     ValueError: If the path uses a retired suffix.
+/// Raises
+/// ------
+/// ValueError
+///     If the path uses a retired suffix.
 #[pyfunction]
 pub fn mrec_validate_path(path: PathBuf) -> PyResult<()> {
     molrs::io::mrec::schema::validate_path(&path).map_err(molrs_error_to_pyerr)
@@ -888,12 +979,16 @@ pub fn mrec_validate_path(path: PathBuf) -> PyResult<()> {
 /// ``molrec_version`` only when it is present: an absent key is no version
 /// check, and a present one must be an integer in ``1..=MOLREC_VERSION``.
 ///
-/// Args:
-///     meta: Record-level metadata mapping.
+/// Parameters
+/// ----------
+/// meta
+///     Record-level metadata mapping.
 ///
-/// Raises:
-///     ValueError: If ``molrec_version`` is present and not a version this
-///         reader supports.
+/// Raises
+/// ------
+/// ValueError
+///     If ``molrec_version`` is present and not a version this
+///     reader supports.
 #[pyfunction]
 pub fn mrec_validate_meta(meta: &Bound<'_, PyAny>) -> PyResult<()> {
     molrs::io::mrec::schema::validate_meta(&meta_document_arg(meta)?).map_err(molrs_error_to_pyerr)
@@ -901,11 +996,15 @@ pub fn mrec_validate_meta(meta: &Bound<'_, PyAny>) -> PyResult<()> {
 
 /// Judge a snapshot or system-definition frame against the Frame vocabulary.
 ///
-/// Args:
-///     frame: In-memory :class:`~molrs.Frame`.
+/// Parameters
+/// ----------
+/// frame
+///     In-memory :class:`~molrs.Frame`.
 ///
-/// Raises:
-///     ValueError: If the frame fails the canonical vocabulary.
+/// Raises
+/// ------
+/// ValueError
+///     If the frame fails the canonical vocabulary.
 #[pyfunction]
 pub fn mrec_validate_frame(frame: &Bound<'_, PyFrame>) -> PyResult<()> {
     frame

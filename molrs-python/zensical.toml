@@ -58,7 +58,7 @@ default_handler = "python"
 # Local: `maturin develop` / `pip install -e ".[doc]"` then `zensical build`.
 
 [project.plugins.mkdocstrings.handlers.python.options]
-docstring_style = "google"
+docstring_style = "numpy"
 members_order = "source"
 show_root_heading = true
 show_root_full_path = false

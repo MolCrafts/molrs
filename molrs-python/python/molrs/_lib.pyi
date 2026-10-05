@@ -604,13 +604,18 @@ class Frame:
         are all selected, renumbered. Other blocks, the box and ``meta`` are
         copied; values keep their units (Å). This frame is never modified.
 
-        Raises:
-            KeyError: no block ``block``.
-            IndexError: a mask of the wrong length, an index below ``-nrows``,
-                a selector that is not 1-D.
-            TypeError: a selector that is neither bool nor integer.
-            ValueError: a row past the end or repeated; a relation block
-                without ``UInt`` endpoints; a ``members`` block.
+        Raises
+        ------
+        KeyError
+            no block ``block``.
+        IndexError
+            a mask of the wrong length, an index below ``-nrows``,
+            a selector that is not 1-D.
+        TypeError
+            a selector that is neither bool nor integer.
+        ValueError
+            a row past the end or repeated; a relation block
+            without ``UInt`` endpoints; a ``members`` block.
         """
     def replicate(self, count: int) -> Frame:
         """``count`` copies of this frame, concatenated block by block (the
@@ -619,9 +624,11 @@ class Frame:
         column — ``id`` / ``mol_id`` included — is copied verbatim. Validity
         masks, ``meta`` and the box travel. This frame is never modified.
 
-        Raises:
-            ValueError: a relation block indexing a missing block or lacking
-                ``UInt`` endpoints; a ``members`` block.
+        Raises
+        ------
+        ValueError
+            a relation block indexing a missing block or lacking
+            ``UInt`` endpoints; a ``members`` block.
         """
     @property
     def coords(self) -> ArrayF:
@@ -920,9 +927,11 @@ class Topology:
     def from_frame(cls, frame: Frame) -> Topology:
         """Read the bond graph of ``frame``.
 
-        Raises:
-            ValueError: ``frame`` has no atoms, the bonds block lacks
-                ``atomi`` / ``atomj``, or a bond names a row outside the frame.
+        Raises
+        ------
+        ValueError
+            ``frame`` has no atoms, the bonds block lacks
+            ``atomi`` / ``atomj``, or a bond names a row outside the frame.
         """
     @property
     def n_atoms(self) -> int: ...
@@ -1074,9 +1083,11 @@ class UnitRegistry:
     def define_lj_sigma(self, sigma: Quantity) -> None:
         """Define the reduced-LJ length unit ``lj_sigma`` alone.
 
-        Raises:
-            UnitsError: ``sigma`` is not a finite positive length, or
-                ``lj_sigma`` is already defined.
+        Raises
+        ------
+        UnitsError
+            ``sigma`` is not a finite positive length, or
+            ``lj_sigma`` is already defined.
         """
     def define_lj_units(
         self, mass: Quantity, sigma: Quantity, epsilon: Quantity
@@ -1190,10 +1201,12 @@ class Graph:
         ``(anchor, handle)`` valence; registers the ``ports`` kind on first
         use. Returns the port's relation handle.
 
-        Raises:
-            ValueError: an unknown glyph, ``handle`` not bonded to
-                ``anchor``, an indefinite order, a valence that already
-                carries a port, or a stale handle.
+        Raises
+        ------
+        ValueError
+            an unknown glyph, ``handle`` not bonded to
+            ``anchor``, an indefinite order, a valence that already
+            carries a port, or a stale handle.
         """
     @property
     def n_ports(self) -> int: ...
@@ -1205,11 +1218,14 @@ class Graph:
         their charge (e) onto the anchors, bond the anchors with the port
         order. Returns the new bond handle.
 
-        Raises:
-            ValueError: a handle naming no live port, a stale or incompatible
-                port pair, a shared anchor, anchors already bonded, or
-                overlapping leaving groups; the graph is unchanged.
-            OverflowError: a negative handle.
+        Raises
+        ------
+        ValueError
+            a handle naming no live port, a stale or incompatible
+            port pair, a shared anchor, anchors already bonded, or
+            overlapping leaving groups; the graph is unchanged.
+        OverflowError
+            a negative handle.
         """
 
 class Atomistic(Graph):
@@ -1314,16 +1330,20 @@ class Atomistic(Graph):
         3 triple, 4 aromatic) and its localized bond number (0 unknown,
         1-4) together.
 
-        Raises:
-            ValueError: ``handle`` is stale.
+        Raises
+        ------
+        ValueError
+            ``handle`` is stale.
         """
     def set_bond_type(self, handle: int, bond_type: int) -> None:
         """Set a plain (non-aromatic) bond class, whose class implies its
         number. Aromatic (4) implies none and leaves the number ``0``; set it
         through :meth:`set_bond_class` instead.
 
-        Raises:
-            ValueError: ``handle`` is stale.
+        Raises
+        ------
+        ValueError
+            ``handle`` is stale.
         """
     def bond_type(self, handle: int) -> int:
         """The bond's chemical class code; ``0`` when it has none."""
@@ -1342,8 +1362,10 @@ class Atomistic(Graph):
         (``rotations (N,3,3)``, ``translations (N,3)``), copy ``c`` stamped
         ``frag_id = frag_ids[c]``; returns the new handles, copy-major.
 
-        Raises:
-            ValueError: a wrong shape or count; this graph is unchanged.
+        Raises
+        ------
+        ValueError
+            a wrong shape or count; this graph is unchanged.
         """
     def induced_subgraph(
         self, nodes: list[int]
@@ -1365,10 +1387,12 @@ class Atomistic(Graph):
         ``x``/``y``/``z`` (Å) and ``mass`` (g/mol); a float64 ``(3,)`` array
         in Å. No periodic imaging: unwrap first (:meth:`Box.unwrap`).
 
-        Raises:
-            ValueError: no atoms; an atom without finite ``x``/``y``/``z`` or
-                a finite, non-negative ``mass`` (names its int handle); a
-                non-positive total mass.
+        Raises
+        ------
+        ValueError
+            no atoms; an atom without finite ``x``/``y``/``z`` or
+            a finite, non-negative ``mass`` (names its int handle); a
+            non-positive total mass.
         """
     def translate(self, delta: Sequence[float] | ArrayF) -> Self:
         """Translate every node that has coordinates by ``delta``; returns self."""
@@ -1378,9 +1402,11 @@ class Atomistic(Graph):
         """Rotate every node that has coordinates by ``angle`` radians about
         ``axis``, pivoting on ``about`` (default: the origin); returns self.
 
-        Raises:
-            ValueError: ``axis`` has no direction or ``angle`` is not finite;
-                nothing moves then.
+        Raises
+        ------
+        ValueError
+            ``axis`` has no direction or ``angle`` is not finite;
+            nothing moves then.
         """
     def scale(self, factor: list[float], about: list[float] | None = None) -> Self:
         """Scale every node that has coordinates by a per-axis ``factor``
@@ -1479,12 +1505,15 @@ class CoarseGrain(Graph):
         writes no ``mass``; set one first. No periodic imaging: a group
         straddling a box face must be unwrapped first (:meth:`Box.unwrap`).
 
-        Raises:
-            ValueError: an empty group; a handle that is not a live bead, or a
-                bead without finite ``x``/``y``/``z`` or a finite,
-                non-negative ``mass`` (names its int handle); a non-positive
-                total mass.
-            OverflowError: a negative handle.
+        Raises
+        ------
+        ValueError
+            an empty group; a handle that is not a live bead, or a
+            bead without finite ``x``/``y``/``z`` or a finite,
+            non-negative ``mass`` (names its int handle); a non-positive
+            total mass.
+        OverflowError
+            a negative handle.
         """
     def translate(self, delta: Sequence[float] | ArrayF) -> Self:
         """Translate every node that has coordinates by ``delta``; returns self."""
@@ -1494,9 +1523,11 @@ class CoarseGrain(Graph):
         """Rotate every node that has coordinates by ``angle`` radians about
         ``axis``, pivoting on ``about`` (default: the origin); returns self.
 
-        Raises:
-            ValueError: ``axis`` has no direction or ``angle`` is not finite;
-                nothing moves then.
+        Raises
+        ------
+        ValueError
+            ``axis`` has no direction or ``angle`` is not finite;
+            nothing moves then.
         """
     def scale(self, factor: list[float], about: list[float] | None = None) -> Self:
         """Scale every node that has coordinates by a per-axis ``factor``
@@ -1706,10 +1737,12 @@ class op:
         (both shape ``(k, 3)``); ``weights`` shape ``(k,)``, uniform when
         omitted, zero-weight points dropped.
 
-        Raises:
-            ValueError: a shape other than ``(k, 3)``, a length mismatch, a
-                negative or non-finite weight, a non-finite coordinate, or no
-                positive weight.
+        Raises
+        ------
+        ValueError
+            a shape other than ``(k, 3)``, a length mismatch, a
+            negative or non-finite weight, a non-finite coordinate, or no
+            positive weight.
         """
     @staticmethod
     def centroid(points: ArrayF, weights: ArrayF | None = None) -> ArrayF | None:
@@ -1718,9 +1751,11 @@ class op:
         when the lengths differ or the total weight is not positive and
         finite.
 
-        Raises:
-            ValueError: ``points`` is not shape ``(k, 3)`` or ``weights`` is
-                not 1-D.
+        Raises
+        ------
+        ValueError
+            ``points`` is not shape ``(k, 3)`` or ``weights`` is
+            not 1-D.
         """
 
 class SmartsMatch:
@@ -1823,16 +1858,20 @@ class SubgraphMatcher:
     def __init__(self, pattern: CoarseGrain) -> None:
         """Snapshot ``pattern`` (copied; later edits do not affect it).
 
-        Raises:
-            TypeError: ``pattern`` is not a :class:`CoarseGrain`.
+        Raises
+        ------
+        TypeError
+            ``pattern`` is not a :class:`CoarseGrain`.
         """
     def find(self, target: CoarseGrain) -> list[list[int]]:
         """Every induced occurrence, one group of target bead handles per
         distinct bead set, in pattern bead order; ``[]`` when none. Releases
         the GIL.
 
-        Raises:
-            TypeError: ``target`` is not a :class:`CoarseGrain`.
+        Raises
+        ------
+        TypeError
+            ``target`` is not a :class:`CoarseGrain`.
         """
 
 @final
@@ -2193,9 +2232,11 @@ class CGSmilesIR:
         node (``bead_type`` only, no coordinates or mass), one CG bond per
         edge.
 
-        Raises:
-            SmilesError: (a ``ValueError``) the IR breaks a reader invariant;
-                no parsed string reaches this.
+        Raises
+        ------
+        SmilesError
+            (a ``ValueError``) the IR breaks a reader invariant;
+            no parsed string reaches this.
         """
 
 # ---------------------------------------------------------------------------

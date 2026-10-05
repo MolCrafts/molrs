@@ -19,9 +19,11 @@ pub struct PyTopology {
 impl PyTopology {
     /// Read the bond graph of ``frame``.
     ///
-    /// Raises:
-    ///     ValueError: ``frame`` has no atoms, the bonds block lacks
-    ///         ``atomi`` / ``atomj``, or a bond names a row outside the frame.
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     ``frame`` has no atoms, the bonds block lacks
+    ///     ``atomi`` / ``atomj``, or a bond names a row outside the frame.
     #[classmethod]
     fn from_frame(_cls: &Bound<'_, PyType>, frame: &PyFrame) -> PyResult<Self> {
         let inner = frame
