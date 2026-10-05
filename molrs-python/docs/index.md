@@ -6,10 +6,10 @@ WebAssembly bindings. The project is organized around a shared data model:
 box metadata, and enough topology to move between file I/O, geometry
 generation, force-field evaluation, and trajectory analysis.
 
-This site is the narrative layer for that system. Rust API reference stays on
-docs.rs, while Python reference is injected from the installed binding module.
-The WebAssembly package emits TypeScript declarations during the docs build;
-the hosted site reserves `/reference/wasm/` for that generated reference.
+This site is the narrative layer for that system. The Rust API reference is on
+docs.rs, the Python reference is rendered from the installed binding module,
+and the npm package ships TypeScript declarations generated from the same Rust
+doc comments.
 
 ## The same workflow runs in Python, Rust, and TypeScript
 
@@ -39,12 +39,12 @@ the hosted site reserves `/reference/wasm/` for that generated reference.
 
 === "Rust"
 
-    Use the facade crate with the `full` feature while learning, then narrow
+    Use the crate with the `full` feature while learning, then narrow
     features when an application has a stable dependency boundary.
 
     ```rust
     use molrs::conformer::{Conformer, ConformerOptions};
-    use molrs::smiles::{parse_smiles, to_atomistic};
+    use molrs::io::smiles::{parse_smiles, to_atomistic};
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ir = parse_smiles("c1ccccc1")?;
@@ -59,13 +59,11 @@ the hosted site reserves `/reference/wasm/` for that generated reference.
 
 === "TypeScript"
 
-    Initialize the WebAssembly module once, then use the generated classes and
-    functions as regular TypeScript exports.
+    The npm package is a bundler build: importing it loads the WebAssembly
+    module, and the generated classes and functions are regular exports.
 
     ```ts
-    import init, { generate3D, parseSMILES, writeFrame } from "@molcrafts/molrs";
-
-    await init();
+    import { generate3D, parseSMILES, writeFrame } from "@molcrafts/molrs";
 
     const ir = parseSMILES("CCO");
     const frame2d = ir.toFrame();
@@ -74,14 +72,33 @@ the hosted site reserves `/reference/wasm/` for that generated reference.
     console.log(writeFrame(frame3d, "xyz"));
     ```
 
+## What's new in 0.15
+
+molrs 0.15 settles the column store and the on-disk record:
+
+- **One column accessor.** `Block::get` / `FrameAccess::column` plus
+  `Column::as_*` replace the per-dtype getters on every surface, and each
+  column reports the dtype it is stored at (C: `MolrsDType`). Floats are
+  `f64` only.
+- **Record files follow the molrec contract.** Typed frame metadata,
+  topology conventions (`chain`, `res_id`, `b_factor`, …), row references,
+  aligned trajectory blocks, declared precision (coordinates in about 7.6
+  instead of 24 bytes per atom per frame), and a `forcefield` section. See
+  [Record files](guides/records.md).
+- **Force fields** are built through `def_style` / `def_type`, compiled by
+  `PotentialCompiler`, and typed by `Typing`; LAMMPS harmonic impropers now
+  evaluate at the LAMMPS energy.
+
+[What's new in 0.15](release-notes.md) lists the highlights, and the
+[migration guide](migration.md) lists every breaking change from 0.14.
+
 ## What lives here
 
-  spellings (`UnitPreset`, `MD(dtype=)`, the `Record` removal, `meta`).
-
-These docs cover the molrs **binding surface** only — the per-language
-quickstarts and the API reference. Task-oriented Python guides (the data model,
-in-process MD, SMILES and topology, neighbor search, 3D embedding, force fields,
-I/O, and trajectory analysis) live in the
+These docs cover the molrs **binding surface**: the per-language quickstarts,
+the [record-file guide](guides/records.md), the API reference, and the
+migration guide. Task-oriented Python guides (the data model, in-process MD,
+SMILES and topology, neighbor search, 3D embedding, force fields, I/O, and
+trajectory analysis) live in the
 [molpy documentation](https://docs.molcrafts.org/molpy/), the Python library
 built on molrs.
 
@@ -93,9 +110,12 @@ quickstart for your host language:
 - [Python Quickstart](getting-started/quickstart-python.md) is the most complete
   end-to-end tutorial and mirrors the style of a notebook.
 - [Rust Quickstart](getting-started/quickstart-rust.md) explains crate features
-  and the facade layout.
-- [WASM Quickstart](getting-started/quickstart-wasm.md) explains initialization,
-  typed arrays, and browser bundling.
+  and the module layout.
+- [WASM Quickstart](getting-started/quickstart-wasm.md) explains loading the
+  module, typed-array columns, and browser bundling.
+
+[Record files](guides/records.md) shows how to save frames, trajectories and
+force fields as `*.mrec` records that every surface reads.
 
 Use [Python Reference](reference/python.md), [Rust Reference](reference/rust.md),
 and [WASM Reference](reference/wasm.md) when you need exact API details.

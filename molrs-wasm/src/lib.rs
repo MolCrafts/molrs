@@ -24,7 +24,7 @@
 //! | JS module  | Purpose |
 //! |------------|---------|
 //! | `core`     | Frame, Block, Box, Mesh, WasmArray |
-//! | `io`       | File readers/writers (XYZ, PDB, LAMMPS, SMILES, Zarr) |
+//! | `io`       | File readers/writers (XYZ, PDB, LAMMPS, SMILES, `*.mrec` records) |
 //! | `conformer`| 3D conformer generation from molecular graphs |
 //! | `ff`       | ForceField / LBFGS / typify (UFF, MMFF94, MMFF94s) |
 //! | `perceive` | Chemical perception builder (`Perceive.findHydrogens`, …) |
@@ -32,10 +32,10 @@
 //!
 //! # Quick start (JavaScript)
 //!
-//! ```js
-//! import init, { parseSMILES, generate3D, writeFrame } from "@molcrafts/molrs";
+//! The npm package is a `bundler` build: importing it loads the module.
 //!
-//! await init();
+//! ```js
+//! import { parseSMILES, generate3D, writeFrame } from "@molcrafts/molrs";
 //!
 //! const ir    = parseSMILES("CCO");
 //! const frame = ir.toFrame();

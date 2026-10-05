@@ -50,15 +50,19 @@ assert forces.shape == (frame["atoms"].nrows, 3)
 | Import | Owns |
 |--------|------|
 | `molrs` (top level) | Core: `Frame`, `Block`, `Atomistic`, `Box`, neighbors, … |
-| `molrs.io` | Readers/writers, `SmilesIR` |
+| `molrs.io` | Readers/writers, `SmilesIR`, `*.mrec` record files (`write_mrec`, `read_mrec`, …) |
+| `molrs.io.mrec` | Streaming trajectories: `SequenceSchema`, `TrajectoryWriter`, `TrajectoryReader`, `pack` |
 | `molrs.ff` | Force fields, typifiers, potentials |
 | `molrs.compute` | RDF, MSD, transport, dielectric, … |
 | `molrs.conformer` | 3D generation |
 | `molrs.perceive` | Rings / aromaticity builder |
 
-Users of analysis APIs: analysis time is **fs** (LAMMPS `real`). MSD needs
-**unwrapped** coordinates. VACF is the unbiased \(C(\tau)\) used for Green–Kubo D
-and VDOS.
+Analysis kernels take `dt` in the time unit of your trajectory, and
+time-valued results come back in that unit. MSD needs **unwrapped**
+coordinates. VACF is the unbiased \(C(\tau)\) used for Green–Kubo D and VDOS.
+
+Upgrading from 0.14? See the
+[migration guide](https://docs.molcrafts.org/molrs/migration/).
 
 ## Development
 

@@ -26,7 +26,9 @@
 //!
 //! ## Features
 //!
-//! - `io`        — file I/O (PDB, XYZ, LAMMPS, CHGCAR, Cube, Zarr)
+//! - `builder`   — structure builders and site-graph assembly
+//! - `io`        — file I/O (PDB, XYZ, LAMMPS, CHGCAR, Cube, …; `*.mrec`
+//!   record files need `zarr`, their path doors `filesystem`)
 //! - `compute`   — trajectory analysis (RDF, MSD, clustering, tensors)
 //! - `smiles`    — SMILES/SMARTS parser (lives in `io`)
 //! - `ff`        — force fields (MMFF94, PME, typifier)

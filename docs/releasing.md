@@ -18,13 +18,39 @@ It is the same script, on the same pinned `rust-toolchain.toml` compiler, that
 the prek hooks and the CI workflows call. The `package` gate compiles the
 unpacked crates.io archive, catching files accidentally omitted from the
 release; inspect `cargo package --list --manifest-path molrs/Cargo.toml` as
-well. Check version metadata across all manifests before tagging; downstream
-molpy pins the major.minor ABI line and must be released after molrs.
+well. Downstream molpy pins the major.minor ABI line and must be released
+after molrs.
+
+Check version metadata before tagging. One version appears in:
+
+- `[workspace.package].version` in `Cargo.toml` (inherited by `molrs/`);
+- `version` and the `molcrafts-molrs` / `molcrafts-molrs-ffi` dependency
+  versions in `molrs-ffi/`, `molrs-python/`, `molrs-wasm/`, `molrs-capi/`
+  and `molrs-cxxapi/Cargo.toml` (the npm `package.json` is generated from
+  `molrs-wasm/Cargo.toml` by wasm-pack);
+- `version` in `molrs-python/pyproject.toml`;
+- the `molcrafts-molrs*` entries of every committed `Cargo.lock` (the root
+  one and one per binder);
+- the version-pinned examples in `README.md` and the documentation site
+  (`version = "X.Y"` dependency lines, `>=X.Y.0,<X.(Y+1)` pins).
+
+The documentation site must build exactly as Cloudflare Pages builds it, in
+a fresh virtualenv:
+
+```bash
+cd molrs-python
+pip install ".[doc]"
+zensical build --clean      # must end with "No issues found"
+```
 
 ## Publishing
 
 1. Finish the checks and review the release diff, including API migrations;
-   add every breaking change to [`docs/migration.md`](migration.md).
+   add every breaking change to the
+   [migration guide](../molrs-python/docs/migration.md) and the highlights to
+   the [release notes](../molrs-python/docs/release-notes.md). Both are pages
+   of the documentation site; the GitHub Release created by **Publish** links
+   to both at the tag, beside the auto-generated changelog.
 2. Run **Publish** manually on a branch for a build rehearsal. It runs CI and
    builds artifacts without uploading to registries or creating a release.
 3. Merge the reviewed revision into `master`, then create and push `vX.Y.Z`,

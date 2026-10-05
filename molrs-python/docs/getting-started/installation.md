@@ -62,7 +62,7 @@ for nightly testing.
     In `src/main.rs`:
 
     ```rust
-    use molrs::smiles::{parse_smiles, to_atomistic};
+    use molrs::io::smiles::{parse_smiles, to_atomistic};
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ir = parse_smiles("O")?;
@@ -78,12 +78,11 @@ for nightly testing.
     npm install @molcrafts/molrs
     ```
 
-    In an ESM-aware runtime or bundler:
+    In a bundler that loads WebAssembly modules (Vite, webpack, …):
 
     ```ts
-    import init, { parseSMILES } from "@molcrafts/molrs";
+    import { parseSMILES } from "@molcrafts/molrs";
 
-    await init();
     console.log(parseSMILES("O").nComponents);
     ```
 
@@ -99,15 +98,22 @@ build inside the checkout — no manual `rustup component add` needed.
 
 ### Native crates
 
-Clone the workspace and build every crate. Tests need fixtures fetched by the
-helper script on the first run:
+Clone the repository and build through the committed `cargo mrs-*` aliases
+(`.cargo/config.toml`). They pin one feature set, so every command reuses the
+same build:
 
 ```bash
 git clone https://github.com/MolCrafts/molrs.git
 cd molrs
-cargo build --workspace            # compile all native crates
-cargo test --all-features          # run the test suite
+cargo mrs-build          # compile the library
+cargo mrs-test           # unit tests
+cargo mrs-doctest        # rustdoc examples
+scripts/check.sh all     # every CI gate
 ```
+
+The binding crates (`molrs-python`, `molrs-wasm`, `molrs-capi`,
+`molrs-cxxapi`, `molrs-ffi`) are standalone workspaces; build each with
+`cargo build --manifest-path <crate>/Cargo.toml`.
 
 ### Python extension
 
@@ -137,10 +143,11 @@ Python extension is installed (Zensical config is `molrs-python/zensical.toml`):
 
 ```bash
 cd molrs-python
-pip install -e ".[doc]"
-maturin develop --release
-zensical build          # writes ./site
+pip install ".[doc]"    # builds the extension and installs zensical
+zensical build --clean  # writes ./site
 ```
+
+This is the command sequence the hosted site is built with.
 
 ## Version Boundaries
 
@@ -150,9 +157,10 @@ the package versions. The documentation site follows the repository `master`
 branch, while crates.io, PyPI, npm, and docs.rs describe released artifacts.
 
 **Consumers (e.g. molpy)** pin the shared **major.minor** line
-(`molcrafts-molrs>=X.Y.0,<X.(Y+1)`), not an exact patch. Patch may drift;
-history lives in git tags / GitHub Releases — there is no hand-written
-`CHANGELOG.md`.
+(`molcrafts-molrs>=0.15.0,<0.16`), not an exact patch. Patch may drift;
+history lives in git tags and GitHub Releases — there is no hand-written
+`CHANGELOG.md`. Each minor release has a [release-notes page](../release-notes.md)
+and a section in the [migration guide](../migration.md).
 
 ## Browser (Pyodide)
 

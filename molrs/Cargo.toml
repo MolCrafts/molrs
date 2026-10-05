@@ -20,9 +20,11 @@ autotests = false
 autobenches = false
 autoexamples = false
 
-# docs.rs builds the public API with every sub-system enabled.
+# docs.rs builds the public API with every sub-system enabled — the same set
+# as `cargo mrs-doc`, so the record-file doors (`filesystem`) and `stream`
+# are documented too.
 [package.metadata.docs.rs]
-features = ["full"]
+features = ["full", "filesystem", "stream"]
 
 [lib]
 name = "molrs"

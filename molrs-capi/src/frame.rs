@@ -7,17 +7,17 @@
 //!
 //! # Typical column layout
 //!
-//! | Block key  | Column  | C type           | Description                     |
-//! |------------|---------|------------------|---------------------------------|
-//! | `"atoms"`  | `"symbol"` | string        | Element symbol ("C", "N", ...)  |
-//! | `"atoms"`  | `"x"`   | `molrs_float_t` | Cartesian x coordinate in Angstrom     |
-//! | `"atoms"`  | `"y"`   | `molrs_float_t` | Cartesian y coordinate in Angstrom     |
-//! | `"atoms"`  | `"z"`   | `molrs_float_t` | Cartesian z coordinate in Angstrom     |
-//! | `"atoms"`  | `"mass"`| `molrs_float_t` | Atomic mass in amu              |
-//! | `"bonds"`  | `"i"`   | `molrs_uint_t`  | First atom index (0-based)      |
-//! | `"bonds"`  | `"j"`   | `molrs_uint_t`  | Second atom index (0-based)     |
-//! | `"bonds"`  | `"bond_type"`  | `molrs_uint_t` | 0 unknown, 1 single, 2 double, 3 triple, 4 aromatic |
-//! | `"bonds"`  | `"bond_number"`| `molrs_uint_t` | Localized Lewis/Kekulé integer (never fractional) |
+//! | Block key  | Column   | C type      | Description                     |
+//! |------------|----------|-------------|---------------------------------|
+//! | `"atoms"`  | `"element"` | string   | Element symbol ("C", "N", ...)  |
+//! | `"atoms"`  | `"x"`    | `F` (double) | Cartesian x coordinate in Angstrom |
+//! | `"atoms"`  | `"y"`    | `F` (double) | Cartesian y coordinate in Angstrom |
+//! | `"atoms"`  | `"z"`    | `F` (double) | Cartesian z coordinate in Angstrom |
+//! | `"atoms"`  | `"mass"` | `F` (double) | Atomic mass in amu             |
+//! | `"bonds"`  | `"atomi"` | `uint64_t` | First atom index (0-based)      |
+//! | `"bonds"`  | `"atomj"` | `uint64_t` | Second atom index (0-based)     |
+//! | `"bonds"`  | `"bond_type"`  | `uint64_t` | 0 unknown, 1 single, 2 double, 3 triple, 4 aromatic |
+//! | `"bonds"`  | `"bond_number"`| `uint64_t` | Localized Lewis/Kekulé integer (never fractional) |
 
 use std::ffi::{CStr, CString, c_char};
 

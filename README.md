@@ -44,10 +44,10 @@ One crate, `molcrafts-molrs`, whose sub-systems are feature-gated modules
 | Module (feature) | Capability |
 |------------------|------------|
 | `core`, `perceive` *(always on)* | Frame / Block column store, MolGraph topology, elements, `SimBox` + minimum-image convention, spatial regions, neighbor search, chemical perception, SMARTS matching |
-| `builder` | Structure builders: graphene, nanotubes, self-avoiding walks, fragment placement along a trace, reaction-site labelling |
-| `io` | Readers / writers for PDB, XYZ, mol2, SDF, CIF, GRO, POSCAR, CHGCAR, Cube, LAMMPS data/dump, DCD, Zarr V3 trajectories (SMILES / CGsmiles parser under the `smiles` feature) |
+| `builder` | Structure builders: graphene, nanotubes, lattices, self-avoiding walks, site-graph assembly (`Assembler`, placers, orienters) |
+| `io` | Readers / writers for PDB, XYZ, mol2, SDF, CIF, GRO, POSCAR, CHGCAR, Cube, LAMMPS data/dump, DCD, TRR, XTC; `*.mrec` record files following the [molrec](https://docs.molcrafts.org/molrec/) contract — frames, topologies, trajectories and force fields (`zarr` / `filesystem`); SMILES / CGsmiles parser under the `smiles` feature |
 | `compute` | Trajectory analysis: RDF, MSD, clustering, gyration / inertia tensors, PCA, k-means, density, diffraction, PMFT, order parameters, dielectric, environment matching |
-| `ff` | Force fields and potentials — MMFF94 / OPLS-AA / GAFF typing, LJ, PME; LAMMPS `*.ff` include read/write (`LammpsFfReader` / `LammpsFfWriter`); L-BFGS geometry optimization over a `Potential` |
+| `ff` | Force fields and potentials — `def_style` / `def_type` model, MMFF94 / OPLS-AA / GAFF / UFF typing through `Typing`, `PotentialCompiler`, LJ, PME; LAMMPS / GROMACS / OpenMM XML read and write; L-BFGS geometry optimization over a `Potential` |
 | `conformer` | 3D conformer generation: ETKDGv3 distance geometry, experimental-torsion refinement, MMFF94 cleanup, stereo guards |
 | `signal` | Signal processing — FFT-based autocorrelation, window functions, frequency grids |
 | `md` | In-process molecular dynamics: velocity-Verlet and Langevin integration over force-field potentials |
@@ -162,6 +162,8 @@ Python and JavaScript/TypeScript quickstarts live in the documentation.
 - [Python reference](https://docs.molcrafts.org/molrs/reference/python/) — the binding surface, rendered from the installed package
 - [Task-oriented guides](https://docs.molcrafts.org/molpy/) — data model, SMILES, neighbor search, 3D embedding, force fields, I/O, trajectory analysis (molpy, the Python library built on molrs)
 - [Rust API reference](https://docs.rs/molcrafts-molrs) — full rustdoc on docs.rs
+- [Record files](https://docs.molcrafts.org/molrs/guides/records/) — saving frames, trajectories and force fields as `*.mrec`
+- [What's new in 0.15](https://docs.molcrafts.org/molrs/release-notes/) and the [migration guide](https://docs.molcrafts.org/molrs/migration/) — upgrading from 0.14
 
 ## MolCrafts ecosystem
 
