@@ -21,6 +21,15 @@ short "Also new" list at the end of each section.
   Zarr f16/f32 arrays and `"f32"` meta tags are refused on read, not widened.
   Python widens a float16/float32 array to float64 when it is inserted.
 - **Image flags are `i32`** everywhere (SimBox, MD, binders). They were `i64`.
+- **LAMMPS harmonic impropers evaluate at half the 0.14 energy.** molrs's
+  `improper/harmonic` kernel is `k·(χ − χ₀)²`, LAMMPS's own form, but the
+  LAMMPS force-field reader stored `k = 2K` (the bond/angle `½k` map) and the
+  writer emitted `K = k/2`. Every improper read from a LAMMPS include or data
+  file was evaluated at twice the energy LAMMPS gives it. The reader now
+  stores `k = K` and the writer emits `K = k`, so energies and forces of
+  LAMMPS-read impropers halve, and a force field whose impropers were built
+  with the kernel's `k` writes a `K` twice the 0.14 value. The GROMACS
+  reader and writer were already right (`k = k_ξ/2`).
 - **Frame meta keeps insertion order.** It used to be sorted by key, so every
   meta iterator and index-based accessor now returns keys in insertion order.
 - **CoarseGrain frame layout.** A CoarseGrain frame now uses
