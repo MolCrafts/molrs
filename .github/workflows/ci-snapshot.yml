@@ -44,7 +44,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: Roy-Kid/molrec
-          ref: 35c4da48228e5d04f246439804c21657252bbf76
+          ref: 71bc71a1f9164ecc7ffff441f36d82bc95d7af9f
           path: .ci-out/molrec
           persist-credentials: false
 
