@@ -10,11 +10,14 @@
 use std::hash::{Hash, Hasher};
 
 use pyo3::basic::CompareOp;
-use pyo3::exceptions::PyTypeError;
+use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
+use molrs::store::block::DType;
 use molrs::store::schema;
+use molrs::types::{F, I, Idx};
+use num_complex::Complex;
 
 // ── Key ──────────────────────────────────────────────────────────────────────
 
@@ -103,7 +106,8 @@ pub struct PyColumnSpec {
     pub key: String,
     /// Constant name, also exported as `molrs.keys.<const_name>`.
     pub const_name: String,
-    /// `"float"` | `"int"` | `"uint"` | `"bool"` | `"u8"` | `"string"`.
+    /// The storage dtype's name: `"float"`, `"int"`, `"i64"`, `"uint"`,
+    /// `"bool"`, `"string"`, … (Rust `DType::name`).
     pub dtype: String,
     /// `"scalar"` or `"vec(n)"`.
     pub shape: String,
@@ -163,18 +167,42 @@ impl PyColumnSpec {
         )
     }
 
-    /// The numpy dtype string this column is stored at (`F` = f64, `I` = i32,
-    /// `Idx` = u64) — the dtype ``block[key] = values`` adopts.
+    /// The numpy dtype name this column is stored at — the dtype
+    /// ``block[key] = values`` adopts (``"float64"``, ``"int32"``,
+    /// ``"int64"``, ``"uint64"``, ``"bool"``, …), and ``"str"`` for a string
+    /// column.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If ``dtype`` names no storage dtype.
     #[getter]
-    fn numpy_dtype(&self) -> &'static str {
-        match self.dtype.as_str() {
-            "float" => "float64",
-            "int" => "int32",
-            "uint" => "uint64",
-            "bool" => "bool",
-            "u8" => "uint8",
-            _ => "str",
-        }
+    fn numpy_dtype(&self, py: Python<'_>) -> PyResult<String> {
+        let dtype = DType::from_name(&self.dtype)
+            .ok_or_else(|| PyValueError::new_err(format!("unknown dtype {:?}", self.dtype)))?;
+        // Derived from the Rust element type each variant stores, so it
+        // cannot drift from what a column of this dtype hands numpy.
+        let descr = match dtype {
+            DType::Float => numpy::dtype::<F>(py),
+            DType::Int8 => numpy::dtype::<i8>(py),
+            DType::Int16 => numpy::dtype::<i16>(py),
+            DType::Int => numpy::dtype::<I>(py),
+            DType::Int64 => numpy::dtype::<i64>(py),
+            DType::Bool => numpy::dtype::<bool>(py),
+            DType::UInt => numpy::dtype::<Idx>(py),
+            DType::U8 => numpy::dtype::<u8>(py),
+            DType::UInt16 => numpy::dtype::<u16>(py),
+            DType::UInt32 => numpy::dtype::<u32>(py),
+            DType::Complex64 => numpy::dtype::<Complex<f32>>(py),
+            DType::Complex128 => numpy::dtype::<Complex<f64>>(py),
+            DType::String => return Ok("str".to_owned()),
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "dtype {other} has no numpy equivalent"
+                )));
+            }
+        };
+        descr.getattr("name")?.extract()
     }
 }
 

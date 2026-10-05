@@ -45,6 +45,28 @@ pub enum DType {
 }
 
 impl DType {
+    /// Every variant, in declaration order.
+    pub const ALL: [DType; 13] = [
+        DType::Float,
+        DType::Int8,
+        DType::Int16,
+        DType::Int,
+        DType::Int64,
+        DType::Bool,
+        DType::UInt,
+        DType::U8,
+        DType::UInt16,
+        DType::UInt32,
+        DType::String,
+        DType::Complex64,
+        DType::Complex128,
+    ];
+
+    /// The variant whose [`name`](Self::name) is `name`, or `None`.
+    pub fn from_name(name: &str) -> Option<DType> {
+        Self::ALL.into_iter().find(|dtype| dtype.name() == name)
+    }
+
     /// Returns the name of the data type as a string.
     pub fn name(&self) -> &'static str {
         match self {
@@ -189,6 +211,24 @@ mod tests {
         for (dtype, width) in FIXED_WIDTH {
             assert_eq!(dtype.itemsize(), Some(width), "itemsize of {dtype}");
         }
+    }
+
+    #[test]
+    fn all_lists_every_variant_once_in_order() {
+        for (i, dtype) in DType::ALL.into_iter().enumerate() {
+            assert_eq!(dtype as usize, i, "DType::ALL[{i}] is {dtype}");
+        }
+        // The last declared variant closes the list, so a variant appended
+        // to the enum without joining `ALL` fails here.
+        assert_eq!(DType::Complex128 as usize + 1, DType::ALL.len());
+    }
+
+    #[test]
+    fn from_name_inverts_name() {
+        for dtype in DType::ALL {
+            assert_eq!(DType::from_name(dtype.name()), Some(dtype));
+        }
+        assert_eq!(DType::from_name("f32"), None);
     }
 
     #[test]
