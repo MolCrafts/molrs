@@ -34,6 +34,7 @@ macro_rules! map_view {
 ///
 /// Each variant holds an `ArrayViewD` that borrows from the corresponding
 /// `ArrayD` inside an owned `Column`. No data is copied.
+#[derive(Clone)]
 pub enum ColumnView<'a> {
     /// Borrowed float column.
     Float(ArrayViewD<'a, F>),
@@ -95,6 +96,29 @@ impl<'a> ColumnView<'a> {
         map_view!(self, a => a.shape())
     }
 
+    /// Reborrow this view for the lifetime of `self`.
+    ///
+    /// A `ColumnView` stored inside a [`BlockView`](super::BlockView) keeps the
+    /// original column's lifetime. Callers that only hold `&self` need a view
+    /// that ends with that borrow.
+    pub fn reborrow(&self) -> ColumnView<'_> {
+        match self {
+            ColumnView::Float(a) => ColumnView::Float(a.view()),
+            ColumnView::Int8(a) => ColumnView::Int8(a.view()),
+            ColumnView::Int16(a) => ColumnView::Int16(a.view()),
+            ColumnView::Int(a) => ColumnView::Int(a.view()),
+            ColumnView::Int64(a) => ColumnView::Int64(a.view()),
+            ColumnView::Bool(a) => ColumnView::Bool(a.view()),
+            ColumnView::UInt(a) => ColumnView::UInt(a.view()),
+            ColumnView::U8(a) => ColumnView::U8(a.view()),
+            ColumnView::UInt16(a) => ColumnView::UInt16(a.view()),
+            ColumnView::UInt32(a) => ColumnView::UInt32(a.view()),
+            ColumnView::String(a) => ColumnView::String(a.view()),
+            ColumnView::Complex64(a) => ColumnView::Complex64(a.view()),
+            ColumnView::Complex128(a) => ColumnView::Complex128(a.view()),
+        }
+    }
+
     /// Returns a view of the float data, or `None` if this column view is not `Float`.
     pub fn as_float(&self) -> Option<ArrayViewD<'a, F>> {
         match self {
@@ -143,7 +167,62 @@ impl<'a> ColumnView<'a> {
         }
     }
 
-    /// Creates an owned [`Column`] by cloning the viewed data.
+    /// Returns a view of the `i8` data, or `None` if not `Int8`.
+    pub fn as_i8(&self) -> Option<ArrayViewD<'a, i8>> {
+        match self {
+            ColumnView::Int8(a) => Some(a.clone()),
+            _ => None,
+        }
+    }
+
+    /// Returns a view of the `i16` data, or `None` if not `Int16`.
+    pub fn as_i16(&self) -> Option<ArrayViewD<'a, i16>> {
+        match self {
+            ColumnView::Int16(a) => Some(a.clone()),
+            _ => None,
+        }
+    }
+
+    /// Returns a view of the `i64` data, or `None` if not `Int64`.
+    pub fn as_i64(&self) -> Option<ArrayViewD<'a, i64>> {
+        match self {
+            ColumnView::Int64(a) => Some(a.clone()),
+            _ => None,
+        }
+    }
+
+    /// Returns a view of the `u16` data, or `None` if not `UInt16`.
+    pub fn as_u16(&self) -> Option<ArrayViewD<'a, u16>> {
+        match self {
+            ColumnView::UInt16(a) => Some(a.clone()),
+            _ => None,
+        }
+    }
+
+    /// Returns a view of the `u32` data, or `None` if not `UInt32`.
+    pub fn as_u32(&self) -> Option<ArrayViewD<'a, u32>> {
+        match self {
+            ColumnView::UInt32(a) => Some(a.clone()),
+            _ => None,
+        }
+    }
+
+    /// Returns a view of the `complex64` data, or `None` if not `Complex64`.
+    pub fn as_c64(&self) -> Option<ArrayViewD<'a, Complex<f32>>> {
+        match self {
+            ColumnView::Complex64(a) => Some(a.clone()),
+            _ => None,
+        }
+    }
+
+    /// Returns a view of the `complex128` data, or `None` if not `Complex128`.
+    pub fn as_c128(&self) -> Option<ArrayViewD<'a, Complex<f64>>> {
+        match self {
+            ColumnView::Complex128(a) => Some(a.clone()),
+            _ => None,
+        }
+    }
+
     /// Format one row as EXTXYZ property tokens.
     pub fn xyz_tokens(&self, row: usize) -> Vec<String> {
         use ndarray::Axis;
@@ -163,6 +242,7 @@ impl<'a> ColumnView<'a> {
         }
     }
 
+    /// Creates an owned [`Column`] by cloning the viewed data.
     pub fn to_owned(&self) -> Column {
         match self {
             ColumnView::Float(a) => Column::from_float(a.to_owned()),
@@ -293,5 +373,19 @@ mod tests {
         let orig_ptr = col.as_float().unwrap().as_ptr();
         let view_ptr = view.as_float().unwrap().as_ptr();
         assert_eq!(orig_ptr, view_ptr);
+    }
+
+    #[test]
+    fn projections_cover_the_narrow_and_complex_variants() {
+        let i64_col = Column::from_i64(Array1::from_vec(vec![1_i64, 2]).into_dyn());
+        let i64_view = ColumnView::from(&i64_col);
+        assert_eq!(i64_view.as_i64().unwrap().as_slice().unwrap(), &[1, 2]);
+        assert!(i64_view.as_int().is_none());
+
+        let c = Column::from_c128(Array1::from_vec(vec![Complex::new(1.0, 2.0)]).into_dyn());
+        let view = ColumnView::from(&c);
+        let arr = view.as_c128().unwrap();
+        assert_eq!(arr[[0]].re, 1.0);
+        assert!(view.as_c64().is_none());
     }
 }

@@ -2,33 +2,29 @@
 //!
 //! [`FrameAccess`] provides a common read-only interface implemented by both
 //! [`Frame`] and [`FrameView`], enabling generic code that works with either.
-
-use ndarray::ArrayViewD;
+//! A frame read is two steps: [`visit_block`](FrameAccess::visit_block), then
+//! the column.
 
 use crate::spatial::simbox::SimBox;
 use crate::store::block::access::BlockAccess;
 use crate::store::frame::Frame;
 use crate::store::frame_view::FrameView;
 use crate::store::meta::MetaMap;
-use crate::types::{F, I, Idx};
 
 /// Unified read-only access for [`Frame`] and [`FrameView`].
 ///
-/// Provides direct access to typed column data across block boundaries,
-/// as well as metadata and simulation box references.
+/// Metadata, the simulation box, and one column read as two keys.
+/// Project a dtype from the returned [`ColumnView`](crate::store::block::ColumnView).
 pub trait FrameAccess {
-    /// Gets a float array view from a column inside a block.
-    fn get_float(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, F>>;
-    /// Gets an int array view from a column inside a block.
-    fn get_int(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, I>>;
-    /// Gets a bool array view from a column inside a block.
-    fn get_bool(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, bool>>;
-    /// Gets a uint array view from a column inside a block.
-    fn get_uint(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, Idx>>;
-    /// Gets a u8 array view from a column inside a block.
-    fn get_u8(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, u8>>;
-    /// Gets a string array view from a column inside a block.
-    fn get_string(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, String>>;
+    /// The column `col_key` inside block `block_key`, or `None` when either key is absent.
+    ///
+    /// A missing block and a missing column are both `None`. A present column of
+    /// another dtype is still `Some`; `as_*` on that column is the dtype check.
+    fn column<'a>(
+        &'a self,
+        block_key: &str,
+        col_key: &str,
+    ) -> Option<crate::store::block::ColumnView<'a>>;
     /// Returns a reference to the simulation box, if present.
     fn simbox_ref(&self) -> Option<&SimBox>;
     /// Returns a reference to the metadata map.
@@ -47,40 +43,12 @@ pub trait FrameAccess {
 }
 
 impl FrameAccess for Frame {
-    fn get_float(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, F>> {
-        self.get(block_key)
-            .and_then(|b| b.get_float(col_key))
-            .map(|a| a.view())
-    }
-
-    fn get_int(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, I>> {
-        self.get(block_key)
-            .and_then(|b| b.get_int(col_key))
-            .map(|a| a.view())
-    }
-
-    fn get_bool(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, bool>> {
-        self.get(block_key)
-            .and_then(|b| b.get_bool(col_key))
-            .map(|a| a.view())
-    }
-
-    fn get_uint(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, Idx>> {
-        self.get(block_key)
-            .and_then(|b| b.get_uint(col_key))
-            .map(|a| a.view())
-    }
-
-    fn get_u8(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, u8>> {
-        self.get(block_key)
-            .and_then(|b| b.get_u8(col_key))
-            .map(|a| a.view())
-    }
-
-    fn get_string(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, String>> {
-        self.get(block_key)
-            .and_then(|b| b.get_string(col_key))
-            .map(|a| a.view())
+    fn column<'a>(
+        &'a self,
+        block_key: &str,
+        col_key: &str,
+    ) -> Option<crate::store::block::ColumnView<'a>> {
+        self.get(block_key)?.column(col_key)
     }
 
     fn simbox_ref(&self) -> Option<&SimBox> {
@@ -113,28 +81,12 @@ impl FrameAccess for Frame {
 }
 
 impl FrameAccess for FrameView<'_> {
-    fn get_float(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, F>> {
-        self.get(block_key).and_then(|b| b.get_float(col_key))
-    }
-
-    fn get_int(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, I>> {
-        self.get(block_key).and_then(|b| b.get_int(col_key))
-    }
-
-    fn get_bool(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, bool>> {
-        self.get(block_key).and_then(|b| b.get_bool(col_key))
-    }
-
-    fn get_uint(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, Idx>> {
-        self.get(block_key).and_then(|b| b.get_uint(col_key))
-    }
-
-    fn get_u8(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, u8>> {
-        self.get(block_key).and_then(|b| b.get_u8(col_key))
-    }
-
-    fn get_string(&self, block_key: &str, col_key: &str) -> Option<ArrayViewD<'_, String>> {
-        self.get(block_key).and_then(|b| b.get_string(col_key))
+    fn column<'a>(
+        &'a self,
+        block_key: &str,
+        col_key: &str,
+    ) -> Option<crate::store::block::ColumnView<'a>> {
+        self.get(block_key)?.column(col_key)
     }
 
     fn simbox_ref(&self) -> Option<&SimBox> {
@@ -190,10 +142,10 @@ mod tests {
     #[test]
     fn test_frame_access_on_frame() {
         let frame = make_frame();
-        assert!(FrameAccess::get_float(&frame, "atoms", "x").is_some());
-        assert!(FrameAccess::get_uint(&frame, "atoms", "id").is_some());
-        assert!(FrameAccess::get_float(&frame, "atoms", "missing").is_none());
-        assert!(FrameAccess::get_float(&frame, "missing", "x").is_none());
+        assert!(column_is_float(&frame, "atoms", "x"));
+        assert!(column_is_uint(&frame, "atoms", "id"));
+        assert!(!column_is_float(&frame, "atoms", "missing"));
+        assert!(!column_is_float(&frame, "missing", "x"));
         assert_eq!(FrameAccess::block_count(&frame), 1);
         assert!(FrameAccess::contains_block(&frame, "atoms"));
         assert!(!FrameAccess::is_empty(&frame));
@@ -208,9 +160,9 @@ mod tests {
     fn test_frame_access_on_frame_view() {
         let frame = make_frame();
         let view = FrameView::from(&frame);
-        assert!(FrameAccess::get_float(&view, "atoms", "x").is_some());
-        assert!(FrameAccess::get_uint(&view, "atoms", "id").is_some());
-        assert!(FrameAccess::get_float(&view, "atoms", "missing").is_none());
+        assert!(column_is_float(&view, "atoms", "x"));
+        assert!(column_is_uint(&view, "atoms", "id"));
+        assert!(!column_is_float(&view, "atoms", "missing"));
         assert_eq!(FrameAccess::block_count(&view), 1);
         assert!(FrameAccess::contains_block(&view, "atoms"));
         assert!(!FrameAccess::is_empty(&view));
@@ -220,11 +172,27 @@ mod tests {
         );
     }
 
+    fn column_is_float(f: &impl FrameAccess, block: &str, col: &str) -> bool {
+        f.visit_block(block, |b| {
+            b.column(col).and_then(|c| c.as_float()).is_some()
+        })
+        .unwrap_or(false)
+    }
+
+    fn column_is_uint(f: &impl FrameAccess, block: &str, col: &str) -> bool {
+        f.visit_block(block, |b| b.column(col).and_then(|c| c.as_uint()).is_some())
+            .unwrap_or(false)
+    }
+
     #[test]
     fn test_generic_function_with_frame_access() {
         fn get_x_data(f: &impl FrameAccess) -> Option<Vec<F>> {
-            f.get_float("atoms", "x")
-                .map(|a| a.iter().copied().collect())
+            f.visit_block("atoms", |b| {
+                b.column("x")
+                    .and_then(|c| c.as_float())
+                    .map(|a| a.iter().copied().collect())
+            })
+            .flatten()
         }
 
         let frame = make_frame();

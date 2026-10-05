@@ -143,14 +143,38 @@ pub fn uff_angle_ctor(
     let block = frame
         .get(ANGLES)
         .ok_or("uff_angle: missing \"angles\" block")?;
-    let i = block.get_uint("atomi").ok_or("uff_angle: missing atomi")?;
-    let j = block.get_uint("atomj").ok_or("uff_angle: missing atomj")?;
-    let k = block.get_uint("atomk").ok_or("uff_angle: missing atomk")?;
-    let ka = block.get_float("ka").ok_or("uff_angle: missing ka")?;
-    let order = block.get_float("order").ok_or("uff_angle: missing order")?;
-    let c0 = block.get_float("c0").ok_or("uff_angle: missing c0")?;
-    let c1 = block.get_float("c1").ok_or("uff_angle: missing c1")?;
-    let c2 = block.get_float("c2").ok_or("uff_angle: missing c2")?;
+    let i = block
+        .get("atomi")
+        .and_then(|c| c.as_uint())
+        .ok_or("uff_angle: missing atomi")?;
+    let j = block
+        .get("atomj")
+        .and_then(|c| c.as_uint())
+        .ok_or("uff_angle: missing atomj")?;
+    let k = block
+        .get("atomk")
+        .and_then(|c| c.as_uint())
+        .ok_or("uff_angle: missing atomk")?;
+    let ka = block
+        .get("ka")
+        .and_then(|c| c.as_float())
+        .ok_or("uff_angle: missing ka")?;
+    let order = block
+        .get("order")
+        .and_then(|c| c.as_float())
+        .ok_or("uff_angle: missing order")?;
+    let c0 = block
+        .get("c0")
+        .and_then(|c| c.as_float())
+        .ok_or("uff_angle: missing c0")?;
+    let c1 = block
+        .get("c1")
+        .and_then(|c| c.as_float())
+        .ok_or("uff_angle: missing c1")?;
+    let c2 = block
+        .get("c2")
+        .and_then(|c| c.as_float())
+        .ok_or("uff_angle: missing c2")?;
     let n = i.len();
     Ok(Member::indexed(UffAngle {
         atom_i: (0..n).map(|t| i[t] as usize).collect(),

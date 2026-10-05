@@ -33,7 +33,7 @@ use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::meta::MetaMap;
-use molrs::types::{F, I, Idx};
+use molrs::types::{F, Idx};
 
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::writer::{FrameWriter, Writer};
@@ -56,15 +56,6 @@ fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
 }
 
 fn insert_str_col(block: &mut Block, key: &str, vals: Vec<String>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
-
-fn insert_i32_col(block: &mut Block, key: &str, vals: Vec<I>) -> Result<()> {
     let n = vals.len();
     let arr = Array1::from_vec(vals)
         .into_shape_with_order(IxDyn(&[n]))
@@ -440,18 +431,34 @@ impl FrameInProgress {
         ) {
             insert_str_col(&mut atoms, "res_name", res_names)?;
         }
-        if let Some(res_seqs) = column_i32(
+        // The canonical residue number: unsigned, so a negative one is
+        // refused here at the boundary (as the PDB reader does), and the CIF
+        // placeholders `.` / `?` (a ligand or water with no polymer residue
+        // number) are null rows rather than a fake 0.
+        if let Some((res_ids, valid)) = column_res_id(
             &self.atom_cols,
             &["_atom_site.label_seq_id", "_atom_site.auth_seq_id"],
-            0,
-        ) {
-            insert_i32_col(&mut atoms, "res_seq", res_seqs)?;
+        )? {
+            let n = res_ids.len();
+            let arr = Array1::from_vec(res_ids)
+                .into_shape_with_order(IxDyn(&[n]))
+                .map_err(invalid_data)?
+                .into_dyn();
+            atoms
+                .insert_nullable("res_id", arr, valid)
+                .map_err(invalid_data)?;
         }
         if let Some(chains) = string_column(
             &self.atom_cols,
             &["_atom_site.label_asym_id", "_atom_site.auth_asym_id"],
         ) {
-            insert_str_col(&mut atoms, "chain_id", chains)?;
+            insert_str_col(&mut atoms, "chain", chains)?;
+        }
+        if let Some(icodes) = string_column(&self.atom_cols, &["_atom_site.pdbx_PDB_ins_code"]) {
+            insert_str_col(&mut atoms, "icode", placeholders_as_empty(icodes))?;
+        }
+        if let Some(altlocs) = string_column(&self.atom_cols, &["_atom_site.label_alt_id"]) {
+            insert_str_col(&mut atoms, "altloc", placeholders_as_empty(altlocs))?;
         }
         if let Some(occ) = column_floats(
             &self.atom_cols,
@@ -463,7 +470,7 @@ impl FrameInProgress {
             &self.atom_cols,
             &["_atom_site.B_iso_or_equiv", "_atom_site_B_iso_or_equiv"],
         ) {
-            insert_float_col(&mut atoms, "b_iso", b)?;
+            insert_float_col(&mut atoms, "b_factor", b)?;
         }
 
         frame.insert("atoms", atoms);
@@ -498,29 +505,54 @@ fn string_column(map: &HashMap<String, Vec<String>>, keys: &[&str]) -> Option<Ve
     None
 }
 
-/// Parse an integer column from a CIF loop. CIF uses `"."` and `"?"` for
-/// "not applicable" and "unknown" respectively (e.g. `_atom_site.label_seq_id`
-/// is `"."` for ligand / water / metal-ion atoms with no polymer residue
-/// numbering). Both placeholders, plus empty strings or unparseable values,
-/// fall back to `missing` rather than aborting the whole frame build.
-fn column_i32(map: &HashMap<String, Vec<String>>, keys: &[&str], missing: I) -> Option<Vec<I>> {
-    for k in keys {
-        if let Some(col) = map.get(*k) {
-            return Some(
-                col.iter()
-                    .map(|s| {
-                        let t = s.trim();
-                        if t == "." || t == "?" || t.is_empty() {
-                            missing
-                        } else {
-                            t.parse::<I>().unwrap_or(missing)
-                        }
-                    })
-                    .collect(),
-            );
+/// Is `token` one of CIF's placeholders: `.` ("not applicable"), `?`
+/// ("unknown"), or empty?
+fn is_placeholder(token: &str) -> bool {
+    matches!(token.trim(), "." | "?" | "")
+}
+
+/// A string column with the CIF placeholders read as `""` (none).
+fn placeholders_as_empty(values: Vec<String>) -> Vec<String> {
+    values
+        .into_iter()
+        .map(|v| if is_placeholder(&v) { String::new() } else { v })
+        .collect()
+}
+
+/// Parse the residue-number column from a CIF loop as unsigned `res_id`
+/// values plus a validity mask: a placeholder (`.` for ligand / water / metal
+/// atoms with no polymer residue numbering, `?`) is a null row.
+///
+/// # Errors
+///
+/// `InvalidData` naming the value for a negative or unparseable number —
+/// residue ids are unsigned, and a reader renumbers at its boundary rather
+/// than storing a fake value.
+fn column_res_id(
+    map: &HashMap<String, Vec<String>>,
+    keys: &[&str],
+) -> Result<Option<(Vec<Idx>, Vec<bool>)>> {
+    let Some(col) = keys.iter().find_map(|k| map.get(*k)) else {
+        return Ok(None);
+    };
+    let mut values = Vec::with_capacity(col.len());
+    let mut valid = Vec::with_capacity(col.len());
+    for token in col {
+        if is_placeholder(token) {
+            values.push(0);
+            valid.push(false);
+            continue;
         }
+        let v = token.trim().parse::<Idx>().map_err(|_| {
+            invalid_data(format!(
+                "CIF residue number {token:?} is not a non-negative integer; residue ids are \
+                 unsigned"
+            ))
+        })?;
+        values.push(v);
+        valid.push(true);
     }
-    None
+    Ok(Some((values, valid)))
 }
 
 fn column_u32(map: &HashMap<String, Vec<String>>, keys: &[&str]) -> Option<Vec<Idx>> {
@@ -787,16 +819,19 @@ pub fn write_cif_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     writeln!(writer, "_atom_site_Cartn_z")?;
 
     let xs = atoms
-        .get_float("x")
+        .get("x")
+        .and_then(|c| c.as_float())
         .ok_or_else(|| invalid_data("atoms.x missing"))?;
     let ys = atoms
-        .get_float("y")
+        .get("y")
+        .and_then(|c| c.as_float())
         .ok_or_else(|| invalid_data("atoms.y missing"))?;
     let zs = atoms
-        .get_float("z")
+        .get("z")
+        .and_then(|c| c.as_float())
         .ok_or_else(|| invalid_data("atoms.z missing"))?;
-    let labels = atoms.get_string("name");
-    let symbols = atoms.get_string("element");
+    let labels = atoms.get("name").and_then(|c| c.as_string());
+    let symbols = atoms.get("element").and_then(|c| c.as_string());
 
     for i in 0..n {
         let label = labels
@@ -884,7 +919,7 @@ C2 C 0.5 0.5 0.5
         let frame = reader.read().unwrap().unwrap();
         let atoms = frame.get("atoms").unwrap();
         assert_eq!(atoms.nrows(), Some(2));
-        let xs = atoms.get_float("x").unwrap();
+        let xs = atoms.get("x").and_then(|c| c.as_float()).unwrap();
         assert!((xs[[1]] - 2.5).abs() < 1e-9, "got {}", xs[[1]]);
         assert!(frame.simbox.is_some());
     }
@@ -899,8 +934,18 @@ C2 C 0.5 0.5 0.5
         write_cif_frame(&mut buf, &frame).unwrap();
         let mut reader2 = CifReader::new(Cursor::new(&buf));
         let frame2 = reader2.read().unwrap().unwrap();
-        let xs1 = frame.get("atoms").unwrap().get_float("x").unwrap();
-        let xs2 = frame2.get("atoms").unwrap().get_float("x").unwrap();
+        let xs1 = frame
+            .get("atoms")
+            .unwrap()
+            .get("x")
+            .and_then(|c| c.as_float())
+            .unwrap();
+        let xs2 = frame2
+            .get("atoms")
+            .unwrap()
+            .get("x")
+            .and_then(|c| c.as_float())
+            .unwrap();
         for i in 0..xs1.len() {
             assert!((xs1[[i]] - xs2[[i]]).abs() < 1e-4);
         }
@@ -910,5 +955,62 @@ C2 C 0.5 0.5 0.5
     fn esd_strip() {
         assert_eq!(strip_esd("5.917(3)"), "5.917");
         assert_eq!(strip_esd("90.000"), "90.000");
+    }
+
+    const MMCIF: &str = "\
+data_prot
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_alt_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_seq_id
+_atom_site.pdbx_PDB_ins_code
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.occupancy
+_atom_site.B_iso_or_equiv
+ATOM 1 N N A ALA A 1 B 1.0 2.0 3.0 0.5 10.5
+HETATM 2 O O . HOH C . ? 4.0 5.0 6.0 1.0 20.0
+";
+
+    #[test]
+    fn mmcif_atoms_take_the_canonical_topology_keys() {
+        let frame = CifReader::new(Cursor::new(MMCIF.as_bytes()))
+            .read()
+            .unwrap()
+            .unwrap();
+        let atoms = frame.get("atoms").unwrap();
+        let strings = |key: &str| -> Vec<String> {
+            atoms
+                .get(key)
+                .and_then(|c| c.as_string())
+                .unwrap()
+                .iter()
+                .cloned()
+                .collect()
+        };
+        assert_eq!(strings("chain"), ["A", "C"]);
+        assert_eq!(strings("altloc"), ["A", ""]);
+        assert_eq!(strings("icode"), ["B", ""]);
+        let res_id = atoms.get("res_id").and_then(|c| c.as_uint()).unwrap();
+        assert_eq!(res_id[[0]], 1);
+        assert_eq!(atoms.validity("res_id"), Some(&[true, false][..]));
+        let b = atoms.get("b_factor").and_then(|c| c.as_float()).unwrap();
+        assert_eq!(b.iter().copied().collect::<Vec<_>>(), [10.5, 20.0]);
+        for old in ["chain_id", "res_seq", "b_iso"] {
+            assert!(atoms.get(old).is_none(), "{old}");
+        }
+
+        let negative = MMCIF.replace("ALA A 1 B", "ALA A -3 B");
+        assert!(
+            CifReader::new(Cursor::new(negative.as_bytes()))
+                .read()
+                .is_err()
+        );
     }
 }

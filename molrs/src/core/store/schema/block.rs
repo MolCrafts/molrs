@@ -26,18 +26,28 @@ impl std::fmt::Display for RowKind {
     }
 }
 
-/// Which node table a relation block's endpoints index into.
+/// Which block one endpoint column of a relation indexes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndpointTarget {
+    /// The rows of this block of the same frame (`"atoms"` for every
+    /// canonical endpoint but `members.atom`).
+    Block(&'static str),
+    /// Whatever the block's `targets` attribute declares for the column, or
+    /// nothing: without a declaration the column is an opaque handle, not a
+    /// row reference (`members.atom`, which points into an all-atom block of
+    /// another section).
+    Declared,
+}
+
+/// The endpoint columns of a relation block, each with the block it indexes.
 ///
-/// Every canonical relation targets `atoms`; a coarse-grained frame stores
-/// its beads as `atoms` rows, so its `bonds` need no other target. The field
-/// keeps the target explicit rather than assumed.
+/// A block's declared `targets` ([`Block::targets`](crate::store::block::Block::targets))
+/// override these defaults; see
+/// [`relation_endpoints`](super::relation_endpoints).
 #[derive(Debug, Clone, Copy)]
 pub struct EndpointSpec {
-    /// Block whose rows the endpoint values index (`"atoms"` for every
-    /// canonical relation).
-    pub target: &'static str,
-    /// Endpoint column keys, in position order.
-    pub columns: &'static [&'static str],
+    /// `(column, target)` in position order.
+    pub columns: &'static [(&'static str, EndpointTarget)],
 }
 
 /// One canonical block of the Frame vocabulary.
@@ -64,11 +74,11 @@ pub struct BlockSpec {
 }
 
 impl BlockSpec {
-    /// Endpoint column keys, or an empty slice for non-relation blocks.
-    pub fn endpoint_columns(&self) -> &'static [&'static str] {
-        match self.endpoints {
-            Some(e) => e.columns,
-            None => &[],
-        }
+    /// Endpoint column keys in position order, empty for non-relation
+    /// blocks.
+    pub fn endpoint_columns(&self) -> Vec<&'static str> {
+        self.endpoints
+            .map(|e| e.columns.iter().map(|&(column, _)| column).collect())
+            .unwrap_or_default()
     }
 }

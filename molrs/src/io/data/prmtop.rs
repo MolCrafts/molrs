@@ -1217,11 +1217,11 @@ modified Bondi radii (mbondi2)
     fn an_angle_label_names_its_end_types_in_sorted_order() {
         let frame = frame_from(LITFSI_HEAD);
         let angles = frame.get("angles").unwrap();
-        let labels = angles.get_string("type").unwrap();
+        let labels = angles.get("type").and_then(|c| c.as_string()).unwrap();
         let (i, j, k) = (
-            angles.get_uint("atomi").unwrap(),
-            angles.get_uint("atomj").unwrap(),
-            angles.get_uint("atomk").unwrap(),
+            angles.get("atomi").and_then(|c| c.as_uint()).unwrap(),
+            angles.get("atomj").and_then(|c| c.as_uint()).unwrap(),
+            angles.get("atomk").and_then(|c| c.as_uint()).unwrap(),
         );
         assert_eq!((i[[3]], j[[3]], k[[3]]), (10, 8, 11));
         assert_eq!(labels[[3]], "c3-sy-o");
@@ -1235,21 +1235,24 @@ modified Bondi radii (mbondi2)
     fn litfsi_charge_and_li() {
         let frame = frame_from(LITFSI_HEAD);
         let atoms = frame.get("atoms").unwrap();
-        let charge = atoms.get_float("charge").unwrap();
+        let charge = atoms.get("charge").and_then(|c| c.as_float()).unwrap();
         assert!((charge[[15]] - 1.0).abs() < 1e-5);
         let total: F = (0..16).map(|i| charge[[i]]).sum();
         assert!(total.abs() < 0.01);
-        let z = atoms.get_uint("atomic_number").unwrap();
+        let z = atoms
+            .get("atomic_number")
+            .and_then(|c| c.as_uint())
+            .unwrap();
         assert_eq!(z[[15]], 3);
         assert_eq!(z[[0]], 9);
-        let names = atoms.get_string("name").unwrap();
+        let names = atoms.get("name").and_then(|c| c.as_string()).unwrap();
         assert_eq!(names[[0]], "F");
         assert_eq!(names[[15]], "LI");
-        let types = atoms.get_string("type").unwrap();
+        let types = atoms.get("type").and_then(|c| c.as_string()).unwrap();
         assert_eq!(types[[0]], "f");
         assert_eq!(types[[1]], "c3");
         assert_eq!(types[[15]], "Li+");
-        let res = atoms.get_uint("res_id").unwrap();
+        let res = atoms.get("res_id").and_then(|c| c.as_uint()).unwrap();
         assert_eq!(res[[0]], 0);
         assert_eq!(res[[14]], 0);
         assert_eq!(res[[15]], 1);
@@ -1259,8 +1262,8 @@ modified Bondi radii (mbondi2)
     fn bond_first_pair_zero_based() {
         let frame = frame_from(LITFSI_HEAD);
         let bonds = frame.get("bonds").unwrap();
-        let ai = bonds.get_uint("atomi").unwrap();
-        let aj = bonds.get_uint("atomj").unwrap();
+        let ai = bonds.get("atomi").and_then(|c| c.as_uint()).unwrap();
+        let aj = bonds.get("atomj").and_then(|c| c.as_uint()).unwrap();
         let mut found = false;
         for i in 0..ai.len() {
             let a = ai[[i]];
@@ -1478,7 +1481,8 @@ c3  c3  c3  c3
         let frame = frame_from(LITFSI_HEAD);
         let atoms = frame.get("atoms").unwrap();
         let res_name = atoms
-            .get_string("res_name")
+            .get("res_name")
+            .and_then(|c| c.as_string())
             .expect("atoms block must carry res_name from RESIDUE_LABEL");
         assert_eq!(res_name.len(), 16);
         for i in 0..15 {
@@ -1493,7 +1497,7 @@ c3  c3  c3  c3
         let frame = frame_from(&text);
         let atoms = frame.get("atoms").unwrap();
         assert!(
-            atoms.get_string("res_name").is_none(),
+            atoms.get("res_name").and_then(|c| c.as_string()).is_none(),
             "res_name must be absent, never fabricated, when RESIDUE_LABEL is missing"
         );
     }
@@ -1503,7 +1507,8 @@ c3  c3  c3  c3
         let frame = frame_from(LITFSI_HEAD);
         let atoms = frame.get("atoms").unwrap();
         let mol_id = atoms
-            .get_uint("mol_id")
+            .get("mol_id")
+            .and_then(|c| c.as_uint())
             .expect("atoms block must carry mol_id from ATOMS_PER_MOLECULE");
         assert_eq!(mol_id.len(), 16);
         for i in 0..15 {
@@ -1522,7 +1527,7 @@ c3  c3  c3  c3
         let frame = frame_from(&text);
         let atoms = frame.get("atoms").unwrap();
         assert!(
-            atoms.get_uint("mol_id").is_none(),
+            atoms.get("mol_id").and_then(|c| c.as_uint()).is_none(),
             "mol_id must be absent, never inferred from bonds"
         );
     }
@@ -1532,7 +1537,8 @@ c3  c3  c3  c3
         let frame = frame_from(LITFSI_HEAD);
         let atoms = frame.get("atoms").unwrap();
         let tree = atoms
-            .get_string("tree")
+            .get("tree")
+            .and_then(|c| c.as_string())
             .expect("atoms block must carry tree from TREE_CHAIN_CLASSIFICATION");
         assert_eq!(tree.len(), 16);
         assert_eq!(tree[[0]], "E");
@@ -1546,7 +1552,7 @@ c3  c3  c3  c3
         let text = without_section(LITFSI_HEAD, "TREE_CHAIN_CLASSIFICATION");
         let frame = frame_from(&text);
         let atoms = frame.get("atoms").unwrap();
-        assert!(atoms.get_string("tree").is_none());
+        assert!(atoms.get("tree").and_then(|c| c.as_string()).is_none());
     }
 
     #[test]
@@ -1554,7 +1560,8 @@ c3  c3  c3  c3
         let frame = frame_from(LITFSI_HEAD);
         let atoms = frame.get("atoms").unwrap();
         let r = atoms
-            .get_float("gb_radius")
+            .get("gb_radius")
+            .and_then(|c| c.as_float())
             .expect("atoms block must carry gb_radius from RADII");
         assert_eq!(r.len(), 16);
         assert!((r[[0]] - 1.50).abs() < 1e-12, "F radius");
@@ -1568,7 +1575,7 @@ c3  c3  c3  c3
         let text = without_section(LITFSI_HEAD, "RADII");
         let frame = frame_from(&text);
         let atoms = frame.get("atoms").unwrap();
-        assert!(atoms.get_float("gb_radius").is_none());
+        assert!(atoms.get("gb_radius").and_then(|c| c.as_float()).is_none());
     }
 
     #[test]
@@ -1576,7 +1583,8 @@ c3  c3  c3  c3
         let frame = frame_from(LITFSI_HEAD);
         let atoms = frame.get("atoms").unwrap();
         let s = atoms
-            .get_float("gb_screen")
+            .get("gb_screen")
+            .and_then(|c| c.as_float())
             .expect("atoms block must carry gb_screen from SCREEN");
         assert_eq!(s.len(), 16);
         assert!((s[[0]] - 0.88).abs() < 1e-12, "F screen");
@@ -1590,7 +1598,7 @@ c3  c3  c3  c3
         let text = without_section(LITFSI_HEAD, "SCREEN");
         let frame = frame_from(&text);
         let atoms = frame.get("atoms").unwrap();
-        assert!(atoms.get_float("gb_screen").is_none());
+        assert!(atoms.get("gb_screen").and_then(|c| c.as_float()).is_none());
     }
 
     // -----------------------------------------------------------------
@@ -1606,8 +1614,14 @@ c3  c3  c3  c3
         // NNB = 65 entries, two of which are the `0` placeholders of the two
         // atoms that exclude nothing (F3, index 14; Li, index 15).
         assert_eq!(excl.nrows(), Some(63));
-        let atomi = excl.get_uint("atomi").expect("exclusions.atomi");
-        let atomj = excl.get_uint("atomj").expect("exclusions.atomj");
+        let atomi = excl
+            .get("atomi")
+            .and_then(|c| c.as_uint())
+            .expect("exclusions.atomi");
+        let atomj = excl
+            .get("atomj")
+            .and_then(|c| c.as_uint())
+            .expect("exclusions.atomj");
         for row in 0..63 {
             assert!(
                 atomi[[row]] < atomj[[row]],
@@ -1639,8 +1653,14 @@ c3  c3  c3  c3
             .get("exclusions")
             .expect("an all-placeholder list still yields a schema-typed empty block");
         assert_eq!(excl.nrows(), Some(0));
-        assert!(excl.get_uint("atomi").is_some(), "atomi column must exist");
-        assert!(excl.get_uint("atomj").is_some(), "atomj column must exist");
+        assert!(
+            excl.get("atomi").and_then(|c| c.as_uint()).is_some(),
+            "atomi column must exist"
+        );
+        assert!(
+            excl.get("atomj").and_then(|c| c.as_uint()).is_some(),
+            "atomj column must exist"
+        );
     }
 
     #[test]
@@ -1673,7 +1693,8 @@ c3  c3  c3  c3
         let flag = frame
             .get("dihedrals")
             .unwrap()
-            .get_bool("exclude_14")
+            .get("exclude_14")
+            .and_then(|c| c.as_bool())
             .expect("dihedrals must carry exclude_14");
         assert_eq!((flag[[0]], flag[[1]]), (true, false));
     }
@@ -1689,7 +1710,8 @@ c3  c3  c3  c3
             .expect("a negative 4th pointer puts the row in impropers");
         assert_eq!(quartets(impropers), vec![[0, 1, 2, 3], [1, 0, 2, 3]]);
         let flag = impropers
-            .get_bool("exclude_14")
+            .get("exclude_14")
+            .and_then(|c| c.as_bool())
             .expect("impropers must carry exclude_14");
         assert_eq!((flag[[0]], flag[[1]]), (true, false));
     }
@@ -1701,9 +1723,13 @@ c3  c3  c3  c3
         let types: Vec<String> = (0..4).map(|i| format!("t{i}")).collect();
         let rows = decode_dihedrals(&[3, 0, 0, 9, 1], &types).unwrap();
         let block = build_dihedral_block(&rows).unwrap();
-        assert_eq!(block.get_uint("atomk").unwrap()[[0]], 0);
+        assert_eq!(
+            block.get("atomk").and_then(|c| c.as_uint()).unwrap()[[0]],
+            0
+        );
         let flag = block
-            .get_bool("exclude_14")
+            .get("exclude_14")
+            .and_then(|c| c.as_bool())
             .expect("build_dihedral_block must emit exclude_14");
         assert!(!flag[[0]], "a literal 0 pointer is not a negative pointer");
     }
@@ -1777,7 +1803,12 @@ MOL
 
     /// The `(atomi, atomj, atomk, atoml)` rows of `block`.
     fn quartets(block: &Block) -> Vec<[Idx; 4]> {
-        let col = |k: &str| block.get_uint(k).unwrap_or_else(|| panic!("{k} column"));
+        let col = |k: &str| {
+            block
+                .get(k)
+                .and_then(|c| c.as_uint())
+                .unwrap_or_else(|| panic!("{k} column"))
+        };
         let (i, j, k, l) = (col("atomi"), col("atomj"), col("atomk"), col("atoml"));
         (0..block.nrows().unwrap_or(0))
             .map(|r| [i[[r]], j[[r]], k[[r]], l[[r]]])
@@ -1796,12 +1827,15 @@ MOL
         // so the row is stored the other way round, atoms and label together.
         assert_eq!(quartets(dihedrals), vec![[3, 2, 1, 0]]);
         assert_eq!(
-            dihedrals.get_string("type").unwrap()[[0]],
+            dihedrals.get("type").and_then(|c| c.as_string()).unwrap()[[0]],
             "c3-os-c3-hc",
             "the label is the quartet's type name"
         );
         assert!(
-            !dihedrals.get_bool("exclude_14").unwrap()[[0]],
+            !dihedrals
+                .get("exclude_14")
+                .and_then(|c| c.as_bool())
+                .unwrap()[[0]],
             "one term keeps the 1-4 pair, so the torsion keeps it"
         );
     }
@@ -1813,7 +1847,12 @@ MOL
         ));
         let dihedrals = frame.get("dihedrals").unwrap();
         assert_eq!(dihedrals.nrows(), Some(1));
-        assert!(dihedrals.get_bool("exclude_14").unwrap()[[0]]);
+        assert!(
+            dihedrals
+                .get("exclude_14")
+                .and_then(|c| c.as_bool())
+                .unwrap()[[0]]
+        );
     }
 
     #[test]
@@ -1825,7 +1864,7 @@ MOL
         // One spelling for both: the first quartet reads reversed, the second
         // (`c3-os-c3-hc` in atom order) already reads forward.
         assert_eq!(quartets(dihedrals), vec![[3, 2, 1, 0], [1, 2, 3, 4]]);
-        let types = dihedrals.get_string("type").unwrap();
+        let types = dihedrals.get("type").and_then(|c| c.as_string()).unwrap();
         assert_eq!(types[[0]], "c3-os-c3-hc");
         assert_eq!(types[[1]], "c3-os-c3-hc");
     }
@@ -1841,7 +1880,8 @@ MOL
             frame
                 .get("dihedrals")
                 .unwrap()
-                .get_uint("type_id")
+                .get("type_id")
+                .and_then(|c| c.as_uint())
                 .is_none()
         );
     }
@@ -1856,7 +1896,10 @@ MOL
         ));
         let impropers = frame.get("impropers").expect("impropers block");
         assert_eq!(quartets(impropers), vec![[0, 3, 1, 2]]);
-        assert_eq!(impropers.get_string("type").unwrap()[[0]], "hc-c3-c3-os");
+        assert_eq!(
+            impropers.get("type").and_then(|c| c.as_string()).unwrap()[[0]],
+            "hc-c3-c3-os"
+        );
     }
 
     #[test]
@@ -1964,7 +2007,12 @@ MOL
         // 1.82223000E+01 / 18.2223 == 1.0 exactly; re-deriving the factor from
         // molrs' own C = 332.0637133 would shift this by ~1.7e-5.
         let frame = frame_from(LITFSI_HEAD);
-        let charge = frame.get("atoms").unwrap().get_float("charge").unwrap();
+        let charge = frame
+            .get("atoms")
+            .unwrap()
+            .get("charge")
+            .and_then(|c| c.as_float())
+            .unwrap();
         assert!(
             (charge[[15]] - 1.0).abs() < 1e-12,
             "Li+ charge {}",
@@ -2048,7 +2096,8 @@ MOL
         let atoms = frame.get("atoms").unwrap();
         for dead in ["join_array", "join", "irotat", "rotat"] {
             assert!(
-                atoms.get_uint(dead).is_none() && atoms.get_int(dead).is_none(),
+                atoms.get(dead).and_then(|c| c.as_uint()).is_none()
+                    && atoms.get(dead).and_then(|c| c.as_int()).is_none(),
                 "{dead} is a dead Amber field: length-checked, then discarded"
             );
         }

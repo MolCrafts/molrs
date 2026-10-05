@@ -39,9 +39,9 @@ class TestReadPdb:
     def test_has_coordinates(self, water_pdb):
         frame = molrs.io.raw.read_pdb(str(water_pdb))
         atoms = frame["atoms"]
-        assert atoms.view("x") is not None
-        assert atoms.view("y") is not None
-        assert atoms.view("z") is not None
+        assert atoms["x"] is not None
+        assert atoms["y"] is not None
+        assert atoms["z"] is not None
 
     def test_missing_file_raises_os_error(self):
         with pytest.raises(OSError):
@@ -67,7 +67,7 @@ class TestReadGro:
         # The reader emits canonical names directly; `resid`/`atom_id` were
         # format-native spellings that something downstream had to rename, and
         # that rename is now a write into a UInt key an Int column cannot pass.
-        for col in ["res_id", "resname", "atom_name", "id", "x", "y", "z"]:
+        for col in ["res_id", "res_name", "name", "id", "x", "y", "z"]:
             assert col in atoms, f"missing column: {col}"
 
     def test_facade_canonical_columns(self, water_gro):
@@ -88,8 +88,8 @@ class TestReadGro:
         assert "res_name" in f0["atoms"] and "resname" not in f0["atoms"]
         f1 = molrs.io.read_gro(out)
         assert f0["atoms"].nrows == f1["atoms"].nrows
-        assert list(f1["atoms"].view("res_id")) == list(f0["atoms"].view("res_id"))
-        assert list(f1["atoms"].view("id")) == list(f0["atoms"].view("id"))
+        assert list(f1["atoms"]["res_id"]) == list(f0["atoms"]["res_id"])
+        assert list(f1["atoms"]["id"]) == list(f0["atoms"]["id"])
 
     def test_trajectory_round_trip(self, water_gro, tmp_path):
         f0 = molrs.io.read_gro(str(water_gro))
@@ -113,7 +113,7 @@ class TestReadXyz:
     def test_has_coordinates(self, water_xyz):
         frame = molrs.io.raw.read_xyz(str(water_xyz))
         atoms = frame["atoms"]
-        assert atoms.view("x") is not None
+        assert atoms["x"] is not None
 
     def test_missing_file_raises_os_error(self):
         with pytest.raises(OSError):

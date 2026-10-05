@@ -249,9 +249,13 @@ impl Store {
         col: &str,
     ) -> Result<(Vec<F>, Vec<usize>), FfiError> {
         let (_, block) = self.validated_block(handle)?;
-        let arr = block.get_float(col).ok_or_else(|| FfiError::KeyNotFound {
-            key: col.to_string(),
-        })?;
+        let arr =
+            block
+                .get(col)
+                .and_then(|c| c.as_float())
+                .ok_or_else(|| FfiError::KeyNotFound {
+                    key: col.to_string(),
+                })?;
         let shape = arr.shape().to_vec();
         let mut data = Vec::with_capacity(arr.len());
         data.extend(arr.iter().copied());
@@ -265,9 +269,13 @@ impl Store {
         col: &str,
     ) -> Result<(usize, Vec<usize>), FfiError> {
         let (_, block) = self.validated_block(handle)?;
-        let arr = block.get_float(col).ok_or_else(|| FfiError::KeyNotFound {
-            key: col.to_string(),
-        })?;
+        let arr =
+            block
+                .get(col)
+                .and_then(|c| c.as_float())
+                .ok_or_else(|| FfiError::KeyNotFound {
+                    key: col.to_string(),
+                })?;
         arr.as_slice_memory_order()
             .ok_or_else(|| FfiError::NonContiguous {
                 key: col.to_string(),
@@ -283,9 +291,13 @@ impl Store {
         f: impl FnOnce(&[F], &[usize]) -> R,
     ) -> Result<R, FfiError> {
         let (_, block) = self.validated_block(handle)?;
-        let arr = block.get_float(col).ok_or_else(|| FfiError::KeyNotFound {
-            key: col.to_string(),
-        })?;
+        let arr =
+            block
+                .get(col)
+                .and_then(|c| c.as_float())
+                .ok_or_else(|| FfiError::KeyNotFound {
+                    key: col.to_string(),
+                })?;
         let slice = arr
             .as_slice_memory_order()
             .ok_or_else(|| FfiError::NonContiguous {
@@ -303,9 +315,12 @@ impl Store {
         col: &str,
     ) -> Result<(Vec<I>, Vec<usize>), FfiError> {
         let (_, block) = self.validated_block(handle)?;
-        let arr = block.get_int(col).ok_or_else(|| FfiError::KeyNotFound {
-            key: col.to_string(),
-        })?;
+        let arr = block
+            .get(col)
+            .and_then(|c| c.as_int())
+            .ok_or_else(|| FfiError::KeyNotFound {
+                key: col.to_string(),
+            })?;
         let shape = arr.shape().to_vec();
         let mut data = Vec::with_capacity(arr.len());
         data.extend(arr.iter().copied());
@@ -319,9 +334,12 @@ impl Store {
         col: &str,
     ) -> Result<(usize, Vec<usize>), FfiError> {
         let (_, block) = self.validated_block(handle)?;
-        let arr = block.get_int(col).ok_or_else(|| FfiError::KeyNotFound {
-            key: col.to_string(),
-        })?;
+        let arr = block
+            .get(col)
+            .and_then(|c| c.as_int())
+            .ok_or_else(|| FfiError::KeyNotFound {
+                key: col.to_string(),
+            })?;
         arr.as_slice_memory_order()
             .ok_or_else(|| FfiError::NonContiguous {
                 key: col.to_string(),
@@ -337,9 +355,12 @@ impl Store {
         f: impl FnOnce(&[I], &[usize]) -> R,
     ) -> Result<R, FfiError> {
         let (_, block) = self.validated_block(handle)?;
-        let arr = block.get_int(col).ok_or_else(|| FfiError::KeyNotFound {
-            key: col.to_string(),
-        })?;
+        let arr = block
+            .get(col)
+            .and_then(|c| c.as_int())
+            .ok_or_else(|| FfiError::KeyNotFound {
+                key: col.to_string(),
+            })?;
         let slice = arr
             .as_slice_memory_order()
             .ok_or_else(|| FfiError::NonContiguous {
@@ -357,9 +378,13 @@ impl Store {
         col: &str,
     ) -> Result<(Vec<Idx>, Vec<usize>), FfiError> {
         let (_, block) = self.validated_block(handle)?;
-        let arr = block.get_uint(col).ok_or_else(|| FfiError::KeyNotFound {
-            key: col.to_string(),
-        })?;
+        let arr =
+            block
+                .get(col)
+                .and_then(|c| c.as_uint())
+                .ok_or_else(|| FfiError::KeyNotFound {
+                    key: col.to_string(),
+                })?;
         let shape = arr.shape().to_vec();
         let mut data = Vec::with_capacity(arr.len());
         data.extend(arr.iter().copied());
@@ -373,9 +398,13 @@ impl Store {
         col: &str,
     ) -> Result<(usize, Vec<usize>), FfiError> {
         let (_, block) = self.validated_block(handle)?;
-        let arr = block.get_uint(col).ok_or_else(|| FfiError::KeyNotFound {
-            key: col.to_string(),
-        })?;
+        let arr =
+            block
+                .get(col)
+                .and_then(|c| c.as_uint())
+                .ok_or_else(|| FfiError::KeyNotFound {
+                    key: col.to_string(),
+                })?;
         arr.as_slice_memory_order()
             .ok_or_else(|| FfiError::NonContiguous {
                 key: col.to_string(),
@@ -391,9 +420,13 @@ impl Store {
         f: impl FnOnce(&[Idx], &[usize]) -> R,
     ) -> Result<R, FfiError> {
         let (_, block) = self.validated_block(handle)?;
-        let arr = block.get_uint(col).ok_or_else(|| FfiError::KeyNotFound {
-            key: col.to_string(),
-        })?;
+        let arr =
+            block
+                .get(col)
+                .and_then(|c| c.as_uint())
+                .ok_or_else(|| FfiError::KeyNotFound {
+                    key: col.to_string(),
+                })?;
         let slice = arr
             .as_slice_memory_order()
             .ok_or_else(|| FfiError::NonContiguous {

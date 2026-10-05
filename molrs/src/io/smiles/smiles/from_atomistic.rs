@@ -384,7 +384,10 @@ fn atom_is_aromatic(mol: &Atomistic, id: AtomId) -> bool {
 
 fn formal_charge(mol: &Atomistic, id: AtomId) -> Option<i8> {
     mol.get_atom(id).ok().and_then(|a| {
-        a.get_f64("formal_charge")
+        // `formal_charge` may be `Int` (read from a frame's `i64` column) or
+        // an integral `F64` (written by the SMILES reader).
+        a.get("formal_charge")
+            .and_then(PropValue::as_f64)
             .or_else(|| a.get_f64("charge"))
             .map(|v| v as i8)
     })

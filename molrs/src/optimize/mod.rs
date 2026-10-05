@@ -117,7 +117,12 @@ mod tests {
             .unwrap();
         assert!(set_free_mask(&mut frame, &[true]).is_err());
         set_free_mask(&mut frame, &[false, true]).unwrap();
-        let free = frame.get(ATOMS).unwrap().get_bool(FREE).unwrap();
+        let free = frame
+            .get(ATOMS)
+            .unwrap()
+            .get(FREE)
+            .and_then(|c| c.as_bool())
+            .unwrap();
         assert_eq!(free.iter().copied().collect::<Vec<_>>(), vec![false, true]);
     }
 }

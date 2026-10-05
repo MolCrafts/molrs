@@ -68,43 +68,62 @@ pub enum MolrsStatus {
 /// Data type discriminants for Block columns.
 ///
 /// Each column in a [`Block`](molrs::store::block::Block) stores a
-/// homogeneously-typed ndarray.  This enum tells C callers which
-/// accessor family to use (`molrs_block_get_F`, `molrs_block_get_I`,
-/// `molrs_block_get_U`, etc.).
+/// homogeneously-typed ndarray.  This enum is the stored variant, not a
+/// width bucket: an `i64` column is [`Int64`](Self::Int64), not [`Int`](Self::Int).
+/// Discriminants 0–4 stay where they were; later variants are appended.
 ///
-/// # C mapping
-///
-/// | Discriminant | C type (`default` features)        |
-/// |--------------|------------------------------------|
-/// | `Float` (0)  | `molrs_float_t` (`float` / `double`)|
-/// | `Int` (1)    | `molrs_int_t` (`int32_t` / `int64_t`)|
-/// | `Bool` (2)   | `bool`                             |
-/// | `UInt` (3)   | `molrs_uint_t` (`uint32_t` / `uint64_t`)|
-/// | `String` (4) | (not directly accessible via pointer; use dedicated string APIs) |
+/// A string column has no flat scalar buffer. [`molrs_block_get`](crate::molrs_block_get)
+/// reports that as `TypeMismatch`, not as a missing key.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MolrsDType {
-    /// Floating-point column (`molrs_float_t`).
+    /// `f64` column.
     Float = 0,
-    /// Signed integer column (`molrs_int_t`).
+    /// `i32` column.
     Int = 1,
-    /// Boolean column.
+    /// Boolean column, one byte per element.
     Bool = 2,
-    /// Unsigned integer column (`molrs_uint_t`).
+    /// `u64` column.
     UInt = 3,
-    /// String column (no zero-copy pointer access).
+    /// String column. No flat scalar buffer.
     String = 4,
+    /// `i8` column.
+    Int8 = 5,
+    /// `i16` column.
+    Int16 = 6,
+    /// `i64` column.
+    Int64 = 7,
+    /// `u8` column.
+    U8 = 8,
+    /// `u16` column.
+    UInt16 = 9,
+    /// `u32` column.
+    UInt32 = 10,
+    /// `complex64` column, a pair of `f32` per element.
+    Complex64 = 11,
+    /// `complex128` column, a pair of `f64` per element.
+    Complex128 = 12,
 }
 
 impl From<DType> for MolrsDType {
     fn from(dt: DType) -> Self {
         match dt {
-            DType::Float | DType::Complex64 | DType::Complex128 => Self::Float,
-            DType::Int | DType::Int8 | DType::Int16 | DType::Int64 => Self::Int,
+            DType::Float => Self::Float,
+            DType::Int => Self::Int,
             DType::Bool => Self::Bool,
-            DType::UInt | DType::U8 | DType::UInt16 | DType::UInt32 => Self::UInt,
+            DType::UInt => Self::UInt,
             DType::String => Self::String,
-            _ => Self::String,
+            DType::Int8 => Self::Int8,
+            DType::Int16 => Self::Int16,
+            DType::Int64 => Self::Int64,
+            DType::U8 => Self::U8,
+            DType::UInt16 => Self::UInt16,
+            DType::UInt32 => Self::UInt32,
+            DType::Complex64 => Self::Complex64,
+            DType::Complex128 => Self::Complex128,
+            // `DType` is `non_exhaustive`. Every variant that exists today is
+            // named above; a future one must not be reported as `String`.
+            other => unreachable!("no C dtype for {other:?}"),
         }
     }
 }
@@ -148,5 +167,31 @@ pub(crate) fn ffi_err_to_status(err: &FfiError) -> MolrsStatus {
         FfiError::KeyNotFound { .. } => MolrsStatus::KeyNotFound,
         FfiError::NonContiguous { .. } => MolrsStatus::NonContiguous,
         FfiError::DTypeMismatch { .. } => MolrsStatus::TypeMismatch,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dtype_reports_the_stored_variant() {
+        assert_eq!(MolrsDType::from(DType::Float) as u8, 0);
+        assert_eq!(MolrsDType::from(DType::Int) as u8, 1);
+        assert_eq!(MolrsDType::from(DType::Bool) as u8, 2);
+        assert_eq!(MolrsDType::from(DType::UInt) as u8, 3);
+        assert_eq!(MolrsDType::from(DType::String) as u8, 4);
+        assert_eq!(MolrsDType::from(DType::Int8), MolrsDType::Int8);
+        assert_eq!(MolrsDType::from(DType::Int16), MolrsDType::Int16);
+        assert_eq!(MolrsDType::from(DType::Int64), MolrsDType::Int64);
+        assert_eq!(MolrsDType::from(DType::U8), MolrsDType::U8);
+        assert_eq!(MolrsDType::from(DType::UInt16), MolrsDType::UInt16);
+        assert_eq!(MolrsDType::from(DType::UInt32), MolrsDType::UInt32);
+        assert_eq!(MolrsDType::from(DType::Complex64), MolrsDType::Complex64);
+        assert_eq!(MolrsDType::from(DType::Complex128), MolrsDType::Complex128);
+        assert_ne!(MolrsDType::from(DType::Int64), MolrsDType::Int);
+        assert_ne!(MolrsDType::from(DType::U8), MolrsDType::UInt);
+        assert_ne!(MolrsDType::from(DType::Complex64), MolrsDType::Float);
+        assert_ne!(MolrsDType::from(DType::Complex128), MolrsDType::Float);
     }
 }

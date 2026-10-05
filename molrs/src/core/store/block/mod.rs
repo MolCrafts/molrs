@@ -8,7 +8,7 @@
 //! ```
 //! use molrs::store::block::Block;
 //! use molrs::types::{F, Idx};
-//! use ndarray::{Array1, ArrayD};
+//! use ndarray::Array1;
 //!
 //! let mut block = Block::new();
 //!
@@ -19,9 +19,9 @@
 //! block.insert("pos", pos).unwrap();
 //! block.insert("id", ids).unwrap();
 //!
-//! // Type-safe retrieval
-//! let pos_ref = block.get_float("pos").unwrap();
-//! let ids_ref = block.get_uint("id").unwrap();
+//! // The column comes back whole. dtype is a property of that column.
+//! let pos_ref = block.get("pos").and_then(|c| c.as_float()).unwrap();
+//! let ids_ref = block.get("id").and_then(|c| c.as_uint()).unwrap();
 //!
 //! assert_eq!(block.nrows(), Some(3));
 //! assert_eq!(block.len(), 2);
@@ -35,7 +35,7 @@ pub mod access;
 pub mod block_view;
 pub mod column_view;
 
-pub use access::{BlockAccess, ColumnAccess};
+pub use access::BlockAccess;
 pub use block_view::BlockView;
 pub use column::{Column, ColumnHolder};
 pub use column_view::ColumnView;
@@ -82,6 +82,12 @@ pub struct Block {
     /// Per-column validity masks, each of length `nrows`. A column absent from
     /// this map is fully valid; see [`Block::insert_nullable`].
     validity: IndexMap<String, Vec<bool>>,
+    /// Declared [precision](crate::store::precision) per `f64` column. A
+    /// column absent from this map is stored as given.
+    precision: IndexMap<String, f64>,
+    /// Declared row-reference target per `u64` column (`targets`): the block
+    /// its values index, `<block>` or `/<section>/<block>`.
+    targets: IndexMap<String, String>,
     nrows: Option<usize>,
     shape: Option<Vec<usize>>,
 }
@@ -90,7 +96,10 @@ impl std::fmt::Debug for Block {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut map = f.debug_map();
         for (k, v) in &self.map {
-            let dtype_shape = format!("{}(shape={:?})", v.dtype(), v.shape());
+            let mut dtype_shape = format!("{}(shape={:?})", v.dtype(), v.shape());
+            if let Some(p) = self.precision.get(k) {
+                dtype_shape.push_str(&format!(" precision={p}"));
+            }
             match self.validity.get(k) {
                 Some(mask) => {
                     let nulls = mask.iter().filter(|&&valid| !valid).count();
@@ -109,6 +118,8 @@ impl Block {
         Self {
             map: IndexMap::new(),
             validity: IndexMap::new(),
+            precision: IndexMap::new(),
+            targets: IndexMap::new(),
             nrows: None,
             shape: None,
         }
@@ -119,6 +130,8 @@ impl Block {
         Self {
             map: IndexMap::with_capacity(cap),
             validity: IndexMap::new(),
+            precision: IndexMap::new(),
+            targets: IndexMap::new(),
             nrows: None,
             shape: None,
         }
@@ -287,6 +300,8 @@ impl Block {
         // A plain insert replaces the column outright, mask included: the
         // rows it describes are gone.
         self.validity.shift_remove(&key);
+        self.keep_precision_if_float(&key, col.dtype());
+        self.keep_target_if_uint(&key, col.dtype());
         self.map.insert(key, col);
         Ok(())
     }
@@ -323,7 +338,7 @@ impl Block {
     ///
     /// assert_eq!(block.validity("frag_id"), Some(&[true, false, false][..]));
     /// // The values stay readable: row 1 reads as the filled 0.
-    /// assert_eq!(block.get_int("frag_id").unwrap()[[1]], 0);
+    /// assert_eq!(block.get("frag_id").and_then(|c| c.as_int()).unwrap()[[1]], 0);
     /// ```
     pub fn insert_nullable<T: BlockDtype>(
         &mut self,
@@ -451,8 +466,152 @@ impl Block {
         }
 
         self.validity.shift_remove(&key);
+        self.keep_precision_if_float(&key, col.dtype());
+        self.keep_target_if_uint(&key, col.dtype());
         self.map.insert(key, col);
         Ok(())
+    }
+
+    /// A declared precision survives a column being replaced by another `f64`
+    /// column (the declaration is about the key's values, and a precision
+    /// column rewritten in place is still one); any other dtype drops it.
+    fn keep_precision_if_float(&mut self, key: &str, dtype: DType) {
+        if dtype != DType::Float {
+            self.precision.shift_remove(key);
+        }
+    }
+
+    /// A declared target survives a column being replaced by another `u64`
+    /// column; any other dtype drops it.
+    fn keep_target_if_uint(&mut self, key: &str, dtype: DType) {
+        if dtype != DType::UInt {
+            self.targets.shift_remove(key);
+        }
+    }
+
+    /// Declare that the `u64` column `key` holds 0-based row indices into
+    /// `target`: `<block>` of the same frame, or `/<section>/<block>` of a
+    /// frame-shaped section of the same record (molrec "row references").
+    ///
+    /// The relation endpoints `atomi` … `atoml` reference `atoms` without a
+    /// declaration; a declaration overrides that default, and names the
+    /// target of any other referencing column (`members.atom`). The
+    /// declaration follows the column like a [precision](Self::set_precision)
+    /// does, and is persisted as the block group's `targets` attribute.
+    ///
+    /// # Errors
+    ///
+    /// - [`BlockError::MissingColumn`] when the block has no column `key`;
+    /// - [`BlockError::Validation`] when the column is not `u64`, or `target`
+    ///   is neither `<block>` nor `/<section>/<block>`, or names a trajectory
+    ///   block (`/trajectory/…`), whose row count is not fixed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use molrs::store::block::Block;
+    /// use ndarray::Array1;
+    ///
+    /// let mut members = Block::new();
+    /// members.insert("ibead", Array1::from_vec(vec![0_u64, 0]).into_dyn()).unwrap();
+    /// members.insert("atom", Array1::from_vec(vec![3_u64, 4]).into_dyn()).unwrap();
+    /// members.set_target("atom", "/frame/atoms").unwrap();
+    /// assert_eq!(members.target("atom"), Some("/frame/atoms"));
+    /// assert!(members.set_target("atom", "/trajectory/atoms").is_err());
+    /// ```
+    pub fn set_target(&mut self, key: &str, target: &str) -> Result<(), BlockError> {
+        let col = self.map.get(key).ok_or_else(|| BlockError::MissingColumn {
+            key: key.to_owned(),
+        })?;
+        if col.dtype() != DType::UInt {
+            return Err(BlockError::validation(format!(
+                "column '{key}' is {}; a row reference is a u64 column",
+                col.dtype()
+            )));
+        }
+        crate::store::schema::check_target(target)
+            .map_err(|e| BlockError::validation(format!("column '{key}': {e}")))?;
+        self.targets.insert(key.to_owned(), target.to_owned());
+        Ok(())
+    }
+
+    /// The declared target of column `key`, or `None` when it declares none.
+    pub fn target(&self, key: &str) -> Option<&str> {
+        self.targets.get(key).map(String::as_str)
+    }
+
+    /// Withdraw the declared target of column `key`, returning it.
+    pub fn clear_target(&mut self, key: &str) -> Option<String> {
+        self.targets.shift_remove(key)
+    }
+
+    /// Every declared target, as `(column, target)` in declaration order.
+    pub fn targets(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.targets.iter().map(|(k, t)| (k.as_str(), t.as_str()))
+    }
+
+    /// Declare the [precision](crate::store::precision) of the `f64` column
+    /// `key`: an absolute tolerance in the column's own units. A writer rounds
+    /// the column's values to the binary grid it implies before storing them;
+    /// the in-memory values are not touched.
+    ///
+    /// The declaration follows the column: a rename carries it, removing the
+    /// column drops it, and replacing the column with one of another dtype
+    /// drops it.
+    ///
+    /// # Errors
+    ///
+    /// - [`BlockError::MissingColumn`] when the block has no column `key`;
+    /// - [`BlockError::Validation`] when the column is not `f64`, or when
+    ///   `precision` is not finite and within `[2^-1000, 2^1000]`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use molrs::store::block::Block;
+    /// use ndarray::Array1;
+    ///
+    /// let mut block = Block::new();
+    /// block.insert("x", Array1::from_vec(vec![0.1234_f64, 1.5]).into_dyn()).unwrap();
+    /// block.set_precision("x", 1e-3).unwrap();
+    /// assert_eq!(block.precision("x"), Some(1e-3));
+    /// assert!(block.set_precision("x", 0.0).is_err());
+    /// ```
+    pub fn set_precision(&mut self, key: &str, precision: f64) -> Result<(), BlockError> {
+        let col = self.map.get(key).ok_or_else(|| BlockError::MissingColumn {
+            key: key.to_owned(),
+        })?;
+        if col.dtype() != DType::Float {
+            return Err(BlockError::validation(format!(
+                "column '{key}' is {}; only an f64 column declares a precision",
+                col.dtype()
+            )));
+        }
+        if !crate::store::precision::is_admissible(precision) {
+            return Err(BlockError::validation(format!(
+                "column '{key}': {}",
+                crate::store::precision::inadmissible(precision)
+            )));
+        }
+        self.precision.insert(key.to_owned(), precision);
+        Ok(())
+    }
+
+    /// The declared precision of column `key`, or `None` when it declares
+    /// none (or is absent).
+    pub fn precision(&self, key: &str) -> Option<f64> {
+        self.precision.get(key).copied()
+    }
+
+    /// Withdraw the declared precision of column `key`, returning it.
+    pub fn clear_precision(&mut self, key: &str) -> Option<f64> {
+        self.precision.shift_remove(key)
+    }
+
+    /// Every declared precision, as `(column, precision)` in declaration
+    /// order.
+    pub fn precisions(&self) -> impl Iterator<Item = (&str, f64)> {
+        self.precision.iter().map(|(k, &p)| (k.as_str(), p))
     }
 
     /// New Block with rows gathered at `indices` (along axis 0), preserving the
@@ -475,6 +634,8 @@ impl Block {
         for (k, mask) in &self.validity {
             out.put_validity(k.clone(), indices.iter().map(|&i| mask[i]).collect());
         }
+        out.precision = self.precision.clone();
+        out.targets = self.targets.clone();
         Ok(out)
     }
 
@@ -490,6 +651,12 @@ impl Block {
             out.insert_column(key.to_owned(), col.clone())?;
             if let Some(mask) = self.validity.get(key) {
                 out.put_validity(key.to_owned(), mask.clone());
+            }
+            if let Some(&p) = self.precision.get(key) {
+                out.precision.insert(key.to_owned(), p);
+            }
+            if let Some(target) = self.targets.get(key) {
+                out.targets.insert(key.to_owned(), target.clone());
             }
         }
         Ok(out)
@@ -517,17 +684,20 @@ impl Block {
         self.select_rows(&order)
     }
 
-    /// Gets an immutable reference to the column for `key` if present.
+    /// The column for `key`, or `None` when the key is absent.
     ///
-    /// For type-safe access, prefer using `get_float()`, `get_int()`, etc.
+    /// Project a dtype with [`Column::as_float`] and the other `as_*` methods.
+    /// `None` from a projection means the column has a different dtype, which is
+    /// not the same as a missing key.
     #[inline]
     pub fn get(&self, key: &str) -> Option<&Column> {
         self.map.get(key)
     }
 
-    /// Gets a mutable reference to the column for `key` if present.
+    /// A mutable column for `key`, or `None` when the key is absent.
     ///
-    /// For type-safe access, prefer using `get_float_mut()`, `get_int_mut()`, etc.
+    /// Project a dtype with [`Column::as_float_mut`] and the other `as_*_mut`
+    /// methods. `None` from a projection means the column has a different dtype.
     ///
     /// # Warning
     ///
@@ -538,100 +708,34 @@ impl Block {
         self.map.get_mut(key)
     }
 
-    // Type-specific getters for the compile-time float scalar.
-
-    /// Gets an immutable reference to a float array for `key` if present and of correct type.
-    pub fn get_float(&self, key: &str) -> Option<&ArrayD<crate::types::F>> {
-        self.get(key).and_then(|c| c.as_float())
-    }
-
-    /// Gets a mutable reference to a float array for `key` if present and of correct type.
-    pub fn get_float_mut(&mut self, key: &str) -> Option<&mut ArrayD<crate::types::F>> {
-        self.get_mut(key).and_then(|c| c.as_float_mut())
-    }
-
-    // Type-specific getters for the compile-time signed integer scalar.
-
-    /// Gets an immutable reference to an int array for `key` if present and of correct type.
-    pub fn get_int(&self, key: &str) -> Option<&ArrayD<crate::types::I>> {
-        self.get(key).and_then(|c| c.as_int())
-    }
-
-    /// Gets a mutable reference to an int array for `key` if present and of correct type.
-    pub fn get_int_mut(&mut self, key: &str) -> Option<&mut ArrayD<crate::types::I>> {
-        self.get_mut(key).and_then(|c| c.as_int_mut())
-    }
-
-    // Type-specific getters for bool
-
-    /// Gets an immutable reference to a bool array for `key` if present and of correct type.
-    pub fn get_bool(&self, key: &str) -> Option<&ArrayD<bool>> {
-        self.get(key).and_then(|c| c.as_bool())
-    }
-
-    /// Gets a mutable reference to a bool array for `key` if present and of correct type.
-    pub fn get_bool_mut(&mut self, key: &str) -> Option<&mut ArrayD<bool>> {
-        self.get_mut(key).and_then(|c| c.as_bool_mut())
-    }
-
-    // Type-specific getters for the compile-time unsigned integer scalar.
-
-    /// Gets an immutable reference to a uint array for `key` if present and of correct type.
-    pub fn get_uint(&self, key: &str) -> Option<&ArrayD<crate::types::Idx>> {
-        self.get(key).and_then(|c| c.as_uint())
-    }
-
-    /// Gets a mutable reference to a uint array for `key` if present and of correct type.
-    pub fn get_uint_mut(&mut self, key: &str) -> Option<&mut ArrayD<crate::types::Idx>> {
-        self.get_mut(key).and_then(|c| c.as_uint_mut())
-    }
-
-    // Type-specific getters for u8
-
-    /// Gets an immutable reference to a u8 array for `key` if present and of correct type.
-    pub fn get_u8(&self, key: &str) -> Option<&ArrayD<u8>> {
-        self.get(key).and_then(|c| c.as_u8())
-    }
-
-    /// Gets a mutable reference to a u8 array for `key` if present and of correct type.
-    pub fn get_u8_mut(&mut self, key: &str) -> Option<&mut ArrayD<u8>> {
-        self.get_mut(key).and_then(|c| c.as_u8_mut())
-    }
-
-    // Type-specific getters for String
-
-    /// Gets an immutable reference to a String array for `key` if present and of correct type.
-    pub fn get_string(&self, key: &str) -> Option<&ArrayD<String>> {
-        self.get(key).and_then(|c| c.as_string())
-    }
-
-    /// `key` exists and is an `f64` storage column.
+    /// `key` exists and is an `f64` column.
     #[inline]
     pub fn has_f64(&self, key: &str) -> bool {
-        matches!(self.get(key), Some(Column::Float(_)))
+        self.get(key).is_some_and(|c| c.dtype() == DType::Float)
     }
 
-    /// `key` exists and is a signed-int column.
+    /// `key` exists and is a signed integer column (`i8`, `i16`, `i32`, or `i64`).
     #[inline]
     pub fn has_int(&self, key: &str) -> bool {
-        self.get_int(key).is_some()
+        matches!(
+            self.get(key).map(|c| c.dtype()),
+            Some(DType::Int | DType::Int8 | DType::Int16 | DType::Int64)
+        )
     }
 
-    /// `key` exists and is an unsigned-int column.
+    /// `key` exists and is an unsigned integer column (`u8`, `u16`, `u32`, or `u64`).
     #[inline]
     pub fn has_uint(&self, key: &str) -> bool {
-        self.get_uint(key).is_some()
+        matches!(
+            self.get(key).map(|c| c.dtype()),
+            Some(DType::UInt | DType::U8 | DType::UInt16 | DType::UInt32)
+        )
     }
 
     /// `key` exists and is a string column.
     #[inline]
     pub fn has_string(&self, key: &str) -> bool {
-        self.get_string(key).is_some()
-    }
-
-    /// Gets a mutable reference to a String array for `key` if present and of correct type.
-    pub fn get_string_mut(&mut self, key: &str) -> Option<&mut ArrayD<String>> {
-        self.get_mut(key).and_then(|c| c.as_string_mut())
+        self.get(key).is_some_and(|c| c.dtype() == DType::String)
     }
 
     /// Removes and returns the column for `key`, if present.
@@ -642,6 +746,8 @@ impl Block {
     /// `shape` to `None`.
     pub fn remove(&mut self, key: &str) -> Option<Column> {
         self.validity.shift_remove(key);
+        self.precision.shift_remove(key);
+        self.targets.shift_remove(key);
         let out = self.map.shift_remove(key);
         if self.map.is_empty() {
             self.nrows = None;
@@ -693,6 +799,13 @@ impl Block {
         if let Some((index, _, mask)) = self.validity.shift_remove_full(old_key) {
             self.validity.shift_insert(index, new_key.to_string(), mask);
         }
+        if let Some((index, _, p)) = self.precision.shift_remove_full(old_key) {
+            self.precision.shift_insert(index, new_key.to_string(), p);
+        }
+        if let Some((index, _, target)) = self.targets.shift_remove_full(old_key) {
+            self.targets
+                .shift_insert(index, new_key.to_string(), target);
+        }
         Ok(())
     }
 
@@ -733,6 +846,8 @@ impl Block {
                 .map(|(key, col)| (key.clone(), col.deep_copy()))
                 .collect(),
             validity: self.validity.clone(),
+            precision: self.precision.clone(),
+            targets: self.targets.clone(),
             nrows: self.nrows,
             shape: self.shape.clone(),
         }
@@ -742,6 +857,8 @@ impl Block {
     pub fn clear(&mut self) {
         self.map.clear();
         self.validity.clear();
+        self.precision.clear();
+        self.targets.clear();
         self.nrows = None;
         self.shape = None;
     }
@@ -795,7 +912,7 @@ impl Block {
     ///
     /// block.resize(4).unwrap();
     /// assert_eq!(block.nrows(), Some(4));
-    /// let x = block.get_float("x").unwrap();
+    /// let x = block.get("x").and_then(|c| c.as_float()).unwrap();
     /// assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0, 0.0, 0.0]);
     /// ```
     pub fn resize(&mut self, new_nrows: usize) -> Result<(), crate::error::MolRsError> {
@@ -931,7 +1048,7 @@ impl Block {
     /// assert_eq!(s.nrows(), Some(3));
     /// assert_eq!(s.keys().collect::<Vec<_>>(), ["x", "type"]);
     /// // `b` had no `type`: its row is filled with "" and marked null.
-    /// assert_eq!(s.get_string("type").unwrap()[[2]], "");
+    /// assert_eq!(s.get("type").and_then(|c| c.as_string()).unwrap()[[2]], "");
     /// assert_eq!(s.validity("type"), Some(&[true, true, false][..]));
     /// assert_eq!(s.validity("x"), None);
     /// ```
@@ -995,6 +1112,14 @@ impl Block {
             out.insert_column(key, concat_columns(key, &pieces)?)?;
             if let Some(mask) = mask {
                 out.put_validity(key.to_owned(), mask);
+            }
+            // The first part that declares a precision for the column speaks
+            // for the stacked one.
+            if let Some(p) = parts.iter().find_map(|part| part.precision(key)) {
+                out.precision.insert(key.to_owned(), p);
+            }
+            if let Some(target) = parts.iter().find_map(|part| part.target(key)) {
+                out.targets.insert(key.to_owned(), target.to_owned());
             }
         }
         if out.is_empty() && !parts.is_empty() {
@@ -1083,6 +1208,8 @@ impl Block {
     fn adopt(&mut self, other: &Block) {
         self.map = other.map.clone();
         self.validity = other.validity.clone();
+        self.precision = other.precision.clone();
+        self.targets = other.targets.clone();
         self.nrows = other.nrows;
         self.shape = other.shape.clone();
     }
@@ -1278,7 +1405,11 @@ fn concat_columns(key: &str, pieces: &[Column]) -> Result<Column, BlockError> {
 /// two keys.
 /// Identifiers (`id`, `atomi`, `type_id`, …) are [`Idx`]. A caller that
 /// hands us a narrower unsigned array is naming the same quantity; store it
-/// at identifier width so `get_uint` and the writers that consume it agree.
+/// at identifier width so `Column::as_uint` and the writers that consume it agree.
+///
+/// This leniency is for the in-memory API only. The `*.mrec` store readers
+/// refuse a canonical identifier stored at another width before it reaches
+/// here, so a non-conforming store is reported rather than silently widened.
 fn promote_canonical_uint(key: &str, col: Column) -> Column {
     use crate::types::Idx;
     let Some(spec) = crate::store::schema::column(key) else {
@@ -1435,11 +1566,14 @@ mod tests {
         assert_eq!(copy.nrows(), Some(4));
         assert_eq!(copy.structural_shape(), Some(&[2, 2][..]));
         assert_ne!(
-            b.get_int("tag").unwrap().as_ptr(),
-            copy.get_int("tag").unwrap().as_ptr()
+            b.get("tag").and_then(|c| c.as_int()).unwrap().as_ptr(),
+            copy.get("tag").and_then(|c| c.as_int()).unwrap().as_ptr()
         );
         assert_eq!(
-            copy.get_int("tag").unwrap().as_slice_memory_order(),
+            copy.get("tag")
+                .and_then(|c| c.as_int())
+                .unwrap()
+                .as_slice_memory_order(),
             Some(&[1 as I, 0, 3, 0][..])
         );
     }
@@ -1475,7 +1609,8 @@ mod tests {
         // select_rows gathers in order.
         let sel = b.select_rows(&[2, 0]).unwrap();
         assert_eq!(
-            sel.get_uint("id")
+            sel.get("id")
+                .and_then(|c| c.as_uint())
                 .unwrap()
                 .iter()
                 .copied()
@@ -1489,7 +1624,8 @@ mod tests {
         // sort by id ascending reorders all columns.
         let s = b.sort_by("id", false).unwrap();
         assert_eq!(
-            s.get_uint("id")
+            s.get("id")
+                .and_then(|c| c.as_uint())
                 .unwrap()
                 .iter()
                 .copied()
@@ -1497,7 +1633,8 @@ mod tests {
             vec![1, 2, 3]
         );
         assert_eq!(
-            s.get_float("x")
+            s.get("x")
+                .and_then(|c| c.as_float())
                 .unwrap()
                 .iter()
                 .copied()
@@ -1508,7 +1645,8 @@ mod tests {
         // reverse = ascending reversed.
         let r = b.sort_by("id", true).unwrap();
         assert_eq!(
-            r.get_uint("id")
+            r.get("id")
+                .and_then(|c| c.as_uint())
                 .unwrap()
                 .iter()
                 .copied()
@@ -1569,18 +1707,21 @@ mod tests {
         block.insert("count", arr_i64).unwrap();
 
         // Correct type access
-        assert!(block.get_float("x").is_some());
-        assert!(block.get_int("count").is_some());
+        assert!(block.get("x").and_then(|c| c.as_float()).is_some());
+        assert!(block.get("count").and_then(|c| c.as_int()).is_some());
 
         // Wrong type access returns None
-        assert!(block.get_int("x").is_none());
-        assert!(block.get_float("count").is_none());
+        assert!(block.get("x").and_then(|c| c.as_int()).is_none());
+        assert!(block.get("count").and_then(|c| c.as_float()).is_none());
 
         // Mutable access
-        if let Some(x_mut) = block.get_float_mut("x") {
+        if let Some(x_mut) = block.get_mut("x").and_then(|c| c.as_float_mut()) {
             x_mut[[0]] = 99.0;
         }
-        assert_eq!(block.get_float("x").unwrap()[[0]], 99.0);
+        assert_eq!(
+            block.get("x").and_then(|c| c.as_float()).unwrap()[[0]],
+            99.0
+        );
     }
 
     #[test]
@@ -1599,7 +1740,10 @@ mod tests {
         if let Some(arr_mut) = col_mut.as_float_mut() {
             arr_mut[[0]] = 42.0;
         }
-        assert_eq!(block.get_float("x").unwrap()[[0]], 42.0);
+        assert_eq!(
+            block.get("x").and_then(|c| c.as_float()).unwrap()[[0]],
+            42.0
+        );
     }
 
     #[test]
@@ -1689,7 +1833,7 @@ mod tests {
         block1.merge(&block2).unwrap();
 
         assert_eq!(block1.nrows(), Some(4));
-        let x = block1.get_float("x").unwrap();
+        let x = block1.get("x").and_then(|c| c.as_float()).unwrap();
         assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0, 3.0, 4.0]);
     }
 
@@ -1766,9 +1910,9 @@ mod tests {
         block1.merge(&block2).unwrap();
 
         assert_eq!(block1.nrows(), Some(4));
-        let x = block1.get_float("x").unwrap();
+        let x = block1.get("x").and_then(|c| c.as_float()).unwrap();
         assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0, 3.0, 4.0]);
-        let id = block1.get_uint("id").unwrap();
+        let id = block1.get("id").and_then(|c| c.as_uint()).unwrap();
         assert_eq!(id.as_slice_memory_order().unwrap(), &[10, 20, 30, 40]);
     }
 
@@ -1788,7 +1932,8 @@ mod tests {
         assert!(block.contains_key("position_x"));
         assert_eq!(
             block
-                .get_float("position_x")
+                .get("position_x")
+                .and_then(|c| c.as_float())
                 .unwrap()
                 .as_slice_memory_order()
                 .unwrap(),
@@ -1821,9 +1966,15 @@ mod tests {
             )
             .unwrap();
 
+        block
+            .insert("charge_i64", Array1::from_vec(vec![1_i64, 2]).into_dyn())
+            .unwrap();
+
         assert!(block.has_f64("x"));
         assert!(block.has_uint("id"));
         assert!(block.has_int("res_seq"));
+        assert!(block.has_int("charge_i64"));
+        assert!(!block.has_f64("charge_i64"));
         assert!(block.has_string("name"));
         assert!(!block.has_uint("res_seq"));
         assert!(!block.has_int("id"));
@@ -1850,9 +2001,9 @@ mod tests {
         block.resize(2).unwrap();
 
         assert_eq!(block.nrows(), Some(2));
-        let x = block.get_float("x").unwrap();
+        let x = block.get("x").and_then(|c| c.as_float()).unwrap();
         assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0]);
-        let id = block.get_uint("id").unwrap();
+        let id = block.get("id").and_then(|c| c.as_uint()).unwrap();
         assert_eq!(id.as_slice_memory_order().unwrap(), &[10, 20]);
     }
 
@@ -1869,10 +2020,10 @@ mod tests {
         block.resize(4).unwrap();
 
         assert_eq!(block.nrows(), Some(4));
-        let x = block.get_float("x").unwrap();
+        let x = block.get("x").and_then(|c| c.as_float()).unwrap();
         // Original data preserved, new rows are 0.0
         assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0, 0.0, 0.0]);
-        let id = block.get_uint("id").unwrap();
+        let id = block.get("id").and_then(|c| c.as_uint()).unwrap();
         // Original data preserved, new rows are 0
         assert_eq!(id.as_slice_memory_order().unwrap(), &[10, 20, 0, 0]);
     }
@@ -1887,7 +2038,7 @@ mod tests {
         block.resize(3).unwrap();
 
         assert_eq!(block.nrows(), Some(3));
-        let x = block.get_float("x").unwrap();
+        let x = block.get("x").and_then(|c| c.as_float()).unwrap();
         assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0, 3.0]);
     }
 
@@ -1919,7 +2070,7 @@ mod tests {
         // Shrink 4x3 -> 2x3
         block.resize(2).unwrap();
         assert_eq!(block.nrows(), Some(2));
-        let pos = block.get_float("pos").unwrap();
+        let pos = block.get("pos").and_then(|c| c.as_float()).unwrap();
         assert_eq!(pos.shape(), &[2, 3]);
         assert_eq!(
             pos.as_slice_memory_order().unwrap(),
@@ -1929,7 +2080,7 @@ mod tests {
         // Grow 2x3 -> 5x3
         block.resize(5).unwrap();
         assert_eq!(block.nrows(), Some(5));
-        let pos = block.get_float("pos").unwrap();
+        let pos = block.get("pos").and_then(|c| c.as_float()).unwrap();
         assert_eq!(pos.shape(), &[5, 3]);
         // Original data followed by zeros
         assert_eq!(
@@ -1964,19 +2115,19 @@ mod tests {
         block.resize(5).unwrap();
         assert_eq!(block.nrows(), Some(5));
 
-        let x = block.get_float("x").unwrap();
+        let x = block.get("x").and_then(|c| c.as_float()).unwrap();
         assert_eq!(
             x.as_slice_memory_order().unwrap(),
             &[1.0, 2.0, 3.0, 0.0, 0.0]
         );
-        let id = block.get_uint("id").unwrap();
+        let id = block.get("id").and_then(|c| c.as_uint()).unwrap();
         assert_eq!(id.as_slice_memory_order().unwrap(), &[10, 20, 30, 0, 0]);
-        let mask = block.get_bool("mask").unwrap();
+        let mask = block.get("mask").and_then(|c| c.as_bool()).unwrap();
         assert_eq!(
             mask.as_slice_memory_order().unwrap(),
             &[true, false, true, false, false]
         );
-        let name = block.get_string("name").unwrap();
+        let name = block.get("name").and_then(|c| c.as_string()).unwrap();
         assert_eq!(name[[0]], "a");
         assert_eq!(name[[1]], "b");
         assert_eq!(name[[2]], "c");
@@ -1987,13 +2138,13 @@ mod tests {
         block.resize(2).unwrap();
         assert_eq!(block.nrows(), Some(2));
 
-        let x = block.get_float("x").unwrap();
+        let x = block.get("x").and_then(|c| c.as_float()).unwrap();
         assert_eq!(x.as_slice_memory_order().unwrap(), &[1.0, 2.0]);
-        let id = block.get_uint("id").unwrap();
+        let id = block.get("id").and_then(|c| c.as_uint()).unwrap();
         assert_eq!(id.as_slice_memory_order().unwrap(), &[10, 20]);
-        let mask = block.get_bool("mask").unwrap();
+        let mask = block.get("mask").and_then(|c| c.as_bool()).unwrap();
         assert_eq!(mask.as_slice_memory_order().unwrap(), &[true, false]);
-        let name = block.get_string("name").unwrap();
+        let name = block.get("name").and_then(|c| c.as_string()).unwrap();
         assert_eq!(name[[0]], "a");
         assert_eq!(name[[1]], "b");
     }
@@ -2105,7 +2256,10 @@ mod tests {
         let s = Block::stack([&a, &b]).unwrap();
         assert_eq!(s.keys().collect::<Vec<_>>(), ["x", "q"]);
         assert_eq!(
-            s.get_float("q").unwrap().as_slice_memory_order(),
+            s.get("q")
+                .and_then(|c| c.as_float())
+                .unwrap()
+                .as_slice_memory_order(),
             Some(&[0.0, 0.0, -1.0][..])
         );
         assert_eq!(s.validity("q"), Some(&[false, false, true][..]));
@@ -2145,7 +2299,10 @@ mod tests {
         let mut b = Block::new();
         b.insert("x", floats(&[1.0, 2.0])).unwrap();
         let s = Block::stack([&a, &b]).unwrap();
-        assert_eq!(s.get_float("v").unwrap().shape(), &[3, 3]);
+        assert_eq!(
+            s.get("v").and_then(|c| c.as_float()).unwrap().shape(),
+            &[3, 3]
+        );
     }
 
     #[test]
@@ -2210,5 +2367,92 @@ mod tests {
         let two = ndarray::Array2::<F>::zeros((2, 2));
         assert!(block.set_coords(two.view()).is_err());
         assert!(block.is_empty());
+    }
+
+    // ---- precision ----
+
+    #[test]
+    fn set_precision_declares_on_an_f64_column_only() {
+        let mut block = Block::new();
+        block.insert("x", floats(&[1.0, 2.0])).unwrap();
+        block
+            .insert("id", Array1::from_vec(vec![1 as Idx, 2]).into_dyn())
+            .unwrap();
+        block.set_precision("x", 1e-3).unwrap();
+        assert_eq!(block.precision("x"), Some(1e-3));
+        assert!(block.set_precision("id", 1e-3).is_err());
+        assert_eq!(
+            block.set_precision("nope", 1e-3).unwrap_err(),
+            BlockError::MissingColumn { key: "nope".into() }
+        );
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY, 2f64.powi(1001)] {
+            assert!(block.set_precision("x", bad).is_err(), "accepted {bad}");
+        }
+        assert_eq!(block.precision("x"), Some(1e-3));
+        assert_eq!(block.clear_precision("x"), Some(1e-3));
+        assert_eq!(block.precision("x"), None);
+    }
+
+    #[test]
+    fn precision_follows_its_column() {
+        let mut block = Block::new();
+        block.insert("x", floats(&[1.0, 2.0])).unwrap();
+        block.insert("y", floats(&[3.0, 4.0])).unwrap();
+        block.set_precision("x", 1e-3).unwrap();
+        block.set_precision("y", 1e-2).unwrap();
+
+        // A rename carries it.
+        block.rename_column("x", "px").unwrap();
+        assert_eq!(block.precision("px"), Some(1e-3));
+        assert_eq!(block.precision("x"), None);
+
+        // Replacing with another f64 column keeps it; another dtype drops it.
+        block.insert("px", floats(&[5.0, 6.0])).unwrap();
+        assert_eq!(block.precision("px"), Some(1e-3));
+        block
+            .insert("px", Array1::from_vec(vec![1 as I, 2]).into_dyn())
+            .unwrap();
+        assert_eq!(block.precision("px"), None);
+
+        // Row selection, column selection and copies keep it.
+        assert_eq!(block.select_rows(&[1]).unwrap().precision("y"), Some(1e-2));
+        assert_eq!(
+            block.select_columns(&["y"]).unwrap().precision("y"),
+            Some(1e-2)
+        );
+        assert_eq!(block.deep_copy().precision("y"), Some(1e-2));
+        let stacked = Block::stack([&block, &block]).unwrap();
+        assert_eq!(stacked.precision("y"), Some(1e-2));
+
+        // Removing the column drops it.
+        block.remove("y");
+        assert_eq!(block.precision("y"), None);
+    }
+
+    // ---- targets ----
+
+    #[test]
+    fn set_target_declares_on_a_u64_column_with_a_well_formed_target() {
+        let mut block = Block::new();
+        block
+            .insert("site", Array1::from_vec(vec![0 as Idx, 1]).into_dyn())
+            .unwrap();
+        block.insert("x", floats(&[1.0, 2.0])).unwrap();
+        block.set_target("site", "sites").unwrap();
+        assert_eq!(block.target("site"), Some("sites"));
+        assert!(block.set_target("x", "atoms").is_err());
+        assert!(block.set_target("nope", "atoms").is_err());
+        for bad in ["", "a/b", "/trajectory/atoms", "/frame"] {
+            assert!(block.set_target("site", bad).is_err(), "{bad}");
+        }
+        block.rename_column("site", "ref").unwrap();
+        assert_eq!(block.target("ref"), Some("sites"));
+        assert_eq!(
+            block.select_rows(&[1]).unwrap().target("ref"),
+            Some("sites")
+        );
+        assert_eq!(block.deep_copy().target("ref"), Some("sites"));
+        block.insert("ref", floats(&[0.0, 1.0])).unwrap();
+        assert_eq!(block.target("ref"), None);
     }
 }

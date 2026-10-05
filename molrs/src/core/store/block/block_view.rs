@@ -6,13 +6,10 @@
 
 use indexmap::IndexMap;
 
-use ndarray::ArrayViewD;
-
 use super::Block;
 use super::column::Column;
 use super::column_view::ColumnView;
 use super::dtype::DType;
-use crate::types::{F, I, Idx};
 
 /// A borrowed, read-only view of a [`Block`].
 ///
@@ -22,6 +19,10 @@ pub struct BlockView<'a> {
     map: IndexMap<&'a str, ColumnView<'a>>,
     /// Borrowed validity masks of the viewed block's nullable columns.
     validity: IndexMap<&'a str, &'a [bool]>,
+    /// Declared precisions of the viewed block's `f64` columns.
+    precision: IndexMap<&'a str, f64>,
+    /// Declared row-reference targets of the viewed block.
+    targets: IndexMap<&'a str, &'a str>,
     /// Borrowed structural shape of the viewed block, if it declares one.
     shape: Option<&'a [usize]>,
     nrows: Option<usize>,
@@ -33,6 +34,8 @@ impl<'a> BlockView<'a> {
         Self {
             map: IndexMap::new(),
             validity: IndexMap::new(),
+            precision: IndexMap::new(),
+            targets: IndexMap::new(),
             shape: None,
             nrows: None,
         }
@@ -74,40 +77,13 @@ impl<'a> BlockView<'a> {
         self.map.contains_key(key)
     }
 
-    /// Gets an immutable reference to the column view for `key` if present.
+    /// The column view for `key`, or `None` when the key is absent.
+    ///
+    /// Project a dtype with [`ColumnView::as_float`] and the other `as_*`
+    /// methods. `None` from a projection means the column has a different dtype.
     #[inline]
     pub fn get(&self, key: &str) -> Option<&ColumnView<'a>> {
         self.map.get(key)
-    }
-
-    /// Gets a float array view for `key` if present and of correct type.
-    pub fn get_float(&self, key: &str) -> Option<ArrayViewD<'a, F>> {
-        self.get(key).and_then(|c| c.as_float())
-    }
-
-    /// Gets an int array view for `key` if present and of correct type.
-    pub fn get_int(&self, key: &str) -> Option<ArrayViewD<'a, I>> {
-        self.get(key).and_then(|c| c.as_int())
-    }
-
-    /// Gets a bool array view for `key` if present and of correct type.
-    pub fn get_bool(&self, key: &str) -> Option<ArrayViewD<'a, bool>> {
-        self.get(key).and_then(|c| c.as_bool())
-    }
-
-    /// Gets a uint array view for `key` if present and of correct type.
-    pub fn get_uint(&self, key: &str) -> Option<ArrayViewD<'a, Idx>> {
-        self.get(key).and_then(|c| c.as_uint())
-    }
-
-    /// Gets a u8 array view for `key` if present and of correct type.
-    pub fn get_u8(&self, key: &str) -> Option<ArrayViewD<'a, u8>> {
-        self.get(key).and_then(|c| c.as_u8())
-    }
-
-    /// Gets a string array view for `key` if present and of correct type.
-    pub fn get_string(&self, key: &str) -> Option<ArrayViewD<'a, String>> {
-        self.get(key).and_then(|c| c.as_string())
     }
 
     /// Returns an iterator over `(&str, &ColumnView)`.
@@ -125,13 +101,23 @@ impl<'a> BlockView<'a> {
         self.map.values()
     }
 
+    /// The validity mask of column `key`, if it carries one.
+    pub fn validity(&self, key: &str) -> Option<&'a [bool]> {
+        self.validity.get(key).copied()
+    }
+
+    /// Every declared row-reference target, as `(column, target)`.
+    pub fn targets(&self) -> Vec<(&'a str, &'a str)> {
+        self.targets.iter().map(|(&k, &t)| (k, t)).collect()
+    }
+
     /// Returns the data type of the column with the given key, if it exists.
     pub fn dtype(&self, key: &str) -> Option<DType> {
         self.get(key).map(|c| c.dtype())
     }
 
-    /// Creates an owned [`Block`] by cloning all viewed data, validity masks
-    /// and structural shape included.
+    /// Creates an owned [`Block`] by cloning all viewed data, validity masks,
+    /// declared precisions and targets, and structural shape included.
     pub fn to_owned(&self) -> Block {
         let mut block = Block::new();
         for (&key, col_view) in &self.map {
@@ -140,6 +126,12 @@ impl<'a> BlockView<'a> {
         }
         for (&key, &mask) in &self.validity {
             block.put_validity(key.to_owned(), mask.to_vec());
+        }
+        for (&key, &p) in &self.precision {
+            let _ = block.set_precision(key, p);
+        }
+        for (&key, &target) in &self.targets {
+            let _ = block.set_target(key, target);
         }
         if let Some(shape) = self.shape {
             let _ = block.set_shape(shape);
@@ -159,6 +151,8 @@ impl<'a> From<&'a Block> for BlockView<'a> {
         let mut view = BlockView {
             map: IndexMap::with_capacity(block.len()),
             validity: IndexMap::new(),
+            precision: block.precisions().collect(),
+            targets: block.targets().collect(),
             shape: block.structural_shape(),
             nrows: block.nrows(),
         };
@@ -185,7 +179,7 @@ impl std::fmt::Debug for BlockView<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Idx;
+    use crate::types::{F, Idx};
     use ndarray::Array1;
 
     #[test]
@@ -202,10 +196,12 @@ mod tests {
             )
             .unwrap();
         block.set_shape(&[1, 2]).unwrap();
+        block.set_precision("c", 1e-3).unwrap();
 
         let owned = BlockView::from(&block).to_owned();
         assert_eq!(owned.keys().collect::<Vec<_>>(), ["c", "a"]);
         assert_eq!(owned.validity("a"), Some(&[false, true][..]));
+        assert_eq!(owned.precision("c"), Some(1e-3));
         assert_eq!(owned.structural_shape(), Some(&[1, 2][..]));
     }
 
@@ -240,15 +236,15 @@ mod tests {
         let view = BlockView::from(&block);
 
         // Correct type
-        assert!(view.get_float("x").is_some());
-        assert!(view.get_uint("id").is_some());
+        assert!(view.get("x").and_then(|c| c.as_float()).is_some());
+        assert!(view.get("id").and_then(|c| c.as_uint()).is_some());
 
         // Wrong type
-        assert!(view.get_int("x").is_none());
-        assert!(view.get_float("id").is_none());
+        assert!(view.get("x").and_then(|c| c.as_int()).is_none());
+        assert!(view.get("id").and_then(|c| c.as_float()).is_none());
 
         // Missing key
-        assert!(view.get_float("missing").is_none());
+        assert!(view.get("missing").and_then(|c| c.as_float()).is_none());
     }
 
     #[test]
@@ -268,7 +264,8 @@ mod tests {
         assert_eq!(owned.len(), 2);
         assert_eq!(
             owned
-                .get_float("x")
+                .get("x")
+                .and_then(|c| c.as_float())
                 .unwrap()
                 .as_slice_memory_order()
                 .unwrap(),
@@ -276,7 +273,8 @@ mod tests {
         );
         assert_eq!(
             owned
-                .get_uint("id")
+                .get("id")
+                .and_then(|c| c.as_uint())
                 .unwrap()
                 .as_slice_memory_order()
                 .unwrap(),
@@ -292,8 +290,8 @@ mod tests {
             .unwrap();
 
         let view = BlockView::from(&block);
-        let orig_ptr = block.get_float("x").unwrap().as_ptr();
-        let view_ptr = view.get_float("x").unwrap().as_ptr();
+        let orig_ptr = block.get("x").and_then(|c| c.as_float()).unwrap().as_ptr();
+        let view_ptr = view.get("x").and_then(|c| c.as_float()).unwrap().as_ptr();
         assert_eq!(orig_ptr, view_ptr);
     }
 

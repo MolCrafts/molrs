@@ -436,7 +436,6 @@ fn parse_mmff_vdw(ff: &mut ForceField, node: &roxmltree::Node) -> Result<(), Str
                     ("a_i", a_i),
                     ("g_i", g_i),
                     ("da", da),
-                    ("type", atype),
                 ]),
             )
             .map_err(|e| e.to_string())?;

@@ -34,16 +34,16 @@
 
 use crate::io::lammps::box_bounds::{BoxBounds, pbc_from_boundary_tokens, simbox_from_bounds};
 use crate::io::lammps::common::{
-    canonical_dump_column, err_mapper, insert_f, insert_i, insert_str, insert_u,
-    is_integer_dump_column, is_string_dump_column, native_dump_column,
+    canonical_dump_column, err_mapper, insert_f, insert_str, native_dump_column,
 };
 use crate::io::reader::{FrameIndex, FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::writer::{FrameWriter, Writer};
-use molrs::store::block::Block;
+use molrs::store::block::{Block, BlockAccess, BlockDtype, ColumnView, DType};
 use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
-use molrs::types::Idx;
-use molrs::types::{F, I};
+use molrs::store::keys;
+use molrs::types::{F, I, Idx};
+use ndarray::{ArrayD, IxDyn};
 use std::fs::File;
 use std::io::{BufRead, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -53,12 +53,15 @@ use std::sync::OnceLock;
 // Helpers
 // ============================================================================
 
-/// Column type classification for LAMMPS dump columns.
+/// The parse state of one dump column while its rows are read.
+///
+/// Only the reader uses it: a dump column's type is a property of its tokens
+/// (promote-on-demand, see `parse_single_frame`), and the stored dtype of an
+/// integer column is settled afterwards by [`insert_integer_column`]. The
+/// writer formats from each column's stored dtype instead.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ColumnType {
     Integer,
-    /// Unsigned — canonical ids and relation endpoints.
-    Unsigned,
     Float,
     String,
 }
@@ -105,32 +108,80 @@ fn local_label_of(count_header: &str) -> Option<&'static str> {
     LOCAL_LABELS.iter().copied().find(|label| tail == *label)
 }
 
-/// Classify a LAMMPS dump column by **canonical** name (post-alias).
+/// The parse state a column starts in.
 ///
-/// Used by the *writer* to pick a per-column print format. Reader-side
-/// typing is value-based (promote-on-demand) because dump column names are
-/// user-defined (`c_X[N]`, `f_reax[1]`, …). Integer/string sets come from
-/// the dump custom + property/atom attribute lists (see `is_*_dump_column`).
-fn classify_column(name: &str) -> ColumnType {
-    // A canonical key's dtype is declared by the vocabulary, not guessed from
-    // its name. Without this, `id` and `mol_id` are stored signed because the
-    // hardcoded name list says "integer", and every consumer reading them as
-    // unsigned silently sees nothing.
-    if let Some(spec) = molrs::store::schema::column(&canonical_dump_column(name)) {
-        return match spec.dtype {
-            molrs::store::block::DType::Float => ColumnType::Float,
-            molrs::store::block::DType::String => ColumnType::String,
-            molrs::store::block::DType::UInt => ColumnType::Unsigned,
-            _ => ColumnType::Integer,
-        };
+/// A canonical key starts at the family its schema dtype declares, so a
+/// canonical Float column whose file happens to hold whole numbers is never
+/// stored as integers (promotion only widens). Every other column — including
+/// user-defined `c_X[N]`, `f_reax[1]`, `batom1` — starts at Integer and widens
+/// on the first token that does not fit.
+fn seed_column_type(canonical: &str) -> ColumnType {
+    match molrs::store::schema::column(canonical).map(|spec| spec.dtype) {
+        Some(DType::Float) => ColumnType::Float,
+        Some(DType::String) => ColumnType::String,
+        _ => ColumnType::Integer,
     }
-    if is_integer_dump_column(name) {
-        ColumnType::Integer
-    } else if is_string_dump_column(name) {
-        ColumnType::String
-    } else {
-        ColumnType::Float
+}
+
+/// Store a column that parsed as integers at the dtype its key calls for.
+///
+/// A canonical key takes its schema dtype: `UInt` (negative values are a
+/// malformed file, not a representable state), `Bool` (written as `1`/`0`),
+/// `Int64`. Anything else is stored as [`I`] when every value fits, and as
+/// `i64` when one does not.
+fn insert_integer_column(
+    block: &mut Block,
+    key: &str,
+    raw: Vec<i64>,
+    nrows: usize,
+) -> std::io::Result<()> {
+    match molrs::store::schema::column(key).map(|spec| spec.dtype) {
+        Some(DType::UInt) => {
+            let values = raw
+                .into_iter()
+                .map(|v| {
+                    Idx::try_from(v).map_err(|_| {
+                        err_mapper(format!(
+                            "column '{key}' is unsigned in the Frame schema but the dump holds {v}"
+                        ))
+                    })
+                })
+                .collect::<std::io::Result<Vec<Idx>>>()?;
+            insert_vec(block, key, values, nrows)
+        }
+        Some(DType::Bool) => {
+            let values = raw
+                .into_iter()
+                .map(|v| match v {
+                    0 => Ok(false),
+                    1 => Ok(true),
+                    other => Err(err_mapper(format!(
+                        "column '{key}' is boolean in the Frame schema but the dump holds {other}"
+                    ))),
+                })
+                .collect::<std::io::Result<Vec<bool>>>()?;
+            insert_vec(block, key, values, nrows)
+        }
+        Some(DType::Int64) => insert_vec(block, key, raw, nrows),
+        _ => match raw
+            .iter()
+            .map(|&v| I::try_from(v))
+            .collect::<Result<Vec<I>, _>>()
+        {
+            Ok(narrow) => insert_vec(block, key, narrow, nrows),
+            Err(_) => insert_vec(block, key, raw, nrows),
+        },
     }
+}
+
+fn insert_vec<T: BlockDtype>(
+    block: &mut Block,
+    key: &str,
+    values: Vec<T>,
+    nrows: usize,
+) -> std::io::Result<()> {
+    let array = ArrayD::from_shape_vec(IxDyn(&[nrows]), values).map_err(err_mapper)?;
+    block.insert(key, array).map_err(err_mapper)
 }
 
 #[inline]
@@ -462,26 +513,14 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
     // promote-on-demand behaviour (start Integer, widen when a token does not
     // fit), because a `dump local` column like `batom1` has no spec and its
     // type is genuinely a property of the data.
-    let mut col_types: Vec<ColumnType> = col_names
-        .iter()
-        .map(|n| {
-            if molrs::store::schema::column(&canonical_dump_column(n)).is_some() {
-                classify_column(n)
-            } else {
-                ColumnType::Integer
-            }
-        })
-        .collect();
+    let mut col_types: Vec<ColumnType> = col_names.iter().map(|n| seed_column_type(n)).collect();
     // Buffers follow the seeded type. Previously every column started Integer
     // so only `int_cols` was pre-allocated and the promotion path allocated the
     // others; seeding from the vocabulary means a column can *begin* as Float
     // or String, and its buffer has to exist before the first row.
-    let mut int_cols: Vec<Option<Vec<I>>> = col_types
+    let mut int_cols: Vec<Option<Vec<i64>>> = col_types
         .iter()
-        .map(|t| {
-            matches!(t, ColumnType::Integer | ColumnType::Unsigned)
-                .then(|| Vec::with_capacity(nrows))
-        })
+        .map(|t| matches!(t, ColumnType::Integer).then(|| Vec::with_capacity(nrows)))
         .collect();
     let mut float_cols: Vec<Option<Vec<F>>> = col_types
         .iter()
@@ -494,11 +533,11 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
 
     // --- Single pass: walk rows in file order, push into typed columns ---
     //
-    // Promote-on-demand value-based typing: every column starts at
-    // Integer (the narrowest); the first token that doesn't parse as
-    // the current type triggers a one-shot promotion of that column's
-    // already-collected values to the wider type, and the loop
-    // continues with the new type cached in `col_types[i]`. Per-cell
+    // Promote-on-demand value-based typing: a column without a schema
+    // dtype starts at Integer (the narrowest); the first token that
+    // doesn't parse as the current type triggers a one-shot promotion of
+    // that column's already-collected values to the wider type, and the
+    // loop continues with the new type cached in `col_types[i]`. Per-cell
     // cost is one `i64`/`f64::parse` in the steady state; promotions
     // happen at most twice per column over the whole file (Integer →
     // Float once, Float → String once) and are bounded O(rows-already-
@@ -525,15 +564,14 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
                 err_mapper(format!("Row {} has fewer than {} tokens", row, ncols))
             })?;
             match col_types[i] {
-                ColumnType::Integer | ColumnType::Unsigned => {
-                    if let Ok(v) = token.parse::<I>() {
+                ColumnType::Integer => {
+                    if let Ok(v) = token.parse::<i64>() {
                         int_cols[i].as_mut().unwrap().push(v);
                     } else if let Ok(v) = token.parse::<F>() {
                         // Integer → Float: lift accumulated ints into a
                         // Vec<F> and continue with float storage. Cast
-                        // is lossless for values in `i32`/`u32` range
-                        // and acceptable elsewhere — the column already
-                        // committed to numeric.
+                        // is lossless below 2^53 and acceptable elsewhere
+                        // — the column already committed to numeric.
                         let drained = int_cols[i].take().unwrap();
                         let mut promoted: Vec<F> = Vec::with_capacity(nrows);
                         for prev in drained {
@@ -581,48 +619,27 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
     let mut data_block = Block::new();
 
     for (i, name) in col_names.iter().enumerate() {
+        let name = name.as_str();
         match col_types[i] {
             ColumnType::Integer => {
-                insert_i(
-                    &mut data_block,
-                    name.as_str(),
-                    int_cols[i].take().unwrap(),
-                    nrows,
-                )?;
-            }
-            ColumnType::Unsigned => {
-                // Parsed through the signed buffer, stored unsigned: the
-                // vocabulary declares these keys UInt and a negative value in
-                // one is a malformed file, not a representable state.
-                let raw = int_cols[i].take().unwrap();
-                if let Some(bad) = raw.iter().find(|&&v| v < 0) {
-                    return Err(err_mapper(format!(
-                        "column '{}' is unsigned in the Frame schema but the dump holds {bad}",
-                        name.as_str()
-                    )));
-                }
-                insert_u(
-                    &mut data_block,
-                    name.as_str(),
-                    raw.into_iter().map(|v| v as Idx).collect(),
-                    nrows,
-                )?;
+                insert_integer_column(&mut data_block, name, int_cols[i].take().unwrap(), nrows)?;
             }
             ColumnType::Float => {
-                insert_f(
-                    &mut data_block,
-                    name.as_str(),
-                    float_cols[i].take().unwrap(),
-                    nrows,
-                )?;
+                insert_f(&mut data_block, name, float_cols[i].take().unwrap(), nrows)?;
             }
             ColumnType::String => {
-                insert_str(
-                    &mut data_block,
-                    name.as_str(),
-                    str_cols[i].take().unwrap(),
-                    nrows,
-                )?;
+                // A dump's `type` field is LAMMPS's numeric ordinal, which the
+                // alias table renames to `type_id`. Written with type labels
+                // (`dump_modify ... types labels`, or by `write_lammps_dump`
+                // from a frame without `type_id`) it holds the force-field
+                // label instead, and that is the canonical string `type`: a
+                // string is not a `type_id`.
+                let key = if name == keys::TYPE_ID {
+                    keys::TYPE
+                } else {
+                    name
+                };
+                insert_str(&mut data_block, key, str_cols[i].take().unwrap(), nrows)?;
             }
         }
     }
@@ -927,7 +944,8 @@ impl<W: Write> FrameWriter for LAMMPSDumpWriter<W> {
 /// [`FrameView`](molrs::store::frame_view::FrameView).
 ///
 /// `columns` is the caller's `dump custom` line: `Some` writes exactly those
-/// columns in that order, `None` writes every column the block holds.
+/// columns in that order, `None` writes every column the block holds. See
+/// [`write_lammps_dump`] for how the `type` field is chosen.
 fn write_lammps_dump_frame<W: Write>(
     writer: &mut W,
     frame: &impl FrameAccess,
@@ -953,85 +971,30 @@ fn write_lammps_dump_frame<W: Write>(
     write_dump_box_bounds(writer, frame)?;
 
     // -- Atoms --
-    // Determine column ordering and write per-row data via visit_block
     let atom_lines: Vec<String> = frame
         .visit_block("atoms", |atoms| -> std::io::Result<Vec<String>> {
             let col_names = atoms.column_keys();
-            let ordered: Vec<String> = match columns {
+            let fields: Vec<&str> = match columns {
                 Some(chosen) => select_dump_columns(chosen, &col_names)?,
                 None => {
-                    let mut ordered: Vec<&str> = Vec::with_capacity(col_names.len());
-
-                    if col_names.contains(&"id") {
-                        ordered.push("id");
-                    }
-                    if col_names.contains(&"type") {
-                        ordered.push("type");
-                    }
-
+                    // `id` and the type field lead, as in every LAMMPS dump;
+                    // the rest follow sorted.
+                    let lead = [keys::ID, keys::TYPE_ID, keys::TYPE];
+                    let mut ordered: Vec<&str> = lead
+                        .into_iter()
+                        .filter(|key| col_names.contains(key))
+                        .collect();
                     let mut remaining: Vec<&str> = col_names
                         .iter()
-                        .filter(|&&n| n != "id" && n != "type")
                         .copied()
+                        .filter(|name| !lead.contains(name))
                         .collect();
-                    remaining.sort();
+                    remaining.sort_unstable();
                     ordered.extend(remaining);
-                    ordered.into_iter().map(str::to_string).collect()
+                    drop_shadowed_fields(&ordered)
                 }
             };
-
-            // `ordered` holds canonical keys, used to look values up in the
-            // block. The header and the type heuristic both speak LAMMPS's
-            // native names, so translate on the way out.
-            let native: Vec<&str> = ordered.iter().map(|n| native_column_name(n)).collect();
-            let header = format!("ITEM: ATOMS {}", native.join(" "));
-            let col_types: Vec<ColumnType> = native.iter().map(|n| classify_column(n)).collect();
-
-            let mut lines = Vec::with_capacity(natoms + 1);
-            lines.push(header);
-
-            for row in 0..natoms {
-                let mut parts = Vec::with_capacity(ordered.len());
-                for (ci, name) in ordered.iter().map(String::as_str).enumerate() {
-                    let s = match col_types[ci] {
-                        ColumnType::Unsigned => {
-                            if let Some(arr) = atoms.get_uint_view(name) {
-                                format!("{}", arr[row])
-                            } else {
-                                String::new()
-                            }
-                        }
-                        ColumnType::Integer => {
-                            if let Some(arr) = atoms.get_int_view(name) {
-                                format!("{}", arr[row])
-                            } else if let Some(arr) = atoms.get_float_view(name) {
-                                format!("{}", arr[row] as I)
-                            } else {
-                                "0".to_string()
-                            }
-                        }
-                        ColumnType::Float => {
-                            if let Some(arr) = atoms.get_float_view(name) {
-                                format!("{:.6}", arr[row])
-                            } else if let Some(arr) = atoms.get_int_view(name) {
-                                format!("{:.6}", arr[row] as F)
-                            } else {
-                                "0.000000".to_string()
-                            }
-                        }
-                        ColumnType::String => {
-                            if let Some(arr) = atoms.get_string_view(name) {
-                                arr[row].clone()
-                            } else {
-                                "X".to_string()
-                            }
-                        }
-                    };
-                    parts.push(s);
-                }
-                lines.push(parts.join(" "));
-            }
-            Ok(lines)
+            dump_lines(atoms, &fields, natoms, "ITEM: ATOMS")
         })
         .transpose()?
         .unwrap_or_default();
@@ -1046,29 +1009,148 @@ fn write_lammps_dump_frame<W: Write>(
 /// Resolve a caller's `dump custom` column list against the `atoms` block.
 ///
 /// Names may be native (`mol`, `q`, `type`) or canonical (`mol_id`, `charge`,
-/// `type_id`); the returned keys are canonical, in the order asked for. A name
-/// the block cannot supply is an error: a dump silently missing the column the
-/// caller named is found wrong later, by whatever reads it.
-fn select_dump_columns(chosen: &[&str], col_names: &[&str]) -> std::io::Result<Vec<String>> {
+/// `type_id`); the returned keys are the block's, in the order asked for. A
+/// native name resolves to its canonical key when the block holds it, else to
+/// the column of that literal name — so `type` is the `type_id` ordinals when
+/// the block has them and the string `type` labels otherwise. A name the block
+/// cannot supply is an error, and so are two names that would both be written
+/// under one native field: a dump silently missing (or doubling) a column is
+/// found wrong later, by whatever reads it.
+fn select_dump_columns<'a>(
+    chosen: &[&str],
+    col_names: &[&'a str],
+) -> std::io::Result<Vec<&'a str>> {
     if chosen.is_empty() {
         return Err(err_mapper("dump column list must name at least one column"));
     }
-    chosen
+    let keys = chosen
         .iter()
         .map(|name| {
-            let key = canonical_column_name(name);
-            if col_names.contains(&key.as_str()) {
-                Ok(key)
-            } else {
-                let have: Vec<&str> = col_names.iter().map(|n| native_column_name(n)).collect();
-                Err(err_mapper(format!(
-                    "dump column '{}' is not in the 'atoms' block (have: {})",
-                    name,
-                    have.join(" ")
-                )))
-            }
+            let canonical = canonical_column_name(name);
+            col_names
+                .iter()
+                .copied()
+                .find(|&key| key == canonical)
+                .or_else(|| col_names.iter().copied().find(|key| key == name))
+                .ok_or_else(|| {
+                    let have: Vec<&str> = col_names.iter().map(|n| native_column_name(n)).collect();
+                    err_mapper(format!(
+                        "dump column '{}' is not in the 'atoms' block (have: {})",
+                        name,
+                        have.join(" ")
+                    ))
+                })
+        })
+        .collect::<std::io::Result<Vec<&str>>>()?;
+    for (i, key) in keys.iter().enumerate() {
+        let native = native_column_name(key);
+        if let Some(other) = keys[..i].iter().find(|k| native_column_name(k) == native) {
+            return Err(err_mapper(format!(
+                "dump columns '{other}' and '{key}' would both be written as the '{native}' field"
+            )));
+        }
+    }
+    Ok(keys)
+}
+
+/// Drop the columns another column of `keys` owns the native field name of.
+///
+/// Two keys can share a LAMMPS-native name: canonical `type_id` is written as
+/// `type`, and so is the canonical string `type`; `mol_id` is written as
+/// `mol`, and so is a literal `mol` column. The field belongs to the key the
+/// reader would map it back to (`type` → `type_id`), so when both are present
+/// that one is written and the other is left out — a dump never carries two
+/// fields of one name. In particular, a frame with both `type_id` and `type`
+/// writes `type_id` as its `type` field and does not write the labels.
+fn drop_shadowed_fields<'a>(keys: &[&'a str]) -> Vec<&'a str> {
+    keys.iter()
+        .copied()
+        .filter(|&key| {
+            let owner = canonical_column_name(native_column_name(key));
+            owner == key || !keys.contains(&owner.as_str())
         })
         .collect()
+}
+
+/// The header line (`header_prefix` + native field names) and one line per
+/// row for the columns `keys` of `block`.
+///
+/// Every value is formatted from its column's stored dtype — integers of any
+/// width and sign as integers, floats with six decimals, booleans as `1`/`0`,
+/// strings verbatim. A column a dump field cannot hold (not one value per row,
+/// complex, or a string that is empty or contains whitespace) is an error, not
+/// a placeholder.
+fn dump_lines(
+    block: &dyn BlockAccess,
+    keys: &[&str],
+    nrows: usize,
+    header_prefix: &str,
+) -> std::io::Result<Vec<String>> {
+    let native: Vec<&str> = keys.iter().map(|key| native_column_name(key)).collect();
+    let columns = keys
+        .iter()
+        .map(|&key| {
+            let column = block
+                .column(key)
+                .ok_or_else(|| err_mapper(format!("dump column '{key}' is not in the block")))?;
+            if column.shape().len() != 1 {
+                return Err(err_mapper(format!(
+                    "column '{key}' has shape {:?}; a dump field holds one value per row",
+                    column.shape()
+                )));
+            }
+            if matches!(column, ColumnView::Complex64(_) | ColumnView::Complex128(_)) {
+                return Err(err_mapper(format!(
+                    "column '{key}' is {}; a LAMMPS dump has no complex fields",
+                    column.dtype()
+                )));
+            }
+            Ok(column)
+        })
+        .collect::<std::io::Result<Vec<ColumnView<'_>>>>()?;
+
+    let mut lines = Vec::with_capacity(nrows + 1);
+    lines.push(format!("{} {}", header_prefix, native.join(" ")));
+    for row in 0..nrows {
+        let parts = keys
+            .iter()
+            .zip(&columns)
+            .map(|(key, column)| dump_value(key, column, row))
+            .collect::<std::io::Result<Vec<String>>>()?;
+        lines.push(parts.join(" "));
+    }
+    Ok(lines)
+}
+
+/// One row of a rank-1 column, formatted by its stored dtype.
+fn dump_value(key: &str, column: &ColumnView<'_>, row: usize) -> std::io::Result<String> {
+    Ok(match column {
+        ColumnView::Float(a) => format!("{:.6}", a[row]),
+        ColumnView::Int8(a) => a[row].to_string(),
+        ColumnView::Int16(a) => a[row].to_string(),
+        ColumnView::Int(a) => a[row].to_string(),
+        ColumnView::Int64(a) => a[row].to_string(),
+        ColumnView::UInt(a) => a[row].to_string(),
+        ColumnView::U8(a) => a[row].to_string(),
+        ColumnView::UInt16(a) => a[row].to_string(),
+        ColumnView::UInt32(a) => a[row].to_string(),
+        ColumnView::Bool(a) => if a[row] { "1" } else { "0" }.to_string(),
+        ColumnView::String(a) => {
+            let value = &a[row];
+            if value.is_empty() || value.contains(char::is_whitespace) {
+                return Err(err_mapper(format!(
+                    "column '{key}' row {row} is {value:?}; a dump field must be one \
+                     non-empty token"
+                )));
+            }
+            value.clone()
+        }
+        ColumnView::Complex64(_) | ColumnView::Complex128(_) => {
+            return Err(err_mapper(format!(
+                "column '{key}' is complex; a LAMMPS dump has no complex fields"
+            )));
+        }
+    })
 }
 
 /// Write a single frame as LAMMPS `dump local` (OVITO Load Trajectory bonds).
@@ -1113,8 +1195,16 @@ fn write_lammps_dump_local_frame<W: Write>(
     if from_entries {
         let lines: Vec<String> = frame
             .visit_block("entries", |entries| {
-                dump_block_lines(entries, nentries, "ITEM: ENTRIES")
+                let mut keys = entries.column_keys();
+                keys.sort_unstable();
+                dump_lines(
+                    entries,
+                    &drop_shadowed_fields(&keys),
+                    nentries,
+                    "ITEM: ENTRIES",
+                )
             })
+            .transpose()?
             .unwrap_or_default();
         for line in &lines {
             writeln!(writer, "{}", line)?;
@@ -1123,10 +1213,12 @@ fn write_lammps_dump_local_frame<W: Write>(
     }
 
     let atomi = frame
-        .get_uint("bonds", "atomi")
+        .column("bonds", "atomi")
+        .and_then(|c| c.as_uint())
         .ok_or_else(|| err_mapper("bonds block missing atomi"))?;
     let atomj = frame
-        .get_uint("bonds", "atomj")
+        .column("bonds", "atomj")
+        .and_then(|c| c.as_uint())
         .ok_or_else(|| err_mapper("bonds block missing atomj"))?;
     let atomi = atomi
         .as_slice()
@@ -1135,10 +1227,12 @@ fn write_lammps_dump_local_frame<W: Write>(
         .as_slice()
         .ok_or_else(|| err_mapper("bonds.atomj is not contiguous"))?;
     let btype = frame
-        .get_uint("bonds", "type_id")
+        .column("bonds", "type_id")
+        .and_then(|c| c.as_uint())
         .and_then(|a| a.as_slice().map(|s| s.to_vec()));
     let atom_ids = frame
-        .get_uint("atoms", "id")
+        .column("atoms", "id")
+        .and_then(|c| c.as_uint())
         .and_then(|a| a.as_slice().map(|s| s.to_vec()));
 
     let id_of = |idx: Idx| -> Idx {
@@ -1165,57 +1259,6 @@ fn write_lammps_dump_local_frame<W: Write>(
         }
     }
     Ok(())
-}
-
-fn dump_block_lines(
-    block: &dyn crate::store::block::access::BlockAccess,
-    nrows: usize,
-    header_prefix: &str,
-) -> Vec<String> {
-    let col_names = block.column_keys();
-    let mut ordered: Vec<&str> = col_names.to_vec();
-    ordered.sort();
-    let native: Vec<&str> = ordered.iter().map(|n| native_column_name(n)).collect();
-    let header = format!("{} {}", header_prefix, native.join(" "));
-    let col_types: Vec<ColumnType> = native.iter().map(|n| classify_column(n)).collect();
-    let mut lines = Vec::with_capacity(nrows + 1);
-    lines.push(header);
-    for row in 0..nrows {
-        let mut parts = Vec::with_capacity(ordered.len());
-        for (ci, &name) in ordered.iter().enumerate() {
-            let s = match col_types[ci] {
-                ColumnType::Unsigned => block
-                    .get_uint_view(name)
-                    .map(|arr| format!("{}", arr[row]))
-                    .unwrap_or_default(),
-                ColumnType::Integer => {
-                    if let Some(arr) = block.get_int_view(name) {
-                        format!("{}", arr[row])
-                    } else if let Some(arr) = block.get_float_view(name) {
-                        format!("{}", arr[row] as I)
-                    } else {
-                        "0".to_string()
-                    }
-                }
-                ColumnType::Float => {
-                    if let Some(arr) = block.get_float_view(name) {
-                        format!("{:.6}", arr[row])
-                    } else if let Some(arr) = block.get_int_view(name) {
-                        format!("{:.6}", arr[row] as F)
-                    } else {
-                        "0.000000".to_string()
-                    }
-                }
-                ColumnType::String => block
-                    .get_string_view(name)
-                    .map(|arr| arr[row].clone())
-                    .unwrap_or_else(|| "X".to_string()),
-            };
-            parts.push(s);
-        }
-        lines.push(parts.join(" "));
-    }
-    lines
 }
 
 fn write_dump_box_bounds<W: Write>(
@@ -1303,7 +1346,17 @@ pub fn open_lammps_dump<P: AsRef<Path>>(
 /// `columns` is the `dump custom` column line: `Some(&["id", "element", "x",
 /// "y", "z"])` writes exactly those, in that order, and errors on a name the
 /// frame cannot supply; `None` writes every column the `atoms` block holds
-/// (`id`, `type`, then the rest sorted).
+/// (`id`, the `type` field, then the rest sorted).
+///
+/// The dump's `type` field is the numeric `type_id` when the block has one,
+/// and otherwise the string `type` labels (LAMMPS type labels), which read
+/// back as `type`. A dump never carries two `type` fields: with both columns
+/// present, `type_id` is written and the labels are not — naming both in
+/// `columns` is an error.
+///
+/// Every value is formatted from its column's stored dtype; a column that a
+/// dump field cannot hold (complex, more than one value per row, a string that
+/// is empty or contains whitespace) is an error.
 pub fn write_lammps_dump<P: AsRef<Path>, FA: FrameAccess>(
     path: P,
     frames: &[FA],
@@ -1454,7 +1507,6 @@ impl FrameIndexBuilder for LammpsDumpIndexBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::store::keys;
     use std::io::Cursor;
 
     /// Multi-frame dump (2 frames) — used only by index/random-access/iter tests.
@@ -1488,20 +1540,19 @@ ITEM: ATOMS id type x y z
     }
 
     #[test]
-    fn test_classify_column() {
-        // `id` is UInt in the vocabulary, so classification follows the schema
-        // rather than the hardcoded integer-name list.
-        assert_eq!(classify_column("id"), ColumnType::Unsigned);
-        // A dump's `type` column canonicalizes to `type_id` (UInt).
-        assert_eq!(classify_column("type"), ColumnType::Unsigned);
-        // `mol` canonicalizes to `mol_id` (UInt).
-        assert_eq!(classify_column("mol"), ColumnType::Unsigned);
-        assert_eq!(classify_column("ix"), ColumnType::Integer);
-        assert_eq!(classify_column("x"), ColumnType::Float);
-        assert_eq!(classify_column("vx"), ColumnType::Float);
-        assert_eq!(classify_column("q"), ColumnType::Float);
-        assert_eq!(classify_column("c_pe"), ColumnType::Float);
-        assert_eq!(classify_column("f_reax[1]"), ColumnType::Float);
+    fn test_seed_column_type() {
+        // Canonical keys start at the family the vocabulary declares.
+        assert_eq!(seed_column_type(keys::ID), ColumnType::Integer);
+        assert_eq!(seed_column_type(keys::TYPE_ID), ColumnType::Integer);
+        assert_eq!(seed_column_type(keys::MOL_ID), ColumnType::Integer);
+        assert_eq!(seed_column_type(keys::IX), ColumnType::Integer);
+        assert_eq!(seed_column_type(keys::X), ColumnType::Float);
+        assert_eq!(seed_column_type(keys::CHARGE), ColumnType::Float);
+        assert_eq!(seed_column_type(keys::ELEMENT), ColumnType::String);
+        assert_eq!(seed_column_type(keys::TYPE), ColumnType::String);
+        // Everything else is typed by its tokens, starting narrowest.
+        assert_eq!(seed_column_type("c_pe"), ColumnType::Integer);
+        assert_eq!(seed_column_type("f_reax[1]"), ColumnType::Integer);
     }
 
     #[test]
@@ -1714,8 +1765,11 @@ ITEM: ATOMS id type x y z
         let mut reader = LAMMPSTrajReader::new(cursor(dump));
         let frames = crate::io::reader::collect_frames(&mut reader).unwrap();
         let atoms = frames[0].get("atoms").expect("atoms block");
-        let ids = atoms.get_uint("id").expect("id column");
-        let xs = atoms.get_float("x").expect("x column");
+        let ids = atoms
+            .get("id")
+            .and_then(|c| c.as_uint())
+            .expect("id column");
+        let xs = atoms.get("x").and_then(|c| c.as_float()).expect("x column");
         // File order preserved: 3, 1, 2 (matching x: 9.0, 1.0, 5.0).
         assert_eq!(ids.as_slice().unwrap(), &[3, 1, 2]);
         assert_eq!(xs.as_slice().unwrap(), &[9.0, 1.0, 5.0]);
@@ -1743,7 +1797,10 @@ ITEM: ENTRIES batom1 batom2 btype
         let mut reader = LAMMPSTrajReader::new(cursor(dump));
         let frames = crate::io::reader::collect_frames(&mut reader).unwrap();
         let entries = frames[0].get("entries").expect("entries block");
-        let batom1 = entries.get_int("batom1").expect("batom1");
+        let batom1 = entries
+            .get("batom1")
+            .and_then(|c| c.as_int())
+            .expect("batom1");
         // File order: 3, 1, 2 (no sort applied).
         assert_eq!(batom1.as_slice().unwrap(), &[3, 1, 2]);
     }
@@ -1802,14 +1859,23 @@ ITEM: ATOMS id type x y z vx vy vz q c_pe
 
         // Custom columns should be float. LAMMPS's `q` is renamed to the
         // canonical `charge` on the way out of the reader.
-        let q = atoms.get_float(keys::CHARGE).expect("charge column");
+        let q = atoms
+            .get(keys::CHARGE)
+            .and_then(|c| c.as_float())
+            .expect("charge column");
         assert!((q[0] - (-0.5)).abs() < 1e-6);
 
-        let pe = atoms.get_float("c_pe").expect("c_pe column");
+        let pe = atoms
+            .get("c_pe")
+            .and_then(|c| c.as_float())
+            .expect("c_pe column");
         assert!((pe[0] - (-10.5)).abs() < 1e-4);
 
         // Velocities should be float
-        let vx = atoms.get_float("vx").expect("vx column");
+        let vx = atoms
+            .get("vx")
+            .and_then(|c| c.as_float())
+            .expect("vx column");
         assert!((vx[0] - 0.1).abs() < 1e-6);
     }
 
@@ -1832,15 +1898,15 @@ ITEM: ATOMS id type xu yu zu
         let frame = reader.read().unwrap().expect("parse");
         let atoms = frame.get("atoms").expect("atoms");
 
-        let x = atoms.get_float("xu").expect("xu");
-        let y = atoms.get_float("yu").expect("yu");
-        let z = atoms.get_float("zu").expect("zu");
+        let x = atoms.get("xu").and_then(|c| c.as_float()).expect("xu");
+        let y = atoms.get("yu").and_then(|c| c.as_float()).expect("yu");
+        let z = atoms.get("zu").and_then(|c| c.as_float()).expect("zu");
 
         assert_eq!(x.iter().copied().collect::<Vec<_>>(), vec![1.0, 4.0]);
         assert_eq!(y.iter().copied().collect::<Vec<_>>(), vec![2.0, 5.0]);
         assert_eq!(z.iter().copied().collect::<Vec<_>>(), vec![3.0, 6.0]);
         assert!(
-            atoms.get_float("x").is_none(),
+            atoms.get("x").and_then(|c| c.as_float()).is_none(),
             "reader should not synthesize x/y/z from xu/yu/zu"
         );
     }
@@ -1864,15 +1930,15 @@ ITEM: ATOMS id type xs ys zs
         let frame = reader.read().unwrap().expect("parse");
         let atoms = frame.get("atoms").expect("atoms");
 
-        let x = atoms.get_float("xs").expect("xs");
-        let y = atoms.get_float("ys").expect("ys");
-        let z = atoms.get_float("zs").expect("zs");
+        let x = atoms.get("xs").and_then(|c| c.as_float()).expect("xs");
+        let y = atoms.get("ys").and_then(|c| c.as_float()).expect("ys");
+        let z = atoms.get("zs").and_then(|c| c.as_float()).expect("zs");
 
         assert_eq!(x.iter().copied().collect::<Vec<_>>(), vec![0.0, 0.5]);
         assert_eq!(y.iter().copied().collect::<Vec<_>>(), vec![0.0, 0.5]);
         assert_eq!(z.iter().copied().collect::<Vec<_>>(), vec![0.0, 0.5]);
         assert!(
-            atoms.get_float("x").is_none(),
+            atoms.get("x").and_then(|c| c.as_float()).is_none(),
             "reader should preserve source columns only"
         );
     }
@@ -1895,9 +1961,9 @@ ITEM: ATOMS id type xs ys zs
         let frame = reader.read().unwrap().expect("parse");
         let atoms = frame.get("atoms").expect("atoms");
 
-        let x = atoms.get_float("xs").expect("xs");
-        let y = atoms.get_float("ys").expect("ys");
-        let z = atoms.get_float("zs").expect("zs");
+        let x = atoms.get("xs").and_then(|c| c.as_float()).expect("xs");
+        let y = atoms.get("ys").and_then(|c| c.as_float()).expect("ys");
+        let z = atoms.get("zs").and_then(|c| c.as_float()).expect("zs");
 
         assert!((x[0] - 0.25).abs() < 1e-6);
         assert!((y[0] - 0.5).abs() < 1e-6);
@@ -1921,9 +1987,18 @@ ITEM: ATOMS id type xs yu zu
         let mut reader = LAMMPSTrajReader::new(cursor(dump));
         let frame = reader.read().unwrap().expect("mixed coords parse");
         let atoms = frame.get("atoms").expect("atoms");
-        assert_eq!(atoms.get_float("xs").expect("xs")[0], 0.5);
-        assert_eq!(atoms.get_float("yu").expect("yu")[0], 5.0);
-        assert_eq!(atoms.get_float("zu").expect("zu")[0], 5.0);
+        assert_eq!(
+            atoms.get("xs").and_then(|c| c.as_float()).expect("xs")[0],
+            0.5
+        );
+        assert_eq!(
+            atoms.get("yu").and_then(|c| c.as_float()).expect("yu")[0],
+            5.0
+        );
+        assert_eq!(
+            atoms.get("zu").and_then(|c| c.as_float()).expect("zu")[0],
+            5.0
+        );
     }
 
     #[test]
@@ -1943,7 +2018,13 @@ ITEM: ATOMS id type q
         let mut reader = LAMMPSTrajReader::new(cursor(dump));
         let frame = reader.read().unwrap().expect("parse");
         let atoms = frame.get("atoms").expect("atoms");
-        assert_eq!(atoms.get_float(keys::CHARGE).expect("charge")[0], -0.5);
+        assert_eq!(
+            atoms
+                .get(keys::CHARGE)
+                .and_then(|c| c.as_float())
+                .expect("charge")[0],
+            -0.5
+        );
     }
 
     #[test]
@@ -1965,8 +2046,20 @@ ITEM: ATOMS id type mol q x y z
         let frame = reader.read().unwrap().expect("parse");
         let atoms = frame.get("atoms").expect("atoms");
 
-        assert_eq!(atoms.get_float(keys::CHARGE).expect("charge")[0], -0.5);
-        assert_eq!(atoms.get_uint(keys::MOL_ID).expect("mol_id")[0], 7);
+        assert_eq!(
+            atoms
+                .get(keys::CHARGE)
+                .and_then(|c| c.as_float())
+                .expect("charge")[0],
+            -0.5
+        );
+        assert_eq!(
+            atoms
+                .get(keys::MOL_ID)
+                .and_then(|c| c.as_uint())
+                .expect("mol_id")[0],
+            7
+        );
         assert!(
             atoms.get("q").is_none(),
             "raw `q` must not survive the reader"
@@ -2302,5 +2395,298 @@ ITEM: ATOMS id type x y z
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("empty.lammpstrj");
         assert!(write_lammps_dump(&path, &[wide_frame()], Some(&[])).is_err());
+    }
+
+    /// Three waters' worth of atoms in a 10 Å cube, with `extra` columns.
+    fn typed_frame(extra: impl FnOnce(&mut Block)) -> Frame {
+        use molrs::spatial::simbox::SimBox;
+        use ndarray::{Array1, array};
+
+        let mut atoms = Block::new();
+        atoms
+            .insert(keys::ID, Array1::from_vec(vec![1 as Idx, 2, 3]).into_dyn())
+            .unwrap();
+        for (key, values) in [
+            (keys::X, [0.0 as F, 1.0, 2.0]),
+            (keys::Y, [0.0, 0.5, 0.0]),
+            (keys::Z, [0.0, 0.0, 0.25]),
+        ] {
+            atoms
+                .insert(key, Array1::from_vec(values.to_vec()).into_dyn())
+                .unwrap();
+        }
+        extra(&mut atoms);
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.simbox =
+            Some(SimBox::cube(10.0, array![0.0 as F, 0.0, 0.0], [true, true, true]).unwrap());
+        frame
+    }
+
+    fn insert_labels(atoms: &mut Block) {
+        insert_str(
+            atoms,
+            keys::TYPE,
+            vec!["OW".into(), "HW".into(), "HW".into()],
+            3,
+        )
+        .unwrap();
+    }
+
+    fn insert_type_ids(atoms: &mut Block) {
+        atoms
+            .insert(
+                keys::TYPE_ID,
+                ndarray::Array1::from_vec(vec![1 as Idx, 2, 2]).into_dyn(),
+            )
+            .unwrap();
+    }
+
+    /// Write `frame` with `columns`, returning the text and the frame read back.
+    fn dump_round_trip(frame: &Frame, columns: Option<&[&str]>) -> (String, Frame) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("typed.lammpstrj");
+        write_lammps_dump(&path, std::slice::from_ref(frame), columns).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let mut frames = read_lammps_dump(&path).unwrap();
+        assert_eq!(frames.len(), 1);
+        (text, frames.remove(0))
+    }
+
+    fn string_column(frame: &Frame, key: &str) -> Vec<String> {
+        frame
+            .get("atoms")
+            .and_then(|atoms| atoms.get(key))
+            .and_then(|c| c.as_string())
+            .unwrap_or_else(|| panic!("no string column '{key}'"))
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    fn uint_column(frame: &Frame, key: &str) -> Vec<Idx> {
+        frame
+            .get("atoms")
+            .and_then(|atoms| atoms.get(key))
+            .and_then(|c| c.as_uint())
+            .unwrap_or_else(|| panic!("no uint column '{key}'"))
+            .iter()
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn string_type_labels_round_trip_as_type() {
+        let (text, back) = dump_round_trip(&typed_frame(insert_labels), None);
+        assert!(text.contains("ITEM: ATOMS id type x y z\n"), "{text}");
+        assert!(
+            text.contains("\n1 OW 0.000000 0.000000 0.000000\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("\n2 HW 1.000000 0.500000 0.000000\n"),
+            "{text}"
+        );
+        assert_eq!(string_column(&back, keys::TYPE), ["OW", "HW", "HW"]);
+        assert!(back.get("atoms").unwrap().get(keys::TYPE_ID).is_none());
+    }
+
+    #[test]
+    fn string_type_labels_are_the_type_field_when_named() {
+        let (text, back) = dump_round_trip(&typed_frame(insert_labels), Some(&["id", "type", "x"]));
+        assert!(
+            text.contains("ITEM: ATOMS id type x\n1 OW 0.000000\n"),
+            "{text}"
+        );
+        assert_eq!(string_column(&back, keys::TYPE), ["OW", "HW", "HW"]);
+    }
+
+    #[test]
+    fn numeric_type_id_round_trips_as_type_id() {
+        let (text, back) = dump_round_trip(&typed_frame(insert_type_ids), None);
+        assert!(text.contains("ITEM: ATOMS id type x y z\n"), "{text}");
+        assert!(
+            text.contains("\n3 2 2.000000 0.000000 0.250000\n"),
+            "{text}"
+        );
+        assert_eq!(uint_column(&back, keys::TYPE_ID), [1, 2, 2]);
+        assert!(back.get("atoms").unwrap().get(keys::TYPE).is_none());
+    }
+
+    #[test]
+    fn type_id_wins_the_type_field_over_labels() {
+        let frame = typed_frame(|atoms| {
+            insert_labels(atoms);
+            insert_type_ids(atoms);
+        });
+        let (text, back) = dump_round_trip(&frame, None);
+        assert!(text.contains("ITEM: ATOMS id type x y z\n"), "{text}");
+        assert!(
+            text.contains("\n1 1 0.000000 0.000000 0.000000\n"),
+            "{text}"
+        );
+        assert!(!text.contains("OW"), "{text}");
+        assert_eq!(uint_column(&back, keys::TYPE_ID), [1, 2, 2]);
+        assert!(back.get("atoms").unwrap().get(keys::TYPE).is_none());
+
+        // Naming `type` picks the ordinals too; naming both is refused rather
+        // than written as two `type` fields.
+        let (text, _) = dump_round_trip(&frame, Some(&["id", "type"]));
+        assert!(text.contains("ITEM: ATOMS id type\n1 1\n"), "{text}");
+        let dir = tempfile::tempdir().unwrap();
+        let err = write_lammps_dump(
+            dir.path().join("both.lammpstrj"),
+            &[frame],
+            Some(&["id", "type_id", "type"]),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("'type' field"), "{err}");
+    }
+
+    #[test]
+    fn a_labelled_lammps_dump_reads_as_type() {
+        // What LAMMPS writes after `dump_modify ... types labels`.
+        let dump = "ITEM: TIMESTEP
+0
+ITEM: NUMBER OF ATOMS
+2
+ITEM: BOX BOUNDS pp pp pp
+0.0 10.0
+0.0 10.0
+0.0 10.0
+ITEM: ATOMS id type x y z
+1 OW 1.0 2.0 3.0
+2 HW 4.0 5.0 6.0
+";
+        let frame = LAMMPSTrajReader::new(cursor(dump))
+            .read()
+            .unwrap()
+            .expect("parse");
+        assert_eq!(string_column(&frame, keys::TYPE), ["OW", "HW"]);
+        assert!(frame.get("atoms").unwrap().get(keys::TYPE_ID).is_none());
+    }
+
+    #[test]
+    fn every_dtype_is_written_from_its_stored_values() {
+        use ndarray::Array1;
+        use num_complex::Complex;
+
+        fn col<T: BlockDtype>(atoms: &mut Block, key: &str, values: Vec<T>) {
+            atoms
+                .insert(key, Array1::from_vec(values).into_dyn())
+                .unwrap();
+        }
+        let frame = typed_frame(|atoms| {
+            col(atoms, "a_i8", vec![-8i8, 0, 8]);
+            col(atoms, "b_i16", vec![-16i16, 0, 16]);
+            col(atoms, "c_i32", vec![-32 as I, 0, 32]);
+            col(atoms, "d_i64", vec![-(1i64 << 40), 0, 64]);
+            col(atoms, "e_u8", vec![8u8, 0, 1]);
+            col(atoms, "f_u16", vec![16u16, 0, 1]);
+            col(atoms, "g_u32", vec![32u32, 0, 1]);
+            col(atoms, "h_u64", vec![u64::MAX, 0, 1]);
+            col(atoms, "i_f64", vec![0.5 as F, -1.25, 3.0]);
+            col(atoms, "j_bool", vec![true, false, true]);
+            col(
+                atoms,
+                "k_str",
+                vec!["Na+".to_string(), "Cl-".into(), "O".into()],
+            );
+        });
+        let fields = [
+            "a_i8", "b_i16", "c_i32", "d_i64", "e_u8", "f_u16", "g_u32", "h_u64", "i_f64",
+            "j_bool", "k_str",
+        ];
+        let (text, back) = dump_round_trip(&frame, Some(&fields));
+        assert!(
+            text.contains(&format!(
+                "ITEM: ATOMS {}\n-8 -16 -32 -1099511627776 8 16 32 18446744073709551615 \
+                 0.500000 1 Na+\n0 0 0 0 0 0 0 0 -1.250000 0 Cl-\n",
+                fields.join(" ")
+            )),
+            "{text}"
+        );
+        let atoms = back.get("atoms").unwrap();
+        assert_eq!(atoms.get("d_i64").unwrap().dtype(), DType::Int64);
+        assert_eq!(atoms.get("c_i32").unwrap().dtype(), DType::Int);
+        assert_eq!(atoms.get("i_f64").unwrap().dtype(), DType::Float);
+        assert_eq!(atoms.get("k_str").unwrap().dtype(), DType::String);
+
+        // A column a dump field cannot hold is refused, not padded.
+        let dir = tempfile::tempdir().unwrap();
+        let refused = |extra: fn(&mut Block)| {
+            write_lammps_dump(
+                dir.path().join("bad.lammpstrj"),
+                &[typed_frame(extra)],
+                None,
+            )
+            .unwrap_err()
+            .to_string()
+        };
+        let err = refused(|atoms| {
+            col(atoms, "z_c64", vec![Complex::new(1.0f32, 0.0); 3]);
+        });
+        assert!(err.contains("complex"), "{err}");
+        let err = refused(|atoms| {
+            atoms
+                .insert("z_vec", ndarray::Array2::<F>::zeros((3, 2)).into_dyn())
+                .unwrap();
+        });
+        assert!(err.contains("one value per row"), "{err}");
+        let err = refused(|atoms| {
+            col(
+                atoms,
+                "z_str",
+                vec!["a b".to_string(), "c".into(), "d".into()],
+            );
+        });
+        assert!(err.contains("one non-empty token"), "{err}");
+    }
+
+    #[test]
+    fn canonical_bool_and_i64_columns_read_back_at_their_schema_dtype() {
+        use ndarray::Array1;
+        let frame = typed_frame(|atoms| {
+            atoms
+                .insert(
+                    keys::FREE,
+                    Array1::from_vec(vec![true, false, true]).into_dyn(),
+                )
+                .unwrap();
+            atoms
+                .insert(
+                    keys::FORMAL_CHARGE,
+                    Array1::from_vec(vec![0i64, -1, 1]).into_dyn(),
+                )
+                .unwrap();
+        });
+        let (text, back) = dump_round_trip(&frame, None);
+        assert!(
+            text.contains("ITEM: ATOMS id formal_charge free x y z\n"),
+            "{text}"
+        );
+        assert!(text.contains("\n2 -1 0 "), "{text}");
+        let atoms = back.get("atoms").unwrap();
+        assert_eq!(
+            atoms
+                .get(keys::FREE)
+                .and_then(|c| c.as_bool())
+                .unwrap()
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            [true, false, true]
+        );
+        assert_eq!(
+            atoms
+                .get(keys::FORMAL_CHARGE)
+                .and_then(|c| c.as_i64())
+                .unwrap()
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            [0, -1, 1]
+        );
     }
 }

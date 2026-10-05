@@ -302,6 +302,8 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_function(wrap_pyfunction!(io::mrec::read_mrec_trajectory, m)?)?;
         m.add_function(wrap_pyfunction!(io::mrec::write_mrec_trajectory, m)?)?;
         m.add_function(wrap_pyfunction!(io::mrec::read_mrec_meta, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::write_mrec_forcefield, m)?)?;
+        m.add_function(wrap_pyfunction!(io::mrec::read_mrec_forcefield, m)?)?;
         m.add_function(wrap_pyfunction!(io::mrec::mrec_sections, m)?)?;
         m.add_function(wrap_pyfunction!(io::mrec::pack, m)?)?;
         m.add_function(wrap_pyfunction!(io::mrec::mrec_validate_path, m)?)?;
@@ -396,6 +398,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Force field
     m.add_class::<PyForceField>()?;
+    m.add_class::<ff::section::PyForceFieldSection>()?;
     m.add_class::<ff::handles::PyStyle>()?;
     m.add_class::<ff::handles::PyAtomStyle>()?;
     m.add_class::<ff::handles::PyBondStyle>()?;

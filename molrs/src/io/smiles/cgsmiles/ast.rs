@@ -50,7 +50,7 @@ use crate::io::smiles::chem::ast::{BondKind, BondingDescriptor, SmilesIR, Span};
 /// because the **last** block is atomistic and builds no coarse level. That
 /// asymmetry is intentional: levels are graphs of beads, and atoms are not
 /// [`CGNode`]s. The last table's bodies stay
-/// [`FragmentBody::Smiles`](FragmentBody::Smiles) values with their bonding
+/// [`FragmentBody::Smiles`] values with their bonding
 /// descriptors intact.
 ///
 /// # A value the reader returns is finished

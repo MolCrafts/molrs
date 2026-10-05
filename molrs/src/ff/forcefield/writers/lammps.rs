@@ -57,7 +57,8 @@
 //! (`store → lj hub → target`) — never ad-hoc eV/kcal factors.
 //!
 //! Form map (independent of unit style):
-//! - harmonic bond/angle/improper: `K = k/2` (molrs `½k` → LAMMPS `K`);
+//! - harmonic bond/angle: `K = k/2` (molrs `½k` → LAMMPS `K`); harmonic
+//!   improper: `K = k` (molrs's improper kernel is LAMMPS's `K(χ−χ₀)²`);
 //! - angle-valued params (`theta0`, dihedral phase, improper `chi0`) are stored
 //!   in **radians** and written in **degrees** (LAMMPS file convention for all
 //!   of real/metal/lj).
@@ -155,11 +156,17 @@ impl WriteUnits {
         self.sys.from_store_bond_k_lammps(k_lammps_store, self.file)
     }
 
-    /// molrs `½k` angle/improper stiffness → LAMMPS file `K`.
+    /// molrs `½k` angle stiffness → LAMMPS file `K`.
     fn angle_k(&self, k_molrs: f64) -> Result<f64, String> {
         let k_lammps_store = molrs_half_k_to_lammps_k(k_molrs);
         self.sys
             .from_store_angle_k_lammps(k_lammps_store, self.file)
+    }
+
+    /// molrs improper stiffness → LAMMPS file `K`: the improper kernel is
+    /// already LAMMPS's `K·(χ − χ₀)²`, so only the unit converts.
+    fn improper_k(&self, k_molrs: f64) -> Result<f64, String> {
+        self.sys.from_store_angle_k_lammps(k_molrs, self.file)
     }
 }
 
@@ -202,7 +209,7 @@ impl Coeff {
 /// |---------------------------|----------------------------------------|---------------|
 /// | `bond harmonic`           | `k`, `r0`                              | `K = k/2`, `r0` |
 /// | `angle harmonic`          | `k`, `theta0` (rad)                    | `K = k/2`, `theta0` (deg) |
-/// | `improper harmonic`       | `k`, `chi0` (rad)                      | `K = k/2`, `chi0` (deg) |
+/// | `improper harmonic`       | `k`, `chi0` (rad)                      | `K = k`, `chi0` (deg) |
 /// | `improper periodic`       | `k`, `periodicity`, `phase` (rad, 0 or π) | `K d n` (LAMMPS `cvff`, `d` = ±1) |
 /// | `dihedral opls`           | `k1..k4` (absent → 0)                  | `K1 K2 K3 K4` |
 /// | `dihedral harmonic`       | `k`, `sign` (±1), `periodicity`        | `K d n` |
@@ -211,8 +218,9 @@ impl Coeff {
 /// | `dihedral multi/harmonic` | `a1..a5` (absent → 0)                  | `A1 A2 A3 A4 A5` |
 /// | `pair lj/cut…`            | `epsilon`, `sigma`                     | `epsilon sigma` |
 ///
-/// `K = k/2` because molrs's harmonic kernels are `½·k·(x−x₀)²` and LAMMPS's
-/// are `K·(x−x₀)²`. An absent param falls back only where the molrs kernel
+/// `K = k/2` because molrs's harmonic bond and angle kernels are
+/// `½·k·(x−x₀)²` and LAMMPS's are `K·(x−x₀)²`; the improper kernel is
+/// LAMMPS's `K·(χ−χ₀)²` already, so `K = k` there. An absent param falls back only where the molrs kernel
 /// reads the same default. Multiplicities (`n`, fourier `m`) are integral.
 ///
 /// # Errors
@@ -298,7 +306,7 @@ fn coeff_fields(
             Real(need("theta0")?.to_degrees()),
         ]),
         ("improper", "harmonic") => Ok(vec![
-            Real(units.angle_k(need("k")?)?),
+            Real(units.improper_k(need("k")?)?),
             Real(need("chi0")?.to_degrees()),
         ]),
         // AMBER `improper periodic`, E = K[1 + cos(nφ − φ0)], is LAMMPS
@@ -1550,7 +1558,8 @@ pair_coeff c3 c3 0.107800 3.397710
         assert!(err.contains("os"), "names the label: {err}");
     }
 
-    /// Improper `k` in molrs `½k` form, `chi0` in radians.
+    /// Improper `k` of the kernel `k·(χ − χ₀)²` (LAMMPS's `K`), `chi0` in
+    /// radians.
     fn improper_ff() -> ForceField {
         let mut ff = ForceField::new("hand");
         ff.def_style("improper", "harmonic", Params::new())
@@ -1571,7 +1580,7 @@ pair_coeff c3 c3 0.107800 3.397710
         let text = LammpsFfWriter::new(&labels).write_str(&ff).unwrap();
         assert_eq!(
             lines_starting_with(&text, "improper_coeff"),
-            vec!["improper_coeff c3-n-c-o 1.100000 180.000000"],
+            vec!["improper_coeff c3-n-c-o 2.200000 180.000000"],
             "{text}"
         );
     }
@@ -1913,8 +1922,9 @@ pair_coeff c3 c3 0.107800 3.397710
     /// `(category, style, stored params, expected LAMMPS values)`.
     type ValuesCase<'a> = (&'a str, &'a str, &'a [(&'a str, f64)], &'a [f64]);
 
-    /// Hand-derived goldens for every kernel, in `real`: harmonic `K = k/2`,
-    /// radians → degrees, energies pass through.
+    /// Hand-derived goldens for every kernel, in `real`: harmonic bond and
+    /// angle `K = k/2`, harmonic improper `K = k`, radians → degrees, energies
+    /// pass through.
     #[test]
     fn lammps_coeff_values_renders_each_kernel() {
         let pi = std::f64::consts::PI;
@@ -1934,7 +1944,7 @@ pair_coeff c3 c3 0.107800 3.397710
             (
                 "improper",
                 "harmonic",
-                &[("k", 20.0), ("chi0", pi)],
+                &[("k", 10.0), ("chi0", pi)],
                 &[10.0, 180.0],
             ),
             (

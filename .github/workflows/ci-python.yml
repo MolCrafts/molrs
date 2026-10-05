@@ -19,26 +19,16 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
-      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: python-maturin-${{ matrix.os }}
-          workspaces: |
-            . -> target
+          workspaces: ". -> target"
       - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
           cache-dependency-glob: |
             molrs-python/pyproject.toml
             molrs-python/Cargo.toml
-      - name: Lint Python bindings
-        run: cargo clippy --manifest-path molrs-python/Cargo.toml --all-targets -- -D warnings
-      # Tools only (no project install) → tox builds the wheel once.
-      # Same gate as prek pre-push.
-      - name: tox -e py
-        working-directory: molrs-python
+      - run: scripts/check.sh python
         shell: bash
-        run: |
-          set -euo pipefail
-          uv sync --no-install-project --extra dev
-          uv run --no-sync tox -e py

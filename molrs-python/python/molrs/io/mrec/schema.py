@@ -1,9 +1,10 @@
 """Runtime validation of the mrec record schema.
 
 The checks live in ``molrs::io::mrec::schema``; this module is their Python
-name, not a second implementation. ``meta["molrec_version"]`` is required and
-must be an integer in ``1..=MOLREC_VERSION``. Identity of a record is the
-``*.mrec/`` path suffix plus a Zarr root.
+name, not a second implementation. Writers always stamp
+``meta["molrec_version"]``; readers validate it only when present — an integer
+in ``1..=MOLREC_VERSION`` — and an absent key is no version check. Identity of
+a record is the ``*.mrec/`` path suffix plus a Zarr root.
 """
 
 from ..._lib import MREC_MOLREC_VERSION as MOLREC_VERSION

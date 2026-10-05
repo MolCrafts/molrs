@@ -30,7 +30,7 @@ the hosted site reserves `/reference/wasm/` for that generated reference.
     atoms = frame["atoms"]
     print("atoms:", atoms.nrows)
     print("columns:", atoms.keys())
-    print("x:", atoms.view("x")[:3])
+    print("x:", atoms["x"][:3])
     ```
 
     Expected shape of the result: the input graph has three heavy atoms, while

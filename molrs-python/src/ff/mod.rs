@@ -33,6 +33,7 @@
 pub mod atd;
 pub mod charge;
 pub mod handles;
+pub mod section;
 
 use std::collections::HashMap;
 use std::fs;
@@ -1068,7 +1069,7 @@ macro_rules! py_mmff_front_door {
         $py_ty:ident, $core:ty, $name:literal
     ) => {
         $(#[$doc])*
-        #[pyclass(module = "molrs", name = $name, extends = PyTypifier)]
+        #[pyclass(module = "molrs.ff.typifier", name = $name, extends = PyTypifier)]
         pub struct $py_ty;
 
         #[pymethods]

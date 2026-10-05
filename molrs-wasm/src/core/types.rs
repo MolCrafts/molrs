@@ -260,11 +260,6 @@ impl WasmArray {
         let (data, _offset) = arr.into_raw_vec_and_offset();
         Self { data, shape }
     }
-
-    #[allow(dead_code)]
-    pub(crate) fn as_slice(&self) -> &[F] {
-        &self.data
-    }
 }
 
 #[cfg(test)]

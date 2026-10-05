@@ -291,6 +291,19 @@ pub fn parse_comment_line(line: &str) -> std::result::Result<XYZComment, String>
     }
 }
 
+/// The extxyz property name of the canonical `res_name` column (ASE's
+/// spelling), mapped at the I/O boundary in both directions.
+const EXTXYZ_RESNAME: &str = "resname";
+
+/// The extxyz property a frame column is written as.
+fn extxyz_property_name(column: &str) -> &str {
+    if column == molrs::store::schema::consts::RES_NAME {
+        EXTXYZ_RESNAME
+    } else {
+        column
+    }
+}
+
 fn expand_property_columns(props: &[PropertySpec]) -> Vec<(String, PropType)> {
     let mut cols = Vec::new();
     for p in props {
@@ -298,6 +311,10 @@ fn expand_property_columns(props: &[PropertySpec]) -> Vec<(String, PropType)> {
             // ExtXYZ `type:I` is a numeric ordinal; Frame stores those as `type_id`.
             let name = if p.name.eq_ignore_ascii_case("type") && p.ty == PropType::I {
                 molrs::store::schema::consts::TYPE_ID.to_string()
+            } else if p.name == EXTXYZ_RESNAME {
+                // The extxyz spelling stays at the I/O boundary; the frame
+                // carries the canonical key.
+                molrs::store::schema::consts::RES_NAME.to_string()
             } else {
                 p.name.clone()
             };
@@ -1336,10 +1353,15 @@ mod tests {
                 .expect("parse XYZ");
         let atoms = frame.get("atoms").expect("atoms block");
         assert_eq!(
-            atoms.get_uint("type_id").unwrap().as_slice().unwrap(),
+            atoms
+                .get("type_id")
+                .and_then(|c| c.as_uint())
+                .unwrap()
+                .as_slice()
+                .unwrap(),
             &[3_u64]
         );
-        assert!(atoms.get_string("type").is_none());
+        assert!(atoms.get("type").and_then(|c| c.as_string()).is_none());
         assert!(!atoms.contains_key("type"));
     }
 
@@ -1351,10 +1373,15 @@ mod tests {
                 .expect("parse XYZ");
         let atoms = frame.get("atoms").expect("atoms block");
         assert_eq!(
-            atoms.get_string("type").unwrap().as_slice().unwrap(),
+            atoms
+                .get("type")
+                .and_then(|c| c.as_string())
+                .unwrap()
+                .as_slice()
+                .unwrap(),
             &["C_3".to_string()]
         );
-        assert!(atoms.get_uint("type_id").is_none());
+        assert!(atoms.get("type_id").and_then(|c| c.as_uint()).is_none());
         assert!(!atoms.contains_key("type_id"));
     }
 
@@ -1455,11 +1482,21 @@ mod tests {
         let bonds = frame.get("bonds").expect("Connct creates bonds block");
 
         assert_eq!(
-            bonds.get_uint("atomi").unwrap().as_slice().unwrap(),
+            bonds
+                .get("atomi")
+                .and_then(|c| c.as_uint())
+                .unwrap()
+                .as_slice()
+                .unwrap(),
             &[0, 0]
         );
         assert_eq!(
-            bonds.get_uint("atomj").unwrap().as_slice().unwrap(),
+            bonds
+                .get("atomj")
+                .and_then(|c| c.as_uint())
+                .unwrap()
+                .as_slice()
+                .unwrap(),
             &[1, 2]
         );
         assert!(!frame.meta.contains_key("Connct"));
@@ -1487,7 +1524,8 @@ mod tests {
             round_trip
                 .get("bonds")
                 .unwrap()
-                .get_uint("atomj")
+                .get("atomj")
+                .and_then(|c| c.as_uint())
                 .unwrap()
                 .as_slice()
                 .unwrap(),
@@ -1529,12 +1567,10 @@ mod tests {
         atoms.insert("y", floats([0.0, 0.0, 1.0])).unwrap();
         atoms.insert("z", floats([0.0, 0.0, 0.0])).unwrap();
         atoms.insert("id", uints([1, 2, 3])).unwrap();
-        atoms
-            .insert("atom_name", strings(["OW", "HW1", "HW2"]))
-            .unwrap();
+        atoms.insert("name", strings(["OW", "HW1", "HW2"])).unwrap();
         atoms.insert("res_id", uints([1, 1, 1])).unwrap();
         atoms
-            .insert("resname", strings(["WAT", "WAT", "WAT"]))
+            .insert("res_name", strings(["WAT", "WAT", "WAT"]))
             .unwrap();
 
         let mut frame = Frame::new();
@@ -1564,7 +1600,12 @@ mod tests {
             .collect::<std::io::Result<_>>()
             .expect("read XYZ trajectory");
         assert_eq!(frames.len(), 2);
-        let x1 = frames[1].get("atoms").unwrap().get_float("x").unwrap();
+        let x1 = frames[1]
+            .get("atoms")
+            .unwrap()
+            .get("x")
+            .and_then(|c| c.as_float())
+            .unwrap();
         assert_eq!(x1[[0]], 5.0);
         assert_eq!(x1[[2]], 7.0);
     }
@@ -1579,7 +1620,7 @@ mod tests {
     #[test]
     fn xyz_writer_row_order_matches_the_properties_header() {
         // The Properties header and the data rows are two views of one column
-        // order. `id` is written before the alphabetically-earlier `atom_name`
+        // order. `id` is written before the alphabetically-earlier `name`
         // in the header, so the rows must do the same — or every consumer reads
         // an atom name where the header promised an integer id.
         let mut output = Vec::new();
@@ -1594,7 +1635,7 @@ mod tests {
         let declared: Vec<&str> = props.split(':').step_by(3).collect();
         assert_eq!(
             declared,
-            ["species", "pos", "id", "atom_name", "res_id", "resname"]
+            ["species", "pos", "id", "name", "res_id", "resname"]
         );
 
         // species + 3 coordinates, then one field per remaining declared column.
@@ -1623,19 +1664,39 @@ mod tests {
         let back = parse_xyz_frame_str(&text).expect("read written XYZ");
         let atoms = back.get("atoms").expect("atoms block");
         assert_eq!(
-            atoms.get_string("atom_name").unwrap().as_slice().unwrap(),
+            atoms
+                .get("name")
+                .and_then(|c| c.as_string())
+                .unwrap()
+                .as_slice()
+                .unwrap(),
             &["OW".to_string(), "HW1".to_string(), "HW2".to_string()]
         );
         assert_eq!(
-            atoms.get_string("resname").unwrap().as_slice().unwrap(),
+            atoms
+                .get("res_name")
+                .and_then(|c| c.as_string())
+                .unwrap()
+                .as_slice()
+                .unwrap(),
             &["WAT".to_string(), "WAT".to_string(), "WAT".to_string()]
         );
         assert_eq!(
-            atoms.get_uint("id").unwrap().as_slice().unwrap(),
+            atoms
+                .get("id")
+                .and_then(|c| c.as_uint())
+                .unwrap()
+                .as_slice()
+                .unwrap(),
             &[1_u64, 2, 3]
         );
         assert_eq!(
-            atoms.get_uint("res_id").unwrap().as_slice().unwrap(),
+            atoms
+                .get("res_id")
+                .and_then(|c| c.as_uint())
+                .unwrap()
+                .as_slice()
+                .unwrap(),
             &[1_u64, 1, 1]
         );
     }
@@ -1756,8 +1817,18 @@ H 1 0 1
         let f1 = reader.read_step(1).expect("step1").expect("some");
         assert_eq!(f0.get("atoms").unwrap().nrows().unwrap(), 2);
         assert_eq!(f1.get("atoms").unwrap().nrows().unwrap(), 2);
-        let z0 = f0.get("atoms").unwrap().get_float("z").unwrap();
-        let z1 = f1.get("atoms").unwrap().get_float("z").unwrap();
+        let z0 = f0
+            .get("atoms")
+            .unwrap()
+            .get("z")
+            .and_then(|c| c.as_float())
+            .unwrap();
+        let z1 = f1
+            .get("atoms")
+            .unwrap()
+            .get("z")
+            .and_then(|c| c.as_float())
+            .unwrap();
         assert!((z0[0] - 0.0).abs() < 1e-12);
         assert!((z1[0] - 1.0).abs() < 1e-12);
     }
@@ -1906,13 +1977,19 @@ pub fn write_xyz_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> st
             );
             let m: usize = shape.iter().skip(1).product();
             let m = if m == 0 { 1 } else { m };
-            props_parts.push(format!("{}:{}:{}", k, dtype_to_char(dt), m));
+            props_parts.push(format!(
+                "{}:{}:{}",
+                extxyz_property_name(k),
+                dtype_to_char(dt),
+                m
+            ));
         }
         let properties_str = props_parts.join(":");
 
         // Read element symbols
         let elements: Vec<String> = atoms
-            .get_string_view("element")
+            .column("element")
+            .and_then(|c| c.as_string())
             .and_then(|arr| arr.as_slice().map(|s| s.to_vec()))
             .unwrap_or_else(|| vec!["X".to_string(); n]);
 
@@ -1979,8 +2056,8 @@ pub fn write_xyz_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> st
         comment_parts.push(format!("{}={}", k, val_str));
     }
     if let (Some(atomi), Some(atomj)) = (
-        frame.get_uint("bonds", "atomi"),
-        frame.get_uint("bonds", "atomj"),
+        frame.column("bonds", "atomi").and_then(|c| c.as_uint()),
+        frame.column("bonds", "atomj").and_then(|c| c.as_uint()),
     ) && atomi.len() == atomj.len()
         && !atomi.is_empty()
     {

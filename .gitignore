@@ -67,17 +67,10 @@ molrs-cxxapi/src/bridge.rs
 
 .claude/worktrees/
 
-# Lock files. molrs ships as a library (crates.io / PyPI / npm), so a lock
-# pins nothing downstream; CI resolves fresh and catches upstream breakage.
-Cargo.lock
-uv.lock
-# The Python dev environment is pinned like the five Cargo.lock files.
-!molrs-python/uv.lock
-
 .tox/
 
-target-aarch64/
-**/target-aarch64/
+# Per-arch / per-consumer cargo target dirs (target-aarch64, target-x86_64-molnex, ...).
+**/target-*/
 molrs-python/python/molrs/_lib.abi3.so.*
 
 # Per-architecture toolchain and wheel output for the GH200 build job

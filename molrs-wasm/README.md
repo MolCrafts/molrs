@@ -45,19 +45,20 @@ const atoms = frame.get("atoms");                 // Block; throws if absent (fr
 atoms.set("x", new Float64Array([0, 1, 2]));      // dtype from the constructor: f64
 atoms.set("element", ["C", "C", "O"]);            // string[] → string
 atoms.set("pos", new Float64Array(9), [3, 3]);    // optional row-major shape
-const x = atoms.get("x");                         // owned Float64Array copy
-const q = atoms.get("charge", new Float64Array(atoms.nrows)); // default if absent
-const v = atoms.view("x");                        // zero-copy; invalid after WASM memory grows
+const v = atoms.view("x");                        // zero-copy Float64Array; invalid after WASM memory grows
+const x = atoms.copy("x");                        // owned Float64Array to keep
+const q = atoms.get("charge", new Float64Array(atoms.nrows)); // copy, or this default if absent
 atoms.dtype("x"); atoms.shape("pos"); atoms.has("x"); atoms.keys();
 ```
 
-| dtype | `get` / `view` | `set` accepts |
-|-------|----------------|---------------|
-| `f64` | `Float64Array` | `Float64Array` (`Float32Array` is refused) |
-| `i8` `i16` `i32` `i64` | `Int8Array` `Int16Array` `Int32Array` `BigInt64Array` | same |
-| `u8` `u16` `u32` `u64` | `Uint8Array` `Uint16Array` `Uint32Array` `BigUint64Array` | same |
-| `bool` | `boolean[]` (no `view`) | `boolean[]` |
-| `string` | `string[]` (no `view`) | `string[]` (and `[]`) |
+| dtype | `view` | `copy` / `get` | `set` accepts |
+|-------|--------|----------------|---------------|
+| `f64` | `Float64Array` | `Float64Array` | `Float64Array` (`Float32Array` is refused) |
+| `i8` `i16` `i32` `i64` | same typed array | same typed array | same |
+| `u8` `u16` `u32` `u64` | same typed array | same typed array | same |
+| `bool` | throws; use `copy` | `boolean[]` | `boolean[]` |
+| `string` | throws; use `copy` | `string[]` | `string[]` (and `[]`) |
+| `c64` / `c128` | throws; use `copy` | `{ real, imag, shape, dtype }` | never |
 
 ### I/O
 
@@ -124,15 +125,10 @@ constructor argument, e.g. `new RDF(100, 5.0, undefined, 1000.0)`.
 
 ### Block column conventions
 
-| Block | Column | Type | Description |
-|-------|--------|------|-------------|
-| `atoms` | `symbol` | `string` | Element symbol |
-| `atoms` | `x`, `y`, `z` | `F` | Cartesian coordinates |
-| `atoms` | `mass` | `F` | Atomic mass |
-| `atoms` | `charge` | `F` | Partial charge |
-| `bonds` | `i`, `j` | `u64` | Atom indices (`BigUint64Array`) |
-| `bonds` | `bond_type` | `U32` | 0 unknown, 1 single, 2 double, 3 triple, 4 aromatic |
-| `bonds` | `bond_number` | `U32` | Localized Lewis/Kekulé integer (never fractional) |
+Names and dtypes are the Frame schema. `schemaDocument()` is that vocabulary
+(`schemaJson()` is the same document as text). `keysDocument()` is the constant
+names (`X`, `BOND_TYPE`, `ATOMS`, `UNITS`, …) projected from the same tables.
+The Rust and Python bindings print the vocabulary with `schema.to_markdown()`.
 
 `F` is the molrs core float type — always `f64`.
 

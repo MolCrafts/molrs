@@ -9,8 +9,9 @@
 //!
 //! | Method | JS signature | Semantics |
 //! |--------|--------------|-----------|
-//! | `get` | `(key: string, fallback?: Column) -> Column` | Owned copy; `fallback` is returned only when `key` is absent; missing without a fallback throws |
-//! | `view` | `(key: string) -> NumericColumn` | Zero-copy typed-array view of a numeric column (see below) |
+//! | `view` | `(key: string) -> NumericColumn` | Zero-copy typed-array view of a numeric column. The primary immediate read |
+//! | `copy` | `(key: string) -> Column` | Owned copy of every dtype, including bool, string, and complex |
+//! | `get` | `(key: string, fallback?: Column) -> Column` | Optional owned lookup: present returns `copy`, absent returns `fallback` or throws |
 //! | `set` | `(key: string, data: Column, shape?: number[])` | Insert or replace; dtype inferred from `data` |
 //! | `has` | `(key: string) -> boolean` | Presence |
 //! | `dtype` | `(key: string) -> DType` | Dtype name; missing throws |
@@ -25,21 +26,23 @@
 //! | `"f64"` | `Float64Array` | `Float64Array` |
 //! | `"i8"` / `"i16"` / `"i32"` / `"i64"` | `Int8Array` / `Int16Array` / `Int32Array` / `BigInt64Array` | same |
 //! | `"u8"` / `"u16"` / `"u32"` / `"u64"` | `Uint8Array` / `Uint16Array` / `Uint32Array` / `BigUint64Array` | same |
-//! | `"bool"` | `boolean[]` (`get` only) | `boolean[]` |
-//! | `"string"` | `string[]` (`get` only) | `string[]` (also the empty `[]`) |
-//! | `"c64"` / `"c128"` | neither: throws | never |
+//! | `"bool"` | `boolean[]` (`copy` / `get`; `view` throws) | `boolean[]` |
+//! | `"string"` | `string[]` (`copy` / `get`; `view` throws) | `string[]` (also the empty `[]`) |
+//! | `"c64"` / `"c128"` | `{ real, imag, shape, dtype }` (`copy` / `get`; `view` throws) | never |
 //!
-//! Values come back flat in row-major order; `shape(key)` restores the
-//! rank. `bool` is `boolean[]` rather than `Uint8Array` so a `get` -> `set`
+//! Numeric results are the typed array itself, with `shape` and `dtype`
+//! properties attached, so `arr[i]` still works. Complex values are not
+//! interleaved: `real` and `imag` each have one entry per element.
+//! `bool` is `boolean[]` rather than `Uint8Array` so a `copy` -> `set`
 //! round trip keeps the dtype (a `Uint8Array` would come back as `u8`).
-//! `Float32Array` is refused: the store keeps every float as `f64`.
+//! `Float32Array` is refused on `set`: the store keeps every real float as `f64`.
 //!
 //! # Memory safety note
 //!
 //! `view` returns a typed array backed by WASM linear memory. It becomes
 //! **invalid** (detached, length 0) as soon as WASM memory grows, which any
 //! allocation may cause, and it dangles once the column is replaced or the
-//! block is freed. Use it immediately and do not keep it; use `get` for data
+//! block is freed. Use it immediately and do not keep it; use `copy` for data
 //! you hold on to. Writes through a view land in the column in place.
 
 use js_sys::{
@@ -60,7 +63,7 @@ use super::types::FLOAT_DTYPE_NAME;
 const COLUMN_TYPES: &'static str = r#"
 /**
  * Column dtype as `Block.dtype` reports it. Each numeric name is the
- * element type of the typed array `Block.get` and `Block.view` return.
+ * element type of the typed array `Block.view` returns.
  */
 export type DType =
     | "f64" | "i8" | "i16" | "i32" | "i64"
@@ -72,8 +75,19 @@ export type NumericColumn =
     | Float64Array | Int8Array | Int16Array | Int32Array | BigInt64Array
     | Uint8Array | Uint16Array | Uint32Array | BigUint64Array;
 
-/** Any column value `Block.get` returns and `Block.set` accepts. */
-export type Column = NumericColumn | boolean[] | string[];
+/** `copy` / `get` of a complex column. `real` and `imag` are not interleaved. */
+export type ComplexColumn = {
+    real: Float32Array | Float64Array;
+    imag: Float32Array | Float64Array;
+    shape: number[];
+    dtype: "c64" | "c128";
+};
+
+/**
+ * Any column value `Block.copy` and `Block.get` return.
+ * `Block.set` accepts the numeric, boolean, and string forms.
+ */
+export type Column = NumericColumn | boolean[] | string[] | ComplexColumn;
 "#;
 
 #[wasm_bindgen]
@@ -135,7 +149,7 @@ pub(crate) fn dtype_name(dt: DType) -> &'static str {
 /// atoms.set("id", new BigUint64Array([0n, 1n, 2n]));
 /// atoms.nrows;            // 3
 /// atoms.dtype("id");      // "u64"
-/// const x = atoms.get("x"); // Float64Array, an owned copy
+/// const x = atoms.view("x"); // zero-copy Float64Array; copy("x") to keep it
 /// ```
 #[wasm_bindgen]
 pub struct Block {
@@ -365,6 +379,55 @@ impl Block {
         })?
     }
 
+    /// The declared row-reference target of column `key`: the block its
+    /// values index (`"atoms"`, or `"/frame/atoms"` in another section of the
+    /// record), as the store declared it (molrec `targets`).
+    ///
+    /// # Returns
+    ///
+    /// The target, or `undefined` when the column declares none.
+    ///
+    /// # Errors
+    ///
+    /// Throws if the column does not exist, or if the handle has been
+    /// invalidated.
+    #[wasm_bindgen(js_name = target)]
+    pub fn target(&self, key: &str) -> Result<Option<String>, JsValue> {
+        self.with(|b| {
+            if !b.contains_key(key) {
+                return Err(missing_column(key));
+            }
+            Ok(b.target(key).map(str::to_string))
+        })?
+    }
+
+    /// The declared precision of column `key`: the absolute tolerance its
+    /// stored values were rounded to (molrec "declared precision").
+    ///
+    /// # Returns
+    ///
+    /// The precision, or `undefined` when the column declares none.
+    ///
+    /// # Errors
+    ///
+    /// Throws if the column does not exist, or if the handle has been
+    /// invalidated.
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// const p = atoms.precision("x"); // e.g. 0.001, or undefined
+    /// ```
+    #[wasm_bindgen(js_name = precision)]
+    pub fn precision(&self, key: &str) -> Result<Option<f64>, JsValue> {
+        self.with(|b| {
+            if !b.contains_key(key) {
+                return Err(missing_column(key));
+            }
+            Ok(b.precision(key))
+        })?
+    }
+
     /// Rename column `old_key` to `new_key`.
     ///
     /// # Errors
@@ -391,49 +454,63 @@ impl Block {
 
     // ---- column data ----
 
-    /// Owned copy of column `key`, as the JS array its dtype maps to
-    /// (`Float64Array` for `f64`, `BigUint64Array` for `u64`, `string[]` for
-    /// `string`, `boolean[]` for `bool`, …). Values are flat, row-major;
-    /// [`shape`](Self::shape) gives the rank.
+    /// Owned copy of column `key`. Numeric columns are the typed array
+    /// itself, with `shape` and `dtype` properties. Bool is `boolean[]`,
+    /// string is a flat row-major `string[]`, and complex is
+    /// `{ real, imag, shape, dtype }` (`Float32Array` for `c64`,
+    /// `Float64Array` for `c128`).
     ///
-    /// `fallback` is returned as given when `key` is absent; it is ignored
-    /// when the column exists.
+    /// This is the read to keep. [`view`](Self::view) is the zero-copy
+    /// numeric read. [`get`](Self::get) is this copy, plus an optional
+    /// fallback when the key is absent.
     ///
     /// # Errors
     ///
-    /// Throws if `key` is absent and no `fallback` was passed, if the column
-    /// is complex (`c64` / `c128`, not exposed to JS), or if the handle has
-    /// been invalidated.
+    /// Throws if `key` is absent or the handle has been invalidated.
+    #[wasm_bindgen(js_name = copy)]
+    pub fn copy(&self, key: &str) -> Result<JsColumn, JsValue> {
+        self.with_col(key, |col| column_to_js(key, col))
+            .map(JsCast::unchecked_into)
+    }
+
+    /// Optional owned lookup of column `key`.
+    ///
+    /// A present column returns the same value as [`copy`](Self::copy).
+    /// An absent column returns `fallback` when one was passed, and throws
+    /// otherwise. Any other failure (a dead handle) is not treated as a
+    /// missing key.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const x = atoms.get("x") as Float64Array;
+    /// const x = atoms.get("x"); // owned Float64Array, same as copy
     /// const charge = atoms.get("charge", new Float64Array(atoms.nrows));
     /// ```
     #[wasm_bindgen(js_name = get)]
     pub fn get(&self, key: &str, fallback: Option<JsColumn>) -> Result<JsColumn, JsValue> {
-        let copied = self.with(|b| b.get(key).map(|col| column_to_js(key, col)))?;
-        match (copied, fallback) {
-            (Some(value), _) => value.map(JsCast::unchecked_into),
-            (None, Some(fallback)) => Ok(fallback),
-            (None, None) => Err(missing_column(key)),
+        match self.copy(key) {
+            Ok(value) => Ok(value),
+            Err(err) => match fallback {
+                Some(fallback) if is_missing_column(&err, key) => Ok(fallback),
+                _ => Err(err),
+            },
         }
     }
 
     /// Zero-copy typed-array view of numeric column `key`, in the column's
-    /// own dtype. Flat, row-major.
+    /// own dtype. Flat, row-major, with `shape` and `dtype` properties.
+    /// This is the primary immediate read for numeric columns.
     ///
     /// **Warning**: the view is backed by WASM linear memory. It is
     /// invalidated (detached) whenever WASM memory grows — any allocation may
     /// do that — and dangles once the column is replaced or the block freed.
-    /// Use it immediately; call [`get`](Self::get) for data you keep. Writes
+    /// Use it immediately; call [`copy`](Self::copy) for data you keep. Writes
     /// through the view modify the column in place.
     ///
     /// # Errors
     ///
-    /// Throws if the column does not exist, if it is not numeric (`string`,
-    /// `bool` and complex columns have no typed-array view — use `get`), if
+    /// Throws if the column does not exist, if it is bool, string, or complex
+    /// (those have no typed-array view — the error says to use `copy`), if
     /// its storage is not contiguous row-major, or if the handle has been
     /// invalidated.
     ///
@@ -503,11 +580,22 @@ fn missing_column(key: &str) -> JsValue {
     JsValue::from_str(&format!("column '{key}' not found"))
 }
 
-fn complex_unsupported(key: &str, dt: DType) -> JsValue {
-    JsValue::from_str(&format!(
-        "column '{key}' is {}: complex columns are not exposed to JS",
-        dtype_name(dt)
-    ))
+fn is_missing_column(err: &JsValue, key: &str) -> bool {
+    err.as_string()
+        .is_some_and(|text| text == format!("column '{key}' not found"))
+}
+
+/// Attach the column's `shape` and `dtype` without wrapping the value,
+/// so a typed array stays a typed array.
+fn stamp(value: JsValue, shape: &[usize], dtype: &str) -> JsValue {
+    let shape_js = shape_to_js(shape);
+    let _ = js_sys::Reflect::set(&value, &JsValue::from_str("shape"), shape_js.as_ref());
+    let _ = js_sys::Reflect::set(
+        &value,
+        &JsValue::from_str("dtype"),
+        &JsValue::from_str(dtype),
+    );
+    value
 }
 
 /// The values of `arr` in logical row-major order: borrowed when the storage
@@ -521,10 +609,13 @@ fn row_major<T: Clone>(arr: &ArrayD<T>) -> std::borrow::Cow<'_, [T]> {
 
 /// Owned JS copy of `col` in its natural JS array type.
 fn column_to_js(key: &str, col: &Column) -> Result<JsValue, JsValue> {
+    let shape = col.shape().to_vec();
+    let dtype = dtype_name(col.dtype());
     macro_rules! typed_copy {
         ($arr:expr, $js:ty) => {
             if let Some(arr) = $arr {
-                return Ok(<$js>::from(row_major(arr).as_ref()).into());
+                let value: JsValue = <$js>::from(row_major(arr).as_ref()).into();
+                return Ok(stamp(value, &shape, dtype));
             }
         };
     }
@@ -538,30 +629,77 @@ fn column_to_js(key: &str, col: &Column) -> Result<JsValue, JsValue> {
     typed_copy!(col.as_u32(), Uint32Array);
     typed_copy!(col.as_uint(), BigUint64Array);
     if let Some(arr) = col.as_bool() {
-        return Ok(arr
+        let value: JsValue = arr
             .iter()
             .map(|&v| JsValue::from_bool(v))
             .collect::<JsArray>()
-            .into());
+            .into();
+        return Ok(stamp(value, &shape, dtype));
     }
     if let Some(arr) = col.as_string() {
-        return Ok(arr
+        let value: JsValue = arr
             .iter()
             .map(|s| JsValue::from_str(s))
             .collect::<JsArray>()
-            .into());
+            .into();
+        return Ok(stamp(value, &shape, dtype));
     }
-    Err(complex_unsupported(key, col.dtype()))
+    if let Some(arr) = col.as_c64() {
+        return Ok(complex_to_js(
+            arr,
+            dtype,
+            |z| z.re,
+            |z| z.im,
+            |re| Float32Array::from(re).into(),
+        ));
+    }
+    if let Some(arr) = col.as_c128() {
+        return Ok(complex_to_js(
+            arr,
+            dtype,
+            |z| z.re,
+            |z| z.im,
+            |re| Float64Array::from(re).into(),
+        ));
+    }
+    Err(JsValue::from_str(&format!(
+        "column '{key}' is {dtype}: no JS copy for this dtype"
+    )))
+}
+
+fn complex_to_js<T: Copy, U: Copy>(
+    arr: &ArrayD<T>,
+    dtype: &str,
+    re: impl Fn(&T) -> U,
+    im: impl Fn(&T) -> U,
+    component: impl Fn(&[U]) -> JsValue,
+) -> JsValue {
+    let flat = row_major(arr);
+    let mut real = Vec::with_capacity(flat.len());
+    let mut imag = Vec::with_capacity(flat.len());
+    for value in flat.iter() {
+        real.push(re(value));
+        imag.push(im(value));
+    }
+    let obj = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("real"), &component(&real));
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("imag"), &component(&imag));
+    let shape = shape_to_js(arr.shape());
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("shape"), shape.as_ref());
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("dtype"), &JsValue::from_str(dtype));
+    obj.into()
 }
 
 /// Zero-copy typed-array view over `col`'s storage.
 fn column_view(key: &str, col: &Column) -> Result<JsValue, JsValue> {
+    let shape = col.shape().to_vec();
+    let dtype = dtype_name(col.dtype());
     macro_rules! typed_view {
         ($arr:expr, $js:ty) => {
             if let Some(arr) = $arr {
                 let slice = arr.as_slice().ok_or_else(|| {
                     JsValue::from_str(&format!(
-                        "column '{key}' is not contiguous row-major; use get()"
+                        "column '{key}' is not contiguous row-major; use copy()"
                     ))
                 })?;
                 // SAFETY: `slice` lives in WASM linear memory, owned by the
@@ -569,7 +707,8 @@ fn column_view(key: &str, col: &Column) -> Result<JsValue, JsValue> {
                 // next memory growth or until the column is replaced/freed;
                 // that contract is documented on `Block.view` and is the JS
                 // caller's to keep.
-                return Ok(unsafe { <$js>::view(slice) }.into());
+                let value: JsValue = unsafe { <$js>::view(slice) }.into();
+                return Ok(stamp(value, &shape, dtype));
             }
         };
     }
@@ -582,14 +721,9 @@ fn column_view(key: &str, col: &Column) -> Result<JsValue, JsValue> {
     typed_view!(col.as_u16(), Uint16Array);
     typed_view!(col.as_u32(), Uint32Array);
     typed_view!(col.as_uint(), BigUint64Array);
-    let dt = col.dtype();
-    match dt {
-        DType::Bool | DType::String => Err(JsValue::from_str(&format!(
-            "column '{key}' is {}: only numeric columns have a typed-array view; use get()",
-            dtype_name(dt)
-        ))),
-        _ => Err(complex_unsupported(key, dt)),
-    }
+    Err(JsValue::from_str(&format!(
+        "column '{key}' is {dtype}: only numeric columns have a typed-array view; use copy()"
+    )))
 }
 
 /// Build a `Column` of `T` from `data`, shaped by `shape` (1-D when `None`).
@@ -954,8 +1088,10 @@ mod tests {
         b.set("s", col(names), None).unwrap();
         let flags: JsArray = [true].iter().map(|&v| JsValue::from_bool(v)).collect();
         b.set("f", col(flags), None).unwrap();
-        assert!(err_text(b.view("s").err().unwrap()).contains("use get()"));
-        assert!(err_text(b.view("f").err().unwrap()).contains("use get()"));
+        assert!(err_text(b.view("s").err().unwrap()).contains("use copy()"));
+        assert!(err_text(b.view("f").err().unwrap()).contains("use copy()"));
+        let copied = b.copy("s").unwrap();
+        assert!(JsValue::from(copied).is_instance_of::<JsArray>());
     }
 
     #[wasm_bindgen_test]

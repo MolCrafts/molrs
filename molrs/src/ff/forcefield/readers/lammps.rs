@@ -27,7 +27,8 @@
 //! files stay reduced.
 //!
 //! **Form map** (independent of unit style): molrs harmonic bond/angle kernels
-//! use `½·k·(x−x₀)²`, LAMMPS uses `K(x−x₀)²` → stored `k = 2·K`. Angle/phase
+//! use `½·k·(x−x₀)²`, LAMMPS uses `K(x−x₀)²` → stored `k = 2·K`. The harmonic
+//! improper kernel is LAMMPS's own `K(χ−χ₀)²` → stored `k = K`. Angle/phase
 //! values in real/metal files are **degrees** and become **radians** at this
 //! boundary. The `fourier` dihedral maps to molrs's `periodic` kernel. The
 //! token → params conversion for one coefficient line is
@@ -704,7 +705,7 @@ fn add_improper(
 /// |-------------------------|----------------------|---------------|
 /// | `bond harmonic`         | `K r0`               | `k = 2K`, `r0` |
 /// | `angle harmonic`        | `K theta0(deg)`      | `k = 2K`, `theta0` (rad) |
-/// | `improper harmonic`     | `K chi0(deg)`        | `k = 2K`, `chi0` (rad) |
+/// | `improper harmonic`     | `K chi0(deg)`        | `k = K`, `chi0` (rad) |
 /// | `dihedral opls`         | `K1 K2 K3 K4`        | `k1..k4` |
 /// | `dihedral harmonic`     | `K d n`              | `k`, `sign = d` (±1), `periodicity = n` |
 /// | `dihedral fourier`      | `m K1 n1 d1(deg) …`  | `k<i>`, `periodicity<i>`, `phase<i>` (rad) |
@@ -712,8 +713,9 @@ fn add_improper(
 /// | `dihedral multi/harmonic` | `A1 A2 A3 A4 A5`   | `a1..a5` |
 /// | `pair lj/cut…`          | `epsilon sigma`      | `epsilon`, `sigma` |
 ///
-/// The `k = 2K` factor exists because molrs's harmonic kernels are `½·k·(x−x₀)²`
-/// and LAMMPS's are `K·(x−x₀)²`. Any `pair` style spelled `lj/cut…`
+/// The bond and angle `k = 2K` factor exists because molrs's harmonic bond and
+/// angle kernels are `½·k·(x−x₀)²` and LAMMPS's are `K·(x−x₀)²`; molrs's
+/// improper kernel is LAMMPS's `K·(χ−χ₀)²`, so the improper `k` is `K`. Any `pair` style spelled `lj/cut…`
 /// (`lj/cut/coul/long`, …) carries the same `epsilon sigma` pair.
 ///
 /// # Errors
@@ -774,11 +776,13 @@ fn coeff_params(
                 ("theta0", theta0_deg.to_radians()),
             ]))
         }
+        // The improper kernel is LAMMPS's own form, K·(χ − χ₀)², so its `k`
+        // is the file's `K`: no ½ factor, unlike bond and angle.
         ("improper", "harmonic") => {
-            let k_lammps = unit_sys.to_store_angle_k_lammps(num(0, "improper K")?, file_units)?;
+            let k = unit_sys.to_store_angle_k_lammps(num(0, "improper K")?, file_units)?;
             let chi0_deg = num(1, "improper chi0")?;
             Ok(Params::from_pairs(&[
-                ("k", lammps_k_to_molrs_half_k(k_lammps)),
+                ("k", k),
                 ("chi0", chi0_deg.to_radians()),
             ]))
         }
@@ -1151,6 +1155,50 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
         assert_eq!(sb.coul[1], 0.0);
     }
 
+    /// Regression: a LAMMPS `improper_style harmonic` term evaluates at the
+    /// energy LAMMPS gives it. The kernel is `k·(χ − χ₀)²`, LAMMPS's own
+    /// `K·(χ − χ₀)²`, so `k` must be `K`; the reader once stored `k = 2K` (the
+    /// bond/angle form map) and every LAMMPS improper came out twice too high.
+    #[test]
+    fn a_lammps_improper_evaluates_at_the_lammps_energy() {
+        use crate::ff::potential::PotentialCompiler;
+        use molrs::store::block::Block;
+        use molrs::store::frame::Frame;
+        use molrs::types::Idx;
+        use ndarray::Array1;
+
+        let text = "special_bonds amber\n\
+                    improper_style harmonic\n\
+                    improper_coeff a-b-c-d 10.0 0.0\n";
+        let ff = LammpsFfReader::new().read_str(text).unwrap();
+
+        let mut impropers = Block::new();
+        for (key, atom) in [("atomi", 0), ("atomj", 1), ("atomk", 2), ("atoml", 3)] {
+            impropers
+                .insert(key, Array1::from_vec(vec![atom as Idx]).into_dyn())
+                .unwrap();
+        }
+        impropers
+            .insert(
+                "type",
+                Array1::from_vec(vec!["a-b-c-d".to_string()]).into_dyn(),
+            )
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("impropers", impropers);
+        let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
+
+        // i = (0,1,0), j = origin, k = (1,0,0), l = (1, cos χ, sin χ): the
+        // I-J-K-L dihedral is χ = 30°.
+        let chi = 30.0_f64.to_radians();
+        let (sin, cos) = chi.sin_cos();
+        let coords = [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, cos, sin];
+        // LAMMPS: E = K·(χ − χ₀)² = 10 · (π/6)² kcal/mol.
+        let lammps = 10.0 * (std::f64::consts::PI / 6.0).powi(2);
+        let e = pots.calc_energy(&coords);
+        assert!((e - lammps).abs() < 1e-10, "E = {e}, LAMMPS gives {lammps}");
+    }
+
     #[test]
     fn special_bonds_presets_and_absent_line() {
         let amber = LammpsFfReader::new()
@@ -1455,8 +1503,9 @@ dihedral_coeff CT-CT-CT-CT 1.0 2.0 3.0 4.0
         close(&p, "theta0", 1.824_218_134_184_473_2);
         assert_eq!(keys(&p), ["k", "theta0"]);
 
+        // The improper kernel is K·(χ − χ₀)², LAMMPS's own form: k = K.
         let p = lammps_coeff_params("improper", "harmonic", &["10", "180"], "real").unwrap();
-        close(&p, "k", 20.0);
+        close(&p, "k", 10.0);
         close(&p, "chi0", std::f64::consts::PI);
         assert_eq!(keys(&p), ["chi0", "k"]);
 

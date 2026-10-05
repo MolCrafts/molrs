@@ -104,7 +104,8 @@ pub(crate) fn atom_type_index(frame: &Frame) -> Result<(Vec<u32>, Vec<String>), 
         .get(ATOMS)
         .ok_or_else(|| "typed pair kernel: frame missing \"atoms\" block".to_string())?;
     let types = atoms
-        .get_string("type")
+        .get("type")
+        .and_then(|c| c.as_string())
         .ok_or_else(|| "typed pair kernel: atoms block missing \"type\" column".to_string())?;
     let mut labels: Vec<String> = Vec::new();
     let mut index = std::collections::HashMap::new();

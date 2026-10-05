@@ -232,23 +232,32 @@ pub fn uff_torsion_ctor(
         .get(DIHEDRALS)
         .ok_or("uff_torsion: missing \"dihedrals\" block")?;
     let i = block
-        .get_uint("atomi")
+        .get("atomi")
+        .and_then(|c| c.as_uint())
         .ok_or("uff_torsion: missing atomi")?;
     let j = block
-        .get_uint("atomj")
+        .get("atomj")
+        .and_then(|c| c.as_uint())
         .ok_or("uff_torsion: missing atomj")?;
     let k = block
-        .get_uint("atomk")
+        .get("atomk")
+        .and_then(|c| c.as_uint())
         .ok_or("uff_torsion: missing atomk")?;
     let l = block
-        .get_uint("atoml")
+        .get("atoml")
+        .and_then(|c| c.as_uint())
         .ok_or("uff_torsion: missing atoml")?;
-    let v = block.get_float("V").ok_or("uff_torsion: missing V")?;
+    let v = block
+        .get("V")
+        .and_then(|c| c.as_float())
+        .ok_or("uff_torsion: missing V")?;
     let order = block
-        .get_float("order")
+        .get("order")
+        .and_then(|c| c.as_float())
         .ok_or("uff_torsion: missing order")?;
     let cos_term = block
-        .get_float("cosTerm")
+        .get("cosTerm")
+        .and_then(|c| c.as_float())
         .ok_or("uff_torsion: missing cosTerm")?;
     let n = i.len();
     Ok(Member::indexed(UffTorsion {

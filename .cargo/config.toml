@@ -10,7 +10,8 @@ target-dir = "target"
 
 # Canonical command set for the root workspace.
 #
-# Every human, hook, CI step and agent invocation goes through these aliases.
+# Every human, hook, CI step and agent invocation goes through these aliases
+# (the gates themselves are scripts/check.sh).
 # The reason is not brevity: a cargo invocation that spells the feature list
 # differently resolves a *different* feature set, which is a different
 # fingerprint, which compiles all 293k lines of `molcrafts-molrs` again and
@@ -21,9 +22,8 @@ target-dir = "target"
 # With the aliases, only the filter after `--` varies, so the crate is compiled
 # once and every later run is a filter over the same test binary:
 #
-#     cargo mrs-test                       # all 2513 unit tests (~5 s)
+#     cargo mrs-test                       # all unit tests (~5 s)
 #     cargo mrs-test -- ff::potential      # just that module (~0.1 s, no rebuild)
-#     scripts/test-scope.sh                # the modules the working tree touched
 #
 # Legitimate builds of molcrafts-molrs in this repo, and no others:
 #   1. this set — `full,filesystem,stream` (+ molrs's default `rayon`; molrs

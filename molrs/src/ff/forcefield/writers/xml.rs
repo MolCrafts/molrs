@@ -92,7 +92,7 @@ impl ForceFieldWriter for XmlForceFieldWriter {
                 let class_ = t
                     .params
                     .iter_strings()
-                    .find(|(k, _)| *k == "class_")
+                    .find(|(k, _)| *k == "class")
                     .map(|(_, v)| v);
                 if type_ != "*" {
                     attrs.push(format!("name=\"{}\"", self.esc(type_)));
@@ -105,7 +105,7 @@ impl ForceFieldWriter for XmlForceFieldWriter {
                 for (xml_key, kw_key) in [
                     ("element", "element"),
                     ("mass", "mass"),
-                    ("def", "def_"),
+                    ("def", "smarts"),
                     ("desc", "desc"),
                     ("doi", "doi"),
                     ("overrides", "overrides"),

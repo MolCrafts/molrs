@@ -76,9 +76,9 @@ impl PyMetaValue {
 /// Collect a mapping (or an iterable of pairs) into a fresh [`MetaMap`].
 ///
 /// A plain value is re-inferred. [`MetaValue`](PyMetaValue) fixes the dtype of
-/// that one value — it does not pin the key. A tag survives a round trip only
-/// through a declared sequence schema or the serde frame document; outside
-/// those two it is re-inferred on read. Another frame's metadata copies across
+/// that one value — it does not pin the key. A tag survives a round trip
+/// through a `*.mrec` frame or system (`_meta_types`), a declared sequence
+/// schema and the serde frame document. Another frame's metadata copies across
 /// whole, tags and all.
 fn mapping_to_meta_map(source: &Bound<'_, PyAny>) -> PyResult<MetaMap> {
     // Another frame's metadata copies across whole, tags and all: going through
@@ -116,9 +116,9 @@ fn mapping_to_meta_map(source: &Bound<'_, PyAny>) -> PyResult<MetaMap> {
 ///
 /// [`dtype`](Self::dtype) reports the tag of the value stored right now; any
 /// plain write re-infers it. [`MetaValue`](PyMetaValue) fixes the dtype of that
-/// write only — it does not pin the key. A tag survives a round trip only
-/// through a declared sequence schema or the serde frame document; outside
-/// those two it is re-inferred on read.
+/// write only — it does not pin the key. A tag survives a round trip through a
+/// `*.mrec` frame or system (`_meta_types`), a declared sequence schema and the
+/// serde frame document.
 ///
 /// `frame.meta["run"]["step"] = 3` raises `TypeError`. Read, unfreeze, write
 /// back: `doc = frame.meta["run"].copy(); doc["step"] = 3; frame.meta["run"] = doc`.
@@ -876,8 +876,8 @@ impl PyFrame {
     ///     Mutations of the mapping persist. ``dtype(k)`` reports the tag
     ///     stored right now; a plain write re-infers it, and a
     ///     :class:`MetaValue` fixes the dtype of that one write. A tag
-    ///     survives a round trip only through a declared sequence schema or
-    ///     the serde frame document.
+    ///     survives a round trip through a ``*.mrec`` frame or system, a
+    ///     declared sequence schema and the serde frame document.
     #[getter]
     fn meta(&self) -> PyFrameMeta {
         PyFrameMeta {
@@ -1266,7 +1266,7 @@ fn meta_value_to_py(py: Python<'_>, value: &MetaValue, form: JsonForm) -> PyResu
 /// Build a [`MetaValue`] carrying an explicit dtype tag, coercing `value` into it.
 ///
 /// Coercion never truncates: a value the tag cannot hold raises.
-fn meta_value_from_dtype(dtype: &str, value: &Bound<'_, PyAny>) -> PyResult<MetaValue> {
+pub(crate) fn meta_value_from_dtype(dtype: &str, value: &Bound<'_, PyAny>) -> PyResult<MetaValue> {
     fn array<T, const N: usize>(value: &Bound<'_, PyAny>, dtype: &str) -> PyResult<[T; N]>
     where
         for<'a, 'py> T: FromPyObject<'a, 'py>,
@@ -1310,7 +1310,7 @@ fn meta_value_from_dtype(dtype: &str, value: &Bound<'_, PyAny>) -> PyResult<Meta
 /// `None`) is a JSON document. A [`MetaValue`](PyMetaValue) passes through
 /// with its tag intact. The tuple arm is the list arm widened: a 6-tuple read
 /// off an `f64x6` key must not fall through into JSON.
-fn infer_meta_value(value: &Bound<'_, PyAny>) -> PyResult<MetaValue> {
+pub(crate) fn infer_meta_value(value: &Bound<'_, PyAny>) -> PyResult<MetaValue> {
     if let Ok(typed) = value.extract::<PyRef<'_, PyMetaValue>>() {
         return Ok(typed.inner.clone());
     }
@@ -1359,6 +1359,45 @@ fn infer_fixed_vector(value: &Bound<'_, PyAny>) -> PyResult<Option<MetaValue>> {
     Ok(meta_value_from_dtype(dtype, value).ok())
 }
 
+/// A record-level `meta` argument as a JSON object.
+///
+/// Takes a `dict`, a [`MetaDocument`](PyMetaDocument), or any other
+/// `collections.abc.Mapping` (`frame.meta` among them). Nested values may be
+/// anything a `frame.meta` door hands out — tuples and documents included —
+/// so what the bindings give a caller round-trips back in.
+pub(crate) fn meta_document_arg(
+    meta: &Bound<'_, PyAny>,
+) -> PyResult<serde_json::Map<String, JsonValue>> {
+    let plain = if meta.cast::<PyDict>().is_ok() || meta.is_instance_of::<PyMetaDocument>() {
+        meta.clone()
+    } else if let Ok(mapping) = meta.cast::<pyo3::types::PyMapping>() {
+        let dict = PyDict::new(meta.py());
+        dict.update(mapping)?;
+        dict.into_any()
+    } else {
+        return Err(PyTypeError::new_err(format!(
+            "meta must be a mapping, got {}",
+            meta.get_type().name()?
+        )));
+    };
+    match py_to_json(&plain, 0)? {
+        JsonValue::Object(map) => Ok(map),
+        _ => unreachable!("a dict or a document converts to a JSON object"),
+    }
+}
+
+/// A JSON object as a plain `dict`: nested objects are dicts, arrays lists.
+pub(crate) fn json_map_to_plain_dict<'py>(
+    py: Python<'py>,
+    map: &serde_json::Map<String, JsonValue>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+    for (key, item) in map {
+        dict.set_item(key, json_to_py(py, item, JsonForm::Plain)?)?;
+    }
+    Ok(dict)
+}
+
 fn json_to_py(py: Python<'_>, value: &JsonValue, form: JsonForm) -> PyResult<Py<PyAny>> {
     Ok(match value {
         JsonValue::Null => py.None(),
@@ -1405,7 +1444,9 @@ fn json_to_py(py: Python<'_>, value: &JsonValue, form: JsonForm) -> PyResult<Py<
 /// otherwise overflow the stack and kill the interpreter.
 const MAX_JSON_DEPTH: usize = 128;
 
-fn py_to_json(value: &Bound<'_, PyAny>, depth: usize) -> PyResult<JsonValue> {
+/// A Python value as JSON: `None`, bools, ints, floats, strings, dicts,
+/// documents, lists and tuples.
+pub(crate) fn py_to_json(value: &Bound<'_, PyAny>, depth: usize) -> PyResult<JsonValue> {
     if depth > MAX_JSON_DEPTH {
         return Err(PyValueError::new_err(format!(
             "meta value nests deeper than {MAX_JSON_DEPTH} levels (cyclic?)"
@@ -1418,12 +1459,24 @@ fn py_to_json(value: &Bound<'_, PyAny>, depth: usize) -> PyResult<JsonValue> {
         return Ok(JsonValue::Bool(b.is_true()));
     }
     if let Ok(i) = value.cast::<PyInt>() {
-        return Ok(JsonValue::from(i.extract::<i64>()?));
+        if let Ok(n) = i.extract::<i64>() {
+            return Ok(JsonValue::from(n));
+        }
+        return Ok(JsonValue::from(i.extract::<u64>()?));
     }
     if let Ok(f) = value.cast::<PyFloat>() {
-        return Ok(serde_json::Number::from_f64(f.extract::<f64>()?)
+        // A JSON document is finite: a NaN here used to become `null`, a
+        // silent loss. A non-finite float belongs in a typed meta value
+        // (`f64`), not inside a document.
+        let v = f.extract::<f64>()?;
+        return serde_json::Number::from_f64(v)
             .map(JsonValue::Number)
-            .unwrap_or(JsonValue::Null));
+            .ok_or_else(|| {
+                PyValueError::new_err(format!(
+                    "a JSON document holds only finite numbers, found {v}; store it as an \
+                     f64 meta value instead"
+                ))
+            });
     }
     if let Ok(s) = value.cast::<PyString>() {
         return Ok(JsonValue::String(s.extract::<String>()?));

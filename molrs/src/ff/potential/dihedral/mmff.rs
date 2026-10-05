@@ -119,18 +119,33 @@ pub fn mmff_torsion_ctor(
     let block = frame
         .get(DIHEDRALS)
         .ok_or("mmff_torsion: missing \"dihedrals\"")?;
-    let ic = block.get_uint("atomi").ok_or("missing atomi")?;
-    let jc = block.get_uint("atomj").ok_or("missing atomj")?;
-    let kc = block.get_uint("atomk").ok_or("missing atomk")?;
-    let lc = block.get_uint("atoml").ok_or("missing atoml")?;
+    let ic = block
+        .get("atomi")
+        .and_then(|c| c.as_uint())
+        .ok_or("missing atomi")?;
+    let jc = block
+        .get("atomj")
+        .and_then(|c| c.as_uint())
+        .ok_or("missing atomj")?;
+    let kc = block
+        .get("atomk")
+        .and_then(|c| c.as_uint())
+        .ok_or("missing atomk")?;
+    let lc = block
+        .get("atoml")
+        .and_then(|c| c.as_uint())
+        .ok_or("missing atoml")?;
     let v1c = block
-        .get_float("v1")
+        .get("v1")
+        .and_then(|c| c.as_float())
         .ok_or("mmff_torsion: missing \"v1\" column (typifier did not bake torsion params)")?;
     let v2c = block
-        .get_float("v2")
+        .get("v2")
+        .and_then(|c| c.as_float())
         .ok_or("mmff_torsion: missing \"v2\" column (typifier did not bake torsion params)")?;
     let v3c = block
-        .get_float("v3")
+        .get("v3")
+        .and_then(|c| c.as_float())
         .ok_or("mmff_torsion: missing \"v3\" column (typifier did not bake torsion params)")?;
 
     let n = ic.len();

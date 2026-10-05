@@ -87,7 +87,7 @@ fn write_positional(file: &File, buf: &[u8], offset: u64) -> std::io::Result<()>
 /// 247 ms on a 256 MiB shard (see the [`crate::io::zarr`] module doc). Through
 /// this adapter the same call writes 16 B.
 ///
-/// [`bytes_written`](Self::bytes_written) is the only observation that tells
+/// `bytes_written` (test-only) is the only observation that tells
 /// the two apart — `get` and the file length are identical either way.
 ///
 /// Unix only: the positional write is
@@ -158,7 +158,8 @@ impl PositionalWriteStore {
         };
         let mut directories = BTreeSet::new();
         for path in &paths {
-            match File::open(path) {
+            // Write access: Windows' FlushFileBuffers refuses a read-only handle.
+            match OpenOptions::new().write(true).open(path) {
                 Ok(file) => file
                     .sync_data()
                     .map_err(|e| MolRsError::zarr(format!("fsync {}: {e}", path.display())))?,
@@ -190,14 +191,9 @@ impl PositionalWriteStore {
     /// reset. It is how a caller proves a tail write cost the size of the tail
     /// and not the size of the file.
     ///
-    /// **The allowance is permanent, and the earlier note that it would lapse
-    /// with `sequence.rs` was wrong.** That note expected the write-amplification
-    /// guard to be production code; it is an *assertion* — `sequence.rs`'s
-    /// `a_steady_state_flush_writes_a_chunk_not_the_shard_file`, the store half
-    /// of ac-011 — so this accessor's only readers are tests, now and by
-    /// design. A measurement nothing acts on is what makes it a measurement;
-    /// giving it a production reader would be the defect, not the fix.
-    #[allow(dead_code)]
+    /// Test-only: the write-amplification assertions in `sequence.rs` are its
+    /// only readers, by design.
+    #[cfg(test)]
     pub(in crate::io::zarr) fn bytes_written(&self) -> u64 {
         self.bytes_written.load(Ordering::Relaxed)
     }
