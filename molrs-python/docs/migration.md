@@ -169,9 +169,48 @@ style entry, and a process that registered nothing reads it back.
   `a2`) or a missing `a1` is refused at compile time and by the writer.
 - **Rust: `molrs::ff::forcefield::torsion` is public** — the exact maps
   between every torsion form and a Fourier series
-  (`FourierSeries`, `TorsionForm`, `TorsionRefusal`, one type per form); see
+  (`FourierSeries`, `TorsionRefusal`, one type per form, each with
+  `from_params`/`to_params`); see
   [Torsion forms and their exact conversions](guides/forcefield-ir.md#torsion-forms-and-their-exact-conversions).
   Nothing that existed changes behaviour.
+
+### Form conversions: `canonical`, `to_form`, `fit_form`
+
+- **New: `ForceField.canonical()`, `ForceField.to_form(category, style)`,
+  `ForceField.fit_form(category, style, q, w=None, *, kt=None,
+  offset=False)`** (Rust: the same on `ForceField`, `fit_form` taking a
+  `molrs::ff::ir::Metric`), over the form families `torsion` (canonical
+  `dihedral periodic`), `bond`, `angle` (canonical `harmonic`) and `lj`
+  (canonical `pair lj/cut`); see
+  [Converting between forms](guides/forcefield-ir.md#converting-between-forms).
+  An out-of-image conversion raises `ValueError` (Rust
+  `IrError::OutOfImage { from, to, type_, reason }`, a new variant: a
+  `match` on `IrError` needs an arm).
+- **Rust: `TorsionForm` is gone.** The closed enum dispatching on
+  `(category, style)` is replaced by the registry: every torsion style
+  registers a `FormCodec` (`Registry::register_form`, `register_form`), and
+  `torsion::torsion_series(category, style, style_params, row)` is the series
+  of any row through it. Use the per-form type's `from_params` /
+  `to_params` (`Opls::from_params(&p).to_series()`) where the style is
+  known; `TorsionRefusal::UnknownStyle` went with it.
+- **Rust: `from_series` is exact on the constant.** Every
+  `<Form>::from_series` reproduces a₀ too, or refuses with the new
+  `TorsionRefusal::ConstantOffset { constant, implied }` (0.16 earlier:
+  "up to a constant offset"). A single-term form takes `k = a₀`, so its sign
+  survives (`k = −1` was returned as `k = 1, γ + 180°`); `Charmm::from_series`
+  takes no `w` (it is 0: the 1-4 weight is no torsion parameter);
+  `Periodic::from_series` adds a periodicity-0 term for a constant its terms
+  do not give. `<Form>::nearest(series)` is the old constant-blind answer
+  (`Opls::nearest` drops the sines, the orders above 4 and the constant).
+  A `dihedral charmm` row with `w ≠ 0` has no series
+  (`TorsionRefusal::OneFourWeight`).
+- **Fix: compiled `pair lj/cut` prices its Mie exponents.** The compiled
+  door (`PotentialCompiler.compile`) priced 12-6 whatever `n`/`m` the style
+  declared; it now prices `C ε[(σ/r)ⁿ − (σ/r)ᵐ]` as the typed door and the
+  spec's expression do. A 12-6 style is unchanged.
+- **Fix: the first-compile conformance check of a Tier-1/Tier-2 style no
+  longer panics on a frame without atom positions**; it waits for a compile
+  whose frame has them.
 
 ### The force-field IR adopts the LAMMPS standard
 

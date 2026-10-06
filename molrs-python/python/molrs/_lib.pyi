@@ -2625,6 +2625,43 @@ class ForceField:
     @property
     def units(self) -> str: ...
     def merge(self, other: ForceField) -> Self: ...
+    def canonical(self) -> ForceField:
+        """Every style of a form family in its canonical style's category
+        mapped onto that style, exactly (``dihedral opls``/``charmm``/``rb``
+        … → ``dihedral periodic``; ``bond class2`` → ``bond harmonic``;
+        ``pair lj/class2`` → ``pair lj/cut``). Impropers stay. Idempotent.
+
+        Raises
+        ------
+        ValueError
+            A row the canonical style cannot hold (charmm ``w ≠ 0``, class2
+            ``k3 ≠ 0``), naming the type and the condition."""
+    def to_form(self, category: str, style: str) -> ForceField:
+        """Every style of ``category`` in ``style``'s form family converted
+        to ``style``, exactly, through the canonical parameters.
+
+        Raises
+        ------
+        ValueError
+            ``style`` has no form codec, or a row is outside its image
+            (``sin(2φ) coefficient … ≠ 0``, ``the constant term …``)."""
+    def fit_form(
+        self,
+        category: str,
+        style: str,
+        q: Sequence[float],
+        w: Sequence[float] | None = None,
+        *,
+        kt: float | None = None,
+        offset: bool = False,
+    ) -> tuple[ForceField, dict[str, Any]]:
+        """Every other style of ``category`` fitted to ``style`` by least
+        squares over the points ``q`` of the coordinate (``r``; ``θ``, ``φ``
+        in radians), weights ``w``, Boltzmann factors at ``kt``, a free
+        constant ``offset``. Returns ``(forcefield, residual)``; ``residual``
+        has ``sum_sq``, ``rms``, ``max_abs`` and ``types`` (per row:
+        ``style``, ``type``, ``exact``, ``sum_sq``, ``rms``, ``max_abs``,
+        ``offset``). ``sum_sq`` is monotone in the metric."""
     @property
     def special_bonds(self) -> tuple[list[float], list[float]]: ...
     def set_special_bonds(self, lj: Sequence[float], coul: Sequence[float]) -> None: ...

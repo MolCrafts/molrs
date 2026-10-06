@@ -65,7 +65,9 @@ use super::ForceFieldWriter;
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::one_four::{OneFour, has_own_one_four};
 use crate::ff::forcefield::readers::opls::{HARMONIC_IMPROPER_ABS, HARMONIC_IMPROPER_SIGNED};
-use crate::ff::forcefield::torsion::{RyckaertBellemans, TorsionForm};
+use crate::ff::forcefield::torsion::{
+    Charmm, Class2, Periodic, RyckaertBellemans, SignedCosine, torsion_series,
+};
 use crate::ff::forcefield::{ForceField, Params, Style, StyleDefs};
 use crate::ff::potential::cmap::charmm::GRID;
 
@@ -361,16 +363,18 @@ impl XmlForceFieldWriter {
         out: &mut Out,
     ) -> Result<(), String> {
         let what = format!("dihedral {} {name}", style.name());
-        let form = TorsionForm::from_params("dihedral", style.name(), p)
-            .map_err(|e| format!("{what}: {e}"))?;
-        let terms: Option<Vec<(f64, f64, f64)>> = match &form {
-            TorsionForm::Periodic(f) => Some(
-                f.terms
+        let refused = |e: crate::ff::forcefield::torsion::TorsionRefusal| format!("{what}: {e}");
+        let terms: Option<Vec<(f64, f64, f64)>> = match style.name() {
+            "periodic" => Some(
+                Periodic::from_params(p)
+                    .map_err(refused)?
+                    .terms
                     .iter()
                     .map(|t| (t.k, t.periodicity, t.phase))
                     .collect(),
             ),
-            TorsionForm::Charmm(f) => {
+            "charmm" => {
+                let f = Charmm::from_params(p).map_err(refused)?;
                 if f.w != 0.0 {
                     return Err(format!(
                         "{what}: the 1-4 weight w = {} has no OpenMM form",
@@ -380,7 +384,8 @@ impl XmlForceFieldWriter {
                 Some(vec![(f.term.k, f.term.periodicity, f.term.phase)])
             }
             // k[1 + d cos nφ] = k[1 + cos(nφ − γ)], γ = 0° (d = 1) or 180° (d = −1).
-            TorsionForm::Harmonic(f) => {
+            "harmonic" => {
+                let f = SignedCosine::from_params("dihedral harmonic", p).map_err(refused)?;
                 let phase = match f.sign {
                     1.0 => 0.0,
                     -1.0 => 180.0,
@@ -389,14 +394,17 @@ impl XmlForceFieldWriter {
                 Some(vec![(f.k, f.periodicity, phase)])
             }
             // k[1 − cos(nφ − φₙ)] = k[1 + cos(nφ − φₙ − 180°)].
-            TorsionForm::Class2(f) => Some(
-                f.k.iter()
-                    .zip(&f.phi)
-                    .enumerate()
-                    .filter(|(_, (k, _))| **k != 0.0)
-                    .map(|(i, (&k, &phi))| (k, (i + 1) as f64, phi + 180.0))
-                    .collect(),
-            ),
+            "class2" => {
+                let f = Class2::from_params(p);
+                Some(
+                    f.k.iter()
+                        .zip(&f.phi)
+                        .enumerate()
+                        .filter(|(_, (k, _))| **k != 0.0)
+                        .map(|(i, (&k, &phi))| (k, (i + 1) as f64, phi + 180.0))
+                        .collect(),
+                )
+            }
             _ => None,
         };
         if let Some(terms) = terms {
@@ -411,8 +419,9 @@ impl XmlForceFieldWriter {
             out.periodic.push_str(&row);
             return Ok(());
         }
-        // The polynomial forms: RB holds Σₙ₌₀⁵ Cₙ cosⁿ(φ − 180°), constant included.
-        let series = form.to_series().map_err(|e| format!("{what}: {e}"))?;
+        // Every other torsion form, through its form codec: RB holds
+        // Σₙ₌₀⁵ Cₙ cosⁿ(φ − 180°), constant included.
+        let series = torsion_series("dihedral", style.name(), style.params(), p)?;
         let rb = RyckaertBellemans::from_series(&series)
             .map_err(|e| format!("{what}: no RBTorsionForce form: {e}"))?;
         let mut row = format!("    <Proper{attrs}");
@@ -841,10 +850,7 @@ mod tests {
     fn series(ff: &ForceField) -> crate::ff::forcefield::torsion::FourierSeries {
         let s = style(ff, "dihedral");
         let p = &s.defs.collect_type_params()[0].1;
-        TorsionForm::from_params("dihedral", s.name(), p)
-            .unwrap()
-            .to_series()
-            .unwrap()
+        torsion_series("dihedral", s.name(), s.params(), p).unwrap()
     }
 
     /// OPLS goes out as RB and reads back as `multi/harmonic`: the same
