@@ -47,8 +47,10 @@ use molrs::types::F;
 use ndarray::Array1;
 
 use crate::compute::error::ComputeError;
+use crate::compute::positions::get_positions_ref;
 use crate::compute::traits::Compute;
-use crate::compute::util::{MicHelper, get_positions_ref};
+use crate::op::vec3::sub;
+use molrs::spatial::simbox::{Mic, SimBox};
 
 /// Legendre reorientational TCF analyzer.
 ///
@@ -114,7 +116,7 @@ impl Compute for LegendreReorientation {
             let (xp, yp, zp) = get_positions_ref(*frame)?;
             let (xs, ys, zs) = (xp.slice(), yp.slice(), zp.slice());
             // Resolve the minimum-image state once per frame, not per pair.
-            let mic = MicHelper::from_simbox(frame.simbox_ref());
+            let mic = frame.simbox_ref().map_or(Mic::Free, SimBox::mic);
             for &(a, b) in pairs {
                 let (a, b) = (a as usize, b as usize);
                 if a >= xs.len() || b >= xs.len() {
@@ -124,7 +126,7 @@ impl Compute for LegendreReorientation {
                         what: "LegendreReorientation atom index",
                     });
                 }
-                let d = mic.disp([xs[a], ys[a], zs[a]], [xs[b], ys[b], zs[b]]);
+                let d = mic.apply(sub([xs[b], ys[b], zs[b]], [xs[a], ys[a], zs[a]]));
                 let norm = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
                 if !(norm.is_finite() && norm > 0.0) {
                     return Err(ComputeError::NonFinite {

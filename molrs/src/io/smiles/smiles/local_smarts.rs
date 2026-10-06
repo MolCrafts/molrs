@@ -8,8 +8,9 @@ use crate::io::smiles::smiles::options::{LocalSmartsOptions, NeighborStyle};
 use crate::io::smiles::smiles::write::write_smarts;
 use crate::perceive::rings::find_rings;
 use molrs::Element;
-use molrs::system::atomistic::{AtomId, Atomistic};
+use molrs::system::atomistic::Atomistic;
 use molrs::system::bond::BondType;
+use molrs::system::molgraph::NodeId;
 use molrs::system::molgraph::PropValue;
 
 /// Build a query [`SmilesIR`] for `center` with the given options.
@@ -19,7 +20,7 @@ use molrs::system::molgraph::PropValue;
 /// nested depth equal to the recursive fragment depth (still ≤ `reach`).
 pub fn local_smarts_ir(
     mol: &Atomistic,
-    center: AtomId,
+    center: NodeId,
     opts: &LocalSmartsOptions,
 ) -> Result<SmilesIR, SmilesError> {
     if opts.reach < 1 {
@@ -32,7 +33,7 @@ pub fn local_smarts_ir(
     let rings = find_rings(mol);
 
     // BFS ball of radius reach
-    let mut depth: HashMap<AtomId, u32> = HashMap::new();
+    let mut depth: HashMap<NodeId, u32> = HashMap::new();
     let mut q = VecDeque::new();
     depth.insert(center, 0);
     q.push_back(center);
@@ -67,7 +68,7 @@ pub fn local_smarts_ir(
 /// IR then [`write_smarts`].
 pub fn write_local_smarts(
     mol: &Atomistic,
-    center: AtomId,
+    center: NodeId,
     opts: &LocalSmartsOptions,
 ) -> Result<String, SmilesError> {
     let ir = local_smarts_ir(mol, center, opts)?;
@@ -83,7 +84,7 @@ fn emit_err(msg: impl Into<String>) -> SmilesError {
     )
 }
 
-fn is_h(mol: &Atomistic, id: AtomId) -> bool {
+fn is_h(mol: &Atomistic, id: NodeId) -> bool {
     mol.get_atom(id)
         .ok()
         .and_then(|a| a.get_str("element").map(|s| s.eq_ignore_ascii_case("H")))
@@ -92,7 +93,7 @@ fn is_h(mol: &Atomistic, id: AtomId) -> bool {
 
 fn center_query(
     mol: &Atomistic,
-    id: AtomId,
+    id: NodeId,
     opts: &LocalSmartsOptions,
     rings: &crate::perceive::rings::RingInfo,
 ) -> Result<AtomQuery, SmilesError> {
@@ -184,7 +185,7 @@ fn formal_charge(atom: &molrs::system::molgraph::Atom) -> Option<i8> {
         .map(|v| v as i8)
 }
 
-fn count_h(mol: &Atomistic, id: AtomId) -> u8 {
+fn count_h(mol: &Atomistic, id: NodeId) -> u8 {
     if let Ok(a) = mol.get_atom(id)
         && let Some(h) = a.get_f64("h_count")
     {
@@ -197,8 +198,8 @@ fn count_h(mol: &Atomistic, id: AtomId) -> u8 {
 
 fn bond_query(
     mol: &Atomistic,
-    a: AtomId,
-    b: AtomId,
+    a: NodeId,
+    b: NodeId,
     opts: &LocalSmartsOptions,
 ) -> Option<BondQuery> {
     if !opts.include_bond_orders {
@@ -215,13 +216,13 @@ fn bond_query(
 
 fn ordered_neighbors(
     mol: &Atomistic,
-    id: AtomId,
-    depth: &HashMap<AtomId, u32>,
+    id: NodeId,
+    depth: &HashMap<NodeId, u32>,
     opts: &LocalSmartsOptions,
-    parent: Option<AtomId>,
-) -> Vec<AtomId> {
+    parent: Option<NodeId>,
+) -> Vec<NodeId> {
     let d0 = depth[&id];
-    let mut nbs: Vec<AtomId> = mol
+    let mut nbs: Vec<NodeId> = mol
         .neighbor_bonds(id)
         .map(|(nb, _)| nb)
         .filter(|nb| Some(*nb) != parent)
@@ -231,7 +232,7 @@ fn ordered_neighbors(
 
     if opts.canonical_neighbor_order {
         let order = mol.canonical_order();
-        let rank: HashMap<AtomId, usize> =
+        let rank: HashMap<NodeId, usize> =
             order.iter().enumerate().map(|(i, id)| (*id, i)).collect();
         nbs.sort_by_key(|id| rank.get(id).copied().unwrap_or(usize::MAX));
     } else {
@@ -242,7 +243,7 @@ fn ordered_neighbors(
 
 fn leaf_atom_query(
     mol: &Atomistic,
-    id: AtomId,
+    id: NodeId,
     opts: &LocalSmartsOptions,
 ) -> Result<AtomQuery, SmilesError> {
     let atom = mol.get_atom(id).map_err(|e| emit_err(e.to_string()))?;
@@ -269,16 +270,16 @@ fn leaf_atom_query(
 
 fn build_chain_env(
     mol: &Atomistic,
-    center: AtomId,
-    depth: &HashMap<AtomId, u32>,
+    center: NodeId,
+    depth: &HashMap<NodeId, u32>,
     opts: &LocalSmartsOptions,
     rings: &crate::perceive::rings::RingInfo,
 ) -> Result<Chain, SmilesError> {
     fn rec(
         mol: &Atomistic,
-        id: AtomId,
-        parent: Option<AtomId>,
-        depth: &HashMap<AtomId, u32>,
+        id: NodeId,
+        parent: Option<NodeId>,
+        depth: &HashMap<NodeId, u32>,
         opts: &LocalSmartsOptions,
         rings: &crate::perceive::rings::RingInfo,
         is_center: bool,
@@ -325,8 +326,8 @@ fn build_chain_env(
 
 fn build_recursive_env(
     mol: &Atomistic,
-    center: AtomId,
-    depth: &HashMap<AtomId, u32>,
+    center: NodeId,
+    depth: &HashMap<NodeId, u32>,
     opts: &LocalSmartsOptions,
     rings: &crate::perceive::rings::RingInfo,
 ) -> Result<Chain, SmilesError> {
@@ -413,7 +414,7 @@ mod tests {
     use crate::io::smiles::smiles::to_atomistic::to_atomistic;
     use crate::perceive::smarts::SmartsPattern;
 
-    fn heavy_atoms(mol: &Atomistic) -> Vec<AtomId> {
+    fn heavy_atoms(mol: &Atomistic) -> Vec<NodeId> {
         mol.atoms()
             .filter(|(id, _)| !is_h(mol, *id))
             .map(|(id, _)| id)

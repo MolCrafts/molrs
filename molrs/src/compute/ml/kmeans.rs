@@ -249,22 +249,11 @@ fn sq_dist(a: &[F], b: &[F]) -> F {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::op::random::standard_normal;
     use molrs::Frame;
+    use rand::SeedableRng;
     use rand::rngs::StdRng;
-    use rand::{RngExt, SeedableRng};
     use std::collections::HashSet;
-
-    fn box_muller(rng: &mut StdRng) -> F {
-        loop {
-            let u1: F = rng.random();
-            let u2: F = rng.random();
-            if u1 > 0.0 {
-                let r = (-2.0 * u1.ln()).sqrt();
-                let theta = 2.0 * std::f64::consts::PI * u2;
-                return r * theta.cos();
-            }
-        }
-    }
 
     fn three_blobs(n_per_cluster: usize, seed: u64) -> PcaResult {
         let centers = [(0.0, 0.0), (10.0, 0.0), (5.0, 10.0)];
@@ -274,8 +263,8 @@ mod tests {
         let mut coords = Vec::with_capacity(total * 2);
         for (cx, cy) in centers.iter().copied() {
             for _ in 0..n_per_cluster {
-                coords.push(cx + sigma * box_muller(&mut rng));
-                coords.push(cy + sigma * box_muller(&mut rng));
+                coords.push(cx + sigma * standard_normal(&mut rng));
+                coords.push(cy + sigma * standard_normal(&mut rng));
             }
         }
         PcaResult {

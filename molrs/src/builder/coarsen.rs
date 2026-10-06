@@ -4,7 +4,7 @@
 //! This is the centre-of-mass mapping operator of coarse-grained modelling
 //! (Noid, *J. Chem. Phys.* **139**, 090901 (2013), doi:10.1063/1.4818908):
 //! site I stands for group G_I and sits at its centre of mass. The groups
-//! typically come from [`SubgraphMatcher::find`](super::SubgraphMatcher::find)
+//! typically come from [`SubgraphMatcher::find`](crate::perceive::SubgraphMatcher::find)
 //! after the caller has made them disjoint.
 
 use std::collections::{HashMap, HashSet};
@@ -12,7 +12,7 @@ use std::fmt;
 
 use crate::spatial::geometry::{CenterError, center};
 use crate::store::keys;
-use crate::system::coarsegrain::{BeadId, CoarseGrain};
+use crate::system::coarsegrain::CoarseGrain;
 use crate::system::molgraph::{MolGraph, NodeId, node_to_u64};
 
 /// Why [`Coarsener::coarsen`] refuses its input. Nothing is built when it
@@ -90,7 +90,7 @@ impl std::error::Error for CoarsenError {
 /// # Examples
 ///
 /// ```
-/// use molrs::perceive::Coarsener;
+/// use molrs::builder::Coarsener;
 /// use molrs::store::keys;
 /// use molrs::system::coarsegrain::CoarseGrain;
 ///
@@ -187,7 +187,7 @@ impl<'a> Coarsener<'a> {
     /// crosses the groups and becomes the one site bond.
     ///
     /// ```
-    /// use molrs::perceive::Coarsener;
+    /// use molrs::builder::Coarsener;
     /// use molrs::store::keys;
     /// use molrs::system::coarsegrain::CoarseGrain;
     ///
@@ -262,7 +262,7 @@ impl<'a> Coarsener<'a> {
         }
 
         let mut cg = CoarseGrain::new();
-        let mut ids: Vec<BeadId> = Vec::with_capacity(groups.len());
+        let mut ids: Vec<NodeId> = Vec::with_capacity(groups.len());
         for ((&site_type, members), &([x, y, z], m, axis)) in
             site_types.iter().zip(groups).zip(&sites)
         {
@@ -306,10 +306,10 @@ impl<'a> Coarsener<'a> {
 mod tests {
     use super::*;
     use crate::store::keys;
-    use crate::system::coarsegrain::BeadId;
+    use crate::system::molgraph::NodeId;
 
     /// A source bead of type "S" at `(x, 0, 0)` carrying `mass`.
-    fn bead(src: &mut CoarseGrain, x: f64, mass: f64) -> BeadId {
+    fn bead(src: &mut CoarseGrain, x: f64, mass: f64) -> NodeId {
         let id = src.add_bead("S", x, 0.0, 0.0);
         src.set_node(id, keys::MASS, mass).unwrap();
         id
@@ -317,9 +317,9 @@ mod tests {
 
     /// Beads at x = 0, 4, 8, 10 with masses 1, 3, 2, 2; bonds b0-b1, b1-b2,
     /// b2-b3, b0-b3.
-    fn square() -> (CoarseGrain, Vec<BeadId>) {
+    fn square() -> (CoarseGrain, Vec<NodeId>) {
         let mut src = CoarseGrain::new();
-        let b: Vec<BeadId> = [(0.0, 1.0), (4.0, 3.0), (8.0, 2.0), (10.0, 2.0)]
+        let b: Vec<NodeId> = [(0.0, 1.0), (4.0, 3.0), (8.0, 2.0), (10.0, 2.0)]
             .into_iter()
             .map(|(x, m)| bead(&mut src, x, m))
             .collect();
@@ -329,7 +329,7 @@ mod tests {
         (src, b)
     }
 
-    fn position(cg: &CoarseGrain, site: BeadId) -> [f64; 3] {
+    fn position(cg: &CoarseGrain, site: NodeId) -> [f64; 3] {
         cg.get_bead(site).unwrap().position().unwrap()
     }
 
@@ -339,7 +339,7 @@ mod tests {
         let cg = Coarsener::new(&src)
             .coarsen(&[vec![b[0], b[1]], vec![b[2], b[3]]], &["A", "B"])
             .unwrap();
-        let sites: Vec<BeadId> = cg.node_ids().collect();
+        let sites: Vec<NodeId> = cg.node_ids().collect();
         assert_eq!(sites.len(), 2);
 
         // (1·0 + 3·4) / 4 = 3 ; (2·8 + 2·10) / 4 = 9
@@ -365,7 +365,7 @@ mod tests {
         let cg = Coarsener::new(&src)
             .coarsen(&[vec![b[1], b[0]], vec![b[2]]], &["A", "B"])
             .unwrap();
-        let sites: Vec<BeadId> = cg.node_ids().collect();
+        let sites: Vec<NodeId> = cg.node_ids().collect();
 
         assert_eq!(
             cg.axes(&sites).unwrap(),
@@ -379,7 +379,7 @@ mod tests {
         let cg = Coarsener::new(&src)
             .coarsen(&[vec![b[0], b[1]], vec![b[2], b[3]]], &["A", "B"])
             .unwrap();
-        let sites: Vec<BeadId> = cg.node_ids().collect();
+        let sites: Vec<NodeId> = cg.node_ids().collect();
         assert_eq!(cg.n_bonds(), 1);
         let (_, bond) = cg.bonds().next().unwrap();
         let mut ends = [bond.nodes[0], bond.nodes[1]];
@@ -393,7 +393,7 @@ mod tests {
     fn an_ungrouped_bead_is_absent_and_adds_no_bond() {
         // b0 - b1 - b2 with b1 left out: both source bonds touch it.
         let mut src = CoarseGrain::new();
-        let b: Vec<BeadId> = [0.0, 1.0, 2.0]
+        let b: Vec<NodeId> = [0.0, 1.0, 2.0]
             .into_iter()
             .map(|x| bead(&mut src, x, 1.0))
             .collect();

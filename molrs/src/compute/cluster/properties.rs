@@ -7,7 +7,7 @@
 //! Mirrors `freud.cluster.ClusterProperties`: for each cluster in a frame,
 //! reports its size, geometric center, mass-weighted center, the (mass-
 //! weighted) gyration tensor, and the scalar radius of gyration. All
-//! quantities are PBC-aware via [`MicHelper`]: the first atom assigned to
+//! quantities are PBC-aware via [`Mic`](molrs::spatial::simbox::Mic): the first atom assigned to
 //! each cluster is used as the local reference and subsequent atom positions
 //! are accumulated through minimum-image displacements, so a cluster that
 //! wraps across the box boundary is handled correctly.
@@ -28,9 +28,11 @@ use molrs::types::F;
 
 use super::ClusterResult;
 use crate::compute::error::ComputeError;
+use crate::compute::positions::get_positions_ref;
 use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
-use crate::compute::util::{MicHelper, get_positions_ref};
+use crate::op::vec3::sub;
+use molrs::spatial::simbox::{Mic, SimBox};
 
 /// Per-frame bundle of cluster scalars and tensors.
 #[derive(Debug, Clone, Default)]
@@ -92,7 +94,7 @@ impl ClusterProperties {
             });
         }
 
-        let mic = MicHelper::from_simbox(frame.simbox_ref());
+        let mic = frame.simbox_ref().map_or(Mic::Free, SimBox::mic);
         let nc = clusters.num_clusters;
         let masses_ref = self.masses.as_deref();
 
@@ -116,7 +118,7 @@ impl ClusterProperties {
                 ref_pos[c] = pos;
                 has_ref[c] = true;
             }
-            let d = mic.disp(ref_pos[c], pos);
+            let d = mic.apply(sub(pos, ref_pos[c]));
             sum_d[c][0] += d[0];
             sum_d[c][1] += d[1];
             sum_d[c][2] += d[2];
@@ -153,7 +155,7 @@ impl ClusterProperties {
             let c = cid as usize;
             let pos = [xs[i], ys[i], zs[i]];
             let m = masses_ref.map_or(1.0, |ms| ms[i]);
-            let d = mic.disp(centers_of_mass[c], pos);
+            let d = mic.apply(sub(pos, centers_of_mass[c]));
             for a in 0..3 {
                 for b in 0..3 {
                     gyration[c][a][b] += m * d[a] * d[b];

@@ -44,8 +44,8 @@ use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
 use crate::compute::error::ComputeError;
+use crate::compute::positions::get_positions_ref;
 use crate::compute::traits::Compute;
-use crate::compute::util::get_positions_ref;
 use crate::compute::{require_disp, require_self_query};
 
 /// Hexatic order parameter calculator.

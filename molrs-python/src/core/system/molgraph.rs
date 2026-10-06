@@ -157,7 +157,7 @@ fn link_error_to_pyerr(e: LinkError) -> PyErr {
 /// The message of a [`LinkError`] as Python sees it.
 ///
 /// Port and atom ids cross as the `int` handles Python holds
-/// (`relation_to_u64` / `node_to_u64`), never as `PortId(..)` / `NodeId(..)`.
+/// (`relation_to_u64` / `node_to_u64`), never as `RelationId(..)` / `NodeId(..)`.
 /// Every variant is matched by name, with no catch-all arm.
 pub(crate) fn link_error_message(e: LinkError) -> String {
     let port = relation_to_u64;

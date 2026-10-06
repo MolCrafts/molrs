@@ -22,9 +22,9 @@ use molrs::types::F;
 use ndarray::Array2;
 
 use crate::compute::error::ComputeError;
+use crate::compute::positions::get_positions_ref;
 use crate::compute::require_disp;
 use crate::compute::traits::Compute;
-use crate::compute::util::get_positions_ref;
 
 const PI: F = std::f64::consts::PI;
 const TWO_PI: F = 2.0 * PI;

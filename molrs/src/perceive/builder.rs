@@ -3,8 +3,8 @@
 //!
 //! The wrapped functions have four different shapes: a side table
 //! ([`rings::find_rings`] → [`rings::RingInfo`]), an in-place mutation returning
-//! a count ([`aromaticity::perceive_aromaticity`]), a graph-out transform
-//! ([`hydrogens::add_hydrogens`]), and maps
+//! a count (`aromaticity::perceive_aromaticity`), a graph-out transform
+//! (`hydrogens::add_hydrogens`), and maps
 //! ([`stereo::assign_stereo_from_3d`], [`rotatable::detect_rotatable_bonds`]).
 //! `Perceive` normalises all four to a single contract:
 //!
@@ -26,6 +26,7 @@
 //! | [`Perceive::find_rotatable`] | — | `is_rotatable` (0/1) |
 //! | [`Perceive::find_bond_orders`] | — | `bond_number`, `bond_type` (antechamber's Kekulé structure) |
 //! | [`Perceive::find_bond_types`] | — | `bcc_bond_type` (1/2/3/6/7/8/9) |
+//! | [`Perceive::find_bond_types_from_connectivity`] | — | `bcc_bond_type`, from connectivity-judged orders |
 //! | [`Perceive::find_equivalence_classes`] | `equiv_class` (0-based class id) | — |
 
 use std::collections::HashSet;
@@ -33,7 +34,8 @@ use std::collections::HashSet;
 use super::equivalence::{EQUIV_CLASS, EquivalenceOptions};
 use super::stereo::{BondStereo, TetrahedralStereo};
 use super::{aromaticity, bond_order, bond_type, equivalence, hydrogens, rings, rotatable, stereo};
-use crate::system::atomistic::{AtomId, Atomistic, BondId};
+use crate::system::atomistic::Atomistic;
+use crate::system::molgraph::{NodeId, RelationId};
 use molrs::error::MolRsError;
 
 /// Atom / bond prop: `1` when the atom / bond lies on at least one SSSR ring.
@@ -95,13 +97,13 @@ impl Perceive {
         let info = rings::find_rings(mol);
         let mut out = mol.clone();
 
-        let atom_ids: Vec<AtomId> = out.atoms().map(|(id, _)| id).collect();
+        let atom_ids: Vec<NodeId> = out.atoms().map(|(id, _)| id).collect();
         for id in atom_ids {
             let _ = out.set_atom(id, IS_IN_RING, i32::from(info.is_atom_in_ring(id)));
             let _ = out.set_atom(id, N_RINGS, saturating_i32(info.num_atom_rings(id)));
         }
 
-        let bond_ids: Vec<BondId> = out.bonds().map(|(id, _)| id).collect();
+        let bond_ids: Vec<RelationId> = out.bonds().map(|(id, _)| id).collect();
         for bid in bond_ids {
             let _ = out.set_bond_prop(bid, IS_IN_RING, i32::from(info.is_bond_in_ring(bid)));
             let _ = out.set_bond_prop(bid, N_RINGS, saturating_i32(info.num_bond_rings(bid)));
@@ -156,7 +158,7 @@ impl Perceive {
 
     /// Add the hydrogens implied by each heavy atom's open valence.
     ///
-    /// Wraps [`hydrogens::add_hydrogens`], which is already graph-in / graph-out.
+    /// Wraps `hydrogens::add_hydrogens`, which is already graph-in / graph-out.
     ///
     /// # Arguments
     ///
@@ -169,7 +171,7 @@ impl Perceive {
     ///
     /// # Errors
     ///
-    /// Whatever [`hydrogens::add_hydrogens`] returns: a [`MolRsError`] when the
+    /// Whatever `hydrogens::add_hydrogens` returns: a [`MolRsError`] when the
     /// graph holds a stale atom handle, which no public constructor of
     /// [`Atomistic`] can produce. The `Result` keeps that invariant a returned
     /// value rather than a panic.
@@ -237,13 +239,13 @@ impl Perceive {
         mol: &Atomistic,
         unknown: rotatable::UnknownBondPolicy,
     ) -> Atomistic {
-        let rotatable: HashSet<(AtomId, AtomId)> = rotatable::detect_rotatable_bonds(mol, unknown)
+        let rotatable: HashSet<(NodeId, NodeId)> = rotatable::detect_rotatable_bonds(mol, unknown)
             .into_iter()
             .map(|(a, b)| unordered(a, b))
             .collect();
         let mut out = mol.clone();
 
-        let bonds: Vec<(BondId, AtomId, AtomId)> = out
+        let bonds: Vec<(RelationId, NodeId, NodeId)> = out
             .bonds()
             .map(|(bid, bond)| (bid, bond.nodes[0], bond.nodes[1]))
             .collect();
@@ -258,7 +260,7 @@ impl Perceive {
     /// Judge every bond's order from the connectivity alone, as antechamber's
     /// `bondtype -j full` does, and write it onto the graph.
     ///
-    /// Wraps [`bond_order::find_bond_orders`]: every judged bond gets a
+    /// Wraps `bond_order::find_bond_orders`: every judged bond gets a
     /// localized `bond_number` (1/2/3) and the `bond_type` it implies, whatever
     /// the input stated. The result depends on the graph's atom and bond order,
     /// exactly as antechamber's depends on its input file's.
@@ -277,9 +279,9 @@ impl Perceive {
     /// Perceive BCC bond types, from the bond orders `mol` states, and project
     /// them onto the graph. (`AtdTypifier` and the antechamber charge models
     /// judge the orders from the connectivity instead, as antechamber does:
-    /// [`bond_type::find_bond_types_from_connectivity`].)
+    /// [`find_bond_types_from_connectivity`](Self::find_bond_types_from_connectivity).)
     ///
-    /// Wraps [`bond_type::find_bond_types`], which is already graph-in /
+    /// Wraps `bond_type::find_bond_types`, which is already graph-in /
     /// graph-out. Every bond receives a [`BCC_BOND_TYPE`](bond_type::BCC_BOND_TYPE)
     /// prop in `{1, 2, 3, 6, 7, 8, 9}` — the alphabet AM1-BCC's atom-type rules and
     /// correction table are keyed on, which distinguishes aromatic bonds (7/8) and
@@ -302,9 +304,27 @@ impl Perceive {
         bond_type::find_bond_types(mol)
     }
 
+    /// Perceive BCC bond types as antechamber does, from bond orders judged
+    /// from the connectivity alone (`bondtype -j full`), whatever orders `mol`
+    /// states, and project them onto the graph — what `AtdTypifier` and the
+    /// antechamber charge models read. [`find_bond_types`](Self::find_bond_types)
+    /// keeps the input's orders instead.
+    ///
+    /// # Arguments
+    ///
+    /// * `mol` — the molecule, every hydrogen drawn; left untouched.
+    ///
+    /// # Returns
+    ///
+    /// A clone of `mol` with a [`BCC_BOND_TYPE`](bond_type::BCC_BOND_TYPE) on
+    /// every bond.
+    pub fn find_bond_types_from_connectivity(&self, mol: &Atomistic) -> Atomistic {
+        bond_type::find_bond_types_from_connectivity(mol)
+    }
+
     /// Assign a localized (Kekulé) `bond_number` to every aromatic bond.
     ///
-    /// Wraps [`bond_type::find_kekule_orders`]. It kekulizes and nothing else —
+    /// Wraps `bond_type::find_kekule_orders`. It kekulizes and nothing else —
     /// a molecule whose aromatic bonds are not marked yet comes back unchanged,
     /// because deciding *which* bonds are aromatic is
     /// [`find_aromaticity`](Self::find_aromaticity)'s job. Reach for this
@@ -369,7 +389,7 @@ impl Perceive {
 
 /// Order an atom pair so that a bond can be looked up regardless of the
 /// direction it was reported in.
-fn unordered(a: AtomId, b: AtomId) -> (AtomId, AtomId) {
+fn unordered(a: NodeId, b: NodeId) -> (NodeId, NodeId) {
     if a <= b { (a, b) } else { (b, a) }
 }
 

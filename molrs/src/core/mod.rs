@@ -70,16 +70,14 @@ pub use store::frame_view::FrameView;
 pub use store::meta::{MetaIter, MetaMap, MetaValue};
 pub use store::record::{MOLREC_VERSION, MolRec, Observables, RESERVED_META_KEYS};
 pub use store::trajectory::{ObservableData, ObservableKind, ObservableRecord, Trajectory};
-pub use system::atomistic::{
-    AngleId, AtomId, Atomistic, Bond, BondId, DihedralId, ExtractedAtomistic, ImproperId,
-};
+pub use system::atomistic::{Atomistic, ExtractedAtomistic};
 pub use system::bond_weights::BondDistanceWeights;
 pub use system::coarsegrain::{CoarseGrain, ExtractedCoarseGrain};
 pub use system::extract::{ExtractedBall, InducedSubgraph};
 pub use system::graph_hash::{canonical_order, is_isomorphic, structural_hash};
 pub use system::link::LinkError;
-pub use system::molgraph::{Atom, Bead, KindId, MolGraph, NodeId, PropValue, Relation};
-pub use system::port::{Port, PortId, PortKind};
+pub use system::molgraph::{Atom, KindId, MolGraph, NodeId, PropValue, Relation, RelationId};
+pub use system::port::{Port, PortKind};
 pub use system::topology::{Topology, TopologyRingInfo};
 pub use units::{
     Dimension, Quantity, Unit, UnitDef, UnitPreset, UnitPresetRegistry, UnitRegistry, UnitsError,

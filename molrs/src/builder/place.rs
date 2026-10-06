@@ -16,13 +16,13 @@ use crate::op::types::Vec3;
 use crate::op::vec3::sub;
 use crate::spatial::geometry::CenterError;
 use crate::system::molgraph::MolGraph;
-use crate::system::port::PortId;
+use crate::system::molgraph::RelationId;
 
 /// The bond from a site to its already-placed parent.
 #[derive(Debug, Clone, Copy)]
 pub struct ParentJoin {
     /// This copy's port on the bond to the parent (a port of the template).
-    pub port: PortId,
+    pub port: RelationId,
     /// The parent copy's placed anchor on that bond (Å).
     pub anchor: Vec3,
     /// The parent copy's placed leaving-group handle on that bond (Å).
@@ -270,14 +270,15 @@ mod tests {
     use crate::store::keys;
     use crate::system::atomistic::Atomistic;
     use crate::system::bond::BondNumber;
-    use crate::system::port::{PortId, PortKind};
+    use crate::system::molgraph::RelationId;
+    use crate::system::port::PortKind;
 
     const TOL: f64 = 1e-12;
 
     /// Monomer M: C0 (0,0,0), C1 (1.5,0,0), H0 (−1,0,0), H1 (2.5,0,0); masses
     /// 12, 12, 1, 1 (or none). Centre of mass x = 19.5 / 26 = 0.75. Ports
     /// (C0, H0, `<`) and (C1, H1, `>`).
-    fn monomer(with_mass: bool) -> (Atomistic, PortId, PortId) {
+    fn monomer(with_mass: bool) -> (Atomistic, RelationId, RelationId) {
         let mut m = Atomistic::new();
         let mut ids = Vec::new();
         for (symbol, x, mass) in [

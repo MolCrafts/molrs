@@ -34,8 +34,9 @@ use std::collections::HashMap;
 
 use crate::op::vec3::{cross, dot, norm, scale, sub};
 use crate::store::keys;
-use crate::system::atomistic::{AtomId, Atomistic, BondId};
+use crate::system::atomistic::Atomistic;
 use crate::system::bond::BondType;
+use crate::system::molgraph::{NodeId, RelationId};
 
 // ---------------------------------------------------------------------------
 // Public enums
@@ -80,8 +81,8 @@ pub enum BondStereo {
 /// * Zero → the four atoms are coplanar (degenerate).
 ///
 /// Returns `0.0` if any atom lacks `x`/`y`/`z` coordinates.
-pub fn chiral_volume(mol: &Atomistic, center: AtomId, neighbor_order: &[AtomId; 4]) -> f64 {
-    let pos = |id: AtomId| -> Option<[f64; 3]> {
+pub fn chiral_volume(mol: &Atomistic, center: NodeId, neighbor_order: &[NodeId; 4]) -> f64 {
+    let pos = |id: NodeId| -> Option<[f64; 3]> {
         let a = mol.get_atom(id).ok()?;
         Some([a.get_f64("x")?, a.get_f64("y")?, a.get_f64("z")?])
     };
@@ -114,10 +115,10 @@ pub fn chiral_volume(mol: &Atomistic, center: AtomId, neighbor_order: &[AtomId; 
 /// Note: this is a *topological* screen only.  Two neighbours may be
 /// constitutionally identical.  CIP rank comparison is outside the scope
 /// of this module.
-pub fn find_chiral_centers(mol: &Atomistic) -> Vec<AtomId> {
+pub fn find_chiral_centers(mol: &Atomistic) -> Vec<NodeId> {
     let mut centers = Vec::new();
     for (id, _atom) in mol.atoms() {
-        let nbrs: Vec<AtomId> = mol.neighbor_bonds(id).map(|(nb, _)| nb).collect();
+        let nbrs: Vec<NodeId> = mol.neighbor_bonds(id).map(|(nb, _)| nb).collect();
         if nbrs.len() == 4 {
             // Check all four are distinct
             let mut unique = nbrs.clone();
@@ -144,12 +145,12 @@ pub fn find_chiral_centers(mol: &Atomistic) -> Vec<AtomId> {
 /// molecule and useful for detecting whether two conformers have the same
 /// chirality.
 ///
-/// Returns a map `AtomId → TetrahedralStereo`.  Atoms without 3-D coordinates
+/// Returns a map `NodeId → TetrahedralStereo`.  Atoms without 3-D coordinates
 /// receive `Unspecified`.
-pub fn assign_stereo_from_3d(mol: &Atomistic) -> HashMap<AtomId, TetrahedralStereo> {
+pub fn assign_stereo_from_3d(mol: &Atomistic) -> HashMap<NodeId, TetrahedralStereo> {
     let mut result = HashMap::new();
     for center in find_chiral_centers(mol) {
-        let nbrs: Vec<AtomId> = mol.neighbor_bonds(center).map(|(nb, _)| nb).collect();
+        let nbrs: Vec<NodeId> = mol.neighbor_bonds(center).map(|(nb, _)| nb).collect();
         if nbrs.len() < 4 {
             result.insert(center, TetrahedralStereo::Unspecified);
             continue;
@@ -180,8 +181,8 @@ pub fn assign_stereo_from_3d(mol: &Atomistic) -> HashMap<AtomId, TetrahedralSter
 /// * |cos φ| < 0 (φ > 90°) → Z (same side, cis).
 /// * |cos φ| > 0 (φ < 90°) → E (opposite sides, trans).
 ///
-/// Returns a map `BondId → BondStereo`.
-pub fn assign_bond_stereo_from_3d(mol: &Atomistic) -> HashMap<BondId, BondStereo> {
+/// Returns a map `RelationId → BondStereo`.
+pub fn assign_bond_stereo_from_3d(mol: &Atomistic) -> HashMap<RelationId, BondStereo> {
     let mut result = HashMap::new();
 
     for (bid, bond) in mol.bonds() {
@@ -195,12 +196,12 @@ pub fn assign_bond_stereo_from_3d(mol: &Atomistic) -> HashMap<BondId, BondStereo
         let (a, b) = (bond.nodes[0], bond.nodes[1]);
 
         // Substituents on A (excluding B) and on B (excluding A)
-        let subs_a: Vec<AtomId> = mol
+        let subs_a: Vec<NodeId> = mol
             .neighbor_bonds(a)
             .map(|(nb, _)| nb)
             .filter(|&x| x != b)
             .collect();
-        let subs_b: Vec<AtomId> = mol
+        let subs_b: Vec<NodeId> = mol
             .neighbor_bonds(b)
             .map(|(nb, _)| nb)
             .filter(|&x| x != a)
@@ -223,7 +224,7 @@ pub fn assign_bond_stereo_from_3d(mol: &Atomistic) -> HashMap<BondId, BondStereo
         // by (Z, lowest index) makes the answer a property of the molecule
         // again; it is still approximate where CIP would look further out, but
         // it is at least the *same* approximation every time.
-        let z_of = |s: AtomId| -> u8 {
+        let z_of = |s: NodeId| -> u8 {
             mol.get_atom(s)
                 .ok()
                 .and_then(|a| {
@@ -236,12 +237,12 @@ pub fn assign_bond_stereo_from_3d(mol: &Atomistic) -> HashMap<BondId, BondStereo
         // Ranked by (Z, then the atom's own position in the molecule). The
         // neighbour list's order is itself insertion-dependent, so breaking the
         // tie on a position *within that list* would not fix anything.
-        let order_of = |s: AtomId| -> usize {
+        let order_of = |s: NodeId| -> usize {
             mol.atoms()
                 .position(|(id, _)| id == s)
                 .unwrap_or(usize::MAX)
         };
-        let pick = |atom_id: AtomId, subs: &[AtomId]| -> AtomId {
+        let pick = |atom_id: NodeId, subs: &[NodeId]| -> NodeId {
             subs.iter()
                 .copied()
                 .max_by_key(|&s| (z_of(s), std::cmp::Reverse(order_of(s))))
@@ -252,7 +253,7 @@ pub fn assign_bond_stereo_from_3d(mol: &Atomistic) -> HashMap<BondId, BondStereo
         let sb = pick(b, &subs_b);
 
         // Get 3-D positions
-        let pos = |id: AtomId| -> Option<[f64; 3]> {
+        let pos = |id: NodeId| -> Option<[f64; 3]> {
             let atom = mol.get_atom(id).ok()?;
             Some([atom.get_f64("x")?, atom.get_f64("y")?, atom.get_f64("z")?])
         };
@@ -303,7 +304,7 @@ mod tests {
         Atom::xyz(sym, x, y, z)
     }
 
-    fn add_double_bond(mol: &mut Atomistic, a: AtomId, b: AtomId) {
+    fn add_double_bond(mol: &mut Atomistic, a: NodeId, b: NodeId) {
         if let Ok(bid) = mol.add_bond(a, b) {
             let _ = mol.set_bond_type(bid, BondType::Double);
         }

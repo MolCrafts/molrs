@@ -59,8 +59,8 @@ use std::sync::OnceLock;
 use molrs::store::keys;
 use molrs::store::schema::block_names::{ANGLES, BONDS, DIHEDRALS, IMPROPERS};
 use molrs::store::type_labels::TypeName;
-use molrs::system::atomistic::ImproperId;
-use molrs::{AtomId, Atomistic};
+use molrs::system::molgraph::RelationId;
+use molrs::{Atomistic, NodeId};
 
 use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
@@ -498,12 +498,12 @@ impl GaffTypifier {
 
         // parmchk2 walks the molecule in atom and bond order; its estimates for
         // the bonds and angles the table lacks come first.
-        let order: Vec<AtomId> = graph.atoms().map(|(id, _)| id).collect();
-        let neighbours: Vec<Vec<AtomId>> = order
+        let order: Vec<NodeId> = graph.atoms().map(|(id, _)| id).collect();
+        let neighbours: Vec<Vec<NodeId>> = order
             .iter()
             .map(|&a| graph.neighbor_bonds(a).map(|(n, _)| n).collect())
             .collect();
-        let names: HashMap<AtomId, &'static str> = type_of
+        let names: HashMap<NodeId, &'static str> = type_of
             .iter()
             .map(|(&atom, &ty)| (atom, index.name_of(ty)))
             .collect();
@@ -517,7 +517,7 @@ impl GaffTypifier {
         );
 
         // --- bonds ---
-        let bonds: Vec<(AtomId, AtomId)> = graph
+        let bonds: Vec<(NodeId, NodeId)> = graph
             .bonds()
             .map(|(_, b)| (b.nodes[0], b.nodes[1]))
             .collect();
@@ -548,7 +548,7 @@ impl GaffTypifier {
         }
 
         // --- angles ---
-        let angles: Vec<[AtomId; 3]> = graph
+        let angles: Vec<[NodeId; 3]> = graph
             .angles()
             .map(|(_, a)| [a.nodes[0], a.nodes[1], a.nodes[2]])
             .collect();
@@ -584,7 +584,7 @@ impl GaffTypifier {
         // estimate it (a specific frcmod row, which tleap prefers), else the
         // wildcard rows — most of the DIHE section — may cover it.
         let torsions = torsion::Torsions::new(&order, &neighbours, &names, index.table, &PARMCHK);
-        let dihedrals: Vec<[AtomId; 4]> = graph
+        let dihedrals: Vec<[NodeId; 4]> = graph
             .dihedrals()
             .map(|(_, d)| [d.nodes[0], d.nodes[1], d.nodes[2], d.nodes[3]])
             .collect();
@@ -628,7 +628,7 @@ impl GaffTypifier {
         }
 
         // --- impropers: positional against the rows `add_impropers` left ---
-        let improper_ids: Vec<ImproperId> = graph.impropers().map(|(id, _)| id).collect();
+        let improper_ids: Vec<RelationId> = graph.impropers().map(|(id, _)| id).collect();
         for id in improper_ids {
             m.link_mut(IMPROPERS)
                 .push(Bonded::annotation("periodic", improper_terms.remove(&id))?);
@@ -781,15 +781,15 @@ impl Bonded {
 fn add_impropers(
     graph: &mut Atomistic,
     index: &TableIndex,
-    type_of: &HashMap<AtomId, ParmType>,
-) -> Result<HashMap<ImproperId, (Vec<String>, Bonded)>, GaffError> {
+    type_of: &HashMap<NodeId, ParmType>,
+) -> Result<HashMap<RelationId, (Vec<String>, Bonded)>, GaffError> {
     // Rebuild from scratch: a pre-existing improper would survive with a label
     // this force field never defines.
     let existing: Vec<_> = graph.impropers().map(|(id, _)| id).collect();
     for id in existing {
         graph.remove_improper(id).map_err(malformed)?;
     }
-    let names: HashMap<AtomId, &'static str> = type_of
+    let names: HashMap<NodeId, &'static str> = type_of
         .iter()
         .map(|(&atom, &ty)| (atom, index.name_of(ty)))
         .collect();
@@ -927,7 +927,7 @@ impl TableIndex {
     /// rather than on a string. It is also the one check that short-circuits: an
     /// atom type the table never declares makes every term touching it missing,
     /// so reporting those terms as well would bury the actual fault.
-    fn intern_atoms(&self, typed: &Atomistic) -> Result<HashMap<AtomId, ParmType>, GaffError> {
+    fn intern_atoms(&self, typed: &Atomistic) -> Result<HashMap<NodeId, ParmType>, GaffError> {
         let mut type_of = HashMap::new();
         let mut undeclared: BTreeSet<String> = BTreeSet::new();
 

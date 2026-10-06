@@ -5122,52 +5122,16 @@ class Dielectric:
         per_particle_current: ArrayF, water_mask: ArrayBool
     ) -> tuple[ArrayF, ArrayF]: ...
 
-def parse_frcmod(text: str):
-    """Parse FRCMOD text into a section dict."""
-
 def parse_lammps_log_text(
     text: str, path: str = "<string>", style: str = "default"
 ) -> LammpsLog:
     """Parse a LAMMPS log from an in-memory string (no filesystem access)."""
-
-def prmtop_decode_angle_params(pointers, force_k, equil_rad):
-    """Decode angle pointer tables → ``(type, i, j, k, K, theta0_deg)`` (1-based)."""
-
-def prmtop_decode_bond_params(pointers, force_k, equil):
-    """Decode bond pointer tables → ``(type, i, j, K, r0)`` (atoms 1-based)."""
-
-def prmtop_decode_dihedral_params(pointers, force_k, phase, periodicity):
-    """Decode dihedral pointer tables → ``(type, i, j, k, l, K, phase, n)`` (1-based)."""
-
-def prmtop_decode_nonbond_params(
-    n_atom,
-    n_types,
-    atom_type_index,
-    nonbonded_parm_index,
-    acoef,
-    bcoef,
-    hbond_a=...,
-    hbond_b=...,
-):
-    """Per-atom LJ ``(atom_1based, sigma, epsilon)`` from ICO + A/B."""
-
-def prmtop_parse_a4_names(lines: Sequence[str]):
-    """Parse Fortran ``20a4`` name fields from section lines."""
-
-def prmtop_parse_pointers(lines: Sequence[str]):
-    """Parse POINTERS lines into the historical meta map (raw + derived counts)."""
 
 def read_ac(path: PathInput):
     """Read an Antechamber ``.ac`` file into a Frame."""
 
 def read_amber_prmtop_ff(path: PathInput) -> ForceField:
     """Read AMBER prmtop force-field parameter tables into a :class:`ForceField`."""
-
-def read_amber_prmtop_sections(path: PathInput):
-    """Read raw prmtop ``%FLAG`` sections as ``{flag: [lines...]}``."""
-
-def read_frcmod(path: PathInput):
-    """Read an AMBER FRCMOD file into a section dict."""
 
 def read_gromacs_top_ff(
     path: PathInput,
@@ -5216,9 +5180,6 @@ def read_mol2(path: PathInput) -> Frame:
 def read_prep(path: PathInput):
     """Read an Amber prep file into a nested dict (serde JSON shape)."""
 
-def read_top(path: PathInput):
-    """Read a GROMACS topology (``.top`` / ``.itp``) **structure** file."""
-
 def read_trr_trajectory(path: PathInput) -> list[Frame]:
     """Read every frame of a GROMACS TRR trajectory and return a list of Frames."""
 
@@ -5253,9 +5214,6 @@ def write_forcefield_xml(
     path: PathInput, forcefield: ForceField, precision: int | None = None
 ) -> None:
     """Write a ForceField to OpenMM force-field XML."""
-
-def write_frcmod(path: PathInput, sections: dict[str, Any]):
-    """Write FRCMOD sections (dict with remark/mass/bond/…) to a path."""
 
 #: AMBER's Coulomb constant (kcal·Å/(mol·e²)), the 1-4 electrostatic divisor
 #: (``coul_14 = 1 / AMBER_SCEE``) and the 1-4 LJ divisor (``lj_14 = 1 / AMBER_SCNB``).
@@ -5318,9 +5276,6 @@ def write_smiles(
     organic_subset=True,
 ):
     """Write an :class:`~molrs.Atomistic` to a SMILES string (io surface, not a core method)."""
-
-def write_top(path: PathInput, frame):
-    """Write a Frame as a minimal GROMACS topology structure file."""
 
 def write_trr_trajectory(path: PathInput, frames: Sequence[Frame]) -> None:
     """Write Frames to a GROMACS TRR trajectory file (single precision)."""

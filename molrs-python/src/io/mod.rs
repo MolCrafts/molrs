@@ -38,10 +38,6 @@ use crate::helpers::{io_error_to_pyerr, molrs_error_to_pyerr, path_str, smiles_e
 use molrs::io::data::ac::read_ac as read_ac_rs;
 use molrs::io::data::chgcar::read_chgcar as read_chgcar_rs;
 use molrs::io::data::cube::{read_cube as read_cube_rs, write_cube as write_cube_rs};
-use molrs::io::data::frcmod::{
-    FrcmodFile, parse_frcmod as parse_frcmod_rs, read_frcmod as read_frcmod_rs,
-    write_frcmod as write_frcmod_rs,
-};
 use molrs::io::data::gro::{
     read_gro as read_gro_rs, write_gro as write_gro_rs, write_gro_traj as write_gro_traj_rs,
 };
@@ -58,17 +54,7 @@ use molrs::io::data::pdb::{read_pdb_frame, read_pdb_traj, write_pdb_frame, write
 use molrs::io::data::prep::{
     PrepAtom, PrepResidue, read_prep as read_prep_rs, write_prep as write_prep_rs,
 };
-use molrs::io::data::prmtop::{
-    read_amber_prmtop as read_amber_prmtop_rs,
-    read_amber_prmtop_sections as read_amber_prmtop_sections_rs,
-};
-use molrs::io::data::prmtop_tables::{
-    decode_angle_params as decode_angle_params_rs, decode_bond_params as decode_bond_params_rs,
-    decode_dihedral_params as decode_dihedral_params_rs,
-    decode_nonbond_params as decode_nonbond_params_rs, parse_a4_names as parse_a4_names_rs,
-    parse_pointers as parse_pointers_rs,
-};
-use molrs::io::data::top::{read_top as read_top_rs, write_top as write_top_rs};
+use molrs::io::data::prmtop::read_amber_prmtop as read_amber_prmtop_rs;
 use molrs::io::data::xsf::{read_xsf as read_xsf_rs, write_xsf as write_xsf_rs};
 use molrs::io::data::xyz::{
     XYZReader, read_xyz_frame, read_xyz_traj, write_xyz_frame, write_xyz_traj,
@@ -1170,109 +1156,6 @@ pub fn read_amber_prmtop(path: PathBuf) -> PyResult<PyFrame> {
     PyFrame::from_core_frame(frame)
 }
 
-/// Read raw prmtop ``%FLAG`` sections as ``{flag: [lines...]}``.
-#[pyfunction]
-pub fn read_amber_prmtop_sections(
-    path: PathBuf,
-) -> PyResult<std::collections::HashMap<String, Vec<String>>> {
-    let path = path_str(&path)?;
-    read_amber_prmtop_sections_rs(path).map_err(io_error_to_pyerr)
-}
-
-/// Parse POINTERS lines into the historical meta map (raw + derived counts).
-#[pyfunction]
-pub fn prmtop_parse_pointers(
-    lines: Vec<String>,
-) -> PyResult<std::collections::HashMap<String, i64>> {
-    parse_pointers_rs(&lines).map_err(PyValueError::new_err)
-}
-
-/// Parse Fortran ``20a4`` name fields from section lines.
-#[pyfunction]
-pub fn prmtop_parse_a4_names(lines: Vec<String>) -> Vec<String> {
-    parse_a4_names_rs(&lines)
-}
-
-/// Decode bond pointer tables → ``(type, i, j, K, r0)`` (atoms 1-based).
-#[pyfunction]
-#[allow(
-    clippy::type_complexity,
-    reason = "Tuple fields match the public Python record format"
-)]
-pub fn prmtop_decode_bond_params(
-    pointers: Vec<i64>,
-    force_k: Vec<f64>,
-    equil: Vec<f64>,
-) -> PyResult<Vec<(i64, i64, i64, f64, f64)>> {
-    decode_bond_params_rs(&pointers, &force_k, &equil).map_err(PyValueError::new_err)
-}
-
-/// Decode angle pointer tables → ``(type, i, j, k, K, theta0_deg)`` (1-based).
-#[pyfunction]
-#[allow(
-    clippy::type_complexity,
-    reason = "Tuple fields match the public Python record format"
-)]
-pub fn prmtop_decode_angle_params(
-    pointers: Vec<i64>,
-    force_k: Vec<f64>,
-    equil_rad: Vec<f64>,
-) -> PyResult<Vec<(i64, i64, i64, i64, f64, f64)>> {
-    decode_angle_params_rs(&pointers, &force_k, &equil_rad).map_err(PyValueError::new_err)
-}
-
-/// Decode dihedral pointer tables → ``(type, i, j, k, l, K, phase, n)`` (1-based).
-#[pyfunction]
-#[allow(
-    clippy::type_complexity,
-    reason = "Tuple fields match the public Python record format"
-)]
-pub fn prmtop_decode_dihedral_params(
-    pointers: Vec<i64>,
-    force_k: Vec<f64>,
-    phase: Vec<f64>,
-    periodicity: Vec<f64>,
-) -> PyResult<Vec<(i64, i64, i64, i64, i64, f64, f64, i64)>> {
-    decode_dihedral_params_rs(&pointers, &force_k, &phase, &periodicity)
-        .map_err(PyValueError::new_err)
-}
-
-/// Per-atom LJ ``(atom_1based, sigma, epsilon)`` from ICO + A/B.
-#[pyfunction]
-#[pyo3(signature = (
-    n_atom,
-    n_types,
-    atom_type_index,
-    nonbonded_parm_index,
-    acoef,
-    bcoef,
-    hbond_a = vec![],
-    hbond_b = vec![],
-))]
-#[allow(clippy::too_many_arguments, reason = "Public Python keyword arguments")]
-pub fn prmtop_decode_nonbond_params(
-    n_atom: usize,
-    n_types: usize,
-    atom_type_index: Vec<i64>,
-    nonbonded_parm_index: Vec<i64>,
-    acoef: Vec<f64>,
-    bcoef: Vec<f64>,
-    hbond_a: Vec<f64>,
-    hbond_b: Vec<f64>,
-) -> PyResult<Vec<(i64, f64, f64)>> {
-    decode_nonbond_params_rs(
-        n_atom,
-        n_types,
-        &atom_type_index,
-        &nonbonded_parm_index,
-        &acoef,
-        &bcoef,
-        &hbond_a,
-        &hbond_b,
-    )
-    .map_err(PyValueError::new_err)
-}
-
 /// Read an Antechamber ``.ac`` file into a Frame.
 #[pyfunction]
 pub fn read_ac(path: PathBuf) -> PyResult<PyFrame> {
@@ -1380,60 +1263,6 @@ fn prep_residue_to_pydict<'py>(py: Python<'py>, res: &PrepResidue) -> PyResult<B
     }
 }
 
-/// Read an AMBER FRCMOD file into a section dict.
-#[pyfunction]
-pub fn read_frcmod(path: PathBuf) -> PyResult<std::collections::HashMap<String, String>> {
-    let path = path_str(&path)?;
-    let file = read_frcmod_rs(path).map_err(io_error_to_pyerr)?;
-    Ok(frcmod_to_map(file))
-}
-
-/// Parse FRCMOD text into a section dict.
-#[pyfunction]
-pub fn parse_frcmod(text: &str) -> PyResult<std::collections::HashMap<String, String>> {
-    Ok(frcmod_to_map(parse_frcmod_rs(text)))
-}
-
-/// Write FRCMOD sections (dict with remark/mass/bond/…) to a path.
-#[pyfunction]
-pub fn write_frcmod(
-    path: PathBuf,
-    sections: std::collections::HashMap<String, String>,
-) -> PyResult<()> {
-    let path = path_str(&path)?;
-    let file = map_to_frcmod(sections);
-    write_frcmod_rs(path, &file).map_err(io_error_to_pyerr)
-}
-
-fn frcmod_to_map(file: FrcmodFile) -> std::collections::HashMap<String, String> {
-    let mut m = std::collections::HashMap::new();
-    m.insert("remark".into(), file.remark);
-    m.insert("raw_text".into(), file.raw_text);
-    for key in ["mass", "bond", "angle", "dihe", "improper", "nonbon"] {
-        m.insert(
-            key.into(),
-            file.sections.get(key).cloned().unwrap_or_default(),
-        );
-    }
-    m
-}
-
-fn map_to_frcmod(sections: std::collections::HashMap<String, String>) -> FrcmodFile {
-    let mut file = FrcmodFile {
-        remark: sections.get("remark").cloned().unwrap_or_default(),
-        raw_text: sections.get("raw_text").cloned().unwrap_or_default(),
-        sections: Default::default(),
-    };
-    for key in ["mass", "bond", "angle", "dihe", "improper", "nonbon"] {
-        if let Some(v) = sections.get(key)
-            && !v.is_empty()
-        {
-            file.sections.insert(key.into(), v.clone());
-        }
-    }
-    file
-}
-
 /// Write a Frame to a Tripos MOL2 file.
 ///
 /// Expects format-native atom columns (``atom_type``, optional
@@ -1450,48 +1279,6 @@ fn map_to_frcmod(sections: std::collections::HashMap<String, String>) -> FrcmodF
 pub fn write_mol2(path: PathBuf, frame: &PyFrame) -> PyResult<()> {
     let path = path_str(&path)?;
     frame.with_frame(|f| write_mol2_rs(path, f).map_err(io_error_to_pyerr))?
-}
-
-/// Read a GROMACS topology (``.top`` / ``.itp``) **structure** file.
-///
-/// Structure only (``[ atoms ]``, ``[ bonds ]``, ``[ pairs ]``,
-/// ``[ angles ]``, ``[ dihedrals ]``). Force-field parameter tables and
-/// ``#include`` expansion are not handled.
-///
-/// Connectivity atom indices are **1-based** as written in the file.
-///
-/// Parameters
-/// ----------
-/// path : str
-///     Path to a ``.top`` or ``.itp`` file.
-///
-/// Returns
-/// -------
-/// Frame
-///     Blocks for atoms and any connectivity sections present.
-#[pyfunction]
-pub fn read_top(path: PathBuf) -> PyResult<PyFrame> {
-    let path = path_str(&path)?;
-    let frame = read_top_rs(path).map_err(io_error_to_pyerr)?;
-    PyFrame::from_core_frame(frame)
-}
-
-/// Write a Frame as a minimal GROMACS topology structure file.
-///
-/// Emits ``[ moleculetype ]``, ``[ atoms ]``, optional connectivity
-/// sections, then ``[ system ]`` / ``[ molecules ]``. Molecule name is
-/// taken from ``frame.meta["name"]`` (fallback ``"MOL"``).
-///
-/// Parameters
-/// ----------
-/// path : str
-///     Output file path.
-/// frame : Frame
-///     Frame to write (atoms + optional bonds/pairs/angles/dihedrals).
-#[pyfunction]
-pub fn write_top(path: PathBuf, frame: &PyFrame) -> PyResult<()> {
-    let path = path_str(&path)?;
-    frame.with_frame(|f| write_top_rs(path, f).map_err(io_error_to_pyerr))?
 }
 
 /// Read a LAMMPS molecule template (native ``.mol`` or JSON).

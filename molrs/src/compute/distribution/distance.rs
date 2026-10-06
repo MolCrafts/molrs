@@ -12,10 +12,9 @@ use molrs::types::F;
 
 use crate::compute::error::ComputeError;
 
-use crate::compute::util::MicHelper;
-
 use super::observable::{AtomGroups, Observable, displacement, positions};
 use crate::op::vec3::norm;
+use molrs::spatial::simbox::{Mic, SimBox};
 
 /// Distance between the two atoms of each pair (arity 2), minimum-image under PBC.
 #[derive(Debug, Clone, Default)]
@@ -50,7 +49,7 @@ impl Observable for DistanceObservable {
         }
         let (xp, yp, zp) = positions(frame)?;
         let (xs, ys, zs) = (xp.slice(), yp.slice(), zp.slice());
-        let mic = MicHelper::from_simbox(frame.simbox_ref());
+        let mic = frame.simbox_ref().map_or(Mic::Free, SimBox::mic);
         out.clear();
         out.reserve(groups.len());
         for g in 0..groups.len() {

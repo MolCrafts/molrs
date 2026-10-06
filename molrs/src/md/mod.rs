@@ -1,4 +1,7 @@
-//! In-process molecular-dynamics engine.
+//! In-process molecular-dynamics engine: integrators and force providers.
+//! Energy kernels are not part of `md`; they live in
+//! [`crate::ff::potential`] and reach the integrators through a
+//! [`ForceProvider`](crate::md::ForceProvider).
 //!
 //! Neighbour lists: [`crate::spatial::neighbors`] (`NeighborList`,
 //! `VerletSkin`). Science here:
@@ -10,11 +13,10 @@
 //!   table, `Plain` for an external field. The providers below hold a
 //!   `Vec<Member>` and match on it, so no step re-derives which is which.
 //!   [`crate::ff::potential::Potentials`] sums them as one potential.
-//! * [`crate::ff::potential::pair::PairPotential`] defines pair-energy and
-//!   pair-force evaluation. [`crate::ff::potential::pair::LJCut`] implements
-//!   the `lj/cut` kernel. The integrator supplies current neighbour pairs via
-//!   [`crate::ff::potential::Potential::calc_energy_forces_with_pairs`];
-//!   potentials do not own or update the skin.
+//! * Pair kernels implement [`crate::ff::potential::pair::PairPotential`];
+//!   the force provider supplies current neighbour pairs via
+//!   [`crate::ff::potential::Potential::calc_energy_forces_with_pairs`], so a
+//!   potential neither owns nor updates the skin.
 //! * [`crate::md::ForceProvider`] is the force-field seam: the potential, the
 //!   neighbour bookkeeping and the periodic régime all live behind it, and the
 //!   integrator sees only energy, forces and virial. [`crate::md::Direct`],
@@ -24,10 +26,6 @@
 //!   `(dt, forces, mass, simbox)` (Langevin also `gamma`, `kbt`, `seed`). The
 //!   provider owns the neighbour state, so the integrator neither holds a skin
 //!   nor knows whether one exists.
-//!
-//! Pair-kernel types are named after the LAMMPS `pair_style` vocabulary:
-//! [`crate::ff::potential::pair::LJCut`] ↔ `lj/cut`; other kernels follow the same mapping
-//! (`coul/cut` → `CoulCut`, `lj/cut/coul/cut` → `LJCutCoulCut`, …).
 //!
 //! No `bind_*` façades. Compose required pieces in the constructor.
 

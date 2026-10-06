@@ -35,7 +35,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use molrs::AtomId;
+use molrs::NodeId;
 
 use crate::ff::forcefield::Params;
 use crate::ff::params::{EmpiricalTable, ParmTable, ParmchkTable, ParmchkWeights};
@@ -97,14 +97,14 @@ impl Analogs {
     /// Run `chk_bond` then `chk_angle` over the molecule (`order`, each atom's
     /// `neighbours`, `type_of`).
     pub(super) fn new(
-        order: &[AtomId],
-        neighbours: &[Vec<AtomId>],
-        type_of: &HashMap<AtomId, &'static str>,
+        order: &[NodeId],
+        neighbours: &[Vec<NodeId>],
+        type_of: &HashMap<NodeId, &'static str>,
         table: ParmTable,
         parmchk: &ParmchkTable,
         empirical: EmpiricalTable,
     ) -> Self {
-        let index: HashMap<AtomId, usize> =
+        let index: HashMap<NodeId, usize> =
             order.iter().enumerate().map(|(i, &a)| (a, i)).collect();
         let bonded: Vec<BTreeSet<usize>> = neighbours
             .iter()

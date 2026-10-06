@@ -76,15 +76,16 @@ impl ElementGraph for Atomistic {
 mod tests {
     use super::ElementGraph;
     use molrs::error::MolRsError;
-    use molrs::system::atomistic::{AtomId, Atomistic};
+    use molrs::system::atomistic::Atomistic;
     use molrs::system::bond::BondNumber;
+    use molrs::system::molgraph::NodeId;
     use molrs::system::molgraph::{Atom, MolGraph};
     use molrs::system::port::PortKind;
 
     /// `H–C–C–H` with a `$` port on each C–H valence and a `frag_id` on every
     /// atom: four atoms, three bonds, two ports, two distinct fragment labels
     /// (so a per-atom check cannot pass by broadcasting a single label).
-    fn ported_pair() -> (Atomistic, [AtomId; 4]) {
+    fn ported_pair() -> (Atomistic, [NodeId; 4]) {
         let mut frag = Atomistic::new();
         let c0 = frag.add_atom_xyz("C", 0.0, 0.0, 0.0);
         let c1 = frag.add_atom_xyz("C", 1.54, 0.0, 0.0);

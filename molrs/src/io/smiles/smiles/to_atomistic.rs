@@ -23,14 +23,15 @@ use crate::io::smiles::smiles::canonical_element_symbol;
 use molrs::Element;
 use molrs::error::MolRsError;
 use molrs::store::keys;
-use molrs::system::atomistic::{AtomId, Atomistic};
+use molrs::system::atomistic::Atomistic;
+use molrs::system::molgraph::NodeId;
 use molrs::system::molgraph::PropValue;
 
 /// Convert a parsed SMILES IR into an [`Atomistic`] molecular graph.
 ///
 /// This resolves ring closures into bonds, sets atom properties (charge,
 /// isotope, chirality), and records bond orders. Implicit hydrogens are
-/// **not** added — call [`add_hydrogens`](crate::perceive::hydrogens::add_hydrogens)
+/// **not** added — call [`Perceive::find_hydrogens`](crate::perceive::Perceive::find_hydrogens)
 /// separately if needed.
 ///
 /// # Aromaticity
@@ -50,7 +51,7 @@ use molrs::system::molgraph::PropValue;
 /// A bracket atom states its hydrogen count exactly, so every bracket atom
 /// gets an `h_count` component — `0` when the notation omits it. Organic-subset
 /// atoms get none and are left to valence-based
-/// [`add_hydrogens`](crate::perceive::hydrogens::add_hydrogens).
+/// [`Perceive::find_hydrogens`](crate::perceive::Perceive::find_hydrogens).
 ///
 /// # Errors
 ///
@@ -95,7 +96,7 @@ pub fn to_atomistic(ir: &SmilesIR) -> Result<Atomistic, SmilesError> {
 /// walk, so descriptor-free input gives the same atoms, bonds and properties
 /// through either entry point.
 ///
-/// The second return value pairs each descriptor with the [`AtomId`] of the
+/// The second return value pairs each descriptor with the [`NodeId`] of the
 /// atom it binds to. Its order is a contract, not an accident: the later
 /// stages that turn descriptors into *ports* — the named joining sites a
 /// fragment offers — index this vector, so the order is fixed as atom-visit
@@ -124,7 +125,7 @@ pub fn to_atomistic(ir: &SmilesIR) -> Result<Atomistic, SmilesError> {
 /// out to the caller is what this entry point is for.
 pub fn fragment_to_atomistic(
     ir: &SmilesIR,
-) -> Result<(Atomistic, Vec<(AtomId, BondingDescriptor)>), SmilesError> {
+) -> Result<(Atomistic, Vec<(NodeId, BondingDescriptor)>), SmilesError> {
     let mut builder = Builder::new(ir, /*collect_descriptors*/ true);
 
     for component in &ir.components {
@@ -145,7 +146,7 @@ pub fn fragment_to_atomistic(
 
 /// Pending ring closure: the atom that opened it and the optional bond kind.
 struct PendingRing {
-    atom: AtomId,
+    atom: NodeId,
     bond: Option<BondKind>,
     span: Span,
 }
@@ -175,7 +176,7 @@ struct Builder<'a> {
     open_rings: HashMap<u16, PendingRing>,
     /// Atoms the notation declared aromatic (lowercase symbol). Needed while
     /// building because a symbol-less bond between two of them is aromatic.
-    aromatic_atoms: HashSet<AtomId>,
+    aromatic_atoms: HashSet<NodeId>,
     /// Reference to the original IR for error messages.
     ir: &'a SmilesIR,
     /// Which entry point this walk serves: `true` on the fragment path, which
@@ -186,7 +187,7 @@ struct Builder<'a> {
     /// the plain path, which never gets past the guard in
     /// [`Builder::add_atom_node`]. Owned, not borrowed: the map is returned by
     /// value.
-    descriptors: Vec<(AtomId, BondingDescriptor)>,
+    descriptors: Vec<(NodeId, BondingDescriptor)>,
 }
 
 impl<'a> Builder<'a> {
@@ -201,14 +202,14 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// Build a chain, returning the [`AtomId`] of the head atom.
+    /// Build a chain, returning the [`NodeId`] of the head atom.
     ///
     /// `prev` is the atom to bond the head to (if any — `None` for top-level).
     fn build_chain(
         &mut self,
         chain: &Chain,
-        prev: Option<(AtomId, Option<BondKind>)>,
-    ) -> Result<AtomId, SmilesError> {
+        prev: Option<(NodeId, Option<BondKind>)>,
+    ) -> Result<NodeId, SmilesError> {
         let head_id = self.add_atom_node(&chain.head)?;
 
         // Bond head to the previous atom (if coming from a branch or sequence).
@@ -260,7 +261,7 @@ impl<'a> Builder<'a> {
     /// the light elements. The wildcard (`*`, and the bracket `[*]`, `[A]`,
     /// `[a]`) names no element and carries no mass, isotope or not: an isotope
     /// on a wildcard is an attachment label, not a nucleus.
-    fn add_atom_node(&mut self, node: &AtomNode) -> Result<AtomId, SmilesError> {
+    fn add_atom_node(&mut self, node: &AtomNode) -> Result<NodeId, SmilesError> {
         if !self.collect_descriptors && !node.descriptors.is_empty() {
             return Err(SmilesError::new(
                 SmilesErrorKind::DescriptorsUnconvertible,
@@ -347,8 +348,8 @@ impl<'a> Builder<'a> {
 
     fn add_bond(
         &mut self,
-        a: AtomId,
-        b: AtomId,
+        a: NodeId,
+        b: NodeId,
         bond: Option<BondKind>,
     ) -> Result<(), SmilesError> {
         let bid = self
@@ -408,7 +409,7 @@ impl<'a> Builder<'a> {
     /// # Errors
     ///
     /// [`SmilesErrorKind::Build`] at `span` when the marker cannot be written.
-    fn mark_aromatic(&mut self, id: AtomId, span: Span) -> Result<(), SmilesError> {
+    fn mark_aromatic(&mut self, id: NodeId, span: Span) -> Result<(), SmilesError> {
         self.aromatic_atoms.insert(id);
         self.mol
             .set_atom(id, "is_aromatic", PropValue::Int(1))
@@ -417,7 +418,7 @@ impl<'a> Builder<'a> {
 
     fn handle_ring_closure(
         &mut self,
-        current: AtomId,
+        current: NodeId,
         rnum: u16,
         bond: Option<BondKind>,
         span: Span,
@@ -476,7 +477,7 @@ impl<'a> Builder<'a> {
     /// [`SmilesErrorKind::Build`] at `span` — see [`Builder::build_error`].
     fn set_mass(
         &mut self,
-        id: AtomId,
+        id: NodeId,
         element: &str,
         isotope: Option<u16>,
         span: Span,
@@ -496,7 +497,7 @@ impl<'a> Builder<'a> {
     /// # Errors
     ///
     /// [`SmilesErrorKind::Build`] at `span` — see [`Builder::build_error`].
-    fn set_prop(&mut self, id: AtomId, key: &str, val: f64, span: Span) -> Result<(), SmilesError> {
+    fn set_prop(&mut self, id: NodeId, key: &str, val: f64, span: Span) -> Result<(), SmilesError> {
         self.mol
             .set_atom(id, key, val)
             .map_err(|e| self.build_error(&e, span))
@@ -509,7 +510,7 @@ impl<'a> Builder<'a> {
     /// [`SmilesErrorKind::Build`] at `span` — see [`Builder::build_error`].
     fn set_prop_str(
         &mut self,
-        id: AtomId,
+        id: NodeId,
         key: &str,
         val: &str,
         span: Span,
@@ -920,14 +921,14 @@ mod tests {
 
     // -- fragment dialect: bonding descriptors ------------------------------
 
-    fn fragment_to_mol(input: &str) -> (Atomistic, Vec<(AtomId, BondingDescriptor)>) {
+    fn fragment_to_mol(input: &str) -> (Atomistic, Vec<(NodeId, BondingDescriptor)>) {
         let ir = parse_fragment_smiles(input).unwrap();
         fragment_to_atomistic(&ir)
             .unwrap_or_else(|e| panic!("fragment_to_atomistic({input:?}) failed: {e}"))
     }
 
     /// Atom ids in the order the walker created them.
-    fn atom_ids(mol: &Atomistic) -> Vec<AtomId> {
+    fn atom_ids(mol: &Atomistic) -> Vec<NodeId> {
         mol.atoms().map(|(id, _)| id).collect()
     }
 

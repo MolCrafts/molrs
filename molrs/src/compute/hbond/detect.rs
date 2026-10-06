@@ -5,7 +5,8 @@
 //! neighbour search, then gated by the distance and angle criterion (see
 //! [`HBondCriterion`]). molrs gathers candidates with the existing
 //! [`NeighborQuery`] cross-query and evaluates the geometry under the minimum
-//! image via [`MicHelper`] — the same MIC the rest of `compute` uses.
+//! image via [`Mic`](molrs::spatial::simbox::Mic) — the same MIC the rest of
+//! `compute` uses.
 
 use molrs::spatial::neighbors::NeighborQuery;
 use molrs::store::frame_access::FrameAccess;
@@ -13,10 +14,11 @@ use molrs::types::F;
 
 use super::criterion::{DistKind, HBondCriterion};
 use crate::compute::error::ComputeError;
+use crate::compute::positions::get_positions_ref;
 use crate::compute::result::ComputeResult;
 use crate::compute::traits::Compute;
-use crate::compute::util::{MicHelper, get_positions_ref};
-use crate::op::vec3::{dot, norm};
+use crate::op::vec3::{dot, norm, sub};
+use molrs::spatial::simbox::{Mic, SimBox};
 
 /// A single detected D–H···A hydrogen bond (atom indices into the frame).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -97,7 +99,7 @@ impl HBonds {
             }
         }
 
-        let mic = MicHelper::from_simbox(frame.simbox_ref());
+        let mic = frame.simbox_ref().map_or(Mic::Free, SimBox::mic);
 
         // Candidate search: query points are the donor heavy atom (DonorAcceptor)
         // or the bridging hydrogen (HydrogenAcceptor); reference points are the
@@ -156,7 +158,7 @@ impl HBonds {
             let apos = pos(acceptor);
 
             // r(D···A) under MIC.
-            let v_da = mic.disp(dpos, apos);
+            let v_da = mic.apply(sub(apos, dpos));
             let r_da = norm(v_da);
             let dist_ok = match self.criterion.dist_kind {
                 // NeighborQuery already enforced r(D···A) ≤ cutoff.
@@ -166,8 +168,8 @@ impl HBonds {
             };
 
             // D–H···A angle at the hydrogen: angle between H→D and H→A.
-            let v_hd = mic.disp(hpos, dpos);
-            let v_ha = mic.disp(hpos, apos);
+            let v_hd = mic.apply(sub(dpos, hpos));
+            let v_ha = mic.apply(sub(apos, hpos));
             let n_hd = norm(v_hd);
             let n_ha = norm(v_ha);
             if n_hd == 0.0 || n_ha == 0.0 {

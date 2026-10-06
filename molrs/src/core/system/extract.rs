@@ -357,7 +357,7 @@ mod tests {
     use crate::system::coarsegrain::CoarseGrain;
     use crate::system::molgraph::Atom;
 
-    fn linear_chain(n: usize) -> (Atomistic, Vec<crate::system::atomistic::AtomId>) {
+    fn linear_chain(n: usize) -> (Atomistic, Vec<crate::system::molgraph::NodeId>) {
         let mut mol = Atomistic::new();
         let mut ids = Vec::with_capacity(n);
         for i in 0..n {

@@ -59,8 +59,9 @@ use std::f64::consts::PI;
 use ndarray::{Array2, ArrayD, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{term_table, validate_coords};
+use crate::ff::potential::geometry::{sub3, term_table, validate_coords};
 use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::op::vec3::{cross, dot, scale};
 use molrs::store::frame::Frame;
 use molrs::store::schema::block_names::CMAPS;
 use molrs::store::schema::consts::{ATOMI, ATOMJ, ATOMK, ATOML, ATOMM, TYPE};
@@ -262,35 +263,6 @@ fn spline(y: &[F], dx: F) -> Vec<F> {
     ddy
 }
 
-#[inline]
-fn sub(a: &[F], i: usize, j: usize) -> [F; 3] {
-    [
-        a[3 * i] - a[3 * j],
-        a[3 * i + 1] - a[3 * j + 1],
-        a[3 * i + 2] - a[3 * j + 2],
-    ]
-}
-
-#[inline]
-fn neg(v: [F; 3]) -> [F; 3] {
-    [-v[0], -v[1], -v[2]]
-}
-
-/// `u × v`, spelled as `fix cmap` spells its cross products.
-#[inline]
-fn cross(u: [F; 3], v: [F; 3]) -> [F; 3] {
-    [
-        u[1] * v[2] - u[2] * v[1],
-        u[2] * v[0] - u[0] * v[2],
-        u[0] * v[1] - u[1] * v[0],
-    ]
-}
-
-#[inline]
-fn dot(u: [F; 3], v: [F; 3]) -> F {
-    u[0] * v[0] + u[1] * v[1] + u[2] * v[2]
-}
-
 /// LAMMPS `FixCMAP::dihedral_angle_atan2`, degrees.
 #[inline]
 fn dihedral_deg(f: [F; 3], a: [F; 3], b: [F; 3], absg: F) -> F {
@@ -334,13 +306,13 @@ impl CmapCharmm {
         let mut energy = 0.0;
         for t in 0..n_terms {
             let [i1, i2, i3, i4, i5] = atoms(t);
-            let vb21 = sub(x, i2, i1);
-            let vb12 = neg(vb21);
-            let vb32 = sub(x, i3, i2);
-            let vb23 = neg(vb32);
-            let vb34 = sub(x, i3, i4);
-            let vb43 = neg(vb34);
-            let vb45 = sub(x, i4, i5);
+            let vb21 = sub3(x, i2, x, i1);
+            let vb12 = scale(vb21, -1.0);
+            let vb32 = sub3(x, i3, x, i2);
+            let vb23 = scale(vb32, -1.0);
+            let vb34 = sub3(x, i3, x, i4);
+            let vb43 = scale(vb34, -1.0);
+            let vb45 = sub3(x, i4, x, i5);
 
             let a1 = cross(vb12, vb23);
             let b1 = cross(vb43, vb23);

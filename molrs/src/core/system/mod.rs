@@ -22,4 +22,4 @@ pub use bond::{BondNumber, BondType};
 pub use bond_weights::BondDistanceWeights;
 pub use extract::{ExtractedBall, InducedSubgraph};
 pub use link::{LinkError, LinkManyError};
-pub use port::{Port, PortId, PortKind};
+pub use port::{Port, PortKind};

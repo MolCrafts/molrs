@@ -55,7 +55,8 @@ use crate::io::smiles::cgsmiles::parser::CgParser;
 use crate::io::smiles::chem::ast::{BondKind, BondingDescriptor, DescriptorKind, SmilesIR};
 use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
 use crate::io::smiles::smiles::fragment_to_atomistic;
-use molrs::system::atomistic::{AtomId, Atomistic};
+use molrs::system::atomistic::Atomistic;
+use molrs::system::molgraph::NodeId;
 use molrs::system::molgraph::PropValue;
 
 /// Pair the bonding descriptors of every level of `ir`, coarsest level first.
@@ -218,7 +219,7 @@ fn derived_edges(
 /// different molecule, not a different labelling.
 ///
 /// The map is in visit order, so one atom's descriptors are contiguous in it
-/// and the grouping is a scan over consecutive equal [`AtomId`]s. A port keeps
+/// and the grouping is a scan over consecutive equal [`NodeId`]s. A port keeps
 /// indexing the instance's flat map, so a [`PairEnd::Body`] is unaffected by
 /// how the ports are grouped.
 ///
@@ -273,7 +274,7 @@ fn last_level_ports(
             .map_err(|e| CgParser::rebase(e, offset, input))?;
         let mut entities: Vec<Vec<Port>> = Vec::new();
         let mut entity: Vec<Port> = Vec::new();
-        let mut current: Option<AtomId> = None;
+        let mut current: Option<NodeId> = None;
         for (port, (atom, descriptor)) in map.iter().enumerate() {
             let props = mol
                 .get_atom(*atom)
@@ -457,7 +458,7 @@ fn flip(kind: DescriptorKind) -> DescriptorKind {
 
 /// One converted fragment body: the heavy-atom graph exactly as `Builder`
 /// wrote it and its port map in walker order (see [`FragmentCache`]).
-pub(super) type ConvertedBody = (Atomistic, Vec<(AtomId, BondingDescriptor)>);
+pub(super) type ConvertedBody = (Atomistic, Vec<(NodeId, BondingDescriptor)>);
 
 /// One converted atomistic body per fragment **definition**, with its port
 /// map.
@@ -498,7 +499,7 @@ impl FragmentCache {
     ///
     /// The returned map is the port order: index *p* of the map is port *p* of
     /// every instance of this definition, so a [`PairEnd::Body`] and an
-    /// [`AtomId`] cannot disagree.
+    /// [`NodeId`] cannot disagree.
     ///
     /// # Errors
     ///

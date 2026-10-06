@@ -979,6 +979,60 @@ energy, forces = pots.calc_energy_forces(pos)
 | `from molpy.md import LJCut` | `from molpy.potential import LJCut` |
 | `molrs.md.Potentials` | `molrs.ff.Potentials` |
 
+### Module ownership
+
+Every module has one job, and every public symbol one path. Paths that moved
+or went away:
+
+**Core, io, perceive, compute, conformer, md (single-responsibility pass A2)**
+
+- Minimum image: `molrs::compute::util` is gone. `MicHelper` is
+  `molrs::spatial::simbox::Mic` (`SimBox::mic()`, or `Mic::ortho(lengths)`
+  for bare edge lengths); `get_positions_ref` is crate-private.
+- `molrs::op::random::standard_normal` is the one Gaussian draw (md had two
+  private copies).
+- `molrs::conformer::etkdg` is private (`generate_3d_impl` was a second door
+  to `Conformer::generate`); its distance-geometry objectives are internal,
+  and the stages minimize with `molrs::optimize::minimize_lbfgs_rms` instead
+  of a steepest-descent of their own, so embedded geometries differ.
+- Removed from `io` (force-field formats belong to `ff::forcefield`):
+  - `molrs::io::data::top::*` (`read_top`, `read_top_frame`, `write_top`,
+    `TopReader`, `TopFrameWriter`) → `ff::forcefield::readers::gromacs::
+    read_system` / `ff::forcefield::writers::gromacs::write_system_str`
+    (0-based indices). Python: `molrs.io.read_top` →
+    `molrs.ff.read_gromacs_system`; `molrs.io.write_top` is removed (the
+    Rust system writer has no Python binding yet).
+  - `molrs::io::data::frcmod::*` (`read_frcmod`, `parse_frcmod`,
+    `format_frcmod`, `write_frcmod`, `FrcmodFile`) → `ff::forcefield::
+    writers::frcmod::write_amber_frcmod`. Python: `molrs.io.read_frcmod`,
+    `parse_frcmod`, `write_frcmod` removed (`molrs.ff.write_amber_frcmod`
+    writes one).
+  - `molrs::io::data::prmtop_tables::decode_{bond,angle,dihedral,nonbond}_params`
+    and their row aliases, and `io::data::prmtop::read_amber_prmtop_sections`;
+    `parse_pointers` / `parse_a4_names` are crate-private. Python:
+    `molrs.io.prmtop_parse_pointers`, `prmtop_parse_a4_names`,
+    `prmtop_decode_*`, `read_amber_prmtop_sections` removed
+    (`molrs.ff.read_amber_prmtop_ff` reads the parameters).
+- One SMARTS parser: `molrs::io::smiles::parse_smarts`, which
+  `perceive::smarts::SmartsPattern` now compiles from. Its IR gains
+  `AtomPrimitive::{AtomicNumber, RingSizeRange, RingBondCount, ContextLabel}`;
+  `[#6]` is `AtomicNumber(6)`, no longer `Element { "C" }`. `perceive::smarts`
+  needs the `smiles` feature (`ff` enables it).
+- One way to perceive onto a graph, the `molrs::perceive::Perceive` builder.
+  Crate-private now: `perceive::hydrogens::add_hydrogens` (→
+  `Perceive::find_hydrogens`), `aromaticity::perceive_aromaticity` (→
+  `find_aromaticity`), `bond_order::find_bond_orders`,
+  `bond_type::{find_bond_types, find_kekule_orders}` (→ the same-named
+  builder methods), `bond_type::find_bond_types_from_connectivity` (→
+  `Perceive::find_bond_types_from_connectivity`),
+  `bond_type::assign_kekule_numbers`. The side-table queries stay public.
+- `molrs::perceive::{Coarsener, CoarsenError}` → `molrs::builder::{Coarsener,
+  CoarsenError}` (Python path unchanged: `molrs.perceive.Coarsener`).
+- One name per handle and payload type: `AtomId`, `BeadId` → `NodeId`;
+  `BondId`, `AngleId`, `DihedralId`, `ImproperId`, `PortId` → `RelationId`;
+  `Bead` → `Atom`; `Bond`, `Angle`, `Dihedral`, `Improper` → `Relation`
+  (all in `molrs::system::molgraph` and at the crate root).
+
 ### From 0.15.0: the 0.15.1 changes
 
 molrs 0.15.1, a patch on the 0.15 ABI line, was versioned on `master` but

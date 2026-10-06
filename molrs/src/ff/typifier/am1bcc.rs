@@ -20,7 +20,7 @@
 //! correction row is an error, never a defaulted value.
 
 use molrs::store::keys;
-use molrs::{AtomId, Atomistic, BondId};
+use molrs::{Atomistic, NodeId, RelationId};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::OnceLock;
@@ -407,7 +407,7 @@ pub(crate) enum BccIncrementError {
     /// No row (and no aliased row) covers this bond.
     MissingRow {
         /// The bond, for the message.
-        bond: BondId,
+        bond: RelationId,
         /// BCC atom type of one endpoint.
         left: String,
         /// BCC atom type of the other endpoint.
@@ -469,8 +469,8 @@ pub(crate) fn bcc_increments(
     mol: &Atomistic,
     types: &[&str],
 ) -> Result<Vec<f64>, BccIncrementError> {
-    let atom_ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-    let index: HashMap<AtomId, usize> = atom_ids
+    let atom_ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
+    let index: HashMap<NodeId, usize> = atom_ids
         .iter()
         .enumerate()
         .map(|(i, aid)| (*aid, i))
@@ -542,7 +542,7 @@ impl BCCCorrector {
     /// A message when an atom has no `type`, an atom has no base `charge`, or the
     /// table has no row for a bond — never a silent zero for any of them.
     pub fn apply(&self, mol: &mut Atomistic) -> Result<(), String> {
-        let atom_ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
+        let atom_ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
         let types: Vec<String> = atom_ids
             .iter()
             .map(|aid| {

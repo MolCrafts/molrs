@@ -21,7 +21,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use molrs::AtomId;
+use molrs::NodeId;
 
 use crate::ff::params::{ParmDihedralRow, ParmTable, ParmchkTable};
 use crate::ff::typifier::estimate::Provenance;
@@ -104,13 +104,13 @@ impl Torsions {
     /// Run parmchk2's torsion search over the molecule (`order`, each atom's
     /// `neighbours`, `type_of`).
     pub(super) fn new(
-        order: &[AtomId],
-        neighbours: &[Vec<AtomId>],
-        type_of: &HashMap<AtomId, &'static str>,
+        order: &[NodeId],
+        neighbours: &[Vec<NodeId>],
+        type_of: &HashMap<NodeId, &'static str>,
         table: ParmTable,
         parmchk: &ParmchkTable,
     ) -> Self {
-        let index: HashMap<AtomId, usize> =
+        let index: HashMap<NodeId, usize> =
             order.iter().enumerate().map(|(i, &a)| (a, i)).collect();
         let bonded: Vec<BTreeSet<usize>> = neighbours
             .iter()

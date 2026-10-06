@@ -16,7 +16,7 @@
 use molrs::Element;
 use molrs::perceive::rings::{RingInfo, find_rings};
 use molrs::system::molgraph::PropValue;
-use molrs::{AtomId, Atomistic};
+use molrs::{Atomistic, NodeId};
 
 /// Bond order (Kekulé): we treat the SDF integer order verbatim.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,9 +45,9 @@ impl BondOrder {
 #[derive(Debug, Clone)]
 pub struct Topo {
     /// Atom ids in stable iteration order (this defines the public index).
-    pub atom_ids: Vec<AtomId>,
+    pub atom_ids: Vec<NodeId>,
     /// atom id -> dense index into `atom_ids`.
-    idx_of: std::collections::HashMap<AtomId, usize>,
+    idx_of: std::collections::HashMap<NodeId, usize>,
     /// atomic number per atom index.
     pub atno: Vec<u8>,
     /// formal charge per atom index (from `"formal_charge"` prop, default 0).
@@ -75,8 +75,8 @@ impl Topo {
     ///
     /// Returns `Err(symbol)` for an atom whose element symbol is unknown.
     pub fn build(mol: &Atomistic) -> Result<Self, String> {
-        let atom_ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-        let idx_of: std::collections::HashMap<AtomId, usize> = atom_ids
+        let atom_ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
+        let idx_of: std::collections::HashMap<NodeId, usize> = atom_ids
             .iter()
             .enumerate()
             .map(|(i, &id)| (id, i))
@@ -144,8 +144,8 @@ impl Topo {
         self.atom_ids.len()
     }
 
-    /// `AtomId` for a dense atom index.
-    pub fn id(&self, i: usize) -> AtomId {
+    /// `NodeId` for a dense atom index.
+    pub fn id(&self, i: usize) -> NodeId {
         self.atom_ids[i]
     }
 

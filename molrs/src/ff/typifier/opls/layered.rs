@@ -4,7 +4,7 @@
 //! [`OplsDependencyAnalyzer`] to order defs so that a def referencing a type
 //! name through a `%label` context predicate is only matched *after* that type
 //! has been assigned in an earlier level. It accumulates a
-//! `HashMap<AtomId, String>` of assigned types and feeds it back as the SMARTS
+//! `HashMap<NodeId, String>` of assigned types and feeds it back as the SMARTS
 //! **context-label map** (so `%opls_NNN` predicates can read the current
 //! assignments).
 //!
@@ -32,7 +32,7 @@
 use std::collections::{HashMap, HashSet};
 
 use molrs::perceive::smarts::{MatchOptions, SmartsPattern};
-use molrs::{AtomId, Atomistic};
+use molrs::{Atomistic, NodeId};
 
 use super::deps::OplsDependencyAnalyzer;
 use super::meta::OplsTypingMeta;
@@ -207,8 +207,8 @@ impl LayeredTypingEngine {
     /// is threaded into each level's SMARTS matching as the context-label map,
     /// so `%opls_NNN` defs see the prior levels' results. A level whose defs lie
     /// in a circular-dependency group is resolved by fixed-point iteration.
-    pub fn assign(&self, mol: &Atomistic) -> HashMap<AtomId, String> {
-        let mut assignments: HashMap<AtomId, String> = HashMap::new();
+    pub fn assign(&self, mol: &Atomistic) -> HashMap<NodeId, String> {
+        let mut assignments: HashMap<NodeId, String> = HashMap::new();
         for level in 0..self.by_level.len() {
             let defs = &self.by_level[level];
             if defs.is_empty() {
@@ -232,10 +232,10 @@ impl LayeredTypingEngine {
         &self,
         defs: &[RankedDef],
         mol: &Atomistic,
-        current: HashMap<AtomId, String>,
-    ) -> HashMap<AtomId, String> {
+        current: HashMap<NodeId, String>,
+    ) -> HashMap<NodeId, String> {
         // Candidate defs per atom, each def at most once.
-        let mut candidates: HashMap<AtomId, Vec<usize>> = HashMap::new();
+        let mut candidates: HashMap<NodeId, Vec<usize>> = HashMap::new();
         for (k, d) in defs.iter().enumerate() {
             for m in d.pattern.find(
                 mol,
@@ -289,8 +289,8 @@ impl LayeredTypingEngine {
         &self,
         defs: &[RankedDef],
         mol: &Atomistic,
-        current: HashMap<AtomId, String>,
-    ) -> HashMap<AtomId, String> {
+        current: HashMap<NodeId, String>,
+    ) -> HashMap<NodeId, String> {
         let mut assignments = current;
         for _ in 0..MAX_CIRCULAR_ITERATIONS {
             let prev = assignments.clone();
@@ -358,7 +358,7 @@ mod tests {
     }
 
     /// Ethanol skeleton C-C-O with explicit Hs; returns (graph, O id, H-on-O id).
-    fn ethanol() -> (Atomistic, AtomId, AtomId) {
+    fn ethanol() -> (Atomistic, NodeId, NodeId) {
         let mut g = Atomistic::new();
         let cm = g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
         let ch = g.add_atom(Atom::xyz("C", 1.5, 0.0, 0.0));

@@ -43,7 +43,7 @@ use std::collections::HashMap;
 
 use molrs::store::keys;
 use molrs::store::schema::block_names::{ANGLES, BONDS, DIHEDRALS};
-use molrs::{AtomId, Atomistic};
+use molrs::{Atomistic, NodeId};
 
 use crate::ff::forcefield::{ForceField, Params, StyleDefs};
 use crate::ff::typifier::estimate::ParameterInterpolator;
@@ -257,8 +257,8 @@ impl CandidateTables {
     fn annotate(
         &self,
         graph: &Atomistic,
-        types: &HashMap<AtomId, String>,
-        ends: &[AtomId],
+        types: &HashMap<NodeId, String>,
+        ends: &[NodeId],
         table: &[Candidate],
         style: &str,
         policy: NoMatch,
@@ -391,7 +391,7 @@ impl<T> Estimator for T where T: ParameterInterpolator<Term = BondedTerm> + ?Siz
 /// estimator itself errors; or if topology enumeration fails.
 pub(crate) fn typify_bonded_with(
     graph: &mut Atomistic,
-    types: &HashMap<AtomId, String>,
+    types: &HashMap<NodeId, String>,
     tables: &CandidateTables,
     policy: NoMatch,
     estimator: Option<&dyn Estimator>,
@@ -399,7 +399,7 @@ pub(crate) fn typify_bonded_with(
     let mut m = Match::default();
 
     // --- bonds (already present from the input topology) ---
-    let bonds: Vec<[AtomId; 2]> = graph
+    let bonds: Vec<[NodeId; 2]> = graph
         .bonds()
         .map(|(_, b)| [b.nodes[0], b.nodes[1]])
         .collect();
@@ -421,7 +421,7 @@ pub(crate) fn typify_bonded_with(
     // --- enumerate angles + dihedrals from the bond graph (clear existing) ---
     crate::ff::typifier::topology::typify_bonded_topology(graph)?;
 
-    let angles: Vec<[AtomId; 3]> = graph
+    let angles: Vec<[NodeId; 3]> = graph
         .angles()
         .map(|(_, a)| [a.nodes[0], a.nodes[1], a.nodes[2]])
         .collect();
@@ -440,7 +440,7 @@ pub(crate) fn typify_bonded_with(
         })
         .collect::<Result<_, _>>()?;
 
-    let dihedrals: Vec<[AtomId; 4]> = graph
+    let dihedrals: Vec<[NodeId; 4]> = graph
         .dihedrals()
         .map(|(_, d)| [d.nodes[0], d.nodes[1], d.nodes[2], d.nodes[3]])
         .collect();
@@ -467,14 +467,14 @@ pub(crate) fn typify_bonded_with(
 /// [`NoMatch::Error`] refuses, naming every untyped endpoint.
 fn untyped_endpoint(
     mol: &Atomistic,
-    types: &HashMap<AtomId, String>,
-    ends: &[AtomId],
+    types: &HashMap<NodeId, String>,
+    ends: &[NodeId],
     policy: NoMatch,
 ) -> Result<(), String> {
     match policy {
         NoMatch::Skip => Ok(()),
         NoMatch::Error => {
-            let untyped: Vec<AtomId> = ends
+            let untyped: Vec<NodeId> = ends
                 .iter()
                 .copied()
                 .filter(|id| !types.contains_key(id))
@@ -490,7 +490,7 @@ fn untyped_endpoint(
 /// Name the atoms `ids` of `mol` as the ATD typifier names an atom it cannot
 /// type — `atom {i} ({element})`, `i` the 0-based position in `mol.atoms()`
 /// order — comma-separated, in that order.
-pub(super) fn name_atoms(mol: &Atomistic, ids: &[AtomId]) -> String {
+pub(super) fn name_atoms(mol: &Atomistic, ids: &[NodeId]) -> String {
     mol.atoms()
         .enumerate()
         .filter(|(_, (id, _))| ids.contains(id))
@@ -678,7 +678,7 @@ mod tests {
 
     /// A C-O bond where only the carbon (atom 0) is typed `opls_135`; the
     /// oxygen (atom 1) is untyped. Returns the graph and the atom types.
-    fn half_typed_bond() -> (Atomistic, HashMap<AtomId, String>) {
+    fn half_typed_bond() -> (Atomistic, HashMap<NodeId, String>) {
         use molrs::Atom;
         let mut g = Atomistic::new();
         let c = g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));

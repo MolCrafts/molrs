@@ -12,7 +12,8 @@
 use std::collections::HashMap;
 
 use crate::perceive::rings::{RingInfo, find_rings};
-use crate::system::atomistic::{AtomId, Atomistic};
+use crate::system::atomistic::Atomistic;
+use crate::system::molgraph::NodeId;
 use crate::system::molgraph::PropValue;
 
 /// Precomputed, read-only context shared by every primitive evaluation.
@@ -34,21 +35,21 @@ pub struct MolContext<'m> {
     pub mol: &'m Atomistic,
     pub rings: RingInfo,
     /// atom → is-aromatic (perceived once, up front).
-    aromatic_atom: HashMap<AtomId, bool>,
+    aromatic_atom: HashMap<NodeId, bool>,
     /// atom → total H count (explicit H neighbours; see module note).
-    h_count: HashMap<AtomId, u32>,
+    h_count: HashMap<NodeId, u32>,
     /// atom → explicit degree (number of bonded neighbours).
-    degree: HashMap<AtomId, u32>,
+    degree: HashMap<NodeId, u32>,
     /// atom → number of incident ring bonds (RDKit `x<n>`).
-    ring_bond_count: HashMap<AtomId, u32>,
+    ring_bond_count: HashMap<NodeId, u32>,
     /// External "current label" map for the `%LABEL` context predicate.
     /// Borrowed from the caller; empty for the legacy match path.
-    labels: &'m HashMap<AtomId, String>,
+    labels: &'m HashMap<NodeId, String>,
 }
 
 /// Shared empty label map for the legacy (label-free) match path, so
 /// [`MolContext::new`] can borrow a `&'static HashMap` without allocating.
-static EMPTY_LABELS: std::sync::LazyLock<HashMap<AtomId, String>> =
+static EMPTY_LABELS: std::sync::LazyLock<HashMap<NodeId, String>> =
     std::sync::LazyLock::new(HashMap::new);
 
 impl<'m> MolContext<'m> {
@@ -61,7 +62,7 @@ impl<'m> MolContext<'m> {
 
     /// Build the context for `mol` with an external label map for `%LABEL`
     /// context predicates. `labels[atom] == "L"` makes `[...;%L]` match `atom`.
-    pub fn with_labels(mol: &'m Atomistic, labels: &'m HashMap<AtomId, String>) -> Self {
+    pub fn with_labels(mol: &'m Atomistic, labels: &'m HashMap<NodeId, String>) -> Self {
         let rings = find_rings(mol);
         let mut aromatic_atom = HashMap::new();
         let mut h_count = HashMap::new();
@@ -94,7 +95,7 @@ impl<'m> MolContext<'m> {
         // Ring-bond connectivity (`x<n>`): for each ring bond, both endpoints
         // gain one incident ring bond. Counted from the bond side so it uses
         // the same `RingInfo::is_bond_in_ring` truth as the `@` bond primitive.
-        let mut ring_bond_count: HashMap<AtomId, u32> =
+        let mut ring_bond_count: HashMap<NodeId, u32> =
             mol.atoms().map(|(id, _)| (id, 0)).collect();
         for (bid, bond) in mol.bonds() {
             if rings.is_bond_in_ring(bid) {
@@ -115,24 +116,24 @@ impl<'m> MolContext<'m> {
         }
     }
 
-    fn is_aromatic(&self, id: AtomId) -> bool {
+    fn is_aromatic(&self, id: NodeId) -> bool {
         self.aromatic_atom.get(&id).copied().unwrap_or(false)
     }
 
     /// Whether the external label map assigns `id` exactly `label`.
-    fn has_label(&self, id: AtomId, label: &str) -> bool {
+    fn has_label(&self, id: NodeId, label: &str) -> bool {
         self.labels.get(&id).map(String::as_str) == Some(label)
     }
 
-    fn h_count(&self, id: AtomId) -> u32 {
+    fn h_count(&self, id: NodeId) -> u32 {
         self.h_count.get(&id).copied().unwrap_or(0)
     }
 
-    fn degree(&self, id: AtomId) -> u32 {
+    fn degree(&self, id: NodeId) -> u32 {
         self.degree.get(&id).copied().unwrap_or(0)
     }
 
-    fn ring_bond_count(&self, id: AtomId) -> u32 {
+    fn ring_bond_count(&self, id: NodeId) -> u32 {
         self.ring_bond_count.get(&id).copied().unwrap_or(0)
     }
 }
@@ -142,7 +143,7 @@ fn element_is_hydrogen(sym: &str) -> bool {
 }
 
 /// Read an atom's element symbol, defaulting to `""` when absent.
-fn atom_symbol(mol: &Atomistic, id: AtomId) -> String {
+fn atom_symbol(mol: &Atomistic, id: NodeId) -> String {
     mol.get_atom(id)
         .ok()
         .and_then(|a| a.get_str("element").map(str::to_owned))
@@ -150,7 +151,7 @@ fn atom_symbol(mol: &Atomistic, id: AtomId) -> String {
 }
 
 /// Read an atom's formal charge as an integer (`PropValue::Int` or `F64`).
-fn atom_charge(mol: &Atomistic, id: AtomId) -> i32 {
+fn atom_charge(mol: &Atomistic, id: NodeId) -> i32 {
     match mol
         .get_atom(id)
         .ok()
@@ -222,7 +223,7 @@ pub enum AtomQuery {
 }
 
 impl AtomPrimitive {
-    fn eval(&self, ctx: &MolContext, id: AtomId) -> bool {
+    fn eval(&self, ctx: &MolContext, id: NodeId) -> bool {
         let mol = ctx.mol;
         match self {
             AtomPrimitive::Any => true,
@@ -347,12 +348,12 @@ impl BondQuery {
 /// Implemented by the matcher (which owns the compiled subpatterns) to avoid
 /// a hard type cycle between `ast` and `matcher`.
 pub trait RecursiveEval {
-    fn eval_recursive(&self, sub_index: usize, ctx: &MolContext, id: AtomId) -> bool;
+    fn eval_recursive(&self, sub_index: usize, ctx: &MolContext, id: NodeId) -> bool;
 }
 
 impl AtomQuery {
     /// Evaluate this atom query against atom `id`.
-    pub fn eval(&self, ctx: &MolContext, id: AtomId, rec: &dyn RecursiveEval) -> bool {
+    pub fn eval(&self, ctx: &MolContext, id: NodeId, rec: &dyn RecursiveEval) -> bool {
         match self {
             AtomQuery::Prim(p) => p.eval(ctx, id),
             AtomQuery::Recursive(idx) => rec.eval_recursive(*idx, ctx, id),

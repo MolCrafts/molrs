@@ -47,9 +47,9 @@ use slotmap::Key;
 
 use crate::error::MolRsError;
 use crate::store::keys;
-use crate::system::atomistic::{AtomId, BondId};
 use crate::system::molgraph::MolGraph;
-use crate::system::port::{Port, PortId};
+use crate::system::molgraph::{NodeId, RelationId};
+use crate::system::port::Port;
 
 /// Why [`MolGraph::link`] refused to join two ports.
 #[derive(Debug)]
@@ -61,37 +61,37 @@ pub enum LinkError {
     /// [`MolGraph::add_port`] checked it, so the port has no leaving group.
     StalePort {
         /// The stale port.
-        port: PortId,
+        port: RelationId,
     },
     /// [`Port::accepts`] refuses the pair: the kinds are not complements, or
     /// the labels or orders differ.
     Incompatible {
         /// The first port.
-        a: PortId,
+        a: RelationId,
         /// The second port.
-        b: PortId,
+        b: RelationId,
     },
     /// Both ports sit on one anchor, and a bond cannot join an atom to itself.
     SameAnchor {
         /// The first port.
-        a: PortId,
+        a: RelationId,
         /// The second port.
-        b: PortId,
+        b: RelationId,
     },
     /// The two anchors are already bonded; linking them would add a duplicate
     /// bond.
     AlreadyBonded {
         /// The first port's anchor.
-        a: AtomId,
+        a: NodeId,
         /// The second port's anchor.
-        b: AtomId,
+        b: NodeId,
     },
     /// The port's branch — its handle's component once the anchor–handle bond
     /// is cut — contains the port's own anchor: the handle sits on a ring, so
     /// deleting the branch would delete the anchor.
     BranchReachesAnchor {
         /// The offending port.
-        port: PortId,
+        port: RelationId,
     },
     /// The two branches share an atom, or one port's anchor lies in the other
     /// port's branch.
@@ -100,7 +100,7 @@ pub enum LinkError {
     /// would invent or lose charge.
     OneSidedCharge {
         /// The anchor of the offending port.
-        anchor: AtomId,
+        anchor: NodeId,
     },
     /// The graph refused a read during validation.
     Graph(MolRsError),
@@ -164,7 +164,7 @@ pub enum LinkManyError {
     /// One port appears in two pairs.
     PortReused {
         /// The reused port.
-        port: PortId,
+        port: RelationId,
         /// Index of the first pair naming it.
         first: usize,
         /// Index of the second pair naming it.
@@ -228,15 +228,15 @@ impl std::error::Error for LinkManyError {
 struct LinkPlan {
     a: Port,
     b: Port,
-    branch_a: BTreeSet<AtomId>,
-    branch_b: BTreeSet<AtomId>,
+    branch_a: BTreeSet<NodeId>,
+    branch_b: BTreeSet<NodeId>,
     fold_a: Option<f64>,
     fold_b: Option<f64>,
 }
 
 impl LinkPlan {
     /// The two `(anchor, folded charge)` sides, `a` first.
-    fn folds(&self) -> [(AtomId, Option<f64>); 2] {
+    fn folds(&self) -> [(NodeId, Option<f64>); 2] {
         [(self.a.anchor, self.fold_a), (self.b.anchor, self.fold_b)]
     }
 }
@@ -319,14 +319,14 @@ impl MolGraph {
     /// assert_eq!(world.n_ports(), 0);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn link(&mut self, a: PortId, b: PortId) -> Result<BondId, LinkError> {
+    pub fn link(&mut self, a: RelationId, b: RelationId) -> Result<RelationId, LinkError> {
         let plan = self.plan_link(a, b)?;
 
         const VALIDATED: &str = "validated before the first write";
         for (anchor, fold) in plan.folds() {
             self.fold_charge(anchor, fold);
         }
-        let doomed: Vec<AtomId> = plan
+        let doomed: Vec<NodeId> = plan
             .branch_a
             .iter()
             .chain(&plan.branch_b)
@@ -397,8 +397,8 @@ impl MolGraph {
     )]
     pub(crate) fn link_many(
         &mut self,
-        pairs: &[(PortId, PortId)],
-    ) -> Result<Vec<BondId>, LinkManyError> {
+        pairs: &[(RelationId, RelationId)],
+    ) -> Result<Vec<RelationId>, LinkManyError> {
         // ---- 1. each pair alone ----
         let plans = pairs
             .iter()
@@ -410,7 +410,7 @@ impl MolGraph {
             .collect::<Result<Vec<LinkPlan>, LinkManyError>>()?;
 
         // ---- 2. a port in two pairs ----
-        let mut port_owner: HashMap<PortId, usize> = HashMap::with_capacity(2 * pairs.len());
+        let mut port_owner: HashMap<RelationId, usize> = HashMap::with_capacity(2 * pairs.len());
         for (second, &(a, b)) in pairs.iter().enumerate() {
             for port in [a, b] {
                 if let Some(&first) = port_owner.get(&port) {
@@ -425,7 +425,7 @@ impl MolGraph {
         }
 
         // ---- 3. two pairs on one anchor couple ----
-        let mut couple_owner: HashMap<(AtomId, AtomId), usize> =
+        let mut couple_owner: HashMap<(NodeId, NodeId), usize> =
             HashMap::with_capacity(plans.len());
         for (second, plan) in plans.iter().enumerate() {
             let (x, y) = (plan.a.anchor, plan.b.anchor);
@@ -449,8 +449,8 @@ impl MolGraph {
         };
         // `doomed` lists the removal set in pair order, so the rows
         // `remove_nodes` swaps are the same on every run.
-        let mut doomed: Vec<AtomId> = Vec::new();
-        let mut doomed_owner: HashMap<AtomId, usize> = HashMap::new();
+        let mut doomed: Vec<NodeId> = Vec::new();
+        let mut doomed_owner: HashMap<NodeId, usize> = HashMap::new();
         for (k, plan) in plans.iter().enumerate() {
             for &atom in plan.branch_a.iter().chain(&plan.branch_b) {
                 // `plan_link` keeps a pair's own two groups disjoint, so an
@@ -483,7 +483,7 @@ impl MolGraph {
 
     /// Validate joining port `a` to port `b` without writing anything, in the
     /// refusal order [`link`](Self::link) documents.
-    fn plan_link(&self, a: PortId, b: PortId) -> Result<LinkPlan, LinkError> {
+    fn plan_link(&self, a: RelationId, b: RelationId) -> Result<LinkPlan, LinkError> {
         let pa = self.port(a).map_err(LinkError::Port)?;
         let pb = self.port(b).map_err(LinkError::Port)?;
         // `leaving_group`'s only error is a missing anchor–handle bond.
@@ -535,9 +535,9 @@ impl MolGraph {
     fn folded_charge(
         &self,
         port: &Port,
-        branch: &BTreeSet<AtomId>,
+        branch: &BTreeSet<NodeId>,
     ) -> Result<Option<f64>, LinkError> {
-        let charge = |atom: AtomId| -> Result<Option<f64>, LinkError> {
+        let charge = |atom: NodeId| -> Result<Option<f64>, LinkError> {
             self.get_node(atom)
                 .map(|props| props.get_f64(keys::CHARGE))
                 .map_err(LinkError::Graph)
@@ -562,7 +562,7 @@ impl MolGraph {
 
     /// Add a validated fold to `anchor`'s current charge, `q_a' = q_a + fold`;
     /// `None` writes nothing.
-    fn fold_charge(&mut self, anchor: AtomId, fold: Option<f64>) {
+    fn fold_charge(&mut self, anchor: NodeId, fold: Option<f64>) {
         const VALIDATED: &str = "validated before the first write";
         if let Some(fold) = fold {
             let q = self
@@ -575,7 +575,7 @@ impl MolGraph {
     }
 
     /// Bond a validated plan's two anchors, classed from the port order.
-    fn bond_anchors(&mut self, plan: &LinkPlan) -> BondId {
+    fn bond_anchors(&mut self, plan: &LinkPlan) -> RelationId {
         const VALIDATED: &str = "validated before the first write";
         self.add_classed_bond(
             plan.a.anchor,
@@ -594,11 +594,12 @@ mod tests {
     use super::{LinkError, LinkManyError};
     use crate::error::MolRsError;
     use crate::store::keys;
-    use crate::system::atomistic::AtomId;
     use crate::system::atomistic::Atomistic;
     use crate::system::bond::BondNumber;
+    use crate::system::molgraph::NodeId;
     use crate::system::molgraph::PropValue;
-    use crate::system::port::{Port, PortId, PortKind};
+    use crate::system::molgraph::RelationId;
+    use crate::system::port::{Port, PortKind};
 
     // ---- fixtures ----------------------------------------------------------
     //
@@ -607,7 +608,7 @@ mod tests {
     // binary floating point and the goldens are compared with `==`.
 
     /// Add an atom of `element` carrying `charge` and (when given) `frag_id`.
-    fn atom(world: &mut Atomistic, element: &str, charge: Option<f64>, frag: u32) -> AtomId {
+    fn atom(world: &mut Atomistic, element: &str, charge: Option<f64>, frag: u32) -> NodeId {
         let a = world.add_atom_bare(element);
         if let Some(q) = charge {
             world
@@ -628,7 +629,7 @@ mod tests {
         handle_q: Option<f64>,
         kind: PortKind,
         frag: u32,
-    ) -> (AtomId, AtomId, PortId) {
+    ) -> (NodeId, NodeId, RelationId) {
         let anchor = atom(world, anchor_element, anchor_q, frag);
         let handle = atom(world, "H", handle_q, frag);
         world.add_bond(anchor, handle).expect("fixture bond");
@@ -638,7 +639,7 @@ mod tests {
         (anchor, handle, port)
     }
 
-    fn charge(world: &Atomistic, a: AtomId) -> f64 {
+    fn charge(world: &Atomistic, a: NodeId) -> f64 {
         world
             .get_node(a)
             .expect("live atom")
@@ -675,7 +676,7 @@ mod tests {
             .count()
     }
 
-    fn is_bonded(world: &Atomistic, a: AtomId, b: AtomId) -> bool {
+    fn is_bonded(world: &Atomistic, a: NodeId, b: NodeId) -> bool {
         world.bonds().any(|(_, bond)| {
             let n = bond.nodes.as_slice();
             (n[0] == a && n[1] == b) || (n[0] == b && n[1] == a)
@@ -685,10 +686,10 @@ mod tests {
     /// Everything a refused link must leave untouched.
     #[derive(Debug, PartialEq)]
     struct Snapshot {
-        atoms: Vec<(AtomId, Option<f64>)>,
-        bonds: Vec<Vec<AtomId>>,
+        atoms: Vec<(NodeId, Option<f64>)>,
+        bonds: Vec<Vec<NodeId>>,
         /// A port that does not read back is recorded as `None`.
-        ports: Vec<(PortId, Option<Port>)>,
+        ports: Vec<(RelationId, Option<Port>)>,
     }
 
     fn snapshot(world: &Atomistic) -> Snapshot {
@@ -704,7 +705,7 @@ mod tests {
 
     /// Run a link that must be refused, assert the world is unchanged, and
     /// return the refusal.
-    fn refuse(world: &mut Atomistic, a: PortId, b: PortId) -> LinkError {
+    fn refuse(world: &mut Atomistic, a: RelationId, b: RelationId) -> LinkError {
         let before = snapshot(world);
         let err = world.link(a, b).expect_err("this pair must be refused");
         assert_eq!(
@@ -1164,11 +1165,11 @@ mod tests {
     /// One chain unit: a C anchor (q −0.25) carrying a `<` port on one H
     /// handle and a `>` port on another (q +0.125 each).
     struct ChainUnit {
-        anchor: AtomId,
-        left_h: AtomId,
-        left: PortId,
-        right_h: AtomId,
-        right: PortId,
+        anchor: NodeId,
+        left_h: NodeId,
+        left: RelationId,
+        right_h: NodeId,
+        right: RelationId,
     }
 
     fn chain(world: &mut Atomistic, n: u32) -> Vec<ChainUnit> {
@@ -1197,7 +1198,7 @@ mod tests {
     }
 
     /// Head-to-tail pairs: unit `i`'s `>` port with unit `i + 1`'s `<` port.
-    fn chain_pairs(units: &[ChainUnit]) -> Vec<(PortId, PortId)> {
+    fn chain_pairs(units: &[ChainUnit]) -> Vec<(RelationId, RelationId)> {
         units.windows(2).map(|w| (w[0].right, w[1].left)).collect()
     }
 
@@ -1206,13 +1207,13 @@ mod tests {
     /// handle. Two worlds reached by different edit orders compare equal
     /// here even though `remove_nodes` swap-removes rows.
     /// A bond as sorted endpoints plus its sorted property bag.
-    type BondState = (AtomId, AtomId, Vec<(String, PropValue)>);
+    type BondState = (NodeId, NodeId, Vec<(String, PropValue)>);
 
     #[derive(Debug, PartialEq)]
     struct WorldState {
-        atoms: Vec<(AtomId, Option<u64>)>,
+        atoms: Vec<(NodeId, Option<u64>)>,
         bonds: Vec<BondState>,
-        ports: Vec<(PortId, Option<Port>)>,
+        ports: Vec<(RelationId, Option<Port>)>,
     }
 
     fn world_state(world: &Atomistic) -> WorldState {
@@ -1242,7 +1243,7 @@ mod tests {
 
     /// Run a batch that must be refused, assert the world is unchanged (row
     /// order included), and return the refusal.
-    fn refuse_many(world: &mut Atomistic, pairs: &[(PortId, PortId)]) -> LinkManyError {
+    fn refuse_many(world: &mut Atomistic, pairs: &[(RelationId, RelationId)]) -> LinkManyError {
         let before = snapshot(world);
         let err = world
             .link_many(pairs)

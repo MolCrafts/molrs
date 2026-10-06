@@ -58,8 +58,9 @@
 use std::collections::HashMap;
 
 use crate::store::keys;
-use crate::system::atomistic::{AtomId, Atomistic};
+use crate::system::atomistic::Atomistic;
 use crate::system::bond::BondNumber;
+use crate::system::molgraph::NodeId;
 use crate::system::molgraph::PropValue;
 use molrs::Element;
 
@@ -181,7 +182,7 @@ const CAP_H: [i32; 8] = [64, 0, 64, NONE, NONE, NONE, NONE, NONE];
 /// # Returns
 ///
 /// A clone of `mol` carrying the judged Kekulé structure.
-pub fn find_bond_orders(mol: &Atomistic) -> Atomistic {
+pub(crate) fn find_bond_orders(mol: &Atomistic) -> Atomistic {
     let mut out = mol.clone();
     let bond_ids: Vec<_> = mol.bonds().map(|(bid, _)| bid).collect();
     for (bid, order) in bond_ids.into_iter().zip(judge_bond_orders(mol)) {
@@ -262,8 +263,8 @@ struct Graph {
 
 impl Graph {
     fn new(mol: &Atomistic) -> Self {
-        let ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-        let index: HashMap<AtomId, usize> =
+        let ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
+        let index: HashMap<NodeId, usize> =
             ids.iter().enumerate().map(|(i, id)| (*id, i)).collect();
         let mut z = Vec::with_capacity(ids.len());
         let mut res = Vec::with_capacity(ids.len());
@@ -872,7 +873,7 @@ mod tests {
     /// order, every bond stated single (what `antechamber` reads).
     fn mol2(elements: &[&str], bonds: &[(usize, usize)]) -> Atomistic {
         let mut mol = Atomistic::new();
-        let ids: Vec<AtomId> = elements.iter().map(|e| mol.add_atom_bare(e)).collect();
+        let ids: Vec<NodeId> = elements.iter().map(|e| mol.add_atom_bare(e)).collect();
         for (i, j) in bonds {
             let b = mol.add_bond(ids[*i], ids[*j]).unwrap();
             mol.set_bond_type(b, BondType::Single).unwrap();
@@ -1024,7 +1025,7 @@ mod tests {
                 (3, 9),
             ],
         );
-        let ids: Vec<AtomId> = mol.atoms().map(|(a, _)| a).collect();
+        let ids: Vec<NodeId> = mol.atoms().map(|(a, _)| a).collect();
         for (i, res) in [1, 1, 2, 2, 1, 1, 1, 2, 2, 2].into_iter().enumerate() {
             mol.set_atom(ids[i], keys::RES_ID, PropValue::Int(res))
                 .unwrap();

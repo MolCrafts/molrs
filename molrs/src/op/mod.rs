@@ -13,7 +13,9 @@
 //! | [`rigid`] | a **rigid motion** — a rotation followed by a translation, which moves a body without deforming it — the quaternion kernels, and NeRF placement of a point from internal coordinates |
 //! | [`superpose`] | **superposition**: the rigid motion that best lays one set of matched points onto another (least squares), and the weighted centroid |
 //! | [`so3`] | uniform sampling of directions on S² |
+//! | [`random`] | random variates (the standard normal) over a caller-seeded RNG |
 pub mod linalg;
+pub mod random;
 pub mod rigid;
 pub mod so3;
 pub mod superpose;

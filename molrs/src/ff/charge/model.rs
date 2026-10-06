@@ -14,7 +14,7 @@
 //! was handed.
 
 use molrs::store::keys;
-use molrs::{AtomId, Atomistic};
+use molrs::{Atomistic, NodeId};
 
 use molrs::perceive::equivalence::{EquivalenceOptions, average_charges, find_equivalence_classes};
 
@@ -76,7 +76,7 @@ pub trait ChargeModel {
 }
 
 /// The atoms of `mol`, in graph atom order — the order every charge slice is in.
-pub(super) fn atom_ids(mol: &Atomistic) -> Vec<AtomId> {
+pub(super) fn atom_ids(mol: &Atomistic) -> Vec<NodeId> {
     mol.atoms().map(|(aid, _)| aid).collect()
 }
 

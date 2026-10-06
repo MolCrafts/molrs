@@ -325,9 +325,22 @@ fn write_atom_query(out: &mut String, q: &AtomQuery) -> Result<(), SmilesError> 
             write_atom_query(out, inner)
         }
         AtomQuery::And(parts) => {
-            // High-precedence AND is written by juxtaposition; no separator is
-            // emitted between terms — Daylight allows the bare spelling.
-            for p in parts {
+            // `&` binds tighter than `,`, so an AND over an OR is spelled with
+            // the low-precedence `;`. The separator is always written:
+            // juxtaposing terms can fuse two into one token (`C` then `a`
+            // reads back as calcium).
+            let sep = if parts
+                .iter()
+                .any(|p| matches!(p, AtomQuery::Or(_) | AtomQuery::LowAnd(_)))
+            {
+                ';'
+            } else {
+                '&'
+            };
+            for (i, p) in parts.iter().enumerate() {
+                if i > 0 {
+                    out.push(sep);
+                }
                 write_atom_query(out, p)?;
             }
             Ok(())
@@ -356,16 +369,18 @@ fn write_atom_query(out: &mut String, q: &AtomQuery) -> Result<(), SmilesError> 
 fn write_primitive(out: &mut String, p: &AtomPrimitive) -> Result<(), SmilesError> {
     match p {
         AtomPrimitive::Element { symbol, aromatic } => {
-            // `#6` is stored as symbol `"#6"` by the parser; write through.
-            if symbol.starts_with('#') {
-                out.push_str(symbol);
-            } else if *aromatic {
+            if *aromatic {
                 for c in symbol.chars() {
                     out.push(c.to_ascii_lowercase());
                 }
             } else {
                 out.push_str(symbol);
             }
+            Ok(())
+        }
+        AtomPrimitive::AtomicNumber(z) => {
+            out.push('#');
+            out.push_str(&z.to_string());
             Ok(())
         }
         AtomPrimitive::Wildcard => {
@@ -416,6 +431,28 @@ fn write_primitive(out: &mut String, p: &AtomPrimitive) -> Result<(), SmilesErro
         AtomPrimitive::RingSize(n) => {
             out.push('r');
             out.push_str(&n.to_string());
+            Ok(())
+        }
+        AtomPrimitive::RingSizeRange { lo, hi } => {
+            out.push_str("r{");
+            if *lo > 0 {
+                out.push_str(&lo.to_string());
+            }
+            out.push('-');
+            if let Some(h) = hi {
+                out.push_str(&h.to_string());
+            }
+            out.push('}');
+            Ok(())
+        }
+        AtomPrimitive::RingBondCount(n) => {
+            out.push('x');
+            out.push_str(&n.to_string());
+            Ok(())
+        }
+        AtomPrimitive::ContextLabel(label) => {
+            out.push('%');
+            out.push_str(label);
             Ok(())
         }
         AtomPrimitive::Valence(n) => {
@@ -479,10 +516,12 @@ fn write_bond(
             if dialect != Dialect::Smarts {
                 return Err(bond_query_err(dialect));
             }
-            let sep = if matches!(q, BondQuery::And(_)) {
-                '&'
-            } else {
-                ','
+            // `&` binds tighter than `,`: an AND over an OR is spelled with
+            // the low-precedence `;`.
+            let sep = match q {
+                BondQuery::And(parts) if parts.iter().any(|p| matches!(p, BondQuery::Or(_))) => ';',
+                BondQuery::And(_) => '&',
+                _ => ',',
             };
             for (i, p) in parts.iter().enumerate() {
                 if i > 0 {

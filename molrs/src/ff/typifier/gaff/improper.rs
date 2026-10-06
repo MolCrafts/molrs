@@ -39,7 +39,7 @@
 
 use std::collections::HashMap;
 
-use molrs::AtomId;
+use molrs::NodeId;
 use molrs::system::atomistic::Atomistic;
 
 use crate::ff::forcefield::Params;
@@ -59,7 +59,7 @@ const DEFAULT_IMPROPER: (f64, f64, f64) = (1.1, 180.0, 2.0);
 #[derive(Debug, Clone)]
 pub(super) struct ImproperTerm {
     /// The four atoms in AMBER order, centre third.
-    pub atoms: [AtomId; 4],
+    pub atoms: [NodeId; 4],
     /// Their atom types, in the same order.
     pub types: [String; 4],
     /// `k`, `periodicity`, `phase` (degrees).
@@ -95,11 +95,11 @@ pub(super) fn impropers(
     graph: &Atomistic,
     table: ParmTable,
     parmchk: &ParmchkTable,
-    type_of: &HashMap<AtomId, &'static str>,
+    type_of: &HashMap<NodeId, &'static str>,
 ) -> Vec<ImproperTerm> {
-    let order: Vec<AtomId> = graph.atoms().map(|(id, _)| id).collect();
-    let index: HashMap<AtomId, usize> = order.iter().enumerate().map(|(i, &a)| (a, i)).collect();
-    let neighbours: Vec<Vec<AtomId>> = order
+    let order: Vec<NodeId> = graph.atoms().map(|(id, _)| id).collect();
+    let index: HashMap<NodeId, usize> = order.iter().enumerate().map(|(i, &a)| (a, i)).collect();
+    let neighbours: Vec<Vec<NodeId>> = order
         .iter()
         .map(|&a| graph.neighbor_bonds(a).map(|(n, _)| n).collect())
         .collect();
@@ -243,9 +243,9 @@ impl Parmchk2<'_> {
     /// the order parmchk2 writes them.
     fn estimate(
         mut self,
-        order: &[AtomId],
-        neighbours: &[Vec<AtomId>],
-        type_of: &HashMap<AtomId, &'static str>,
+        order: &[NodeId],
+        neighbours: &[Vec<NodeId>],
+        type_of: &HashMap<NodeId, &'static str>,
     ) -> Vec<Row> {
         let table_rows = self.rows.len();
         for (atom, around) in order.iter().zip(neighbours) {
@@ -523,11 +523,11 @@ impl Stored {
 fn order_atoms(
     row: &Stored,
     mut types: [&str; 4],
-    mut atoms: [AtomId; 4],
-    index: &HashMap<AtomId, usize>,
-) -> ([AtomId; 4], [String; 4]) {
+    mut atoms: [NodeId; 4],
+    index: &HashMap<NodeId, usize>,
+) -> ([NodeId; 4], [String; 4]) {
     let p = &row.types;
-    let swap = |types: &mut [&str; 4], atoms: &mut [AtomId; 4], a: usize, b: usize| {
+    let swap = |types: &mut [&str; 4], atoms: &mut [NodeId; 4], a: usize, b: usize| {
         types.swap(a, b);
         atoms.swap(a, b);
     };
@@ -598,10 +598,10 @@ fn order_atoms(
 /// tleap's impropers: every triple of neighbours of every atom with three or
 /// more, wherever the unit's terms, the frcmod or the table has a row.
 fn tleap(
-    order: &[AtomId],
-    neighbours: &[Vec<AtomId>],
-    index: &HashMap<AtomId, usize>,
-    type_of: &HashMap<AtomId, &'static str>,
+    order: &[NodeId],
+    neighbours: &[Vec<NodeId>],
+    index: &HashMap<NodeId, usize>,
+    type_of: &HashMap<NodeId, &'static str>,
     frcmod: &[Row],
     table: &[Row],
 ) -> Vec<ImproperTerm> {

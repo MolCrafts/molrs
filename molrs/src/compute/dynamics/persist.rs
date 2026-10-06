@@ -46,6 +46,8 @@
 use ndarray::{Array1, Array2, Array3};
 
 use crate::compute::error::ComputeError;
+use crate::op::vec3::{dot, sub};
+use molrs::spatial::simbox::Mic;
 
 /// Pair-survival criterion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,16 +87,9 @@ pub struct PersistResult {
 }
 
 #[inline]
-fn mic_dist2(a: [f64; 3], b: [f64; 3], l: [f64; 3]) -> f64 {
-    let mut s = 0.0;
-    for d in 0..3 {
-        let mut dx = b[d] - a[d];
-        if l[d] > 0.0 {
-            dx -= (dx / l[d]).round() * l[d];
-        }
-        s += dx * dx;
-    }
-    s
+fn mic_dist2(mic: &Mic, a: [f64; 3], b: [f64; 3]) -> f64 {
+    let d = mic.apply(sub(b, a));
+    dot(d, d)
 }
 
 /// Pair-survival time-correlation function between two species.
@@ -200,13 +195,19 @@ pub fn pair_survival_tcf(
         [coords[[t, a, 0]], coords[[t, a, 1]], coords[[t, a, 2]]]
     };
 
+    // One orthorhombic minimum-image convention per frame.
+    let mics: Vec<Mic> = (0..n_frames)
+        .map(|t| {
+            Mic::ortho([
+                box_lengths[[t, 0]],
+                box_lengths[[t, 1]],
+                box_lengths[[t, 2]],
+            ])
+        })
+        .collect();
+
     for t0 in 0..n_frames {
         let lmax = max_lag.min(n_frames - 1 - t0);
-        let l0 = [
-            box_lengths[[t0, 0]],
-            box_lengths[[t0, 1]],
-            box_lengths[[t0, 2]],
-        ];
         for i in 0..n_i {
             let pi0 = pos(coords_i, t0, i);
             for j in 0..n_j {
@@ -214,7 +215,7 @@ pub fn pair_survival_tcf(
                     continue;
                 }
                 // Birth test at t0 (inner cutoff r0).
-                if mic_dist2(pi0, pos(coords_j, t0, j), l0) > r0_2 {
+                if mic_dist2(&mics[t0], pi0, pos(coords_j, t0, j)) > r0_2 {
                     continue;
                 }
                 acc[0] += 1.0; // born ⇒ alive at τ = 0
@@ -225,12 +226,7 @@ pub fn pair_survival_tcf(
                         #[allow(clippy::needless_range_loop)]
                         for tau in 1..=lmax {
                             let t = t0 + tau;
-                            let lt = [
-                                box_lengths[[t, 0]],
-                                box_lengths[[t, 1]],
-                                box_lengths[[t, 2]],
-                            ];
-                            let d2 = mic_dist2(pos(coords_i, t, i), pos(coords_j, t, j), lt);
+                            let d2 = mic_dist2(&mics[t], pos(coords_i, t, i), pos(coords_j, t, j));
                             if d2 <= r1_2 {
                                 acc[tau] += 1.0;
                             } else {
@@ -244,12 +240,7 @@ pub fn pair_survival_tcf(
                         #[allow(clippy::needless_range_loop)]
                         for tau in 1..=lmax {
                             let t = t0 + tau;
-                            let lt = [
-                                box_lengths[[t, 0]],
-                                box_lengths[[t, 1]],
-                                box_lengths[[t, 2]],
-                            ];
-                            let d2 = mic_dist2(pos(coords_i, t, i), pos(coords_j, t, j), lt);
+                            let d2 = mic_dist2(&mics[t], pos(coords_i, t, i), pos(coords_j, t, j));
                             if d2 <= r1_2 {
                                 acc[tau] += 1.0;
                             }

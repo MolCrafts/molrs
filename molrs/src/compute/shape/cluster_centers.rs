@@ -13,8 +13,10 @@ use molrs::types::F;
 
 use crate::compute::cluster::ClusterResult;
 use crate::compute::error::ComputeError;
+use crate::compute::positions::get_positions_ref;
 use crate::compute::traits::Compute;
-use crate::compute::util::{MicHelper, get_positions_ref};
+use crate::op::vec3::sub;
+use molrs::spatial::simbox::{Mic, SimBox};
 
 /// Computes the geometric center of each cluster per frame using the minimum
 /// image convention (MIC).
@@ -39,7 +41,7 @@ impl ClusterCenters {
         let xs = xs_p.slice();
         let ys = ys_p.slice();
         let zs = zs_p.slice();
-        let mic = MicHelper::from_simbox(frame.simbox_ref());
+        let mic = frame.simbox_ref().map_or(Mic::Free, SimBox::mic);
         let nc = clusters.num_clusters;
 
         let mut ref_pos = vec![[0.0 as F; 3]; nc];
@@ -59,7 +61,7 @@ impl ClusterCenters {
                 has_ref[c] = true;
             }
 
-            let d = mic.disp(ref_pos[c], pos);
+            let d = mic.apply(sub(pos, ref_pos[c]));
             sum_delta[c][0] += d[0];
             sum_delta[c][1] += d[1];
             sum_delta[c][2] += d[2];

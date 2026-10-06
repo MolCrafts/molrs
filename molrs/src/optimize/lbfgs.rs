@@ -271,7 +271,8 @@ where
     (energy, grad, iters, converged)
 }
 
-/// RMS-gradient-tolerance L-BFGS entry point for the ETKDG MMFF cleanup.
+/// RMS-gradient-tolerance L-BFGS entry point for the ETKDG stages: both
+/// distance-geometry minimizations and the MMFF cleanup.
 ///
 /// Preserves the historical signature and convergence behaviour (RMS gradient,
 /// no trust region, history size `HISTORY`) so conformer generation is
