@@ -20,6 +20,7 @@
 //! token onto a core [`crate::units::UnitPreset`] name and converts through
 //! [`UnitRegistry`]. It does not define a unit-system type.
 
+use crate::ff::ir::UnitScale;
 use molrs::types::F;
 use molrs::units::{Quantity, UnitRegistry, UnitsError};
 
@@ -103,15 +104,6 @@ impl LammpsFfUnits {
         }
     }
 
-    /// Energy / length² (a bond stiffness).
-    fn energy_per_length2_unit(style: &str) -> String {
-        format!(
-            "{}/{}**2",
-            Self::energy_unit(style),
-            Self::length_unit(style)
-        )
-    }
-
     /// Convert a raw file value of the given dimension from `from` style to `to`
     /// style **through lj** (`from → lj → to`).
     fn convert_through_lj(
@@ -144,11 +136,38 @@ impl LammpsFfUnits {
         self.convert_through_lj(value, from, to, |s| Self::length_unit(s).to_string())
     }
 
-    /// Bond stiffness `K` (energy/length²): `from → lj → to`. An angle-like
-    /// stiffness (energy/rad²) converts as an [`energy`](Self::energy): a
-    /// radian is a pure number.
-    pub fn bond_k(&self, value: F, from: &str, to: &str) -> Result<F, String> {
-        self.convert_through_lj(value, from, to, Self::energy_per_length2_unit)
+    /// The per-dimension conversion of every parameter from `from` to `to`
+    /// (one unit of energy, length, charge and mass, each `from → lj →
+    /// to`); exactly the identity when the two are the same style.
+    pub fn scale(&self, from: &str, to: &str) -> Result<UnitScale, String> {
+        if from == to {
+            return Ok(UnitScale::IDENTITY);
+        }
+        let one = |unit: fn(&str) -> &'static str| {
+            self.convert_through_lj(1.0, from, to, |s| unit(s).to_string())
+        };
+        Ok(UnitScale::new(
+            one(Self::energy_unit)?,
+            one(Self::length_unit)?,
+            one(Self::charge_unit)?,
+            one(Self::mass_unit)?,
+        ))
+    }
+
+    fn charge_unit(style: &str) -> &'static str {
+        match style {
+            "lj" => "lj_charge",
+            "real" | "metal" => "elementary_charge",
+            other => panic!("unknown LAMMPS style {other}"),
+        }
+    }
+
+    fn mass_unit(style: &str) -> &'static str {
+        match style {
+            "lj" => "lj_mass",
+            "real" | "metal" => "gram_per_mole",
+            other => panic!("unknown LAMMPS style {other}"),
+        }
     }
 }
 
@@ -202,7 +221,7 @@ mod tests {
     fn same_style_is_the_identity() {
         let sys = LammpsFfUnits::canonical().unwrap();
         assert_eq!(sys.energy(0.5, "lj", "lj").unwrap(), 0.5);
-        assert_eq!(sys.bond_k(228.89, "real", "real").unwrap(), 228.89);
+        assert!(sys.scale("real", "real").unwrap().is_identity());
     }
 
     #[test]
@@ -218,7 +237,10 @@ mod tests {
         let sys = LammpsFfUnits::canonical().unwrap();
         // Same numerical K in metal (eV/Å²) vs real (kcal/mol/Å²) must scale
         // exactly as energy (length is Å in both).
-        let k_real = sys.bond_k(1.0, "metal", "real").unwrap();
+        let k_real = sys
+            .scale("metal", "real")
+            .unwrap()
+            .apply(1.0, "E/L^2".parse().unwrap());
         let e_real = sys.energy(1.0, "metal", "real").unwrap();
         assert!((k_real - e_real).abs() < 1e-12);
     }

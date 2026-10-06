@@ -1156,6 +1156,16 @@ fn python_kernel(
 ///     Replace a style registered at run time under this name (a built-in
 ///     is :class:`Sealed` regardless). Without it, a different registration
 ///     under a taken name is :class:`Conflict`, an identical one a no-op.
+/// lammps : {"positional", "positional:<name>"}, optional
+///     The style's LAMMPS form: ``"positional"`` writes and reads it as
+///     ``<category>_style <name>`` with ``params`` in order on the
+///     ``*_coeff`` line, each converted by its dimension (``pair_style
+///     <name> <cutoff>``, ``pair_modify mix <mixing>``); ``"positional:fene"``
+///     under the LAMMPS style ``fene``. ``None`` (the default): LAMMPS
+///     refuses it by name (:class:`NoEngineForm`; the installed LAMMPS has
+///     no LEPTON package for an expression). A positional form the spec
+///     cannot have (a Text, Array or indexed parameter, a style parameter
+///     other than ``cutoff`` / ``mixing``) is :class:`NoEngineForm`.
 ///
 /// Raises
 /// ------
@@ -1180,7 +1190,7 @@ fn python_kernel(
 /// ...                "+step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)",
 /// ... )
 #[pyfunction]
-#[pyo3(signature = (category, name, *, params=None, style_params=None, expression=None, kernel=None, compound=false, special=None, samples=None, replace=false))]
+#[pyo3(signature = (category, name, *, params=None, style_params=None, expression=None, kernel=None, compound=false, special=None, samples=None, replace=false, lammps=None))]
 #[allow(clippy::too_many_arguments)]
 fn register_style(
     py: Python<'_>,
@@ -1194,12 +1204,14 @@ fn register_style(
     special: Option<&str>,
     samples: Option<Bound<'_, PyAny>>,
     replace: bool,
+    lammps: Option<&str>,
 ) -> PyResult<()> {
     let mut spec = StyleSpec::new(category.clone(), name.clone())
         .params(parse_params(params.as_ref())?)
         .style_params(parse_params(style_params.as_ref())?);
     spec.expression = expression;
     spec.samples = parse_samples(samples.as_ref())?;
+    spec.lammps = super::engine::lammps_form(lammps)?;
     spec.special = match special {
         None => None,
         Some("lj") => Some(SpecialClass::Vdw),
@@ -1428,6 +1440,13 @@ impl PyStyleInfo {
             ParamSource::TypeRows => "type_rows",
             ParamSource::PerInstance => "per_instance",
         }
+    }
+
+    /// The style's LAMMPS form: ``"positional"``, ``"positional:<name>"``,
+    /// ``"custom:<name>"`` (a codec of its own) or ``None``.
+    #[getter]
+    fn lammps(&self) -> Option<String> {
+        super::engine::lammps_form_name(&self.spec)
     }
 
     /// A pair style's special-bonds class: ``"lj"`` or ``"coul"``.
@@ -1868,5 +1887,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(styles, m)?)?;
     m.add_function(wrap_pyfunction!(categories, m)?)?;
     m.add_function(wrap_pyfunction!(evaluate, m)?)?;
+    super::engine::register(m)?;
     Ok(())
 }

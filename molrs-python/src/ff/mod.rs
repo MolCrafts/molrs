@@ -33,6 +33,7 @@
 
 pub mod atd;
 pub mod charge;
+pub mod engine;
 pub mod forms;
 pub mod gaff;
 pub mod handles;
@@ -2196,10 +2197,12 @@ pub fn read_lammps_data_coeffs_py(
 /// unit style than ``units`` has its energies and lengths converted through
 /// the lj reduced hub — never hard-coded eV/kcal factors. A split ``lj/cut`` +
 /// ``coul/cut`` pair is recombined as ``lj/cut/coul/cut`` so geometric mixing
-/// is not defeated by a hybrid wildcard. Styles: ``bond`` harmonic / morse,
-/// ``angle`` harmonic, ``dihedral`` periodic (as ``fourier``) / opls / harmonic
-/// / charmm / multi/harmonic / nharmonic, ``improper`` harmonic / cvff / periodic (as
-/// ``cvff``, the atom order unchanged).
+/// is not defeated by a hybrid wildcard. Every style is written through its
+/// LAMMPS form in the IR registry (``molrs.ff.ir``, ``StyleInfo.lammps``):
+/// the built-ins LAMMPS has (``dihedral periodic`` as ``fourier``,
+/// ``improper periodic`` as ``cvff``, the ``class2`` styles with their
+/// cross-term lines at zero, …) and a style registered with
+/// ``lammps="positional"``, each parameter converted by its dimension.
 ///
 /// Parameters
 /// ----------
@@ -2231,8 +2234,9 @@ pub fn read_lammps_data_coeffs_py(
 /// ------
 /// ValueError
 ///     On a frame type label the force field does not define (the message
-///     names the block and the label), an unsupported style holding a used
-///     type, a bad units keyword, or missing required parameters.
+///     names the block and the label), a style without a LAMMPS form holding
+///     a used type ("LAMMPS has no form for …"), a bad units keyword, or
+///     missing required parameters.
 #[pyfunction]
 #[pyo3(
     name = "write_lammps_forcefield",

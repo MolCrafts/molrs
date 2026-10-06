@@ -129,6 +129,7 @@
 //! does this system's data file need" and is keyed by the system's
 //! `TypeLabels`.
 
+use crate::ff::ir::Engine;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::ForceFieldWriter;
@@ -659,7 +660,7 @@ impl GromacsTopFfWriter {
                 }
                 one(2, vec![chi0, 2.0 * need("k")? * KJ_PER_KCAL], None)
             }
-            (category, style) => Err(format!("{category}/{style} has no GROMACS directive")),
+            (category, style) => Err(Engine::Gromacs.refuse_style(category, style).to_string()),
         }
     }
 }
@@ -717,7 +718,7 @@ fn check_style(style: &Style) -> Result<(), String> {
             }
             Ok(())
         }
-        (category, name) => Err(format!("{category}/{name} has no GROMACS directive")),
+        (category, name) => Err(Engine::Gromacs.refuse_style(category, name).to_string()),
     }
 }
 

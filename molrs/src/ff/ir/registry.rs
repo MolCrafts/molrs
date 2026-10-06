@@ -21,6 +21,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::ff::forcefield::Params;
 use crate::ff::ir::conformance::{self, PROBE_TERMS, Probe, form_id};
+use crate::ff::ir::engine::{Engine, LammpsCodec, LammpsForm};
 use crate::ff::ir::form::FormCodec;
 use crate::ff::ir::{CategorySpec, IrError, StyleSpec, builtin_categories, builtin_styles};
 use crate::ff::potential::Member;
@@ -584,6 +585,7 @@ impl Registry {
                 category: spec.category.to_string(),
             })?;
         conformance::check_style(category, &spec, kernel.as_ref(), self.expressions)?;
+        spec.lammps.check_spec(&spec)?;
         self.styles.insert(
             key,
             StyleEntry {
@@ -673,6 +675,86 @@ impl Registry {
             },
         );
         Ok(())
+    }
+
+    /// Give a registered style the engine form `form` of `engine`
+    /// (`ff-ir-02-protocol` §8): a LAMMPS form for a style registered
+    /// without one.
+    ///
+    /// Only LAMMPS takes a registered form: the OpenMM XML writer writes an
+    /// expression style's `Custom*Force` from its expression, and GROMACS
+    /// and AMBER hold the built-in styles only ([`IrError::NoEngineForm`]).
+    /// A style that is not registered is [`IrError::NoKernel`]; the same
+    /// form again is a no-op; another form under a style that has one is
+    /// [`IrError::Sealed`] for a built-in and [`IrError::Conflict`]
+    /// otherwise; a positional form the spec cannot have is
+    /// [`IrError::NoEngineForm`].
+    pub fn register_engine_form(
+        &mut self,
+        engine: Engine,
+        category: &str,
+        style: &str,
+        form: LammpsForm,
+    ) -> Result<(), IrError> {
+        let key = (category.to_owned(), style.to_owned());
+        let Some(entry) = self.styles.get_mut(&key) else {
+            return Err(IrError::NoKernel {
+                category: key.0,
+                style: key.1,
+            });
+        };
+        if engine != Engine::Lammps {
+            return Err(engine.refuse(
+                category,
+                style,
+                "only LAMMPS takes a registered form: the OpenMM XML writer writes an expression \
+                 style's Custom*Force from its expression, and GROMACS and AMBER hold the \
+                 built-in styles only",
+            ));
+        }
+        if entry.spec.lammps == form {
+            return Ok(());
+        }
+        if !matches!(entry.spec.lammps, LammpsForm::None) || entry.sealed {
+            let (category, style) = key;
+            return Err(if entry.sealed {
+                IrError::Sealed { category, style }
+            } else {
+                IrError::Conflict { category, style }
+            });
+        }
+        form.check_spec(&entry.spec)?;
+        entry.spec.lammps = form;
+        Ok(())
+    }
+
+    /// The style of `category` a LAMMPS file's style name `lammps` reads
+    /// as, with its codec: the style of that name when its form writes the
+    /// name, else the one style whose form does (`fourier` is `dihedral
+    /// periodic`). `None` when no style, or more than one, claims it.
+    pub fn lammps_style(
+        &self,
+        category: &str,
+        lammps: &str,
+    ) -> Option<(&StyleSpec, &dyn LammpsCodec)> {
+        let writes =
+            |e: &&StyleEntry| e.spec.lammps.lammps_name(&e.spec).as_deref() == Some(lammps);
+        let found = match self.entry(category, lammps).filter(writes) {
+            Some(e) => e,
+            None => {
+                let mut claims = self
+                    .styles
+                    .values()
+                    .filter(|e| e.spec.category == category)
+                    .filter(writes);
+                let first = claims.next()?;
+                if claims.next().is_some() {
+                    return None;
+                }
+                first
+            }
+        };
+        Some((&found.spec, found.spec.lammps.codec()?))
     }
 
     /// The form codec of `(category, style)`, if it registered one.
@@ -781,6 +863,41 @@ pub fn register_form(category: &str, style: &str, codec: FormCodec) -> Result<()
         .write()
         .unwrap()
         .register_form(category, style, codec)
+}
+
+/// [`Registry::register_engine_form`] on the process-wide registry.
+pub fn register_engine_form(
+    engine: Engine,
+    category: &str,
+    style: &str,
+    form: LammpsForm,
+) -> Result<(), IrError> {
+    global()
+        .write()
+        .unwrap()
+        .register_engine_form(engine, category, style, form)
+}
+
+/// The registry an engine reader or writer reads: the process-wide one
+/// (the default), or a caller's own — a test's styles, seen by nothing
+/// else.
+#[derive(Clone, Debug, Default)]
+pub enum RegistryRef {
+    #[default]
+    Global,
+    Own(Arc<Registry>),
+}
+
+impl RegistryRef {
+    /// Run `f` on the registry: a snapshot of the process-wide one (no lock
+    /// is held while `f` runs, so `f` may read the process-wide registry
+    /// itself), or the caller's.
+    pub fn with<R>(&self, f: impl FnOnce(&Registry) -> R) -> R {
+        match self {
+            RegistryRef::Global => f(&with_global(Registry::clone)),
+            RegistryRef::Own(r) => f(r),
+        }
+    }
 }
 
 /// [`Registry::unregister_style`] on the process-wide registry.

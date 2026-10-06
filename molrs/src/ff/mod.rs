@@ -5,6 +5,8 @@ pub(crate) mod constants;
 #[cfg(test)]
 mod convention_invariance;
 #[cfg(test)]
+mod engine_codec_check;
+#[cfg(test)]
 mod equivalence_check;
 pub mod forcefield;
 pub mod ir;

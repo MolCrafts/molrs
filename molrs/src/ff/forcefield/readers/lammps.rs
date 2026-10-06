@@ -1,11 +1,14 @@
 //! LAMMPS force-field reader (the `*.ff` include next to a data file).
 //!
-//! Parses a LAMMPS force-field include — `pair_style`/`pair_coeff`,
-//! `bond_style harmonic|morse`, `angle_style harmonic|charmm`, `dihedral_style`
-//! `fourier` / `opls` / `harmonic` / `charmm` / `multi/harmonic` / `nharmonic`,
-//! `improper_style harmonic|cvff`, and a `hybrid` of those in any bonded
-//! category — with **type-label** coefficients into a
-//! molrs [`ForceField`]. Inverse of
+//! Parses a LAMMPS force-field include — `pair_style`/`pair_coeff` and the
+//! `*_style`/`*_coeff` lines of every bonded category, a `hybrid` of styles
+//! in any of them — with **type-label** coefficients into a molrs
+//! [`ForceField`]. A LAMMPS style reads as the registered style whose
+//! [`LammpsForm`](crate::ff::ir::LammpsForm) writes its name
+//! ([`Registry::lammps_style`]), through that form's codec
+//! (`ff-ir-02-protocol` §8): a positional style's coefficients are its
+//! spec's `params` in order, so a style registered at run time with a LAMMPS
+//! form reads with nothing else written. Inverse of
 //! [`LammpsFfWriter`](crate::ff::forcefield::writers::lammps::LammpsFfWriter), e.g.:
 //!
 //! ```text
@@ -25,10 +28,15 @@
 //! conventions"): every style's energy expression, factors and parameter
 //! units are the LAMMPS style's, with angle-valued parameters in degrees. So
 //! this reader converts nothing: each coefficient is stored as written, under
-//! the molrs name of its slot, and the force field declares the file's `units`
+//! the name of its slot, and the force field declares the file's `units`
 //! (`real` when the file has no `units` line). [`lammps_coeff_params`] is that
 //! one token → params map. The only renames are of style names molrs spells
 //! differently: `dihedral_style fourier` is molrs's `dihedral periodic`.
+//!
+//! A `class2` style's cross-term lines (`angle_coeff t bb …`, `dihedral_coeff
+//! t mbt …`, a data file's `BondBond Coeffs`, …) read when their force
+//! constants are zero, and are refused otherwise: the force-field IR has no
+//! cross terms.
 //!
 //! A coefficient line carries exactly its style's coefficients: an extra
 //! token is an error, as it is in LAMMPS, never a number dropped (an
@@ -57,7 +65,10 @@
 //! `pair_style lj/cut` is `lj/cut` alone (LAMMPS prices no charge under it);
 //! `lj/cut/coul/cut` is `lj/cut` with `coul/cut`; `lj/cut/coul/long` is
 //! `lj/cut` with `coul/long/pme` at its cutoff and LAMMPS's Coulomb
-//! constant. The Ewald parameters of the last are the input script's
+//! constant. Any other pair style reads through its codec (`buck`, `morse`,
+//! `lj/class2`, a style registered with a LAMMPS form), alone, as a `hybrid`
+//! of such styles, or as a `hybrid/overlay` with `coul/cut` / `coul/long` on
+//! `* *`; its `mixing` is `pair_modify mix`, else LAMMPS's `geometric`. The Ewald parameters of the last are the input script's
 //! `kspace_style` accuracy, not an `alpha`, so they are not read and the style
 //! prices nothing until a caller states them. A `hybrid` / `hybrid/overlay`
 //! of `lj/cut` with `coul/cut` or `coul/long` reads the same way; accelerator
@@ -104,12 +115,14 @@ use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::lammps_units::parse_style;
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
+use crate::ff::ir::{LammpsCodec, Registry, RegistryRef, StyleSpec, with_global};
 use crate::ff::params::amber::{AMBER_SCEE, AMBER_SCNB};
 use molrs::store::type_labels::TypeName;
 use molrs::units::constants::{COULOMB_METAL, COULOMB_REAL};
 use ndarray::ArrayD;
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
 
 /// Optional id→label maps (from a data-file Type Labels section).
 #[derive(Debug, Clone, Default)]
@@ -128,12 +141,17 @@ pub struct LammpsFfReader {
     /// **real** (LAMMPS bare-script default is `lj` — pass `default_units: Lj`
     /// or write an explicit `units` line when that matters).
     pub default_units: &'static str,
+    /// The registry whose styles' LAMMPS forms the file reads through: the
+    /// process-wide one unless [`with_registry`](Self::with_registry) gives
+    /// another.
+    pub registry: RegistryRef,
 }
 
 impl Default for LammpsFfReader {
     fn default() -> Self {
         Self {
             default_units: "real",
+            registry: RegistryRef::Global,
         }
     }
 }
@@ -141,6 +159,13 @@ impl Default for LammpsFfReader {
 impl LammpsFfReader {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Read each style through its codec in `registry` instead of the
+    /// process-wide one.
+    pub fn with_registry(mut self, registry: Arc<Registry>) -> Self {
+        self.registry = RegistryRef::Own(registry);
+        self
     }
 
     /// Parse data-file `* Coeffs` sections with optional Type Labels maps.
@@ -155,9 +180,11 @@ impl LammpsFfReader {
     /// A data file has no `*_style` lines; `write_data` records each style as
     /// the section header's comment, e.g. `Bond Coeffs # harmonic/kk`. That
     /// hint selects the category's style, with an accelerator suffix (`/kk`,
-    /// `/gpu`, `/omp`, `/intel`, `/opt`) removed. A hinted style this reader
-    /// has no kernel for (`fene`, `cosine`, …) is an error naming the section
-    /// and the style — the numbers are never read under another kernel.
+    /// `/gpu`, `/omp`, `/intel`, `/opt`) removed. A hinted style no registered
+    /// style reads (`cosine`, …) is an error naming the section and the
+    /// style — the numbers are never read under another kernel. The
+    /// `class2` cross-term sections (`BondBond Coeffs`, …) read as their
+    /// `*_coeff` lines.
     ///
     /// A section **without** a hint, and a category with no section, fall back
     /// to `harmonic` (bond, angle, dihedral, improper) and `lj/cut` (pair).
@@ -189,7 +216,8 @@ impl LammpsFfReader {
         for category in ["pair", "bond", "angle", "dihedral", "improper"] {
             let style = match hints.get(category) {
                 Some(hint) => {
-                    hint.require_supported(category)?;
+                    self.registry
+                        .with(|reg| hint.require_supported(reg, category))?;
                     hint.style.as_str()
                 }
                 // A data file without a hint: the AMBER-style default above,
@@ -238,6 +266,17 @@ impl LammpsFfReader {
         labels: &LammpsTypeLabelMaps,
         dir: Option<&Path>,
     ) -> Result<ForceField, String> {
+        self.registry
+            .with(|reg| self.read_with(reg, text, labels, dir))
+    }
+
+    fn read_with(
+        &self,
+        reg: &Registry,
+        text: &str,
+        labels: &LammpsTypeLabelMaps,
+        dir: Option<&Path>,
+    ) -> Result<ForceField, String> {
         let mut file_units = self.default_units;
         let mut ff = ForceField::new("LAMMPS");
         let mut pair_rows: Vec<PairRow> = Vec::new();
@@ -270,7 +309,7 @@ impl LammpsFfReader {
                         .ok_or_else(|| format!("{}: units missing style name", where_()))?;
                     file_units = parse_style(name).map_err(|e| format!("{}: {e}", where_()))?;
                 }
-                "pair_style" => pair_line = require_pair_style(&rest, &where_)?,
+                "pair_style" => pair_line = require_pair_style(reg, &rest, &where_)?,
                 "bond_style" | "angle_style" | "dihedral_style" | "improper_style" => {
                     let category = kw.trim_end_matches("_style");
                     let category = BONDED.iter().copied().find(|c| *c == category).unwrap();
@@ -280,23 +319,25 @@ impl LammpsFfReader {
                     let declared = if *name == "hybrid" {
                         let subs: Vec<String> = rest[1..].iter().map(|s| (*s).to_owned()).collect();
                         for sub in &subs {
-                            def_bonded_style(&mut ff, category, sub, &where_)?;
+                            def_bonded_style(&mut ff, reg, category, sub, &[], &where_)?;
                         }
                         BondedStyle::Hybrid(subs)
                     } else {
-                        def_bonded_style(&mut ff, category, name, &where_)?;
+                        def_bonded_style(&mut ff, reg, category, name, &rest[1..], &where_)?;
                         BondedStyle::Single((*name).to_owned())
                     };
                     styles.insert(category, declared);
                 }
-                "pair_coeff" => collect_pair(&rest, &pair_line, &mut pair_rows, &where_, labels)?,
+                "pair_coeff" => {
+                    collect_pair(reg, &rest, &pair_line, &mut pair_rows, &where_, labels)?
+                }
                 "bond_coeff" | "angle_coeff" | "dihedral_coeff" | "improper_coeff" => {
                     let category = kw.trim_end_matches("_coeff");
                     let category = BONDED.iter().copied().find(|c| *c == category).unwrap();
                     let declared = styles.get(category).ok_or_else(|| {
                         format!("{}: coeff before its `{category}_style`", where_())
                     })?;
-                    add_bonded(&mut ff, category, declared, &rest, &where_, labels)?;
+                    add_bonded(&mut ff, reg, category, declared, &rest, &where_, labels)?;
                 }
                 "special_bonds" => {
                     ff.set_special_bonds(parse_special_bonds(&rest, &where_)?);
@@ -381,6 +422,7 @@ impl LammpsFfReader {
 
         build_pairs(
             &mut ff,
+            reg,
             &pair_rows,
             pair_line,
             pair_mix.as_deref(),
@@ -539,32 +581,33 @@ fn coulomb_constant(units: &str) -> f64 {
     }
 }
 
-/// The molrs name of a LAMMPS style: the same, except `dihedral fourier`,
-/// which is molrs's canonical multi-term `dihedral periodic`.
-fn molrs_style_name<'a>(category: &str, lammps: &'a str) -> &'a str {
-    match (category, lammps) {
-        ("dihedral", "fourier") => "periodic",
-        _ => lammps,
-    }
-}
+/// The data-file sections of the `class2` cross-term lines: heading,
+/// category, and the `*_coeff` keyword the section's rows are.
+pub(crate) const CROSS_TERM_SECTIONS: [(&str, &str, &str); 7] = [
+    ("BondBond Coeffs", "angle", "bb"),
+    ("BondAngle Coeffs", "angle", "ba"),
+    ("MiddleBondTorsion Coeffs", "dihedral", "mbt"),
+    ("EndBondTorsion Coeffs", "dihedral", "ebt"),
+    ("AngleTorsion Coeffs", "dihedral", "at"),
+    ("AngleAngleTorsion Coeffs", "dihedral", "aat"),
+    ("BondBond13 Coeffs", "dihedral", "bb13"),
+];
 
-/// The LAMMPS styles this reader stores, per bonded category: each has a
-/// molrs kernel of the same expression.
-fn supported_styles(category: &str) -> &'static [&'static str] {
-    match category {
-        "bond" => &["harmonic", "morse"],
-        "angle" => &["harmonic", "charmm"],
-        "dihedral" => &[
-            "fourier",
-            "opls",
-            "harmonic",
-            "multi/harmonic",
-            "nharmonic",
-            "charmm",
-        ],
-        "improper" => &["harmonic", "cvff"],
-        _ => &[],
-    }
+/// The registered style the LAMMPS style `name` of `category` reads as,
+/// with its codec, or an error naming it.
+fn lammps_style<'r>(
+    reg: &'r Registry,
+    category: &str,
+    name: &str,
+    where_: &dyn Fn() -> String,
+) -> Result<(&'r StyleSpec, &'r dyn LammpsCodec), String> {
+    reg.lammps_style(category, name).ok_or_else(|| {
+        format!(
+            "{}: unsupported {category}_style `{name}`: no registered style has this LAMMPS form \
+             (molrs.ff.ir.register_style with a LAMMPS form registers one)",
+            where_()
+        )
+    })
 }
 
 /// A data-file `* Coeffs` section header's `# <style>` comment.
@@ -593,16 +636,15 @@ impl SectionStyleHint {
 
     /// Refuse a style the `category`'s `*_style` directive would refuse, with
     /// the error naming this section.
-    fn require_supported(&self, category: &str) -> Result<(), String> {
+    fn require_supported(&self, reg: &Registry, category: &str) -> Result<(), String> {
         let where_ = || format!("`{}` section", self.header);
         let style = self.style.as_str();
         match category {
-            "pair" => {
-                require_pair_style(&[style, &DATA_PAIR_CUTOFF.to_string()], &where_).map(|_| ())
-            }
+            "pair" => require_pair_style(reg, &[style, &DATA_PAIR_CUTOFF.to_string()], &where_)
+                .map(|_| ()),
             // Each row names its sub-style, checked as the row is read.
             _ if style == "hybrid" => Ok(()),
-            _ => require_bonded_style(category, style, &where_),
+            _ => lammps_style(reg, category, style, &where_).map(|_| ()),
         }
     }
 }
@@ -616,12 +658,22 @@ fn data_sections_to_commands(
     let mut out = String::new();
     let mut hints = BTreeMap::new();
     let mut section: Option<&str> = None;
+    // The `*_coeff` keyword of a cross-term section's rows.
+    let mut cross_keyword: Option<&str> = None;
     for (lineno, raw) in text.lines().enumerate() {
         let line = strip_comment(raw).trim();
         if line.is_empty() {
             continue;
         }
         let lower = line.to_ascii_lowercase();
+        let cross = CROSS_TERM_SECTIONS
+            .iter()
+            .find(|(heading, ..)| lower.starts_with(&heading.to_ascii_lowercase()));
+        if let Some(&(_, category, keyword)) = cross {
+            section = Some(category);
+            cross_keyword = Some(keyword);
+            continue;
+        }
         let opened = [
             ("pair coeffs", "pair"),
             ("pairij coeffs", "pairij"),
@@ -634,6 +686,7 @@ fn data_sections_to_commands(
         .find(|(name, _)| lower.starts_with(name));
         if let Some((_, kind)) = opened {
             section = Some(kind);
+            cross_keyword = None;
             // `PairIJ Coeffs` is the pair category: one hint for both forms.
             let category = if kind == "pairij" { "pair" } else { kind };
             match SectionStyleHint::parse(raw) {
@@ -696,25 +749,25 @@ fn data_sections_to_commands(
         };
         match kind {
             "pair" => {
-                // Pair Coeffs: id ε σ  →  pair_coeff T T ε σ
-                if parts.len() < 3 {
+                // Pair Coeffs: id values…  →  pair_coeff T T values…
+                if parts.len() < 2 {
                     return Err(format!(
-                        "line {}: Pair Coeffs needs `id epsilon sigma`",
+                        "line {}: Pair Coeffs needs `id` and its coefficients",
                         lineno + 1
                     ));
                 }
                 out.push_str(&format!(
-                    "pair_coeff {type_tok} {type_tok} {} {}\n",
-                    parts[1], parts[2]
+                    "pair_coeff {type_tok} {type_tok} {}\n",
+                    parts[1..].join(" ")
                 ));
             }
             "pairij" => {
-                // PairIJ Coeffs: i j ε σ  →  pair_coeff Ti Tj ε σ. A row with
-                // i ≠ j is an explicit cross pair, kept as a pair type of its
-                // own (it used to end the coefficient sections, unread).
-                if parts.len() < 4 {
+                // PairIJ Coeffs: i j values…  →  pair_coeff Ti Tj values…. A
+                // row with i ≠ j is an explicit cross pair, kept as a pair
+                // type of its own.
+                if parts.len() < 3 {
                     return Err(format!(
-                        "line {}: PairIJ Coeffs needs `i j epsilon sigma`",
+                        "line {}: PairIJ Coeffs needs `i j` and its coefficients",
                         lineno + 1
                     ));
                 }
@@ -726,15 +779,19 @@ fn data_sections_to_commands(
                     )
                 })?;
                 out.push_str(&format!(
-                    "pair_coeff {type_tok} {} {} {}\n",
+                    "pair_coeff {type_tok} {} {}\n",
                     atom_label(j),
-                    parts[2],
-                    parts[3]
+                    parts[2..].join(" ")
                 ));
             }
             other => {
                 // bond/angle/dihedral/improper: id params… → *_coeff TYPE params…
+                // (a cross-term section's: *_coeff TYPE <keyword> params…)
                 out.push_str(&format!("{other}_coeff {type_tok}"));
+                if let Some(keyword) = cross_keyword {
+                    out.push(' ');
+                    out.push_str(keyword);
+                }
                 for p in &parts[1..] {
                     out.push(' ');
                     out.push_str(p);
@@ -750,13 +807,25 @@ fn data_sections_to_commands(
 
 /// The pair kernel a `pair_style` line declares, with its cutoffs in the
 /// file's length unit.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum PairLine {
     /// An `lj/cut…` style: molrs's `lj/cut` and its Coulomb half.
     LjCut { lj: Option<f64>, coul: Coul },
     /// `lj/charmm/coul/charmm inner outer [inner2 outer2]`: molrs's
     /// `lj/charmm` + `coul/charmm`, each with its `(inner, cutoff)`.
     Charmm { lj: (f64, f64), coul: (f64, f64) },
+    /// Any other style through its codec, alone or as the sub-styles of a
+    /// `hybrid` (`hybrid/overlay`, with a Coulomb style on `* *`).
+    Styles { subs: Vec<PairSub>, coul: Coul },
+}
+
+/// One pair style read through its codec: its LAMMPS name, the molrs style
+/// it reads as, and the style parameters its `pair_style` arguments state.
+#[derive(Clone, Debug, PartialEq)]
+struct PairSub {
+    lammps: String,
+    style: String,
+    params: Params,
 }
 
 /// The Coulomb half of an `lj/cut…` pair line, with its cutoff.
@@ -793,6 +862,25 @@ fn without_accelerator(name: &str) -> &str {
     name
 }
 
+/// The pair style `name` read through its codec, `args` its `pair_style`
+/// arguments.
+fn pair_sub(
+    reg: &Registry,
+    name: &str,
+    args: &[&str],
+    where_: &dyn Fn() -> String,
+) -> Result<PairSub, String> {
+    let (spec, codec) = lammps_style(reg, "pair", name, where_)?;
+    let params = codec
+        .read_style_args(spec, args)
+        .map_err(|e| format!("{}: {e}", where_()))?;
+    Ok(PairSub {
+        lammps: name.to_owned(),
+        style: spec.name.to_string(),
+        params,
+    })
+}
+
 /// Validate the pair kernel and return what it declares.
 ///
 /// Three spellings map to the reader's lj/cut + coul/cut pair:
@@ -814,23 +902,32 @@ fn without_accelerator(name: &str) -> &str {
 /// one when only two are given). Its `coul/long` sibling is refused: its
 /// Coulomb is switched in real space, which no molrs kernel is.
 ///
+/// Every other name is the registered style whose LAMMPS form writes it, its
+/// arguments read by its codec (`pair_style buck 10.0`); a `hybrid` of such
+/// styles reads each sub-style so.
+///
 /// The cutoffs are part of the force field, not a rendering detail: a reader
 /// that keeps only the kernel name cannot write a runnable input back out.
-fn require_pair_style(rest: &[&str], where_: &dyn Fn() -> String) -> Result<PairLine, String> {
+fn require_pair_style(
+    reg: &Registry,
+    rest: &[&str],
+    where_: &dyn Fn() -> String,
+) -> Result<PairLine, String> {
     let name = rest
         .first()
         .ok_or_else(|| format!("{}: pair_style missing kernel name", where_()))?;
     if *name == "hybrid" || *name == "hybrid/overlay" {
-        let (lj, coul) = hybrid_cutoffs(&rest[1..], where_)?;
-        return Ok(PairLine::LjCut { lj, coul });
+        return hybrid_pair(reg, &rest[1..], where_);
     }
-    let name = &without_accelerator(name);
-    let nums = rest[1..]
-        .iter()
-        .map(|t| parse_f64(t, "pair_style cutoff", where_))
-        .collect::<Result<Vec<_>, _>>()?;
-    if *name == "lj/charmm/coul/charmm" {
-        return match *nums.as_slice() {
+    let name = without_accelerator(name);
+    let numbers = || {
+        rest[1..]
+            .iter()
+            .map(|t| parse_f64(t, "pair_style cutoff", where_))
+            .collect::<Result<Vec<_>, _>>()
+    };
+    if name == "lj/charmm/coul/charmm" {
+        return match *numbers()?.as_slice() {
             [a, b] => Ok(PairLine::Charmm {
                 lj: (a, b),
                 coul: (a, b),
@@ -855,71 +952,99 @@ fn require_pair_style(rest: &[&str], where_: &dyn Fn() -> String) -> Result<Pair
             where_()
         ));
     }
-    let lj = nums.first().copied();
-    let cut = nums.get(1).copied().or(lj);
-    let coul = match *name {
-        "lj/cut" => Coul::None,
-        "lj/cut/coul/cut" => Coul::Cut(cut),
-        "lj/cut/coul/long" => Coul::Long(cut),
-        _ => {
-            return Err(format!(
-                "{}: unsupported pair_style `{name}` (molrs reads `lj/cut`, \
-                 `lj/cut/coul/cut`, `lj/cut/coul/long`, `lj/charmm/coul/charmm`, and a \
-                 `hybrid` / `hybrid/overlay` of `lj/cut` with `coul/cut` or `coul/long`)",
-                where_()
-            ));
-        }
-    };
-    Ok(PairLine::LjCut { lj, coul })
-}
-
-/// Cutoffs from a `hybrid` / `hybrid/overlay` pair line, e.g.
-/// `lj/cut 10.0 coul/cut 10.0`: read each `lj/cut` and `coul/cut` sub-style's
-/// first numeric argument. Other sub-styles are rejected, matching the combined
-/// form's `lj/cut` requirement.
-fn hybrid_cutoffs(
-    rest: &[&str],
-    where_: &dyn Fn() -> String,
-) -> Result<(Option<f64>, Coul), String> {
-    let (mut lj, mut coul) = (None, Coul::None);
-    let mut i = 0;
-    while i < rest.len() {
-        let sub = rest[i];
-        // A sub-style's cutoff is optional: the next token is a cutoff only if
-        // it parses as a number, otherwise it is the next sub-style name (and
-        // this sub-style falls back to LAMMPS's global default).
-        let cut = rest.get(i + 1).and_then(|t| t.parse::<f64>().ok());
-        match without_accelerator(sub) {
-            "lj/cut" => lj = cut,
-            "coul/cut" => coul = Coul::Cut(cut),
-            "coul/long" => coul = Coul::Long(cut),
-            other => {
+    if name == "lj/cut" || name.starts_with("lj/cut/coul/") {
+        let nums = numbers()?;
+        let lj = nums.first().copied();
+        let cut = nums.get(1).copied().or(lj);
+        let coul = match name {
+            "lj/cut" => Coul::None,
+            "lj/cut/coul/cut" => Coul::Cut(cut),
+            "lj/cut/coul/long" => Coul::Long(cut),
+            _ => {
                 return Err(format!(
-                    "{}: unsupported hybrid pair sub-style `{other}` \
-                     (expected `lj/cut`, `coul/cut` or `coul/long`)",
+                    "{}: unsupported pair_style `{name}` (of the lj/cut Coulomb styles molrs \
+                     reads `lj/cut/coul/cut` and `lj/cut/coul/long`)",
                     where_()
                 ));
             }
-        }
-        // Step over the sub-style name and its cutoff argument, if any.
-        i += if cut.is_some() { 2 } else { 1 };
+        };
+        return Ok(PairLine::LjCut { lj, coul });
     }
-    Ok((lj, coul.with_cutoff(lj)))
+    if matches!(name, "coul/cut" | "coul/long" | "coul/charmm") {
+        return Err(format!(
+            "{}: unsupported pair_style `{name}` alone (a Coulomb style is read beside the \
+             van der Waals one: `lj/cut/{name}`, or a `hybrid/overlay`)",
+            where_()
+        ));
+    }
+    Ok(PairLine::Styles {
+        subs: vec![pair_sub(reg, name, &rest[1..], where_)?],
+        coul: Coul::None,
+    })
 }
 
-/// One `pair_coeff` row: the two atom types (equal for a self pair) and its
-/// `lj/cut` parameters.
-type PairRow = (String, String, Params);
+/// A `hybrid` / `hybrid/overlay` pair line, e.g. `lj/cut 10.0 coul/cut
+/// 10.0`: each sub-style and the numbers after it. `lj/cut` with `coul/cut`
+/// or `coul/long` is the [`PairLine::LjCut`] pair (a sub-style's cutoff is
+/// then optional, LAMMPS's global default); any other sub-style reads
+/// through its codec.
+fn hybrid_pair(
+    reg: &Registry,
+    rest: &[&str],
+    where_: &dyn Fn() -> String,
+) -> Result<PairLine, String> {
+    let mut subs: Vec<(&str, Vec<&str>)> = Vec::new();
+    for tok in rest {
+        if tok.parse::<f64>().is_ok() {
+            let Some((_, args)) = subs.last_mut() else {
+                return Err(format!(
+                    "{}: pair_style hybrid: a number `{tok}` before any sub-style",
+                    where_()
+                ));
+            };
+            args.push(tok);
+        } else {
+            subs.push((without_accelerator(tok), Vec::new()));
+        }
+    }
+    let number = |args: &[&str]| args.first().and_then(|t| t.parse::<f64>().ok());
+    let mut coul = Coul::None;
+    let mut typed: Vec<(&str, Vec<&str>)> = Vec::new();
+    for (name, args) in subs {
+        match name {
+            "coul/cut" => coul = Coul::Cut(number(&args)),
+            "coul/long" => coul = Coul::Long(number(&args)),
+            _ => typed.push((name, args)),
+        }
+    }
+    if let [("lj/cut", args)] = typed.as_slice() {
+        let lj = number(args);
+        return Ok(PairLine::LjCut {
+            lj,
+            coul: coul.with_cutoff(lj),
+        });
+    }
+    let subs = typed
+        .iter()
+        .map(|(name, args)| pair_sub(reg, name, args, where_))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(PairLine::Styles { subs, coul })
+}
+
+/// One `pair_coeff` row: the two atom types (equal for a self pair), the
+/// molrs style it is a type of, and its parameters.
+type PairRow = (String, String, String, Params);
 
 fn collect_pair(
+    reg: &Registry,
     rest: &[&str],
     line: &PairLine,
     rows: &mut Vec<PairRow>,
     where_: &dyn Fn() -> String,
     labels: &LammpsTypeLabelMaps,
 ) -> Result<(), String> {
-    // pair_coeff <i> <j> [sub-style] <epsilon> <sigma>. A self pair i==j is an
-    // atom type's own row; a cross pair i!=j is an explicit override (NBFIX) that
+    // pair_coeff <i> <j> [sub-style] <values…>. A self pair i==j is an atom
+    // type's own row; a cross pair i!=j is an explicit override (NBFIX) that
     // the kernel uses in place of the combining rule. A later line for the same
     // pair replaces an earlier one, as in LAMMPS.
     if rest.len() < 2 {
@@ -927,27 +1052,52 @@ fn collect_pair(
     }
     let ti = resolve_atom_type(rest[0], labels, where_)?;
     let tj = resolve_atom_type(rest[1], labels, where_)?;
-    // A hybrid line names its sub-style before the numbers: `c3 c3 lj/cut …`.
-    // Only lj/cut carries eps/sigma; the `* * coul/cut` wildcard (charges come
-    // from the frame) has nothing to transcribe.
     let mut args = &rest[2..];
-    // Optional hybrid sub-style token (must be a known name, not any non-float —
-    // otherwise `notanumber` would be silently skipped as an unknown sub-style).
+    // A hybrid line names its sub-style before the numbers: `c3 c3 lj/cut …`.
+    // The `* * coul/cut` wildcard (charges come from the frame) has nothing
+    // to transcribe. The sub-style must be one the line declared, not any
+    // non-number (`notanumber` would otherwise be skipped silently).
+    let mut sub: Option<&str> = None;
     if let Some(&first) = args.first()
         && first.parse::<f64>().is_err()
     {
-        match first {
-            "lj/cut" => args = &args[1..],
-            "coul/cut" | "coul/long" => return Ok(()), // charges from frame
-            other => {
+        if matches!(first, "coul/cut" | "coul/long") {
+            return Ok(());
+        }
+        sub = Some(first);
+        args = &args[1..];
+    }
+    let unexpected = |tok: &str| {
+        format!(
+            "{}: pair_coeff unexpected token `{tok}` (not a sub-style of the pair_style line)",
+            where_()
+        )
+    };
+    let style = match line {
+        PairLine::LjCut { .. } => match sub {
+            None | Some("lj/cut") => "lj/cut".to_owned(),
+            Some(other) => return Err(unexpected(other)),
+        },
+        PairLine::Charmm { .. } => match sub {
+            None => "lj/charmm".to_owned(),
+            Some(other) => return Err(unexpected(other)),
+        },
+        PairLine::Styles { subs, .. } => match (sub, subs.as_slice()) {
+            (None, [one]) => one.style.clone(),
+            (None, _) => {
                 return Err(format!(
-                    "{}: pair_coeff unexpected token `{other}` (expected \
-                     [lj/cut] eps sigma)",
+                    "{}: pair_coeff under a hybrid pair_style names no sub-style",
                     where_()
                 ));
             }
-        }
-    }
+            (Some(name), _) => subs
+                .iter()
+                .find(|s| s.lammps == name)
+                .ok_or_else(|| unexpected(name))?
+                .style
+                .clone(),
+        },
+    };
     if ti != tj && (ti.contains('*') || tj.contains('*')) {
         return Err(format!(
             "{}: pair_coeff `{ti} {tj}` is a wildcard cross pair; expand it to explicit \
@@ -955,21 +1105,24 @@ fn collect_pair(
             where_()
         ));
     }
-    let style = match line {
-        PairLine::LjCut { .. } => "lj/cut",
-        PairLine::Charmm { .. } => "lj/charmm/coul/charmm",
-    };
-    let params = coeff_params("pair", style, args, where_)?;
-    let same = |(a, b, _): &PairRow| (a == &ti && b == &tj) || (a == &tj && b == &ti);
+    let (spec, _) = reg
+        .style("pair", &style)
+        .ok_or_else(|| format!("{}: pair style `{style}` is not registered", where_()))?;
+    let codec = spec.lammps.require(spec).map_err(|e| e.to_string())?;
+    let params = codec
+        .read(spec, args)
+        .map_err(|e| format!("{}: {e}", where_()))?;
+    let same =
+        |(a, b, s, _): &PairRow| s == &style && ((a == &ti && b == &tj) || (a == &tj && b == &ti));
     match rows.iter_mut().find(|row| same(row)) {
-        Some(row) => *row = (ti, tj, params),
-        None => rows.push((ti, tj, params)),
+        Some(row) => *row = (ti, tj, style, params),
+        None => rows.push((ti, tj, style, params)),
     }
     Ok(())
 }
 
-/// Emit the collected LJ rows (self pairs and explicit cross pairs) as a `lj/cut` style plus a `coul/cut` style
-/// (charges resolved from the frame).
+/// Emit the collected pair rows as their styles, plus the Coulomb style the
+/// line declares (charges resolved from the frame).
 ///
 /// `coul/cut` is the **buffered** Coulomb `E = k·qᵢqⱼ/(D·(r + δ))`; a LAMMPS
 /// force field is the unbuffered case (δ = 0) in vacuum with LAMMPS's `k`
@@ -978,6 +1131,7 @@ fn collect_pair(
 /// both are correct.
 fn build_pairs(
     ff: &mut ForceField,
+    reg: &Registry,
     rows: &[PairRow],
     line: PairLine,
     mix: Option<&str>,
@@ -989,27 +1143,35 @@ fn build_pairs(
     }
     // 1-4 scaling lives on the ForceField's `special_bonds` (set in `read_str`),
     // not on the pair styles — `PotentialCompiler::compile` projects it into the kernels.
-    let mut coul_params = vec![("coulomb", coulomb), ("dielectric", VACUUM_DIELECTRIC)];
-    let (lj_name, mut lj_params, coul_name) = match line {
-        PairLine::LjCut { lj, coul } => {
-            let mut lj_pairs: Vec<(&str, f64)> =
-                lj.map(|c| vec![("cutoff", c)]).unwrap_or_default();
-            if shift {
-                lj_pairs.push(("shift", 1.0));
+    let coul_style = |coul: Coul| -> Option<(&'static str, Params)> {
+        let mut p = vec![("coulomb", coulomb), ("dielectric", VACUUM_DIELECTRIC)];
+        let name = match coul {
+            Coul::None => return None,
+            Coul::Cut(c) => {
+                p.extend(c.map(|c| ("cutoff", c)));
+                "coul/cut"
             }
-            let coul_name = match coul {
-                Coul::None => None,
-                Coul::Cut(c) => {
-                    coul_params.extend(c.map(|c| ("cutoff", c)));
-                    Some("coul/cut")
-                }
-                Coul::Long(c) => {
-                    coul_params = vec![("coulomb", coulomb)];
-                    coul_params.extend(c.map(|c| ("cutoff", c)));
-                    Some("coul/long/pme")
-                }
-            };
-            ("lj/cut", Params::from_pairs(&lj_pairs), coul_name)
+            Coul::Long(c) => {
+                p = vec![("coulomb", coulomb)];
+                p.extend(c.map(|c| ("cutoff", c)));
+                "coul/long/pme"
+            }
+        };
+        Some((name, Params::from_pairs(&p)))
+    };
+    // LAMMPS mixes **geometrically** unless `pair_modify mix` says otherwise,
+    // and the CHARMM styles **arithmetically**; record it explicitly rather
+    // than inherit a kernel default.
+    let mut styles: Vec<(String, Params)> = Vec::new();
+    let coulomb_style = match line {
+        PairLine::LjCut { lj, coul } => {
+            let mut p = Params::from_pairs(&lj.map(|c| vec![("cutoff", c)]).unwrap_or_default());
+            if shift {
+                p.set("shift", 1.0);
+            }
+            p.set_str("mixing", mix.unwrap_or("geometric"));
+            styles.push(("lj/cut".into(), p));
+            coul_style(coul)
         }
         PairLine::Charmm { lj, coul } => {
             if shift {
@@ -1019,37 +1181,62 @@ fn build_pairs(
                         .into(),
                 );
             }
-            coul_params.extend([("inner", coul.0), ("cutoff", coul.1)]);
-            (
-                "lj/charmm",
-                Params::from_pairs(&[("inner", lj.0), ("cutoff", lj.1)]),
-                Some("coul/charmm"),
-            )
+            let mut p = Params::from_pairs(&[("inner", lj.0), ("cutoff", lj.1)]);
+            p.set_str("mixing", mix.unwrap_or("arithmetic"));
+            styles.push(("lj/charmm".into(), p));
+            Some((
+                "coul/charmm",
+                Params::from_pairs(&[
+                    ("coulomb", coulomb),
+                    ("dielectric", VACUUM_DIELECTRIC),
+                    ("inner", coul.0),
+                    ("cutoff", coul.1),
+                ]),
+            ))
+        }
+        PairLine::Styles { subs, coul } => {
+            for sub in subs {
+                let (spec, codec) = reg
+                    .lammps_style("pair", &sub.lammps)
+                    .expect("a sub-style read through its codec");
+                let mut p = sub.params;
+                if spec.style_param("mixing").is_some() {
+                    p.set_str(
+                        "mixing",
+                        codec.fixed_mixing().or(mix).unwrap_or("geometric"),
+                    );
+                }
+                if shift {
+                    if spec.style_param("shift").is_none() {
+                        return Err(format!(
+                            "pair_modify shift yes under `{}`: molrs's style has no shift",
+                            sub.lammps
+                        ));
+                    }
+                    p.set("shift", 1.0);
+                }
+                styles.push((sub.style, p));
+            }
+            coul_style(coul)
         }
     };
-    // LAMMPS mixes `lj/cut` **geometrically** and the CHARMM styles
-    // **arithmetically** unless `pair_modify mix` says otherwise; record it
-    // explicitly rather than inherit a kernel default.
-    let default_mix = if lj_name == "lj/charmm" {
-        "arithmetic"
-    } else {
-        "geometric"
-    };
-    lj_params.set_str("mixing", mix.unwrap_or(default_mix));
-    let lj = ff
-        .def_style("pair", lj_name, lj_params)
-        .map_err(|e| e.to_string())?;
-    for (ti, tj, params) in rows {
-        if ti == tj {
-            lj.def_type(ti, &[ti], params.clone())
-        } else {
-            let name = TypeName::pair(ti, tj)?;
-            lj.def_type(name.as_str(), &[ti, tj], params.clone())
+
+    for (name, params) in styles {
+        let style = ff
+            .def_style("pair", &name, params)
+            .map_err(|e| e.to_string())?;
+        for (ti, tj, _, params) in rows.iter().filter(|r| r.2 == name) {
+            if ti == tj {
+                style.def_type(ti, &[ti], params.clone())
+            } else {
+                let type_name = TypeName::pair(ti, tj)?;
+                style.def_type(type_name.as_str(), &[ti, tj], params.clone())
+            }
+            .map_err(|e| e.to_string())?;
         }
-        .map_err(|e| e.to_string())?;
     }
-    if let Some(coul_name) = coul_name {
-        ff.def_style("pair", coul_name, Params::from_pairs(&coul_params))
+    if let Some((name, params)) = coulomb_style {
+        ff.def_style("pair", name, params)
             .map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -1067,24 +1254,32 @@ enum BondedStyle {
     Hybrid(Vec<String>),
 }
 
-/// Declare the molrs style of the LAMMPS bonded style `name`, refusing one
-/// this reader has no kernel for.
+/// Declare the style the LAMMPS bonded style `name` reads as (`args` its
+/// `*_style` arguments), refusing one no registered style reads.
 fn def_bonded_style(
     ff: &mut ForceField,
+    reg: &Registry,
     category: &str,
     name: &str,
+    args: &[&str],
     where_: &dyn Fn() -> String,
 ) -> Result<(), String> {
-    require_bonded_style(category, name, where_)?;
-    ff.def_style(category, molrs_style_name(category, name), Params::new())
+    let (spec, codec) = lammps_style(reg, category, name, where_)?;
+    let params = codec
+        .read_style_args(spec, args)
+        .map_err(|e| format!("{}: {e}", where_()))?;
+    ff.def_style(category, &spec.name, params)
         .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-/// One `<category>_coeff <type> [<sub-style>] <values…>` line under its
-/// LAMMPS style.
+/// One `<category>_coeff <type> [<sub-style>] [<keyword>] <values…>` line
+/// under its LAMMPS style: a type's coefficients, or (after a keyword the
+/// style's codec writes, `class2`'s `bb`, `mbt`, …) a cross-term line it
+/// checks.
 fn add_bonded(
     ff: &mut ForceField,
+    reg: &Registry,
     category: &'static str,
     declared: &BondedStyle,
     rest: &[&str],
@@ -1111,7 +1306,7 @@ fn add_bonded(
             (name, e.to_vec())
         }
     };
-    let (lammps_style, values) = match declared {
+    let (lammps_name, values) = match declared {
         BondedStyle::Single(name) => (name.as_str(), &rest[1..]),
         BondedStyle::Hybrid(subs) => {
             let sub = *rest.get(1).ok_or_else(|| {
@@ -1121,7 +1316,11 @@ fn add_bonded(
                 )
             })?;
             if subs.is_empty() {
-                def_bonded_style(ff, category, sub, where_)?;
+                if lammps_style(reg, category, sub, where_)
+                    .is_ok_and(|(spec, _)| ff.get_style(category, &spec.name).is_none())
+                {
+                    def_bonded_style(ff, reg, category, sub, &[], where_)?;
+                }
             } else if !subs.iter().any(|s| s == sub) {
                 return Err(format!(
                     "{}: {category}_coeff sub-style `{sub}` is not one of the \
@@ -1133,39 +1332,51 @@ fn add_bonded(
             (sub, &rest[2..])
         }
     };
-    let params = coeff_params(category, lammps_style, values, where_)?;
+    let (spec, codec) = lammps_style(reg, category, lammps_name, where_)?;
+    let at = |e: String| format!("{}: {e}", where_());
+    if let Some(&keyword) = values
+        .first()
+        .filter(|k| codec.extra_keywords().contains(k))
+    {
+        let mut params = Params::new();
+        return codec
+            .read_extra(spec, keyword, &values[1..], &mut params)
+            .map_err(at);
+    }
+    let params = codec.read(spec, values).map_err(at)?;
     let ends: Vec<&str> = endpoints.iter().map(String::as_str).collect();
-    let directive = format!("{category}_style {lammps_style}");
-    style_mut(
-        ff,
-        category,
-        molrs_style_name(category, lammps_style),
-        &directive,
-        where_,
-    )?
-    .def_type(&name, &ends, params)
-    .map_err(|e| e.to_string())?;
+    let directive = format!("{category}_style {lammps_name}");
+    style_mut(ff, category, &spec.name, &directive, where_)?
+        .def_type(&name, &ends, params)
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
 // ── coefficient conversion ──────────────────────────────────────────────────
 
-/// One LAMMPS coefficient line as the molrs params the reader stores.
+/// One LAMMPS coefficient line as the molrs params the reader stores,
+/// through the codec of the style the LAMMPS style reads as in the
+/// process-wide registry.
 ///
 /// `values` are the coefficient tokens **after** the type field(s) — for
 /// `bond_coeff c3-c3 228.89 1.5354` that is `["228.89", "1.5354"]`, for
-/// `pair_coeff c3 c3 0.1078 3.3977` it is `["0.1078", "3.3977"]`. `units` is the
-/// LAMMPS `units` keyword the numbers are written in (`real`, `metal`, `lj`),
-/// which the params are in too: the force-field IR follows the LAMMPS standard, so every
+/// `pair_coeff c3 c3 0.1078 3.3977` it is `["0.1078", "3.3977"]`. `style` is
+/// the LAMMPS style name (`fourier`, `lj/cut/coul/long`: every `lj/cut…`
+/// style carries `lj/cut`'s `epsilon sigma`). `units` is the LAMMPS `units`
+/// keyword the numbers are written in (`real`, `metal`, `lj`), which the
+/// params are in too: the force-field IR follows the LAMMPS standard, so every
 /// value is stored as written — the ½ inside LAMMPS's `K`, degrees for every
-/// angle-valued slot — under the molrs name of its slot:
+/// angle-valued slot — under the name of its slot, the spec's `params` in
+/// order for a positional style:
 ///
 /// | category / style        | LAMMPS tokens        | stored params |
 /// |-------------------------|----------------------|---------------|
 /// | `bond harmonic`         | `K r0`               | `k`, `r0` |
 /// | `bond morse`            | `D0 alpha r0`        | `d0`, `alpha`, `r0` |
+/// | `bond class2`           | `r0 K2 K3 K4`        | `r0`, `k2`, `k3`, `k4` |
 /// | `angle harmonic`        | `K theta0`           | `k`, `theta0` (deg) |
 /// | `angle charmm`          | `K theta0 K_ub r_ub` | `k`, `theta0` (deg), `k_ub`, `r_ub` |
+/// | `angle class2`          | `theta0 K2 K3 K4`    | `theta0` (deg), `k2`, `k3`, `k4` |
 /// | `improper harmonic`     | `K chi0`             | `k`, `chi0` (deg) |
 /// | `improper cvff`         | `K d n`              | `k`, `sign = d` (±1), `periodicity = n` |
 /// | `dihedral opls`         | `K1 K2 K3 K4`        | `k1..k4` |
@@ -1174,19 +1385,20 @@ fn add_bonded(
 /// | `dihedral charmm`       | `K n d w`            | `k`, `periodicity`, `phase` (deg), `w` |
 /// | `dihedral multi/harmonic` | `A1 A2 A3 A4 A5`   | `a1..a5` |
 /// | `dihedral nharmonic`    | `N A1 … AN`          | `a1..aN` |
-/// | `pair lj/cut…`          | `epsilon sigma`      | `epsilon`, `sigma` |
+/// | `dihedral class2`       | `K1 phi1 K2 phi2 K3 phi3` | `k1`, `phi1` (deg), … |
+/// | `pair lj/cut…`, `lj/class2` | `epsilon sigma`  | `epsilon`, `sigma` |
+/// | `pair buck`             | `A rho C`            | `a`, `rho`, `c` |
+/// | `pair morse`            | `D0 alpha r0`        | `d0`, `alpha`, `r0` |
 /// | `pair lj/charmm/coul/charmm` | `epsilon sigma [epsilon14 sigma14]` | `epsilon`, `sigma`, `epsilon14`, `sigma14` (absent → `epsilon`, `sigma`) |
 ///
 /// LAMMPS's single-letter `n` and `d` take molrs's descriptive names because
 /// LAMMPS spells two different things `d`: a phase (`charmm`, `fourier`) and a
-/// sign (`harmonic`, `cvff`). Any `pair` style spelled `lj/cut…`
-/// (`lj/cut/coul/long`, …) carries the same `epsilon sigma` pair.
+/// sign (`harmonic`, `cvff`).
 ///
 /// # Errors
 ///
-/// A `(category, style)` the LAMMPS reader has no kernel for, an unknown
-/// `units` keyword, a missing coefficient, an extra one (bonded styles), or a
-/// non-numeric token.
+/// A LAMMPS style no registered style reads, an unknown `units` keyword, a
+/// missing coefficient, an extra one, or a non-numeric token.
 ///
 /// ```
 /// use molrs::ff::forcefield::readers::lammps::lammps_coeff_params;
@@ -1204,137 +1416,15 @@ pub fn lammps_coeff_params(
     units: &str,
 ) -> Result<Params, String> {
     parse_style(units)?;
-    coeff_params(category, style, values, &|| format!("{category} {style}"))
-}
-
-/// The one LAMMPS-coefficient → molrs-params map, shared by the reader and
-/// [`lammps_coeff_params`]. It renames slots and converts nothing.
-fn coeff_params(
-    category: &str,
-    style: &str,
-    values: &[&str],
-    where_: &dyn Fn() -> String,
-) -> Result<Params, String> {
-    let num = |idx: usize, what: &str| -> Result<f64, String> {
-        parse_f64(get(values, idx, what, where_)?, what, where_)
+    let style = match style {
+        s if category == "pair" && s.starts_with("lj/cut") => "lj/cut",
+        s => s,
     };
-    // A bonded coefficient line is exactly its style's numbers, as LAMMPS
-    // requires; a trailing token is refused rather than dropped.
-    let exactly = |n: usize| -> Result<(), String> {
-        if category == "pair" || values.len() <= n {
-            return Ok(());
-        }
-        Err(format!(
-            "{}: {category} {style} takes {n} coefficients, got {}",
-            where_(),
-            values.len()
-        ))
-    };
-    let slots = |names: &[(&str, &str)]| -> Result<Params, String> {
-        exactly(names.len())?;
-        let mut params = Params::new();
-        for (idx, (key, what)) in names.iter().enumerate() {
-            params.set(key, num(idx, what)?);
-        }
-        Ok(params)
-    };
-    match (category, style) {
-        ("bond", "harmonic") => slots(&[("k", "bond K"), ("r0", "bond r0")]),
-        ("bond", "morse") => slots(&[
-            ("d0", "bond D0"),
-            ("alpha", "bond alpha"),
-            ("r0", "bond r0"),
-        ]),
-        ("angle", "harmonic") => slots(&[("k", "angle K"), ("theta0", "angle theta0")]),
-        // E = K(θ − θ0)² + K_ub(r₁₃ − r_ub)²: harmonic plus Urey–Bradley.
-        ("angle", "charmm") => slots(&[
-            ("k", "angle K"),
-            ("theta0", "angle theta0"),
-            ("k_ub", "angle K_ub"),
-            ("r_ub", "angle r_ub"),
-        ]),
-        ("improper", "harmonic") => slots(&[("k", "improper K"), ("chi0", "improper chi0")]),
-        // E = K[1 + d·cos(nφ)]: `d` is a SIGN (±1), not a phase angle.
-        ("improper", "cvff") | ("dihedral", "harmonic") => {
-            slots(&[("k", "K"), ("sign", "d"), ("periodicity", "n")])
-        }
-        ("dihedral", "opls") => slots(&[
-            ("k1", "dihedral K1"),
-            ("k2", "dihedral K2"),
-            ("k3", "dihedral K3"),
-            ("k4", "dihedral K4"),
-        ]),
-        // E = K[1 + cos(nφ − d)]; `w` is the 1-4 weight of the dihedral's own
-        // 1-4 pair (see `dihedral::charmm`).
-        ("dihedral", "charmm") => slots(&[
-            ("k", "dihedral K"),
-            ("periodicity", "dihedral n"),
-            ("phase", "dihedral d"),
-            ("w", "dihedral w"),
-        ]),
-        ("dihedral", "multi/harmonic") => slots(&[
-            ("a1", "dihedral A1"),
-            ("a2", "dihedral A2"),
-            ("a3", "dihedral A3"),
-            ("a4", "dihedral A4"),
-            ("a5", "dihedral A5"),
-        ]),
-        // N  A1 ... AN  (N ≥ 1)
-        ("dihedral", "nharmonic") => {
-            let n: usize = get(values, 0, "dihedral n", where_)?
-                .parse()
-                .ok()
-                .filter(|&n| n >= 1)
-                .ok_or_else(|| format!("{}: dihedral n is not an integer ≥ 1", where_()))?;
-            let mut params = Params::new();
-            for i in 1..=n {
-                params.set(&format!("a{i}"), num(i, "dihedral A")?);
-            }
-            Ok(params)
-        }
-        // m  K1 n1 d1  [K2 n2 d2 ...]
-        ("dihedral", "fourier") => {
-            let m: usize = get(values, 0, "dihedral m", where_)?
-                .parse()
-                .map_err(|_| format!("{}: dihedral m is not an integer", where_()))?;
-            exactly(1 + 3 * m)?;
-            let mut params = Params::new();
-            for term in 0..m {
-                let base = 1 + 3 * term;
-                let i = term + 1;
-                params.set(&format!("k{i}"), num(base, "dihedral K")?);
-                params.set(&format!("periodicity{i}"), num(base + 1, "dihedral n")?);
-                params.set(&format!("phase{i}"), num(base + 2, "dihedral d")?);
-            }
-            Ok(params)
-        }
-        ("pair", s) if s.starts_with("lj/cut") => {
-            slots(&[("epsilon", "pair epsilon"), ("sigma", "pair sigma")])
-        }
-        // `epsilon sigma [epsilon14 sigma14]`; LAMMPS's two-number form means
-        // the 1-4 pair is the regular one, stored as such.
-        ("pair", "lj/charmm/coul/charmm") => {
-            let mut params = slots(&[("epsilon", "pair epsilon"), ("sigma", "pair sigma")])?;
-            let (eps14, sigma14) = match values.len() {
-                2 => (params.get("epsilon").unwrap(), params.get("sigma").unwrap()),
-                4 => (num(2, "pair epsilon14")?, num(3, "pair sigma14")?),
-                n => {
-                    return Err(format!(
-                        "{}: pair_coeff for lj/charmm/coul/charmm takes `epsilon sigma \
-                         [epsilon14 sigma14]`, got {n} numbers",
-                        where_()
-                    ));
-                }
-            };
-            params.set("epsilon14", eps14);
-            params.set("sigma14", sigma14);
-            Ok(params)
-        }
-        _ => Err(format!(
-            "{}: unsupported LAMMPS {category} style `{style}`",
-            where_()
-        )),
-    }
+    let where_ = || format!("{category} {style}");
+    with_global(|reg| {
+        let (spec, codec) = lammps_style(reg, category, style, &where_)?;
+        codec.read(spec, values)
+    })
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -1358,23 +1448,6 @@ fn strip_comment(line: &str) -> &str {
         Some(i) => &line[..i],
         None => line,
     }
-}
-
-/// Refuse a bonded `*_style` this reader has no kernel for.
-fn require_bonded_style(
-    category: &str,
-    name: &str,
-    where_: &dyn Fn() -> String,
-) -> Result<(), String> {
-    let allowed = supported_styles(category);
-    if allowed.contains(&name) {
-        return Ok(());
-    }
-    Err(format!(
-        "{}: unsupported {category}_style `{name}` (expected one of {})",
-        where_(),
-        allowed.join(", ")
-    ))
 }
 
 /// Resolve one atom-type token: numeric id via label map, or bare label / `*`.
@@ -2011,9 +2084,23 @@ PairIJ Coeffs # lj/cut
 
     #[test]
     fn data_coeffs_unsupported_pair_hint_is_an_error() {
-        let err = read_data("Pair Coeffs # morse\n\n1 1.0 2.0 3.0\n").unwrap_err();
-        assert!(err.contains("morse"), "{err}");
+        let err = read_data("Pair Coeffs # born\n\n1 1.0 2.0 3.0 4.0 5.0\n").unwrap_err();
+        assert!(err.contains("born"), "{err}");
         assert!(err.contains("Pair Coeffs"), "{err}");
+    }
+
+    /// A pair style with a positional LAMMPS form reads from its data-file
+    /// hint through its codec, its cutoff the data path's 10.0.
+    #[test]
+    fn data_coeffs_pair_morse_hint_reads_through_its_codec() {
+        let ff = read_data("Pair Coeffs # morse\n\n1 1.0 2.0 3.0\n").unwrap();
+        let morse = ff.get_style("pair", "morse").unwrap();
+        assert_eq!(morse.params().get("cutoff"), Some(DATA_PAIR_CUTOFF));
+        let p = morse.type_params("1").unwrap();
+        assert_eq!(
+            (p.get("d0"), p.get("alpha"), p.get("r0")),
+            (Some(1.0), Some(2.0), Some(3.0))
+        );
     }
 
     #[test]

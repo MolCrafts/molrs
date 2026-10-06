@@ -11,6 +11,7 @@
 use std::borrow::Cow;
 
 use crate::ff::ir::Dim;
+use crate::ff::ir::engine::LammpsForm;
 use crate::ff::potential::registry::{ParamSource, SpecialClass};
 use molrs::types::F;
 
@@ -171,6 +172,9 @@ pub struct StyleSpec {
     /// The bare spelling of the indexed parameters (`k`, `periodicity`,
     /// `phase`) is accepted as term 1 (`dihedral periodic`).
     pub unindexed_one_term: bool,
+    /// How LAMMPS writes and reads the style ([`LammpsForm`]); `None`
+    /// refuses it by name.
+    pub lammps: LammpsForm,
     /// Points the conformance checks run on at registration; without any
     /// they run once per process at the style's first compile.
     pub samples: Vec<Sample>,
@@ -189,6 +193,7 @@ impl StyleSpec {
             expression: None,
             force_is_gradient: true,
             unindexed_one_term: false,
+            lammps: LammpsForm::None,
             samples: Vec::new(),
         }
     }
@@ -215,6 +220,11 @@ impl StyleSpec {
 
     pub fn expression(mut self, expression: impl Into<String>) -> Self {
         self.expression = Some(expression.into());
+        self
+    }
+
+    pub fn lammps(mut self, form: LammpsForm) -> Self {
+        self.lammps = form;
         self
     }
 
@@ -288,7 +298,9 @@ fn charmm_switch() -> String {
 ///
 /// [`KernelRegistry::builtin`]: crate::ff::potential::KernelRegistry::builtin
 pub fn builtin_styles() -> Vec<StyleSpec> {
+    use crate::ff::forcefield::lammps_codecs::{self as lc, custom};
     use ParamSource::PerInstance;
+    let positional = LammpsForm::positional;
     use SpecialClass::{Coulomb, Vdw};
     let s = StyleSpec::new;
     let eps = |sigma: &'static str| {
@@ -303,11 +315,14 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
     };
     let coulomb = || p("coulomb", "E*L/Q^2");
     let dielectric = || p("dielectric", "1").default_num(1.0);
-    let mut periodic = s("dihedral", "periodic").params(vec![
-        p("k", "E").indexed(),
-        p("periodicity", "1").indexed(),
-        p("phase", "A").indexed(),
-    ]);
+    let zero = |name: &'static str, dim: &str| p(name, dim).default_num(0.0);
+    let mut periodic = s("dihedral", "periodic")
+        .params(vec![
+            p("k", "E").indexed(),
+            p("periodicity", "1").indexed(),
+            zero("phase", "A").indexed(),
+        ])
+        .lammps(custom(&lc::FOURIER));
     periodic.unindexed_one_term = true;
     let mut coul_charmm = s("pair", "coul/charmm")
         .style_params(vec![coulomb(), dielectric(), p("inner", "L"), cutoff()])
@@ -316,7 +331,8 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
         .expression(format!(
             "coulomb*q1*q2/(dielectric*r)*S; {}",
             charmm_switch()
-        ));
+        ))
+        .lammps(custom(&lc::COUL_CHARMM));
     coul_charmm.force_is_gradient = false;
     vec![
         // ---- atom, and the categories that price no energy
@@ -336,10 +352,12 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
         // ---- bond
         s("bond", "harmonic")
             .params(vec![p("k", "E/L^2"), p("r0", "L")])
-            .expression("k*(r-r0)^2"),
+            .expression("k*(r-r0)^2")
+            .lammps(positional()),
         s("bond", "morse")
             .params(vec![p("d0", "E"), p("alpha", "1/L"), p("r0", "L")])
-            .expression("d0*(1-exp(-alpha*(r-r0)))^2"),
+            .expression("d0*(1-exp(-alpha*(r-r0)))^2")
+            .lammps(positional()),
         s("bond", "class2")
             .params(vec![
                 p("r0", "L"),
@@ -347,7 +365,8 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
                 p("k3", "E/L^3"),
                 p("k4", "E/L^4"),
             ])
-            .expression("k2*d^2+k3*d^3+k4*d^4; d=r-r0"),
+            .expression("k2*d^2+k3*d^3+k4*d^4; d=r-r0")
+            .lammps(positional()),
         s("bond", "mmff_bond")
             .params(vec![p("kb", "E/L^2"), p("r0", "L")])
             .source(PerInstance),
@@ -357,7 +376,8 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
         // ---- angle
         s("angle", "harmonic")
             .params(vec![p("k", "E/A^2"), p("theta0", "A")])
-            .expression(format!("k*(theta-theta0*{D})^2")),
+            .expression(format!("k*(theta-theta0*{D})^2"))
+            .lammps(positional()),
         s("angle", "charmm")
             .params(vec![
                 p("k", "E/A^2"),
@@ -367,7 +387,8 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
             ])
             .expression(format!(
                 "k*(theta-theta0*{D})^2+k_ub*(distance(p1,p3)-r_ub)^2"
-            )),
+            ))
+            .lammps(positional()),
         s("angle", "class2")
             .params(vec![
                 p("theta0", "A"),
@@ -375,7 +396,8 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
                 p("k3", "E/A^3"),
                 p("k4", "E/A^4"),
             ])
-            .expression(format!("k2*d^2+k3*d^3+k4*d^4; d=theta-theta0*{D}")),
+            .expression(format!("k2*d^2+k3*d^3+k4*d^4; d=theta-theta0*{D}"))
+            .lammps(custom(&lc::ANGLE_CLASS2)),
         s("angle", "mmff_angle")
             .params(vec![p("ka", "E/A^2"), p("theta0", "A"), p("linear", "1")])
             .source(PerInstance),
@@ -403,34 +425,41 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
             .params(vec![
                 p("k", "E"),
                 p("periodicity", "1"),
-                p("phase", "A"),
+                zero("phase", "A"),
                 p("w", "1"),
             ])
-            .expression(format!("k*(1+cos(periodicity*phi-phase*{D}))")),
+            .expression(format!("k*(1+cos(periodicity*phi-phase*{D}))"))
+            .lammps(custom(&lc::DIHEDRAL_CHARMM)),
         s("dihedral", "opls")
-            .params(ps(&["k1", "k2", "k3", "k4"], "E"))
+            .params(["k1", "k2", "k3", "k4"].map(|k| zero(k, "E")).to_vec())
             .expression(
                 "0.5*(k1*(1+cos(phi))+k2*(1-cos(2*phi))+k3*(1+cos(3*phi))+k4*(1-cos(4*phi)))",
-            ),
+            )
+            .lammps(positional()),
         s("dihedral", "multi/harmonic")
-            .params(ps(&["a1", "a2", "a3", "a4", "a5"], "E"))
-            .expression("a1+a2*c+a3*c^2+a4*c^3+a5*c^4; c=cos(phi)"),
-        s("dihedral", "nharmonic").params(vec![p("a", "E").indexed()]),
+            .params(["a1", "a2", "a3", "a4", "a5"].map(|a| zero(a, "E")).to_vec())
+            .expression("a1+a2*c+a3*c^2+a4*c^3+a5*c^4; c=cos(phi)")
+            .lammps(positional()),
+        s("dihedral", "nharmonic")
+            .params(vec![p("a", "E").indexed()])
+            .lammps(custom(&lc::NHARMONIC)),
         s("dihedral", "harmonic")
             .params(vec![p("k", "E"), p("sign", "1"), p("periodicity", "1")])
-            .expression("k*(1+sign*cos(periodicity*phi))"),
+            .expression("k*(1+sign*cos(periodicity*phi))")
+            .lammps(custom(&lc::SIGNED_COSINE)),
         s("dihedral", "class2")
             .params(vec![
-                p("k1", "E"),
-                p("phi1", "A"),
-                p("k2", "E"),
-                p("phi2", "A"),
-                p("k3", "E"),
-                p("phi3", "A"),
+                zero("k1", "E"),
+                zero("phi1", "A"),
+                zero("k2", "E"),
+                zero("phi2", "A"),
+                zero("k3", "E"),
+                zero("phi3", "A"),
             ])
             .expression(format!(
                 "k1*(1-cos(phi-phi1*{D}))+k2*(1-cos(2*phi-phi2*{D}))+k3*(1-cos(3*phi-phi3*{D}))"
-            )),
+            ))
+            .lammps(custom(&lc::DIHEDRAL_CLASS2)),
         // molrec's registry style, registered by its expression alone: the
         // first built-in that is pure protocol.
         s("dihedral", "rb")
@@ -444,14 +473,17 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
             .source(PerInstance),
         // ---- improper
         s("improper", "harmonic")
-            .params(vec![p("k", "E/A^2"), p("chi0", "A")])
-            .expression(format!("k*(chi-chi0*{D})^2")),
+            .params(vec![p("k", "E/A^2"), zero("chi0", "A")])
+            .expression(format!("k*(chi-chi0*{D})^2"))
+            .lammps(positional()),
         s("improper", "cvff")
             .params(vec![p("k", "E"), p("sign", "1"), p("periodicity", "1")])
-            .expression("k*(1+sign*cos(periodicity*phi))"),
+            .expression("k*(1+sign*cos(periodicity*phi))")
+            .lammps(custom(&lc::SIGNED_COSINE)),
         s("improper", "periodic")
-            .params(vec![p("k", "E"), p("periodicity", "1"), p("phase", "A")])
-            .expression(format!("k*(1+cos(periodicity*phi-phase*{D}))")),
+            .params(vec![p("k", "E"), p("periodicity", "1"), zero("phase", "A")])
+            .expression(format!("k*(1+cos(periodicity*phi-phase*{D}))"))
+            .lammps(custom(&lc::PERIODIC_AS_CVFF)),
         s("improper", "mmff_oop")
             .params(vec![p("koop", "E/A^2")])
             .source(PerInstance),
@@ -459,7 +491,9 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
             .params(vec![p("K", "E"), p("c0", "1"), p("c1", "1"), p("c2", "1")])
             .source(PerInstance),
         // ---- cmap
-        s("cmap", "charmm").params(vec![p("grid", "E").kind(ParamKind::Array { rank: 2 })]),
+        s("cmap", "charmm")
+            .params(vec![p("grid", "E").kind(ParamKind::Array { rank: 2 })])
+            .lammps(custom(&lc::FIX_CMAP)),
         // ---- pair
         s("pair", "lj/cut")
             .params(vec![eps("sigma"), sig("epsilon")])
@@ -474,22 +508,26 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
             .expression(
                 "C*epsilon*((sigma/r)^n-(sigma/r)^m-select(shift,(sigma/cutoff)^n-(sigma/cutoff)^m,0)); \
                  C=n/(n-m)*(n/m)^(m/(n-m))",
-            ),
+            )
+            .lammps(custom(&lc::LJ_CUT)),
         s("pair", "lj/class2")
             .params(vec![eps("sigma"), sig("epsilon")])
             .style_params(vec![cutoff(), mixing()])
             .special(Vdw)
-            .expression("epsilon*(2*(sigma/r)^9-3*(sigma/r)^6)"),
+            .expression("epsilon*(2*(sigma/r)^9-3*(sigma/r)^6)")
+            .lammps(custom(&lc::LJ_CLASS2)),
         s("pair", "buck")
             .params(vec![p("a", "E"), p("rho", "L"), p("c", "E*L^6")])
             .style_params(vec![cutoff()])
             .special(Vdw)
-            .expression("a*exp(-r/rho)-c/r^6"),
+            .expression("a*exp(-r/rho)-c/r^6")
+            .lammps(positional()),
         s("pair", "morse")
             .params(vec![p("d0", "E"), p("alpha", "1/L"), p("r0", "L")])
             .style_params(vec![cutoff()])
             .special(Vdw)
-            .expression("d0*((1-exp(-alpha*(r-r0)))^2-1)"),
+            .expression("d0*((1-exp(-alpha*(r-r0)))^2-1)")
+            .lammps(positional()),
         s("pair", "lj/charmm")
             .params(vec![
                 eps("sigma"),
@@ -512,7 +550,8 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
             .expression(format!(
                 "4*epsilon*((sigma/r)^12-(sigma/r)^6)*S; {}",
                 charmm_switch()
-            )),
+            ))
+            .lammps(custom(&lc::LJ_CHARMM)),
         s("pair", "coul/cut")
             .style_params(vec![
                 coulomb(),
@@ -522,7 +561,8 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
             ])
             .source(PerInstance)
             .special(Coulomb)
-            .expression("coulomb*q1*q2/(dielectric*(r+delta))"),
+            .expression("coulomb*q1*q2/(dielectric*(r+delta))")
+            .lammps(custom(&lc::COUL_CUT)),
         coul_charmm,
         s("pair", "coul/long/pme")
             .style_params(vec![
@@ -535,7 +575,8 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
                 p("grid_z", "1"),
             ])
             .source(PerInstance)
-            .special(Coulomb),
+            .special(Coulomb)
+            .lammps(custom(&lc::COUL_LONG)),
         s("pair", "thole")
             .params(vec![p("charge", "Q"), p("alpha", "L^3"), p("damp", "1")])
             .special(Coulomb),

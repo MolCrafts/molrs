@@ -64,7 +64,7 @@ the energy of a physical system did not change with it.
 |---|---|---|---|---|
 | `harmonic` | k (r − r0)² | `k` (E/L²), `r0` (L) | `bond_style harmonic` `K r0` | `k` is LAMMPS's `K` (was ½k form: `k_new = k_old / 2`) |
 | `morse` | d0 [1 − e^(−alpha (r − r0))]² | `d0` (E), `alpha` (1/L), `r0` (L) | `bond_style morse` `D0 alpha r0` | `D` renamed `d0` |
-| `class2` | k2 Δ² + k3 Δ³ + k4 Δ⁴, Δ = r − r0 | `r0`, `k2`, `k3`, `k4` | `bond_style class2` `r0 K2 K3 K4` | unchanged |
+| `class2` | k2 Δ² + k3 Δ³ + k4 Δ⁴, Δ = r − r0 | `r0`, `k2`, `k3`, `k4` | `bond_style class2` `r0 K2 K3 K4` | read and written (was refused) |
 | `mmff_bond` | MMFF94 cubic-quartic stretch | per-instance `kb`, `r0` | none | unchanged (molrs's definition) |
 | `uff_bond` | ½ kb (r − r0)² (RDKit) | per-instance `kb`, `r0` | none | unchanged (molrs's definition) |
 
@@ -74,7 +74,7 @@ the energy of a physical system did not change with it.
 |---|---|---|---|---|
 | `harmonic` | k (θ − theta0)² | `k` (E/rad²), `theta0` (deg) | `angle_style harmonic` `K theta0` | `k_new = k_old / 2`; `theta0` degrees (was radians) |
 | `charmm` | k (θ − theta0)² + k_ub (r₁₃ − r_ub)² | `k` (E/rad²), `theta0` (deg), `k_ub` (E/L²), `r_ub` (L) | `angle_style charmm` `K theta0 K_ub r_ub` | new kernel ([Urey–Bradley](#ureybradley)) |
-| `class2` | k2 Δ² + k3 Δ³ + k4 Δ⁴, Δ = θ − theta0 | `theta0` (deg), `k2`, `k3`, `k4` (E/radⁿ) | `angle_style class2` `theta0 K2 K3 K4` (its `bb` / `ba` cross terms are not implemented) | `theta0` degrees |
+| `class2` | k2 Δ² + k3 Δ³ + k4 Δ⁴, Δ = θ − theta0 | `theta0` (deg), `k2`, `k3`, `k4` (E/radⁿ) | `angle_style class2` `theta0 K2 K3 K4`, its `bb` / `ba` lines written at zero (a non-zero cross term is refused: the IR has none) | `theta0` degrees; read and written (was refused) |
 | `mmff_angle`, `mmff_stbn` | MMFF94 bend / stretch-bend | per-instance `ka`, `theta0` (deg), `kba_*` | none | the `theta0` column is degrees |
 | `uff_angle` | UFF Fourier / order-n bend (RDKit) | per-instance `ka`, `order`, `c0..c2` (`theta0` kept as metadata, deg) | none | `theta0` metadata degrees |
 
@@ -88,7 +88,7 @@ the energy of a physical system did not change with it.
 | `multi/harmonic` | Σₙ₌₁⁵ aₙ cosⁿ⁻¹ φ | `a1..a5` (E) | `dihedral_style multi/harmonic` | unchanged |
 | `nharmonic` | Σᵢ₌₁ᴺ aᵢ cosⁱ⁻¹ φ | `a1..aN` (E), contiguous, N ≥ 1 | `dihedral_style nharmonic` `N A1 … AN` | new style |
 | `harmonic` | k [1 + sign cos(n φ)] | `k` (E), `sign` (±1), `periodicity` | `dihedral_style harmonic` `K d n` | new kernel (the LAMMPS reader read it, nothing priced it) |
-| `class2` | Σₙ₌₁³ kₙ [1 − cos(n φ − phiₙ)] | `k1, phi1, k2, phi2, k3, phi3` (E, deg) | `dihedral_style class2` (core term; `mbt`/`ebt`/`at`/`aat`/`bb13` not implemented) | phases degrees |
+| `class2` | Σₙ₌₁³ kₙ [1 − cos(n φ − phiₙ)] | `k1, phi1, k2, phi2, k3, phi3` (E, deg) | `dihedral_style class2` `K1 phi1 K2 phi2 K3 phi3`, its `mbt`/`ebt`/`at`/`aat`/`bb13` lines written at zero (a non-zero one is refused) | phases degrees; read and written (was refused) |
 | `mmff_torsion` | ½[V1(1 + cos φ) + V2(1 − cos 2φ) + V3(1 + cos 3φ)] | per-instance `v1..v3` | none | unchanged |
 | `uff_torsion` | V/2 [1 − cosTerm cos(n φ)] (RDKit) | per-instance `V`, `order`, `cosTerm` | none | unchanged |
 
@@ -107,9 +107,9 @@ the energy of a physical system did not change with it.
 | Style | Energy | Parameters (units) | LAMMPS | 0.16 |
 |---|---|---|---|---|
 | `lj/cut` | C ε [(σ/r)ⁿ − (σ/r)ᵐ], C = n/(n−m)·(n/m)^(m/(n−m)); 4ε[(σ/r)¹² − (σ/r)⁶] at n = 12, m = 6 | `epsilon` (E), `sigma` (L); style `cutoff`, `mixing`, `n`, `m`, `shift` | `pair_style lj/cut` (`shift`: `pair_modify shift yes`; `mixing`: `pair_modify mix`; n ≠ 12 or m ≠ 6, LAMMPS's `mie/cut`, is neither read nor written) | `pair_style lj/cut` alone reads with no Coulomb style (was `coul/cut` beside it); `pair_modify shift yes` read and written (was dropped) |
-| `lj/class2` | ε [2(σ/r)⁹ − 3(σ/r)⁶] | `epsilon`, `sigma` | `pair_style lj/class2` | unchanged |
-| `buck` | a e^(−r/rho) − c/r⁶ | `a` (E), `rho` (L), `c` (E·L⁶) | `pair_style buck` `A rho C` | unchanged |
-| `morse` | d0 [(1 − e^(−alpha (r − r0)))² − 1] | `d0` (E), `alpha` (1/L), `r0` (L) | `pair_style morse` `D0 alpha r0` | the compiled kernel read `D0`, the neighbour-driven one `d0`; both read `d0` |
+| `lj/class2` | ε [2(σ/r)⁹ − 3(σ/r)⁶] | `epsilon`, `sigma` | `pair_style lj/class2` (LAMMPS mixes it `sixthpower` whatever `pair_modify` says: another `mixing` is refused, and it reads as `sixthpower`) | read and written (was refused) |
+| `buck` | a e^(−r/rho) − c/r⁶ | `a` (E), `rho` (L), `c` (E·L⁶) | `pair_style buck` `A rho C` | read and written (was refused) |
+| `morse` | d0 [(1 − e^(−alpha (r − r0)))² − 1] | `d0` (E), `alpha` (1/L), `r0` (L) | `pair_style morse` `D0 alpha r0` | the compiled kernel read `D0`, the neighbour-driven one `d0`; both read `d0`; read and written (was refused) |
 | `coul/cut` | coulomb qᵢqⱼ / (dielectric (r + delta)) | style `coulomb` (E·L/e²), `dielectric`, `delta` (L), `cutoff` | `pair_style coul/cut` with `delta = 0` (the buffer is molrs's, for MMFF; the LAMMPS writer refuses `delta ≠ 0` and `dielectric ≠ 1`). LAMMPS fixes the constant (`qqr2e`) per `units` | unchanged |
 | `lj/charmm` | 4ε[(σ/r)¹² − (σ/r)⁶]·S(r), S CHARMM's switch from `inner` to `cutoff` | `epsilon`, `sigma`, `epsilon14`, `sigma14` (absent → `epsilon`, `sigma`); style `inner`, `cutoff`, `mixing` (default `arithmetic`), `one_four` (`"regular"`, the default, or `"epsilon14"`: what a `special_bonds` 1-4 pair is priced at, see [1-4](#1-4-interactions)) | `pair_style lj/charmm/coul/charmm`, van-der-Waals half; `pair_coeff i j ε σ ε₁₄ σ₁₄` (`one_four = "epsilon14"` has no LAMMPS form) | new |
 | `coul/charmm` | coulomb qᵢqⱼ/(dielectric r)·S(r); force (C qᵢqⱼ/r²)·S(r), LAMMPS's switched force, not the gradient | style `coulomb`, `dielectric`, `inner`, `cutoff` | `pair_style lj/charmm/coul/charmm`, Coulomb half (`inner2 outer2` when its cutoffs differ) | new |
@@ -645,8 +645,11 @@ an RB `<Improper>`, `ordering="smirnoff"`, a multi-term periodic improper,
 an odd CMAP size, a wildcard Urey–Bradley row, an `<NBFixPair>` of a type
 with itself, a `<NonbondedForce>` with non-zero `epsilon` beside a
 `<LennardJonesForce>` (OpenMM prices both), and every other force (AMOEBA
-multipoles, GBSA, Drude, …). The writer refuses what OpenMM's tags cannot
-hold: a style outside the table (`improper cvff`, `bond morse`, …),
+multipoles, GBSA, Drude, …). A style outside the table that has an
+expression is written as its category's `Custom*Force` ([Engine
+codecs](#engine-codecs)). The writer refuses what OpenMM's tags cannot
+hold: a style outside the table without an expression (`dihedral
+mmff_torsion`, …),
 `dihedral charmm` `w ≠ 0`, `special_bonds` other than `[0, 0, s]`,
 `sixthpower` mixing or `geometric` with cross rows, a cross row with its own
 1-4 parameters, `lj/charmm` under `one_four = "regular"` with 1-4 parameters
@@ -936,6 +939,149 @@ a field is priced by an engine at that engine's:
 | AMBER (charges × 18.2223) | 332.05221729 | − 3.5·10⁻⁵ |
 | CHARMM (chamber prmtop) | 332.0716 | + 2.4·10⁻⁵ |
 
+## Engine codecs
+
+Engine I/O follows the IR's protocol (`molrs::ff::ir::engine`), not a table
+per writer: a style registered with a spec reads and writes in every engine
+that can hold it with nothing else written, and is refused by name —
+`IrError::NoEngineForm { engine, category, style, reason }` — by every
+engine that cannot.
+
+### LAMMPS: the style's `LammpsForm`
+
+A `StyleSpec` carries `lammps: LammpsForm`:
+
+- **`Positional`** (`LammpsForm::positional()`, or `positional_named("fene")`
+  for another LAMMPS name) is derived from the spec: `<category>_style
+  <name>` (`pair_style <name> <cutoff>`), `<category>_coeff <type> v₁ … vₙ`
+  in `params` order, `mixing` as `pair_modify mix`. Each value is converted
+  by its `Dim` from the force field's units to the file's — `E/L^2` by
+  energy/length², `E*L^6` by energy·length⁶, an angle value (exactly `A`)
+  and a per-radian constant not at all — and a dimensionless integral value
+  is written as an integer (LAMMPS reads multiplicities and signs with
+  `inumeric`). Reading is the inverse: exactly `n` numbers, else an error
+  naming the line and the missing parameter. A positional form refuses, at
+  registration, a Text, Array or indexed parameter, a style parameter
+  other than `cutoff` / `mixing`, and a category with no `*_style` command;
+  at write, a row without a value and no default.
+- **`Custom(Arc<dyn LammpsCodec>)`**: a codec of its own where the LAMMPS
+  line is not positional.
+- **`None`**: refused by name; an expression-only style because the
+  installed LAMMPS has no `LEPTON` package.
+
+| Built-in | LAMMPS form |
+|---|---|
+| `bond harmonic`, `morse`, `class2`; `angle harmonic`, `charmm`; `dihedral opls`, `multi/harmonic`; `improper harmonic`; `pair buck`, `morse` | positional |
+| `dihedral periodic` | `fourier`: `m K1 n1 d1 …` (the term count, indexed parameters) |
+| `dihedral nharmonic` | `N A1 … AN` |
+| `dihedral charmm` | `K n d w`, `n` and `d` integers |
+| `dihedral harmonic`, `improper cvff` | `K d n`, `d` = ±1 and `n` integers |
+| `improper periodic` | `cvff` `K d n`, φ₀ = 0° / 180° as `d` = ±1 (it reads back as `improper cvff`, the same energy) |
+| `angle class2`, `dihedral class2` | `class2` and its cross-term lines (`bb`, `ba`; `mbt`, `ebt`, `at`, `aat`, `bb13`) at zero; a data file's `BondBond Coeffs`, … sections; a non-zero cross term is refused on read |
+| `pair lj/cut` | `epsilon sigma`; `shift` as `pair_modify shift yes`; only 12-6 |
+| `pair lj/charmm` + `coul/charmm` | `lj/charmm/coul/charmm inner outer [inner2 outer2]`, `epsilon sigma epsilon14 sigma14` |
+| `pair lj/class2` | positional, mixing always `sixthpower` (LAMMPS's `init_one`) |
+| `pair coul/cut`, `coul/long/pme` | the Coulomb half of `lj/cut/coul/cut` / `lj/cut/coul/long` (or of a `hybrid/overlay` with another style, the Coulomb on `* *`); `delta ≠ 0`, `dielectric ≠ 1` and stated Ewald parameters refused |
+| `cmap charmm` | `fix cmap` and its grid file |
+| `dihedral rb`, MMFF, UFF, `thole`, `coul/tt`, `drude harmonic` | none |
+
+The reader resolves a LAMMPS style name through the registry
+(`Registry::lammps_style`): the style of that name when its form writes it,
+else the one style whose form does (`fourier` is `dihedral periodic`). A
+run-time category, which LAMMPS has no `*_style` for, is refused by the
+writer rather than dropped. Readers and writers read the process-wide
+registry, or the one `with_registry` gives them.
+
+Registering a LAMMPS form:
+
+```rust
+use molrs::ff::ir::{Dim, LammpsForm, ParamSpec, StyleSpec, register_style};
+
+let fene = StyleSpec::new("bond", "fene")
+    .params(vec![
+        ParamSpec::new("k", "E/L^2".parse().unwrap()),
+        ParamSpec::new("r0", Dim::LENGTH),
+        ParamSpec::new("epsilon", Dim::ENERGY),
+        ParamSpec::new("sigma", Dim::LENGTH),
+    ])
+    .expression("-0.5*k*r0^2*log(1-(r/r0)^2)+step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)")
+    .lammps(LammpsForm::positional());
+register_style(fene, None)?;
+```
+
+```python
+from molrs.ff import ir
+
+FENE = ("-0.5*k*r0^2*log(1-(r/r0)^2)"
+        "+step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)")
+ir.register_style("bond", "fene", params={"k": "E/L^2", "r0": "L",
+    "epsilon": "E", "sigma": "L"}, expression=FENE, lammps="positional")
+ir.register_engine_form("lammps", "bond", "other", "positional:fene")  # afterwards
+[s.lammps for s in ir.styles("dihedral") if s.name == "periodic"]  # ['custom:fourier']
+```
+
+`register_engine_form(engine, category, style, form)` gives a style
+registered without one its form; another engine is `NoEngineForm` (OpenMM
+writes an expression style from its expression, GROMACS and AMBER hold
+built-in styles only), a built-in `Sealed`.
+
+### OpenMM XML: `Custom*Force` of the expression
+
+A style with no native tag but an expression — registered, built in
+(`bond morse`, `bond class2`, `angle class2`, `improper cvff`, …), or an
+unregistered instance's own — is written as its category's custom force.
+The parameters stay in IR units (`PerBondParameter`, …, style parameters
+as `GlobalParameter`s); the expression is rewritten, exactly, through the
+expression printer:
+
+| Category | Force | Rewrite |
+|---|---|---|
+| bond (`r`) | `CustomBondForce` | `4.184*(E[r → 10*r])` |
+| angle (`theta`) | `CustomAngleForce` | `4.184*(E)` |
+| dihedral (`phi`) | `CustomTorsionForce` `<Proper>` | `phi` → `theta` |
+| improper (`phi`, `chi`) | `CustomTorsionForce ordering="charmm"` `<Improper>`, the row's order (its centre first) | `phi` → `theta`, `chi` → `abs(theta)` |
+| compound (a run-time category, or points in the expression) | `CustomCompoundBondForce`, built by a `<Script>` over OpenMM's bonds, angles or propers whose types match a row either way round | `distance(…)` → `10*distance(…)`; `r`, `theta`, `phi` as their functions of the points |
+| pair | `CustomNonbondedForce` `bondCutoff` from `special_bonds` (`[0,0,0]` → 3, `[0,0,1]` → 2, …) | `r` → `10*r`; a bare parameter → its mixing rule of `x1`, `x2`; `q1`, `q2` → per-particle `charge1`, `charge2` |
+
+OpenMM's ForceField XML has no compound tag (an unknown tag is ignored, its
+energy lost), so the compound force is a `<Script>` OpenMM's
+`createSystem` runs. Refused: a style with no expression, an indexed
+parameter, a wildcard where OpenMM would re-order an improper or a
+compound row, a compound category that is no chain of 2 to 4 atoms, two
+custom forces stating one global parameter at different values, and for a
+pair a cross row, a parameter that does not mix (`buck`, `morse`), an atom
+type without a row, and 1-4 weights a `bondCutoff` cannot state. Reading a
+`Custom*Force` stays refused (D21), but for the two harmonic-improper
+forms.
+
+### GROMACS, AMBER
+
+The GROMACS topology writer and the frcmod writer hold the built-in styles
+they have directives (sections) for; every other style — built in, or
+registered at run time, or an instance's expression — is `NoEngineForm`
+("not a built-in style: GROMACS holds the built-in styles it has
+directives for"). The GROMACS reader is unchanged.
+
+### Checked against the engines
+
+`ff::engine_codec_check` (`scripts/ff_engine_codec_check.sh`, pinned in
+`molrs/src/ff/testdata/engine_codecs/engines.tsv`): files molrs writes,
+priced by LAMMPS `run 0` and OpenMM 8.6.1 (`Reference`, `NoCutoff`, one
+force group per term) at two configurations each, against molrs's energy:
+
+| Case | Engine | What | Worst relative difference |
+|---|---|---|---|
+| `fene` | LAMMPS | a run-time `bond fene`, positional | 4·10⁻¹⁶ |
+| `smooth` | LAMMPS | a run-time `pair lj/smooth/linear`, positional, `pair_modify mix arithmetic` | 1·10⁻¹⁶ |
+| `metal` | LAMMPS | built-in `bond morse` + `pair buck` of a `real` field, written in `metal` (conversion per dimension) | 2·10⁻¹⁶ |
+| `morse` | LAMMPS | built-in `pair morse`, a row per pair | 0 |
+| `openmm` | OpenMM | `bond fene`, `bond morse`, `angle class2`, `improper cvff`, a run-time compound `urey_bradley` (`<Script>`), `pair lj/smooth/linear` (`bondCutoff="3"`) | 2·10⁻¹⁵ |
+
+The installed LAMMPS has no CLASS2 package: the `class2` codecs are held by
+read → write → read identity, molrs's pricing of both sides, and the
+cross-term refusals instead (`every_builtin_round_trips_through_an_include_at_the_same_energy`,
+`class2_cross_terms_are_written_at_zero_and_refused_otherwise`).
+
 ## Cross-engine equivalence
 
 One molecule per force-field family, read from its native format into the
@@ -1029,103 +1175,113 @@ ff::completeness::the_guide_holds_the_generated_table` rewrites it).
 | Style or setting | kernel | LAMMPS read | LAMMPS write | OpenMM read | OpenMM write | GROMACS read | GROMACS write | prmtop read | molrec v2 |
 |---|---|---|---|---|---|---|---|---|---|
 | `bond harmonic` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `bond morse` | ✓ | ✓ | ✓ | refused [1] | refused [2] | ✓ | ✓ | — | ✓ |
-| `bond class2` | ✓ | refused [3] | refused [3] | — | refused [3] | — | refused [3] | — | ✓ |
-| `bond mmff_bond` | ✓ | — | refused [4] | — | refused [4] | — | refused [4] | — | ✓ |
-| `bond uff_bond` | ✓ | — | refused [4] | — | refused [4] | — | refused [4] | — | ✓ |
+| `bond morse` | ✓ | ✓ | ✓ | refused [1] | ✓ | ✓ | ✓ | — | ✓ |
+| `bond class2` | ✓ | ✓ [2] | ✓ [2] | — | ✓ [3] | — | refused [4] | — | ✓ |
+| `bond mmff_bond` | ✓ | — | refused [5] | — | refused [5] | — | refused [5] | — | ✓ |
+| `bond uff_bond` | ✓ | — | refused [5] | — | refused [5] | — | refused [5] | — | ✓ |
 | `angle harmonic` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `angle charmm` | ✓ | ✓ | ✓ | ✓ [5] | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `angle class2` | ✓ | refused [3] | refused [3] | — | refused [3] | — | refused [3] | — | ✓ |
-| `angle mmff_angle` | ✓ | — | refused [4] | — | refused [4] | — | refused [4] | — | ✓ |
-| `angle mmff_stbn` | ✓ | — | refused [4] | — | refused [4] | — | refused [4] | — | ✓ |
-| `angle uff_angle` | ✓ | — | refused [4] | — | refused [4] | — | refused [4] | — | ✓ |
+| `angle charmm` | ✓ | ✓ | ✓ | ✓ [6] | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `angle class2` | ✓ | ✓ [2] | ✓ [2] | — | ✓ [3] | — | refused [4] | — | ✓ |
+| `angle mmff_angle` | ✓ | — | refused [5] | — | refused [5] | — | refused [5] | — | ✓ |
+| `angle mmff_stbn` | ✓ | — | refused [5] | — | refused [5] | — | refused [5] | — | ✓ |
+| `angle uff_angle` | ✓ | — | refused [5] | — | refused [5] | — | refused [5] | — | ✓ |
 | `dihedral periodic` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `dihedral charmm` | ✓ | ✓ | ✓ | — | ✓ [6] | — | ✓ [7] | — | ✓ |
-| `dihedral opls` | ✓ | ✓ | ✓ | ✓ | ✓ [8] | ✓ | ✓ | — | ✓ |
+| `dihedral charmm` | ✓ | ✓ | ✓ | — | ✓ [7] | — | ✓ [8] | — | ✓ |
+| `dihedral opls` | ✓ | ✓ | ✓ | ✓ | ✓ [9] | ✓ | ✓ | — | ✓ |
 | `dihedral multi/harmonic` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ |
-| `dihedral nharmonic` | ✓ | ✓ | ✓ | ✓ | ✓ [9] | ✓ | ✓ [10] | — | ✓ |
+| `dihedral nharmonic` | ✓ | ✓ | ✓ | ✓ | ✓ [10] | ✓ | ✓ [11] | — | ✓ |
 | `dihedral harmonic` | ✓ | ✓ | ✓ | — | ✓ | — | ✓ | — | ✓ |
-| `dihedral class2` | ✓ | refused [11] | refused [12] | — | ✓ | — | ✓ | — | ✓ |
-| `dihedral mmff_torsion` | ✓ | — | refused [4] | — | refused [4] | — | refused [4] | — | ✓ |
-| `dihedral uff_torsion` | ✓ | — | refused [4] | — | refused [4] | — | refused [4] | — | ✓ |
-| `improper harmonic` | ✓ | ✓ | ✓ [13] | ✓ [14] | ✓ [15] | ✓ [16] | ✓ [17] | ✓ | ✓ |
-| `improper cvff` | ✓ | ✓ | ✓ | — | refused [18] | — | ✓ | — | ✓ |
-| `improper periodic` | ✓ | — | ✓ [19] | ✓ | ✓ [20] | ✓ | ✓ | ✓ | ✓ |
-| `improper mmff_oop` | ✓ | — | refused [4] | — | refused [4] | — | refused [4] | — | ✓ |
-| `improper uff_inversion` | ✓ | — | refused [4] | — | refused [4] | — | refused [4] | — | ✓ |
-| `cmap charmm` | ✓ | ✓ | ✓ | ✓ [21] | ✓ [22] | ✓ | ✓ | ✓ | ✓ |
+| `dihedral class2` | ✓ | ✓ [2] | ✓ [2] | — | ✓ | — | ✓ | — | ✓ |
+| `dihedral mmff_torsion` | ✓ | — | refused [5] | — | refused [5] | — | refused [5] | — | ✓ |
+| `dihedral uff_torsion` | ✓ | — | refused [5] | — | refused [5] | — | refused [5] | — | ✓ |
+| `improper harmonic` | ✓ | ✓ | ✓ [12] | ✓ [13] | ✓ [14] | ✓ [15] | ✓ [16] | ✓ | ✓ |
+| `improper cvff` | ✓ | ✓ | ✓ | — | ✓ [17] | — | ✓ | — | ✓ |
+| `improper periodic` | ✓ | — | ✓ [18] | ✓ | ✓ [19] | ✓ | ✓ | ✓ | ✓ |
+| `improper mmff_oop` | ✓ | — | refused [5] | — | refused [5] | — | refused [5] | — | ✓ |
+| `improper uff_inversion` | ✓ | — | refused [5] | — | refused [5] | — | refused [5] | — | ✓ |
+| `cmap charmm` | ✓ | ✓ | ✓ | ✓ [20] | ✓ [21] | ✓ | ✓ | ✓ | ✓ |
 | `pair lj/cut` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `pair lj/charmm` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `pair coul/cut` | ✓ | ✓ | ✓ [23] | ✓ | ✓ [24] | ✓ | ✓ [25] | ✓ | ✓ |
+| `pair coul/cut` | ✓ | ✓ | ✓ [22] | ✓ | ✓ [23] | ✓ | ✓ [24] | ✓ | ✓ |
 | `pair coul/charmm` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `pair coul/long/pme` | ✓ | ✓ [26] | ✓ [27] | — | refused [28] | — | refused [29] | — | ✓ |
-| `pair lj/class2` | ✓ | refused [3] | refused [3] | — | refused [3] | — | refused [3] | — | ✓ |
-| `pair buck` | ✓ | refused [30] | refused [30] | — | refused [30] | — | refused [30] | — | ✓ |
-| `pair morse` | ✓ | refused [30] | refused [30] | — | refused [30] | — | refused [30] | — | ✓ |
-| `pair thole` | ✓ | refused [31] | refused [31] | — | refused [31] | — | refused [31] | — | ✓ |
-| `pair coul/tt` | ✓ | refused [31] | refused [31] | — | refused [31] | — | refused [31] | — | ✓ |
-| `pair mmff_vdw` | ✓ | — | refused [4] | — | refused [4] | — | refused [4] | — | ✓ |
-| `pair uff_lj` | ✓ | — | refused [4] | — | refused [4] | — | refused [4] | — | ✓ |
-| `special_bonds` | ✓ | ✓ | ✓ | ✓ [32] | ✓ [33] | ✓ | ✓ [33] | ✓ | ✓ |
-| `per-pair overrides (pairs epsilon, sigma, lj_scale, charge_product, coul_scale)` | ✓ | — | refused [34] | — | — | ✓ | ✓ | ✓ | ✓ |
-| `lj/charmm one_four = "epsilon14"` | ✓ | — | ✓ [35] | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `pair coul/long/pme` | ✓ | ✓ [25] | ✓ [26] | — | refused [27] | — | refused [28] | — | ✓ |
+| `pair lj/class2` | ✓ | ✓ [29] | ✓ [29] | — | refused [30] | — | refused [4] | — | ✓ |
+| `pair buck` | ✓ | ✓ | ✓ | — | refused [31] | — | refused [4] | — | ✓ |
+| `pair morse` | ✓ | ✓ | ✓ | — | refused [31] | — | refused [4] | — | ✓ |
+| `pair thole` | ✓ | refused [32] | refused [32] | — | refused [32] | — | refused [32] | — | ✓ |
+| `pair coul/tt` | ✓ | refused [32] | refused [32] | — | refused [32] | — | refused [32] | — | ✓ |
+| `pair mmff_vdw` | ✓ | — | refused [5] | — | refused [5] | — | refused [5] | — | ✓ |
+| `pair uff_lj` | ✓ | — | refused [5] | — | refused [5] | — | refused [5] | — | ✓ |
+| `special_bonds` | ✓ | ✓ | ✓ | ✓ [33] | ✓ [34] | ✓ | ✓ [34] | ✓ | ✓ |
+| `per-pair overrides (pairs epsilon, sigma, lj_scale, charge_product, coul_scale)` | ✓ | — | refused [35] | — | — | ✓ | ✓ | ✓ | ✓ |
+| `lj/charmm one_four = "epsilon14"` | ✓ | — | ✓ [36] | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `mixing arithmetic` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `mixing geometric` | ✓ | ✓ | ✓ | ✓ [36] | ✓ [37] | ✓ | ✓ | — | ✓ |
-| `mixing sixthpower` | ✓ | ✓ | ✓ | — | refused [38] | — | refused [39] | — | ✓ |
-| `cross rows (NBFIX)` | ✓ | ✓ | ✓ | ✓ | ✓ [40] | ✓ | ✓ | ✓ | ✓ |
-| `lj/cut shift` | ✓ | ✓ | ✓ | — | refused [41] | — | refused [42] | — | ✓ |
-| `lj/cut n, m (Mie)` | ✓ | refused [43] | refused [44] | — | refused [45] | — | refused [46] | — | ✓ |
+| `mixing geometric` | ✓ | ✓ | ✓ | ✓ [37] | ✓ [38] | ✓ | ✓ | — | ✓ |
+| `mixing sixthpower` | ✓ | ✓ | ✓ | — | refused [39] | — | refused [40] | — | ✓ |
+| `cross rows (NBFIX)` | ✓ | ✓ | ✓ | ✓ | ✓ [41] | ✓ | ✓ | ✓ | ✓ |
+| `lj/cut shift` | ✓ | ✓ | ✓ | — | refused [42] | — | refused [43] | — | ✓ |
+| `lj/cut n, m (Mie)` | ✓ | refused [44] | refused [45] | — | refused [46] | — | refused [47] | — | ✓ |
 | `Coulomb constant` | ✓ | ✓ | — | ✓ | — | ✓ | — | ✓ | ✓ |
 | `cutoff, inner (switch)` | ✓ | ✓ | ✓ | — | — | — | — | — | ✓ |
-| `units presets (real, metal, lj)` | ✓ | ✓ | ✓ | — | refused [47] | — | refused [47] | — | ✓ |
+| `units presets (real, metal, lj)` | ✓ | ✓ | ✓ | — | refused [48] | — | refused [48] | — | ✓ |
+| `run-time style with a positional LAMMPS form` | ✓ | ✓ | ✓ | refused [49] | ✓ | — | refused [50] | — | ✓ |
+| `expression style without a LAMMPS form` | ✓ | refused [51] | refused [52] | refused [49] | ✓ | — | refused [50] | — | ✓ |
+| `run-time compound category (Urey-Bradley)` | ✓ | — | refused [53] | — | ✓ [54] | — | refused [50] | — | ✓ |
 
 1. OpenMM has a Morse bond only as a CustomBondForce, which the reader refuses
-2. no HarmonicBondForce form
-3. Class II, outside the Class-I IR (LAMMPS's class2 styles carry cross terms the IR has no form for)
-4. molrs's own definition (a typifier's), no engine style
-5. a wildcard Urey–Bradley row is refused
-6. w = 0 (a periodic term); w ≠ 0 refused
-7. w = 0 (funct 9); w > 0 refused
-8. as RB, which reads back as multi/harmonic: the same series, constant included
-9. N ≤ 6 (RB's C0 … C5); above refused
-10. N ≤ 6; above refused
-11. LAMMPS's dihedral class2 carries its mbt/ebt/at/aat/bb13 cross terms, outside the Class-I IR
-12. LAMMPS's dihedral class2 needs its cross-term lines; the torsion alone is not written
-13. LAMMPS clamps sin χ at 0.001 in its force: within 0.057° of planar its forces are not its energy's gradient
-14. CustomTorsionForce k(θ−θ0)² at θ0 = 0, or k(|θ|−θ0)²; another signed θ0 refused
-15. a wildcard endpoint refused (OpenMM would re-order the atoms)
-16. funct 2 at ξ0 ∈ {0°, 180°}; another ξ0 refused
-17. chi0 ∈ {0°, 180°}; another refused
-18. OpenMM prices an improper over the dihedral with the centre third; cvff's starts at the centre
-19. as cvff, at a phase of 0° or 180°; another refused
-20. OpenMM orders the two outer atoms it finds first by element and index (its AMBER rule); a system whose stored order differs prices another dihedral
-21. odd N refused; OpenMM takes its node slopes from periodic splines (≤ 10⁻⁷ kcal/mol off the IR's)
-22. as OpenMM read: its interpolation ≤ 10⁻⁷ kcal/mol off the IR's
-23. delta = 0 and dielectric = 1; the Coulomb constant is LAMMPS's own
-24. the Coulomb constant is OpenMM's own
-25. the Coulomb constant is GROMACS's own
-26. lj/cut/coul/long: cutoff and constant; its kspace_style states an accuracy, not an alpha, so pricing is refused until the Ewald parameters are stated
-27. the real-space lj/cut/coul/long; stated Ewald parameters refused (molrs's smooth PME is not LAMMPS's PPPM)
-28. the long-range method is a createSystem argument
-29. the long-range method is an .mdp setting
-30. not a Class-I nonbonded form; LAMMPS's pair style of the name would hold it, which no reader or writer maps
-31. polarizable (Drude) screening, outside the Class-I IR
-32. [0, 0, s] (OpenMM's 14scale)
-33. [0, 0, s]; another refused
-34. LAMMPS has no per-pair 1-4 parameters
-35. refused as such; its exact LAMMPS form is special_bonds 0 and one zero-K dihedral charmm row of w = 1 per 1-4 pair
-36. foyer's combining_rule, which OpenMM's own app.ForceField ignores
-37. foyer's combining_rule (OpenMM's own app.ForceField ignores it); with cross rows refused
-38. OpenMM mixes arithmetically
-39. no GROMACS comb-rule
-40. a cross row with 1-4 parameters of its own refused (OpenMM prices an NBFIX 1-4 pair with the NBFIX row)
-41. OpenMM's NonbondedForce has no shifted Lennard-Jones
-42. a modifier is an .mdp setting
-43. pair_style mie/cut is not read
-44. pair_style mie/cut is not written
-45. OpenMM's Lennard-Jones is 12-6
-46. GROMACS's Lennard-Jones is 12-6
-47. the conversions are from real
+2. through its codec (cross-term lines at zero, a non-zero one refused); not run by LAMMPS: the installed lmp has no CLASS2 package
+3. the CustomBondForce / CustomAngleForce of its expression, rewritten exactly (held by OpenMM on bond fene, bond morse, angle class2)
+4. GROMACS has no directive of its form (NoEngineForm)
+5. molrs's own definition (a typifier's), no engine style
+6. a wildcard Urey–Bradley row is refused
+7. w = 0 (a periodic term); w ≠ 0 refused
+8. w = 0 (funct 9); w > 0 refused
+9. as RB, which reads back as multi/harmonic: the same series, constant included
+10. N ≤ 6 (RB's C0 … C5); above refused
+11. N ≤ 6; above refused
+12. LAMMPS clamps sin χ at 0.001 in its force: within 0.057° of planar its forces are not its energy's gradient
+13. CustomTorsionForce k(θ−θ0)² at θ0 = 0, or k(|θ|−θ0)²; another signed θ0 refused
+14. a wildcard endpoint refused (OpenMM would re-order the atoms)
+15. funct 2 at ξ0 ∈ {0°, 180°}; another ξ0 refused
+16. chi0 ∈ {0°, 180°}; another refused
+17. the CustomTorsionForce of its expression with ordering="charmm", which prices the row's dihedral, its centre first
+18. as cvff, at a phase of 0° or 180°; another refused
+19. OpenMM orders the two outer atoms it finds first by element and index (its AMBER rule); a system whose stored order differs prices another dihedral
+20. odd N refused; OpenMM takes its node slopes from periodic splines (≤ 10⁻⁷ kcal/mol off the IR's)
+21. as OpenMM read: its interpolation ≤ 10⁻⁷ kcal/mol off the IR's
+22. delta = 0 and dielectric = 1; the Coulomb constant is LAMMPS's own
+23. the Coulomb constant is OpenMM's own
+24. the Coulomb constant is GROMACS's own
+25. lj/cut/coul/long: cutoff and constant; its kspace_style states an accuracy, not an alpha, so pricing is refused until the Ewald parameters are stated
+26. the real-space lj/cut/coul/long; stated Ewald parameters refused (molrs's smooth PME is not LAMMPS's PPPM)
+27. the long-range method is a createSystem argument
+28. the long-range method is an .mdp setting
+29. through its codec, mixing sixthpower as LAMMPS's always does; not run by LAMMPS: the installed lmp has no CLASS2 package
+30. its kernel prices a row per pair (cross rows), which a CustomNonbondedForce has not
+31. its parameters do not mix, so a pair's are a cross row's, which a CustomNonbondedForce has not
+32. polarizable (Drude) screening, outside the Class-I IR
+33. [0, 0, s] (OpenMM's 14scale)
+34. [0, 0, s]; another refused
+35. LAMMPS has no per-pair 1-4 parameters
+36. refused as such; its exact LAMMPS form is special_bonds 0 and one zero-K dihedral charmm row of w = 1 per 1-4 pair
+37. foyer's combining_rule, which OpenMM's own app.ForceField ignores
+38. foyer's combining_rule (OpenMM's own app.ForceField ignores it); with cross rows refused
+39. OpenMM mixes arithmetically
+40. no GROMACS comb-rule
+41. a cross row with 1-4 parameters of its own refused (OpenMM prices an NBFIX 1-4 pair with the NBFIX row)
+42. OpenMM's NonbondedForce has no shifted Lennard-Jones
+43. a modifier is an .mdp setting
+44. pair_style mie/cut is not read
+45. pair_style mie/cut is not written
+46. OpenMM's Lennard-Jones is 12-6
+47. GROMACS's Lennard-Jones is 12-6
+48. the conversions are from real
+49. reading a Custom*Force stays refused (D21) but for the two harmonic impropers
+50. not a built-in style (NoEngineForm)
+51. no registered style reads its name (the installed LAMMPS has no LEPTON package)
+52. no LAMMPS form: an expression needs LAMMPS's LEPTON package (NoEngineForm)
+53. no `*_style` command (NoEngineForm)
+54. a <Script> building a CustomCompoundBondForce over OpenMM's bonds, angles or propers (a chain of 2 to 4 atoms)
 <!-- completeness:end -->
 
 The styles marked outside the Class-I IR (Class II, Buckingham, Morse pair,

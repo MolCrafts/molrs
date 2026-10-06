@@ -1,0 +1,1387 @@
+//! Engine codecs against the engines (`ff-ir-02-protocol` §8, WP8): styles
+//! the engines have no molrs arm for — registered at run time with a spec,
+//! or built in with an expression — written by molrs and priced by the
+//! engine, to relative 1e-10 of molrs's own energy.
+//!
+//! | Case | Engine | What it holds |
+//! |---|---|---|
+//! | `fene` | LAMMPS `run 0` | a run-time `bond fene` registered with `LammpsForm::Positional`: `bond_style fene` |
+//! | `smooth` | LAMMPS `run 0` | a run-time `pair lj/smooth/linear`, positional, mixed by `pair_modify mix arithmetic` |
+//! | `metal` | LAMMPS `run 0` | built-in `bond morse` and `pair buck` of a `real` field written in `metal`: the conversion per dimension (`E`, `1/L`, `E*L^6`) |
+//! | `morse` | LAMMPS `run 0` | built-in `pair morse`, positional, a row per pair |
+//! | `openmm` | OpenMM 8.6.1 Reference | the `fene` bond (`CustomBondForce`), built-in `bond morse`, `angle class2` and `improper cvff` (`CustomBondForce`, `CustomAngleForce`, `CustomTorsionForce` with `ordering="charmm"`), a run-time compound category `urey_bradley` (`CustomCompoundBondForce`, by the XML's `<Script>`), the `lj/smooth/linear` pair (`CustomNonbondedForce`) |
+//!
+//! `scripts/ff_engine_codec_check.sh` writes the inputs (this module's
+//! [`write_engine_inputs`] with `MOLRS_ENGINE_CODEC_DIR` set), runs the
+//! engines and prints their numbers; `--pin` stores them in
+//! `testdata/engine_codecs/engines.tsv`, which
+//! [`every_engine_prices_the_codec_cases_as_molrs`] holds molrs to.
+
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
+use std::path::Path;
+use std::sync::Arc;
+
+use ndarray::Array1;
+use serde_json::json;
+
+use crate::ff::forcefield::lammps_units::LammpsFfUnits;
+use crate::ff::forcefield::writers::ForceFieldWriter;
+use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
+use crate::ff::ir::{
+    CategorySpec, Coordinate, Dim, EndpointOrder, LammpsForm, Mix, ParamSpec, Registry,
+    SpecialClass, StyleSpec, Value,
+};
+use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
+use crate::ff::{LammpsFfWriter, LammpsWriteOptions, XmlForceFieldWriter};
+use molrs::io::data::lammps_data::write_lammps_data;
+use molrs::spatial::simbox::SimBox;
+use molrs::store::block::Block;
+use molrs::store::frame::Frame;
+use molrs::store::type_labels::TypeLabels;
+use molrs::types::{F, Idx};
+
+fn dim(s: &str) -> Dim {
+    s.parse().unwrap()
+}
+
+/// LAMMPS `bond_style fene` (Kremer–Grest): `K R0 epsilon sigma`, the
+/// WCA repulsion inside `2^(1/6) σ`.
+pub(crate) fn fene_spec() -> StyleSpec {
+    StyleSpec::new("bond", "fene")
+        .params(vec![
+            ParamSpec::new("k", dim("E/L^2")),
+            ParamSpec::new("r0", Dim::LENGTH),
+            ParamSpec::new("epsilon", Dim::ENERGY),
+            ParamSpec::new("sigma", Dim::LENGTH),
+        ])
+        .expression(
+            "-0.5*k*r0^2*log(1-(r/r0)^2)+step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)",
+        )
+        .lammps(LammpsForm::positional())
+}
+
+/// LAMMPS `pair_style lj/smooth/linear` (shifted force): the 12-6 less its
+/// value and slope at the cutoff.
+pub(crate) fn smooth_spec() -> StyleSpec {
+    StyleSpec::new("pair", "lj/smooth/linear")
+        .params(vec![
+            ParamSpec::new("epsilon", Dim::ENERGY).mix(Mix::LjEpsilon {
+                sigma: "sigma".into(),
+            }),
+            ParamSpec::new("sigma", Dim::LENGTH).mix(Mix::LjSigma {
+                epsilon: "epsilon".into(),
+            }),
+        ])
+        .style_params(vec![
+            ParamSpec::new("cutoff", Dim::LENGTH),
+            ParamSpec::text("mixing", &["arithmetic", "geometric", "sixthpower"])
+                .default_value(Value::Text("arithmetic".into())),
+        ])
+        .special(SpecialClass::Vdw)
+        .expression(
+            "4*epsilon*((sigma/r)^12-(sigma/r)^6)-4*epsilon*((sigma/cutoff)^12-(sigma/cutoff)^6)\
+             +(r-cutoff)*f; f=4*epsilon*(12*sigma^12/cutoff^13-6*sigma^6/cutoff^7)",
+        )
+        .lammps(LammpsForm::positional())
+}
+
+/// A run-time compound category: the Urey–Bradley 1-3 term of an angle,
+/// its own block `urey_bradleys`.
+pub(crate) fn urey_bradley() -> (CategorySpec, StyleSpec) {
+    (
+        CategorySpec::custom(
+            "urey_bradley",
+            3,
+            Coordinate::Compound,
+            EndpointOrder::Reversible,
+        ),
+        StyleSpec::new("urey_bradley", "harmonic")
+            .params(vec![
+                ParamSpec::new("k", dim("E/L^2")),
+                ParamSpec::new("r0", Dim::LENGTH),
+            ])
+            .expression("k*(distance(p1,p3)-r0)^2"),
+    )
+}
+
+/// The registry of the cases: the built-ins and the run-time styles.
+pub(crate) fn registry() -> Arc<Registry> {
+    let mut r = Registry::builtin();
+    r.register_style(fene_spec(), None).unwrap();
+    r.register_style(smooth_spec(), None).unwrap();
+    let (cat, ub) = urey_bradley();
+    r.register_category(cat).unwrap();
+    r.register_style(ub, None).unwrap();
+    Arc::new(r)
+}
+
+/// One case: a force field, its frame, its configurations (Å, on the 0.01 Å
+/// grid every file holds exactly) and the engine pricing it.
+pub(crate) struct Case {
+    pub name: &'static str,
+    pub engine: &'static str,
+    pub ff: ForceField,
+    pub frame: Frame,
+    pub configs: Vec<Vec<F>>,
+    /// The LAMMPS `units` the files are written in.
+    pub units: &'static str,
+}
+
+fn strings(v: &[&str]) -> ndarray::ArrayD<String> {
+    Array1::from_vec(v.iter().map(|s| (*s).to_owned()).collect()).into_dyn()
+}
+
+/// A frame of atoms `types` (masses `mass` by type), `relations` blocks of
+/// `(atoms, type)` rows.
+/// A relation block: its name and its `(atoms, type)` rows.
+type Relation<'a> = (&'a str, &'a [(&'a [Idx], &'a str)]);
+
+fn frame(types: &[&str], mass: &[(&str, F)], relations: &[Relation<'_>]) -> Frame {
+    let n = types.len();
+    let mut atoms = Block::new();
+    atoms.insert("type", strings(types)).unwrap();
+    let m: Vec<F> = types
+        .iter()
+        .map(|t| mass.iter().find(|(k, _)| k == t).unwrap().1)
+        .collect();
+    atoms
+        .insert("mass", Array1::from_vec(m).into_dyn())
+        .unwrap();
+    atoms
+        .insert("charge", Array1::from_vec(vec![0.0; n]).into_dyn())
+        .unwrap();
+    let mol: Vec<Idx> = vec![1; n];
+    atoms
+        .insert("mol_id", Array1::from_vec(mol).into_dyn())
+        .unwrap();
+    for key in ["x", "y", "z"] {
+        atoms
+            .insert(key, Array1::from_vec(vec![0.0; n]).into_dyn())
+            .unwrap();
+    }
+    let mut f = Frame::new();
+    f.insert("atoms", atoms);
+    for (block, rows) in relations {
+        let mut b = Block::new();
+        let arity = rows[0].0.len();
+        for (k, key) in ["atomi", "atomj", "atomk", "atoml"][..arity]
+            .iter()
+            .enumerate()
+        {
+            b.insert(
+                *key,
+                Array1::from_vec(rows.iter().map(|r| r.0[k]).collect()).into_dyn(),
+            )
+            .unwrap();
+        }
+        b.insert(
+            "type",
+            strings(&rows.iter().map(|r| r.1).collect::<Vec<_>>()),
+        )
+        .unwrap();
+        f.insert(*block, b);
+    }
+    f
+}
+
+fn atom_types(ff: &mut ForceField, types: &[(&str, F)]) {
+    let s = ff.def_style("atom", "full", Params::new()).unwrap();
+    for (t, m) in types {
+        s.def_type(t, &[], Params::from_pairs(&[("mass", *m), ("charge", 0.0)]))
+            .unwrap();
+    }
+}
+
+/// `frame` with its `pairs` block under `ff`'s special-bonds weights.
+///
+/// A pair style whose kernel reads each pair's type (`buck`, `morse`,
+/// `lj/class2`: a row per pair) gets the `type` column: the name of the style's row on the
+/// pair's two atom types.
+///
+/// The 1-3 and 1-4 classes are the bond graph's, as an engine's are (OpenMM's
+/// `bondCutoff`), not only the rows the frame's `angles` and `dihedrals`
+/// blocks happen to hold.
+fn with_pairs(ff: &ForceField, mut frame: Frame) -> Frame {
+    let mut pairs = intramolecular_pairs(&graph_topology(&frame), ff.special_bonds()).unwrap();
+    if let Some(style) = ["buck", "morse", "lj/class2"]
+        .iter()
+        .find_map(|n| ff.get_style("pair", n))
+    {
+        let types = frame
+            .get("atoms")
+            .unwrap()
+            .get("type")
+            .unwrap()
+            .as_string()
+            .unwrap();
+        let col = |k: &str| pairs.get(k).unwrap().as_uint().unwrap().to_owned();
+        let (ai, aj) = (col("atomi"), col("atomj"));
+        let names: Vec<String> = ai
+            .iter()
+            .zip(aj.iter())
+            .map(|(&i, &j)| {
+                let (ti, tj) = (&types[[i as usize]], &types[[j as usize]]);
+                style
+                    .type_rows()
+                    .iter()
+                    .find(|(_, e, _)| {
+                        let (a, b) = (e[0], *e.last().unwrap());
+                        (a == ti && b == tj) || (a == tj && b == ti)
+                    })
+                    .map(|r| r.0.to_owned())
+                    .unwrap()
+            })
+            .collect();
+        pairs
+            .insert("type", Array1::from_vec(names).into_dyn())
+            .unwrap();
+    }
+    frame.insert("pairs", pairs);
+    frame
+}
+
+/// `frame` with every angle and proper dihedral of its bond graph as its
+/// `angles` and `dihedrals` rows (untyped: for the pair list only).
+fn graph_topology(frame: &Frame) -> Frame {
+    let mut out = frame.clone();
+    let n = frame.get("atoms").unwrap().nrows().unwrap();
+    let mut adj = vec![Vec::new(); n];
+    if let Some(b) = frame.get("bonds") {
+        let col = |k: &str| b.get(k).unwrap().as_uint().unwrap().to_owned();
+        let (i, j) = (col("atomi"), col("atomj"));
+        for (&a, &b) in i.iter().zip(j.iter()) {
+            adj[a as usize].push(b as usize);
+            adj[b as usize].push(a as usize);
+        }
+    }
+    let mut angles: Vec<[usize; 3]> = Vec::new();
+    for (c, around) in adj.iter().enumerate() {
+        for (x, &a) in around.iter().enumerate() {
+            for &k in &around[x + 1..] {
+                angles.push([a, c, k]);
+            }
+        }
+    }
+    let mut dihedrals: Vec<[usize; 4]> = Vec::new();
+    for j in 0..n {
+        for &k in adj[j].iter().filter(|&&k| k > j) {
+            for &i in adj[j].iter().filter(|&&i| i != k) {
+                for &l in adj[k].iter().filter(|&&l| l != j && l != i) {
+                    dihedrals.push([i, j, k, l]);
+                }
+            }
+        }
+    }
+    let block = |rows: Vec<Vec<usize>>, keys: &[&str]| {
+        let mut b = Block::new();
+        for (c, key) in keys.iter().enumerate() {
+            let v: Vec<Idx> = rows.iter().map(|r| r[c] as Idx).collect();
+            b.insert(*key, Array1::from_vec(v).into_dyn()).unwrap();
+        }
+        b
+    };
+    out.insert(
+        "angles",
+        block(
+            angles.iter().map(|r| r.to_vec()).collect(),
+            &["atomi", "atomj", "atomk"],
+        ),
+    );
+    out.insert(
+        "dihedrals",
+        block(
+            dihedrals.iter().map(|r| r.to_vec()).collect(),
+            &["atomi", "atomj", "atomk", "atoml"],
+        ),
+    );
+    out
+}
+
+/// `x` shifted by `d` Å along `(1, -1, 2)` on every second atom: a second
+/// configuration on the grid.
+fn shifted(x: &[F], d: F) -> Vec<F> {
+    x.chunks(3)
+        .enumerate()
+        .flat_map(|(i, p)| {
+            let s = if i % 2 == 1 { d } else { 0.0 };
+            [p[0] + s, p[1] - s, p[2] + 2.0 * s]
+        })
+        .collect()
+}
+
+pub(crate) fn cases(reg: &Registry) -> Vec<Case> {
+    let mut out = Vec::new();
+    let masses = [("A", 12.011), ("B", 14.007), ("C", 15.999), ("D", 32.06)];
+
+    // fene: a 4-atom chain, three fene types, two inside the WCA range.
+    let mut ff = ForceField::new("fene");
+    ff.set_units("real");
+    ff.set_special_bonds(SpecialBonds {
+        lj: [0.0, 1.0, 1.0],
+        coul: [0.0, 1.0, 1.0],
+    });
+    atom_types(&mut ff, &masses[..2]);
+    let fene = ff.def_style("bond", "fene", Params::new()).unwrap();
+    for (name, ends, k, r0, eps, sigma) in [
+        ("A-A", ["A", "A"], 30.0, 1.5, 1.0, 1.0),
+        ("A-B", ["A", "B"], 25.0, 1.75, 0.8, 1.1),
+        ("B-B", ["B", "B"], 40.0, 1.6, 1.2, 0.95),
+    ] {
+        fene.def_type(
+            name,
+            &ends,
+            Params::from_pairs(&[("k", k), ("r0", r0), ("epsilon", eps), ("sigma", sigma)]),
+        )
+        .unwrap();
+    }
+    let x = vec![
+        0.0, 0.0, 0.0, 0.97, 0.0, 0.0, 0.97, 1.2, 0.0, 0.97, 1.2, 0.9,
+    ];
+    out.push(Case {
+        name: "fene",
+        engine: "lammps",
+        frame: with_pairs(
+            &ff,
+            frame(
+                &["A", "A", "B", "B"],
+                &masses,
+                &[(
+                    "bonds",
+                    &[(&[0, 1], "A-A"), (&[1, 2], "A-B"), (&[2, 3], "B-B")],
+                )],
+            ),
+        ),
+        configs: vec![x.clone(), shifted(&x, 0.05)],
+        units: "real",
+        ff,
+    });
+
+    // smooth: five unbonded atoms of two types, every pair inside the cutoff.
+    let mut ff = ForceField::new("smooth");
+    ff.set_units("real");
+    ff.set_special_bonds(SpecialBonds {
+        lj: [0.0, 0.0, 0.0],
+        coul: [0.0, 0.0, 0.0],
+    });
+    atom_types(&mut ff, &masses[..2]);
+    let mut style = Params::from_pairs(&[("cutoff", 8.0)]);
+    style.set_str("mixing", "arithmetic");
+    let lj = ff.def_style("pair", "lj/smooth/linear", style).unwrap();
+    lj.def_type(
+        "A",
+        &["A"],
+        Params::from_pairs(&[("epsilon", 0.2), ("sigma", 3.1)]),
+    )
+    .unwrap();
+    lj.def_type(
+        "B",
+        &["B"],
+        Params::from_pairs(&[("epsilon", 0.15), ("sigma", 3.6)]),
+    )
+    .unwrap();
+    let x = vec![
+        0.0, 0.0, 0.0, 3.7, 0.0, 0.0, 0.0, 3.9, 0.0, 3.6, 3.8, 0.4, 1.8, 1.9, 3.5,
+    ];
+    out.push(Case {
+        name: "smooth",
+        engine: "lammps",
+        frame: with_pairs(&ff, frame(&["A", "A", "B", "B", "B"], &masses, &[])),
+        configs: vec![x.clone(), shifted(&x, 0.13)],
+        units: "real",
+        ff,
+    });
+
+    // metal: bond morse and pair buck of a real field, written in metal.
+    let mut ff = ForceField::new("metal");
+    ff.set_units("real");
+    ff.set_special_bonds(SpecialBonds {
+        lj: [0.0, 1.0, 1.0],
+        coul: [0.0, 1.0, 1.0],
+    });
+    atom_types(&mut ff, &masses[..2]);
+    ff.def_style("bond", "morse", Params::new())
+        .unwrap()
+        .def_type(
+            "A-B",
+            &["A", "B"],
+            Params::from_pairs(&[("d0", 95.6), ("alpha", 2.1), ("r0", 1.53)]),
+        )
+        .unwrap();
+    let buck = ff
+        .def_style("pair", "buck", Params::from_pairs(&[("cutoff", 9.0)]))
+        .unwrap();
+    for (name, ends, a, rho, c) in [
+        ("A", vec!["A"], 32000.0, 0.27, 210.0),
+        ("B", vec!["B"], 41000.0, 0.26, 180.0),
+        ("A-B", vec!["A", "B"], 36000.0, 0.265, 195.0),
+    ] {
+        buck.def_type(
+            name,
+            &ends,
+            Params::from_pairs(&[("a", a), ("rho", rho), ("c", c)]),
+        )
+        .unwrap();
+    }
+    let x = vec![0.0, 0.0, 0.0, 1.61, 0.0, 0.0, 0.3, 3.4, 0.2, 1.7, 3.1, 0.9];
+    out.push(Case {
+        name: "metal",
+        engine: "lammps",
+        frame: with_pairs(
+            &ff,
+            frame(
+                &["A", "B", "A", "B"],
+                &masses,
+                &[("bonds", &[(&[0, 1], "A-B"), (&[2, 3], "A-B")])],
+            ),
+        ),
+        configs: vec![x.clone(), shifted(&x, 0.07)],
+        units: "metal",
+        ff,
+    });
+
+    // morse: pair morse, every pair its row (no mixing), four unbonded atoms.
+    let mut ff = ForceField::new("morse");
+    ff.set_units("real");
+    ff.set_special_bonds(SpecialBonds {
+        lj: [0.0, 0.0, 0.0],
+        coul: [0.0, 0.0, 0.0],
+    });
+    atom_types(&mut ff, &masses[..2]);
+    let morse = ff
+        .def_style("pair", "morse", Params::from_pairs(&[("cutoff", 10.0)]))
+        .unwrap();
+    for (name, ends, d0, alpha, r0) in [
+        ("A", vec!["A"], 0.25, 1.4, 3.6),
+        ("B", vec!["B"], 0.18, 1.2, 3.9),
+        ("A-B", vec!["A", "B"], 0.21, 1.3, 3.75),
+    ] {
+        morse
+            .def_type(
+                name,
+                &ends,
+                Params::from_pairs(&[("d0", d0), ("alpha", alpha), ("r0", r0)]),
+            )
+            .unwrap();
+    }
+    let x = vec![0.0, 0.0, 0.0, 3.4, 0.5, 0.0, 0.7, 3.9, 0.3, 3.8, 3.6, 2.2];
+    out.push(Case {
+        name: "morse",
+        engine: "lammps",
+        frame: with_pairs(&ff, frame(&["A", "B", "A", "B"], &masses, &[])),
+        configs: vec![x.clone(), shifted(&x, 0.11)],
+        units: "real",
+        ff,
+    });
+
+    // openmm: a chain A-B-B-A, a D on the first B (a centre of three: an
+    // improper), and a lone C.
+    // 1-2, 1-3 and 1-4 pairs excluded: `bondCutoff="3"`.
+    let mut ff = ForceField::new("openmm");
+    ff.set_units("real");
+    ff.set_special_bonds(SpecialBonds {
+        lj: [0.0, 0.0, 0.0],
+        coul: [0.0, 0.0, 0.0],
+    });
+    atom_types(&mut ff, &masses);
+    ff.def_style("bond", "fene", Params::new())
+        .unwrap()
+        .def_type(
+            "A-B",
+            &["A", "B"],
+            Params::from_pairs(&[("k", 25.0), ("r0", 1.9), ("epsilon", 0.8), ("sigma", 1.4)]),
+        )
+        .unwrap();
+    ff.def_style("bond", "morse", Params::new())
+        .unwrap()
+        .def_type(
+            "B-B",
+            &["B", "B"],
+            Params::from_pairs(&[("d0", 95.6), ("alpha", 2.1), ("r0", 1.53)]),
+        )
+        .unwrap()
+        .def_type(
+            "B-D",
+            &["B", "D"],
+            Params::from_pairs(&[("d0", 70.2), ("alpha", 1.9), ("r0", 1.41)]),
+        )
+        .unwrap();
+    // LAMMPS's cvff: the dihedral of the row, its centre first, which
+    // OpenMM's `ordering="charmm"` prices as written.
+    ff.def_style("improper", "cvff", Params::new())
+        .unwrap()
+        .def_type(
+            "B-A-B-D",
+            &["B", "A", "B", "D"],
+            Params::from_pairs(&[("k", 1.1), ("sign", -1.0), ("periodicity", 2.0)]),
+        )
+        .unwrap();
+    ff.def_style("angle", "class2", Params::new())
+        .unwrap()
+        .def_type(
+            "A-B-B",
+            &["A", "B", "B"],
+            Params::from_pairs(&[("theta0", 112.0), ("k2", 40.0), ("k3", -12.0), ("k4", 3.0)]),
+        )
+        .unwrap();
+    ff.def_style_in(reg, "urey_bradley", "harmonic", Params::new())
+        .unwrap()
+        .def_type(
+            "A-B-B",
+            &["A", "B", "B"],
+            Params::from_pairs(&[("k", 22.5), ("r0", 2.45)]),
+        )
+        .unwrap();
+    let mut style = Params::from_pairs(&[("cutoff", 12.0)]);
+    style.set_str("mixing", "arithmetic");
+    let lj = ff.def_style("pair", "lj/smooth/linear", style).unwrap();
+    for (t, eps, sigma) in [
+        ("A", 0.2, 3.1),
+        ("B", 0.15, 3.6),
+        ("C", 0.25, 3.0),
+        ("D", 0.3, 3.4),
+    ] {
+        lj.def_type(
+            t,
+            &[t],
+            Params::from_pairs(&[("epsilon", eps), ("sigma", sigma)]),
+        )
+        .unwrap();
+    }
+    let x = vec![
+        0.0, 0.0, 0.0, 1.42, 0.31, 0.0, 2.05, 1.62, 0.12, 3.47, 1.81, 0.4, 1.2, 4.9, 3.3, 1.9,
+        -0.95, 0.6,
+    ];
+    out.push(Case {
+        name: "openmm",
+        engine: "openmm",
+        frame: with_pairs(
+            &ff,
+            frame(
+                &["A", "B", "B", "A", "C", "D"],
+                &masses,
+                &[
+                    (
+                        "bonds",
+                        &[
+                            (&[0, 1], "A-B"),
+                            (&[1, 2], "B-B"),
+                            (&[2, 3], "A-B"),
+                            (&[1, 5], "B-D"),
+                        ],
+                    ),
+                    ("impropers", &[(&[1, 0, 2, 5], "B-A-B-D")]),
+                    ("angles", &[(&[0, 1, 2], "A-B-B"), (&[1, 2, 3], "A-B-B")]),
+                    (
+                        "urey_bradleys",
+                        &[(&[0, 1, 2], "A-B-B"), (&[1, 2, 3], "A-B-B")],
+                    ),
+                ],
+            ),
+        ),
+        configs: vec![x.clone(), shifted(&x, 0.09)],
+        units: "real",
+        ff,
+    });
+    out
+}
+
+/// The term each style's energy counts in.
+fn term(category: &str) -> &'static str {
+    match category {
+        "bond" => "bond",
+        "angle" => "angle",
+        "improper" => "improper",
+        "urey_bradley" => "urey_bradley",
+        "pair" => "vdw",
+        other => panic!("no term for {other}"),
+    }
+}
+
+/// molrs's energy of `case` at configuration `k`, per term and in total,
+/// in the units of the engine's files.
+pub(crate) fn molrs_terms(case: &Case, reg: &Registry, k: usize) -> BTreeMap<&'static str, F> {
+    let x = &case.configs[k];
+    let energy_of = |ff: &ForceField, frame: &Frame| {
+        PotentialCompiler::with_registry(ff, reg)
+            .compile(frame)
+            .unwrap()
+            .calc_energy(x)
+    };
+    let energy = |ff: &ForceField| energy_of(ff, &case.frame);
+    let to_file = if case.units == "real" {
+        1.0
+    } else {
+        LammpsFfUnits::canonical()
+            .unwrap()
+            .energy(1.0, "real", case.units)
+            .unwrap()
+    };
+    let mut out: BTreeMap<&'static str, F> = BTreeMap::new();
+    for style in case.ff.styles() {
+        if style.category() == "atom" {
+            continue;
+        }
+        let mut one = case.ff.empty_like();
+        let s = one
+            .def_style_in(reg, style.category(), style.name(), style.params().clone())
+            .unwrap();
+        for (name, ends, p) in style.type_rows() {
+            s.def_type(name, &ends, p.clone()).unwrap();
+        }
+        // The style alone, on the rows of its own types.
+        let mut own = case.frame.clone();
+        let block = &reg.category(style.category()).unwrap().block;
+        if let Some(b) = case.frame.get(block)
+            && style.category() != "pair"
+        {
+            let names: Vec<&str> = style.type_rows().iter().map(|r| r.0).collect();
+            let types = b.get("type").unwrap().as_string().unwrap();
+            let keep: Vec<usize> = (0..types.len())
+                .filter(|&r| names.contains(&types[[r]].as_str()))
+                .collect();
+            own.insert(block.as_ref(), b.select_rows(&keep).unwrap());
+        }
+        *out.entry(term(style.category())).or_default() += energy_of(&one, &own) * to_file;
+    }
+    out.insert("total", energy(&case.ff) * to_file);
+    out
+}
+
+/// `frame` at `x` without its pair list: a LAMMPS data file.
+fn placed(frame: &Frame, x: &[F]) -> Frame {
+    let mut out = at(frame, x);
+    out.remove("pairs");
+    out
+}
+
+/// `frame` with its atoms at `x`, in a box past every atom
+/// (non-periodic).
+fn at(frame: &Frame, x: &[F]) -> Frame {
+    let mut out = frame.clone();
+    let atoms = out.get_mut("atoms").unwrap();
+    for (d, key) in ["x", "y", "z"].iter().enumerate() {
+        let col: Vec<F> = x.iter().skip(d).step_by(3).copied().collect();
+        atoms
+            .insert(*key, Array1::from_vec(col).into_dyn())
+            .unwrap();
+    }
+    out.simbox =
+        Some(SimBox::cube(100.0, ndarray::array![-50.0, -50.0, -50.0], [false; 3]).unwrap());
+    out
+}
+
+/// Write the case's engine inputs into `dir/<case>/`.
+fn write_case(dir: &Path, case: &Case, reg: &Arc<Registry>, tsv: &mut String) {
+    let root = dir.join(case.name);
+    std::fs::create_dir_all(&root).unwrap();
+    match case.engine {
+        "lammps" => {
+            let labels = TypeLabels::from_frame(&case.frame).unwrap();
+            let options = LammpsWriteOptions {
+                precision: 17,
+                units: case.units,
+                ..LammpsWriteOptions::default()
+            };
+            let text = LammpsFfWriter::with_options(&labels, options)
+                .with_registry(reg.clone())
+                .write_str(&case.ff)
+                .unwrap();
+            let (pre, post): (Vec<&str>, Vec<&str>) =
+                text.lines().partition(|l| l.starts_with("units"));
+            std::fs::write(root.join("pre.lmp"), pre.join("\n") + "\n").unwrap();
+            std::fs::write(root.join("system.ff"), post.join("\n") + "\n").unwrap();
+            for (k, x) in case.configs.iter().enumerate() {
+                // Masses (g/mol) and lengths (Å) are the same numbers in
+                // `real` and `metal`.
+                write_lammps_data(root.join(format!("data_{k}.lmp")), &placed(&case.frame, x))
+                    .unwrap();
+            }
+        }
+        "openmm" => {
+            let xml = XmlForceFieldWriter::new()
+                .with_registry(reg.clone())
+                .write_str(&case.ff)
+                .unwrap();
+            std::fs::write(root.join("ff.xml"), xml).unwrap();
+            let atoms = case.frame.get("atoms").unwrap();
+            let types = atoms.get("type").unwrap().as_string().unwrap();
+            let bonds = case.frame.get("bonds").unwrap();
+            let col = |k: &str| -> Vec<usize> {
+                bonds
+                    .get(k)
+                    .unwrap()
+                    .as_uint()
+                    .map(|c| c.iter().map(|&v| v as usize).collect())
+                    .unwrap()
+            };
+            let system = json!({
+                "types": types.iter().cloned().collect::<Vec<_>>(),
+                "bonds": col("atomi").into_iter().zip(col("atomj")).map(|(i, j)| [i, j]).collect::<Vec<_>>(),
+                "configs": case.configs,
+            });
+            std::fs::write(root.join("system.json"), system.to_string()).unwrap();
+        }
+        other => panic!("engine {other}"),
+    }
+    for k in 0..case.configs.len() {
+        for (t, v) in molrs_terms(case, reg, k) {
+            writeln!(tsv, "{}\t{k}\t{}\t{t}\t{v:?}", case.name, case.engine).unwrap();
+        }
+    }
+}
+
+/// With `MOLRS_ENGINE_CODEC_DIR` set, write every case's engine inputs
+/// there and molrs's numbers to `molrs.tsv` (the script's job).
+#[test]
+fn write_engine_inputs() {
+    let Some(dir) = std::env::var_os("MOLRS_ENGINE_CODEC_DIR") else {
+        return;
+    };
+    let dir = Path::new(&dir);
+    let reg = registry();
+    let mut tsv = String::new();
+    for case in cases(&reg) {
+        write_case(dir, &case, &reg, &mut tsv);
+    }
+    std::fs::write(dir.join("molrs.tsv"), tsv).unwrap();
+}
+
+/// `(case, config, engine) → term → value`, from the pinned table.
+fn pinned() -> BTreeMap<(String, usize, String), BTreeMap<String, F>> {
+    let mut out: BTreeMap<_, BTreeMap<String, F>> = BTreeMap::new();
+    for line in include_str!("testdata/engine_codecs/engines.tsv").lines() {
+        if line.starts_with('#') || line.trim().is_empty() {
+            continue;
+        }
+        let c: Vec<&str> = line.split('\t').collect();
+        let [case, k, engine, term, value] = c[..] else {
+            panic!("bad line {line:?}");
+        };
+        out.entry((case.to_owned(), k.parse().unwrap(), engine.to_owned()))
+            .or_default()
+            .insert(term.to_owned(), value.parse().unwrap());
+    }
+    out
+}
+
+/// Every pinned engine number is molrs's to relative 1e-10 (of the term,
+/// or of 1 kcal/mol for a smaller one), every case, configuration and
+/// term.
+#[test]
+fn every_engine_prices_the_codec_cases_as_molrs() {
+    let table = pinned();
+    let reg = registry();
+    let mut bad = Vec::new();
+    let mut seen = 0;
+    for case in cases(&reg) {
+        for k in 0..case.configs.len() {
+            let got = table
+                .get(&(case.name.to_owned(), k, case.engine.to_owned()))
+                .unwrap_or_else(|| panic!("{} config {k}: no pinned numbers", case.name));
+            let want = molrs_terms(&case, &reg, k);
+            assert_eq!(
+                got.keys().collect::<Vec<_>>(),
+                want.keys()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .iter()
+                    .collect::<Vec<_>>(),
+                "{} config {k}: the engine's terms are molrs's",
+                case.name
+            );
+            for (t, w) in want {
+                let g = got[t];
+                let rel = (g - w).abs() / w.abs().max(1.0);
+                seen += 1;
+                if rel > 1e-10 {
+                    bad.push(format!(
+                        "{} config {k} {t}: {} {g:.17e}, molrs {w:.17e}, rel {rel:.1e}",
+                        case.name, case.engine
+                    ));
+                }
+            }
+        }
+    }
+    assert!(seen > 0);
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+// ── the codecs, in process ──────────────────────────────────────────────────
+
+mod codecs {
+    use super::*;
+    use crate::ff::forcefield::readers::ForceFieldReader;
+    use crate::ff::forcefield::readers::lammps::LammpsFfReader;
+    use crate::ff::forcefield::writers::frcmod::write_amber_frcmod_str;
+    use crate::ff::forcefield::writers::gromacs::GromacsTopFfWriter;
+    use crate::ff::ir::expr::{Binding, Geometry, compile};
+    use crate::ff::ir::{Engine, IrError, UnitScale, builtin_styles};
+
+    /// A row of `spec` a LAMMPS line holds: each parameter a value of its
+    /// kind, the multiplicities and signs integers.
+    fn sample(spec: &StyleSpec) -> Params {
+        let pairs: &[(&str, F)] = match (spec.category.as_ref(), spec.name.as_ref()) {
+            ("dihedral", "periodic") => &[
+                ("k1", 0.5),
+                ("periodicity1", 1.0),
+                ("phase1", 180.0),
+                ("k2", 0.25),
+                ("periodicity2", 3.0),
+                ("phase2", 0.0),
+            ],
+            ("dihedral", "nharmonic") => &[("a1", 1.0), ("a2", -2.0), ("a3", 0.5)],
+            ("dihedral", "harmonic") | ("improper", "cvff") => {
+                &[("k", 2.0), ("sign", -1.0), ("periodicity", 3.0)]
+            }
+            ("dihedral", "charmm") => &[
+                ("k", 0.2),
+                ("periodicity", 3.0),
+                ("phase", 180.0),
+                // w > 0 needs a lj/charmm beside it, which this one-style
+                // field has not; the codec writes it the same either way.
+                ("w", 0.0),
+            ],
+            ("improper", "periodic") => &[("k", 1.1), ("periodicity", 2.0), ("phase", 180.0)],
+            _ => &[],
+        };
+        if !pairs.is_empty() {
+            return Params::from_pairs(pairs);
+        }
+        let mut p = Params::new();
+        for (i, ps) in spec.params.iter().enumerate() {
+            let v = if ps.dim == Dim::ANGLE {
+                100.0 + 5.0 * i as F
+            } else {
+                0.5 + 0.25 * i as F
+            };
+            p.set(&ps.name, v);
+        }
+        p
+    }
+
+    /// The built-in styles a LAMMPS coefficient line holds (not `fix cmap`,
+    /// not the Coulomb halves).
+    fn coefficient_styles() -> Vec<StyleSpec> {
+        builtin_styles()
+            .into_iter()
+            .filter(|s| {
+                s.lammps.codec().is_some() && s.category != "cmap" && !s.name.starts_with("coul/")
+            })
+            .collect()
+    }
+
+    /// Every built-in a LAMMPS line holds: the codec's tokens read back to
+    /// the row, and the tokens are the identity.
+    #[test]
+    fn every_builtin_codec_reads_back_what_it_writes() {
+        let mut seen = Vec::new();
+        for spec in coefficient_styles() {
+            let codec = spec.lammps.codec().unwrap();
+            let row = sample(&spec);
+            let written = codec.write(&spec, &row, &UnitScale::IDENTITY).unwrap();
+            let tokens: Vec<String> = written.values.iter().map(|t| t.render(17)).collect();
+            let strs: Vec<&str> = tokens.iter().map(String::as_str).collect();
+            let back = codec
+                .read(&spec, &strs)
+                .unwrap_or_else(|e| panic!("{} {}: {e}", spec.category, spec.name));
+            assert!(
+                back.same_parameters(&row),
+                "{} {}: {back:?} != {row:?}",
+                spec.category,
+                spec.name
+            );
+            let again = codec.write(&spec, &back, &UnitScale::IDENTITY).unwrap();
+            assert_eq!(again, written, "{} {}", spec.category, spec.name);
+            for (keyword, values) in &written.extra {
+                let tokens: Vec<String> = values.iter().map(|t| t.render(6)).collect();
+                let strs: Vec<&str> = tokens.iter().map(String::as_str).collect();
+                codec
+                    .read_extra(&spec, keyword, &strs, &mut Params::new())
+                    .unwrap();
+            }
+            seen.push(format!("{} {}", spec.category, spec.name));
+        }
+        for must in [
+            "bond class2",
+            "angle class2",
+            "dihedral class2",
+            "pair buck",
+            "pair morse",
+            "pair lj/class2",
+        ] {
+            assert!(seen.iter().any(|s| s == must), "{must} has no LAMMPS codec");
+        }
+    }
+
+    /// A force field of one built-in style and the frame of one term (a
+    /// pair style: two types, every pair a row), for a whole-file round
+    /// trip.
+    fn one_style(spec: &StyleSpec) -> (ForceField, Frame) {
+        let mut ff = ForceField::new("one");
+        ff.set_units("real");
+        ff.set_special_bonds(SpecialBonds {
+            lj: [0.0, 0.0, 0.0],
+            coul: [0.0, 0.0, 0.0],
+        });
+        let masses = [("A", 12.011), ("B", 14.007)];
+        atom_types(&mut ff, &masses);
+        let cat = spec.category.as_ref();
+        let mut style = Params::new();
+        if cat == "pair" {
+            style.set("cutoff", 9.0);
+        }
+        match spec.name.as_ref() {
+            "lj/charmm" => style.set("inner", 7.0),
+            "lj/class2" => style.set_str("mixing", "sixthpower"),
+            "lj/cut" => style.set_str("mixing", "geometric"),
+            _ => {}
+        }
+        let s = ff.def_style(cat, &spec.name, style).unwrap();
+        let row = sample(spec);
+        let x = vec![0.0, 0.0, 0.0, 1.5, 0.1, 0.0, 2.1, 1.4, 0.2, 3.4, 1.7, 1.1];
+        let types = ["A", "B", "B", "A"];
+        let frame = match cat {
+            "pair" => {
+                s.def_type("A", &["A"], row.clone()).unwrap();
+                let mut b = Params::new();
+                for (k, v) in row.iter() {
+                    b.set(k, v * 1.1);
+                }
+                s.def_type("B", &["B"], b).unwrap();
+                if spec.params.iter().any(|p| p.mix == Mix::None) || spec.name == "lj/class2" {
+                    let mut c = Params::new();
+                    for (k, v) in row.iter() {
+                        c.set(k, v * 1.05);
+                    }
+                    s.def_type("A-B", &["A", "B"], c).unwrap();
+                }
+                frame(&types, &masses, &[])
+            }
+            "bond" => {
+                s.def_type("A-B", &["A", "B"], row).unwrap();
+                frame(&types, &masses, &[("bonds", &[(&[0, 1], "A-B")])])
+            }
+            "angle" => {
+                s.def_type("A-B-B", &["A", "B", "B"], row).unwrap();
+                frame(&types, &masses, &[("angles", &[(&[0, 1, 2], "A-B-B")])])
+            }
+            "dihedral" => {
+                s.def_type("A-B-B-A", &["A", "B", "B", "A"], row).unwrap();
+                frame(
+                    &types,
+                    &masses,
+                    &[("dihedrals", &[(&[0, 1, 2, 3], "A-B-B-A")])],
+                )
+            }
+            _ => {
+                s.def_type("B-A-B-A", &["B", "A", "B", "A"], row).unwrap();
+                frame(
+                    &types,
+                    &masses,
+                    &[("impropers", &[(&[1, 0, 2, 3], "B-A-B-A")])],
+                )
+            }
+        };
+        let frame = with_pairs(&ff, frame);
+        let frame = at(&frame, &x);
+        (ff, frame)
+    }
+
+    fn include(ff: &ForceField, frame: &Frame) -> String {
+        let labels = TypeLabels::from_frame(frame).unwrap();
+        let options = LammpsWriteOptions {
+            precision: 17,
+            ..LammpsWriteOptions::default()
+        };
+        LammpsFfWriter::with_options(&labels, options)
+            .write_str(ff)
+            .unwrap()
+    }
+
+    /// Every built-in a LAMMPS line holds, through a whole include: write →
+    /// read → write is the identity on the text, the rows read back as
+    /// written, and both force fields price the term alike.
+    #[test]
+    fn every_builtin_round_trips_through_an_include_at_the_same_energy() {
+        for spec in coefficient_styles() {
+            let what = format!("{} {}", spec.category, spec.name);
+            if spec.name == "lj/charmm" {
+                // LAMMPS has lj/charmm only beside its coul/charmm (the
+                // equivalence check's CHARMM sources write and read it).
+                continue;
+            }
+            let (ff, frame) = one_style(&spec);
+            let text = include(&ff, &frame);
+            let back = LammpsFfReader::new()
+                .read_str(&text)
+                .unwrap_or_else(|e| panic!("{what}: {e}\n{text}"));
+            assert_eq!(include(&back, &frame), text, "{what}");
+            // `improper periodic` is LAMMPS's `cvff`, which reads as molrs's
+            // `improper cvff`: the same energy, another spelling.
+            let Some(style) = back.get_style(&spec.category, &spec.name) else {
+                assert_eq!(what, "improper periodic", "{text}");
+                assert!(back.get_style("improper", "cvff").is_some(), "{text}");
+                continue_energy(&what, &ff, &back, &frame);
+                continue;
+            };
+            for (name, _, p) in ff
+                .get_style(&spec.category, &spec.name)
+                .unwrap()
+                .type_rows()
+            {
+                let got = style
+                    .type_params(name)
+                    .unwrap_or_else(|| panic!("{what}: no type {name} read"));
+                assert!(got.same_parameters(p), "{what} {name}: {got:?} != {p:?}");
+            }
+            continue_energy(&what, &ff, &back, &frame);
+        }
+    }
+
+    /// Both force fields price `frame` alike, and not at zero.
+    fn continue_energy(what: &str, ff: &ForceField, back: &ForceField, frame: &Frame) {
+        let x: Vec<F> = {
+            let atoms = frame.get("atoms").unwrap();
+            let c = |k: &str| atoms.get(k).unwrap().as_float().unwrap().to_owned();
+            let (x, y, z) = (c("x"), c("y"), c("z"));
+            (0..x.len())
+                .flat_map(|i| [x[[i]], y[[i]], z[[i]]])
+                .collect()
+        };
+        let e = |ff: &ForceField| {
+            PotentialCompiler::new(ff)
+                .compile(frame)
+                .unwrap_or_else(|e| panic!("{what}: {e}"))
+                .calc_energy(&x)
+        };
+        let (a, b) = (e(ff), e(back));
+        assert!(
+            (a - b).abs() <= 1e-12 * a.abs(),
+            "{what}: the energy read back, {a} != {b}"
+        );
+        assert!(
+            a != 0.0,
+            "{what}: a term that prices nothing proves nothing"
+        );
+    }
+
+    /// `class2` carries its cross-term lines at zero; a non-zero cross term
+    /// is refused by name, in an include and in a data file.
+    #[test]
+    fn class2_cross_terms_are_written_at_zero_and_refused_otherwise() {
+        for name in ["angle", "dihedral"] {
+            let spec = builtin_styles()
+                .into_iter()
+                .find(|s| s.category == name && s.name == "class2")
+                .unwrap();
+            let (ff, frame) = one_style(&spec);
+            let text = include(&ff, &frame);
+            let keywords: &[&str] = if name == "angle" {
+                &["bb", "ba"]
+            } else {
+                &["mbt", "ebt", "at", "aat", "bb13"]
+            };
+            for k in keywords {
+                assert!(
+                    text.lines().any(|l| l.split_whitespace().nth(2) == Some(k)),
+                    "{name} class2 `{k}` line missing:\n{text}"
+                );
+            }
+            let nonzero = text.replacen(
+                &format!("{} 0 ", keywords[0]),
+                &format!("{} 3.5 ", keywords[0]),
+                1,
+            );
+            let err = LammpsFfReader::new().read_str(&nonzero).unwrap_err();
+            assert!(err.contains("cross term"), "{err}");
+            // The data file: the cross-term sections, read back.
+            let labels = TypeLabels::from_frame(&frame).unwrap();
+            let data = LammpsFfWriter::new(&labels)
+                .write_data_coeffs_str(&ff)
+                .unwrap();
+            let heading = if name == "angle" {
+                "BondBond Coeffs"
+            } else {
+                "MiddleBondTorsion Coeffs"
+            };
+            assert!(data.contains(heading), "{data}");
+            let back = LammpsFfReader::new()
+                .read_data_coeffs(&data, &Default::default(), "real")
+                .unwrap();
+            assert!(back.get_style(name, "class2").is_some(), "{data}");
+        }
+    }
+
+    /// Unit conversion is per dimension: energy, length, their products and
+    /// inverses; an angle value and a per-radian constant are unchanged.
+    #[test]
+    fn units_convert_per_dimension() {
+        let sys = LammpsFfUnits::canonical().unwrap();
+        let scale = sys.scale("real", "metal").unwrap();
+        let fe = sys.energy(1.0, "real", "metal").unwrap();
+        let close = |a: F, b: F| assert!((a - b).abs() <= 1e-15 * b.abs(), "{a} != {b}");
+        close(scale.apply(2.0, dim("E")), 2.0 * fe);
+        close(scale.apply(2.0, dim("E/L^2")), 2.0 * fe);
+        close(scale.apply(2.0, dim("E*L^6")), 2.0 * fe);
+        close(scale.apply(2.0, dim("1/L")), 2.0);
+        assert_eq!(scale.apply(109.5, Dim::ANGLE), 109.5);
+        close(scale.apply(2.0, dim("E/A^2")), 2.0 * fe);
+        assert!(sys.scale("real", "real").unwrap().is_identity());
+        // Through a writer: `buck`'s `c` (E·L⁶) is the energy's factor.
+        let to_lj = sys.scale("real", "lj").unwrap();
+        let l = sys.length(1.0, "real", "lj").unwrap();
+        close(
+            to_lj.apply(3.0, dim("E*L^6")),
+            3.0 * sys.energy(1.0, "real", "lj").unwrap() * l.powi(6),
+        );
+    }
+
+    /// The run-time `bond fene` (positional): written as `bond_style fene`
+    /// and read back through the same registry; the process-wide registry
+    /// (which has no `fene`) refuses the line by name.
+    #[test]
+    fn a_runtime_positional_style_reads_and_writes_through_its_registry() {
+        let reg = registry();
+        let case = cases(&reg).into_iter().find(|c| c.name == "fene").unwrap();
+        let labels = TypeLabels::from_frame(&case.frame).unwrap();
+        let text = LammpsFfWriter::new(&labels)
+            .with_registry(reg.clone())
+            .write_str(&case.ff)
+            .unwrap();
+        assert!(text.contains("bond_style fene\n"), "{text}");
+        assert!(
+            text.contains("bond_coeff A-A 30.000000 1.500000 1.000000 1.000000\n"),
+            "{text}"
+        );
+        let back = LammpsFfReader::new()
+            .with_registry(reg.clone())
+            .read_str(&text)
+            .unwrap();
+        let fene = back.get_style("bond", "fene").unwrap();
+        assert!(
+            fene.type_params("A-B").unwrap().same_parameters(
+                case.ff
+                    .get_style("bond", "fene")
+                    .unwrap()
+                    .type_params("A-B")
+                    .unwrap()
+            )
+        );
+        let err = LammpsFfReader::new().read_str(&text).unwrap_err();
+        assert!(err.contains("unsupported bond_style `fene`"), "{err}");
+        let err = LammpsFfWriter::new(&labels)
+            .write_str(&case.ff)
+            .unwrap_err();
+        assert!(err.contains("LAMMPS has no form for bond `fene`"), "{err}");
+    }
+
+    /// Every way an engine refuses a style is `NoEngineForm`, by name.
+    #[test]
+    fn engines_refuse_what_they_cannot_hold_by_name() {
+        // LAMMPS: an expression style without a LAMMPS form (no LEPTON).
+        let mut reg = Registry::builtin();
+        let mut expr_only = fene_spec();
+        expr_only.lammps = LammpsForm::None;
+        reg.register_style(expr_only, None).unwrap();
+        let reg = Arc::new(reg);
+        let case = cases(&registry())
+            .into_iter()
+            .find(|c| c.name == "fene")
+            .unwrap();
+        let labels = TypeLabels::from_frame(&case.frame).unwrap();
+        let err = LammpsFfWriter::new(&labels)
+            .with_registry(reg.clone())
+            .write_str(&case.ff)
+            .unwrap_err();
+        assert!(
+            err.contains("LAMMPS has no form for bond `fene`") && err.contains("LEPTON"),
+            "{err}"
+        );
+        // A positional form the spec cannot have, at registration.
+        let mut r = Registry::builtin();
+        let mut indexed = StyleSpec::new("dihedral", "my_series")
+            .params(vec![ParamSpec::new("k", Dim::ENERGY).indexed()])
+            .expression("k1*cos(phi)")
+            .lammps(LammpsForm::positional());
+        let err = r.register_style(indexed.clone(), None).unwrap_err();
+        assert!(matches!(err, IrError::NoEngineForm { .. }), "{err:?}");
+        let (cat, mut ub) = urey_bradley();
+        r.register_category(cat).unwrap();
+        ub.lammps = LammpsForm::positional();
+        let err = r.register_style(ub, None).unwrap_err();
+        assert!(err.to_string().contains("no `urey_bradley_style`"), "{err}");
+        // register_engine_form: a form for a style registered without one;
+        // another engine refused; a built-in sealed.
+        indexed.lammps = LammpsForm::None;
+        indexed.params = vec![ParamSpec::new("k", Dim::ENERGY)];
+        indexed.expression = Some("k*cos(phi)".into());
+        r.register_style(indexed, None).unwrap();
+        r.register_engine_form(
+            Engine::Lammps,
+            "dihedral",
+            "my_series",
+            LammpsForm::positional(),
+        )
+        .unwrap();
+        assert_eq!(
+            r.style("dihedral", "my_series").unwrap().0.lammps,
+            LammpsForm::positional()
+        );
+        assert!(matches!(
+            r.register_engine_form(
+                Engine::Gromacs,
+                "dihedral",
+                "my_series",
+                LammpsForm::positional()
+            ),
+            Err(IrError::NoEngineForm { .. })
+        ));
+        assert!(matches!(
+            r.register_engine_form(Engine::Lammps, "bond", "harmonic", LammpsForm::None),
+            Err(IrError::Sealed { .. })
+        ));
+        // GROMACS and frcmod: a style that is not built in.
+        let mut ff = ForceField::new("x");
+        ff.set_units("real");
+        let mut p = Params::new();
+        p.set_str("expression", "k*(r-r0)^4");
+        ff.def_style("bond", "quartic_custom", p)
+            .unwrap()
+            .def_type(
+                "A-B",
+                &["A", "B"],
+                Params::from_pairs(&[("k", 1.0), ("r0", 1.0)]),
+            )
+            .unwrap();
+        let err = GromacsTopFfWriter::new().write_str(&ff).unwrap_err();
+        assert!(
+            err.contains("GROMACS has no form for bond `quartic_custom`")
+                && err.contains("not a built-in style"),
+            "{err}"
+        );
+        let err = write_amber_frcmod_str(&ff).unwrap_err();
+        assert!(
+            err.contains("AMBER frcmod has no form for bond `quartic_custom`"),
+            "{err}"
+        );
+        // LAMMPS: a run-time category has no `*_style` command, and its
+        // energy is not dropped silently.
+        let reg = registry();
+        let case = cases(&reg)
+            .into_iter()
+            .find(|c| c.name == "openmm")
+            .unwrap();
+        let labels = TypeLabels::from_frame(&case.frame).unwrap();
+        let err = LammpsFfWriter::new(&labels)
+            .with_registry(reg)
+            .write_str(&case.ff)
+            .unwrap_err();
+        assert!(
+            err.contains("LAMMPS has no form for urey_bradley `harmonic`")
+                && err.contains("no `urey_bradley_style`"),
+            "{err}"
+        );
+        // OpenMM: an unregistered expression style is its Custom*Force.
+        let xml = XmlForceFieldWriter::new().write_str(&ff).unwrap();
+        assert!(
+            xml.contains("<CustomBondForce energy=\"4.184*(k*(10*r-r0)^4)\">"),
+            "{xml}"
+        );
+    }
+
+    /// The OpenMM rewrite is exact: the written energy of OpenMM's
+    /// coordinate (nm) is 4.184 times molrs's of the same distance in Å.
+    #[test]
+    fn the_openmm_rewrite_is_the_energy_in_openmm_units() {
+        let reg = registry();
+        let case = cases(&reg)
+            .into_iter()
+            .find(|c| c.name == "openmm")
+            .unwrap();
+        let xml = XmlForceFieldWriter::new()
+            .with_registry(reg.clone())
+            .write_str(&case.ff)
+            .unwrap();
+        let energy = xml
+            .lines()
+            .find(|l| l.contains("<CustomBondForce") && l.contains("log("))
+            .and_then(|l| l.split('"').nth(1))
+            .unwrap()
+            .to_owned();
+        let names = ["k", "r0", "epsilon", "sigma"];
+        let openmm = compile(
+            &energy,
+            &Binding::new(Geometry::of_category("bond").unwrap(), &names, &[]),
+        )
+        .unwrap();
+        let fene = fene_spec();
+        let ir = compile(
+            fene.expression.as_deref().unwrap(),
+            &Binding::new(Geometry::of_category("bond").unwrap(), &names, &[]),
+        )
+        .unwrap();
+        let p = [25.0, 1.9, 0.8, 1.4];
+        for r in [1.1, 1.3, 1.45, 1.7] {
+            let (e_omm, _) = openmm.eval_scalar_one(r / 10.0, &p);
+            let (e_ir, _) = ir.eval_scalar_one(r, &p);
+            assert!(
+                (e_omm - 4.184 * e_ir).abs() <= 1e-13 * e_omm.abs(),
+                "r = {r}: {e_omm} != 4.184 × {e_ir}"
+            );
+        }
+    }
+
+    /// OpenMM's refusals: a compound category it generates no tuples for, a
+    /// pair cross row, a 1-4 weight a bondCutoff cannot state.
+    #[test]
+    fn openmm_custom_forces_refuse_by_name() {
+        let reg = registry();
+        let mut case = cases(&reg)
+            .into_iter()
+            .find(|c| c.name == "openmm")
+            .unwrap();
+        case.ff.set_special_bonds(SpecialBonds {
+            lj: [0.0, 0.0, 0.5],
+            coul: [0.0, 0.0, 0.5],
+        });
+        let err = XmlForceFieldWriter::new()
+            .with_registry(reg.clone())
+            .write_str(&case.ff)
+            .unwrap_err();
+        assert!(err.contains("bondCutoff"), "{err}");
+        let mut r = (*reg).clone();
+        r.register_category(CategorySpec::custom(
+            "quint",
+            5,
+            Coordinate::Compound,
+            EndpointOrder::Reversible,
+        ))
+        .unwrap();
+        r.register_style(
+            StyleSpec::new("quint", "x")
+                .params(vec![ParamSpec::new("k", Dim::ENERGY)])
+                .expression("k*distance(p1,p5)"),
+            None,
+        )
+        .unwrap();
+        let mut ff = ForceField::new("q");
+        ff.set_units("real");
+        ff.def_style_in(&r, "quint", "x", Params::new())
+            .unwrap()
+            .def_type(
+                "t",
+                &["A", "A", "A", "A", "A"],
+                Params::from_pairs(&[("k", 1.0)]),
+            )
+            .unwrap();
+        let err = XmlForceFieldWriter::new()
+            .with_registry(Arc::new(r))
+            .write_str(&ff)
+            .unwrap_err();
+        assert!(
+            err.contains("OpenMM XML has no form for quint `x`"),
+            "{err}"
+        );
+    }
+}

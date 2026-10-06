@@ -76,6 +76,21 @@ const NO_OMM: &str =
 const NO_LMP: &str = "ff/forcefield/writers/lammps.rs::lammps_coeff_values_rejects_unsupported_kernel_and_missing_param";
 const NO_LMP_PAIR: &str =
     "ff/forcefield/readers/lammps.rs::data_coeffs_unsupported_pair_hint_is_an_error";
+// The engine codecs (WP8).
+const CODEC_RT: &str = "ff/engine_codec_check.rs::every_builtin_codec_reads_back_what_it_writes";
+const CODEC_FILE: &str =
+    "ff/engine_codec_check.rs::every_builtin_round_trips_through_an_include_at_the_same_energy";
+const CODEC_ENG: &str = "ff/engine_codec_check.rs::every_engine_prices_the_codec_cases_as_molrs";
+const CLASS2_X: &str =
+    "ff/engine_codec_check.rs::class2_cross_terms_are_written_at_zero_and_refused_otherwise";
+const NO_ENGINE: &str = "ff/engine_codec_check.rs::engines_refuse_what_they_cannot_hold_by_name";
+const OMM_REWRITE: &str =
+    "ff/engine_codec_check.rs::the_openmm_rewrite_is_the_energy_in_openmm_units";
+const RUNTIME_LMP: &str =
+    "ff/engine_codec_check.rs::a_runtime_positional_style_reads_and_writes_through_its_registry";
+const NO_CUSTOM_READ: &str =
+    "ff/forcefield/readers/opls.rs::other_custom_forces_are_refused_by_name";
+const PERSIST_CUSTOM: &str = "ff/ir/tests.rs::custom_styles_persist_to_a_fresh_process";
 
 /// A style of molrs's own definition (MMFF94, UFF, …): no engine format has
 /// it.
@@ -94,8 +109,9 @@ const fn own(kernel: &'static [&'static str]) -> [Cell; 9] {
     ]
 }
 
-/// A style outside the Class-I IR (Class II, Buckingham, Morse, Thole, …):
-/// priced, persisted, refused by the engine readers and writers.
+/// A style no engine format has a form of (the polarizable screenings
+/// `thole`, `coul/tt`): priced, persisted, refused by the engine readers and
+/// writers.
 const fn outside(kernel: &'static [&'static str], why: &'static str) -> [Cell; 9] {
     [
         Exact(kernel),
@@ -110,8 +126,47 @@ const fn outside(kernel: &'static [&'static str], why: &'static str) -> [Cell; 9
     ]
 }
 
-const CLASS_II: &str = "Class II, outside the Class-I IR (LAMMPS's class2 styles carry cross terms the IR has no form for)";
-const NOT_CLASS_I_PAIR: &str = "not a Class-I nonbonded form; LAMMPS's pair style of the name would hold it, which no reader or writer maps";
+/// A Class II style: LAMMPS's `class2` through its codec, OpenMM's custom
+/// force of its expression, GROMACS refused.
+const fn class2(kernel: &'static [&'static str], lammps: &'static [&'static str]) -> [Cell; 9] {
+    [
+        Exact(kernel),
+        ExactWhere(CLASS2_LMP, lammps),
+        ExactWhere(CLASS2_LMP, lammps),
+        Na("OpenMM has no Class II tag (a Custom*Force reads refused)"),
+        ExactWhere(OMM_EXPR, &[OMM_REWRITE, CODEC_ENG]),
+        Na("GROMACS has no Class II directive"),
+        Refused(GMX_NONE, &[NO_ENGINE]),
+        Na("AMBER is Class I"),
+        Exact(&[RECORD]),
+    ]
+}
+
+/// A pair style LAMMPS holds positionally (`pair_coeff i j` per row, no
+/// mixing): read, written and priced by `lmp run 0`.
+const fn positional_pair(kernel: &'static [&'static str]) -> [Cell; 9] {
+    [
+        Exact(kernel),
+        Exact(&[
+            CODEC_FILE,
+            "ff/forcefield/readers/lammps.rs::data_coeffs_pair_morse_hint_reads_through_its_codec",
+        ]),
+        Exact(&[CODEC_FILE, CODEC_ENG]),
+        Na("OpenMM has no tag of its form"),
+        Refused(NO_OMM_PAIR, &[NO_OMM]),
+        Na("GROMACS has no directive of its form"),
+        Refused(GMX_NONE, &[NO_ENGINE]),
+        Na("AMBER's nonbonded is 12-6 Lennard-Jones"),
+        Exact(&[RECORD]),
+    ]
+}
+
+/// LAMMPS reads and writes it through its codec; the installed LAMMPS has
+/// no CLASS2 package, so no `lmp run 0` prices it.
+const CLASS2_LMP: &str = "through its codec (cross-term lines at zero, a non-zero one refused); not run by LAMMPS: the installed lmp has no CLASS2 package";
+const GMX_NONE: &str = "GROMACS has no directive of its form (NoEngineForm)";
+const OMM_EXPR: &str = "the CustomBondForce / CustomAngleForce of its expression, rewritten exactly (held by OpenMM on bond fene, bond morse, angle class2)";
+const NO_OMM_PAIR: &str = "its parameters do not mix, so a pair's are a cross row's, which a CustomNonbondedForce has not";
 
 const MATRIX: &[Row] = &[
     // ── bonds ──
@@ -145,13 +200,13 @@ const MATRIX: &[Row] = &[
         item: "bond morse",
         cells: [
             Exact(&["ff/potential/bond/morse.rs::forces_match_finite_difference"]),
-            Exact(&[RT_L]),
-            Exact(&[RT_L]),
+            Exact(&[RT_L, CODEC_FILE]),
+            Exact(&[RT_L, CODEC_ENG]),
             Refused(
                 "OpenMM has a Morse bond only as a CustomBondForce, which the reader refuses",
-                &["ff/forcefield/readers/opls.rs::other_custom_forces_are_refused_by_name"],
+                &[NO_CUSTOM_READ],
             ),
-            Refused("no HarmonicBondForce form", &[NO_OMM]),
+            Exact(&[CODEC_ENG]),
             Exact(&[
                 "ff/forcefield/readers/gromacs/mod.rs::bondtypes_funct_3_is_bond_morse_in_molrs_units",
             ]),
@@ -162,9 +217,9 @@ const MATRIX: &[Row] = &[
     },
     Row {
         item: "bond class2",
-        cells: outside(
+        cells: class2(
             &["ff/potential/bond/class2.rs::energy_matches_closed_form"],
-            CLASS_II,
+            &[CODEC_RT],
         ),
     },
     Row {
@@ -240,9 +295,9 @@ const MATRIX: &[Row] = &[
     },
     Row {
         item: "angle class2",
-        cells: outside(
+        cells: class2(
             &["ff/potential/angle/class2.rs::forces_match_finite_difference"],
-            CLASS_II,
+            &[CLASS2_X],
         ),
     },
     Row {
@@ -425,14 +480,8 @@ const MATRIX: &[Row] = &[
         item: "dihedral class2",
         cells: [
             Exact(&["ff/potential/dihedral/class2.rs::energy_phase", SERIES]),
-            Refused(
-                "LAMMPS's dihedral class2 carries its mbt/ebt/at/aat/bb13 cross terms, outside the Class-I IR",
-                &[],
-            ),
-            Refused(
-                "LAMMPS's dihedral class2 needs its cross-term lines; the torsion alone is not written",
-                &[],
-            ),
+            ExactWhere(CLASS2_LMP, &[CODEC_FILE, CLASS2_X]),
+            ExactWhere(CLASS2_LMP, &[CODEC_FILE, CLASS2_X]),
             Na("OpenMM's periodic torsion reads as dihedral periodic"),
             Exact(&["ff/forcefield/writers/xml.rs::cosine_torsions_are_written_as_periodic_terms"]),
             Na("GROMACS's periodic rows read as dihedral periodic"),
@@ -508,9 +557,12 @@ const MATRIX: &[Row] = &[
             Exact(&[RT_L]),
             Exact(&[RT_L]),
             Na("OpenMM's improper reads as improper periodic"),
-            Refused(
-                "OpenMM prices an improper over the dihedral with the centre third; cvff's starts at the centre",
-                &["ff/forcefield/writers/xml.rs::a_cvff_improper_is_refused"],
+            ExactWhere(
+                "the CustomTorsionForce of its expression with ordering=\"charmm\", which prices the row's dihedral, its centre first",
+                &[
+                    "ff/forcefield/writers/xml.rs::a_cvff_improper_is_a_charmm_ordered_custom_torsion",
+                    CODEC_ENG,
+                ],
             ),
             Na("GROMACS's periodic improper reads as improper periodic"),
             Exact(&[
@@ -750,24 +802,34 @@ const MATRIX: &[Row] = &[
     },
     Row {
         item: "pair lj/class2",
-        cells: outside(
-            &["ff/potential/pair/lj_class2.rs::energy_at_sigma_is_negative_eps"],
-            CLASS_II,
-        ),
+        cells: [
+            Exact(&["ff/potential/pair/lj_class2.rs::energy_at_sigma_is_negative_eps"]),
+            ExactWhere(
+                "through its codec, mixing sixthpower as LAMMPS's always does; not run by LAMMPS: the installed lmp has no CLASS2 package",
+                &[CODEC_FILE],
+            ),
+            ExactWhere(
+                "through its codec, mixing sixthpower as LAMMPS's always does; not run by LAMMPS: the installed lmp has no CLASS2 package",
+                &[CODEC_FILE],
+            ),
+            Na("OpenMM has no lj/class2 tag"),
+            Refused(
+                "its kernel prices a row per pair (cross rows), which a CustomNonbondedForce has not",
+                &[NO_OMM],
+            ),
+            Na("GROMACS has no 9-6 Lennard-Jones"),
+            Refused(GMX_NONE, &[NO_ENGINE]),
+            Na("AMBER's Lennard-Jones is 12-6"),
+            Exact(&[RECORD]),
+        ],
     },
     Row {
         item: "pair buck",
-        cells: outside(
-            &["ff/potential/pair/buck.rs::energy_matches_closed_form"],
-            NOT_CLASS_I_PAIR,
-        ),
+        cells: positional_pair(&["ff/potential/pair/buck.rs::energy_matches_closed_form"]),
     },
     Row {
         item: "pair morse",
-        cells: outside(
-            &["ff/potential/pair/morse.rs::well_minimum_is_minus_d0"],
-            NOT_CLASS_I_PAIR,
-        ),
+        cells: positional_pair(&["ff/potential/pair/morse.rs::well_minimum_is_minus_d0"]),
     },
     Row {
         item: "pair thole",
@@ -1078,6 +1140,64 @@ const MATRIX: &[Row] = &[
             Exact(&[
                 "ff/forcefield/section.rs::a_section_stating_radians_beside_a_preset_is_refused",
             ]),
+        ],
+    },
+    // ── the protocol's engine forms (WP8) ──
+    Row {
+        item: "run-time style with a positional LAMMPS form",
+        cells: [
+            Exact(&[CODEC_ENG]),
+            Exact(&[RUNTIME_LMP]),
+            Exact(&[RUNTIME_LMP, CODEC_ENG]),
+            Refused(
+                "reading a Custom*Force stays refused (D21) but for the two harmonic impropers",
+                &[NO_CUSTOM_READ],
+            ),
+            Exact(&[OMM_REWRITE, CODEC_ENG]),
+            Na("GROMACS holds built-in styles only"),
+            Refused("not a built-in style (NoEngineForm)", &[NO_ENGINE]),
+            Na("AMBER holds built-in styles only"),
+            Exact(&[PERSIST_CUSTOM]),
+        ],
+    },
+    Row {
+        item: "expression style without a LAMMPS form",
+        cells: [
+            Exact(&[CODEC_ENG]),
+            Refused(
+                "no registered style reads its name (the installed LAMMPS has no LEPTON package)",
+                &[RUNTIME_LMP],
+            ),
+            Refused(
+                "no LAMMPS form: an expression needs LAMMPS's LEPTON package (NoEngineForm)",
+                &[NO_ENGINE],
+            ),
+            Refused(
+                "reading a Custom*Force stays refused (D21) but for the two harmonic impropers",
+                &[NO_CUSTOM_READ],
+            ),
+            Exact(&[NO_ENGINE, OMM_REWRITE]),
+            Na("GROMACS holds built-in styles only"),
+            Refused("not a built-in style (NoEngineForm)", &[NO_ENGINE]),
+            Na("AMBER holds built-in styles only"),
+            Exact(&[PERSIST_CUSTOM]),
+        ],
+    },
+    Row {
+        item: "run-time compound category (Urey-Bradley)",
+        cells: [
+            Exact(&[CODEC_ENG]),
+            Na("LAMMPS has no `*_style` command for a run-time category"),
+            Refused("no `*_style` command (NoEngineForm)", &[NO_ENGINE]),
+            Na("OpenMM's ForceField XML has no compound tag"),
+            ExactWhere(
+                "a <Script> building a CustomCompoundBondForce over OpenMM's bonds, angles or propers (a chain of 2 to 4 atoms)",
+                &[CODEC_ENG],
+            ),
+            Na("GROMACS holds built-in categories only"),
+            Refused("not a built-in style (NoEngineForm)", &[NO_ENGINE]),
+            Na("AMBER holds built-in categories only"),
+            Exact(&[PERSIST_CUSTOM]),
         ],
     },
 ];

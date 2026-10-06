@@ -91,6 +91,7 @@ StyleInfo = _ir.StyleInfo
 CategoryInfo = _ir.CategoryInfo
 register_category = _ir.register_category
 register_style = _ir.register_style
+register_engine_form = _ir.register_engine_form
 unregister = _ir.unregister
 styles = _ir.styles
 categories = _ir.categories
@@ -122,6 +123,8 @@ class StyleSpec:
         ``kernel`` takes positions ``x`` (``(n, arity, 3)``), not ``q``.
     replace : bool
         Replace a style of the name registered at run time.
+    lammps : {"positional", "positional:<name>"}, optional
+        The style's LAMMPS form (:func:`register_style`'s ``lammps``).
 
     A ``kernel(self, q, **params) -> (e, de_dq)`` method (or
     ``kernel(self, x, **params) -> (e, grad)`` for a compound style) prices
@@ -156,6 +159,7 @@ class StyleSpec:
     samples: ClassVar[Sequence[Mapping[str, Any]] | None] = None
     compound: ClassVar[bool] = False
     replace: ClassVar[bool] = False
+    lammps: ClassVar[str | None] = None
 
     def __init_subclass__(cls, *, register: bool = True, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -184,6 +188,7 @@ class StyleSpec:
             special=cls.special,
             samples=cls.samples,
             replace=cls.replace,
+            lammps=cls.lammps,
         )
 
     @classmethod
@@ -235,6 +240,7 @@ __all__ = [
     "categories",
     "evaluate",
     "register_category",
+    "register_engine_form",
     "register_style",
     "styles",
     "unregister",

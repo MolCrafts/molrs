@@ -6,6 +6,7 @@
 //! into computational [`Potential`](super::potential::Potential) objects by
 //! [`PotentialCompiler`](super::potential::PotentialCompiler).
 
+pub mod lammps_codecs;
 pub mod lammps_units;
 pub mod mixing;
 pub mod one_four;

@@ -32,13 +32,19 @@
 //!   is an error only then. Type-less pair styles (`coul/cut`) apply to every
 //!   atom and are always in play.
 //!
-//! # The identity on coefficients
+//! # Coefficients through the styles' codecs
 //!
 //! Inverse of [`super::super::readers::lammps::LammpsFfReader`]. The
 //! force-field IR follows the LAMMPS standard — every style's expression,
-//! factors and parameter units, with angle-valued parameters in degrees — so a
-//! coefficient is
-//! written as it is stored:
+//! factors and parameter units, with angle-valued parameters in degrees — so
+//! a coefficient is written as it is stored, by the style's
+//! [`LammpsForm`](crate::ff::ir::LammpsForm) in the registry
+//! (`ff-ir-02-protocol` §8): a positional style writes its spec's `params`
+//! in order, a style whose line is not positional (`fourier`, `nharmonic`,
+//! `lj/charmm`, the `class2` cross-term lines, …) its own codec, and a style
+//! registered at run time with a LAMMPS form is written with nothing else
+//! added. A style without one is refused by name
+//! ([`IrError::NoEngineForm`](crate::ff::ir::IrError::NoEngineForm)):
 //!
 //! ```text
 //! pair_style lj/cut/coul/cut 10.0 10.0
@@ -54,9 +60,10 @@
 //! The file is written in [`LammpsWriteOptions::units`] (default `real`). A
 //! force field declared in those units ([`ForceField::units`]) is written
 //! number for number; one declared in another LAMMPS unit style (`real`,
-//! `metal`, `lj`) has its energies and lengths converted through
-//! [`LammpsFfUnits`] (`from → lj hub → to`) — never ad-hoc eV/kcal factors.
-//! Angles need no conversion in any unit style.
+//! `metal`, `lj`) has every parameter converted by its dimension
+//! ([`Dim`](crate::ff::ir::Dim), [`UnitScale`]) through [`LammpsFfUnits`]
+//! (`from → lj hub → to`) — never ad-hoc eV/kcal factors, never per style.
+//! Angle values need no conversion in any unit style.
 //!
 //! Two styles are written under another LAMMPS name: molrs's `dihedral
 //! periodic` is LAMMPS's `fourier`, term for term, and AMBER's `improper
@@ -102,32 +109,23 @@
 //! [`refuse_pair_overrides`] for a caller writing a force field for it.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 use super::ForceFieldWriter;
 use crate::ff::forcefield::lammps_units::{LammpsFfUnits, parse_style};
-use crate::ff::forcefield::mixing::Mixing;
-use crate::ff::forcefield::one_four::OneFour;
-use crate::ff::forcefield::readers::lammps::{LAMMPS_CMAP_DIM, LAMMPS_CMAP_MAX};
-use crate::ff::forcefield::torsion::nharmonic_coefficients;
+use crate::ff::forcefield::readers::lammps::{
+    CROSS_TERM_SECTIONS, LAMMPS_CMAP_DIM, LAMMPS_CMAP_MAX,
+};
 use crate::ff::forcefield::{
     AngleType, BondType, CmapType, DihedralType, ForceField, ImproperType, PairType, Params, Style,
     StyleDefs,
 };
+use crate::ff::ir::{
+    Engine, LammpsCodec, LammpsCoeffs, Mix, Registry, RegistryRef, StyleSpec, Token, UnitScale,
+    with_global,
+};
 use molrs::store::type_labels::{TypeLabels, TypeName};
 use ndarray::ArrayD;
-
-/// The cutoff a `pair_style` line needs. The writer never invents one
-/// (operator 2026-09-28: the user provides the cutoff); a style without one is
-/// an error unless the caller skips the `pair_style` line.
-fn required_cutoff(style: &Style) -> Result<f64, String> {
-    style_cutoff(style).ok_or_else(|| {
-        format!(
-            "pair style '{}' has no cutoff: declare one on the style or write with \
-             skip_pair_style",
-            style.name()
-        )
-    })
-}
 
 /// Formatting options for [`LammpsFfWriter`].
 #[derive(Debug, Clone)]
@@ -167,119 +165,69 @@ impl Default for LammpsWriteOptions {
 /// The fix id the include gives `fix cmap`.
 const CMAP_FIX_ID: &str = "cmap";
 
-/// Conversion context: the force field's units → the file's, through the lj
-/// hub. The identity when the two are the same unit style.
-struct WriteUnits {
-    sys: LammpsFfUnits,
-    from: &'static str,
-    to: &'static str,
+/// The conversion of `ff`'s parameters, per dimension, into the file's
+/// units `to`: the identity when the two are the same unit style. A force
+/// field in a unit system LAMMPS has no `units` style for is refused only
+/// when it would need converting.
+fn units_of(ff: &ForceField, to: &'static str) -> Result<UnitScale, String> {
+    let from = match parse_style(ff.units()) {
+        Ok(from) => from,
+        Err(_) if ff.units() == to => return Ok(UnitScale::IDENTITY),
+        Err(e) => return Err(format!("force field units: {e}")),
+    };
+    LammpsFfUnits::canonical()
+        .map_err(|e| format!("lammps unit system: {e}"))?
+        .scale(from, to)
 }
 
-impl WriteUnits {
-    fn new(from: &'static str, to: &'static str) -> Result<Self, String> {
-        Ok(Self {
-            sys: LammpsFfUnits::canonical().map_err(|e| format!("lammps unit system: {e}"))?,
-            from,
-            to,
-        })
-    }
-
-    /// The units of `ff`, written as `to`. A force field in a unit system
-    /// LAMMPS has no `units` style for is refused only when it would need
-    /// converting.
-    fn of(ff: &ForceField, to: &'static str) -> Result<Self, String> {
-        let from = match parse_style(ff.units()) {
-            Ok(from) => from,
-            Err(_) if ff.units() == to => to,
-            Err(e) => return Err(format!("force field units: {e}")),
-        };
-        Self::new(from, to)
-    }
-
-    fn energy(&self, value: f64) -> Result<f64, String> {
-        self.sys.energy(value, self.from, self.to)
-    }
-
-    fn length(&self, value: f64) -> Result<f64, String> {
-        self.sys.length(value, self.from, self.to)
-    }
-
-    /// Bond stiffness, energy/length².
-    fn bond_k(&self, value: f64) -> Result<f64, String> {
-        self.sys.bond_k(value, self.from, self.to)
-    }
-
-    /// Angle-like stiffness, energy/rad²: radians are pure numbers, so it
-    /// converts as an energy.
-    fn angle_k(&self, value: f64) -> Result<f64, String> {
-        self.energy(value)
-    }
-
-    /// Inverse length (Morse `alpha`).
-    fn inverse_length(&self, value: f64) -> Result<f64, String> {
-        Ok(1.0 / self.length(1.0 / value)?)
-    }
+/// The spec and LAMMPS codec of `category` `style` in `reg`, or the
+/// [`IrError::NoEngineForm`](crate::ff::ir::IrError::NoEngineForm) naming
+/// why it has none.
+pub(crate) fn codec_of<'r>(
+    reg: &'r Registry,
+    category: &str,
+    style: &str,
+) -> Result<(&'r StyleSpec, &'r dyn LammpsCodec), String> {
+    let (spec, _) = reg.style(category, style).ok_or_else(|| {
+        Engine::Lammps
+            .refuse(
+                category,
+                style,
+                "the style is not registered (molrs.ff.ir.register_style), so nothing states \
+                 its parameters' order and dimensions",
+            )
+            .to_string()
+    })?;
+    let codec = spec.lammps.require(spec).map_err(|e| e.to_string())?;
+    Ok((spec, codec))
 }
 
-/// One field of a LAMMPS `*_coeff` line. LAMMPS parses a dihedral
-/// multiplicity and the fourier term count as integers, so they are written
-/// without decimals.
-#[derive(Debug, Clone, Copy)]
-enum Coeff {
-    Real(f64),
-    Int(i64),
-}
-
-impl Coeff {
-    fn value(self) -> f64 {
-        match self {
-            Self::Real(v) => v,
-            Self::Int(n) => n as f64,
-        }
-    }
-
-    fn render(self, precision: usize) -> String {
-        match self {
-            Self::Real(v) => fmt_num(v, precision),
-            Self::Int(n) => n.to_string(),
-        }
-    }
+/// The LAMMPS style name of a spec with a codec.
+fn lammps_name(spec: &StyleSpec) -> String {
+    spec.lammps
+        .lammps_name(spec)
+        .expect("a style with a LAMMPS codec has a LAMMPS name")
 }
 
 /// Render one type's molrs params as the numbers of its LAMMPS coefficient
-/// line — the inverse of
+/// line, through the style's codec in the process-wide registry — the
+/// inverse of
 /// [`lammps_coeff_params`](crate::ff::forcefield::readers::lammps::lammps_coeff_params)
-/// and the conversion every `*_coeff` line and `* Coeffs` row this writer
-/// emits goes through.
+/// and what every `*_coeff` line and `* Coeffs` row this writer emits is.
 ///
-/// The result is the coefficients **after** the type field(s). `params` and
-/// the result are both in the LAMMPS `units` style `units` (`real`, `metal`,
-/// `lj`): the map is the identity on values, slot for slot.
-///
-/// | category / style          | stored params                          | LAMMPS values |
-/// |---------------------------|----------------------------------------|---------------|
-/// | `bond harmonic`           | `k`, `r0`                              | `K r0` |
-/// | `bond morse`              | `d0`, `alpha`, `r0`                    | `D0 alpha r0` |
-/// | `angle harmonic`          | `k`, `theta0` (deg)                    | `K theta0` |
-/// | `angle charmm`            | `k`, `theta0` (deg), `k_ub`, `r_ub`    | `K theta0 K_ub r_ub` |
-/// | `improper harmonic`       | `k`, `chi0` (deg)                      | `K chi0` |
-/// | `improper cvff`           | `k`, `sign` (±1), `periodicity`        | `K d n` |
-/// | `improper periodic`       | `k`, `periodicity`, `phase` (deg, 0 or 180) | `K d n` (LAMMPS `cvff`, `d = cos phase`) |
-/// | `dihedral opls`           | `k1..k4` (absent → 0)                  | `K1 K2 K3 K4` |
-/// | `dihedral harmonic`       | `k`, `sign` (±1), `periodicity`        | `K d n` |
-/// | `dihedral periodic`       | `k<i>`, `periodicity<i>`, `phase<i>` (deg, absent → 0), or one term as `k`, `periodicity`, `phase` | LAMMPS `fourier`: `m K1 n1 d1 …` |
-/// | `dihedral charmm`         | `k`, `periodicity`, `phase` (deg, absent → 0), `w` | `K n d w` |
-/// | `dihedral multi/harmonic` | `a1..a5` (absent → 0)                  | `A1 A2 A3 A4 A5` |
-/// | `dihedral nharmonic`      | `a1..aN` (contiguous, N ≥ 1)           | `N A1 … AN` |
-/// | `pair lj/cut…`            | `epsilon`, `sigma`                     | `epsilon sigma` |
-///
-/// An absent param falls back only where the molrs kernel reads the same
-/// default. Multiplicities (`n`, fourier `m`) are integral.
+/// The result is the coefficients **after** the type field(s) of the main
+/// line (a `class2` style's cross-term lines are not in it). `params` and
+/// the result are both in the LAMMPS `units` style `units` (`real`,
+/// `metal`, `lj`): the map is the identity on values. `style` is the molrs
+/// style name (`dihedral periodic`, written as LAMMPS's `fourier`).
 ///
 /// # Errors
 ///
-/// A `(category, style)` LAMMPS output has no form for, an unknown `units`
-/// keyword, a missing param (named), or a non-integral multiplicity.
+/// A style without a LAMMPS form ([`IrError::NoEngineForm`]), an unknown
+/// `units` keyword, a missing param (named), a param the line has no place
+/// for, or a non-integral multiplicity.
+///
+/// [`IrError::NoEngineForm`]: crate::ff::ir::IrError::NoEngineForm
 ///
 /// ```
 /// use molrs::ff::forcefield::Params;
@@ -295,198 +243,25 @@ pub fn lammps_coeff_values(
     params: &Params,
     units: &str,
 ) -> Result<Vec<f64>, String> {
-    let units = parse_style(units)?;
-    let units = WriteUnits::new(units, units)?;
-    Ok(coeff_fields(&units, category, style, params)?
-        .into_iter()
-        .map(Coeff::value)
-        .collect())
+    parse_style(units)?;
+    with_global(|reg| {
+        let (spec, codec) = codec_of(reg, category, style)?;
+        Ok(codec
+            .write(spec, params, &UnitScale::IDENTITY)?
+            .values
+            .into_iter()
+            .map(Token::value)
+            .collect())
+    })
 }
 
-/// `fields` joined as the tail of a `*_coeff` line or `* Coeffs` row.
-fn render_coeffs(fields: &[Coeff], precision: usize) -> String {
-    fields
+/// `tokens` joined as the tail of a `*_coeff` line or `* Coeffs` row.
+fn render(tokens: &[Token], precision: usize) -> String {
+    tokens
         .iter()
-        .map(|c| c.render(precision))
+        .map(|t| t.render(precision))
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-/// The LAMMPS spelling of a molrs style: the same name, except AMBER's
-/// `improper periodic`, which LAMMPS calls `cvff` (see [`coeff_fields`]).
-fn lammps_style_name<'a>(category: &str, style: &'a str) -> &'a str {
-    match (category, style) {
-        ("improper", "periodic") => "cvff",
-        // The canonical multi-term torsion is LAMMPS's `fourier`, term for term.
-        ("dihedral", "periodic") => "fourier",
-        _ => style,
-    }
-}
-
-/// The one molrs-params → LAMMPS-coefficient conversion, shared by the writer
-/// (which already holds its [`WriteUnits`]) and [`lammps_coeff_values`].
-fn coeff_fields(
-    units: &WriteUnits,
-    category: &str,
-    style: &str,
-    params: &Params,
-) -> Result<Vec<Coeff>, String> {
-    let need = |key: &str| {
-        params
-            .get(key)
-            .ok_or_else(|| format!("{category} {style}: missing param `{key}`"))
-    };
-    let multiplicity = |key: &str, n: f64| {
-        if n.fract() == 0.0 {
-            Ok(Coeff::Int(n as i64))
-        } else {
-            Err(format!(
-                "{category} {style}: param `{key}` = {n} is not an integer multiplicity"
-            ))
-        }
-    };
-    let sign = |d: f64| {
-        if d == 1.0 || d == -1.0 {
-            Ok(d as i64)
-        } else {
-            Err(format!("{category} {style}: param `sign` = {d} is not ±1"))
-        }
-    };
-    let energies = |keys: &[&str]| -> Result<Vec<Coeff>, String> {
-        keys.iter()
-            .map(|key| Ok(Coeff::Real(units.energy(params.get(key).unwrap_or(0.0))?)))
-            .collect()
-    };
-    use Coeff::Real;
-    match (category, style) {
-        ("bond", "harmonic") => Ok(vec![
-            Real(units.bond_k(need("k")?)?),
-            Real(units.length(need("r0")?)?),
-        ]),
-        ("bond", "morse") => Ok(vec![
-            Real(units.energy(need("d0")?)?),
-            Real(units.inverse_length(need("alpha")?)?),
-            Real(units.length(need("r0")?)?),
-        ]),
-        ("angle", "harmonic") => Ok(vec![
-            Real(units.angle_k(need("k")?)?),
-            Real(need("theta0")?),
-        ]),
-        // Harmonic plus Urey–Bradley: `K_ub` is a bond stiffness.
-        ("angle", "charmm") => Ok(vec![
-            Real(units.angle_k(need("k")?)?),
-            Real(need("theta0")?),
-            Real(units.bond_k(need("k_ub")?)?),
-            Real(units.length(need("r_ub")?)?),
-        ]),
-        ("improper", "harmonic") => Ok(vec![Real(units.angle_k(need("k")?)?), Real(need("chi0")?)]),
-        // E = K[1 + d·cos(nφ)]: `d` is the stored sign (±1), not a phase.
-        ("improper", "cvff") => Ok(vec![
-            Real(units.energy(need("k")?)?),
-            Coeff::Int(sign(need("sign")?)?),
-            multiplicity("periodicity", need("periodicity")?)?,
-        ]),
-        // AMBER `improper periodic`, E = K[1 + cos(nφ − φ0)], is LAMMPS
-        // `improper_style cvff`, E = K[1 + d·cos(nφ)], when φ0 is 0° (d = +1) or
-        // 180° (d = −1) — every GAFF improper. AMBER writes π as 3.1416, which a
-        // reader in degrees stores as 180.0004, hence the tolerance (1e-3 rad).
-        // Any other phase has no cvff form and is refused, not rounded.
-        ("improper", "periodic") => {
-            let phase = params.get("phase").unwrap_or(0.0).rem_euclid(360.0);
-            let near = |x: f64| (phase - x).abs() < 1e-3_f64.to_degrees();
-            let d = if near(0.0) || near(360.0) {
-                1
-            } else if near(180.0) {
-                -1
-            } else {
-                return Err(format!(
-                    "{category} {style}: phase {phase}° has no LAMMPS `cvff` form \
-                     (needs 0° or 180°)"
-                ));
-            };
-            Ok(vec![
-                Real(units.energy(need("k")?)?),
-                Coeff::Int(d),
-                multiplicity("periodicity", need("periodicity")?)?,
-            ])
-        }
-        ("dihedral", "opls") => energies(&["k1", "k2", "k3", "k4"]),
-        ("dihedral", "harmonic") => Ok(vec![
-            Real(units.energy(need("k")?)?),
-            Coeff::Int(sign(need("sign")?)?),
-            multiplicity("periodicity", need("periodicity")?)?,
-        ]),
-        // m  K1 n1 d1  [K2 n2 d2 ...] from `k<i>` / `periodicity<i>` / `phase<i>`:
-        // molrs's `periodic` is LAMMPS's `fourier` term for term; its unindexed
-        // `k` / `periodicity` / `phase` is the one-term case.
-        ("dihedral", "periodic") => {
-            let mut terms = Vec::new();
-            if params.get("k1").is_none()
-                && let Some(k) = params.get("k")
-            {
-                terms.push(Real(units.energy(k)?));
-                terms.push(multiplicity("periodicity", need("periodicity")?)?);
-                terms.push(Real(params.get("phase").unwrap_or(0.0)));
-            }
-            let mut i = 1usize;
-            while let Some(k) = params.get(&format!("k{i}")) {
-                let n_key = format!("periodicity{i}");
-                terms.push(Real(units.energy(k)?));
-                terms.push(multiplicity(&n_key, need(&n_key)?)?);
-                terms.push(Real(params.get(&format!("phase{i}")).unwrap_or(0.0)));
-                i += 1;
-            }
-            if terms.is_empty() {
-                return Err(format!("{category} {style}: missing param `k1`"));
-            }
-            let mut fields = vec![Coeff::Int(terms.len() as i64 / 3)];
-            fields.extend(terms);
-            Ok(fields)
-        }
-        // E = K[1 + cos(nφ − d)]; `w` is the 1-4 pair weight. LAMMPS reads
-        // `d` as an integer number of degrees (`dihedral_charmm.cpp`).
-        ("dihedral", "charmm") => {
-            let phase = params.get("phase").unwrap_or(0.0);
-            if phase.fract() != 0.0 {
-                return Err(format!(
-                    "dihedral charmm: phase = {phase}° is not an integer number of \
-                     degrees, which LAMMPS's dihedral_style charmm requires"
-                ));
-            }
-            Ok(vec![
-                Real(units.energy(need("k")?)?),
-                multiplicity("periodicity", need("periodicity")?)?,
-                Coeff::Int(phase as i64),
-                Real(need("w")?),
-            ])
-        }
-        ("dihedral", "multi/harmonic") => energies(&["a1", "a2", "a3", "a4", "a5"]),
-        ("dihedral", "nharmonic") => {
-            let a = nharmonic_coefficients(params)?;
-            let mut fields = vec![Coeff::Int(a.len() as i64)];
-            for v in a {
-                fields.push(Real(units.energy(v)?));
-            }
-            Ok(fields)
-        }
-        ("pair", s) if s.starts_with("lj/cut") => Ok(vec![
-            Real(units.energy(need("epsilon")?)?),
-            Real(units.length(need("sigma")?)?),
-        ]),
-        // `epsilon sigma epsilon14 sigma14`, the 1-4 pair always written.
-        ("pair", "lj/charmm") => {
-            let (eps, sigma) = (need("epsilon")?, need("sigma")?);
-            Ok(vec![
-                Real(units.energy(eps)?),
-                Real(units.length(sigma)?),
-                Real(units.energy(params.get("epsilon14").unwrap_or(eps))?),
-                Real(units.length(params.get("sigma14").unwrap_or(sigma))?),
-            ])
-        }
-        _ => Err(format!(
-            "unsupported LAMMPS {category} style `{style}` for coefficient output"
-        )),
-    }
 }
 
 /// A bonded type category the writer emits coefficients for.
@@ -663,32 +438,43 @@ struct Resolved<'f, T> {
 }
 
 impl<T: BondedCoeff> Resolved<'_, T> {
-    /// The coefficients of the resolved type; an error names the label.
-    fn coeffs(&self, units: &WriteUnits, precision: usize) -> Result<String, String> {
-        coeff_fields(units, T::CATEGORY, self.style.name(), self.ty.params())
-            .map(|fields| render_coeffs(&fields, precision))
-            .map_err(|e| format!("{} label `{}`: {e}", T::BLOCK, self.label))
+    /// The LAMMPS style name and the coefficient lines of the resolved type;
+    /// an error names the label.
+    fn coeffs(&self, reg: &Registry, units: &UnitScale) -> Result<(String, LammpsCoeffs), String> {
+        let at = |e: String| format!("{} label `{}`: {e}", T::BLOCK, self.label);
+        let (spec, codec) = codec_of(reg, T::CATEGORY, self.style.name()).map_err(at)?;
+        codec.check_style(spec, self.style.params()).map_err(at)?;
+        let coeffs = codec.write(spec, self.ty.params(), units).map_err(at)?;
+        Ok((lammps_name(spec), coeffs))
     }
 }
 
-/// A pair coefficient row: the ids of its two atom labels (lower first) and
-/// the pair type that defines it.
+/// A pair coefficient row: the ids of its two atom labels and the labels
+/// (lower id first: LAMMPS sets nothing for `pair_coeff I J` with `I > J`),
+/// and the pair type that defines it.
 struct PairRow<'f> {
     ids: (usize, usize),
+    labels: (&'f str, &'f str),
     style: &'f Style,
     ty: &'f PairType,
 }
 
 impl PairRow<'_> {
-    /// The pair coefficients in file units. A style with no `pair_coeff` form
-    /// here (`thole`, `coul/tt`, `buck`, …) is an error naming the style and
-    /// type: skipping it would leave the `pair_style` line without its
+    /// The pair coefficients in file units, through the style's codec. A
+    /// style without a LAMMPS form is an error naming the style and type:
+    /// skipping it would leave the `pair_style` line without its
     /// `pair_coeff` rows. Type-less styles (`coul/cut`) produce no rows and
     /// never reach here.
-    fn coeffs(&self, units: &WriteUnits, precision: usize) -> Result<String, String> {
-        coeff_fields(units, "pair", self.style.name(), &self.ty.params)
-            .map(|fields| render_coeffs(&fields, precision))
-            .map_err(|e| format!("pair type `{}`: {e}", self.ty.name))
+    fn coeffs(
+        &self,
+        reg: &Registry,
+        units: &UnitScale,
+        precision: usize,
+    ) -> Result<String, String> {
+        let at = |e: String| format!("pair type `{}`: {e}", self.ty.name);
+        let (spec, codec) = codec_of(reg, "pair", self.style.name()).map_err(at)?;
+        let coeffs = codec.write(spec, &self.ty.params, units).map_err(at)?;
+        Ok(render(&coeffs.values, precision))
     }
 }
 
@@ -697,11 +483,14 @@ impl PairRow<'_> {
 /// Holds the system's [`TypeLabels`]; see the module docs for the matching
 /// rules. [`ForceFieldWriter::write_str`] emits the `*.ff` include,
 /// [`LammpsFfWriter::write_data_coeffs_str`] the data-file `* Coeffs`
-/// sections; both write the same labels with the same numbers.
+/// sections; both write the same labels with the same numbers, each style
+/// through its LAMMPS codec in the process-wide registry, or in the one
+/// [`with_registry`](Self::with_registry) gives.
 #[derive(Debug, Clone)]
 pub struct LammpsFfWriter<'a> {
     labels: &'a TypeLabels,
     options: LammpsWriteOptions,
+    registry: RegistryRef,
 }
 
 impl<'a> LammpsFfWriter<'a> {
@@ -712,40 +501,56 @@ impl<'a> LammpsFfWriter<'a> {
 
     /// Writer for `labels` with explicit options.
     pub fn with_options(labels: &'a TypeLabels, options: LammpsWriteOptions) -> Self {
-        Self { labels, options }
+        Self {
+            labels,
+            options,
+            registry: RegistryRef::Global,
+        }
+    }
+
+    /// Write each style through its codec in `registry` instead of the
+    /// process-wide one.
+    pub fn with_registry(mut self, registry: Arc<Registry>) -> Self {
+        self.registry = RegistryRef::Own(registry);
+        self
     }
 
     /// Emit data-file `* Coeffs` sections only (no `units` / `*_style` lines).
     ///
     /// Rows are the labels' 1-based ids in [`TypeLabels`] order, with the same
-    /// numbers, form map and [`LammpsWriteOptions::units`] as
+    /// numbers, codecs and [`LammpsWriteOptions::units`] as
     /// [`ForceFieldWriter::write_str`]. `Pair Coeffs` holds self pairs only, so
     /// a used explicit cross pair is an error here (write it through the
-    /// include).
+    /// include). A style's cross-term lines (`class2`'s `bb`, `mbt`, …) are
+    /// their sections (`BondBond Coeffs`, `MiddleBondTorsion Coeffs`, …).
     pub fn write_data_coeffs_str(&self, ff: &ForceField) -> Result<String, String> {
-        let units = WriteUnits::of(ff, self.options.units)?;
-        let mut lines: Vec<String> = Vec::new();
-        self.write_data_pair_coeffs(&mut lines, ff, &units)?;
-        self.write_data_section::<BondType>(&mut lines, ff, &units)?;
-        self.write_data_section::<AngleType>(&mut lines, ff, &units)?;
-        self.write_data_section::<DihedralType>(&mut lines, ff, &units)?;
-        self.write_data_section::<ImproperType>(&mut lines, ff, &units)?;
-        Ok(lines.concat())
+        let units = units_of(ff, self.options.units)?;
+        self.registry.with(|reg| {
+            refuse_other_categories(ff, reg)?;
+            let mut lines: Vec<String> = Vec::new();
+            self.write_data_pair_coeffs(&mut lines, ff, reg, &units)?;
+            self.write_data_section::<BondType>(&mut lines, ff, reg, &units)?;
+            self.write_data_section::<AngleType>(&mut lines, ff, reg, &units)?;
+            self.write_data_section::<DihedralType>(&mut lines, ff, reg, &units)?;
+            self.write_data_section::<ImproperType>(&mut lines, ff, reg, &units)?;
+            Ok(lines.concat())
+        })
     }
 
     /// The LAMMPS `fix cmap` file of the `cmaps` labels: the grid of the
-    /// `cmap charmm` row each label names, in label id order, so map `t` is
-    /// the crossterm type `t` the data writer gives the `CMAP` section
-    /// ([`lammps_cmap_str`] is the layout). Energies are converted to
-    /// [`LammpsWriteOptions::units`] as every coefficient is.
+    /// `cmap` row each label names, in label id order, so map `t` is the
+    /// crossterm type `t` the data writer gives the `CMAP` section
+    /// ([`lammps_cmap_str`] is the layout). The grid is converted to
+    /// [`LammpsWriteOptions::units`] by its dimension, as every coefficient
+    /// is.
     ///
     /// # Errors
     ///
-    /// No `cmaps` label, a label with no cmap type, a style other than
-    /// `charmm`, a row without a `grid`, a grid that is not 24×24, or more
-    /// than six maps (LAMMPS's `CMAPDIM`, `CMAPMAX`).
+    /// No `cmaps` label, a label with no cmap type, a style whose LAMMPS form
+    /// is not `fix cmap`, a row without a `grid`, a grid that is not 24×24,
+    /// or more than six maps (LAMMPS's `CMAPDIM`, `CMAPMAX`).
     pub fn write_cmap_str(&self, ff: &ForceField) -> Result<String, String> {
-        let units = WriteUnits::of(ff, self.options.units)?;
+        let units = units_of(ff, self.options.units)?;
         let rows = self.resolve::<CmapType>(ff)?;
         if rows.is_empty() {
             return Err("cmaps: the system has no CMAP crossterm labels".into());
@@ -759,13 +564,20 @@ impl<'a> LammpsFfWriter<'a> {
         let mut maps = Vec::with_capacity(rows.len());
         for r in &rows {
             let what = || format!("cmaps label `{}`", r.label);
-            if r.style.name() != "charmm" {
-                return Err(format!(
-                    "{}: cmap style `{}` has no fix cmap form (only `charmm`)",
-                    what(),
-                    r.style.name()
-                ));
-            }
+            let dim = self.registry.with(|reg| {
+                let (spec, _) = codec_of(reg, "cmap", r.style.name())
+                    .map_err(|e| format!("{}: {e}", what()))?;
+                if lammps_name(spec) != "cmap" {
+                    return Err(format!(
+                        "{}: cmap style `{}` has no fix cmap form",
+                        what(),
+                        r.style.name()
+                    ));
+                }
+                spec.param("grid")
+                    .map(|p| p.dim)
+                    .ok_or_else(|| format!("{}: its spec declares no `grid`", what()))
+            })?;
             let grid =
                 r.ty.params
                     .get_array("grid")
@@ -777,12 +589,7 @@ impl<'a> LammpsFfWriter<'a> {
                     grid.shape()
                 ));
             }
-            let converted = grid
-                .iter()
-                .map(|&v| units.energy(v))
-                .collect::<Result<Vec<f64>, String>>()?;
-            let converted =
-                ArrayD::from_shape_vec(grid.shape(), converted).map_err(|e| e.to_string())?;
+            let converted = grid.mapv(|v| units.apply(v, dim));
             maps.push((r.label.clone(), converted));
         }
         let titled: Vec<(&str, &ArrayD<f64>)> =
@@ -887,11 +694,7 @@ impl<'a> LammpsFfWriter<'a> {
     /// styles such as Coulomb) has no pair rows to write, so it yields none
     /// rather than demanding a self pair per label.
     fn resolve_pairs<'f>(&self, ff: &'f ForceField) -> Result<Vec<PairRow<'f>>, String> {
-        let typed = ff
-            .get_styles("pair")
-            .iter()
-            .any(|s| matches!(s.defs(), StyleDefs::Pair(types) if !types.is_empty()));
-        if !typed {
+        if !ff.get_styles("pair").iter().any(|s| typed(s)) {
             return Ok(Vec::new());
         }
         let labels = self.block_labels("atoms");
@@ -910,9 +713,14 @@ impl<'a> LammpsFfWriter<'a> {
                 else {
                     continue;
                 };
-                let key = (i.min(j), i.max(j));
+                let (key, labels) = if i <= j {
+                    ((i, j), (ty.itom.as_str(), ty.jtom.as_str()))
+                } else {
+                    ((j, i), (ty.jtom.as_str(), ty.itom.as_str()))
+                };
                 rows.entry(key).or_insert(PairRow {
                     ids: key,
+                    labels,
                     style,
                     ty,
                 });
@@ -930,11 +738,25 @@ impl<'a> LammpsFfWriter<'a> {
         Ok(rows.into_values().collect())
     }
 
+    /// The `pair_style` (and `pair_modify`) lines and the `pair_coeff`
+    /// lines of the styles in play, each through its codec.
+    ///
+    /// LAMMPS's combined styles are written as such: `lj/charmm` +
+    /// `coul/charmm` is `lj/charmm/coul/charmm` (its only spelling), and
+    /// `lj/cut` + `coul/cut` (`coul/long/pme`) is `lj/cut/coul/cut`
+    /// (`lj/cut/coul/long`), which keeps LAMMPS's mixing on the LJ rows (a
+    /// `hybrid` with a `pair_coeff * * coul/cut` wildcard marks every cross
+    /// pair as explicit). One style is `pair_style <name> <cutoff>`; one
+    /// typed style beside a Coulomb style is a `hybrid/overlay` of the two,
+    /// the Coulomb one on `* *` — refused when the typed style would mix an
+    /// unlike pair, which the overlay leaves unmixed; several typed styles
+    /// are a `hybrid`.
     fn write_pair_section(
         &self,
         lines: &mut Vec<String>,
         ff: &ForceField,
-        units: &WriteUnits,
+        reg: &Registry,
+        units: &UnitScale,
     ) -> Result<(), String> {
         let rows = self.resolve_pairs(ff)?;
         if rows.is_empty() {
@@ -945,23 +767,30 @@ impl<'a> LammpsFfWriter<'a> {
         let styles: Vec<&Style> = ff
             .get_styles("pair")
             .into_iter()
-            .filter(|s| {
-                matches!(s.defs(), StyleDefs::Pair(types) if types.is_empty())
-                    || rows.iter().any(|r| std::ptr::eq(r.style, *s))
-            })
+            .filter(|s| !typed(s) || rows.iter().any(|r| std::ptr::eq(r.style, *s)))
             .collect();
-        let opts = &self.options;
+        let mut codecs: Vec<(&StyleSpec, &dyn LammpsCodec)> = Vec::new();
         for style in &styles {
-            refuse_unexpressible_pair(style)?;
+            let (spec, codec) = codec_of(reg, "pair", style.name())?;
+            codec.check_style(spec, style.params())?;
+            codecs.push((spec, codec));
         }
+        let opts = &self.options;
+        let args = |i: usize| -> Result<Vec<Token>, String> {
+            let (spec, codec) = codecs[i];
+            codec.style_args(spec, styles[i].params(), units)
+        };
+        let modify = |i: usize| -> Result<Option<String>, String> {
+            let (spec, codec) = codecs[i];
+            let keys = codec.pair_modify(spec, styles[i].params())?;
+            Ok((!keys.is_empty()).then(|| format!("pair_modify {}\n", keys.join(" "))))
+        };
+        let names: HashSet<&str> = styles.iter().map(|s| s.name()).collect();
+        let find = |name: &str| styles.iter().position(|s| s.name() == name);
 
         // lj/charmm + coul/charmm is LAMMPS's one `lj/charmm/coul/charmm`; it
         // has no other spelling (no `hybrid` sub-style is either half).
-        if styles
-            .iter()
-            .any(|s| matches!(s.name(), "lj/charmm" | "coul/charmm"))
-        {
-            let names: HashSet<&str> = styles.iter().map(|s| s.name()).collect();
+        if names.contains("lj/charmm") || names.contains("coul/charmm") {
             if names != HashSet::from(["lj/charmm", "coul/charmm"]) {
                 let mut names: Vec<&str> = names.into_iter().collect();
                 names.sort_unstable();
@@ -971,102 +800,123 @@ impl<'a> LammpsFfWriter<'a> {
                      beside it"
                 ));
             }
-            if let Some(lj) = styles.iter().find(|s| s.name() == "lj/charmm")
-                && OneFour::of(lj.params())? == OneFour::Epsilon14
-            {
-                return Err(
-                    "pair lj/charmm has one_four = \"epsilon14\" (its special_bonds 1-4 pairs \
-                     at epsilon14/sigma14), which LAMMPS's lj/charmm/coul/charmm prices at the \
-                     regular epsilon/sigma; LAMMPS reaches epsilon14/sigma14 only through \
-                     dihedral charmm w"
-                        .into(),
-                );
-            }
+            let (lj, coul) = (find("lj/charmm").unwrap(), find("coul/charmm").unwrap());
             if !opts.skip_pair_style {
-                let lj = styles.iter().find(|s| s.name() == "lj/charmm").unwrap();
-                let coul = styles.iter().find(|s| s.name() == "coul/charmm").unwrap();
-                let (lj_cuts, coul_cuts) =
-                    (charmm_cutoffs(lj, units)?, charmm_cutoffs(coul, units)?);
-                let mut cuts = lj_cuts.to_vec();
+                let (lj_cuts, coul_cuts) = (args(lj)?, args(coul)?);
+                let mut cuts = lj_cuts.clone();
                 if coul_cuts != lj_cuts {
                     cuts.extend(coul_cuts);
                 }
                 lines.push(format!(
-                    "pair_style lj/charmm/coul/charmm {}\n",
-                    format_nums(&cuts, opts.precision)
-                ));
-                lines.extend(pair_modify_line(lj));
-                lines.push("\n".to_owned());
-            }
-            return self.push_pair_coeffs(lines, &rows, false, units);
-        }
-
-        // Reader always builds lj/cut + coul/cut; recombine for a correct write-back.
-        if is_split_lj_coulomb(&styles) {
-            if !opts.skip_pair_style {
-                let lj = styles
-                    .iter()
-                    .find(|s| s.name() == "lj/cut")
-                    .ok_or_else(|| "split pair styles missing lj/cut".to_owned())?;
-                let coul = styles
-                    .iter()
-                    .find(|s| s.name() == "coul/cut" || s.name() == "coul/long/pme")
-                    .ok_or_else(|| "split pair styles missing coul/*".to_owned())?;
-                let lj_cut = units.length(required_cutoff(lj)?)?;
-                let coul_cut = units.length(required_cutoff(coul)?)?;
-                let combined = if coul.name() == "coul/cut" {
-                    "lj/cut/coul/cut"
-                } else {
-                    "lj/cut/coul/long"
-                };
-                lines.push(format!(
-                    "pair_style {combined} {} {}\n",
-                    fmt_num(lj_cut, opts.precision),
-                    fmt_num(coul_cut, opts.precision)
-                ));
-                lines.extend(pair_modify_line(lj));
-                lines.push("\n".to_owned());
-            }
-            // Only LJ carries per-type ε/σ; Coulomb charges live on the atoms.
-            return self.push_pair_coeffs(lines, &rows, false, units);
-        }
-
-        if let [style] = styles.as_slice() {
-            if !opts.skip_pair_style {
-                let params = pair_style_cutoffs(style, units)?;
-                lines.push(format!(
                     "pair_style {} {}\n",
-                    lammps_pair_name(style.name()),
-                    format_nums(&params, opts.precision)
+                    lammps_name(codecs[lj].0),
+                    render(&cuts, opts.precision)
                 ));
-                lines.extend(pair_modify_line(style));
+                lines.extend(modify(lj)?);
                 lines.push("\n".to_owned());
             }
-            return self.push_pair_coeffs(lines, &rows, false, units);
+            return self.push_pair_coeffs(lines, reg, &rows, false, units);
         }
 
-        // Genuinely independent sub-styles → hybrid with per-substyle cutoffs.
-        if !opts.skip_pair_style {
-            let mut sub = Vec::new();
-            for s in &styles {
-                let cuts = pair_style_cutoffs(s, units)?;
-                if cuts.is_empty() {
-                    sub.push(lammps_pair_name(s.name()).to_owned());
-                } else {
-                    sub.push(format!(
-                        "{} {}",
-                        lammps_pair_name(s.name()),
-                        format_nums(&cuts, opts.precision)
+        // lj/cut + its Coulomb: LAMMPS's combined `lj/cut/coul/<cut|long>`.
+        if let (2, Some(lj), Some(coul)) = (
+            styles.len(),
+            find("lj/cut"),
+            find("coul/cut").or_else(|| find("coul/long/pme")),
+        ) {
+            if !opts.skip_pair_style {
+                let mut cuts = args(lj)?;
+                cuts.extend(args(coul)?);
+                lines.push(format!(
+                    "pair_style lj/cut/{} {}\n",
+                    lammps_name(codecs[coul].0),
+                    render(&cuts, opts.precision)
+                ));
+                lines.extend(modify(lj)?);
+                lines.push("\n".to_owned());
+            }
+            return self.push_pair_coeffs(lines, reg, &rows, false, units);
+        }
+
+        if styles.len() == 1 {
+            if !opts.skip_pair_style {
+                lines.push(format!(
+                    "pair_style {}\n",
+                    [lammps_name(codecs[0].0), render(&args(0)?, opts.precision)]
+                        .join(" ")
+                        .trim_end()
+                ));
+                lines.extend(modify(0)?);
+                lines.push("\n".to_owned());
+            }
+            return self.push_pair_coeffs(lines, reg, &rows, false, units);
+        }
+
+        let sub_style = |i: usize| -> Result<String, String> {
+            let cuts = args(i)?;
+            let name = lammps_name(codecs[i].0);
+            Ok(if cuts.is_empty() {
+                name
+            } else {
+                format!("{name} {}", render(&cuts, opts.precision))
+            })
+        };
+        let coulombs: Vec<usize> = (0..styles.len()).filter(|&i| !typed(styles[i])).collect();
+        match coulombs.as_slice() {
+            // Genuinely independent sub-styles → hybrid with per-substyle cutoffs.
+            // A hybrid needs `pair_modify pair <substyle> mix <rule>` per
+            // sub-style; no in-tree force field carries a non-default `mixing`
+            // on a hybrid, so emitting it is deferred rather than guessed.
+            [] => {
+                if !opts.skip_pair_style {
+                    let subs = (0..styles.len())
+                        .map(sub_style)
+                        .collect::<Result<Vec<_>, _>>()?;
+                    lines.push(format!("pair_style hybrid {}\n", subs.join(" ")));
+                    lines.push("\n".to_owned());
+                }
+                self.push_pair_coeffs(lines, reg, &rows, true, units)?;
+            }
+            // One typed style and a Coulomb style on every pair.
+            &[c] if styles.len() == 2 => {
+                let t = 1 - c;
+                let (spec, _) = codecs[t];
+                let mixes = spec.style_param("mixing").is_some()
+                    || spec.params.iter().any(|p| p.mix != Mix::None);
+                let n = self.block_labels("atoms").len();
+                let unlike = rows.iter().filter(|r| r.ids.0 != r.ids.1).count();
+                if mixes && unlike != n * (n - 1) / 2 {
+                    return Err(Engine::Lammps
+                        .refuse(
+                            "pair",
+                            styles[t].name(),
+                            format!(
+                                "beside `{}` it is a hybrid/overlay sub-style, which LAMMPS \
+                                 does not mix; state every unlike pair as a cross row",
+                                styles[c].name()
+                            ),
+                        )
+                        .to_string());
+                }
+                if !opts.skip_pair_style {
+                    lines.push(format!(
+                        "pair_style hybrid/overlay {} {}\n\n",
+                        sub_style(t)?,
+                        sub_style(c)?
                     ));
                 }
+                self.push_pair_coeffs(lines, reg, &rows, true, units)?;
+                lines.push(format!("pair_coeff * * {}\n", lammps_name(codecs[c].0)));
             }
-            lines.push(format!("pair_style hybrid {}\n", sub.join(" ")));
-            // A hybrid needs `pair_modify pair <substyle> mix <rule>` per sub-style;
-            // no in-tree force field carries a non-default `mixing` on a hybrid, so
-            // emitting it is deferred rather than guessed.
-            lines.push("\n".to_owned());
+            _ => {
+                let mut names: Vec<&str> = names.into_iter().collect();
+                names.sort_unstable();
+                return Err(format!(
+                    "pair styles {names:?}: a Coulomb style beside several typed pair styles \
+                     has no LAMMPS form this writer writes"
+                ));
+            }
         }
-        self.push_pair_coeffs(lines, &rows, true, units)?;
         lines.push("\n".to_owned());
         Ok(())
     }
@@ -1076,15 +926,17 @@ impl<'a> LammpsFfWriter<'a> {
     fn push_pair_coeffs(
         &self,
         lines: &mut Vec<String>,
+        reg: &Registry,
         rows: &[PairRow<'_>],
         hybrid: bool,
-        units: &WriteUnits,
+        units: &UnitScale,
     ) -> Result<(), String> {
         for row in rows {
-            let nums = row.coeffs(units, self.options.precision)?;
-            let (i, j) = (&row.ty.itom, &row.ty.jtom);
+            let nums = row.coeffs(reg, units, self.options.precision)?;
+            let (i, j) = row.labels;
             if hybrid {
-                lines.push(format!("pair_coeff {i} {j} {} {nums}\n", row.style.name()));
+                let (spec, _) = codec_of(reg, "pair", row.style.name())?;
+                lines.push(format!("pair_coeff {i} {j} {} {nums}\n", lammps_name(spec)));
             } else {
                 lines.push(format!("pair_coeff {i} {j} {nums}\n"));
             }
@@ -1098,28 +950,47 @@ impl<'a> LammpsFfWriter<'a> {
     /// The `T_style` line and `T_coeff` lines for the used labels, in label id
     /// order. When the labels' types belong to more than one LAMMPS style the
     /// line is `T_style hybrid <sub-style>…` and each coefficient line names
-    /// its sub-style, as LAMMPS reads them.
+    /// its sub-style, as LAMMPS reads them. A style's cross-term lines follow
+    /// its type's line.
     fn write_section<T: BondedCoeff>(
         &self,
         lines: &mut Vec<String>,
         ff: &ForceField,
-        units: &WriteUnits,
+        reg: &Registry,
+        units: &UnitScale,
     ) -> Result<(), String> {
         let used = self.resolve::<T>(ff)?;
         if used.is_empty() {
             return Ok(());
         }
-        let subs = lammps_styles_of(&used);
+        let coeffs = used
+            .iter()
+            .map(|r| r.coeffs(reg, units))
+            .collect::<Result<Vec<_>, _>>()?;
+        let subs = distinct(coeffs.iter().map(|(name, _)| name.as_str()));
         let hybrid = subs.len() > 1;
+        let p = self.options.precision;
         lines.push(format!("{}_style {}\n", T::CATEGORY, style_line(&subs)));
-        for r in &used {
+        for (r, (name, c)) in used.iter().zip(&coeffs) {
+            let sub = if hybrid {
+                format!("{name} ")
+            } else {
+                String::new()
+            };
             lines.push(format!(
-                "{}_coeff {} {}{}\n",
+                "{}_coeff {} {sub}{}\n",
                 T::CATEGORY,
                 r.label,
-                sub_style_field(hybrid, r),
-                r.coeffs(units, self.options.precision)?
+                render(&c.values, p)
             ));
+            for (keyword, values) in &c.extra {
+                lines.push(format!(
+                    "{}_coeff {} {sub}{keyword} {}\n",
+                    T::CATEGORY,
+                    r.label,
+                    render(values, p)
+                ));
+            }
         }
         lines.push("\n".to_owned());
         Ok(())
@@ -1129,7 +1000,8 @@ impl<'a> LammpsFfWriter<'a> {
         &self,
         lines: &mut Vec<String>,
         ff: &ForceField,
-        units: &WriteUnits,
+        reg: &Registry,
+        units: &UnitScale,
     ) -> Result<(), String> {
         let mut section = Vec::new();
         for row in self.resolve_pairs(ff)? {
@@ -1140,7 +1012,7 @@ impl<'a> LammpsFfWriter<'a> {
                     row.ty.name
                 ));
             }
-            let nums = row.coeffs(units, self.options.precision)?;
+            let nums = row.coeffs(reg, units, self.options.precision)?;
             section.push(format!("{} {nums}\n", row.ids.0));
         }
         push_data_section(lines, "Pair Coeffs", section);
@@ -1151,31 +1023,60 @@ impl<'a> LammpsFfWriter<'a> {
         &self,
         lines: &mut Vec<String>,
         ff: &ForceField,
-        units: &WriteUnits,
+        reg: &Registry,
+        units: &UnitScale,
     ) -> Result<(), String> {
         let used = self.resolve::<T>(ff)?;
-        let subs = lammps_styles_of(&used);
+        let coeffs = used
+            .iter()
+            .map(|r| r.coeffs(reg, units))
+            .collect::<Result<Vec<_>, _>>()?;
+        let subs = distinct(coeffs.iter().map(|(name, _)| name.as_str()));
+        let hybrid = subs.len() > 1;
+        let p = self.options.precision;
         let mut section = Vec::new();
-        for r in &used {
-            section.push(format!(
-                "{} {}{}\n",
-                r.id,
-                sub_style_field(subs.len() > 1, r),
-                r.coeffs(units, self.options.precision)?
-            ));
+        let mut cross: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+        for (r, (name, c)) in used.iter().zip(&coeffs) {
+            let sub = if hybrid {
+                format!("{name} ")
+            } else {
+                String::new()
+            };
+            section.push(format!("{} {sub}{}\n", r.id, render(&c.values, p)));
+            for (keyword, values) in &c.extra {
+                if hybrid {
+                    return Err(format!(
+                        "{} label `{}`: its `{keyword}` cross-term line in a hybrid data-file \
+                         section has no form this writer writes (write the *.ff include)",
+                        T::BLOCK,
+                        r.label
+                    ));
+                }
+                cross
+                    .entry(keyword)
+                    .or_default()
+                    .push(format!("{} {}\n", r.id, render(values, p)));
+            }
         }
         // The `# style` comment is how `read_data_coeffs` (and LAMMPS's own
         // `write_data`) knows which style the numbers are; without it a reader
         // falls back to `harmonic`.
         let heading = format!("{} # {}", T::HEADING, style_hint(&subs));
         push_data_section(lines, &heading, section);
+        for (heading, category, keyword) in CROSS_TERM_SECTIONS {
+            if category == T::CATEGORY
+                && let Some(rows) = cross.remove(keyword)
+            {
+                push_data_section(lines, heading, rows);
+            }
+        }
         Ok(())
     }
 }
 
 impl ForceFieldWriter for LammpsFfWriter<'_> {
     fn write_str(&self, ff: &ForceField) -> Result<String, String> {
-        let units = WriteUnits::of(ff, self.options.units)?;
+        let units = units_of(ff, self.options.units)?;
         let mut lines: Vec<String> = Vec::new();
         lines.push("# LAMMPS force field generated by molrs\n".to_owned());
         if !self.options.skip_units {
@@ -1202,23 +1103,56 @@ impl ForceFieldWriter for LammpsFfWriter<'_> {
             lines.push("\n".to_owned());
         }
 
-        self.write_pair_section(&mut lines, ff, &units)?;
-        self.write_section::<BondType>(&mut lines, ff, &units)?;
-        self.write_section::<AngleType>(&mut lines, ff, &units)?;
-        self.write_section::<DihedralType>(&mut lines, ff, &units)?;
-        self.write_section::<ImproperType>(&mut lines, ff, &units)?;
-
+        self.registry.with(|reg| {
+            refuse_other_categories(ff, reg)?;
+            self.write_pair_section(&mut lines, ff, reg, &units)?;
+            self.write_section::<BondType>(&mut lines, ff, reg, &units)?;
+            self.write_section::<AngleType>(&mut lines, ff, reg, &units)?;
+            self.write_section::<DihedralType>(&mut lines, ff, reg, &units)?;
+            self.write_section::<ImproperType>(&mut lines, ff, reg, &units)
+        })?;
         Ok(lines.concat())
     }
 }
 
-/// The distinct LAMMPS styles of `used`, in first-use order. Two molrs styles
-/// LAMMPS spells alike (`improper cvff` and `improper periodic`, both `cvff`)
-/// are one LAMMPS style with one coefficient form.
-fn lammps_styles_of<'f, T: BondedCoeff>(used: &[Resolved<'f, T>]) -> Vec<&'f str> {
+/// Refuse a style with types in a category that prices energy and has no
+/// LAMMPS `*_style` command (a run-time category, `drude`): writing the
+/// include without it would drop its energy. A category that prices none
+/// (`constraint`, `virtual_site`) is the input script's (`fix shake`, …).
+fn refuse_other_categories(ff: &ForceField, reg: &Registry) -> Result<(), String> {
+    const WRITTEN: [&str; 7] = [
+        "atom", "pair", "bond", "angle", "dihedral", "improper", "cmap",
+    ];
+    for style in ff.styles() {
+        let category = style.category();
+        if WRITTEN.contains(&category) || style.type_rows().is_empty() {
+            continue;
+        }
+        if reg.category(category).is_some_and(|c| !c.prices_energy()) {
+            continue;
+        }
+        return Err(Engine::Lammps
+            .refuse(
+                category,
+                style.name(),
+                format!("LAMMPS has no `{category}_style` command"),
+            )
+            .to_string());
+    }
+    Ok(())
+}
+
+/// Whether a pair style holds types (a Coulomb style holds none).
+fn typed(style: &Style) -> bool {
+    matches!(style.defs(), StyleDefs::Pair(types) if !types.is_empty())
+}
+
+/// The distinct names, in first-use order. Two molrs styles LAMMPS spells
+/// alike (`improper cvff` and `improper periodic`, both `cvff`) are one
+/// LAMMPS style with one coefficient form.
+fn distinct<'s>(names: impl Iterator<Item = &'s str>) -> Vec<&'s str> {
     let mut subs: Vec<&str> = Vec::new();
-    for r in used {
-        let name = lammps_style_name(T::CATEGORY, r.style.name());
+    for name in names {
         if !subs.contains(&name) {
             subs.push(name);
         }
@@ -1243,16 +1177,6 @@ fn style_hint<'s>(subs: &[&'s str]) -> &'s str {
     }
 }
 
-/// The sub-style token (and its separating space) a hybrid coefficient line
-/// carries before its numbers; empty otherwise.
-fn sub_style_field<T: BondedCoeff>(hybrid: bool, r: &Resolved<'_, T>) -> String {
-    if hybrid {
-        format!("{} ", lammps_style_name(T::CATEGORY, r.style.name()))
-    } else {
-        String::new()
-    }
-}
-
 /// `heading`, a blank line, the rows and a blank line; nothing when empty.
 fn push_data_section(lines: &mut Vec<String>, heading: &str, rows: Vec<String>) {
     if rows.is_empty() {
@@ -1261,139 +1185,6 @@ fn push_data_section(lines: &mut Vec<String>, heading: &str, rows: Vec<String>) 
     lines.push(format!("{heading}\n\n"));
     lines.extend(rows);
     lines.push("\n".to_owned());
-}
-
-// ── pair styles ──────────────────────────────────────────────────────────────
-
-/// `pair_modify mix <rule>`: the rule the style declares, or — for an `lj/cut`
-/// that declares none — the rule the kernel evaluates it under,
-/// [`Mixing::UNDECLARED`]. LAMMPS' own default for `lj/cut` is `geometric`, so
-/// an export that stays silent mixes differently from molrs whenever the rule
-/// is anything else, and the run silently uses the wrong cross terms.
-fn pair_modify_line(style: &Style) -> Option<String> {
-    let rule = match style.params().get_str("mixing") {
-        Some(rule) => rule,
-        None if style.name() == "lj/cut" => Mixing::UNDECLARED.name(),
-        None => return None,
-    };
-    let shift = if style.params().get("shift").is_some_and(|s| s != 0.0) {
-        " shift yes"
-    } else {
-        ""
-    };
-    Some(format!("pair_modify mix {rule}{shift}\n"))
-}
-
-/// A `coul/cut` LAMMPS cannot price as molrs does: a buffer `delta ≠ 0`
-/// (MMFF's `qᵢqⱼ/(r + δ)`; LAMMPS's Coulomb styles have none) or a
-/// `dielectric ≠ 1` (an input-script `dielectric` command, not a coefficient).
-/// The Coulomb constant is LAMMPS's own `qqr2e` for the `units` and is not
-/// written; a field stating another (AMBER's 332.0522173) is priced by LAMMPS
-/// at LAMMPS's, a documented difference of ~3e-5 relative.
-fn refuse_unexpressible_pair(style: &Style) -> Result<(), String> {
-    let p = style.params();
-    match style.name() {
-        "lj/cut" => {
-            let (n, m) = (p.get("n").unwrap_or(12.0), p.get("m").unwrap_or(6.0));
-            if (n, m) != (12.0, 6.0) {
-                return Err(format!(
-                    "pair lj/cut with n = {n}, m = {m}: LAMMPS's lj/cut is 12-6 (its Mie \
-                     form, mie/cut, is not written)"
-                ));
-            }
-            return Ok(());
-        }
-        "coul/long/pme" => {
-            if let Some(key) = ["alpha", "order", "grid_x", "grid_y", "grid_z"]
-                .into_iter()
-                .find(|k| p.get(k).is_some())
-            {
-                return Err(format!(
-                    "pair coul/long/pme states its Ewald '{key}': molrs's smooth PME is not \
-                     LAMMPS's PPPM, whose kspace_style sets the mesh by an accuracy; only \
-                     the real-space lj/cut/coul/long is written"
-                ));
-            }
-            return Ok(());
-        }
-        "lj/charmm" | "coul/cut" | "coul/charmm" => {}
-        other => {
-            return Err(format!(
-                "pair style `{other}` has no LAMMPS form this writer writes (lj/cut, \
-                 coul/cut, coul/long/pme, lj/charmm + coul/charmm)"
-            ));
-        }
-    }
-    if style.name() == "coul/charmm" {
-        if let Some(d) = style.params().get("dielectric").filter(|d| *d != 1.0) {
-            return Err(format!(
-                "pair coul/charmm: dielectric = {d} is a LAMMPS input-script `dielectric` \
-                 command, not a coefficient this include can carry"
-            ));
-        }
-        return Ok(());
-    }
-    if style.name() != "coul/cut" {
-        return Ok(());
-    }
-    let p = style.params();
-    if let Some(delta) = p.get("delta").filter(|d| *d != 0.0) {
-        return Err(format!(
-            "pair coul/cut: the buffer delta = {delta} (E = k·qq/(D·(r + delta))) has no \
-             LAMMPS Coulomb style"
-        ));
-    }
-    if let Some(d) = p.get("dielectric").filter(|d| *d != 1.0) {
-        return Err(format!(
-            "pair coul/cut: dielectric = {d} is a LAMMPS input-script `dielectric` \
-             command, not a coefficient this include can carry"
-        ));
-    }
-    Ok(())
-}
-
-/// The LAMMPS pair style a molrs pair style is: `coul/long/pme`'s real-space
-/// half is LAMMPS's `coul/long`.
-fn lammps_pair_name(name: &str) -> &str {
-    match name {
-        "coul/long/pme" => "coul/long",
-        other => other,
-    }
-}
-
-fn is_split_lj_coulomb(styles: &[&Style]) -> bool {
-    if styles.len() != 2 {
-        return false;
-    }
-    let names: HashSet<&str> = styles.iter().map(|s| s.name()).collect();
-    names == HashSet::from(["lj/cut", "coul/cut"])
-        || names == HashSet::from(["lj/cut", "coul/long/pme"])
-}
-
-fn pair_style_cutoffs(style: &Style, units: &WriteUnits) -> Result<Vec<f64>, String> {
-    // Combined names want two cutoffs; simple kernels one, which they must carry.
-    let convert = |c: f64| units.length(c);
-    match style.name() {
-        "lj/cut" | "coul/cut" | "coul/long/pme" => Ok(vec![convert(required_cutoff(style)?)?]),
-        _ => match style_cutoff(style) {
-            Some(c) => Ok(vec![convert(c)?]),
-            None => Ok(vec![]),
-        },
-    }
-}
-
-/// `(inner, cutoff)` of a CHARMM style, in file units; both required.
-fn charmm_cutoffs(style: &Style, units: &WriteUnits) -> Result<[f64; 2], String> {
-    let get = |key: &str| {
-        style.params().get(key).ok_or_else(|| {
-            format!(
-                "pair style '{}' has no '{key}': lj/charmm/coul/charmm needs its inner and \
-                 outer switching cutoffs",
-                style.name()
-            )
-        })
-    };
-    Ok([units.length(get("inner")?)?, units.length(get("cutoff")?)?])
 }
 
 /// The per-pair override columns of `frame`'s `pairs` block, refused by name:
@@ -1417,10 +1208,6 @@ pub fn refuse_pair_overrides(frame: &molrs::store::frame::Frame) -> Result<(), S
          prices a 1-4 pair by special_bonds, lj/charmm's epsilon14/sigma14 and dihedral \
          charmm's w, never per pair"
     ))
-}
-
-fn style_cutoff(style: &Style) -> Option<f64> {
-    style.params().get("cutoff")
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -1476,13 +1263,6 @@ pub fn lammps_cmap_str(
 
 fn fmt_num(v: f64, precision: usize) -> String {
     format!("{v:.precision$}")
-}
-
-fn format_nums(vals: &[f64], precision: usize) -> String {
-    vals.iter()
-        .map(|v| fmt_num(*v, precision))
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 #[cfg(test)]
@@ -2558,7 +2338,6 @@ pair_coeff c3 c3 0.107800 3.397710
     /// accepts is written as one fourier term.
     #[test]
     fn periodic_dihedral_is_written_as_fourier() {
-        assert_eq!(lammps_style_name("dihedral", "periodic"), "fourier");
         let single = Params::from_pairs(&[("k", 0.3), ("periodicity", 2.0), ("phase", 180.0)]);
         assert_eq!(
             lammps_coeff_values("dihedral", "periodic", &single, "real").unwrap(),
@@ -2738,7 +2517,10 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
                  angle_coeff A-B-A 33.43 110.1 22.53 2.179\n",
             )
             .unwrap_err();
-        assert!(err.contains("takes 2 coefficients, got 4"), "{err}");
+        assert!(
+            err.contains("takes 2 coefficients (k theta0), got 4"),
+            "{err}"
+        );
         let err = LammpsFfReader::new()
             .read_str(
                 "special_bonds charmm\nangle_style hybrid harmonic\n\

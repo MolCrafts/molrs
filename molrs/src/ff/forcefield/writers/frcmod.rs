@@ -69,6 +69,7 @@ use super::ForceFieldWriter;
 use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::{ForceField, Params, Style};
+use crate::ff::ir::Engine;
 use crate::ff::params::amber::{AMBER_COULOMB, AMBER_SCEE, AMBER_SCNB};
 use crate::ff::typifier::estimate::Provenance;
 
@@ -274,7 +275,7 @@ impl AmberFrcmodFfWriter {
             ("improper", "periodic") => 4,
             ("pair", "lj/cut") => 5,
             ("pair", "coul/cut") => return Ok((5, Vec::new())),
-            _ => return Err(format!("{category}/{name} has no frcmod section")),
+            _ => return Err(Engine::AmberFrcmod.refuse_style(category, name).to_string()),
         };
         let mut rows = Vec::new();
         for (type_name, ends, p) in style.type_rows() {
@@ -351,8 +352,8 @@ impl ForceFieldWriter for AmberFrcmodFfWriter {
         Self::check_declarations(ff)?;
         let mut sections: [Vec<String>; 6] = Default::default();
         for style in ff.styles() {
-            Self::check_style_params(style)?;
             let (section, rows) = Self::style_rows(style)?;
+            Self::check_style_params(style)?;
             sections[section].extend(rows);
         }
         let mut out = format!("{} force field, written by molrs\n", ff.name);
@@ -591,7 +592,10 @@ mod tests {
             Params::from_pairs(&[("d0", 1.0), ("alpha", 2.0), ("r0", 1.4)]),
         );
         let err = write_amber_frcmod_str(&ff).unwrap_err();
-        assert!(err.contains("bond/morse"), "{err}");
+        assert!(
+            err.contains("AMBER frcmod has no form for bond `morse`"),
+            "{err}"
+        );
     }
 
     #[test]

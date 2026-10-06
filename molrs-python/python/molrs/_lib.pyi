@@ -4610,6 +4610,8 @@ class ir:
         def source(self) -> Literal["type_rows", "per_instance"]: ...
         @property
         def special(self) -> Literal["lj", "coul"] | None: ...
+        @property
+        def lammps(self) -> str | None: ...
 
     class CategoryInfo:
         """A registered category, as ``categories()`` lists it."""
@@ -4652,7 +4654,10 @@ class ir:
         special: Literal["lj", "coul"] | None = None,
         samples: Sequence[_AbcMapping[str, Any]] | None = None,
         replace: bool = False,
+        lammps: str | None = None,
     ) -> None: ...
+    @staticmethod
+    def register_engine_form(engine: str, category: str, name: str, form: str) -> None: ...
     @staticmethod
     def unregister(category: str, name: str) -> None: ...
     @staticmethod

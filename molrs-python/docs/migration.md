@@ -504,6 +504,58 @@ CHARMM36, AMBER ff14SB and OPLS-AA molecules.
   has no LAMMPS form for (`coul/tt`, …) is refused by name, no longer
   written into a `pair_style hybrid` line LAMMPS cannot read.
 
+### Engine codecs: styles carry their engine forms
+
+Engine I/O follows the force-field IR's protocol; see [Force-field
+IR](guides/forcefield-ir.md#engine-codecs).
+
+- **`StyleSpec.lammps`** (`LammpsForm::{None, Positional, Custom}`). A style
+  registered with `LammpsForm::positional()` (Python
+  `register_style(..., lammps="positional")`, `"positional:<name>"` for
+  another LAMMPS name, `ir.StyleSpec.lammps`, or afterwards
+  `ir.register_engine_form("lammps", category, name, form)`) is read and
+  written by the LAMMPS reader and writer with nothing else written:
+  `params` in order, each converted by its `Dim`. `StyleInfo.lammps` names a
+  style's form. The reader's and writer's closed tables
+  (`supported_styles`, `coeff_params`, `molrs_style_name`; `coeff_fields`,
+  `lammps_style_name`, the writer's per-arm unit conversion) are gone:
+  `lammps_coeff_params` and `lammps_coeff_values` go through the codecs.
+- **Newly read and written by LAMMPS**: `bond class2`, `angle class2` and
+  `dihedral class2` (cross-term lines at zero; a non-zero cross term is
+  refused), `pair buck`, `pair morse`, `pair lj/class2` (always
+  `sixthpower`, as LAMMPS mixes it), a `hybrid` of such pair styles and a
+  `hybrid/overlay` of one with `coul/cut` / `coul/long`. A `Pair Coeffs #
+  morse` data-file section reads (it was refused).
+- **The LAMMPS writer converts per dimension.** A field written in another
+  unit style has every parameter scaled by its `Dim` (`E*L^6`, `1/L`, …),
+  not per style arm; numbers agree with 0.15's to the last digit or two.
+  `pair_coeff` lines name the lower type id first (LAMMPS sets nothing for
+  `pair_coeff I J` with `I > J`). `lj/charmm/coul/charmm` is followed by
+  `pair_modify mix arithmetic` (LAMMPS's default for it, now stated).
+  A `pair_coeff` line with a per-pair cutoff is refused (molrs has none; it
+  was dropped). A style with types in a category LAMMPS has no `*_style`
+  for (a run-time category, `drude`) is refused, no longer dropped.
+- **OpenMM writes expression styles as `Custom*Force`s.** `bond morse`,
+  `bond class2`, `angle class2`, `improper cvff` and any registered or
+  instance expression style are written as `CustomBondForce`,
+  `CustomAngleForce`, `CustomTorsionForce`, `CustomNonbondedForce`, or a
+  `<Script>`-built `CustomCompoundBondForce` (a run-time compound category),
+  the parameters in IR units and the expression rewritten exactly
+  (`4.184*(E[r → 10*r])`); 0.15 refused them, and silently skipped
+  run-time categories. Reading a `Custom*Force` stays refused.
+- **Every engine refusal is `NoEngineForm`.** The GROMACS and frcmod
+  writers refuse a style that is not built in, and the LAMMPS and OpenMM
+  writers a style with no form, as "`<engine>` has no form for `<category>`
+  `` `<style>` ``: …" (Python `molrs.ff.ir.NoEngineForm` from
+  `register_engine_form`; the writers raise `ValueError` with that message).
+- **Readers and writers take a registry**: `LammpsFfReader::with_registry`,
+  `LammpsFfWriter::with_registry`, `XmlForceFieldWriter::with_registry`
+  (the process-wide one by default).
+- **Built-in spec defaults** now state the zeros the kernels read for an
+  absent parameter: `dihedral opls` `k1..k4`, `multi/harmonic` `a1..a5`,
+  `class2` `k1..k3`/`phi1..phi3`, `charmm` and `periodic` `phase`, `improper
+  harmonic` `chi0`, `improper periodic` `phase`.
+
 ### AMBER prmtop
 
 The prmtop readers (`read_amber_prmtop`, `AmberPrmtopFfReader` /

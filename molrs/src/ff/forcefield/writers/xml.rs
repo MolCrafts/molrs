@@ -35,10 +35,16 @@
 //! What OpenMM's tags cannot hold is an `Err` naming it, never a silent
 //! approximation or a skipped style:
 //!
-//! - a style of any category outside the table (`bond morse`, `angle
-//!   class2`, `dihedral mmff_torsion`, `improper cvff` — LAMMPS's `cvff`
-//!   prices the dihedral with the centre first, which no OpenMM ordering
-//!   does —, `pair buck`, …);
+//! - a style of any category outside the table that has no expression
+//!   (`dihedral mmff_torsion`, …); a style outside the table **with** an
+//!   expression — registered (`bond morse`, `angle class2`, `improper
+//!   cvff`, a style registered at run time) or not (an instance's own
+//!   `expression`) — is written as its category's `Custom*Force`, its
+//!   expression rewritten to OpenMM's units and its parameters in the IR's
+//!   (`xml/custom.rs`: `CustomBondForce`, `CustomAngleForce`,
+//!   `CustomTorsionForce`, `CustomNonbondedForce`, and a `<Script>`-built
+//!   `CustomCompoundBondForce` for a compound category), or refused by name
+//!   where that has no exact form;
 //! - a `dihedral charmm` type with `w ≠ 0` (OpenMM has no per-dihedral 1-4
 //!   weight), an `nharmonic` past N = 6, a harmonic improper with a wildcard
 //!   endpoint (OpenMM then re-orders it), a CMAP of odd size;
@@ -68,6 +74,9 @@
 //! `TypeLabels`.
 
 use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
+
+mod custom;
 
 use super::ForceFieldWriter;
 use crate::ff::forcefield::mixing::Mixing;
@@ -77,6 +86,7 @@ use crate::ff::forcefield::torsion::{
     Charmm, Class2, Periodic, RyckaertBellemans, SignedCosine, torsion_series,
 };
 use crate::ff::forcefield::{ForceField, Params, Style, StyleDefs};
+use crate::ff::ir::{Registry, RegistryRef};
 use crate::ff::potential::cmap::charmm::GRID;
 
 /// kcal/mol → kJ/mol.
@@ -88,10 +98,13 @@ const ANGSTROM_PER_NM: f64 = 10.0;
 /// Writer for OpenMM `<ForceField>` XML.
 ///
 /// `precision`: decimals per number; `None` (the default) writes each number
-/// in the shortest form that reads back to the same `f64`.
+/// in the shortest form that reads back to the same `f64`. Expression
+/// styles are looked up in the process-wide registry, or the one
+/// [`with_registry`](Self::with_registry) gives.
 #[derive(Debug, Clone, Default)]
 pub struct XmlForceFieldWriter {
     pub precision: Option<usize>,
+    pub registry: RegistryRef,
 }
 
 impl XmlForceFieldWriter {
@@ -101,6 +114,12 @@ impl XmlForceFieldWriter {
 
     pub fn with_precision(mut self, precision: Option<usize>) -> Self {
         self.precision = precision;
+        self
+    }
+
+    /// Look styles up in `registry` instead of the process-wide one.
+    pub fn with_registry(mut self, registry: Arc<Registry>) -> Self {
+        self.registry = RegistryRef::Own(registry);
         self
     }
 
@@ -147,31 +166,40 @@ impl Endpoints {
 
     /// ` class1="…" class2="…"` (or `type{n}` per endpoint).
     fn attrs(&self, labels: &[&str]) -> String {
-        let mut out = String::new();
-        for (n, label) in labels.iter().enumerate() {
-            let key = if !label.is_empty() && self.typed.contains(*label) {
-                "type"
-            } else {
-                "class"
-            };
-            out.push_str(&format!(" {key}{}=\"{}\"", n + 1, esc(label)));
-        }
-        out
+        self.keys(labels)
+            .into_iter()
+            .map(|(key, label)| format!(" {key}=\"{}\"", esc(&label)))
+            .collect()
+    }
+
+    /// `(class{n} | type{n}, label)` per endpoint.
+    fn keys(&self, labels: &[&str]) -> Vec<(String, String)> {
+        labels
+            .iter()
+            .enumerate()
+            .map(|(n, label)| {
+                let key = if !label.is_empty() && self.typed.contains(*label) {
+                    "type"
+                } else {
+                    "class"
+                };
+                (format!("{key}{}", n + 1), (*label).to_owned())
+            })
+            .collect()
     }
 }
 
-/// `Err` naming a style of `category` this writer has no OpenMM form for.
+/// `Err` naming a style of `category` this writer has no OpenMM form for
+/// ([`IrError::NoEngineForm`](crate::ff::ir::IrError::NoEngineForm)).
 fn refuse(style: &Style, why: &str) -> String {
-    format!(
-        "{} style `{}` has no OpenMM ForceField XML form{}",
-        style.category(),
-        style.name(),
-        if why.is_empty() {
-            String::new()
-        } else {
-            format!(": {why}")
-        }
-    )
+    let why = if why.is_empty() {
+        "it has no tag of OpenMM's ForceField XML"
+    } else {
+        why
+    };
+    crate::ff::ir::Engine::OpenmmXml
+        .refuse(style.category(), style.name(), why)
+        .to_string()
 }
 
 fn need(p: &Params, key: &str, what: &str) -> Result<f64, String> {
@@ -189,9 +217,15 @@ struct Out {
     custom: Vec<(f64, String)>,
     cmap_maps: Vec<Vec<f64>>,
     cmap_rows: String,
+    /// Expression styles' `Custom*Force` elements, whole.
+    custom_forces: Vec<String>,
+    /// `<Script>`s (compound terms), as Python.
+    scripts: Vec<String>,
+    /// The custom forces' global parameters: one value per name.
+    globals: HashMap<String, f64>,
     /// The rows written, by OpenMM generator family and the labels it
     /// matches on: (type name, parameters as written).
-    seen: HashMap<(&'static str, Vec<String>), (String, String)>,
+    seen: HashMap<(String, Vec<String>), (String, String)>,
 }
 
 /// Labels OpenMM matches either way round, as one key.
@@ -216,15 +250,15 @@ impl Out {
     /// (skipped) or a conflict (refused).
     fn admit(
         &mut self,
-        family: &'static str,
+        family: &str,
         key: Vec<String>,
         name: &str,
         body: &str,
     ) -> Result<bool, String> {
-        match self.seen.get(&(family, key.clone())) {
+        match self.seen.get(&(family.to_owned(), key.clone())) {
             None => {
                 self.seen
-                    .insert((family, key), (name.to_owned(), body.to_owned()));
+                    .insert((family.to_owned(), key), (name.to_owned(), body.to_owned()));
                 Ok(true)
             }
             Some((_, written)) if written == body => Ok(false),
@@ -238,13 +272,35 @@ impl Out {
 }
 
 impl XmlForceFieldWriter {
-    fn bonded(&self, ff: &ForceField, ends: &Endpoints, out: &mut Out) -> Result<(), String> {
+    fn bonded(
+        &self,
+        ff: &ForceField,
+        reg: &Registry,
+        ends: &Endpoints,
+        out: &mut Out,
+    ) -> Result<(), String> {
         for style in ff.styles() {
+            let native = match (style.category(), style.name()) {
+                ("bond", name) => name == "harmonic",
+                ("angle", name) => matches!(name, "harmonic" | "charmm"),
+                // A torsion of the form family writes as periodic or RB terms.
+                ("dihedral", name) => {
+                    matches!(name, "periodic" | "charmm" | "harmonic" | "class2")
+                        || reg
+                            .form("dihedral", name)
+                            .is_some_and(|f| f.family == crate::ff::forcefield::torsion::FAMILY)
+                }
+                ("improper", name) => matches!(name, "periodic" | "harmonic"),
+                ("cmap", name) => name == "charmm",
+                ("atom" | "pair", _) => true,
+                _ => false,
+            };
+            if !native {
+                custom::bonded(self, reg, style, ends, out)?;
+                continue;
+            }
             match (style.category(), &style.defs) {
                 ("bond", StyleDefs::Bond(types)) => {
-                    if style.name() != "harmonic" {
-                        return Err(refuse(style, ""));
-                    }
                     for t in types {
                         let what = format!("bond harmonic {}", t.name);
                         // LAMMPS K (kcal/mol/Å²) → OpenMM ½k, k = 2K (kJ/mol/nm²).
@@ -265,11 +321,7 @@ impl XmlForceFieldWriter {
                     }
                 }
                 ("angle", StyleDefs::Angle(types)) => {
-                    let ub = match style.name() {
-                        "harmonic" => false,
-                        "charmm" => true,
-                        _ => return Err(refuse(style, "")),
-                    };
+                    let ub = style.name() == "charmm";
                     for t in types {
                         let what = format!("angle {} {}", style.name(), t.name);
                         let labels = [t.itom.as_str(), &t.jtom, &t.ktom];
@@ -371,22 +423,11 @@ impl XmlForceFieldWriter {
                                     ));
                                 }
                             }
-                            "cvff" => {
-                                return Err(refuse(
-                                    style,
-                                    "LAMMPS's cvff prices the dihedral I-J-K-L with I the \
-                                     centre; OpenMM lists an improper's centre first and \
-                                     prices (c2, c3, c1, c4), the AMBER periodic improper",
-                                ));
-                            }
-                            _ => return Err(refuse(style, "")),
+                            _ => unreachable!("a native improper style"),
                         }
                     }
                 }
                 ("cmap", StyleDefs::Cmap(types)) => {
-                    if style.name() != "charmm" {
-                        return Err(refuse(style, ""));
-                    }
                     for t in types {
                         let grid = t.params.get_array(GRID).ok_or_else(|| {
                             format!("cmap charmm {}: missing its `{GRID}` array", t.name)
@@ -526,9 +567,16 @@ impl XmlForceFieldWriter {
 
     /// `<NonbondedForce>` and, when the van der Waals needs it,
     /// `<LennardJonesForce>`; also the root's `combining_rule`.
-    fn nonbonded(&self, ff: &ForceField) -> Result<(String, Option<&'static str>), String> {
+    fn nonbonded(
+        &self,
+        ff: &ForceField,
+        reg: &Registry,
+        sections: &mut Out,
+    ) -> Result<(String, Option<&'static str>), String> {
         let mut lj_style: Option<&Style> = None;
         let mut coul_style: Option<&Style> = None;
+        // Expression pair styles: their `CustomNonbondedForce`s.
+        let mut custom_xml = String::new();
         for style in ff.get_styles("pair") {
             match style.name() {
                 "lj/cut" | "lj/charmm" => {
@@ -564,7 +612,7 @@ impl XmlForceFieldWriter {
                     }
                     coul_style = Some(style);
                 }
-                _ => return Err(refuse(style, "")),
+                _ => custom_xml.push_str(&custom::pair(self, reg, ff, style, sections)?),
             }
         }
 
@@ -597,7 +645,7 @@ impl XmlForceFieldWriter {
             );
         }
         if lj_style.is_none() && coul_style.is_none() {
-            return Ok((String::new(), None));
+            return Ok((custom_xml, None));
         }
 
         let sb = ff.special_bonds();
@@ -757,6 +805,7 @@ impl XmlForceFieldWriter {
             }
             out.push_str("  </LennardJonesForce>\n");
         }
+        out.push_str(&custom_xml);
         Ok((out, combining_rule))
     }
 }
@@ -773,8 +822,10 @@ impl ForceFieldWriter for XmlForceFieldWriter {
         }
         let ends = Endpoints::new(ff);
         let mut sections = Out::default();
-        self.bonded(ff, &ends, &mut sections)?;
-        let (nonbonded, combining_rule) = self.nonbonded(ff)?;
+        let (nonbonded, combining_rule) = self.registry.with(|reg| {
+            self.bonded(ff, reg, &ends, &mut sections)?;
+            self.nonbonded(ff, reg, &mut sections)
+        })?;
 
         let mut out = String::from("<?xml version='1.0' encoding='utf-8'?>\n");
         out.push_str(&format!(
@@ -858,7 +909,13 @@ impl ForceFieldWriter for XmlForceFieldWriter {
             body.push_str(&sections.cmap_rows);
             section("CMAPTorsionForce", "", &body);
         }
+        for force in &sections.custom_forces {
+            out.push_str(force);
+        }
         out.push_str(&nonbonded);
+        for script in &sections.scripts {
+            out.push_str(&format!("  <Script>\n{}  </Script>\n", esc(script)));
+        }
         out.push_str("</ForceField>\n");
         Ok(out)
     }
@@ -1173,22 +1230,44 @@ mod tests {
         close(p.get("phase").unwrap(), 180.0, "phase");
     }
 
-    /// LAMMPS's `cvff` prices the dihedral I-J-K-L with I the centre; OpenMM
-    /// lists the centre first and prices `(c2, c3, c1, c4)`, so no OpenMM row
-    /// prices a cvff improper.
+    /// LAMMPS's `cvff` prices the dihedral I-J-K-L with I the centre: the
+    /// `CustomTorsionForce` of its expression with `ordering="charmm"`, which
+    /// prices an improper's atoms in the row's order, the centre first; a
+    /// wildcard endpoint (OpenMM would re-order the atoms) is refused.
     #[test]
-    fn a_cvff_improper_is_refused() {
-        let mut ff = ForceField::new("cvff");
-        ff.def_style("improper", "cvff", Params::new())
-            .unwrap()
-            .def_type(
-                "CA-CA-CA-HA",
-                &["CA", "CA", "CA", "HA"],
-                Params::from_pairs(&[("k", 1.1), ("sign", -1.0), ("periodicity", 2.0)]),
-            )
-            .unwrap();
-        let err = write_forcefield_xml_str(&ff, None).unwrap_err();
-        assert!(err.contains("cvff"), "{err}");
+    fn a_cvff_improper_is_a_charmm_ordered_custom_torsion() {
+        let cvff = |ends: [&str; 4]| {
+            let mut ff = ForceField::new("cvff");
+            ff.def_style("improper", "cvff", Params::new())
+                .unwrap()
+                .def_type(
+                    "CA-CA-CA-HA",
+                    &ends,
+                    Params::from_pairs(&[("k", 1.1), ("sign", -1.0), ("periodicity", 2.0)]),
+                )
+                .unwrap();
+            write_forcefield_xml_str(&ff, None)
+        };
+        let xml = cvff(["CA", "CA", "CA", "HA"]).unwrap();
+        assert!(
+            xml.contains(
+                "<CustomTorsionForce energy=\"4.184*(k*(1+sign*cos(periodicity*theta)))\" \
+                 ordering=\"charmm\">"
+            ),
+            "{xml}"
+        );
+        assert!(
+            xml.contains(
+                "<Improper class1=\"CA\" class2=\"CA\" class3=\"CA\" class4=\"HA\" k=\"1.1\" \
+                 sign=\"-1.0\" periodicity=\"2.0\"/>"
+            ),
+            "{xml}"
+        );
+        let err = cvff(["CA", "", "CA", "HA"]).unwrap_err();
+        assert!(
+            err.contains("OpenMM XML has no form for improper `cvff`") && err.contains("wildcard"),
+            "{err}"
+        );
     }
 
     /// A `dihedral charmm` term with a 1-4 weight has no OpenMM form.
@@ -1202,14 +1281,18 @@ mod tests {
         assert!(err.contains("w = 1"), "{err}");
     }
 
-    /// Styles with no OpenMM form are refused by name, never skipped.
+    /// Styles with no OpenMM form are refused by name, never skipped: no
+    /// native tag and no expression (`dihedral mmff_torsion`), or an
+    /// expression with no exact `Custom*Force` (`pair buck`: its parameters
+    /// do not mix, so a pair's are a cross row's). A style with an expression
+    /// is its `Custom*Force` (`bond morse`).
     #[test]
     fn styles_without_an_openmm_form_are_refused_by_name() {
         let ff = one_torsion("mmff_torsion", Params::from_pairs(&[("v1", 1.0)]));
+        let err = write_forcefield_xml_str(&ff, None).unwrap_err();
         assert!(
-            write_forcefield_xml_str(&ff, None)
-                .unwrap_err()
-                .contains("mmff_torsion")
+            err.contains("OpenMM XML has no form for dihedral `mmff_torsion`"),
+            "{err}"
         );
         let mut ff = ForceField::new("x");
         ff.def_style("bond", "morse", Params::new())
@@ -1220,10 +1303,10 @@ mod tests {
                 Params::from_pairs(&[("d0", 1.0), ("alpha", 1.0), ("r0", 1.0)]),
             )
             .unwrap();
+        let xml = write_forcefield_xml_str(&ff, None).unwrap();
         assert!(
-            write_forcefield_xml_str(&ff, None)
-                .unwrap_err()
-                .contains("morse")
+            xml.contains("<CustomBondForce energy=\"4.184*(d0*(1-exp(-alpha*(10*r-r0)))^2)\">"),
+            "{xml}"
         );
         let mut ff = ForceField::new("x");
         ff.def_style("pair", "buck", Params::new())
@@ -1234,10 +1317,10 @@ mod tests {
                 Params::from_pairs(&[("a", 1.0), ("rho", 1.0), ("c", 1.0)]),
             )
             .unwrap();
+        let err = write_forcefield_xml_str(&ff, None).unwrap_err();
         assert!(
-            write_forcefield_xml_str(&ff, None)
-                .unwrap_err()
-                .contains("buck")
+            err.contains("pair `buck`") && err.contains("does not mix"),
+            "{err}"
         );
     }
 
