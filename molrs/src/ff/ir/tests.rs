@@ -4,11 +4,11 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use crate::ff::forcefield::{ForceField, Params};
+use crate::ff::forcefield::{DefError, ForceField, Params, StyleDefs};
 use crate::ff::ir::{
-    Arity, CategorySpec, Coordinate, Dim, EndpointOrder, ExpressionForm, ExpressionKernel, IrError,
-    Kernel, Mix, ParamCols, ParamKind, ParamSpec, Registry, RowSource, Sample, ScalarForm,
-    SpecialClass, StyleSpec, Value, builtin_categories, builtin_styles,
+    Arity, CategorySpec, CompoundForm, Coordinate, Dim, EndpointOrder, ExpressionForm,
+    ExpressionKernel, IrError, Kernel, Mix, ParamCols, ParamKind, ParamSpec, Registry, RowSource,
+    Sample, ScalarForm, SpecialClass, StyleSpec, Value, builtin_categories, builtin_styles,
 };
 use crate::ff::potential::bond::harmonic::bond_harmonic_ctor;
 use crate::ff::potential::{KernelRegistry, PotentialCompiler, register_kernel};
@@ -1089,4 +1089,320 @@ fn a_pair_expression_binds_self_rows_and_must_be_symmetric() {
     }
     let got = pots.calc_energy(&COORDS);
     assert!((got - want).abs() <= 1e-12 * want.abs(), "{got} vs {want}");
+}
+
+// ---------------------------------------------------------------------------
+// A custom category in a force field (protocol §6)
+// ---------------------------------------------------------------------------
+
+/// The Urey–Bradley 1-3 spring of LAMMPS `angle charmm` as an N-body form:
+/// `k_ub (r₁₃ − r_ub)²`.
+struct UreyBradley;
+
+impl CompoundForm for UreyBradley {
+    fn eval(
+        &self,
+        x: &[[F; 3]],
+        arity: usize,
+        p: &ParamCols<'_>,
+        e: &mut [F],
+        grad: &mut [[F; 3]],
+    ) {
+        let (k, r0) = (p.get("k_ub").unwrap(), p.get("r_ub").unwrap());
+        for t in 0..e.len() {
+            let (a, c) = (x[t * arity], x[t * arity + 2]);
+            let d = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+            let r = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+            let dr = r - r0[t];
+            e[t] = k[t] * dr * dr;
+            let g = d.map(|di| 2.0 * k[t] * dr * di / r);
+            grad[t * arity] = g.map(|gi| -gi);
+            grad[t * arity + 1] = [0.0; 3];
+            grad[t * arity + 2] = g;
+        }
+    }
+
+    fn inputs(&self) -> Vec<String> {
+        vec!["k_ub".into(), "r_ub".into()]
+    }
+}
+
+const UB_EXPRESSION: &str = "k_ub*(distance(p1,p3)-r_ub)^2";
+
+/// `urey_bradley`: arity 3, compound, block `urey_bradleys`.
+fn urey_bradley_category() -> CategorySpec {
+    CategorySpec::custom(
+        "urey_bradley",
+        3,
+        Coordinate::Compound,
+        EndpointOrder::Reversible,
+    )
+}
+
+fn ub_params() -> Vec<ParamSpec> {
+    vec![
+        ParamSpec::new("k_ub", "E/L^2".parse().unwrap()),
+        ParamSpec::new("r_ub", Dim::LENGTH),
+    ]
+}
+
+/// A builtin registry with `urey_bradley` and two styles of it: `harmonic`
+/// (the native form) and `expr` (priced by its expression alone).
+fn ub_registry() -> Registry {
+    let mut r = Registry::builtin();
+    r.register_category(urey_bradley_category()).unwrap();
+    r.register_style(
+        StyleSpec::new("urey_bradley", "harmonic").params(ub_params()),
+        Some(Kernel::Compound(Arc::new(UreyBradley))),
+    )
+    .unwrap();
+    r.register_style(
+        StyleSpec::new("urey_bradley", "expr")
+            .params(ub_params())
+            .expression(UB_EXPRESSION),
+        None,
+    )
+    .unwrap();
+    r
+}
+
+/// The two type rows every case prices: `(name, k_ub, r_ub)`.
+const UB_TYPES: [(&str, F, F); 2] = [("t", 20.0, 2.45), ("u", 11.0, 2.2)];
+
+/// [`chain`]'s four atoms with two terms of `category` (3 atoms each,
+/// typed `t` and `u`) in its block `<category>s`.
+fn two_terms(category: &str) -> Frame {
+    let mut frame = chain(category, 3);
+    let mut block = Block::new();
+    for (key, atoms) in [
+        ("atomi", [0 as Idx, 1]),
+        ("atomj", [1, 2]),
+        ("atomk", [2, 3]),
+    ] {
+        block
+            .insert(key, Array1::from_vec(atoms.to_vec()).into_dyn())
+            .unwrap();
+    }
+    block
+        .insert(
+            "type",
+            Array1::from_vec(vec!["t".to_string(), "u".to_string()]).into_dyn(),
+        )
+        .unwrap();
+    frame.insert(format!("{category}s"), block);
+    frame
+}
+
+/// The reference: LAMMPS `angle charmm` with K = 0, a pure 1-3 spring.
+fn charmm_reference() -> (F, Vec<F>) {
+    let mut ff = ForceField::new("ref");
+    let style = ff.def_style("angle", "charmm", Params::new()).unwrap();
+    for (name, k_ub, r_ub) in UB_TYPES {
+        style
+            .def_type(
+                name,
+                &["A", "A", "A"],
+                Params::from_pairs(&[
+                    ("k", 0.0),
+                    ("theta0", 109.5),
+                    ("k_ub", k_ub),
+                    ("r_ub", r_ub),
+                ]),
+            )
+            .unwrap();
+    }
+    PotentialCompiler::new(&ff)
+        .compile(&two_terms("angle"))
+        .unwrap()
+        .calc_energy_forces(&COORDS)
+}
+
+/// `ff` with one `urey_bradley` style `style` (style params `params`) over
+/// [`UB_TYPES`], defined through `def`.
+fn ub_ff(
+    style: &str,
+    params: Params,
+    def: impl FnOnce(&mut ForceField, Params) -> Result<&mut crate::ff::forcefield::Style, DefError>,
+) -> ForceField {
+    let mut ff = ForceField::new("ub");
+    let s = def(&mut ff, params).unwrap();
+    assert_eq!(s.category(), "urey_bradley");
+    assert_eq!(s.name(), style);
+    for (name, k_ub, r_ub) in UB_TYPES {
+        s.def_type(
+            name,
+            &["A", "A", "A"],
+            Params::from_pairs(&[("k_ub", k_ub), ("r_ub", r_ub)]),
+        )
+        .unwrap();
+    }
+    ff
+}
+
+fn assert_same_energy_forces(label: &str, got: (F, Vec<F>), want: &(F, Vec<F>)) {
+    let scale = want.0.abs().max(1.0);
+    assert!(
+        (got.0 - want.0).abs() <= 1e-12 * scale,
+        "{label}: energy {} vs {}",
+        got.0,
+        want.0
+    );
+    let fmax = want.1.iter().fold(1.0_f64, |m, f| m.max(f.abs()));
+    for (i, (a, b)) in got.1.iter().zip(&want.1).enumerate() {
+        assert!(
+            (a - b).abs() <= 1e-12 * fmax,
+            "{label}: force[{i}] {a} vs {b}"
+        );
+    }
+}
+
+/// A custom category registered in a registry is a style category of a
+/// force field (`def_style_in`, its arity from the registration), and its
+/// block `urey_bradleys` is priced by a native compound form and by an
+/// expression alike: both equal LAMMPS `angle charmm` with K = 0, at both
+/// compile doors.
+#[test]
+fn a_custom_category_prices_its_block_like_angle_charmm_without_k() {
+    let r = ub_registry();
+    let want = charmm_reference();
+    assert!(want.0 > 0.0, "a non-trivial reference: {}", want.0);
+    let frame = two_terms("urey_bradley");
+    for style in ["harmonic", "expr"] {
+        let ff = ub_ff(style, Params::new(), |ff, p| {
+            ff.def_style_in(&r, "urey_bradley", style, p)
+        });
+        let StyleDefs::Relation { arity, types, .. } = ff.styles()[0].defs() else {
+            panic!("a custom category is a relation");
+        };
+        assert_eq!((*arity, types.len()), (3, 2));
+        let compiler = PotentialCompiler::with_registry(&ff, &r);
+        let pots = compiler.compile(&frame).unwrap();
+        assert_eq!(pots.members().len(), 1, "{style}");
+        assert_same_energy_forces(style, pots.calc_energy_forces(&COORDS), &want);
+        let typed = compiler.compile_typed(&frame).unwrap();
+        assert_eq!(typed.len(), 1, "{style}");
+        assert!(
+            typed[0].1.is_none(),
+            "a relation takes no special-bonds weight"
+        );
+        // No block, nothing to price.
+        assert!(
+            compiler
+                .compile(&chain("bond", 2))
+                .unwrap()
+                .members()
+                .is_empty()
+        );
+    }
+}
+
+/// A type of a custom category names exactly its arity of endpoints; the
+/// category is unknown to a registry that does not declare it.
+#[test]
+fn a_custom_category_checks_its_arity_and_needs_its_registration() {
+    let r = ub_registry();
+    let mut ff = ForceField::new("t");
+    let style = ff
+        .def_style_in(&r, "urey_bradley", "harmonic", Params::new())
+        .unwrap();
+    let err = style.def_type("x", &["A", "A"], Params::new()).unwrap_err();
+    assert!(
+        matches!(&err, DefError::Arity { category, got: 2, .. } if category == "urey_bradley"),
+        "{err:?}"
+    );
+    assert!(err.to_string().contains("expected 3 endpoints"), "{err}");
+
+    let mut fresh = ForceField::new("t");
+    assert!(matches!(
+        fresh.def_style_in(&Registry::builtin(), "urey_bradley", "harmonic", Params::new()),
+        Err(DefError::UnknownCategory(c)) if c == "urey_bradley"
+    ));
+    // Held by the force field already, the category takes the arity it has.
+    ff.def_style_in(&Registry::builtin(), "urey_bradley", "other", Params::new())
+        .unwrap()
+        .def_type("y", &["A", "B", "C"], Params::new())
+        .unwrap();
+    assert!(matches!(
+        ff.def_style_with_arity("urey_bradley", 2, "two", Params::new()),
+        Err(DefError::CategoryArity {
+            expected: 3,
+            got: 2,
+            ..
+        })
+    ));
+}
+
+/// A custom category round-trips through the record's section (its arity
+/// from the endpoint columns) and prices identically afterwards.
+#[test]
+fn a_custom_category_round_trips_through_its_section() {
+    let r = ub_registry();
+    let ff = ub_ff("harmonic", Params::new(), |ff, p| {
+        ff.def_style_in(&r, "urey_bradley", "harmonic", p)
+    });
+    let section = ff.to_section().unwrap();
+    let table = section.table("urey_bradley", "harmonic").unwrap();
+    assert!(table.contains_key("ktom") && !table.contains_key("ltom"));
+    let back = ForceField::from_section(&section).unwrap();
+    assert_eq!(back.styles().len(), 1);
+    assert_eq!(back.styles()[0].category(), "urey_bradley");
+    assert_eq!(back.styles()[0].arity(), 3);
+    assert_eq!(back.styles()[0].type_rows(), ff.styles()[0].type_rows());
+    assert_eq!(back.to_section().unwrap().document, section.document);
+    let frame = two_terms("urey_bradley");
+    let price = |ff: &ForceField| {
+        PotentialCompiler::with_registry(ff, &r)
+            .compile(&frame)
+            .unwrap()
+            .calc_energy_forces(&COORDS)
+    };
+    let (e0, f0) = price(&ff);
+    let (e1, f1) = price(&back);
+    assert_eq!(e0.to_bits(), e1.to_bits());
+    assert_eq!(f0, f1);
+}
+
+/// A category nothing declares is kept from a record with the arity of its
+/// endpoint columns; with rows and no expression, compiling it is refused
+/// naming the style, and with an `expression` it is priced by it alone.
+#[test]
+fn an_unregistered_category_round_trips_and_is_priced_only_by_an_expression() {
+    let bare = ub_ff("spring", Params::new(), |ff, p| {
+        ff.def_style_with_arity("urey_bradley", 3, "spring", p)
+    });
+    let back = ForceField::from_section(&bare.to_section().unwrap()).unwrap();
+    assert_eq!(back.styles()[0].arity(), 3);
+    assert_eq!(back.styles()[0].type_rows(), bare.styles()[0].type_rows());
+    let compiler = PotentialCompiler::new(&back);
+    let err = compiler.compile(&two_terms("urey_bradley")).unwrap_err();
+    assert!(err.contains("no kernel for urey_bradley `spring`"), "{err}");
+    let err = compiler
+        .compile_typed(&two_terms("urey_bradley"))
+        .unwrap_err();
+    assert!(err.contains("urey_bradley `spring`"), "{err}");
+    // Without its block there is nothing to price, and nothing refused.
+    assert!(
+        compiler
+            .compile(&chain("bond", 2))
+            .unwrap()
+            .members()
+            .is_empty()
+    );
+
+    let mut style = Params::new();
+    style.set_str("expression", UB_EXPRESSION);
+    let priced = ub_ff("spring", style, |ff, p| {
+        ff.def_style_with_arity("urey_bradley", 3, "spring", p)
+    });
+    let section = priced.to_section().unwrap();
+    assert_eq!(
+        section.document["styles"][0]["expression"],
+        serde_json::json!(UB_EXPRESSION)
+    );
+    let back = ForceField::from_section(&section).unwrap();
+    let got = PotentialCompiler::new(&back)
+        .compile(&two_terms("urey_bradley"))
+        .unwrap()
+        .calc_energy_forces(&COORDS);
+    assert_same_energy_forces("unregistered expression", got, &charmm_reference());
 }

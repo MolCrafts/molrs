@@ -3,21 +3,27 @@
 //! A handle is the owning force field plus the identifiers of one style or
 //! one type, and nothing else: every read and write goes through the one
 //! native [`molrs::ff::ForceField`]. `ForceField.def_style` returns the
-//! category's style handle ([`PyAtomStyle`] … [`PyCmapStyle`]); its typed
-//! ``def_type`` door defines a type and returns the type's handle
-//! ([`PyAtomType`] … [`PyCmapType`]).
+//! category's style handle ([`PyAtomStyle`] … [`PyCmapStyle`], and
+//! [`PyRelationStyle`] for every other category); its ``def_type`` door
+//! defines a type and returns the type's handle ([`PyAtomType`] …
+//! [`PyCmapType`], [`PyRelationType`]).
+
+use std::sync::Arc;
 
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 
-use molrs::ff::forcefield::Style;
+use molrs::ff::forcefield::{ForceField, Style};
 
 use super::{PyForceField, array_param, params_from_dict, params_to_dict};
 use crate::helpers::py_value_err;
 
-/// The seven categories and their handle classes.
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// A category and its handle classes: the seven with classes of their own,
+/// and every other category — a custom one of the force-field IR registry,
+/// molrec's `constraint` / `drude` / `virtual_site`, or one a record brought
+/// in that nothing declares — as a relation.
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) enum Category {
     Atom,
     Bond,
@@ -26,10 +32,30 @@ pub(crate) enum Category {
     Improper,
     Pair,
     Cmap,
+    Relation(Arc<str>),
+}
+
+/// Which categories a ``get_styles`` / ``get_types`` selector names.
+pub(crate) enum Selection {
+    /// Every category (``Style`` / ``Type``).
+    Every,
+    /// Every category beyond the seven (``RelationStyle`` / ``RelationType``).
+    Relations,
+    Only(Category),
+}
+
+impl Selection {
+    pub(crate) fn contains(&self, category: &Category) -> bool {
+        match self {
+            Self::Every => true,
+            Self::Relations => matches!(category, Category::Relation(_)),
+            Self::Only(only) => only == category,
+        }
+    }
 }
 
 impl Category {
-    pub(crate) const ALL: [Self; 7] = [
+    const BUILTIN: [Self; 7] = [
         Self::Atom,
         Self::Bond,
         Self::Angle,
@@ -39,14 +65,38 @@ impl Category {
         Self::Cmap,
     ];
 
-    pub(crate) fn of(name: &str) -> PyResult<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|category| category.name() == name)
-            .ok_or_else(|| PyValueError::new_err(format!("unknown force-field category '{name}'")))
+    /// The category `name` names in `ff`: one of the seven, one the
+    /// process-wide force-field IR registry declares, or one `ff` holds a
+    /// style of.
+    ///
+    /// # Errors
+    ///
+    /// `ValueError` for any other name.
+    pub(crate) fn of(name: &str, ff: &ForceField) -> PyResult<Self> {
+        if let Some(builtin) = Self::BUILTIN.into_iter().find(|c| c.name() == name) {
+            return Ok(builtin);
+        }
+        let declared = molrs::ff::ir::with_global(|r| r.category(name).is_some())
+            || ff.styles().iter().any(|s| s.category() == name);
+        if declared {
+            Ok(Self::Relation(Arc::from(name)))
+        } else {
+            Err(PyValueError::new_err(format!(
+                "unknown force-field category '{name}'"
+            )))
+        }
     }
 
-    pub(crate) fn name(self) -> &'static str {
+    /// The category of a defined style.
+    pub(crate) fn of_style(style: &Style) -> Self {
+        let name = style.category();
+        Self::BUILTIN
+            .into_iter()
+            .find(|c| c.name() == name)
+            .unwrap_or_else(|| Self::Relation(Arc::from(name)))
+    }
+
+    pub(crate) fn name(&self) -> &str {
         match self {
             Self::Atom => "atom",
             Self::Bond => "bond",
@@ -55,10 +105,11 @@ impl Category {
             Self::Improper => "improper",
             Self::Pair => "pair",
             Self::Cmap => "cmap",
+            Self::Relation(name) => name,
         }
     }
 
-    fn style_class<'py>(self, py: Python<'py>) -> Bound<'py, PyType> {
+    fn style_class<'py>(&self, py: Python<'py>) -> Bound<'py, PyType> {
         match self {
             Self::Atom => py.get_type::<PyAtomStyle>(),
             Self::Bond => py.get_type::<PyBondStyle>(),
@@ -67,10 +118,11 @@ impl Category {
             Self::Improper => py.get_type::<PyImproperStyle>(),
             Self::Pair => py.get_type::<PyPairStyle>(),
             Self::Cmap => py.get_type::<PyCmapStyle>(),
+            Self::Relation(_) => py.get_type::<PyRelationStyle>(),
         }
     }
 
-    fn type_class<'py>(self, py: Python<'py>) -> Bound<'py, PyType> {
+    fn type_class<'py>(&self, py: Python<'py>) -> Bound<'py, PyType> {
         match self {
             Self::Atom => py.get_type::<PyAtomType>(),
             Self::Bond => py.get_type::<PyBondType>(),
@@ -79,30 +131,38 @@ impl Category {
             Self::Improper => py.get_type::<PyImproperType>(),
             Self::Pair => py.get_type::<PyPairType>(),
             Self::Cmap => py.get_type::<PyCmapType>(),
+            Self::Relation(_) => py.get_type::<PyRelationType>(),
         }
     }
 
-    /// The categories `selector` names: a category name its own; a style or
-    /// type class its category; the base ``Style`` / ``Type`` every one.
+    /// The categories `selector` names in `ff`: a category name its own; a
+    /// style or type class its category (``RelationStyle`` /
+    /// ``RelationType`` every category beyond the seven); the base
+    /// ``Style`` / ``Type`` every one.
     ///
     /// # Errors
     ///
     /// `ValueError` for an unknown category name, `TypeError` when
     /// `selector` is neither a name nor a style or type class.
-    pub(crate) fn selected(selector: &Bound<'_, PyAny>) -> PyResult<Vec<Self>> {
+    pub(crate) fn selected(selector: &Bound<'_, PyAny>, ff: &ForceField) -> PyResult<Selection> {
         let py = selector.py();
         if let Ok(name) = selector.extract::<&str>() {
-            return Ok(vec![Self::of(name)?]);
+            return Ok(Selection::Only(Self::of(name, ff)?));
         }
         if selector.is(py.get_type::<PyStyle>()) || selector.is(py.get_type::<PyFfType>()) {
-            return Ok(Self::ALL.to_vec());
+            return Ok(Selection::Every);
         }
-        Self::ALL
+        if selector.is(py.get_type::<PyRelationStyle>())
+            || selector.is(py.get_type::<PyRelationType>())
+        {
+            return Ok(Selection::Relations);
+        }
+        Self::BUILTIN
             .into_iter()
             .find(|category| {
                 selector.is(category.style_class(py)) || selector.is(category.type_class(py))
             })
-            .map(|category| vec![category])
+            .map(Selection::Only)
             .ok_or_else(|| {
                 PyTypeError::new_err(format!(
                     "expected a category name or a Style / Type class, got {}",
@@ -112,14 +172,14 @@ impl Category {
     }
 
     pub(crate) fn style_handle(
-        self,
+        &self,
         py: Python<'_>,
         ff: &Py<PyForceField>,
         name: &str,
     ) -> PyResult<Py<PyAny>> {
         let base = PyStyle {
             ff: ff.clone_ref(py),
-            category: self,
+            category: self.clone(),
             name: name.to_owned(),
         };
         let init = PyClassInitializer::from(base);
@@ -131,11 +191,12 @@ impl Category {
             Self::Improper => Py::new(py, init.add_subclass(PyImproperStyle {}))?.into_any(),
             Self::Pair => Py::new(py, init.add_subclass(PyPairStyle {}))?.into_any(),
             Self::Cmap => Py::new(py, init.add_subclass(PyCmapStyle {}))?.into_any(),
+            Self::Relation(_) => Py::new(py, init.add_subclass(PyRelationStyle {}))?.into_any(),
         })
     }
 
     fn type_handle(
-        self,
+        &self,
         py: Python<'_>,
         ff: &Py<PyForceField>,
         style: Option<&str>,
@@ -143,7 +204,7 @@ impl Category {
     ) -> PyResult<Py<PyAny>> {
         let base = PyFfType {
             ff: ff.clone_ref(py),
-            category: self,
+            category: self.clone(),
             style: style.map(str::to_owned),
             name: name.to_owned(),
         };
@@ -156,11 +217,12 @@ impl Category {
             Self::Improper => Py::new(py, init.add_subclass(PyImproperType {}))?.into_any(),
             Self::Pair => Py::new(py, init.add_subclass(PyPairType {}))?.into_any(),
             Self::Cmap => Py::new(py, init.add_subclass(PyCmapType {}))?.into_any(),
+            Self::Relation(_) => Py::new(py, init.add_subclass(PyRelationType {}))?.into_any(),
         })
     }
 }
 
-fn missing_style(category: Category, name: &str) -> PyErr {
+fn missing_style(category: &Category, name: &str) -> PyErr {
     PyValueError::new_err(format!("no {} style named '{name}'", category.name()))
 }
 
@@ -187,7 +249,7 @@ impl PyStyle {
         let style = ff
             .inner
             .get_style(self.category.name(), &self.name)
-            .ok_or_else(|| missing_style(self.category, &self.name))?;
+            .ok_or_else(|| missing_style(&self.category, &self.name))?;
         Ok(f(style))
     }
 
@@ -238,7 +300,7 @@ impl PyStyle {
             let style = ff
                 .inner
                 .get_style_mut(self.category.name(), &self.name)
-                .ok_or_else(|| missing_style(self.category, &self.name))?;
+                .ok_or_else(|| missing_style(&self.category, &self.name))?;
             let ends: Vec<&str> = ends.iter().map(String::as_str).collect();
             style.def_type(name, &ends, params).map_err(py_value_err)?;
             // A pair restating a stored pair under another name is that row.
@@ -263,9 +325,10 @@ impl PyStyle {
         &self.name
     }
 
-    /// The category (``"atom"``, ``"bond"``, …, ``"pair"``, ``"cmap"``).
+    /// The category (``"atom"``, ``"bond"``, …, ``"pair"``, ``"cmap"``, or
+    /// any other a relation style is of).
     #[getter]
-    fn category(&self) -> &'static str {
+    fn category(&self) -> &str {
         self.category.name()
     }
 
@@ -331,7 +394,7 @@ impl PyStyle {
         let style = ff
             .inner
             .get_style_mut(self.category.name(), &self.name)
-            .ok_or_else(|| missing_style(self.category, &self.name))?;
+            .ok_or_else(|| missing_style(&self.category, &self.name))?;
         if let Ok(text) = value.cast::<PyString>() {
             style.set_str_param(key, text.to_str()?);
         } else if let Ok(number) = value.extract::<f64>() {
@@ -587,6 +650,44 @@ impl PyCmapStyle {
     }
 }
 
+/// The style of any category beyond the seven — a custom category of the
+/// force-field IR, molrec's ``constraint`` / ``drude`` /
+/// ``virtual_site``, or one a record brought in that nothing declares:
+/// ``def_type(name, *endpoints, **params)``.
+#[pyclass(module = "molrs.ff", name = "RelationStyle", extends = PyStyle, frozen, subclass)]
+pub struct PyRelationStyle {}
+
+#[pymethods]
+impl PyRelationStyle {
+    /// How many endpoints a type of this category names.
+    #[getter]
+    fn arity(slf: &Bound<'_, Self>) -> PyResult<usize> {
+        slf.as_super().get().with_style(slf.py(), Style::arity)
+    }
+
+    /// Define the type ``name`` on ``endpoints`` (``AtomType`` handles, as
+    /// many as the category's arity, in order) with ``params`` and return
+    /// its handle.
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If an endpoint is not an ``AtomType``.
+    /// ValueError
+    ///     On the wrong number of endpoints, or a conflicting re-definition.
+    #[pyo3(signature = (name, *endpoints, **params))]
+    fn def_type(
+        slf: &Bound<'_, Self>,
+        name: &str,
+        endpoints: &Bound<'_, PyTuple>,
+        params: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Py<PyAny>> {
+        let ends: Vec<Bound<'_, PyAny>> = endpoints.iter().collect();
+        let refs: Vec<&Bound<'_, PyAny>> = ends.iter().collect();
+        slf.as_super().get().define(slf.py(), name, &refs, params)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -617,7 +718,7 @@ impl PyFfType {
         let style = ff
             .inner
             .get_style(self.category.name(), style)
-            .ok_or_else(|| missing_style(self.category, style))?;
+            .ok_or_else(|| missing_style(&self.category, style))?;
         match style.type_params(&self.name) {
             Some(params) => params_to_dict(py, params),
             None => Ok(PyDict::new(py)),
@@ -640,9 +741,10 @@ impl PyFfType {
         &self.name
     }
 
-    /// The category (``"atom"``, ``"bond"``, …, ``"pair"``, ``"cmap"``).
+    /// The category (``"atom"``, ``"bond"``, …, ``"pair"``, ``"cmap"``, or
+    /// any other a relation style is of).
     #[getter]
-    fn category(&self) -> &'static str {
+    fn category(&self) -> &str {
         self.category.name()
     }
 
@@ -694,7 +796,7 @@ impl PyFfType {
         let style = ff
             .inner
             .get_style_mut(self.category.name(), style)
-            .ok_or_else(|| missing_style(self.category, style))?;
+            .ok_or_else(|| missing_style(&self.category, style))?;
         let set = if let Ok(text) = value.cast::<PyString>() {
             style.set_type_str_param(&self.name, key, text.to_str()?)
         } else if let Some(array) = array_param(value)? {
@@ -886,4 +988,25 @@ impl PyCmapType {
     fn mtom(slf: &Bound<'_, Self>) -> PyResult<Py<PyAny>> {
         PyFfType::endpoint(slf.as_super(), 4)
     }
+}
+
+/// A type of a category beyond the seven; its ``endpoints`` are as many
+/// atom types as the category's arity.
+#[pyclass(module = "molrs.ff", name = "RelationType", extends = PyFfType, frozen, subclass)]
+pub struct PyRelationType {}
+
+/// Register the custom category `name` of `arity` endpoints (block
+/// `<name>s`, priced by its atoms' positions) in the process-wide
+/// force-field IR registry — the Rust registration path, for the tests of
+/// the relation handles. `molrs.ff.ir.register_category` is the public door.
+#[pyfunction(name = "_register_relation_category")]
+pub(crate) fn register_relation_category(name: &str, arity: u8) -> PyResult<()> {
+    use molrs::ff::ir::{CategorySpec, Coordinate, EndpointOrder};
+    molrs::ff::ir::register_category(CategorySpec::custom(
+        name.to_owned(),
+        arity,
+        Coordinate::Compound,
+        EndpointOrder::Reversible,
+    ))
+    .map_err(py_value_err)
 }

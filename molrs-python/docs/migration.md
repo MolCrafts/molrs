@@ -29,12 +29,14 @@ Convention-neutral plumbing for the Class-I force-field IR.
   compare them exactly, so two definitions differing only in an array are a
   conflict. Code that copies a `Params` key by key through `iter()` and
   `iter_strings()` loses the arrays.
-- **The `forcefield` section.** A `cmap` table's `grid` column is
-  `f64[T, N, N]` (`N ≥ 2`, every row the same `N`, finite values); it is the
-  one column with trailing axes. Any other trailing-axis column, a
-  non-square or non-float grid, and an array style param are refused by
-  `validate` / `to_section`. `ForceField.from_section` reads a `cmap` style
-  (0.15 refused it as an unknown category).
+- **The `forcefield` section.** Any type parameter may be an array
+  (molrec's `f64[T, S…]`: one shape per column, every trailing axis at least
+  1, finite values in a non-null row); a `cmap` table's `grid` is further
+  `f64[T, N, N]` (`N ≥ 2`). A non-float or empty-axis array column, a
+  non-square grid, an array under an annotation or canonical key, and an
+  array style param are refused by `validate` / `to_section`.
+  `ForceField.from_section` reads a `cmap` style (0.15 refused it as an
+  unknown category).
 - **Frame vocabulary.** The canonical key `atomm` (`u64`, fifth relation
   endpoint) and the block `cmaps` (relation of arity 5, optional `type`,
   `type_id`, `style`) are new; `subset`, `replicate` and the validator
@@ -55,6 +57,53 @@ Convention-neutral plumbing for the Class-I force-field IR.
   level per axis), and `molrs_ff_from_json` reads it and refuses a ragged or
   non-numeric one. `"cmap"` is a category; `molrs_schema_column_dtype("atomm")`
   is `"uint"`.
+### Force-field IR protocol: categories beyond the seven
+
+The force-field IR is a protocol: a category the IR registry declares
+(molrec's `constraint`, `drude`, `virtual_site`, or a custom one registered
+with `molrs::ff::ir::register_category`), or one read from a record that
+nothing declares, is a style category like `bond`.
+
+- **Rust: `Style::category()` and `StyleDefs::category()` return `&str`**
+  (0.15: `&'static str`); the string borrows the style.
+- **Rust: `StyleDefs::Relation { category, arity, types }`** holds every
+  category beyond the seven, its types `RelationType { name, endpoints,
+  params }` (`endpoints: SmallVec<[String; 5]>`). A `match` on `StyleDefs`
+  already needs a wildcard arm (`#[non_exhaustive]`).
+- **Rust: `DefError` carries owned categories.** `DefError::Arity` has
+  `category: String, expected: String` and `DefError::TypeConflict` has
+  `category: String` (0.15: `&'static str`). `DefError::Unsupported` is gone
+  (nothing produced it); `DefError::CategoryArity { category, expected, got }`
+  is new: a style of a category with another number of endpoints than its
+  registration, or than the styles of it the force field holds.
+- **Rust: `ForceField::def_style` accepts every declared category.** The
+  arity of a category beyond the seven comes from the process-wide IR
+  registry (`ForceField::def_style_in` takes a registry), else from the
+  styles of it the force field already holds; anything else is still
+  `DefError::UnknownCategory`. `ForceField::def_style_with_arity` defines a
+  style of a category nothing declares, with the arity given (what
+  `from_section` does with a record's endpoint columns). New:
+  `Style::arity`, `StyleDefs::arity`, `ForceField::get_relationtypes`.
+- **`ForceField::from_section` keeps a category beyond the seven** (it
+  refused `virtual_site` and every unknown category): its arity is the
+  registry's, or the count of its table's endpoint columns.
+- **Compiling.** A style of a category nothing declares is priced as a
+  compound custom category: from its block `<name>s` by its style's
+  `expression`, or refused by name (``no kernel for <category> `<style>` ``)
+  when the block has rows and nothing prices it; a block that is absent
+  prices nothing.
+- **Python: `ForceField.def_style` returns a `RelationStyle`** for a category
+  beyond the seven; its `def_type(name, *endpoints, **params)` takes as many
+  `AtomType` endpoints as the category's `arity` (`ValueError` otherwise) and
+  returns a `RelationType`. `ForceField.styles`, `get_styles` and
+  `get_types` include these styles (they were dropped silently);
+  `get_styles(RelationStyle)` / `get_types(RelationType)` select them all.
+- **Python: a `ForceField` pickle carries each style's arity**, so a
+  category no registry of the unpickling process declares survives it. A
+  `ForceField` pickled by 0.15 does not unpickle in 0.16.
+- **C API.** `molrs_ff_def_style` accepts the same categories as
+  `ForceField::def_style`.
+
 ### Torsion algebra and `dihedral nharmonic`
 
 - **`dihedral nharmonic`** (LAMMPS's `Σᵢ₌₁ᴺ Aᵢ cosⁱ⁻¹φ`, params `a1..aN`,

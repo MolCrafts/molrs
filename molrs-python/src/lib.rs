@@ -408,6 +408,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ff::handles::PyImproperStyle>()?;
     m.add_class::<ff::handles::PyPairStyle>()?;
     m.add_class::<ff::handles::PyCmapStyle>()?;
+    m.add_class::<ff::handles::PyRelationStyle>()?;
     m.add_class::<ff::handles::PyFfType>()?;
     m.add_class::<ff::handles::PyAtomType>()?;
     m.add_class::<ff::handles::PyBondType>()?;
@@ -416,6 +417,11 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ff::handles::PyImproperType>()?;
     m.add_class::<ff::handles::PyPairType>()?;
     m.add_class::<ff::handles::PyCmapType>()?;
+    m.add_class::<ff::handles::PyRelationType>()?;
+    m.add_function(wrap_pyfunction!(
+        ff::handles::register_relation_category,
+        m
+    )?)?;
     m.add_class::<ff::PyFragmentScaling>()?;
     m.add_class::<PyTypifier>()?;
     m.add_class::<PyMatch>()?;

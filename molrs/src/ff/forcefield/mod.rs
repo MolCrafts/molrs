@@ -16,9 +16,13 @@ pub mod writers;
 pub mod xml;
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use molrs::system::bond_weights::BondDistanceWeights;
 use ndarray::ArrayD;
+use smallvec::SmallVec;
+
+use crate::ff::ir::{Arity, Registry};
 
 // ---------------------------------------------------------------------------
 // Params
@@ -195,7 +199,25 @@ pub struct CmapType {
     pub params: Params,
 }
 
+/// A type of a category beyond the seven built-in ones — a registered
+/// custom category of the force-field IR (`urey_bradley`, …), molrec's
+/// `constraint` / `drude` / `virtual_site`, or a category read from a record
+/// that no registry declares. Its endpoints are as many atom-type names as
+/// the category's arity, in order (`itom`, `jtom`, …).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RelationType {
+    pub name: String,
+    pub endpoints: SmallVec<[String; 5]>,
+    pub params: Params,
+}
+
 /// Each variant IS the category and holds only the relevant type definitions.
+///
+/// The seven categories molrs has always priced have a variant each;
+/// every other category — anything the force-field IR registry declares
+/// ([`crate::ff::ir::register_category`]), or a category read from a
+/// record that nothing declares — is a [`StyleDefs::Relation`], which
+/// carries its category name and arity.
 ///
 /// Non-exhaustive: a category may be added in a minor release, so a match
 /// outside this crate keeps a wildcard arm.
@@ -209,14 +231,19 @@ pub enum StyleDefs {
     Improper(Vec<ImproperType>),
     Pair(Vec<PairType>),
     Cmap(Vec<CmapType>),
+    /// Any other category: `arity` endpoints per type (0 ..= 5).
+    Relation {
+        category: Arc<str>,
+        arity: u8,
+        types: Vec<RelationType>,
+    },
 }
 
 impl StyleDefs {
-    /// No definitions, under `category` (`atom`/`bond`/`angle`/`dihedral`/
-    /// `improper`/`pair`/`cmap`); anything else is
-    /// `Err(DefError::UnknownCategory)`.
-    fn empty(category: &str) -> Result<Self, DefError> {
-        Ok(match category {
+    /// No definitions, under one of the seven categories with a variant of
+    /// its own; `None` for any other.
+    fn builtin(category: &str) -> Option<Self> {
+        Some(match category {
             "atom" => Self::Atom(Vec::new()),
             "bond" => Self::Bond(Vec::new()),
             "angle" => Self::Angle(Vec::new()),
@@ -224,12 +251,35 @@ impl StyleDefs {
             "improper" => Self::Improper(Vec::new()),
             "pair" => Self::Pair(Vec::new()),
             "cmap" => Self::Cmap(Vec::new()),
-            other => return Err(DefError::UnknownCategory(other.to_owned())),
+            _ => return None,
         })
     }
 
+    /// No definitions, under `category` of `arity` endpoints.
+    fn relation(category: &str, arity: u8) -> Self {
+        Self::Relation {
+            category: Arc::from(category),
+            arity,
+            types: Vec::new(),
+        }
+    }
+
+    /// No definitions, under the same category as `self`.
+    fn empty_like(&self) -> Self {
+        match self {
+            Self::Relation {
+                category, arity, ..
+            } => Self::Relation {
+                category: category.clone(),
+                arity: *arity,
+                types: Vec::new(),
+            },
+            other => Self::builtin(other.category()).expect("a built-in variant"),
+        }
+    }
+
     /// Category string for registry lookups.
-    pub fn category(&self) -> &'static str {
+    pub fn category(&self) -> &str {
         match self {
             Self::Atom(_) => "atom",
             Self::Bond(_) => "bond",
@@ -238,40 +288,41 @@ impl StyleDefs {
             Self::Improper(_) => "improper",
             Self::Pair(_) => "pair",
             Self::Cmap(_) => "cmap",
+            Self::Relation { category, .. } => category,
+        }
+    }
+
+    /// How many endpoint columns a type row of the category carries in a
+    /// record (a pair two, a self pair restating its one atom type).
+    pub fn arity(&self) -> usize {
+        match self {
+            Self::Atom(_) => 0,
+            Self::Bond(_) | Self::Pair(_) => 2,
+            Self::Angle(_) => 3,
+            Self::Dihedral(_) | Self::Improper(_) => 4,
+            Self::Cmap(_) => 5,
+            Self::Relation { arity, .. } => usize::from(*arity),
         }
     }
 
     /// Collect `(type_name, params)` pairs for kernel construction.
     pub fn collect_type_params(&self) -> Vec<(String, Params)> {
+        macro_rules! collect {
+            ($v:expr) => {
+                $v.iter()
+                    .map(|t| (t.name.clone(), t.params.clone()))
+                    .collect()
+            };
+        }
         match self {
-            Self::Atom(types) => types
-                .iter()
-                .map(|t| (t.name.clone(), t.params.clone()))
-                .collect(),
-            Self::Bond(types) => types
-                .iter()
-                .map(|t| (t.name.clone(), t.params.clone()))
-                .collect(),
-            Self::Angle(types) => types
-                .iter()
-                .map(|t| (t.name.clone(), t.params.clone()))
-                .collect(),
-            Self::Dihedral(types) => types
-                .iter()
-                .map(|t| (t.name.clone(), t.params.clone()))
-                .collect(),
-            Self::Improper(types) => types
-                .iter()
-                .map(|t| (t.name.clone(), t.params.clone()))
-                .collect(),
-            Self::Pair(types) => types
-                .iter()
-                .map(|t| (t.name.clone(), t.params.clone()))
-                .collect(),
-            Self::Cmap(types) => types
-                .iter()
-                .map(|t| (t.name.clone(), t.params.clone()))
-                .collect(),
+            Self::Atom(types) => collect!(types),
+            Self::Bond(types) => collect!(types),
+            Self::Angle(types) => collect!(types),
+            Self::Dihedral(types) => collect!(types),
+            Self::Improper(types) => collect!(types),
+            Self::Pair(types) => collect!(types),
+            Self::Cmap(types) => collect!(types),
+            Self::Relation { types, .. } => collect!(types),
         }
     }
 }
@@ -365,8 +416,14 @@ impl Style {
     }
 
     /// Category string derived from the `StyleDefs` variant.
-    pub fn category(&self) -> &'static str {
+    pub fn category(&self) -> &str {
         self.defs.category()
+    }
+
+    /// How many endpoints a type of this style names in a record (see
+    /// [`StyleDefs::arity`]).
+    pub fn arity(&self) -> usize {
+        self.defs.arity()
     }
 
     pub fn get_atomtype(&self, name: &str) -> Option<&AtomType> {
@@ -402,8 +459,9 @@ impl Style {
     /// is the convention) but it is never read back into endpoints — a `-` in
     /// a name is just a character. The endpoint count follows the category:
     /// an atom style takes none; a pair style one (a self pair) or two; bond
-    /// two; angle three; dihedral and improper four; cmap five. Any other count is
-    /// `Err(DefError::Arity)` and never panics. Re-defining a stored name, or
+    /// two; angle three; dihedral and improper four; cmap five; any other
+    /// category its arity. Any other count is `Err(DefError::Arity)` and
+    /// never panics. Re-defining a stored name, or
     /// restating a stored pair, follows the conflict rule (see [`Style`]):
     /// identical is a no-op, different is `Err(DefError::TypeConflict)` /
     /// `Err(DefError::PairConflict)`.
@@ -415,7 +473,7 @@ impl Style {
     ) -> Result<&mut Self, DefError> {
         if !self.accepts_endpoint_count(endpoints.len()) {
             return Err(DefError::Arity {
-                category: self.category(),
+                category: self.category().to_owned(),
                 expected: self.endpoint_arity(),
                 name: name.to_owned(),
                 got: endpoints.len(),
@@ -427,9 +485,10 @@ impl Style {
         // Checked here, where the label enters, not at the kernel that reads
         // it back: a force field that accepts a label it cannot compile is a
         // trap sprung later.
-        let labels: &[&str] = match self.defs {
-            StyleDefs::Atom(_) => &[name],
-            _ => endpoints,
+        let labels: &[&str] = if endpoints.is_empty() {
+            &[name]
+        } else {
+            endpoints
         };
         molrs::store::type_labels::TypeName::join(labels).map_err(DefError::Name)?;
         self.insert_type(name.to_owned(), endpoints, params)?;
@@ -438,24 +497,17 @@ impl Style {
 
     fn accepts_endpoint_count(&self, n: usize) -> bool {
         match self.defs {
-            StyleDefs::Atom(_) => n == 0,
-            StyleDefs::Bond(_) => n == 2,
-            StyleDefs::Angle(_) => n == 3,
-            StyleDefs::Dihedral(_) | StyleDefs::Improper(_) => n == 4,
             StyleDefs::Pair(_) => n == 1 || n == 2,
-            StyleDefs::Cmap(_) => n == 5,
+            _ => n == self.arity(),
         }
     }
 
     /// The `def_type` endpoint count this category expects.
-    fn endpoint_arity(&self) -> &'static str {
-        match self.defs {
-            StyleDefs::Atom(_) => "no endpoints",
-            StyleDefs::Bond(_) => "2 endpoints",
-            StyleDefs::Angle(_) => "3 endpoints",
-            StyleDefs::Dihedral(_) | StyleDefs::Improper(_) => "4 endpoints",
-            StyleDefs::Pair(_) => "1 or 2 endpoints",
-            StyleDefs::Cmap(_) => "5 endpoints",
+    fn endpoint_arity(&self) -> String {
+        match (&self.defs, self.arity()) {
+            (StyleDefs::Pair(_), _) => "1 or 2 endpoints".to_owned(),
+            (_, 0) => "no endpoints".to_owned(),
+            (_, n) => format!("{n} endpoints"),
         }
     }
 
@@ -502,7 +554,7 @@ impl Style {
                 Ok(true)
             } else {
                 Err(DefError::TypeConflict {
-                    category: self.category(),
+                    category: self.category().to_owned(),
                     style: self.name.clone(),
                     name: name.to_owned(),
                 })
@@ -578,6 +630,13 @@ impl Style {
                     (t.name.as_str(), e, &t.params)
                 })
                 .collect(),
+            StyleDefs::Relation { types, .. } => types
+                .iter()
+                .map(|t| {
+                    let e = t.endpoints.iter().map(String::as_str).collect();
+                    (t.name.as_str(), e, &t.params)
+                })
+                .collect(),
         }
     }
 
@@ -638,6 +697,11 @@ impl Style {
                 mtom: own(4),
                 params,
             }),
+            StyleDefs::Relation { types, .. } => types.push(RelationType {
+                name,
+                endpoints: e.iter().map(|&end| end.to_owned()).collect(),
+                params,
+            }),
         }
         Ok(())
     }
@@ -652,21 +716,29 @@ pub enum DefError {
     /// The type `name` was given the wrong number of endpoints for
     /// `category`.
     Arity {
-        category: &'static str,
-        expected: &'static str,
+        category: String,
+        expected: String,
         name: String,
         got: usize,
     },
-    /// The category accepts no per-type definitions.
-    Unsupported(&'static str),
-    /// Unknown style category string.
+    /// Unknown style category string: neither one of the seven built-in
+    /// ones, nor declared by the force-field IR registry, nor held by the
+    /// force field already.
     UnknownCategory(String),
+    /// A style of `category` declared with `got` endpoints per type, where
+    /// the category (its registration, or the styles of it the force field
+    /// already holds) has `expected`.
+    CategoryArity {
+        category: String,
+        expected: usize,
+        got: usize,
+    },
     /// No style `name` is defined under `category`.
     UnknownStyle { category: String, name: String },
     /// The `category` style `style` already defines a type `name` with other
     /// endpoints or other params. The first definition is kept.
     TypeConflict {
-        category: &'static str,
+        category: String,
         style: String,
         name: String,
     },
@@ -709,12 +781,19 @@ impl std::fmt::Display for DefError {
                 f,
                 "{category} type \"{name}\": expected {expected}, got {got} endpoint(s)"
             ),
-            DefError::Unsupported(category) => {
-                write!(f, "{category} styles do not support per-type definitions")
-            }
-            DefError::UnknownCategory(category) => {
-                write!(f, "unknown style category '{category}'")
-            }
+            DefError::UnknownCategory(category) => write!(
+                f,
+                "unknown style category '{category}': no force-field IR registry \
+                 declares it (register_category)"
+            ),
+            DefError::CategoryArity {
+                category,
+                expected,
+                got,
+            } => write!(
+                f,
+                "category '{category}' has {expected} endpoint(s) per type, not {got}"
+            ),
             DefError::UnknownStyle { category, name } => {
                 write!(f, "no {category} style named '{name}'")
             }
@@ -778,6 +857,7 @@ impl Style {
             StyleDefs::Improper(v) => find_in!(v),
             StyleDefs::Pair(v) => find_in!(v),
             StyleDefs::Cmap(v) => find_in!(v),
+            StyleDefs::Relation { types, .. } => find_in!(types),
         }
     }
 
@@ -823,6 +903,10 @@ impl Style {
                     t.mtom.clone(),
                 ]
             }),
+            StyleDefs::Relation { types, .. } => types
+                .iter()
+                .find(|t| t.name == name)
+                .map(|t| t.endpoints.to_vec()),
         }
     }
 
@@ -848,6 +932,7 @@ impl Style {
             StyleDefs::Improper(v) => set_on!(v),
             StyleDefs::Pair(v) => set_on!(v),
             StyleDefs::Cmap(v) => set_on!(v),
+            StyleDefs::Relation { types, .. } => set_on!(types),
         }
         false
     }
@@ -890,6 +975,7 @@ impl Style {
             StyleDefs::Improper(v) => set_on!(v),
             StyleDefs::Pair(v) => set_on!(v),
             StyleDefs::Cmap(v) => set_on!(v),
+            StyleDefs::Relation { types, .. } => set_on!(types),
         }
         false
     }
@@ -916,6 +1002,7 @@ impl Style {
             StyleDefs::Improper(v) => set_on!(v),
             StyleDefs::Pair(v) => set_on!(v),
             StyleDefs::Cmap(v) => set_on!(v),
+            StyleDefs::Relation { types, .. } => set_on!(types),
         }
         false
     }
@@ -929,7 +1016,7 @@ impl Style {
     /// dropped (`Ok(true)`); if it is defined with anything else, the rename is
     /// `Err(DefError::TypeConflict)` and nothing changes.
     pub fn rename_type(&mut self, old: &str, new: &str) -> Result<bool, DefError> {
-        let category = self.defs.category();
+        let category = self.defs.category().to_owned();
         let style = &self.name;
         macro_rules! rename_in {
             ($v:expr) => {{
@@ -947,7 +1034,7 @@ impl Style {
                     }
                     Some(_) => {
                         return Err(DefError::TypeConflict {
-                            category,
+                            category: category.clone(),
                             style: style.clone(),
                             name: new.to_owned(),
                         });
@@ -965,6 +1052,7 @@ impl Style {
             StyleDefs::Improper(v) => rename_in!(v),
             StyleDefs::Pair(v) => rename_in!(v),
             StyleDefs::Cmap(v) => rename_in!(v),
+            StyleDefs::Relation { types, .. } => rename_in!(types),
         }
     }
 
@@ -989,6 +1077,7 @@ impl Style {
             StyleDefs::Improper(v) => remove_in!(v),
             StyleDefs::Pair(v) => remove_in!(v),
             StyleDefs::Cmap(v) => remove_in!(v),
+            StyleDefs::Relation { types, .. } => remove_in!(types),
         }
     }
 }
@@ -1158,6 +1247,18 @@ pub struct ForceField {
     special_bonds: Option<SpecialBonds>,
 }
 
+/// The most endpoints a type names (`itom` … `mtom`).
+const MAX_ARITY: usize = 5;
+
+/// Whether `name` is spelled like a category (`^[a-z][a-z0-9_]*$`, the
+/// force-field IR's rule): a reader's unknown category must be one to be
+/// held.
+fn is_category_name(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    bytes.next().is_some_and(|b| b.is_ascii_lowercase())
+        && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+
 /// The unit system of a force field that declares none (LAMMPS `real`).
 const DEFAULT_UNITS: &str = "real";
 
@@ -1249,7 +1350,7 @@ impl ForceField {
             _ => {}
         }
         for style in &other.styles {
-            let target = out.def_style(style.category(), &style.name, style.params.clone())?;
+            let target = out.define_style(style.defs.empty_like(), &style.name, &style.params)?;
             for (name, endpoints, params) in style.type_rows() {
                 target.def_type(name, &endpoints, params.clone())?;
             }
@@ -1261,7 +1362,11 @@ impl ForceField {
     /// Define the `category` style named `name`, or return the existing one.
     ///
     /// `category` is one of `atom`/`bond`/`angle`/`dihedral`/`improper`/`pair`/
-    /// `cmap`; anything else is `Err(DefError::UnknownCategory)`. A style is identified
+    /// `cmap`, a category the process-wide force-field IR registry declares
+    /// ([`crate::ff::ir::register_category`]; its arity comes from there), or
+    /// a category this force field already holds a style of (one read from a
+    /// record that no registry declares); anything else is
+    /// `Err(DefError::UnknownCategory)`. A style is identified
     /// by `(category, name)`: a repeated definition with exactly equal `params`
     /// returns the style already defined; with different `params` it is
     /// `Err(DefError::StyleConflict)` and the first definition is kept.
@@ -1271,16 +1376,124 @@ impl ForceField {
         name: &str,
         params: Params,
     ) -> Result<&mut Style, DefError> {
-        self.check_style(category, name, &params)?;
+        let defs = crate::ff::ir::with_global(|r| self.empty_defs(Some(r), category))?;
+        self.define_style(defs, name, &params)
+    }
+
+    /// [`Self::def_style`] against `registry` instead of the process-wide
+    /// one — the registry a test extends the IR in.
+    pub fn def_style_in(
+        &mut self,
+        registry: &Registry,
+        category: &str,
+        name: &str,
+        params: Params,
+    ) -> Result<&mut Style, DefError> {
+        let defs = self.empty_defs(Some(registry), category)?;
+        self.define_style(defs, name, &params)
+    }
+
+    /// [`Self::def_style`] for a style whose types name `arity` endpoints —
+    /// how a reader brings in a category that nothing declares, its arity
+    /// taken from the endpoint columns of the record (molrec: an unknown
+    /// category's arity is its endpoint prefix).
+    ///
+    /// A category that is declared (built in, registered in the
+    /// process-wide registry, or already held here) keeps its own arity:
+    /// `arity` must equal it (`Err(DefError::CategoryArity)` otherwise; a
+    /// pair's is 2). A category that is not becomes a
+    /// [`StyleDefs::Relation`] of `arity` (0 ..= 5).
+    pub fn def_style_with_arity(
+        &mut self,
+        category: &str,
+        arity: usize,
+        name: &str,
+        params: Params,
+    ) -> Result<&mut Style, DefError> {
+        let declared = crate::ff::ir::with_global(|r| self.empty_defs(Some(r), category));
+        let defs = match declared {
+            Ok(defs) if defs.arity() == arity => defs,
+            Ok(defs) => {
+                return Err(DefError::CategoryArity {
+                    category: category.to_owned(),
+                    expected: defs.arity(),
+                    got: arity,
+                });
+            }
+            Err(DefError::UnknownCategory(_)) if is_category_name(category) => {
+                let arity = u8::try_from(arity)
+                    .ok()
+                    .filter(|&n| usize::from(n) <= MAX_ARITY)
+                    .ok_or_else(|| DefError::CategoryArity {
+                        category: category.to_owned(),
+                        expected: MAX_ARITY,
+                        got: arity,
+                    })?;
+                StyleDefs::relation(category, arity)
+            }
+            Err(e) => return Err(e),
+        };
+        self.define_style(defs, name, &params)
+    }
+
+    /// No definitions under `category`: its built-in variant, else a
+    /// [`StyleDefs::Relation`] of the arity `registry` declares, else of the
+    /// arity of the styles of `category` this force field holds.
+    fn empty_defs(
+        &self,
+        registry: Option<&Registry>,
+        category: &str,
+    ) -> Result<StyleDefs, DefError> {
+        if let Some(defs) = StyleDefs::builtin(category) {
+            return Ok(defs);
+        }
+        if let Some(spec) = registry.and_then(|r| r.category(category)) {
+            return match spec.arity {
+                Arity::Exact(n) => Ok(StyleDefs::relation(category, n)),
+                // Only `pair` is neighbour-driven, and it has its variant.
+                Arity::SelfOrPair => Err(DefError::UnknownCategory(category.to_owned())),
+            };
+        }
+        self.styles
+            .iter()
+            .find(|s| s.category() == category)
+            .map(|s| s.defs.empty_like())
+            .ok_or_else(|| DefError::UnknownCategory(category.to_owned()))
+    }
+
+    /// The one path a style is defined through: `defs` (empty) is its
+    /// category; an existing `(category, name)` with equal params is
+    /// returned, with other params refused.
+    fn define_style(
+        &mut self,
+        defs: StyleDefs,
+        name: &str,
+        params: &Params,
+    ) -> Result<&mut Style, DefError> {
+        let category = defs.category();
+        if let Some(other) = self.styles.iter().find(|s| s.category() == category)
+            && other.arity() != defs.arity()
+        {
+            return Err(DefError::CategoryArity {
+                category: category.to_owned(),
+                expected: other.arity(),
+                got: defs.arity(),
+            });
+        }
         if let Some(idx) = self
             .styles
             .iter()
             .position(|s| s.category() == category && s.name == name)
         {
+            if self.styles[idx].params != *params {
+                return Err(DefError::StyleConflict {
+                    category: category.to_owned(),
+                    name: name.to_owned(),
+                });
+            }
             return Ok(&mut self.styles[idx]);
         }
-        self.styles
-            .push(Style::new(StyleDefs::empty(category)?, name, params));
+        self.styles.push(Style::new(defs, name, params.clone()));
         Ok(self.styles.last_mut().expect("a style was just pushed"))
     }
 
@@ -1295,7 +1508,7 @@ impl ForceField {
         name: &str,
         params: &Params,
     ) -> Result<(), DefError> {
-        StyleDefs::empty(category)?;
+        crate::ff::ir::with_global(|r| self.empty_defs(Some(r), category))?;
         match self.get_style(category, name) {
             Some(existing) if existing.params != *params => Err(DefError::StyleConflict {
                 category: category.to_owned(),
@@ -1414,6 +1627,21 @@ impl ForceField {
             .collect()
     }
 
+    /// The types of every style of `category` that is a
+    /// [`StyleDefs::Relation`], style by style.
+    pub fn get_relationtypes(&self, category: &str) -> Vec<&RelationType> {
+        self.styles
+            .iter()
+            .filter_map(|s| match &s.defs {
+                StyleDefs::Relation {
+                    category: c, types, ..
+                } if &**c == category => Some(types.iter()),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
     pub fn get_cmaptypes(&self) -> Vec<&CmapType> {
         self.styles
             .iter()
@@ -1492,6 +1720,60 @@ pub(crate) mod tests {
             Err(DefError::UnknownCategory(_))
         ));
         assert!(ff.styles().is_empty());
+    }
+
+    /// A category beyond the seven is a [`StyleDefs::Relation`] of its
+    /// arity, and every edit reads and writes it like any other: its rows,
+    /// params, renames, removals, the conflict rule and a merge.
+    #[test]
+    fn a_relation_style_is_edited_like_any_other() {
+        let mut ff = ForceField::new("t");
+        // molrec's `drude`, which the built-in registry declares (arity 2).
+        let style = ff.def_style("drude", "harmonic", Params::new()).unwrap();
+        assert_eq!((style.category(), style.arity()), ("drude", 2));
+        style
+            .def_type("C-D", &["C", "D"], Params::from_pairs(&[("k", 500.0)]))
+            .unwrap();
+        assert!(matches!(
+            style.def_type("C-D", &["C", "E"], Params::from_pairs(&[("k", 500.0)])),
+            Err(DefError::TypeConflict { category, .. }) if category == "drude"
+        ));
+        assert!(matches!(
+            style.def_type("X", &["C"], Params::new()),
+            Err(DefError::Arity { got: 1, .. })
+        ));
+        assert_eq!(
+            style.type_endpoints("C-D"),
+            Some(vec!["C".into(), "D".into()])
+        );
+        assert!(style.set_type_param("C-D", "k", 400.0));
+        assert!(style.set_type_str_param("C-D", "desc", "core"));
+        assert!(style.set_type_array_param("C-D", "table", ArrayD::zeros(vec![3])));
+        assert_eq!(style.type_params("C-D").unwrap().get("k"), Some(400.0));
+        assert_eq!(style.rename_type("C-D", "core"), Ok(true));
+        assert_eq!(
+            style.type_rows(),
+            vec![("core", vec!["C", "D"], style.type_params("core").unwrap())]
+        );
+        assert_eq!(ff.get_relationtypes("drude").len(), 1);
+
+        let mut other = ForceField::new("u");
+        other
+            .def_style("drude", "harmonic", Params::new())
+            .unwrap()
+            .def_type("O-D", &["O", "D"], Params::from_pairs(&[("k", 300.0)]))
+            .unwrap();
+        ff.merge(&other).unwrap();
+        assert_eq!(
+            ff.get_style("drude", "harmonic").unwrap().type_rows().len(),
+            2
+        );
+        assert_eq!(
+            ff.get_style_mut("drude", "harmonic")
+                .unwrap()
+                .remove_type("core"),
+            1
+        );
     }
 
     /// `kspace` is not a category a force field can declare a style under.
@@ -2623,6 +2905,18 @@ pub(crate) mod tests {
             (StyleDefs::Improper(x), StyleDefs::Improper(y)) => x == y,
             (StyleDefs::Pair(x), StyleDefs::Pair(y)) => x == y,
             (StyleDefs::Cmap(x), StyleDefs::Cmap(y)) => x == y,
+            (
+                StyleDefs::Relation {
+                    category: c,
+                    arity: n,
+                    types: x,
+                },
+                StyleDefs::Relation {
+                    category: d,
+                    arity: m,
+                    types: y,
+                },
+            ) => (c, n, x) == (d, m, y),
             _ => false,
         }
     }
@@ -2651,7 +2945,7 @@ pub(crate) mod tests {
         }
     }
 
-    fn style_keys(ff: &ForceField) -> Vec<(&'static str, &str)> {
+    fn style_keys(ff: &ForceField) -> Vec<(&str, &str)> {
         ff.styles()
             .iter()
             .map(|s| (s.category(), s.name()))

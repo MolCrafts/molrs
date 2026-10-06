@@ -2643,7 +2643,11 @@ class ForceField:
         category: str,
         name: str,
         params: dict[str, ParamInput] | None = None,
-    ) -> Style: ...
+    ) -> Style:
+        """Define (or return the identical) ``category`` style ``name``: an
+        ``AtomStyle`` … ``CmapStyle`` for the seven categories, a
+        ``RelationStyle`` for any other the force-field IR registry declares
+        or this force field already holds."""
     @property
     def styles(self) -> list[Style]: ...
     def get_style(self, category: str, name: str) -> Style | None: ...
@@ -2730,6 +2734,19 @@ class CmapStyle(Style):
         **params: ParamInput,
     ) -> CmapType: ...
 
+class RelationStyle(Style):
+    """The style of a category beyond the seven (a registered custom
+    category, ``drude``, ``constraint``, ``virtual_site``, or one read from a
+    record that nothing declares)."""
+
+    @property
+    def arity(self) -> int: ...
+    def def_type(
+        self, name: str, *endpoints: AtomType, **params: ParamInput
+    ) -> RelationType:
+        """Define the type ``name`` on exactly ``arity`` endpoints, in
+        order; another count raises ``ValueError``."""
+
 class Type:
     """Handle of one type of a :class:`ForceField`; equal handles name the
     same category, style and type of one force field."""
@@ -2802,6 +2819,10 @@ class CmapType(Type):
     def ltom(self) -> AtomType: ...
     @property
     def mtom(self) -> AtomType: ...
+
+class RelationType(Type):
+    """A type of a category beyond the seven; ``endpoints`` holds as many
+    atom types as the category's arity."""
 
 class LammpsLogHeader:
     """Header lines that precede the first run of a LAMMPS log."""
@@ -3311,6 +3332,9 @@ def write_lammps_data_coeffs(
     units: str = "real",
 ) -> str: ...
 def assign_cmaps(frame: Frame, forcefield: ForceField) -> int: ...
+def _register_relation_category(name: str, arity: int) -> None:
+    """Test hook: register the compound custom category ``name`` of
+    ``arity`` endpoints in the process-wide force-field IR registry."""
 def read_lammps_cmap(path: PathInput) -> ForceField: ...
 def write_lammps_cmap(
     path: PathInput,

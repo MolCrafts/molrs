@@ -591,7 +591,7 @@ mod tests {
             .collect()
     }
 
-    fn style_keys(ff: &ForceField) -> Vec<(&'static str, &str)> {
+    fn style_keys(ff: &ForceField) -> Vec<(&str, &str)> {
         ff.styles()
             .iter()
             .map(|s| (s.category(), s.name()))

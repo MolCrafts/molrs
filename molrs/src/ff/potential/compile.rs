@@ -17,9 +17,9 @@
 
 use std::borrow::Cow;
 
-use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
+use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style, StyleDefs};
 use crate::ff::ir::registry::StyleEntry;
-use crate::ff::ir::{self, CategorySpec, Registry};
+use crate::ff::ir::{self, CategorySpec, Coordinate, EndpointOrder, Registry};
 use crate::ff::potential::pair::exceptions;
 use crate::ff::potential::registry::{self, ParamSource, RowSource};
 use crate::ff::potential::{Member, PairWeights, Potentials, TypedKernel, TypedMember};
@@ -216,6 +216,7 @@ impl<'a> PotentialCompiler<'a> {
         frame: &Frame,
     ) -> Result<Option<TypedKernel>, String> {
         let category = category_of(reg, style)?;
+        let category = &*category;
         if !category.prices_energy() {
             return Ok(None);
         }
@@ -295,6 +296,7 @@ impl<'a> PotentialCompiler<'a> {
         special_bonds: &SpecialBonds,
     ) -> Result<Option<Member>, String> {
         let spec = category_of(reg, style)?;
+        let spec = &*spec;
         if !spec.prices_energy() {
             return Ok(None);
         }
@@ -478,17 +480,41 @@ fn with_fallback<'r>(
     }
 }
 
-/// The registered category of `style`. An unregistered one is an error
-/// naming it: compiling it would need a block and a coordinate nothing
-/// declared.
-fn category_of<'r>(reg: &'r Registry, style: &Style) -> Result<&'r CategorySpec, String> {
-    reg.category(style.category()).ok_or_else(|| {
-        format!(
+/// The registered category of `style`.
+///
+/// A category no registry declares that the force field holds anyway (a
+/// [`StyleDefs::Relation`] read from a record) behaves as
+/// [`CategorySpec::custom`] of its arity, a compound category: priced from
+/// its block `<name>s` by its style's `expression`, refused by name
+/// ([`ir::IrError::NoKernel`]) when it has rows and nothing prices it, and
+/// never priced below two endpoints (molrec: no energy). A built-in
+/// category missing from the registry is an error naming it.
+fn category_of<'r>(reg: &'r Registry, style: &Style) -> Result<Cow<'r, CategorySpec>, String> {
+    if let Some(spec) = reg.category(style.category()) {
+        return Ok(Cow::Borrowed(spec));
+    }
+    match style.defs() {
+        StyleDefs::Relation {
+            category, arity, ..
+        } => {
+            let coordinate = if *arity >= 2 {
+                Coordinate::Compound
+            } else {
+                Coordinate::None
+            };
+            Ok(Cow::Owned(CategorySpec::custom(
+                category.to_string(),
+                *arity,
+                coordinate,
+                EndpointOrder::Reversible,
+            )))
+        }
+        _ => Err(format!(
             "style '{}': category '{}' is not registered (molrs::ff::ir::register_category)",
             style.name(),
             style.category()
-        )
-    })
+        )),
+    }
 }
 
 fn no_kernel(style: &Style) -> String {

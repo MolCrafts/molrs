@@ -108,7 +108,10 @@ impl CandidateSet {
                         t.params.clone(),
                     )
                 })),
-                StyleDefs::Atom(_) | StyleDefs::Pair(_) | StyleDefs::Cmap(_) => {}
+                StyleDefs::Atom(_)
+                | StyleDefs::Pair(_)
+                | StyleDefs::Cmap(_)
+                | StyleDefs::Relation { .. } => {}
             }
         }
         out
