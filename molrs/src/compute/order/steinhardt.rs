@@ -147,8 +147,8 @@ impl Steinhardt {
 /// [`ComputeError::BadShape`] if `nlist` has no `disp` column — a `DIST_SQ` or
 /// `INDICES_ONLY` table is refused rather than read as zeros — or if `nlist` is
 /// a [`CrossQuery`](molrs::spatial::neighbors::QueryMode::CrossQuery) table.
-/// Positions are read through [`get_positions_ref`], so a frame without
-/// `atoms.x/y/z` columns errors there instead.
+/// Positions are read from the `atoms.x/y/z` columns, so a frame without
+/// them errors there instead.
 pub fn compute_qlm<FA: FrameAccess>(
     frame: &FA,
     nlist: &Neighbors,

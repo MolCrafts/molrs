@@ -1,7 +1,7 @@
 //! In-process molecular-dynamics engine: integrators and force providers.
 //! Energy kernels are not part of `md`; they live in
 //! [`crate::ff::potential`] and reach the integrators through a
-//! [`ForceProvider`].
+//! [`ForceProvider`](crate::md::ForceProvider).
 //!
 //! Neighbour lists: [`crate::spatial::neighbors`] (`NeighborList`,
 //! `VerletSkin`). Science here:
