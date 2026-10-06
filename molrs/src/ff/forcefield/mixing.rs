@@ -109,4 +109,19 @@ mod tests {
         assert!(err.contains("arithmetic | geometric | sixthpower"), "{err}");
         assert!(!err.contains("  "), "run of spaces in: {err:?}");
     }
+
+    /// LAMMPS's `sixthpower` (Waldman–Hagler): σᵢⱼ = ((σᵢ⁶ + σⱼ⁶)/2)^⅙,
+    /// εᵢⱼ = 2√(εᵢεⱼ) σᵢ³σⱼ³/(σᵢ⁶ + σⱼ⁶) (`pair.cpp`, `mix_energy`/`mix_distance`).
+    #[test]
+    fn sixthpower_is_the_waldman_hagler_rule() {
+        let (eps, sigma) = Mixing::SixthPower.combine((0.2, 3.0), (0.05, 4.0));
+        let want_sigma = ((3.0f64.powi(6) + 4.0f64.powi(6)) / 2.0).powf(1.0 / 6.0);
+        let want_eps =
+            2.0 * (0.2f64 * 0.05).sqrt() * 27.0 * 64.0 / (3.0f64.powi(6) + 4.0f64.powi(6));
+        assert!((sigma - want_sigma).abs() < 1e-14);
+        assert!((eps - want_eps).abs() < 1e-15);
+        // A type with itself is itself.
+        let (e, s) = Mixing::SixthPower.combine((0.2, 3.0), (0.2, 3.0));
+        assert!((e - 0.2).abs() < 1e-15 && (s - 3.0).abs() < 1e-14);
+    }
 }

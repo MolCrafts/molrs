@@ -1349,6 +1349,23 @@ fn same_terms(
     }
 }
 
+/// Every source's IR, and each engine's form of it, goes through a record
+/// section (molrec v2) and back to the same field: molrs prices the read-back
+/// field as the one written, term by term.
+#[test]
+fn every_source_persists_through_a_record() {
+    for source in sources() {
+        let sys = source.load();
+        let x = configuration(source.name, &sys.coords, 0);
+        for engine in ENGINES {
+            let (ff, frame) = engine_form(&sys, engine);
+            let back = ForceField::from_section(&ff.to_section().unwrap())
+                .unwrap_or_else(|e| panic!("{} {engine}: {e}", source.name));
+            same_terms(source.name, "record", (&ff, &frame), (&back, &frame), &x);
+        }
+    }
+}
+
 /// With `MOLRS_FF_EQUIV_DIR` set: write every engine's inputs and molrs's
 /// numbers (`molrs.tsv`) there, for `scripts/ff_equivalence_check.sh`.
 #[test]

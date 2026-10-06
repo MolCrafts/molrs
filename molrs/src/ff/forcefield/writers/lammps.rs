@@ -2923,4 +2923,21 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
             .unwrap();
         assert!(write(&tt).unwrap_err().contains("coul/tt"));
     }
+
+    /// `pair_modify mix sixthpower` reads as the style's `mixing` and is
+    /// written back.
+    #[test]
+    fn sixthpower_mixing_is_read_and_written_back() {
+        let labels = labels_of(&[("atoms", &["c3"])]);
+        let ff = LammpsFfReader::new()
+            .read_str(
+                "special_bonds amber\npair_style lj/cut 10.0\npair_modify mix sixthpower\n\
+                 pair_coeff c3 c3 0.1 3.4\n",
+            )
+            .unwrap();
+        let lj = ff.get_style("pair", "lj/cut").unwrap();
+        assert_eq!(lj.params().get_str("mixing"), Some("sixthpower"));
+        let text = LammpsFfWriter::new(&labels).write_str(&ff).unwrap();
+        assert!(text.contains("pair_modify mix sixthpower"), "{text}");
+    }
 }

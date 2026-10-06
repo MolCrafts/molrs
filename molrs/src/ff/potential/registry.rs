@@ -132,6 +132,17 @@ impl KernelRegistry {
         Self::default()
     }
 
+    /// Every registered `(category, style)`, sorted.
+    pub fn styles(&self) -> Vec<(&str, &str)> {
+        let mut out: Vec<(&str, &str)> = self
+            .ctors
+            .keys()
+            .map(|(c, s)| (c.as_str(), s.as_str()))
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
     /// Register (or override) a table-driven ([`ParamSource::TypeRows`]) kernel
     /// for `(category, name)`.
     ///
