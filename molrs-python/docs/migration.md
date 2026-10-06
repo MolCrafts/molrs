@@ -8,6 +8,54 @@ add features are not listed here, apart from a short "Also new" list at the
 end of each section; [What's new in 0.15](release-notes.md) walks through the
 new features.
 
+## 0.15 → 0.16
+
+### Force-field IR infrastructure: cmap, array params, five endpoints
+
+Convention-neutral plumbing for the Class-I force-field IR.
+
+- **Rust: `StyleDefs` is `#[non_exhaustive]` and has a `Cmap` variant.**
+  `StyleDefs::Cmap(Vec<CmapType>)` holds five-endpoint types
+  (`itom` … `mtom`). A `match` on `StyleDefs` outside molrs needs a wildcard
+  arm. `ForceField::def_style("cmap", …)` defines a style (0.15 returned
+  `DefError::UnknownCategory`), and its `def_type` takes exactly five
+  endpoints.
+- **Rust: `ENDPOINT_COLUMNS` has five entries.**
+  `store::forcefield_section::ENDPOINT_COLUMNS` is `[&str; 5]`
+  (`itom` … `ltom`, `mtom`), and `category_arity("cmap")` is `Some(5)`
+  (0.15: `None`). A `cmap` style table must carry all five endpoint columns.
+- **Array params.** `Params` holds `f64` arrays beside numbers and strings
+  (`set_array`, `get_array`, `iter_arrays`); `==` and `same_parameters`
+  compare them exactly, so two definitions differing only in an array are a
+  conflict. Code that copies a `Params` key by key through `iter()` and
+  `iter_strings()` loses the arrays.
+- **The `forcefield` section.** A `cmap` table's `grid` column is
+  `f64[T, N, N]` (`N ≥ 2`, every row the same `N`, finite values); it is the
+  one column with trailing axes. Any other trailing-axis column, a
+  non-square or non-float grid, and an array style param are refused by
+  `validate` / `to_section`. `ForceField.from_section` reads a `cmap` style
+  (0.15 refused it as an unknown category).
+- **Frame vocabulary.** The canonical key `atomm` (`u64`, fifth relation
+  endpoint) and the block `cmaps` (relation of arity 5, optional `type`,
+  `type_id`, `style`) are new; `subset`, `replicate` and the validator
+  renumber and range-check `atomi` … `atomm`. `keys::ENDPOINTS` (Rust
+  `[&str; 5]`, Python `molrs.keys.ENDPOINTS`) gains `atomm`, so a block
+  without a spec now reads an `atomm` column as an endpoint into `atoms`, an
+  `atomm` column at another dtype than `u64` is refused, and the fifth
+  endpoint column of a five-node `MolGraph` relation is `atomm` (0.15:
+  `atom4`).
+- **Python.** `molrs.ff.CmapStyle` / `CmapType` (with `itom` … `mtom`);
+  `def_style("cmap", …)` returns a `CmapStyle`. A param value may be an
+  array: `def_type(**params)`, `def_style(params=…)` and `Type.__setitem__`
+  take a numpy array or a nested list / tuple of numbers and store float64, so
+  a list value that raised `TypeError` in 0.15 is now stored. `params` and
+  `t[key]` return arrays as float64 numpy arrays; pickles carry them.
+- **C API.** `molrs_ff_to_json` writes an optional `array_params` object (on
+  a style or a type, only when it holds an array param: nested lists, one
+  level per axis), and `molrs_ff_from_json` reads it and refuses a ragged or
+  non-numeric one. `"cmap"` is a category; `molrs_schema_column_dtype("atomm")`
+  is `"uint"`.
+
 ## 0.15.0 → 0.15.1
 
 A patch release on the 0.15 ABI line: nothing is renamed or removed, and

@@ -171,7 +171,7 @@ impl PyForceField {
     /// ------
     /// ValueError
     ///     When the section is invalid, or molrs cannot hold it:
-    ///     a category outside atom/bond/angle/dihedral/improper/pair,
+    ///     a category outside atom/bond/angle/dihedral/improper/pair/cmap,
     ///     units that are no preset, a smirks-keyed style.
     #[staticmethod]
     fn from_section(section: PyRef<'_, PyForceFieldSection>) -> PyResult<PyForceField> {

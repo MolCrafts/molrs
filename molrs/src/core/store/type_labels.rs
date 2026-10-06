@@ -57,8 +57,9 @@ pub(crate) fn is_int_token(token: &str) -> bool {
 pub struct TypeName(String);
 
 impl TypeName {
-    /// Join endpoint labels into a name: `-` between them, or `::` when any
-    /// label contains `-`.
+    /// Join endpoint labels (any number: none for an atom, up to five for a
+    /// cmap) into a name: `-` between them, or `::` when any label contains
+    /// `-`.
     ///
     /// `Err` naming the part when a part contains `@`, which would read as the
     /// start of a qualifier.
@@ -487,6 +488,16 @@ mod tests {
     fn join_uses_hyphen_between_plain_parts() {
         let name = TypeName::join(&["c3", "c3", "h1"]).unwrap();
         assert_eq!(name.as_str(), "c3-c3-h1");
+    }
+
+    #[test]
+    fn join_takes_the_five_labels_of_a_cmap() {
+        let name = TypeName::join(&["C", "NH1", "CT1", "C", "NH1"]).unwrap();
+        assert_eq!(name.as_str(), "C-NH1-CT1-C-NH1");
+        assert_eq!(
+            TypeName::infer_endpoints(name.as_str(), 5).unwrap(),
+            ["C", "NH1", "CT1", "C", "NH1"]
+        );
     }
 
     #[test]

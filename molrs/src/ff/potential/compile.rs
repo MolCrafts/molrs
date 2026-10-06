@@ -21,7 +21,7 @@ use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
 use crate::ff::potential::registry::{self, ParamSource};
 use crate::ff::potential::{Member, Potentials, TypedKernel, TypedMember};
 use molrs::store::frame::Frame;
-use molrs::store::schema::block_names::{ANGLES, ATOMS, BONDS, DIHEDRALS, IMPROPERS, PAIRS};
+use molrs::store::schema::block_names::{ANGLES, ATOMS, BONDS, CMAPS, DIHEDRALS, IMPROPERS, PAIRS};
 
 /// Compiles one [`ForceField`] against typed [`Frame`]s.
 ///
@@ -227,6 +227,7 @@ impl<'a> PotentialCompiler<'a> {
             "angle" => Some(ANGLES),
             "dihedral" => Some(DIHEDRALS),
             "improper" => Some(IMPROPERS),
+            "cmap" => Some(CMAPS),
             "pair" => Some(PAIRS),
             _ => None,
         };
@@ -361,6 +362,44 @@ mod tests {
         let e = pots.calc_energy(&[0.0, 0.0, 0.0, 1.6, 0.0, 0.0]);
         assert!((e - 1.5).abs() < 1e-10, "{e}");
         assert_eq!(compiler.compile_typed(&bonded).unwrap().len(), 1);
+    }
+
+    /// A cmap style is gated on the `cmaps` block like any bonded style, and
+    /// a present block with no cmap kernel registered is the plain
+    /// "no kernel" error, never a panic.
+    #[test]
+    fn a_cmap_style_is_gated_on_cmaps_and_needs_a_kernel() {
+        let mut params = Params::new();
+        params.set_array("grid", ndarray::ArrayD::zeros(vec![24, 24]));
+        let mut ff = ForceField::new("t");
+        ff.def_style("cmap", "charmm", Params::new())
+            .unwrap()
+            .def_type("c", &["C", "N", "CA", "C", "N"], params)
+            .unwrap();
+        let compiler = PotentialCompiler::new(&ff);
+        assert!(compiler.compile(&two_atoms()).unwrap().members().is_empty());
+        assert!(compiler.compile_typed(&two_atoms()).unwrap().is_empty());
+
+        let mut frame = two_atoms();
+        let mut cmaps = Block::new();
+        for key in ["atomi", "atomj", "atomk", "atoml", "atomm"] {
+            cmaps
+                .insert(key, Array1::from_vec(vec![0 as Idx]).into_dyn())
+                .unwrap();
+        }
+        cmaps
+            .insert("type", Array1::from_vec(vec!["c".to_string()]).into_dyn())
+            .unwrap();
+        frame.insert("cmaps", cmaps);
+        for err in [
+            compiler.compile(&frame).map(|_| ()).unwrap_err(),
+            compiler.compile_typed(&frame).map(|_| ()).unwrap_err(),
+        ] {
+            assert!(
+                err.contains("no kernel for style category 'cmap' name 'charmm'"),
+                "{err}"
+            );
+        }
     }
 
     #[test]

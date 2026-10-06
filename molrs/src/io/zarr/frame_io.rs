@@ -2824,4 +2824,52 @@ mod tests {
         assert_eq!(back["virtual_sites"].validity("atoml"), Some(&[false][..]));
         assert_eq!(back["drudes"].nrows(), Some(1));
     }
+
+    /// A `cmaps` block — five endpoints, `atomi` through `atomm`, a `type`
+    /// and a `style` — round-trips at its canonical dtypes.
+    #[test]
+    fn a_cmaps_block_round_trips() {
+        let dir = TempDir::new().unwrap();
+        let store = store_in(&dir);
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms_of(6));
+        let mut cmaps = Block::new();
+        for (key, rows) in [
+            ("atomi", [0, 1]),
+            ("atomj", [1, 2]),
+            ("atomk", [2, 3]),
+            ("atoml", [3, 4]),
+            ("atomm", [4, 5]),
+        ] {
+            cmaps.insert_column(key, uints(&rows)).unwrap();
+        }
+        cmaps.insert_column("type", strings(&["c1", "c2"])).unwrap();
+        cmaps
+            .insert_column("style", strings(&["charmm", "charmm"]))
+            .unwrap();
+        frame.insert("cmaps", cmaps);
+        assert!(
+            molrs::store::schema::Validator::canonical()
+                .check(&frame)
+                .is_empty()
+        );
+        write_frame_group(&store, FRAME, &frame).unwrap();
+        let back = read_frame_group(&store, FRAME).unwrap();
+        let cmaps = &back["cmaps"];
+        assert_eq!(cmaps.dtype("atomm"), Some(DType::UInt));
+        assert_eq!(
+            cmaps
+                .get("atomm")
+                .and_then(Column::as_uint)
+                .unwrap()
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            [4, 5]
+        );
+        assert_eq!(
+            cmaps.get("type").and_then(Column::as_string).unwrap()[[1]],
+            "c2"
+        );
+    }
 }

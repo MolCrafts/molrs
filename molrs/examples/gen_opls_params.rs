@@ -441,8 +441,13 @@ impl Table {
                         });
                     }
                 }
-                StyleDefs::Improper(_) => {
-                    return Err("improper styles have no row type in the OPLS-AA table".to_owned());
+                // `StyleDefs` is non-exhaustive: improper, cmap and any later
+                // category have no row type here.
+                other => {
+                    return Err(format!(
+                        "{} styles have no row type in the OPLS-AA table",
+                        other.category()
+                    ));
                 }
             }
         }

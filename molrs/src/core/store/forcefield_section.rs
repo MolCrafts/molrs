@@ -26,7 +26,9 @@
 //!   `name`, with endpoint columns other than its category's (or, keyed by
 //!   `smirks`, any endpoint column or no never-null `smirks`), or with a column
 //!   that is not `f64` / `string` (an annotation column: `string`; a canonical
-//!   key: that key's dtype), has trailing axes, or declares a precision;
+//!   key: that key's dtype), has trailing axes, or declares a precision — the
+//!   one exception being a `cmap` table's [`CMAP_GRID`] column, `f64[T, N, N]`
+//!   with `N ≥ 2` and every value of a non-null row finite;
 //! - a `class`-keyed style beside an atom table without `class`;
 //! - a `pair` or `pair14` table (endpoint-keyed) with two rows on one
 //!   unordered `{itom, jtom}` that differ in a parameter
@@ -41,7 +43,12 @@ use crate::MolRsError;
 use crate::store::block::{Block, DType};
 
 /// The endpoint columns of a style table, in position order.
-pub const ENDPOINT_COLUMNS: [&str; 4] = ["itom", "jtom", "ktom", "ltom"];
+pub const ENDPOINT_COLUMNS: [&str; 5] = ["itom", "jtom", "ktom", "ltom", "mtom"];
+
+/// The one parameter column with trailing axes: a `cmap` row's correction
+/// table, `f64[T, N, N]` — an `N × N` grid over the two dihedrals, every row
+/// of the table sharing `N`.
+pub const CMAP_GRID: &str = "grid";
 
 /// The annotation columns of a style table: `string`, nullable.
 pub const ANNOTATION_COLUMNS: [&str; 7] = [
@@ -144,6 +151,7 @@ pub fn category_arity(category: &str) -> Option<usize> {
         "bond" | "pair" | "pair14" | "constraint" | "drude" => 2,
         "angle" => 3,
         "dihedral" | "improper" => 4,
+        "cmap" => 5,
         _ => return None,
     })
 }
@@ -578,7 +586,7 @@ fn check_style_table(
         (_, None) => {
             if present != ENDPOINT_COLUMNS[..present.len()] {
                 return Err(fail(format!(
-                    "endpoint columns {present:?} are no prefix of itom..ltom"
+                    "endpoint columns {present:?} are no prefix of itom..mtom"
                 )));
             }
         }
@@ -594,6 +602,10 @@ fn check_style_table(
 
     for (column, values) in table.iter() {
         if column == "name" || ENDPOINT_COLUMNS.contains(&column) {
+            continue;
+        }
+        if style.category == "cmap" && column == CMAP_GRID {
+            check_cmap_grid(table, values).map_err(fail)?;
             continue;
         }
         let allowed: &[DType] = if ANNOTATION_COLUMNS.contains(&column) {
@@ -623,6 +635,36 @@ fn check_style_table(
     }
     if PAIR_CATEGORIES.contains(&style.category) && present == ENDPOINT_COLUMNS[..2] {
         check_pair_restatements(table).map_err(fail)?;
+    }
+    Ok(())
+}
+
+/// The trailing-axis exception: a `cmap` table's [`CMAP_GRID`] column is
+/// `f64[T, N, N]`, `N ≥ 2`, with no precision, and every value of a row that
+/// is not null is finite.
+fn check_cmap_grid(table: &Block, values: &crate::store::block::Column) -> Result<(), String> {
+    let shape = values.shape();
+    let grid = values
+        .as_float()
+        .filter(|_| table.precision(CMAP_GRID).is_none())
+        .filter(|_| matches!(shape, [_, n, m] if n == m && *n >= 2))
+        .ok_or_else(|| {
+            format!(
+                "the cmap grid is f64[T, N, N] with N >= 2 and no precision, found {}{:?}",
+                values.dtype().name(),
+                &shape[1..]
+            )
+        })?;
+    let validity = table.validity(CMAP_GRID);
+    for (row, cells) in grid.outer_iter().enumerate() {
+        if validity.is_some_and(|mask| !mask[row]) {
+            continue;
+        }
+        if let Some(bad) = cells.iter().find(|v| !v.is_finite()) {
+            return Err(format!(
+                "the cmap grid of row {row} holds {bad}; it is finite"
+            ));
+        }
     }
     Ok(())
 }
@@ -878,9 +920,9 @@ mod tests {
         ff.document["styles"]
             .as_array_mut()
             .unwrap()
-            .push(json!({"category": "cmap", "style": "charmm"}));
+            .push(json!({"category": "cross_term", "style": "custom"}));
         ff.tables.insert(
-            "cmap.charmm".into(),
+            "cross_term.custom".into(),
             table(vec![
                 ("name", strings(&["c"])),
                 ("itom", strings(&["C"])),
@@ -893,10 +935,89 @@ mod tests {
             table(vec![("text", strings(&["anything"]))]),
         );
         ff.validate().unwrap();
-        ff.tables["cmap.charmm"]
+        ff.tables["cross_term.custom"]
             .insert_column("ltom", strings(&["C"]))
             .unwrap();
         assert!(ff.validate().is_err(), "itom jtom ltom is no prefix");
+    }
+
+    fn grids(shape: &[usize], values: Vec<f64>) -> Column {
+        Column::from_float(ArrayD::from_shape_vec(shape.to_vec(), values).unwrap())
+    }
+
+    /// `base` with a `cmap charmm` style of two rows, whose `grid` column is
+    /// `grid`.
+    fn with_cmap(grid: Column) -> ForceFieldSection {
+        let mut ff = base();
+        ff.document["styles"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"category": "cmap", "style": "charmm"}));
+        let mut columns = vec![("name", strings(&["c1", "c2"]))];
+        for endpoint in ENDPOINT_COLUMNS {
+            columns.push((endpoint, strings(&["C", "N"])));
+        }
+        columns.push(("grid", grid));
+        ff.tables
+            .insert(style_block_name("cmap", "charmm"), table(columns));
+        ff
+    }
+
+    #[test]
+    fn a_cmap_row_names_five_endpoints_and_its_grid_is_square() {
+        assert_eq!(category_arity("cmap"), Some(5));
+        let square = |n: usize| grids(&[2, n, n], vec![0.25; 2 * n * n]);
+        with_cmap(square(2)).validate().unwrap();
+        with_cmap(square(24)).validate().unwrap();
+
+        let mut ff = with_cmap(square(3));
+        ff.tables["cmap.charmm"].remove("mtom");
+        assert!(ff.validate().is_err(), "four endpoints");
+    }
+
+    #[test]
+    fn a_ragged_or_malformed_cmap_grid_is_refused() {
+        for (grid, why) in [
+            (grids(&[2, 3, 4], vec![0.0; 24]), "not square"),
+            (grids(&[2, 1, 1], vec![0.0; 2]), "N < 2"),
+            (grids(&[2, 4], vec![0.0; 8]), "one trailing axis"),
+            (grids(&[2], vec![0.0; 2]), "no trailing axes"),
+            (grids(&[2, 2, 2, 2], vec![0.0; 16]), "three trailing axes"),
+            (strings(&["24x24", "24x24"]), "a string"),
+        ] {
+            let err = with_cmap(grid).validate().unwrap_err().to_string();
+            assert!(err.contains("cmap grid"), "{why}: {err}");
+        }
+        let mut values = vec![0.0; 8];
+        values[5] = f64::NAN;
+        let err = with_cmap(grids(&[2, 2, 2], values.clone()))
+            .validate()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("row 1"), "{err}");
+        // A null row's filler is not a value.
+        let mut ff = with_cmap(grids(&[2, 2, 2], values));
+        ff.tables["cmap.charmm"]
+            .set_validity("grid", vec![true, false])
+            .unwrap();
+        ff.validate().unwrap();
+    }
+
+    /// Only a cmap table's `grid` carries trailing axes: another cmap column,
+    /// or a `grid` anywhere else, is refused.
+    #[test]
+    fn a_trailing_axis_anywhere_else_is_refused() {
+        let mut ff = with_cmap(grids(&[2, 2, 2], vec![0.0; 8]));
+        ff.tables["cmap.charmm"]
+            .insert_column("other", grids(&[2, 2, 2], vec![0.0; 8]))
+            .unwrap();
+        assert!(ff.validate().is_err(), "another cmap column");
+
+        let mut ff = base();
+        ff.tables["bond.harmonic"]
+            .insert_column("grid", grids(&[1, 2, 2], vec![0.0; 4]))
+            .unwrap();
+        assert!(ff.validate().is_err(), "a bond grid");
     }
 
     /// `base` with a `pair lj/cut` style (category `category`) whose rows

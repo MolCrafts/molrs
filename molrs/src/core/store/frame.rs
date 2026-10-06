@@ -1432,6 +1432,66 @@ mod tests {
         );
     }
 
+    /// Six atoms at x = 0..5 and the two cmaps (0,1,2,3,4) and (1,2,3,4,5).
+    fn two_cmaps() -> Frame {
+        let mut atoms = Block::new();
+        atoms
+            .insert("x", float_col(&[0.0, 1.0, 2.0, 3.0, 4.0, 5.0]))
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert(
+            "cmaps",
+            uint_block(&[
+                ("atomi", &[0, 1]),
+                ("atomj", &[1, 2]),
+                ("atomk", &[2, 3]),
+                ("atoml", &[3, 4]),
+                ("atomm", &[4, 5]),
+                ("type_id", &[7, 8]),
+            ]),
+        );
+        frame
+    }
+
+    #[test]
+    fn subset_renumbers_a_cmap_through_atomm() {
+        // rows [1..=5]: cmap 0 touches atom 0 and is dropped; cmap 1 becomes
+        // (0,1,2,3,4) and keeps type_id 8.
+        let out = two_cmaps().subset("atoms", &[1, 2, 3, 4, 5]).unwrap();
+        assert_eq!(out["cmaps"].nrows(), Some(1));
+        for (key, want) in [
+            ("atomi", 0),
+            ("atomj", 1),
+            ("atomk", 2),
+            ("atoml", 3),
+            ("atomm", 4),
+        ] {
+            assert_eq!(uint_values(&out, "cmaps", key), [want], "{key}");
+        }
+        assert_eq!(uint_values(&out, "cmaps", "type_id"), [8]);
+
+        // atomm alone leaving the selection drops the row.
+        let out = two_cmaps().subset("atoms", &[0, 1, 2, 3, 4]).unwrap();
+        assert_eq!(uint_values(&out, "cmaps", "atomm"), [4]);
+        assert_eq!(uint_values(&out, "cmaps", "type_id"), [7]);
+    }
+
+    #[test]
+    fn replicate_offsets_every_cmap_endpoint() {
+        let two = two_cmaps().replicate(2).unwrap();
+        assert_eq!(uint_values(&two, "cmaps", "atomi"), [0, 1, 6, 7]);
+        assert_eq!(uint_values(&two, "cmaps", "atomm"), [4, 5, 10, 11]);
+        assert_eq!(uint_values(&two, "cmaps", "type_id"), [7, 8, 7, 8]);
+    }
+
+    #[test]
+    fn subset_refuses_a_cmaps_block_missing_atomm() {
+        let mut frame = two_cmaps();
+        frame.get_mut("cmaps").unwrap().remove("atomm");
+        assert!(frame.subset("atoms", &[0, 1]).is_err());
+    }
+
     #[test]
     fn replicate_offsets_an_unspecified_relation_block_too() {
         let mut frame = chain_of_four();

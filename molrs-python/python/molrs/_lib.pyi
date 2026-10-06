@@ -37,6 +37,12 @@ type ArrayU8 = npt.NDArray[np.uint8]
 type ArrayU32 = npt.NDArray[np.uint32]
 type ArrayI64 = npt.NDArray[np.int64]
 type PathInput = str | os.PathLike[str]
+# A force-field param as read back: a number, a string, or a float64 array
+# (a CMAP ``grid``).
+type ParamValue = float | str | ArrayF
+# A force-field param as given: an array may be any numpy array or nested
+# sequence of numbers, stored as float64.
+type ParamInput = float | str | npt.ArrayLike
 _TGraph = TypeVar("_TGraph", bound=Graph)
 
 def _ffi_abi_token() -> tuple[str, str, str, str, str]:
@@ -1971,6 +1977,7 @@ class keys:
     ATOMJ: str
     ATOMK: str
     ATOML: str
+    ATOMM: str
     ATOMIC_NUMBER: str
     BEAD_TYPE: str
     BOND_NUMBER: str
@@ -2629,7 +2636,7 @@ class ForceField:
         self,
         category: str,
         name: str,
-        params: dict[str, float | str] | None = None,
+        params: dict[str, ParamInput] | None = None,
     ) -> Style: ...
     @property
     def styles(self) -> list[Style]: ...
@@ -2652,16 +2659,16 @@ class Style:
     def get_types(self, type_cls: type[Type] | None = None) -> list[Type]: ...
     def get_type_by_name(self, name: str) -> Type | None: ...
     @property
-    def params(self) -> dict[str, float | str]: ...
-    def __getitem__(self, key: str) -> float | str | None: ...
+    def params(self) -> dict[str, ParamValue]: ...
+    def __getitem__(self, key: str) -> ParamValue | None: ...
     def __setitem__(self, key: str, value: float | str) -> None: ...
 
 class AtomStyle(Style):
-    def def_type(self, name: str, **params: float | str) -> AtomType: ...
+    def def_type(self, name: str, **params: ParamInput) -> AtomType: ...
 
 class BondStyle(Style):
     def def_type(
-        self, name: str, itom: AtomType, jtom: AtomType, **params: float | str
+        self, name: str, itom: AtomType, jtom: AtomType, **params: ParamInput
     ) -> BondType: ...
 
 class AngleStyle(Style):
@@ -2671,7 +2678,7 @@ class AngleStyle(Style):
         itom: AtomType,
         jtom: AtomType,
         ktom: AtomType,
-        **params: float | str,
+        **params: ParamInput,
     ) -> AngleType: ...
 
 class DihedralStyle(Style):
@@ -2682,7 +2689,7 @@ class DihedralStyle(Style):
         jtom: AtomType,
         ktom: AtomType,
         ltom: AtomType,
-        **params: float | str,
+        **params: ParamInput,
     ) -> DihedralType: ...
 
 class ImproperStyle(Style):
@@ -2693,7 +2700,7 @@ class ImproperStyle(Style):
         jtom: AtomType,
         ktom: AtomType,
         ltom: AtomType,
-        **params: float | str,
+        **params: ParamInput,
     ) -> ImproperType: ...
 
 class PairStyle(Style):
@@ -2702,8 +2709,20 @@ class PairStyle(Style):
         name: str,
         itom: AtomType,
         jtom: AtomType | None = None,
-        **params: float | str,
+        **params: ParamInput,
     ) -> PairType: ...
+
+class CmapStyle(Style):
+    def def_type(
+        self,
+        name: str,
+        itom: AtomType,
+        jtom: AtomType,
+        ktom: AtomType,
+        ltom: AtomType,
+        mtom: AtomType,
+        **params: ParamInput,
+    ) -> CmapType: ...
 
 class Type:
     """Handle of one type of a :class:`ForceField`; equal handles name the
@@ -2714,13 +2733,13 @@ class Type:
     @property
     def category(self) -> str: ...
     @property
-    def params(self) -> dict[str, float | str]: ...
-    def __getitem__(self, key: str) -> float | str | None: ...
+    def params(self) -> dict[str, ParamValue]: ...
+    def __getitem__(self, key: str) -> ParamValue | None: ...
     def get(self, key: str, default: Any = None) -> Any: ...
     def __contains__(self, key: str) -> bool: ...
-    def __setitem__(self, key: str, value: float | str) -> None: ...
+    def __setitem__(self, key: str, value: ParamInput) -> None: ...
     def keys(self) -> list[str]: ...
-    def items(self) -> list[tuple[str, float | str]]: ...
+    def items(self) -> list[tuple[str, ParamValue]]: ...
     @property
     def endpoints(self) -> tuple[AtomType, ...]: ...
 
@@ -2765,6 +2784,18 @@ class PairType(Type):
     def itom(self) -> AtomType: ...
     @property
     def jtom(self) -> AtomType: ...
+
+class CmapType(Type):
+    @property
+    def itom(self) -> AtomType: ...
+    @property
+    def jtom(self) -> AtomType: ...
+    @property
+    def ktom(self) -> AtomType: ...
+    @property
+    def ltom(self) -> AtomType: ...
+    @property
+    def mtom(self) -> AtomType: ...
 
 class LammpsLogHeader:
     """Header lines that precede the first run of a LAMMPS log."""

@@ -3,9 +3,9 @@
 //! A handle is the owning force field plus the identifiers of one style or
 //! one type, and nothing else: every read and write goes through the one
 //! native [`molrs::ff::ForceField`]. `ForceField.def_style` returns the
-//! category's style handle ([`PyAtomStyle`] … [`PyPairStyle`]); its typed
+//! category's style handle ([`PyAtomStyle`] … [`PyCmapStyle`]); its typed
 //! ``def_type`` door defines a type and returns the type's handle
-//! ([`PyAtomType`] … [`PyPairType`]).
+//! ([`PyAtomType`] … [`PyCmapType`]).
 
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -13,10 +13,10 @@ use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 
 use molrs::ff::forcefield::Style;
 
-use super::{PyForceField, params_from_dict, params_to_dict};
+use super::{PyForceField, array_param, params_from_dict, params_to_dict};
 use crate::helpers::py_value_err;
 
-/// The six categories and their handle classes.
+/// The seven categories and their handle classes.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Category {
     Atom,
@@ -25,16 +25,18 @@ pub(crate) enum Category {
     Dihedral,
     Improper,
     Pair,
+    Cmap,
 }
 
 impl Category {
-    pub(crate) const ALL: [Self; 6] = [
+    pub(crate) const ALL: [Self; 7] = [
         Self::Atom,
         Self::Bond,
         Self::Angle,
         Self::Dihedral,
         Self::Improper,
         Self::Pair,
+        Self::Cmap,
     ];
 
     pub(crate) fn of(name: &str) -> PyResult<Self> {
@@ -52,6 +54,7 @@ impl Category {
             Self::Dihedral => "dihedral",
             Self::Improper => "improper",
             Self::Pair => "pair",
+            Self::Cmap => "cmap",
         }
     }
 
@@ -63,6 +66,7 @@ impl Category {
             Self::Dihedral => py.get_type::<PyDihedralStyle>(),
             Self::Improper => py.get_type::<PyImproperStyle>(),
             Self::Pair => py.get_type::<PyPairStyle>(),
+            Self::Cmap => py.get_type::<PyCmapStyle>(),
         }
     }
 
@@ -74,6 +78,7 @@ impl Category {
             Self::Dihedral => py.get_type::<PyDihedralType>(),
             Self::Improper => py.get_type::<PyImproperType>(),
             Self::Pair => py.get_type::<PyPairType>(),
+            Self::Cmap => py.get_type::<PyCmapType>(),
         }
     }
 
@@ -125,6 +130,7 @@ impl Category {
             Self::Dihedral => Py::new(py, init.add_subclass(PyDihedralStyle {}))?.into_any(),
             Self::Improper => Py::new(py, init.add_subclass(PyImproperStyle {}))?.into_any(),
             Self::Pair => Py::new(py, init.add_subclass(PyPairStyle {}))?.into_any(),
+            Self::Cmap => Py::new(py, init.add_subclass(PyCmapStyle {}))?.into_any(),
         })
     }
 
@@ -149,6 +155,7 @@ impl Category {
             Self::Dihedral => Py::new(py, init.add_subclass(PyDihedralType {}))?.into_any(),
             Self::Improper => Py::new(py, init.add_subclass(PyImproperType {}))?.into_any(),
             Self::Pair => Py::new(py, init.add_subclass(PyPairType {}))?.into_any(),
+            Self::Cmap => Py::new(py, init.add_subclass(PyCmapType {}))?.into_any(),
         })
     }
 }
@@ -256,7 +263,7 @@ impl PyStyle {
         &self.name
     }
 
-    /// The category (``"atom"``, ``"bond"``, …, ``"pair"``).
+    /// The category (``"atom"``, ``"bond"``, …, ``"pair"``, ``"cmap"``).
     #[getter]
     fn category(&self) -> &'static str {
         self.category.name()
@@ -544,6 +551,42 @@ impl PyPairStyle {
     }
 }
 
+/// The cmap style: ``def_type(name, itom, jtom, ktom, ltom, mtom, **params)``.
+#[pyclass(module = "molrs.ff", name = "CmapStyle", extends = PyStyle, frozen, subclass)]
+pub struct PyCmapStyle {}
+
+#[pymethods]
+impl PyCmapStyle {
+    /// Define the cmap type ``name`` on the five atom types of two
+    /// consecutive dihedrals, ``itom``–``jtom``–``ktom``–``ltom`` and
+    /// ``jtom``–``ktom``–``ltom``–``mtom``, with ``params`` (its correction
+    /// table is the array param ``grid``, an ``N × N`` float array) and
+    /// return its handle.
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If an endpoint is not an ``AtomType``.
+    /// ValueError
+    ///     On a conflicting re-definition.
+    #[pyo3(signature = (name, itom, jtom, ktom, ltom, mtom, **params))]
+    #[allow(clippy::too_many_arguments, reason = "five endpoints, as in Python")]
+    fn def_type(
+        slf: &Bound<'_, Self>,
+        name: &str,
+        itom: &Bound<'_, PyAny>,
+        jtom: &Bound<'_, PyAny>,
+        ktom: &Bound<'_, PyAny>,
+        ltom: &Bound<'_, PyAny>,
+        mtom: &Bound<'_, PyAny>,
+        params: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Py<PyAny>> {
+        slf.as_super()
+            .get()
+            .define(slf.py(), name, &[itom, jtom, ktom, ltom, mtom], params)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -551,7 +594,8 @@ impl PyPairStyle {
 /// Handle of one type of a :class:`ForceField`.
 ///
 /// Its params read as a mapping (``t["k"]``, ``"k" in t``, ``t.keys()``) and
-/// write one at a time (``t["k"] = 300.0``, ``t["element"] = "C"``).
+/// write one at a time (``t["k"] = 300.0``, ``t["element"] = "C"``,
+/// ``t["grid"] = np.zeros((24, 24))``).
 /// ``endpoints`` are the ``AtomType`` handles it is defined on. Two handles
 /// are equal when they name the same category, style and type of the same
 /// force field.
@@ -596,13 +640,14 @@ impl PyFfType {
         &self.name
     }
 
-    /// The category (``"atom"``, ``"bond"``, …, ``"pair"``).
+    /// The category (``"atom"``, ``"bond"``, …, ``"pair"``, ``"cmap"``).
     #[getter]
     fn category(&self) -> &'static str {
         self.category.name()
     }
 
-    /// The type's params (numbers and strings), as a new dict.
+    /// The type's params (numbers, strings and float64 arrays), as a new
+    /// dict.
     #[getter]
     fn params<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         self.params_of(py)
@@ -628,12 +673,14 @@ impl PyFfType {
         self.params_of(py)?.contains(key)
     }
 
-    /// Set one param: a number, or a string (``t["element"] = "C"``).
+    /// Set one param: a number, a string (``t["element"] = "C"``) or an
+    /// array (a numpy array or nested sequence of numbers, stored as
+    /// float64: ``t["grid"] = np.zeros((24, 24))``).
     ///
     /// Raises
     /// ------
     /// TypeError
-    ///     If ``value`` is neither a number nor a str.
+    ///     If ``value`` is neither a number, a str nor an array of numbers.
     /// ValueError
     ///     If the type is an endpoint no atom style defines.
     fn __setitem__(&self, py: Python<'_>, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -650,11 +697,13 @@ impl PyFfType {
             .ok_or_else(|| missing_style(self.category, style))?;
         let set = if let Ok(text) = value.cast::<PyString>() {
             style.set_type_str_param(&self.name, key, text.to_str()?)
+        } else if let Some(array) = array_param(value)? {
+            style.set_type_array_param(&self.name, key, array)
         } else if let Ok(number) = value.extract::<f64>() {
             style.set_type_param(&self.name, key, number)
         } else {
             return Err(PyTypeError::new_err(format!(
-                "param '{key}' must be a number or a str, got {}",
+                "param '{key}' must be a number, a str or an array of numbers, got {}",
                 value.get_type().name()?
             )));
         };
@@ -779,7 +828,7 @@ macro_rules! third_endpoint {
     };
 }
 
-/// The `ltom` endpoint accessor of a type class with four endpoints.
+/// The `ltom` endpoint accessor of a type class with four or more endpoints.
 macro_rules! fourth_endpoint {
     ($ty:ty) => {
         #[pymethods]
@@ -822,3 +871,19 @@ fourth_endpoint!(PyImproperType);
 #[pyclass(module = "molrs.ff", name = "PairType", extends = PyFfType, frozen, subclass)]
 pub struct PyPairType {}
 first_two_endpoints!(PyPairType);
+
+/// A cmap type: two consecutive dihedrals on five atom types.
+#[pyclass(module = "molrs.ff", name = "CmapType", extends = PyFfType, frozen, subclass)]
+pub struct PyCmapType {}
+first_two_endpoints!(PyCmapType);
+third_endpoint!(PyCmapType);
+fourth_endpoint!(PyCmapType);
+
+#[pymethods]
+impl PyCmapType {
+    /// The fifth endpoint atom type.
+    #[getter]
+    fn mtom(slf: &Bound<'_, Self>) -> PyResult<Py<PyAny>> {
+        PyFfType::endpoint(slf.as_super(), 4)
+    }
+}

@@ -17,6 +17,7 @@ pub mod xml;
 use std::collections::HashMap;
 
 use molrs::system::bond_weights::BondDistanceWeights;
+use ndarray::ArrayD;
 
 // ---------------------------------------------------------------------------
 // Params
@@ -24,18 +25,22 @@ use molrs::system::bond_weights::BondDistanceWeights;
 
 /// Key-value parameter bag for type definitions.
 ///
-/// Holds numeric params (`k`, `r0`, the numeric type `id`, …) and, separately,
-/// string params (`element`, or any string metadata carried by convention as a
-/// keyword param). Energy kernels read only the numeric side; the string side
-/// preserves I/O metadata across the boundary.
+/// Holds numeric params (`k`, `r0`, the numeric type `id`, …), string params
+/// (`element`, or any string metadata carried by convention as a keyword
+/// param) and array params (an N-dimensional `f64` array, e.g. a CMAP
+/// correction's `grid`), each on its own side. Energy kernels read the numeric
+/// and array sides; the string side preserves I/O metadata across the
+/// boundary.
 ///
-/// Equality is exact on both sides (the same keys, `f64` values equal under
-/// `==` with no tolerance, equal strings): it decides whether a re-definition
-/// is the same definition, which is a question of identity, not closeness.
+/// Equality is exact on every side (the same keys, `f64` values equal under
+/// `==` with no tolerance, equal strings, arrays of one shape with every
+/// element equal under `==`): it decides whether a re-definition is the same
+/// definition, which is a question of identity, not closeness.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Params {
     inner: HashMap<String, f64>,
     strings: HashMap<String, String>,
+    arrays: HashMap<String, ArrayD<f64>>,
 }
 
 impl Params {
@@ -44,14 +49,11 @@ impl Params {
     }
 
     pub fn from_pairs(pairs: &[(&str, f64)]) -> Self {
-        let mut inner = HashMap::new();
+        let mut out = Self::new();
         for &(k, v) in pairs {
-            inner.insert(k.to_owned(), v);
+            out.set(k, v);
         }
-        Self {
-            inner,
-            strings: HashMap::new(),
-        }
+        out
     }
 
     pub fn get(&self, key: &str) -> Option<f64> {
@@ -80,9 +82,25 @@ impl Params {
         self.strings.iter().map(|(k, v)| (k.as_str(), v.as_str()))
     }
 
+    // -- array params (a CMAP `grid`, and any other N-D parameter) --
+
+    /// Set (or replace) the array param `key`.
+    pub fn set_array(&mut self, key: &str, value: ArrayD<f64>) {
+        self.arrays.insert(key.to_owned(), value);
+    }
+
+    /// The array param `key`, or `None`.
+    pub fn get_array(&self, key: &str) -> Option<&ArrayD<f64>> {
+        self.arrays.get(key)
+    }
+
+    pub fn iter_arrays(&self) -> impl Iterator<Item = (&str, &ArrayD<f64>)> + '_ {
+        self.arrays.iter().map(|(k, v)| (k.as_str(), v))
+    }
+
     /// Whether `self` and `other` price alike: equal on every key that is a
-    /// parameter ([`is_parameter_column`]), numeric and string, a key one
-    /// carries and the other lacks being a difference. The annotation keys
+    /// parameter ([`is_parameter_column`]), numeric, string and array, a key
+    /// one carries and the other lacks being a difference. The annotation keys
     /// (`desc`, `doi`, `smarts`, …) take no part. Exact, like `==`.
     ///
     /// [`is_parameter_column`]: molrs::store::forcefield_section::is_parameter_column
@@ -97,6 +115,7 @@ impl Params {
         }
         parameters(&self.inner) == parameters(&other.inner)
             && parameters(&self.strings) == parameters(&other.strings)
+            && parameters(&self.arrays) == parameters(&other.arrays)
     }
 }
 
@@ -161,8 +180,26 @@ pub struct PairType {
     pub params: Params,
 }
 
+/// CMAP type definition (references five atom type names: the two
+/// consecutive backbone dihedrals `itom-jtom-ktom-ltom` and
+/// `jtom-ktom-ltom-mtom`). Its correction table is the array param `grid`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CmapType {
+    pub name: String,
+    pub itom: String,
+    pub jtom: String,
+    pub ktom: String,
+    pub ltom: String,
+    pub mtom: String,
+    pub params: Params,
+}
+
 /// Each variant IS the category and holds only the relevant type definitions.
+///
+/// Non-exhaustive: a category may be added in a minor release, so a match
+/// outside this crate keeps a wildcard arm.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum StyleDefs {
     Atom(Vec<AtomType>),
     Bond(Vec<BondType>),
@@ -170,11 +207,13 @@ pub enum StyleDefs {
     Dihedral(Vec<DihedralType>),
     Improper(Vec<ImproperType>),
     Pair(Vec<PairType>),
+    Cmap(Vec<CmapType>),
 }
 
 impl StyleDefs {
     /// No definitions, under `category` (`atom`/`bond`/`angle`/`dihedral`/
-    /// `improper`/`pair`); anything else is `Err(DefError::UnknownCategory)`.
+    /// `improper`/`pair`/`cmap`); anything else is
+    /// `Err(DefError::UnknownCategory)`.
     fn empty(category: &str) -> Result<Self, DefError> {
         Ok(match category {
             "atom" => Self::Atom(Vec::new()),
@@ -183,6 +222,7 @@ impl StyleDefs {
             "dihedral" => Self::Dihedral(Vec::new()),
             "improper" => Self::Improper(Vec::new()),
             "pair" => Self::Pair(Vec::new()),
+            "cmap" => Self::Cmap(Vec::new()),
             other => return Err(DefError::UnknownCategory(other.to_owned())),
         })
     }
@@ -196,6 +236,7 @@ impl StyleDefs {
             Self::Dihedral(_) => "dihedral",
             Self::Improper(_) => "improper",
             Self::Pair(_) => "pair",
+            Self::Cmap(_) => "cmap",
         }
     }
 
@@ -223,6 +264,10 @@ impl StyleDefs {
                 .map(|t| (t.name.clone(), t.params.clone()))
                 .collect(),
             Self::Pair(types) => types
+                .iter()
+                .map(|t| (t.name.clone(), t.params.clone()))
+                .collect(),
+            Self::Cmap(types) => types
                 .iter()
                 .map(|t| (t.name.clone(), t.params.clone()))
                 .collect(),
@@ -284,8 +329,8 @@ impl StyleDefs {
 /// any name, is a no-op when the two have
 /// [the same parameters](Params::same_parameters) and
 /// `Err(DefError::PairConflict)` otherwise, so a pair style holds at most one
-/// row per pair. The edits `set_type_param`, `set_type_str_param` and
-/// `remove_type` change an existing definition and are outside the rule;
+/// row per pair. The edits `set_type_param`, `set_type_str_param`,
+/// `set_type_array_param` and `remove_type` change an existing definition and are outside the rule;
 /// `rename_type` can land on an existing name and therefore carries it.
 #[derive(Debug, Clone)]
 pub struct Style {
@@ -356,7 +401,7 @@ impl Style {
     /// is the convention) but it is never read back into endpoints — a `-` in
     /// a name is just a character. The endpoint count follows the category:
     /// an atom style takes none; a pair style one (a self pair) or two; bond
-    /// two; angle three; dihedral and improper four. Any other count is
+    /// two; angle three; dihedral and improper four; cmap five. Any other count is
     /// `Err(DefError::Arity)` and never panics. Re-defining a stored name, or
     /// restating a stored pair, follows the conflict rule (see [`Style`]):
     /// identical is a no-op, different is `Err(DefError::TypeConflict)` /
@@ -397,6 +442,7 @@ impl Style {
             StyleDefs::Angle(_) => n == 3,
             StyleDefs::Dihedral(_) | StyleDefs::Improper(_) => n == 4,
             StyleDefs::Pair(_) => n == 1 || n == 2,
+            StyleDefs::Cmap(_) => n == 5,
         }
     }
 
@@ -408,6 +454,7 @@ impl Style {
             StyleDefs::Angle(_) => "3 endpoints",
             StyleDefs::Dihedral(_) | StyleDefs::Improper(_) => "4 endpoints",
             StyleDefs::Pair(_) => "1 or 2 endpoints",
+            StyleDefs::Cmap(_) => "5 endpoints",
         }
     }
 
@@ -523,6 +570,13 @@ impl Style {
                 .iter()
                 .map(|t| (t.name.as_str(), vec![&*t.itom, &*t.jtom], &t.params))
                 .collect(),
+            StyleDefs::Cmap(v) => v
+                .iter()
+                .map(|t| {
+                    let e = vec![&*t.itom, &*t.jtom, &*t.ktom, &*t.ltom, &*t.mtom];
+                    (t.name.as_str(), e, &t.params)
+                })
+                .collect(),
         }
     }
 
@@ -572,6 +626,15 @@ impl Style {
                 name,
                 itom: own(0),
                 jtom: own(e.len() - 1),
+                params,
+            }),
+            StyleDefs::Cmap(types) => types.push(CmapType {
+                name,
+                itom: own(0),
+                jtom: own(1),
+                ktom: own(2),
+                ltom: own(3),
+                mtom: own(4),
                 params,
             }),
         }
@@ -713,6 +776,7 @@ impl Style {
             StyleDefs::Dihedral(v) => find_in!(v),
             StyleDefs::Improper(v) => find_in!(v),
             StyleDefs::Pair(v) => find_in!(v),
+            StyleDefs::Cmap(v) => find_in!(v),
         }
     }
 
@@ -749,6 +813,15 @@ impl Style {
                 .iter()
                 .find(|t| t.name == name)
                 .map(|t| vec![t.itom.clone(), t.jtom.clone()]),
+            StyleDefs::Cmap(v) => v.iter().find(|t| t.name == name).map(|t| {
+                vec![
+                    t.itom.clone(),
+                    t.jtom.clone(),
+                    t.ktom.clone(),
+                    t.ltom.clone(),
+                    t.mtom.clone(),
+                ]
+            }),
         }
     }
 
@@ -773,6 +846,7 @@ impl Style {
             StyleDefs::Dihedral(v) => set_on!(v),
             StyleDefs::Improper(v) => set_on!(v),
             StyleDefs::Pair(v) => set_on!(v),
+            StyleDefs::Cmap(v) => set_on!(v),
         }
         false
     }
@@ -814,6 +888,33 @@ impl Style {
             StyleDefs::Dihedral(v) => set_on!(v),
             StyleDefs::Improper(v) => set_on!(v),
             StyleDefs::Pair(v) => set_on!(v),
+            StyleDefs::Cmap(v) => set_on!(v),
+        }
+        false
+    }
+
+    /// Set (or add) a single array param on the type named `name` (a CMAP
+    /// type's `grid`). Returns `false` if no such type exists.
+    ///
+    /// An edit of an existing definition, not a definition: it changes the
+    /// stored value in place and is outside the conflict rule (see [`Style`]).
+    pub fn set_type_array_param(&mut self, name: &str, key: &str, value: ArrayD<f64>) -> bool {
+        macro_rules! set_on {
+            ($v:expr) => {{
+                if let Some(t) = $v.iter_mut().find(|t| t.name == name) {
+                    t.params.set_array(key, value);
+                    return true;
+                }
+            }};
+        }
+        match &mut self.defs {
+            StyleDefs::Atom(v) => set_on!(v),
+            StyleDefs::Bond(v) => set_on!(v),
+            StyleDefs::Angle(v) => set_on!(v),
+            StyleDefs::Dihedral(v) => set_on!(v),
+            StyleDefs::Improper(v) => set_on!(v),
+            StyleDefs::Pair(v) => set_on!(v),
+            StyleDefs::Cmap(v) => set_on!(v),
         }
         false
     }
@@ -862,6 +963,7 @@ impl Style {
             StyleDefs::Dihedral(v) => rename_in!(v),
             StyleDefs::Improper(v) => rename_in!(v),
             StyleDefs::Pair(v) => rename_in!(v),
+            StyleDefs::Cmap(v) => rename_in!(v),
         }
     }
 
@@ -885,6 +987,7 @@ impl Style {
             StyleDefs::Dihedral(v) => remove_in!(v),
             StyleDefs::Improper(v) => remove_in!(v),
             StyleDefs::Pair(v) => remove_in!(v),
+            StyleDefs::Cmap(v) => remove_in!(v),
         }
     }
 }
@@ -1156,8 +1259,8 @@ impl ForceField {
 
     /// Define the `category` style named `name`, or return the existing one.
     ///
-    /// `category` is one of `atom`/`bond`/`angle`/`dihedral`/`improper`/`pair`;
-    /// anything else is `Err(DefError::UnknownCategory)`. A style is identified
+    /// `category` is one of `atom`/`bond`/`angle`/`dihedral`/`improper`/`pair`/
+    /// `cmap`; anything else is `Err(DefError::UnknownCategory)`. A style is identified
     /// by `(category, name)`: a repeated definition with exactly equal `params`
     /// returns the style already defined; with different `params` it is
     /// `Err(DefError::StyleConflict)` and the first definition is kept.
@@ -1229,8 +1332,8 @@ impl ForceField {
     }
 
     /// Mutable style lookup, for the explicit edits (`set_type_param`,
-    /// `set_type_str_param`, `rename_type`, `remove_type`) of an existing
-    /// definition.
+    /// `set_type_str_param`, `set_type_array_param`, `rename_type`,
+    /// `remove_type`) of an existing definition.
     pub fn get_style_mut(&mut self, category: &str, name: &str) -> Option<&mut Style> {
         self.styles
             .iter_mut()
@@ -1309,6 +1412,17 @@ impl ForceField {
             .flatten()
             .collect()
     }
+
+    pub fn get_cmaptypes(&self) -> Vec<&CmapType> {
+        self.styles
+            .iter()
+            .filter_map(|s| match &s.defs {
+                StyleDefs::Cmap(types) => Some(types.iter()),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1318,6 +1432,7 @@ impl ForceField {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use molrs::store::type_labels::TypeName;
 
     #[test]
     fn test_params() {
@@ -1763,7 +1878,7 @@ pub(crate) mod tests {
 
     #[test]
     fn def_type_endpoint_count_off_the_category_arity_is_an_arity_error() {
-        let cases: [(&str, &str, &[&str]); 8] = [
+        let cases: [(&str, &str, &[&str]); 10] = [
             ("atom", "full", &["CT"]),
             ("bond", "harmonic", &["CT"]),
             ("bond", "harmonic", &["CT", "CT", "CT"]),
@@ -1772,6 +1887,8 @@ pub(crate) mod tests {
             ("improper", "harmonic", &["CT", "CT", "CT", "CT", "CT"]),
             ("pair", "lj/cut", &[]),
             ("pair", "lj/cut", &["CT", "CT", "CT"]),
+            ("cmap", "charmm", &["CT", "CT", "CT", "CT"]),
+            ("cmap", "charmm", &["CT", "CT", "CT", "CT", "CT", "CT"]),
         ];
         for (category, style_name, endpoints) in cases {
             let mut ff = ForceField::new("test");
@@ -1820,6 +1937,145 @@ pub(crate) mod tests {
         assert_eq!(a, same);
         assert_ne!(a, next_ulp);
         assert_ne!(a, other_string);
+    }
+
+    fn grid(values: &[f64]) -> ArrayD<f64> {
+        let n = (values.len() as f64).sqrt() as usize;
+        ArrayD::from_shape_vec(vec![n, n], values.to_vec()).unwrap()
+    }
+
+    /// The array side is compared like the others: same keys, same shape,
+    /// every element equal under `==`.
+    #[test]
+    fn params_equality_is_exact_on_the_array_side() {
+        let mut a = Params::new();
+        a.set_array("grid", grid(&[0.0, 1.0, 2.0, 3.0]));
+        let same = a.clone();
+        let mut next_ulp = Params::new();
+        next_ulp.set_array(
+            "grid",
+            grid(&[0.0, 1.0, 2.0, f64::from_bits(3.0_f64.to_bits() + 1)]),
+        );
+        let mut reshaped = Params::new();
+        reshaped.set_array(
+            "grid",
+            ArrayD::from_shape_vec(vec![4], vec![0.0, 1.0, 2.0, 3.0]).unwrap(),
+        );
+
+        assert_eq!(a, same);
+        assert_ne!(a, next_ulp);
+        assert_ne!(a, reshaped);
+        assert_ne!(a, Params::new());
+        assert_eq!(a.get_array("grid").map(|g| g.shape()), Some(&[2, 2][..]));
+        assert_eq!(a.iter_arrays().count(), 1);
+        assert!(a.same_parameters(&same));
+        assert!(!a.same_parameters(&next_ulp));
+    }
+
+    /// A pair restating a stored pair is compared on its arrays too.
+    #[test]
+    fn a_pair_restatement_compares_array_parameters() {
+        let with = |g: &[f64]| {
+            let mut p = Params::from_pairs(&[("epsilon", 0.1)]);
+            p.set_array("table", grid(g));
+            p
+        };
+        let mut ff = ForceField::new("t");
+        let style = ff.def_style("pair", "table", Params::new()).unwrap();
+        style
+            .def_type("A-B", &["A", "B"], with(&[1.0, 2.0, 3.0, 4.0]))
+            .unwrap();
+        style
+            .def_type("B-A", &["B", "A"], with(&[1.0, 2.0, 3.0, 4.0]))
+            .unwrap();
+        assert_eq!(
+            style.type_rows().len(),
+            1,
+            "an equal restatement is a no-op"
+        );
+        assert!(matches!(
+            style.def_type("B-A", &["B", "A"], with(&[1.0, 2.0, 3.0, 5.0])),
+            Err(DefError::PairConflict { .. })
+        ));
+    }
+
+    #[test]
+    fn def_type_cmap_takes_five_endpoints_and_keeps_its_grid() {
+        let mut params = Params::new();
+        params.set_array("grid", grid(&[0.0, 0.5, -0.5, 0.25]));
+        let mut ff = ForceField::new("test");
+        let style = ff.def_style("cmap", "charmm", Params::new()).unwrap();
+        style
+            .def_type("C-NH1-CT1-C-NH1", &["C", "NH1", "CT1", "C", "NH1"], params)
+            .unwrap();
+
+        assert_eq!(style.category(), "cmap");
+        assert_eq!(
+            style.type_endpoints("C-NH1-CT1-C-NH1"),
+            Some(["C", "NH1", "CT1", "C", "NH1"].map(String::from).to_vec())
+        );
+        let cmaps = ff.get_cmaptypes();
+        assert_eq!(cmaps.len(), 1);
+        assert_eq!(
+            (cmaps[0].itom.as_str(), cmaps[0].mtom.as_str()),
+            ("C", "NH1")
+        );
+        assert_eq!(
+            cmaps[0].params.get_array("grid"),
+            Some(&grid(&[0.0, 0.5, -0.5, 0.25]))
+        );
+        assert_eq!(
+            TypeName::join(&["C", "NH1", "CT1", "C", "NH1"])
+                .unwrap()
+                .as_str(),
+            "C-NH1-CT1-C-NH1"
+        );
+    }
+
+    /// A different grid under a stored name is a type conflict, and the edits
+    /// carry arrays: `set_type_array_param` replaces one in place and
+    /// `rename_type` keeps it.
+    #[test]
+    fn a_cmap_grid_takes_part_in_the_conflict_rule_and_the_edits() {
+        let ends = ["C", "N", "CA", "C", "N"];
+        let with = |g: &[f64]| {
+            let mut p = Params::new();
+            p.set_array("grid", grid(g));
+            p
+        };
+        let mut ff = ForceField::new("t");
+        let style = ff.def_style("cmap", "charmm", Params::new()).unwrap();
+        style.def_type("c1", &ends, with(&[1.0; 4])).unwrap();
+        style.def_type("c1", &ends, with(&[1.0; 4])).unwrap();
+        assert!(matches!(
+            style.def_type("c1", &ends, with(&[2.0; 4])),
+            Err(DefError::TypeConflict { .. })
+        ));
+        assert!(style.set_type_array_param("c1", "grid", grid(&[3.0; 4])));
+        assert!(!style.set_type_array_param("nope", "grid", grid(&[3.0; 4])));
+        assert!(style.rename_type("c1", "c2").unwrap());
+        assert_eq!(
+            style.type_params("c2").and_then(|p| p.get_array("grid")),
+            Some(&grid(&[3.0; 4]))
+        );
+        assert_eq!(style.remove_type("c2"), 1);
+    }
+
+    #[test]
+    fn merge_carries_array_params() {
+        let mut params = Params::new();
+        params.set_array("grid", grid(&[1.0, 2.0, 3.0, 4.0]));
+        let mut other = ForceField::new("other");
+        other
+            .def_style("cmap", "charmm", Params::new())
+            .unwrap()
+            .def_type("c", &["A", "B", "C", "D", "E"], params.clone())
+            .unwrap();
+        let mut ff = ForceField::new("ff");
+        ff.merge(&other).unwrap();
+        assert_eq!(ff.get_cmaptypes()[0].params, params);
+        ff.merge(&other).unwrap();
+        assert_eq!(ff.get_cmaptypes().len(), 1, "an identical overlap");
     }
 
     // -- the conflict rule: Style::def_type ---------------------------------------
@@ -2365,6 +2621,7 @@ pub(crate) mod tests {
             (StyleDefs::Dihedral(x), StyleDefs::Dihedral(y)) => x == y,
             (StyleDefs::Improper(x), StyleDefs::Improper(y)) => x == y,
             (StyleDefs::Pair(x), StyleDefs::Pair(y)) => x == y,
+            (StyleDefs::Cmap(x), StyleDefs::Cmap(y)) => x == y,
             _ => false,
         }
     }
