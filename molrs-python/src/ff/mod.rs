@@ -2048,7 +2048,7 @@ pub fn read_lammps_data_coeffs_py(
 /// ``coul/cut`` pair is recombined as ``lj/cut/coul/cut`` so geometric mixing
 /// is not defeated by a hybrid wildcard. Styles: ``bond`` harmonic / morse,
 /// ``angle`` harmonic, ``dihedral`` periodic (as ``fourier``) / opls / harmonic
-/// / charmm / multi/harmonic, ``improper`` harmonic / cvff / periodic (as
+/// / charmm / multi/harmonic / nharmonic, ``improper`` harmonic / cvff / periodic (as
 /// ``cvff``, the atom order unchanged).
 ///
 /// Parameters

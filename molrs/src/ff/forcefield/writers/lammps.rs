@@ -84,6 +84,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use super::ForceFieldWriter;
 use crate::ff::forcefield::lammps_units::{LammpsFfUnits, parse_style};
 use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::torsion::nharmonic_coefficients;
 use crate::ff::forcefield::{
     AngleType, BondType, DihedralType, ForceField, ImproperType, PairType, Params, Style, StyleDefs,
 };
@@ -235,6 +236,7 @@ impl Coeff {
 /// | `dihedral periodic`       | `k<i>`, `periodicity<i>`, `phase<i>` (deg, absent → 0), or one term as `k`, `periodicity`, `phase` | LAMMPS `fourier`: `m K1 n1 d1 …` |
 /// | `dihedral charmm`         | `k`, `periodicity`, `phase` (deg, absent → 0), `w` | `K n d w` |
 /// | `dihedral multi/harmonic` | `a1..a5` (absent → 0)                  | `A1 A2 A3 A4 A5` |
+/// | `dihedral nharmonic`      | `a1..aN` (contiguous, N ≥ 1)           | `N A1 … AN` |
 /// | `pair lj/cut…`            | `epsilon`, `sigma`                     | `epsilon sigma` |
 ///
 /// An absent param falls back only where the molrs kernel reads the same
@@ -415,6 +417,14 @@ fn coeff_fields(
             Real(need("w")?),
         ]),
         ("dihedral", "multi/harmonic") => energies(&["a1", "a2", "a3", "a4", "a5"]),
+        ("dihedral", "nharmonic") => {
+            let a = nharmonic_coefficients(params)?;
+            let mut fields = vec![Coeff::Int(a.len() as i64)];
+            for v in a {
+                fields.push(Real(units.energy(v)?));
+            }
+            Ok(fields)
+        }
         ("pair", s) if s.starts_with("lj/cut") => Ok(vec![
             Real(units.energy(need("epsilon")?)?),
             Real(units.length(need("sigma")?)?),
@@ -2234,6 +2244,12 @@ pair_coeff c3 c3 0.107800 3.397710
                 "multi/harmonic",
                 "multi/harmonic",
                 &["1", "2", "3", "4", "5"],
+            ),
+            (
+                "dihedral",
+                "nharmonic",
+                "nharmonic",
+                &["3", "1", "-2", "0.5"],
             ),
             ("pair", "lj/cut", "lj/cut", &["0.066", "3.5"]),
         ];

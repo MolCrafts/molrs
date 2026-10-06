@@ -10,7 +10,7 @@ pub mod lammps_units;
 pub mod mixing;
 pub mod readers;
 pub mod section;
-pub(crate) mod torsion;
+pub mod torsion;
 pub mod writers;
 pub mod xml;
 

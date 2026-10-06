@@ -2,7 +2,7 @@
 //!
 //! Parses a LAMMPS force-field include — `pair_style`/`pair_coeff`,
 //! `bond_style harmonic|morse`, `angle_style harmonic|charmm`, `dihedral_style`
-//! `fourier` / `opls` / `harmonic` / `charmm` / `multi/harmonic`,
+//! `fourier` / `opls` / `harmonic` / `charmm` / `multi/harmonic` / `nharmonic`,
 //! `improper_style harmonic|cvff`, and a `hybrid` of those in any bonded
 //! category — with **type-label** coefficients into a
 //! molrs [`ForceField`]. Inverse of
@@ -305,7 +305,14 @@ fn supported_styles(category: &str) -> &'static [&'static str] {
     match category {
         "bond" => &["harmonic", "morse"],
         "angle" => &["harmonic", "charmm"],
-        "dihedral" => &["fourier", "opls", "harmonic", "multi/harmonic", "charmm"],
+        "dihedral" => &[
+            "fourier",
+            "opls",
+            "harmonic",
+            "multi/harmonic",
+            "nharmonic",
+            "charmm",
+        ],
         "improper" => &["harmonic", "cvff"],
         _ => &[],
     }
@@ -785,6 +792,7 @@ fn add_bonded(
 /// | `dihedral fourier`      | `m K1 n1 d1 …`       | molrs `periodic`: `k<i>`, `periodicity<i>`, `phase<i>` (deg) |
 /// | `dihedral charmm`       | `K n d w`            | `k`, `periodicity`, `phase` (deg), `w` |
 /// | `dihedral multi/harmonic` | `A1 A2 A3 A4 A5`   | `a1..a5` |
+/// | `dihedral nharmonic`    | `N A1 … AN`          | `a1..aN` |
 /// | `pair lj/cut…`          | `epsilon sigma`      | `epsilon`, `sigma` |
 ///
 /// LAMMPS's single-letter `n` and `d` take molrs's descriptive names because
@@ -889,6 +897,19 @@ fn coeff_params(
             ("a4", "dihedral A4"),
             ("a5", "dihedral A5"),
         ]),
+        // N  A1 ... AN  (N ≥ 1)
+        ("dihedral", "nharmonic") => {
+            let n: usize = get(values, 0, "dihedral n", where_)?
+                .parse()
+                .ok()
+                .filter(|&n| n >= 1)
+                .ok_or_else(|| format!("{}: dihedral n is not an integer ≥ 1", where_()))?;
+            let mut params = Params::new();
+            for i in 1..=n {
+                params.set(&format!("a{i}"), num(i, "dihedral A")?);
+            }
+            Ok(params)
+        }
         // m  K1 n1 d1  [K2 n2 d2 ...]
         ("dihedral", "fourier") => {
             let m: usize = get(values, 0, "dihedral m", where_)?

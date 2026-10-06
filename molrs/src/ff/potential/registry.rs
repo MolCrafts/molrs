@@ -288,6 +288,11 @@ impl KernelRegistry {
             dihedral::harmonic::dihedral_harmonic_ctor,
         );
         r.register("dihedral", "class2", dihedral::class2::dihedral_class2_ctor);
+        r.register(
+            "dihedral",
+            "nharmonic",
+            dihedral::multi_harmonic::dihedral_nharmonic_ctor,
+        );
         // pair / nonbonded
         r.register("pair", "lj/cut", pair::lj_cut::pair_lj_cut_ctor);
         r.register("pair", "lj/class2", pair::lj_class2::pair_lj_class2_ctor);
