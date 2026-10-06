@@ -63,8 +63,9 @@ use crate::io::data::prmtop::parse_flag_sections;
 #[cfg(doc)]
 use crate::io::data::prmtop_tables::amber_phase;
 use crate::io::data::prmtop_tables::{
-    CHAMBER_COULOMB, TorsionTables, TorsionTerm, atom_type_names, chamber_impropers,
-    chamber_urey_bradleys, cmap_terms, decode_torsions, is_chamber, one_four_weights, parse_tokens,
+    CHAMBER_COULOMB, TorsionTables, TorsionTerm, atom_type_names, canonical_terms,
+    chamber_impropers, chamber_urey_bradleys, cmap_terms, decode_torsions, is_chamber,
+    one_four_weights, parse_tokens, proper_type_names,
 };
 use crate::math::pair_form::lj_ab_to_sigma_epsilon;
 use molrs::store::type_labels::TypeName;
@@ -262,19 +263,6 @@ fn periodic_params(terms: &[TorsionTerm]) -> Params {
     Params::from_pairs(&refs)
 }
 
-/// Terms in one canonical order — by periodicity, then phase, then k — so
-/// two torsions with the same terms in a different row order are one type.
-fn sorted_terms(terms: &[TorsionTerm]) -> Vec<TorsionTerm> {
-    let mut out = terms.to_vec();
-    out.sort_by(|a, b| {
-        a.periodicity
-            .total_cmp(&b.periodicity)
-            .then(a.phase.total_cmp(&b.phase))
-            .then(a.k.total_cmp(&b.k))
-    });
-    out
-}
-
 fn first_i64(sections: &HashMap<String, Vec<String>>, key: &str) -> Result<Option<i64>, String> {
     Ok(section_i64(sections, key)?.first().copied())
 }
@@ -443,8 +431,8 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     // improper. Potential: PK·[1 + cos(n·φ − phase)], phase stored in degrees
     // — LAMMPS fourier / molrs periodic, no form factor on K. The rows of one
     // atom quartet (and each row's negative-PN chain) are one torsion; every
-    // torsion defines its type, so two torsions of one name with different
-    // terms are a TypeConflict.
+    // torsion defines its type; a further distinct set of terms on one
+    // quartet is the type `<quartet>@<n>` (`proper_type_names`).
     let dih_k = section_f64(sections, "DIHEDRAL_FORCE_CONSTANT")?;
     let dih_phase = section_f64(sections, "DIHEDRAL_PHASE")?;
     let dih_per = section_f64(sections, "DIHEDRAL_PERIODICITY")?;
@@ -469,14 +457,12 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
 
     {
         let style = def(&mut ff, "dihedral", "periodic", Params::new())?;
-        for t in torsions.iter().filter(|t| !t.improper) {
+        let names = proper_type_names(&torsions, &atom_types)?;
+        for (t, name) in torsions.iter().zip(names) {
+            let Some(name) = name else { continue };
             let ends = t.types(&atom_types);
             style
-                .def_type(
-                    TypeName::join(&ends)?.as_str(),
-                    &ends,
-                    periodic_params(&sorted_terms(&t.terms)),
-                )
+                .def_type(&name, &ends, periodic_params(&canonical_terms(&t.terms)))
                 .map_err(|e| e.to_string())?;
         }
     }

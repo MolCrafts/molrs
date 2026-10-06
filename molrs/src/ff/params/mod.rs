@@ -3,7 +3,9 @@
 //!
 //! molrs parses **no** parameter text at runtime. The upstream `.DAT` / `.DEF`
 //! tables are transcribed into the `const`s in the sibling modules here by
-//! `scripts/gen_param_tables.py`, which reads them from `$AMBERHOME`; [`mmff`]
+//! `scripts/gen_param_tables.py`, which reads them from `$AMBERHOME` (the
+//! committed fourteen are AmberTools 26.1's; `--check` verifies them byte for
+//! byte); [`mmff`]
 //! is ported from RDKit's `Params.cpp` and merged with what MMFF's retired XML
 //! carried; [`oplsaa`] is generated from GROMACS `share/top/oplsaa.ff` (a
 //! pinned release, LGPL-2.1-or-later) by `cargo mrs-gen-opls --gromacs <dir>`,
@@ -552,29 +554,32 @@ pub struct ParmTable {
 
 /// The nine penalty columns of an `EQUA` / `CORR` row, in `PARMCHK.DAT`'s order.
 ///
-/// The file's own note pins it — *"GENERAL_SIMILARITY is listed in the 11th
-/// colume of CORR lines"* — and a CORR row's 11th token is the last of the nine,
-/// so the columns run in the order its `DEFAULT_*` block declares them. `-1.0`
-/// means **not tabulated**: the consumer substitutes the matching default.
+/// The order is the one parmchk2 reads them in (`read_parmchk_parm`:
+/// `bl blf cba cbaf ba baf ctor tor ps`): the angle's CENTRE columns come
+/// before its END columns, and the torsion's INNER column before its OUTER
+/// one. The file's own note pins the last — *"GENERAL_SIMILARITY is listed in
+/// the 11th colume of CORR lines"*. `-1.0` means **not tabulated**: parmchk2
+/// substitutes the matching `DEFAULT_*` (and a `CORR` line with no columns at
+/// all, which this table also writes as `-1.0` throughout, reads as zeros).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParmchkPenalty {
     /// Bond length (`bl`).
     BondLength = 0,
     /// Bond force constant (`blf`).
     BondForce = 1,
+    /// Angle, at the CENTRE atom (`cba`).
+    AngleCentre = 2,
+    /// Angle force constant, at the centre atom (`cbaf`).
+    AngleCentreForce = 3,
     /// Angle, at an END atom (`ba`).
-    Angle = 2,
+    Angle = 4,
     /// Angle force constant, at an end atom (`baf`).
-    AngleForce = 3,
-    /// Angle, at the CENTRE atom (`ba_ctr`).
-    AngleCentre = 4,
-    /// Angle force constant, at the centre atom (`baf_ctr`).
-    AngleCentreForce = 5,
+    AngleForce = 5,
+    /// Torsion, at an INNER atom (`ctor`).
+    TorsionCentre = 6,
     /// Torsion, at an OUTER atom (`tor`).
-    Torsion = 6,
-    /// Torsion, at an INNER atom (`tor_ctr`).
-    TorsionCentre = 7,
-    /// The row's overall similarity score — the 11th column.
+    Torsion = 7,
+    /// The row's overall similarity score — the 11th column (`ps`).
     Similarity = 8,
 }
 

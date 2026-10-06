@@ -21,8 +21,9 @@
 //! potentials is `PotentialCompiler.compile`.
 //!
 //! The antechamber-derived bindings live in their own modules rather than here:
-//! [`atd`] (the ATD atom typifier, one engine over seven `ATOMTYPE_*.DEF` tables)
-//! and [`charge`] (the three charge models). This file is already large, and they
+//! [`atd`] (the ATD atom typifier, one engine over seven `ATOMTYPE_*.DEF` tables),
+//! [`gaff`] (the GAFF / GAFF2 bonded-term typifier) and [`charge`] (the three
+//! charge models). This file is already large, and they
 //! are self-contained.
 //!
 //! # References
@@ -33,8 +34,10 @@
 pub mod atd;
 pub mod charge;
 pub mod forms;
+pub mod gaff;
 pub mod handles;
 pub mod ir;
+pub mod param_columns;
 pub mod potential;
 pub mod section;
 
@@ -189,7 +192,8 @@ impl PyTypifier {
             || cls.is_subclass_of::<PyMMFF94Typifier>()?
             || cls.is_subclass_of::<PyMMFF94STypifier>()?
             || cls.is_subclass_of::<PyElementTypifier>()?
-            || cls.is_subclass_of::<atd::PyAtdTypifier>()?;
+            || cls.is_subclass_of::<atd::PyAtdTypifier>()?
+            || cls.is_subclass_of::<gaff::PyGaffTypifier>()?;
         if native {
             for hook in ["match", "library"] {
                 if own.contains(hook)? {

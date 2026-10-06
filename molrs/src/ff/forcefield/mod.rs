@@ -9,6 +9,7 @@
 pub mod lammps_units;
 pub mod mixing;
 pub mod one_four;
+pub mod param_columns;
 pub mod readers;
 pub mod section;
 pub mod torsion;

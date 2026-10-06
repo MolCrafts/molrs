@@ -1,25 +1,42 @@
-//! The missing-parameter estimator: one cascade, one seam, every force field.
+//! The generic missing-parameter estimator: a parmchk2-style cascade any force
+//! field can borrow.
 //!
 //! A force field's tables never cover every term of every molecule. What fills the
-//! gap is [`Parmchk2Estimator`] — the parmchk2 analogy cascade (exact →
-//! equivalent → **wildcard row** → corresponding, plus a CGenFF-style additive
-//! penalty with inner atoms weighted ×10) backed by the GAFF empirical formulas
-//! (Badger bond `k`, mean-of-neighbours θ₀, the Wang2004 Eq. 5 angle `K_θ`, and a
-//! never-fabricate rule for torsions). **No ab-initio / QM fitting is ever
-//! performed.**
+//! gap for a force field with no estimator of its own is [`Parmchk2Estimator`] —
+//! a cascade modelled on parmchk2's (exact → equivalent → **wildcard row** →
+//! corresponding, plus an additive penalty with inner atoms weighted ×10) backed
+//! by the GAFF empirical formulas (Badger bond `k`, mean-of-neighbours θ₀, the
+//! Wang2004 Eq. 5 angle `K_θ`, and a never-fabricate rule for torsions). **No
+//! ab-initio / QM fitting is ever performed.**
 //!
-//! It reaches its callers two ways, and they are the same object:
+//! It is **not** parmchk2. GAFF itself does not use it:
+//! [`typifier::gaff`](crate::ff::typifier::gaff) reproduces parmchk2's own
+//! searches exactly, quirks and all (`gaff::analog`, `gaff::torsion`,
+//! `gaff::improper`), because GAFF's estimates are AmberTools' by definition.
+//! This cascade keeps its own, simpler scoring, which the OPLS-AA typifier's
+//! estimates and tests are built on:
 //!
-//! * **as an interpolation seam** — it implements [`ParameterInterpolator`] for
-//!   [`BondedTerm`] and is injected into the OPLS bonded matcher via
-//!   [`OPLSAATypifier::with_estimator`](super::opls::OPLSAATypifier::with_estimator). Exact matches
-//!   always win first; with `strict=true` the interpolator is never consulted; with
-//!   none attached the assign path is byte-identical to pre-interpolator behaviour.
-//! * **as a table reader** — [`typifier::gaff`](crate::ff::typifier::gaff)
-//!   builds it over `gaff.dat` / `gaff2.dat` and asks it for every term the tables'
-//!   wildcard-free rows do not cover. That path needs the
-//!   [`Covered`](Estimate::Covered) / [`Estimated`](Estimate::Estimated)
-//!   distinction, so it consumes [`Estimate`] directly rather than through the seam.
+//! | Term | Column read per substituted atom (`PARMCHK.DAT`) | Weight |
+//! |---|---|---|
+//! | bond | `bl` | `WEIGHT_BL` |
+//! | angle | `cba` (the centre column), at every atom | `WEIGHT_BA`, ×`WEIGHT_BA_CTR` at the vertex |
+//! | torsion, inner atom | `tor`, else ½·`ctor` + ½·similarity | ×`WEIGHT_TOR_CTR` |
+//! | torsion, outer atom | `ctor`, else `DEFAULT_TOR` | 1 |
+//!
+//! parmchk2 scores an angle end by `ba` + `baf` and its vertex by `cba` +
+//! `cbaf`, a bond by `bl` + `blf`, a torsion's inner atom by `ctor` and its
+//! outer by `tor`, and adds group and conjugation penalties; a penalty this
+//! cascade reports is therefore its own, not parmchk2's.
+//!
+//! It reaches its callers as an interpolation seam: it implements
+//! [`ParameterInterpolator`] for [`BondedTerm`] and is injected into the OPLS
+//! bonded matcher via
+//! [`OPLSAATypifier::with_estimator`](super::opls::OPLSAATypifier::with_estimator). Exact matches
+//! always win first; with `strict=true` the interpolator is never consulted; with
+//! none attached the assign path is byte-identical to pre-interpolator behaviour.
+//! [`Parmchk2Estimator::estimate`] keeps the [`Covered`](Estimate::Covered) /
+//! [`Estimated`](Estimate::Estimated) distinction for a caller that reads a
+//! table directly.
 //!
 //! # The tables are GAFF's. That is a limitation, and it is deliberate.
 //!
@@ -29,7 +46,7 @@
 //! angle constants (`PARM_BLBA_GAFF*.DAT`). They are keyed by **GAFF atom-type
 //! names** — `c3`, `os`, `ca`.
 //!
-//! A GAFF-typed molecule therefore gets the full cascade. **Any other force field
+//! A GAFF-typed term therefore gets the full cascade. **Any other force field
 //! borrows it and degrades**: `opls_135` appears in no row of the substitution
 //! table, so no equivalence and no correspondence can ever be found for it, and the
 //! estimator falls back on what it *can* still say — a type-name / class-name match
@@ -447,11 +464,30 @@ fn element_from_token(token: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::typifier::gaff::{GaffParameterSet, gaff_estimator};
+    use std::sync::OnceLock;
 
-    /// The estimator over `gaff.dat`, exactly as the force-field builder makes it.
+    use crate::ff::typifier::Typifier;
+    use crate::ff::typifier::gaff::{GaffParameterSet, GaffTypifier};
+
+    /// The cascade over a GAFF table's candidate rows and empirical constants.
+    fn over(set: GaffParameterSet) -> &'static Parmchk2Estimator {
+        static GAFF: OnceLock<Parmchk2Estimator> = OnceLock::new();
+        static GAFF2: OnceLock<Parmchk2Estimator> = OnceLock::new();
+        let (cell, empirical) = match set {
+            GaffParameterSet::Gaff => (&GAFF, EmpiricalSet::Gaff),
+            GaffParameterSet::Gaff2 => (&GAFF2, EmpiricalSet::Gaff2),
+        };
+        cell.get_or_init(|| {
+            let gaff = GaffTypifier::new(set);
+            let candidates = gaff.library();
+            let context = TypifierParameterContext::new().with_forcefield_elements(candidates);
+            Parmchk2Estimator::with_context(candidates, context).with_empirical(empirical)
+        })
+    }
+
+    /// The cascade over `gaff.dat`.
     fn gaff() -> &'static Parmchk2Estimator {
-        gaff_estimator(GaffParameterSet::Gaff)
+        over(GaffParameterSet::Gaff)
     }
 
     fn types<const N: usize>(names: [&str; N]) -> [String; N] {
@@ -476,7 +512,7 @@ mod tests {
     #[test]
     fn tier_equivalent_type_substitutes_free_of_charge() {
         // gaff2's `ns` is `n`: the specific row `o-c-n -hn` covers `o-c-ns-hn`.
-        let estimate = gaff_estimator(GaffParameterSet::Gaff2)
+        let estimate = over(GaffParameterSet::Gaff2)
             .estimate(&BondedTerm::Dihedral(types(["o", "c", "ns", "hn"])))
             .expect("an equivalent-type match");
         let provenance = estimate.provenance().expect("estimated");
