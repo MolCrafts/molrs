@@ -420,8 +420,10 @@ fn main() {
     let bridge_path = out_dir.join("bridge.rs");
     std::fs::write(&bridge_path, &bridge_src).unwrap();
 
-    // Also write to src/ so corrosion_add_cxxbridge can find it. Only when it
-    // changed: an identical rewrite would still touch a committed file.
+    // Also write to src/ — the committed copy Atomiverse's CMake consumes
+    // (corrosion_add_cxxbridge, and the configure-time surface probes in its
+    // cmake/MolrsContract.cmake). Only when it changed: an identical rewrite
+    // would still touch a committed file.
     let src_path = manifest_dir.join("src").join("bridge.rs");
     if std::fs::read_to_string(&src_path).ok().as_deref() != Some(bridge_src.as_str()) {
         std::fs::write(&src_path, &bridge_src).unwrap();

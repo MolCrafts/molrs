@@ -18,11 +18,11 @@ use ndarray::{Array1, Array2, ArrayView2, array};
 
 use molrs::spatial::SimBox;
 
-use crate::F;
 use crate::error::{self, MolrsStatus};
 use crate::handle::{MolrsBoxHandle, box_key_to_handle, handle_to_box_key};
 use crate::store::lock_store;
 use crate::{ffi_try, null_check};
+use molrs::op::types::F;
 
 // ---------------------------------------------------------------------------
 // Construction

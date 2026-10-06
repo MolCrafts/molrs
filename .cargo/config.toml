@@ -32,9 +32,10 @@ target-dir = "target"
 #      The generator links this same library unit; it adds exactly one example
 #      unit (`example-gen_opls_params`), and `mrs-check` / `mrs-clippy
 #      --all-targets` add their check units for it;
-#   2. `full,filesystem,rayon` — what molrs-capi and molrs-cxxapi link. They
-#      must not ship `stream` (tokio + tungstenite in a C archive), so this set
-#      stays separate on purpose;
+#   2. `full,filesystem,rayon,serde` — what molrs-capi and molrs-cxxapi link
+#      (`serde`: the C API's force-field JSON is the core section's serde
+#      form). They must not ship `stream` (tokio + tungstenite in a C
+#      archive), so this set stays separate on purpose;
 #   3. molrs-ffi's `default-features = false` minimal set;
 #   4. the wasm32 build of molrs-wasm.
 # Anything else in target/debug/.fingerprint/molcrafts-molrs-* is drift.

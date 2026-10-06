@@ -34,7 +34,6 @@ use molrs::spatial::region::{
 use molrs_ffi::RegionRef;
 use ndarray::{Array2, ArrayView2};
 
-use crate::F;
 use crate::error::{self, MolrsStatus};
 use crate::handle::{
     MolrsBoxHandle, MolrsRegionHandle, handle_to_box_key, handle_to_region_key,
@@ -42,6 +41,7 @@ use crate::handle::{
 };
 use crate::store::lock_store;
 use crate::{ffi_try, null_check};
+use molrs::op::types::F;
 
 /// Insert a freshly built region and hand back its handle.
 fn publish(region: Arc<dyn Region + Send + Sync>, out: *mut MolrsRegionHandle) -> MolrsStatus {

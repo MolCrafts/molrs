@@ -72,8 +72,9 @@ pub use handle::{MolrsBlockHandle, MolrsBoxHandle, MolrsForceFieldHandle, MolrsF
 
 use store::lock_store;
 
-/// Primary floating-point scalar (`F` in the C header, `typedef double F`) — always `f64`.
-pub type F = f64;
+// The float scalar is molrs's own `molrs::op::types::F` (always `f64`); the C
+// header spells it `typedef double F` (cbindgen.toml `after_includes`, since
+// cbindgen does not parse dependencies).
 
 // ---------------------------------------------------------------------------
 // Internal helper: catch panics at the FFI boundary

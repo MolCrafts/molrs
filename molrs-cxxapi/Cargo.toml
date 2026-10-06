@@ -33,9 +33,10 @@ strip = "symbols"
 
 [dependencies]
 # The merged crate, imported under the extern name `molrs`. molrs defaults to
-# core only, so the set is spelled here: `full` + `filesystem` + `rayon` — the
-# same set molrs-capi links (build 2 in .cargo/config.toml). Never `stream`.
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.16.0", default-features = false, features = ["full", "filesystem", "rayon"] }
+# core only, so the set is spelled here: `full` + `filesystem` + `rayon` +
+# `serde` — the same set molrs-capi links (build 2 in .cargo/config.toml), so
+# the two compile molrs once. Never `stream`.
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.16.0", default-features = false, features = ["full", "filesystem", "rayon", "serde"] }
 molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.16.0" }
 cxx = "1"
 ndarray = "0.17"

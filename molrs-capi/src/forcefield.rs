@@ -5,6 +5,12 @@
 //! This module exposes functions to build a force field programmatically
 //! from C, serialize/deserialize it as JSON, and query its contents.
 //!
+//! The JSON is molrs's one force-field serialization: the core `forcefield`
+//! record section (`ForceField::to_section` / `ForceField::from_section`) in
+//! its serde form, `{"document": {…}, "tables": {<block>: Block}}` — the
+//! same section an `*.mrec` record stores. The C API has no format of its
+//! own.
+//!
 //! # Typical workflow
 //!
 //! ```c
@@ -22,7 +28,7 @@
 //! double      tv[] = {0.1553, 3.166};
 //! molrs_ff_def_type(ff, "pair", "lj/cut", "OW", ow, 1, tk, tv, 2);
 //!
-//! // Serialize to JSON for storage
+//! // Serialize to JSON (the core forcefield section) for storage
 //! char*  json;
 //! size_t json_len;
 //! molrs_ff_to_json(ff, &json, &json_len);
@@ -40,14 +46,13 @@
 //!
 //! The `molrs_ff_def_*` calls take numeric parameters only. String
 //! parameters (a pair style's `mixing`, an atom type's `element`) reach a
-//! force field from C through [`molrs_ff_from_json`], whose document
-//! carries both.
+//! force field from C through [`molrs_ff_from_json`], whose section carries
+//! both.
 
 use std::ffi::{CStr, CString, c_char};
 
-use molrs::ff::forcefield::{DefError, Params, Style};
-use molrs::ff::{forcefield::ForceField, forcefield::SpecialBonds};
-use serde_json::{Value, json};
+use molrs::ff::forcefield::{DefError, ForceField, Params};
+use molrs::store::ForceFieldSection;
 
 use crate::error::{self, MolrsStatus};
 use crate::handle::{MolrsForceFieldHandle, ff_key_to_handle, handle_to_ff_key};
@@ -530,12 +535,10 @@ pub unsafe extern "C" fn molrs_ff_get_style_name(
 // JSON serialization
 // ---------------------------------------------------------------------------
 
-/// Serialize a ForceField to a JSON string.
-///
-/// The document carries every definition -- the declared `units` and
-/// `special_bonds` (each written only when declared), numeric and string
-/// params of every style and type, and every type's endpoints -- in the format
-/// described at [`molrs_ff_from_json`].
+/// Serialize a ForceField to a JSON string: its core `forcefield` section
+/// (`ForceField::to_section`) in serde form,
+/// `{"document": {…}, "tables": {<block>: Block}}` — molrs's one force-field
+/// serialization, the section an `*.mrec` record stores.
 ///
 /// The returned string is heap-allocated and must be freed with
 /// [`molrs_free_string`](crate::molrs_free_string).
@@ -560,6 +563,8 @@ pub unsafe extern "C" fn molrs_ff_get_style_name(
 /// * `MolrsStatus::Ok` on success.
 /// * `MolrsStatus::NullPointer` if `out_json` or `out_len` is null.
 /// * `MolrsStatus::InvalidForceFieldHandle` if `ff` is stale.
+/// * `MolrsStatus::InvalidArgument` if the force field has no section form
+///   (`ForceField::to_section` refuses it — e.g. units that are no preset).
 ///
 /// # Safety
 ///
@@ -579,7 +584,13 @@ pub unsafe extern "C" fn molrs_ff_to_json(
         let store = lock_store();
         let ff = get_ff!(store, ff);
 
-        let json = ff_to_json_string(ff);
+        let json = match ff_to_json_string(ff) {
+            Ok(json) => json,
+            Err(msg) => {
+                error::set_last_error(msg);
+                return MolrsStatus::InvalidArgument;
+            }
+        };
         let len = json.len();
         let c_json = CString::new(json).unwrap_or_default();
         unsafe {
@@ -590,53 +601,14 @@ pub unsafe extern "C" fn molrs_ff_to_json(
     })
 }
 
-/// Deserialize a ForceField from a JSON string.
+/// Deserialize a ForceField from a JSON string: a core `forcefield`
+/// section in the serde form [`molrs_ff_to_json`] writes, turned into a
+/// force field by `ForceField::from_section`.
 ///
-/// The JSON format matches the output of [`molrs_ff_to_json`]:
-///
-/// ```json
-/// {
-///   "name": "my_ff",
-///   "units": "real",
-///   "special_bonds": {"lj": [0.0, 0.0, 0.5], "coul": [0.0, 0.0, 0.8333]},
-///   "styles": [
-///     {
-///       "category": "pair",
-///       "name": "lj/cut",
-///       "params": {"cutoff": 12.0},
-///       "str_params": {"mixing": "geometric"},
-///       "types": [
-///         {"name": "OW", "endpoints": ["OW", "OW"],
-///          "params": {"epsilon": 0.1553, "sigma": 3.166}, "str_params": {}}
-///       ]
-///     },
-///     {
-///       "category": "cmap",
-///       "name": "charmm",
-///       "params": {},
-///       "str_params": {},
-///       "types": [
-///         {"name": "C-N-CA-C-N", "endpoints": ["C", "N", "CA", "C", "N"],
-///          "params": {}, "str_params": {},
-///          "array_params": {"grid": [[0.0, 0.1], [0.2, 0.3]]}}
-///       ]
-///     }
-///   ]
-/// }
-/// ```
-///
-/// `units` and `special_bonds` are optional: present means declared, absent
-/// means undeclared, and the force field is rebuilt declaring exactly what the
-/// document holds. `array_params` (on a style or a type) is optional and
-/// written only when the definition holds an array param: each value is the
-/// array as nested lists of numbers, one level per axis, every list of a
-/// level the same length. Every other key shown is required and no other key
-/// is accepted. The document is carried whole or refused: a missing or
-/// unknown key, a non-string `units`, a non-number in `params`, a non-string
-/// in `str_params` or `endpoints`, a ragged or non-numeric array in
-/// `array_params`, a `special_bonds` array whose length is not 3, an unknown
-/// category, or an endpoint count that does not match the category is
-/// `InvalidArgument` -- nothing is skipped.
+/// The section is carried whole or refused: JSON that is no section (a
+/// missing `document`, an unknown top-level key, a malformed table) or a
+/// section `ForceField::from_section` refuses is `InvalidArgument` --
+/// nothing is skipped.
 ///
 /// # C signature
 ///
@@ -655,8 +627,8 @@ pub unsafe extern "C" fn molrs_ff_to_json(
 /// * `MolrsStatus::Ok` on success.
 /// * `MolrsStatus::NullPointer` if `json` or `out` is null.
 /// * `MolrsStatus::Utf8Error` if `json` is not valid UTF-8.
-/// * `MolrsStatus::InvalidArgument` if the JSON is malformed or does not
-///   match the document above.
+/// * `MolrsStatus::InvalidArgument` if the JSON is malformed, is no
+///   section, or is a section with no force-field form.
 ///
 /// # Safety
 ///
@@ -692,302 +664,21 @@ pub unsafe extern "C" fn molrs_ff_from_json(
 }
 
 // ---------------------------------------------------------------------------
-// JSON document: carries every definition or refuses it
+// JSON: the core forcefield section
 // ---------------------------------------------------------------------------
 
-type JsonMap = serde_json::Map<String, Value>;
-
-/// Serialize every piece of declared state: name, the declared `units` and
-/// `special_bonds` (absent when undeclared), and per style its category, name,
-/// numeric, string and array params, and per type its name, endpoints,
-/// numeric, string and array params.
-fn ff_to_json_string(ff: &ForceField) -> String {
-    let styles: Vec<Value> = ff
-        .styles()
-        .iter()
-        .map(|style| {
-            let mut entry = json!({
-                "category": style.category(),
-                "name": style.name(),
-                "params": numeric_params(style.params()),
-                "str_params": string_params(style.params()),
-                "types": type_rows(style),
-            });
-            put_array_params(&mut entry, style.params());
-            entry
-        })
-        .collect();
-    let mut doc = JsonMap::new();
-    doc.insert("name".into(), json!(ff.name));
-    if let Some(units) = ff.declared_units() {
-        doc.insert("units".into(), json!(units));
-    }
-    if let Some(special) = ff.declared_special_bonds() {
-        doc.insert(
-            "special_bonds".into(),
-            json!({"lj": special.lj, "coul": special.coul}),
-        );
-    }
-    doc.insert("styles".into(), json!(styles));
-    Value::Object(doc).to_string()
+/// The force field's core section (`ForceField::to_section`) as JSON.
+fn ff_to_json_string(ff: &ForceField) -> Result<String, String> {
+    let section = ff.to_section()?;
+    serde_json::to_string(&section).map_err(|e| format!("JSON encode error: {e}"))
 }
 
-fn numeric_params(params: &Params) -> JsonMap {
-    params
-        .iter()
-        .map(|(k, v)| (k.to_owned(), json!(v)))
-        .collect()
-}
-
-fn string_params(params: &Params) -> JsonMap {
-    params
-        .iter_strings()
-        .map(|(k, v)| (k.to_owned(), json!(v)))
-        .collect()
-}
-
-/// `array_params` on `entry` when `params` holds an array param: each array
-/// as nested lists, one level per axis.
-fn put_array_params(entry: &mut Value, params: &Params) {
-    fn nested(view: ndarray::ArrayViewD<'_, f64>) -> Value {
-        if view.ndim() == 0 {
-            return json!(view.first().copied().unwrap_or_default());
-        }
-        Value::Array(view.outer_iter().map(nested).collect())
-    }
-    let arrays: JsonMap = params
-        .iter_arrays()
-        .map(|(k, v)| (k.to_owned(), nested(v.view())))
-        .collect();
-    if !arrays.is_empty() {
-        entry["array_params"] = Value::Object(arrays);
-    }
-}
-
-/// Every type of a style as `{name, endpoints, params, str_params}` (and
-/// `array_params` when it has any), in definition order.
-fn type_rows(style: &Style) -> Vec<Value> {
-    style
-        .type_rows()
-        .into_iter()
-        .map(|(name, endpoints, params)| {
-            let mut row = json!({
-                "name": name,
-                "endpoints": endpoints,
-                "params": numeric_params(params),
-                "str_params": string_params(params),
-            });
-            put_array_params(&mut row, params);
-            row
-        })
-        .collect()
-}
-
-/// Rebuild a force field from the [`ff_to_json_string`] document.
-///
-/// Every style is defined through `def_style` with its full params, every type
-/// through `def_type` with its endpoints. Nothing is skipped: a missing or
-/// unknown key at any level, a non-string `units`, a non-number in `params`, a
-/// non-string in `str_params` or `endpoints`, or a `special_bonds` array whose
-/// length is not 3 is an error. `units` and `special_bonds` are declared
-/// exactly when present.
+/// The force field the JSON form of a core section describes
+/// (`ForceField::from_section`).
 fn ff_from_json_string(json: &str) -> Result<ForceField, String> {
-    let val: Value = serde_json::from_str(json).map_err(|e| format!("JSON parse error: {e}"))?;
-    let doc = JsonObject::new(
-        &val,
-        "document",
-        &["name", "styles"],
-        &["units", "special_bonds"],
-    )?;
-    let mut ff = ForceField::new(doc.str("name")?);
-
-    if doc.has("units") {
-        ff.set_units(doc.str("units")?);
-    }
-    if doc.has("special_bonds") {
-        let special = JsonObject::new(
-            doc.get("special_bonds")?,
-            "special_bonds",
-            &["lj", "coul"],
-            &[],
-        )?;
-        ff.set_special_bonds(SpecialBonds {
-            lj: special.weights("lj")?,
-            coul: special.weights("coul")?,
-        });
-    }
-
-    for (i, style_val) in doc.array("styles")?.iter().enumerate() {
-        let at = format!("styles[{i}]");
-        let style_obj = JsonObject::new(
-            style_val,
-            &at,
-            &["category", "name", "params", "str_params", "types"],
-            &["array_params"],
-        )?;
-        let style = ff
-            .def_style(
-                style_obj.str("category")?,
-                style_obj.str("name")?,
-                style_obj.params()?,
-            )
-            .map_err(|e| format!("{at}: {e}"))?;
-        for (j, type_val) in style_obj.array("types")?.iter().enumerate() {
-            let at = format!("{at}.types[{j}]");
-            let type_obj = JsonObject::new(
-                type_val,
-                &at,
-                &["name", "endpoints", "params", "str_params"],
-                &["array_params"],
-            )?;
-            let endpoints = type_obj
-                .array("endpoints")?
-                .iter()
-                .enumerate()
-                .map(|(k, v)| {
-                    v.as_str()
-                        .ok_or_else(|| format!("{at}.endpoints[{k}] is not a string"))
-                })
-                .collect::<Result<Vec<&str>, String>>()?;
-            style
-                .def_type(type_obj.str("name")?, &endpoints, type_obj.params()?)
-                .map_err(|e| format!("{at}: {e}"))?;
-        }
-    }
-
-    Ok(ff)
-}
-
-/// The array nested lists `value` spell: one level per axis, every list of a
-/// level the same length, numbers at the leaves (a bare number is 0-d).
-fn json_array(value: &Value, at: &str) -> Result<ndarray::ArrayD<f64>, String> {
-    let mut shape = Vec::new();
-    let mut level = value;
-    while let Value::Array(items) = level {
-        shape.push(items.len());
-        match items.first() {
-            Some(first) => level = first,
-            None => break,
-        }
-    }
-    fn flatten(value: &Value, shape: &[usize], out: &mut Vec<f64>, at: &str) -> Result<(), String> {
-        match (value, shape) {
-            (Value::Array(items), [n, rest @ ..]) if items.len() == *n => items
-                .iter()
-                .try_for_each(|item| flatten(item, rest, out, at)),
-            (Value::Number(n), []) => {
-                out.push(n.as_f64().expect("a JSON number reads as f64"));
-                Ok(())
-            }
-            _ => Err(format!(
-                "{at} is not a rectangular array of numbers (shape {shape:?})"
-            )),
-        }
-    }
-    let mut values = Vec::new();
-    flatten(value, &shape, &mut values, at)?;
-    ndarray::ArrayD::from_shape_vec(shape, values).map_err(|e| format!("{at}: {e}"))
-}
-
-/// A JSON object holding every `required` key, any of the `optional` keys and
-/// nothing else, with typed field readers that name the offending path on
-/// error.
-struct JsonObject<'a> {
-    at: &'a str,
-    map: &'a JsonMap,
-}
-
-impl<'a> JsonObject<'a> {
-    fn new(
-        val: &'a Value,
-        at: &'a str,
-        required: &[&str],
-        optional: &[&str],
-    ) -> Result<Self, String> {
-        let map = val
-            .as_object()
-            .ok_or_else(|| format!("{at} is not an object"))?;
-        if let Some(unknown) = map
-            .keys()
-            .find(|k| !required.contains(&k.as_str()) && !optional.contains(&k.as_str()))
-        {
-            return Err(format!("{at}: unknown key '{unknown}'"));
-        }
-        if let Some(missing) = required.iter().find(|k| !map.contains_key(**k)) {
-            return Err(format!("{at}: missing key '{missing}'"));
-        }
-        Ok(Self { at, map })
-    }
-
-    fn has(&self, key: &str) -> bool {
-        self.map.contains_key(key)
-    }
-
-    fn get(&self, key: &str) -> Result<&'a Value, String> {
-        self.map
-            .get(key)
-            .ok_or_else(|| format!("{}: missing key '{key}'", self.at))
-    }
-
-    fn str(&self, key: &str) -> Result<&'a str, String> {
-        self.get(key)?
-            .as_str()
-            .ok_or_else(|| format!("{}.{key} is not a string", self.at))
-    }
-
-    fn array(&self, key: &str) -> Result<&'a Vec<Value>, String> {
-        self.get(key)?
-            .as_array()
-            .ok_or_else(|| format!("{}.{key} is not an array", self.at))
-    }
-
-    fn object(&self, key: &str) -> Result<&'a JsonMap, String> {
-        self.get(key)?
-            .as_object()
-            .ok_or_else(|| format!("{}.{key} is not an object", self.at))
-    }
-
-    /// `params` (numbers), `str_params` (strings) and the optional
-    /// `array_params` (nested lists of numbers) as one [`Params`].
-    fn params(&self) -> Result<Params, String> {
-        let mut params = Params::new();
-        for (k, v) in self.object("params")? {
-            let v = v
-                .as_f64()
-                .ok_or_else(|| format!("{}.params.{k} is not a number", self.at))?;
-            params.set(k, v);
-        }
-        for (k, v) in self.object("str_params")? {
-            let v = v
-                .as_str()
-                .ok_or_else(|| format!("{}.str_params.{k} is not a string", self.at))?;
-            params.set_str(k, v);
-        }
-        if self.has("array_params") {
-            for (k, v) in self.object("array_params")? {
-                let at = format!("{}.array_params.{k}", self.at);
-                params.set_array(k, json_array(v, &at)?);
-            }
-        }
-        Ok(params)
-    }
-
-    /// A `[1-2, 1-3, 1-4]` weight triple: exactly three numbers.
-    fn weights(&self, key: &str) -> Result<[f64; 3], String> {
-        let values = self
-            .array(key)?
-            .iter()
-            .map(Value::as_f64)
-            .collect::<Option<Vec<f64>>>()
-            .ok_or_else(|| format!("{}.{key} holds a non-number", self.at))?;
-        values.try_into().map_err(|v: Vec<f64>| {
-            format!(
-                "{}.{key} must hold 3 weights [1-2, 1-3, 1-4], got {}",
-                self.at,
-                v.len()
-            )
-        })
-    }
+    let section: ForceFieldSection =
+        serde_json::from_str(json).map_err(|e| format!("JSON parse error: {e}"))?;
+    ForceField::from_section(&section)
 }
 
 #[cfg(test)]
@@ -997,7 +688,7 @@ mod tests {
     use molrs::ff::forcefield::SpecialBonds;
 
     fn round_trip(ff: &ForceField) -> ForceField {
-        ff_from_json_string(&ff_to_json_string(ff)).unwrap()
+        ff_from_json_string(&ff_to_json_string(ff).unwrap()).unwrap()
     }
 
     #[test]
@@ -1041,8 +732,8 @@ mod tests {
         );
     }
 
-    /// An array param travels as nested lists and comes back at its shape,
-    /// on a cmap type with five endpoints.
+    /// An array param comes back at its shape, on a cmap type with five
+    /// endpoints.
     #[test]
     fn json_round_trip_keeps_a_cmap_grid() {
         let grid =
@@ -1055,24 +746,10 @@ mod tests {
             .def_type("c", &["C", "N", "CA", "C", "N"], params)
             .unwrap();
 
-        let json = ff_to_json_string(&ff);
-        assert!(json.contains("\"array_params\""), "{json}");
-        let back = ff_from_json_string(&json).unwrap();
+        let back = round_trip(&ff);
         let cmap = back.get_cmaptypes()[0];
         assert_eq!(cmap.params.get_array("grid"), Some(&grid));
         assert_eq!(cmap.mtom, "N");
-    }
-
-    #[test]
-    fn a_ragged_array_param_is_refused() {
-        let doc = r#"{"name": "x", "styles": [{"category": "cmap", "name": "charmm",
-            "params": {}, "str_params": {}, "types": [{"name": "c",
-            "endpoints": ["A", "B", "C", "D", "E"], "params": {}, "str_params": {},
-            "array_params": {"grid": [[1.0, 2.0], [3.0]]}}]}]}"#;
-        let err = ff_from_json_string(doc).unwrap_err();
-        assert!(err.contains("array_params.grid"), "{err}");
-        let doc = doc.replace("[3.0]", r#"[3.0, "x"]"#);
-        assert!(ff_from_json_string(&doc).is_err());
     }
 
     #[test]
@@ -1095,78 +772,6 @@ mod tests {
 
         let back = round_trip(&ff);
         assert_eq!(back.declared_units(), Some("lj"));
-    }
-
-    /// Undeclared state is not written as a default and read back as a
-    /// declaration.
-    #[test]
-    fn json_round_trip_keeps_an_undeclared_forcefield_undeclared() {
-        let ff = ForceField::new("rt");
-
-        let back = round_trip(&ff);
-        assert_eq!(back.declared_units(), None);
-        assert_eq!(back.declared_special_bonds(), None);
-    }
-
-    #[test]
-    fn json_from_string_refuses_a_numeric_units() {
-        let doc = r#"{
-            "name": "doc",
-            "units": 1,
-            "special_bonds": {"lj": [0.0, 0.0, 0.5], "coul": [0.0, 0.0, 0.8333]},
-            "styles": [{
-                "category": "bond", "name": "harmonic", "params": {}, "str_params": {},
-                "types": [{"name": "CT-OH", "endpoints": ["CT", "OH"],
-                           "params": {"k": 300.0, "r0": 1.4}, "str_params": {}}]
-            }]
-        }"#;
-        assert!(ff_from_json_string(doc).is_err());
-    }
-
-    /// The control for the refusals below: each differs from this document in
-    /// exactly one place.
-    const VALID: &str = r#"{
-        "name": "doc",
-        "special_bonds": {"lj": [0.0, 0.0, 0.5], "coul": [0.0, 0.0, 0.8333]},
-        "styles": [{
-            "category": "bond", "name": "harmonic", "params": {}, "str_params": {},
-            "types": [{"name": "CT-OH", "endpoints": ["CT", "OH"],
-                       "params": {"k": 300.0, "r0": 1.4}, "str_params": {}}]
-        }]
-    }"#;
-
-    #[test]
-    fn json_from_string_accepts_a_complete_document() {
-        assert!(ff_from_json_string(VALID).is_ok());
-    }
-
-    #[test]
-    fn json_from_string_refuses_a_bool_param_value() {
-        let doc = r#"{
-            "name": "doc",
-            "special_bonds": {"lj": [0.0, 0.0, 0.5], "coul": [0.0, 0.0, 0.8333]},
-            "styles": [{
-                "category": "bond", "name": "harmonic", "params": {}, "str_params": {},
-                "types": [{"name": "CT-OH", "endpoints": ["CT", "OH"],
-                           "params": {"k": true, "r0": 1.4}, "str_params": {}}]
-            }]
-        }"#;
-        assert!(ff_from_json_string(doc).is_err());
-    }
-
-    #[test]
-    fn json_from_string_refuses_an_unknown_key() {
-        let doc = r#"{
-            "name": "doc",
-            "bogus": 1,
-            "special_bonds": {"lj": [0.0, 0.0, 0.5], "coul": [0.0, 0.0, 0.8333]},
-            "styles": [{
-                "category": "bond", "name": "harmonic", "params": {}, "str_params": {},
-                "types": [{"name": "CT-OH", "endpoints": ["CT", "OH"],
-                           "params": {"k": 300.0, "r0": 1.4}, "str_params": {}}]
-            }]
-        }"#;
-        assert!(ff_from_json_string(doc).is_err());
     }
 
     /// Seam only: the Rust conflict rule is unit-tested in molrs; here a
@@ -1232,17 +837,38 @@ mod tests {
         }
     }
 
+    /// The JSON is the core section's serde form: what `to_section` gives,
+    /// key for key.
     #[test]
-    fn json_from_string_refuses_a_two_element_special_bonds_array() {
-        let doc = r#"{
-            "name": "doc",
-            "special_bonds": {"lj": [0.0, 0.5], "coul": [0.0, 0.0, 0.8333]},
-            "styles": [{
-                "category": "bond", "name": "harmonic", "params": {}, "str_params": {},
-                "types": [{"name": "CT-OH", "endpoints": ["CT", "OH"],
-                           "params": {"k": 300.0, "r0": 1.4}, "str_params": {}}]
-            }]
-        }"#;
-        assert!(ff_from_json_string(doc).is_err());
+    fn json_is_the_core_forcefield_section() {
+        let mut ff = ForceField::new("rt");
+        ff.def_style("bond", "harmonic", Params::new())
+            .unwrap()
+            .def_type(
+                "A-B",
+                &["A", "B"],
+                Params::from_pairs(&[("k", 300.0), ("r0", 1.5)]),
+            )
+            .unwrap();
+        let json = ff_to_json_string(&ff).unwrap();
+        let expected = serde_json::to_string(&ff.to_section().unwrap()).unwrap();
+        assert_eq!(json, expected);
+    }
+
+    /// JSON that is no section is refused whole: an unknown top-level key,
+    /// a missing `document`, and the retired C-API-only document.
+    #[test]
+    fn json_that_is_no_section_is_refused() {
+        let mut ff = ForceField::new("rt");
+        ff.set_units("real");
+        let mut doc: serde_json::Value =
+            serde_json::from_str(&ff_to_json_string(&ff).unwrap()).unwrap();
+        assert!(ff_from_json_string(&doc.to_string()).is_ok());
+        doc["bogus"] = 1.into();
+        assert!(ff_from_json_string(&doc.to_string()).is_err());
+        assert!(ff_from_json_string(r#"{"tables": {}}"#).is_err());
+        let retired = r#"{"name": "doc", "styles": [{"category": "bond",
+            "name": "harmonic", "params": {}, "str_params": {}, "types": []}]}"#;
+        assert!(ff_from_json_string(retired).is_err());
     }
 }

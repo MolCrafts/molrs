@@ -589,12 +589,14 @@ TEST_F(MolrsTest, ForceFieldJsonRoundtrip) {
     const char* ar[] = {"Ar"};
     ASSERT_MOLRS_OK(molrs_ff_def_type(ff, "pair", "lj/cut", "Ar", ar, 1, tpk, tpv, 2));
 
-    // serialize
+    // serialize: the core forcefield section (ForceField::to_section) as JSON
     char* json = nullptr;
     size_t json_len = 0;
     ASSERT_MOLRS_OK(molrs_ff_to_json(ff, &json, &json_len));
     ASSERT_NE(json, nullptr);
     EXPECT_GT(json_len, 0u);
+    EXPECT_NE(std::string(json).find("\"document\""), std::string::npos);
+    EXPECT_NE(std::string(json).find("\"tables\""), std::string::npos);
 
     // deserialize
     MolrsForceFieldHandle ff2{};

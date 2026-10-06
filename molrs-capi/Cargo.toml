@@ -28,9 +28,11 @@ default = []
 
 [dependencies]
 # molrs defaults to core only, so the set is spelled here: `full` +
-# `filesystem` + `rayon`, the same set molrs-ffi's default links (build 2 in
-# .cargo/config.toml). Never `stream`: no tokio / tungstenite in a C archive.
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.16.0", default-features = false, features = ["full", "filesystem", "rayon"] }
+# `filesystem` + `rayon` (molrs-ffi's default) + `serde`, whose force-field
+# section impls are `molrs_ff_to_json` / `molrs_ff_from_json` — build 2 in
+# .cargo/config.toml, shared with molrs-cxxapi. Never `stream`: no tokio /
+# tungstenite in a C archive.
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.16.0", default-features = false, features = ["full", "filesystem", "rayon", "serde"] }
 molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.16.0" }
 slotmap = "1.0"
 ndarray = "0.17"
