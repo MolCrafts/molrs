@@ -994,4 +994,49 @@ mod tests {
         ff.set_units("furlongs");
         assert!(ff.to_section().unwrap_err().contains("furlongs"));
     }
+
+    /// A cmap row holding CHARMM's alanine map round-trips through the
+    /// section and a `*.mrec` store, and the force field read back prices a
+    /// crossterm to the same bits.
+    #[test]
+    fn a_populated_cmap_round_trips_and_prices_the_same() {
+        use crate::ff::potential::PotentialCompiler;
+        use crate::ff::potential::cmap::charmm::tests::{alanine, chain};
+        use molrs::store::block::Block;
+        use ndarray::Array1;
+
+        let mut ff = ForceField::new("charmm");
+        let mut params = Params::new();
+        params.set_array("grid", alanine());
+        ff.def_style("cmap", "charmm", Params::new())
+            .unwrap()
+            .def_type("ala", &["C", "NH1", "CT1", "C", "NH1"], params)
+            .unwrap();
+        round_trips(&ff, "charmm cmap");
+        let back = ForceField::from_section(&ff.to_section().unwrap()).unwrap();
+
+        let mut cmaps = Block::new();
+        for (p, key) in ["atomi", "atomj", "atomk", "atoml", "atomm"]
+            .into_iter()
+            .enumerate()
+        {
+            cmaps
+                .insert(key, Array1::from_vec(vec![p as u64]).into_dyn())
+                .unwrap();
+        }
+        cmaps
+            .insert("type", Array1::from_vec(vec!["ala".to_owned()]).into_dyn())
+            .unwrap();
+        let mut frame = molrs::store::frame::Frame::new();
+        frame.insert("cmaps", cmaps);
+        let x = chain(-63.0, -41.0);
+        let e = |ff: &ForceField| {
+            PotentialCompiler::new(ff)
+                .compile(&frame)
+                .unwrap()
+                .calc_energy(&x)
+        };
+        assert_eq!(e(&ff).to_bits(), e(&back).to_bits());
+        assert!(e(&ff) != 0.0);
+    }
 }

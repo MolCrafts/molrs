@@ -436,10 +436,10 @@ mod tests {
     }
 
     /// A cmap style is gated on the `cmaps` block like any bonded style, and
-    /// a present block with no cmap kernel registered is the plain
-    /// "no kernel" error, never a panic.
+    /// a present block is built by both doors into one member (here a
+    /// degenerate crossterm, which `fix cmap` and molrs price at zero).
     #[test]
-    fn a_cmap_style_is_gated_on_cmaps_and_needs_a_kernel() {
+    fn a_cmap_style_is_gated_on_cmaps_and_built_by_both_doors() {
         let mut params = Params::new();
         params.set_array("grid", ndarray::ArrayD::zeros(vec![24, 24]));
         let mut ff = ForceField::new("t");
@@ -462,15 +462,15 @@ mod tests {
             .insert("type", Array1::from_vec(vec!["c".to_string()]).into_dyn())
             .unwrap();
         frame.insert("cmaps", cmaps);
-        for err in [
-            compiler.compile(&frame).map(|_| ()).unwrap_err(),
-            compiler.compile_typed(&frame).map(|_| ()).unwrap_err(),
-        ] {
-            assert!(
-                err.contains("no kernel for style category 'cmap' name 'charmm'"),
-                "{err}"
-            );
-        }
+        let pots = compiler.compile(&frame).unwrap();
+        assert_eq!(pots.members().len(), 1);
+        assert_eq!(pots.calc_energy(&[0.0, 0.0, 0.0, 1.6, 0.0, 0.0]), 0.0);
+        let typed = compiler.compile_typed(&frame).unwrap();
+        assert_eq!(typed.len(), 1);
+        assert!(
+            typed[0].1.is_none(),
+            "a crossterm takes no special-bonds weight"
+        );
     }
 
     #[test]

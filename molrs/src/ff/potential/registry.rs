@@ -37,7 +37,7 @@ use crate::ff::forcefield::Params;
 use crate::ff::potential::Member;
 use molrs::store::frame::Frame;
 
-use super::{angle, bond, dihedral, improper, kspace, pair};
+use super::{angle, bond, cmap, dihedral, improper, kspace, pair};
 
 /// Builds a molecule-bound [`Member`] from a style's params, its per-type
 /// params (`(type_label, params)`), and a typed [`Frame`]. Every kernel
@@ -466,6 +466,8 @@ impl KernelRegistry {
         );
         // CHARMM angle + Urey–Bradley (LAMMPS `angle_style charmm`).
         r.register("angle", "charmm", angle::charmm::angle_charmm_ctor);
+        // CMAP: a five-atom crossterm over the `cmaps` block (LAMMPS `fix cmap`).
+        r.register("cmap", "charmm", cmap::charmm::cmap_charmm_ctor);
 
         r
     }

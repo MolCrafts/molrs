@@ -8,6 +8,7 @@ pub mod geometry;
 
 pub mod angle;
 pub mod bond;
+pub mod cmap;
 pub mod compile;
 pub mod dihedral;
 pub mod improper;
