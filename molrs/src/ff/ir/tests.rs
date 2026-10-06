@@ -527,7 +527,7 @@ fn a_form_without_samples_is_checked_at_its_first_compile() {
         let err = PotentialCompiler::with_registry(&ff, &r)
             .compile(&frame)
             .unwrap_err();
-        assert!(err.contains("central difference"), "{err}");
+        assert!(err.to_string().contains("central difference"), "{err}");
     }
 }
 
@@ -639,7 +639,11 @@ fn an_expression_beside_a_native_form_must_agree_with_it() {
     let err = PotentialCompiler::with_registry(&ff, &r)
         .compile(&frame)
         .unwrap_err();
-    assert!(err.contains("no kernel for bond `by/expression`"), "{err}");
+    assert!(
+        err.to_string()
+            .contains("no kernel for bond `by/expression`"),
+        "{err}"
+    );
 }
 
 /// A compile against a registry without the category names it.
@@ -650,7 +654,11 @@ fn compiling_an_unregistered_category_is_an_error() {
     let err = PotentialCompiler::with_registry(&ff, &empty)
         .compile(&Frame::new())
         .unwrap_err();
-    assert!(err.contains("category 'bond' is not registered"), "{err}");
+    assert!(
+        err.to_string()
+            .contains("category 'bond' is not registered"),
+        "{err}"
+    );
 }
 
 /// A style registered in one registry is seen by a compile against it and
@@ -667,7 +675,7 @@ fn a_registry_of_ones_own_is_seen_by_its_compile_only() {
     // k (r − r0)² = 2 · 0.6²
     assert!((pots.calc_energy(&[0.0, 0.0, 0.0, 1.6, 0.0, 0.0]) - 0.72).abs() < 1e-12);
     let err = PotentialCompiler::new(&ff).compile(&frame).unwrap_err();
-    assert!(err.contains("no kernel"), "{err}");
+    assert!(err.to_string().contains("no kernel"), "{err}");
 }
 
 /// A text style parameter is checked to be text, and an array parameter is
@@ -1375,11 +1383,15 @@ fn an_unregistered_category_round_trips_and_is_priced_only_by_an_expression() {
     assert_eq!(back.styles()[0].type_rows(), bare.styles()[0].type_rows());
     let compiler = PotentialCompiler::new(&back);
     let err = compiler.compile(&two_terms("urey_bradley")).unwrap_err();
-    assert!(err.contains("no kernel for urey_bradley `spring`"), "{err}");
+    assert!(
+        err.to_string()
+            .contains("no kernel for urey_bradley `spring`"),
+        "{err}"
+    );
     let err = compiler
         .compile_typed(&two_terms("urey_bradley"))
         .unwrap_err();
-    assert!(err.contains("urey_bradley `spring`"), "{err}");
+    assert!(err.to_string().contains("urey_bradley `spring`"), "{err}");
     // Without its block there is nothing to price, and nothing refused.
     assert!(
         compiler

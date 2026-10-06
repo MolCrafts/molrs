@@ -328,11 +328,11 @@ fn a_weight_beside_global_1_4_weights_is_refused() {
     let err = PotentialCompiler::new(&ff)
         .compile(&frame(ff.special_bonds(), false))
         .unwrap_err();
-    assert!(err.contains("special_bonds charmm"), "{err}");
+    assert!(err.to_string().contains("special_bonds charmm"), "{err}");
     let err = PotentialCompiler::new(&ff)
         .compile_typed(&frame(ff.special_bonds(), false))
         .unwrap_err();
-    assert!(err.contains("special_bonds charmm"), "{err}");
+    assert!(err.to_string().contains("special_bonds charmm"), "{err}");
 }
 
 /// `w = 1` prices exactly `Σ 4ε₁₄[(σ₁₄/r)¹² − (σ₁₄/r)⁶] + C qᵢqⱼ/r` over the
@@ -692,7 +692,7 @@ fn an_override_beside_a_non_lj_style_is_refused() {
     let base = frame(buck.special_bonds(), false);
     let over = with_overrides(&base, &[("lj_scale", &|_, _| 0.5)]);
     let err = PotentialCompiler::new(&buck).compile(&over).unwrap_err();
-    assert!(err.contains("buck"), "{err}");
+    assert!(err.to_string().contains("buck"), "{err}");
 }
 
 /// The LAMMPS writers refuse a frame carrying per-pair overrides, by name;

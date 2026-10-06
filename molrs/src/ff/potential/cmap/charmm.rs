@@ -446,7 +446,7 @@ pub fn cmap_charmm_ctor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get(CMAPS)
@@ -809,7 +809,7 @@ pub(crate) mod tests {
             .map(|_| ())
             .unwrap_err();
         assert!(
-            err.contains("grid") || err.contains("unknown type"),
+            err.to_string().contains("grid") || err.to_string().contains("unknown type"),
             "{err}"
         );
         let mut odd = Params::new();

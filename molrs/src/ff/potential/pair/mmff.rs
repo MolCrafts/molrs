@@ -411,7 +411,11 @@ fn vdw_combining(pi: &VdwAtomParams, pj: &VdwAtomParams, sp: &VdwStyleParams) ->
 ///
 /// [`SpecialBonds`]: crate::ff::forcefield::SpecialBonds
 /// [`PotentialCompiler::compile`]: crate::ff::potential::PotentialCompiler::compile
-pub fn mmff_vdw_ctor(sp: &Params, tp: &[(&str, &Params)], frame: &Frame) -> Result<Member, String> {
+pub fn mmff_vdw_ctor(
+    sp: &Params,
+    tp: &[(&str, &Params)],
+    frame: &Frame,
+) -> Result<Member, crate::ff::potential::CompileError> {
     let style = VdwStyleParams::from_style(sp);
     let lj_14 = sp.get("lj14scale").unwrap_or(1.0) as F;
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
@@ -488,7 +492,7 @@ pub fn mmff_vdw_typed_ctor(
     sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let style = VdwStyleParams::from_style(sp);
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let (type_id, labels) = atom_type_index(frame)?;

@@ -501,7 +501,7 @@ mod tests {
             intramolecular_pairs(&frame, ff.special_bonds()).unwrap(),
         );
         let err = PotentialCompiler::new(&ff).compile(&frame).err().unwrap();
-        assert!(err.contains("materialize_one_four"), "{err}");
+        assert!(err.to_string().contains("materialize_one_four"), "{err}");
         let x: Vec<F> = frame.coords().unwrap().into_iter().collect();
         ff.materialize_one_four(&mut frame).unwrap();
         let with = PotentialCompiler::new(&ff)

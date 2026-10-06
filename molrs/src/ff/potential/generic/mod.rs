@@ -279,7 +279,7 @@ pub(crate) fn resolve_terms(
     style: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<(Vec<Vec<usize>>, TermParams), String> {
+) -> Result<(Vec<Vec<usize>>, TermParams), crate::ff::potential::CompileError> {
     let who = format!("{} `{}`", spec.category, spec.name);
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
@@ -296,14 +296,14 @@ pub(crate) fn resolve_terms(
     let n = atoms.first().map_or(0, Vec::len);
     let types = block.get("type").and_then(|c| c.as_string());
     if types.is_none() && spec.source == ParamSource::TypeRows {
-        return Err(format!("{who}: {block_name} block missing \"type\" column"));
+        return Err(format!("{who}: {block_name} block missing \"type\" column").into());
     }
     let mut rows = Vec::with_capacity(n);
     for t in 0..n {
         let label = types.map_or("", |ty| ty[t].as_str());
         let row = type_map.get(label).copied();
         if row.is_none() && spec.source == ParamSource::TypeRows {
-            return Err(format!("{who}: unknown {block_name} type '{label}'"));
+            return Err(format!("{who}: unknown {block_name} type '{label}'").into());
         }
         rows.push((label, row));
     }
@@ -357,7 +357,8 @@ pub(crate) fn resolve_terms(
                             "{who} type '{label}': `{}` has rank {}, the spec says {rank}",
                             col.name,
                             a.ndim()
-                        ));
+                        )
+                        .into());
                     }
                     views.push(a.view());
                 }

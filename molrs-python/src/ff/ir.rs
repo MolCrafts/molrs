@@ -30,12 +30,14 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyString, PyTuple};
 
+use molrs::ff::forcefield::DefError;
 use molrs::ff::ir::registry::ExpressionForm;
 use molrs::ff::ir::{
     self as rir, Arity, CategorySpec, CompoundForm, Coordinate, Dim, EndpointOrder, IrError,
     Kernel, Mix, ParamCols, ParamKind, ParamSource, ParamSpec, Registry, Sample, ScalarForm,
     SpecialClass, StyleSpec, Value,
 };
+use molrs::ff::potential::CompileError;
 use molrs::types::F;
 
 use crate::md::ErrSlot;
@@ -283,17 +285,26 @@ fn refuse(e: IrError) -> PyErr {
     ir_err(&e, message)
 }
 
-/// A compile's error `message` as a Python exception: a Python kernel's
-/// parked exception first (it is the cause of whatever followed), else the
-/// IR refusal the message states (`molrs::ff::ir::error::recover`) as its
-/// `IrError` subclass, else a plain `ValueError`.
-pub(crate) fn compile_err(message: String) -> PyErr {
+/// A compile's error as a Python exception: a Python kernel's parked
+/// exception first (it is the cause of whatever followed), else an IR
+/// refusal as its `IrError` subclass, else a plain `ValueError`.
+pub(crate) fn compile_err(e: CompileError) -> PyErr {
     if let Err(parked) = take_kernel_err() {
         return parked;
     }
-    match rir::error::recover(&message) {
-        Some(e) => ir_err(&e, message),
-        None => PyValueError::new_err(message),
+    match e {
+        CompileError::Ir(e) => refuse(e),
+        CompileError::Invalid(message) => PyValueError::new_err(message),
+    }
+}
+
+/// A force-field definition error as a Python exception: the IR refusal
+/// it is (`Arity`, `UnknownCategory`) as its subclass, with the
+/// definition's own message; else a plain `ValueError`.
+pub(crate) fn def_err(e: DefError) -> PyErr {
+    match e.ir() {
+        Some(refusal) => ir_err(&refusal, e.to_string()),
+        None => PyValueError::new_err(e.to_string()),
     }
 }
 

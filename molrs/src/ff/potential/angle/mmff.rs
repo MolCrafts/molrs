@@ -164,7 +164,7 @@ pub fn mmff_angle_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     // Per-instance parameters: the MMFF typifier baked ka and theta0 (degrees)
     // onto each angle (table → equivalence → empirical). This kernel only reads
     // the columns and evaluates — no force-field-specific resolution lives here.
@@ -370,7 +370,7 @@ pub fn mmff_stbn_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     // Per-instance parameters: the MMFF typifier baked the stretch-bend force
     // constants (kba_ijk/kba_kji, via the dfsb period-row default-row fallback
     // that the shared-table path lacked) plus the two reference bond lengths and

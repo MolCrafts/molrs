@@ -112,7 +112,7 @@ pub fn mmff_torsion_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     // Per-instance parameters: the MMFF typifier baked v1/v2/v3 onto each
     // dihedral (table → empirical). This kernel only reads the columns and
     // evaluates — no force-field-specific resolution lives here.

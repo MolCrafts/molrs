@@ -1429,12 +1429,12 @@ impl PyForceField {
                     &style_name,
                     params_from_dict(Some(&params))?,
                 )
-                .map_err(py_value_err)?;
+                .map_err(ir::def_err)?;
             for (type_name, endpoints, params) in types {
                 let endpoints: Vec<&str> = endpoints.iter().map(String::as_str).collect();
                 style
                     .def_type(&type_name, &endpoints, params_from_dict(Some(&params))?)
-                    .map_err(py_value_err)?;
+                    .map_err(ir::def_err)?;
             }
         }
         Ok(inner)
@@ -1631,7 +1631,7 @@ impl PyForceField {
             let style = ff
                 .inner
                 .def_style(category, name, params)
-                .map_err(py_value_err)?;
+                .map_err(ir::def_err)?;
             handles::Category::of_style(style)
         };
         category.style_handle(slf.py(), &slf.clone().unbind(), name)

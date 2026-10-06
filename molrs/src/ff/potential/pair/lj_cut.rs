@@ -728,7 +728,7 @@ pub fn pair_lj_cut_ctor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let scale_14 = style_params.get("lj14scale").unwrap_or(1.0) as F;
     let mixing = match style_params.get_str("mixing") {
@@ -792,7 +792,7 @@ pub fn pair_lj_cut_typed_ctor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let mixing = match style_params.get_str("mixing") {
         Some(name) => Mixing::parse(name).map_err(|e| format!("LJCut: {e}"))?,

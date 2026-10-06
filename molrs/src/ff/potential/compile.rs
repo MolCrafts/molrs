@@ -22,7 +22,9 @@ use crate::ff::ir::registry::StyleEntry;
 use crate::ff::ir::{self, CategorySpec, Coordinate, EndpointOrder, Registry};
 use crate::ff::potential::pair::exceptions;
 use crate::ff::potential::registry::{self, ParamSource, RowSource};
-use crate::ff::potential::{Member, PairWeights, Potentials, TypedKernel, TypedMember};
+use crate::ff::potential::{
+    CompileError, Member, PairWeights, Potentials, TypedKernel, TypedMember,
+};
 use molrs::store::frame::Frame;
 use molrs::store::schema::PAIR_OVERRIDE_COLUMNS;
 use molrs::store::schema::block_names::{ATOMS, PAIRS};
@@ -109,7 +111,7 @@ impl<'a> PotentialCompiler<'a> {
     /// pair styles see the `pairs` list without the override rows. Both doors
     /// build it the same way. Precedence per pair: an override cell, else the
     /// dihedral's `w`, else `special_bonds`.
-    pub fn compile(&self, frame: &Frame) -> Result<Potentials, String> {
+    pub fn compile(&self, frame: &Frame) -> Result<Potentials, CompileError> {
         // The `pairs` block need not have come from `intramolecular_pairs` — a
         // GROMACS `[ pairs ]` section is read straight off a file — so the
         // weights are checked here too, at the door that decides the physics,
@@ -170,7 +172,7 @@ impl<'a> PotentialCompiler<'a> {
     /// such memory — it finds every pair inside the cutoff, bonded or not — so
     /// without the weights a bonded pair is counted twice: once by the bond
     /// term and once at full non-bonded strength, at bond length.
-    pub fn compile_typed(&self, frame: &Frame) -> Result<Vec<TypedMember>, String> {
+    pub fn compile_typed(&self, frame: &Frame) -> Result<Vec<TypedMember>, CompileError> {
         let reg = self.registry();
         let exceptions = exceptions::plan(self.ff, frame)?;
         let mut out = Vec::new();
@@ -214,7 +216,7 @@ impl<'a> PotentialCompiler<'a> {
         reg: &Registry,
         style: &Style,
         frame: &Frame,
-    ) -> Result<Option<TypedKernel>, String> {
+    ) -> Result<Option<TypedKernel>, CompileError> {
         let category = category_of(reg, style)?;
         let category = &*category;
         if !category.prices_energy() {
@@ -251,7 +253,8 @@ impl<'a> PotentialCompiler<'a> {
                 "Style '{}' ({}) has no type definitions",
                 style.name(),
                 category
-            ));
+            )
+            .into());
         }
         let type_refs: Vec<(&str, &Params)> = type_params
             .iter()
@@ -294,7 +297,7 @@ impl<'a> PotentialCompiler<'a> {
         style: &Style,
         frame: &Frame,
         special_bonds: &SpecialBonds,
-    ) -> Result<Option<Member>, String> {
+    ) -> Result<Option<Member>, CompileError> {
         let spec = category_of(reg, style)?;
         let spec = &*spec;
         if !spec.prices_energy() {
@@ -358,7 +361,8 @@ impl<'a> PotentialCompiler<'a> {
                 "Style '{}' ({}) has no type definitions",
                 style.name(),
                 category
-            ));
+            )
+            .into());
         }
         let type_refs: Vec<(&str, &Params)> = type_params
             .iter()
@@ -399,7 +403,7 @@ impl<'a> PotentialCompiler<'a> {
         block_name: Option<&str>,
         source: ParamSource,
         frame: &'f Frame,
-    ) -> Result<Cow<'f, Frame>, String> {
+    ) -> Result<Cow<'f, Frame>, CompileError> {
         let table_driven = |s: &&Style| {
             reg.param_source(s.category(), s.name())
                 .unwrap_or(ParamSource::TypeRows)
@@ -443,7 +447,8 @@ impl<'a> PotentialCompiler<'a> {
                 return Err(format!(
                     "{block_name} row {row}: type '{label}' is defined by no {} style",
                     style.category()
-                ));
+                )
+                .into());
             }
         }
         let mut cut = frame.clone();
@@ -464,7 +469,7 @@ fn with_fallback<'r>(
     style: &Style,
     entry: Option<&'r StyleEntry>,
     tp: &[(&str, &Params)],
-) -> Result<Cow<'r, StyleEntry>, String> {
+) -> Result<Cow<'r, StyleEntry>, CompileError> {
     if let Some(e) = entry {
         return Ok(Cow::Borrowed(e));
     }
@@ -489,7 +494,10 @@ fn with_fallback<'r>(
 /// ([`ir::IrError::NoKernel`]) when it has rows and nothing prices it, and
 /// never priced below two endpoints (molrec: no energy). A built-in
 /// category missing from the registry is an error naming it.
-fn category_of<'r>(reg: &'r Registry, style: &Style) -> Result<Cow<'r, CategorySpec>, String> {
+fn category_of<'r>(
+    reg: &'r Registry,
+    style: &Style,
+) -> Result<Cow<'r, CategorySpec>, CompileError> {
     if let Some(spec) = reg.category(style.category()) {
         return Ok(Cow::Borrowed(spec));
     }
@@ -509,15 +517,14 @@ fn category_of<'r>(reg: &'r Registry, style: &Style) -> Result<Cow<'r, CategoryS
                 EndpointOrder::Reversible,
             )))
         }
-        _ => Err(format!(
-            "style '{}': category '{}' is not registered (molrs::ff::ir::register_category)",
-            style.name(),
-            style.category()
-        )),
+        _ => Err(ir::IrError::UnknownCategory {
+            category: style.category().to_owned(),
+        }
+        .into()),
     }
 }
 
-fn no_kernel(style: &Style) -> String {
+fn no_kernel(style: &Style) -> CompileError {
     ir::IrError::NoKernel {
         category: style.category().to_owned(),
         style: style.name().to_owned(),
@@ -528,7 +535,10 @@ fn no_kernel(style: &Style) -> String {
 /// `frame` as the regular pair kernels see it: without the `pairs` rows a
 /// per-pair override hands to the exceptions kernel, and without the override
 /// columns.
-fn regular_pairs<'f>(frame: &'f Frame, override_rows: &[usize]) -> Result<Cow<'f, Frame>, String> {
+fn regular_pairs<'f>(
+    frame: &'f Frame,
+    override_rows: &[usize],
+) -> Result<Cow<'f, Frame>, CompileError> {
     if override_rows.is_empty() {
         return Ok(Cow::Borrowed(frame));
     }
@@ -686,7 +696,7 @@ mod tests {
         let err = PotentialCompiler::new(&ff)
             .compile_typed(&two_atoms())
             .unwrap_err();
-        assert!(err.contains("neighbour-driven"), "{err}");
+        assert!(err.to_string().contains("neighbour-driven"), "{err}");
     }
 
     #[test]
@@ -700,7 +710,7 @@ mod tests {
         });
         let frame = with_bond(two_atoms(), "CT-CT");
         let err = PotentialCompiler::new(&ff).compile(&frame).unwrap_err();
-        assert!(err.contains("1-3"), "{err}");
+        assert!(err.to_string().contains("1-3"), "{err}");
 
         // A fraction on 1-2 is refused the same way.
         let mut ff = bond_ff();
@@ -709,6 +719,6 @@ mod tests {
             coul: [0.5, 0.0, 0.5],
         });
         let err = PotentialCompiler::new(&ff).compile(&frame).unwrap_err();
-        assert!(err.contains("1-2"), "{err}");
+        assert!(err.to_string().contains("1-2"), "{err}");
     }
 }

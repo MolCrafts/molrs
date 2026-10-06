@@ -139,7 +139,7 @@ pub fn uff_angle_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let block = frame
         .get(ANGLES)
         .ok_or("uff_angle: missing \"angles\" block")?;

@@ -125,7 +125,7 @@ pub fn dihedral_opls_ctor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get(DIHEDRALS)
@@ -190,7 +190,8 @@ pub fn dihedral_opls_ctor(
                  `dihedral_style periodic` term table, not the OPLS quartet; \
                  declare the periodic style for it",
                 tc[idx]
-            ));
+            )
+            .into());
         }
         if ["k1", "k2", "k3", "k4"]
             .iter()
@@ -200,7 +201,8 @@ pub fn dihedral_opls_ctor(
                 "dihedral_opls: type '{}' carries none of k1..k4; an OPLS torsion \
                  with no coefficient at all is unparameterised, not sparse",
                 tc[idx]
-            ));
+            )
+            .into());
         }
         f1.push(p.get("k1").unwrap_or(0.0) as F);
         f2.push(p.get("k2").unwrap_or(0.0) as F);

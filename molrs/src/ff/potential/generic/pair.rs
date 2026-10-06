@@ -282,7 +282,7 @@ impl ScalarPair {
         style: &Params,
         tp: &[(&str, &Params)],
         frame: &Frame,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, crate::ff::potential::CompileError> {
         let who = format!("{} `{}`", spec.category, spec.name);
         let table = PairRows::new(spec, &form.inputs(), style, tp)?;
         let charge = charges(frame);
@@ -377,14 +377,14 @@ impl ScalarPair {
         style: &Params,
         tp: &[(&str, &Params)],
         frame: &Frame,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, crate::ff::potential::CompileError> {
         let who = format!("{} `{}`", spec.category, spec.name);
         let table = PairRows::new(spec, &form.inputs(), style, tp)?;
         let cutoff = style
             .get("cutoff")
             .ok_or_else(|| format!("{who}: a neighbour-driven pair style must declare 'cutoff'"))?;
         if cutoff <= 0.0 {
-            return Err(format!("{who}: 'cutoff' must be > 0"));
+            return Err(format!("{who}: 'cutoff' must be > 0").into());
         }
         let (type_id, labels) = atom_type_index(frame)?;
         let ntypes = labels.len();

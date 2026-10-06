@@ -112,7 +112,7 @@ pub fn mmff_bond_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     // Per-instance parameters: the MMFF typifier baked `kb`/`r0` onto each bond
     // (table → equivalence fallback → empirical rules). This kernel only reads the
     // columns and evaluates — no force-field-specific resolution lives here.

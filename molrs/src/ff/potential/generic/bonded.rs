@@ -43,7 +43,7 @@ impl ScalarBonded {
         style: &Params,
         tp: &[(&str, &Params)],
         frame: &Frame,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, crate::ff::potential::CompileError> {
         let coordinate = category.coordinate;
         let arity = coordinate.atoms().ok_or_else(|| {
             format!(

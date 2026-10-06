@@ -161,7 +161,7 @@ pub fn uff_inversion_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let Some(block) = frame.get(IMPROPERS) else {
         return Ok(Member::indexed(UffInversion {
             atom_i: vec![],

@@ -155,7 +155,7 @@ pub fn angle_charmm_ctor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
@@ -422,7 +422,7 @@ mod tests {
             .compile(&frame("A", &coords))
             .map(|_| ())
             .unwrap_err();
-        assert!(err.contains("'r_ub'"), "{err}");
+        assert!(err.to_string().contains("'r_ub'"), "{err}");
     }
 
     /// Urey–Bradley creates no exclusion: whether the 1-3 pair of a charmm
@@ -625,7 +625,8 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
         let stray = molecule(&xyz, &[(0, 1, 2, "CT-CT-CT"), (3, 0, 1, "XX-XX-XX")]);
         let err = compiler.compile(&stray).map(|_| ()).unwrap_err();
         assert!(
-            err.contains("'XX-XX-XX' is defined by no angle style"),
+            err.to_string()
+                .contains("'XX-XX-XX' is defined by no angle style"),
             "{err}"
         );
     }

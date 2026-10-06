@@ -148,7 +148,7 @@ pub fn mmff_oop_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     // Per-instance parameters: the MMFF typifier baked koop onto each improper.
     // This kernel only reads the column and evaluates.
     let block = frame

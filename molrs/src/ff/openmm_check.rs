@@ -647,12 +647,12 @@ fn an_unmaterialized_epsilon14_frame_is_refused() {
     let ff = read(c);
     let bare = frame(c, &ff);
     let err = PotentialCompiler::new(&ff).compile(&bare).err().unwrap();
-    assert!(err.contains("materialize_one_four"), "{err}");
+    assert!(err.to_string().contains("materialize_one_four"), "{err}");
     let err = PotentialCompiler::new(&ff)
         .compile_typed(&bare)
         .err()
         .unwrap();
-    assert!(err.contains("materialize_one_four"), "{err}");
+    assert!(err.to_string().contains("materialize_one_four"), "{err}");
 }
 
 /// `materialize_one_four` fills each 1-4 pair once (OpenMM's 1-4 list) and

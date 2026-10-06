@@ -368,7 +368,7 @@ pub fn pair_coul_cut_ctor(
     style_params: &Params,
     _type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let coulomb = required(style_params, "coulomb")?;
     let dielectric = required(style_params, "dielectric")?;
     let scale_14 = required(style_params, "coulomb14scale")?;
@@ -431,7 +431,7 @@ pub fn pair_coul_cut_typed_ctor(
     style_params: &Params,
     _type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let coulomb = required(style_params, "coulomb")?;
     let dielectric = required(style_params, "dielectric")?;
     let delta = style_params.get("delta").map(|d| d as F).unwrap_or(0.0);

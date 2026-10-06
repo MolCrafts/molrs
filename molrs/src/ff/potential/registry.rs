@@ -41,7 +41,8 @@ use super::{angle, bond, cmap, dihedral, improper, kspace, pair};
 /// Builds a molecule-bound [`Member`] from a style's params, its per-type
 /// params (`(type_label, params)`), and a typed [`Frame`]. Every kernel
 /// constructor in the crate matches this signature.
-pub type KernelConstructor = fn(&Params, &[(&str, &Params)], &Frame) -> Result<Member, String>;
+pub type KernelConstructor =
+    fn(&Params, &[(&str, &Params)], &Frame) -> Result<Member, crate::ff::potential::CompileError>;
 
 /// Where a kernel's parameters come from — the question the empty-type-params
 /// guard must ask before it rejects a style with no type rows.

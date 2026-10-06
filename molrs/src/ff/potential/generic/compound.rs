@@ -34,13 +34,14 @@ impl CompoundTerms {
         style: &Params,
         tp: &[(&str, &Params)],
         frame: &Frame,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, crate::ff::potential::CompileError> {
         let arity = category.arity.endpoints();
         if arity == 0 {
             return Err(format!(
                 "{} `{}`: a compound term names at least one atom",
                 spec.category, spec.name
-            ));
+            )
+            .into());
         }
         let (atoms, params) = resolve_terms(
             spec,

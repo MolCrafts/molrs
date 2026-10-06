@@ -227,7 +227,7 @@ pub fn uff_torsion_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let block = frame
         .get(DIHEDRALS)
         .ok_or("uff_torsion: missing \"dihedrals\" block")?;

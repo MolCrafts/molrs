@@ -11,6 +11,7 @@ pub mod bond;
 pub mod cmap;
 pub mod compile;
 pub mod dihedral;
+pub mod error;
 pub mod generic;
 pub mod improper;
 pub mod kspace;
@@ -19,6 +20,7 @@ pub mod registry;
 pub mod soft;
 
 pub use compile::PotentialCompiler;
+pub use error::CompileError;
 pub use registry::{
     KernelConstructor, KernelRegistry, ParamSource, RowSource, lookup_kernel, lookup_param_source,
     lookup_row_source, register_kernel, register_kernel_with,
@@ -1237,14 +1239,18 @@ mod tests {
             .unwrap();
         let frame = make_bond_frame();
         let err = PotentialCompiler::new(&ff).compile(&frame).unwrap_err();
-        assert!(err.contains("no kernel"), "{err}");
+        assert!(err.to_string().contains("no kernel"), "{err}");
     }
 
     #[test]
     fn register_kernel_extends_dispatch() {
         // A custom (category, name) with no built-in kernel becomes usable by
         // registering its constructor — no edit to PotentialCompiler required.
-        fn my_ctor(_sp: &Params, _tp: &[(&str, &Params)], _f: &Frame) -> Result<Member, String> {
+        fn my_ctor(
+            _sp: &Params,
+            _tp: &[(&str, &Params)],
+            _f: &Frame,
+        ) -> Result<Member, crate::ff::potential::CompileError> {
             Ok(Member::plain(DummyPotential { value: 42.0 }))
         }
         register_kernel("pair", "test/custom", my_ctor).unwrap();
@@ -1279,7 +1285,7 @@ mod tests {
         let err = PotentialCompiler::new(&ff)
             .compile(&frame)
             .expect_err("expected compile to fail");
-        assert!(err.contains("has no type definitions"));
+        assert!(err.to_string().contains("has no type definitions"));
     }
 
     #[test]

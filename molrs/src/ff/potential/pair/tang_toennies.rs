@@ -280,7 +280,7 @@ pub fn pair_tang_toennies_ctor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let b = style_params.get("b").unwrap_or(4.5) as F;
     let n = style_params.get("order").unwrap_or(4.0).round() as usize;
@@ -352,7 +352,7 @@ pub fn pair_tang_toennies_typed_ctor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let b = style_params.get("b").unwrap_or(4.5) as F;
     let n = style_params.get("order").unwrap_or(4.0).round() as usize;

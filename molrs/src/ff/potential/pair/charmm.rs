@@ -622,7 +622,7 @@ pub fn pair_lj_charmm_ctor(
     style: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let switch = switch_of(style, "lj/charmm")?;
     let mixing = charmm_mixing(style)?;
     // The 1-4 semantics are the exceptions kernel's; checked here so an
@@ -653,7 +653,7 @@ pub fn pair_lj_charmm_typed_ctor(
     style: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let switch = switch_of(style, "lj/charmm")?;
     let mixing = charmm_mixing(style)?;
     // The 1-4 semantics are the exceptions kernel's; checked here so an
@@ -706,7 +706,7 @@ pub fn pair_coul_charmm_ctor(
     style: &Params,
     _type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let switch = switch_of(style, "coul/charmm")?;
     let k = coulomb_constant(style)?;
     let q = charges(frame)?;
@@ -731,7 +731,7 @@ pub fn pair_coul_charmm_typed_ctor(
     style: &Params,
     _type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let switch = switch_of(style, "coul/charmm")?;
     let k = coulomb_constant(style)?;
     let q = charges(frame)?;

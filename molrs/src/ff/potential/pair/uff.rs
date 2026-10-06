@@ -270,7 +270,7 @@ pub fn uff_lj_ctor(
     style_params: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let atoms = frame.get(ATOMS).ok_or("uff_lj: missing atoms")?;
     let x1 = atoms
         .get("x1")
@@ -336,7 +336,7 @@ pub fn uff_lj_typed_ctor(
     _style_params: &Params,
     _type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let atoms = frame.get(ATOMS).ok_or("uff_lj: missing atoms")?;
     let x1 = atoms
         .get("x1")

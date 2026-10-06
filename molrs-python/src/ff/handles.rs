@@ -17,7 +17,6 @@ use pyo3::types::{PyDict, PyString, PyTuple, PyType};
 use molrs::ff::forcefield::{ForceField, Style};
 
 use super::{PyForceField, array_param, params_from_dict, params_to_dict};
-use crate::helpers::py_value_err;
 
 /// A category and its handle classes: the seven with classes of their own,
 /// and every other category — a custom one of the force-field IR registry,
@@ -302,7 +301,9 @@ impl PyStyle {
                 .get_style_mut(self.category.name(), &self.name)
                 .ok_or_else(|| missing_style(&self.category, &self.name))?;
             let ends: Vec<&str> = ends.iter().map(String::as_str).collect();
-            style.def_type(name, &ends, params).map_err(py_value_err)?;
+            style
+                .def_type(name, &ends, params)
+                .map_err(crate::ff::ir::def_err)?;
             // A pair restating a stored pair under another name is that row.
             match style.type_params(name) {
                 Some(_) => name.to_owned(),

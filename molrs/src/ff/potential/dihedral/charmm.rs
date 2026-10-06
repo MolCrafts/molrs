@@ -130,7 +130,7 @@ pub fn dihedral_charmm_ctor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get(DIHEDRALS)
@@ -244,12 +244,15 @@ mod tests {
         let err = crate::ff::potential::PotentialCompiler::new(&ff)
             .compile(&frame)
             .unwrap_err();
-        assert!(err.contains("lj/charmm"), "{err}");
+        assert!(err.to_string().contains("lj/charmm"), "{err}");
         let (ff, frame) = lammps_charmm("1.5");
         let err = crate::ff::potential::PotentialCompiler::new(&ff)
             .compile(&frame)
             .unwrap_err();
-        assert!(err.contains("a-b-c-d") && err.contains("[0, 1]"), "{err}");
+        assert!(
+            err.to_string().contains("a-b-c-d") && err.to_string().contains("[0, 1]"),
+            "{err}"
+        );
     }
 
     /// `w = 0` is the AMBER use of the style and prices LAMMPS's

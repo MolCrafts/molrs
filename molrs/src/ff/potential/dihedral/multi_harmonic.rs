@@ -128,7 +128,7 @@ pub fn dihedral_multi_harmonic_ctor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     cos_polynomial_ctor("dihedral_multi_harmonic", tp, frame, |p| {
         Ok(["a1", "a2", "a3", "a4", "a5"]
             .iter()
@@ -143,7 +143,7 @@ pub fn dihedral_nharmonic_ctor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     cos_polynomial_ctor("dihedral_nharmonic", tp, frame, |p| {
         Ok(nharmonic_coefficients(p)?
             .into_iter()
@@ -158,7 +158,7 @@ fn cos_polynomial_ctor(
     tp: &[(&str, &Params)],
     frame: &Frame,
     coefficients: impl Fn(&Params) -> Result<Vec<F>, String>,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get(DIHEDRALS)
@@ -289,7 +289,7 @@ mod nharmonic_tests {
     fn one_dihedral(
         style: &str,
         params: Params,
-    ) -> Result<crate::ff::potential::Potentials, String> {
+    ) -> Result<crate::ff::potential::Potentials, crate::ff::potential::CompileError> {
         let mut ff = ForceField::new("t");
         ff.def_style("dihedral", style, Params::new())
             .unwrap()
@@ -339,9 +339,9 @@ mod nharmonic_tests {
     #[test]
     fn a_missing_or_gapped_coefficient_is_refused() {
         let err = one_dihedral("nharmonic", Params::from_pairs(&[("a2", 1.0)])).unwrap_err();
-        assert!(err.contains("a1"), "{err}");
+        assert!(err.to_string().contains("a1"), "{err}");
         let err =
             one_dihedral("nharmonic", Params::from_pairs(&[("a1", 1.0), ("a3", 1.0)])).unwrap_err();
-        assert!(err.contains("a3"), "{err}");
+        assert!(err.to_string().contains("a3"), "{err}");
     }
 }

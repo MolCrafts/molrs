@@ -894,7 +894,7 @@ pub fn pme_ctor(
     style_params: &Params,
     _type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let alpha = style_params.get("alpha").ok_or("PME: missing 'alpha'")? as F;
     let cutoff = style_params.get("cutoff").ok_or("PME: missing 'cutoff'")? as F;
     let grid_x = style_params.get("grid_x").ok_or("PME: missing 'grid_x'")? as usize;

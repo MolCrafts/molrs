@@ -282,7 +282,7 @@ impl StyleEntry {
         tp: &[(&str, &Params)],
         frame: &Frame,
         expressions: Option<ExpressionCompiler>,
-    ) -> Result<Member, String> {
+    ) -> Result<Member, crate::ff::potential::CompileError> {
         if let Some(Kernel::Ctor { compiled, .. }) = &self.kernel {
             return compiled(params, tp, frame);
         }
@@ -324,7 +324,7 @@ impl StyleEntry {
         tp: &[(&str, &Params)],
         frame: &Frame,
         expressions: Option<ExpressionCompiler>,
-    ) -> Result<Option<(Member, SpecialClass)>, String> {
+    ) -> Result<Option<(Member, SpecialClass)>, crate::ff::potential::CompileError> {
         match &self.kernel {
             Some(Kernel::Ctor { typed: None, .. }) => return Ok(None),
             Some(Kernel::Ctor {

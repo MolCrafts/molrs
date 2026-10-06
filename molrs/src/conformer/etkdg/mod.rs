@@ -431,7 +431,9 @@ fn mmff_cleanup(mol: &Atomistic, coords3d: &mut [f64]) -> Result<(f64, usize, bo
     // than from an assumption about them.
     let ff = typing.forcefield();
     frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds())?);
-    let potentials = PotentialCompiler::new(ff).compile(&frame)?;
+    let potentials = PotentialCompiler::new(ff)
+        .compile(&frame)
+        .map_err(|e| e.to_string())?;
 
     // RDKit's MMFFOptimizeMolecule runs a full BFGS minimization to a
     // gradient-norm tolerance. Mirror that with L-BFGS to an RMS-gradient

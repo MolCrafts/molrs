@@ -100,7 +100,7 @@ pub fn uff_bond_ctor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<Member, crate::ff::potential::CompileError> {
     let block = frame
         .get(BONDS)
         .ok_or("uff_bond: missing \"bonds\" block")?;

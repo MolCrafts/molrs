@@ -838,6 +838,28 @@ impl std::fmt::Display for DefError {
 
 impl std::error::Error for DefError {}
 
+impl DefError {
+    /// The force-field IR refusal this is, when it is one: a type with the
+    /// wrong number of endpoints, or a style of the wrong arity, is
+    /// [`IrError::Arity`](crate::ff::ir::IrError::Arity) (`arity` the count
+    /// given); an undeclared category is
+    /// [`IrError::UnknownCategory`](crate::ff::ir::IrError::UnknownCategory).
+    pub fn ir(&self) -> Option<crate::ff::ir::IrError> {
+        use crate::ff::ir::IrError;
+        match self {
+            DefError::Arity { category, got, .. }
+            | DefError::CategoryArity { category, got, .. } => Some(IrError::Arity {
+                category: category.clone(),
+                arity: *got,
+            }),
+            DefError::UnknownCategory(category) => Some(IrError::UnknownCategory {
+                category: category.clone(),
+            }),
+            _ => None,
+        }
+    }
+}
+
 /// In-place mutators backing the Python handle-view layer (Style/Type views read
 /// through [`collect_type_params`](StyleDefs::collect_type_params) and write
 /// through these). Each operates on the type identified by its dash-form name.
