@@ -32,7 +32,6 @@ use crate::ff::typifier::am1bcc::{
     BCCCorrectionTable, BccIncrementError, BccParameterSet, bcc_increments,
 };
 use crate::ff::typifier::atd::AtdTypifier;
-use molrs::perceive::Perceive;
 
 use super::error::ChargeError;
 use super::model::{
@@ -148,11 +147,10 @@ impl BccModel {
         check_count(mol, am1)?;
 
         let work = without_type_columns(mol)?;
-        let perceived = Perceive::new().find_bond_types(&work);
         let atd = self.set.atd_set();
-        let types = AtdTypifier::new(atd)
-            .types_of(&perceived)
-            .map_err(charge_error)?;
+        let typifier = AtdTypifier::new(atd);
+        let perceived = typifier.perceive_bond_types(&work);
+        let types = typifier.types_of(&perceived).map_err(charge_error)?;
         reject_dummy_types(&perceived, &types, atd.table().name)?;
 
         let delta = bcc_increments(&self.table, &perceived, &types).map_err(charge_error_row)?;

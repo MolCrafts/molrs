@@ -24,7 +24,7 @@ pub(crate) mod topology;
 pub mod uff;
 
 pub use am1bcc::{BCCAtomChargeTypifier, BCCCorrectionTable, BCCCorrector, BccParameterSet};
-pub use atd::{AtdParameterSet, AtdTypifier};
+pub use atd::{AtdBondOrders, AtdParameterSet, AtdTypifier};
 pub use cmap::assign_cmaps;
 pub use element::ElementTypifier;
 pub use estimate::{

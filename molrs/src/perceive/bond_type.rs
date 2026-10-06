@@ -23,47 +23,64 @@
 //! The part numbering is antechamber's own (`bondtype.c::finalize()`), kept so the
 //! rules here can be read against the source they came from.
 //!
-//! Two further values exist in the tables but are **never emitted**:
+//! # Two entry points: the input's orders, or antechamber's
+//!
+//! * [`find_bond_types_from_connectivity`] is `bondtype -j full`, what
+//!   antechamber runs by default (`-j 4`, and always for `-c bcc`): the bond
+//!   orders are judged from the connectivity alone ([`judge_bond_orders`]),
+//!   the input's ignored; aromatic rings for part 1 are antechamber's own
+//!   ring classes ([`ring_classes`]) of the input's bond types; and part 3 is
+//!   written as `bondtype` writes it.
+//!   On the file antechamber reads, the bond types are antechamber's, bond
+//!   for bond — including the Kekulé structure of a molecule that has two
+//!   (azulene, cyclooctatetraene), which the order of the atoms and bonds
+//!   decides, as it does for antechamber.
+//! * [`find_bond_types`] keeps the input's orders: a localized bond is typed
+//!   by the number it states, an aromatic one by the Kekulé structure molrs
+//!   derives for it (below), promoted on molrs's own aromaticity, with part 3
+//!   repaired (below). Its answer does not depend on the order of the bonds.
+//!
+//! The alphabet both emit is `{1, 2, 3, 6, 7, 8, 9}`. Two further values exist
+//! in the tables:
 //!
 //! * **10** is not a peer of 7/8 — it is the *unresolved* aromatic precursor (the
-//!   SYBYL `ar` input token). It is an **input**, resolved here into 7 or 8, and
-//!   never survives into the output.
+//!   SYBYL `ar` input token). [`find_bond_types`] resolves it into 7 or 8;
+//!   [`find_bond_types_from_connectivity`] keeps it only where antechamber
+//!   does: an `ar` bond of a molecule no valence state closes.
 //! * **11** occupies 26 same-type diagonal rows of `BCCPARM.DAT`, all with a
-//!   correction of exactly `0.0000`, and no rule reaches it. Verified against
-//!   AmberTools25 over a 33-molecule probe sweep: the emitted alphabet is
-//!   `{1,2,3,6,7,8,9}` — never 10, never 11.
+//!   correction of exactly `0.0000`, and no rule reaches it.
 //!
 //! # Aromatic promotion is not "is the bond aromatic?"
 //!
 //! A bond is promoted to 7/8 only when **both** endpoints are aromatic *and* they
 //! share a ring of size **5 or 6 in which every ring atom is aromatic**. So
 //! biphenyl's inter-ring bond and every bond of a 7-membered aromatic ring stay
-//! 1/2 (part 1 of the perception).
+//! 1/2 (part 1 of the perception). antechamber's "aromatic" is a ring class
+//! (AR1 / AR2) rather than Hückel aromaticity: a quinone ring read from a
+//! connectivity-only file is AR1 and promoted; the five-ring of an indole is
+//! taken out by the AM1-BCC indole rule and is not.
 //!
-//! # Kekulé structures are re-perceived, not read
+//! # Kekulé structures, when the input's orders are kept
 //!
-//! An aromatic input carries no Kekulé structure (order 1.5), and the one an input
-//! file *does* carry is not authoritative — AmberTools ignores it and re-derives
-//! its own (verified: flipping a benzene SDF's Kekulé phase does not move its
-//! output). So this module re-derives one too, by minimising the same
-//! valence-state penalty (`APS.DAT`) over the aromatic subsystem.
-//!
-//! Which of 7/8 a given ring bond ends up with is *charge-invariant* — `BCCPARM`
-//! stores identical corrections for types 7, 8 and 10 — but the **atom types** are
-//! not: a heteroaromatic ring with two degenerate Kekulé structures (imidazolium)
-//! puts the N–C double bond on a different nitrogen in each, and those two
-//! nitrogens type differently. The tie-break is therefore load-bearing, and is
-//! pinned to AmberTools by the antechamber oracle.
+//! An aromatic input carries no Kekulé structure (order 1.5), so
+//! [`find_bond_types`] derives one by minimising the valence-state penalty
+//! (`APS.DAT`) over the aromatic subsystem. Which of 7/8 a given ring bond ends
+//! up with is *charge-invariant* — `BCCPARM` stores identical corrections for
+//! types 7, 8 and 10 — but the **atom types** are not: a heteroaromatic ring
+//! with two degenerate Kekulé structures (imidazolium) puts the N–C double bond
+//! on a different nitrogen in each, and those two nitrogens type differently.
+//! The tie-break is calibrated to AmberTools on the simple heteroaromatics; for
+//! antechamber's own answer on any input, use
+//! [`find_bond_types_from_connectivity`].
 //!
 //! # Provenance
 //!
 //! A reimplementation of the perception in AmberTools' `antechamber/bondtype.c`
 //! (`finalize()` and the `conjatom[]` flags), written by reading that source with
 //! the AmberTools developers' permission; see `.claude/notes/notes.md`
-//! (2026-07-12) for the licensing posture. It is **not** a line-for-line port: two
-//! defects are deliberately repaired, see below.
+//! (2026-07-12) for the licensing posture.
 //!
-//! # Type 6 — the order-dependence fix
+//! # Type 6 — the order-dependence fix of [`find_bond_types`]
 //!
 //! `bondtype.c`'s type-6 rule (`/*part3*/`) has two defects that make its output
 //! depend on the order the bonds appear in the input file:
@@ -78,11 +95,12 @@
 //! final charges by 0.28 e; and **pyridine-N-oxide**'s N–O bond types as 6 or 9
 //! purely according to whether the file wrote that bond as `O-N` or `N-O`.
 //!
-//! This module repairs both: the neighbour scan is **exhaustive**, and the rule is
-//! **symmetric in the bond's endpoints**. Everything else follows antechamber. The
-//! well-behaved cases are unmoved (nitrite stays 6/6, nitromethane stays 9/9,
-//! nitrobenzene 9/9, TMAO 9); the only outputs that move are the ones antechamber
-//! itself cannot reproduce under a permutation of its own input.
+//! [`find_bond_types`] repairs both: the neighbour scan is **exhaustive**, and
+//! the rule is **symmetric in the bond's endpoints** (nitrite stays 6/6,
+//! nitromethane 9/9, nitrobenzene 9/9, TMAO 9).
+//! [`find_bond_types_from_connectivity`] keeps both defects: its answer already
+//! follows the input's order, as antechamber's does, and reproducing antechamber
+//! means reproducing them.
 //!
 //! # The perceived type is a *perceived fact*, and lives in its own key
 //!
@@ -104,6 +122,8 @@ use indexmap::IndexMap;
 use std::collections::HashMap;
 
 use crate::perceive::aromaticity::perceive_aromaticity;
+use crate::perceive::bond_order::judge_bond_orders;
+use crate::perceive::ring_class::{RingClasses, ring_classes};
 use crate::perceive::rings::find_rings;
 use crate::store::keys;
 use crate::system::atomistic::{AtomId, Atomistic, BondId};
@@ -146,7 +166,10 @@ const AROMATIC_UNRESOLVED: i32 = 10;
 /// element's `APS.DAT` row leaves blank (`*`).
 const FORBIDDEN: u32 = 1000;
 
-/// Perceive the BCC bond type of every bond.
+/// Perceive the BCC bond type of every bond from the bond orders the input
+/// states (aromatic bonds kekulized). For the bond types antechamber itself
+/// perceives — orders judged from the connectivity, the input's ignored — use
+/// [`find_bond_types_from_connectivity`].
 ///
 /// Graph in / graph out and **non-mutating**: `mol` is cloned, the clone's bonds
 /// receive a [`BCC_BOND_TYPE`] prop holding the perceived type, and the clone is
@@ -253,8 +276,89 @@ pub fn find_bond_types(mol: &Atomistic) -> Atomistic {
     }
 
     let graph = BondGraph::new(&out);
-    let types = graph.perceive();
+    let types = graph.perceive(Seed::Input);
 
+    for (bid, ty) in graph.bond_ids.iter().zip(types) {
+        let _ = out.set_bond_prop(*bid, BCC_BOND_TYPE, ty);
+    }
+    out
+}
+
+/// Perceive the BCC bond type of every bond as antechamber does: the bond
+/// orders judged from the connectivity alone ([`judge_bond_orders`], `bondtype
+/// -j full`), whatever orders the input states, then `bondtype`'s `finalize`.
+///
+/// This is what `antechamber` does by default (`-j 4`, and always for `-c bcc`):
+/// it discards the file's bond orders and re-derives them, so on a molecule with
+/// more than one Kekulé structure (azulene, cyclooctatetraene) the structure —
+/// and every atom type that follows it — is the one its search settles on.
+/// [`find_bond_types`] keeps the input's orders instead.
+///
+/// Two things still read the input's bond types, because `bondtype` reads them
+/// from its file — taken here as the stated number, `ar` (10) for an aromatic
+/// bond that states none, and single otherwise:
+///
+/// * which rings are aromatic for the 7 / 8 promotion (part 1), decided by
+///   antechamber's ring classes ([`ring_classes`], with the AM1-BCC indole
+///   rule) before any bond is judged — a ring whose input carries an exocyclic
+///   double bond (a quinone drawn with its C=O) is AR3, not aromatic;
+/// * a residue no valence state closes, where antechamber warns that "the
+///   assigned bond types may be wrong" and keeps the file's types (an `ar` bond
+///   stays 10).
+///
+/// The judgement follows the graph's own atom and bond order, as antechamber's
+/// follows its input file's. Every hydrogen must be drawn.
+///
+/// # Arguments
+///
+/// * `mol` — the molecule to perceive; left untouched.
+///
+/// # Returns
+///
+/// A clone of `mol` whose every bond carries a [`BCC_BOND_TYPE`] prop in
+/// `{1, 2, 3, 6, 7, 8, 9}` (10 only as above). As with [`find_bond_types`],
+/// bond `order` and [`keys::TYPE`] are not rewritten.
+pub fn find_bond_types_from_connectivity(mol: &Atomistic) -> Atomistic {
+    if mol.n_bonds() == 0 {
+        return mol.clone();
+    }
+    let judged = judge_bond_orders(mol);
+    let graph = BondGraph::new(mol);
+
+    // Which rings are aromatic is decided before any bond is judged, from the
+    // bond types of the file antechamber reads: the stated number, `ar` (10)
+    // for an aromatic bond that states none, single otherwise.
+    let stated: Vec<(usize, usize, i32)> = graph
+        .ends
+        .iter()
+        .zip(&graph.bond_ids)
+        .map(|((i, j), bid)| {
+            let stated = mol.bond_number(*bid).count();
+            let t = if (1..=3).contains(&stated) {
+                stated as i32
+            } else if graph.aromatic[graph.bond_index[bid]] {
+                AROMATIC_UNRESOLVED
+            } else {
+                SINGLE
+            };
+            (*i, *j, t)
+        })
+        .collect();
+    let rings = ring_classes(&graph.z, &graph.adj, &stated, true);
+
+    // A residue no valence state closes keeps the file's types, as antechamber
+    // keeps them.
+    let kekule: Vec<i32> = judged
+        .iter()
+        .zip(&stated)
+        .map(|(order, (_, _, t))| order.map_or(*t, i32::from))
+        .collect();
+    let types = graph.perceive(Seed::Judged {
+        orders: &kekule,
+        rings: &rings,
+    });
+
+    let mut out = mol.clone();
     for (bid, ty) in graph.bond_ids.iter().zip(types) {
         let _ = out.set_bond_prop(*bid, BCC_BOND_TYPE, ty);
     }
@@ -433,6 +537,8 @@ fn aromatic_marking(props: &IndexMap<String, PropValue>) -> bool {
 struct BondGraph {
     /// Per bond: its handle, in bond index order.
     bond_ids: Vec<BondId>,
+    /// Bond handle -> bond index.
+    bond_index: HashMap<BondId, usize>,
     /// Per bond: its two endpoint atom indices.
     ends: Vec<(usize, usize)>,
     /// Per bond: the input bond order.
@@ -453,6 +559,19 @@ struct BondGraph {
     aromatic_atom: Vec<bool>,
     /// The SSSR rings, as atom indices.
     rings: Vec<Vec<usize>>,
+}
+
+/// What [`BondGraph::perceive`] seeds the bond types from.
+#[derive(Clone, Copy)]
+enum Seed<'a> {
+    /// The input's own orders, the aromatic bonds kekulized, promoted on
+    /// molrs's aromaticity.
+    Input,
+    /// Orders antechamber's search judged, promoted on antechamber's rings.
+    Judged {
+        orders: &'a [i32],
+        rings: &'a RingClasses,
+    },
 }
 
 impl BondGraph {
@@ -557,8 +676,10 @@ impl BondGraph {
             })
             .collect();
 
+        let bond_index = bond_ids.iter().enumerate().map(|(k, b)| (*b, k)).collect();
         Self {
             bond_ids,
+            bond_index,
             ends,
             order,
             aromatic,
@@ -609,16 +730,32 @@ impl BondGraph {
     }
 
     /// Run the whole perception, returning one BCC type per bond in bond order.
-    fn perceive(&self) -> Vec<i32> {
-        let mut types = self.seed_types();
+    fn perceive(&self, seed: Seed<'_>) -> Vec<i32> {
+        let mut types = match seed {
+            Seed::Input => self.seed_types(),
+            Seed::Judged { orders, .. } => orders
+                .iter()
+                .map(|o| match *o {
+                    AROMATIC_UNRESOLVED => AROMATIC_UNRESOLVED,
+                    o => o.clamp(SINGLE, TRIPLE),
+                })
+                .collect(),
+        };
         let conjugated = self.conjugated_atoms();
-        self.promote_aromatic(&mut types);
+        match seed {
+            Seed::Input => self.promote_aromatic(&mut types),
+            Seed::Judged { rings, .. } => self.promote_rings(&mut types, rings),
+        }
 
         for k in 0..self.ends.len() {
             if self.delocalize_double(k, &mut types, &conjugated) {
                 continue;
             }
-            if self.type_n_chalcogen(k, &mut types, &conjugated) {
+            let claimed = match seed {
+                Seed::Input => self.type_n_chalcogen(k, &mut types, &conjugated),
+                Seed::Judged { .. } => self.type_n_chalcogen_as_bondtype(k, &mut types),
+            };
+            if claimed {
                 continue;
             }
             self.delocalize_single(k, &mut types);
@@ -705,6 +842,33 @@ impl BondGraph {
         }
     }
 
+    /// **Part 1, as `bondtype` runs it** on a structure it judged: a bond whose
+    /// ends are both AR1, or both AR2 (antechamber's ring classes,
+    /// [`ring_classes`]), inside a five- or six-ring all of whose atoms are AR1
+    /// or AR2, is promoted 1 → 7, 2 → 8.
+    fn promote_rings(&self, types: &mut [i32], rings: &RingClasses) {
+        let f = &rings.atoms;
+        let aromatic = |a: usize| f[a].ar[0] > 0 || f[a].ar[1] > 0;
+        for (k, (i, j)) in self.ends.iter().copied().enumerate() {
+            if !((f[i].ar[0] > 0 && f[j].ar[0] > 0) || (f[i].ar[1] > 0 && f[j].ar[1] > 0)) {
+                continue;
+            }
+            let shared = rings.rings.iter().any(|ring| {
+                matches!(ring.num, 5 | 6)
+                    && ring.members().iter().all(|a| aromatic(*a))
+                    && ring.members().contains(&i)
+                    && ring.members().contains(&j)
+            });
+            if shared {
+                if types[k] == SINGLE {
+                    types[k] = AROMATIC_SINGLE;
+                } else if types[k] == DOUBLE {
+                    types[k] = AROMATIC_DOUBLE;
+                }
+            }
+        }
+    }
+
     /// **Part 2 — delocalized double.** A double bond from a conjugated centre to a
     /// terminal O/S is delocalized: the carboxylate C=O, the nitro N=O.
     ///
@@ -757,6 +921,31 @@ impl BondGraph {
             types[k] = N_CHALCOGEN;
         }
         second
+    }
+
+    /// **Part 3, as `bondtype` writes it** — for the structure it judged, where
+    /// the answer already follows the input's atom and bond order, so the
+    /// order-dependence the repaired [`type_n_chalcogen`](Self::type_n_chalcogen)
+    /// removes is part of what is being reproduced.
+    ///
+    /// With the bond stored N → O/S, it is 6 when the nitrogen's first other
+    /// neighbour (in `con[]` order) is itself a terminal O/S; stored O/S → N, it
+    /// is 6 outright (pyridine N-oxide written `O-N`).
+    fn type_n_chalcogen_as_bondtype(&self, k: usize, types: &mut [i32]) -> bool {
+        let (i, j) = self.ends[k];
+        let is_n = |a: usize| self.z[a] == 7 && matches!(self.degree(a), 2 | 3);
+        if is_n(i) && self.is_terminal_chalcogen(j) {
+            let first_other = self.adj[i].iter().find(|nb| **nb != j);
+            if first_other.is_some_and(|nb| self.is_terminal_chalcogen(*nb)) {
+                types[k] = N_CHALCOGEN;
+                return true;
+            }
+        }
+        if is_n(j) && self.is_terminal_chalcogen(i) {
+            types[k] = N_CHALCOGEN;
+            return true;
+        }
+        false
     }
 
     /// Orient a bond as `(nitrogen, terminal chalcogen)` if it is one, in whichever

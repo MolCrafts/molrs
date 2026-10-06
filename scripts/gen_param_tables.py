@@ -344,6 +344,9 @@ class Equivalents:
 
     #: phase-1 atom type -> the phase-2 type antechamber renames it to.
     pairs: dict[str, str]
+    #: the one flagged pair the header does not name (`cp` -> `cq`): the biphenyl
+    #: bridge carbons, which antechamber colours in a pass of their own.
+    bridge: dict[str, str]
     #: atom type -> its `equivalent_flag` column, verbatim (sign included).
     flags: dict[str, int]
 
@@ -403,11 +406,28 @@ def parse_parmchk(path: Path) -> Equivalents:
                     f"equivalent_flag column says {flags[name]}"
                 )
     pairs = dict(zip(phases[1], phases[2], strict=True))
-    return Equivalents(pairs=pairs, flags=flags)
+
+    # The flagged types the header leaves out are the bridge pair (`cp` -1 /
+    # `cq` -2). `atomtype.c` colours them in `cpadjust`, separately from the
+    # header's pairs (`atadjust`). The pairing is positional only when there is
+    # one of each, so anything else is a generator error.
+    named = set(phases[1]) | set(phases[2])
+    rest = {
+        phase: sorted(t for t, f in flags.items() if abs(f) == phase and t not in named)
+        for phase in (1, 2)
+    }
+    if len(rest[1]) != len(rest[2]) or len(rest[1]) > 1:
+        raise GrammarError(
+            f"{path.name}: expected at most one equivalent_flag pair outside the header, "
+            f"found {rest[1]} / {rest[2]}"
+        )
+    bridge = dict(zip(rest[1], rest[2], strict=True))
+    return Equivalents(pairs=pairs, flags=flags, bridge=bridge)
 
 
 def alternate_of(atom_type: str, eq: Equivalents | None) -> str | None:
-    """The phase-2 name `atom_type` is renamed to on the other colour, or `None`.
+    """The phase-2 name `atom_type` is renamed to on the other colour of a
+    conjugated system (the header's pairs, `atadjust`), or `None`.
 
     `eq` is `None` for a `.DEF` outside the GAFF namespace (see `ATOMTYPE_FILES`),
     where PARMCHK.DAT's column says nothing about the types the file declares.
@@ -421,8 +441,8 @@ def alternate_of(atom_type: str, eq: Equivalents | None) -> str | None:
       and break a column that reproduces antechamber 37/37 today.
     * the **header's enumeration** is what supplies the partner's name. A nonzero
       flag alone is not a pairing: upstream flags `cp` / `cq` (-1 / -2) but does not
-      list them in the header, and `antechamber -at gaff` types biphenyl `cp cp`,
-      never `cp cq` — the phase renaming does not reach them.
+      list them in the header — they are coloured in a pass of their own
+      (`bridge_of`), and never together with `cc` / `ce` / ….
     * the **namespace** decides whether the column applies to this file at all.
     """
     if eq is None:
@@ -430,6 +450,23 @@ def alternate_of(atom_type: str, eq: Equivalents | None) -> str | None:
     if abs(eq.flags.get(atom_type, 0)) != 1:
         return None
     return eq.pairs.get(atom_type)
+
+
+def bridge_of(atom_type: str, eq: Equivalents | None) -> str | None:
+    """The name a biphenyl bridge carbon (`cp`) takes on the other colour of
+    its bridge system (`cq`, `atomtype.c`'s `cpadjust`), or `None`."""
+    if eq is None:
+        return None
+    return eq.bridge.get(atom_type)
+
+
+def emit_alternate(atom_type: str, eq: Equivalents | None) -> str:
+    """The `alternate` column of an `AtdRule` row."""
+    if (name := alternate_of(atom_type, eq)) is not None:
+        return f"Some(Alternate {{ atom_type: {rust_str(name)}, pass: AlternatePass::Conjugated }})"
+    if (name := bridge_of(atom_type, eq)) is not None:
+        return f"Some(Alternate {{ atom_type: {rust_str(name)}, pass: AlternatePass::Bridge }})"
+    return "None"
 
 
 # ---------------------------------------------------------------------------
@@ -945,7 +982,7 @@ def emit_pattern(p: Pattern, wildatoms: dict) -> str:
 
 
 PARAM_TYPES = [
-    "AtdRule", "AtdTable", "AtomPattern", "AtomProp", "EnvBond", "EnvBondType",
+    "Alternate", "AlternatePass", "AtdRule", "AtdTable", "AtomPattern", "AtomProp", "EnvBond", "EnvBondType",
     "PatternAtom", "PropConstraint", "PropExpr", "PropRelation", "PropUnit",
     "WildAtom", "WildAtomSpec",
 ]
@@ -980,7 +1017,7 @@ def emit_atomtype(path: Path, const: str, eq: Equivalents | None) -> str:
     w("];")
     w("")
 
-    paired = sum(1 for r in rules if alternate_of(r.atom_type, eq))
+    paired = sum(1 for r in rules if emit_alternate(r.atom_type, eq) != "None")
     w(f"/// The {len(rules)} `ATD` rules of `{path.name}`, in file order.")
     w("///")
     w("/// Order is significant: the FIRST rule that matches wins — which is why the")
@@ -992,16 +1029,15 @@ def emit_atomtype(path: Path, const: str, eq: Equivalents | None) -> str:
     if paired:
         w(f"/// {paired} of these rules carry an `alternate`: the phase-2 name")
         w("/// `PARMCHK.DAT` pairs their atom type with. The rule emits the phase-1 name;")
-        w("/// the typifier's 2-colouring pass renames one colour of each conjugated")
-        w("/// system to the alternate, which is the only way a type no ATD row declares")
-        w("/// (`cd`) is ever assigned.")
+        w("/// the typifier's 2-colouring passes rename one colour of each conjugated")
+        w("/// (or biphenyl-bridge) system to the alternate, which is the only way a type")
+        w("/// no ATD row declares (`cd`, `cq`) is ever assigned.")
     else:
         w("/// No rule here carries an `alternate`: `PARMCHK.DAT`'s `equivalent_flag`")
         w("/// column describes the GAFF atom-type namespace, and this file is not written")
         w("/// in it. Nothing in this table is ever renamed by the 2-colouring pass.")
     w("pub const RULES: &[AtdRule] = &[")
     for r in rules:
-        alternate = alternate_of(r.atom_type, eq)
         env = (
             "&[" + ", ".join(emit_pattern(p, wildatoms) for p in r.env) + "]"
             if r.env is not None else None
@@ -1016,7 +1052,7 @@ def emit_atomtype(path: Path, const: str, eq: Equivalents | None) -> str:
             env_bonds = f"&[{bonds}]"
         w("    AtdRule {")
         w(f"        atom_type: {rust_str(r.atom_type)},")
-        w(f"        alternate: {opt(rust_str(alternate)) if alternate else 'None'},")
+        w(f"        alternate: {emit_alternate(r.atom_type, eq)},")
         w(f"        residue: {rust_str(r.residue)},")
         w(f"        atomic_number: {opt(str(r.atomic_number) if r.atomic_number is not None else None)},")
         w(f"        degree: {opt(str(r.degree) if r.degree is not None else None)},")

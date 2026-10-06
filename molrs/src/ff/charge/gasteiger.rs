@@ -59,7 +59,6 @@ use molrs::{AtomId, Atomistic};
 
 use crate::ff::params::{GASTEIGER_PARAMS, GasteigerRow};
 use crate::ff::typifier::atd::{AtdParameterSet, AtdTypifier};
-use molrs::perceive::Perceive;
 
 use super::error::ChargeError;
 use super::model::{
@@ -162,12 +161,10 @@ impl ChargeModel for GasteigerModel {
     /// fallback value.
     fn assign(&self, mol: &Atomistic, _qm: Option<&[f64]>) -> Result<Vec<f64>, ChargeError> {
         let work = without_type_columns(mol)?;
-        let perceived = Perceive::new().find_bond_types(&work);
-
         let set = AtdParameterSet::Gas;
-        let types = AtdTypifier::new(set)
-            .types_of(&perceived)
-            .map_err(charge_error)?;
+        let typifier = AtdTypifier::new(set);
+        let perceived = typifier.perceive_bond_types(&work);
+        let types = typifier.types_of(&perceived).map_err(charge_error)?;
         reject_dummy_types(&perceived, &types, set.table().name)?;
 
         let rows = parameter_rows(&perceived, &types)?;

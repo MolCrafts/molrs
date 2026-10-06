@@ -1947,6 +1947,8 @@ class Perceive:
     ``find_aromaticity`` → ``is_aromatic`` on atoms, ``bond_type`` /
     ``bond_number`` on bonds; ``find_hydrogens`` → adds H atoms and bonds;
     ``find_stereo`` → ``stereo``; ``find_rotatable`` → ``is_rotatable``;
+    ``find_bond_orders`` → ``bond_number`` / ``bond_type`` (antechamber's
+    Kekulé structure, judged from the connectivity);
     ``find_bond_types`` → ``bcc_bond_type``; ``find_equivalence_classes`` →
     ``equiv_class``."""
 
@@ -1964,6 +1966,7 @@ class Perceive:
         """Flag ``is_rotatable`` (0/1) on every bond. ``unknown_bond`` says
         what a bond with no ``bond_type`` counts as: ``"not_rotatable"``
         (never guess) or ``"single"``."""
+    def find_bond_orders(self, mol: Atomistic) -> Atomistic: ...
     def find_bond_types(self, mol: Atomistic) -> Atomistic: ...
     def find_equivalence_classes(self, mol: Atomistic) -> Atomistic: ...
 
@@ -3271,17 +3274,30 @@ class OPLSAATypifier(Typifier[Atomistic]):
     def __init__(self, source: Any = None, *, strict: bool = True) -> None: ...
 
 type AtdParameterSet = Literal["bcc", "abcg2", "gas", "gaff", "gaff2", "amber", "sybyl"]
+type AtdBondOrders = Literal["perceive", "input"]
 
 class AtdTypifier(Typifier[Atomistic]):
     """antechamber atom types — one rule engine over seven ``ATOMTYPE_*.DEF`` tables.
 
     ``parameter_set`` is the antechamber ``-at`` flag and is **required**: seven
     tables exist, they disagree, and there is no default. An atom no rule matches
-    comes back labelled ``"DU"`` — the table's own catch-all row, not a fallback."""
+    comes back labelled ``"DU"`` — the table's own catch-all row, not a fallback.
 
-    def __init__(self, *, parameter_set: AtdParameterSet) -> None: ...
+    ``bond_orders`` says which bond orders the types follow: ``"perceive"`` (the
+    default) judges them from the connectivity alone, as antechamber's
+    ``bondtype -j full`` does, ignoring the molecule's own; ``"input"`` keeps
+    the molecule's orders."""
+
+    def __init__(
+        self,
+        *,
+        parameter_set: AtdParameterSet,
+        bond_orders: AtdBondOrders = "perceive",
+    ) -> None: ...
     @property
     def parameter_set(self) -> AtdParameterSet: ...
+    @property
+    def bond_orders(self) -> AtdBondOrders: ...
 
 type GaffParameterSet = Literal["gaff", "gaff2"]
 

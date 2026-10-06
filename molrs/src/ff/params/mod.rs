@@ -321,6 +321,26 @@ pub struct EnvBond {
     pub bond: EnvBondType,
 }
 
+/// The phase-2 partner of a rule's atom type, and the colouring pass that
+/// renames to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Alternate {
+    /// The phase-2 name (`cd`, `cf`, `cq`, …).
+    pub atom_type: &'static str,
+    /// Which of antechamber's two colouring passes owns the pair.
+    pub pass: AlternatePass,
+}
+
+/// antechamber's two post-typing colouring passes (`atomtype.c`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlternatePass {
+    /// `atadjust`: the conjugated chain and ring names `cc` / `ce` / `cg` /
+    /// `nc` / `ne` / `pc` / `pe`, coloured together.
+    Conjugated,
+    /// `cpadjust`: the biphenyl bridge carbons `cp`, coloured on their own.
+    Bridge,
+}
+
 /// One `ATD` row: a conjunction of constraints on a candidate atom.
 ///
 /// Every `Option` field is an unconstrained `*` / `&` column in the source.
@@ -340,10 +360,14 @@ pub struct AtdRule {
     /// everything else). Hence a column of the rule rather than a `match` in the
     /// typifier.
     ///
+    /// The biphenyl bridge carbon `cp` pairs the same way with `cq` (`-1` / `-2`
+    /// in the column, though the header does not list them), and antechamber
+    /// colours those in a pass of their own — hence [`Alternate::pass`].
+    ///
     /// `None` whenever that column says `0` — including `ATOMTYPE_AMBER.DEF`'s
     /// `CC` / `CD`, which are parm94's histidine carbons and **not** a conjugated
     /// pair despite the spelling.
-    pub alternate: Option<&'static str>,
+    pub alternate: Option<Alternate>,
     /// Residue name, or `*` for any.
     pub residue: &'static str,
     /// Required atomic number.

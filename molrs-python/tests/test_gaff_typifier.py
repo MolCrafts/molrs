@@ -211,3 +211,65 @@ def test_a_frame_of_another_field_is_refused() -> None:
     other.def_style("bond", "harmonic")
     with pytest.raises(ValueError, match="no bond style defines"):
         other.materialize_params(frame, prefix="x_")
+
+
+# ---------------------------------------------------------------------------
+# AtdTypifier bond orders — antechamber's Kekulé structure
+# ---------------------------------------------------------------------------
+
+
+def _mol2(elements: list[str], bonds: list[tuple[int, int]], orders=None) -> molrs.Atomistic:
+    """A molecule as a mol2 file lists it: atoms by element, bonds in file
+    order, single unless ``orders`` says otherwise."""
+    mol = molrs.Atomistic()
+    atoms = [mol.def_atom(element=e) for e in elements]
+    for k, (i, j) in enumerate(bonds):
+        order = 1 if orders is None else orders[k]
+        mol.def_bond(atoms[i], atoms[j], bond_type=order, bond_number=order)
+    return mol
+
+
+_COT_BONDS = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (0, 7)] + [
+    (c, 8 + c) for c in range(8)
+]
+_AZULENE_BONDS = [
+    (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (3, 7), (7, 8), (8, 9), (0, 9),
+] + [(c, 10 + h) for h, c in enumerate([0, 1, 2, 4, 5, 6, 8, 9])]
+
+
+def _types(mol: molrs.Atomistic, parameter_set: str, **kw) -> list[str]:
+    typed = molrs.ff.typifier.AtdTypifier(parameter_set=parameter_set, **kw).typify(mol)
+    return [str(t) for t in typed.to_frame()["atoms"]["type"]]
+
+
+@pytest.mark.parametrize("parameter_set", ["gaff", "gaff2"])
+def test_azulene_and_cyclooctatetraene_type_as_antechamber(parameter_set: str) -> None:
+    # antechamber -at gaff / gaff2 (AmberTools 26.1) on the same mol2 files.
+    azulene = _mol2(["C"] * 10 + ["H"] * 8, _AZULENE_BONDS)
+    assert " ".join(_types(azulene, parameter_set)[:10]) == "cc cc cd cd cc cc cd cd cc cc"
+    cot = _mol2(["C"] * 8 + ["H"] * 8, _COT_BONDS)
+    assert " ".join(_types(cot, parameter_set)[:8]) == "cc cc cd cd cc cc cd cd"
+
+
+def test_the_drawn_kekule_structure_is_kept_only_when_asked() -> None:
+    drawn = [2, 1, 2, 1, 2, 1, 2, 1] + [1] * 8
+    cot = _mol2(["C"] * 8 + ["H"] * 8, _COT_BONDS, drawn)
+    # antechamber ignores the input's orders; so does the default.
+    assert " ".join(_types(cot, "gaff")[:8]) == "cc cc cd cd cc cc cd cd"
+    assert " ".join(_types(cot, "gaff", bond_orders="input")[:8]) == "cc cd cd cc cc cd cd cc"
+
+
+def test_bond_orders_is_checked_and_reported() -> None:
+    atd = molrs.ff.typifier.AtdTypifier(parameter_set="gaff")
+    assert atd.bond_orders == "perceive"
+    assert repr(atd) == "AtdTypifier(parameter_set='gaff', bond_orders='perceive')"
+    assert molrs.ff.typifier.AtdTypifier(parameter_set="bcc", bond_orders="input").bond_orders == "input"
+    with pytest.raises(ValueError, match="perceive"):
+        molrs.ff.typifier.AtdTypifier(parameter_set="gaff", bond_orders="kekule")
+
+
+def test_find_bond_orders_judges_from_connectivity() -> None:
+    cot = _mol2(["C"] * 8 + ["H"] * 8, _COT_BONDS)
+    out = molrs.perceive.Perceive().find_bond_orders(cot)
+    numbers = [int(n) for n in out.to_frame()["bonds"]["bond_number"]]
+    assert numbers[:8] == [1, 2, 1, 2, 1, 2, 1, 2]

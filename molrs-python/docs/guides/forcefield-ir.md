@@ -861,6 +861,37 @@ term). An estimated term is therefore named with its analog and penalty,
 `<types>@<analog>_<penalty>` (`c3-o-c-os@c3.o.c.oh_8.5`; the improper
 default `@default_0.0`), so one output force field holds both.
 
+**Which bond orders the types follow.** antechamber (its default `-j 4`)
+ignores the bond orders of its input: `bondtype -j full` judges new ones from
+the connectivity — each atom's penalty per valence (`APS.DAT`), valence states
+tried in order of total penalty, and for each a search that settles forced
+bonds and tries the first undecided bond in file order single, double, then
+triple — and the atom types follow that structure. `AtdTypifier` does the
+same by default (`bond_orders="perceive"`; Rust `AtdBondOrders::Perceive`):
+it types a molecule as antechamber types the mol2 file holding the same atoms
+and bonds in the same order, whatever orders the molrs graph carries. Where a
+molecule has more than one Kekulé structure (azulene, cyclooctatetraene,
+polycyclic aromatics) the structure — and with it the `cc` / `cd`, `ce` /
+`cf`, `nc` / `nd`, `cp` / `cq` colouring — is antechamber's, and is decided
+by that order, as antechamber's is. Two things still read the input's bond
+types, because `bondtype` reads them from its file: which rings count as
+aromatic for the 7 / 8 bond types (a quinone drawn with its C=O is not; read
+from a connectivity-only file, it is), and a molecule no valence state closes
+(tropylium), where antechamber keeps the file's bonds. Every hydrogen must be
+drawn. `bond_orders="input"` keeps the graph's own orders instead (aromatic
+bonds kekulized): a cyclooctatetraene drawn `C1=CC=CC=CC=C1` then types `cc
+cd cd cc …`, the structure it was drawn with, where antechamber answers `cc cc
+cd cd …`. `Perceive.find_bond_orders` writes the judged structure onto a
+molecule.
+
+The rest follows `antechamber` as well: rings and ring classes (`AR1` …
+`AR5`, `RG*`, `NR`) are its own (`ring.c`: every chordless ring of up to ten
+atoms, the AM1-BCC indole rule under `bcc` / `abcg2`), not a smallest set of
+smallest rings, and the colouring is its two post-typing passes (`atadjust`
+for `cc` / `ce` / `cg` / `nc` / `ne` / `pc` / `pe`, swept in bond order;
+`cpadjust` for the biphenyl bridge carbon, so o-terphenyl's middle ring is
+`cp … cq`).
+
 Checked against AmberTools 26.1:
 
 - antechamber + parmchk2 + tleap + sander on 127 molecules (neutral and
@@ -877,11 +908,15 @@ Checked against AmberTools 26.1:
 - parmchk2 on 800 type graphs built to need bond and angle estimates: every
   bond and angle it writes — parameters, analog, penalty, and every `ATTN`
   (a missing term here) — agrees.
-- `AtdTypifier` against antechamber's atom types: identical on 125 of the
-  127, given the same Kekulé structure. antechamber re-derives bond orders
-  from connectivity alone; for azulene and cyclooctatetraene it settles on
-  the other Kekulé structure, and the `cc` / `cd` colouring of the
-  conjugated system flips with it.
+- `AtdTypifier` against antechamber's atom types, on the mol2 files
+  antechamber read (connectivity only): identical on all 127 (and on
+  phenylboronic acid, which antechamber types but cannot charge) under all
+  seven `-at` tables (`gaff`, `gaff2`, `bcc`, `abcg2`, `amber`, `sybyl`,
+  `gas`), with the bond types `bondtype -j full` writes identical bond for
+  bond — and likewise on 173 further molecules built to stress the Kekulé
+  search and the ring perception (polycyclic and non-alternant aromatics,
+  annulenes, terphenyls, heteroaromatics, cations, anions and zwitterions,
+  N-oxides, azides, molecules no valence state closes, drug-like molecules).
 
 A term neither the table nor parmchk2's search reaches is an error where
 parmchk2 writes a zero marked `ATTN, need revision`.

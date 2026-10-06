@@ -8,8 +8,8 @@
 //! Source: `$AMBERHOME/dat/antechamber/ATOMTYPE_GFF2.DEF` (AmberTools).
 
 use crate::ff::params::{
-    AtdRule, AtdTable, AtomPattern, AtomProp, PatternAtom, PropConstraint, PropExpr, PropRelation,
-    PropUnit, WildAtom, WildAtomSpec,
+    Alternate, AlternatePass, AtdRule, AtdTable, AtomPattern, AtomProp, PatternAtom,
+    PropConstraint, PropExpr, PropRelation, PropUnit, WildAtom, WildAtomSpec,
 };
 
 /// `WILDATOM XX C N O S P`
@@ -70,11 +70,11 @@ pub const WILDATOMS: &[WildAtom] = &[
 /// antechamber does reach it: `-at amber` types nitromethane's nitro oxygens
 /// `DU`. It is a rule of the table, not a fallback the engine invents.
 ///
-/// 85 of these rules carry an `alternate`: the phase-2 name
+/// 86 of these rules carry an `alternate`: the phase-2 name
 /// `PARMCHK.DAT` pairs their atom type with. The rule emits the phase-1 name;
-/// the typifier's 2-colouring pass renames one colour of each conjugated
-/// system to the alternate, which is the only way a type no ATD row declares
-/// (`cd`) is ever assigned.
+/// the typifier's 2-colouring passes rename one colour of each conjugated
+/// (or biphenyl-bridge) system to the alternate, which is the only way a type
+/// no ATD row declares (`cd`, `cq`) is ever assigned.
 pub const RULES: &[AtdRule] = &[
     AtdRule {
         atom_type: "cx",
@@ -378,7 +378,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "cp",
-        alternate: None,
+        alternate: Some(Alternate {
+            atom_type: "cq",
+            pass: AlternatePass::Bridge,
+        }),
         residue: "*",
         atomic_number: Some(6),
         degree: Some(3),
@@ -473,7 +476,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "cc",
-        alternate: Some("cd"),
+        alternate: Some(Alternate {
+            atom_type: "cd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(6),
         degree: Some(3),
@@ -521,7 +527,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "cc",
-        alternate: Some("cd"),
+        alternate: Some(Alternate {
+            atom_type: "cd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(6),
         degree: Some(3),
@@ -569,7 +578,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "cc",
-        alternate: Some("cd"),
+        alternate: Some(Alternate {
+            atom_type: "cd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(6),
         degree: Some(3),
@@ -617,7 +629,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "cc",
-        alternate: Some("cd"),
+        alternate: Some(Alternate {
+            atom_type: "cd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(6),
         degree: Some(3),
@@ -665,7 +680,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "cc",
-        alternate: Some("cd"),
+        alternate: Some(Alternate {
+            atom_type: "cd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(6),
         degree: Some(3),
@@ -713,7 +731,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "cc",
-        alternate: Some("cd"),
+        alternate: Some(Alternate {
+            atom_type: "cd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(6),
         degree: Some(3),
@@ -761,7 +782,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "cc",
-        alternate: Some("cd"),
+        alternate: Some(Alternate {
+            atom_type: "cd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(6),
         degree: Some(3),
@@ -811,7 +835,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "cc",
-        alternate: Some("cd"),
+        alternate: Some(Alternate {
+            atom_type: "cd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(6),
         degree: Some(3),
@@ -861,7 +888,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "cc",
-        alternate: Some("cd"),
+        alternate: Some(Alternate {
+            atom_type: "cd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(6),
         degree: Some(3),
@@ -920,7 +950,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "cc",
-        alternate: Some("cd"),
+        alternate: Some(Alternate {
+            atom_type: "cd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(6),
         degree: Some(3),
@@ -946,512 +979,6 @@ pub const RULES: &[AtdRule] = &[
                     units: &[PropUnit {
                         count: None,
                         prop: AtomProp::Ar2,
-                        relation: None,
-                    }],
-                },
-            ],
-        }),
-        environment: Some(&[AtomPattern {
-            atom: PatternAtom::Wild(WILD_XD),
-            degree: Some(4),
-            property: Some(PropExpr {
-                constraints: &[
-                    PropConstraint {
-                        units: &[PropUnit {
-                            count: None,
-                            prop: AtomProp::SbAny,
-                            relation: Some(PropRelation::BondedToPrev),
-                        }],
-                    },
-                    PropConstraint {
-                        units: &[PropUnit {
-                            count: None,
-                            prop: AtomProp::DbAny,
-                            relation: None,
-                        }],
-                    },
-                ],
-            }),
-            label: None,
-            children: &[],
-        }]),
-        environment_bonds: None,
-    },
-    AtdRule {
-        atom_type: "cc",
-        alternate: Some("cd"),
-        residue: "*",
-        atomic_number: Some(6),
-        degree: Some(3),
-        hydrogen_count: None,
-        ewd_count: None,
-        atom_property: Some(PropExpr {
-            constraints: &[
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::SbAny,
-                        relation: None,
-                    }],
-                },
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::DbAny,
-                        relation: None,
-                    }],
-                },
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::Ar3,
-                        relation: None,
-                    }],
-                },
-            ],
-        }),
-        environment: Some(&[AtomPattern {
-            atom: PatternAtom::Element(6),
-            degree: Some(3),
-            property: None,
-            label: None,
-            children: &[AtomPattern {
-                atom: PatternAtom::Element(6),
-                degree: Some(3),
-                property: None,
-                label: None,
-                children: &[],
-            }],
-        }]),
-        environment_bonds: None,
-    },
-    AtdRule {
-        atom_type: "cc",
-        alternate: Some("cd"),
-        residue: "*",
-        atomic_number: Some(6),
-        degree: Some(3),
-        hydrogen_count: None,
-        ewd_count: None,
-        atom_property: Some(PropExpr {
-            constraints: &[
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::SbAny,
-                        relation: None,
-                    }],
-                },
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::DbAny,
-                        relation: None,
-                    }],
-                },
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::Ar3,
-                        relation: None,
-                    }],
-                },
-            ],
-        }),
-        environment: Some(&[AtomPattern {
-            atom: PatternAtom::Element(6),
-            degree: Some(3),
-            property: None,
-            label: None,
-            children: &[AtomPattern {
-                atom: PatternAtom::Element(6),
-                degree: Some(2),
-                property: None,
-                label: None,
-                children: &[],
-            }],
-        }]),
-        environment_bonds: None,
-    },
-    AtdRule {
-        atom_type: "cc",
-        alternate: Some("cd"),
-        residue: "*",
-        atomic_number: Some(6),
-        degree: Some(3),
-        hydrogen_count: None,
-        ewd_count: None,
-        atom_property: Some(PropExpr {
-            constraints: &[
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::SbAny,
-                        relation: None,
-                    }],
-                },
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::DbAny,
-                        relation: None,
-                    }],
-                },
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::Ar3,
-                        relation: None,
-                    }],
-                },
-            ],
-        }),
-        environment: Some(&[AtomPattern {
-            atom: PatternAtom::Element(6),
-            degree: Some(3),
-            property: None,
-            label: None,
-            children: &[AtomPattern {
-                atom: PatternAtom::Wild(WILD_XB),
-                degree: Some(2),
-                property: None,
-                label: None,
-                children: &[],
-            }],
-        }]),
-        environment_bonds: None,
-    },
-    AtdRule {
-        atom_type: "cc",
-        alternate: Some("cd"),
-        residue: "*",
-        atomic_number: Some(6),
-        degree: Some(3),
-        hydrogen_count: None,
-        ewd_count: None,
-        atom_property: Some(PropExpr {
-            constraints: &[
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::SbAny,
-                        relation: None,
-                    }],
-                },
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::DbAny,
-                        relation: None,
-                    }],
-                },
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::Ar3,
-                        relation: None,
-                    }],
-                },
-            ],
-        }),
-        environment: Some(&[AtomPattern {
-            atom: PatternAtom::Wild(WILD_XB),
-            degree: Some(2),
-            property: None,
-            label: None,
-            children: &[AtomPattern {
-                atom: PatternAtom::Wild(WILD_XB),
-                degree: Some(2),
-                property: None,
-                label: None,
-                children: &[],
-            }],
-        }]),
-        environment_bonds: None,
-    },
-    AtdRule {
-        atom_type: "cc",
-        alternate: Some("cd"),
-        residue: "*",
-        atomic_number: Some(6),
-        degree: Some(3),
-        hydrogen_count: None,
-        ewd_count: None,
-        atom_property: Some(PropExpr {
-            constraints: &[
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::SbAny,
-                        relation: None,
-                    }],
-                },
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::DbAny,
-                        relation: None,
-                    }],
-                },
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::Ar3,
-                        relation: None,
-                    }],
-                },
-            ],
-        }),
-        environment: Some(&[AtomPattern {
-            atom: PatternAtom::Wild(WILD_XB),
-            degree: Some(2),
-            property: None,
-            label: None,
-            children: &[AtomPattern {
-                atom: PatternAtom::Element(6),
-                degree: Some(2),
-                property: None,
-                label: None,
-                children: &[],
-            }],
-        }]),
-        environment_bonds: None,
-    },
-    AtdRule {
-        atom_type: "cc",
-        alternate: Some("cd"),
-        residue: "*",
-        atomic_number: Some(6),
-        degree: Some(3),
-        hydrogen_count: None,
-        ewd_count: None,
-        atom_property: Some(PropExpr {
-            constraints: &[
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::SbAny,
-                        relation: None,
-                    }],
-                },
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::DbAny,
-                        relation: None,
-                    }],
-                },
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::Ar3,
-                        relation: None,
-                    }],
-                },
-            ],
-        }),
-        environment: Some(&[AtomPattern {
-            atom: PatternAtom::Wild(WILD_XB),
-            degree: Some(2),
-            property: None,
-            label: None,
-            children: &[AtomPattern {
-                atom: PatternAtom::Element(6),
-                degree: Some(3),
-                property: None,
-                label: None,
-                children: &[],
-            }],
-        }]),
-        environment_bonds: None,
-    },
-    AtdRule {
-        atom_type: "cc",
-        alternate: Some("cd"),
-        residue: "*",
-        atomic_number: Some(6),
-        degree: Some(3),
-        hydrogen_count: None,
-        ewd_count: None,
-        atom_property: Some(PropExpr {
-            constraints: &[
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::SbAny,
-                        relation: None,
-                    }],
-                },
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::DbAny,
-                        relation: None,
-                    }],
-                },
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::Ar3,
-                        relation: None,
-                    }],
-                },
-            ],
-        }),
-        environment: Some(&[AtomPattern {
-            atom: PatternAtom::Element(6),
-            degree: Some(3),
-            property: Some(PropExpr {
-                constraints: &[PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::SbAny,
-                        relation: Some(PropRelation::BondedToPrev),
-                    }],
-                }],
-            }),
-            label: None,
-            children: &[],
-        }]),
-        environment_bonds: None,
-    },
-    AtdRule {
-        atom_type: "cc",
-        alternate: Some("cd"),
-        residue: "*",
-        atomic_number: Some(6),
-        degree: Some(3),
-        hydrogen_count: None,
-        ewd_count: None,
-        atom_property: Some(PropExpr {
-            constraints: &[
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::SbAny,
-                        relation: None,
-                    }],
-                },
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::DbAny,
-                        relation: None,
-                    }],
-                },
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::Ar3,
-                        relation: None,
-                    }],
-                },
-            ],
-        }),
-        environment: Some(&[AtomPattern {
-            atom: PatternAtom::Wild(WILD_XB),
-            degree: Some(2),
-            property: Some(PropExpr {
-                constraints: &[PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::SbAny,
-                        relation: Some(PropRelation::BondedToPrev),
-                    }],
-                }],
-            }),
-            label: None,
-            children: &[],
-        }]),
-        environment_bonds: None,
-    },
-    AtdRule {
-        atom_type: "cc",
-        alternate: Some("cd"),
-        residue: "*",
-        atomic_number: Some(6),
-        degree: Some(3),
-        hydrogen_count: None,
-        ewd_count: None,
-        atom_property: Some(PropExpr {
-            constraints: &[
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::SbAny,
-                        relation: None,
-                    }],
-                },
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::DbAny,
-                        relation: None,
-                    }],
-                },
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::Ar3,
-                        relation: None,
-                    }],
-                },
-            ],
-        }),
-        environment: Some(&[AtomPattern {
-            atom: PatternAtom::Wild(WILD_XD),
-            degree: Some(3),
-            property: Some(PropExpr {
-                constraints: &[
-                    PropConstraint {
-                        units: &[PropUnit {
-                            count: None,
-                            prop: AtomProp::SbAny,
-                            relation: Some(PropRelation::BondedToPrev),
-                        }],
-                    },
-                    PropConstraint {
-                        units: &[PropUnit {
-                            count: None,
-                            prop: AtomProp::DbAny,
-                            relation: None,
-                        }],
-                    },
-                ],
-            }),
-            label: None,
-            children: &[],
-        }]),
-        environment_bonds: None,
-    },
-    AtdRule {
-        atom_type: "cc",
-        alternate: Some("cd"),
-        residue: "*",
-        atomic_number: Some(6),
-        degree: Some(3),
-        hydrogen_count: None,
-        ewd_count: None,
-        atom_property: Some(PropExpr {
-            constraints: &[
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::SbAny,
-                        relation: None,
-                    }],
-                },
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::DbAny,
-                        relation: None,
-                    }],
-                },
-                PropConstraint {
-                    units: &[PropUnit {
-                        count: None,
-                        prop: AtomProp::Ar3,
                         relation: None,
                     }],
                 },
@@ -1485,7 +1012,546 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "cc",
-        alternate: Some("cd"),
+        alternate: Some(Alternate {
+            atom_type: "cd",
+            pass: AlternatePass::Conjugated,
+        }),
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(3),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        alternate: Some(Alternate {
+            atom_type: "cd",
+            pass: AlternatePass::Conjugated,
+        }),
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        alternate: Some(Alternate {
+            atom_type: "cd",
+            pass: AlternatePass::Conjugated,
+        }),
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Wild(WILD_XB),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        alternate: Some(Alternate {
+            atom_type: "cd",
+            pass: AlternatePass::Conjugated,
+        }),
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Wild(WILD_XB),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        alternate: Some(Alternate {
+            atom_type: "cd",
+            pass: AlternatePass::Conjugated,
+        }),
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(2),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        alternate: Some(Alternate {
+            atom_type: "cd",
+            pass: AlternatePass::Conjugated,
+        }),
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: None,
+            label: None,
+            children: &[AtomPattern {
+                atom: PatternAtom::Element(6),
+                degree: Some(3),
+                property: None,
+                label: None,
+                children: &[],
+            }],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        alternate: Some(Alternate {
+            atom_type: "cd",
+            pass: AlternatePass::Conjugated,
+        }),
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Element(6),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        alternate: Some(Alternate {
+            atom_type: "cd",
+            pass: AlternatePass::Conjugated,
+        }),
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XB),
+            degree: Some(2),
+            property: Some(PropExpr {
+                constraints: &[PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: Some(PropRelation::BondedToPrev),
+                    }],
+                }],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        alternate: Some(Alternate {
+            atom_type: "cd",
+            pass: AlternatePass::Conjugated,
+        }),
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(3),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbAny,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        alternate: Some(Alternate {
+            atom_type: "cd",
+            pass: AlternatePass::Conjugated,
+        }),
+        residue: "*",
+        atomic_number: Some(6),
+        degree: Some(3),
+        hydrogen_count: None,
+        ewd_count: None,
+        atom_property: Some(PropExpr {
+            constraints: &[
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::SbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::DbAny,
+                        relation: None,
+                    }],
+                },
+                PropConstraint {
+                    units: &[PropUnit {
+                        count: None,
+                        prop: AtomProp::Ar3,
+                        relation: None,
+                    }],
+                },
+            ],
+        }),
+        environment: Some(&[AtomPattern {
+            atom: PatternAtom::Wild(WILD_XD),
+            degree: Some(4),
+            property: Some(PropExpr {
+                constraints: &[
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::SbAny,
+                            relation: Some(PropRelation::BondedToPrev),
+                        }],
+                    },
+                    PropConstraint {
+                        units: &[PropUnit {
+                            count: None,
+                            prop: AtomProp::DbAny,
+                            relation: None,
+                        }],
+                    },
+                ],
+            }),
+            label: None,
+            children: &[],
+        }]),
+        environment_bonds: None,
+    },
+    AtdRule {
+        atom_type: "cc",
+        alternate: Some(Alternate {
+            atom_type: "cd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(6),
         degree: Some(3),
@@ -1521,7 +1587,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "cc",
-        alternate: Some("cd"),
+        alternate: Some(Alternate {
+            atom_type: "cd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(6),
         degree: Some(3),
@@ -1557,7 +1626,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "ce",
-        alternate: Some("cf"),
+        alternate: Some(Alternate {
+            atom_type: "cf",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(6),
         degree: Some(3),
@@ -1600,7 +1672,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "ce",
-        alternate: Some("cf"),
+        alternate: Some(Alternate {
+            atom_type: "cf",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(6),
         degree: Some(3),
@@ -1643,7 +1718,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "ce",
-        alternate: Some("cf"),
+        alternate: Some(Alternate {
+            atom_type: "cf",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(6),
         degree: Some(3),
@@ -1686,7 +1764,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "ce",
-        alternate: Some("cf"),
+        alternate: Some(Alternate {
+            atom_type: "cf",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(6),
         degree: Some(3),
@@ -1738,7 +1819,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "ce",
-        alternate: Some("cf"),
+        alternate: Some(Alternate {
+            atom_type: "cf",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(6),
         degree: Some(3),
@@ -1842,7 +1926,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "cg",
-        alternate: Some("ch"),
+        alternate: Some(Alternate {
+            atom_type: "ch",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(6),
         degree: Some(2),
@@ -1885,7 +1972,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "cg",
-        alternate: Some("ch"),
+        alternate: Some(Alternate {
+            atom_type: "ch",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(6),
         degree: Some(2),
@@ -1928,7 +2018,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "cg",
-        alternate: Some("ch"),
+        alternate: Some(Alternate {
+            atom_type: "ch",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(6),
         degree: Some(2),
@@ -1971,7 +2064,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "cg",
-        alternate: Some("ch"),
+        alternate: Some(Alternate {
+            atom_type: "ch",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(6),
         degree: Some(2),
@@ -2326,7 +2422,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pc",
-        alternate: Some("pd"),
+        alternate: Some(Alternate {
+            atom_type: "pd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -2374,7 +2473,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pc",
-        alternate: Some("pd"),
+        alternate: Some(Alternate {
+            atom_type: "pd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -2422,7 +2524,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pc",
-        alternate: Some("pd"),
+        alternate: Some(Alternate {
+            atom_type: "pd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -2470,7 +2575,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pc",
-        alternate: Some("pd"),
+        alternate: Some(Alternate {
+            atom_type: "pd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -2518,7 +2626,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pc",
-        alternate: Some("pd"),
+        alternate: Some(Alternate {
+            atom_type: "pd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -2566,7 +2677,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pc",
-        alternate: Some("pd"),
+        alternate: Some(Alternate {
+            atom_type: "pd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -2614,7 +2728,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pc",
-        alternate: Some("pd"),
+        alternate: Some(Alternate {
+            atom_type: "pd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -2664,7 +2781,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pc",
-        alternate: Some("pd"),
+        alternate: Some(Alternate {
+            atom_type: "pd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -2714,7 +2834,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pc",
-        alternate: Some("pd"),
+        alternate: Some(Alternate {
+            atom_type: "pd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -2764,7 +2887,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pc",
-        alternate: Some("pd"),
+        alternate: Some(Alternate {
+            atom_type: "pd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -2823,7 +2949,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pc",
-        alternate: Some("pd"),
+        alternate: Some(Alternate {
+            atom_type: "pd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -2882,7 +3011,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pc",
-        alternate: Some("pd"),
+        alternate: Some(Alternate {
+            atom_type: "pd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -2930,7 +3062,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pc",
-        alternate: Some("pd"),
+        alternate: Some(Alternate {
+            atom_type: "pd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -2978,7 +3113,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pc",
-        alternate: Some("pd"),
+        alternate: Some(Alternate {
+            atom_type: "pd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -3026,7 +3164,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pc",
-        alternate: Some("pd"),
+        alternate: Some(Alternate {
+            atom_type: "pd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -3074,7 +3215,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pc",
-        alternate: Some("pd"),
+        alternate: Some(Alternate {
+            atom_type: "pd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -3122,7 +3266,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pc",
-        alternate: Some("pd"),
+        alternate: Some(Alternate {
+            atom_type: "pd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -3170,7 +3317,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pc",
-        alternate: Some("pd"),
+        alternate: Some(Alternate {
+            atom_type: "pd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -3220,7 +3370,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pc",
-        alternate: Some("pd"),
+        alternate: Some(Alternate {
+            atom_type: "pd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -3270,7 +3423,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pc",
-        alternate: Some("pd"),
+        alternate: Some(Alternate {
+            atom_type: "pd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -3320,7 +3476,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pc",
-        alternate: Some("pd"),
+        alternate: Some(Alternate {
+            atom_type: "pd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -3379,7 +3538,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pc",
-        alternate: Some("pd"),
+        alternate: Some(Alternate {
+            atom_type: "pd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -3458,7 +3620,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pe",
-        alternate: Some("pf"),
+        alternate: Some(Alternate {
+            atom_type: "pf",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -3501,7 +3666,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pe",
-        alternate: Some("pf"),
+        alternate: Some(Alternate {
+            atom_type: "pf",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -3544,7 +3712,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pe",
-        alternate: Some("pf"),
+        alternate: Some(Alternate {
+            atom_type: "pf",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -3587,7 +3758,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pe",
-        alternate: Some("pf"),
+        alternate: Some(Alternate {
+            atom_type: "pf",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -3630,7 +3804,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pe",
-        alternate: Some("pf"),
+        alternate: Some(Alternate {
+            atom_type: "pf",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -3682,7 +3859,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "pe",
-        alternate: Some("pf"),
+        alternate: Some(Alternate {
+            atom_type: "pf",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(15),
         degree: Some(2),
@@ -5227,7 +5407,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "nc",
-        alternate: Some("nd"),
+        alternate: Some(Alternate {
+            atom_type: "nd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -5275,7 +5458,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "nc",
-        alternate: Some("nd"),
+        alternate: Some(Alternate {
+            atom_type: "nd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -5323,7 +5509,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "nc",
-        alternate: Some("nd"),
+        alternate: Some(Alternate {
+            atom_type: "nd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -5371,7 +5560,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "nc",
-        alternate: Some("nd"),
+        alternate: Some(Alternate {
+            atom_type: "nd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -5419,7 +5611,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "nc",
-        alternate: Some("nd"),
+        alternate: Some(Alternate {
+            atom_type: "nd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -5467,7 +5662,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "nc",
-        alternate: Some("nd"),
+        alternate: Some(Alternate {
+            atom_type: "nd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -5515,7 +5713,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "nc",
-        alternate: Some("nd"),
+        alternate: Some(Alternate {
+            atom_type: "nd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -5565,7 +5766,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "nc",
-        alternate: Some("nd"),
+        alternate: Some(Alternate {
+            atom_type: "nd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -5615,7 +5819,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "nc",
-        alternate: Some("nd"),
+        alternate: Some(Alternate {
+            atom_type: "nd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -5674,7 +5881,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "nc",
-        alternate: Some("nd"),
+        alternate: Some(Alternate {
+            atom_type: "nd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -5733,7 +5943,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "nc",
-        alternate: Some("nd"),
+        alternate: Some(Alternate {
+            atom_type: "nd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -5781,7 +5994,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "nc",
-        alternate: Some("nd"),
+        alternate: Some(Alternate {
+            atom_type: "nd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -5829,7 +6045,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "nc",
-        alternate: Some("nd"),
+        alternate: Some(Alternate {
+            atom_type: "nd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -5877,7 +6096,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "nc",
-        alternate: Some("nd"),
+        alternate: Some(Alternate {
+            atom_type: "nd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -5925,7 +6147,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "nc",
-        alternate: Some("nd"),
+        alternate: Some(Alternate {
+            atom_type: "nd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -5973,7 +6198,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "nc",
-        alternate: Some("nd"),
+        alternate: Some(Alternate {
+            atom_type: "nd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -6021,7 +6249,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "nc",
-        alternate: Some("nd"),
+        alternate: Some(Alternate {
+            atom_type: "nd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -6071,7 +6302,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "nc",
-        alternate: Some("nd"),
+        alternate: Some(Alternate {
+            atom_type: "nd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -6121,7 +6355,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "nc",
-        alternate: Some("nd"),
+        alternate: Some(Alternate {
+            atom_type: "nd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -6180,7 +6417,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "nc",
-        alternate: Some("nd"),
+        alternate: Some(Alternate {
+            atom_type: "nd",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -6239,7 +6479,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "ne",
-        alternate: Some("nf"),
+        alternate: Some(Alternate {
+            atom_type: "nf",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -6282,7 +6525,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "ne",
-        alternate: Some("nf"),
+        alternate: Some(Alternate {
+            atom_type: "nf",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -6325,7 +6571,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "ne",
-        alternate: Some("nf"),
+        alternate: Some(Alternate {
+            atom_type: "nf",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -6368,7 +6617,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "ne",
-        alternate: Some("nf"),
+        alternate: Some(Alternate {
+            atom_type: "nf",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -6411,7 +6663,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "ne",
-        alternate: Some("nf"),
+        alternate: Some(Alternate {
+            atom_type: "nf",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
@@ -6463,7 +6718,10 @@ pub const RULES: &[AtdRule] = &[
     },
     AtdRule {
         atom_type: "ne",
-        alternate: Some("nf"),
+        alternate: Some(Alternate {
+            atom_type: "nf",
+            pass: AlternatePass::Conjugated,
+        }),
         residue: "*",
         atomic_number: Some(7),
         degree: Some(2),
