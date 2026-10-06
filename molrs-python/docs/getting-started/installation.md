@@ -157,7 +157,7 @@ the package versions. The documentation site follows the repository `master`
 branch, while crates.io, PyPI, npm, and docs.rs describe released artifacts.
 
 **Consumers (e.g. molpy)** pin the shared **major.minor** line
-(`molcrafts-molrs>=0.15.0,<0.16`), not an exact patch. Patch may drift;
+(`molcrafts-molrs>=0.16.0,<0.17`), not an exact patch. Patch may drift;
 history lives in git tags and GitHub Releases — there is no hand-written
 `CHANGELOG.md`. Each minor release has a [release-notes page](../release-notes.md)
 and a section in the [migration guide](../migration.md).

@@ -24,7 +24,7 @@ Downstream packages that co-release with molrs (e.g. molpy) pin the shared
 
 ```toml
 [dependencies]
-molrs = { package = "molcrafts-molrs", version = "0.15", features = ["ff"] }
+molrs = { package = "molcrafts-molrs", version = "0.16", features = ["ff"] }
 ```
 
 Then use the native types directly — no FFI, no copies. For example, building
@@ -127,7 +127,7 @@ PyCapsules. That is a pointer bridge, so both sides must embed a
 `molrs_ffi::abi` is the single source of the contract; **never hard-code the
 capsule names**:
 
-- `abi::abi_line()` — `major.minor` of the embedded molrs (e.g. `"0.15"`).
+- `abi::abi_line()` — `major.minor` of the embedded molrs (e.g. `"0.16"`).
 - `abi::frameref_capsule_name()` / `abi::forcefield_capsule_name()` /
   `abi::regionref_capsule_name()` — `molrs.FrameRef/<line>` /
   `molrs.ForceFieldRef/<line>` / `molrs.RegionRef/<line>`. Versioned since

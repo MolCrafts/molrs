@@ -27,8 +27,8 @@ nav = [
     { "Python" = "reference/python.md" },
     { "WASM" = "reference/wasm.md" },
   ] },
-  { "Release 0.15" = [
-    { "What's new in 0.15" = "release-notes.md" },
+  { "Release 0.16" = [
+    { "What's new in 0.16" = "release-notes.md" },
     { "Migration guide" = "migration.md" },
   ] },
   { "Contributing" = "contributing.md" },

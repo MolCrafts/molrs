@@ -70,7 +70,7 @@ for all of them (`builder`, `io`, `smiles`, `signal`, `compute`, `voronoi`,
 drops `rayon` (wasm, Pyodide).
 
 ```toml
-molcrafts-molrs = { version = "0.15", features = ["io", "smiles", "conformer"] }
+molcrafts-molrs = { version = "0.16", features = ["io", "smiles", "conformer"] }
 ```
 
 | Environment | Install | Import / use |
@@ -163,7 +163,7 @@ Python and JavaScript/TypeScript quickstarts live in the documentation.
 - [Task-oriented guides](https://docs.molcrafts.org/molpy/) — data model, SMILES, neighbor search, 3D embedding, force fields, I/O, trajectory analysis (molpy, the Python library built on molrs)
 - [Rust API reference](https://docs.rs/molcrafts-molrs) — full rustdoc on docs.rs
 - [Record files](https://docs.molcrafts.org/molrs/guides/records/) — saving frames, trajectories and force fields as `*.mrec`
-- [What's new in 0.15](https://docs.molcrafts.org/molrs/release-notes/) and the [migration guide](https://docs.molcrafts.org/molrs/migration/) — upgrading from 0.14
+- [What's new in 0.16](https://docs.molcrafts.org/molrs/release-notes/) and the [migration guide](https://docs.molcrafts.org/molrs/migration/) — upgrading from 0.15
 
 ## MolCrafts ecosystem
 

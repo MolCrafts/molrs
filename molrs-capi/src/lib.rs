@@ -131,7 +131,7 @@ pub unsafe extern "C" fn molrs_init() {
 /// Report the `molcrafts-molrs` core version compiled into this library.
 ///
 /// Returns a pointer to a static null-terminated UTF-8 string, e.g.
-/// `"0.15.0"`. Informational — this identifies the exact molrs release for
+/// `"0.16.0"`. Informational — this identifies the exact molrs release for
 /// diagnostics.
 ///
 /// # C signature

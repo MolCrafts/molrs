@@ -1,6 +1,6 @@
 [package]
 name = "molcrafts-molrs-capi"
-version = "0.15.1"
+version = "0.16.0"
 edition = "2024"
 authors = ["MolCrafts"]
 license = "BSD-3-Clause"
@@ -30,8 +30,8 @@ default = []
 # molrs defaults to core only, so the set is spelled here: `full` +
 # `filesystem` + `rayon`, the same set molrs-ffi's default links (build 2 in
 # .cargo/config.toml). Never `stream`: no tokio / tungstenite in a C archive.
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.15.1", default-features = false, features = ["full", "filesystem", "rayon"] }
-molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.15.1" }
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.16.0", default-features = false, features = ["full", "filesystem", "rayon"] }
+molrs-ffi = { path = "../molrs-ffi", package = "molcrafts-molrs-ffi", version = "0.16.0" }
 slotmap = "1.0"
 ndarray = "0.17"
 serde_json = "1"
