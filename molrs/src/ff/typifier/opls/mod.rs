@@ -48,7 +48,7 @@
 
 use std::collections::HashSet;
 
-use molrs::{AtomId, Atomistic};
+use molrs::{Atomistic, NodeId};
 
 use crate::ff::forcefield::ForceField;
 use crate::ff::forcefield::readers::{ForceFieldReader, opls::OplsXmlReader};
@@ -243,7 +243,7 @@ impl Typifier for OPLSAATypifier {
     fn r#match(&self, graph: &mut Atomistic) -> Result<Match, String> {
         let atoms = typify_atoms(graph, &self.meta, &self.ff)?;
         if self.no_match == NoMatch::Error {
-            let untyped: Vec<AtomId> = graph
+            let untyped: Vec<NodeId> = graph
                 .atoms()
                 .map(|(id, _)| id)
                 .filter(|id| !atoms.types.contains_key(id))

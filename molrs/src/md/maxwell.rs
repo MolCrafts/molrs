@@ -1,9 +1,10 @@
 //! Maxwell-Boltzmann velocity distribution. Not a hook — draw only.
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
+use rand::SeedableRng;
 use rand::rngs::StdRng;
-use rand::{RngExt, SeedableRng};
 
+use crate::op::random::standard_normal;
 use molrs::types::{F, FNx3};
 
 use super::error::MdError;
@@ -96,12 +97,6 @@ impl MaxwellBoltzmann {
         }
         Ok(vel)
     }
-}
-
-fn standard_normal(rng: &mut StdRng) -> F {
-    let u1 = rng.random::<F>().max(f64::MIN_POSITIVE);
-    let u2 = rng.random::<F>();
-    (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
 }
 
 fn remove_com_velocity(vel: &mut Array2<F>, mass: ArrayView1<'_, F>) {

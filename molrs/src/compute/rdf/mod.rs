@@ -21,9 +21,9 @@ use molrs::types::{F, FNx3View};
 use ndarray::Array1;
 
 use crate::compute::error::ComputeError;
+use crate::compute::positions::get_positions_ref;
 use crate::compute::require_dist_sq;
 use crate::compute::traits::Compute;
-use crate::compute::util::get_positions_ref;
 
 /// Radial distribution function g(r) calculator.
 ///
@@ -322,7 +322,7 @@ impl Compute for RDF {
 
 #[cfg(test)]
 mod tests {
-    use super::super::util::get_positions_ref;
+    use super::super::positions::get_positions_ref;
     use super::*;
     use crate::compute::test_support::nlist_from_frame;
     use molrs::Frame;

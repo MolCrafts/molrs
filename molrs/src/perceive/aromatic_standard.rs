@@ -32,8 +32,9 @@ use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 
 use crate::perceive::Perceive;
-use crate::system::atomistic::{AtomId, Atomistic, BondId};
+use crate::system::atomistic::Atomistic;
 use crate::system::molgraph::PropValue;
+use crate::system::molgraph::{NodeId, RelationId};
 
 /// Bond prop: the chemical class (§2.1).
 const BOND_TYPE: &str = "bond_type";
@@ -119,24 +120,24 @@ fn uint_prop(props: &IndexMap<String, PropValue>, key: &str) -> Option<u32> {
     })
 }
 
-fn bond_type(mol: &Atomistic, bid: BondId) -> u32 {
+fn bond_type(mol: &Atomistic, bid: RelationId) -> u32 {
     let b = mol.get_bond(bid).expect("bond");
     uint_prop(&b.props, BOND_TYPE).unwrap_or_else(|| panic!("bond has no {BOND_TYPE}"))
 }
 
-fn bond_number(mol: &Atomistic, bid: BondId) -> u32 {
+fn bond_number(mol: &Atomistic, bid: RelationId) -> u32 {
     let b = mol.get_bond(bid).expect("bond");
     uint_prop(&b.props, BOND_NUMBER).unwrap_or_else(|| panic!("bond has no {BOND_NUMBER}"))
 }
 
-fn atom_is_aromatic(mol: &Atomistic, id: AtomId) -> bool {
+fn atom_is_aromatic(mol: &Atomistic, id: NodeId) -> bool {
     mol.get_atom(id)
         .ok()
         .and_then(|a| a.get(IS_AROMATIC).and_then(PropValue::as_f64))
         .is_some_and(|v| v != 0.0)
 }
 
-fn aromatic_bonds(mol: &Atomistic) -> Vec<BondId> {
+fn aromatic_bonds(mol: &Atomistic) -> Vec<RelationId> {
     mol.bonds()
         .filter(|(bid, _)| bond_type(mol, *bid) == TYPE_AROMATIC)
         .map(|(bid, _)| bid)
@@ -146,7 +147,7 @@ fn aromatic_bonds(mol: &Atomistic) -> Vec<BondId> {
 /// The molecule's `(bond_type, bond_number)` per bond, keyed by endpoint index
 /// pair — a comparison that survives a different bond iteration order.
 fn signature(mol: &Atomistic) -> HashMap<(usize, usize), (u32, u32)> {
-    let index: HashMap<AtomId, usize> = mol
+    let index: HashMap<NodeId, usize> = mol
         .atoms()
         .enumerate()
         .map(|(i, (id, _))| (id, i))
@@ -438,7 +439,7 @@ fn a_benzene_ring_is_never_six_localized_doubles() {
         // And every ring atom is in exactly one of them — that, not a printed
         // `1,2,1,2,…` list, is what alternating means. The bond table's order is
         // not the ring's.
-        let mut touched: HashMap<AtomId, usize> = HashMap::new();
+        let mut touched: HashMap<NodeId, usize> = HashMap::new();
         for bid in ring
             .iter()
             .filter(|bid| bond_number(&mol, **bid) == NUMBER_DOUBLE)
@@ -645,7 +646,7 @@ fn a_protonated_ring_nitrogen_never_ends_up_four_valent() {
         ("purine", "c1nc2[nH]cnc2cn1"),
     ] {
         let mol = standardize(smiles);
-        let index: HashMap<AtomId, usize> = mol
+        let index: HashMap<NodeId, usize> = mol
             .atoms()
             .enumerate()
             .map(|(i, (id, _))| (id, i))

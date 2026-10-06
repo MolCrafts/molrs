@@ -13,14 +13,16 @@
 //! query atom, so candidates are generated from the neighbourhood of the
 //! anchor's image.
 
-use crate::system::atomistic::{AtomId, Atomistic};
+use crate::system::atomistic::Atomistic;
+
+use crate::system::molgraph::NodeId;
 
 use super::ast::{BondFacts, MolContext, RecursiveEval};
-use super::parser::QueryGraph;
+use super::compile::QueryGraph;
 use super::{MatchOptions, SmartsMatch};
 
 /// Resolve bond facts between two molecule atoms, if they are bonded.
-fn bond_facts(ctx: &MolContext, a: AtomId, b: AtomId) -> Option<BondFacts> {
+fn bond_facts(ctx: &MolContext, a: NodeId, b: NodeId) -> Option<BondFacts> {
     let mol = ctx.mol;
     for (bid, other) in mol.incident_bond_ids(a) {
         if other == b {
@@ -46,7 +48,7 @@ struct RecursiveEvaluator<'g> {
 }
 
 impl RecursiveEval for RecursiveEvaluator<'_> {
-    fn eval_recursive(&self, sub_index: usize, ctx: &MolContext, id: AtomId) -> bool {
+    fn eval_recursive(&self, sub_index: usize, ctx: &MolContext, id: NodeId) -> bool {
         let sub = &self.recursives[sub_index];
         // The recursive subpattern matches iff it has at least one embedding
         // whose first query atom maps to `id` (RDKit roots `$(...)` at the
@@ -74,8 +76,8 @@ impl RecursiveEval for RecursiveEvaluator<'_> {
 fn enumerate_matches(
     query: &QueryGraph,
     ctx: &MolContext,
-    root_fix: Option<AtomId>,
-    visit: &mut dyn FnMut(&[AtomId]) -> bool,
+    root_fix: Option<NodeId>,
+    visit: &mut dyn FnMut(&[NodeId]) -> bool,
 ) {
     let n = query.atoms.len();
     if n == 0 {
@@ -84,14 +86,14 @@ fn enumerate_matches(
     let rec = RecursiveEvaluator {
         recursives: &query.recursives,
     };
-    let mut assign: Vec<Option<AtomId>> = vec![None; n];
-    let mut full: Vec<AtomId> = Vec::with_capacity(n);
+    let mut assign: Vec<Option<NodeId>> = vec![None; n];
+    let mut full: Vec<NodeId> = Vec::with_capacity(n);
     backtrack(query, ctx, &rec, root_fix, 0, &mut assign, &mut full, visit);
 }
 
 /// The earliest-placed query atom `qa` is bonded to, i.e. its lowest-indexed
-/// neighbour below `qa`. The parser always connects a new atom to a prior
-/// one, so every non-root atom has one.
+/// neighbour below `qa`. A compiled query is one connected pattern numbered
+/// in writing order, so every non-root atom has one.
 fn anchor_of(query: &QueryGraph, qa: usize) -> Option<usize> {
     query
         .bonds
@@ -114,11 +116,11 @@ fn backtrack(
     query: &QueryGraph,
     ctx: &MolContext,
     rec: &dyn RecursiveEval,
-    root_fix: Option<AtomId>,
+    root_fix: Option<NodeId>,
     depth: usize,
-    assign: &mut [Option<AtomId>],
-    full: &mut Vec<AtomId>,
-    visit: &mut dyn FnMut(&[AtomId]) -> bool,
+    assign: &mut [Option<NodeId>],
+    full: &mut Vec<NodeId>,
+    visit: &mut dyn FnMut(&[NodeId]) -> bool,
 ) -> bool {
     if depth == query.atoms.len() {
         full.clear();
@@ -162,12 +164,12 @@ fn try_place(
     query: &QueryGraph,
     ctx: &MolContext,
     rec: &dyn RecursiveEval,
-    root_fix: Option<AtomId>,
+    root_fix: Option<NodeId>,
     depth: usize,
-    cand: AtomId,
-    assign: &mut [Option<AtomId>],
-    full: &mut Vec<AtomId>,
-    visit: &mut dyn FnMut(&[AtomId]) -> bool,
+    cand: NodeId,
+    assign: &mut [Option<NodeId>],
+    full: &mut Vec<NodeId>,
+    visit: &mut dyn FnMut(&[NodeId]) -> bool,
 ) -> bool {
     if assign[..depth].contains(&Some(cand)) {
         return true;
@@ -215,7 +217,7 @@ pub fn find(query: &QueryGraph, mol: &Atomistic, options: MatchOptions<'_>) -> V
 pub(crate) fn find_in_context(
     query: &QueryGraph,
     ctx: &MolContext<'_>,
-    root: Option<AtomId>,
+    root: Option<NodeId>,
     limit: Option<usize>,
 ) -> Vec<SmartsMatch> {
     let Some(limit) = limit else {
@@ -265,8 +267,8 @@ mod tests {
     }
 
     fn matches(smarts: &str, mol: &Atomistic) -> Vec<Vec<usize>> {
-        let ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-        let q = super::super::parser::parse(smarts).unwrap();
+        let ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
+        let q = super::super::compile::compile(smarts).unwrap();
         find(&q, mol, MatchOptions::default())
             .into_iter()
             .map(|m| {
@@ -330,8 +332,8 @@ mod tests {
     #[test]
     fn a_root_pin_and_a_limit_narrow_the_enumeration() {
         let mol = ethanol();
-        let ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-        let q = super::super::parser::parse("C").unwrap();
+        let ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
+        let q = super::super::compile::compile("C").unwrap();
         let rooted = find(
             &q,
             &mol,

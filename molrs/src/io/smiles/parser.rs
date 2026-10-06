@@ -101,10 +101,11 @@ fn parse_paired(input: &str, dialect: Dialect) -> Result<SmilesIR, SmilesError> 
 
 /// Parse a SMARTS pattern into the shared IR.
 ///
-/// This yields SMARTS *syntax* as an IR, for callers that want the pattern as
-/// a tree. It is not the frontend of the substructure-matching engine in
-/// [`crate::perceive::smarts`], which has a parser of its own and never
-/// consumes this one.
+/// The one SMARTS parser: [`crate::perceive::smarts::SmartsPattern`] compiles
+/// its matcher from this IR. Beyond Daylight SMARTS it reads the RDKit
+/// ring-size range `r{lo-hi}` and ring connectivity `x<n>`, and the molrs
+/// context label `%LABEL`; a leading bare `H` in a bracket (`[H]`, `[H+]`) is
+/// the hydrogen element, any other `H` a hydrogen count, as in RDKit.
 ///
 /// # Errors
 ///
@@ -191,6 +192,9 @@ struct Parser<'a> {
     scanner: Scanner<'a>,
     dialect: Dialect,
     depth: usize,
+    /// SMARTS: the next bracket primitive is the first of its bracket, where a
+    /// bare `H` is the hydrogen element rather than a hydrogen count.
+    bracket_leading: bool,
 }
 
 /// Which bracket of a descriptor run the out-of-bracket bond symbol touches.
@@ -215,6 +219,7 @@ impl<'a> Parser<'a> {
             scanner: Scanner::new(input, dialect.notation()),
             dialect,
             depth: 0,
+            bracket_leading: false,
         }
     }
 
@@ -748,6 +753,22 @@ impl<'a> Parser<'a> {
             });
         }
 
+        // SMARTS also reads any one-letter element symbol outside brackets
+        // (`H`, `K`), as an aliphatic atom.
+        if self.dialect == Dialect::Smarts
+            && first.is_ascii_uppercase()
+            && Element::by_symbol(&one).is_some()
+        {
+            return Ok(AtomNode {
+                spec: AtomSpec::Organic {
+                    symbol: one,
+                    aromatic: false,
+                },
+                span: self.scanner.span_from(start),
+                descriptors: Vec::new(),
+            });
+        }
+
         Err(self.error_at(
             SmilesErrorKind::InvalidElement(one),
             Span::new(start, self.scanner.pos()),
@@ -983,15 +1004,36 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse a bond (possibly with SMARTS logical operators). Returns
-    /// `Option<BondQuery>` so SMARTS bond operators `!`, `&`, `,` can be
+    /// `Option<BondQuery>` so SMARTS bond operators `!`, `&`, `,`, `;` can be
     /// represented faithfully; SMILES inputs always yield
     /// `Some(BondQuery::Kind(_))` or `None`.
     fn parse_bond(&mut self) -> Result<Option<BondQuery>, SmilesError> {
         if self.dialect == Dialect::Smarts {
-            self.parse_bond_or()
+            self.parse_bond_low_and()
         } else {
             Ok(self.parse_bond_kind()?.map(BondQuery::Kind))
         }
+    }
+
+    /// SMARTS bond `;`-AND, the lowest precedence: `expr (;expr)*`
+    /// (Daylight: `-,:;@` is "single or aromatic, and in a ring").
+    fn parse_bond_low_and(&mut self) -> Result<Option<BondQuery>, SmilesError> {
+        let Some(head) = self.parse_bond_or()? else {
+            return Ok(None);
+        };
+        let mut parts = vec![head];
+        while self.scanner.peek() == Some(';') {
+            self.scanner.advance();
+            let Some(next) = self.parse_bond_or()? else {
+                return Err(self.error(SmilesErrorKind::UnexpectedEnd));
+            };
+            parts.push(next);
+        }
+        Ok(Some(if parts.len() == 1 {
+            parts.pop().unwrap()
+        } else {
+            BondQuery::And(parts)
+        }))
     }
 
     /// SMARTS bond `,`-OR: `expr (,expr)*`.
@@ -1014,15 +1056,21 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    /// SMARTS bond `&`-AND: `expr (&expr)*` (implicit AND via adjacency is
-    /// **not** supported on bonds — use `&` explicitly).
+    /// SMARTS bond high-precedence AND: `&`, or two bond primitives written
+    /// side by side (`!@-` is "not a ring bond, and single").
     fn parse_bond_and(&mut self) -> Result<Option<BondQuery>, SmilesError> {
         let Some(head) = self.parse_bond_not()? else {
             return Ok(None);
         };
         let mut parts = vec![head];
-        while self.scanner.peek() == Some('&') {
-            self.scanner.advance();
+        loop {
+            match self.scanner.peek() {
+                Some('&') => {
+                    self.scanner.advance();
+                }
+                Some(c) if Self::is_bond_char_smarts(c) => {}
+                _ => break,
+            }
             let Some(next) = self.parse_bond_not()? else {
                 return Err(self.error(SmilesErrorKind::UnexpectedEnd));
             };
@@ -1054,6 +1102,7 @@ impl<'a> Parser<'a> {
     // -----------------------------------------------------------------------
 
     fn parse_bracket_atom_smarts(&mut self, start: usize) -> Result<AtomNode, SmilesError> {
+        self.bracket_leading = true;
         let query = self.parse_atom_query_low_and()?;
 
         if self.scanner.peek() != Some(']') {
@@ -1191,17 +1240,14 @@ impl<'a> Parser<'a> {
             || ch == '@'
             || ch == '!'
             || ch == ':'
+            || ch == '%'
     }
 
     /// Parse the SMARTS atomic-number primitive `#<n>` (Daylight §3.1).
     ///
-    /// The number names an element, so it is resolved here through
-    /// [`Element::by_number`] and stored as that element's own symbol: `[#6]`
-    /// and `[C]` are the same element, and a consumer of the IR must not have
-    /// to re-parse the notation text `"#6"` to learn so. Aromaticity is not
-    /// part of the spelling — `[#6]` matches an aromatic carbon too — so the
-    /// stored primitive is the aliphatic-cased symbol with `aromatic: false`,
-    /// exactly as an unqualified query element.
+    /// Kept as [`AtomPrimitive::AtomicNumber`], not folded into an element
+    /// symbol: `[#6]` matches aromatic and aliphatic carbon alike, `[C]` only
+    /// the aliphatic one.
     ///
     /// # Errors
     ///
@@ -1218,9 +1264,25 @@ impl<'a> Parser<'a> {
             .ok_or_else(|| {
                 self.error(SmilesErrorKind::InvalidQueryPrimitive(format!("#{digits}")))
             })?;
-        Ok(AtomPrimitive::Element {
-            symbol: element.symbol().to_owned(),
-            aromatic: false,
+        Ok(AtomPrimitive::AtomicNumber(element.z()))
+    }
+
+    /// Read the count after a counter primitive (`D`, `H`, `X`, `R`, `r`, `x`,
+    /// `h`, `v`): every digit that follows, `None` when none does.
+    ///
+    /// # Errors
+    ///
+    /// [`SmilesErrorKind::InvalidQueryPrimitive`] naming `letter` and the
+    /// digits when the count does not fit a `u8`.
+    fn parse_count(&mut self, letter: char) -> Result<Option<u8>, SmilesError> {
+        let digits = self.scanner.eat_digits();
+        if digits.is_empty() {
+            return Ok(None);
+        }
+        digits.parse::<u8>().map(Some).map_err(|_| {
+            self.error(SmilesErrorKind::InvalidQueryPrimitive(format!(
+                "{letter}{digits}"
+            )))
         })
     }
 
@@ -1233,8 +1295,12 @@ impl<'a> Parser<'a> {
     /// [`SmilesErrorKind::UnexpectedChar`] / [`SmilesErrorKind::UnclosedBracket`]
     /// when the next character starts no primitive at all.
     fn parse_atom_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        // Only the bracket's first primitive sees `leading`; reading any
+        // primitive clears it.
+        let leading = std::mem::replace(&mut self.bracket_leading, false);
         match self.scanner.peek() {
             Some(':') => self.parse_atom_class_primitive(),
+            Some('%') => self.parse_context_label_primitive(),
             Some('*') => {
                 self.scanner.advance();
                 Ok(AtomPrimitive::Wildcard)
@@ -1244,7 +1310,7 @@ impl<'a> Parser<'a> {
             Some('@') => self.parse_chirality_primitive(),
             Some(sign @ ('+' | '-')) => self.parse_charge_primitive(sign),
             Some(c) if c.is_ascii_digit() => self.parse_isotope_primitive(),
-            Some(c) if c.is_ascii_uppercase() => self.parse_uppercase_primitive(c),
+            Some(c) if c.is_ascii_uppercase() => self.parse_uppercase_primitive(c, leading),
             Some(c) if c.is_ascii_lowercase() => self.parse_lowercase_primitive(c),
             Some(c) => Err(self.error(SmilesErrorKind::UnexpectedChar(c))),
             None => Err(self.error(SmilesErrorKind::UnclosedBracket)),
@@ -1296,24 +1362,65 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse the formal-charge primitive `+`/`-`, in either the doubled
-    /// (`++`, `--`) or the digit-suffixed (`+2`, `-2`) spelling; a bare sign
-    /// is ±1.
+    /// Parse the formal-charge primitive `+`/`-`: a repeated sign counts
+    /// (`++` is +2, `---` is -3), a number gives the magnitude (`+2`), and a
+    /// bare sign is ±1.
+    ///
+    /// # Errors
+    ///
+    /// [`SmilesErrorKind::InvalidQueryPrimitive`] when the magnitude does not
+    /// fit an `i8`.
     fn parse_charge_primitive(&mut self, sign: char) -> Result<AtomPrimitive, SmilesError> {
         self.scanner.advance();
-        let magnitude = if self.scanner.peek() == Some(sign) {
-            self.scanner.advance();
-            2
-        } else if let Some(d) = self.scanner.eat_digit() {
-            d as i8
+        let digits = self.scanner.eat_digits();
+        let magnitude: i8 = if digits.is_empty() {
+            let mut n = 1i8;
+            while self.scanner.peek() == Some(sign) {
+                self.scanner.advance();
+                n = n.saturating_add(1);
+            }
+            n
         } else {
-            1
+            digits.parse().map_err(|_| {
+                self.error(SmilesErrorKind::InvalidQueryPrimitive(format!(
+                    "{sign}{digits}"
+                )))
+            })?
         };
         Ok(AtomPrimitive::Charge(if sign == '-' {
             -magnitude
         } else {
             magnitude
         }))
+    }
+
+    /// Parse the molrs context-label primitive `%LABEL`: `%` and an
+    /// identifier of letters, digits and `_` that starts with a letter or `_`.
+    ///
+    /// # Errors
+    ///
+    /// [`SmilesErrorKind::InvalidQueryPrimitive`] for a bare `%` or a label
+    /// starting with a digit.
+    fn parse_context_label_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        self.scanner.advance(); // consume '%'
+        let start = self.scanner.pos();
+        if !self
+            .scanner
+            .peek()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        {
+            return Err(self.error(SmilesErrorKind::InvalidQueryPrimitive("%".to_owned())));
+        }
+        while self
+            .scanner
+            .peek()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            self.scanner.advance();
+        }
+        Ok(AtomPrimitive::ContextLabel(
+            self.scanner.input()[start..self.scanner.pos()].to_owned(),
+        ))
     }
 
     /// Parse the isotope primitive: a bare mass number leading the bracket.
@@ -1328,18 +1435,32 @@ impl<'a> Parser<'a> {
     /// Dispatch an uppercase-initial primitive: the counter letters `D`, `H`,
     /// `R`, `X` and the aliphatic wildcard `A` each shadow an element symbol,
     /// every other letter is an aliphatic element symbol.
-    fn parse_uppercase_primitive(&mut self, c: char) -> Result<AtomPrimitive, SmilesError> {
+    fn parse_uppercase_primitive(
+        &mut self,
+        c: char,
+        leading: bool,
+    ) -> Result<AtomPrimitive, SmilesError> {
         match c {
             'A' => self.parse_aliphatic_primitive(),
             'D' => self.parse_degree_primitive(),
-            'H' => self.parse_hcount_primitive(),
+            'H' => self.parse_hcount_primitive(leading),
             'R' => self.parse_ring_membership_primitive(),
             'X' => self.parse_total_connections_primitive(),
             _ => {
-                // Generic uppercase: element symbol
-                let sym = self.consume_element_symbol();
+                // Generic uppercase: an element symbol. The second letter
+                // belongs to it only when the two letters name an element, so
+                // `[Cv4]` is carbon of valence 4, not an element "Cv".
+                self.scanner.advance();
+                let mut symbol = c.to_string();
+                if let Some(c2) = self.scanner.peek()
+                    && c2.is_ascii_lowercase()
+                    && Element::by_symbol(&format!("{c}{c2}")).is_some()
+                {
+                    symbol.push(c2);
+                    self.scanner.advance();
+                }
                 Ok(AtomPrimitive::Element {
-                    symbol: sym,
+                    symbol,
                     aromatic: false,
                 })
             }
@@ -1382,7 +1503,7 @@ impl<'a> Parser<'a> {
     /// elements Dy, Db, Ds that share its letter.
     fn parse_degree_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
         self.scanner.advance();
-        if let Some(d) = self.scanner.eat_digit() {
+        if let Some(d) = self.parse_count('D')? {
             Ok(AtomPrimitive::Degree(d))
         } else if self.scanner.peek().is_some_and(|c| c.is_ascii_lowercase()) {
             // Dy, Db, Ds — two-letter elements
@@ -1397,10 +1518,12 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse the total-hydrogen counter `H<n>`, or the elements He, Hf, Hg,
-    /// Hs, Ho that share its letter.
-    fn parse_hcount_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
+    /// Hs, Ho that share its letter. A bare `H` leading its bracket (`[H]`,
+    /// `[H+]`) is the hydrogen element, as in RDKit; anywhere else (`[CH]`,
+    /// `[C;H]`) it is a hydrogen count of one.
+    fn parse_hcount_primitive(&mut self, leading: bool) -> Result<AtomPrimitive, SmilesError> {
         self.scanner.advance();
-        if let Some(d) = self.scanner.eat_digit() {
+        if let Some(d) = self.parse_count('H')? {
             Ok(AtomPrimitive::HCount(d))
         } else if self
             .scanner
@@ -1412,6 +1535,11 @@ impl<'a> Parser<'a> {
                 symbol: format!("H{c2}"),
                 aromatic: false,
             })
+        } else if leading {
+            Ok(AtomPrimitive::Element {
+                symbol: "H".to_owned(),
+                aromatic: false,
+            })
         } else {
             Ok(AtomPrimitive::HCount(1))
         }
@@ -1421,7 +1549,7 @@ impl<'a> Parser<'a> {
     /// starting with R (Rb, Ru, Rh, ...).
     fn parse_ring_membership_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
         self.scanner.advance();
-        if let Some(d) = self.scanner.eat_digit() {
+        if let Some(d) = self.parse_count('R')? {
             Ok(AtomPrimitive::RingMembership(Some(d)))
         } else if self.scanner.peek().is_some_and(|c| c.is_ascii_lowercase()) {
             let c2 = self.scanner.advance().unwrap();
@@ -1438,7 +1566,7 @@ impl<'a> Parser<'a> {
     /// starting with X (Xe).
     fn parse_total_connections_primitive(&mut self) -> Result<AtomPrimitive, SmilesError> {
         self.scanner.advance();
-        if let Some(d) = self.scanner.eat_digit() {
+        if let Some(d) = self.parse_count('X')? {
             Ok(AtomPrimitive::TotalConnections(d))
         } else if self.scanner.peek().is_some_and(|c| c.is_ascii_lowercase()) {
             let c2 = self.scanner.advance().unwrap();
@@ -1451,26 +1579,28 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Dispatch a lowercase-initial primitive: the counters `h`, `r`, `v` and
-    /// the aromatic element symbols `c`, `n`, `o`, `s`, `p`.
+    /// Dispatch a lowercase-initial primitive: the counters `h`, `r`, `v`,
+    /// `x`, the aromatic wildcard `a` and the aromatic element symbols `c`,
+    /// `n`, `o`, `s`, `p`.
     ///
     /// # Errors
     ///
     /// Any other lowercase letter is no primitive at all and yields
-    /// [`SmilesErrorKind::InvalidQueryPrimitive`] naming the letter.
+    /// [`SmilesErrorKind::InvalidQueryPrimitive`] naming the letter, as does
+    /// `x` without its count.
     fn parse_lowercase_primitive(&mut self, c: char) -> Result<AtomPrimitive, SmilesError> {
         match c {
             'h' => {
                 self.scanner.advance();
-                if let Some(d) = self.scanner.eat_digit() {
-                    Ok(AtomPrimitive::ImplicitH(d))
-                } else {
-                    Ok(AtomPrimitive::ImplicitH(1))
-                }
+                Ok(AtomPrimitive::ImplicitH(
+                    self.parse_count('h')?.unwrap_or(1),
+                ))
             }
             'r' => {
                 self.scanner.advance();
-                if let Some(d) = self.scanner.eat_digit() {
+                if self.scanner.peek() == Some('{') {
+                    self.parse_ring_size_range()
+                } else if let Some(d) = self.parse_count('r')? {
                     Ok(AtomPrimitive::RingSize(d))
                 } else {
                     // Bare 'r' means "in a ring" — same as R but lowercase
@@ -1479,11 +1609,18 @@ impl<'a> Parser<'a> {
             }
             'v' => {
                 self.scanner.advance();
-                if let Some(d) = self.scanner.eat_digit() {
-                    Ok(AtomPrimitive::Valence(d))
-                } else {
-                    Ok(AtomPrimitive::Valence(1))
-                }
+                Ok(AtomPrimitive::Valence(self.parse_count('v')?.unwrap_or(1)))
+            }
+            'x' => {
+                self.scanner.advance();
+                let n = self.parse_count('x')?.ok_or_else(|| {
+                    self.error(SmilesErrorKind::InvalidQueryPrimitive("x".to_owned()))
+                })?;
+                Ok(AtomPrimitive::RingBondCount(n))
+            }
+            'a' => {
+                self.scanner.advance();
+                Ok(AtomPrimitive::Aromatic)
             }
             // Aromatic element symbols: c, n, o, s, p
             'c' | 'n' | 'o' | 's' | 'p' => {
@@ -1499,6 +1636,37 @@ impl<'a> Parser<'a> {
                 Err(self.error(SmilesErrorKind::InvalidQueryPrimitive(sym)))
             }
         }
+    }
+
+    /// Parse the body of an `r{lo-hi}` ring-size range (cursor on `{`):
+    /// `{lo-hi}`, `{lo-}` (no upper bound) or `{-hi}` (no lower bound).
+    ///
+    /// # Errors
+    ///
+    /// [`SmilesErrorKind::InvalidQueryPrimitive`] naming the range text when
+    /// the `-` or the closing `}` is missing, both bounds are, or a bound does
+    /// not fit a `u8`.
+    fn parse_ring_size_range(&mut self) -> Result<AtomPrimitive, SmilesError> {
+        let start = self.scanner.pos();
+        self.scanner.advance(); // consume '{'
+        let invalid = |this: &Self| {
+            let text = &this.scanner.input()[start..this.scanner.pos()];
+            this.error(SmilesErrorKind::InvalidQueryPrimitive(format!("r{text}")))
+        };
+        let lo = self.parse_count('r').map_err(|_| invalid(self))?;
+        if self.scanner.peek() != Some('-') {
+            return Err(invalid(self));
+        }
+        self.scanner.advance(); // consume '-'
+        let hi = self.parse_count('r').map_err(|_| invalid(self))?;
+        if self.scanner.peek() != Some('}') || (lo.is_none() && hi.is_none()) {
+            return Err(invalid(self));
+        }
+        self.scanner.advance(); // consume '}'
+        Ok(AtomPrimitive::RingSizeRange {
+            lo: lo.unwrap_or(0),
+            hi,
+        })
     }
 }
 
@@ -1926,38 +2094,119 @@ mod tests {
         assert_eq!(atom_count(&mol), 1);
     }
 
-    /// The element symbol a one-primitive SMARTS bracket resolved to,
-    /// whichever of the two shapes the bracket parser left it in: a single
-    /// concrete element is simplified to `AtomSpec::Bracket`, anything else
-    /// stays an `AtomSpec::Query`. The symbol is the behaviour under test; the
-    /// shape is not.
-    fn bracket_element_symbol(mol: &SmilesIR) -> String {
+    /// The primitive a one-primitive SMARTS bracket parsed to.
+    fn sole_primitive(mol: &SmilesIR) -> &AtomPrimitive {
         match &mol.components[0].head.spec {
-            AtomSpec::Bracket {
-                symbol: BracketSymbol::Element { symbol, .. },
-                ..
-            } => symbol.clone(),
-            AtomSpec::Query(AtomQuery::Primitive(AtomPrimitive::Element { symbol, .. })) => {
-                symbol.clone()
-            }
-            other => panic!("expected a concrete element, got {other:?}"),
+            AtomSpec::Query(AtomQuery::Primitive(p)) => p,
+            other => panic!("expected a single query primitive, got {other:?}"),
         }
     }
 
-    /// `[#6]` is the atomic-number spelling of carbon, so it resolves through
-    /// `Element::by_number` to the element's own symbol. Storing the notation
-    /// text `"#6"` as a symbol would leave every consumer to re-parse it, and
-    /// `[#6]` and `[C]` would name two different elements.
+    /// `[#6]` keeps its atomic-number spelling: it matches aromatic and
+    /// aliphatic carbon alike, which the element symbol `C` (aliphatic only)
+    /// does not, so folding it into a symbol would change what it matches.
     #[test]
-    fn test_smarts_atomic_number_six_is_stored_as_carbon() {
-        assert_eq!(bracket_element_symbol(&smarts("[#6]")), "C");
+    fn test_smarts_atomic_number_is_kept_as_a_number() {
+        assert_eq!(
+            sole_primitive(&smarts("[#6]")),
+            &AtomPrimitive::AtomicNumber(6)
+        );
+        assert_eq!(
+            sole_primitive(&smarts("[#8]")),
+            &AtomPrimitive::AtomicNumber(8)
+        );
     }
 
-    /// The same rule at a second number, so the table is a lookup and not a
-    /// special case for carbon.
+    /// A bare `H` leading its bracket is hydrogen; after another primitive it
+    /// is a hydrogen count, and counts take every digit that follows.
     #[test]
-    fn test_smarts_atomic_number_eight_is_stored_as_oxygen() {
-        assert_eq!(bracket_element_symbol(&smarts("[#8]")), "O");
+    fn test_smarts_leading_h_is_hydrogen_and_counts_are_multi_digit() {
+        assert!(matches!(
+            &smarts("[H]").components[0].head.spec,
+            AtomSpec::Bracket { symbol: BracketSymbol::Element { symbol, .. }, .. } if symbol == "H"
+        ));
+        match &smarts("[H+]").components[0].head.spec {
+            AtomSpec::Query(AtomQuery::And(parts)) => {
+                assert!(matches!(
+                    &parts[0],
+                    AtomQuery::Primitive(AtomPrimitive::Element { symbol, .. }) if symbol == "H"
+                ));
+            }
+            other => panic!("expected H and +, got {other:?}"),
+        }
+        match &smarts("[CH2]").components[0].head.spec {
+            AtomSpec::Query(AtomQuery::And(parts)) => {
+                assert_eq!(parts[1], AtomQuery::Primitive(AtomPrimitive::HCount(2)));
+            }
+            other => panic!("expected C and H2, got {other:?}"),
+        }
+        assert_eq!(
+            sole_primitive(&smarts("[r12]")),
+            &AtomPrimitive::RingSize(12)
+        );
+        assert_eq!(sole_primitive(&smarts("[+12]")), &AtomPrimitive::Charge(12));
+        assert_eq!(sole_primitive(&smarts("[---]")), &AtomPrimitive::Charge(-3));
+    }
+
+    /// The RDKit ring extensions and the molrs context label.
+    #[test]
+    fn test_smarts_ring_range_ring_connectivity_and_context_label() {
+        assert_eq!(
+            sole_primitive(&smarts("[r{9-}]")),
+            &AtomPrimitive::RingSizeRange { lo: 9, hi: None }
+        );
+        assert_eq!(
+            sole_primitive(&smarts("[r{-8}]")),
+            &AtomPrimitive::RingSizeRange { lo: 0, hi: Some(8) }
+        );
+        assert_eq!(
+            sole_primitive(&smarts("[x2]")),
+            &AtomPrimitive::RingBondCount(2)
+        );
+        assert_eq!(
+            sole_primitive(&smarts("[%opls_145]")),
+            &AtomPrimitive::ContextLabel("opls_145".to_owned())
+        );
+        assert_eq!(sole_primitive(&smarts("[a]")), &AtomPrimitive::Aromatic);
+        assert!(parse_smarts("[r{-}]").is_err());
+        assert!(parse_smarts("[%1]").is_err());
+    }
+
+    /// Bond expressions follow Daylight precedence: `;` below `,` below `&`
+    /// and juxtaposition.
+    #[test]
+    fn test_smarts_bond_precedence() {
+        let bond = |s: &str| match &smarts(s).components[0].tail[0] {
+            ChainElement::BondedAtom { bond: Some(b), .. } => b.clone(),
+            other => panic!("expected a bonded atom, got {other:?}"),
+        };
+        let ring = BondQuery::Kind(BondKind::Ring);
+        let single = BondQuery::Kind(BondKind::Single);
+        let arom = BondQuery::Kind(BondKind::Aromatic);
+        assert_eq!(
+            bond("C!@;-C"),
+            BondQuery::And(vec![BondQuery::Not(Box::new(ring.clone())), single.clone()])
+        );
+        assert_eq!(
+            bond("C!@-C"),
+            BondQuery::And(vec![BondQuery::Not(Box::new(ring.clone())), single.clone()])
+        );
+        assert_eq!(
+            bond("C-,:;@C"),
+            BondQuery::And(vec![BondQuery::Or(vec![single, arom]), ring])
+        );
+    }
+
+    /// Outside brackets SMARTS also reads a one-letter element symbol beyond
+    /// the organic subset (`H`, `K`), as aliphatic.
+    #[test]
+    fn test_smarts_reads_a_bare_one_letter_element() {
+        let mol = smarts("[C](H)H");
+        assert_eq!(atom_count(&mol), 3);
+        assert!(
+            parse_smiles("[C](H)H").is_err(),
+            "SMILES keeps the organic subset"
+        );
     }
 
     /// `Element::by_number` is defined on 1..=118; a number past it names no

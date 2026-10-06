@@ -32,8 +32,8 @@ use molrs::types::F;
 
 use super::steinhardt::compute_qlm;
 use crate::compute::error::ComputeError;
+use crate::compute::positions::get_positions_ref;
 use crate::compute::traits::Compute;
-use crate::compute::util::get_positions_ref;
 
 /// Frenkel-ten Wolde solid/liquid classifier.
 #[derive(Debug, Clone, Copy)]

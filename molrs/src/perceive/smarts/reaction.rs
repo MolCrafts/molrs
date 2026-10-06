@@ -34,16 +34,17 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::error::MolRsError;
-use crate::system::atomistic::{AtomId, Atomistic, BondId};
+use crate::system::atomistic::Atomistic;
 use crate::system::bond::{BondNumber, BondType};
+use crate::system::molgraph::{NodeId, RelationId};
 use molrs::Element;
 
 use super::SmartsPattern;
 use super::ast::MolContext;
 use super::ast::{AtomPrimitive, AtomQuery, BondPrimitive, BondQuery};
-use super::parser::QueryGraph;
+use super::compile::QueryGraph;
 
-type ReactionAtomSets = Vec<Vec<AtomId>>;
+type ReactionAtomSets = Vec<Vec<NodeId>>;
 type DetailedReactionBatch = (ReactionAtomSets, ReactionAtomSets);
 
 // ---------------------------------------------------------------------------
@@ -434,10 +435,10 @@ impl Transform {
     fn resolve_leaving(
         &self,
         context: &MolContext<'_>,
-        binding: &HashMap<u32, AtomId>,
+        binding: &HashMap<u32, NodeId>,
         reactants: &[SmartsPattern],
-    ) -> Result<HashSet<AtomId>, MolRsError> {
-        let mut leaving: HashSet<AtomId> = HashSet::new();
+    ) -> Result<HashSet<NodeId>, MolRsError> {
+        let mut leaving: HashSet<NodeId> = HashSet::new();
         for spec in &self.delete {
             // Re-anchor the reactant to the binding to resolve its leaving atoms.
             // When the root query atom (index 0) is pinned — the usual case, e.g.
@@ -481,12 +482,12 @@ impl Transform {
     fn apply_after_delete(
         &self,
         mol: &mut Atomistic,
-        binding: &HashMap<u32, AtomId>,
-        touched: &mut Vec<AtomId>,
-        created: &mut Vec<AtomId>,
+        binding: &HashMap<u32, NodeId>,
+        touched: &mut Vec<NodeId>,
+        created: &mut Vec<NodeId>,
     ) -> Result<(), MolRsError> {
         // 2. Add unmapped product atoms (no coordinates).
-        let mut added: HashMap<usize, AtomId> = HashMap::new();
+        let mut added: HashMap<usize, NodeId> = HashMap::new();
         for spec in &self.add_atoms {
             let id = mol.add_atom_bare(&spec.element);
             if spec.charge != 0 {
@@ -497,7 +498,7 @@ impl Transform {
             created.push(id);
         }
 
-        let resolve = |n: &NodeRef| -> Result<AtomId, MolRsError> {
+        let resolve = |n: &NodeRef| -> Result<NodeId, MolRsError> {
             match n {
                 NodeRef::Mapped(l) => binding.get(l).copied().ok_or_else(|| {
                     MolRsError::validation(format!("reaction apply: binding missing atom map :{l}"))
@@ -509,7 +510,7 @@ impl Transform {
                 }),
             }
         };
-        let mapped = |l: &u32| -> Result<AtomId, MolRsError> {
+        let mapped = |l: &u32| -> Result<NodeId, MolRsError> {
             binding.get(l).copied().ok_or_else(|| {
                 MolRsError::validation(format!("reaction apply: binding missing atom map :{l}"))
             })
@@ -566,11 +567,11 @@ impl Transform {
     fn apply(
         &self,
         mol: &mut Atomistic,
-        binding: &HashMap<u32, AtomId>,
+        binding: &HashMap<u32, NodeId>,
         reactants: &[SmartsPattern],
-        labels: &HashMap<AtomId, String>,
+        labels: &HashMap<NodeId, String>,
         refresh: bool,
-    ) -> Result<Vec<AtomId>, MolRsError> {
+    ) -> Result<Vec<NodeId>, MolRsError> {
         let leaving = {
             let context = MolContext::with_labels(mol, labels);
             self.resolve_leaving(&context, binding, reactants)?
@@ -605,9 +606,9 @@ impl Transform {
     fn apply_many(
         &self,
         mol: &mut Atomistic,
-        bindings: &[HashMap<u32, AtomId>],
+        bindings: &[HashMap<u32, NodeId>],
         reactants: &[SmartsPattern],
-        labels: &HashMap<AtomId, String>,
+        labels: &HashMap<NodeId, String>,
         refresh: bool,
     ) -> Result<DetailedReactionBatch, MolRsError> {
         let leaving_per_edit = {
@@ -660,8 +661,8 @@ impl Transform {
     }
 }
 
-/// The [`BondId`] of the bond directly joining `a` and `b`, if any.
-fn bond_between(mol: &Atomistic, a: AtomId, b: AtomId) -> Option<BondId> {
+/// The [`RelationId`] of the bond directly joining `a` and `b`, if any.
+fn bond_between(mol: &Atomistic, a: NodeId, b: NodeId) -> Option<RelationId> {
     mol.incident_bond_ids(a)
         .find(|&(_, other)| other == b)
         .map(|(bid, _)| bid)
@@ -785,10 +786,10 @@ impl Reaction {
     pub fn apply(
         &self,
         mol: &mut Atomistic,
-        binding: &HashMap<u32, AtomId>,
-        labels: &HashMap<AtomId, String>,
+        binding: &HashMap<u32, NodeId>,
+        labels: &HashMap<NodeId, String>,
         refresh: bool,
-    ) -> Result<Vec<AtomId>, MolRsError> {
+    ) -> Result<Vec<NodeId>, MolRsError> {
         self.transform
             .apply(mol, binding, &self.reactants, labels, refresh)
     }
@@ -798,10 +799,10 @@ impl Reaction {
     pub fn apply_many(
         &self,
         mol: &mut Atomistic,
-        bindings: &[HashMap<u32, AtomId>],
-        labels: &HashMap<AtomId, String>,
+        bindings: &[HashMap<u32, NodeId>],
+        labels: &HashMap<NodeId, String>,
         refresh: bool,
-    ) -> Result<Vec<Vec<AtomId>>, MolRsError> {
+    ) -> Result<Vec<Vec<NodeId>>, MolRsError> {
         self.transform
             .apply_many(mol, bindings, &self.reactants, labels, refresh)
             .map(|(touched, _)| touched)
@@ -815,8 +816,8 @@ impl Reaction {
     pub fn apply_many_detailed(
         &self,
         mol: &mut Atomistic,
-        bindings: &[HashMap<u32, AtomId>],
-        labels: &HashMap<AtomId, String>,
+        bindings: &[HashMap<u32, NodeId>],
+        labels: &HashMap<NodeId, String>,
         refresh: bool,
     ) -> Result<DetailedReactionBatch, MolRsError> {
         self.transform

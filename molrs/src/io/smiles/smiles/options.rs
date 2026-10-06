@@ -2,7 +2,7 @@
 //!
 //! Every science/representation choice is an explicit field — no silent policy.
 
-use molrs::system::atomistic::AtomId;
+use molrs::system::molgraph::NodeId;
 
 /// Options for [`super::from_atomistic()`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,7 +12,7 @@ pub struct SmilesEmitOptions {
     pub canonical: bool,
     /// Override root atom; when set, root selection ignores `canonical` root pick
     /// (branch order may still use canonical colors).
-    pub root: Option<AtomId>,
+    pub root: Option<NodeId>,
     /// Aromatic emission style.
     pub aromatic: AromaticEmit,
     /// How hydrogens appear in the string.

@@ -46,7 +46,7 @@ const CHIRAL_RATIO_TOL: f64 = 0.8;
 /// `mol` is treated as a connectivity graph; any pre-existing 3D coordinates
 /// are used only to seed chiral-volume signs (so a stereochemically-defined
 /// input keeps its handedness) and are otherwise overwritten.
-pub fn generate_3d_impl(
+pub(crate) fn generate_3d_impl(
     mol: &Atomistic,
     opts: &ConformerOptions,
 ) -> Result<(Atomistic, ConformerReport), MolRsError> {
@@ -351,7 +351,7 @@ fn try_embed<R: rand::Rng + ?Sized>(
     // First minimization: distance + chiral + 4th-dimension (RDKit
     // firstMinimization, weightChiral=1.0, weightFourthDim=0.1).
     let field1 = etmin::FirstStageField::build(bounds, &constraints.chiral, EMBED_DIM, 1.0, 0.1);
-    let (e1, _c1, s1) = etmin::minimize(&mut coords4d, 400, 1e-3, |p, g| field1.energy_grad(p, g));
+    let (e1, _, s1, _) = minimize(&mut coords4d, 400, |p, g| field1.energy_grad(p, g));
     // Reject obviously-bad first minimizations (RDKit github #971,
     // `MAX_MINIMIZED_E_PER_ATOM`). Random-coords fallback skips this gate.
     if !use_random_coords && e1 / (n as f64) >= etmin::MAX_MINIMIZED_E_PER_ATOM {
@@ -361,7 +361,7 @@ fn try_embed<R: rand::Rng + ?Sized>(
     // Fourth-dimension squeeze (RDKit minimizeFourthDimension, weightChiral=0.2,
     // weightFourthDim=1.0) to collapse 4D → 3D.
     let field1b = etmin::FirstStageField::build(bounds, &constraints.chiral, EMBED_DIM, 0.2, 1.0);
-    let _ = etmin::minimize(&mut coords4d, 200, 1e-3, |p, g| field1b.energy_grad(p, g));
+    let _ = minimize(&mut coords4d, 200, |p, g| field1b.energy_grad(p, g));
 
     // Project to 3D (drop the 4th component).
     let mut coords3d = vec![0.0; n * 3];
@@ -378,7 +378,7 @@ fn try_embed<R: rand::Rng + ?Sized>(
         &constraints.experimental_torsions,
         &constraints.improper,
     );
-    let (e2, c2, s2) = etmin::minimize(&mut coords3d, 300, 1e-3, |p, g| field2.energy_grad(p, g));
+    let (e2, _, s2, c2) = minimize(&mut coords3d, 300, |p, g| field2.energy_grad(p, g));
 
     // Chiral check.
     let mut chiral_pass = true;
@@ -397,6 +397,23 @@ fn try_embed<R: rand::Rng + ?Sized>(
     }
 
     (Some(coords3d), s1, e2, s2, c2, chiral_pass)
+}
+
+/// Minimize one distance-geometry objective with the crate's L-BFGS
+/// ([`crate::optimize::minimize_lbfgs_rms`]) to RDKit's embedding force
+/// tolerance (1e-3 RMS gradient). `objective` returns the energy and fills
+/// the gradient; L-BFGS takes forces, so the gradient is negated here.
+fn minimize(
+    coords: &mut [f64],
+    max_iters: usize,
+    objective: impl Fn(&[f64], &mut [f64]) -> f64,
+) -> crate::optimize::MinResult {
+    crate::optimize::minimize_lbfgs_rms(coords, max_iters, 1e-3, |p| {
+        let mut grad = vec![0.0; p.len()];
+        let energy = objective(p, &mut grad);
+        grad.iter_mut().for_each(|g| *g = -*g);
+        (energy, grad)
+    })
 }
 
 /// RDKit `haveOppositeSign`.

@@ -54,7 +54,7 @@ use std::collections::{HashMap, HashSet};
 use molrs::store::schema::block_names::{ANGLES, BONDS, DIHEDRALS, IMPROPERS};
 use molrs::store::type_labels::TypeName;
 use molrs::system::molgraph::PropValue;
-use molrs::{AtomId, Atomistic, Element};
+use molrs::{Atomistic, Element, NodeId};
 
 use crate::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
 use crate::ff::params::uff::{AtomicParams, G, LAMBDA, params_for_label};
@@ -159,8 +159,8 @@ impl Typifier for UFFTypifier {
             .generate_topology(true, true, false, true)
             .map_err(|e| e.to_string())?;
 
-        let atom_ids: Vec<AtomId> = graph.atoms().map(|(id, _)| id).collect();
-        let id_to_idx: HashMap<AtomId, usize> = atom_ids
+        let atom_ids: Vec<NodeId> = graph.atoms().map(|(id, _)| id).collect();
+        let id_to_idx: HashMap<NodeId, usize> = atom_ids
             .iter()
             .enumerate()
             .map(|(i, &id)| (id, i))
@@ -307,8 +307,8 @@ impl Typifier for UFFTypifier {
         }
 
         // Angles
-        let in_ring3 = |aid: AtomId| rings.rings_of_size(3).iter().any(|r| r.contains(&aid));
-        let in_ring4 = |aid: AtomId| rings.rings_of_size(4).iter().any(|r| r.contains(&aid));
+        let in_ring3 = |aid: NodeId| rings.rings_of_size(3).iter().any(|r| r.contains(&aid));
+        let in_ring4 = |aid: NodeId| rings.rings_of_size(4).iter().any(|r| r.contains(&aid));
         let angles: Vec<[usize; 3]> = graph
             .angles()
             .map(|(_, a)| std::array::from_fn(|n| id_to_idx[&a.nodes[n]]))
@@ -502,7 +502,7 @@ impl Typifier for UFFTypifier {
     }
 }
 
-fn element_of(mol: &Atomistic, id: AtomId) -> Element {
+fn element_of(mol: &Atomistic, id: NodeId) -> Element {
     mol.get_atom(id)
         .ok()
         .and_then(|a| a.get_str("element").and_then(Element::by_symbol))
@@ -789,7 +789,7 @@ mod tests {
     /// N-methylacetamide `CH3-C(=O)-NH-CH3`, hand-built: methyl C is atom 0,
     /// carbonyl C atom 1, O atom 2 (C=O double), amide N atom 3, N-methyl C
     /// atom 4; hydrogens follow. Returns the graph and the carbonyl C and N.
-    fn n_methylacetamide() -> (Atomistic, AtomId, AtomId) {
+    fn n_methylacetamide() -> (Atomistic, NodeId, NodeId) {
         let mut m = Atomistic::new();
         let c_me = m.add_atom_bare("C");
         let c_co = m.add_atom_bare("C");
@@ -821,7 +821,7 @@ mod tests {
         let mut m = Atomistic::new();
         let mut ipso = Vec::new();
         for _ in 0..3 {
-            let ring: Vec<AtomId> = (0..6).map(|_| m.add_atom_bare("C")).collect();
+            let ring: Vec<NodeId> = (0..6).map(|_| m.add_atom_bare("C")).collect();
             for k in 0..6 {
                 let b = m.add_bond(ring[k], ring[(k + 1) % 6]).unwrap();
                 m.set_bond_type(b, molrs::system::BondType::Aromatic)
@@ -854,7 +854,7 @@ mod tests {
     }
 
     /// The UFF atom label (`type`) of every atom, by id.
-    fn atom_labels(typed: &Atomistic) -> HashMap<AtomId, String> {
+    fn atom_labels(typed: &Atomistic) -> HashMap<NodeId, String> {
         typed
             .atoms()
             .map(|(id, a)| (id, a.get_str("type").expect("every atom typed").to_owned()))
@@ -863,8 +863,8 @@ mod tests {
 
     /// `(nodes, type label)` of every link of `kind` (`bonds`, `angles`,
     /// `dihedrals`, `impropers`); a missing `type` is a failure.
-    fn link_labels(typed: &Atomistic, kind: &str) -> Vec<(Vec<AtomId>, String)> {
-        let rows: Vec<(Vec<AtomId>, IndexMap<String, PropValue>)> = match kind {
+    fn link_labels(typed: &Atomistic, kind: &str) -> Vec<(Vec<NodeId>, String)> {
+        let rows: Vec<(Vec<NodeId>, IndexMap<String, PropValue>)> = match kind {
             "bonds" => typed
                 .bonds()
                 .map(|(_, r)| (r.nodes.to_vec(), r.props))
@@ -1007,7 +1007,7 @@ mod tests {
     fn assert_improper_labels_keep_node_order(mol: &Atomistic) -> usize {
         let (typed, _) = uff_typed(mol);
         let atoms = atom_labels(&typed);
-        let bonded = |a: AtomId, b: AtomId| {
+        let bonded = |a: NodeId, b: NodeId| {
             typed
                 .bonds()
                 .any(|(_, r)| r.nodes.contains(&a) && r.nodes.contains(&b))

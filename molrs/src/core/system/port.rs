@@ -87,9 +87,6 @@ use crate::error::MolRsError;
 use crate::system::bond::{BondNumber, BondType, write_bond_class};
 use crate::system::molgraph::{FRAG_ID, KindId, MolGraph, NodeId, PropValue, RelationId};
 
-/// Handle to a port (a relation of the `ports` kind).
-pub type PortId = RelationId;
-
 /// The relation-kind name ports are stored under.
 pub const PORTS: &str = "ports";
 
@@ -285,7 +282,7 @@ impl MolGraph {
         kind: PortKind,
         label: &str,
         order: BondNumber,
-    ) -> Result<PortId, MolRsError> {
+    ) -> Result<RelationId, MolRsError> {
         self.get_node(anchor)?;
         self.get_node(handle)?;
         if !self.is_bonded(anchor, handle) {
@@ -319,7 +316,7 @@ impl MolGraph {
     /// [`MolRsError::Validation`] when the relation is missing `port_kind`,
     /// `port_label` or `port_order`, when the stored glyph is outside the
     /// grammar, or when the stored order is not a definite [`BondNumber`].
-    pub fn port(&self, id: PortId) -> Result<Port, MolRsError> {
+    pub fn port(&self, id: RelationId) -> Result<Port, MolRsError> {
         let ports = self
             .ports_kind()
             .ok_or_else(|| MolRsError::not_found("port", format!("port {}", id.data().as_ffi())))?;
@@ -398,7 +395,7 @@ impl MolGraph {
     }
 
     /// Iterate over the graph's port handles; empty without a `ports` kind.
-    pub fn ports(&self) -> impl Iterator<Item = PortId> + '_ {
+    pub fn ports(&self) -> impl Iterator<Item = RelationId> + '_ {
         self.ports_kind()
             .into_iter()
             .flat_map(move |kind| self.relation_ids(kind))
@@ -414,7 +411,7 @@ impl MolGraph {
     /// [`add_port`](Self::add_port) admits one port per valence, so the answer
     /// is unique. After a [`merge`](Self::merge), a port of the merged graph is
     /// found again here by its mapped anchor and handle.
-    pub fn port_on(&self, anchor: NodeId, handle: NodeId) -> Option<PortId> {
+    pub fn port_on(&self, anchor: NodeId, handle: NodeId) -> Option<RelationId> {
         let ports = self.ports_kind()?;
         self.neighbor_relations(anchor)
             .find(|&(kind, rid, other)| {
@@ -500,17 +497,17 @@ impl MolGraph {
 mod tests {
     use std::str::FromStr;
 
-    use super::{Port, PortId, PortKind};
+    use super::{Port, PortKind, RelationId};
     use crate::error::MolRsError;
-    use crate::system::atomistic::AtomId;
     use crate::system::atomistic::Atomistic;
     use crate::system::bond::BondNumber;
     use crate::system::coarsegrain::CoarseGrain;
+    use crate::system::molgraph::NodeId;
     use crate::system::molgraph::PropValue;
 
     /// `C0–C1` plus one real capping hydrogen bonded to `C0`: the smallest
     /// graph that can carry a legal port. Returns `(mol, c0, c1, h)`.
-    fn ch_template() -> (Atomistic, AtomId, AtomId, AtomId) {
+    fn ch_template() -> (Atomistic, NodeId, NodeId, NodeId) {
         let mut frag = Atomistic::new();
         let c0 = frag.add_atom_xyz("C", 0.0, 0.0, 0.0);
         let c1 = frag.add_atom_xyz("C", 1.54, 0.0, 0.0);
@@ -521,7 +518,7 @@ mod tests {
     }
 
     /// `ch_template` with one `Symmetric` port `(C0, H)` labelled `"A"`.
-    fn ported_template() -> (Atomistic, AtomId, AtomId, AtomId, PortId) {
+    fn ported_template() -> (Atomistic, NodeId, NodeId, NodeId, RelationId) {
         let (mut frag, c0, c1, h) = ch_template();
         let pid = frag
             .add_port(c0, h, PortKind::Symmetric, "A", BondNumber::Single)
@@ -704,7 +701,7 @@ mod tests {
         assert_ne!(p1, p2);
         assert_eq!(frag.n_ports(), 2);
 
-        let ids: Vec<PortId> = frag.ports().collect();
+        let ids: Vec<RelationId> = frag.ports().collect();
         assert_eq!(ids.len(), 2);
         assert!(ids.contains(&p1) && ids.contains(&p2));
         assert_eq!(frag.n_bonds(), 3, "a port is not a bond");

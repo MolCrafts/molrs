@@ -15,9 +15,11 @@ use molrs::types::F;
 
 use crate::compute::cluster::ClusterResult;
 use crate::compute::error::ComputeError;
+use crate::compute::positions::get_positions_ref;
 use crate::compute::shape::cluster_centers::ClusterCentersResult;
 use crate::compute::traits::Compute;
-use crate::compute::util::{MicHelper, get_positions_ref};
+use crate::op::vec3::sub;
+use molrs::spatial::simbox::{Mic, SimBox};
 
 /// Gyration tensor per cluster, per frame.
 ///
@@ -44,7 +46,7 @@ impl GyrationTensor {
         let xs = xs_p.slice();
         let ys = ys_p.slice();
         let zs = zs_p.slice();
-        let mic = MicHelper::from_simbox(frame.simbox_ref());
+        let mic = frame.simbox_ref().map_or(Mic::Free, SimBox::mic);
         let nc = clusters.num_clusters;
 
         if centers.centers.len() != nc {
@@ -64,7 +66,7 @@ impl GyrationTensor {
             }
             let c = cid as usize;
             let pos = [xs[i], ys[i], zs[i]];
-            let s = mic.disp(centers.centers[c], pos);
+            let s = mic.apply(sub(pos, centers.centers[c]));
 
             // Fully unrolled 3x3 rank-1 update — compiler emits straight-line code.
             let t = &mut tensors[c];

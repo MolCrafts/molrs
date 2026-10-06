@@ -11,8 +11,9 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::store::keys;
-use crate::system::atomistic::{AtomId, Atomistic};
+use crate::system::atomistic::Atomistic;
 use crate::system::bond::BondType;
+use crate::system::molgraph::NodeId;
 use crate::system::topology::Topology;
 
 /// How rotatable-bond detection reads a bond whose class is
@@ -47,7 +48,7 @@ impl UnknownBondPolicy {
 }
 
 /// A rotatable bond between atoms `j` and `k`, with the set of downstream
-/// atom indices (0-based positional indices, not `AtomId`s) on the `k`-side.
+/// atom indices (0-based positional indices, not `NodeId`s) on the `k`-side.
 #[derive(Debug, Clone)]
 pub struct RotatableBond {
     /// Axis start atom (positional index).
@@ -58,9 +59,9 @@ pub struct RotatableBond {
     pub downstream: Vec<usize>,
 }
 
-/// Build a positional index map from `AtomId` to 0-based index, following the
+/// Build a positional index map from `NodeId` to 0-based index, following the
 /// iteration order of [`Atomistic::atoms`].
-pub fn atom_id_to_index(graph: &Atomistic) -> HashMap<AtomId, usize> {
+pub fn atom_id_to_index(graph: &Atomistic) -> HashMap<NodeId, usize> {
     graph
         .atoms()
         .enumerate()
@@ -74,7 +75,7 @@ pub fn atom_id_to_index(graph: &Atomistic) -> HashMap<AtomId, usize> {
 /// Because [`Topology::from_edges`] preserves edge insertion order, a
 /// [`Topology::bond_ring_mask`] over the returned topology aligns positionally
 /// with `graph.bonds()`.
-fn build_topology(graph: &Atomistic, id_to_idx: &HashMap<AtomId, usize>) -> Topology {
+fn build_topology(graph: &Atomistic, id_to_idx: &HashMap<NodeId, usize>) -> Topology {
     let edges: Vec<[usize; 2]> = graph
         .bonds()
         .map(|(_, b)| [id_to_idx[&b.nodes[0]], id_to_idx[&b.nodes[1]]])
@@ -84,7 +85,7 @@ fn build_topology(graph: &Atomistic, id_to_idx: &HashMap<AtomId, usize>) -> Topo
 
 /// Shared detection core. Returns the positional `(j, k)` index pair of every
 /// rotatable bond together with the `Topology` they were derived from (reused by
-/// the caller for downstream BFS) and the reverse `idx -> AtomId` table.
+/// the caller for downstream BFS) and the reverse `idx -> NodeId` table.
 ///
 /// A bond is rotatable when its class is [`BondType::Single`] (an
 /// [`Unknown`](BondType::Unknown) class decided by `unknown`), both endpoints
@@ -93,9 +94,9 @@ fn build_topology(graph: &Atomistic, id_to_idx: &HashMap<AtomId, usize>) -> Topo
 fn scan_rotatable(
     graph: &Atomistic,
     unknown: UnknownBondPolicy,
-) -> (Vec<AtomId>, Topology, Vec<(usize, usize)>) {
-    let ids: Vec<AtomId> = graph.atoms().map(|(id, _)| id).collect();
-    let id_to_idx: HashMap<AtomId, usize> =
+) -> (Vec<NodeId>, Topology, Vec<(usize, usize)>) {
+    let ids: Vec<NodeId> = graph.atoms().map(|(id, _)| id).collect();
+    let id_to_idx: HashMap<NodeId, usize> =
         ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
 
     // Collect bonds once so the edge index used for `bond_ring_mask` and the
@@ -165,13 +166,13 @@ fn downstream_indices(topo: &Topology, j: usize, k: usize) -> Vec<usize> {
 
 /// Detect rotatable bonds in a molecular graph.
 ///
-/// Returns a list of `(AtomId, AtomId)` pairs. A bond is rotatable when its
+/// Returns a list of `(NodeId, NodeId)` pairs. A bond is rotatable when its
 /// class is single, both endpoints have degree > 1, and it lies on no ring;
 /// `unknown` decides a bond with no class written.
 pub fn detect_rotatable_bonds(
     graph: &Atomistic,
     unknown: UnknownBondPolicy,
-) -> Vec<(AtomId, AtomId)> {
+) -> Vec<(NodeId, NodeId)> {
     let (ids, _topo, rotatable) = scan_rotatable(graph, unknown);
     rotatable
         .into_iter()
@@ -182,12 +183,12 @@ pub fn detect_rotatable_bonds(
 /// BFS to find all atoms downstream of bond (j, k) on the k-side.
 ///
 /// Starting from `k`, traverses all connected atoms without crossing back
-/// through `j`. Returns positional indices (not `AtomId`s).
+/// through `j`. Returns positional indices (not `NodeId`s).
 pub fn downstream_atoms(
-    j: AtomId,
-    k: AtomId,
+    j: NodeId,
+    k: NodeId,
     graph: &Atomistic,
-    id_to_idx: &HashMap<AtomId, usize>,
+    id_to_idx: &HashMap<NodeId, usize>,
 ) -> Vec<usize> {
     let topo = build_topology(graph, id_to_idx);
     downstream_indices(&topo, id_to_idx[&j], id_to_idx[&k])
@@ -278,7 +279,7 @@ mod tests {
     fn test_downstream_atoms_chain() {
         let g = chain(5);
         let id_to_idx = atom_id_to_index(&g);
-        let ids: Vec<AtomId> = g.atoms().map(|(id, _)| id).collect();
+        let ids: Vec<NodeId> = g.atoms().map(|(id, _)| id).collect();
 
         let ds = downstream_atoms(ids[1], ids[2], &g, &id_to_idx);
         assert_eq!(ds.len(), 3);

@@ -11,8 +11,8 @@
 //! This module lives under `chem/` because the AST is the shared vocabulary of
 //! all three dialects. Language-specific processing — parsing entry points,
 //! validation and graph conversion — lives in the sibling `smiles/` module.
-//! (SMARTS *matching* is a separate engine, [`crate::perceive::smarts`], with
-//! its own parser; it does not consume this AST.)
+//! SMARTS *matching* ([`crate::perceive::smarts`]) compiles its queries from
+//! this AST: there is one SMARTS parser, the one in this module.
 
 use molrs::system::bond::{BondNumber, BondType};
 
@@ -416,6 +416,9 @@ impl DescriptorKind {
 pub enum AtomPrimitive {
     /// Concrete element (possibly aromatic).
     Element { symbol: String, aromatic: bool },
+    /// `#<n>` — atomic number, aromatic or aliphatic alike (`[#6]` matches
+    /// both `C` and `c`, unlike the element symbol `C`).
+    AtomicNumber(u8),
     /// `*` — any atom.
     Wildcard,
     /// `A` — any aliphatic atom.
@@ -434,6 +437,11 @@ pub enum AtomPrimitive {
     RingMembership(Option<u8>),
     /// `r<n>` — smallest ring size.
     RingSize(u8),
+    /// `r{lo-hi}` / `r{lo-}` / `r{-hi}` — smallest ring size in a range (the
+    /// RDKit extension). `lo == 0` is no lower bound, `hi == None` no upper.
+    RingSizeRange { lo: u8, hi: Option<u8> },
+    /// `x<n>` — number of incident ring bonds (ring connectivity).
+    RingBondCount(u8),
     /// `v<n>` — total valence.
     Valence(u8),
     /// Formal charge.
@@ -446,6 +454,12 @@ pub enum AtomPrimitive {
     Chirality(Chirality),
     /// `$(...)` — recursive SMARTS (environment match).
     Recursive(Box<SmilesIR>),
+    /// `%LABEL` — a molrs extension, not standard SMARTS: the atom carries
+    /// exactly this label in a caller-supplied label map (the iterative
+    /// typifiers' "already assigned type", e.g. `%opls_154`). The label starts
+    /// with a letter or `_`, so it never reads as a `%nn` ring closure, which
+    /// only appears outside brackets anyway.
+    ContextLabel(String),
 }
 
 /// SMARTS atom query expression with logical operators.

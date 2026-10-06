@@ -37,9 +37,9 @@ use crate::error::MolRsError;
 use crate::store::block::Block;
 use crate::store::frame::Frame;
 use crate::store::keys;
-use crate::system::atomistic::{Bond, BondId};
+
 use crate::system::entity_table::EntityTable;
-use crate::system::molgraph::{Atom, KindId, MolGraph, NodeId};
+use crate::system::molgraph::{Atom, KindId, MolGraph, NodeId, Relation, RelationId};
 use crate::types::Idx;
 
 /// Result of [`CoarseGrain::extract_subgraph`].
@@ -48,17 +48,14 @@ pub struct ExtractedCoarseGrain {
     /// The extracted bead graph (membership copied for selected beads).
     pub graph: CoarseGrain,
     /// Selected parent beads with a CG-bond neighbour outside the ball.
-    pub boundary: Vec<BeadId>,
+    pub boundary: Vec<NodeId>,
     /// New bead id → parent bead id.
-    pub parent_of: HashMap<BeadId, BeadId>,
+    pub parent_of: HashMap<NodeId, NodeId>,
     /// Parent bead id → hops (CG bonds) from the nearest center.
-    pub hops: HashMap<BeadId, i64>,
+    pub hops: HashMap<NodeId, i64>,
     /// Parent bead id → new bead id.
-    pub node_map: HashMap<BeadId, BeadId>,
+    pub node_map: HashMap<NodeId, NodeId>,
 }
-
-/// Handle to a bead (a graph node).
-pub type BeadId = NodeId;
 
 /// Coarse-grained molecular graph.
 ///
@@ -74,7 +71,7 @@ pub type BeadId = NodeId;
 pub struct CoarseGrain {
     graph: MolGraph,
     bond: KindId,
-    members: HashMap<BeadId, Vec<u64>>,
+    members: HashMap<NodeId, Vec<u64>>,
 }
 
 impl Deref for CoarseGrain {
@@ -121,7 +118,7 @@ impl CoarseGrain {
     /// [`MolGraph::add_node_with`](crate::system::molgraph::MolGraph::add_node_with)
     /// reached through [`as_molgraph_mut`](Self::as_molgraph_mut) returns the
     /// conflict for callers holding a foreign bag.
-    pub fn add_bead(&mut self, bead_type: &str, x: f64, y: f64, z: f64) -> BeadId {
+    pub fn add_bead(&mut self, bead_type: &str, x: f64, y: f64, z: f64) -> NodeId {
         let mut a = Atom::new();
         a.set(keys::BEAD_TYPE, bead_type);
         a.set(keys::X, x);
@@ -138,7 +135,7 @@ impl CoarseGrain {
     ///
     /// Panics when the `bead_type` column already holds a different element
     /// type — see [`add_bead`](Self::add_bead).
-    pub fn add_bead_bare(&mut self, bead_type: &str) -> BeadId {
+    pub fn add_bead_bare(&mut self, bead_type: &str) -> NodeId {
         let mut a = Atom::new();
         a.set(keys::BEAD_TYPE, bead_type);
         self.graph
@@ -147,7 +144,7 @@ impl CoarseGrain {
     }
 
     /// Remove a bead and all incident CG bonds (and its membership).
-    pub fn remove_bead(&mut self, id: BeadId) -> Result<Atom, MolRsError> {
+    pub fn remove_bead(&mut self, id: NodeId) -> Result<Atom, MolRsError> {
         self.members.remove(&id);
         self.graph.remove_node(id)
     }
@@ -156,7 +153,7 @@ impl CoarseGrain {
 
     /// Set the atom handles a bead groups (replaces any existing membership).
     /// An empty slice clears the membership.
-    pub fn set_bead_members(&mut self, bead: BeadId, atoms: Vec<u64>) {
+    pub fn set_bead_members(&mut self, bead: NodeId, atoms: Vec<u64>) {
         if atoms.is_empty() {
             self.members.remove(&bead);
         } else {
@@ -165,13 +162,13 @@ impl CoarseGrain {
     }
 
     /// The atom handles a bead groups (empty if none recorded).
-    pub fn bead_members(&self, bead: BeadId) -> &[u64] {
+    pub fn bead_members(&self, bead: NodeId) -> &[u64] {
         self.members.get(&bead).map_or(&[], Vec::as_slice)
     }
 
     /// Beads whose membership includes `atom`, in bead-handle order.
-    pub fn beads_of_atom(&self, atom: u64) -> Vec<BeadId> {
-        let mut out: Vec<BeadId> = self
+    pub fn beads_of_atom(&self, atom: u64) -> Vec<NodeId> {
+        let mut out: Vec<NodeId> = self
             .members
             .iter()
             .filter(|(_, atoms)| atoms.contains(&atom))
@@ -182,12 +179,12 @@ impl CoarseGrain {
     }
 
     /// Materialize a bead's property bag (owned copy of its set components).
-    pub fn get_bead(&self, id: BeadId) -> Result<Atom, MolRsError> {
+    pub fn get_bead(&self, id: NodeId) -> Result<Atom, MolRsError> {
         self.graph.get_node(id)
     }
 
-    /// Iterate over all `(BeadId, Atom)` pairs (each property bag materialized).
-    pub fn beads(&self) -> impl Iterator<Item = (BeadId, Atom)> + '_ {
+    /// Iterate over all `(NodeId, Atom)` pairs (each property bag materialized).
+    pub fn beads(&self) -> impl Iterator<Item = (NodeId, Atom)> + '_ {
         self.graph.nodes()
     }
 
@@ -220,13 +217,13 @@ impl CoarseGrain {
     /// assert_eq!(cg.positions(&[b, a])?, vec![[3.0, 4.0, 5.0], [0.0, 1.0, 2.0]]);
     /// # Ok::<(), molrs::MolRsError>(())
     /// ```
-    pub fn positions(&self, beads: &[BeadId]) -> Result<Vec<[f64; 3]>, MolRsError> {
+    pub fn positions(&self, beads: &[NodeId]) -> Result<Vec<[f64; 3]>, MolRsError> {
         self.vectors(beads, keys::COORDS, "coordinate")
     }
 
     /// The site axes `[axis_x, axis_y, axis_z]` of `beads`, in Å as stored,
     /// in the order of `beads`. A site made by
-    /// [`Coarsener::coarsen`](crate::perceive::Coarsener::coarsen) carries
+    /// `builder::Coarsener::coarsen` carries
     /// the vector from the first member of its group to the site, which
     /// fixes the site's direction; a one-member site's axis is zero. O(k) for
     /// k listed beads.
@@ -249,14 +246,14 @@ impl CoarseGrain {
     /// assert_eq!(cg.axes(&[a])?, vec![[1.0, 2.0, 3.0]]);
     /// # Ok::<(), molrs::MolRsError>(())
     /// ```
-    pub fn axes(&self, beads: &[BeadId]) -> Result<Vec<[f64; 3]>, MolRsError> {
+    pub fn axes(&self, beads: &[NodeId]) -> Result<Vec<[f64; 3]>, MolRsError> {
         self.vectors(beads, keys::AXIS, "axis")
     }
 
     /// The three f64 columns `columns` of `beads`, each finite.
     fn vectors(
         &self,
-        beads: &[BeadId],
+        beads: &[NodeId],
         columns: [&str; 3],
         what: &str,
     ) -> Result<Vec<[f64; 3]>, MolRsError> {
@@ -308,7 +305,7 @@ impl CoarseGrain {
     /// assert_eq!(cg.bead_types(&[b, a, b])?, ["P1", "W", "P1"]);
     /// # Ok::<(), molrs::MolRsError>(())
     /// ```
-    pub fn bead_types(&self, beads: &[BeadId]) -> Result<Vec<String>, MolRsError> {
+    pub fn bead_types(&self, beads: &[NodeId]) -> Result<Vec<String>, MolRsError> {
         let table = self.graph.node_table();
         let column = table.column_str(keys::BEAD_TYPE).ok();
         beads
@@ -329,24 +326,24 @@ impl CoarseGrain {
 
     /// The row of `bead` in the node table, or `NotFound` naming its integer
     /// handle.
-    fn bead_row(table: &EntityTable<NodeId>, bead: BeadId) -> Result<usize, MolRsError> {
+    fn bead_row(table: &EntityTable<NodeId>, bead: NodeId) -> Result<usize, MolRsError> {
         table
             .row(bead)
             .ok_or_else(|| MolRsError::not_found("bead", format!("bead {}", bead.data().as_ffi())))
     }
 
     /// Add a CG bond between two existing beads.
-    pub fn add_bond(&mut self, a: BeadId, b: BeadId) -> Result<BondId, MolRsError> {
+    pub fn add_bond(&mut self, a: NodeId, b: NodeId) -> Result<RelationId, MolRsError> {
         self.graph.add_relation(self.bond, &[a, b])
     }
 
     /// Materialize a CG bond (endpoints + properties).
-    pub fn get_bond(&self, id: BondId) -> Result<Bond, MolRsError> {
+    pub fn get_bond(&self, id: RelationId) -> Result<Relation, MolRsError> {
         self.graph.get_relation(self.bond, id)
     }
 
-    /// Iterate over all `(BondId, Bond)` pairs (each materialized).
-    pub fn bonds(&self) -> impl Iterator<Item = (BondId, Bond)> + '_ {
+    /// Iterate over all `(RelationId, Relation)` pairs (each materialized).
+    pub fn bonds(&self) -> impl Iterator<Item = (RelationId, Relation)> + '_ {
         self.graph.relations(self.bond)
     }
 
@@ -562,7 +559,7 @@ impl CoarseGrain {
         };
         let ibead = column("ibead")?;
         let atom = column("atom")?;
-        let bead_ids: Vec<BeadId> = self.graph.node_ids().collect();
+        let bead_ids: Vec<NodeId> = self.graph.node_ids().collect();
         for (row, (&bead_row, &handle)) in ibead.iter().zip(atom.iter()).enumerate() {
             let Some(&bead) = bead_ids.get(bead_row as usize) else {
                 return Err(MolRsError::validation(format!(
@@ -671,7 +668,7 @@ impl CoarseGrain {
     /// [`crate::spatial::geometry::center`].
     pub fn center(
         &self,
-        group: &[BeadId],
+        group: &[NodeId],
     ) -> Result<[f64; 3], crate::spatial::geometry::CenterError> {
         crate::spatial::geometry::center(self.as_molgraph(), group)
     }
@@ -693,7 +690,7 @@ impl CoarseGrain {
         template: &CoarseGrain,
         transforms: &[crate::op::rigid::Rigid],
         frag_ids: &[crate::types::I],
-    ) -> Result<Vec<BeadId>, MolRsError> {
+    ) -> Result<Vec<NodeId>, MolRsError> {
         self.graph.replicate(&template.graph, transforms, frag_ids)
     }
 
@@ -702,8 +699,8 @@ impl CoarseGrain {
     /// Induced subgraph on an explicit bead set. Stale handles fail-fast.
     pub fn induced_subgraph(
         &self,
-        beads: &[BeadId],
-    ) -> Result<(CoarseGrain, HashMap<BeadId, BeadId>), MolRsError> {
+        beads: &[NodeId],
+    ) -> Result<(CoarseGrain, HashMap<NodeId, NodeId>), MolRsError> {
         let induced = self.graph.induced_subgraph(beads)?;
         let mut cg = CoarseGrain::try_from_molgraph(induced.graph)?;
         for (&old, &new) in &induced.node_map {
@@ -719,7 +716,7 @@ impl CoarseGrain {
     /// atom handles) is copied for selected beads unchanged.
     pub fn extract_subgraph(
         &self,
-        centers: &[BeadId],
+        centers: &[NodeId],
         radius: i64,
     ) -> Result<ExtractedCoarseGrain, MolRsError> {
         let ball = self.graph.extract_ball(
@@ -754,7 +751,7 @@ impl CoarseGrain {
     /// contradicts the element type `self` holds for that key — see
     /// [`MolGraph::merge`](crate::system::molgraph::MolGraph::merge), whose
     /// partial-write contract this inherits.
-    pub fn merge(&mut self, other: CoarseGrain) -> Result<HashMap<BeadId, BeadId>, MolRsError> {
+    pub fn merge(&mut self, other: CoarseGrain) -> Result<HashMap<NodeId, NodeId>, MolRsError> {
         let node_map = self.graph.merge(other.graph)?;
         for (old_bead, members) in other.members {
             if let Some(&new_bead) = node_map.get(&old_bead)
@@ -782,7 +779,7 @@ impl CoarseGrain {
 
     /// Deterministic canonical bead ordering from the WL refinement (see
     /// [`crate::system::graph_hash::canonical_order`]).
-    pub fn canonical_order(&self) -> Vec<BeadId> {
+    pub fn canonical_order(&self) -> Vec<NodeId> {
         crate::system::graph_hash::canonical_order(&self.graph)
     }
 
@@ -1078,8 +1075,8 @@ mod tests {
 
         let cg = CoarseGrain::from_frame(&frame).expect("atoms + bonds");
         assert_eq!(cg.n_bonds(), 2);
-        let ids: Vec<BeadId> = cg.node_ids().collect();
-        let mut endpoints: Vec<[BeadId; 2]> = cg
+        let ids: Vec<NodeId> = cg.node_ids().collect();
+        let mut endpoints: Vec<[NodeId; 2]> = cg
             .bonds()
             .map(|(_, bond)| [bond.nodes[0], bond.nodes[1]])
             .collect();
@@ -1222,7 +1219,7 @@ mod tests {
 
         let frame = cg.to_frame().expect("a schema-conforming graph converts");
         let restored = CoarseGrain::from_frame(&frame).expect("CG frame round-trip");
-        let ids: Vec<BeadId> = restored.node_ids().collect();
+        let ids: Vec<NodeId> = restored.node_ids().collect();
         assert_eq!(ids.len(), 3);
         assert_eq!(restored.bead_members(ids[0]), &[10, 11]);
         assert_eq!(restored.bead_members(ids[1]), &[12]);

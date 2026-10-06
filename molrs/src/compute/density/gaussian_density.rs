@@ -33,8 +33,8 @@ use molrs::types::F;
 
 use super::wrap_index;
 use crate::compute::error::ComputeError;
+use crate::compute::positions::get_positions_ref;
 use crate::compute::traits::Compute;
-use crate::compute::util::get_positions_ref;
 
 /// Gaussian-density calculator.
 #[derive(Debug, Clone, Copy)]

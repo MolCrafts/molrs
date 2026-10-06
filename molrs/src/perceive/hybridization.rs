@@ -18,8 +18,9 @@
 //! conjugated, as in RDKit.
 
 use molrs::Element;
-use molrs::system::atomistic::{AtomId, Atomistic};
+use molrs::system::atomistic::Atomistic;
 use molrs::system::bond::BondNumber;
+use molrs::system::molgraph::NodeId;
 use molrs::system::molgraph::PropValue;
 
 /// An atom's hybridization — RDKit's `Atom::HybridizationType`, less its
@@ -68,8 +69,8 @@ struct Snapshot {
 
 impl Snapshot {
     fn new(mol: &Atomistic) -> Self {
-        let ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-        let index: std::collections::HashMap<AtomId, usize> =
+        let ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
+        let index: std::collections::HashMap<NodeId, usize> =
             ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
         let mut atno = Vec::with_capacity(ids.len());
         let mut formal_charge = Vec::with_capacity(ids.len());

@@ -92,8 +92,9 @@ use std::collections::HashMap;
 
 use crate::op::vec3::{cross, dot, sub};
 use crate::store::keys;
-use crate::system::atomistic::{AtomId, Atomistic};
+use crate::system::atomistic::Atomistic;
 use crate::system::bond::BondType;
+use crate::system::molgraph::NodeId;
 use molrs::Element;
 
 /// Atom prop written by [`crate::perceive::Perceive::find_equivalence_classes`]:
@@ -196,9 +197,9 @@ impl EquivalenceOptions {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EquivalenceClasses {
     /// Per atom: its class id.
-    class_of: HashMap<AtomId, u32>,
+    class_of: HashMap<NodeId, u32>,
     /// Per class: its members, in graph atom order.
-    members: Vec<Vec<AtomId>>,
+    members: Vec<Vec<NodeId>>,
 }
 
 impl EquivalenceClasses {
@@ -212,7 +213,7 @@ impl EquivalenceClasses {
     ///
     /// The 0-based class id, or `None` when the atom is not in the molecule the
     /// classes were computed from.
-    pub fn class_of(&self, atom: AtomId) -> Option<u32> {
+    pub fn class_of(&self, atom: NodeId) -> Option<u32> {
         self.class_of.get(&atom).copied()
     }
 
@@ -235,7 +236,7 @@ impl EquivalenceClasses {
     /// # Returns
     ///
     /// The atoms in that class, in graph atom order, or `None` for an unknown id.
-    pub fn members(&self, class: u32) -> Option<&[AtomId]> {
+    pub fn members(&self, class: u32) -> Option<&[NodeId]> {
         self.members.get(class as usize).map(Vec::as_slice)
     }
 
@@ -244,7 +245,7 @@ impl EquivalenceClasses {
     /// # Returns
     ///
     /// An iterator yielding each class's atoms, in class-id order.
-    pub fn classes(&self) -> impl Iterator<Item = &[AtomId]> {
+    pub fn classes(&self) -> impl Iterator<Item = &[NodeId]> {
         self.members.iter().map(Vec::as_slice)
     }
 }
@@ -262,7 +263,7 @@ impl EquivalenceClasses {
 ///
 /// # Returns
 ///
-/// The partition, keyed by [`AtomId`].
+/// The partition, keyed by [`NodeId`].
 ///
 /// # Performance
 ///
@@ -306,7 +307,7 @@ pub fn find_equivalence_classes(mol: &Atomistic, opts: EquivalenceOptions) -> Eq
     // antechamber's O(N²) sweep into one pass.
     let mut seen: HashMap<Vec<u64>, u32> = HashMap::new();
     let mut class_of = HashMap::with_capacity(n);
-    let mut members: Vec<Vec<AtomId>> = Vec::new();
+    let mut members: Vec<Vec<NodeId>> = Vec::new();
     for i in 0..n {
         let key: Vec<u64> = scorer.scores_for(i).iter().map(|s| s.to_bits()).collect();
         let next = seen.len() as u32;
@@ -333,7 +334,7 @@ struct Torsion {
 /// The molecule flattened to the arrays the walk needs.
 struct Flat {
     /// Per atom: its handle, in graph atom order.
-    ids: Vec<AtomId>,
+    ids: Vec<NodeId>,
     /// Per atom: atomic number (`0` when the element is unknown, as in
     /// [`crate::perceive::bond_type`]).
     z: Vec<u8>,
@@ -348,8 +349,8 @@ struct Flat {
 impl Flat {
     /// Flatten a molecule.
     fn new(mol: &Atomistic) -> Self {
-        let ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-        let index: HashMap<AtomId, usize> = ids
+        let ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
+        let index: HashMap<NodeId, usize> = ids
             .iter()
             .copied()
             .enumerate()
@@ -618,7 +619,7 @@ mod tests {
     #[test]
     fn methyl_hydrogens_are_one_class_and_the_hydroxyl_is_not() {
         let mol = methanol();
-        let ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
+        let ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
         let classes = find_equivalence_classes(&mol, EquivalenceOptions::bcc());
 
         assert_eq!(classes.n_classes(), 4, "C, O, 3×methyl H, hydroxyl H");

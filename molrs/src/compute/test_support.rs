@@ -12,7 +12,7 @@ use molrs::spatial::neighbors::{NeighborList, Neighbors, NeighborsStorage};
 use molrs::store::frame_access::FrameAccess;
 use molrs::types::F;
 
-use super::util::get_positions_ref;
+use super::positions::get_positions_ref;
 
 /// Build a self-query [`Neighbors`] table for `frame` at `cutoff` through the
 /// engine, using the frame's own simulation box.

@@ -45,7 +45,7 @@
 //! it. So biphenyl's bridge is `cp cp`, and o-terphenyl's middle ring, whose two
 //! bridge carbons share an aromatic bond, is `cp … cq`.
 
-use molrs::AtomId;
+use molrs::NodeId;
 
 use super::facts::MolFacts;
 use crate::ff::params::{AlternatePass, AtdRule};
@@ -58,7 +58,7 @@ use crate::ff::params::{AlternatePass, AtdRule};
 /// two *phases*. Vinylacetylene (`C=C-C#C`) is one system holding a `ce` and a
 /// `cg`, and antechamber answers `ce cg`.
 pub(super) fn resolve_types(
-    atom_ids: &[AtomId],
+    atom_ids: &[NodeId],
     assigned: &[&'static AtdRule],
     facts: &MolFacts,
 ) -> Vec<&'static str> {

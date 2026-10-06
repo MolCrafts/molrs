@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 
 use molrs::store::keys;
-use molrs::{AtomId, Atomistic};
+use molrs::{Atomistic, NodeId};
 
 use molrs::perceive::equivalence::{EquivalenceOptions, find_equivalence_classes};
 
@@ -78,7 +78,7 @@ pub trait ChargeModel {
 }
 
 /// The atoms of `mol`, in graph atom order — the order every charge slice is in.
-pub(super) fn atom_ids(mol: &Atomistic) -> Vec<AtomId> {
+pub(super) fn atom_ids(mol: &Atomistic) -> Vec<NodeId> {
     mol.atoms().map(|(aid, _)| aid).collect()
 }
 
@@ -131,7 +131,7 @@ pub(super) fn check_count(mol: &Atomistic, charges: &[f64]) -> Result<(), Charge
 ///
 /// The class-averaged charges, in the same order.
 pub(super) fn equivalence_average(mol: &Atomistic, qm: &[f64]) -> Vec<f64> {
-    let index: HashMap<AtomId, usize> = atom_ids(mol)
+    let index: HashMap<NodeId, usize> = atom_ids(mol)
         .into_iter()
         .enumerate()
         .map(|(i, id)| (id, i))

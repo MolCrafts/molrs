@@ -418,7 +418,7 @@ impl PyAssembler {
 }
 
 /// The message of an [`AssembleError`] as Python sees it: node and port ids
-/// as int handles, never `NodeId(..)` / `PortId(..)`. Every variant is
+/// as int handles, never `NodeId(..)` / `RelationId(..)`. Every variant is
 /// matched by name; the wording of the outer sentence is the core's.
 fn assemble_error_message(e: AssembleError) -> String {
     match e {

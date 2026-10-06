@@ -16,7 +16,8 @@
 //! `Unknown` and only the volume magnitude bounds are emitted.
 
 use crate::op::vec3::{cross, dot, sub};
-use molrs::system::atomistic::{AtomId, Atomistic};
+use molrs::system::atomistic::Atomistic;
+use molrs::system::molgraph::NodeId;
 
 use super::mol_features::Perceived;
 use molrs::perceive::Hybridization;
@@ -60,7 +61,7 @@ pub struct ImproperConstraint {
     pub bound_to_sp2_o: bool,
 }
 
-fn coord(mol: &Atomistic, id: AtomId) -> Option<[f64; 3]> {
+fn coord(mol: &Atomistic, id: NodeId) -> Option<[f64; 3]> {
     let a = mol.get_atom(id).ok()?;
     Some([a.get_f64("x")?, a.get_f64("y")?, a.get_f64("z")?])
 }

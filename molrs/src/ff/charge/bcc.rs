@@ -28,7 +28,7 @@
 
 use std::collections::HashMap;
 
-use molrs::{AtomId, Atomistic};
+use molrs::{Atomistic, NodeId};
 
 use crate::ff::params::{BccAlias, BccCorrectionRow};
 use crate::ff::typifier::atd::{AtdParameterSet, AtdTypifier, antechamber_bond_type};
@@ -370,8 +370,8 @@ fn bcc_increments(
     mol: &Atomistic,
     types: &[&str],
 ) -> Result<Vec<f64>, BccIncrementError> {
-    let atom_ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-    let index: HashMap<AtomId, usize> = atom_ids
+    let atom_ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
+    let index: HashMap<NodeId, usize> = atom_ids
         .iter()
         .enumerate()
         .map(|(i, aid)| (*aid, i))

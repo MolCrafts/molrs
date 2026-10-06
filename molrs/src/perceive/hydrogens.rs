@@ -1,7 +1,7 @@
 //! Hydrogen addition for molecular graphs.
 //!
-//! [`add_hydrogens`] computes the number of implicit hydrogens each heavy atom
-//! requires (based on its element's default valences and the sum of its current
+//! Hydrogen addition ([`Perceive::find_hydrogens`](crate::perceive::Perceive::find_hydrogens))
+//! computes the number of implicit hydrogens each heavy atom requires (based on its element's default valences and the sum of its current
 //! bond orders) and returns a **new** [`Atomistic`] with explicit H atoms added.
 //!
 //! [`remove_hydrogens`] does the inverse: it returns a new [`Atomistic`] with
@@ -29,9 +29,10 @@
 use std::collections::HashSet;
 
 use crate::op::vec3::{cross, norm};
-use crate::system::atomistic::{AtomId, Atomistic};
+use crate::system::atomistic::Atomistic;
 use crate::system::bond::BondType;
 use crate::system::molgraph::Atom;
+use crate::system::molgraph::NodeId;
 use molrs::Element;
 use molrs::error::MolRsError;
 
@@ -66,7 +67,7 @@ const PORTS_KIND: &str = "ports";
 /// of [`Atomistic`] can produce such a graph, so the case is unreachable in
 /// practice; the `Result` is here so that the invariant is *returned* rather
 /// than asserted by a panic on a caller's thread.
-pub fn add_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
+pub(crate) fn add_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
     let mut new_mol = mol.clone();
 
     // Mass (amu) of the hydrogens this call appends, read once from the
@@ -77,7 +78,7 @@ pub fn add_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
 
     // Collect (atom_id, n_implicit_h) for all heavy atoms up front so that
     // we don't hold a borrow while mutating.
-    let additions: Vec<(AtomId, u32)> = new_mol
+    let additions: Vec<(NodeId, u32)> = new_mol
         .atoms()
         .filter_map(|(id, atom)| {
             let sym = atom.get_str("element")?;
@@ -304,7 +305,7 @@ pub fn remove_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
     // removal. The relations are scanned rather than the adjacency index
     // because that index holds arity-2 kinds only, and "participates in a
     // port" must not depend on how wide a port row happens to be.
-    let port_nodes: HashSet<AtomId> = match new_mol.kind_id(PORTS_KIND) {
+    let port_nodes: HashSet<NodeId> = match new_mol.kind_id(PORTS_KIND) {
         Some(kind) => new_mol
             .relations(kind)
             .flat_map(|(_, rel)| rel.nodes.into_iter())
@@ -312,7 +313,7 @@ pub fn remove_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
         None => HashSet::new(),
     };
 
-    let h_ids: Vec<AtomId> = new_mol
+    let h_ids: Vec<NodeId> = new_mol
         .atoms()
         .filter_map(|(id, atom)| {
             let sym = atom.get_str("element")?;
@@ -344,7 +345,7 @@ pub fn remove_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
 ///
 /// Returns `None` if the atom has no recognisable element symbol or if its
 /// element has no defined default valences (e.g. noble gases).
-pub fn implicit_h_count(mol: &Atomistic, atom_id: AtomId) -> Option<u32> {
+pub fn implicit_h_count(mol: &Atomistic, atom_id: NodeId) -> Option<u32> {
     let atom = mol.get_atom(atom_id).ok()?;
 
     // A declared hydrogen count (SMILES bracket atom) is exact: `[nH]` has one
@@ -443,7 +444,7 @@ pub fn implicit_h_count(mol: &Atomistic, atom_id: AtomId) -> Option<u32> {
 ///
 /// A graph with integral Kekulé orders has no aromatic bonds and is summed
 /// unchanged.
-fn valence_demand(mol: &Atomistic, atom_id: AtomId, lowest_valence: u8) -> f64 {
+fn valence_demand(mol: &Atomistic, atom_id: NodeId, lowest_valence: u8) -> f64 {
     // The two facts are read from their own places: how many bonds this is
     // (the localized number) and whether it is delocalized (the class).
     let bonds: Vec<(BondType, f64)> = mol
@@ -484,7 +485,7 @@ mod tests {
         a
     }
 
-    fn bond_with_order(mol: &mut Atomistic, a: AtomId, b: AtomId, order: f64) {
+    fn bond_with_order(mol: &mut Atomistic, a: NodeId, b: NodeId, order: f64) {
         let bid = mol.add_bond(a, b).expect("fixture bond");
         // The old float encoding, expressed in the two facts it conflated:
         // 1.5 meant "aromatic", every integer meant a localized count.
@@ -541,7 +542,7 @@ mod tests {
     fn test_benzene_aromatic() {
         // 6-membered ring with bond order 1.5: each C should get 1 H.
         let mut g = Atomistic::new();
-        let ids: Vec<AtomId> = (0..6).map(|_| g.add_atom(atom("C"))).collect();
+        let ids: Vec<NodeId> = (0..6).map(|_| g.add_atom(atom("C"))).collect();
         for i in 0..6 {
             bond_with_order(&mut g, ids[i], ids[(i + 1) % 6], 1.5);
         }
@@ -554,7 +555,7 @@ mod tests {
         // Kekule benzene: alternating single/double bonds.
         // Each C has bond_order_sum = 1+2 = 3, needs 1 H. Total = 6 H.
         let mut g = Atomistic::new();
-        let ids: Vec<AtomId> = (0..6).map(|_| g.add_atom(atom("C"))).collect();
+        let ids: Vec<NodeId> = (0..6).map(|_| g.add_atom(atom("C"))).collect();
         let orders = [2.0, 1.0, 2.0, 1.0, 2.0, 1.0];
         for i in 0..6 {
             bond_with_order(&mut g, ids[i], ids[(i + 1) % 6], orders[i]);
@@ -699,7 +700,7 @@ mod tests {
     }
 
     /// Helper: implicit-H on `atom_id` of a built graph.
-    fn h_at(g: &Atomistic, id: AtomId) -> u32 {
+    fn h_at(g: &Atomistic, id: NodeId) -> u32 {
         implicit_h_count(g, id).unwrap_or(0)
     }
 
@@ -722,7 +723,7 @@ mod tests {
 
         // benzene (aromatic, bos 1.5+1.5=3): each C -> 1 H
         let mut g = Atomistic::new();
-        let ids: Vec<AtomId> = (0..6).map(|_| g.add_atom(atom("C"))).collect();
+        let ids: Vec<NodeId> = (0..6).map(|_| g.add_atom(atom("C"))).collect();
         for i in 0..6 {
             bond_with_order(&mut g, ids[i], ids[(i + 1) % 6], 1.5);
         }
@@ -954,7 +955,7 @@ mod tests {
         g.add_relation(ports, &[o2, h4])
             .expect("(anchor, handle) is a 2-ary relation");
 
-        let before: Vec<AtomId> = g.atoms().map(|(id, _)| id).collect();
+        let before: Vec<NodeId> = g.atoms().map(|(id, _)| id).collect();
         let result = add_hydrogens(&g).expect("repletion succeeds on a well-formed graph");
 
         assert_eq!(result.n_atoms(), 9, "3 heavy + 2 handles + 4 added");
@@ -1073,7 +1074,7 @@ mod tests {
         // carbon sees one bond and takes 3.
         const N: usize = 2000;
         let mut g = Atomistic::new();
-        let ids: Vec<AtomId> = (0..N).map(|_| g.add_atom(atom("C"))).collect();
+        let ids: Vec<NodeId> = (0..N).map(|_| g.add_atom(atom("C"))).collect();
         for pair in ids.windows(2) {
             bond_with_order(&mut g, pair[0], pair[1], 1.0);
         }

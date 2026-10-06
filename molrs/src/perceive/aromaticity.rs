@@ -41,9 +41,10 @@ use std::collections::{HashMap, HashSet};
 
 use crate::perceive::rings::find_rings;
 use crate::store::keys;
-use crate::system::atomistic::{AtomId, Atomistic, BondId};
+use crate::system::atomistic::Atomistic;
 use crate::system::bond::{BondNumber, BondType};
 use crate::system::molgraph::PropValue;
+use crate::system::molgraph::{NodeId, RelationId};
 use molrs::Element;
 
 /// Maximum number of fused rings combined when checking the Hückel rule
@@ -174,7 +175,7 @@ fn more_electronegative(za: u8, zb: u8) -> bool {
 ///
 /// An aromatic bond that has no number yet counts as the one bond every bond is
 /// at least.
-fn bond_order(mol: &Atomistic, bid: BondId) -> f64 {
+fn bond_order(mol: &Atomistic, bid: RelationId) -> f64 {
     let Ok(b) = mol.get_bond(bid) else {
         return 1.0;
     };
@@ -184,7 +185,7 @@ fn bond_order(mol: &Atomistic, bid: BondId) -> f64 {
 }
 
 /// Atomic number of an atom (from its `"element"` symbol). `0` if unknown.
-fn atomic_num(mol: &Atomistic, id: AtomId) -> u8 {
+fn atomic_num(mol: &Atomistic, id: NodeId) -> u8 {
     mol.get_atom(id)
         .ok()
         .and_then(|a| {
@@ -196,7 +197,7 @@ fn atomic_num(mol: &Atomistic, id: AtomId) -> u8 {
 }
 
 /// Formal charge (`"formal_charge"` prop, default 0).
-fn formal_charge(mol: &Atomistic, id: AtomId) -> i32 {
+fn formal_charge(mol: &Atomistic, id: NodeId) -> i32 {
     match mol
         .get_atom(id)
         .ok()
@@ -210,7 +211,7 @@ fn formal_charge(mol: &Atomistic, id: AtomId) -> i32 {
 
 /// Heavy-atom + H degree (RDKit `getDegree() + getTotalNumHs()`); here all H
 /// are explicit so this is simply the neighbour count.
-fn total_degree(mol: &Atomistic, id: AtomId) -> i32 {
+fn total_degree(mol: &Atomistic, id: NodeId) -> i32 {
     explicit_degree(mol, id) + implicit_h_count(mol, id)
 }
 
@@ -221,7 +222,7 @@ fn total_degree(mol: &Atomistic, id: AtomId) -> i32 {
 /// total, while its "does this atom carry a multiple bond" tests are keyed on
 /// the drawn degree, and swapping them makes every aromatic carbon look
 /// saturated.
-fn explicit_degree(mol: &Atomistic, id: AtomId) -> i32 {
+fn explicit_degree(mol: &Atomistic, id: NodeId) -> i32 {
     mol.neighbor_bonds(id).count() as i32
 }
 
@@ -233,7 +234,7 @@ fn explicit_degree(mol: &Atomistic, id: AtomId) -> i32 {
 /// hydrogens were made explicit — `add_hydrogens` stays a separate, optional
 /// operation, and running it changes no answer here (an explicit H raises the
 /// valence and drives this to zero).
-fn implicit_h_count(mol: &Atomistic, id: AtomId) -> i32 {
+fn implicit_h_count(mol: &Atomistic, id: NodeId) -> i32 {
     let z = atomic_num(mol, id);
     let dv = default_valence(z);
     if dv <= 0 {
@@ -253,22 +254,22 @@ fn implicit_h_count(mol: &Atomistic, id: AtomId) -> i32 {
     (capacity - explicit_valence(mol, id)).max(0)
 }
 
-/// Iterate incident `(BondId, other_atom, localized bond number)` for an atom.
+/// Iterate incident `(RelationId, other_atom, localized bond number)` for an atom.
 ///
 /// Uses the graph adjacency index (O(degree)) rather than scanning every bond
 /// (O(n_bonds)); the latter made per-ring-atom classification O(N^2) on
 /// ring-heavy molecules.
 fn incident_bonds<'a>(
     mol: &'a Atomistic,
-    id: AtomId,
-) -> impl Iterator<Item = (BondId, AtomId, f64)> + 'a {
+    id: NodeId,
+) -> impl Iterator<Item = (RelationId, NodeId, f64)> + 'a {
     mol.incident_bond_ids(id)
         .map(move |(bid, other)| (bid, other, bond_order(mol, bid)))
 }
 
 /// Explicit valence = sum of incident **Kekulé** bond orders (RDKit
 /// `getValence(EXPLICIT)`), rounded to nearest integer.
-fn explicit_valence(mol: &Atomistic, id: AtomId) -> i32 {
+fn explicit_valence(mol: &Atomistic, id: NodeId) -> i32 {
     let sum: f64 = incident_bonds(mol, id).map(|(_, _, o)| o).sum();
     sum.round() as i32
 }
@@ -278,8 +279,8 @@ fn explicit_valence(mol: &Atomistic, id: AtomId) -> i32 {
 fn incident_noncyclic_multiple_bond(
     mol: &Atomistic,
     rings: &crate::perceive::rings::RingInfo,
-    id: AtomId,
-) -> Option<AtomId> {
+    id: NodeId,
+) -> Option<NodeId> {
     for (bid, other, order) in incident_bonds(mol, id) {
         if !rings.is_bond_in_ring(bid) && order >= 2.0 {
             return Some(other);
@@ -293,14 +294,14 @@ fn incident_noncyclic_multiple_bond(
 fn incident_cyclic_multiple_bond(
     mol: &Atomistic,
     rings: &crate::perceive::rings::RingInfo,
-    id: AtomId,
+    id: NodeId,
 ) -> bool {
     incident_bonds(mol, id).any(|(bid, _, order)| rings.is_bond_in_ring(bid) && order >= 2.0)
 }
 
 /// RDKit `incidentMultipleBond`: explicit valence differs from σ-degree, i.e.
 /// the atom carries at least one π bond.
-fn incident_multiple_bond(mol: &Atomistic, id: AtomId) -> bool {
+fn incident_multiple_bond(mol: &Atomistic, id: NodeId) -> bool {
     explicit_valence(mol, id) != explicit_degree(mol, id)
 }
 
@@ -310,7 +311,7 @@ fn incident_multiple_bond(mol: &Atomistic, id: AtomId) -> bool {
 
 /// RDKit `MolOps::countAtomElec` — number of electrons the atom can donate to
 /// the π system, or `-1` if it cannot be aromatic / conjugated.
-fn count_atom_elec(mol: &Atomistic, id: AtomId) -> i32 {
+fn count_atom_elec(mol: &Atomistic, id: NodeId) -> i32 {
     let z = atomic_num(mol, id);
     let dv = default_valence(z);
     if dv <= 1 {
@@ -349,7 +350,7 @@ fn count_atom_elec(mol: &Atomistic, id: AtomId) -> i32 {
 fn atom_donor_type(
     mol: &Atomistic,
     rings: &crate::perceive::rings::RingInfo,
-    id: AtomId,
+    id: NodeId,
 ) -> ElectronDonor {
     let z = atomic_num(mol, id);
     if z == 0 {
@@ -407,7 +408,7 @@ fn atom_donor_type(
 }
 
 /// RDKit `isAtomCandForArom` with the default-model flag set (all permissive).
-fn is_atom_candidate(mol: &Atomistic, id: AtomId, edon: ElectronDonor) -> bool {
+fn is_atom_candidate(mol: &Atomistic, id: NodeId, edon: ElectronDonor) -> bool {
     let z = atomic_num(mol, id);
 
     // first two rows + Se / Te
@@ -457,7 +458,7 @@ fn is_atom_candidate(mol: &Atomistic, id: AtomId, edon: ElectronDonor) -> bool {
 
 /// RDKit `applyHuckel`: does the electron range over `ring_atoms` admit a
 /// `4n+2` count?
-fn apply_huckel(ring_atoms: &[AtomId], edon: &HashMap<AtomId, ElectronDonor>) -> bool {
+fn apply_huckel(ring_atoms: &[NodeId], edon: &HashMap<NodeId, ElectronDonor>) -> bool {
     let mut rlw = 0;
     let mut rup = 0;
     for &a in ring_atoms {
@@ -489,7 +490,7 @@ fn apply_huckel(ring_atoms: &[AtomId], edon: &HashMap<AtomId, ElectronDonor>) ->
 // ---------------------------------------------------------------------------
 
 /// Bond-id set for a ring (consecutive atom pairs).
-fn ring_bonds(mol: &Atomistic, ring: &[AtomId]) -> Vec<BondId> {
+fn ring_bonds(mol: &Atomistic, ring: &[NodeId]) -> Vec<RelationId> {
     let n = ring.len();
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
@@ -506,7 +507,7 @@ fn ring_bonds(mol: &Atomistic, ring: &[AtomId]) -> Vec<BondId> {
 ///
 /// Walks `a`'s adjacency (O(degree)) rather than scanning every bond; the latter
 /// made `ring_bonds` O(rings × n_bonds) ≈ O(N²) on ring-heavy molecules.
-fn find_bond(mol: &Atomistic, a: AtomId, b: AtomId) -> Option<BondId> {
+fn find_bond(mol: &Atomistic, a: NodeId, b: NodeId) -> Option<RelationId> {
     mol.incident_bond_ids(a)
         .find(|&(_, other)| other == b)
         .map(|(bid, _)| bid)
@@ -518,7 +519,7 @@ fn find_bond(mol: &Atomistic, a: AtomId, b: AtomId) -> Option<BondId> {
 /// Uses a bond→rings index plus union-find (near-linear in the total number of
 /// ring bonds) rather than the all-pairs `is_disjoint` scan, which was O(rings²)
 /// even for entirely disjoint ring systems.
-fn fused_systems(ring_bond_sets: &[HashSet<BondId>]) -> Vec<Vec<usize>> {
+fn fused_systems(ring_bond_sets: &[HashSet<RelationId>]) -> Vec<Vec<usize>> {
     let n = ring_bond_sets.len();
 
     // union-find with path compression
@@ -540,7 +541,7 @@ fn fused_systems(ring_bond_sets: &[HashSet<BondId>]) -> Vec<Vec<usize>> {
 
     // Rings that share a bond belong to the same system. Group ring indices by
     // bond, then union all rings touching each bond.
-    let mut bond_to_rings: HashMap<BondId, Vec<usize>> = HashMap::new();
+    let mut bond_to_rings: HashMap<RelationId, Vec<usize>> = HashMap::new();
     for (ri, set) in ring_bond_sets.iter().enumerate() {
         for &b in set {
             bond_to_rings.entry(b).or_default().push(ri);
@@ -604,12 +605,12 @@ fn combinations(n: usize, k: usize) -> Vec<Vec<usize>> {
 /// marked when a single-ring combination is tried. Accumulates into
 /// `aromatic_bonds` / `aromatic_atoms`.
 fn apply_huckel_to_fused(
-    rings: &[Vec<AtomId>],
-    ring_bond_sets: &[HashSet<BondId>],
+    rings: &[Vec<NodeId>],
+    ring_bond_sets: &[HashSet<RelationId>],
     fused: &[usize],
-    edon: &HashMap<AtomId, ElectronDonor>,
-    aromatic_bonds: &mut HashSet<BondId>,
-    aromatic_atoms: &mut HashSet<AtomId>,
+    edon: &HashMap<NodeId, ElectronDonor>,
+    aromatic_bonds: &mut HashSet<RelationId>,
+    aromatic_atoms: &mut HashSet<NodeId>,
     mol: &Atomistic,
 ) {
     let nrings = fused.len();
@@ -625,14 +626,14 @@ fn apply_huckel_to_fused(
             }
 
             // count membership of every atom across the chosen rings
-            let mut counts: HashMap<AtomId, usize> = HashMap::new();
+            let mut counts: HashMap<NodeId, usize> = HashMap::new();
             for &ri in &cur_rs {
                 for &a in &rings[ri] {
                     *counts.entry(a).or_insert(0) += 1;
                 }
             }
             // atoms present in exactly one or two rings (RDKit #2895)
-            let unon: Vec<AtomId> = counts
+            let unon: Vec<NodeId> = counts
                 .iter()
                 .filter(|&(_, &c)| c == 1 || c == 2)
                 .map(|(&a, _)| a)
@@ -641,7 +642,7 @@ fn apply_huckel_to_fused(
             if apply_huckel(&unon, edon) {
                 // markAtomsBondsArom: count bond appearances within this
                 // combination's rings; mark those appearing exactly once.
-                let mut bond_count: HashMap<BondId, usize> = HashMap::new();
+                let mut bond_count: HashMap<RelationId, usize> = HashMap::new();
                 for &ri in &cur_rs {
                     for &bid in &ring_bond_sets[ri] {
                         *bond_count.entry(bid).or_insert(0) += 1;
@@ -663,7 +664,7 @@ fn apply_huckel_to_fused(
 
 /// Whether a subset of ring indices forms a single fused (bond-connected)
 /// component.
-fn is_connected_subset(subset: &[usize], ring_bond_sets: &[HashSet<BondId>]) -> bool {
+fn is_connected_subset(subset: &[usize], ring_bond_sets: &[HashSet<RelationId>]) -> bool {
     if subset.len() <= 1 {
         return true;
     }
@@ -702,16 +703,16 @@ fn is_connected_subset(subset: &[usize], ring_bond_sets: &[HashSet<BondId>]) -> 
 /// Port of RDKit `setAromaticity(mol, AROMATICITY_RDKIT)` →
 /// `aromaticityHelper(mol, srings, 0, 0, /*includeFused=*/true)`.
 /// `Code/GraphMol/Aromaticity.cpp`, BSD 3-Clause, © RDKit contributors.
-pub fn perceive_aromaticity(mol: &mut Atomistic) -> usize {
+pub(crate) fn perceive_aromaticity(mol: &mut Atomistic) -> usize {
     // No snapshot: `bond_number` is never overwritten by perception, so the
     // input's own localized structure *is* the memory. This is what makes the
     // pass idempotent, and it is why there is no second localized-order field.
     let rings_info = find_rings(mol);
-    let srings: Vec<Vec<AtomId>> = rings_info.rings().to_vec();
+    let srings: Vec<Vec<NodeId>> = rings_info.rings().to_vec();
 
     // ---- 1. classify every ring atom -----------------------------------
-    let mut edon: HashMap<AtomId, ElectronDonor> = HashMap::new();
-    let mut candidate: HashMap<AtomId, bool> = HashMap::new();
+    let mut edon: HashMap<NodeId, ElectronDonor> = HashMap::new();
+    let mut candidate: HashMap<NodeId, bool> = HashMap::new();
 
     for ring in &srings {
         for &id in ring {
@@ -736,15 +737,15 @@ pub fn perceive_aromaticity(mol: &mut Atomistic) -> usize {
         }
     }
 
-    let crings: Vec<Vec<AtomId>> = cring_idx.iter().map(|&ri| srings[ri].clone()).collect();
-    let ring_bond_sets: Vec<HashSet<BondId>> = crings
+    let crings: Vec<Vec<NodeId>> = cring_idx.iter().map(|&ri| srings[ri].clone()).collect();
+    let ring_bond_sets: Vec<HashSet<RelationId>> = crings
         .iter()
         .map(|r| ring_bonds(mol, r).into_iter().collect())
         .collect();
 
     // ---- 3-4. Hückel over each fused system + mark aromatic bonds/atoms --
-    let mut aromatic_atoms: HashSet<AtomId> = HashSet::new();
-    let mut aromatic_bonds: HashSet<BondId> = HashSet::new();
+    let mut aromatic_atoms: HashSet<NodeId> = HashSet::new();
+    let mut aromatic_bonds: HashSet<RelationId> = HashSet::new();
     for system in fused_systems(&ring_bond_sets) {
         apply_huckel_to_fused(
             &crings,
@@ -758,7 +759,7 @@ pub fn perceive_aromaticity(mol: &mut Atomistic) -> usize {
     }
 
     // ---- 5. write back (idempotent: reset everything, then set) ---------
-    let all_atom_ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
+    let all_atom_ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
     for id in all_atom_ids {
         let arom = aromatic_atoms.contains(&id);
         let _ = mol.set_atom(id, "is_aromatic", PropValue::Int(if arom { 1 } else { 0 }));
@@ -767,7 +768,7 @@ pub fn perceive_aromaticity(mol: &mut Atomistic) -> usize {
     // A bond's class is rewritten; its localized number is not. Perception
     // decides *what kind* of bond this is — whether a Kekulé phase is legal is
     // kekulization's question, and a caller that already stated one keeps it.
-    let all_bond_ids: Vec<BondId> = mol.bonds().map(|(id, _)| id).collect();
+    let all_bond_ids: Vec<RelationId> = mol.bonds().map(|(id, _)| id).collect();
     for bid in all_bond_ids {
         if aromatic_bonds.contains(&bid) {
             let _ = mol.set_bond_prop(bid, keys::BOND_TYPE, BondType::Aromatic);
@@ -790,7 +791,7 @@ mod tests {
     /// Build a Kekulé benzene ring of 6 carbons (alternating single/double).
     fn benzene() -> Atomistic {
         let mut g = Atomistic::new();
-        let c: Vec<AtomId> = (0..6)
+        let c: Vec<NodeId> = (0..6)
             .map(|_| g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0)))
             .collect();
         for i in 0..6 {
@@ -817,7 +818,7 @@ mod tests {
     #[test]
     fn test_cyclohexane_not_aromatic() {
         let mut g = Atomistic::new();
-        let c: Vec<AtomId> = (0..6)
+        let c: Vec<NodeId> = (0..6)
             .map(|_| g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0)))
             .collect();
         for i in 0..6 {

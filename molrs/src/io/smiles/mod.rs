@@ -15,10 +15,9 @@
 //! string into an intermediate representation (IR), validate it, and convert
 //! it into an atomistic molecular graph.
 //!
-//! [`parse_smarts`] parses SMARTS *syntax* into the shared [`SmilesIR`], for
-//! callers that want a SMARTS pattern as an IR. It is **not** the frontend of
-//! the matching engine in [`crate::perceive::smarts`]: that engine has its own
-//! parser and never consumes this one. Neither module depends on the other.
+//! [`parse_smarts`] parses SMARTS *syntax* into the shared [`SmilesIR`]. It is
+//! the one SMARTS parser: the matching engine in [`crate::perceive::smarts`]
+//! compiles its queries from this IR.
 //!
 //! [`parse_cgsmiles`] reads the third notation this module hosts. `CGsmiles`
 //! writes a molecule at a *coarse-grained* resolution: one node per whole
@@ -116,8 +115,8 @@ pub mod smiles;
 // `chem::Dialect`, so the three dialects share one grammar implementation.
 // `parse_smiles` and `parse_fragment_smiles` reach callers through the
 // `smiles` module, which re-exports them; `parse_smarts` has no such module of
-// its own (the matching engine in `crate::perceive::smarts` is independent of
-// this parser) and is re-exported straight from here.
+// its own and is re-exported straight from here (the matching engine in
+// `crate::perceive::smarts` compiles from its output).
 mod parser;
 
 // The `CGsmiles` coarse-graph notation: private like `parser`, reaching

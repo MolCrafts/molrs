@@ -276,9 +276,10 @@ fn vec_norm(v: &[F]) -> F {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::op::random::standard_normal;
     use molrs::Frame;
+    use rand::SeedableRng;
     use rand::rngs::StdRng;
-    use rand::{RngExt, SeedableRng};
 
     /// Descriptor row wrapping a Vec<F>.
     #[derive(Clone)]
@@ -290,18 +291,6 @@ mod tests {
     }
     impl ComputeResult for Row {}
 
-    fn box_muller(rng: &mut StdRng) -> F {
-        loop {
-            let u1: F = rng.random();
-            let u2: F = rng.random();
-            if u1 > 0.0 {
-                let r = (-2.0 * u1.ln()).sqrt();
-                let theta = 2.0 * std::f64::consts::PI * u2;
-                return r * theta.cos();
-            }
-        }
-    }
-
     fn three_blobs_rows(n_per_cluster: usize, seed: u64) -> Vec<Row> {
         let centers = [(0.0, 0.0), (10.0, 0.0), (5.0, 10.0)];
         let sigma: F = 0.5;
@@ -310,8 +299,8 @@ mod tests {
         for (cx, cy) in centers.iter().copied() {
             for _ in 0..n_per_cluster {
                 rows.push(Row(vec![
-                    cx + sigma * box_muller(&mut rng),
-                    cy + sigma * box_muller(&mut rng),
+                    cx + sigma * standard_normal(&mut rng),
+                    cy + sigma * standard_normal(&mut rng),
                 ]));
             }
         }

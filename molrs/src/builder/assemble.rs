@@ -25,11 +25,12 @@ use crate::op::rigid::{Rigid, apply};
 use crate::op::types::Vec3;
 use crate::op::vec3::sub;
 use crate::store::keys;
-use crate::system::atomistic::AtomId;
-use crate::system::coarsegrain::{BeadId, CoarseGrain};
+use crate::system::coarsegrain::CoarseGrain;
 use crate::system::link::LinkManyError;
+use crate::system::molgraph::NodeId;
+use crate::system::molgraph::RelationId;
 use crate::system::molgraph::{FromMolGraph, MolGraph};
-use crate::system::port::{Port, PortId};
+use crate::system::port::Port;
 use crate::types::I;
 
 /// The most port assignments tried at one site before it is refused.
@@ -178,7 +179,7 @@ impl std::error::Error for AssembleError {
 
 /// One port of a template, read once.
 struct TemplatePort {
-    id: PortId,
+    id: RelationId,
     port: Port,
     anchor_row: usize,
     handle_row: usize,
@@ -211,7 +212,7 @@ struct SiteGraph {
 
 impl SiteGraph {
     fn read(sites: &CoarseGrain) -> Result<Self, AssembleError> {
-        let ids: Vec<BeadId> = sites.node_ids().collect();
+        let ids: Vec<NodeId> = sites.node_ids().collect();
         let n = ids.len();
         if I::try_from(n).is_err() {
             return Err(AssembleError::TooManyUnits { units: n });
@@ -229,7 +230,7 @@ impl SiteGraph {
         } else {
             None
         };
-        let ordinal: HashMap<BeadId, usize> =
+        let ordinal: HashMap<NodeId, usize> =
             ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
         let mut bonds = Vec::with_capacity(sites.n_bonds());
         let mut incident = vec![Vec::new(); n];
@@ -557,7 +558,7 @@ impl Assembler {
 
         // ---- replicate and stamp mol_id: one pass per name ----
         let mut world = MolGraph::new();
-        let mut copies: Vec<Vec<AtomId>> = Vec::with_capacity(groups.len());
+        let mut copies: Vec<Vec<NodeId>> = Vec::with_capacity(groups.len());
         for group in &groups {
             let rigids: Vec<Rigid> = group.sites.iter().map(|&u| poses[u]).collect();
             let replicate_err = |source| AssembleError::Replicate {
@@ -586,14 +587,14 @@ impl Assembler {
         }
 
         // ---- one scan of the world's ports ----
-        let mut world_ports: HashMap<(AtomId, AtomId), PortId> =
+        let mut world_ports: HashMap<(NodeId, NodeId), RelationId> =
             HashMap::with_capacity(world.n_ports());
         for id in world.ports() {
             if let Ok(port) = world.port(id) {
                 world_ports.insert((port.anchor, port.handle), id);
             }
         }
-        let world_port = |u: usize, b: usize| -> Result<PortId, AssembleError> {
+        let world_port = |u: usize, b: usize| -> Result<RelationId, AssembleError> {
             let (g, c) = group_of[u];
             let group = &groups[g];
             let tp = port_of(u, b);
@@ -612,7 +613,7 @@ impl Assembler {
         };
 
         // ---- one batch join along the site bonds ----
-        let mut pairs: Vec<(PortId, PortId)> = Vec::with_capacity(graph.bonds.len());
+        let mut pairs: Vec<(RelationId, RelationId)> = Vec::with_capacity(graph.bonds.len());
         for (b, &(u, v)) in graph.bonds.iter().enumerate() {
             pairs.push((world_port(u, b)?, world_port(v, b)?));
         }
@@ -827,14 +828,14 @@ impl Assembler {
             name: name.to_owned(),
             source,
         };
-        let row = |atom: AtomId| {
+        let row = |atom: NodeId| {
             template.node_table().row(atom).ok_or_else(|| {
                 refuse(MolRsError::validation(format!(
                     "a port names {atom:?}, which is no live atom"
                 )))
             })
         };
-        let position = |atom: AtomId| template.get_node(atom).ok().and_then(|a| a.position());
+        let position = |atom: NodeId| template.get_node(atom).ok().and_then(|a| a.position());
         let center =
             crate::spatial::geometry::center(template, &template.node_ids().collect::<Vec<_>>())
                 .ok();
@@ -920,11 +921,11 @@ mod tests {
     use crate::op::rigid::{Rigid, about};
     use crate::op::types::Vec3;
     use crate::store::keys;
-    use crate::system::atomistic::AtomId;
     use crate::system::atomistic::Atomistic;
     use crate::system::bond::BondNumber;
     use crate::system::coarsegrain::CoarseGrain;
     use crate::system::molgraph::MolGraph;
+    use crate::system::molgraph::NodeId;
     use crate::system::port::PortKind;
 
     const TOL: f64 = 1e-9;
@@ -939,7 +940,7 @@ mod tests {
     // and adds one C1–C0 bond. An n-unit M chain therefore has
     // 5n − 2(n−1) atoms, 4n − 2(n−1) + (n−1) bonds and 2 ports.
 
-    fn atom(f: &mut Atomistic, symbol: &str, xyz: Vec3, mass: f64) -> AtomId {
+    fn atom(f: &mut Atomistic, symbol: &str, xyz: Vec3, mass: f64) -> NodeId {
         let id = f.add_atom_xyz(symbol, xyz[0], xyz[1], xyz[2]);
         f.set_node(id, keys::MASS, mass).expect("stamp mass");
         id

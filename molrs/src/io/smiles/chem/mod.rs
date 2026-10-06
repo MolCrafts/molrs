@@ -3,9 +3,9 @@
 //!
 //! The abstract syntax tree (AST), the byte-level scanner, and the validation
 //! helpers that are language-agnostic live here. Language-specific parsing,
-//! validation and graph conversion live in the sibling `smiles/` module;
-//! SMARTS pattern *matching* is an independent engine
-//! ([`crate::perceive::smarts`]) that does not use this vocabulary.
+//! validation and graph conversion live in the sibling `smiles/` module.
+//! SMARTS pattern *matching* ([`crate::perceive::smarts`]) compiles its
+//! queries from this vocabulary.
 //!
 //! A fourth notation borrows from here without being a `Dialect`: the
 //! `CGsmiles` coarse-graph parser behind

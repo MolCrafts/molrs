@@ -11,7 +11,7 @@
 //!    `i`-th atom of [`Atomistic::atoms`], edge index `i` the `i`-th bond of
 //!    [`Atomistic::bonds`],
 //! 2. calls [`Topology::find_rings`],
-//! 3. lifts the resulting `usize` indices back onto the [`AtomId`] / [`BondId`]
+//! 3. lifts the resulting `usize` indices back onto the [`NodeId`] / [`RelationId`]
 //!    handles chemistry code (aromaticity, SMARTS, MMFF, AM1-BCC, the conformer
 //!    pipeline) actually holds, as a [`RingInfo`].
 //!
@@ -20,7 +20,9 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::system::atomistic::{AtomId, Atomistic, BondId};
+use crate::system::atomistic::Atomistic;
+
+use crate::system::molgraph::{NodeId, RelationId};
 use crate::system::topology::Topology;
 
 // ---------------------------------------------------------------------------
@@ -31,35 +33,35 @@ use crate::system::topology::Topology;
 ///
 /// The handle-keyed counterpart of
 /// [`crate::system::topology::TopologyRingInfo`]: the same rings, addressed by
-/// [`AtomId`] / [`BondId`] instead of by graph index.
+/// [`NodeId`] / [`RelationId`] instead of by graph index.
 #[derive(Debug, Clone)]
 pub struct RingInfo {
-    /// Each ring is an ordered list of `AtomId`s forming a closed path.
-    rings: Vec<Vec<AtomId>>,
+    /// Each ring is an ordered list of `NodeId`s forming a closed path.
+    rings: Vec<Vec<NodeId>>,
     /// atom → indices of rings that contain it.
-    atom_rings: HashMap<AtomId, Vec<usize>>,
+    atom_rings: HashMap<NodeId, Vec<usize>>,
     /// bond → indices of rings that contain it.
-    bond_rings: HashMap<BondId, Vec<usize>>,
+    bond_rings: HashMap<RelationId, Vec<usize>>,
 }
 
 impl RingInfo {
     /// Whether the atom belongs to any ring.
-    pub fn is_atom_in_ring(&self, id: AtomId) -> bool {
+    pub fn is_atom_in_ring(&self, id: NodeId) -> bool {
         self.atom_rings.get(&id).is_some_and(|v| !v.is_empty())
     }
 
     /// Whether the bond belongs to any ring.
-    pub fn is_bond_in_ring(&self, id: BondId) -> bool {
+    pub fn is_bond_in_ring(&self, id: RelationId) -> bool {
         self.bond_rings.get(&id).is_some_and(|v| !v.is_empty())
     }
 
     /// Number of rings containing this atom.
-    pub fn num_atom_rings(&self, id: AtomId) -> usize {
+    pub fn num_atom_rings(&self, id: NodeId) -> usize {
         self.atom_rings.get(&id).map_or(0, Vec::len)
     }
 
     /// Number of rings containing this bond.
-    pub fn num_bond_rings(&self, id: BondId) -> usize {
+    pub fn num_bond_rings(&self, id: RelationId) -> usize {
         self.bond_rings.get(&id).map_or(0, Vec::len)
     }
 
@@ -69,12 +71,12 @@ impl RingInfo {
     }
 
     /// All rings of exactly `n` atoms.
-    pub fn rings_of_size(&self, n: usize) -> Vec<&Vec<AtomId>> {
+    pub fn rings_of_size(&self, n: usize) -> Vec<&Vec<NodeId>> {
         self.rings.iter().filter(|r| r.len() == n).collect()
     }
 
     /// Size of the smallest ring containing `id`, if any.
-    pub fn smallest_ring_containing_atom(&self, id: AtomId) -> Option<usize> {
+    pub fn smallest_ring_containing_atom(&self, id: NodeId) -> Option<usize> {
         self.atom_rings
             .get(&id)?
             .iter()
@@ -87,8 +89,8 @@ impl RingInfo {
         self.rings.len()
     }
 
-    /// All rings as slices of `AtomId`.
-    pub fn rings(&self) -> &[Vec<AtomId>] {
+    /// All rings as slices of `NodeId`.
+    pub fn rings(&self) -> &[Vec<NodeId>] {
         &self.rings
     }
 
@@ -112,7 +114,7 @@ impl RingInfo {
     /// symmetrized `GetSymmSSSR` differ in *which* small rings they list, not
     /// in which atoms are cyclic, and the union over shared atoms collapses
     /// that difference.
-    pub fn ring_systems(&self) -> Vec<Vec<AtomId>> {
+    pub fn ring_systems(&self) -> Vec<Vec<NodeId>> {
         let n = self.rings.len();
         if n == 0 {
             return Vec::new();
@@ -134,7 +136,7 @@ impl RingInfo {
             }
         }
         // atom → first ring index seen
-        let mut atom_owner: HashMap<AtomId, usize> = HashMap::new();
+        let mut atom_owner: HashMap<NodeId, usize> = HashMap::new();
         for (ri, ring) in self.rings.iter().enumerate() {
             for &atom in ring {
                 if let Some(&prev) = atom_owner.get(&atom) {
@@ -147,8 +149,8 @@ impl RingInfo {
         // Component → atoms, in first-seen order so the result is deterministic
         // without leaking a handle ordering.
         let mut order: Vec<usize> = Vec::new();
-        let mut systems: HashMap<usize, Vec<AtomId>> = HashMap::new();
-        let mut seen: HashSet<AtomId> = HashSet::new();
+        let mut systems: HashMap<usize, Vec<NodeId>> = HashMap::new();
+        let mut seen: HashSet<NodeId> = HashSet::new();
         for (ri, ring) in self.rings.iter().enumerate() {
             let root = find(&mut parent, ri);
             let atoms = systems.entry(root).or_insert_with(|| {
@@ -216,10 +218,10 @@ pub fn max_ring_system_size(mol: &Atomistic) -> usize {
 /// absent, and an acyclic molecule yields nothing at all.
 pub fn small_ring_closure(
     mol: &Atomistic,
-    centers: &[AtomId],
+    centers: &[NodeId],
     radius: i64,
     max_ring_size: usize,
-) -> Vec<Vec<AtomId>> {
+) -> Vec<Vec<NodeId>> {
     if max_ring_size < 3 || centers.is_empty() {
         return Vec::new();
     }
@@ -231,9 +233,9 @@ pub fn small_ring_closure(
     // slot-indexed `SecondaryMap`, so it allocates and drains one slot per atom
     // of the *parent* even when `max_hops` stops the search after nine. A
     // hash-keyed BFS costs the ball, which is what this function promises.
-    let mut ball: Vec<AtomId> = Vec::new();
-    let mut hops: HashMap<AtomId, i64> = HashMap::new();
-    let mut queue: VecDeque<AtomId> = VecDeque::new();
+    let mut ball: Vec<NodeId> = Vec::new();
+    let mut hops: HashMap<NodeId, i64> = HashMap::new();
+    let mut queue: VecDeque<NodeId> = VecDeque::new();
     for &center in centers {
         if hops.insert(center, 0).is_none() {
             ball.push(center);
@@ -245,7 +247,7 @@ pub fn small_ring_closure(
         if hop >= radius {
             continue;
         }
-        let neighbors: Vec<AtomId> = mol.neighbor_bonds(atom).map(|(other, _)| other).collect();
+        let neighbors: Vec<NodeId> = mol.neighbor_bonds(atom).map(|(other, _)| other).collect();
         for other in neighbors {
             if let std::collections::hash_map::Entry::Vacant(slot) = hops.entry(other) {
                 slot.insert(hop + 1);
@@ -256,9 +258,9 @@ pub fn small_ring_closure(
     }
 
     // One flood per ring system, so an atom is emitted in exactly one group.
-    let mut assigned: HashSet<AtomId> = HashSet::new();
-    let mut on_small_ring: HashMap<(AtomId, AtomId), bool> = HashMap::new();
-    let mut groups: Vec<Vec<AtomId>> = Vec::new();
+    let mut assigned: HashSet<NodeId> = HashSet::new();
+    let mut on_small_ring: HashMap<(NodeId, NodeId), bool> = HashMap::new();
+    let mut groups: Vec<Vec<NodeId>> = Vec::new();
 
     for &start in &ball {
         if !assigned.insert(start) {
@@ -266,9 +268,9 @@ pub fn small_ring_closure(
         }
         let mut system = vec![start];
         let mut frontier = vec![start];
-        let mut in_system: HashSet<AtomId> = HashSet::from([start]);
+        let mut in_system: HashSet<NodeId> = HashSet::from([start]);
         while let Some(atom) = frontier.pop() {
-            let neighbors: Vec<AtomId> = mol.neighbor_bonds(atom).map(|(other, _)| other).collect();
+            let neighbors: Vec<NodeId> = mol.neighbor_bonds(atom).map(|(other, _)| other).collect();
             for other in neighbors {
                 if in_system.contains(&other) {
                     continue;
@@ -308,10 +310,10 @@ pub fn small_ring_closure(
 /// Bounded BFS for an alternative `a`→`b` route: a route of `L` bonds closes a
 /// ring of `L + 1` atoms, so the search stops at `max_ring_size - 1` hops. Cost
 /// is the neighbourhood within that many bonds, never the whole molecule.
-fn bond_on_small_ring(mol: &Atomistic, a: AtomId, b: AtomId, max_ring_size: usize) -> bool {
+fn bond_on_small_ring(mol: &Atomistic, a: NodeId, b: NodeId, max_ring_size: usize) -> bool {
     let max_hops = max_ring_size - 1;
-    let mut visited: HashSet<AtomId> = HashSet::from([a]);
-    let mut queue: VecDeque<(AtomId, usize)> = VecDeque::from([(a, 0usize)]);
+    let mut visited: HashSet<NodeId> = HashSet::from([a]);
+    let mut queue: VecDeque<(NodeId, usize)> = VecDeque::from([(a, 0usize)]);
     while let Some((atom, hops)) = queue.pop_front() {
         if hops >= max_hops {
             continue;
@@ -336,25 +338,25 @@ fn bond_on_small_ring(mol: &Atomistic, a: AtomId, b: AtomId, max_ring_size: usiz
 ///
 /// Delegates the actual cycle search to the core graph primitive
 /// [`Topology::find_rings`] and lifts its `usize` indices back onto
-/// [`AtomId`] / [`BondId`] handles. Rings come back smallest-first, exactly as
+/// [`NodeId`] / [`RelationId`] handles. Rings come back smallest-first, exactly as
 /// the primitive orders them.
 pub fn find_rings(mol: &Atomistic) -> RingInfo {
     // ---- 1. Project onto the core index space ------------------------------
     // Atom index `i` == the `i`-th atom of `mol.atoms()`; edge index `i` == the
     // `i`-th bond of `mol.bonds()` (`Topology::from_edges` preserves edge
     // insertion order), so the mapping back below is unambiguous.
-    let atom_vec: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-    let atom_to_idx: HashMap<AtomId, usize> = atom_vec
+    let atom_vec: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
+    let atom_to_idx: HashMap<NodeId, usize> = atom_vec
         .iter()
         .enumerate()
         .map(|(i, &id)| (id, i))
         .collect();
 
-    let bond_vec: Vec<BondId> = mol.bonds().map(|(id, _)| id).collect();
+    let bond_vec: Vec<RelationId> = mol.bonds().map(|(id, _)| id).collect();
 
     let mut edges: Vec<[usize; 2]> = Vec::with_capacity(bond_vec.len());
-    // Fast (AtomId, AtomId) → BondId lookup, used to lift ring edges back.
-    let mut bond_map: HashMap<(AtomId, AtomId), BondId> = HashMap::new();
+    // Fast (NodeId, NodeId) → RelationId lookup, used to lift ring edges back.
+    let mut bond_map: HashMap<(NodeId, NodeId), RelationId> = HashMap::new();
     for &bid in &bond_vec {
         let (n0, n1) = mol.bond_endpoints(bid).expect("bond must exist");
         edges.push([atom_to_idx[&n0], atom_to_idx[&n1]]);
@@ -366,8 +368,8 @@ pub fn find_rings(mol: &Atomistic) -> RingInfo {
     let topo = Topology::from_edges(atom_vec.len(), &edges);
     let info = topo.find_rings();
 
-    // ---- 3. Lift node-index cycles → AtomId rings ---------------------------
-    let rings: Vec<Vec<AtomId>> = info
+    // ---- 3. Lift node-index cycles → NodeId rings ---------------------------
+    let rings: Vec<Vec<NodeId>> = info
         .rings()
         .iter()
         .map(|cycle| cycle.iter().map(|&ni| atom_vec[ni]).collect())
@@ -376,8 +378,8 @@ pub fn find_rings(mol: &Atomistic) -> RingInfo {
     // ---- 4. Build the handle-keyed reverse-lookup maps ----------------------
     // Each ring is a closed path, so its cyclically consecutive atom pairs are
     // exactly its bonds.
-    let mut atom_rings: HashMap<AtomId, Vec<usize>> = HashMap::new();
-    let mut bond_rings: HashMap<BondId, Vec<usize>> = HashMap::new();
+    let mut atom_rings: HashMap<NodeId, Vec<usize>> = HashMap::new();
+    let mut bond_rings: HashMap<RelationId, Vec<usize>> = HashMap::new();
 
     for (ri, ring) in rings.iter().enumerate() {
         let n = ring.len();
@@ -409,7 +411,7 @@ mod tests {
 
     fn cycle(n: usize) -> Atomistic {
         let mut g = Atomistic::new();
-        let ids: Vec<AtomId> = (0..n).map(|_| g.add_atom(Atom::new())).collect();
+        let ids: Vec<NodeId> = (0..n).map(|_| g.add_atom(Atom::new())).collect();
         for i in 0..n {
             g.add_bond(ids[i], ids[(i + 1) % n])
                 .expect("add cycle bond");
@@ -428,7 +430,7 @@ mod tests {
     #[test]
     fn test_linear_no_rings() {
         let mut g = Atomistic::new();
-        let ids: Vec<AtomId> = (0..6).map(|_| g.add_atom(Atom::new())).collect();
+        let ids: Vec<NodeId> = (0..6).map(|_| g.add_atom(Atom::new())).collect();
         for i in 0..5 {
             g.add_bond(ids[i], ids[i + 1]).expect("add chain bond");
         }
@@ -461,7 +463,7 @@ mod tests {
     #[test]
     fn test_naphthalene() {
         let mut g = Atomistic::new();
-        let ids: Vec<AtomId> = (0..10).map(|_| g.add_atom(Atom::new())).collect();
+        let ids: Vec<NodeId> = (0..10).map(|_| g.add_atom(Atom::new())).collect();
         // Ring A: 0-1-2-3-4-5-0
         for i in 0..5 {
             g.add_bond(ids[i], ids[i + 1]).expect("bond");
@@ -488,7 +490,7 @@ mod tests {
     fn test_max_ring_system_size_benzene_and_acyclic() {
         assert_eq!(find_rings(&cycle(6)).max_ring_system_size(), 6);
         let mut chain = Atomistic::new();
-        let ids: Vec<AtomId> = (0..3).map(|_| chain.add_atom(Atom::new())).collect();
+        let ids: Vec<NodeId> = (0..3).map(|_| chain.add_atom(Atom::new())).collect();
         chain.add_bond(ids[0], ids[1]).unwrap();
         chain.add_bond(ids[1], ids[2]).unwrap();
         assert_eq!(find_rings(&chain).max_ring_system_size(), 0);
@@ -498,15 +500,15 @@ mod tests {
 
     /// Two `n`-cycles joined at `shared` consecutive atoms: `shared = 2` is
     /// ortho-fused (naphthalene-like), `shared = 1` is spiro.
-    fn joined_cycles(n: usize, shared: usize) -> (Atomistic, Vec<AtomId>) {
+    fn joined_cycles(n: usize, shared: usize) -> (Atomistic, Vec<NodeId>) {
         let mut g = Atomistic::new();
         let total = 2 * n - shared;
-        let ids: Vec<AtomId> = (0..total).map(|_| g.add_atom(Atom::new())).collect();
+        let ids: Vec<NodeId> = (0..total).map(|_| g.add_atom(Atom::new())).collect();
         for i in 0..n {
             g.add_bond(ids[i], ids[(i + 1) % n]).expect("ring A bond");
         }
         // Ring B reuses ids[0..shared] and continues through the fresh atoms.
-        let mut ring_b: Vec<AtomId> = (0..shared).map(|i| ids[i]).collect();
+        let mut ring_b: Vec<NodeId> = (0..shared).map(|i| ids[i]).collect();
         ring_b.extend(ids[n..].iter().copied());
         for i in 0..ring_b.len() {
             g.add_bond(ring_b[i], ring_b[(i + 1) % ring_b.len()])
@@ -544,7 +546,7 @@ mod tests {
     #[test]
     fn test_ring_systems_disconnected_rings_stay_separate() {
         let mut g = cycle(6);
-        let ids: Vec<AtomId> = (0..6).map(|_| g.add_atom(Atom::new())).collect();
+        let ids: Vec<NodeId> = (0..6).map(|_| g.add_atom(Atom::new())).collect();
         for i in 0..6 {
             g.add_bond(ids[i], ids[(i + 1) % 6]).expect("second ring");
         }
@@ -556,7 +558,7 @@ mod tests {
     #[test]
     fn test_ring_systems_acyclic_is_empty() {
         let mut chain = Atomistic::new();
-        let ids: Vec<AtomId> = (0..3).map(|_| chain.add_atom(Atom::new())).collect();
+        let ids: Vec<NodeId> = (0..3).map(|_| chain.add_atom(Atom::new())).collect();
         chain.add_bond(ids[0], ids[1]).unwrap();
         chain.add_bond(ids[1], ids[2]).unwrap();
         assert!(find_rings(&chain).ring_systems().is_empty());
@@ -566,7 +568,7 @@ mod tests {
     fn test_ring_systems_partition_every_ring_atom_exactly_once() {
         let (g, _) = joined_cycles(6, 2);
         let ri = find_rings(&g);
-        let mut seen: HashSet<AtomId> = HashSet::new();
+        let mut seen: HashSet<NodeId> = HashSet::new();
         for system in ri.ring_systems() {
             for atom in system {
                 assert!(seen.insert(atom), "atom in two systems");
@@ -586,7 +588,7 @@ mod tests {
         // molecule than the one it was cut from.
         // Extraction re-wraps as an Atomistic, so these atoms need an element.
         let mut g = Atomistic::new();
-        let ring_ids: Vec<AtomId> = (0..6).map(|_| g.add_atom_bare("C")).collect();
+        let ring_ids: Vec<NodeId> = (0..6).map(|_| g.add_atom_bare("C")).collect();
         for i in 0..6 {
             g.add_bond(ring_ids[i], ring_ids[(i + 1) % 6])
                 .expect("ring bond");
@@ -602,7 +604,7 @@ mod tests {
             .extract_subgraph(&[methyl], 2, false, &ri.ring_systems())
             .unwrap();
         assert_eq!(closed.graph.n_atoms(), 7, "whole ring, plus the methyl");
-        let selected: HashSet<AtomId> = closed.node_map.keys().copied().collect();
+        let selected: HashSet<NodeId> = closed.node_map.keys().copied().collect();
         for system in ri.ring_systems() {
             let inside = system.iter().filter(|a| selected.contains(a)).count();
             assert!(
@@ -624,9 +626,9 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// A ring of `n` carbons with a methyl on atom 0. Returns `(graph, methyl)`.
-    fn methyl_on_ring(n: usize) -> (Atomistic, Vec<AtomId>, AtomId) {
+    fn methyl_on_ring(n: usize) -> (Atomistic, Vec<NodeId>, NodeId) {
         let mut g = Atomistic::new();
-        let ring: Vec<AtomId> = (0..n).map(|_| g.add_atom_bare("C")).collect();
+        let ring: Vec<NodeId> = (0..n).map(|_| g.add_atom_bare("C")).collect();
         for i in 0..n {
             g.add_bond(ring[i], ring[(i + 1) % n]).expect("ring bond");
         }
@@ -640,7 +642,7 @@ mod tests {
         let (g, ring, methyl) = methyl_on_ring(6);
         let groups = small_ring_closure(&g, &[methyl], 1, 8);
         assert_eq!(groups.len(), 1, "one ring system");
-        let closed: HashSet<AtomId> = groups[0].iter().copied().collect();
+        let closed: HashSet<NodeId> = groups[0].iter().copied().collect();
         assert_eq!(closed, ring.iter().copied().collect::<HashSet<_>>());
         // The exocyclic bond is on no ring, so the methyl is not part of it.
         assert!(!closed.contains(&methyl));
@@ -684,8 +686,8 @@ mod tests {
         // Biphenyl: the inter-ring bond lies on no small ring, so a ball on one
         // ring must not drag in the other.
         let mut g = Atomistic::new();
-        let ring_of = |g: &mut Atomistic| -> Vec<AtomId> {
-            let r: Vec<AtomId> = (0..6).map(|_| g.add_atom_bare("C")).collect();
+        let ring_of = |g: &mut Atomistic| -> Vec<NodeId> {
+            let r: Vec<NodeId> = (0..6).map(|_| g.add_atom_bare("C")).collect();
             for i in 0..6 {
                 g.add_bond(r[i], r[(i + 1) % 6]).expect("ring bond");
             }
@@ -703,7 +705,7 @@ mod tests {
     #[test]
     fn test_small_ring_closure_is_empty_for_an_acyclic_molecule() {
         let mut g = Atomistic::new();
-        let ids: Vec<AtomId> = (0..8).map(|_| g.add_atom_bare("C")).collect();
+        let ids: Vec<NodeId> = (0..8).map(|_| g.add_atom_bare("C")).collect();
         for i in 0..7 {
             g.add_bond(ids[i], ids[i + 1]).expect("chain bond");
         }
@@ -727,14 +729,14 @@ mod tests {
             ("spiro pair", joined_cycles(6, 1).0, 0),
             ("cyclopropane", cycle(3), 0),
         ] {
-            let atoms: Vec<AtomId> = g.atoms().map(|(id, _)| id).collect();
+            let atoms: Vec<NodeId> = g.atoms().map(|(id, _)| id).collect();
             let local = small_ring_closure(&g, &[atoms[seed]], 0, 8);
-            let global: Vec<Vec<AtomId>> = find_rings(&g)
+            let global: Vec<Vec<NodeId>> = find_rings(&g)
                 .ring_systems()
                 .into_iter()
                 .filter(|system| system.contains(&atoms[seed]))
                 .collect();
-            let as_set = |groups: &[Vec<AtomId>]| -> HashSet<AtomId> {
+            let as_set = |groups: &[Vec<NodeId>]| -> HashSet<NodeId> {
                 groups.iter().flatten().copied().collect()
             };
             assert_eq!(

@@ -30,11 +30,13 @@
 //! - `io`        — file I/O (PDB, XYZ, LAMMPS, CHGCAR, Cube, …; `*.mrec`
 //!   record files need `zarr`, their path doors `filesystem`)
 //! - `compute`   — trajectory analysis (RDF, MSD, clustering, tensors)
-//! - `smiles`    — SMILES/SMARTS parser (lives in `io`)
+//! - `smiles`    — SMILES/SMARTS parser (lives in `io`) and the SMARTS
+//!   matcher (`perceive::smarts`) compiled from it
 //! - `ff`        — force fields (MMFF94, PME, typifier)
 //! - `conformer` — 3D conformer generation
 //! - `signal`    — signal processing (FFT-based ACF, windowing, frequency grids)
-//! - `md`        — in-process molecular dynamics (enables `ff`)
+//! - `md`        — in-process molecular dynamics: integrators and force
+//!   providers; the kernels are `ff::potential` (enables `ff`)
 //! - `voronoi`   — radical Voronoi tessellation (enables `compute`)
 //! - `full`      — everything above
 //! - `stream`    — MessagePack/JSON frames and native WebSocket streaming (not in `full`)
@@ -94,11 +96,10 @@ pub use crate::builder::{
     SitePlacer, SiteView, WalkError, WalkOutput,
 };
 
-// Chemical perception: one layer above `core`, below `ff` / `io` / `conformer`.
-// Always compiled — every consumer configuration already compiled these modules
-// when they lived inside `core`, so keeping them unconditional reproduces the
-// existing build graph exactly (feature-gating them would be a behaviour change,
-// not a refactor).
+// Chemical perception: one layer above `core`, below `ff` / `conformer`.
+// Always compiled, except the SMARTS matcher (`perceive::smarts`), which
+// compiles its queries from the one SMARTS parser in `io::smiles` and so needs
+// the `smiles` feature.
 pub mod perceive;
 
 #[cfg(feature = "io")]
@@ -116,12 +117,13 @@ pub mod ff;
 // Geometry optimization; always compiled (its module docs say what needs `ff`).
 pub mod optimize;
 
-/// In-process MD: velocity-Verlet / Langevin and shifted Lennard-Jones.
-/// Consumes the one [`ff::potential::Potential`]/[`ff::potential::Potentials`]
-/// seam (the `md` feature therefore enables `ff`) — required pieces go in the
-/// constructor (`VelocityVerlet::new(dt, potential, neighbors, mass)`); pair
-/// search is core [`spatial::neighbors::VerletSkin`]. Frame/`ForceField`
-/// wiring lives in molpy / molrs-python.
+/// In-process MD: integrators (velocity-Verlet, Langevin) and force providers.
+/// The energy kernels are not here — they are in [`ff::potential`], consumed
+/// through the one [`ff::potential::Potential`]/[`ff::potential::Potentials`]
+/// seam (the `md` feature therefore enables `ff`). Required pieces go in the
+/// constructor (`VelocityVerlet::new(dt, forces, mass, simbox)`); pair search
+/// is core [`spatial::neighbors::VerletSkin`]. Frame/`ForceField` wiring lives
+/// in molpy / molrs-python.
 #[cfg(feature = "md")]
 pub mod md;
 
