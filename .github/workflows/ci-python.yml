@@ -24,7 +24,7 @@ jobs:
         with:
           shared-key: python-maturin-${{ matrix.os }}
           workspaces: ". -> target"
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
           cache-dependency-glob: |
@@ -48,5 +48,5 @@ jobs:
         with:
           shared-key: python-docs
           workspaces: ". -> target"
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: astral-sh/setup-uv@v10.2.0
       - run: scripts/check.sh docs
