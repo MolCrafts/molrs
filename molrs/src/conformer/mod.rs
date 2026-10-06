@@ -36,8 +36,9 @@ mod graph;
 mod options;
 mod report;
 
-/// ETKDGv3 conformer-embedding pipeline (the active [`Conformer`] backend).
-pub mod etkdg;
+/// ETKDGv3 conformer-embedding pipeline (the active [`Conformer`] backend);
+/// reached only through [`Conformer::generate`].
+mod etkdg;
 
 pub use element_graph::ElementGraph;
 pub use options::{ConformerOptions, ConformerSpeed, ForceFieldKind};

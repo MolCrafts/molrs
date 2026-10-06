@@ -1,4 +1,4 @@
-//! First-stage ETKDG error function + minimizer.
+//! ETKDG distance-geometry objectives (first stage and torsion refinement).
 //!
 //! Port of RDKit's distance-geometry error function and its experimental-torsion
 //! refinement, assembled from:
@@ -16,8 +16,12 @@
 //!
 //! RDKit runs two minimizations: a 4D "first minimization" over distance +
 //! chiral + fourth-dimension terms, then a 3D experimental-torsion refinement.
-//! We reproduce both as steepest-descent / gradient minimizations on a flat
-//! `n*dim` coordinate buffer.
+//! This module supplies the two objectives (energy + gradient on a flat
+//! `n*dim` coordinate buffer); the minimizer is the crate's one L-BFGS,
+//! [`crate::optimize::minimize_lbfgs_rms`], as for RDKit's own BFGS.
+//!
+//! The objectives are internal distance-geometry terms, not force-field
+//! kernels, so they stay private to `conformer`.
 
 use crate::conformer::distgeom::{
     BoundsMatrix, ChiralConstraint, ImproperConstraint, TorsionConstraint,
@@ -26,7 +30,7 @@ use crate::op::vec3::{cross, dot, norm, sub};
 
 /// Per-atom energy threshold above which the first minimization is rejected
 /// (RDKit `MAX_MINIMIZED_E_PER_ATOM`).
-pub const MAX_MINIMIZED_E_PER_ATOM: f64 = 0.05;
+pub(super) const MAX_MINIMIZED_E_PER_ATOM: f64 = 0.05;
 
 /// Distance-violation contribution (squared bounds form, RDKit
 /// `DistViolationContribs`).
@@ -49,7 +53,7 @@ struct ChiralContrib {
 }
 
 /// The 4D first-stage force field: distance + chiral + fourth-dim penalties.
-pub struct FirstStageField {
+pub(super) struct FirstStageField {
     n: usize,
     dim: usize,
     dist: Vec<DistContrib>,
@@ -60,7 +64,7 @@ pub struct FirstStageField {
 impl FirstStageField {
     /// Build the first-stage field over all atom pairs (RDKit
     /// `constructForceField` with `weightChiral`, `weightFourthDim`).
-    pub fn build(
+    pub(super) fn build(
         bounds: &BoundsMatrix,
         chiral: &[ChiralConstraint],
         dim: usize,
@@ -113,7 +117,7 @@ impl FirstStageField {
 
     /// Energy + gradient (gradient written into `grad`, which must be
     /// length `n*dim` and is overwritten).
-    pub fn energy_grad(&self, p: &[f64], grad: &mut [f64]) -> f64 {
+    pub(super) fn energy_grad(&self, p: &[f64], grad: &mut [f64]) -> f64 {
         for g in grad.iter_mut() {
             *g = 0.0;
         }
@@ -241,7 +245,7 @@ impl FirstStageField {
 
 /// Signed chiral volume of four points using the first 3 dimensions (RDKit
 /// `DistGeom::calcChiralVolume`). `dim` is the coordinate stride.
-pub fn calc_chiral_volume(p: &[f64], idx: [usize; 4], dim: usize) -> f64 {
+pub(super) fn calc_chiral_volume(p: &[f64], idx: [usize; 4], dim: usize) -> f64 {
     let [i1, i2, i3, i4] = idx;
     let v1 = [
         p[i1 * dim] - p[i4 * dim],
@@ -266,7 +270,7 @@ pub fn calc_chiral_volume(p: &[f64], idx: [usize; 4], dim: usize) -> f64 {
 /// RDKit's `construct3DForceField`: we keep the experimental-torsion M6 terms
 /// and the long-range distance constraints from the bounds matrix, which
 /// together carry the torsion bias plus the bonded skeleton.
-pub struct ExpTorsionField {
+pub(super) struct ExpTorsionField {
     dist: Vec<DistContrib>,
     torsions: Vec<TorsionM6>,
     impropers: Vec<Improper>,
@@ -295,7 +299,7 @@ const IMPROPER_FORCE: f64 = 10.0;
 impl ExpTorsionField {
     /// Build over the bounds (distance constraints), experimental torsions, and
     /// improper (sp2 planarity) constraints.
-    pub fn build(
+    pub(super) fn build(
         bounds: &BoundsMatrix,
         torsions: &[TorsionConstraint],
         impropers: &[ImproperConstraint],
@@ -349,7 +353,7 @@ impl ExpTorsionField {
     }
 
     /// Energy + gradient over a flat `n*3` coordinate buffer.
-    pub fn energy_grad(&self, p: &[f64], grad: &mut [f64]) -> f64 {
+    pub(super) fn energy_grad(&self, p: &[f64], grad: &mut [f64]) -> f64 {
         for g in grad.iter_mut() {
             *g = 0.0;
         }
@@ -511,60 +515,6 @@ fn torsion_cos_phi(p: &[f64], atoms: [usize; 4]) -> f64 {
         return 1.0;
     }
     (dot(t1, t2) / (d1 * d2)).clamp(-1.0, 1.0)
-}
-
-/// Generic gradient minimizer (steepest descent with adaptive step + a simple
-/// backtracking line search). `closure` computes energy and fills the gradient.
-/// Returns `(final_energy, converged, steps)`.
-pub fn minimize<F>(
-    coords: &mut [f64],
-    max_iters: usize,
-    force_tol: f64,
-    mut closure: F,
-) -> (f64, bool, usize)
-where
-    F: FnMut(&[f64], &mut [f64]) -> f64,
-{
-    let n = coords.len();
-    let mut grad = vec![0.0; n];
-    let mut energy = closure(coords, &mut grad);
-    let mut step = 0.01;
-    let mut converged = false;
-    let mut iters = 0;
-    for it in 0..max_iters {
-        iters = it + 1;
-        let gnorm = grad.iter().map(|g| g * g).sum::<f64>().sqrt();
-        if gnorm < force_tol {
-            converged = true;
-            break;
-        }
-        // Backtracking line search along -grad.
-        let mut trial = coords.to_vec();
-        let mut new_grad = vec![0.0; n];
-        let mut accepted = false;
-        let mut local_step = step;
-        for _ in 0..20 {
-            for k in 0..n {
-                trial[k] = coords[k] - local_step * grad[k];
-            }
-            let e_trial = closure(&trial, &mut new_grad);
-            if e_trial < energy {
-                coords.copy_from_slice(&trial);
-                energy = e_trial;
-                grad.copy_from_slice(&new_grad);
-                step = (local_step * 1.2).min(0.1);
-                accepted = true;
-                break;
-            }
-            local_step *= 0.5;
-        }
-        if !accepted {
-            // Could not make progress; treat as converged at a local min.
-            converged = true;
-            break;
-        }
-    }
-    (energy, converged, iters)
 }
 
 #[cfg(test)]
