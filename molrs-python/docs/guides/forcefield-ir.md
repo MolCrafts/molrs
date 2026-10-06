@@ -276,7 +276,11 @@ style's (ε, σ, qᵢqⱼ, `special_bonds` weight of the pair's bond-distance
 class). The regular pair kernels price an override pair at weight 0: the
 compiled door leaves its `pairs` row out, the neighbour-driven door zeroes
 its weight (`PairWeights`). A `w` pair needs no such step — its
-`special_bonds` 1-4 weight is 0. Converting an exception table to a global
+`special_bonds` 1-4 weight is 0. A cell is priced only by the style it
+belongs to: `epsilon`, `sigma`, `lj_scale` under a Lennard-Jones style,
+`charge_product`, `coul_scale` under a Coulomb style. A field without that
+style ignores them, so a bonded-only (or Coulomb-only) field compiled on a
+frame with materialized 1-4 cells prices no Lennard-Jones. Converting an exception table to a global
 weight is not exact (r₁₄ depends on φ and on the other coordinates), so no
 reader or writer does it.
 

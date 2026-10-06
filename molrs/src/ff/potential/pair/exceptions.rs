@@ -24,7 +24,11 @@
 //! parameters at the `special_bonds` weight of the pair's bond-distance class
 //! otherwise. So `lj_scale` / `coul_scale` replace `w` or the global weight,
 //! and `epsilon` / `sigma` / `charge_product` replace the style's (or the
-//! dihedral's 1-4) values.
+//! dihedral's 1-4) values. A cell is priced only by the style it belongs to:
+//! `epsilon` / `sigma` / `lj_scale` under a Lennard-Jones style,
+//! `charge_product` / `coul_scale` under a Coulomb style. A field without
+//! that style ignores them, so a bonded-only field on a frame with
+//! materialized 1-4 cells prices no pair at all.
 //!
 //! Every such pair is priced here, once:
 //!
@@ -323,47 +327,36 @@ pub(crate) fn plan(ff: &ForceField, frame: &Frame) -> Result<Exceptions, String>
         };
 
         // Van der Waals: the cells, else the dihedral's 1-4 parameters, else
-        // the style's own.
-        let base = || -> Result<Option<(F, F)>, String> {
-            match &vdw {
-                Vdw::Charmm(_, mixing) => {
-                    let (a, b) = atom_type_pair(types, i, j)?;
-                    let (regular, one_four) = charmm_pair_params(&lj_rows, *mixing, a, b)?;
-                    Ok(Some(if w > 0.0 { one_four } else { regular }))
-                }
-                Vdw::LjCut(_, mixing) => {
-                    let (a, b) = atom_type_pair(types, i, j)?;
-                    Ok(Some(lj_cut_pair_params(&lj_rows, *mixing, a, b)?))
-                }
-                _ => Ok(None),
+        // the style's own. A field with no Lennard-Jones style prices none of
+        // the LJ cells: they belong to a style it does not have.
+        let base = |mixing: Mixing, charmm: bool| -> Result<(F, F), String> {
+            let (a, b) = atom_type_pair(types, i, j)?;
+            if charmm {
+                let (regular, one_four) = charmm_pair_params(&lj_rows, mixing, a, b)?;
+                Ok(if w > 0.0 { one_four } else { regular })
+            } else {
+                lj_cut_pair_params(&lj_rows, mixing, a, b)
             }
         };
-        let w_lj = cell[LJ_SCALE].unwrap_or_else(|| if w > 0.0 { w } else { weight(sb.lj) });
-        let (eps, sigma, w_lj) = match (cell[EPS], cell[SIGMA]) {
-            (Some(e), Some(s)) => (e, s, w_lj),
-            (e, s) => match base()? {
-                Some((be, bs)) => (e.unwrap_or(be), s.unwrap_or(bs), w_lj),
-                None if e.is_none() && s.is_none() => (0.0, 0.0, 0.0),
-                None => {
-                    return Err(format!(
-                        "pairs: atoms {i} and {j} override one of epsilon / sigma, and the \
-                         force field has no Lennard-Jones style to supply the other"
-                    ));
-                }
-            },
+        let (eps, sigma, w_lj) = match &vdw {
+            Vdw::Charmm(_, mixing) | Vdw::LjCut(_, mixing) => {
+                let (e, s) = match (cell[EPS], cell[SIGMA]) {
+                    (Some(e), Some(s)) => (e, s),
+                    (e, s) => {
+                        let (be, bs) = base(*mixing, matches!(vdw, Vdw::Charmm(..)))?;
+                        (e.unwrap_or(be), s.unwrap_or(bs))
+                    }
+                };
+                let w_lj =
+                    cell[LJ_SCALE].unwrap_or_else(|| if w > 0.0 { w } else { weight(sb.lj) });
+                (e, s, w_lj)
+            }
+            _ => (0.0, 0.0, 0.0),
         };
 
-        // Coulomb.
+        // Coulomb, likewise only under a Coulomb style.
         let (k, w_c, qq_ij) = match coul {
-            None => {
-                if cell[QQ].is_some() {
-                    return Err(format!(
-                        "pairs: atoms {i} and {j} carry `charge_product`, and the force \
-                         field has no Coulomb pair style to say the constant"
-                    ));
-                }
-                (0.0, 0.0, 0.0)
-            }
+            None => (0.0, 0.0, 0.0),
             Some(k) => {
                 let w_c =
                     cell[COUL_SCALE].unwrap_or_else(|| if w > 0.0 { w } else { weight(sb.coul) });
