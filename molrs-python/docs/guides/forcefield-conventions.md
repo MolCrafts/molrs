@@ -81,6 +81,7 @@ the energy of a physical system did not change with it.
 | `charmm` | k [1 + cos(n φ − d)] | `k` (E), `periodicity`, `phase` (deg), `w` | `dihedral_style charmm` `K n d w` | `phase` degrees; `w ≠ 0` refused at compile time (see [1-4](#1-4-interactions)) |
 | `opls` | ½[k1(1 + cos φ) + k2(1 − cos 2φ) + k3(1 + cos 3φ) + k4(1 − cos 4φ)] | `k1..k4` (E) | `dihedral_style opls` | unchanged |
 | `multi/harmonic` | Σₙ₌₁⁵ aₙ cosⁿ⁻¹ φ | `a1..a5` (E) | `dihedral_style multi/harmonic` | unchanged |
+| `nharmonic` | Σᵢ₌₁ᴺ aᵢ cosⁱ⁻¹ φ | `a1..aN` (E), contiguous, N ≥ 1 | `dihedral_style nharmonic` `N A1 … AN` | new style |
 | `harmonic` | k [1 + sign cos(n φ)] | `k` (E), `sign` (±1), `periodicity` | `dihedral_style harmonic` `K d n` | new kernel (the LAMMPS reader read it, nothing priced it) |
 | `class2` | Σₙ₌₁³ kₙ [1 − cos(n φ − phiₙ)] | `k1, phi1, k2, phi2, k3, phi3` (E, deg) | `dihedral_style class2` (core term; `mbt`/`ebt`/`at`/`aat`/`bb13` not implemented) | phases degrees |
 | `mmff_torsion` | ½[V1(1 + cos φ) + V2(1 − cos 2φ) + V3(1 + cos 3φ)] | per-instance `v1..v3` | none | unchanged |
@@ -249,6 +250,97 @@ N×N, the layout above; the `forcefield` section's `grid` column is
 spline, so energies off the grid points differ from LAMMPS's at the
 interpolation's accuracy. GROMACS `[ cmaptypes ]` lists CHARMM's grid; its
 reader must be checked against a GROMACS energy before it is trusted.
+
+## Torsion forms and their exact conversions
+
+Every Class-I torsion and dihedral-angle improper style above is a finite
+Fourier series in φ — the signed dihedral of the atoms as stored, the angle
+every molrs kernel and LAMMPS compute:
+
+    E(φ) = Σₙ₌₀ aₙ cos nφ + bₙ sin nφ
+
+That series is the intermediate of every conversion between forms
+(`molrs::ff::forcefield::torsion`). Each form **embeds** exactly (the series
+is the same function of φ, constant included) and **projects** back exactly
+or refuses, naming the term that prevents it. Rows of several styles on one
+quadruple are one torsion: their series add.
+
+| Form | aₙ, bₙ of the form (n ≥ 1) | constant a₀ | image condition (n ≥ 1) |
+|---|---|---|---|
+| `dihedral periodic` (LAMMPS `fourier`), Σₘ kₘ[1 + cos(nₘφ − γₘ)] | aₙ += kₘ cos γₘ, bₙ += kₘ sin γₘ | Σₘ kₘ (fixed) | none — every series; back: kₙ = √(aₙ² + bₙ²), γₙ = atan2(bₙ, aₙ) |
+| `dihedral charmm`, k[1 + cos(nφ − d)] | as one `periodic` term; `w` is not a torsion parameter and is carried beside the series | k (fixed) | one order |
+| `improper periodic`, k[1 + cos(nφ − γ)] | as one `periodic` term | k (fixed) | one order |
+| `dihedral harmonic`, `improper cvff`, k[1 + d cos nφ] | aₙ = k d | k (fixed) | one order, bₙ = 0; back: k = \|aₙ\|, d = sign aₙ |
+| `dihedral opls`, ½Σ kₙ[1 ± cos nφ] | a₁ = k₁/2, a₂ = −k₂/2, a₃ = k₃/2, a₄ = −k₄/2 | ½Σkₙ (fixed) | bₙ = 0, n ≤ 4 |
+| `dihedral class2` (torsion part), Σₙ₌₁³ kₙ[1 − cos(nφ − φₙ)] | aₙ = −kₙ cos φₙ, bₙ = −kₙ sin φₙ | Σkₙ (fixed) | n ≤ 3 |
+| `dihedral multi/harmonic`, Σₙ₌₁⁵ Aₙ cosⁿ⁻¹φ | cosᵏφ = 2⁻ᵏ Σⱼ C(k, j) cos((k − 2j)φ) | free (exact) | bₙ = 0, n ≤ 4; back: cos nφ = Tₙ(cos φ) |
+| `dihedral nharmonic`, Σᵢ₌₁ᴺ Aᵢ cosⁱ⁻¹φ | as `multi/harmonic` | free (exact) | bₙ = 0 |
+| Ryckaert–Bellemans (GROMACS funct 3, OpenMM `RBTorsionForce`), Σₙ₌₀⁵ Cₙ cosⁿ(φ − 180°) | `nharmonic` with Aₙ₊₁ = (−1)ⁿ Cₙ (cos(φ − 180°) = −cos φ) | free (exact) | bₙ = 0, n ≤ 5 |
+
+Every periodicity must be an integer, as LAMMPS requires of every style
+here. A "sine term" (bₙ ≠ 0) is a phase other than 0° or 180°; phases on
+multiples of 90° are evaluated exactly, so a 180° phase is bₙ = 0, not
+1.2·10⁻¹⁶.
+
+**The constant term.** A constant shifts no force, so two torsions are the
+same physics iff their series agree for n ≥ 1; the canonical series drops
+a₀. The polynomial forms (`multi/harmonic`, `nharmonic`, RB) carry a₀ back
+exactly; every other form fixes its constant by its other parameters, and
+reproduces the series up to that offset. In particular ΣCₙ = 0 is **not** an
+image condition of RB → OPLS once the constant is dropped — only C₅ = 0 is.
+The GROMACS and OPLS-XML readers, which keep the absolute energy, still
+require ΣCₙ = 0 to within 10⁻⁴ kJ/mol beside C₅ = 0.
+
+The familiar chains are instances:
+
+- **RB ↔ `multi/harmonic`**: A₁ = C₀, A₂ = −C₁, A₃ = C₂, A₄ = −C₃, A₅ = C₄
+  (C₅ = 0); with C₅ ≠ 0 the exact target is `nharmonic` (N = 6).
+- **RB ↔ OPLS** (GROMACS manual Eqs. 200–201): k₁ = −2C₁ − 3C₃/2,
+  k₂ = −C₂ − C₄, k₃ = −C₃/2, k₄ = −C₄/4; back C₀ = k₂ + (k₁ + k₃)/2,
+  C₁ = (−k₁ + 3k₃)/2, C₂ = −k₂ + 4k₄, C₃ = −2k₃, C₄ = −4k₄, C₅ = 0.
+- **OPLS ↔ `periodic`**: one term per non-zero kₙ, `k = kₙ/2`, phase 0° at
+  odd n and 180° at even n (for kₙ > 0).
+
+**Outside the image.**
+
+- `improper harmonic`, K(|φ| − chi0)², and LAMMPS `dihedral quadratic`,
+  K(φ − φ0)², are not finite Fourier series and are refused. A periodic
+  improper k[1 + cos(nφ − γ)] and a harmonic one agree only to second order
+  about the minimum: **K = n²k/2** in LAMMPS's un-halved K (K = 2k for
+  AMBER's n = 2, γ = 180°; the `k_h = n²k` sometimes quoted is the ½-form
+  harmonic ½k_h χ²), with chi0 the minimum nearest 0 and, back,
+  γ = n·chi0 + 180°. The quartic terms differ by −k n⁴ δ⁴/24.
+- `dihedral class2`'s cross terms (`mbt`, `ebt`, `at`, `aat`, `bb13`) couple
+  the torsion to bonds and angles: outside the Class-I IR.
+- `improper fourier` (molrs `uff_inversion`) and `mmff_oop` price an
+  out-of-plane (Wilson) angle, not a dihedral.
+
+In Rust:
+
+```rust
+use molrs::ff::forcefield::torsion::{FourierSeries, TorsionForm, TorsionRefusal};
+
+// A stored row → its series (exact, constant included).
+let row = TorsionForm::from_params("dihedral", "opls", &params)?;
+let series = row.to_series()?;
+// Several rows on one quadruple → one series; compare without the constant.
+let total: FourierSeries = rows.iter().map(|r| r.to_series()).sum::<Result<_, _>>()?;
+assert_eq!(total.canonical(), other.canonical());
+// Series → a target style, or the reason it cannot be.
+match TorsionForm::from_series("dihedral", "multi/harmonic", &series) {
+    Ok(form) => form.to_params(),
+    Err(TorsionRefusal::SineTerm { n, .. }) => todo!("phase off 0/180° at order {n}"),
+    Err(other) => todo!("{other}"),
+};
+```
+
+The per-form types (`Periodic`, `Charmm`, `CosineTerm`, `SignedCosine`,
+`Opls`, `Class2`, `MultiHarmonic`, `NHarmonic`, `RyckaertBellemans`,
+`ImproperHarmonic`) carry the same maps one form at a time.
+`FourierSeries::chopped(tol)` zeroes coefficients below a tolerance first,
+for input rounded on print. A test evaluates every registered kernel on
+random geometries against its form's series, so the algebra and the kernels
+cannot drift.
 
 ## Engine maps at a glance
 

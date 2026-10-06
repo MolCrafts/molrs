@@ -55,6 +55,18 @@ Convention-neutral plumbing for the Class-I force-field IR.
   level per axis), and `molrs_ff_from_json` reads it and refuses a ragged or
   non-numeric one. `"cmap"` is a category; `molrs_schema_column_dtype("atomm")`
   is `"uint"`.
+### Torsion algebra and `dihedral nharmonic`
+
+- **`dihedral nharmonic`** (LAMMPS's `Σᵢ₌₁ᴺ Aᵢ cosⁱ⁻¹φ`, params `a1..aN`,
+  contiguous, N ≥ 1) is a new style: kernel, LAMMPS reader
+  (`dihedral_coeff t N A1 … AN`) and writer. A gap (`a1`, `a3` without
+  `a2`) or a missing `a1` is refused at compile time and by the writer.
+- **Rust: `molrs::ff::forcefield::torsion` is public** — the exact maps
+  between every torsion form and a Fourier series
+  (`FourierSeries`, `TorsionForm`, `TorsionRefusal`, one type per form); see
+  [Torsion forms and their exact conversions](guides/forcefield-conventions.md#torsion-forms-and-their-exact-conversions).
+  Nothing that existed changes behaviour.
+
 ### Force-field conventions are LAMMPS's
 
 molrs's force-field convention is now LAMMPS's: every style's energy
