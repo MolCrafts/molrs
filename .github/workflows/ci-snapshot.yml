@@ -36,15 +36,15 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      # The suite and its molrs adapter live in molrec, not in this repo.
-      # Pinned to a molrec commit: a floating ref would run whatever lands
-      # there. Bump deliberately when molrec's adapter moves. Now: the head of
-      # MolCrafts/molrec#12 (the chapter in LAMMPS conventions) on its fork;
-      # moves to MolCrafts/molrec once #12 merges.
+      # The suite and its molrs adapter live in molrec, not in this repo, at
+      # the commit .github/partners.env pins: the one place that pin lives,
+      # read by `scripts/check.sh mrec` (the pre-push gate) as well.
+      - name: Partner pins
+        run: grep -E '^[A-Z][A-Z0-9_]*=' .github/partners.env >> "$GITHUB_ENV"
       - uses: actions/checkout@v7
         with:
-          repository: Roy-Kid/molrec
-          ref: 6890423257466033f2ea560ae065f7c46eb0f186
+          repository: ${{ env.MOLREC_REPOSITORY }}
+          ref: ${{ env.MOLREC_REF }}
           path: .ci-out/molrec
           persist-credentials: false
 
@@ -80,7 +80,7 @@ jobs:
           export CARGO_TERM_COLOR=never
 
           set +e
-          cargo test -p molcrafts-molrs --lib --features full,filesystem,stream \
+          cargo test --locked -p molcrafts-molrs --lib --features full,filesystem,stream \
             -- --color=never | tee .ci-out/cargo-test.log
           status=${PIPESTATUS[0]}
           set -e
@@ -88,7 +88,7 @@ jobs:
             exit "$status"
           fi
 
-          exe=$(cargo test -p molcrafts-molrs --lib --features full,filesystem,stream \
+          exe=$(cargo test --locked -p molcrafts-molrs --lib --features full,filesystem,stream \
             --no-run --message-format=json | python3 -c '
           import json, sys
           found = None
@@ -153,13 +153,15 @@ jobs:
       # molrs.io.mrec is the Rust core's path door. Building the extension
       # is how the suite reaches that door. The Python test suite is not run.
       # A red suite fails this job; its record is still written and published.
+      # `scripts/check.sh mrec` is this step as a local pre-push gate: keep
+      # the two in step.
       - name: Run the mrec suite
         if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           # shellcheck disable=SC1091
           source .ci-out/venv/bin/activate
-          maturin develop --manifest-path molrs-python/Cargo.toml
+          maturin develop --locked --manifest-path molrs-python/Cargo.toml
           python scripts/ci-conformance.py \
             --suite .ci-out/molrec/tests \
             --out .ci-out/snapshots/conformance.json \

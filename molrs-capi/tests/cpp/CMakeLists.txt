@@ -53,7 +53,7 @@ set(MOLRS_SHARED_LIB
 # Let Cargo check source fingerprints on every build; an existing library
 # alone does not mean the Rust sources or generated C header are up to date.
 add_custom_target(molrs_capi_build
-    COMMAND cargo build --manifest-path "${MOLRS_CAPI_ROOT}/Cargo.toml"
+    COMMAND cargo build --locked --manifest-path "${MOLRS_CAPI_ROOT}/Cargo.toml"
             --target-dir "${CARGO_TARGET_DIR}" ${MOLRS_CARGO_PROFILE_ARGS}
     BYPRODUCTS "${MOLRS_SHARED_LIB}"
     WORKING_DIRECTORY "${MOLRS_ROOT}"

@@ -94,7 +94,7 @@ pass_env = [
 ]
 allowlist_externals = ["maturin"]
 commands_pre = [
-  ["maturin", "build", "--release", "-o", "{env_tmp_dir}/wheels"],
+  ["maturin", "build", "--release", "--locked", "-o", "{env_tmp_dir}/wheels"],
   [
     "{envpython}",
     "-c",

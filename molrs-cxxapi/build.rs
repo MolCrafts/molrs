@@ -414,19 +414,27 @@ fn main() {
         )
     });
     let variants = cxx_element_variants(&element_source);
-    let bridge_src = CXX_BRIDGE_SCHEMA.replace("__MOLRS_ELEMENT_VARIANTS__", &variants);
+    let mut bridge_src = CXX_BRIDGE_SCHEMA.replace("__MOLRS_ELEMENT_VARIANTS__", &variants);
     assert!(
         !bridge_src.contains("__MOLRS_ELEMENT_VARIANTS__"),
         "CXX Element variant placeholder was not replaced"
     );
+    // src/bridge.rs is committed: end it the way the committed file (and the
+    // end-of-file hook) does, so a build leaves a clean tree clean.
+    if !bridge_src.ends_with('\n') {
+        bridge_src.push('\n');
+    }
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let bridge_path = out_dir.join("bridge.rs");
     std::fs::write(&bridge_path, &bridge_src).unwrap();
 
-    // Also write to src/ so corrosion_add_cxxbridge can find it
+    // Also write to src/ so corrosion_add_cxxbridge can find it. Only when it
+    // changed: an identical rewrite would still touch a committed file.
     let src_path = manifest_dir.join("src").join("bridge.rs");
-    std::fs::write(&src_path, &bridge_src).unwrap();
+    if std::fs::read_to_string(&src_path).ok().as_deref() != Some(bridge_src.as_str()) {
+        std::fs::write(&src_path, &bridge_src).unwrap();
+    }
 
     cxx_build::bridge(&src_path)
         .std("c++20")

@@ -32,3 +32,21 @@ jobs:
             molrs-python/Cargo.toml
       - run: scripts/check.sh python
         shell: bash
+
+  # The docs site Cloudflare Pages deploys, built the way it builds it (a
+  # fresh `pip install ".[doc]"`, then zensical) with --strict: an unresolved
+  # mkdocstrings reference or any other warning fails. Same gate as pre-push.
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: python-docs
+          workspaces: ". -> target"
+      - uses: astral-sh/setup-uv@v10.0.1
+      - run: scripts/check.sh docs
