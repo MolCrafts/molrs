@@ -55,16 +55,16 @@
 //! # Pair styles
 //!
 //! `pair_style lj/cut` is `lj/cut` alone (LAMMPS prices no charge under it);
-//! `lj/cut/coul/cut` is `lj/cut` + `coul/cut`; `lj/cut/coul/long` is `lj/cut`
-//! + `coul/long/pme` with its cutoff and LAMMPS's Coulomb constant — the
-//! Ewald parameters are the input script's `kspace_style` accuracy, not an
-//! `alpha`, so they are not read and the style prices nothing until a caller
-//! states them. A `hybrid` / `hybrid/overlay` of `lj/cut` with `coul/cut` or
-//! `coul/long` reads the same way; accelerator suffixes (`/omp`, `/kk`, …)
-//! are dropped. Any other Coulomb (`coul/debye`, `coul/dsf`, `coul/wolf`, …)
-//! is refused. `pair_modify mix <rule>` is the `mixing` and `pair_modify
-//! shift yes` the `shift` of `lj/cut` (refused under the switched CHARMM
-//! style).
+//! `lj/cut/coul/cut` is `lj/cut` with `coul/cut`; `lj/cut/coul/long` is
+//! `lj/cut` with `coul/long/pme` at its cutoff and LAMMPS's Coulomb
+//! constant. The Ewald parameters of the last are the input script's
+//! `kspace_style` accuracy, not an `alpha`, so they are not read and the style
+//! prices nothing until a caller states them. A `hybrid` / `hybrid/overlay`
+//! of `lj/cut` with `coul/cut` or `coul/long` reads the same way; accelerator
+//! suffixes (`/omp`, `/kk`, …) are dropped. Any other Coulomb (`coul/debye`,
+//! `coul/dsf`, `coul/wolf`, …) is refused. `pair_modify mix <rule>` is the
+//! `mixing` and `pair_modify shift yes` the `shift` of `lj/cut` (refused
+//! under the switched CHARMM style).
 //!
 //! # CHARMM pair style
 //!

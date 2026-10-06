@@ -35,8 +35,8 @@
 //!   - a self row of the Lennard-Jones pair style with `sigma` = V·10 (Å) and
 //!     `epsilon` = W/4.184 (kcal/mol) — V/W are σ/ε under comb-rules 2 and 3,
 //!     so `[ atomtypes ]` requires `[ defaults ]`;
-//!   - the Coulomb pair style, with `coulomb` = `COULOMB_REAL` and
-//!     `dielectric` = 1 (vacuum).
+//!   - the Coulomb pair style, with `coulomb` = [`GROMACS_COULOMB`] (GROMACS's
+//!     own constant) and `dielectric` = 1 (vacuum).
 //! - **`[ nonbond_params ]`** `i j func V W`, func 1: an explicit cross row of
 //!   the Lennard-Jones style between the atom types `i` and `j` (σ, ε as for
 //!   `[ atomtypes ]`), which the kernels use in place of the comb-rule. The row
@@ -219,10 +219,15 @@ use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::potential::cmap::charmm::GRID;
 use molrs::store::frame::Frame;
 use molrs::store::type_labels::TypeName;
-use molrs::units::constants::COULOMB_REAL;
 
 const KJ_PER_KCAL: f64 = 4.184;
 const NM_TO_ANGSTROM: f64 = 10.0;
+
+/// GROMACS's Coulomb constant, kcal·Å/(mol·e²): its `ONE_4PI_EPS0`, 1/(4π ε₀)
+/// from CODATA 2018 in GROMACS's own expression (`units.h`),
+/// 138.93545764438196 kJ·nm/(mol·e²) — one ulp below OpenMM's, and LAMMPS
+/// `real`'s 332.06371 × (1 + 9.9·10⁻⁹).
+pub const GROMACS_COULOMB: f64 = 138.935_457_644_381_96 * NM_TO_ANGSTROM / KJ_PER_KCAL;
 
 /// Two Lennard-Jones parameter pairs closer than this (relative) are one.
 const SAME_LJ: f64 = 1e-12;
@@ -1449,7 +1454,10 @@ fn define_lj(
         ff.def_style(
             "pair",
             coul_name,
-            Params::from_pairs(&[("coulomb", COULOMB_REAL), ("dielectric", VACUUM_DIELECTRIC)]),
+            Params::from_pairs(&[
+                ("coulomb", GROMACS_COULOMB),
+                ("dielectric", VACUUM_DIELECTRIC),
+            ]),
         )
         .map_err(|e| e.to_string())?;
     }
@@ -1780,7 +1788,9 @@ mod tests {
     fn atomtypes_declare_coul_cut_with_its_constants() {
         let ff = read(&with_section("atomtypes", OPLS_135));
         let p = style(&ff, "pair", "coul/cut").params();
-        assert_eq!(p.get("coulomb"), Some(COULOMB_REAL));
+        assert_eq!(p.get("coulomb"), Some(GROMACS_COULOMB));
+        // GROMACS's ONE_4PI_EPS0 is LAMMPS real's to 9.9e-9.
+        assert!((GROMACS_COULOMB / COULOMB_REAL - 1.0 - 9.9e-9).abs() < 1e-10);
         assert_eq!(p.get("dielectric"), Some(VACUUM_DIELECTRIC));
     }
 

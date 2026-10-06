@@ -397,15 +397,26 @@ improper_coeff N-C-H-CT 10.5 12.0
 /// fields on the hand molecule. `dihedral/fourier` of 0.15.1 is 0.16's
 /// `dihedral/periodic` (the alias is gone), and its GROMACS funct-3
 /// `dihedral/opls` is 0.16's `dihedral/multi/harmonic` (the same polynomial,
-/// read without the OPLS projection); the OpenMM improper and the OpenMM
-/// Coulomb constant are the intended changes (see the module docs and the next
-/// test).
+/// read without the OPLS projection); the OpenMM improper and the OpenMM and
+/// GROMACS Coulomb constants are the intended changes (see the module docs
+/// and the next test).
 #[test]
 fn file_read_fields_price_as_in_0_15() {
     let gmx = GromacsTopFfReader::new().read_str(GROMACS_FF).unwrap();
+    let mut gmx_energies = per_style(&gmx, &hand_frame(&gmx));
+    // 0.16 prices a GROMACS-read field with GROMACS's own Coulomb constant
+    // (its ONE_4PI_EPS0, CODATA 2018); 0.15.1 stated LAMMPS real's. The
+    // energy is 0.15.1's times their ratio, exactly.
+    let coul = gmx_energies.remove("pair/coul/cut").unwrap();
+    let ratio = crate::ff::forcefield::readers::gromacs::GROMACS_COULOMB / 332.06371;
+    let want = -10.706661989420029 * ratio;
+    assert!(
+        (coul - want).abs() <= 1e-12 * want.abs(),
+        "GROMACS pair/coul/cut: {coul} vs {want}"
+    );
     assert_energies(
         "GROMACS",
-        &per_style(&gmx, &hand_frame(&gmx)),
+        &gmx_energies,
         &[
             ("angle/harmonic", 1.3595933975169494),
             ("bond/harmonic", 0.16275010462128736),
@@ -413,7 +424,6 @@ fn file_read_fields_price_as_in_0_15() {
             ("dihedral/periodic", 0.09469745227704568),
             ("improper/harmonic", 0.07338136844630398),
             ("improper/periodic", 0.003384791688934619),
-            ("pair/coul/cut", -10.706661989420029),
             ("pair/lj/cut", 1.264689101097666),
         ],
     );

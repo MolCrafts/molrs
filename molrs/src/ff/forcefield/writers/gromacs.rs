@@ -1299,10 +1299,10 @@ impl GromacsTopFfWriter {
 mod tests {
     use super::*;
     use crate::ff::constants::VACUUM_DIELECTRIC;
+    use crate::ff::forcefield::readers::gromacs::GROMACS_COULOMB;
     use crate::ff::forcefield::readers::{ForceFieldReader, gromacs::GromacsTopFfReader};
     use crate::ff::forcefield::writers::ForceFieldWriter;
     use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
-    use molrs::units::constants::COULOMB_REAL;
 
     // -- fixtures (molrs units: Å, kcal/mol, degrees) --------------------------------
 
@@ -2052,7 +2052,10 @@ mod tests {
         ff.def_style(
             "pair",
             "coul/cut",
-            Params::from_pairs(&[("coulomb", COULOMB_REAL), ("dielectric", VACUUM_DIELECTRIC)]),
+            Params::from_pairs(&[
+                ("coulomb", GROMACS_COULOMB),
+                ("dielectric", VACUUM_DIELECTRIC),
+            ]),
         )
         .unwrap();
         // (category, style, type name, endpoints, params) of one type definition.
@@ -2381,7 +2384,7 @@ SOL  2
                         p.validity(k).is_none_or(|m| m[r]).then(|| col[[r]])
                     })
                     .collect();
-                (i[[r]] as u64, j[[r]] as u64, f[[r]], cells)
+                (i[[r]], j[[r]], f[[r]], cells)
             })
             .collect()
     }

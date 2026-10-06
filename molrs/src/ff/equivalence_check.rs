@@ -61,7 +61,7 @@ use ndarray::Array1;
 use serde_json::{Value, json};
 
 use crate::ff::forcefield::readers::ForceFieldReader;
-use crate::ff::forcefield::readers::gromacs::GromacsTopFfReader;
+use crate::ff::forcefield::readers::gromacs::{GROMACS_COULOMB, GromacsTopFfReader};
 use crate::ff::forcefield::readers::opls::{OPENMM_COULOMB, OplsXmlReader};
 use crate::ff::forcefield::readers::prmtop::AmberPrmtopFfReader;
 use crate::ff::forcefield::writers::ForceFieldWriter;
@@ -99,10 +99,6 @@ pub(crate) const ENGINES: [&str; 4] = ["native", "lammps", "openmm", "gromacs"];
 /// engine's nonbonded energy is the plain sum.
 const NO_CUTOFF: F = 1000.0;
 const NO_SWITCH: F = 900.0;
-
-/// GROMACS 2025's `ONE_4PI_EPS0` (CODATA 2018, its own expression),
-/// kcal·Å/(mol·e²): one ulp below OpenMM's 138.93545764438198.
-const GROMACS_COULOMB: F = 138.935_457_644_381_96 * 10.0 / 4.184;
 
 /// The native engine of a source.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

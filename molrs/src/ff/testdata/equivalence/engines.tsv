@@ -69,9 +69,9 @@ chamber	1	openmm	coul	53.58784441678732
 chamber	1	openmm	total	513.8353741695761
 chamber	1	openmm	fdotv	-425.8071052963228
 chamber	1	openmm	fnorm2	1465664.307146419
-chamber	1	gromacs	bond	314.25739520189035
-chamber	1	gromacs	angle	101.68411069844034
-chamber	1	gromacs	dihedral	32.140105452553456
+chamber	1	gromacs	bond	314.25739520189046
+chamber	1	gromacs	angle	101.68411069844036
+chamber	1	gromacs	dihedral	32.14010545255347
 chamber	1	gromacs	improper	0.3369608678848075
 chamber	1	gromacs	cmap	0.5454822508710289
 chamber	1	gromacs	vdw	11.28347526772584
@@ -109,9 +109,9 @@ chamber	2	openmm	coul	54.63149583093913
 chamber	2	openmm	total	445.4106548130846
 chamber	2	openmm	fdotv	-748.2110994106846
 chamber	2	openmm	fnorm2	1277948.067259002
-chamber	2	gromacs	bond	264.59656640809544
+chamber	2	gromacs	bond	264.5965664080954
 chamber	2	gromacs	angle	78.51489682772085
-chamber	2	gromacs	dihedral	34.2340272350535
+chamber	2	gromacs	dihedral	34.234027235053496
 chamber	2	gromacs	improper	0.6694029061285363
 chamber	2	gromacs	cmap	0.42239097144489934
 chamber	2	gromacs	vdw	12.341874604926312

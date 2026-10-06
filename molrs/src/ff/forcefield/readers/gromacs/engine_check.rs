@@ -19,9 +19,11 @@
 //!
 //! Settings: a plain cut-off at 2.5 nm (no shift, no reaction field) in a
 //! 6 nm box — every intramolecular pair inside it, no image — so nonbonded
-//! energies are the plain sums. GROMACS's Coulomb constant (CODATA 2018,
-//! 138.935457… kJ mol⁻¹ nm e⁻²) is LAMMPS `real`'s 332.06371 kcal mol⁻¹ Å e⁻²
-//! to 1.1 × 10⁻⁸; that is the floor of the Coulomb terms against GROMACS.
+//! energies are the plain sums. The reader states GROMACS's own Coulomb
+//! constant ([`super::GROMACS_COULOMB`], CODATA 2018), LAMMPS `real`'s
+//! 332.06371 × (1 + 9.9·10⁻⁹); LAMMPS prices at its own, so molrs's Coulomb
+//! terms are held to LAMMPS's times the constants' ratio (exact: the energy is
+//! linear in it).
 //!
 //! molrs prices each system as read, its 1-4 pairs written out by
 //! [`ForceField::materialize_one_four`] (CHARMM's `[ pairtypes ]` pairs are
@@ -53,6 +55,7 @@ use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::type_labels::TypeLabels;
 use molrs::types::{F, Idx};
+use molrs::units::constants::COULOMB_REAL;
 
 /// The terms compared, in print order.
 const TERMS: [&str; 10] = [
@@ -189,10 +192,9 @@ const FIXTURES: [Fixture; 4] = [
 
 /// Relative tolerance against GROMACS, per term. The bonded terms, CMAP and
 /// the van-der-Waals pairs agree to rounding; GROMACS prices 1-4 pairs from
-/// cubic-spline tables (1e-9), and its Coulomb constant (CODATA 2018) is
-/// LAMMPS `real`'s × (1 + 9.9e-9).
+/// cubic-spline tables (≈10⁻⁹, Coulomb-14 included).
 const GROMACS_TOL: [F; 10] = [
-    1e-12, 1e-12, 1e-12, 1e-12, 1e-12, 5e-9, 2e-8, 1e-12, 2e-8, 2e-8,
+    1e-12, 1e-12, 1e-12, 1e-12, 1e-12, 5e-9, 5e-9, 1e-12, 1e-11, 5e-9,
 ];
 
 /// The fixture's force field (with the comparison's cutoffs declared), its
@@ -570,6 +572,14 @@ fn gromacs_read_systems_price_as_gromacs_and_lammps() {
             if let Some(lammps) = f.lammps
                 && let (Some(got), Some(want)) = (lammps_form_terms[k], lammps[k])
             {
+                // LAMMPS prices at its own Coulomb constant.
+                let ratio = COULOMB_REAL / super::GROMACS_COULOMB;
+                let coul = |t: &[Option<F>; 10]| t[6].unwrap_or(0.0) + t[8].unwrap_or(0.0);
+                let got = match *term {
+                    "coul14" | "coulsr" => got * ratio,
+                    "total" => got + coul(&lammps_form_terms) * (ratio - 1.0),
+                    _ => got,
+                };
                 assert_close(&format!("{what} vs LAMMPS"), got, want, 1e-13);
             }
         }
