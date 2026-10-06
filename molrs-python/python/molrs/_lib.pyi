@@ -3100,7 +3100,8 @@ class Potentials:
     """Composite of the one ``Potential`` concept — itself a potential.
 
     ``Potentials()`` is empty; ``push`` **moves** members in (an ``LJCut``,
-    a ``md.Potential`` subclass instance, or another ``Potentials``).
+    another ``Potentials`` such as one ``potential.kernel`` built, or an
+    object with ``calc_energy_forces``).
     ``set_energy_scale`` applies a caller-computed numeric unit factor to the
     merged energy and forces (compute it with ``md.preset_energy_to_md`` /
     ``md.energy_to_md``); nothing applies it implicitly.
@@ -3108,7 +3109,7 @@ class Potentials:
 
     def __init__(self) -> None: ...
     def __len__(self) -> int: ...
-    def push(self, potential: md.LJCut | md.Potential | Potentials) -> None: ...
+    def push(self, potential: potential.LJCut | Potentials | Any) -> None: ...
     def set_energy_scale(self, scale: float) -> None: ...
     @property
     def energy_scale(self) -> float: ...
@@ -4246,9 +4247,84 @@ def polarizability_finite_field(
 # Submodule stubbed as a class namespace, following the `keys` precedent.
 # ---------------------------------------------------------------------------
 
+class potential:
+    """The ``_lib.potential`` submodule (``molrs.ff.potential``): ``kernel``,
+    the kernel of any style the force-field IR prices over explicit
+    instances, and ``LJCut``, the neighbour-loop ``lj/cut`` kernel."""
+
+    @staticmethod
+    def kernel(
+        category: str,
+        style: str,
+        atoms: Sequence[Sequence[int]] | ArrayI64 | ArrayU32,
+        *,
+        charges: Sequence[float] | ArrayF | None = None,
+        **params: float | str | Sequence[float] | Sequence[str] | ArrayF,
+    ) -> Potentials:
+        """One style's kernel over explicit instances: ``atoms`` ``(n,
+        arity)``, each per-term parameter a number (broadcast) or one value
+        per term, as stored (angle values in degrees); style parameters
+        (``cutoff``, ``coulomb``, an unregistered style's ``expression``) a
+        number or a string. Built as ``PotentialCompiler.compile`` builds it,
+        one type per term; works for every registered style, built-in or
+        custom. Refusals raise their ``molrs.ff.ir.IrError`` subclass."""
+
+    class LJCut:
+        """LAMMPS ``pair_style lj/cut``: the one-type cut Lennard-Jones / Mie
+        kernel (``n``/``m`` exponents) a neighbour loop feeds (MD's nonbond
+        kernel). A pair list with a row per pair is
+        ``kernel("pair", "lj/cut", pairs, epsilon=..., sigma=...)``."""
+
+        def __init__(
+            self,
+            epsilon: float,
+            sigma: float,
+            cutoff: float,
+            *,
+            n: int = 12,
+            m: int = 6,
+            shifted: bool = True,
+            smeared: bool = False,
+        ) -> None: ...
+        @property
+        def epsilon(self) -> float: ...
+        @property
+        def sigma(self) -> float: ...
+        @property
+        def cutoff(self) -> float: ...
+        @property
+        def n(self) -> int: ...
+        @property
+        def m(self) -> int: ...
+        @property
+        def shifted(self) -> bool: ...
+        @property
+        def smeared(self) -> bool: ...
+        def pair_energy(self, r2: float, disp: Sequence[float]) -> float | None: ...
+        def pair_force(
+            self, r2: float, disp: Sequence[float]
+        ) -> list[float] | None: ...
+        def pair_eval(
+            self, r2: float, disp: Sequence[float]
+        ) -> tuple[float, list[float]] | None: ...
+        def calc_energy_forces(self, pos: ArrayF) -> tuple[float, ArrayF]: ...
+        def eval(self, neighbors: VerletSkin, pos: ArrayF) -> tuple[float, ArrayF]: ...
+        def eval_table(
+            self, n_atoms: int, neighbors: Neighbors
+        ) -> tuple[float, ArrayF]: ...
+        def eval_pairs(
+            self,
+            n_atoms: int,
+            i: ArrayU32,
+            j: ArrayU32,
+            disp: ArrayF,
+            dist_sq: ArrayF | None = None,
+        ) -> tuple[float, ArrayF]: ...
+
 class md:
-    """The ``_lib.md`` submodule: LJCut + NVE/Langevin integrators + the
-    ``Potential`` base class.
+    """The ``_lib.md`` submodule: NVE/Langevin integrators. MD defines no
+    potential; it integrates a ``potential.LJCut``, a ``Potentials``
+    collection, or any object with ``calc_energy_forces``.
 
     The engine is unit-agnostic — supply consistent units yourself. The
     conversion helpers target MD energy (amu·Å²/fs², :data:`MD_ENERGY`):
@@ -4308,70 +4384,10 @@ class md:
         @energy.setter
         def energy(self, value: float) -> None: ...
 
-    class LJCut:
-        """LAMMPS ``pair_style lj/cut``: cut Lennard-Jones / Mie pair kernel
-        (``n``/``m`` exponents), md's nonbond potential — the integrator loop
-        feeds it the current neighbour pairs."""
-
-        def __init__(
-            self,
-            epsilon: float,
-            sigma: float,
-            cutoff: float,
-            *,
-            n: int = 12,
-            m: int = 6,
-            shifted: bool = True,
-            smeared: bool = False,
-        ) -> None: ...
-        @property
-        def epsilon(self) -> float: ...
-        @property
-        def sigma(self) -> float: ...
-        @property
-        def cutoff(self) -> float: ...
-        @property
-        def n(self) -> int: ...
-        @property
-        def m(self) -> int: ...
-        @property
-        def shifted(self) -> bool: ...
-        @property
-        def smeared(self) -> bool: ...
-        def pair_energy(self, r2: float, disp: Sequence[float]) -> float | None: ...
-        def pair_force(
-            self, r2: float, disp: Sequence[float]
-        ) -> list[float] | None: ...
-        def pair_eval(
-            self, r2: float, disp: Sequence[float]
-        ) -> tuple[float, list[float]] | None: ...
-        def eval(self, neighbors: VerletSkin, pos: ArrayF) -> tuple[float, ArrayF]: ...
-        def eval_table(
-            self, n_atoms: int, neighbors: Neighbors
-        ) -> tuple[float, ArrayF]: ...
-        def eval_pairs(
-            self,
-            n_atoms: int,
-            i: ArrayU32,
-            j: ArrayU32,
-            disp: ArrayF,
-            dist_sq: ArrayF | None = None,
-        ) -> tuple[float, ArrayF]: ...
-
-    class Potential:
-        """Abstract base class for user potentials: subclass it
-        (``class MyPotential(molpy.md.Potential):``) and override
-        ``calc_energy_forces``; molrs invokes the override under the GIL at
-        every force evaluation (the NN/Torch seam). Return units must be
-        consistent with everything else passed to the integrator. The base
-        method raises ``NotImplementedError``."""
-
-        def __init__(self, *args: Any, **kwargs: Any) -> None: ...
-        def calc_energy_forces(self, pos: ArrayF) -> tuple[float, ArrayF]: ...
-
     class VelocityVerlet:
-        """NVE velocity-Verlet. ``potential`` (``LJCut`` / ``Potentials`` /
-        a ``Potential`` subclass) and ``neighbors`` (a ``VerletSkin``) are
+        """NVE velocity-Verlet. ``potential`` (a ``potential.LJCut`` /
+        ``Potentials`` / an object with ``calc_energy_forces``) and
+        ``neighbors`` (a ``VerletSkin``) are
         moved in; the loop feeds fresh pairs to the potential after each
         rebuild. ``LJCut`` requires ``neighbors=``."""
 
@@ -4379,7 +4395,7 @@ class md:
             self,
             dt: float,
             *,
-            potential: md.LJCut | Potentials | TypedPotentials | md.Potential,
+            potential: potential.LJCut | Potentials | TypedPotentials | Any,
             neighbors: VerletSkin | None = None,
             mass: float | ArrayF,
             simbox: Box | None = None,
@@ -4411,7 +4427,7 @@ class md:
             *,
             gamma: float,
             kbt: float,
-            potential: md.LJCut | Potentials | TypedPotentials | md.Potential,
+            potential: potential.LJCut | Potentials | TypedPotentials | Any,
             neighbors: VerletSkin | None = None,
             mass: float | ArrayF,
             seed: int = 0,

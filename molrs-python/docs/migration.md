@@ -674,6 +674,47 @@ and an OPLS-AA dipeptide (`scripts/gromacs_engine_check.sh`).
   molecule, each row with its type's parameters, `[ pairs ]` with the
   override cells, `[ exclusions ]` for the pairs the frame does not price.
 
+### Kernels live in `molrs.ff.potential`; `md` defines no potential
+
+`LJCut` moved from `molrs.md` to `molrs.ff.potential` (molpy: `molpy.md.LJCut`
+→ `molpy.potential.LJCut`), beside the `Potential` protocol, which `molrs.md`
+no longer re-exports either; nor does it re-export `Potentials`
+(`molrs.ff.Potentials` / `molpy.Potentials`). The integrators still accept all
+of them.
+
+New in the same module: `kernel(category, style, atoms, *, charges=None,
+**params)`, the kernel of **any** style the force-field IR prices — a
+built-in, a style registered through `molrs.ff.ir` (expression or Python
+kernel), a style of a custom category, an unregistered style given its
+`expression=` — over explicit instances: `atoms` `(n, arity)`, each per-term
+parameter a number or one value per term **as stored** (angle values in
+degrees, indexed families as `k1`, `k2`, …), style parameters (`cutoff`,
+`coulomb`, …) a number or a string, per-atom charges as `charges=`. It is
+built by the code `PotentialCompiler.compile` runs (Rust:
+`molrs::ff::potential::Instances`), returns a `Potentials`, and
+`Potentials.push` moves it into a larger collection. There is no class per
+built-in style: one builder covers every registered style, custom ones
+included.
+
+```python
+from molrs.ff import Potentials
+from molrs.ff.potential import kernel
+
+pots = Potentials()
+pots.push(kernel("bond", "harmonic", [[0, 1], [1, 2]], k=300.0, r0=1.4))
+pots.push(kernel("angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=109.5))
+pots.push(kernel("dihedral", "periodic", [[0, 1, 2, 3]],
+                 k1=1.3, periodicity1=1, phase1=0.0, k2=0.4, periodicity2=2, phase2=180.0))
+pots.push(kernel("pair", "coul/cut", [[0, 3]], charges=q, coulomb=332.06371, dielectric=1.0))
+energy, forces = pots.calc_energy_forces(pos)
+```
+
+| 0.15 | 0.16 |
+|---|---|
+| `from molrs.md import LJCut, Potential` | `from molrs.ff.potential import LJCut, Potential` |
+| `from molpy.md import LJCut` | `from molpy.potential import LJCut` |
+| `molrs.md.Potentials` | `molrs.ff.Potentials` |
+
 ### Already in 0.15.1
 
 0.15.1 was a patch release on the 0.15 ABI line (nothing renamed or removed;

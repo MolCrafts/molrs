@@ -1,0 +1,248 @@
+"""``molrs.ff.potential.kernel``: any style's kernel over explicit instances.
+
+One builder for every style the force-field IR prices — the built-ins, a
+style registered from Python by expression or by a numpy kernel, a style of a
+custom category, an unregistered style given its expression. Each term is its
+atoms and its own parameter row, as stored (angle values in degrees). The
+tests prove each prices its LAMMPS energy, ``Potentials.push`` moves it, and
+a collection assembled by hand prices a molecule exactly as the compiled
+force field does.
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Iterator
+
+import molrs
+import numpy as np
+import pytest
+from molrs.ff import Potentials, ir
+from molrs.ff.potential import kernel
+
+# A non-planar four-atom chain: every angle and the dihedral are generic.
+XYZ = np.array(
+    [[1.2, -0.4, 0.3], [0.0, 0.0, 0.0], [-0.2, 1.5, 0.1], [0.9, 2.1, -0.8]],
+    dtype=np.float64,
+)
+FLAT = XYZ.reshape(-1)
+
+
+@pytest.fixture
+def registered() -> Iterator[list[tuple[str, str]]]:
+    """Styles a test registers, unregistered afterwards."""
+    names: list[tuple[str, str]] = []
+    yield names
+    for category, name in names:
+        try:
+            ir.unregister(category, name)
+        except ir.IrError:
+            pass
+
+
+def _dist(a: int, b: int) -> float:
+    return float(np.linalg.norm(XYZ[a] - XYZ[b]))
+
+
+def _angle(a: int, b: int, c: int) -> float:
+    u, v = XYZ[a] - XYZ[b], XYZ[c] - XYZ[b]
+    return math.acos(u @ v / (np.linalg.norm(u) * np.linalg.norm(v)))
+
+
+def _dihedral(a: int, b: int, c: int, d: int) -> float:
+    b1, b2, b3 = XYZ[b] - XYZ[a], XYZ[c] - XYZ[b], XYZ[d] - XYZ[c]
+    n1, n2 = np.cross(b1, b2), np.cross(b2, b3)
+    m1 = np.cross(n1, b2 / np.linalg.norm(b2))
+    return math.atan2(m1 @ n2, n1 @ n2)
+
+
+def _energy(pots: Potentials) -> float:
+    return pots.calc_energy_forces(FLAT)[0]
+
+
+def _fd_forces(make, h: float = 1e-6) -> np.ndarray:
+    """Central-difference ``-dE/dx``."""
+    pots = make()
+    out = np.zeros_like(FLAT)
+    for i in range(FLAT.size):
+        plus, minus = FLAT.copy(), FLAT.copy()
+        plus[i] += h
+        minus[i] -= h
+        out[i] = -(pots.calc_energy(plus) - pots.calc_energy(minus)) / (2 * h)
+    return out.reshape(-1, 3)
+
+
+class TestBuiltins:
+    def test_bond_harmonic_prices_one_row_per_term(self) -> None:
+        def make() -> Potentials:
+            return kernel("bond", "harmonic", [[0, 1], [1, 2]], k=[300.0, 200.0], r0=1.4)
+
+        want = 300.0 * (_dist(0, 1) - 1.4) ** 2 + 200.0 * (_dist(1, 2) - 1.4) ** 2
+        e, f = make().calc_energy_forces(FLAT)
+        assert math.isclose(e, want, rel_tol=1e-12)
+        np.testing.assert_allclose(f, _fd_forces(make), atol=1e-5)
+
+    def test_angle_harmonic_takes_theta0_in_degrees(self) -> None:
+        pots = kernel("angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=109.5)
+        want = 50.0 * (_angle(0, 1, 2) - math.radians(109.5)) ** 2
+        assert math.isclose(_energy(pots), want, rel_tol=1e-12)
+
+    def test_dihedral_periodic_sums_its_indexed_series(self) -> None:
+        k, n, phase = (1.3, 0.4), (1.0, 2.0), (0.0, 180.0)
+
+        def make() -> Potentials:
+            return kernel(
+                "dihedral",
+                "periodic",
+                [[0, 1, 2, 3]],
+                k1=k[0],
+                periodicity1=n[0],
+                phase1=phase[0],
+                k2=k[1],
+                periodicity2=n[1],
+                phase2=phase[1],
+            )
+
+        phi = _dihedral(0, 1, 2, 3)
+        want = sum(
+            k[t] * (1 + math.cos(n[t] * phi - math.radians(phase[t]))) for t in range(2)
+        )
+        e, f = make().calc_energy_forces(FLAT)
+        assert math.isclose(e, want, rel_tol=1e-12)
+        np.testing.assert_allclose(f, _fd_forces(make), atol=1e-5)
+
+    def test_improper_cvff_prices_the_dihedral_of_the_listed_order(self) -> None:
+        pots = kernel("improper", "cvff", [[1, 0, 2, 3]], k=2.0, sign=-1.0, periodicity=2.0)
+        phi = _dihedral(1, 0, 2, 3)
+        assert math.isclose(_energy(pots), 2.0 * (1 - math.cos(2 * phi)), rel_tol=1e-12)
+
+    def test_improper_periodic_takes_its_phase_in_degrees(self) -> None:
+        pots = kernel("improper", "periodic", [[0, 2, 1, 3]], k=1.1, periodicity=2.0, phase=180.0)
+        phi = _dihedral(0, 2, 1, 3)
+        assert math.isclose(_energy(pots), 1.1 * (1 + math.cos(2 * phi - math.pi)), rel_tol=1e-12)
+
+    def test_a_pair_term_is_priced_with_its_own_row(self) -> None:
+        pots = kernel("pair", "lj/cut", [[0, 3], [1, 3]], epsilon=[0.2, 0.1], sigma=3.1)
+        want = sum(
+            4 * eps * ((3.1 / _dist(i, 3)) ** 12 - (3.1 / _dist(i, 3)) ** 6)
+            for i, eps in ((0, 0.2), (1, 0.1))
+        )
+        assert math.isclose(_energy(pots), want, rel_tol=1e-12)
+
+    def test_coul_cut_reads_per_atom_charges(self) -> None:
+        q = [0.3, 0.0, 0.0, -0.4]
+        pots = kernel("pair", "coul/cut", [[0, 3]], charges=q, coulomb=332.06371, dielectric=1.0)
+        want = 332.06371 * 0.3 * -0.4 / _dist(0, 3)
+        assert math.isclose(_energy(pots), want, rel_tol=1e-12)
+
+
+class TestCustomStyles:
+    def test_a_style_registered_by_expression(self, registered) -> None:
+        class Quartic(ir.StyleSpec):
+            category = "bond"
+            name = "quartic/kernel-test"
+            params = {"k": "E/L^4", "r0": "L"}
+            expression = "k*(r-r0)^4"
+
+        registered.append(("bond", Quartic.name))
+        pots = kernel("bond", Quartic.name, [[0, 1]], k=2.0, r0=1.0)
+        assert math.isclose(_energy(pots), 2.0 * (_dist(0, 1) - 1.0) ** 4, rel_tol=1e-12)
+
+    def test_a_style_priced_by_a_numpy_kernel(self, registered) -> None:
+        def cubic(r, k, r0):
+            d = r - r0
+            return k * d**3, 3 * k * d**2
+
+        ir.register_style(
+            "bond", "cubic/kernel-test", params={"k": "E/L^3", "r0": "L"}, kernel=cubic
+        )
+        registered.append(("bond", "cubic/kernel-test"))
+        pots = kernel("bond", "cubic/kernel-test", [[0, 1]], k=3.0, r0=0.5)
+        assert math.isclose(_energy(pots), 3.0 * (_dist(0, 1) - 0.5) ** 3, rel_tol=1e-12)
+
+    def test_a_style_of_a_custom_category(self, registered) -> None:
+        ir.register_category("urey_bradley", 3)
+        ir.register_style(
+            "urey_bradley",
+            "kernel-test",
+            params={"k_ub": "E/L^2", "r_ub": "L"},
+            expression="k_ub*(distance(p1,p3)-r_ub)^2",
+        )
+        registered.append(("urey_bradley", "kernel-test"))
+        pots = kernel("urey_bradley", "kernel-test", [[0, 1, 2]], k_ub=20.0, r_ub=2.4)
+        assert math.isclose(_energy(pots), 20.0 * (_dist(0, 2) - 2.4) ** 2, rel_tol=1e-12)
+
+    def test_an_unregistered_style_by_its_expression(self) -> None:
+        pots = kernel("bond", "unregistered/kernel-test", [[0, 1]], expression="k*r^2", k=0.5)
+        assert math.isclose(_energy(pots), 0.5 * _dist(0, 1) ** 2, rel_tol=1e-12)
+
+
+class TestRefusals:
+    def test_unknown_category(self) -> None:
+        with pytest.raises(ir.UnknownCategory):
+            kernel("nope", "x", [[0, 1]])
+
+    def test_a_term_of_the_wrong_arity(self) -> None:
+        with pytest.raises(ir.Arity):
+            kernel("bond", "harmonic", [[0, 1, 2]], k=1.0, r0=1.0)
+
+    def test_an_undeclared_parameter(self) -> None:
+        with pytest.raises(TypeError, match="no parameter `kb`"):
+            kernel("bond", "harmonic", [[0, 1]], kb=1.0, r0=1.0)
+
+    def test_a_missing_parameter(self) -> None:
+        with pytest.raises(ValueError, match="missing 'r0'"):
+            kernel("bond", "harmonic", [[0, 1]], k=1.0)
+
+    def test_an_unregistered_style_without_expression(self) -> None:
+        with pytest.raises(ir.NoKernel):
+            kernel("bond", "nothing/kernel-test", [[0, 1]], k=1.0)
+
+    def test_mismatched_lengths(self) -> None:
+        with pytest.raises(ValueError, match="2 terms"):
+            kernel("bond", "harmonic", [[0, 1], [1, 2]], k=[1.0, 2.0, 3.0], r0=1.0)
+
+
+class TestPotentialsAssembly:
+    def test_push_moves_the_kernel(self) -> None:
+        bond = kernel("bond", "harmonic", [[0, 1]], k=300.0, r0=1.4)
+        pots = Potentials()
+        pots.push(bond)
+        assert len(pots) == 1
+        with pytest.raises(ValueError, match="moved"):
+            pots.push(bond)
+
+    def test_a_hand_assembled_collection_prices_what_the_compiled_field_prices(self) -> None:
+        ff = molrs.ff.ForceField("chain", units="real")
+        atoms = ff.def_style("atom", "full")
+        c = atoms.def_type("C", mass=12.011)
+        ff.def_style("bond", "harmonic").def_type("CC", c, c, k=300.0, r0=1.4)
+        ff.def_style("angle", "harmonic").def_type("CCC", c, c, c, k=50.0, theta0=109.5)
+        torsion = dict(k1=1.3, periodicity1=1.0, phase1=0.0, k2=0.4, periodicity2=2.0, phase2=180.0)
+        ff.def_style("dihedral", "periodic").def_type("CCCC", c, c, c, c, **torsion)
+        frame = molrs.Frame()
+        block = molrs.Block()
+        for d, key in enumerate("xyz"):
+            block.insert(key, XYZ[:, d].copy())
+        block.insert("type", ["C"] * 4)
+        frame["atoms"] = block
+        bonds, angles, dihedrals = [[0, 1], [1, 2], [2, 3]], [[0, 1, 2], [1, 2, 3]], [[0, 1, 2, 3]]
+        for name, rows, label in (
+            ("bonds", bonds, "CC"),
+            ("angles", angles, "CCC"),
+            ("dihedrals", dihedrals, "CCCC"),
+        ):
+            topo = molrs.Block()
+            for column, atom in zip(("atomi", "atomj", "atomk", "atoml"), zip(*rows)):
+                topo.insert(column, np.array(atom, dtype=np.uint32))
+            topo.insert("type", [label] * len(rows))
+            frame[name] = topo
+        compiled = molrs.ff.PotentialCompiler(ff).compile(frame).calc_energy_forces(FLAT)
+
+        pots = Potentials()
+        pots.push(kernel("bond", "harmonic", bonds, k=300.0, r0=1.4))
+        pots.push(kernel("angle", "harmonic", angles, k=50.0, theta0=109.5))
+        pots.push(kernel("dihedral", "periodic", dihedrals, **torsion))
+        by_hand = pots.calc_energy_forces(FLAT)
+        assert math.isclose(by_hand[0], compiled[0], rel_tol=1e-12)
+        np.testing.assert_allclose(by_hand[1], compiled[1], rtol=1e-12, atol=1e-12)

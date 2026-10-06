@@ -1535,7 +1535,7 @@ impl Inputs {
 /// The declaration a keyword of [`evaluate`] names: a declared parameter,
 /// a member `<name><m>` of an indexed family, or on a pair `q1`, `q2`,
 /// `<name>1`, `<name>2` (numeric).
-fn declared<'s>(
+pub(crate) fn declared<'s>(
     spec: &'s StyleSpec,
     pair: bool,
     key: &str,
@@ -1564,7 +1564,7 @@ fn declared<'s>(
 }
 
 /// `obj` as `n` numbers: a scalar broadcast, or a length-`n` sequence.
-fn column(what: &str, obj: &Bound<'_, PyAny>, n: usize) -> PyResult<Vec<F>> {
+pub(crate) fn column(what: &str, obj: &Bound<'_, PyAny>, n: usize) -> PyResult<Vec<F>> {
     if let Ok(v) = obj.extract::<F>() {
         return Ok(vec![v; n]);
     }

@@ -7,6 +7,7 @@ End to end (Ar-like LJ dimer)::
 
     import numpy as np
     from molpy import Box, md
+    from molpy.potential import LJCut
 
     pos = np.array([[0.0, 0.0, 0.0], [3.8, 0.0, 0.0]])
     rc, skin = 7.5, 1.0
@@ -14,7 +15,7 @@ End to end (Ar-like LJ dimer)::
     # force cutoff = rc (what the potential sees); skin is the rebuild buffer.
     nl = md.VerletSkin(md.NeighborList(rc + skin), rc, pos, Box.cubic(20.0), skin=skin)
     eps = 0.238  # caller units; MD does not convert
-    vv = md.VelocityVerlet(1.0, potential=md.LJCut(eps, 3.405, rc),
+    vv = md.VelocityVerlet(1.0, potential=LJCut(eps, 3.405, rc),
                            neighbors=nl, mass=np.full(2, 39.948))
     state = vv.initial(pos, np.zeros_like(pos))
     state = vv.advance_n(state, 100)
@@ -31,9 +32,12 @@ Units contract — the engine is **unit-agnostic**. Take constants from
     md.MaxwellBoltzmann(kb * 300.0, seed=0)
     md.MD().run(frame, n, dt=dt, kb=kb, thermo=100)
 
-External forces (the NN/Torch seam) subclass :class:`Potential`::
+MD defines no potential: it integrates a :class:`molrs.ff.potential.LJCut`,
+a ``Potentials`` collection (e.g. from :func:`molrs.ff.potential.kernel`), or
+any object with ``calc_energy_forces``. External forces (the NN/Torch seam)
+subclass :class:`molrs.ff.potential.Potential`::
 
-    class Spring(md.Potential):
+    class Spring(Potential):
         def calc_energy_forces(self, pos):
             return 0.05 * float((pos * pos).sum()), -0.1 * pos
 
@@ -50,10 +54,7 @@ raise; those loops belong in the Rust integrators.
 from __future__ import annotations
 
 from .._lib import md as _md
-from ..ff import Potentials
-from ..ff.potential import Potential
 
-LJCut = _md.LJCut
 Langevin = _md.Langevin
 MDState = _md.MDState
 MaxwellBoltzmann = _md.MaxwellBoltzmann
@@ -63,11 +64,8 @@ from .driver import MD
 
 __all__ = [
     "MD",
-    "LJCut",
     "Langevin",
     "MDState",
     "MaxwellBoltzmann",
-    "Potential",
-    "Potentials",
     "VelocityVerlet",
 ]

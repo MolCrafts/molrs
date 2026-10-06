@@ -14,6 +14,7 @@ pub mod dihedral;
 pub mod error;
 pub mod generic;
 pub mod improper;
+pub mod instances;
 pub mod kspace;
 pub mod pair;
 pub mod registry;
@@ -21,6 +22,7 @@ pub mod soft;
 
 pub use compile::PotentialCompiler;
 pub use error::CompileError;
+pub use instances::Instances;
 pub use registry::{
     KernelConstructor, KernelRegistry, ParamSource, RowSource, lookup_kernel, lookup_param_source,
     lookup_row_source, register_kernel, register_kernel_with,

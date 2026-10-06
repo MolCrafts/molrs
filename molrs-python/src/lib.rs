@@ -438,6 +438,9 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyOptReport>()?;
     m.add_class::<PyLBFGS>()?;
 
+    let potential = PyModule::new(m.py(), "potential")?;
+    ff::potential::register(&potential)?;
+    m.add_submodule(&potential)?;
     let md = PyModule::new(m.py(), "md")?;
     md::register(&md)?;
     m.add_submodule(&md)?;

@@ -89,7 +89,8 @@ class MD:
     def set_potential(self, potential: object) -> MD:
         """Attach a pre-built potential (advanced; replaces :meth:`set_forcefield`).
 
-        Accepts a compiled ``Potentials`` collection, an ``LJCut``, or a
+        Accepts a compiled ``Potentials`` collection (e.g. one
+        :func:`molrs.ff.potential.kernel` built), an ``LJCut``, or a
         ``Potential`` subclass instance. The caller owns units (apply
         units) — and, when skipping :meth:`set_neighbors`, neighbor correctness too:
         compiled ``Potentials`` evaluate exactly the topology (any ``pairs``

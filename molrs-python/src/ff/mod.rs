@@ -35,6 +35,7 @@ pub mod charge;
 pub mod forms;
 pub mod handles;
 pub mod ir;
+pub mod potential;
 pub mod section;
 
 use std::collections::HashMap;

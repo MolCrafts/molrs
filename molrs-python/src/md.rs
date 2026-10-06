@@ -1,25 +1,24 @@
-//! Python bindings for `molrs::md`.
+//! Python bindings for `molrs::md`: the integrators and the `MD` state.
 //!
 //! ```text
 //! VelocityVerlet(dt, potential=lj, neighbors=nl, mass=mass)
 //! VelocityVerlet(dt, potential=potentials, mass=mass)   # ff Potentials / mix
-//! LJCut.pair_energy / pair_force / pair_eval → per-pair
-//! LJCut.eval(neighbors, pos) → (energy, forces)
-//! class MyPotential(Potential): …  — subclass the abstract base, molrs calls it
-//! Potentials  — the collection merging members (molrs.Potentials)
 //! ```
 //!
-//! One `Potential` concept everywhere: `LJCut` (nonbond), the force-field
-//! `Potentials` collection, and a duck-typed Python override. MD has no
-//! unit knowledge. Integrators own the optional `VerletSkin`.
+//! MD defines no potential. What it integrates is any member
+//! [`take_potential`] accepts: `molrs.ff.potential.LJCut`, the force-field
+//! `Potentials` collection (e.g. from `molrs.ff.potential.kernel`), or a
+//! duck-typed Python object with
+//! `calc_energy_forces`. MD has no unit knowledge. Integrators own the
+//! optional `VerletSkin`.
 
 use std::sync::{Arc, Mutex};
 
-use crate::core::spatial::neighborlist::{PyNeighbors, PyVerletSkin};
+use crate::core::spatial::neighborlist::PyVerletSkin;
 use crate::core::spatial::simbox::PyBox;
 use crate::ff::PyPotentials;
+use crate::ff::potential::PyLJCut;
 use crate::helpers::NpF;
-use molrs::ff::potential::pair::{LJCut, PairPotential};
 use molrs::ff::potential::{Member, Potential};
 use molrs::math::Virial;
 use molrs::md::{
@@ -36,7 +35,7 @@ fn md_err(e: MdError) -> PyErr {
     PyValueError::new_err(e.to_string())
 }
 
-fn check_nx3(arr: &PyReadonlyArray2<'_, NpF>, label: &str) -> PyResult<()> {
+pub(crate) fn check_nx3(arr: &PyReadonlyArray2<'_, NpF>, label: &str) -> PyResult<()> {
     if arr.as_array().ncols() != 3 {
         return Err(PyValueError::new_err(format!(
             "{label} must have shape (N, 3)"
@@ -232,146 +231,6 @@ impl PyMDState {
     }
 }
 
-/// LAMMPS ``pair_style lj/cut``: cut Lennard-Jones / Mie pair kernel, and
-/// md's nonbond potential (the loop feeds it the current neighbour pairs).
-#[pyclass(name = "LJCut", module = "molrs.md", subclass)]
-pub struct PyLJCut {
-    pub(crate) inner: LJCut,
-}
-
-#[pymethods]
-impl PyLJCut {
-    #[new]
-    #[pyo3(signature = (epsilon, sigma, cutoff, *, n=12, m=6, shifted=true, smeared=false))]
-    fn new(
-        epsilon: F,
-        sigma: F,
-        cutoff: F,
-        n: i32,
-        m: i32,
-        shifted: bool,
-        smeared: bool,
-    ) -> PyResult<Self> {
-        Ok(Self {
-            inner: LJCut::new(epsilon, sigma, cutoff, n, m, shifted, smeared)
-                .map_err(PyValueError::new_err)?,
-        })
-    }
-
-    #[getter]
-    fn epsilon(&self) -> F {
-        self.inner.epsilon()
-    }
-    #[getter]
-    fn sigma(&self) -> F {
-        self.inner.sigma()
-    }
-    #[getter]
-    fn cutoff(&self) -> F {
-        self.inner.cutoff()
-    }
-    #[getter]
-    fn n(&self) -> i32 {
-        self.inner.n()
-    }
-    #[getter]
-    fn m(&self) -> i32 {
-        self.inner.m()
-    }
-    #[getter]
-    fn shifted(&self) -> bool {
-        self.inner.shifted()
-    }
-    #[getter]
-    fn smeared(&self) -> bool {
-        self.inner.smeared()
-    }
-
-    fn pair_energy(&self, r2: F, disp: [F; 3]) -> Option<F> {
-        self.inner.pair_energy(r2, disp)
-    }
-    fn pair_force(&self, r2: F, disp: [F; 3]) -> Option<[F; 3]> {
-        self.inner.pair_force(r2, disp)
-    }
-    fn pair_eval(&self, r2: F, disp: [F; 3]) -> Option<(F, [F; 3])> {
-        self.inner.pair_eval(r2, disp)
-    }
-
-    fn calc_energy_forces<'py>(
-        &self,
-        py: Python<'py>,
-        pos: PyReadonlyArray2<'_, NpF>,
-    ) -> PyResult<(F, Bound<'py, PyArray2<NpF>>)> {
-        check_nx3(&pos, "pos")?;
-        let view = pos.as_array();
-        let n = view.nrows();
-        // A standard-layout `(N, 3)` array *is* the flat `[x0, y0, z0, …]` a
-        // kernel wants; only a strided view is copied.
-        let owned: Vec<F>;
-        let flat: &[F] = match view.as_slice() {
-            Some(slice) => slice,
-            None => {
-                owned = view.iter().copied().collect();
-                &owned
-            }
-        };
-        let (energy, forces) = Potential::calc_energy_forces(&self.inner, flat);
-        let arr = Array2::from_shape_vec((n, 3), forces)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        Ok((energy, arr.into_pyarray(py)))
-    }
-
-    fn eval<'py>(
-        &self,
-        py: Python<'py>,
-        neighbors: &mut PyVerletSkin,
-        pos: PyReadonlyArray2<'_, NpF>,
-    ) -> PyResult<(F, Bound<'py, PyArray2<NpF>>)> {
-        check_nx3(&pos, "pos")?;
-        let nl = neighbors.get_mut()?;
-        let (e, f) = self
-            .inner
-            .eval(nl, pos.as_array())
-            .map_err(PyValueError::new_err)?;
-        Ok((e, f.into_pyarray(py)))
-    }
-
-    fn eval_table<'py>(
-        &self,
-        py: Python<'py>,
-        n_atoms: usize,
-        neighbors: &PyNeighbors,
-    ) -> PyResult<(F, Bound<'py, PyArray2<NpF>>)> {
-        let (e, f) = self
-            .inner
-            .eval_table(n_atoms, &neighbors.inner)
-            .map_err(PyValueError::new_err)?;
-        Ok((e, f.into_pyarray(py)))
-    }
-
-    #[pyo3(signature = (n_atoms, i, j, disp, dist_sq=None))]
-    fn eval_pairs<'py>(
-        &self,
-        py: Python<'py>,
-        n_atoms: usize,
-        i: PyReadonlyArray1<'_, u32>,
-        j: PyReadonlyArray1<'_, u32>,
-        disp: PyReadonlyArray2<'_, NpF>,
-        dist_sq: Option<PyReadonlyArray1<'_, NpF>>,
-    ) -> PyResult<(F, Bound<'py, PyArray2<NpF>>)> {
-        check_nx3(&disp, "disp")?;
-        let d2 = match dist_sq.as_ref() {
-            Some(a) => Some(a.as_slice()?),
-            None => None,
-        };
-        let (e, f) = self
-            .inner
-            .eval_pairs(n_atoms, i.as_slice()?, j.as_slice()?, disp.as_array(), d2)
-            .map_err(PyValueError::new_err)?;
-        Ok((e, f.into_pyarray(py)))
-    }
-}
-
 // ---------------------------------------------------------------------------
 // The one Potential seam — Python subclasses and post-evaluation error relay.
 // ---------------------------------------------------------------------------
@@ -392,8 +251,8 @@ pub(crate) fn take_err(slots: &[ErrSlot]) -> PyResult<()> {
     Ok(())
 }
 
-/// A Python `md.Potential` subclass instance as the one `Potential` concept —
-/// the seam for NN / external forces. Holds a reference to the instance and
+/// A Python object with `calc_energy_forces` (a `molrs.ff.potential.Potential`)
+/// as the one `Potential` concept — the seam for NN / external forces. Holds a reference to the instance and
 /// dispatches to its overridden ``calc_energy_forces`` under the GIL.
 pub struct SubclassPotential {
     obj: Py<PyAny>,
@@ -811,7 +670,6 @@ impl PyMaxwellBoltzmann {
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMDState>()?;
-    m.add_class::<PyLJCut>()?;
     m.add_class::<PyVelocityVerlet>()?;
     m.add_class::<PyLangevin>()?;
     m.add_class::<PyMaxwellBoltzmann>()?;
