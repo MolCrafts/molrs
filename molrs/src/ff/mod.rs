@@ -6,6 +6,8 @@ pub mod forcefield;
 pub mod mmff;
 #[cfg(test)]
 mod one_four;
+#[cfg(test)]
+mod openmm_check;
 pub mod params;
 pub mod potential;
 pub mod scale_lj;
