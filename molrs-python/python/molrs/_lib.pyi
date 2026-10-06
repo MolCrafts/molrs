@@ -3531,6 +3531,14 @@ class GasteigerModel:
 def read_forcefield_xml(path: PathInput) -> ForceField: ...
 def read_opls_xml(path: PathInput) -> ForceField: ...
 def read_lammps_forcefield(path: PathInput) -> ForceField: ...
+def write_gromacs_system(
+    path: PathInput, forcefield: ForceField, frame: Frame, *, precision: int = 6
+) -> None:
+    """Write ``forcefield`` and the typed ``frame`` as one GROMACS topology
+    (directives, one ``[ moleculetype ]`` per molecule, ``[ system ]``,
+    ``[ molecules ]``): the inverse of :func:`read_gromacs_system`. Raises
+    ``ValueError`` for what GROMACS cannot express."""
+
 def clpol_polarizability(path: PathInput | None = None) -> dict[str, dict[str, float]]:
     """CL&Pol Drude parameters per atom type (``m_D``, ``q_D_sign``, ``k_D``,
     ``alpha``, ``a_thole``): the shipped ``alpha.ff`` table, or ``path``

@@ -73,3 +73,18 @@ def test_read_gromacs_system_returns_the_force_field_and_a_typed_frame(tmp_path)
 
     with pytest.raises(ValueError, match="read_system"):
         molrs.ff.read_gromacs_top_ff(path)
+
+
+def test_write_gromacs_system_round_trips_read_gromacs_system(tmp_path):
+    path = tmp_path / "topol.top"
+    path.write_text(_SYSTEM)
+    ff, frame = molrs.ff.read_gromacs_system(path)
+    out = tmp_path / "out.top"
+    molrs.ff.write_gromacs_system(out, ff, frame)
+    ff2, frame2 = molrs.ff.read_gromacs_system(out)
+    # The writer states each bond's parameters on its row; the reader names
+    # such a row's type after its lookup type.
+    assert all(str(t).startswith("CT-HC") for t in frame2["bonds"]["type"])
+    assert list(frame2["atoms"]["type"]) == list(frame["atoms"]["type"])
+    assert list(frame2["bonds"]["atomi"]) == [0, 2]
+    assert list(frame2["atoms"]["mol_id"]) == [1, 1, 2, 2]

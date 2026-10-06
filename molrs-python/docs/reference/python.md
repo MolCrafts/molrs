@@ -290,6 +290,8 @@ arrays (a CMAP `grid`).
 
 ::: molrs.ff.clpol_polarizability
 
+::: molrs.ff.write_gromacs_system
+
 ## Trajectory
 
 ::: molrs.Trajectory

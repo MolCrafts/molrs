@@ -475,6 +475,10 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ff::fragment_scaling_data_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::scale_lj_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::clpol::clpol_polarizability, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        ff::gromacs_system::write_gromacs_system,
+        m
+    )?)?;
 
     // Compute analyses
     m.add_class::<PyRDF>()?;

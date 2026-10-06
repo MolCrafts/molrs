@@ -1163,6 +1163,9 @@ the bullet says so):
   `UnitPreset.register(name, units, boltzmann=, coulomb=, overwrite=False)`,
   `preset_names` / `UnitPreset.names()`, `replace_preset`, and the
   `boltzmann_constant` (`k_B`) unit.
+- `molrs.ff.write_gromacs_system(path, forcefield, frame, *, precision=6)`,
+  the Python door of `GromacsTopFfWriter::write_system_str` and the inverse
+  of `read_gromacs_system`.
 - CL&Pol: `ff::params::CLPOL_POLARIZABILITY` (`alpha.ff`, 78 types),
   `ff::forcefield::readers::clpol::read_alpha_ff`, and
   `molrs.ff.clpol_polarizability(path=None)`.
