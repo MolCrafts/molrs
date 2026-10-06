@@ -2604,7 +2604,7 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
             ..Default::default()
         };
         let back = LammpsFfReader::new()
-            .read_data_coeffs(&data, &maps, "real")
+            .read_data_sections(&data, &maps, "real")
             .unwrap();
         let angles = |ff: &ForceField, style: &str| -> Vec<AngleType> {
             match ff.get_style("angle", style).unwrap().defs() {

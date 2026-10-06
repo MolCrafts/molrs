@@ -117,21 +117,46 @@ use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::ir::{LammpsCodec, Registry, RegistryRef, StyleSpec, with_global};
 use crate::ff::params::amber::{AMBER_SCEE, AMBER_SCNB};
-use molrs::store::type_labels::TypeName;
+use molrs::store::FrameAccess;
+use molrs::store::type_labels::{TypeLabels, TypeName};
 use molrs::units::constants::{COULOMB_METAL, COULOMB_REAL};
 use ndarray::ArrayD;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-/// Optional id→label maps (from a data-file Type Labels section).
+/// Id→label maps of a data file's `* Type Labels` sections.
 #[derive(Debug, Clone, Default)]
-pub struct LammpsTypeLabelMaps {
-    pub atom: BTreeMap<u32, String>,
-    pub bond: BTreeMap<u32, String>,
-    pub angle: BTreeMap<u32, String>,
-    pub dihedral: BTreeMap<u32, String>,
-    pub improper: BTreeMap<u32, String>,
+pub(crate) struct LammpsTypeLabelMaps {
+    pub(crate) atom: BTreeMap<u32, String>,
+    pub(crate) bond: BTreeMap<u32, String>,
+    pub(crate) angle: BTreeMap<u32, String>,
+    pub(crate) dihedral: BTreeMap<u32, String>,
+    pub(crate) improper: BTreeMap<u32, String>,
+}
+
+impl LammpsTypeLabelMaps {
+    /// The maps `frame`'s type-label inventories declare, ids as written —
+    /// what the LAMMPS data reader stored from the `* Type Labels` sections.
+    fn from_frame(frame: &impl FrameAccess) -> Result<Self, String> {
+        let map = |block: &str| -> Result<BTreeMap<u32, String>, String> {
+            TypeLabels::declared_ids(frame, block)?
+                .into_iter()
+                .map(|(id, label)| {
+                    u32::try_from(id)
+                        .map(|id| (id, label))
+                        .map_err(|_| format!("{block}: type id {id} is out of range"))
+                })
+                .collect()
+        };
+        Ok(Self {
+            atom: map("atoms")?,
+            bond: map("bonds")?,
+            angle: map("angles")?,
+            dihedral: map("dihedrals")?,
+            improper: map("impropers")?,
+        })
+    }
 }
 
 /// Reader for a LAMMPS force-field include (`*.ff`), AMBER/GAFF flavour.
@@ -168,10 +193,18 @@ impl LammpsFfReader {
         self
     }
 
-    /// Parse data-file `* Coeffs` sections with optional Type Labels maps.
+    /// The force field a LAMMPS data file's `* Coeffs` sections define, from
+    /// the frame the data reader returned
+    /// ([`read_lammps_data`](crate::io::data::lammps_data::read_lammps_data)).
     ///
-    /// `coeffs_text` is a fragment containing `Pair Coeffs` / `PairIJ Coeffs` /
-    /// `Bond Coeffs` / … (and optional `units` line). A `PairIJ Coeffs` row
+    /// The sections are the frame's
+    /// [`COEFFS_TEXT_META`](crate::io::data::lammps_data::COEFFS_TEXT_META)
+    /// meta; a row's numeric type id is named by the label the file's
+    /// `* Type Labels` section gave it (the frame's type-label inventories,
+    /// ids as written), else by the id itself. `units` is the unit style the
+    /// coefficients are in: the one the file's title line stated
+    /// ([`UNITS_META`](crate::io::data::lammps_data::UNITS_META)) when `None`,
+    /// else [`default_units`](Self::default_units). A `PairIJ Coeffs` row
     /// `i j ε σ` is the `pair_coeff i j ε σ` line: with `i ≠ j` an explicit
     /// cross pair that replaces the mixing rule for that type pair.
     ///
@@ -193,8 +226,50 @@ impl LammpsFfReader {
     ///
     /// # Errors
     ///
-    /// An unsupported hinted style, plus every error of the `*_coeff` parse.
+    /// A frame with no `* Coeffs` sections, a `units` that disagrees with the
+    /// one the file stated, a malformed type-label inventory, an unsupported
+    /// hinted style, plus every error of the `*_coeff` parse.
     pub fn read_data_coeffs(
+        &self,
+        frame: &impl FrameAccess,
+        units: Option<&str>,
+    ) -> Result<ForceField, String> {
+        use crate::io::data::lammps_data::{COEFFS_TEXT_META, UNITS_META};
+        let meta = frame.meta_ref();
+        let text = meta
+            .get(COEFFS_TEXT_META)
+            .ok_or_else(|| {
+                format!(
+                    "the frame has no `* Coeffs` sections (meta {COEFFS_TEXT_META:?}): \
+                     read it with the LAMMPS data reader from a file that has them"
+                )
+            })?
+            .as_str()
+            .ok_or_else(|| format!("meta {COEFFS_TEXT_META:?} must be a string"))?;
+        let stated = match meta.get(UNITS_META) {
+            None => None,
+            Some(value) => {
+                Some(parse_style(value.as_str().ok_or_else(|| {
+                    format!("meta {UNITS_META:?} must be a string")
+                })?)?)
+            }
+        };
+        let units = match (units.map(parse_style).transpose()?, stated) {
+            (Some(given), Some(stated)) if given != stated => {
+                return Err(format!(
+                    "units {given:?} disagree with the data file's own `units = {stated}`"
+                ));
+            }
+            (Some(units), _) | (None, Some(units)) => units,
+            (None, None) => self.default_units,
+        };
+        let labels = LammpsTypeLabelMaps::from_frame(frame)?;
+        self.read_data_sections(text, &labels, units)
+    }
+
+    /// [`read_data_coeffs`](Self::read_data_coeffs) of the `* Coeffs` text
+    /// itself, with the `* Type Labels` maps and the unit style.
+    pub(crate) fn read_data_sections(
         &self,
         coeffs_text: &str,
         labels: &LammpsTypeLabelMaps,
@@ -2016,7 +2091,7 @@ Pair Coeffs
 1 0.1521 3.1507
 ";
         let ff = LammpsFfReader::new()
-            .read_data_coeffs(coeffs, &labels, "real")
+            .read_data_sections(coeffs, &labels, "real")
             .unwrap();
         let bond = ff.get_style("bond", "harmonic").unwrap();
         let bt = bond.get_bondtype("OW", "HW").unwrap();
@@ -2025,6 +2100,142 @@ Pair Coeffs
         let lj = ff.get_style("pair", "lj/cut").unwrap();
         let pt = lj.get_pairtype("OW", None).unwrap();
         assert!((pt.params.get("epsilon").unwrap() - 0.1521).abs() < 1e-9);
+    }
+
+    /// A data file whose `* Type Labels` number the types out of sorted order
+    /// (`1 hc`, `2 c3`), with its `* Coeffs` rows by id.
+    const LABELLED_DATA: &str = "\
+LAMMPS data file via write_data, version 4 Jul 2026, timestep = 0, units = real
+
+3 atoms
+2 atom types
+2 bonds
+1 bond types
+1 angles
+1 angle types
+
+0 10 xlo xhi
+0 10 ylo yhi
+0 10 zlo zhi
+
+Atom Type Labels
+
+1 hc
+2 c3
+
+Bond Type Labels
+
+1 c3-hc
+
+Angle Type Labels
+
+1 hc-c3-hc
+
+Masses
+
+1 1.008
+2 12.011
+
+Pair Coeffs # lj/cut/coul/cut
+
+1 0.0157 2.6495
+2 0.1094 3.3997
+
+Bond Coeffs # harmonic
+
+1 340.0 1.09
+
+Angle Coeffs # harmonic
+
+1 35.0 109.5
+
+Atoms # full
+
+1 1 2 -0.2 5.0 5.0 5.0
+2 1 1 0.1 6.09 5.0 5.0
+3 1 1 0.1 4.64 6.03 5.0
+
+Bonds
+
+1 1 1 2
+2 1 1 3
+
+Angles
+
+1 1 2 1 3
+";
+
+    fn data_frame(text: &str) -> crate::store::Frame {
+        crate::io::data::lammps_data::parse_frame_bytes(text.as_bytes()).unwrap()
+    }
+
+    /// The frame the data reader returned is the whole input: the rows are
+    /// named by the file's own label ids (`1` is `hc`, though `c3` sorts
+    /// first), in the units its title line states.
+    #[test]
+    fn data_coeffs_read_from_the_frame_name_rows_by_the_files_labels() {
+        let ff = LammpsFfReader::new()
+            .read_data_coeffs(&data_frame(LABELLED_DATA), None)
+            .unwrap();
+        assert_eq!(ff.units(), "real");
+        let lj = ff.get_style("pair", "lj/cut").unwrap();
+        let eps = |t: &str| lj.get_pairtype(t, None).unwrap().params.get("epsilon");
+        assert_eq!(eps("hc"), Some(0.0157));
+        assert_eq!(eps("c3"), Some(0.1094));
+        let bond = ff.get_style("bond", "harmonic").unwrap();
+        assert_eq!(
+            bond.get_bondtype("c3", "hc").unwrap().params.get("k"),
+            Some(340.0)
+        );
+        assert!(ff.get_style("angle", "harmonic").is_some());
+    }
+
+    /// LAMMPS data -> force field -> LAMMPS data (the frame plus the force
+    /// field's `* Coeffs`) -> force field gives the same force field.
+    #[test]
+    fn data_coeffs_round_trip_through_a_written_data_file() {
+        use crate::ff::forcefield::writers::ForceFieldWriter;
+        use crate::ff::forcefield::writers::lammps::LammpsFfWriter;
+        use crate::io::writer::FrameWriter;
+        let frame = data_frame(LABELLED_DATA);
+        let ff = LammpsFfReader::new()
+            .read_data_coeffs(&frame, None)
+            .unwrap();
+        let labels = TypeLabels::from_frame(&frame).unwrap();
+        let coeffs = LammpsFfWriter::new(&labels)
+            .write_data_coeffs_str(&ff)
+            .unwrap();
+        let mut written = Vec::new();
+        crate::io::data::lammps_data::LAMMPSDataWriter::new(&mut written)
+            .write(&frame)
+            .unwrap();
+        let text = format!("{}\n{coeffs}", String::from_utf8(written).unwrap());
+        let again_frame = data_frame(&text);
+        let again = LammpsFfReader::new()
+            .read_data_coeffs(&again_frame, Some("real"))
+            .unwrap();
+        let include = |ff: &ForceField, frame: &crate::store::Frame| {
+            LammpsFfWriter::new(&TypeLabels::from_frame(frame).unwrap())
+                .write_str(ff)
+                .unwrap()
+        };
+        assert_eq!(include(&again, &again_frame), include(&ff, &frame));
+        assert!(include(&ff, &frame).contains("bond_coeff c3-hc 340"));
+    }
+
+    /// `units` that disagree with the file's title line, and a frame with no
+    /// `* Coeffs`, are refused.
+    #[test]
+    fn data_coeffs_refuse_other_units_and_a_frame_without_coeffs() {
+        let frame = data_frame(LABELLED_DATA);
+        let err = LammpsFfReader::new()
+            .read_data_coeffs(&frame, Some("metal"))
+            .unwrap_err();
+        assert!(err.contains("metal") && err.contains("real"), "{err}");
+        let err = LammpsFfReader::new()
+            .read_data_coeffs(&crate::store::Frame::new(), None)
+            .unwrap_err();
+        assert!(err.contains("lammps_coeffs_text"), "{err}");
     }
 
     /// `PairIJ Coeffs` rows are pair_coeff lines: the self rows are the types'
@@ -2042,7 +2253,7 @@ PairIJ Coeffs # lj/cut
 2 2 0.0930 3.24287
 ";
         let ff = LammpsFfReader::new()
-            .read_data_coeffs(coeffs, &labels, "real")
+            .read_data_sections(coeffs, &labels, "real")
             .unwrap();
         let lj = ff.get_style("pair", "lj/cut").unwrap();
         let cross = lj.get_pairtype("c3", Some("oh")).expect("cross row c3-oh");
@@ -2060,7 +2271,7 @@ PairIJ Coeffs # lj/cut
     }
 
     fn read_data(coeffs: &str) -> Result<ForceField, String> {
-        LammpsFfReader::new().read_data_coeffs(coeffs, &LammpsTypeLabelMaps::default(), "real")
+        LammpsFfReader::new().read_data_sections(coeffs, &LammpsTypeLabelMaps::default(), "real")
     }
 
     /// `Bond Coeffs # fene/kk` must not be read as harmonic: the reader has no

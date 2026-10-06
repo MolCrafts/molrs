@@ -3534,15 +3534,13 @@ def clpol_polarizability(path: PathInput | None = None) -> dict[str, dict[str, f
     ``alpha``, ``a_thole``): the shipped ``alpha.ff`` table, or ``path``
     read the same way. Raises ``ValueError`` for an unreadable file."""
 
-def read_lammps_data_coeffs(
-    coeffs_text: str,
-    units: str = "real",
-    atom_labels: dict[int, str] | None = None,
-    bond_labels: dict[int, str] | None = None,
-    angle_labels: dict[int, str] | None = None,
-    dihedral_labels: dict[int, str] | None = None,
-    improper_labels: dict[int, str] | None = None,
-) -> ForceField: ...
+def read_lammps_data_coeffs(frame: Frame, *, units: str | None = None) -> ForceField:
+    """The force field a LAMMPS data file's ``* Coeffs`` sections define, from
+    the frame :func:`molrs.io.read_lammps_data` returned: its
+    ``meta["lammps_coeffs_text"]``, rows named by the file's ``* Type Labels``
+    (ids as written). ``units`` defaults to the file's stated units, else
+    ``"real"``. Raises ``ValueError`` for a frame with no ``* Coeffs``
+    sections or a ``units`` that disagrees with the file's."""
 def write_lammps_forcefield(
     path: PathInput,
     forcefield: ForceField,

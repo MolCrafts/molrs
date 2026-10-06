@@ -221,9 +221,20 @@ impl BlockTypes {
 
     /// Labels of the inventory meta value `"1:C,2:H"`, ordered by id.
     ///
+    /// `Err` as [`parse_inventory_ids`](Self::parse_inventory_ids).
+    fn parse_inventory(key: &str, raw: &str) -> Result<Vec<String>, String> {
+        Ok(Self::parse_inventory_ids(key, raw)?
+            .into_iter()
+            .map(|(_, label)| label)
+            .collect())
+    }
+
+    /// The `(id, label)` entries of the inventory meta value `"1:C,2:H"`,
+    /// ordered by id, the ids as written.
+    ///
     /// `Err` naming `key` and the token for a pair without `:`, a non-integer
     /// id, an empty label or a repeated id.
-    fn parse_inventory(key: &str, raw: &str) -> Result<Vec<String>, String> {
+    fn parse_inventory_ids(key: &str, raw: &str) -> Result<Vec<(u64, String)>, String> {
         if raw.trim().is_empty() {
             return Ok(Vec::new());
         }
@@ -248,7 +259,7 @@ impl BlockTypes {
             pairs.push((id, label.to_owned()));
         }
         pairs.sort_by_key(|(id, _)| *id);
-        Ok(pairs.into_iter().map(|(_, label)| label).collect())
+        Ok(pairs)
     }
 
     /// Resolve `block`, merging the inventory under `meta_key`.
@@ -438,6 +449,34 @@ impl TypeLabels {
             .iter()
             .find(|(name, _)| *name == block)
             .map(|(_, types)| types)
+    }
+
+    /// The `(id, label)` entries `block`'s inventory meta key declares, ordered
+    /// by id, **the ids as written** — not re-sorted as
+    /// [`from_frame`](Self::from_frame) orders them. Empty when the frame has
+    /// no inventory for `block`. This is what a format that numbers its types
+    /// itself (a LAMMPS data file's `* Type Labels`) declared, for reading
+    /// rows that refer to those numbers.
+    ///
+    /// # Errors
+    ///
+    /// A `block` this contract does not cover, a non-string meta value, and a
+    /// malformed inventory (see the type-level docs), each naming the key.
+    pub fn declared_ids(
+        frame: &impl FrameAccess,
+        block: &str,
+    ) -> Result<Vec<(u64, String)>, String> {
+        let key = Self::inventory_key(block)
+            .ok_or_else(|| format!("block {block:?} has no type-label inventory"))?;
+        match frame.meta_ref().get(key) {
+            None => Ok(Vec::new()),
+            Some(value) => {
+                let raw = value
+                    .as_str()
+                    .ok_or_else(|| format!("meta {key:?} must be a string"))?;
+                BlockTypes::parse_inventory_ids(key, raw)
+            }
+        }
     }
 
     /// The inventory meta key of `block` (`"atoms"` → `"atom_type_labels"`),

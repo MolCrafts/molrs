@@ -1073,7 +1073,7 @@ mod codecs {
             };
             assert!(data.contains(heading), "{data}");
             let back = LammpsFfReader::new()
-                .read_data_coeffs(&data, &Default::default(), "real")
+                .read_data_sections(&data, &Default::default(), "real")
                 .unwrap();
             assert!(back.get_style(name, "class2").is_some(), "{data}");
         }

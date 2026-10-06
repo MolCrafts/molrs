@@ -35,6 +35,16 @@ use std::io::{BufRead, BufReader, Cursor, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::OnceLock;
 
+/// Frame meta key: every `* Coeffs` section of the data file, verbatim
+/// (`PairIJ` and the class2 cross terms included). The force-field reader
+/// `ff::forcefield::readers::lammps::LammpsFfReader::read_data_coeffs` takes
+/// the frame and reads this, with the type labels the `* Type Labels`
+/// sections declared.
+pub const COEFFS_TEXT_META: &str = "lammps_coeffs_text";
+/// Frame meta key: the unit style the `write_data` title line stated
+/// (`units = real`); absent when the file states none.
+pub const UNITS_META: &str = "lammps_units";
+
 // ============================================================================
 // Header
 // ============================================================================
@@ -1139,7 +1149,7 @@ fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
     );
     // Unit style from the `write_data` title line; absent when not stated.
     if let Some(units) = &h.units {
-        frame.meta.insert("lammps_units".to_string(), units.clone());
+        frame.meta.insert(UNITS_META.to_string(), units.clone());
     }
     // Which box axes appeared in the header (zero-volume boxes still set has_*).
     frame.meta.insert(
@@ -1150,11 +1160,12 @@ fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
         ),
     );
 
-    // Force-field coefficient sections (Pair/Bond/… Coeffs) for molpy / ff reader.
+    // Force-field coefficient sections (Pair/Bond/… Coeffs), read into a force
+    // field by `LammpsFfReader::read_data_coeffs(&frame, …)`.
     if !data.coeffs_text.is_empty() {
         frame
             .meta
-            .insert("lammps_coeffs_text".to_string(), data.coeffs_text);
+            .insert(COEFFS_TEXT_META.to_string(), data.coeffs_text);
     }
 
     Ok(frame)
@@ -1315,7 +1326,7 @@ fn dispatch_section<R: BufRead>(
 /// into a `cmaps` block of `atomi` … `atomm` and the numeric `type_id`, the
 /// map's index in the `fix cmap` file); every `* Coeffs` section
 /// (`PairIJ` and the class2 cross terms included) is kept verbatim in the
-/// frame's `lammps_coeffs_text` meta. Any other section — `Ellipsoids`,
+/// frame's [`COEFFS_TEXT_META`] meta. Any other section — `Ellipsoids`,
 /// `Lines`, `Triangles`, `Bodies`, or a fix-defined one such as `BiTorsions` — is
 /// refused with an `InvalidData` error naming it, unless it was named in
 /// [`with_skipped_section`], in which case its body is read past and
@@ -2392,11 +2403,11 @@ mod atom_style_tests {
         );
         let frame = parse_text(&titled);
         assert_eq!(
-            frame.meta.get("lammps_units").and_then(|v| v.as_str()),
+            frame.meta.get(UNITS_META).and_then(|v| v.as_str()),
             Some("lj")
         );
         let bare = parse_text(&format!("LAMMPS data file\n{body}"));
-        assert!(!bare.meta.contains_key("lammps_units"));
+        assert!(!bare.meta.contains_key(UNITS_META));
     }
 
     #[test]
@@ -3142,7 +3153,7 @@ mod atom_style_tests {
         let frame = parse_text(&text);
         let coeffs = frame
             .meta
-            .get("lammps_coeffs_text")
+            .get(COEFFS_TEXT_META)
             .and_then(|value| value.as_str())
             .expect("PairIJ Coeffs must land in lammps_coeffs_text");
         assert!(coeffs.contains("PairIJ Coeffs"), "{coeffs}");
@@ -3173,7 +3184,7 @@ mod atom_style_tests {
             .expect("one frame");
         let coeffs = frame
             .meta
-            .get("lammps_coeffs_text")
+            .get(COEFFS_TEXT_META)
             .and_then(|value| value.as_str())
             .expect("Pair Coeffs must land in lammps_coeffs_text");
         assert!(coeffs.contains("1 0.1 3.0"), "{coeffs}");
