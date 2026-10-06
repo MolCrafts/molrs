@@ -56,3 +56,41 @@ def test_define_lj_sigma_refuses_a_sigma_that_is_not_a_length():
     units = molrs.UnitRegistry()
     with pytest.raises(molrs.UnitsError):
         units.define_lj_sigma(units.quantity(1.0, "second"))
+
+
+def test_openmm_preset_is_native_with_molrs_boltzmann():
+    preset = molrs.UnitPreset("openmm")
+    assert preset.length() == "nanometer"
+    assert preset.energy() == "kilojoule_per_mole"
+    real = molrs.UnitPreset("real")
+    units = molrs.UnitRegistry()
+    kj = units.quantity(real.boltzmann(), "kilocalorie_per_mole").to("kilojoule_per_mole")
+    assert preset.boltzmann() == pytest.approx(kj.magnitude, rel=1e-14)
+    assert "openmm" in molrs.UnitPreset.names()
+
+
+def test_boltzmann_constant_is_a_registry_unit():
+    units = molrs.UnitRegistry()
+    rt = (300.0 * units.parse("k_B * kelvin")).to("kilojoule_per_mole")
+    assert rt.magnitude == pytest.approx(2.494338785, rel=1e-9)
+
+
+def test_register_a_custom_preset():
+    table = {
+        dim: getattr(molrs.UnitPreset("real"), dim)()
+        for dim in (
+            "mass", "length", "time", "energy", "temperature",
+            "charge", "pressure", "velocity", "force", "density",
+        )
+    }
+    table["length"] = "nanometer"
+    preset = molrs.UnitPreset.register("real_nm_test", table, boltzmann=1.0, coulomb=2.0)
+    assert molrs.UnitPreset("real_nm_test").length() == "nanometer"
+    assert preset.coulomb() == 2.0
+    with pytest.raises(ValueError, match="already"):
+        molrs.UnitPreset.register("real_nm_test", table, boltzmann=1.0, coulomb=2.0)
+    molrs.UnitPreset.register("real_nm_test", table, boltzmann=3.0, coulomb=2.0, overwrite=True)
+    assert molrs.UnitPreset("real_nm_test").boltzmann() == 3.0
+    del table["mass"]
+    with pytest.raises(ValueError, match="mass"):
+        molrs.UnitPreset.register("broken", table, boltzmann=1.0, coulomb=1.0)

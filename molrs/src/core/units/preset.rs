@@ -15,7 +15,7 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::types::F;
 
-use super::constants::{BOLTZMANN, BOLTZMANN_REAL, COULOMB_REAL, ELEMENTARY_CHARGE};
+use super::constants::{BOLTZMANN, BOLTZMANN_REAL, COULOMB_REAL, ELEMENTARY_CHARGE, GAS_CONSTANT};
 
 /// One of the ten named dimensions every [`UnitPreset`] reports.
 ///
@@ -95,6 +95,55 @@ pub struct UnitPreset {
 }
 
 impl UnitPreset {
+    /// A preset of the caller's own: `units` gives the unit expression of
+    /// each of the ten [`PresetDim`]s (keyed by [`PresetDim::name`]),
+    /// `boltzmann` and `coulomb` the two constants in those units.
+    ///
+    /// # Errors
+    ///
+    /// `Err` naming the key for a missing dimension, a key that is not a
+    /// dimension, or an empty unit expression. (Whether the expressions
+    /// parse is the [`UnitRegistry`](super::UnitRegistry)'s question, asked
+    /// when a unit is used.)
+    pub fn new<K: AsRef<str>, V: Into<String>>(
+        name: impl Into<String>,
+        units: impl IntoIterator<Item = (K, V)>,
+        boltzmann: F,
+        coulomb: F,
+    ) -> Result<Self, String> {
+        let name = name.into();
+        let mut table: HashMap<&'static str, String> = HashMap::new();
+        for (key, unit) in units {
+            let key = key.as_ref();
+            let dim = PresetDim::ALL
+                .into_iter()
+                .find(|d| d.name() == key)
+                .ok_or_else(|| {
+                    format!("unit preset `{name}`: `{key}` is not a preset dimension")
+                })?;
+            let unit: String = unit.into();
+            if unit.trim().is_empty() {
+                return Err(format!("unit preset `{name}`: `{key}` has an empty unit"));
+            }
+            table.insert(dim.name(), unit);
+        }
+        if let Some(missing) = PresetDim::ALL
+            .iter()
+            .find(|d| !table.contains_key(d.name()))
+        {
+            return Err(format!(
+                "unit preset `{name}` does not give a unit for `{}`",
+                missing.name()
+            ));
+        }
+        Ok(Self {
+            name,
+            units: table,
+            boltzmann,
+            coulomb,
+        })
+    }
+
     fn from_table(
         name: &str,
         units: [(&'static str, &'static str); 10],
@@ -279,6 +328,32 @@ impl UnitPreset {
         )
     }
 
+    /// OpenMM's (and GROMACS's) unit system: nm, kJ/mol, ps, e.
+    ///
+    /// Not a LAMMPS style. `k_B` is the exact molar gas constant in
+    /// kJ·mol⁻¹·K⁻¹ (`R / 1000`), and the Coulomb constant is
+    /// [`COULOMB_REAL`] in kJ·nm·mol⁻¹·e⁻² (× 4.184 kJ/kcal ÷ 10 Å/nm), so
+    /// it prices charges exactly as the `real` preset does.
+    pub fn openmm() -> Self {
+        Self::from_table(
+            "openmm",
+            [
+                ("mass", "gram_per_mole"),
+                ("length", "nanometer"),
+                ("time", "picosecond"),
+                ("energy", "kilojoule_per_mole"),
+                ("temperature", "kelvin"),
+                ("charge", "elementary_charge"),
+                ("pressure", "bar"),
+                ("velocity", "nanometer / picosecond"),
+                ("force", "kilojoule_per_mole / nanometer"),
+                ("density", "gram / centimeter ** 3"),
+            ],
+            GAS_CONSTANT / 1000.0,
+            COULOMB_REAL * 4.184 / 10.0,
+        )
+    }
+
     /// Preset name (`"real"`, `"metal"`, …).
     pub fn name(&self) -> &str {
         &self.name
@@ -346,7 +421,8 @@ impl UnitPresetRegistry {
         }
     }
 
-    /// Built-in presets: real, metal, si, cgs, electron, lj, micro, nano.
+    /// Built-in presets: the LAMMPS styles real, metal, si, cgs, electron,
+    /// lj, micro and nano, plus openmm.
     pub fn new() -> Self {
         let mut reg = Self::empty();
         for p in [
@@ -358,6 +434,7 @@ impl UnitPresetRegistry {
             UnitPreset::lj(),
             UnitPreset::micro(),
             UnitPreset::nano(),
+            UnitPreset::openmm(),
         ] {
             let name = p.name().to_owned();
             reg.inner.insert(name, p);
@@ -373,6 +450,12 @@ impl UnitPresetRegistry {
         }
         self.inner.insert(name, data);
         Ok(())
+    }
+
+    /// Insert `data` under `name`, replacing (and returning) any preset
+    /// already there.
+    pub fn replace(&mut self, name: impl Into<String>, data: UnitPreset) -> Option<UnitPreset> {
+        self.inner.insert(name.into(), data)
     }
 
     /// Look up a preset by name.
@@ -417,6 +500,28 @@ pub fn register_preset(name: impl Into<String>, data: UnitPreset) -> Result<(), 
         .lock()
         .map_err(|e| e.to_string())?
         .register(name, data)
+}
+
+/// Put `data` under `name` on the process-wide registry, replacing any
+/// preset there (a built-in included); returns the replaced one.
+pub fn replace_preset(
+    name: impl Into<String>,
+    data: UnitPreset,
+) -> Result<Option<UnitPreset>, String> {
+    Ok(global()
+        .lock()
+        .map_err(|e| e.to_string())?
+        .replace(name, data))
+}
+
+/// Every preset name on the process-wide registry, sorted.
+pub fn preset_names() -> Vec<String> {
+    let mut names: Vec<String> = global()
+        .lock()
+        .map(|reg| reg.iter().map(|(name, _)| name.to_owned()).collect())
+        .unwrap_or_default();
+    names.sort();
+    names
 }
 
 #[cfg(test)]
@@ -472,6 +577,49 @@ mod tests {
             "duplicate PresetDim name"
         );
         assert_eq!(names.len(), real.units.len());
+    }
+
+    #[test]
+    fn openmm_constants_are_reals_in_kilojoules_and_nanometres() {
+        use crate::units::UnitRegistry;
+        let p = UnitPreset::openmm();
+        assert_eq!(p.length(), "nanometer");
+        let units = UnitRegistry::new();
+        // k_B: the real preset's value, converted kcal → kJ.
+        let real = units
+            .quantity(UnitPreset::real().boltzmann(), "kilocalorie_per_mole")
+            .unwrap();
+        let kj = real
+            .to(&units.parse("kilojoule_per_mole").unwrap())
+            .unwrap();
+        assert!((p.boltzmann() - kj.value()).abs() < 1e-15);
+        assert!((p.coulomb() - 138.935_456).abs() < 1e-4, "{}", p.coulomb());
+        assert!(lookup_preset("openmm").is_some());
+        assert!(preset_names().contains(&"openmm".to_string()));
+    }
+
+    #[test]
+    fn a_custom_preset_needs_every_dimension() {
+        let real = UnitPreset::real();
+        let full: Vec<(&str, &str)> = PresetDim::ALL
+            .iter()
+            .map(|d| (d.name(), real.unit(d.name()).unwrap()))
+            .collect();
+        let p = UnitPreset::new("mine", full.clone(), 1.0, 2.0).unwrap();
+        assert_eq!(p.name(), "mine");
+        assert_eq!(p.energy(), "kilocalorie_per_mole");
+        assert!(UnitPreset::new("short", full[..9].to_vec(), 1.0, 1.0).is_err());
+        let mut extra = full.clone();
+        extra.push(("colour", "red"));
+        assert!(UnitPreset::new("extra", extra, 1.0, 1.0).is_err());
+    }
+
+    #[test]
+    fn replace_overwrites_and_returns_the_old_preset() {
+        let mut reg = UnitPresetRegistry::new();
+        let old = reg.replace("real", UnitPreset::metal()).unwrap();
+        assert_eq!(old.name(), "real");
+        assert_eq!(reg.get("real").unwrap().energy(), "electron_volt");
     }
 
     #[test]

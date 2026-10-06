@@ -51,6 +51,7 @@ from .._lib import (
     Style,
     Type,
     assign_cmaps,
+    clpol_polarizability,
     read_amber_prmtop_ff,
     read_forcefield_xml,
     read_gromacs_system,
@@ -61,6 +62,7 @@ from .._lib import (
     read_opls_xml,
     write_amber_frcmod,
     write_forcefield_xml,
+    write_gromacs_system,
     write_gromacs_top_ff,
     write_lammps_cmap,
     write_lammps_data_coeffs,
@@ -144,6 +146,7 @@ __all__ = [
     "assign_cmaps",
     # subpackages
     "charge",
+    "clpol_polarizability",
     "compute_k_ij",
     "fragment_scaling_data",
     # pair helpers + polarizable fragment scaling
@@ -163,6 +166,7 @@ __all__ = [
     "typifier",
     "write_amber_frcmod",
     "write_forcefield_xml",
+    "write_gromacs_system",
     "write_gromacs_top_ff",
     "write_lammps_cmap",
     "write_lammps_data_coeffs",

@@ -14,12 +14,19 @@
 //!
 //! ## Output Frame
 //!
-//! - `"atoms"` block: `id` (i32, 1-based), `name` (str), `x`/`y`/`z` (F),
-//!   `atom_type` (str), `subst_id` (i32) and `subst_name` (str) when present,
-//!   `charge` (F) when present.
-//! - `"bonds"` block (when present): `atomi`/`atomj` (u32, 0-based indices),
-//!   `sybyl_bond_type` (str), plus the canonical `bond_type` / `bond_number`.
+//! Columns carry the canonical vocabulary names; the MOL2 field each one
+//! comes from is in parentheses.
+//!
+//! - `"atoms"` block: `id` (uint, 1-based; `atom_id`), `name` (str;
+//!   `atom_name`), `x`/`y`/`z` (F), `type` (str; the SYBYL `atom_type`),
+//!   `res_id` (uint; `subst_id`) and `res_name` (str; `subst_name`) when
+//!   present, `charge` (F) when present.
+//! - `"bonds"` block (when present): `atomi`/`atomj` (uint, 0-based indices),
+//!   `type` (str; the SYBYL `bond_type` token `1`, `2`, `ar`, `am`, …), plus
+//!   the chemical `bond_type` / `bond_number` codes it maps onto.
 //! - `frame.meta["title"]` = molecule name.
+//!
+//! The writer reads the same names back.
 
 use std::io::{BufRead, BufWriter, Error, ErrorKind, Result, Write};
 use std::path::Path;
@@ -28,6 +35,7 @@ use ndarray::{Array1, IxDyn};
 
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
+use molrs::store::schema::consts as keys;
 use molrs::types::{F, I, Idx};
 
 use crate::io::reader::{FrameReader, Reader};
@@ -327,16 +335,16 @@ fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Resu
     insert_float_col(&mut block, "x", x)?;
     insert_float_col(&mut block, "y", y)?;
     insert_float_col(&mut block, "z", z)?;
-    insert_str_col(&mut block, "atom_type", a_type)?;
+    insert_str_col(&mut block, keys::TYPE, a_type)?;
     if have_subst {
-        // Canonical ``res_id`` is uint; store subst_id as U so rename
-        // (Mol2FieldFormatter) does not fail the frame schema.
+        // `res_id` is unsigned in the vocabulary; a negative `subst_id`
+        // (unheard of in practice) is clamped to 0.
         insert_uint_col(
             &mut block,
-            "subst_id",
+            keys::RES_ID,
             subst_id.iter().map(|&v| v.max(0) as Idx).collect(),
         )?;
-        insert_str_col(&mut block, "subst_name", subst_name)?;
+        insert_str_col(&mut block, keys::RES_NAME, subst_name)?;
     }
     if have_charge {
         insert_float_col(&mut block, "charge", charge)?;
@@ -375,10 +383,10 @@ fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Resu
         let mut bblock = Block::new();
         insert_uint_col(&mut bblock, "atomi", atomi)?;
         insert_uint_col(&mut bblock, "atomj", atomj)?;
-        // SYBYL's own alphabet ("1", "2", "ar", "am") is format-local and keeps a
-        // format-local name: `bond_type` is the canonical chemical class, a uint
-        // code, and two quantities never share one key.
-        insert_str_col(&mut bblock, "sybyl_bond_type", btype)?;
+        // SYBYL's own alphabet ("1", "2", "ar", "am") is the bond's type label,
+        // so it is the string `type` column; `bond_type` is the chemical class,
+        // a uint code, and two quantities never share one key.
+        insert_str_col(&mut bblock, keys::TYPE, btype)?;
 
         // …and the canonical pair it maps onto. `ar` declares delocalization
         // and no Kekulé phase, so its number is left unknown for
@@ -512,9 +520,9 @@ pub fn write_mol2_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
         .get("z")
         .and_then(|c| c.as_float())
         .ok_or_else(|| invalid_data("atoms.z missing"))?;
-    let type_col = atoms.get("atom_type").and_then(|c| c.as_string());
-    let subst_id_col = atoms.get("subst_id").and_then(|c| c.as_int());
-    let subst_name_col = atoms.get("subst_name").and_then(|c| c.as_string());
+    let type_col = atoms.get(keys::TYPE).and_then(|c| c.as_string());
+    let subst_id_col = atoms.get(keys::RES_ID).and_then(|c| c.as_uint());
+    let subst_name_col = atoms.get(keys::RES_NAME).and_then(|c| c.as_string());
     for i in 0..n {
         let id = id_col.map(|c| c[[i]]).unwrap_or((i as Idx) + 1);
         let name = name_col.map(|c| c[[i]].as_str()).unwrap_or("X");
@@ -551,7 +559,7 @@ pub fn write_mol2_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
             .get("atomj")
             .and_then(|c| c.as_uint())
             .ok_or_else(|| invalid_data("bonds.atomj missing"))?;
-        let btype_col = b.get("sybyl_bond_type").and_then(|c| c.as_string());
+        let btype_col = b.get(keys::TYPE).and_then(|c| c.as_string());
         for i in 0..n_bonds {
             let bt = btype_col.map(|c| c[[i]].as_str()).unwrap_or("1");
             writeln!(
@@ -613,6 +621,57 @@ mod tests {
         let atomj = bonds.get("atomj").and_then(|c| c.as_uint()).unwrap();
         assert_eq!(atomi[[0]], 0);
         assert_eq!(atomj[[0]], 1);
+    }
+
+    #[test]
+    fn columns_carry_canonical_names() {
+        let mut reader = Mol2Reader::new(Cursor::new(ETHANE_MIN.as_bytes()));
+        let frame = reader.read().unwrap().unwrap();
+        let atoms = frame.get("atoms").unwrap();
+        for key in ["type", "res_id", "res_name"] {
+            assert!(atoms.contains_key(key), "atoms.{key}");
+        }
+        for key in ["atom_type", "subst_id", "subst_name"] {
+            assert!(!atoms.contains_key(key), "atoms.{key} is format-native");
+        }
+        let bonds = frame.get("bonds").unwrap();
+        assert_eq!(
+            bonds.get("type").and_then(|c| c.as_string()).unwrap()[[0]],
+            "1"
+        );
+        assert!(!bonds.contains_key("sybyl_bond_type"));
+    }
+
+    #[test]
+    fn residues_and_types_round_trip() {
+        const TWO_RES: &str = "@<TRIPOS>MOLECULE\nX\n2 1 2 0 0\nSMALL\nNO_CHARGES\n@<TRIPOS>ATOM\n1 C1 0.0 0.0 0.0 C.ar 7 BEN 0.0\n2 N1 1.4 0.0 0.0 N.am 9 AMD 0.0\n@<TRIPOS>BOND\n1 1 2 am\n";
+        let frame = Mol2Reader::new(Cursor::new(TWO_RES.as_bytes()))
+            .read()
+            .unwrap()
+            .unwrap();
+        let mut buf = Vec::new();
+        write_mol2_frame(&mut buf, &frame).unwrap();
+        let back = Mol2Reader::new(Cursor::new(&buf)).read().unwrap().unwrap();
+        let atoms = back.get("atoms").unwrap();
+        let res_id: Vec<Idx> = atoms
+            .get("res_id")
+            .and_then(|c| c.as_uint())
+            .unwrap()
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(res_id, [7, 9]);
+        let types = atoms.get("type").and_then(|c| c.as_string()).unwrap();
+        assert_eq!((types[[0]].as_str(), types[[1]].as_str()), ("C.ar", "N.am"));
+        let res_name = atoms.get("res_name").and_then(|c| c.as_string()).unwrap();
+        assert_eq!(res_name[[1]], "AMD");
+        let btype = back
+            .get("bonds")
+            .unwrap()
+            .get("type")
+            .and_then(|c| c.as_string())
+            .unwrap();
+        assert_eq!(btype[[0]], "am");
     }
 
     #[test]

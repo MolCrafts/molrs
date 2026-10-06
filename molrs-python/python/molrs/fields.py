@@ -22,9 +22,7 @@ from typing import ClassVar
 __all__ = [
     "FieldFormatter",
     "LammpsFieldFormatter",
-    "Mol2FieldFormatter",
     "PdbFieldFormatter",
-    "XyzFieldFormatter",
 ]
 
 
@@ -95,28 +93,4 @@ class LammpsFieldFormatter(FieldFormatter):
     _field_formatters: ClassVar[dict[str, str]] = {
         "q": "charge",
         "mol": "mol_id",
-    }
-
-
-class XyzFieldFormatter(FieldFormatter):
-    """XYZ ↔ canonical names."""
-
-    _field_formatters: ClassVar[dict[str, str]] = {
-        "symbol": "element",
-        "species": "element",
-    }
-
-
-class Mol2FieldFormatter(FieldFormatter):
-    """Tripos MOL2 ↔ canonical names.
-
-    ``atom_type`` is the SYBYL type label, mapped onto the shared string
-    ``type`` column. Substructure fields are residues.
-    """
-
-    _field_formatters: ClassVar[dict[str, str]] = {
-        "atom_type": "type",
-        "subst_id": "res_id",
-        "subst_name": "res_name",
-        "sybyl_bond_type": "type",
     }

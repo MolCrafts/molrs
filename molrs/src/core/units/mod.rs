@@ -45,7 +45,10 @@ pub mod unit;
 
 pub use dimension::Dimension;
 pub use error::UnitsError;
-pub use preset::{PresetDim, UnitPreset, UnitPresetRegistry, lookup_preset, register_preset};
+pub use preset::{
+    PresetDim, UnitPreset, UnitPresetRegistry, lookup_preset, preset_names, register_preset,
+    replace_preset,
+};
 pub use quantity::Quantity;
 pub use registry::{UnitDef, UnitRegistry};
 pub use unit::Unit;

@@ -1,5 +1,6 @@
 //! Single-structure data file formats: PDB, XYZ, GRO, mol2, SDF, CIF,
-//! LAMMPS data, XSF, AMBER inpcrd / prmtop (structure half), and
+//! LAMMPS data (and the `fix bond/react` file set around it), XSF, AMBER
+//! inpcrd / prmtop (structure half), and
 //! VASP/Gaussian grid formats (CHGCAR, POSCAR, Cube).
 //!
 //! Force-field files (GROMACS `.top`/`.itp`, AMBER frcmod and the prmtop
@@ -15,6 +16,7 @@ pub mod cif;
 pub mod cube;
 pub mod gro;
 pub mod inpcrd;
+pub mod lammps_bond_react;
 pub mod lammps_data;
 pub mod lammps_molecule;
 pub mod mol2;

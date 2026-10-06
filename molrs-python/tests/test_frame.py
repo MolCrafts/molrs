@@ -890,3 +890,38 @@ class TestFrameSubset:
     def test_a_missing_block_is_a_key_error(self):
         with pytest.raises(KeyError):
             self._chain().subset([0], block="missing")
+
+
+class TestFrameConcat:
+    @staticmethod
+    def _chain(n: int, charge: bool = False) -> molrs.Frame:
+        frame = molrs.Frame()
+        atoms = molrs.Block()
+        atoms.insert("x", np.arange(n, dtype=np.float64))
+        if charge:
+            atoms.insert("charge", np.zeros(n))
+        bonds = molrs.Block()
+        bonds.insert("atomi", np.arange(n - 1, dtype=np.uint64))
+        bonds.insert("atomj", np.arange(1, n, dtype=np.uint64))
+        frame["atoms"] = atoms
+        frame["bonds"] = bonds
+        return frame
+
+    def test_endpoints_are_offset_past_earlier_parts(self):
+        joined = molrs.Frame.concat([self._chain(2), self._chain(3)])
+        assert joined["atoms"].nrows == 5
+        assert list(joined["bonds"]["atomi"]) == [0, 2, 3]
+        assert list(joined["bonds"]["atomj"]) == [1, 3, 4]
+
+    def test_concat_of_copies_equals_replicate(self):
+        chain = self._chain(3)
+        joined = molrs.Frame.concat([chain, chain])
+        tiled = chain.replicate(2)
+        assert list(joined["bonds"]["atomj"]) == list(tiled["bonds"]["atomj"])
+
+    def test_a_column_one_part_lacks_is_null_there(self):
+        joined = molrs.Frame.concat([self._chain(2, charge=True), self._chain(2)])
+        assert list(joined["atoms"].validity("charge")) == [True, True, False, False]
+
+    def test_no_parts_give_an_empty_frame(self):
+        assert len(molrs.Frame.concat([])) == 0

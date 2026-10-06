@@ -205,3 +205,115 @@ class TestBlockCsv:
         path = tmp_path / "out.csv"
         assert molrs.io.write_block_csv(molrs.Block({"x": [1.0, 2.0]}), path) is None
         np.testing.assert_allclose(molrs.io.read_block_csv(path)["x"], [1.0, 2.0])
+
+
+class TestCanonicalNativeColumns:
+    """Readers whose native columns are the canonical ones are re-exported
+    by identity: no Python renaming layer."""
+
+    def test_mol2_reader_and_writer_are_the_compiled_functions(self):
+        assert molrs.io.read_mol2 is molrs._lib.read_mol2
+        assert molrs.io.write_mol2 is molrs._lib.write_mol2
+        assert molrs.io.read_xyz is molrs._lib.read_xyz
+        assert molrs.io.read_lammps_data is molrs._lib.read_lammps_data
+
+    def test_mol2_columns_are_canonical_and_round_trip(self, tmp_path):
+        path = tmp_path / "x.mol2"
+        path.write_text(
+            "@<TRIPOS>MOLECULE\nX\n2 1 2 0 0\nSMALL\nNO_CHARGES\n@<TRIPOS>ATOM\n"
+            "1 C1 0.0 0.0 0.0 C.ar 7 BEN 0.0\n2 N1 1.4 0.0 0.0 N.am 9 AMD 0.0\n"
+            "@<TRIPOS>BOND\n1 1 2 am\n"
+        )
+        frame = molrs.io.read_mol2(path)
+        atoms = frame["atoms"]
+        assert list(atoms["type"]) == ["C.ar", "N.am"]
+        assert list(atoms["res_id"]) == [7, 9]
+        assert list(frame["bonds"]["type"]) == ["am"]
+        out = tmp_path / "y.mol2"
+        molrs.io.write_mol2(out, frame)
+        back = molrs.io.read_mol2(out)
+        assert list(back["atoms"]["res_name"]) == ["BEN", "AMD"]
+
+    def test_extxyz_species_is_element_and_wide_properties_stay_whole(self, tmp_path):
+        path = tmp_path / "f.xyz"
+        path.write_text(
+            "2\nProperties=species:S:1:pos:R:3:forces:R:3\n"
+            "O 0 0 0 0.1 0.2 0.3\nH 1 0 0 -0.1 -0.2 -0.3\n"
+        )
+        atoms = molrs.io.read_xyz(path)["atoms"]
+        assert list(atoms["element"]) == ["O", "H"]
+        assert atoms["forces"].shape == (2, 3)
+        assert "forces_1" not in atoms
+
+
+class TestLammpsDataLabels:
+    LABELLED = (
+        "test\n\n3 atoms\n1 bonds\n2 atom types\n1 bond types\n\n"
+        "0 10 xlo xhi\n0 10 ylo yhi\n0 10 zlo zhi\n\n"
+        "Atom Type Labels\n\n1 OW\n2 HW\n\nBond Type Labels\n\n1 OW-HW\n\n"
+        "Atoms # full\n\n1 1 1 -0.8 0 0 0\n2 1 2 0.4 1 0 0\n3 1 2 0.4 0 1 0\n\n"
+        "Bonds\n\n1 1 1 2\n"
+    )
+
+    def test_typed_blocks_carry_string_types(self, tmp_path):
+        path = tmp_path / "w.data"
+        path.write_text(self.LABELLED)
+        frame = molrs.io.read_lammps_data(path)
+        assert list(frame["atoms"]["type"]) == ["OW", "HW", "HW"]
+        assert list(frame["atoms"]["type_id"]) == [1, 2, 2]
+        assert list(frame["bonds"]["type"]) == ["OW-HW"]
+
+    def test_atom_style_sets_the_atoms_layout(self, tmp_path):
+        path = tmp_path / "a.data"
+        path.write_text(
+            "t\n\n1 atoms\n1 atom types\n\n0 1 xlo xhi\n0 1 ylo yhi\n0 1 zlo zhi\n\n"
+            "Atoms # full\n\n1 1 0.1 0.2 0.3\n"
+        )
+        atoms = molrs.io.read_lammps_data(path, atom_style="atomic")["atoms"]
+        assert "charge" not in atoms and "mol_id" not in atoms
+        with pytest.raises(OSError, match="atom style"):
+            molrs.io.read_lammps_data(path, atom_style="nonsense")
+
+    def test_write_declares_extra_type_labels(self, tmp_path):
+        src = tmp_path / "w.data"
+        src.write_text(self.LABELLED)
+        frame = molrs.io.read_lammps_data(src)
+        out = tmp_path / "o.data"
+        molrs.io.write_lammps_data(out, frame, type_labels={"atoms": ["OX"]})
+        text = out.read_text()
+        assert "3 atom types" in text
+        assert "Atom Type Labels\n\n1 HW\n2 OW\n3 OX\n" in text
+        with pytest.raises(ValueError, match="empty"):
+            molrs.io.write_lammps_data(out, frame, type_labels={"atoms": [""]})
+
+
+class TestInpcrdIntoFrame:
+    TEXT = (
+        "two atoms\n  2\n"
+        "  1.0000000   2.0000000   3.0000000   4.0000000   5.0000000   6.0000000\n"
+    )
+
+    def test_coordinates_go_into_the_given_frame(self, tmp_path):
+        path = tmp_path / "x.inpcrd"
+        path.write_text(self.TEXT)
+        frame = molrs.Frame()
+        atoms = molrs.Block()
+        atoms.insert("x", np.zeros(2))
+        atoms.insert("charge", np.array([0.5, -0.5]))
+        frame["atoms"] = atoms
+        same = molrs.io.read_amber_inpcrd(path, frame)
+        assert same is frame
+        np.testing.assert_allclose(frame["atoms"]["z"], [3.0, 6.0])
+        np.testing.assert_allclose(frame["atoms"]["charge"], [0.5, -0.5])
+        assert frame.meta["title"] == "two atoms"
+
+    def test_a_count_mismatch_leaves_the_frame_alone(self, tmp_path):
+        path = tmp_path / "x.inpcrd"
+        path.write_text(self.TEXT)
+        frame = molrs.Frame()
+        atoms = molrs.Block()
+        atoms.insert("x", np.zeros(3))
+        frame["atoms"] = atoms
+        with pytest.raises(OSError, match="rows"):
+            molrs.io.read_amber_inpcrd(path, frame)
+        assert "y" not in frame["atoms"]

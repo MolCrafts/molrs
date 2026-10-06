@@ -89,6 +89,7 @@ from pathlib import Path
 from typing import Any, Self, overload
 
 from .._lib import (
+    BondReactTemplate,
     BondingDescriptor,
     CGEdge,
     CGFragmentDef,
@@ -120,8 +121,11 @@ from .._lib import (
     read_amber_prmtop,
     read_chgcar,
     read_cube,
+    read_frame,
     read_frame_bytes,
+    read_lammps_data,
     read_lammps_log,
+    read_mol2,
     read_mrec,
     read_mrec_forcefield,
     read_mrec_meta,
@@ -130,13 +134,18 @@ from .._lib import (
     read_prep,
     read_stl,
     read_xsf,
+    read_xyz,
     write_cube,
     write_dcd_trajectory,
+    write_bond_react_map,
+    write_frame,
     write_frame_bytes,
+    write_lammps_bond_react_system,
     write_lammps_data,
     write_lammps_dump_local,
     write_lammps_molecule,
     write_lammps_trajectory,
+    write_mol2,
     write_mrec,
     write_mrec_forcefield,
     write_mrec_system,
@@ -160,22 +169,16 @@ from .._lib import XYZTrajReader as _XYZTrajReader
 from .._lib import read_block_csv as _read_block_csv
 from .._lib import read_gro as _read_gro
 from .._lib import read_gro_trajectory as _read_gro_trajectory
-from .._lib import read_lammps_data as _read_lammps_data
 from .._lib import read_lammps_molecule as _read_lammps_molecule
-from .._lib import read_mol2 as _read_mol2
 from .._lib import read_pdb as _read_pdb
 from .._lib import read_pdb_trajectory as _read_pdb_trajectory
-from .._lib import read_xyz as _read_xyz
 from .._lib import write_block_csv as _write_block_csv
 from .._lib import write_gro as _write_gro
 from .._lib import write_gro_trajectory as _write_gro_trajectory
-from .._lib import write_mol2 as _write_mol2
 from ..fields import (
     FieldFormatter,
     LammpsFieldFormatter,
-    Mol2FieldFormatter,
     PdbFieldFormatter,
-    XyzFieldFormatter,
 )
 from . import mrec, raw
 
@@ -183,25 +186,10 @@ PathInput = str | PathLike[str]
 
 _pdb_fmt = PdbFieldFormatter()
 _lammps_fmt = LammpsFieldFormatter()
-_xyz_fmt = XyzFieldFormatter()
-_mol2_fmt = Mol2FieldFormatter()
-# DCD / TRR / XTC frames carry only coordinates / box — no format-specific
-# column names to canonicalize, so a no-op formatter is correct.
+# XYZ, DCD, TRR and XTC readers already emit canonical names (DCD / TRR /
+# XTC frames carry only coordinates and the box), so a no-op formatter is
+# correct.
 _noop_fmt = FieldFormatter()
-
-
-def read_lammps_data(file: PathInput) -> Frame:
-    """Read a LAMMPS data file.
-
-    The atom style is detected from the file (column count and the optional
-    ``Atoms # <style>`` comment).
-
-    Returns:
-        A molrs ``Frame`` with canonical field names.
-    """
-    result = _read_lammps_data(file)
-    _lammps_fmt.canonicalize_frame(result)
-    return result
 
 
 def read_pdb(file: PathInput) -> Frame:
@@ -227,17 +215,6 @@ def read_pdb_trajectory(file: PathInput) -> list[Frame]:
     return frames
 
 
-def read_xyz(file: PathInput) -> Frame:
-    """Read an XYZ file.
-
-    Returns a molrs ``Frame`` with canonical field names
-    (``element`` instead of ``symbol``).
-    """
-    result = _read_xyz(file)
-    _xyz_fmt.canonicalize_frame(result)
-    return result
-
-
 def read_gro(file: PathInput) -> Frame:
     """Read the first frame of a GROMACS GRO file.
 
@@ -258,30 +235,6 @@ def read_gro_trajectory(file: PathInput) -> list[Frame]:
     returns a one-element list. Inverse of :func:`write_gro_trajectory`.
     """
     return _read_gro_trajectory(file)
-
-
-def read_mol2(file: PathInput) -> Frame:
-    """Read a Tripos MOL2 file (first molecule).
-
-    Returns a molrs ``Frame`` with canonical field names (``type`` instead of
-    ``atom_type``, ``res_id``/``res_name`` instead of ``subst_*``).
-    """
-    result = _read_mol2(file)
-    _mol2_fmt.canonicalize_frame(result)
-    return result
-
-
-def write_mol2(file: PathInput, frame: Frame) -> None:
-    """Write a Frame to a Tripos MOL2 file.
-
-    Localises canonical columns (``type`` → ``atom_type``, residue pair) for
-    the native writer, then restores them, so *frame* is left as it was passed.
-    """
-    _mol2_fmt.localize_frame(frame)
-    try:
-        _write_mol2(file, frame)
-    finally:
-        _mol2_fmt.canonicalize_frame(frame)
 
 
 def read_lammps_molecule(file: PathInput) -> Frame:
@@ -448,7 +401,7 @@ def read_xyz_trajectory(file: PathInput | Sequence[PathInput]) -> TrajectoryRead
     """Open one XYZ trajectory, or several whose frames are concatenated, as a
     lazy :class:`TrajectoryReader` (``molrs.io.raw.read_xyz_trajectory`` is
     the eager ``list[Frame]`` form)."""
-    return TrajectoryReader([_XYZTrajReader(p) for p in _as_paths(file)], _xyz_fmt)
+    return TrajectoryReader([_XYZTrajReader(p) for p in _as_paths(file)], _noop_fmt)
 
 
 def read_dcd_trajectory(file: PathInput | Sequence[PathInput]) -> TrajectoryReader:
@@ -530,6 +483,7 @@ def write_block_csv(
 
 
 __all__ = [
+    "BondReactTemplate",
     "BondingDescriptor",
     "CGEdge",
     "CGFragmentDef",
@@ -565,6 +519,7 @@ __all__ = [
     "read_chgcar",
     "read_cube",
     "read_dcd_trajectory",
+    "read_frame",
     "read_frame_bytes",
     "read_gro",
     "read_gro_trajectory",
@@ -590,9 +545,12 @@ __all__ = [
     "write_block_csv",
     "write_cube",
     "write_dcd_trajectory",
+    "write_bond_react_map",
+    "write_frame",
     "write_frame_bytes",
     "write_gro",
     "write_gro_trajectory",
+    "write_lammps_bond_react_system",
     "write_lammps_data",
     "write_lammps_dump_local",
     "write_lammps_molecule",

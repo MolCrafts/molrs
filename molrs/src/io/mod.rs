@@ -10,6 +10,8 @@
 //!   formats. [`mrec`] writes and reads a [`crate::Frame`] or
 //!   [`crate::Trajectory`] as a `*.mrec` directory or packed `*.mrec.zip`
 //!   (Zarr V3 on disk; Cargo feature `zarr`, adapter crate-private)
+//! - [`format`] — [`read_frame`] / [`write_frame`], the one door that picks a
+//!   structure format from a file name (or format name) and hands off to it
 //! - [`reader`] / [`writer`] / [`streaming`] — shared traits and the
 //!   chunk-based frame-indexing infrastructure
 //! - [`smiles`] — SMILES/SMARTS and CGsmiles notation parsing (feature
@@ -17,6 +19,7 @@
 
 pub mod csv;
 pub mod data;
+pub mod format;
 /// Shared LAMMPS primitives (atom_style layouts, box bounds, helpers).
 /// Used by both the data-file and dump trajectory readers.
 pub(crate) mod lammps;
@@ -35,3 +38,5 @@ pub mod mrec;
 pub mod smiles;
 #[cfg(feature = "zarr")]
 pub(crate) mod zarr;
+
+pub use format::{FrameFormat, read_frame, write_frame};

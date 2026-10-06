@@ -439,6 +439,73 @@ impl TypeLabels {
             .find(|(name, _)| *name == block)
             .map(|(_, types)| types)
     }
+
+    /// The inventory meta key of `block` (`"atoms"` → `"atom_type_labels"`),
+    /// or `None` for a block this contract does not cover.
+    pub fn inventory_key(block: &str) -> Option<&'static str> {
+        Self::BLOCKS
+            .iter()
+            .find(|(name, _)| *name == block)
+            .map(|(_, key)| *key)
+    }
+
+    /// Declare `labels` as types of `block` whether or not a row uses them,
+    /// by merging them into the block's inventory meta key.
+    ///
+    /// The inventory becomes the union of what it declared and `labels`, in
+    /// the sorted order [`TypeLabels`] gives ids in, so for a block typed by
+    /// string labels the ids of the declared and the used types agree with
+    /// what [`from_frame`](Self::from_frame) resolves. (A block typed only by
+    /// numeric `type_id` takes its labels from the inventory *by id*, which
+    /// re-sorting would scramble: declare labels on string-typed blocks.)
+    ///
+    /// # Errors
+    ///
+    /// `Err` naming the label for an empty label or one containing `,` (the
+    /// inventory separator), for a `block` not covered (see the type docs),
+    /// and for an existing inventory that does not parse. `frame` is
+    /// unchanged on error.
+    pub fn declare<S: AsRef<str>>(
+        frame: &mut crate::core::store::frame::Frame,
+        block: &str,
+        labels: impl IntoIterator<Item = S>,
+    ) -> Result<(), String> {
+        let key = Self::inventory_key(block)
+            .ok_or_else(|| format!("block {block:?} has no type-label inventory"))?;
+        let mut all: Vec<String> = match frame.meta.get(key) {
+            None => Vec::new(),
+            Some(value) => {
+                let raw = value
+                    .as_str()
+                    .ok_or_else(|| format!("meta {key:?} must be a string"))?;
+                BlockTypes::parse_inventory(key, raw)?
+            }
+        };
+        for label in labels {
+            let label = label.as_ref().trim();
+            if label.is_empty() {
+                return Err(format!("{block}: an empty type label cannot be declared"));
+            }
+            if label.contains(',') {
+                return Err(format!(
+                    "{block}: type label {label:?} contains ',', the inventory separator"
+                ));
+            }
+            all.push(label.to_owned());
+        }
+        let ordered = BlockTypes::sorted(all);
+        if ordered.is_empty() {
+            return Ok(());
+        }
+        let packed = ordered
+            .iter()
+            .enumerate()
+            .map(|(i, label)| format!("{}:{label}", i + 1))
+            .collect::<Vec<_>>()
+            .join(",");
+        frame.meta.insert(key, packed);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -449,6 +516,34 @@ mod tests {
     use crate::core::store::keys;
     use crate::core::types::Idx;
     use ndarray::{ArrayD, IxDyn};
+
+    #[test]
+    fn declare_merges_into_the_sorted_inventory() {
+        let mut frame = Frame::new();
+        frame.insert("atoms", label_block(&["c3", "c3"]));
+        frame.meta.insert(keys::ATOM_TYPE_LABELS, "1:oh");
+        TypeLabels::declare(&mut frame, "atoms", ["hc", "c3"]).unwrap();
+        assert_eq!(
+            frame
+                .meta
+                .get(keys::ATOM_TYPE_LABELS)
+                .and_then(|v| v.as_str()),
+            Some("1:c3,2:hc,3:oh")
+        );
+        let labels = TypeLabels::from_frame(&frame).unwrap();
+        let atoms = labels.block("atoms").unwrap();
+        assert_eq!(atoms.labels().unwrap(), ["c3", "hc", "oh"]);
+        assert_eq!(atoms.type_ids(), [1, 1]);
+    }
+
+    #[test]
+    fn declare_refuses_empty_and_separator_labels_and_unknown_blocks() {
+        let mut frame = Frame::new();
+        assert!(TypeLabels::declare(&mut frame, "atoms", [" "]).is_err());
+        assert!(TypeLabels::declare(&mut frame, "atoms", ["a,b"]).is_err());
+        assert!(TypeLabels::declare(&mut frame, "pairs", ["a"]).is_err());
+        assert!(frame.meta.get(keys::ATOM_TYPE_LABELS).is_none());
+    }
 
     // ------------------------------------------------------------------
     // Fixture builders

@@ -14,7 +14,7 @@
 //! unit axis `k̂` is `q = (cos(θ/2), sin(θ/2) k̂)`.
 
 use crate::op::types::{F, Mat3, Quat, Vec3};
-use crate::op::vec3::{add, cross, dot, norm, normalize, perpendicular, scale, sub};
+use crate::op::vec3::{add, cross, dot, norm, normalize, perpendicular, scale, sub, unit_or_zero};
 
 /// A rigid motion `p' = R p + t`: rotate by `rotation`, then translate by
 /// `translation`.
@@ -168,6 +168,35 @@ pub fn compose(outer: &Rigid, inner: &Rigid) -> Rigid {
         rotation,
         translation: apply(outer, inner.translation),
     }
+}
+
+/// Natural-extension reference frame (NeRF): the point `d` that sits at
+/// distance `bond` from `c`, makes the angle `angle` at `c` with `b`
+/// (`∠b–c–d`), and the dihedral `torsion` about `b → c` with `a`
+/// (`a–b–c–d`). Angles in radians, `bond` in the length unit of the points.
+///
+/// The exact inverse of [`angle`](crate::op::vec3::angle) and
+/// [`dihedral`](crate::op::vec3::dihedral): for the returned `d`,
+/// `angle(b, c, d) == angle` and `dihedral(a, b, c, d) == torsion` to
+/// rounding. With `b̂c` the unit `b → c`, `n̂` the unit normal of the plane
+/// `(a, b, c)` and `m = n̂ × b̂c`, `d = c + b̂c·(−r cos θ) + m·(r sin θ cos φ) +
+/// n̂·(r sin θ sin φ)`. Collinear `a, b, c` leave the plane undefined: `n̂`
+/// then comes back as zero (see
+/// [`unit_or_zero`](crate::op::vec3)), and so does every off-axis component.
+///
+/// Parsons et al., *J. Comput. Chem.* **26** (2005) 1063.
+pub fn nerf(a: Vec3, b: Vec3, c: Vec3, bond: F, angle: F, torsion: F) -> Vec3 {
+    let bc = unit_or_zero(sub(c, b));
+    let n = unit_or_zero(cross(sub(b, a), bc));
+    let m = cross(n, bc);
+    let (st, ct) = angle.sin_cos();
+    let (sp, cp) = torsion.sin_cos();
+    let d2 = [-bond * ct, bond * st * cp, bond * st * sp];
+    [
+        c[0] + bc[0] * d2[0] + m[0] * d2[1] + n[0] * d2[2],
+        c[1] + bc[1] * d2[0] + m[1] * d2[1] + n[1] * d2[2],
+        c[2] + bc[2] * d2[0] + m[2] * d2[1] + n[2] * d2[2],
+    ]
 }
 
 /// Quaternion conjugate `q* = (w, −x, −y, −z)`.
@@ -467,5 +496,19 @@ mod tests {
         // (2, 0, 0, 0) is the identity rotation once normalised.
         let r = quat_to_matrix([2.0, 0.0, 0.0, 0.0]);
         assert_mat_close(r, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+    }
+
+    #[test]
+    fn nerf_inverts_angle_and_dihedral() {
+        use crate::op::vec3::{angle, dihedral};
+        let (a, b, c) = ([0.3, -1.1, 0.2], [0.0, 0.0, 0.0], [1.5, 0.1, -0.2]);
+        for &(r, theta, phi) in &[(1.09, 1.91, 0.4), (1.53, 2.1, -2.9), (0.96, 1.2, PI)] {
+            let d = nerf(a, b, c, r, theta, phi);
+            assert!((norm(sub(d, c)) - r).abs() < 1e-12);
+            assert!((angle(b, c, d) - theta).abs() < 1e-12);
+            let got = dihedral(a, b, c, d);
+            let wrapped = (got - phi + PI).rem_euclid(2.0 * PI) - PI;
+            assert!(wrapped.abs() < 1e-12, "torsion {phi} came back {got}");
+        }
     }
 }

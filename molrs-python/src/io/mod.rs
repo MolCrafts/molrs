@@ -20,7 +20,9 @@
 
 // `CGsmiles` is pure text: no filesystem store, hence no `fs` gate, unlike the
 // two path-backed families below.
+pub mod bond_react;
 pub mod cgsmiles;
+pub mod format;
 #[cfg(feature = "fs")]
 pub mod log;
 // Both doors need the filesystem store in the core crate; without `fs` the
@@ -176,27 +178,6 @@ pub fn read_xyz_trajectory(path: PathBuf) -> PyResult<Vec<PyFrame>> {
     frames.into_iter().map(PyFrame::from_core_frame).collect()
 }
 
-/// Read a LAMMPS data file and return a Frame.
-///
-/// Parameters
-/// ----------
-/// path : str
-///     Path to a LAMMPS data file on disk.
-///
-/// Returns
-/// -------
-/// Frame
-///     Parsed molecular data with atoms, bonds, and box metadata.
-///
-/// Raises
-/// ------
-/// IOError
-///     If the file cannot be opened or parsed.
-///
-/// Examples
-/// --------
-/// >>> frame = molrs.io.read_lammps_data("system.data")
-/// >>> atoms = frame["atoms"]
 /// Read an STL surface mesh (ASCII or binary) into a [`PyTriMesh`].
 ///
 /// The file's numbers are taken as they are; convert with
@@ -208,10 +189,62 @@ pub fn read_stl(path: PathBuf) -> PyResult<PyTriMesh> {
     Ok(PyTriMesh { inner: mesh })
 }
 
+/// Read a LAMMPS data file and return a Frame.
+///
+/// Every typed block (``atoms``, ``bonds``, ``angles``, ``dihedrals``,
+/// ``impropers``) carries the numeric ``type_id`` and the string ``type``: the
+/// file's type label, or the id spelled as a label when the file has no
+/// ``* Type Labels`` section. The ``* Coeffs`` sections are kept verbatim in
+/// ``frame.meta["lammps_coeffs_text"]`` (read them into a force field with
+/// :func:`molrs.ff.read_lammps_data_coeffs`); the type-label inventories,
+/// header counts, unit style and the box axes the header named are in
+/// ``frame.meta`` too.
+///
+/// Parameters
+/// ----------
+/// path : str
+///     Path to a LAMMPS data file on disk.
+/// atom_style : str, optional
+///     The ``Atoms`` column layout (``"full"``, ``"atomic"``, ``"charge"``,
+///     …), as LAMMPS's ``atom_style`` governs ``read_data``. Without it the
+///     section's ``# style`` comment decides, and without that the column
+///     count.
+///
+/// Returns
+/// -------
+/// Frame
+///     Parsed molecular data with atoms, bonds, and box metadata.
+///
+/// Raises
+/// ------
+/// IOError
+///     If the file cannot be opened or parsed, or ``atom_style`` is not an
+///     atom style.
+///
+/// Examples
+/// --------
+/// >>> frame = molrs.io.read_lammps_data("system.data")
+/// >>> atoms = frame["atoms"]
 #[pyfunction]
-pub fn read_lammps_data(path: PathBuf) -> PyResult<PyFrame> {
+#[pyo3(signature = (path, atom_style = None))]
+pub fn read_lammps_data(path: PathBuf, atom_style: Option<&str>) -> PyResult<PyFrame> {
+    use molrs::io::data::lammps_data::LAMMPSDataReader;
+    use molrs::io::reader::FrameReader;
     let path = path_str(&path)?;
-    let frame = read_lammps_data_rs(path).map_err(io_error_to_pyerr)?;
+    let frame = match atom_style {
+        None => read_lammps_data_rs(path).map_err(io_error_to_pyerr)?,
+        Some(style) => {
+            let file = File::open(path).map_err(io_error_to_pyerr)?;
+            LAMMPSDataReader::new(std::io::BufReader::new(file))
+                .with_atom_style(style)
+                .map_err(io_error_to_pyerr)?
+                .read()
+                .map_err(io_error_to_pyerr)?
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyIOError::new_err("no frame in LAMMPS data file")
+                })?
+        }
+    };
     PyFrame::from_core_frame(frame)
 }
 
@@ -1023,10 +1056,11 @@ pub fn write_cube(path: PathBuf, frame: &PyFrame) -> PyResult<()> {
 
 /// Read a Tripos MOL2 file and return the first molecule as a Frame.
 ///
-/// Format-native columns on atoms: ``id``, ``name``, ``x``/``y``/``z``,
-/// ``atom_type``, optional ``subst_id``/``subst_name``/``charge``. Bonds carry
-/// ``atomi``/``atomj`` (0-based), ``sybyl_bond_type``, and canonical
-/// ``bond_type``/``bond_number``.
+/// Canonical columns on atoms: ``id``, ``name``, ``x``/``y``/``z``, ``type``
+/// (the SYBYL atom type), optional ``res_id``/``res_name`` (the MOL2
+/// substructure) and ``charge``. Bonds carry ``atomi``/``atomj`` (0-based),
+/// ``type`` (the SYBYL bond type token), and the chemical
+/// ``bond_type``/``bond_number`` codes.
 ///
 /// Parameters
 /// ----------
@@ -1045,28 +1079,54 @@ pub fn read_mol2(path: PathBuf) -> PyResult<PyFrame> {
 
 /// Read an AMBER ASCII inpcrd / restrt coordinate file.
 ///
-/// Fixed-width Fortran ``6F12.7`` layout. Returns a Frame with
-/// ``id``, ``name``, ``x``/``y``/``z``, optional ``vel`` (shape ``[n, 3]``),
-/// optional box, and meta ``title`` / ``timestep``.
+/// Fixed-width Fortran ``6F12.7`` layout. Without ``frame``, returns a new
+/// Frame with ``id``, ``name``, ``x``/``y``/``z``, optional ``vel`` (shape
+/// ``[n, 3]``), optional box, and meta ``title`` / ``timestep``.
+///
+/// With ``frame`` (say, the structure :func:`read_amber_prmtop` read), the
+/// file's coordinates go into that frame in place and it is returned: ``x`` /
+/// ``y`` / ``z`` (and ``vel``) replace those atom columns, every other column
+/// stays; the file's box and meta keys are set. A frame without an ``atoms``
+/// block receives the file's whole block.
 ///
 /// Parameters
 /// ----------
 /// path : str
 ///     Path to a ``.inpcrd`` or restart file.
+/// frame : Frame, optional
+///     Frame to receive the coordinates.
 ///
 /// Returns
 /// -------
 /// Frame
+///     ``frame`` itself when given, else a new frame.
 ///
 /// Raises
 /// ------
 /// IOError
-///     If the file cannot be opened or parsed.
+///     If the file cannot be opened or parsed, or ``frame``'s atom count
+///     differs from the file's (``frame`` is then unchanged).
 #[pyfunction]
-pub fn read_amber_inpcrd(path: PathBuf) -> PyResult<PyFrame> {
+#[pyo3(signature = (path, frame = None))]
+pub fn read_amber_inpcrd<'py>(
+    py: Python<'py>,
+    path: PathBuf,
+    frame: Option<Bound<'py, PyFrame>>,
+) -> PyResult<Bound<'py, PyAny>> {
     let path = path_str(&path)?;
-    let frame = read_amber_inpcrd_rs(path).map_err(io_error_to_pyerr)?;
-    PyFrame::from_core_frame(frame)
+    match frame {
+        None => {
+            let frame = read_amber_inpcrd_rs(path).map_err(io_error_to_pyerr)?;
+            Ok(Bound::new(py, PyFrame::from_core_frame(frame)?)?.into_any())
+        }
+        Some(target) => {
+            target
+                .borrow()
+                .with_frame_mut(|f| molrs::io::data::inpcrd::read_amber_inpcrd_into(path, f))?
+                .map_err(io_error_to_pyerr)?;
+            Ok(target.into_any())
+        }
+    }
 }
 
 /// Read an AMBER prmtop **structure** file into a Frame.
@@ -1501,16 +1561,50 @@ pub fn write_xyz_trajectory(path: PathBuf, frames: Vec<PyRef<'_, PyFrame>>) -> P
 /// shrink-wraps that box to the atoms. A frame meant to be periodic carries
 /// its box.
 ///
+/// Atoms, topology, ``Masses`` and the ``* Type Labels`` sections are
+/// written; ``* Coeffs`` are not (:func:`molrs.ff.write_lammps_data_coeffs`
+/// returns them for the same labels). A system with Drude particles (a
+/// ``drudes`` block, or atoms whose ``vsite`` is ``"drude"``) gets a header
+/// comment with the ``fix drude`` C/D/N flags in atom-type order.
+///
 /// Parameters
 /// ----------
 /// path : str
 ///     Output file path.
 /// frame : Frame
 ///     Frame to write.
+/// type_labels : dict[str, list[str]], optional
+///     Extra type labels per block (``{"atoms": [...], "bonds": [...]}``),
+///     declared in the file even when no row uses them; ids stay dense and
+///     follow the sorted labels. ``frame`` itself is not modified.
+///
+/// Raises
+/// ------
+/// ValueError
+///     If a declared label is empty or contains ``,``, or a block is not
+///     ``atoms`` / ``bonds`` / ``angles`` / ``dihedrals`` / ``impropers`` /
+///     ``cmaps``.
+/// IOError
+///     If the frame cannot be written.
 #[pyfunction]
-pub fn write_lammps_data(path: PathBuf, frame: &PyFrame) -> PyResult<()> {
+#[pyo3(signature = (path, frame, *, type_labels = None))]
+pub fn write_lammps_data(
+    path: PathBuf,
+    frame: &PyFrame,
+    type_labels: Option<std::collections::BTreeMap<String, Vec<String>>>,
+) -> PyResult<()> {
     let path = path_str(&path)?;
-    frame.with_frame(|f| write_lammps_data_rs(path, f).map_err(io_error_to_pyerr))?
+    match type_labels {
+        None => frame.with_frame(|f| write_lammps_data_rs(path, f).map_err(io_error_to_pyerr))?,
+        Some(extra) => {
+            let mut work = frame.clone_core_frame()?;
+            for (block, labels) in &extra {
+                molrs::store::type_labels::TypeLabels::declare(&mut work, block, labels)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+            }
+            write_lammps_data_rs(path, &work).map_err(io_error_to_pyerr)
+        }
+    }
 }
 
 /// Write Frames to a LAMMPS dump trajectory file.

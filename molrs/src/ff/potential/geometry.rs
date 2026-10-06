@@ -1,10 +1,11 @@
 //! Shared geometry helpers for potential kernels.
 //!
-//! Provides the flat-index [`sub3`] adapter, angle/dihedral computation, and
-//! Cartesian force projection routines used by multiple kernel families. The
-//! vector arithmetic itself is [`crate::op::vec3`].
+//! Provides the flat-index [`sub3`] adapter, the flat-array angle/dihedral
+//! entry points, and Cartesian force projection routines used by multiple
+//! kernel families. The vector arithmetic and the internal coordinates
+//! themselves are [`crate::op::vec3`].
 
-use crate::op::vec3::{cross, dot, norm};
+use crate::op::vec3::{self, cross, dot, norm};
 use molrs::types::F;
 
 // ---------------------------------------------------------------------------
@@ -19,6 +20,12 @@ pub fn sub3(a: &[F], ai: usize, b: &[F], bi: usize) -> [F; 3] {
         a[ai * 3 + 1] - b[bi * 3 + 1],
         a[ai * 3 + 2] - b[bi * 3 + 2],
     ]
+}
+
+/// Atom `i`'s position from a flat `[x0, y0, z0, x1, …]` array.
+#[inline]
+fn point(coords: &[F], i: usize) -> [F; 3] {
+    [coords[i * 3], coords[i * 3 + 1], coords[i * 3 + 2]]
 }
 
 /// Validate that `coords` length is a multiple of 3 and return atom count.
@@ -36,12 +43,10 @@ pub fn validate_coords(coords: &[F]) -> usize {
 // Angle computation
 // ---------------------------------------------------------------------------
 
-/// Compute angle i-j-k in radians.
+/// Compute angle i-j-k in radians: [`op::vec3::angle`](crate::op::vec3::angle)
+/// over the flat coordinate array.
 pub fn compute_angle(coords: &[F], i: usize, j: usize, k: usize) -> F {
-    let rji = sub3(coords, i, coords, j);
-    let rjk = sub3(coords, k, coords, j);
-    let cos_theta = dot(rji, rjk) / (norm(rji) * norm(rjk));
-    cos_theta.clamp(-1.0, 1.0).acos()
+    vec3::angle(point(coords, i), point(coords, j), point(coords, k))
 }
 
 /// Project dE/dθ into Cartesian forces for angle i-j-k.
@@ -78,19 +83,16 @@ pub fn accumulate_angle_forces(
 // Dihedral computation
 // ---------------------------------------------------------------------------
 
-/// Compute dihedral angle i-j-k-l in radians.
+/// Compute dihedral angle i-j-k-l in radians, in `(−π, π]`:
+/// [`op::vec3::dihedral`](crate::op::vec3::dihedral) over the flat
+/// coordinate array.
 pub fn compute_dihedral(coords: &[F], i: usize, j: usize, k: usize, l: usize) -> F {
-    let b1 = sub3(coords, j, coords, i);
-    let b2 = sub3(coords, k, coords, j);
-    let b3 = sub3(coords, l, coords, k);
-    let n1 = cross(b1, b2);
-    let n2 = cross(b2, b3);
-    // Standard signed dihedral: y = |b2|·(b1·n2), x = n1·n2. The earlier form
-    // used y = (n1×b2)·n2 = −|b2|²·(b1·n2), whose extra |b2| factor distorts
-    // the angle (and its gradient at the central atoms) whenever |b2| ≠ 1.
-    let x = dot(n1, n2);
-    let y = norm(b2) * dot(b1, n2);
-    y.atan2(x)
+    vec3::dihedral(
+        point(coords, i),
+        point(coords, j),
+        point(coords, k),
+        point(coords, l),
+    )
 }
 
 /// Project dE/dφ into Cartesian forces for dihedral i-j-k-l (Blondel-Karplus method).

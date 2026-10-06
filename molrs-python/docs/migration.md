@@ -1188,6 +1188,40 @@ the bullet says so):
 - **Python native typifiers** can be subclassed, but a subclass that
   defines `match` or `library` raises `TypeError` at class creation.
 
+### Structure files and geometry
+
+- **MOL2 columns are canonical in Rust.** The reader writes `type` (the
+  SYBYL atom type), `res_id` / `res_name` (the substructure) and the bonds'
+  SYBYL token as `type`; 0.15 wrote `atom_type`, `subst_id`, `subst_name`
+  and `sybyl_bond_type`, and the writer reads the new names. `molrs.io.read_mol2`
+  / `write_mol2` returned these names already and are now the compiled
+  functions themselves; `molrs.fields.Mol2FieldFormatter` is removed. The
+  writer also keeps `res_id` (0.15 read it as signed and wrote `1`).
+- **Extended XYZ: `species` reads as `element`, and a wide property is one
+  column.** `name:R:3` becomes one `(N, 3)` column `name` (0.15:
+  `name_1` … `name_3`), the shape the writer writes back as `name:R:3`.
+  `molrs.io.read_xyz` is the compiled function; `molrs.fields.XyzFieldFormatter`
+  is removed. (Rust callers: `read_xyz_frame` no longer emits `species`.)
+- **LAMMPS data files: every typed block carries a string `type`** — the
+  file's `* Type Labels` label, or the numeric id spelled as a label when
+  the file has none — beside `type_id`. A labelled file written back is
+  numbered by its sorted labels (string labels win over `type_id`, as for
+  any frame), which can renumber types; the labels, and so the system, are
+  the same. A system with Drude particles (a `drudes` block, or atoms whose
+  `vsite` is `"drude"`) gets a `# fix drude flags (atom-type order): …`
+  header comment.
+- **`write_lammps_data` writes a stated `mass`.** An atom's `mass` column
+  is its type's mass; 0.15 replaced it with the element's periodic-table
+  mass whenever the element was known, so a Drude core (lighter than its
+  element by the shell) or a united atom was written with the wrong mass.
+  Rows without a `mass` column still take the element's.
+- **`io::data::inpcrd::read_inpcrd` is removed**; it was an alias of
+  `read_amber_inpcrd`.
+- **`ff::potential::geometry::compute_angle` / `compute_dihedral`** are now
+  `op::vec3::angle` / `dihedral` over the flat array: the dihedral is in
+  `(−π, π]` (an exact `−π` folds to `π`), and an angle with a zero-length arm
+  is `π/2` instead of NaN. Energies agree with 0.15 to rounding.
+
 ### Also new in 0.16
 
 - `ForceField.materialize_params(frame, *, prefix)` (Rust
@@ -1196,6 +1230,43 @@ the bullet says so):
   as columns `<prefix><parameter>` (null where a row's type lacks one) and
   returns block → columns written; see
   [Force-field IR](guides/forcefield-ir.md#parameters-as-frame-columns).
+- **One I/O door**: `molrs::io::{read_frame, write_frame, FrameFormat}` /
+  `molrs.io.read_frame(path, format=None)`, `write_frame(path, frame,
+  format=None)` pick PDB, XYZ, SDF, MOL2, GRO, CIF, POSCAR, XSF, cube,
+  inpcrd, LAMMPS data or LAMMPS dump from the file name or a format name.
+- `Frame::concat` / `Frame.concat(frames)`: frames joined block by block,
+  relation endpoints offset past the earlier parts (`replicate` for parts
+  that differ).
+- `op::vec3::{angle, dihedral}` and `op::rigid::nerf` (NeRF placement from
+  internal coordinates).
+- LAMMPS data: `LAMMPSDataReader::with_atom_style` /
+  `read_lammps_data(path, atom_style=None)` fixes the `Atoms` layout as
+  LAMMPS's `atom_style` does; `TypeLabels::declare` /
+  `write_lammps_data(path, frame, type_labels={"atoms": [...]})` declares
+  type labels no row uses.
+- `read_amber_inpcrd_into(path, &mut frame)` /
+  `read_amber_inpcrd(path, frame=None)` reads coordinates into an existing
+  frame (a prmtop's structure).
+- LAMMPS `fix bond/react`: `io::data::lammps_bond_react::{BondReactTemplate,
+  write_bond_react_map, write_lammps_bond_react_system}` /
+  `molrs.io.BondReactTemplate`, `write_bond_react_map`,
+  `write_lammps_bond_react_system` (data, `.ff`, `_pre.mol`, `_post.mol` and
+  `.map` with one type numbering; a type only a template uses is declared
+  in the data file with the template's mass, and the `.ff` has no `units`
+  line, so the input reads it after `read_data`).
+- Regions: `mask(block)`, `region(block)` (the rows inside), `Cuboid.cube`,
+  `Sphere.center` / `radius`, `Cuboid.origin` / `lengths`; `&` / `|` with a
+  non-region return `NotImplemented`, so a selector's `__rand__` composes.
+- Units: the `openmm` preset (nm, kJ/mol, ps), `UnitPreset::new` /
+  `UnitPreset.register(name, units, boltzmann=, coulomb=, overwrite=False)`,
+  `preset_names` / `UnitPreset.names()`, `replace_preset`, and the
+  `boltzmann_constant` (`k_B`) unit.
+- `molrs.ff.write_gromacs_system(path, forcefield, frame, *, precision=6)`,
+  the Python door of `GromacsTopFfWriter::write_system_str` and the inverse
+  of `read_gromacs_system`.
+- CL&Pol: `ff::params::CLPOL_POLARIZABILITY` (`alpha.ff`, 78 types),
+  `ff::forcefield::readers::clpol::read_alpha_ff`, and
+  `molrs.ff.clpol_polarizability(path=None)`.
 - The cross-engine equivalence check and the completeness matrix
   ([Force-field IR](guides/forcefield-ir.md#completeness)), and the
   `molrs-ext-example` crate, a third party extending the IR through the

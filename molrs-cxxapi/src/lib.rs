@@ -817,8 +817,8 @@ fn z_for_symbol(sym: &str) -> Result<i32, String> {
 /// Read the first frame of an (ext)XYZ file into a materialize-ready `FrameRef`.
 ///
 /// All parsing (atom table, `Lattice="..."` -> simbox) is done by the molrs
-/// core ExtXYZ reader. The ExtXYZ `species` column is consumed and replaced by
-/// `atomic_number` (a UInt column), so the result satisfies the exact schema
+/// core ExtXYZ reader. The `element` column (the ExtXYZ `species` property) is
+/// consumed and replaced by `atomic_number` (a UInt column), so the result satisfies the exact schema
 /// that `cpu::materialize` requires (`atoms.{x,y,z,atomic_number}`). The
 /// external-format column does not cross that boundary.
 ///
@@ -832,10 +832,10 @@ fn xyz_read_first_frame(path: &str) -> Result<Box<FrameRef>, String> {
         .get_mut("atoms")
         .ok_or_else(|| "xyz_read_first_frame: frame has no atoms block".to_string())?;
     let species = atoms
-        .get("species")
+        .get("element")
         .and_then(|c| c.as_string())
         .ok_or_else(|| {
-            "xyz_read_first_frame: atoms block has no ExtXYZ species column".to_string()
+            "xyz_read_first_frame: atoms block has no element (ExtXYZ species) column".to_string()
         })?;
     let zs: Result<Vec<u64>, String> = species
         .iter()
@@ -845,7 +845,7 @@ fn xyz_read_first_frame(path: &str) -> Result<Box<FrameRef>, String> {
     atoms
         .insert("atomic_number", Array1::from_vec(zs).into_dyn())
         .map_err(|e| format!("xyz_read_first_frame: insert atomic_number: {e}"))?;
-    atoms.remove("species");
+    atoms.remove("element");
 
     let inner = molrs_ffi::FrameRef::new_standalone();
     inner
@@ -1639,10 +1639,13 @@ mod tests {
         );
     }
 
+    /// The core reader names the element column `element` whichever key the
+    /// file used (ExtXYZ's `species`, or an `element` property), so the
+    /// bridge sees one column either way.
     #[test]
-    fn extxyz_boundary_rejects_an_alternate_element_key() {
+    fn extxyz_boundary_reads_an_element_property_like_species() {
         let path = std::env::temp_dir().join(format!(
-            "molrs-cxxapi-extxyz-wrong-key-{}.xyz",
+            "molrs-cxxapi-extxyz-element-key-{}.xyz",
             std::process::id()
         ));
         std::fs::write(
@@ -1656,9 +1659,9 @@ mod tests {
         )
         .unwrap();
 
-        let result = xyz_read_first_frame(path.to_str().unwrap());
+        let frame = xyz_read_first_frame(path.to_str().unwrap()).expect("xyz_read_first_frame");
         std::fs::remove_file(path).unwrap();
-        assert!(result.is_err());
+        assert_eq!(frame_column_u32(&frame, "atoms", "atomic_number"), [1u64]);
     }
 
     /// Round-trip: write every column dtype + simbox through the bridge,
