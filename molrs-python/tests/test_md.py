@@ -99,7 +99,7 @@ class TestDispatch:
         assert calls and all(c == 2 for c in calls)
 
     def test_potentials_take_the_native_fast_path(self) -> None:
-        from molrs.ff import Potentials
+        from molrs.ff.potential import Potentials
 
         pots = Potentials()
         # empty collection is a native type; take_potential must not duck-wrap it.
@@ -109,7 +109,7 @@ class TestDispatch:
 
 class TestMaxwellBoltzmann:
     def test_kbt_constructor(self) -> None:
-        mb = MaxwellBoltzmann(molrs.UnitPreset("real").boltzmann() * 300.0, seed=1)
+        mb = MaxwellBoltzmann(molrs.units.UnitPreset("real").boltzmann() * 300.0, seed=1)
         pos = np.zeros((4, 3))
         vel = mb.velocities(pos, np.ones(4))
         assert vel.shape == (4, 3)

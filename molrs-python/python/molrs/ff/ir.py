@@ -6,7 +6,7 @@ The force-field IR adopts the LAMMPS standard; its *shape* is data. A
 live in; a **style** names its ordered parameters, each with a dimension, and
 its energy — as an expression, a vectorised Python kernel, or both. Anything
 of that form registers into the process-wide registry every
-:class:`~molrs.ff.PotentialCompiler` reads, and then prices at both compile
+:class:`~molrs.ff.potential.PotentialCompiler` reads, and then prices at both compile
 doors and in MD exactly like a built-in. What does not conform is refused
 with an :class:`IrError` subclass naming the offending item.
 

@@ -32,7 +32,7 @@ however the array was spelled.
 import numpy as np
 import molrs
 
-atoms = molrs.Block({
+atoms = molrs.store.Block({
     "element": ["O", "H", "H"],
     "x": np.array([0.000, 0.757, -0.757]),
     "y": np.array([0.000, 0.586, 0.586]),
@@ -41,13 +41,13 @@ atoms = molrs.Block({
     "res_name": ["HOH", "HOH", "HOH"],
     "chain": ["A", "A", "A"],
 })
-bonds = molrs.Block({
+bonds = molrs.store.Block({
     "atomi": np.array([0, 0], dtype=np.uint64),
     "atomj": np.array([1, 2], dtype=np.uint64),
 })
-frame = molrs.Frame(
+frame = molrs.store.Frame(
     {"atoms": atoms, "bonds": bonds},
-    box=molrs.Box.cube(20.0),
+    box=molrs.spatial.Box.cube(20.0),
 )
 frame.meta["title"] = "water"
 frame.meta["temperature"] = 300.0
@@ -78,7 +78,7 @@ so every value reads back at the dtype it was stored with, `float("nan")`
 included. A JSON object comes back as a frozen `MetaDocument`.
 
 ```python
-frame.meta["n_steps"] = molrs.MetaValue("i32", 5000)
+frame.meta["n_steps"] = molrs.store.MetaValue("i32", 5000)
 frame.meta["run"] = {"ensemble": "NVT", "thermostat": "langevin"}
 molrs.io.write_mrec("water.mrec", frame)
 
@@ -100,7 +100,7 @@ format readers produce. `chain`, `res_id`, `res_name`, `icode`, `altloc`,
 `occupancy` and `b_factor` are canonical `atoms` columns; the PDB, mmCIF, GRO
 and extxyz readers fill them under those names. Extra blocks with fixed
 meanings are `constraints`, `virtual_sites`, `drudes` and `members` (bead →
-atom membership in a coarse-grained frame). `molrs.schema` prints the whole
+atom membership in a coarse-grained frame). `molrs.store.schema` prints the whole
 vocabulary.
 
 A `uint64` column can declare which block its values index. Writers store
@@ -108,7 +108,7 @@ that as the block's `targets` attribute and refuse a reference that does not
 resolve, so a dangling index fails at write time instead of at analysis time:
 
 ```python
-contacts = molrs.Block({
+contacts = molrs.store.Block({
     "site": np.array([0, 2], dtype=np.uint64),
     "distance": np.array([2.8, 3.1]),
 })
@@ -155,7 +155,7 @@ for i in range(4):
     f["atoms"]["x"] = frame["atoms"]["x"] + 0.01 * i
     frames.append(f)
 
-traj = molrs.Trajectory(
+traj = molrs.store.Trajectory(
     frames,
     step=np.arange(4, dtype=np.int64) * 100,
     time=np.arange(4, dtype=np.float64) * 0.2,
@@ -232,7 +232,7 @@ section's numbers are converted, as above. `ForceField.to_section` and
 a force field next to the structure it parameterizes:
 
 ```python
-ff = molrs.ff.ForceField("water", units="real")
+ff = molrs.ff.forcefield.ForceField("water", units="real")
 atom_style = ff.def_style("atom", "full")
 o = atom_style.def_type("OW", mass=15.9994, charge=-0.8476)
 h = atom_style.def_type("HW", mass=1.008, charge=0.4238)
@@ -246,7 +246,7 @@ print(sorted(molrs.io.mrec_sections("water.mrec")))
 
 section = molrs.io.read_mrec_forcefield("water.mrec")
 print(section.name, sorted(section.tables))
-restored = molrs.ff.ForceField.from_section(section)
+restored = molrs.ff.forcefield.ForceField.from_section(section)
 print([(s.category, s.name) for s in restored.styles])
 ```
 

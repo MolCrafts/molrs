@@ -1,17 +1,17 @@
-//! Live views over the leaf graphs (`molrs.Atomistic`, `molrs.CoarseGrain`).
+//! Live views over the leaf graphs (`molrs.system.Atomistic`, `molrs.system.CoarseGrain`).
 //!
 //! A view is a `(world, handle)` pair and nothing else: every read and write
 //! goes through the owning graph, which stays the only holder of data. The
 //! graph interns its views weakly ([`ViewCache`]), so while a view is alive the
 //! same handle always answers with the same object (`graph.atoms[0] is atom`).
 //!
-//! - [`PyNodeRef`] (`molrs.NodeRef`) and its classes `Atom`, `VirtualSite`,
+//! - [`PyNodeRef`] (`molrs.system.NodeRef`) and its classes `Atom`, `VirtualSite`,
 //!   `DrudeParticle`, `MasslessSite`, `Bead`: one node. The class follows the
 //!   graph type and, for an atom, its stored ``vsite``.
-//! - [`PyRelationRef`] (`molrs.RelationRef`) and `Bond`, `Angle`, `Dihedral`,
+//! - [`PyRelationRef`] (`molrs.system.RelationRef`) and `Bond`, `Angle`, `Dihedral`,
 //!   `Improper`, `Port`, `CGBond`: one relation, with its interned endpoints.
 //!   The class follows the graph type and the relation kind.
-//! - [`PyRefs`] (`molrs.Refs`): an ordered handle list of one kind, read as a
+//! - [`PyRefs`] (`molrs.system.Refs`): an ordered handle list of one kind, read as a
 //!   sequence of views or, by field name, as a column.
 //! - [`PyRelationBuckets`] (`graph.links`): relations selected by view class.
 
@@ -30,8 +30,8 @@ use molrs::system::{
 };
 
 use super::molgraph::{PyAtomistic, PyCoarseGrain, cell_to_py, prop_to_py, py_to_prop};
-use crate::helpers::molrs_error_to_pyerr;
-use crate::schema::extract_column_key;
+use crate::core::store::schema::extract_column_key;
+use crate::error::molrs_error_to_pyerr;
 
 // ---------------------------------------------------------------------------
 // Interning
@@ -633,7 +633,7 @@ impl Fields for RelationFields<'_, '_> {
 }
 
 /// The mapping protocol of a view, over its [`Fields`]: a field name (or a
-/// `molrs.keys.Key`) reads, writes and deletes one field; a tuple of names
+/// `molrs.store.keys.Key`) reads, writes and deletes one field; a tuple of names
 /// reads or writes several at once (``atom["x", "y", "z"]``); assigning
 /// ``None`` deletes.
 macro_rules! field_mapping_impl {
@@ -815,7 +815,7 @@ fn write_field(fields: &impl Fields, key: &str, value: &Bound<'_, PyAny>) -> PyR
 /// mapping: ``atom["x"]``, ``atom["x", "y", "z"] = (0.0, 0.0, 1.0)``,
 /// ``"charge" in atom``. Removing the node leaves the view stale: its reads
 /// raise.
-#[pyclass(module = "molrs", name = "NodeRef", frozen, subclass, weakref)]
+#[pyclass(module = "molrs.system", name = "NodeRef", frozen, subclass, weakref)]
 pub struct PyNodeRef {
     world: Py<PyAny>,
     handle: u64,
@@ -918,24 +918,24 @@ impl PyNodeRef {
 field_mapping_impl!(PyNodeRef);
 
 /// A node of an :class:`Atomistic`.
-#[pyclass(module = "molrs", name = "Atom", extends = PyNodeRef, frozen, subclass)]
+#[pyclass(module = "molrs.system", name = "Atom", extends = PyNodeRef, frozen, subclass)]
 pub struct PyAtom {}
 
 /// An atom carrying a ``vsite`` field: a site that is not a nucleus.
-#[pyclass(module = "molrs", name = "VirtualSite", extends = PyAtom, frozen, subclass)]
+#[pyclass(module = "molrs.system", name = "VirtualSite", extends = PyAtom, frozen, subclass)]
 pub struct PyVirtualSite {}
 
 /// A Drude shell (``vsite == "drude"``).
-#[pyclass(module = "molrs", name = "DrudeParticle", extends = PyVirtualSite, frozen, subclass)]
+#[pyclass(module = "molrs.system", name = "DrudeParticle", extends = PyVirtualSite, frozen, subclass)]
 pub struct PyDrudeParticle {}
 
 /// A massless site (``vsite == "massless"``), e.g. the TIP4P M site.
-#[pyclass(module = "molrs", name = "MasslessSite", extends = PyVirtualSite, frozen, subclass)]
+#[pyclass(module = "molrs.system", name = "MasslessSite", extends = PyVirtualSite, frozen, subclass)]
 pub struct PyMasslessSite {}
 
 /// A node of a :class:`CoarseGrain`. ``bead["atoms"]`` is the tuple of atom
 /// views the bead groups, when it has members.
-#[pyclass(module = "molrs", name = "Bead", extends = PyNodeRef, frozen, subclass)]
+#[pyclass(module = "molrs.system", name = "Bead", extends = PyNodeRef, frozen, subclass)]
 pub struct PyBead {}
 
 // ---------------------------------------------------------------------------
@@ -947,7 +947,13 @@ pub struct PyBead {}
 /// Made by the graph, never constructed directly. ``endpoints`` are the
 /// interned node views, in order; the relation's own fields read and write
 /// as a mapping (``bond["order"]``).
-#[pyclass(module = "molrs", name = "RelationRef", frozen, subclass, weakref)]
+#[pyclass(
+    module = "molrs.system",
+    name = "RelationRef",
+    frozen,
+    subclass,
+    weakref
+)]
 pub struct PyRelationRef {
     world: Py<PyAny>,
     kind: String,
@@ -1053,7 +1059,7 @@ impl PyRelationRef {
 field_mapping_impl!(PyRelationRef);
 
 /// A bond of an :class:`Atomistic`; ``itom`` / ``jtom`` are its atoms.
-#[pyclass(module = "molrs", name = "Bond", extends = PyRelationRef, frozen, subclass)]
+#[pyclass(module = "molrs.system", name = "Bond", extends = PyRelationRef, frozen, subclass)]
 pub struct PyBond {}
 
 #[pymethods]
@@ -1072,19 +1078,19 @@ impl PyBond {
 }
 
 /// An angle ``i–j–k`` of an :class:`Atomistic` (``j`` the vertex).
-#[pyclass(module = "molrs", name = "Angle", extends = PyRelationRef, frozen, subclass)]
+#[pyclass(module = "molrs.system", name = "Angle", extends = PyRelationRef, frozen, subclass)]
 pub struct PyAngle {}
 
 /// A proper dihedral ``i–j–k–l`` of an :class:`Atomistic`.
-#[pyclass(module = "molrs", name = "Dihedral", extends = PyRelationRef, frozen, subclass)]
+#[pyclass(module = "molrs.system", name = "Dihedral", extends = PyRelationRef, frozen, subclass)]
 pub struct PyDihedral {}
 
 /// An improper of an :class:`Atomistic`, in its style's slot order.
-#[pyclass(module = "molrs", name = "Improper", extends = PyDihedral, frozen, subclass)]
+#[pyclass(module = "molrs.system", name = "Improper", extends = PyDihedral, frozen, subclass)]
 pub struct PyImproper {}
 
 /// A bond of a :class:`CoarseGrain`.
-#[pyclass(module = "molrs", name = "CGBond", extends = PyRelationRef, frozen, subclass)]
+#[pyclass(module = "molrs.system", name = "CGBond", extends = PyRelationRef, frozen, subclass)]
 pub struct PyCGBond {}
 
 /// One unsatisfied valence (a port) of an :class:`Atomistic`.
@@ -1097,7 +1103,7 @@ pub struct PyCGBond {}
 ///
 /// The second endpoint is ``handle_atom``, not ``handle``: ``handle`` is the
 /// port's own relation handle. The two answer different questions.
-#[pyclass(module = "molrs", name = "Port", extends = PyRelationRef, frozen, subclass)]
+#[pyclass(module = "molrs.system", name = "Port", extends = PyRelationRef, frozen, subclass)]
 pub struct PyPort {}
 
 #[pymethods]
@@ -1125,7 +1131,7 @@ impl PyPort {
 /// reads a field of every item as a numpy array (``None`` where unset) and
 /// ``refs["x", "y", "z"]`` stacks several side by side. Views are made on
 /// demand, so ``len(graph.atoms)`` and ``graph.atoms["x"]`` make none.
-#[pyclass(module = "molrs", name = "Refs", frozen, subclass)]
+#[pyclass(module = "molrs.system", name = "Refs", frozen, subclass)]
 pub struct PyRefs {
     world: Py<PyAny>,
     /// `None` for nodes, the relation kind otherwise.
@@ -1239,7 +1245,9 @@ impl PyRefs {
         let py = slf.py();
         let this = slf.get();
         if key.is_instance_of::<PyString>()
-            || key.extract::<PyRef<'_, crate::schema::PyKey>>().is_ok()
+            || key
+                .extract::<PyRef<'_, crate::core::store::schema::PyKey>>()
+                .is_ok()
         {
             return this.column(py, key);
         }
@@ -1380,7 +1388,7 @@ impl PyRefs {
 // ---------------------------------------------------------------------------
 
 /// A graph's relations, selected by view class (``graph.links``).
-#[pyclass(module = "molrs", name = "RelationBuckets", frozen, subclass)]
+#[pyclass(module = "molrs.system", name = "RelationBuckets", frozen, subclass)]
 pub struct PyRelationBuckets {
     world: Py<PyAny>,
 }

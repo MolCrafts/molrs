@@ -4,10 +4,10 @@
 //! lives in aligned component columns, and topology is kind-tagged relations.
 //! This module exposes that faithfully:
 //!
-//! - [`PyGraph`] (`molrs.Graph`) — the domain-agnostic world: stable-handle
+//! - [`PyGraph`] (`molrs.system.Graph`) — the domain-agnostic world: stable-handle
 //!   entities, by-name component get/set, and the kind-tagged relation API.
-//! - [`PyAtomistic`] (`molrs.Atomistic`) / [`PyCoarseGrain`]
-//!   (`molrs.CoarseGrain`) — peer leaves that **hold a core [`Atomistic`] /
+//! - [`PyAtomistic`] (`molrs.system.Atomistic`) / [`PyCoarseGrain`]
+//!   (`molrs.system.CoarseGrain`) — peer leaves that **hold a core [`Atomistic`] /
 //!   [`CoarseGrain`] from construction** (never converted from a `MolGraph`,
 //!   never converted into each other). They add the
 //!   domain builders (`add_atom`/`add_bond`/…), own `to_frame` /
@@ -30,33 +30,48 @@
 //! make sure nothing ever reads it.
 
 use std::collections::HashMap;
+
 use std::str::FromStr;
 
 use ndarray::Array2;
+
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArrayDyn};
+
 use pyo3::exceptions::{PyTypeError, PyValueError};
+
 use pyo3::prelude::*;
+
 use pyo3::types::{PyDict, PyList, PyTuple, PyType};
+
 use pyo3::{PyTraverseError, PyVisit};
 
-use molrs::perceive::rings::max_ring_system_size as core_max_ring_system_size;
-use molrs::perceive::smarts::{MatchOptions, Reaction, RingPrimitive, SmartsPattern};
 use molrs::spatial::CenterError;
+
 use molrs::store::keys;
+
 use molrs::system::LinkError;
+
 use molrs::system::PortKind;
+
 use molrs::system::entity_table::Cell;
+
 use molrs::system::{Atomistic, ExtractedAtomistic};
+
 use molrs::system::{BondNumber, BondType};
+
 use molrs::system::{CoarseGrain, ExtractedCoarseGrain};
+
 use molrs::system::{
     KindId, MolGraph, NodeId, PropValue, node_from_u64, node_to_u64, relation_from_u64,
     relation_to_u64,
 };
 
 use super::views::{BEAD_ATOMS, Leaf, PyNodeRef, PyRefs, PyRelationBuckets, ViewCache};
+
 use crate::core::store::frame::PyFrame;
-use crate::helpers::molrs_error_to_pyerr;
+
+use crate::error::molrs_error_to_pyerr;
+
 use crate::op::vector_to_py;
 
 // ---------------------------------------------------------------------------
@@ -350,9 +365,9 @@ macro_rules! graph_world_impl {
 
             /// Read entity `h`'s component `key` (``None`` if absent).
             ///
-            /// `key` is a :class:`molrs.keys.Key` or ``str``.
+            /// `key` is a :class:`molrs.store.keys.Key` or ``str``.
             fn get(&self, py: Python<'_>, h: u64, key: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-                let key = crate::schema::extract_column_key(key)?;
+                let key = crate::core::store::schema::extract_column_key(key)?;
                 match self.mol().node_table().value(node_from_u64(h), &key) {
                     Some(cell) => cell_to_py(py, cell),
                     None => Ok(py.None()),
@@ -361,14 +376,14 @@ macro_rules! graph_world_impl {
 
             /// Set entity `h`'s component `key` (``value`` is int|float|str).
             ///
-            /// `key` is a :class:`molrs.keys.Key` or ``str``.
+            /// `key` is a :class:`molrs.store.keys.Key` or ``str``.
             fn set(
                 &mut self,
                 h: u64,
                 key: &Bound<'_, PyAny>,
                 value: &Bound<'_, PyAny>,
             ) -> PyResult<()> {
-                let key = crate::schema::extract_column_key(key)?;
+                let key = crate::core::store::schema::extract_column_key(key)?;
                 let pv = py_to_prop(value)?;
                 self.mol_mut()
                     .set_node(node_from_u64(h), &key, pv)
@@ -377,17 +392,17 @@ macro_rules! graph_world_impl {
 
             /// Whether entity `h` has component `key`.
             ///
-            /// `key` is a :class:`molrs.keys.Key` or ``str``.
+            /// `key` is a :class:`molrs.store.keys.Key` or ``str``.
             fn has(&self, h: u64, key: &Bound<'_, PyAny>) -> PyResult<bool> {
-                let key = crate::schema::extract_column_key(key)?;
+                let key = crate::core::store::schema::extract_column_key(key)?;
                 Ok(self.mol().node_table().has(node_from_u64(h), &key))
             }
 
             /// Clear entity `h`'s component `key` (no-op if absent).
             ///
-            /// `key` is a :class:`molrs.keys.Key` or ``str``.
+            /// `key` is a :class:`molrs.store.keys.Key` or ``str``.
             fn delete(&mut self, h: u64, key: &Bound<'_, PyAny>) -> PyResult<()> {
-                let key = crate::schema::extract_column_key(key)?;
+                let key = crate::core::store::schema::extract_column_key(key)?;
                 self.mol_mut()
                     .clear_node(node_from_u64(h), &key)
                     .map_err(molrs_error_to_pyerr)
@@ -568,7 +583,7 @@ macro_rules! graph_world_impl {
             ) -> PyResult<Bound<'py, PyAny>> {
                 use molrs::system::entity_table::Column;
 
-                let key = crate::schema::extract_column_key(key)?;
+                let key = crate::core::store::schema::extract_column_key(key)?;
                 let py = slf.py();
                 let this = slf.borrow();
                 let table = this.mol().node_table();
@@ -626,13 +641,13 @@ macro_rules! graph_world_impl {
             /// aligned to row order. `True` where the entity at that row has the
             /// component set.
             ///
-            /// `key` is a :class:`molrs.keys.Key` or ``str``.
+            /// `key` is a :class:`molrs.store.keys.Key` or ``str``.
             fn validity<'py>(
                 &self,
                 py: Python<'py>,
                 key: &Bound<'_, PyAny>,
             ) -> PyResult<Bound<'py, numpy::PyArray1<bool>>> {
-                let key = crate::schema::extract_column_key(key)?;
+                let key = crate::core::store::schema::extract_column_key(key)?;
                 let valid =
                     self.mol().node_table().col_validity(&key).ok_or_else(|| {
                         PyValueError::new_err(format!("column '{key}' is absent"))
@@ -669,11 +684,12 @@ macro_rules! graph_world_impl {
 /// * ``hops`` — ``{parent_handle: hops_from_nearest_center}``
 /// * ``node_map`` — ``{parent_handle: new_handle}``
 #[pyclass(
-    module = "molrs",
+    module = "molrs.system",
     name = "ExtractedSubgraph",
     skip_from_py_object,
     subclass
 )]
+
 pub struct PyExtractedSubgraph {
     graph: Py<PyAny>,
     boundary: Vec<u64>,
@@ -702,7 +718,7 @@ impl PyExtractedSubgraph {
     }
 
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
-        crate::helpers::reduce_via_type(
+        crate::pickle::reduce_via_type(
             slf.as_any(),
             (
                 slf.getattr("graph")?,
@@ -897,8 +913,8 @@ impl GraphContent for MolGraph {
 // PyGraph — the generic world
 // ---------------------------------------------------------------------------
 
-/// Domain-agnostic ECS world, exposed to Python as `molrs.Graph`.
-#[pyclass(module = "molrs", name = "Graph", subclass)]
+/// Domain-agnostic ECS world, exposed to Python as `molrs.system.Graph`.
+#[pyclass(module = "molrs.system", name = "Graph", subclass)]
 pub struct PyGraph {
     inner: MolGraph,
 }
@@ -931,7 +947,7 @@ impl PyGraph {
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let py = slf.py();
         let content = slf.borrow().inner.dump_content(py)?;
-        crate::helpers::reduce_with_state(
+        crate::pickle::reduce_with_state(
             slf.as_any(),
             PyTuple::empty(py),
             PyTuple::new(py, [content])?.into_any(),
@@ -945,6 +961,7 @@ impl PyGraph {
         Ok(())
     }
 }
+
 graph_world_impl!(PyGraph);
 
 /// Any graph object: a `Graph`, an `Atomistic` or a `CoarseGrain`.
@@ -1097,12 +1114,12 @@ macro_rules! leaf_views_impl {
 // PyAtomistic — all-atom leaf (holds a core Atomistic)
 // ---------------------------------------------------------------------------
 
-/// All-atom molecular graph, exposed to Python as `molrs.Atomistic`.
+/// All-atom molecular graph, exposed to Python as `molrs.system.Atomistic`.
 ///
 /// Holds a core [`Atomistic`] from construction; it is never converted from a
 /// `MolGraph`. Subclasses `Graph`; the generic API operates on this leaf's own
 /// graph. ``Atomistic(**props)``: the keywords are the graph's :attr:`props`.
-#[pyclass(module = "molrs._lib", name = "Atomistic", extends = PyGraph, subclass)]
+#[pyclass(module = "molrs.system", name = "Atomistic", extends = PyGraph, subclass)]
 pub struct PyAtomistic {
     inner: Atomistic,
     props: Py<PyDict>,
@@ -1382,7 +1399,7 @@ impl PyAtomistic {
         let this = slf.try_borrow()?;
         let state =
             (this.props.bind(py).clone(), this.mol().dump_content(py)?).into_pyobject(py)?;
-        crate::helpers::reduce_with_state(slf.as_any(), PyTuple::empty(py), state.into_any())
+        crate::pickle::reduce_with_state(slf.as_any(), PyTuple::empty(py), state.into_any())
     }
 
     fn __setstate__(&mut self, state: (Bound<'_, PyDict>, Bound<'_, PyAny>)) -> PyResult<()> {
@@ -1509,13 +1526,6 @@ impl PyAtomistic {
     #[getter]
     fn n_bonds(&self) -> usize {
         self.inner.n_bonds()
-    }
-
-    /// Atom count of the largest fused/bridged ring system (naphthalene → 10).
-    ///
-    /// Acyclic molecules → ``0``. Pure structure fact for molpy region typing.
-    fn max_ring_system_size(&self) -> usize {
-        core_max_ring_system_size(&self.inner)
     }
 
     /// Export to a tabular [`Frame`] (atoms / bonds / angles / dihedrals /
@@ -1749,6 +1759,7 @@ impl PyAtomistic {
         Ok(vector_to_py(py, &center))
     }
 }
+
 graph_world_impl!(PyAtomistic);
 
 leaf_views_impl!(PyAtomistic);
@@ -1793,411 +1804,15 @@ impl PyAtomistic {
 }
 
 // ---------------------------------------------------------------------------
-// PySmartsMatch / PySmartsPattern — atom-map-aware SMARTS matcher over Atomistic
-// ---------------------------------------------------------------------------
-
-/// One SMARTS match, exposed to Python as `molrs.SmartsMatch`.
-///
-/// ``atoms`` stores molecule atom handles in query-atom order. ``mapping``
-/// stores the Daylight atom-map projection (``:1`` → atom handle), and is empty
-/// when the query carries no map labels.
-#[pyclass(
-    module = "molrs.perceive",
-    name = "SmartsMatch",
-    skip_from_py_object,
-    subclass
-)]
-#[derive(Clone)]
-pub struct PySmartsMatch {
-    atoms: Vec<u64>,
-    mapping: HashMap<u32, u64>,
-}
-
-#[pymethods]
-impl PySmartsMatch {
-    /// Molecule atom handles in query-atom order.
-    #[getter]
-    fn atoms(&self) -> Vec<u64> {
-        self.atoms.clone()
-    }
-
-    /// Daylight atom-map projection (``:n`` label -> molecule atom handle).
-    #[getter]
-    fn mapping(&self) -> HashMap<u32, u64> {
-        self.mapping.clone()
-    }
-
-    fn as_list(&self) -> Vec<u64> {
-        self.atoms.clone()
-    }
-
-    fn as_dict(&self) -> HashMap<u32, u64> {
-        self.mapping.clone()
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "SmartsMatch(atoms={:?}, mapping={:?})",
-            self.atoms, self.mapping
-        )
-    }
-}
-
-/// Compiled SMARTS query, exposed to Python as `molrs.SmartsPattern`.
-///
-/// A thin wrapper over the core [`SmartsPattern`] (`molrs/src/core/chem/smarts`)
-/// — the same backtracking subgraph-isomorphism engine that drives the OPLS-AA
-/// typifier. Matching is non-uniquified (RDKit ``uniquify=False``): every
-/// distinct query-atom → mol-atom embedding is reported as a
-/// :class:`SmartsMatch`.
-///
-/// Daylight atom maps (``[C:1]``) are parsed and carried through but add **no**
-/// match constraint (they are "ignored in molecule SMARTS"); pass
-/// ``mapped=True`` to :meth:`find_matches` for the legacy shortcut returning
-/// ``{map_number: atom_handle}`` dictionaries.
-///
-/// Examples
-/// --------
-/// >>> pat = molrs.SmartsPattern("[C:1][O:2][H:3]")
-/// >>> pat.find_matches(methanol)[0].mapping
-/// {1: <C>, 2: <O>, 3: <H>}
-#[pyclass(module = "molrs.perceive", name = "SmartsPattern", subclass)]
-pub struct PySmartsPattern {
-    inner: SmartsPattern,
-}
-
-#[pymethods]
-impl PySmartsPattern {
-    /// Parse a SMARTS string. Raises ``ValueError`` on a syntax error.
-    #[new]
-    fn new(smarts: &str) -> PyResult<Self> {
-        let inner = SmartsPattern::parse(smarts).map_err(molrs_error_to_pyerr)?;
-        Ok(Self { inner })
-    }
-
-    /// Whether at least one match exists in `mol`.
-    #[pyo3(signature = (mol, *, labels=None, root=None))]
-    fn has_match(
-        &self,
-        mol: &PyAtomistic,
-        labels: Option<HashMap<u64, String>>,
-        root: Option<u64>,
-    ) -> bool {
-        let core_labels = labels.map(|labels| {
-            labels
-                .into_iter()
-                .map(|(h, l)| (node_from_u64(h), l))
-                .collect::<HashMap<NodeId, String>>()
-        });
-        self.inner.has_match(
-            mol.core(),
-            MatchOptions {
-                labels: core_labels.as_ref(),
-                root: root.map(node_from_u64),
-                limit: None,
-            },
-        )
-    }
-
-    /// All matches. By default each match is a :class:`SmartsMatch`; with
-    /// ``mapped=True`` each match is returned as a ``{atom_map_number:
-    /// atom_handle}`` dict. ``labels`` supplies the ``%LABEL`` context, ``root``
-    /// pins query atom 0 to one atom handle, and ``limit`` stops after N
-    /// embeddings.
-    #[pyo3(signature = (mol, *, labels=None, root=None, mapped=false, limit=None))]
-    fn find_matches(
-        &self,
-        py: Python<'_>,
-        mol: &PyAtomistic,
-        labels: Option<HashMap<u64, String>>,
-        root: Option<u64>,
-        mapped: bool,
-        limit: Option<usize>,
-    ) -> PyResult<Py<PyAny>> {
-        let core_labels = labels.map(|labels| {
-            labels
-                .into_iter()
-                .map(|(h, l)| (node_from_u64(h), l))
-                .collect::<HashMap<NodeId, String>>()
-        });
-        let matches = self.inner.find(
-            mol.core(),
-            MatchOptions {
-                labels: core_labels.as_ref(),
-                root: root.map(node_from_u64),
-                limit,
-            },
-        );
-        if mapped {
-            let out: Vec<HashMap<u32, u64>> = matches
-                .iter()
-                .map(|m| {
-                    self.inner
-                        .mapped(m)
-                        .into_iter()
-                        .map(|(label, atom)| (label, node_to_u64(atom)))
-                        .collect()
-                })
-                .collect();
-            return Ok(out.into_pyobject(py)?.into_any().unbind());
-        }
-        let out: Vec<PySmartsMatch> = matches
-            .iter()
-            .map(|m| PySmartsMatch {
-                atoms: m.atoms().iter().map(|&atom| node_to_u64(atom)).collect(),
-                mapping: self
-                    .inner
-                    .mapped(m)
-                    .into_iter()
-                    .map(|(label, atom)| (label, node_to_u64(atom)))
-                    .collect(),
-            })
-            .collect();
-        Ok(out.into_pyobject(py)?.into_any().unbind())
-    }
-
-    /// Number of query atoms in the pattern.
-    #[getter]
-    fn num_query_atoms(&self) -> usize {
-        self.inner.num_query_atoms()
-    }
-
-    /// Longest shortest-path length (bonds) on the query atom graph.
-    ///
-    /// Isolated atoms → ``0``. Pure syntax fact for molpy region typing.
-    #[getter]
-    fn max_bond_depth(&self) -> usize {
-        self.inner.max_bond_depth()
-    }
-
-    /// Ring primitives used in this pattern (syntax only; no boundedness).
-    ///
-    /// Each item is ``(kind, n)`` where ``kind`` is one of
-    /// ``"sized"`` / ``"membership"`` / ``"ring_count"`` / ``"ring_bond_count"``
-    /// and ``n`` is ``None`` for membership.
-    #[getter]
-    fn ring_primitives(&self) -> Vec<(String, Option<u32>)> {
-        self.inner
-            .ring_primitives()
-            .into_iter()
-            .map(|p| match p {
-                RingPrimitive::Sized(n) => ("sized".into(), Some(n)),
-                RingPrimitive::Membership => ("membership".into(), None),
-                RingPrimitive::RingCount(n) => ("ring_count".into(), Some(n)),
-                RingPrimitive::RingBondCount(n) => ("ring_bond_count".into(), Some(n)),
-            })
-            .collect()
-    }
-
-    /// The ``:n`` atom-map label of query atom `query_atom` (``None`` if
-    /// unlabelled / out of range).
-    fn map_label(&self, query_atom: usize) -> Option<u32> {
-        self.inner.map_label(query_atom)
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "SmartsPattern(num_query_atoms={})",
-            self.inner.num_query_atoms()
-        )
-    }
-}
-
-// ---------------------------------------------------------------------------
-// PyReaction — Daylight reaction-SMARTS (SMIRKS) transform over an Atomistic
-// ---------------------------------------------------------------------------
-
-/// Compiled reaction SMARTS, exposed to Python as `molrs.Reaction`.
-///
-/// A thin wrapper over the core [`Reaction`] (`molrs/src/core/chem/smarts`).
-/// Parses ``reactants >> products`` (tolerating an ignored ``>agent>`` field),
-/// derives the graph edit from the Daylight atom-map diff, and applies it to one
-/// matched occurrence in place. Reacting atoms may carry SMARTS queries
-/// (RDKit-style reaction SMARTS); only concrete product atoms are addable.
-///
-/// Examples
-/// --------
-/// >>> rxn = molrs.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
-/// >>> rxn.forming_bonds                 # [(1, 2)]
-/// >>> binding = {}                       # match each reactant component ...
-/// >>> for pat in rxn.reactant_patterns:  # ... and merge the map->atom dicts
-/// ...     binding.update(pat.find_matches(mol, mapped=True)[0])
-/// >>> rxn.apply(mol, binding)            # edits `mol` in place
-#[pyclass(module = "molrs", name = "Reaction", subclass)]
-pub struct PyReaction {
-    inner: Reaction,
-}
-
-#[pymethods]
-impl PyReaction {
-    /// Parse a reaction SMARTS. Raises ``ValueError`` on a syntax or
-    /// map-consistency error (e.g. an atom map that appears on only one side).
-    #[new]
-    fn new(reaction_smarts: &str) -> PyResult<Self> {
-        let inner = Reaction::parse(reaction_smarts).map_err(molrs_error_to_pyerr)?;
-        Ok(Self { inner })
-    }
-
-    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
-        crate::helpers::reduce_via_type(slf.as_any(), (slf.borrow().inner.source().to_owned(),))
-    }
-
-    /// The reactant components (LHS), one :class:`SmartsPattern` per top-level
-    /// ``.`` component, for matching / pairing each independently.
-    #[getter]
-    fn reactant_patterns(&self) -> Vec<PySmartsPattern> {
-        self.inner
-            .reactants()
-            .iter()
-            .map(|p| PySmartsPattern { inner: p.clone() })
-            .collect()
-    }
-
-    /// The ``(map_a, map_b)`` pairs of newly formed bonds between preserved
-    /// atoms — the distance criterion for picking a reacting occurrence. Bonds
-    /// that merely change order, and bonds to added atoms, are excluded.
-    #[getter]
-    fn forming_bonds(&self) -> Vec<(u32, u32)> {
-        self.inner.forming_bonds()
-    }
-
-    /// Apply the transform to `mol` in place at the occurrence pinned by
-    /// `binding` (``{map_number: atom_handle}``). Deletes unmapped-LHS atoms,
-    /// adds unmapped-RHS atoms (no coordinates), forms/breaks bonds, then
-    /// regenerates angle/dihedral topology and re-perceives aromaticity.
-    ///
-    /// Returns the deduplicated, deterministically-ordered list of *surviving*
-    /// touched atom handles (formed/broken/order-changed bond endpoints, added
-    /// atoms, deleted atoms' surviving neighbours, and prop-set atoms). Deleted
-    /// atoms' own handles are never included. The caller expands this seed set
-    /// into a retype-safe region.
-    ///
-    /// ``refresh=False`` skips the per-apply whole-graph angle/dihedral
-    /// regeneration + aromaticity re-perception: a batch caller (crosslinking a
-    /// melt with many edits) passes it and refreshes ONCE at the end, turning an
-    /// O(edits × N) cost into O(edits × local). Matching only needs bonds, which
-    /// are updated in place regardless.
-    #[pyo3(signature = (mol, binding, labels=None, refresh=true))]
-    fn apply(
-        &self,
-        mol: &mut PyAtomistic,
-        binding: HashMap<u32, u64>,
-        labels: Option<HashMap<u64, String>>,
-        refresh: bool,
-    ) -> PyResult<Vec<u64>> {
-        let resolved: HashMap<u32, NodeId> = binding
-            .into_iter()
-            .map(|(k, v)| (k, node_from_u64(v)))
-            .collect();
-        let core_labels: HashMap<NodeId, String> = labels
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(h, l)| (node_from_u64(h), l))
-            .collect();
-        self.inner
-            .apply(mol.core_mut(), &resolved, &core_labels, refresh)
-            .map(|touched| touched.into_iter().map(node_to_u64).collect())
-            .map_err(molrs_error_to_pyerr)
-    }
-
-    /// Compile every binding against the intact graph, then apply the disjoint
-    /// transforms as one batch. Leaving groups are deleted with one relation
-    /// scan, and one touched-handle list is returned per binding.
-    #[pyo3(signature = (mol, bindings, labels=None, refresh=true))]
-    fn apply_many(
-        &self,
-        mol: &mut PyAtomistic,
-        bindings: Vec<HashMap<u32, u64>>,
-        labels: Option<HashMap<u64, String>>,
-        refresh: bool,
-    ) -> PyResult<Vec<Vec<u64>>> {
-        let resolved: Vec<HashMap<u32, NodeId>> = bindings
-            .into_iter()
-            .map(|binding| {
-                binding
-                    .into_iter()
-                    .map(|(k, v)| (k, node_from_u64(v)))
-                    .collect()
-            })
-            .collect();
-        let core_labels: HashMap<NodeId, String> = labels
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(h, l)| (node_from_u64(h), l))
-            .collect();
-        self.inner
-            .apply_many(mol.core_mut(), &resolved, &core_labels, refresh)
-            .map(|sets| {
-                sets.into_iter()
-                    .map(|touched| touched.into_iter().map(node_to_u64).collect())
-                    .collect()
-            })
-            .map_err(molrs_error_to_pyerr)
-    }
-
-    /// ``apply_many`` plus RHS-created handles in product creation order.
-    ///
-    /// The second list is intentionally not reconstructed by sorting handles:
-    /// batch deletion may reuse graph slots in an order unrelated to product
-    /// atom order.
-    #[pyo3(signature = (mol, bindings, labels=None, refresh=true))]
-    #[allow(
-        clippy::type_complexity,
-        reason = "Python returns products and created handles as a tuple"
-    )]
-    fn apply_many_detailed(
-        &self,
-        mol: &mut PyAtomistic,
-        bindings: Vec<HashMap<u32, u64>>,
-        labels: Option<HashMap<u64, String>>,
-        refresh: bool,
-    ) -> PyResult<(Vec<Vec<u64>>, Vec<Vec<u64>>)> {
-        let resolved: Vec<HashMap<u32, NodeId>> = bindings
-            .into_iter()
-            .map(|binding| {
-                binding
-                    .into_iter()
-                    .map(|(k, v)| (k, node_from_u64(v)))
-                    .collect()
-            })
-            .collect();
-        let core_labels: HashMap<NodeId, String> = labels
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(h, l)| (node_from_u64(h), l))
-            .collect();
-        self.inner
-            .apply_many_detailed(mol.core_mut(), &resolved, &core_labels, refresh)
-            .map(|(touched_sets, created_sets)| {
-                let handles = |sets: Vec<Vec<NodeId>>| {
-                    sets.into_iter()
-                        .map(|set| set.into_iter().map(node_to_u64).collect())
-                        .collect()
-                };
-                (handles(touched_sets), handles(created_sets))
-            })
-            .map_err(molrs_error_to_pyerr)
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "Reaction(reactants={}, forming_bonds={:?})",
-            self.inner.reactants().len(),
-            self.inner.forming_bonds()
-        )
-    }
-}
-
-// ---------------------------------------------------------------------------
 // PyCoarseGrain — coarse-grained leaf (holds a core CoarseGrain)
 // ---------------------------------------------------------------------------
 
-/// Coarse-grained molecular graph, exposed to Python as `molrs.CoarseGrain`.
+/// Coarse-grained molecular graph, exposed to Python as `molrs.system.CoarseGrain`.
 ///
 /// ``CoarseGrain(**props)``: the keywords are the graph's :attr:`props`. A
 /// bead built with ``def_bead(atoms=...)`` groups atom views of one source
 /// graph (its *member world*); ``bead["atoms"]`` answers with those views.
-#[pyclass(module = "molrs._lib", name = "CoarseGrain", extends = PyGraph, subclass)]
+#[pyclass(module = "molrs.system", name = "CoarseGrain", extends = PyGraph, subclass)]
 pub struct PyCoarseGrain {
     inner: CoarseGrain,
     props: Py<PyDict>,
@@ -2399,7 +2014,7 @@ impl PyCoarseGrain {
             memberships,
         )
             .into_pyobject(py)?;
-        crate::helpers::reduce_with_state(slf.as_any(), PyTuple::empty(py), state.into_any())
+        crate::pickle::reduce_with_state(slf.as_any(), PyTuple::empty(py), state.into_any())
     }
 
     #[allow(
@@ -2508,7 +2123,7 @@ impl PyCoarseGrain {
             .collect()
     }
 
-    /// Export to a tabular :class:`~molrs.Frame` in the shared vocabulary.
+    /// Export to a tabular :class:`~molrs.store.Frame` in the shared vocabulary.
     ///
     /// One ``atoms`` row per bead and one ``bonds`` row per CG bond
     /// (``atomi`` / ``atomj`` are the endpoint beads' ``atoms`` rows), plus a
@@ -2773,6 +2388,7 @@ impl PyCoarseGrain {
         self.inner.bead_types(&beads).map_err(molrs_error_to_pyerr)
     }
 }
+
 graph_world_impl!(PyCoarseGrain);
 
 leaf_views_impl!(PyCoarseGrain);
@@ -2901,6 +2517,7 @@ macro_rules! replicate_impl {
 }
 
 replicate_impl!(PyAtomistic, "Atomistic", "atom", "");
+
 replicate_impl!(PyCoarseGrain, "CoarseGrain", "bead", "");
 
 // ---------------------------------------------------------------------------
@@ -2953,91 +2570,8 @@ macro_rules! rigid_body_impl {
 }
 
 rigid_body_impl!(PyAtomistic);
+
 rigid_body_impl!(PyCoarseGrain);
-
-/// The ring facts of a molecule: SSSR rings and the systems they fuse into.
-///
-/// Perception runs once, in the constructor; every method reads the result.
-///
-/// Not to be confused with :meth:`Perceive.find_rings`, which answers a
-/// different question — it *decorates* a graph with ring flags and hands the
-/// graph back. This type *reports*, and never touches the molecule.
-///
-/// Examples
-/// --------
-/// >>> rings = molrs.perceive.RingInfo(molrs.io.SmilesIR("c1ccccc1").to_atomistic())
-/// >>> rings.num_rings()
-/// 1
-/// >>> rings.ring_sizes()
-/// [6]
-#[pyclass(module = "molrs.perceive", name = "RingInfo", subclass)]
-pub struct PyRingInfo {
-    inner: molrs::perceive::rings::RingInfo,
-}
-
-#[pymethods]
-impl PyRingInfo {
-    /// Perceive the rings of `mol` (SSSR / minimum cycle basis).
-    #[new]
-    fn new(mol: &Bound<'_, PyAtomistic>) -> Self {
-        Self {
-            inner: molrs::perceive::rings::find_rings(mol.borrow().core()),
-        }
-    }
-
-    /// Every ring, as a list of atom handles forming a closed path.
-    fn rings(&self) -> Vec<Vec<u64>> {
-        self.inner
-            .rings()
-            .iter()
-            .map(|ring| ring.iter().map(|&a| node_to_u64(a)).collect())
-            .collect()
-    }
-
-    /// Number of rings.
-    fn num_rings(&self) -> usize {
-        self.inner.num_rings()
-    }
-
-    /// Atom count of every ring, ascending.
-    fn ring_sizes(&self) -> Vec<usize> {
-        self.inner.ring_sizes()
-    }
-
-    /// Rings that share at least one atom, unioned: benzene → one system of 6,
-    /// naphthalene → one of 10, biphenyl → two of 6.
-    fn ring_systems(&self) -> Vec<Vec<u64>> {
-        self.inner
-            .ring_systems()
-            .iter()
-            .map(|system| system.iter().map(|&a| node_to_u64(a)).collect())
-            .collect()
-    }
-
-    /// Whether `atom` belongs to any ring.
-    fn is_atom_in_ring(&self, atom: u64) -> bool {
-        self.inner.is_atom_in_ring(node_from_u64(atom))
-    }
-
-    /// Number of rings containing `atom`.
-    fn num_atom_rings(&self, atom: u64) -> usize {
-        self.inner.num_atom_rings(node_from_u64(atom))
-    }
-
-    /// Size of the smallest ring containing `atom`, or ``None``.
-    fn smallest_ring_containing_atom(&self, atom: u64) -> Option<usize> {
-        self.inner
-            .smallest_ring_containing_atom(node_from_u64(atom))
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "RingInfo(num_rings={}, sizes={:?})",
-            self.inner.num_rings(),
-            self.inner.ring_sizes()
-        )
-    }
-}
 
 /// Keep only the `atom_fields` columns of `frame`'s ``atoms`` block; `None`
 /// keeps them all. A requested column the block lacks raises

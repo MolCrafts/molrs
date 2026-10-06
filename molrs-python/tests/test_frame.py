@@ -8,10 +8,10 @@ import pickle
 import molrs
 import numpy as np
 import pytest
-from molrs import Block, Frame, MetaValue
+from molrs.store import Block, Frame, MetaValue
 
 
-class _SubFrame(molrs.Frame):
+class _SubFrame(molrs.store.Frame):
     """Module level, so pickle can find it."""
 
 
@@ -46,15 +46,15 @@ class TestOneFrame:
     """There is one ``Frame``: the PyO3 class, constructed and read natively."""
 
     def test_molrs_frame_is_the_native_class(self):
-        assert molrs.Frame is molrs._lib.Frame
+        assert molrs.store.Frame is molrs._lib.Frame
 
     def test_a_frame_can_be_subclassed(self):
         """Core data classes are extensible; a subclass is still a Frame."""
 
-        class Sub(molrs.Frame):
+        class Sub(molrs.store.Frame):
             pass
 
-        assert isinstance(Sub(), molrs.Frame)
+        assert isinstance(Sub(), molrs.store.Frame)
 
     def test_a_frame_subclass_pickles_as_itself(self):
         sub = _SubFrame()
@@ -71,7 +71,7 @@ class TestOneFrame:
         assert type(molrs.io.read_xyz(str(path))) is Frame
 
     def test_a_graph_serialises_to_the_one_class(self):
-        mol = molrs.Atomistic()
+        mol = molrs.system.Atomistic()
         mol.def_atom(element="C", x=0.0, y=0.0, z=0.0)
         frame = mol.to_frame()
         assert type(frame) is Frame
@@ -81,7 +81,7 @@ class TestOneFrame:
         f = Frame(
             {"atoms": {"x": [1.0, 2.0]}, "bonds": Block({"atomi": [0], "atomj": [1]})},
             meta={"title": MetaValue("string", "t")},
-            box=molrs.Box.cube(5.0),
+            box=molrs.spatial.Box.cube(5.0),
         )
         assert sorted(f.keys()) == ["atoms", "bonds"]
         np.testing.assert_array_equal(f["atoms"]["x"], [1.0, 2.0])
@@ -153,7 +153,7 @@ class TestFrameBlockHandle:
 class TestFrameCopy:
     def test_copy_does_not_share_buffers(self):
         f = Frame({"atoms": {"x": np.array([1.0, 2.0])}})
-        f.box = molrs.Box.cube(5.0)
+        f.box = molrs.spatial.Box.cube(5.0)
         g = f.copy()
         assert not np.shares_memory(f["atoms"]["x"], g["atoms"]["x"])
         g["atoms"]["x"][0] = 9.0
@@ -178,7 +178,7 @@ class TestFramePickle:
             "tag", np.array([4, 0], dtype=np.int32), [True, False]
         )
         f.meta["temperature"] = MetaValue("f64", 300.0)
-        f.box = molrs.Box.cube(2.0)
+        f.box = molrs.spatial.Box.cube(2.0)
         restored = pickle.loads(pickle.dumps(f))
         assert type(restored) is Frame
         np.testing.assert_array_equal(restored["atoms"]["x"], [1.0, 2.0])
@@ -278,20 +278,20 @@ class TestFrameBox:
 
     def test_set_box(self):
         f = Frame()
-        box_ = molrs.Box.cube(10.0)
+        box_ = molrs.spatial.Box.cube(10.0)
         f.box = box_
         assert f.box is not None
         assert pytest.approx(f.box.volume(), abs=1) == 1000.0
 
     def test_clear_box(self):
         f = Frame()
-        f.box = molrs.Box.cube(10.0)
+        f.box = molrs.spatial.Box.cube(10.0)
         f.box = None
         assert f.box is None
 
     def test_repr_with_box(self):
         f = Frame()
-        f.box = molrs.Box.cube(10.0)
+        f.box = molrs.spatial.Box.cube(10.0)
         assert "yes" in repr(f)
 
 
@@ -704,14 +704,14 @@ class TestMetaDocument:
         # while `isinstance(..., dict)` is false, and neither may drift.
         assert doc == expected
         assert isinstance(doc, dict) is False
-        assert isinstance(doc, molrs.MetaDocument)
+        assert isinstance(doc, molrs.store.MetaDocument)
         assert isinstance(doc, Mapping)
         assert (doc != expected) is False
         assert doc != {"tool": "molrec", "run": 3, "tags": [1, 2], "inner": {"step": 1}}
         assert doc["tags"] == (1, 2)
         assert doc["tags"] != [1, 2]
         assert isinstance(doc["tags"], tuple)
-        assert isinstance(doc["inner"], molrs.MetaDocument)
+        assert isinstance(doc["inner"], molrs.store.MetaDocument)
         assert doc["inner"] == {"step": 1}
         other = Frame()
         other.meta["run"] = {
@@ -782,7 +782,7 @@ class TestMetaDocument:
         assert isinstance(plain["tags"], list)
         assert isinstance(plain["rows"], list)
         assert isinstance(plain["rows"][0], dict)
-        assert not isinstance(plain["rows"][0], molrs.MetaDocument)
+        assert not isinstance(plain["rows"][0], molrs.store.MetaDocument)
         assert json.loads(json.dumps(plain)) == plain
         plain["step"] = 9
         plain["rows"][0]["a"] = 5
@@ -792,7 +792,7 @@ class TestMetaDocument:
             "rows": ({"a": 1}, {"a": None}),
         }
         assert isinstance(frame.meta["run"]["rows"], tuple)
-        assert isinstance(frame.meta["run"]["rows"][0], molrs.MetaDocument)
+        assert isinstance(frame.meta["run"]["rows"][0], molrs.store.MetaDocument)
 
     def test_json_array_written_back_stays_an_array(self):
         frame = Frame()
@@ -823,7 +823,7 @@ class TestFrameValidation:
 
 
 class TestFrameSubset:
-    """Seam of ``molrs.Frame.subset``.
+    """Seam of ``molrs.store.Frame.subset``.
 
     Row gathering and relation renumbering are proven by
     ``molrs/src/core/store/frame.rs``; these check the return type, the row
@@ -831,9 +831,9 @@ class TestFrameSubset:
     """
 
     @staticmethod
-    def _chain() -> molrs.Frame:
+    def _chain() -> molrs.store.Frame:
         # 4 atoms at x = 0..3 (Å) in two molecules, bonded (0,1), (1,2), (2,3).
-        return molrs.Frame(
+        return molrs.store.Frame(
             {
                 "atoms": {
                     "x": np.array([0.0, 1.0, 2.0, 3.0], dtype=np.float64),
@@ -849,7 +849,7 @@ class TestFrameSubset:
     def test_subset_returns_a_frame_with_the_selected_rows(self):
         sub = self._chain().subset([2, 3])
 
-        assert type(sub) is molrs.Frame
+        assert type(sub) is molrs.store.Frame
         np.testing.assert_array_equal(sub["atoms"]["x"], [2.0, 3.0])
         np.testing.assert_array_equal(sub["atoms"]["mol_id"], [2, 2])
         assert sub["bonds"].nrows == 1
@@ -894,13 +894,13 @@ class TestFrameSubset:
 
 class TestFrameConcat:
     @staticmethod
-    def _chain(n: int, charge: bool = False) -> molrs.Frame:
-        frame = molrs.Frame()
-        atoms = molrs.Block()
+    def _chain(n: int, charge: bool = False) -> molrs.store.Frame:
+        frame = molrs.store.Frame()
+        atoms = molrs.store.Block()
         atoms.insert("x", np.arange(n, dtype=np.float64))
         if charge:
             atoms.insert("charge", np.zeros(n))
-        bonds = molrs.Block()
+        bonds = molrs.store.Block()
         bonds.insert("atomi", np.arange(n - 1, dtype=np.uint64))
         bonds.insert("atomj", np.arange(1, n, dtype=np.uint64))
         frame["atoms"] = atoms
@@ -908,20 +908,20 @@ class TestFrameConcat:
         return frame
 
     def test_endpoints_are_offset_past_earlier_parts(self):
-        joined = molrs.Frame.concat([self._chain(2), self._chain(3)])
+        joined = molrs.store.Frame.concat([self._chain(2), self._chain(3)])
         assert joined["atoms"].nrows == 5
         assert list(joined["bonds"]["atomi"]) == [0, 2, 3]
         assert list(joined["bonds"]["atomj"]) == [1, 3, 4]
 
     def test_concat_of_copies_equals_replicate(self):
         chain = self._chain(3)
-        joined = molrs.Frame.concat([chain, chain])
+        joined = molrs.store.Frame.concat([chain, chain])
         tiled = chain.replicate(2)
         assert list(joined["bonds"]["atomj"]) == list(tiled["bonds"]["atomj"])
 
     def test_a_column_one_part_lacks_is_null_there(self):
-        joined = molrs.Frame.concat([self._chain(2, charge=True), self._chain(2)])
+        joined = molrs.store.Frame.concat([self._chain(2, charge=True), self._chain(2)])
         assert list(joined["atoms"].validity("charge")) == [True, True, False, False]
 
     def test_no_parts_give_an_empty_frame(self):
-        assert len(molrs.Frame.concat([])) == 0
+        assert len(molrs.store.Frame.concat([])) == 0

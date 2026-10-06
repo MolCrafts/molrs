@@ -18,8 +18,8 @@
 //! none of them has a constructor on the Python side.
 //!
 //! There is deliberately **no** `CGSmilesReader`: in this binding "Reader"
-//! means a lazy, path-backed trajectory cursor (`XYZTrajReader`,
-//! `DCDTrajReader`, …), and a text-in / IR-out parser is not that object. The
+//! means a lazy, path-backed trajectory cursor (`molrs.io.TrajectoryReader`),
+//! and a text-in / IR-out parser is not that object. The
 //! reader-shaped API belongs to molpy, wrapping this class the way its
 //! `SmilesReader` wraps `molrs.io.SmilesIR`.
 //!
@@ -64,8 +64,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::core::system::molgraph::{PyAtomistic, PyCoarseGrain};
-use crate::helpers::smiles_error_to_pyerr;
-use crate::io::PySmilesIR;
+use crate::error::smiles_error_to_pyerr;
+use crate::io::smiles::PySmilesIR;
 
 /// The lowercase Python spelling of a [`BondKind`].
 ///
@@ -842,7 +842,7 @@ impl PyCGSmilesIR {
         PyAtomistic::from_core(py, mol)
     }
 
-    /// Read the last fragment table as named, ported :class:`~molrs.Atomistic` templates.
+    /// Read the last fragment table as named, ported :class:`~molrs.system.Atomistic` templates.
     ///
     /// One entry per fragment the table defines, keyed by the name written
     /// after ``#``. Each body keeps its own atoms and bonds and carries one
@@ -931,4 +931,17 @@ impl PyCGSmilesIR {
             self.inner.levels.len()
         )
     }
+}
+
+/// Register the CGsmiles front door and the read-only records it hands out.
+pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyCGSmilesIR>()?;
+    m.add_class::<PyCGGraph>()?;
+    m.add_class::<PyCGNode>()?;
+    m.add_class::<PyCGEdge>()?;
+    m.add_class::<PyCGFragmentDef>()?;
+    m.add_class::<PyResolvedPair>()?;
+    m.add_class::<PyPairEnd>()?;
+    m.add_class::<PyBondingDescriptor>()?;
+    Ok(())
 }

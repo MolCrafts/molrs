@@ -1,0 +1,96 @@
+"""The force-field container and its file formats — ``molrs::ff::forcefield``.
+
+:class:`ForceField` holds styles (one per category and LAMMPS style name)
+and the types defined under them; :class:`Style` / :class:`Type` and their
+per-category subclasses are live handles onto it. The readers and writers map
+each engine's force-field files onto that IR (structure and trajectory formats
+are :mod:`molrs.io`'s):
+
+* readers — :func:`read_lammps_forcefield`, :func:`read_lammps_data_coeffs`,
+  :func:`read_lammps_cmap`, :func:`read_gromacs_top_ff`,
+  :func:`read_gromacs_system`, :func:`read_amber_prmtop_ff`,
+  :func:`read_forcefield_xml`, :func:`read_opls_xml`
+* writers — :func:`write_lammps_forcefield`,
+  :func:`write_lammps_forcefield_str`, :func:`write_lammps_data_coeffs`,
+  :func:`write_lammps_cmap`, :func:`write_gromacs_top_ff`,
+  :func:`write_gromacs_system`, :func:`write_amber_frcmod`,
+  :func:`write_forcefield_xml`
+"""
+
+from __future__ import annotations
+
+from .._lib import (
+    AngleStyle,
+    AngleType,
+    AtomStyle,
+    AtomType,
+    BondStyle,
+    BondType,
+    CmapStyle,
+    CmapType,
+    DihedralStyle,
+    DihedralType,
+    ForceField,
+    ImproperStyle,
+    ImproperType,
+    PairStyle,
+    PairType,
+    RelationStyle,
+    RelationType,
+    Style,
+    Type,
+    read_amber_prmtop_ff,
+    read_forcefield_xml,
+    read_gromacs_system,
+    read_gromacs_top_ff,
+    read_lammps_cmap,
+    read_lammps_data_coeffs,
+    read_lammps_forcefield,
+    read_opls_xml,
+    write_amber_frcmod,
+    write_forcefield_xml,
+    write_gromacs_system,
+    write_gromacs_top_ff,
+    write_lammps_cmap,
+    write_lammps_data_coeffs,
+    write_lammps_forcefield,
+    write_lammps_forcefield_str,
+)
+
+__all__ = [
+    "AngleStyle",
+    "AngleType",
+    "AtomStyle",
+    "AtomType",
+    "BondStyle",
+    "BondType",
+    "CmapStyle",
+    "CmapType",
+    "DihedralStyle",
+    "DihedralType",
+    "ForceField",
+    "ImproperStyle",
+    "ImproperType",
+    "PairStyle",
+    "PairType",
+    "RelationStyle",
+    "RelationType",
+    "Style",
+    "Type",
+    "read_amber_prmtop_ff",
+    "read_forcefield_xml",
+    "read_gromacs_system",
+    "read_gromacs_top_ff",
+    "read_lammps_cmap",
+    "read_lammps_data_coeffs",
+    "read_lammps_forcefield",
+    "read_opls_xml",
+    "write_amber_frcmod",
+    "write_forcefield_xml",
+    "write_gromacs_system",
+    "write_gromacs_top_ff",
+    "write_lammps_cmap",
+    "write_lammps_data_coeffs",
+    "write_lammps_forcefield",
+    "write_lammps_forcefield_str",
+]

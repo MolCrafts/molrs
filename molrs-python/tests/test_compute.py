@@ -10,22 +10,22 @@ import molrs
 import numpy as np
 import pytest
 from conftest import make_frame, octahedron_frame
-from molrs.compute.cluster import Cluster, ClusterProperties
-from molrs.compute.density import GaussianDensity, LocalDensity
-from molrs.compute.diffraction import StaticStructureFactorDebye
-from molrs.compute.environment import BondOrder
-from molrs.compute.order import Hexatic, Nematic, SolidLiquid, Steinhardt
-from molrs.compute.pmft import PMFTXY
+from molrs.compute import Cluster, ClusterProperties
+from molrs.compute import GaussianDensity, LocalDensity
+from molrs.compute import StaticStructureFactorDebye
+from molrs.compute import BondOrder
+from molrs.compute import Hexatic, Nematic, SolidLiquid, Steinhardt
+from molrs.compute import PMFTXY
 
 
 def _nlist(frame, pts, cutoff=1.2):
-    nq = molrs.NeighborQuery(frame.box, pts, cutoff)
+    nq = molrs.spatial.NeighborQuery(frame.box, pts, cutoff)
     return nq.query_self()
 
 
 def test_neighbor_query_free_boundary():
     points = np.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [2.0, 0.0, 0.0]])
-    query = molrs.NeighborQuery.free(points, 1.0)
+    query = molrs.spatial.NeighborQuery.free(points, 1.0)
     result = query.query(np.array([[0.0, 0.0, 0.0]]))
 
     assert np.array_equal(result.point_indices(), np.array([0, 1], dtype=np.uint32))
@@ -34,11 +34,11 @@ def test_neighbor_query_free_boundary():
 
 def test_neighbor_query_rejects_non_positive_cutoff():
     points = np.zeros((1, 3))
-    box = molrs.Box.cube(1.0)
+    box = molrs.spatial.Box.cube(1.0)
     with pytest.raises(ValueError, match="positive"):
-        molrs.NeighborQuery(box, points, 0.0)
+        molrs.spatial.NeighborQuery(box, points, 0.0)
     with pytest.raises(ValueError, match="positive"):
-        molrs.NeighborQuery.free(points, 0.0)
+        molrs.spatial.NeighborQuery.free(points, 0.0)
 
 
 class TestSteinhardt:
@@ -74,7 +74,7 @@ class TestNematic:
             dtype=np.float64,
         )
         frame = make_frame(pts, box_len=20.0)
-        ori = molrs.Block()
+        ori = molrs.store.Block()
         ori.insert("atomi", np.array([0, 2, 4, 6, 8], dtype=np.uint32))
         ori.insert("atomj", np.array([1, 3, 5, 7, 9], dtype=np.uint32))
         frame["orientations"] = ori
@@ -186,7 +186,7 @@ class TestMSDMethodSelection:
         pos = np.cumsum(rng.normal(size=(n_frames, n_particles, 3)), axis=0)
         frames = []
         for t in range(n_frames):
-            f, b = molrs.Frame(), molrs.Block()
+            f, b = molrs.store.Frame(), molrs.store.Block()
             b["x"] = pos[t, :, 0].copy()
             b["y"] = pos[t, :, 1].copy()
             b["z"] = pos[t, :, 2].copy()
@@ -195,20 +195,20 @@ class TestMSDMethodSelection:
         return frames, pos
 
     def test_default_is_direct(self):
-        assert molrs.compute.msd.MSD().method == "direct"
+        assert molrs.compute.MSD().method == "direct"
 
     def test_window_is_selected_by_method(self):
-        assert molrs.compute.msd.MSD(method="window").method == "window"
+        assert molrs.compute.MSD(method="window").method == "window"
 
     def test_unknown_method_raises(self):
         with pytest.raises(ValueError, match="unknown MSD method"):
-            molrs.compute.msd.MSD(method="rolling")
+            molrs.compute.MSD(method="rolling")
 
     def test_the_two_methods_disagree(self):
         """Otherwise the parameter would be pinning nothing."""
         frames, _ = self._random_walk_frames()
-        direct = np.asarray(molrs.compute.msd.MSD().compute(frames).mean)
-        window = np.asarray(molrs.compute.msd.MSD(method="window").compute(frames).mean)
+        direct = np.asarray(molrs.compute.MSD().compute(frames).mean)
+        window = np.asarray(molrs.compute.MSD(method="window").compute(frames).mean)
         assert not np.allclose(direct, window)
 
 
@@ -241,28 +241,28 @@ class TestAcf:
 
     def test_lag_zero_is_the_mean_square(self):
         s = self._series()
-        got = np.asarray(molrs.compute.dynamics.Acf().compute(s, max_lag=3).acf)
+        got = np.asarray(molrs.compute.Acf().compute(s, max_lag=3).acf)
         assert got[0] == pytest.approx((s**2).sum() / (s.shape[1] * s.shape[0]))
 
     def test_max_lag_is_clamped(self):
         s = self._series(n_frames=10)
-        res = molrs.compute.dynamics.Acf().compute(s, max_lag=999)
+        res = molrs.compute.Acf().compute(s, max_lag=999)
         assert len(np.asarray(res.acf)) == 10
         assert res.lags[-1] == 9
 
     def test_a_constant_series_is_flat(self):
         s = np.full((16, 3, 2), 2.0)
-        got = np.asarray(molrs.compute.dynamics.Acf().compute(s, max_lag=6).acf)
+        got = np.asarray(molrs.compute.Acf().compute(s, max_lag=6).acf)
         assert np.allclose(got, 8.0)  # n_components * value^2
 
     def test_is_not_the_same_estimator_as_vacf(self):
         """VACF mean-subtracts, averages over DOF, and is biased."""
         s = self._series()
-        acf = np.asarray(molrs.compute.dynamics.Acf().compute(s, max_lag=10).acf)
+        acf = np.asarray(molrs.compute.Acf().compute(s, max_lag=10).acf)
         flat = s.reshape(s.shape[0], -1)
-        vacf = np.asarray(molrs.compute.transport.VACF().compute(flat, 1.0, 10)["acf"])
+        vacf = np.asarray(molrs.compute.VACF().compute(flat, 1.0, 10)["acf"])
         assert not np.allclose(acf, vacf), "the two estimators must not coincide"
 
     def test_too_few_frames_raises(self):
         with pytest.raises(ValueError):
-            molrs.compute.dynamics.Acf().compute(np.zeros((1, 2, 3)), max_lag=0)
+            molrs.compute.Acf().compute(np.zeros((1, 2, 3)), max_lag=0)

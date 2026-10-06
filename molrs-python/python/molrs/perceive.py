@@ -16,20 +16,24 @@ SMARTS lives here because a pattern is a query over a *perceived* graph —
 matching needs ring membership and aromaticity, not a text format. The SMILES
 front-end is a format, and lives in :mod:`molrs.io`.
 
+:class:`Reaction` applies a reaction SMARTS (SMIRKS) to a molecule: the
+transform is defined by a pattern over the perceived graph, so it is
+perception's too.
+
 :class:`SubgraphMatcher` is the coarse-grained counterpart: it snapshots a bead
-pattern (a :class:`~molrs.CoarseGrain`, e.g. from
+pattern (a :class:`~molrs.system.CoarseGrain`, e.g. from
 ``CGSmilesIR(...).to_coarsegrain()``) and lists every occurrence of it in a
 target ``CoarseGrain`` as bead-handle groups. It does not partition
-overlapping groups. :class:`Coarsener` maps disjoint node groups of a held
-``CoarseGrain`` or ``Atomistic`` onto the sites of a new ``CoarseGrain``, each
-at its group's centre of mass with an axis from the group's first member.
+overlapping groups. Mapping matched groups onto the sites of a new
+``CoarseGrain`` is construction, not perception: that is
+:class:`molrs.builder.Coarsener`.
 """
 
 from __future__ import annotations
 
 from ._lib import (
-    Coarsener,
     Perceive,
+    Reaction,
     RingInfo,
     SmartsMatch,
     SmartsPattern,
@@ -37,8 +41,8 @@ from ._lib import (
 )
 
 __all__ = [
-    "Coarsener",
     "Perceive",
+    "Reaction",
     "RingInfo",
     "SmartsMatch",
     "SmartsPattern",

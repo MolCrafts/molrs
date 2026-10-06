@@ -95,35 +95,35 @@ def chain_bonds() -> tuple[np.ndarray, np.ndarray]:
     return i, i + 1
 
 
-def bond_frame(xyz: np.ndarray = CHAIN) -> molrs.Frame:
-    atoms = molrs.Block()
+def bond_frame(xyz: np.ndarray = CHAIN) -> molrs.store.Frame:
+    atoms = molrs.store.Block()
     for d, key in enumerate("xyz"):
         atoms.insert(key, xyz[:, d].copy())
     atoms.insert("type", ["B"] * len(xyz))
     i, j = chain_bonds()
-    bonds = molrs.Block()
+    bonds = molrs.store.Block()
     bonds.insert("atomi", i.astype(np.uint32))
     bonds.insert("atomj", j.astype(np.uint32))
     bonds.insert("type", ["B-B"] * len(i))
-    frame = molrs.Frame()
+    frame = molrs.store.Frame()
     frame["atoms"] = atoms
     frame["bonds"] = bonds
     return frame
 
 
-def bond_ff(style: str, **params: float) -> molrs.ff.ForceField:
-    ff = molrs.ff.ForceField("beads", units="lj")
+def bond_ff(style: str, **params: float) -> molrs.ff.forcefield.ForceField:
+    ff = molrs.ff.forcefield.ForceField("beads", units="lj")
     b = ff.def_style("atom", "full").def_type("B", mass=1.0)
     ff.def_style("bond", style).def_type("B-B", b, b, **params)
     return ff
 
 
-def fene_ff(style: str) -> molrs.ff.ForceField:
+def fene_ff(style: str) -> molrs.ff.forcefield.ForceField:
     return bond_ff(style, k=K, r0=R0, epsilon=EPS, sigma=SIG)
 
 
-def energy_forces(ff: molrs.ff.ForceField, frame: molrs.Frame):
-    pots = molrs.ff.PotentialCompiler(ff).compile(frame)
+def energy_forces(ff: molrs.ff.forcefield.ForceField, frame: molrs.store.Frame):
+    pots = molrs.ff.potential.PotentialCompiler(ff).compile(frame)
     return pots.calc_energy(frame), pots.calc_forces(frame)
 
 
@@ -169,7 +169,7 @@ def test_a_numpy_kernel_prices_as_the_expression(registered) -> None:
     frame = bond_frame()
     e_x, f_x = energy_forces(fene_ff("fene/expr"), frame)
     calls.clear()
-    pots = molrs.ff.PotentialCompiler(fene_ff("fene/np")).compile(frame)
+    pots = molrs.ff.potential.PotentialCompiler(fene_ff("fene/np")).compile(frame)
     calls.clear()
     e_np, f_np = pots.calc_energy_forces(frame)
     # One Python call per style per evaluation, every term in it.
@@ -290,12 +290,12 @@ def test_a_kernel_that_raises_is_reraised_from_compile_and_calc(registered) -> N
     registered.append(("bond", "flaky"))
     ff, frame = bond_ff("flaky", k=300.0, r0=1.0), bond_frame()
     with pytest.raises(ir.KernelShape, match="flaky") as err:
-        molrs.ff.PotentialCompiler(ff).compile(frame)
+        molrs.ff.potential.PotentialCompiler(ff).compile(frame)
     assert isinstance(err.value.__cause__, ZeroDivisionError)
     assert err.value.style == "flaky"
 
     boom["on"] = False
-    pots = molrs.ff.PotentialCompiler(ff).compile(frame)
+    pots = molrs.ff.potential.PotentialCompiler(ff).compile(frame)
     e = pots.calc_energy(frame)
     boom["on"] = True
     with pytest.raises(ir.KernelShape) as err:
@@ -565,15 +565,15 @@ PAIR_TYPES = ["A", "B", "A"]
 PAIRS = [(0, 1), (0, 2), (1, 2)]
 
 
-def pair_frame() -> molrs.Frame:
-    atoms = molrs.Block()
+def pair_frame() -> molrs.store.Frame:
+    atoms = molrs.store.Block()
     for d, key in enumerate("xyz"):
         atoms.insert(key, PAIR_XYZ[:, d].copy())
     atoms.insert("type", PAIR_TYPES)
-    pairs = molrs.Block()
+    pairs = molrs.store.Block()
     pairs.insert("atomi", np.array([i for i, _ in PAIRS], dtype=np.uint64))
     pairs.insert("atomj", np.array([j for _, j in PAIRS], dtype=np.uint64))
-    frame = molrs.Frame()
+    frame = molrs.store.Frame()
     frame["atoms"] = atoms
     frame["pairs"] = pairs
     return frame
@@ -581,8 +581,8 @@ def pair_frame() -> molrs.Frame:
 
 def pair_ff(
     style: str, rows: dict[str, dict[str, float]], **style_params
-) -> molrs.ff.ForceField:
-    ff = molrs.ff.ForceField("pairs", units="lj")
+) -> molrs.ff.forcefield.ForceField:
+    ff = molrs.ff.forcefield.ForceField("pairs", units="lj")
     atoms = ff.def_style("atom", "full")
     types = {t: atoms.def_type(t, mass=1.0) for t in rows}
     pair = ff.def_style("pair", style, {"cutoff": RC, **style_params})
@@ -680,16 +680,16 @@ def test_a_pair_expression_reads_the_self_rows(registered) -> None:
 UB = (33.0, 2.2)  # k_ub, r_ub
 
 
-def ub_frame(xyz: np.ndarray, block: str) -> molrs.Frame:
-    atoms = molrs.Block()
+def ub_frame(xyz: np.ndarray, block: str) -> molrs.store.Frame:
+    atoms = molrs.store.Block()
     for d, key in enumerate("xyz"):
         atoms.insert(key, xyz[:, d].copy())
     atoms.insert("type", ["A"] * len(xyz))
-    rows = molrs.Block()
+    rows = molrs.store.Block()
     for key, atom in (("atomi", 0), ("atomj", 1), ("atomk", 2)):
         rows.insert(key, np.array([atom], dtype=np.uint32))
     rows.insert("type", ["t"])
-    frame = molrs.Frame()
+    frame = molrs.store.Frame()
     frame["atoms"] = atoms
     frame[block] = rows
     return frame
@@ -697,13 +697,13 @@ def ub_frame(xyz: np.ndarray, block: str) -> molrs.Frame:
 
 def ub_reference(xyz: np.ndarray) -> tuple[float, np.ndarray]:
     """LAMMPS ``angle_style charmm`` with K = 0: the 1-3 spring alone."""
-    ff = molrs.ff.ForceField("charmm")
+    ff = molrs.ff.forcefield.ForceField("charmm")
     a = ff.def_style("atom", "full").def_type("A", mass=1.0)
     ff.def_style("angle", "charmm").def_type(
         "t", a, a, a, k=0.0, theta0=109.5, k_ub=UB[0], r_ub=UB[1]
     )
     frame = ub_frame(xyz, "angles")
-    return molrs.ff.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
+    return molrs.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
 
 
 def test_a_new_category_registers_and_evaluates(registered) -> None:
@@ -767,13 +767,13 @@ def test_a_new_category_registers_and_evaluates(registered) -> None:
     # Typed in a ForceField and compiled: LAMMPS `angle charmm` with K = 0.
     reference = ub_reference(x[0])
     for style in ("harmonic", "harmonic/np"):
-        ff = molrs.ff.ForceField("ub")
+        ff = molrs.ff.forcefield.ForceField("ub")
         a = ff.def_style("atom", "full").def_type("A", mass=1.0)
         ff.def_style("urey_bradley", style).def_type(
             "t", a, a, a, k_ub=UB[0], r_ub=UB[1]
         )
         frame = ub_frame(x[0], "urey_bradleys")
-        e, f = molrs.ff.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
+        e, f = molrs.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
         assert math.isclose(e, reference[0], rel_tol=1e-12)
         np.testing.assert_allclose(
             f, reference[1], rtol=0, atol=1e-12 * np.abs(reference[1]).max()

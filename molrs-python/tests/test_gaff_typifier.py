@@ -17,14 +17,14 @@ import numpy as np
 import pytest
 
 
-def _acetanilide() -> molrs.Atomistic:
+def _acetanilide() -> molrs.system.Atomistic:
     """Acetanilide with hydrogens and 3D coordinates."""
     heavy = molrs.io.SmilesIR("CC(=O)Nc1ccccc1").to_atomistic()
     mol, _ = molrs.conformer.Conformer(seed=7).generate(heavy)
     return mol
 
 
-def _typed(parameter_set: str, mol: molrs.Atomistic | None = None):
+def _typed(parameter_set: str, mol: molrs.system.Atomistic | None = None):
     """``(typifier, typed Atomistic)``: ATD types, then the GAFF table."""
     mol = _acetanilide() if mol is None else mol
     labelled = molrs.ff.typifier.AtdTypifier(parameter_set=parameter_set).typify(mol)
@@ -32,8 +32,8 @@ def _typed(parameter_set: str, mol: molrs.Atomistic | None = None):
     return gaff, gaff.typify(labelled)
 
 
-def _ethylene() -> molrs.Atomistic:
-    mol = molrs.Atomistic()
+def _ethylene() -> molrs.system.Atomistic:
+    mol = molrs.system.Atomistic()
     c1 = mol.def_atom(element="C", type="c2")
     c2 = mol.def_atom(element="C", type="c2")
     mol.def_bond(c1, c2)
@@ -49,9 +49,9 @@ def _ethylene() -> molrs.Atomistic:
 
 def test_gaff_typifier_is_exposed() -> None:
     assert "GaffTypifier" in molrs.ff.typifier.__all__
-    assert molrs.ff.GaffTypifier is molrs.ff.typifier.GaffTypifier
+    assert molrs.ff.typifier.GaffTypifier is molrs.ff.typifier.GaffTypifier
     gaff = molrs.ff.typifier.GaffTypifier(parameter_set="gaff2")
-    assert isinstance(gaff, molrs.ff.Typifier)
+    assert isinstance(gaff, molrs.ff.typifier.Typifier)
     assert gaff.parameter_set == "gaff2"
     assert repr(gaff) == "GaffTypifier(parameter_set='gaff2')"
 
@@ -78,10 +78,10 @@ def test_atd_then_gaff_types_and_prices_acetanilide(parameter_set: str) -> None:
     assert ("improper", "periodic") in styles
     # Charges are not a GAFF parameter: a charge model supplies them.
     atoms = frame["atoms"]
-    atoms.insert("charge", molrs.ff.GasteigerModel().assign(typed))
+    atoms.insert("charge", molrs.ff.charge.GasteigerModel().assign(typed))
     frame["atoms"] = atoms
-    frame["pairs"] = molrs.ff.intramolecular_pairs(frame, ff)
-    energy = molrs.ff.PotentialCompiler(ff).compile(frame).calc_energy(frame)
+    frame["pairs"] = molrs.ff.potential.intramolecular_pairs(frame, ff)
+    energy = molrs.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy(frame)
     assert math.isfinite(energy)
 
 
@@ -119,7 +119,7 @@ def test_a_native_gaff_subclass_cannot_override_match() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _column(frame: molrs.Frame, block: str, key: str) -> np.ndarray:
+def _column(frame: molrs.store.Frame, block: str, key: str) -> np.ndarray:
     return np.asarray(frame[block][key])
 
 
@@ -151,18 +151,18 @@ def test_gaff2_reference_columns_are_the_typed_parameters() -> None:
 def test_a_parameter_a_rows_type_lacks_is_a_null_cell() -> None:
     """Two bond styles in one block: each row carries its own style's
     parameters, and the other style's are holes, not zeros."""
-    ff = molrs.ff.ForceField("toy")
+    ff = molrs.ff.forcefield.ForceField("toy")
     atoms = ff.def_style("atom", "full")
     a = atoms.def_type("A", mass=12.0)
     b = atoms.def_type("B", mass=1.0)
     ff.def_style("bond", "harmonic").def_type("A-B", a, b, k=300.0, r0=1.1)
     ff.def_style("bond", "morse").def_type("A-A", a, a, d0=80.0, alpha=2.0, r0=1.5)
 
-    frame = molrs.Frame()
-    block = molrs.Block()
+    frame = molrs.store.Frame()
+    block = molrs.store.Block()
     block.insert("type", ["A", "A", "B"])
     frame["atoms"] = block
-    bonds = molrs.Block()
+    bonds = molrs.store.Block()
     bonds.insert("atomi", np.array([0, 1], dtype=np.uint64))
     bonds.insert("atomj", np.array([1, 2], dtype=np.uint64))
     bonds.insert("type", ["A-A", "A-B"])
@@ -177,7 +177,7 @@ def test_a_parameter_a_rows_type_lacks_is_a_null_cell() -> None:
 
 
 def test_per_atom_lennard_jones_is_the_self_row() -> None:
-    ff = molrs.ff.ForceField("toy")
+    ff = molrs.ff.forcefield.ForceField("toy")
     atoms = ff.def_style("atom", "full")
     a = atoms.def_type("A", mass=12.0)
     b = atoms.def_type("B", mass=1.0)
@@ -187,11 +187,11 @@ def test_per_atom_lennard_jones_is_the_self_row() -> None:
     ff.def_style("pair", "coul/cut", {"coulomb": 332.0})
     ff.def_style("bond", "harmonic").def_type("A-B", a, b, k=300.0, r0=1.1)
 
-    frame = molrs.Frame()
-    block = molrs.Block()
+    frame = molrs.store.Frame()
+    block = molrs.store.Block()
     block.insert("type", ["A", "B"])
     frame["atoms"] = block
-    bonds = molrs.Block()
+    bonds = molrs.store.Block()
     bonds.insert("atomi", np.array([0], dtype=np.uint64))
     bonds.insert("atomj", np.array([1], dtype=np.uint64))
     bonds.insert("type", ["A-B"])
@@ -207,7 +207,7 @@ def test_per_atom_lennard_jones_is_the_self_row() -> None:
 def test_a_frame_of_another_field_is_refused() -> None:
     gaff, typed = _typed("gaff2")
     frame = typed.to_frame()
-    other = molrs.ff.ForceField("other")
+    other = molrs.ff.forcefield.ForceField("other")
     other.def_style("bond", "harmonic")
     with pytest.raises(ValueError, match="no bond style defines"):
         other.materialize_params(frame, prefix="x_")
@@ -218,10 +218,10 @@ def test_a_frame_of_another_field_is_refused() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _mol2(elements: list[str], bonds: list[tuple[int, int]], orders=None) -> molrs.Atomistic:
+def _mol2(elements: list[str], bonds: list[tuple[int, int]], orders=None) -> molrs.system.Atomistic:
     """A molecule as a mol2 file lists it: atoms by element, bonds in file
     order, single unless ``orders`` says otherwise."""
-    mol = molrs.Atomistic()
+    mol = molrs.system.Atomistic()
     atoms = [mol.def_atom(element=e) for e in elements]
     for k, (i, j) in enumerate(bonds):
         order = 1 if orders is None else orders[k]
@@ -237,7 +237,7 @@ _AZULENE_BONDS = [
 ] + [(c, 10 + h) for h, c in enumerate([0, 1, 2, 4, 5, 6, 8, 9])]
 
 
-def _types(mol: molrs.Atomistic, parameter_set: str, **kw) -> list[str]:
+def _types(mol: molrs.system.Atomistic, parameter_set: str, **kw) -> list[str]:
     typed = molrs.ff.typifier.AtdTypifier(parameter_set=parameter_set, **kw).typify(mol)
     return [str(t) for t in typed.to_frame()["atoms"]["type"]]
 

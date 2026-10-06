@@ -1,10 +1,9 @@
 //! Python wrapper for [`molrs::spatial::TriMesh`].
 //!
 //! A triangle surface with a shared vertex table — what
-//! [`read_stl`](crate::io::read_stl) reads and what a
+//! `molrs.io.read_stl` reads and what a
 //! [`Polyhedron`](crate::core::spatial::region::PyPolyhedron) is bounded by.
 
-use crate::helpers::NpF;
 use molrs::spatial::TriMesh;
 use ndarray::Array2;
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
@@ -13,7 +12,7 @@ use pyo3::prelude::*;
 
 /// Triangle surface mesh: a vertex table plus faces indexing into it.
 ///
-/// Exposed to Python as `molrs.TriMesh`. Lengths are whatever unit the
+/// Exposed to Python as `molrs.spatial.TriMesh`. Lengths are whatever unit the
 /// vertices are in; :meth:`scaled` converts.
 ///
 /// Examples
@@ -21,8 +20,8 @@ use pyo3::prelude::*;
 /// >>> mesh = molrs.io.read_stl("cavity.stl").scaled(4.18)
 /// >>> mesh.is_watertight()
 /// True
-/// >>> region = molrs.Polyhedron(mesh)
-#[pyclass(module = "molrs", name = "TriMesh", from_py_object, subclass)]
+/// >>> region = molrs.spatial.Polyhedron(mesh)
+#[pyclass(module = "molrs.spatial", name = "TriMesh", from_py_object, subclass)]
 #[derive(Clone)]
 pub struct PyTriMesh {
     pub(crate) inner: TriMesh,
@@ -45,7 +44,7 @@ impl PyTriMesh {
     ///     If a face points past the vertex table, or the shapes are wrong.
     #[new]
     fn new(
-        vertices: PyReadonlyArray2<'_, NpF>,
+        vertices: PyReadonlyArray2<'_, f64>,
         faces: PyReadonlyArray2<'_, u32>,
     ) -> PyResult<Self> {
         let v = vertices.as_array();
@@ -56,7 +55,7 @@ impl PyTriMesh {
         if f.ncols() != 3 {
             return Err(PyValueError::new_err("faces must have shape (F, 3)"));
         }
-        let verts: Vec<[NpF; 3]> = v.rows().into_iter().map(|r| [r[0], r[1], r[2]]).collect();
+        let verts: Vec<[f64; 3]> = v.rows().into_iter().map(|r| [r[0], r[1], r[2]]).collect();
         let face_list: Vec<[u32; 3]> = f.rows().into_iter().map(|r| [r[0], r[1], r[2]]).collect();
         let inner = TriMesh::from_indexed(verts, face_list).map_err(|index| {
             PyValueError::new_err(format!("face {index} points past the vertex table"))
@@ -65,7 +64,7 @@ impl PyTriMesh {
     }
 
     /// The vertex table, shape ``(V, 3)``.
-    fn vertices<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<NpF>> {
+    fn vertices<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
         let verts = self.inner.vertices();
         let mut a = Array2::zeros((verts.len(), 3));
         for (i, v) in verts.iter().enumerate() {
@@ -107,7 +106,7 @@ impl PyTriMesh {
     }
 
     /// The same mesh with every coordinate multiplied by ``factor``.
-    fn scaled(&self, factor: NpF) -> PyResult<Self> {
+    fn scaled(&self, factor: f64) -> PyResult<Self> {
         if !(factor.is_finite() && factor > 0.0) {
             return Err(PyValueError::new_err(format!(
                 "scale factor must be finite and > 0, got {factor}"
@@ -124,7 +123,7 @@ impl PyTriMesh {
     /// ------
     /// ValueError
     ///     If the mesh has no vertices.
-    fn bounds<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<NpF>>> {
+    fn bounds<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let (lo, hi) = self
             .inner
             .aabb()
@@ -140,7 +139,7 @@ impl PyTriMesh {
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
-        crate::helpers::reduce_via_type(slf.as_any(), (this.vertices(py), this.faces(py)))
+        crate::pickle::reduce_via_type(slf.as_any(), (this.vertices(py), this.faces(py)))
     }
 
     fn __repr__(&self) -> String {

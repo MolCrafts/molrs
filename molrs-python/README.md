@@ -29,11 +29,8 @@ from molrs.conformer import Conformer
 mol, report = Conformer().generate(mol)
 
 # Force field: typify → pairs → potentials
-from molrs.ff import (
-    MMFF94Typifier,
-    PotentialCompiler,
-    intramolecular_pairs,
-)
+from molrs.ff.typifier import MMFF94Typifier
+from molrs.ff.potential import PotentialCompiler, intramolecular_pairs
 
 typifier = MMFF94Typifier()
 typed = typifier.typify(mol)
@@ -47,15 +44,25 @@ assert forces.shape == (frame["atoms"].nrows, 3)
 
 ## Package layout
 
+The top level is the subsystems, exactly as the Rust crate's root is; every
+symbol has one path, named after its Rust owner (`molrs.store.Frame` is
+`molrs::store::Frame`).
+
 | Import | Owns |
 |--------|------|
-| `molrs` (top level) | Core: `Frame`, `Block`, `Atomistic`, `Box`, neighbors, … |
+| `molrs.store` | `Frame`, `Block`, `Trajectory`, frame metadata; `keys`, `schema` |
+| `molrs.spatial` | `Box`, neighbour search, regions, `TriMesh`, `Trace` |
+| `molrs.system` | `Atomistic`, `CoarseGrain`, `Graph` and their live views |
+| `molrs.units` | `Unit`, `Quantity`, `UnitPreset`, `UnitRegistry` |
 | `molrs.io` | Readers/writers, `SmilesIR`, `*.mrec` record files (`write_mrec`, `read_mrec`, …) |
 | `molrs.io.mrec` | Streaming trajectories: `SequenceSchema`, `TrajectoryWriter`, `TrajectoryReader`, `pack` |
-| `molrs.ff` | Force fields, typifiers, potentials |
-| `molrs.compute` | RDF, MSD, transport, dielectric, … |
+| `molrs.ff.*` | `forcefield`, `potential`, `typifier`, `charge`, `ir`, `params`, `scale_lj` |
+| `molrs.optimize` | `LBFGS`, `OptReport` |
+| `molrs.md` | Integrators and the `MD` driver |
+| `molrs.compute` | RDF, MSD, transport, dielectric, … (flat) |
 | `molrs.conformer` | 3D generation |
-| `molrs.perceive` | Rings / aromaticity builder |
+| `molrs.perceive` | Rings, aromaticity, SMARTS, reactions |
+| `molrs.builder` | Structure builders, site-graph assembly, `Coarsener` |
 
 Analysis kernels take `dt` in the time unit of your trajectory, and
 time-valued results come back in that unit. MSD needs **unwrapped**

@@ -10,7 +10,6 @@ import socket
 import threading
 
 import molrs
-import molrs.io as mio
 import numpy as np
 import pytest
 from molrs.stream import ControlCommand
@@ -18,8 +17,8 @@ from molrs.stream import ControlCommand
 pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
 
 
-def _frame(n: int = 3, offset: float = 0.0) -> molrs.Frame:
-    return molrs.Frame(
+def _frame(n: int = 3, offset: float = 0.0) -> molrs.store.Frame:
+    return molrs.store.Frame(
         blocks={
             "atoms": {
                 "x": np.arange(n, dtype=np.float64) + offset,
@@ -34,7 +33,7 @@ def _frame(n: int = 3, offset: float = 0.0) -> molrs.Frame:
 class TestFrameWireCodec:
     def test_round_trip_preserves_columns(self):
         frame = _frame()
-        back = mio.read_frame_bytes(mio.write_frame_bytes(frame))
+        back = molrs.stream.read_frame_bytes(molrs.stream.write_frame_bytes(frame))
         np.testing.assert_allclose(back["atoms"]["x"], frame["atoms"]["x"])
         assert list(back["atoms"]["element"]) == ["C", "C", "C"]
 
@@ -42,31 +41,31 @@ class TestFrameWireCodec:
         # `_lib.Frame.from_bytes` is a staticmethod on the bare PyO3 core; the
         # rich layer shadows it. Without the shadow a decoded stream frame
         # would not accept `frame["atoms"]["x"]`.
-        back = mio.read_frame_bytes(mio.write_frame_bytes(_frame()))
-        assert isinstance(back, molrs.Frame)
+        back = molrs.stream.read_frame_bytes(molrs.stream.write_frame_bytes(_frame()))
+        assert isinstance(back, molrs.store.Frame)
 
     def test_round_trip_preserves_the_box(self):
         frame = _frame()
-        frame.box = molrs.Box(np.eye(3) * 10.0)
-        back = mio.read_frame_bytes(mio.write_frame_bytes(frame))
+        frame.box = molrs.spatial.Box(np.eye(3) * 10.0)
+        back = molrs.stream.read_frame_bytes(molrs.stream.write_frame_bytes(frame))
         assert back.box is not None
         np.testing.assert_allclose(back.box.h, frame.box.h)
 
     @pytest.mark.parametrize("fmt", ["msgpack", "json"])
     def test_both_formats_round_trip(self, fmt):
-        back = mio.read_frame_bytes(mio.write_frame_bytes(_frame(), fmt), fmt)
+        back = molrs.stream.read_frame_bytes(molrs.stream.write_frame_bytes(_frame(), fmt), fmt)
         np.testing.assert_allclose(back["atoms"]["x"], [0.0, 1.0, 2.0])
 
     def test_decoding_with_the_wrong_format_raises(self):
         # Silently reading MessagePack as JSON is how a stream turns into
         # garbage columns instead of an error.
-        payload = mio.write_frame_bytes(_frame(), "msgpack")
+        payload = molrs.stream.write_frame_bytes(_frame(), "msgpack")
         with pytest.raises(ValueError):
-            mio.read_frame_bytes(payload, "json")
+            molrs.stream.read_frame_bytes(payload, "json")
 
     def test_unknown_format_name_raises(self):
         with pytest.raises(ValueError, match="unknown wire format"):
-            mio.write_frame_bytes(_frame(), "messagepack")
+            molrs.stream.write_frame_bytes(_frame(), "messagepack")
 
 
 class TestControlCommand:

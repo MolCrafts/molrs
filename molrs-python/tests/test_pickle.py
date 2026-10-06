@@ -6,7 +6,7 @@ import numpy as np
 from molrs import _lib
 
 
-def _unit_cube_mesh() -> "molrs.TriMesh":
+def _unit_cube_mesh() -> "molrs.spatial.TriMesh":
     """Closed unit cube, 12 triangles, outward winding."""
     v = np.array(
         [[x, y, z] for z in (0.0, 1.0) for y in (0.0, 1.0) for x in (0.0, 1.0)],
@@ -30,7 +30,7 @@ def _unit_cube_mesh() -> "molrs.TriMesh":
         ],
         dtype=np.uint32,
     )
-    return molrs.TriMesh(v, faces)
+    return molrs.spatial.TriMesh(v, faces)
 
 
 def roundtrip(value):
@@ -38,30 +38,30 @@ def roundtrip(value):
 
 
 def test_storage_units_and_observables_pickle_by_logical_state() -> None:
-    block = molrs.Block()
+    block = molrs.store.Block()
     block.insert("sample", np.array([1, 2], dtype=np.int16))
     block.insert("label", ["left", "right"])
     block.set_shape([1, 2])
     restored = roundtrip(block)
-    assert type(restored) is molrs.Block
+    assert type(restored) is molrs.store.Block
     assert restored.dtype("sample") == "i16"
     assert restored["sample"].tolist() == [1, 2]
     assert restored["label"].tolist() == ["left", "right"]
     assert restored.structural_shape == [1, 2]
 
-    empty_rows = molrs.Block()
+    empty_rows = molrs.store.Block()
     empty_rows.resize(3)
     assert roundtrip(empty_rows).nrows == 3
 
-    frame = molrs.Frame({"grid": block}, meta={"nested": {"ok": True}})
-    frame.box = molrs.Box.cube(4.0)
+    frame = molrs.store.Frame({"grid": block}, meta={"nested": {"ok": True}})
+    frame.box = molrs.spatial.Box.cube(4.0)
     restored_frame = roundtrip(frame)
-    assert type(restored_frame) is molrs.Frame
+    assert type(restored_frame) is molrs.store.Frame
     assert restored_frame["grid"].dtype("sample") == "i16"
     assert restored_frame.meta["nested"] == {"ok": True}
     assert restored_frame.box.volume() == 64.0
 
-    registry = molrs.UnitRegistry()
+    registry = molrs.units.UnitRegistry()
     registry.define("smoot", 1.7018, [1, 0, 0, 0, 0, 0, 0])
     registry.note = "custom registry"
     restored_registry = roundtrip(registry)
@@ -71,10 +71,10 @@ def test_storage_units_and_observables_pickle_by_logical_state() -> None:
     quantity = roundtrip(2.5 * registry.smoot)
     assert quantity.magnitude == 2.5
     assert str(quantity.unit) == "smoot"
-    assert roundtrip(molrs.UnitPreset("real")).name == "real"
-    assert roundtrip(molrs.Element("C")) == molrs.Element(6)
+    assert roundtrip(molrs.units.UnitPreset("real")).name == "real"
+    assert roundtrip(molrs.system.Element("C")) == molrs.system.Element(6)
 
-    observable = molrs.VectorObservable(
+    observable = molrs.store.VectorObservable(
         "force",
         np.array([[1.0, 2.0, 3.0]]),
         "force vector",
@@ -91,7 +91,7 @@ def test_storage_units_and_observables_pickle_by_logical_state() -> None:
     assert restored_observable.axes == ["atom", "xyz"]
     assert restored_observable.target == "atoms"
 
-    trajectory = molrs.Trajectory(
+    trajectory = molrs.store.Trajectory(
         [frame], step=np.array([7], dtype=np.int64), time=np.array([0.5])
     )
     restored_trajectory = roundtrip(trajectory)
@@ -101,14 +101,14 @@ def test_storage_units_and_observables_pickle_by_logical_state() -> None:
 
 
 def test_spatial_types_preserve_queries_and_region_behavior() -> None:
-    box = molrs.Box.cube(10.0, pbc=np.array([True, False, True]))
+    box = molrs.spatial.Box.cube(10.0, pbc=np.array([True, False, True]))
     points = np.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [3.0, 0.0, 0.0]])
 
     restored_box = roundtrip(box)
     np.testing.assert_array_equal(restored_box.pbc, box.pbc)
     np.testing.assert_array_equal(restored_box.h, box.h)
 
-    neighbor_list = molrs.NeighborList.brute_force(1.0)
+    neighbor_list = molrs.spatial.NeighborList.brute_force(1.0)
     neighbor_list.build(points, box)
     restored_list = roundtrip(neighbor_list)
     restored_pairs = restored_list.neighbors(disp=False)
@@ -120,12 +120,12 @@ def test_spatial_types_preserve_queries_and_region_behavior() -> None:
     assert table.dist_sq() is None
     np.testing.assert_allclose(table.disp(), [[0.5, 0.0, 0.0]])
 
-    query = roundtrip(molrs.NeighborQuery(box, points, 1.0))
+    query = roundtrip(molrs.spatial.NeighborQuery(box, points, 1.0))
     assert query.query_self().n_pairs == 1
     assert query.query(np.array([[0.25, 0.0, 0.0]])).n_pairs == 2
 
-    skin = molrs.VerletSkin(
-        molrs.NeighborList(1.2),
+    skin = molrs.spatial.VerletSkin(
+        molrs.spatial.NeighborList(1.2),
         1.0,
         points,
         box,
@@ -140,26 +140,26 @@ def test_spatial_types_preserve_queries_and_region_behavior() -> None:
 
     cube_mesh = _unit_cube_mesh()
     primitives = [
-        molrs.Sphere(np.zeros(3), 2.0),
-        molrs.Cuboid(np.zeros(3), np.ones(3)),
-        molrs.Parallelepiped(np.eye(3), np.zeros(3)),
-        molrs.HalfSpace(np.array([0.0, 0.0, 1.0]), np.array([0.0, 0.0, 0.5])),
-        molrs.Cylinder(np.zeros(3), np.array([0.0, 0.0, 1.0]), 1.0, 2.0),
-        molrs.Ellipsoid(np.zeros(3), np.array([1.0, 2.0, 0.5])),
-        molrs.Polyhedron(cube_mesh),
-        molrs.SphereUnion(np.array([[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]]), 0.8),
-        molrs.SphereUnion(
+        molrs.spatial.Sphere(np.zeros(3), 2.0),
+        molrs.spatial.Cuboid(np.zeros(3), np.ones(3)),
+        molrs.spatial.Parallelepiped(np.eye(3), np.zeros(3)),
+        molrs.spatial.HalfSpace(np.array([0.0, 0.0, 1.0]), np.array([0.0, 0.0, 0.5])),
+        molrs.spatial.Cylinder(np.zeros(3), np.array([0.0, 0.0, 1.0]), 1.0, 2.0),
+        molrs.spatial.Ellipsoid(np.zeros(3), np.array([1.0, 2.0, 0.5])),
+        molrs.spatial.Polyhedron(cube_mesh),
+        molrs.spatial.SphereUnion(np.array([[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]]), 0.8),
+        molrs.spatial.SphereUnion(
             np.array([[0.2, 0.2, 0.2]]),
             np.array([0.5]),
-            box=molrs.Box.cube(3.0, np.zeros(3), np.array([True, True, True])),
+            box=molrs.spatial.Box.cube(3.0, np.zeros(3), np.array([True, True, True])),
         ),
     ]
     composed = (primitives[0] & ~primitives[1]) | (primitives[3] & primitives[7])
     restored_mesh = roundtrip(cube_mesh)
-    assert isinstance(restored_mesh, molrs.TriMesh)
+    assert isinstance(restored_mesh, molrs.spatial.TriMesh)
     np.testing.assert_array_equal(restored_mesh.faces(), cube_mesh.faces())
     probes = np.array([[0.0, 0.0, 0.0], [0.5, 0.5, 0.5], [1.5, 0.0, 0.0]])
-    for region in [*primitives, composed, molrs.Region(primitives[0])]:
+    for region in [*primitives, composed, molrs.spatial.Region(primitives[0])]:
         restored = roundtrip(region)
         assert type(restored) is type(region)
         np.testing.assert_array_equal(
@@ -168,7 +168,7 @@ def test_spatial_types_preserve_queries_and_region_behavior() -> None:
 
 
 def test_graphs_views_and_extraction_pickle_as_one_object_graph() -> None:
-    graph = molrs.Graph()
+    graph = molrs.system.Graph()
     graph.register_kind("empty", 3)
     graph.register_kind("links", 2)
     first, removed, last = [graph.spawn() for _ in range(3)]
@@ -186,11 +186,11 @@ def test_graphs_views_and_extraction_pickle_as_one_object_graph() -> None:
         == handles
     )
 
-    molecule = molrs.Atomistic(label="typed refs")
+    molecule = molrs.system.Atomistic(label="typed refs")
     atoms = [molecule.def_atom(element="C") for _ in range(4)]
-    virtual = molecule.def_virtual_site(kind=molrs.VirtualSite)
-    drude = molecule.def_virtual_site(kind=molrs.DrudeParticle)
-    massless = molecule.def_virtual_site(kind=molrs.MasslessSite)
+    virtual = molecule.def_virtual_site(kind=molrs.system.VirtualSite)
+    drude = molecule.def_virtual_site(kind=molrs.system.DrudeParticle)
+    massless = molecule.def_virtual_site(kind=molrs.system.MasslessSite)
     refs = [
         *atoms,
         virtual,
@@ -209,7 +209,7 @@ def test_graphs_views_and_extraction_pickle_as_one_object_graph() -> None:
     assert all(ref.world is restored_molecule for ref in restored_refs)
     assert all(ref.world is restored_molecule for ref in restored_lazy)
 
-    coarse = molrs.CoarseGrain(label="cg")
+    coarse = molrs.system.CoarseGrain(label="cg")
     bead = coarse.def_bead(type="P", atoms=tuple(atoms[:2]))
     coarse.def_bead(type="Q")
     coarse.def_cgbond(coarse.beads[0], coarse.beads[1])
@@ -219,7 +219,7 @@ def test_graphs_views_and_extraction_pickle_as_one_object_graph() -> None:
     assert restored_bead is restored_coarse.beads[0]
     assert all(atom.world is restored_source for atom in restored_bead["atoms"])
 
-    chain = molrs.Atomistic()
+    chain = molrs.system.Atomistic()
     chain_atoms = [chain.def_atom(element="C") for _ in range(3)]
     chain.def_bond(chain_atoms[0], chain_atoms[1])
     chain.def_bond(chain_atoms[1], chain_atoms[2])
@@ -227,21 +227,21 @@ def test_graphs_views_and_extraction_pickle_as_one_object_graph() -> None:
     assert len(extracted.graph.atoms) == 3
     assert set(extracted.parent_of) == set(extracted.graph.entities())
 
-    fragment = molrs.Atomistic()
+    fragment = molrs.system.Atomistic()
     fragment_anchor = fragment.def_atom(element="O")
     fragment_handle = fragment.def_atom(element="H")
     fragment.def_bond(fragment_anchor, fragment_handle)
     fragment.def_port(fragment_anchor, fragment_handle, "$")
     fragment.set_frag_id(fragment_anchor.handle, 2)
     restored_fragment = roundtrip(fragment)
-    assert type(restored_fragment) is molrs.Atomistic
+    assert type(restored_fragment) is molrs.system.Atomistic
     assert restored_fragment.n_ports == 1
     assert restored_fragment.ports[0]["port_kind"] == "$"
     assert restored_fragment.frag_id(restored_fragment.atoms[0].handle) == 2
 
     # A partially labelled fragment keeps its holes: an unlabelled atom comes
     # back unlabelled, never as a stated ``frag_id`` of 0.
-    partial = molrs.Atomistic()
+    partial = molrs.system.Atomistic()
     labelled = partial.def_atom(element="C")
     middle = partial.def_atom(element="C")
     capping = partial.def_atom(element="H")
@@ -255,11 +255,11 @@ def test_graphs_views_and_extraction_pickle_as_one_object_graph() -> None:
 
     assert type(roundtrip(_lib.Atomistic())) is _lib.Atomistic
     assert type(roundtrip(_lib.CoarseGrain())) is _lib.CoarseGrain
-    assert roundtrip(molrs.Reaction("[C:1]>>[C:1]")).forming_bonds == []
+    assert roundtrip(molrs.perceive.Reaction("[C:1]>>[C:1]")).forming_bonds == []
 
 
 def test_schema_and_metadata_pickle_as_value_types() -> None:
-    column = molrs.schema.columns[0]
+    column = molrs.store.schema.columns[0]
     restored_column = roundtrip(column)
     assert type(restored_column) is type(column)
     assert restored_column.key == column.key
@@ -270,7 +270,7 @@ def test_schema_and_metadata_pickle_as_value_types() -> None:
     assert restored_column.doc == column.doc
     assert restored_column.numpy_dtype == column.numpy_dtype
 
-    block = next(spec for spec in molrs.schema.blocks if spec.endpoint_columns)
+    block = next(spec for spec in molrs.store.schema.blocks if spec.endpoint_columns)
     restored_block = roundtrip(block)
     assert type(restored_block) is type(block)
     assert restored_block.name == block.name
@@ -282,63 +282,63 @@ def test_schema_and_metadata_pickle_as_value_types() -> None:
     assert restored_block.open == block.open
     assert restored_block.doc == block.doc
 
-    assert [spec.key for spec in roundtrip(list(molrs.schema.columns))] == [
-        spec.key for spec in molrs.schema.columns
+    assert [spec.key for spec in roundtrip(list(molrs.store.schema.columns))] == [
+        spec.key for spec in molrs.store.schema.columns
     ]
 
-    text = roundtrip(molrs.MetaValue("string", "hello"))
+    text = roundtrip(molrs.store.MetaValue("string", "hello"))
     assert text.dtype == "string"
     assert text.value == "hello"
-    nested = roundtrip(molrs.MetaValue("json", {"ok": True}))
+    nested = roundtrip(molrs.store.MetaValue("json", {"ok": True}))
     assert nested.dtype == "json"
     assert nested.value == {"ok": True}
 
 
 def test_frame_json_meta_roundtrip_stays_json_and_frozen() -> None:
-    frame = molrs.Frame(meta={"nested": {"ok": True, "tags": [1, 2]}})
+    frame = molrs.store.Frame(meta={"nested": {"ok": True, "tags": [1, 2]}})
     restored = roundtrip(frame)
     assert restored.meta.dtype("nested") == "json"
-    assert isinstance(restored.meta["nested"], molrs.MetaDocument)
+    assert isinstance(restored.meta["nested"], molrs.store.MetaDocument)
     assert isinstance(restored.meta["nested"], dict) is False
     assert restored.meta["nested"] == {"ok": True, "tags": (1, 2)}
 
 
 def test_meta_value_json_payload_is_plain_and_vector_payload_is_tuple() -> None:
-    vector = molrs.MetaValue("f64x6", [1, 2, 3, 4, 5, 6])
+    vector = molrs.store.MetaValue("f64x6", [1, 2, 3, 4, 5, 6])
     assert isinstance(vector.value, tuple)
     assert vector.value == (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
-    document = molrs.MetaValue("json", {"ok": True, "tags": [1, 2]})
+    document = molrs.store.MetaValue("json", {"ok": True, "tags": [1, 2]})
     assert isinstance(document.value, dict)
     assert isinstance(document.value["tags"], list)
     assert document.value == {"ok": True, "tags": [1, 2]}
-    assert not isinstance(document.value, molrs.MetaDocument)
+    assert not isinstance(document.value, molrs.store.MetaDocument)
 
 
 def test_document_assigned_across_frames_keeps_json_dtype() -> None:
-    src = molrs.Frame()
+    src = molrs.store.Frame()
     src.meta["run"] = {"step": 1, "tags": [1, 2], "inner": {"a": [3]}}
-    dst = molrs.Frame()
+    dst = molrs.store.Frame()
     dst.meta["copied"] = src.meta["run"]
     assert dst.meta.dtype("copied") == "json"
-    assert isinstance(dst.meta["copied"], molrs.MetaDocument)
+    assert isinstance(dst.meta["copied"], molrs.store.MetaDocument)
     assert dst.meta["copied"] == {"step": 1, "tags": (1, 2), "inner": {"a": (3,)}}
     assert isinstance(dst.meta["copied"]["tags"], tuple)
     assert isinstance(dst.meta["copied"]["inner"]["a"], tuple)
 
 
 def test_a_meta_document_pickles_by_content() -> None:
-    frame = molrs.Frame(meta={"doc": {"ok": True, "tags": [1, 2], "inner": {"a": 1}}})
+    frame = molrs.store.Frame(meta={"doc": {"ok": True, "tags": [1, 2], "inner": {"a": 1}}})
     doc = frame.meta["doc"]
     assert roundtrip(doc) == {"ok": True, "tags": (1, 2), "inner": {"a": 1}}
 
 
 def test_a_meta_document_deep_copies_by_content() -> None:
-    frame = molrs.Frame(meta={"doc": {"ok": True, "tags": [1, 2], "inner": {"a": 1}}})
+    frame = molrs.store.Frame(meta={"doc": {"ok": True, "tags": [1, 2], "inner": {"a": 1}}})
     doc = frame.meta["doc"]
     assert copy.deepcopy(doc) == {"ok": True, "tags": (1, 2), "inner": {"a": 1}}
 
 
 def test_a_meta_dict_snapshot_with_a_document_pickles() -> None:
-    frame = molrs.Frame(meta={"doc": {"ok": True, "tags": [1, 2]}, "step": 3})
+    frame = molrs.store.Frame(meta={"doc": {"ok": True, "tags": [1, 2]}, "step": 3})
     restored = roundtrip(dict(frame.meta))
     assert restored == {"doc": {"ok": True, "tags": (1, 2)}, "step": 3}

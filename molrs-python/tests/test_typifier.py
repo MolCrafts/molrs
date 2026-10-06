@@ -15,30 +15,30 @@ import itertools
 
 import molrs
 import pytest
-from molrs import Dihedral, Improper
+from molrs.system import Dihedral, Improper
 from molrs.ff.typifier import Match, MMFF94Typifier, Typifier
 
 _SPECIAL_LJ = (0.0, 0.0, 0.5)
 _SPECIAL_COUL = (0.0, 0.0, 0.75)
 
 
-def _pair() -> molrs.Atomistic:
+def _pair() -> molrs.system.Atomistic:
     """Two bonded carbon atoms, nothing typed."""
-    mol = molrs.Atomistic()
+    mol = molrs.system.Atomistic()
     a = mol.def_atom(element="C", x=0.0, y=0.0, z=0.0)
     b = mol.def_atom(element="C", x=1.54, y=0.0, z=0.0)
     mol.def_bond(a, b)
     return mol
 
 
-def _chain_with_improper() -> molrs.Atomistic:
+def _chain_with_improper() -> molrs.system.Atomistic:
     """Five named atoms; two dihedrals with one improper created between them.
 
     The improper is created after the first dihedral and before the second, so
     a mapping that mixed impropers into the dihedral positions
     (``links.bucket(Dihedral)``) would disagree with the kind's own rows.
     """
-    mol = molrs.Atomistic()
+    mol = molrs.system.Atomistic()
     atoms = [
         mol.def_atom(element="C", name=f"a{i}", x=1.5 * i, y=0.0, z=0.0)
         for i in range(5)
@@ -51,9 +51,9 @@ def _chain_with_improper() -> molrs.Atomistic:
     return mol
 
 
-def _ethane() -> molrs.Atomistic:
+def _ethane() -> molrs.system.Atomistic:
     """Ethane (C2H6) with explicit hydrogens, as the native typifiers expect."""
-    mol = molrs.Atomistic()
+    mol = molrs.system.Atomistic()
     c1 = mol.add_atom("C", 0.0, 0.0, 0.0)
     c2 = mol.add_atom("C", 1.54, 0.0, 0.0)
     hpos = [
@@ -71,18 +71,18 @@ def _ethane() -> molrs.Atomistic:
     return mol
 
 
-def _atom_rows(ff: molrs.ff.ForceField) -> dict[str, dict]:
+def _atom_rows(ff: molrs.ff.forcefield.ForceField) -> dict[str, dict]:
     """``{name: params}`` of the ``atom``/``full`` style of ``ff``."""
     return {t.name: t.params for t in ff.get_style("atom", "full").types}
 
 
-def _assert_declares_library_special_bonds(ff: molrs.ff.ForceField) -> None:
+def _assert_declares_library_special_bonds(ff: molrs.ff.forcefield.ForceField) -> None:
     """``ff`` declares exactly ``_SPECIAL_LJ`` / ``_SPECIAL_COUL``: merging an
     equal declaration is accepted, a different one refused."""
-    same = molrs.ff.ForceField("same")
+    same = molrs.ff.forcefield.ForceField("same")
     same.set_special_bonds(list(_SPECIAL_LJ), list(_SPECIAL_COUL))
     assert ff.merge(same) is ff
-    other = molrs.ff.ForceField("other")
+    other = molrs.ff.forcefield.ForceField("other")
     other.set_special_bonds([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
     with pytest.raises(ValueError):
         ff.merge(other)
@@ -98,7 +98,7 @@ class _FirstAtomX(Typifier):
     def __init__(self, mass: float = 1.0) -> None:
         self.mass = mass
 
-    def match(self, graph: molrs.Atomistic) -> Match:
+    def match(self, graph: molrs.system.Atomistic) -> Match:
         return Match(
             [{"type": ("full", "X", (), {"mass": self.mass})}, {}],
             styles=[("atom", "full", {})],
@@ -108,7 +108,7 @@ class _FirstAtomX(Typifier):
 class _DihedralTagger(Typifier):
     """Stamps each node and each dihedral with a label derived from the element itself."""
 
-    def match(self, graph: molrs.Atomistic) -> Match:
+    def match(self, graph: molrs.system.Atomistic) -> Match:
         nodes = [{"seen": str(atom["name"])} for atom in graph.atoms]
         dihedrals = [
             {"tag": _endpoint_label(link)}
@@ -120,12 +120,12 @@ class _DihedralTagger(Typifier):
 class _SpecialBondsLibrary(Typifier):
     """A stamp-only typifier whose library declares special_bonds."""
 
-    def library(self) -> molrs.ff.ForceField:
-        lib = molrs.ff.ForceField("lib")
+    def library(self) -> molrs.ff.forcefield.ForceField:
+        lib = molrs.ff.forcefield.ForceField("lib")
         lib.set_special_bonds(list(_SPECIAL_LJ), list(_SPECIAL_COUL))
         return lib
 
-    def match(self, graph: molrs.Atomistic) -> Match:
+    def match(self, graph: molrs.system.Atomistic) -> Match:
         return Match([{} for _ in graph.atoms])
 
 
@@ -144,7 +144,7 @@ class TestTypifierSubclass:
 
         typed = typifier.typify(mol)
 
-        assert isinstance(typed, molrs.Atomistic)
+        assert isinstance(typed, molrs.system.Atomistic)
         assert typed is not mol
         first, second = typed.atoms[0], typed.atoms[1]
         assert first["type"] == "X"
@@ -196,7 +196,7 @@ class TestTypifierSubclass:
         with pytest.raises(TypeError):
 
             class _Overrides(Typifier):
-                def typify(self, mol: molrs.Atomistic) -> molrs.Atomistic:
+                def typify(self, mol: molrs.system.Atomistic) -> molrs.system.Atomistic:
                     return mol
 
 

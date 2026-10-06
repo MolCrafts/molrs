@@ -15,7 +15,7 @@ use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArrayDyn};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use crate::helpers::py_value_err;
+use crate::error::py_value_err;
 
 // ---------------------------------------------------------------------------
 // Array seams shared with the leaf `replicate`

@@ -25,7 +25,7 @@ class TestReturnsReaderNotList:
         path = str(water_xyz)
         reader = molrs.io.read_xyz_trajectory(path)
         assert isinstance(reader, molrs.io.TrajectoryReader)
-        eager = molrs.io.raw.read_xyz_trajectory(path)
+        eager = molrs.io.read_xyz_trajectory(path).read_all()
         assert isinstance(eager, list)
         assert reader.n_frames == len(eager)
 
@@ -78,31 +78,31 @@ class TestTrajectoryReaderSurface:
 
 class TestDumpLocalWrite:
     def test_write_bonds_roundtrip(self, tmp_path):
-        atoms = molrs.Block()
+        atoms = molrs.store.Block()
         atoms["id"] = np.array([1, 2, 3], dtype=np.uint64)
         atoms["x"] = np.array([0.0, 1.0, 2.0])
         atoms["y"] = np.zeros(3)
         atoms["z"] = np.zeros(3)
-        bonds = molrs.Block()
+        bonds = molrs.store.Block()
         bonds["atomi"] = np.array([0, 1], dtype=np.uint64)
         bonds["atomj"] = np.array([1, 2], dtype=np.uint64)
-        frame = molrs.Frame()
+        frame = molrs.store.Frame()
         frame["atoms"] = atoms
         frame["bonds"] = bonds
-        frame.box = molrs.Box.cube(10.0)
+        frame.box = molrs.spatial.Box.cube(10.0)
         path = tmp_path / "bonds.dump.local"
         molrs.io.write_lammps_dump_local(path, [frame])
         text = path.read_text()
         assert "ITEM: NUMBER OF ENTRIES" in text
         assert "batom1 batom2" in text
-        loaded = molrs.io.raw.read_lammps_trajectory(str(path))
+        loaded = molrs.io.read_lammps_trajectory(str(path)).read_all()
         assert loaded[0]["entries"].nrows == 2
 
 
 class TestDumpColumnChoice:
     @staticmethod
     def _frame():
-        atoms = molrs.Block()
+        atoms = molrs.store.Block()
         atoms["id"] = np.array([1, 2], dtype=np.uint64)
         atoms["mol_id"] = np.array([1, 1], dtype=np.uint64)
         atoms["mass"] = np.array([16.0, 1.008])
@@ -110,9 +110,9 @@ class TestDumpColumnChoice:
         atoms["x"] = np.array([0.0, 1.0])
         atoms["y"] = np.array([0.0, 2.0])
         atoms["z"] = np.array([0.0, 3.0])
-        frame = molrs.Frame()
+        frame = molrs.store.Frame()
         frame["atoms"] = atoms
-        frame.box = molrs.Box.cube(10.0)
+        frame.box = molrs.spatial.Box.cube(10.0)
         return frame
 
     def test_writes_only_the_named_columns_in_order(self, tmp_path):
@@ -148,26 +148,26 @@ class TestDumpTypeField:
 
     def test_string_type_labels_round_trip(self, tmp_path):
         path = tmp_path / "labels.lammpstrj"
-        frame = molrs.Frame(
-            {"atoms": self._atoms(type=["OW", "HW", "HW"])}, box=molrs.Box.cube(10.0)
+        frame = molrs.store.Frame(
+            {"atoms": self._atoms(type=["OW", "HW", "HW"])}, box=molrs.spatial.Box.cube(10.0)
         )
         molrs.io.write_lammps_trajectory(path, [frame])
         text = path.read_text()
         assert "ITEM: ATOMS id type x y z\n1 OW " in text
-        atoms = molrs.io.raw.read_lammps_trajectory(str(path))[0]["atoms"]
+        atoms = molrs.io.read_lammps_trajectory(str(path)).read_all()[0]["atoms"]
         assert list(atoms["type"]) == ["OW", "HW", "HW"]
         assert "type_id" not in atoms
 
     def test_type_id_wins_the_type_field(self, tmp_path):
         path = tmp_path / "both.lammpstrj"
-        frame = molrs.Frame(
+        frame = molrs.store.Frame(
             {"atoms": self._atoms(type=["OW", "HW", "HW"], type_id=[1, 2, 2])},
-            box=molrs.Box.cube(10.0),
+            box=molrs.spatial.Box.cube(10.0),
         )
         molrs.io.write_lammps_trajectory(path, [frame])
         text = path.read_text()
         assert "ITEM: ATOMS id type x y z\n1 1 " in text
-        atoms = molrs.io.raw.read_lammps_trajectory(str(path))[0]["atoms"]
+        atoms = molrs.io.read_lammps_trajectory(str(path)).read_all()[0]["atoms"]
         assert list(atoms["type_id"]) == [1, 2, 2]
         assert "type" not in atoms
 

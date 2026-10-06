@@ -17,7 +17,7 @@ FIXTURES = Path(__file__).resolve().parents[2] / "molrs/src/ff/testdata/openmm"
 
 
 def test_a_charmm_port_reads_every_section() -> None:
-    ff = molrs.ff.read_opls_xml(FIXTURES / "charmm.xml")
+    ff = molrs.ff.forcefield.read_opls_xml(FIXTURES / "charmm.xml")
     lj = ff.get_style("pair", "lj/charmm")
     assert lj.params["one_four"] == "epsilon14"
     assert lj.params["mixing"] == "arithmetic"
@@ -31,20 +31,20 @@ def test_a_charmm_port_reads_every_section() -> None:
 
 @pytest.mark.parametrize("case", ["charmm", "amber", "opls"])
 def test_written_xml_reads_back_with_the_same_types(case: str, tmp_path: Path) -> None:
-    ff = molrs.ff.read_opls_xml(FIXTURES / f"{case}.xml")
+    ff = molrs.ff.forcefield.read_opls_xml(FIXTURES / f"{case}.xml")
     path = tmp_path / f"{case}.xml"
-    molrs.ff.write_forcefield_xml(path, ff)
-    back = molrs.ff.read_forcefield_xml(path)
+    molrs.ff.forcefield.write_forcefield_xml(path, ff)
+    back = molrs.ff.forcefield.read_forcefield_xml(path)
     for category in ("bond", "angle", "dihedral", "improper", "pair", "cmap"):
         names = sorted(t.name for t in ff.get_types(category))
         assert sorted(t.name for t in back.get_types(category)) == names, category
 
 
-def _chain() -> molrs.Frame:
+def _chain() -> molrs.store.Frame:
     """ACE's CH3-C-N-CA (CT3 C NH1 CT1), bonded in a row: (0, 3) is the one
     1-4 pair, typed with the CHARMM fixture's rows."""
-    frame = molrs.Frame()
-    atoms = molrs.Block()
+    frame = molrs.store.Frame()
+    atoms = molrs.store.Block()
     x = np.array([[0.0, 0.0, 0.0], [1.5, 0.2, 0.0], [2.2, 1.5, 0.3], [3.6, 1.9, 0.1]])
     for k, key in enumerate("xyz"):
         atoms.insert(key, x[:, k].copy())
@@ -56,7 +56,7 @@ def _chain() -> molrs.Frame:
         ("angles", [[0, 1, 2], [1, 2, 3]], ["NH1-C-CT3", "CT1-NH1-C"]),
         ("dihedrals", [[0, 1, 2, 3]], ["CT3-C-NH1-CT1"]),
     ):
-        block = molrs.Block()
+        block = molrs.store.Block()
         for k, key in enumerate(("atomi", "atomj", "atomk", "atoml")[: len(rows[0])]):
             block.insert(key, np.array([r[k] for r in rows], dtype=np.uint64))
         block.insert("type", labels)
@@ -65,13 +65,13 @@ def _chain() -> molrs.Frame:
 
 
 def test_materialize_one_four_writes_the_one_four_rows() -> None:
-    ff = molrs.ff.read_opls_xml(FIXTURES / "charmm.xml")
+    ff = molrs.ff.forcefield.read_opls_xml(FIXTURES / "charmm.xml")
     for name in ("lj/charmm", "coul/charmm"):
         style = ff.get_style("pair", name)
         style["inner"] = 900.0
         style["cutoff"] = 1000.0
     frame = _chain()
-    compiler = molrs.ff.PotentialCompiler(ff)
+    compiler = molrs.ff.potential.PotentialCompiler(ff)
     with pytest.raises(ValueError, match="materialize_one_four"):
         compiler.compile(frame)
     assert ff.materialize_one_four(frame) == 1

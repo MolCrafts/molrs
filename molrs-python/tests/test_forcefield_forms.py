@@ -22,8 +22,8 @@ XYZ = np.array(
 )
 
 
-def _opls() -> molrs.ff.ForceField:
-    ff = molrs.ff.ForceField("opls", units="real")
+def _opls() -> molrs.ff.forcefield.ForceField:
+    ff = molrs.ff.forcefield.ForceField("opls", units="real")
     atoms = ff.def_style("atom", "full")
     ct = atoms.def_type("CT", mass=12.011)
     ff.def_style("dihedral", "opls").def_type(
@@ -32,8 +32,8 @@ def _opls() -> molrs.ff.ForceField:
     return ff
 
 
-def _periodic(phase: float) -> molrs.ff.ForceField:
-    ff = molrs.ff.ForceField("p", units="real")
+def _periodic(phase: float) -> molrs.ff.forcefield.ForceField:
+    ff = molrs.ff.forcefield.ForceField("p", units="real")
     ct = ff.def_style("atom", "full").def_type("CT", mass=12.011)
     ff.def_style("dihedral", "periodic").def_type(
         "CT-CT-CT-CT", ct, ct, ct, ct, k1=1.0, periodicity1=2, phase1=phase
@@ -41,24 +41,24 @@ def _periodic(phase: float) -> molrs.ff.ForceField:
     return ff
 
 
-def _frame() -> molrs.Frame:
-    atoms = molrs.Block()
+def _frame() -> molrs.store.Frame:
+    atoms = molrs.store.Block()
     for d, key in enumerate("xyz"):
         atoms.insert(key, XYZ[:, d].copy())
     atoms.insert("type", ["CT"] * 4)
-    dihedrals = molrs.Block()
+    dihedrals = molrs.store.Block()
     for key, atom in (("atomi", 0), ("atomj", 1), ("atomk", 2), ("atoml", 3)):
         dihedrals.insert(key, np.array([atom], dtype=np.uint32))
     dihedrals.insert("type", ["CT-CT-CT-CT"])
-    frame = molrs.Frame()
+    frame = molrs.store.Frame()
     frame["atoms"] = atoms
     frame["dihedrals"] = dihedrals
     return frame
 
 
-def _energy(ff: molrs.ff.ForceField) -> float:
+def _energy(ff: molrs.ff.forcefield.ForceField) -> float:
     frame = _frame()
-    return molrs.ff.PotentialCompiler(ff).compile(frame).calc_energy(frame)
+    return molrs.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy(frame)
 
 
 def test_canonical_is_dihedral_periodic_with_the_same_energy() -> None:

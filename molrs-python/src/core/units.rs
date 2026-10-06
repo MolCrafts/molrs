@@ -1,4 +1,7 @@
-//! Python bindings for molrs' native unit engine.
+//! Python bindings for `molrs::units` (`molrs.units`): the native unit
+//! engine (`Unit`, `Quantity`, `UnitRegistry`, `UnitPreset`), its
+//! `UnitsError`, and the physical constants other subsystems need by name
+//! (`AMBER_COULOMB`).
 
 use crate::error::units_error;
 use molrs::units::{Dimension, Quantity, Unit, UnitDef, UnitPreset, UnitRegistry, lookup_preset};
@@ -6,7 +9,13 @@ use pyo3::exceptions::{PyAttributeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 
-#[pyclass(module = "molrs", name = "Unit", frozen, skip_from_py_object, subclass)]
+#[pyclass(
+    module = "molrs.units",
+    name = "Unit",
+    frozen,
+    skip_from_py_object,
+    subclass
+)]
 #[derive(Clone)]
 pub struct PyUnit {
     inner: Unit,
@@ -75,7 +84,7 @@ impl PyUnit {
 
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let unit = &slf.borrow().inner;
-        crate::helpers::reduce_via_type(
+        crate::pickle::reduce_via_type(
             slf.as_any(),
             (
                 unit.factor(),
@@ -88,7 +97,7 @@ impl PyUnit {
 }
 
 #[pyclass(
-    module = "molrs",
+    module = "molrs.units",
     name = "Quantity",
     frozen,
     skip_from_py_object,
@@ -121,7 +130,7 @@ impl PyQuantity {
 
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let this = slf.borrow();
-        crate::helpers::reduce_via_type(slf.as_any(), (this.magnitude(), this.unit()))
+        crate::pickle::reduce_via_type(slf.as_any(), (this.magnitude(), this.unit()))
     }
 
     #[getter]
@@ -236,7 +245,7 @@ impl PyQuantity {
 /// [`UnitDef`]: `(name, aliases, symbol, factor, offset, dimension, prefixable)`.
 type UnitDefTuple = (String, Vec<String>, String, f64, f64, [i32; 7], bool);
 
-#[pyclass(module = "molrs", name = "UnitRegistry", subclass, dict)]
+#[pyclass(module = "molrs.units", name = "UnitRegistry", subclass, dict)]
 pub struct PyUnitRegistry {
     pub(crate) inner: UnitRegistry,
 }
@@ -352,7 +361,7 @@ impl PyUnitRegistry {
     }
 
     fn __repr__(&self) -> &'static str {
-        "<molrs.UnitRegistry>"
+        "<molrs.units.UnitRegistry>"
     }
 
     fn __reduce__<'py>(
@@ -385,7 +394,7 @@ impl PyUnitRegistry {
 /// Named unit-system view (`"real"`, `"metal"`, …). Constants live in core;
 /// this is the Python spelling of `molrs::units::UnitPreset`.
 #[pyclass(
-    module = "molrs",
+    module = "molrs.units",
     name = "UnitPreset",
     frozen,
     from_py_object,
@@ -466,7 +475,7 @@ impl PyUnitPreset {
     }
 
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
-        crate::helpers::reduce_via_type(slf.as_any(), (slf.borrow().name().to_owned(),))
+        crate::pickle::reduce_via_type(slf.as_any(), (slf.borrow().name().to_owned(),))
     }
 
     /// Boltzmann constant **in this preset's energy / temperature units**
@@ -517,4 +526,15 @@ impl PyUnitPreset {
     fn __repr__(&self) -> String {
         format!("UnitPreset({:?})", self.inner.name())
     }
+}
+
+/// Register `molrs.units`.
+pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add("UnitsError", m.py().get_type::<crate::error::UnitsError>())?;
+    m.add_class::<PyUnit>()?;
+    m.add_class::<PyQuantity>()?;
+    m.add_class::<PyUnitRegistry>()?;
+    m.add_class::<PyUnitPreset>()?;
+    m.add("AMBER_COULOMB", molrs::units::constants::AMBER_COULOMB)?;
+    Ok(())
 }

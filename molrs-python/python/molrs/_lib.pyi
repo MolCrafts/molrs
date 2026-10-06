@@ -265,7 +265,7 @@ class VerletSkin:
 # Block / Frame
 # ---------------------------------------------------------------------------
 
-# A column key: a plain name or a ``molrs.keys.Key``.
+# A column key: a plain name or a ``molrs.store.keys.Key``.
 type ColumnKey = str | Any
 
 @final
@@ -274,7 +274,7 @@ class Block:
 
     Columns are dense. A per-row component that only some rows carry is stored
     with a validity mask beside it, read back with :meth:`validity`. Every
-    column-key argument accepts a ``str`` or a ``molrs.keys.Key``. A block read
+    column-key argument accepts a ``str`` or a ``molrs.store.keys.Key``. A block read
     from a frame (``frame["atoms"]``) is a handle on the stored block.
     """
 
@@ -1401,7 +1401,6 @@ class Atomistic(Graph):
     def n_atoms(self) -> int: ...
     @property
     def n_bonds(self) -> int: ...
-    def max_ring_system_size(self) -> int: ...
     def to_frame(self, atom_fields: Sequence[str] | None = None) -> Frame:
         """Export to a :class:`Frame`; ``atom_fields`` keeps only those
         ``atoms`` columns (a missing one raises ``ValueError``)."""
@@ -1961,7 +1960,7 @@ class SubgraphMatcher:
 
 @final
 class Coarsener:
-    """``molrs.perceive.Coarsener`` — node groups of a held source graph
+    """``molrs.builder.Coarsener`` — node groups of a held source graph
     mapped onto the sites of a new :class:`CoarseGrain`. Frozen.
 
     Site ``I`` stands for ``groups[I]``: it sits at the group's mass-weighted
@@ -2050,7 +2049,7 @@ class Perceive:
     def find_equivalence_classes(self, mol: Atomistic) -> Atomistic: ...
 
 # ---------------------------------------------------------------------------
-# Field-name convention (mirrors molrs_core::keys)
+# Field-name convention (molrs.store.keys, mirrors molrs::store::keys)
 # ---------------------------------------------------------------------------
 
 class keys:
@@ -2347,7 +2346,6 @@ def read_pdb_trajectory(path: PathInput) -> list[Frame]:
     """Read every MODEL of a PDB file as a trajectory (one Frame per MODEL)."""
 
 def read_xyz(path: PathInput) -> Frame: ...
-def read_xyz_trajectory(path: PathInput) -> list[Frame]: ...
 def read_lammps_data(path: PathInput, atom_style: str | None = None) -> Frame:
     """Read a LAMMPS data file. Typed blocks carry ``type_id`` and the string
     ``type`` (the file's type label, or the id as a label); ``atom_style``
@@ -2400,7 +2398,6 @@ def write_lammps_bond_react_system(
     for untyped template topology it leaves out."""
 
 def read_stl(path: PathInput) -> TriMesh: ...
-def read_lammps_trajectory(path: PathInput) -> list[Frame]: ...
 def read_gro(path: PathInput) -> Frame: ...
 def read_gro_trajectory(path: PathInput) -> list[Frame]: ...
 def read_xsf(path: PathInput) -> Frame: ...
@@ -2443,8 +2440,6 @@ class LAMMPSTrajReader:
     def __next__(self) -> Frame: ...
     def __enter__(self) -> Self: ...
     def __exit__(self, *exc: object) -> bool: ...
-
-def read_dcd_trajectory(path: PathInput) -> list[Frame]: ...
 
 class DCDTrajReader:
     """Lazy, indexed reader for DCD trajectory files.
@@ -2541,9 +2536,9 @@ def write_xsf(path: PathInput, frame: Frame) -> None: ...
 # Signal processing
 # ---------------------------------------------------------------------------
 
-def signal_acf_fft(data: ArrayF, max_lag: int) -> ArrayF: ...
-def signal_apply_window(data: ArrayF, window_type: str, axis: int = 0) -> ArrayF: ...
-def signal_frequency_grid(n_fft: int, dt: float) -> ArrayF: ...
+def acf_fft(data: ArrayF, max_lag: int) -> ArrayF: ...
+def apply_window(data: ArrayF, window_type: str, axis: int = 0) -> ArrayF: ...
+def frequency_grid(n_fft: int, dt: float) -> ArrayF: ...
 
 # ---------------------------------------------------------------------------
 # Structure builders (molrs::builder)
@@ -3250,19 +3245,14 @@ class Potentials:
     """Composite of the one ``Potential`` concept — itself a potential.
 
     ``Potentials()`` is empty; ``push`` **moves** members in (an ``LJCut``,
-    another ``Potentials`` such as one ``potential.kernel`` built, or an
-    object with ``calc_energy_forces``).
-    ``set_energy_scale`` applies a caller-computed numeric unit factor to the
-    merged energy and forces (compute it with ``md.preset_energy_to_md`` /
-    ``md.energy_to_md``); nothing applies it implicitly.
+    another ``Potentials`` such as one ``kernel`` built, or an object with
+    ``calc_energy_forces``). The engine is unit-agnostic: nothing scales the
+    energy or forces implicitly.
     """
 
     def __init__(self) -> None: ...
     def __len__(self) -> int: ...
-    def push(self, potential: potential.LJCut | Potentials | Any) -> None: ...
-    def set_energy_scale(self, scale: float) -> None: ...
-    @property
-    def energy_scale(self) -> float: ...
+    def push(self, potential: LJCut | Potentials | Any) -> None: ...
     def calc_energy_forces(self, arg: Frame | ArrayF) -> tuple[float, ArrayF]: ...
     def calc_energy(self, arg: Frame | ArrayF) -> float: ...
     def calc_forces(self, arg: Frame | ArrayF) -> ArrayF: ...
@@ -4447,105 +4437,90 @@ def polarizability_finite_field(
 ) -> ArrayF: ...
 
 # ---------------------------------------------------------------------------
-# molrs.md — experimental in-process MD (mirrors molrs-python/src/md.rs).
+# molrs.ff.potential — hand-built kernels (mirrors molrs-python/src/ff/potential.rs)
+# ---------------------------------------------------------------------------
+
+def kernel(
+    category: str,
+    style: str,
+    atoms: Sequence[Sequence[int]] | ArrayI64 | ArrayU32,
+    *,
+    charges: Sequence[float] | ArrayF | None = None,
+    **params: float | str | Sequence[float] | Sequence[str] | ArrayF,
+) -> Potentials:
+    """One style's kernel over explicit instances: ``atoms`` ``(n,
+    arity)``, each per-term parameter a number (broadcast) or one value
+    per term, as stored (angle values in degrees); style parameters
+    (``cutoff``, ``coulomb``, an unregistered style's ``expression``) a
+    number or a string. Built as ``PotentialCompiler.compile`` builds it,
+    one type per term; works for every registered style, built-in or
+    custom. Refusals raise their ``molrs.ff.ir.IrError`` subclass."""
+
+class LJCut:
+    """LAMMPS ``pair_style lj/cut``: the one-type cut Lennard-Jones / Mie
+    kernel (``n``/``m`` exponents) a neighbour loop feeds (MD's nonbond
+    kernel). A pair list with a row per pair is
+    ``kernel("pair", "lj/cut", pairs, epsilon=..., sigma=...)``."""
+
+    def __init__(
+        self,
+        epsilon: float,
+        sigma: float,
+        cutoff: float,
+        *,
+        n: int = 12,
+        m: int = 6,
+        shifted: bool = True,
+        smeared: bool = False,
+    ) -> None: ...
+    @property
+    def epsilon(self) -> float: ...
+    @property
+    def sigma(self) -> float: ...
+    @property
+    def cutoff(self) -> float: ...
+    @property
+    def n(self) -> int: ...
+    @property
+    def m(self) -> int: ...
+    @property
+    def shifted(self) -> bool: ...
+    @property
+    def smeared(self) -> bool: ...
+    def pair_energy(self, r2: float, disp: Sequence[float]) -> float | None: ...
+    def pair_force(
+        self, r2: float, disp: Sequence[float]
+    ) -> list[float] | None: ...
+    def pair_eval(
+        self, r2: float, disp: Sequence[float]
+    ) -> tuple[float, list[float]] | None: ...
+    def calc_energy_forces(self, pos: ArrayF) -> tuple[float, ArrayF]: ...
+    def eval(self, neighbors: VerletSkin, pos: ArrayF) -> tuple[float, ArrayF]: ...
+    def eval_table(
+        self, n_atoms: int, neighbors: Neighbors
+    ) -> tuple[float, ArrayF]: ...
+    def eval_pairs(
+        self,
+        n_atoms: int,
+        i: ArrayU32,
+        j: ArrayU32,
+        disp: ArrayF,
+        dist_sq: ArrayF | None = None,
+    ) -> tuple[float, ArrayF]: ...
+
+# ---------------------------------------------------------------------------
+# molrs.md — in-process MD (mirrors molrs-python/src/md.rs).
 # Submodule stubbed as a class namespace, following the `keys` precedent.
 # ---------------------------------------------------------------------------
 
-class potential:
-    """The ``_lib.potential`` submodule (``molrs.ff.potential``): ``kernel``,
-    the kernel of any style the force-field IR prices over explicit
-    instances, and ``LJCut``, the neighbour-loop ``lj/cut`` kernel."""
-
-    @staticmethod
-    def kernel(
-        category: str,
-        style: str,
-        atoms: Sequence[Sequence[int]] | ArrayI64 | ArrayU32,
-        *,
-        charges: Sequence[float] | ArrayF | None = None,
-        **params: float | str | Sequence[float] | Sequence[str] | ArrayF,
-    ) -> Potentials:
-        """One style's kernel over explicit instances: ``atoms`` ``(n,
-        arity)``, each per-term parameter a number (broadcast) or one value
-        per term, as stored (angle values in degrees); style parameters
-        (``cutoff``, ``coulomb``, an unregistered style's ``expression``) a
-        number or a string. Built as ``PotentialCompiler.compile`` builds it,
-        one type per term; works for every registered style, built-in or
-        custom. Refusals raise their ``molrs.ff.ir.IrError`` subclass."""
-
-    class LJCut:
-        """LAMMPS ``pair_style lj/cut``: the one-type cut Lennard-Jones / Mie
-        kernel (``n``/``m`` exponents) a neighbour loop feeds (MD's nonbond
-        kernel). A pair list with a row per pair is
-        ``kernel("pair", "lj/cut", pairs, epsilon=..., sigma=...)``."""
-
-        def __init__(
-            self,
-            epsilon: float,
-            sigma: float,
-            cutoff: float,
-            *,
-            n: int = 12,
-            m: int = 6,
-            shifted: bool = True,
-            smeared: bool = False,
-        ) -> None: ...
-        @property
-        def epsilon(self) -> float: ...
-        @property
-        def sigma(self) -> float: ...
-        @property
-        def cutoff(self) -> float: ...
-        @property
-        def n(self) -> int: ...
-        @property
-        def m(self) -> int: ...
-        @property
-        def shifted(self) -> bool: ...
-        @property
-        def smeared(self) -> bool: ...
-        def pair_energy(self, r2: float, disp: Sequence[float]) -> float | None: ...
-        def pair_force(
-            self, r2: float, disp: Sequence[float]
-        ) -> list[float] | None: ...
-        def pair_eval(
-            self, r2: float, disp: Sequence[float]
-        ) -> tuple[float, list[float]] | None: ...
-        def calc_energy_forces(self, pos: ArrayF) -> tuple[float, ArrayF]: ...
-        def eval(self, neighbors: VerletSkin, pos: ArrayF) -> tuple[float, ArrayF]: ...
-        def eval_table(
-            self, n_atoms: int, neighbors: Neighbors
-        ) -> tuple[float, ArrayF]: ...
-        def eval_pairs(
-            self,
-            n_atoms: int,
-            i: ArrayU32,
-            j: ArrayU32,
-            disp: ArrayF,
-            dist_sq: ArrayF | None = None,
-        ) -> tuple[float, ArrayF]: ...
-
 class md:
-    """The ``_lib.md`` submodule: NVE/Langevin integrators. MD defines no
-    potential; it integrates a ``potential.LJCut``, a ``Potentials``
+    """The ``_lib.md`` submodule (``molrs.md``): NVE/Langevin integrators.
+    MD defines no potential; it integrates an ``LJCut``, a ``Potentials``
     collection, or any object with ``calc_energy_forces``.
 
-    The engine is unit-agnostic — supply consistent units yourself. The
-    conversion helpers target MD energy (amu·Å²/fs², :data:`MD_ENERGY`):
-    ``energy_to_md`` converts an explicit unit string
-    (``"kilocalorie_per_mole"``, ``"electron_volt"``, …),
-    ``preset_energy_to_md`` a LAMMPS unit-style name (``"real"`` = kcal/mol),
-    and ``kb_md()`` is Boltzmann's constant in MD units.
+    The engine is unit-agnostic — supply consistent units yourself; take
+    constants from :class:`UnitPreset` (``UnitPreset("real").boltzmann()``).
     """
-
-    MD_ENERGY: str
-
-    @staticmethod
-    def kb_md() -> float: ...
-    @staticmethod
-    def energy_to_md(value: float, from_unit: str) -> float: ...
-    @staticmethod
-    def preset_energy_to_md(style: str) -> float: ...
 
     class MDState:
         """Dynamical state (pos/vel/forces ``(N, 3)`` float64 + potential energy).
@@ -4589,7 +4564,7 @@ class md:
         def energy(self, value: float) -> None: ...
 
     class VelocityVerlet:
-        """NVE velocity-Verlet. ``potential`` (a ``potential.LJCut`` /
+        """NVE velocity-Verlet. ``potential`` (a ``LJCut`` /
         ``Potentials`` / an object with ``calc_energy_forces``) and
         ``neighbors`` (a ``VerletSkin``) are
         moved in; the loop feeds fresh pairs to the potential after each
@@ -4599,7 +4574,7 @@ class md:
             self,
             dt: float,
             *,
-            potential: potential.LJCut | Potentials | TypedPotentials | Any,
+            potential: LJCut | Potentials | TypedPotentials | Any,
             neighbors: VerletSkin | None = None,
             mass: float | ArrayF,
             simbox: Box | None = None,
@@ -4620,7 +4595,7 @@ class md:
 
     class Langevin:
         """BAOAB Langevin; ``kbt`` is an energy in your unit system
-        (``kb_md() * T`` when integrating in MD units).
+        (``UnitPreset(style).boltzmann() * T``).
 
         ``advance`` draws noise from the internal seeded RNG; ``step`` takes
         the ``(N, 3)`` Gaussian draw explicitly."""
@@ -4631,7 +4606,7 @@ class md:
             *,
             gamma: float,
             kbt: float,
-            potential: potential.LJCut | Potentials | TypedPotentials | Any,
+            potential: LJCut | Potentials | TypedPotentials | Any,
             neighbors: VerletSkin | None = None,
             mass: float | ArrayF,
             seed: int = 0,
@@ -4884,7 +4859,7 @@ class DipoleRateCrossSpectrum:
     ) -> None: ...
     def fit(self, cross: Any) -> Any: ...
 
-def signal_xcorr_fft(a: ArrayF, b: ArrayF, max_lag: int) -> ArrayF:
+def xcorr_fft(a: ArrayF, b: ArrayF, max_lag: int) -> ArrayF:
     """Cross-correlation via FFT: ``C[k] = sum_t a[t]*b[t+k]`` (Wiener-Khinchin)."""
 
 # ---------------------------------------------------------------------------
@@ -5054,6 +5029,9 @@ class RingInfo:
     """
     def __init__(self, mol) -> None: ...
     def is_atom_in_ring(self, /, atom): ...
+    def max_ring_system_size(self) -> int:
+        """Atom count of the largest fused / bridged ring system
+        (naphthalene → 10); ``0`` for an acyclic molecule."""
     def num_atom_rings(self, /, atom): ...
     def num_rings(self, /): ...
     def ring_sizes(self, /): ...
@@ -5106,11 +5084,11 @@ class XTCTrajReader:
     def read_frames(self, /, indices): ...
     def read_range(self, /, start=0, stop=None, step=1): ...
 
-def check_conductivity_sum_rule(
+def conductivity_sum_rule(
     frequency, conductivity, current_sq_mean, volume: float, temperature: float
 ): ...
-def check_kramers_kronig(frequency, eps_real, eps_imag, eps_inf): ...
-def check_route_agreement(results): ...
+def kramers_kronig(frequency, eps_real, eps_imag, eps_inf): ...
+def route_agreement(results): ...
 
 class Dielectric:
     """Raw dielectric kernels (static methods)."""
@@ -5187,12 +5165,6 @@ def read_mol2(path: PathInput) -> Frame:
 
 def read_prep(path: PathInput):
     """Read an Amber prep file into a nested dict (serde JSON shape)."""
-
-def read_trr_trajectory(path: PathInput) -> list[Frame]:
-    """Read every frame of a GROMACS TRR trajectory and return a list of Frames."""
-
-def read_xtc_trajectory(path: PathInput) -> list[Frame]:
-    """Read every frame of a GROMACS XTC trajectory and return a list of Frames."""
 
 class Onsager:
     """Onsager collective mean-displacement cross-correlation (static)."""
@@ -5271,19 +5243,6 @@ def write_smarts(
     canonical_neighbor_order=True,
 ):
     """Encode the local topology around ``center`` as a SMARTS string."""
-
-def write_smiles(
-    mol,
-    *,
-    canonical=True,
-    root=None,
-    aromatic="as_marked",
-    hydrogens="organic_subset",
-    include_stereo=False,
-    multi_component="error_if_multiple",
-    organic_subset=True,
-):
-    """Write an :class:`~molrs.Atomistic` to a SMILES string (io surface, not a core method)."""
 
 def write_trr_trajectory(path: PathInput, frames: Sequence[Frame]) -> None:
     """Write Frames to a GROMACS TRR trajectory file (single precision)."""

@@ -1,42 +1,33 @@
 //! Python bindings for the molrs molecular simulation library.
 //!
-//! This crate provides PyO3-based Python bindings (`import molrs`) exposing
-//! the core data model, I/O, neighbor search, force-field evaluation,
-//! 3D coordinate generation, and analysis routines.
+//! This crate builds the private native module `molrs._lib`; the Python
+//! package `molrs` (`python/molrs`) gives every symbol its one public path,
+//! the Python module named after the symbol's Rust owner:
 //!
-//! # Module Layout
+//! | binding                 | Rust owner          | Python module        |
+//! |-------------------------|---------------------|----------------------|
+//! | [`core::store`]         | `molrs::store`      | `molrs.store`        |
+//! | [`core::spatial`]       | `molrs::spatial`    | `molrs.spatial`      |
+//! | [`core::system`]        | `molrs::system`     | `molrs.system`       |
+//! | [`core::units`]         | `molrs::units`      | `molrs.units`        |
+//! | [`op`]                  | `molrs::op`         | `molrs.op`           |
+//! | [`perceive`]            | `molrs::perceive`   | `molrs.perceive`     |
+//! | [`io`]                  | `molrs::io`         | `molrs.io`           |
+//! | [`ff`]                  | `molrs::ff`         | `molrs.ff.*`         |
+//! | [`optimize`]            | `molrs::optimize`   | `molrs.optimize`     |
+//! | [`md`]                  | `molrs::md`         | `molrs.md`           |
+//! | [`conformer`]           | `molrs::conformer`  | `molrs.conformer`    |
+//! | [`builder`]             | `molrs::builder`    | `molrs.builder`      |
+//! | [`compute`]             | `molrs::compute`    | `molrs.compute`      |
+//! | [`signal`]              | `molrs::signal`     | `molrs.signal`       |
+//! | [`stream`]              | `molrs::stream`     | `molrs.stream`       |
 //!
-//! | Python class              | Rust wrapper        | Purpose                                     |
-//! |---------------------------|---------------------|---------------------------------------------|
-//! | `Block`                   | `PyBlock`           | Heterogeneous column store (numpy arrays)   |
-//! | `Frame`                   | `PyFrame`           | Collection of named `Block`s + `SimBox`     |
-//! | `Box`                     | `PyBox`             | Simulation box / periodic boundaries        |
-//! | `Trace`                   | `PyTrace`           | Ordered path of 3D points (no chemistry)    |
-//! | `NeighborList`            | `PyNeighborList`    | Neighbor-search engine (build / update)     |
-//! | `Neighbors`               | `PyNeighbors`       | Materialized pair table (read-only columns) |
-//! | `NeighborQuery`           | `PyNeighborQuery`   | Cross-query against a reference point set   |
-//! | `Atomistic`               | `PyAtomistic`       | All-atom molecular graph                    |
-//! | `Perceive`                | `PyPerceive`        | Chemical perception (graph in / graph out)  |
-//! | `SubgraphMatcher`         | `PySubgraphMatcher` | Bead-pattern occurrences in a CoarseGrain   |
-//! | `Coarsener`               | `PyCoarsener`       | Node groups → sites of a new CoarseGrain    |
-//! | `Typifier`                | `PyTypifier`        | Typifier base: `match` hook, owned output   |
-//! | `Match`                   | `PyMatch`           | What a typifier's `match` assigns           |
-//! | `MMFF94Typifier`          | `PyMMFF94Typifier`  | MMFF94 atom-type assignment                 |
-//! | `MMFF94STypifier`         | `PyMMFF94STypifier` | MMFF94s (static) atom-type assignment       |
-//! | `OPLSAATypifier`          | `PyOPLSAATypifier`  | OPLS-AA atom-type + bonded assignment       |
-//! | `AtdTypifier`             | `PyAtdTypifier`     | antechamber atom types (7 `-at` tables)     |
-//! | `GaffTypifier`            | `PyGaffTypifier`    | GAFF / GAFF2 bonded terms + parameters      |
-//! | `ElementTypifier`         | `PyElementTypifier` | Element-symbol type labels, no force field  |
-//! | `BccModel`                | `PyBccModel`        | AM1-BCC / ABCG2 bond-charge corrections     |
-//! | `MullikenModel`           | `PyMullikenModel`   | QM Mulliken charges, unchanged              |
-//! | `GasteigerModel`          | `PyGasteigerModel`  | Gasteiger / PEOE charges (no QM input)      |
-//! | `SitePlacer`              | `PySitePlacer`      | Centre of mass of each copy on its site     |
-//! | `GrowthPlacer`            | `PyGrowthPlacer`    | Each copy grown onto its parent's port      |
-//! | `AxisOrienter`            | `PyAxisOrienter`    | Template frame onto site axis + bonds       |
-//! | `Assembler`               | `PyAssembler`       | Site graph → one placed, linked world       |
-//! | `PotentialCompiler`       | `PyPotentialCompiler` | ForceField → Potentials / TypedPotentials |
-//! | `Potentials`              | `PyPotentials`      | Compiled energy/force evaluator             |
-//! | `RDF` / `MSD` / `Cluster` |                     | Structural analysis                         |
+//! Every subsystem binding registers its own classes and functions through
+//! its `register`. Most land flat on `_lib`; a namespace with vocabulary of
+//! its own is a `_lib` submodule (`op`, `md`, `ff.ir` as `ir`, and the store's
+//! `keys` / `schema`). Cross-cutting plumbing has one home each: exceptions
+//! and Rust-error mapping in [`error`], the pickle protocol in [`pickle`],
+//! path arguments in [`path`].
 //!
 //! # Float Precision
 //!
@@ -46,83 +37,21 @@
 use pyo3::prelude::*;
 
 mod error;
-mod helpers;
-mod schema;
-mod spectrum_checks;
-mod store;
+mod path;
+mod pickle;
 
-// Mirrors the molrs core module layout: core/ (store · spatial · system), io/,
-// compute/, ff/, conformer/, signal/.
 mod builder;
-mod core;
-use crate::builder::{
-    PyAssembler, PyAxisOrienter, PyCarbonTubeBuilder, PyGrapheneBuilder, PyGrowthPlacer,
-    PySitePlacer,
-};
-use crate::core::spatial::mesh::PyTriMesh;
-use crate::core::spatial::neighborlist::{
-    PyNeighborList, PyNeighborQuery, PyNeighbors, PyVerletSkin,
-};
-use crate::core::spatial::region::{
-    PyCuboid, PyCylinder, PyEllipsoid, PyHalfSpace, PyParallelepiped, PyPolyhedron, PyRegion,
-    PySphere, PySphereUnion,
-};
-use crate::core::spatial::simbox::PyBox;
-use crate::core::spatial::trace::PyTrace;
-use crate::core::store::block::PyBlock;
-use crate::core::store::frame::{PyFrame, PyFrameMeta, PyMetaDocument, PyMetaValue};
-use crate::core::store::trajectory::{PyScalarObservable, PyTrajectory, PyVectorObservable};
-use crate::core::system::element::PyElement;
-use crate::core::system::molgraph::PyRingInfo;
-use crate::core::system::molgraph::{
-    PyAtomistic, PyCoarseGrain, PyExtractedSubgraph, PyGraph, PyReaction, PySmartsMatch,
-    PySmartsPattern,
-};
-use crate::core::system::topology::PyTopology;
-use crate::core::system::views::{
-    PyAngle, PyAtom, PyBead, PyBond, PyCGBond, PyDihedral, PyDrudeParticle, PyImproper,
-    PyMasslessSite, PyNodeRef, PyPort, PyRefs, PyRelationBuckets, PyRelationRef, PyVirtualSite,
-};
-use crate::core::units::{PyQuantity, PyUnit, PyUnitPreset, PyUnitRegistry};
-
-mod io;
-
-// Chemical perception: one layer above `core`, mirroring `molrs::perceive`.
-mod perceive;
-use crate::perceive::{PyCoarsener, PyPerceive, PySubgraphMatcher};
-
-mod conformer;
-use conformer::{PyConformer, PyConformerReport, PyConformerStageReport};
-
-mod ff;
-use ff::atd::PyAtdTypifier;
-use ff::charge::{PyBccModel, PyGasteigerModel, PyMullikenModel};
-use ff::gaff::PyGaffTypifier;
-use ff::{
-    PyElementTypifier, PyForceField, PyLBFGS, PyMMFF94STypifier, PyMMFF94Typifier, PyMatch,
-    PyOPLSAATypifier, PyOptReport, PyPotentialCompiler, PyPotentials, PyTypedPotentials,
-    PyTypifier,
-};
-
 mod compute;
-use compute::{
-    PyCenterOfMass, PyCenterOfMassResult, PyCluster, PyClusterCenters, PyClusterCentersResult,
-    PyClusterResult, PyDescriptorRow, PyGyrationTensor, PyInertiaTensor, PyKMeans, PyKMeansResult,
-    PyMSD, PyMSDResult, PyMSDTimeSeries, PyPca2, PyPcaResult, PyRDF, PyRDFResult,
-    PyRadiusOfGyration,
-};
-
+mod conformer;
+mod core;
+mod ff;
+mod io;
 mod md;
 mod op;
+mod optimize;
+mod perceive;
 mod signal;
-
-// Live Frame streaming (`molrs::stream`). `ControlCommand` is portable;
-// `Publisher` binds a listener and is native-only, gated exactly as the
-// Rust `molrs::stream::publisher` module is.
 mod stream;
-use stream::PyControlCommand;
-#[cfg(not(target_arch = "wasm32"))]
-use stream::PyPublisher;
 
 /// The FFI ABI handshake token of this build.
 ///
@@ -154,373 +83,29 @@ fn _ffi_abi_token() -> (&'static str, &'static str, String, String, String) {
     )
 }
 
-/// Root Python module for the molrs library.
-///
-/// Registered classes and free functions are listed in the module-level
-/// documentation above.
+/// The native module, `molrs._lib`: every subsystem's bindings.
 #[pymodule]
 #[pyo3(name = "_lib")]
 fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(_ffi_abi_token, m)?)?;
-    m.add_function(wrap_pyfunction!(helpers::_restore_pickled_state, m)?)?;
-    // SimBox + neighbors
-    m.add_class::<PyBox>()?;
-    m.add_class::<PyNeighborList>()?;
-    m.add_class::<PyNeighbors>()?;
-    m.add_class::<PyNeighborQuery>()?;
-    m.add_class::<PyVerletSkin>()?;
+    m.add_function(wrap_pyfunction!(pickle::_restore_pickled_state, m)?)?;
 
-    // Public exceptions
-    m.add(
-        "BlockDtypeError",
-        m.py().get_type::<error::BlockDtypeError>(),
-    )?;
-    m.add("UnitsError", m.py().get_type::<error::UnitsError>())?;
-    m.add("SmilesError", m.py().get_type::<error::SmilesError>())?;
+    core::register(m)?;
+    perceive::register(m)?;
+    io::register(m)?;
+    ff::register(m)?;
+    optimize::register(m)?;
+    conformer::register(m)?;
+    builder::register(m)?;
+    compute::register(m)?;
+    signal::register(m)?;
+    stream::register(m)?;
 
-    // Block + Frame
-    m.add_class::<PyBlock>()?;
-    m.add_class::<PyMetaValue>()?;
-    m.add_class::<PyMetaDocument>()?;
-    m.add_class::<PyFrameMeta>()?;
-    m.add_class::<PyFrame>()?;
-
-    // Live Frame streaming
-    m.add_class::<PyControlCommand>()?;
-    #[cfg(not(target_arch = "wasm32"))]
-    m.add_class::<PyPublisher>()?;
-
-    // Native units
-    m.add_class::<PyUnit>()?;
-    m.add_class::<PyQuantity>()?;
-    m.add_class::<PyUnitRegistry>()?;
-    m.add_class::<PyUnitPreset>()?;
-
-    // I/O + SMILES
-    // Readers
-    m.add_function(wrap_pyfunction!(io::read_block_csv, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_block_csv, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_frame_bytes, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_frame_bytes, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_pdb, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_pdb_trajectory, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_xyz, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_xyz_trajectory, m)?)?;
-    m.add_class::<io::PyXYZTrajReader>()?;
-    m.add_function(wrap_pyfunction!(io::read_lammps_data, m)?)?;
-    m.add_function(wrap_pyfunction!(io::format::read_frame, m)?)?;
-    m.add_function(wrap_pyfunction!(io::format::write_frame, m)?)?;
-    m.add_class::<io::bond_react::PyBondReactTemplate>()?;
-    m.add_function(wrap_pyfunction!(io::bond_react::write_bond_react_map, m)?)?;
-    m.add_function(wrap_pyfunction!(
-        io::bond_react::write_lammps_bond_react_system,
-        m
-    )?)?;
-    m.add_function(wrap_pyfunction!(io::read_stl, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_lammps_trajectory, m)?)?;
-    m.add_class::<io::PyLAMMPSTrajReader>()?;
-    m.add_function(wrap_pyfunction!(io::read_dcd_trajectory, m)?)?;
-    m.add_class::<io::PyDcdTrajReader>()?;
-    m.add_function(wrap_pyfunction!(io::read_trr_trajectory, m)?)?;
-    m.add_class::<io::PyTrrTrajReader>()?;
-    m.add_function(wrap_pyfunction!(io::read_xtc_trajectory, m)?)?;
-    m.add_class::<io::PyXtcTrajReader>()?;
-    m.add_function(wrap_pyfunction!(io::read_gro, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_gro_trajectory, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_chgcar, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_cube, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_cube, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_mol2, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_mol2, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_amber_inpcrd, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_amber_prmtop, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_ac, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_prep, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_prep, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_lammps_molecule, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_lammps_molecule, m)?)?;
-    m.add_function(wrap_pyfunction!(io::read_xsf, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_xsf, m)?)?;
-    // LAMMPS log doors. Native-only: the parser reads a path, and the whole
-    // module is behind `fs` for the same reason the mrec block below is.
-    #[cfg(feature = "fs")]
-    {
-        m.add_function(wrap_pyfunction!(io::read_lammps_log, m)?)?;
-        m.add_function(wrap_pyfunction!(io::parse_lammps_log_text, m)?)?;
-        m.add_class::<io::log::PyLammpsLog>()?;
-        m.add_class::<io::log::PyLammpsRun>()?;
-        m.add_class::<io::log::PyLammpsThermo>()?;
-        m.add_class::<io::log::PyLammpsLogHeader>()?;
-        m.add_class::<io::log::PyLammpsMemoryUsage>()?;
-        m.add_class::<io::log::PyLammpsLoopTime>()?;
-        m.add_class::<io::log::PyLammpsPerformance>()?;
-        m.add_class::<io::log::PyLammpsCpuUse>()?;
-        m.add_class::<io::log::PyLammpsTimingRow>()?;
-        m.add_class::<io::log::PyLammpsTimingBreakdown>()?;
-        m.add_class::<io::log::PyLammpsLoadBalance>()?;
-        m.add_class::<io::log::PyLammpsNeighborStatistics>()?;
-        m.add_class::<io::log::PyLammpsWarning>()?;
-    }
-    // Writers
-    m.add_function(wrap_pyfunction!(io::write_gro, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_gro_trajectory, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_pdb, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_pdb_trajectory, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_xyz, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_xyz_trajectory, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_lammps_data, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_lammps_trajectory, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_lammps_dump_local, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_dcd_trajectory, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_trr_trajectory, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_xtc_trajectory, m)?)?;
-    // SMILES
-    m.add_class::<io::PySmilesIR>()?;
-    m.add_function(wrap_pyfunction!(io::write_smiles_from_atomistic, m)?)?;
-    m.add_function(wrap_pyfunction!(io::write_smarts, m)?)?;
-
-    // CGsmiles. One front door (`CGSmilesIR`) plus the read-only records it
-    // hands out; no reader class and no free parse function.
-    m.add_class::<io::cgsmiles::PyCGSmilesIR>()?;
-    m.add_class::<io::cgsmiles::PyCGGraph>()?;
-    m.add_class::<io::cgsmiles::PyCGNode>()?;
-    m.add_class::<io::cgsmiles::PyCGEdge>()?;
-    m.add_class::<io::cgsmiles::PyCGFragmentDef>()?;
-    m.add_class::<io::cgsmiles::PyResolvedPair>()?;
-    m.add_class::<io::cgsmiles::PyPairEnd>()?;
-    m.add_class::<io::cgsmiles::PyBondingDescriptor>()?;
-
-    // Scientific-record (*.mrec) path doors. Native-only (filesystem store).
-    // The classes are `molrs.io.mrec`'s; python/molrs/io/mrec re-exports them.
-    #[cfg(feature = "fs")]
-    {
-        m.add_function(wrap_pyfunction!(io::mrec::read_mrec, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::write_mrec, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::read_mrec_system, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::write_mrec_system, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::read_mrec_trajectory, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::write_mrec_trajectory, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::read_mrec_meta, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::write_mrec_forcefield, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::read_mrec_forcefield, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::mrec_sections, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::pack, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::mrec_validate_path, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::mrec_validate_meta, m)?)?;
-        m.add_function(wrap_pyfunction!(io::mrec::mrec_validate_frame, m)?)?;
-        m.add_class::<io::mrec::PyMrecTrajectoryReader>()?;
-        m.add_class::<io::mrec::PyMrecSequenceSchema>()?;
-        m.add_class::<io::mrec::PyMrecTrajectoryWriter>()?;
-        m.setattr("MREC_MOLREC_VERSION", molrs::store::MOLREC_VERSION)?;
-        m.setattr("MREC_RESERVED_META_KEYS", molrs::store::RESERVED_META_KEYS)?;
-    }
-
-    // Trajectory (frame sequence) + observable records
-    m.add_class::<PyTrajectory>()?;
-    m.add_class::<PyScalarObservable>()?;
-    m.add_class::<PyVectorObservable>()?;
-
-    // Regions (and the mesh a Polyhedron is bounded by)
-    m.add_class::<PyTriMesh>()?;
-    m.add_class::<PySphere>()?;
-    m.add_class::<PyCuboid>()?;
-    m.add_class::<PyParallelepiped>()?;
-    m.add_class::<PyHalfSpace>()?;
-    m.add_class::<PyCylinder>()?;
-    m.add_class::<PyEllipsoid>()?;
-    m.add_class::<PyPolyhedron>()?;
-    m.add_class::<PySphereUnion>()?;
-    m.add_class::<PyRegion>()?;
-
-    // An ordered path of points (the sites of one chain)
-    m.add_class::<PyTrace>()?;
-
-    // Molecular graph hierarchy (base before subclasses)
-    m.add_class::<PyElement>()?;
-    m.add_class::<PyTopology>()?;
-    m.add_class::<PyGraph>()?;
-    m.add_class::<PyAtomistic>()?;
-    m.add_class::<PyCoarseGrain>()?;
-    // Live views over the leaves (base before subclasses)
-    m.add_class::<PyNodeRef>()?;
-    m.add_class::<PyAtom>()?;
-    m.add_class::<PyVirtualSite>()?;
-    m.add_class::<PyDrudeParticle>()?;
-    m.add_class::<PyMasslessSite>()?;
-    m.add_class::<PyBead>()?;
-    m.add_class::<PyRelationRef>()?;
-    m.add_class::<PyBond>()?;
-    m.add_class::<PyAngle>()?;
-    m.add_class::<PyDihedral>()?;
-    m.add_class::<PyImproper>()?;
-    m.add_class::<PyPort>()?;
-    m.add_class::<PyCGBond>()?;
-    m.add_class::<PyRefs>()?;
-    m.add_class::<PyRelationBuckets>()?;
-    m.add_class::<PyExtractedSubgraph>()?;
-    m.add_class::<PySmartsMatch>()?;
-    m.add_class::<PySmartsPattern>()?;
-    m.add_class::<PyReaction>()?;
-
-    // Structure builders (graphene, nanotubes, …)
-    m.add_class::<PyCarbonTubeBuilder>()?;
-    m.add_class::<PyGrapheneBuilder>()?;
-
-    // Site-graph assembly: place and link one world graph
-    m.add_class::<PySitePlacer>()?;
-    m.add_class::<PyGrowthPlacer>()?;
-    m.add_class::<PyAxisOrienter>()?;
-    m.add_class::<PyAssembler>()?;
-
-    // translate / rotate / scale are methods on Atomistic and CoarseGrain.
-
-    // Chemical perception, as a builder: graph in / graph out, non-mutating.
-    m.add_class::<PyPerceive>()?;
-    m.add_class::<PyRingInfo>()?;
-    m.add_class::<PySubgraphMatcher>()?;
-    m.add_class::<PyCoarsener>()?;
-
-    // Field-name convention (`molrs.keys.X`, `molrs.keys.ELEMENT`, …)
-    schema::register_keys(m)?;
-    schema::register_schema(m)?;
-
-    // Conformer generation
-    m.add_class::<PyConformer>()?;
-    m.add_class::<PyConformerReport>()?;
-    m.add_class::<PyConformerStageReport>()?;
-
-    // Force field
-    m.add_class::<PyForceField>()?;
-    m.add_class::<ff::section::PyForceFieldSection>()?;
-    m.add_class::<ff::handles::PyStyle>()?;
-    m.add_class::<ff::handles::PyAtomStyle>()?;
-    m.add_class::<ff::handles::PyBondStyle>()?;
-    m.add_class::<ff::handles::PyAngleStyle>()?;
-    m.add_class::<ff::handles::PyDihedralStyle>()?;
-    m.add_class::<ff::handles::PyImproperStyle>()?;
-    m.add_class::<ff::handles::PyPairStyle>()?;
-    m.add_class::<ff::handles::PyCmapStyle>()?;
-    m.add_class::<ff::handles::PyRelationStyle>()?;
-    m.add_class::<ff::handles::PyFfType>()?;
-    m.add_class::<ff::handles::PyAtomType>()?;
-    m.add_class::<ff::handles::PyBondType>()?;
-    m.add_class::<ff::handles::PyAngleType>()?;
-    m.add_class::<ff::handles::PyDihedralType>()?;
-    m.add_class::<ff::handles::PyImproperType>()?;
-    m.add_class::<ff::handles::PyPairType>()?;
-    m.add_class::<ff::handles::PyCmapType>()?;
-    m.add_class::<ff::handles::PyRelationType>()?;
-    m.add_class::<ff::PyFragmentScaling>()?;
-    m.add_class::<PyTypifier>()?;
-    m.add_class::<PyMatch>()?;
-    m.add_class::<PyMMFF94Typifier>()?;
-    m.add_class::<PyMMFF94STypifier>()?;
-    m.add_class::<PyOPLSAATypifier>()?;
-    m.add_class::<PyAtdTypifier>()?;
-    m.add_class::<PyGaffTypifier>()?;
-    m.add_class::<PyElementTypifier>()?;
-    m.add_class::<PyPotentialCompiler>()?;
-    m.add_class::<PyPotentials>()?;
-    m.add_class::<PyTypedPotentials>()?;
-
-    // Charge models — Python's first native AM1-BCC. One calling convention:
-    // `needs_equivalencing()` + `assign(mol, qm=None)`; `BccModel` adds `correct`.
-    m.add_class::<PyBccModel>()?;
-    m.add_class::<PyMullikenModel>()?;
-    m.add_class::<PyGasteigerModel>()?;
-    m.add_class::<PyOptReport>()?;
-    m.add_class::<PyLBFGS>()?;
-
-    let potential = PyModule::new(m.py(), "potential")?;
-    ff::potential::register(&potential)?;
-    m.add_submodule(&potential)?;
-    let md = PyModule::new(m.py(), "md")?;
-    md::register(&md)?;
-    m.add_submodule(&md)?;
-    // Pure numeric base; `Fit` lives only in `_lib.op`.
-    // The force-field IR registry (`molrs.ff.ir`).
-    let ir = PyModule::new(m.py(), "ir")?;
-    ff::ir::register(&ir)?;
-    m.add_submodule(&ir)?;
-    let op = PyModule::new(m.py(), "op")?;
-    op::register(&op)?;
-    m.add_submodule(&op)?;
-    m.add_function(wrap_pyfunction!(ff::read_forcefield_xml_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::read_opls_xml_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::read_lammps_forcefield_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::read_amber_prmtop_ff_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::read_gromacs_top_ff_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::read_gromacs_system_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::write_amber_frcmod_py, m)?)?;
-    m.add("AMBER_COULOMB", ::molrs::units::constants::AMBER_COULOMB)?;
-    m.add("AMBER_SCEE", ::molrs::ff::params::amber::AMBER_SCEE)?;
-    m.add("AMBER_SCNB", ::molrs::ff::params::amber::AMBER_SCNB)?;
-    m.add_function(wrap_pyfunction!(ff::write_gromacs_top_ff_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::write_forcefield_xml_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::read_lammps_data_coeffs_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::write_lammps_forcefield_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::write_lammps_forcefield_str_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::write_lammps_data_coeffs_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::assign_cmaps_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::read_lammps_cmap_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::write_lammps_cmap_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::intramolecular_pairs_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::compute_k_ij_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::fragment_scaling_data_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::scale_lj_py, m)?)?;
-    m.add_function(wrap_pyfunction!(ff::clpol::clpol_polarizability, m)?)?;
-    m.add_function(wrap_pyfunction!(
-        ff::gromacs_system::write_gromacs_system,
-        m
-    )?)?;
-
-    // Compute analyses
-    m.add_class::<PyRDF>()?;
-    m.add_class::<PyRDFResult>()?;
-    m.add_class::<PyMSD>()?;
-    m.add_class::<PyMSDResult>()?;
-    m.add_class::<PyMSDTimeSeries>()?;
-    m.add_class::<PyCluster>()?;
-    m.add_class::<PyClusterResult>()?;
-    m.add_class::<PyClusterCenters>()?;
-    m.add_class::<PyClusterCentersResult>()?;
-    m.add_class::<PyCenterOfMass>()?;
-    m.add_class::<PyCenterOfMassResult>()?;
-    m.add_class::<PyGyrationTensor>()?;
-    m.add_class::<PyInertiaTensor>()?;
-    m.add_class::<PyRadiusOfGyration>()?;
-    m.add_class::<PyDescriptorRow>()?;
-    m.add_class::<PyPca2>()?;
-    m.add_class::<PyPcaResult>()?;
-    m.add_class::<PyKMeans>()?;
-    m.add_class::<PyKMeansResult>()?;
-
-    // Additional analyzers ported from freud (Steinhardt, Nematic, …).
-    compute::extra::register(m)?;
-
-    // Raw-compute + explicit-fit classes (phase-02 compute/fit repoint):
-    // VACF / EinsteinConductivity / GreenKuboConductivity / … + LinearFit /
-    // CumulativeTrapezoid / Plateau / DebyeFit / PowerSpectrum / IRSpectrum /
-    // RamanSpectrum at the top level (`molrs.VACF`, `molrs.LinearFit`, …).
-    compute::fitting::register(m)?;
-
-    // analysis-parity computes: geometric distributions (ADF/DDF/distance),
-    // Van Hove, Legendre reorientation, hydrogen bonds, spatial distribution,
-    // radical-Voronoi tessellation + domain/void analysis.
-    compute::analysis::register(m)?;
-
-    // Signal processing
-    m.add_function(wrap_pyfunction!(signal::signal_acf_fft, m)?)?;
-    m.add_function(wrap_pyfunction!(signal::signal_xcorr_fft, m)?)?;
-    m.add_function(wrap_pyfunction!(signal::signal_apply_window, m)?)?;
-    m.add_function(wrap_pyfunction!(signal::signal_frequency_grid, m)?)?;
-
-    // Dielectric
-    compute::dielectric::register_dielectric(m)?;
-    compute::transport::register_transport(m)?;
-
-    // Validation
-    spectrum_checks::register_check(m)?;
-
+    let op_module = PyModule::new(m.py(), "op")?;
+    op::register(&op_module)?;
+    m.add_submodule(&op_module)?;
+    let md_module = PyModule::new(m.py(), "md")?;
+    md::register(&md_module)?;
+    m.add_submodule(&md_module)?;
     Ok(())
 }

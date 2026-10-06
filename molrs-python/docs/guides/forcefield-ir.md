@@ -766,7 +766,7 @@ with one periodicity; a Urey–Bradley term on no angle or on several.
 
 `GromacsTopFfReader` reads a topology's directives into a force field
 (`read`) or a whole `.top` into the force field and a typed frame
-(`read_system`; Python `molrs.ff.read_gromacs_system`); the writer
+(`read_system`; Python `molrs.ff.forcefield.read_gromacs_system`); the writer
 (`GromacsTopFfWriter`) is the inverse of the directive map
 (`write_str`) and of `read_system` (`write_system_str`). Every row is
 exact; GROMACS's ½k forms are halved into LAMMPS's `K`, nm → Å, kJ → kcal,

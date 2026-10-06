@@ -2,7 +2,7 @@
 
 The directive model (what is read, what is refused, what a skip does) is proved
 in Rust (``ff::forcefield::readers::gromacs``). This test only asserts that the
-public ``molrs.ff.read_gromacs_top_ff`` maps a refused directive to
+public ``molrs.ff.forcefield.read_gromacs_top_ff`` maps a refused directive to
 ``ValueError`` and that its ``skip_directives`` keyword reaches the Rust reader.
 """
 
@@ -30,10 +30,10 @@ def test_constrainttypes_is_refused_without_skip_and_read_past_with_it(tmp_path)
     path = tmp_path / "ff.top"
     path.write_text(_TOP)
     with pytest.raises(ValueError, match="constrainttypes"):
-        molrs.ff.read_gromacs_top_ff(path)
+        molrs.ff.forcefield.read_gromacs_top_ff(path)
 
-    ff = molrs.ff.read_gromacs_top_ff(path, skip_directives=["constrainttypes"])
-    assert type(ff) is molrs.ff.ForceField
+    ff = molrs.ff.forcefield.read_gromacs_top_ff(path, skip_directives=["constrainttypes"])
+    assert type(ff) is molrs.ff.forcefield.ForceField
 
 
 _SYSTEM = """\
@@ -65,23 +65,23 @@ CH  2
 def test_read_gromacs_system_returns_the_force_field_and_a_typed_frame(tmp_path):
     path = tmp_path / "topol.top"
     path.write_text(_SYSTEM)
-    ff, frame = molrs.ff.read_gromacs_system(path)
-    assert type(ff) is molrs.ff.ForceField
+    ff, frame = molrs.ff.forcefield.read_gromacs_system(path)
+    assert type(ff) is molrs.ff.forcefield.ForceField
     assert list(frame["bonds"]["type"]) == ["CT-HC", "CT-HC"]
     assert list(frame["bonds"]["atomi"]) == [0, 2]
     assert list(frame["atoms"]["mol_id"]) == [1, 1, 2, 2]
 
     with pytest.raises(ValueError, match="read_system"):
-        molrs.ff.read_gromacs_top_ff(path)
+        molrs.ff.forcefield.read_gromacs_top_ff(path)
 
 
 def test_write_gromacs_system_round_trips_read_gromacs_system(tmp_path):
     path = tmp_path / "topol.top"
     path.write_text(_SYSTEM)
-    ff, frame = molrs.ff.read_gromacs_system(path)
+    ff, frame = molrs.ff.forcefield.read_gromacs_system(path)
     out = tmp_path / "out.top"
-    molrs.ff.write_gromacs_system(out, ff, frame)
-    ff2, frame2 = molrs.ff.read_gromacs_system(out)
+    molrs.ff.forcefield.write_gromacs_system(out, ff, frame)
+    ff2, frame2 = molrs.ff.forcefield.read_gromacs_system(out)
     # The writer states each bond's parameters on its row; the reader names
     # such a row's type after its lookup type.
     assert all(str(t).startswith("CT-HC") for t in frame2["bonds"]["type"])

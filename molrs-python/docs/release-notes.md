@@ -164,6 +164,18 @@ blocks; the `openmm` unit preset and `k_B` are native; and the CL&Pol
   by name; it is never read as version 2. Every 0.15.0 test record prices in
   0.16 at the energy 0.15.0 computed for it.
 
+### One path per symbol
+
+Every module has one job and every public symbol one path, in Rust and in
+Python alike. The Rust crate root holds subsystems only (`molrs::store`,
+`molrs::system`, `molrs::spatial`, `molrs::units`, `molrs::ff`, …), and so
+does `import molrs`: `molrs.store.Frame`, `molrs.spatial.Box`,
+`molrs.system.Atomistic`, `molrs.ff.forcefield.ForceField`,
+`molrs.ff.potential.PotentialCompiler`, `molrs.compute.RDF`. `molrs.io.raw`,
+`molrs.fields` and the alias functions are gone — every reader emits the
+canonical column names. The [migration guide](migration.md#python-paths)
+lists every old → new path.
+
 ### Packaging
 
 - FFI capsules move to the `0.16` ABI line (`molrs.FrameRef/0.16`, …):

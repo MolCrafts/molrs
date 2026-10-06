@@ -9,19 +9,19 @@ def test_from_frame_refuses_a_2d_atoms_column_with_value_error() -> None:
     # A graph property is one value per row; an (n, 3) column has no reading.
     # The refusal must be a ValueError, not pyo3's PanicException (which
     # derives from BaseException and so escapes ``pytest.raises(ValueError)``).
-    frame = molrs.Frame()
-    frame["atoms"] = molrs.Block(
+    frame = molrs.store.Frame()
+    frame["atoms"] = molrs.store.Block(
         {
             "type": np.array(["A", "B"]),
             "xyz": np.array([[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]], dtype=np.float64),
         }
     )
     with pytest.raises(ValueError, match="xyz"):
-        molrs.CoarseGrain.from_frame(frame)
+        molrs.system.CoarseGrain.from_frame(frame)
 
 
-def _three_beads() -> tuple[molrs.CoarseGrain, list[int]]:
-    cg = molrs.CoarseGrain()
+def _three_beads() -> tuple[molrs.system.CoarseGrain, list[int]]:
+    cg = molrs.system.CoarseGrain()
     handles = [
         cg.add_bead("W", 0.5, -1.25, 2.0),
         cg.add_bead("P1", 3.0, 4.0, 5.0),
