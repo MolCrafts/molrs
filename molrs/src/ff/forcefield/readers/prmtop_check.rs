@@ -277,9 +277,14 @@ fn system(case: &Case) -> (Frame, ForceField, Vec<F>) {
             style.set_param("cutoff", CUTOFF);
         }
     }
+    // The full pair list (keeping the frame reader's per-pair 1-4 scales),
+    // then the field's 1-4 pricing on it: a chamber file's `one_four =
+    // "epsilon14"` 1-4 pairs need their ε₁₄/σ₁₄ as override cells.
     let pairs = intramolecular_pairs(&frame, ff.special_bonds())
         .unwrap_or_else(|e| panic!("{}: pairs: {e}", case.name));
     frame.insert("pairs", pairs);
+    ff.materialize_one_four(&mut frame)
+        .unwrap_or_else(|e| panic!("{}: materialize_one_four: {e}", case.name));
     let xyz = read_amber_inpcrd_from_reader(Cursor::new(case.rst.as_bytes())).unwrap();
     let atoms = xyz.get("atoms").unwrap();
     let col = |k: &str| atoms.get(k).unwrap().as_float().unwrap().to_owned();
@@ -304,6 +309,19 @@ fn only(ff: &ForceField, category: &str, name: &str, edit: impl Fn(&mut Params))
         s.def_type(type_name, &ends, params).unwrap();
     }
     one
+}
+
+/// `ff` with only its two pair styles.
+fn pair_styles(ff: &ForceField, lj: (&str, &str), coul: (&str, &str)) -> ForceField {
+    let mut out = only(ff, lj.0, lj.1, |_| {});
+    let style = ff.get_style(coul.0, coul.1).unwrap();
+    let s = out
+        .def_style(coul.0, coul.1, style.params().clone())
+        .unwrap();
+    for (name, ends, params) in style.type_rows() {
+        s.def_type(name, &ends, params.clone()).unwrap();
+    }
+    out
 }
 
 /// `frame` with only the `pairs` rows whose `is_14` is `want`.
@@ -346,6 +364,12 @@ fn molrs_terms(frame: &Frame, ff: &ForceField, coords: &[F]) -> Terms {
         (("pair", "lj/cut"), ("pair", "coul/cut"))
     };
     let (near, far) = (pairs_where(frame, true), pairs_where(frame, false));
+    // The bonded terms on a frame without `pairs`: the exceptions kernel
+    // prices a pair's override cells under any force field, so a pair list
+    // with them would add the 1-4 Lennard-Jones to every term.
+    let mut frame = frame.clone();
+    frame.remove("pairs");
+    let frame = &frame;
     Terms {
         bond: term(ff, frame, coords, ("bond", "harmonic"), keep),
         angle: if charmm {
@@ -360,8 +384,12 @@ fn molrs_terms(frame: &Frame, ff: &ForceField, coords: &[F]) -> Terms {
             + term(ff, frame, coords, ("improper", "periodic"), keep),
         imp: term(ff, frame, coords, ("improper", "harmonic"), keep),
         cmap: term(ff, frame, coords, ("cmap", "charmm"), keep),
+        // A 1-4 pair with override cells is priced by the exceptions
+        // kernel, which prices its LJ cells under any style: the Coulomb
+        // part is the two pair styles' energy less the Lennard-Jones one's.
         vdw_14: term(ff, &near, coords, lj, keep),
-        elec_14: term(ff, &near, coords, coul, keep),
+        elec_14: energy(&pair_styles(ff, lj, coul), &near, coords)
+            - term(ff, &near, coords, lj, keep),
         vdw: term(ff, &far, coords, lj, keep),
         elec: term(ff, &far, coords, coul, keep),
     }
@@ -452,20 +480,20 @@ fn write_lammps(dir: &Path, frame: &Frame, ff: &ForceField, coords: &[F]) {
         format!("{:?}\n", coul.params().get("coulomb").unwrap()),
     )
     .unwrap();
-    if frame
-        .get("pairs")
-        .is_some_and(|p| p.get("lj_scale").is_some() || p.get("coul_scale").is_some())
-    {
-        std::fs::write(dir.join("weights.txt"), molecule_weights(frame, &ff)).unwrap();
+    // Per-molecule 1-4 weights, when some differ from `special_bonds` (a
+    // `materialize_one_four` cell restating them changes nothing).
+    if let Some(weights) = molecule_weights(frame, &ff) {
+        std::fs::write(dir.join("weights.txt"), weights).unwrap();
     }
 }
 
 /// `weights <molecule> <coul> <lj>` per molecule: the 1-4 weights of its
 /// pairs (the `pairs` override cell, else `special_bonds`), which must be
-/// one per molecule for the script to apply them.
-fn molecule_weights(frame: &Frame, ff: &ForceField) -> String {
+/// one per molecule for the script to apply them; `None` when every one is
+/// the `special_bonds` weight.
+fn molecule_weights(frame: &Frame, ff: &ForceField) -> Option<String> {
     let mol = molecules(frame);
-    let pairs = frame.get("pairs").unwrap();
+    let pairs = frame.get("pairs")?;
     let col = |k: &str| pairs.get(k).unwrap().as_uint().unwrap().to_owned();
     let (ai, flags) = (col("atomi"), pairs.get("is_14").unwrap().as_bool().unwrap());
     let cell = |k: &str, r: usize, default: F| -> F {
@@ -488,9 +516,14 @@ fn molecule_weights(frame: &Frame, ff: &ForceField) -> String {
             "molecule {m} has two 1-4 weights"
         );
     }
-    of.iter()
-        .map(|(m, (c, l))| format!("weights {m} {c:?} {l:?}\n"))
-        .collect()
+    if of.values().all(|&(c, l)| c == sb.coul[2] && l == sb.lj[2]) {
+        return None;
+    }
+    Some(
+        of.iter()
+            .map(|(m, (c, l))| format!("weights {m} {c:?} {l:?}\n"))
+            .collect(),
+    )
 }
 
 /// A copy of `ff` whose styles carry no string or number parameter `key`.

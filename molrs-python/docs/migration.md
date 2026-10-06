@@ -283,7 +283,9 @@ guide, "AMBER prmtop", for the full map.
   `one_four = "epsilon14"` when the file's 1-4 table differs) and Coulomb
   `coul/charmm` at 332.0716; charges are de-scaled by √332.0716 (not
   18.2223). The force field's `name` is `"CHARMM"`. Its pair styles carry no
-  `inner` / `cutoff`: declare them before compiling.
+  `inner` / `cutoff`: declare them before compiling. With `one_four =
+  "epsilon14"`, build the pair list (`intramolecular_pairs`) and call
+  `ForceField.materialize_one_four(frame)` before compiling.
 - **CMAP reads** (ff19SB's `CMAP_*` too); 0.15 refused `CMAP_COUNT > 0`.
 - **Non-uniform `SCEE` / `SCNB` read.** 0.15 refused two divisors among the
   1-4 rows. `special_bonds` is now the divisor most 1-4 rows carry (it was

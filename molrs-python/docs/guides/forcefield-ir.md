@@ -502,7 +502,10 @@ list, a 1-4 pair of the topology no row lists (weight 0, or 1 if the
 exclusion list leaves it out) — with only the differing cells set.
 `intramolecular_pairs` keeps those cells when it builds the full pair list.
 A chamber file's 1-4 Lennard-Jones (`one_four = "epsilon14"`) reaches a
-frame through `ForceField.materialize_one_four`.
+frame through `ForceField.materialize_one_four`. Build the full list first
+(`intramolecular_pairs`, which keeps the frame reader's cells), then
+materialize: `materialize_one_four` builds a list only when the frame has
+no `pairs`, and the frame reader's `pairs` hold only the odd 1-4 pairs.
 
 Refused by name: polarizable (`IPOL > 0`), 12-6-4 (`LENNARD_JONES_CCOEF`),
 non-zero 10-12 (`HBOND_ACOEF/BCOEF`, a negative ICO), perturbed, solvent-cap
@@ -562,7 +565,9 @@ with one periodicity; a Urey–Bradley term on no angle or on several.
   coordinates. Every term (bond, angle, Urey–Bradley, dihedral with AMBER
   impropers, CHARMM improper, CMAP, 1-4 vdW, 1-4 Coulomb, vdW, Coulomb)
   matches pysander to ≤ 6.2e-9 relative and LAMMPS `run 0` on the files
-  molrs writes to ≤ 3.2e-14. The van-der-Waals 1e-9 against sander is the
+  molrs writes to ≤ 3.2e-14 (the chamber 1-4 vdW through
+  `materialize_one_four`, and in LAMMPS with `epsilon14`/`sigma14` in the
+  regular slots). The van-der-Waals 1e-9 against sander is the
   file's eight-digit `LENNARD_JONES_ACOEF/BCOEF`: sander uses each printed
   off-diagonal entry, molrs and LAMMPS mix the self terms; every other
   term agrees to 1e-14.
