@@ -232,8 +232,10 @@ The convention is LAMMPS `fix cmap` (CHARMM's correction map):
 - the energy between grid points is LAMMPS's bicubic interpolation, with the
   derivatives LAMMPS precomputes from periodic cubic splines.
 
-A `cmap` style's row holds one map as an array parameter (molrs 0.16 adds
-array params and the five-endpoint `cmaps` block). OpenMM's
+A `cmap` style's row holds one map as its `grid` array parameter (`f64`
+N×N, the layout above; the `forcefield` section's `grid` column is
+`f64[T, N, N]`), and a frame's `cmaps` block lists the crossterms
+(`atomi` … `atomm`, `type`). OpenMM's
 `CMAPTorsionForce` stores `energy[i + N·j]` at φ = 2πi/N, ψ = 2πj/N (origin
 0, φ fastest): its reader maps element `(i, j)` to molrs `[(i + N/2) mod N]
 [(j + N/2) mod N]`; OpenMM interpolates with a natural periodic bicubic
