@@ -26,9 +26,12 @@
 //!   `name`, with endpoint columns other than its category's (or, keyed by
 //!   `smirks`, any endpoint column or no never-null `smirks`), or with a column
 //!   that is not `f64` / `string` (an annotation column: `string`; a canonical
-//!   key: that key's dtype), has trailing axes, or declares a precision — the
-//!   one exception being a `cmap` table's [`CMAP_GRID`] column, `f64[T, N, N]`
-//!   with `N ≥ 2` and every value of a non-null row finite;
+//!   key: that key's dtype) or declares a precision;
+//! - an **array parameter** — a parameter column with trailing axes,
+//!   `f64[T, S…]` — that is not `f64`, has an axis of length 0, or holds a
+//!   non-finite value in a non-null row (the name, the endpoints, the
+//!   annotation columns and the canonical keys never have trailing axes); a
+//!   `cmap` table's [`CMAP_GRID`] is further `f64[T, N, N]` with `N ≥ 2`;
 //! - a `class`-keyed style beside an atom table without `class`;
 //! - a `pair` table (endpoint-keyed) with two rows on one unordered
 //!   `{itom, jtom}` that differ in a parameter ([`check_pair_restatements`]).
@@ -48,9 +51,10 @@ use crate::store::block::{Block, DType};
 /// The endpoint columns of a style table, in position order.
 pub const ENDPOINT_COLUMNS: [&str; 5] = ["itom", "jtom", "ktom", "ltom", "mtom"];
 
-/// The one parameter column with trailing axes: a `cmap` row's correction
-/// table, `f64[T, N, N]` — an `N × N` grid over the two dihedrals, every row
-/// of the table sharing `N`.
+/// The array parameter whose shape the chapter pins: a `cmap` row's
+/// correction table, `f64[T, N, N]` — an `N × N` grid over the two
+/// dihedrals, every row of the table sharing `N`. Any other parameter may be
+/// an array too (`f64[T, S…]`, [`ForceFieldSection::validate`]).
 pub const CMAP_GRID: &str = "grid";
 
 /// The annotation columns of a style table: `string`, nullable.
@@ -614,6 +618,12 @@ fn check_style_table(
             check_cmap_grid(table, values).map_err(fail)?;
             continue;
         }
+        let scalar_only =
+            ANNOTATION_COLUMNS.contains(&column) || crate::store::schema::column(column).is_some();
+        if values.shape().len() > 1 && !scalar_only {
+            check_array_param(table, column, values).map_err(fail)?;
+            continue;
+        }
         let allowed: &[DType] = if ANNOTATION_COLUMNS.contains(&column) {
             &[DType::String]
         } else if let Some(spec) = crate::store::schema::column(column) {
@@ -647,7 +657,41 @@ fn check_style_table(
     Ok(())
 }
 
-/// The trailing-axis exception: a `cmap` table's [`CMAP_GRID`] column is
+/// An array parameter (molrec: `f64[T, S…]`): `f64`, no precision, every
+/// trailing axis at least 1 long, and every value of a non-null row finite.
+fn check_array_param(
+    table: &Block,
+    column: &str,
+    values: &crate::store::block::Column,
+) -> Result<(), String> {
+    let shape = values.shape();
+    let array = values
+        .as_float()
+        .filter(|_| table.precision(column).is_none())
+        .filter(|_| shape[1..].iter().all(|&n| n >= 1))
+        .ok_or_else(|| {
+            format!(
+                "array parameter {column:?} is f64[T, S…] with every axis at least 1 and \
+                 no precision, found {}{:?}",
+                values.dtype().name(),
+                &shape[1..]
+            )
+        })?;
+    let validity = table.validity(column);
+    for (row, cells) in array.outer_iter().enumerate() {
+        if validity.is_some_and(|mask| !mask[row]) {
+            continue;
+        }
+        if let Some(bad) = cells.iter().find(|v| !v.is_finite()) {
+            return Err(format!(
+                "array parameter {column:?} of row {row} holds {bad}; it is finite"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The pinned array parameter: a `cmap` table's [`CMAP_GRID`] column is
 /// `f64[T, N, N]`, `N ≥ 2`, with no precision, and every value of a row that
 /// is not null is finite.
 fn check_cmap_grid(table: &Block, values: &crate::store::block::Column) -> Result<(), String> {
@@ -1011,21 +1055,64 @@ mod tests {
         ff.validate().unwrap();
     }
 
-    /// Only a cmap table's `grid` carries trailing axes: another cmap column,
-    /// or a `grid` anywhere else, is refused.
+    /// Any parameter may be an array (molrec: `f64[T, S…]`): another cmap
+    /// column, a `grid` in a bond table, a rank-1 table. One that is not
+    /// `f64`, has an empty axis, holds a non-finite value in a non-null row,
+    /// or sits under an annotation key, is refused (a block refuses one
+    /// under a canonical key itself).
     #[test]
-    fn a_trailing_axis_anywhere_else_is_refused() {
+    fn any_parameter_may_be_an_array() {
         let mut ff = with_cmap(grids(&[2, 2, 2], vec![0.0; 8]));
         ff.tables["cmap.charmm"]
-            .insert_column("other", grids(&[2, 2, 2], vec![0.0; 8]))
+            .insert_column("other", grids(&[2, 2, 3], vec![0.0; 12]))
             .unwrap();
-        assert!(ff.validate().is_err(), "another cmap column");
+        ff.validate().unwrap();
 
-        let mut ff = base();
-        ff.tables["bond.harmonic"]
-            .insert_column("grid", grids(&[1, 2, 2], vec![0.0; 4]))
+        let with_bond_column = |key: &str, column: Column| {
+            let mut ff = base();
+            ff.tables["bond.harmonic"]
+                .insert_column(key, column)
+                .unwrap();
+            ff
+        };
+        with_bond_column("grid", grids(&[1, 2, 2], vec![0.0; 4]))
+            .validate()
             .unwrap();
-        assert!(ff.validate().is_err(), "a bond grid");
+        with_bond_column("table", grids(&[1, 12], vec![0.5; 12]))
+            .validate()
+            .unwrap();
+        let mut nulled = with_bond_column("table", grids(&[1, 2], vec![f64::NAN; 2]));
+        nulled.tables["bond.harmonic"]
+            .set_validity("table", vec![false])
+            .unwrap();
+        nulled.validate().unwrap();
+
+        let refused = [
+            (
+                with_bond_column("table", grids(&[1, 0], vec![])),
+                "an empty axis",
+            ),
+            (
+                with_bond_column("table", grids(&[1, 2], vec![0.0, f64::INFINITY])),
+                "a non-finite value",
+            ),
+            (
+                with_bond_column(
+                    "table",
+                    Column::from_string(
+                        ArrayD::from_shape_vec(vec![1, 2], vec!["a".into(), "b".into()]).unwrap(),
+                    ),
+                ),
+                "a string array",
+            ),
+            (
+                with_bond_column("desc", grids(&[1, 2], vec![0.0; 2])),
+                "an annotation",
+            ),
+        ];
+        for (ff, why) in refused {
+            assert!(ff.validate().is_err(), "{why}");
+        }
     }
 
     /// `base` with a `pair lj/cut` style (category `category`) whose rows

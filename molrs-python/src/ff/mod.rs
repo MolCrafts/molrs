@@ -1333,11 +1333,11 @@ impl PyForceField {
         Py::new(py, PyForceField { inner })
     }
 
-    /// Every style handle whose category is one of `categories`, in
-    /// definition order.
+    /// Every style handle whose category `selection` names, in definition
+    /// order.
     fn style_handles(
         slf: &Bound<'_, Self>,
-        categories: &[handles::Category],
+        selection: &handles::Selection,
     ) -> PyResult<Vec<Py<PyAny>>> {
         let py = slf.py();
         let styles: Vec<(handles::Category, String)> = slf
@@ -1346,8 +1346,8 @@ impl PyForceField {
             .styles()
             .iter()
             .filter_map(|style| {
-                let category = handles::Category::of(style.category()).ok()?;
-                categories
+                let category = handles::Category::of_style(style);
+                selection
                     .contains(&category)
                     .then(|| (category, style.name().to_owned()))
             })
@@ -1360,7 +1360,8 @@ impl PyForceField {
     }
 
     /// The pickled definition: `(name, declared units, declared special
-    /// bonds, [(category, style, params, [(type, endpoints, params)])])`.
+    /// bonds, [(category, arity, style, params, [(type, endpoints,
+    /// params)])])`.
     fn definition<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
         let styles = PyList::empty(py);
         for style in self.inner.styles() {
@@ -1370,6 +1371,7 @@ impl PyForceField {
             }
             styles.append((
                 style.category(),
+                style.arity(),
                 style.name(),
                 params_to_dict(py, style.params())?,
                 types,
@@ -1400,6 +1402,7 @@ impl PyForceField {
             Option<([f64; 3], [f64; 3])>,
             Vec<(
                 String,
+                usize,
                 String,
                 Bound<'_, PyDict>,
                 Vec<(String, Vec<String>, Bound<'_, PyDict>)>,
@@ -1412,9 +1415,16 @@ impl PyForceField {
         if let Some((lj, coul)) = special_bonds {
             inner.set_special_bonds(molrs::ff::forcefield::SpecialBonds { lj, coul });
         }
-        for (category, style_name, params, types) in styles {
+        for (category, arity, style_name, params, types) in styles {
+            // The arity travels with the style: a category no registry of
+            // the unpickling process declares is still a relation of it.
             let style = inner
-                .def_style(&category, &style_name, params_from_dict(Some(&params))?)
+                .def_style_with_arity(
+                    &category,
+                    arity,
+                    &style_name,
+                    params_from_dict(Some(&params))?,
+                )
                 .map_err(py_value_err)?;
             for (type_name, endpoints, params) in types {
                 let endpoints: Vec<&str> = endpoints.iter().map(String::as_str).collect();
@@ -1592,8 +1602,12 @@ impl PyForceField {
     /// Define the ``category`` style ``name`` with style-level ``params``
     /// (numbers and strings, e.g. ``{"cutoff": 10.0, "mixing": "geometric"}``)
     /// and return its handle (``AtomStyle`` … ``PairStyle``, ``CmapStyle``),
-    /// whose typed ``def_type`` defines types. Re-defining it with equal
-    /// ``params`` keeps the existing style.
+    /// whose typed ``def_type`` defines types. Any other category the
+    /// force-field IR registry declares (``drude``, a registered custom
+    /// category, …), or one this force field holds already, returns a
+    /// ``RelationStyle``, whose ``def_type(name, *endpoints, **params)``
+    /// takes as many endpoints as the category's arity. Re-defining it with
+    /// equal ``params`` keeps the existing style.
     ///
     /// Raises
     /// ------
@@ -1608,41 +1622,54 @@ impl PyForceField {
         params: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Py<PyAny>> {
         let params = params_from_dict(params)?;
-        slf.try_borrow_mut()?
-            .inner
-            .def_style(category, name, params)
-            .map_err(py_value_err)?;
-        handles::Category::of(category)?.style_handle(slf.py(), &slf.clone().unbind(), name)
+        let category = {
+            let mut ff = slf.try_borrow_mut()?;
+            let style = ff
+                .inner
+                .def_style(category, name, params)
+                .map_err(py_value_err)?;
+            handles::Category::of_style(style)
+        };
+        category.style_handle(slf.py(), &slf.clone().unbind(), name)
     }
 
     /// Every style, in definition order.
     #[getter(styles)]
     fn every_style(slf: &Bound<'_, Self>) -> PyResult<Vec<Py<PyAny>>> {
-        Self::style_handles(slf, &handles::Category::ALL)
+        Self::style_handles(slf, &handles::Selection::Every)
     }
 
     /// The ``category`` style ``name``, or ``None``.
     fn get_style(slf: &Bound<'_, Self>, category: &str, name: &str) -> PyResult<Option<Py<PyAny>>> {
-        if slf.try_borrow()?.inner.get_style(category, name).is_none() {
+        let Some(category) = slf
+            .try_borrow()?
+            .inner
+            .get_style(category, name)
+            .map(handles::Category::of_style)
+        else {
             return Ok(None);
-        }
-        handles::Category::of(category)?
+        };
+        category
             .style_handle(slf.py(), &slf.clone().unbind(), name)
             .map(Some)
     }
 
     /// The styles of a category — a name (``"bond"``) or a style class
-    /// (``BondStyle``; ``Style`` selects every category).
+    /// (``BondStyle``; ``RelationStyle`` selects every category beyond the
+    /// seven, ``Style`` every category).
     fn get_styles(slf: &Bound<'_, Self>, category: &Bound<'_, PyAny>) -> PyResult<Vec<Py<PyAny>>> {
-        Self::style_handles(slf, &handles::Category::selected(category)?)
+        let selection = handles::Category::selected(category, &slf.try_borrow()?.inner)?;
+        Self::style_handles(slf, &selection)
     }
 
     /// The types of a category — a name (``"bond"``) or a type class
-    /// (``BondType``; ``Type`` selects every category) — style by style.
+    /// (``BondType``; ``RelationType`` selects every category beyond the
+    /// seven, ``Type`` every category) — style by style.
     fn get_types(slf: &Bound<'_, Self>, category: &Bound<'_, PyAny>) -> PyResult<Vec<Py<PyAny>>> {
         let py = slf.py();
         let mut types = Vec::new();
-        for style in Self::style_handles(slf, &handles::Category::selected(category)?)? {
+        let selection = handles::Category::selected(category, &slf.try_borrow()?.inner)?;
+        for style in Self::style_handles(slf, &selection)? {
             types.extend(
                 style
                     .bind(py)

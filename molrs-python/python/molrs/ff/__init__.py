@@ -44,6 +44,8 @@ from .._lib import (
     ImproperType,
     PairStyle,
     PairType,
+    RelationStyle,
+    RelationType,
     Style,
     Type,
     assign_cmaps,
@@ -129,6 +131,8 @@ __all__ = [
     "Potential",
     "PotentialCompiler",
     "Potentials",
+    "RelationStyle",
+    "RelationType",
     "Style",
     "Type",
     # typifiers

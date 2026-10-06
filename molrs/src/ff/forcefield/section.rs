@@ -8,13 +8,14 @@
 //! | [`ForceField::declared_special_bonds`] | `document.special_bonds`; absent ⇔ `None` |
 //! | [`ForceField::styles`], in order | `document.styles`, in order |
 //! | [`Style::category`], [`Style::name`] | `category`, `style` |
+//! | a category no registry declares ([`StyleDefs::Relation`]), its arity | the same `category`, its arity the endpoint columns' count |
 //! | [`Style::params`] numeric / string | `params` numbers / strings |
 //! | the string style params `expression`, `endpoint_key` | the entry fields of those names |
 //! | [`Style::type_rows`], in definition order | the rows of the table at [`style_block_name`] |
 //! | row name, endpoints (a pair always two) | `name`, `itom`…`mtom` |
 //! | a pair self row / an explicit cross row (NBFIX) | a pair row with `itom == jtom` / `itom != jtom` |
 //! | row [`Params`] numeric / string | `f64` / `string` columns, after `name` and the endpoints, keys sorted bytewise |
-//! | a row array param of shape `S` (every row carrying the key at one shape) | an `f64[T, S…]` column, null where a row lacks it; [`ForceFieldSection::validate`] admits one: a `cmap` row's `grid`, `S = [N, N]` |
+//! | a row array param of shape `S` (every row carrying the key at one shape) | an `f64[T, S…]` column, null where a row lacks it ([`ForceFieldSection::validate`]: finite, every axis ≥ 1; a `cmap` row's `grid` is `S = [N, N]`, `N ≥ 2`) |
 //! | a numeric param under a canonical non-`f64` key (`atomic_number`, `id`, …) | a column of that key's dtype; [`ForceField::from_section`] reads it back as `f64` |
 //! | a key a row does not carry | null in that row |
 //!
@@ -27,6 +28,7 @@
 //! [`Style::name`]: super::Style::name
 //! [`Style::params`]: super::Style::params
 //! [`Style::type_rows`]: super::Style::type_rows
+//! [`StyleDefs::Relation`]: super::StyleDefs::Relation
 
 use crate::ff::forcefield::one_four::OneFour;
 use std::collections::{BTreeMap, BTreeSet};
@@ -38,8 +40,8 @@ use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use super::{ForceField, Params, SpecialBonds, Style};
 use molrs::store::block::{Block, Column, DType};
 use molrs::store::forcefield_section::{
-    ENDPOINT_COLUMNS, EndpointKey, ForceFieldSection, UNIT_QUANTITIES, category_arity,
-    style_block_name, unit_preset,
+    ENDPOINT_COLUMNS, EndpointKey, ForceFieldSection, UNIT_QUANTITIES, style_block_name,
+    unit_preset,
 };
 
 /// The string style params that are entry fields of `document.styles`.
@@ -297,7 +299,7 @@ fn param_column(
 fn style_table(style: &Style) -> Result<Block, String> {
     let what = || format!("{}/{}", style.category(), style.name());
     let rows = style.type_rows();
-    let arity = category_arity(style.category()).expect("a molrs category is the chapter's");
+    let arity = style.arity();
     let mut block = Block::new();
     let column_err = |e: molrs::store::block::BlockError| format!("{}: {e}", what());
     block
@@ -421,8 +423,9 @@ impl ForceField {
     /// in another, on two sides of one [`Params`], or `name` / an endpoint
     /// column; an array param at two shapes; a param under a canonical key at
     /// another dtype (a non-integral `atomic_number`, a numeric `element`, an
-    /// array); or anything [`ForceFieldSection::validate`] refuses — an array
-    /// param other than a `cmap` row's square `grid` among it.
+    /// array); or anything [`ForceFieldSection::validate`] refuses — a
+    /// non-finite array value, or a `cmap` `grid` that is not square, among
+    /// it.
     ///
     /// # Examples
     ///
@@ -472,11 +475,18 @@ impl ForceField {
     /// does not know are unknown content the force field has no place for:
     /// they stay with the section.
     ///
+    /// A category beyond molrs's seven is kept as a
+    /// [`StyleDefs::Relation`](super::StyleDefs::Relation): with the arity
+    /// the force-field IR registry declares for it, or — a category nothing
+    /// declares — the count of its table's endpoint columns. Reading never
+    /// evaluates an `expression`; compiling a style nothing can price is
+    /// where it is refused.
+    ///
     /// # Errors
     ///
     /// An `Err` when the section fails [`ForceFieldSection::validate`], or
-    /// has no [`ForceField`] form: a category outside `atom bond angle
-    /// dihedral improper pair cmap`; units that are no preset (stated by
+    /// has no [`ForceField`] form: a registered category whose table names
+    /// another number of endpoints; units that are no preset (stated by
     /// `preset`, or by one preset's own length and energy); a `smirks`-keyed
     /// style; a `class`-keyed style whose endpoints are not all atom-type
     /// names.
@@ -539,17 +549,17 @@ impl ForceField {
                     params.set_str("endpoint_key", EndpointKey::Class.as_str());
                 }
             }
+            let endpoint_columns: Vec<&ArrayD<String>> = ENDPOINT_COLUMNS
+                .iter()
+                .filter_map(|c| table.get(c).and_then(Column::as_string))
+                .collect();
             let style = ff
-                .def_style(entry.category, entry.style, params)
+                .def_style_with_arity(entry.category, endpoint_columns.len(), entry.style, params)
                 .map_err(|e| format!("{what}: {e}"))?;
             let names = table
                 .get("name")
                 .and_then(Column::as_string)
                 .expect("validated: a name column");
-            let endpoint_columns: Vec<&ArrayD<String>> = ENDPOINT_COLUMNS
-                .iter()
-                .filter_map(|c| table.get(c).and_then(Column::as_string))
-                .collect();
             for (row, name) in names.iter().enumerate() {
                 let endpoints: Vec<&str> = endpoint_columns
                     .iter()
@@ -899,17 +909,6 @@ mod tests {
         stated.document["units"] = json!({"length": "angstrom", "energy": "eV"});
         assert_eq!(ForceField::from_section(&stated).unwrap().units(), "metal");
 
-        let mut sites = section.clone();
-        sites.document["styles"] = json!([{"category": "virtual_site", "style": "tip4p"}]);
-        let mut rows = Block::new();
-        rows.insert_column("name", strings(vec![])).unwrap();
-        sites.tables.insert("virtual_site.tip4p".into(), rows);
-        assert!(
-            ForceField::from_section(&sites)
-                .unwrap_err()
-                .contains("virtual_site")
-        );
-
         let mut smirks = section;
         smirks.document["styles"][0]["endpoint_key"] = json!("smirks");
         let mut rows = Block::new();
@@ -969,8 +968,8 @@ mod tests {
     }
 
     /// A grid the section cannot hold is refused by `to_section`, not
-    /// reshaped: two sizes in one table, a non-square grid, an array param
-    /// anywhere but a cmap row's `grid`, an array style param.
+    /// reshaped: two sizes in one table, a non-square grid, an array style
+    /// param.
     #[test]
     fn an_array_the_section_cannot_hold_is_refused() {
         let err = cmap_ff(&[Some(grid(24, 1.0)), Some(grid(12, 1.0))])
@@ -982,15 +981,8 @@ mod tests {
         let err = cmap_ff(&[Some(rect)]).to_section().unwrap_err();
         assert!(err.contains("cmap grid"), "{err}");
 
-        let mut ff = ForceField::new("t");
         let mut params = Params::new();
         params.set_array("grid", grid(2, 1.0));
-        ff.def_style("bond", "harmonic", Params::new())
-            .unwrap()
-            .def_type("A-B", &["A", "B"], params.clone())
-            .unwrap();
-        assert!(ff.to_section().is_err(), "a bond grid");
-
         let mut ff = ForceField::new("t");
         ff.def_style("cmap", "charmm", params).unwrap();
         let err = ff.to_section().unwrap_err();
@@ -1015,6 +1007,62 @@ mod tests {
             .unwrap();
         let err = ff.to_section().unwrap_err();
         assert!(err.contains("0-d"), "{err}");
+    }
+
+    /// Any type param may be an array (molrec: `f64[T, S…]`, one shape per
+    /// column): a rank-1 table and a rank-2 grid on a dihedral style, a row
+    /// without one a null row, back bit for bit.
+    #[test]
+    fn any_type_param_may_be_an_array() {
+        let mut ff = ForceField::new("t");
+        let style = ff
+            .def_style("dihedral", "table/linear", Params::new())
+            .unwrap();
+        let table = |s: f64| ArrayD::from_shape_fn(vec![12], |ix| s * ix[0] as f64 - 0.1);
+        let mut a = Params::from_pairs(&[("n", 12.0)]);
+        a.set_array("table", table(0.25));
+        a.set_array("grid", grid(3, 1.0 / 7.0));
+        let mut b = Params::from_pairs(&[("n", 12.0)]);
+        b.set_array("table", table(-1.0 / 3.0));
+        style
+            .def_type("a", &["A", "B", "B", "A"], a)
+            .unwrap()
+            .def_type("b", &["A", "B", "B", "C"], b)
+            .unwrap();
+        let section = ff.to_section().unwrap();
+        let t = section.table("dihedral", "table/linear").unwrap();
+        assert_eq!(t.get("table").unwrap().shape(), &[2, 12]);
+        assert_eq!(t.get("grid").unwrap().shape(), &[2, 3, 3]);
+        assert_eq!(t.validity("grid"), Some(&[true, false][..]));
+        round_trips(&ff, "array params");
+    }
+
+    /// A category beyond molrs's seven round-trips: one the registry
+    /// declares (`virtual_site`, no endpoints) and one nothing declares,
+    /// whose arity is its endpoint columns'.
+    #[test]
+    fn a_category_beyond_the_seven_round_trips() {
+        let mut ff = ForceField::new("t");
+        ff.def_style("virtual_site", "tip4p", Params::new())
+            .unwrap()
+            .def_type("M", &[], Params::from_pairs(&[("d", 0.15)]))
+            .unwrap();
+        ff.def_style_with_arity("bespoke", 4, "x", Params::new())
+            .unwrap()
+            .def_type(
+                "q",
+                &["A", "B", "C", "D"],
+                Params::from_pairs(&[("k", 1.5)]),
+            )
+            .unwrap();
+        let section = ff.to_section().unwrap();
+        let bespoke = section.table("bespoke", "x").unwrap();
+        assert!(bespoke.contains_key("ltom") && !bespoke.contains_key("mtom"));
+        round_trips(&ff, "beyond the seven");
+        let back = ForceField::from_section(&section).unwrap();
+        assert_eq!(back.get_style("bespoke", "x").unwrap().arity(), 4);
+        assert_eq!(back.get_style("virtual_site", "tip4p").unwrap().arity(), 0);
+        assert_eq!(back.get_relationtypes("bespoke")[0].endpoints.len(), 4);
     }
 
     #[test]

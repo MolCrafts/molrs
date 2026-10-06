@@ -278,7 +278,9 @@ fn invalid_argument(e: DefError) -> MolrsStatus {
 ///
 /// * `ff` -- ForceField handle.
 /// * `category` -- One of `"atom"`, `"bond"`, `"angle"`, `"dihedral"`,
-///   `"improper"`, `"pair"`, `"cmap"`.
+///   `"improper"`, `"pair"`, `"cmap"`, or any other category the force-field
+///   IR registry declares (`"drude"`, a registered custom category) or the
+///   force field already holds.
 /// * `name` -- Style name (e.g. `"harmonic"`, `"lj/cut"`).
 /// * `param_keys` -- Array of `n_params` style-level parameter names
 ///   (e.g. `"cutoff"`). May be `NULL` if `n_params == 0`.
@@ -294,8 +296,8 @@ fn invalid_argument(e: DefError) -> MolrsStatus {
 /// * `MolrsStatus::Ok` on success.
 /// * `MolrsStatus::NullPointer` if a required pointer is null.
 /// * `MolrsStatus::Utf8Error` if any string is not valid UTF-8.
-/// * `MolrsStatus::InvalidArgument` if `category` is not one of the values
-///   above, or the style is already defined with different params.
+/// * `MolrsStatus::InvalidArgument` if `category` is none of the above, or
+///   the style is already defined with different params.
 /// * `MolrsStatus::InvalidForceFieldHandle` if `ff` is stale.
 ///
 /// # Safety
@@ -354,7 +356,8 @@ pub unsafe extern "C" fn molrs_ff_def_style(
 /// * `type_name` -- The type name, stored as given.
 /// * `endpoints` -- Array of `n_endpoints` atom-type names. The count must
 ///   match the category: atom 0, pair 1 (a self pair) or 2, bond 2, angle 3,
-///   dihedral and improper 4. May be `NULL` if `n_endpoints == 0`.
+///   dihedral and improper 4, cmap 5, any other category its arity. May be
+///   `NULL` if `n_endpoints == 0`.
 /// * `param_keys` / `param_values` / `n_params` -- Numeric type parameters;
 ///   the arrays may be `NULL` if `n_params == 0`.
 ///
