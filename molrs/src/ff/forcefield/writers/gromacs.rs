@@ -111,10 +111,9 @@
 //! `sigma` differ, else funct 2 `fudgeQQ qᵢqⱼ 1 σ lj_scale·ε`), and
 //! `[ exclusions ]` every pair of one molecule beyond three bonds the frame
 //! does not price — so GROMACS prices exactly the frame's intramolecular
-//! `pairs` (built by
-//! [`intramolecular_pairs`](crate::ff::potential::intramolecular_pairs) when
-//! absent), and every pair across molecules. Refused by name: a priced pair within three bonds that is not a
-//! 1-4 pair (GROMACS excludes it) or a 1-4 pair beyond them, override cells
+//! `pairs` (built by [`intramolecular_pairs`] when absent), and every pair
+//! across molecules. Refused by name: a priced pair within three bonds that is
+//! not a 1-4 pair (GROMACS excludes it) or a 1-4 pair beyond them, override cells
 //! without `epsilon` and `sigma`, a crossterm GROMACS's lookup would give
 //! another grid, a type name two styles of one category share, a molecule
 //! whose atoms are not consecutive or a row across two molecules, more than
