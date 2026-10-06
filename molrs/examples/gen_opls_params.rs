@@ -19,6 +19,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use molrs::ff::forcefield::torsion::{MultiHarmonic, Opls};
 use molrs::ff::forcefield::{Params, StyleDefs};
 use molrs::ff::{ForceField, ForceFieldReader, GromacsTopFfReader};
 use molrs::units::constants::COULOMB_REAL;
@@ -56,8 +57,13 @@ const WALKED: [(&str, &str); 6] = [
     ("pair", "coul/cut"),
     ("bond", "harmonic"),
     ("angle", "harmonic"),
-    ("dihedral", "opls"),
+    ("dihedral", "multi/harmonic"),
 ];
+
+/// GROMACS prints RB coefficients with 5 decimals; a row whose ΣCₙ (its
+/// energy at φ = 180°, which the OPLS form fixes at 0) is further from 0 than
+/// six roundings has an offset the table's Fourier row cannot hold.
+const RB_SUM_TOL_KJ: f64 = 1e-4;
 
 /// The table's own path, independent of where cargo was invoked.
 const OUTPUT: &str = "src/ff/params/oplsaa.rs";
@@ -424,7 +430,29 @@ impl Table {
                 }
                 StyleDefs::Dihedral(types) => {
                     for t in types {
-                        let what = format!("dihedral/opls {}", t.name);
+                        // The reader keeps RB exactly (`multi/harmonic`); the
+                        // table holds its OPLS Fourier projection, exact when
+                        // ΣCₙ = 0 (C₅ = 0 is what `multi/harmonic` means).
+                        let what = format!("dihedral/multi/harmonic {}", t.name);
+                        let a = [
+                            param(&t.params, "a1", &what)?,
+                            param(&t.params, "a2", &what)?,
+                            param(&t.params, "a3", &what)?,
+                            param(&t.params, "a4", &what)?,
+                            param(&t.params, "a5", &what)?,
+                        ];
+                        let series = MultiHarmonic { a }.to_series();
+                        let sum = series.energy(std::f64::consts::PI);
+                        if sum.abs() > RB_SUM_TOL_KJ / 4.184 {
+                            return Err(format!(
+                                "{what}: sum of C = {} kJ/mol is a constant offset the OPLS \
+                                 Fourier row cannot hold",
+                                sum * 4.184
+                            ));
+                        }
+                        let f = Opls::from_series(&series)
+                            .map_err(|e| format!("{what}: {e}"))?
+                            .k;
                         table.dihedrals.push(DihedralRow {
                             ends: [
                                 t.itom.clone(),
@@ -432,12 +460,7 @@ impl Table {
                                 t.ktom.clone(),
                                 t.ltom.clone(),
                             ],
-                            f: [
-                                param(&t.params, "k1", &what)?,
-                                param(&t.params, "k2", &what)?,
-                                param(&t.params, "k3", &what)?,
-                                param(&t.params, "k4", &what)?,
-                            ],
+                            f,
                         });
                     }
                 }
