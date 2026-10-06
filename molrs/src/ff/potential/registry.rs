@@ -284,8 +284,8 @@ impl KernelRegistry {
         );
         r.register(
             "dihedral",
-            "fourier",
-            dihedral::periodic::dihedral_periodic_ctor,
+            "harmonic",
+            dihedral::harmonic::dihedral_harmonic_ctor,
         );
         r.register("dihedral", "class2", dihedral::class2::dihedral_class2_ctor);
         // pair / nonbonded
