@@ -575,9 +575,8 @@ impl CompoundForm for PyCompoundKernel {
         Python::attach(|py| match self.call(py, x, arity, p) {
             Ok((ev, gv)) => {
                 e.copy_from_slice(&ev);
-                for (g, c) in grad.iter_mut().zip(gv.chunks_exact(3)) {
-                    *g = [c[0], c[1], c[2]];
-                }
+                let (points, _) = gv.as_chunks::<3>();
+                grad.copy_from_slice(points);
             }
             Err(err) => {
                 park(err);
@@ -1774,7 +1773,7 @@ fn evaluate<'py>(
             }
             let n = shape[0];
             let flat: Vec<F> = x.readonly().as_array().iter().copied().collect();
-            let points: Vec<[F; 3]> = flat.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+            let points: Vec<[F; 3]> = flat.as_chunks::<3>().0.to_vec();
             let mut inp = inputs(py, &spec, pair, params, n)?;
             require(&spec, f.inputs(), &mut inp, pair)?;
             let (mut e, mut grad) = (vec![0.0; n], vec![[0.0; 3]; n * arity]);

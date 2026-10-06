@@ -2,7 +2,7 @@
 
 The force-field IR is a protocol (``ff-ir-02-protocol`` §6): a category the
 registry declares — molrec's ``drude``, or a custom ``urey_bradley`` of three
-endpoints registered from Rust — is a style category like ``bond``.
+endpoints registered through ``molrs.ff.ir`` — is a style category like ``bond``.
 ``ForceField.def_style`` returns a ``RelationStyle`` whose
 ``def_type(name, *endpoints, **params)`` takes as many endpoints as the
 category's arity; its block ``<name>s`` is priced by its expression. A
@@ -29,8 +29,8 @@ XYZ = np.array(
 # (name, k_ub, r_ub), over atoms (0, 1, 2) and (1, 2, 3).
 TYPES = [("t", 20.0, 2.45), ("u", 11.0, 2.2)]
 
-# The Rust registration path: the process-wide registry gains the category.
-molrs._lib._register_relation_category("urey_bradley", 3)
+# The public registration path: the process-wide registry gains the category.
+molrs.ff.ir.register_category("urey_bradley", 3)
 
 
 def _frame(block: str) -> molrs.Frame:

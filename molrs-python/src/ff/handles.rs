@@ -994,19 +994,3 @@ impl PyCmapType {
 /// atom types as the category's arity.
 #[pyclass(module = "molrs.ff", name = "RelationType", extends = PyFfType, frozen, subclass)]
 pub struct PyRelationType {}
-
-/// Register the custom category `name` of `arity` endpoints (block
-/// `<name>s`, priced by its atoms' positions) in the process-wide
-/// force-field IR registry — the Rust registration path, for the tests of
-/// the relation handles. `molrs.ff.ir.register_category` is the public door.
-#[pyfunction(name = "_register_relation_category")]
-pub(crate) fn register_relation_category(name: &str, arity: u8) -> PyResult<()> {
-    use molrs::ff::ir::{CategorySpec, Coordinate, EndpointOrder};
-    molrs::ff::ir::register_category(CategorySpec::custom(
-        name.to_owned(),
-        arity,
-        Coordinate::Compound,
-        EndpointOrder::Reversible,
-    ))
-    .map_err(py_value_err)
-}

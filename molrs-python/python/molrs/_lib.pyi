@@ -3332,9 +3332,6 @@ def write_lammps_data_coeffs(
     units: str = "real",
 ) -> str: ...
 def assign_cmaps(frame: Frame, forcefield: ForceField) -> int: ...
-def _register_relation_category(name: str, arity: int) -> None:
-    """Test hook: register the compound custom category ``name`` of
-    ``arity`` endpoints in the process-wide force-field IR registry."""
 def read_lammps_cmap(path: PathInput) -> ForceField: ...
 def write_lammps_cmap(
     path: PathInput,

@@ -418,10 +418,6 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ff::handles::PyPairType>()?;
     m.add_class::<ff::handles::PyCmapType>()?;
     m.add_class::<ff::handles::PyRelationType>()?;
-    m.add_function(wrap_pyfunction!(
-        ff::handles::register_relation_category,
-        m
-    )?)?;
     m.add_class::<ff::PyFragmentScaling>()?;
     m.add_class::<PyTypifier>()?;
     m.add_class::<PyMatch>()?;

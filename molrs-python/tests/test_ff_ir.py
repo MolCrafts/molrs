@@ -7,11 +7,6 @@ subclass named after the Rust variant, naming the item.
 
 The registry is process-wide, so every test registers under its own names and
 takes them out again (``registered``).
-
-TODO(merge with WP2, ir/p-relation): once ``ForceField.def_style`` takes a
-custom category (``StyleDefs::Relation``), price ``urey_bradley`` through
-``PotentialCompiler`` too; until then custom categories are tested at the
-registry level and through ``ir.evaluate``.
 """
 
 from __future__ import annotations
@@ -678,10 +673,36 @@ def test_a_pair_expression_reads_the_self_rows(registered) -> None:
 
 
 # ---------------------------------------------------------------------------
-# A new category (registry level; ForceField pricing is WP2's)
+# A new category: registered, typed in a ForceField, priced
 # ---------------------------------------------------------------------------
 
 UB = (33.0, 2.2)  # k_ub, r_ub
+
+
+def ub_frame(xyz: np.ndarray, block: str) -> molrs.Frame:
+    atoms = molrs.Block()
+    for d, key in enumerate("xyz"):
+        atoms.insert(key, xyz[:, d].copy())
+    atoms.insert("type", ["A"] * len(xyz))
+    rows = molrs.Block()
+    for key, atom in (("atomi", 0), ("atomj", 1), ("atomk", 2)):
+        rows.insert(key, np.array([atom], dtype=np.uint32))
+    rows.insert("type", ["t"])
+    frame = molrs.Frame()
+    frame["atoms"] = atoms
+    frame[block] = rows
+    return frame
+
+
+def ub_reference(xyz: np.ndarray) -> tuple[float, np.ndarray]:
+    """LAMMPS ``angle_style charmm`` with K = 0: the 1-3 spring alone."""
+    ff = molrs.ff.ForceField("charmm")
+    a = ff.def_style("atom", "full").def_type("A", mass=1.0)
+    ff.def_style("angle", "charmm").def_type(
+        "t", a, a, a, k=0.0, theta0=109.5, k_ub=UB[0], r_ub=UB[1]
+    )
+    frame = ub_frame(xyz, "angles")
+    return molrs.ff.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
 
 
 def test_a_new_category_registers_and_evaluates(registered) -> None:
@@ -742,6 +763,20 @@ def test_a_new_category_registers_and_evaluates(registered) -> None:
     )
     np.testing.assert_allclose(e_np, e, rtol=1e-12)
     np.testing.assert_allclose(grad_np, grad, rtol=1e-12, atol=1e-14)
+    # Typed in a ForceField and compiled: LAMMPS `angle charmm` with K = 0.
+    reference = ub_reference(x[0])
+    for style in ("harmonic", "harmonic/np"):
+        ff = molrs.ff.ForceField("ub")
+        a = ff.def_style("atom", "full").def_type("A", mass=1.0)
+        ff.def_style("urey_bradley", style).def_type(
+            "t", a, a, a, k_ub=UB[0], r_ub=UB[1]
+        )
+        frame = ub_frame(x[0], "urey_bradleys")
+        e, f = molrs.ff.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
+        assert math.isclose(e, reference[0], rel_tol=1e-12)
+        np.testing.assert_allclose(
+            f, reference[1], rtol=0, atol=1e-12 * np.abs(reference[1]).max()
+        )
     with pytest.raises(TypeError, match="pass x"):
         ir.evaluate("urey_bradley", "harmonic", [1.0], k_ub=1.0, r_ub=1.0)
     with pytest.raises(ir.Point):
