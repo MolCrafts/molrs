@@ -245,6 +245,10 @@ restored = molrs.ff.ForceField.from_section(section)
 print([(s.category, s.name) for s in restored.styles])
 ```
 
+A pair style's table holds each atom type's own row (`itom == jtom`) and any
+explicit cross row (`itom != jtom`, e.g. a CHARMM NBFIX), which prices that
+type pair in place of the style's mixing rule. Both kinds round-trip.
+
 `read_mrec_forcefield` returns `None` for a record without a force field.
 `write_mrec_forcefield(path, ff)` writes a force-field package with no
 structure at all.
