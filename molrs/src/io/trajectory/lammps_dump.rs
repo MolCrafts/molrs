@@ -184,16 +184,6 @@ fn insert_vec<T: BlockDtype>(
     block.insert(key, array).map_err(err_mapper)
 }
 
-#[inline]
-fn canonical_column_name(name: &str) -> String {
-    canonical_dump_column(name)
-}
-
-#[inline]
-fn native_column_name(name: &str) -> &str {
-    native_dump_column(name)
-}
-
 // ============================================================================
 // Parsing
 // ============================================================================
@@ -472,7 +462,7 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
         .trim();
     let col_names: Vec<String> = header_tail
         .split_whitespace()
-        .map(canonical_column_name)
+        .map(canonical_dump_column)
         .collect();
 
     if col_names.is_empty() {
@@ -1026,14 +1016,14 @@ fn select_dump_columns<'a>(
     let keys = chosen
         .iter()
         .map(|name| {
-            let canonical = canonical_column_name(name);
+            let canonical = canonical_dump_column(name);
             col_names
                 .iter()
                 .copied()
                 .find(|&key| key == canonical)
                 .or_else(|| col_names.iter().copied().find(|key| key == name))
                 .ok_or_else(|| {
-                    let have: Vec<&str> = col_names.iter().map(|n| native_column_name(n)).collect();
+                    let have: Vec<&str> = col_names.iter().map(|n| native_dump_column(n)).collect();
                     err_mapper(format!(
                         "dump column '{}' is not in the 'atoms' block (have: {})",
                         name,
@@ -1043,8 +1033,8 @@ fn select_dump_columns<'a>(
         })
         .collect::<std::io::Result<Vec<&str>>>()?;
     for (i, key) in keys.iter().enumerate() {
-        let native = native_column_name(key);
-        if let Some(other) = keys[..i].iter().find(|k| native_column_name(k) == native) {
+        let native = native_dump_column(key);
+        if let Some(other) = keys[..i].iter().find(|k| native_dump_column(k) == native) {
             return Err(err_mapper(format!(
                 "dump columns '{other}' and '{key}' would both be written as the '{native}' field"
             )));
@@ -1066,7 +1056,7 @@ fn drop_shadowed_fields<'a>(keys: &[&'a str]) -> Vec<&'a str> {
     keys.iter()
         .copied()
         .filter(|&key| {
-            let owner = canonical_column_name(native_column_name(key));
+            let owner = canonical_dump_column(native_dump_column(key));
             owner == key || !keys.contains(&owner.as_str())
         })
         .collect()
@@ -1086,7 +1076,7 @@ fn dump_lines(
     nrows: usize,
     header_prefix: &str,
 ) -> std::io::Result<Vec<String>> {
-    let native: Vec<&str> = keys.iter().map(|key| native_column_name(key)).collect();
+    let native: Vec<&str> = keys.iter().map(|key| native_dump_column(key)).collect();
     let columns = keys
         .iter()
         .map(|&key| {
@@ -2072,12 +2062,12 @@ ITEM: ATOMS id type mol q x y z
 
     #[test]
     fn canonical_columns_round_trip_to_lammps_native_names() {
-        assert_eq!(canonical_column_name("q"), keys::CHARGE);
-        assert_eq!(canonical_column_name("mol"), keys::MOL_ID);
-        assert_eq!(canonical_column_name("vx"), keys::VX);
-        assert_eq!(native_column_name(keys::CHARGE), "q");
-        assert_eq!(native_column_name(keys::MOL_ID), "mol");
-        assert_eq!(native_column_name(keys::VX), keys::VX);
+        assert_eq!(canonical_dump_column("q"), keys::CHARGE);
+        assert_eq!(canonical_dump_column("mol"), keys::MOL_ID);
+        assert_eq!(canonical_dump_column("vx"), keys::VX);
+        assert_eq!(native_dump_column(keys::CHARGE), "q");
+        assert_eq!(native_dump_column(keys::MOL_ID), "mol");
+        assert_eq!(native_dump_column(keys::VX), keys::VX);
     }
 
     #[test]
