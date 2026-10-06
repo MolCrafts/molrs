@@ -11,6 +11,8 @@ same word:
 * :mod:`~molrs.ff.charge` — partial-charge models (AM1-BCC / ABCG2, Mulliken,
   Gasteiger)
 * :mod:`~molrs.ff.potential` — the parameter interface of the compiled kernels
+* :mod:`~molrs.ff.ir` — the force-field IR as a protocol: register a new
+  category or style (expression or Python kernel) with nothing rebuilt
 
 The names below are re-exported here because they are the force-field surface
 callers reach for; the submodule path stays available when you need to say
@@ -84,7 +86,7 @@ from .._lib import (
 from .._lib import (
     scale_lj as scale_lj,
 )
-from . import charge, potential, typifier
+from . import charge, ir, potential, typifier
 from .charge import BccModel, GasteigerModel, MullikenModel
 from .potential import Potential
 from .typifier import (
@@ -140,6 +142,7 @@ __all__ = [
     "fragment_scaling_data",
     # pair helpers + polarizable fragment scaling
     "intramolecular_pairs",
+    "ir",
     "potential",
     "read_amber_prmtop_ff",
     # force-field file formats

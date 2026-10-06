@@ -496,7 +496,7 @@ fn no_kernel(style: &Style) -> String {
         category: style.category().to_owned(),
         style: style.name().to_owned(),
     }
-    .to_string()
+    .into()
 }
 
 /// `frame` as the regular pair kernels see it: without the `pairs` rows a

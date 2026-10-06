@@ -8,6 +8,7 @@ the same parameter names as the compiled signature.
 
 import os
 from collections.abc import (
+    Callable,
     ItemsView,
     Iterable,
     Iterator,
@@ -3094,14 +3095,14 @@ class LBFGS:
 
 #: A param value of a type annotation or style: numbers to the numeric side,
 #: strings to the string side.
-type ParamValue = float | int | str
+type MatchParamValue = float | int | str
 
 #: What a ``Match`` writes under one key of one graph element: a scalar is
 #: stamped and defines nothing; ``(style, name, endpoints, params)`` stamps
 #: ``name`` and every param and defines the type ``name`` on ``endpoints``
 #: (atom-type names; empty for an atom type) under the style.
 type Annotation = (
-    str | bool | int | float | tuple[str, str, Sequence[str], dict[str, ParamValue]]
+    str | bool | int | float | tuple[str, str, Sequence[str], dict[str, MatchParamValue]]
 )
 
 class Match:
@@ -3119,8 +3120,8 @@ class Match:
         nodes: Sequence[_AbcMapping[str, Annotation]],
         links: _AbcMapping[type, Sequence[_AbcMapping[str, Annotation]]] | None = None,
         *,
-        styles: Sequence[tuple[str, str, dict[str, ParamValue]]] = (),
-        pairs: Sequence[tuple[str, str, Sequence[str], dict[str, ParamValue]]] = (),
+        styles: Sequence[tuple[str, str, dict[str, MatchParamValue]]] = (),
+        pairs: Sequence[tuple[str, str, Sequence[str], dict[str, MatchParamValue]]] = (),
     ) -> None: ...
 
 class Typifier[TGraph: Graph]:
@@ -4391,6 +4392,164 @@ class md:
         @property
         def remove_com(self) -> bool: ...
         def velocities(self, pos: ArrayF, mass: float | ArrayF) -> ArrayF: ...
+
+class ir:
+    """The ``_lib.ir`` submodule: the force-field IR registry
+    (``molrs::ff::ir``), surfaced as :mod:`molrs.ff.ir`.
+
+    Register a category or a style — by an expression, a vectorised Python
+    kernel, or both — into the process-wide registry every compile reads;
+    what does not conform raises the :class:`IrError` subclass named after
+    the Rust variant."""
+
+    class IrError(ValueError):
+        """A refusal of the force-field IR; the variant's fields are
+        attributes (``category``, ``style``, ``param``, …)."""
+
+    class UnknownCategory(IrError): ...
+    class BadName(IrError): ...
+    class Arity(IrError): ...
+    class BlockName(IrError): ...
+    class ReservedParam(IrError): ...
+    class DuplicateParam(IrError): ...
+    class Dim(IrError): ...
+    class Parse(IrError): ...
+    class UnboundVariable(IrError): ...
+    class UnknownFunction(IrError): ...
+    class FunctionArity(IrError): ...
+    class Point(IrError): ...
+    class CoordinateMismatch(IrError): ...
+    class Derivative(IrError): ...
+    class Disagree(IrError): ...
+    class Asymmetric(IrError): ...
+    class Sealed(IrError): ...
+    class Conflict(IrError): ...
+    class NoKernel(IrError): ...
+    class NoMixing(IrError): ...
+    class MissingParam(IrError): ...
+    class KernelShape(IrError):
+        """A kernel output of the wrong shape or dtype, or a Python kernel
+        that raised (the original exception is ``__cause__``)."""
+
+    class NoEngineForm(IrError): ...
+    class FormConflict(IrError): ...
+    class NoForm(IrError): ...
+    class Malformed(IrError): ...
+
+    class Param:
+        """One parameter of a style: name, dimension (``"E/L^2"``), kind,
+        default, mixing rule (pair styles), indexed family."""
+
+        def __init__(
+            self,
+            name: str,
+            dim: str = "1",
+            *,
+            kind: Literal["scalar", "array", "text"] = "scalar",
+            rank: int | None = None,
+            choices: Sequence[str] | None = None,
+            default: float | str | None = None,
+            mix: str | tuple[str, str] | None = None,
+            indexed: bool = False,
+        ) -> None: ...
+        @property
+        def name(self) -> str: ...
+        @property
+        def dim(self) -> str: ...
+        @property
+        def kind(self) -> Literal["scalar", "array", "text"]: ...
+        @property
+        def rank(self) -> int | None: ...
+        @property
+        def choices(self) -> list[str] | None: ...
+        @property
+        def default(self) -> float | str | None: ...
+        @property
+        def mix(self) -> str | tuple[str, str] | None: ...
+        @property
+        def indexed(self) -> bool: ...
+
+    class StyleInfo:
+        """A registered style, as ``styles()`` lists it."""
+
+        @property
+        def category(self) -> str: ...
+        @property
+        def name(self) -> str: ...
+        @property
+        def params(self) -> list[ir.Param]: ...
+        @property
+        def style_params(self) -> list[ir.Param]: ...
+        @property
+        def expression(self) -> str | None: ...
+        @property
+        def kernel(
+            self,
+        ) -> Literal["expression", "scalar", "compound", "constructor"] | None: ...
+        @property
+        def builtin(self) -> bool: ...
+        @property
+        def source(self) -> Literal["type_rows", "per_instance"]: ...
+        @property
+        def special(self) -> Literal["lj", "coul"] | None: ...
+
+    class CategoryInfo:
+        """A registered category, as ``categories()`` lists it."""
+
+        @property
+        def name(self) -> str: ...
+        @property
+        def arity(self) -> int: ...
+        @property
+        def pair(self) -> bool: ...
+        @property
+        def block(self) -> str: ...
+        @property
+        def coordinate(self) -> str: ...
+        @property
+        def order(self) -> str: ...
+        @property
+        def builtin(self) -> bool: ...
+
+    @staticmethod
+    def register_category(
+        name: str,
+        arity: int,
+        *,
+        coordinate: Literal[
+            "compound", "distance", "angle", "dihedral", "improper"
+        ] = "compound",
+        order: Literal["reversible", "ordered", "unordered"] = "reversible",
+    ) -> None: ...
+    @staticmethod
+    def register_style(
+        category: str,
+        name: str,
+        *,
+        params: Sequence[ir.Param] | _AbcMapping[str, str] | None = None,
+        style_params: Sequence[ir.Param] | _AbcMapping[str, str] | None = None,
+        expression: str | None = None,
+        kernel: Callable[..., tuple[ArrayF, ArrayF]] | None = None,
+        compound: bool = False,
+        special: Literal["lj", "coul"] | None = None,
+        samples: Sequence[_AbcMapping[str, Any]] | None = None,
+        replace: bool = False,
+    ) -> None: ...
+    @staticmethod
+    def unregister(category: str, name: str) -> None: ...
+    @staticmethod
+    def styles(category: str | None = None) -> list[ir.StyleInfo]: ...
+    @staticmethod
+    def categories() -> list[ir.CategoryInfo]: ...
+    @staticmethod
+    def evaluate(
+        category: str,
+        name: str,
+        q: npt.ArrayLike | None = None,
+        *,
+        x: npt.ArrayLike | None = None,
+        **params: Any,
+    ) -> tuple[ArrayF, ArrayF]: ...
 
 class DipoleAutocorrelationSpectrum:
     """ε(ω) from the fluctuation dipole ACF via ``χ = A [C(0) − iω Ĉ(ω)]``."""

@@ -33,6 +33,7 @@
 pub mod atd;
 pub mod charge;
 pub mod handles;
+pub mod ir;
 pub mod section;
 
 use std::collections::HashMap;
@@ -838,7 +839,7 @@ impl PyPotentials {
                 PotBacking::Compiled(p) => p.calc_energy_forces(&coords),
                 PotBacking::Deferred(ff) => PotentialCompiler::new(ff)
                     .compile(&core)
-                    .map_err(PyValueError::new_err)?
+                    .map_err(ir::compile_err)?
                     .calc_energy_forces(&coords),
                 PotBacking::Moved => return Err(potentials_moved_err()),
             }
@@ -1002,7 +1003,7 @@ impl PyLBFGS {
                 PotBacking::Deferred(ff) => {
                     compiled = PotentialCompiler::new(ff)
                         .compile(&core)
-                        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                        .map_err(ir::compile_err)?;
                     &compiled
                 }
                 PotBacking::Moved => return Err(potentials_moved_err()),
@@ -1025,6 +1026,7 @@ impl PyLBFGS {
                 self.memory,
             )
             .map_err(pyo3::exceptions::PyValueError::new_err)?;
+            crate::md::take_err(&pots.err_slots)?;
             core.set_coords(xyz.view())
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
             let out_frame = PyFrame::from_core_frame(core)?;
@@ -1056,6 +1058,7 @@ impl PyLBFGS {
                     self.memory,
                 )
                 .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                crate::md::take_err(&pots.err_slots)?;
                 let out: Bound<'py, PyArray2<NpF>> = Array2::from_shape_vec((n_elem / 3, 3), flat)
                     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
                     .to_pyarray(py);
@@ -1089,6 +1092,7 @@ impl PyLBFGS {
                     self.memory,
                 )
                 .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                crate::md::take_err(&pots.err_slots)?;
                 let out: Bound<'py, PyArray3<NpF>> = Array3::from_shape_vec((b, n, 3), flat)
                     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
                     .to_pyarray(py);
@@ -1746,12 +1750,14 @@ impl PyPotentialCompiler {
     ///     If a style has no registered kernel, a type label is unknown, or
     ///     the force field's 1-2 / 1-3 weights are not 0 or 1.
     fn compile(&self, frame: &PyFrame) -> PyResult<PyPotentials> {
+        ir::clear_kernel_err();
         let potentials = frame
             .with_frame(|core| PotentialCompiler::new(&self.ff).compile(core))?
-            .map_err(PyValueError::new_err)?;
+            .map_err(ir::compile_err)?;
+        ir::take_kernel_err()?;
         Ok(PyPotentials {
             inner: PotBacking::Compiled(potentials),
-            err_slots: Vec::new(),
+            err_slots: vec![ir::kernel_err_slot()],
         })
     }
 
@@ -1769,7 +1775,7 @@ impl PyPotentialCompiler {
     fn defer(&self) -> PyPotentials {
         PyPotentials {
             inner: PotBacking::Deferred(self.ff.clone()),
-            err_slots: Vec::new(),
+            err_slots: vec![ir::kernel_err_slot()],
         }
     }
 
@@ -1806,9 +1812,11 @@ impl PyPotentialCompiler {
         let (topo, members) = frame.with_frame(|core| -> PyResult<_> {
             let topo = molrs::Topology::from_frame(core)
                 .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            ir::clear_kernel_err();
             let members = PotentialCompiler::new(&self.ff)
                 .compile_typed(core)
-                .map_err(PyValueError::new_err)?;
+                .map_err(ir::compile_err)?;
+            ir::take_kernel_err()?;
             Ok((topo, members))
         })??;
         let bound = members

@@ -460,7 +460,8 @@ pub(crate) fn take_members(obj: &Bound<'_, PyAny>) -> PyResult<(Members, Vec<Err
                  build them again from the force field",
             )
         })?;
-        return Ok((members, Vec::new()));
+        // A Python kernel among them parks its exception here.
+        return Ok((members, vec![crate::ff::ir::kernel_err_slot()]));
     }
     let (pot, slots) = take_potential(obj)?;
     Ok((vec![(pot, molrs::md::SpecialWeights::default())], slots))

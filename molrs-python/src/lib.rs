@@ -440,6 +440,10 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     md::register(&md)?;
     m.add_submodule(&md)?;
     // Pure numeric base; `Fit` lives only in `_lib.op`.
+    // The force-field IR registry (`molrs.ff.ir`).
+    let ir = PyModule::new(m.py(), "ir")?;
+    ff::ir::register(&ir)?;
+    m.add_submodule(&ir)?;
     let op = PyModule::new(m.py(), "op")?;
     op::register(&op)?;
     m.add_submodule(&op)?;

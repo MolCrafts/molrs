@@ -276,8 +276,54 @@ impl fmt::Display for IrError {
 
 impl std::error::Error for IrError {}
 
+/// How many of the latest refusals [`recover`] can still find.
+const RECENT: usize = 8;
+
+thread_local! {
+    /// The latest [`IrError`]s this thread turned into a `String` message.
+    static LATEST: std::cell::RefCell<std::collections::VecDeque<IrError>> =
+        const { std::cell::RefCell::new(std::collections::VecDeque::new()) };
+}
+
+/// A compile reports its refusals as a `String` (the error type of
+/// [`PotentialCompiler::compile`](crate::ff::potential::PotentialCompiler::compile)
+/// and of every kernel constructor), so a refusal of the IR is turned into
+/// its message on the way out — and remembered here, so a binding that
+/// meets the message can raise the refusal by its variant ([`recover`]).
 impl From<IrError> for String {
     fn from(e: IrError) -> Self {
-        e.to_string()
+        let message = e.to_string();
+        LATEST.with(|latest| {
+            let mut latest = latest.borrow_mut();
+            if latest.len() == RECENT {
+                latest.pop_front();
+            }
+            latest.push_back(e);
+        });
+        message
     }
+}
+
+/// The refusal behind a compile's error `message`: the latest [`IrError`]
+/// this thread turned into a message that `message` states (equal to it, or
+/// quoting it). `None` when the message is no refusal of the IR (a missing
+/// block, an unknown type label).
+///
+/// ```
+/// use molrs::ff::ir::{IrError, error::recover};
+///
+/// let refused = IrError::NoKernel { category: "bond".into(), style: "fene".into() };
+/// let message: String = refused.clone().into();
+/// assert_eq!(recover(&message), Some(refused));
+/// assert_eq!(recover("frame missing \"bonds\" block"), None);
+/// ```
+pub fn recover(message: &str) -> Option<IrError> {
+    LATEST.with(|latest| {
+        latest
+            .borrow()
+            .iter()
+            .rev()
+            .find(|e| message.contains(&e.to_string()))
+            .cloned()
+    })
 }
