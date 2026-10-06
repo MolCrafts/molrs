@@ -77,7 +77,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::store::keys;
-use crate::system::coarsegrain::{BeadId, CoarseGrain};
+use crate::system::coarsegrain::CoarseGrain;
 use crate::system::graph_hash::{GraphView, adjacency_map, feasible};
 use crate::system::molgraph::{MolGraph, NodeId};
 
@@ -134,7 +134,8 @@ impl MatchGraph {
 ///
 /// ```
 /// use molrs::perceive::SubgraphMatcher;
-/// use molrs::system::coarsegrain::{BeadId, CoarseGrain};
+/// use molrs::system::coarsegrain::CoarseGrain;
+/// use molrs::system::molgraph::NodeId;
 ///
 /// let chain = || {
 ///     let mut g = CoarseGrain::new();
@@ -150,7 +151,7 @@ impl MatchGraph {
 ///
 /// let groups = SubgraphMatcher::new(&pattern).find(&target);
 /// // The mirror map `[c, b, a]` names the same bead set and is dropped.
-/// let beads: Vec<BeadId> = target.node_ids().collect();
+/// let beads: Vec<NodeId> = target.node_ids().collect();
 /// assert_eq!(groups, vec![beads]);
 /// ```
 #[derive(Debug, Clone)]
@@ -174,7 +175,7 @@ impl SubgraphMatcher {
     /// the groups are sorted by those rows. Overlapping groups are all
     /// returned. No occurrence (including an empty pattern or target) gives
     /// an empty `Vec`.
-    pub fn find(&self, target: &CoarseGrain) -> Vec<Vec<BeadId>> {
+    pub fn find(&self, target: &CoarseGrain) -> Vec<Vec<NodeId>> {
         let n = self.pattern.labels.len();
         if n == 0 {
             return Vec::new();
@@ -321,13 +322,14 @@ mod tests {
     use super::SubgraphMatcher;
     use crate::store::keys;
     use crate::system::BondNumber;
-    use crate::system::coarsegrain::{BeadId, CoarseGrain};
+    use crate::system::coarsegrain::CoarseGrain;
+    use crate::system::molgraph::NodeId;
 
     /// A coarse-grained graph with one bead per entry of `types` (row = index)
     /// and one CG bond per `(row, row)` pair.
     fn cg(types: &[&str], bonds: &[(usize, usize)]) -> CoarseGrain {
         let mut g = CoarseGrain::new();
-        let ids: Vec<BeadId> = types.iter().map(|t| g.add_bead_bare(t)).collect();
+        let ids: Vec<NodeId> = types.iter().map(|t| g.add_bead_bare(t)).collect();
         for &(a, b) in bonds {
             g.add_bond(ids[a], ids[b]).expect("fixture bond");
         }
@@ -342,8 +344,8 @@ mod tests {
     /// the groups sorted lexicographically by those target rows, so the
     /// expected vectors below are exact.
     fn rows(pattern: &CoarseGrain, target: &CoarseGrain) -> Vec<Vec<usize>> {
-        let order: Vec<BeadId> = target.node_ids().collect();
-        let row = |id: BeadId| {
+        let order: Vec<NodeId> = target.node_ids().collect();
+        let row = |id: NodeId| {
             order
                 .iter()
                 .position(|&n| n == id)

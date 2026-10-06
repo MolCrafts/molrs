@@ -14,7 +14,7 @@
 //! The engine never sees the caller's graph as given. It matches a clone
 //! brought to the standard aromatic form by
 //! [`Perceive::find_aromaticity`](molrs::perceive::Perceive::find_aromaticity),
-//! which keeps every [`AtomId`], so a Kekulé ring and an aromatic-declared ring
+//! which keeps every [`NodeId`], so a Kekulé ring and an aromatic-declared ring
 //! type alike under the aromatic rules (`c`, `n`, `:`). Only the assigned type
 //! names travel back; the caller's bond types and bond numbers are never
 //! touched, so a Kekulé input stays Kekulé.
@@ -60,7 +60,7 @@ use std::collections::HashMap;
 
 use molrs::perceive::Perceive;
 use molrs::system::molgraph::PropValue;
-use molrs::{AtomId, Atomistic};
+use molrs::{Atomistic, NodeId};
 
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::typifier::Annotation;
@@ -72,7 +72,7 @@ use super::meta::OplsTypingMeta;
 pub(crate) struct AtomTyping {
     /// The `opls_NNN` type of every atom a def typed; an atom no def typed is
     /// absent.
-    pub(crate) types: HashMap<AtomId, String>,
+    pub(crate) types: HashMap<NodeId, String>,
     /// The node annotations, positional against `graph.atoms()`.
     pub(crate) nodes: Vec<Vec<(String, Annotation)>>,
 }
@@ -80,7 +80,7 @@ pub(crate) struct AtomTyping {
 /// Type the atoms of `mol` with OPLS-AA atom types.
 ///
 /// Drives the [`LayeredTypingEngine`] over `meta`, matching a privately
-/// aromaticity-perceived copy of `mol` (same [`AtomId`]s; `mol` itself is never
+/// aromaticity-perceived copy of `mol` (same [`NodeId`]s; `mol` itself is never
 /// changed). Every atom assigned a type gets two annotations:
 /// - `type` → [`Annotation::Type`] under the `atom/full` style of `ff`, named
 ///   by the `opls_NNN` type, with that row's numeric params (`mass`, `charge`)
@@ -344,12 +344,12 @@ mod tests {
     /// Kekulé benzene, hand-built: ring carbons 0..=5 bonded `C0=C1-C2=C3-C4=C5-C0`
     /// (bond types `Double` / `Single`, no `is_aromatic` flag), one hydrogen on
     /// each carbon (atoms 6..=11). Returns the graph and its six ring bonds.
-    fn kekule_benzene() -> (Atomistic, Vec<molrs::BondId>) {
+    fn kekule_benzene() -> (Atomistic, Vec<molrs::RelationId>) {
         let mut g = Atomistic::new();
-        let c: Vec<AtomId> = (0..6)
+        let c: Vec<NodeId> = (0..6)
             .map(|k| g.add_atom(Atom::xyz("C", 1.4 * k as f64, 0.0, 0.0)))
             .collect();
-        let ring: Vec<molrs::BondId> = (0..6)
+        let ring: Vec<molrs::RelationId> = (0..6)
             .map(|k| {
                 let bond = g.add_bond(c[k], c[(k + 1) % 6]).unwrap();
                 let order = if k % 2 == 0 {

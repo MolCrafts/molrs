@@ -55,7 +55,7 @@
 //! half-updated charge back into χ mid-sweep (Gauss–Seidel) changes the convergence
 //! trajectory and the answer.
 
-use molrs::{AtomId, Atomistic};
+use molrs::{Atomistic, NodeId};
 
 use crate::ff::params::{GASTEIGER_PARAMS, GasteigerRow};
 use crate::ff::typifier::atd::{AtdParameterSet, AtdTypifier};
@@ -216,7 +216,7 @@ impl ChargeModel for GasteigerModel {
 /// # Ok(())
 /// # }
 /// ```
-pub fn compute_gasteiger_charges(mol: &Atomistic) -> Result<Vec<(AtomId, f64)>, ChargeError> {
+pub fn compute_gasteiger_charges(mol: &Atomistic) -> Result<Vec<(NodeId, f64)>, ChargeError> {
     let charges = GasteigerModel.assign(mol, None)?;
     Ok(atom_ids(mol).into_iter().zip(charges).collect())
 }
@@ -259,7 +259,7 @@ fn parameter_rows(
 ///
 /// [`ChargeError::Malformed`] when a bond's endpoint is not an atom of the molecule.
 fn bond_pairs(mol: &Atomistic) -> Result<Vec<(usize, usize)>, ChargeError> {
-    let index: std::collections::HashMap<AtomId, usize> = atom_ids(mol)
+    let index: std::collections::HashMap<NodeId, usize> = atom_ids(mol)
         .into_iter()
         .enumerate()
         .map(|(i, aid)| (aid, i))

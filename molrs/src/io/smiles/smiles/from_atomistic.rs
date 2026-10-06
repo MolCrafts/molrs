@@ -9,8 +9,9 @@ use crate::io::smiles::smiles::options::{
 };
 use crate::io::smiles::smiles::write::write_smiles;
 use molrs::Element;
-use molrs::system::atomistic::{AtomId, Atomistic};
+use molrs::system::atomistic::Atomistic;
 use molrs::system::bond::{BondNumber, BondType};
+use molrs::system::molgraph::NodeId;
 use molrs::system::molgraph::PropValue;
 
 /// Convert a molecular graph into a concrete SMILES IR.
@@ -99,14 +100,14 @@ fn emit_err(msg: impl Into<String>) -> SmilesError {
     )
 }
 
-fn is_hydrogen(mol: &Atomistic, id: AtomId) -> bool {
+fn is_hydrogen(mol: &Atomistic, id: NodeId) -> bool {
     mol.get_atom(id)
         .ok()
         .and_then(|a| a.get_str("element").map(|s| s.eq_ignore_ascii_case("H")))
         .unwrap_or(false)
 }
 
-fn connected_components(mol: &Atomistic, include_h: bool) -> Vec<Vec<AtomId>> {
+fn connected_components(mol: &Atomistic, include_h: bool) -> Vec<Vec<NodeId>> {
     let mut seen = HashSet::new();
     let mut comps = Vec::new();
     for (id, _) in mol.atoms() {
@@ -137,9 +138,9 @@ fn connected_components(mol: &Atomistic, include_h: bool) -> Vec<Vec<AtomId>> {
 
 fn choose_root(
     mol: &Atomistic,
-    comp: &[AtomId],
+    comp: &[NodeId],
     opts: &SmilesEmitOptions,
-) -> Result<AtomId, SmilesError> {
+) -> Result<NodeId, SmilesError> {
     if let Some(r) = opts.root {
         if comp.contains(&r) {
             return Ok(r);
@@ -166,34 +167,34 @@ fn choose_root(
 #[derive(Default)]
 struct Tree {
     /// parent[child] = Some(parent); root has None
-    parent: HashMap<AtomId, Option<AtomId>>,
-    children: HashMap<AtomId, Vec<AtomId>>,
+    parent: HashMap<NodeId, Option<NodeId>>,
+    children: HashMap<NodeId, Vec<NodeId>>,
     /// ring closures: atom → list of (rnum, optional bond kind for write)
-    rings: HashMap<AtomId, Vec<(u16, Option<BondKind>)>>,
+    rings: HashMap<NodeId, Vec<(u16, Option<BondKind>)>>,
 }
 
 fn emit_component(
     mol: &Atomistic,
-    comp: &[AtomId],
-    root: AtomId,
+    comp: &[NodeId],
+    root: NodeId,
     opts: &SmilesEmitOptions,
     include_h: bool,
     _skip_h_implicit: bool,
 ) -> Result<Chain, SmilesError> {
-    let comp_set: HashSet<AtomId> = comp.iter().copied().collect();
+    let comp_set: HashSet<NodeId> = comp.iter().copied().collect();
     let tree = build_tree(mol, &comp_set, root, opts, include_h)?;
     build_chain_from(mol, root, &tree, opts)
 }
 
 fn build_tree(
     mol: &Atomistic,
-    comp: &HashSet<AtomId>,
-    root: AtomId,
+    comp: &HashSet<NodeId>,
+    root: NodeId,
     opts: &SmilesEmitOptions,
     include_h: bool,
 ) -> Result<Tree, SmilesError> {
     let mut tree = Tree::default();
-    let mut parent_edge: HashMap<AtomId, AtomId> = HashMap::new();
+    let mut parent_edge: HashMap<NodeId, NodeId> = HashMap::new();
     let mut stack = vec![root];
     tree.parent.insert(root, None);
     tree.children.insert(root, Vec::new());
@@ -203,7 +204,7 @@ fn build_tree(
     visited.insert(root);
 
     while let Some(cur) = stack.pop() {
-        let mut nbs: Vec<AtomId> = mol
+        let mut nbs: Vec<NodeId> = mol
             .neighbor_bonds(cur)
             .map(|(nb, _)| nb)
             .filter(|nb| comp.contains(nb))
@@ -212,7 +213,7 @@ fn build_tree(
 
         if opts.canonical {
             let order = mol.canonical_order();
-            let rank: HashMap<AtomId, usize> =
+            let rank: HashMap<NodeId, usize> =
                 order.iter().enumerate().map(|(i, id)| (*id, i)).collect();
             nbs.sort_by_key(|id| rank.get(id).copied().unwrap_or(usize::MAX));
         } else {
@@ -232,7 +233,7 @@ fn build_tree(
 
     // Non-tree edges → ring digits
     let mut next_rnum: u16 = 1;
-    let mut assigned_edges: HashSet<(AtomId, AtomId)> = HashSet::new();
+    let mut assigned_edges: HashSet<(NodeId, NodeId)> = HashSet::new();
     for &a in comp {
         if !include_h && is_hydrogen(mol, a) {
             continue;
@@ -275,7 +276,7 @@ fn build_tree(
 
 fn bond_kind_for(
     mol: &Atomistic,
-    bid: molrs::system::atomistic::BondId,
+    bid: molrs::system::molgraph::RelationId,
     opts: &SmilesEmitOptions,
 ) -> Result<Option<BondKind>, SmilesError> {
     let bt = mol.bond_type(bid);
@@ -308,7 +309,7 @@ fn bond_kind_for(
     }
 }
 
-fn find_bond(mol: &Atomistic, a: AtomId, b: AtomId) -> Option<molrs::system::atomistic::BondId> {
+fn find_bond(mol: &Atomistic, a: NodeId, b: NodeId) -> Option<molrs::system::molgraph::RelationId> {
     mol.neighbor_bonds(a)
         .find(|(nb, _)| *nb == b)
         .map(|(_, bid)| bid)
@@ -316,7 +317,7 @@ fn find_bond(mol: &Atomistic, a: AtomId, b: AtomId) -> Option<molrs::system::ato
 
 fn build_chain_from(
     mol: &Atomistic,
-    atom: AtomId,
+    atom: NodeId,
     tree: &Tree,
     opts: &SmilesEmitOptions,
 ) -> Result<Chain, SmilesError> {
@@ -370,7 +371,7 @@ fn build_chain_from(
     Ok(Chain { head, tail })
 }
 
-fn atom_is_aromatic(mol: &Atomistic, id: AtomId) -> bool {
+fn atom_is_aromatic(mol: &Atomistic, id: NodeId) -> bool {
     mol.get_atom(id)
         .ok()
         .and_then(|a| match a.get("is_aromatic") {
@@ -382,7 +383,7 @@ fn atom_is_aromatic(mol: &Atomistic, id: AtomId) -> bool {
         .unwrap_or(false)
 }
 
-fn formal_charge(mol: &Atomistic, id: AtomId) -> Option<i8> {
+fn formal_charge(mol: &Atomistic, id: NodeId) -> Option<i8> {
     mol.get_atom(id).ok().and_then(|a| {
         // `formal_charge` may be `Int` (read from a frame's `i64` column) or
         // an integral `F64` (written by the SMILES reader).
@@ -393,13 +394,13 @@ fn formal_charge(mol: &Atomistic, id: AtomId) -> Option<i8> {
     })
 }
 
-fn h_count_prop(mol: &Atomistic, id: AtomId) -> Option<u8> {
+fn h_count_prop(mol: &Atomistic, id: NodeId) -> Option<u8> {
     mol.get_atom(id)
         .ok()
         .and_then(|a| a.get_f64("h_count").map(|v| v as u8))
 }
 
-fn isotope_prop(mol: &Atomistic, id: AtomId) -> Option<u16> {
+fn isotope_prop(mol: &Atomistic, id: NodeId) -> Option<u16> {
     mol.get_atom(id)
         .ok()
         .and_then(|a| a.get_f64("isotope").map(|v| v as u16))
@@ -428,7 +429,7 @@ fn organic_subset_ok(sym: &str) -> bool {
 
 fn atom_node(
     mol: &Atomistic,
-    id: AtomId,
+    id: NodeId,
     opts: &SmilesEmitOptions,
 ) -> Result<AtomNode, SmilesError> {
     let atom = mol.get_atom(id).map_err(|e| emit_err(e.to_string()))?;

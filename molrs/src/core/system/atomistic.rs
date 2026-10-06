@@ -40,34 +40,14 @@ pub struct ExtractedAtomistic {
     /// The extracted all-atom graph.
     pub graph: Atomistic,
     /// Selected parent atoms with a bond-neighbor outside the ball.
-    pub boundary: Vec<AtomId>,
+    pub boundary: Vec<NodeId>,
     /// New atom id → parent atom id.
-    pub parent_of: HashMap<AtomId, AtomId>,
+    pub parent_of: HashMap<NodeId, NodeId>,
     /// Parent atom id → hops from nearest center.
-    pub hops: HashMap<AtomId, i64>,
+    pub hops: HashMap<NodeId, i64>,
     /// Parent atom id → new atom id.
-    pub node_map: HashMap<AtomId, AtomId>,
+    pub node_map: HashMap<NodeId, NodeId>,
 }
-
-/// Handle to an atom (a graph node).
-pub type AtomId = NodeId;
-/// Handle to a bond (a relation). Distinct-key semantics for `HashSet<BondId>`.
-pub type BondId = RelationId;
-/// Handle to an angle (a relation).
-pub type AngleId = RelationId;
-/// Handle to a dihedral (a relation).
-pub type DihedralId = RelationId;
-/// Handle to an improper (a relation).
-pub type ImproperId = RelationId;
-
-/// A bond — a 2-ary relation.
-pub type Bond = Relation;
-/// An angle (i-j-k) — a 3-ary relation.
-pub type Angle = Relation;
-/// A dihedral (i-j-k-l) — a 4-ary relation.
-pub type Dihedral = Relation;
-/// An improper (i-j-k-l) — a 4-ary relation, distinct from a dihedral by kind.
-pub type Improper = Relation;
 
 /// All-atom molecular graph.
 ///
@@ -132,7 +112,7 @@ impl Atomistic {
     /// [`MolGraph::add_node_with`](crate::system::molgraph::MolGraph::add_node_with)
     /// through [`as_molgraph_mut`](Self::as_molgraph_mut), which returns the
     /// conflict instead.
-    pub fn add_atom(&mut self, atom: Atom) -> AtomId {
+    pub fn add_atom(&mut self, atom: Atom) -> NodeId {
         self.graph
             .add_node_with(atom)
             .expect("caller-built atom bag contradicts an existing atom column")
@@ -144,7 +124,7 @@ impl Atomistic {
     ///
     /// Panics when the `element` / `x` / `y` / `z` columns already hold a
     /// different element type — see [`add_atom`](Self::add_atom).
-    pub fn add_atom_xyz(&mut self, symbol: &str, x: f64, y: f64, z: f64) -> AtomId {
+    pub fn add_atom_xyz(&mut self, symbol: &str, x: f64, y: f64, z: f64) -> NodeId {
         self.add_atom(Atom::xyz(symbol, x, y, z))
     }
 
@@ -157,26 +137,26 @@ impl Atomistic {
     ///
     /// Panics when the `element` column already holds a different element
     /// type — see [`add_atom`](Self::add_atom).
-    pub fn add_atom_bare(&mut self, symbol: &str) -> AtomId {
+    pub fn add_atom_bare(&mut self, symbol: &str) -> NodeId {
         let mut a = Atom::new();
         a.set(keys::ELEMENT, symbol);
         self.add_atom(a)
     }
 
     /// Remove an atom and all incident bonds / angles / dihedrals / impropers.
-    pub fn remove_atom(&mut self, id: AtomId) -> Result<Atom, MolRsError> {
+    pub fn remove_atom(&mut self, id: NodeId) -> Result<Atom, MolRsError> {
         self.graph.remove_node(id)
     }
 
     /// Materialize an atom's property bag (owned copy of its set components).
-    pub fn get_atom(&self, id: AtomId) -> Result<Atom, MolRsError> {
+    pub fn get_atom(&self, id: NodeId) -> Result<Atom, MolRsError> {
         self.graph.get_node(id)
     }
 
     /// Set a single component on an atom.
     pub fn set_atom(
         &mut self,
-        id: AtomId,
+        id: NodeId,
         key: &str,
         val: impl Into<PropValue>,
     ) -> Result<(), MolRsError> {
@@ -184,12 +164,12 @@ impl Atomistic {
     }
 
     /// Clear a single component on an atom (no-op if absent).
-    pub fn clear_atom(&mut self, id: AtomId, key: &str) -> Result<(), MolRsError> {
+    pub fn clear_atom(&mut self, id: NodeId, key: &str) -> Result<(), MolRsError> {
         self.graph.clear_node(id, key)
     }
 
-    /// Iterate over all `(AtomId, Atom)` pairs (each property bag materialized).
-    pub fn atoms(&self) -> impl Iterator<Item = (AtomId, Atom)> + '_ {
+    /// Iterate over all `(NodeId, Atom)` pairs (each property bag materialized).
+    pub fn atoms(&self) -> impl Iterator<Item = (NodeId, Atom)> + '_ {
         self.graph.nodes()
     }
 
@@ -201,14 +181,14 @@ impl Atomistic {
     // ---- bonds ----
 
     /// Add a bond between two existing atoms (default order 1.0).
-    pub fn add_bond(&mut self, a: AtomId, b: AtomId) -> Result<BondId, MolRsError> {
+    pub fn add_bond(&mut self, a: NodeId, b: NodeId) -> Result<RelationId, MolRsError> {
         let bid = self.graph.add_relation(self.bond, &[a, b])?;
         self.set_bond_type(bid, BondType::Single)?;
         Ok(bid)
     }
 
     /// The bond's chemical class; [`BondType::Unknown`] if it has none.
-    pub fn bond_type(&self, id: BondId) -> BondType {
+    pub fn bond_type(&self, id: RelationId) -> BondType {
         match self.get_bond(id) {
             Ok(b) => BondType::from_prop(b.props.get(keys::BOND_TYPE)),
             Err(_) => BondType::Unknown,
@@ -217,7 +197,7 @@ impl Atomistic {
 
     /// The bond's localized (Kekulé) bond number; [`BondNumber::Unknown`] if it
     /// has none — an aromatic bond before kekulization, for instance.
-    pub fn bond_number(&self, id: BondId) -> BondNumber {
+    pub fn bond_number(&self, id: RelationId) -> BondNumber {
         match self.get_bond(id) {
             Ok(b) => BondNumber::from_prop(b.props.get(keys::BOND_NUMBER)),
             Err(_) => BondNumber::Unknown,
@@ -235,7 +215,7 @@ impl Atomistic {
     /// Returns [`MolRsError::NotFound`] when `id` names no live bond.
     pub fn set_bond_class(
         &mut self,
-        id: BondId,
+        id: RelationId,
         bond_type: BondType,
         bond_number: BondNumber,
     ) -> Result<(), MolRsError> {
@@ -247,33 +227,33 @@ impl Atomistic {
     /// `Aromatic` has no implied number, so it must go through
     /// [`set_bond_class`](Self::set_bond_class) with the number a Kekulé
     /// assignment decided.
-    pub fn set_bond_type(&mut self, id: BondId, bond_type: BondType) -> Result<(), MolRsError> {
+    pub fn set_bond_type(&mut self, id: RelationId, bond_type: BondType) -> Result<(), MolRsError> {
         let number = bond_type.implied_number().unwrap_or_default();
         self.set_bond_class(id, bond_type, number)
     }
 
     /// Remove a bond.
-    pub fn remove_bond(&mut self, id: BondId) -> Result<Bond, MolRsError> {
+    pub fn remove_bond(&mut self, id: RelationId) -> Result<Relation, MolRsError> {
         self.graph.remove_relation(self.bond, id)
     }
 
     /// Materialize a bond (endpoints + properties).
-    pub fn get_bond(&self, id: BondId) -> Result<Bond, MolRsError> {
+    pub fn get_bond(&self, id: RelationId) -> Result<Relation, MolRsError> {
         self.graph.get_relation(self.bond, id)
     }
 
     /// Set a single property on a bond.
     pub fn set_bond_prop(
         &mut self,
-        id: BondId,
+        id: RelationId,
         key: &str,
         val: impl Into<PropValue>,
     ) -> Result<(), MolRsError> {
         self.graph.set_relation_prop(self.bond, id, key, val)
     }
 
-    /// Iterate over all `(BondId, Bond)` pairs (each materialized).
-    pub fn bonds(&self) -> impl Iterator<Item = (BondId, Bond)> + '_ {
+    /// Iterate over all `(RelationId, Relation)` pairs (each materialized).
+    pub fn bonds(&self) -> impl Iterator<Item = (RelationId, Relation)> + '_ {
         self.graph.relations(self.bond)
     }
 
@@ -289,7 +269,7 @@ impl Atomistic {
     /// wants to know whether the bond is aromatic asks
     /// [`bond_type`](Self::bond_type). Handing back a single float is what let
     /// those two questions be answered by the same value.
-    pub fn neighbor_bonds(&self, id: AtomId) -> impl Iterator<Item = (AtomId, BondId)> + '_ {
+    pub fn neighbor_bonds(&self, id: NodeId) -> impl Iterator<Item = (NodeId, RelationId)> + '_ {
         self.graph
             .neighbor_relations(id)
             .filter(move |(kind, _, _)| *kind == self.bond)
@@ -298,17 +278,17 @@ impl Atomistic {
 
     /// Endpoints `(a, b)` of a bond by id, without materializing its property
     /// map (reads only the relation's endpoint list).
-    pub fn bond_endpoints(&self, id: BondId) -> Option<(AtomId, AtomId)> {
+    pub fn bond_endpoints(&self, id: RelationId) -> Option<(NodeId, NodeId)> {
         self.graph
             .relation_nodes(self.bond, id)
             .ok()
             .map(|eps| (eps[0], eps[1]))
     }
 
-    /// Iterate `(BondId, neighbor_id)` incident to `id` via the adjacency index
+    /// Iterate `(RelationId, neighbor_id)` incident to `id` via the adjacency index
     /// (O(degree)), without materializing each bond's property map. The bond
     /// order, if needed, is looked up separately by the caller.
-    pub fn incident_bond_ids(&self, id: AtomId) -> impl Iterator<Item = (BondId, AtomId)> + '_ {
+    pub fn incident_bond_ids(&self, id: NodeId) -> impl Iterator<Item = (RelationId, NodeId)> + '_ {
         let bond = self.bond;
         self.graph
             .neighbor_relations(id)
@@ -318,32 +298,32 @@ impl Atomistic {
     // ---- angles ----
 
     /// Add an angle (i-j-k, j central).
-    pub fn add_angle(&mut self, i: AtomId, j: AtomId, k: AtomId) -> Result<AngleId, MolRsError> {
+    pub fn add_angle(&mut self, i: NodeId, j: NodeId, k: NodeId) -> Result<RelationId, MolRsError> {
         self.graph.add_relation(self.angle, &[i, j, k])
     }
 
     /// Remove an angle.
-    pub fn remove_angle(&mut self, id: AngleId) -> Result<Angle, MolRsError> {
+    pub fn remove_angle(&mut self, id: RelationId) -> Result<Relation, MolRsError> {
         self.graph.remove_relation(self.angle, id)
     }
 
     /// Materialize an angle (endpoints + properties).
-    pub fn get_angle(&self, id: AngleId) -> Result<Angle, MolRsError> {
+    pub fn get_angle(&self, id: RelationId) -> Result<Relation, MolRsError> {
         self.graph.get_relation(self.angle, id)
     }
 
     /// Set a single property on an angle.
     pub fn set_angle_prop(
         &mut self,
-        id: AngleId,
+        id: RelationId,
         key: &str,
         val: impl Into<PropValue>,
     ) -> Result<(), MolRsError> {
         self.graph.set_relation_prop(self.angle, id, key, val)
     }
 
-    /// Iterate over all `(AngleId, Angle)` pairs (each materialized).
-    pub fn angles(&self) -> impl Iterator<Item = (AngleId, Angle)> + '_ {
+    /// Iterate over all `(RelationId, Relation)` pairs (each materialized).
+    pub fn angles(&self) -> impl Iterator<Item = (RelationId, Relation)> + '_ {
         self.graph.relations(self.angle)
     }
 
@@ -357,36 +337,36 @@ impl Atomistic {
     /// Add a dihedral (i-j-k-l).
     pub fn add_dihedral(
         &mut self,
-        i: AtomId,
-        j: AtomId,
-        k: AtomId,
-        l: AtomId,
-    ) -> Result<DihedralId, MolRsError> {
+        i: NodeId,
+        j: NodeId,
+        k: NodeId,
+        l: NodeId,
+    ) -> Result<RelationId, MolRsError> {
         self.graph.add_relation(self.dihedral, &[i, j, k, l])
     }
 
     /// Remove a dihedral.
-    pub fn remove_dihedral(&mut self, id: DihedralId) -> Result<Dihedral, MolRsError> {
+    pub fn remove_dihedral(&mut self, id: RelationId) -> Result<Relation, MolRsError> {
         self.graph.remove_relation(self.dihedral, id)
     }
 
     /// Materialize a dihedral (endpoints + properties).
-    pub fn get_dihedral(&self, id: DihedralId) -> Result<Dihedral, MolRsError> {
+    pub fn get_dihedral(&self, id: RelationId) -> Result<Relation, MolRsError> {
         self.graph.get_relation(self.dihedral, id)
     }
 
     /// Set a single property on a dihedral.
     pub fn set_dihedral_prop(
         &mut self,
-        id: DihedralId,
+        id: RelationId,
         key: &str,
         val: impl Into<PropValue>,
     ) -> Result<(), MolRsError> {
         self.graph.set_relation_prop(self.dihedral, id, key, val)
     }
 
-    /// Iterate over all `(DihedralId, Dihedral)` pairs (each materialized).
-    pub fn dihedrals(&self) -> impl Iterator<Item = (DihedralId, Dihedral)> + '_ {
+    /// Iterate over all `(RelationId, Relation)` pairs (each materialized).
+    pub fn dihedrals(&self) -> impl Iterator<Item = (RelationId, Relation)> + '_ {
         self.graph.relations(self.dihedral)
     }
 
@@ -447,8 +427,8 @@ impl Atomistic {
         }
 
         // Build the native topology snapshot from bonds (atoms in node-id order).
-        let atoms: Vec<AtomId> = self.graph.node_ids().collect();
-        let pos: std::collections::HashMap<AtomId, usize> =
+        let atoms: Vec<NodeId> = self.graph.node_ids().collect();
+        let pos: std::collections::HashMap<NodeId, usize> =
             atoms.iter().enumerate().map(|(i, &a)| (a, i)).collect();
         let mut edges: Vec<[usize; 2]> = Vec::new();
         for id in self.graph.relation_ids(self.bond) {
@@ -520,15 +500,15 @@ impl Atomistic {
     /// The BFS runs directly on the native `MolGraph` adjacency (relations
     /// filtered to the bond kind), keyed by a `SecondaryMap` (O(1),
     /// slot-indexed) — no `Topology` materialization and no
-    /// AtomId→contiguous-index remap.
-    pub fn topo_distances(&self, source: AtomId, max_hops: Option<i64>) -> Vec<(AtomId, i64)> {
+    /// NodeId→contiguous-index remap.
+    pub fn topo_distances(&self, source: NodeId, max_hops: Option<i64>) -> Vec<(NodeId, i64)> {
         use slotmap::SecondaryMap;
         use std::collections::VecDeque;
 
         if self.graph.get_node(source).is_err() {
             return Vec::new();
         }
-        let mut dist: SecondaryMap<AtomId, i64> = SecondaryMap::new();
+        let mut dist: SecondaryMap<NodeId, i64> = SecondaryMap::new();
         dist.insert(source, 0);
         let mut queue = VecDeque::new();
         queue.push_back(source);
@@ -556,36 +536,36 @@ impl Atomistic {
     /// ([`generate_topology`](Self::generate_topology)) lists the centre first.
     pub fn add_improper(
         &mut self,
-        i: AtomId,
-        j: AtomId,
-        k: AtomId,
-        l: AtomId,
-    ) -> Result<ImproperId, MolRsError> {
+        i: NodeId,
+        j: NodeId,
+        k: NodeId,
+        l: NodeId,
+    ) -> Result<RelationId, MolRsError> {
         self.graph.add_relation(self.improper, &[i, j, k, l])
     }
 
     /// Remove an improper.
-    pub fn remove_improper(&mut self, id: ImproperId) -> Result<Improper, MolRsError> {
+    pub fn remove_improper(&mut self, id: RelationId) -> Result<Relation, MolRsError> {
         self.graph.remove_relation(self.improper, id)
     }
 
     /// Materialize an improper (endpoints + properties).
-    pub fn get_improper(&self, id: ImproperId) -> Result<Improper, MolRsError> {
+    pub fn get_improper(&self, id: RelationId) -> Result<Relation, MolRsError> {
         self.graph.get_relation(self.improper, id)
     }
 
     /// Set a single property on an improper.
     pub fn set_improper_prop(
         &mut self,
-        id: ImproperId,
+        id: RelationId,
         key: &str,
         val: impl Into<PropValue>,
     ) -> Result<(), MolRsError> {
         self.graph.set_relation_prop(self.improper, id, key, val)
     }
 
-    /// Iterate over all `(ImproperId, Improper)` pairs (each materialized).
-    pub fn impropers(&self) -> impl Iterator<Item = (ImproperId, Improper)> + '_ {
+    /// Iterate over all `(RelationId, Relation)` pairs (each materialized).
+    pub fn impropers(&self) -> impl Iterator<Item = (RelationId, Relation)> + '_ {
         self.graph.relations(self.improper)
     }
 
@@ -749,7 +729,7 @@ impl Atomistic {
         template: &Atomistic,
         transforms: &[crate::op::rigid::Rigid],
         frag_ids: &[crate::types::I],
-    ) -> Result<Vec<AtomId>, MolRsError> {
+    ) -> Result<Vec<NodeId>, MolRsError> {
         self.graph.replicate(&template.graph, transforms, frag_ids)
     }
 
@@ -763,8 +743,8 @@ impl Atomistic {
     /// format alias such as `"symbol"`.
     pub fn induced_subgraph(
         &self,
-        atoms: &[AtomId],
-    ) -> Result<(Atomistic, HashMap<AtomId, AtomId>), MolRsError> {
+        atoms: &[NodeId],
+    ) -> Result<(Atomistic, HashMap<NodeId, NodeId>), MolRsError> {
         let induced = self.graph.induced_subgraph(atoms)?;
         let atomistic = Atomistic::try_from_molgraph(induced.graph)?;
         Ok((atomistic, induced.node_map))
@@ -778,10 +758,10 @@ impl Atomistic {
     /// parent's higher-order tables — small-graph / verbatim path).
     pub fn extract_subgraph(
         &self,
-        centers: &[AtomId],
+        centers: &[NodeId],
         radius: i64,
         regenerate_topology: bool,
-        whole_groups: &[Vec<AtomId>],
+        whole_groups: &[Vec<NodeId>],
     ) -> Result<ExtractedAtomistic, MolRsError> {
         let ball = self.graph.extract_ball(
             centers,
@@ -812,7 +792,7 @@ impl Atomistic {
     /// contradicts the element type `self` holds for that key — see
     /// [`MolGraph::merge`](crate::system::molgraph::MolGraph::merge), whose
     /// partial-write contract this inherits.
-    pub fn merge(&mut self, other: Atomistic) -> Result<HashMap<AtomId, AtomId>, MolRsError> {
+    pub fn merge(&mut self, other: Atomistic) -> Result<HashMap<NodeId, NodeId>, MolRsError> {
         self.graph.merge(other.graph)
     }
 
@@ -833,7 +813,7 @@ impl Atomistic {
     /// Deterministic canonical atom ordering from the WL refinement, so two
     /// isomorphic molecules line up node-by-node (see
     /// [`crate::system::graph_hash::canonical_order`]).
-    pub fn canonical_order(&self) -> Vec<AtomId> {
+    pub fn canonical_order(&self) -> Vec<NodeId> {
         crate::system::graph_hash::canonical_order(&self.graph)
     }
 
@@ -949,7 +929,7 @@ mod tests {
     /// Ethane (C2H6): C0-C1 plus 3 H on each carbon. 7 bonds.
     fn ethane() -> Atomistic {
         let mut mol = Atomistic::new();
-        let atoms: Vec<AtomId> = ["C", "C", "H", "H", "H", "H", "H", "H"]
+        let atoms: Vec<NodeId> = ["C", "C", "H", "H", "H", "H", "H", "H"]
             .iter()
             .map(|e| mol.add_atom_bare(e))
             .collect();
@@ -996,7 +976,7 @@ mod tests {
     /// A trivalent centre: C bonded to O, H, H.
     fn formaldehyde() -> Atomistic {
         let mut mol = Atomistic::new();
-        let atoms: Vec<AtomId> = ["C", "O", "H", "H"]
+        let atoms: Vec<NodeId> = ["C", "O", "H", "H"]
             .iter()
             .map(|e| mol.add_atom_bare(e))
             .collect();
@@ -1039,7 +1019,7 @@ mod tests {
         // An improper is symmetric under permuting its outer legs, so one
         // written with the legs in another order is the same relation.
         let mut mol = formaldehyde();
-        let ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
+        let ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
         mol.add_improper(ids[0], ids[3], ids[1], ids[2]).unwrap();
         let (_, _, n_imp) = mol.generate_topology(false, false, true, false).unwrap();
         assert_eq!(n_imp, 0);
@@ -1059,18 +1039,18 @@ mod tests {
     fn topo_distances_parity() {
         // Native BFS over the bond graph. Asserts the (atom, hops) set directly
         // against the expected hop multisets.
-        let hops = |mut v: Vec<(AtomId, i64)>| -> Vec<i64> {
+        let hops = |mut v: Vec<(NodeId, i64)>| -> Vec<i64> {
             v.sort();
             v.into_iter().map(|(_, d)| d).collect::<Vec<i64>>()
         };
-        let sorted_hops = |v: Vec<(AtomId, i64)>| {
+        let sorted_hops = |v: Vec<(NodeId, i64)>| {
             let mut d: Vec<i64> = v.into_iter().map(|(_, d)| d).collect();
             d.sort_unstable();
             d
         };
 
         let eth = ethane();
-        let atoms: Vec<AtomId> = eth.node_ids().collect();
+        let atoms: Vec<NodeId> = eth.node_ids().collect();
         // Ethane: C0(0)-C1(1) with H2,H3,H4 on C0 and H5,H6,H7 on C1.
         // From C0: self 0; C1 1; its own H's 1; far H's 2.
         let expected_per_source: [Vec<i64>; 8] = [
@@ -1143,8 +1123,8 @@ mod tests {
         assert_eq!(mol.n_angles(), 1);
         assert_eq!(mol.n_dihedrals(), 1);
         assert_eq!(mol.n_impropers(), 1);
-        // typed BondId usable as a HashSet key
-        let ids: std::collections::HashSet<BondId> = mol.bonds().map(|(id, _)| id).collect();
+        // typed RelationId usable as a HashSet key
+        let ids: std::collections::HashSet<RelationId> = mol.bonds().map(|(id, _)| id).collect();
         assert_eq!(ids.len(), 3);
         // cascade on central atom
         mol.remove_atom(a).unwrap();
@@ -1163,7 +1143,7 @@ mod tests {
         mol.add_bond(o, h1).unwrap();
         mol.add_bond(o, h2).unwrap();
         assert_eq!(mol.neighbors(o).count(), 2);
-        let nb: Vec<(AtomId, BondId)> = mol.neighbor_bonds(o).collect();
+        let nb: Vec<(NodeId, RelationId)> = mol.neighbor_bonds(o).collect();
         assert_eq!(nb.len(), 2);
         assert!(
             nb.iter()
@@ -1342,7 +1322,7 @@ mod tests {
     /// Three atoms, one of them labelled: the column is emitted with the
     /// mask the entity table holds, so the two unlabelled atoms read as
     /// "no value" rather than as fragment instance zero.
-    fn partly_labelled() -> (Atomistic, AtomId) {
+    fn partly_labelled() -> (Atomistic, NodeId) {
         let mut mol = Atomistic::new();
         let a0 = mol.add_atom_bare("C");
         mol.add_atom_bare("C");

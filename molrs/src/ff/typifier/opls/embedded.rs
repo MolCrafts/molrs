@@ -200,7 +200,7 @@ mod tests {
     use crate::ff::typifier::{Typifier, Typing};
     use molrs::system::BondType;
     use molrs::system::molgraph::PropValue;
-    use molrs::{Atom, AtomId, Atomistic};
+    use molrs::{Atom, Atomistic, NodeId};
 
     /// Relative tolerance of the source-equivalence pins. A zero expectation
     /// therefore demands an exact zero (`-0.0` compares equal).
@@ -498,7 +498,7 @@ mod tests {
     struct Golden {
         graph: Atomistic,
         /// `(atom, element, expected type)`, in insertion order.
-        expected: Vec<(AtomId, &'static str, &'static str)>,
+        expected: Vec<(NodeId, &'static str, &'static str)>,
     }
 
     impl Golden {
@@ -510,7 +510,7 @@ mod tests {
         }
 
         /// Add an atom the input writes aliphatic, expected to type `ty`.
-        fn atom(&mut self, element: &'static str, ty: &'static str) -> AtomId {
+        fn atom(&mut self, element: &'static str, ty: &'static str) -> NodeId {
             let x = 1.2 * self.expected.len() as f64;
             let id = self.graph.add_atom(Atom::xyz(element, x, 0.0, 0.0));
             self.expected.push((id, element, ty));
@@ -519,7 +519,7 @@ mod tests {
 
         /// Add an atom the input declares aromatic (`is_aromatic = 1`, as a
         /// lowercase SMILES atom reads), expected to type `ty`.
-        fn aromatic_atom(&mut self, element: &'static str, ty: &'static str) -> AtomId {
+        fn aromatic_atom(&mut self, element: &'static str, ty: &'static str) -> NodeId {
             let id = self.atom(element, ty);
             self.graph
                 .set_atom(id, "is_aromatic", PropValue::Int(1))
@@ -527,14 +527,14 @@ mod tests {
             id
         }
 
-        fn bond(&mut self, a: AtomId, b: AtomId, order: BondType) {
+        fn bond(&mut self, a: NodeId, b: NodeId, order: BondType) {
             let bond = self.graph.add_bond(a, b).unwrap();
             self.graph.set_bond_type(bond, order).unwrap();
         }
 
         /// Close `atoms` into a ring, bond `k` joining `atoms[k]` and
         /// `atoms[k + 1]` (wrapping) with `orders[k]`.
-        fn ring(&mut self, atoms: &[AtomId], orders: &[BondType]) {
+        fn ring(&mut self, atoms: &[NodeId], orders: &[BondType]) {
             assert_eq!(atoms.len(), orders.len(), "one order per ring bond");
             for (k, &order) in orders.iter().enumerate() {
                 self.bond(atoms[k], atoms[(k + 1) % atoms.len()], order);
@@ -542,7 +542,7 @@ mod tests {
         }
 
         /// Add `n` hydrogens singly bonded to `heavy`, each expected `ty`.
-        fn hydrogens(&mut self, heavy: AtomId, n: usize, ty: &'static str) {
+        fn hydrogens(&mut self, heavy: NodeId, n: usize, ty: &'static str) {
             for _ in 0..n {
                 let h = self.atom("H", ty);
                 self.bond(heavy, h, S);
@@ -632,7 +632,7 @@ mod tests {
     #[test]
     fn golden_benzene_aromatic_input() {
         let mut m = Golden::new();
-        let r: Vec<AtomId> = (0..6).map(|_| m.aromatic_atom("C", "opls_145")).collect();
+        let r: Vec<NodeId> = (0..6).map(|_| m.aromatic_atom("C", "opls_145")).collect();
         m.ring(&r, &[A; 6]);
         for &c in &r {
             m.hydrogens(c, 1, "opls_146");
@@ -644,7 +644,7 @@ mod tests {
     #[test]
     fn golden_benzene_kekule_input() {
         let mut m = Golden::new();
-        let r: Vec<AtomId> = (0..6).map(|_| m.atom("C", "opls_145")).collect();
+        let r: Vec<NodeId> = (0..6).map(|_| m.atom("C", "opls_145")).collect();
         m.ring(&r, &KEKULE6);
         for &c in &r {
             m.hydrogens(c, 1, "opls_146");
@@ -718,7 +718,7 @@ mod tests {
     fn golden_benzonitrile() {
         let mut m = Golden::new();
         let ipso = m.atom("C", "opls_260");
-        let rest: Vec<AtomId> = (0..5).map(|_| m.atom("C", "opls_145")).collect();
+        let rest: Vec<NodeId> = (0..5).map(|_| m.atom("C", "opls_145")).collect();
         let cn = m.atom("C", "opls_261");
         let n = m.atom("N", "opls_262");
         let ring = [&[ipso][..], &rest].concat();
@@ -736,7 +736,7 @@ mod tests {
     fn golden_chlorobenzene() {
         let mut m = Golden::new();
         let ipso = m.atom("C", "opls_263");
-        let rest: Vec<AtomId> = (0..5).map(|_| m.atom("C", "opls_145")).collect();
+        let rest: Vec<NodeId> = (0..5).map(|_| m.atom("C", "opls_145")).collect();
         let cl = m.atom("Cl", "opls_264");
         let ring = [&[ipso][..], &rest].concat();
         m.ring(&ring, &KEKULE6);
@@ -766,7 +766,7 @@ mod tests {
     fn golden_fluorobenzene() {
         let mut m = Golden::new();
         let ipso = m.atom("C", "opls_718");
-        let rest: Vec<AtomId> = (0..5).map(|_| m.atom("C", "opls_145")).collect();
+        let rest: Vec<NodeId> = (0..5).map(|_| m.atom("C", "opls_145")).collect();
         let f = m.atom("F", "opls_719");
         let ring = [&[ipso][..], &rest].concat();
         m.ring(&ring, &KEKULE6);

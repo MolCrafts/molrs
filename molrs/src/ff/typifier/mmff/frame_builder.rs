@@ -43,7 +43,7 @@ use std::collections::{HashMap, HashSet};
 
 use molrs::store::schema::block_names::{ANGLES, BONDS, DIHEDRALS, IMPROPERS};
 use molrs::system::molgraph::PropValue;
-use molrs::{AtomId, Atomistic};
+use molrs::{Atomistic, NodeId};
 
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::mmff::resolve as eparams;
@@ -64,8 +64,8 @@ type Annotations = Vec<Vec<(String, Annotation)>>;
 /// of MMFF typing and every step needs the result, so it is not re-derived.
 struct MmffContext<'a> {
     /// Molecule atom-iteration order — the index space `props` / `types` use.
-    atom_ids: Vec<AtomId>,
-    idx_of: HashMap<AtomId, usize>,
+    atom_ids: Vec<NodeId>,
+    idx_of: HashMap<NodeId, usize>,
     props: MmffMolProperties,
     /// MMFF topology with perceived aromaticity — the resolver's ring / bond-order
     /// source, and the reason the type codes below can see what `classify.rs` could not.
@@ -79,12 +79,12 @@ struct MmffContext<'a> {
 
 impl MmffContext<'_> {
     /// MMFF numeric type of an atom, by id.
-    fn type_of(&self, aid: AtomId) -> u32 {
+    fn type_of(&self, aid: NodeId) -> u32 {
         self.props.atom_type(self.idx_of[&aid]) as u32
     }
 
     /// Zero-based index of an atom, by id.
-    fn idx(&self, aid: AtomId) -> usize {
+    fn idx(&self, aid: NodeId) -> usize {
         self.idx_of[&aid]
     }
 }
@@ -179,8 +179,8 @@ fn build_context<'a>(
     // `atom_ids`.
     let props = MmffMolProperties::compute(mol, variant).map_err(|e| e.to_string())?;
 
-    let atom_ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-    let idx_of: HashMap<AtomId, usize> = atom_ids
+    let atom_ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
+    let idx_of: HashMap<NodeId, usize> = atom_ids
         .iter()
         .enumerate()
         .map(|(i, &id)| (id, i))

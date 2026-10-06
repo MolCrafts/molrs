@@ -126,9 +126,10 @@ use crate::perceive::bond_order::judge_bond_orders;
 use crate::perceive::ring_class::{RingClasses, ring_classes};
 use crate::perceive::rings::find_rings;
 use crate::store::keys;
-use crate::system::atomistic::{AtomId, Atomistic, BondId};
+use crate::system::atomistic::Atomistic;
 use crate::system::bond::{BondNumber, BondType};
 use crate::system::molgraph::PropValue;
+use crate::system::molgraph::{NodeId, RelationId};
 use molrs::Element;
 
 /// Bond prop holding the perceived BCC bond type, as an `i32` in
@@ -444,7 +445,7 @@ pub(crate) fn assign_kekule_numbers(mol: &mut Atomistic) -> bool {
     // up in no double bond and had no lone pair to give is the signal that no
     // legal assignment exists — the search returns its least-bad answer, and
     // only a completeness check can tell the two apart.
-    let mut assignment: Vec<(BondId, BondNumber)> = Vec::new();
+    let mut assignment: Vec<(RelationId, BondNumber)> = Vec::new();
     for (k, bid) in graph.bond_ids.iter().enumerate() {
         if !graph.aromatic[k] {
             continue;
@@ -536,9 +537,9 @@ fn aromatic_marking(props: &IndexMap<String, PropValue>) -> bool {
 /// faithful transcription rather than a translation.
 struct BondGraph {
     /// Per bond: its handle, in bond index order.
-    bond_ids: Vec<BondId>,
+    bond_ids: Vec<RelationId>,
     /// Bond handle -> bond index.
-    bond_index: HashMap<BondId, usize>,
+    bond_index: HashMap<RelationId, usize>,
     /// Per bond: its two endpoint atom indices.
     ends: Vec<(usize, usize)>,
     /// Per bond: the input bond order.
@@ -578,8 +579,8 @@ impl BondGraph {
     /// Flatten a molecule. Atoms whose element is unknown get `z = 0` and so match
     /// no rule; they fall through to their plain bond order.
     fn new(mol: &Atomistic) -> Self {
-        let atom_ids: Vec<AtomId> = mol.atoms().map(|(aid, _)| aid).collect();
-        let index: HashMap<AtomId, usize> = atom_ids
+        let atom_ids: Vec<NodeId> = mol.atoms().map(|(aid, _)| aid).collect();
+        let index: HashMap<NodeId, usize> = atom_ids
             .iter()
             .copied()
             .enumerate()
@@ -1223,7 +1224,7 @@ mod tests {
 
     /// Ring bonds as `((i, j), is_double)`, endpoints low-high, sorted.
     fn ring_doubles(mol: &Atomistic) -> Vec<((usize, usize), bool)> {
-        let index: HashMap<AtomId, usize> = mol
+        let index: HashMap<NodeId, usize> = mol
             .atoms()
             .enumerate()
             .map(|(position, (id, _))| (id, position))

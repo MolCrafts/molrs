@@ -467,14 +467,15 @@ fn node_ffi(id: NodeId) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::atomistic::{AtomId, Atomistic};
+    use crate::system::atomistic::Atomistic;
     use crate::system::coarsegrain::CoarseGrain;
+    use crate::system::molgraph::NodeId;
 
     /// Ethanol skeleton C-C-O with explicit H (9 atoms), returned with its
     /// atom handles in build order.
-    fn ethanol() -> (Atomistic, Vec<AtomId>) {
+    fn ethanol() -> (Atomistic, Vec<NodeId>) {
         let mut mol = Atomistic::new();
-        let ids: Vec<AtomId> = ["C", "C", "O", "H", "H", "H", "H", "H", "H"]
+        let ids: Vec<NodeId> = ["C", "C", "O", "H", "H", "H", "H", "H", "H"]
             .iter()
             .map(|e| mol.add_atom_bare(e))
             .collect();
@@ -548,7 +549,7 @@ mod tests {
         let (a, _) = ethanol();
         // Swap the O for an S — a different local environment.
         let mut mol = Atomistic::new();
-        let ids: Vec<AtomId> = ["C", "C", "S", "H", "H", "H", "H", "H", "H"]
+        let ids: Vec<NodeId> = ["C", "C", "S", "H", "H", "H", "H", "H", "H"]
             .iter()
             .map(|e| mol.add_atom_bare(e))
             .collect();
@@ -642,7 +643,7 @@ mod tests {
         // Ethanol (9 atoms) vs a 9-atom linear chain — same size, different topo.
         let (a, _) = ethanol();
         let mut chain = Atomistic::new();
-        let ids: Vec<AtomId> = (0..9).map(|_| chain.add_atom_bare("C")).collect();
+        let ids: Vec<NodeId> = (0..9).map(|_| chain.add_atom_bare("C")).collect();
         for k in 0..ids.len() - 1 {
             chain.add_bond(ids[k], ids[k + 1]).unwrap();
         }

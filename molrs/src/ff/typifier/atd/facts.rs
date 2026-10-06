@@ -23,18 +23,18 @@ use molrs::perceive::bond_type::BCC_BOND_TYPE;
 use molrs::perceive::ring_class::ring_classes;
 use molrs::store::keys;
 use molrs::system::molgraph::PropValue;
-use molrs::{AtomId, Atomistic, Bond, BondId, Element};
+use molrs::{Atomistic, Element, NodeId, Relation, RelationId};
 
 use crate::ff::params::AtomProp;
 
 /// Pre-computed answers to every question an ATD rule can ask about an atom.
 ///
 /// All vectors are indexed by the atom's position in `mol.atoms()` order;
-/// [`MolFacts::index_of`] maps an [`AtomId`] onto that position.
+/// [`MolFacts::index_of`] maps an [`NodeId`] onto that position.
 #[derive(Debug, Clone)]
 pub(super) struct MolFacts {
     /// Atom id -> row index into every vector below.
-    pub(super) index: HashMap<AtomId, usize>,
+    pub(super) index: HashMap<NodeId, usize>,
     /// Atomic number.
     pub(super) atomic_number: Vec<u8>,
     /// Number of bonded neighbours.
@@ -48,7 +48,7 @@ pub(super) struct MolFacts {
     /// Ring / aromaticity / bond-order counts.
     pub(super) props: Vec<AtomPropertyFacts>,
     /// Neighbours as `(atom, antechamber bond type, bond)`.
-    pub(super) neighbors: Vec<Vec<(AtomId, i32, BondId)>>,
+    pub(super) neighbors: Vec<Vec<(NodeId, i32, RelationId)>>,
     /// Every bond as `(first atom row, second atom row, antechamber bond type)`,
     /// in graph bond order and with its endpoints in stored order — the bond
     /// list antechamber's post-typing passes sweep.
@@ -64,7 +64,7 @@ impl MolFacts {
     /// perceives rings with the indole rule on.
     pub(super) fn new(mol: &Atomistic, bcc: bool) -> Result<Self, String> {
         let atom_ids: Vec<_> = mol.atoms().map(|(aid, _)| aid).collect();
-        let index: HashMap<AtomId, usize> = atom_ids
+        let index: HashMap<NodeId, usize> = atom_ids
             .iter()
             .copied()
             .enumerate()
@@ -150,7 +150,7 @@ impl MolFacts {
     }
 
     /// The row index of `aid`.
-    pub(super) fn index_of(&self, aid: AtomId) -> Result<usize, String> {
+    pub(super) fn index_of(&self, aid: NodeId) -> Result<usize, String> {
         self.index
             .get(&aid)
             .copied()
@@ -162,7 +162,7 @@ impl MolFacts {
     /// The `.DEF` column counts the EW neighbours of the *attachment point*, not
     /// of the candidate itself — that is how a hydrogen learns about the
     /// substituents of the carbon it sits on.
-    pub(super) fn ewd_count_around_attachment(&self, aid: AtomId) -> Option<usize> {
+    pub(super) fn ewd_count_around_attachment(&self, aid: NodeId) -> Option<usize> {
         let i = self.index_of(aid).ok()?;
         let attached = self.neighbors[i].first()?.0;
         let j = self.index_of(attached).ok()?;
@@ -295,7 +295,7 @@ impl AtomPropertyFacts {
 ///
 /// Shared with the BCC corrector, whose correction rows are keyed on the same
 /// integer. A bond without one is an error, never a guessed single bond.
-pub(crate) fn antechamber_bond_type(bond: &Bond) -> Result<i32, String> {
+pub(crate) fn antechamber_bond_type(bond: &Relation) -> Result<i32, String> {
     match bond.props.get(BCC_BOND_TYPE) {
         Some(PropValue::Int(v)) => Ok(*v),
         Some(PropValue::F64(v)) if (*v - v.round()).abs() < 1.0e-6 => Ok(v.round() as i32),

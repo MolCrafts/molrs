@@ -33,7 +33,8 @@ use std::collections::HashSet;
 use super::equivalence::{EQUIV_CLASS, EquivalenceOptions};
 use super::stereo::{BondStereo, TetrahedralStereo};
 use super::{aromaticity, bond_order, bond_type, equivalence, hydrogens, rings, rotatable, stereo};
-use crate::system::atomistic::{AtomId, Atomistic, BondId};
+use crate::system::atomistic::Atomistic;
+use crate::system::molgraph::{NodeId, RelationId};
 use molrs::error::MolRsError;
 
 /// Atom / bond prop: `1` when the atom / bond lies on at least one SSSR ring.
@@ -95,13 +96,13 @@ impl Perceive {
         let info = rings::find_rings(mol);
         let mut out = mol.clone();
 
-        let atom_ids: Vec<AtomId> = out.atoms().map(|(id, _)| id).collect();
+        let atom_ids: Vec<NodeId> = out.atoms().map(|(id, _)| id).collect();
         for id in atom_ids {
             let _ = out.set_atom(id, IS_IN_RING, i32::from(info.is_atom_in_ring(id)));
             let _ = out.set_atom(id, N_RINGS, saturating_i32(info.num_atom_rings(id)));
         }
 
-        let bond_ids: Vec<BondId> = out.bonds().map(|(id, _)| id).collect();
+        let bond_ids: Vec<RelationId> = out.bonds().map(|(id, _)| id).collect();
         for bid in bond_ids {
             let _ = out.set_bond_prop(bid, IS_IN_RING, i32::from(info.is_bond_in_ring(bid)));
             let _ = out.set_bond_prop(bid, N_RINGS, saturating_i32(info.num_bond_rings(bid)));
@@ -237,13 +238,13 @@ impl Perceive {
         mol: &Atomistic,
         unknown: rotatable::UnknownBondPolicy,
     ) -> Atomistic {
-        let rotatable: HashSet<(AtomId, AtomId)> = rotatable::detect_rotatable_bonds(mol, unknown)
+        let rotatable: HashSet<(NodeId, NodeId)> = rotatable::detect_rotatable_bonds(mol, unknown)
             .into_iter()
             .map(|(a, b)| unordered(a, b))
             .collect();
         let mut out = mol.clone();
 
-        let bonds: Vec<(BondId, AtomId, AtomId)> = out
+        let bonds: Vec<(RelationId, NodeId, NodeId)> = out
             .bonds()
             .map(|(bid, bond)| (bid, bond.nodes[0], bond.nodes[1]))
             .collect();
@@ -369,7 +370,7 @@ impl Perceive {
 
 /// Order an atom pair so that a bond can be looked up regardless of the
 /// direction it was reported in.
-fn unordered(a: AtomId, b: AtomId) -> (AtomId, AtomId) {
+fn unordered(a: NodeId, b: NodeId) -> (NodeId, NodeId) {
     if a <= b { (a, b) } else { (b, a) }
 }
 

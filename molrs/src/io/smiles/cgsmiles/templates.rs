@@ -43,8 +43,9 @@ use crate::io::smiles::smiles::fragment_to_atomistic;
 use molrs::Element;
 use molrs::error::MolRsError;
 use molrs::store::keys;
-use molrs::system::atomistic::{AtomId, Atomistic};
+use molrs::system::atomistic::Atomistic;
 use molrs::system::bond::BondNumber;
+use molrs::system::molgraph::NodeId;
 use molrs::system::port::PortKind;
 
 impl CGSmilesIR {
@@ -269,7 +270,7 @@ fn build_template(ir: &SmilesIR, context: &str, span: Span) -> Result<Atomistic,
 /// One open valence to cap: the anchor atom and the descriptor written on it.
 struct OpenSite<'a> {
     /// The atom the descriptor was written on.
-    anchor: AtomId,
+    anchor: NodeId,
     /// The descriptor itself: kind, label and written bond order.
     descriptor: &'a BondingDescriptor,
 }
@@ -417,8 +418,9 @@ mod tests {
         FragmentBody, Notation, SmilesErrorKind, Span, parse_cgsmiles, parse_fragment_smiles,
     };
     use molrs::store::keys;
-    use molrs::system::atomistic::{AtomId, Atomistic};
+    use molrs::system::atomistic::Atomistic;
     use molrs::system::bond::{BondNumber, BondType};
+    use molrs::system::molgraph::NodeId;
     use molrs::system::molgraph::PropValue;
     use molrs::system::port::{Port, PortKind};
 
@@ -480,7 +482,7 @@ mod tests {
     }
 
     /// The element symbol of one atom of a template.
-    fn element(frag: &Atomistic, atom: AtomId) -> String {
+    fn element(frag: &Atomistic, atom: NodeId) -> String {
         let props = frag
             .get_node(atom)
             .unwrap_or_else(|e| panic!("atom {atom:?} is missing: {e}"));
@@ -494,7 +496,7 @@ mod tests {
     ///
     /// Not `neighbors`: a port is an arity-2 relation too, so the generic
     /// adjacency would report a handle twice and call a port a bond.
-    fn bonded(frag: &Atomistic, atom: AtomId) -> Vec<AtomId> {
+    fn bonded(frag: &Atomistic, atom: NodeId) -> Vec<NodeId> {
         let bonds = frag
             .kind_id("bonds")
             .expect("'bonds' is registered on every Atomistic");
@@ -705,7 +707,7 @@ mod tests {
         assert_eq!(peo.n_ports(), 2);
 
         let ports = ports_of(&peo);
-        let oxygens: Vec<AtomId> = peo
+        let oxygens: Vec<NodeId> = peo
             .node_ids()
             .filter(|&atom| element(&peo, atom) == "O")
             .collect();
@@ -754,7 +756,7 @@ mod tests {
         assert_eq!(bb.n_ports(), 3);
 
         let ports = ports_of(&bb);
-        let count_on = |anchor: AtomId| ports.iter().filter(|p| p.anchor == anchor).count();
+        let count_on = |anchor: NodeId| ports.iter().filter(|p| p.anchor == anchor).count();
         let lone: Vec<&Port> = ports.iter().filter(|p| count_on(p.anchor) == 1).collect();
         let shared: Vec<&Port> = ports.iter().filter(|p| count_on(p.anchor) == 2).collect();
         assert_eq!(lone.len(), 1, "C0 carries the one `>`");

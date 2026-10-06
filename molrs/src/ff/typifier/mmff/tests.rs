@@ -9,7 +9,7 @@ mod tests {
     use crate::ff::forcefield::ForceField;
     use crate::ff::typifier::mmff::MMFF94Typifier;
     use molrs::system::molgraph::{Atom, PropValue};
-    use molrs::{AtomId, Atomistic};
+    use molrs::{Atomistic, NodeId};
 
     fn atom(sym: &str) -> Atom {
         let mut a = Atom::new();
@@ -17,7 +17,7 @@ mod tests {
         a
     }
 
-    fn bond_order(mol: &mut Atomistic, a: AtomId, b: AtomId, order: f64) {
+    fn bond_order(mol: &mut Atomistic, a: NodeId, b: NodeId, order: f64) {
         if let Ok(bid) = mol.add_bond(a, b) {
             // The old float encoding, split into the two facts it conflated.
             let _ = if (order - 1.5).abs() < 1e-6 {
@@ -127,9 +127,9 @@ mod tests {
     /// Explicit-H 1,3-butadiene `H2C=CH-CH=CH2`, hand-built: carbons
     /// `C0=C1-C2=C3` are atoms 0..=3; hydrogens follow (two on C0, one on C1,
     /// one on C2, two on C3).
-    fn butadiene() -> (Atomistic, [AtomId; 4]) {
+    fn butadiene() -> (Atomistic, [NodeId; 4]) {
         let mut mol = Atomistic::new();
-        let c: [AtomId; 4] = std::array::from_fn(|_| mol.add_atom(atom("C")));
+        let c: [NodeId; 4] = std::array::from_fn(|_| mol.add_atom(atom("C")));
         bond_order(&mut mol, c[0], c[1], 2.0);
         bond_order(&mut mol, c[1], c[2], 1.0);
         bond_order(&mut mol, c[2], c[3], 2.0);
@@ -183,8 +183,8 @@ mod tests {
             .typify(&mol)
             .expect("butadiene types without a TypeConflict");
 
-        let is_carbon = |id: &AtomId| c.contains(id);
-        let ccc: Vec<(Vec<AtomId>, String)> = typed
+        let is_carbon = |id: &NodeId| c.contains(id);
+        let ccc: Vec<(Vec<NodeId>, String)> = typed
             .angles()
             .filter(|(_, a)| a.nodes.iter().all(is_carbon))
             .map(|(_, a)| {
@@ -247,7 +247,7 @@ mod tests {
     /// the ring `C=N`, type 3) atom 1, `c_h2` (the sp3 ring CH2, type 20 `CR4R`)
     /// atom 2, `n` (the ring imine N, type 9 `N=C`) atom 3, `o` (type 7) atom 4;
     /// the three hydrogens follow.
-    fn azetone() -> (Atomistic, [AtomId; 4]) {
+    fn azetone() -> (Atomistic, [NodeId; 4]) {
         let mut mol = Atomistic::new();
         let c_co = mol.add_atom(atom("C"));
         let c_im = mol.add_atom(atom("C"));
@@ -308,7 +308,7 @@ mod tests {
             .typify(&mol)
             .expect("one torsion label names one parameter set, so no TypeConflict");
 
-        let find = |path: [AtomId; 4]| {
+        let find = |path: [NodeId; 4]| {
             let (_, d) = typed
                 .dihedrals()
                 .find(|(_, d)| {

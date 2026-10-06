@@ -27,7 +27,8 @@ use crate::io::smiles::cgsmiles::resolve::FragmentCache;
 use crate::io::smiles::cgsmiles::templates::cg_build;
 use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
 use molrs::op::rigid::Rigid;
-use molrs::system::atomistic::{AtomId, Atomistic};
+use molrs::system::atomistic::Atomistic;
+use molrs::system::molgraph::NodeId;
 use molrs::types::I;
 
 /// The lowest level of an IR, with the fragment table that defines its
@@ -151,7 +152,7 @@ impl CGSmilesIR {
         let nodes = &level.nodes;
         let mut cache = FragmentCache::default();
         let mut mol = Atomistic::new();
-        let mut ports: Vec<Vec<AtomId>> = Vec::with_capacity(nodes.len());
+        let mut ports: Vec<Vec<NodeId>> = Vec::with_capacity(nodes.len());
         let mut first = 0;
         while first < nodes.len() {
             let name = &nodes[first].name;
@@ -233,7 +234,7 @@ impl CGSmilesIR {
     fn bond_pairs(
         &self,
         mol: &mut Atomistic,
-        instances: &[Vec<AtomId>],
+        instances: &[Vec<NodeId>],
         pairs: &[ResolvedPair],
     ) -> Result<(), SmilesError> {
         for pair in pairs {
@@ -259,7 +260,7 @@ impl CGSmilesIR {
     /// [`SmilesErrorKind::CgBuild`] for an end that is not a last-level port
     /// ([`PairEnd::Sub`] belongs to an intermediate level, which grows no
     /// atoms), or for an instance or port index the level does not offer.
-    fn port_atom(&self, end: &PairEnd, instances: &[Vec<AtomId>]) -> Result<AtomId, SmilesError> {
+    fn port_atom(&self, end: &PairEnd, instances: &[Vec<NodeId>]) -> Result<NodeId, SmilesError> {
         let PairEnd::Body { instance, port } = end else {
             return Err(cg_build(
                 self.span,
@@ -326,8 +327,9 @@ mod tests {
         FragmentBody, SmilesErrorKind, Span, parse_cgsmiles, parse_fragment_smiles,
     };
     use molrs::store::keys;
-    use molrs::system::atomistic::{AtomId, Atomistic};
+    use molrs::system::atomistic::Atomistic;
     use molrs::system::bond::{BondNumber, BondType};
+    use molrs::system::molgraph::NodeId;
     use molrs::system::molgraph::PropValue;
 
     // Every count below is hand-derived from the fixtures of § Domain basis of
@@ -351,7 +353,7 @@ mod tests {
     /// The instance an expanded atom belongs to, as the `frag_id` stamp states
     /// it. Panics unless the stamp is an [`PropValue::Int`] — the variant the
     /// contract names, and the one `mol_id` already uses.
-    fn frag_id(mol: &Atomistic, id: AtomId) -> i32 {
+    fn frag_id(mol: &Atomistic, id: NodeId) -> i32 {
         let atom = mol
             .get_atom(id)
             .unwrap_or_else(|e| panic!("atom {id:?} is missing: {e}"));
@@ -622,7 +624,7 @@ mod tests {
             .map(|(id, _)| id)
             .find(|&id| frag_id(&mol, id) == 0 && mol.neighbor_bonds(id).count() == 1)
             .expect("instance 0 holds a chain end");
-        let element = |id: AtomId| -> String {
+        let element = |id: NodeId| -> String {
             mol.get_atom(id)
                 .unwrap_or_else(|e| panic!("atom {id:?} is missing: {e}"))
                 .get_str(keys::ELEMENT)

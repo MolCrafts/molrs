@@ -183,7 +183,7 @@ mod tests {
     //! expected label is written by hand.
 
     use molrs::system::molgraph::{Atom, PropValue};
-    use molrs::{AtomId, Atomistic};
+    use molrs::{Atomistic, NodeId};
 
     use super::*;
     use crate::ff::typifier::Typing;
@@ -226,7 +226,7 @@ mod tests {
     }
 
     /// C1–C2–H with bonds C1–C2, C2–H and one angle written H–C2–C1.
-    fn cch() -> (Atomistic, [AtomId; 3]) {
+    fn cch() -> (Atomistic, [NodeId; 3]) {
         let mut g = Atomistic::new();
         let c1 = g.add_atom_bare("C");
         let c2 = g.add_atom_bare("C");
@@ -307,7 +307,7 @@ mod tests {
     fn a_graph_with_an_improper_is_refused_naming_impropers() {
         let mut mol = Atomistic::new();
         let c = mol.add_atom_bare("C");
-        let ids: Vec<AtomId> = (0..3).map(|_| mol.add_atom_bare("H")).collect();
+        let ids: Vec<NodeId> = (0..3).map(|_| mol.add_atom_bare("H")).collect();
         for &h in &ids {
             mol.add_bond(c, h).unwrap();
         }

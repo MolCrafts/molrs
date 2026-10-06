@@ -68,7 +68,8 @@ mod reaction;
 use std::collections::HashMap;
 
 use crate::error::MolRsError;
-use crate::system::atomistic::{AtomId, Atomistic};
+use crate::system::atomistic::Atomistic;
+use crate::system::molgraph::NodeId;
 
 use compile::QueryGraph;
 
@@ -94,9 +95,9 @@ pub enum RingPrimitive {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MatchOptions<'a> {
     /// Optional `%LABEL` context (`atom -> current label`).
-    pub labels: Option<&'a HashMap<AtomId, String>>,
+    pub labels: Option<&'a HashMap<NodeId, String>>,
     /// Optional root pin for query atom 0.
-    pub root: Option<AtomId>,
+    pub root: Option<NodeId>,
     /// Optional maximum number of matches to return.
     pub limit: Option<usize>,
 }
@@ -104,11 +105,11 @@ pub struct MatchOptions<'a> {
 /// One SMARTS match, indexed by query atom order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmartsMatch {
-    pub atoms: Vec<AtomId>,
+    pub atoms: Vec<NodeId>,
 }
 
 impl SmartsMatch {
-    pub fn atoms(&self) -> &[AtomId] {
+    pub fn atoms(&self) -> &[NodeId] {
         &self.atoms
     }
 }
@@ -137,7 +138,7 @@ impl SmartsPattern {
     pub(crate) fn find_in_context(
         &self,
         context: &ast::MolContext<'_>,
-        root: Option<AtomId>,
+        root: Option<NodeId>,
     ) -> Vec<SmartsMatch> {
         matcher::find_in_context(&self.graph, context, root, None)
     }
@@ -148,7 +149,7 @@ impl SmartsPattern {
     }
 
     /// Project a match into `{atom_map_label -> molecule atom}`.
-    pub fn mapped(&self, m: &SmartsMatch) -> HashMap<u32, AtomId> {
+    pub fn mapped(&self, m: &SmartsMatch) -> HashMap<u32, NodeId> {
         m.atoms
             .iter()
             .enumerate()

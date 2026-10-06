@@ -17,14 +17,15 @@ use crate::op::types::{F, Mat3, Vec3};
 use crate::op::vec3::{add, normalize, scale, sub};
 use crate::spatial::geometry::CenterError;
 use crate::system::molgraph::MolGraph;
-use crate::system::port::{PortId, PortKind};
+use crate::system::molgraph::RelationId;
+use crate::system::port::PortKind;
 
 /// One bond of a site: the template port the copy joins through and the
 /// position of the partner site (Å).
 #[derive(Debug, Clone, Copy)]
 pub struct SiteLink {
     /// The template port this bond uses.
-    pub port: PortId,
+    pub port: RelationId,
     /// The partner site's position (Å).
     pub toward: Vec3,
 }
@@ -128,7 +129,7 @@ pub struct AxisOrienter;
 struct TemplateGeometry {
     center: Vec3,
     /// Kind and handle position of every port.
-    ports: HashMap<PortId, (PortKind, Vec3)>,
+    ports: HashMap<RelationId, (PortKind, Vec3)>,
     /// The chain frame, when the template has exactly one `<` and one `>`.
     chain: Option<Mat3>,
 }
@@ -333,7 +334,8 @@ mod tests {
     use crate::store::keys;
     use crate::system::atomistic::Atomistic;
     use crate::system::bond::BondNumber;
-    use crate::system::port::{PortId, PortKind};
+    use crate::system::molgraph::RelationId;
+    use crate::system::port::PortKind;
 
     const TOL: f64 = 1e-9;
 
@@ -341,7 +343,7 @@ mod tests {
     /// x = ∓2, and X (0,2,0); masses 1, 1, 1, 1, 4. Centre of mass (0, 1, 0);
     /// chain frame: primary +y, secondary +x. Returns the unit and its
     /// (`<`, `>`) ports.
-    fn chain_unit() -> (Atomistic, PortId, PortId) {
+    fn chain_unit() -> (Atomistic, RelationId, RelationId) {
         let mut f = Atomistic::new();
         let c0 = f.add_atom_xyz("C", -1.0, 0.0, 0.0);
         let c1 = f.add_atom_xyz("C", 1.0, 0.0, 0.0);
@@ -365,7 +367,7 @@ mod tests {
 
     /// Branch unit: a centre C at the origin with three `$` hydrogens at
     /// +x, +y and +z (masses 12, 1, 1, 1). Returns it and its ports.
-    fn branch_unit() -> (Atomistic, Vec<PortId>) {
+    fn branch_unit() -> (Atomistic, Vec<RelationId>) {
         let mut f = Atomistic::new();
         let c = f.add_atom_xyz("C", 0.0, 0.0, 0.0);
         f.set_node(c, keys::MASS, 12.0).expect("mass");

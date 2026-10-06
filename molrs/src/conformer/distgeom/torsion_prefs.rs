@@ -36,7 +36,8 @@
 use std::collections::HashMap;
 
 use molrs::perceive::smarts::{MatchOptions, SmartsPattern};
-use molrs::system::atomistic::{AtomId, Atomistic};
+use molrs::system::atomistic::Atomistic;
+use molrs::system::molgraph::NodeId;
 use molrs::system::molgraph::PropValue;
 
 use super::mol_features::Perceived;
@@ -139,7 +140,7 @@ fn aromatic_working_copy(mol: &Atomistic, p: &Perceived) -> Atomistic {
         .bonds()
         .map(|(bid, b)| (bid, [b.nodes[0], b.nodes[1]]))
         .collect();
-    let idx_of: HashMap<AtomId, usize> = p
+    let idx_of: HashMap<NodeId, usize> = p
         .atom_ids
         .iter()
         .enumerate()
@@ -179,7 +180,7 @@ pub fn assign_with_provenance(mol: &Atomistic, p: &Perceived) -> Vec<AssignedTor
     let work = aromatic_working_copy(mol, p);
     let patterns = compile_all();
 
-    let idx_of: HashMap<AtomId, usize> = p
+    let idx_of: HashMap<NodeId, usize> = p
         .atom_ids
         .iter()
         .enumerate()

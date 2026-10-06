@@ -16,7 +16,8 @@ use std::collections::HashMap;
 
 use molrs::Element;
 use molrs::perceive::rings::{RingInfo, find_rings};
-use molrs::system::atomistic::{AtomId, Atomistic};
+use molrs::system::atomistic::Atomistic;
+use molrs::system::molgraph::NodeId;
 
 /// Coarse hybridization label (subset of RDKit's `Atom::HybridizationType`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,7 +47,7 @@ pub struct PerceivedAtom {
 /// Perceived view of a molecule: index-aligned atoms, neighbour lists, bond
 /// orders, ring info, and aromatic/amide bond flags.
 pub struct Perceived {
-    pub atom_ids: Vec<AtomId>,
+    pub atom_ids: Vec<NodeId>,
     pub atoms: Vec<PerceivedAtom>,
     /// `adj[i]` = sorted neighbour indices of atom `i`.
     pub adj: Vec<Vec<usize>>,
@@ -73,7 +74,7 @@ impl Perceived {
     }
 }
 
-fn element_of(mol: &Atomistic, id: AtomId) -> Element {
+fn element_of(mol: &Atomistic, id: NodeId) -> Element {
     mol.get_atom(id)
         .ok()
         .and_then(|a| a.get_str("element").and_then(Element::by_symbol))
@@ -82,8 +83,8 @@ fn element_of(mol: &Atomistic, id: AtomId) -> Element {
 
 /// Perceive hybridization, aromaticity and conjugation for `mol`.
 pub fn perceive(mol: &Atomistic) -> Perceived {
-    let atom_ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-    let id_to_idx: HashMap<AtomId, usize> = atom_ids
+    let atom_ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
+    let id_to_idx: HashMap<NodeId, usize> = atom_ids
         .iter()
         .enumerate()
         .map(|(i, &id)| (id, i))

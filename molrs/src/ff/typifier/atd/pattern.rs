@@ -20,7 +20,7 @@
 
 use std::collections::HashMap;
 
-use molrs::AtomId;
+use molrs::NodeId;
 
 use super::facts::MolFacts;
 use crate::ff::params::{
@@ -28,7 +28,7 @@ use crate::ff::params::{
 };
 
 /// The `<label>` → atom bindings of one environment match.
-type Labels = HashMap<&'static str, AtomId>;
+type Labels = HashMap<&'static str, NodeId>;
 
 /// The rest of an environment match, run on the labels bound so far.
 type Rest<'a> = dyn FnMut(&mut Labels) -> bool + 'a;
@@ -36,8 +36,8 @@ type Rest<'a> = dyn FnMut(&mut Labels) -> bool + 'a;
 /// One pattern list and where it hangs: the patterns must match distinct
 /// neighbours of `parent`, none of them `prev`.
 struct Siblings {
-    parent: AtomId,
-    prev: Option<AtomId>,
+    parent: NodeId,
+    prev: Option<NodeId>,
     patterns: &'static [AtomPattern],
 }
 
@@ -48,8 +48,8 @@ impl MolFacts {
     /// own top-level property — where a `'` suffix has no bond to speak of.
     pub(super) fn atom_property_matches(
         &self,
-        aid: AtomId,
-        prev: Option<AtomId>,
+        aid: NodeId,
+        prev: Option<NodeId>,
         expr: &PropExpr,
     ) -> bool {
         expr.constraints.iter().all(|constraint| {
@@ -63,8 +63,8 @@ impl MolFacts {
     /// One `[count]PROP['|'']` unit.
     fn atom_property_unit_matches(
         &self,
-        aid: AtomId,
-        prev: Option<AtomId>,
+        aid: NodeId,
+        prev: Option<NodeId>,
         unit: &PropUnit,
     ) -> bool {
         let Ok(i) = self.index_of(aid) else {
@@ -93,7 +93,7 @@ impl MolFacts {
     }
 
     /// Is the bond from `aid` back to `prev` itself of type `prop`?
-    fn bond_to_prev_matches(&self, aid: AtomId, prev: AtomId, prop: AtomProp) -> bool {
+    fn bond_to_prev_matches(&self, aid: NodeId, prev: NodeId, prop: AtomProp) -> bool {
         let Ok(i) = self.index_of(aid) else {
             return false;
         };
@@ -112,7 +112,7 @@ impl MolFacts {
     /// through its second carbon path, not its first.)
     pub(super) fn environment_matches(
         &self,
-        aid: AtomId,
+        aid: NodeId,
         patterns: &'static [AtomPattern],
         env_bonds: Option<&'static [EnvBond]>,
     ) -> bool {
@@ -150,8 +150,8 @@ impl MolFacts {
     /// match. `true` once `rest` accepts some assignment.
     fn match_pattern_list(
         &self,
-        parent: AtomId,
-        prev: Option<AtomId>,
+        parent: NodeId,
+        prev: Option<NodeId>,
         patterns: &'static [AtomPattern],
         labels: &mut Labels,
         rest: &mut Rest<'_>,
@@ -171,7 +171,7 @@ impl MolFacts {
         siblings: &Siblings,
         pos: usize,
         labels: &mut Labels,
-        used: &mut Vec<AtomId>,
+        used: &mut Vec<NodeId>,
         rest: &mut Rest<'_>,
     ) -> bool {
         if pos == siblings.patterns.len() {
@@ -207,8 +207,8 @@ impl MolFacts {
     /// One node of the environment forest, plus its children, then `rest`.
     fn atom_pattern_matches(
         &self,
-        aid: AtomId,
-        prev: AtomId,
+        aid: NodeId,
+        prev: NodeId,
         pattern: &'static AtomPattern,
         labels: &mut Labels,
         rest: &mut Rest<'_>,

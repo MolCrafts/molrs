@@ -12,7 +12,8 @@
 use crate::io::smiles::cgsmiles::ast::CGSmilesIR;
 use crate::io::smiles::cgsmiles::templates::cg_build;
 use crate::io::smiles::error::SmilesError;
-use molrs::system::coarsegrain::{BeadId, CoarseGrain};
+use molrs::system::coarsegrain::CoarseGrain;
+use molrs::system::molgraph::NodeId;
 
 impl CGSmilesIR {
     /// Read the coarsest level, `levels[0]`, as a [`CoarseGrain`].
@@ -82,7 +83,7 @@ impl CGSmilesIR {
         };
 
         let mut cg = CoarseGrain::new();
-        let beads: Vec<BeadId> = level
+        let beads: Vec<NodeId> = level
             .nodes
             .iter()
             .map(|node| cg.add_bead_bare(&node.name))

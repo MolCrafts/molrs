@@ -58,7 +58,7 @@ use molrs::perceive::Perceive;
 use molrs::perceive::bond_type::find_bond_types_from_connectivity;
 use molrs::store::keys;
 use molrs::system::molgraph::PropValue;
-use molrs::{AtomId, Atomistic};
+use molrs::{Atomistic, NodeId};
 
 use self::facts::MolFacts;
 use crate::ff::forcefield::ForceField;
@@ -247,7 +247,7 @@ impl AtdTypifier {
         let bcc = matches!(self.set, AtdParameterSet::Bcc | AtdParameterSet::Abcg2);
         let facts =
             MolFacts::new(perceived, bcc).map_err(|detail| AtdError::Malformed { detail })?;
-        let atom_ids: Vec<AtomId> = perceived.atoms().map(|(aid, _)| aid).collect();
+        let atom_ids: Vec<NodeId> = perceived.atoms().map(|(aid, _)| aid).collect();
 
         // Pass 1 — the table: the first rule that matches each atom.
         let assigned: Vec<&'static AtdRule> = atom_ids
@@ -358,7 +358,7 @@ mod tests {
     /// order — with `stated` bond types (single where it says nothing).
     fn mol2(elements: &[&str], bonds: &[(usize, usize)], stated: &[BondType]) -> Atomistic {
         let mut mol = Atomistic::new();
-        let ids: Vec<AtomId> = elements.iter().map(|e| mol.add_atom_bare(e)).collect();
+        let ids: Vec<NodeId> = elements.iter().map(|e| mol.add_atom_bare(e)).collect();
         for (k, (i, j)) in bonds.iter().enumerate() {
             let b = mol.add_bond(ids[*i], ids[*j]).unwrap();
             mol.set_bond_type(b, stated.get(k).copied().unwrap_or(BondType::Single))

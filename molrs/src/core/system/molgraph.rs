@@ -434,7 +434,7 @@ fn narrow_uint(key: &str, v: Idx) -> Result<I, MolRsError> {
 }
 
 // ---------------------------------------------------------------------------
-// Atom  (dynamic node prop bag — also used for beads via `type Bead = Atom`)
+// Atom  (dynamic node prop bag — the payload of every node, atom or bead)
 // ---------------------------------------------------------------------------
 
 /// A dynamic property bag representing a graph node (an atom or a bead).
@@ -560,18 +560,20 @@ impl IndexMut<&str> for Atom {
     }
 }
 
-/// Alias for coarse-grained usage — same node payload, different prop keys by
-/// convention.
-pub type Bead = Atom;
-
 // ---------------------------------------------------------------------------
 // Key types
 // ---------------------------------------------------------------------------
 
 new_key_type! {
-    /// Stable handle to a node in a [`MolGraph`].
+    /// Stable handle to a node in a [`MolGraph`]: an atom of an
+    /// [`Atomistic`](crate::system::atomistic::Atomistic) and a bead of a
+    /// [`CoarseGrain`](crate::system::coarsegrain::CoarseGrain) alike. It is
+    /// the one name for that handle; there are no per-graph aliases.
     pub struct NodeId;
-    /// Stable handle to a relation (any kind) in a [`MolGraph`].
+    /// Stable handle to a relation (any kind) in a [`MolGraph`]: a bond,
+    /// angle, dihedral, improper or port. The relation's kind says which; it
+    /// is the one name for that handle, as [`Relation`] is the one name for
+    /// the relation itself.
     pub struct RelationId;
 }
 
