@@ -6,22 +6,19 @@
 //! ([`minimize_lbfgs_rms`]). A purely geometric optimizer (e.g. a packer's
 //! torsion Monte Carlo) implements [`Optimizer`] without enabling `ff`.
 //!
-//! The optimizers that minimize a force-field potential
-//! (`ff::potential::Potential`) are gated on `ff`:
-//! `LBFGS` (limited-memory BFGS, the default) and `SoftLbfgs` over a
-//! `SoftSpec`. The dependency points one way — `optimize` consumes `ff`,
-//! never the reverse.
+//! The optimizer that minimizes a force-field potential
+//! (`ff::potential::Potential`), `LBFGS`, is gated on `ff`. It is the one
+//! front door for every potential — a potential that rebuilds its pairs as
+//! the atoms move (`ff::potential::soft::SoftPotential`) does so itself.
+//! The dependency points one way: `optimize` consumes `ff`, never the
+//! reverse.
 
 pub mod lbfgs;
 #[cfg(feature = "ff")]
 mod potential;
-#[cfg(feature = "ff")]
-pub mod soft;
 
 #[cfg(feature = "ff")]
-pub use potential::{LBFGS, SoftLbfgs};
-#[cfg(feature = "ff")]
-pub use soft::SoftSpec;
+pub use potential::LBFGS;
 
 use crate::store::frame::Frame;
 use crate::store::schema::block_names::ATOMS;

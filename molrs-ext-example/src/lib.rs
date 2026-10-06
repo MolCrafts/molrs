@@ -25,9 +25,10 @@
 use std::sync::Arc;
 
 use molrs::ff::ir::{
-    CategorySpec, CompoundForm, Coordinate, Dim, EndpointOrder, IrError, Kernel, LammpsForm, Mix,
-    ParamCols, ParamSpec, Registry, Sample, ScalarForm, SpecialClass, StyleSpec, Value,
+    CategorySpec, Coordinate, Dim, EndpointOrder, IrError, Kernel, LammpsForm, Mix, ParamSpec,
+    Registry, Sample, SpecialClass, StyleSpec, Value,
 };
+use molrs::ff::potential::generic::{CompoundForm, ParamCols, ScalarForm};
 
 /// The numeric column `name` of a batch; the registry checked at build
 /// that every column a form states in its `inputs` is there.

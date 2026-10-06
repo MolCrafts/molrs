@@ -352,7 +352,7 @@ fn coul_style(style_params: &Params) -> Result<(F, F, F), crate::ff::ir::IrError
 /// The `pairs` block is the consumer-built neighbour list (`atomi`/`atomj`/`is_14`)
 /// from `intramolecular_pairs`; 1-2/1-3 are already excluded. Charge-free pair types
 /// are not consulted — this kernel is per-atom
-/// ([`ParamSource::PerInstance`](crate::ff::potential::ParamSource::PerInstance)).
+/// ([`ParamSource::PerInstance`](crate::ff::ir::ParamSource::PerInstance)).
 pub fn pair_coul_cut_ctor(
     style_params: &Params,
     _type_params: &[(&str, &Params)],

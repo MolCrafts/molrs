@@ -24,15 +24,77 @@ use crate::ff::ir::conformance::{self, PROBE_TERMS, Probe, form_id};
 use crate::ff::ir::engine::{Engine, LammpsCodec, LammpsForm};
 use crate::ff::ir::form::FormCodec;
 use crate::ff::ir::{CategorySpec, IrError, StyleSpec, builtin_categories, builtin_styles};
+use crate::ff::potential::KernelRegistry;
 use crate::ff::potential::Member;
 use crate::ff::potential::generic::{
     CompoundForm, CompoundTerms, ScalarBonded, ScalarForm, ScalarPair,
 };
-use crate::ff::potential::registry::{
-    KernelConstructor, KernelRegistry, ParamSource, RowSource, SpecialClass,
-};
 use molrs::store::frame::Frame;
 use molrs::types::F;
+
+// ---------------------------------------------------------------------------
+// Registration vocabulary
+// ---------------------------------------------------------------------------
+
+/// Builds a molecule-bound [`Member`] from a style's params, its per-type
+/// params (`(type_label, params)`), and a typed [`Frame`]. Every kernel
+/// constructor in the crate matches this signature.
+pub type KernelConstructor =
+    fn(&Params, &[(&str, &Params)], &Frame) -> Result<Member, crate::ff::potential::CompileError>;
+
+/// Which `Frame` block decides whether a style has any rows to act on.
+///
+/// `PotentialCompiler::compile` skips a style whose topology is absent — a bond style
+/// with no bonds contributes nothing, and letting the kernel fault on the
+/// missing block instead would be a worse way to say so. Which block that is,
+/// is a property of the **kernel**, not of its category.
+///
+/// PME is the case that proves it: registered under `pair` because that is
+/// where an electrostatic style belongs, it reads per-atom charges and
+/// `exclusions` and never looks at `pairs`. Gated on `pairs`, it was skipped
+/// outright for any system whose caller had not built a pair list — deleting
+/// the entire long-range electrostatics, silently, to exactly zero.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RowSource {
+    /// The category's own topology block: `bonds`, `angles`, `dihedrals`,
+    /// `impropers` or `pairs`. Absent or empty means the style contributes
+    /// nothing.
+    #[default]
+    CategoryBlock,
+    /// The atoms, or rows the kernel finds for itself. Nothing gates it.
+    Atoms,
+}
+
+/// Where a kernel's parameters come from — the question the empty-type-params
+/// guard must ask before it rejects a style with no type rows.
+///
+/// A kernel constructor that binds its type-params as `_tp` (i.e. resolves
+/// nothing from them) **is not a table-driven style**, and must say so by being
+/// registered [`PerInstance`](ParamSource::PerInstance).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParamSource {
+    /// Parameters come from the style's type-definition rows (the `tp` slice).
+    /// A style with no rows resolves nothing, and is an error.
+    TypeRows,
+    /// Parameters are resolved per interaction by the typifier and baked into
+    /// [`Frame`] columns; `tp` is ignored and may legitimately be empty.
+    PerInstance,
+}
+
+/// Which of a force field's special-bonds weight sets scales a pair style.
+///
+/// A force field may scale close van-der-Waals and electrostatic neighbours
+/// differently — Amber uses `1/2` and `1/1.2` — and in molrs those are
+/// separate kernels, so each has to say which set is its own. Declared at
+/// registration rather than guessed from the style's name: a name is a label,
+/// and this is a fact about the physics.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpecialClass {
+    /// Scaled by the force field's van-der-Waals weights.
+    Vdw,
+    /// Scaled by its electrostatic weights.
+    Coulomb,
+}
 
 /// A style's energy written as an expression, compiled.
 ///

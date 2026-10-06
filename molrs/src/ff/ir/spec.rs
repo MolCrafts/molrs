@@ -14,7 +14,7 @@ use crate::ff::forcefield::Params;
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::ir::engine::LammpsForm;
 use crate::ff::ir::{Dim, IrError};
-use crate::ff::potential::registry::{ParamSource, SpecialClass};
+use crate::ff::ir::{ParamSource, SpecialClass};
 use molrs::types::F;
 
 /// A parameter value: a number or a string.
@@ -773,7 +773,7 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
                 p("a_i", "1"),
                 p("g_i", "1"),
                 // MMFF's own default role, neither donor nor acceptor.
-                p("da", "1").default_num(f64::from(crate::ff::mmff::da::DA_NEITHER)),
+                p("da", "1").default_num(f64::from(crate::ff::params::mmff::DA_NEITHER)),
             ])
             .style_params(vec![
                 p("B", "1").default_num(0.2),

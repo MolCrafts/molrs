@@ -59,6 +59,7 @@ use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::params::amber::AMBER_COULOMB;
+use crate::ff::potential::pair::lj_cut::lj_ab_to_sigma_epsilon;
 use crate::io::data::prmtop::parse_flag_sections;
 #[cfg(doc)]
 use crate::io::data::prmtop_tables::amber_phase;
@@ -67,7 +68,6 @@ use crate::io::data::prmtop_tables::{
     chamber_impropers, chamber_urey_bradleys, cmap_terms, decode_torsions, is_chamber,
     one_four_weights, parse_tokens, proper_type_names,
 };
-use crate::math::pair_form::lj_ab_to_sigma_epsilon;
 use molrs::store::type_labels::TypeName;
 
 /// `(sigma_Å, epsilon_kcal_per_mol)` of one LJ entry.

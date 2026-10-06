@@ -4,7 +4,7 @@
 //! accessors mirroring RDKit's `std::equal_range` lookup. No atom typing, charge,
 //! aromaticity or energy logic lives here (the lookup *rules* — equivalence
 //! degradation, ring-context type codes, empirical fallbacks — are an algorithm
-//! and live in `ff::mmff::resolve`).
+//! and live in the MMFF typifier's resolver).
 //!
 //! # Provenance
 //!
@@ -28,7 +28,7 @@
 //! `<ForceField name=…>` attribute. The real MMFF94-vs-MMFF94s delta (11
 //! out-of-plane + 42 torsion rows on delocalised trivalent nitrogen) lives here,
 //! in [`MMFF_OOP_S`] / [`MMFF_TOR_S`], and is selected by
-//! [`MmffVariant`](crate::ff::mmff::MmffVariant). So the two typifier front doors
+//! the typifier's MMFF variant. So the two typifier front doors
 //! read this one table and differ by a name string and a variant — not by a
 //! duplicated copy of the same 199 entries.
 #![allow(clippy::unreadable_literal)]
@@ -51563,8 +51563,8 @@ pub fn mmff_is_arom(atom_type: u8) -> bool {
 /// The `category` is the [`ForceField`](crate::ff::forcefield::ForceField) style
 /// category and `name` is the kernel the registry resolves it to. Five of the
 /// seven carry no per-type rows at all: their parameters are
-/// [`ParamSource::PerInstance`](crate::ff::potential::ParamSource::PerInstance),
-/// resolved per interaction by `ff::mmff::resolve` and baked onto the
+/// [`ParamSource::PerInstance`](crate::ff::ir::ParamSource::PerInstance),
+/// resolved per interaction by the MMFF typifier's resolver and baked onto the
 /// typed Frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MmffStyle {
@@ -51683,6 +51683,44 @@ pub static MMFF_ELE_STYLE: MmffEleStyle = MmffEleStyle {
     delta: 0.05,
     scale14: 0.75,
 };
+
+// ---------------------------------------------------------------------------
+// The `DA` column, as the code a `mmff_vdw` row carries
+// ---------------------------------------------------------------------------
+
+// MMFF's `DA` column (`"D"` / `"A"` / `"-"`) travels on a `mmff_vdw` parameter
+// row as a small integer, because `Params` is a numeric bag. One encoding, three
+// writers (a caller's XML, this table, the typifier) and one reader (the
+// `mmff_vdw` kernel, deciding whether a pair is a hydrogen bond); it is
+// parameter vocabulary, so it lives with the parameters every one of them reads.
+
+/// Neither hydrogen-bond donor nor acceptor (`DA` = `"-"`).
+pub const DA_NEITHER: u8 = 0;
+/// Hydrogen-bond **donor** (`DA` = `"D"`) — polar hydrogen.
+pub const DA_DONOR: u8 = 1;
+/// Hydrogen-bond **acceptor** (`DA` = `"A"`).
+pub const DA_ACCEPTOR: u8 = 2;
+
+/// Encode MMFF's `DA` letter (`"D"` / `"A"` / `"-"`) as the code a `mmff_vdw`
+/// row's `da` param holds. Anything unrecognised is [`DA_NEITHER`], which is
+/// also MMFF's own default for the 80-odd non-hydrogen-bonding types.
+pub(crate) fn encode_da(raw: &str) -> f64 {
+    match raw.as_bytes() {
+        [code] => encode_da_byte(*code),
+        _ => DA_NEITHER.into(),
+    }
+}
+
+/// [`encode_da`] for this table's `da` column, which holds the letter's ASCII
+/// byte ([`MmffVdW::da`], as RDKit stores it).
+pub(crate) fn encode_da_byte(code: u8) -> f64 {
+    match code {
+        b'D' => DA_DONOR,
+        b'A' => DA_ACCEPTOR,
+        _ => DA_NEITHER,
+    }
+    .into()
+}
 
 #[cfg(test)]
 mod tests {

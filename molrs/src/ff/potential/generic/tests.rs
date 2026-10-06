@@ -13,11 +13,8 @@ use std::sync::Arc;
 use ndarray::Array1;
 
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
-use crate::ff::ir::{
-    Dim, Kernel, Mix, ParamCols, ParamSource, ParamSpec, Registry, ScalarForm, SpecialClass,
-    StyleSpec,
-};
-use crate::ff::potential::generic::CompoundForm;
+use crate::ff::ir::{Dim, Kernel, Mix, ParamSource, ParamSpec, Registry, SpecialClass, StyleSpec};
+use crate::ff::potential::generic::{CompoundForm, ParamCols, ScalarForm};
 use crate::ff::potential::geometry::{accumulate_angle_forces, compute_angle};
 use crate::ff::potential::pair::testing::{assert_virial_matches_forces, table_over};
 use crate::ff::potential::{Member, Potential, PotentialCompiler, Potentials};

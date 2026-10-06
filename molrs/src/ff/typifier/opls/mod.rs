@@ -100,7 +100,7 @@ impl OPLSAATypifier {
     /// not declare (naming both) or the overrides form a cycle (naming its
     /// members).
     pub fn from_xml_str(xml: &str) -> Result<Self, String> {
-        let meta = crate::ff::forcefield::xml::read_opls_typing_xml_str(xml)?;
+        let meta = meta::read_typing_xml_str(xml)?;
         layered::Dominance::new(&meta)?;
         let ff = OplsXmlReader::new().read_str(xml)?;
         Ok(Self::new(meta, ff))

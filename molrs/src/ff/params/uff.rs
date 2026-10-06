@@ -2085,8 +2085,6 @@ pub fn params_for_label(label: &str) -> Option<&'static AtomicParams> {
 pub const LAMBDA: f64 = 0.1332;
 /// Bond force-constant prefactor.
 pub const G: f64 = 332.06;
-/// Amide C–N special bond order.
-pub const AMIDE_BOND_ORDER: f64 = 1.41;
 
 #[cfg(test)]
 mod tests {

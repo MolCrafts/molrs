@@ -18,7 +18,8 @@
 use crate::op::vec3::{cross, dot, sub};
 use molrs::system::atomistic::{AtomId, Atomistic};
 
-use super::mol_features::{Hybridization, Perceived};
+use super::mol_features::Perceived;
+use molrs::perceive::Hybridization;
 
 /// Sign of a chiral constraint's signed tetrahedral volume.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

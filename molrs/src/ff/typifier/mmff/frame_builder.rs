@@ -14,7 +14,7 @@
 //! # One resolver, for the numbers AND the labels
 //!
 //! Every number and every type code on this graph comes from
-//! [`crate::ff::mmff::resolve`] — the RDKit-faithful resolver, with the ring rules,
+//! `resolve` — the RDKit-faithful resolver, with the ring rules,
 //! the four-level equivalence degradation and the empirical fallbacks. There used
 //! to be a second classifier (`typifier/mmff/classify.rs`) that produced the
 //! *labels* while the resolver produced the *parameters*, so a single row could
@@ -26,7 +26,7 @@
 //! type 3. It is deleted.
 //!
 //! The labels are only provenance and conflict records — the per-instance
-//! kernels ([`ParamSource::PerInstance`](crate::ff::potential::ParamSource)) read
+//! kernels ([`ParamSource::PerInstance`](crate::ff::ir::ParamSource)) read
 //! Frame *columns*, not type rows — but "only provenance" is not a licence to be
 //! wrong: one label must name one parameter set, or the output force field
 //! refuses the second definition.
@@ -45,10 +45,10 @@ use molrs::store::schema::block_names::{ANGLES, BONDS, DIHEDRALS, IMPROPERS};
 use molrs::system::molgraph::PropValue;
 use molrs::{AtomId, Atomistic};
 
+use super::properties::{MmffMolProperties, MmffVariant};
+use super::resolve as eparams;
+use super::topo::Topo;
 use crate::ff::forcefield::{ForceField, Params};
-use crate::ff::mmff::resolve as eparams;
-use crate::ff::mmff::topo::Topo;
-use crate::ff::mmff::{MmffMolProperties, MmffVariant};
 use crate::ff::typifier::{Annotation, Match};
 
 use super::params::MMFFParams;
@@ -177,7 +177,7 @@ fn build_context<'a>(
     // The RDKit-validated front-end for atom types + MMFF partial charges. Its
     // per-atom index is the molecule's atom iteration order — the same order as
     // `atom_ids`.
-    let props = MmffMolProperties::compute(mol, variant).map_err(|e| e.to_string())?;
+    let props = MmffMolProperties::compute(mol).map_err(|e| e.to_string())?;
 
     let atom_ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
     let idx_of: HashMap<AtomId, usize> = atom_ids
@@ -190,7 +190,7 @@ fn build_context<'a>(
     // below. Aromaticity is *perceived* here — which is precisely the fact the
     // deleted classifier never saw, because it was handed raw bond orders instead.
     let base = Topo::build(mol).map_err(|s| format!("MMFF Topo: {s}"))?;
-    let topo = crate::ff::mmff::aromaticity::set_mmff_aromaticity(&base);
+    let topo = super::aromaticity::set_mmff_aromaticity(&base);
     let types: Vec<u8> = (0..atom_ids.len()).map(|i| props.atom_type(i)).collect();
 
     Ok(MmffContext {

@@ -52,8 +52,9 @@ use molrs::spatial::neighbors::VerletSkin;
 use molrs::types::{F, FNx3, FNx3View, I};
 
 use super::error::MdError;
-use super::pairs::{BondedLists, Comm, SpecialWeights};
+use super::pairs::{BondedLists, Comm};
 use super::types::ForceOutput;
+use molrs::ff::potential::SpecialWeights;
 
 /// What an integrator asks of a force field.
 ///
@@ -605,8 +606,8 @@ mod tests {
     use molrs::spatial::neighbors::{NeighborList, NeighborPolicy};
     use molrs::spatial::simbox::SimBox;
 
-    use super::super::pairs::SpecialWeights;
     use super::*;
+    use molrs::ff::potential::SpecialWeights;
 
     fn cell() -> SimBox {
         SimBox::cube(12.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap()
@@ -1218,7 +1219,7 @@ mod tests {
             .into_iter()
             .map(|(pot, weights)| {
                 let special = weights
-                    .map(|w| SpecialWeights::new(&w.special_weights(&topo)))
+                    .map(|w| w.special_weights(&topo))
                     .unwrap_or_default();
                 (pot, special)
             })

@@ -1,6 +1,7 @@
-//! Energy invariance across the molrs 0.16 convention change.
+//! Energy invariance across molrs 0.16's move to the force-field IR (LAMMPS
+//! standard).
 //!
-//! 0.16 made molrs's force-field convention LAMMPS's: harmonic bonds and
+//! 0.16 made the force-field IR the LAMMPS standard: harmonic bonds and
 //! angles are `k(x − x0)²` (no hidden ½), every angle-valued parameter is in
 //! degrees, and an improper is priced over the dihedral of its stored atom
 //! order. Every reader, writer and typifier moved with the kernels, so the
@@ -10,6 +11,9 @@
 //! at 1e-12 relative — one engine family each: GAFF-, OPLS-AA-, MMFF94- and
 //! UFF-typed acetanilide, and a GROMACS-, OpenMM- and LAMMPS-read field on a
 //! hand-built molecule.
+//!
+//! UFF's bonded terms change because 0.16 labels UFF atoms from RDKit's own
+//! hybridization and conjugation, and so prices them as RDKit does.
 //!
 //! The GAFF improper term changes because 0.16 orders a GAFF improper's
 //! atoms as tleap does (`ff::typifier::gaff::improper`); 0.15.1 put the same
@@ -644,10 +648,20 @@ fn typed_molecules_price_as_in_0_15() {
         "UFF",
         &per_style(ff, &typed_frame(&typed, ff)),
         &[
-            ("angle/uff_angle", 27.68913795225764),
-            ("bond/uff_bond", 4.946564125573773),
-            ("dihedral/uff_torsion", 2.598167385505838),
-            ("improper/uff_inversion", 0.009038965561054917),
+            // UFF's bonded terms changed with its atom labels, which 0.16
+            // takes from RDKit's hybridization and conjugation
+            // (`perceive::hybridizations`): the amide N, carbonyl C and O are
+            // `N_R` / `C_R` / `O_R` (0.15.1: `N_3` / `C_2` / `O_2`), and the
+            // amide C-N is priced at order 1, not 1.41. The four bonded
+            // terms below sum to RDKit 2026.03's UFF energy on the same
+            // geometry without vdW, 16.88335231598728, to 1e-14 (0.15.1:
+            // 35.2429). 0.15.1 had angle 27.68913795225764, bond
+            // 4.946564125573773, torsion 2.598167385505838, inversion
+            // 0.009038965561054917.
+            ("angle/uff_angle", 9.878623919580525),
+            ("bond/uff_bond", 6.018563091754078),
+            ("dihedral/uff_torsion", 0.9769947445298511),
+            ("improper/uff_inversion", 0.009170560122818843),
             ("pair/uff_lj", 25.591590220999027),
         ],
     );

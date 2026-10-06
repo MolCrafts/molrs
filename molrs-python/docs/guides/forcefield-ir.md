@@ -425,7 +425,7 @@ value cell — the same numbers but for float ties on a cell edge).
 
 ### Crossterms and LAMMPS files
 
-- `assign_cmaps(frame, ff)` (Rust `molrs::ff::assign_cmaps`) builds the
+- `assign_cmaps(frame, ff)` (Rust `molrs::ff::typifier::cmap::assign_cmaps`) builds the
   `cmaps` block: five atoms whose dihedrals `(a, b, c, d)` and `(b, c, d, e)`
   are both rows of `dihedrals` (either stored direction) and whose atom types
   equal a cmap row's `itom … mtom` **forward** — never reversed, since
@@ -1373,14 +1373,17 @@ reader refuses `ordering="smirnoff"`).
   IR: [Cross-engine equivalence](#cross-engine-equivalence) and
   [Completeness](#completeness).
 - Each style has a hand-value test against the LAMMPS manual's formula.
-- `ff::convention_invariance` holds the 0.16 energies of GAFF-, OPLS-AA-,
+- `ff::ir_invariance` holds the 0.16 energies of GAFF-, OPLS-AA-,
   MMFF94- and UFF-typed acetanilide and of a GROMACS-, OpenMM- and
   LAMMPS-read hand molecule to the values molrs 0.15.1 computed on the same
   inputs, term by term, at 1e-12 relative; every one matches bit for bit,
   except the OpenMM improper (the fix above), which now equals the
   GROMACS-read value of the same improper and the hand value of OpenMM's
-  formula, and the OpenMM- and GROMACS-read Coulomb terms, which are
-  0.15.1's times the ratio of the engine's own constant to LAMMPS's.
+  formula, the OpenMM- and GROMACS-read Coulomb terms, which are
+  0.15.1's times the ratio of the engine's own constant to LAMMPS's, and
+  UFF's bonded terms, which follow its atom labels to RDKit's (RDKit
+  hybridization and conjugation; amide C–N at order 1) and sum to RDKit
+  2026.03's UFF energy on the same geometry to 1e-14.
 - `cmap charmm` against LAMMPS `fix cmap` (`run 0`, CHARMM36's alanine map
   and its transpose on three crossterms of an eight-atom backbone, files
   written by molrs; `scripts/lammps_cmap_check.sh`): E = −1.25779219530854869

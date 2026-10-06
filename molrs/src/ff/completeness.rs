@@ -19,8 +19,8 @@
 use std::path::Path;
 
 use crate::ff::forcefield::{ForceField, Params};
+use crate::ff::potential::KernelRegistry;
 use crate::ff::potential::PotentialCompiler;
-use crate::ff::potential::registry::KernelRegistry;
 
 /// The columns, in order.
 const COLUMNS: [&str; 9] = [
@@ -616,7 +616,7 @@ const MATRIX: &[Row] = &[
     },
     Row {
         item: "improper mmff_oop",
-        cells: own(&["ff/convention_invariance.rs::typed_molecules_price_as_in_0_15"]),
+        cells: own(&["ff/ir_invariance.rs::typed_molecules_price_as_in_0_15"]),
     },
     Row {
         item: "improper uff_inversion",

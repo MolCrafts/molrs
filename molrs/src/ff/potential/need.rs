@@ -55,7 +55,7 @@ pub(crate) fn style_text<'p>(
 }
 
 /// The per-instance column `key` of `block`: the number a typifier baked
-/// onto every term of a [`PerInstance`](crate::ff::potential::ParamSource::PerInstance)
+/// onto every term of a [`PerInstance`](crate::ff::ir::ParamSource::PerInstance)
 /// style.
 pub(crate) fn instance_col<'b>(
     style: &str,

@@ -1,5 +1,5 @@
-//! Numeric constants shared by the MMFF parameter resolver
-//! ([`crate::ff::mmff::params`]) and the potential kernels
+//! Numeric constants shared by the MMFF typifier's parameter resolver and the
+//! potential kernels
 //! ([`crate::ff::potential`]). Values match RDKit's MMFF94 implementation exactly
 //! — keeping them in one place prevents the rounding drift that creeps in when
 //! the same literal is re-typed per module.

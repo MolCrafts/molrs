@@ -35,7 +35,9 @@ use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::ir::conformance::{Rng, SEED};
 use crate::ff::ir::{Kernel, LammpsForm, ParamKind, ParamSource, Registry, StyleSpec};
 use crate::ff::potential::{Member, PotentialCompiler};
-use crate::ff::{LammpsFfWriter, LammpsWriteOptions};
+use crate::ff::{
+    forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
+};
 use molrs::spatial::neighbors::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
@@ -876,8 +878,8 @@ fn style_cases() -> Vec<(String, String)> {
 /// LAMMPS-read hand molecule, every P4 source's LAMMPS form, and one field
 /// per positional built-in in `real` and `metal`, written with 17 digits.
 fn positional_cases() -> Vec<(String, String)> {
-    use crate::ff::convention_invariance::{LAMMPS_FF, hand_frame};
     use crate::ff::equivalence_check::{engine_form, lammps_include, sources};
+    use crate::ff::ir_invariance::{LAMMPS_FF, hand_frame};
     let mut out = Vec::new();
     let hand = [(
         "hand_lammps",

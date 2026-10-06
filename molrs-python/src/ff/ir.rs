@@ -33,11 +33,11 @@ use pyo3::types::{PyDict, PyList, PyString, PyTuple};
 use molrs::ff::forcefield::DefError;
 use molrs::ff::ir::registry::ExpressionForm;
 use molrs::ff::ir::{
-    self as rir, Arity, CategorySpec, CompoundForm, Coordinate, Dim, EndpointOrder, IrError,
-    Kernel, Mix, ParamCols, ParamKind, ParamSource, ParamSpec, Registry, Sample, ScalarForm,
-    SpecialClass, StyleSpec, Value,
+    self as rir, Arity, CategorySpec, Coordinate, Dim, EndpointOrder, IrError, Kernel, Mix,
+    ParamKind, ParamSource, ParamSpec, Registry, Sample, SpecialClass, StyleSpec, Value,
 };
 use molrs::ff::potential::CompileError;
+use molrs::ff::potential::generic::{CompoundForm, ParamCols, ScalarForm};
 use molrs::types::F;
 
 use crate::md::ErrSlot;
@@ -334,7 +334,7 @@ pub(crate) fn compile_err(e: CompileError) -> PyErr {
 /// definition's own message; else a plain `ValueError`.
 /// A writer's error: its typed refusal (`NoEngineForm`) as the `IrError`
 /// subclass, anything else a `ValueError`.
-pub(crate) fn write_err(e: molrs::ff::WriteError) -> PyErr {
+pub(crate) fn write_err(e: molrs::ff::forcefield::writers::WriteError) -> PyErr {
     match e.ir() {
         Some(refusal) => ir_err(refusal, e.to_string()),
         None => PyValueError::new_err(e.to_string()),

@@ -50,7 +50,9 @@ use crate::ff::forcefield::writers::ForceFieldWriter;
 use crate::ff::forcefield::writers::xml::XmlForceFieldWriter;
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
-use crate::ff::{LammpsFfWriter, LammpsWriteOptions};
+use crate::ff::{
+    forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
+};
 use molrs::io::data::lammps_data::write_lammps_data;
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;

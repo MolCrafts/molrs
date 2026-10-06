@@ -12,7 +12,7 @@ There is no marshalling layer and no `to_dict`/`from_dict` round-trip — a cons
 holds molrs data directly (native) or through a stable handle (FFI). The reference
 Rust consumer, [`molcrafts-molpack`](https://github.com/MolCrafts/molpack), uses the
 native path: its `Cargo.toml` depends on `molcrafts-molrs` directly and operates on
-`molrs::Frame` / `molrs::ff::ForceField` natively.
+`molrs::Frame` / `molrs::ff::forcefield::ForceField` natively.
 
 ---
 

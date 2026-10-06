@@ -136,7 +136,7 @@ use molrs::Element;
 ///
 /// Written by [`find_bond_types`] and read by everything keyed on the antechamber
 /// alphabet — the `ATOMTYPE_*.DEF` rule engine (`ff::typifier::AtdTypifier`)
-/// and the `BCCPARM.DAT` corrector (`ff::typifier::am1bcc::BCCCorrector`);
+/// and the `BCCPARM.DAT` corrections (`ff::charge::BccModel`);
 /// `perceive` sits below `ff` and names no item of it.
 ///
 /// Deliberately **not** [`keys::TYPE`]: that key is the caller's, and holds the
@@ -180,9 +180,7 @@ const FORBIDDEN: u32 = 1000;
 /// The type is always (re)derived from structure: a [`BCC_BOND_TYPE`] already on
 /// the input is read only as an aromaticity *hint* (7, 8 and 10 mark an aromatic
 /// bond), never trusted as an answer. That is what resolves the unresolved
-/// aromatic precursor, type 10, into 7 or 8. To bypass perception entirely and
-/// supply your own types, drive [`crate::ff::typifier::am1bcc::BCCCorrector`]
-/// directly.
+/// aromatic precursor, type 10, into 7 or 8.
 ///
 /// Aromaticity is taken from the graph when it carries any aromatic marking
 /// (a truthy `is_aromatic` bond prop, an `order` of 1.5, or a [`BCC_BOND_TYPE`] of

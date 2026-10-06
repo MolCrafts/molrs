@@ -5,7 +5,7 @@
 //! 2004-2025 Greg Landrum / Sereina Riniker and other RDKit contributors)
 //! wired onto MolCrafts' own constraint generator (`crate::conformer::distgeom`,
 //! ETKDGv3 bounds + experimental torsions + chiral sets) and the MMFF94
-//! force field (`molrs::ff::mmff`) for the second-stage cleanup.
+//! force field (`molrs::ff::typifier::mmff`) for the second-stage cleanup.
 //!
 //! ## Stages (mapped onto the public `StageKind` variants)
 //! 1. `Preprocess`    — optional hydrogen addition.

@@ -2,7 +2,7 @@
 //!
 //! A handle is the owning force field plus the identifiers of one style or
 //! one type, and nothing else: every read and write goes through the one
-//! native [`molrs::ff::ForceField`]. `ForceField.def_style` returns the
+//! native [`molrs::ff::forcefield::ForceField`]. `ForceField.def_style` returns the
 //! category's style handle ([`PyAtomStyle`] … [`PyCmapStyle`], and
 //! [`PyRelationStyle`] for every other category); its ``def_type`` door
 //! defines a type and returns the type's handle ([`PyAtomType`] …

@@ -21,8 +21,10 @@ use super::charmm::tests::{alanine, chain, place};
 use crate::ff::forcefield::writers::ForceFieldWriter;
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::potential::PotentialCompiler;
-use crate::ff::typifier::assign_cmaps;
-use crate::ff::{LammpsFfWriter, LammpsWriteOptions};
+use crate::ff::typifier::cmap::assign_cmaps;
+use crate::ff::{
+    forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
+};
 use molrs::io::data::lammps_data::write_lammps_data;
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;

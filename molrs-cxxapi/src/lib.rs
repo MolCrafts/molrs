@@ -1373,7 +1373,6 @@ fn am1_bcc_assign_frame_from_base(
         .with_mut(|frame| -> Result<Vec<f64>, String> {
             let mol = molrs::Atomistic::from_frame(frame).map_err(|e| e.to_string())?;
             let charges = BccModel::new(set)
-                .map_err(|e| e.to_string())?
                 .correct(&mol, am1_charges)
                 .map_err(|e| e.to_string())?;
 

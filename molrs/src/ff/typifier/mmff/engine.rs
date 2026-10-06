@@ -38,8 +38,8 @@
 
 use std::sync::Arc;
 
+use super::properties::MmffVariant;
 use crate::ff::forcefield::ForceField;
-use crate::ff::mmff::MmffVariant;
 use crate::ff::typifier::Match;
 use molrs::Atomistic;
 
@@ -69,7 +69,7 @@ impl MmffEngine {
     ///
     /// `variant` is supplied by the front door, never by a user.
     pub(super) fn from_xml_str(variant: MmffVariant, xml: &str) -> Result<Self, String> {
-        let params = crate::ff::forcefield::xml::read_mmff_params_xml_str(xml)?;
+        let params = super::params::read_params_xml_str(xml)?;
         let ff = crate::ff::forcefield::xml::read_forcefield_xml_str(xml)?;
         Ok(Self {
             variant,

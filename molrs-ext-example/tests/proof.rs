@@ -33,10 +33,13 @@ use molrs::ff::forcefield::writers::gromacs::GromacsTopFfWriter;
 use molrs::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
 use molrs::ff::ir::{
     Arity, CategorySpec, Coordinate, Dim, EndpointOrder, Engine, FormCodec, IrError, Kernel,
-    LammpsForm, ParamCols, ParamSpec, Refusal, Registry, Sample, ScalarForm, StyleSpec, Value,
+    LammpsForm, ParamSpec, Refusal, Registry, Sample, StyleSpec, Value,
 };
+use molrs::ff::potential::generic::{ParamCols, ScalarForm};
 use molrs::ff::potential::{CompileError, Member, PotentialCompiler, intramolecular_pairs};
-use molrs::ff::{LammpsFfWriter, LammpsWriteOptions};
+use molrs::ff::{
+    forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
+};
 use molrs::io::data::lammps_data::write_lammps_data;
 use molrs::io::mrec::{read_forcefield_file, write_forcefield_file};
 use molrs::spatial::neighbors::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
@@ -559,7 +562,7 @@ fn pair_style_matches_lammps() {
             let (Member::Pair(p), Some(w)) = (&member, weights) else {
                 panic!("a weighted pair member");
             };
-            let special = molrs::md::SpecialWeights::new(&w.special_weights(&topo));
+            let special = w.special_weights(&topo);
             let factor: Vec<f64> = links.iter().map(|&(i, j)| special.weight(i, j)).collect();
             et += p.accumulate_pairs(x, &table, &factor, &mut ft).0;
         }

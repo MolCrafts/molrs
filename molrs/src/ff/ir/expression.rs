@@ -10,8 +10,8 @@ use crate::ff::forcefield::Params;
 use crate::ff::ir::expr::{self, Binding, Compiled, ExprError, Geometry};
 use crate::ff::ir::registry::{ExpressionForm, ExpressionKernel};
 use crate::ff::ir::{CategorySpec, Coordinate, Dim, IrError, Mix, ParamKind, ParamSpec, StyleSpec};
+use crate::ff::ir::{ParamSource, SpecialClass};
 use crate::ff::potential::generic::{CompoundForm, ParamCols, ScalarForm};
-use crate::ff::potential::registry::{ParamSource, SpecialClass};
 use molrs::types::F;
 
 /// Members an indexed family binds in an expression: `k1 … k16`. A table

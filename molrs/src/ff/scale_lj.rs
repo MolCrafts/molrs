@@ -1,4 +1,5 @@
-//! CL&Pol SAPT-derived Lennard-Jones scaling.
+//! CL&Pol SAPT-derived Lennard-Jones scaling: a force field in, its `pair`
+//! epsilon (and optionally sigma) scaled per fragment pair out.
 
 use std::collections::HashMap;
 use std::fmt;

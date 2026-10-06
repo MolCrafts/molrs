@@ -53,16 +53,22 @@
 #![allow(clippy::type_complexity)]
 
 use crate::ff::forcefield::ForceField;
-use crate::ff::mmff::MmffVariant;
 use crate::ff::typifier::{Match, Typifier};
 use molrs::Atomistic;
+use properties::MmffVariant;
 
 use engine::MmffEngine;
 
+mod aromaticity;
+mod atomtype;
+mod charges;
 mod embedded;
 mod engine;
-pub(crate) mod frame_builder;
-pub mod params;
+mod frame_builder;
+mod params;
+mod properties;
+mod resolve;
+mod topo;
 
 #[cfg(test)]
 mod tests;

@@ -53,7 +53,7 @@ use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyDict, PyList, PyMapping, PyString, PySuper, PyTuple, PyType};
 
-use molrs::ff::ForceField;
+use molrs::ff::forcefield::ForceField;
 use molrs::ff::potential::{Member, PotentialCompiler, Potentials};
 use molrs::ff::typifier::ElementTypifier;
 use molrs::ff::typifier::mmff::{MMFF94STypifier, MMFF94Typifier};
@@ -553,7 +553,7 @@ impl From<OptReport> for PyOptReport {
 #[pyclass(name = "TypedPotentials", module = "molrs.ff", subclass)]
 pub struct PyTypedPotentials {
     /// Taken by the integrator that consumes it; `None` afterwards.
-    pub(crate) members: Option<Vec<(Member, molrs::md::SpecialWeights)>>,
+    pub(crate) members: Option<Vec<(Member, molrs::ff::potential::SpecialWeights)>>,
 }
 
 #[pymethods]
@@ -663,7 +663,7 @@ pub struct PyFragmentScaling {
     polarizable: bool,
 }
 
-impl From<PyFragmentScaling> for molrs::ff::FragmentScaling {
+impl From<PyFragmentScaling> for molrs::ff::scale_lj::FragmentScaling {
     fn from(value: PyFragmentScaling) -> Self {
         Self {
             name: value.name,
@@ -675,8 +675,8 @@ impl From<PyFragmentScaling> for molrs::ff::FragmentScaling {
     }
 }
 
-impl From<molrs::ff::FragmentScaling> for PyFragmentScaling {
-    fn from(value: molrs::ff::FragmentScaling) -> Self {
+impl From<molrs::ff::scale_lj::FragmentScaling> for PyFragmentScaling {
+    fn from(value: molrs::ff::scale_lj::FragmentScaling) -> Self {
         Self {
             name: value.name,
             q: value.q,
@@ -713,7 +713,8 @@ pub fn compute_k_ij_py(
     fr_j: PyRef<'_, PyFragmentScaling>,
     r: f64,
 ) -> PyResult<f64> {
-    molrs::ff::compute_k_ij(&fr_i.clone().into(), &fr_j.clone().into(), r).map_err(py_value_err)
+    molrs::ff::scale_lj::compute_k_ij(&fr_i.clone().into(), &fr_j.clone().into(), r)
+        .map_err(py_value_err)
 }
 
 /// Return the compiled-in CL&Pol fragment table.
@@ -741,7 +742,7 @@ pub fn scale_lj_py(
         let name = label.extract::<String>()?;
         let (atom_types, coords, masses) =
             value.extract::<(Vec<String>, Vec<[f64; 3]>, Vec<f64>)>()?;
-        native_fragments.push(molrs::ff::FragmentAtoms {
+        native_fragments.push(molrs::ff::scale_lj::FragmentAtoms {
             name,
             atom_types,
             coords,
@@ -759,13 +760,14 @@ pub fn scale_lj_py(
         scaling = molrs::ff::scale_lj::builtin_fragment_scaling();
     }
 
-    let inner = molrs::ff::scale_lj(&ff.borrow().inner, &native_fragments, &scaling, scale_sigma)
-        .map_err(|error| match error {
-        molrs::ff::ScaleLjError::MissingFragment(name) => {
-            PyKeyError::new_err(format!("no scaling data for fragment '{name}'"))
-        }
-        other => py_value_err(other),
-    })?;
+    let inner =
+        molrs::ff::scale_lj::scale_lj(&ff.borrow().inner, &native_fragments, &scaling, scale_sigma)
+            .map_err(|error| match error {
+                molrs::ff::scale_lj::ScaleLjError::MissingFragment(name) => {
+                    PyKeyError::new_err(format!("no scaling data for fragment '{name}'"))
+                }
+                other => py_value_err(other),
+            })?;
     PyForceField::from_core(py, inner)
 }
 
@@ -1315,7 +1317,7 @@ impl PyElementTypifier {
 #[pyfunction]
 #[pyo3(name = "read_forcefield_xml")]
 pub fn read_forcefield_xml_py(path: PathBuf) -> PyResult<PyForceField> {
-    let forcefield = molrs::ff::read_forcefield_xml(path_str(&path)?)
+    let forcefield = molrs::ff::forcefield::xml::read_forcefield_xml(path_str(&path)?)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
     Ok(PyForceField { inner: forcefield })
 }
@@ -1860,7 +1862,7 @@ impl PyPotentialCompiler {
             .into_iter()
             .map(|(pot, weights)| {
                 let special = weights
-                    .map(|w| molrs::md::SpecialWeights::new(&w.special_weights(&topo)))
+                    .map(|w| w.special_weights(&topo))
                     .unwrap_or_default();
                 (pot, special)
             })
@@ -1915,8 +1917,8 @@ impl PyPotentialCompiler {
 #[pyfunction]
 #[pyo3(name = "read_opls_xml")]
 pub fn read_opls_xml_py(path: PathBuf) -> PyResult<PyForceField> {
-    use molrs::ff::ForceFieldReader;
-    let forcefield = molrs::ff::OplsXmlReader::new()
+    use molrs::ff::forcefield::readers::ForceFieldReader;
+    let forcefield = molrs::ff::forcefield::readers::opls::OplsXmlReader::new()
         .read(path_str(&path)?)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
@@ -1955,8 +1957,8 @@ pub fn read_opls_xml_py(path: PathBuf) -> PyResult<PyForceField> {
 #[pyfunction]
 #[pyo3(name = "read_lammps_forcefield")]
 pub fn read_lammps_forcefield_py(path: PathBuf) -> PyResult<PyForceField> {
-    use molrs::ff::ForceFieldReader;
-    let forcefield = molrs::ff::LammpsFfReader::new()
+    use molrs::ff::forcefield::readers::ForceFieldReader;
+    let forcefield = molrs::ff::forcefield::readers::lammps::LammpsFfReader::new()
         .read(path_str(&path)?)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
@@ -1971,8 +1973,8 @@ pub fn read_lammps_forcefield_py(path: PathBuf) -> PyResult<PyForceField> {
 #[pyfunction]
 #[pyo3(name = "read_amber_prmtop_ff")]
 pub fn read_amber_prmtop_ff_py(path: PathBuf) -> PyResult<PyForceField> {
-    let forcefield =
-        molrs::ff::read_amber_prmtop_ff(path).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let forcefield = molrs::ff::forcefield::readers::prmtop::read_amber_prmtop_ff(path)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
 }
 
@@ -2013,7 +2015,7 @@ pub fn read_gromacs_top_ff_py(
     include_dirs: Vec<PathBuf>,
     skip_directives: Vec<String>,
 ) -> PyResult<PyForceField> {
-    use molrs::ff::ForceFieldReader;
+    use molrs::ff::forcefield::readers::ForceFieldReader;
     let forcefield = gromacs_top_ff_reader(include, &include_dirs, &skip_directives)
         .read(path_str(&path)?)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
@@ -2063,9 +2065,9 @@ fn gromacs_top_ff_reader(
     include: bool,
     include_dirs: &[PathBuf],
     skip_directives: &[String],
-) -> molrs::ff::GromacsTopFfReader {
+) -> molrs::ff::forcefield::readers::gromacs::GromacsTopFfReader {
     let reader = include_dirs.iter().fold(
-        molrs::ff::GromacsTopFfReader::new().with_include(include),
+        molrs::ff::forcefield::readers::gromacs::GromacsTopFfReader::new().with_include(include),
         |reader, dir| reader.with_include_dir(dir),
     );
     skip_directives
@@ -2089,8 +2091,8 @@ pub fn write_gromacs_top_ff_py(
     forcefield: &PyForceField,
     precision: usize,
 ) -> PyResult<()> {
-    use molrs::ff::ForceFieldWriter;
-    molrs::ff::GromacsTopFfWriter::new()
+    use molrs::ff::forcefield::writers::ForceFieldWriter;
+    molrs::ff::forcefield::writers::gromacs::GromacsTopFfWriter::new()
         .with_precision(precision)
         .write(&forcefield.inner, path_str(&path)?)
         .map_err(crate::ff::ir::write_err)
@@ -2105,7 +2107,7 @@ pub fn write_gromacs_top_ff_py(
 #[pyfunction]
 #[pyo3(name = "write_amber_frcmod", signature = (path, forcefield))]
 pub fn write_amber_frcmod_py(path: PathBuf, forcefield: &PyForceField) -> PyResult<()> {
-    molrs::ff::write_amber_frcmod(path_str(&path)?, &forcefield.inner)
+    molrs::ff::forcefield::writers::frcmod::write_amber_frcmod(path_str(&path)?, &forcefield.inner)
         .map_err(crate::ff::ir::write_err)
 }
 
@@ -2135,8 +2137,12 @@ pub fn write_forcefield_xml_py(
     forcefield: &PyForceField,
     precision: Option<usize>,
 ) -> PyResult<()> {
-    molrs::ff::write_forcefield_xml(path_str(&path)?, &forcefield.inner, precision)
-        .map_err(crate::ff::ir::write_err)
+    molrs::ff::forcefield::writers::xml::write_forcefield_xml(
+        path_str(&path)?,
+        &forcefield.inner,
+        precision,
+    )
+    .map_err(crate::ff::ir::write_err)
 }
 
 /// Parse LAMMPS data-file ``* Coeffs`` sections into a :class:`ForceField`.
@@ -2168,8 +2174,8 @@ pub fn read_lammps_data_coeffs_py(
     dihedral_labels: Option<std::collections::HashMap<u32, String>>,
     improper_labels: Option<std::collections::HashMap<u32, String>>,
 ) -> PyResult<PyForceField> {
-    use molrs::ff::LammpsFfReader;
     use molrs::ff::forcefield::lammps_units::parse_style;
+    use molrs::ff::forcefield::readers::lammps::LammpsFfReader;
     use molrs::ff::forcefield::readers::lammps::LammpsTypeLabelMaps;
     use std::collections::BTreeMap;
 
@@ -2278,7 +2284,10 @@ pub fn write_lammps_forcefield_py(
     cmap_file: Option<String>,
 ) -> PyResult<()> {
     use molrs::ff::forcefield::lammps_units::parse_style;
-    use molrs::ff::{ForceFieldWriter, LammpsFfWriter, LammpsWriteOptions};
+    use molrs::ff::{
+        forcefield::writers::ForceFieldWriter, forcefield::writers::lammps::LammpsFfWriter,
+        forcefield::writers::lammps::LammpsWriteOptions,
+    };
     use molrs::store::type_labels::TypeLabels;
     let units = parse_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
     frame
@@ -2332,7 +2341,10 @@ pub fn write_lammps_forcefield_str_py(
     cmap_file: Option<String>,
 ) -> PyResult<String> {
     use molrs::ff::forcefield::lammps_units::parse_style;
-    use molrs::ff::{ForceFieldWriter, LammpsFfWriter, LammpsWriteOptions};
+    use molrs::ff::{
+        forcefield::writers::ForceFieldWriter, forcefield::writers::lammps::LammpsFfWriter,
+        forcefield::writers::lammps::LammpsWriteOptions,
+    };
     use molrs::store::type_labels::TypeLabels;
     let units = parse_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
     frame
@@ -2382,7 +2394,10 @@ pub fn write_lammps_data_coeffs_py(
     units: &str,
 ) -> PyResult<String> {
     use molrs::ff::forcefield::lammps_units::parse_style;
-    use molrs::ff::{LammpsFfWriter, LammpsWriteOptions};
+    use molrs::ff::{
+        forcefield::writers::lammps::LammpsFfWriter,
+        forcefield::writers::lammps::LammpsWriteOptions,
+    };
     use molrs::store::type_labels::TypeLabels;
     let units = parse_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
     frame
@@ -2423,7 +2438,7 @@ pub fn write_lammps_data_coeffs_py(
 #[pyo3(name = "assign_cmaps")]
 pub fn assign_cmaps_py(frame: &PyFrame, forcefield: &PyForceField) -> PyResult<usize> {
     frame
-        .with_frame_mut(|core| molrs::ff::assign_cmaps(core, &forcefield.inner))?
+        .with_frame_mut(|core| molrs::ff::typifier::cmap::assign_cmaps(core, &forcefield.inner))?
         .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
@@ -2441,7 +2456,7 @@ pub fn assign_cmaps_py(frame: &PyFrame, forcefield: &PyForceField) -> PyResult<u
 pub fn read_lammps_cmap_py(path: PathBuf) -> PyResult<PyForceField> {
     let text = std::fs::read_to_string(&path)
         .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("{}: {e}", path.display())))?;
-    let forcefield = molrs::ff::LammpsFfReader::new()
+    let forcefield = molrs::ff::forcefield::readers::lammps::LammpsFfReader::new()
         .read_cmap_str(&text)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
@@ -2474,7 +2489,10 @@ pub fn write_lammps_cmap_py(
     units: &str,
 ) -> PyResult<()> {
     use molrs::ff::forcefield::lammps_units::parse_style;
-    use molrs::ff::{LammpsFfWriter, LammpsWriteOptions};
+    use molrs::ff::{
+        forcefield::writers::lammps::LammpsFfWriter,
+        forcefield::writers::lammps::LammpsWriteOptions,
+    };
     use molrs::store::type_labels::TypeLabels;
     let units = parse_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
     let labels = frame

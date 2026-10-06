@@ -25,7 +25,9 @@ use crate::ff::forcefield::readers::prmtop::AmberPrmtopFfReader;
 use crate::ff::forcefield::writers::ForceFieldWriter;
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
-use crate::ff::{LammpsFfWriter, LammpsWriteOptions};
+use crate::ff::{
+    forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
+};
 use molrs::io::data::inpcrd::read_amber_inpcrd_from_reader;
 use molrs::io::data::lammps_data::write_lammps_data;
 use molrs::io::data::prmtop::read_amber_prmtop_from_reader;

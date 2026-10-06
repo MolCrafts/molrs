@@ -20,8 +20,8 @@
 // mirroring the C++ `for (i = 0; i < atomRings.size(); ++i)` structure.
 #![allow(clippy::needless_range_loop)]
 
-use super::hybrid::{Hyb, hybridization};
 use super::topo::{BondOrder, Topo};
+use molrs::perceive::Hybridization;
 
 /// Run MMFF aromaticity perception, returning an updated snapshot.
 pub(crate) fn set_mmff_aromaticity(input: &Topo) -> Topo {
@@ -101,7 +101,7 @@ pub(crate) fn set_mmff_aromaticity(input: &Topo) -> Topo {
             for &a in &ring {
                 arom_bit[a] = true;
                 let atno = topo.atno[a];
-                if (atno == 6 || atno == 7) && hybridization(&topo, a) != Hyb::Sp2 {
+                if (atno == 6 || atno == 7) && topo.hybridization[a] != Hybridization::Sp2 {
                     can_be_aromatic = false;
                 }
             }

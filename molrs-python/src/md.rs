@@ -304,7 +304,7 @@ impl Potential for SubclassPotential {
 /// which kernel is which and how its close neighbours are scaled — because
 /// `PotentialCompiler::compile_typed` decided it. Anything else is one member
 /// that scales nothing.
-pub(crate) type Members = Vec<(Member, molrs::md::SpecialWeights)>;
+pub(crate) type Members = Vec<(Member, molrs::ff::potential::SpecialWeights)>;
 
 /// Move the Rust potential out of any exposed potential class.
 ///
@@ -323,7 +323,10 @@ pub(crate) fn take_members(obj: &Bound<'_, PyAny>) -> PyResult<(Members, Vec<Err
         return Ok((members, vec![crate::ff::ir::kernel_err_slot()]));
     }
     let (pot, slots) = take_potential(obj)?;
-    Ok((vec![(pot, molrs::md::SpecialWeights::default())], slots))
+    Ok((
+        vec![(pot, molrs::ff::potential::SpecialWeights::default())],
+        slots,
+    ))
 }
 
 pub(crate) fn take_potential(obj: &Bound<'_, PyAny>) -> PyResult<(Member, Vec<ErrSlot>)> {

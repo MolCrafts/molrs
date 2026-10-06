@@ -326,7 +326,7 @@ impl Perceive {
     /// `-pl` path-length cap.
     ///
     /// Perception stops at the classes: the class-mean itself is
-    /// [`equivalence::average_charges`], an explicit step the charge model calls,
+    /// a charge-model step (`ff::charge`), taken by a model that declares it,
     /// because whether to average is a property of the charge model (only
     /// `bcc` / `abcg2` / `resp` default to `-eq 1`) and not of the graph.
     ///

@@ -6,12 +6,13 @@ use std::sync::Arc;
 
 use crate::ff::forcefield::{DefError, ForceField, Params, StyleDefs};
 use crate::ff::ir::{
-    Arity, CategorySpec, CompoundForm, Coordinate, Dim, EndpointOrder, ExpressionForm,
-    ExpressionKernel, IrError, Kernel, Mix, ParamCols, ParamKind, ParamSpec, Registry, RowSource,
-    Sample, ScalarForm, SpecialClass, StyleSpec, Value, builtin_categories, builtin_styles,
+    Arity, CategorySpec, Coordinate, Dim, EndpointOrder, ExpressionForm, ExpressionKernel, IrError,
+    Kernel, Mix, ParamKind, ParamSpec, Registry, RowSource, Sample, SpecialClass, StyleSpec, Value,
+    builtin_categories, builtin_styles, register_style,
 };
 use crate::ff::potential::bond::harmonic::bond_harmonic_ctor;
-use crate::ff::potential::{CompileError, KernelRegistry, PotentialCompiler, register_kernel};
+use crate::ff::potential::generic::{CompoundForm, ParamCols, ScalarForm};
+use crate::ff::potential::{CompileError, KernelRegistry, PotentialCompiler};
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::types::{F, Idx};
@@ -222,9 +223,12 @@ fn a_builtin_is_sealed_and_an_identical_restatement_is_a_no_op() {
         r.unregister_style("bond", "harmonic"),
         Err(IrError::Sealed { .. })
     ));
-    // The global registry seals them too, through the old shim.
+    // The global registry seals them too.
     assert!(matches!(
-        register_kernel("bond", "harmonic", bond_harmonic_ctor),
+        register_style(
+            StyleSpec::new("bond", "harmonic"),
+            Some(Kernel::ctor(bond_harmonic_ctor))
+        ),
         Err(IrError::Sealed { .. })
     ));
     // A built-in category likewise.

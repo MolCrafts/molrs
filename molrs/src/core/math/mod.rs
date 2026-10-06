@@ -1,11 +1,10 @@
 //! Special functions and physics numerics: complex arithmetic, spherical
-//! harmonics, Wigner symbols, the pair-potential forms and the virial.
+//! harmonics, Wigner symbols and the virial.
 //!
 //! The pure 3×3 linear algebra and the symmetric eigensolvers live in
 //! [`crate::op::linalg`]; the vector kernels in [`crate::op::vec3`].
 
 pub mod complex;
-pub mod pair_form;
 pub mod spherical_harmonics;
 pub mod virial;
 pub mod wigner3j;

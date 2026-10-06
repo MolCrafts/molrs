@@ -25,8 +25,9 @@
 use std::collections::HashMap;
 
 use super::matrix::BoundsMatrix;
-use super::mol_features::{Hybridization, Perceived};
-use super::uff;
+use super::mol_features::{Perceived, PerceivedAtom};
+use crate::ff::typifier::uff::{atom_label, bond_rest_length as uff_rest_length};
+use molrs::perceive::Hybridization;
 
 const DIST12_DELTA: f64 = 0.01;
 const DIST13_TOL: f64 = 0.04;
@@ -246,41 +247,64 @@ fn is_larger_sp2(p: &Perceived, i: usize) -> bool {
         && p.rings.is_atom_in_ring(p.atom_ids[i])
 }
 
+/// The bond order RDKit's rest-length formula uses: 1.5 for an aromatic
+/// bond, else the graph's integral order (`Bond::getBondTypeAsDouble`). An
+/// amide C–N is not special-cased: RDKit 2026.03's `set12Bounds` gives
+/// acetanilide's C(=O)–N the order-1 `C_R`–`N_R` length, 1.4222 Å.
+fn effective_bond_order(order: f64, aromatic: bool) -> f64 {
+    if aromatic { 1.5 } else { order }
+}
+
+/// The 1-2 bound: the UFF rest length when both atoms have a UFF type
+/// ([`uff_rest_length`]), else RDKit's untyped fallback `(vw1 + vw2) / 2`.
+fn bond_rest_length(a: &PerceivedAtom, b: &PerceivedAtom, order: f64) -> f64 {
+    let label = |x: &PerceivedAtom| {
+        atom_label(
+            x.element.symbol(),
+            x.hybridization,
+            x.aromatic || x.conjugated,
+            x.total_valence,
+        )
+    };
+    match (label(a), label(b)) {
+        (Some(la), Some(lb)) if order > 0.0 => uff_rest_length(&la, &lb, order),
+        _ => None,
+    }
+    .unwrap_or_else(|| 0.5 * (rvdw(a.element.z()) + rvdw(b.element.z())))
+}
+
+/// Van der Waals radius (Å) as RDKit's `PeriodicTable::getRvdw` gives it.
+///
+/// These differ from [`molrs::Element::vdw_radius`] (Bondi-style): RDKit ships
+/// its own table in `atomic_data`, and `setLowerBoundVDW` / `set15Bounds`
+/// depend on the exact values, so they are transcribed here.
+fn rvdw(z: u8) -> f64 {
+    match z {
+        1 => 1.2,
+        5 => 1.8,
+        6 => 1.7,
+        7 => 1.6,
+        8 => 1.55,
+        9 => 1.5,
+        14 => 2.1,
+        15 => 1.95,
+        16 => 1.8,
+        17 => 1.8,
+        35 => 1.9,
+        53 => 2.1,
+        // RDKit default for unlisted elements is 2.0.
+        _ => 2.0,
+    }
+}
+
 fn set_12_bounds(p: &Perceived, bi: &BondIndex, comp: &mut Computed, mmat: &mut BoundsMatrix) {
     for (bid, b) in bi.bonds.iter().enumerate() {
-        let amide = is_amide_bond(p, b.a, b.b);
-        let eff = uff::effective_bond_order(b.order, b.aromatic, amide);
-        let (bl, _found) = uff::bond_rest_length(&p.atoms[b.a], &p.atoms[b.b], eff);
+        let eff = effective_bond_order(b.order, b.aromatic);
+        let bl = bond_rest_length(&p.atoms[b.a], &p.atoms[b.b], eff);
         comp.bond_lengths[bid] = bl;
         mmat.set_upper(b.a, b.b, bl + DIST12_DELTA);
         mmat.set_lower(b.a, b.b, bl - DIST12_DELTA);
     }
-}
-
-/// Detect an amide / ester-type C-N or C-O single bond where C bears a
-/// carbonyl: RDKit applies UFF `amideBondOrder = 1.41` to amide C-N bonds.
-fn is_amide_bond(p: &Perceived, a: usize, b: usize) -> bool {
-    let order = p.bond_order(a, b);
-    if (order - 1.0).abs() > 0.01 {
-        return false;
-    }
-    let pair = [(a, b), (b, a)];
-    for &(c_idx, n_idx) in &pair {
-        if p.atoms[c_idx].element.symbol() == "C" && p.atoms[n_idx].element.symbol() == "N" {
-            // C must have a double-bonded O/N neighbour (carbonyl).
-            for &nb in &p.adj[c_idx] {
-                if nb == n_idx {
-                    continue;
-                }
-                let o = p.bond_order(c_idx, nb);
-                let sym = p.atoms[nb].element.symbol();
-                if o >= 1.75 && (sym == "O" || sym == "N") {
-                    return true;
-                }
-            }
-        }
-    }
-    false
 }
 
 /// Ring angle for an sp2/sp3 atom in a ring of `ring_size` (RDKit `_setRingAngle`).
@@ -419,7 +443,9 @@ fn set_13_bounds(p: &Perceived, bi: &BondIndex, comp: &mut Computed, mmat: &mut 
                         Hybridization::Sp => pi,
                         Hybridization::Sp2 => 2.0 * pi / 3.0,
                         Hybridization::Sp3 => 109.5 * pi / 180.0,
-                        Hybridization::Other => 120.0 * pi / 180.0,
+                        Hybridization::Sp3d => 105.0 * pi / 180.0,
+                        Hybridization::Sp3d2 => 90.0 * pi / 180.0,
+                        Hybridization::S | Hybridization::Other => 120.0 * pi / 180.0,
                     };
                     if deg <= 4 {
                         set_13_helper(p, bi, comp, mmat, aid1, aid2, aid3, angle);
@@ -1012,8 +1038,8 @@ fn set_15_helper(
                     dl = c15_trans_cis(d4, d3, d2, d1, ang34, ang23, ang12) - DIST15_TOL;
                     du = c15_trans_trans(d4, d3, d2, d1, ang34, ang23, ang12) + DIST15_TOL;
                 } else {
-                    let vw1 = uff::rvdw(p.atoms[aid1].element.z());
-                    let vw5 = uff::rvdw(p.atoms[aid5].element.z());
+                    let vw1 = rvdw(p.atoms[aid1].element.z());
+                    let vw5 = rvdw(p.atoms[aid5].element.z());
                     dl = VDW_SCALE_15 * (vw1 + vw5);
                     du = -1.0;
                 }
@@ -1050,9 +1076,9 @@ fn set_15_bounds(
 fn set_lower_bound_vdw(p: &Perceived, mmat: &mut BoundsMatrix, topo: &[Vec<f64>]) {
     let n = p.atoms.len();
     for i in 1..n {
-        let vw1 = uff::rvdw(p.atoms[i].element.z());
+        let vw1 = rvdw(p.atoms[i].element.z());
         for j in 0..i {
-            let vw2 = uff::rvdw(p.atoms[j].element.z());
+            let vw2 = rvdw(p.atoms[j].element.z());
             if mmat.lower(i, j) < DIST12_DELTA {
                 let d = topo[i][j];
                 let lb = if d == 4.0 {
@@ -1090,4 +1116,48 @@ pub fn set_topol_bounds(p: &Perceived) -> BoundsMatrix {
     set_15_bounds(p, &bi, &mut comp, &mut mmat, &topo);
     set_lower_bound_vdw(p, &mut mmat, &topo);
     mmat
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use molrs::Element;
+
+    fn atom(element: Element, hybridization: Hybridization) -> PerceivedAtom {
+        PerceivedAtom {
+            element,
+            hybridization,
+            aromatic: false,
+            conjugated: false,
+            degree: 0,
+            total_valence: 0.0,
+        }
+    }
+
+    #[test]
+    fn effective_order_is_one_and_a_half_when_aromatic() {
+        assert_eq!(effective_bond_order(1.0, true), 1.5);
+        assert_eq!(effective_bond_order(2.0, false), 2.0);
+    }
+
+    /// A typed bond gets the UFF rest length; one with no usable order gets
+    /// RDKit's van der Waals guess.
+    #[test]
+    fn a_typed_bond_gets_the_uff_rest_length_and_an_unordered_one_the_vdw_guess() {
+        let c = atom(Element::C, Hybridization::Sp3);
+        let r_cc = bond_rest_length(&c, &c, 1.0);
+        assert_eq!(Some(r_cc), uff_rest_length("C_3", "C_3", 1.0));
+        assert!(
+            bond_rest_length(&c, &c, 2.0) < r_cc,
+            "a double bond is shorter"
+        );
+        assert_eq!(bond_rest_length(&c, &c, 0.0), 0.5 * (rvdw(6) + rvdw(6)));
+    }
+
+    #[test]
+    fn rvdw_is_rdkits_table_with_a_two_angstrom_default() {
+        assert_eq!(rvdw(6), 1.7);
+        assert_eq!(rvdw(1), 1.2);
+        assert_eq!(rvdw(26), 2.0);
+    }
 }

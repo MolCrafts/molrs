@@ -17,10 +17,10 @@
 //!   cross rows, `cutoff`, special-bonds weights and the virial.
 //! * [`CompoundTerms`] — an N-body term over any block.
 
-pub mod bonded;
-pub mod compound;
-pub mod form;
-pub mod pair;
+mod bonded;
+mod compound;
+mod form;
+mod pair;
 #[cfg(test)]
 mod tests;
 
@@ -35,8 +35,8 @@ use std::ops::Range;
 use ndarray::{ArrayD, Axis, Slice};
 
 use crate::ff::forcefield::Params;
+use crate::ff::ir::ParamSource;
 use crate::ff::ir::{IrError, ParamKind, ParamSpec, StyleSpec};
-use crate::ff::potential::registry::ParamSource;
 use molrs::store::frame::Frame;
 use molrs::store::schema::consts::ENDPOINTS;
 use molrs::types::F;

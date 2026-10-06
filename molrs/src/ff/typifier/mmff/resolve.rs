@@ -12,7 +12,7 @@
 //!
 //! What makes these rules irreducible to a `(type_i, type_j, …) → params` table
 //! — and hence the reason MMFF's kernels are
-//! [`ParamSource::PerInstance`](crate::ff::potential::ParamSource::PerInstance):
+//! [`ParamSource::PerInstance`](crate::ff::ir::ParamSource::PerInstance):
 //!
 //! * the type codes depend on **topology**, not just atom types — aromaticity
 //!   ([`bond_type`]), 3-/4-membered-ring membership ([`angle_type`]),
@@ -46,9 +46,9 @@
 //! is used, with the typifier front end. Naming it `params.rs` was the same
 //! mistake in the other direction, and it is corrected here: it *resolves*.
 
-use crate::ff::mmff::MmffVariant;
-use crate::ff::mmff::charges::mmff_bond_type;
-use crate::ff::mmff::topo::{BondOrder, Topo};
+use super::charges::mmff_bond_type;
+use super::properties::MmffVariant;
+use super::topo::{BondOrder, Topo};
 use crate::ff::params::mmff::{
     mmff_angle, mmff_bndk, mmff_bond, mmff_cov_rad_pau_ele, mmff_def, mmff_dfsb,
     mmff_herschbach_laurie, mmff_oop, mmff_oop_s, mmff_prop, mmff_stbn, mmff_tor, mmff_tor_s,

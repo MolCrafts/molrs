@@ -46,7 +46,7 @@
 use std::ffi::{CStr, CString, c_char};
 
 use molrs::ff::forcefield::{DefError, Params, Style};
-use molrs::ff::{ForceField, SpecialBonds};
+use molrs::ff::{forcefield::ForceField, forcefield::SpecialBonds};
 use serde_json::{Value, json};
 
 use crate::error::{self, MolrsStatus};
@@ -993,8 +993,8 @@ impl<'a> JsonObject<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::ff::SpecialBonds;
     use molrs::ff::forcefield::Params;
+    use molrs::ff::forcefield::SpecialBonds;
 
     fn round_trip(ff: &ForceField) -> ForceField {
         ff_from_json_string(&ff_to_json_string(ff)).unwrap()

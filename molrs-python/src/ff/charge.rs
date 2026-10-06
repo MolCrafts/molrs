@@ -141,7 +141,7 @@ impl PyBccModel {
     #[new]
     #[pyo3(signature = (*, parameter_set))]
     fn new(parameter_set: &str) -> PyResult<Self> {
-        let inner = BccModel::new(bcc_set_from_name(parameter_set)?).map_err(charge_err)?;
+        let inner = BccModel::new(bcc_set_from_name(parameter_set)?);
         Ok(Self { inner })
     }
 

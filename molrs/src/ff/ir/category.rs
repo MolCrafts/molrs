@@ -182,7 +182,7 @@ pub fn builtin_categories() -> Vec<CategorySpec> {
         // A pair's terms are the pairs of atoms a neighbour search (or a
         // compiled `pairs` list) turns up, keyed on `atoms.type`.
         CategorySpec::new("pair", SelfOrPair, ATOMS, C::Distance, Unordered),
-        CategorySpec::new("cmap", Exact(5), CMAPS, C::Compound, Reversible),
+        CategorySpec::new("cmap", Exact(5), CMAPS, C::Compound, Ordered),
         CategorySpec::new("constraint", Exact(2), CONSTRAINTS, C::None, Reversible),
         // `atomi` is the core, `atomj` its Drude particle.
         CategorySpec::new("drude", Exact(2), DRUDES, C::Distance, Ordered),

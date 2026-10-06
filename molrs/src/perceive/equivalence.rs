@@ -77,9 +77,9 @@
 //!
 //! # Averaging is a separate step
 //!
-//! Perception ends at the classes. [`average_charges`] applies the class-mean and
-//! is called explicitly by the charge model, so that a model which does *not* want
-//! equivalencing simply never calls it.
+//! Perception ends at the classes. The class-mean is a charge-model step
+//! (`ff::charge`), applied by a model that declares it wants equivalencing, so a
+//! model which does *not* simply never asks for the classes.
 //!
 //! # Provenance
 //!
@@ -128,8 +128,8 @@ const MAX_CON: usize = 6;
 /// antechamber's `-eq`: which topological-equivalence model to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EquivalenceLevel {
-    /// `-eq 0` — no equivalencing. Every atom is its own class, so
-    /// [`average_charges`] is a no-op.
+    /// `-eq 0` — no equivalencing. Every atom is its own class, so averaging
+    /// over the classes is a no-op.
     Off,
     /// `-eq 1` — equivalence by atomic paths. The default for AM1-BCC, ABCG2 and
     /// RESP, and the level pinned to the antechamber oracle.
@@ -319,64 +319,6 @@ pub fn find_equivalence_classes(mol: &Atomistic, opts: EquivalenceOptions) -> Eq
     }
 
     EquivalenceClasses { class_of, members }
-}
-
-/// Replace each atom's charge with the mean over its equivalence class.
-///
-/// The step antechamber runs between AM1 and BCC (`charge.c::bccharge()`): a plain
-/// arithmetic mean, broadcast to every member, which conserves the class's total
-/// charge and hence the molecule's. Singleton classes are left alone, so a
-/// partition from [`EquivalenceLevel::Off`] leaves every charge bit-for-bit intact.
-///
-/// Charge lives under [`keys::CHARGE`]. A class in which any member carries no
-/// charge is skipped whole — averaging over a subset of a class would invent a
-/// value that is neither the atom's nor its class's.
-///
-/// # Arguments
-///
-/// * `mol` — the molecule whose [`keys::CHARGE`] props to average; left untouched.
-/// * `classes` — the partition from [`find_equivalence_classes`].
-///
-/// # Returns
-///
-/// A clone of `mol` carrying the averaged charges.
-///
-/// # Precision
-///
-/// The mean is a rounded `f64`, so broadcasting it perturbs the molecule's total
-/// charge by a few ULP (measured over the 37-molecule antechamber oracle: at most
-/// `3.7e-16` e). That residual is inherent to an arithmetic mean — no assignment
-/// that gives every class member *the same* `f64` can also reproduce the total
-/// bit-for-bit — and antechamber carries the identical residual. Nothing is
-/// renormalized away here, because renormalizing would be a divergence from
-/// antechamber, not a fix.
-pub fn average_charges(mol: &Atomistic, classes: &EquivalenceClasses) -> Atomistic {
-    let mut out = mol.clone();
-    for members in classes.classes() {
-        if members.len() < 2 {
-            continue;
-        }
-        let mut sum = 0.0;
-        let mut complete = true;
-        for id in members {
-            match mol.get_atom(*id).ok().and_then(|a| a.get_f64(keys::CHARGE)) {
-                // Accumulated in graph atom order, as `bccharge()` accumulates it.
-                Some(q) => sum += q,
-                None => {
-                    complete = false;
-                    break;
-                }
-            }
-        }
-        if !complete {
-            continue;
-        }
-        let mean = sum / members.len() as f64;
-        for id in members {
-            let _ = out.set_atom(*id, keys::CHARGE, mean);
-        }
-    }
-    out
 }
 
 /// One rotation-restricted torsion (antechamber's `GEOM`), used at `-eq 2`.
@@ -696,20 +638,7 @@ mod tests {
         let classes = find_equivalence_classes(&mol, EquivalenceOptions::off());
         assert_eq!(classes.n_classes(), mol.n_atoms());
 
-        let averaged = average_charges(&mol, &classes);
-        for (id, atom) in mol.atoms() {
-            let before = atom.get_f64(keys::CHARGE).expect("charge");
-            let after = averaged
-                .get_atom(id)
-                .expect("atom")
-                .get_f64(keys::CHARGE)
-                .expect("charge");
-            assert_eq!(
-                before.to_bits(),
-                after.to_bits(),
-                "-eq 0 must not touch charges"
-            );
-        }
+        assert!(classes.classes().all(|c| c.len() == 1));
     }
 
     #[test]
@@ -825,47 +754,5 @@ mod tests {
         // alone: the three methyl H, the hydroxyl H all collapse into one class.
         assert!(capped.n_classes() < uncapped.n_classes());
         assert_eq!(capped.n_classes(), 3, "C | O | every H");
-    }
-
-    #[test]
-    fn averaging_broadcasts_the_class_mean() {
-        let mol = methanol();
-        let ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-        let classes = find_equivalence_classes(&mol, EquivalenceOptions::bcc());
-        let averaged = average_charges(&mol, &classes);
-
-        let q = |id: AtomId| {
-            averaged
-                .get_atom(id)
-                .expect("atom")
-                .get_f64(keys::CHARGE)
-                .expect("charge")
-        };
-        // (0.053 + 0.098 + 0.053) / 3
-        for h in [ids[2], ids[3], ids[4]] {
-            assert!((q(h) - 0.068).abs() < 1e-12, "methyl H averaged to 0.068");
-        }
-        assert_eq!(q(ids[2]).to_bits(), q(ids[3]).to_bits());
-        assert_eq!(q(ids[2]).to_bits(), q(ids[4]).to_bits());
-        // Untouched: singleton classes.
-        assert_eq!(q(ids[5]).to_bits(), 0.195_f64.to_bits());
-    }
-
-    #[test]
-    fn a_class_with_a_chargeless_member_is_left_alone() {
-        let mut mol = methanol();
-        let ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-        mol.clear_atom(ids[3], keys::CHARGE).expect("clear");
-        let classes = find_equivalence_classes(&mol, EquivalenceOptions::bcc());
-        let averaged = average_charges(&mol, &classes);
-        let q = |id: AtomId| {
-            averaged
-                .get_atom(id)
-                .expect("atom")
-                .get_f64(keys::CHARGE)
-                .expect("charge")
-        };
-        assert_eq!(q(ids[2]).to_bits(), 0.053_f64.to_bits());
-        assert_eq!(q(ids[4]).to_bits(), 0.053_f64.to_bits());
     }
 }

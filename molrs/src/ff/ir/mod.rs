@@ -12,8 +12,9 @@
 //!   with a [`Dim`], its style parameters, where its numbers come from — and
 //!   a [`Kernel`] in one of three tiers: an expression
 //!   ([`ExpressionKernel`]), a batch form of one coordinate or of the atoms'
-//!   positions ([`ScalarForm`], [`CompoundForm`], built into the generic
-//!   kernels of [`crate::ff::potential::generic`]), or a constructor that
+//!   positions ([`ScalarForm`](crate::ff::potential::generic::ScalarForm),
+//!   [`CompoundForm`](crate::ff::potential::generic::CompoundForm), built into
+//!   the generic kernels of [`crate::ff::potential::generic`]), or a constructor that
 //!   builds a whole kernel (every built-in kernel; `dihedral rb` is a
 //!   built-in priced by its expression alone);
 //! * the [`Registry`] refuses anything that does not conform
@@ -34,7 +35,8 @@
 //!
 //! ```
 //! use std::sync::Arc;
-//! use molrs::ff::ir::{Dim, Kernel, ParamCols, ParamSpec, Registry, ScalarForm, StyleSpec};
+//! use molrs::ff::ir::{Dim, Kernel, ParamSpec, Registry, StyleSpec};
+//! use molrs::ff::potential::generic::{ParamCols, ScalarForm};
 //!
 //! /// LAMMPS `bond_style harmonic`, as a third party would write it.
 //! struct Harmonic;
@@ -76,14 +78,11 @@ pub use error::IrError;
 pub use expression::{CompiledExpression, compile_expression};
 pub use form::{FormCodec, FormFn, Metric, Refusal, Residual, TypeParams, TypeResidual};
 pub use registry::{
-    ExpressionCompiler, ExpressionForm, ExpressionKernel, Kernel, Registry, RegistryRef,
-    register_category, register_engine_form, register_form, register_style,
-    set_expression_compiler, unregister_style, with_global,
+    ExpressionCompiler, ExpressionForm, ExpressionKernel, Kernel, KernelConstructor, ParamSource,
+    Registry, RegistryRef, RowSource, SpecialClass, register_category, register_engine_form,
+    register_form, register_style, set_expression_compiler, unregister_style, with_global,
 };
 pub use spec::{Mix, ParamKind, ParamSpec, Sample, StyleSpec, Value, builtin_styles};
-
-pub use crate::ff::potential::generic::{CompoundForm, ParamCols, ScalarForm};
-pub use crate::ff::potential::registry::{KernelConstructor, ParamSource, RowSource, SpecialClass};
 
 #[cfg(test)]
 mod builtin_conformance;

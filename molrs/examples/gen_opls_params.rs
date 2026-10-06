@@ -21,7 +21,10 @@ use std::process::ExitCode;
 
 use molrs::ff::forcefield::torsion::{MultiHarmonic, Opls};
 use molrs::ff::forcefield::{Params, StyleDefs};
-use molrs::ff::{ForceField, ForceFieldReader, GromacsTopFfReader};
+use molrs::ff::{
+    forcefield::ForceField, forcefield::readers::ForceFieldReader,
+    forcefield::readers::gromacs::GromacsTopFfReader,
+};
 use molrs::units::constants::COULOMB_REAL;
 use sha2::{Digest, Sha256};
 

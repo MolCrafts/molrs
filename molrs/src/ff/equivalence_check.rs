@@ -70,7 +70,10 @@ use crate::ff::forcefield::writers::xml::XmlForceFieldWriter;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
 use crate::ff::potential::pair::exceptions;
 use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
-use crate::ff::{LammpsFfReader, LammpsFfWriter, LammpsWriteOptions};
+use crate::ff::{
+    forcefield::readers::lammps::LammpsFfReader, forcefield::writers::lammps::LammpsFfWriter,
+    forcefield::writers::lammps::LammpsWriteOptions,
+};
 use molrs::io::data::gro::read_gro_frame;
 use molrs::io::data::inpcrd::read_amber_inpcrd_from_reader;
 use molrs::io::data::lammps_data::{read_lammps_data, write_lammps_data};

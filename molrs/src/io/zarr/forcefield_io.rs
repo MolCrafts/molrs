@@ -24,10 +24,10 @@ use zarrs::storage::{
     WritableStorageTraits,
 };
 
+use super::record_io::V1Upgrade;
 use crate::io::zarr::frame_io::{join_path, node_prefix, read_block_group, write_block_group};
 use molrs::MolRsError;
 use molrs::store::forcefield_section::ForceFieldSection;
-use molrs::store::record_v1::V1Upgrade;
 
 /// The record's root group holding its force field.
 pub(crate) const FORCEFIELD_GROUP: &str = "forcefield";
@@ -86,6 +86,7 @@ where
 /// # Errors
 ///
 /// A block group that fails to decode.
+#[cfg(feature = "ff")]
 pub(crate) fn read_stored_forcefield_if_present<S>(
     store: &Arc<S>,
     prefix: &str,

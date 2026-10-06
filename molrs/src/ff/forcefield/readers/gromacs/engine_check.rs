@@ -46,7 +46,9 @@ use crate::ff::forcefield::writers::ForceFieldWriter;
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::potential::PotentialCompiler;
 use crate::ff::potential::pair::exceptions;
-use crate::ff::{LammpsFfWriter, LammpsWriteOptions};
+use crate::ff::{
+    forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
+};
 use molrs::io::data::gro::read_gro_frame;
 use molrs::io::data::lammps_data::write_lammps_data;
 use molrs::store::frame::Frame;

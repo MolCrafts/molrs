@@ -13,7 +13,7 @@
 //! (1992)); each field is an `f64` in Rust `Display` form:
 //!
 //! - bond `{ti}-{tj}@{bo}` — the effective bond order used (`1`, `1.5`, `2`,
-//!   `3`, `1.41` for an amide C–N);
+//!   `3`; an amide C–N is `1`, as RDKit prices it);
 //! - angle `{ti}-{tj}-{tk}@{bo_ij}_{bo_jk}_{code}` — `code` is the RDKit
 //!   coordination code before the effective map (`0`, `1`, `2`, `3`, `4`,
 //!   `30`, `35`, `40`, `45`), which fixes `theta0` and the Fourier/order form;
@@ -57,9 +57,10 @@ use molrs::system::molgraph::PropValue;
 use molrs::{AtomId, Atomistic, Element};
 
 use crate::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
-use crate::ff::params::uff::{AMIDE_BOND_ORDER, AtomicParams, G, LAMBDA, params_for_label};
+use crate::ff::params::uff::{AtomicParams, G, LAMBDA, params_for_label};
 use crate::ff::typifier::{Annotation, Match, Typifier};
 use crate::perceive::rings::find_rings;
+use crate::perceive::{Hybridization, conjugated_atoms, hybridizations};
 
 /// Universal Force Field typifier (Rappé 1992, RDKit-aligned).
 pub struct UFFTypifier {
@@ -236,7 +237,10 @@ impl Typifier for UFFTypifier {
         // Hybridization + labels
         let mut labels: Vec<String> = Vec::with_capacity(n);
         let mut params: Vec<&'static AtomicParams> = Vec::with_capacity(n);
-        let mut hyb: Vec<Hyb> = Vec::with_capacity(n);
+        // RDKit's hybridization and conjugation (`perceive`): what its
+        // `getAtomLabel`, angle coordination codes and torsion rules read.
+        let hyb = hybridizations(graph);
+        let conjugated = conjugated_atoms(graph);
         let mut z: Vec<u8> = Vec::with_capacity(n);
         let mut m = Match::default();
         let mut lj_used: HashSet<String> = HashSet::new();
@@ -245,18 +249,14 @@ impl Typifier for UFFTypifier {
             let el = element_of(graph, aid);
             z.push(el.z());
             let degree = adj[i].len();
-            let mut max_order = 1.0_f64;
-            let mut valence = 0.0_f64;
-            for &j in &adj[i] {
-                let o = order_of(i, j);
-                max_order = max_order.max(o);
-                valence += o;
-            }
-            let h = classify_hyb(el.symbol(), degree, max_order, aromatic_atom[i]);
-            hyb.push(h);
-            let label = atom_label(el.symbol(), h, aromatic_atom[i], valence).ok_or_else(|| {
-                format!("UFF: no atom type for {} (degree={degree})", el.symbol())
-            })?;
+            let valence: f64 = adj[i].iter().map(|&j| order_of(i, j)).sum();
+            let label = atom_label(
+                el.symbol(),
+                hyb[i],
+                aromatic_atom[i] || conjugated[i],
+                valence,
+            )
+            .ok_or_else(|| format!("UFF: no atom type for {} (degree={degree})", el.symbol()))?;
             let p = params_for_label(&label)
                 .ok_or_else(|| format!("UFF: parameters missing for label '{label}'"))?;
             if lj_used.insert(label.clone()) {
@@ -290,10 +290,6 @@ impl Typifier for UFFTypifier {
             if aromatic_atom[i] && aromatic_atom[j] && (bo - 1.5).abs() < 0.2 {
                 bo = 1.5;
             }
-            // amide C-N: N next to carbonyl-ish C_R/C_2 with O
-            if is_amide_cn(graph, &atom_ids, &id_to_idx, &adj, &labels, i, j) {
-                bo = AMIDE_BOND_ORDER;
-            }
             let (p, q) = if reads_reversed(&[&labels[i], &labels[j]], &[bo], &[bo]) {
                 (j, i)
             } else {
@@ -319,13 +315,13 @@ impl Typifier for UFFTypifier {
             .collect();
         for [i, j, k] in angles {
             let mut order = match hyb[j] {
-                Hyb::Sp => 1u8,
-                Hyb::Sp2 => 3,
-                Hyb::Sp3D2 => 4,
+                Hybridization::Sp => 1u8,
+                Hybridization::Sp2 => 3,
+                Hybridization::Sp3d2 => 4,
                 _ => 0,
             };
             // Ring hacks for sp2 (RDKit Builder) — simplified
-            if hyb[j] == Hyb::Sp2 {
+            if hyb[j] == Hybridization::Sp2 {
                 if in_ring3(atom_ids[j]) {
                     order = if in_ring3(atom_ids[i]) && in_ring3(atom_ids[k]) {
                         35
@@ -400,12 +396,12 @@ impl Typifier for UFFTypifier {
         for [i, j, k, l] in dihedrals {
             // Only SP2/SP3 central atoms (RDKit); any other centre gets a zero
             // barrier — energy 0.
-            let (v, order, cos_term) = if !matches!(hyb[j], Hyb::Sp2 | Hyb::Sp3)
-                || !matches!(hyb[k], Hyb::Sp2 | Hyb::Sp3)
+            let (v, order, cos_term) = if !matches!(hyb[j], Hybridization::Sp2 | Hybridization::Sp3)
+                || !matches!(hyb[k], Hybridization::Sp2 | Hybridization::Sp3)
             {
                 (0.0, 3u8, -1.0)
             } else {
-                let end_sp2 = hyb[i] == Hyb::Sp2 || hyb[l] == Hyb::Sp2;
+                let end_sp2 = hyb[i] == Hybridization::Sp2 || hyb[l] == Hybridization::Sp2;
                 let (v, order, cos_term) = torsion_params(
                     order_of(j, k),
                     z[j],
@@ -456,12 +452,14 @@ impl Typifier for UFFTypifier {
             if !eligible {
                 continue;
             }
-            if matches!(zc, 6..=8) && hyb[j] != Hyb::Sp2 {
+            if matches!(zc, 6..=8) && hyb[j] != Hybridization::Sp2 {
                 continue;
             }
             let nbrs = [adj[j][0], adj[j][1], adj[j][2]];
-            let is_c_bound_to_sp2_o =
-                zc == 6 && nbrs.iter().any(|&o| z[o] == 8 && hyb[o] == Hyb::Sp2);
+            let is_c_bound_to_sp2_o = zc == 6
+                && nbrs
+                    .iter()
+                    .any(|&o| z[o] == 8 && hyb[o] == Hybridization::Sp2);
             let (k_inv, c0, c1, c2) = inversion_coeffs(zc, is_c_bound_to_sp2_o);
             // three permutations: centre j first, outer atoms in RDKit order
             let perms = [
@@ -504,15 +502,6 @@ impl Typifier for UFFTypifier {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Hyb {
-    Sp,
-    Sp2,
-    Sp3,
-    Sp3D2,
-    Other,
-}
-
 fn element_of(mol: &Atomistic, id: AtomId) -> Element {
     mol.get_atom(id)
         .ok()
@@ -520,35 +509,19 @@ fn element_of(mol: &Atomistic, id: AtomId) -> Element {
         .unwrap_or(Element::C)
 }
 
-fn classify_hyb(sym: &str, degree: usize, max_order: f64, aromatic: bool) -> Hyb {
-    // Halogens / alkali-like terminals: no hybridization suffix in RDKit.
-    if matches!(sym, "H" | "F" | "Cl" | "Br" | "I" | "At") {
-        return Hyb::Other;
-    }
-    if aromatic {
-        return Hyb::Sp2;
-    }
-    // Hypervalent / high coordination (SP3D / SP3D2 heuristics).
-    if degree >= 6 {
-        return Hyb::Sp3D2;
-    }
-    if degree == 5 {
-        return Hyb::Sp3D2; // treated as '5'/'6' by label builder
-    }
-    if max_order >= 2.9 {
-        return Hyb::Sp;
-    }
-    if max_order >= 1.9 || (degree == 3 && max_order > 1.4) {
-        return Hyb::Sp2;
-    }
-    if degree <= 4 {
-        return Hyb::Sp3;
-    }
-    Hyb::Other
-}
-
-/// RDKit `Tools::getAtomLabel` + `addAtomChargeFlags` (full default UFF set).
-fn atom_label(sym: &str, h: Hyb, aromatic: bool, valence: f64) -> Option<String> {
+/// The UFF atom label of an atom: RDKit `Tools::getAtomLabel` +
+/// `addAtomChargeFlags` (the full default UFF set).
+///
+/// `hyb` is RDKit's hybridization ([`hybridizations`]); `resonant` is whether
+/// the atom is aromatic or carries a conjugated bond, which turns an sp²
+/// C / N / O / S into its `_R` type. Shared with the ETKDG bounds builder,
+/// whose 1-2 bounds are UFF rest lengths.
+pub(crate) fn atom_label(
+    sym: &str,
+    hyb: Hybridization,
+    resonant: bool,
+    valence: f64,
+) -> Option<String> {
     let z = Element::by_symbol(sym)?.z();
     let mut key = sym.to_string();
     if key.len() == 1 {
@@ -571,33 +544,29 @@ fn atom_label(sym: &str, h: Hyb, aromatic: bool, valence: f64) -> Option<String>
             // Hg → Hg1
             key.push('1');
         } else {
-            match h {
-                Hyb::Sp => key.push('1'),
-                Hyb::Sp2 => {
-                    if aromatic && matches!(z, 6 | 7 | 8 | 16) {
+            match hyb {
+                Hybridization::Sp => key.push('1'),
+                Hybridization::Sp2 => {
+                    if resonant && matches!(z, 6 | 7 | 8 | 16) {
                         key.push('R');
                     } else {
                         key.push('2');
                     }
                 }
-                Hyb::Sp3 => key.push('3'),
-                Hyb::Sp3D2 if adj_degree_hint(valence) >= 6 => key.push('6'),
-                Hyb::Sp3D2 => key.push('5'),
-                Hyb::Other => {}
+                Hybridization::Sp3 => key.push('3'),
+                Hybridization::Sp3d => key.push('5'),
+                Hybridization::Sp3d2 => key.push('6'),
+                Hybridization::S | Hybridization::Other => {}
             }
         }
     }
 
-    add_charge_flags(&mut key, z, valence, h);
+    add_charge_flags(&mut key, z, valence, hyb);
     Some(key)
 }
 
-fn adj_degree_hint(valence: f64) -> usize {
-    valence.round().max(0.0) as usize
-}
-
 /// RDKit `addAtomChargeFlags` (tolerateChargeMismatch = true for robustness).
-fn add_charge_flags(key: &mut String, z: u8, valence: f64, hyb: Hyb) {
+fn add_charge_flags(key: &mut String, z: u8, valence: f64, hyb: Hybridization) {
     let v = valence.round() as i32;
     let push = |k: &mut String, s: &str| k.push_str(s);
 
@@ -625,7 +594,7 @@ fn add_charge_flags(key: &mut String, z: u8, valence: f64, hyb: Hyb) {
         }
         16 => {
             // S — skip charge flag for SP2 (S_2 / S_R)
-            if hyb != Hyb::Sp2 {
+            if hyb != Hybridization::Sp2 {
                 match v {
                     2 => push(key, "+2"),
                     4 => push(key, "+4"),
@@ -680,6 +649,16 @@ fn inversion_coeffs(at2_z: u8, is_c_bound_to_o: bool) -> (f64, f64, f64, f64) {
     (res, c0, c1, c2)
 }
 
+/// UFF's bond rest length between two labelled atoms (RDKit
+/// `calcBondRestLength`), or `None` when a label has no UFF row.
+///
+/// The ETKDG bounds builder sets its 1-2 bounds from this, as RDKit's does.
+#[cfg(any(feature = "conformer", test))]
+pub(crate) fn bond_rest_length(label_i: &str, label_j: &str, bond_order: f64) -> Option<f64> {
+    let (pi, pj) = (params_for_label(label_i)?, params_for_label(label_j)?);
+    Some(bond_rest_and_k(pi, pj, bond_order).0)
+}
+
 fn bond_rest_and_k(p1: &AtomicParams, p2: &AtomicParams, bond_order: f64) -> (f64, f64) {
     let bo = bond_order.max(1e-6);
     let (ri, rj) = (p1.r1, p2.r1);
@@ -729,13 +708,13 @@ fn torsion_params(
     bo23: f64,
     z2: u8,
     z3: u8,
-    h2: Hyb,
-    h3: Hyb,
+    h2: Hybridization,
+    h3: Hybridization,
     p2: &AtomicParams,
     p3: &AtomicParams,
     end_sp2: bool,
 ) -> (f64, u8, f64) {
-    if h2 == Hyb::Sp3 && h3 == Hyb::Sp3 {
+    if h2 == Hybridization::Sp3 && h3 == Hybridization::Sp3 {
         let mut v = (p2.v1 * p3.v1).sqrt();
         let mut order = 3u8;
         let mut cos_term = -1.0;
@@ -748,7 +727,7 @@ fn torsion_params(
         }
         return (v, order, cos_term);
     }
-    if h2 == Hyb::Sp2 && h3 == Hyb::Sp2 {
+    if h2 == Hybridization::Sp2 && h3 == Hybridization::Sp2 {
         let v = 5.0 * (p2.u1 * p3.u1).sqrt() * (1.0 + 4.18 * bo23.ln());
         return (v, 2, 1.0);
     }
@@ -757,8 +736,8 @@ fn torsion_params(
     let mut order = 6u8;
     let mut cos_term = 1.0;
     if (bo23 - 1.0).abs() < 1e-6 {
-        if (h2 == Hyb::Sp3 && is_group6(z2) && !is_group6(z3))
-            || (h3 == Hyb::Sp3 && is_group6(z3) && !is_group6(z2))
+        if (h2 == Hybridization::Sp3 && is_group6(z2) && !is_group6(z3))
+            || (h3 == Hybridization::Sp3 && is_group6(z3) && !is_group6(z2))
         {
             v = 5.0 * (p2.u1 * p3.u1).sqrt() * (1.0 + 4.18 * bo23.ln());
             order = 2;
@@ -770,32 +749,6 @@ fn torsion_params(
         }
     }
     (v, order, cos_term)
-}
-
-fn is_amide_cn(
-    mol: &Atomistic,
-    atom_ids: &[AtomId],
-    id_to_idx: &HashMap<AtomId, usize>,
-    adj: &[Vec<usize>],
-    labels: &[String],
-    i: usize,
-    j: usize,
-) -> bool {
-    let c_idx = if labels[i].starts_with('C') && labels[j].starts_with('N') {
-        i
-    } else if labels[j].starts_with('C') && labels[i].starts_with('N') {
-        j
-    } else {
-        return false;
-    };
-    let _ = (mol, atom_ids, id_to_idx);
-    // C attached to carbonyl O
-    for &o in &adj[c_idx] {
-        if labels[o] == "O_2" || labels[o] == "O_1" {
-            return true;
-        }
-    }
-    false
 }
 
 #[cfg(test)]
@@ -1090,17 +1043,20 @@ mod tests {
         assert!(n > 0, "P and the ring carbons are inversion centres");
     }
 
-    /// The amide C-N bond uses UFF's amide bond order 1.41, and the label
-    /// carries it in the qualifier.
+    /// The amide C-N bond is priced at its graph order, 1, as RDKit prices it:
+    /// RDKit 2026.03's `GetUFFBondStretchParams` gives N-methylacetamide's
+    /// C(=O)-N the `C_R`-`N_R` rest length at order 1 (1.4222 Å), and its
+    /// ETKDG 1-2 bound is that length too. UFF's `amideBondOrder` (1.41)
+    /// enters neither.
     #[test]
-    fn typing_n_methylacetamide_amide_bond_label_ends_in_amide_order() {
+    fn typing_n_methylacetamide_prices_the_amide_bond_at_order_one() {
         let (mol, c_co, n) = n_methylacetamide();
         let (typed, _) = uff_typed(&mol);
         let (_, label) = link_labels(&typed, "bonds")
             .into_iter()
             .find(|(nodes, _)| nodes.contains(&c_co) && nodes.contains(&n))
             .expect("the amide C-N bond");
-        assert!(label.ends_with("@1.41"), "{label}");
+        assert_eq!(label, "C_R-N_R@1", "{label}");
     }
 
     /// Every label has the documented qualifier: bonds `@{bo}`; angles
@@ -1204,5 +1160,46 @@ mod tests {
         assert!((r_co - (c.r1 + o.r1 - r_en)).abs() < 1e-12);
         assert!(r_co < c.r1 + o.r1);
         assert!((k_co - 2.0 * G * c.z1 * o.z1 / r_co.powi(3)).abs() < 1e-9);
+    }
+
+    /// `getAtomLabel`: the hybridization suffix, `R` for a resonant sp² C / N /
+    /// O / S, none for hydrogen and the halogens.
+    #[test]
+    fn labels_follow_element_and_hybridization() {
+        use Hybridization::{Sp, Sp2, Sp3};
+        let label = |sym, h, resonant| atom_label(sym, h, resonant, 0.0).unwrap();
+        assert_eq!(label("H", Sp3, false), "H_");
+        assert_eq!(label("Cl", Sp3, false), "Cl");
+        assert_eq!(label("C", Sp3, false), "C_3");
+        assert_eq!(label("C", Sp2, false), "C_2");
+        assert_eq!(label("C", Sp2, true), "C_R");
+        assert_eq!(label("N", Sp, false), "N_1");
+        // Phosphorus is always `3`, with its valence as a charge flag.
+        assert_eq!(atom_label("P", Sp2, false, 3.0).unwrap(), "P_3+3");
+    }
+
+    /// Sulfur carries its valence as a charge flag, unless it is sp².
+    #[test]
+    fn sulfur_carries_its_valence_as_a_charge_flag() {
+        assert_eq!(
+            atom_label("S", Hybridization::Sp3, false, 2.0).unwrap(),
+            "S_3+2"
+        );
+        assert_eq!(
+            atom_label("S", Hybridization::Sp3, false, 6.0).unwrap(),
+            "S_3+6"
+        );
+        assert_eq!(
+            atom_label("S", Hybridization::Sp2, false, 2.0).unwrap(),
+            "S_2"
+        );
+    }
+
+    /// The rest length is the labelled pair's; an unknown label has none.
+    #[test]
+    fn bond_rest_length_reads_the_labels_rows() {
+        let c = params_for_label("C_3").unwrap();
+        assert_eq!(bond_rest_length("C_3", "C_3", 1.0), Some(2.0 * c.r1));
+        assert_eq!(bond_rest_length("C_3", "no_such_label", 1.0), None);
     }
 }

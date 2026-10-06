@@ -55,7 +55,7 @@
 //! // The model is chosen at runtime — the trait is object-safe, and no caller has
 //! // to know which one it is holding.
 //! let models: Vec<Box<dyn ChargeModel>> = vec![
-//!     Box::new(BccModel::new(BccParameterSet::Bcc)?),
+//!     Box::new(BccModel::new(BccParameterSet::Bcc)),
 //!     Box::new(MullikenModel),
 //! ];
 //! let am1 = [-0.826, 0.417, 0.409];
@@ -75,16 +75,8 @@ mod gasteiger;
 mod model;
 mod mulliken;
 
-pub use bcc::BccModel;
+pub use bcc::{BccModel, BccParameterSet};
 pub use error::ChargeError;
 pub use gasteiger::{GasteigerModel, compute_gasteiger_charges};
 pub use model::ChargeModel;
 pub use mulliken::MullikenModel;
-
-/// The correction family a [`BccModel`] applies: `BCCPARM.DAT` or `BCCPARM_ABCG2.DAT`.
-///
-/// Re-exported from the module that owns the tables
-/// ([`ff::typifier::am1bcc`](crate::ff::typifier::am1bcc)), so that a caller building
-/// a charge model never has to reach into the typifier tree for the one argument the
-/// model needs.
-pub use crate::ff::typifier::am1bcc::BccParameterSet;

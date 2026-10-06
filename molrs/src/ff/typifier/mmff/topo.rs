@@ -4,7 +4,7 @@
 //! `AtomTyper.cpp` makes on an `ROMol`: `getAtomicNum`, `getDegree`,
 //! `getTotalDegree`, `getFormalCharge`, `getBondBetweenAtoms`,
 //! `getValence(EXPLICIT) + getNumImplicitHs()`, plus the derived
-//! Kekulé/SSSR/aromaticity/hybridization flags.
+//! Kekulé/SSSR/aromaticity flags, and the hybridization `perceive` derives.
 //!
 //! Ported from RDKit `Code/GraphMol/ForceFieldHelpers/MMFF/AtomTyper.cpp`
 //! and `Code/GraphMol/ConjugHybrid.cpp` (BSD-3, RDKit contributors).
@@ -14,6 +14,7 @@
 //! `charges`) read from it and never mutate the graph.
 
 use molrs::Element;
+use molrs::perceive::Hybridization;
 use molrs::perceive::rings::{RingInfo, find_rings};
 use molrs::system::molgraph::PropValue;
 use molrs::{AtomId, Atomistic};
@@ -68,6 +69,9 @@ pub struct Topo {
     pub is_aromatic: Vec<bool>,
     /// MMFF aromatic flag per ring (parallel to `ring_idx`).
     pub ring_aromatic: Vec<bool>,
+    /// RDKit hybridization per atom ([`molrs::perceive::hybridizations`]),
+    /// read by MMFF aromaticity to reject non-sp² ring carbon and nitrogen.
+    pub hybridization: Vec<Hybridization>,
 }
 
 impl Topo {
@@ -136,6 +140,7 @@ impl Topo {
             ring_idx,
             is_aromatic: vec![false; n],
             ring_aromatic,
+            hybridization: molrs::perceive::hybridizations(mol),
         })
     }
 

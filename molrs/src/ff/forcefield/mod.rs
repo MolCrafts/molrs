@@ -1,4 +1,7 @@
-//! Force field definition types.
+//! The [`ForceField`] data model, and force-field files mapped to and from
+//! it: [`readers`], [`writers`] and [`xml`]. Structure and trajectory formats
+//! are `io`'s; a force-field file is here because what it reads into is a
+//! force field, not a frame.
 //!
 //! Provides a declarative layer for defining atom types, bond types, pair types,
 //! etc. with their parameters. A [`ForceField`] holds [`Style`]s, each of which
@@ -12,6 +15,8 @@ pub mod mixing;
 pub mod one_four;
 pub mod param_columns;
 pub mod readers;
+#[cfg(feature = "zarr")]
+pub(crate) mod record_v1;
 pub mod section;
 pub mod torsion;
 pub mod writers;

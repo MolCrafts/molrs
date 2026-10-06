@@ -14,7 +14,7 @@
 
 use std::rc::Rc;
 
-use molrs::ff::ForceField;
+use molrs::ff::forcefield::ForceField;
 
 /// Shared-ownership handle to a [`ForceField`]. Cheap to clone (one `Rc` bump).
 ///

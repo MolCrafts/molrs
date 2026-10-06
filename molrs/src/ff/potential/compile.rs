@@ -31,8 +31,8 @@ use std::borrow::Cow;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style, StyleDefs};
 use crate::ff::ir::registry::StyleEntry;
 use crate::ff::ir::{self, CategorySpec, Coordinate, EndpointOrder, Registry};
+use crate::ff::ir::{ParamSource, RowSource, SpecialClass};
 use crate::ff::potential::pair::exceptions;
-use crate::ff::potential::registry::{self, ParamSource, RowSource};
 use crate::ff::potential::{
     CompileError, Member, PairWeights, Potentials, TypedKernel, TypedMember,
 };
@@ -204,8 +204,8 @@ impl<'a> PotentialCompiler<'a> {
             if let Some((pot, special)) = self.typed_member(&reg, style, frame)? {
                 let weights = special.map(|c| {
                     let by_distance = match c {
-                        registry::SpecialClass::Vdw => self.ff.special_bonds().lj_weights(),
-                        registry::SpecialClass::Coulomb => self.ff.special_bonds().coul_weights(),
+                        SpecialClass::Vdw => self.ff.special_bonds().lj_weights(),
+                        SpecialClass::Coulomb => self.ff.special_bonds().coul_weights(),
                     };
                     PairWeights::new(by_distance, exceptions.replaced.clone())
                 });

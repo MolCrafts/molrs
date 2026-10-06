@@ -59,11 +59,11 @@ use zarrs::storage::{
     ListableStorageTraits, ReadableStorageTraits, ReadableWritableListableStorage,
 };
 
+#[cfg(feature = "ff")]
+use crate::io::zarr::forcefield_io::read_stored_forcefield_if_present;
 #[cfg(feature = "zarr")]
 use crate::io::zarr::forcefield_io::write_forcefield_group;
-use crate::io::zarr::forcefield_io::{
-    FORCEFIELD_GROUP, read_forcefield_group, read_stored_forcefield_if_present,
-};
+use crate::io::zarr::forcefield_io::{FORCEFIELD_GROUP, read_forcefield_group};
 use crate::io::zarr::frame_io::{
     check_declared_references, join_path, read_column, read_frame_group,
 };
@@ -83,7 +83,6 @@ use molrs::store::forcefield_section::ForceFieldSection;
 // every configuration, wasm included.
 use molrs::store::frame::Frame;
 use molrs::store::record::MolRec;
-use molrs::store::record_v1::V1Upgrade;
 #[cfg(feature = "filesystem")]
 use molrs::store::trajectory::Trajectory;
 use molrs::store::trajectory::{ObservableData, ObservableKind, ObservableRecord};
@@ -435,7 +434,7 @@ fn write_observables(
 /// `molrec_version` in `meta` is validated when present — it must be an integer
 /// in `1..=`[`crate::MOLREC_VERSION`]. A version-1 store, and one without the
 /// key (written before version 1), is converted section by section to the
-/// current version ([`molrs::store::record_v1`]) or refused; `meta` comes back
+/// current version (`ff::forcefield::record_v1`) or refused; `meta` comes back
 /// as stored. Root sections this build does not interpret are ignored, never
 /// misread.
 ///
@@ -671,8 +670,42 @@ where
     if schema::read_version(meta)? == schema::MOLREC_VERSION {
         return Ok(None);
     }
-    let stored = read_stored_forcefield_if_present(store, &join_path("/", FORCEFIELD_GROUP))?;
-    V1Upgrade::new(stored.as_ref()).map(Some)
+    #[cfg(feature = "ff")]
+    {
+        let stored = read_stored_forcefield_if_present(store, &join_path("/", FORCEFIELD_GROUP))?;
+        V1Upgrade::new(stored.as_ref()).map(Some)
+    }
+    #[cfg(not(feature = "ff"))]
+    {
+        let _ = store;
+        Err(MolRsError::validation(
+            "a molrec_version 1 record is read by converting its force-field \
+             parameters, which needs molrs's `ff` feature",
+        ))
+    }
+}
+
+/// The version-1 conversion (`ff::forcefield::record_v1`).
+#[cfg(feature = "ff")]
+pub(in crate::io::zarr) use crate::ff::forcefield::record_v1::V1Upgrade;
+
+/// Without `ff` there is no version-1 conversion: [`read_upgrade`] refuses
+/// such a record, so no value of this type exists.
+#[cfg(not(feature = "ff"))]
+pub(in crate::io::zarr) enum V1Upgrade {}
+
+#[cfg(not(feature = "ff"))]
+impl V1Upgrade {
+    pub(in crate::io::zarr) fn forcefield(
+        &self,
+        _: &molrs::store::forcefield_section::ForceFieldSection,
+    ) -> Result<molrs::store::forcefield_section::ForceFieldSection, MolRsError> {
+        match *self {}
+    }
+
+    pub(in crate::io::zarr) fn frame(&self, _: &mut Frame) -> Result<(), MolRsError> {
+        match *self {}
+    }
 }
 
 fn read_json_group(

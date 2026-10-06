@@ -1,4 +1,6 @@
-//! Molecular typifiers.
+//! Typing: a molecular graph in, the force-field types it carries (and the
+//! per-instance parameters some force fields resolve) out. Charges are
+//! [`crate::ff::charge`]'s; kernels are [`crate::ff::potential`]'s.
 //!
 //! Typing is a template method. A [`Typifier`] implements only
 //! `r#match` ([`Typifier`]): it reads a molecular graph and produces a
@@ -23,9 +25,8 @@ pub mod opls;
 pub(crate) mod topology;
 pub mod uff;
 
-pub use am1bcc::{BCCAtomChargeTypifier, BCCCorrectionTable, BCCCorrector, BccParameterSet};
+pub use am1bcc::BCCAtomChargeTypifier;
 pub use atd::{AtdBondOrders, AtdParameterSet, AtdTypifier};
-pub use cmap::assign_cmaps;
 pub use element::ElementTypifier;
 pub use estimate::{
     BondedTerm, Estimate, ParameterInterpolator, Parmchk2Estimator, TypifierParameterContext,
@@ -1969,6 +1970,41 @@ mod tests {
                 .unwrap()
                 .type_endpoints("x-b"),
             Some(vec!["X".to_owned(), "B".to_owned()])
+        );
+    }
+
+    /// CMAP is directional — φ is the dihedral of its first four atoms and ψ
+    /// of its last four, the grid's two axes in that order — so its category
+    /// is `Ordered`: a row written end-for-end names another term, and a
+    /// reversed five-atom match would read φ and ψ off the wrong axes.
+    #[test]
+    fn a_cmap_row_is_not_matched_reversed() {
+        assert_eq!(
+            link_category("cmaps"),
+            Some(("cmap".to_owned(), EndpointOrder::Ordered))
+        );
+        let mut lib = ForceField::new("lib");
+        lib.def_style("cmap", "charmm", Params::new())
+            .unwrap()
+            .def_type("edcba", &["E", "D", "C", "B", "A"], Params::new())
+            .unwrap();
+        let mut g = Atomistic::new();
+        let ids: Vec<_> = ["A", "B", "C", "D", "E"]
+            .iter()
+            .map(|t| {
+                let id = g.add_atom_bare("C");
+                g.set_atom(id, "type", *t).unwrap();
+                id
+            })
+            .collect();
+        let graph = g.as_molgraph_mut();
+        let cmaps = graph.register_kind("cmaps", 5);
+        graph.add_relation(cmaps, &ids).unwrap();
+        let mut m = Match::default();
+        // The only row reads E-D-C-B-A; the term is A-B-C-D-E.
+        assert_eq!(
+            m.assign_terms(g.as_molgraph(), "cmaps", &lib, "type"),
+            Ok(vec![0])
         );
     }
 

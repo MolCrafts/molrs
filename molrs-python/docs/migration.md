@@ -437,7 +437,7 @@ LAMMPS's three 1-4 mechanisms are all priced, LAMMPS's way; see
   pair member.
 - **Rust: `TypedMember` is `(Member, Option<PairWeights>)`** (was
   `Option<BondDistanceWeights>`). Build the MD weights with
-  `SpecialWeights::new(&w.special_weights(&topo))` (0.15:
+  `w.special_weights(&topo)`, which returns `ff::potential::SpecialWeights` (0.15:
   `topo.special_weights(&w)`, which still exists for a
   `BondDistanceWeights` but misses the pairs an override weights 0);
   `PairWeights::by_distance()` is the old table.
@@ -862,12 +862,13 @@ built-ins sealed among them; see
 [Extending the force-field IR](guides/extending-forcefield-ir.md). What
 changes for code written against 0.15:
 
-- **Rust: `register_kernel` / `register_kernel_with` return
-  `Result<(), IrError>`** and register into the IR registry (0.15: `()`,
-  overriding whatever was there). A built-in is sealed (`IrError::Sealed`);
-  registering the same constructor again is a no-op, another one under a
-  taken name is `IrError::Conflict`. To change a built-in's behaviour,
-  register a style of another name.
+- **Rust: `register_kernel` / `register_kernel_with` are removed**; register
+  through the IR registry, `molrs::ff::ir::register_style(StyleSpec::new(category,
+  name).source(source), Some(Kernel::ctor(ctor)))` (0.15: `()`, overriding
+  whatever was there). A built-in is sealed (`IrError::Sealed`); registering
+  the same constructor again is a no-op, another one under a taken name is
+  `IrError::Conflict`. To change a built-in's behaviour, register a style of
+  another name.
 - **Categories beyond the seven.** A category the IR registry declares
   (molrec's `constraint`, `drude`, `virtual_site`, or a custom one
   registered with `molrs::ff::ir::register_category`), or one read from a
@@ -937,6 +938,103 @@ changes for code written against 0.15:
   [Converting between forms](guides/forcefield-ir.md#converting-between-forms).
   An out-of-image conversion is refused (`IrError::OutOfImage`, Python
   `molrs.ff.ir.OutOfImage`, a `ValueError`).
+
+### Module ownership: force fields (`ff`)
+
+Every `ff` module has one job — `ir` the force-field IR (LAMMPS standard) and
+its registry, `forcefield` the `ForceField` model and force-field files,
+`potential` kernels, `typifier` typing, `charge` charge models, `params` the
+shipped tables — and every public symbol has one path. Rust paths that moved
+or went away:
+
+- **No re-exports at `molrs::ff`.** Each name is at its owner:
+  - `ForceField`, `SpecialBonds` → `ff::forcefield::`;
+    `read_forcefield_xml[_str]` → `ff::forcefield::xml::`.
+  - `ForceFieldReader` → `ff::forcefield::readers::`; `LammpsFfReader`,
+    `GromacsTopFfReader`, `OplsXmlReader`, `AmberPrmtopFfReader` /
+    `read_amber_prmtop_ff` → `ff::forcefield::readers::{lammps, gromacs,
+    opls, prmtop}::`.
+  - `ForceFieldWriter`, `WriteError` → `ff::forcefield::writers::`;
+    `LammpsFfWriter` / `LammpsWriteOptions`, `GromacsTopFfWriter`,
+    `AmberFrcmodFfWriter` / `write_amber_frcmod[_str]`, `XmlForceFieldWriter` /
+    `write_forcefield_xml[_str]` → `ff::forcefield::writers::{lammps,
+    gromacs, frcmod, xml}::`.
+  - `BccModel`, `BccParameterSet`, `ChargeError`, `ChargeModel`,
+    `MullikenModel` → `ff::charge::`.
+  - `FragmentAtoms`, `FragmentScaling`, `ScaleLjError`, `compute_k_ij`,
+    `scale_lj` → `ff::scale_lj::`.
+  - `assign_cmaps` → `ff::typifier::cmap::assign_cmaps` (also no longer at
+    `ff::typifier::`); `GaffParameterSet` → `ff::typifier::gaff::`.
+- **IR vocabulary is the IR's.** `ParamSource`, `RowSource`, `SpecialClass`
+  and `KernelConstructor` are at `ff::ir::` only (were also
+  `ff::potential::` and `ff::potential::registry::`; that module is private,
+  `KernelRegistry` stays at `ff::potential::KernelRegistry`). `ScalarForm`,
+  `CompoundForm` and `ParamCols` are at `ff::potential::generic::` only (were
+  also `ff::ir::`); `generic`'s `bonded` / `compound` / `form` / `pair`
+  modules are private. `ff::potential::{lookup_kernel, lookup_typed_kernel,
+  lookup_param_source, lookup_row_source}` are removed: ask the registry,
+  `ff::ir::with_global(|r| r.style(category, name))` /
+  `r.param_source(..)` / `r.row_source(..)`.
+- **`molrs::md::SpecialWeights` → `molrs::ff::potential::SpecialWeights`**,
+  and `PairWeights::special_weights(&topo)` returns it (was the per-atom
+  lists to feed `SpecialWeights::new`).
+- **The soft packing potential is a potential; `LBFGS` is the one
+  optimizer.** `molrs::optimize::{SoftSpec, SoftLbfgs}` and
+  `optimize::soft` are removed. `SoftSpec` is
+  `molrs::ff::potential::soft::SoftSpec`; minimize with
+  `LBFGS::new(Arc::new(spec.potential(frame.simbox.as_ref())), fmax,
+  max_steps, max_step, memory)`. `SoftPotential` resolves its own pairs: its
+  springs at the first configuration it sees (as `SoftLbfgs` did), its
+  non-bonded pairs rebuilt whenever an atom has moved half a 1 Å skin
+  (`SoftLbfgs` rebuilt them once per run), in any box (was cubic only).
+  `SoftSpec::{build_bonded, build_nb, build_potential, params, sigma, a_rep,
+  b_attract, rcut, k_bond, k_ang}`, `SoftPotential::{new, n_pairs}`,
+  `HarmTerm` and `NbTerm` are removed.
+- **`molrs::ff::mmff` is removed**: MMFF typing (aromaticity, atom types,
+  charges, the parameter resolver) is private to `ff::typifier::mmff`, and
+  `MmffVariant` / `MmffMolProperties` with it — pick a variant by picking
+  `MMFF94Typifier` or `MMFF94STypifier`. `ff::mmff::da::{DA_NEITHER,
+  DA_DONOR, DA_ACCEPTOR}` → `ff::params::mmff::`.
+  `ff::typifier::mmff::params::{MMFFAtomProp, MMFFParams}` →
+  `ff::typifier::mmff::{MMFFAtomProp, MMFFParams}`.
+- **One hybridization: `molrs::perceive::Hybridization`**, with
+  `perceive::{hybridizations, conjugated_atoms}` — RDKit's
+  `setHybridization` / `setConjugation`, checked against RDKit 2026.03 on 27
+  molecules. It replaces `ff::mmff::hybrid::Hyb`, the UFF typifier's private
+  heuristic and the conformer's `distgeom::mol_features::Hybridization`.
+  MMFF is unchanged. UFF atom labels now follow RDKit: an amide N, a
+  conjugated carbonyl C / O, an ester O are `N_R` / `C_R` / `O_R` (0.15:
+  `N_3` / `C_2` / `O_2` / `O_3`), and angle and torsion terms follow the new
+  hybridizations, so UFF energies of such molecules change — to RDKit's
+  (acetanilide's bonded UFF energy now equals RDKit's to 1e-14). ETKDG's
+  bounds move with them, and its 1-2 bounds are the UFF typifier's rest
+  lengths (`conformer::distgeom`'s private UFF table is gone), so a
+  phosphorus bond now gets its UFF length (`P_3+3`) where 0.15 fell back to
+  the van der Waals guess.
+- **No amide bond order.** UFF and the ETKDG 1-2 bounds price an amide C–N
+  at its graph order 1, as RDKit 2026.03 does (`ff::params::uff::AMIDE_BOND_ORDER`,
+  1.41, is removed; a UFF amide bond's type is `C_R-N_R@1`).
+- **`ff::forcefield::xml::{read_mmff_params_xml_str, read_opls_typing_xml_str}`
+  are removed** (each typifier reads its own metadata): use
+  `MMFF94Typifier::from_xml_str` / `OPLSAATypifier::from_xml_str`.
+- **BCC tables are the charge model's.** `ff::typifier::{BccParameterSet,
+  BCCCorrectionTable, BCCCorrector}` are removed: `BccParameterSet` is at
+  `ff::charge::BccParameterSet` only, and the corrections are applied by
+  `BccModel::correct` (the second door, `BCCCorrector::apply`, is gone with
+  `BCCCorrectionTable`). `ff::typifier::BCCAtomChargeTypifier` stays.
+  `BccModel::new` returns `BccModel` (was `Result`; it could not fail).
+- **`molrs::perceive::equivalence::average_charges` is removed**: the
+  class-mean is a charge-model step, applied by `ChargeModel::assign` for a
+  model that declares it (`needs_equivalencing`).
+- **`molrs::math::pair_form::lj_ab_to_sigma_epsilon` →
+  `molrs::ff::potential::pair::lj_cut::lj_ab_to_sigma_epsilon`.**
+- **`molrs::store::record_v1` is removed** (the version-1 conversion is
+  crate-private in `ff::forcefield`): reading a `molrec_version` 1 record
+  needs the `ff` feature; without it such a record is refused.
+- **CMAP is ordered.** The built-in `cmap` category's endpoint order is
+  `Ordered` (was `Reversible`): a cmap type row matches its five atoms as
+  written only, since reversing them would swap φ and ψ against the grid.
+  Python: `molrs.ff.ir.categories()` reports `"ordered"` for it.
 
 ### Python: kernels live in `molrs.ff.potential`
 

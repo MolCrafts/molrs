@@ -1,4 +1,11 @@
-//! Potential energy evaluation traits and kernel registry.
+//! Kernels: a force field's terms evaluated on coordinates — the
+//! [`Potential`] traits, every built-in kernel, the compiler that binds a
+//! force field's styles to a frame ([`PotentialCompiler`]), and the weights a
+//! non-bonded kernel takes on close pairs ([`PairWeights`], [`SpecialWeights`]).
+//!
+//! What a style *is* (its spec, its registration) is the IR's
+//! ([`crate::ff::ir`]); which integrator calls a kernel is `md`'s and
+//! `optimize`'s.
 //!
 //! A [`Potential`] stores pre-resolved topology indices and parameters.
 //! Callers pass only flat coordinates — no [`Frame`] in the hot loop.
@@ -18,16 +25,13 @@ pub mod instances;
 pub mod kspace;
 pub(crate) mod need;
 pub mod pair;
-pub mod registry;
+pub(crate) mod registry;
 pub mod soft;
 
 pub use compile::PotentialCompiler;
 pub use error::CompileError;
 pub use instances::Instances;
-pub use registry::{
-    KernelConstructor, KernelRegistry, ParamSource, RowSource, lookup_kernel, lookup_param_source,
-    lookup_row_source, register_kernel, register_kernel_with,
-};
+pub use registry::KernelRegistry;
 
 use std::collections::{HashMap, HashSet};
 
@@ -585,7 +589,7 @@ impl Potential for Box<dyn Potential> {
 /// A kernel built for a neighbour-driven evaluation, and which of a force
 /// field's special-bonds weight sets scales it. `None` for a bonded kernel:
 /// it *is* the bonded interaction, not a scaled copy of one.
-pub type TypedKernel = (Member, Option<registry::SpecialClass>);
+pub type TypedKernel = (Member, Option<crate::ff::ir::SpecialClass>);
 
 /// One member of a neighbour-driven evaluation: the kernel, and the weights
 /// its non-bonded term takes.
@@ -627,11 +631,11 @@ impl PairWeights {
         &self.replaced
     }
 
-    /// Per atom, its partners whose weight is not 1, sorted by partner — the
-    /// lists [`Topology::special_weights`](molrs::Topology::special_weights)
-    /// gives, with the replaced pairs set to 0. Feed it to
-    /// [`SpecialWeights::new`](crate::md::SpecialWeights::new).
-    pub fn special_weights(&self, topo: &molrs::Topology) -> Vec<Vec<(usize, F)>> {
+    /// The weights on `topo`'s close pairs: per atom, its partners whose
+    /// weight is not 1 — the lists
+    /// [`Topology::special_weights`](molrs::Topology::special_weights) gives,
+    /// with the replaced pairs set to 0.
+    pub fn special_weights(&self, topo: &molrs::Topology) -> SpecialWeights {
         let mut lists = topo.special_weights(&self.by_distance);
         for &(i, j) in &self.replaced {
             for (a, b) in [(i, j), (j, i)] {
@@ -643,7 +647,156 @@ impl PairWeights {
                 }
             }
         }
-        lists
+        SpecialWeights::new(&lists)
+    }
+}
+
+/// The weights a force field puts on close non-bonded neighbours.
+///
+/// A bonded pair's non-bonded term is not wanted at full strength: 1-2 and 1-3
+/// are normally excluded outright and 1-4 scaled, because the bonded terms
+/// already describe those interactions. A compiled intramolecular list carries
+/// that by *omitting* the excluded rows and baking the 1-4 factor into the
+/// parameters — which works only while that exact list is the one being
+/// evaluated. A neighbour table has no such memory: it finds every pair inside
+/// the cutoff, bonded or not.
+///
+/// So the weights have to be applied at evaluation time, and this holds them.
+/// Build it from [`PairWeights::special_weights`], or from
+/// [`Topology::special_weights`](molrs::Topology::special_weights), which
+/// walks the bond graph.
+///
+/// # Why it splits the table rather than scaling in the kernel
+///
+/// Energy is a sum over pairs, so scaling a group of pairs and scaling their
+/// contribution are the same number — which means the weights can be applied
+/// *outside* the kernels, and no kernel has to learn that a force field has
+/// exclusions.
+///
+/// The obvious cheaper trick — evaluate everything, then subtract what should
+/// not have been counted — is not available. A 1-2 pair sits at bond length,
+/// where a Lennard-Jones term is enormous; subtracting it from a total of
+/// ordinary size cancels away the very digits the answer is made of.
+#[derive(Clone, Debug)]
+pub struct SpecialWeights {
+    /// Per owned atom, its special partners sorted by index, with weights.
+    per_atom: Vec<Vec<(u32, F)>>,
+    /// Whether every list is empty. A fact about the table, not about a step.
+    nothing_scaled: bool,
+}
+
+/// Nothing scaled — the right default, and not the one `derive` would give.
+///
+/// `nothing_scaled` is a cached answer, and a derived `bool` default is
+/// `false`: an empty table would have claimed to scale something. It cost only
+/// a slower path, because an empty lookup answers 1.0 for every pair — but a
+/// cached fact that disagrees with the thing it caches is a trap whoever
+/// trusts it next will fall into.
+impl Default for SpecialWeights {
+    fn default() -> Self {
+        Self {
+            per_atom: Vec::new(),
+            nothing_scaled: true,
+        }
+    }
+}
+
+impl SpecialWeights {
+    /// Take the per-atom lists a bond-graph walk produced.
+    pub fn new(special: &[Vec<(usize, F)>]) -> Self {
+        let per_atom: Vec<Vec<(u32, F)>> = special
+            .iter()
+            .map(|l| l.iter().map(|&(p, w)| (p as u32, w)).collect())
+            .collect();
+        Self {
+            nothing_scaled: per_atom.iter().all(|l| l.is_empty()),
+            per_atom,
+        }
+    }
+
+    /// The weight on the pair `(i, j)`, both owned indices. `1.0` when the two
+    /// are far enough apart in the bond graph to interact normally.
+    pub fn weight(&self, i: usize, j: usize) -> F {
+        let Some(list) = self.per_atom.get(i) else {
+            return 1.0;
+        };
+        match list.binary_search_by_key(&(j as u32), |&(p, _)| p) {
+            Ok(k) => list[k].1,
+            Err(_) => 1.0,
+        }
+    }
+
+    /// True when nothing is scaled, so a caller can skip the weights entirely.
+    ///
+    /// Answered from a flag set at construction: it is a property of the table
+    /// and was being recomputed by scanning every atom, once per member, once
+    /// per step.
+    pub fn is_empty(&self) -> bool {
+        self.nothing_scaled
+    }
+
+    /// Fill `out` with one weight per row of `pairs`.
+    ///
+    /// `owner` maps a periodic copy to the atom it copies — index `a` is a copy
+    /// when `a >= n_owned`, and its owner is `owner[a - n_owned]`. A pair
+    /// naming a copy is weighted as that owner: a bond graph knows atoms, and a
+    /// copy is the same atom seen through a face. Pass an empty slice when the
+    /// table names atoms directly, as a minimum-image one does.
+    ///
+    /// # Why a column and not a split
+    ///
+    /// This used to partition the table into a full-strength one and a group
+    /// per distinct weight, because energy is a sum over pairs and scaling a
+    /// group is the same as scaling its contribution. That is true, and it cost
+    /// the table being rebuilt — allocated, re-pushed column by column — once
+    /// per weight per member per step. Measured at 4 096 atoms it was four
+    /// times the kernel it was preparing input for, and thirty megabytes a step.
+    ///
+    /// A weight is one number per pair. Handing the kernel that number is one
+    /// pass over a buffer the caller keeps.
+    /// The per-pair weights for `pairs`, or an empty slice when nothing is
+    /// scaled.
+    ///
+    /// The empty slice is not a table of ones: a kernel reads it as "no weights
+    /// apply" and skips the multiply entirely, which is the common case and the
+    /// one worth not paying for. `scratch` is the caller's buffer, reused
+    /// across steps — [`fill_factors`](Self::fill_factors) is what fills it.
+    pub fn factors_for<'a>(
+        &self,
+        pairs: &Neighbors,
+        n_owned: usize,
+        owner: &[u32],
+        scratch: &'a mut Vec<F>,
+    ) -> &'a [F] {
+        if self.is_empty() {
+            return &[];
+        }
+        self.fill_factors(pairs, n_owned, owner, scratch);
+        scratch
+    }
+
+    pub fn fill_factors(&self, pairs: &Neighbors, n_owned: usize, owner: &[u32], out: &mut Vec<F>) {
+        let i_col = pairs.query_point_indices();
+        let j_col = pairs.point_indices();
+        out.clear();
+        out.reserve(i_col.len());
+        let own = |a: usize| {
+            if a < n_owned {
+                a
+            } else {
+                owner[a - n_owned] as usize
+            }
+        };
+        for p in 0..i_col.len() {
+            let (i, j) = (i_col[p] as usize, j_col[p] as usize);
+            // An atom and a *copy of itself* are a real interaction, and no
+            // bond-graph weight describes it: the walk is root-inclusive, so
+            // asking for `weight(i, i)` would answer 0 — the weight of an atom
+            // with itself, which is a different question and not one this pair
+            // is asking.
+            let (oi, oj) = (own(i), own(j));
+            out.push(if oi == oj { 1.0 } else { self.weight(oi, oj) });
+        }
     }
 }
 
@@ -922,6 +1075,24 @@ impl PairDriven for Potentials {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The default scales nothing, and says so.
+    ///
+    /// `nothing_scaled` caches an answer, and a cached fact that disagrees with
+    /// the thing it caches is worse than no cache: a derived `bool` default is
+    /// `false`, so an empty table claimed to have weights and a provider with
+    /// no neighbour list refused to build. The Python suite found it; this
+    /// keeps it found.
+    #[test]
+    fn an_empty_weight_table_scales_nothing() {
+        assert!(SpecialWeights::default().is_empty());
+        assert!(SpecialWeights::new(&[]).is_empty());
+        assert!(SpecialWeights::new(&[vec![], vec![]]).is_empty());
+        assert!(!SpecialWeights::new(&[vec![(1_usize, 0.5_f64)], vec![]]).is_empty());
+        // And an absent entry still answers full strength.
+        assert_eq!(SpecialWeights::default().weight(0, 1), 1.0);
+    }
+
     use crate::ff::forcefield::{ForceField, Params};
     use molrs::store::block::Block;
     use molrs::types::Idx;
@@ -1246,7 +1417,7 @@ mod tests {
     }
 
     #[test]
-    fn register_kernel_extends_dispatch() {
+    fn registering_a_style_extends_dispatch() {
         // A custom (category, name) with no built-in kernel becomes usable by
         // registering its constructor — no edit to PotentialCompiler required.
         fn my_ctor(
@@ -1256,7 +1427,11 @@ mod tests {
         ) -> Result<Member, crate::ff::potential::CompileError> {
             Ok(Member::plain(DummyPotential { value: 42.0 }))
         }
-        register_kernel("pair", "test/custom", my_ctor).unwrap();
+        crate::ff::ir::register_style(
+            crate::ff::ir::StyleSpec::new("pair", "test/custom"),
+            Some(crate::ff::ir::Kernel::ctor(my_ctor)),
+        )
+        .unwrap();
 
         let mut ff = ForceField::new("test");
         ff.def_style("pair", "test/custom", Params::new())

@@ -1,4 +1,7 @@
-//! Optimizers over a force-field [`Potential`]: [`LBFGS`] and [`SoftLbfgs`].
+//! The optimizer over a force-field [`Potential`]: [`LBFGS`].
+//!
+//! One front door for every potential, including one that rebuilds its own
+//! pairs as the atoms move (`ff::potential::soft::SoftPotential`).
 //!
 //! Gated on `ff` (the potential trait lives there); the [`Optimizer`] trait
 //! they implement is always compiled.
@@ -6,9 +9,8 @@
 use std::sync::Arc;
 
 use super::lbfgs::{Converge, fmax_from_grad, minimize_core};
-use super::{OptReport, Optimizer, soft};
+use super::{OptReport, Optimizer};
 use crate::ff::potential::Potential;
-use crate::spatial::simbox::BoxKind;
 use crate::store::frame::Frame;
 use crate::store::schema::block_names::ATOMS;
 use crate::store::schema::consts::FREE;
@@ -264,78 +266,6 @@ impl Optimizer for LBFGS {
     }
 }
 
-/// SoftSpec-backed optimizer: rebuilds non-bonded pairs from the Frame each run.
-pub struct SoftLbfgs {
-    spec: soft::SoftSpec,
-    fmax: F,
-    max_steps: usize,
-    max_step: F,
-    memory: usize,
-    /// Cached bonded terms (r0/a0 + shifts) from the first run.
-    bonded: Option<(
-        Vec<molrs::ff::potential::soft::HarmTerm>,
-        Vec<molrs::ff::potential::soft::HarmTerm>,
-    )>,
-}
-
-impl SoftLbfgs {
-    pub fn new(
-        spec: soft::SoftSpec,
-        fmax: F,
-        max_steps: usize,
-        max_step: F,
-        memory: usize,
-    ) -> Self {
-        Self {
-            spec,
-            fmax,
-            max_steps,
-            max_step,
-            memory,
-            bonded: None,
-        }
-    }
-}
-
-impl Optimizer for SoftLbfgs {
-    fn run(&mut self, frame: &mut Frame) -> Result<OptReport, String> {
-        let xyz: Vec<[F; 3]> = frame
-            .coords()
-            .map_err(|e| e.to_string())?
-            .rows()
-            .into_iter()
-            .map(|r| [r[0], r[1], r[2]])
-            .collect();
-        let box_edge = frame_box_edge(frame);
-
-        if self.bonded.is_none() {
-            self.bonded = Some(self.spec.build_bonded(&xyz, box_edge));
-        }
-        let (bonds, angles) = self.bonded.as_ref().unwrap().clone();
-        let nb = self.spec.build_nb(&xyz, box_edge);
-        let pot = molrs::ff::potential::soft::SoftPotential::new(
-            bonds,
-            angles,
-            nb,
-            self.spec.sigma(),
-            self.spec.a_rep(),
-            self.spec.b_attract(),
-            self.spec.rcut(),
-            self.spec.k_bond(),
-            self.spec.k_ang(),
-        );
-        let mut opt = LBFGS::new(
-            Arc::new(pot),
-            self.fmax,
-            self.max_steps,
-            self.max_step,
-            self.memory,
-        );
-        // SoftPotential only sees free+fixed coords; free mask still applies.
-        opt.run(frame)
-    }
-}
-
 // ── Frame helpers ────────────────────────────────────────────────────────────
 
 /// `None` ⇒ all free. `Some(mask)` length = n_atoms.
@@ -353,26 +283,6 @@ fn frame_free_mask(frame: &Frame, n_atoms: usize) -> Result<Option<Vec<bool>>, S
         ));
     }
     Ok(Some(col.iter().copied().collect()))
-}
-
-fn frame_box_edge(frame: &Frame) -> Option<F> {
-    let sb = frame.simbox.as_ref()?;
-    // Equal lattice-vector lengths do not make a cell cubic: a rhombohedral
-    // cell has three equal edges and three non-right angles, and feeding its
-    // edge to the cubic minimum image below would fold displacements against a
-    // box that is not there. Only an orthorhombic cell can answer this.
-    if !matches!(sb.kind(), BoxKind::Ortho { .. }) {
-        return None;
-    }
-    // Use the first lattice length as cubic edge when available.
-    let lengths = sb.lengths();
-    let l0 = lengths[0];
-    if (lengths[1] - l0).abs() < 1e-9 && (lengths[2] - l0).abs() < 1e-9 {
-        Some(l0)
-    } else {
-        // SoftSpec currently only supports cubic box_edge; non-cubic → open.
-        None
-    }
 }
 
 #[cfg(test)]
@@ -595,5 +505,27 @@ mod tests {
         let pot = HarmonicBond { k: 100.0, r0: 1.0 };
         let mut coords: Vec<F> = vec![];
         assert!(LBFGS::minimize_batch(&pot, &mut coords, 0, 3, 0.05, 500, 0.2, 8).is_err());
+    }
+
+    /// The soft packing potential minimizes through the one front door: two
+    /// overlapping atoms are pushed to the soft core's edge, and a pair that
+    /// was out of range when the run started still counts once it comes in.
+    #[test]
+    fn lbfgs_relaxes_the_soft_potential_that_rebuilds_its_own_pairs() {
+        use crate::ff::potential::soft::SoftSpec;
+        let mut frame = frame_from_coords(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 30.0, 0.0, 0.0]);
+        let pot = SoftSpec::from_frame(&frame).potential(None);
+        let report = LBFGS::new(Arc::new(pot), 1e-4, 500, 0.2, 8)
+            .run(&mut frame)
+            .unwrap();
+        assert!(report.converged, "{report:?}");
+        assert!(report.final_energy < 1e-6, "{report:?}");
+        let x = frame
+            .get("atoms")
+            .unwrap()
+            .get("x")
+            .and_then(|c| c.as_float())
+            .unwrap();
+        assert!(x[[1]] - x[[0]] > 2.59, "pushed apart to sigma: {x:?}");
     }
 }

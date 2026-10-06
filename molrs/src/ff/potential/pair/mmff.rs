@@ -30,8 +30,8 @@ use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
 #[cfg(test)]
-use crate::ff::mmff::da::DA_NEITHER;
-use crate::ff::mmff::da::{DA_ACCEPTOR, DA_DONOR};
+use crate::ff::params::mmff::DA_NEITHER;
+use crate::ff::params::mmff::{DA_ACCEPTOR, DA_DONOR};
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::{sub3, validate_coords};
 use crate::ff::potential::pair::atom_type_index;
@@ -297,7 +297,7 @@ impl PairDriven for MMFFVdW {
 ///
 /// `alpha` is the atomic polarizability α (Å³), `n_eff` the Slater-Kirkwood
 /// effective electron number N, `a_i` / `g_i` the MMFF scale factors A and G, and
-/// `da` the hydrogen-bond role ([`DA_NEITHER`](crate::ff::mmff::da::DA_NEITHER) / [`DA_DONOR`] / [`DA_ACCEPTOR`]).
+/// `da` the hydrogen-bond role ([`DA_NEITHER`](crate::ff::params::mmff::DA_NEITHER) / [`DA_DONOR`] / [`DA_ACCEPTOR`]).
 #[derive(Clone, Debug)]
 pub struct VdwAtomParams {
     /// Atomic polarizability α (Å³).
@@ -308,7 +308,7 @@ pub struct VdwAtomParams {
     pub a_i: f64,
     /// MMFF scale factor G.
     pub g_i: f64,
-    /// Hydrogen-bond role: [`DA_NEITHER`](crate::ff::mmff::da::DA_NEITHER), [`DA_DONOR`] or [`DA_ACCEPTOR`].
+    /// Hydrogen-bond role: [`DA_NEITHER`](crate::ff::params::mmff::DA_NEITHER), [`DA_DONOR`] or [`DA_ACCEPTOR`].
     pub da: u8,
 }
 

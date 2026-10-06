@@ -39,7 +39,6 @@ mod mol_features;
 mod smooth;
 mod torsion_prefs;
 mod torsion_tables;
-mod uff;
 
 use molrs::error::MolRsError;
 use molrs::system::atomistic::Atomistic;

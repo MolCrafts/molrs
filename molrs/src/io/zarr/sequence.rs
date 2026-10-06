@@ -148,12 +148,12 @@ use zarrs::storage::{
     StorageHandle, StorePrefix, WritableStorageTraits,
 };
 
+use super::record_io::V1Upgrade;
 use molrs::MolRsError;
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::{Block, Column, DType};
 use molrs::store::frame::Frame;
 use molrs::store::meta::{MetaMap, MetaValue};
-use molrs::store::record_v1::V1Upgrade;
 use molrs::store::trajectory::Trajectory;
 use molrs::types::F;
 

@@ -589,7 +589,6 @@ fn global_half_equals_per_pair_scales_equals_per_pair_parameters() {
             assert!((a - b).abs() < 1e-10, "{label}: force {a} vs {b}");
         }
         // The neighbour-driven door agrees.
-        #[cfg(feature = "md")]
         close(
             &format!("{label} typed"),
             typed_energy(&zero, frame).0,
@@ -738,11 +737,9 @@ fn forces_are_the_gradient_inside_the_switches() {
 
 /// The neighbour-driven door over a table of every pair, each weighted as
 /// MD weights it.
-#[cfg(feature = "md")]
 fn typed_energy(ff: &ForceField, frame: &Frame) -> (F, Vec<F>) {
     use crate::ff::potential::Member;
     use crate::ff::potential::pair::testing::table_over;
-    use crate::md::SpecialWeights;
     let topo = molrs::Topology::from_frame(frame).unwrap();
     let x = coords();
     let links: Vec<(usize, usize)> = (0..7)
@@ -754,7 +751,7 @@ fn typed_energy(ff: &ForceField, frame: &Frame) -> (F, Vec<F>) {
     for (member, weights) in PotentialCompiler::new(ff).compile_typed(frame).unwrap() {
         match (&member, weights) {
             (Member::Pair(p), Some(w)) => {
-                let special = SpecialWeights::new(&w.special_weights(&topo));
+                let special = w.special_weights(&topo);
                 let factor: Vec<F> = links.iter().map(|&(i, j)| special.weight(i, j)).collect();
                 e += p.accumulate_pairs(&x, &table, &factor, &mut out).0;
             }
@@ -765,7 +762,6 @@ fn typed_energy(ff: &ForceField, frame: &Frame) -> (F, Vec<F>) {
 }
 
 /// Both compile doors price every case the same.
-#[cfg(feature = "md")]
 #[test]
 fn compile_equals_compile_typed() {
     let short = ff_text(CHARMM, "1.0").replace("3.5 4.2 3.0 5.0", "2.0 2.4");

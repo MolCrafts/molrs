@@ -38,7 +38,7 @@ pub struct CategorySpec {
 | `dihedral` | 4 | `dihedrals` | `phi` | reversible | yes |
 | `improper` | 4 | `impropers` | `phi`, `chi = abs(phi)` | ordered | yes |
 | `pair` | self or pair | `atoms` (by `type`) | `r` | unordered | yes: a `pairs` list or a neighbour search |
-| `cmap` | 5 | `cmaps` | compound | reversible | yes |
+| `cmap` | 5 | `cmaps` | compound | ordered (φ then ψ) | yes |
 | `drude` | 2 | `drudes` | `r` | ordered | yes, `drude harmonic` by its expression |
 | `constraint` | 2 | `constraints` | none | reversible | no |
 | `virtual_site` | 0 | `virtual_sites` | none | – | no |

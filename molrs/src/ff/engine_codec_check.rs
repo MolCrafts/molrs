@@ -33,7 +33,10 @@ use crate::ff::ir::{
     SpecialClass, StyleSpec, Value,
 };
 use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
-use crate::ff::{LammpsFfWriter, LammpsWriteOptions, XmlForceFieldWriter};
+use crate::ff::{
+    forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
+    forcefield::writers::xml::XmlForceFieldWriter,
+};
 use molrs::io::data::lammps_data::write_lammps_data;
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;

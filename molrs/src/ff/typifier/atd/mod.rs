@@ -73,7 +73,7 @@ use crate::ff::typifier::{Annotation, Match, Typifier};
 /// This is the **atom-type** axis, and it is wider than the BCC-correction axis
 /// it used to be conflated with: `ATOMTYPE_GAS.DEF` exists but there is no
 /// `BCCPARM_GAS.DAT`, so GAS is a set of atom types with no correction family.
-/// Only [`BccParameterSet`](super::am1bcc::BccParameterSet) — `Bcc` and `Abcg2`
+/// Only [`BccParameterSet`](crate::ff::charge::BccParameterSet) — `Bcc` and `Abcg2`
 /// — names both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AtdParameterSet {

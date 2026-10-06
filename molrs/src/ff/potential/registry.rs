@@ -1,11 +1,14 @@
-//! Kernel registry: maps `(category, style_name)` → [`KernelConstructor`] plus
-//! the [`ParamSource`] that says **where that kernel's parameters come from**.
+//! The table of molrs's own Tier-3 kernel constructors: `(category,
+//! style_name)` → [`KernelConstructor`], plus the [`ParamSource`] that says
+//! **where that kernel's parameters come from**.
 //!
-//! This is the table of molrs's own Tier-3 constructors. The force-field IR
+//! This is a table, not a registry anyone extends: the force-field IR
 //! registry ([`crate::ff::ir::Registry`]) seeds its sealed built-ins from
 //! [`KernelRegistry::builtin`], each beside its spec, and `PotentialCompiler`
-//! resolves every style through that registry. [`register_kernel`] and the
-//! `lookup_*` functions are thin shims over it.
+//! resolves every style through that registry. A third party registers
+//! through [`ir::register_style`](crate::ff::ir::register_style); the
+//! registration vocabulary ([`ParamSource`], [`RowSource`], [`SpecialClass`],
+//! [`KernelConstructor`]) is the IR's.
 //!
 //! # Why a registration carries a `ParamSource`
 //!
@@ -32,71 +35,9 @@
 
 use std::collections::HashMap;
 
-use crate::ff::forcefield::Params;
-use crate::ff::potential::Member;
-use molrs::store::frame::Frame;
+use crate::ff::ir::{KernelConstructor, ParamSource, RowSource, SpecialClass};
 
 use super::{angle, bond, cmap, dihedral, improper, kspace, pair};
-
-/// Builds a molecule-bound [`Member`] from a style's params, its per-type
-/// params (`(type_label, params)`), and a typed [`Frame`]. Every kernel
-/// constructor in the crate matches this signature.
-pub type KernelConstructor =
-    fn(&Params, &[(&str, &Params)], &Frame) -> Result<Member, crate::ff::potential::CompileError>;
-
-/// Where a kernel's parameters come from — the question the empty-type-params
-/// guard must ask before it rejects a style with no type rows.
-///
-/// A kernel constructor that binds its type-params as `_tp` (i.e. resolves
-/// nothing from them) **is not a table-driven style**, and must say so by being
-/// registered [`PerInstance`](ParamSource::PerInstance).
-/// Which `Frame` block decides whether a style has any rows to act on.
-///
-/// `PotentialCompiler::compile` skips a style whose topology is absent — a bond style
-/// with no bonds contributes nothing, and letting the kernel fault on the
-/// missing block instead would be a worse way to say so. Which block that is,
-/// is a property of the **kernel**, not of its category.
-///
-/// PME is the case that proves it: registered under `pair` because that is
-/// where an electrostatic style belongs, it reads per-atom charges and
-/// `exclusions` and never looks at `pairs`. Gated on `pairs`, it was skipped
-/// outright for any system whose caller had not built a pair list — deleting
-/// the entire long-range electrostatics, silently, to exactly zero.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum RowSource {
-    /// The category's own topology block: `bonds`, `angles`, `dihedrals`,
-    /// `impropers` or `pairs`. Absent or empty means the style contributes
-    /// nothing.
-    #[default]
-    CategoryBlock,
-    /// The atoms, or rows the kernel finds for itself. Nothing gates it.
-    Atoms,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ParamSource {
-    /// Parameters come from the style's type-definition rows (the `tp` slice).
-    /// A style with no rows resolves nothing, and is an error.
-    TypeRows,
-    /// Parameters are resolved per interaction by the typifier and baked into
-    /// [`Frame`] columns; `tp` is ignored and may legitimately be empty.
-    PerInstance,
-}
-
-/// Which of a force field's special-bonds weight sets scales a pair style.
-///
-/// A force field may scale close van-der-Waals and electrostatic neighbours
-/// differently — Amber uses `1/2` and `1/1.2` — and in molrs those are
-/// separate kernels, so each has to say which set is its own. Declared at
-/// registration rather than guessed from the style's name: a name is a label,
-/// and this is a fact about the physics.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SpecialClass {
-    /// Scaled by the force field's van-der-Waals weights.
-    Vdw,
-    /// Scaled by its electrostatic weights.
-    Coulomb,
-}
 
 /// Maps `(category, style_name)` to the constructor that builds its potential
 /// and the [`ParamSource`] it resolves parameters from.
@@ -178,24 +119,16 @@ impl KernelRegistry {
         );
     }
 
-    /// Register the neighbour-driven form of an already-registered pair style.
-    ///
-    /// A style without one cannot be evaluated over a neighbour table at all,
-    /// and [`PotentialCompiler::compile_typed`](crate::ff::potential::PotentialCompiler::compile_typed)
-    /// says so rather than quietly falling back to the compiled form, whose
-    /// parameters would belong to a pair list nobody is evaluating.
-    /// # Panics
-    ///
-    /// If `(category, name)` has no compiled registration. A neighbour-driven
-    /// form is an *alternative* way to build a style that already exists, so a
-    /// silent no-op here would leave the caller believing their style works
-    /// under MD when `PotentialCompiler::compile_typed` will refuse it.
     /// Declare where a registered style's rows come from.
     ///
     /// Only needed to say [`RowSource::Atoms`]; the default is the category's
     /// topology block. Like [`register_typed`](Self::register_typed) this is a
     /// second statement about a style that must already exist, and an override
     /// resets it — a re-registered style is a different force law.
+    ///
+    /// # Panics
+    ///
+    /// If `(category, name)` has no compiled registration.
     pub fn declare_rows(&mut self, category: &str, name: &str, rows: RowSource) {
         let r = self
             .ctors
@@ -216,6 +149,19 @@ impl KernelRegistry {
             .map(|r| r.rows)
     }
 
+    /// Register the neighbour-driven form of an already-registered pair style.
+    ///
+    /// A style without one cannot be evaluated over a neighbour table at all,
+    /// and [`PotentialCompiler::compile_typed`](crate::ff::potential::PotentialCompiler::compile_typed)
+    /// says so rather than quietly falling back to the compiled form, whose
+    /// parameters would belong to a pair list nobody is evaluating.
+    ///
+    /// # Panics
+    ///
+    /// If `(category, name)` has no compiled registration. A neighbour-driven
+    /// form is an *alternative* way to build a style that already exists, so a
+    /// silent no-op here would leave the caller believing their style works
+    /// under MD when `PotentialCompiler::compile_typed` will refuse it.
     pub fn register_typed(
         &mut self,
         category: &str,
@@ -521,75 +467,6 @@ impl KernelRegistry {
 
         r
     }
-}
-
-/// Register a table-driven ([`ParamSource::TypeRows`]) kernel in the global
-/// force-field IR registry: a shim over
-/// [`ir::register_style`](crate::ff::ir::register_style) with a
-/// [`Kernel::ctor`](crate::ff::ir::Kernel::ctor) and a spec that declares no
-/// parameters.
-///
-/// A built-in is sealed ([`IrError::Sealed`]); registering the same
-/// constructor again is a no-op, another one under a taken name an
-/// [`IrError::Conflict`]. A kernel that should state its parameters, a
-/// neighbour-driven form or an expression registers through
-/// [`ir::register_style`](crate::ff::ir::register_style) directly.
-///
-/// [`IrError::Sealed`]: crate::ff::ir::IrError::Sealed
-/// [`IrError::Conflict`]: crate::ff::ir::IrError::Conflict
-pub fn register_kernel(
-    category: &str,
-    name: &str,
-    ctor: KernelConstructor,
-) -> Result<(), crate::ff::ir::IrError> {
-    register_kernel_with(category, name, ctor, ParamSource::TypeRows)
-}
-
-/// [`register_kernel`], declaring the kernel's [`ParamSource`].
-///
-/// Use this — with [`ParamSource::PerInstance`] — for a kernel whose parameters
-/// are baked into [`Frame`] columns rather than resolved from type rows; it is
-/// what exempts the style from the "has type definitions" check.
-pub fn register_kernel_with(
-    category: &str,
-    name: &str,
-    ctor: KernelConstructor,
-    source: ParamSource,
-) -> Result<(), crate::ff::ir::IrError> {
-    crate::ff::ir::register_style(
-        crate::ff::ir::StyleSpec::new(category.to_owned(), name.to_owned()).source(source),
-        Some(crate::ff::ir::Kernel::ctor(ctor)),
-    )
-}
-
-/// The compiled constructor of a Tier-3 style in the global registry.
-pub fn lookup_kernel(category: &str, name: &str) -> Option<KernelConstructor> {
-    crate::ff::ir::with_global(|r| match r.style(category, name)?.1? {
-        crate::ff::ir::Kernel::Ctor { compiled, .. } => Some(*compiled),
-        _ => None,
-    })
-}
-
-/// The neighbour-driven constructor a Tier-3 pair style declared, and the
-/// weight set that scales it.
-pub fn lookup_typed_kernel(
-    category: &str,
-    name: &str,
-) -> Option<(KernelConstructor, SpecialClass)> {
-    crate::ff::ir::with_global(|r| match r.style(category, name)?.1? {
-        crate::ff::ir::Kernel::Ctor { typed, .. } => *typed,
-        _ => None,
-    })
-}
-
-/// The [`ParamSource`] a style declared, from the global registry.
-pub fn lookup_param_source(category: &str, name: &str) -> Option<ParamSource> {
-    crate::ff::ir::with_global(|r| r.param_source(category, name))
-}
-
-/// Where a style's rows come from, from the global registry.
-pub fn lookup_row_source(category: &str, name: &str) -> Option<RowSource> {
-    crate::ff::ir::with_global(|r| r.row_source(category, name))
 }
 
 #[cfg(test)]

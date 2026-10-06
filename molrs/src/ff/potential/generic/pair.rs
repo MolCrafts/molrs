@@ -5,12 +5,12 @@ use std::sync::Arc;
 
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::{Params, pair_key};
+use crate::ff::ir::SpecialClass;
 use crate::ff::ir::conformance::Probe;
 use crate::ff::ir::{IrError, Mix, ParamKind, StyleSpec};
 use crate::ff::potential::generic::{Column, ScalarForm, TermParams, columns, read_by, row_num};
 use crate::ff::potential::need::{neighbour_cutoff, pair_cutoff};
 use crate::ff::potential::pair::{atom_type_index, fold_chunks, type_pair};
-use crate::ff::potential::registry::SpecialClass;
 use crate::ff::potential::{PairDriven, Potential, gather_copies};
 use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;

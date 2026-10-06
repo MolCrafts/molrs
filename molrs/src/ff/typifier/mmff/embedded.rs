@@ -5,7 +5,7 @@
 //! library per variant ([`library`]), built once from the compiled table
 //! ([`crate::ff::params::mmff`]); the two differ by exactly two things:
 //! the force-field **name** they build under, and the
-//! [`MmffVariant`](crate::ff::mmff::MmffVariant) their front door pins. Nothing
+//! [`MmffVariant`] their front door pins. Nothing
 //! here is a number: every value comes from the table.
 //!
 //! The XML reader is not gone — [`MMFF94Typifier::from_xml_str`] still parses a
@@ -14,10 +14,11 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
+use super::properties::MmffVariant;
 use crate::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
-use crate::ff::mmff::MmffVariant;
-use crate::ff::mmff::da::encode_da_byte;
-use crate::ff::params::mmff::{MMFF_ELE_STYLE, MMFF_PROP, MMFF_STYLES, MMFF_VDW, MMFF_VDW_STYLE};
+use crate::ff::params::mmff::{
+    MMFF_ELE_STYLE, MMFF_PROP, MMFF_STYLES, MMFF_VDW, MMFF_VDW_STYLE, encode_da_byte,
+};
 
 use super::engine::MmffLibrary;
 use super::params::{MMFFAtomProp, MMFFParams};

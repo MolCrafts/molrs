@@ -34,6 +34,7 @@ pub mod bond_type;
 pub mod builder;
 pub mod coarsen;
 pub mod equivalence;
+mod hybridization;
 pub mod hydrogens;
 pub mod ring_class;
 pub mod rings;
@@ -44,4 +45,5 @@ pub mod subgraph;
 
 pub use builder::Perceive;
 pub use coarsen::{CoarsenError, Coarsener};
+pub use hybridization::{Hybridization, conjugated_atoms, hybridizations};
 pub use subgraph::SubgraphMatcher;

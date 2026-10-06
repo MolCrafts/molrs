@@ -56,7 +56,7 @@
 //! and one without the key (written before version 1), is converted on read —
 //! the force-field IR's numbers whose meaning changed in version 2 are
 //! re-expressed exactly, or the store is refused
-//! ([`molrs::store::record_v1`]). `meta` comes back as stored. A version-1
+//! (`ff::forcefield::record_v1`; without the `ff` feature, refused). `meta` comes back as stored. A version-1
 //! trajectory is read, never appended to.
 //!
 //! Identity of a store is the `*.mrec/` path suffix plus a Zarr root, not this
