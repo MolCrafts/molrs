@@ -159,8 +159,9 @@ angle style, and both `PotentialCompiler.compile` and `compile_typed` price it.
 The 1-3 spring adds no exclusion; which 1-3 pairs a pair style sees is
 `special_bonds`'s answer, as before. See
 [Force-field IR](guides/forcefield-ir.md#ureybradley).
-Engine readers other than LAMMPS's (GROMACS funct 5, OpenMM
-`AmoebaUreyBradleyForce`, CHARMM `.prm`) come in a later release. Behaviour
+OpenMM's `AmoebaUreyBradleyForce` reads and writes it too
+([OpenMM XML](#openmm-xml)); the other engines' readers (GROMACS funct 5,
+CHARMM `.prm`) come in a later release. Behaviour
 that changes with it:
 
 - **A force field with several styles of one bonded category compiles.**
@@ -264,9 +265,69 @@ conventions guide, "1-4 interactions", for the formulas.
   `Option<BondDistanceWeights>`). Build the MD weights with
   `SpecialWeights::new(&w.special_weights(&topo))` (was
   `topo.special_weights(&w)`); `PairWeights::by_distance()` is the old table.
+- **`lj/charmm` style param `one_four`** — `"regular"` (default; a
+  `special_bonds` 1-4 pair at the regular ε/σ, LAMMPS) or `"epsilon14"` (at
+  ε₁₄/σ₁₄, OpenMM / GROMACS pairtypes); any other value is refused.
+  `ForceField.materialize_one_four(frame)` (Rust
+  `ForceField::materialize_one_four`) writes a frame's 1-4 pairs as override
+  rows from the field's declarations; compiling an `"epsilon14"` field for a
+  frame without them is refused, and the LAMMPS writer refuses the param.
 - **`pair14` is no category.** molrec retired it; `category_arity("pair14")`
   is `None`, `PAIR_CATEGORIES` is gone, and a `pair14` table is kept as
   unknown content (no arity or restatement check). No reader produced it.
+
+### OpenMM XML
+
+The OpenMM reader (`OplsXmlReader`, Python `read_opls_xml`; `read_forcefield_xml`
+dispatches to it) and writer (`XmlForceFieldWriter`, `write_forcefield_xml`)
+cover every force OpenMM's `app.ForceField` builds from a Class-I file, and
+refuse the rest by name; see [Force-field IR](guides/forcefield-ir.md#openmm-xml).
+Checked against OpenMM's own energies (Reference platform) and LAMMPS on
+CHARMM36, AMBER ff14SB and OPLS-AA molecules.
+
+- **New sections read and written.** `<LennardJonesForce>` (`sigma14`,
+  `epsilon14`, `<NBFixPair>`) is `pair lj/charmm` + `coul/charmm`;
+  `<AmoebaUreyBradleyForce>` is `angle charmm`; `<CMAPTorsionForce>` is
+  `cmap charmm` (OpenMM's map shifted by N/2 per index and transposed into
+  φ-major); `<CustomTorsionForce energy="k*(theta-theta0)^2">` is
+  `improper harmonic` (`theta0 = 0`; the writer uses
+  `k*(abs(theta)-theta0)^2` for `chi0 ≠ 0`).
+- **`<RBTorsionForce>` reads as `dihedral multi/harmonic`** (`nharmonic` when
+  C₅ ≠ 0), exactly and with its constant; it was `dihedral opls`, which
+  refused C₅ ≠ 0 and ΣCₙ ≠ 0. The OPLS-AA typifier built from XML takes its
+  dihedral candidates from every dihedral style.
+- **Coulomb uses OpenMM's constant.** An OpenMM-read `coul/cut` /
+  `coul/charmm` has `coulomb = 332.06371329919216` (OpenMM's `ONE_4PI_EPS0`),
+  not LAMMPS `real`'s 332.06371: Coulomb energies of an OpenMM-read field are
+  9.9·10⁻⁹ larger than in 0.15.
+- **`NonbondedForce` states its mixing.** Without the foyer
+  `combining_rule`, `lj/cut` gets `mixing = "arithmetic"` (OpenMM's rule)
+  instead of none.
+- **Refused, by name, instead of skipped or misread**: every
+  `Custom*Force` other than the harmonic improper (0.15 skipped them
+  silently), `<Script>`, an RB `<Improper>`, a bonded row naming neither
+  `class{n}` nor `type{n}` (0.15 read it as a `*` wildcard; OpenMM ignores
+  it), `ordering="smirnoff"`, odd CMAP sizes, a `<NonbondedForce>` with
+  `epsilon ≠ 0` beside a `<LennardJonesForce>`. `<Info>` and `<Patches>` are
+  skipped like `<Residues>`.
+- **1-4 parameters of their own.** A `<LennardJonesForce>` whose types carry
+  `sigma14`/`epsilon14` gives its `lj/charmm` the new style param
+  `one_four = "epsilon14"` (see [1-4 interactions](#1-4-interactions)); call
+  `ForceField.materialize_one_four(frame)` before compiling such a frame.
+- **Writer.** Writes everything above, plus `dihedral charmm` (`w = 0`),
+  `harmonic` and `class2` as periodic terms, `multi/harmonic`, `nharmonic`
+  and `opls` as RB, explicit LJ cross rows as `<NBFixPair>` (0.15 refused
+  them), charges from the atom types (0.15 read them from the pair rows,
+  where no reader puts them, and wrote 0), class / type endpoints as the
+  field names them, `combining_rule` when not arithmetic. It refuses every
+  style it has no form for (0.15 skipped bond, angle and pair styles it did
+  not know). Placeholder class types are no longer written as atom types.
+- **`write_forcefield_xml(path, ff, precision)`: `precision` is optional**
+  (`Option<usize>` in Rust); the default writes each number in the shortest
+  form that reads back to the same float (0.15: six decimals).
+- **LAMMPS writer: `dihedral charmm` phase is an integer.** LAMMPS reads it
+  as integer degrees and refused `180.000000`; a non-integer phase is
+  refused by name.
 
 ### Already in 0.15.1
 

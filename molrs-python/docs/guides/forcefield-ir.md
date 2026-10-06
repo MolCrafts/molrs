@@ -107,7 +107,7 @@ the energy of a physical system did not change with it.
 | `buck` | a e^(−r/rho) − c/r⁶ | `a` (E), `rho` (L), `c` (E·L⁶) | `pair_style buck` `A rho C` | unchanged |
 | `morse` | d0 [(1 − e^(−alpha (r − r0)))² − 1] | `d0` (E), `alpha` (1/L), `r0` (L) | `pair_style morse` `D0 alpha r0` | the compiled kernel read `D0`, the neighbour-driven one `d0`; both read `d0` |
 | `coul/cut` | coulomb qᵢqⱼ / (dielectric (r + delta)) | style `coulomb` (E·L/e²), `dielectric`, `delta` (L), `cutoff` | `pair_style coul/cut` with `delta = 0` (the buffer is molrs's, for MMFF; the LAMMPS writer refuses `delta ≠ 0` and `dielectric ≠ 1`). LAMMPS fixes the constant (`qqr2e`) per `units` | unchanged |
-| `lj/charmm` | 4ε[(σ/r)¹² − (σ/r)⁶]·S(r), S CHARMM's switch from `inner` to `cutoff` | `epsilon`, `sigma`, `epsilon14`, `sigma14` (absent → `epsilon`, `sigma`); style `inner`, `cutoff`, `mixing` (default `arithmetic`) | `pair_style lj/charmm/coul/charmm`, van-der-Waals half; `pair_coeff i j ε σ ε₁₄ σ₁₄` | new |
+| `lj/charmm` | 4ε[(σ/r)¹² − (σ/r)⁶]·S(r), S CHARMM's switch from `inner` to `cutoff` | `epsilon`, `sigma`, `epsilon14`, `sigma14` (absent → `epsilon`, `sigma`); style `inner`, `cutoff`, `mixing` (default `arithmetic`), `one_four` (`"regular"`, the default, or `"epsilon14"`: what a `special_bonds` 1-4 pair is priced at, see [1-4](#1-4-interactions)) | `pair_style lj/charmm/coul/charmm`, van-der-Waals half; `pair_coeff i j ε σ ε₁₄ σ₁₄` (`one_four = "epsilon14"` has no LAMMPS form) | new |
 | `coul/charmm` | coulomb qᵢqⱼ/(dielectric r)·S(r); force (C qᵢqⱼ/r²)·S(r), LAMMPS's switched force, not the gradient | style `coulomb`, `dielectric`, `inner`, `cutoff` | `pair_style lj/charmm/coul/charmm`, Coulomb half (`inner2 outer2` when its cutoffs differ) | new |
 | `coul/long/pme` | Ewald-summed coulomb qᵢqⱼ/r | style `coulomb`, `cutoff`, `alpha`, `order`, `grid_*` | `pair_style coul/long` + `kspace_style pppm` | unchanged |
 | `thole` | T(r) qᵢqⱼ/r, T = 1 − (1 + s r/2) e^(−s r), s = ½(aᵢ + aⱼ)/(αᵢαⱼ)^(1/6) | per type `charge`, `alpha` (L³), `damp` | `pair_style thole` `alpha damp` (LAMMPS damps the Drude charges of the atoms; molrs's per-type `charge` is its own) | `a_thole` renamed `damp` |
@@ -144,6 +144,8 @@ order; molrs gives `0.003384791688934619`).
 | OpenMM `<Improper class1 … class4>`, `ordering` default / `amber` | c1 = centre; OpenMM prices φ(c2, c3, c1, c4) | (c2, c3, c1, c4); the writer writes the inverse |
 | OpenMM, `ordering="charmm"`, no wildcard | OpenMM prices φ(c1, c2, c3, c4) | as written |
 | OpenMM, `ordering="smirnoff"` | three permutations averaged | refused |
+| OpenMM `<CustomTorsionForce>` harmonic improper (default ordering `charmm`) | OpenMM prices φ(c1, c2, c3, c4) without a wildcard, φ(c2, c3, c1, c4) with one | as OpenMM prices; the writer refuses a wildcard |
+| OpenMM `<RBTorsionForce><Improper>` | — | refused (no improper style is a cosine polynomial) |
 | molrs topology perception (`generate_topology`, `trivalent_impropers`) | centre first | a force field that wants AMBER's order re-orders (GAFF does) |
 | UFF, MMFF typifiers | — | centre first |
 
@@ -185,6 +187,34 @@ parameters:
    is not (`pair_lj_charmm_coul_charmm.cpp`). `lj/charmm/coul/long` is not
    read. GROMACS `[ pairtypes ]` will land in the cross rows'
    `epsilon14`/`sigma14`.
+
+   LAMMPS prices a `special_bonds` 1-4 pair under this style at the
+   **regular** `epsilon` / `sigma`; `epsilon14` / `sigma14` reach only the
+   `w` pairs of mechanism 3. Engines that price every bond-graph 1-4 pair
+   once with its own 1-4 parameters (OpenMM's `<LennardJonesForce>`
+   `sigma14`/`epsilon14`, GROMACS `[ pairtypes ]`, a chamber prmtop's 1-4
+   table) mean it at `epsilon14` / `sigma14`. The style param `one_four`
+   says which:
+
+   | `one_four` | A `special_bonds` 1-4 pair (no `w`, no override) is priced at |
+   |---|---|
+   | absent or `"regular"` | the regular `epsilon` / `sigma` — LAMMPS |
+   | `"epsilon14"` | `epsilon14` / `sigma14` (the cross row's for an explicit pair, else the two types' mixed by `mixing`) |
+
+   Any other value is refused (by the compile doors, `to_section` /
+   `from_section` and every reader of a record). LAMMPS's pair style has no
+   `"epsilon14"` form, so the IR holds those pairs as per-pair override
+   rows (below): **`ForceField.materialize_one_four(frame)`** (Rust
+   `ForceField::materialize_one_four`) writes, on every `is_14` row of the
+   frame's `pairs` (built when absent) that no `w > 0` dihedral covers,
+   `epsilon`, `sigma` = the pair's 1-4 parameters and `lj_scale`,
+   `coul_scale` = the `special_bonds` 1-4 weights, keeping a cell already
+   set; under `"regular"` (or `lj/cut`) it writes the regular parameters, so
+   the energy does not change. A field declaring `"epsilon14"` needs it on
+   its frames before compiling: both compile doors refuse a 1-4 pair whose
+   1-4 parameters differ from its regular ones and that neither an override
+   nor `w` covers, naming `materialize_one_four`, and the LAMMPS writer
+   refuses the param (its deck would price the regular parameters).
 3. **Per-dihedral weight** — `dihedral_style charmm` `w`: each dihedral
    prices the pair of its own end atoms,
 
@@ -254,15 +284,15 @@ exclusion (the 1-3 pair is excluded by `special_bonds`). There is no separate
 Urey–Bradley category. A field that mixes it with other angle styles is
 LAMMPS's `angle_style hybrid harmonic charmm` (`angle_coeff t charmm K theta0
 K_ub r_ub`), which the LAMMPS reader and writer read and write; molrs prices
-each angle row under the style that defines its type. 0.16 has the kernel and
-the LAMMPS reader and writer; the other engines' maps below are how
-their readers map onto the IR:
+each angle row under the style that defines its type. 0.16 has the kernel,
+the LAMMPS reader and writer and the OpenMM reader and writer; the other
+engines' maps below are how their readers map onto the IR:
 
 | Source | `angle charmm` |
 |---|---|
 | CHARMM `.prm` `ANGLES` `Ktheta Theta0 Kub S0` | as written (CHARMM has no ½) |
 | GROMACS `[ angletypes ]` funct 5 `θ₀ k_θ r13 k_UB` (½k forms, nm, kJ/mol) | `k = k_θ/(2·4.184)`, `theta0 = θ₀`, `k_ub = k_UB/(2·418.4)`, `r_ub = 10·r13` |
-| OpenMM `<AmoebaUreyBradleyForce><UreyBradley … k d>` (OpenMM adds a `HarmonicBondForce` term with `2k`, so `k` is un-halved) | `k_ub = k/418.4`, `r_ub = 10·d`, joined with the `HarmonicAngleForce` row of the same classes |
+| OpenMM `<AmoebaUreyBradleyForce><UreyBradley … k d>` (`AmoebaUreyBradleyForceBuilder.addUreyBradleys` adds `HarmonicBondForce.addBond(a1, a3, d, 2*k)`, energy ½·2k(r − d)², so `k` is un-halved) | `k_ub = k/418.4`, `r_ub = 10·d`, joined with the `HarmonicAngleForce` row of the same three labels in either direction; without one, `k = 0`. Checked against OpenMM's energy ([OpenMM XML](#openmm-xml)) |
 
 ## CMAP
 
@@ -365,10 +395,15 @@ value cell — the same numbers but for float ties on a cell edge).
   `fix cmap` line's file relative to the include.
 
 OpenMM's `CMAPTorsionForce` stores `energy[i + N·j]` at φ = 2πi/N, ψ = 2πj/N
-(origin 0, φ fastest): its reader maps element `(i, j)` to molrs `[(i + N/2) mod N]
-[(j + N/2) mod N]`; OpenMM interpolates with a natural periodic bicubic
-spline, so energies off the grid points differ from LAMMPS's at the
-interpolation's accuracy. GROMACS `[ cmaptypes ]` lists CHARMM's grid; its
+(origin 0, φ fastest — `CMAPTorsionForce::addMap`): its reader maps element
+`(i, j)` to molrs `[(i + N/2) mod N][(j + N/2) mod N]` (each index shifted by
+N/2, the axes swapped into φ-major), and refuses an odd N, which puts no
+OpenMM node on −180°; the writer is the inverse. OpenMM takes its node slopes
+from periodic splines where LAMMPS splines the doubled map with natural ends,
+so energies off the grid points differ at the spline's end effect: 3·10⁻¹²
+relative on CHARMM36's alanine map at an ACE-ALA-NME conformer
+([OpenMM XML](#openmm-xml)). OpenMM's generator matches a crossterm's five
+types forward or backward; `assign_cmaps` matches forward only. GROMACS `[ cmaptypes ]` lists CHARMM's grid; its
 reader must be checked against a GROMACS energy before it is trusted.
 
 ## Torsion forms and their exact conversions
@@ -408,8 +443,10 @@ a₀. The polynomial forms (`multi/harmonic`, `nharmonic`, RB) carry a₀ back
 exactly; every other form fixes its constant by its other parameters, and
 reproduces the series up to that offset. In particular ΣCₙ = 0 is **not** an
 image condition of RB → OPLS once the constant is dropped — only C₅ = 0 is.
-The GROMACS and OPLS-XML readers, which keep the absolute energy, still
-require ΣCₙ = 0 to within 10⁻⁴ kJ/mol beside C₅ = 0.
+The GROMACS reader, which keeps the absolute energy in its OPLS form, still
+requires ΣCₙ = 0 to within 10⁻⁴ kJ/mol beside C₅ = 0; the OpenMM XML reader
+reads `<RBTorsionForce>` as `multi/harmonic` (`nharmonic` when C₅ ≠ 0),
+which holds every RB row exactly.
 
 The familiar chains are instances:
 
@@ -462,13 +499,63 @@ for input rounded on print. A test evaluates every registered kernel on
 random geometries against its form's series, so the algebra and the kernels
 cannot drift.
 
+## OpenMM XML
+
+`OplsXmlReader` (Python `read_opls_xml`, and `read_forcefield_xml` for a
+file in OpenMM's schema) reads OpenMM's `<ForceField>` — its own CHARMM36,
+AMBER and OPLS-AA ports and the foyer / molpy packs — and
+`XmlForceFieldWriter` (`write_forcefield_xml`) writes the inverse, each
+number in the shortest form that reads back to the same `f64` unless a
+`precision` is given. The IR's definitions are LAMMPS's; OpenMM's are
+converted at the boundary:
+
+| OpenMM | IR | Conversion |
+|---|---|---|
+| `<HarmonicBondForce><Bond length k>` | `bond harmonic` | `r0 = 10·length`, `k = k/(2·418.4)` (OpenMM's ½k) |
+| `<HarmonicAngleForce><Angle angle k>` | `angle harmonic` | `theta0` in degrees, `k = k/(2·4.184)` |
+| `<AmoebaUreyBradleyForce><UreyBradley k d>` | `angle charmm`, joined with its angle row | `k_ub = k/418.4`, `r_ub = 10·d` ([Urey–Bradley](#ureybradley)) |
+| `<PeriodicTorsionForce><Proper k_m periodicity_m phase_m>` | `dihedral periodic` | `k_m/4.184`, phases in degrees; the writer also writes `dihedral charmm` (`w = 0`), `harmonic` and `class2` here, term for term, constant included |
+| `<PeriodicTorsionForce><Proper c0..c3>` (CL&P / foyer) | `dihedral opls` | `k_n = c_{n−1}/4.184` |
+| `<PeriodicTorsionForce><Improper>` | `improper periodic` (one term) | stored in the order OpenMM prices ([Improper atom order](#improper-atom-order)) |
+| `<RBTorsionForce><Proper c0..c5>` | `dihedral multi/harmonic` (C₅ = 0) or `nharmonic` (N = 6) | `Aₙ₊₁ = (−1)ⁿ Cₙ/4.184`, constant included; the writer writes `multi/harmonic`, `nharmonic` (N ≤ 6) and `opls` here |
+| `<CustomTorsionForce energy="k*(theta-theta0)^2">` `<Improper>` | `improper harmonic` | `k/4.184`; OpenMM's θ is signed and LAMMPS's χ = \|φ\|, which agree at `theta0 = 0` only — another `theta0` is refused (CHARMM36's two `theta0 = π` rows among them) |
+| `<CustomTorsionForce energy="k*(abs(theta)-theta0)^2">` | `improper harmonic` | `chi0` = theta0 in degrees (the writer's form when some `chi0 ≠ 0`) |
+| `<CMAPTorsionForce><Map>`, `<Torsion map>` | `cmap charmm` | [CMAP](#cmap) |
+| `<NonbondedForce coulomb14scale lj14scale><Atom charge sigma epsilon>` | `pair lj/cut` (`mixing` = the root's foyer `combining_rule`, else `arithmetic`) + `pair coul/cut`; `charge` on `atom full` | `sigma` × 10, `epsilon` ÷ 4.184; `special_bonds` `[0, 0, scale]` |
+| `<LennardJonesForce lj14scale><Atom sigma epsilon [sigma14 epsilon14]>`, `<NBFixPair>` | `pair lj/charmm` (`arithmetic`, NBFIX as cross rows) + `pair coul/charmm`, the `<NonbondedForce>` beside it (its `epsilon` 0) giving the charges | 1-4: `special_bonds` `[0, 0, lj14scale]` / `[0, 0, coulomb14scale]`, and `one_four = "epsilon14"` when a type's 1-4 parameters differ ([1-4](#1-4-interactions)); an NBFIX row is OpenMM's 1-4 parameters for its pair too, LAMMPS's two-number cross row |
+
+Rows key on `class{n}` or `type{n}` as written; OpenMM's wildcard (an empty
+attribute) is `""`, and a row naming neither, which OpenMM ignores, is
+refused. Every Coulomb style states OpenMM's constant (`ONE_4PI_EPS0` =
+332.06371329919216 kcal·Å/(mol·e²), 9.9·10⁻⁹ above LAMMPS `real`'s
+`qqr2e`); the writers do not carry it (each engine fixes its own). OpenMM's
+cutoffs and switching are `createSystem` arguments, so no style read from a
+file has a `cutoff` (or `inner`): the caller states them, for `NoCutoff` a
+cutoff beyond every pair.
+
+**Refused**, by name: `<Script>` / `<InitializationScript>`, every
+`Custom*Force` other than the harmonic improper, a `<Proper>` under it,
+an RB `<Improper>`, `ordering="smirnoff"`, a multi-term periodic improper,
+an odd CMAP size, a wildcard Urey–Bradley row, an `<NBFixPair>` of a type
+with itself, a `<NonbondedForce>` with non-zero `epsilon` beside a
+`<LennardJonesForce>` (OpenMM prices both), and every other force (AMOEBA
+multipoles, GBSA, Drude, …). The writer refuses what OpenMM's tags cannot
+hold: a style outside the table (`improper cvff`, `bond morse`, …),
+`dihedral charmm` `w ≠ 0`, `special_bonds` other than `[0, 0, s]`,
+`sixthpower` mixing or `geometric` with cross rows, a cross row with its own
+1-4 parameters, `lj/charmm` under `one_four = "regular"` with 1-4 parameters
+of its own at a non-zero weight (OpenMM would use them), a Coulomb style
+with `dielectric ≠ 1` or `delta ≠ 0`, and charges on some atom types only.
+`<Residues>`, `<Patches>` and `<Info>` carry no parameters and are skipped;
+placeholder atom types the reader makes for classes are not written.
+
 ## Engine maps at a glance
 
 | Engine | bond `k` | angle `k`, `theta0` | phases | impropers |
 |---|---|---|---|---|
 | LAMMPS | `K` | `K`, deg | deg | as written |
 | GROMACS (`.top`/`.itp`) | `k_b/2`, kJ→kcal, nm→Å | `k_θ/2`, deg | deg | as written |
-| OpenMM XML | `k/2`, kJ→kcal, nm→Å | `k/2`, rad→deg | rad→deg | (c1..c4) ↔ (c2, c3, c1, c4) |
+| OpenMM XML | `k/2`, kJ→kcal, nm→Å | `k/2`, rad→deg | rad→deg | (c1..c4) ↔ (c2, c3, c1, c4); see [OpenMM XML](#openmm-xml) |
 | AMBER prmtop | `RK` | `TK`, rad→deg | rad→deg | AMBER order |
 | AMBER frcmod (writer) | `RK = k` | `TK = k`, deg | deg | AMBER order |
 | GAFF / GAFF2 tables | `K` | `K`, deg | deg | AMBER order |
@@ -503,6 +590,42 @@ cannot drift.
   0.162750104621288, angle 1.35959339751695, dihedral 0.692979891423841,
   improper 0.431717012867386, van der Waals 1.22012795938037, Coulomb
   −10.7066619897381 kcal/mol.
+- OpenMM XML end to end (`ff::openmm_check`; `scripts/openmm_xml_check.py`
+  prices with OpenMM 8.6.1's own `app.ForceField`, `Reference` platform,
+  `NoCutoff`, each force in its own group; `scripts/openmm_xml_check.sh`
+  runs LAMMPS `run 0` on the data file and include molrs writes): ACE-ALA-NME
+  with CHARMM36 (Urey–Bradley, harmonic impropers, CMAP, `sigma14` /
+  `epsilon14`, an NBFIX row — LAMMPS deck in its `dihedral charmm` `w` form),
+  with AMBER ff14SB, and 1-propanol with OPLS-AA (RB, geometric mixing).
+  kcal/mol:
+
+  | Case | Term | OpenMM | LAMMPS | molrs |
+  |---|---|---|---|---|
+  | charmm | bond | 36.945047858708044 | 36.94504785870815 | 36.94504785870815 |
+  | charmm | angle (incl. UB) | 17.449423871456695 | 17.449423871456627 | 17.44942387145663 |
+  | charmm | dihedral | 6.19239592482837 | 6.1923959248283635 | 6.192395924828361 |
+  | charmm | improper | 2.715834463096705 | 2.7158344630968245 | 2.715834463096736 |
+  | charmm | cmap | 0.43270566338002386 | 0.43270566337874106 | 0.43270566337874106 |
+  | charmm | vdW (incl. 1-4) | 0.4406266917233237 | 0.4406266917233339 | 0.440626691723334 |
+  | charmm | Coulomb | −24.645577292730245 | −24.64557704786598 | −24.645577292730195 |
+  | amber | bond | 32.27593176355788 | 32.275931763558 | 32.275931763558 |
+  | amber | angle | 15.661664106340247 | 15.661664106340188 | 15.66166410634019 |
+  | amber | dihedral | 13.096829168247133 | 13.096829168247146 | 13.096829168247142 |
+  | amber | improper | 1.030690929439921 | 1.03069092943996 | 1.0306909294399393 |
+  | amber | vdW | 2.995530281438277 | 2.995530281438281 | 2.9955302814382825 |
+  | amber | Coulomb | −36.45693850206638 | −36.4569381398514 | −36.45693850206634 |
+  | opls | bond | 25.068019234759834 | 25.06801923475996 | 25.06801923475996 |
+  | opls | angle | 3.651654362069225 | 3.6516543620692508 | 3.6516543620692508 |
+  | opls | dihedral (RB) | −0.26085298030739323 | −0.26085298030739323 | −0.26085298030739335 |
+  | opls | vdW | 0.10191738393823163 | 0.10191738393823166 | 0.1019173839382316 |
+  | opls | Coulomb | 0.9415611810268669 | 0.9415611716720687 | 0.9415611810268705 |
+
+  molrs is OpenMM to ≤ 2.3·10⁻¹⁴ relative, the CMAP to 3·10⁻¹² (its
+  interpolation, [CMAP](#cmap)); molrs is LAMMPS to ≤ 3.3·10⁻¹⁴ except the
+  Coulomb, which differs from LAMMPS by exactly the two Coulomb constants'
+  ratio (9.9·10⁻⁹), as OpenMM does. The XML molrs writes back from each
+  force field, priced by OpenMM, gives the source's energies to ≤ 6·10⁻¹⁵,
+  and read → write → read is the identity.
 - `angle charmm` through LAMMPS (`run 0`), as `angle_style charmm` on three
   atoms and as `angle_style hybrid harmonic charmm` on five: `pe` 0.024871552479721934
   and 0.35736516873047092 kcal/mol, which molrs reproduces bit for bit, and
