@@ -2626,6 +2626,43 @@ class ForceField:
     @property
     def units(self) -> str: ...
     def merge(self, other: ForceField) -> Self: ...
+    def canonical(self) -> ForceField:
+        """Every style of a form family in its canonical style's category
+        mapped onto that style, exactly (``dihedral opls``/``charmm``/``rb``
+        … → ``dihedral periodic``; ``bond class2`` → ``bond harmonic``;
+        ``pair lj/class2`` → ``pair lj/cut``). Impropers stay. Idempotent.
+
+        Raises
+        ------
+        ValueError
+            A row the canonical style cannot hold (charmm ``w ≠ 0``, class2
+            ``k3 ≠ 0``), naming the type and the condition."""
+    def to_form(self, category: str, style: str) -> ForceField:
+        """Every style of ``category`` in ``style``'s form family converted
+        to ``style``, exactly, through the canonical parameters.
+
+        Raises
+        ------
+        ValueError
+            ``style`` has no form codec, or a row is outside its image
+            (``sin(2φ) coefficient … ≠ 0``, ``the constant term …``)."""
+    def fit_form(
+        self,
+        category: str,
+        style: str,
+        q: Sequence[float],
+        w: Sequence[float] | None = None,
+        *,
+        kt: float | None = None,
+        offset: bool = False,
+    ) -> tuple[ForceField, dict[str, Any]]:
+        """Every other style of ``category`` fitted to ``style`` by least
+        squares over the points ``q`` of the coordinate (``r``; ``θ``, ``φ``
+        in radians), weights ``w``, Boltzmann factors at ``kt``, a free
+        constant ``offset``. Returns ``(forcefield, residual)``; ``residual``
+        has ``sum_sq``, ``rms``, ``max_abs`` and ``types`` (per row:
+        ``style``, ``type``, ``exact``, ``sum_sq``, ``rms``, ``max_abs``,
+        ``offset``). ``sum_sq`` is monotone in the metric."""
     @property
     def special_bonds(self) -> tuple[list[float], list[float]]: ...
     def set_special_bonds(self, lj: Sequence[float], coul: Sequence[float]) -> None: ...
@@ -3130,16 +3167,22 @@ class Match:
     """What a typifier's ``match`` assigns to one graph.
 
     ``nodes`` is positional against ``graph.atoms``; ``links`` maps a relation
-    class (``Bond``, ``Angle``, ``Dihedral``, ``Improper``) to rows positional
-    against ``graph.links.exact_bucket(cls)`` — the kind's own rows, so an
-    improper never shifts a dihedral position. An unknown kind raises
-    ``TypeError``. ``styles`` are ``(category, style, params)`` to declare, in
-    order; ``pairs`` are ``(style, name, endpoints, params)`` pair rows."""
+    kind to rows positional against that kind's own rows, so an improper never
+    shifts a dihedral position. A key is a relation class (``Bond``, ``Angle``,
+    ``Dihedral``, ``Improper``, ``Port``; rows as
+    ``graph.links.exact_bucket(cls)``) or a kind name (``"bonds"``, or a
+    custom ``"urey_bradleys"`` from ``graph.register_kind``; rows as
+    ``graph.relation_ids(kind)``). A type annotation under a kind defines a
+    type of the category whose block the kind is (``urey_bradleys`` →
+    ``urey_bradley``). Any other key raises ``TypeError``, a kind named twice
+    ``ValueError``. ``styles`` are ``(category, style, params)`` to declare,
+    in order; ``pairs`` are ``(style, name, endpoints, params)`` pair rows."""
 
     def __init__(
         self,
         nodes: Sequence[_AbcMapping[str, Annotation]],
-        links: _AbcMapping[type, Sequence[_AbcMapping[str, Annotation]]] | None = None,
+        links: _AbcMapping[type | str, Sequence[_AbcMapping[str, Annotation]]]
+        | None = None,
         *,
         styles: Sequence[tuple[str, str, dict[str, MatchParamValue]]] = (),
         pairs: Sequence[tuple[str, str, Sequence[str], dict[str, MatchParamValue]]] = (),

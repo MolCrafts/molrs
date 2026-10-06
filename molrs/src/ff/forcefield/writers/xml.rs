@@ -25,7 +25,8 @@
 //! name="charge"/>`). The Coulomb constant is OpenMM's own, as LAMMPS's is
 //! LAMMPS's, and is not written. Placeholder atom types (`type_ = "*"`, the
 //! reader's class stand-ins) are not written; the reader makes them again.
-//! An endpoint is written `class{n}` when it is an atom class (or no atom
+//! A type without a `class` (a prmtop's, a LAMMPS file's) is written as its
+//! own class, which OpenMM requires of every `<Type>`. An endpoint is written `class{n}` when it is an atom class (or no atom
 //! type names it), `type{n}` when it is the name of a type of another class,
 //! and `""` is OpenMM's wildcard.
 //!
@@ -48,7 +49,14 @@
 //!   `one_four = "regular"` (LAMMPS's semantics) whose types have their own
 //!   1-4 parameters at a non-zero 1-4 weight (OpenMM would use them);
 //! - a Coulomb style with `dielectric ≠ 1` or `delta ≠ 0`; charges beside no
-//!   Coulomb style; charges on some types and not others.
+//!   Coulomb style; charges on some types and not others;
+//! - two types OpenMM's generator would match on the same labels (bonds,
+//!   angles, propers and crossterms either way round, impropers by their
+//!   centre and the other three in any order) with other parameters — a
+//!   proper's periodic and RB forms included, since OpenMM would add both;
+//!   the same row twice is written once;
+//! - a shifted or non-12-6 `lj/cut` (`shift`, `n`, `m`);
+//! - a force field declared in units other than `real`.
 //!
 //! # Whole-FF serialization, not coefficient writing
 //!
@@ -65,7 +73,9 @@ use super::ForceFieldWriter;
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::one_four::{OneFour, has_own_one_four};
 use crate::ff::forcefield::readers::opls::{HARMONIC_IMPROPER_ABS, HARMONIC_IMPROPER_SIGNED};
-use crate::ff::forcefield::torsion::{RyckaertBellemans, TorsionForm};
+use crate::ff::forcefield::torsion::{
+    Charmm, Class2, Periodic, RyckaertBellemans, SignedCosine, torsion_series,
+};
 use crate::ff::forcefield::{ForceField, Params, Style, StyleDefs};
 use crate::ff::potential::cmap::charmm::GRID;
 
@@ -124,11 +134,10 @@ impl Endpoints {
             if t.params.get_str("type_") == Some("*") {
                 continue;
             }
-            let class = t.params.get_str("class");
-            if let Some(c) = class {
-                classes.insert(c.to_owned());
-            }
-            if class != Some(t.name.as_str()) {
+            // OpenMM requires a class: a type without one is its own.
+            let class = t.params.get_str("class").unwrap_or(&t.name);
+            classes.insert(class.to_owned());
+            if class != t.name.as_str() {
                 names.push(t.name.clone());
             }
         }
@@ -180,6 +189,52 @@ struct Out {
     custom: Vec<(f64, String)>,
     cmap_maps: Vec<Vec<f64>>,
     cmap_rows: String,
+    /// The rows written, by OpenMM generator family and the labels it
+    /// matches on: (type name, parameters as written).
+    seen: HashMap<(&'static str, Vec<String>), (String, String)>,
+}
+
+/// Labels OpenMM matches either way round, as one key.
+fn either_way(labels: &[&str]) -> Vec<String> {
+    let fwd: Vec<String> = labels.iter().map(|l| (*l).to_owned()).collect();
+    let rev: Vec<String> = fwd.iter().rev().cloned().collect();
+    fwd.min(rev)
+}
+
+/// An improper's labels as OpenMM matches them: the centre, then the other
+/// three in any order.
+fn centre_first(centre: &str, others: [&str; 3]) -> Vec<String> {
+    let mut rest: Vec<String> = others.iter().map(|l| (*l).to_owned()).collect();
+    rest.sort();
+    std::iter::once(centre.to_owned()).chain(rest).collect()
+}
+
+impl Out {
+    /// Whether the row of type `name` (parameters `body`) is to be written:
+    /// once per `family` and `key` — OpenMM's generator takes the first row
+    /// that matches, so a second row on the same labels is a restatement
+    /// (skipped) or a conflict (refused).
+    fn admit(
+        &mut self,
+        family: &'static str,
+        key: Vec<String>,
+        name: &str,
+        body: &str,
+    ) -> Result<bool, String> {
+        match self.seen.get(&(family, key.clone())) {
+            None => {
+                self.seen
+                    .insert((family, key), (name.to_owned(), body.to_owned()));
+                Ok(true)
+            }
+            Some((_, written)) if written == body => Ok(false),
+            Some((other, _)) => Err(format!(
+                "{family} types '{other}' and '{name}' are on the same labels {key:?} with \
+                 other parameters: OpenMM's generator would price every such {family} with \
+                 the first"
+            )),
+        }
+    }
 }
 
 impl XmlForceFieldWriter {
@@ -198,12 +253,15 @@ impl XmlForceFieldWriter {
                             * KJ_PER_KCAL
                             * (ANGSTROM_PER_NM * ANGSTROM_PER_NM);
                         let r0 = need(&t.params, "r0", &what)? / ANGSTROM_PER_NM;
-                        out.bonds.push_str(&format!(
-                            "    <Bond{} length=\"{}\" k=\"{}\"/>\n",
-                            ends.attrs(&[&t.itom, &t.jtom]),
-                            self.fmt_f(r0),
-                            self.fmt_f(k)
-                        ));
+                        let body =
+                            format!(" length=\"{}\" k=\"{}\"", self.fmt_f(r0), self.fmt_f(k));
+                        let key = either_way(&[&t.itom, &t.jtom]);
+                        if out.admit("Bond", key, &t.name, &body)? {
+                            out.bonds.push_str(&format!(
+                                "    <Bond{}{body}/>\n",
+                                ends.attrs(&[&t.itom, &t.jtom])
+                            ));
+                        }
                     }
                 }
                 ("angle", StyleDefs::Angle(types)) => {
@@ -217,12 +275,27 @@ impl XmlForceFieldWriter {
                         let labels = [t.itom.as_str(), &t.jtom, &t.ktom];
                         let k = 2.0 * need(&t.params, "k", &what)? * KJ_PER_KCAL;
                         let theta0 = need(&t.params, "theta0", &what)?.to_radians();
-                        out.angles.push_str(&format!(
-                            "    <Angle{} angle=\"{}\" k=\"{}\"/>\n",
-                            ends.attrs(&labels),
-                            self.fmt_f(theta0),
-                            self.fmt_f(k)
-                        ));
+                        let body =
+                            format!(" angle=\"{}\" k=\"{}\"", self.fmt_f(theta0), self.fmt_f(k));
+                        let ub_body = if ub {
+                            format!(
+                                " k_ub=\"{:?}\" r_ub=\"{:?}\"",
+                                t.params.get("k_ub"),
+                                t.params.get("r_ub")
+                            )
+                        } else {
+                            String::new()
+                        };
+                        if !out.admit(
+                            "Angle",
+                            either_way(&labels),
+                            &t.name,
+                            &format!("{body}{ub_body}"),
+                        )? {
+                            continue;
+                        }
+                        out.angles
+                            .push_str(&format!("    <Angle{}{body}/>\n", ends.attrs(&labels)));
                         if ub {
                             if labels.iter().any(|l| l.is_empty()) {
                                 return Err(format!(
@@ -246,7 +319,13 @@ impl XmlForceFieldWriter {
                 ("dihedral", StyleDefs::Dihedral(types)) => {
                     for t in types {
                         let labels = [t.itom.as_str(), &t.jtom, &t.ktom, &t.ltom];
-                        self.dihedral(style, &t.name, &t.params, &ends.attrs(&labels), out)?;
+                        self.dihedral(
+                            style,
+                            &t.name,
+                            &t.params,
+                            (&ends.attrs(&labels), either_way(&labels)),
+                            out,
+                        )?;
                     }
                 }
                 ("improper", StyleDefs::Improper(types)) => {
@@ -260,11 +339,14 @@ impl XmlForceFieldWriter {
                                     t.params.get("phase").unwrap_or(0.0),
                                 );
                                 // OpenMM prices (c2, c3, c1, c4); stored (i, j, k, l).
-                                out.periodic.push_str(&format!(
-                                    "    <Improper{}{}/>\n",
-                                    ends.attrs(&[&t.ktom, &t.itom, &t.jtom, &t.ltom]),
-                                    self.periodic_term(1, k, n, phase)
-                                ));
+                                let body = self.periodic_term(1, k, n, phase);
+                                let key = centre_first(&t.ktom, [&t.itom, &t.jtom, &t.ltom]);
+                                if out.admit("Improper", key, &t.name, &body)? {
+                                    out.periodic.push_str(&format!(
+                                        "    <Improper{}{body}/>\n",
+                                        ends.attrs(&[&t.ktom, &t.itom, &t.jtom, &t.ltom])
+                                    ));
+                                }
                             }
                             "harmonic" => {
                                 let labels = [t.itom.as_str(), &t.jtom, &t.ktom, &t.ltom];
@@ -276,15 +358,18 @@ impl XmlForceFieldWriter {
                                 }
                                 let k = need(&t.params, "k", &what)? * KJ_PER_KCAL;
                                 let chi0 = t.params.get("chi0").unwrap_or(0.0).to_radians();
-                                out.custom.push((
-                                    chi0,
-                                    format!(
-                                        "    <Improper{} k=\"{}\" theta0=\"{}\"/>\n",
-                                        ends.attrs(&labels),
-                                        self.fmt_f(k),
-                                        self.fmt_f(chi0)
-                                    ),
-                                ));
+                                let body = format!(
+                                    " k=\"{}\" theta0=\"{}\"",
+                                    self.fmt_f(k),
+                                    self.fmt_f(chi0)
+                                );
+                                let key = centre_first(&t.itom, [&t.jtom, &t.ktom, &t.ltom]);
+                                if out.admit("Improper", key, &t.name, &body)? {
+                                    out.custom.push((
+                                        chi0,
+                                        format!("    <Improper{}{body}/>\n", ends.attrs(&labels)),
+                                    ));
+                                }
                             }
                             "cvff" => {
                                 return Err(refuse(
@@ -322,6 +407,11 @@ impl XmlForceFieldWriter {
                                     grid[[(i + n / 2) % n, (j + n / 2) % n]] * KJ_PER_KCAL;
                             }
                         }
+                        let labels = [t.itom.as_str(), &t.jtom, &t.ktom, &t.ltom, &t.mtom];
+                        let body = format!("{values:?}");
+                        if !out.admit("Torsion", either_way(&labels), &t.name, &body)? {
+                            continue;
+                        }
                         let index = match out.cmap_maps.iter().position(|m| *m == values) {
                             Some(i) => i,
                             None => {
@@ -357,20 +447,22 @@ impl XmlForceFieldWriter {
         style: &Style,
         name: &str,
         p: &Params,
-        attrs: &str,
+        (attrs, key): (&str, Vec<String>),
         out: &mut Out,
     ) -> Result<(), String> {
         let what = format!("dihedral {} {name}", style.name());
-        let form = TorsionForm::from_params("dihedral", style.name(), p)
-            .map_err(|e| format!("{what}: {e}"))?;
-        let terms: Option<Vec<(f64, f64, f64)>> = match &form {
-            TorsionForm::Periodic(f) => Some(
-                f.terms
+        let refused = |e: crate::ff::forcefield::torsion::TorsionRefusal| format!("{what}: {e}");
+        let terms: Option<Vec<(f64, f64, f64)>> = match style.name() {
+            "periodic" => Some(
+                Periodic::from_params(p)
+                    .map_err(refused)?
+                    .terms
                     .iter()
                     .map(|t| (t.k, t.periodicity, t.phase))
                     .collect(),
             ),
-            TorsionForm::Charmm(f) => {
+            "charmm" => {
+                let f = Charmm::from_params(p).map_err(refused)?;
                 if f.w != 0.0 {
                     return Err(format!(
                         "{what}: the 1-4 weight w = {} has no OpenMM form",
@@ -380,7 +472,8 @@ impl XmlForceFieldWriter {
                 Some(vec![(f.term.k, f.term.periodicity, f.term.phase)])
             }
             // k[1 + d cos nφ] = k[1 + cos(nφ − γ)], γ = 0° (d = 1) or 180° (d = −1).
-            TorsionForm::Harmonic(f) => {
+            "harmonic" => {
+                let f = SignedCosine::from_params("dihedral harmonic", p).map_err(refused)?;
                 let phase = match f.sign {
                     1.0 => 0.0,
                     -1.0 => 180.0,
@@ -389,38 +482,45 @@ impl XmlForceFieldWriter {
                 Some(vec![(f.k, f.periodicity, phase)])
             }
             // k[1 − cos(nφ − φₙ)] = k[1 + cos(nφ − φₙ − 180°)].
-            TorsionForm::Class2(f) => Some(
-                f.k.iter()
-                    .zip(&f.phi)
-                    .enumerate()
-                    .filter(|(_, (k, _))| **k != 0.0)
-                    .map(|(i, (&k, &phi))| (k, (i + 1) as f64, phi + 180.0))
-                    .collect(),
-            ),
+            "class2" => {
+                let f = Class2::from_params(p);
+                Some(
+                    f.k.iter()
+                        .zip(&f.phi)
+                        .enumerate()
+                        .filter(|(_, (k, _))| **k != 0.0)
+                        .map(|(i, (&k, &phi))| (k, (i + 1) as f64, phi + 180.0))
+                        .collect(),
+                )
+            }
             _ => None,
         };
         if let Some(terms) = terms {
-            let mut row = format!("    <Proper{attrs}");
+            let mut body = String::new();
             if terms.is_empty() {
-                row.push_str(&self.periodic_term(1, 0.0, 1.0, 0.0));
+                body.push_str(&self.periodic_term(1, 0.0, 1.0, 0.0));
             }
             for (m, (k, n, phase)) in terms.iter().enumerate() {
-                row.push_str(&self.periodic_term(m + 1, *k, *n, *phase));
+                body.push_str(&self.periodic_term(m + 1, *k, *n, *phase));
             }
-            row.push_str("/>\n");
-            out.periodic.push_str(&row);
+            if out.admit("Proper", key, name, &body)? {
+                out.periodic
+                    .push_str(&format!("    <Proper{attrs}{body}/>\n"));
+            }
             return Ok(());
         }
-        // The polynomial forms: RB holds Σₙ₌₀⁵ Cₙ cosⁿ(φ − 180°), constant included.
-        let series = form.to_series().map_err(|e| format!("{what}: {e}"))?;
+        // Every other torsion form, through its form codec: RB holds
+        // Σₙ₌₀⁵ Cₙ cosⁿ(φ − 180°), constant included.
+        let series = torsion_series("dihedral", style.name(), style.params(), p)?;
         let rb = RyckaertBellemans::from_series(&series)
             .map_err(|e| format!("{what}: no RBTorsionForce form: {e}"))?;
-        let mut row = format!("    <Proper{attrs}");
+        let mut body = String::new();
         for (n, c) in rb.c.iter().enumerate() {
-            row.push_str(&format!(" c{n}=\"{}\"", self.fmt_f(c * KJ_PER_KCAL)));
+            body.push_str(&format!(" c{n}=\"{}\"", self.fmt_f(c * KJ_PER_KCAL)));
         }
-        row.push_str("/>\n");
-        out.rb.push_str(&row);
+        if out.admit("Proper", key, name, &body)? {
+            out.rb.push_str(&format!("    <Proper{attrs}{body}/>\n"));
+        }
         Ok(())
     }
 
@@ -432,6 +532,16 @@ impl XmlForceFieldWriter {
         for style in ff.get_styles("pair") {
             match style.name() {
                 "lj/cut" | "lj/charmm" => {
+                    let p = style.params();
+                    if p.get("shift").is_some_and(|v| v != 0.0)
+                        || p.get("n").is_some_and(|v| v != 12.0)
+                        || p.get("m").is_some_and(|v| v != 6.0)
+                    {
+                        return Err(refuse(
+                            style,
+                            "OpenMM's Lennard-Jones is the unshifted 12-6 (shift, n, m)",
+                        ));
+                    }
                     if let Some(other) = lj_style {
                         return Err(format!(
                             "pair styles `{}` and `{}`: OpenMM holds one Lennard-Jones table",
@@ -653,6 +763,14 @@ impl XmlForceFieldWriter {
 
 impl ForceFieldWriter for XmlForceFieldWriter {
     fn write_str(&self, ff: &ForceField) -> Result<String, String> {
+        if let Some(units) = ff.declared_units()
+            && units != "real"
+        {
+            return Err(format!(
+                "force field units '{units}': the OpenMM XML writer converts from real units \
+                 (Å, kcal/mol)"
+            ));
+        }
         let ends = Endpoints::new(ff);
         let mut sections = Out::default();
         self.bonded(ff, &ends, &mut sections)?;
@@ -681,6 +799,10 @@ impl ForceFieldWriter for XmlForceFieldWriter {
         sorted.sort_by(|a, b| a.name.cmp(&b.name));
         for t in sorted {
             let mut attrs = vec![format!("name=\"{}\"", esc(&t.name))];
+            if t.params.get_str("class").is_none() {
+                // OpenMM requires a class: a type without one is its own.
+                attrs.push(format!("class=\"{}\"", esc(&t.name)));
+            }
             for (xml_key, key) in [
                 ("class", "class"),
                 ("element", "element"),
@@ -841,10 +963,7 @@ mod tests {
     fn series(ff: &ForceField) -> crate::ff::forcefield::torsion::FourierSeries {
         let s = style(ff, "dihedral");
         let p = &s.defs.collect_type_params()[0].1;
-        TorsionForm::from_params("dihedral", s.name(), p)
-            .unwrap()
-            .to_series()
-            .unwrap()
+        torsion_series("dihedral", s.name(), s.params(), p).unwrap()
     }
 
     /// OPLS goes out as RB and reads back as `multi/harmonic`: the same
@@ -1235,5 +1354,96 @@ mod tests {
         assert!(coarse.contains("length=\"0.15\""), "{coarse}");
         let fine = write_forcefield_xml_str(&ff, Some(4)).unwrap();
         assert!(fine.contains("length=\"0.1529\""), "{fine}");
+    }
+
+    /// OpenMM requires a class on every `<Type>`: a type without one is
+    /// written as its own class, and its rows still name it.
+    #[test]
+    fn a_classless_type_is_its_own_class() {
+        let xml = write(&small_ff());
+        assert!(
+            xml.contains(r#"<Type name="CT" class="CT" mass="12.011"/>"#),
+            "{xml}"
+        );
+        assert!(xml.contains(r#"<Bond class1="CT" class2="CT""#), "{xml}");
+    }
+
+    /// Two types OpenMM would match on the same labels: the same row twice is
+    /// written once; other parameters are refused, naming both types.
+    #[test]
+    fn two_types_on_the_same_labels_are_one_row_or_refused() {
+        let mut ff = small_ff();
+        let bond = ff.get_style_mut("bond", "harmonic").unwrap();
+        bond.def_type(
+            "CT-CT@again",
+            &["CT", "CT"],
+            Params::from_pairs(&[("k", 268.0), ("r0", 1.529)]),
+        )
+        .unwrap();
+        let xml = write(&ff);
+        assert_eq!(xml.matches("<Bond ").count(), 1, "{xml}");
+        ff.get_style_mut("bond", "harmonic")
+            .unwrap()
+            .def_type(
+                "CT-CT@other",
+                &["CT", "CT"],
+                Params::from_pairs(&[("k", 300.0), ("r0", 1.529)]),
+            )
+            .unwrap();
+        let err = write_forcefield_xml_str(&ff, None).unwrap_err();
+        assert!(
+            err.contains("CT-CT@other") && err.contains("same labels"),
+            "{err}"
+        );
+        // A proper's periodic and RB rows on one quartet: OpenMM adds both.
+        let mut ff = small_ff();
+        for (style, params) in [
+            (
+                "periodic",
+                Params::from_pairs(&[("k", 1.0), ("periodicity", 3.0), ("phase", 0.0)]),
+            ),
+            (
+                "opls",
+                Params::from_pairs(&[("k1", 1.0), ("k2", 0.0), ("k3", 0.5), ("k4", 0.0)]),
+            ),
+        ] {
+            ff.def_style("dihedral", style, Params::new())
+                .unwrap()
+                .def_type(&format!("t-{style}"), &["CT", "CT", "CT", "CT"], params)
+                .unwrap();
+        }
+        let err = write_forcefield_xml_str(&ff, None).unwrap_err();
+        assert!(err.contains("Proper"), "{err}");
+    }
+
+    /// The writer converts from real units, and OpenMM's Lennard-Jones is the
+    /// unshifted 12-6: another preset or a shifted / Mie `lj/cut` is refused.
+    #[test]
+    fn other_units_and_a_shifted_lj_are_refused() {
+        let mut ff = small_ff();
+        ff.set_units("metal");
+        assert!(
+            write_forcefield_xml_str(&ff, None)
+                .unwrap_err()
+                .contains("metal")
+        );
+        let mut ff = small_ff();
+        ff.def_style(
+            "pair",
+            "lj/cut",
+            Params::from_pairs(&[("cutoff", 10.0), ("shift", 1.0)]),
+        )
+        .unwrap()
+        .def_type(
+            "CT",
+            &["CT"],
+            Params::from_pairs(&[("epsilon", 0.1), ("sigma", 3.4)]),
+        )
+        .unwrap();
+        assert!(
+            write_forcefield_xml_str(&ff, None)
+                .unwrap_err()
+                .contains("shift")
+        );
     }
 }

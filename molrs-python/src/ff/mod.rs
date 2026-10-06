@@ -32,6 +32,7 @@
 
 pub mod atd;
 pub mod charge;
+pub mod forms;
 pub mod handles;
 pub mod ir;
 pub mod section;
@@ -342,10 +343,15 @@ impl PyTypifier {
 ///     One mapping of ``key -> annotation`` per node, positional against
 ///     ``graph.atoms``. An empty mapping gives that node nothing.
 /// links : mapping, optional
-///     Relation class (``Bond``, ``Angle``, ``Dihedral``, ``Improper``) to a
-///     sequence of mappings, positional against
-///     ``graph.links.exact_bucket(cls)`` — the kind's own rows, so an improper
-///     never shifts a dihedral position. Any other key raises ``TypeError``.
+///     Relation kind to a sequence of mappings, positional against that
+///     kind's own rows (an improper never shifts a dihedral position). A key
+///     is a relation class (``Bond``, ``Angle``, ``Dihedral``, ``Improper``,
+///     ``Port``), rows as ``graph.links.exact_bucket(cls)``, or a kind name
+///     (``"bonds"``, or ``"urey_bradleys"`` registered with
+///     ``graph.register_kind``), rows as ``graph.relation_ids(kind)``. A type
+///     annotation under a kind defines a type of the category whose block
+///     the kind is (``urey_bradleys`` → ``urey_bradley``). Any other key
+///     raises ``TypeError``; a kind named twice raises ``ValueError``.
 /// styles : sequence of (category, style, params), optional
 ///     Styles to declare, in order.
 /// pairs : sequence of (style, name, endpoints, params), optional
@@ -429,33 +435,24 @@ impl PyMatch {
             ..Match::default()
         };
         if let Some(links) = links {
-            let mut seen: Vec<String> = Vec::new();
             for item in links.cast::<PyMapping>()?.items()?.iter() {
-                let (cls, rows): (Bound<'_, PyAny>, Bound<'_, PyAny>) = item.extract()?;
-                let kind = RelationClass::atomistic_kind(&cls).ok_or_else(|| {
-                    PyTypeError::new_err(format!(
-                        "links keys must be Atomistic relation view classes, got {cls}"
-                    ))
-                })?;
-                let slot = match kind {
-                    "bonds" => &mut inner.bonds,
-                    "angles" => &mut inner.angles,
-                    "dihedrals" => &mut inner.dihedrals,
-                    "impropers" => &mut inner.impropers,
-                    other => {
-                        return Err(PyTypeError::new_err(format!(
-                            "{cls}: a Match carries bonds, angles, dihedrals and impropers, \
-                             not relation kind '{other}'"
-                        )));
-                    }
+                let (key, rows): (Bound<'_, PyAny>, Bound<'_, PyAny>) = item.extract()?;
+                let kind = match RelationClass::atomistic_kind(&key) {
+                    Some(kind) => kind.to_owned(),
+                    None => key.extract::<String>().map_err(|_| {
+                        PyTypeError::new_err(format!(
+                            "links keys must be Atomistic relation view classes or relation \
+                             kind names, got {key}"
+                        ))
+                    })?,
                 };
-                if seen.iter().any(|k| k == kind) {
+                if inner.links.contains_key(&kind) {
                     return Err(PyValueError::new_err(format!(
                         "links name relation kind '{kind}' more than once"
                     )));
                 }
-                *slot = Self::rows(&rows).map_err(|err| prefix_err(rows.py(), err, kind))?;
-                seen.push(kind.to_owned());
+                let rows = Self::rows(&rows).map_err(|err| prefix_err(rows.py(), err, &kind))?;
+                inner.links.insert(kind, rows);
             }
         }
         for (category, name, params) in styles {
@@ -471,14 +468,15 @@ impl PyMatch {
 
     fn __repr__(&self) -> String {
         let m = &self.inner;
+        let links: Vec<String> = m
+            .links
+            .iter()
+            .map(|(kind, rows)| format!("{kind}={}", rows.len()))
+            .collect();
         format!(
-            "Match(nodes={}, bonds={}, angles={}, dihedrals={}, impropers={}, styles={}, \
-             pairs={})",
+            "Match(nodes={}, links={{{}}}, styles={}, pairs={})",
             m.nodes.len(),
-            m.bonds.len(),
-            m.angles.len(),
-            m.dihedrals.len(),
-            m.impropers.len(),
+            links.join(", "),
             m.styles.len(),
             m.pairs.len()
         )

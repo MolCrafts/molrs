@@ -34,12 +34,15 @@ pub use gaff::{GaffParameterSet, GaffTypifier};
 pub use opls::OPLSAATypifier;
 pub use uff::UFFTypifier;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
+use indexmap::IndexMap;
 use molrs::system::atomistic::Atomistic;
-use molrs::system::molgraph::{KindId, NodeId, PropValue, RelationId};
+use molrs::system::molgraph::{KindId, MolGraph, NodeId, PropValue, RelationId};
 
 use crate::ff::forcefield::{ForceField, Params, Style};
+use crate::ff::ir::{Arity, EndpointOrder};
+use estimate::candidate::is_wildcard;
 
 /// A graph typifier: what matching a molecule against a force field produces.
 ///
@@ -82,11 +85,12 @@ pub enum Annotation {
     Value(PropValue),
     /// Stamp `key = name` and every param under its own key (numeric as
     /// [`PropValue::F64`], string as [`PropValue::Str`]), and define the type
-    /// `(category, style, name)` with `params`. The category follows the
-    /// [`Match`] vector the annotation sits in (`nodes` → `atom`, `bonds` →
-    /// `bond`, …). `endpoints` are the type's endpoint atom types, given to
-    /// [`Style::def_type`] as they are (none for an atom type); `name` is
-    /// never read for them.
+    /// `(category, style, name)` with `params`. The category follows where
+    /// the annotation sits: `nodes` → `atom`, a [`Match::links`] kind → the
+    /// category whose Frame block that kind is ([`link_category`]: `bonds` →
+    /// `bond`, `urey_bradleys` → `urey_bradley`). `endpoints` are the type's
+    /// endpoint atom types, given to [`Style::def_type`] as they are (none
+    /// for an atom type); `name` is never read for them.
     Type {
         style: String,
         name: String,
@@ -95,26 +99,103 @@ pub enum Annotation {
     },
 }
 
+/// The annotations of one graph element, `key → annotation`, in write order.
+pub type Annotations = Vec<(String, Annotation)>;
+
 /// What a [`Typifier`] assigns to one graph.
 ///
 /// `nodes` is positional against the graph's atoms in row order
-/// (`graph.atoms()`); `bonds`, `angles`, `dihedrals` and `impropers` are
-/// positional against **their own kind's** rows (`MolGraph::relation_ids(kind)`,
-/// the order `graph.bonds()` etc. yield) — an improper never shifts a dihedral
-/// position. An empty vector means "nothing for this kind"; an empty
-/// per-element list means "this element gets nothing".
+/// (`graph.atoms()`). `links` maps a relation kind of the graph — the name
+/// [`MolGraph::register_kind`] gave it, which is the Frame block of its
+/// category (`bonds`, `impropers`, a custom `urey_bradleys`) — to rows
+/// positional against **that kind's own** rows
+/// ([`MolGraph::relation_ids`]`(kind)`, the order `graph.bonds()` etc.
+/// yield): an improper never shifts a dihedral position. Every relation kind,
+/// built-in or registered at run time, takes this one path. An absent kind
+/// or an empty vector means "nothing for this kind"; an empty per-element
+/// list means "this element gets nothing".
 ///
 /// `styles` are `(category, style, style params)` to declare, in output
 /// order; `pairs` are `(style, name, endpoints, params)` pair rows.
 #[derive(Debug, Clone, Default)]
 pub struct Match {
-    pub nodes: Vec<Vec<(String, Annotation)>>,
-    pub bonds: Vec<Vec<(String, Annotation)>>,
-    pub angles: Vec<Vec<(String, Annotation)>>,
-    pub dihedrals: Vec<Vec<(String, Annotation)>>,
-    pub impropers: Vec<Vec<(String, Annotation)>>,
+    pub nodes: Vec<Annotations>,
+    pub links: IndexMap<String, Vec<Annotations>>,
     pub styles: Vec<(String, String, Params)>,
     pub pairs: Vec<(String, String, Vec<String>, Params)>,
+}
+
+/// The category whose Frame block is the relation kind `kind`, and how its
+/// type rows' endpoints match a term's atoms.
+///
+/// A category the process-wide force-field IR registry declares with that
+/// block (`bonds` → `bond`, a registered `urey_bradleys` →
+/// `urey_bradley`); otherwise molrec's rule for a category outside its
+/// table, whose block is its name followed by `s`, matched
+/// [`EndpointOrder::Reversible`]. `None` for a kind not spelled that way and
+/// for `atoms`, the block of the atom and pair categories, which name no
+/// relation.
+pub fn link_category(kind: &str) -> Option<(String, EndpointOrder)> {
+    // `Some(_)` when registered categories own the block: the relation
+    // among them, if any.
+    let owned = crate::ff::ir::with_global(|r| {
+        let owners: Vec<_> = r.categories().filter(|c| c.block == kind).collect();
+        (!owners.is_empty()).then(|| {
+            owners
+                .into_iter()
+                .find(|c| matches!(c.arity, Arity::Exact(n) if n > 0))
+                .map(|c| (c.name.clone().into_owned(), c.order))
+        })
+    });
+    match owned {
+        Some(relation) => relation,
+        None => kind
+            .strip_suffix('s')
+            .filter(|c| !c.is_empty())
+            .map(|c| (c.to_owned(), EndpointOrder::Reversible)),
+    }
+}
+
+/// Whether the type-row endpoints `pattern` name a term over atoms of the
+/// types `atoms` under `order`: slot by slot, a wildcard
+/// ([`is_wildcard`]) matching any type. [`EndpointOrder::Reversible`] also
+/// tries `pattern` reversed; [`EndpointOrder::Unordered`] any permutation.
+fn endpoints_match(pattern: &[&str], atoms: &[&str], order: EndpointOrder) -> bool {
+    fn slot(pattern: &str, atom: &str) -> bool {
+        is_wildcard(pattern) || pattern == atom
+    }
+    /// Whether `pattern[i..]` can be assigned to the atoms `used` leaves.
+    fn permuted(pattern: &[&str], atoms: &[&str], used: &mut [bool]) -> bool {
+        let Some((first, rest)) = pattern.split_first() else {
+            return true;
+        };
+        for j in 0..atoms.len() {
+            if !used[j] && slot(first, atoms[j]) {
+                used[j] = true;
+                let found = permuted(rest, atoms, used);
+                used[j] = false;
+                if found {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+    if pattern.len() != atoms.len() {
+        return false;
+    }
+    let forward = || pattern.iter().zip(atoms).all(|(p, a)| slot(p, a));
+    match order {
+        EndpointOrder::Ordered => forward(),
+        EndpointOrder::Reversible => {
+            forward()
+                || pattern
+                    .iter()
+                    .zip(atoms.iter().rev())
+                    .all(|(p, a)| slot(p, a))
+        }
+        EndpointOrder::Unordered => permuted(pattern, atoms, &mut vec![false; atoms.len()]),
+    }
 }
 
 /// One graph element a [`Match`] writes to.
@@ -122,6 +203,17 @@ pub struct Match {
 enum Element {
     Node(NodeId),
     Link(KindId, RelationId),
+}
+
+/// One positional vector of a [`Match`], resolved against the graph.
+struct Vector {
+    /// The category a type annotated here defines; `None` for a relation
+    /// kind no category names ([`link_category`]).
+    category: Option<String>,
+    /// The graph kind, `atoms` for the nodes.
+    kind: String,
+    elements: Vec<Element>,
+    rows: Vec<Annotations>,
 }
 
 /// The keys one element receives, each written once.
@@ -168,7 +260,9 @@ impl Match {
     ///
     /// 1. **Validate.** A non-empty positional vector whose length differs
     ///    from the graph's count of that kind is an error naming the kind and
-    ///    both counts (positions are the kind's own rows, see [`Match`]).
+    ///    both counts (positions are the kind's own rows, see [`Match`]), as
+    ///    is a non-empty one for a relation kind the graph does not have, and
+    ///    a type under a kind no category names ([`link_category`]).
     ///    Every style is checked against `forcefield` and the other styles,
     ///    and every [`Annotation::Type`] and pair row against `forcefield` and
     ///    the rest of the match, by the rule [`ForceField::def_style`] /
@@ -178,9 +272,10 @@ impl Match {
     /// 2. **Stamp** every annotation onto `graph`. A write the graph refuses
     ///    (a value contradicting the dtype of a declared key) is an error.
     /// 3. **Commit** through [`ForceField::def_style`] (in `styles` order) and
-    ///    [`Style::def_type`] (types in element order — nodes, bonds,
-    ///    angles, dihedrals, impropers — then pair rows). Phase 1 makes this
-    ///    infallible.
+    ///    [`Style::def_type`] (types in element order — nodes, then the
+    ///    relation kinds in the graph's registration order: bonds, angles,
+    ///    dihedrals, impropers, then any kind registered later — then pair
+    ///    rows). Phase 1 makes this infallible.
     ///
     /// # Errors
     ///
@@ -193,10 +288,7 @@ impl Match {
     ) -> Result<(), String> {
         let Match {
             nodes,
-            bonds,
-            angles,
-            dihedrals,
-            impropers,
+            mut links,
             styles,
             pairs,
         } = self;
@@ -213,32 +305,58 @@ impl Match {
                 .map_err(|e| format!("match styles: {e}"))?;
         }
 
-        let mut stamps = Vec::new();
-        for (category, kind, rows) in [
-            ("atom", None, nodes),
-            ("bond", Some("bonds"), bonds),
-            ("angle", Some("angles"), angles),
-            ("dihedral", Some("dihedrals"), dihedrals),
-            ("improper", Some("impropers"), impropers),
-        ] {
+        // Nodes first, then the relation kinds in the graph's registration
+        // order (bonds, angles, dihedrals, impropers, then any kind added
+        // later), whatever order `links` lists them in.
+        let mut vectors: Vec<Vector> = Vec::new();
+        if !nodes.is_empty() {
+            let elements = graph.node_ids().map(Element::Node).collect();
+            vectors.push(Vector {
+                category: Some("atom".to_owned()),
+                kind: "atoms".to_owned(),
+                elements,
+                rows: nodes,
+            });
+        }
+        let kinds: Vec<KindId> = graph.as_molgraph().kind_ids().collect();
+        for id in kinds {
+            let kind = graph.as_molgraph().kind_name(id).to_owned();
+            let Some(rows) = links.shift_remove(&kind) else {
+                continue;
+            };
             if rows.is_empty() {
                 continue;
             }
-            let elements: Vec<Element> = match kind {
-                None => graph.node_ids().map(Element::Node).collect(),
-                Some(kind) => {
-                    let id = graph
-                        .kind_id(kind)
-                        .ok_or_else(|| format!("graph has no '{kind}' relation kind"))?;
-                    graph
-                        .relation_ids(id)
-                        .map(|r| Element::Link(id, r))
-                        .collect()
-                }
-            };
+            let elements = graph
+                .relation_ids(id)
+                .map(|r| Element::Link(id, r))
+                .collect();
+            let category = link_category(&kind).map(|(c, _)| c);
+            vectors.push(Vector {
+                category,
+                kind,
+                elements,
+                rows,
+            });
+        }
+        if let Some((kind, _)) = links.iter().find(|(_, rows)| !rows.is_empty()) {
+            return Err(format!("graph has no '{kind}' relation kind"));
+        }
+
+        let mut stamps = Vec::new();
+        for Vector {
+            category,
+            kind,
+            elements,
+            rows,
+        } in vectors
+        {
+            // A kind no category names still takes stamped values; only a
+            // type needs its category.
+            let label = category.as_deref().unwrap_or(&kind);
             if rows.len() != elements.len() {
                 return Err(format!(
-                    "match has {} {category} annotation rows, the graph has {} {category} rows",
+                    "match has {} {label} annotation rows, the graph has {} {label} rows",
                     rows.len(),
                     elements.len()
                 ));
@@ -246,7 +364,7 @@ impl Match {
             for (position, (element, annotations)) in elements.into_iter().zip(rows).enumerate() {
                 let mut stamp = Stamp {
                     element,
-                    label: format!("{category} {position}"),
+                    label: format!("{label} {position}"),
                     writes: Vec::new(),
                 };
                 for (key, annotation) in annotations {
@@ -264,6 +382,12 @@ impl Match {
                             for (k, v) in params.iter_strings() {
                                 stamp.write(k.to_owned(), PropValue::Str(v.to_owned()))?;
                             }
+                            let category = category.as_deref().ok_or_else(|| {
+                                format!(
+                                    "{}: relation kind '{kind}' is the block of no category",
+                                    stamp.label
+                                )
+                            })?;
                             // An array param (a cmap `grid`) has no property
                             // form; it stays on the type `name` defines below.
                             let target =
@@ -307,7 +431,12 @@ impl Match {
         // `forcefield`, so `def_style` returns it in place.
         for style in batch.styles() {
             let target = forcefield
-                .def_style(style.category(), style.name(), style.params().clone())
+                .def_style_with_arity(
+                    style.category(),
+                    style.arity(),
+                    style.name(),
+                    style.params().clone(),
+                )
                 .map_err(|e| format!("commit after validation: {e}"))?;
             for (name, endpoints, params) in style.type_rows() {
                 target
@@ -327,11 +456,13 @@ impl Match {
         category: &str,
         style: &str,
     ) -> Result<&'b mut Style, String> {
-        let params = match batch
+        // The declared style's arity: a category no registry declares (read
+        // from a record) is known to the batch only through it.
+        let (arity, params) = match batch
             .get_style(category, style)
             .or_else(|| forcefield.get_style(category, style))
         {
-            Some(declared) => declared.params().clone(),
+            Some(declared) => (declared.arity(), declared.params().clone()),
             None => {
                 return Err(format!(
                     "{category} style '{style}' is declared neither in the force field nor in \
@@ -340,7 +471,7 @@ impl Match {
             }
         };
         batch
-            .def_style(category, style, params)
+            .def_style_with_arity(category, arity, style, params)
             .map_err(|e| format!("match: {e}"))
     }
 
@@ -372,6 +503,164 @@ impl Match {
                 }
             }
         }
+    }
+
+    /// The rows of relation kind `kind`, created empty when the match has
+    /// none.
+    pub fn link_mut(&mut self, kind: &str) -> &mut Vec<Annotations> {
+        self.links.entry(kind.to_owned()).or_default()
+    }
+
+    /// Type every row of relation kind `kind` of `graph` by its atoms' types
+    /// against the type rows `library` holds in the kind's category
+    /// ([`link_category`]): the one generic endpoint matcher, for a built-in
+    /// kind and a registered one alike.
+    ///
+    /// An atom's type is its `key` annotation in [`Match::nodes`] (a
+    /// [`Annotation::Type`]'s name or a string [`Annotation::Value`]), else
+    /// its string `key` property on `graph`. A type row matches a term when
+    /// its endpoints equal the atoms' types slot by slot, a wildcard (`""`,
+    /// `*`, `X`) matching any type, in the orders the category's
+    /// [`EndpointOrder`] allows: as listed or reversed
+    /// ([`Reversible`](EndpointOrder::Reversible): bonds, angles, proper
+    /// dihedrals, a custom category by default), as listed only
+    /// ([`Ordered`](EndpointOrder::Ordered): impropers), or in any order
+    /// ([`Unordered`](EndpointOrder::Unordered)). Among the rows that match,
+    /// the one with the fewest wildcards wins, and among those the first in
+    /// table order (the library's styles in order, each style's rows in
+    /// definition order) — molrec's rule.
+    ///
+    /// The winner is added to the term's annotations as
+    /// `key = (style, name, endpoints, params)` exactly as the library holds
+    /// it, and its style, with the library's style params, is added to
+    /// [`Match::styles`] unless already there.
+    ///
+    /// Returns the positions (in the kind's own row order) no row matched;
+    /// they gain nothing. A graph without the kind assigns nothing.
+    ///
+    /// # Errors
+    ///
+    /// A `kind` no category names, an atom of a term without a type, and an
+    /// existing non-empty vector for `kind` of another length than the
+    /// graph's count of it.
+    pub fn assign_terms(
+        &mut self,
+        graph: &MolGraph,
+        kind: &str,
+        library: &ForceField,
+        key: &str,
+    ) -> Result<Vec<usize>, String> {
+        let Some(kind_id) = graph.kind_id(kind) else {
+            return Ok(Vec::new());
+        };
+        let (category, order) = link_category(kind)
+            .ok_or_else(|| format!("relation kind '{kind}' is the block of no category"))?;
+
+        let candidates: Vec<(&Style, &str, Vec<&str>, &Params)> = library
+            .get_styles(&category)
+            .into_iter()
+            .flat_map(|style| {
+                style
+                    .type_rows()
+                    .into_iter()
+                    .map(move |(name, endpoints, params)| (style, name, endpoints, params))
+            })
+            .collect();
+
+        let row_of: HashMap<NodeId, usize> = graph
+            .node_ids()
+            .enumerate()
+            .map(|(row, id)| (id, row))
+            .collect();
+        let atom_type = |node: NodeId| -> Option<String> {
+            let row = *row_of.get(&node)?;
+            let annotated = self.nodes.get(row).and_then(|annotations| {
+                annotations
+                    .iter()
+                    .find(|(k, _)| k == key)
+                    .and_then(|(_, a)| match a {
+                        Annotation::Type { name, .. } => Some(name.clone()),
+                        Annotation::Value(PropValue::Str(s)) => Some(s.clone()),
+                        Annotation::Value(_) => None,
+                    })
+            });
+            annotated.or_else(|| {
+                graph
+                    .node_table()
+                    .get_str(node, key)
+                    .ok()
+                    .map(str::to_owned)
+            })
+        };
+
+        let mut assigned: Vec<Option<usize>> = Vec::new();
+        let mut cache: HashMap<Vec<String>, Option<usize>> = HashMap::new();
+        for (position, id) in graph.relation_ids(kind_id).enumerate() {
+            let nodes = graph
+                .relation_nodes(kind_id, id)
+                .map_err(|e| format!("{category} {position}: {e}"))?;
+            let types: Vec<String> = nodes
+                .iter()
+                .map(|&n| {
+                    atom_type(n).ok_or_else(|| {
+                        format!("{category} {position}: atom {n:?} has no '{key}' type")
+                    })
+                })
+                .collect::<Result<_, _>>()?;
+            let best = *cache.entry(types).or_insert_with_key(|types| {
+                let atoms: Vec<&str> = types.iter().map(String::as_str).collect();
+                candidates
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (_, _, pattern, _))| endpoints_match(pattern, &atoms, order))
+                    .min_by_key(|(i, (_, _, pattern, _))| {
+                        (pattern.iter().filter(|p| is_wildcard(p)).count(), *i)
+                    })
+                    .map(|(i, _)| i)
+            });
+            assigned.push(best);
+        }
+
+        let rows = self.links.entry(kind.to_owned()).or_default();
+        if rows.is_empty() {
+            rows.resize(assigned.len(), Vec::new());
+        } else if rows.len() != assigned.len() {
+            return Err(format!(
+                "match has {} {category} annotation rows, the graph has {} {category} rows",
+                rows.len(),
+                assigned.len()
+            ));
+        }
+        let mut unmatched = Vec::new();
+        for (position, (best, annotations)) in assigned.iter().zip(rows.iter_mut()).enumerate() {
+            let Some(&(style, name, ref endpoints, params)) = best.map(|i| &candidates[i]) else {
+                unmatched.push(position);
+                continue;
+            };
+            annotations.push((
+                key.to_owned(),
+                Annotation::Type {
+                    style: style.name().to_owned(),
+                    name: name.to_owned(),
+                    endpoints: endpoints.iter().map(|e| (*e).to_owned()).collect(),
+                    params: params.clone(),
+                },
+            ));
+        }
+        for &(style, ..) in assigned.iter().flatten().map(|&i| &candidates[i]) {
+            let declared = self
+                .styles
+                .iter()
+                .any(|(c, s, _)| *c == category && s == style.name());
+            if !declared {
+                self.styles.push((
+                    category.clone(),
+                    style.name().to_owned(),
+                    style.params().clone(),
+                ));
+            }
+        }
+        Ok(unmatched)
     }
 }
 
@@ -558,6 +847,15 @@ mod tests {
         )
     }
 
+    fn links<const N: usize>(
+        kinds: [(&str, Vec<Annotations>); N],
+    ) -> IndexMap<String, Vec<Annotations>> {
+        kinds
+            .into_iter()
+            .map(|(k, rows)| (k.to_owned(), rows))
+            .collect()
+    }
+
     fn atom_full(name: &str, mass: f64) -> (String, Annotation) {
         ty(
             "type",
@@ -673,16 +971,19 @@ mod tests {
         let mut g = chain3();
         let mut ff = ForceField::new("out");
         let m = Match {
-            bonds: vec![
-                vec![],
-                vec![ty(
-                    "type",
-                    "harmonic",
-                    "C-O",
-                    &["C", "O"],
-                    Params::from_pairs(&[("k", 320.0), ("r0", 1.41)]),
-                )],
-            ],
+            links: links([(
+                "bonds",
+                vec![
+                    vec![],
+                    vec![ty(
+                        "type",
+                        "harmonic",
+                        "C-O",
+                        &["C", "O"],
+                        Params::from_pairs(&[("k", 320.0), ("r0", 1.41)]),
+                    )],
+                ],
+            )]),
             styles: vec![style("bond", "harmonic", Params::new())],
             ..Match::default()
         };
@@ -706,8 +1007,10 @@ mod tests {
         g.add_dihedral(ids[0], ids[1], ids[2], ids[3]).unwrap();
         let mut ff = ForceField::new("out");
         let m = Match {
-            dihedrals: vec![vec![value("tag", "dihedral-0")]],
-            impropers: vec![vec![value("tag", "improper-0")]],
+            links: links([
+                ("dihedrals", vec![vec![value("tag", "dihedral-0")]]),
+                ("impropers", vec![vec![value("tag", "improper-0")]]),
+            ]),
             ..Match::default()
         };
 
@@ -732,8 +1035,7 @@ mod tests {
         let mut ff = ForceField::new("out");
         let m = Match {
             nodes: vec![vec![], vec![], vec![]],
-            bonds: vec![],
-            angles: vec![],
+            links: links([("bonds", vec![]), ("angles", vec![])]),
             ..Match::default()
         };
 
@@ -755,22 +1057,25 @@ mod tests {
                 vec![atom_full("CT", 12.011)],
                 vec![atom_full("OH", 15.999)],
             ],
-            bonds: vec![
-                vec![ty(
-                    "type",
-                    "harmonic",
-                    "CT-CT",
-                    &["CT", "CT"],
-                    Params::from_pairs(&[("k", 268.0), ("r0", 1.529)]),
-                )],
-                vec![ty(
-                    "type",
-                    "harmonic",
-                    "CT-OH",
-                    &["CT", "OH"],
-                    Params::from_pairs(&[("k", 320.0), ("r0", 1.41)]),
-                )],
-            ],
+            links: links([(
+                "bonds",
+                vec![
+                    vec![ty(
+                        "type",
+                        "harmonic",
+                        "CT-CT",
+                        &["CT", "CT"],
+                        Params::from_pairs(&[("k", 268.0), ("r0", 1.529)]),
+                    )],
+                    vec![ty(
+                        "type",
+                        "harmonic",
+                        "CT-OH",
+                        &["CT", "OH"],
+                        Params::from_pairs(&[("k", 320.0), ("r0", 1.41)]),
+                    )],
+                ],
+            )]),
             styles: vec![
                 atom_full_style(),
                 style("bond", "harmonic", Params::new()),
@@ -780,7 +1085,6 @@ mod tests {
                 pair_row("lj/cut", "CT", &["CT"], lj(0.066, 3.5)),
                 pair_row("lj/cut", "OH", &["OH"], lj(0.17, 3.12)),
             ],
-            ..Match::default()
         };
 
         m.write_onto(&mut g, &mut ff).unwrap();
@@ -814,10 +1118,13 @@ mod tests {
         let mut ff = ForceField::new("out");
         let k = || Params::from_pairs(&[("kb", 4.2)]);
         let m = Match {
-            bonds: vec![
-                vec![ty("type", "mmff_bond", "0_1_1", &["1", "1"], k())],
-                vec![ty("type", "mmff_bond", "1-6", &["2", "7"], k())],
-            ],
+            links: links([(
+                "bonds",
+                vec![
+                    vec![ty("type", "mmff_bond", "0_1_1", &["1", "1"], k())],
+                    vec![ty("type", "mmff_bond", "1-6", &["2", "7"], k())],
+                ],
+            )]),
             styles: vec![style("bond", "mmff_bond", Params::new())],
             ..Match::default()
         };
@@ -946,7 +1253,7 @@ mod tests {
                 vec![atom_full("CT", 12.0)],
                 vec![],
             ],
-            bonds: vec![],
+            links: links([("bonds", vec![])]),
             styles: vec![style("bond", "harmonic", Params::new()), atom_full_style()],
             ..Match::default()
         };
@@ -1067,7 +1374,7 @@ mod tests {
         let mut ff = ForceField::new("out");
         let before = ff.clone();
         let m = Match {
-            bonds: vec![vec![], vec![], vec![], vec![]],
+            links: links([("bonds", vec![vec![], vec![], vec![], vec![]])]),
             ..Match::default()
         };
 
@@ -1324,5 +1631,379 @@ mod tests {
 
         assert_eq!(typing.library().name, "lib");
         assert_eq!(type_names(typing.forcefield(), "atom", "full"), vec!["CT"]);
+    }
+
+    // -- any relation kind: `links` and `assign_terms` ---------------------------
+
+    /// The custom category of the force-field IR protocol's proof: 1-3
+    /// Urey–Bradley terms in their own block `urey_bradleys`. Registered in
+    /// the process-wide registry exactly as the Python test hook does, so
+    /// the registration is idempotent across tests.
+    fn register_urey_bradley() {
+        crate::ff::ir::register_category(crate::ff::ir::CategorySpec::custom(
+            "urey_bradley",
+            3,
+            crate::ff::ir::Coordinate::Compound,
+            EndpointOrder::Reversible,
+        ))
+        .unwrap();
+    }
+
+    const UB_EXPRESSION: &str = "k_ub*(distance(p1,p3)-r_ub)^2";
+    const UB_XYZ: [[f64; 3]; 4] = [
+        [0.0, 0.0, 0.0],
+        [1.52, 0.1, 0.05],
+        [2.1, 1.45, -0.1],
+        [3.55, 1.6, 0.6],
+    ];
+
+    /// Four atoms typed `A`, `B`, `C`, `D` in a chain with the three-atom
+    /// relation kind `kind` over `(0, 1, 2)` and `(1, 2, 3)`; `angles` uses
+    /// the Atomistic's own kind.
+    fn ub_chain(kind: &str) -> Atomistic {
+        let mut g = Atomistic::new();
+        let ids: Vec<_> = UB_XYZ
+            .iter()
+            .map(|p| g.add_atom_xyz("C", p[0], p[1], p[2]))
+            .collect();
+        let graph = g.as_molgraph_mut();
+        let kid = graph.register_kind(kind, 3);
+        for w in ids.windows(3) {
+            graph.add_relation(kid, w).unwrap();
+        }
+        g
+    }
+
+    /// One `category` style `style` with, in table order: a decoy of three
+    /// wildcards, `t` written end-for-end (`C-B-A`), and `u` with one
+    /// wildcard end (`*-C-D`). `extra` adds params every row carries.
+    fn ub_library(
+        category: &str,
+        style: &str,
+        params: Params,
+        extra: &[(&str, f64)],
+    ) -> ForceField {
+        let mut lib = ForceField::new("lib");
+        let atom = lib.def_style("atom", "full", Params::new()).unwrap();
+        for name in ["A", "B", "C", "D"] {
+            atom.def_type(name, &[], Params::from_pairs(&[("mass", 12.0)]))
+                .unwrap();
+        }
+        let s = lib.def_style(category, style, params).unwrap();
+        for (name, ends, k_ub, r_ub) in [
+            ("decoy", ["", "", ""], 99.0, 9.9),
+            ("t", ["C", "B", "A"], 20.0, 2.45),
+            ("u", ["*", "C", "D"], 11.0, 2.2),
+        ] {
+            let mut p = Params::from_pairs(&[("k_ub", k_ub), ("r_ub", r_ub)]);
+            for &(k, v) in extra {
+                p.set(k, v);
+            }
+            s.def_type(name, &ends, p).unwrap();
+        }
+        lib
+    }
+
+    /// Types atoms `A`..`D` in row order and assigns `kind` from its library.
+    struct ChainTypifier {
+        library: ForceField,
+        kind: &'static str,
+    }
+
+    impl Typifier for ChainTypifier {
+        fn r#match(&self, graph: &mut Atomistic) -> Result<Match, String> {
+            let mut m = Match {
+                nodes: ["A", "B", "C", "D"]
+                    .iter()
+                    .map(|t| {
+                        vec![ty(
+                            "type",
+                            "full",
+                            t,
+                            &[],
+                            Params::from_pairs(&[("mass", 12.0)]),
+                        )]
+                    })
+                    .collect(),
+                styles: vec![atom_full_style()],
+                ..Match::default()
+            };
+            let missing = m.assign_terms(graph.as_molgraph(), self.kind, &self.library, "type")?;
+            assert!(missing.is_empty(), "{missing:?}");
+            Ok(m)
+        }
+
+        fn library(&self) -> &ForceField {
+            &self.library
+        }
+    }
+
+    fn energy_forces(ff: &ForceField, typed: &Atomistic) -> (f64, Vec<f64>) {
+        let frame = typed.to_frame().unwrap();
+        let coords: Vec<f64> = UB_XYZ.iter().flatten().copied().collect();
+        crate::ff::potential::PotentialCompiler::new(ff)
+            .compile(&frame)
+            .unwrap()
+            .calc_energy_forces(&coords)
+    }
+
+    /// A registered custom category is typified exactly like `angles`: the
+    /// same matcher assigns its terms, they land in the block `urey_bradleys`
+    /// (`atomi`, `atomj`, `atomk`, `type`), and the typed output prices them
+    /// as LAMMPS `angle charmm` with K = 0 prices the same two terms.
+    #[test]
+    fn a_custom_relation_kind_is_typified_compiled_and_priced_like_angle_charmm() {
+        register_urey_bradley();
+        let mut expr = Params::new();
+        expr.set_str("expression", UB_EXPRESSION);
+        let mut ub = Typing::new(ChainTypifier {
+            library: ub_library("urey_bradley", "spring", expr, &[]),
+            kind: "urey_bradleys",
+        });
+        let typed = ub.typify(&ub_chain("urey_bradleys")).unwrap();
+
+        let frame = typed.to_frame().unwrap();
+        let block = frame.get("urey_bradleys").expect("urey_bradleys block");
+        for key in ["atomi", "atomj", "atomk", "type"] {
+            assert!(block.contains_key(key), "urey_bradleys has no '{key}'");
+        }
+        let kid = typed.as_molgraph().kind_id("urey_bradleys").unwrap();
+        let types: Vec<_> = typed
+            .as_molgraph()
+            .relations(kid)
+            .map(|(_, r)| r.props["type"].clone())
+            .collect();
+        assert_eq!(types, vec![PropValue::from("t"), PropValue::from("u")]);
+        // Only the types used are defined; the decoy never is.
+        assert_eq!(
+            type_names(ub.forcefield(), "urey_bradley", "spring"),
+            vec!["t", "u"]
+        );
+        assert_eq!(
+            ub.forcefield()
+                .get_style("urey_bradley", "spring")
+                .unwrap()
+                .params()
+                .get_str("expression"),
+            Some(UB_EXPRESSION)
+        );
+
+        let mut charmm = Typing::new(ChainTypifier {
+            library: ub_library(
+                "angle",
+                "charmm",
+                Params::new(),
+                &[("k", 0.0), ("theta0", 109.5)],
+            ),
+            kind: "angles",
+        });
+        let reference = charmm.typify(&ub_chain("angles")).unwrap();
+        assert_eq!(
+            type_names(charmm.forcefield(), "angle", "charmm"),
+            vec!["t", "u"]
+        );
+
+        let (e, f) = energy_forces(ub.forcefield(), &typed);
+        let (e_ref, f_ref) = energy_forces(charmm.forcefield(), &reference);
+        assert!(e_ref > 0.0, "a non-trivial reference: {e_ref}");
+        assert!((e - e_ref).abs() <= 1e-12 * e_ref, "{e} vs {e_ref}");
+        let fmax = f_ref.iter().fold(1.0_f64, |m, x| m.max(x.abs()));
+        for (i, (a, b)) in f.iter().zip(&f_ref).enumerate() {
+            assert!((a - b).abs() <= 1e-12 * fmax, "force[{i}] {a} vs {b}");
+        }
+    }
+
+    /// `links` takes any relation kind of the graph; a kind the graph does
+    /// not have is refused by name, and a type under a kind no category
+    /// names is refused while a stamped value there is not.
+    #[test]
+    fn write_onto_takes_any_relation_kind_and_refuses_a_kind_the_graph_lacks() {
+        register_urey_bradley();
+        let mut g = ub_chain("urey_bradleys");
+        let mut ff = ForceField::new("out");
+        let m = Match {
+            links: links([("urey_bradleys", vec![vec![value("tag", "first")], vec![]])]),
+            ..Match::default()
+        };
+        m.write_onto(&mut g, &mut ff).unwrap();
+        let kid = g.as_molgraph().kind_id("urey_bradleys").unwrap();
+        let first = g.as_molgraph().relations(kid).next().unwrap().1.props;
+        assert_eq!(first.get("tag"), Some(&PropValue::Str("first".into())));
+
+        let m = Match {
+            links: links([("cross_terms", vec![vec![]])]),
+            ..Match::default()
+        };
+        let err = m.write_onto(&mut g, &mut ff).unwrap_err();
+        assert!(
+            err.contains("graph has no 'cross_terms' relation kind"),
+            "{err}"
+        );
+
+        let kid = g.as_molgraph_mut().register_kind("link", 2);
+        let ids: Vec<_> = g.node_ids().take(2).collect();
+        g.as_molgraph_mut().add_relation(kid, &ids).unwrap();
+        let m = Match {
+            links: links([("link", vec![vec![value("tag", "x")]])]),
+            ..Match::default()
+        };
+        m.write_onto(&mut g, &mut ff).unwrap();
+        let m = Match {
+            links: links([(
+                "link",
+                vec![vec![ty("type", "s", "t", &["A", "B"], Params::new())]],
+            )]),
+            ..Match::default()
+        };
+        let err = m.write_onto(&mut g, &mut ff).unwrap_err();
+        assert!(
+            err.contains("relation kind 'link' is the block of no category"),
+            "{err}"
+        );
+        assert!(ff.styles().is_empty());
+    }
+
+    /// Fewest wildcards wins, then table order; `Reversible` matches a row
+    /// written end-for-end, `Ordered` (impropers) only as written.
+    #[test]
+    fn assign_terms_prefers_fewest_wildcards_then_table_order_by_endpoint_order() {
+        let mut lib = ForceField::new("lib");
+        let bond = lib.def_style("bond", "harmonic", Params::new()).unwrap();
+        for (name, ends) in [
+            ("any", ["", ""]),
+            ("x-b", ["X", "B"]),
+            ("b-a", ["B", "A"]),
+            ("a-b", ["A", "B"]),
+        ] {
+            bond.def_type(name, &ends, Params::from_pairs(&[("k", 1.0), ("r0", 1.0)]))
+                .unwrap();
+        }
+        let dihedral = lib.def_style("dihedral", "charmm", Params::new()).unwrap();
+        dihedral
+            .def_type(
+                "dcba",
+                &["D", "C", "B", "A"],
+                Params::from_pairs(&[("k", 1.0)]),
+            )
+            .unwrap();
+        let improper = lib.def_style("improper", "cvff", Params::new()).unwrap();
+        improper
+            .def_type(
+                "dcba",
+                &["D", "C", "B", "A"],
+                Params::from_pairs(&[("k", 1.0)]),
+            )
+            .unwrap();
+        improper
+            .def_type(
+                "b-wild",
+                &["B", "*", "*", "*"],
+                Params::from_pairs(&[("k", 2.0)]),
+            )
+            .unwrap();
+
+        let mut g = Atomistic::new();
+        let ids: Vec<_> = ["A", "B", "C", "D"]
+            .iter()
+            .map(|t| {
+                let id = g.add_atom_bare("C");
+                g.set_atom(id, "type", *t).unwrap();
+                id
+            })
+            .collect();
+        g.add_bond(ids[0], ids[1]).unwrap(); // A-B: `b-a` and `a-b` tie, `b-a` first
+        g.add_bond(ids[1], ids[2]).unwrap(); // B-C: only wildcards; `x-b` reversed
+        g.add_bond(ids[2], ids[3]).unwrap(); // C-D: only `any`
+        g.add_dihedral(ids[0], ids[1], ids[2], ids[3]).unwrap();
+        g.add_improper(ids[0], ids[1], ids[2], ids[3]).unwrap();
+        g.add_improper(ids[1], ids[0], ids[2], ids[3]).unwrap();
+
+        let mut m = Match::default();
+        let graph = g.as_molgraph();
+        assert_eq!(m.assign_terms(graph, "bonds", &lib, "type"), Ok(vec![]));
+        assert_eq!(m.assign_terms(graph, "dihedrals", &lib, "type"), Ok(vec![]));
+        // The first improper is A-B-C-D: `dcba` only reversed, refused.
+        assert_eq!(
+            m.assign_terms(graph, "impropers", &lib, "type"),
+            Ok(vec![0])
+        );
+        // No graph kind, nothing to assign.
+        assert_eq!(m.assign_terms(graph, "cmaps", &lib, "type"), Ok(vec![]));
+
+        let names = |kind: &str| -> Vec<Option<String>> {
+            m.links[kind]
+                .iter()
+                .map(|a| match a.first() {
+                    Some((_, Annotation::Type { name, .. })) => Some(name.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(
+            names("bonds"),
+            [Some("b-a"), Some("x-b"), Some("any")].map(|n| n.map(str::to_owned))
+        );
+        assert_eq!(names("dihedrals"), vec![Some("dcba".to_owned())]);
+        assert_eq!(names("impropers"), vec![None, Some("b-wild".to_owned())]);
+        // The styles used, once each, with the library's style params.
+        assert_eq!(
+            m.styles
+                .iter()
+                .map(|(c, s, _)| (c.as_str(), s.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("bond", "harmonic"),
+                ("dihedral", "charmm"),
+                ("improper", "cvff")
+            ]
+        );
+
+        let mut ff = ForceField::new("out");
+        m.write_onto(&mut g, &mut ff).unwrap();
+        assert_eq!(
+            type_names(&ff, "bond", "harmonic"),
+            vec!["b-a", "x-b", "any"]
+        );
+        assert_eq!(
+            ff.get_style("bond", "harmonic")
+                .unwrap()
+                .type_endpoints("x-b"),
+            Some(vec!["X".to_owned(), "B".to_owned()])
+        );
+    }
+
+    /// `Unordered` matches any permutation, wildcards included.
+    #[test]
+    fn unordered_endpoints_match_any_permutation() {
+        use EndpointOrder::{Ordered, Reversible, Unordered};
+        let atoms = ["A", "B", "C"];
+        assert!(endpoints_match(&["B", "C", "A"], &atoms, Unordered));
+        assert!(!endpoints_match(&["B", "C", "A"], &atoms, Reversible));
+        assert!(endpoints_match(&["C", "B", "A"], &atoms, Reversible));
+        assert!(!endpoints_match(&["C", "B", "A"], &atoms, Ordered));
+        assert!(endpoints_match(&["C", "", "B"], &atoms, Unordered));
+        assert!(!endpoints_match(&["C", "C", ""], &atoms, Unordered));
+        assert!(!endpoints_match(&["A", "B"], &atoms, Unordered));
+    }
+
+    /// The category of a relation kind is the registered one whose block it
+    /// is, else molrec's `<name>s` rule.
+    #[test]
+    fn link_category_resolves_blocks_to_categories() {
+        register_urey_bradley();
+        assert_eq!(
+            link_category("impropers"),
+            Some(("improper".to_owned(), EndpointOrder::Ordered))
+        );
+        assert_eq!(
+            link_category("urey_bradleys"),
+            Some(("urey_bradley".to_owned(), EndpointOrder::Reversible))
+        );
+        assert_eq!(
+            link_category("cross_terms"),
+            Some(("cross_term".to_owned(), EndpointOrder::Reversible))
+        );
+        assert_eq!(link_category("link"), None);
+        assert_eq!(link_category("atoms"), None);
     }
 }

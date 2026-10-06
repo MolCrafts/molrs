@@ -20,7 +20,12 @@
 //!   ([`conformance`], [`IrError`]) and seals the built-ins;
 //! * [`expr`] compiles a style's Lepton `expression` into its kernel, with
 //!   exact derivatives — installed in every registry
-//!   [`Registry::builtin`] makes.
+//!   [`Registry::builtin`] makes;
+//! * a style of a **form family** registers a [`FormCodec`] — its exact maps
+//!   to and from the family's canonical style — and [`form`] converts a force
+//!   field between the family's styles: exactly
+//!   (`ForceField::canonical`, `ForceField::to_form`) or by least squares
+//!   with a residual (`ForceField::fit_form`).
 //!
 //! ```
 //! use std::sync::Arc;
@@ -54,6 +59,7 @@ pub mod dim;
 pub mod error;
 pub mod expr;
 pub mod expression;
+pub mod form;
 pub mod registry;
 pub mod spec;
 
@@ -61,9 +67,10 @@ pub use category::{Arity, CategorySpec, Coordinate, EndpointOrder, builtin_categ
 pub use dim::Dim;
 pub use error::IrError;
 pub use expression::{CompiledExpression, compile_expression};
+pub use form::{FormCodec, FormFn, Metric, Refusal, Residual, TypeParams, TypeResidual};
 pub use registry::{
     ExpressionCompiler, ExpressionForm, ExpressionKernel, Kernel, Registry, register_category,
-    register_style, set_expression_compiler, unregister_style, with_global,
+    register_form, register_style, set_expression_compiler, unregister_style, with_global,
 };
 pub use spec::{Mix, ParamKind, ParamSpec, Sample, StyleSpec, Value, builtin_styles};
 

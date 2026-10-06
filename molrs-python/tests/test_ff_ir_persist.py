@@ -1,0 +1,208 @@
+"""Custom force-field IR styles persist in ``.mrec`` (``ff-ir-02-protocol`` §7).
+
+A force field holding styles and categories molrs does not ship is written
+to a record; a **fresh Python process** that registered nothing reads it
+back. There:
+
+* an expression style (``bond fene``) and a custom category priced by its
+  expression (``urey_bradley``, ``k_ub*(distance(p1,p3)-r_ub)^2``) price the
+  same energy and forces, bit for bit, and keep the expression byte for byte;
+* a style with no expression (native-only where it was made) is read whole,
+  and compiling it is refused by name — "no kernel for … register it
+  (molrs.ff.ir.register_style) or give it an expression";
+* an array parameter (``dihedral table/linear``, ``table: f64[N]``) comes back
+  bit for bit, through ``molrs.io.mrec`` as an ``f64[T, N]`` column;
+* a category nothing ever registers is kept.
+
+The custom category is registered through the Rust registry's
+``molrs._lib._register_relation_category`` hook: ``molrs.ff.ir`` (WP5) is not
+on this branch. The record carries every expression as the style instance's
+own; writing a *registered* custom style's registry expression is tested in
+Rust (``ff::ir::tests::to_section_writes_a_custom_styles_registry_expression``).
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import molrs
+import numpy as np
+import pytest
+from ff_ir_persist_child import exact, price
+
+FENE = (
+    "-0.5*k*r0^2*log(1-(r/r0)^2) + "
+    "step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)"
+)
+UB = "k_ub*(distance(p1,p3)-r_ub)^2"
+CHILD = Path(__file__).with_name("ff_ir_persist_child.py")
+NO_KERNEL = (
+    "no kernel for {} `{}`: register it (molrs.ff.ir.register_style) "
+    "or give it an expression"
+)
+
+# The Rust registration path: this process's registry gains the category.
+molrs._lib._register_relation_category("urey_bradley", 3)
+
+TABLE = np.array([1.25 + np.sin(0.7 * i) / 3.0 - 0.01 * i * i for i in range(12)])
+UB_ROWS = ([[0, 1, 2], [1, 2, 3]], ["t", "u"])
+
+
+def _atom(ff: molrs.ff.ForceField) -> molrs.ff.AtomType:
+    return ff.def_style("atom", "full").def_type("A", mass=12.0)
+
+
+def _fene() -> molrs.ff.ForceField:
+    ff = molrs.ff.ForceField("fene")
+    a = _atom(ff)
+    ff.def_style("bond", "fene", {"expression": FENE}).def_type(
+        "t", a, a, k=30.0, r0=2.25, epsilon=1.1, sigma=1.4
+    )
+    return ff
+
+
+def _ub(style: str, expression: str | None) -> molrs.ff.ForceField:
+    ff = molrs.ff.ForceField("ub")
+    a = _atom(ff)
+    params = {} if expression is None else {"expression": expression}
+    s = ff.def_style("urey_bradley", style, params)
+    for name, k_ub, r_ub in (("t", 20.0, 2.45), ("u", 11.0, 2.2)):
+        s.def_type(name, a, a, a, k_ub=k_ub, r_ub=r_ub)
+    return ff
+
+
+def _table() -> molrs.ff.ForceField:
+    ff = molrs.ff.ForceField("table")
+    a = _atom(ff)
+    style = ff.def_style("dihedral", "table/linear")
+    style.def_type("t", a, a, a, a, table=TABLE)
+    style.def_type("u", a, a, a, a, table=TABLE[::-1].copy())
+    return ff
+
+
+def _bespoke() -> molrs.io.mrec.ForceFieldSection:
+    """A record whose ``bespoke`` category nothing registers in any process:
+    the native-only ``urey_bradley`` force field with its category renamed."""
+    section = _ub("spring", None).to_section()
+    document, tables = section.document, section.tables
+    (entry,) = [s for s in document["styles"] if s["category"] == "urey_bradley"]
+    entry["category"] = "bespoke"
+    block = molrs.io.mrec.ForceFieldSection.block_name
+    tables[block("bespoke", "spring")] = tables.pop(block("urey_bradley", "spring"))
+    return molrs.io.mrec.ForceFieldSection(document, tables)
+
+
+@pytest.fixture(scope="module")
+def fresh(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict, dict]:
+    """Every record written here, and what a fresh process makes of it."""
+    tmp = tmp_path_factory.mktemp("persist")
+    records = {
+        "fene": (_fene().to_section(), "bonds", [[0, 1]], ["t"]),
+        "ub_expr": (_ub("spring", UB).to_section(), "urey_bradleys", *UB_ROWS),
+        "ub_native": (_ub("harmonic", None).to_section(), "urey_bradleys", *UB_ROWS),
+        "table": (_table().to_section(), "dihedrals", [[0, 1, 2, 3]], ["t"]),
+        "bespoke": (_bespoke(), "bespokes", *UB_ROWS),
+    }
+    here_out, cases = {}, {}
+    for name, (section, block, rows, types) in records.items():
+        path = tmp / f"{name}.mrec"
+        molrs.io.write_mrec_forcefield(path, section)
+        ff = molrs.ff.ForceField.from_section(section)
+        here_out[name] = {
+            "price": price(ff, block, rows, types),
+            "section": exact(section),
+        }
+        cases[name] = [str(path), block, rows, types]
+    done = subprocess.run(
+        [sys.executable, str(CHILD), json.dumps(cases)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    return here_out, json.loads(done.stdout)
+
+
+def test_the_fresh_process_registered_nothing() -> None:
+    done = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import molrs\n"
+                "try:\n"
+                "    molrs.ff.ForceField('t').def_style('urey_bradley', 'x')\n"
+                "except ValueError:\n"
+                "    print('unknown')"
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert done.stdout.strip() == "unknown"
+
+
+@pytest.mark.parametrize("name", ["fene", "ub_expr"])
+def test_an_expression_style_prices_the_same_bits_in_a_fresh_process(
+    fresh: tuple[dict, dict], name: str
+) -> None:
+    here_out, there = fresh
+    assert "error" not in here_out[name]["price"], here_out[name]["price"]
+    assert float.fromhex(here_out[name]["price"]["e"]) > 0.0
+    assert there[name]["price"] == here_out[name]["price"]
+
+
+def test_the_expression_is_kept_byte_for_byte(fresh: tuple[dict, dict]) -> None:
+    _, there = fresh
+    styles = {
+        s["style"]: s.get("expression")
+        for name in ("fene", "ub_expr")
+        for s in there[name]["section"]["document"]["styles"]
+    }
+    assert styles["fene"] == FENE
+    assert styles["spring"] == UB
+
+
+@pytest.mark.parametrize(
+    ("name", "category", "style"),
+    [
+        ("ub_native", "urey_bradley", "harmonic"),
+        ("table", "dihedral", "table/linear"),
+        ("bespoke", "bespoke", "spring"),
+    ],
+)
+def test_a_style_without_an_expression_is_read_whole_and_refused_by_name(
+    fresh: tuple[dict, dict], name: str, category: str, style: str
+) -> None:
+    here_out, there = fresh
+    assert [category, style] in there[name]["styles"]
+    # Read whole: the section a fresh process writes back is the one written.
+    assert there[name]["section"] == here_out[name]["section"]
+    assert there[name]["price"] == {"error": NO_KERNEL.format(category, style)}
+
+
+def test_an_array_param_round_trips_bit_for_bit_as_an_f64_t_n_column(
+    fresh: tuple[dict, dict], tmp_path: Path
+) -> None:
+    here_out, there = fresh
+    block = molrs.io.mrec.ForceFieldSection.block_name("dihedral", "table/linear")
+    shape, values = there["table"]["section"]["tables"][block]["table"]
+    assert shape == [2, 12]
+    want = np.stack([TABLE, TABLE[::-1]])
+    assert values == [float(x).hex() for x in want.ravel()]
+    assert there["table"]["section"] == here_out["table"]["section"]
+
+    # Through molrs.io.mrec in this process too: the section, and the types.
+    path = tmp_path / "table.mrec"
+    molrs.io.write_mrec_forcefield(path, _table())
+    section = molrs.io.read_mrec_forcefield(path)
+    column = section.table("dihedral", "table/linear")["table"]
+    assert column.dtype == np.float64 and column.shape == (2, 12)
+    assert column.tobytes() == want.tobytes()
+    back = molrs.ff.ForceField.from_section(section)
+    t = back.get_style("dihedral", "table/linear").get_type_by_name("t")
+    assert np.asarray(t["table"]).tobytes() == TABLE.tobytes()

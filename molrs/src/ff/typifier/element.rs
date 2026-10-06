@@ -6,8 +6,10 @@
 
 use std::collections::HashMap;
 
+use indexmap::IndexMap;
 use molrs::Atomistic;
 use molrs::store::keys;
+use molrs::store::schema::block_names::{ANGLES, BONDS, DIHEDRALS};
 use molrs::store::type_labels::TypeName;
 use molrs::system::molgraph::{MolGraph, NodeId, PropValue};
 
@@ -156,11 +158,16 @@ impl Typifier for ElementTypifier {
         }
 
         let mut cache: HashMap<Vec<String>, String> = HashMap::new();
+        let mut links = IndexMap::new();
+        for kind in [BONDS, ANGLES, DIHEDRALS] {
+            links.insert(
+                kind.to_owned(),
+                link_labels(graph, kind, &elements, &mut cache)?,
+            );
+        }
         Ok(Match {
             nodes,
-            bonds: link_labels(graph, "bonds", &elements, &mut cache)?,
-            angles: link_labels(graph, "angles", &elements, &mut cache)?,
-            dihedrals: link_labels(graph, "dihedrals", &elements, &mut cache)?,
+            links,
             ..Match::default()
         })
     }

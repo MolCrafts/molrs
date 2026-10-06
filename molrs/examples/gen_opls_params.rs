@@ -450,9 +450,9 @@ impl Table {
                                 sum * 4.184
                             ));
                         }
-                        let f = Opls::from_series(&series)
-                            .map_err(|e| format!("{what}: {e}"))?
-                            .k;
+                        // The sum is zero to the tolerance above, so the
+                        // cosines are the OPLS row (its constant is its own).
+                        let f = Opls::nearest(&series).k;
                         table.dihedrals.push(DihedralRow {
                             ends: [
                                 t.itom.clone(),

@@ -180,6 +180,28 @@ impl LJCut {
         }
     }
 
+    /// The compiled kernel with the Mie exponents `n > m > 0` of the style
+    /// (`n`, `m`; LAMMPS's `lj/mie/cut` generalisation, 12-6 by default):
+    /// `C ε [(σ/r)ⁿ − (σ/r)ᵐ]`, `C = n/(n − m) (n/m)^(m/(n − m))`.
+    ///
+    /// # Errors
+    /// The kernel is not compiled, or the exponents do not satisfy
+    /// `n > m > 0`.
+    pub fn with_exponents(mut self, n: i32, m: i32) -> Result<Self, String> {
+        if !matches!(self.source, PairSource::Compiled { .. }) {
+            return Err("LJCut::with_exponents: only a compiled kernel takes them here".into());
+        }
+        if m <= 0 || n <= m {
+            return Err(format!(
+                "LJCut exponents must satisfy n > m > 0, got n={n}, m={m}"
+            ));
+        }
+        self.n = n;
+        self.m = m;
+        self.ceps = mie_c(n, m);
+        Ok(self)
+    }
+
     /// A kernel that finds its parameters from the atoms a pair names.
     ///
     /// `type_id` is one type index per atom — including, under a ghost régime,
@@ -402,7 +424,8 @@ impl LJCut {
             let dy = coords[j * 3 + 1] - coords[i * 3 + 1];
             let dz = coords[j * 3 + 2] - coords[i * 3 + 2];
             let r2 = dx * dx + dy * dy + dz * dz;
-            let ceps = 4.0 * epsilon[idx];
+            // `ceps` is the Mie prefactor of the exponents (4 at 12-6).
+            let ceps = self.ceps * epsilon[idx];
             let Some((e, f)) = self.pair_kernel_params(
                 r2,
                 [dx, dy, dz],
@@ -411,8 +434,8 @@ impl LJCut {
                 0.0,
                 0.0,
                 F::INFINITY,
-                12,
-                6,
+                self.n,
+                self.m,
             ) else {
                 continue;
             };
@@ -777,9 +800,11 @@ pub fn pair_lj_cut_ctor(
         sig_vec.push(sigma);
     }
 
-    Ok(Member::pair(LJCut::compiled(
-        atom_i, atom_j, eps_vec, sig_vec,
-    )))
+    let n = style_params.get("n").unwrap_or(12.0).round() as i32;
+    let m = style_params.get("m").unwrap_or(6.0).round() as i32;
+    Ok(Member::pair(
+        LJCut::compiled(atom_i, atom_j, eps_vec, sig_vec).with_exponents(n, m)?,
+    ))
 }
 
 /// Construct a neighbour-driven [`LJCut`] from per-atom parameters.
@@ -962,6 +987,55 @@ mod tests {
         );
         let (e1, _) = pot.calc_energy_forces_with_pairs(&coords, &extra);
         assert_eq!(e0, e1);
+    }
+
+    /// The compiled door prices the style's Mie exponents, as the typed door
+    /// and the spec's expression do (it priced 12-6 whatever `n`, `m` said).
+    #[test]
+    fn the_compiled_door_takes_the_style_exponents() {
+        use molrs::store::block::Block;
+        use ndarray::Array1;
+        let rows = [(
+            "A".to_string(),
+            Params::from_pairs(&[("epsilon", 0.2), ("sigma", 3.0)]),
+        )];
+        let tp: Vec<(&str, &Params)> = rows.iter().map(|(k, p)| (k.as_str(), p)).collect();
+        let mut frame = ab_frame();
+        frame.insert(ATOMS, {
+            let mut atoms = Block::new();
+            atoms
+                .insert(
+                    "type",
+                    Array1::from_vec(vec!["A".to_string(), "A".to_string()]).into_dyn(),
+                )
+                .unwrap();
+            atoms
+        });
+        let coords = [0.0, 0.0, 0.0, 3.7, 0.0, 0.0];
+        for (n, m) in [(12.0, 6.0), (9.0, 6.0), (10.0, 4.0)] {
+            let style = Params::from_pairs(&[("cutoff", 100.0), ("n", n), ("m", m)]);
+            let compiled = pair_lj_cut_ctor(&style, &tp, &frame).unwrap();
+            let typed = pair_lj_cut_typed_ctor(&style, &tp, &frame).unwrap();
+            let c = (n / (n - m)) * (n / m).powf(m / (n - m));
+            let want = c * 0.2 * ((3.0_f64 / 3.7).powf(n) - (3.0_f64 / 3.7).powf(m));
+            let e_c = compiled.as_potential().calc_energy(&coords);
+            assert!((e_c - want).abs() < 1e-12, "{n}-{m}: {e_c} vs {want}");
+            let pair = Neighbors::from_pairs(
+                vec![molrs::spatial::neighbors::NeighborPair {
+                    i: 0,
+                    j: 1,
+                    dist_sq: 3.7 * 3.7,
+                    disp: [3.7, 0.0, 0.0],
+                }],
+                molrs::spatial::neighbors::NeighborsStorage::FULL,
+                molrs::spatial::neighbors::QueryMode::SelfQuery { num_points: 2 },
+            );
+            let Member::Pair(typed) = typed else {
+                panic!("a pair member")
+            };
+            let e_t = typed.calc_energy_forces_with_pairs(&coords, &pair).0;
+            assert!((e_t - want).abs() < 1e-12, "{n}-{m} typed: {e_t} vs {want}");
+        }
     }
 
     /// The typed table and the compiled list are two ways of finding the same

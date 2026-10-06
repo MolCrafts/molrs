@@ -52,6 +52,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::OnceLock;
 
 use molrs::store::keys;
+use molrs::store::schema::block_names::{ANGLES, BONDS, DIHEDRALS, IMPROPERS};
 use molrs::store::type_labels::TypeName;
 use molrs::system::atomistic::ImproperId;
 use molrs::{AtomId, Atomistic};
@@ -541,7 +542,8 @@ impl GaffTypifier {
                     }
                 }
             };
-            m.bonds.push(Bonded::annotation("harmonic", resolved)?);
+            m.link_mut(BONDS)
+                .push(Bonded::annotation("harmonic", resolved)?);
         }
 
         // --- angles ---
@@ -567,7 +569,8 @@ impl GaffTypifier {
                     }
                 }
             };
-            m.angles.push(Bonded::annotation("harmonic", resolved)?);
+            m.link_mut(ANGLES)
+                .push(Bonded::annotation("harmonic", resolved)?);
         }
 
         // --- dihedrals ---
@@ -601,13 +604,14 @@ impl GaffTypifier {
                     }
                 }
             };
-            m.dihedrals.push(Bonded::annotation("periodic", resolved)?);
+            m.link_mut(DIHEDRALS)
+                .push(Bonded::annotation("periodic", resolved)?);
         }
 
         // --- impropers: positional against the rows `add_impropers` left ---
         let improper_ids: Vec<ImproperId> = graph.impropers().map(|(id, _)| id).collect();
         for id in improper_ids {
-            m.impropers
+            m.link_mut(IMPROPERS)
                 .push(Bonded::annotation("periodic", improper_terms.remove(&id))?);
         }
 

@@ -145,6 +145,16 @@ pub enum IrError {
         category: String,
         style: String,
     },
+    /// An exact form conversion refused: the row named `type_` of `from`
+    /// (`"<category> <style>"`) is outside the image of `to`, for the named
+    /// `reason` (`ff-ir-01` P3: a Fourier series with `bₙ ≠ 0` has no RB
+    /// form). Also a `fit_form` that cannot evaluate the category.
+    OutOfImage {
+        from: String,
+        to: String,
+        type_: String,
+        reason: String,
+    },
     /// A spec whose declarations contradict each other (a mixing rule on a
     /// bonded parameter, an ε without its σ, an expression kernel that is
     /// not the spec's expression). Not in the protocol's table: the table
@@ -269,6 +279,21 @@ impl fmt::Display for IrError {
             NoForm { category, style } => {
                 write!(f, "{category} `{style}` belongs to no form family")
             }
+            OutOfImage {
+                from,
+                to,
+                type_,
+                reason,
+            } if type_.is_empty() => write!(f, "{from} has no exact `{to}` form: {reason}"),
+            OutOfImage {
+                from,
+                to,
+                type_,
+                reason,
+            } => write!(
+                f,
+                "{from} type '{type_}' has no exact `{to}` form: {reason}"
+            ),
             Malformed { style, reason } => write!(f, "style `{style}`: {reason}"),
         }
     }

@@ -42,10 +42,12 @@
 use std::collections::HashMap;
 
 use molrs::store::keys;
+use molrs::store::schema::block_names::{ANGLES, BONDS, DIHEDRALS};
 use molrs::{AtomId, Atomistic};
 
 use crate::ff::forcefield::{ForceField, Params, StyleDefs};
 use crate::ff::typifier::estimate::ParameterInterpolator;
+use crate::ff::typifier::estimate::candidate::is_wildcard;
 use crate::ff::typifier::{Annotation, Match};
 
 use super::meta::OplsTypingMeta;
@@ -74,13 +76,6 @@ fn end_score(pattern: &str, atom_type: &str, atom_class: Option<&str>) -> Option
         return Some(1);
     }
     None
-}
-
-/// Whether a bonded-type endpoint name is a wildcard. OPLS XML wildcards arrive
-/// as `""` (verbatim from the reader); `"*"` and `"X"` are accepted for parity
-/// with molpy / generic force-field conventions.
-fn is_wildcard(pattern: &str) -> bool {
-    pattern.is_empty() || pattern == "*" || pattern == "X"
 }
 
 /// Best specificity of an ordered bonded-term pattern against an ordered atom
@@ -408,7 +403,7 @@ pub(crate) fn typify_bonded_with(
         .bonds()
         .map(|(_, b)| [b.nodes[0], b.nodes[1]])
         .collect();
-    m.bonds = bonds
+    *m.link_mut(BONDS) = bonds
         .iter()
         .map(|ends| {
             tables.annotate(
@@ -430,7 +425,7 @@ pub(crate) fn typify_bonded_with(
         .angles()
         .map(|(_, a)| [a.nodes[0], a.nodes[1], a.nodes[2]])
         .collect();
-    m.angles = angles
+    *m.link_mut(ANGLES) = angles
         .iter()
         .map(|ends| {
             tables.annotate(
@@ -449,7 +444,7 @@ pub(crate) fn typify_bonded_with(
         .dihedrals()
         .map(|(_, d)| [d.nodes[0], d.nodes[1], d.nodes[2], d.nodes[3]])
         .collect();
-    m.dihedrals = dihedrals
+    *m.link_mut(DIHEDRALS) = dihedrals
         .iter()
         .map(|ends| {
             tables.annotate(

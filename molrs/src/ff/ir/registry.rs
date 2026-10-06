@@ -21,6 +21,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::ff::forcefield::Params;
 use crate::ff::ir::conformance::{self, PROBE_TERMS, Probe, form_id};
+use crate::ff::ir::form::FormCodec;
 use crate::ff::ir::{CategorySpec, IrError, StyleSpec, builtin_categories, builtin_styles};
 use crate::ff::potential::Member;
 use crate::ff::potential::generic::{
@@ -172,6 +173,10 @@ pub(crate) struct StyleEntry {
     spec: StyleSpec,
     kernel: Option<Kernel>,
     sealed: bool,
+    /// What the first-compile verdict is keyed on instead of the form's
+    /// address: the registry expression an instance expression is checked
+    /// against, whose compiled form is new at every compile.
+    probe_id: Option<usize>,
 }
 
 /// What a style's form kernel is, and where it came from.
@@ -209,6 +214,64 @@ impl StyleEntry {
             spec,
             kernel: Some(Kernel::Expression(x)),
             sealed: false,
+            probe_id: None,
+        }))
+    }
+
+    /// The entry a style instance carrying its own `expression` is priced
+    /// under (protocol §4, D16).
+    ///
+    /// The registered kernel prices it, a registered kernel taking priority
+    /// over an expression; an instance expression that differs from the
+    /// registry's is checked for agreement with that kernel at first compile
+    /// ([`IrError::Disagree`]), like an expression registered beside a native
+    /// kernel. A registered style with neither kernel nor expression is
+    /// priced by the instance's. A sealed built-in, and a Tier-3
+    /// constructor (never sampled), is priced as registered, unchecked.
+    pub(crate) fn with_instance_expression(
+        &self,
+        category: &CategorySpec,
+        instance: Option<&str>,
+        expressions: Option<ExpressionCompiler>,
+    ) -> Result<std::borrow::Cow<'_, StyleEntry>, IrError> {
+        use std::borrow::Cow;
+        let Some(instance) = instance else {
+            return Ok(Cow::Borrowed(self));
+        };
+        if self.sealed || self.spec.expression.as_deref() == Some(instance) {
+            return Ok(Cow::Borrowed(self));
+        }
+        let native = |form: ExpressionForm| match form {
+            ExpressionForm::Scalar(f) => Kernel::Scalar(f),
+            ExpressionForm::Compound(f) => Kernel::Compound(f),
+        };
+        let keyed = |source: &str| {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            source.hash(&mut h);
+            Some(h.finish() as usize)
+        };
+        let (kernel, probe_id) = match (&self.kernel, &self.spec.expression) {
+            (Some(Kernel::Ctor { .. }), _) => return Ok(Cow::Borrowed(self)),
+            (Some(k @ (Kernel::Scalar(_) | Kernel::Compound(_))), _) => (Some(k.clone()), None),
+            (Some(Kernel::Expression(x)), _) => (Some(native(x.form())), keyed(x.source())),
+            (None, Some(registered)) => match expressions {
+                Some(compile) => (
+                    Some(native(compile(category, &self.spec)?.form())),
+                    keyed(registered),
+                ),
+                None => return Ok(Cow::Borrowed(self)),
+            },
+            (None, None) => (None, None),
+        };
+        let mut spec = self.spec.clone();
+        spec.expression = Some(instance.to_owned());
+        spec.samples.clear();
+        Ok(Cow::Owned(StyleEntry {
+            spec,
+            kernel,
+            sealed: false,
+            probe_id,
         }))
     }
 
@@ -266,7 +329,7 @@ impl StyleEntry {
             category,
             &self.spec,
             &form.form,
-            form_id(&form.form),
+            self.probe_id.unwrap_or_else(|| form_id(&form.form)),
             form.native,
             expressions,
             probe,
@@ -293,21 +356,21 @@ impl StyleEntry {
             ExpressionForm::Scalar(f) if category.is_pair_driven() => {
                 let k = ScalarPair::compiled(f.clone(), spec, params, tp, frame)?;
                 self.first_compile(category, &form, expressions, || {
-                    k.probe(&coords, PROBE_TERMS)
+                    probe_on(&coords, |c| k.probe(c, PROBE_TERMS))
                 })?;
                 Member::pair(k)
             }
             ExpressionForm::Scalar(f) => {
                 let k = ScalarBonded::build(f.clone(), category, spec, params, tp, frame)?;
                 self.first_compile(category, &form, expressions, || {
-                    k.probe(&coords, PROBE_TERMS)
+                    probe_on(&coords, |c| k.probe(c, PROBE_TERMS))
                 })?;
                 Member::indexed(k)
             }
             ExpressionForm::Compound(f) => {
                 let k = CompoundTerms::build(f.clone(), category, spec, params, tp, frame)?;
                 self.first_compile(category, &form, expressions, || {
-                    k.probe(&coords, PROBE_TERMS)
+                    probe_on(&coords, |c| k.probe(c, PROBE_TERMS))
                 })?;
                 Member::indexed(k)
             }
@@ -340,9 +403,19 @@ impl StyleEntry {
         let k = ScalarPair::typed(f.clone(), &self.spec, params, tp, frame)?;
         let coords = frame_coords(frame);
         self.first_compile(category, &form, expressions, || {
-            k.probe(&coords, PROBE_TERMS)
+            probe_on(&coords, |c| k.probe(c, PROBE_TERMS))
         })?;
         Ok(Some((Member::pair(k), self.spec.special_class())))
+    }
+}
+
+/// The probe of a kernel's real terms at `coords`, or none (the check
+/// waits for a compile whose frame has positions) when the frame has none.
+fn probe_on(coords: &[F], probe: impl FnOnce(&[F]) -> Probe) -> Probe {
+    if coords.is_empty() {
+        Probe::default()
+    } else {
+        probe(coords)
     }
 }
 
@@ -368,12 +441,21 @@ struct CategoryEntry {
     sealed: bool,
 }
 
-/// Categories and styles of the force-field IR, and the kernels that price
-/// the styles.
+/// One registered form codec.
+#[derive(Clone)]
+struct FormEntry {
+    codec: FormCodec,
+    sealed: bool,
+}
+
+/// Categories and styles of the force-field IR, the kernels that price the
+/// styles, and the form codecs that convert between them
+/// ([`crate::ff::ir::form`]).
 #[derive(Clone, Default)]
 pub struct Registry {
     categories: BTreeMap<String, CategoryEntry>,
     styles: BTreeMap<(String, String), StyleEntry>,
+    forms: BTreeMap<(String, String), FormEntry>,
     expressions: Option<ExpressionCompiler>,
 }
 
@@ -382,6 +464,7 @@ impl fmt::Debug for Registry {
         f.debug_struct("Registry")
             .field("categories", &self.categories.len())
             .field("styles", &self.styles.len())
+            .field("forms", &self.forms.len())
             .finish()
     }
 }
@@ -421,8 +504,15 @@ impl Registry {
             r.register_style(spec, kernel)
                 .unwrap_or_else(|e| panic!("built-in {category} `{name}`: {e}"));
         }
+        for (category, style, codec) in crate::ff::ir::form::builtin_forms() {
+            r.register_form(category, style, codec)
+                .unwrap_or_else(|e| panic!("built-in form of {category} `{style}`: {e}"));
+        }
         for s in r.styles.values_mut() {
             s.sealed = true;
+        }
+        for f in r.forms.values_mut() {
+            f.sealed = true;
         }
         r
     }
@@ -500,6 +590,7 @@ impl Registry {
                 spec,
                 kernel,
                 sealed: false,
+                probe_id: None,
             },
         );
         Ok(())
@@ -520,10 +611,94 @@ impl Registry {
                 style: key.1,
             }),
             Some(_) => {
+                self.forms.remove(&key);
                 self.styles.remove(&key);
                 Ok(())
             }
         }
+    }
+
+    /// Register the form codec of a registered style: its family, and its
+    /// exact maps to and from the family's canonical parameters
+    /// (`ff-ir-02-protocol` §9).
+    ///
+    /// Refuses a style that is not registered ([`IrError::NoKernel`]), a
+    /// second canonical style of one family ([`IrError::FormConflict`]), and
+    /// a different codec under a style that has one ([`IrError::Sealed`]
+    /// for a built-in, [`IrError::Conflict`] otherwise); the same codec again
+    /// is a no-op.
+    pub fn register_form(
+        &mut self,
+        category: &str,
+        style: &str,
+        codec: FormCodec,
+    ) -> Result<(), IrError> {
+        let key = (category.to_owned(), style.to_owned());
+        if !self.styles.contains_key(&key) {
+            return Err(IrError::NoKernel {
+                category: key.0,
+                style: key.1,
+            });
+        }
+        if let Some(existing) = self.forms.get(&key) {
+            if existing.codec.same(&codec) {
+                return Ok(());
+            }
+            let (category, style) = key;
+            return Err(if existing.sealed {
+                IrError::Sealed { category, style }
+            } else {
+                IrError::Conflict { category, style }
+            });
+        }
+        if codec.canonical
+            && let Some(((c, s), _)) = self
+                .forms
+                .iter()
+                .find(|(_, f)| f.codec.canonical && f.codec.family == codec.family)
+        {
+            return Err(IrError::FormConflict {
+                family: codec.family.to_string(),
+                reason: format!(
+                    "{c} `{s}` is its canonical style already; {category} `{style}` cannot be \
+                     a second one"
+                ),
+            });
+        }
+        self.forms.insert(
+            key,
+            FormEntry {
+                codec,
+                sealed: false,
+            },
+        );
+        Ok(())
+    }
+
+    /// The form codec of `(category, style)`, if it registered one.
+    pub fn form(&self, category: &str, style: &str) -> Option<&FormCodec> {
+        self.forms
+            .get(&(category.to_owned(), style.to_owned()))
+            .map(|f| &f.codec)
+    }
+
+    /// Every registered form codec, by `(category, style)`.
+    pub fn forms(&self) -> impl Iterator<Item = (&str, &str, &FormCodec)> + '_ {
+        self.forms
+            .iter()
+            .map(|((c, s), f)| (c.as_str(), s.as_str(), &f.codec))
+    }
+
+    /// The canonical style `(category, style)` of `family`;
+    /// [`IrError::FormConflict`] when it has none.
+    pub fn canonical_form(&self, family: &str) -> Result<(&str, &str), IrError> {
+        self.forms()
+            .find(|(_, _, f)| f.canonical && f.family == family)
+            .map(|(c, s, _)| (c, s))
+            .ok_or_else(|| IrError::FormConflict {
+                family: family.to_owned(),
+                reason: "no style is its canonical one".into(),
+            })
     }
 
     /// Install the expression engine: it prices expression-only styles and
@@ -598,6 +773,14 @@ pub fn register_category(c: CategorySpec) -> Result<(), IrError> {
 /// point every compile reads, with nothing rebuilt.
 pub fn register_style(spec: StyleSpec, kernel: Option<Kernel>) -> Result<(), IrError> {
     global().write().unwrap().register_style(spec, kernel)
+}
+
+/// [`Registry::register_form`] on the process-wide registry.
+pub fn register_form(category: &str, style: &str, codec: FormCodec) -> Result<(), IrError> {
+    global()
+        .write()
+        .unwrap()
+        .register_form(category, style, codec)
 }
 
 /// [`Registry::unregister_style`] on the process-wide registry.

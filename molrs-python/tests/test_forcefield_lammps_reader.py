@@ -155,10 +155,12 @@ def test_skip_pair_style_omits_special_bonds(read_ff):
 
 
 def test_write_lammps_forcefield_str_round_trip(read_ff):
-    """write_lammps_forcefield_str is the inverse of the reader (units + layout)."""
+    """write_lammps_forcefield_str is the inverse of the reader (units + layout):
+    lj/cut/coul/long reads as lj/cut + coul/long/pme and is written back."""
     ff = read_ff(_FF)
+    assert ff.get_style("pair", "coul/long/pme") is not None
     text = molrs.ff.write_lammps_forcefield_str(ff, _ff_frame())
-    assert "pair_style lj/cut/coul/cut" in text
+    assert "pair_style lj/cut/coul/long" in text
     assert "hybrid" not in text
     assert "bond_coeff c3-c3 228.890000 1.535400" in text
     assert "angle_coeff c3-c3-oh 76.790000 109.660000" in text

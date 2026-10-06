@@ -38,7 +38,7 @@
 // The pinned numbers are kept as their engines printed them.
 #![allow(clippy::excessive_precision)]
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use ndarray::Array1;
@@ -48,29 +48,25 @@ use crate::ff::forcefield::readers::ForceFieldReader;
 use crate::ff::forcefield::readers::opls::OplsXmlReader;
 use crate::ff::forcefield::writers::ForceFieldWriter;
 use crate::ff::forcefield::writers::xml::XmlForceFieldWriter;
-use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
-use crate::ff::potential::pair::exceptions;
+use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
 use crate::ff::{LammpsFfWriter, LammpsWriteOptions};
 use molrs::io::data::lammps_data::write_lammps_data;
 use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
-use molrs::store::schema::PAIR_OVERRIDE_COLUMNS;
 use molrs::store::type_labels::TypeLabels;
 use molrs::types::{F, Idx};
 
-const TERMS: [&str; 8] = [
-    "bond", "angle", "dihedral", "improper", "cmap", "vdw", "coul", "total",
-];
+use crate::ff::equivalence_check::{self, TERMS};
 
-struct Case {
+pub(crate) struct Case {
     name: &'static str,
     xml: &'static str,
     json: &'static str,
 }
 
-const CASES: [Case; 3] = [
+pub(crate) const CASES: [Case; 3] = [
     Case {
         name: "charmm",
         xml: include_str!("testdata/openmm/charmm.xml"),
@@ -127,7 +123,7 @@ fn strings(v: &Value, key: &str) -> Vec<String> {
 
 /// The XML read with OpenMM's `NoCutoff` stated as a cutoff beyond every
 /// pair.
-fn read(c: &Case) -> ForceField {
+pub(crate) fn read(c: &Case) -> ForceField {
     let mut ff = OplsXmlReader::new().read_str(c.xml).unwrap();
     for name in ["lj/charmm", "coul/charmm", "lj/cut", "coul/cut"] {
         if let Some(style) = ff.get_style_mut("pair", name) {
@@ -195,7 +191,7 @@ fn relation(rows: &[(Vec<usize>, String)]) -> Block {
 
 /// The frame OpenMM priced, typed against `ff`, with its `pairs` (1-4
 /// flagged from every proper of the bond graph).
-fn frame(c: &Case, ff: &ForceField) -> Frame {
+pub(crate) fn frame(c: &Case, ff: &ForceField) -> Frame {
     let v = json(c);
     let types = strings(&v, "types");
     let x = rows_f(&v);
@@ -277,115 +273,11 @@ fn coords(frame: &Frame) -> Vec<F> {
     frame.coords().unwrap().into_iter().collect()
 }
 
-/// `frame` without its per-pair override rows (the pair styles' own list).
-fn without_overrides(frame: &Frame) -> Frame {
-    let mut out = frame.clone();
-    let Some(pairs) = frame.get("pairs") else {
-        return out;
-    };
-    let n = pairs.nrows().unwrap_or(0);
-    let has = |r: usize| {
-        PAIR_OVERRIDE_COLUMNS
-            .iter()
-            .any(|k| pairs.get(k).is_some() && pairs.validity(k).is_none_or(|m| m[r]))
-    };
-    let keep: Vec<usize> = (0..n).filter(|&r| !has(r)).collect();
-    let mut kept = pairs.select_rows(&keep).unwrap();
-    for k in PAIR_OVERRIDE_COLUMNS {
-        kept.remove(k);
-    }
-    out.insert("pairs", kept);
-    out
-}
-
-/// The term family of a style, as OpenMM's force groups and LAMMPS's thermo
-/// keywords split them.
-fn term(category: &str, style: &str) -> &'static str {
-    match (category, style) {
-        ("bond", _) => "bond",
-        ("angle", _) => "angle",
-        ("dihedral", _) => "dihedral",
-        ("improper", _) => "improper",
-        ("cmap", _) => "cmap",
-        ("pair", s) if s.starts_with("coul") => "coul",
-        ("pair", _) => "vdw",
-        _ => unreachable!("{category}/{style}"),
-    }
-}
-
-/// molrs's energy per term family (kcal/mol): each style alone on the frame
-/// without its override rows, plus the exceptions kernel's van der Waals and
-/// Coulomb (override rows and `w` pairs), and the whole field.
+/// molrs's energy per term family (kcal/mol), at the field's own Coulomb
+/// constant ([`equivalence_check::molrs_terms`]).
 fn molrs_terms(ff: &ForceField, frame: &Frame) -> BTreeMap<&'static str, F> {
     let x = coords(frame);
-    let plain = without_overrides(frame);
-    let mut out: BTreeMap<&'static str, F> = TERMS.iter().map(|t| (*t, 0.0)).collect();
-    for style in ff.styles() {
-        if style.category() == "atom" {
-            continue;
-        }
-        let mut one = ff.empty_like();
-        // The style alone prices the frame's regular pairs; its 1-4
-        // semantics are the exceptions kernel's, added below.
-        let mut params = style.params().clone();
-        if style.name() == "lj/charmm" {
-            params.set_str("one_four", "regular");
-        }
-        let s = one
-            .def_style(style.category(), style.name(), params)
-            .unwrap();
-        for (name, ends, p) in style.type_rows() {
-            let mut p = p.clone();
-            if p.get("w").is_some() {
-                p.set("w", 0.0);
-            }
-            s.def_type(name, &ends, p).unwrap();
-        }
-        // A relation block may name types of several styles of one
-        // category; this style prices its own rows.
-        let mut own = plain.clone();
-        let block_name = match style.category() {
-            "bond" => Some("bonds"),
-            "angle" => Some("angles"),
-            "dihedral" => Some("dihedrals"),
-            "improper" => Some("impropers"),
-            "cmap" => Some("cmaps"),
-            _ => None,
-        };
-        if let Some(block_name) = block_name
-            && let Some(block) = plain.get(block_name)
-        {
-            let names: HashSet<&str> = style.type_rows().iter().map(|r| r.0).collect();
-            let labels = block.get("type").unwrap().as_string().unwrap();
-            let keep: Vec<usize> = (0..labels.len())
-                .filter(|&r| names.contains(labels[r].as_str()))
-                .collect();
-            if keep.is_empty() {
-                continue;
-            }
-            own.insert(block_name, block.select_rows(&keep).unwrap());
-        }
-        let e = PotentialCompiler::new(&one)
-            .compile(&own)
-            .unwrap()
-            .calc_energy(&x);
-        *out.get_mut(term(style.category(), style.name())).unwrap() += e;
-    }
-    let (lj14, coul14) = exceptions::plan(ff, frame)
-        .unwrap()
-        .kernel
-        .map(|k| k.energy_terms(&x))
-        .unwrap_or((0.0, 0.0));
-    *out.get_mut("vdw").unwrap() += lj14;
-    *out.get_mut("coul").unwrap() += coul14;
-    out.insert(
-        "total",
-        PotentialCompiler::new(ff)
-            .compile(frame)
-            .unwrap()
-            .calc_energy(&x),
-    );
-    out
+    equivalence_check::molrs_terms(ff, frame, &x, equivalence_check::coulomb(ff), false)
 }
 
 /// The field and frame molrs prices `c` with: `charmm`'s 1-4 pairs as
@@ -399,72 +291,14 @@ fn system(c: &Case) -> (ForceField, Frame) {
     (ff, frame)
 }
 
-/// `charmm` in LAMMPS's form: `special_bonds` 0, `one_four` regular, and a
-/// `dihedral charmm` row `w14` (k = 0, `w` = the 1-4 scale) on one proper
-/// per 1-4 pair.
+/// `charmm` in LAMMPS's form: `special_bonds` 0 and a `w` = 1 zero-`K`
+/// `dihedral charmm` row per 1-4 pair
+/// ([`equivalence_check::one_four_as_dihedral_weights`]); the others as
+/// read.
 fn lammps_form(c: &Case) -> (ForceField, Frame) {
-    let mut ff = read(c);
-    let mut frame = frame(c, &ff);
-    if c.name != "charmm" {
-        return (ff, frame);
-    }
-    let sb = *ff.special_bonds();
-    assert_eq!(sb.lj_14(), sb.coul_14(), "one w prices both halves");
-    ff.get_style_mut("pair", "lj/charmm")
-        .unwrap()
-        .set_str_param("one_four", "regular");
-    ff.set_special_bonds(SpecialBonds {
-        lj: [0.0, 0.0, 0.0],
-        coul: [0.0, 0.0, 0.0],
-    });
-    ff.def_style("dihedral", "charmm", Params::new())
-        .unwrap()
-        .def_type(
-            "w14",
-            &["", "", "", ""],
-            Params::from_pairs(&[
-                ("k", 0.0),
-                ("periodicity", 1.0),
-                ("phase", 0.0),
-                ("w", sb.lj_14()),
-            ]),
-        )
-        .unwrap();
-    let v = json(c);
-    let pairs = frame.get("pairs").unwrap();
-    let flagged: HashSet<(usize, usize)> = {
-        let ai = pairs.get("atomi").unwrap().as_uint().unwrap();
-        let aj = pairs.get("atomj").unwrap().as_uint().unwrap();
-        let f = pairs.get("is_14").unwrap().as_bool().unwrap();
-        (0..ai.len())
-            .filter(|&r| f[r])
-            .map(|r| (ai[r] as usize, aj[r] as usize))
-            .collect()
-    };
-    let mut seen = HashSet::new();
-    let block = frame.get("dihedrals").unwrap();
-    let mut rows_out: Vec<(Vec<usize>, String)> = (0..block.nrows().unwrap())
-        .map(|r| {
-            let at = |k: &str| block.get(k).unwrap().as_uint().unwrap()[r] as usize;
-            (
-                vec![at("atomi"), at("atomj"), at("atomk"), at("atoml")],
-                block.get("type").unwrap().as_string().unwrap()[r].clone(),
-            )
-        })
-        .collect();
-    for r in rows(&v, "dihedrals") {
-        let key = (r[0].min(r[3]), r[0].max(r[3]));
-        if flagged.contains(&key) && seen.insert(key) {
-            rows_out.push((r, "w14".into()));
-        }
-    }
-    assert_eq!(seen.len(), flagged.len());
-    frame.insert("dihedrals", relation(&rows_out));
-    frame.insert(
-        "pairs",
-        intramolecular_pairs(&frame, ff.special_bonds()).unwrap(),
-    );
-    (ff, frame)
+    let ff = read(c);
+    let frame = frame(c, &ff);
+    equivalence_check::one_four_as_dihedral_weights(&ff, &frame)
 }
 
 /// Write `c`'s LAMMPS inputs into `dir`: `<case>.data`, `<case>.pre` (lines

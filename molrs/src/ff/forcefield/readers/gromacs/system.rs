@@ -698,6 +698,22 @@ fn assemble(moltypes: &[MolType], molecules: &[(usize, usize)]) -> Result<Frame,
         }
     }
 
+    // GROMACS prices every pair of two molecules: up to the size a full list
+    // is built for, the frame's list holds them too, so `compile` prices
+    // what GROMACS does. (Above it, a neighbour list does: `compile_typed`.)
+    if offset <= MAX_ATOMS_FOR_A_FULL_PAIR_LIST {
+        let mol = &atoms.6;
+        for a in 0..offset {
+            for b in a + 1..offset {
+                if mol[a] != mol[b] {
+                    pairs.0.push(a as Idx);
+                    pairs.1.push(b as Idx);
+                    pairs.2.push(false);
+                    pairs.3.push([None; 5]);
+                }
+            }
+        }
+    }
     let mut frame = Frame::new();
     if offset == 0 {
         return Ok(frame);
@@ -965,7 +981,12 @@ SOL  2
             .copied()
             .collect();
         let rows: Vec<(u64, u64, bool)> = (0..i.len()).map(|r| (i[r], j[r], is_14[r])).collect();
-        assert_eq!(rows, [(3, 4, false), (0, 3, true), (4, 2, true)]);
+        // Per molecule (the butane's; a water's are all excluded), then every
+        // pair of two molecules.
+        assert_eq!(rows[..3], [(3, 4, false), (0, 3, true), (4, 2, true)]);
+        let mol = |a: u64| if a < 5 { 0 } else { (a - 5) / 3 + 1 };
+        assert_eq!(rows.len(), 3 + 5 * 6 + 3 * 3);
+        assert!(rows[3..].iter().all(|&(a, b, f)| !f && mol(a) != mol(b)));
         let pairs = frame.get("pairs").unwrap();
         // The second [ pairs ] row carries its own σ, ε, at full LJ weight,
         // fudgeQQ Coulomb; the first carries nothing.
@@ -974,7 +995,9 @@ SOL  2
         assert_eq!(floats(&frame, "pairs", "sigma")[2], 3.0);
         assert_eq!(floats(&frame, "pairs", "lj_scale")[2], 1.0);
         assert_eq!(floats(&frame, "pairs", "coul_scale")[2], 0.8333);
-        assert_eq!(pairs.validity("epsilon"), Some(&[false, false, true][..]));
+        let valid = pairs.validity("epsilon").unwrap();
+        assert_eq!(valid[..3], [false, false, true]);
+        assert!(valid[3..].iter().all(|v| !v));
         assert!(pairs.get("charge_product").is_none());
     }
 

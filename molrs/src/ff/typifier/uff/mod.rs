@@ -51,6 +51,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use molrs::store::schema::block_names::{ANGLES, BONDS, DIHEDRALS, IMPROPERS};
 use molrs::store::type_labels::TypeName;
 use molrs::system::molgraph::PropValue;
 use molrs::{AtomId, Atomistic, Element};
@@ -301,7 +302,7 @@ impl Typifier for UFFTypifier {
             let ends = [labels[p].as_str(), labels[q].as_str()];
             let name = qualified(&ends, &[bo])?;
             let (r0, kb) = bond_rest_and_k(params[p], params[q], bo);
-            m.bonds.push(typed(
+            m.link_mut(BONDS).push(typed(
                 "uff_bond",
                 &name,
                 &ends,
@@ -371,7 +372,7 @@ impl Typifier for UFFTypifier {
             } else {
                 (0.0, 0.0, 0.0)
             };
-            m.angles.push(typed(
+            m.link_mut(ANGLES).push(typed(
                 "uff_angle",
                 &name,
                 &ends,
@@ -436,7 +437,7 @@ impl Typifier for UFFTypifier {
                 forward
             };
             let name = qualified(&ends, &fields)?;
-            m.dihedrals.push(typed(
+            m.link_mut(DIHEDRALS).push(typed(
                 "uff_torsion",
                 &name,
                 &ends,
@@ -487,7 +488,7 @@ impl Typifier for UFFTypifier {
         }
         // Positional against every improper of the graph; one the input
         // already carried gets nothing.
-        m.impropers = graph
+        *m.link_mut(IMPROPERS) = graph
             .impropers()
             .map(|(id, _)| inversions.remove(&id).unwrap_or_default())
             .collect();

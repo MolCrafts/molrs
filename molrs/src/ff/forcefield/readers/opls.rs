@@ -1265,15 +1265,12 @@ mod tests {
     /// The RB series equals OpenMM's formula at any φ.
     #[test]
     fn rb_multi_harmonic_prices_openmm_formula() {
-        use crate::ff::forcefield::torsion::TorsionForm;
+        use crate::ff::forcefield::torsion::MultiHarmonic;
         let c = [1.3, -0.7, 2.1, 0.4, -1.9, 0.0];
         let strs = c.map(|v| v.to_string());
         let xml = rb_row(strs.each_ref().map(|v| v.as_str()));
         let p = rb_params(&xml, "multi/harmonic");
-        let series = TorsionForm::from_params("dihedral", "multi/harmonic", &p)
-            .unwrap()
-            .to_series()
-            .unwrap();
+        let series = MultiHarmonic::from_params(&p).to_series();
         for phi in [-2.9, -1.0, 0.0, 0.4, 1.7, 3.1] {
             let psi: f64 = phi - std::f64::consts::PI;
             let openmm: f64 = c
