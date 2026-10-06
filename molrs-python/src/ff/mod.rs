@@ -32,6 +32,7 @@
 
 pub mod atd;
 pub mod charge;
+pub mod forms;
 pub mod handles;
 pub mod section;
 
