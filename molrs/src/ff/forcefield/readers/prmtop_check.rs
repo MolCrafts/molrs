@@ -558,3 +558,68 @@ fn molecules(frame: &Frame) -> Vec<molrs::types::Idx> {
         })
         .collect()
 }
+
+/// molrs's own GAFF2 typing of the `gaff2` case prices it as sander prices
+/// tleap's prmtop, term by term: the atoms keep the prmtop's GAFF2 types
+/// (antechamber's) and charges, and `GaffTypifier` assigns every bonded term
+/// — `gaff2.dat` rows, parmchk2's estimates and tleap's impropers — from the
+/// bond graph alone. The bonds are taken in the prmtop's order, which is not
+/// the mol2 order parmchk2 and tleap saw; this molecule's terms do not depend
+/// on it.
+#[test]
+fn gaff2_typing_prices_the_gaff2_case_as_sander() {
+    use crate::ff::typifier::Typing;
+    use crate::ff::typifier::gaff::{GaffParameterSet, GaffTypifier};
+    use molrs::store::keys;
+
+    let case = cases().into_iter().find(|c| c.name == "gaff2").unwrap();
+    let (prmtop, _, coords) = system(&case);
+    let atoms = prmtop.get("atoms").unwrap();
+    let element = atoms.get("element").unwrap().as_string().unwrap();
+    let types = atoms.get("type").unwrap().as_string().unwrap();
+    let mut mol = molrs::Atomistic::new();
+    let ids: Vec<_> = (0..element.len())
+        .map(|i| {
+            let id = mol.add_atom_xyz(
+                &element[[i]],
+                coords[3 * i],
+                coords[3 * i + 1],
+                coords[3 * i + 2],
+            );
+            mol.set_atom(id, keys::TYPE, types[[i]].as_str()).unwrap();
+            id
+        })
+        .collect();
+    let bonds = prmtop.get("bonds").unwrap();
+    let (bi, bj) = (
+        bonds.get("atomi").unwrap().as_uint().unwrap(),
+        bonds.get("atomj").unwrap().as_uint().unwrap(),
+    );
+    for (&i, &j) in bi.iter().zip(bj.iter()) {
+        mol.add_bond(ids[i as usize], ids[j as usize]).unwrap();
+    }
+
+    let mut gaff = Typing::new(GaffTypifier::new(GaffParameterSet::Gaff2));
+    let typed = gaff.typify(&mol).unwrap();
+    let ff = gaff.forcefield();
+    let mut frame = typed.to_frame().unwrap();
+    let mut typed_atoms = frame.get("atoms").unwrap().clone();
+    typed_atoms
+        .insert(
+            "charge",
+            atoms.get("charge").unwrap().as_float().unwrap().to_owned(),
+        )
+        .unwrap();
+    frame.insert("atoms", typed_atoms);
+    let pairs = intramolecular_pairs(&frame, ff.special_bonds()).unwrap();
+    frame.insert("pairs", pairs);
+
+    // tleap converts θ₀ to radians with π = 3.141594 (as it writes a phase of
+    // π), so the prmtop's θ₀ is 4.3e-7 relative above `gaff2.dat`'s degrees,
+    // which molrs prices as written: ~1e-6 of this angle energy.
+    let got = molrs_terms(&frame, ff, &coords);
+    for ((label, g), (_, sander)) in got.named().into_iter().zip(case.sander.named()) {
+        let rel = if label == "angle" { 1e-5 } else { 1e-6 };
+        close("gaff2 typing", &format!("{label} (sander)"), g, sander, rel);
+    }
+}

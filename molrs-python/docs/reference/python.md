@@ -251,6 +251,10 @@ arrays (a CMAP `grid`).
 
 ::: molrs.ff.OPLSAATypifier
 
+::: molrs.ff.typifier.AtdTypifier
+
+::: molrs.ff.GaffTypifier
+
 ::: molrs.ff.typifier.Typifier
 
 ::: molrs.ff.typifier.Match

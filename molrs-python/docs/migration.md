@@ -539,9 +539,11 @@ guide, "AMBER prmtop", for the full map.
 - **A phase within 0.004 rad of ±π is ±180° exactly**, as sander takes it
   (tleap writes π as `3.14159400`); 0.15 stored 180.0000153°.
 - **Dihedral types.** The terms of a `dihedral periodic` type are sorted by
-  periodicity (they were in the file's type-id order), and two torsions of one
-  name with different terms are a `TypeConflict` (0.15 merged their terms
-  into one type, silently).
+  periodicity (they were in the file's type-id order). Two torsions of one
+  type quartet with different terms (tleap reuses a quartet's first match:
+  GAFF2's `hc-c3-ca-ca` alone beside `hc-c3-ca-ca` + `X -c3-ca-X`) are two
+  types, the second named `<quartet>@<n>` in both readers; 0.15 merged their
+  terms into one type, silently.
 - **Atom types.** A type name that stands for atoms of two LJ classes or
   masses is split into `<name>~<class>` types (0.15 raised a
   `TypeConflict`); every bonded type name and frame label uses the split
@@ -673,6 +675,54 @@ and an OPLS-AA dipeptide (`scripts/gromacs_engine_check.sh`).
   frame)`**, the inverse of `read_system`: one `[ moleculetype ]` per
   molecule, each row with its type's parameters, `[ pairs ]` with the
   override cells, `[ exclusions ]` for the pairs the frame does not price.
+
+### GAFF and GAFF2
+
+- **`GaffTypifier` in Python**: `molrs.ff.typifier.GaffTypifier(
+  parameter_set="gaff" | "gaff2")` (also `molrs.ff.GaffTypifier`), the Rust
+  `GaffTypifier` behind the usual `Typifier` interface; compose it after
+  `AtdTypifier(parameter_set=…)`, which types the atoms. See
+  [Force-field IR](guides/forcefield-ir.md#gaff-and-gaff2).
+- **`gaff2.dat` is 2.2.30** (AmberTools 26.1; it was an older 2.2): new
+  atom type `hb`, the impropers `X -X -cc-X`, `X -X -cd-X`, `X -X -nc-X`,
+  `X -X -nd-X` (10.5 kcal/mol), and revised torsion rows (34 rows of the
+  old table replaced by 31). GAFF2-typed
+  energies change accordingly. `gaff.dat` is unchanged.
+- **Impropers are built as AmberTools builds them.** `GaffTypifier` puts an
+  improper wherever tleap does, with tleap's atom order and parmchk2's
+  estimate (0.15 put one at each `PARMCHK.DAT`-planar centre, peripherals
+  sorted by type, with its own estimate: 1.1 where parmchk2 gives 10.5 and
+  back, e.g. every GAFF2 `c2` / `ce` / `cc` centre). Improper energies of
+  GAFF-typed molecules change; ethylene under GAFF2 goes from 1.1 to
+  10.5 kcal/mol per improper.
+- **Every term the table lacks is estimated as parmchk2 estimates it**:
+  torsions (0.15's analogy ranking picked other rows, e.g. indole's
+  `ca-ca-cd-cc`, and refused guanidinium's `nh-cz-nh-hn`), and bonds and
+  angles, whose `estimate_penalty` is now parmchk2's (caffeine's `c-cc-na`:
+  2.6, was 2.15). A bond parmchk2 finds no analog for is now a missing term
+  (parmchk2 writes it with a zero length, `ATTN`); 0.15 made one up from
+  Badger's rule (`hc-br`). `gaff_estimator` is gone: GAFF no longer goes
+  through `Parmchk2Estimator`, which stays as the generic estimator other
+  force fields (OPLS-AA's `with_default_estimator`) borrow, with its own
+  scoring, unchanged.
+- **Estimated type names** carry their analog and penalty,
+  `<types>@<analog>_<penalty>` (`c3-o-c-os@c3.o.c.oh_8.5`,
+  `c-cc-na@c2.cc.na_2.6`), so one output force field can hold two
+  estimates of a name; 0.15 named them by their types alone.
+- **Rust: `ParmchkPenalty` names the columns as parmchk2 reads them**
+  (`bl blf cba cbaf ba baf ctor tor ps`): `AngleCentre` / `AngleCentreForce`
+  are columns 2 / 3 and `Angle` / `AngleForce` 4 / 5 (0.15 had them the
+  other way round), `TorsionCentre` is 6 and `Torsion` 7 (likewise
+  swapped). Code that read a column by variant reads the other one now.
+
+### Parameters as frame columns
+
+`ForceField.materialize_params(frame, *, prefix)` (Rust
+`ForceField::materialize_params(&mut frame, prefix)`) is new: it writes the
+parameters a force field gives each relation row and atom of a typed frame
+as columns `<prefix><parameter>` (null where a row's type lacks one) and
+returns block → columns written. See
+[Force-field IR](guides/forcefield-ir.md#parameters-as-frame-columns).
 
 ### Already in 0.15.1
 

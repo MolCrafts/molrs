@@ -2675,6 +2675,12 @@ class ForceField:
         ``pairs`` block (``epsilon``/``sigma`` from the 1-4 parameters when
         ``lj/charmm`` declares ``one_four="epsilon14"``, the scales from
         ``special_bonds``); return the number of rows filled."""
+    def materialize_params(self, frame: Frame, *, prefix: str) -> dict[str, list[str]]:
+        """Write the parameters this force field gives each row of ``frame``
+        (relation blocks by ``type``; ``atoms`` by ``atoms.type`` under every
+        atom style and every pair style's self row) as columns
+        ``<prefix><parameter>``, in the force-field IR's units; a parameter a
+        row's type lacks is a null cell. Return block → columns written."""
     def to_section(self) -> ForceFieldSection: ...
     @staticmethod
     def from_section(section: ForceFieldSection) -> ForceField: ...
@@ -3275,6 +3281,30 @@ class AtdTypifier(Typifier[Atomistic]):
     def __init__(self, *, parameter_set: AtdParameterSet) -> None: ...
     @property
     def parameter_set(self) -> AtdParameterSet: ...
+
+type GaffParameterSet = Literal["gaff", "gaff2"]
+
+class GaffTypifier(Typifier[Atomistic]):
+    """GAFF / GAFF2 bonded terms and parameters for a molecule whose atoms
+    already carry GAFF types (``AtdTypifier`` with the same ``parameter_set``).
+
+    Angles and dihedrals are regenerated from the bond graph, impropers rebuilt
+    at the planar centres ``PARMCHK.DAT`` flags (AMBER order, centre third);
+    each term is an exact ``gaff.dat`` / ``gaff2.dat`` row, a wildcard row, or a
+    ``parmchk2``-style estimate whose type carries ``estimated``,
+    ``estimate_penalty``, ``estimate_method`` and ``estimate_analog``.
+    ``parameter_set`` is required; there is no default.
+
+    Raises
+    ------
+    ValueError
+        An unknown ``parameter_set``; from :meth:`typify`, an untyped atom, a
+        type the table does not declare, or terms nothing covers (all listed).
+    """
+
+    def __init__(self, *, parameter_set: GaffParameterSet) -> None: ...
+    @property
+    def parameter_set(self) -> GaffParameterSet: ...
 
 class ElementTypifier(Typifier[Atomistic]):
     """``molrs.ff.typifier.ElementTypifier`` — ``type`` labels from element
