@@ -3,7 +3,9 @@
 //!
 //! molrs parses **no** parameter text at runtime. The upstream `.DAT` / `.DEF`
 //! tables are transcribed into the `const`s in the sibling modules here by
-//! `scripts/gen_param_tables.py`, which reads them from `$AMBERHOME`; [`mmff`]
+//! `scripts/gen_param_tables.py`, which reads them from `$AMBERHOME` (the
+//! committed fourteen are AmberTools 26.1's; `--check` verifies them byte for
+//! byte); [`mmff`]
 //! is ported from RDKit's `Params.cpp` and merged with what MMFF's retired XML
 //! carried; [`oplsaa`] is generated from GROMACS `share/top/oplsaa.ff` (a
 //! pinned release, LGPL-2.1-or-later) by `cargo mrs-gen-opls --gromacs <dir>`,
