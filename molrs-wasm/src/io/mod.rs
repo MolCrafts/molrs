@@ -9,6 +9,7 @@
 //! | [`streaming`] | `WasmLammpsDumpStream`, `WasmXyzStream`, `WasmPdbStream`, `WasmLammpsDataStream`, `WasmSdfStream`, `WasmDcdStream`, `WasmXtcStream`, `WasmTrrStream` | Streaming readers driven by a chunk-fed `FrameIndexBuilder` |
 //! | [`writer`] | `writeFrame(frame, format)` | Write XYZ, PDB, LAMMPS dump |
 //! | [`log`] | `readLammpsLogThermo`, `isLammpsLog` | LAMMPS log thermo tables |
+//! | `smiles` | `parseSMILES` → `SmilesIR` | SMILES strings (`smiles` feature) |
 //! | [`zarr`] | `TrajectoryReader` | Read frame-sequence Zarr V3 archives |
 //! | [`mesh`] | `readSTL(bytes)` | STL surface meshes (ASCII or binary) — produces a `Mesh`, not a `Frame` |
 //!
@@ -19,6 +20,8 @@
 pub mod log;
 pub mod mesh;
 pub mod reader;
+#[cfg(feature = "smiles")]
+pub mod smiles;
 pub mod streaming;
 pub mod writer;
 pub mod zarr;
@@ -26,6 +29,8 @@ pub mod zarr;
 pub use log::*;
 pub use mesh::*;
 pub use reader::*;
+#[cfg(feature = "smiles")]
+pub use smiles::*;
 pub use streaming::*;
 pub use writer::*;
 pub use zarr::*;

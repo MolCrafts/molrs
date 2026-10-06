@@ -1,7 +1,7 @@
 //! WASM bindings for [`Frame`] -- the top-level hierarchical data container.
 //!
 //! A `Frame` holds a collection of named [`Block`]s (e.g., `"atoms"`,
-//! `"bonds"`, `"angles"`) and an optional [`SimBox`](super::region::simbox::Box)
+//! `"bonds"`, `"angles"`) and an optional [`SimBox`](super::spatial::simbox::Box)
 //! defining periodic boundary conditions.
 //!
 //! # Typical block layout
@@ -33,6 +33,7 @@
 
 use wasm_bindgen::prelude::*;
 
+use molrs::op::types::F;
 use molrs::store::Block as RsBlock;
 use molrs::store::MetaValue;
 use molrs_ffi::{BlockRef, FrameRef};
@@ -43,7 +44,7 @@ use super::js_err;
 /// Hierarchical data container mapping string keys to typed [`Block`]s.
 ///
 /// A `Frame` owns a set of named blocks (column stores) and an optional
-/// simulation box ([`Box`](super::region::simbox::Box)). This is the
+/// simulation box ([`Box`](super::spatial::simbox::Box)). This is the
 /// primary interchange type for molecular data in the WASM API.
 ///
 /// # Conventions
@@ -434,7 +435,7 @@ impl Frame {
     ///
     /// # Returns
     ///
-    /// The [`Box`](super::region::simbox::Box) if one has been set,
+    /// The [`Box`](super::spatial::simbox::Box) if one has been set,
     /// or `undefined` otherwise.
     ///
     /// # Example (JavaScript)
@@ -446,19 +447,19 @@ impl Frame {
     /// }
     /// ```
     #[wasm_bindgen(getter, js_name = box)]
-    pub fn get_box(&self) -> Option<super::region::simbox::Box> {
+    pub fn get_box(&self) -> Option<super::spatial::simbox::Box> {
         self.inner
             .store
             .borrow()
             .with_frame_box(self.inner.id, |sb| {
-                sb.map(|s| super::region::simbox::Box { inner: s.clone() })
+                sb.map(|s| super::spatial::simbox::Box { inner: s.clone() })
             })
             .ok()?
     }
 
     /// Attach or detach a simulation box.
     ///
-    /// Pass a [`Box`](super::region::simbox::Box) to attach, or
+    /// Pass a [`Box`](super::spatial::simbox::Box) to attach, or
     /// `undefined`/`null` to detach.
     ///
     /// # Arguments
@@ -476,7 +477,7 @@ impl Frame {
     /// frame.simbox = Box.cube(10.0, origin, true, true, true);
     /// ```
     #[wasm_bindgen(setter, js_name = box)]
-    pub fn set_box(&self, simbox: Option<super::region::simbox::Box>) -> Result<(), JsValue> {
+    pub fn set_box(&self, simbox: Option<super::spatial::simbox::Box>) -> Result<(), JsValue> {
         self.inner
             .store
             .borrow_mut()
@@ -562,6 +563,40 @@ impl Frame {
             .with_frame(self.inner.id, f)
             .map_err(js_err)?
     }
+}
+
+/// Extract an Nx3 position matrix from the `"atoms"` block of a core
+/// [`Frame`](molrs::store::Frame).
+///
+/// Reads the `x`, `y`, `z` columns (F, angstrom) and assembles
+/// them into a contiguous row-major matrix.
+pub(crate) fn positions_from_frame(
+    frame: &molrs::store::Frame,
+) -> Result<ndarray::Array2<F>, JsValue> {
+    let atoms = frame
+        .get("atoms")
+        .ok_or_else(|| JsValue::from_str("Frame has no 'atoms' block"))?;
+    let get = |col: &str| -> Result<&[F], JsValue> {
+        use molrs::store::BlockDtype;
+        let c = atoms
+            .get(col)
+            .ok_or_else(|| JsValue::from_str(&format!("atoms block missing '{col}' column")))?;
+        let arr = <F as BlockDtype>::from_column(c)
+            .ok_or_else(|| JsValue::from_str(&format!("'{col}' column has wrong dtype")))?;
+        arr.as_slice()
+            .ok_or_else(|| JsValue::from_str(&format!("'{col}' column is not contiguous")))
+    };
+    let xs = get("x")?;
+    let ys = get("y")?;
+    let zs = get("z")?;
+    let n = xs.len();
+    let mut pos = ndarray::Array2::<F>::zeros((n, 3));
+    for i in 0..n {
+        pos[[i, 0]] = xs[i];
+        pos[[i, 1]] = ys[i];
+        pos[[i, 2]] = zs[i];
+    }
+    Ok(pos)
 }
 
 #[cfg(test)]

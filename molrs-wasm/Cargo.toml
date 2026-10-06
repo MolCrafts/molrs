@@ -29,7 +29,7 @@ strip = "symbols"
 # Default build = full (all subsystems). Each forwards to the merged crate's
 # matching module feature.
 default = ["smiles", "io", "compute", "conformer", "voronoi", "stream", "builder"]
-# Graphene / nanotube / walk generators behind `generate.rs`.
+# Graphene / nanotube / walk generators behind `builder.rs`.
 builder = ["molrs/builder"]
 smiles  = ["io", "molrs/smiles"]
 io      = ["molrs/io"]

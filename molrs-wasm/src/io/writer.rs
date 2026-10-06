@@ -154,7 +154,8 @@ pub fn write_frame_export(frame: &Frame, format: &str) -> Result<String, JsValue
 /// Serialize a [`Frame`] to bytes in a binary trajectory format.
 ///
 /// Mirrors [`write_frame_export`] for the formats whose output is not valid
-/// UTF-8: `"dcd"`, `"trr"`, `"xtc"` (case-insensitive). Returns a
+/// UTF-8: `"dcd"`, `"trr"`, `"xtc"` (case-insensitive), plus the live-stream
+/// wire encodings `"msgpack"` / `"json"` (`stream` feature). Returns a
 /// `Uint8Array` to JavaScript. The GROMACS formats (`trr`/`xtc`) are written
 /// in nm by the molrs writers themselves — see `molrs::io` — so nothing is
 /// scaled here.
@@ -192,6 +193,7 @@ pub fn write_frame_bytes_export(frame: &Frame, format: &str) -> Result<Vec<u8>, 
             // The live-stream wire encoding. Not a file format, but it is a
             // frame going out as bytes, so it belongs to the same entry point
             // rather than to a `Frame.toBytes` method of its own.
+            #[cfg(feature = "stream")]
             "msgpack" | "json" => {
                 let fmt = if format.eq_ignore_ascii_case("json") {
                     molrs::stream::MessageFormat::Json

@@ -1,4 +1,4 @@
-//! WASM bindings for structure generators.
+//! Structure builders — the WASM face of `molrs::builder`.
 
 use molrs::builder::CarbonTubeBuilder as RsCarbonTubeBuilder;
 use wasm_bindgen::prelude::*;

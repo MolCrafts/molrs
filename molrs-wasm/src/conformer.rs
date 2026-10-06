@@ -28,8 +28,9 @@ use crate::core::frame::Frame;
 ///
 /// The input frame must have an `"atoms"` block with a `"element"`
 /// string column (element symbols like `"C"`, `"N"`, `"O"`). A
-/// `"bonds"` block with `i`, `j` (u32) and `order` (F) columns
-/// is required for correct geometry.
+/// `"bonds"` block with `atomi`, `atomj` and the bond order (`bond_type` /
+/// `bond_number`, as `parseSMILES` writes them) is required for correct
+/// geometry.
 ///
 /// Returns a **new** [`Frame`] with 3D coordinates added as `x`, `y`,
 /// `z` (F, angstrom) columns in the `"atoms"` block.
@@ -37,7 +38,7 @@ use crate::core::frame::Frame;
 /// # Arguments
 ///
 /// * `frame` - Input molecular frame with atoms and bonds (from
-///   [`parseSMILES`](crate::parse_smiles) or file readers)
+///   [`parseSMILES`](crate::io::smiles::parse_smiles) or file readers)
 /// * `speed` - Quality/speed preset:
 ///   - `"fast"` -- minimal refinement, suitable for visualization
 ///   - `"medium"` (default) -- balanced quality/speed

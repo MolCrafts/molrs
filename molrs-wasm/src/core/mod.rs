@@ -1,17 +1,15 @@
-//! Core data model types exported to JavaScript.
-//!
-//! This module re-exports the four fundamental types that make up the
-//! molrs WASM data layer:
+//! Core data model exported to JavaScript — the WASM face of molrs' `store`,
+//! `system` and `spatial` domains.
 //!
 //! - [`Frame`] -- hierarchical container of named [`Block`]s, plus an
 //!   optional [`Box`] (simulation box).
 //! - [`Block`] -- column-oriented data store with typed arrays.
-//! - [`Box`] -- parallelepiped simulation box with periodic boundary
-//!   conditions (PBC).
 //! - [`WasmArray`] -- owned float array with shape metadata for passing
 //!   multi-dimensional numeric data across the WASM boundary.
-//! - [`Mesh`] -- triangle surface (vertices + faces), what `readSTL`
-//!   produces. Carries no atoms and no box.
+//! - `schema` -- the Frame schema vocabulary (`schemaDocument`, …).
+//! - [`Topology`] -- the bond graph of a frame (`molrs::system::Topology`).
+//! - `spatial` -- the simulation [`Box`], regions, [`Mesh`] and neighbor
+//!   search.
 //!
 //! # Internal details
 //!
@@ -25,23 +23,25 @@
 //! [`BlockRef`](molrs_ffi::BlockRef) wrappers live in `molrs-ffi` so every
 //! binding layer (wasm, python, capi) consumes the same canonical
 //! lifetime-management plumbing.
+//!
+//! [`SharedStore`]: molrs_ffi::SharedStore
 
 use wasm_bindgen::JsValue;
 
 use molrs_ffi::FfiError;
 
-pub mod block;
-pub mod frame;
-pub mod mesh;
-pub mod region;
-pub mod types;
+pub(crate) mod block;
+pub(crate) mod frame;
+pub(crate) mod schema;
+pub(crate) mod spatial;
+pub(crate) mod topology;
+pub(crate) mod types;
 
 pub use block::Block;
 pub use frame::Frame;
-pub use mesh::Mesh;
-// JS-facing simulation box binding lives under `region/simbox` for historical
-// path stability of the WASM package layout; the Rust type is `molrs::spatial::SimBox`.
-pub use region::simbox::Box;
+pub use schema::*;
+pub use spatial::*;
+pub use topology::Topology;
 pub use types::WasmArray;
 
 /// Convert an [`FfiError`] into a [`JsValue`] string for propagation

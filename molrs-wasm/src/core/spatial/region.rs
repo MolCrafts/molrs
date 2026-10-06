@@ -35,8 +35,8 @@ use molrs::spatial::region::{
 use ndarray::Array2;
 use wasm_bindgen::prelude::*;
 
-use crate::core::mesh::Mesh;
-use crate::core::region::simbox::Box as WasmBox;
+use crate::core::spatial::mesh::Mesh;
+use crate::core::spatial::simbox::Box as WasmBox;
 
 type Shared = Arc<dyn RegionTrait + Send + Sync>;
 

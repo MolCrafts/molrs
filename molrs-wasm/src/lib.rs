@@ -21,14 +21,18 @@
 //!
 //! # Modules
 //!
-//! | JS module  | Purpose |
-//! |------------|---------|
-//! | `core`     | Frame, Block, Box, Mesh, WasmArray |
-//! | `io`       | File readers/writers (XYZ, PDB, LAMMPS, SMILES, `*.mrec` records) |
-//! | `conformer`| 3D conformer generation from molecular graphs |
-//! | `ff`       | ForceField / LBFGS / typify (UFF, MMFF94, MMFF94s) |
-//! | `perceive` | Chemical perception builder (`Perceive.findHydrogens`, …) |
-//! | `compute`  | Analysis: RDF, MSD, Cluster, neighbor search |
+//! Each module binds one molrs owner; the JS namespace itself is flat.
+//!
+//! | Module      | molrs owner | Exports |
+//! |-------------|-------------|---------|
+//! | `core`      | `store`, `system`, `spatial` | Frame, Block, Box, WasmArray, schema, Topology, regions, Mesh, NeighborList / NeighborQuery / Neighbors |
+//! | `io`        | `io` | File readers/writers (XYZ, PDB, LAMMPS, `*.mrec` records, …), `parseSMILES` |
+//! | `perceive`  | `perceive` | Chemical perception builder (`Perceive.findRings`, `findHydrogens`, …) |
+//! | `compute`   | `compute` | Analysis: RDF, MSD, Cluster, … and the compute catalog |
+//! | `conformer` | `conformer` | 3D conformer generation (`generate3D`) |
+//! | `ff`        | `ff` | Typifiers (UFF, MMFF94, MMFF94s) and the `Potentials` they compile |
+//! | `optimize`  | `optimize` | `LBFGS` / `OptReport` |
+//! | `builder`   | `builder` | `CarbonTubeBuilder` |
 //!
 //! # Quick start (JavaScript)
 //!
@@ -96,36 +100,38 @@ pub fn covalent_radius(symbol: &str) -> Option<f64> {
     molrs::system::Element::by_symbol(symbol).map(|el| f64::from(el.covalent_radius()))
 }
 
-// Module declarations
+// Module declarations — one per molrs owner, mirroring the Rust crate.
+#[cfg(feature = "builder")]
+mod builder;
 #[cfg(feature = "compute")]
 mod compute;
 #[cfg(feature = "conformer")]
 mod conformer;
 mod core;
-/// Force-field composition (typify / ForceField / LBFGS) — requires `conformer` (→ `ff`).
+/// Force-field composition (typify / Potentials) — requires `conformer` (→ `ff`).
 #[cfg(feature = "conformer")]
 mod ff;
-mod generate;
 #[cfg(feature = "io")]
 mod io;
+/// Geometry optimization (`LBFGS`) over force-field potentials.
+#[cfg(feature = "conformer")]
+mod optimize;
 /// Chemical perception (rings, aromaticity, hydrogens, …) — WASM face of
 /// `molrs::perceive`.
 mod perceive;
-mod schema;
-#[cfg(feature = "smiles")]
-mod smiles;
 
-// Re-exports following molrs-core layout.
+// The JS namespace is flat; so is the crate root.
+#[cfg(feature = "builder")]
+pub use builder::CarbonTubeBuilder;
 #[cfg(feature = "compute")]
 pub use compute::*;
 #[cfg(feature = "conformer")]
 pub use conformer::*;
-pub use core::{Block, Box, Frame, Mesh, WasmArray};
+pub use core::*;
 #[cfg(feature = "conformer")]
 pub use ff::*;
-pub use generate::CarbonTubeBuilder;
 #[cfg(feature = "io")]
 pub use io::*;
+#[cfg(feature = "conformer")]
+pub use optimize::*;
 pub use perceive::Perceive;
-#[cfg(feature = "smiles")]
-pub use smiles::*;

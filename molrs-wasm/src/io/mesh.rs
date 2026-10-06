@@ -7,7 +7,7 @@
 //! Unlike the readers in [`reader`](super::reader), these produce a
 //! [`Mesh`] rather than a `Frame`: an STL carries triangles, not atoms.
 
-use crate::core::mesh::Mesh;
+use crate::core::spatial::mesh::Mesh;
 use molrs::io::mesh::parse_stl;
 use wasm_bindgen::prelude::*;
 
@@ -38,7 +38,7 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen(js_name = readSTL)]
 pub fn read_stl_export(bytes: &[u8]) -> Result<Mesh, JsValue> {
     parse_stl(bytes)
-        .map(Mesh::new)
+        .map(|inner| Mesh { inner })
         .map_err(|e| JsValue::from_str(&format!("STL reading error: {e}")))
 }
 

@@ -70,8 +70,8 @@ impl WasmSmilesIR {
     ///
     /// - `"atoms"` block: `symbol` (string), and implicit hydrogens
     ///   are added. No 3D coordinates are present -- use
-    ///   [`generate3D`](crate::generate_3d_wasm) to embed coordinates.
-    /// - `"bonds"` block: `i`, `j` (u64, zero-based atom indices),
+    ///   [`generate3D`](crate::conformer::generate_3d_wasm) to embed coordinates.
+    /// - `"bonds"` block: `atomi`, `atomj` (u64, zero-based atom indices),
     ///   `bond_type` (u64: 1 single, 2 double, 3 triple, 4 aromatic) and
     ///   `bond_number` (u64: the localized Lewis/Kekulé integer, 0 when the
     ///   notation declared aromaticity without a phase — call

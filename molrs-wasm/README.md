@@ -39,6 +39,8 @@ async `init()` function that must be awaited before calling the API.
 - **`Frame`** — container mapping string keys (`"atoms"`, `"bonds"`) to `Block`s
 - **`Block`** — column store with typed arrays. Float columns are `Float64Array` (F = f64).
 - **`Box`** — simulation box with periodic boundary conditions
+- **`Topology`** — the bond graph (`Topology.fromFrame(frame)` reads
+  `bonds.atomi` / `atomj`): angles, dihedrals, impropers, connected components
 
 Columns read like numpy: the column's dtype picks the array type, and no
 method names a dtype.
@@ -62,6 +64,15 @@ atoms.dtype("x"); atoms.shape("pos"); atoms.has("x"); atoms.keys();
 | `bool` | throws; use `copy` | `boolean[]` | `boolean[]` |
 | `string` | throws; use `copy` | `string[]` | `string[]` (and `[]`) |
 | `c64` / `c128` | throws; use `copy` | `{ real, imag, shape, dtype }` | never |
+
+### Perception
+
+```js
+const p = new Perceive();
+const rings = p.findRings(frame);     // atoms/bonds gain is_in_ring, n_rings
+const arom  = p.findAromaticity(frame);
+const withH = p.findHydrogens(frame);
+```
 
 ### I/O
 
@@ -115,9 +126,8 @@ fabricated zero array. `disp` is the unnormalized minimum-image displacement
   O(N²) reference backend
 - **`Neighbors`** — the materialized pair table (`numPairs`, `queryPointIndices()`,
   `pointIndices()`, `distSq()`, `disp()`)
-- **`LinkedCell` / `BruteForce`** — compatibility aliases that build and
-  materialize in one call; `LinkedCell.query(refFrame, other)` is the
-  cross-search door
+- **`NeighborQuery`** — the cross search: `new NeighborQuery(refFrame, cutoff)`
+  indexes a reference frame, `query(otherFrame)` returns the directed pairs
 - **`RDF`** — radial distribution function (periodic and free-boundary)
 - **`MSD`** — mean squared displacement
 - **`Cluster`** — distance-based cluster analysis

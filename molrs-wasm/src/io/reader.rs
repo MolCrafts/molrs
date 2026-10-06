@@ -277,9 +277,11 @@ impl PdbReader {
 /// Reads LAMMPS data files (the format written by `write_data`). The
 /// reader produces a [`Frame`] containing:
 ///
-/// - `"atoms"` block: `type` (i32), `x`, `y`, `z` (F, angstrom),
-///   and optionally `charge` (F)
-/// - `"bonds"` block (if present): `i`, `j` (u32), `type` (i32)
+/// - `"atoms"` block: `type_id` (the file's numeric type), `type` (its label,
+///   when the file carries type labels), `x`, `y`, `z` (F, angstrom), and
+///   optionally `charge` (F)
+/// - `"bonds"`, `"angles"`, `"dihedrals"`, `"impropers"` blocks (if present):
+///   zero-based endpoints `atomi`, `atomj`, … plus the term type
 /// - Simulation box (`box`) with PBC
 ///
 /// Only a single frame is supported (`step = 0`).
@@ -1339,6 +1341,7 @@ impl XtcReader {
 ///   const frame = readFrameBytes(new Uint8Array(ev.data), "msgpack");
 /// };
 /// ```
+#[cfg(feature = "stream")]
 #[wasm_bindgen(js_name = readFrameBytes)]
 pub fn read_frame_bytes_export(data: &[u8], format: &str) -> Result<Frame, JsValue> {
     let fmt = match format.to_lowercase().as_str() {
@@ -1401,6 +1404,7 @@ END"#;
         assert_eq!(x.get_index(1), 4.0);
     }
 
+    #[cfg(feature = "stream")]
     #[wasm_bindgen_test]
     fn stream_bytes_round_trip_through_io() {
         use crate::core::types::JsFloatArray;
@@ -1427,6 +1431,7 @@ END"#;
         }
     }
 
+    #[cfg(feature = "stream")]
     #[wasm_bindgen_test]
     fn unknown_stream_format_is_named_not_guessed() {
         let err = match read_frame_bytes_export(b"", "messagepack") {

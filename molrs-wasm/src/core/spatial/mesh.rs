@@ -31,12 +31,6 @@ pub struct Mesh {
     pub(crate) inner: TriMesh,
 }
 
-impl Mesh {
-    pub(crate) fn new(inner: TriMesh) -> Self {
-        Self { inner }
-    }
-}
-
 #[wasm_bindgen]
 impl Mesh {
     /// Number of vertices in the shared table.

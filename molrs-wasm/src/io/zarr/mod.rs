@@ -14,7 +14,7 @@
 //!   range server) synchronously.
 
 use crate::core::frame::Frame;
-use crate::core::region::simbox::Box as JsBox;
+use crate::core::spatial::simbox::Box as JsBox;
 use molrs::io::mrec::{FrameSequence, read_frame_section_store, section_names_store};
 use molrs::io::reader::TrajectoryReader;
 use std::io::Read;
