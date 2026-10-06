@@ -73,6 +73,7 @@ use crate::io::zarr::sequence::{FrameSequenceWriter, SequenceSchema};
 use crate::io::zarr::store::PositionalWriteStore;
 use molrs::MolRsError;
 use molrs::store::block::Column;
+#[cfg(feature = "filesystem")]
 use molrs::store::forcefield_section::ForceFieldSection;
 // Not `filesystem`-gated: the store-taking section door below names it in
 // every configuration, wasm included.

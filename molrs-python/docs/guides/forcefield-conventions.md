@@ -68,6 +68,7 @@ the energy of a physical system did not change with it.
 | Style | Energy | Parameters (units) | LAMMPS | 0.16 |
 |---|---|---|---|---|
 | `harmonic` | k (θ − theta0)² | `k` (E/rad²), `theta0` (deg) | `angle_style harmonic` `K theta0` | `k_new = k_old / 2`; `theta0` degrees (was radians) |
+| `charmm` | k (θ − theta0)² + k_ub (r₁₃ − r_ub)² | `k` (E/rad²), `theta0` (deg), `k_ub` (E/L²), `r_ub` (L) | `angle_style charmm` `K theta0 K_ub r_ub` | new kernel ([Urey–Bradley](#ureybradley)) |
 | `class2` | k2 Δ² + k3 Δ³ + k4 Δ⁴, Δ = θ − theta0 | `theta0` (deg), `k2`, `k3`, `k4` (E/radⁿ) | `angle_style class2` `theta0 K2 K3 K4` (its `bb` / `ba` cross terms are not implemented) | `theta0` degrees |
 | `mmff_angle`, `mmff_stbn` | MMFF94 bend / stretch-bend | per-instance `ka`, `theta0` (deg), `kba_*` | none | the `theta0` column is degrees |
 | `uff_angle` | UFF Fourier / order-n bend (RDKit) | per-instance `ka`, `order`, `c0..c2` (`theta0` kept as metadata, deg) | none | `theta0` metadata degrees |
@@ -208,8 +209,14 @@ per pair, so the LAMMPS writers refuse a frame or field that carries them
 LAMMPS carries Urey–Bradley in one angle style, and so does molrs:
 **`angle charmm`**, E = k(θ − theta0)² + k_ub(r₁₃ − r_ub)², parameters `k`
 (E/rad²), `theta0` (deg), `k_ub` (E/L²), `r_ub` (L) — `angle_coeff t K theta0
-K_ub r_ub`. It adds no exclusion (the 1-3 pair is excluded by
-`special_bonds`). There is no separate Urey–Bradley category. Engine maps:
+K_ub r_ub`, r₁₃ the distance between the angle's end atoms. It adds no
+exclusion (the 1-3 pair is excluded by `special_bonds`). There is no separate
+Urey–Bradley category. A field that mixes it with other angle styles is
+LAMMPS's `angle_style hybrid harmonic charmm` (`angle_coeff t charmm K theta0
+K_ub r_ub`), which the LAMMPS reader and writer read and write; molrs prices
+each angle row under the style that defines its type. 0.16 has the kernel and
+the LAMMPS reader and writer; the other engines' maps below are the
+convention their readers will follow:
 
 | Source | `angle charmm` |
 |---|---|
@@ -270,3 +277,7 @@ reader must be checked against a GROMACS energy before it is trusted.
   0.162750104621288, angle 1.35959339751695, dihedral 0.692979891423841,
   improper 0.431717012867386, van der Waals 1.22012795938037, Coulomb
   −10.7066619897381 kcal/mol.
+- `angle charmm` through LAMMPS (`run 0`), as `angle_style charmm` on three
+  atoms and as `angle_style hybrid harmonic charmm` on five: `pe` 0.024871552479721934
+  and 0.35736516873047092 kcal/mol, which molrs reproduces bit for bit, and
+  the per-atom forces to ≤ 2e-15 kcal/(mol·Å).

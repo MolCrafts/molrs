@@ -459,6 +459,8 @@ impl KernelRegistry {
             pair::thole::pair_thole_typed_ctor,
             SpecialClass::Coulomb,
         );
+        // CHARMM angle + Urey–Bradley (LAMMPS `angle_style charmm`).
+        r.register("angle", "charmm", angle::charmm::angle_charmm_ctor);
 
         r
     }

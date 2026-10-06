@@ -138,6 +138,44 @@ an older molrs needs its values converted:
   different dihedral). A frame built for an OpenMM-read field lists each
   improper's atoms in its type's endpoint order, now `(c2, c3, c1, c4)`.
 
+### Urey–Bradley (angle charmm)
+
+A new style, LAMMPS's `angle_style charmm`: `angle charmm`,
+E = k(θ − theta0)² + k_ub(r₁₃ − r_ub)², type params `k` (energy/rad²),
+`theta0` (degrees), `k_ub` (energy/length²), `r_ub` (length) — the
+`angle_coeff t K theta0 K_ub r_ub` numbers as written. It is an angle style,
+not a category: `def_style("angle", "charmm")` (Python: an `AngleStyle`), the
+`forcefield` section's `angle.charmm` table and `*.mrec` carry it like any
+angle style, and both `PotentialCompiler.compile` and `compile_typed` price it.
+The 1-3 spring adds no exclusion; which 1-3 pairs a pair style sees is
+`special_bonds`'s answer, as before. See
+[Force-field conventions](guides/forcefield-conventions.md#ureybradley).
+Engine readers other than LAMMPS's (GROMACS funct 5, OpenMM
+`AmoebaUreyBradleyForce`, CHARMM `.prm`) come in a later release. Behaviour
+that changes with it:
+
+- **A force field with several styles of one bonded category compiles.**
+  `PotentialCompiler` hands each table-driven style only the rows of its own
+  types (0.15 handed every style every row, so `angle harmonic` beside
+  `angle charmm` failed with "unknown angle type"). A row whose type no style
+  of the category defines is still an error, naming the type.
+- **The LAMMPS reader reads `angle_style charmm` and bonded `hybrid`
+  styles.** `angle_style hybrid harmonic charmm` defines both styles, and each
+  `angle_coeff t <sub-style> …` line is a type of the sub-style it names; the
+  same for `bond`, `dihedral` and `improper`. A data file's
+  `Angle Coeffs # hybrid` section reads the same way.
+- **The LAMMPS reader refuses a bonded coefficient line with extra
+  numbers.** LAMMPS refuses them too; 0.15 dropped them, so an
+  `angle_coeff t K theta0 K_ub r_ub` line under `angle_style harmonic` lost
+  its Urey–Bradley term silently.
+- **The LAMMPS writer writes one `*_style hybrid` line** when a category's
+  used types span several LAMMPS styles, each coefficient line naming its
+  sub-style (0.15 wrote one `*_style` line per style, and LAMMPS kept only the
+  last). Every data-file `* Coeffs` section it writes names its style in the
+  header comment (`Angle Coeffs # charmm`, `# hybrid` with the sub-style on
+  each row), as LAMMPS's `write_data` does, so `read_data_coeffs` reads a
+  non-`harmonic` section back under the right style.
+
 ### Already in 0.15.1
 
 0.15.1 was a patch release on the 0.15 ABI line (nothing renamed or removed;
