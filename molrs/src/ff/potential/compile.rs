@@ -282,8 +282,79 @@ impl<'a> PotentialCompiler<'a> {
         } else {
             Cow::Borrowed(style.params())
         };
-        let pot = ctor(&params, &type_refs, frame)?;
+        let frame = self.own_rows(style, topo_block, param_source, frame)?;
+        let pot = ctor(&params, &type_refs, &frame)?;
         Ok(Some(pot))
+    }
+
+    /// `frame` with `style`'s topology block cut to the rows whose type is one
+    /// of `style`'s — when another table-driven style of the same category
+    /// owns the rest (a LAMMPS `angle_style hybrid harmonic charmm`).
+    ///
+    /// A kernel resolves every row of its block against its own types, so
+    /// without this a second style's rows are "unknown types" to the first.
+    /// A row whose type no style of the category defines is still an error.
+    /// Per-instance styles (MMFF's bend and stretch-bend) each price every
+    /// row and are never cut; a category with one table-driven style is
+    /// passed through unchanged.
+    fn own_rows<'f>(
+        &self,
+        style: &Style,
+        block_name: Option<&str>,
+        source: ParamSource,
+        frame: &'f Frame,
+    ) -> Result<Cow<'f, Frame>, String> {
+        let table_driven = |s: &&Style| {
+            registry::lookup_param_source(s.category(), s.name()).unwrap_or(ParamSource::TypeRows)
+                == ParamSource::TypeRows
+        };
+        let siblings: Vec<&Style> = self
+            .ff
+            .get_styles(style.category())
+            .into_iter()
+            .filter(table_driven)
+            .collect();
+        let (Some(block_name), ParamSource::TypeRows, true) =
+            (block_name, source, siblings.len() > 1)
+        else {
+            return Ok(Cow::Borrowed(frame));
+        };
+        let Some(block) = frame.get(block_name) else {
+            return Ok(Cow::Borrowed(frame));
+        };
+        let types = block
+            .get("type")
+            .and_then(|c| c.as_string())
+            .ok_or_else(|| format!("{block_name} block missing \"type\" column"))?;
+        let names = |s: &Style| -> Result<Vec<String>, String> {
+            Ok(s.defs()
+                .kernel_type_params()?
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect())
+        };
+        let own = names(style)?;
+        let all: Vec<Vec<String>> = siblings
+            .iter()
+            .map(|s| names(s))
+            .collect::<Result<_, _>>()?;
+        let mut keep = Vec::new();
+        for (row, label) in types.iter().enumerate() {
+            if own.contains(label) {
+                keep.push(row);
+            } else if !all.iter().flatten().any(|n| n == label) {
+                return Err(format!(
+                    "{block_name} row {row}: type '{label}' is defined by no {} style",
+                    style.category()
+                ));
+            }
+        }
+        let mut cut = frame.clone();
+        cut.insert(
+            block_name,
+            block.select_rows(&keep).map_err(|e| e.to_string())?,
+        );
+        Ok(Cow::Owned(cut))
     }
 }
 
