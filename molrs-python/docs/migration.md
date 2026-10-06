@@ -505,13 +505,25 @@ and an OPLS-AA dipeptide (`scripts/gromacs_engine_check.sh`).
   back, e.g. every GAFF2 `c2` / `ce` / `cc` centre). Improper energies of
   GAFF-typed molecules change; ethylene under GAFF2 goes from 1.1 to
   10.5 kcal/mol per improper.
-- **Torsions the table lacks are estimated as parmchk2 estimates them**
-  (scored corresponding-type rows; 0.15's analogy ranking picked other rows,
-  e.g. indole's `ca-ca-cd-cc`, and refused guanidinium's `nh-cz-nh-hn`).
-- **Estimated torsion and improper type names** carry their analog and
-  penalty, `<types>@<analog>_<penalty>` (`c3-o-c-os@c3.o.c.oh_8.5`), so one
-  output force field can hold two estimates of a quartet; 0.15 named them by
-  their types alone.
+- **Every term the table lacks is estimated as parmchk2 estimates it**:
+  torsions (0.15's analogy ranking picked other rows, e.g. indole's
+  `ca-ca-cd-cc`, and refused guanidinium's `nh-cz-nh-hn`), and bonds and
+  angles, whose `estimate_penalty` is now parmchk2's (caffeine's `c-cc-na`:
+  2.6, was 2.15). A bond parmchk2 finds no analog for is now a missing term
+  (parmchk2 writes it with a zero length, `ATTN`); 0.15 made one up from
+  Badger's rule (`hc-br`). `gaff_estimator` is gone: GAFF no longer goes
+  through `Parmchk2Estimator`, which stays as the generic estimator other
+  force fields (OPLS-AA's `with_default_estimator`) borrow, with its own
+  scoring, unchanged.
+- **Estimated type names** carry their analog and penalty,
+  `<types>@<analog>_<penalty>` (`c3-o-c-os@c3.o.c.oh_8.5`,
+  `c-cc-na@c2.cc.na_2.6`), so one output force field can hold two
+  estimates of a name; 0.15 named them by their types alone.
+- **Rust: `ParmchkPenalty` names the columns as parmchk2 reads them**
+  (`bl blf cba cbaf ba baf ctor tor ps`): `AngleCentre` / `AngleCentreForce`
+  are columns 2 / 3 and `Angle` / `AngleForce` 4 / 5 (0.15 had them the
+  other way round), `TorsionCentre` is 6 and `Torsion` 7 (likewise
+  swapped). Code that read a column by variant reads the other one now.
 
 ### Parameters as frame columns
 

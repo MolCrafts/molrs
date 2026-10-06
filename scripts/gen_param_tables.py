@@ -453,12 +453,12 @@ def alternate_of(atom_type: str, eq: Equivalents | None) -> str | None:
 CORR_COLUMNS = [
     "bond_length",
     "bond_force",
-    "angle",
-    "angle_force",
     "angle_centre",
     "angle_centre_force",
-    "torsion",
+    "angle",
+    "angle_force",
     "torsion_centre",
+    "torsion",
     "similarity",
 ]
 

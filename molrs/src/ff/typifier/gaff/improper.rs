@@ -14,7 +14,9 @@
 //!    bond order**, not sorted, so one quartet can be estimated differently in
 //!    two molecules (aspirin's ester carbon reaches `c3-o -c -oh`, ethyl
 //!    acetate's the `X -X -c -o` amide term); a quartet estimated once in a
-//!    molecule is reused for the rest of it.
+//!    molecule is reused for the rest of it, and is itself a row the later
+//!    searches can copy (indole's `ca-cc-cd-ha` copies the `ca-ca-ca-ha` its
+//!    benzene ring was given just before).
 //! 2. **tleap** visits every atom with three or more neighbours and every
 //!    triple of them, looks the triple up in the parameter sets — the unit's own
 //!    (the terms it has already used), the frcmod, then `gaff.dat` /
@@ -31,8 +33,9 @@
 //! `WEIGHT_X 10` (the `WEIGHT_X` prefix also matches the `WEIGHT_X3` line, which
 //! is read last), and a `CORR` line without a ninth column scores 0 as an
 //! improper analog. Checked against antechamber + parmchk2 + tleap (AmberTools
-//! 26.1) on 73 molecules under GAFF and GAFF2: every frcmod improper row and
-//! every prmtop improper (atoms, order, barrier) agree.
+//! 26.1) on 127 molecules under GAFF and GAFF2: every frcmod improper row
+//! (barrier, analog, penalty) and every prmtop improper (atoms, order,
+//! barrier) agree.
 
 use std::collections::HashMap;
 
@@ -211,19 +214,24 @@ impl Parmchk2<'_> {
 
     /// The penalty of the `X` slots of `row`.
     fn wildcard_score(&self, row: &Row) -> f64 {
+        self.add_wildcards(0.0, row)
+    }
+
+    /// `score` plus the penalty of each `X` slot of `row`, added one by one.
+    fn add_wildcards(&self, score: f64, row: &Row) -> f64 {
         let w = &self.parmchk.weights;
         row.names
             .iter()
             .enumerate()
             .filter(|(_, n)| *n == X)
-            .map(|(slot, _)| {
-                if slot == 2 {
-                    w.weight_wildcard_centre
-                } else {
-                    WEIGHT_X
-                }
+            .fold(score, |score, (slot, _)| {
+                score
+                    + if slot == 2 {
+                        w.weight_wildcard_centre
+                    } else {
+                        WEIGHT_X
+                    }
             })
-            .sum()
     }
 
     /// Does a wildcard `row` match `names` slot by slot?
@@ -261,7 +269,7 @@ impl Parmchk2<'_> {
                 continue;
             }
             let (force, phase, periodicity, provenance) =
-                match self.search(&self.rows[..table_rows], unsorted, names) {
+                match self.search(&self.rows, unsorted, names) {
                     Some((row, provenance)) => (row.force, row.phase, row.periodicity, provenance),
                     None => {
                         let (k, phase, n) = DEFAULT_IMPROPER;
@@ -280,7 +288,8 @@ impl Parmchk2<'_> {
     }
 
     /// Steps 2–6 of `chk_improper` for one improper: the row they settle on
-    /// and how. `unsorted` is in the atoms' bond order, `names` sorted.
+    /// and how, over `rows` — the table's and those estimated so far.
+    /// `unsorted` is in the atoms' bond order, `names` sorted.
     fn search<'r>(
         &self,
         rows: &'r [Row],
@@ -350,11 +359,14 @@ impl Parmchk2<'_> {
 
         let corr = unsorted.map(|t| self.correspondents(t));
         let substituted = |c: [&Corr; 4]| c.iter().any(|&&(_, _, kind)| kind > 1);
+        // parmchk2 adds WEIGHT_GROUP and takes it back off for one group; the
+        // additions are made in its order, so equal analogs tie as they do there.
         let grouped = |c: [&Corr; 4], score: f64| {
+            let score = score + w.weight_group;
             if self.same_group([c[0].0, c[1].0, c[2].0, c[3].0]) {
-                score
+                score - w.weight_group
             } else {
-                score + w.weight_group
+                score
             }
         };
 
@@ -399,12 +411,12 @@ impl Parmchk2<'_> {
                         if !substituted(c) {
                             continue;
                         }
-                        let base = grouped(c, c1.1 + c2.1 + c3.1 + w.weight_improper + c4.1);
+                        let base = grouped(c, c1.1 + c2.1 + (c3.1 + w.weight_improper) + c4.1);
                         if let Some(row) = rows
                             .iter()
                             .find(|r| Self::general_match(r, [c1.0, c2.0, c3.0, c4.0]))
                         {
-                            let score = base + self.wildcard_score(row);
+                            let score = self.add_wildcards(base, row);
                             if best.is_none_or(|(_, b)| score < b) {
                                 best = Some((row, score));
                             }

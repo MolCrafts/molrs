@@ -608,6 +608,12 @@ frame through `ForceField.materialize_one_four`. Build the full list first
 materialize: `materialize_one_four` builds a list only when the frame has
 no `pairs`, and the frame reader's `pairs` hold only the odd 1-4 pairs.
 
+sander clamps the cosine of a harmonic angle to ±0.999 before taking its
+arccosine, so it prices an angle beyond 177.44° as 177.44°; LAMMPS and molrs
+price the IR's `k (θ − theta0)²` at the angle itself. A prmtop with a
+near-linear angle (an `sp` carbon, θ₀ ≈ 180°) therefore prices its angle term
+differently in sander, and only there.
+
 Refused by name: polarizable (`IPOL > 0`), 12-6-4 (`LENNARD_JONES_CCOEF`),
 non-zero 10-12 (`HBOND_ACOEF/BCOEF`, a negative ICO), perturbed, solvent-cap
 and `IFBOX = 3` files; a 1-4 row on a negative-`PN` chain (sander prices the
@@ -695,26 +701,47 @@ estimate carries `estimated`, `estimate_penalty`, `estimate_method` and
   `PARMCHK.DAT` flags as planar) and then tleap: an improper wherever tleap
   finds a row for a triple of an atom's neighbours, its atoms in the order
   tleap gives them.
-- **Bonds and angles** take the closest analog or the empirical formulas
-  (Badger bond `k`, Wang's angle `K_θ`).
+- **Bonds and angles** follow parmchk2's `chk_bond` / `chk_angle`:
+  equivalent-type rows, the cheapest corresponding-type row (an angle within
+  `THRESHOLD_BA`), then, for an angle, Wang's empirical `K_θ` and the mean
+  θ₀ of the `A-B-A` and `C-B-C` rows, for its own, equivalent and
+  corresponding types. A corresponding type scores parmchk2's columns:
+  `bl` + `blf` at a bond end, `ba` + `baf` at an angle end, (`cba` +
+  `cbaf`)·`WEIGHT_BA_CTR` at its vertex (caffeine's `c-cc-na` is
+  `c2-cc-na` at 2.6).
 
-parmchk2 searches torsions and impropers in atom and bond order, so a type
-quartet can be estimated differently in two molecules (aspirin's ester
-carbon takes `c3-o -c -oh`, ethyl acetate's the `X -X -c -o` amide term). An
-estimated torsion or improper is therefore named with its analog and
-penalty, `<types>@<analog>_<penalty>` (`c3-o-c-os@c3.o.c.oh_8.5`; the
-improper default `@default_0.0`), so one output force field holds both.
+parmchk2 searches the molecule in atom and bond order and reuses a name's
+first estimate (an improper estimate is itself a row later impropers can
+copy), so a name can be estimated differently in two molecules (aspirin's
+ester carbon takes `c3-o -c -oh`, ethyl acetate's the `X -X -c -o` amide
+term). An estimated term is therefore named with its analog and penalty,
+`<types>@<analog>_<penalty>` (`c3-o-c-os@c3.o.c.oh_8.5`; the improper
+default `@default_0.0`), so one output force field holds both.
 
-Checked against antechamber + parmchk2 + tleap + sander (AmberTools 26.1) on
-73 molecules (neutral and charged; aromatic, heteroaromatic, conjugated,
-strained, S / P / halogen chemistry) under both sets: every ATD atom type,
-every bond, angle, torsion and improper row (atoms, atom order, every
-parameter), every atom's σ / ε, and every energy term at perturbed
-coordinates — bond, angle, dihedral with impropers, 1-4 and other van der
-Waals and Coulomb — agree, the angle energy to the 4·10⁻⁷ by which tleap's
-π (3.141594) moves θ₀. A term neither the table nor parmchk2's search
-reaches is an error where parmchk2 writes a zero barrier marked `ATTN, need
-revision`.
+Checked against AmberTools 26.1:
+
+- antechamber + parmchk2 + tleap + sander on 127 molecules (neutral and
+  charged; aromatic, heteroaromatic, conjugated, strained, S / P / B /
+  halogen chemistry) under both sets, with antechamber's atom types: every
+  bond, angle, torsion and improper row (atoms, atom order, every parameter),
+  every estimate's analog and penalty (all 634 frcmod rows), every atom's
+  σ / ε, and every energy term at perturbed coordinates — bond, angle,
+  dihedral with impropers, 1-4 and other van der Waals and Coulomb — agree.
+  The angle energy agrees to the 4·10⁻⁷ by which tleap's π (3.141594) moves
+  θ₀, except at a near-linear angle: sander clamps cos θ to ±0.999 (θ never
+  above 177.44°), LAMMPS and molrs do not (phenylacetylene's `c1` / `cg`
+  angles, 0.055 kcal/mol).
+- parmchk2 on 800 type graphs built to need bond and angle estimates: every
+  bond and angle it writes — parameters, analog, penalty, and every `ATTN`
+  (a missing term here) — agrees.
+- `AtdTypifier` against antechamber's atom types: identical on 125 of the
+  127, given the same Kekulé structure. antechamber re-derives bond orders
+  from connectivity alone; for azulene and cyclooctatetraene it settles on
+  the other Kekulé structure, and the `cc` / `cd` colouring of the
+  conjugated system flips with it.
+
+A term neither the table nor parmchk2's search reaches is an error where
+parmchk2 writes a zero marked `ATTN, need revision`.
 
 ## Parameters as frame columns
 

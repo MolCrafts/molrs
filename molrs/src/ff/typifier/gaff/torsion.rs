@@ -16,8 +16,8 @@
 //! `(ctor or DEFAULT_TOR_CTR)·FRACT1 + similarity·FRACT2`, weighted by
 //! `WEIGHT_TOR_CTR`; an outer atom's is `tor`, or `DEFAULT_TOR` where blank;
 //! a `CORR` line with no columns scores 0 everywhere. Checked against
-//! parmchk2 (AmberTools 26.1) on 73 molecules under GAFF and GAFF2: every
-//! frcmod torsion row agrees.
+//! parmchk2 (AmberTools 26.1) on 127 molecules under GAFF and GAFF2: every
+//! frcmod torsion row (terms, analog, penalty) agrees.
 
 use std::collections::{BTreeSet, HashMap};
 
