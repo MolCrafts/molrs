@@ -24,6 +24,7 @@
 //! | [`Perceive::find_hydrogens`] | — (adds H atoms) | — (adds H bonds) |
 //! | [`Perceive::find_stereo`] | `stereo` (`"CW"` / `"CCW"`) | `stereo` (`"E"` / `"Z"` / `"either"`) |
 //! | [`Perceive::find_rotatable`] | — | `is_rotatable` (0/1) |
+//! | [`Perceive::find_bond_orders`] | — | `bond_number`, `bond_type` (antechamber's Kekulé structure) |
 //! | [`Perceive::find_bond_types`] | — | `bcc_bond_type` (1/2/3/6/7/8/9) |
 //! | [`Perceive::find_equivalence_classes`] | `equiv_class` (0-based class id) | — |
 
@@ -31,7 +32,7 @@ use std::collections::HashSet;
 
 use super::equivalence::{EQUIV_CLASS, EquivalenceOptions};
 use super::stereo::{BondStereo, TetrahedralStereo};
-use super::{aromaticity, bond_type, equivalence, hydrogens, rings, rotatable, stereo};
+use super::{aromaticity, bond_order, bond_type, equivalence, hydrogens, rings, rotatable, stereo};
 use crate::system::atomistic::{AtomId, Atomistic, BondId};
 use molrs::error::MolRsError;
 
@@ -254,7 +255,29 @@ impl Perceive {
         out
     }
 
-    /// Perceive BCC bond types and project them onto the graph.
+    /// Judge every bond's order from the connectivity alone, as antechamber's
+    /// `bondtype -j full` does, and write it onto the graph.
+    ///
+    /// Wraps [`bond_order::find_bond_orders`]: every judged bond gets a
+    /// localized `bond_number` (1/2/3) and the `bond_type` it implies, whatever
+    /// the input stated. The result depends on the graph's atom and bond order,
+    /// exactly as antechamber's depends on its input file's.
+    ///
+    /// # Arguments
+    ///
+    /// * `mol` — the molecule, every hydrogen drawn; left untouched.
+    ///
+    /// # Returns
+    ///
+    /// A clone of `mol` carrying antechamber's Kekulé structure.
+    pub fn find_bond_orders(&self, mol: &Atomistic) -> Atomistic {
+        bond_order::find_bond_orders(mol)
+    }
+
+    /// Perceive BCC bond types, from the bond orders `mol` states, and project
+    /// them onto the graph. (`AtdTypifier` and the antechamber charge models
+    /// judge the orders from the connectivity instead, as antechamber does:
+    /// [`bond_type::find_bond_types_from_connectivity`].)
     ///
     /// Wraps [`bond_type::find_bond_types`], which is already graph-in /
     /// graph-out. Every bond receives a [`BCC_BOND_TYPE`](bond_type::BCC_BOND_TYPE)

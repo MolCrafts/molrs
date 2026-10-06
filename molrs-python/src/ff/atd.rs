@@ -16,7 +16,7 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use molrs::ff::typifier::atd::{AtdParameterSet, AtdTypifier};
+use molrs::ff::typifier::atd::{AtdBondOrders, AtdParameterSet, AtdTypifier};
 
 use crate::ff::PyTypifier;
 
@@ -56,6 +56,38 @@ pub(crate) fn parameter_set_from_name(name: &str) -> PyResult<AtdParameterSet> {
         })
 }
 
+/// The `bond_orders` names, paired with the source each one selects.
+const BOND_ORDERS: &[(&str, AtdBondOrders)] = &[
+    ("perceive", AtdBondOrders::Perceive),
+    ("input", AtdBondOrders::Input),
+];
+
+/// The bond-order source named `name`.
+///
+/// # Errors
+///
+/// `ValueError` — an unknown name.
+fn bond_orders_from_name(name: &str) -> PyResult<AtdBondOrders> {
+    BOND_ORDERS
+        .iter()
+        .find(|(known, _)| *known == name)
+        .map(|(_, orders)| *orders)
+        .ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "unknown bond_orders {name:?}; expected \"perceive\" or \"input\""
+            ))
+        })
+}
+
+/// The name of a bond-order source — the inverse of [`bond_orders_from_name`].
+fn bond_orders_name(orders: AtdBondOrders) -> &'static str {
+    BOND_ORDERS
+        .iter()
+        .find(|(_, known)| *known == orders)
+        .map(|(name, _)| *name)
+        .unwrap_or("")
+}
+
 /// The `-at` flag of a parameter set — the inverse of [`parameter_set_from_name`].
 fn parameter_set_name(set: AtdParameterSet) -> &'static str {
     PARAMETER_SETS
@@ -88,11 +120,20 @@ fn parameter_set_name(set: AtdParameterSet) -> &'static str {
 ///     The antechamber ``-at`` flag naming the table: ``"bcc"``, ``"abcg2"``,
 ///     ``"gas"``, ``"gaff"``, ``"gaff2"``, ``"amber"`` or ``"sybyl"``. Required —
 ///     there is no default table.
+/// bond_orders : str, default ``"perceive"``
+///     Which bond orders the types follow. ``"perceive"`` judges them from the
+///     connectivity alone, as antechamber does by default (``bondtype -j
+///     full``): the molecule's own orders are ignored, and on a molecule with
+///     two Kekulé structures (azulene, cyclooctatetraene) the colouring
+///     (``cc`` / ``cd`` …) is the one antechamber's search settles on for the
+///     same atom and bond order. Every hydrogen must be drawn. ``"input"``
+///     keeps the molecule's own orders (aromatic bonds without one are
+///     kekulized).
 ///
 /// Raises
 /// ------
 /// ValueError
-///     If ``parameter_set`` names no table.
+///     If ``parameter_set`` names no table, or ``bond_orders`` no source.
 ///
 /// Examples
 /// --------
@@ -103,18 +144,23 @@ fn parameter_set_name(set: AtdParameterSet) -> &'static str {
 #[derive(Debug)]
 pub struct PyAtdTypifier {
     parameter_set: AtdParameterSet,
+    bond_orders: AtdBondOrders,
 }
 
 #[pymethods]
 impl PyAtdTypifier {
     /// Bind the engine to the table `parameter_set` names.
     #[new]
-    #[pyo3(signature = (*, parameter_set))]
-    fn new(parameter_set: &str) -> PyResult<(Self, PyTypifier)> {
+    #[pyo3(signature = (*, parameter_set, bond_orders = "perceive"))]
+    fn new(parameter_set: &str, bond_orders: &str) -> PyResult<(Self, PyTypifier)> {
         let parameter_set = parameter_set_from_name(parameter_set)?;
+        let bond_orders = bond_orders_from_name(bond_orders)?;
         Ok((
-            Self { parameter_set },
-            PyTypifier::native(AtdTypifier::new(parameter_set)),
+            Self {
+                parameter_set,
+                bond_orders,
+            },
+            PyTypifier::native(AtdTypifier::new(parameter_set).with_bond_orders(bond_orders)),
         ))
     }
 
@@ -124,7 +170,17 @@ impl PyAtdTypifier {
         parameter_set_name(self.parameter_set)
     }
 
+    /// Which bond orders the types follow: ``"perceive"`` or ``"input"``.
+    #[getter]
+    fn bond_orders(&self) -> &'static str {
+        bond_orders_name(self.bond_orders)
+    }
+
     fn __repr__(&self) -> String {
-        format!("AtdTypifier(parameter_set='{}')", self.parameter_set())
+        format!(
+            "AtdTypifier(parameter_set='{}', bond_orders='{}')",
+            self.parameter_set(),
+            self.bond_orders()
+        )
     }
 }
