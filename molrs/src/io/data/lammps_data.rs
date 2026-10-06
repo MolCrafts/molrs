@@ -44,6 +44,9 @@ struct LAMMPSHeader {
     num_angles: usize,
     num_dihedrals: usize,
     num_impropers: usize,
+    /// `N crossterms` (or `N cmap crossterms`): the rows of the `CMAP`
+    /// section LAMMPS `fix cmap` reads.
+    num_crossterms: usize,
     num_atom_types: usize,
     num_bond_types: usize,
     num_angle_types: usize,
@@ -336,7 +339,7 @@ impl AtomColumns {
 
 struct TopologyTerm {
     type_ref: TypeRef,
-    members: [I; 4],
+    members: [I; 5],
     n_members: u8,
 }
 
@@ -559,6 +562,10 @@ fn parse_header_with_first_section<R: BufRead>(
             [n, "angles", ..] => header.num_angles = n.parse().map_err(bad_count)?,
             [n, "dihedrals", ..] => header.num_dihedrals = n.parse().map_err(bad_count)?,
             [n, "impropers", ..] => header.num_impropers = n.parse().map_err(bad_count)?,
+            // `fix cmap`'s header line, in either of the two spellings it reads.
+            [n, "crossterms"] | [n, "cmap", "crossterms"] => {
+                header.num_crossterms = n.parse().map_err(bad_count)?
+            }
             [
                 n,
                 kind @ ("atom" | "bond" | "angle" | "dihedral" | "improper"),
@@ -634,6 +641,8 @@ const SECTION_NAMES: &[&str] = &[
     "Angles",
     "Dihedrals",
     "Impropers",
+    // `fix cmap`'s section (`read_data … fix cmap crossterm CMAP`).
+    "CMAP",
     "Atom Type Labels",
     "Bond Type Labels",
     "Angle Type Labels",
@@ -836,7 +845,7 @@ fn parse_topology_section<R: BufRead>(
                 tokens.len()
             )));
         }
-        let mut members = [0 as I; 4];
+        let mut members = [0 as I; 5];
         for (i, slot) in members.iter_mut().enumerate().take(n_members) {
             *slot = parse_i(tokens[2 + i])?;
         }
@@ -955,6 +964,7 @@ struct ParsedData {
     angles: Vec<TopologyTerm>,
     dihedrals: Vec<TopologyTerm>,
     impropers: Vec<TopologyTerm>,
+    cmaps: Vec<TopologyTerm>,
     type_masses: HashMap<I, F>,
     atom_type_labels: HashMap<String, String>,
     bond_type_labels: HashMap<String, String>,
@@ -1029,6 +1039,23 @@ fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
             &atom_id_map,
             &invert_type_labels(&data.improper_type_labels),
         )?;
+        // A CMAP type is an index into the `fix cmap` file; LAMMPS has no
+        // labels for it.
+        insert_topology_block(
+            &mut frame,
+            "cmaps",
+            "CMAP",
+            &data.cmaps,
+            &[
+                keys::ATOMI,
+                keys::ATOMJ,
+                keys::ATOMK,
+                keys::ATOML,
+                keys::ATOMM,
+            ],
+            &atom_id_map,
+            &HashMap::new(),
+        )?;
     }
 
     let pbc: Pbc3 = [true, true, true];
@@ -1053,7 +1080,7 @@ fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
     frame.meta.insert(
         "lammps_counts".to_string(),
         format!(
-            "atoms={},bonds={},angles={},dihedrals={},impropers={},\
+            "atoms={},bonds={},angles={},dihedrals={},impropers={},crossterms={},\
              atom_types={},bond_types={},angle_types={},dihedral_types={},\
              improper_types={}",
             h.num_atoms,
@@ -1061,6 +1088,7 @@ fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
             h.num_angles,
             h.num_dihedrals,
             h.num_impropers,
+            h.num_crossterms,
             h.num_atom_types,
             h.num_bond_types,
             h.num_angle_types,
@@ -1179,6 +1207,15 @@ fn dispatch_section<R: BufRead>(
                 parse_topology_section(reader, data.header.num_impropers, 4, "Impropers")?;
             Ok(None)
         }
+        "CMAP" => {
+            if data.header.num_crossterms == 0 {
+                return Err(err_mapper(
+                    "LAMMPS data section `CMAP` without a `N crossterms` header line",
+                ));
+            }
+            data.cmaps = parse_topology_section(reader, data.header.num_crossterms, 5, "CMAP")?;
+            Ok(None)
+        }
         // Force-field coefficient blocks — the header line (`# style` comment
         // included) and its rows, captured verbatim for the FF reader. A row
         // must start with a type id or a declared type label; anything else is
@@ -1225,10 +1262,13 @@ fn dispatch_section<R: BufRead>(
 ///
 /// No section is lost silently. The sections this reader parses are the five
 /// `* Type Labels` sections, `Masses`, `Atoms`, `Velocities`, `Charges`,
-/// `Bonds`, `Angles`, `Dihedrals` and `Impropers`; every `* Coeffs` section
+/// `Bonds`, `Angles`, `Dihedrals`, `Impropers` and `fix cmap`'s `CMAP`
+/// (`index type a1 … a5` per row, sized by the `N crossterms` header line,
+/// into a `cmaps` block of `atomi` … `atomm` and the numeric `type_id`, the
+/// map's index in the `fix cmap` file); every `* Coeffs` section
 /// (`PairIJ` and the class2 cross terms included) is kept verbatim in the
 /// frame's `lammps_coeffs_text` meta. Any other section — `Ellipsoids`,
-/// `Lines`, `Triangles`, `Bodies`, or a fix-defined one such as `CMAP` — is
+/// `Lines`, `Triangles`, `Bodies`, or a fix-defined one such as `BiTorsions` — is
 /// refused with an `InvalidData` error naming it, unless it was named in
 /// [`with_skipped_section`], in which case its body is read past and
 /// discarded. A line inside a `* Coeffs` or `* Type Labels` section that does
@@ -1264,7 +1304,7 @@ impl<R: BufRead + Seek> LAMMPSDataReader<R> {
 
     /// Read past the section `header` instead of refusing it, discarding its
     /// body. `header` is the section name without its `# style` comment
-    /// (`"Ellipsoids"`, `"Bodies"`, or a fix-defined `"CMAP"` the `read_data`
+    /// (`"Ellipsoids"`, `"Bodies"`, or a fix-defined `"BiTorsions"` the `read_data`
     /// vocabulary does not name — a line reading `header` then opens a
     /// section); it is case-sensitive, as in LAMMPS.
     pub fn with_skipped_section(mut self, header: &str) -> Self {
@@ -1282,6 +1322,7 @@ impl<R: BufRead + Seek> LAMMPSDataReader<R> {
             angles: Vec::new(),
             dihedrals: Vec::new(),
             impropers: Vec::new(),
+            cmaps: Vec::new(),
             type_masses: HashMap::new(),
             atom_type_labels: HashMap::new(),
             bond_type_labels: HashMap::new(),
@@ -1707,7 +1748,7 @@ fn write_lammps_data_frame<W: Write>(
     // carries a molecule ID. The writer never invents one: which atoms form a
     // molecule is the caller's call.
     if !frame_has_atom_field(frame, DataField::Mol) {
-        for block in ["bonds", "angles", "dihedrals", "impropers"] {
+        for block in ["bonds", "angles", "dihedrals", "impropers", "cmaps"] {
             let n = frame
                 .visit_block(block, |b| b.nrows().unwrap_or(0))
                 .unwrap_or(0);
@@ -1733,6 +1774,7 @@ fn write_lammps_data_frame<W: Write>(
     let angle_rt = type_labels.block("angles");
     let dihedral_rt = type_labels.block("dihedrals");
     let improper_rt = type_labels.block("impropers");
+    let cmap_rt = type_labels.block("cmaps");
 
     let atom_ids = resolve_atom_ids(frame, num_atoms);
     let row_masses = resolve_row_masses(frame, num_atoms);
@@ -1748,6 +1790,9 @@ fn write_lammps_data_frame<W: Write>(
         .unwrap_or(0);
     let num_impropers = frame
         .visit_block("impropers", |b| b.nrows().unwrap_or(0))
+        .unwrap_or(0);
+    let num_crossterms = frame
+        .visit_block("cmaps", |b| b.nrows().unwrap_or(0))
         .unwrap_or(0);
 
     let num_atom_types = atom_rt.n_types().max(1);
@@ -1768,6 +1813,11 @@ fn write_lammps_data_frame<W: Write>(
     }
     if num_impropers > 0 {
         writeln!(writer, "{num_impropers} impropers")?;
+    }
+    // `fix cmap`'s header line; the file is read with
+    // `read_data <file> fix <id> crossterm CMAP`.
+    if num_crossterms > 0 {
+        writeln!(writer, "{num_crossterms} crossterms")?;
     }
     writeln!(writer, "{num_atom_types} atom types")?;
     if num_bond_types > 0 {
@@ -1926,6 +1976,17 @@ fn write_lammps_data_frame<W: Write>(
         4,
         &atom_ids,
         improper_rt.map(|r| r.type_ids()).unwrap_or(&[]),
+    )?;
+    // The type is the map's index in the `fix cmap` file, which
+    // `LammpsFfWriter::write_cmap_str` writes in this same label id order.
+    write_topology_section(
+        writer,
+        frame,
+        "CMAP",
+        "cmaps",
+        5,
+        &atom_ids,
+        cmap_rt.map(|r| r.type_ids()).unwrap_or(&[]),
     )?;
 
     Ok(())
@@ -2798,26 +2859,27 @@ mod atom_style_tests {
         assert!(coeffs.contains("1 1 0.1 3.0"), "{coeffs}");
     }
 
-    /// Three `bond` atoms, a `Pair Coeffs` section, then a fix-defined `CMAP`
-    /// section this reader has no name for.
-    fn pair_coeffs_then_cmap() -> String {
-        three_bond_atoms_then("Pair Coeffs\n\n1 0.1 3.0\n\nCMAP\n\n1 1 1 2 3 1 2\n")
+    /// Three `bond` atoms, a `Pair Coeffs` section, then a fix-defined
+    /// `BiTorsions` section (`fix amoeba/bitorsion`) this reader has no name
+    /// for.
+    fn pair_coeffs_then_bitorsions() -> String {
+        three_bond_atoms_then("Pair Coeffs\n\n1 0.1 3.0\n\nBiTorsions\n\n1 1 1 2 3 1 2\n")
     }
 
     #[test]
     fn unknown_section_after_coeffs_is_refused_by_name() {
-        let err = refusal(&pair_coeffs_then_cmap());
-        assert_invalid_data_naming(&err, "CMAP");
+        let err = refusal(&pair_coeffs_then_bitorsions());
+        assert_invalid_data_naming(&err, "BiTorsions");
         assert!(err.to_string().contains("with_skipped_section"), "{err}");
     }
 
     #[test]
     fn with_skipped_section_skips_a_name_outside_the_vocabulary() {
-        let text = pair_coeffs_then_cmap();
+        let text = pair_coeffs_then_bitorsions();
         let frame = LAMMPSDataReader::new(Cursor::new(text.as_bytes()))
-            .with_skipped_section("CMAP")
+            .with_skipped_section("BiTorsions")
             .read()
-            .expect("a skipped CMAP section must not refuse the file")
+            .expect("a skipped BiTorsions section must not refuse the file")
             .expect("one frame");
         let coeffs = frame
             .meta
@@ -2825,7 +2887,7 @@ mod atom_style_tests {
             .and_then(|value| value.as_str())
             .expect("Pair Coeffs must land in lammps_coeffs_text");
         assert!(coeffs.contains("1 0.1 3.0"), "{coeffs}");
-        assert!(!coeffs.contains("CMAP"), "{coeffs}");
+        assert!(!coeffs.contains("BiTorsions"), "{coeffs}");
         assert!(!coeffs.contains("1 1 1 2 3 1 2"), "{coeffs}");
     }
 
@@ -2849,5 +2911,71 @@ mod atom_style_tests {
             "Atoms # bond\n\n1 1 1 0.0 0.0 0.0\n",
         );
         assert_invalid_data_naming(&refusal(text), "Masses");
+    }
+
+    /// A frame's `cmaps` block goes out as `fix cmap`'s `N crossterms` header
+    /// line and `CMAP` section (types by label id) and comes back as a
+    /// `cmaps` block of `atomi` … `atomm` and `type_id`; `N cmap crossterms`
+    /// reads too, and a `CMAP` section without its count is refused.
+    #[test]
+    fn a_cmaps_block_round_trips_through_the_cmap_section() {
+        let text = three_bond_atoms_then("");
+        let mut frame = parse_text(&text.replace("3 atoms", "6 atoms").replace(
+            "3 1 1 2.0 0.0 0.0\n",
+            "3 1 1 2.0 0.0 0.0\n4 1 1 3.0 0.0 0.0\n5 1 1 4.0 0.0 0.0\n6 1 1 5.0 0.0 0.0\n",
+        ));
+        let mut cmaps = Block::new();
+        for (p, key) in [
+            keys::ATOMI,
+            keys::ATOMJ,
+            keys::ATOMK,
+            keys::ATOML,
+            keys::ATOMM,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let col: Vec<Idx> = vec![p as Idx, p as Idx + 1];
+            cmaps
+                .insert(key, ndarray::Array1::from_vec(col).into_dyn())
+                .unwrap();
+        }
+        cmaps
+            .insert(
+                keys::TYPE,
+                ndarray::Array1::from_vec(vec!["psi".to_owned(), "phi".to_owned()]).into_dyn(),
+            )
+            .unwrap();
+        frame.insert("cmaps", cmaps);
+        let mut out = Vec::new();
+        LAMMPSDataWriter::new(&mut out).write(&frame).unwrap();
+        let written = String::from_utf8(out).unwrap();
+        assert!(written.contains("\n2 crossterms\n"), "{written}");
+        // Labels sorted: `phi` = 1, `psi` = 2.
+        assert!(
+            written.contains("CMAP\n\n1 2 1 2 3 4 5\n2 1 2 3 4 5 6\n"),
+            "{written}"
+        );
+
+        let back = parse_text(&written);
+        let block = &back["cmaps"];
+        let col = |k: &str| {
+            block
+                .get(k)
+                .unwrap()
+                .as_uint()
+                .unwrap()
+                .iter()
+                .copied()
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(col(keys::ATOMI), [0, 1]);
+        assert_eq!(col(keys::ATOMM), [4, 5]);
+        assert_eq!(col(keys::TYPE_ID), [2, 1]);
+
+        let spelled = parse_text(&written.replace("2 crossterms", "2 cmap crossterms"));
+        assert_eq!(spelled["cmaps"].nrows(), Some(2));
+        let err = refusal(&written.replace("2 crossterms\n", ""));
+        assert_invalid_data_naming(&err, "crossterms");
     }
 }

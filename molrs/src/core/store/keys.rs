@@ -54,6 +54,9 @@ meta_keys! {
     pub const DIHEDRAL_TYPE_LABELS: &str = "dihedral_type_labels";
     /// Frame meta key: the improper-type inventory, packed as `"id:label,…"`.
     pub const IMPROPER_TYPE_LABELS: &str = "improper_type_labels";
+    /// Frame meta key: the CMAP-crossterm-type inventory, packed as
+    /// `"id:label,…"`.
+    pub const CMAP_TYPE_LABELS: &str = "cmap_type_labels";
     /// Frame meta key: the unit system the frame's numbers are in, as the
     /// force-field `units` object — `{"preset": "real"}`, or quantities such
     /// as `{"length": "nm", "energy": "kJ/mol"}` (molrec `conventions.md`,
