@@ -832,9 +832,9 @@ pub(crate) fn frame_from_sections(sections: &HashMap<String, Vec<String>>) -> Re
     let n_res = *meta_map.get("NRES").unwrap_or(&0) as usize;
     let nnb = *meta_map.get("NNB").unwrap_or(&0);
     let ifbox = meta_map.get("IFBOX").copied().unwrap_or(0);
-    refuse_unsupported(&sections, &meta_map)?;
-    check_dead_int_section(&sections, "JOIN_ARRAY", n_atoms)?;
-    check_dead_int_section(&sections, "IROTAT", n_atoms)?;
+    refuse_unsupported(sections, &meta_map)?;
+    check_dead_int_section(sections, "JOIN_ARRAY", n_atoms)?;
+    check_dead_int_section(sections, "IROTAT", n_atoms)?;
 
     let names = sections
         .get("ATOM_NAME")
@@ -871,7 +871,7 @@ pub(crate) fn frame_from_sections(sections: &HashMap<String, Vec<String>>) -> Re
         )));
     }
     // A chamber file scales by CHARMM's √332.0716, an AMBER one by 18.2223.
-    let charge_factor = if prmtop_tables::is_chamber(&sections) {
+    let charge_factor = if prmtop_tables::is_chamber(sections) {
         crate::units::constants::CHARMM_COULOMB.sqrt()
     } else {
         AMBER_CHARGE_FACTOR
@@ -890,7 +890,7 @@ pub(crate) fn frame_from_sections(sections: &HashMap<String, Vec<String>>) -> Re
         )));
     }
 
-    let atom_types = prmtop_tables::atom_type_names(&sections, n_atoms).map_err(invalid_data)?;
+    let atom_types = prmtop_tables::atom_type_names(sections, n_atoms).map_err(invalid_data)?;
 
     let atomic_numbers_raw: Option<Vec<i64>> = sections
         .get("ATOMIC_NUMBER")
@@ -911,27 +911,27 @@ pub(crate) fn frame_from_sections(sections: &HashMap<String, Vec<String>>) -> Re
     };
 
     let res_ids = residue_ids(sections.get("RESIDUE_POINTER"), n_atoms)?;
-    let res_name = residue_names(&sections, &res_ids, n_res)?;
-    let mol_id = molecule_ids(&sections, n_atoms)?;
-    let tree = a4_exact(&sections, "TREE_CHAIN_CLASSIFICATION", n_atoms)?;
-    let gb_radius = floats_n(&sections, "RADII", n_atoms)?;
-    let gb_screen = floats_n(&sections, "SCREEN", n_atoms)?;
-    let exclusions = build_exclusions_block(&sections, nnb, n_atoms)?;
+    let res_name = residue_names(sections, &res_ids, n_res)?;
+    let mol_id = molecule_ids(sections, n_atoms)?;
+    let tree = a4_exact(sections, "TREE_CHAIN_CLASSIFICATION", n_atoms)?;
+    let gb_radius = floats_n(sections, "RADII", n_atoms)?;
+    let gb_screen = floats_n(sections, "SCREEN", n_atoms)?;
+    let exclusions = build_exclusions_block(sections, nnb, n_atoms)?;
 
     // Connectivity (inc + without H).
-    let mut bond_ptrs = section_ints(&sections, "BONDS_INC_HYDROGEN")?;
-    bond_ptrs.extend(section_ints(&sections, "BONDS_WITHOUT_HYDROGEN")?);
+    let mut bond_ptrs = section_ints(sections, "BONDS_INC_HYDROGEN")?;
+    bond_ptrs.extend(section_ints(sections, "BONDS_WITHOUT_HYDROGEN")?);
     let bonds = decode_bonds(&bond_ptrs, &atom_types)?;
 
-    let mut angle_ptrs = section_ints(&sections, "ANGLES_INC_HYDROGEN")?;
-    angle_ptrs.extend(section_ints(&sections, "ANGLES_WITHOUT_HYDROGEN")?);
+    let mut angle_ptrs = section_ints(sections, "ANGLES_INC_HYDROGEN")?;
+    angle_ptrs.extend(section_ints(sections, "ANGLES_WITHOUT_HYDROGEN")?);
     let angles = decode_angles(&angle_ptrs, &atom_types)?;
 
-    let mut dihe_ptrs = section_ints(&sections, "DIHEDRALS_INC_HYDROGEN")?;
-    dihe_ptrs.extend(section_ints(&sections, "DIHEDRALS_WITHOUT_HYDROGEN")?);
-    let dih_k: Vec<F> = section_floats(&sections, "DIHEDRAL_FORCE_CONSTANT")?;
-    let dih_per: Vec<F> = section_floats(&sections, "DIHEDRAL_PERIODICITY")?;
-    let dih_phase: Vec<F> = section_floats(&sections, "DIHEDRAL_PHASE")?;
+    let mut dihe_ptrs = section_ints(sections, "DIHEDRALS_INC_HYDROGEN")?;
+    dihe_ptrs.extend(section_ints(sections, "DIHEDRALS_WITHOUT_HYDROGEN")?);
+    let dih_k: Vec<F> = section_floats(sections, "DIHEDRAL_FORCE_CONSTANT")?;
+    let dih_per: Vec<F> = section_floats(sections, "DIHEDRAL_PERIODICITY")?;
+    let dih_phase: Vec<F> = section_floats(sections, "DIHEDRAL_PHASE")?;
     // Without the parameter tables (a structure-only head) the terms are
     // unknown, and each improper is one row.
     let tables = (!dih_k.is_empty() || !dih_per.is_empty() || !dih_phase.is_empty()).then_some(
@@ -944,7 +944,7 @@ pub(crate) fn frame_from_sections(sections: &HashMap<String, Vec<String>>) -> Re
     let mut dihedrals = decode_dihedrals(&dihe_ptrs, &atom_types, tables)?;
     // A chamber file's CHARMM impropers, in file order (centre first), named
     // as the force-field reader's `improper harmonic` types.
-    for imp in prmtop_tables::chamber_impropers(&sections, n_atoms).map_err(invalid_data)? {
+    for imp in prmtop_tables::chamber_impropers(sections, n_atoms).map_err(invalid_data)? {
         let types = imp.atoms.map(|a| atom_types[a].as_str());
         dihedrals.push(DihedralRow {
             atomi: imp.atoms[0] as Idx,
@@ -956,7 +956,7 @@ pub(crate) fn frame_from_sections(sections: &HashMap<String, Vec<String>>) -> Re
             exclude_14: true,
         });
     }
-    let cmaps = prmtop_tables::cmap_terms(&sections, &atom_types)
+    let cmaps = prmtop_tables::cmap_terms(sections, &atom_types)
         .map_err(invalid_data)?
         .map(|c| build_cmap_block(&c))
         .transpose()?;
@@ -1035,8 +1035,8 @@ pub(crate) fn frame_from_sections(sections: &HashMap<String, Vec<String>>) -> Re
     if let Some(cmaps) = cmaps {
         frame.insert(block_names::CMAPS, cmaps);
     }
-    apply_meta_scalars(&mut frame, &sections)?;
-    apply_box(&mut frame, &sections, ifbox)?;
+    apply_meta_scalars(&mut frame, sections)?;
+    apply_box(&mut frame, sections, ifbox)?;
 
     Ok(frame)
 }
