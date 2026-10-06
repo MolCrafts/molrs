@@ -3,9 +3,9 @@
 //!
 //! These differ from [`crate::ff::forcefield::xml`], which reads molrs's own native
 //! schema. A reader here owns the translation from a foreign format — element
-//! and attribute names, **and unit and factor normalization** — into molrs's
-//! convention, which is LAMMPS's: every style's energy expression, factors (no
-//! hidden ½) and parameter units are the LAMMPS style's, angle-valued
+//! and attribute names, **and unit and factor normalization** — into the
+//! force-field IR (LAMMPS standard): every style's energy expression, factors
+//! (no hidden ½) and parameter units are the LAMMPS style's, angle-valued
 //! parameters in degrees, in a LAMMPS unit preset (`real` for every reader but
 //! the LAMMPS one, which keeps the file's `units`). The resulting `ForceField`
 //! needs no downstream fixup.
@@ -15,14 +15,16 @@
 //! [`LammpsFfReader`](lammps::LammpsFfReader) (a LAMMPS `*.ff` include, AMBER/GAFF
 //! flavour — inverse of
 //! [`LammpsFfWriter`](super::writers::lammps::LammpsFfWriter)),
-//! [`AmberPrmtopFfReader`](prmtop::AmberPrmtopFfReader) (AMBER prmtop parameter
-//! tables), and [`GromacsTopFfReader`](gromacs::GromacsTopFfReader) (GROMACS
+//! [`AmberPrmtopFfReader`](prmtop::AmberPrmtopFfReader) (AMBER and chamber
+//! (CHARMM) prmtop parameter tables), and [`GromacsTopFfReader`](gromacs::GromacsTopFfReader) (GROMACS
 //! `.top`/`.itp` section tables).
 
 pub mod gromacs;
 pub mod lammps;
 pub mod opls;
 pub mod prmtop;
+#[cfg(test)]
+mod prmtop_check;
 
 use crate::ff::forcefield::ForceField;
 
