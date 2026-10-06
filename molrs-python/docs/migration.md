@@ -64,15 +64,15 @@ Convention-neutral plumbing for the Class-I force-field IR.
 - **Rust: `molrs::ff::forcefield::torsion` is public** — the exact maps
   between every torsion form and a Fourier series
   (`FourierSeries`, `TorsionForm`, `TorsionRefusal`, one type per form); see
-  [Torsion forms and their exact conversions](guides/forcefield-conventions.md#torsion-forms-and-their-exact-conversions).
+  [Torsion forms and their exact conversions](guides/forcefield-ir.md#torsion-forms-and-their-exact-conversions).
   Nothing that existed changes behaviour.
 
-### Force-field conventions are LAMMPS's
+### The force-field IR adopts the LAMMPS standard
 
-molrs's force-field convention is now LAMMPS's: every style's energy
-expression, factors and parameter units are those of the LAMMPS style it
-corresponds to, and every angle-valued parameter is in degrees.
-[Force-field conventions](guides/forcefield-conventions.md) is the reference.
+molrs holds force fields in one force-field IR, which adopts LAMMPS's
+definitions as its standard: every style's energy expression, factors and
+parameter units are those of the LAMMPS style it corresponds to, and every angle-valued parameter is in degrees.
+[Force-field IR](guides/forcefield-ir.md) is the reference.
 The readers, writers and typifiers moved with the kernels, so **the energy of
 a physical system read from a file or typed by a typifier does not change**
 (the one exception is a bug fix, listed last). What changes is the meaning of
@@ -113,7 +113,7 @@ an older molrs needs its values converted:
   refuses a buffered (`delta ≠ 0`) or `dielectric ≠ 1` `coul/cut`.
   `lammps_units`' `to_store_*` / `from_store_*` / `*_k_lammps` helpers and
   the `½k` form maps are gone; `LammpsFfUnits::bond_k` converts a bond `K`.
-- **Readers of other engines convert to the LAMMPS convention.** GROMACS:
+- **Readers of other engines convert to the force-field IR (LAMMPS standard).** GROMACS:
   `k = k_b/2`, `k = k_θ/2`, degrees kept. OpenMM XML: `k/2` for bonds and
   angles, radians → degrees. AMBER prmtop: `k = RK`, `k = TK`, radians →
   degrees. The GAFF and OPLS-AA tables (`GaffTypifier`, `OPLSAATypifier`)
@@ -129,7 +129,7 @@ an older molrs needs its values converted:
   old convention; it is refused on read (its preset and its angle unit
   disagree). Convert its parameters as above and restate the unit.
 - **Generic XML (`<BondStyle>` …) no longer renames `k0` to `k`.** The two
-  meant the same `½k` number; under the LAMMPS convention they do not, so a
+  meant the same `½k` number; under the force-field IR (LAMMPS standard) they do not, so a
   `k0` attribute is kept as `k0` and a kernel that needs `k` refuses it.
 - **The OpenMM XML reader refuses `<PeriodicImproperForce>`**, the section
   molrs 0.15.0's writer made up (it is no OpenMM force, and its rows were in
@@ -158,7 +158,7 @@ not a category: `def_style("angle", "charmm")` (Python: an `AngleStyle`), the
 angle style, and both `PotentialCompiler.compile` and `compile_typed` price it.
 The 1-3 spring adds no exclusion; which 1-3 pairs a pair style sees is
 `special_bonds`'s answer, as before. See
-[Force-field conventions](guides/forcefield-conventions.md#ureybradley).
+[Force-field IR](guides/forcefield-ir.md#ureybradley).
 Engine readers other than LAMMPS's (GROMACS funct 5, OpenMM
 `AmoebaUreyBradleyForce`, CHARMM `.prm`) come in a later release. Behaviour
 that changes with it:
@@ -187,7 +187,7 @@ that changes with it:
 ### CMAP
 
 The `cmap` category has a kernel, `cmap charmm` — LAMMPS `fix cmap`, ported
-step for step ([Force-field conventions](guides/forcefield-conventions.md),
+step for step ([Force-field IR](guides/forcefield-ir.md),
 CMAP) — and LAMMPS's `fix cmap` files are read and written.
 
 - **A `cmaps` block compiles.** `PotentialCompiler.compile` /

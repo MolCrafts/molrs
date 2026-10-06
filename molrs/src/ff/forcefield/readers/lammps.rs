@@ -1057,7 +1057,7 @@ fn add_bonded(
 /// `bond_coeff c3-c3 228.89 1.5354` that is `["228.89", "1.5354"]`, for
 /// `pair_coeff c3 c3 0.1078 3.3977` it is `["0.1078", "3.3977"]`. `units` is the
 /// LAMMPS `units` keyword the numbers are written in (`real`, `metal`, `lj`),
-/// which the params are in too: molrs's convention is LAMMPS's, so every
+/// which the params are in too: the force-field IR follows the LAMMPS standard, so every
 /// value is stored as written — the ½ inside LAMMPS's `K`, degrees for every
 /// angle-valued slot — under the molrs name of its slot:
 ///

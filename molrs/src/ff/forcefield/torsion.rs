@@ -13,7 +13,7 @@
 //! energy is the same function of φ, constant included) and an exact
 //! **projection** back (`from_series`), which either reproduces every
 //! `n ≥ 1` coefficient or refuses with a [`TorsionRefusal`] naming the term
-//! that prevents it. The forms, in LAMMPS's convention (parameters as stored,
+//! that prevents it. The forms, in the force-field IR (LAMMPS standard) (parameters as stored,
 //! phases in degrees):
 //!
 //! | form | LAMMPS style | energy | image condition (`n ≥ 1` part) | constant |

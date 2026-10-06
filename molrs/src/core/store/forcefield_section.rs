@@ -81,7 +81,7 @@ pub const UNIT_QUANTITIES: [&str; 6] = ["length", "energy", "angle", "charge", "
 /// unit (reduced `lj`).
 ///
 /// The angle is a **degree** in every preset: the presets are LAMMPS's `units`
-/// styles, and molrs's convention is LAMMPS's, whose coefficient lines give
+/// styles, and the force-field IR follows the LAMMPS standard, whose coefficient lines give
 /// every angle-valued parameter (θ₀, χ₀, phases) in degrees. A force constant
 /// stays per **radian**ⁿ (LAMMPS's `K` for an angle is energy/rad²), as in
 /// LAMMPS: `angle` is the unit of angle values, not of force-constant

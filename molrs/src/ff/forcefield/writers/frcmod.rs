@@ -4,7 +4,7 @@
 //! [`AmberPrmtopFfReader`](crate::ff::forcefield::readers::prmtop::AmberPrmtopFfReader):
 //! it writes a [`ForceField`] as the six parameter sections of an AMBER
 //! frcmod file, so tleap can load a molrs force field with
-//! `loadamberparams`. molrs's convention is LAMMPS's, which for these terms is
+//! `loadamberparams`. the force-field IR follows the LAMMPS standard, which for these terms is
 //! AMBER's own — Å, kcal/mol, amu, un-halved `K`, degrees — so every number is
 //! written as stored.
 //!
