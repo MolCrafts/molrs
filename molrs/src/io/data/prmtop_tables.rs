@@ -451,6 +451,61 @@ impl Torsion {
     }
 }
 
+/// The type name of every **proper** torsion of `torsions` (`None` for an
+/// improper, whose rows [`Torsion::improper_rows`] names).
+///
+/// A proper is named by its quartet. tleap can give two torsions of one
+/// quartet different terms — it caches the first match of a quartet in the
+/// unit's own parameter set, so a later torsion may take a specific row where
+/// an earlier one took the specific and a wildcard row (GAFF2's `hc-c3-ca-ca`
+/// beside `X -c3-ca-X`) — and a type holds one set of terms. Each further
+/// distinct set of terms on a quartet is named `<quartet>@<n>`, `n` counting
+/// the quartet's distinct sets from 2 in order of appearance; the first keeps
+/// the bare name. Term sets are compared in a canonical order, so rows
+/// written in another order are one set.
+pub fn proper_type_names(
+    torsions: &[Torsion],
+    atom_types: &[String],
+) -> Result<Vec<Option<String>>, String> {
+    let mut sets: HashMap<String, Vec<Vec<TorsionTerm>>> = HashMap::new();
+    let mut out = Vec::with_capacity(torsions.len());
+    for t in torsions {
+        if t.improper {
+            out.push(None);
+            continue;
+        }
+        let base = TypeName::join(&t.types(atom_types))?;
+        let terms = canonical_terms(&t.terms);
+        let seen = sets.entry(base.to_string()).or_default();
+        let n = match seen.iter().position(|other| *other == terms) {
+            Some(n) => n,
+            None => {
+                seen.push(terms);
+                seen.len() - 1
+            }
+        };
+        out.push(Some(if n == 0 {
+            base.to_string()
+        } else {
+            base.with_qualifier(&[&(n + 1).to_string()])?.to_string()
+        }));
+    }
+    Ok(out)
+}
+
+/// `terms` in one canonical order — by periodicity, then phase, then k — so
+/// two torsions with the same terms in a different row order compare equal.
+pub fn canonical_terms(terms: &[TorsionTerm]) -> Vec<TorsionTerm> {
+    let mut out = terms.to_vec();
+    out.sort_by(|a, b| {
+        a.periodicity
+            .total_cmp(&b.periodicity)
+            .then(a.phase.total_cmp(&b.phase))
+            .then(a.k.total_cmp(&b.k))
+    });
+    out
+}
+
 /// `n` as an integer, which every LAMMPS torsion style requires.
 fn integral_periodicity(n: f64, what: &str) -> Result<i64, String> {
     if n.fract() != 0.0 || !n.is_finite() {
@@ -967,6 +1022,43 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// tleap gave two `hc-c3-ca-ca` torsions of ibuprofen different terms
+    /// (the specific row alone, and with GAFF2's `X -c3-ca-X`): the second
+    /// set is its own type `<quartet>@2`, and a third torsion with the first
+    /// set (rows in another order) shares the bare name.
+    #[test]
+    fn a_quartet_with_a_second_set_of_terms_is_a_second_type() {
+        let types: Vec<String> = ["hc", "c3", "ca", "ca"].map(str::to_owned).to_vec();
+        let term = |periodicity: f64| TorsionTerm {
+            k: 0.0,
+            periodicity,
+            phase: 0.0,
+        };
+        let torsion = |terms: Vec<TorsionTerm>| Torsion {
+            atoms: [0, 1, 2, 3],
+            improper: false,
+            exclude_14: false,
+            terms,
+        };
+        let torsions = vec![
+            torsion(vec![term(1.0)]),
+            torsion(vec![term(1.0), term(2.0)]),
+            torsion(vec![term(2.0), term(1.0)]),
+            torsion(vec![term(1.0)]),
+        ];
+        let names = proper_type_names(&torsions, &types).unwrap();
+        let names: Vec<&str> = names.iter().map(|n| n.as_deref().unwrap()).collect();
+        assert_eq!(
+            names,
+            [
+                "hc-c3-ca-ca",
+                "hc-c3-ca-ca@2",
+                "hc-c3-ca-ca@2",
+                "hc-c3-ca-ca"
+            ]
+        );
+    }
 
     #[test]
     fn bond_1based_and_sorted() {

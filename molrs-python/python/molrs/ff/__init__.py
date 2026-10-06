@@ -89,6 +89,7 @@ from .charge import BccModel, GasteigerModel, MullikenModel
 from .potential import Potential
 from .typifier import (
     AtdTypifier,
+    GaffTypifier,
     Match,
     MMFF94STypifier,
     MMFF94Typifier,
@@ -116,6 +117,7 @@ __all__ = [
     # force field + its handle views
     "ForceField",
     "FragmentScaling",
+    "GaffTypifier",
     "GasteigerModel",
     "ImproperStyle",
     "ImproperType",

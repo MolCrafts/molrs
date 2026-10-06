@@ -1,7 +1,9 @@
 //! The cascade: exact → equivalent → wildcard row → corresponding → empirical.
 //!
-//! One set of tiers, tried in parmchk2's own order, for every arity. The tiers
-//! are what the whole estimator is:
+//! One set of tiers, modelled on parmchk2's order, for every arity (the
+//! generic estimator — GAFF itself reproduces parmchk2 exactly in
+//! `typifier::gaff`; see the [module](super) table for how this scoring
+//! differs). The tiers are what the whole estimator is:
 //!
 //! 1. **exact / class match** — the row is written for these very types. Penalty 0.
 //! 2. **equivalent-type substitution** (`EQUA`) — `gaff2`'s `ns` *is* `n`, so the
@@ -25,9 +27,9 @@
 //! tried in both orientations. An improper is a planarity constraint on a
 //! **centre** whose three peripherals are an unordered *set*, so its row is tried
 //! against all six assignments of peripherals to slots and the cheapest is paid
-//! for. And a **specific** improper row is an exact match or nothing — which is
-//! why methyl methacrylate's `c -c2-ce-c3` comes out as parmchk2's default rather
-//! than as a substituted `c -c2-c2-c3`.
+//! for. And a **specific** improper row is an exact match or nothing — so
+//! methyl methacrylate's `c -c2-ce-c3` comes out as the default rather than as
+//! a substituted `c -c2-c2-c3`.
 
 use crate::ff::forcefield::Params;
 use crate::ff::params::ParmchkPenalty;
@@ -256,7 +258,7 @@ impl Parmchk2Estimator {
     fn penalty_columns(&self, arity: Arity) -> (ParmchkPenalty, f64, f64) {
         let w = &self.substitutions.weights;
         match arity {
-            Arity::Angle => (ParmchkPenalty::Angle, w.default_angle, w.weight_angle),
+            Arity::Angle => (ParmchkPenalty::AngleCentre, w.default_angle, w.weight_angle),
             Arity::Bond => (
                 ParmchkPenalty::BondLength,
                 w.default_bond_length,
@@ -404,8 +406,9 @@ impl Parmchk2Estimator {
         Some((subs, score))
     }
 
-    /// What parmchk2 charges for replacing the row's `from` with the molecule's
-    /// `to` in a torsion, or `None` when it will not make that substitution.
+    /// What this cascade charges for replacing the row's `from` with the
+    /// molecule's `to` in a torsion, or `None` when it will not make that
+    /// substitution (its own rule, see the [module](super) table; not parmchk2's).
     ///
     /// An **inner** atom needs a tabulated correspondence and is weighted
     /// `WEIGHT_TOR_CTR` (×10). An **outer** atom may fall back on `DEFAULT_TOR`,
@@ -438,11 +441,11 @@ impl Parmchk2Estimator {
         let row = self.substitutions.correspondence(from, to);
         if inner {
             let row = row?;
-            let centre = row.get(ParmchkPenalty::TorsionCentre).unwrap_or_else(|| {
-                // Untabulated: parmchk2 interpolates between the OUTER penalty and
-                // the row's overall similarity, half and half.
+            let centre = row.get(ParmchkPenalty::Torsion).unwrap_or_else(|| {
+                // Untabulated: half the `ctor` column, half the row's overall
+                // similarity.
                 let outer = row
-                    .get(ParmchkPenalty::Torsion)
+                    .get(ParmchkPenalty::TorsionCentre)
                     .unwrap_or(weights.default_torsion);
                 let similarity = row
                     .get(ParmchkPenalty::Similarity)
@@ -453,7 +456,7 @@ impl Parmchk2Estimator {
         }
         match row {
             Some(row) => Some(
-                row.get(ParmchkPenalty::Torsion)
+                row.get(ParmchkPenalty::TorsionCentre)
                     .unwrap_or(weights.default_torsion),
             ),
             None => self
@@ -467,8 +470,8 @@ impl Parmchk2Estimator {
     /// penalty that says so. Never a fabricated barrier.
     ///
     /// Only the interpolation seam reaches this: a caller reading a parameter table
-    /// directly ([`typifier::gaff`](crate::ff::typifier::gaff)) wants to hear
-    /// that the torsion is missing, not to be handed a placeholder for it.
+    /// directly ([`Parmchk2Estimator::estimate`]) wants to hear that the torsion
+    /// is missing, not to be handed a placeholder for it.
     pub(super) fn no_torsion(&self) -> Params {
         Params::from_pairs(&[("k1", 0.0), ("k2", 0.0), ("k3", 0.0), ("k4", 0.0)])
     }
@@ -556,7 +559,8 @@ impl Parmchk2Estimator {
         };
 
         // The peripherals are a SET: the row's slots may take them in any order,
-        // and parmchk2 pays for the cheapest assignment.
+        // and the cascade pays for the cheapest assignment (parmchk2 itself
+        // tries only the bond order; `typifier::gaff::improper`).
         let slots = [
             cand.pattern[0].as_str(),
             cand.pattern[1].as_str(),

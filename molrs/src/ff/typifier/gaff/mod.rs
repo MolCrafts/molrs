@@ -15,22 +15,27 @@
 //! let typed = gaff.typify(&labelled)?;
 //! ```
 //!
-//! # Exact rows first, then the estimator
+//! # Exact rows first, then parmchk2
 //!
 //! A term is looked up first **only** against rows whose every slot is a
-//! concrete atom type. A term no such row covers goes to the table's
-//! [`Parmchk2Estimator`] ([`gaff_estimator`]): a wildcard (`X`) row that covers
-//! it is a parameter, anything reached by analogy or formula is an estimate and
-//! says so (see `Typifier::r#match` on [`GaffTypifier`]). A term neither
-//! covers is missing, and every missing term is reported at once.
+//! concrete atom type. What no such row covers is estimated exactly as
+//! AmberTools' parmchk2 estimates it: bonds and angles by [`analog`], torsions
+//! by [`torsion`] (whose estimate tleap prefers, then the wildcard row
+//! `X-j-k-X`), impropers by [`improper`]. A wildcard row that covers a term is
+//! a parameter, anything reached by analogy or formula is an estimate and says
+//! so (see `Typifier::r#match` on [`GaffTypifier`]). A term parmchk2 cannot
+//! estimate either (it writes a zero marked `ATTN, need revision`) is missing,
+//! and every missing term is reported at once.
 //!
 //! Matching a term in either orientation (`c3-c3-oh` covers `oh-c3-c3`) is not a
 //! fallback but the undirected nature of a bonded term, and the generator
 //! guarantees no table holds both a term and its reverse as separate rows.
 //!
-//! Impropers are the one exception to "missing is an error": AMBER adds an
-//! improper only at a centre `PARMCHK.DAT` flags as planar, and the estimator
-//! always answers one.
+//! Impropers are the one exception to "missing is an error": which atoms carry an improper, in which
+//! order, and at which barrier is decided by parmchk2's improper search and
+//! tleap's improper matching, and [`improper`] reproduces both exactly. An
+//! improper exists where tleap finds a row (the table's, or parmchk2's
+//! estimate at a centre `PARMCHK.DAT` flags as planar), and nowhere else.
 //!
 //! # Units
 //!
@@ -60,13 +65,15 @@ use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
 use crate::ff::params::amber::{AMBER_COULOMB, AMBER_SCEE, AMBER_SCNB};
 use crate::ff::params::{
-    GAFF, GAFF2, ParmAngleRow, ParmBondRow, ParmDihedralRow, ParmImproperRow, ParmNonbondedRow,
-    ParmTable, ParmType,
+    GAFF, GAFF2, PARMCHK, ParmAngleRow, ParmBondRow, ParmDihedralRow, ParmImproperRow,
+    ParmNonbondedRow, ParmTable, ParmType,
 };
-use crate::ff::typifier::estimate::{
-    BondedTerm, EmpiricalSet, Estimate, Parmchk2Estimator, Provenance, TypifierParameterContext,
-};
+use crate::ff::typifier::estimate::{BondedTerm, EmpiricalSet, EstimateMethod, Provenance};
 use crate::ff::typifier::{Annotation, Match, Typifier};
+
+pub mod analog;
+pub mod improper;
+pub mod torsion;
 
 /// Which AMBER `parm` force field to match against.
 ///
@@ -132,34 +139,6 @@ impl GaffParameterSet {
     }
 }
 
-/// The missing-parameter estimator of one `parm` table.
-///
-/// The estimator is the general one — [`Parmchk2Estimator`], of which molrs has
-/// exactly one — and this is how GAFF reaches it: over the set's candidate
-/// library, which the estimator flattens by style kind. Wildcard rows are
-/// included, because they are most of what the estimator is for. The library's
-/// rows are already in molrs's convention (`k = K`, degrees), and so is every
-/// estimate drawn from them (`empirical`'s formulas give AMBER's `K`), so a
-/// looked-up row and an estimate reach the output in one convention.
-///
-/// Memoised per parameter set, like the library it reads: the table is
-/// `&'static` data, and rebuilding the estimator per call doubled the test
-/// suite's wall time when it was written that way.
-pub fn gaff_estimator(set: GaffParameterSet) -> &'static Parmchk2Estimator {
-    static GAFF_ESTIMATOR: OnceLock<Parmchk2Estimator> = OnceLock::new();
-    static GAFF2_ESTIMATOR: OnceLock<Parmchk2Estimator> = OnceLock::new();
-
-    let cell = match set {
-        GaffParameterSet::Gaff => &GAFF_ESTIMATOR,
-        GaffParameterSet::Gaff2 => &GAFF2_ESTIMATOR,
-    };
-    cell.get_or_init(|| {
-        let candidates = set.library();
-        let context = TypifierParameterContext::new().with_forcefield_elements(candidates);
-        Parmchk2Estimator::with_context(candidates, context).with_empirical(set.empirical())
-    })
-}
-
 /// Transcribe a whole `parm` table into a [`ForceField`] of candidate rows.
 ///
 /// An input-free constructor over a compiled `ff/params` table: the one
@@ -175,9 +154,8 @@ fn candidate_forcefield(table: ParmTable) -> ForceField {
 
 /// The fallible body of [`candidate_forcefield`].
 ///
-/// Every row, wildcards and all — the estimator's whole job is the rows the exact
-/// matcher skips. `X` fills a wildcard slot, which is the spelling
-/// [`Candidate`](crate::ff::typifier::estimate::Candidate) reads.
+/// Every row, wildcards and all, `X` filling a wildcard slot: the library is
+/// what [`Typifier::library`] hands out, and the output declares its styles.
 ///
 /// The library declares AMBER's 1-4 handling — 1-2 / 1-3 excluded outright, 1-4
 /// scaled by 1/SCNB = 1/2 (LJ) and 1/SCEE = 1/1.2 (Coulomb) — so every typing
@@ -326,7 +304,7 @@ fn borrowed(params: &[(String, f64)]) -> Vec<(&str, f64)> {
     params.iter().map(|(k, v)| (k.as_str(), *v)).collect()
 }
 
-/// A term of the molecule that neither an exact row nor the estimator covers.
+/// A term of the molecule that neither an exact row nor parmchk2 covers.
 ///
 /// Atom types are the GAFF labels of the term's atoms, in the molecule's own
 /// order. Every miss is collected before returning, so one call names every
@@ -368,7 +346,7 @@ pub(crate) enum GaffError {
         /// The atom's 0-based index in graph atom order.
         atom: usize,
     },
-    /// Neither the table nor the estimator covers one or more of the
+    /// Neither the table nor parmchk2 covers one or more of the
     /// molecule's terms.
     ///
     /// An atom type the table does not declare at all ([`MissingTerm::Mass`])
@@ -468,8 +446,8 @@ pub struct GaffTypifier {
 }
 
 impl GaffTypifier {
-    /// A typifier over `set`'s table. The library and estimator it reads are
-    /// shared per set, so construction is free.
+    /// A typifier over `set`'s table. The library it reads is shared per set,
+    /// so construction is free.
     pub fn new(set: GaffParameterSet) -> Self {
         Self { set }
     }
@@ -477,17 +455,16 @@ impl GaffTypifier {
     /// The body of [`Typifier::r#match`], with the typed error.
     fn match_terms(&self, graph: &mut Atomistic) -> Result<Match, GaffError> {
         let index = TableIndex::new(self.set.table());
-        let estimator = gaff_estimator(self.set);
         let type_of = index.intern_atoms(graph)?;
         let mut missed = Misses::default();
 
         // Topology first, so every positional vector below is read off the
         // graph `Match::write_onto` stamps: angles and dihedrals regenerated
-        // from the bond graph, impropers rebuilt from the table.
+        // from the bond graph, impropers rebuilt as AmberTools builds them.
         graph
             .generate_topology(true, true, false, true)
             .map_err(malformed)?;
-        let mut improper_terms = add_impropers(graph, &index, estimator, &type_of)?;
+        let mut improper_terms = add_impropers(graph, &index, &type_of)?;
 
         let mut m = Match::default();
 
@@ -518,6 +495,26 @@ impl GaffTypifier {
             })
             .collect();
 
+        // parmchk2 walks the molecule in atom and bond order; its estimates for
+        // the bonds and angles the table lacks come first.
+        let order: Vec<AtomId> = graph.atoms().map(|(id, _)| id).collect();
+        let neighbours: Vec<Vec<AtomId>> = order
+            .iter()
+            .map(|&a| graph.neighbor_bonds(a).map(|(n, _)| n).collect())
+            .collect();
+        let names: HashMap<AtomId, &'static str> = type_of
+            .iter()
+            .map(|(&atom, &ty)| (atom, index.name_of(ty)))
+            .collect();
+        let analogs = analog::Analogs::new(
+            &order,
+            &neighbours,
+            &names,
+            index.table,
+            &PARMCHK,
+            self.set.empirical().table(),
+        );
+
         // --- bonds ---
         let bonds: Vec<(AtomId, AtomId)> = graph
             .bonds()
@@ -532,8 +529,12 @@ impl GaffTypifier {
                 )),
                 None => {
                     let names = index.names([ti, tj]);
-                    match Bonded::estimate(estimator, &BondedTerm::Bond(names.clone()))? {
-                        Some(resolved) => Some(resolved),
+                    match analogs.bond([index.name_of(ti), index.name_of(tj)]) {
+                        Some(estimate) => Some(Bonded::estimated(
+                            &BondedTerm::Bond(names),
+                            estimate.params.clone(),
+                            estimate.provenance.clone(),
+                        )),
                         None => {
                             missed.note(MissingTerm::Bond(names));
                             None
@@ -558,8 +559,13 @@ impl GaffTypifier {
                 )),
                 None => {
                     let names = index.names([ti, tj, tk]);
-                    match Bonded::estimate(estimator, &BondedTerm::Angle(names.clone()))? {
-                        Some(resolved) => Some(resolved),
+                    let types = [ti, tj, tk].map(|ty| index.name_of(ty));
+                    match analogs.angle(types) {
+                        Some(estimate) => Some(Bonded::estimated(
+                            &BondedTerm::Angle(names),
+                            estimate.params.clone(),
+                            estimate.provenance.clone(),
+                        )),
                         None => {
                             missed.note(MissingTerm::Angle(names));
                             None
@@ -571,9 +577,10 @@ impl GaffTypifier {
         }
 
         // --- dihedrals ---
-        // A torsion the exact index misses is not yet missing: the wildcard rows
-        // are most of the DIHE section, and parmchk2 estimates only what they too
-        // fail to cover.
+        // A torsion the exact index misses is not yet missing: parmchk2 may
+        // estimate it (a specific frcmod row, which tleap prefers), else the
+        // wildcard rows — most of the DIHE section — may cover it.
+        let torsions = torsion::Torsions::new(&order, &neighbours, &names, index.table, &PARMCHK);
         let dihedrals: Vec<[AtomId; 4]> = graph
             .dihedrals()
             .map(|(_, d)| [d.nodes[0], d.nodes[1], d.nodes[2], d.nodes[3]])
@@ -592,12 +599,24 @@ impl GaffTypifier {
                 }
                 None => {
                     let names = index.names(quartet);
-                    match Bonded::estimate(estimator, &BondedTerm::Dihedral(names.clone()))? {
-                        Some(resolved) => Some(resolved),
-                        None => {
-                            missed.note(MissingTerm::Dihedral(names));
-                            None
-                        }
+                    let term = BondedTerm::Dihedral(names.clone());
+                    let endpoints: Vec<String> =
+                        term.endpoints().into_iter().map(str::to_owned).collect();
+                    let canon = torsion::canonical(quartet.map(|ty| index.name_of(ty)));
+                    if let Some(estimate) = torsions.estimate(&canon) {
+                        Some(Bonded::estimated(
+                            &term,
+                            Params::from_pairs(&borrowed(&dihedral_params(&estimate.rows))),
+                            estimate.provenance.clone(),
+                        ))
+                    } else if let Some(rows) = torsions.general(canon[1], canon[2]) {
+                        Some((
+                            endpoints,
+                            Bonded::matched(Params::from_pairs(&borrowed(&dihedral_params(&rows)))),
+                        ))
+                    } else {
+                        missed.note(MissingTerm::Dihedral(names));
+                        None
                     }
                 }
             };
@@ -630,13 +649,16 @@ impl Typifier for GaffTypifier {
     /// Match the bonded terms of a molecule whose atoms carry GAFF types.
     ///
     /// Angles and dihedrals are regenerated from the bond graph onto `graph`;
-    /// impropers are rebuilt — in AMBER's central-atom-third order — at every
-    /// 3-coordinate centre `PARMCHK.DAT` flags as planar. Atoms get `type` as a
+    /// impropers are rebuilt as parmchk2 + tleap build them (see [`improper`]),
+    /// in AMBER's central-atom-third order. Atom order and bond order are read
+    /// as antechamber reads a mol2 file's: they decide parmchk2's improper
+    /// estimates and tleap's atom order, as they do in AmberTools. Atoms get `type` as a
     /// type under `atom/full` with the table's `mass`; every bond, angle,
     /// dihedral and improper gets `type` as a type under `bond/harmonic`,
     /// `angle/harmonic`, `dihedral/periodic` or `improper/periodic`. A term an
     /// exact row covers is named by that row; any other is named by
-    /// [`BondedTerm::type_name`], and when it was estimated rather than covered
+    /// [`BondedTerm::type_name`] (an estimated term: its types, qualified
+    /// `@<analog>_<penalty>`), and when it was estimated rather than covered
     /// by a wildcard row its params carry the provenance keys `estimated`,
     /// `estimate_penalty`, `estimate_method` and `estimate_analog`. Styles:
     /// every library style, in library order. Pairs: the library's `lj/cut`
@@ -673,13 +695,15 @@ impl Typifier for GaffTypifier {
 /// rather than looked up — what that cost.
 ///
 /// The parameters are in the library's convention whether they came from a row
-/// of the table or from the estimator: that is the point of the convention, and
+/// of the table or from parmchk2's search: that is the point of the convention, and
 /// it is why one struct serves all four arities. The provenance rides with them
 /// rather than being reconstructed afterwards — an estimate that does not say so
 /// is not auditable.
 struct Bonded {
     params: Params,
     estimate: Option<Provenance>,
+    /// Qualifier fields of the type name (`<types>@<fields>`), or empty.
+    qualifier: Vec<String>,
 }
 
 impl Bonded {
@@ -687,22 +711,21 @@ impl Bonded {
         Self {
             params,
             estimate: None,
+            qualifier: Vec::new(),
         }
     }
 
-    /// Ask the estimator for `term`: its [`BondedTerm::endpoints`] and params,
-    /// or `None` when nothing can produce it.
-    fn estimate(
-        estimator: &Parmchk2Estimator,
-        term: &BondedTerm,
-    ) -> Result<Option<(Vec<String>, Self)>, GaffError> {
-        let Some(estimate) = estimator.estimate(term) else {
-            return Ok(None);
-        };
-        Ok(Some((
+    /// A term parmchk2 estimated: its [`BondedTerm::endpoints`], `params`, the
+    /// provenance, and the type-name qualifier it implies.
+    fn estimated(term: &BondedTerm, params: Params, provenance: Provenance) -> (Vec<String>, Self) {
+        (
             term.endpoints().into_iter().map(str::to_owned).collect(),
-            Self::from(estimate),
-        )))
+            Self {
+                params,
+                qualifier: estimate_qualifier(&provenance),
+                estimate: Some(provenance),
+            },
+        )
     }
 
     /// The annotations of one term: `type` → the term's type under `style`,
@@ -717,11 +740,16 @@ impl Bonded {
             return Ok(Vec::new());
         };
         let ends: Vec<&str> = endpoints.iter().map(String::as_str).collect();
-        let name = TypeName::join(&ends).map_err(malformed)?;
+        let mut name = TypeName::join(&ends).map_err(malformed)?;
         let Bonded {
             mut params,
             estimate,
+            qualifier,
         } = term;
+        if !qualifier.is_empty() {
+            let fields: Vec<&str> = qualifier.iter().map(String::as_str).collect();
+            name = name.with_qualifier(&fields).map_err(malformed)?;
+        }
         if let Some(provenance) = &estimate {
             provenance.write_onto(&mut params);
         }
@@ -737,35 +765,18 @@ impl Bonded {
     }
 }
 
-impl From<Estimate> for Bonded {
-    /// A term the estimator answered. A **wildcard row** answer is
-    /// [`Estimate::Covered`]: the table covered the term, so it is a parameter and
-    /// carries no provenance — which is exactly what parmchk2 does.
-    fn from(estimate: Estimate) -> Self {
-        match estimate {
-            Estimate::Covered { params, .. } => Self::matched(params),
-            Estimate::Estimated { params, provenance } => Self {
-                params,
-                estimate: Some(provenance),
-            },
-        }
-    }
-}
-
-/// Enumerate AMBER impropers onto `graph` and resolve each one.
+/// Rebuild the impropers of `graph` as AmberTools would (see [`improper`]) and
+/// resolve each one, by id.
 ///
-/// A centre with exactly three neighbours is a candidate; it becomes an improper
-/// only if `PARMCHK.DAT` flags its type as an improper centre. An exact row
-/// whose central slot is the centre's type and whose three peripheral slots are,
-/// as a multiset, the neighbours' types fixes the atom order — the relation is
-/// added as I-J-K-L with the centre at K, which is where
-/// [`ImproperPeriodic`](crate::ff::potential::improper::periodic::ImproperPeriodic)
-/// expects it — so no peripheral ordering convention has to be invented here.
-/// Returns the resolved term of every improper added, by id.
+/// A term parmchk2 reached by analogy or took as its default is named with
+/// the qualifier `@<analog>_<penalty>` (`c3-o-c-os@c3.o.c.oh_8.5`, `…@default_0.0`):
+/// parmchk2 searches a quartet's peripherals in bond order, so one quartet can
+/// be estimated differently in two molecules, and one output force field
+/// holds both. A table row, or a wildcard row parmchk2 matched outright, is
+/// named by its four types alone.
 fn add_impropers(
     graph: &mut Atomistic,
     index: &TableIndex,
-    estimator: &Parmchk2Estimator,
     type_of: &HashMap<AtomId, ParmType>,
 ) -> Result<HashMap<ImproperId, (Vec<String>, Bonded)>, GaffError> {
     // Rebuild from scratch: a pre-existing improper would survive with a label
@@ -774,70 +785,51 @@ fn add_impropers(
     for id in existing {
         graph.remove_improper(id).map_err(malformed)?;
     }
-
-    let centres: Vec<(AtomId, Vec<AtomId>)> = graph
-        .atoms()
-        .map(|(id, _)| {
-            let neighbours: Vec<AtomId> = graph.neighbor_bonds(id).map(|(n, _)| n).collect();
-            (id, neighbours)
-        })
-        .filter(|(id, neighbours)| {
-            // The `improper_flag` column of PARMCHK.DAT — a planar centre carries
-            // an improper, an sp3 one does not, and that is upstream DATA rather
-            // than a hybridisation this crate re-derives.
-            neighbours.len() == 3 && estimator.is_improper_centre(index.name_of(type_of[id]))
-        })
+    let names: HashMap<AtomId, &'static str> = type_of
+        .iter()
+        .map(|(&atom, &ty)| (atom, index.name_of(ty)))
         .collect();
-
     let mut terms = HashMap::new();
-    for (centre, peripherals) in centres {
-        let peripheral_types: Vec<ParmType> = peripherals.iter().map(|n| type_of[n]).collect();
-
-        // An exact row fixes the atom order itself; anything else is an estimate,
-        // and its peripherals are ordered by type name so one improper has one name.
-        let (order, endpoints, term) = match index.improper(type_of[&centre], &peripheral_types) {
-            Some((row, order)) => (
-                order,
-                index.names(concrete(row.i, row.j, row.k, row.l)).to_vec(),
-                Bonded::matched(Params::from_pairs(&improper_params(row))),
-            ),
-            None => {
-                let mut order = [0usize, 1, 2];
-                order.sort_by_key(|&slot| index.name_of(peripheral_types[slot]));
-                let names: Vec<&'static str> = order
-                    .iter()
-                    .map(|&slot| index.name_of(peripheral_types[slot]))
-                    .collect();
-                let centre_name = index.name_of(type_of[&centre]);
-                // AMBER slot order: the centre is THIRD, the peripherals a set.
-                let term = BondedTerm::Improper([
-                    names[0].to_owned(),
-                    names[1].to_owned(),
-                    centre_name.to_owned(),
-                    names[2].to_owned(),
-                ]);
-                let estimate = estimator
-                    .estimate(&term)
-                    .expect("an improper always resolves — a row, or parmchk2's default");
-                (
-                    order,
-                    term.endpoints().into_iter().map(str::to_owned).collect(),
-                    Bonded::from(estimate),
-                )
-            }
+    for term in improper::impropers(graph, index.table, &PARMCHK, &names) {
+        let [i, j, k, l] = term.atoms;
+        let id = graph.add_improper(i, j, k, l).map_err(malformed)?;
+        let qualifier = term
+            .estimate
+            .as_ref()
+            .map(estimate_qualifier)
+            .unwrap_or_default();
+        let bonded = Bonded {
+            params: term.params,
+            estimate: term.estimate,
+            qualifier,
         };
-
-        let id = graph
-            .add_improper(
-                peripherals[order[0]],
-                peripherals[order[1]],
-                centre,
-                peripherals[order[2]],
-            )
-            .map_err(malformed)?;
-        terms.insert(id, (endpoints, term));
+        terms.insert(id, (term.types.to_vec(), bonded));
     }
     Ok(terms)
+}
+
+/// The type-name qualifier of a term parmchk2 estimated, empty for one it
+/// matched outright.
+///
+/// parmchk2 searches a molecule's terms in atom and bond order and reuses a
+/// name's first estimate for the rest of the molecule (an empirical angle
+/// reads the bonds estimated before it), so one name can be estimated
+/// differently in two molecules; one output force field holds both. An
+/// estimate is qualified `@<analog>_<penalty>` — the row it copied, or the
+/// types an empirical angle was computed for, with `-` written `.`
+/// (`c3-o-c-os@c3.o.c.oh_8.5`, `c-cc-na@c2.cc.na_2.6`) — and the improper
+/// default `@default_0.0`. A wildcard row parmchk2 matched outright depends
+/// on the four types alone and is not qualified.
+fn estimate_qualifier(p: &Provenance) -> Vec<String> {
+    if p.method == EstimateMethod::GenericWildcard && !p.analog.is_empty() {
+        return Vec::new();
+    }
+    let analog = if p.analog.is_empty() {
+        "default".to_owned()
+    } else {
+        p.analog.replace('-', ".")
+    };
+    vec![analog, format!("{:.1}", p.penalty)]
 }
 
 /// The four slots of a row this module has already established is wildcard-free.
@@ -898,8 +890,6 @@ struct TableIndex {
     angles: HashMap<[ParmType; 3], &'static ParmAngleRow>,
     /// Every cosine term of a quartet, in file order.
     dihedrals: HashMap<[ParmType; 4], Vec<&'static ParmDihedralRow>>,
-    /// Wildcard-free improper rows, in file order — the first match wins.
-    impropers: Vec<&'static ParmImproperRow>,
 }
 
 impl TableIndex {
@@ -924,11 +914,6 @@ impl TableIndex {
             bonds: table.bonds.iter().map(|r| ([r.i, r.j], r)).collect(),
             angles: table.angles.iter().map(|r| ([r.i, r.j, r.k], r)).collect(),
             dihedrals,
-            impropers: table
-                .impropers
-                .iter()
-                .filter(|r| [r.i, r.j, r.k, r.l].iter().all(Option::is_some))
-                .collect(),
         }
     }
 
@@ -998,34 +983,6 @@ impl TableIndex {
             .or_else(|| self.dihedrals.get(&[l, k, j, i]))
             .map(Vec::as_slice)
     }
-
-    /// The first wildcard-free improper row for a `centre`-typed atom whose three
-    /// neighbours carry `peripherals` (in any order).
-    ///
-    /// Returns the row together with which neighbour fills each of the row's
-    /// I / J / L slots, so the caller adds the relation in the row's order rather
-    /// than inventing one.
-    fn improper(
-        &self,
-        centre: ParmType,
-        peripherals: &[ParmType],
-    ) -> Option<(&'static ParmImproperRow, [usize; 3])> {
-        self.impropers.iter().find_map(|row| {
-            if row.k? != centre {
-                return None;
-            }
-            let wanted = [row.i?, row.j?, row.l?];
-            let mut taken = [false; 3];
-            let mut order = [0usize; 3];
-            for (slot, want) in wanted.iter().enumerate() {
-                let found =
-                    (0..peripherals.len()).find(|&idx| !taken[idx] && peripherals[idx] == *want)?;
-                taken[found] = true;
-                order[slot] = found;
-            }
-            Some((*row, order))
-        })
-    }
 }
 
 #[cfg(test)]
@@ -1040,11 +997,9 @@ mod tests {
 
     use molrs::store::keys;
     use molrs::system::atomistic::Atomistic;
-    use molrs::system::molgraph::PropValue;
 
     use super::{
-        GaffParameterSet, GaffTypifier, angle_params, bond_params, gaff_estimator,
-        try_candidate_forcefield,
+        GaffParameterSet, GaffTypifier, angle_params, bond_params, try_candidate_forcefield,
     };
     use crate::ff::forcefield::{ForceField, SpecialBonds};
     use crate::ff::typifier::Typing;
@@ -1182,53 +1137,94 @@ mod tests {
     }
 
     /// `gaff.dat` has no BOND row for `hc-br` (no GAFF-typed molecule bonds H to
-    /// Br), so the bond is estimated. Its output definition says so: it carries
-    /// `estimated = 1`, a numeric `estimate_penalty`, and the string params
-    /// `estimate_method` and `estimate_analog` (empty for a formula).
+    /// Br), and parmchk2 finds no analog for one: it writes the bond with a zero
+    /// length, `ATTN, need revision`. molrs reports it missing instead.
     #[test]
-    fn gaff_typing_an_estimated_term_carries_its_provenance() {
+    fn a_bond_parmchk2_cannot_estimate_is_missing() {
         let mut typing = Typing::new(GaffTypifier::new(GaffParameterSet::Gaff));
-        let typed = typing
+        let err = typing
             .typify(&diatomic(("H", "hc"), ("Br", "br")))
-            .expect("an H-Br bond is estimated, not missing");
+            .expect_err("parmchk2 has no analog for hc-br");
+        assert!(err.contains("BOND hc-br"), "{err}");
+    }
 
-        let labels: Vec<String> = typed
-            .bonds()
-            .map(|(_, bond)| match bond.props.get(keys::TYPE) {
-                Some(PropValue::Str(label)) => label.clone(),
-                other => panic!("the bond carries no string `type`: {other:?}"),
-            })
+    /// Caffeine under GAFF (antechamber's types, its bond order): parmchk2
+    /// (AmberTools 26.1) writes `c -cc-na   68.700  123.270   same as
+    /// c2-cc-na, penalty score=  2.6` — `c` → `c2` at an angle end costs
+    /// `0.5·ba + 0.5·baf` of its `CORR` row (2.9, 2.3). The estimate says so.
+    #[test]
+    fn caffeines_c_cc_na_angle_is_parmchk2s_estimate() {
+        let caffeine = molecule(
+            &[
+                ("C", "c3"),
+                ("N", "na"),
+                ("C", "cc"),
+                ("N", "nd"),
+                ("C", "cd"),
+                ("C", "cc"),
+                ("C", "c"),
+                ("O", "o"),
+                ("N", "n"),
+                ("C", "c3"),
+                ("C", "c"),
+                ("O", "o"),
+                ("N", "n"),
+                ("C", "c3"),
+                ("H", "h1"),
+                ("H", "h1"),
+                ("H", "h1"),
+                ("H", "h5"),
+                ("H", "h1"),
+                ("H", "h1"),
+                ("H", "h1"),
+                ("H", "h1"),
+                ("H", "h1"),
+                ("H", "h1"),
+            ],
+            &[
+                (0, 1),
+                (1, 2),
+                (2, 3),
+                (3, 4),
+                (4, 5),
+                (1, 5),
+                (5, 6),
+                (6, 7),
+                (6, 8),
+                (8, 9),
+                (8, 10),
+                (10, 11),
+                (10, 12),
+                (4, 12),
+                (12, 13),
+                (0, 14),
+                (0, 15),
+                (0, 16),
+                (2, 17),
+                (9, 18),
+                (9, 19),
+                (9, 20),
+                (13, 21),
+                (13, 22),
+                (13, 23),
+            ],
+        );
+        let mut typing = Typing::new(GaffTypifier::new(GaffParameterSet::Gaff));
+        typing.typify(&caffeine).expect("caffeine types");
+        let angles = params_of(typing.forcefield(), "angle");
+        let estimated: Vec<_> = angles
+            .iter()
+            .filter(|(_, p)| p.get("estimated").is_some())
             .collect();
-        assert_eq!(labels.len(), 1, "one bond");
-        let label = &labels[0];
-
-        let definitions: Vec<_> = typing
-            .forcefield()
-            .get_styles("bond")
-            .into_iter()
-            .flat_map(|s| s.defs().collect_type_params())
-            .filter(|(name, _)| name == label)
-            .collect();
-        assert_eq!(
-            definitions.len(),
-            1,
-            "exactly one bond definition named `{label}`"
-        );
-        let params = &definitions[0].1;
-
-        assert_eq!(params.get("estimated"), Some(1.0), "`{label}` is flagged");
-        assert!(
-            params.get("estimate_penalty").is_some(),
-            "`{label}` carries its penalty"
-        );
-        assert!(
-            params.get_str("estimate_method").is_some(),
-            "`{label}` carries its method"
-        );
-        assert!(
-            params.get_str("estimate_analog").is_some(),
-            "`{label}` carries its analog"
-        );
+        assert_eq!(estimated.len(), 1, "{angles:?}");
+        let (name, params) = estimated[0];
+        assert_eq!(name, "c-cc-na@c2.cc.na_2.6");
+        assert_eq!(params.get("k"), Some(68.7));
+        assert_eq!(params.get("theta0"), Some(123.27));
+        assert_eq!(params.get_str("estimate_method"), Some("analogy"));
+        assert_eq!(params.get_str("estimate_analog"), Some("c2-cc-na"));
+        let penalty = params.get("estimate_penalty").unwrap();
+        assert!((penalty - 2.6).abs() < 1e-12, "{penalty}");
     }
 
     // -- the candidate library and its estimator ---------------------------------
@@ -1269,23 +1265,113 @@ mod tests {
         assert_eq!(params[1].1, row.angle_deg);
     }
 
-    /// The estimator draws from the same candidate tables, so a formula-derived
-    /// constant must be in the same convention as a looked-up row. A factor of
-    /// two here is invisible in an energy — it just makes a bond too soft.
+    // -- impropers and torsions as AmberTools builds them ----------------------
+
+    /// A molecule of `(element, type)` atoms and `bonds` (in this order).
+    fn molecule(atoms: &[(&str, &str)], bonds: &[(usize, usize)]) -> Atomistic {
+        let mut mol = Atomistic::new();
+        let ids: Vec<_> = atoms
+            .iter()
+            .map(|&(el, ty)| {
+                let id = mol.add_atom_bare(el);
+                mol.set_atom(id, keys::TYPE, ty).expect("stamp type");
+                id
+            })
+            .collect();
+        for &(a, b) in bonds {
+            mol.add_bond(ids[a], ids[b]).expect("bond");
+        }
+        mol
+    }
+
+    /// The params of every `category` type of `ff`, by name.
+    fn params_of(
+        ff: &ForceField,
+        category: &str,
+    ) -> BTreeMap<String, crate::ff::forcefield::Params> {
+        ff.get_styles(category)
+            .into_iter()
+            .flat_map(|s| s.defs().collect_type_params())
+            .collect()
+    }
+
+    /// Ethylene's two sp2 carbons: parmchk2 (AmberTools 26.1) writes
+    /// `c2-ha-c2-ha 1.1 Same as X -X -ca-ha, penalty score= 47.1` under GAFF and
+    /// `c2-ha-c2-ha 10.5 Same as X -X -cc-X , penalty score= 40.3` under GAFF2,
+    /// whose 2.2.30 table added the `X -X -cc-X` row; tleap gives each carbon
+    /// that improper.
     #[test]
-    fn an_empirical_estimate_shares_the_tables_convention() {
-        let estimator = gaff_estimator(GaffParameterSet::Gaff);
-        let table = GaffParameterSet::Gaff.table();
-        let row = &table.bonds[0];
-        let names = [
-            table.name_of(row.i).to_owned(),
-            table.name_of(row.j).to_owned(),
-        ];
-        let looked_up = estimator.estimate_bond(&names).expect("a row exists");
-        let k = looked_up.get("k").expect("canonical `k`");
-        assert!(
-            (k - row.force_constant).abs() < 1e-9,
-            "a table hit arrives as AMBER's K, like every estimate"
+    fn ethylene_impropers_are_parmchk2s_estimates() {
+        let ethylene = molecule(
+            &[
+                ("C", "c2"),
+                ("C", "c2"),
+                ("H", "ha"),
+                ("H", "ha"),
+                ("H", "ha"),
+                ("H", "ha"),
+            ],
+            &[(0, 1), (0, 2), (0, 3), (1, 4), (1, 5)],
         );
+        for (set, k, analog, penalty) in [
+            (GaffParameterSet::Gaff, 1.1, "X-X-ca-ha", 47.1),
+            (GaffParameterSet::Gaff2, 10.5, "X-X-cc-X", 40.3),
+        ] {
+            let mut typing = Typing::new(GaffTypifier::new(set));
+            let typed = typing.typify(&ethylene).expect("ethylene types");
+            assert_eq!(typed.impropers().count(), 2, "{}", set.name());
+            let impropers = params_of(typing.forcefield(), "improper");
+            assert_eq!(impropers.len(), 1, "{}: {impropers:?}", set.name());
+            let params = impropers.values().next().unwrap();
+            assert_eq!(params.get("k"), Some(k), "{}", set.name());
+            assert_eq!(params.get_str("estimate_analog"), Some(analog));
+            let got = params.get("estimate_penalty").unwrap();
+            assert!((got - penalty).abs() < 1e-9, "{}: {got}", set.name());
+        }
+    }
+
+    /// Guanidinium: parmchk2 writes `nh-cz-nh-hn 4 2.700 180.000 2.000 same as
+    /// X -c2-nh-X , penalty score=462.5` — `cz` stands in for the `c2` of a
+    /// wildcard row through `cz`'s own `CORR c2` line.
+    #[test]
+    fn guanidinium_torsion_is_parmchk2s_corresponding_wildcard_row() {
+        let guanidinium = molecule(
+            &[
+                ("C", "cz"),
+                ("N", "nh"),
+                ("N", "nh"),
+                ("N", "nh"),
+                ("H", "hn"),
+                ("H", "hn"),
+                ("H", "hn"),
+                ("H", "hn"),
+                ("H", "hn"),
+                ("H", "hn"),
+            ],
+            &[
+                (0, 1),
+                (0, 2),
+                (0, 3),
+                (1, 4),
+                (1, 5),
+                (2, 6),
+                (2, 7),
+                (3, 8),
+                (3, 9),
+            ],
+        );
+        let mut typing = Typing::new(GaffTypifier::new(GaffParameterSet::Gaff));
+        typing.typify(&guanidinium).expect("guanidinium types");
+        let dihedrals = params_of(typing.forcefield(), "dihedral");
+        let estimated: Vec<_> = dihedrals
+            .iter()
+            .filter(|(_, p)| p.get("estimated").is_some())
+            .collect();
+        assert_eq!(estimated.len(), 1, "{dihedrals:?}");
+        let (name, params) = estimated[0];
+        assert!(name.ends_with("@X.c2.nh.X_462.5"), "{name}");
+        assert_eq!(params.get("k1"), Some(2.7 / 4.0));
+        assert_eq!(params.get("periodicity1"), Some(2.0));
+        assert_eq!(params.get("phase1"), Some(180.0));
     }
 }

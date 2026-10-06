@@ -1,0 +1,213 @@
+"""Python-binding coverage for ``GaffTypifier`` and ``ForceField.materialize_params``.
+
+The GAFF / GAFF2 matching itself (table rows, parmchk2's estimates, tleap's
+impropers) is owned by the Rust tests in ``molrs/src/ff/typifier/gaff`` and
+checked there against an AmberTools-built prmtop; these tests prove the
+binding seam: construction, the ATD → GAFF composition, the output force
+field, and the per-row parameter columns. The two pinned numbers below are
+parmchk2's (AmberTools 26.1) estimates for ethylene, quoted, not recomputed.
+"""
+
+from __future__ import annotations
+
+import math
+
+import molrs
+import numpy as np
+import pytest
+
+
+def _acetanilide() -> molrs.Atomistic:
+    """Acetanilide with hydrogens and 3D coordinates."""
+    heavy = molrs.io.SmilesIR("CC(=O)Nc1ccccc1").to_atomistic()
+    mol, _ = molrs.conformer.Conformer(seed=7).generate(heavy)
+    return mol
+
+
+def _typed(parameter_set: str, mol: molrs.Atomistic | None = None):
+    """``(typifier, typed Atomistic)``: ATD types, then the GAFF table."""
+    mol = _acetanilide() if mol is None else mol
+    labelled = molrs.ff.typifier.AtdTypifier(parameter_set=parameter_set).typify(mol)
+    gaff = molrs.ff.typifier.GaffTypifier(parameter_set=parameter_set)
+    return gaff, gaff.typify(labelled)
+
+
+def _ethylene() -> molrs.Atomistic:
+    mol = molrs.Atomistic()
+    c1 = mol.def_atom(element="C", type="c2")
+    c2 = mol.def_atom(element="C", type="c2")
+    mol.def_bond(c1, c2)
+    for c in (c1, c1, c2, c2):
+        mol.def_bond(c, mol.def_atom(element="H", type="ha"))
+    return mol
+
+
+# ---------------------------------------------------------------------------
+# GaffTypifier
+# ---------------------------------------------------------------------------
+
+
+def test_gaff_typifier_is_exposed() -> None:
+    assert "GaffTypifier" in molrs.ff.typifier.__all__
+    assert molrs.ff.GaffTypifier is molrs.ff.typifier.GaffTypifier
+    gaff = molrs.ff.typifier.GaffTypifier(parameter_set="gaff2")
+    assert isinstance(gaff, molrs.ff.Typifier)
+    assert gaff.parameter_set == "gaff2"
+    assert repr(gaff) == "GaffTypifier(parameter_set='gaff2')"
+
+
+def test_the_parameter_set_is_required_and_checked() -> None:
+    with pytest.raises(TypeError):
+        molrs.ff.typifier.GaffTypifier()  # type: ignore[call-arg]
+    with pytest.raises(ValueError, match="gaff, gaff2"):
+        molrs.ff.typifier.GaffTypifier(parameter_set="amber")
+
+
+@pytest.mark.parametrize("parameter_set", ["gaff", "gaff2"])
+def test_atd_then_gaff_types_and_prices_acetanilide(parameter_set: str) -> None:
+    gaff, typed = _typed(parameter_set)
+    frame = typed.to_frame()
+    assert frame["bonds"].nrows == 19
+    assert frame["angles"].nrows == 30
+    assert frame["dihedrals"].nrows == 38
+    assert frame["impropers"].nrows > 0
+    ff = gaff.forcefield()
+    assert ff.name == parameter_set
+    assert ff.special_bonds == ([0.0, 0.0, 0.5], [0.0, 0.0, pytest.approx(1 / 1.2)])
+    styles = {(s.category, s.name) for s in ff.styles}
+    assert ("improper", "periodic") in styles
+    # Charges are not a GAFF parameter: a charge model supplies them.
+    atoms = frame["atoms"]
+    atoms.insert("charge", molrs.ff.GasteigerModel().assign(typed))
+    frame["atoms"] = atoms
+    frame["pairs"] = molrs.ff.intramolecular_pairs(frame, ff)
+    energy = molrs.ff.PotentialCompiler(ff).compile(frame).calc_energy(frame)
+    assert math.isfinite(energy)
+
+
+def test_an_untyped_atom_is_refused() -> None:
+    gaff = molrs.ff.typifier.GaffTypifier(parameter_set="gaff")
+    with pytest.raises(ValueError, match="carries no"):
+        gaff.typify(_acetanilide())
+
+
+@pytest.mark.parametrize(
+    ("parameter_set", "k", "analog"),
+    [("gaff", 1.1, "X-X-ca-ha"), ("gaff2", 10.5, "X-X-cc-X")],
+)
+def test_ethylene_impropers_are_parmchk2s(parameter_set: str, k: float, analog: str) -> None:
+    """parmchk2: ``c2-ha-c2-ha 1.1 Same as X -X -ca-ha`` (GAFF),
+    ``10.5 Same as X -X -cc-X`` (GAFF2)."""
+    gaff = molrs.ff.typifier.GaffTypifier(parameter_set=parameter_set)
+    typed = gaff.typify(_ethylene())
+    assert typed.to_frame()["impropers"].nrows == 2
+    (improper,) = gaff.forcefield().get_types("improper")
+    assert improper.params["k"] == k
+    assert improper.params["estimate_analog"] == analog
+
+
+def test_a_native_gaff_subclass_cannot_override_match() -> None:
+    with pytest.raises(TypeError, match="native typifier"):
+
+        class _Bad(molrs.ff.typifier.GaffTypifier):  # pragma: no cover - refused
+            def match(self, graph):
+                return None
+
+
+# ---------------------------------------------------------------------------
+# ForceField.materialize_params
+# ---------------------------------------------------------------------------
+
+
+def _column(frame: molrs.Frame, block: str, key: str) -> np.ndarray:
+    return np.asarray(frame[block][key])
+
+
+def test_gaff2_reference_columns_are_the_typed_parameters() -> None:
+    gaff, typed = _typed("gaff2")
+    ff = gaff.forcefield()
+    frame = typed.to_frame()
+    written = ff.materialize_params(frame, prefix="gaff2_")
+
+    assert {"gaff2_k", "gaff2_r0"} <= set(written["bonds"])
+    assert {"gaff2_k", "gaff2_theta0"} <= set(written["angles"])
+    assert {"gaff2_epsilon", "gaff2_sigma", "gaff2_mass"} <= set(written["atoms"])
+    assert "gaff2_k1" in written["dihedrals"]
+    assert "gaff2_k" in written["impropers"]
+
+    by_name = {t.name: t.params for t in ff.get_types("bond")}
+    for label, k, r0 in zip(
+        frame["bonds"]["type"],
+        _column(frame, "bonds", "gaff2_k"),
+        _column(frame, "bonds", "gaff2_r0"),
+    ):
+        assert by_name[str(label)]["k"] == k
+        assert by_name[str(label)]["r0"] == r0
+    # theta0 in degrees, as the force-field IR stores it.
+    theta0 = _column(frame, "angles", "gaff2_theta0")
+    assert 100.0 < theta0.min() and theta0.max() < 130.0
+
+
+def test_a_parameter_a_rows_type_lacks_is_a_null_cell() -> None:
+    """Two bond styles in one block: each row carries its own style's
+    parameters, and the other style's are holes, not zeros."""
+    ff = molrs.ff.ForceField("toy")
+    atoms = ff.def_style("atom", "full")
+    a = atoms.def_type("A", mass=12.0)
+    b = atoms.def_type("B", mass=1.0)
+    ff.def_style("bond", "harmonic").def_type("A-B", a, b, k=300.0, r0=1.1)
+    ff.def_style("bond", "morse").def_type("A-A", a, a, d0=80.0, alpha=2.0, r0=1.5)
+
+    frame = molrs.Frame()
+    block = molrs.Block()
+    block.insert("type", ["A", "A", "B"])
+    frame["atoms"] = block
+    bonds = molrs.Block()
+    bonds.insert("atomi", np.array([0, 1], dtype=np.uint64))
+    bonds.insert("atomj", np.array([1, 2], dtype=np.uint64))
+    bonds.insert("type", ["A-A", "A-B"])
+    frame["bonds"] = bonds
+
+    written = ff.materialize_params(frame, prefix="ref_")
+    assert written["bonds"] == ["ref_alpha", "ref_d0", "ref_k", "ref_r0"]
+    np.testing.assert_array_equal(_column(frame, "bonds", "ref_r0"), [1.5, 1.1])
+    np.testing.assert_array_equal(np.asarray(frame["bonds"].validity("ref_k")), [False, True])
+    np.testing.assert_array_equal(np.asarray(frame["bonds"].validity("ref_d0")), [True, False])
+    assert frame["bonds"].validity("ref_r0") is None
+
+
+def test_per_atom_lennard_jones_is_the_self_row() -> None:
+    ff = molrs.ff.ForceField("toy")
+    atoms = ff.def_style("atom", "full")
+    a = atoms.def_type("A", mass=12.0)
+    b = atoms.def_type("B", mass=1.0)
+    lj = ff.def_style("pair", "lj/cut")
+    lj.def_type("A", a, epsilon=0.1, sigma=3.4)
+    lj.def_type("B", b, epsilon=0.02, sigma=2.5)
+    ff.def_style("pair", "coul/cut", {"coulomb": 332.0})
+    ff.def_style("bond", "harmonic").def_type("A-B", a, b, k=300.0, r0=1.1)
+
+    frame = molrs.Frame()
+    block = molrs.Block()
+    block.insert("type", ["A", "B"])
+    frame["atoms"] = block
+    bonds = molrs.Block()
+    bonds.insert("atomi", np.array([0], dtype=np.uint64))
+    bonds.insert("atomj", np.array([1], dtype=np.uint64))
+    bonds.insert("type", ["A-B"])
+    frame["bonds"] = bonds
+
+    written = ff.materialize_params(frame, prefix="")
+    assert written == {"bonds": ["k", "r0"], "atoms": ["epsilon", "mass", "sigma"]}
+    np.testing.assert_array_equal(_column(frame, "atoms", "sigma"), [3.4, 2.5])
+    np.testing.assert_array_equal(_column(frame, "atoms", "epsilon"), [0.1, 0.02])
+    np.testing.assert_array_equal(_column(frame, "bonds", "k"), [300.0])
+
+
+def test_a_frame_of_another_field_is_refused() -> None:
+    gaff, typed = _typed("gaff2")
+    frame = typed.to_frame()
+    other = molrs.ff.ForceField("other")
+    other.def_style("bond", "harmonic")
+    with pytest.raises(ValueError, match="no bond style defines"):
+        other.materialize_params(frame, prefix="x_")
