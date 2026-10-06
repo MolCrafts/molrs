@@ -33,6 +33,7 @@ use std::path::Path;
 
 use super::ForceFieldReader;
 use crate::ff::constants::VACUUM_DIELECTRIC;
+use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::params::amber::{AMBER_COULOMB, AMBER_SCEE, AMBER_SCNB};
 use crate::io::data::prmtop::parse_flag_sections;
@@ -142,7 +143,7 @@ fn ico_entry(n_types: usize, iac_i: usize, iac_j: usize, nb_index: &[i64]) -> Re
 /// explicit cross row per pair of type names whose off-diagonal entry is not
 /// the Lorentz–Berthelot mix of the two self terms (CHARMM NBFIX / ParmEd
 /// `changeLJPair` edits). A Lorentz–Berthelot entry gives no row: the
-/// `lj/cut` kernel's arithmetic mixing reproduces it.
+/// `lj/cut` style states `mixing = arithmetic`, which reproduces it.
 ///
 /// Atoms sharing a type name share its LJ class (the atom-type definition
 /// makes a second class under one name a `TypeConflict`), so their rows are
@@ -504,8 +505,12 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     let (rows, cross) =
         decode_lj_types(n_types, &atom_types, &type_index, &nb_index, &acoef, &bcoef)?;
     {
+        // The off-diagonal entries that are no row are Lorentz–Berthelot
+        // mixes, so the style states that rule rather than lean on a default.
+        let mut lj = Params::new();
+        lj.set_str("mixing", Mixing::Arithmetic.name());
         let style = ff
-            .def_style("pair", "lj/cut", Params::new())
+            .def_style("pair", "lj/cut", lj)
             .map_err(|e| e.to_string())?;
         for (tname, sigma, epsilon) in &rows {
             style
@@ -963,6 +968,15 @@ c3  c3  c3  hc
         // The self rows are untouched.
         let c3 = lj.get_pairtype("c3", None).unwrap();
         assert!(rel_close(c3.params.get("epsilon").unwrap(), 0.1094, 1e-6));
+    }
+
+    /// The `lj/cut` style states the rule its missing off-diagonal rows are
+    /// mixed by, Lorentz–Berthelot, rather than leaning on a kernel default.
+    #[test]
+    fn the_lj_style_states_arithmetic_mixing() {
+        let ff = read_ff(GAFF_MINI);
+        let lj = ff.get_style("pair", "lj/cut").expect("lj/cut pair style");
+        assert_eq!(lj.params().get_str("mixing"), Some("arithmetic"));
     }
 
     /// A Lorentz–Berthelot off-diagonal entry is what mixing gives: no row.
