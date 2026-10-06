@@ -5,22 +5,38 @@ capability below (construction from a mapping, schema-dtype adoption, row and
 multi-column indexing, rename, deep copy, sort) is implemented once, in Rust.
 """
 
+import pickle
+
 import molrs
 import numpy as np
 import pytest
 from molrs import Block
 
 
+class _SubBlock(molrs.Block):
+    """Module level, so pickle can find it."""
+
+
 class TestOneClass:
     def test_molrs_block_is_the_native_class(self):
         assert molrs.Block is molrs._lib.Block
 
-    def test_a_block_cannot_be_subclassed(self):
-        # There is nothing to subclass or upgrade: one class, one implementation.
-        with pytest.raises(TypeError):
+    def test_a_block_can_be_subclassed(self):
+        """Core data classes are extensible; a subclass is still a Block."""
 
-            class Sub(molrs.Block):
-                pass
+        class Sub(molrs.Block):
+            pass
+
+        assert isinstance(Sub(), molrs.Block)
+
+    def test_a_block_subclass_pickles_as_itself(self):
+        sub = _SubBlock()
+        sub.insert("x", np.array([1.0, 2.0]))
+        sub.tag = "kept"
+        back = pickle.loads(pickle.dumps(sub))
+        assert type(back) is _SubBlock
+        assert back.tag == "kept"
+        assert back["x"].tolist() == [1.0, 2.0]
 
 
 class TestBlockConstruction:

@@ -3,10 +3,16 @@ import subprocess
 import sys
 from collections.abc import ItemsView, KeysView, Mapping, MutableMapping, ValuesView
 
+import pickle
+
 import molrs
 import numpy as np
 import pytest
 from molrs import Block, Frame, MetaValue
+
+
+class _SubFrame(molrs.Frame):
+    """Module level, so pickle can find it."""
 
 
 class TestFrameConstruction:
@@ -42,11 +48,22 @@ class TestOneFrame:
     def test_molrs_frame_is_the_native_class(self):
         assert molrs.Frame is molrs._lib.Frame
 
-    def test_a_frame_cannot_be_subclassed(self):
-        with pytest.raises(TypeError):
+    def test_a_frame_can_be_subclassed(self):
+        """Core data classes are extensible; a subclass is still a Frame."""
 
-            class Sub(molrs.Frame):
-                pass
+        class Sub(molrs.Frame):
+            pass
+
+        assert isinstance(Sub(), molrs.Frame)
+
+    def test_a_frame_subclass_pickles_as_itself(self):
+        sub = _SubFrame()
+        sub["atoms"] = Block({"x": np.array([0.5])})
+        sub.tag = "kept"
+        back = pickle.loads(pickle.dumps(sub))
+        assert type(back) is _SubFrame
+        assert back.tag == "kept"
+        assert back["atoms"]["x"].tolist() == [0.5]
 
     def test_readers_return_the_one_class(self, tmp_path):
         path = tmp_path / "one.xyz"

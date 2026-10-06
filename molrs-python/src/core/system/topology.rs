@@ -10,7 +10,13 @@ use crate::core::store::frame::PyFrame;
 
 /// Bond graph of a frame: atoms are rows ``0..n`` of ``frame["atoms"]``,
 /// edges the ``atomi`` / ``atomj`` rows of ``frame["bonds"]``.
-#[pyclass(module = "molrs", name = "Topology", frozen, skip_from_py_object)]
+#[pyclass(
+    module = "molrs",
+    name = "Topology",
+    frozen,
+    skip_from_py_object,
+    subclass
+)]
 pub struct PyTopology {
     inner: Topology,
 }

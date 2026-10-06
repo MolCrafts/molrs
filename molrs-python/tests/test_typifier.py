@@ -213,6 +213,28 @@ class TestTypifierBase:
             _NoMatch().typify(_pair())
 
 
+class TestNativeTypifierSubclass:
+    """A native typifier can be extended, but its hooks run in Rust."""
+
+    def test_a_native_typifier_subclass_typifies_as_the_native(self) -> None:
+        class _Tagged(MMFF94Typifier):
+            tag = "mine"
+
+        typed = _Tagged().typify(_ethane())
+        reference = MMFF94Typifier().typify(_ethane())
+        assert typed.to_frame()["atoms"]["type"].tolist() == (
+            reference.to_frame()["atoms"]["type"].tolist()
+        )
+
+    @pytest.mark.parametrize("hook", ["match", "library"])
+    def test_a_native_subclass_overriding_a_hook_is_rejected(self, hook: str) -> None:
+        with pytest.raises(TypeError, match=hook):
+            type("_Overrides", (MMFF94Typifier,), {hook: lambda self, *a: None})
+
+    def test_the_native_typifiers_live_in_the_typifier_module(self) -> None:
+        assert MMFF94Typifier.__module__ == "molrs.ff.typifier"
+
+
 class TestNativeTypifierMatch:
     def test_mmff94_match_returns_match(self) -> None:
         assert isinstance(MMFF94Typifier().match(_ethane()), Match)

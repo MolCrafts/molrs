@@ -149,9 +149,7 @@ impl PyColumnSpec {
         format!("ColumnSpec(key='{}', dtype='{}')", self.key, self.dtype)
     }
 
-    fn __reduce__<'py>(
-        slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
         let this = slf.borrow();
         crate::helpers::reduce_via_type(
             slf.as_any(),
@@ -268,9 +266,7 @@ impl PyBlockSpec {
         format!("BlockSpec(name='{}', rows='{}')", self.name, self.row_kind)
     }
 
-    fn __reduce__<'py>(
-        slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
         let this = slf.borrow();
         crate::helpers::reduce_via_type(
             slf.as_any(),

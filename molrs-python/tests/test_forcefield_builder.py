@@ -45,9 +45,40 @@ def test_the_force_field_classes_are_the_native_classes(name):
     assert getattr(molrs.ff, name) is getattr(_lib, name)
 
 
-def test_the_force_field_class_cannot_be_subclassed():
-    with pytest.raises(TypeError):
-        type("Sub", (molrs.ff.ForceField,), {})
+def test_the_force_field_class_can_be_subclassed():
+    """molnex's ForceField extends this one; a subclass keeps the base's state."""
+
+    class Sub(molrs.ff.ForceField):
+        pass
+
+    ff = Sub("scratch")
+    assert isinstance(ff, molrs.ff.ForceField)
+    assert ff.name == "scratch"
+
+
+class _Extended(molrs.ff.ForceField):
+    """Module level, so pickle can find it."""
+
+
+def test_a_force_field_subclass_pickles_as_itself():
+    ff = _Extended("ext", units="metal")
+    (ct,) = _atoms(ff, "CT")
+    ff.def_style("pair", "lj/cut").def_type("CT", ct, epsilon=0.1, sigma=3.5)
+    ff.origin = "molnex"
+    back = pickle.loads(pickle.dumps(ff))
+    assert type(back) is _Extended
+    assert back.origin == "molnex"
+    assert (back.name, back.units) == ("ext", "metal")
+    assert _rows(back.get_style("pair", "lj/cut")) == [
+        ("CT", {"epsilon": 0.1, "sigma": 3.5})
+    ]
+
+
+def test_special_bonds_reads_the_declared_triples():
+    ff = molrs.ff.ForceField("sb")
+    assert ff.special_bonds == ([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
+    ff.set_special_bonds([0.0, 0.0, 0.5], [0.0, 0.0, 0.8333])
+    assert ff.special_bonds == ([0.0, 0.0, 0.5], [0.0, 0.0, 0.8333])
 
 
 def test_empty_forcefield_constructs():
@@ -416,6 +447,47 @@ def test_compile_unknown_type_label_raises_value_error():
     compiler = molrs.ff.PotentialCompiler(_bond_ff())
     with pytest.raises(ValueError):
         compiler.compile(_bonded_pair("XX-XX"))
+
+
+def _lj_ab(cross: bool) -> molrs.ff.ForceField:
+    """Self rows A (0.1, 3.0) and B (0.4, 3.6), geometric mixing, and with
+    ``cross`` an explicit A-B row (0.9, 2.0)."""
+    ff = molrs.ff.ForceField("nbfix")
+    a, b = _atoms(ff, "A", "B")
+    lj = ff.def_style("pair", "lj/cut", {"cutoff": 10.0, "mixing": "geometric"})
+    lj.def_type("A", a, epsilon=0.1, sigma=3.0)
+    lj.def_type("B", b, epsilon=0.4, sigma=3.6)
+    if cross:
+        lj.def_type("A-B", a, b, epsilon=0.9, sigma=2.0)
+    return ff
+
+
+def _lj_pair_energy(ff: molrs.ff.ForceField, r: float) -> float:
+    atoms = molrs.Block()
+    for key, values in (("x", [0.0, r]), ("y", [0.0, 0.0]), ("z", [0.0, 0.0])):
+        atoms.insert(key, np.array(values))
+    atoms.insert("type", ["A", "B"])
+    pairs = molrs.Block()
+    pairs.insert("atomi", np.array([0], dtype=np.uint64))
+    pairs.insert("atomj", np.array([1], dtype=np.uint64))
+    frame = molrs.Frame()
+    frame["atoms"] = atoms
+    frame["pairs"] = pairs
+    return molrs.ff.PotentialCompiler(ff).compile(frame).calc_energy(frame)
+
+
+def _lj(eps: float, sigma: float, r: float) -> float:
+    s6 = (sigma / r) ** 6
+    return 4.0 * eps * (s6 * s6 - s6)
+
+
+def test_an_explicit_cross_row_overrides_the_mixing_rule():
+    r = 2.5
+    mixed = _lj((0.1 * 0.4) ** 0.5, (3.0 * 3.6) ** 0.5, r)
+    assert _lj_pair_energy(_lj_ab(cross=False), r) == pytest.approx(mixed, rel=1e-12)
+    assert _lj_pair_energy(_lj_ab(cross=True), r) == pytest.approx(
+        _lj(0.9, 2.0, r), rel=1e-12
+    )
 
 
 def test_potential_compiler_has_one_public_path():

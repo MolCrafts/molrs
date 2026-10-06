@@ -352,7 +352,7 @@ impl PyStyle {
 }
 
 /// The atom style: ``def_type(name, **params)``.
-#[pyclass(module = "molrs.ff", name = "AtomStyle", extends = PyStyle, frozen)]
+#[pyclass(module = "molrs.ff", name = "AtomStyle", extends = PyStyle, frozen, subclass)]
 pub struct PyAtomStyle {}
 
 #[pymethods]
@@ -376,7 +376,7 @@ impl PyAtomStyle {
 }
 
 /// The bond style: ``def_type(name, itom, jtom, **params)``.
-#[pyclass(module = "molrs.ff", name = "BondStyle", extends = PyStyle, frozen)]
+#[pyclass(module = "molrs.ff", name = "BondStyle", extends = PyStyle, frozen, subclass)]
 pub struct PyBondStyle {}
 
 #[pymethods]
@@ -406,7 +406,7 @@ impl PyBondStyle {
 }
 
 /// The angle style: ``def_type(name, itom, jtom, ktom, **params)``.
-#[pyclass(module = "molrs.ff", name = "AngleStyle", extends = PyStyle, frozen)]
+#[pyclass(module = "molrs.ff", name = "AngleStyle", extends = PyStyle, frozen, subclass)]
 pub struct PyAngleStyle {}
 
 #[pymethods]
@@ -436,7 +436,7 @@ impl PyAngleStyle {
 }
 
 /// The dihedral style: ``def_type(name, itom, jtom, ktom, ltom, **params)``.
-#[pyclass(module = "molrs.ff", name = "DihedralStyle", extends = PyStyle, frozen)]
+#[pyclass(module = "molrs.ff", name = "DihedralStyle", extends = PyStyle, frozen, subclass)]
 pub struct PyDihedralStyle {}
 
 #[pymethods]
@@ -467,7 +467,7 @@ impl PyDihedralStyle {
 }
 
 /// The improper style: ``def_type(name, itom, jtom, ktom, ltom, **params)``.
-#[pyclass(module = "molrs.ff", name = "ImproperStyle", extends = PyStyle, frozen)]
+#[pyclass(module = "molrs.ff", name = "ImproperStyle", extends = PyStyle, frozen, subclass)]
 pub struct PyImproperStyle {}
 
 #[pymethods]
@@ -499,7 +499,7 @@ impl PyImproperStyle {
 }
 
 /// The pair style: ``def_type(name, itom, jtom=None, **params)``.
-#[pyclass(module = "molrs.ff", name = "PairStyle", extends = PyStyle, frozen)]
+#[pyclass(module = "molrs.ff", name = "PairStyle", extends = PyStyle, frozen, subclass)]
 pub struct PyPairStyle {}
 
 #[pymethods]
@@ -728,7 +728,7 @@ impl PyFfType {
 }
 
 /// An atom type; the endpoint every other type is defined on.
-#[pyclass(module = "molrs.ff", name = "AtomType", extends = PyFfType, frozen)]
+#[pyclass(module = "molrs.ff", name = "AtomType", extends = PyFfType, frozen, subclass)]
 pub struct PyAtomType {}
 
 /// The `itom` / `jtom` endpoint accessors of a type class.
@@ -780,31 +780,31 @@ macro_rules! fourth_endpoint {
 }
 
 /// A bond type.
-#[pyclass(module = "molrs.ff", name = "BondType", extends = PyFfType, frozen)]
+#[pyclass(module = "molrs.ff", name = "BondType", extends = PyFfType, frozen, subclass)]
 pub struct PyBondType {}
 first_two_endpoints!(PyBondType);
 
 /// An angle type (``jtom`` the vertex).
-#[pyclass(module = "molrs.ff", name = "AngleType", extends = PyFfType, frozen)]
+#[pyclass(module = "molrs.ff", name = "AngleType", extends = PyFfType, frozen, subclass)]
 pub struct PyAngleType {}
 first_two_endpoints!(PyAngleType);
 third_endpoint!(PyAngleType);
 
 /// A dihedral type.
-#[pyclass(module = "molrs.ff", name = "DihedralType", extends = PyFfType, frozen)]
+#[pyclass(module = "molrs.ff", name = "DihedralType", extends = PyFfType, frozen, subclass)]
 pub struct PyDihedralType {}
 first_two_endpoints!(PyDihedralType);
 third_endpoint!(PyDihedralType);
 fourth_endpoint!(PyDihedralType);
 
 /// An improper type.
-#[pyclass(module = "molrs.ff", name = "ImproperType", extends = PyFfType, frozen)]
+#[pyclass(module = "molrs.ff", name = "ImproperType", extends = PyFfType, frozen, subclass)]
 pub struct PyImproperType {}
 first_two_endpoints!(PyImproperType);
 third_endpoint!(PyImproperType);
 fourth_endpoint!(PyImproperType);
 
 /// A pair type.
-#[pyclass(module = "molrs.ff", name = "PairType", extends = PyFfType, frozen)]
+#[pyclass(module = "molrs.ff", name = "PairType", extends = PyFfType, frozen, subclass)]
 pub struct PyPairType {}
 first_two_endpoints!(PyPairType);
