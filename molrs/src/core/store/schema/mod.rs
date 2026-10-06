@@ -154,7 +154,7 @@ macro_rules! columns {
             /// The three site-axis keys, in axis order.
             pub const AXIS: [&str; 3] = [AXIS_X, AXIS_Y, AXIS_Z];
             /// Relation endpoint keys in position order.
-            pub const ENDPOINTS: [&str; 4] = [ATOMI, ATOMJ, ATOMK, ATOML];
+            pub const ENDPOINTS: [&str; 5] = [ATOMI, ATOMJ, ATOMK, ATOML, ATOMM];
         }
 
         /// Column groups the bindings export next to the scalar key constants.
@@ -179,6 +179,7 @@ columns! {
     ATOMJ: "atomj", UInt, Scalar, NotAQuantity, "Second endpoint of a relation, 0-indexed.";
     ATOMK: "atomk", UInt, Scalar, NotAQuantity, "Third endpoint of a relation (angle terminus / dihedral), 0-indexed; the angle vertex is `atomj`.";
     ATOML: "atoml", UInt, Scalar, NotAQuantity, "Fourth endpoint of a relation (dihedral / improper), 0-indexed.";
+    ATOMM: "atomm", UInt, Scalar, NotAQuantity, "Fifth endpoint of a relation (a CMAP's two consecutive dihedrals `atomi..atoml` and `atomj..atomm`), 0-indexed.";
     AXIS_X: "axis_x", Float, Scalar, Of(Length), "x-component of a coarse-grained site's axis: from the first member of its group to the site.";
     AXIS_Y: "axis_y", Float, Scalar, Of(Length), "y-component of a coarse-grained site's axis: from the first member of its group to the site.";
     AXIS_Z: "axis_z", Float, Scalar, Of(Length), "z-component of a coarse-grained site's axis: from the first member of its group to the site.";
@@ -300,6 +301,12 @@ blocks! {
     &[consts::ATOMI, consts::ATOMJ],
     &[consts::TYPE, consts::TYPE_ID, consts::STYLE, consts::BOND_TYPE, consts::BOND_NUMBER],
     "Two-body bond terms.";
+    CMAPS = "cmaps",
+    RowKind::Relation { arity: 5 },
+    Some(EndpointSpec { columns: &[(consts::ATOMI, EndpointTarget::Block(block_names::ATOMS)), (consts::ATOMJ, EndpointTarget::Block(block_names::ATOMS)), (consts::ATOMK, EndpointTarget::Block(block_names::ATOMS)), (consts::ATOML, EndpointTarget::Block(block_names::ATOMS)), (consts::ATOMM, EndpointTarget::Block(block_names::ATOMS))] }),
+    &[consts::ATOMI, consts::ATOMJ, consts::ATOMK, consts::ATOML, consts::ATOMM],
+    &[consts::TYPE, consts::TYPE_ID, consts::STYLE],
+    "Five-body CMAP cross terms: the dihedrals `atomi-atomj-atomk-atoml` and `atomj-atomk-atoml-atomm` (CHARMM phi/psi).";
     CONSTRAINTS = "constraints",
     RowKind::Relation { arity: 2 },
     Some(EndpointSpec { columns: &[(consts::ATOMI, EndpointTarget::Block(block_names::ATOMS)), (consts::ATOMJ, EndpointTarget::Block(block_names::ATOMS))] }),
@@ -711,7 +718,7 @@ mod tests {
             .filter(|c| {
                 c.key == "id"
                     || c.key.ends_with("_id")
-                    || matches!(c.key, "atomi" | "atomj" | "atomk" | "atoml")
+                    || matches!(c.key, "atomi" | "atomj" | "atomk" | "atoml" | "atomm")
             })
             .collect();
         assert!(ids.len() >= 8, "identifier scan found only {}", ids.len());
@@ -791,6 +798,27 @@ mod tests {
             refs("angles", |_| false, &[]),
             pairs(&[("atomi", "atoms"), ("atomj", "atoms"), ("atomk", "atoms")])
         );
+    }
+
+    #[test]
+    fn cmaps_is_a_five_endpoint_relation_on_atomi_through_atomm() {
+        assert_eq!(column(consts::ATOMM).map(|c| c.dtype), Some(DType::UInt));
+        let spec = block(block_names::CMAPS).expect("cmaps is canonical");
+        assert_eq!(spec.row_kind, RowKind::Relation { arity: 5 });
+        assert_eq!(spec.required, consts::ENDPOINTS.as_slice());
+        for key in [consts::TYPE, consts::TYPE_ID, consts::STYLE] {
+            assert!(spec.optional.contains(&key), "{key}");
+        }
+        let all = [
+            ("atomi", "atoms"),
+            ("atomj", "atoms"),
+            ("atomk", "atoms"),
+            ("atoml", "atoms"),
+            ("atomm", "atoms"),
+        ];
+        assert_eq!(refs("cmaps", |_| false, &[]), pairs(&all));
+        // An unspecified block reads all five endpoint keys too.
+        assert_eq!(refs("cross_terms", |_| true, &[]), pairs(&all));
     }
 
     #[test]

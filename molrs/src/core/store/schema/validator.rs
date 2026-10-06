@@ -325,6 +325,37 @@ mod tests {
     }
 
     #[test]
+    fn check_ranges_every_cmap_endpoint_and_requires_all_five() {
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms(3));
+        frame.insert(
+            "cmaps",
+            uint_block(&[
+                ("atomi", &[0]),
+                ("atomj", &[1]),
+                ("atomk", &[2]),
+                ("atoml", &[1]),
+                ("atomm", &[0]),
+            ]),
+        );
+        let report = Validator::canonical().check(&frame);
+        assert!(report.is_empty(), "{report}");
+
+        frame.get_mut("cmaps").unwrap().remove("atomm");
+        frame
+            .get_mut("cmaps")
+            .unwrap()
+            .insert("atomm", Array1::from_vec(vec![3 as Idx]).into_dyn())
+            .unwrap();
+        let report = Validator::canonical().check(&frame);
+        assert!(report.to_string().contains("atomm"), "{report}");
+
+        frame.get_mut("cmaps").unwrap().remove("atomm");
+        let report = Validator::canonical().check(&frame);
+        assert!(report.to_string().contains("atomm"), "{report}");
+    }
+
+    #[test]
     fn check_skips_a_null_endpoint() {
         let mut frame = Frame::new();
         frame.insert("atoms", atoms(3));
