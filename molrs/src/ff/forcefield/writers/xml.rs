@@ -3,7 +3,7 @@
 //!
 //! The schema is OpenMM's, and so are the units and factors: lengths in
 //! **nm**, energies in **kJ/mol**, angles and phases in **radians**, harmonic
-//! terms as `½k(x − x0)²`. molrs's convention is LAMMPS's (`real`: Å,
+//! terms as `½k(x − x0)²`. the force-field IR follows the LAMMPS standard (`real`: Å,
 //! kcal/mol, degrees, un-halved `K`), so every value is converted at this
 //! boundary — the exact inverse of the reader's table (bond `k` × 2 × 4.184 ×
 //! 100, angle `k` × 2 × 4.184, every torsion / pair energy × 4.184, lengths ÷

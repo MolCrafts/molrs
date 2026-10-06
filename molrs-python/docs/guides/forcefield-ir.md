@@ -1,18 +1,19 @@
-# Force-field conventions
+# Force-field IR
 
-molrs has one force-field convention, and it is LAMMPS's. For every style
-molrs registers, the energy expression, the factors (no hidden ½), the
-parameter meanings and the parameter units are those of the LAMMPS style of
-the same name, or of the LAMMPS style it corresponds to. Reading a LAMMPS
-force field and writing it back is therefore the identity on coefficients,
-and every other engine — GROMACS, OpenMM, AMBER, the GAFF / OPLS-AA / MMFF /
-UFF tables — converts to and from this convention at its reader, writer or
-typifier, never in a kernel.
+molrs holds every force field in one intermediate representation, the
+**force-field IR**: one set of styles, each with a fixed energy expression,
+parameter meanings and parameter units. The IR adopts LAMMPS's definitions as
+its standard — for every style molrs registers, the expression, the factors
+(no hidden ½), the parameter meanings and the units are those of the LAMMPS
+style of the same name, or of the LAMMPS style it corresponds to. Reading a
+LAMMPS force field and writing it back is therefore the identity on
+coefficients, and every other engine — GROMACS, OpenMM, AMBER, the GAFF /
+OPLS-AA / MMFF / UFF tables — converts to and from the IR at its reader,
+writer or typifier, never in a kernel.
 
-This page is the reference for that convention: what each style computes,
-what its parameters mean, which engine form maps onto it and how, and how the
-terms the next releases add (Urey–Bradley, explicit 1-4 pairs, CMAP) are
-represented.
+This page is the reference for the IR: what each style computes, what its
+parameters mean, which engine form maps onto it and how, and how Urey–Bradley,
+explicit 1-4 pairs and CMAP are represented.
 
 ## Units
 
@@ -28,14 +29,14 @@ preset. Two rules are LAMMPS's own and hold in every preset:
     (`angle harmonic` `k` is energy/rad²), as in LAMMPS. The kernels convert
     the angle to radians once, when they are built.
 
-    This makes "molrs convention = LAMMPS convention" literally true for the
+    This makes "the force-field IR stores exactly what LAMMPS writes" literally true for the
     stored values: `angle_coeff c3-c3-oh 76.79 109.66` is the type
     `{k: 76.79, theta0: 109.66}`, with no conversion in either direction.
 
 The `forcefield` section of a record states `"angle": "degree"` beside its
 preset. A section written by molrs ≤ 0.15 states `"angle": "radian"`, so
 0.16 refuses it (its preset and its stated angle unit disagree) rather than
-reading it in the wrong convention.
+misreading it.
 
 The LAMMPS reader keeps the file's `units` (a `metal` file is a `metal` force
 field, `coul/cut` taking LAMMPS's `metal` Coulomb constant); the LAMMPS writer
@@ -254,8 +255,8 @@ Urey–Bradley category. A field that mixes it with other angle styles is
 LAMMPS's `angle_style hybrid harmonic charmm` (`angle_coeff t charmm K theta0
 K_ub r_ub`), which the LAMMPS reader and writer read and write; molrs prices
 each angle row under the style that defines its type. 0.16 has the kernel and
-the LAMMPS reader and writer; the other engines' maps below are the
-convention their readers will follow:
+the LAMMPS reader and writer; the other engines' maps below are how
+their readers map onto the IR:
 
 | Source | `angle charmm` |
 |---|---|
@@ -265,7 +266,7 @@ convention their readers will follow:
 
 ## CMAP
 
-The convention is LAMMPS `fix cmap` (CHARMM's correction map), and the
+The IR follows LAMMPS `fix cmap` (CHARMM's correction map), and the
 kernel is `cmap charmm`, a step-for-step port of LAMMPS's
 `src/MOLECULE/fix_cmap.cpp`:
 

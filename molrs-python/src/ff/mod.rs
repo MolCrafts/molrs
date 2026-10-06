@@ -1834,7 +1834,7 @@ pub fn read_opls_xml_py(path: PathBuf) -> PyResult<PyForceField> {
 ///
 /// Parses the ``pair_style``/``pair_coeff`` + ``bond_style``/``angle_style``/
 /// ``dihedral_style``/``improper_style`` include that
-/// :func:`write_lammps_forcefield` emits. molrs's convention is LAMMPS's, so
+/// :func:`write_lammps_forcefield` emits. the force-field IR follows the LAMMPS standard, so
 /// every coefficient is stored as written (``K``, degrees) and the force field
 /// declares the file's ``units``; the ``fourier`` dihedral is molrs's
 /// ``periodic``. The ``special_bonds`` line is recorded on the force field.
@@ -2042,7 +2042,7 @@ pub fn read_lammps_data_coeffs_py(
 /// Force-field types no label uses are not written.
 ///
 /// Inverse of :func:`read_lammps_forcefield`, and the identity on coefficients:
-/// molrs's convention is LAMMPS's. A force field declared in another LAMMPS
+/// the force-field IR follows the LAMMPS standard. A force field declared in another LAMMPS
 /// unit style than ``units`` has its energies and lengths converted through
 /// the lj reduced hub — never hard-coded eV/kcal factors. A split ``lj/cut`` +
 /// ``coul/cut`` pair is recombined as ``lj/cut/coul/cut`` so geometric mixing

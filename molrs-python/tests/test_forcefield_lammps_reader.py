@@ -81,7 +81,7 @@ def test_read_lammps_forcefield_yields_the_one_forcefield(read_ff):
 
 def test_lammps_units_pass_through_binding(read_ff):
     ff = read_ff(_FF)
-    # molrs's convention is LAMMPS's: every coefficient is stored as written —
+    # the force-field IR follows the LAMMPS standard: every coefficient is stored as written —
     # bond K, r0; angle K, theta0 in degrees; pair epsilon, sigma.
     bond = ff.get_style("bond", "harmonic")
     bt = bond.get_type_by_name("c3-c3")

@@ -34,9 +34,10 @@
 //!
 //! # The identity on coefficients
 //!
-//! Inverse of [`super::super::readers::lammps::LammpsFfReader`]. molrs's
-//! convention is LAMMPS's — every style's expression, factors and parameter
-//! units, with angle-valued parameters in degrees — so a coefficient is
+//! Inverse of [`super::super::readers::lammps::LammpsFfReader`]. The
+//! force-field IR follows the LAMMPS standard — every style's expression,
+//! factors and parameter units, with angle-valued parameters in degrees — so a
+//! coefficient is
 //! written as it is stored:
 //!
 //! ```text
