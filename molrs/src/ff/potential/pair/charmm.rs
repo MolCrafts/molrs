@@ -44,6 +44,7 @@ use molrs::store::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
 use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::one_four::OneFour;
 use crate::ff::forcefield::{Params, pair_key};
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
@@ -624,6 +625,9 @@ pub fn pair_lj_charmm_ctor(
 ) -> Result<Member, String> {
     let switch = switch_of(style, "lj/charmm")?;
     let mixing = charmm_mixing(style)?;
+    // The 1-4 semantics are the exceptions kernel's; checked here so an
+    // invalid value never compiles.
+    OneFour::of(style)?;
     let rows: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let types = atom_types(frame, "lj/charmm")?;
     let (ai, aj, is_14) = pair_rows(frame, "lj/charmm")?;
@@ -652,6 +656,9 @@ pub fn pair_lj_charmm_typed_ctor(
 ) -> Result<Member, String> {
     let switch = switch_of(style, "lj/charmm")?;
     let mixing = charmm_mixing(style)?;
+    // The 1-4 semantics are the exceptions kernel's; checked here so an
+    // invalid value never compiles.
+    OneFour::of(style)?;
     let rows: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let (type_id, labels) = atom_type_index(frame)?;
     let ntypes = labels.len();

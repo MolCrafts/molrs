@@ -28,6 +28,7 @@
 //! [`Style::params`]: super::Style::params
 //! [`Style::type_rows`]: super::Style::type_rows
 
+use crate::ff::forcefield::one_four::OneFour;
 use std::collections::{BTreeMap, BTreeSet};
 
 use indexmap::IndexMap;
@@ -110,6 +111,9 @@ fn units_document(units: &str) -> Result<JsonValue, String> {
 
 fn style_entry(style: &Style) -> Result<JsonValue, String> {
     let what = || format!("{}/{} style params", style.category(), style.name());
+    if (style.category(), style.name()) == ("pair", "lj/charmm") {
+        OneFour::of(style.params()).map_err(|e| format!("{}: {e}", what()))?;
+    }
     let mut entry = JsonMap::new();
     entry.insert("category".into(), style.category().into());
     entry.insert("style".into(), style.name().into());
@@ -506,6 +510,9 @@ impl ForceField {
             if let Some(expression) = entry.expression {
                 params.set_str("expression", expression);
             }
+            if (entry.category, entry.style) == ("pair", "lj/charmm") {
+                OneFour::of(&params).map_err(|e| format!("{what}: {e}"))?;
+            }
             let table = &section.tables[&entry.block_name()];
             match entry.endpoint_key {
                 EndpointKey::Type => {}
@@ -792,6 +799,48 @@ mod tests {
             .unwrap()
             .calc_energy(&coords);
         assert!((e - want).abs() < 1e-9, "E = {e}, cross row gives {want}");
+    }
+
+    /// `lj/charmm`'s `one_four` round-trips through the section, and a value
+    /// other than `regular` / `epsilon14` is refused both ways.
+    #[test]
+    fn lj_charmm_one_four_round_trips_and_an_unknown_value_is_refused() {
+        let mut ff = ForceField::new("x");
+        let mut sp = Params::from_pairs(&[("inner", 8.0), ("cutoff", 10.0)]);
+        sp.set_str("one_four", "epsilon14");
+        ff.def_style("pair", "lj/charmm", sp)
+            .unwrap()
+            .def_type(
+                "A",
+                &["A"],
+                Params::from_pairs(&[
+                    ("epsilon", 0.1),
+                    ("sigma", 3.0),
+                    ("epsilon14", 0.04),
+                    ("sigma14", 2.0),
+                ]),
+            )
+            .unwrap();
+        let section = ff.to_section().unwrap();
+        let back = ForceField::from_section(&section).unwrap();
+        assert_eq!(
+            back.get_style("pair", "lj/charmm")
+                .unwrap()
+                .params()
+                .get_str("one_four"),
+            Some("epsilon14")
+        );
+        round_trips(&ff, "lj/charmm one_four");
+
+        let mut bad = ff.clone();
+        bad.get_style_mut("pair", "lj/charmm")
+            .unwrap()
+            .set_str_param("one_four", "both");
+        assert!(bad.to_section().unwrap_err().contains("one_four"));
+        let mut doc = section.clone();
+        doc.document["styles"][0]["params"]["one_four"] = json!("both");
+        let err = ForceField::from_section(&doc).unwrap_err();
+        assert!(err.contains("one_four"), "{err}");
     }
 
     #[test]

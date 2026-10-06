@@ -47,6 +47,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::one_four::check_materialized;
 use crate::ff::forcefield::{ForceField, Params, Style};
 use crate::ff::potential::end_pairs;
 use crate::ff::potential::geometry::{term_table, validate_coords};
@@ -243,6 +244,7 @@ pub(crate) fn plan(ff: &ForceField, frame: &Frame) -> Result<Exceptions, String>
     let wsum = dihedral_weights(ff, frame)?;
     let (cells, override_rows) = override_cells(frame)?;
     let rows_ij = pair_ends(frame);
+    check_one_four(ff, frame, &wsum, &cells, &rows_ij)?;
 
     let mut entries: BTreeMap<(usize, usize), (F, Option<usize>)> = BTreeMap::new();
     for (&key, &w) in &wsum {
@@ -407,7 +409,10 @@ fn atom_type_pair(
 
 /// The sum of `w` over the `dihedral charmm` rows ending at each atom pair,
 /// after LAMMPS's checks of the weights.
-fn dihedral_weights(ff: &ForceField, frame: &Frame) -> Result<BTreeMap<(usize, usize), F>, String> {
+pub(crate) fn dihedral_weights(
+    ff: &ForceField,
+    frame: &Frame,
+) -> Result<BTreeMap<(usize, usize), F>, String> {
     let mut wsum = BTreeMap::new();
     for style in ff.get_styles("dihedral") {
         if style.name() != "charmm" {
@@ -446,6 +451,45 @@ fn dihedral_weights(ff: &ForceField, frame: &Frame) -> Result<BTreeMap<(usize, u
         }
     }
     Ok(wsum)
+}
+
+/// A `lj/charmm` field with `one_four = "epsilon14"` must have its 1-4 pairs
+/// priced by an override (`epsilon` and `sigma` cells) or a `w` dihedral:
+/// [`check_materialized`]. The 1-4 pairs are the `pairs` rows flagged `is_14`,
+/// or, for a frame without a `pairs` block (the neighbour-driven door), the
+/// bond-graph 1-4 pairs.
+fn check_one_four(
+    ff: &ForceField,
+    frame: &Frame,
+    wsum: &BTreeMap<(usize, usize), F>,
+    cells: &[Cells],
+    rows_ij: &[(usize, usize)],
+) -> Result<(), String> {
+    let mut overridden: HashSet<(usize, usize)> = HashSet::new();
+    for (r, c) in cells.iter().enumerate() {
+        if c[EPS].is_some() && c[SIGMA].is_some() {
+            overridden.insert(rows_ij[r]);
+        }
+    }
+    let pairs_14: Vec<(usize, usize)> = match frame
+        .get(PAIRS)
+        .and_then(|b| b.get("is_14"))
+        .and_then(|c| c.as_bool())
+    {
+        Some(flags) => rows_ij
+            .iter()
+            .zip(flags.iter())
+            .filter(|(_, f)| **f)
+            .map(|(k, _)| *k)
+            .collect(),
+        None => BondClasses::new(frame)
+            .map(|c| c.pairs_at_three())
+            .unwrap_or_default(),
+    };
+    let covered = |i: usize, j: usize| {
+        overridden.contains(&(i, j)) || wsum.get(&(i, j)).is_some_and(|&w| w > 0.0)
+    };
+    check_materialized(ff, frame, &pairs_14, &covered)
 }
 
 /// LAMMPS's `DihedralCharmm::init_style` checks for a field with `w > 0`.
@@ -605,6 +649,32 @@ impl BondClasses {
             }
         }
         Some(Self { adjacency })
+    }
+
+    /// Every `(lo, hi)` pair at bond distance exactly 3.
+    fn pairs_at_three(&self) -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        for i in 0..self.adjacency.len() {
+            let mut depth = HashMap::from([(i, 0usize)]);
+            let mut queue = VecDeque::from([i]);
+            while let Some(a) = queue.pop_front() {
+                let d = depth[&a];
+                if d == 3 {
+                    if a > i {
+                        out.push((i, a));
+                    }
+                    continue;
+                }
+                for &b in &self.adjacency[a] {
+                    if let std::collections::hash_map::Entry::Vacant(e) = depth.entry(b) {
+                        e.insert(d + 1);
+                        queue.push_back(b);
+                    }
+                }
+            }
+        }
+        out.sort_unstable();
+        out
     }
 
     /// The bond distance of `(i, j)` when it is 1, 2 or 3; 0 beyond.
