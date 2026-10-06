@@ -90,7 +90,7 @@ impl std::error::Error for CoarsenError {
 /// # Examples
 ///
 /// ```
-/// use molrs::perceive::Coarsener;
+/// use molrs::builder::Coarsener;
 /// use molrs::store::keys;
 /// use molrs::system::coarsegrain::CoarseGrain;
 ///
@@ -187,7 +187,7 @@ impl<'a> Coarsener<'a> {
     /// crosses the groups and becomes the one site bond.
     ///
     /// ```
-    /// use molrs::perceive::Coarsener;
+    /// use molrs::builder::Coarsener;
     /// use molrs::store::keys;
     /// use molrs::system::coarsegrain::CoarseGrain;
     ///
