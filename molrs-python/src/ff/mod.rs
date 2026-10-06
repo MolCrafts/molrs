@@ -2087,7 +2087,7 @@ pub fn write_gromacs_top_ff_py(
     molrs::ff::GromacsTopFfWriter::new()
         .with_precision(precision)
         .write(&forcefield.inner, path_str(&path)?)
-        .map_err(pyo3::exceptions::PyValueError::new_err)
+        .map_err(crate::ff::ir::write_err)
 }
 
 /// Write a ForceField as an AMBER frcmod file.
@@ -2100,7 +2100,7 @@ pub fn write_gromacs_top_ff_py(
 #[pyo3(name = "write_amber_frcmod", signature = (path, forcefield))]
 pub fn write_amber_frcmod_py(path: PathBuf, forcefield: &PyForceField) -> PyResult<()> {
     molrs::ff::write_amber_frcmod(path_str(&path)?, &forcefield.inner)
-        .map_err(pyo3::exceptions::PyValueError::new_err)
+        .map_err(crate::ff::ir::write_err)
 }
 
 /// Write a ForceField to OpenMM force-field XML.
@@ -2130,7 +2130,7 @@ pub fn write_forcefield_xml_py(
     precision: Option<usize>,
 ) -> PyResult<()> {
     molrs::ff::write_forcefield_xml(path_str(&path)?, &forcefield.inner, precision)
-        .map_err(pyo3::exceptions::PyValueError::new_err)
+        .map_err(crate::ff::ir::write_err)
 }
 
 /// Parse LAMMPS data-file ``* Coeffs`` sections into a :class:`ForceField`.
@@ -2294,7 +2294,7 @@ pub fn write_lammps_forcefield_py(
     );
     writer
         .write(&forcefield.inner, path_str(&path)?)
-        .map_err(pyo3::exceptions::PyValueError::new_err)
+        .map_err(crate::ff::ir::write_err)
 }
 
 /// Serialize a :class:`ForceField` to a LAMMPS force-field include string
@@ -2348,7 +2348,7 @@ pub fn write_lammps_forcefield_str_py(
     );
     writer
         .write_str(&forcefield.inner)
-        .map_err(pyo3::exceptions::PyValueError::new_err)
+        .map_err(crate::ff::ir::write_err)
 }
 
 /// Serialize a :class:`ForceField` to LAMMPS data-file ``* Coeffs`` sections.
@@ -2395,7 +2395,7 @@ pub fn write_lammps_data_coeffs_py(
     );
     writer
         .write_data_coeffs_str(&forcefield.inner)
-        .map_err(pyo3::exceptions::PyValueError::new_err)
+        .map_err(crate::ff::ir::write_err)
 }
 
 /// Build ``frame``'s ``cmaps`` block from its dihedrals and return the number
@@ -2481,7 +2481,7 @@ pub fn write_lammps_cmap_py(
     };
     let text = LammpsFfWriter::with_options(&labels, options)
         .write_cmap_str(&forcefield.inner)
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        .map_err(crate::ff::ir::write_err)?;
     std::fs::write(&path, text)
         .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("{}: {e}", path.display())))
 }

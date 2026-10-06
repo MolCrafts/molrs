@@ -55,6 +55,9 @@ enum Source {
 
 pub struct PairMorse {
     source: Source,
+    /// `cutoff²` of a neighbour-driven kernel (`r < cutoff`, as LAMMPS);
+    /// infinite for a compiled one, which prices the list it was given.
+    cutoff2: F,
 }
 
 impl PairMorse {
@@ -71,6 +74,7 @@ impl PairMorse {
         assert_eq!(alpha.len(), n);
         assert_eq!(r0.len(), n);
         Self {
+            cutoff2: F::INFINITY,
             source: Source::Compiled {
                 atom_i,
                 atom_j,
@@ -102,6 +106,7 @@ impl PairMorse {
         );
         let n_owned = type_id.len();
         Self {
+            cutoff2: F::INFINITY,
             source: Source::Typed {
                 type_id,
                 ntypes,
@@ -111,6 +116,13 @@ impl PairMorse {
                 n_owned,
             },
         }
+    }
+
+    /// Price only pairs closer than `cutoff` (a neighbour-driven kernel:
+    /// the style's `cutoff`, as LAMMPS truncates).
+    pub fn with_cutoff(mut self, cutoff: F) -> Self {
+        self.cutoff2 = cutoff * cutoff;
+        self
     }
 
     /// The pair term for one already-reduced separation.
@@ -179,6 +191,9 @@ impl PairMorse {
                 continue;
             }
             let (i, j, (d0, alpha, r0), disp, r2) = pair(idx);
+            if r2 >= self.cutoff2 {
+                continue;
+            }
             let Some((e, f)) = self.pair_kernel(r2, disp, d0, alpha, r0) else {
                 continue;
             };
@@ -363,7 +378,7 @@ pub fn pair_morse_ctor(
 /// search turns up. It reads no `pairs` block — there is none to read when the
 /// list is rebuilt every few steps.
 pub fn pair_morse_typed_ctor(
-    _style_params: &Params,
+    style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, crate::ff::potential::CompileError> {
@@ -385,9 +400,15 @@ pub fn pair_morse_typed_ctor(
             r0[t] = need::type_num("morse", &key, p, "r0")?;
         }
     }
-    Ok(Member::pair(PairMorse::typed(
-        type_id, ntypes, d0, alpha, r0,
-    )))
+    let kernel = PairMorse::typed(type_id, ntypes, d0, alpha, r0);
+    // The style's `cutoff`, when it states one (`r < cutoff`, as LAMMPS).
+    Ok(Member::pair(match style_params.get("cutoff") {
+        Some(c) if c > 0.0 => kernel.with_cutoff(c),
+        Some(c) => {
+            return Err(format!("pair morse: 'cutoff' must be > 0, got {c}").into());
+        }
+        None => kernel,
+    }))
 }
 
 #[cfg(test)]

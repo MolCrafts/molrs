@@ -50,6 +50,9 @@ enum Source {
 
 pub struct PairLJClass2 {
     source: Source,
+    /// `cutoff²` of a neighbour-driven kernel (`r < cutoff`, as LAMMPS);
+    /// infinite for a compiled one, which prices the list it was given.
+    cutoff2: F,
 }
 
 impl PairLJClass2 {
@@ -59,6 +62,7 @@ impl PairLJClass2 {
         assert_eq!(epsilon.len(), n);
         assert_eq!(sigma.len(), n);
         Self {
+            cutoff2: F::INFINITY,
             source: Source::Compiled {
                 atom_i,
                 atom_j,
@@ -88,6 +92,7 @@ impl PairLJClass2 {
         );
         let n_owned = type_id.len();
         Self {
+            cutoff2: F::INFINITY,
             source: Source::Typed {
                 type_id,
                 ntypes,
@@ -96,6 +101,13 @@ impl PairLJClass2 {
                 n_owned,
             },
         }
+    }
+
+    /// Price only pairs closer than `cutoff` (a neighbour-driven kernel:
+    /// the style's `cutoff`, as LAMMPS truncates).
+    pub fn with_cutoff(mut self, cutoff: F) -> Self {
+        self.cutoff2 = cutoff * cutoff;
+        self
     }
 
     /// The pair term for one already-reduced separation.
@@ -167,6 +179,9 @@ impl PairLJClass2 {
                 continue;
             }
             let (i, j, (eps, sigma), disp, r2) = pair(idx);
+            if r2 >= self.cutoff2 {
+                continue;
+            }
             let Some((e, f)) = self.pair_kernel(r2, disp, eps, sigma) else {
                 continue;
             };
@@ -375,9 +390,15 @@ pub fn pair_lj_class2_typed_ctor(
                 lj_pair_params("lj/class2", &type_map, mixing, &labels[ti], &labels[tj])?;
         }
     }
-    Ok(Member::pair(PairLJClass2::typed(
-        type_id, ntypes, epsilon, sigma,
-    )))
+    let kernel = PairLJClass2::typed(type_id, ntypes, epsilon, sigma);
+    // The style's `cutoff`, when it states one (`r < cutoff`, as LAMMPS).
+    Ok(Member::pair(match style_params.get("cutoff") {
+        Some(c) if c > 0.0 => kernel.with_cutoff(c),
+        Some(c) => {
+            return Err(format!("pair lj/class2: 'cutoff' must be > 0, got {c}").into());
+        }
+        None => kernel,
+    }))
 }
 
 #[cfg(test)]

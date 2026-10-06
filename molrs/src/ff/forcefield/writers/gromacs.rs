@@ -132,7 +132,7 @@
 use crate::ff::ir::Engine;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use super::ForceFieldWriter;
+use super::{ForceFieldWriter, WriteError};
 use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::torsion::nharmonic_coefficients;
@@ -450,7 +450,7 @@ impl GromacsTopFfWriter {
     }
 
     /// The `[ *types ]` lines of one bonded type of `style`.
-    fn bonded_lines(&self, style: &Style, name: &str, p: &Params) -> Result<Vec<Line>, String> {
+    fn bonded_lines(&self, style: &Style, name: &str, p: &Params) -> Result<Vec<Line>, WriteError> {
         let what = format!("{}/{} type '{name}'", style.category(), style.name());
         let allowed = |keys: &[&str]| -> Result<(), String> {
             match p.iter().find(|(key, _)| !keys.contains(key)) {
@@ -542,7 +542,8 @@ impl GromacsTopFfWriter {
                 if style.category() == "improper" {
                     return Err(format!(
                         "{what} has several terms: dihedraltypes funct 4 holds one"
-                    ));
+                    )
+                    .into());
                 }
                 let mut lines = Vec::new();
                 let mut m = 1;
@@ -566,7 +567,7 @@ impl GromacsTopFfWriter {
                             .is_none_or(|i| i == 0 || i > terms)
                     })
                 }) {
-                    return Err(format!("{what}: parameter '{key}' has no GROMACS column"));
+                    return Err(format!("{what}: parameter '{key}' has no GROMACS column").into());
                 }
                 Ok(lines)
             }
@@ -577,7 +578,8 @@ impl GromacsTopFfWriter {
                         "{what}: w = {} prices the dihedral's 1-4 pair, which GROMACS prices \
                          by [ pairs ], never by a dihedral",
                         need("w")?
-                    ));
+                    )
+                    .into());
                 }
                 one(
                     9,
@@ -638,7 +640,8 @@ impl GromacsTopFfWriter {
                     return Err(format!(
                         "{what}: N = {} is above Ryckaert-Bellemans' C0..C5 (N ≤ 6)",
                         a.len()
-                    ));
+                    )
+                    .into());
                 }
                 let mut c = [0.0; 6];
                 for (n, &x) in a.iter().enumerate() {
@@ -659,18 +662,19 @@ impl GromacsTopFfWriter {
                     return Err(format!(
                         "{what}: chi0 = {chi0} deg; dihedraltypes funct 2 is signed and agrees \
                          with K(|phi| - chi0)^2 only at chi0 = 0 and 180"
-                    ));
+                    )
+                    .into());
                 }
                 one(2, vec![chi0, 2.0 * need("k")? * KJ_PER_KCAL], None)
             }
-            (category, style) => Err(Engine::Gromacs.refuse_style(category, style).to_string()),
+            (category, style) => Err(Engine::Gromacs.refuse_style(category, style).into()),
         }
     }
 }
 
 /// The styles this writer reads: `Ok` when `style` is one, `Err` naming it
 /// otherwise.
-fn check_style(style: &Style) -> Result<(), String> {
+fn check_style(style: &Style) -> Result<(), WriteError> {
     let declared = |key: &str, value: f64| style.params().get(key).is_none_or(|v| v == value);
     let extra_params = |keys: &[&str]| {
         style
@@ -694,15 +698,15 @@ fn check_style(style: &Style) -> Result<(), String> {
         // A pair `cutoff` (and the CHARMM switch's `inner`) is a run setting
         // (GROMACS keeps it in the .mdp), not force-field data.
         ("pair", "lj/cut") => match extra_params(&["cutoff", "mixing"]) {
-            Some(key) => Err(format!(
-                "pair/lj/cut style param '{key}' has no GROMACS directive"
-            )),
+            Some(key) => {
+                Err(format!("pair/lj/cut style param '{key}' has no GROMACS directive").into())
+            }
             None => Ok(()),
         },
         ("pair", "lj/charmm") => match extra_params(&["cutoff", "inner", "mixing", "one_four"]) {
-            Some(key) => Err(format!(
-                "pair/lj/charmm style param '{key}' has no GROMACS directive"
-            )),
+            Some(key) => {
+                Err(format!("pair/lj/charmm style param '{key}' has no GROMACS directive").into())
+            }
             None => Ok(()),
         },
         // The Coulomb constant is GROMACS's own (as LAMMPS's is LAMMPS's):
@@ -717,16 +721,17 @@ fn check_style(style: &Style) -> Result<(), String> {
                     "pair/{name} {:?} has no GROMACS directive: only dielectric = \
                      {VACUUM_DIELECTRIC}, with no types, is implied by the directives",
                     style.params()
-                ));
+                )
+                .into());
             }
             Ok(())
         }
-        (category, name) => Err(Engine::Gromacs.refuse_style(category, name).to_string()),
+        (category, name) => Err(Engine::Gromacs.refuse_style(category, name).into()),
     }
 }
 
 impl ForceFieldWriter for GromacsTopFfWriter {
-    fn write_str(&self, ff: &ForceField) -> Result<String, String> {
+    fn write_str(&self, ff: &ForceField) -> Result<String, WriteError> {
         self.directives(ff, false)
     }
 }
@@ -736,14 +741,15 @@ impl GromacsTopFfWriter {
     /// [`Self::write_system_str`] — no bonded `[ *types ]` tables but
     /// `[ cmaptypes ]` (its rows carry their parameters), and atom types
     /// without a mass or charge written 0.
-    fn directives(&self, ff: &ForceField, system: bool) -> Result<String, String> {
+    fn directives(&self, ff: &ForceField, system: bool) -> Result<String, WriteError> {
         if let Some(units) = ff.declared_units()
             && units != "real"
         {
             return Err(format!(
                 "force field units '{units}': the GROMACS writer converts from real units \
                  (Å, kcal/mol)"
-            ));
+            )
+            .into());
         }
         for style in ff.styles() {
             check_style(style)?;
@@ -861,7 +867,8 @@ impl GromacsTopFfWriter {
                                 style.name(),
                                 cols.join(" "),
                                 table.1
-                            ));
+                            )
+                            .into());
                         }
                     }
                     for value in values {
@@ -881,7 +888,8 @@ impl GromacsTopFfWriter {
                 if let Some((key, _)) = params.iter().next() {
                     return Err(format!(
                         "cmap/charmm type '{name}': parameter '{key}' has no GROMACS column"
-                    ));
+                    )
+                    .into());
                 }
                 let grid = params
                     .get_array(GRID)
@@ -891,7 +899,8 @@ impl GromacsTopFfWriter {
                     shape => {
                         return Err(format!(
                             "cmap/charmm type '{name}': grid of shape {shape:?} is not N×N"
-                        ));
+                        )
+                        .into());
                     }
                 };
                 rows.push_str(&format!("{} 1 {n} {n}\\\n", cols.join(" ")));
@@ -910,7 +919,7 @@ impl GromacsTopFfWriter {
 
     /// `ff` and the typed `frame` as one GROMACS topology: the force-field
     /// directives and one molecule type per molecule (module docs, "Systems").
-    pub fn write_system_str(&self, ff: &ForceField, frame: &Frame) -> Result<String, String> {
+    pub fn write_system_str(&self, ff: &ForceField, frame: &Frame) -> Result<String, WriteError> {
         let mut out = self.directives(ff, true)?;
         let atoms = frame.get("atoms").ok_or("frame has no atoms block")?;
         let n = atoms.nrows().unwrap_or(0);
@@ -918,7 +927,8 @@ impl GromacsTopFfWriter {
             return Err(format!(
                 "{n} atoms: the topology states the frame's pairs molecule by molecule, \
                  which is not done above {MAX_ATOMS_FOR_A_FULL_PAIR_LIST} atoms"
-            ));
+            )
+            .into());
         }
         let strings = |key: &str| atoms.get(key).and_then(|c| c.as_string());
         let types = strings("type").ok_or("atoms has no string type column")?;
@@ -1005,7 +1015,8 @@ impl GromacsTopFfWriter {
                     m + 1,
                     lo + 1,
                     hi
-                ));
+                )
+                .into());
             }
         }
         let molecule_of = |what: &str, atoms_of: &[usize]| -> Result<usize, String> {
@@ -1031,7 +1042,8 @@ impl GromacsTopFfWriter {
                         "{} type '{name}' is defined by two styles: a frame row naming it is \
                          ambiguous",
                         style.category()
-                    ));
+                    )
+                    .into());
                 }
             }
         }
@@ -1103,7 +1115,8 @@ impl GromacsTopFfWriter {
                          {} finds {found:?}",
                         atoms_of.iter().map(|a| a + 1).collect::<Vec<_>>(),
                         classes.join(" ")
-                    ));
+                    )
+                    .into());
                 }
                 let m = molecule_of("cmaps", atoms_of)?;
                 sections[m]
@@ -1174,7 +1187,8 @@ impl GromacsTopFfWriter {
                     } else {
                         "a regular pair within three bonds"
                     }
-                ));
+                )
+                .into());
             }
             priced.insert(key);
             if !one_four {
@@ -1191,7 +1205,8 @@ impl GromacsTopFfWriter {
                     return Err(format!(
                         "pair {i} {j}: override cells without epsilon and sigma — a \
                          [ pairs ] row with parameters states both"
-                    ));
+                    )
+                    .into());
                 };
                 let (v, w) = (full(sigma / NM_TO_ANGSTROM), |e: f64| full(e * KJ_PER_KCAL));
                 if qq.is_none()
@@ -1377,6 +1392,7 @@ mod tests {
         GromacsTopFfWriter::new()
             .write_str(ff)
             .expect_err("expected Err from write_str")
+            .into()
     }
 
     /// The whitespace-split data rows of `[ section ]` (comments skipped).

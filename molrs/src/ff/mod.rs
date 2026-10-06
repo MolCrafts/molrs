@@ -30,7 +30,7 @@ pub use forcefield::readers::{
     prmtop::{AmberPrmtopFfReader, read_amber_prmtop_ff},
 };
 pub use forcefield::writers::{
-    ForceFieldWriter,
+    ForceFieldWriter, WriteError,
     frcmod::{AmberFrcmodFfWriter, write_amber_frcmod, write_amber_frcmod_str},
     gromacs::GromacsTopFfWriter,
     lammps::{LammpsFfWriter, LammpsWriteOptions},

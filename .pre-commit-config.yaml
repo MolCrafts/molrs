@@ -6,7 +6,7 @@
 #   pre-commit  file hygiene, `fmt`, and the std::os cfg guard: nothing
 #               compiles, so a commit never waits for a build (or for Slurm).
 #   pre-push    the hygiene hooks on --all-files, `partners`, clippy + doc +
-#               test, the binder gates whose files changed, `mrec` (molrec's
+#               test, the binder gates and `ext` whose files changed, `mrec` (molrec's
 #               conformance suite at the commit .github/partners.env pins,
 #               as ci-snapshot.yml runs it) and `docs` (the site as Cloudflare
 #               Pages builds it). Each binder links molrs under its own
@@ -32,8 +32,11 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
+      # Byte-exact fixtures: what a writer wrote, kept as it wrote it.
       - id: trailing-whitespace
+        exclude: ^molrs/src/ff/testdata/builtin_conformance/
       - id: end-of-file-fixer
+        exclude: ^molrs/src/ff/testdata/builtin_conformance/
       - id: check-yaml
       - id: check-toml
       - id: check-merge-conflict
@@ -104,6 +107,16 @@ repos:
         language: system
         pass_filenames: false
         files: ^(molrs/|molrs-ffi/|molrs-cxxapi/|Cargo\.toml|\.cargo/|rust-toolchain\.toml|scripts/check\.sh)
+        stages: [pre-push]
+
+      # The force-field IR extension proof crate: a third party extending
+      # the IR through molrs's pub API alone (ff-ir-02-protocol, P-Rust).
+      - id: ext
+        name: check ext (the force-field IR extended from outside molrs)
+        entry: scripts/check.sh ext
+        language: system
+        pass_filenames: false
+        files: ^(molrs/|molrs-ext-example/|Cargo\.toml|\.cargo/|rust-toolchain\.toml|scripts/check\.sh)
         stages: [pre-push]
 
       - id: python

@@ -569,8 +569,15 @@ IR](guides/forcefield-ir.md#engine-codecs).
 - **Every engine refusal is `NoEngineForm`.** The GROMACS and frcmod
   writers refuse a style that is not built in, and the LAMMPS and OpenMM
   writers a style with no form, as "`<engine>` has no form for `<category>`
-  `` `<style>` ``: …" (Python `molrs.ff.ir.NoEngineForm` from
-  `register_engine_form`; the writers raise `ValueError` with that message).
+  `` `<style>` ``: …", typed: `ForceFieldWriter::write_str` / `write` (and
+  `write_amber_frcmod`, `write_forcefield_xml`,
+  `GromacsTopFfWriter::write_system_str`, the LAMMPS writer's
+  `write_data_coeffs_str` / `write_cmap_str`) return
+  **`WriteError`** instead of `String`: it dereferences to its message (so
+  `err.contains(…)` still reads it, and `String::from(err)` converts) and
+  `err.ir()` is the `IrError::NoEngineForm` when an engine refused a style.
+  Python raises `molrs.ff.ir.NoEngineForm` (a `ValueError`) from every
+  writer, as from `register_engine_form`.
 - **Readers and writers take a registry**: `LammpsFfReader::with_registry`,
   `LammpsFfWriter::with_registry`, `XmlForceFieldWriter::with_registry`
   (the process-wide one by default).
@@ -616,6 +623,12 @@ IR](guides/forcefield-ir.md#engine-codecs).
   `lj/cut`, `inner >= cutoff` of a CHARMM switch). An unlike pair of `buck` /
   `morse` with no cross row is `NoMixing`. Structural failures (a missing
   block or column, an unknown type label) stay plain `ValueError`.
+- **The neighbour-driven `pair lj/class2`, `buck` and `morse` stop at their
+  `cutoff`** (`r < cutoff`, as LAMMPS and `lj/cut` do); 0.15 priced every
+  pair the neighbour table held, beyond the cutoff too. The compiled
+  (`pairs`-list) door is unchanged: cutoff-free. Found by the built-in gate
+  (`ff::ir::builtin_conformance`), which holds each built-in to its
+  expression at both doors.
 - **`dihedral periodic`** refuses a gap in its terms (`k1`, `k3` without
   `k2`: `MissingParam` `k2`; 0.15 silently dropped `k3`) and a row spelling
   both `k` and `k1` (`BadValue`).
@@ -755,6 +768,12 @@ and an OPLS-AA dipeptide (`scripts/gromacs_engine_check.sh`).
   `ForceField.materialize_one_four(frame)`, which writes its 1-4 pairs out.
 - **`[ defaults ]` gen-pairs `no`** is read (1-4 LJ weight 1, every pair
   priced by its own parameters) instead of refused.
+- **A row's own type is named deterministically.** A `[ dihedrals ]` (…)
+  row with parameters of its own becomes one type per distinct parameter
+  set, `<labels>@gmx_<n>`; equal sets were told apart by the text of a
+  hash map, so the same file could read as a different number of types,
+  numbered differently, from run to run. `Params`' `Debug` now lists its
+  keys in order, and equal rows are one type.
 - **`#define` macros are expanded** in rows (0.15 recorded them and never
   expanded them), a line ending in `\` continues, and text before the first
   section is read past as GROMACS reads it past (charmm27's `forcefield.itp`

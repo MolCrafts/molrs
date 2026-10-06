@@ -111,7 +111,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use super::ForceFieldWriter;
+use super::{ForceFieldWriter, WriteError};
 use crate::ff::forcefield::lammps_units::{LammpsFfUnits, parse_style};
 use crate::ff::forcefield::readers::lammps::{
     CROSS_TERM_SECTIONS, LAMMPS_CMAP_DIM, LAMMPS_CMAP_MAX,
@@ -197,18 +197,16 @@ pub(crate) fn codec_of<'r>(
     reg: &'r Registry,
     category: &str,
     style: &str,
-) -> Result<(&'r StyleSpec, &'r dyn LammpsCodec), String> {
+) -> Result<(&'r StyleSpec, &'r dyn LammpsCodec), WriteError> {
     let (spec, _) = reg.style(category, style).ok_or_else(|| {
-        Engine::Lammps
-            .refuse(
-                category,
-                style,
-                "the style is not registered (molrs.ff.ir.register_style), so nothing states \
-                 its parameters' order and dimensions",
-            )
-            .to_string()
+        Engine::Lammps.refuse(
+            category,
+            style,
+            "the style is not registered (molrs.ff.ir.register_style), so nothing states \
+             its parameters' order and dimensions",
+        )
     })?;
-    let codec = spec.lammps.require(spec).map_err(|e| e.to_string())?;
+    let codec = spec.lammps.require(spec)?;
     Ok((spec, codec))
 }
 
@@ -252,7 +250,7 @@ pub fn lammps_coeff_values(
     style: &str,
     params: &Params,
     units: &str,
-) -> Result<Vec<f64>, String> {
+) -> Result<Vec<f64>, WriteError> {
     parse_style(units)?;
     with_global(|reg| {
         let (spec, codec) = codec_of(reg, category, style)?;
@@ -450,11 +448,19 @@ struct Resolved<'f, T> {
 impl<T: BondedCoeff> Resolved<'_, T> {
     /// The LAMMPS style name and the coefficient lines of the resolved type;
     /// an error names the label.
-    fn coeffs(&self, reg: &Registry, units: &UnitScale) -> Result<(String, LammpsCoeffs), String> {
-        let at = |e: String| format!("{} label `{}`: {e}", T::BLOCK, self.label);
+    fn coeffs(
+        &self,
+        reg: &Registry,
+        units: &UnitScale,
+    ) -> Result<(String, LammpsCoeffs), WriteError> {
+        let at = |e: WriteError| e.context(format_args!("{} label `{}`", T::BLOCK, self.label));
         let (spec, codec) = codec_of(reg, T::CATEGORY, self.style.name()).map_err(at)?;
-        codec.check_style(spec, self.style.params()).map_err(at)?;
-        let coeffs = codec.write(spec, self.ty.params(), units).map_err(at)?;
+        codec
+            .check_style(spec, self.style.params())
+            .map_err(|e| at(e.into()))?;
+        let coeffs = codec
+            .write(spec, self.ty.params(), units)
+            .map_err(|e| at(e.into()))?;
         Ok((lammps_name(spec), coeffs))
     }
 }
@@ -480,10 +486,12 @@ impl PairRow<'_> {
         reg: &Registry,
         units: &UnitScale,
         precision: usize,
-    ) -> Result<String, String> {
-        let at = |e: String| format!("pair type `{}`: {e}", self.ty.name);
+    ) -> Result<String, WriteError> {
+        let at = |e: WriteError| e.context(format_args!("pair type `{}`", self.ty.name));
         let (spec, codec) = codec_of(reg, "pair", self.style.name()).map_err(at)?;
-        let coeffs = codec.write(spec, &self.ty.params, units).map_err(at)?;
+        let coeffs = codec
+            .write(spec, &self.ty.params, units)
+            .map_err(|e| at(e.into()))?;
         Ok(render(&coeffs.values, precision))
     }
 }
@@ -533,7 +541,7 @@ impl<'a> LammpsFfWriter<'a> {
     /// a used explicit cross pair is an error here (write it through the
     /// include). A style's cross-term lines (`class2`'s `bb`, `mbt`, …) are
     /// their sections (`BondBond Coeffs`, `MiddleBondTorsion Coeffs`, …).
-    pub fn write_data_coeffs_str(&self, ff: &ForceField) -> Result<String, String> {
+    pub fn write_data_coeffs_str(&self, ff: &ForceField) -> Result<String, WriteError> {
         let units = units_of(ff, self.options.units)?;
         self.registry.with(|reg| {
             refuse_other_categories(ff, reg)?;
@@ -559,7 +567,7 @@ impl<'a> LammpsFfWriter<'a> {
     /// No `cmaps` label, a label with no cmap type, a style whose LAMMPS form
     /// is not `fix cmap`, a row without a `grid`, a grid that is not 24×24,
     /// or more than six maps (LAMMPS's `CMAPDIM`, `CMAPMAX`).
-    pub fn write_cmap_str(&self, ff: &ForceField) -> Result<String, String> {
+    pub fn write_cmap_str(&self, ff: &ForceField) -> Result<String, WriteError> {
         let units = units_of(ff, self.options.units)?;
         let rows = self.resolve::<CmapType>(ff)?;
         if rows.is_empty() {
@@ -569,14 +577,15 @@ impl<'a> LammpsFfWriter<'a> {
             return Err(format!(
                 "cmaps: {} CMAP types, fix cmap reads at most {LAMMPS_CMAP_MAX}",
                 rows.len()
-            ));
+            )
+            .into());
         }
         let mut maps = Vec::with_capacity(rows.len());
         for r in &rows {
             let what = || format!("cmaps label `{}`", r.label);
             let dim = self.registry.with(|reg| {
-                let (spec, _) = codec_of(reg, "cmap", r.style.name())
-                    .map_err(|e| format!("{}: {e}", what()))?;
+                let (spec, _) =
+                    codec_of(reg, "cmap", r.style.name()).map_err(|e| e.context(what()))?;
                 if lammps_name(spec) != "cmap" {
                     return Err(format!(
                         "{}: cmap style `{}` has no fix cmap form",
@@ -597,7 +606,8 @@ impl<'a> LammpsFfWriter<'a> {
                     "{}: a {:?} grid; fix cmap reads {LAMMPS_CMAP_DIM}×{LAMMPS_CMAP_DIM}",
                     what(),
                     grid.shape()
-                ));
+                )
+                .into());
             }
             let converted = grid.mapv(|v| units.apply(v, dim));
             maps.push((r.label.clone(), converted));
@@ -609,7 +619,7 @@ impl<'a> LammpsFfWriter<'a> {
 
     /// The include's `fix cmap` lines when the system has CMAP crossterms,
     /// nothing otherwise.
-    fn write_cmap_fix(&self, lines: &mut Vec<String>, ff: &ForceField) -> Result<(), String> {
+    fn write_cmap_fix(&self, lines: &mut Vec<String>, ff: &ForceField) -> Result<(), WriteError> {
         if self.resolve::<CmapType>(ff)?.is_empty() {
             return Ok(());
         }
@@ -618,9 +628,9 @@ impl<'a> LammpsFfWriter<'a> {
              write_cmap_str's text is saved as",
         )?;
         if file.is_empty() || file.chars().any(char::is_whitespace) {
-            return Err(format!(
-                "cmap_file {file:?}: LAMMPS reads one word as the fix cmap file"
-            ));
+            return Err(
+                format!("cmap_file {file:?}: LAMMPS reads one word as the fix cmap file").into(),
+            );
         }
         lines.push(
             "# CMAP crossterms: this fix must precede `read_data <data> fix cmap crossterm CMAP`\n"
@@ -649,7 +659,7 @@ impl<'a> LammpsFfWriter<'a> {
     fn resolve<'f, T: BondedCoeff>(
         &self,
         ff: &'f ForceField,
-    ) -> Result<Vec<Resolved<'f, T>>, String> {
+    ) -> Result<Vec<Resolved<'f, T>>, WriteError> {
         let labels = self.block_labels(T::BLOCK);
         if labels.is_empty() {
             return Ok(Vec::new());
@@ -703,7 +713,7 @@ impl<'a> LammpsFfWriter<'a> {
     /// A force field with no typed pair style (bonded-only, or only type-less
     /// styles such as Coulomb) has no pair rows to write, so it yields none
     /// rather than demanding a self pair per label.
-    fn resolve_pairs<'f>(&self, ff: &'f ForceField) -> Result<Vec<PairRow<'f>>, String> {
+    fn resolve_pairs<'f>(&self, ff: &'f ForceField) -> Result<Vec<PairRow<'f>>, WriteError> {
         if !ff.get_styles("pair").iter().any(|s| typed(s)) {
             return Ok(Vec::new());
         }
@@ -741,9 +751,9 @@ impl<'a> LammpsFfWriter<'a> {
             .enumerate()
             .find(|(i, _)| !rows.contains_key(&(i + 1, i + 1)))
         {
-            return Err(format!(
-                "atoms: type label `{label}` has no pair type in the force field"
-            ));
+            return Err(
+                format!("atoms: type label `{label}` has no pair type in the force field").into(),
+            );
         }
         Ok(rows.into_values().collect())
     }
@@ -767,7 +777,7 @@ impl<'a> LammpsFfWriter<'a> {
         ff: &ForceField,
         reg: &Registry,
         units: &UnitScale,
-    ) -> Result<(), String> {
+    ) -> Result<(), WriteError> {
         let rows = self.resolve_pairs(ff)?;
         if rows.is_empty() {
             return Ok(());
@@ -786,11 +796,11 @@ impl<'a> LammpsFfWriter<'a> {
             codecs.push((spec, codec));
         }
         let opts = &self.options;
-        let args = |i: usize| -> Result<Vec<Token>, String> {
+        let args = |i: usize| -> Result<Vec<Token>, WriteError> {
             let (spec, codec) = codecs[i];
-            codec.style_args(spec, styles[i].params(), units)
+            Ok(codec.style_args(spec, styles[i].params(), units)?)
         };
-        let modify = |i: usize| -> Result<Option<String>, String> {
+        let modify = |i: usize| -> Result<Option<String>, WriteError> {
             let (spec, codec) = codecs[i];
             let keys = codec.pair_modify(spec, styles[i].params())?;
             Ok((!keys.is_empty()).then(|| format!("pair_modify {}\n", keys.join(" "))))
@@ -808,7 +818,8 @@ impl<'a> LammpsFfWriter<'a> {
                     "pair styles {names:?}: LAMMPS has lj/charmm only as \
                      `lj/charmm/coul/charmm`, the pair lj/charmm + coul/charmm and nothing \
                      beside it"
-                ));
+                )
+                .into());
             }
             let (lj, coul) = (find("lj/charmm").unwrap(), find("coul/charmm").unwrap());
             let style_line = if opts.skip_pair_style {
@@ -865,7 +876,7 @@ impl<'a> LammpsFfWriter<'a> {
             return self.push_pair_coeffs(lines, reg, &rows, false, units);
         }
 
-        let sub_style = |i: usize| -> Result<String, String> {
+        let sub_style = |i: usize| -> Result<String, WriteError> {
             let cuts = args(i)?;
             let name = lammps_name(codecs[i].0);
             Ok(if cuts.is_empty() {
@@ -924,7 +935,7 @@ impl<'a> LammpsFfWriter<'a> {
                                 styles[c].name()
                             ),
                         )
-                        .to_string());
+                        .into());
                 }
                 if !opts.skip_pair_style {
                     lines.push(format!(
@@ -942,7 +953,8 @@ impl<'a> LammpsFfWriter<'a> {
                 return Err(format!(
                     "pair styles {names:?}: a Coulomb style beside several typed pair styles \
                      has no LAMMPS form this writer writes"
-                ));
+                )
+                .into());
             }
         }
         lines.push("\n".to_owned());
@@ -958,7 +970,7 @@ impl<'a> LammpsFfWriter<'a> {
         rows: &[PairRow<'_>],
         hybrid: bool,
         units: &UnitScale,
-    ) -> Result<(), String> {
+    ) -> Result<(), WriteError> {
         for row in rows {
             let nums = row.coeffs(reg, units, self.options.precision)?;
             let (i, j) = row.labels;
@@ -986,7 +998,7 @@ impl<'a> LammpsFfWriter<'a> {
         ff: &ForceField,
         reg: &Registry,
         units: &UnitScale,
-    ) -> Result<(), String> {
+    ) -> Result<(), WriteError> {
         let used = self.resolve::<T>(ff)?;
         if used.is_empty() {
             return Ok(());
@@ -1030,7 +1042,7 @@ impl<'a> LammpsFfWriter<'a> {
         ff: &ForceField,
         reg: &Registry,
         units: &UnitScale,
-    ) -> Result<(), String> {
+    ) -> Result<(), WriteError> {
         let mut section = Vec::new();
         for row in self.resolve_pairs(ff)? {
             if row.ids.0 != row.ids.1 {
@@ -1038,7 +1050,8 @@ impl<'a> LammpsFfWriter<'a> {
                     "pair type `{}` is an explicit cross pair; a data-file Pair Coeffs \
                      section holds self pairs only (write it through the *.ff include)",
                     row.ty.name
-                ));
+                )
+                .into());
             }
             let nums = row.coeffs(reg, units, self.options.precision)?;
             section.push(format!("{} {nums}\n", row.ids.0));
@@ -1053,7 +1066,7 @@ impl<'a> LammpsFfWriter<'a> {
         ff: &ForceField,
         reg: &Registry,
         units: &UnitScale,
-    ) -> Result<(), String> {
+    ) -> Result<(), WriteError> {
         let used = self.resolve::<T>(ff)?;
         let coeffs = used
             .iter()
@@ -1078,7 +1091,8 @@ impl<'a> LammpsFfWriter<'a> {
                          section has no form this writer writes (write the *.ff include)",
                         T::BLOCK,
                         r.label
-                    ));
+                    )
+                    .into());
                 }
                 cross
                     .entry(keyword)
@@ -1115,7 +1129,7 @@ fn push_pair_header(lines: &mut Vec<String>, style_line: Option<String>, modify:
 }
 
 impl ForceFieldWriter for LammpsFfWriter<'_> {
-    fn write_str(&self, ff: &ForceField) -> Result<String, String> {
+    fn write_str(&self, ff: &ForceField) -> Result<String, WriteError> {
         let units = units_of(ff, self.options.units)?;
         let mut lines: Vec<String> = Vec::new();
         lines.push("# LAMMPS force field generated by molrs\n".to_owned());
@@ -1159,7 +1173,7 @@ impl ForceFieldWriter for LammpsFfWriter<'_> {
 /// LAMMPS `*_style` command (a run-time category, `drude`): writing the
 /// include without it would drop its energy. A category that prices none
 /// (`constraint`, `virtual_site`) is the input script's (`fix shake`, …).
-fn refuse_other_categories(ff: &ForceField, reg: &Registry) -> Result<(), String> {
+fn refuse_other_categories(ff: &ForceField, reg: &Registry) -> Result<(), WriteError> {
     const WRITTEN: [&str; 7] = [
         "atom", "pair", "bond", "angle", "dihedral", "improper", "cmap",
     ];
@@ -1177,7 +1191,7 @@ fn refuse_other_categories(ff: &ForceField, reg: &Registry) -> Result<(), String
                 style.name(),
                 format!("LAMMPS has no `{category}_style` command"),
             )
-            .to_string());
+            .into());
     }
     Ok(())
 }
@@ -1271,16 +1285,16 @@ pub fn lammps_cmap_str(
     maps: &[(&str, &ArrayD<f64>)],
     units: &str,
     precision: usize,
-) -> Result<String, String> {
+) -> Result<String, WriteError> {
     let width = precision + 7;
     let mut out = format!("# UNITS: {units} CMAP correction maps written by molrs\n");
     for (t, (title, grid)) in maps.iter().enumerate() {
         let n = match grid.shape() {
             [a, b] if a == b => *a,
-            shape => return Err(format!("map `{title}`: a {shape:?} grid is not square")),
+            shape => return Err(format!("map `{title}`: a {shape:?} grid is not square").into()),
         };
         if title.contains(['\n', '\r']) {
-            return Err(format!("map {}: its title holds a line break", t + 1));
+            return Err(format!("map {}: its title holds a line break", t + 1).into());
         }
         out.push_str(&format!("\n# {title}, type {}\n", t + 1));
         let values: Vec<f64> = grid.iter().copied().collect();

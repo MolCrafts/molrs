@@ -86,4 +86,6 @@ pub use crate::ff::potential::generic::{CompoundForm, ParamCols, ScalarForm};
 pub use crate::ff::potential::registry::{KernelConstructor, ParamSource, RowSource, SpecialClass};
 
 #[cfg(test)]
+mod builtin_conformance;
+#[cfg(test)]
 mod tests;

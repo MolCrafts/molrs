@@ -43,11 +43,41 @@ use crate::ff::ir::{Arity, Registry};
 /// `==` with no tolerance, equal strings, arrays of one shape with every
 /// element equal under `==`): it decides whether a re-definition is the same
 /// definition, which is a question of identity, not closeness.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Clone, Default, PartialEq)]
 pub struct Params {
     inner: HashMap<String, f64>,
     strings: HashMap<String, String>,
     arrays: HashMap<String, ArrayD<f64>>,
+}
+
+/// Keys in order: two equal `Params` print the same text, whatever order
+/// their maps iterate in (a reader keys its own types on the text).
+impl std::fmt::Debug for Params {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Params")
+            .field(
+                "inner",
+                &self
+                    .inner
+                    .iter()
+                    .collect::<std::collections::BTreeMap<_, _>>(),
+            )
+            .field(
+                "strings",
+                &self
+                    .strings
+                    .iter()
+                    .collect::<std::collections::BTreeMap<_, _>>(),
+            )
+            .field(
+                "arrays",
+                &self
+                    .arrays
+                    .iter()
+                    .collect::<std::collections::BTreeMap<_, _>>(),
+            )
+            .finish()
+    }
 }
 
 impl Params {

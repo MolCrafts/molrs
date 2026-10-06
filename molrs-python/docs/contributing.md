@@ -37,7 +37,7 @@ fails is a CI job that would have failed.
 | Stage | Hooks |
 | --- | --- |
 | pre-commit | file hygiene (whitespace, final newline, YAML/TOML, merge markers, line endings), `fmt`, and `os-cfg`. Nothing compiles. |
-| pre-push | the pre-commit hooks again on `--all-files`; `partners`; `clippy doc test` (molrs core); `ffi`, `cxx`, `python`, `capi`, `wasm` when that binder's files changed; `mrec`; `docs`. |
+| pre-push | the pre-commit hooks again on `--all-files`; `partners`; `clippy doc test` (molrs core); `ffi`, `cxx`, `python`, `capi`, `wasm` when that binder's files changed, and `ext` (the force-field IR extension proof crate, `molrs-ext-example`) when it or molrs changed; `mrec`; `docs`. |
 | CI only | `features` and `package` — run them by hand (`scripts/check.sh features package`) when touching Cargo features or the crate's file list. |
 
 - `partners` — every pin in `.github/partners.env` exists on its remote, no

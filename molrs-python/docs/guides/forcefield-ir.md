@@ -13,7 +13,9 @@ writer or typifier, never in a kernel.
 
 This page is the reference for the IR: what each style computes, what its
 parameters mean, which engine form maps onto it and how, and how Urey–Bradley,
-explicit 1-4 pairs and CMAP are represented.
+explicit 1-4 pairs and CMAP are represented. The IR is also a protocol: a
+new style or category, from Rust, Python or molpy, registers into it with
+nothing rebuilt — see [Extending the force-field IR](extending-forcefield-ir.md).
 
 ## Units
 

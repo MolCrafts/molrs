@@ -53,6 +53,9 @@ enum Source {
 
 pub struct PairBuck {
     source: Source,
+    /// `cutoff²` of a neighbour-driven kernel (`r < cutoff`, as LAMMPS);
+    /// infinite for a compiled one, which prices the list it was given.
+    cutoff2: F,
 }
 
 impl PairBuck {
@@ -63,6 +66,7 @@ impl PairBuck {
         assert_eq!(rho.len(), n);
         assert_eq!(c.len(), n);
         Self {
+            cutoff2: F::INFINITY,
             source: Source::Compiled {
                 atom_i,
                 atom_j,
@@ -94,6 +98,7 @@ impl PairBuck {
         );
         let n_owned = type_id.len();
         Self {
+            cutoff2: F::INFINITY,
             source: Source::Typed {
                 type_id,
                 ntypes,
@@ -103,6 +108,13 @@ impl PairBuck {
                 n_owned,
             },
         }
+    }
+
+    /// Price only pairs closer than `cutoff` (a neighbour-driven kernel:
+    /// the style's `cutoff`, as LAMMPS truncates).
+    pub fn with_cutoff(mut self, cutoff: F) -> Self {
+        self.cutoff2 = cutoff * cutoff;
+        self
     }
 
     /// The pair term for one already-reduced separation.
@@ -179,6 +191,9 @@ impl PairBuck {
                 continue;
             }
             let (i, j, (a, rho, c), disp, r2) = pair(idx);
+            if r2 >= self.cutoff2 {
+                continue;
+            }
             let Some((e, f)) = self.pair_kernel(r2, disp, a, rho, c) else {
                 continue;
             };
@@ -374,7 +389,7 @@ pub fn pair_buck_ctor(
 /// search turns up. It reads no `pairs` block — there is none to read when the
 /// list is rebuilt every few steps.
 pub fn pair_buck_typed_ctor(
-    _style_params: &Params,
+    style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, crate::ff::potential::CompileError> {
@@ -396,7 +411,15 @@ pub fn pair_buck_typed_ctor(
             c[t] = need::type_num("buck", &key, p, "c")?;
         }
     }
-    Ok(Member::pair(PairBuck::typed(type_id, ntypes, a, rho, c)))
+    let kernel = PairBuck::typed(type_id, ntypes, a, rho, c);
+    // The style's `cutoff`, when it states one (`r < cutoff`, as LAMMPS).
+    Ok(Member::pair(match style_params.get("cutoff") {
+        Some(c) if c > 0.0 => kernel.with_cutoff(c),
+        Some(c) => {
+            return Err(format!("pair buck: 'cutoff' must be > 0, got {c}").into());
+        }
+        None => kernel,
+    }))
 }
 
 #[cfg(test)]

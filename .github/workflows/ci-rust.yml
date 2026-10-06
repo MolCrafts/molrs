@@ -21,7 +21,7 @@ jobs:
       - run: scripts/check.sh fmt partners clippy doc
 
   test:
-    name: unit + ffi + cxx + package
+    name: unit + ffi + cxx + ext + package
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -30,7 +30,7 @@ jobs:
         with:
           shared-key: unit
           workspaces: ". -> target"
-      - run: scripts/check.sh test ffi cxx package
+      - run: scripts/check.sh test ffi cxx ext package
 
   features:
     name: Feature isolation

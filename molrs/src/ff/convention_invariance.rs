@@ -235,7 +235,7 @@ fn relation_block(ff: &ForceField, category: &str, rows: &[Vec<usize>]) -> Optio
     Some(block)
 }
 
-fn hand_frame(ff: &ForceField) -> Frame {
+pub(crate) fn hand_frame(ff: &ForceField) -> Frame {
     let mut frame = Frame::new();
     let mut atoms = Block::new();
     for (d, key) in ["x", "y", "z"].iter().enumerate() {
@@ -359,7 +359,7 @@ const OPENMM_FF: &str = r#"<ForceField name="hand">
 </ForceField>
 "#;
 
-const LAMMPS_FF: &str = "\
+pub(crate) const LAMMPS_FF: &str = "\
 units real
 special_bonds lj 0.0 0.0 0.5 coul 0.0 0.0 0.8333333333333334
 pair_style lj/cut/coul/cut 10.0

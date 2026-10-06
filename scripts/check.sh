@@ -7,7 +7,7 @@
 #   scripts/check.sh fmt clippy     # run the named gates, in order
 #   scripts/check.sh all            # every gate (CI parity)
 #
-# Gates: fmt partners clippy doc test features package ffi cxx python capi
+# Gates: fmt partners clippy doc test features package ffi cxx ext python capi
 # wasm mrec docs. Root-workspace cargo calls go through the `cargo mrs-*`
 # aliases (.cargo/config.toml) so they share one feature set and one build.
 # Every cargo / maturin / wasm-pack call is --locked and every uv call runs
@@ -31,6 +31,9 @@ CLEANUP=()
 trap '[ "${#CLEANUP[@]}" -eq 0 ] || rm -rf "${CLEANUP[@]}"' EXIT
 
 BINDERS=(molrs-ffi molrs-python molrs-wasm molrs-capi molrs-cxxapi)
+# Every standalone workspace root besides the root one: the binders, and the
+# force-field IR extension proof crate.
+ROOTS=("${BINDERS[@]}" molrs-ext-example)
 # wasm-opt release the wasm gate runs; CI installs exactly this one.
 BINARYEN_VERSION=version_133
 TARGET_DIR=${CARGO_TARGET_DIR:-$PWD/target}
@@ -47,7 +50,7 @@ scratch() {
 
 gate_fmt() {
     cargo fmt --all --check
-    for crate in "${BINDERS[@]}"; do
+    for crate in "${ROOTS[@]}"; do
         cargo fmt --manifest-path "$crate/Cargo.toml" --check
     done
 }
@@ -107,6 +110,15 @@ gate_ffi() {
 gate_cxx() {
     clippy_binder molrs-cxxapi
     cargo test --locked --manifest-path molrs-cxxapi/Cargo.toml
+}
+
+# The force-field IR as a protocol (ff-ir-02-protocol, P-Rust): a third
+# party's crate extending it through molrs's pub API alone — a pair style, a
+# new category, an expression style — priced against pinned LAMMPS numbers
+# (scripts/ff_ir_extension_lammps_check.sh), persisted, and refused by name.
+gate_ext() {
+    clippy_binder molrs-ext-example
+    cargo test --locked --manifest-path molrs-ext-example/Cargo.toml
 }
 
 # Tools only (no project install), so tox builds the wheel once.
@@ -179,7 +191,7 @@ gate_docs() {
     (cd molrs-python && "$work/venv/bin/zensical" build --clean --strict)
 }
 
-ALL=(fmt partners clippy doc test features package ffi cxx python capi wasm mrec docs)
+ALL=(fmt partners clippy doc test features package ffi cxx ext python capi wasm mrec docs)
 # Gates that compile nothing; everything else goes to MOLCRAFTS_HOOK_RUNNER.
 CHEAP=(fmt partners)
 

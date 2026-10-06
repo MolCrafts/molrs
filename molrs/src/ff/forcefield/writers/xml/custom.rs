@@ -42,6 +42,7 @@ use super::{
     esc,
 };
 use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::writers::WriteError;
 use crate::ff::forcefield::{ForceField, Params, Style, StyleDefs};
 use crate::ff::ir::expr::{self, BinOp, Definition, Expr, Func, Parsed};
 use crate::ff::ir::expression::fallback_spec;
@@ -51,10 +52,10 @@ use crate::ff::ir::{
 };
 use molrs::types::F;
 
-fn refuse(style: &Style, why: impl Into<String>) -> String {
+fn refuse(style: &Style, why: impl Into<String>) -> WriteError {
     Engine::OpenmmXml
         .refuse(style.category(), style.name(), why)
-        .to_string()
+        .into()
 }
 
 /// The category, spec and parsed expression a style is written under.
@@ -67,7 +68,7 @@ struct Custom {
 /// `style`'s expression and the spec stating its parameters: the registered
 /// spec (with the instance's own expression when it carries one), else the
 /// compile fallback's spec of an unregistered style's instance expression.
-fn custom_of(reg: &Registry, style: &Style) -> Result<Custom, String> {
+fn custom_of(reg: &Registry, style: &Style) -> Result<Custom, WriteError> {
     let cat = match (reg.category(style.category()), style.defs()) {
         (Some(c), _) => c.clone(),
         (
@@ -235,7 +236,7 @@ fn per_type<'s>(
     style: &Style,
     spec: &'s StyleSpec,
     used: &[String],
-) -> Result<Vec<&'s str>, String> {
+) -> Result<Vec<&'s str>, WriteError> {
     let mut out = Vec::new();
     for p in &spec.params {
         if p.kind != ParamKind::Scalar {
@@ -265,7 +266,7 @@ fn row_value(
     ty: &str,
     row: &Params,
     name: &str,
-) -> Result<F, String> {
+) -> Result<F, WriteError> {
     row.get(name)
         .or_else(|| {
             spec.param(name)
@@ -284,7 +285,7 @@ fn globals(
     spec: &StyleSpec,
     used: &[String],
     out: &mut Out,
-) -> Result<String, String> {
+) -> Result<String, WriteError> {
     let mut xml = String::new();
     for p in spec
         .style_params
@@ -332,7 +333,7 @@ pub(super) fn bonded(
     style: &Style,
     ends: &Endpoints,
     out: &mut Out,
-) -> Result<(), String> {
+) -> Result<(), WriteError> {
     let rows = style.type_rows();
     let c = match custom_of(reg, style) {
         Ok(c) => c,
@@ -416,7 +417,7 @@ fn compound(
     style: &Style,
     ends: &Endpoints,
     out: &mut Out,
-) -> Result<(), String> {
+) -> Result<(), WriteError> {
     let arity = c.cat.arity.endpoints();
     let tuples = match (arity, c.cat.order) {
         (2, EndpointOrder::Reversible) => "[(_b.atom1, _b.atom2) for _b in data.bonds]",
@@ -516,7 +517,7 @@ pub(super) fn pair(
     ff: &ForceField,
     style: &Style,
     out: &mut Out,
-) -> Result<String, String> {
+) -> Result<String, WriteError> {
     let c = custom_of(reg, style)?;
     let used = identifiers(&c.parsed);
     let StyleDefs::Pair(types) = style.defs() else {

@@ -53,7 +53,7 @@ pub const SAMPLE_POINTS: usize = 16;
 /// Real terms a first-compile check evaluates.
 pub const PROBE_TERMS: usize = 8;
 /// The seed of every sample.
-const SEED: u64 = 0x1F1F_0002;
+pub(crate) const SEED: u64 = 0x1F1F_0002;
 
 /// `^[a-z][a-z0-9_]*$`, molrec's category name.
 fn is_category_name(name: &str) -> bool {
@@ -379,10 +379,10 @@ fn check_variables(
 
 /// A seeded SplitMix64: the sample points are the same on every machine
 /// and every run, so a refusal is reproducible.
-struct Rng(u64);
+pub(crate) struct Rng(pub(crate) u64);
 
 impl Rng {
-    fn uniform(&mut self, lo: F, hi: F) -> F {
+    pub(crate) fn uniform(&mut self, lo: F, hi: F) -> F {
         self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut z = self.0;
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);

@@ -331,6 +331,15 @@ pub(crate) fn compile_err(e: CompileError) -> PyErr {
 /// A force-field definition error as a Python exception: the IR refusal
 /// it is (`Arity`, `UnknownCategory`) as its subclass, with the
 /// definition's own message; else a plain `ValueError`.
+/// A writer's error: its typed refusal (`NoEngineForm`) as the `IrError`
+/// subclass, anything else a `ValueError`.
+pub(crate) fn write_err(e: molrs::ff::WriteError) -> PyErr {
+    match e.ir() {
+        Some(refusal) => ir_err(refusal, e.to_string()),
+        None => PyValueError::new_err(e.to_string()),
+    }
+}
+
 pub(crate) fn def_err(e: DefError) -> PyErr {
     match e.ir() {
         Some(refusal) => ir_err(&refusal, e.to_string()),

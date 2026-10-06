@@ -78,7 +78,7 @@ use std::sync::Arc;
 
 mod custom;
 
-use super::ForceFieldWriter;
+use super::{ForceFieldWriter, WriteError};
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::one_four::{OneFour, has_own_one_four};
 use crate::ff::forcefield::readers::opls::{HARMONIC_IMPROPER_ABS, HARMONIC_IMPROPER_SIGNED};
@@ -191,7 +191,7 @@ impl Endpoints {
 
 /// `Err` naming a style of `category` this writer has no OpenMM form for
 /// ([`IrError::NoEngineForm`](crate::ff::ir::IrError::NoEngineForm)).
-fn refuse(style: &Style, why: &str) -> String {
+fn refuse(style: &Style, why: &str) -> WriteError {
     let why = if why.is_empty() {
         "it has no tag of OpenMM's ForceField XML"
     } else {
@@ -199,7 +199,7 @@ fn refuse(style: &Style, why: &str) -> String {
     };
     crate::ff::ir::Engine::OpenmmXml
         .refuse(style.category(), style.name(), why)
-        .to_string()
+        .into()
 }
 
 fn need(p: &Params, key: &str, what: &str) -> Result<f64, String> {
@@ -254,7 +254,7 @@ impl Out {
         key: Vec<String>,
         name: &str,
         body: &str,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, WriteError> {
         match self.seen.get(&(family.to_owned(), key.clone())) {
             None => {
                 self.seen
@@ -266,7 +266,8 @@ impl Out {
                 "{family} types '{other}' and '{name}' are on the same labels {key:?} with \
                  other parameters: OpenMM's generator would price every such {family} with \
                  the first"
-            )),
+            )
+            .into()),
         }
     }
 }
@@ -278,7 +279,7 @@ impl XmlForceFieldWriter {
         reg: &Registry,
         ends: &Endpoints,
         out: &mut Out,
-    ) -> Result<(), String> {
+    ) -> Result<(), WriteError> {
         for style in ff.styles() {
             let native = match (style.category(), style.name()) {
                 ("bond", name) => name == "harmonic",
@@ -352,7 +353,8 @@ impl XmlForceFieldWriter {
                             if labels.iter().any(|l| l.is_empty()) {
                                 return Err(format!(
                                     "{what}: OpenMM's Urey-Bradley row matches no wildcard"
-                                ));
+                                )
+                                .into());
                             }
                             // OpenMM adds a bond of force constant 2k: k = K_ub.
                             let k_ub = need(&t.params, "k_ub", &what)?
@@ -406,7 +408,8 @@ impl XmlForceFieldWriter {
                                     return Err(format!(
                                         "{what}: a wildcard endpoint makes OpenMM re-order the \
                                          improper, so it would price another dihedral"
-                                    ));
+                                    )
+                                    .into());
                                 }
                                 let k = need(&t.params, "k", &what)? * KJ_PER_KCAL;
                                 let chi0 = t.params.get("chi0").unwrap_or(0.0).to_radians();
@@ -439,7 +442,8 @@ impl XmlForceFieldWriter {
                                 "cmap charmm {}: grid of shape {shape:?}; OpenMM's map (origin \
                                  0) needs an even N×N grid to hold molrs's (origin −180°)",
                                 t.name
-                            ));
+                            )
+                            .into());
                         }
                         let mut values = vec![0.0; n * n];
                         for j in 0..n {
@@ -490,7 +494,7 @@ impl XmlForceFieldWriter {
         p: &Params,
         (attrs, key): (&str, Vec<String>),
         out: &mut Out,
-    ) -> Result<(), String> {
+    ) -> Result<(), WriteError> {
         let what = format!("dihedral {} {name}", style.name());
         let refused = |e: crate::ff::forcefield::torsion::TorsionRefusal| format!("{what}: {e}");
         let terms: Option<Vec<(f64, f64, f64)>> = match style.name() {
@@ -505,10 +509,9 @@ impl XmlForceFieldWriter {
             "charmm" => {
                 let f = Charmm::from_params(p).map_err(refused)?;
                 if f.w != 0.0 {
-                    return Err(format!(
-                        "{what}: the 1-4 weight w = {} has no OpenMM form",
-                        f.w
-                    ));
+                    return Err(
+                        format!("{what}: the 1-4 weight w = {} has no OpenMM form", f.w).into(),
+                    );
                 }
                 Some(vec![(f.term.k, f.term.periodicity, f.term.phase)])
             }
@@ -518,7 +521,7 @@ impl XmlForceFieldWriter {
                 let phase = match f.sign {
                     1.0 => 0.0,
                     -1.0 => 180.0,
-                    d => return Err(format!("{what}: sign d = {d} is not ±1")),
+                    d => return Err(format!("{what}: sign d = {d} is not ±1").into()),
                 };
                 Some(vec![(f.k, f.periodicity, phase)])
             }
@@ -572,7 +575,7 @@ impl XmlForceFieldWriter {
         ff: &ForceField,
         reg: &Registry,
         sections: &mut Out,
-    ) -> Result<(String, Option<&'static str>), String> {
+    ) -> Result<(String, Option<&'static str>), WriteError> {
         let mut lj_style: Option<&Style> = None;
         let mut coul_style: Option<&Style> = None;
         // Expression pair styles: their `CustomNonbondedForce`s.
@@ -595,7 +598,8 @@ impl XmlForceFieldWriter {
                             "pair styles `{}` and `{}`: OpenMM holds one Lennard-Jones table",
                             other.name(),
                             style.name()
-                        ));
+                        )
+                        .into());
                     }
                     lj_style = Some(style);
                 }
@@ -654,7 +658,8 @@ impl XmlForceFieldWriter {
                 "special_bonds lj {:?} coul {:?}: OpenMM excludes 1-2 and 1-3 pairs and \
                  scales only 1-4",
                 sb.lj, sb.coul
-            ));
+            )
+            .into());
         }
         let (lj14, coul14) = (sb.lj_14(), sb.coul_14());
 
@@ -673,9 +678,9 @@ impl XmlForceFieldWriter {
                 }
             }
         }
-        let mixing = |style: &Style| -> Result<Mixing, String> {
+        let mixing = |style: &Style| -> Result<Mixing, WriteError> {
             match style.params().get_str("mixing") {
-                Some(m) => Mixing::parse(m),
+                Some(m) => Ok(Mixing::parse(m)?),
                 None => Ok(Mixing::UNDECLARED),
             }
         };
@@ -719,7 +724,7 @@ impl XmlForceFieldWriter {
             },
         };
 
-        let lj_of = |p: &Params, what: &str| -> Result<(f64, f64), String> {
+        let lj_of = |p: &Params, what: &str| -> Result<(f64, f64), WriteError> {
             Ok((
                 need(p, "sigma", what)? / ANGSTROM_PER_NM,
                 need(p, "epsilon", what)? * KJ_PER_KCAL,
@@ -792,7 +797,8 @@ impl XmlForceFieldWriter {
                     return Err(format!(
                         "{what}: a cross row with 1-4 parameters of its own; OpenMM prices an \
                          NBFIX 1-4 pair with the NBFIX row"
-                    ));
+                    )
+                    .into());
                 }
                 let (sigma, epsilon) = lj_of(p, &what)?;
                 out.push_str(&format!(
@@ -811,14 +817,15 @@ impl XmlForceFieldWriter {
 }
 
 impl ForceFieldWriter for XmlForceFieldWriter {
-    fn write_str(&self, ff: &ForceField) -> Result<String, String> {
+    fn write_str(&self, ff: &ForceField) -> Result<String, WriteError> {
         if let Some(units) = ff.declared_units()
             && units != "real"
         {
             return Err(format!(
                 "force field units '{units}': the OpenMM XML writer converts from real units \
                  (Å, kcal/mol)"
-            ));
+            )
+            .into());
         }
         let ends = Endpoints::new(ff);
         let mut sections = Out::default();
@@ -925,7 +932,7 @@ pub fn write_forcefield_xml(
     path: &str,
     ff: &ForceField,
     precision: Option<usize>,
-) -> Result<(), String> {
+) -> Result<(), WriteError> {
     XmlForceFieldWriter::new()
         .with_precision(precision)
         .write(ff, path)
@@ -934,7 +941,7 @@ pub fn write_forcefield_xml(
 pub fn write_forcefield_xml_str(
     ff: &ForceField,
     precision: Option<usize>,
-) -> Result<String, String> {
+) -> Result<String, WriteError> {
     XmlForceFieldWriter::new()
         .with_precision(precision)
         .write_str(ff)

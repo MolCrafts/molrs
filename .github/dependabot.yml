@@ -11,6 +11,7 @@ updates:
       - "/molrs-wasm"
       - "/molrs-capi"
       - "/molrs-cxxapi"
+      - "/molrs-ext-example"
     schedule:
       interval: weekly
     target-branch: dev

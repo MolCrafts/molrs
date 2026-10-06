@@ -65,7 +65,7 @@
 //!   than AMBER's (1-2 / 1-3 excluded, 1-4 LJ 1/SCNB, Coulomb 1/SCEE), which
 //!   tleap supplies itself.
 
-use super::ForceFieldWriter;
+use super::{ForceFieldWriter, WriteError};
 use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::{ForceField, Params, Style};
@@ -265,7 +265,7 @@ impl AmberFrcmodFfWriter {
     }
 
     /// The rows of `style`, with the index of the section they belong to.
-    fn style_rows(style: &Style) -> Result<(usize, Vec<String>), String> {
+    fn style_rows(style: &Style) -> Result<(usize, Vec<String>), WriteError> {
         let (category, name) = (style.category(), style.name());
         let section = match (category, name) {
             ("atom", "full") => 0,
@@ -275,7 +275,7 @@ impl AmberFrcmodFfWriter {
             ("improper", "periodic") => 4,
             ("pair", "lj/cut") => 5,
             ("pair", "coul/cut") => return Ok((5, Vec::new())),
-            _ => return Err(Engine::AmberFrcmod.refuse_style(category, name).to_string()),
+            _ => return Err(Engine::AmberFrcmod.refuse_style(category, name).into()),
         };
         let mut rows = Vec::new();
         for (type_name, ends, p) in style.type_rows() {
@@ -334,7 +334,8 @@ impl AmberFrcmodFfWriter {
                             "{what}: an explicit cross row ({} with {}) is an NBFIX, which a \
                              frcmod cannot express",
                             ends[0], ends[1]
-                        ));
+                        )
+                        .into());
                     }
                     Self::check_type_params(p, &["sigma", "epsilon"], &what)?;
                     let key = Self::single_type_field(ends[0], &what)?;
@@ -348,7 +349,7 @@ impl AmberFrcmodFfWriter {
 }
 
 impl ForceFieldWriter for AmberFrcmodFfWriter {
-    fn write_str(&self, ff: &ForceField) -> Result<String, String> {
+    fn write_str(&self, ff: &ForceField) -> Result<String, WriteError> {
         Self::check_declarations(ff)?;
         let mut sections: [Vec<String>; 6] = Default::default();
         for style in ff.styles() {
@@ -371,12 +372,12 @@ impl ForceFieldWriter for AmberFrcmodFfWriter {
 }
 
 /// Write `forcefield` to `path` as an AMBER frcmod file.
-pub fn write_amber_frcmod(path: &str, forcefield: &ForceField) -> Result<(), String> {
+pub fn write_amber_frcmod(path: &str, forcefield: &ForceField) -> Result<(), WriteError> {
     AmberFrcmodFfWriter::new().write(forcefield, path)
 }
 
 /// `forcefield` as the text of an AMBER frcmod file.
-pub fn write_amber_frcmod_str(forcefield: &ForceField) -> Result<String, String> {
+pub fn write_amber_frcmod_str(forcefield: &ForceField) -> Result<String, WriteError> {
     AmberFrcmodFfWriter::new().write_str(forcefield)
 }
 
