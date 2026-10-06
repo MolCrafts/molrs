@@ -172,6 +172,10 @@ pub(crate) struct StyleEntry {
     spec: StyleSpec,
     kernel: Option<Kernel>,
     sealed: bool,
+    /// What the first-compile verdict is keyed on instead of the form's
+    /// address: the registry expression an instance expression is checked
+    /// against, whose compiled form is new at every compile.
+    probe_id: Option<usize>,
 }
 
 /// What a style's form kernel is, and where it came from.
@@ -209,6 +213,64 @@ impl StyleEntry {
             spec,
             kernel: Some(Kernel::Expression(x)),
             sealed: false,
+            probe_id: None,
+        }))
+    }
+
+    /// The entry a style instance carrying its own `expression` is priced
+    /// under (protocol §4, D16).
+    ///
+    /// The registered kernel prices it, a registered kernel taking priority
+    /// over an expression; an instance expression that differs from the
+    /// registry's is checked for agreement with that kernel at first compile
+    /// ([`IrError::Disagree`]), like an expression registered beside a native
+    /// kernel. A registered style with neither kernel nor expression is
+    /// priced by the instance's. A sealed built-in, and a Tier-3
+    /// constructor (never sampled), is priced as registered, unchecked.
+    pub(crate) fn with_instance_expression(
+        &self,
+        category: &CategorySpec,
+        instance: Option<&str>,
+        expressions: Option<ExpressionCompiler>,
+    ) -> Result<std::borrow::Cow<'_, StyleEntry>, IrError> {
+        use std::borrow::Cow;
+        let Some(instance) = instance else {
+            return Ok(Cow::Borrowed(self));
+        };
+        if self.sealed || self.spec.expression.as_deref() == Some(instance) {
+            return Ok(Cow::Borrowed(self));
+        }
+        let native = |form: ExpressionForm| match form {
+            ExpressionForm::Scalar(f) => Kernel::Scalar(f),
+            ExpressionForm::Compound(f) => Kernel::Compound(f),
+        };
+        let keyed = |source: &str| {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            source.hash(&mut h);
+            Some(h.finish() as usize)
+        };
+        let (kernel, probe_id) = match (&self.kernel, &self.spec.expression) {
+            (Some(Kernel::Ctor { .. }), _) => return Ok(Cow::Borrowed(self)),
+            (Some(k @ (Kernel::Scalar(_) | Kernel::Compound(_))), _) => (Some(k.clone()), None),
+            (Some(Kernel::Expression(x)), _) => (Some(native(x.form())), keyed(x.source())),
+            (None, Some(registered)) => match expressions {
+                Some(compile) => (
+                    Some(native(compile(category, &self.spec)?.form())),
+                    keyed(registered),
+                ),
+                None => return Ok(Cow::Borrowed(self)),
+            },
+            (None, None) => (None, None),
+        };
+        let mut spec = self.spec.clone();
+        spec.expression = Some(instance.to_owned());
+        spec.samples.clear();
+        Ok(Cow::Owned(StyleEntry {
+            spec,
+            kernel,
+            sealed: false,
+            probe_id,
         }))
     }
 
@@ -266,7 +328,7 @@ impl StyleEntry {
             category,
             &self.spec,
             &form.form,
-            form_id(&form.form),
+            self.probe_id.unwrap_or_else(|| form_id(&form.form)),
             form.native,
             expressions,
             probe,
@@ -500,6 +562,7 @@ impl Registry {
                 spec,
                 kernel,
                 sealed: false,
+                probe_id: None,
             },
         );
         Ok(())

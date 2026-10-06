@@ -10,7 +10,8 @@
 //! | [`Style::category`], [`Style::name`] | `category`, `style` |
 //! | a category no registry declares ([`StyleDefs::Relation`]), its arity | the same `category`, its arity the endpoint columns' count |
 //! | [`Style::params`] numeric / string | `params` numbers / strings |
-//! | the string style params `expression`, `endpoint_key` | the entry fields of those names |
+//! | the string style params `expression`, `endpoint_key` | the entry fields of those names, `expression` byte for byte |
+//! | a style the force-field IR registry holds as a **custom** style, with no `expression` of its own | the registry's `expression`, so a process that registered nothing prices it (a built-in style writes none) |
 //! | [`Style::type_rows`], in definition order | the rows of the table at [`style_block_name`] |
 //! | row name, endpoints (a pair always two) | `name`, `itom`…`mtom` |
 //! | a pair self row / an explicit cross row (NBFIX) | a pair row with `itom == jtom` / `itom != jtom` |
@@ -30,7 +31,6 @@
 //! [`Style::type_rows`]: super::Style::type_rows
 //! [`StyleDefs::Relation`]: super::StyleDefs::Relation
 
-use crate::ff::forcefield::one_four::OneFour;
 use std::collections::{BTreeMap, BTreeSet};
 
 use indexmap::IndexMap;
@@ -38,6 +38,7 @@ use ndarray::{ArrayD, Axis};
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 
 use super::{ForceField, Params, SpecialBonds, Style};
+use crate::ff::ir::Registry;
 use molrs::store::block::{Block, Column, DType};
 use molrs::store::forcefield_section::{
     ENDPOINT_COLUMNS, EndpointKey, ForceFieldSection, UNIT_QUANTITIES, style_block_name,
@@ -111,11 +112,22 @@ fn units_document(units: &str) -> Result<JsonValue, String> {
     Ok(JsonValue::Object(out))
 }
 
-fn style_entry(style: &Style) -> Result<JsonValue, String> {
+/// The `expression` `style` persists with: its own, else — a custom style
+/// `registry` holds (not a sealed built-in) — the registry's, so a process
+/// that registered nothing can price what it reads (protocol D16).
+fn persisted_expression<'a>(style: &'a Style, registry: &'a Registry) -> Option<&'a str> {
+    style.params().get_str("expression").or_else(|| {
+        if registry.is_sealed(style.category(), style.name()) {
+            return None;
+        }
+        registry
+            .style(style.category(), style.name())
+            .and_then(|(spec, _)| spec.expression.as_deref())
+    })
+}
+
+fn style_entry(style: &Style, registry: &Registry) -> Result<JsonValue, String> {
     let what = || format!("{}/{} style params", style.category(), style.name());
-    if (style.category(), style.name()) == ("pair", "lj/charmm") {
-        OneFour::of(style.params()).map_err(|e| format!("{}: {e}", what()))?;
-    }
     let mut entry = JsonMap::new();
     entry.insert("category".into(), style.category().into());
     entry.insert("style".into(), style.name().into());
@@ -148,8 +160,9 @@ fn style_entry(style: &Style) -> Result<JsonValue, String> {
     if !params.is_empty() {
         entry.insert("params".into(), JsonValue::Object(params));
     }
-    if let Some(expression) = fields.remove("expression") {
-        entry.insert("expression".into(), expression);
+    fields.remove("expression");
+    if let Some(expression) = persisted_expression(style, registry) {
+        entry.insert("expression".into(), expression.into());
     }
     if let Some(key) = fields.remove("endpoint_key")
         && key != "type"
@@ -415,6 +428,12 @@ impl ForceField {
     /// This force field as a record's `forcefield` section (see the module
     /// docs for the mapping).
     ///
+    /// A style's own `expression` is written byte for byte. A custom style
+    /// the process-wide force-field IR registry holds, with none of its own,
+    /// is written with the registry's `expression`, so a process that
+    /// registered nothing reads a style it can price; a built-in style is
+    /// written with none.
+    ///
     /// # Errors
     ///
     /// An `Err` naming the style and key when the force field has no section
@@ -443,6 +462,13 @@ impl ForceField {
     /// assert_eq!(back.get_bondtypes()[0].params.get("k"), Some(300.0));
     /// ```
     pub fn to_section(&self) -> Result<ForceFieldSection, String> {
+        crate::ff::ir::with_global(|registry| self.to_section_in(registry))
+    }
+
+    /// [`Self::to_section`] against `registry` instead of the process-wide
+    /// one: the registry whose custom styles' expressions a style without
+    /// its own is written with.
+    pub fn to_section_in(&self, registry: &Registry) -> Result<ForceFieldSection, String> {
         let mut document = JsonMap::new();
         document.insert("name".into(), self.name.clone().into());
         document.insert("units".into(), units_document(self.units())?);
@@ -455,7 +481,7 @@ impl ForceField {
         let mut entries = Vec::with_capacity(self.styles().len());
         let mut tables = IndexMap::with_capacity(self.styles().len());
         for style in self.styles() {
-            entries.push(style_entry(style)?);
+            entries.push(style_entry(style, registry)?);
             tables.insert(
                 style_block_name(style.category(), style.name()),
                 style_table(style)?,
@@ -475,7 +501,8 @@ impl ForceField {
     /// does not know are unknown content the force field has no place for:
     /// they stay with the section.
     ///
-    /// A category beyond molrs's seven is kept as a
+    /// A style's `expression` is kept byte for byte, whether or not anything
+    /// registered the style. A category beyond molrs's seven is kept as a
     /// [`StyleDefs::Relation`](super::StyleDefs::Relation): with the arity
     /// the force-field IR registry declares for it, or — a category nothing
     /// declares — the count of its table's endpoint columns. Reading never
@@ -519,9 +546,6 @@ impl ForceField {
             }
             if let Some(expression) = entry.expression {
                 params.set_str("expression", expression);
-            }
-            if (entry.category, entry.style) == ("pair", "lj/charmm") {
-                OneFour::of(&params).map_err(|e| format!("{what}: {e}"))?;
             }
             let table = &section.tables[&entry.block_name()];
             match entry.endpoint_key {
