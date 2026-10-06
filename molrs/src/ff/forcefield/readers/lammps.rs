@@ -9,7 +9,7 @@
 //! [`LammpsFfWriter`](crate::ff::forcefield::writers::lammps::LammpsFfWriter), e.g.:
 //!
 //! ```text
-//! pair_style lj/cut/coul/long 10.0 10.0
+//! pair_style lj/cut/coul/cut 10.0 10.0
 //! pair_coeff c3 c3 0.107800 3.397710          # epsilon sigma
 //! bond_style harmonic
 //! bond_coeff c3-c3 228.890000 1.535400        # K r0
@@ -51,6 +51,20 @@
 //! in place of the mixing rule. A later line for the same pair, in either
 //! order, replaces an earlier one, as in LAMMPS. A cross line with a wildcard
 //! (`pair_coeff c3 * …`) is refused rather than expanded.
+//!
+//! # Pair styles
+//!
+//! `pair_style lj/cut` is `lj/cut` alone (LAMMPS prices no charge under it);
+//! `lj/cut/coul/cut` is `lj/cut` + `coul/cut`; `lj/cut/coul/long` is `lj/cut`
+//! + `coul/long/pme` with its cutoff and LAMMPS's Coulomb constant — the
+//! Ewald parameters are the input script's `kspace_style` accuracy, not an
+//! `alpha`, so they are not read and the style prices nothing until a caller
+//! states them. A `hybrid` / `hybrid/overlay` of `lj/cut` with `coul/cut` or
+//! `coul/long` reads the same way; accelerator suffixes (`/omp`, `/kk`, …)
+//! are dropped. Any other Coulomb (`coul/debye`, `coul/dsf`, `coul/wolf`, …)
+//! is refused. `pair_modify mix <rule>` is the `mixing` and `pair_modify
+//! shift yes` the `shift` of `lj/cut` (refused under the switched CHARMM
+//! style).
 //!
 //! # CHARMM pair style
 //!
@@ -178,7 +192,9 @@ impl LammpsFfReader {
                     hint.require_supported(category)?;
                     hint.style.as_str()
                 }
-                None if category == "pair" => "lj/cut",
+                // A data file without a hint: the AMBER-style default above,
+                // charges priced by a plain Coulomb.
+                None if category == "pair" => "lj/cut/coul/cut",
                 None => "harmonic",
             };
             if category == "pair" {
@@ -227,9 +243,10 @@ impl LammpsFfReader {
         let mut pair_rows: Vec<PairRow> = Vec::new();
         let mut pair_line = PairLine::LjCut {
             lj: None,
-            coul: None,
+            coul: Coul::Cut(None),
         };
         let mut pair_mix: Option<String> = None;
+        let mut pair_shift = false;
         // The LAMMPS style each category's coefficient lines are read under.
         let mut styles: BTreeMap<&'static str, BondedStyle> = BTreeMap::new();
         let mut saw_special_bonds = false;
@@ -293,6 +310,18 @@ impl LammpsFfReader {
                         Mixing::parse(rule).map_err(|e| format!("{}: {e}", where_()))?;
                         pair_mix = Some((*rule).to_owned());
                     }
+                    if let Some(i) = rest.iter().position(|t| *t == "shift") {
+                        pair_shift = match rest.get(i + 1) {
+                            Some(&"yes") => true,
+                            Some(&"no") => false,
+                            other => {
+                                return Err(format!(
+                                    "{}: pair_modify shift takes yes or no, got {other:?}",
+                                    where_()
+                                ));
+                            }
+                        };
+                    }
                 }
                 "fix" => {
                     let [id, _group, style, args @ ..] = rest.as_slice() else {
@@ -355,6 +384,7 @@ impl LammpsFfReader {
             &pair_rows,
             pair_line,
             pair_mix.as_deref(),
+            pair_shift,
             coulomb_constant(file_units),
         )?;
         // Every number is as the file wrote it, so the force field is in the
@@ -722,11 +752,45 @@ fn data_sections_to_commands(
 /// file's length unit.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum PairLine {
-    /// Any LJ-12-6 + Coulomb `lj/cut…` variant: molrs's `lj/cut` + `coul/cut`.
-    LjCut { lj: Option<f64>, coul: Option<f64> },
+    /// An `lj/cut…` style: molrs's `lj/cut` and its Coulomb half.
+    LjCut { lj: Option<f64>, coul: Coul },
     /// `lj/charmm/coul/charmm inner outer [inner2 outer2]`: molrs's
     /// `lj/charmm` + `coul/charmm`, each with its `(inner, cutoff)`.
     Charmm { lj: (f64, f64), coul: (f64, f64) },
+}
+
+/// The Coulomb half of an `lj/cut…` pair line, with its cutoff.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Coul {
+    /// None: `pair_style lj/cut` prices no charge.
+    None,
+    /// `coul/cut`: molrs's `coul/cut`.
+    Cut(Option<f64>),
+    /// `coul/long`: the real-space half of an Ewald sum, molrs's
+    /// `coul/long/pme`. Its Ewald parameters are the input script's
+    /// `kspace_style` (an accuracy, not an `alpha`), so they are not read, and
+    /// the style prices nothing until a caller states them.
+    Long(Option<f64>),
+}
+
+impl Coul {
+    fn with_cutoff(self, cut: Option<f64>) -> Coul {
+        match self {
+            Coul::None => Coul::None,
+            Coul::Cut(c) => Coul::Cut(c.or(cut)),
+            Coul::Long(c) => Coul::Long(c.or(cut)),
+        }
+    }
+}
+
+/// A LAMMPS style name without its accelerator suffix (`/omp`, `/kk`, …).
+fn without_accelerator(name: &str) -> &str {
+    for suffix in ["/omp", "/opt", "/kk", "/gpu", "/intel"] {
+        if let Some(base) = name.strip_suffix(suffix) {
+            return base;
+        }
+    }
+    name
 }
 
 /// Validate the pair kernel and return what it declares.
@@ -739,11 +803,16 @@ enum PairLine {
 /// - `hybrid/overlay lj/cut 10.0 coul/cut 10.0`, both on every pair — what this
 ///   reader's own force field means, so its writer emits it.
 ///
+/// `pair_style lj/cut` alone is `lj/cut` with no Coulomb style (LAMMPS prices
+/// no charge under it); `lj/cut/coul/long` (and a hybrid `coul/long`) is
+/// `lj/cut` + `coul/long/pme` with the Coulomb cutoff and constant, its Ewald
+/// parameters left for the caller (the `kspace_style` states an accuracy).
+/// Any other `lj/cut/coul/…` Coulomb (`debye`, `dsf`, `wolf`, …) is refused.
+///
 /// `lj/charmm/coul/charmm inner outer [inner2 outer2]` maps to `lj/charmm` +
 /// `coul/charmm` with LAMMPS's switching cutoffs (the Coulomb pair the LJ
 /// one when only two are given). Its `coul/long` sibling is refused: its
-/// Coulomb is the real-space half of an Ewald sum, which molrs has no
-/// neighbour-driven kernel for.
+/// Coulomb is switched in real space, which no molrs kernel is.
 ///
 /// The cutoffs are part of the force field, not a rendering detail: a reader
 /// that keeps only the kernel name cannot write a runnable input back out.
@@ -755,6 +824,7 @@ fn require_pair_style(rest: &[&str], where_: &dyn Fn() -> String) -> Result<Pair
         let (lj, coul) = hybrid_cutoffs(&rest[1..], where_)?;
         return Ok(PairLine::LjCut { lj, coul });
     }
+    let name = &without_accelerator(name);
     let nums = rest[1..]
         .iter()
         .map(|t| parse_f64(t, "pair_style cutoff", where_))
@@ -785,16 +855,21 @@ fn require_pair_style(rest: &[&str], where_: &dyn Fn() -> String) -> Result<Pair
             where_()
         ));
     }
-    // Any LJ-12-6 + Coulomb variant maps to lj/cut + coul/cut for the relaxer.
-    if !name.starts_with("lj/cut") {
-        return Err(format!(
-            "{}: unsupported pair_style `{name}` (expected an `lj/cut...`, \
-             `lj/charmm/coul/charmm`, `hybrid`, or `hybrid/overlay` variant)",
-            where_()
-        ));
-    }
     let lj = nums.first().copied();
-    let coul = nums.get(1).copied().or(lj);
+    let cut = nums.get(1).copied().or(lj);
+    let coul = match *name {
+        "lj/cut" => Coul::None,
+        "lj/cut/coul/cut" => Coul::Cut(cut),
+        "lj/cut/coul/long" => Coul::Long(cut),
+        _ => {
+            return Err(format!(
+                "{}: unsupported pair_style `{name}` (molrs reads `lj/cut`, \
+                 `lj/cut/coul/cut`, `lj/cut/coul/long`, `lj/charmm/coul/charmm`, and a \
+                 `hybrid` / `hybrid/overlay` of `lj/cut` with `coul/cut` or `coul/long`)",
+                where_()
+            ));
+        }
+    };
     Ok(PairLine::LjCut { lj, coul })
 }
 
@@ -805,8 +880,8 @@ fn require_pair_style(rest: &[&str], where_: &dyn Fn() -> String) -> Result<Pair
 fn hybrid_cutoffs(
     rest: &[&str],
     where_: &dyn Fn() -> String,
-) -> Result<(Option<f64>, Option<f64>), String> {
-    let (mut lj, mut coul) = (None, None);
+) -> Result<(Option<f64>, Coul), String> {
+    let (mut lj, mut coul) = (None, Coul::None);
     let mut i = 0;
     while i < rest.len() {
         let sub = rest[i];
@@ -814,13 +889,14 @@ fn hybrid_cutoffs(
         // it parses as a number, otherwise it is the next sub-style name (and
         // this sub-style falls back to LAMMPS's global default).
         let cut = rest.get(i + 1).and_then(|t| t.parse::<f64>().ok());
-        match sub {
+        match without_accelerator(sub) {
             "lj/cut" => lj = cut,
-            "coul/cut" | "coul/long" => coul = cut,
+            "coul/cut" => coul = Coul::Cut(cut),
+            "coul/long" => coul = Coul::Long(cut),
             other => {
                 return Err(format!(
                     "{}: unsupported hybrid pair sub-style `{other}` \
-                     (expected `lj/cut` or `coul/cut`)",
+                     (expected `lj/cut`, `coul/cut` or `coul/long`)",
                     where_()
                 ));
             }
@@ -828,7 +904,7 @@ fn hybrid_cutoffs(
         // Step over the sub-style name and its cutoff argument, if any.
         i += if cut.is_some() { 2 } else { 1 };
     }
-    Ok((lj, coul.or(lj)))
+    Ok((lj, coul.with_cutoff(lj)))
 }
 
 /// One `pair_coeff` row: the two atom types (equal for a self pair) and its
@@ -905,6 +981,7 @@ fn build_pairs(
     rows: &[PairRow],
     line: PairLine,
     mix: Option<&str>,
+    shift: bool,
     coulomb: f64,
 ) -> Result<(), String> {
     if rows.is_empty() {
@@ -915,18 +992,38 @@ fn build_pairs(
     let mut coul_params = vec![("coulomb", coulomb), ("dielectric", VACUUM_DIELECTRIC)];
     let (lj_name, mut lj_params, coul_name) = match line {
         PairLine::LjCut { lj, coul } => {
-            let lj_pairs: Vec<(&str, f64)> = lj.map(|c| vec![("cutoff", c)]).unwrap_or_default();
-            if let Some(c) = coul {
-                coul_params.push(("cutoff", c));
+            let mut lj_pairs: Vec<(&str, f64)> =
+                lj.map(|c| vec![("cutoff", c)]).unwrap_or_default();
+            if shift {
+                lj_pairs.push(("shift", 1.0));
             }
-            ("lj/cut", Params::from_pairs(&lj_pairs), "coul/cut")
+            let coul_name = match coul {
+                Coul::None => None,
+                Coul::Cut(c) => {
+                    coul_params.extend(c.map(|c| ("cutoff", c)));
+                    Some("coul/cut")
+                }
+                Coul::Long(c) => {
+                    coul_params = vec![("coulomb", coulomb)];
+                    coul_params.extend(c.map(|c| ("cutoff", c)));
+                    Some("coul/long/pme")
+                }
+            };
+            ("lj/cut", Params::from_pairs(&lj_pairs), coul_name)
         }
         PairLine::Charmm { lj, coul } => {
+            if shift {
+                return Err(
+                    "pair_modify shift yes under lj/charmm/coul/charmm: its switch already \
+                     takes the energy to zero at the cutoff"
+                        .into(),
+                );
+            }
             coul_params.extend([("inner", coul.0), ("cutoff", coul.1)]);
             (
                 "lj/charmm",
                 Params::from_pairs(&[("inner", lj.0), ("cutoff", lj.1)]),
-                "coul/charmm",
+                Some("coul/charmm"),
             )
         }
     };
@@ -951,8 +1048,10 @@ fn build_pairs(
         }
         .map_err(|e| e.to_string())?;
     }
-    ff.def_style("pair", coul_name, Params::from_pairs(&coul_params))
-        .map_err(|e| e.to_string())?;
+    if let Some(coul_name) = coul_name {
+        ff.def_style("pair", coul_name, Params::from_pairs(&coul_params))
+            .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
@@ -1440,7 +1539,7 @@ mod tests {
     const MINI: &str = r#"
 # LAMMPS force field generated by molrs
 special_bonds amber
-pair_style lj/cut/coul/long 10.0 10.0
+pair_style lj/cut/coul/cut 10.0 10.0
 pair_coeff c3 c3 0.107800 3.397710
 pair_coeff oh oh 0.093000 3.242871
 pair_coeff c3 c3 0.107800 3.397710   # duplicate; the last one is used
@@ -1782,7 +1881,7 @@ pair_coeff c3 c3 lj/cut 0.1078 3.39771
         let text = "\
 units metal
 special_bonds amber
-pair_style lj/cut 10.0
+pair_style lj/cut/coul/cut 10.0
 pair_coeff c3 c3 1.0 3.4
 bond_style harmonic
 bond_coeff c3-c3 1.0 1.5
@@ -2235,5 +2334,75 @@ dihedral_coeff 10-10-10-10 0.2 1.0 180.0
             .read(path.to_str().unwrap())
             .unwrap_err();
         assert!(err.contains("UNITS: metal"), "{err}");
+    }
+
+    /// `pair_style lj/cut` prices no charge in LAMMPS: no Coulomb style.
+    #[test]
+    fn a_bare_lj_cut_has_no_coulomb_style() {
+        let ff = LammpsFfReader::new()
+            .read_str("special_bonds amber\npair_style lj/cut 10.0\npair_coeff c3 c3 0.1 3.4\n")
+            .unwrap();
+        assert!(ff.get_style("pair", "lj/cut").is_some());
+        assert!(ff.get_style("pair", "coul/cut").is_none());
+        assert_eq!(ff.get_styles("pair").len(), 1);
+    }
+
+    /// `lj/cut/coul/long` is `coul/long/pme` with its cutoff and constant; its
+    /// Ewald parameters are the script's `kspace_style`, not read, so pricing
+    /// refuses until they are stated.
+    #[test]
+    fn lj_cut_coul_long_is_coul_long_pme_without_its_ewald_parameters() {
+        for line in [
+            "pair_style lj/cut/coul/long 10.0 12.0",
+            "pair_style lj/cut/coul/long/omp 10.0 12.0",
+            "pair_style hybrid/overlay lj/cut 10.0 coul/long 12.0",
+        ] {
+            let ff = LammpsFfReader::new()
+                .read_str(&format!(
+                    "special_bonds amber\n{line}\npair_coeff c3 c3 0.1 3.4\n"
+                ))
+                .unwrap();
+            assert!(ff.get_style("pair", "coul/cut").is_none(), "{line}");
+            let coul = ff.get_style("pair", "coul/long/pme").expect(line);
+            assert_eq!(coul.params().get("cutoff"), Some(12.0), "{line}");
+            assert_eq!(coul.params().get("coulomb"), Some(COULOMB_REAL), "{line}");
+            assert_eq!(coul.params().get("alpha"), None, "{line}");
+        }
+    }
+
+    /// Another LAMMPS Coulomb is refused by name, not read as plain.
+    #[test]
+    fn another_lj_cut_coulomb_is_refused() {
+        for style in ["lj/cut/coul/debye 10.0", "lj/cut/coul/dsf 0.2 10.0"] {
+            let err = LammpsFfReader::new()
+                .read_str(&format!(
+                    "special_bonds amber\npair_style {style}\npair_coeff c3 c3 0.1 3.4\n"
+                ))
+                .unwrap_err();
+            assert!(err.contains(style.split(' ').next().unwrap()), "{err}");
+        }
+    }
+
+    /// `pair_modify shift yes` is `lj/cut`'s `shift`; the switched CHARMM
+    /// style refuses it.
+    #[test]
+    fn pair_modify_shift_is_the_lj_cut_shift() {
+        let ff = LammpsFfReader::new()
+            .read_str(
+                "special_bonds amber\npair_style lj/cut 10.0\npair_modify mix arithmetic shift yes\n\
+                 pair_coeff c3 c3 0.1 3.4\n",
+            )
+            .unwrap();
+        let lj = ff.get_style("pair", "lj/cut").unwrap();
+        assert_eq!(lj.params().get("shift"), Some(1.0));
+        assert_eq!(lj.params().get_str("mixing"), Some("arithmetic"));
+        let err = LammpsFfReader::new()
+            .read_str(
+                "special_bonds charmm\npair_style lj/charmm/coul/charmm 8.0 10.0\n\
+                 pair_modify shift yes\n\
+                 pair_coeff c3 c3 0.1 3.4\n",
+            )
+            .unwrap_err();
+        assert!(err.contains("shift"), "{err}");
     }
 }

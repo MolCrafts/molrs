@@ -49,6 +49,7 @@
 //! | `dihedral/harmonic` k[1 + d cos nφ] | dihedraltypes 9 | φ_s = 0° (d = 1) or 180° (d = −1) |
 //! | `dihedral/multi/harmonic`, `dihedral/nharmonic` (N ≤ 6) | dihedraltypes 3 | Cₙ = (−1)ⁿ·aₙ₊₁·4.184 kJ/mol (C₅ = 0 for multi/harmonic) |
 //! | `dihedral/opls` | dihedraltypes 5 | Cₙ = kₙ·4.184 kJ/mol |
+//! | `dihedral/class2` (its torsion; LAMMPS's cross terms are not IR) | dihedraltypes 9, a row per non-zero kₙ | φ_s = phiₙ + 180°; kₙ·4.184 kJ/mol; n |
 //! | `improper/periodic` | dihedraltypes 4 | as funct 1; the atoms in the stored order |
 //! | `improper/cvff` k[1 + d cos nφ] | dihedraltypes 4 | φ_s = 0° (d = 1) or 180° (d = −1) |
 //! | `improper/harmonic` | dihedraltypes 2 | ξ₀ = chi0 (0° or 180°); k_ξ = 2·k·4.184 kJ/mol/rad² |
@@ -76,7 +77,7 @@
 //! What GROMACS force-field directives cannot express is an `Err` naming it,
 //! never a silent drop or an invented value:
 //!
-//! - any other style (`dihedral/class2`, `improper/mmff_oop`, …),
+//! - any other style (`improper/mmff_oop`, `bond/class2`, …),
 //!   `dihedral/charmm` with `w` ≠ 0 (GROMACS prices a 1-4 pair by `[ pairs ]`,
 //!   never by a dihedral), `dihedral/nharmonic` with N > 6;
 //! - `sixthpower` mixing; a non-zero 1-2 or 1-3 special-bond weight;
@@ -98,8 +99,9 @@
 //! typed frame as one `.top`, the inverse of
 //! [`GromacsTopFfReader::read_system_str`](crate::ff::forcefield::readers::gromacs::GromacsTopFfReader::read_system_str):
 //! `[ defaults ]`, `[ atomtypes ]`, `[ nonbond_params ]`, `[ pairtypes ]`
-//! and `[ cmaptypes ]` as above, then one `[ moleculetype ]` holding every
-//! atom (`nrexcl` 3) with each `bonds` / `angles` / `dihedrals` /
+//! and `[ cmaptypes ]` as above, then one `[ moleculetype ]` (`nrexcl` 3) per
+//! molecule (bond-graph component, a run of consecutive atoms), with each
+//! `bonds` / `angles` / `dihedrals` /
 //! `impropers` row written with its type's parameters on the line (one
 //! funct-9 line per periodic term, a single term included), so no lookup can
 //! pick another type; `cmaps` rows
@@ -107,15 +109,17 @@
 //! `[ pairs ]` lists the frame's 1-4 pairs (funct 1, or with parameters of
 //! their own from the override cells: funct 1 `σ ε` when only `epsilon` /
 //! `sigma` differ, else funct 2 `fudgeQQ qᵢqⱼ 1 σ lj_scale·ε`), and
-//! `[ exclusions ]` every pair beyond three bonds the frame does not price —
-//! so GROMACS prices exactly the frame's `pairs` (built by
+//! `[ exclusions ]` every pair of one molecule beyond three bonds the frame
+//! does not price — so GROMACS prices exactly the frame's intramolecular
+//! `pairs` (built by
 //! [`intramolecular_pairs`](crate::ff::potential::intramolecular_pairs) when
-//! absent). Refused by name: a priced pair within three bonds that is not a
+//! absent), and every pair across molecules. Refused by name: a priced pair within three bonds that is not a
 //! 1-4 pair (GROMACS excludes it) or a 1-4 pair beyond them, override cells
 //! without `epsilon` and `sigma`, a crossterm GROMACS's lookup would give
-//! another grid, a type name two styles of one category share, more than
-//! `MAX_ATOMS_FOR_A_FULL_PAIR_LIST` atoms (the one molecule type lists its
-//! pairs), and the force-field refusals above.
+//! another grid, a type name two styles of one category share, a molecule
+//! whose atoms are not consecutive or a row across two molecules, more than
+//! `MAX_ATOMS_FOR_A_FULL_PAIR_LIST` atoms, and the force-field refusals
+//! above.
 //!
 //! # Whole-FF serialization, not coefficient writing
 //!
@@ -126,7 +130,7 @@
 //! does this system's data file need" and is keyed by the system's
 //! `TypeLabels`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::ForceFieldWriter;
 use crate::ff::constants::VACUUM_DIELECTRIC;
@@ -137,6 +141,7 @@ use crate::ff::potential::cmap::charmm::GRID;
 use crate::ff::potential::pair::charmm::{charmm_mixing, charmm_pair_params};
 use crate::ff::potential::{MAX_ATOMS_FOR_A_FULL_PAIR_LIST, intramolecular_pairs};
 use molrs::store::frame::Frame;
+use molrs::store::schema::PAIR_OVERRIDE_COLUMNS;
 const KJ_PER_KCAL: f64 = 4.184;
 const NM_TO_ANGSTROM: f64 = 10.0;
 
@@ -594,6 +599,29 @@ impl GromacsTopFfWriter {
                     Some(2),
                 )
             }
+            // k[1 − cos(nφ − φₙ)] = k[1 + cos(nφ − φₙ − 180°)]: one funct-9 row
+            // per non-zero term, constant included.
+            ("dihedral", "class2") => {
+                allowed(&["k1", "phi1", "k2", "phi2", "k3", "phi3"])?;
+                let lines: Vec<Line> = (1..=3)
+                    .filter_map(|n| {
+                        let k = p.get(&format!("k{n}")).unwrap_or(0.0);
+                        (k != 0.0).then(|| Line {
+                            funct: 9,
+                            values: vec![
+                                p.get(&format!("phi{n}")).unwrap_or(0.0) + 180.0,
+                                k * KJ_PER_KCAL,
+                                n as f64,
+                            ],
+                            integer: Some(2),
+                        })
+                    })
+                    .collect();
+                if lines.is_empty() {
+                    return one(9, vec![0.0, 0.0, 1.0], Some(2));
+                }
+                Ok(lines)
+            }
             ("dihedral", "multi/harmonic" | "nharmonic") => {
                 let a: Vec<f64> = if style.name() == "nharmonic" {
                     nharmonic_coefficients(p).map_err(|e| format!("{what}: {e}"))?
@@ -656,7 +684,7 @@ fn check_style(style: &Style) -> Result<(), String> {
         | ("angle", "harmonic" | "charmm")
         | (
             "dihedral",
-            "periodic" | "opls" | "multi/harmonic" | "nharmonic" | "harmonic" | "charmm",
+            "periodic" | "opls" | "multi/harmonic" | "nharmonic" | "harmonic" | "charmm" | "class2",
         )
         | ("improper", "periodic" | "harmonic" | "cvff")
         | ("cmap", "charmm") => Ok(()),
@@ -878,16 +906,15 @@ impl GromacsTopFfWriter {
     }
 
     /// `ff` and the typed `frame` as one GROMACS topology: the force-field
-    /// directives and one molecule type holding every atom (module docs,
-    /// "Systems").
+    /// directives and one molecule type per molecule (module docs, "Systems").
     pub fn write_system_str(&self, ff: &ForceField, frame: &Frame) -> Result<String, String> {
         let mut out = self.directives(ff, true)?;
         let atoms = frame.get("atoms").ok_or("frame has no atoms block")?;
         let n = atoms.nrows().unwrap_or(0);
         if n > MAX_ATOMS_FOR_A_FULL_PAIR_LIST {
             return Err(format!(
-                "{n} atoms: the one molecule type lists its excluded pairs, which is not done \
-                 above {MAX_ATOMS_FOR_A_FULL_PAIR_LIST} atoms"
+                "{n} atoms: the topology states the frame's pairs molecule by molecule, \
+                 which is not done above {MAX_ATOMS_FOR_A_FULL_PAIR_LIST} atoms"
             ));
         }
         let strings = |key: &str| atoms.get(key).and_then(|c| c.as_string());
@@ -905,49 +932,6 @@ impl GromacsTopFfWriter {
             .map(|t| (t.name.as_str(), t))
             .collect();
         let full = |v: f64| format!("{v:?}");
-
-        out.push_str("[ moleculetype ]\n; name  nrexcl\n  MOL  3\n\n[ atoms ]\n");
-        out.push_str("; nr  type  resnr  residue  atom  cgnr  charge  mass\n");
-        for i in 0..n {
-            let t = types[[i]].as_str();
-            let ty = atom_types
-                .get(t)
-                .ok_or_else(|| format!("atom {}: type '{t}' is no atom/full type", i + 1))?;
-            let mass = match masses {
-                Some(m) => m[[i]],
-                None => ty.params.get("mass").ok_or_else(|| {
-                    format!("atom {}: no mass column and type '{t}' has no mass", i + 1)
-                })?,
-            };
-            let name = names.map_or_else(|| format!("A{}", i + 1), |c| c[[i]].clone());
-            let res_name = res_names.map_or_else(|| "MOL".to_owned(), |c| c[[i]].clone());
-            out.push_str(&format!(
-                "  {}  {t}  {}  {res_name}  {name}  {}  {}  {}\n",
-                i + 1,
-                res_id.map_or(1, |c| c[[i]]),
-                i + 1,
-                full(charges[[i]]),
-                full(mass)
-            ));
-        }
-        out.push('\n');
-
-        // Every bonded row, written with its type's parameters.
-        let mut typed: HashMap<(&str, &str), (&Style, &Params)> = HashMap::new();
-        for style in ff.styles() {
-            for (name, _, params) in style.type_rows() {
-                if typed
-                    .insert((style.category(), name), (style, params))
-                    .is_some()
-                {
-                    return Err(format!(
-                        "{} type '{name}' is defined by two styles: a frame row naming it is \
-                         ambiguous",
-                        style.category()
-                    ));
-                }
-            }
-        }
         let column = |block: &str, key: &str| -> Result<Vec<usize>, String> {
             frame
                 .get(block)
@@ -973,6 +957,89 @@ impl GromacsTopFfWriter {
                 .map(|r| (cols.iter().map(|c| c[r]).collect(), names[[r]].clone()))
                 .collect())
         };
+
+        // The molecules: bond-graph components (bonds, constraints), each a
+        // run of consecutive atoms, as a GROMACS molecule is.
+        let mut adjacent = vec![Vec::new(); n];
+        for block in ["bonds", "constraints"] {
+            if frame.get(block).is_some() {
+                for (i, j) in column(block, "atomi")?
+                    .into_iter()
+                    .zip(column(block, "atomj")?)
+                {
+                    adjacent[i].push(j);
+                    adjacent[j].push(i);
+                }
+            }
+        }
+        let mut molecule = vec![usize::MAX; n];
+        let mut runs: Vec<(usize, usize)> = Vec::new();
+        for start in 0..n {
+            if molecule[start] != usize::MAX {
+                continue;
+            }
+            let m = runs.len();
+            molecule[start] = m;
+            let (mut lo, mut hi) = (start, start);
+            let mut stack = vec![start];
+            while let Some(a) = stack.pop() {
+                for &b in &adjacent[a] {
+                    if molecule[b] == usize::MAX {
+                        molecule[b] = m;
+                        (lo, hi) = (lo.min(b), hi.max(b));
+                        stack.push(b);
+                    }
+                }
+            }
+            runs.push((lo, hi + 1));
+        }
+        for (m, &(lo, hi)) in runs.iter().enumerate() {
+            if let Some(a) = (lo..hi).find(|&a| molecule[a] != m) {
+                return Err(format!(
+                    "atom {} lies inside molecule {} (atoms {}..{}) but is not bonded to it: \
+                     a GROMACS molecule is a run of consecutive atoms",
+                    a + 1,
+                    m + 1,
+                    lo + 1,
+                    hi
+                ));
+            }
+        }
+        let molecule_of = |what: &str, atoms_of: &[usize]| -> Result<usize, String> {
+            let m = molecule[atoms_of[0]];
+            if atoms_of.iter().any(|&a| molecule[a] != m) {
+                return Err(format!(
+                    "{what} {:?} spans two molecules",
+                    atoms_of.iter().map(|a| a + 1).collect::<Vec<_>>()
+                ));
+            }
+            Ok(m)
+        };
+
+        // Every bonded row, written with its type's parameters.
+        let mut typed: HashMap<(&str, &str), (&Style, &Params)> = HashMap::new();
+        for style in ff.styles() {
+            for (name, _, params) in style.type_rows() {
+                if typed
+                    .insert((style.category(), name), (style, params))
+                    .is_some()
+                {
+                    return Err(format!(
+                        "{} type '{name}' is defined by two styles: a frame row naming it is \
+                         ambiguous",
+                        style.category()
+                    ));
+                }
+            }
+        }
+        let mut sections: Vec<BTreeMap<&str, String>> = vec![BTreeMap::new(); runs.len()];
+        let local = |m: usize, atoms_of: &[usize]| -> String {
+            atoms_of
+                .iter()
+                .map(|a| (a - runs[m].0 + 1).to_string())
+                .collect::<Vec<_>>()
+                .join("  ")
+        };
         for (section, blocks) in [
             ("bonds", &[("bonds", "bond", 2)][..]),
             ("angles", &[("angles", "angle", 3)][..]),
@@ -981,7 +1048,6 @@ impl GromacsTopFfWriter {
                 &[("dihedrals", "dihedral", 4), ("impropers", "improper", 4)][..],
             ),
         ] {
-            let mut text = String::new();
             for &(block, category, arity) in blocks {
                 for (atoms_of, name) in rows_of(block, arity)? {
                     let (style, params) =
@@ -990,7 +1056,8 @@ impl GromacsTopFfWriter {
                                 "{block} row names type '{name}', which no {category} style has"
                             )
                         })?;
-                    let index: Vec<String> = atoms_of.iter().map(|a| (a + 1).to_string()).collect();
+                    let m = molecule_of(block, &atoms_of)?;
+                    let text = sections[m].entry(section).or_default();
                     for mut line in self.bonded_lines(style, &name, params)? {
                         // One periodic proper per line, as funct 9 writes
                         // each term of several: one form for both.
@@ -999,14 +1066,11 @@ impl GromacsTopFfWriter {
                         }
                         text.push_str(&format!(
                             "  {}  {}\n",
-                            index.join("  "),
+                            local(m, &atoms_of),
                             self.render_values(&line)
                         ));
                     }
                 }
-            }
-            if !text.is_empty() {
-                out.push_str(&format!("[ {section} ]\n{text}\n"));
             }
         }
 
@@ -1023,7 +1087,6 @@ impl GromacsTopFfWriter {
                     .unwrap_or(t)
                     .to_owned()
             };
-            let mut text = String::new();
             for (atoms_of, name) in &cmap_rows {
                 let classes: Vec<String> = atoms_of.iter().map(|&a| label(&types[[a]])).collect();
                 let found = style
@@ -1039,15 +1102,17 @@ impl GromacsTopFfWriter {
                         classes.join(" ")
                     ));
                 }
-                let index: Vec<String> = atoms_of.iter().map(|a| (a + 1).to_string()).collect();
-                text.push_str(&format!("  {}  1\n", index.join("  ")));
+                let m = molecule_of("cmaps", atoms_of)?;
+                sections[m]
+                    .entry("cmap")
+                    .or_default()
+                    .push_str(&format!("  {}  1\n", local(m, atoms_of)));
             }
-            out.push_str(&format!("[ cmap ]\n{text}\n"));
         }
 
         // The pairs GROMACS prices: nrexcl 3 excludes every pair within
         // three bonds, `[ pairs ]` prices the 1-4 ones, `[ exclusions ]`
-        // removes the others the frame does not price.
+        // removes the others of the molecule the frame does not price.
         let pairs = match frame.get("pairs") {
             Some(p) => p.clone(),
             None => intramolecular_pairs(frame, ff.special_bonds())?,
@@ -1067,18 +1132,6 @@ impl GromacsTopFfWriter {
             let col = pairs.get(key)?.as_float()?;
             pairs.validity(key).is_none_or(|m| m[r]).then(|| col[[r]])
         };
-        let mut adjacent = vec![Vec::new(); n];
-        for block in ["bonds", "constraints"] {
-            if frame.get(block).is_some() {
-                for (i, j) in column(block, "atomi")?
-                    .into_iter()
-                    .zip(column(block, "atomj")?)
-                {
-                    adjacent[i].push(j);
-                    adjacent[j].push(i);
-                }
-            }
-        }
         let mut near = HashSet::new();
         for start in 0..n {
             let mut depth = vec![usize::MAX; n];
@@ -1103,7 +1156,6 @@ impl GromacsTopFfWriter {
         }
         let sb = ff.special_bonds();
         let mut priced = HashSet::new();
-        let mut text = String::new();
         for r in 0..pi.len() {
             let (a, b) = (pi[[r]] as usize, pj[[r]] as usize);
             let key = (a.min(b), a.max(b));
@@ -1125,50 +1177,49 @@ impl GromacsTopFfWriter {
             if !one_four {
                 continue;
             }
-            let [eps, sigma, qq, lj_w, coul_w] =
-                molrs::store::schema::PAIR_OVERRIDE_COLUMNS.map(|k| cell(k, r));
+            let [eps, sigma, qq, lj_w, coul_w] = PAIR_OVERRIDE_COLUMNS.map(|k| cell(k, r));
             let (i, j) = (a + 1, b + 1);
-            if [eps, sigma, qq, lj_w, coul_w].iter().all(Option::is_none) {
-                text.push_str(&format!("  {i}  {j}  1\n"));
-                continue;
-            }
-            let (Some(eps), Some(sigma)) = (eps, sigma) else {
-                return Err(format!(
-                    "pair {i} {j}: override cells without epsilon and sigma — a [ pairs ] row \
-                     with parameters states both"
-                ));
-            };
-            let (v, w) = (full(sigma / NM_TO_ANGSTROM), |e: f64| full(e * KJ_PER_KCAL));
-            if qq.is_none()
-                && lj_w.is_none_or(|x| x == 1.0)
-                && coul_w.is_none_or(|x| x == sb.coul[2])
-            {
-                text.push_str(&format!("  {i}  {j}  1  {v}  {}\n", w(eps)));
+            let m = molecule[a];
+            let ij = local(m, &[a, b]);
+            let line = if [eps, sigma, qq, lj_w, coul_w].iter().all(Option::is_none) {
+                format!("  {ij}  1\n")
             } else {
-                let qq = qq.unwrap_or(charges[[a]] * charges[[b]]);
-                text.push_str(&format!(
-                    "  {i}  {j}  2  {}  {}  1.0  {v}  {}\n",
-                    full(coul_w.unwrap_or(sb.coul[2])),
-                    full(qq),
-                    w(eps * lj_w.unwrap_or(1.0))
-                ));
+                let (Some(eps), Some(sigma)) = (eps, sigma) else {
+                    return Err(format!(
+                        "pair {i} {j}: override cells without epsilon and sigma — a \
+                         [ pairs ] row with parameters states both"
+                    ));
+                };
+                let (v, w) = (full(sigma / NM_TO_ANGSTROM), |e: f64| full(e * KJ_PER_KCAL));
+                if qq.is_none()
+                    && lj_w.is_none_or(|x| x == 1.0)
+                    && coul_w.is_none_or(|x| x == sb.coul[2])
+                {
+                    format!("  {ij}  1  {v}  {}\n", w(eps))
+                } else {
+                    format!(
+                        "  {ij}  2  {}  {}  1.0  {v}  {}\n",
+                        full(coul_w.unwrap_or(sb.coul[2])),
+                        full(qq.unwrap_or(charges[[a]] * charges[[b]])),
+                        w(eps * lj_w.unwrap_or(1.0))
+                    )
+                }
+            };
+            sections[m].entry("pairs").or_default().push_str(&line);
+        }
+        for (m, &(lo, hi)) in runs.iter().enumerate() {
+            for i in lo..hi {
+                let others: Vec<String> = (i + 1..hi)
+                    .filter(|&j| !near.contains(&(i, j)) && !priced.contains(&(i, j)))
+                    .map(|j| (j - lo + 1).to_string())
+                    .collect();
+                if !others.is_empty() {
+                    sections[m]
+                        .entry("exclusions")
+                        .or_default()
+                        .push_str(&format!("  {}  {}\n", i - lo + 1, others.join("  ")));
+                }
             }
-        }
-        if !text.is_empty() {
-            out.push_str(&format!("[ pairs ]\n{text}\n"));
-        }
-        let mut text = String::new();
-        for i in 0..n {
-            let others: Vec<String> = (i + 1..n)
-                .filter(|&j| !near.contains(&(i, j)) && !priced.contains(&(i, j)))
-                .map(|j| (j + 1).to_string())
-                .collect();
-            if !others.is_empty() {
-                text.push_str(&format!("  {}  {}\n", i + 1, others.join("  ")));
-            }
-        }
-        if !text.is_empty() {
-            out.push_str(&format!("[ exclusions ]\n{text}\n"));
         }
         if frame.get("constraints").is_some() {
             let r0 = frame
@@ -1176,22 +1227,70 @@ impl GromacsTopFfWriter {
                 .and_then(|b| b.get("r0"))
                 .and_then(|c| c.as_float())
                 .ok_or("constraints has no r0 column")?;
-            let mut text = String::new();
             for (k, (i, j)) in column("constraints", "atomi")?
                 .into_iter()
                 .zip(column("constraints", "atomj")?)
                 .enumerate()
             {
-                text.push_str(&format!(
-                    "  {}  {}  1  {}\n",
-                    i + 1,
-                    j + 1,
-                    full(r0[[k]] / NM_TO_ANGSTROM)
+                let m = molecule[i];
+                sections[m]
+                    .entry("constraints")
+                    .or_default()
+                    .push_str(&format!(
+                        "  {}  1  {}\n",
+                        local(m, &[i, j]),
+                        full(r0[[k]] / NM_TO_ANGSTROM)
+                    ));
+            }
+        }
+
+        for (m, &(lo, hi)) in runs.iter().enumerate() {
+            out.push_str(&format!(
+                "[ moleculetype ]\n; name  nrexcl\n  M{}  3\n\n[ atoms ]\n\
+                 ; nr  type  resnr  residue  atom  cgnr  charge  mass\n",
+                m + 1
+            ));
+            for i in lo..hi {
+                let t = types[[i]].as_str();
+                let ty = atom_types
+                    .get(t)
+                    .ok_or_else(|| format!("atom {}: type '{t}' is no atom/full type", i + 1))?;
+                let mass = match masses {
+                    Some(mass) => mass[[i]],
+                    None => ty.params.get("mass").ok_or_else(|| {
+                        format!("atom {}: no mass column and type '{t}' has no mass", i + 1)
+                    })?,
+                };
+                let name = names.map_or_else(|| format!("A{}", i + 1), |c| c[[i]].clone());
+                let res_name = res_names.map_or_else(|| "MOL".to_owned(), |c| c[[i]].clone());
+                out.push_str(&format!(
+                    "  {}  {t}  {}  {res_name}  {name}  {}  {}  {}\n",
+                    i - lo + 1,
+                    res_id.map_or(1, |c| c[[i]]),
+                    i - lo + 1,
+                    full(charges[[i]]),
+                    full(mass)
                 ));
             }
-            out.push_str(&format!("[ constraints ]\n{text}\n"));
+            out.push('\n');
+            for section in [
+                "bonds",
+                "pairs",
+                "angles",
+                "dihedrals",
+                "cmap",
+                "exclusions",
+                "constraints",
+            ] {
+                if let Some(text) = sections[m].get(section) {
+                    out.push_str(&format!("[ {section} ]\n{text}\n"));
+                }
+            }
         }
-        out.push_str("[ system ]\nmolrs\n\n[ molecules ]\nMOL  1\n");
+        out.push_str("[ system ]\nmolrs\n\n[ molecules ]\n");
+        for m in 0..runs.len() {
+            out.push_str(&format!("M{}  1\n", m + 1));
+        }
         Ok(out)
     }
 }
@@ -2173,5 +2272,256 @@ mod tests {
                 assert_params_close(&format!("{what} {name}"), got_p, want_p);
             }
         }
+    }
+
+    // -- systems ------------------------------------------------------------------
+
+    /// Butane-ish C1-C2-C3-C4 with an H on C1 — one `[ pairs ]` row with
+    /// parameters (funct 1), one funct 2 — and two waters (settles).
+    const SYSTEM: &str = "\
+[ defaults ]
+1  3  yes  0.5  0.8333
+[ atomtypes ]
+opls_135  CT  6  12.011  -0.18  A  0.35  0.276144
+opls_140  HC  1   1.008   0.06  A  0.25  0.12552
+OW        OW  8  15.999  -0.834 A  0.315  0.6364
+HW        HW  1   1.008   0.417 A  0.0    0.0
+[ bondtypes ]
+HC  CT  1  0.109  284512.0
+CT  CT  1  0.1529 224262.4
+[ angletypes ]
+CT  CT  CT  1  112.7  488.273
+HC  CT  CT  1  110.7  313.800
+[ dihedraltypes ]
+HC  CT  CT  CT  9  0.0  2.0  3
+HC  CT  CT  CT  9  180.0  0.5  1
+CT  CT  CT  CT  3  2.9288  -1.4644  0.2092  -1.6736  0.0  0.0
+[ moleculetype ]
+BUT  3
+[ atoms ]
+1  opls_135  1  BUT  C1  1
+2  opls_135  1  BUT  C2  1  -0.12  12.011
+3  opls_135  1  BUT  C3  1  -0.12
+4  opls_135  1  BUT  C4  1
+5  opls_140  1  BUT  H1  1
+[ bonds ]
+1  2  1
+2  3  1
+3  4  1
+5  1  1
+[ pairs ]
+1  4  1  0.3  0.5
+5  3  2  0.8  0.2  -0.3  0.31  0.4
+[ angles ]
+1  2  3  1
+2  3  4  1
+5  1  2  1
+[ dihedrals ]
+1  2  3  4  3
+5  1  2  3  9
+[ moleculetype ]
+SOL  2
+[ atoms ]
+1  OW  1  SOL  OW  1
+2  HW  1  SOL  HW1 1
+3  HW  1  SOL  HW2 1
+[ settles ]
+1  1  0.09572  0.15139
+[ exclusions ]
+1  2  3
+2  1  3
+3  1  2
+[ system ]
+test
+[ molecules ]
+BUT  1
+SOL  2
+";
+
+    fn read_system(text: &str) -> (ForceField, molrs::store::frame::Frame) {
+        GromacsTopFfReader::new()
+            .read_system_str(text)
+            .unwrap_or_else(|e| panic!("{e}\n{text}"))
+    }
+
+    /// Coordinates for `n` atoms, none on another.
+    fn coords(n: usize) -> Vec<f64> {
+        (0..3 * n)
+            .map(|i| 1.3 * (i / 3) as f64 + 0.37 * ((i * 7 + 3) % 5) as f64)
+            .collect()
+    }
+
+    fn energy(ff: &ForceField, frame: &molrs::store::frame::Frame, x: &[f64]) -> f64 {
+        let mut ff = ff.clone();
+        for name in ["lj/cut", "coul/cut"] {
+            if let Some(s) = ff.get_style_mut("pair", name) {
+                s.set_param("cutoff", 100.0);
+            }
+        }
+        crate::ff::potential::PotentialCompiler::new(&ff)
+            .compile(frame)
+            .unwrap()
+            .calc_energy(x)
+    }
+
+    /// The (i, j, is_14, override cells) of a frame's pairs.
+    fn pairs_of(frame: &molrs::store::frame::Frame) -> Vec<(u64, u64, bool, Vec<Option<f64>>)> {
+        let p = frame.get("pairs").unwrap();
+        let (i, j) = (
+            p.get("atomi").unwrap().as_uint().unwrap(),
+            p.get("atomj").unwrap().as_uint().unwrap(),
+        );
+        let f = p.get("is_14").unwrap().as_bool().unwrap();
+        (0..i.len())
+            .map(|r| {
+                let cells = molrs::store::schema::PAIR_OVERRIDE_COLUMNS
+                    .iter()
+                    .map(|k| {
+                        let col = p.get(k)?.as_float()?;
+                        p.validity(k).is_none_or(|m| m[r]).then(|| col[[r]])
+                    })
+                    .collect();
+                (i[[r]] as u64, j[[r]] as u64, f[[r]], cells)
+            })
+            .collect()
+    }
+
+    /// A system written and read back is the system: every pair GROMACS
+    /// prices and its 1-4 flag, the `[ pairs ]` rows' own parameters (funct 1
+    /// and 2), the constraints, and the energy molrs prices; writing the read
+    /// system again gives the same topology.
+    #[test]
+    fn a_system_reads_back_as_written() {
+        let (ff, frame) = read_system(SYSTEM);
+        let writer = GromacsTopFfWriter::new().with_precision(17);
+        let top = writer.write_system_str(&ff, &frame).unwrap();
+        for section in [
+            "[ moleculetype ]",
+            "[ pairs ]",
+            "[ constraints ]",
+            "[ dihedrals ]",
+        ] {
+            assert!(top.contains(section), "{section}:\n{top}");
+        }
+        let (back, back_frame) = read_system(&top);
+        let (a, b) = (pairs_of(&frame), pairs_of(&back_frame));
+        assert_eq!(a.len(), b.len());
+        for (p, q) in a.iter().zip(&b) {
+            assert_eq!((p.0, p.1, p.2), (q.0, q.1, q.2));
+            for (x, y) in p.3.iter().zip(&q.3) {
+                match (x, y) {
+                    (Some(x), Some(y)) => assert!((x - y).abs() <= 1e-12 * x.abs().max(1.0)),
+                    (x, y) => assert_eq!(x.is_some(), y.is_some(), "{p:?} vs {q:?}"),
+                }
+            }
+        }
+        let c = |f: &molrs::store::frame::Frame| f.get("constraints").unwrap().nrows();
+        assert_eq!(c(&frame), c(&back_frame));
+        let n = frame.get("atoms").unwrap().nrows().unwrap();
+        let x = coords(n);
+        let (e, e_back) = (energy(&ff, &frame, &x), energy(&back, &back_frame, &x));
+        assert!((e - e_back).abs() <= 1e-12 * e.abs(), "{e} vs {e_back}");
+        let again = writer.write_system_str(&back, &back_frame).unwrap();
+        let tokens = |t: &str| t.split_whitespace().map(str::to_owned).collect::<Vec<_>>();
+        assert_eq!(tokens(&top).len(), tokens(&again).len());
+        for (u, v) in tokens(&top).iter().zip(tokens(&again)) {
+            match (u.parse::<f64>(), v.parse::<f64>()) {
+                (Ok(a), Ok(b)) => assert!((a - b).abs() <= 1e-14 * a.abs().max(b.abs())),
+                _ => assert_eq!(u, &v),
+            }
+        }
+    }
+
+    /// A pair the frame prices that GROMACS cannot (a regular pair within
+    /// three bonds, a 1-4 pair beyond them), override cells without their
+    /// Lennard-Jones parameters, and a frame pair GROMACS would exclude by
+    /// default are refused or written out as exclusions.
+    #[test]
+    fn the_frame_s_pairs_are_what_gromacs_prices_or_refused() {
+        let (ff, frame) = read_system(SYSTEM);
+        let writer = GromacsTopFfWriter::new().with_precision(17);
+        let with_pairs = |edit: &dyn Fn(&mut molrs::store::block::Block)| {
+            let mut f = frame.clone();
+            edit(f.get_mut("pairs").unwrap());
+            writer.write_system_str(&ff, &f)
+        };
+        // C1-C4, a 1-4 pair, flagged regular.
+        let err = with_pairs(&|p| {
+            let mut flags = p.get("is_14").unwrap().as_bool().unwrap().to_owned();
+            let r = flags.iter().position(|&b| b).unwrap();
+            flags[[r]] = false;
+            p.insert("is_14", flags).unwrap();
+        })
+        .unwrap_err();
+        assert!(err.contains("within three bonds"), "{err}");
+        // An override cell alone.
+        let err = with_pairs(&|p| {
+            p.remove("epsilon");
+        })
+        .unwrap_err();
+        assert!(err.contains("epsilon and sigma"), "{err}");
+        // A regular pair the frame does not price: an [ exclusions ] row.
+        let top = with_pairs(&|p| {
+            let keep: Vec<usize> = {
+                let i = p.get("atomi").unwrap().as_uint().unwrap();
+                let j = p.get("atomj").unwrap().as_uint().unwrap();
+                (0..i.len())
+                    .filter(|&r| (i[[r]], j[[r]]) != (3, 4))
+                    .collect()
+            };
+            *p = p.select_rows(&keep).unwrap();
+        })
+        .unwrap();
+        assert!(top.contains("[ exclusions ]\n  4  5\n"), "{top}");
+        let (_, back) = read_system(&top);
+        assert!(!pairs_of(&back).iter().any(|p| (p.0, p.1) == (3, 4)));
+        // A pair of two molecules is no exclusion: GROMACS prices it.
+        assert_eq!(top.matches("[ exclusions ]").count(), 1, "{top}");
+    }
+
+    /// The Coulomb constant is the engine's, not written: a field stating
+    /// AMBER's is written as one stating LAMMPS's.
+    #[test]
+    fn a_stated_coulomb_constant_is_not_written() {
+        let mut a = every_supported_style();
+        let b = a.clone();
+        a.get_style_mut("pair", "coul/cut")
+            .unwrap()
+            .set_param("coulomb", 332.0522173);
+        assert_eq!(write(&a), write(&b));
+    }
+
+    /// The writer converts from real units; another declared preset is
+    /// refused, as is an atom type without a charge outside a system.
+    #[test]
+    fn units_other_than_real_are_refused() {
+        let mut ff = every_supported_style();
+        ff.set_units("metal");
+        assert_names(&write_err(&ff), &["metal"]);
+    }
+
+    /// `dihedral class2`'s torsion is funct 9, k[1 − cos(nφ − φₙ)] =
+    /// k[1 + cos(nφ − φₙ − 180°)]: the same energy as read back.
+    #[test]
+    fn dihedral_class2_is_funct_9_at_its_phase_plus_180() {
+        let ff = with_type(
+            "dihedral",
+            "class2",
+            "CT-CT-CT-CT",
+            &["CT", "CT", "CT", "CT"],
+            Params::from_pairs(&[
+                ("k1", 1.5),
+                ("phi1", 10.0),
+                ("k2", 0.0),
+                ("phi2", 0.0),
+                ("k3", -0.25),
+                ("phi3", 30.0),
+            ]),
+        );
+        let text = write(&ff);
+        let rows = section_rows(&text, "dihedraltypes");
+        assert_eq!(rows.len(), 2, "{text}");
+        assert_row_values(&rows[0][4..], "9", &[190.0, 1.5 * 4.184, 1.0]);
+        assert_row_values(&rows[1][4..], "9", &[210.0, -0.25 * 4.184, 3.0]);
     }
 }

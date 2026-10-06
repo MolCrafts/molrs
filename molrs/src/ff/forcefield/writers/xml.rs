@@ -55,6 +55,7 @@
 //!   centre and the other three in any order) with other parameters — a
 //!   proper's periodic and RB forms included, since OpenMM would add both;
 //!   the same row twice is written once;
+//! - a shifted or non-12-6 `lj/cut` (`shift`, `n`, `m`);
 //! - a force field declared in units other than `real`.
 //!
 //! # Whole-FF serialization, not coefficient writing
@@ -522,6 +523,16 @@ impl XmlForceFieldWriter {
         for style in ff.get_styles("pair") {
             match style.name() {
                 "lj/cut" | "lj/charmm" => {
+                    let p = style.params();
+                    if p.get("shift").is_some_and(|v| v != 0.0)
+                        || p.get("n").is_some_and(|v| v != 12.0)
+                        || p.get("m").is_some_and(|v| v != 6.0)
+                    {
+                        return Err(refuse(
+                            style,
+                            "OpenMM's Lennard-Jones is the unshifted 12-6 (shift, n, m)",
+                        ));
+                    }
                     if let Some(other) = lj_style {
                         return Err(format!(
                             "pair styles `{}` and `{}`: OpenMM holds one Lennard-Jones table",
@@ -1337,5 +1348,96 @@ mod tests {
         assert!(coarse.contains("length=\"0.15\""), "{coarse}");
         let fine = write_forcefield_xml_str(&ff, Some(4)).unwrap();
         assert!(fine.contains("length=\"0.1529\""), "{fine}");
+    }
+
+    /// OpenMM requires a class on every `<Type>`: a type without one is
+    /// written as its own class, and its rows still name it.
+    #[test]
+    fn a_classless_type_is_its_own_class() {
+        let xml = write(&small_ff());
+        assert!(
+            xml.contains(r#"<Type name="CT" class="CT" mass="12.011"/>"#),
+            "{xml}"
+        );
+        assert!(xml.contains(r#"<Bond class1="CT" class2="CT""#), "{xml}");
+    }
+
+    /// Two types OpenMM would match on the same labels: the same row twice is
+    /// written once; other parameters are refused, naming both types.
+    #[test]
+    fn two_types_on_the_same_labels_are_one_row_or_refused() {
+        let mut ff = small_ff();
+        let bond = ff.get_style_mut("bond", "harmonic").unwrap();
+        bond.def_type(
+            "CT-CT@again",
+            &["CT", "CT"],
+            Params::from_pairs(&[("k", 268.0), ("r0", 1.529)]),
+        )
+        .unwrap();
+        let xml = write(&ff);
+        assert_eq!(xml.matches("<Bond ").count(), 1, "{xml}");
+        ff.get_style_mut("bond", "harmonic")
+            .unwrap()
+            .def_type(
+                "CT-CT@other",
+                &["CT", "CT"],
+                Params::from_pairs(&[("k", 300.0), ("r0", 1.529)]),
+            )
+            .unwrap();
+        let err = write_forcefield_xml_str(&ff, None).unwrap_err();
+        assert!(
+            err.contains("CT-CT@other") && err.contains("same labels"),
+            "{err}"
+        );
+        // A proper's periodic and RB rows on one quartet: OpenMM adds both.
+        let mut ff = small_ff();
+        for (style, params) in [
+            (
+                "periodic",
+                Params::from_pairs(&[("k", 1.0), ("periodicity", 3.0), ("phase", 0.0)]),
+            ),
+            (
+                "opls",
+                Params::from_pairs(&[("k1", 1.0), ("k2", 0.0), ("k3", 0.5), ("k4", 0.0)]),
+            ),
+        ] {
+            ff.def_style("dihedral", style, Params::new())
+                .unwrap()
+                .def_type(&format!("t-{style}"), &["CT", "CT", "CT", "CT"], params)
+                .unwrap();
+        }
+        let err = write_forcefield_xml_str(&ff, None).unwrap_err();
+        assert!(err.contains("Proper"), "{err}");
+    }
+
+    /// The writer converts from real units, and OpenMM's Lennard-Jones is the
+    /// unshifted 12-6: another preset or a shifted / Mie `lj/cut` is refused.
+    #[test]
+    fn other_units_and_a_shifted_lj_are_refused() {
+        let mut ff = small_ff();
+        ff.set_units("metal");
+        assert!(
+            write_forcefield_xml_str(&ff, None)
+                .unwrap_err()
+                .contains("metal")
+        );
+        let mut ff = small_ff();
+        ff.def_style(
+            "pair",
+            "lj/cut",
+            Params::from_pairs(&[("cutoff", 10.0), ("shift", 1.0)]),
+        )
+        .unwrap()
+        .def_type(
+            "CT",
+            &["CT"],
+            Params::from_pairs(&[("epsilon", 0.1), ("sigma", 3.4)]),
+        )
+        .unwrap();
+        assert!(
+            write_forcefield_xml_str(&ff, None)
+                .unwrap_err()
+                .contains("shift")
+        );
     }
 }

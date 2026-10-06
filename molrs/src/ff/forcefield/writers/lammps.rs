@@ -952,7 +952,7 @@ impl<'a> LammpsFfWriter<'a> {
             .collect();
         let opts = &self.options;
         for style in &styles {
-            refuse_unexpressible_coulomb(style)?;
+            refuse_unexpressible_pair(style)?;
         }
 
         // lj/charmm + coul/charmm is LAMMPS's one `lj/charmm/coul/charmm`; it
@@ -1010,12 +1010,17 @@ impl<'a> LammpsFfWriter<'a> {
                     .ok_or_else(|| "split pair styles missing lj/cut".to_owned())?;
                 let coul = styles
                     .iter()
-                    .find(|s| s.name() == "coul/cut" || s.name() == "coul/long")
+                    .find(|s| s.name() == "coul/cut" || s.name() == "coul/long/pme")
                     .ok_or_else(|| "split pair styles missing coul/*".to_owned())?;
                 let lj_cut = units.length(required_cutoff(lj)?)?;
                 let coul_cut = units.length(required_cutoff(coul)?)?;
+                let combined = if coul.name() == "coul/cut" {
+                    "lj/cut/coul/cut"
+                } else {
+                    "lj/cut/coul/long"
+                };
                 lines.push(format!(
-                    "pair_style lj/cut/coul/cut {} {}\n",
+                    "pair_style {combined} {} {}\n",
                     fmt_num(lj_cut, opts.precision),
                     fmt_num(coul_cut, opts.precision)
                 ));
@@ -1031,7 +1036,7 @@ impl<'a> LammpsFfWriter<'a> {
                 let params = pair_style_cutoffs(style, units)?;
                 lines.push(format!(
                     "pair_style {} {}\n",
-                    style.name(),
+                    lammps_pair_name(style.name()),
                     format_nums(&params, opts.precision)
                 ));
                 lines.extend(pair_modify_line(style));
@@ -1046,11 +1051,11 @@ impl<'a> LammpsFfWriter<'a> {
             for s in &styles {
                 let cuts = pair_style_cutoffs(s, units)?;
                 if cuts.is_empty() {
-                    sub.push(s.name().to_owned());
+                    sub.push(lammps_pair_name(s.name()).to_owned());
                 } else {
                     sub.push(format!(
                         "{} {}",
-                        s.name(),
+                        lammps_pair_name(s.name()),
                         format_nums(&cuts, opts.precision)
                     ));
                 }
@@ -1271,7 +1276,12 @@ fn pair_modify_line(style: &Style) -> Option<String> {
         None if style.name() == "lj/cut" => Mixing::UNDECLARED.name(),
         None => return None,
     };
-    Some(format!("pair_modify mix {rule}\n"))
+    let shift = if style.params().get("shift").is_some_and(|s| s != 0.0) {
+        " shift yes"
+    } else {
+        ""
+    };
+    Some(format!("pair_modify mix {rule}{shift}\n"))
 }
 
 /// A `coul/cut` LAMMPS cannot price as molrs does: a buffer `delta ≠ 0`
@@ -1280,7 +1290,40 @@ fn pair_modify_line(style: &Style) -> Option<String> {
 /// The Coulomb constant is LAMMPS's own `qqr2e` for the `units` and is not
 /// written; a field stating another (AMBER's 332.0522173) is priced by LAMMPS
 /// at LAMMPS's, a documented difference of ~3e-5 relative.
-fn refuse_unexpressible_coulomb(style: &Style) -> Result<(), String> {
+fn refuse_unexpressible_pair(style: &Style) -> Result<(), String> {
+    let p = style.params();
+    match style.name() {
+        "lj/cut" => {
+            let (n, m) = (p.get("n").unwrap_or(12.0), p.get("m").unwrap_or(6.0));
+            if (n, m) != (12.0, 6.0) {
+                return Err(format!(
+                    "pair lj/cut with n = {n}, m = {m}: LAMMPS's lj/cut is 12-6 (its Mie \
+                     form, mie/cut, is not written)"
+                ));
+            }
+            return Ok(());
+        }
+        "coul/long/pme" => {
+            if let Some(key) = ["alpha", "order", "grid_x", "grid_y", "grid_z"]
+                .into_iter()
+                .find(|k| p.get(k).is_some())
+            {
+                return Err(format!(
+                    "pair coul/long/pme states its Ewald '{key}': molrs's smooth PME is not \
+                     LAMMPS's PPPM, whose kspace_style sets the mesh by an accuracy; only \
+                     the real-space lj/cut/coul/long is written"
+                ));
+            }
+            return Ok(());
+        }
+        "lj/charmm" | "coul/cut" | "coul/charmm" => {}
+        other => {
+            return Err(format!(
+                "pair style `{other}` has no LAMMPS form this writer writes (lj/cut, \
+                 coul/cut, coul/long/pme, lj/charmm + coul/charmm)"
+            ));
+        }
+    }
     if style.name() == "coul/charmm" {
         if let Some(d) = style.params().get("dielectric").filter(|d| *d != 1.0) {
             return Err(format!(
@@ -1309,26 +1352,29 @@ fn refuse_unexpressible_coulomb(style: &Style) -> Result<(), String> {
     Ok(())
 }
 
+/// The LAMMPS pair style a molrs pair style is: `coul/long/pme`'s real-space
+/// half is LAMMPS's `coul/long`.
+fn lammps_pair_name(name: &str) -> &str {
+    match name {
+        "coul/long/pme" => "coul/long",
+        other => other,
+    }
+}
+
 fn is_split_lj_coulomb(styles: &[&Style]) -> bool {
     if styles.len() != 2 {
         return false;
     }
     let names: HashSet<&str> = styles.iter().map(|s| s.name()).collect();
     names == HashSet::from(["lj/cut", "coul/cut"])
-        || names == HashSet::from(["lj/cut", "coul/long"])
+        || names == HashSet::from(["lj/cut", "coul/long/pme"])
 }
 
 fn pair_style_cutoffs(style: &Style, units: &WriteUnits) -> Result<Vec<f64>, String> {
     // Combined names want two cutoffs; simple kernels one, which they must carry.
     let convert = |c: f64| units.length(c);
     match style.name() {
-        "lj/cut/coul/cut" | "lj/cut/coul/long" => {
-            let c = convert(required_cutoff(style)?)?;
-            Ok(vec![c, c])
-        }
-        "lj/cut" | "lj126" | "coul/cut" | "coul/long" => {
-            Ok(vec![convert(required_cutoff(style)?)?])
-        }
+        "lj/cut" | "coul/cut" | "coul/long/pme" => Ok(vec![convert(required_cutoff(style)?)?]),
         _ => match style_cutoff(style) {
             Some(c) => Ok(vec![convert(c)?]),
             None => Ok(vec![]),
@@ -1448,7 +1494,7 @@ mod tests {
     const MINI: &str = r#"
 # LAMMPS force field generated by molrs
 special_bonds amber
-pair_style lj/cut/coul/long 10.0 10.0
+pair_style lj/cut/coul/cut 10.0 10.0
 pair_coeff c3 c3 0.107800 3.397710
 pair_coeff oh oh 0.093000 3.242871
 pair_coeff c3 c3 0.107800 3.397710
@@ -2822,5 +2868,59 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
             .write_cmap_str(&cmap_ff(&[("a", grid)]))
             .unwrap_err();
         assert!(err.contains("`zz`"), "{err}");
+    }
+
+    /// The pair settings LAMMPS can hold are written, the others refused by
+    /// name: `shift` is `pair_modify shift yes`; a Mie `n`/`m` is refused;
+    /// `coul/long/pme` without Ewald parameters is the real-space
+    /// `lj/cut/coul/long` (and reads back so), with them refused; a type-less
+    /// style LAMMPS has no form for here (`coul/tt`) is refused.
+    #[test]
+    fn pair_settings_are_written_or_refused_by_name() {
+        let labels = labels_of(&[("atoms", &["c3"])]);
+        let read = |text: &str| LammpsFfReader::new().read_str(text).unwrap();
+        let write = |ff: &ForceField| LammpsFfWriter::new(&labels).write_str(ff);
+
+        let shifted = read(
+            "special_bonds amber\npair_style lj/cut 10.0\npair_modify mix arithmetic shift yes\npair_coeff c3 c3 0.1 3.4\n",
+        );
+        let text = write(&shifted).unwrap();
+        assert!(
+            text.contains("pair_modify mix arithmetic shift yes"),
+            "{text}"
+        );
+        assert_eq!(
+            read(&text)
+                .get_style("pair", "lj/cut")
+                .unwrap()
+                .params()
+                .get("shift"),
+            Some(1.0)
+        );
+
+        let mut mie = shifted.clone();
+        mie.get_style_mut("pair", "lj/cut")
+            .unwrap()
+            .set_param("n", 9.0);
+        assert!(write(&mie).unwrap_err().contains("n = 9"));
+
+        let long = read(
+            "special_bonds amber\npair_style lj/cut/coul/long 10.0 12.0\npair_coeff c3 c3 0.1 3.4\n",
+        );
+        let text = write(&long).unwrap();
+        assert!(text.contains("pair_style lj/cut/coul/long 10"), "{text}");
+        assert!(read(&text).get_style("pair", "coul/long/pme").is_some());
+        let mut ewald = long.clone();
+        ewald
+            .get_style_mut("pair", "coul/long/pme")
+            .unwrap()
+            .set_param("alpha", 0.3);
+        assert!(write(&ewald).unwrap_err().contains("alpha"));
+
+        let mut tt =
+            read("special_bonds amber\npair_style lj/cut 10.0\npair_coeff c3 c3 0.1 3.4\n");
+        tt.def_style("pair", "coul/tt", Params::from_pairs(&[("cutoff", 10.0)]))
+            .unwrap();
+        assert!(write(&tt).unwrap_err().contains("coul/tt"));
     }
 }
