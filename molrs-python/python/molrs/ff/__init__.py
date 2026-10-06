@@ -49,6 +49,7 @@ from .._lib import (
     assign_cmaps,
     read_amber_prmtop_ff,
     read_forcefield_xml,
+    read_gromacs_system,
     read_gromacs_top_ff,
     read_lammps_cmap,
     read_lammps_data_coeffs,
@@ -143,6 +144,7 @@ __all__ = [
     "read_amber_prmtop_ff",
     # force-field file formats
     "read_forcefield_xml",
+    "read_gromacs_system",
     "read_gromacs_top_ff",
     "read_lammps_cmap",
     "read_lammps_data_coeffs",

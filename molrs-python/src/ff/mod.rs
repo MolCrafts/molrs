@@ -1934,58 +1934,105 @@ pub fn read_amber_prmtop_ff_py(path: PathBuf) -> PyResult<PyForceField> {
 /// Read the force-field directives of a GROMACS topology into a
 /// :class:`ForceField`.
 ///
-/// Reads ``[ defaults ]`` (nbfunc 1, gen-pairs ``yes``, comb-rule 2 or 3 →
-/// ``lj/cut`` ``mixing`` ``arithmetic`` / ``geometric``), ``[ atomtypes ]``,
-/// ``[ nonbond_params ]`` (funct 1, explicit ``lj/cut`` cross rows that
-/// replace the comb-rule for their type pair), ``[ bondtypes ]``,
-/// ``[ angletypes ]`` and ``[ dihedraltypes ]``, converting GROMACS units (nm,
-/// kJ/mol, ``½k`` harmonic terms) to molrs's convention, LAMMPS's ``real`` (Å,
-/// kcal/mol, ``K = k/2``; degrees stay degrees).
+/// Reads ``[ defaults ]`` (nbfunc 1; comb-rule 2 or 3 → ``mixing``
+/// ``arithmetic`` / ``geometric``; gen-pairs, fudgeLJ, fudgeQQ →
+/// ``special_bonds``), ``[ atomtypes ]``, ``[ nonbond_params ]`` (explicit
+/// cross rows), ``[ pairtypes ]`` (``lj/charmm`` ``epsilon14`` / ``sigma14``,
+/// declared ``one_four = "epsilon14"``), ``[ bondtypes ]`` (funct 1, 3),
+/// ``[ angletypes ]`` (funct 1, 5 → ``angle charmm``), ``[ dihedraltypes ]``
+/// (funct 1, 9 → ``dihedral periodic``; 3 → ``multi/harmonic`` /
+/// ``nharmonic``; 5 → ``opls``; 2, 4 → impropers) and ``[ cmaptypes ]``
+/// (``cmap charmm``), converting GROMACS units (nm, kJ/mol, ``½k`` harmonic
+/// terms) to the force-field IR (LAMMPS standard, ``real``: Å, kcal/mol,
+/// ``K = k/2``; degrees stay degrees). See the Force-field IR guide,
+/// "GROMACS topologies".
 ///
-/// Anything the reader does not model raises ``ValueError`` naming it: an
-/// unsupported function code or comb-rule, ``[ pairtypes ]``,
-/// ``[ constrainttypes ]``, ``[ cmaptypes ]``,
+/// What the IR cannot hold raises ``ValueError`` naming it: an unsupported
+/// function code or comb-rule, ``[ constrainttypes ]``,
 /// ``[ implicit_genborn_params ]``, any unknown section, and every molecule
-/// section (``[ moleculetype ]``, ``[ atoms ]``, ``[ bonds ]``, ``[ system ]``,
-/// ``[ molecules ]``, …). Molecule sections are topology: read them with
-/// :func:`molrs.io.read_top`, or skip them here.
+/// section — read a whole topology with :func:`read_gromacs_system`, or skip
+/// them here.
 ///
-/// ``include`` follows ``#include`` relative to the including file (default
-/// false: ignored). Each name in ``skip_directives`` (bracket-less,
-/// case-insensitive, e.g. ``"constrainttypes"``) is read past, rows and all,
-/// instead of refused.
+/// ``include`` follows ``#include`` relative to the including file and then
+/// each of ``include_dirs`` (default false: ignored). Each name in
+/// ``skip_directives`` (bracket-less, case-insensitive, e.g.
+/// ``"constrainttypes"``) is read past, rows and all, instead of refused.
 #[pyfunction]
 #[pyo3(
     name = "read_gromacs_top_ff",
-    signature = (path, include = false, *, skip_directives = Vec::new())
+    signature = (path, include = false, *, include_dirs = Vec::new(), skip_directives = Vec::new())
 )]
 pub fn read_gromacs_top_ff_py(
     path: PathBuf,
     include: bool,
+    include_dirs: Vec<PathBuf>,
     skip_directives: Vec<String>,
 ) -> PyResult<PyForceField> {
     use molrs::ff::ForceFieldReader;
-    let forcefield = gromacs_top_ff_reader(include, &skip_directives)
+    let forcefield = gromacs_top_ff_reader(include, &include_dirs, &skip_directives)
         .read(path_str(&path)?)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
 }
 
-/// The GROMACS directive reader the Python entry point configures.
+/// Read a whole GROMACS topology into a :class:`ForceField` and a typed
+/// :class:`Frame`.
+///
+/// The directives as :func:`read_gromacs_top_ff` reads them, and the molecule
+/// sections: ``atoms`` (``type``, ``charge``, ``mass``, ``name``, ``res_id``,
+/// ``res_name``, ``mol_id``), ``bonds``, ``angles``, ``dihedrals``,
+/// ``impropers``, ``cmaps`` (each row's ``type`` the force-field type
+/// GROMACS's own lookup picks; a row with parameters of its own gets a type
+/// of its own), ``constraints``, ``exclusions`` and ``pairs`` (every
+/// intramolecular pair GROMACS prices; the ``[ pairs ]`` rows flagged
+/// ``is_14``, with per-pair override columns where they carry parameters).
+/// Atom indices are 0-based. ``#include`` is followed, relative to the
+/// including file and then each of ``include_dirs`` (GROMACS's
+/// ``share/gromacs/top`` for ``#include "charmm27.ff/forcefield.itp"``).
+/// Coordinates come from the ``.gro`` (:func:`molrs.io.read_gro`).
+///
+/// Returns ``(forcefield, frame)``. Anything the IR cannot hold (virtual
+/// sites, restraints, free-energy B states, …) raises ``ValueError`` naming
+/// it and where.
+#[pyfunction]
+#[pyo3(
+    name = "read_gromacs_system",
+    signature = (path, *, include_dirs = Vec::new(), skip_directives = Vec::new())
+)]
+pub fn read_gromacs_system_py(
+    path: PathBuf,
+    include_dirs: Vec<PathBuf>,
+    skip_directives: Vec<String>,
+) -> PyResult<(PyForceField, PyFrame)> {
+    let (forcefield, frame) = gromacs_top_ff_reader(true, &include_dirs, &skip_directives)
+        .read_system(path_str(&path)?)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    Ok((
+        PyForceField { inner: forcefield },
+        PyFrame::from_core_frame(frame)?,
+    ))
+}
+
+/// The GROMACS reader the Python entry points configure.
 fn gromacs_top_ff_reader(
     include: bool,
+    include_dirs: &[PathBuf],
     skip_directives: &[String],
 ) -> molrs::ff::GromacsTopFfReader {
-    skip_directives.iter().fold(
+    let reader = include_dirs.iter().fold(
         molrs::ff::GromacsTopFfReader::new().with_include(include),
-        |reader, name| reader.with_skipped_directive(name),
-    )
+        |reader, dir| reader.with_include_dir(dir),
+    );
+    skip_directives
+        .iter()
+        .fold(reader, |reader, name| reader.with_skipped_directive(name))
 }
 
 /// Write a ForceField as GROMACS force-field directives.
 ///
-/// Writes ``[ defaults ]``, ``[ atomtypes ]``, ``[ bondtypes ]``,
-/// ``[ angletypes ]`` and ``[ dihedraltypes ]`` in GROMACS units (nm, kJ/mol,
+/// Writes ``[ defaults ]``, ``[ atomtypes ]``, ``[ nonbond_params ]``,
+/// ``[ pairtypes ]``, ``[ bondtypes ]``, ``[ angletypes ]``,
+/// ``[ dihedraltypes ]`` and ``[ cmaptypes ]`` in GROMACS units (nm, kJ/mol,
 /// degrees) — the inverse of :func:`read_gromacs_top_ff`. No molecule section
 /// is written: a force field holds no molecule. A style or parameter GROMACS
 /// directives cannot express raises ``ValueError`` naming it. ``precision`` is

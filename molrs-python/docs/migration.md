@@ -159,9 +159,9 @@ angle style, and both `PotentialCompiler.compile` and `compile_typed` price it.
 The 1-3 spring adds no exclusion; which 1-3 pairs a pair style sees is
 `special_bonds`'s answer, as before. See
 [Force-field IR](guides/forcefield-ir.md#ureybradley).
-Engine readers other than LAMMPS's (GROMACS funct 5, OpenMM
-`AmoebaUreyBradleyForce`, CHARMM `.prm`) come in a later release. Behaviour
-that changes with it:
+The GROMACS reader and writer map `[ angletypes ]` funct 5 onto it (see
+[GROMACS](#gromacs)); OpenMM's `AmoebaUreyBradleyForce` and CHARMM `.prm`
+come later. Behaviour that changes with it:
 
 - **A force field with several styles of one bonded category compiles.**
   `PotentialCompiler` hands each table-driven style only the rows of its own
@@ -267,6 +267,56 @@ conventions guide, "1-4 interactions", for the formulas.
 - **`pair14` is no category.** molrec retired it; `category_arity("pair14")`
   is `None`, `PAIR_CATEGORIES` is gone, and a `pair14` table is kept as
   unknown content (no arity or restatement check). No reader produced it.
+
+### GROMACS
+
+The GROMACS reader holds everything the Class-I IR can, and the writer is
+its inverse; see [Force-field IR](guides/forcefield-ir.md#gromacs-topologies).
+Checked against GROMACS 2025.3 and LAMMPS term by term on a CHARMM, an AMBER
+and an OPLS-AA dipeptide (`scripts/gromacs_engine_check.sh`).
+
+- **`[ dihedraltypes ]` funct 3 (Ryckaert–Bellemans) reads as
+  `dihedral multi/harmonic`** (`aₙ₊₁ = (−1)ⁿ Cₙ`, constant included), or
+  `dihedral nharmonic` when C₅ ≠ 0 — no longer as `dihedral opls`, and no
+  longer refused for C₅ ≠ 0 or ΣCₙ ≠ 0. Code that looked a GROMACS-read RB
+  type up under `dihedral opls` finds it under `multi/harmonic`; the energy
+  is the same (with ΣCₙ = 0, as 0.15 required). The writer writes
+  `multi/harmonic` and `nharmonic` (N ≤ 6) as funct 3 and **`dihedral opls`
+  as funct 5** (GROMACS's Fourier dihedral, which is `opls` term for term;
+  0.15 wrote funct 3), and the reader reads funct 5 back as `opls`.
+- **New directives read and written:** `[ pairtypes ]` (an `lj/charmm` +
+  `coul/charmm` field declared `one_four = "epsilon14"`, its 1-4 parameters
+  as `epsilon14` / `sigma14`, divided by fudgeLJ), `[ angletypes ]` funct 5
+  (`angle charmm`), `[ dihedraltypes ]` funct 9 (consecutive rows on equal
+  labels are one multi-term `dihedral periodic`; the writer writes a
+  multi-term type as funct-9 rows instead of refusing it), funct 5, funct 2
+  at ξ₀ = 180°, the 2-name form, `[ cmaptypes ]` (`cmap charmm`, grid
+  unchanged). A field whose `[ pairtypes ]` give 1-4 parameters other than
+  the generated ones reads with `lj/charmm`, not `lj/cut`; it switches
+  between `inner` and `cutoff`, which the caller sets (GROMACS keeps them in
+  the `.mdp`). Price a system read with it after
+  `ForceField.materialize_one_four(frame)`, which writes its 1-4 pairs out.
+- **`[ defaults ]` gen-pairs `no`** is read (1-4 LJ weight 1, every pair
+  priced by its own parameters) instead of refused.
+- **`#define` macros are expanded** in rows (0.15 recorded them and never
+  expanded them), a line ending in `\` continues, and text before the first
+  section is read past as GROMACS reads it past (charmm27's `forcefield.itp`
+  banner was refused). `with_include_dir(dir)` resolves `#include` against
+  GROMACS's share directory, as `-I` does.
+- **Unknown atom types are refused** in `[ nonbond_params ]` and
+  `[ pairtypes ]` (0.15 stored a cross row on an undefined type).
+- **Whole topologies: `GromacsTopFfReader::read_system` / Python
+  `molrs.ff.read_gromacs_system`** read the molecule sections too, into the
+  force field and a typed frame (0-based indices): GROMACS's own type lookup,
+  rows with their own parameters as types `<labels>@gmx_<n>`, `[ pairs ]`
+  rows with parameters as per-pair overrides, the nrexcl pair list,
+  exclusions, constraints and settles, `[ molecules ]` repeated. The
+  force-field reader still refuses molecule sections, now naming
+  `read_system` (0.15 pointed at `molrs.io.read_top`, which reads structure
+  only, 1-based).
+- **Writer refusals:** `dihedral charmm` with `w > 0`, `epsilon14` /
+  `sigma14` on an `lj/charmm` not declared `one_four = "epsilon14"`, two
+  types GROMACS would read as one (same labels in one function-code table).
 
 ### Already in 0.15.1
 

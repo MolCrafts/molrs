@@ -139,7 +139,7 @@ order; molrs gives `0.003384791688934619`).
 | Source | File order | Stored order |
 |---|---|---|
 | LAMMPS data / `improper_coeff` | I, J, K, L | as written |
-| GROMACS funct 4 (periodic), funct 2 (harmonic) | i, j, k, l (GROMACS prices φ(i,j,k,l)) | as written |
+| GROMACS funct 4 (periodic), funct 2 (harmonic) | i, j, k, l (GROMACS prices φ(i,j,k,l); pdb2gmx lists a CHARMM improper centre first, an AMBER one centre third) | as written |
 | AMBER prmtop, frcmod, GAFF typifier | i, j, K, l (centre third) | as written |
 | OpenMM `<Improper class1 … class4>`, `ordering` default / `amber` | c1 = centre; OpenMM prices φ(c2, c3, c1, c4) | (c2, c3, c1, c4); the writer writes the inverse |
 | OpenMM, `ordering="charmm"`, no wildcard | OpenMM prices φ(c1, c2, c3, c4) | as written |
@@ -183,8 +183,8 @@ parameters:
    and `cutoff`, at both compile doors; the Lennard-Jones force is the
    gradient, the Coulomb force is LAMMPS's switched force C qᵢqⱼ S/r², which
    is not (`pair_lj_charmm_coul_charmm.cpp`). `lj/charmm/coul/long` is not
-   read. GROMACS `[ pairtypes ]` will land in the cross rows'
-   `epsilon14`/`sigma14`.
+   read. GROMACS `[ pairtypes ]` land in `epsilon14`/`sigma14` (self rows
+   and cross rows, see [GROMACS topologies](#gromacs-topologies)).
 3. **Per-dihedral weight** — `dihedral_style charmm` `w`: each dihedral
    prices the pair of its own end atoms,
 
@@ -217,7 +217,9 @@ Frame's `pairs` block, the rows the pair kernels already price (`atomi`,
 A null cell (the column's validity mask) takes the value the pair has
 without the row. OpenMM's exception `(chargeProd, sigma, epsilon)` is
 `charge_product`, `sigma`, `epsilon` with both scales 1; a GROMACS funct-1
-`[ pairs ]` row with parameters is `sigma`, `epsilon` (`lj_scale` 1); AMBER's
+`[ pairs ]` row with parameters is `sigma`, `epsilon` (`lj_scale` 1,
+`coul_scale` fudgeQQ), a funct-2 row adds `charge_product` and its own
+fudgeQQ; AMBER's
 per-dihedral divisors are `lj_scale = 1/SCNB`, `coul_scale = 1/SCEE`. A pair
 style other than a 12-6 `lj/cut` or `lj/charmm` and a plain Coulomb
 (`coul/cut` with `delta = 0`, `coul/charmm`) has no exception form, and a
@@ -254,9 +256,9 @@ exclusion (the 1-3 pair is excluded by `special_bonds`). There is no separate
 Urey–Bradley category. A field that mixes it with other angle styles is
 LAMMPS's `angle_style hybrid harmonic charmm` (`angle_coeff t charmm K theta0
 K_ub r_ub`), which the LAMMPS reader and writer read and write; molrs prices
-each angle row under the style that defines its type. 0.16 has the kernel and
-the LAMMPS reader and writer; the other engines' maps below are how
-their readers map onto the IR:
+each angle row under the style that defines its type. 0.16 has the kernel,
+the LAMMPS reader and writer and the GROMACS reader and writer; the other
+engines' maps below are how their readers map onto the IR:
 
 | Source | `angle charmm` |
 |---|---|
@@ -368,8 +370,11 @@ OpenMM's `CMAPTorsionForce` stores `energy[i + N·j]` at φ = 2πi/N, ψ = 2πj/
 (origin 0, φ fastest): its reader maps element `(i, j)` to molrs `[(i + N/2) mod N]
 [(j + N/2) mod N]`; OpenMM interpolates with a natural periodic bicubic
 spline, so energies off the grid points differ from LAMMPS's at the
-interpolation's accuracy. GROMACS `[ cmaptypes ]` lists CHARMM's grid; its
-reader must be checked against a GROMACS energy before it is trusted.
+interpolation's accuracy. GROMACS `[ cmaptypes ]` lists CHARMM's grid in
+the IR's layout (φ-major from −180°, GROMACS's `cmap_setup_grid_index`), so
+its reader keeps element `i·N + j` at `[i][j]`; GROMACS's own interpolation
+is CHARMM's too, and the CHARMM dipeptide's two crossterms price as GROMACS
+2025.3 prices them to 6 × 10⁻¹⁶ (see [How this is checked](#how-this-is-checked)).
 
 ## Torsion forms and their exact conversions
 
@@ -408,8 +413,10 @@ a₀. The polynomial forms (`multi/harmonic`, `nharmonic`, RB) carry a₀ back
 exactly; every other form fixes its constant by its other parameters, and
 reproduces the series up to that offset. In particular ΣCₙ = 0 is **not** an
 image condition of RB → OPLS once the constant is dropped — only C₅ = 0 is.
-The GROMACS and OPLS-XML readers, which keep the absolute energy, still
-require ΣCₙ = 0 to within 10⁻⁴ kJ/mol beside C₅ = 0.
+The OPLS-XML reader, which keeps the absolute energy in `dihedral opls`,
+still requires ΣCₙ = 0 to within 10⁻⁴ kJ/mol beside C₅ = 0; the GROMACS
+reader keeps RB as the polynomial it is (`multi/harmonic`, or `nharmonic`
+when C₅ ≠ 0) and refuses neither.
 
 The familiar chains are instances:
 
@@ -462,6 +469,61 @@ for input rounded on print. A test evaluates every registered kernel on
 random geometries against its form's series, so the algebra and the kernels
 cannot drift.
 
+## GROMACS topologies
+
+`GromacsTopFfReader` reads a topology's directives into a force field
+(`read`) or a whole `.top` into the force field and a typed frame
+(`read_system`; Python `molrs.ff.read_gromacs_system`); the writer
+(`GromacsTopFfWriter`) is the inverse of the directive map. Every row is
+exact; GROMACS's ½k forms are halved into LAMMPS's `K`, nm → Å, kJ → kcal,
+degrees stay degrees.
+
+| GROMACS | IR |
+|---|---|
+| `[ defaults ]` comb-rule 2 / 3 | `mixing` `arithmetic` / `geometric` on the Lennard-Jones style (comb-rule 1, C6/C12, refused) |
+| `[ defaults ]` gen-pairs, fudgeLJ, fudgeQQ | `special_bonds` `lj [0, 0, fudgeLJ]`, `coul [0, 0, fudgeQQ]` (gen-pairs `no`: `lj` 1-4 = 1, no pair is generated) |
+| `[ atomtypes ]` V W | `atom full` type + Lennard-Jones self row `sigma = 10·V`, `epsilon = W/4.184` |
+| `[ nonbond_params ]` funct 1 | explicit cross row |
+| `[ pairtypes ]` funct 1 | `lj/charmm` + `coul/charmm`, `one_four = "epsilon14"`: `epsilon14 = ε/fudgeLJ`, `sigma14 = σ` on the self rows, and cross rows where the mix of the self rows would not give the pair GROMACS's 1-4 parameters (to 10⁻¹²) — so `special_bonds` × LJ(ε₁₄, σ₁₄) is GROMACS's 1-4 energy for every type pair. A pairtype equal to the generated pair changes nothing (`lj/cut` stays) |
+| `[ bondtypes ]` funct 1 / 3 | `bond harmonic` (`k = k_b/2`) / `bond morse` |
+| `[ angletypes ]` funct 1 / 5 | `angle harmonic` / `angle charmm` ([Urey–Bradley](#ureybradley)) |
+| `[ dihedraltypes ]` funct 1 | `dihedral periodic`, one term |
+| `[ dihedraltypes ]` funct 9 | `dihedral periodic`: the consecutive rows on equal labels are the terms `k<m>`, `periodicity<m>`, `phase<m>` of one type, in file order |
+| `[ dihedraltypes ]` funct 3 (RB) | `dihedral multi/harmonic` `aₙ₊₁ = (−1)ⁿ Cₙ`, constant included; `dihedral nharmonic` (N = 6) when C₅ ≠ 0 |
+| `[ dihedraltypes ]` funct 5 (Fourier) | `dihedral opls`, `kₙ = Cₙ` |
+| `[ dihedraltypes ]` funct 2 | `improper harmonic`, `K = k_ξ/2`, `chi0 = ξ₀` ∈ {0°, 180°} (the signed GROMACS form equals `K(|φ| − chi0)²` there and nowhere else, so other ξ₀ are refused); atoms as written |
+| `[ dihedraltypes ]` funct 4 | `improper periodic`; atoms as written (AMBER order) |
+| `[ cmaptypes ]` funct 1 | `cmap charmm`, the grid unchanged in layout ([CMAP](#cmap)) |
+| `X` | the empty wildcard |
+
+The writer writes `dihedral periodic` with several terms as consecutive
+funct-9 rows, `multi/harmonic` and `nharmonic` (N ≤ 6) as funct 3, `opls` as
+funct 5, `dihedral harmonic` / `improper cvff` and `dihedral charmm` with
+`w = 0` as periodic rows at phase 0° / 180°, `cmap charmm` as `[ cmaptypes ]`,
+and the 1-4 parameters of an `lj/charmm` declared `one_four = "epsilon14"`
+as `[ pairtypes ]` exactly where GROMACS would generate other ones. It
+refuses `dihedral charmm` with `w > 0` (GROMACS prices a 1-4 pair by
+`[ pairs ]`, never by a dihedral), `epsilon14` / `sigma14` on an `lj/charmm`
+that does not price 1-4 pairs with them, and two types GROMACS would read as
+one (same labels, same function-code table).
+
+**Systems.** `read_system` types each molecule row as GROMACS's own lookup
+does — bonds, angles, Fourier dihedrals and cmaps by exact bond types
+(cmaps forward only), the other dihedrals by the first row with the most
+non-wildcard matches, either way, with all of a funct-9 row's terms; a row
+with parameters of its own (an OPLS-AA `improper_*` macro, expanded) gets a
+type of its own, `<labels>@gmx_<n>`. Its frame holds `atoms`, `bonds`,
+`angles`, `dihedrals` (funct 1, 9, 3, 5), `impropers` (funct 2, 4), `cmaps`,
+`constraints` (`[ constraints ]`, `[ settles ]`; `r0` in Å), `exclusions`
+and `pairs`: every intramolecular pair GROMACS prices, the `[ pairs ]` rows
+flagged `is_14`. A `[ pairs ]` row with parameters carries them as per-pair
+overrides — funct 1 `sigma`, `epsilon`, `lj_scale` 1, `coul_scale` fudgeQQ;
+funct 2 also `charge_product` and its own fudgeQQ — which LAMMPS cannot hold.
+Virtual sites, restraints, polarization and free-energy B states have no IR
+form and are refused by name. A system whose field reads with
+`one_four = "epsilon14"` (CHARMM's pairtypes) compiles once its 1-4 pairs
+are written out as per-pair rows, `ForceField.materialize_one_four(frame)`.
+
 ## Engine maps at a glance
 
 | Engine | bond `k` | angle `k`, `theta0` | phases | impropers |
@@ -498,6 +560,20 @@ cannot drift.
   every force component to 1e-10 (`ff::one_four`). `special_bonds` ½ equals
   per-pair scales ½ equals per-pair parameters ε/2, qᵢqⱼ/2; `w` = 1 equals
   per-pair rows of ε₁₄, σ₁₄; `compile` equals `compile_typed`.
+- GROMACS-read systems against GROMACS 2025.3 (double precision, `mdrun
+  -rerun`, energies from the .edr) and LAMMPS (`run 0` on molrs's data file
+  and include), `ff::forcefield::readers::gromacs::engine_check`,
+  `scripts/gromacs_engine_check.sh`: ACE-ALA-ALA-NME under charmm27
+  (Urey–Bradley, two CMAP crossterms, `[ pairtypes ]`, a
+  `[ nonbond_params ]` row), amber99sb-ildn (funct 9, funct 4, fudge ½ / ⅚),
+  oplsaa (funct 3, funct-1 impropers) and AMBER with `[ pairs ]` rows of
+  their own, plain cut-off at 2.5 nm. molrs equals LAMMPS to ≤ 1e-14 on
+  every term; it equals GROMACS to ≤ 2e-14 on bond, angle (with UB),
+  dihedral, improper and CMAP, ≤ 1.3e-13 on LJ, ≤ 1.6e-9 on LJ-14 (GROMACS
+  prices 1-4 pairs from cubic-spline tables) and 9.9e-9 on Coulomb (GROMACS's
+  CODATA-2018 constant is LAMMPS `real`'s × (1 + 9.9e-9)). CHARMM's
+  1-4 pairs run in LAMMPS as zero-`K` `dihedral charmm` rows with `w` = 1
+  beside `special_bonds` 0.
 - The LAMMPS-read hand molecule run through LAMMPS (`run 0`) gives the
   same per-term energies as molrs to ≤ 2e-13 relative: bond
   0.162750104621288, angle 1.35959339751695, dihedral 0.692979891423841,
