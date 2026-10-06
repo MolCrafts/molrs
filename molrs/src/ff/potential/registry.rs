@@ -1,11 +1,11 @@
 //! Kernel registry: maps `(category, style_name)` → [`KernelConstructor`] plus
 //! the [`ParamSource`] that says **where that kernel's parameters come from**.
 //!
-//! `PotentialCompiler` resolves each style's kernel through this
-//! registry instead of a hard-coded match, so a new potential is added by
-//! *registering* its constructor rather than editing core dispatch. The
-//! built-ins are seeded on first use; [`register_kernel`] adds or overrides
-//! entries at runtime (the advertised extension point).
+//! This is the table of molrs's own Tier-3 constructors. The force-field IR
+//! registry ([`crate::ff::ir::Registry`]) seeds its sealed built-ins from
+//! [`KernelRegistry::builtin`], each beside its spec, and `PotentialCompiler`
+//! resolves every style through that registry. [`register_kernel`] and the
+//! `lookup_*` functions are thin shims over it.
 //!
 //! # Why a registration carries a `ParamSource`
 //!
@@ -31,7 +31,6 @@
 //! is kept by review alone.
 
 use std::collections::HashMap;
-use std::sync::{OnceLock, RwLock};
 
 use crate::ff::forcefield::Params;
 use crate::ff::potential::Member;
@@ -259,6 +258,24 @@ impl KernelRegistry {
     /// Whether the registry has no kernels.
     pub fn is_empty(&self) -> bool {
         self.ctors.is_empty()
+    }
+
+    /// Every registered `(category, name)`.
+    #[cfg(test)]
+    pub(crate) fn names(&self) -> impl Iterator<Item = (&str, &str)> + '_ {
+        self.ctors.keys().map(|(c, n)| (c.as_str(), n.as_str()))
+    }
+
+    /// `(category, name)` as a Tier-3 [`Kernel`](crate::ff::ir::Kernel) of
+    /// the force-field IR registry, which seeds its built-ins from here.
+    pub(crate) fn kernel(&self, category: &str, name: &str) -> Option<crate::ff::ir::Kernel> {
+        self.ctors
+            .get(&(category.to_owned(), name.to_owned()))
+            .map(|r| crate::ff::ir::Kernel::Ctor {
+                compiled: r.ctor,
+                typed: r.typed,
+                rows: r.rows,
+            })
     }
 
     /// A registry seeded with every built-in kernel.
@@ -494,33 +511,29 @@ impl KernelRegistry {
     }
 }
 
-/// The process-wide kernel registry, initialized with the built-ins on first use.
-fn global() -> &'static RwLock<KernelRegistry> {
-    static REGISTRY: OnceLock<RwLock<KernelRegistry>> = OnceLock::new();
-    REGISTRY.get_or_init(|| RwLock::new(KernelRegistry::builtin()))
+/// Register a table-driven ([`ParamSource::TypeRows`]) kernel in the global
+/// force-field IR registry: a shim over
+/// [`ir::register_style`](crate::ff::ir::register_style) with a
+/// [`Kernel::ctor`](crate::ff::ir::Kernel::ctor) and a spec that declares no
+/// parameters.
+///
+/// A built-in is sealed ([`IrError::Sealed`]); registering the same
+/// constructor again is a no-op, another one under a taken name an
+/// [`IrError::Conflict`]. A kernel that should state its parameters, a
+/// neighbour-driven form or an expression registers through
+/// [`ir::register_style`](crate::ff::ir::register_style) directly.
+///
+/// [`IrError::Sealed`]: crate::ff::ir::IrError::Sealed
+/// [`IrError::Conflict`]: crate::ff::ir::IrError::Conflict
+pub fn register_kernel(
+    category: &str,
+    name: &str,
+    ctor: KernelConstructor,
+) -> Result<(), crate::ff::ir::IrError> {
+    register_kernel_with(category, name, ctor, ParamSource::TypeRows)
 }
 
-/// Register (or override) a table-driven ([`ParamSource::TypeRows`]) kernel in
-/// the global registry. The extension point for new potentials — no core
-/// dispatch edit required.
-///
-/// # No in-tree caller, by design
-///
-/// Nothing in molrs, molpack or any binder calls this; only its own unit test
-/// does. That is what an extension point looks like, and it is load-bearing
-/// rather than speculative: [`PotentialCompiler`] resolves its kernel through
-/// [`lookup_kernel`] on the **global** registry, and no API accepts a
-/// [`KernelRegistry`] of the caller's own, so an out-of-tree kernel has no
-/// other door. `architecture-rules.md` names this registry as the project's
-/// open-dispatch mechanism.
-///
-/// [`PotentialCompiler`]: crate::ff::potential::PotentialCompiler
-pub fn register_kernel(category: &str, name: &str, ctor: KernelConstructor) {
-    global().write().unwrap().register(category, name, ctor);
-}
-
-/// Register (or override) a kernel in the global registry, declaring its
-/// [`ParamSource`].
+/// [`register_kernel`], declaring the kernel's [`ParamSource`].
 ///
 /// Use this — with [`ParamSource::PerInstance`] — for a kernel whose parameters
 /// are baked into [`Frame`] columns rather than resolved from type rows; it is
@@ -530,35 +543,41 @@ pub fn register_kernel_with(
     name: &str,
     ctor: KernelConstructor,
     source: ParamSource,
-) {
-    global()
-        .write()
-        .unwrap()
-        .register_with(category, name, ctor, source);
+) -> Result<(), crate::ff::ir::IrError> {
+    crate::ff::ir::register_style(
+        crate::ff::ir::StyleSpec::new(category.to_owned(), name.to_owned()).source(source),
+        Some(crate::ff::ir::Kernel::ctor(ctor)),
+    )
 }
 
-/// Look up a kernel constructor in the global registry.
+/// The compiled constructor of a Tier-3 style in the global registry.
 pub fn lookup_kernel(category: &str, name: &str) -> Option<KernelConstructor> {
-    global().read().unwrap().get(category, name)
+    crate::ff::ir::with_global(|r| match r.style(category, name)?.1? {
+        crate::ff::ir::Kernel::Ctor { compiled, .. } => Some(*compiled),
+        _ => None,
+    })
 }
 
-/// Look up the neighbour-driven kernel a pair style declared, and the weight
-/// set that scales it.
+/// The neighbour-driven constructor a Tier-3 pair style declared, and the
+/// weight set that scales it.
 pub fn lookup_typed_kernel(
     category: &str,
     name: &str,
 ) -> Option<(KernelConstructor, SpecialClass)> {
-    global().read().unwrap().get_typed(category, name)
+    crate::ff::ir::with_global(|r| match r.style(category, name)?.1? {
+        crate::ff::ir::Kernel::Ctor { typed, .. } => *typed,
+        _ => None,
+    })
 }
 
-/// Look up the [`ParamSource`] a style's kernel declared.
+/// The [`ParamSource`] a style declared, from the global registry.
 pub fn lookup_param_source(category: &str, name: &str) -> Option<ParamSource> {
-    global().read().unwrap().param_source(category, name)
+    crate::ff::ir::with_global(|r| r.param_source(category, name))
 }
 
 /// Where a style's rows come from, from the global registry.
 pub fn lookup_row_source(category: &str, name: &str) -> Option<RowSource> {
-    global().read().unwrap().row_source(category, name)
+    crate::ff::ir::with_global(|r| r.row_source(category, name))
 }
 
 #[cfg(test)]

@@ -18,12 +18,13 @@
 use std::borrow::Cow;
 
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
+use crate::ff::ir::{self, CategorySpec, Registry};
 use crate::ff::potential::pair::exceptions;
-use crate::ff::potential::registry::{self, ParamSource};
+use crate::ff::potential::registry::{self, ParamSource, RowSource};
 use crate::ff::potential::{Member, PairWeights, Potentials, TypedKernel, TypedMember};
 use molrs::store::frame::Frame;
 use molrs::store::schema::PAIR_OVERRIDE_COLUMNS;
-use molrs::store::schema::block_names::{ANGLES, ATOMS, BONDS, CMAPS, DIHEDRALS, IMPROPERS, PAIRS};
+use molrs::store::schema::block_names::{ATOMS, PAIRS};
 
 /// Compiles one [`ForceField`] against typed [`Frame`]s.
 ///
@@ -46,15 +47,42 @@ use molrs::store::schema::block_names::{ANGLES, ATOMS, BONDS, CMAPS, DIHEDRALS, 
 /// let pots = PotentialCompiler::new(&ff).compile(&Frame::new()).unwrap();
 /// assert!(pots.members().is_empty());
 /// ```
+///
+/// Each style's category and kernel come from the force-field IR registry
+/// ([`crate::ff::ir`]): the process-wide one, unless the compiler was made
+/// with [`with_registry`](Self::with_registry).
 #[derive(Debug, Clone, Copy)]
 pub struct PotentialCompiler<'a> {
     ff: &'a ForceField,
+    registry: Option<&'a Registry>,
 }
 
 impl<'a> PotentialCompiler<'a> {
-    /// A compiler that reads `ff`.
+    /// A compiler that reads `ff`, against the process-wide registry.
     pub fn new(ff: &'a ForceField) -> Self {
-        Self { ff }
+        Self { ff, registry: None }
+    }
+
+    /// A compiler that reads `ff` against `registry` instead of the
+    /// process-wide one — a test's own styles, seen by nothing else.
+    pub fn with_registry(ff: &'a ForceField, registry: &'a Registry) -> Self {
+        Self {
+            ff,
+            registry: Some(registry),
+        }
+    }
+
+    /// The registry this compile reads.
+    ///
+    /// The process-wide one is copied out rather than read under its lock:
+    /// a kernel constructor is arbitrary code (a third party's, a Python
+    /// callable's), and one that registered a style while the compile held
+    /// the lock would deadlock.
+    fn registry(&self) -> Cow<'a, Registry> {
+        match self.registry {
+            Some(r) => Cow::Borrowed(r),
+            None => Cow::Owned(ir::with_global(Registry::clone)),
+        }
     }
 
     /// Build evaluable [`Potentials`] by expanding every style against a
@@ -86,6 +114,7 @@ impl<'a> PotentialCompiler<'a> {
         // weights are checked here too, at the door that decides the physics,
         // and not only where the list happens to be built.
         self.ff.special_bonds().compiled_inclusion()?;
+        let reg = self.registry();
         // The 1-4 exceptions (dihedral charmm `w`, per-pair overrides) are one
         // kernel; the regular pair kernels see the `pairs` list without the
         // override rows, which is their weight 0.
@@ -93,7 +122,7 @@ impl<'a> PotentialCompiler<'a> {
         let regular = regular_pairs(frame, &exceptions.override_rows)?;
         let mut pots = Potentials::new();
         for style in self.ff.styles() {
-            let frame = if style.category() == "pair" {
+            let frame = if category_of(&reg, style)?.is_pair_driven() {
                 &*regular
             } else {
                 frame
@@ -101,7 +130,7 @@ impl<'a> PotentialCompiler<'a> {
             // `member` skips a style whose topology block is absent or empty; a
             // *present* block with an unknown type label is a real error and
             // propagates from the kernel constructor.
-            if let Some(pot) = self.member(style, frame, self.ff.special_bonds())? {
+            if let Some(pot) = self.member(&reg, style, frame, self.ff.special_bonds())? {
                 pots.push(pot);
             }
         }
@@ -141,6 +170,7 @@ impl<'a> PotentialCompiler<'a> {
     /// without the weights a bonded pair is counted twice: once by the bond
     /// term and once at full non-bonded strength, at bond length.
     pub fn compile_typed(&self, frame: &Frame) -> Result<Vec<TypedMember>, String> {
+        let reg = self.registry();
         let exceptions = exceptions::plan(self.ff, frame)?;
         let mut out = Vec::new();
         for style in self.ff.styles() {
@@ -148,7 +178,7 @@ impl<'a> PotentialCompiler<'a> {
             // topology of its kind (`member` skips it). A pair style is never
             // skipped: which pairs exist is the neighbour search's answer, not
             // the frame's.
-            if let Some((pot, special)) = self.typed_member(style, frame)? {
+            if let Some((pot, special)) = self.typed_member(&reg, style, frame)? {
                 let weights = special.map(|c| {
                     let by_distance = match c {
                         registry::SpecialClass::Vdw => self.ff.special_bonds().lj_weights(),
@@ -178,24 +208,31 @@ impl<'a> PotentialCompiler<'a> {
     /// A pair style with no typed form is an [`Err`], not a fallback to the
     /// compiled one. Falling back would hand back a kernel whose parameters
     /// belong to a pair list nobody is evaluating, and it would answer.
-    fn typed_member(&self, style: &Style, frame: &Frame) -> Result<Option<TypedKernel>, String> {
-        let category = style.category();
-        if category == "atom" {
+    fn typed_member(
+        &self,
+        reg: &Registry,
+        style: &Style,
+        frame: &Frame,
+    ) -> Result<Option<TypedKernel>, String> {
+        let category = category_of(reg, style)?;
+        if !category.prices_energy() {
             return Ok(None);
         }
-        if category != "pair" {
+        if !category.is_pair_driven() {
             // Bonded styles are unchanged, and take no special-bonds weight:
             // the term *is* the bonded interaction, not a scaled copy of it.
             // `special_bonds` is irrelevant to them, so a default is honest.
             return Ok(self
-                .member(style, frame, &SpecialBonds::default())?
+                .member(reg, style, frame, &SpecialBonds::default())?
                 .map(|p| (p, None)));
         }
         // No `pairs` gate: a typed pair kernel is built from the atoms, and a
         // frame with atoms always has those.
+        let spec = category;
+        let category = style.category();
+        let entry = reg.entry(category, style.name());
         let type_params = style.defs().kernel_type_params()?;
-        let param_source =
-            registry::lookup_param_source(category, style.name()).unwrap_or(ParamSource::TypeRows);
+        let param_source = entry.map_or(ParamSource::TypeRows, |e| e.spec().source);
         if type_params.is_empty() && param_source == ParamSource::TypeRows {
             return Err(format!(
                 "Style '{}' ({}) has no type definitions",
@@ -207,8 +244,16 @@ impl<'a> PotentialCompiler<'a> {
             .iter()
             .map(|(name, params)| (name.as_str(), params))
             .collect();
-        let (ctor, special) =
-            registry::lookup_typed_kernel(category, style.name()).ok_or_else(|| {
+        let entry = entry.ok_or_else(|| no_kernel(style))?;
+        let (pot, special) = entry
+            .typed(
+                spec,
+                style.params(),
+                &type_refs,
+                frame,
+                reg.expression_compiler(),
+            )?
+            .ok_or_else(|| {
                 format!(
                     "pair style '{}' has no neighbour-driven form, so it cannot be \
                      evaluated over a neighbour list; its compiled form answers only \
@@ -216,7 +261,6 @@ impl<'a> PotentialCompiler<'a> {
                     style.name()
                 )
             })?;
-        let pot = ctor(style.params(), &type_refs, frame)?;
         Ok(Some((pot, Some(special))))
     }
 
@@ -228,19 +272,22 @@ impl<'a> PotentialCompiler<'a> {
     /// Returns `Ok(None)` for a style that carries no pairwise kernel (an atom
     /// style — types/charges only), `Err` for an unknown `(category, name)`.
     ///
-    /// The `(category, name)` → constructor mapping lives in the [`registry`]; a
-    /// new potential is added by registering its kernel, not by editing this
-    /// dispatch.
+    /// The `(category, name)` → kernel mapping, and the category's block and
+    /// gating, live in the force-field IR [`Registry`]; a new potential or a
+    /// new category is added by registering it, not by editing this dispatch.
     fn member(
         &self,
+        reg: &Registry,
         style: &Style,
         frame: &Frame,
         special_bonds: &SpecialBonds,
     ) -> Result<Option<Member>, String> {
-        let category = style.category();
-        if category == "atom" {
+        let spec = category_of(reg, style)?;
+        if !spec.prices_energy() {
             return Ok(None);
         }
+        let category = style.category();
+        let entry = reg.entry(category, style.name());
         // A style contributes nothing when the molecule carries no topology of its
         // kind: a bonded style with no bonds/angles/dihedrals/impropers, or a pair
         // style when the neighbour list is empty (e.g. methane, whose every atom
@@ -251,19 +298,16 @@ impl<'a> PotentialCompiler<'a> {
         // `exclusions` and never looks at `pairs`, so gating it on `pairs`
         // deleted a system's whole long-range electrostatics whenever the
         // caller had not built a pair list.
-        let gated = registry::lookup_row_source(category, style.name())
-            .unwrap_or(registry::RowSource::CategoryBlock)
-            == registry::RowSource::CategoryBlock;
-        let topo_block = match category {
-            _ if !gated => None,
-            "bond" => Some(BONDS),
-            "angle" => Some(ANGLES),
-            "dihedral" => Some(DIHEDRALS),
-            "improper" => Some(IMPROPERS),
-            "cmap" => Some(CMAPS),
-            "pair" => Some(PAIRS),
-            _ => None,
+        let gated =
+            entry.map_or(RowSource::CategoryBlock, |e| e.row_source()) == RowSource::CategoryBlock;
+        // A pair style's compiled terms are the frame's `pairs` list; every
+        // other category's, its own block.
+        let block: &str = if spec.is_pair_driven() {
+            PAIRS
+        } else {
+            &spec.block
         };
+        let topo_block = gated.then_some(block);
         if let Some(block_name) = topo_block {
             let rows = frame.get(block_name).and_then(|b| b.nrows()).unwrap_or(0);
             if rows == 0 {
@@ -283,8 +327,7 @@ impl<'a> PotentialCompiler<'a> {
         // The registry is the authority because it is where the kernel is declared;
         // an unregistered style falls through to `TypeRows` here and then fails on
         // the kernel lookup below with a more specific message.
-        let param_source =
-            registry::lookup_param_source(category, style.name()).unwrap_or(ParamSource::TypeRows);
+        let param_source = entry.map_or(ParamSource::TypeRows, |e| e.spec().source);
         if type_params.is_empty() && param_source == ParamSource::TypeRows {
             return Err(format!(
                 "Style '{}' ({}) has no type definitions",
@@ -296,18 +339,12 @@ impl<'a> PotentialCompiler<'a> {
             .iter()
             .map(|(name, params)| (name.as_str(), params))
             .collect();
-        let ctor = registry::lookup_kernel(category, style.name()).ok_or_else(|| {
-            format!(
-                "no kernel for style category '{}' name '{}'",
-                category,
-                style.name()
-            )
-        })?;
+        let entry = entry.ok_or_else(|| no_kernel(style))?;
         // Project the ForceField's `special_bonds` 1-4 weights into the params the
         // pair kernel reads (`lj14scale` / `coulomb14scale`), so the kernel scales
         // 1-4-flagged pairs without the registry signature carrying special_bonds.
         // Bonded kernels see their params unchanged.
-        let params: Cow<Params> = if category == "pair" {
+        let params: Cow<Params> = if spec.is_pair_driven() {
             let mut p = style.params().clone();
             p.set("lj14scale", special_bonds.lj_14());
             p.set("coulomb14scale", special_bonds.coul_14());
@@ -315,8 +352,8 @@ impl<'a> PotentialCompiler<'a> {
         } else {
             Cow::Borrowed(style.params())
         };
-        let frame = self.own_rows(style, topo_block, param_source, frame)?;
-        let pot = ctor(&params, &type_refs, &frame)?;
+        let frame = self.own_rows(reg, style, topo_block, param_source, frame)?;
+        let pot = entry.compiled(spec, &params, &type_refs, &frame, reg.expression_compiler())?;
         Ok(Some(pot))
     }
 
@@ -332,13 +369,15 @@ impl<'a> PotentialCompiler<'a> {
     /// passed through unchanged.
     fn own_rows<'f>(
         &self,
+        reg: &Registry,
         style: &Style,
         block_name: Option<&str>,
         source: ParamSource,
         frame: &'f Frame,
     ) -> Result<Cow<'f, Frame>, String> {
         let table_driven = |s: &&Style| {
-            registry::lookup_param_source(s.category(), s.name()).unwrap_or(ParamSource::TypeRows)
+            reg.param_source(s.category(), s.name())
+                .unwrap_or(ParamSource::TypeRows)
                 == ParamSource::TypeRows
         };
         let siblings: Vec<&Style> = self
@@ -389,6 +428,27 @@ impl<'a> PotentialCompiler<'a> {
         );
         Ok(Cow::Owned(cut))
     }
+}
+
+/// The registered category of `style`. An unregistered one is an error
+/// naming it: compiling it would need a block and a coordinate nothing
+/// declared.
+fn category_of<'r>(reg: &'r Registry, style: &Style) -> Result<&'r CategorySpec, String> {
+    reg.category(style.category()).ok_or_else(|| {
+        format!(
+            "style '{}': category '{}' is not registered (molrs::ff::ir::register_category)",
+            style.name(),
+            style.category()
+        )
+    })
+}
+
+fn no_kernel(style: &Style) -> String {
+    ir::IrError::NoKernel {
+        category: style.category().to_owned(),
+        style: style.name().to_owned(),
+    }
+    .to_string()
 }
 
 /// `frame` as the regular pair kernels see it: without the `pairs` rows a

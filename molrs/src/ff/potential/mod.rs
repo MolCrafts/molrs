@@ -11,6 +11,7 @@ pub mod bond;
 pub mod cmap;
 pub mod compile;
 pub mod dihedral;
+pub mod generic;
 pub mod improper;
 pub mod kspace;
 pub mod pair;
@@ -1246,7 +1247,7 @@ mod tests {
         fn my_ctor(_sp: &Params, _tp: &[(&str, &Params)], _f: &Frame) -> Result<Member, String> {
             Ok(Member::plain(DummyPotential { value: 42.0 }))
         }
-        register_kernel("pair", "test/custom", my_ctor);
+        register_kernel("pair", "test/custom", my_ctor).unwrap();
 
         let mut ff = ForceField::new("test");
         ff.def_style("pair", "test/custom", Params::new())

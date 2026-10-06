@@ -1,0 +1,570 @@
+//! What a style is: its ordered per-type parameters, its style parameters,
+//! where its numbers come from, and (optionally) its energy as an
+//! expression.
+//!
+//! The parameter order is the force-field IR's: where LAMMPS has a style of
+//! the name, it is that style's `*_coeff` order and the meanings are
+//! LAMMPS's (the IR adopts the LAMMPS standard). [`builtin_styles`] states it
+//! for every style molrs registers, so an engine codec can write a style it
+//! has no arm for from the spec alone.
+
+use std::borrow::Cow;
+
+use crate::ff::ir::Dim;
+use crate::ff::potential::registry::{ParamSource, SpecialClass};
+use molrs::types::F;
+
+/// A parameter value: a number or a string.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Value {
+    Num(F),
+    Text(Cow<'static, str>),
+}
+
+impl Value {
+    pub fn as_num(&self) -> Option<F> {
+        match self {
+            Value::Num(v) => Some(*v),
+            Value::Text(_) => None,
+        }
+    }
+
+    pub fn as_text(&self) -> Option<&str> {
+        match self {
+            Value::Text(s) => Some(s),
+            Value::Num(_) => None,
+        }
+    }
+}
+
+/// The shape of one parameter's value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ParamKind {
+    /// One number per row.
+    Scalar,
+    /// An `f64` array of this rank per row (`cmap` `grid`: rank 2), the
+    /// table's column `f64[T, S…]`. Not an expression variable.
+    Array { rank: u8 },
+    /// A string, optionally one of `choices` (`mixing`, `one_four`). Not an
+    /// expression variable.
+    Text {
+        choices: Option<Vec<Cow<'static, str>>>,
+    },
+}
+
+/// How a pair style's parameter combines from the two self rows when no
+/// cross row gives the pair its own value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Mix {
+    /// It does not: an unlike pair needs a cross row stating it (LAMMPS
+    /// `buck`, `morse`). Every bonded parameter.
+    None,
+    /// `½(pᵢ + pⱼ)`.
+    Arithmetic,
+    /// `√(pᵢ pⱼ)`.
+    Geometric,
+    /// The well depth of the joint (ε, σ) rule the style's `mixing` names
+    /// ([`Mixing`](crate::ff::forcefield::mixing::Mixing); absent:
+    /// `arithmetic`), combined with the length parameter `sigma`.
+    LjEpsilon { sigma: Cow<'static, str> },
+    /// The length of that rule, combined with the depth `epsilon`.
+    LjSigma { epsilon: Cow<'static, str> },
+}
+
+/// One parameter of a style.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParamSpec {
+    /// `^[A-Za-z_][A-Za-z0-9_]*$`, not a reserved name.
+    pub name: Cow<'static, str>,
+    pub dim: Dim,
+    pub kind: ParamKind,
+    /// The value a row (or the style) that lacks the parameter takes; `None`
+    /// makes it required.
+    pub default: Option<Value>,
+    /// Pair styles only.
+    pub mix: Mix,
+    /// A numbered family `<name>1 … <name>M`, contiguous from 1, one `M`
+    /// per table shared by every indexed parameter of the style.
+    pub indexed: bool,
+}
+
+impl ParamSpec {
+    /// A required scalar parameter that does not mix.
+    pub fn new(name: impl Into<Cow<'static, str>>, dim: Dim) -> Self {
+        Self {
+            name: name.into(),
+            dim,
+            kind: ParamKind::Scalar,
+            default: None,
+            mix: Mix::None,
+            indexed: false,
+        }
+    }
+
+    /// A text parameter, one of `choices` when there are any.
+    pub fn text(name: impl Into<Cow<'static, str>>, choices: &[&'static str]) -> Self {
+        let choices = (!choices.is_empty()).then(|| choices.iter().map(|&c| c.into()).collect());
+        Self::new(name, Dim::NONE).kind(ParamKind::Text { choices })
+    }
+
+    pub fn kind(mut self, kind: ParamKind) -> Self {
+        self.kind = kind;
+        self
+    }
+
+    pub fn default_value(mut self, value: Value) -> Self {
+        self.default = Some(value);
+        self
+    }
+
+    pub fn default_num(self, value: F) -> Self {
+        self.default_value(Value::Num(value))
+    }
+
+    pub fn mix(mut self, mix: Mix) -> Self {
+        self.mix = mix;
+        self
+    }
+
+    pub fn indexed(mut self) -> Self {
+        self.indexed = true;
+        self
+    }
+}
+
+/// A set of registration sample points (`ff-ir-02-protocol` §5): the
+/// derivative and agreement checks evaluate the style at 16 seeded points
+/// with these parameter values and the coordinate drawn from `q` (for a
+/// compound category, `q` bounds the step lengths of the seeded atoms).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Sample {
+    pub params: Vec<(Cow<'static, str>, Value)>,
+    pub q: (F, F),
+}
+
+/// One style of the force-field IR: `(category, name)`, its parameters and
+/// where they come from.
+///
+/// The kernel that prices it is registered beside it
+/// ([`Registry::register_style`](crate::ff::ir::Registry::register_style)).
+#[derive(Clone, Debug, PartialEq)]
+pub struct StyleSpec {
+    pub category: Cow<'static, str>,
+    pub name: Cow<'static, str>,
+    /// Per-type parameters, in the IR's order (LAMMPS's `*_coeff` order
+    /// where LAMMPS has the style).
+    pub params: Vec<ParamSpec>,
+    /// Style-level parameters. `cutoff` (`L`), `mixing` and `special` (text)
+    /// keep their reserved meanings.
+    pub style_params: Vec<ParamSpec>,
+    pub source: ParamSource,
+    /// Which special-bonds weights scale a pair style; `None` on a pair style
+    /// means molrec's default, `lj` ([`SpecialClass::Vdw`]).
+    pub special: Option<SpecialClass>,
+    /// The energy as a Lepton expression (molrec `docs/spec/forcefield.md`,
+    /// Expressions), kept byte for byte.
+    pub expression: Option<String>,
+    /// Whether the kernel's force is the gradient of its energy. `false`
+    /// only for `pair coul/charmm` (LAMMPS's switched force): an expression
+    /// beside it agrees on the energy alone.
+    pub force_is_gradient: bool,
+    /// The bare spelling of the indexed parameters (`k`, `periodicity`,
+    /// `phase`) is accepted as term 1 (`dihedral periodic`).
+    pub unindexed_one_term: bool,
+    /// Points the conformance checks run on at registration; without any
+    /// they run once per process at the style's first compile.
+    pub samples: Vec<Sample>,
+}
+
+impl StyleSpec {
+    /// A table-driven style with no parameters declared yet.
+    pub fn new(category: impl Into<Cow<'static, str>>, name: impl Into<Cow<'static, str>>) -> Self {
+        Self {
+            category: category.into(),
+            name: name.into(),
+            params: Vec::new(),
+            style_params: Vec::new(),
+            source: ParamSource::TypeRows,
+            special: None,
+            expression: None,
+            force_is_gradient: true,
+            unindexed_one_term: false,
+            samples: Vec::new(),
+        }
+    }
+
+    pub fn params(mut self, params: Vec<ParamSpec>) -> Self {
+        self.params = params;
+        self
+    }
+
+    pub fn style_params(mut self, params: Vec<ParamSpec>) -> Self {
+        self.style_params = params;
+        self
+    }
+
+    pub fn source(mut self, source: ParamSource) -> Self {
+        self.source = source;
+        self
+    }
+
+    pub fn special(mut self, special: SpecialClass) -> Self {
+        self.special = Some(special);
+        self
+    }
+
+    pub fn expression(mut self, expression: impl Into<String>) -> Self {
+        self.expression = Some(expression.into());
+        self
+    }
+
+    pub fn sample(mut self, sample: Sample) -> Self {
+        self.samples.push(sample);
+        self
+    }
+
+    /// The per-type parameter `name`, if declared.
+    pub fn param(&self, name: &str) -> Option<&ParamSpec> {
+        self.params.iter().find(|p| p.name == name)
+    }
+
+    /// The style parameter `name`, if declared.
+    pub fn style_param(&self, name: &str) -> Option<&ParamSpec> {
+        self.style_params.iter().find(|p| p.name == name)
+    }
+
+    /// The special-bonds weights that scale this (pair) style: its own, else
+    /// molrec's default `lj`.
+    pub fn special_class(&self) -> SpecialClass {
+        self.special.unwrap_or(SpecialClass::Vdw)
+    }
+}
+
+/// `π/180` as Appendix A of the protocol spells it in every built-in
+/// expression.
+const D: &str = "0.017453292519943295";
+
+/// A scalar parameter of dimension `dim` (a [`Dim`] spelling); the built-in
+/// table is written with it, and a test parses every spelling.
+fn p(name: &'static str, dim: &str) -> ParamSpec {
+    ParamSpec::new(
+        name,
+        dim.parse()
+            .unwrap_or_else(|e| panic!("built-in param {name}: {e}")),
+    )
+}
+
+fn ps(names: &[&'static str], dim: &str) -> Vec<ParamSpec> {
+    names.iter().map(|n| p(n, dim)).collect()
+}
+
+fn cutoff() -> ParamSpec {
+    p("cutoff", "L")
+}
+
+fn mixing() -> ParamSpec {
+    ParamSpec::text("mixing", &["arithmetic", "geometric", "sixthpower"])
+        .default_value(Value::Text("arithmetic".into()))
+}
+
+/// CHARMM's switch `S(r)` from `inner` to `cutoff`, as an expression
+/// definition.
+fn charmm_switch() -> String {
+    "S=select(step(inner-r),1,(cutoff^2-r^2)^2*(cutoff^2+2*r^2-3*inner^2)/(cutoff^2-inner^2)^3)"
+        .to_owned()
+}
+
+/// The spec of every style molrs registers: each kernel of
+/// [`KernelRegistry::builtin`], `dihedral rb` (expression only), and the
+/// styles of the categories that price no energy.
+///
+/// Names, order and dimensions are the force-field IR's
+/// (`molrs-python/docs/guides/forcefield-ir.md`, Style reference; molrec
+/// `docs/spec/forcefield.md`, Style registry); the expressions are
+/// Appendix A of `ff-ir-02-protocol`, byte for byte (the generated ones,
+/// `dihedral periodic` and `nharmonic`, are left to the expression engine).
+/// The per-instance styles (MMFF, UFF, the per-atom-charge Coulomb styles)
+/// list the Frame columns their kernels read.
+///
+/// [`KernelRegistry::builtin`]: crate::ff::potential::KernelRegistry::builtin
+pub fn builtin_styles() -> Vec<StyleSpec> {
+    use ParamSource::PerInstance;
+    use SpecialClass::{Coulomb, Vdw};
+    let s = StyleSpec::new;
+    let eps = |sigma: &'static str| {
+        p("epsilon", "E").mix(Mix::LjEpsilon {
+            sigma: sigma.into(),
+        })
+    };
+    let sig = |epsilon: &'static str| {
+        p("sigma", "L").mix(Mix::LjSigma {
+            epsilon: epsilon.into(),
+        })
+    };
+    let coulomb = || p("coulomb", "E*L/Q^2");
+    let dielectric = || p("dielectric", "1").default_num(1.0);
+    let mut periodic = s("dihedral", "periodic").params(vec![
+        p("k", "E").indexed(),
+        p("periodicity", "1").indexed(),
+        p("phase", "A").indexed(),
+    ]);
+    periodic.unindexed_one_term = true;
+    let mut coul_charmm = s("pair", "coul/charmm")
+        .style_params(vec![coulomb(), dielectric(), p("inner", "L"), cutoff()])
+        .source(PerInstance)
+        .special(Coulomb)
+        .expression(format!(
+            "coulomb*q1*q2/(dielectric*r)*S; {}",
+            charmm_switch()
+        ));
+    coul_charmm.force_is_gradient = false;
+    vec![
+        // ---- atom, and the categories that price no energy
+        s("atom", "full").params(vec![p("mass", "M"), p("charge", "Q")]),
+        s("constraint", "fixed").params(vec![p("r0", "L")]),
+        s("virtual_site", "average2").params(ps(&["w1", "w2"], "1")),
+        s("virtual_site", "average3").params(ps(&["w1", "w2", "w3"], "1")),
+        s("virtual_site", "outofplane3").params(vec![
+            p("w12", "1"),
+            p("w13", "1"),
+            p("wcross", "1/L"),
+        ]),
+        // ---- drude: a spec, priced by its expression alone
+        s("drude", "harmonic")
+            .params(vec![p("k", "E/L^2"), p("alpha", "L^3"), p("thole", "1")])
+            .expression("k*r^2"),
+        // ---- bond
+        s("bond", "harmonic")
+            .params(vec![p("k", "E/L^2"), p("r0", "L")])
+            .expression("k*(r-r0)^2"),
+        s("bond", "morse")
+            .params(vec![p("d0", "E"), p("alpha", "1/L"), p("r0", "L")])
+            .expression("d0*(1-exp(-alpha*(r-r0)))^2"),
+        s("bond", "class2")
+            .params(vec![
+                p("r0", "L"),
+                p("k2", "E/L^2"),
+                p("k3", "E/L^3"),
+                p("k4", "E/L^4"),
+            ])
+            .expression("k2*d^2+k3*d^3+k4*d^4; d=r-r0"),
+        s("bond", "mmff_bond")
+            .params(vec![p("kb", "E/L^2"), p("r0", "L")])
+            .source(PerInstance),
+        s("bond", "uff_bond")
+            .params(vec![p("kb", "E/L^2"), p("r0", "L")])
+            .source(PerInstance),
+        // ---- angle
+        s("angle", "harmonic")
+            .params(vec![p("k", "E/A^2"), p("theta0", "A")])
+            .expression(format!("k*(theta-theta0*{D})^2")),
+        s("angle", "charmm")
+            .params(vec![
+                p("k", "E/A^2"),
+                p("theta0", "A"),
+                p("k_ub", "E/L^2"),
+                p("r_ub", "L"),
+            ])
+            .expression(format!(
+                "k*(theta-theta0*{D})^2+k_ub*(distance(p1,p3)-r_ub)^2"
+            )),
+        s("angle", "class2")
+            .params(vec![
+                p("theta0", "A"),
+                p("k2", "E/A^2"),
+                p("k3", "E/A^3"),
+                p("k4", "E/A^4"),
+            ])
+            .expression(format!("k2*d^2+k3*d^3+k4*d^4; d=theta-theta0*{D}")),
+        s("angle", "mmff_angle")
+            .params(vec![p("ka", "E/A^2"), p("theta0", "A"), p("linear", "1")])
+            .source(PerInstance),
+        s("angle", "mmff_stbn")
+            .params(vec![
+                p("kba_ijk", "E/L/A"),
+                p("kba_kji", "E/L/A"),
+                p("r0_ij", "L"),
+                p("r0_kj", "L"),
+                p("theta0", "A"),
+            ])
+            .source(PerInstance),
+        s("angle", "uff_angle")
+            .params(vec![
+                p("ka", "E"),
+                p("order", "1"),
+                p("c0", "1"),
+                p("c1", "1"),
+                p("c2", "1"),
+            ])
+            .source(PerInstance),
+        // ---- dihedral
+        periodic,
+        s("dihedral", "charmm")
+            .params(vec![
+                p("k", "E"),
+                p("periodicity", "1"),
+                p("phase", "A"),
+                p("w", "1"),
+            ])
+            .expression(format!("k*(1+cos(periodicity*phi-phase*{D}))")),
+        s("dihedral", "opls")
+            .params(ps(&["k1", "k2", "k3", "k4"], "E"))
+            .expression(
+                "0.5*(k1*(1+cos(phi))+k2*(1-cos(2*phi))+k3*(1+cos(3*phi))+k4*(1-cos(4*phi)))",
+            ),
+        s("dihedral", "multi/harmonic")
+            .params(ps(&["a1", "a2", "a3", "a4", "a5"], "E"))
+            .expression("a1+a2*c+a3*c^2+a4*c^3+a5*c^4; c=cos(phi)"),
+        s("dihedral", "nharmonic").params(vec![p("a", "E").indexed()]),
+        s("dihedral", "harmonic")
+            .params(vec![p("k", "E"), p("sign", "1"), p("periodicity", "1")])
+            .expression("k*(1+sign*cos(periodicity*phi))"),
+        s("dihedral", "class2")
+            .params(vec![
+                p("k1", "E"),
+                p("phi1", "A"),
+                p("k2", "E"),
+                p("phi2", "A"),
+                p("k3", "E"),
+                p("phi3", "A"),
+            ])
+            .expression(format!(
+                "k1*(1-cos(phi-phi1*{D}))+k2*(1-cos(2*phi-phi2*{D}))+k3*(1-cos(3*phi-phi3*{D}))"
+            )),
+        // molrec's registry style, registered by its expression alone: the
+        // first built-in that is pure protocol.
+        s("dihedral", "rb")
+            .params(ps(&["c0", "c1", "c2", "c3", "c4", "c5"], "E"))
+            .expression("c0+c1*c+c2*c^2+c3*c^3+c4*c^4+c5*c^5; c=-cos(phi)"),
+        s("dihedral", "mmff_torsion")
+            .params(ps(&["v1", "v2", "v3"], "E"))
+            .source(PerInstance),
+        s("dihedral", "uff_torsion")
+            .params(vec![p("V", "E"), p("order", "1"), p("cosTerm", "1")])
+            .source(PerInstance),
+        // ---- improper
+        s("improper", "harmonic")
+            .params(vec![p("k", "E/A^2"), p("chi0", "A")])
+            .expression(format!("k*(chi-chi0*{D})^2")),
+        s("improper", "cvff")
+            .params(vec![p("k", "E"), p("sign", "1"), p("periodicity", "1")])
+            .expression("k*(1+sign*cos(periodicity*phi))"),
+        s("improper", "periodic")
+            .params(vec![p("k", "E"), p("periodicity", "1"), p("phase", "A")])
+            .expression(format!("k*(1+cos(periodicity*phi-phase*{D}))")),
+        s("improper", "mmff_oop")
+            .params(vec![p("koop", "E/A^2")])
+            .source(PerInstance),
+        s("improper", "uff_inversion")
+            .params(vec![p("K", "E"), p("c0", "1"), p("c1", "1"), p("c2", "1")])
+            .source(PerInstance),
+        // ---- cmap
+        s("cmap", "charmm").params(vec![p("grid", "E").kind(ParamKind::Array { rank: 2 })]),
+        // ---- pair
+        s("pair", "lj/cut")
+            .params(vec![eps("sigma"), sig("epsilon")])
+            .style_params(vec![
+                cutoff(),
+                mixing(),
+                p("n", "1").default_num(12.0),
+                p("m", "1").default_num(6.0),
+                p("shift", "1").default_num(0.0),
+            ])
+            .special(Vdw)
+            .expression(
+                "C*epsilon*((sigma/r)^n-(sigma/r)^m-select(shift,(sigma/cutoff)^n-(sigma/cutoff)^m,0)); \
+                 C=n/(n-m)*(n/m)^(m/(n-m))",
+            ),
+        s("pair", "lj/class2")
+            .params(vec![eps("sigma"), sig("epsilon")])
+            .style_params(vec![cutoff(), mixing()])
+            .special(Vdw)
+            .expression("epsilon*(2*(sigma/r)^9-3*(sigma/r)^6)"),
+        s("pair", "buck")
+            .params(vec![p("a", "E"), p("rho", "L"), p("c", "E*L^6")])
+            .style_params(vec![cutoff()])
+            .special(Vdw)
+            .expression("a*exp(-r/rho)-c/r^6"),
+        s("pair", "morse")
+            .params(vec![p("d0", "E"), p("alpha", "1/L"), p("r0", "L")])
+            .style_params(vec![cutoff()])
+            .special(Vdw)
+            .expression("d0*((1-exp(-alpha*(r-r0)))^2-1)"),
+        s("pair", "lj/charmm")
+            .params(vec![
+                eps("sigma"),
+                sig("epsilon"),
+                p("epsilon14", "E").mix(Mix::LjEpsilon {
+                    sigma: "sigma14".into(),
+                }),
+                p("sigma14", "L").mix(Mix::LjSigma {
+                    epsilon: "epsilon14".into(),
+                }),
+            ])
+            .style_params(vec![
+                p("inner", "L"),
+                cutoff(),
+                mixing(),
+                ParamSpec::text("one_four", &["regular", "epsilon14"])
+                    .default_value(Value::Text("regular".into())),
+            ])
+            .special(Vdw)
+            .expression(format!(
+                "4*epsilon*((sigma/r)^12-(sigma/r)^6)*S; {}",
+                charmm_switch()
+            )),
+        s("pair", "coul/cut")
+            .style_params(vec![
+                coulomb(),
+                dielectric(),
+                p("delta", "L").default_num(0.0),
+                cutoff(),
+            ])
+            .source(PerInstance)
+            .special(Coulomb)
+            .expression("coulomb*q1*q2/(dielectric*(r+delta))"),
+        coul_charmm,
+        s("pair", "coul/long/pme")
+            .style_params(vec![
+                coulomb(),
+                cutoff(),
+                p("alpha", "1/L"),
+                p("order", "1"),
+                p("grid_x", "1"),
+                p("grid_y", "1"),
+                p("grid_z", "1"),
+            ])
+            .source(PerInstance)
+            .special(Coulomb),
+        s("pair", "thole")
+            .params(vec![p("charge", "Q"), p("alpha", "L^3"), p("damp", "1")])
+            .special(Coulomb),
+        s("pair", "coul/tt")
+            .params(vec![p("charge", "Q")])
+            .style_params(vec![
+                p("b", "1/L").default_num(4.5),
+                p("c", "1").default_num(1.0),
+                p("order", "1").default_num(4.0),
+            ])
+            .special(Coulomb),
+        s("pair", "uff_lj")
+            .params(vec![p("x1", "L"), p("D1", "E")])
+            .source(PerInstance)
+            .special(Vdw),
+        s("pair", "mmff_vdw")
+            .params(vec![
+                p("alpha", "L^3"),
+                p("n_eff", "1"),
+                p("a_i", "1"),
+                p("g_i", "1"),
+                p("da", "1"),
+            ])
+            .style_params(vec![
+                p("B", "1").default_num(0.2),
+                p("Beta", "1").default_num(12.0),
+                p("DARAD", "1").default_num(0.8),
+                p("DAEPS", "1").default_num(0.5),
+            ])
+            .special(Vdw),
+    ]
+}

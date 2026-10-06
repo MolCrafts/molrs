@@ -3,6 +3,7 @@ pub(crate) mod constants;
 #[cfg(test)]
 mod convention_invariance;
 pub mod forcefield;
+pub mod ir;
 pub mod mmff;
 #[cfg(test)]
 mod one_four;
