@@ -10,7 +10,7 @@
 //!   formats. [`mrec`] writes and reads a [`crate::Frame`] or
 //!   [`crate::Trajectory`] as a `*.mrec` directory or packed `*.mrec.zip`
 //!   (Zarr V3 on disk; Cargo feature `zarr`, adapter crate-private)
-//! - [`format`] — [`read_frame`] / [`write_frame`], the one door that picks a
+//! - [`format`](mod@format) — [`read_frame`] / [`write_frame`], the one door that picks a
 //!   structure format from a file name (or format name) and hands off to it
 //! - [`reader`] / [`writer`] / [`streaming`] — shared traits and the
 //!   chunk-based frame-indexing infrastructure

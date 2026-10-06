@@ -9,7 +9,7 @@
 //! [`write_lammps_bond_react_system`] writes the whole file set a reactive run
 //! reads:
 //!
-//! - `{stem}.data` — the system ([`write_lammps_data`]);
+//! - `{stem}.data` — the system ([`write_lammps_data`](super::lammps_data::write_lammps_data));
 //! - `{name}_pre.mol` / `{name}_post.mol` — the templates, as LAMMPS molecule
 //!   files ([`write_lammps_molecule`]);
 //! - `{name}.map` — the map file.
