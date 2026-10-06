@@ -13,13 +13,13 @@ fn usize_vec(data: &[u32]) -> Vec<usize> {
     data.iter().map(|&v| v as usize).collect()
 }
 
-#[wasm_bindgen(js_name = WasmCorrelationFunction)]
-pub struct WasmCorrelationFunction {
+#[wasm_bindgen(js_name = CorrelationFunction)]
+pub struct CorrelationFunction {
     inner: molrs::compute::CorrelationFunction,
 }
 
-#[wasm_bindgen(js_class = WasmCorrelationFunction)]
-impl WasmCorrelationFunction {
+#[wasm_bindgen(js_class = CorrelationFunction)]
+impl CorrelationFunction {
     #[wasm_bindgen(constructor)]
     pub fn new(n_bins: usize, r_max: F, r_min: Option<F>) -> Result<Self, JsValue> {
         Ok(Self {
@@ -69,13 +69,13 @@ impl WasmCorrelationFunction {
     }
 }
 
-#[wasm_bindgen(js_name = WasmLocalDensity)]
-pub struct WasmLocalDensity {
+#[wasm_bindgen(js_name = LocalDensity)]
+pub struct LocalDensity {
     inner: molrs::compute::LocalDensity,
 }
 
-#[wasm_bindgen(js_class = WasmLocalDensity)]
-impl WasmLocalDensity {
+#[wasm_bindgen(js_class = LocalDensity)]
+impl LocalDensity {
     #[wasm_bindgen(constructor)]
     pub fn new(r_max: F, diameter: Option<F>) -> Result<Self, JsValue> {
         let mut inner = molrs::compute::LocalDensity::new(r_max)
@@ -110,13 +110,13 @@ impl WasmLocalDensity {
     }
 }
 
-#[wasm_bindgen(js_name = WasmGaussianDensity)]
-pub struct WasmGaussianDensity {
+#[wasm_bindgen(js_name = GaussianDensity)]
+pub struct GaussianDensity {
     inner: molrs::compute::GaussianDensity,
 }
 
-#[wasm_bindgen(js_class = WasmGaussianDensity)]
-impl WasmGaussianDensity {
+#[wasm_bindgen(js_class = GaussianDensity)]
+impl GaussianDensity {
     #[wasm_bindgen(constructor)]
     pub fn new(
         nx: usize,
@@ -155,13 +155,13 @@ impl WasmGaussianDensity {
     }
 }
 
-#[wasm_bindgen(js_name = WasmSphereVoxelization)]
-pub struct WasmSphereVoxelization {
+#[wasm_bindgen(js_name = SphereVoxelization)]
+pub struct SphereVoxelization {
     inner: molrs::compute::SphereVoxelization,
 }
 
-#[wasm_bindgen(js_class = WasmSphereVoxelization)]
-impl WasmSphereVoxelization {
+#[wasm_bindgen(js_class = SphereVoxelization)]
+impl SphereVoxelization {
     #[wasm_bindgen(constructor)]
     pub fn new(nx: usize, ny: usize, nz: usize, r_max: F) -> Result<Self, JsValue> {
         Ok(Self {
@@ -204,15 +204,15 @@ impl WasmSphereVoxelization {
     }
 }
 
-#[wasm_bindgen(js_name = WasmSpatialDistribution)]
-pub struct WasmSpatialDistribution {
+#[wasm_bindgen(js_name = SpatialDistribution)]
+pub struct SpatialDistribution {
     inner: molrs::compute::SpatialDistribution,
     frames: Vec<molrs::store::Frame>,
     bulk_density: Option<F>,
 }
 
-#[wasm_bindgen(js_class = WasmSpatialDistribution)]
-impl WasmSpatialDistribution {
+#[wasm_bindgen(js_class = SpatialDistribution)]
+impl SpatialDistribution {
     // The JS constructor is positional by wasm-bindgen's design; molvis calls
     // it with these ten arguments, so the shape is the public contract.
     #[allow(clippy::too_many_arguments)]

@@ -8,13 +8,13 @@ use molrs::op::types::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-#[wasm_bindgen(js_name = WasmStaticStructureFactorDebye)]
-pub struct WasmStaticStructureFactorDebye {
+#[wasm_bindgen(js_name = StaticStructureFactorDebye)]
+pub struct StaticStructureFactorDebye {
     inner: molrs::compute::StaticStructureFactorDebye,
 }
 
-#[wasm_bindgen(js_class = WasmStaticStructureFactorDebye)]
-impl WasmStaticStructureFactorDebye {
+#[wasm_bindgen(js_class = StaticStructureFactorDebye)]
+impl StaticStructureFactorDebye {
     /// Sample `n_k` scattering vectors evenly over `[k_min, k_max]` (A^-1).
     #[wasm_bindgen(constructor)]
     pub fn new(k_min: F, k_max: F, n_k: usize) -> Result<Self, JsValue> {
@@ -57,13 +57,13 @@ impl WasmStaticStructureFactorDebye {
     }
 }
 
-#[wasm_bindgen(js_name = WasmDiffractionPattern)]
-pub struct WasmDiffractionPattern {
+#[wasm_bindgen(js_name = DiffractionPattern)]
+pub struct DiffractionPattern {
     inner: molrs::compute::DiffractionPattern,
 }
 
-#[wasm_bindgen(js_class = WasmDiffractionPattern)]
-impl WasmDiffractionPattern {
+#[wasm_bindgen(js_class = DiffractionPattern)]
+impl DiffractionPattern {
     #[wasm_bindgen(constructor)]
     pub fn new(n_grid: usize, sigma: F, axis: Option<usize>) -> Result<Self, JsValue> {
         let mut inner = molrs::compute::DiffractionPattern::new(n_grid, sigma)

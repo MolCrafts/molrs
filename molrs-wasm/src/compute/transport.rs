@@ -9,14 +9,14 @@ use molrs::op::types::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-#[wasm_bindgen(js_name = WasmVACF)]
-pub struct WasmVACF {
+#[wasm_bindgen(js_name = VACF)]
+pub struct VACF {
     dt: F,
     resolution: usize,
 }
 
-#[wasm_bindgen(js_class = WasmVACF)]
-impl WasmVACF {
+#[wasm_bindgen(js_class = VACF)]
+impl VACF {
     #[wasm_bindgen(constructor)]
     pub fn new(dt: F, resolution: usize) -> Self {
         Self { dt, resolution }
@@ -43,14 +43,14 @@ impl WasmVACF {
     }
 }
 
-#[wasm_bindgen(js_name = WasmGreenKuboDiffusion)]
-pub struct WasmGreenKuboDiffusion {
+#[wasm_bindgen(js_name = GreenKuboDiffusion)]
+pub struct GreenKuboDiffusion {
     dt: F,
     resolution: usize,
 }
 
-#[wasm_bindgen(js_class = WasmGreenKuboDiffusion)]
-impl WasmGreenKuboDiffusion {
+#[wasm_bindgen(js_class = GreenKuboDiffusion)]
+impl GreenKuboDiffusion {
     #[wasm_bindgen(constructor)]
     pub fn new(dt: F, resolution: usize) -> Self {
         Self { dt, resolution }
@@ -77,14 +77,14 @@ impl WasmGreenKuboDiffusion {
     }
 }
 
-#[wasm_bindgen(js_name = WasmGreenKuboConductivity)]
-pub struct WasmGreenKuboConductivity {
+#[wasm_bindgen(js_name = GreenKuboConductivity)]
+pub struct GreenKuboConductivity {
     dt: F,
     max_lag: usize,
 }
 
-#[wasm_bindgen(js_class = WasmGreenKuboConductivity)]
-impl WasmGreenKuboConductivity {
+#[wasm_bindgen(js_class = GreenKuboConductivity)]
+impl GreenKuboConductivity {
     #[wasm_bindgen(constructor)]
     pub fn new(dt: F, max_lag: usize) -> Self {
         Self { dt, max_lag }
@@ -106,14 +106,14 @@ impl WasmGreenKuboConductivity {
     }
 }
 
-#[wasm_bindgen(js_name = WasmEinsteinConductivity)]
-pub struct WasmEinsteinConductivity {
+#[wasm_bindgen(js_name = EinsteinConductivity)]
+pub struct EinsteinConductivity {
     dt: F,
     max_lag: usize,
 }
 
-#[wasm_bindgen(js_class = WasmEinsteinConductivity)]
-impl WasmEinsteinConductivity {
+#[wasm_bindgen(js_class = EinsteinConductivity)]
+impl EinsteinConductivity {
     #[wasm_bindgen(constructor)]
     pub fn new(dt: F, max_lag: usize) -> Self {
         Self { dt, max_lag }
@@ -140,14 +140,14 @@ impl WasmEinsteinConductivity {
     }
 }
 
-#[wasm_bindgen(js_name = WasmOnsagerCorrelation)]
-pub struct WasmOnsagerCorrelation {
+#[wasm_bindgen(js_name = OnsagerCorrelation)]
+pub struct OnsagerCorrelation {
     dt: F,
     max_lag: usize,
 }
 
-#[wasm_bindgen(js_class = WasmOnsagerCorrelation)]
-impl WasmOnsagerCorrelation {
+#[wasm_bindgen(js_class = OnsagerCorrelation)]
+impl OnsagerCorrelation {
     #[wasm_bindgen(constructor)]
     pub fn new(dt: F, max_lag: usize) -> Self {
         Self { dt, max_lag }
@@ -170,14 +170,14 @@ impl WasmOnsagerCorrelation {
     }
 }
 
-#[wasm_bindgen(js_name = WasmEinsteinDiffusion)]
-pub struct WasmEinsteinDiffusion {
+#[wasm_bindgen(js_name = EinsteinDiffusion)]
+pub struct EinsteinDiffusion {
     dt: F,
     frames: Vec<molrs::store::Frame>,
 }
 
-#[wasm_bindgen(js_class = WasmEinsteinDiffusion)]
-impl WasmEinsteinDiffusion {
+#[wasm_bindgen(js_class = EinsteinDiffusion)]
+impl EinsteinDiffusion {
     #[wasm_bindgen(constructor)]
     pub fn new(dt: F) -> Self {
         Self {
@@ -211,8 +211,8 @@ impl WasmEinsteinDiffusion {
     }
 }
 
-#[wasm_bindgen(js_name = WasmDebyeRelaxation)]
-pub struct WasmDebyeRelaxation {
+#[wasm_bindgen(js_name = DebyeRelaxation)]
+pub struct DebyeRelaxation {
     dt: F,
     max_lag: usize,
     volume: F,
@@ -220,8 +220,8 @@ pub struct WasmDebyeRelaxation {
     boundary: String,
 }
 
-#[wasm_bindgen(js_class = WasmDebyeRelaxation)]
-impl WasmDebyeRelaxation {
+#[wasm_bindgen(js_class = DebyeRelaxation)]
+impl DebyeRelaxation {
     #[wasm_bindgen(constructor)]
     pub fn new(volume: F, temperature: F, boundary: Option<String>, dt: F, max_lag: usize) -> Self {
         Self {
@@ -270,13 +270,13 @@ impl WasmDebyeRelaxation {
     }
 }
 
-#[wasm_bindgen(js_name = WasmDebyeFit)]
-pub struct WasmDebyeFit {
+#[wasm_bindgen(js_name = DebyeFit)]
+pub struct DebyeFit {
     dt: F,
 }
 
-#[wasm_bindgen(js_class = WasmDebyeFit)]
-impl WasmDebyeFit {
+#[wasm_bindgen(js_class = DebyeFit)]
+impl DebyeFit {
     #[wasm_bindgen(constructor)]
     pub fn new(dt: F) -> Self {
         Self { dt }

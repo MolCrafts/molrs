@@ -17,22 +17,22 @@ use wasm_bindgen::prelude::*;
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const pca = new WasmPca2();
+/// const pca = new Pca2();
 /// const result = pca.fitTransform(matrix, nRows, nCols);
 /// const coords   = result.coords();    // Float64Array, length 2 * nRows
 /// const variance = result.variance();  // Float64Array, length 2
 /// ```
 #[wasm_bindgen]
-pub struct WasmPca2;
+pub struct Pca2;
 
 #[allow(clippy::new_without_default)]
-#[wasm_bindgen(js_class = WasmPca2)]
-impl WasmPca2 {
+#[wasm_bindgen(js_class = Pca2)]
+impl Pca2 {
     /// Create a new PCA calculator. The struct carries no state — all
     /// parameters are supplied on [`fitTransform`](Self::fit_transform).
     #[wasm_bindgen(constructor)]
-    pub fn new() -> WasmPca2 {
-        WasmPca2
+    pub fn new() -> Pca2 {
+        Pca2
     }
 
     /// Fit 2-component PCA on a row-major observation matrix and return the
@@ -55,7 +55,7 @@ impl WasmPca2 {
         matrix: &[F],
         n_rows: usize,
         n_cols: usize,
-    ) -> Result<WasmPcaResult, JsValue> {
+    ) -> Result<PcaResult, JsValue> {
         if matrix.len() != n_rows * n_cols {
             return Err(JsValue::from_str(&format!(
                 "PCA: matrix length {} != n_rows * n_cols = {} * {}",
@@ -70,7 +70,7 @@ impl WasmPca2 {
         let dummy = molrs::store::Frame::new();
         RsPca2::<PcaRow>::new()
             .compute(&[&dummy], &rows)
-            .map(|inner| WasmPcaResult { inner })
+            .map(|inner| PcaResult { inner })
             .map_err(|e| JsValue::from_str(&format!("PCA: {e}")))
     }
 }
@@ -88,17 +88,17 @@ impl DescriptorRow for PcaRow {
 
 impl ComputeResult for PcaRow {}
 
-/// Result of a [`WasmPca2::fit_transform`] call.
+/// Result of a [`Pca2::fit_transform`] call.
 ///
 /// Each accessor returns an **owned** `Float64Array` (copy of the underlying
 /// `Vec`) so JS is free to let this wrapper be GC'd without dangling views.
 #[wasm_bindgen]
-pub struct WasmPcaResult {
+pub struct PcaResult {
     inner: RsPcaResult,
 }
 
-#[wasm_bindgen(js_class = WasmPcaResult)]
-impl WasmPcaResult {
+#[wasm_bindgen(js_class = PcaResult)]
+impl PcaResult {
     /// Projected 2D coordinates as a row-major `Float64Array` of length
     /// `2 * n_rows`. `coords[2 * i + 0]` is the PC1 score for row `i`,
     /// `coords[2 * i + 1]` is PC2.
@@ -126,16 +126,16 @@ impl WasmPcaResult {
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const km = new WasmKMeans(3, 100, 42);
+/// const km = new KMeans(3, 100, 42);
 /// const labels = km.fit(coords, nRows, 2);   // Int32Array
 /// ```
 #[wasm_bindgen]
-pub struct WasmKMeans {
+pub struct KMeans {
     inner: RsKMeans,
 }
 
-#[wasm_bindgen(js_class = WasmKMeans)]
-impl WasmKMeans {
+#[wasm_bindgen(js_class = KMeans)]
+impl KMeans {
     /// Create a new k-means configuration.
     ///
     /// # Arguments
@@ -150,10 +150,10 @@ impl WasmKMeans {
     ///
     /// Throws if `k == 0` or `max_iter == 0`.
     #[wasm_bindgen(constructor)]
-    pub fn new(k: usize, max_iter: usize, seed: f64) -> Result<WasmKMeans, JsValue> {
+    pub fn new(k: usize, max_iter: usize, seed: f64) -> Result<KMeans, JsValue> {
         let seed_u64 = seed as u64;
         RsKMeans::new(k, max_iter, seed_u64)
-            .map(|inner| WasmKMeans { inner })
+            .map(|inner| KMeans { inner })
             .map_err(|e| JsValue::from_str(&format!("KMeans: {e}")))
     }
 

@@ -1200,6 +1200,13 @@ The JS namespace stays flat. What changes for callers:
 | `topology.findRings()` → `TopologyRingInfo` (`numRings`, `ringSizes`, `rings`, `isAtomInRing`, `numAtomRings`, `atomRingMask`) | `new Perceive().findRings(frame)` → a new `Frame` whose atoms and bonds carry `is_in_ring` and `n_rings` |
 | `Topology.fromFrame(frame)` read `bonds.i` / `bonds.j`, so a canonical frame came back with no bonds | reads `bonds.atomi` / `atomj` (`molrs::system::Topology::from_frame`); a missing endpoint column or an out-of-range atom throws |
 
+**The analysis classes drop the `Wasm` prefix**, so every compute class is
+named like `RDF`, `MSD` and `Cluster` already were: `WasmVACF` → `VACF`,
+`WasmPca2` → `Pca2`, `WasmPMFTXY` → `PMFTXY`, and so on for all
+59: `AngleDistribution`, `AngularSeparation`, `BondOrder`, `CombinedDistribution`, `CorrelationFunction`, `Cubatic`, `CumulativeTrapezoid`, `DebyeFit`, `DebyeRelaxation`, `DiffractionPattern`, `DihedralDistribution`, `DistanceDistribution`, `EinsteinConductivity`, `EinsteinDiffusion`, `EinsteinHelfandDielectricSpectrum`, `GaussianDensity`, `GreenKuboConductivity`, `GreenKuboDielectricSpectrum`, `GreenKuboDiffusion`, `HBondLifetime`, `HBondNetwork`, `HBonds`, `Hexatic`, `IRFlux`, `IRSpectrum`, `KMeans`, `LinearFit`, `LocalDensity`, `LocalDescriptors`, `MatchEnv`, `Nematic`, `OnsagerCorrelation`, `PairPersistence`, `Pca2`, `PcaResult`, `Plateau`, `PMFTR12`, `PMFTXY`, `PMFTXYT`, `PMFTXYZ`, `PowerSpectrum`, `RadicalVoronoi`, `RamanSpectrum`, `RamanTensor`, `RoaCrossTensor`, `RoaSpectrum`, `RotationalAutocorrelation`, `SolidLiquid`, `SpatialDistribution`, `SphereVoxelization`, `StaticDielectric`, `StaticStructureFactorDebye`, `Steinhardt`, `VACF`, `VanHove`, `VcdCrossFlux`, `VcdSpectrum`, `VoronoiDomainAnalysis`, `VoronoiVoidAnalysis`. The compute catalog follows: each entry's `wasmExport`
+is the new name, and `molrsComputeCatalog().version` is 4. molvis pins
+`@molcrafts/molrs` 0.15.0 and adopts these names when it moves to 0.16.
+
 `readFrameBytes` and the `"msgpack"` / `"json"` formats of `writeFrameBytes`
 need the `stream` feature (on by default); before, a custom build with `io`
 but without `stream` did not compile. `CarbonTubeBuilder` is compiled only

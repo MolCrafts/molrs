@@ -131,6 +131,9 @@ fabricated zero array. `disp` is the unnormalized minimum-image displacement
 - **`RDF`** — radial distribution function (periodic and free-boundary)
 - **`MSD`** — mean squared displacement
 - **`Cluster`** — distance-based cluster analysis
+- **`VACF`**, **`Steinhardt`**, **`HBonds`**, **`PMFTXY`**, **`RadicalVoronoi`**, …
+  — one class per analysis, named after its molrs owner;
+  `molrsComputeCatalog()` lists every one with its parameters
 
 Neighbor searches support frames without a simulation box. RDF additionally
 needs a normalization volume: for a frame without a box, pass it as the fourth

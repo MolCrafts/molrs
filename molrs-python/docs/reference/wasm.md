@@ -24,7 +24,7 @@ The generated `pkg/` directory is not committed.
 | File formats | `XYZReader`, `PDBReader`, `GROReader`, `LAMMPSReader`, `LAMMPSTrajReader`, `MOL2Reader`, `SDFReader`, `CIFReader`, `POSCARReader`, `DCDReader`, `TRRReader`, `XTCReader`, …; `writeFrame` / `writeFrameBytes` |
 | Record files (`*.mrec`) | `readMrecFrame`, `readMrecFrameFromZip`, `mrecSections`, `TrajectoryReader` (`fromZip`, `fromStore`) |
 | Topology and perception | `Topology` (`fromFrame`), `Perceive` (`findRings`, `findAromaticity`, `findHydrogens`, …) |
-| Neighbors and analysis | `NeighborList`, `NeighborQuery`, `Neighbors`, `RDF`, `MSD`, `Cluster`, the `Wasm*` analysis classes, `molrsComputeCatalog` |
+| Neighbors and analysis | `NeighborList`, `NeighborQuery`, `Neighbors`, `RDF`, `MSD`, `Cluster`, `VACF`, `Steinhardt`, `PMFTXY`, … (one class per analysis; `molrsComputeCatalog()` lists them all) |
 | Force fields | `UFFTypifier`, `MMFF94Typifier`, `MMFF94STypifier` (`typify`, `toPotentials`), `Potentials`, `LBFGS` |
 | Schema | `schemaDocument`, `schemaJson`, `keysDocument`, `schemaColumnDtype`, `schemaVocabVersion` |
 

@@ -66,14 +66,14 @@ fn dielectric_spectrum_out(r: molrs::compute::DielectricSpectrumResult) -> Diele
     }
 }
 
-#[wasm_bindgen(js_name = WasmIRFlux)]
-pub struct WasmIRFlux {
+#[wasm_bindgen(js_name = IRFlux)]
+pub struct IRFlux {
     dt: F,
     resolution: usize,
 }
 
-#[wasm_bindgen(js_class = WasmIRFlux)]
-impl WasmIRFlux {
+#[wasm_bindgen(js_class = IRFlux)]
+impl IRFlux {
     #[wasm_bindgen(constructor)]
     pub fn new(dt: F, resolution: usize) -> Self {
         Self { dt, resolution }
@@ -95,14 +95,14 @@ impl WasmIRFlux {
     }
 }
 
-#[wasm_bindgen(js_name = WasmRamanTensor)]
-pub struct WasmRamanTensor {
+#[wasm_bindgen(js_name = RamanTensor)]
+pub struct RamanTensor {
     dt: F,
     resolution: usize,
 }
 
-#[wasm_bindgen(js_class = WasmRamanTensor)]
-impl WasmRamanTensor {
+#[wasm_bindgen(js_class = RamanTensor)]
+impl RamanTensor {
     #[wasm_bindgen(constructor)]
     pub fn new(dt: F, resolution: usize) -> Self {
         Self { dt, resolution }
@@ -137,14 +137,14 @@ impl WasmRamanTensor {
     }
 }
 
-#[wasm_bindgen(js_name = WasmVcdCrossFlux)]
-pub struct WasmVcdCrossFlux {
+#[wasm_bindgen(js_name = VcdCrossFlux)]
+pub struct VcdCrossFlux {
     dt: F,
     resolution: usize,
 }
 
-#[wasm_bindgen(js_class = WasmVcdCrossFlux)]
-impl WasmVcdCrossFlux {
+#[wasm_bindgen(js_class = VcdCrossFlux)]
+impl VcdCrossFlux {
     #[wasm_bindgen(constructor)]
     pub fn new(dt: F, resolution: usize) -> Self {
         Self { dt, resolution }
@@ -172,14 +172,14 @@ impl WasmVcdCrossFlux {
     }
 }
 
-#[wasm_bindgen(js_name = WasmRoaCrossTensor)]
-pub struct WasmRoaCrossTensor {
+#[wasm_bindgen(js_name = RoaCrossTensor)]
+pub struct RoaCrossTensor {
     dt: F,
     resolution: usize,
 }
 
-#[wasm_bindgen(js_class = WasmRoaCrossTensor)]
-impl WasmRoaCrossTensor {
+#[wasm_bindgen(js_class = RoaCrossTensor)]
+impl RoaCrossTensor {
     #[wasm_bindgen(constructor)]
     pub fn new(dt: F, resolution: usize) -> Self {
         Self { dt, resolution }
@@ -239,20 +239,20 @@ macro_rules! spectrum_fit_class {
     };
 }
 
-spectrum_fit_class!(WasmPowerSpectrum, molrs::compute::PowerSpectrum);
-spectrum_fit_class!(WasmIRSpectrum, molrs::compute::IRSpectrum);
-spectrum_fit_class!(WasmVcdSpectrum, molrs::compute::VcdSpectrum);
+spectrum_fit_class!(PowerSpectrum, molrs::compute::PowerSpectrum);
+spectrum_fit_class!(IRSpectrum, molrs::compute::IRSpectrum);
+spectrum_fit_class!(VcdSpectrum, molrs::compute::VcdSpectrum);
 
-#[wasm_bindgen(js_name = WasmRamanSpectrum)]
-pub struct WasmRamanSpectrum {
+#[wasm_bindgen(js_name = RamanSpectrum)]
+pub struct RamanSpectrum {
     dt_fs: F,
     incident_frequency_cm1: F,
     temperature_k: F,
     averaged: bool,
 }
 
-#[wasm_bindgen(js_class = WasmRamanSpectrum)]
-impl WasmRamanSpectrum {
+#[wasm_bindgen(js_class = RamanSpectrum)]
+impl RamanSpectrum {
     #[wasm_bindgen(constructor)]
     pub fn new(
         incident_frequency_cm1: Option<F>,
@@ -284,12 +284,12 @@ impl WasmRamanSpectrum {
     }
 }
 
-#[wasm_bindgen(js_name = WasmRoaSpectrum)]
-pub struct WasmRoaSpectrum(WasmRamanSpectrum);
+#[wasm_bindgen(js_name = RoaSpectrum)]
+pub struct RoaSpectrum(RamanSpectrum);
 
-#[wasm_bindgen(js_class = WasmRoaSpectrum)]
-impl WasmRoaSpectrum {
-    /// Same optical configuration as [`WasmRamanSpectrum`]; ROA differs only in
+#[wasm_bindgen(js_class = RoaSpectrum)]
+impl RoaSpectrum {
+    /// Same optical configuration as [`RamanSpectrum`]; ROA differs only in
     /// which cross-correlations are supplied to [`fit`](Self::fit).
     #[wasm_bindgen(constructor)]
     pub fn new(
@@ -298,7 +298,7 @@ impl WasmRoaSpectrum {
         averaged: Option<bool>,
         dt_fs: F,
     ) -> Self {
-        Self(WasmRamanSpectrum::new(
+        Self(RamanSpectrum::new(
             incident_frequency_cm1,
             temperature_k,
             averaged,
@@ -321,8 +321,8 @@ impl WasmRoaSpectrum {
     }
 }
 
-#[wasm_bindgen(js_name = WasmEinsteinHelfandDielectricSpectrum)]
-pub struct WasmEinsteinHelfandDielectricSpectrum {
+#[wasm_bindgen(js_name = EinsteinHelfandDielectricSpectrum)]
+pub struct EinsteinHelfandDielectricSpectrum {
     dt: F,
     volume: F,
     temperature: F,
@@ -330,8 +330,8 @@ pub struct WasmEinsteinHelfandDielectricSpectrum {
     zero_lag_variance: F,
 }
 
-#[wasm_bindgen(js_class = WasmEinsteinHelfandDielectricSpectrum)]
-impl WasmEinsteinHelfandDielectricSpectrum {
+#[wasm_bindgen(js_class = EinsteinHelfandDielectricSpectrum)]
+impl EinsteinHelfandDielectricSpectrum {
     #[wasm_bindgen(constructor)]
     pub fn new(
         dt: F,
@@ -365,8 +365,8 @@ impl WasmEinsteinHelfandDielectricSpectrum {
     }
 }
 
-#[wasm_bindgen(js_name = WasmGreenKuboDielectricSpectrum)]
-pub struct WasmGreenKuboDielectricSpectrum {
+#[wasm_bindgen(js_name = GreenKuboDielectricSpectrum)]
+pub struct GreenKuboDielectricSpectrum {
     dt: F,
     volume: F,
     temperature: F,
@@ -374,8 +374,8 @@ pub struct WasmGreenKuboDielectricSpectrum {
     window_type: String,
 }
 
-#[wasm_bindgen(js_class = WasmGreenKuboDielectricSpectrum)]
-impl WasmGreenKuboDielectricSpectrum {
+#[wasm_bindgen(js_class = GreenKuboDielectricSpectrum)]
+impl GreenKuboDielectricSpectrum {
     #[wasm_bindgen(constructor)]
     pub fn new(
         dt: F,
