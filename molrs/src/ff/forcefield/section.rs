@@ -11,9 +11,10 @@
 //! | [`Style::params`] numeric / string | `params` numbers / strings |
 //! | the string style params `expression`, `endpoint_key` | the entry fields of those names |
 //! | [`Style::type_rows`], in definition order | the rows of the table at [`style_block_name`] |
-//! | row name, endpoints (a pair always two) | `name`, `itom`…`ltom` |
+//! | row name, endpoints (a pair always two) | `name`, `itom`…`mtom` |
 //! | a pair self row / an explicit cross row (NBFIX) | a pair row with `itom == jtom` / `itom != jtom` |
 //! | row [`Params`] numeric / string | `f64` / `string` columns, after `name` and the endpoints, keys sorted bytewise |
+//! | a row array param of shape `S` (every row carrying the key at one shape) | an `f64[T, S…]` column, null where a row lacks it; [`ForceFieldSection::validate`] admits one: a `cmap` row's `grid`, `S = [N, N]` |
 //! | a numeric param under a canonical non-`f64` key (`atomic_number`, `id`, …) | a column of that key's dtype; [`ForceField::from_section`] reads it back as `f64` |
 //! | a key a row does not carry | null in that row |
 //!
@@ -30,14 +31,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use indexmap::IndexMap;
-use ndarray::ArrayD;
+use ndarray::{ArrayD, Axis};
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 
 use super::{ForceField, Params, SpecialBonds, Style};
 use molrs::store::block::{Block, Column, DType};
 use molrs::store::forcefield_section::{
-    ENDPOINT_COLUMNS, EndpointKey, ForceFieldSection, UNIT_QUANTITIES, style_block_name,
-    unit_preset,
+    ENDPOINT_COLUMNS, EndpointKey, ForceFieldSection, UNIT_QUANTITIES, category_arity,
+    style_block_name, unit_preset,
 };
 
 /// The string style params that are entry fields of `document.styles`.
@@ -51,21 +52,38 @@ const STATED_QUANTITIES: [&str; 5] = ["length", "energy", "angle", "charge", "ma
 enum Value<'a> {
     Number(f64),
     Text(&'a str),
+    Array(&'a ArrayD<f64>),
 }
 
-/// The params of `params` as one sorted map, refusing a key that is both a
-/// number and a string.
+impl Value<'_> {
+    fn kind(&self) -> &'static str {
+        match self {
+            Value::Number(_) => "a number",
+            Value::Text(_) => "a string",
+            Value::Array(_) => "an array",
+        }
+    }
+}
+
+/// The params of `params` as one sorted map, refusing a key held on two
+/// sides (number, string, array).
 fn merged<'a>(
     params: &'a Params,
     what: &dyn Fn() -> String,
 ) -> Result<BTreeMap<&'a str, Value<'a>>, String> {
     let mut out: BTreeMap<&str, Value<'_>> =
         params.iter().map(|(k, v)| (k, Value::Number(v))).collect();
-    for (key, text) in params.iter_strings() {
-        if out.insert(key, Value::Text(text)).is_some() {
+    let others = params
+        .iter_strings()
+        .map(|(k, v)| (k, Value::Text(v)))
+        .chain(params.iter_arrays().map(|(k, v)| (k, Value::Array(v))));
+    for (key, value) in others {
+        let kind = value.kind();
+        if let Some(earlier) = out.insert(key, value) {
             return Err(format!(
-                "{}: param {key:?} is both a number and a string",
-                what()
+                "{}: param {key:?} is both {} and {kind}",
+                what(),
+                earlier.kind()
             ));
         }
     }
@@ -113,6 +131,12 @@ fn style_entry(style: &Style) -> Result<JsonValue, String> {
             Value::Text(text) => {
                 params.insert(key.into(), text.into());
             }
+            Value::Array(_) => {
+                return Err(format!(
+                    "{}: {key:?} is an array; a style param is a number or a string",
+                    what()
+                ));
+            }
         }
     }
     if !params.is_empty() {
@@ -134,6 +158,57 @@ fn strings(values: Vec<String>) -> Column {
     Column::from_string(ArrayD::from_shape_vec(vec![n], values).expect("one value per row"))
 }
 
+/// The `f64[T, S…]` column of an array param: every row's array at one shape
+/// `S`, a row without one filled with zeros (and null).
+fn array_column(
+    key: &str,
+    cells: &[Option<Value<'_>>],
+    what: &dyn Fn() -> String,
+) -> Result<Column, String> {
+    let arrays: Vec<Option<&ArrayD<f64>>> = cells
+        .iter()
+        .map(|c| match c {
+            Some(Value::Array(a)) => Some(*a),
+            _ => None,
+        })
+        .collect();
+    let shape = arrays
+        .iter()
+        .flatten()
+        .next()
+        .expect("an array column has an array")
+        .shape()
+        .to_vec();
+    if shape.is_empty() {
+        // An `f64[T]` column reads back as numbers, not as 0-d arrays.
+        return Err(format!(
+            "{}: param {key:?} is a 0-d array; a section holds a scalar as a number",
+            what()
+        ));
+    }
+    if let Some(other) = arrays.iter().flatten().find(|a| a.shape() != shape) {
+        return Err(format!(
+            "{}: param {key:?} is an array of shape {shape:?} in one row and {:?} in \
+             another; a column holds one shape",
+            what(),
+            other.shape()
+        ));
+    }
+    let size: usize = shape.iter().product();
+    let mut values = Vec::with_capacity(arrays.len() * size);
+    for array in &arrays {
+        match array {
+            Some(a) => values.extend(a.iter().copied()),
+            None => values.extend(std::iter::repeat_n(0.0, size)),
+        }
+    }
+    let mut full = vec![arrays.len()];
+    full.extend(&shape);
+    Ok(Column::from_float(
+        ArrayD::from_shape_vec(full, values).expect("one array per row"),
+    ))
+}
+
 /// The column of one param across the rows, at the dtype it is stored at.
 fn param_column(
     key: &str,
@@ -141,19 +216,26 @@ fn param_column(
     what: &dyn Fn() -> String,
 ) -> Result<(Column, Vec<bool>), String> {
     let validity: Vec<bool> = cells.iter().map(Option::is_some).collect();
-    let numeric = cells
-        .iter()
-        .flatten()
-        .any(|v| matches!(v, Value::Number(_)));
-    let text = cells.iter().flatten().any(|v| matches!(v, Value::Text(_)));
-    if numeric && text {
+    let mut kinds: Vec<&str> = cells.iter().flatten().map(Value::kind).collect();
+    kinds.sort_unstable();
+    kinds.dedup();
+    if let [first, second, ..] = kinds[..] {
         return Err(format!(
-            "{}: param {key:?} is a number in one row and a string in another",
+            "{}: param {key:?} is {first} in one row and {second} in another",
             what()
         ));
     }
+    let text = kinds == ["a string"];
     let canonical = molrs::store::schema::column(key).map(|spec| spec.dtype);
-    let column = if text {
+    let column = if kinds == ["an array"] {
+        if canonical.is_some() {
+            return Err(format!(
+                "{}: param {key:?} is an array, and the canonical key {key:?} is a scalar",
+                what()
+            ));
+        }
+        array_column(key, cells, what)?
+    } else if text {
         if canonical.is_some_and(|dtype| dtype != DType::String) {
             return Err(format!(
                 "{}: param {key:?} is a string, and the canonical key {key:?} is not",
@@ -211,12 +293,7 @@ fn param_column(
 fn style_table(style: &Style) -> Result<Block, String> {
     let what = || format!("{}/{}", style.category(), style.name());
     let rows = style.type_rows();
-    let arity = match style.category() {
-        "atom" => 0,
-        "bond" | "pair" => 2,
-        "angle" => 3,
-        _ => 4,
-    };
+    let arity = category_arity(style.category()).expect("a molrs category is the chapter's");
     let mut block = Block::new();
     let column_err = |e: molrs::store::block::BlockError| format!("{}: {e}", what());
     block
@@ -299,7 +376,7 @@ fn special_bonds(value: &JsonValue) -> SpecialBonds {
 }
 
 /// The params of row `row` of `table`: every column but `name` and the
-/// endpoints, where not null.
+/// endpoints, where not null; a column with trailing axes is an array param.
 fn row_params(table: &Block, row: usize) -> Params {
     let mut params = Params::new();
     for (key, column) in table.iter() {
@@ -312,7 +389,11 @@ fn row_params(table: &Block, row: usize) -> Params {
         if let Some(values) = column.as_string() {
             params.set_str(key, &values[[row]]);
         } else if let Some(values) = column.as_float() {
-            params.set(key, values[[row]]);
+            if values.ndim() > 1 {
+                params.set_array(key, values.index_axis(Axis(0), row).to_owned());
+            } else {
+                params.set(key, values[[row]]);
+            }
         } else if let Some(values) = column.as_uint() {
             params.set(key, values[[row]] as f64);
         } else if let Some(values) = column.as_int() {
@@ -331,11 +412,13 @@ impl ForceField {
     /// # Errors
     ///
     /// An `Err` naming the style and key when the force field has no section
-    /// form: units that are no preset; a non-finite style param; a param key
-    /// that is a number in one row and a string in another, both in one
-    /// [`Params`], or `name` / an endpoint column; a param under a canonical
-    /// key at another dtype (a non-integral `atomic_number`, a numeric
-    /// `element`); or anything [`ForceFieldSection::validate`] refuses.
+    /// form: units that are no preset; a non-finite or array style param; a
+    /// param key of one kind (number, string, array) in one row and another
+    /// in another, on two sides of one [`Params`], or `name` / an endpoint
+    /// column; an array param at two shapes; a param under a canonical key at
+    /// another dtype (a non-integral `atomic_number`, a numeric `element`, an
+    /// array); or anything [`ForceFieldSection::validate`] refuses — an array
+    /// param other than a `cmap` row's square `grid` among it.
     ///
     /// # Examples
     ///
@@ -389,7 +472,7 @@ impl ForceField {
     ///
     /// An `Err` when the section fails [`ForceFieldSection::validate`], or
     /// has no [`ForceField`] form: a category outside `atom bond angle
-    /// dihedral improper pair`; units that are no preset (stated by
+    /// dihedral improper pair cmap`; units that are no preset (stated by
     /// `preset`, or by one preset's own length and energy); a `smirks`-keyed
     /// style; a `class`-keyed style whose endpoints are not all atom-type
     /// names.
@@ -753,15 +836,15 @@ mod tests {
         stated.document["units"] = json!({"length": "angstrom", "energy": "eV"});
         assert_eq!(ForceField::from_section(&stated).unwrap().units(), "metal");
 
-        let mut cmap = section.clone();
-        cmap.document["styles"] = json!([{"category": "cmap", "style": "charmm"}]);
-        let mut grid = Block::new();
-        grid.insert_column("name", strings(vec![])).unwrap();
-        cmap.tables.insert("cmap.charmm".into(), grid);
+        let mut sites = section.clone();
+        sites.document["styles"] = json!([{"category": "virtual_site", "style": "tip4p"}]);
+        let mut rows = Block::new();
+        rows.insert_column("name", strings(vec![])).unwrap();
+        sites.tables.insert("virtual_site.tip4p".into(), rows);
         assert!(
-            ForceField::from_section(&cmap)
+            ForceField::from_section(&sites)
                 .unwrap_err()
-                .contains("cmap")
+                .contains("virtual_site")
         );
 
         let mut smirks = section;
@@ -777,6 +860,98 @@ mod tests {
                 .unwrap_err()
                 .contains("smirks")
         );
+    }
+
+    fn grid(n: usize, scale: f64) -> ArrayD<f64> {
+        ArrayD::from_shape_fn(vec![n, n], |ix| scale * (ix[0] * n + ix[1]) as f64)
+    }
+
+    fn cmap_ff(grids: &[Option<ArrayD<f64>>]) -> ForceField {
+        let mut ff = ForceField::new("charmm");
+        let style = ff.def_style("cmap", "charmm", Params::new()).unwrap();
+        for (i, g) in grids.iter().enumerate() {
+            let mut params = Params::from_pairs(&[("id", i as f64)]);
+            if let Some(g) = g {
+                params.set_array("grid", g.clone());
+            }
+            style
+                .def_type(&format!("c{i}"), &["C", "NH1", "CT1", "C", "NH1"], params)
+                .unwrap();
+        }
+        ff
+    }
+
+    /// A cmap style's grids become one `f64[T, N, N]` column, a row without a
+    /// grid a null row of it, and come back bit for bit — through the
+    /// section, and through a `*.mrec` store.
+    #[test]
+    fn a_cmap_style_with_a_grid_round_trips() {
+        let ff = cmap_ff(&[Some(grid(24, 0.125)), None, Some(grid(24, -1.0 / 3.0))]);
+        let section = ff.to_section().unwrap();
+        let table = section.table("cmap", "charmm").unwrap();
+        assert_eq!(table.get("grid").unwrap().shape(), &[3, 24, 24]);
+        assert_eq!(table.validity("grid"), Some(&[true, false, true][..]));
+        assert_eq!(
+            table.get("mtom").and_then(Column::as_string).unwrap()[[0]],
+            "NH1"
+        );
+        round_trips(&ff, "cmap");
+        let back = ForceField::from_section(&section).unwrap();
+        let rows = back.get_cmaptypes();
+        assert_eq!(
+            rows[2].params.get_array("grid"),
+            Some(&grid(24, -1.0 / 3.0))
+        );
+        assert_eq!(rows[1].params.get_array("grid"), None);
+    }
+
+    /// A grid the section cannot hold is refused by `to_section`, not
+    /// reshaped: two sizes in one table, a non-square grid, an array param
+    /// anywhere but a cmap row's `grid`, an array style param.
+    #[test]
+    fn an_array_the_section_cannot_hold_is_refused() {
+        let err = cmap_ff(&[Some(grid(24, 1.0)), Some(grid(12, 1.0))])
+            .to_section()
+            .unwrap_err();
+        assert!(err.contains("\"grid\"") && err.contains("shape"), "{err}");
+
+        let rect = ArrayD::from_elem(vec![2, 3], 0.0);
+        let err = cmap_ff(&[Some(rect)]).to_section().unwrap_err();
+        assert!(err.contains("cmap grid"), "{err}");
+
+        let mut ff = ForceField::new("t");
+        let mut params = Params::new();
+        params.set_array("grid", grid(2, 1.0));
+        ff.def_style("bond", "harmonic", Params::new())
+            .unwrap()
+            .def_type("A-B", &["A", "B"], params.clone())
+            .unwrap();
+        assert!(ff.to_section().is_err(), "a bond grid");
+
+        let mut ff = ForceField::new("t");
+        ff.def_style("cmap", "charmm", params).unwrap();
+        let err = ff.to_section().unwrap_err();
+        assert!(err.contains("style param"), "{err}");
+
+        let mut both = Params::from_pairs(&[("grid", 1.0)]);
+        both.set_array("grid", grid(2, 1.0));
+        let mut ff = ForceField::new("t");
+        ff.def_style("cmap", "charmm", Params::new())
+            .unwrap()
+            .def_type("c", &["A", "B", "C", "D", "E"], both)
+            .unwrap();
+        let err = ff.to_section().unwrap_err();
+        assert!(err.contains("both a number and an array"), "{err}");
+
+        let mut scalar = Params::new();
+        scalar.set_array("grid", ArrayD::from_elem(vec![], 1.0));
+        let mut ff = ForceField::new("t");
+        ff.def_style("cmap", "charmm", Params::new())
+            .unwrap()
+            .def_type("c", &["A", "B", "C", "D", "E"], scalar)
+            .unwrap();
+        let err = ff.to_section().unwrap_err();
+        assert!(err.contains("0-d"), "{err}");
     }
 
     #[test]

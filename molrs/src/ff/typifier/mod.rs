@@ -262,6 +262,8 @@ impl Match {
                             for (k, v) in params.iter_strings() {
                                 stamp.write(k.to_owned(), PropValue::Str(v.to_owned()))?;
                             }
+                            // An array param (a cmap `grid`) has no property
+                            // form; it stays on the type `name` defines below.
                             let target =
                                 Self::batch_style(&mut batch, forcefield, category, &style)?;
                             let e: Vec<&str> = endpoints.iter().map(String::as_str).collect();
