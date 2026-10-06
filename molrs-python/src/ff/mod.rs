@@ -33,6 +33,7 @@
 pub mod atd;
 pub mod charge;
 pub mod handles;
+pub mod potential;
 pub mod section;
 
 use std::collections::HashMap;

@@ -47,6 +47,42 @@ pub struct ImproperPeriodic {
 }
 
 impl ImproperPeriodic {
+    /// A kernel over explicit instances: `k[1 + cos(n·φ − γ)]` per improper,
+    /// `φ` the dihedral of the stored (AMBER) order and `γ` in **radians**.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        atom_i: Vec<usize>,
+        atom_j: Vec<usize>,
+        atom_k: Vec<usize>,
+        atom_l: Vec<usize>,
+        k: Vec<F>,
+        periodicity: Vec<F>,
+        phase: Vec<F>,
+    ) -> Self {
+        let n = atom_i.len();
+        for len in [
+            atom_j.len(),
+            atom_k.len(),
+            atom_l.len(),
+            k.len(),
+            periodicity.len(),
+            phase.len(),
+        ] {
+            assert_eq!(len, n);
+        }
+        Self {
+            atom_i,
+            atom_j,
+            atom_k,
+            atom_l,
+            k,
+            n: periodicity,
+            d: phase,
+        }
+    }
+}
+
+impl ImproperPeriodic {
     /// The physics, once. Which atoms a term names is the only thing
     /// that differs between the two entry points, so it is the only thing
     /// passed in — a second copy of the loop would be a second place for

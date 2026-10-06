@@ -15,12 +15,13 @@ the Python path and the Rust path are the same word:
 * :mod:`molrs.perceive` — chemical perception: rings, aromaticity, hydrogens,
   stereochemistry, SMARTS matching, coarse-grained bead-pattern matching
   (``SubgraphMatcher``).
-* :mod:`molrs.ff` — force fields, typifiers, charge models, potentials.
+* :mod:`molrs.ff` — force fields, typifiers, charge models, potentials
+  (:mod:`molrs.ff.potential`: the ``Potential`` protocol and one kernel class
+  per style, e.g. ``LJCut``).
 * :mod:`molrs.optimize` — geometry optimizers.
 * :mod:`molrs.conformer` — 3D conformer generation.
-* :mod:`molrs.md` — in-process molecular dynamics: ``LJCut`` +
-  velocity-Verlet/Langevin integrators, the ``Potential`` base class, the
-  ``MD`` driver. Loaded lazily so a compiled ``_lib`` without ``md`` still
+* :mod:`molrs.md` — in-process molecular dynamics: velocity-Verlet/Langevin
+  integrators and the ``MD`` driver; it integrates potentials, it defines none. Loaded lazily so a compiled ``_lib`` without ``md`` still
   imports.
 * :mod:`molrs.op` — pure numeric base: weighted superposition, centroids.
 * :mod:`molrs.builder` — structure builders (graphene, nanotubes).

@@ -233,6 +233,24 @@ CMAP) — and LAMMPS's `fix cmap` files are read and written.
   kernel. Python: `molrs.ff.assign_cmaps`, `read_lammps_cmap`,
   `write_lammps_cmap`.
 
+### Kernels live in `molrs.ff.potential`; `md` defines no potential
+
+`LJCut` moved from `molrs.md` to `molrs.ff.potential` (molpy: `molpy.md.LJCut`
+→ `molpy.potential.LJCut`), beside the `Potential` protocol, which `molrs.md`
+no longer re-exports either; nor does it re-export `Potentials`
+(`molrs.ff.Potentials` / `molpy.Potentials`). The integrators still accept all
+of them. New in the same module, one class per kernel, built from explicit
+instances in the force-field convention and moved into a `Potentials` by
+`push`: `BondHarmonic`, `AngleHarmonic` (`theta0` in degrees),
+`DihedralPeriodic` (`(M, T)` series, phases in degrees), `ImproperCvff`,
+`ImproperPeriodic`, `PairCoulCut`, and `LJCut.compiled` over a fixed pair list.
+
+| 0.15 | 0.16 |
+|---|---|
+| `from molrs.md import LJCut, Potential` | `from molrs.ff.potential import LJCut, Potential` |
+| `from molpy.md import LJCut` | `from molpy.potential import LJCut` |
+| `molrs.md.Potentials` | `molrs.ff.Potentials` |
+
 ### Already in 0.15.1
 
 0.15.1 was a patch release on the 0.15 ABI line (nothing renamed or removed;

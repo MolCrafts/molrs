@@ -3031,8 +3031,9 @@ class TypedPotentials:
 class Potentials:
     """Composite of the one ``Potential`` concept — itself a potential.
 
-    ``Potentials()`` is empty; ``push`` **moves** members in (an ``LJCut``,
-    a ``md.Potential`` subclass instance, or another ``Potentials``).
+    ``Potentials()`` is empty; ``push`` **moves** members in (a
+    ``potential`` kernel such as ``BondHarmonic`` or ``LJCut``, an object with
+    ``calc_energy_forces``, or another ``Potentials``).
     ``set_energy_scale`` applies a caller-computed numeric unit factor to the
     merged energy and forces (compute it with ``md.preset_energy_to_md`` /
     ``md.energy_to_md``); nothing applies it implicitly.
@@ -3040,7 +3041,7 @@ class Potentials:
 
     def __init__(self) -> None: ...
     def __len__(self) -> int: ...
-    def push(self, potential: md.LJCut | md.Potential | Potentials) -> None: ...
+    def push(self, potential: _Kernel | Potentials | Any) -> None: ...
     def set_energy_scale(self, scale: float) -> None: ...
     @property
     def energy_scale(self) -> float: ...
@@ -4172,9 +4173,170 @@ def polarizability_finite_field(
 # Submodule stubbed as a class namespace, following the `keys` precedent.
 # ---------------------------------------------------------------------------
 
+class potential:
+    """The ``_lib.potential`` submodule (``molrs.ff.potential``): one kernel
+    class per style, built from explicit instances in the force field's
+    convention (LAMMPS's; angles in degrees) and moved into a ``Potentials``
+    by ``Potentials.push``."""
+
+    class LJCut:
+        """LAMMPS ``pair_style lj/cut``: cut Lennard-Jones / Mie pair kernel
+        (``n``/``m`` exponents). The constructor is the one-type kernel a
+        neighbour loop feeds; ``compiled`` is the style over a fixed pair list."""
+
+        def __init__(
+            self,
+            epsilon: float,
+            sigma: float,
+            cutoff: float,
+            *,
+            n: int = 12,
+            m: int = 6,
+            shifted: bool = True,
+            smeared: bool = False,
+        ) -> None: ...
+        @staticmethod
+        def compiled(
+            atomi: Sequence[int],
+            atomj: Sequence[int],
+            epsilon: Sequence[float],
+            sigma: Sequence[float],
+        ) -> potential.LJCut: ...
+        @property
+        def epsilon(self) -> float: ...
+        @property
+        def sigma(self) -> float: ...
+        @property
+        def cutoff(self) -> float: ...
+        @property
+        def n(self) -> int: ...
+        @property
+        def m(self) -> int: ...
+        @property
+        def shifted(self) -> bool: ...
+        @property
+        def smeared(self) -> bool: ...
+        def pair_energy(self, r2: float, disp: Sequence[float]) -> float | None: ...
+        def pair_force(
+            self, r2: float, disp: Sequence[float]
+        ) -> list[float] | None: ...
+        def pair_eval(
+            self, r2: float, disp: Sequence[float]
+        ) -> tuple[float, list[float]] | None: ...
+        def eval(self, neighbors: VerletSkin, pos: ArrayF) -> tuple[float, ArrayF]: ...
+        def eval_table(
+            self, n_atoms: int, neighbors: Neighbors
+        ) -> tuple[float, ArrayF]: ...
+        def eval_pairs(
+            self,
+            n_atoms: int,
+            i: ArrayU32,
+            j: ArrayU32,
+            disp: ArrayF,
+            dist_sq: ArrayF | None = None,
+        ) -> tuple[float, ArrayF]: ...
+
+    class BondHarmonic:
+        """``k (r − r0)²`` per bond."""
+
+        def __init__(
+            self,
+            atomi: Sequence[int],
+            atomj: Sequence[int],
+            k: Sequence[float],
+            r0: Sequence[float],
+        ) -> None: ...
+        def calc_energy_forces(self, pos: ArrayF) -> tuple[float, ArrayF]: ...
+
+    class AngleHarmonic:
+        """``k (θ − theta0)²`` per angle, ``theta0`` in degrees."""
+
+        def __init__(
+            self,
+            atomi: Sequence[int],
+            atomj: Sequence[int],
+            atomk: Sequence[int],
+            k: Sequence[float],
+            theta0: Sequence[float],
+        ) -> None: ...
+        def calc_energy_forces(self, pos: ArrayF) -> tuple[float, ArrayF]: ...
+
+    class DihedralPeriodic:
+        """``Σₘ kₘ [1 + cos(nₘ φ − γₘ)]`` per dihedral; ``k``,
+        ``periodicity``, ``phase`` (degrees) are ``(M, T)``."""
+
+        def __init__(
+            self,
+            atomi: Sequence[int],
+            atomj: Sequence[int],
+            atomk: Sequence[int],
+            atoml: Sequence[int],
+            k: ArrayF,
+            periodicity: ArrayF,
+            phase: ArrayF,
+        ) -> None: ...
+        def calc_energy_forces(self, pos: ArrayF) -> tuple[float, ArrayF]: ...
+
+    class ImproperCvff:
+        """``k [1 + sign·cos(n φ)]``, the centre first."""
+
+        def __init__(
+            self,
+            atomi: Sequence[int],
+            atomj: Sequence[int],
+            atomk: Sequence[int],
+            atoml: Sequence[int],
+            k: Sequence[float],
+            sign: Sequence[float],
+            periodicity: Sequence[float],
+        ) -> None: ...
+        def calc_energy_forces(self, pos: ArrayF) -> tuple[float, ArrayF]: ...
+
+    class ImproperPeriodic:
+        """``k [1 + cos(n φ − γ)]``, AMBER order (centre third), ``γ`` in degrees."""
+
+        def __init__(
+            self,
+            atomi: Sequence[int],
+            atomj: Sequence[int],
+            atomk: Sequence[int],
+            atoml: Sequence[int],
+            k: Sequence[float],
+            periodicity: Sequence[float],
+            phase: Sequence[float],
+        ) -> None: ...
+        def calc_energy_forces(self, pos: ArrayF) -> tuple[float, ArrayF]: ...
+
+    class PairCoulCut:
+        """``coulomb · qᵢqⱼ / (dielectric · (r + delta))`` over a fixed pair list."""
+
+        def __init__(
+            self,
+            atomi: Sequence[int],
+            atomj: Sequence[int],
+            qiqj: Sequence[float],
+            *,
+            coulomb: float,
+            dielectric: float = 1.0,
+            delta: float = 0.0,
+            cutoff: float = ...,
+        ) -> None: ...
+        def calc_energy_forces(self, pos: ArrayF) -> tuple[float, ArrayF]: ...
+
+type _Kernel = (
+    potential.LJCut
+    | potential.BondHarmonic
+    | potential.AngleHarmonic
+    | potential.DihedralPeriodic
+    | potential.ImproperCvff
+    | potential.ImproperPeriodic
+    | potential.PairCoulCut
+)
+
 class md:
-    """The ``_lib.md`` submodule: LJCut + NVE/Langevin integrators + the
-    ``Potential`` base class.
+    """The ``_lib.md`` submodule: NVE/Langevin integrators. MD defines no
+    potential; it integrates a ``potential`` kernel, a ``Potentials``
+    collection, or any object with ``calc_energy_forces``.
 
     The engine is unit-agnostic — supply consistent units yourself. The
     conversion helpers target MD energy (amu·Å²/fs², :data:`MD_ENERGY`):
@@ -4234,70 +4396,10 @@ class md:
         @energy.setter
         def energy(self, value: float) -> None: ...
 
-    class LJCut:
-        """LAMMPS ``pair_style lj/cut``: cut Lennard-Jones / Mie pair kernel
-        (``n``/``m`` exponents), md's nonbond potential — the integrator loop
-        feeds it the current neighbour pairs."""
-
-        def __init__(
-            self,
-            epsilon: float,
-            sigma: float,
-            cutoff: float,
-            *,
-            n: int = 12,
-            m: int = 6,
-            shifted: bool = True,
-            smeared: bool = False,
-        ) -> None: ...
-        @property
-        def epsilon(self) -> float: ...
-        @property
-        def sigma(self) -> float: ...
-        @property
-        def cutoff(self) -> float: ...
-        @property
-        def n(self) -> int: ...
-        @property
-        def m(self) -> int: ...
-        @property
-        def shifted(self) -> bool: ...
-        @property
-        def smeared(self) -> bool: ...
-        def pair_energy(self, r2: float, disp: Sequence[float]) -> float | None: ...
-        def pair_force(
-            self, r2: float, disp: Sequence[float]
-        ) -> list[float] | None: ...
-        def pair_eval(
-            self, r2: float, disp: Sequence[float]
-        ) -> tuple[float, list[float]] | None: ...
-        def eval(self, neighbors: VerletSkin, pos: ArrayF) -> tuple[float, ArrayF]: ...
-        def eval_table(
-            self, n_atoms: int, neighbors: Neighbors
-        ) -> tuple[float, ArrayF]: ...
-        def eval_pairs(
-            self,
-            n_atoms: int,
-            i: ArrayU32,
-            j: ArrayU32,
-            disp: ArrayF,
-            dist_sq: ArrayF | None = None,
-        ) -> tuple[float, ArrayF]: ...
-
-    class Potential:
-        """Abstract base class for user potentials: subclass it
-        (``class MyPotential(molpy.md.Potential):``) and override
-        ``calc_energy_forces``; molrs invokes the override under the GIL at
-        every force evaluation (the NN/Torch seam). Return units must be
-        consistent with everything else passed to the integrator. The base
-        method raises ``NotImplementedError``."""
-
-        def __init__(self, *args: Any, **kwargs: Any) -> None: ...
-        def calc_energy_forces(self, pos: ArrayF) -> tuple[float, ArrayF]: ...
-
     class VelocityVerlet:
-        """NVE velocity-Verlet. ``potential`` (``LJCut`` / ``Potentials`` /
-        a ``Potential`` subclass) and ``neighbors`` (a ``VerletSkin``) are
+        """NVE velocity-Verlet. ``potential`` (a ``potential`` kernel /
+        ``Potentials`` / an object with ``calc_energy_forces``) and
+        ``neighbors`` (a ``VerletSkin``) are
         moved in; the loop feeds fresh pairs to the potential after each
         rebuild. ``LJCut`` requires ``neighbors=``."""
 
@@ -4305,7 +4407,7 @@ class md:
             self,
             dt: float,
             *,
-            potential: md.LJCut | Potentials | TypedPotentials | md.Potential,
+            potential: potential.LJCut | Potentials | TypedPotentials | Any,
             neighbors: VerletSkin | None = None,
             mass: float | ArrayF,
             simbox: Box | None = None,
@@ -4337,7 +4439,7 @@ class md:
             *,
             gamma: float,
             kbt: float,
-            potential: md.LJCut | Potentials | TypedPotentials | md.Potential,
+            potential: potential.LJCut | Potentials | TypedPotentials | Any,
             neighbors: VerletSkin | None = None,
             mass: float | ArrayF,
             seed: int = 0,

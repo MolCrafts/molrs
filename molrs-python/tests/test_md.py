@@ -7,8 +7,8 @@ import warnings
 import molrs
 import numpy as np
 import pytest
-from molrs.ff.potential import Potential as FfPotential
-from molrs.md import MD, LJCut, MaxwellBoltzmann, Potential, VelocityVerlet
+from molrs.ff.potential import LJCut, Potential
+from molrs.md import MD, MaxwellBoltzmann, VelocityVerlet
 
 
 class Harmonic:
@@ -30,11 +30,13 @@ class TestPotentialProtocol:
     def test_ljcut_is_potential(self) -> None:
         assert isinstance(LJCut(1.0, 1.0, 2.5), Potential)
 
-    def test_md_and_ff_potential_are_the_same_object(self) -> None:
-        assert Potential is FfPotential
+    def test_md_defines_no_potential(self) -> None:
+        """MD integrates potentials; it does not define or re-export one."""
+        from molrs import md
 
-    def test_no_pyo3_potential_class(self) -> None:
-        assert not hasattr(molrs._lib.md, "Potential")
+        for name in ("Potential", "Potentials", "LJCut"):
+            assert not hasattr(md, name)
+            assert not hasattr(molrs._lib.md, name)
 
 
 class TestMDDtype:

@@ -36,6 +36,42 @@ pub struct ImproperCvff {
 }
 
 impl ImproperCvff {
+    /// A kernel over explicit instances: `k[1 + sign·cos(n·φ)]` per improper,
+    /// `φ` the dihedral of the stored order (centre first).
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        atom_i: Vec<usize>,
+        atom_j: Vec<usize>,
+        atom_k: Vec<usize>,
+        atom_l: Vec<usize>,
+        k: Vec<F>,
+        sign: Vec<F>,
+        periodicity: Vec<F>,
+    ) -> Self {
+        let n = atom_i.len();
+        for len in [
+            atom_j.len(),
+            atom_k.len(),
+            atom_l.len(),
+            k.len(),
+            sign.len(),
+            periodicity.len(),
+        ] {
+            assert_eq!(len, n);
+        }
+        Self {
+            atom_i,
+            atom_j,
+            atom_k,
+            atom_l,
+            k,
+            d: sign,
+            n: periodicity,
+        }
+    }
+}
+
+impl ImproperCvff {
     /// The physics, once. Which atoms a term names is the only thing
     /// that differs between the two entry points, so it is the only thing
     /// passed in — a second copy of the loop would be a second place for

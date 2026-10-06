@@ -43,6 +43,39 @@ pub struct DihedralPeriodic {
 }
 
 impl DihedralPeriodic {
+    /// A kernel over explicit instances.
+    ///
+    /// `terms[idx]` is the cosine series of dihedral `idx` as `(k, n, γ)`
+    /// triples, `γ` in **radians** — the kernel's own unit, as for
+    /// [`AngleHarmonic::new`](crate::ff::potential::angle::harmonic::AngleHarmonic::new);
+    /// the force-field parameter is degrees and the constructor from a
+    /// [`Frame`] converts it.
+    pub fn new(
+        atom_i: Vec<usize>,
+        atom_j: Vec<usize>,
+        atom_k: Vec<usize>,
+        atom_l: Vec<usize>,
+        terms: Vec<Vec<(F, F, F)>>,
+    ) -> Self {
+        let n = atom_i.len();
+        assert_eq!(atom_j.len(), n);
+        assert_eq!(atom_k.len(), n);
+        assert_eq!(atom_l.len(), n);
+        assert_eq!(terms.len(), n);
+        Self {
+            atom_i,
+            atom_j,
+            atom_k,
+            atom_l,
+            terms: terms
+                .into_iter()
+                .map(|row| row.into_iter().map(|(k, n, d)| Term { k, n, d }).collect())
+                .collect(),
+        }
+    }
+}
+
+impl DihedralPeriodic {
     /// The physics, once. Which atoms a term names is the only thing
     /// that differs between the two entry points, so it is the only thing
     /// passed in — a second copy of the loop would be a second place for
