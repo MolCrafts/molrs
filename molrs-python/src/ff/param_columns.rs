@@ -63,7 +63,7 @@ impl PyForceField {
     /// >>> frame = gaff.typify(labelled).to_frame()
     /// >>> gaff.forcefield().materialize_params(frame, prefix="gaff2_")
     /// {'bonds': ['gaff2_k', 'gaff2_r0'], 'angles': [...], ..., 'atoms': ['gaff2_epsilon', 'gaff2_mass', 'gaff2_sigma']}
-    /// >>> frame["bonds"]["gaff2_k"]
+    /// >>> k = frame["bonds"].get("gaff2_k")
     #[pyo3(signature = (frame, *, prefix))]
     fn materialize_params<'py>(
         &self,
