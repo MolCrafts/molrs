@@ -1589,6 +1589,9 @@ The JS namespace stays flat. What changes for callers:
 | `new LinkedCell(cutoff).query(refFrame, otherFrame)` | `new NeighborQuery(refFrame, cutoff).query(otherFrame)` (both columns kept) |
 | `topology.findRings()` → `TopologyRingInfo` (`numRings`, `ringSizes`, `rings`, `isAtomInRing`, `numAtomRings`, `atomRingMask`) | `new Perceive().findRings(frame)` → a new `Frame` whose atoms and bonds carry `is_in_ring` and `n_rings` |
 | `Topology.fromFrame(frame)` read `bonds.i` / `bonds.j`, so a canonical frame came back with no bonds | reads `bonds.atomi` / `atomj` (`molrs::system::Topology::from_frame`); a missing endpoint column or an out-of-range atom throws |
+| `new XYZReader(text)` / `PDBReader` / `SDFReader` / `LAMMPSReader` / `LAMMPSTrajReader` (whole-content readers) | removed: `XYZStream` / `PDBStream` / `SDFStream` / `LAMMPSStream` / `LAMMPSTrajStream` (`allocInputBuffer` → `feedIndexChunk` + `finishIndex` → `parseRangeInInput` per frame) are the one reader of those formats |
+| `new DCDReader(bytes)` / `TRRReader` / `XTCReader` | removed: `DCDStream` / `TRRStream` / `XTCStream` |
+| `new LBFGS(pots)` (an internal O(N²) topology pair list, N ≤ 2000) | `new LBFGS(pots, nl.neighbors())`: the table is required and comes from a `NeighborList` (or `NeighborList.bruteForce`); the force field's `special_bonds` decide whether 1-2 / 1-3 pairs are kept, as `intramolecular_pairs` does |
 
 **The analysis classes drop the `Wasm` prefix**, so every compute class is
 named like `RDF`, `MSD` and `Cluster` already were: `WasmVACF` → `VACF`,
@@ -1619,6 +1622,22 @@ need the `stream` feature (on by default); before, a custom build with `io`
 but without `stream` did not compile. `CarbonTubeBuilder` is compiled only
 with the `builder` feature (on by default).
 
+`covalentRadius` is bound in the wasm `core` module (`core/element.rs`, over
+`molrs::system::Element`), not the crate root; its JS name is unchanged.
+`molrs-wasm`'s `io::reader` holds only the formats with no stream (CIF, Cube,
+CHGCAR, GRO, MOL2, POSCAR, XSF, inpcrd, AC).
+
+C API (`molrs.h`): `molrs_ff_to_json` / `molrs_ff_from_json` read and write
+the core `forcefield` record section as JSON, `{"document": {…}, "tables":
+{<block>: Block}}` — the serde form (`serde` feature, `molrs/src/serialize.rs`)
+of `molrs::store::ForceFieldSection`, i.e. `ForceField::to_section` /
+`from_section`, the section an `*.mrec` record stores. The C-API-only
+document (`name` / `units` / `special_bonds` / `styles[]` with `params` /
+`str_params` / `array_params` / `types`) is gone and refused on read; a force
+field `to_section` refuses is `InvalidArgument` from `molrs_ff_to_json`.
+capi's `F` is `molrs::op::types::F` (the header keeps `typedef double F;`).
+molrs-capi and molrs-cxxapi link molrs with `full,filesystem,rayon,serde`.
+
 C++ (`molrs-cxxapi`):
 
 - **`write_frame_xyz` is removed**: it was `write_frame_xyz_typed` with no
@@ -1626,6 +1645,10 @@ C++ (`molrs-cxxapi`):
 - **The `zarr` cargo feature is removed.** It was on by default and the crate
   did not build without it; the `*.mrec` writers and readers are always
   present.
+- **`src/bridge.rs` is committed** (no longer git-ignored). `build.rs` still
+  generates it and rewrites it only when the text changes; Atomiverse's
+  CMake reads it from the source tree (`corrosion_add_cxxbridge`, and
+  `MolrsContract.cmake`'s feature probes) before any cargo build.
 
 ### Python: kernels live in `molrs.ff.potential`
 
