@@ -709,6 +709,23 @@ and an OPLS-AA dipeptide (`scripts/gromacs_engine_check.sh`).
   `<types>@<analog>_<penalty>` (`c3-o-c-os@c3.o.c.oh_8.5`,
   `c-cc-na@c2.cc.na_2.6`), so one output force field can hold two
   estimates of a name; 0.15 named them by their types alone.
+- **`AtdTypifier` types the bond orders antechamber perceives.** By default
+  (`bond_orders="perceive"`, Rust `AtdBondOrders::Perceive`) the bond orders
+  are judged from the connectivity as `bondtype -j full` judges them, and
+  the graph's own are ignored, so a molecule types as `antechamber` types the
+  mol2 file with the same atom and bond order; 0.15 typed the orders the
+  graph stated (aromatic bonds kekulized by molrs). The atom types of a
+  molecule with two Kekulé structures can change (cyclooctatetraene drawn
+  `C1=CC=CC=CC=C1` is now `cc cc cd cd …`, antechamber's), as can every
+  type that depends on ring classes or the colouring, which now follow
+  antechamber's `ring.c`, `atadjust` and `cpadjust` (anthracene's middle
+  ring is `ca`, was `cc` / `cd`; o-terphenyl's second bridge carbon `cq`,
+  was `cp`), under every table — and with them the AM1-BCC and Gasteiger
+  charges, which type through the same path. `bond_orders="input"` keeps the
+  graph's orders. Every hydrogen must be drawn.
+- **Rust: `AtdRule::alternate` is an `Option<Alternate>`** (the partner name
+  and the `AlternatePass`, `Conjugated` or `Bridge`), was
+  `Option<&'static str>`; `cp` carries `cq` in the `Bridge` pass.
 - **Rust: `ParmchkPenalty` names the columns as parmchk2 reads them**
   (`bl blf cba cbaf ba baf ctor tor ps`): `AngleCentre` / `AngleCentreForce`
   are columns 2 / 3 and `Angle` / `AngleForce` 4 / 5 (0.15 had them the
