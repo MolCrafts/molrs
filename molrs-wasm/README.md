@@ -39,6 +39,7 @@ async `init()` function that must be awaited before calling the API.
 - **`Frame`** — container mapping string keys (`"atoms"`, `"bonds"`) to `Block`s
 - **`Block`** — column store with typed arrays. Float columns are `Float64Array` (F = f64).
 - **`Box`** — simulation box with periodic boundary conditions
+- **`NDArray`** — owned `Float64Array` plus a shape (what `Box.origin()`, `Box.hMatrix()` and `Box.lengths()` return)
 - **`Topology`** — the bond graph (`Topology.fromFrame(frame)` reads
   `bonds.atomi` / `atomj`): angles, dihedrals, impropers, connected components
 

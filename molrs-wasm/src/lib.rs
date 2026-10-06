@@ -16,7 +16,7 @@
 //!   `F = f64` and map to `Float64Array`.
 //! - **[`Box`]** (exported as `Box` in JS) -- simulation box defining
 //!   periodic boundary conditions and coordinate transformations.
-//! - **[`WasmArray`]** -- owned float array with ndarray-compatible shape
+//! - **[`NDArray`]** -- owned float array with ndarray-compatible shape
 //!   metadata for passing multi-dimensional data across the WASM boundary.
 //!
 //! # Modules
@@ -25,7 +25,7 @@
 //!
 //! | Module      | molrs owner | Exports |
 //! |-------------|-------------|---------|
-//! | `core`      | `store`, `system`, `spatial` | Frame, Block, Box, WasmArray, schema, Topology, regions, Mesh, NeighborList / NeighborQuery / Neighbors |
+//! | `core`      | `store`, `system`, `spatial` | Frame, Block, Box, NDArray, schema, Topology, regions, Mesh, NeighborList / NeighborQuery / Neighbors |
 //! | `io`        | `io` | File readers/writers (XYZ, PDB, LAMMPS, `*.mrec` records, …), `parseSMILES` |
 //! | `perceive`  | `perceive` | Chemical perception builder (`Perceive.findRings`, `findHydrogens`, …) |
 //! | `compute`   | `compute` | Analysis: RDF, MSD, Cluster, … and the compute catalog |

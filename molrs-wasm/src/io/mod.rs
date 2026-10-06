@@ -6,7 +6,7 @@
 //! | Module | JS class / function | Formats |
 //! |--------|-------------------|---------|
 //! | [`reader`] | `XYZReader`, `PDBReader`, `CIFReader`, `LAMMPSReader`, `LAMMPSTrajReader`, `SDFReader`, `CubeReader`, `CHGCARReader`, `GROReader`, `MOL2Reader`, `POSCARReader`, `XSFReader`, `AmberInpcrdReader`, `AcReader`, `DCDReader`, `TRRReader`, `XTCReader` | Read XYZ/ExtXYZ, PDB, CIF, LAMMPS data/dump, SDF, Cube, CHGCAR, GRO, MOL2, POSCAR, XSF, AMBER inpcrd, AC, DCD, TRR, XTC |
-//! | [`streaming`] | `WasmLammpsDumpStream`, `WasmXyzStream`, `WasmPdbStream`, `WasmLammpsDataStream`, `WasmSdfStream`, `WasmDcdStream`, `WasmXtcStream`, `WasmTrrStream` | Streaming readers driven by a chunk-fed `FrameIndexBuilder` |
+//! | [`streaming`] | `LAMMPSTrajStream`, `XYZStream`, `PDBStream`, `LAMMPSStream`, `SDFStream`, `DCDStream`, `XTCStream`, `TRRStream` | Streaming readers driven by a chunk-fed `FrameIndexBuilder` |
 //! | [`writer`] | `writeFrame(frame, format)` | Write XYZ, PDB, LAMMPS dump |
 //! | [`log`] | `readLammpsLogThermo`, `isLammpsLog` | LAMMPS log thermo tables |
 //! | `smiles` | `parseSMILES` → `SmilesIR` | SMILES strings (`smiles` feature) |
