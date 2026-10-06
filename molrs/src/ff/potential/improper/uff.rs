@@ -1,8 +1,11 @@
 //! UFF inversion (out-of-plane), RDKit `InversionContrib`.
 //!
 //! Per-instance columns on `impropers`: `K`, `c0`, `c1`, `c2`.
-//! Centre atom is `atomj` (Wilson / RDKit convention: i–j–k with j central,
-//! fourth atom `atoml`).
+//!
+//! No LAMMPS style has this name; its form is LAMMPS `improper_style fourier`
+//! (`K[C0 + C1 cos ω + C2 cos 2ω]`, ω between the I-L axis and the I-J-K plane)
+//! and so is its atom order: the centre is **first** (`atomi`). RDKit lists the
+//! centre second; the UFF typifier writes it first.
 
 use molrs::store::schema::block_names::IMPROPERS;
 use ndarray::{Array2, ArrayView2};
@@ -42,7 +45,8 @@ impl UffInversion {
         let forces = out;
 
         for idx in 0..n_terms {
-            let (i, j, k, l) = atoms(idx);
+            // Stored centre first; the RDKit math below names the centre `j`.
+            let (j, i, k, l) = atoms(idx);
             // cosY from RDKit Utils::calculateCosY
             let r_ji = sub3(coords, i, coords, j);
             let r_jk = sub3(coords, k, coords, j);
@@ -234,8 +238,8 @@ mod tests {
 
     fn inversion(c: [F; 3]) -> UffInversion {
         UffInversion {
-            atom_i: vec![0],
-            atom_j: vec![1],
+            atom_i: vec![1],
+            atom_j: vec![0],
             atom_k: vec![2],
             atom_l: vec![3],
             k: vec![6.0],
@@ -245,7 +249,8 @@ mod tests {
         }
     }
 
-    /// Centre atom `j` at the origin with three planar neighbours.
+    /// The centre (atom 1, stored first) at the origin with three planar
+    /// neighbours.
     fn planar() -> Vec<F> {
         vec![
             1.2, 0.0, 0.0, 0.0, 0.0, 0.0, -0.6, 1.0, 0.0, -0.6, -1.0, 0.0,
