@@ -362,6 +362,22 @@ blocks! {
 /// in the vocabulary.
 pub const MEMBER_ATOM: &str = "atom";
 
+/// The per-pair override columns a `pairs` row may carry: what LAMMPS cannot
+/// express per pair (a GROMACS `[ pairs ]` row with parameters, an OpenMM
+/// exception, an AMBER dihedral's own SCEE / SCNB). `epsilon` / `sigma` (the
+/// pair's LJ parameters), `charge_product` (qᵢqⱼ, e²), `lj_scale` /
+/// `coul_scale` (its weights in place of `special_bonds`). Float, a null cell
+/// (validity mask) taking the force field's value. Not canonical keys —
+/// `epsilon` names other things elsewhere — so they live here, as the one
+/// list the force-field compiler reads and the LAMMPS writers refuse.
+pub const PAIR_OVERRIDE_COLUMNS: [&str; 5] = [
+    "epsilon",
+    "sigma",
+    "charge_product",
+    "lj_scale",
+    "coul_scale",
+];
+
 /// Canonical spec for a column key, or `None` if the key is unconstrained.
 pub fn column(key: &str) -> Option<&'static ColumnSpec> {
     SCHEMA_COLUMNS

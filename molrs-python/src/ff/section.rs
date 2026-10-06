@@ -130,9 +130,8 @@ impl PyForceFieldSection {
     /// ValueError
     ///     Naming the first rule broken (units, a duplicate
     ///     style, a missing table, a duplicate or null type name, the
-    ///     wrong endpoint columns, a parameter dtype, a ``pair`` /
-    ///     ``pair14`` table pricing one unordered pair twice with different
-    ///     parameters, …).
+    ///     wrong endpoint columns, a parameter dtype, a ``pair`` table
+    ///     pricing one unordered pair twice with different parameters, …).
     fn validate(&self) -> PyResult<()> {
         self.inner.validate().map_err(molrs_error_to_pyerr)
     }

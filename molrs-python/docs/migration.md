@@ -119,12 +119,9 @@ an older molrs needs its values converted:
   degrees. The GAFF and OPLS-AA tables (`GaffTypifier`, `OPLSAATypifier`)
   and the GAFF estimator's empirical constants follow; the frcmod writer
   writes `RK = k`, the GROMACS and OpenMM writers convert back.
-- **`dihedral charmm` with `w ≠ 0` does not compile.** LAMMPS prices that
-  dihedral's 1-4 pair inside the dihedral (with `lj/charmm`'s
-  `epsilon14`/`sigma14`), beside `special_bonds` 1-4 weights of 0; molrs had
-  no such path and silently priced the pair at zero. `PotentialCompiler`
-  now refuses the type, naming it; `w = 0` (AMBER's use) compiles. The
-  OpenMM writer refuses a non-zero `w` too.
+- **`dihedral charmm` `w` is priced** (it was read and ignored, pricing a
+  CHARMM field's 1-4 pairs at zero): see [1-4 interactions](#1-4-interactions).
+  The OpenMM writer refuses a non-zero `w`.
 - **`dihedral harmonic` has a kernel** (`k[1 + sign·cos(nφ)]`, LAMMPS's); the
   LAMMPS reader read it but nothing priced it.
 - **`forcefield` sections state `"angle": "degree"`** beside their preset.
@@ -232,6 +229,44 @@ CMAP) — and LAMMPS's `fix cmap` files are read and written.
   own file comes back line for line); `CmapGrid` / `CmapCharmm` are the
   kernel. Python: `molrs.ff.assign_cmaps`, `read_lammps_cmap`,
   `write_lammps_cmap`.
+### 1-4 interactions
+
+LAMMPS's three 1-4 mechanisms are all priced, LAMMPS's way; see the
+conventions guide, "1-4 interactions", for the formulas.
+
+- **New pair styles `lj/charmm` and `coul/charmm`** — the halves of LAMMPS
+  `pair_style lj/charmm/coul/charmm`: per type `epsilon`, `sigma`,
+  `epsilon14`, `sigma14`; style `inner`, `cutoff` (both required), `mixing`
+  (default `arithmetic`); CHARMM's energy switch at both compile doors, the
+  Coulomb force LAMMPS's switched force. The LAMMPS reader reads
+  `pair_style lj/charmm/coul/charmm inner outer [inner2 outer2]` and
+  `pair_coeff` with two or four numbers (two store `epsilon14 = epsilon`,
+  `sigma14 = sigma`); the writer writes them back with four. A data file's
+  `Pair Coeffs # lj/charmm/coul/charmm` is refused (no switching cutoffs);
+  `lj/charmm/coul/long` is refused.
+- **`dihedral charmm` `w` prices its end atoms' 1-4 pair**,
+  `w·[LJ(ε₁₄, σ₁₄) + C qᵢqⱼ/r]` with no cutoff, a pair at the ends of
+  several dihedrals taking the sum. Refused, as in LAMMPS: `w > 0` beside
+  `special_bonds` 1-4 weights other than 0, or without `lj/charmm` (and a
+  Coulomb style); `w` outside [0, 1].
+- **Per-pair overrides on `pairs`.** Float columns `epsilon`, `sigma`,
+  `charge_product`, `lj_scale`, `coul_scale` (null cell: the force field's
+  value; `molrs::store::schema::PAIR_OVERRIDE_COLUMNS`). Explicit values are
+  final and the scales replace the `special_bonds` weight (or `w`).
+  Precedence: override > `w` > `special_bonds`. The LAMMPS data-file writer
+  and the Python LAMMPS force-field writers refuse a frame carrying them.
+- **One exceptions kernel at both doors.** Every override pair and every
+  `w > 0` pair is priced by one more member (`PairExceptions`, an indexed
+  member). `compile` drops the override rows from the `pairs` list the pair
+  styles see; `compile_typed` reads those rows and weights them 0 in every
+  pair member.
+- **Rust: `TypedMember` is `(Member, Option<PairWeights>)`** (was
+  `Option<BondDistanceWeights>`). Build the MD weights with
+  `SpecialWeights::new(&w.special_weights(&topo))` (was
+  `topo.special_weights(&w)`); `PairWeights::by_distance()` is the old table.
+- **`pair14` is no category.** molrec retired it; `category_arity("pair14")`
+  is `None`, `PAIR_CATEGORIES` is gone, and a `pair14` table is kept as
+  unknown content (no arity or restatement check). No reader produced it.
 
 ### Already in 0.15.1
 

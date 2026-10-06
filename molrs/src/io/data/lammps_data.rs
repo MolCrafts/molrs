@@ -1744,6 +1744,24 @@ fn write_lammps_data_frame<W: Write>(
         .and_then(|c| c.as_float())
         .ok_or_else(|| err_mapper("Missing 'z' column"))?;
 
+    // A per-pair 1-4 override has no LAMMPS form: LAMMPS prices a close pair
+    // by special_bonds, lj/charmm's epsilon14/sigma14 and dihedral charmm's
+    // w, never per pair. Writing the file without it would run a different
+    // force field.
+    if let Some(present) = frame.visit_block("pairs", |b| {
+        crate::store::schema::PAIR_OVERRIDE_COLUMNS
+            .iter()
+            .copied()
+            .filter(|k| b.contains_key(k))
+            .collect::<Vec<_>>()
+    }) && !present.is_empty()
+    {
+        return Err(err_mapper(format!(
+            "frame['pairs'] carries the per-pair override columns {present:?}, which a \
+             LAMMPS data file cannot express (LAMMPS has no per-pair 1-4 exception)"
+        )));
+    }
+
     // Bonded sections need a molecular atom style, and every molecular style
     // carries a molecule ID. The writer never invents one: which atoms form a
     // molecule is the caller's call.

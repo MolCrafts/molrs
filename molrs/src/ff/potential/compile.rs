@@ -18,9 +18,11 @@
 use std::borrow::Cow;
 
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
+use crate::ff::potential::pair::exceptions;
 use crate::ff::potential::registry::{self, ParamSource};
-use crate::ff::potential::{Member, Potentials, TypedKernel, TypedMember};
+use crate::ff::potential::{Member, PairWeights, Potentials, TypedKernel, TypedMember};
 use molrs::store::frame::Frame;
+use molrs::store::schema::PAIR_OVERRIDE_COLUMNS;
 use molrs::store::schema::block_names::{ANGLES, ATOMS, BONDS, CMAPS, DIHEDRALS, IMPROPERS, PAIRS};
 
 /// Compiles one [`ForceField`] against typed [`Frame`]s.
@@ -69,20 +71,42 @@ impl<'a> PotentialCompiler<'a> {
     /// [`SpecialBonds::compiled_inclusion`](crate::ff::forcefield::SpecialBonds::compiled_inclusion).
     /// [`compile_typed`](Self::compile_typed) carries a per-pair weight and
     /// takes every force field.
+    ///
+    /// # 1-4 exceptions
+    ///
+    /// The pairs a `dihedral charmm` `w` prices and the `pairs` rows carrying
+    /// per-pair override columns are one more member, the exceptions kernel
+    /// ([`PairExceptions`](crate::ff::potential::pair::PairExceptions)); the
+    /// pair styles see the `pairs` list without the override rows. Both doors
+    /// build it the same way. Precedence per pair: an override cell, else the
+    /// dihedral's `w`, else `special_bonds`.
     pub fn compile(&self, frame: &Frame) -> Result<Potentials, String> {
         // The `pairs` block need not have come from `intramolecular_pairs` — a
         // GROMACS `[ pairs ]` section is read straight off a file — so the
         // weights are checked here too, at the door that decides the physics,
         // and not only where the list happens to be built.
         self.ff.special_bonds().compiled_inclusion()?;
+        // The 1-4 exceptions (dihedral charmm `w`, per-pair overrides) are one
+        // kernel; the regular pair kernels see the `pairs` list without the
+        // override rows, which is their weight 0.
+        let exceptions = exceptions::plan(self.ff, frame)?;
+        let regular = regular_pairs(frame, &exceptions.override_rows)?;
         let mut pots = Potentials::new();
         for style in self.ff.styles() {
+            let frame = if style.category() == "pair" {
+                &*regular
+            } else {
+                frame
+            };
             // `member` skips a style whose topology block is absent or empty; a
             // *present* block with an unknown type label is a real error and
             // propagates from the kernel constructor.
             if let Some(pot) = self.member(style, frame, self.ff.special_bonds())? {
                 pots.push(pot);
             }
+        }
+        if let Some(kernel) = exceptions.kernel {
+            pots.push(Member::indexed(kernel));
         }
         // Record the atom count so callers (e.g. the geometry optimizer's batch
         // path) can validate coordinate shapes against this topology.
@@ -98,8 +122,10 @@ impl<'a> PotentialCompiler<'a> {
     /// block — a fixed list, finite by construction and with no spatial
     /// cutoff, which is right for a free-boundary molecule and wrong for a
     /// periodic system. This one resolves them against the **atoms**, so the
-    /// kernels can answer for whatever pairs a neighbour search turns up, and
-    /// reads no `pairs` block at all.
+    /// kernels can answer for whatever pairs a neighbour search turns up. Of
+    /// the `pairs` block it reads only the rows carrying per-pair overrides:
+    /// those pairs go to the exceptions kernel (an indexed member, weight
+    /// `None`), and every pair member's [`PairWeights`] weights them 0.
     ///
     /// The weights come back per member rather than once, because a force field
     /// may scale close van-der-Waals and electrostatic neighbours differently —
@@ -115,6 +141,7 @@ impl<'a> PotentialCompiler<'a> {
     /// without the weights a bonded pair is counted twice: once by the bond
     /// term and once at full non-bonded strength, at bond length.
     pub fn compile_typed(&self, frame: &Frame) -> Result<Vec<TypedMember>, String> {
+        let exceptions = exceptions::plan(self.ff, frame)?;
         let mut out = Vec::new();
         for style in self.ff.styles() {
             // A bonded style contributes nothing when the molecule carries no
@@ -122,12 +149,18 @@ impl<'a> PotentialCompiler<'a> {
             // skipped: which pairs exist is the neighbour search's answer, not
             // the frame's.
             if let Some((pot, special)) = self.typed_member(style, frame)? {
-                let weights = special.map(|c| match c {
-                    registry::SpecialClass::Vdw => self.ff.special_bonds().lj_weights(),
-                    registry::SpecialClass::Coulomb => self.ff.special_bonds().coul_weights(),
+                let weights = special.map(|c| {
+                    let by_distance = match c {
+                        registry::SpecialClass::Vdw => self.ff.special_bonds().lj_weights(),
+                        registry::SpecialClass::Coulomb => self.ff.special_bonds().coul_weights(),
+                    };
+                    PairWeights::new(by_distance, exceptions.replaced.clone())
                 });
                 out.push((pot, weights));
             }
+        }
+        if let Some(kernel) = exceptions.kernel {
+            out.push((Member::indexed(kernel), None));
         }
         Ok(out)
     }
@@ -356,6 +389,29 @@ impl<'a> PotentialCompiler<'a> {
         );
         Ok(Cow::Owned(cut))
     }
+}
+
+/// `frame` as the regular pair kernels see it: without the `pairs` rows a
+/// per-pair override hands to the exceptions kernel, and without the override
+/// columns.
+fn regular_pairs<'f>(frame: &'f Frame, override_rows: &[usize]) -> Result<Cow<'f, Frame>, String> {
+    if override_rows.is_empty() {
+        return Ok(Cow::Borrowed(frame));
+    }
+    let Some(block) = frame.get(PAIRS) else {
+        return Ok(Cow::Borrowed(frame));
+    };
+    let n = block.nrows().unwrap_or(0);
+    let keep: Vec<usize> = (0..n)
+        .filter(|r| override_rows.binary_search(r).is_err())
+        .collect();
+    let mut kept = block.select_rows(&keep).map_err(|e| e.to_string())?;
+    for key in PAIR_OVERRIDE_COLUMNS {
+        kept.remove(key);
+    }
+    let mut out = frame.clone();
+    out.insert(PAIRS, kept);
+    Ok(Cow::Owned(out))
 }
 
 #[cfg(test)]

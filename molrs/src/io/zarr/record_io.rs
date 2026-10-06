@@ -2157,6 +2157,46 @@ mod tests {
         }
     }
 
+    /// molrec retired the `pair14` category (1-4 parameters are `lj/charmm`'s
+    /// `epsilon14` / `sigma14` and the frame's per-pair override columns): an
+    /// old record's `pair14` table is unknown content, kept as written — a
+    /// restatement with other parameters included, which a `pair` table may
+    /// not hold.
+    #[test]
+    fn a_pair14_table_round_trips_as_an_unknown_category() {
+        let mut ff = awkward_forcefield();
+        ff.document["styles"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"category": "pair14", "style": "lj/cut"}));
+        let mut pair14 = Block::new();
+        for (column, values) in [
+            ("name", ["CT-HC", "HC-CT"]),
+            ("itom", ["CT", "HC"]),
+            ("jtom", ["HC", "CT"]),
+        ] {
+            pair14
+                .insert_column(column, string_column(&values))
+                .unwrap();
+        }
+        pair14
+            .insert_column("epsilon", float_column(&[0.1, 0.2]))
+            .unwrap();
+        ff.tables.insert("pair14.lj%2Fcut".to_owned(), pair14);
+        ff.validate().unwrap();
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("ff.mrec");
+        write_forcefield_file(&path, &ff, None).unwrap();
+        let back = read_forcefield_file(&path).unwrap().unwrap();
+        assert_eq!(back.document, ff.document);
+        same_block(
+            &ff.tables["pair14.lj%2Fcut"],
+            &back.tables["pair14.lj%2Fcut"],
+            "pair14",
+        );
+    }
+
     #[test]
     fn a_forcefield_section_round_trips_through_a_record() {
         let ff = awkward_forcefield();
