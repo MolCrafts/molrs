@@ -29,8 +29,8 @@ fn array3(
         .map_err(|e| JsValue::from_str(&format!("{name}: {e}")))
 }
 
-#[wasm_bindgen(js_name = WasmVanHove)]
-pub struct WasmVanHove {
+#[wasm_bindgen(js_name = VanHove)]
+pub struct VanHove {
     frames: Vec<molrs::store::Frame>,
     n_r_bins: usize,
     r_max: F,
@@ -38,8 +38,8 @@ pub struct WasmVanHove {
     stride: usize,
 }
 
-#[wasm_bindgen(js_class = WasmVanHove)]
-impl WasmVanHove {
+#[wasm_bindgen(js_class = VanHove)]
+impl VanHove {
     #[wasm_bindgen(constructor)]
     pub fn new(n_r_bins: usize, r_max: F, lags: Vec<usize>, stride: Option<usize>) -> Self {
         Self {
@@ -96,8 +96,8 @@ impl WasmVanHove {
     }
 }
 
-#[wasm_bindgen(js_name = WasmPairPersistence)]
-pub struct WasmPairPersistence {
+#[wasm_bindgen(js_name = PairPersistence)]
+pub struct PairPersistence {
     r0: F,
     r1: F,
     method: String,
@@ -106,8 +106,8 @@ pub struct WasmPairPersistence {
     exclude_self: bool,
 }
 
-#[wasm_bindgen(js_class = WasmPairPersistence)]
-impl WasmPairPersistence {
+#[wasm_bindgen(js_class = PairPersistence)]
+impl PairPersistence {
     #[wasm_bindgen(constructor)]
     pub fn new(r0: F, r1: F, method: String, dt: F, max_lag: usize, exclude_self: bool) -> Self {
         Self {

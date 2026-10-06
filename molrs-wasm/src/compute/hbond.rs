@@ -8,8 +8,8 @@ use molrs::op::types::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-#[wasm_bindgen(js_name = WasmHBonds)]
-pub struct WasmHBonds {
+#[wasm_bindgen(js_name = HBonds)]
+pub struct HBonds {
     donors: Vec<(u32, u32)>,
     acceptors: Vec<u32>,
     dist_cutoff: F,
@@ -18,8 +18,8 @@ pub struct WasmHBonds {
     frames: Vec<molrs::store::Frame>,
 }
 
-#[wasm_bindgen(js_class = WasmHBonds)]
-impl WasmHBonds {
+#[wasm_bindgen(js_class = HBonds)]
+impl HBonds {
     #[wasm_bindgen(constructor)]
     pub fn new(
         donors: &[u32],
@@ -107,14 +107,14 @@ impl WasmHBonds {
     }
 }
 
-#[wasm_bindgen(js_name = WasmHBondLifetime)]
-pub struct WasmHBondLifetime {
+#[wasm_bindgen(js_name = HBondLifetime)]
+pub struct HBondLifetime {
     dt: F,
     max_lag: usize,
 }
 
-#[wasm_bindgen(js_class = WasmHBondLifetime)]
-impl WasmHBondLifetime {
+#[wasm_bindgen(js_class = HBondLifetime)]
+impl HBondLifetime {
     #[wasm_bindgen(constructor)]
     pub fn new(dt: F, max_lag: usize) -> Self {
         Self { dt, max_lag }
@@ -156,17 +156,17 @@ impl WasmHBondLifetime {
     }
 }
 
-#[wasm_bindgen(js_name = WasmHBondNetwork)]
-pub struct WasmHBondNetwork;
+#[wasm_bindgen(js_name = HBondNetwork)]
+pub struct HBondNetwork;
 
-impl Default for WasmHBondNetwork {
+impl Default for HBondNetwork {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[wasm_bindgen(js_class = WasmHBondNetwork)]
-impl WasmHBondNetwork {
+#[wasm_bindgen(js_class = HBondNetwork)]
+impl HBondNetwork {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         Self

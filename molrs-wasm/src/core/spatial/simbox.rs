@@ -24,7 +24,7 @@
 //! All lengths are in angstrom (A).
 
 use crate::core::block::Block;
-use crate::core::types::{JsFloatArray, WasmArray};
+use crate::core::types::{JsFloatArray, NDArray};
 use molrs::op::types::F;
 use molrs::spatial::SimBox;
 use wasm_bindgen::prelude::*;
@@ -223,25 +223,25 @@ impl Box {
         self.inner.volume()
     }
 
-    /// Return the box origin as a `WasmArray` with shape `[3]`.
+    /// Return the box origin as a `NDArray` with shape `[3]`.
     ///
     /// The origin is the lower-left corner of the box in angstrom (A).
     ///
     /// # Returns
     ///
-    /// `WasmArray` containing `[ox, oy, oz]` in angstrom.
+    /// `NDArray` containing `[ox, oy, oz]` in angstrom.
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
     /// const o = box.origin().toCopy(); // Float64Array [0, 0, 0]
     /// ```
-    pub fn origin(&self) -> WasmArray {
+    pub fn origin(&self) -> NDArray {
         let o = self.inner.origin_view();
-        WasmArray::from_vec(o.to_vec(), std::boxed::Box::new([3]))
+        NDArray::from_vec(o.to_vec(), std::boxed::Box::new([3]))
     }
 
-    /// Return the box's 3×3 cell matrix `h` as a `WasmArray` with shape
+    /// Return the box's 3×3 cell matrix `h` as a `NDArray` with shape
     /// `[9]`, **column-major** (column j of `h` is the j-th lattice
     /// vector). Suitable for direct consumption by `marchingCubes` and
     /// other code that expects the cell as a flat 3×3 column-major
@@ -249,7 +249,7 @@ impl Box {
     ///
     /// # Returns
     ///
-    /// `WasmArray` of length 9: `[h00, h10, h20, h01, h11, h21, h02, h12, h22]`,
+    /// `NDArray` of length 9: `[h00, h10, h20, h01, h11, h21, h02, h12, h22]`,
     /// in angstrom (A).
     ///
     /// # Example (JavaScript)
@@ -259,7 +259,7 @@ impl Box {
     /// // col0 = a-vector = cell[0..3]
     /// ```
     #[wasm_bindgen(js_name = hMatrix)]
-    pub fn h_matrix(&self) -> WasmArray {
+    pub fn h_matrix(&self) -> NDArray {
         let h = self.inner.h_view();
         // h_view is a 3×3 ndarray; emit it column-major to match the
         // marching-cubes consumer's expectation. Iterate (col, row) so
@@ -270,17 +270,17 @@ impl Box {
                 flat.push(h[[i, j]]);
             }
         }
-        WasmArray::from_vec(flat, std::boxed::Box::new([9]))
+        NDArray::from_vec(flat, std::boxed::Box::new([9]))
     }
 
-    /// Return the box edge lengths as a `WasmArray` with shape `[3]`.
+    /// Return the box edge lengths as a `NDArray` with shape `[3]`.
     ///
     /// For orthorhombic boxes these are `[lx, ly, lz]`. For triclinic
     /// boxes these are the lengths of the three cell vectors.
     ///
     /// # Returns
     ///
-    /// `WasmArray` containing `[lx, ly, lz]` in angstrom (A).
+    /// `NDArray` containing `[lx, ly, lz]` in angstrom (A).
     ///
     /// # Example (JavaScript)
     ///
@@ -310,12 +310,12 @@ impl Box {
         arr
     }
 
-    pub fn lengths(&self) -> WasmArray {
+    pub fn lengths(&self) -> NDArray {
         let l = self.inner.lengths();
-        WasmArray::from_vec(l.to_vec(), std::boxed::Box::new([3]))
+        NDArray::from_vec(l.to_vec(), std::boxed::Box::new([3]))
     }
 
-    /// Return the box tilt factors as a `WasmArray` with shape `[3]`.
+    /// Return the box tilt factors as a `NDArray` with shape `[3]`.
     ///
     /// Tilt factors `[xy, xz, yz]` define the off-diagonal elements
     /// of the cell matrix (LAMMPS convention). For orthorhombic boxes
@@ -323,7 +323,7 @@ impl Box {
     ///
     /// # Returns
     ///
-    /// `WasmArray` containing `[xy, xz, yz]` (dimensionless ratios
+    /// `NDArray` containing `[xy, xz, yz]` (dimensionless ratios
     /// multiplied by the corresponding box length, so effectively in A).
     ///
     /// # Example (JavaScript)
@@ -331,9 +331,9 @@ impl Box {
     /// ```js
     /// const t = box.tilts().toCopy(); // Float64Array [0, 0, 0]
     /// ```
-    pub fn tilts(&self) -> WasmArray {
+    pub fn tilts(&self) -> NDArray {
         let t = self.inner.tilts();
-        WasmArray::from_vec(t.to_vec(), std::boxed::Box::new([3]))
+        NDArray::from_vec(t.to_vec(), std::boxed::Box::new([3]))
     }
 
     /// Convert Cartesian coordinates to fractional coordinates.
@@ -343,12 +343,12 @@ impl Box {
     ///
     /// # Arguments
     ///
-    /// * `coords` - `WasmArray` with shape `[N, 3]` containing
+    /// * `coords` - `NDArray` with shape `[N, 3]` containing
     ///   Cartesian coordinates in angstrom (A)
     ///
     /// # Returns
     ///
-    /// `WasmArray` with shape `[N, 3]` containing fractional coordinates
+    /// `NDArray` with shape `[N, 3]` containing fractional coordinates
     /// (dimensionless).
     ///
     /// # Errors
@@ -358,11 +358,11 @@ impl Box {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const cart = WasmArray.from(coords, [1, 3]);
+    /// const cart = NDArray.from(coords, [1, 3]);
     /// const frac = box.toFrac(cart);
     /// console.log(frac.toCopy()); // [0.5, 0.5, 0.5] for a 10x10x10 box
     /// ```
-    pub fn to_frac(&self, coords: &WasmArray) -> Result<WasmArray, JsValue> {
+    pub fn to_frac(&self, coords: &NDArray) -> Result<NDArray, JsValue> {
         let shape = coords.shape();
         if shape.len() != 2 || shape[1] != 3 {
             return Err(JsValue::from_str("coords must have shape [N, 3]"));
@@ -373,19 +373,19 @@ impl Box {
             .map_err(|e| JsValue::from_str(&e))?;
 
         let result = self.inner.to_frac(coords_arr);
-        Ok(WasmArray::from_array2(result))
+        Ok(NDArray::from_array2(result))
     }
 
     /// Convert fractional coordinates to Cartesian coordinates.
     ///
     /// # Arguments
     ///
-    /// * `coords` - `WasmArray` with shape `[N, 3]` containing
+    /// * `coords` - `NDArray` with shape `[N, 3]` containing
     ///   fractional coordinates (dimensionless)
     ///
     /// # Returns
     ///
-    /// `WasmArray` with shape `[N, 3]` containing Cartesian coordinates
+    /// `NDArray` with shape `[N, 3]` containing Cartesian coordinates
     /// in angstrom (A).
     ///
     /// # Errors
@@ -395,11 +395,11 @@ impl Box {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const frac = WasmArray.from(fracCoords, [1, 3]);
+    /// const frac = NDArray.from(fracCoords, [1, 3]);
     /// const cart = box.toCart(frac);
     /// console.log(cart.toCopy()); // [5, 5, 5] for a 10x10x10 box
     /// ```
-    pub fn to_cart(&self, coords: &WasmArray) -> Result<WasmArray, JsValue> {
+    pub fn to_cart(&self, coords: &NDArray) -> Result<NDArray, JsValue> {
         let shape = coords.shape();
         if shape.len() != 2 || shape[1] != 3 {
             return Err(JsValue::from_str("coords must have shape [N, 3]"));
@@ -410,7 +410,7 @@ impl Box {
             .map_err(|e| JsValue::from_str(&e))?;
 
         let result = self.inner.to_cart(coords_arr);
-        Ok(WasmArray::from_array2(result))
+        Ok(NDArray::from_array2(result))
     }
 
     /// Wrap Cartesian coordinates into the primary image of the box.
@@ -421,12 +421,12 @@ impl Box {
     ///
     /// # Arguments
     ///
-    /// * `coords` - `WasmArray` with shape `[N, 3]` containing
+    /// * `coords` - `NDArray` with shape `[N, 3]` containing
     ///   Cartesian coordinates in angstrom (A)
     ///
     /// # Returns
     ///
-    /// `WasmArray` with shape `[N, 3]` containing wrapped coordinates
+    /// `NDArray` with shape `[N, 3]` containing wrapped coordinates
     /// in angstrom (A).
     ///
     /// # Errors
@@ -436,10 +436,10 @@ impl Box {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const pos = WasmArray.from(positions, [1, 3]);
+    /// const pos = NDArray.from(positions, [1, 3]);
     /// const wrapped = box.wrap(pos); // wraps into [0, lx) x [0, ly) x [0, lz)
     /// ```
-    pub fn wrap(&self, coords: &WasmArray) -> Result<WasmArray, JsValue> {
+    pub fn wrap(&self, coords: &NDArray) -> Result<NDArray, JsValue> {
         let shape = coords.shape();
         if shape.len() != 2 || shape[1] != 3 {
             return Err(JsValue::from_str("coords must have shape [N, 3]"));
@@ -450,17 +450,17 @@ impl Box {
             .map_err(|e| JsValue::from_str(&e))?;
 
         let result = self.inner.wrap(coords_arr);
-        Ok(WasmArray::from_array2(result))
+        Ok(NDArray::from_array2(result))
     }
 
     /// Wrap coordinates and write the result directly into a [`Block`] column.
     ///
     /// This is an allocation-efficient alternative to [`wrap`](Box::wrap)
-    /// that avoids creating an intermediate `WasmArray`.
+    /// that avoids creating an intermediate `NDArray`.
     ///
     /// # Arguments
     ///
-    /// * `coords` - `WasmArray` with shape `[N, 3]` containing
+    /// * `coords` - `NDArray` with shape `[N, 3]` containing
     ///   Cartesian coordinates in angstrom (A)
     /// * `out_block` - Target [`Block`] to write the result into
     /// * `out_key` - Column name for the result (float, shape `[N, 3]`)
@@ -478,7 +478,7 @@ impl Box {
     #[wasm_bindgen(js_name = wrapToBlock)]
     pub fn wrap_to_block(
         &self,
-        coords: &WasmArray,
+        coords: &NDArray,
         out_block: &mut Block,
         out_key: &str,
     ) -> Result<(), JsValue> {
@@ -503,14 +503,14 @@ impl Box {
     ///
     /// # Arguments
     ///
-    /// * `a` - `WasmArray` with shape `[N, 3]` (reference positions in A)
-    /// * `b` - `WasmArray` with shape `[N, 3]` (target positions in A)
+    /// * `a` - `NDArray` with shape `[N, 3]` (reference positions in A)
+    /// * `b` - `NDArray` with shape `[N, 3]` (target positions in A)
     /// * `minimum_image` - If `true`, apply minimum image convention
     ///   for PBC-enabled axes
     ///
     /// # Returns
     ///
-    /// `WasmArray` with shape `[N, 3]` containing displacement vectors
+    /// `NDArray` with shape `[N, 3]` containing displacement vectors
     /// `(b - a)` in angstrom (A).
     ///
     /// # Errors
@@ -521,16 +521,11 @@ impl Box {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const a = WasmArray.from(aCoords, [1, 3]);
-    /// const b = WasmArray.from(bCoords, [1, 3]);
+    /// const a = NDArray.from(aCoords, [1, 3]);
+    /// const b = NDArray.from(bCoords, [1, 3]);
     /// const d = box.delta(a, b, true); // minimum-image displacement
     /// ```
-    pub fn delta(
-        &self,
-        a: &WasmArray,
-        b: &WasmArray,
-        minimum_image: bool,
-    ) -> Result<WasmArray, JsValue> {
+    pub fn delta(&self, a: &NDArray, b: &NDArray, minimum_image: bool) -> Result<NDArray, JsValue> {
         let shape_a = a.shape();
         let shape_b = b.shape();
         if shape_a.len() != 2 || shape_a[1] != 3 {
@@ -550,7 +545,7 @@ impl Box {
         let b_arr = b.as_array2(n_atoms, 3).map_err(|e| JsValue::from_str(&e))?;
 
         let result = self.inner.delta(a_arr, b_arr, minimum_image);
-        Ok(WasmArray::from_array2(result))
+        Ok(NDArray::from_array2(result))
     }
 
     /// Calculate displacement vectors and write the result directly into
@@ -560,8 +555,8 @@ impl Box {
     ///
     /// # Arguments
     ///
-    /// * `a` - `WasmArray` with shape `[N, 3]` (reference positions in A)
-    /// * `b` - `WasmArray` with shape `[N, 3]` (target positions in A)
+    /// * `a` - `NDArray` with shape `[N, 3]` (reference positions in A)
+    /// * `b` - `NDArray` with shape `[N, 3]` (target positions in A)
     /// * `minimum_image` - If `true`, apply minimum image convention
     /// * `out_block` - Target [`Block`] to write the result into
     /// * `out_key` - Column name for the result (float, shape `[N, 3]`)
@@ -578,8 +573,8 @@ impl Box {
     #[wasm_bindgen(js_name = deltaToBlock)]
     pub fn delta_to_block(
         &self,
-        a: &WasmArray,
-        b: &WasmArray,
+        a: &NDArray,
+        b: &NDArray,
         minimum_image: bool,
         out_block: &mut Block,
         out_key: &str,
@@ -609,7 +604,7 @@ impl Box {
     ///
     /// # Arguments
     ///
-    /// * `coords` - `WasmArray` with shape `[N, 3]` (Cartesian, A)
+    /// * `coords` - `NDArray` with shape `[N, 3]` (Cartesian, A)
     /// * `out_block` - Target [`Block`]
     /// * `out_key` - Column name for the result (float, shape `[N, 3]`)
     ///
@@ -625,7 +620,7 @@ impl Box {
     #[wasm_bindgen(js_name = toFracToBlock)]
     pub fn to_frac_to_block(
         &self,
-        coords: &WasmArray,
+        coords: &NDArray,
         out_block: &mut Block,
         out_key: &str,
     ) -> Result<(), JsValue> {
@@ -646,7 +641,7 @@ impl Box {
     ///
     /// # Arguments
     ///
-    /// * `coords` - `WasmArray` with shape `[N, 3]` (fractional, dimensionless)
+    /// * `coords` - `NDArray` with shape `[N, 3]` (fractional, dimensionless)
     /// * `out_block` - Target [`Block`]
     /// * `out_key` - Column name for the result (float, shape `[N, 3]`)
     ///
@@ -662,7 +657,7 @@ impl Box {
     #[wasm_bindgen(js_name = toCartToBlock)]
     pub fn to_cart_to_block(
         &self,
-        coords: &WasmArray,
+        coords: &NDArray,
         out_block: &mut Block,
         out_key: &str,
     ) -> Result<(), JsValue> {
@@ -682,7 +677,7 @@ impl Box {
     ///
     /// # Returns
     ///
-    /// `WasmArray` with shape `[8, 3]` containing the corner
+    /// `NDArray` with shape `[8, 3]` containing the corner
     /// coordinates in angstrom (A). The flat array has 24 elements.
     ///
     /// # Example (JavaScript)
@@ -691,9 +686,9 @@ impl Box {
     /// const corners = box.getCorners();
     /// console.log(corners.len()); // 24 (8 corners x 3 coords)
     /// ```
-    pub fn get_corners(&self) -> WasmArray {
+    pub fn get_corners(&self) -> NDArray {
         let corners = self.inner.get_corners();
-        WasmArray::from_array2(corners)
+        NDArray::from_array2(corners)
     }
 }
 
@@ -701,7 +696,7 @@ impl Box {
 mod tests {
     use super::Box as WasmBox;
     use crate::core::types::JsFloatArray;
-    use crate::{Frame, WasmArray};
+    use crate::{Frame, NDArray};
     use molrs::op::types::F;
     #[allow(unused_imports)]
     use wasm_bindgen::JsCast;
@@ -728,7 +723,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn box_coordinate_ops() {
-        let mut view = WasmArray::new(Box::new([2_usize, 3_usize]));
+        let mut view = NDArray::new(Box::new([2_usize, 3_usize]));
         let view_data = float_array(&[0.0, 0.0, 0.0, 2.0, 3.0, 4.0]);
         view.write_from(&view_data).expect("write_from failed");
 
@@ -744,7 +739,7 @@ mod tests {
         let cart_js = cart.to_copy();
         assert_eq_array(&cart_js, &[0.0, 0.0, 0.0, 2.0, 3.0, 4.0]);
 
-        let mut wrap_view = WasmArray::new(Box::new([1_usize, 3_usize]));
+        let mut wrap_view = NDArray::new(Box::new([1_usize, 3_usize]));
         wrap_view
             .write_from(&float_array(&[2.5, 3.5, 4.5]))
             .expect("write wrap_view");
@@ -769,8 +764,8 @@ mod tests {
         let ortho_lengths_out = ortho.lengths().to_copy();
         assert_eq_array(&ortho_lengths_out, &[3.0, 4.0, 5.0]);
 
-        let mut a = WasmArray::new(Box::new([1_usize, 3_usize]));
-        let mut b = WasmArray::new(Box::new([1_usize, 3_usize]));
+        let mut a = NDArray::new(Box::new([1_usize, 3_usize]));
+        let mut b = NDArray::new(Box::new([1_usize, 3_usize]));
         a.write_from(&float_array(&[1.0, 1.0, 1.0]))
             .expect("write a");
         b.write_from(&float_array(&[9.0, 9.0, 9.0]))

@@ -18,13 +18,13 @@ fn vectors3(data: &[F], name: &str) -> Result<Vec<[F; 3]>, JsValue> {
     Ok(data.as_chunks::<3>().0.to_vec())
 }
 
-#[wasm_bindgen(js_name = WasmSteinhardt)]
-pub struct WasmSteinhardt {
+#[wasm_bindgen(js_name = Steinhardt)]
+pub struct Steinhardt {
     inner: molrs::compute::Steinhardt,
 }
 
-#[wasm_bindgen(js_class = WasmSteinhardt)]
-impl WasmSteinhardt {
+#[wasm_bindgen(js_class = Steinhardt)]
+impl Steinhardt {
     #[wasm_bindgen(constructor)]
     pub fn new(
         l_values: &[u32],
@@ -74,13 +74,13 @@ impl WasmSteinhardt {
     }
 }
 
-#[wasm_bindgen(js_name = WasmHexatic)]
-pub struct WasmHexatic {
+#[wasm_bindgen(js_name = Hexatic)]
+pub struct Hexatic {
     inner: molrs::compute::Hexatic,
 }
 
-#[wasm_bindgen(js_class = WasmHexatic)]
-impl WasmHexatic {
+#[wasm_bindgen(js_class = Hexatic)]
+impl Hexatic {
     #[wasm_bindgen(constructor)]
     pub fn new(k: u32) -> Result<Self, JsValue> {
         Ok(Self {
@@ -113,17 +113,17 @@ impl WasmHexatic {
     }
 }
 
-#[wasm_bindgen(js_name = WasmNematic)]
-pub struct WasmNematic;
+#[wasm_bindgen(js_name = Nematic)]
+pub struct Nematic;
 
-impl Default for WasmNematic {
+impl Default for Nematic {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[wasm_bindgen(js_class = WasmNematic)]
-impl WasmNematic {
+#[wasm_bindgen(js_class = Nematic)]
+impl Nematic {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         Self
@@ -156,8 +156,8 @@ impl WasmNematic {
     }
 }
 
-#[wasm_bindgen(js_name = WasmCubatic)]
-pub struct WasmCubatic {
+#[wasm_bindgen(js_name = Cubatic)]
+pub struct Cubatic {
     seed: u64,
     initial_temp: F,
     cooling_rate: F,
@@ -165,8 +165,8 @@ pub struct WasmCubatic {
     n_chains: usize,
 }
 
-#[wasm_bindgen(js_class = WasmCubatic)]
-impl WasmCubatic {
+#[wasm_bindgen(js_class = Cubatic)]
+impl Cubatic {
     #[wasm_bindgen(constructor)]
     pub fn new(
         seed: Option<f64>,
@@ -212,13 +212,13 @@ impl WasmCubatic {
     }
 }
 
-#[wasm_bindgen(js_name = WasmSolidLiquid)]
-pub struct WasmSolidLiquid {
+#[wasm_bindgen(js_name = SolidLiquid)]
+pub struct SolidLiquid {
     inner: molrs::compute::SolidLiquid,
 }
 
-#[wasm_bindgen(js_class = WasmSolidLiquid)]
-impl WasmSolidLiquid {
+#[wasm_bindgen(js_class = SolidLiquid)]
+impl SolidLiquid {
     #[wasm_bindgen(constructor)]
     pub fn new(
         l: u32,
@@ -265,13 +265,13 @@ impl WasmSolidLiquid {
     }
 }
 
-#[wasm_bindgen(js_name = WasmRotationalAutocorrelation)]
-pub struct WasmRotationalAutocorrelation {
+#[wasm_bindgen(js_name = RotationalAutocorrelation)]
+pub struct RotationalAutocorrelation {
     l: u32,
 }
 
-#[wasm_bindgen(js_class = WasmRotationalAutocorrelation)]
-impl WasmRotationalAutocorrelation {
+#[wasm_bindgen(js_class = RotationalAutocorrelation)]
+impl RotationalAutocorrelation {
     #[wasm_bindgen(constructor)]
     pub fn new(l: u32) -> Self {
         Self { l }

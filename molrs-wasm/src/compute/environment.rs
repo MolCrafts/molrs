@@ -10,13 +10,13 @@ use molrs::op::types::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-#[wasm_bindgen(js_name = WasmBondOrder)]
-pub struct WasmBondOrder {
+#[wasm_bindgen(js_name = BondOrder)]
+pub struct BondOrder {
     inner: molrs::compute::BondOrder,
 }
 
-#[wasm_bindgen(js_class = WasmBondOrder)]
-impl WasmBondOrder {
+#[wasm_bindgen(js_class = BondOrder)]
+impl BondOrder {
     #[wasm_bindgen(constructor)]
     pub fn new(n_theta: usize, n_phi: usize) -> Result<Self, JsValue> {
         Ok(Self {
@@ -59,13 +59,13 @@ impl WasmBondOrder {
     }
 }
 
-#[wasm_bindgen(js_name = WasmLocalDescriptors)]
-pub struct WasmLocalDescriptors {
+#[wasm_bindgen(js_name = LocalDescriptors)]
+pub struct LocalDescriptors {
     inner: molrs::compute::LocalDescriptors,
 }
 
-#[wasm_bindgen(js_class = WasmLocalDescriptors)]
-impl WasmLocalDescriptors {
+#[wasm_bindgen(js_class = LocalDescriptors)]
+impl LocalDescriptors {
     #[wasm_bindgen(constructor)]
     pub fn new(l_max: u32) -> Self {
         Self {
@@ -99,13 +99,13 @@ impl WasmLocalDescriptors {
     }
 }
 
-#[wasm_bindgen(js_name = WasmAngularSeparation)]
-pub struct WasmAngularSeparation {
+#[wasm_bindgen(js_name = AngularSeparation)]
+pub struct AngularSeparation {
     equivalent_orientations: bool,
 }
 
-#[wasm_bindgen(js_class = WasmAngularSeparation)]
-impl WasmAngularSeparation {
+#[wasm_bindgen(js_class = AngularSeparation)]
+impl AngularSeparation {
     #[wasm_bindgen(constructor)]
     pub fn new(equivalent_orientations: Option<bool>) -> Self {
         Self {
@@ -169,13 +169,13 @@ impl WasmAngularSeparation {
     }
 }
 
-#[wasm_bindgen(js_name = WasmMatchEnv)]
-pub struct WasmMatchEnv {
+#[wasm_bindgen(js_name = MatchEnv)]
+pub struct MatchEnv {
     inner: molrs::compute::MatchEnv,
 }
 
-#[wasm_bindgen(js_class = WasmMatchEnv)]
-impl WasmMatchEnv {
+#[wasm_bindgen(js_class = MatchEnv)]
+impl MatchEnv {
     #[wasm_bindgen(constructor)]
     pub fn new(
         rmsd_threshold: F,

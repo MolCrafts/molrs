@@ -1,6 +1,6 @@
 //! Owned float multi-dimensional array for WASM-JS interop.
 //!
-//! [`WasmArray`] bridges the gap between Rust's ndarray types and
+//! [`NDArray`] bridges the gap between Rust's ndarray types and
 //! JavaScript typed arrays by storing both the flat data and shape
 //! metadata. It is used for bulk coordinate data (e.g., Nx3 positions)
 //! that is too large or structured for individual typed-array columns.
@@ -27,24 +27,24 @@ pub(crate) const FLOAT_DTYPE_NAME: &str = "f64";
 ///
 /// ```js
 /// // Create a 2x3 zero array
-/// const arr = new WasmArray([2, 3]);
+/// const arr = new NDArray([2, 3]);
 /// arr.writeFrom(floatArray);
 ///
 /// // Or from existing data
-/// const arr2 = WasmArray.from(floatArray, [1, 3]);
+/// const arr2 = NDArray.from(floatArray, [1, 3]);
 ///
 /// // Get data back
 /// const copy = arr.toCopy();       // safe owned copy
 /// const view = arr.toTypedArray(); // zero-copy (invalidated on alloc)
 /// ```
 #[wasm_bindgen]
-pub struct WasmArray {
+pub struct NDArray {
     data: Vec<F>,
     shape: Box<[usize]>,
 }
 
 #[wasm_bindgen]
-impl WasmArray {
+impl NDArray {
     /// Create a zero-initialized array with the given shape.
     ///
     /// The total number of elements is the product of all dimensions.
@@ -56,7 +56,7 @@ impl WasmArray {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const coords = new WasmArray([100, 3]); // 100 atoms, 3D
+    /// const coords = new NDArray([100, 3]); // 100 atoms, 3D
     /// console.log(coords.len()); // 300
     /// ```
     #[wasm_bindgen(constructor)]
@@ -66,7 +66,7 @@ impl WasmArray {
         Self { data, shape }
     }
 
-    /// Create a `WasmArray` from an existing JS float typed array.
+    /// Create a `NDArray` from an existing JS float typed array.
     ///
     /// # Arguments
     ///
@@ -75,7 +75,7 @@ impl WasmArray {
     ///
     /// # Returns
     ///
-    /// A new `WasmArray` owning a copy of the data.
+    /// A new `NDArray` owning a copy of the data.
     ///
     /// # Errors
     ///
@@ -84,11 +84,11 @@ impl WasmArray {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const arr = WasmArray.from(floatArray, [2, 3]);
+    /// const arr = NDArray.from(floatArray, [2, 3]);
     /// console.log(arr.shape()); // [2, 3]
     /// ```
     #[wasm_bindgen(js_name = from)]
-    pub fn from_js(data: &JsFloatArray, shape: Option<Box<[usize]>>) -> Result<WasmArray, JsValue> {
+    pub fn from_js(data: &JsFloatArray, shape: Option<Box<[usize]>>) -> Result<NDArray, JsValue> {
         let shape = shape.unwrap_or_else(|| Box::new([data.length() as usize]));
         let expected: usize = shape.iter().product();
         if expected != data.length() as usize {
@@ -98,7 +98,7 @@ impl WasmArray {
                 data.length()
             )));
         }
-        Ok(WasmArray {
+        Ok(NDArray {
             data: data.to_vec(),
             shape,
         })
@@ -109,7 +109,7 @@ impl WasmArray {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const arr = new WasmArray([10, 3]);
+    /// const arr = new NDArray([10, 3]);
     /// console.log(arr.len()); // 30
     /// ```
     pub fn len(&self) -> usize {
@@ -136,7 +136,7 @@ impl WasmArray {
     ///
     /// This is intended for advanced interop with other WASM modules
     /// that need direct memory access. The pointer is only valid as
-    /// long as this `WasmArray` is alive and no WASM memory growth
+    /// long as this `NDArray` is alive and no WASM memory growth
     /// has occurred.
     pub fn ptr(&self) -> *const F {
         self.data.as_ptr()
@@ -150,7 +150,7 @@ impl WasmArray {
     /// Overwrite the array contents from a JS float typed array.
     ///
     /// The source array must have exactly the same number of elements
-    /// as this `WasmArray` (i.e., the shape is preserved).
+    /// as this `NDArray` (i.e., the shape is preserved).
     ///
     /// # Arguments
     ///
@@ -163,7 +163,7 @@ impl WasmArray {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const wa = new WasmArray([3]);
+    /// const wa = new NDArray([3]);
     /// wa.writeFrom(floatArray);
     /// ```
     pub fn write_from(&mut self, arr: &JsFloatArray) -> Result<(), JsValue> {
@@ -181,14 +181,14 @@ impl WasmArray {
     /// Zero-copy float typed-array view over this array's backing storage.
     ///
     /// **Warning**: The returned view becomes **invalid** if WASM linear
-    /// memory grows (due to any allocation). Use [`toCopy`](WasmArray::to_copy)
+    /// memory grows (due to any allocation). Use [`toCopy`](NDArray::to_copy)
     /// if you need to keep the data.
     ///
     /// # Safety (internal)
     ///
     /// Uses the corresponding JS float typed-array `view` constructor,
     /// which creates an unowned view into
-    /// WASM memory. The view must not outlive the `WasmArray` and must
+    /// WASM memory. The view must not outlive the `NDArray` and must
     /// not be used after any allocation that could trigger memory growth.
     ///
     /// # Example (JavaScript)
@@ -227,7 +227,7 @@ impl WasmArray {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const arr = WasmArray.from(floatArray);
+    /// const arr = NDArray.from(floatArray);
     /// console.log(arr.sum()); // 6.0
     /// ```
     pub fn sum(&self) -> F {
@@ -236,7 +236,7 @@ impl WasmArray {
 }
 
 // Internal methods not exposed to JavaScript
-impl WasmArray {
+impl NDArray {
     pub(crate) fn from_vec(data: Vec<F>, shape: Box<[usize]>) -> Self {
         Self { data, shape }
     }
@@ -264,12 +264,12 @@ impl WasmArray {
 
 #[cfg(test)]
 mod tests {
-    use super::{JsFloatArray, WasmArray};
+    use super::{JsFloatArray, NDArray};
     use wasm_bindgen_test::wasm_bindgen_test;
 
     #[wasm_bindgen_test]
     fn wasm_array_basic_ops() {
-        let mut view = WasmArray::new(Box::new([2_usize, 3_usize]));
+        let mut view = NDArray::new(Box::new([2_usize, 3_usize]));
         assert_eq!(view.len(), 6);
         assert_eq!(&*view.shape(), &[2, 3]);
 

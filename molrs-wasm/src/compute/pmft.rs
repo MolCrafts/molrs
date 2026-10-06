@@ -75,13 +75,13 @@ struct PmftOut {
     pmf: Vec<F>,
 }
 
-#[wasm_bindgen(js_name = WasmPMFTR12)]
-pub struct WasmPMFTR12 {
+#[wasm_bindgen(js_name = PMFTR12)]
+pub struct PMFTR12 {
     inner: molrs::compute::PMFTR12,
 }
 
-#[wasm_bindgen(js_class = WasmPMFTR12)]
-impl WasmPMFTR12 {
+#[wasm_bindgen(js_class = PMFTR12)]
+impl PMFTR12 {
     /// Radial range `r_max` (A); `n_r × n_t1 × n_t2` bins over `(r, θ₁, θ₂)`.
     #[wasm_bindgen(constructor)]
     pub fn new(r_max: F, n_r: usize, n_t1: usize, n_t2: usize) -> Result<Self, JsValue> {
@@ -121,13 +121,13 @@ impl WasmPMFTR12 {
     }
 }
 
-#[wasm_bindgen(js_name = WasmPMFTXY)]
-pub struct WasmPMFTXY {
+#[wasm_bindgen(js_name = PMFTXY)]
+pub struct PMFTXY {
     inner: molrs::compute::PMFTXY,
 }
 
-#[wasm_bindgen(js_class = WasmPMFTXY)]
-impl WasmPMFTXY {
+#[wasm_bindgen(js_class = PMFTXY)]
+impl PMFTXY {
     /// Body-frame window `±x_max × ±y_max` (A); `n_x × n_y` bins.
     #[wasm_bindgen(constructor)]
     pub fn new(x_max: F, y_max: F, n_x: usize, n_y: usize) -> Result<Self, JsValue> {
@@ -168,13 +168,13 @@ impl WasmPMFTXY {
     }
 }
 
-#[wasm_bindgen(js_name = WasmPMFTXYT)]
-pub struct WasmPMFTXYT {
+#[wasm_bindgen(js_name = PMFTXYT)]
+pub struct PMFTXYT {
     inner: molrs::compute::PMFTXYT,
 }
 
-#[wasm_bindgen(js_class = WasmPMFTXYT)]
-impl WasmPMFTXYT {
+#[wasm_bindgen(js_class = PMFTXYT)]
+impl PMFTXYT {
     /// Body-frame window `±x_max × ±y_max` (A); `n_x × n_y × n_t` bins over
     /// `(x, y, θ)` where `θ` is the relative orientation.
     #[wasm_bindgen(constructor)]
@@ -215,13 +215,13 @@ impl WasmPMFTXYT {
     }
 }
 
-#[wasm_bindgen(js_name = WasmPMFTXYZ)]
-pub struct WasmPMFTXYZ {
+#[wasm_bindgen(js_name = PMFTXYZ)]
+pub struct PMFTXYZ {
     inner: molrs::compute::PMFTXYZ,
 }
 
-#[wasm_bindgen(js_class = WasmPMFTXYZ)]
-impl WasmPMFTXYZ {
+#[wasm_bindgen(js_class = PMFTXYZ)]
+impl PMFTXYZ {
     /// Body-frame window `±x_max × ±y_max × ±z_max` (A); `n_x × n_y × n_z` bins.
     #[wasm_bindgen(constructor)]
     pub fn new(

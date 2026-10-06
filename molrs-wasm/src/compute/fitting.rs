@@ -8,14 +8,14 @@ use molrs::op::types::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-#[wasm_bindgen(js_name = WasmLinearFit)]
-pub struct WasmLinearFit {
+#[wasm_bindgen(js_name = LinearFit)]
+pub struct LinearFit {
     start_frac: F,
     end_frac: F,
 }
 
-#[wasm_bindgen(js_class = WasmLinearFit)]
-impl WasmLinearFit {
+#[wasm_bindgen(js_class = LinearFit)]
+impl LinearFit {
     #[wasm_bindgen(constructor)]
     pub fn new(start_frac: F, end_frac: F) -> Self {
         Self {
@@ -51,14 +51,14 @@ impl WasmLinearFit {
     }
 }
 
-#[wasm_bindgen(js_name = WasmCumulativeTrapezoid)]
-pub struct WasmCumulativeTrapezoid {
+#[wasm_bindgen(js_name = CumulativeTrapezoid)]
+pub struct CumulativeTrapezoid {
     dt: F,
     n_lags: Option<usize>,
 }
 
-#[wasm_bindgen(js_class = WasmCumulativeTrapezoid)]
-impl WasmCumulativeTrapezoid {
+#[wasm_bindgen(js_class = CumulativeTrapezoid)]
+impl CumulativeTrapezoid {
     #[wasm_bindgen(constructor)]
     pub fn new(dt: F, n_lags: Option<usize>) -> Self {
         Self { dt, n_lags }
@@ -75,14 +75,14 @@ impl WasmCumulativeTrapezoid {
     }
 }
 
-#[wasm_bindgen(js_name = WasmPlateau)]
-pub struct WasmPlateau {
+#[wasm_bindgen(js_name = Plateau)]
+pub struct Plateau {
     start_frac: F,
     end_frac: F,
 }
 
-#[wasm_bindgen(js_class = WasmPlateau)]
-impl WasmPlateau {
+#[wasm_bindgen(js_class = Plateau)]
+impl Plateau {
     #[wasm_bindgen(constructor)]
     pub fn new(start_frac: F, end_frac: F) -> Self {
         Self {

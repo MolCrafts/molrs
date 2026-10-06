@@ -39,6 +39,7 @@ async `init()` function that must be awaited before calling the API.
 - **`Frame`** — container mapping string keys (`"atoms"`, `"bonds"`) to `Block`s
 - **`Block`** — column store with typed arrays. Float columns are `Float64Array` (F = f64).
 - **`Box`** — simulation box with periodic boundary conditions
+- **`NDArray`** — owned `Float64Array` plus a shape (what `Box.origin()`, `Box.hMatrix()` and `Box.lengths()` return)
 - **`Topology`** — the bond graph (`Topology.fromFrame(frame)` reads
   `bonds.atomi` / `atomj`): angles, dihedrals, impropers, connected components
 
@@ -131,6 +132,9 @@ fabricated zero array. `disp` is the unnormalized minimum-image displacement
 - **`RDF`** — radial distribution function (periodic and free-boundary)
 - **`MSD`** — mean squared displacement
 - **`Cluster`** — distance-based cluster analysis
+- **`VACF`**, **`Steinhardt`**, **`HBonds`**, **`PMFTXY`**, **`RadicalVoronoi`**, …
+  — one class per analysis, named after its molrs owner;
+  `molrsComputeCatalog()` lists every one with its parameters
 
 Neighbor searches support frames without a simulation box. RDF additionally
 needs a normalization volume: for a frame without a box, pass it as the fourth

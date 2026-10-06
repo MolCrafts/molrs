@@ -61,13 +61,13 @@ fn voronoi_cells(
     Ok((cells, simbox.volume()))
 }
 
-#[wasm_bindgen(js_name = WasmRadicalVoronoi)]
-pub struct WasmRadicalVoronoi {
+#[wasm_bindgen(js_name = RadicalVoronoi)]
+pub struct RadicalVoronoi {
     use_atom_radii: bool,
 }
 
-#[wasm_bindgen(js_class = WasmRadicalVoronoi)]
-impl WasmRadicalVoronoi {
+#[wasm_bindgen(js_class = RadicalVoronoi)]
+impl RadicalVoronoi {
     /// With `use_atom_radii` the tessellation is Laguerre-weighted by each
     /// atom's covalent radius, read from the frame's `element` column.
     #[wasm_bindgen(constructor)]
@@ -115,13 +115,13 @@ impl WasmRadicalVoronoi {
     }
 }
 
-#[wasm_bindgen(js_name = WasmVoronoiDomainAnalysis)]
-pub struct WasmVoronoiDomainAnalysis {
+#[wasm_bindgen(js_name = VoronoiDomainAnalysis)]
+pub struct VoronoiDomainAnalysis {
     use_atom_radii: bool,
 }
 
-#[wasm_bindgen(js_class = WasmVoronoiDomainAnalysis)]
-impl WasmVoronoiDomainAnalysis {
+#[wasm_bindgen(js_class = VoronoiDomainAnalysis)]
+impl VoronoiDomainAnalysis {
     #[wasm_bindgen(constructor)]
     pub fn new(use_atom_radii: bool) -> Self {
         Self { use_atom_radii }
@@ -158,14 +158,14 @@ impl WasmVoronoiDomainAnalysis {
     }
 }
 
-#[wasm_bindgen(js_name = WasmVoronoiVoidAnalysis)]
-pub struct WasmVoronoiVoidAnalysis {
+#[wasm_bindgen(js_name = VoronoiVoidAnalysis)]
+pub struct VoronoiVoidAnalysis {
     use_atom_radii: bool,
     box_volume: Option<F>,
 }
 
-#[wasm_bindgen(js_class = WasmVoronoiVoidAnalysis)]
-impl WasmVoronoiVoidAnalysis {
+#[wasm_bindgen(js_class = VoronoiVoidAnalysis)]
+impl VoronoiVoidAnalysis {
     /// `box_volume` overrides the frame's box volume when normalizing the void
     /// fraction; pass `null` to use the frame's own box.
     #[wasm_bindgen(constructor)]

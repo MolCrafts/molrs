@@ -1,7 +1,7 @@
 //! SMILES string parsing for the WASM API.
 //!
 //! Provides [`parseSMILES`](parse_smiles) to convert a SMILES notation
-//! string into a [`SmilesIR`](WasmSmilesIR) intermediate representation,
+//! string into a [`SmilesIR`](SmilesIR) intermediate representation,
 //! which can then be converted to a [`Frame`] with atoms and bonds.
 //!
 //! # Typical workflow (JavaScript)
@@ -28,7 +28,7 @@ use wasm_bindgen::prelude::*;
 /// SMILES string can encode multiple disconnected molecules separated
 /// by `.` (e.g., `"[Na+].[Cl-]"`).
 ///
-/// Call [`toFrame()`](WasmSmilesIR::to_frame) to convert to a [`Frame`]
+/// Call [`toFrame()`](SmilesIR::to_frame) to convert to a [`Frame`]
 /// with `"atoms"` and `"bonds"` blocks.
 ///
 /// # Example (JavaScript)
@@ -42,12 +42,12 @@ use wasm_bindgen::prelude::*;
 /// console.log(atoms.copy("element")); // ["C", "C", "O", "H", ...], an owned copy
 /// ```
 #[wasm_bindgen(js_name = SmilesIR)]
-pub struct WasmSmilesIR {
+pub struct SmilesIR {
     inner: molrs::io::smiles::SmilesIR,
 }
 
 #[wasm_bindgen(js_class = SmilesIR)]
-impl WasmSmilesIR {
+impl SmilesIR {
     /// Return the number of disconnected components in the SMILES.
     ///
     /// Components are separated by `.` in the SMILES string. For
@@ -118,7 +118,7 @@ impl WasmSmilesIR {
 ///
 /// # Returns
 ///
-/// A [`SmilesIR`](WasmSmilesIR) object. Call `.toFrame()` to convert
+/// A [`SmilesIR`](SmilesIR) object. Call `.toFrame()` to convert
 /// to a [`Frame`] with atoms and bonds blocks.
 ///
 /// # Errors
@@ -134,8 +134,8 @@ impl WasmSmilesIR {
 /// const mol3d = generate3D(frame, "fast");
 /// ```
 #[wasm_bindgen(js_name = parseSMILES)]
-pub fn parse_smiles(smiles: &str) -> Result<WasmSmilesIR, JsValue> {
+pub fn parse_smiles(smiles: &str) -> Result<SmilesIR, JsValue> {
     let inner = molrs::io::smiles::parse_smiles(smiles)
         .map_err(|e| JsValue::from_str(&format!("SMILES parse error: {e}")))?;
-    Ok(WasmSmilesIR { inner })
+    Ok(SmilesIR { inner })
 }

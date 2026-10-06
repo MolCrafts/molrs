@@ -4,7 +4,7 @@
 //! - [`Frame`] -- hierarchical container of named [`Block`]s, plus an
 //!   optional [`Box`] (simulation box).
 //! - [`Block`] -- column-oriented data store with typed arrays.
-//! - [`WasmArray`] -- owned float array with shape metadata for passing
+//! - [`NDArray`] -- owned float array with shape metadata for passing
 //!   multi-dimensional numeric data across the WASM boundary.
 //! - `schema` -- the Frame schema vocabulary (`schemaDocument`, …).
 //! - [`Topology`] -- the bond graph of a frame (`molrs::system::Topology`).
@@ -42,7 +42,7 @@ pub use frame::Frame;
 pub use schema::*;
 pub use spatial::*;
 pub use topology::Topology;
-pub use types::WasmArray;
+pub use types::NDArray;
 
 /// Convert an [`FfiError`] into a [`JsValue`] string for propagation
 /// to JavaScript as a thrown exception.

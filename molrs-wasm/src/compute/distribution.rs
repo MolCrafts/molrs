@@ -46,15 +46,15 @@ fn distribution_compute<O: molrs::compute::Observable + Sync>(
     })
 }
 
-#[wasm_bindgen(js_name = WasmDistanceDistribution)]
-pub struct WasmDistanceDistribution {
+#[wasm_bindgen(js_name = DistanceDistribution)]
+pub struct DistanceDistribution {
     n_bins: usize,
     min: F,
     max: F,
 }
 
-#[wasm_bindgen(js_class = WasmDistanceDistribution)]
-impl WasmDistanceDistribution {
+#[wasm_bindgen(js_class = DistanceDistribution)]
+impl DistanceDistribution {
     #[wasm_bindgen(constructor)]
     pub fn new(n_bins: usize, min: F, max: F) -> Self {
         Self { n_bins, min, max }
@@ -74,13 +74,13 @@ impl WasmDistanceDistribution {
     }
 }
 
-#[wasm_bindgen(js_name = WasmAngleDistribution)]
-pub struct WasmAngleDistribution {
+#[wasm_bindgen(js_name = AngleDistribution)]
+pub struct AngleDistribution {
     n_bins: usize,
 }
 
-#[wasm_bindgen(js_class = WasmAngleDistribution)]
-impl WasmAngleDistribution {
+#[wasm_bindgen(js_class = AngleDistribution)]
+impl AngleDistribution {
     #[wasm_bindgen(constructor)]
     pub fn new(n_bins: usize) -> Self {
         Self { n_bins }
@@ -99,13 +99,13 @@ impl WasmAngleDistribution {
     }
 }
 
-#[wasm_bindgen(js_name = WasmDihedralDistribution)]
-pub struct WasmDihedralDistribution {
+#[wasm_bindgen(js_name = DihedralDistribution)]
+pub struct DihedralDistribution {
     n_bins: usize,
 }
 
-#[wasm_bindgen(js_class = WasmDihedralDistribution)]
-impl WasmDihedralDistribution {
+#[wasm_bindgen(js_class = DihedralDistribution)]
+impl DihedralDistribution {
     #[wasm_bindgen(constructor)]
     pub fn new(n_bins: usize) -> Self {
         Self { n_bins }
@@ -123,14 +123,14 @@ impl WasmDihedralDistribution {
     }
 }
 
-#[wasm_bindgen(js_name = WasmCombinedDistribution)]
-pub struct WasmCombinedDistribution {
+#[wasm_bindgen(js_name = CombinedDistribution)]
+pub struct CombinedDistribution {
     kinds: Vec<String>,
     axes: Vec<molrs::compute::AxisSpec>,
 }
 
-#[wasm_bindgen(js_class = WasmCombinedDistribution)]
-impl WasmCombinedDistribution {
+#[wasm_bindgen(js_class = CombinedDistribution)]
+impl CombinedDistribution {
     /// `kinds[i]` is `"distance" | "angle" | "dihedral"`; axis `i` bins
     /// observable `i` into `bins[i]` bins over `[mins[i], maxs[i]]`. A non-zero
     /// `sinWeight[i]` marks axis `i` angular so its marginal carries the

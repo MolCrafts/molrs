@@ -6,15 +6,15 @@ use molrs::op::types::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-#[wasm_bindgen(js_name = WasmStaticDielectric)]
-pub struct WasmStaticDielectric {
+#[wasm_bindgen(js_name = StaticDielectric)]
+pub struct StaticDielectric {
     volume: F,
     temperature: F,
     epsilon_inf: Option<F>,
 }
 
-#[wasm_bindgen(js_class = WasmStaticDielectric)]
-impl WasmStaticDielectric {
+#[wasm_bindgen(js_class = StaticDielectric)]
+impl StaticDielectric {
     #[wasm_bindgen(constructor)]
     pub fn new(volume: F, temperature: F, epsilon_inf: Option<F>) -> Self {
         Self {
