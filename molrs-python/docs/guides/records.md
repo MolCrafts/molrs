@@ -57,9 +57,10 @@ print(frame["atoms"].dtype("res_id"))
 
 `write_mrec` writes the `frame` section and a `meta` document. Each writer
 stamps the current `molrec_version` (2) into `meta`, over any value you
-supplied. A record molrs 0.15 wrote (`molrec_version` 1) still reads: its
-force-field numbers are converted to the 0.16 force-field IR on the way in (see
-the [migration guide](../migration.md#records-molrec_version-2)).
+supplied. A record molrs ≤ 0.15 wrote (`molrec_version` 1) still reads: its
+force-field numbers are converted to the force-field IR on the way in,
+exactly, or the record is refused (see the
+[migration guide](../migration.md#records-molrec_version-2)).
 
 ```python
 molrs.io.write_mrec("water.mrec", frame, meta={"producer": "quickstart"})
@@ -140,7 +141,7 @@ On a 3000-atom trajectory moving 0.05 Å per frame, lossless coordinates
 take 24 B/atom/frame; `p = 1e-3` Å takes about 7.6 and `p = 1e-2` Å about
 5.8. Without a declaration nothing is rounded. Memory is never touched: only
 the stored copy is rounded. A store with a declared precision needs a reader
-that decodes zstd and shuffle, as every molrs 0.15 build does (the WASM
+that decodes zstd and shuffle, as every molrs build since 0.15 does (the WASM
 package included); molrs 0.14 cannot read it.
 
 ## Trajectories
@@ -225,7 +226,8 @@ with TrajectoryReader(zipped) as reader:
 
 A `forcefield` section stores a force field as data: a document (styles,
 units, mixing rule, special-bond weights) and one table per style. Units are
-recorded as declared and never converted. `ForceField.to_section` and
+recorded as declared and read back as recorded; only a `molrec_version` 1
+section's numbers are converted, as above. `ForceField.to_section` and
 `ForceField.from_section` map between the two, and every record writer takes
 a force field next to the structure it parameterizes:
 

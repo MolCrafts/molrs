@@ -37,9 +37,9 @@ pub struct CategorySpec {
 | `angle` | 3 | `angles` | `theta` | reversible | yes |
 | `dihedral` | 4 | `dihedrals` | `phi` | reversible | yes |
 | `improper` | 4 | `impropers` | `phi`, `chi = abs(phi)` | ordered | yes |
-| `pair` | self or pair | `atoms` (by `type`) | `r` | unordered | yes, neighbour-driven |
+| `pair` | self or pair | `atoms` (by `type`) | `r` | unordered | yes: a `pairs` list or a neighbour search |
 | `cmap` | 5 | `cmaps` | compound | reversible | yes |
-| `drude` | 2 | `drudes` | `r` | ordered | spec only |
+| `drude` | 2 | `drudes` | `r` | ordered | yes, `drude harmonic` by its expression |
 | `constraint` | 2 | `constraints` | none | reversible | no |
 | `virtual_site` | 0 | `virtual_sites` | none | – | no |
 
@@ -104,7 +104,7 @@ pub struct ParamSpec { name, dim: Dim, kind: ParamKind, default: Option<Value>, 
 | 2 | `Kernel::Scalar(Arc<dyn ScalarForm>)`, `Kernel::Compound(Arc<dyn CompoundForm>)` | `kernel=` (a numpy callable; `compound=True` for positions) | a batch function of the coordinate, or of the atoms' positions |
 | 3 | `Kernel::Ctor { compiled, typed, rows }` | – | a constructor that builds the whole kernel (every native built-in) |
 
-Calling conventions, every tier:
+The kernel contract, every tier:
 
 - `q` per term is the category's coordinate: `r` in the field's length unit,
   `theta` ∈ [0, π], `phi` ∈ (−π, π] (IUPAC sign, atoms in row order) —
@@ -188,6 +188,13 @@ evaluation that met it.
 `PotentialCompiler::with_registry(ff, &registry)` compiles against a
 registry of one's own; `PotentialCompiler::new` reads the process-wide one
 (`molrs::ff::ir::register_style`, Python `ir.register_style`).
+
+Without a force field, `molrs.ff.potential.kernel(category, style, atoms, *,
+charges=None, **params)` builds the kernel of any style the IR prices — a
+built-in, a registered one, a custom category's — over explicit terms: an
+`(n, arity)` array of atom indices and each parameter as stored, one number
+or one value per term. It is built exactly as `PotentialCompiler.compile`
+builds it and returns a `Potentials`; there is no per-style Python class.
 
 ## New categories
 
@@ -339,6 +346,8 @@ offending item.
 | `KernelShape` | a Python kernel's output of the wrong shape or dtype, or a kernel that raised |
 | `NoEngineForm` | an engine that cannot hold the style |
 | `FormConflict`, `NoForm` | a form family without exactly one canonical style; a style without a codec |
+| `OutOfImage` | an exact form conversion (`to_form`) of a row outside the target style's image; a `fit_form` that cannot evaluate the category |
+| `Malformed` | a spec whose declarations contradict each other (a mixing rule on a bonded parameter, an ε without its σ) |
 
 The derivative and agreement checks run at registration on the style's
 `samples` (16 seeded points each); a style registered without samples is
@@ -439,15 +448,16 @@ the largest, and a fresh process that registered nothing prices the saved
   constructors; a `TypeRows` one prices another row differently and no row
   not at all, a `PerInstance` one prices the same bits with or without a
   row.
-- Every positional LAMMPS codec writes what the pre-codec writer wrote, for
-  the LAMMPS-read hand molecule, the five cross-engine sources (`ff14sb`,
-  `gaff2`, `chamber`, `charmm36`, `oplsaa`) and one field per positional
-  built-in in `real` and `metal`: 16 of 22 files byte for byte, the rest by
-  rounding alone (≤ 2 ulps: the old writer converted every value through
-  LAMMPS's `lj` units by a unit expression, `real` → `real` included, and
-  wrote `bond morse`'s `alpha` = 1.987 one ulp off; the codec multiplies by
-  one exact factor per dimension). `bond class2`, `pair buck` and `pair
-  morse` had no LAMMPS writer before; LAMMPS prices them in
+- Every positional LAMMPS codec writes the pinned includes of the
+  hand-written LAMMPS writer it replaced (`ff/testdata/builtin_conformance/`)
+  for the LAMMPS-read hand molecule, the five cross-engine sources
+  (`ff14sb`, `gaff2`, `chamber`, `charmm36`, `oplsaa`) and one field per
+  positional built-in in `real` and `metal`: 16 of 22 files byte for byte,
+  the rest by rounding alone (≤ 2 ulps: the hand-written writer converted
+  every value through LAMMPS's `lj` units by a unit expression, `real` →
+  `real` included, and wrote `bond morse`'s `alpha` = 1.987 one ulp off; the
+  codec multiplies by one exact factor per dimension). `bond class2`, `pair
+  buck` and `pair morse` have no pinned include; LAMMPS prices them in
   `ff::engine_codec_check`.
 
 The engine codecs of extension styles against LAMMPS and OpenMM (`fene`,

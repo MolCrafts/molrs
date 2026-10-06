@@ -72,25 +72,25 @@ doc comments.
     console.log(writeFrame(frame3d, "xyz"));
     ```
 
-## What's new in 0.15
+## What's new in 0.16
 
-molrs 0.15 settles the column store and the on-disk record:
+molrs 0.16 holds every force field in one force-field IR, which adopts the
+LAMMPS standard:
 
-- **One column accessor.** `Block::get` / `FrameAccess::column` plus
-  `Column::as_*` replace the per-dtype getters on every surface, and each
-  column reports the dtype it is stored at (C: `MolrsDType`). Floats are
-  `f64` only.
-- **Record files follow the molrec contract.** Typed frame metadata,
-  topology conventions (`chain`, `res_id`, `b_factor`, …), row references,
-  aligned trajectory blocks, declared precision (coordinates in about 7.6
-  instead of 24 bytes per atom per frame), and a `forcefield` section. See
-  [Record files](guides/records.md).
-- **Force fields** are built through `def_style` / `def_type`, compiled by
-  `PotentialCompiler`, and typed by `Typing`; LAMMPS harmonic impropers now
-  evaluate at the LAMMPS energy.
+- **One set of styles** with LAMMPS's energy expressions, factors and
+  units; every angle-valued parameter is in degrees. Urey–Bradley, CMAP,
+  CHARMM 1-4 interactions and per-pair overrides are new. See
+  [Force-field IR](guides/forcefield-ir.md).
+- **Engines read and written whole.** LAMMPS, GROMACS (whole topologies),
+  OpenMM XML and AMBER prmtop (chamber too) convert to the IR exactly or
+  refuse by name, checked term by term against the engines.
+- **The IR is a protocol.** A style or a category registers from Rust,
+  Python or molpy with nothing rebuilt; see
+  [Extending the force-field IR](guides/extending-forcefield-ir.md).
+- **Records are `molrec_version` 2**; a 0.15 record is converted on read.
 
-[What's new in 0.15](release-notes.md) lists the highlights, and the
-[migration guide](migration.md) lists every breaking change from 0.14.
+[What's new in 0.16](release-notes.md) lists the highlights, and the
+[migration guide](migration.md) lists every breaking change from 0.15.
 
 ## What lives here
 

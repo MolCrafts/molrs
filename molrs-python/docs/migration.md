@@ -5,222 +5,53 @@ surface. Every downstream project pins one molrs minor line (see
 [Consuming molrs from another project](https://github.com/MolCrafts/molrs/blob/master/docs/interop.md)),
 so moving to a new minor means working through its section. Changes that only
 add features are not listed here, apart from a short "Also new" list at the
-end of each section; [What's new in 0.15](release-notes.md) walks through the
+end of each section; [What's new in 0.16](release-notes.md) walks through the
 new features.
 
 ## 0.15 → 0.16
 
-### Force-field IR infrastructure: cmap, array params, five endpoints
+0.16 holds every force field in one force-field IR, which adopts the LAMMPS
+standard ([Force-field IR](guides/forcefield-ir.md) is the reference). Most
+of what breaks is force-field code: the meaning of some stored numbers,
+records, the engine readers and writers, and the Rust error types. The
+sections run from the IR's definitions and records, through compiling, the
+new styles and the engines, to the typifiers, the IR protocol and the Python
+API; each states what 0.15 did. molrs 0.15.1 was versioned on `master` but
+never published, so coming from 0.15.0 read
+[From 0.15.0: the 0.15.1 changes](#from-0150-the-0151-changes) as well.
 
-Convention-neutral plumbing for the Class-I force-field IR.
+### ABI line, pickles and JSON
 
-- **Rust: `StyleDefs` is `#[non_exhaustive]` and has a `Cmap` variant.**
-  `StyleDefs::Cmap(Vec<CmapType>)` holds five-endpoint types
-  (`itom` … `mtom`). A `match` on `StyleDefs` outside molrs needs a wildcard
-  arm. `ForceField::def_style("cmap", …)` defines a style (0.15 returned
-  `DefError::UnknownCategory`), and its `def_type` takes exactly five
-  endpoints.
-- **Rust: `ENDPOINT_COLUMNS` has five entries.**
-  `store::forcefield_section::ENDPOINT_COLUMNS` is `[&str; 5]`
-  (`itom` … `ltom`, `mtom`), and `category_arity("cmap")` is `Some(5)`
-  (0.15: `None`). A `cmap` style table must carry all five endpoint columns.
-- **Array params.** `Params` holds `f64` arrays beside numbers and strings
-  (`set_array`, `get_array`, `iter_arrays`); `==` and `same_parameters`
-  compare them exactly, so two definitions differing only in an array are a
-  conflict. Code that copies a `Params` key by key through `iter()` and
-  `iter_strings()` loses the arrays.
-- **The `forcefield` section.** Any type parameter may be an array
-  (molrec's `f64[T, S…]`: one shape per column, every trailing axis at least
-  1, finite values in a non-null row); a `cmap` table's `grid` is further
-  `f64[T, N, N]` (`N ≥ 2`). A non-float or empty-axis array column, a
-  non-square grid, an array under an annotation or canonical key, and an
-  array style param are refused by `validate` / `to_section`.
-  `ForceField.from_section` reads a `cmap` style (0.15 refused it as an
-  unknown category).
-- **Frame vocabulary.** The canonical key `atomm` (`u64`, fifth relation
-  endpoint) and the block `cmaps` (relation of arity 5, optional `type`,
-  `type_id`, `style`) are new; `subset`, `replicate` and the validator
-  renumber and range-check `atomi` … `atomm`. `keys::ENDPOINTS` (Rust
-  `[&str; 5]`, Python `molrs.keys.ENDPOINTS`) gains `atomm`, so a block
-  without a spec now reads an `atomm` column as an endpoint into `atoms`, an
-  `atomm` column at another dtype than `u64` is refused, and the fifth
-  endpoint column of a five-node `MolGraph` relation is `atomm` (0.15:
-  `atom4`).
-- **Python.** `molrs.ff.CmapStyle` / `CmapType` (with `itom` … `mtom`);
-  `def_style("cmap", …)` returns a `CmapStyle`. A param value may be an
-  array: `def_type(**params)`, `def_style(params=…)` and `Type.__setitem__`
-  take a numpy array or a nested list / tuple of numbers and store float64, so
-  a list value that raised `TypeError` in 0.15 is now stored. `params` and
-  `t[key]` return arrays as float64 numpy arrays; pickles carry them.
-- **C API.** `molrs_ff_to_json` writes an optional `array_params` object (on
-  a style or a type, only when it holds an array param: nested lists, one
-  level per axis), and `molrs_ff_from_json` reads it and refuses a ragged or
-  non-numeric one. `"cmap"` is a category; `molrs_schema_column_dtype("atomm")`
-  is `"uint"`.
-### Force-field IR protocol: categories beyond the seven
-
-The force-field IR is a protocol: a category the IR registry declares
-(molrec's `constraint`, `drude`, `virtual_site`, or a custom one registered
-with `molrs::ff::ir::register_category`), or one read from a record that
-nothing declares, is a style category like `bond`.
-
-- **Rust: `Style::category()` and `StyleDefs::category()` return `&str`**
-  (0.15: `&'static str`); the string borrows the style.
-- **Rust: `StyleDefs::Relation { category, arity, types }`** holds every
-  category beyond the seven, its types `RelationType { name, endpoints,
-  params }` (`endpoints: SmallVec<[String; 5]>`). A `match` on `StyleDefs`
-  already needs a wildcard arm (`#[non_exhaustive]`).
-- **Rust: `DefError` carries owned categories.** `DefError::Arity` has
-  `category: String, expected: String` and `DefError::TypeConflict` has
-  `category: String` (0.15: `&'static str`). `DefError::Unsupported` is gone
-  (nothing produced it); `DefError::CategoryArity { category, expected, got }`
-  is new: a style of a category with another number of endpoints than its
-  registration, or than the styles of it the force field holds.
-- **Rust: `ForceField::def_style` accepts every declared category.** The
-  arity of a category beyond the seven comes from the process-wide IR
-  registry (`ForceField::def_style_in` takes a registry), else from the
-  styles of it the force field already holds; anything else is still
-  `DefError::UnknownCategory`. `ForceField::def_style_with_arity` defines a
-  style of a category nothing declares, with the arity given (what
-  `from_section` does with a record's endpoint columns). New:
-  `Style::arity`, `StyleDefs::arity`, `ForceField::get_relationtypes`.
-- **`ForceField::from_section` keeps a category beyond the seven** (it
-  refused `virtual_site` and every unknown category): its arity is the
-  registry's, or the count of its table's endpoint columns.
-- **Compiling.** A style of a category nothing declares is priced as a
-  compound custom category: from its block `<name>s` by its style's
-  `expression`, or refused by name (``no kernel for <category> `<style>` ``)
-  when the block has rows and nothing prices it; a block that is absent
-  prices nothing.
-- **Python: `ForceField.def_style` returns a `RelationStyle`** for a category
-  beyond the seven; its `def_type(name, *endpoints, **params)` takes as many
-  `AtomType` endpoints as the category's `arity` (`ValueError` otherwise) and
-  returns a `RelationType`. `ForceField.styles`, `get_styles` and
-  `get_types` include these styles (they were dropped silently);
-  `get_styles(RelationStyle)` / `get_types(RelationType)` select them all.
-- **Python: a `ForceField` pickle carries each style's arity**, so a
-  category no registry of the unpickling process declares survives it. A
-  `ForceField` pickled by 0.15 does not unpickle in 0.16.
-- **C API.** `molrs_ff_def_style` accepts the same categories as
-  `ForceField::def_style`.
-- **Rust: a typifier `Match` carries any relation kind.** The fixed fields
-  `bonds`, `angles`, `dihedrals` and `impropers` are gone; `Match::links`
-  (`IndexMap<String, Vec<Annotations>>`) maps a graph relation kind (the
-  Frame block of its category: `"bonds"`, a custom `"urey_bradleys"`) to
-  rows positional against that kind's own rows. Replace `m.bonds = rows` with
-  `*m.link_mut("bonds") = rows` (or `m.links.insert(..)`), `m.bonds.push(a)`
-  with `m.link_mut("bonds").push(a)`. A type under a kind defines a type of
-  the category whose block the kind is (`typifier::link_category`); a
-  non-empty vector for a kind the graph lacks is an error naming it.
-  `write_onto` defines the kinds in the graph's registration order, as
-  before for the four built-ins.
-- **Rust: `Match::assign_terms(graph, kind, library, key)`** types every row
-  of a relation kind against the library's type rows of its category by the
-  atoms' types: slot by slot with wildcards, in the orders the category's
-  `EndpointOrder` allows (reversible, ordered or unordered), fewest wildcards
-  first, then table order (molrec's rule). It returns the positions nothing
-  matched.
-- **Python: `Match(nodes, links=...)` takes a kind name as a key** as well
-  as a relation class (`{Bond: rows, "urey_bradleys": rows}`); a relation
-  class other than `Bond`/`Angle`/`Dihedral`/`Improper`/`Port`, or a key
-  that is neither class nor `str`, still raises `TypeError`, and naming one
-  kind twice (`{Bond: …, "bonds": …}`) `ValueError`. `repr(Match)` lists the
-  kinds: `Match(nodes=2, links={bonds=1}, styles=0, pairs=0)`.
-
-### Force-field IR protocol: custom styles persist
-
-A custom style or category is stored in a `*.mrec` record as its molrec
-style entry, and a process that registered nothing reads it back.
-
-- **`to_section` writes a registered custom style's expression.** A style
-  with no `expression` of its own that the process-wide IR registry holds
-  as a custom (not built-in) style is written with the registry's
-  `expression`, so a fresh process prices it from the record alone. A
-  built-in style is written with none; a style's own `expression` is
-  written, and read back, byte for byte. Rust:
-  `ForceField::to_section_in(&Registry)` is `to_section` against a given
-  registry.
-- **Reading never needs a registration.** A style nothing registers, with
-  no expression, is read whole (its rows, its array params, its category);
-  compiling it is refused by name: ``no kernel for <category> `<style>`:
-  register it (molrs.ff.ir.register_style) or give it an expression``. A
-  style with an expression is priced by it, bit for bit as in the process
-  that registered it.
-- **An instance expression is checked against the registered kernel.** A
-  registered custom style whose instance carries an `expression` that
-  differs from the registry's is still priced by its registered kernel (a
-  registered kernel comes first); at first compile the instance expression
-  is checked against it, energy and derivative to 1e-10, and a disagreeing
-  one is refused (`IrError::Disagree`, naming the style). A registered style
-  with neither kernel nor expression is priced by the instance's.
-- **Array params round-trip end to end**: a parameter column `f64[T, S…]`
-  through `to_section` / `from_section`, a `*.mrec` store, and Python
-  `molrs.io.mrec` (e.g. a `dihedral table/linear` row's `table: f64[N]`).
-- **`ForceFieldSection.validate` refuses a `pair lj/charmm` `one_four`**
-  other than `"regular"` / `"epsilon14"` (molrec
-  `reject-ff-lj-charmm-one-four`), so `read_mrec_forcefield` refuses such a
-  record before anything turns it into a `ForceField`.
-
-### Torsion algebra and `dihedral nharmonic`
-
-- **`dihedral nharmonic`** (LAMMPS's `Σᵢ₌₁ᴺ Aᵢ cosⁱ⁻¹φ`, params `a1..aN`,
-  contiguous, N ≥ 1) is a new style: kernel, LAMMPS reader
-  (`dihedral_coeff t N A1 … AN`) and writer. A gap (`a1`, `a3` without
-  `a2`) or a missing `a1` is refused at compile time and by the writer.
-- **Rust: `molrs::ff::forcefield::torsion` is public** — the exact maps
-  between every torsion form and a Fourier series
-  (`FourierSeries`, `TorsionRefusal`, one type per form, each with
-  `from_params`/`to_params`); see
-  [Torsion forms and their exact conversions](guides/forcefield-ir.md#torsion-forms-and-their-exact-conversions).
-  Nothing that existed changes behaviour.
-
-### Form conversions: `canonical`, `to_form`, `fit_form`
-
-- **New: `ForceField.canonical()`, `ForceField.to_form(category, style)`,
-  `ForceField.fit_form(category, style, q, w=None, *, kt=None,
-  offset=False)`** (Rust: the same on `ForceField`, `fit_form` taking a
-  `molrs::ff::ir::Metric`), over the form families `torsion` (canonical
-  `dihedral periodic`), `bond`, `angle` (canonical `harmonic`) and `lj`
-  (canonical `pair lj/cut`); see
-  [Converting between forms](guides/forcefield-ir.md#converting-between-forms).
-  An out-of-image conversion raises `ValueError` (Rust
-  `IrError::OutOfImage { from, to, type_, reason }`, a new variant: a
-  `match` on `IrError` needs an arm).
-- **Rust: `TorsionForm` is gone.** The closed enum dispatching on
-  `(category, style)` is replaced by the registry: every torsion style
-  registers a `FormCodec` (`Registry::register_form`, `register_form`), and
-  `torsion::torsion_series(category, style, style_params, row)` is the series
-  of any row through it. Use the per-form type's `from_params` /
-  `to_params` (`Opls::from_params(&p).to_series()`) where the style is
-  known; `TorsionRefusal::UnknownStyle` went with it.
-- **Rust: `from_series` is exact on the constant.** Every
-  `<Form>::from_series` reproduces a₀ too, or refuses with the new
-  `TorsionRefusal::ConstantOffset { constant, implied }` (0.16 earlier:
-  "up to a constant offset"). A single-term form takes `k = a₀`, so its sign
-  survives (`k = −1` was returned as `k = 1, γ + 180°`); `Charmm::from_series`
-  takes no `w` (it is 0: the 1-4 weight is no torsion parameter);
-  `Periodic::from_series` adds a periodicity-0 term for a constant its terms
-  do not give. `<Form>::nearest(series)` is the old constant-blind answer
-  (`Opls::nearest` drops the sines, the orders above 4 and the constant).
-  A `dihedral charmm` row with `w ≠ 0` has no series
-  (`TorsionRefusal::OneFourWeight`).
-- **Fix: compiled `pair lj/cut` prices its Mie exponents.** The compiled
-  door (`PotentialCompiler.compile`) priced 12-6 whatever `n`/`m` the style
-  declared; it now prices `C ε[(σ/r)ⁿ − (σ/r)ᵐ]` as the typed door and the
-  spec's expression do. A 12-6 style is unchanged.
-- **Fix: the first-compile conformance check of a Tier-1/Tier-2 style no
-  longer panics on a frame without atom positions**; it waits for a compile
-  whose frame has them.
+- **ABI line.** The capsule names are now `molrs.FrameRef/0.16`,
+  `molrs.ForceFieldRef/0.16` and `molrs.RegionRef/0.16`, so handles cannot be
+  exchanged with a 0.15 build. Rebuild consumer extensions and re-pin them to
+  `>=0.16.0,<0.17`. The frame vocabulary version stays 2 (`atomm` and
+  `cmaps` are additions).
+- **Records are `molrec_version` 2**, which 0.15 cannot read; 0.16 reads
+  0.15's version-1 records (see [Records](#records-molrec_version-2)).
+- **A `ForceField` pickled by 0.15 does not unpickle in 0.16** (a pickle
+  now carries each style's arity).
+- **Force-field JSON is not converted.** `molrs_ff_from_json` reads a
+  0.15 `molrs_ff_to_json` document as written, ½k harmonic `k`, radians,
+  `D`, `a_thole` and `fourier` included: convert it as
+  [the force-field IR](#the-force-field-ir-adopts-the-lammps-standard)
+  says, or move it through a `*.mrec` record, which is converted on read.
+- **Every binding sees the force-field changes.** WASM, C and C++ return the
+  same typifier output (out-of-plane impropers centre first, MMFF `theta0`
+  in degrees), write box-less LAMMPS data the same way and read version-1
+  records the same way as Rust and Python; the C++ trajectory writer refuses
+  to append to a version-1 store. Their exported symbols and `MolrsStatus`
+  codes are unchanged.
 
 ### The force-field IR adopts the LAMMPS standard
 
 molrs holds force fields in one force-field IR, which adopts LAMMPS's
 definitions as its standard: every style's energy expression, factors and
-parameter units are those of the LAMMPS style it corresponds to, and every angle-valued parameter is in degrees.
-[Force-field IR](guides/forcefield-ir.md) is the reference.
-The readers, writers and typifiers moved with the kernels, so **the energy of
-a physical system read from a file or typed by a typifier does not change**
-(the one exception is a bug fix, listed last). What changes is the meaning of
+parameter units are those of the LAMMPS style it corresponds to, and every
+angle-valued parameter is in degrees. The readers, writers and typifiers
+moved with the kernels, so **the energy of a physical system read from a
+file or typed by a typifier does not change** (except where 0.15 was wrong:
+the bug fixes are marked as such below). What changes is the meaning of
 stored numbers, so a force field **built by hand** (`def_type`) or stored by
 an older molrs needs its values converted:
 
@@ -249,482 +80,90 @@ an older molrs needs its values converted:
   (it used to store `k = 2K` and radians), and the force field declares the
   file's `units`: a `metal` include is a `metal` force field (it used to be
   converted to `real`), with LAMMPS's `metal` Coulomb constant on `coul/cut`.
-  It reads `bond_style morse` and `improper_style cvff` too.
   `lammps_coeff_params` returns the coefficients as written.
 - **The LAMMPS writer writes coefficients as stored** (`K = k`, no
-  `to_degrees`), converting energies and lengths only when the target
-  `units` differs from the force field's. `lammps_coeff_values` takes params
-  in the `units` it writes. It writes `bond morse` and `improper cvff`, and
-  refuses a buffered (`delta ≠ 0`) or `dielectric ≠ 1` `coul/cut`.
-  `lammps_units`' `to_store_*` / `from_store_*` / `*_k_lammps` helpers and
-  the `½k` form maps are gone; `LammpsFfUnits::bond_k` converts a bond `K`.
-- **Readers of other engines convert to the force-field IR (LAMMPS standard).** GROMACS:
+  `to_degrees`), converting only when the target `units` differs from the
+  force field's. `lammps_coeff_values` takes params in the `units` it
+  writes. `lammps_units`' `to_store_*` / `from_store_*` / `*_k_lammps`
+  helpers and the `½k` form maps are gone; `LammpsFfUnits::scale(from, to)`
+  returns the `UnitScale` that converts a parameter by its dimension
+  (`UnitScale::apply`).
+- **Readers of other engines convert to the force-field IR.** GROMACS:
   `k = k_b/2`, `k = k_θ/2`, degrees kept. OpenMM XML: `k/2` for bonds and
   angles, radians → degrees. AMBER prmtop: `k = RK`, `k = TK`, radians →
   degrees. The GAFF and OPLS-AA tables (`GaffTypifier`, `OPLSAATypifier`)
   and the GAFF estimator's empirical constants follow; the frcmod writer
   writes `RK = k`, the GROMACS and OpenMM writers convert back.
-- **`dihedral charmm` `w` is priced** (it was read and ignored, pricing a
-  CHARMM field's 1-4 pairs at zero): see [1-4 interactions](#1-4-interactions).
-  The OpenMM writer refuses a non-zero `w`.
+- **`dihedral charmm` `w` is priced** (bug fix: it was read and ignored,
+  pricing a CHARMM field's 1-4 pairs at zero); see
+  [1-4 interactions](#1-4-interactions).
 - **`dihedral harmonic` has a kernel** (`k[1 + sign·cos(nφ)]`, LAMMPS's); the
   LAMMPS reader read it but nothing priced it.
 - **`forcefield` sections state `"angle": "degree"`** beside their preset.
-  A record molrs 0.15 wrote is `molrec_version` 1 and is converted on read
-  (see [Records: molrec_version 2](#records-molrec_version-2)). A section
-  built in memory with `"angle": "radian"` beside a preset is still refused
-  (its preset and its angle unit disagree): convert its parameters as above
-  and restate the unit.
+  A record molrs 0.15 wrote is converted on read (see
+  [Records](#records-molrec_version-2)). A section built in memory with
+  `"angle": "radian"` beside a preset is refused (its preset and its angle
+  unit disagree): convert its parameters as above and restate the unit.
 - **Generic XML (`<BondStyle>` …) no longer renames `k0` to `k`.** The two
-  meant the same `½k` number; under the force-field IR (LAMMPS standard) they do not, so a
-  `k0` attribute is kept as `k0` and a kernel that needs `k` refuses it.
-- **The OpenMM XML reader refuses `<PeriodicImproperForce>`**, the section
-  molrs 0.15.0's writer made up (it is no OpenMM force, and its rows were in
-  no OpenMM order). Rewrite such a file with `<PeriodicTorsionForce>`.
-- **OpenMM impropers price as OpenMM does (bug fix; energies change).** An
-  `<Improper class1 class2 class3 class4>` lists the centre first and OpenMM
-  prices the dihedral `(c2, c3, c1, c4)`. molrs stored the file order and
-  priced `(c1, c2, c3, c4)` — a different dihedral, 0.40× OpenMM's energy on
-  the regression molecule. The reader now stores `(c2, c3, c1, c4)` (AMBER's
-  order, centre third, the order `improper periodic` is priced in everywhere
-  — GROMACS, AMBER, LAMMPS `cvff`); `ordering="charmm"` rows without
-  wildcards stay as written, `ordering="smirnoff"` is refused. The writer
-  writes the inverse, and refuses `improper cvff` (OpenMM cannot price a
-  dihedral that starts at the centre; 0.15 wrote rows OpenMM priced over a
-  different dihedral). A frame built for an OpenMM-read field lists each
-  improper's atoms in its type's endpoint order, now `(c2, c3, c1, c4)`.
+  meant the same `½k` number; in the force-field IR they do not, so a `k0`
+  attribute is kept as `k0` and a kernel that needs `k` refuses it.
 
-### Urey–Bradley (angle charmm)
-
-A new style, LAMMPS's `angle_style charmm`: `angle charmm`,
-E = k(θ − theta0)² + k_ub(r₁₃ − r_ub)², type params `k` (energy/rad²),
-`theta0` (degrees), `k_ub` (energy/length²), `r_ub` (length) — the
-`angle_coeff t K theta0 K_ub r_ub` numbers as written. It is an angle style,
-not a category: `def_style("angle", "charmm")` (Python: an `AngleStyle`), the
-`forcefield` section's `angle.charmm` table and `*.mrec` carry it like any
-angle style, and both `PotentialCompiler.compile` and `compile_typed` price it.
-The 1-3 spring adds no exclusion; which 1-3 pairs a pair style sees is
-`special_bonds`'s answer, as before. See
-[Force-field IR](guides/forcefield-ir.md#ureybradley).
-OpenMM's `AmoebaUreyBradleyForce` reads and writes it too
-([OpenMM XML](#openmm-xml)), and the GROMACS reader and writer map
-`[ angletypes ]` funct 5 onto it (see [GROMACS](#gromacs)); CHARMM `.prm`
-comes later. Behaviour that changes with it:
-
-- **A force field with several styles of one bonded category compiles.**
-  `PotentialCompiler` hands each table-driven style only the rows of its own
-  types (0.15 handed every style every row, so `angle harmonic` beside
-  `angle charmm` failed with "unknown angle type"). A row whose type no style
-  of the category defines is still an error, naming the type.
-- **The LAMMPS reader reads `angle_style charmm` and bonded `hybrid`
-  styles.** `angle_style hybrid harmonic charmm` defines both styles, and each
-  `angle_coeff t <sub-style> …` line is a type of the sub-style it names; the
-  same for `bond`, `dihedral` and `improper`. A data file's
-  `Angle Coeffs # hybrid` section reads the same way.
-- **The LAMMPS reader refuses a bonded coefficient line with extra
-  numbers.** LAMMPS refuses them too; 0.15 dropped them, so an
-  `angle_coeff t K theta0 K_ub r_ub` line under `angle_style harmonic` lost
-  its Urey–Bradley term silently.
-- **The LAMMPS writer writes one `*_style hybrid` line** when a category's
-  used types span several LAMMPS styles, each coefficient line naming its
-  sub-style (0.15 wrote one `*_style` line per style, and LAMMPS kept only the
-  last). Every data-file `* Coeffs` section it writes names its style in the
-  header comment (`Angle Coeffs # charmm`, `# hybrid` with the sub-style on
-  each row), as LAMMPS's `write_data` does, so `read_data_coeffs` reads a
-  non-`harmonic` section back under the right style.
-### CMAP
-
-The `cmap` category has a kernel, `cmap charmm` — LAMMPS `fix cmap`, ported
-step for step ([Force-field IR](guides/forcefield-ir.md),
-CMAP) — and LAMMPS's `fix cmap` files are read and written.
-
-- **A `cmaps` block compiles.** `PotentialCompiler.compile` /
-  `compile_typed` build a `cmap charmm` style over a frame's `cmaps` block
-  (0.16's infrastructure release refused it with "no kernel for style
-  category 'cmap'"). Each row needs a 2-D square `grid` (any N ≥ 2; LAMMPS
-  files are 24×24).
-- **The LAMMPS data reader reads `fix cmap`'s sections.** The header line
-  `N crossterms` (or `N cmap crossterms`) and the `CMAP` section become a
-  `cmaps` block (`atomi` … `atomm`, numeric `type_id`, the map's index in
-  the `fix cmap` file). 0.15 refused the header line and the `CMAP` section
-  (unless skipped with `with_skipped_section("CMAP")`, which still skips
-  it); a `CMAP` section without the header count is refused. The
-  `lammps_counts` meta gains `crossterms=N`.
-- **The LAMMPS data writer writes a `cmaps` block** as `N crossterms` and a
-  `CMAP` section, types by label id; `mol_id` is required for it as for every
-  bonded block. Read such a file in LAMMPS with
-  `read_data <file> fix cmap crossterm CMAP`.
-- **`TypeLabels` covers `cmaps`**, with the inventory meta key
-  `cmap_type_labels` (`keys::CMAP_TYPE_LABELS`). A frame whose `cmaps`
-  block has rows but neither `type` nor `type_id` is now refused by every
-  writer that resolves type labels.
-- **Rust: `LammpsWriteOptions` has a `cmap_file` field** (`Option<String>`,
-  default `None`); a struct literal needs it or `..Default::default()`. An
-  include written for a system with `cmaps` labels needs it — the writer
-  refuses without — and starts with `fix cmap all cmap <cmap_file>` and
-  `fix_modify cmap energy yes` beside `units` (the fix must precede
-  `read_data`). Python: `write_lammps_forcefield(…, cmap_file=…)`, same for
-  `write_lammps_forcefield_str`.
-- **The LAMMPS include reader reads `fix <id> <group> cmap <file>`** (the
-  file relative to the include when read from a path) and `fix_modify` of
-  that fix; any other `fix` line is refused by name (0.15: "unknown LAMMPS
-  keyword `fix`").
-- **New.** `assign_cmaps(frame, ff)` builds the `cmaps` block from a frame's
-  dihedrals and the field's cmap rows (forward matching only);
-  `read_lammps_cmap_str` / `LammpsCmapFile` / `LammpsFfReader::read_cmap_str`
-  read a `fix cmap` file into rows named `"1"` … `"K"`;
-  `LammpsFfWriter::write_cmap_str` and `lammps_cmap_str` write one (CHARMM's
-  own file comes back line for line); `CmapGrid` / `CmapCharmm` are the
-  kernel. Python: `molrs.ff.assign_cmaps`, `read_lammps_cmap`,
-  `write_lammps_cmap`.
-### 1-4 interactions
-
-LAMMPS's three 1-4 mechanisms are all priced, LAMMPS's way; see the
-conventions guide, "1-4 interactions", for the formulas.
-
-- **New pair styles `lj/charmm` and `coul/charmm`** — the halves of LAMMPS
-  `pair_style lj/charmm/coul/charmm`: per type `epsilon`, `sigma`,
-  `epsilon14`, `sigma14`; style `inner`, `cutoff` (both required), `mixing`
-  (default `arithmetic`); CHARMM's energy switch at both compile doors, the
-  Coulomb force LAMMPS's switched force. The LAMMPS reader reads
-  `pair_style lj/charmm/coul/charmm inner outer [inner2 outer2]` and
-  `pair_coeff` with two or four numbers (two store `epsilon14 = epsilon`,
-  `sigma14 = sigma`); the writer writes them back with four. A data file's
-  `Pair Coeffs # lj/charmm/coul/charmm` is refused (no switching cutoffs);
-  `lj/charmm/coul/long` is refused.
-- **`dihedral charmm` `w` prices its end atoms' 1-4 pair**,
-  `w·[LJ(ε₁₄, σ₁₄) + C qᵢqⱼ/r]` with no cutoff, a pair at the ends of
-  several dihedrals taking the sum. Refused, as in LAMMPS: `w > 0` beside
-  `special_bonds` 1-4 weights other than 0, or without `lj/charmm` (and a
-  Coulomb style); `w` outside [0, 1].
-- **Per-pair overrides on `pairs`.** Float columns `epsilon`, `sigma`,
-  `charge_product`, `lj_scale`, `coul_scale` (null cell: the force field's
-  value; `molrs::store::schema::PAIR_OVERRIDE_COLUMNS`). Explicit values are
-  final and the scales replace the `special_bonds` weight (or `w`).
-  Precedence: override > `w` > `special_bonds`. The LAMMPS data-file writer
-  and the Python LAMMPS force-field writers refuse a frame carrying them.
-- **One exceptions kernel at both doors.** Every override pair and every
-  `w > 0` pair is priced by one more member (`PairExceptions`, an indexed
-  member). `compile` drops the override rows from the `pairs` list the pair
-  styles see; `compile_typed` reads those rows and weights them 0 in every
-  pair member.
-- **Rust: `TypedMember` is `(Member, Option<PairWeights>)`** (was
-  `Option<BondDistanceWeights>`). Build the MD weights with
-  `SpecialWeights::new(&w.special_weights(&topo))` (was
-  `topo.special_weights(&w)`); `PairWeights::by_distance()` is the old table.
-- **`lj/charmm` style param `one_four`** — `"regular"` (default; a
-  `special_bonds` 1-4 pair at the regular ε/σ, LAMMPS) or `"epsilon14"` (at
-  ε₁₄/σ₁₄, OpenMM / GROMACS pairtypes); any other value is refused.
-  `ForceField.materialize_one_four(frame)` (Rust
-  `ForceField::materialize_one_four`) writes a frame's 1-4 pairs as override
-  rows from the field's declarations; compiling an `"epsilon14"` field for a
-  frame without them is refused, and the LAMMPS writer refuses the param.
-- **`pair14` is no category.** molrec retired it; `category_arity("pair14")`
-  is `None`, `PAIR_CATEGORIES` is gone, and a `pair14` table is kept as
-  unknown content (no arity or restatement check). No reader produced it.
-
-### OpenMM XML
-
-The OpenMM reader (`OplsXmlReader`, Python `read_opls_xml`; `read_forcefield_xml`
-dispatches to it) and writer (`XmlForceFieldWriter`, `write_forcefield_xml`)
-cover every force OpenMM's `app.ForceField` builds from a Class-I file, and
-refuse the rest by name; see [Force-field IR](guides/forcefield-ir.md#openmm-xml).
-Checked against OpenMM's own energies (Reference platform) and LAMMPS on
-CHARMM36, AMBER ff14SB and OPLS-AA molecules.
-
-- **New sections read and written.** `<LennardJonesForce>` (`sigma14`,
-  `epsilon14`, `<NBFixPair>`) is `pair lj/charmm` + `coul/charmm`;
-  `<AmoebaUreyBradleyForce>` is `angle charmm`; `<CMAPTorsionForce>` is
-  `cmap charmm` (OpenMM's map shifted by N/2 per index and transposed into
-  φ-major); `<CustomTorsionForce energy="k*(theta-theta0)^2">` is
-  `improper harmonic` (`theta0 = 0`; the writer uses
-  `k*(abs(theta)-theta0)^2` for `chi0 ≠ 0`).
-- **`<RBTorsionForce>` reads as `dihedral multi/harmonic`** (`nharmonic` when
-  C₅ ≠ 0), exactly and with its constant; it was `dihedral opls`, which
-  refused C₅ ≠ 0 and ΣCₙ ≠ 0. The OPLS-AA typifier built from XML takes its
-  dihedral candidates from every dihedral style.
-- **Coulomb uses OpenMM's constant.** An OpenMM-read `coul/cut` /
-  `coul/charmm` has `coulomb = 332.06371329919216` (OpenMM's `ONE_4PI_EPS0`),
-  not LAMMPS `real`'s 332.06371: Coulomb energies of an OpenMM-read field are
-  9.9·10⁻⁹ larger than in 0.15.
-- **`NonbondedForce` states its mixing.** Without the foyer
-  `combining_rule`, `lj/cut` gets `mixing = "arithmetic"` (OpenMM's rule)
-  instead of none.
-- **Refused, by name, instead of skipped or misread**: every
-  `Custom*Force` other than the harmonic improper (0.15 skipped them
-  silently), `<Script>`, an RB `<Improper>`, a bonded row naming neither
-  `class{n}` nor `type{n}` (0.15 read it as a `*` wildcard; OpenMM ignores
-  it), `ordering="smirnoff"`, odd CMAP sizes, a `<NonbondedForce>` with
-  `epsilon ≠ 0` beside a `<LennardJonesForce>`. `<Info>` and `<Patches>` are
-  skipped like `<Residues>`.
-- **1-4 parameters of their own.** A `<LennardJonesForce>` whose types carry
-  `sigma14`/`epsilon14` gives its `lj/charmm` the new style param
-  `one_four = "epsilon14"` (see [1-4 interactions](#1-4-interactions)); call
-  `ForceField.materialize_one_four(frame)` before compiling such a frame.
-- **Writer.** Writes everything above, plus `dihedral charmm` (`w = 0`),
-  `harmonic` and `class2` as periodic terms, `multi/harmonic`, `nharmonic`
-  and `opls` as RB, explicit LJ cross rows as `<NBFixPair>` (0.15 refused
-  them), charges from the atom types (0.15 read them from the pair rows,
-  where no reader puts them, and wrote 0), class / type endpoints as the
-  field names them, `combining_rule` when not arithmetic. It refuses every
-  style it has no form for (0.15 skipped bond, angle and pair styles it did
-  not know). Placeholder class types are no longer written as atom types.
-- **`write_forcefield_xml(path, ff, precision)`: `precision` is optional**
-  (`Option<usize>` in Rust); the default writes each number in the shortest
-  form that reads back to the same float (0.15: six decimals).
-- **LAMMPS writer: `dihedral charmm` phase is an integer.** LAMMPS reads it
-  as integer degrees and refused `180.000000`; a non-integer phase is
-  refused by name.
-- **Writer: every `<Type>` has a class** (OpenMM refuses a file without):
-  a type without one — a prmtop's, a LAMMPS file's — is written as its own
-  class. **Two types on the same labels** (as OpenMM's generator matches
-  them) are refused when their parameters differ (OpenMM would price every
-  such term with the first) and written once when they agree; a proper's
-  periodic and RB rows on one quartet are refused (OpenMM adds both). A
-  shifted or Mie `lj/cut` and a force field in units other than `real` are
-  refused.
-
-### LAMMPS pair styles
-
-- **`pair_style lj/cut` alone has no Coulomb style.** LAMMPS prices no
-  charge under it; 0.15 added a `coul/cut` beside it, which priced the
-  charges. `lj/cut/coul/cut` reads as before.
-- **`lj/cut/coul/long` reads as `lj/cut` + `coul/long/pme`** (its cutoff and
-  LAMMPS's constant), not as a plain `coul/cut` cut off at the same
-  distance: the Ewald sum is not a cut-off sum. The include's
-  `kspace_style` states an accuracy, not an `alpha`, so the Ewald
-  parameters are not read, and compiling the style refuses until they are
-  stated. The writer writes such a style back as `lj/cut/coul/long`, and
-  refuses one that states its Ewald parameters (molrs's smooth PME is not
-  LAMMPS's PPPM). Other `lj/cut/coul/*` Coulombs (`debye`, `dsf`, `wolf`, …)
-  are refused, not read as plain.
-- **`pair_modify shift yes`** reads as `lj/cut`'s `shift` and is written
-  (0.15 dropped it both ways); a Mie `lj/cut` (`n`, `m` ≠ 12, 6) is
-  refused by the writer (0.15 wrote a 12-6 line). A pair style the writer
-  has no LAMMPS form for (`coul/tt`, …) is refused by name, no longer
-  written into a `pair_style hybrid` line LAMMPS cannot read.
-- **`skip_pair_style` skips the `pair_style` line only.**
-  `write_lammps_forcefield(_str)(…, skip_pair_style=True)` (Rust
-  `LammpsWriteOptions::skip_pair_style`) now keeps `special_bonds` and
-  `pair_modify mix` / `shift`: they are the force field's, and LAMMPS's
-  defaults (`0 0 0`, `geometric` for `lj/cut`) are not molrs's. 0.15 dropped
-  both, so a relaxation that set its own `pair_style` ran with LAMMPS's 1-4
-  weights and mixing rule. A caller that states its own 1-4 weights passes
-  the new `skip_special_bonds=True`. `pair_modify` needs a pair style: read a
-  `skip_pair_style` include after the input's `pair_style`.
-- **A pair `hybrid` states each sub-style's mixing rule**: one
-  `pair_modify pair <sub-style> mix <rule>` per sub-style whose spec declares
-  `mixing` (its rule, else the spec's default `arithmetic`); 0.15 wrote none,
-  so LAMMPS mixed an `lj/cut` sub-style geometrically.
-
-### LAMMPS data files
-
-- **A box-less frame is written inside the bounds of its atoms.**
-  `write_lammps_data` gives a frame without a box the axis-aligned bounds of
-  its coordinates widened by 1 length unit on every side (0.15 wrote a
-  `0 1` placeholder box, which LAMMPS wraps the atoms into under `p` and
-  loses them from under `f` / `s`). Read such a file with
-  `boundary s s s`; a non-finite coordinate is refused. A frame meant to be
-  periodic carries its box, written as before.
-
-### Engine codecs: styles carry their engine forms
-
-Engine I/O follows the force-field IR's protocol; see [Force-field
-IR](guides/forcefield-ir.md#engine-codecs).
-
-- **`StyleSpec.lammps`** (`LammpsForm::{None, Positional, Custom}`). A style
-  registered with `LammpsForm::positional()` (Python
-  `register_style(..., lammps="positional")`, `"positional:<name>"` for
-  another LAMMPS name, `ir.StyleSpec.lammps`, or afterwards
-  `ir.register_engine_form("lammps", category, name, form)`) is read and
-  written by the LAMMPS reader and writer with nothing else written:
-  `params` in order, each converted by its `Dim`. `StyleInfo.lammps` names a
-  style's form. The reader's and writer's closed tables
-  (`supported_styles`, `coeff_params`, `molrs_style_name`; `coeff_fields`,
-  `lammps_style_name`, the writer's per-arm unit conversion) are gone:
-  `lammps_coeff_params` and `lammps_coeff_values` go through the codecs.
-- **Newly read and written by LAMMPS**: `bond class2`, `angle class2` and
-  `dihedral class2` (cross-term lines at zero; a non-zero cross term is
-  refused), `pair buck`, `pair morse`, `pair lj/class2` (always
-  `sixthpower`, as LAMMPS mixes it), a `hybrid` of such pair styles and a
-  `hybrid/overlay` of one with `coul/cut` / `coul/long`. A `Pair Coeffs #
-  morse` data-file section reads (it was refused).
-- **The LAMMPS writer converts per dimension.** A field written in another
-  unit style has every parameter scaled by its `Dim` (`E*L^6`, `1/L`, …),
-  not per style arm; numbers agree with 0.15's to the last digit or two.
-  `pair_coeff` lines name the lower type id first (LAMMPS sets nothing for
-  `pair_coeff I J` with `I > J`). `lj/charmm/coul/charmm` is followed by
-  `pair_modify mix arithmetic` (LAMMPS's default for it, now stated).
-  A `pair_coeff` line with a per-pair cutoff is refused (molrs has none; it
-  was dropped). A style with types in a category LAMMPS has no `*_style`
-  for (a run-time category, `drude`) is refused, no longer dropped.
-- **OpenMM writes expression styles as `Custom*Force`s.** `bond morse`,
-  `bond class2`, `angle class2`, `improper cvff` and any registered or
-  instance expression style are written as `CustomBondForce`,
-  `CustomAngleForce`, `CustomTorsionForce`, `CustomNonbondedForce`, or a
-  `<Script>`-built `CustomCompoundBondForce` (a run-time compound category),
-  the parameters in IR units and the expression rewritten exactly
-  (`4.184*(E[r → 10*r])`); 0.15 refused them, and silently skipped
-  run-time categories. Reading a `Custom*Force` stays refused.
-- **Every engine refusal is `NoEngineForm`.** The GROMACS and frcmod
-  writers refuse a style that is not built in, and the LAMMPS and OpenMM
-  writers a style with no form, as "`<engine>` has no form for `<category>`
-  `` `<style>` ``: …", typed: `ForceFieldWriter::write_str` / `write` (and
-  `write_amber_frcmod`, `write_forcefield_xml`,
-  `GromacsTopFfWriter::write_system_str`, the LAMMPS writer's
-  `write_data_coeffs_str` / `write_cmap_str`) return
-  **`WriteError`** instead of `String`: it dereferences to its message (so
-  `err.contains(…)` still reads it, and `String::from(err)` converts) and
-  `err.ir()` is the `IrError::NoEngineForm` when an engine refused a style.
-  Python raises `molrs.ff.ir.NoEngineForm` (a `ValueError`) from every
-  writer, as from `register_engine_form`.
-- **Readers and writers take a registry**: `LammpsFfReader::with_registry`,
-  `LammpsFfWriter::with_registry`, `XmlForceFieldWriter::with_registry`
-  (the process-wide one by default).
-- **Built-in spec defaults** now state the zeros the kernels read for an
-  absent parameter: `dihedral opls` `k1..k4`, `multi/harmonic` `a1..a5`,
-  `class2` `k1..k3`/`phi1..phi3`, `charmm` and `periodic` `phase`, `improper
-  harmonic` `chi0`, `improper periodic` `phase`.
-
-### Parameter defaults and refusals are the spec's
+### Parameter defaults and refusals
 
 - **One place applies a default.** `StyleSpec::gather` fills every default a
-  spec declares (style params, per-type rows, each term of an indexed family)
-  and checks each stated value's kind, before any kernel — built-in
-  constructor, generic kernel, expression — sees a parameter; the 1-4
-  exceptions and `materialize_one_four` read through it too. No built-in
-  kernel states a default of its own any more, so an absent parameter prices
-  the same in every tier:
+  style's spec declares (style params, per-type rows, each term of an
+  indexed family) and checks each stated value's kind before any kernel — a
+  built-in constructor, a generic kernel, an expression — sees a parameter;
+  the 1-4 exceptions and `materialize_one_four` read through it too. No
+  built-in kernel states a default of its own, so an absent parameter
+  prices the same in every kernel. Where this changes what 0.15 did:
   - `pair coul/cut` and `coul/charmm` take `dielectric` 1 when the style
     omits it (LAMMPS's default; 0.15 refused it as "force-field data").
   - `pair lj/cut`, `lj/class2`, `buck`, `morse` and `coul/cut` declare
     `cutoff` with default ∞ (untruncated), which their compiled kernels
-    already did; an expression-priced style no longer needs one at the
-    compiled door. A neighbour-driven evaluation still needs a finite
-    `cutoff` and refuses ∞ (`BadValue`).
+    already did; see [Pair cutoffs](#pair-cutoffs-and-the-pme-box) for the
+    neighbour-driven forms.
   - `pair lj/class2` mixes by its `mixing` (default `sixthpower`, LAMMPS's)
     when a pair has no cross row; 0.15 refused any pair without one.
-  - `dihedral charmm` `w` defaults to 0 (the 1-4 exception read 0), `pair
-    mmff_vdw` `da` to 0 (neither donor nor acceptor), `angle mmff_stbn`
-    declares the `linear` column it reads.
+  - The zeros 0.15's kernels read for an absent parameter are the specs'
+    declared defaults, so energies do not change: `dihedral opls` `k1..k4`,
+    `multi/harmonic` `a1..a5`, `class2` `k1..k3` / `phi1..phi3`, `charmm`
+    and `periodic` `phase`, `charmm` `w`, `improper harmonic` `chi0`,
+    `improper periodic` `phase`, `pair mmff_vdw` `da` (neither donor nor
+    acceptor); `angle mmff_stbn` declares the `linear` column it reads.
   - `mixing` accepts the canonical names only (`arithmetic`, `geometric`,
     `sixthpower`); foyer's `combining_rule="lorentz"` is translated by the
-    OPLS-AA (foyer XML) reader, and the `lorentz` / `lorentz-berthelot` aliases are
-    gone.
-- **Every missing or ill-typed parameter is an `IrError`.** A built-in
+    OPLS-AA (foyer XML) reader, and the `lorentz` / `lorentz-berthelot`
+    aliases are gone.
+- **Every missing or ill-typed parameter is a typed `IrError`.** A built-in
   constructor that lacks a parameter raises `MissingParam` (`style`, `type`,
-  `param`) — Python `molrs.ff.ir.MissingParam` — where 0.15 raised a plain
+  `param`; Python `molrs.ff.ir.MissingParam`) where 0.15 raised a plain
   `ValueError` with a message; a per-instance column a typifier did not bake
-  (`kb` of `mmff_bond`, …) is `MissingParam` too. The new variant
-  **`BadValue`** (`style`, `type`, `param`, `reason`; Python
-  `molrs.ff.ir.BadValue`) refuses a value of the wrong kind (text for a
-  number, an array of another rank), text outside its declared choices
-  (`mixing = "lorentz"`) or a value outside its domain (a non-integer `n` of
-  `lj/cut`, `inner >= cutoff` of a CHARMM switch). An unlike pair of `buck` /
-  `morse` with no cross row is `NoMixing`. Structural failures (a missing
-  block or column, an unknown type label) stay plain `ValueError`.
-- **The neighbour-driven `pair lj/class2`, `buck` and `morse` stop at their
-  `cutoff`** (`r < cutoff`, as LAMMPS and `lj/cut` do); 0.15 priced every
-  pair the neighbour table held, beyond the cutoff too. Found by the
-  built-in gate (`ff::ir::builtin_conformance`), which holds each built-in
-  to its expression at both doors. The compiled door truncates too: see
-  [Pair cutoffs at both compile doors](#pair-cutoffs-at-both-compile-doors).
+  (`kb` of `mmff_bond`, …) is `MissingParam` too. `BadValue` (`style`,
+  `type`, `param`, `reason`; Python `molrs.ff.ir.BadValue`) refuses a value
+  of the wrong kind (text for a number, an array of another rank), text
+  outside its declared choices (`mixing = "lorentz"`) or a value outside its
+  domain (a non-integer `n` of `lj/cut`, `inner >= cutoff` of a CHARMM
+  switch). An unlike pair of `buck` / `morse` with no cross row is
+  `NoMixing`. Rust: `VdwStyleParams::from_style` returns
+  `Result<Self, IrError>`.
+- **Python raises the typed refusal everywhere.** Every refusal of the
+  force-field IR — from `def_style` / `def_type`, `PotentialCompiler.compile`
+  and `defer`, the optimizers and every writer — is a subclass of
+  `molrs.ff.ir.IrError`, itself a `ValueError`, carrying its fields as
+  attributes (`err.style`, `err.param`, …). `except ValueError` still catches
+  them; code that matched the exact type or the message text does not.
+  Structural failures (a missing block or column, an unknown type label)
+  stay plain `ValueError`.
 - **`dihedral periodic`** refuses a gap in its terms (`k1`, `k3` without
   `k2`: `MissingParam` `k2`; 0.15 silently dropped `k3`) and a row spelling
   both `k` and `k1` (`BadValue`).
-
-### Pair cutoffs at both compile doors
-
-- **`PotentialCompiler.compile` (the `pairs`-list door) truncates every
-  pair style at its `cutoff`**, exactly as `compile_typed` and LAMMPS do: a
-  `pairs` row prices only at `r < cutoff`, a shifted `lj/cut`
-  (`shift`, `pair_modify shift yes`) is shifted to zero there, and the
-  CHARMM styles switch between `inner` and `cutoff` (they already did). 0.15
-  priced every listed pair whatever the style's `cutoff`. This holds for
-  every pair style: the built-ins, a run-time `ScalarForm`, a Python
-  callable and an expression. A `special_bonds` 1-4 pair is truncated with
-  the rest (LAMMPS applies the special weights inside its cutoff test); the
-  1-4 exceptions kernel — a `dihedral charmm` `w` pair, a per-pair override —
-  is not, as LAMMPS's `dihedral_style charmm` prices its 1-4 pair at any
-  distance. A pair exactly at the cutoff prices nothing (`rsq < cutsq`;
-  the typed `lj/cut` priced it).
-- **A style that states no `cutoff` is untruncated**: the declared default
-  ∞ of `lj/cut`, `lj/class2`, `buck`, `morse`, `coul/cut`, and every style
-  whose spec has none. Fields read from OpenMM XML (`NoCutoff`), a prmtop or
-  a GROMACS topology without a stated cutoff price as before. Only a field
-  that states a `cutoff` shorter than some listed pair prices differently,
-  and then as LAMMPS does.
-- **The neighbour-driven `lj/class2`, `buck`, `morse` and `coul/cut` refuse
-  an absent (∞) `cutoff`** (`BadValue`), as `lj/cut` and the generic pair
-  kernel already did: a neighbour sum is not finite without one. 0.15
-  silently priced every pair the table held.
-- **The compiled `pair buck` and `morse` find a pair's row from its two
-  atoms' types** (the self row, else the cross row; neither is `NoMixing`),
-  as their neighbour-driven forms and LAMMPS's `pair_coeff i j` do. 0.15
-  read a per-pair `type` column off the `pairs` block instead, which
-  `intramolecular_pairs` never writes, so the compiled door failed on any
-  list molrs built; that column is no longer read.
-- **`pair coul/long/pme` takes its cell from the frame** (`frame.box`), as
-  LAMMPS's kspace takes its simulation box; the undeclared style params
-  `box_xx` … `box_zz` it read are gone (a field stating them now states
-  parameters nothing reads). A frame without a box, with a box not periodic
-  in x, y and z, or with a cell outside LAMMPS's restricted triclinic form
-  is refused by name: Rust `CompileError::NoBox` (new variant), Python
-  `ValueError`.
-
-### AMBER prmtop
-
-The prmtop readers (`read_amber_prmtop`, `AmberPrmtopFfReader` /
-`read_amber_prmtop_ff`) read what they refused, and the frame and the force
-field they return change where they did. AMBER stays read-only. See the IR
-guide, "AMBER prmtop", for the full map.
-
-- **Chamber (CHARMM) prmtops read.** 0.15 refused `%FLAG CTITLE` /
-  `FORCE_FIELD_TYPE`. Now: every angle is `angle charmm` with its
-  Urey–Bradley term, `CHARMM_IMPROPERS` are `improper harmonic` (centre
-  first; a ψ₀ off 0°/180° is refused), CMAP is `cmap charmm` and a `cmaps`
-  block, Lennard-Jones is `lj/charmm` (with `epsilon14` / `sigma14` and
-  `one_four = "epsilon14"` when the file's 1-4 table differs) and Coulomb
-  `coul/charmm` at 332.0716; charges are de-scaled by √332.0716 (not
-  18.2223). The force field's `name` is `"CHARMM"`. Its pair styles carry no
-  `inner` / `cutoff`: declare them before compiling. With `one_four =
-  "epsilon14"`, build the pair list (`intramolecular_pairs`) and call
-  `ForceField.materialize_one_four(frame)` before compiling.
-- **CMAP reads** (ff19SB's `CMAP_*` too); 0.15 refused `CMAP_COUNT > 0`.
-- **Non-uniform `SCEE` / `SCNB` read.** 0.15 refused two divisors among the
-  1-4 rows. `special_bonds` is now the divisor most 1-4 rows carry (it was
-  the one value), and the frame gains a `pairs` block — only when some pair
-  is weighted otherwise — listing those 1-4 pairs with `coul_scale` /
-  `lj_scale` cells. It is not a pair list: `intramolecular_pairs` builds the
-  full list and keeps the cells (it used to drop a frame's `pairs`). An
-  `intramolecular_pairs` call on a frame whose `pairs` row with an override
-  names a 1-2 / 1-3 pair raises.
-- **Multi-term impropers read.** 0.15 refused a negative-`PN` chain on an
-  improper and silently kept only the first term of several improper rows on
-  one quartet. Such an improper is now one `improper periodic` type
-  `<quartet>@<n>` and one `impropers` row per term (a single-term improper
-  is unchanged).
-- **A phase within 0.004 rad of ±π is ±180° exactly**, as sander takes it
-  (tleap writes π as `3.14159400`); 0.15 stored 180.0000153°.
-- **Dihedral types.** The terms of a `dihedral periodic` type are sorted by
-  periodicity (they were in the file's type-id order). Two torsions of one
-  type quartet with different terms (tleap reuses a quartet's first match:
-  GAFF2's `hc-c3-ca-ca` alone beside `hc-c3-ca-ca` + `X -c3-ca-X`) are two
-  types, the second named `<quartet>@<n>` in both readers; 0.15 merged their
-  terms into one type, silently.
-- **Atom types.** A type name that stands for atoms of two LJ classes or
-  masses is split into `<name>~<class>` types (0.15 raised a
-  `TypeConflict`); every bonded type name and frame label uses the split
-  names.
-- **Refused, by name:** a 1-4 row on a negative-`PN` chain, or on a bonded /
-  angle-end pair; `IPOL > 0` (0.15: only `IPOL = 1`). The force-field reader
-  now refuses `IPOL > 0` as the frame reader does.
 
 ### Records: molrec_version 2
 
 Every record molrs 0.16 writes is `molrec_version` 2
 (`molrs.io.mrec.schema.MOLREC_VERSION`, Rust `molrs::MOLREC_VERSION`). In
-version 2 the force-field IR adopts LAMMPS's definitions, so some stored
+version 2 the `forcefield` section is the force-field IR, so some stored
 numbers mean something else than in the version-1 records molrs 0.15 wrote.
 0.16 never reads a version-1 record as version 2: it converts every changed
 number exactly on read, or refuses the record by name.
@@ -771,18 +210,422 @@ number exactly on read, or refuses the record by name.
   and the atom order of every other improper. A 0.15 record of an
   OpenMM-read field keeps the improper rows 0.15 priced; re-read the XML with
   0.16 for OpenMM's own order.
+- **The `forcefield` section holds more.** Any type parameter may be an
+  array (molrec's `f64[T, S…]`: one shape per column, every trailing axis at
+  least 1, finite values in a non-null row); a `cmap` table's `grid` is
+  further `f64[T, N, N]` (`N ≥ 2`). A non-float or empty-axis array column,
+  a non-square grid, an array under an annotation or canonical key, and an
+  array style param are refused by `validate` / `to_section`.
+  `ForceField.from_section` reads a `cmap` style and every category beyond
+  the seven (0.15 refused both); see
+  [The force-field IR as a protocol](#the-force-field-ir-as-a-protocol).
+- **`pair14` is no category.** molrec retired it; `category_arity("pair14")`
+  is `None`, and a `pair14` table is kept as
+  unknown content (no arity or restatement check). No reader produced it.
+- **`ForceFieldSection.validate` refuses a `pair lj/charmm` `one_four`**
+  other than `"regular"` / `"epsilon14"`, so `read_mrec_forcefield` refuses
+  such a record before anything turns it into a `ForceField`.
 
 Every 0.15 test record (`molrs/src/io/zarr/testdata/v1`, written by the
 published molrs 0.15.0 wheel: MMFF, harmonic / periodic, morse / class2 /
 charmm, `fourier` under `lj` units, class2 under `metal`) prices in 0.16 to
 the energy and forces 0.15.0 computed for it.
 
+### Compiling
+
+- **Rust: compiling returns `CompileError`.** `PotentialCompiler::compile`
+  and `compile_typed` return `Result<_, CompileError>` (0.15: `String`):
+  `CompileError::Ir(IrError)` for a refusal of the force-field IR,
+  `NoBox { category, style, reason }`, `Invalid(String)` for anything else.
+  It implements `Display` and `std::error::Error`, `err.ir()` is the IR
+  refusal when it is one, and it converts from `String` / `&str` /
+  `IrError`; a caller that propagated the `String` maps it
+  (`.map_err(|e| e.to_string())`). `KernelConstructor` and every built-in
+  `*_ctor` return `Result<Member, CompileError>` (0.15: `String`); a custom
+  constructor that returns `Err(message.into())` or uses `?` on a `String`
+  error still compiles.
+- **A force field with several styles of one bonded category compiles.**
+  `PotentialCompiler` hands each table-driven style only the rows of its own
+  types (0.15 handed every style every row, so `angle harmonic` beside
+  `angle charmm` failed with "unknown angle type"). A row whose type no style
+  of the category defines is still an error, naming the type.
+- **The compiled `pair lj/cut` prices its Mie exponents** (bug fix). The
+  compiled door priced 12-6 whatever `n` / `m` the style declared; it now
+  prices `C ε[(σ/r)ⁿ − (σ/r)ᵐ]` as the typed door does. A 12-6 style is
+  unchanged.
+- **The compiled `pair buck` and `morse` find a pair's row from its two
+  atoms' types** (the self row, else the cross row; neither is `NoMixing`),
+  as their neighbour-driven forms and LAMMPS's `pair_coeff i j` do. 0.15
+  read a per-pair `type` column off the `pairs` block instead, which
+  `intramolecular_pairs` never writes, so the compiled door failed on any
+  list molrs built; that column is no longer read.
+
+### Pair cutoffs and the PME box
+
+- **`PotentialCompiler.compile` (the `pairs`-list door) truncates every
+  pair style at its `cutoff`**, exactly as `compile_typed` and LAMMPS do: a
+  `pairs` row prices only at `r < cutoff`, a shifted `lj/cut` (`shift`,
+  `pair_modify shift yes`) is shifted to zero there, and the CHARMM styles
+  switch between `inner` and `cutoff`. 0.15 priced every listed pair
+  whatever the style's `cutoff`. This holds for every pair style: the
+  built-ins, a run-time `ScalarForm`, a Python callable and an expression.
+  A `special_bonds` 1-4 pair is truncated with the rest (LAMMPS applies the
+  special weights inside its cutoff test); the 1-4 exceptions kernel — a
+  `dihedral charmm` `w` pair, a per-pair override — is not, as LAMMPS's
+  `dihedral_style charmm` prices its 1-4 pair at any distance. A pair
+  exactly at the cutoff prices nothing (`rsq < cutsq`; 0.15's typed
+  `lj/cut` priced it).
+- **A style that states no `cutoff` is untruncated**: the declared default
+  ∞ of `lj/cut`, `lj/class2`, `buck`, `morse`, `coul/cut`, and every style
+  whose spec has none. Fields read from OpenMM XML (`NoCutoff`), a prmtop or
+  a GROMACS topology without a stated cutoff price as before. Only a field
+  that states a `cutoff` shorter than some listed pair prices differently,
+  and then as LAMMPS does.
+- **The neighbour-driven `lj/class2`, `buck`, `morse` and `coul/cut` stop
+  at their `cutoff`** (`r < cutoff`, as LAMMPS and `lj/cut` do; 0.15 priced
+  every pair the neighbour table held, beyond the cutoff too), and **refuse
+  an absent (∞) `cutoff`** (`BadValue`), as `lj/cut` and the generic pair
+  kernel already did: a neighbour sum is not finite without one.
+- **`pair coul/long/pme` takes its cell from the frame** (`frame.box`), as
+  LAMMPS's kspace takes its simulation box; the undeclared style params
+  `box_xx` … `box_zz` it read are gone (a field stating them now states
+  parameters nothing reads). A frame without a box, with a box not periodic
+  in x, y and z, or with a cell outside LAMMPS's restricted triclinic form
+  is refused by name: Rust `CompileError::NoBox`, Python `ValueError`.
+
+### Urey–Bradley (angle charmm)
+
+A new style, LAMMPS's `angle_style charmm`: `angle charmm`,
+E = k(θ − theta0)² + k_ub(r₁₃ − r_ub)², type params `k` (energy/rad²),
+`theta0` (degrees), `k_ub` (energy/length²), `r_ub` (length) — the
+`angle_coeff t K theta0 K_ub r_ub` numbers as written. It is an angle style,
+not a category: `def_style("angle", "charmm")` (Python: an `AngleStyle`), the
+`forcefield` section's `angle.charmm` table and `*.mrec` carry it like any
+angle style, and both compile doors price it. The 1-3 spring adds no
+exclusion; which 1-3 pairs a pair style sees is `special_bonds`'s answer, as
+before. See [Force-field IR](guides/forcefield-ir.md#ureybradley). The
+LAMMPS ([hybrid styles](#lammps)), OpenMM (`AmoebaUreyBradleyForce`),
+GROMACS (`[ angletypes ]` funct 5) and chamber prmtop readers and writers
+carry it.
+
+### CMAP
+
+The `cmap` category (five endpoints) and its kernel `cmap charmm` — LAMMPS
+`fix cmap`, ported step for step
+([Force-field IR](guides/forcefield-ir.md#cmap)) — are new, and LAMMPS's
+`fix cmap` files are read and written.
+
+- **Rust: `StyleDefs` is `#[non_exhaustive]` and has a `Cmap` variant.**
+  `StyleDefs::Cmap(Vec<CmapType>)` holds five-endpoint types
+  (`itom` … `mtom`). A `match` on `StyleDefs` outside molrs needs a wildcard
+  arm. `ForceField::def_style("cmap", …)` defines a style (0.15 returned
+  `DefError::UnknownCategory`), and its `def_type` takes exactly five
+  endpoints.
+- **Rust: `ENDPOINT_COLUMNS` has five entries.**
+  `store::forcefield_section::ENDPOINT_COLUMNS` is `[&str; 5]`
+  (`itom` … `ltom`, `mtom`), and `category_arity("cmap")` is `Some(5)`
+  (0.15: `None`). A `cmap` style table must carry all five endpoint columns.
+- **Frame vocabulary.** The canonical key `atomm` (`u64`, fifth relation
+  endpoint) and the block `cmaps` (relation of arity 5, optional `type`,
+  `type_id`, `style`) are new; `subset`, `replicate` and the validator
+  renumber and range-check `atomi` … `atomm`. `keys::ENDPOINTS` (Rust
+  `[&str; 5]`, Python `molrs.keys.ENDPOINTS`) gains `atomm`, so a block
+  without a spec now reads an `atomm` column as an endpoint into `atoms`, an
+  `atomm` column at another dtype than `u64` is refused, and the fifth
+  endpoint column of a five-node `MolGraph` relation is `atomm` (0.15:
+  `atom4`).
+- **A `cmaps` block compiles** at both doors (0.15 refused the category).
+  Each row needs a 2-D square `grid` (any N ≥ 2; LAMMPS files are 24×24).
+- **The LAMMPS data reader reads `fix cmap`'s sections.** The header line
+  `N crossterms` (or `N cmap crossterms`) and the `CMAP` section become a
+  `cmaps` block (`atomi` … `atomm`, numeric `type_id`, the map's index in
+  the `fix cmap` file). 0.15 refused the header line and the `CMAP` section
+  (unless skipped with `with_skipped_section("CMAP")`, which still skips
+  it); a `CMAP` section without the header count is refused. The
+  `lammps_counts` meta gains `crossterms=N`.
+- **The LAMMPS data writer writes a `cmaps` block** as `N crossterms` and a
+  `CMAP` section, types by label id; `mol_id` is required for it as for every
+  bonded block. Read such a file in LAMMPS with
+  `read_data <file> fix cmap crossterm CMAP`.
+- **`TypeLabels` covers `cmaps`**, with the inventory meta key
+  `cmap_type_labels` (`keys::CMAP_TYPE_LABELS`). A frame whose `cmaps`
+  block has rows but neither `type` nor `type_id` is refused by every
+  writer that resolves type labels.
+- **Rust: `LammpsWriteOptions` has a `cmap_file` field** (`Option<String>`,
+  default `None`; with `skip_special_bonds`, see [LAMMPS](#lammps), two new
+  fields): a struct literal needs them or `..Default::default()`. An
+  include written for a system with `cmaps` labels needs it — the writer
+  refuses without — and starts with `fix cmap all cmap <cmap_file>` and
+  `fix_modify cmap energy yes` beside `units` (the fix must precede
+  `read_data`). Python: `write_lammps_forcefield(…, cmap_file=…)`, same for
+  `write_lammps_forcefield_str`.
+- **The LAMMPS include reader reads `fix <id> <group> cmap <file>`** (the
+  file relative to the include when read from a path) and `fix_modify` of
+  that fix; any other `fix` line is refused by name (0.15: "unknown LAMMPS
+  keyword `fix`").
+- **Python.** `molrs.ff.CmapStyle` / `CmapType` (with `itom` … `mtom`);
+  `def_style("cmap", …)` returns a `CmapStyle`.
+- **C API.** `"cmap"` is a category; `molrs_schema_column_dtype("atomm")`
+  is `"uint"`.
+- **New.** `assign_cmaps(frame, ff)` builds the `cmaps` block from a frame's
+  dihedrals and the field's cmap rows (forward matching only);
+  `read_lammps_cmap_str` / `LammpsCmapFile` / `LammpsFfReader::read_cmap_str`
+  read a `fix cmap` file into rows named `"1"` … `"K"`;
+  `LammpsFfWriter::write_cmap_str` and `lammps_cmap_str` write one (CHARMM's
+  own file comes back line for line); `CmapGrid` / `CmapCharmm` are the
+  kernel. Python: `molrs.ff.assign_cmaps`, `read_lammps_cmap`,
+  `write_lammps_cmap`.
+
+### Array parameters
+
+- **Rust: `Params` holds `f64` arrays** beside numbers and strings
+  (`set_array`, `get_array`, `iter_arrays`); `==` and `same_parameters`
+  compare them exactly, so two definitions differing only in an array are a
+  conflict. Code that copies a `Params` key by key through `iter()` and
+  `iter_strings()` loses the arrays.
+- **Python.** A param value may be an array: `def_type(**params)`,
+  `def_style(params=…)` and `Type.__setitem__` take a numpy array or a
+  nested list / tuple of numbers and store float64, so a list value that
+  raised `TypeError` in 0.15 is now stored. `params` and `t[key]` return
+  arrays as float64 numpy arrays; pickles carry them.
+- **C API.** `molrs_ff_to_json` writes an optional `array_params` object (on
+  a style or a type, only when it holds an array param: nested lists, one
+  level per axis), and `molrs_ff_from_json` reads it and refuses a ragged or
+  non-numeric one.
+- **Records.** An array parameter is a `f64[T, S…]` column (see
+  [Records](#records-molrec_version-2)); it round-trips through
+  `to_section` / `from_section`, a `*.mrec` store and `molrs.io.mrec`.
+
+### 1-4 interactions
+
+LAMMPS's three 1-4 mechanisms are all priced, LAMMPS's way; see
+[Force-field IR](guides/forcefield-ir.md#1-4-interactions) for the formulas.
+
+- **New pair styles `lj/charmm` and `coul/charmm`** — the halves of LAMMPS
+  `pair_style lj/charmm/coul/charmm`: per type `epsilon`, `sigma`,
+  `epsilon14`, `sigma14`; style `inner`, `cutoff` (both required), `mixing`
+  (default `arithmetic`); CHARMM's energy switch at both compile doors, the
+  Coulomb force LAMMPS's switched force. The LAMMPS reader reads
+  `pair_style lj/charmm/coul/charmm inner outer [inner2 outer2]` and
+  `pair_coeff` with two or four numbers (two store `epsilon14 = epsilon`,
+  `sigma14 = sigma`); the writer writes them back with four. A data file's
+  `Pair Coeffs # lj/charmm/coul/charmm` is refused (no switching cutoffs);
+  `lj/charmm/coul/long` is refused.
+- **`lj/charmm` style param `one_four`** — `"regular"` (default; a
+  `special_bonds` 1-4 pair at the regular ε/σ, LAMMPS) or `"epsilon14"` (at
+  ε₁₄/σ₁₄, OpenMM / GROMACS pairtypes); any other value is refused.
+  `ForceField.materialize_one_four(frame)` (Rust
+  `ForceField::materialize_one_four`) writes a frame's 1-4 pairs as override
+  rows from the field's declarations; compiling an `"epsilon14"` field for a
+  frame without them is refused, and the LAMMPS writer refuses the param.
+- **`dihedral charmm` `w` prices its end atoms' 1-4 pair**,
+  `w·[LJ(ε₁₄, σ₁₄) + C qᵢqⱼ/r]` with no cutoff, a pair at the ends of
+  several dihedrals taking the sum. Refused, as in LAMMPS: `w > 0` beside
+  `special_bonds` 1-4 weights other than 0, or without `lj/charmm` (and a
+  Coulomb style); `w` outside [0, 1]. The OpenMM and GROMACS writers refuse
+  a non-zero `w`.
+- **Per-pair overrides on `pairs`.** Float columns `epsilon`, `sigma`,
+  `charge_product`, `lj_scale`, `coul_scale` (null cell: the force field's
+  value; `molrs::store::schema::PAIR_OVERRIDE_COLUMNS`). Explicit values are
+  final and the scales replace the `special_bonds` weight (or `w`).
+  Precedence: override > `w` > `special_bonds`. The LAMMPS data-file writer
+  and the Python LAMMPS force-field writers refuse a frame carrying them.
+- **One exceptions kernel at both doors.** Every override pair and every
+  `w > 0` pair is priced by one more member (`PairExceptions`, an indexed
+  member). `compile` drops the override rows from the `pairs` list the pair
+  styles see; `compile_typed` reads those rows and weights them 0 in every
+  pair member.
+- **Rust: `TypedMember` is `(Member, Option<PairWeights>)`** (was
+  `Option<BondDistanceWeights>`). Build the MD weights with
+  `SpecialWeights::new(&w.special_weights(&topo))` (0.15:
+  `topo.special_weights(&w)`, which still exists for a
+  `BondDistanceWeights` but misses the pairs an override weights 0);
+  `PairWeights::by_distance()` is the old table.
+
+### Torsions
+
+- **`dihedral nharmonic`** (LAMMPS's `Σᵢ₌₁ᴺ Aᵢ cosⁱ⁻¹φ`, params `a1..aN`,
+  contiguous, N ≥ 1) is a new style: kernel, LAMMPS reader
+  (`dihedral_coeff t N A1 … AN`) and writer. A gap (`a1`, `a3` without
+  `a2`) or a missing `a1` is refused at compile time and by the writer.
+- **Rust: `molrs::ff::forcefield::torsion` is new** — the exact maps
+  between every torsion form and a Fourier series (`FourierSeries`,
+  `TorsionRefusal`, one type per form with `from_params` / `to_params`,
+  `torsion_series(category, style, style_params, row)` for any registered
+  torsion style); see
+  [Torsion forms and their exact conversions](guides/forcefield-ir.md#torsion-forms-and-their-exact-conversions).
+  `<Form>::from_series` is exact, the constant included, or refuses
+  (`TorsionRefusal::ConstantOffset`); `<Form>::nearest(series)` is the
+  constant-blind answer. A `dihedral charmm` row with `w ≠ 0` has no series
+  (`TorsionRefusal::OneFourWeight`).
+
+### LAMMPS
+
+- **Bonded `hybrid` styles and `angle_style charmm` are read.**
+  `angle_style hybrid harmonic charmm` defines both styles, and each
+  `angle_coeff t <sub-style> …` line is a type of the sub-style it names; the
+  same for `bond`, `dihedral` and `improper`. A data file's
+  `Angle Coeffs # hybrid` section reads the same way.
+- **The reader refuses a bonded coefficient line with extra numbers.**
+  LAMMPS refuses them too; 0.15 dropped them, so an
+  `angle_coeff t K theta0 K_ub r_ub` line under `angle_style harmonic` lost
+  its Urey–Bradley term silently.
+- **The writer writes one `*_style hybrid` line** when a category's used
+  types span several LAMMPS styles, each coefficient line naming its
+  sub-style (0.15 wrote one `*_style` line per style, and LAMMPS kept only the
+  last). Every data-file `* Coeffs` section it writes names its style in the
+  header comment (`Angle Coeffs # charmm`, `# hybrid` with the sub-style on
+  each row), as LAMMPS's `write_data` does, so `read_data_coeffs` reads a
+  non-`harmonic` section back under the right style.
+- **Newly read and written**: `bond morse`, `improper cvff`, `bond class2`,
+  `angle class2` and `dihedral class2` (cross-term lines at zero; a non-zero
+  cross term is refused), `pair buck`, `pair morse`, `pair lj/class2`
+  (always `sixthpower`, as LAMMPS mixes it), a `hybrid` of such pair styles
+  and a `hybrid/overlay` of one with `coul/cut` / `coul/long`. A `Pair
+  Coeffs # morse` data-file section reads (it was refused).
+- **`pair_style lj/cut` alone has no Coulomb style.** LAMMPS prices no
+  charge under it; 0.15 added a `coul/cut` beside it, which priced the
+  charges. `lj/cut/coul/cut` reads as before.
+- **`lj/cut/coul/long` reads as `lj/cut` + `coul/long/pme`** (its cutoff and
+  LAMMPS's constant), not as a plain `coul/cut` cut off at the same
+  distance: the Ewald sum is not a cut-off sum. The include's
+  `kspace_style` states an accuracy, not an `alpha`, so the Ewald
+  parameters are not read, and compiling the style refuses until they are
+  stated. The writer writes such a style back as `lj/cut/coul/long`, and
+  refuses one that states its Ewald parameters (molrs's smooth PME is not
+  LAMMPS's PPPM). Other `lj/cut/coul/*` Coulombs (`debye`, `dsf`, `wolf`, …)
+  are refused, not read as plain.
+- **`pair_modify shift yes`** reads as `lj/cut`'s `shift` and is written
+  (0.15 dropped it both ways); a Mie `lj/cut` (`n`, `m` ≠ 12, 6) is
+  refused by the writer (0.15 wrote a 12-6 line).
+- **The writer converts per dimension.** A field written in another unit
+  style has every parameter scaled by its `Dim` (`E*L^6`, `1/L`, …), not per
+  style arm; numbers agree with 0.15's to the last digit or two.
+  `pair_coeff` lines name the lower type id first (LAMMPS sets nothing for
+  `pair_coeff I J` with `I > J`). `lj/charmm/coul/charmm` is followed by
+  `pair_modify mix arithmetic` (LAMMPS's default for it, now stated).
+- **A pair `hybrid` states each sub-style's mixing rule**: one
+  `pair_modify pair <sub-style> mix <rule>` per sub-style whose spec declares
+  `mixing` (its rule, else the spec's default `arithmetic`); 0.15 wrote none,
+  so LAMMPS mixed an `lj/cut` sub-style geometrically.
+- **Writer refusals instead of silent output**: a buffered (`delta ≠ 0`) or
+  `dielectric ≠ 1` `coul/cut`; a pair style with no LAMMPS form (`coul/tt`,
+  …; it was written into a `pair_style hybrid` line LAMMPS cannot read); a
+  `pair_coeff` with a per-pair cutoff (molrs has none; it was dropped); a
+  style with types in a category LAMMPS has no `*_style` for (a run-time
+  category, `drude`; it was dropped); a non-integer `dihedral charmm` phase
+  (LAMMPS reads it as integer degrees; it is now written as an integer,
+  where 0.15 wrote `180.000000`, which LAMMPS refused).
+- **`skip_pair_style` skips the `pair_style` line only.**
+  `write_lammps_forcefield(_str)(…, skip_pair_style=True)` (Rust
+  `LammpsWriteOptions::skip_pair_style`) keeps `special_bonds` and
+  `pair_modify mix` / `shift`: they are the force field's, and LAMMPS's
+  defaults (`0 0 0`, `geometric` for `lj/cut`) are not the field's. 0.15
+  dropped both, so a relaxation that set its own `pair_style` ran with
+  LAMMPS's 1-4 weights and mixing rule. A caller that states its own 1-4
+  weights passes the new `skip_special_bonds=True`. `pair_modify` needs a
+  pair style: read a `skip_pair_style` include after the input's
+  `pair_style`.
+- **A box-less frame is written inside the bounds of its atoms.**
+  `write_lammps_data` gives a frame without a box the axis-aligned bounds of
+  its coordinates widened by 1 length unit on every side (0.15 wrote a
+  `0 1` placeholder box, which LAMMPS wraps the atoms into under `p` and
+  loses them from under `f` / `s`). Read such a file with
+  `boundary s s s`; a non-finite coordinate is refused. A frame meant to be
+  periodic carries its box, written as before.
+- **A style's LAMMPS form is part of its spec** (see
+  [Engine codecs](#engine-codecs-and-refusals)): the reader, the writer,
+  `lammps_coeff_params` and `lammps_coeff_values` go through it.
+
+### OpenMM XML
+
+The OpenMM reader (`OplsXmlReader`, Python `read_opls_xml`;
+`read_forcefield_xml` dispatches to it) and writer (`XmlForceFieldWriter`,
+`write_forcefield_xml`) cover every force OpenMM's `app.ForceField` builds
+from a Class-I file, and refuse the rest by name; see
+[Force-field IR](guides/forcefield-ir.md#openmm-xml). Checked against
+OpenMM's own energies (Reference platform) and LAMMPS on CHARMM36, AMBER
+ff14SB and OPLS-AA molecules.
+
+- **OpenMM impropers price as OpenMM does (bug fix; energies change).** An
+  `<Improper class1 class2 class3 class4>` lists the centre first and OpenMM
+  prices the dihedral `(c2, c3, c1, c4)`. molrs stored the file order and
+  priced `(c1, c2, c3, c4)` — a different dihedral, 0.40× OpenMM's energy on
+  the regression molecule. The reader now stores `(c2, c3, c1, c4)` (AMBER's
+  order, centre third, the order `improper periodic` is priced in everywhere
+  — GROMACS, AMBER, LAMMPS `cvff`); `ordering="charmm"` rows without
+  wildcards stay as written, `ordering="smirnoff"` is refused. The writer
+  writes the inverse, and refuses `improper cvff` as a periodic improper
+  (OpenMM cannot price a dihedral that starts at the centre; 0.15 wrote rows
+  OpenMM priced over a different dihedral). A frame built for an OpenMM-read
+  field lists each improper's atoms in its type's endpoint order, now
+  `(c2, c3, c1, c4)`.
+- **New sections read and written.** `<LennardJonesForce>` (`sigma14`,
+  `epsilon14`, `<NBFixPair>`) is `pair lj/charmm` + `coul/charmm`;
+  `<AmoebaUreyBradleyForce>` is `angle charmm`; `<CMAPTorsionForce>` is
+  `cmap charmm` (OpenMM's map shifted by N/2 per index and transposed into
+  φ-major); `<CustomTorsionForce energy="k*(theta-theta0)^2">` is
+  `improper harmonic` (`theta0 = 0`; the writer uses
+  `k*(abs(theta)-theta0)^2` for `chi0 ≠ 0`).
+- **`<RBTorsionForce>` reads as `dihedral multi/harmonic`** (`nharmonic` when
+  C₅ ≠ 0), exactly and with its constant; it was `dihedral opls`, which
+  refused C₅ ≠ 0 and ΣCₙ ≠ 0. The OPLS-AA typifier built from XML takes its
+  dihedral candidates from every dihedral style.
+- **Coulomb uses OpenMM's constant.** An OpenMM-read `coul/cut` /
+  `coul/charmm` has `coulomb = 332.06371329919216` (OpenMM's `ONE_4PI_EPS0`),
+  not LAMMPS `real`'s 332.06371: Coulomb energies of an OpenMM-read field are
+  9.9·10⁻⁹ larger than in 0.15.
+- **`NonbondedForce` states its mixing.** Without the foyer
+  `combining_rule`, `lj/cut` gets `mixing = "arithmetic"` (OpenMM's rule)
+  instead of none.
+- **1-4 parameters of their own.** A `<LennardJonesForce>` whose types carry
+  `sigma14` / `epsilon14` gives its `lj/charmm` the style param
+  `one_four = "epsilon14"` (see [1-4 interactions](#1-4-interactions)); call
+  `ForceField.materialize_one_four(frame)` before compiling such a frame.
+- **Refused, by name, instead of skipped or misread**: every
+  `Custom*Force` other than the harmonic improper (0.15 skipped them
+  silently), `<Script>`, an RB `<Improper>`, a bonded row naming neither
+  `class{n}` nor `type{n}` (0.15 read it as a `*` wildcard; OpenMM ignores
+  it), `ordering="smirnoff"`, odd CMAP sizes, a `<NonbondedForce>` with
+  `epsilon ≠ 0` beside a `<LennardJonesForce>`, and `<PeriodicImproperForce>`
+  (the section molrs 0.15.0's writer made up; 0.15.1 still read it):
+  rewrite such a file with `<PeriodicTorsionForce>`. `<Info>` and
+  `<Patches>` are skipped like `<Residues>`.
+- **Writer.** Writes everything above, plus `dihedral charmm` (`w = 0`),
+  `harmonic` and `class2` as periodic terms, `multi/harmonic`, `nharmonic`
+  and `opls` as RB, explicit LJ cross rows as `<NBFixPair>` (0.15 refused
+  them), charges from the atom types (0.15 read them from the pair rows,
+  where no reader puts them, and wrote 0), class / type endpoints as the
+  field names them, `combining_rule` when not arithmetic. `bond morse`,
+  `bond class2`, `angle class2`, `improper cvff` and any registered or
+  instance expression style are written as `CustomBondForce`,
+  `CustomAngleForce`, `CustomTorsionForce`, `CustomNonbondedForce`, or a
+  `<Script>`-built `CustomCompoundBondForce` (a run-time compound category),
+  the parameters in IR units and the expression rewritten exactly
+  (`4.184*(E[r → 10*r])`); 0.15 refused them, and silently skipped
+  run-time categories. It refuses every style it has no form for (0.15
+  skipped bond, angle and pair styles it did not know). Placeholder class
+  types are no longer written as atom types.
+- **Writer: every `<Type>` has a class** (OpenMM refuses a file without):
+  a type without one — a prmtop's, a LAMMPS file's — is written as its own
+  class. **Two types on the same labels** (as OpenMM's generator matches
+  them) are refused when their parameters differ (OpenMM would price every
+  such term with the first) and written once when they agree; a proper's
+  periodic and RB rows on one quartet are refused (OpenMM adds both). A
+  shifted or Mie `lj/cut` and a force field in units other than `real` are
+  refused.
+- **`write_forcefield_xml(path, ff, precision)`: `precision` is optional**
+  (`Option<usize>` in Rust, also for `write_forcefield_xml_str` and
+  `XmlForceFieldWriter::with_precision`); the default writes each number in the shortest
+  form that reads back to the same float (0.15: six decimals).
+
 ### GROMACS
 
-The GROMACS reader holds everything the Class-I IR can, and the writer is
-its inverse; see [Force-field IR](guides/forcefield-ir.md#gromacs-topologies).
-Checked against GROMACS 2025.3 and LAMMPS term by term on a CHARMM, an AMBER
-and an OPLS-AA dipeptide (`scripts/gromacs_engine_check.sh`).
+The GROMACS reader holds everything the force-field IR can, and the writer
+is its inverse; see
+[Force-field IR](guides/forcefield-ir.md#gromacs-topologies). Checked
+against GROMACS 2025.3 and LAMMPS term by term on a CHARMM, an AMBER and an
+OPLS-AA dipeptide (`scripts/gromacs_engine_check.sh`).
 
 - **`[ dihedraltypes ]` funct 3 (Ryckaert–Bellemans) reads as
   `dihedral multi/harmonic`** (`aₙ₊₁ = (−1)ⁿ Cₙ`, constant included), or
@@ -820,15 +663,28 @@ and an OPLS-AA dipeptide (`scripts/gromacs_engine_check.sh`).
   GROMACS's share directory, as `-I` does.
 - **Unknown atom types are refused** in `[ nonbond_params ]` and
   `[ pairtypes ]` (0.15 stored a cross row on an undefined type).
-- **Whole topologies: `GromacsTopFfReader::read_system` / Python
+- **A bonded type restated in reverse with other parameters is refused**
+  (0.15 stored it as a second type; the same orientation was already a
+  `TypeConflict`).
+- **Coulomb uses GROMACS's constant.** A GROMACS-read `coul/cut` /
+  `coul/charmm` has `coulomb = GROMACS_COULOMB` = 332.06371329919205
+  (GROMACS's `ONE_4PI_EPS0`, CODATA 2018), not LAMMPS `real`'s: Coulomb
+  energies of a GROMACS-read field are 9.9·10⁻⁹ larger than in 0.15, and
+  equal GROMACS's.
+- **Whole topologies read: `GromacsTopFfReader::read_system` / Python
   `molrs.ff.read_gromacs_system`** read the molecule sections too, into the
   force field and a typed frame (0-based indices): GROMACS's own type lookup,
   rows with their own parameters as types `<labels>@gmx_<n>`, `[ pairs ]`
-  rows with parameters as per-pair overrides, the nrexcl pair list,
-  exclusions, constraints and settles, `[ molecules ]` repeated. The
-  force-field reader still refuses molecule sections, now naming
-  `read_system` (0.15 pointed at `molrs.io.read_top`, which reads structure
-  only, 1-based).
+  rows with parameters as per-pair overrides, the nrexcl pair list (every
+  pair of two molecules too, up to `MAX_ATOMS_FOR_A_FULL_PAIR_LIST` atoms,
+  so `compile` prices them as GROMACS does), exclusions, constraints and
+  settles, `[ molecules ]` repeated. The force-field reader still refuses
+  molecule sections, now naming `read_system` (0.15 pointed at
+  `molrs.io.read_top`, which reads structure only, 1-based).
+- **Whole topologies written: `GromacsTopFfWriter::write_system_str(ff,
+  frame)`**, the inverse of `read_system`: one `[ moleculetype ]` per
+  molecule, each row with its type's parameters, `[ pairs ]` with the
+  override cells, `[ exclusions ]` for the pairs the frame does not price.
 - **Writer refusals:** `dihedral charmm` with `w > 0`, `epsilon14` /
   `sigma14` on an `lj/charmm` not declared `one_four = "epsilon14"`, two
   types GROMACS would read as one (same labels in one function-code table),
@@ -836,60 +692,84 @@ and an OPLS-AA dipeptide (`scripts/gromacs_engine_check.sh`).
   LAMMPS `real`'s is no longer refused (GROMACS prices at its own, as the
   LAMMPS and OpenMM writers already let their engines do), and
   `dihedral class2` is written as funct-9 rows at phase φₙ + 180°.
-- **Coulomb uses GROMACS's constant.** A GROMACS-read `coul/cut` /
-  `coul/charmm` has `coulomb = GROMACS_COULOMB` = 332.06371329919205
-  (GROMACS's `ONE_4PI_EPS0`, CODATA 2018), not LAMMPS `real`'s: Coulomb
-  energies of a GROMACS-read field are 9.9·10⁻⁹ larger than in 0.15, and
-  equal GROMACS's.
-- **`read_system` lists the pairs between molecules.** A system of several
-  molecules (up to `MAX_ATOMS_FOR_A_FULL_PAIR_LIST` atoms) has every pair of
-  two molecules in its `pairs` block, so `compile` prices them as GROMACS
-  does; the list held only each molecule's own pairs.
-- **Whole topologies written: `GromacsTopFfWriter::write_system_str(ff,
-  frame)`**, the inverse of `read_system`: one `[ moleculetype ]` per
-  molecule, each row with its type's parameters, `[ pairs ]` with the
-  override cells, `[ exclusions ]` for the pairs the frame does not price.
 
-### Kernels live in `molrs.ff.potential`; `md` defines no potential
+### AMBER prmtop
 
-`LJCut` moved from `molrs.md` to `molrs.ff.potential` (molpy: `molpy.md.LJCut`
-→ `molpy.potential.LJCut`), beside the `Potential` protocol, which `molrs.md`
-no longer re-exports either; nor does it re-export `Potentials`
-(`molrs.ff.Potentials` / `molpy.Potentials`). The integrators still accept all
-of them.
+The prmtop readers (`read_amber_prmtop`, `AmberPrmtopFfReader` /
+`read_amber_prmtop_ff`) read what they refused, and the frame and the force
+field they return change where they did. AMBER stays read-only. See
+[Force-field IR](guides/forcefield-ir.md#amber-prmtop) for the full map.
 
-New in the same module: `kernel(category, style, atoms, *, charges=None,
-**params)`, the kernel of **any** style the force-field IR prices — a
-built-in, a style registered through `molrs.ff.ir` (expression or Python
-kernel), a style of a custom category, an unregistered style given its
-`expression=` — over explicit instances: `atoms` `(n, arity)`, each per-term
-parameter a number or one value per term **as stored** (angle values in
-degrees, indexed families as `k1`, `k2`, …), style parameters (`cutoff`,
-`coulomb`, …) a number or a string, per-atom charges as `charges=`. It is
-built by the code `PotentialCompiler.compile` runs (Rust:
-`molrs::ff::potential::Instances`), returns a `Potentials`, and
-`Potentials.push` moves it into a larger collection. There is no class per
-built-in style: one builder covers every registered style, custom ones
-included.
+- **Chamber (CHARMM) prmtops read.** 0.15 refused `%FLAG CTITLE` /
+  `FORCE_FIELD_TYPE`. Now: every angle is `angle charmm` with its
+  Urey–Bradley term, `CHARMM_IMPROPERS` are `improper harmonic` (centre
+  first; a ψ₀ off 0°/180° is refused), CMAP is `cmap charmm` and a `cmaps`
+  block, Lennard-Jones is `lj/charmm` (with `epsilon14` / `sigma14` and
+  `one_four = "epsilon14"` when the file's 1-4 table differs) and Coulomb
+  `coul/charmm` at 332.0716; charges are de-scaled by √332.0716 (not
+  18.2223). The force field's `name` is `"CHARMM"`. Its pair styles carry no
+  `inner` / `cutoff`: declare them before compiling. With `one_four =
+  "epsilon14"`, build the pair list (`intramolecular_pairs`) and call
+  `ForceField.materialize_one_four(frame)` before compiling.
+- **CMAP reads** (ff19SB's `CMAP_*` too); 0.15 refused `CMAP_COUNT > 0`.
+- **Non-uniform `SCEE` / `SCNB` read.** 0.15 refused two divisors among the
+  1-4 rows. `special_bonds` is now the divisor most 1-4 rows carry (it was
+  the one value), and the frame gains a `pairs` block — only when some pair
+  is weighted otherwise — listing those 1-4 pairs with `coul_scale` /
+  `lj_scale` cells. It is not a pair list: `intramolecular_pairs` builds the
+  full list and keeps the cells (it used to drop a frame's `pairs`). An
+  `intramolecular_pairs` call on a frame whose `pairs` row with an override
+  names a 1-2 / 1-3 pair raises.
+- **Multi-term impropers read.** 0.15 refused a negative-`PN` chain on an
+  improper and silently kept only the first term of several improper rows on
+  one quartet. Such an improper is now one `improper periodic` type
+  `<quartet>@<n>` and one `impropers` row per term (a single-term improper
+  is unchanged).
+- **A phase within 0.004 rad of ±π is ±180° exactly**, as sander takes it
+  (tleap writes π as `3.14159400`); 0.15 stored 180.0000153°.
+- **Dihedral types.** The terms of a `dihedral periodic` type are sorted by
+  periodicity (they were in the file's type-id order). Two torsions of one
+  type quartet with different terms (tleap reuses a quartet's first match:
+  GAFF2's `hc-c3-ca-ca` alone beside `hc-c3-ca-ca` + `X -c3-ca-X`) are two
+  types, the second named `<quartet>@<n>` in both readers; 0.15 merged their
+  terms into one type, silently.
+- **Atom types.** A type name that stands for atoms of two LJ classes or
+  masses is split into `<name>~<class>` types (0.15 raised a
+  `TypeConflict`); every bonded type name and frame label uses the split
+  names.
+- **Refused, by name:** a 1-4 row on a negative-`PN` chain, or on a bonded /
+  angle-end pair; `IPOL > 0` (0.15: only `IPOL = 1`). The force-field reader
+  now refuses `IPOL > 0` as the frame reader does.
 
-```python
-from molrs.ff import Potentials
-from molrs.ff.potential import kernel
+### Engine codecs and refusals
 
-pots = Potentials()
-pots.push(kernel("bond", "harmonic", [[0, 1], [1, 2]], k=300.0, r0=1.4))
-pots.push(kernel("angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=109.5))
-pots.push(kernel("dihedral", "periodic", [[0, 1, 2, 3]],
-                 k1=1.3, periodicity1=1, phase1=0.0, k2=0.4, periodicity2=2, phase2=180.0))
-pots.push(kernel("pair", "coul/cut", [[0, 3]], charges=q, coulomb=332.06371, dielectric=1.0))
-energy, forces = pots.calc_energy_forces(pos)
-```
+Engine I/O follows the force-field IR's protocol; see
+[Force-field IR](guides/forcefield-ir.md#engine-codecs).
 
-| 0.15 | 0.16 |
-|---|---|
-| `from molrs.md import LJCut, Potential` | `from molrs.ff.potential import LJCut, Potential` |
-| `from molpy.md import LJCut` | `from molpy.potential import LJCut` |
-| `molrs.md.Potentials` | `molrs.ff.Potentials` |
+- **`StyleSpec.lammps`** (`LammpsForm::{None, Positional, Custom}`). A style
+  registered with `LammpsForm::positional()` (Python
+  `register_style(..., lammps="positional")`, `"positional:<name>"` for
+  another LAMMPS name, `ir.StyleSpec.lammps`, or afterwards
+  `ir.register_engine_form("lammps", category, name, form)`) is read and
+  written by the LAMMPS reader and writer with nothing else written:
+  `params` in order, each converted by its `Dim`. `StyleInfo.lammps` names a
+  style's form.
+- **Every engine refusal is `NoEngineForm`.** The GROMACS and frcmod
+  writers refuse a style that is not built in, and the LAMMPS and OpenMM
+  writers a style with no form, as "`<engine>` has no form for `<category>`
+  `` `<style>` ``: …", typed: `ForceFieldWriter::write_str` / `write` (and
+  `write_amber_frcmod` / `write_amber_frcmod_str`, `write_forcefield_xml` /
+  `write_forcefield_xml_str`, `GromacsTopFfWriter::write_system_str`,
+  `lammps_coeff_values`, the LAMMPS writer's `write_data_coeffs_str` /
+  `write_cmap_str`) return **`WriteError`**
+  instead of `String`: it dereferences to its message (so
+  `err.contains(…)` still reads it, and `String::from(err)` converts) and
+  `err.ir()` is the `IrError::NoEngineForm` when an engine refused a style.
+  Python raises `molrs.ff.ir.NoEngineForm` (a `ValueError`) from every
+  writer, as from `register_engine_form`.
+- **Readers and writers take a registry**: `LammpsFfReader::with_registry`,
+  `LammpsFfWriter::with_registry`, `XmlForceFieldWriter::with_registry`
+  (the process-wide one by default).
 
 ### GAFF and GAFF2
 
@@ -901,8 +781,8 @@ energy, forces = pots.calc_energy_forces(pos)
 - **`gaff2.dat` is 2.2.30** (AmberTools 26.1; it was an older 2.2): new
   atom type `hb`, the impropers `X -X -cc-X`, `X -X -cd-X`, `X -X -nc-X`,
   `X -X -nd-X` (10.5 kcal/mol), and revised torsion rows (34 rows of the
-  old table replaced by 31). GAFF2-typed
-  energies change accordingly. `gaff.dat` is unchanged.
+  old table replaced by 31). GAFF2-typed energies change accordingly.
+  `gaff.dat` is unchanged.
 - **Impropers are built as AmberTools builds them.** `GaffTypifier` puts an
   improper wherever tleap does, with tleap's atom order and parmchk2's
   estimate (0.15 put one at each `PARMCHK.DAT`-planar centre, peripherals
@@ -947,20 +827,164 @@ energy, forces = pots.calc_energy_forces(pos)
   other way round), `TorsionCentre` is 6 and `Torsion` 7 (likewise
   swapped). Code that read a column by variant reads the other one now.
 
-### Parameters as frame columns
+### Typifier matches carry any relation kind
 
-`ForceField.materialize_params(frame, *, prefix)` (Rust
-`ForceField::materialize_params(&mut frame, prefix)`) is new: it writes the
-parameters a force field gives each relation row and atom of a typed frame
-as columns `<prefix><parameter>` (null where a row's type lacks one) and
-returns block → columns written. See
-[Force-field IR](guides/forcefield-ir.md#parameters-as-frame-columns).
+- **Rust: a typifier `Match` carries any relation kind.** The fixed fields
+  `bonds`, `angles`, `dihedrals` and `impropers` are gone; `Match::links`
+  (`IndexMap<String, Vec<Annotations>>`) maps a graph relation kind (the
+  Frame block of its category: `"bonds"`, a custom `"urey_bradleys"`) to
+  rows positional against that kind's own rows. Replace `m.bonds = rows` with
+  `*m.link_mut("bonds") = rows` (or `m.links.insert(..)`), `m.bonds.push(a)`
+  with `m.link_mut("bonds").push(a)`. A type under a kind defines a type of
+  the category whose block the kind is (`typifier::link_category`); a
+  non-empty vector for a kind the graph lacks is an error naming it.
+  `write_onto` defines the kinds in the graph's registration order, as
+  before for the four built-ins.
+- **Rust: `Match::assign_terms(graph, kind, library, key)`** (new) types
+  every row of a relation kind against the library's type rows of its
+  category by the atoms' types: slot by slot with wildcards, in the orders
+  the category's `EndpointOrder` allows (reversible, ordered or unordered),
+  fewest wildcards first, then table order (molrec's rule). It returns the
+  positions nothing matched.
+- **Python: `Match(nodes, links=...)` takes a kind name as a key** as well
+  as a relation class (`{Bond: rows, "urey_bradleys": rows}`); a relation
+  class other than `Bond` / `Angle` / `Dihedral` / `Improper` / `Port`, or
+  a key that is neither class nor `str`, still raises `TypeError`, and
+  naming one kind twice (`{Bond: …, "bonds": …}`) `ValueError`.
+  `repr(Match)` lists the kinds: `Match(nodes=2, links={bonds=1}, styles=0,
+  pairs=0)`.
 
-### Already in 0.15.1
+### The force-field IR as a protocol
 
-0.15.1 was a patch release on the 0.15 ABI line (nothing renamed or removed;
-consumers pinned to `>=0.15.0,<0.16` needed no rebuild). Coming from 0.15.0,
-these behaviours change as well:
+The force-field IR is a protocol (`molrs::ff::ir`, Python `molrs.ff.ir`,
+new in 0.16): categories and styles are registrations of one form, the
+built-ins sealed among them; see
+[Extending the force-field IR](guides/extending-forcefield-ir.md). What
+changes for code written against 0.15:
+
+- **Rust: `register_kernel` / `register_kernel_with` return
+  `Result<(), IrError>`** and register into the IR registry (0.15: `()`,
+  overriding whatever was there). A built-in is sealed (`IrError::Sealed`);
+  registering the same constructor again is a no-op, another one under a
+  taken name is `IrError::Conflict`. To change a built-in's behaviour,
+  register a style of another name.
+- **Categories beyond the seven.** A category the IR registry declares
+  (molrec's `constraint`, `drude`, `virtual_site`, or a custom one
+  registered with `molrs::ff::ir::register_category`), or one read from a
+  record that nothing declares, is a style category like `bond`:
+  - **Rust: `Style::category()` and `StyleDefs::category()` return `&str`**
+    (0.15: `&'static str`); the string borrows the style.
+  - **Rust: `StyleDefs::Relation { category, arity, types }`** holds every
+    such category, its types `RelationType { name, endpoints, params }`
+    (`endpoints: SmallVec<[String; 5]>`).
+  - **Rust: `DefError` carries owned categories.** `DefError::Arity` has
+    `category: String, expected: String` and `DefError::TypeConflict` has
+    `category: String` (0.15: `&'static str`). `DefError::Unsupported` is
+    gone (nothing produced it); `DefError::CategoryArity { category,
+    expected, got }` is new: a style of a category with another number of
+    endpoints than its registration, or than the styles of it the force
+    field holds. `DefError` is not `#[non_exhaustive]`: a `match` on it needs
+    an arm for `CategoryArity` (and, coming from 0.15.0, `PairConflict`).
+  - **Rust: `ForceField::def_style` accepts every declared category.** The
+    arity of a category beyond the seven comes from the process-wide IR
+    registry (`ForceField::def_style_in` takes a registry), else from the
+    styles of it the force field already holds; anything else is still
+    `DefError::UnknownCategory`. `ForceField::def_style_with_arity` defines
+    a style of a category nothing declares, with the arity given (what
+    `from_section` does with a record's endpoint columns). New:
+    `Style::arity`, `StyleDefs::arity`, `ForceField::get_relationtypes`.
+  - **`ForceField::from_section` keeps a category beyond the seven** (it
+    refused `virtual_site` and every unknown category): its arity is the
+    registry's, or the count of its table's endpoint columns.
+  - **Compiling.** A style of a category nothing declares is priced as a
+    compound custom category: from its block `<name>s` by its style's
+    `expression`, or refused by name (``no kernel for <category> `<style>` ``)
+    when the block has rows and nothing prices it; a block that is absent
+    prices nothing.
+  - **Python: `ForceField.def_style` returns a `RelationStyle`** for such a
+    category; its `def_type(name, *endpoints, **params)` takes as many
+    `AtomType` endpoints as the category's `arity` (`ValueError` otherwise)
+    and returns a `RelationType`. `ForceField.styles`, `get_styles` and
+    `get_types` include these styles (0.15 dropped them silently);
+    `get_styles(RelationStyle)` / `get_types(RelationType)` select them all.
+  - **C API.** `molrs_ff_def_style` and `molrs_ff_def_type` accept the same
+    categories as `ForceField::def_style`.
+- **Custom styles persist.** A custom style or category is stored in a
+  `*.mrec` record as its molrec style entry, and a process that registered
+  nothing reads it back:
+  - `to_section` writes a registered custom style's `expression` when the
+    style has none of its own (a built-in is written with none; a style's
+    own `expression` is written, and read back, byte for byte). Rust:
+    `ForceField::to_section_in(&Registry)`.
+  - A style nothing registers, with no expression, is read whole (its rows,
+    its array params, its category); compiling it is refused by name:
+    ``no kernel for <category> `<style>`: register it
+    (molrs.ff.ir.register_style) or give it an expression``. A style with
+    an expression is priced by it, bit for bit as in the process that
+    registered it.
+  - A registered custom style whose instance carries an `expression` that
+    differs from the registry's is priced by its registered kernel; at
+    first compile the instance expression is checked against it, energy and
+    derivative to 1e-10, and a disagreeing one is refused (`IrError::Disagree`,
+    naming the style). A registered style with neither kernel nor
+    expression is priced by the instance's.
+- **Form conversions** (new): `ForceField.canonical()`,
+  `ForceField.to_form(category, style)` and `ForceField.fit_form(category,
+  style, q, w=None, *, kt=None, offset=False)` (Rust: the same on
+  `ForceField`, `fit_form` taking a `molrs::ff::ir::Metric`), over the form
+  families `torsion` (canonical `dihedral periodic`), `bond`, `angle`
+  (canonical `harmonic`) and `lj` (canonical `pair lj/cut`); see
+  [Converting between forms](guides/forcefield-ir.md#converting-between-forms).
+  An out-of-image conversion is refused (`IrError::OutOfImage`, Python
+  `molrs.ff.ir.OutOfImage`, a `ValueError`).
+
+### Python: kernels live in `molrs.ff.potential`
+
+`LJCut` moved from `molrs.md` to `molrs.ff.potential` (molpy: `molpy.md.LJCut`
+→ `molpy.potential.LJCut`), beside the `Potential` protocol, which `molrs.md`
+no longer re-exports either; nor does it re-export `Potentials`
+(`molrs.ff.Potentials` / `molpy.Potentials`). The integrators still accept all
+of them.
+
+New in the same module: `kernel(category, style, atoms, *, charges=None,
+**params)`, the kernel of **any** style the force-field IR prices — a
+built-in, a style registered through `molrs.ff.ir` (expression or Python
+kernel), a style of a custom category, an unregistered style given its
+`expression=` — over explicit instances: `atoms` `(n, arity)`, each per-term
+parameter a number or one value per term **as stored** (angle values in
+degrees, indexed families as `k1`, `k2`, …), style parameters (`cutoff`,
+`coulomb`, …) a number or a string, per-atom charges as `charges=`. It is
+built by the code `PotentialCompiler.compile` runs (Rust:
+`molrs::ff::potential::Instances`), returns a `Potentials`, and
+`Potentials.push` moves it into a larger collection. There is no class per
+built-in style: one builder covers every registered style, custom ones
+included.
+
+```python
+from molrs.ff import Potentials
+from molrs.ff.potential import kernel
+
+pots = Potentials()
+pots.push(kernel("bond", "harmonic", [[0, 1], [1, 2]], k=300.0, r0=1.4))
+pots.push(kernel("angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=109.5))
+pots.push(kernel("dihedral", "periodic", [[0, 1, 2, 3]],
+                 k1=1.3, periodicity1=1, phase1=0.0, k2=0.4, periodicity2=2, phase2=180.0))
+pots.push(kernel("pair", "coul/cut", [[0, 3]], charges=q, coulomb=332.06371, dielectric=1.0))
+energy, forces = pots.calc_energy_forces(pos)
+```
+
+| 0.15 | 0.16 |
+|---|---|
+| `from molrs.md import LJCut, Potential` | `from molrs.ff.potential import LJCut, Potential` |
+| `from molpy.md import LJCut` | `from molpy.potential import LJCut` |
+| `molrs.md.Potentials` | `molrs.ff.Potentials` |
+
+### From 0.15.0: the 0.15.1 changes
+
+molrs 0.15.1, a patch on the 0.15 ABI line, was versioned on `master` but
+never tagged or published; its changes ship in 0.16. Coming from the
+published 0.15.0, these behaviours change as well (where 0.16 goes further,
+the bullet says so):
 
 - **LJ cross rows are applied.** A `pair/lj/cut` row whose two endpoints
   differ overrides the style's `mixing` rule for that type pair. 0.15.0
@@ -983,8 +1007,9 @@ these behaviours change as well:
   not stored; with different parameters it raises `ValueError`
   (`DefError::PairConflict` in Rust). 0.15.0 stored both rows and refused the
   reversed conflict only when the kernel was compiled, and let the last of
-  two same-order rows win. A `forcefield` section with such a conflict in a
-  `pair` / `pair14` table is now refused on read and by
+  two same-order rows win. Python's `PairStyle.def_type` on an equal restated
+  pair returns the stored row's handle and name. A `forcefield` section with
+  such a conflict in a `pair` table is now refused on read and by
   `ForceFieldSection.validate()`.
 - **AMBER prmtop reader.** A non-Lorentz–Berthelot off-diagonal LJ entry
   (NBFIX) becomes a cross row; 0.15.0 refused the file. The `lj/cut` style
@@ -994,20 +1019,35 @@ these behaviours change as well:
 - **OpenMM XML reader.** A `<PeriodicTorsionForce>` `<Proper>` in OpenMM's
   `k{m}/periodicity{m}/phase{m}` spelling is `dihedral/periodic` (0.15.0 read
   it as an all-zero `dihedral/opls`), and an `<Improper>` there is
-  `improper/periodic` (0.15.0 skipped it), and so is an `<Improper>` under
-  `<PeriodicImproperForce>` (0.15.0 skipped the section). A row with neither
+  `improper/periodic` (0.15.0 skipped it). An `<Improper>` under
+  `<PeriodicImproperForce>` (0.15.0 skipped the section) is refused in 0.16
+  (see [OpenMM XML](#openmm-xml)). A row with neither
   spelling, with both, an incomplete term, a multi-term `<Improper>`, or
   another child tag is an error.
 - **OpenMM XML writer.** Impropers are `<Improper>` rows under
-  `<PeriodicTorsionForce>`, not `<PeriodicImproperForce>`. A harmonic
-  improper, a dihedral style with no periodic or OPLS form
-  (`multi/harmonic`, …) and an LJ cross row are errors; 0.15.0 wrote them as
-  rows that read back wrong or not at all.
+  `<PeriodicTorsionForce>`, not `<PeriodicImproperForce>`. 0.15.0 wrote a
+  harmonic improper, a `multi/harmonic` dihedral and an LJ cross row as rows
+  that read back wrong or not at all; 0.16 writes them as a
+  `CustomTorsionForce`, RB terms and `<NBFixPair>` rows (see
+  [OpenMM XML](#openmm-xml)).
 - **LAMMPS force-field writer.** `dihedral/periodic` is written as
   `dihedral_style fourier`; a force field without pair types writes no
   `pair_coeff` lines instead of failing.
 - **Python native typifiers** can be subclassed, but a subclass that
   defines `match` or `library` raises `TypeError` at class creation.
+
+### Also new in 0.16
+
+- `ForceField.materialize_params(frame, *, prefix)` (Rust
+  `ForceField::materialize_params(&mut frame, prefix)`) writes the
+  parameters a force field gives each relation row and atom of a typed frame
+  as columns `<prefix><parameter>` (null where a row's type lacks one) and
+  returns block → columns written; see
+  [Force-field IR](guides/forcefield-ir.md#parameters-as-frame-columns).
+- The cross-engine equivalence check and the completeness matrix
+  ([Force-field IR](guides/forcefield-ir.md#completeness)), and the
+  `molrs-ext-example` crate, a third party extending the IR through the
+  public API alone (`scripts/check.sh ext`).
 
 ## 0.14 → 0.15
 

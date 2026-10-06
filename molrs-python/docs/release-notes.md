@@ -1,29 +1,166 @@
-# What's new in 0.15
+# What's new in 0.16
 
-molrs 0.15 settles two foundations: the column store has one accessor and
-reports the exact dtype of every column, and `*.mrec` record files follow the
-[molrec](https://docs.molcrafts.org/molrec/) contract end to end, from typed
-metadata to compressed trajectories and stored force fields. The force-field
-model is rebuilt around explicit definitions, a compiler and a typing step.
+molrs 0.16 holds every force field in one **force-field IR**, which adopts the
+LAMMPS standard: each style's energy expression, factors and parameter units
+are those of the LAMMPS style it corresponds to, and every angle-valued
+parameter is in degrees. LAMMPS, GROMACS, OpenMM XML and AMBER prmtop files
+are read into it and written from it exactly, or refused by name, and the
+conversions are checked term by term against the engines themselves. The IR
+is also a protocol: a style or a category of the right shape registers into
+it from Rust, Python or molpy, with nothing rebuilt, and is typed, priced,
+stored and written like a built-in.
 
-0.15 is a breaking release on every surface. Work through the
-[migration guide](migration.md) when upgrading from 0.14; this page lists the
-highlights.
+0.16 is a breaking release for force-field code. The energy of a system read
+from a file or typed by a typifier does not change (the few exceptions are
+bug fixes, listed under [Compatibility](#compatibility)), but some stored
+numbers mean something else: a harmonic `k` is LAMMPS's `K` (no ½) and an
+angle is in degrees. Work through the [migration guide](migration.md) when
+upgrading from 0.15; this page lists the highlights.
 
 ```bash
 cargo add molcrafts-molrs --features full,filesystem   # Rust
-pip install "molcrafts-molrs>=0.15,<0.16"              # Python
-npm install @molcrafts/molrs@0.15                      # JavaScript / TypeScript
+pip install "molcrafts-molrs>=0.16,<0.17"              # Python
+npm install @molcrafts/molrs@0.16                      # JavaScript / TypeScript
 ```
 
-C and C++ consumers download `molrs-capi-0.15.0-<platform>.tar.gz` from the
-[GitHub release](https://github.com/MolCrafts/molrs/releases/tag/v0.15.0).
+C and C++ consumers download `molrs-capi-0.16.0-<platform>.tar.gz` from the
+[GitHub release](https://github.com/MolCrafts/molrs/releases/tag/v0.16.0).
 
-## 0.15.1
+## Highlights
 
-0.15.1 completes the class I force-field model: explicit Lennard-Jones cross
-rows (NBFIX) are read from every format that has them, priced by the kernel,
-and stored in records; OpenMM torsions are read in OpenMM's own spelling; and
+### The force-field IR adopts the LAMMPS standard
+
+- One set of styles, each with LAMMPS's energy expression, factors and
+  parameter names: `bond harmonic` and `angle harmonic` are k(x − x₀)²,
+  `bond morse` names its well depth `d0`, `pair thole` its damping `damp`,
+  and every equilibrium angle and phase is in degrees (force constants stay
+  per radianⁿ). [Force-field IR](guides/forcefield-ir.md) is the reference
+  for every style.
+- Reading a LAMMPS force field and writing it back is the identity on
+  coefficients; every other engine and every typifier table (GAFF,
+  OPLS-AA, MMFF, UFF) converts at its reader, writer or typifier, never in a
+  kernel.
+- Spec defaults are applied in one place, so an absent parameter prices the
+  same in every kernel tier, and every missing or ill-typed parameter is a
+  typed `IrError` (`MissingParam`, `BadValue`, `NoMixing`, …; Python
+  `molrs.ff.ir.*`, each a `ValueError`). Compile refusals are typed too
+  (`CompileError`).
+- `PotentialCompiler.compile` truncates every pair style at its `cutoff`, as
+  `compile_typed` and LAMMPS do; `pair coul/long/pme` takes its cell from the
+  frame's box.
+
+### New styles and interactions
+
+- **Urey–Bradley**: `angle charmm`, LAMMPS's `angle_style charmm`.
+- **CMAP**: the `cmap` category (five endpoints, an `atomm` column and a
+  `cmaps` block) with its kernel `cmap charmm`, a step-for-step port of
+  LAMMPS `fix cmap`; LAMMPS `fix cmap` files and the data-file `CMAP`
+  section are read and written, and `assign_cmaps` builds a frame's `cmaps`.
+- **CHARMM 1-4 interactions**: `pair lj/charmm` and `coul/charmm` (LAMMPS
+  `lj/charmm/coul/charmm`, switched) with `epsilon14` / `sigma14` and the
+  style parameter `one_four`; `dihedral charmm` `w` prices its end atoms'
+  1-4 pair; per-pair overrides (`epsilon`, `sigma`, `charge_product`,
+  `lj_scale`, `coul_scale`) on a frame's `pairs` rows; one exceptions kernel
+  prices them all, LAMMPS's way. `ForceField.materialize_one_four(frame)`
+  writes a field's 1-4 pairs as override rows.
+- **Torsions**: `dihedral nharmonic`, a `dihedral harmonic` kernel, and the
+  exact algebra between every torsion form and a Fourier series
+  (`molrs::ff::forcefield::torsion`).
+- **Array parameters**: any type parameter may be an `f64` array, stored in
+  a record as a `f64[T, S…]` column.
+
+### Engines, read and written whole
+
+- **LAMMPS**: bonded `hybrid` styles, `angle charmm`, `class2` bond / angle
+  / dihedral, `pair buck`, `morse`, `lj/class2`, `lj/charmm/coul/charmm`,
+  `lj/cut/coul/long` (as `coul/long/pme`), `pair_modify shift`, `fix cmap`.
+  The include writer keeps `special_bonds` and the mixing rule under
+  `skip_pair_style`, and a box-less frame is written inside the bounds of
+  its atoms.
+- **OpenMM XML**: every force `app.ForceField` builds from a Class-I file —
+  `<LennardJonesForce>` with `<NBFixPair>`, `<AmoebaUreyBradleyForce>`,
+  `<CMAPTorsionForce>`, Ryckaert–Bellemans as `dihedral multi/harmonic`, the
+  harmonic `CustomTorsionForce` improper — read and written; expression
+  styles are written as `Custom*Force`s; impropers are priced in OpenMM's
+  atom order.
+- **GROMACS**: `[ pairtypes ]`, `[ cmaptypes ]`, `[ angletypes ]` funct 5,
+  `[ dihedraltypes ]` funct 2, 3, 5 and 9, `#define` macros, `gen-pairs no`,
+  and whole topologies both ways: `read_gromacs_system` returns the force
+  field and a typed frame, `GromacsTopFfWriter::write_system_str` writes one
+  back. GROMACS's own Coulomb constant is kept.
+- **AMBER prmtop**: chamber (CHARMM) prmtops with Urey–Bradley, CHARMM
+  impropers, CMAP and their 1-4 table; ff19SB's CMAP; per-pair `SCEE` /
+  `SCNB`; multi-term impropers.
+- **Checked against the engines.** One molecule per family (ff14SB, GAFF2,
+  CHARMM36 from a chamber prmtop and from OpenMM XML, OPLS-AA from GROMACS)
+  is read from its native format, written to every format that can hold it
+  and priced by LAMMPS, OpenMM, GROMACS and sander term by term; a generated
+  completeness matrix states, for every style and setting, which formats
+  hold it exactly and which refuse it
+  ([Cross-engine equivalence](guides/forcefield-ir.md#cross-engine-equivalence),
+  [Completeness](guides/forcefield-ir.md#completeness)).
+
+### GAFF and GAFF2 as AmberTools builds them
+
+- `GaffTypifier` in Python (`molrs.ff.typifier.GaffTypifier(parameter_set=
+  "gaff" | "gaff2")`), composed after `AtdTypifier`.
+- Atom types follow antechamber's bond-order perception (`bondtype -j
+  full`), its ring classes and its colouring; impropers are placed as tleap
+  places them, and every missing bond, angle, torsion and improper is
+  estimated as parmchk2 estimates it, the estimate's analog and penalty in
+  the type name. `gaff2.dat` is 2.2.30 (AmberTools 26.1).
+- `ForceField.materialize_params(frame, prefix=…)` writes the parameters a
+  force field gives each row of a typed frame as columns.
+
+### The force-field IR as a protocol
+
+- **Registry** (`molrs::ff::ir`, Python `molrs.ff.ir`): categories and styles
+  are data — a category's arity, block and coordinate; a style's ordered
+  parameters, each with a dimension, and its energy. Built-ins are sealed
+  registrations of the same form. `register_style`, `register_category`,
+  `styles`, `categories`, `evaluate`, `unregister`.
+- **Three kernel tiers**: an energy expression (a Lepton-style grammar with
+  `distance`, `angle` and `dihedral` over points), a native scalar or
+  compound form, or a Python callable; the generic
+  `molrs.ff.potential.kernel(category, style, atoms, **params)` builds the
+  kernel of any registered style over explicit instances.
+- **Custom categories** beyond the seven built-in ones are relation styles
+  over a `<category>s` block; a typifier's `Match.links` types any relation
+  kind (`{Bond: rows, "urey_bradleys": rows}`).
+- **Persistence**: a custom style is stored in a `*.mrec` record with its
+  expression, so a process that registered nothing reads and prices it.
+- **Form conversions**: `ForceField.canonical()`, `to_form(category, style)`
+  (exact or refused) and `fit_form(…)` (least squares with its residual).
+- **Engine codecs**: a style carries its LAMMPS form (`positional` or
+  custom), OpenMM writes expression styles as `Custom*Force`s, and an
+  engine that cannot hold a style refuses it as `NoEngineForm`.
+- **The proof**: `molrs-ext-example`, a crate depending on molrs only
+  through its public API, adds a pair style, a category and an expression
+  style and prices them against LAMMPS; see
+  [Extending the force-field IR](guides/extending-forcefield-ir.md).
+
+### Records: `molrec_version` 2
+
+- Every record molrs 0.16 writes is `molrec_version` 2, in which the
+  `forcefield` section is the force-field IR (degrees, un-halved `k`, the
+  `cmap` category, array parameters, `pair lj/charmm` `one_four`, per-pair
+  overrides, custom styles with their expressions).
+- A version-1 record (molrs 0.15) is converted exactly on read, or refused
+  by name; it is never read as version 2. Every 0.15.0 test record prices in
+  0.16 at the energy 0.15.0 computed for it.
+
+### Packaging
+
+- FFI capsules move to the `0.16` ABI line (`molrs.FrameRef/0.16`, …):
+  extensions built against 0.15 must be rebuilt and re-pinned to
+  `>=0.16.0,<0.17`.
+
+## Also in 0.16: the unpublished 0.15.1
+
+molrs 0.15.1 was versioned on `master` but never tagged or published, so
+its changes ship in 0.16. It completes the class I force-field model:
+explicit Lennard-Jones cross rows (NBFIX) are read from every format that
+has them, priced by the kernel, and stored in records; OpenMM torsions are read in OpenMM's own spelling; and
 the core Python classes can be subclassed. A few readers and writers now
 refuse what they used to drop or mistranslate; the
 [migration guide](migration.md) lists each behaviour change.
@@ -42,9 +179,9 @@ refuse what they used to drop or mistranslate; the
   - AMBER prmtop off-diagonal `LENNARD_JONES_ACOEF/BCOEF` entries that are
     not Lorentz–Berthelot, which used to be refused.
 - Writers: the GROMACS writer emits `[ nonbond_params ]` and the LAMMPS
-  include writer `pair_coeff i j`. The OpenMM XML writer refuses a cross row
-  (an OpenMM pair override lives in `<LennardJonesForce>`, not modelled)
-  instead of writing it as an `<Atom>` row.
+  include writer `pair_coeff i j`. The OpenMM XML writer writes a cross row
+  as an `<NBFixPair>` of a `<LennardJonesForce>` (0.15.0 wrote it as an
+  `<Atom>` row).
 - A cross row is a `pair` table row with `itom != jtom` in a record's
   `forcefield` section, so it round-trips through `ForceField.to_section` /
   `from_section` and `*.mrec`.
@@ -52,7 +189,7 @@ refuse what they used to drop or mistranslate; the
   holds one row per pair. `def_type` restating a pair already defined (`B-A`
   after `A-B`, or a second name on `A-B`) is a no-op when the parameters are
   equal and a `ValueError` when they differ; a stored `forcefield` section
-  whose `pair` or `pair14` table restates a pair with other parameters is
+  whose `pair` table restates a pair with other parameters is
   refused by `ForceFieldSection.validate()`, `ForceField.from_section` and
   every `*.mrec` reader (molrec forcefield, linking rule 3). `name` and the
   annotation columns (`desc`, `doi`, `smarts`, …) are not compared.
@@ -67,10 +204,9 @@ refuse what they used to drop or mistranslate; the
   CL&P spelling still reads as `dihedral/opls`.
 - `<Improper>` rows under `<PeriodicTorsionForce>` read as
   `improper/periodic` (they used to be skipped), and the writer emits
-  periodic and `cvff` impropers there; `<PeriodicImproperForce>`, which OpenMM
-  does not have, is no longer written. Files 0.15.0 wrote with it still read:
-  its `<Improper>` rows are read the same way (the section used to be
-  skipped).
+  periodic impropers there; `<PeriodicImproperForce>`, which OpenMM does not
+  have, is no longer written, and 0.16 refuses to read it: rewrite a file
+  0.15.0 wrote with it under `<PeriodicTorsionForce>`.
 
 ### LAMMPS force-field writer
 
@@ -91,7 +227,40 @@ refuse what they used to drop or mistranslate; the
   defines either raises `TypeError`; subclass `Typifier` to supply your own.
 - `ForceField.special_bonds` reads the `(lj, coul)` weights back.
 
-## Highlights
+## Compatibility
+
+The energy of a physical system read from a file or typed by a typifier is
+the same as in 0.15, except where 0.15 was wrong:
+
+- OpenMM impropers are priced over the dihedral OpenMM prices (0.15 priced a
+  different one).
+- A CHARMM field's 1-4 pairs are priced by `dihedral charmm` `w` (0.15 read
+  `w` and ignored it).
+- Coulomb energies of OpenMM- and GROMACS-read fields use the engine's own
+  constant (9.9·10⁻⁹ relative).
+- GAFF / GAFF2 impropers and estimated terms are AmberTools's, and the atom
+  types of a molecule follow antechamber's bond orders.
+- A `pairs` list prices only the pairs inside each style's `cutoff`.
+- `pair_style lj/cut` alone read from LAMMPS prices no charges, as in LAMMPS.
+- An explicit LJ cross row (NBFIX) prices its pair in place of the mixing
+  rule (0.15.0 compiled it and ignored it).
+
+Records molrs 0.16 writes are version 2 and cannot be read by 0.15. A
+`ForceField` pickled by 0.15 does not unpickle in 0.16.
+
+See the [migration guide](migration.md) for every breaking change.
+
+## 0.15.0
+
+molrs 0.15 settles two foundations: the column store has one accessor and
+reports the exact dtype of every column, and `*.mrec` record files follow the
+[molrec](https://docs.molcrafts.org/molrec/) contract end to end, from typed
+metadata to compressed trajectories and stored force fields. The force-field
+model is rebuilt around explicit definitions, a compiler and a typing step.
+
+0.15 is a breaking release on every surface. Work through the
+[migration guide](migration.md) when upgrading from 0.14; this page lists the
+highlights.
 
 ### One column accessor, one dtype per column
 
@@ -175,7 +344,7 @@ The [Record files guide](guides/records.md) walks through all of it.
   extensions built against 0.14 must be rebuilt and re-pinned to
   `>=0.15.0,<0.16`. The frame vocabulary version is 2.
 
-## Compatibility
+### Compatibility
 
 - 0.15 reads records more strictly than 0.14: a store that breaks the molrec
   contract (a canonical column at the wrong dtype, a block group without a
