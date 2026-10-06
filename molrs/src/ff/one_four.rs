@@ -664,7 +664,8 @@ fn lammps_round_trip_and_override_refusal() {
         "{text}"
     );
     assert!(
-        text.contains("dihedral_coeff CT3-CT2-CT2-OH1 0.300000 1 180.000000 0.500000"),
+        // LAMMPS reads the charmm phase as an integer number of degrees.
+        text.contains("dihedral_coeff CT3-CT2-CT2-OH1 0.300000 1 180 0.500000"),
         "{text}"
     );
     let back = LammpsFfReader::new().read_str(&text).unwrap();

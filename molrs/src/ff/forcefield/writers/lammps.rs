@@ -106,6 +106,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use super::ForceFieldWriter;
 use crate::ff::forcefield::lammps_units::{LammpsFfUnits, parse_style};
 use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::one_four::OneFour;
 use crate::ff::forcefield::readers::lammps::{LAMMPS_CMAP_DIM, LAMMPS_CMAP_MAX};
 use crate::ff::forcefield::torsion::nharmonic_coefficients;
 use crate::ff::forcefield::{
@@ -442,13 +443,23 @@ fn coeff_fields(
             fields.extend(terms);
             Ok(fields)
         }
-        // E = K[1 + cos(nφ − d)]; `w` is the 1-4 pair weight.
-        ("dihedral", "charmm") => Ok(vec![
-            Real(units.energy(need("k")?)?),
-            multiplicity("periodicity", need("periodicity")?)?,
-            Real(params.get("phase").unwrap_or(0.0)),
-            Real(need("w")?),
-        ]),
+        // E = K[1 + cos(nφ − d)]; `w` is the 1-4 pair weight. LAMMPS reads
+        // `d` as an integer number of degrees (`dihedral_charmm.cpp`).
+        ("dihedral", "charmm") => {
+            let phase = params.get("phase").unwrap_or(0.0);
+            if phase.fract() != 0.0 {
+                return Err(format!(
+                    "dihedral charmm: phase = {phase}° is not an integer number of \
+                     degrees, which LAMMPS's dihedral_style charmm requires"
+                ));
+            }
+            Ok(vec![
+                Real(units.energy(need("k")?)?),
+                multiplicity("periodicity", need("periodicity")?)?,
+                Coeff::Int(phase as i64),
+                Real(need("w")?),
+            ])
+        }
         ("dihedral", "multi/harmonic") => energies(&["a1", "a2", "a3", "a4", "a5"]),
         ("dihedral", "nharmonic") => {
             let a = nharmonic_coefficients(params)?;
@@ -959,6 +970,17 @@ impl<'a> LammpsFfWriter<'a> {
                      `lj/charmm/coul/charmm`, the pair lj/charmm + coul/charmm and nothing \
                      beside it"
                 ));
+            }
+            if let Some(lj) = styles.iter().find(|s| s.name() == "lj/charmm")
+                && OneFour::of(lj.params())? == OneFour::Epsilon14
+            {
+                return Err(
+                    "pair lj/charmm has one_four = \"epsilon14\" (its special_bonds 1-4 pairs \
+                     at epsilon14/sigma14), which LAMMPS's lj/charmm/coul/charmm prices at the \
+                     regular epsilon/sigma; LAMMPS reaches epsilon14/sigma14 only through \
+                     dihedral charmm w"
+                        .into(),
+                );
             }
             if !opts.skip_pair_style {
                 let lj = styles.iter().find(|s| s.name() == "lj/charmm").unwrap();
