@@ -207,8 +207,9 @@ what `molrs.io.read_stl` reads (the WASM binding reads the same file with
 ## Force Fields
 
 The native force-field model exposes a `Style`/`Type` handle hierarchy
-(`BondStyle`/`BondType`, `PairStyle`/`PairType`, …); a handle's `params`
-is a plain dict.
+(`BondStyle`/`BondType`, `PairStyle`/`PairType`, `CmapStyle`/`CmapType`,
+…); a handle's `params` is a plain dict of numbers, strings and float64
+arrays (a CMAP `grid`).
 
 ::: molrs.ff.ForceField
 
@@ -226,6 +227,8 @@ is a plain dict.
 
 ::: molrs.ff.PairStyle
 
+::: molrs.ff.CmapStyle
+
 ::: molrs.ff.Type
 
 ::: molrs.ff.AtomType
@@ -239,6 +242,8 @@ is a plain dict.
 ::: molrs.ff.ImproperType
 
 ::: molrs.ff.PairType
+
+::: molrs.ff.CmapType
 
 ::: molrs.ff.MMFF94Typifier
 

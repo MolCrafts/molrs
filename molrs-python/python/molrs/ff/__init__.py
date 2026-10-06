@@ -35,6 +35,8 @@ from .._lib import (
     AtomType,
     BondStyle,
     BondType,
+    CmapStyle,
+    CmapType,
     DihedralStyle,
     DihedralType,
     ForceField,
@@ -103,6 +105,8 @@ __all__ = [
     "BccModel",
     "BondStyle",
     "BondType",
+    "CmapStyle",
+    "CmapType",
     "DihedralStyle",
     "DihedralType",
     # force field + its handle views

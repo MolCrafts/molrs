@@ -339,8 +339,10 @@ def test_a_type_param_can_be_a_string():
     ct["element"] = "C"
     ct["charge"] = -0.5
     assert ct.params == {"mass": 1.0, "element": "C", "charge": -0.5}
-    with pytest.raises(TypeError, match="number or a str"):
-        ct["tags"] = [1, 2]
+    with pytest.raises(TypeError, match="a number, a str or an array"):
+        ct["tags"] = {"a": 1}
+    with pytest.raises(TypeError, match="rectangular"):
+        ct["tags"] = ["a", "b"]
 
 
 def test_endpoints_are_the_defined_atom_types():

@@ -764,10 +764,38 @@ pub fn scale_lj_py(
     PyForceField::from_core(py, inner)
 }
 
-/// Convert an optional Python ``dict[str, float | str]`` of parameters into
-/// [`Params`](molrs::ff::forcefield::Params). A ``str`` value goes to the string
-/// side, a number to the numeric side; anything else raises ``TypeError``. A
-/// missing dict yields no params.
+/// `value` as an array param: a numpy array of at least one dimension, or a
+/// list or tuple of numbers (any nesting), converted to float64 by
+/// ``numpy.asarray``; `None` for any other value (a 0-d array is a number). A
+/// sequence numpy cannot make a numeric array of (strings, ragged nesting)
+/// raises ``TypeError``.
+pub(crate) fn array_param(value: &Bound<'_, PyAny>) -> PyResult<Option<ndarray::ArrayD<f64>>> {
+    let py = value.py();
+    let np = py.import("numpy")?;
+    let is_array = if value.is_instance(&np.getattr("ndarray")?)? {
+        value.getattr("ndim")?.extract::<usize>()? > 0
+    } else {
+        value.cast::<PyList>().is_ok() || value.cast::<PyTuple>().is_ok()
+    };
+    if !is_array {
+        return Ok(None);
+    }
+    let converted = np
+        .call_method1("asarray", (value, np.getattr("float64")?))
+        .map_err(|e| {
+            PyTypeError::new_err(format!(
+                "an array param must be numbers of one rectangular shape: {e}"
+            ))
+        })?;
+    let array: PyReadonlyArrayDyn<'_, f64> = converted.extract()?;
+    Ok(Some(array.as_array().to_owned()))
+}
+
+/// Convert an optional Python ``dict[str, float | str | array]`` of parameters
+/// into [`Params`](molrs::ff::forcefield::Params). A ``str`` value goes to the
+/// string side, a number to the numeric side, an array (a numpy array or a
+/// nested list / tuple of numbers, stored as float64) to the array side;
+/// anything else raises ``TypeError``. A missing dict yields no params.
 fn params_from_dict(params: Option<&Bound<'_, PyDict>>) -> PyResult<molrs::ff::forcefield::Params> {
     let mut out = molrs::ff::forcefield::Params::new();
     let Some(d) = params else {
@@ -777,11 +805,13 @@ fn params_from_dict(params: Option<&Bound<'_, PyDict>>) -> PyResult<molrs::ff::f
         let key = k.extract::<String>()?;
         if let Ok(text) = v.cast::<PyString>() {
             out.set_str(&key, text.to_str()?);
+        } else if let Some(array) = array_param(&v)? {
+            out.set_array(&key, array);
         } else if let Ok(number) = v.extract::<f64>() {
             out.set(&key, number);
         } else {
             return Err(PyTypeError::new_err(format!(
-                "param '{key}' must be a number or a str, got {}",
+                "param '{key}' must be a number, a str or an array of numbers, got {}",
                 v.get_type().name()?
             )));
         }
@@ -1397,7 +1427,8 @@ impl PyForceField {
     }
 }
 
-/// `params` as a dict: numbers and strings.
+/// `params` as a dict: numbers, strings, and arrays as new float64 numpy
+/// arrays.
 fn params_to_dict<'py>(
     py: Python<'py>,
     params: &molrs::ff::forcefield::Params,
@@ -1408,6 +1439,9 @@ fn params_to_dict<'py>(
     }
     for (key, value) in params.iter_strings() {
         out.set_item(key, value)?;
+    }
+    for (key, value) in params.iter_arrays() {
+        out.set_item(key, value.to_pyarray(py))?;
     }
     Ok(out)
 }
@@ -1519,9 +1553,9 @@ impl PyForceField {
 
     /// Define the ``category`` style ``name`` with style-level ``params``
     /// (numbers and strings, e.g. ``{"cutoff": 10.0, "mixing": "geometric"}``)
-    /// and return its handle (``AtomStyle`` … ``PairStyle``), whose typed
-    /// ``def_type`` defines types. Re-defining it with equal ``params`` keeps
-    /// the existing style.
+    /// and return its handle (``AtomStyle`` … ``PairStyle``, ``CmapStyle``),
+    /// whose typed ``def_type`` defines types. Re-defining it with equal
+    /// ``params`` keeps the existing style.
     ///
     /// Raises
     /// ------
