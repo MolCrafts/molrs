@@ -26,6 +26,7 @@
 //! | [`Perceive::find_rotatable`] | — | `is_rotatable` (0/1) |
 //! | [`Perceive::find_bond_orders`] | — | `bond_number`, `bond_type` (antechamber's Kekulé structure) |
 //! | [`Perceive::find_bond_types`] | — | `bcc_bond_type` (1/2/3/6/7/8/9) |
+//! | [`Perceive::find_bond_types_from_connectivity`] | — | `bcc_bond_type`, from connectivity-judged orders |
 //! | [`Perceive::find_equivalence_classes`] | `equiv_class` (0-based class id) | — |
 
 use std::collections::HashSet;
@@ -278,7 +279,7 @@ impl Perceive {
     /// Perceive BCC bond types, from the bond orders `mol` states, and project
     /// them onto the graph. (`AtdTypifier` and the antechamber charge models
     /// judge the orders from the connectivity instead, as antechamber does:
-    /// `bond_type::find_bond_types_from_connectivity`.)
+    /// [`find_bond_types_from_connectivity`](Self::find_bond_types_from_connectivity).)
     ///
     /// Wraps `bond_type::find_bond_types`, which is already graph-in /
     /// graph-out. Every bond receives a [`BCC_BOND_TYPE`](bond_type::BCC_BOND_TYPE)
@@ -301,6 +302,24 @@ impl Perceive {
     /// bond.
     pub fn find_bond_types(&self, mol: &Atomistic) -> Atomistic {
         bond_type::find_bond_types(mol)
+    }
+
+    /// Perceive BCC bond types as antechamber does, from bond orders judged
+    /// from the connectivity alone (`bondtype -j full`), whatever orders `mol`
+    /// states, and project them onto the graph — what `AtdTypifier` and the
+    /// antechamber charge models read. [`find_bond_types`](Self::find_bond_types)
+    /// keeps the input's orders instead.
+    ///
+    /// # Arguments
+    ///
+    /// * `mol` — the molecule, every hydrogen drawn; left untouched.
+    ///
+    /// # Returns
+    ///
+    /// A clone of `mol` with a [`BCC_BOND_TYPE`](bond_type::BCC_BOND_TYPE) on
+    /// every bond.
+    pub fn find_bond_types_from_connectivity(&self, mol: &Atomistic) -> Atomistic {
+        bond_type::find_bond_types_from_connectivity(mol)
     }
 
     /// Assign a localized (Kekulé) `bond_number` to every aromatic bond.

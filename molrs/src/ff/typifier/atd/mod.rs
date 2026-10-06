@@ -55,7 +55,6 @@ pub(crate) use facts::antechamber_bond_type;
 use std::sync::OnceLock;
 
 use molrs::perceive::Perceive;
-use molrs::perceive::bond_type::find_bond_types_from_connectivity;
 use molrs::store::keys;
 use molrs::system::molgraph::PropValue;
 use molrs::{Atomistic, NodeId};
@@ -218,7 +217,7 @@ impl AtdTypifier {
     /// [`types_of`](Self::types_of) wants.
     pub(crate) fn perceive_bond_types(&self, mol: &Atomistic) -> Atomistic {
         match self.bond_orders {
-            AtdBondOrders::Perceive => find_bond_types_from_connectivity(mol),
+            AtdBondOrders::Perceive => Perceive::new().find_bond_types_from_connectivity(mol),
             AtdBondOrders::Input => Perceive::new().find_bond_types(mol),
         }
     }

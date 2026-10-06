@@ -1023,8 +1023,9 @@ or went away:
   `Perceive::find_hydrogens`), `aromaticity::perceive_aromaticity` (→
   `find_aromaticity`), `bond_order::find_bond_orders`,
   `bond_type::{find_bond_types, find_kekule_orders}` (→ the same-named
-  builder methods), `bond_type::{find_bond_types_from_connectivity,
-  assign_kekule_numbers}`. The side-table queries stay public.
+  builder methods), `bond_type::find_bond_types_from_connectivity` (→
+  `Perceive::find_bond_types_from_connectivity`),
+  `bond_type::assign_kekule_numbers`. The side-table queries stay public.
 - `molrs::perceive::{Coarsener, CoarsenError}` → `molrs::builder::{Coarsener,
   CoarsenError}` (Python path unchanged: `molrs.perceive.Coarsener`).
 - One name per handle and payload type: `AtomId`, `BeadId` → `NodeId`;
