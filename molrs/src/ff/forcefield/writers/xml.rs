@@ -1,16 +1,23 @@
 //! OpenMM-style force-field XML writer — the inverse of
 //! [`OplsXmlReader`](crate::ff::forcefield::readers::opls::OplsXmlReader).
 //!
-//! The schema is OpenMM's, and so are the units: lengths in **nm**, energies in
-//! **kJ/mol**, angles and phases in **radians**. molrs stores Å, kcal/mol and
-//! radians, so every length and energy is converted at this boundary — the
-//! exact inverse of the reader's table (bond `k` × 4.184 × 100, angle `k` and
-//! every torsion / pair energy × 4.184, lengths ÷ 10). OPLS dihedrals stored as
-//! the 4-cosine `k1..k4` are written as Ryckaert–Bellemans `c0..c5` (GROMACS
-//! Eqs. 200–201); periodic terms use `k{m}/periodicity{m}/phase{m}`.
+//! The schema is OpenMM's, and so are the units and factors: lengths in
+//! **nm**, energies in **kJ/mol**, angles and phases in **radians**, harmonic
+//! terms as `½k(x − x0)²`. molrs's convention is LAMMPS's (`real`: Å,
+//! kcal/mol, degrees, un-halved `K`), so every value is converted at this
+//! boundary — the exact inverse of the reader's table (bond `k` × 2 × 4.184 ×
+//! 100, angle `k` × 2 × 4.184, every torsion / pair energy × 4.184, lengths ÷
+//! 10, degrees → radians). OPLS dihedrals stored as the 4-cosine `k1..k4` are
+//! written as Ryckaert–Bellemans `c0..c5` (GROMACS Eqs. 200–201); periodic
+//! terms use `k{m}/periodicity{m}/phase{m}`; a `dihedral/charmm` term is one
+//! periodic term (its `w` must be 0).
+//!
 //! Impropers are OpenMM `<Improper>` rows under `<PeriodicTorsionForce>`
-//! (OpenMM has no improper force of its own): `improper/periodic` term for
-//! term, `improper/cvff` with its sign as the phase (`+1` → 0, `−1` → π).
+//! (OpenMM has no improper force of its own), one per `improper/periodic`
+//! type. OpenMM lists the centre first and prices the dihedral
+//! `(c2, c3, c1, c4)`; molrs stores an AMBER improper in AMBER's order,
+//! centre third, and prices the dihedral of that order, so the stored
+//! `(i, j, k, l)` is written `class1 = k, class2 = i, class3 = j, class4 = l`.
 //!
 //! # Refusals
 //!
@@ -19,8 +26,12 @@
 //!
 //! - a dihedral style with neither `k1..k4` / `c0..c5` nor periodic terms
 //!   (`multi/harmonic`, …);
-//! - an improper style other than `periodic` and `cvff` (`harmonic`,
-//!   `k(χ − χ₀)²`, has no periodic form);
+//! - a `dihedral/charmm` type with a non-zero `w` (OpenMM has no per-dihedral
+//!   1-4 weight);
+//! - an improper style other than `periodic`: `harmonic`, `k(χ − χ₀)²`, has
+//!   no periodic form, and LAMMPS's `cvff` prices the dihedral I-J-K-L with I
+//!   the centre, which OpenMM's improper orderings (centre first, dihedral
+//!   `(c2, c3, c1, c4)`) cannot express;
 //! - an explicit LJ cross row (NBFIX): OpenMM keeps pair overrides in
 //!   `<LennardJonesForce>`, which this writer does not model.
 //!
@@ -161,9 +172,10 @@ impl ForceFieldWriter for XmlForceFieldWriter {
             }
             out.push_str("  <HarmonicBondForce>\n");
             for bt in types {
-                // Å → nm; kcal/mol/Å² → kJ/mol/nm².
+                // Å → nm; LAMMPS K (kcal/mol/Å²) → OpenMM ½k with k = 2K
+                // (kJ/mol/nm²).
                 let r0 = bt.params.get("r0").unwrap_or(0.0) * NM_PER_ANGSTROM;
-                let k = bt.params.get("k").unwrap_or(0.0) * KJ_PER_KCAL
+                let k = 2.0 * bt.params.get("k").unwrap_or(0.0) * KJ_PER_KCAL
                     / (NM_PER_ANGSTROM * NM_PER_ANGSTROM);
                 out.push_str(&format!(
                     "    <Bond class1=\"{}\" class2=\"{}\" length=\"{}\" k=\"{}\"/>\n",
@@ -189,8 +201,9 @@ impl ForceFieldWriter for XmlForceFieldWriter {
             }
             out.push_str("  <HarmonicAngleForce>\n");
             for at in types {
-                let theta0 = at.params.get("theta0").unwrap_or(0.0);
-                let k = at.params.get("k").unwrap_or(0.0) * KJ_PER_KCAL;
+                // degrees → radians; LAMMPS K → OpenMM ½k with k = 2K.
+                let theta0 = at.params.get("theta0").unwrap_or(0.0).to_radians();
+                let k = 2.0 * at.params.get("k").unwrap_or(0.0) * KJ_PER_KCAL;
                 out.push_str(&format!(
                     "    <Angle class1=\"{}\" class2=\"{}\" class3=\"{}\" angle=\"{}\" k=\"{}\"/>\n",
                     self.esc(&at.itom),
@@ -244,6 +257,15 @@ impl ForceFieldWriter for XmlForceFieldWriter {
             } else {
                 out.push_str("  <PeriodicTorsionForce>\n");
                 for dt in types {
+                    if let Some(w) = dt.params.get("w")
+                        && w != 0.0
+                    {
+                        return Err(format!(
+                            "dihedral style `{}` ({}): the 1-4 weight w = {w} has no \
+                             OpenMM form",
+                            style.name, dt.name
+                        ));
+                    }
                     let mut attrs = format!(
                         "class1=\"{}\" class2=\"{}\" class3=\"{}\" class4=\"{}\"",
                         self.esc(&dt.itom),
@@ -262,7 +284,7 @@ impl ForceFieldWriter for XmlForceFieldWriter {
                                     " periodicity{m}=\"{}\" k{m}=\"{}\" phase{m}=\"{}\"",
                                     n as i64,
                                     self.fmt_f(k * KJ_PER_KCAL),
-                                    self.fmt_f(d)
+                                    self.fmt_f(d.to_radians())
                                 ));
                             }
                             _ => break,
@@ -280,7 +302,7 @@ impl ForceFieldWriter for XmlForceFieldWriter {
                             " periodicity1=\"{}\" k1=\"{}\" phase1=\"{}\"",
                             n as i64,
                             self.fmt_f(k * KJ_PER_KCAL),
-                            self.fmt_f(d)
+                            self.fmt_f(d.to_radians())
                         ));
                     }
                     if !attrs.contains("periodicity1=") {
@@ -298,10 +320,10 @@ impl ForceFieldWriter for XmlForceFieldWriter {
 
         // Impropers: OpenMM has no improper force of its own; its periodic
         // impropers are `<Improper>` rows under `<PeriodicTorsionForce>`, one
-        // term each here because the periodic improper kernel holds one. `cvff`
-        // is the same function with its sign as a phase. Every other improper
-        // style (harmonic `k(χ − χ0)²`) has no form under this tag and is refused
-        // — it used to be written as a periodic row with periodicity 0.
+        // term each here because the periodic improper kernel holds one. OpenMM
+        // prices `(c2, c3, c1, c4)`, so the stored AMBER order `(i, j, k, l)` —
+        // centre `k` — is written `(k, i, j, l)`. Every other improper style has
+        // no form under this tag and is refused (see the module docs).
         let mut rows = String::new();
         for style in ff.get_styles("improper") {
             let StyleDefs::Improper(types) = style.defs() else {
@@ -315,32 +337,25 @@ impl ForceFieldWriter for XmlForceFieldWriter {
                 };
                 let (k, n, phase) = match style.name.as_str() {
                     "periodic" => (get("k")?, get("periodicity")?, get("phase")?),
-                    "cvff" => {
-                        let sign = get("sign")?;
-                        let phase = if sign > 0.0 {
-                            0.0
-                        } else {
-                            std::f64::consts::PI
-                        };
-                        (get("k")?, get("periodicity")?, phase)
-                    }
                     other => {
                         return Err(format!(
                             "improper style `{other}` ({}) has no OpenMM \
-                             PeriodicTorsionForce form; only periodic and cvff do",
+                             PeriodicTorsionForce form: OpenMM lists an improper's \
+                             centre first and prices the dihedral (c2, c3, c1, c4), the \
+                             AMBER periodic improper; only improper/periodic maps",
                             it.name
                         ));
                     }
                 };
                 rows.push_str(&format!(
                     "    <Improper class1=\"{}\" class2=\"{}\" class3=\"{}\" class4=\"{}\" periodicity1=\"{}\" k1=\"{}\" phase1=\"{}\"/>\n",
+                    self.esc(&it.ktom),
                     self.esc(&it.itom),
                     self.esc(&it.jtom),
-                    self.esc(&it.ktom),
                     self.esc(&it.ltom),
                     n as i64,
                     self.fmt_f(k * KJ_PER_KCAL),
-                    self.fmt_f(phase)
+                    self.fmt_f(phase.to_radians())
                 ));
             }
         }
@@ -458,7 +473,7 @@ mod tests {
             .def_type(
                 "CT-CT-CT",
                 &["CT", "CT", "CT"],
-                Params::from_pairs(&[("k", 58.35), ("theta0", 1.9670)]),
+                Params::from_pairs(&[("k", 58.35), ("theta0", 112.7)]),
             )
             .unwrap();
         ff
@@ -476,7 +491,9 @@ mod tests {
         assert!((bt.get("k").unwrap() - 268.0).abs() < 1e-9);
         assert!((bt.get("r0").unwrap() - 1.529).abs() < 1e-9);
         let at = type_params(style(&back, "angle"), "CT-CT-CT");
-        assert!((at.get("theta0").unwrap() - 1.9670).abs() < 1e-9);
+        // Six decimals of radians in the file: 1e-6 rad is 6e-5 degrees.
+        assert!((at.get("theta0").unwrap() - 112.7).abs() < 1e-4);
+        assert!((at.get("k").unwrap() - 58.35).abs() < 1e-9);
     }
 
     #[test]
@@ -615,7 +632,7 @@ mod tests {
                     ("phase1", 0.0),
                     ("k2", 0.25),
                     ("periodicity2", 1.0),
-                    ("phase2", std::f64::consts::PI),
+                    ("phase2", 180.0),
                 ]),
             )
             .unwrap();
@@ -627,7 +644,7 @@ mod tests {
             ("phase1", 0.0),
             ("k2", 0.25),
             ("periodicity2", 1.0),
-            ("phase2", std::f64::consts::PI),
+            ("phase2", 180.0),
         ] {
             let got = p.get(key).unwrap_or_else(|| panic!("missing {key}"));
             assert!((got - want).abs() < 1e-8, "{key}: got {got}, want {want}");
@@ -635,24 +652,45 @@ mod tests {
     }
 
     /// Impropers go out as OpenMM `<Improper>` rows under `<PeriodicTorsionForce>`
-    /// (there is no `<PeriodicImproperForce>` in OpenMM). `cvff` is the same
-    /// function with the sign as a phase: `k[1 + s cos nχ]` = `k[1 + cos(nχ − γ)]`
-    /// with γ = 0 for s = +1 and γ = π for s = −1.
+    /// (there is no `<PeriodicImproperForce>` in OpenMM). The stored AMBER
+    /// order `C-O-N-CT` (centre `N` third) is written centre first, as OpenMM
+    /// lists it — `class1="N" class2="C" class3="O" class4="CT"`, whose
+    /// dihedral OpenMM prices as `(c2, c3, c1, c4)` = `C-O-N-CT` — and reads
+    /// back as stored.
     #[test]
-    fn periodic_and_cvff_impropers_round_trip_as_openmm_impropers() {
+    fn a_periodic_improper_round_trips_through_openmm_order() {
         let mut ff = ForceField::new("amber");
         ff.def_style("improper", "periodic", Params::new())
             .unwrap()
             .def_type(
                 "C-O-N-CT",
                 &["C", "O", "N", "CT"],
-                Params::from_pairs(&[
-                    ("k", 10.5),
-                    ("periodicity", 2.0),
-                    ("phase", std::f64::consts::PI),
-                ]),
+                Params::from_pairs(&[("k", 10.5), ("periodicity", 2.0), ("phase", 180.0)]),
             )
             .unwrap();
+        let xml = write_forcefield_xml_str(&ff, 10).unwrap();
+        assert!(!xml.contains("PeriodicImproperForce"), "{xml}");
+        assert!(
+            xml.contains(r#"<Improper class1="N" class2="C" class3="O" class4="CT""#),
+            "{xml}"
+        );
+        let back = read_forcefield_xml_str(&xml).unwrap();
+        let got = improper_params(&back);
+        assert_eq!(got.len(), 1, "{got:?}");
+        let (name, p) = &got[0];
+        assert_eq!(name, "periodic:C-O-N-CT");
+        assert!((p.get("k").unwrap() - 10.5).abs() < 1e-8);
+        assert_eq!(p.get("periodicity"), Some(2.0));
+        assert!((p.get("phase").unwrap() - 180.0).abs() < 1e-8);
+    }
+
+    /// LAMMPS's `cvff` prices the dihedral I-J-K-L with I the centre; OpenMM
+    /// lists the centre first and prices `(c2, c3, c1, c4)`, so no OpenMM row
+    /// prices a cvff improper. It is refused rather than written as a periodic
+    /// row OpenMM would price over a different dihedral.
+    #[test]
+    fn a_cvff_improper_is_refused() {
+        let mut ff = ForceField::new("cvff");
         ff.def_style("improper", "cvff", Params::new())
             .unwrap()
             .def_type(
@@ -661,27 +699,24 @@ mod tests {
                 Params::from_pairs(&[("k", 1.1), ("sign", -1.0), ("periodicity", 2.0)]),
             )
             .unwrap();
-        let xml = write_forcefield_xml_str(&ff, 10).unwrap();
-        assert!(!xml.contains("PeriodicImproperForce"), "{xml}");
-        let back = read_forcefield_xml_str(&xml).unwrap();
-        let got = improper_params(&back);
-        assert_eq!(got.len(), 2, "{got:?}");
-        for (name, k, phase) in [
-            ("periodic:C-O-N-CT", 10.5, std::f64::consts::PI),
-            ("periodic:CA-CA-CA-HA", 1.1, std::f64::consts::PI),
-        ] {
-            let p = &got
-                .iter()
-                .find(|(n, _)| n == name)
-                .unwrap_or_else(|| panic!("{name}: {got:?}"))
-                .1;
-            assert!((p.get("k").unwrap() - k).abs() < 1e-8, "{name}");
-            assert!(
-                (p.get("periodicity").unwrap() - 2.0).abs() < 1e-12,
-                "{name}"
-            );
-            assert!((p.get("phase").unwrap() - phase).abs() < 1e-8, "{name}");
-        }
+        let err = write_forcefield_xml_str(&ff, 6).unwrap_err();
+        assert!(err.contains("cvff"), "{err}");
+    }
+
+    /// A `dihedral charmm` term with a 1-4 weight has no OpenMM form.
+    #[test]
+    fn a_charmm_dihedral_with_a_weight_is_refused() {
+        let mut ff = ForceField::new("charmm");
+        ff.def_style("dihedral", "charmm", Params::new())
+            .unwrap()
+            .def_type(
+                "A-B-C-D",
+                &["A", "B", "C", "D"],
+                Params::from_pairs(&[("k", 0.2), ("periodicity", 3.0), ("phase", 0.0), ("w", 1.0)]),
+            )
+            .unwrap();
+        let err = write_forcefield_xml_str(&ff, 6).unwrap_err();
+        assert!(err.contains("w = 1"), "{err}");
     }
 
     /// A dihedral style without periodic terms (`multi/harmonic`) used to be
