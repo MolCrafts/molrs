@@ -19,14 +19,14 @@ The generated `pkg/` directory is not committed.
 
 | Area | Exports |
 | --- | --- |
-| Data model | `Frame`, `Block` (`get`, `view`, `copy`, `set`, `dtype`, `shape`, `nrows`), `Box`, `NDArray` |
+| Data model | `Frame`, `Block` (`get`, `view`, `copy`, `set`, `dtype`, `shape`, `nrows`), `Box`, `NDArray`, `covalentRadius` |
 | SMILES and 3D | `parseSMILES` → `SmilesIR` (`toFrame`), `generate3D` |
-| File formats | `XYZReader`, `PDBReader`, `GROReader`, `LAMMPSReader`, `LAMMPSTrajReader`, `MOL2Reader`, `SDFReader`, `CIFReader`, `POSCARReader`, `DCDReader`, `TRRReader`, `XTCReader`, …; `writeFrame` / `writeFrameBytes` |
-| Chunk-fed streams | `XYZStream`, `PDBStream`, `SDFStream`, `LAMMPSStream`, `LAMMPSTrajStream`, `DCDStream`, `XTCStream`, `TRRStream` (`FrameIndexEntry`) |
+| File formats | whole-content readers of the formats with no stream: `CIFReader`, `GROReader`, `MOL2Reader`, `POSCARReader`, `XSFReader`, `CubeReader`, `CHGCARReader`, `AmberInpcrdReader`, `AcReader`; `writeFrame` / `writeFrameBytes` |
+| Chunk-fed streams (the one reader of their format) | `XYZStream`, `PDBStream`, `SDFStream`, `LAMMPSStream`, `LAMMPSTrajStream`, `DCDStream`, `XTCStream`, `TRRStream` (`FrameIndexEntry`) |
 | Record files (`*.mrec`) | `readMrecFrame`, `readMrecFrameFromZip`, `mrecSections`, `TrajectoryReader` (`fromZip`, `fromStore`) |
 | Topology and perception | `Topology` (`fromFrame`), `Perceive` (`findRings`, `findAromaticity`, `findHydrogens`, …) |
 | Neighbors and analysis | `NeighborList`, `NeighborQuery`, `Neighbors`, `RDF`, `MSD`, `Cluster`, `VACF`, `Steinhardt`, `PMFTXY`, … (one class per analysis; `molrsComputeCatalog()` lists them all) |
-| Force fields | `UFFTypifier`, `MMFF94Typifier`, `MMFF94STypifier` (`typify`, `toPotentials`), `Potentials`, `LBFGS` |
+| Force fields | `UFFTypifier`, `MMFF94Typifier`, `MMFF94STypifier` (`typify`, `toPotentials`), `Potentials`, `LBFGS` (pairs from a `NeighborList`'s `Neighbors`) |
 | Schema | `schemaDocument`, `schemaJson`, `keysDocument`, `schemaColumnDtype`, `schemaVocabVersion` |
 
 The [package README](https://github.com/MolCrafts/molrs/tree/master/molrs-wasm#readme)

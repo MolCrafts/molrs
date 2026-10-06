@@ -5,8 +5,10 @@
 //! const nl     = new NeighborList(12.5);         // or NeighborList.bruteForce
 //! nl.build(typed);
 //! const report = new LBFGS(pots, nl.neighbors()).run(typed, 200);
-//! // omitting the neighbor table → full topology nonbonded pairs (small molecules only)
 //! ```
+//!
+//! The non-bonded pairs come from a [`NeighborList`](crate::core::spatial::NeighborList)
+//! and nowhere else: the optimizer builds no pair list of its own.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -15,10 +17,7 @@ use js_sys::Uint32Array;
 use wasm_bindgen::prelude::*;
 
 use molrs::ff::forcefield::ForceField as RsForceField;
-use molrs::ff::potential::{
-    Potential, PotentialCompiler, Potentials as RsPotentials,
-    intramolecular_pairs as topology_pairs,
-};
+use molrs::ff::potential::{Potential, PotentialCompiler, Potentials as RsPotentials};
 use molrs::op::types::Idx;
 use molrs::optimize::{LBFGS as RsLBFGS, Optimizer, set_free_mask};
 use molrs::store::Block as RsBlock;
@@ -31,38 +30,24 @@ use crate::ff::Potentials;
 
 // ── LBFGS ───────────────────────────────────────────────────────────────────
 
-/// Pair source for non-bonded terms.
-enum PairSource {
-    /// O(N²) topology list: all i<j except 1-2 / 1-3, 1-4 flagged
-    /// ([`topology_pairs`]). Default when no [`Neighbors`] table is given.
-    BruteForceTopology,
-    /// Spatial neighbour pair indices (1-2 / 1-3 still excluded at install).
-    Neighbors { i: Vec<u32>, j: Vec<u32> },
-}
-
-/// Max atoms for the **omit-neighbors** path (full topology nonbonded pairs).
-/// Above this, callers must pass a spatial [`Neighbors`] table from
-/// [`NeighborList`](crate::core::spatial::NeighborList).
-const LBFGS_TOPOLOGY_PAIRS_MAX_ATOMS: usize = 2_000;
-
 /// Limited-memory BFGS.
 ///
-/// Construct with potentials (and an optional neighbor table), then
-/// `run(frame, nSteps)`.
+/// Construct with potentials and a neighbor table, then `run(frame, nSteps)`.
 ///
-/// **Prefer an explicit spatial pair table** — build one with
-/// [`NeighborList`](crate::core::spatial::NeighborList) at the force field's
-/// non-electrostatic cutoff.
-///
-/// If no table is given, the optimizer builds an internal **topology**
-/// pair list (all nonbonded pairs excluding 1-2 / 1-3, no spatial cutoff).
-/// That path is refused when `N > 2000` to avoid O(N²) OOM / WASM aborts.
+/// The table is a [`NeighborList`](crate::core::spatial::NeighborList)'s
+/// [`Neighbors`], built at the force field's non-bonded cutoff (or
+/// `NeighborList.bruteForce` for a small molecule). Its pairs are installed
+/// as the frame's `pairs` with the force field's `special_bonds` applied: a
+/// 1-2 / 1-3 pair the weights exclude is dropped, a dihedral's end pair is
+/// flagged 1-4 — the rules of `molrs::ff::potential::intramolecular_pairs`.
 #[wasm_bindgen(js_name = LBFGS)]
 pub struct LBFGS {
     ff: RsForceField,
     /// Latest compiled kernels (rebuilt at each `run` after pair install).
     pots: Arc<RsPotentials>,
-    pairs: PairSource,
+    /// Neighbor pair indices `(i, j)` from the constructor's table.
+    pair_i: Vec<u32>,
+    pair_j: Vec<u32>,
     fmax: f64,
     max_step: f64,
     memory: usize,
@@ -70,35 +55,24 @@ pub struct LBFGS {
 
 #[wasm_bindgen(js_class = LBFGS)]
 impl LBFGS {
-    /// Bind `pots`. Optional spatial [`Neighbors`] table from
+    /// Bind `pots` and the [`Neighbors`] table from
     /// [`NeighborList::neighbors`](crate::core::spatial::NeighborList::neighbors).
-    ///
-    /// If omitted, a **topology** all-pairs nonbonded list (no spatial cutoff)
-    /// is built at `run` — only for small molecules (`N ≤ 2000`); larger
-    /// systems must pass an explicit list.
     ///
     /// Knobs: `fmax` (default 0.05), `maxStep` (0.2), `memory` (8).
     /// Step count is the second argument of [`run`](Self::run).
     #[wasm_bindgen(constructor)]
     pub fn new(
         pots: &Potentials,
-        neighbors: Option<Neighbors>,
+        neighbors: &Neighbors,
         fmax: Option<f64>,
         max_step: Option<f64>,
         memory: Option<usize>,
     ) -> LBFGS {
-        let pairs = match neighbors {
-            Some(table) => {
-                let i = table.inner.query_point_indices().to_vec();
-                let j = table.inner.point_indices().to_vec();
-                PairSource::Neighbors { i, j }
-            }
-            None => PairSource::BruteForceTopology,
-        };
         LBFGS {
             ff: pots.ff.clone(),
             pots: Arc::clone(&pots.inner),
-            pairs,
+            pair_i: neighbors.inner.query_point_indices().to_vec(),
+            pair_j: neighbors.inner.point_indices().to_vec(),
             fmax: fmax.unwrap_or(0.05).max(1e-8),
             max_step: max_step.unwrap_or(0.2).max(1e-6),
             memory: memory.unwrap_or(8).max(1),
@@ -107,9 +81,8 @@ impl LBFGS {
 
     /// Minimize `frame` coordinates **in place** for up to `nSteps` iterations.
     ///
-    /// Installs the pair list (from the constructor's neighbour list or an
-    /// internal bruteforce topology list), recompiles potentials, then runs
-    /// L-BFGS. Optional `fixed`: dense atom indices held fixed.
+    /// Installs the constructor's neighbour pairs, recompiles potentials,
+    /// then runs L-BFGS. Optional `fixed`: dense atom indices held fixed.
     pub fn run(
         &mut self,
         frame: &Frame,
@@ -122,7 +95,9 @@ impl LBFGS {
         let report = frame
             .inner
             .with_mut(|rs| -> Result<molrs::optimize::OptReport, String> {
-                install_pairs(rs, &self.pairs, self.ff.special_bonds())?;
+                let pairs =
+                    pairs_from_indices(rs, &self.pair_i, &self.pair_j, self.ff.special_bonds())?;
+                rs.insert("pairs", pairs);
                 let compiled = PotentialCompiler::new(&self.ff)
                     .compile(rs)
                     .map_err(|e| format!("compile: {e}"))?;
@@ -187,33 +162,17 @@ impl OptReport {
 
 // ── pair install ────────────────────────────────────────────────────────────
 
-fn install_pairs(
-    frame: &mut RsFrame,
-    source: &PairSource,
+/// Build a `pairs` block from spatial neighbour indices by the rules of
+/// `molrs::ff::potential::intramolecular_pairs`: a 1-2 / 1-3 pair is dropped
+/// unless `special` keeps its class, and a dihedral's end pair is flagged 1-4
+/// unless it is also a 1-2 or 1-3 pair (a ring closes it).
+fn pairs_from_indices(
+    frame: &RsFrame,
+    i: &[u32],
+    j: &[u32],
     special: &molrs::ff::forcefield::SpecialBonds,
-) -> Result<(), String> {
-    let block = match source {
-        PairSource::BruteForceTopology => {
-            let n = frame.get("atoms").and_then(|b| b.nrows()).unwrap_or(0);
-            if n > LBFGS_TOPOLOGY_PAIRS_MAX_ATOMS {
-                return Err(format!(
-                    "LBFGS: omitting neighborList builds O(N²) topology pairs \
-                     (N={n} > max {LBFGS_TOPOLOGY_PAIRS_MAX_ATOMS}). Pass a \
-                     Neighbors table from NeighborList(cutoff) at the \
-                     force-field nonbonded shell."
-                ));
-            }
-            topology_pairs(frame, special)?
-        }
-        PairSource::Neighbors { i, j } => pairs_from_indices(frame, i, j)?,
-    };
-    frame.insert("pairs", block);
-    Ok(())
-}
-
-/// Build a `pairs` block from spatial neighbour indices, dropping 1-2 / 1-3
-/// and flagging 1-4 from topology (same exclusions as [`topology_pairs`]).
-fn pairs_from_indices(frame: &RsFrame, i: &[u32], j: &[u32]) -> Result<RsBlock, String> {
+) -> Result<RsBlock, String> {
+    let [keep_12, keep_13] = special.compiled_inclusion()?;
     if i.len() != j.len() {
         return Err(format!(
             "neighbor list length mismatch: i={} j={}",
@@ -221,8 +180,8 @@ fn pairs_from_indices(frame: &RsFrame, i: &[u32], j: &[u32]) -> Result<RsBlock, 
             j.len()
         ));
     }
-    let excluded_12 = end_pairs(frame, "bonds", "atomi", "atomj");
-    let excluded_13 = end_pairs(frame, "angles", "atomi", "atomk");
+    let pairs_12 = end_pairs(frame, "bonds", "atomi", "atomj");
+    let pairs_13 = end_pairs(frame, "angles", "atomi", "atomk");
     let set_14 = end_pairs(frame, "dihedrals", "atomi", "atoml");
 
     let mut pi: Vec<Idx> = Vec::new();
@@ -236,12 +195,13 @@ fn pairs_from_indices(frame: &RsFrame, i: &[u32], j: &[u32]) -> Result<RsBlock, 
         if !seen.insert(key) {
             continue;
         }
-        if excluded_12.contains(&key) || excluded_13.contains(&key) {
+        let (is_12, is_13) = (pairs_12.contains(&key), pairs_13.contains(&key));
+        if (!keep_12 && is_12) || (!keep_13 && is_13) {
             continue;
         }
         pi.push(lo as Idx);
         pj.push(hi as Idx);
-        p14.push(set_14.contains(&key));
+        p14.push(set_14.contains(&key) && !is_12 && !is_13);
     }
 
     let mut pairs = RsBlock::new();

@@ -5,17 +5,18 @@
 //!
 //! | Module | JS class / function | Formats |
 //! |--------|-------------------|---------|
-//! | [`reader`] | `XYZReader`, `PDBReader`, `CIFReader`, `LAMMPSReader`, `LAMMPSTrajReader`, `SDFReader`, `CubeReader`, `CHGCARReader`, `GROReader`, `MOL2Reader`, `POSCARReader`, `XSFReader`, `AmberInpcrdReader`, `AcReader`, `DCDReader`, `TRRReader`, `XTCReader` | Read XYZ/ExtXYZ, PDB, CIF, LAMMPS data/dump, SDF, Cube, CHGCAR, GRO, MOL2, POSCAR, XSF, AMBER inpcrd, AC, DCD, TRR, XTC |
-//! | [`streaming`] | `LAMMPSTrajStream`, `XYZStream`, `PDBStream`, `LAMMPSStream`, `SDFStream`, `DCDStream`, `XTCStream`, `TRRStream` | Streaming readers driven by a chunk-fed `FrameIndexBuilder` |
+//! | [`reader`] | `CIFReader`, `CubeReader`, `CHGCARReader`, `GROReader`, `MOL2Reader`, `POSCARReader`, `XSFReader`, `AmberInpcrdReader`, `AcReader` | Whole-content readers for the formats without a stream: CIF, Cube, CHGCAR, GRO, MOL2, POSCAR, XSF, AMBER inpcrd, AC |
+//! | [`streaming`] | `LAMMPSTrajStream`, `XYZStream`, `PDBStream`, `LAMMPSStream`, `SDFStream`, `DCDStream`, `XTCStream`, `TRRStream` | The one reader of XYZ/ExtXYZ, PDB, LAMMPS data/dump, SDF, DCD, XTC, TRR: chunk-fed `FrameIndexBuilder` + per-range parse |
 //! | [`writer`] | `writeFrame(frame, format)` | Write XYZ, PDB, LAMMPS dump |
 //! | [`log`] | `readLammpsLogThermo`, `isLammpsLog` | LAMMPS log thermo tables |
 //! | `smiles` | `parseSMILES` → `SmilesIR` | SMILES strings (`smiles` feature) |
 //! | [`zarr`] | `TrajectoryReader` | Read frame-sequence Zarr V3 archives |
 //! | [`mesh`] | `readSTL(bytes)` | STL surface meshes (ASCII or binary) — produces a `Mesh`, not a `Frame` |
 //!
-//! All readers consume string content (not file handles) since
-//! WASM does not have filesystem access. Use the File API in the
-//! browser to read files, then pass the text content to the reader.
+//! No reader takes a file handle, since WASM has no filesystem access: a
+//! whole-content reader takes the file's text (or bytes), a stream takes
+//! chunks the host copies into its input buffer. Each format has exactly one
+//! of the two.
 
 pub mod log;
 pub mod mesh;

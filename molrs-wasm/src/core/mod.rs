@@ -8,6 +8,7 @@
 //!   multi-dimensional numeric data across the WASM boundary.
 //! - `schema` -- the Frame schema vocabulary (`schemaDocument`, …).
 //! - [`Topology`] -- the bond graph of a frame (`molrs::system::Topology`).
+//! - `covalentRadius` -- per-element data (`molrs::system::Element`).
 //! - `spatial` -- the simulation [`Box`], regions, [`Mesh`] and neighbor
 //!   search.
 //!
@@ -31,6 +32,7 @@ use wasm_bindgen::JsValue;
 use molrs_ffi::FfiError;
 
 pub(crate) mod block;
+pub(crate) mod element;
 pub(crate) mod frame;
 pub(crate) mod schema;
 pub(crate) mod spatial;
@@ -38,6 +40,7 @@ pub(crate) mod topology;
 pub(crate) mod types;
 
 pub use block::Block;
+pub use element::covalent_radius;
 pub use frame::Frame;
 pub use schema::*;
 pub use spatial::*;

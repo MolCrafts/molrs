@@ -1,9 +1,10 @@
-//! Streaming trajectory readers for the WASM API.
+//! Streaming readers for the WASM API — the one reader of every format they
+//! cover (XYZ, PDB, SDF, LAMMPS data and dump, DCD, XTC, TRR).
 //!
 //! Implements Phase 1 / Task #4 of the streaming-trajectory spec
-//! (see `molvis/docs/specs/streaming-trajectory.md`). Unlike the legacy
-//! whole-content readers in [`super::reader`], these classes are designed
-//! to be driven by a worker that owns:
+//! (see `molvis/docs/specs/streaming-trajectory.md`). The whole-content
+//! readers of [`super::reader`] cover only the formats with no stream. These
+//! classes are designed to be driven by a worker that owns:
 //!
 //! - a *reusable* WASM input buffer ([`allocInputBuffer`](
 //!   `LAMMPSTrajStream::alloc_input_buffer`)) into which the worker
@@ -479,6 +480,63 @@ ITEM: ATOMS id type x y z\n\
             assert_eq!(a.byte_offset(), b.byte_offset());
             assert_eq!(a.byte_len(), b.byte_len());
         }
+    }
+
+    /// Owned `f64` column `key` of `block`.
+    fn float_col(block: &crate::core::Block, key: &str) -> js_sys::Float64Array {
+        wasm_bindgen::JsCast::unchecked_into(JsValue::from(block.get(key, None).expect(key)))
+    }
+
+    /// Copy `bytes` into a stream's input buffer in one chunk and index it.
+    macro_rules! index_whole {
+        ($stream:expr, $bytes:expr) => {{
+            let bytes: &[u8] = $bytes;
+            let p = $stream.alloc_input_buffer(bytes.len());
+            // SAFETY: the buffer was just sized to `bytes.len()` and the
+            // stream is borrowed exclusively here.
+            unsafe {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
+            }
+            let mut all = $stream.feed_index_chunk(0.0, bytes.len()).expect("feed");
+            all.extend($stream.finish_index().expect("finish"));
+            all
+        }};
+    }
+
+    /// A PDB file is read through `PDBStream`, its one reader.
+    #[wasm_bindgen_test]
+    fn pdb_stream_reads_the_atoms() {
+        let pdb = "ATOM      1  C   MOL     1       1.000   2.000   3.000  1.00  0.00           C\n\
+ATOM      2  N   MOL     1       4.000   5.000   6.000  1.00  0.00           N\n\
+END\n";
+        let mut stream = PDBStream::new();
+        let entries = index_whole!(stream, pdb.as_bytes());
+        assert_eq!(entries.len(), 1);
+        let e = &entries[0];
+        let frame = stream
+            .parse_range_in_input(e.byte_offset() as usize, e.byte_len() as usize)
+            .expect("parse");
+        let x = float_col(&frame.get("atoms").expect("atoms"), "x");
+        assert_eq!(x.to_vec(), vec![1.0, 4.0]);
+    }
+
+    /// A LAMMPS data file is one frame of `LAMMPSStream`.
+    #[wasm_bindgen_test]
+    fn lammps_data_stream_reads_one_frame() {
+        let data = "LAMMPS data\n\n\
+                    2 atoms\n1 atom types\n\n\
+                    0.0 10.0 xlo xhi\n0.0 10.0 ylo yhi\n0.0 10.0 zlo zhi\n\n\
+                    Atoms\n\n\
+                    1 1 1.0 2.0 3.0\n2 1 4.0 5.0 6.0\n";
+        let mut stream = LAMMPSStream::new();
+        let entries = index_whole!(stream, data.as_bytes());
+        assert_eq!(entries.len(), 1);
+        let e = &entries[0];
+        let frame = stream
+            .parse_range_in_input(e.byte_offset() as usize, e.byte_len() as usize)
+            .expect("parse");
+        let x = float_col(&frame.get("atoms").expect("atoms"), "x");
+        assert_eq!(x.to_vec(), vec![1.0, 4.0]);
     }
 
     /// Calling parse_range_in_input on an out-of-bounds range must error

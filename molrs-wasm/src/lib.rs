@@ -25,7 +25,7 @@
 //!
 //! | Module      | molrs owner | Exports |
 //! |-------------|-------------|---------|
-//! | `core`      | `store`, `system`, `spatial` | Frame, Block, Box, NDArray, schema, Topology, regions, Mesh, NeighborList / NeighborQuery / Neighbors |
+//! | `core`      | `store`, `system`, `spatial` | Frame, Block, Box, NDArray, schema, Topology, `covalentRadius`, regions, Mesh, NeighborList / NeighborQuery / Neighbors |
 //! | `io`        | `io` | File readers/writers (XYZ, PDB, LAMMPS, `*.mrec` records, …), `parseSMILES` |
 //! | `perceive`  | `perceive` | Chemical perception builder (`Perceive.findRings`, `findHydrogens`, …) |
 //! | `compute`   | `compute` | Analysis: RDF, MSD, Cluster, … and the compute catalog |
@@ -79,25 +79,6 @@ pub fn start() {
 #[wasm_bindgen(js_name = wasmMemory)]
 pub fn wasm_memory() -> Memory {
     wasm_bindgen::memory().unchecked_into()
-}
-
-/// Covalent radius (in angstrom) for an element symbol.
-///
-/// Case-insensitive lookup against the built-in periodic table. Returns
-/// `null` (`undefined` in JS) for an unrecognised symbol. This is the
-/// single source of truth for covalent radii — downstream code (e.g. bond
-/// perception) should call this rather than carrying its own table.
-///
-/// # Example (JavaScript)
-///
-/// ```js
-/// covalentRadius("C");  // 0.76
-/// covalentRadius("h");  // 0.31 (case-insensitive)
-/// covalentRadius("Xx"); // undefined
-/// ```
-#[wasm_bindgen(js_name = covalentRadius)]
-pub fn covalent_radius(symbol: &str) -> Option<f64> {
-    molrs::system::Element::by_symbol(symbol).map(|el| f64::from(el.covalent_radius()))
 }
 
 // Module declarations — one per molrs owner, mirroring the Rust crate.

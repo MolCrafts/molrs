@@ -78,7 +78,14 @@ const withH = p.findHydrogens(frame);
 ### I/O
 
 - `parseSMILES(smiles)` → `SmilesIR` → `.toFrame()`
-- `XYZReader`, `PDBReader`, `LAMMPSReader` — file format parsers
+- `XYZStream`, `PDBStream`, `SDFStream`, `LAMMPSStream`, `LAMMPSTrajStream`,
+  `DCDStream`, `XTCStream`, `TRRStream` — chunk-fed readers, the one reader of
+  their format (`allocInputBuffer` → `feedIndexChunk` / `finishIndex` →
+  `parseRangeInInput` per frame)
+- `CIFReader`, `GROReader`, `MOL2Reader`, `POSCARReader`, `XSFReader`,
+  `CubeReader`, `CHGCARReader`, `AmberInpcrdReader`, `AcReader` — whole-content
+  readers of the formats with no stream
+- `covalentRadius(symbol)` — the element table's covalent radius (Å)
 - `writeFrame(frame, "xyz" | "pdb" | "lammps-data" | "lammps-dump")` — serialize to string
 
 ### 3D generation
@@ -91,9 +98,9 @@ const withH = p.findHydrogens(frame);
 const typifier = new UFFTypifier();                 // or MMFF94Typifier / MMFF94STypifier
 const typed    = typifier.typify(frame);
 const pots     = typifier.toPotentials(typed);      // compiles the typed output; no forcefield() handle
-const report   = new LBFGS(pots).run(typed, 200);   // Optimizer(pots).run(frame, n_steps)
-// optional: new LBFGS(pots, neighborList).run(typed, 200)
-// no neighborList → internal bruteforce topology pair list (exclude 1-2/1-3)
+const nl       = new NeighborList(12.5);            // or NeighborList.bruteForce(12.5)
+nl.build(typed);
+const report   = new LBFGS(pots, nl.neighbors()).run(typed, 200);  // pairs come from the NeighborList
 ```
 
 - **UFF** — full RDKit default table (entire periodic table + oxidation states)
