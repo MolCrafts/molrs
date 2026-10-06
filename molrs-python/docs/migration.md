@@ -55,12 +55,94 @@ Convention-neutral plumbing for the Class-I force-field IR.
   level per axis), and `molrs_ff_from_json` reads it and refuses a ragged or
   non-numeric one. `"cmap"` is a category; `molrs_schema_column_dtype("atomm")`
   is `"uint"`.
+### Force-field conventions are LAMMPS's
 
-## 0.15.0 → 0.15.1
+molrs's force-field convention is now LAMMPS's: every style's energy
+expression, factors and parameter units are those of the LAMMPS style it
+corresponds to, and every angle-valued parameter is in degrees.
+[Force-field conventions](guides/forcefield-conventions.md) is the reference.
+The readers, writers and typifiers moved with the kernels, so **the energy of
+a physical system read from a file or typed by a typifier does not change**
+(the one exception is a bug fix, listed last). What changes is the meaning of
+stored numbers, so a force field **built by hand** (`def_type`) or stored by
+an older molrs needs its values converted:
 
-A patch release on the 0.15 ABI line: nothing is renamed or removed, and
-consumers pinned to `>=0.15.0,<0.16` need no rebuild. These behaviours
-change:
+- **`bond harmonic` `k` is LAMMPS's `K`**: E = k(r − r0)², no ½.
+  `k_new = k_old / 2`.
+- **`angle harmonic` `k` is LAMMPS's `K`**: E = k(θ − theta0)².
+  `k_new = k_old / 2`.
+- **Angle-valued parameters are degrees** (they were radians):
+  `angle harmonic` / `class2` `theta0`, `improper harmonic` `chi0`,
+  `dihedral periodic` `phase` / `phase<m>`, `dihedral charmm` `phase`,
+  `improper periodic` `phase`, `dihedral class2` `phi1..phi3`, and the
+  per-instance MMFF `theta0` column of `angles`. `deg = math.degrees(rad)`.
+  Force constants stay per radian².
+- **`bond morse` `D` is `d0`** (LAMMPS's `D0`); `pair morse` reads `d0` in
+  both its compiled and neighbour-driven forms (the compiled one read `D0`).
+- **`pair thole` `a_thole` is `damp`** (LAMMPS's `pair_coeff` name).
+- **The `dihedral fourier` style is gone**; it was an alias of
+  `dihedral periodic` (same kernel, same params). The LAMMPS reader reads
+  `dihedral_style fourier` as `periodic`, the prmtop reader produces
+  `periodic`, and the LAMMPS writer writes `periodic` as `fourier`.
+- **Out-of-plane impropers list the centre first.** `uff_inversion` and
+  `mmff_oop` rows (UFF and MMFF typifier output) are `(centre, a, b, c)`;
+  they were `(a, centre, b, c)`. Their type names follow (`UFF {tj}-{ta}-…`;
+  MMFF keeps its key as the name, its endpoints centre first).
+- **The LAMMPS reader converts nothing.** A coefficient is stored as written
+  (it used to store `k = 2K` and radians), and the force field declares the
+  file's `units`: a `metal` include is a `metal` force field (it used to be
+  converted to `real`), with LAMMPS's `metal` Coulomb constant on `coul/cut`.
+  It reads `bond_style morse` and `improper_style cvff` too.
+  `lammps_coeff_params` returns the coefficients as written.
+- **The LAMMPS writer writes coefficients as stored** (`K = k`, no
+  `to_degrees`), converting energies and lengths only when the target
+  `units` differs from the force field's. `lammps_coeff_values` takes params
+  in the `units` it writes. It writes `bond morse` and `improper cvff`, and
+  refuses a buffered (`delta ≠ 0`) or `dielectric ≠ 1` `coul/cut`.
+  `lammps_units`' `to_store_*` / `from_store_*` / `*_k_lammps` helpers and
+  the `½k` form maps are gone; `LammpsFfUnits::bond_k` converts a bond `K`.
+- **Readers of other engines convert to the LAMMPS convention.** GROMACS:
+  `k = k_b/2`, `k = k_θ/2`, degrees kept. OpenMM XML: `k/2` for bonds and
+  angles, radians → degrees. AMBER prmtop: `k = RK`, `k = TK`, radians →
+  degrees. The GAFF and OPLS-AA tables (`GaffTypifier`, `OPLSAATypifier`)
+  and the GAFF estimator's empirical constants follow; the frcmod writer
+  writes `RK = k`, the GROMACS and OpenMM writers convert back.
+- **`dihedral charmm` with `w ≠ 0` does not compile.** LAMMPS prices that
+  dihedral's 1-4 pair inside the dihedral (with `lj/charmm`'s
+  `epsilon14`/`sigma14`), beside `special_bonds` 1-4 weights of 0; molrs had
+  no such path and silently priced the pair at zero. `PotentialCompiler`
+  now refuses the type, naming it; `w = 0` (AMBER's use) compiles. The
+  OpenMM writer refuses a non-zero `w` too.
+- **`dihedral harmonic` has a kernel** (`k[1 + sign·cos(nφ)]`, LAMMPS's); the
+  LAMMPS reader read it but nothing priced it.
+- **`forcefield` sections state `"angle": "degree"`** beside their preset.
+  A section written by molrs 0.15 states `"angle": "radian"` and holds the
+  old convention; it is refused on read (its preset and its angle unit
+  disagree). Convert its parameters as above and restate the unit.
+- **Generic XML (`<BondStyle>` …) no longer renames `k0` to `k`.** The two
+  meant the same `½k` number; under the LAMMPS convention they do not, so a
+  `k0` attribute is kept as `k0` and a kernel that needs `k` refuses it.
+- **The OpenMM XML reader refuses `<PeriodicImproperForce>`**, the section
+  molrs 0.15.0's writer made up (it is no OpenMM force, and its rows were in
+  no OpenMM order). Rewrite such a file with `<PeriodicTorsionForce>`.
+- **OpenMM impropers price as OpenMM does (bug fix; energies change).** An
+  `<Improper class1 class2 class3 class4>` lists the centre first and OpenMM
+  prices the dihedral `(c2, c3, c1, c4)`. molrs stored the file order and
+  priced `(c1, c2, c3, c4)` — a different dihedral, 0.40× OpenMM's energy on
+  the regression molecule. The reader now stores `(c2, c3, c1, c4)` (AMBER's
+  order, centre third, the order `improper periodic` is priced in everywhere
+  — GROMACS, AMBER, LAMMPS `cvff`); `ordering="charmm"` rows without
+  wildcards stay as written, `ordering="smirnoff"` is refused. The writer
+  writes the inverse, and refuses `improper cvff` (OpenMM cannot price a
+  dihedral that starts at the centre; 0.15 wrote rows OpenMM priced over a
+  different dihedral). A frame built for an OpenMM-read field lists each
+  improper's atoms in its type's endpoint order, now `(c2, c3, c1, c4)`.
+
+### Already in 0.15.1
+
+0.15.1 was a patch release on the 0.15 ABI line (nothing renamed or removed;
+consumers pinned to `>=0.15.0,<0.16` needed no rebuild). Coming from 0.15.0,
+these behaviours change as well:
 
 - **LJ cross rows are applied.** A `pair/lj/cut` row whose two endpoints
   differ overrides the style's `mixing` rule for that type pair. 0.15.0
