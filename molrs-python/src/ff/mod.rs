@@ -1777,7 +1777,7 @@ impl PyPotentialCompiler {
             .into_iter()
             .map(|(pot, weights)| {
                 let special = weights
-                    .map(|w| molrs::md::SpecialWeights::new(&topo.special_weights(&w)))
+                    .map(|w| molrs::md::SpecialWeights::new(&w.special_weights(&topo)))
                     .unwrap_or_default();
                 (pot, special)
             })

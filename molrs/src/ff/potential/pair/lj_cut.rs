@@ -703,6 +703,23 @@ fn lj_cross_row(
     lj_row(type_map, &pair_key(a, b)?)
 }
 
+/// `(ε, σ)` of the atom-type pair `(a, b)`: its explicit cross row, else the
+/// two self rows mixed by `mixing` — what both `lj/cut` ctors price it with.
+pub(crate) fn lj_cut_pair_params(
+    type_map: &HashMap<&str, &Params>,
+    mixing: Mixing,
+    a: &str,
+    b: &str,
+) -> Result<(F, F), String> {
+    if let Some(row) = lj_cross_row(type_map, a, b)? {
+        return Ok(row);
+    }
+    let own = |t: &str| -> Result<(F, F), String> {
+        lj_row(type_map, t)?.ok_or_else(|| format!("LJCut: unknown atom type '{t}'"))
+    };
+    Ok(mixing.combine(own(a)?, own(b)?))
+}
+
 /// Construct a compiled [`LJCut`] from per-atom-type params + a neighbour list.
 ///
 /// A pair whose types have an explicit cross row is priced with it; every other
@@ -745,19 +762,12 @@ pub fn pair_lj_cut_ctor(
     let mut eps_vec = Vec::with_capacity(n);
     let mut sig_vec = Vec::with_capacity(n);
 
-    let per_atom = |t: &str| -> Result<(F, F), String> {
-        lj_row(&type_map, t)?.ok_or_else(|| format!("LJCut: unknown atom type '{t}'"))
-    };
-
     for idx in 0..n {
         let (ti, tj) = (
             atom_types[i_col[idx] as usize].as_str(),
             atom_types[j_col[idx] as usize].as_str(),
         );
-        let (mut eps, sigma) = match lj_cross_row(&type_map, ti, tj)? {
-            Some(row) => row,
-            None => mixing.combine(per_atom(ti)?, per_atom(tj)?),
-        };
+        let (mut eps, sigma) = lj_cut_pair_params(&type_map, mixing, ti, tj)?;
         if is_14.is_some_and(|b| b[idx]) {
             eps *= scale_14;
         }

@@ -9,12 +9,13 @@
 //! # The weight `w`
 //!
 //! LAMMPS's fourth coefficient `w` weights a 1-4 non-bonded pair that the
-//! *dihedral* computes, with the `epsilon14` / `sigma14` of a `lj/charmm` pair
-//! style and the full Coulomb, beside `special_bonds` 1-4 weights of zero.
-//! molrs has no `lj/charmm` pair style and no 1-4 path in this kernel, so a
-//! non-zero `w` would silently drop that pair: [`dihedral_charmm_ctor`] refuses
-//! it. `w = 0` (or absent) is the AMBER use of the style — the 1-4 pairs are
-//! the pair styles' job, scaled by `special_bonds` — and compiles.
+//! *dihedral* computes — its end atoms, with the `epsilon14` / `sigma14` of
+//! the `lj/charmm` pair style and the full Coulomb, beside `special_bonds`
+//! 1-4 weights of zero. This kernel prices the torsion alone; the compiler
+//! routes every dihedral's `w` pair to the 1-4 exceptions kernel
+//! ([`crate::ff::potential::pair::exceptions`]), which also makes LAMMPS's
+//! checks (`0 ≤ w ≤ 1`, `special_bonds` 1-4 = 0, a `lj/charmm` pair style).
+//! `w = 0` (or absent) is the AMBER use of the style.
 
 use molrs::store::schema::block_names::DIHEDRALS;
 use std::collections::HashMap;
@@ -122,14 +123,9 @@ impl IndexedTerms for DihedralCharmm {
 }
 
 /// Construct a [`DihedralCharmm`] from per-type params (`k`, `periodicity`,
-/// `phase` in degrees, `w`) and a Frame's `"dihedrals"` block
-/// (`atomi/atomj/atomk/atoml/type`).
-///
-/// # Errors
-///
-/// A type whose `w` is non-zero: the 1-4 pair LAMMPS computes inside this
-/// style is not computed by molrs (see the module docs), and leaving it out
-/// would be a silently different energy.
+/// `phase` in degrees) and a Frame's `"dihedrals"` block
+/// (`atomi/atomj/atomk/atoml/type`). `w` is the compiler's (see the module
+/// docs).
 pub fn dihedral_charmm_ctor(
     _sp: &Params,
     tp: &[(&str, &Params)],
@@ -187,19 +183,6 @@ pub fn dihedral_charmm_ctor(
                 .ok_or("dihedral_charmm: missing periodicity")? as F,
         );
         dd.push(p.get("phase").unwrap_or(0.0).to_radians() as F); // degrees → radians
-        if let Some(w) = p.get("w")
-            && w != 0.0
-        {
-            return Err(format!(
-                "dihedral_charmm: type '{}' has the 1-4 weight w = {w}. In LAMMPS a non-zero w \
-                 makes the dihedral compute the 1-4 Lennard-Jones (with the epsilon14/sigma14 of \
-                 a lj/charmm pair style) and Coulomb pair itself, beside special_bonds 1-4 = 0; \
-                 molrs has neither lj/charmm nor that 1-4 path, so the pair would be missing. \
-                 Use w = 0 and carry the 1-4 interaction in the pair styles with special_bonds \
-                 (the AMBER use of this style).",
-                tc[idx]
-            ));
-        }
     }
     Ok(Member::indexed(DihedralCharmm {
         atom_i: ai,
@@ -251,18 +234,22 @@ mod tests {
         (ff, frame)
     }
 
-    /// Regression: with `special_bonds charmm` (1-4 weights 0) LAMMPS prices a
-    /// dihedral's 1-4 pair inside `dihedral_style charmm`, weighted by `w`.
-    /// molrs does not, so a non-zero `w` used to compile to a field whose every
-    /// 1-4 non-bonded energy was silently zero. It is refused at compile time,
-    /// naming the type and the weight.
+    /// A non-zero `w` prices its pair with `lj/charmm`'s `epsilon14` /
+    /// `sigma14`; a field without that pair style is refused, as LAMMPS
+    /// refuses it ("Dihedral charmm is incompatible with Pair style"), and so
+    /// is a `w` outside `[0, 1]`.
     #[test]
-    fn a_nonzero_weight_is_refused_at_compile_time() {
+    fn a_nonzero_weight_needs_lj_charmm_and_a_weight_in_range() {
         let (ff, frame) = lammps_charmm("1.0");
         let err = crate::ff::potential::PotentialCompiler::new(&ff)
             .compile(&frame)
             .unwrap_err();
-        assert!(err.contains("a-b-c-d") && err.contains("w = 1"), "{err}");
+        assert!(err.contains("lj/charmm"), "{err}");
+        let (ff, frame) = lammps_charmm("1.5");
+        let err = crate::ff::potential::PotentialCompiler::new(&ff)
+            .compile(&frame)
+            .unwrap_err();
+        assert!(err.contains("a-b-c-d") && err.contains("[0, 1]"), "{err}");
     }
 
     /// `w = 0` is the AMBER use of the style and prices LAMMPS's

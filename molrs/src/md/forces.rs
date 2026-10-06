@@ -1218,7 +1218,7 @@ mod tests {
             .into_iter()
             .map(|(pot, weights)| {
                 let special = weights
-                    .map(|w| SpecialWeights::new(&topo.special_weights(&w)))
+                    .map(|w| SpecialWeights::new(&w.special_weights(&topo)))
                     .unwrap_or_default();
                 (pot, special)
             })

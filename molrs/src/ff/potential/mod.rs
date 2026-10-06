@@ -475,13 +475,65 @@ impl Potential for Box<dyn Potential> {
 /// it *is* the bonded interaction, not a scaled copy of one.
 pub type TypedKernel = (Member, Option<registry::SpecialClass>);
 
-/// One member of a neighbour-driven evaluation: the kernel, and the
-/// bond-distance weights its non-bonded term takes.
+/// One member of a neighbour-driven evaluation: the kernel, and the weights
+/// its non-bonded term takes.
 ///
 /// The weights travel with the member because a force field may scale close
 /// van-der-Waals and electrostatic neighbours differently, and in molrs those
 /// are separate kernels.
-pub type TypedMember = (Member, Option<BondDistanceWeights>);
+pub type TypedMember = (Member, Option<PairWeights>);
+
+/// The weights a neighbour-driven non-bonded member applies: by bond distance
+/// (`special_bonds`), and zero on the pairs the 1-4 exceptions kernel prices
+/// in its place (a `pairs` row with per-pair overrides).
+///
+/// A neighbour table finds every pair inside the cutoff, so a pair that an
+/// exception prices would otherwise be priced twice — once here at its
+/// class's weight, once there at its own.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PairWeights {
+    by_distance: BondDistanceWeights,
+    replaced: Vec<(usize, usize)>,
+}
+
+impl PairWeights {
+    /// Weights by bond distance, with `replaced` pairs (either order) at 0.
+    pub fn new(by_distance: BondDistanceWeights, replaced: Vec<(usize, usize)>) -> Self {
+        Self {
+            by_distance,
+            replaced,
+        }
+    }
+
+    /// The weights by bond distance.
+    pub fn by_distance(&self) -> &BondDistanceWeights {
+        &self.by_distance
+    }
+
+    /// The pairs weighted 0 whatever their bond distance.
+    pub fn replaced(&self) -> &[(usize, usize)] {
+        &self.replaced
+    }
+
+    /// Per atom, its partners whose weight is not 1, sorted by partner — the
+    /// lists [`Topology::special_weights`](molrs::Topology::special_weights)
+    /// gives, with the replaced pairs set to 0. Feed it to
+    /// [`SpecialWeights::new`](crate::md::SpecialWeights::new).
+    pub fn special_weights(&self, topo: &molrs::Topology) -> Vec<Vec<(usize, F)>> {
+        let mut lists = topo.special_weights(&self.by_distance);
+        for &(i, j) in &self.replaced {
+            for (a, b) in [(i, j), (j, i)] {
+                if let Some(list) = lists.get_mut(a) {
+                    match list.binary_search_by_key(&b, |&(p, _)| p) {
+                        Ok(k) => list[k].1 = 0.0,
+                        Err(k) => list.insert(k, (b, 0.0)),
+                    }
+                }
+            }
+        }
+        lists
+    }
+}
 
 /// Rebuild the copies' entries of a per-atom vector from their owners'.
 ///
