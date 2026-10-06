@@ -1157,6 +1157,17 @@ pub enum Mic {
 }
 
 impl Mic {
+    /// The orthorhombic convention from edge lengths alone, for a caller that
+    /// carries per-frame lengths rather than a [`SimBox`]. A non-positive edge
+    /// leaves that axis unwrapped.
+    pub fn ortho(len: [F; 3]) -> Mic {
+        Mic::Ortho {
+            len,
+            inv_len: len.map(|l| if l > 0.0 { 1.0 / l } else { 0.0 }),
+            pbc: len.map(|l| l > 0.0),
+        }
+    }
+
     /// Minimum image of a displacement.
     ///
     /// Takes the displacement rather than two points: the convention depends

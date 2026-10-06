@@ -146,6 +146,7 @@ pub mod ml;
 pub mod msd;
 pub mod order;
 pub mod pmft;
+pub(crate) mod positions;
 pub mod rdf;
 pub(crate) mod require;
 pub mod result;
@@ -155,7 +156,6 @@ pub mod spectroscopy;
 pub(crate) mod test_support;
 pub mod traits;
 pub mod transport;
-pub mod util;
 #[cfg(feature = "voronoi")]
 pub mod voronoi;
 

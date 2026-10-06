@@ -35,8 +35,8 @@ use rustfft::FftPlanner;
 use rustfft::num_complex::Complex as RfComplex;
 
 use crate::compute::error::ComputeError;
+use crate::compute::positions::get_positions_ref_any_dim;
 use crate::compute::traits::Compute;
-use crate::compute::util::get_positions_ref_any_dim;
 
 /// Mode of MSD computation.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

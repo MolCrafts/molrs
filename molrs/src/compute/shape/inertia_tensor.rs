@@ -14,9 +14,11 @@ use molrs::types::F;
 
 use crate::compute::cluster::ClusterResult;
 use crate::compute::error::ComputeError;
+use crate::compute::positions::get_positions_ref;
 use crate::compute::shape::center_of_mass::COMResult;
 use crate::compute::traits::Compute;
-use crate::compute::util::{MicHelper, get_positions_ref};
+use crate::op::vec3::sub;
+use molrs::spatial::simbox::{Mic, SimBox};
 
 /// Moment of inertia tensor per cluster, per frame.
 ///
@@ -64,7 +66,7 @@ impl InertiaTensor {
             });
         }
 
-        let mic = MicHelper::from_simbox(frame.simbox_ref());
+        let mic = frame.simbox_ref().map_or(Mic::Free, SimBox::mic);
         let nc = clusters.num_clusters;
 
         if com.centers_of_mass.len() != nc {
@@ -85,7 +87,7 @@ impl InertiaTensor {
             let c = cid as usize;
             let pos = [xs[i], ys[i], zs[i]];
             let m = masses_ref.map_or(1.0 as F, |ms| ms[i]);
-            let s = mic.disp(com.centers_of_mass[c], pos);
+            let s = mic.apply(sub(pos, com.centers_of_mass[c]));
             let sx = s[0];
             let sy = s[1];
             let sz = s[2];

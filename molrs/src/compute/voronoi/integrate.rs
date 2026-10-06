@@ -33,7 +33,7 @@
 //! converts the density `e/Bohr³ → e/Å³` (divide by `a³`, `a = 0.529177… Å/Bohr`)
 //! so `∫ρ dV` is a pure electron count and `μ` is in `e·Å`.
 
-use molrs::spatial::simbox::SimBox;
+use molrs::spatial::simbox::{Mic, SimBox};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 use ndarray::{Array2, ArrayView2};
@@ -216,6 +216,7 @@ impl VoronoiIntegration {
         }
         let l = simbox.lengths();
         let lbox = [l[0], l[1], l[2]];
+        let mic = Mic::ortho(lbox);
 
         // Hoist the generator positions into a contiguous `[F; 3]` buffer and
         // precompute the squared radii once — Pass B's voxel loop reads both
@@ -236,7 +237,7 @@ impl VoronoiIntegration {
             let m = atom_to_mol[a];
             let ra = genpos(a);
             let anc = *anchor[m].get_or_insert(ra);
-            let ru = unwrap(ra, anc, lbox);
+            let ru = unwrap(ra, anc, &mic);
             let z = atomic_numbers[a] as F;
             for d in 0..3 {
                 ref_num[m][d] += z * ru[d];
@@ -263,7 +264,7 @@ impl VoronoiIntegration {
             let z = atomic_numbers[a] as F;
             charges[m] += z;
             let rref = [references[[m, 0]], references[[m, 1]], references[[m, 2]]];
-            let d = min_image(sub(genpos(a), rref), lbox);
+            let d = mic.apply(sub(genpos(a), rref));
             for c in 0..3 {
                 dipoles[[m, c]] += z * d[c];
             }
@@ -329,7 +330,7 @@ impl VoronoiIntegration {
                 references[[mol, 1]],
                 references[[mol, 2]],
             ];
-            let disp = min_image(sub(x, rref), lbox);
+            let disp = mic.apply(sub(x, rref));
             for c in 0..3 {
                 dip[[mol, c]] -= n_elec * disp[c];
             }
@@ -382,28 +383,15 @@ impl VoronoiIntegration {
     }
 }
 
-// --- small orthorhombic vector helpers (the voronoi module is ortho-only) ---
+// --- orthorhombic helpers (the voronoi module is ortho-only) ---
 //
-// ponytail: specialized orthorhombic MIC over a precomputed box-length array,
-// called once per voxel (millions of times) in the hot Pass-B loop below;
-// `compute::util::MicHelper` is the general (box-kind-resolving) path used
-// elsewhere. Kept local on purpose to avoid per-iteration box dispatch.
-
-/// Minimum-image displacement for an orthorhombic box.
-#[inline]
-fn min_image(mut d: [F; 3], l: [F; 3]) -> [F; 3] {
-    for c in 0..3 {
-        if l[c] > 0.0 {
-            d[c] -= l[c] * (d[c] / l[c]).round();
-        }
-    }
-    d
-}
+// The minimum image is `Mic::ortho(lbox)`, resolved once per call and carried
+// into the hot Pass-B loop by value, so no voxel re-dispatches on box kind.
 
 /// Unwrap `r` to be the min-image-closest copy to `anchor`.
 #[inline]
-fn unwrap(r: [F; 3], anchor: [F; 3], l: [F; 3]) -> [F; 3] {
-    let d = min_image(sub(r, anchor), l);
+fn unwrap(r: [F; 3], anchor: [F; 3], mic: &Mic) -> [F; 3] {
+    let d = mic.apply(sub(r, anchor));
     [anchor[0] + d[0], anchor[1] + d[1], anchor[2] + d[2]]
 }
 
@@ -413,8 +401,8 @@ fn unwrap(r: [F; 3], anchor: [F; 3], l: [F; 3]) -> [F; 3] {
 /// what makes the spatial-index gather and the brute-force fallback yield
 /// bit-identical `pow` values.
 #[inline]
-fn power_dist(x: [F; 3], g: [F; 3], r_sq: F, l: [F; 3]) -> F {
-    let d = min_image(sub(x, g), l);
+fn power_dist(x: [F; 3], g: [F; 3], r_sq: F, mic: &Mic) -> F {
+    let d = mic.apply(sub(x, g));
     d[0] * d[0] + d[1] * d[1] + d[2] * d[2] - r_sq
 }
 
@@ -468,8 +456,10 @@ struct CellList {
     /// Cell edge length per axis (`= lbox / ncell ≥ r_cut`; `∞` for a degenerate
     /// axis with `lbox ≤ 0`).
     cell_edge: [F; 3],
-    /// Orthorhombic box lengths (same array used by the min-image compare).
+    /// Orthorhombic box lengths (cell indexing).
     lbox: [F; 3],
+    /// The minimum image the power distances are measured under.
+    mic: Mic,
     /// CSR offsets: cell `c` owns `cell_gens[cell_start[c]..cell_start[c + 1]]`.
     cell_start: Vec<usize>,
     /// Generator indices grouped by owning cell, ascending within each cell.
@@ -520,6 +510,7 @@ impl CellList {
             ncell,
             cell_edge,
             lbox,
+            mic: Mic::ortho(lbox),
             cell_start,
             cell_gens,
         }
@@ -552,7 +543,7 @@ impl CellList {
                     let c = (cx * self.ncell[1] + cy) * self.ncell[2] + cz;
                     for &a in &self.cell_gens[self.cell_start[c]..self.cell_start[c + 1]] {
                         any = true;
-                        let pow = power_dist(x, gens[a], radii_sq[a], self.lbox);
+                        let pow = power_dist(x, gens[a], radii_sq[a], &self.mic);
                         // argmin with a lowest-index tie-break, tolerant of the
                         // grouped (non-index-order) candidate visiting: strictly
                         // smaller wins, exact ties go to the lower index. Uses only
@@ -581,7 +572,7 @@ impl CellList {
         let mut fb_best = 0usize;
         let mut fb_pow = F::INFINITY;
         for a in 0..n {
-            let pow = power_dist(x, gens[a], radii_sq[a], self.lbox);
+            let pow = power_dist(x, gens[a], radii_sq[a], &self.mic);
             if pow < fb_pow {
                 fb_pow = pow;
                 fb_best = a;
@@ -622,7 +613,7 @@ mod tests {
 
     #[test]
     fn min_image_wraps_half_box() {
-        let d = min_image([0.9, 0.0, 0.0], [1.0, 1.0, 1.0]);
+        let d = Mic::ortho([1.0, 1.0, 1.0]).apply([0.9, 0.0, 0.0]);
         assert!((d[0] - (-0.1)).abs() < 1e-12);
     }
 
@@ -647,13 +638,14 @@ mod tests {
             .collect();
         let radii_sq: Vec<F> = (0..n).map(|_| (rng() * 1.5).powi(2)).collect();
         let w_max = radii_sq.iter().copied().fold(0.0_f64, f64::max);
+        let mic = Mic::ortho(lbox);
 
         // Reference: byte-for-byte the exhaustive Pass-B search.
         let brute = |x: [F; 3]| -> usize {
             let mut best = 0usize;
             let mut best_pow = F::INFINITY;
             for a in 0..n {
-                let pow = power_dist(x, gens[a], radii_sq[a], lbox);
+                let pow = power_dist(x, gens[a], radii_sq[a], &mic);
                 if pow < best_pow {
                     best_pow = pow;
                     best = a;

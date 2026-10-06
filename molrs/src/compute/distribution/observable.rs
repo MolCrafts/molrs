@@ -6,12 +6,14 @@
 //! selection is the frozen [`AtomGroups`] index container and the extractor is
 //! any [`Observable`] (distance / angle / dihedral).
 
+use molrs::spatial::simbox::Mic;
 use molrs::store::frame_access::FrameAccess;
 use molrs::store::keys;
 use molrs::types::{F, Idx};
 
 use crate::compute::error::ComputeError;
-use crate::compute::util::{MicHelper, Positions, get_positions_ref};
+use crate::compute::positions::{Positions, get_positions_ref};
+use crate::op::vec3::sub;
 
 /// A frozen container of atom-index tuples, all of one arity.
 ///
@@ -202,8 +204,8 @@ pub(crate) type PosCols<'a> = (Positions<'a>, Positions<'a>, Positions<'a>);
 
 /// Borrow the `atoms` x/y/z columns as three parallel slices.
 ///
-/// Thin wrapper over [`compute::util::get_positions_ref`](crate::compute::util)
-/// (the shared column extractor). Unlike a materialized `N×3` array this keeps
+/// Thin wrapper over the shared column extractor
+/// (`compute::positions::get_positions_ref`). Unlike a materialized `N×3` array this keeps
 /// the columns in their native SoA layout — observables index `xs[i]`/`ys[i]`/
 /// `zs[i]` directly, with no per-frame copy.
 pub(crate) fn positions<FA: FrameAccess>(frame: &FA) -> Result<PosCols<'_>, ComputeError> {
@@ -219,23 +221,16 @@ pub(crate) fn positions<FA: FrameAccess>(frame: &FA) -> Result<PosCols<'_>, Comp
     Ok((xp, yp, zp))
 }
 
-/// Minimum-image displacement `b - a` using a per-frame [`MicHelper`] hoisted by
-/// the caller (built once with [`MicHelper::from_simbox`] rather than resolved
-/// per pair). Free boundaries fall back to the raw separation. This is the one
+/// Minimum-image displacement `b - a` using a per-frame [`Mic`] hoisted by
+/// the caller (built once with [`SimBox::mic`](molrs::spatial::simbox::SimBox::mic) rather than resolved per
+/// pair). Free boundaries fall back to the raw separation. This is the one
 /// minimum-image implementation across `compute`, so distance DFs agree with
 /// [`compute::rdf`](crate::compute::rdf) on the same pair (ac-003).
 #[inline]
-pub(crate) fn displacement(
-    mic: &MicHelper,
-    xs: &[F],
-    ys: &[F],
-    zs: &[F],
-    a: usize,
-    b: usize,
-) -> [F; 3] {
+pub(crate) fn displacement(mic: &Mic, xs: &[F], ys: &[F], zs: &[F], a: usize, b: usize) -> [F; 3] {
     let from = [xs[a], ys[a], zs[a]];
     let to = [xs[b], ys[b], zs[b]];
-    mic.disp(from, to)
+    mic.apply(sub(to, from))
 }
 
 #[cfg(test)]
