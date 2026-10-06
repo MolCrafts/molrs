@@ -78,7 +78,7 @@ the energy of a physical system did not change with it.
 | Style | Energy | Parameters (units) | LAMMPS | 0.16 |
 |---|---|---|---|---|
 | `periodic` | Σₘ kₘ [1 + cos(nₘ φ − γₘ)] | `k<m>` (E), `periodicity<m>`, `phase<m>` (deg); or one term `k`, `periodicity`, `phase` | `dihedral_style fourier` `m K1 n1 d1 …` | phases degrees; the `dihedral fourier` alias is gone (LAMMPS `fourier` reads as `periodic`) |
-| `charmm` | k [1 + cos(n φ − d)] | `k` (E), `periodicity`, `phase` (deg), `w` | `dihedral_style charmm` `K n d w` | `phase` degrees; `w ≠ 0` refused at compile time (see [1-4](#1-4-interactions)) |
+| `charmm` | k [1 + cos(n φ − d)], plus `w`·(its end atoms' 1-4 pair) | `k` (E), `periodicity`, `phase` (deg), `w` | `dihedral_style charmm` `K n d w` | `phase` degrees; `w` prices the 1-4 pair (see [1-4](#1-4-interactions)) |
 | `opls` | ½[k1(1 + cos φ) + k2(1 − cos 2φ) + k3(1 + cos 3φ) + k4(1 − cos 4φ)] | `k1..k4` (E) | `dihedral_style opls` | unchanged |
 | `multi/harmonic` | Σₙ₌₁⁵ aₙ cosⁿ⁻¹ φ | `a1..a5` (E) | `dihedral_style multi/harmonic` | unchanged |
 | `nharmonic` | Σᵢ₌₁ᴺ aᵢ cosⁱ⁻¹ φ | `a1..aN` (E), contiguous, N ≥ 1 | `dihedral_style nharmonic` `N A1 … AN` | new style |
@@ -106,6 +106,8 @@ the energy of a physical system did not change with it.
 | `buck` | a e^(−r/rho) − c/r⁶ | `a` (E), `rho` (L), `c` (E·L⁶) | `pair_style buck` `A rho C` | unchanged |
 | `morse` | d0 [(1 − e^(−alpha (r − r0)))² − 1] | `d0` (E), `alpha` (1/L), `r0` (L) | `pair_style morse` `D0 alpha r0` | the compiled kernel read `D0`, the neighbour-driven one `d0`; both read `d0` |
 | `coul/cut` | coulomb qᵢqⱼ / (dielectric (r + delta)) | style `coulomb` (E·L/e²), `dielectric`, `delta` (L), `cutoff` | `pair_style coul/cut` with `delta = 0` (the buffer is molrs's, for MMFF; the LAMMPS writer refuses `delta ≠ 0` and `dielectric ≠ 1`). LAMMPS fixes the constant (`qqr2e`) per `units` | unchanged |
+| `lj/charmm` | 4ε[(σ/r)¹² − (σ/r)⁶]·S(r), S CHARMM's switch from `inner` to `cutoff` | `epsilon`, `sigma`, `epsilon14`, `sigma14` (absent → `epsilon`, `sigma`); style `inner`, `cutoff`, `mixing` (default `arithmetic`) | `pair_style lj/charmm/coul/charmm`, van-der-Waals half; `pair_coeff i j ε σ ε₁₄ σ₁₄` | new |
+| `coul/charmm` | coulomb qᵢqⱼ/(dielectric r)·S(r); force (C qᵢqⱼ/r²)·S(r), LAMMPS's switched force, not the gradient | style `coulomb`, `dielectric`, `inner`, `cutoff` | `pair_style lj/charmm/coul/charmm`, Coulomb half (`inner2 outer2` when its cutoffs differ) | new |
 | `coul/long/pme` | Ewald-summed coulomb qᵢqⱼ/r | style `coulomb`, `cutoff`, `alpha`, `order`, `grid_*` | `pair_style coul/long` + `kspace_style pppm` | unchanged |
 | `thole` | T(r) qᵢqⱼ/r, T = 1 − (1 + s r/2) e^(−s r), s = ½(aᵢ + aⱼ)/(αᵢαⱼ)^(1/6) | per type `charge`, `alpha` (L³), `damp` | `pair_style thole` `alpha damp` (LAMMPS damps the Drude charges of the atoms; molrs's per-type `charge` is its own) | `a_thole` renamed `damp` |
 | `coul/tt` | fₙ(r) qᵢqⱼ/r (Tang–Toennies) | style `b`, `c`, `order` | `pair_style coul/tt` (`n` = `order`) | unchanged |
@@ -164,46 +166,82 @@ parameters:
 1. **Global weights** — `special_bonds lj w12 w13 w14 coul w12 w13 w14`:
    `ForceField.special_bonds`. AMBER is `lj 0 0 ½ coul 0 0 5/6`, OPLS-AA
    `0 0 ½`, CHARMM `0 0 0` (its 1-4 pairs are priced by the dihedral, below).
-2. **Per-type 1-4 Lennard-Jones** — `pair_style lj/charmm/coul/charmm` (and
-   `lj/charmm/coul/long`), `pair_coeff I J epsilon sigma epsilon14 sigma14`.
-   In molrs, a pair style `lj/charmm` (van der Waals half, as `lj/cut` is of
-   `lj/cut/coul/cut`) with columns `epsilon`, `sigma`, `epsilon14`,
-   `sigma14`, mixed by the style's `mixing` (LAMMPS's default for these styles
-   is `arithmetic`); self rows per type, explicit cross rows per type pair.
-   GROMACS `[ pairtypes ]` lands in the cross rows' `epsilon14`/`sigma14`.
-3. **Per-dihedral weight** — `dihedral_style charmm` `w`: the dihedral prices
-   the 1-4 pair of its own end atoms, `w·[LJ(epsilon14, sigma14) + C qᵢqⱼ/r]`,
-   beside `special_bonds` 1-4 weights of 0 (`w` = 1, ½ in six-membered rings,
-   0 in four- and five-membered rings).
+   The pair styles price a 1-4 pair at their own parameters (and switch),
+   times the weight.
+2. **Per-type 1-4 Lennard-Jones** — `pair_style lj/charmm/coul/charmm inner
+   outer [inner2 outer2]`, `pair_coeff I J epsilon sigma [epsilon14
+   sigma14]`. In molrs, a pair style `lj/charmm` (van der Waals half, as
+   `lj/cut` is of `lj/cut/coul/cut`) with columns `epsilon`, `sigma`,
+   `epsilon14`, `sigma14` and style params `inner`, `cutoff`, `mixing`
+   (LAMMPS's default for these styles is `arithmetic`; `epsilon14` /
+   `sigma14` mix like `epsilon` / `sigma`, as LAMMPS's `init_one` mixes them);
+   self rows per type, explicit cross rows per type pair. Its Coulomb half is
+   `coul/charmm` (`coulomb`, `dielectric`, `inner`, `cutoff`). Both switch
+   with CHARMM's
+   S(r) = (r_c² − r²)²(r_c² + 2r² − 3r_in²)/(r_c² − r_in²)³ between `inner`
+   and `cutoff`, at both compile doors; the Lennard-Jones force is the
+   gradient, the Coulomb force is LAMMPS's switched force C qᵢqⱼ S/r², which
+   is not (`pair_lj_charmm_coul_charmm.cpp`). `lj/charmm/coul/long` is not
+   read. GROMACS `[ pairtypes ]` will land in the cross rows'
+   `epsilon14`/`sigma14`.
+3. **Per-dihedral weight** — `dihedral_style charmm` `w`: each dihedral
+   prices the pair of its own end atoms,
 
-molrs 0.16 implements (1) and stores (3)'s `w`; `lj/charmm` and the
-dihedral's 1-4 pair are the next release's kernels. Until then a
-`dihedral charmm` type with `w ≠ 0` is **refused at compile time**, naming the
-type and the weight: under `special_bonds charmm` that pair would otherwise be
-silently zero. `w = 0` (AMBER's use of the style) compiles and prices
-LAMMPS's `K[1 + cos(nφ − d)]`.
+   E₁₄ = w·[4ε₁₄((σ₁₄/r)¹² − (σ₁₄/r)⁶) + C qᵢqⱼ/r],
+
+   with the `lj/charmm` 1-4 parameters of the two types, the Coulomb style's
+   C = `coulomb`/`dielectric`, no cutoff and no switch
+   (`dihedral_charmm.cpp`; LAMMPS tallies it into `evdwl` and `ecoul`). `w`
+   is 1, ½ in six-membered rings, 0 in four- and five-membered rings; a pair
+   at the ends of several dihedrals takes the sum of their `w`. As in LAMMPS,
+   a field with any `w > 0` is refused unless its `special_bonds` 1-4 weights
+   are both 0 (else the pair would be priced twice) and it has a `lj/charmm`
+   style and a Coulomb style; `w` outside [0, 1] is refused. `w = 0` (AMBER's
+   use of the style) prices LAMMPS's `K[1 + cos(nφ − d)]` alone.
 
 **Per-pair exceptions LAMMPS cannot express** — a GROMACS `[ pairs ]` row
 with explicit parameters, an OpenMM `NonbondedForce` exception, an AMBER
 dihedral whose `SCEE`/`SCNB` differ from the field's (the prmtop reader
-refuses a non-uniform pair today) — are per-instance columns on the Frame's
-`pairs` block, the rows the pair kernels already price (`atomi`, `atomj`,
-`is_14`). A column overrides, for its row, what the style would give it:
+refuses a non-uniform pair today) — are per-instance float columns on the
+Frame's `pairs` block, the rows the pair kernels already price (`atomi`,
+`atomj`, `is_14`):
 
 | Column | Meaning |
 |---|---|
-| `epsilon`, `sigma` | the LJ parameters of this pair, in place of the pair style's row or mixing |
-| `lj_scale` | the van-der-Waals weight of this pair, in place of `special_bonds.lj` for its class |
+| `epsilon`, `sigma` | the LJ parameters of this pair, in place of the pair style's row or mixing (or the dihedral's `epsilon14` / `sigma14`) |
+| `lj_scale` | the van-der-Waals weight of this pair, in place of `special_bonds.lj` for its class (or of `w`) |
 | `charge_product` | qᵢqⱼ (e²) of this pair, in place of the atoms' product |
-| `coul_scale` | the Coulomb weight of this pair, in place of `special_bonds.coul` |
+| `coul_scale` | the Coulomb weight of this pair, in place of `special_bonds.coul` (or of `w`) |
 
-A null (absent) cell takes the style's value. OpenMM's exception
-`(chargeProd, sigma, epsilon)` is `charge_product`, `sigma`, `epsilon` with
-both scales 1; a GROMACS funct-1 `[ pairs ]` row with parameters is `sigma`,
-`epsilon` (`lj_scale` 1); AMBER's per-dihedral divisors are
-`lj_scale = 1/SCNB`, `coul_scale = 1/SCEE`. LAMMPS can express none of these
-per pair, so the LAMMPS writers refuse a frame or field that carries them
-(not yet reachable: no reader produces them in 0.16).
+A null cell (the column's validity mask) takes the value the pair has
+without the row. OpenMM's exception `(chargeProd, sigma, epsilon)` is
+`charge_product`, `sigma`, `epsilon` with both scales 1; a GROMACS funct-1
+`[ pairs ]` row with parameters is `sigma`, `epsilon` (`lj_scale` 1); AMBER's
+per-dihedral divisors are `lj_scale = 1/SCNB`, `coul_scale = 1/SCEE`. A pair
+style other than a 12-6 `lj/cut` or `lj/charmm` and a plain Coulomb
+(`coul/cut` with `delta = 0`, `coul/charmm`) has no exception form, and a
+field with one beside an exception is refused. LAMMPS can express none of
+these per pair, so the LAMMPS writers refuse a frame that carries them,
+naming the columns. (molrec retired its `pair14` category for these columns
+and `epsilon14` / `sigma14`; a `pair14` table in a record is kept as an
+unknown category.)
+
+**Precedence**, per pair and per quantity: **per-pair override > dihedral
+charmm `w` > `special_bonds`**. Every pair that carries an override cell or
+sits at the ends of a `w > 0` dihedral is priced once, by one exceptions
+kernel at both compile doors,
+
+E = lj_w·4ε[(σ/r)¹² − (σ/r)⁶] + coul_w·C qᵢqⱼ/r   (no cutoff, no switch),
+
+where each of ε, σ, qᵢqⱼ, lj_w, coul_w is the override cell if there is one,
+else the dihedral's (ε₁₄, σ₁₄, qᵢqⱼ, Σw, Σw) when `w > 0`, else the pair
+style's (ε, σ, qᵢqⱼ, `special_bonds` weight of the pair's bond-distance
+class). The regular pair kernels price an override pair at weight 0: the
+compiled door leaves its `pairs` row out, the neighbour-driven door zeroes
+its weight (`PairWeights`). A `w` pair needs no such step — its
+`special_bonds` 1-4 weight is 0. Converting an exception table to a global
+weight is not exact (r₁₄ depends on φ and on the other coordinates), so no
+reader or writer does it.
 
 ## Urey–Bradley
 
@@ -450,6 +488,15 @@ cannot drift.
   written by molrs; `scripts/lammps_cmap_check.sh`): E = −1.25779219530854869
   kcal/mol, molrs 1.1 × 10⁻¹⁵ relative off; 22 of the 24 force components
   bit for bit, the other two 2 × 10⁻¹⁶ off.
+- The 1-4 mechanisms run through LAMMPS (`run 0`, `lj/charmm/coul/charmm
+  3.5 4.2 3.0 5.0` on a charged seven-atom alcohol whose pairs fall inside,
+  across and beyond both switches): `special_bonds charmm` with every `w` =
+  1, every `w` = ½ with one dihedral listed twice, and `special_bonds` ½ /
+  ⅚ with `w` = 0. Every `evdwl`, `ecoul`, `ebond`, `eangle`, `edihed`, `pe`
+  matches molrs to ≤ 2.3e-15 relative (`evdwl` and `ecoul` bit for bit), and
+  every force component to 1e-10 (`ff::one_four`). `special_bonds` ½ equals
+  per-pair scales ½ equals per-pair parameters ε/2, qᵢqⱼ/2; `w` = 1 equals
+  per-pair rows of ε₁₄, σ₁₄; `compile` equals `compile_typed`.
 - The LAMMPS-read hand molecule run through LAMMPS (`run 0`) gives the
   same per-term energies as molrs to ≤ 2e-13 relative: bond
   0.162750104621288, angle 1.35959339751695, dihedral 0.692979891423841,
