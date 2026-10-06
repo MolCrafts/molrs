@@ -1,7 +1,7 @@
 //! Store: owns frames and mediates access via handles.
 //!
 //! Column access methods use uppercase type-alias suffixes (`F`, `I`, `U`)
-//! matching the compile-time aliases in [`molrs::types`].
+//! matching the compile-time aliases in [`molrs::op::types`].
 #![allow(non_snake_case)]
 
 use crate::error::FfiError;

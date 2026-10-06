@@ -169,19 +169,10 @@ __MOLRS_ELEMENT_VARIANTS__    }
         ) -> Result<Vec<f64>>;
 
         // ── I/O ──────────────────────────────────────────────────
-        // Write one frame to an XYZ file (standard element+coords). append=false
-        // truncates (create); append=true appends the frame.
-        fn write_frame_xyz(
-            path: &str,
-            type_id: &[i32],
-            x: &[f64],
-            y: &[f64],
-            z: &[f64],
-            box_mat: &[f64],
-            append: bool,
-        ) -> Result<()>;
-        // Typed-metadata writer. Every MetaEntry carries an explicit dtype;
-        // malformed vector lengths are returned as errors.
+        // Write one frame (element + coords + typed metadata) to an XYZ file.
+        // Every MetaEntry carries an explicit dtype; malformed vector lengths
+        // are returned as errors. append=false truncates (create); append=true
+        // appends the frame.
         fn write_frame_xyz_typed(
             path: &str,
             type_id: &[i32],

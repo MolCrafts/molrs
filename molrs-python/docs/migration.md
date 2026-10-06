@@ -1182,6 +1182,37 @@ the `ForceField` model and force-field files, `potential` the kernels,
   `Bead` → `Atom`; `Bond`, `Angle`, `Dihedral`, `Improper` → `Relation`
   (all in `molrs::system`).
 
+#### WASM and C++ bindings
+
+The binders follow the same rule: one module per molrs owner, one name per
+symbol. `molrs-wasm` is laid out as `core/{block, frame, schema, topology,
+types, spatial/{simbox, region, mesh, neighbors}}`, `io/` (now with
+`smiles`), `perceive`, `compute/<family>` (one file per `molrs::compute`
+family plus `catalog`), `conformer`, `ff`, `optimize` and `builder`;
+`molrs-cxxapi` is split into `frame`, `io`, `compute`, `charge` and `region`.
+The JS namespace stays flat. What changes for callers:
+
+| 0.15 (JS) | 0.16 (JS) |
+|---|---|
+| `new LinkedCell(cutoff, storeDistSq?, storeDiff?).build(frame)` | `const nl = new NeighborList(cutoff); nl.build(frame); nl.neighbors({ distSq, disp })` |
+| `new BruteForce(cutoff, …).build(frame)` | `NeighborList.bruteForce(cutoff)`, then `build` / `neighbors` (no 8 000-atom refusal) |
+| `new LinkedCell(cutoff).query(refFrame, otherFrame)` | `new NeighborQuery(refFrame, cutoff).query(otherFrame)` (both columns kept) |
+| `topology.findRings()` → `TopologyRingInfo` (`numRings`, `ringSizes`, `rings`, `isAtomInRing`, `numAtomRings`, `atomRingMask`) | `new Perceive().findRings(frame)` → a new `Frame` whose atoms and bonds carry `is_in_ring` and `n_rings` |
+| `Topology.fromFrame(frame)` read `bonds.i` / `bonds.j`, so a canonical frame came back with no bonds | reads `bonds.atomi` / `atomj` (`molrs::system::Topology::from_frame`); a missing endpoint column or an out-of-range atom throws |
+
+`readFrameBytes` and the `"msgpack"` / `"json"` formats of `writeFrameBytes`
+need the `stream` feature (on by default); before, a custom build with `io`
+but without `stream` did not compile. `CarbonTubeBuilder` is compiled only
+with the `builder` feature (on by default).
+
+C++ (`molrs-cxxapi`):
+
+- **`write_frame_xyz` is removed**: it was `write_frame_xyz_typed` with no
+  metadata. Pass an empty `rust::Vec<MetaEntry>`.
+- **The `zarr` cargo feature is removed.** It was on by default and the crate
+  did not build without it; the `*.mrec` writers and readers are always
+  present.
+
 ### Python: kernels live in `molrs.ff.potential`
 
 `LJCut` moved from `molrs.md` to `molrs.ff.potential` (molpy: `molpy.md.LJCut`
