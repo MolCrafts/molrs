@@ -5,16 +5,10 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use molrs::ff::ir::{IrError, Metric, Residual};
+use molrs::ff::ir::{Metric, Residual};
 
 use super::PyForceField;
-
-/// A refusal of the force-field IR as its `molrs.ff.ir` exception (a
-/// `ValueError` subclass named after the variant: `OutOfImage`, `NoForm`,
-/// `FormConflict`, …).
-fn ir_err(e: IrError) -> PyErr {
-    crate::ff::ir::refuse(e)
-}
+use crate::ff::ir::refuse;
 
 fn residual_dict<'py>(py: Python<'py>, residual: &Residual) -> PyResult<Bound<'py, PyDict>> {
     let types = PyList::empty(py);
@@ -46,7 +40,7 @@ impl PyForceField {
     /// ``pair lj/cut``). Raises ``ValueError`` naming the type and the
     /// condition for a row the canonical style cannot hold.
     fn canonical(&self) -> PyResult<PyForceField> {
-        let inner = self.inner.canonical().map_err(ir_err)?;
+        let inner = self.inner.canonical().map_err(refuse)?;
         Ok(PyForceField { inner })
     }
 
@@ -54,7 +48,7 @@ impl PyForceField {
     /// of ``style`` converted to ``style``, exactly; raises ``ValueError``
     /// naming the first row outside ``style``'s image and the condition.
     fn to_form(&self, category: &str, style: &str) -> PyResult<PyForceField> {
-        let inner = self.inner.to_form(category, style).map_err(ir_err)?;
+        let inner = self.inner.to_form(category, style).map_err(refuse)?;
         Ok(PyForceField { inner })
     }
 
@@ -87,7 +81,7 @@ impl PyForceField {
         let (inner, residual) = self
             .inner
             .fit_form(category, style, &metric)
-            .map_err(ir_err)?;
+            .map_err(refuse)?;
         Ok((PyForceField { inner }, residual_dict(py, &residual)?))
     }
 }

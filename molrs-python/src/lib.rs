@@ -24,10 +24,15 @@
 //!
 //! Every subsystem binding registers its own classes and functions through
 //! its `register`. Most land flat on `_lib`; a namespace with vocabulary of
-//! its own is a `_lib` submodule (`op`, `md`, `ff.ir` as `ir`, and the store's
-//! `keys` / `schema`). Cross-cutting plumbing has one home each: exceptions
-//! and Rust-error mapping in [`error`], the pickle protocol in [`pickle`],
-//! path arguments in [`path`].
+//! its own is a `_lib` submodule ([`add_submodule`]: `op`, `md`, `ff.ir` as
+//! `ir`, `io.mrec` as `mrec`, and the store's `keys` / `schema`).
+//!
+//! Every class and function names its public path as its `__module__`, so
+//! `repr`, pickle and the docs name it the way users import it: a class by
+//! `#[pyclass(module = "molrs.…")]`, a flat function by [`add_function`], and
+//! everything on a submodule by that submodule's name. Cross-cutting plumbing
+//! has one home each: exceptions and Rust-error mapping in [`error`], the
+//! pickle protocol in [`pickle`], path arguments in [`path`].
 //!
 //! # Float Precision
 //!
@@ -83,6 +88,32 @@ fn _ffi_abi_token() -> (&'static str, &'static str, String, String, String) {
     )
 }
 
+/// Add the `#[pyfunction]` `f` to `m` with `module`, the Python module it is
+/// re-exported from, as its `__module__` — what `#[pyclass(module = …)]` is
+/// for a class.
+pub(crate) fn add_function(
+    m: &Bound<'_, PyModule>,
+    module: &str,
+    f: Bound<'_, pyo3::types::PyCFunction>,
+) -> PyResult<()> {
+    f.setattr("__module__", module)?;
+    m.add_function(f)
+}
+
+/// Add a native submodule reached as `parent.<attr>` and named `path`, its
+/// public Python module, so each function `register` adds to it reports
+/// `__module__ == path`.
+pub(crate) fn add_submodule(
+    parent: &Bound<'_, PyModule>,
+    attr: &str,
+    path: &str,
+    register: impl FnOnce(&Bound<'_, PyModule>) -> PyResult<()>,
+) -> PyResult<()> {
+    let module = PyModule::new(parent.py(), path)?;
+    register(&module)?;
+    parent.add(attr, module)
+}
+
 /// The native module, `molrs._lib`: every subsystem's bindings.
 #[pymodule]
 #[pyo3(name = "_lib")]
@@ -101,11 +132,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     signal::register(m)?;
     stream::register(m)?;
 
-    let op_module = PyModule::new(m.py(), "op")?;
-    op::register(&op_module)?;
-    m.add_submodule(&op_module)?;
-    let md_module = PyModule::new(m.py(), "md")?;
-    md::register(&md_module)?;
-    m.add_submodule(&md_module)?;
+    add_submodule(m, "op", "molrs.op", op::register)?;
+    add_submodule(m, "md", "molrs.md", md::register)?;
     Ok(())
 }

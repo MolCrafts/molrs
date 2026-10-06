@@ -427,7 +427,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyControlCommand>()?;
     #[cfg(not(target_arch = "wasm32"))]
     m.add_class::<PyPublisher>()?;
-    m.add_function(wrap_pyfunction!(read_frame_bytes, m)?)?;
-    m.add_function(wrap_pyfunction!(write_frame_bytes, m)?)?;
+    crate::add_function(m, "molrs.stream", wrap_pyfunction!(read_frame_bytes, m)?)?;
+    crate::add_function(m, "molrs.stream", wrap_pyfunction!(write_frame_bytes, m)?)?;
     Ok(())
 }

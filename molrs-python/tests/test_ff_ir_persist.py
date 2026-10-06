@@ -125,7 +125,7 @@ def fresh(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict, dict]:
     here_out, cases = {}, {}
     for name, (section, block, rows, types) in records.items():
         path = tmp / f"{name}.mrec"
-        molrs.io.write_mrec_forcefield(path, section)
+        molrs.io.mrec.write_forcefield(path, section)
         ff = molrs.ff.forcefield.ForceField.from_section(section)
         here_out[name] = {
             "price": price(ff, block, rows, types),
@@ -233,8 +233,8 @@ def test_an_array_param_round_trips_bit_for_bit_as_an_f64_t_n_column(
 
     # Through molrs.io.mrec in this process too: the section, and the types.
     path = tmp_path / "table.mrec"
-    molrs.io.write_mrec_forcefield(path, _table())
-    section = molrs.io.read_mrec_forcefield(path)
+    molrs.io.mrec.write_forcefield(path, _table())
+    section = molrs.io.mrec.read_forcefield(path)
     column = section.table("dihedral", "table/linear")["table"]
     assert column.dtype == np.float64 and column.shape == (2, 12)
     assert column.tobytes() == want.tobytes()

@@ -20,6 +20,6 @@ pub fn read_stl(path: PathBuf) -> PyResult<PyTriMesh> {
 
 /// Register this module's classes and functions.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(read_stl, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_stl, m)?)?;
     Ok(())
 }

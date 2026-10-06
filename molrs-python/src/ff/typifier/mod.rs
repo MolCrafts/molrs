@@ -679,6 +679,10 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<atd::PyAtdTypifier>()?;
     m.add_class::<gaff::PyGaffTypifier>()?;
     m.add_class::<PyElementTypifier>()?;
-    m.add_function(wrap_pyfunction!(assign_cmaps_py, m)?)?;
+    crate::add_function(
+        m,
+        "molrs.ff.typifier",
+        wrap_pyfunction!(assign_cmaps_py, m)?,
+    )?;
     Ok(())
 }

@@ -34,8 +34,5 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     charge::register(m)?;
     params::register(m)?;
     scale_lj::register(m)?;
-    let ir_module = PyModule::new(m.py(), "ir")?;
-    ir::register(&ir_module)?;
-    m.add_submodule(&ir_module)?;
-    Ok(())
+    crate::add_submodule(m, "ir", "molrs.ff.ir", ir::register)
 }

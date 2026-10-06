@@ -533,7 +533,7 @@ FRESH = textwrap.dedent(
 
     path, frames = sys.argv[1], json.loads(sys.argv[2])
     registered = [(s.category, s.name) for s in molrs.ff.ir.styles() if not s.builtin]
-    ff = molrs.ff.forcefield.ForceField.from_section(molrs.io.read_mrec_forcefield(path))
+    ff = molrs.ff.forcefield.ForceField.from_section(molrs.io.mrec.read_forcefield(path))
     out = {"registered": registered, "styles": [[s.category, s.name] for s in ff.styles]}
     for name, spec in frames.items():
         f = molrs.store.Frame()
@@ -595,7 +595,7 @@ def fresh(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict, dict, dict]:
     process that registered nothing makes of the record."""
     ff, frames = everything()
     path = tmp_path_factory.mktemp("proof") / "everything.mrec"
-    molrs.io.write_mrec_forcefield(path, ff.to_section())
+    molrs.io.mrec.write_forcefield(path, ff.to_section())
     here = {}
     for name, spec in frames.items():
         e, f = price(ff, spec_frame(spec))
@@ -603,7 +603,7 @@ def fresh(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict, dict, dict]:
     done = subprocess.run([sys.executable, "-c", FRESH, str(path), json.dumps(frames)],
                           capture_output=True, text=True, check=False)
     assert done.returncode == 0, done.stderr
-    return molrs.io.read_mrec_forcefield(path).document, here, json.loads(done.stdout)
+    return molrs.io.mrec.read_forcefield(path).document, here, json.loads(done.stdout)
 
 
 def test_a_record_prices_the_same_bits_in_a_fresh_process(fresh) -> None:
@@ -739,8 +739,8 @@ def test_an_array_param_style_is_hand_linear_interpolation_and_round_trips(tmp_p
     print(f"MEASURED table/linear vs hand interpolation: {worst:.1e}")
     # Round trip: the column f64[T, N] and the energy, bit for bit.
     path = tmp_path / "table.mrec"
-    molrs.io.write_mrec_forcefield(path, ff)
-    section = molrs.io.read_mrec_forcefield(path)
+    molrs.io.mrec.write_forcefield(path, ff)
+    section = molrs.io.mrec.read_forcefield(path)
     column = section.table("dihedral", "table/linear")["table"]
     assert column.dtype == np.float64 and column.shape == (1, len(TABLE))
     assert column.tobytes() == TABLE.tobytes()

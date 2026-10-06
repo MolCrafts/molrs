@@ -173,7 +173,9 @@ does `import molrs`: `molrs.store.Frame`, `molrs.spatial.Box`,
 `molrs.system.Atomistic`, `molrs.ff.forcefield.ForceField`,
 `molrs.ff.potential.PotentialCompiler`, `molrs.compute.RDF`. `molrs.io.raw`,
 `molrs.fields` and the alias functions are gone — every reader emits the
-canonical column names. The [migration guide](migration.md#python-paths)
+canonical column names. Every `*.mrec` door is `molrs.io.mrec`'s
+(`molrs.io.mrec.read`, `write`, `FrameSequence`, …), and a function's
+`__module__` names its public path as a class's does. The [migration guide](migration.md#python-paths)
 lists every old → new path.
 
 ### Packaging

@@ -141,8 +141,16 @@ pub fn scale_lj_py(
 /// Register `molrs.ff.scale_lj`.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyFragmentScaling>()?;
-    m.add_function(wrap_pyfunction!(compute_k_ij_py, m)?)?;
-    m.add_function(wrap_pyfunction!(fragment_scaling_data_py, m)?)?;
-    m.add_function(wrap_pyfunction!(scale_lj_py, m)?)?;
+    crate::add_function(
+        m,
+        "molrs.ff.scale_lj",
+        wrap_pyfunction!(compute_k_ij_py, m)?,
+    )?;
+    crate::add_function(
+        m,
+        "molrs.ff.scale_lj",
+        wrap_pyfunction!(fragment_scaling_data_py, m)?,
+    )?;
+    crate::add_function(m, "molrs.ff.scale_lj", wrap_pyfunction!(scale_lj_py, m)?)?;
     Ok(())
 }

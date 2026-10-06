@@ -953,10 +953,10 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyXYZTrajReader>()?;
     m.add_class::<PyTrrTrajReader>()?;
     m.add_class::<PyXtcTrajReader>()?;
-    m.add_function(wrap_pyfunction!(write_lammps_trajectory, m)?)?;
-    m.add_function(wrap_pyfunction!(write_lammps_dump_local, m)?)?;
-    m.add_function(wrap_pyfunction!(write_dcd_trajectory, m)?)?;
-    m.add_function(wrap_pyfunction!(write_trr_trajectory, m)?)?;
-    m.add_function(wrap_pyfunction!(write_xtc_trajectory, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_lammps_trajectory, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_lammps_dump_local, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_dcd_trajectory, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_trr_trajectory, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_xtc_trajectory, m)?)?;
     Ok(())
 }

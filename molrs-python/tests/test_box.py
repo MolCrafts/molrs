@@ -20,9 +20,48 @@ class TestBoxConstruction:
         assert b.volume() > 0
 
     def test_singular_matrix_raises_value_error(self):
-        h = np.zeros((3, 3), dtype=np.float64)
+        h = np.array([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
         with pytest.raises(ValueError):
             molrs.spatial.Box(h)
+
+    def test_a_defined_zero_cell_is_singular(self):
+        with pytest.raises(ValueError):
+            molrs.spatial.Box(np.zeros((3, 3)), cell_defined=True)
+
+    def test_no_matrix_is_a_free_box(self):
+        b = molrs.spatial.Box()
+        assert not b.cell_defined
+        assert b.style == "free"
+        assert b.is_free
+        assert list(b.pbc) == [False, False, False]
+        np.testing.assert_array_equal(b.h, np.eye(3))
+
+    def test_an_all_zero_matrix_is_no_cell(self):
+        b = molrs.spatial.Box(np.zeros((3, 3)))
+        assert not b.cell_defined
+        assert list(b.pbc) == [False, False, False]
+
+    def test_a_free_box_may_still_say_which_axes_wrap(self):
+        b = molrs.spatial.Box(pbc=np.array([True, False, False]))
+        assert not b.cell_defined
+        assert list(b.pbc) == [True, False, False]
+
+    def test_a_diagonal_is_an_orthogonal_cell(self):
+        b = molrs.spatial.Box([10.0, 20.0, 30.0])
+        assert b.style == "orthogonal"
+        assert b.cell_defined
+        assert list(b.pbc) == [True, True, True]
+        np.testing.assert_array_equal(b.h, np.diag([10.0, 20.0, 30.0]))
+        assert pytest.approx(b.volume()) == 6000.0
+
+    def test_a_nested_list_is_a_matrix(self):
+        b = molrs.spatial.Box([[10, 0, 0], [0, 10, 0], [0, 0, 10]])
+        assert pytest.approx(b.volume()) == 1000.0
+
+    def test_cell_defined_false_ignores_the_matrix(self):
+        b = molrs.spatial.Box(np.eye(3) * 5.0, cell_defined=False)
+        assert not b.cell_defined
+        np.testing.assert_array_equal(b.h, np.eye(3))
 
     def test_cube_zero_raises_value_error(self):
         with pytest.raises(ValueError):
@@ -159,7 +198,7 @@ class TestBoxContainment:
 
 class TestBoxErrors:
     def test_bad_h_shape(self):
-        with pytest.raises(ValueError, match="3x3"):
+        with pytest.raises(ValueError, match=r"\(3, 3\) or \(3,\)"):
             molrs.spatial.Box(np.ones((2, 3), dtype=np.float64))
 
     def test_bad_origin_length(self):

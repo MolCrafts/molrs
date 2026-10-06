@@ -432,6 +432,6 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.py().get_type::<crate::error::SmilesError>(),
     )?;
     m.add_class::<PySmilesIR>()?;
-    m.add_function(wrap_pyfunction!(write_smarts, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_smarts, m)?)?;
     Ok(())
 }

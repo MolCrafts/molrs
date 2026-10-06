@@ -48,6 +48,27 @@ impl Trajectory {
         self.frames.is_empty()
     }
 
+    /// The sub-trajectory of the states at `indices`, in that order, with
+    /// their `step` / `time` labels.
+    ///
+    /// # Panics
+    ///
+    /// If an index is out of range, or a present `step` / `time` axis is
+    /// shorter than the frames (see [`validate`](Self::validate)).
+    pub fn select(&self, indices: &[usize]) -> Self {
+        Self {
+            frames: indices.iter().map(|&i| self.frames[i].clone()).collect(),
+            step: self
+                .step
+                .as_ref()
+                .map(|step| indices.iter().map(|&i| step[i]).collect()),
+            time: self
+                .time
+                .as_ref()
+                .map(|time| indices.iter().map(|&i| time[i]).collect()),
+        }
+    }
+
     /// Validate shared axis lengths.
     pub fn validate(&self) -> Result<(), MolRsError> {
         let n = self.frames.len();
@@ -245,6 +266,36 @@ mod tests {
         assert_eq!(
             serde_json::from_value::<ObservableKind>(serde_json::json!("vector")).unwrap(),
             ObservableKind::Vector
+        );
+    }
+
+    #[test]
+    fn select_keeps_the_chosen_states_and_their_labels() {
+        let frames = (0..4)
+            .map(|i| {
+                let mut f = Frame::new();
+                f.meta.insert("i", crate::store::MetaValue::I64(i));
+                f
+            })
+            .collect();
+        let mut traj = Trajectory::from_frames(frames);
+        traj.step = Some(vec![0, 10, 20, 30]);
+        traj.time = Some(vec![0.0, 0.5, 1.0, 1.5]);
+
+        let sub = traj.select(&[3, 1]);
+        assert_eq!(sub.len(), 2);
+        assert_eq!(sub.step, Some(vec![30, 10]));
+        assert_eq!(sub.time, Some(vec![1.5, 0.5]));
+        assert_eq!(
+            sub.frames[0].meta.get("i"),
+            Some(&crate::store::MetaValue::I64(3))
+        );
+        sub.validate().unwrap();
+
+        let unlabeled = Trajectory::from_frames(vec![Frame::new(); 2]).select(&[1]);
+        assert_eq!(
+            (unlabeled.len(), unlabeled.step, unlabeled.time),
+            (1, None, None)
         );
     }
 

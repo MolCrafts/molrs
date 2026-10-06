@@ -52,7 +52,7 @@ use crate::error::ffi_error_to_pyerr;
 ///
 /// ```python
 /// import numpy as np
-/// from molrs import Block
+/// from molrs.store import Block
 ///
 /// b = Block({"x": [1.0, 2.0, 3.0], "element": ["C", "H", "H"]})
 /// assert b.nrows == 3

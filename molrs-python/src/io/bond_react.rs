@@ -277,7 +277,11 @@ pub fn write_lammps_bond_react_system(
 /// Register the LAMMPS ``fix bond/react`` template and writers.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyBondReactTemplate>()?;
-    m.add_function(wrap_pyfunction!(write_bond_react_map, m)?)?;
-    m.add_function(wrap_pyfunction!(write_lammps_bond_react_system, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_bond_react_map, m)?)?;
+    crate::add_function(
+        m,
+        "molrs.io",
+        wrap_pyfunction!(write_lammps_bond_react_system, m)?,
+    )?;
     Ok(())
 }

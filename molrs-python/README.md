@@ -54,8 +54,8 @@ symbol has one path, named after its Rust owner (`molrs.store.Frame` is
 | `molrs.spatial` | `Box`, neighbour search, regions, `TriMesh`, `Trace` |
 | `molrs.system` | `Atomistic`, `CoarseGrain`, `Graph` and their live views |
 | `molrs.units` | `Unit`, `Quantity`, `UnitPreset`, `UnitRegistry` |
-| `molrs.io` | Readers/writers, `SmilesIR`, `*.mrec` record files (`write_mrec`, `read_mrec`, …) |
-| `molrs.io.mrec` | Streaming trajectories: `SequenceSchema`, `TrajectoryWriter`, `TrajectoryReader`, `pack` |
+| `molrs.io` | Readers/writers, `TrajectoryReader`, `SmilesIR` |
+| `molrs.io.mrec` | `*.mrec` records: `read` / `write` (and `_system` / `_trajectory` / `_forcefield`), streaming `SequenceSchema`, `FrameSequenceWriter`, `FrameSequence`, `pack` |
 | `molrs.ff.*` | `forcefield`, `potential`, `typifier`, `charge`, `ir`, `params`, `scale_lj` |
 | `molrs.optimize` | `LBFGS`, `OptReport` |
 | `molrs.md` | Integrators and the `MD` driver |

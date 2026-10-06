@@ -9,11 +9,33 @@ use ndarray::{ArrayD, IxDyn};
 use numpy::{IntoPyArray, PyArrayDyn, PyReadonlyArray1, PyReadonlyArrayDyn};
 use pyo3::exceptions::{PyIndexError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyList};
+use pyo3::types::{PyAny, PyList, PySlice};
 
 use crate::core::store::frame::PyFrame;
 use crate::error::molrs_error_to_pyerr;
 
+/// An in-memory frame sequence with optional per-frame ``step`` / ``time``
+/// labels.
+///
+/// ``len(traj)``, ``traj[i]`` (negative indices count from the end) and
+/// iteration give frames; ``traj[a:b:c]`` is the sub-trajectory of those
+/// frames with their labels, and :meth:`map` builds a new trajectory frame by
+/// frame. Lazy, seekable reading from disk is a file reader's
+/// (:mod:`molrs.io`), not this container's.
+///
+/// Parameters
+/// ----------
+/// frames
+///     The :class:`Frame` sequence; each frame is copied in.
+/// step
+///     Optional ``int64`` step label per frame.
+/// time
+///     Optional ``float64`` time per frame.
+///
+/// Raises
+/// ------
+/// ValueError
+///     If ``step`` or ``time`` does not have one entry per frame.
 #[pyclass(module = "molrs.store", name = "Trajectory", from_py_object, subclass)]
 #[derive(Clone)]
 pub struct PyTrajectory {
@@ -66,28 +88,70 @@ impl PyTrajectory {
         Ok(Self { inner })
     }
 
-    #[staticmethod]
-    #[pyo3(signature = (frames, step=None, time=None))]
-    fn from_frames(
-        frames: Vec<PyRef<'_, PyFrame>>,
-        step: Option<PyReadonlyArray1<'_, i64>>,
-        time: Option<PyReadonlyArray1<'_, f64>>,
-    ) -> PyResult<Self> {
-        Self::new(frames, step, time)
-    }
-
     fn __len__(&self) -> usize {
         self.inner.frames.len()
     }
 
-    fn __getitem__(&self, index: usize) -> PyResult<PyFrame> {
-        let frame = self
+    /// The frame at an integer index (negative counts from the end), or the
+    /// sub-trajectory a slice selects, its ``step`` / ``time`` sliced alike.
+    fn __getitem__(slf: &Bound<'_, Self>, key: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let py = slf.py();
+        let this = slf.borrow();
+        let n = this.inner.frames.len();
+        if let Ok(slice) = key.cast::<PySlice>() {
+            let ix = slice.indices(n as isize)?;
+            let indices: Vec<usize> = (0..ix.slicelength)
+                .map(|k| (ix.start + k as isize * ix.step) as usize)
+                .collect();
+            let sub = Self {
+                inner: this.inner.select(&indices),
+            };
+            return Ok(Bound::new(py, sub)?.into_any().unbind());
+        }
+        let index: isize = key.extract()?;
+        let resolved = if index < 0 { index + n as isize } else { index };
+        if resolved < 0 || resolved as usize >= n {
+            return Err(PyIndexError::new_err("trajectory index out of range"));
+        }
+        let frame = this.inner.frames[resolved as usize].clone();
+        Ok(Bound::new(py, PyFrame::from_core_frame(frame)?)?
+            .into_any()
+            .unbind())
+    }
+
+    /// A new trajectory of ``func(frame)`` for every frame, keeping this
+    /// one's ``step`` / ``time`` labels. This trajectory is not modified.
+    ///
+    /// Raises
+    /// ------
+    /// TypeError
+    ///     If ``func`` returns something other than a :class:`Frame`.
+    fn map(&self, func: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let frames = self
             .inner
             .frames
-            .get(index)
-            .cloned()
-            .ok_or_else(|| PyIndexError::new_err(index.to_string()))?;
-        PyFrame::from_core_frame(frame)
+            .iter()
+            .map(|frame| {
+                let mapped = func.call1((PyFrame::from_core_frame(frame.clone())?,))?;
+                let mapped = mapped.cast::<PyFrame>().map_err(|_| {
+                    PyTypeError::new_err(format!(
+                        "Trajectory.map: func must return a Frame, got {}",
+                        mapped
+                            .get_type()
+                            .name()
+                            .map_or_else(|_| "?".into(), |n| n.to_string())
+                    ))
+                })?;
+                mapped.borrow().clone_core_frame()
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Self {
+            inner: CoreTrajectory {
+                frames,
+                step: self.inner.step.clone(),
+                time: self.inner.time.clone(),
+            },
+        })
     }
 
     #[getter]
@@ -118,9 +182,8 @@ impl PyTrajectory {
         })
     }
 
-    /// Number of frames in the trajectory.
-    fn count_frames(&self) -> usize {
-        self.inner.frames.len()
+    fn __repr__(&self) -> String {
+        format!("Trajectory(n_frames={})", self.inner.frames.len())
     }
 
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {

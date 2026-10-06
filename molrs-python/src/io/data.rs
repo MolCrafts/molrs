@@ -774,32 +774,32 @@ pub fn write_lammps_data(
 
 /// Register this module's classes and functions.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(read_pdb, m)?)?;
-    m.add_function(wrap_pyfunction!(read_pdb_trajectory, m)?)?;
-    m.add_function(wrap_pyfunction!(read_xyz, m)?)?;
-    m.add_function(wrap_pyfunction!(read_lammps_data, m)?)?;
-    m.add_function(wrap_pyfunction!(read_gro, m)?)?;
-    m.add_function(wrap_pyfunction!(read_gro_trajectory, m)?)?;
-    m.add_function(wrap_pyfunction!(write_gro, m)?)?;
-    m.add_function(wrap_pyfunction!(write_gro_trajectory, m)?)?;
-    m.add_function(wrap_pyfunction!(read_chgcar, m)?)?;
-    m.add_function(wrap_pyfunction!(read_cube, m)?)?;
-    m.add_function(wrap_pyfunction!(write_cube, m)?)?;
-    m.add_function(wrap_pyfunction!(read_mol2, m)?)?;
-    m.add_function(wrap_pyfunction!(read_amber_inpcrd, m)?)?;
-    m.add_function(wrap_pyfunction!(read_amber_prmtop, m)?)?;
-    m.add_function(wrap_pyfunction!(read_ac, m)?)?;
-    m.add_function(wrap_pyfunction!(read_prep, m)?)?;
-    m.add_function(wrap_pyfunction!(write_prep, m)?)?;
-    m.add_function(wrap_pyfunction!(write_mol2, m)?)?;
-    m.add_function(wrap_pyfunction!(read_lammps_molecule, m)?)?;
-    m.add_function(wrap_pyfunction!(read_xsf, m)?)?;
-    m.add_function(wrap_pyfunction!(write_xsf, m)?)?;
-    m.add_function(wrap_pyfunction!(write_lammps_molecule, m)?)?;
-    m.add_function(wrap_pyfunction!(write_pdb, m)?)?;
-    m.add_function(wrap_pyfunction!(write_pdb_trajectory, m)?)?;
-    m.add_function(wrap_pyfunction!(write_xyz, m)?)?;
-    m.add_function(wrap_pyfunction!(write_xyz_trajectory, m)?)?;
-    m.add_function(wrap_pyfunction!(write_lammps_data, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_pdb, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_pdb_trajectory, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_xyz, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_lammps_data, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_gro, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_gro_trajectory, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_gro, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_gro_trajectory, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_chgcar, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_cube, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_cube, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_mol2, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_amber_inpcrd, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_amber_prmtop, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_ac, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_prep, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_prep, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_mol2, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_lammps_molecule, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_xsf, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_xsf, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_lammps_molecule, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_pdb, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_pdb_trajectory, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_xyz, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_xyz_trajectory, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_lammps_data, m)?)?;
     Ok(())
 }

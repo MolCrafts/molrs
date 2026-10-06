@@ -91,8 +91,7 @@ class MD:
 
         Accepts a compiled ``Potentials`` collection (e.g. one
         :func:`molrs.ff.potential.kernel` built), an ``LJCut``, or a
-        ``Potential`` subclass instance. The caller owns units (apply
-        units) — and, when skipping :meth:`set_neighbors`, neighbor correctness too:
+        ``Potential`` subclass instance. The caller owns units — and, when skipping :meth:`set_neighbors`, neighbor correctness too:
         compiled ``Potentials`` evaluate exactly the topology (any ``pairs``
         block included) they were bound to; nothing is rebuilt as coordinates
         move. A ``Potentials`` collection is **moved** into the run's
@@ -127,9 +126,9 @@ class MD:
           style's own cutoff.
         * **Kwargs** — each run builds a fresh
           ``VerletSkin(NeighborList(cutoff + skin), cutoff, …)`` over the
-          frame. ``cutoff`` is the force cutoff in Å (default: derived from
+          frame. ``cutoff`` is the force cutoff, in the coordinates' length unit (default: derived from
           the pair style's ``cutoff`` param); ``skin`` is the Verlet buffer
-          in Å (default 2.0); ``every`` / ``delay`` / ``check`` mirror the
+          (default 2.0); ``every`` / ``delay`` / ``check`` mirror the
           ``VerletSkin`` rebuild policy (defaults 1 / 0 / True).
 
         Only consulted when the run has a nonbond term (force-field pair
@@ -151,9 +150,9 @@ class MD:
             self._neighbor_config = None
         else:
             if cutoff is not None and float(cutoff) <= 0.0:
-                raise ValueError("cutoff must be > 0 Å")
+                raise ValueError("cutoff must be > 0")
             if skin is not None and float(skin) < 0.0:
-                raise ValueError("skin must be >= 0 Å")
+                raise ValueError("skin must be >= 0")
             config = dict(_NEIGHBOR_DEFAULTS)
             if cutoff is not None:
                 config["cutoff"] = float(cutoff)
@@ -187,7 +186,7 @@ class MD:
         return None if self._integrator is None else self._integrator.ago
 
     def _force_cutoff(self, config: dict) -> float:
-        """The force cutoff (Å) the neighbour list must cover.
+        """The force cutoff the neighbour list must cover.
 
         First of: ``set_neighbors(cutoff=…)``, the largest style-level
         ``cutoff`` the force field declares, a prebuilt skin's own cutoff.
@@ -205,7 +204,7 @@ class MD:
             return float(self._skin.cutoff)
         raise ValueError(
             "cannot derive a force cutoff: no pair style declares 'cutoff'. "
-            "Call set_neighbors(cutoff=<A>, skin=<A>) before run."
+            "Call set_neighbors(cutoff=..., skin=...) before run."
         )
 
     def _build_skin(
@@ -216,8 +215,8 @@ class MD:
             skin = self._skin
             if force_cutoff is not None and force_cutoff > float(skin.cutoff) + 1e-12:
                 raise ValueError(
-                    f"prebuilt VerletSkin cutoff {skin.cutoff} Å is smaller "
-                    f"than the pair-style force cutoff {force_cutoff} Å; "
+                    f"prebuilt VerletSkin cutoff {skin.cutoff} is smaller "
+                    f"than the pair-style force cutoff {force_cutoff}; "
                     "pairs would be silently missed"
                 )
             # Moved into the integrator below: single-shot by construction.
@@ -235,7 +234,7 @@ class MD:
         if not cutoff:
             raise ValueError(
                 "cannot derive a force cutoff for the neighbour list. Call "
-                "set_neighbors(cutoff=<Å>, skin=<Å>) before run."
+                "set_neighbors(cutoff=..., skin=...) before run."
             )
         box = getattr(frame, "box", None)
         if box is None:
@@ -337,12 +336,14 @@ class MD:
         Assembly is per call (:meth:`_assemble`) — a driver configured via
         :meth:`set_forcefield` runs again and again. ``mass=`` overrides
         ``frame["atoms"]["mass"]`` (a scalar broadcasts). ``temperature=``
-        draws initial velocities through ``MaxwellBoltzmann(temperature,
-        seed=seed)`` (LAMMPS ``velocity create``; this helper fixes MD units:
-        K and amu → Å/fs); otherwise the frame's ``vx``/``vy``/``vz`` (or
-        zeros) are used. ``thermo=N`` samples ``step`` / ``pe`` / ``ke`` /
-        ``etotal`` / ``temp`` every N steps into :attr:`thermo` (the ``temp``
-        column uses ``kb=``). Returns the final ``MDState``.
+        draws initial velocities through ``MaxwellBoltzmann(kb * temperature,
+        seed=seed)`` (LAMMPS ``velocity create``); otherwise the frame's
+        ``vx``/``vy``/``vz`` (or zeros) are used. ``thermo=N`` samples
+        ``step`` / ``pe`` / ``ke`` / ``etotal`` / ``temp`` every N steps into
+        :attr:`thermo` (the ``temp`` column uses ``kb=``). Every quantity is in
+        the caller's unit system — ``kb`` is Boltzmann's constant in it, e.g.
+        ``molrs.units.UnitPreset("real").boltzmann()`` — and nothing is
+        converted. Returns the final ``MDState``.
         """
         if self._forcefield is None and self._potential is None:
             raise RuntimeError("set_forcefield or set_potential before run")

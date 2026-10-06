@@ -87,8 +87,8 @@ def test_a_cmap_grid_round_trips_through_the_section_and_a_store(
     assert table["grid"].shape == (1, 24, 24)
 
     path = tmp_path / "ff.mrec"
-    molrs.io.write_mrec_forcefield(path, ff)
-    back = molrs.ff.forcefield.ForceField.from_section(molrs.io.read_mrec_forcefield(path))
+    molrs.io.mrec.write_forcefield(path, ff)
+    back = molrs.ff.forcefield.ForceField.from_section(molrs.io.mrec.read_forcefield(path))
     (cmap,) = back.get_types("cmap")
     assert cmap["grid"].tobytes() == _grid().tobytes()
 
@@ -134,8 +134,8 @@ def test_a_cmaps_block_renumbers_atomi_through_atomm(tmp_path: Path) -> None:
     assert list(two["cmaps"]["atomm"]) == [4, 5, 10, 11]
 
     path = tmp_path / "cmaps.mrec"
-    molrs.io.write_mrec(path, frame)
-    back = molrs.io.read_mrec(path)
+    molrs.io.mrec.write(path, frame)
+    back = molrs.io.mrec.read(path)
     assert list(back["cmaps"]["atomm"]) == [4, 5]
 
 

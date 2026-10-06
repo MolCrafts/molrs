@@ -175,7 +175,7 @@ number exactly on read, or refuses the record by name.
 
 - **Readers accept versions 1 and 2 and refuse a newer one.** A store
   without `molrec_version` predates version 1 and is read by version 1's
-  rules. `read_mrec_meta` (and `MolRec.meta` in Rust) hands `meta` back as
+  rules. `molrs.io.mrec.read_meta` (and `MolRec.meta` in Rust) hands `meta` back as
   stored, so a converted record still says `molrec_version: 1`.
 - **Writers always stamp 2.** A producer's `molrec_version` in `meta` is
   overwritten (0.15 kept it, and refused an unsupported one). Writing a
@@ -208,7 +208,7 @@ number exactly on read, or refuses the record by name.
   multi-term `improper periodic`, an `expression` on a converted style, an
   unknown `angle` / `dihedral` / `improper` style that carries parameters, an
   angle unit other than the radian and the degree, and a version-1 trajectory
-  opened for appending (`TrajectoryWriter` on an existing 0.15 store: read it
+  opened for appending (`FrameSequenceWriter.open` on an existing 0.15 store: read it
   and write a new record).
 - **Unchanged:** `dihedral charmm` `w` (the same 1-4 weight in both
   versions; 0.16 prices it), every other style's numbers, `special_bonds`,
@@ -228,7 +228,7 @@ number exactly on read, or refuses the record by name.
   is `None`, and a `pair14` table is kept as
   unknown content (no arity or restatement check). No reader produced it.
 - **`ForceFieldSection.validate` refuses a `pair lj/charmm` `one_four`**
-  other than `"regular"` / `"epsilon14"`, so `read_mrec_forcefield` refuses
+  other than `"regular"` / `"epsilon14"`, so `molrs.io.mrec.read_forcefield` refuses
   such a record before anything turns it into a `ForceField`.
 
 Every 0.15 test record (`molrs/src/io/zarr/testdata/v1`, written by the
@@ -1263,8 +1263,14 @@ The Python package follows the same rule. `molrs` holds the subsystems and
 nothing else — `store`, `spatial`, `system`, `units`, `op`, `perceive`, `io`,
 `ff`, `optimize`, `md`, `conformer`, `builder`, `compute`, `signal`,
 `stream` — and every symbol has one public path: the Python module named
-after its Rust owner (`molrs.store.Frame` is `molrs::store::Frame`). The
-class's `__module__` is that path.
+after its Rust owner (`molrs.store.Frame` is `molrs::store::Frame`). A
+class's and a function's `__module__` and `__name__` are that path (0.15
+functions said `molrs._lib`, and the `molrs.op`, `molrs.ff.ir` and
+`molrs.store.schema` ones said `op`, `ir`, `schema`), so `repr`, pickle and
+the docs name every symbol the way it is imported. A public module exports
+exactly its `__all__`: no `typing` or stdlib name imported for an annotation
+(`molrs.io.Path`, `molrs.ff.ir.Callable`, `annotations`, …) is reachable on
+it any more.
 
 - A Rust namespace below a subsystem's facade is not a Python module of its
   own: `ff::potential::pair::LJCut` is `molrs.ff.potential.LJCut`,
@@ -1272,8 +1278,21 @@ class's `__module__` is that path.
   `spatial::{neighbors, region}` are `molrs.spatial`, and the
   `io::{data, trajectory, smiles, log, mesh, csv}` formats are `molrs.io`.
   Kept as modules: the vocabularies `molrs.store.keys` and
-  `molrs.store.schema`, `molrs.io.mrec` (the record store's machinery,
-  including `ForceFieldSection`) and `molrs.ff.ir`.
+  `molrs.store.schema`, `molrs.io.mrec` (every `*.mrec` door, including
+  `ForceFieldSection`) and `molrs.ff.ir`.
+- **Every `*.mrec` door is `molrs.io.mrec`'s**, named without the repeated
+  `mrec`: `read` / `write`, `read_system` / `write_system`,
+  `read_trajectory` / `write_trajectory`, `read_forcefield` /
+  `write_forcefield`, `read_meta`, `section_names` (Rust
+  `molrs::io::mrec::section_names`). The lazy store cursor and its writer
+  take their Rust names, `FrameSequence` and `FrameSequenceWriter`, so
+  `molrs.io.TrajectoryReader` (the LAMMPS / XYZ / DCD / TRR / XTC dump
+  concatenator) is the only `TrajectoryReader`.
+- **One door per fact on a class.** `SmartsPattern.find_matches(mol,
+  mapped=True)` is gone (each `SmartsMatch.mapping` is the
+  `{map_number: atom}` dict it returned), and so are `SmartsMatch.as_list()`
+  / `as_dict()` (`atoms` / `mapping`), `Trajectory.from_frames` (the
+  constructor) and `Trajectory.count_frames()` (`len(traj)`).
 - `molrs.ff` holds only its submodules, one per `molrs::ff` submodule:
   `forcefield` (the `ForceField`, its handles, and the force-field file
   readers and writers), `potential`, `typifier`, `charge`, `ir`, `params`,
@@ -1483,6 +1502,18 @@ class's `__module__` is that path.
 | `molrs.io.write_frame_bytes` | `molrs.stream.write_frame_bytes` |
 | `molrs.io.write_smiles` | removed: `molrs.io.SmilesIR.from_atomistic(mol, **flags).write_smiles()` |
 | `molrs.fields` | removed — the Rust readers emit canonical column names |
+| `molrs.io.read_mrec` | `molrs.io.mrec.read` |
+| `molrs.io.write_mrec` | `molrs.io.mrec.write` |
+| `molrs.io.read_mrec_system` | `molrs.io.mrec.read_system` |
+| `molrs.io.write_mrec_system` | `molrs.io.mrec.write_system` |
+| `molrs.io.read_mrec_trajectory` | `molrs.io.mrec.read_trajectory` |
+| `molrs.io.write_mrec_trajectory` | `molrs.io.mrec.write_trajectory` |
+| `molrs.io.read_mrec_forcefield` | `molrs.io.mrec.read_forcefield` |
+| `molrs.io.write_mrec_forcefield` | `molrs.io.mrec.write_forcefield` |
+| `molrs.io.read_mrec_meta` | `molrs.io.mrec.read_meta` |
+| `molrs.io.mrec_sections` | `molrs.io.mrec.section_names` |
+| `molrs.io.mrec.TrajectoryReader` | `molrs.io.mrec.FrameSequence` |
+| `molrs.io.mrec.TrajectoryWriter` | `molrs.io.mrec.FrameSequenceWriter` |
 
 **Analysis: `molrs.compute` is flat, as the Rust facade is**
 
@@ -1595,6 +1626,16 @@ class's `__module__` is that path.
 | `molrs.md.driver.MD` | `molrs.md.MD` |
 | `molrs.perceive.Coarsener` | `molrs.builder.Coarsener` |
 | `molrs.md.driver` | private (`molrs.md._driver`); `MD` is `molrs.md.MD` |
+| `SmartsPattern.find_matches(mol, mapped=True)` | `[m.mapping for m in pattern.find_matches(mol)]` |
+| `SmartsMatch.as_list()` | `SmartsMatch.atoms` |
+| `SmartsMatch.as_dict()` | `SmartsMatch.mapping` |
+
+**Store**
+
+| 0.15 | 0.16 |
+|---|---|
+| `molrs.store.Trajectory.from_frames(frames, step, time)` | `molrs.store.Trajectory(frames, step, time)` |
+| `molrs.store.Trajectory.count_frames()` | `len(traj)` |
 
 #### WASM and C++ bindings
 
@@ -1844,12 +1885,22 @@ the bullet says so):
   `UnitPreset.register(name, units, boltzmann=, coulomb=, overwrite=False)`,
   `preset_names` / `UnitPreset.names()`, `replace_preset`, and the
   `boltzmann_constant` (`k_B`) unit.
-- `molrs.ff.write_gromacs_system(path, forcefield, frame, *, precision=6)`,
+- `molrs.ff.forcefield.write_gromacs_system(path, forcefield, frame, *, precision=6)`,
   the Python door of `GromacsTopFfWriter::write_system_str` and the inverse
   of `read_gromacs_system`.
 - CL&Pol: `ff::params::CLPOL_POLARIZABILITY` (`alpha.ff`, 78 types),
   `ff::forcefield::readers::clpol::read_alpha_ff`, and
-  `molrs.ff.clpol_polarizability(path=None)`.
+  `molrs.ff.params.clpol_polarizability(path=None)`.
+- `molrs.spatial.Box(h=None, origin=None, pbc=None, cell_defined=None)`
+  takes a `(3, 3)` matrix, a `(3,)` diagonal or any array-like of either;
+  `None` or an all-zero matrix is no cell (a free box, `cell_defined`
+  false), and `pbc` defaults to whether there is a cell. Explicit
+  `cell_defined=False` keeps its meaning but now defaults `pbc` to
+  non-periodic. (molpy's `Box` subclass did this; `molpy.Box` can now be
+  `molrs.spatial.Box`.)
+- `molrs.store.Trajectory`: `traj[-1]`, `traj[a:b:c]` (a sub-trajectory with
+  its `step` / `time` labels sliced alike; Rust `Trajectory::select`),
+  `traj.map(func)` and a `repr` (molpy's `Trajectory` subclass did these).
 - The cross-engine equivalence check and the completeness matrix
   ([Force-field IR](guides/forcefield-ir.md#completeness)), and the
   `molrs-ext-example` crate, a third party extending the IR through the

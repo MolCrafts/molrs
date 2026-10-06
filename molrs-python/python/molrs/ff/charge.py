@@ -7,8 +7,6 @@ accepts the ``qm`` argument and ignores it, which is what keeps the three
 interchangeable at a call site.
 """
 
-from __future__ import annotations
-
 from .._lib import (
     BccModel,
     GasteigerModel,

@@ -7,8 +7,6 @@ dipole and polarizability, and :func:`fragment_scaling_data` the table molrs
 ships.
 """
 
-from __future__ import annotations
-
 from .._lib import FragmentScaling, compute_k_ij, fragment_scaling_data, scale_lj
 
 __all__ = ["FragmentScaling", "compute_k_ij", "fragment_scaling_data", "scale_lj"]

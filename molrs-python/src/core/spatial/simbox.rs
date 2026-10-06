@@ -14,7 +14,10 @@ use molrs::spatial::{BoxError, SimBox};
 use molrs::store::keys;
 use molrs::store::schema::block_names;
 use ndarray::{Array1, Array2, Axis, array};
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3, PyReadonlyArray1, PyReadonlyArray2};
+use numpy::{
+    AllowTypeChange, IntoPyArray, PyArray1, PyArray2, PyArray3, PyArrayLikeDyn, PyReadonlyArray1,
+    PyReadonlyArray2,
+};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -74,7 +77,7 @@ fn bounds_points(arg: &Bound<'_, PyAny>) -> PyResult<Array2<F>> {
 ///
 /// ```python
 /// import numpy as np
-/// from molrs import Box
+/// from molrs.spatial import Box
 ///
 /// box = Box.cube(10.0)                       # 10 x 10 x 10 cubic
 /// box = Box.ortho(np.array([10, 20, 30]))    # orthorhombic
@@ -88,18 +91,24 @@ pub struct PyBox {
 
 #[pymethods]
 impl PyBox {
-    /// Create a fully triclinic simulation box from a cell matrix.
+    /// Create a simulation box from a cell matrix, a diagonal, or no cell.
     ///
     /// Parameters
     /// ----------
-    /// h : numpy.ndarray, shape (3, 3), dtype float
-    ///     Cell matrix with lattice vectors as **columns**.
-    /// origin : numpy.ndarray, shape (3,), dtype float, optional
+    /// h : array_like, shape (3, 3) or (3,), optional
+    ///     Cell matrix with lattice vectors as **columns**, or the diagonal of
+    ///     an orthorhombic one. ``None`` or an all-zero matrix is no cell: a
+    ///     free box carrying the identity as a placeholder
+    ///     (``cell_defined`` false).
+    /// origin : array_like, shape (3,), optional
     ///     Origin of the box in Cartesian coordinates. Defaults to
     ///     ``[0, 0, 0]``.
-    /// pbc : numpy.ndarray, shape (3,), dtype bool, optional
-    ///     Periodic boundary flags for x, y, z. Defaults to
-    ///     ``[True, True, True]``.
+    /// pbc : array_like of bool, shape (3,), optional
+    ///     Periodic boundary flags for x, y, z. Defaults to periodic on every
+    ///     axis when there is a cell and on none when there is not.
+    /// cell_defined : bool, optional
+    ///     Whether the cell is geometrically defined; inferred from ``h`` when
+    ///     omitted. ``False`` ignores ``h`` (a store's undefined cell).
     ///
     /// Returns
     /// -------
@@ -108,30 +117,56 @@ impl PyBox {
     /// Raises
     /// ------
     /// ValueError
-    ///     If ``h`` is not 3x3 or the cell matrix is singular.
+    ///     If ``h`` is neither ``(3, 3)`` nor ``(3,)``, or a defined cell
+    ///     matrix is singular.
     ///
     /// Examples
     /// --------
-    /// >>> h = np.eye(3) * 10.0
-    /// >>> box = Box(h)
+    /// >>> box = Box(np.eye(3) * 10.0)
+    /// >>> Box([10.0, 20.0, 30.0]).style
+    /// 'orthogonal'
+    /// >>> Box().is_free
+    /// True
     #[new]
-    #[pyo3(signature = (h, origin=None, pbc=None, cell_defined=true))]
+    #[pyo3(signature = (h=None, origin=None, pbc=None, cell_defined=None))]
     fn new(
-        h: PyReadonlyArray2<'_, f64>,
+        h: Option<PyArrayLikeDyn<'_, F, AllowTypeChange>>,
         origin: Option<PyReadonlyArray1<'_, f64>>,
         pbc: Option<PyReadonlyArray1<'_, bool>>,
-        cell_defined: bool,
+        cell_defined: Option<bool>,
     ) -> PyResult<Self> {
-        let h_view = h.as_array();
-        if h_view.dim() != (3, 3) {
-            return Err(PyValueError::new_err("h must be a 3x3 matrix"));
-        }
-        let h_matrix = h_view.to_owned();
-        let origin_vec = parse_origin(origin)?;
-        let pbc_array = parse_pbc(pbc)?;
-
-        let inner = SimBox::new_cell(h_matrix, origin_vec, pbc_array, cell_defined)
-            .map_err(box_error_to_pyerr)?;
+        let h_matrix = match h {
+            None => None,
+            Some(h) => {
+                let view = h.as_array();
+                Some(match view.shape() {
+                    [3, 3] => Array2::from_shape_fn((3, 3), |(i, j)| view[[i, j]]),
+                    [3] => Array2::from_diag(&Array1::from_shape_fn(3, |i| view[[i]])),
+                    shape => {
+                        return Err(PyValueError::new_err(format!(
+                            "h must be (3, 3) or (3,), got {shape:?}"
+                        )));
+                    }
+                })
+            }
+        };
+        // No matrix, or an all-zero one, is no cell.
+        let cell_defined = cell_defined.unwrap_or_else(|| {
+            h_matrix
+                .as_ref()
+                .is_some_and(|h| h.iter().any(|&x| x != 0.0))
+        });
+        let pbc_array = match pbc {
+            Some(_) => parse_pbc(pbc)?,
+            None => [cell_defined; 3],
+        };
+        let inner = SimBox::new_cell(
+            h_matrix.unwrap_or_else(|| Array2::eye(3)),
+            parse_origin(origin)?,
+            pbc_array,
+            cell_defined,
+        )
+        .map_err(box_error_to_pyerr)?;
         Ok(PyBox { inner })
     }
 

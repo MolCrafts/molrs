@@ -6,8 +6,6 @@
   one molrs ships or one read from a file.
 """
 
-from __future__ import annotations
-
 from .._lib import AMBER_SCEE, AMBER_SCNB, clpol_polarizability
 
 __all__ = ["AMBER_SCEE", "AMBER_SCNB", "clpol_polarizability"]

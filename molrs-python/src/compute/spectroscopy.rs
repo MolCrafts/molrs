@@ -607,8 +607,12 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyVcdSpectrum>()?;
     m.add_class::<PyRoaSpectrum>()?;
     m.add_class::<PyResonanceRamanSpectrum>()?;
-    m.add_function(wrap_pyfunction!(kramers_kronig, m)?)?;
-    m.add_function(wrap_pyfunction!(conductivity_sum_rule, m)?)?;
-    m.add_function(wrap_pyfunction!(route_agreement, m)?)?;
+    crate::add_function(m, "molrs.compute", wrap_pyfunction!(kramers_kronig, m)?)?;
+    crate::add_function(
+        m,
+        "molrs.compute",
+        wrap_pyfunction!(conductivity_sum_rule, m)?,
+    )?;
+    crate::add_function(m, "molrs.compute", wrap_pyfunction!(route_agreement, m)?)?;
     Ok(())
 }

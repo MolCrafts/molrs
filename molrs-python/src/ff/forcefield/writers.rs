@@ -402,13 +402,45 @@ pub fn write_gromacs_system(
 
 /// Register the force-field writers.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(write_gromacs_top_ff_py, m)?)?;
-    m.add_function(wrap_pyfunction!(write_gromacs_system, m)?)?;
-    m.add_function(wrap_pyfunction!(write_amber_frcmod_py, m)?)?;
-    m.add_function(wrap_pyfunction!(write_forcefield_xml_py, m)?)?;
-    m.add_function(wrap_pyfunction!(write_lammps_forcefield_py, m)?)?;
-    m.add_function(wrap_pyfunction!(write_lammps_forcefield_str_py, m)?)?;
-    m.add_function(wrap_pyfunction!(write_lammps_data_coeffs_py, m)?)?;
-    m.add_function(wrap_pyfunction!(write_lammps_cmap_py, m)?)?;
+    crate::add_function(
+        m,
+        "molrs.ff.forcefield",
+        wrap_pyfunction!(write_gromacs_top_ff_py, m)?,
+    )?;
+    crate::add_function(
+        m,
+        "molrs.ff.forcefield",
+        wrap_pyfunction!(write_gromacs_system, m)?,
+    )?;
+    crate::add_function(
+        m,
+        "molrs.ff.forcefield",
+        wrap_pyfunction!(write_amber_frcmod_py, m)?,
+    )?;
+    crate::add_function(
+        m,
+        "molrs.ff.forcefield",
+        wrap_pyfunction!(write_forcefield_xml_py, m)?,
+    )?;
+    crate::add_function(
+        m,
+        "molrs.ff.forcefield",
+        wrap_pyfunction!(write_lammps_forcefield_py, m)?,
+    )?;
+    crate::add_function(
+        m,
+        "molrs.ff.forcefield",
+        wrap_pyfunction!(write_lammps_forcefield_str_py, m)?,
+    )?;
+    crate::add_function(
+        m,
+        "molrs.ff.forcefield",
+        wrap_pyfunction!(write_lammps_data_coeffs_py, m)?,
+    )?;
+    crate::add_function(
+        m,
+        "molrs.ff.forcefield",
+        wrap_pyfunction!(write_lammps_cmap_py, m)?,
+    )?;
     Ok(())
 }

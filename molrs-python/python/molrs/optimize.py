@@ -5,8 +5,6 @@ coordinate vector; it does not build the potentials and does not own a force
 field. Construct the potentials with :mod:`molrs.ff.potential`, hand them here.
 """
 
-from __future__ import annotations
-
 from ._lib import (
     LBFGS,
     OptReport,

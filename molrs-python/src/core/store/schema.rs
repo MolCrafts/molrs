@@ -378,8 +378,7 @@ fn relation_endpoints(
 }
 
 /// Register `molrs.store.schema`.
-pub fn register_schema(parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    let m = PyModule::new(parent.py(), "schema")?;
+pub fn register_schema(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyColumnSpec>()?;
     m.add_class::<PyBlockSpec>()?;
     m.add("columns", column_specs())?;
@@ -391,15 +390,14 @@ pub fn register_schema(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     for group in schema::BLOCK_GROUPS {
         m.add(
             group.const_name,
-            pyo3::types::PyTuple::new(parent.py(), group.keys.iter().copied())?,
+            pyo3::types::PyTuple::new(m.py(), group.keys.iter().copied())?,
         )?;
     }
-    m.add_function(wrap_pyfunction!(py_column, &m)?)?;
-    m.add_function(wrap_pyfunction!(py_block, &m)?)?;
-    m.add_function(wrap_pyfunction!(to_json, &m)?)?;
-    m.add_function(wrap_pyfunction!(to_markdown, &m)?)?;
-    m.add_function(wrap_pyfunction!(relation_endpoints, &m)?)?;
-    parent.add_submodule(&m)?;
+    m.add_function(wrap_pyfunction!(py_column, m)?)?;
+    m.add_function(wrap_pyfunction!(py_block, m)?)?;
+    m.add_function(wrap_pyfunction!(to_json, m)?)?;
+    m.add_function(wrap_pyfunction!(to_markdown, m)?)?;
+    m.add_function(wrap_pyfunction!(relation_endpoints, m)?)?;
     Ok(())
 }
 
@@ -410,9 +408,7 @@ pub fn register_schema(parent: &Bound<'_, PyModule>) -> PyResult<()> {
 ///
 /// Each scalar is a :class:`Key`. Ordered groups (`COORDS`, …) are lists of
 /// :class:`Key`. Block names are :mod:`molrs.store.schema`.
-pub fn register_keys(parent: &Bound<'_, PyModule>) -> PyResult<()> {
-    let py = parent.py();
-    let m = PyModule::new(py, "keys")?;
+pub fn register_keys(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyKey>()?;
 
     for spec in schema::SCHEMA_COLUMNS {
@@ -425,8 +421,5 @@ pub fn register_keys(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     for spec in molrs::store::keys::META_KEYS {
         m.add(spec.const_name, PyKey::new(spec.value))?;
     }
-
-    parent.add_submodule(&m)?;
-    parent.setattr("keys", &m)?;
     Ok(())
 }

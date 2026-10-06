@@ -74,14 +74,14 @@ def test_smarts_pattern_is_exposed():
     assert pat is not None
 
 
-def test_mapped_true_captures_map_numbers():
-    """find_matches(..., mapped=True) returns map-number keyed matches."""
+def test_mapping_captures_map_numbers():
+    """A match's mapping is keyed by the query's map numbers."""
     mol, c, o, ho = _methanol()
     pat = molrs.perceive.SmartsPattern("[C:1][O:2][H:3]")
-    matches = pat.find_matches(mol, mapped=True)
+    matches = pat.find_matches(mol)
     assert isinstance(matches, list)
     assert len(matches) == 1
-    m = matches[0]
+    m = matches[0].mapping
     assert set(m.keys()) == {1, 2, 3}
     # Handles map to the expected atoms / elements.
     assert m[1] == c
@@ -102,15 +102,13 @@ def test_default_matches_are_objects():
     assert isinstance(match, molrs.perceive.SmartsMatch)
     assert match.atoms == [c, o, ho]
     assert match.mapping == {1: c, 2: o, 3: ho}
-    assert match.as_list() == [c, o, ho]
-    assert match.as_dict() == {1: c, 2: o, 3: ho}
 
 
-def test_mapped_true_empty_on_non_match():
+def test_no_match_is_empty():
     """A molecule lacking the group yields an empty match list."""
     mol, _c1, _c2 = _ethane()
     pat = molrs.perceive.SmartsPattern("[C:1][O:2][H:3]")
-    assert pat.find_matches(mol, mapped=True) == []
+    assert pat.find_matches(mol) == []
     assert pat.has_match(mol) is False
 
 
@@ -118,12 +116,12 @@ def test_primary_amine_matches_NH2():
     """[N;H2:1] matches a primary amine nitrogen (2 explicit H)."""
     mol, n = _methylamine()
     pat = molrs.perceive.SmartsPattern("[N;H2:1]")
-    matches = pat.find_matches(mol, mapped=True)
+    matches = pat.find_matches(mol)
     assert len(matches) == 1
-    assert matches[0] == {1: n}
+    assert matches[0].mapping == {1: n}
     # Ethane (no N) does not match.
     ethane, _c1, _c2 = _ethane()
-    assert pat.find_matches(ethane, mapped=True) == []
+    assert pat.find_matches(ethane) == []
 
 
 # ---------------------------------------------------------------------------

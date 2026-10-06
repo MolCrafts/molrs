@@ -48,8 +48,6 @@ Precision: ``MD(dtype=np.float64)`` is the only entry. ``np.float32`` / mixed
 raise; those loops belong in the Rust integrators.
 """
 
-from __future__ import annotations
-
 from .._lib import md as _md
 
 Langevin = _md.Langevin

@@ -17,8 +17,6 @@ are :mod:`molrs.io`'s):
   :func:`write_forcefield_xml`
 """
 
-from __future__ import annotations
-
 from .._lib import (
     AngleStyle,
     AngleType,

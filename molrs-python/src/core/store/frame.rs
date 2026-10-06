@@ -614,7 +614,8 @@ impl PyMetaDocument {
 ///
 /// ```python
 /// import numpy as np
-/// from molrs import Frame, Box
+/// from molrs.spatial import Box
+/// from molrs.store import Frame
 ///
 /// frame = Frame(
 ///     {"atoms": {"element": ["O", "H", "H"], "x": [0.0, 0.76, -0.76]}},

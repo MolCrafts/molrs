@@ -28,8 +28,8 @@ and the docs build.
 | `molrs.units` | `molrs::units` | `Unit`, `Quantity`, `UnitRegistry`, `UnitPreset`, `UnitsError`, `AMBER_COULOMB` |
 | `molrs.op` | `molrs::op` | `superpose`, `centroid`, `Fit`, `DEFAULT_GAP_TOL` |
 | `molrs.perceive` | `molrs::perceive` | `Perceive`, `RingInfo`, `SmartsPattern`, `SmartsMatch`, `Reaction`, `SubgraphMatcher` |
-| `molrs.io` | `molrs::io` | structure and trajectory readers / writers, `TrajectoryReader`, `SmilesIR`, `CGSmilesIR`, `SmilesError`, the LAMMPS log, `*.mrec` doors |
-| `molrs.io.mrec` | `molrs::io::mrec` | `SequenceSchema`, `TrajectoryWriter`, `TrajectoryReader`, `ForceFieldSection`, `pack`, `schema` |
+| `molrs.io` | `molrs::io` | structure and trajectory readers / writers, `TrajectoryReader`, `SmilesIR`, `CGSmilesIR`, `SmilesError`, the LAMMPS log |
+| `molrs.io.mrec` | `molrs::io::mrec` | every `*.mrec` door: `read` / `write` and their `system` / `trajectory` / `forcefield` partners, `read_meta`, `section_names`, `FrameSequence`, `SequenceSchema`, `FrameSequenceWriter`, `ForceFieldSection`, `pack`, `schema` |
 | `molrs.ff.forcefield` | `molrs::ff::forcefield` | `ForceField`, the `Style` / `Type` handles, the force-field file readers and writers |
 | `molrs.ff.potential` | `molrs::ff::potential` | `PotentialCompiler`, `Potentials`, `TypedPotentials`, `kernel`, `LJCut`, `intramolecular_pairs`, `Potential` |
 | `molrs.ff.typifier` | `molrs::ff::typifier` | `Typifier`, `Match`, the built-in typifiers, `assign_cmaps` |
@@ -196,35 +196,35 @@ TRR and XTC trajectory readers return a lazy `TrajectoryReader`.
 
 ::: molrs.io.SmilesIR
 
-::: molrs.io.read_mrec
-
-::: molrs.io.write_mrec
-
-::: molrs.io.read_mrec_system
-
-::: molrs.io.write_mrec_system
-
-::: molrs.io.read_mrec_trajectory
-
-::: molrs.io.write_mrec_trajectory
-
-::: molrs.io.read_mrec_forcefield
-
-::: molrs.io.write_mrec_forcefield
-
-::: molrs.io.mrec_sections
-
-::: molrs.io.read_mrec_meta
-
 ### Record files (`molrs.io.mrec`)
 
 The [Record files guide](../guides/records.md) shows these in use.
 
+::: molrs.io.mrec.read
+
+::: molrs.io.mrec.write
+
+::: molrs.io.mrec.read_system
+
+::: molrs.io.mrec.write_system
+
+::: molrs.io.mrec.read_trajectory
+
+::: molrs.io.mrec.write_trajectory
+
+::: molrs.io.mrec.read_forcefield
+
+::: molrs.io.mrec.write_forcefield
+
+::: molrs.io.mrec.section_names
+
+::: molrs.io.mrec.read_meta
+
 ::: molrs.io.mrec.SequenceSchema
 
-::: molrs.io.mrec.TrajectoryWriter
+::: molrs.io.mrec.FrameSequenceWriter
 
-::: molrs.io.mrec.TrajectoryReader
+::: molrs.io.mrec.FrameSequence
 
 ::: molrs.io.mrec.ForceFieldSection
 

@@ -249,8 +249,12 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPotentials>()?;
     m.add_class::<PyTypedPotentials>()?;
     m.add_class::<PyLJCut>()?;
-    m.add_function(wrap_pyfunction!(kernel, m)?)?;
-    m.add_function(wrap_pyfunction!(intramolecular_pairs_py, m)?)?;
+    crate::add_function(m, "molrs.ff.potential", wrap_pyfunction!(kernel, m)?)?;
+    crate::add_function(
+        m,
+        "molrs.ff.potential",
+        wrap_pyfunction!(intramolecular_pairs_py, m)?,
+    )?;
     Ok(())
 }
 
