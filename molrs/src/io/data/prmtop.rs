@@ -374,7 +374,9 @@ fn decode_angles(pointers: &[i64], atom_types: &[String]) -> Result<Vec<AngleRow
 ///
 /// - A proper is one row per atom quartet: the rows of a multi-term torsion
 ///   share the quartet, and the force-field reader's `dihedral periodic` type
-///   holds every term. It is oriented as the force-field reader names it:
+///   holds every term. A quartet tleap gave two different sets of terms is
+///   two types, the second `<quartet>@<n>`
+///   ([`prmtop_tables::proper_type_names`]). It is oriented as the force-field reader names it:
 ///   reversed when [`TypeName::reads_reversed`] says its types are, atoms and
 ///   name together. Counts therefore match the torsions, not the cosine terms.
 /// - An improper (negative 4th pointer) keeps its prmtop atom order: AMBER
@@ -395,20 +397,18 @@ fn decode_dihedrals(
 ) -> Result<Vec<DihedralRow>> {
     let torsions =
         prmtop_tables::decode_torsions(pointers, atom_types, tables).map_err(invalid_data)?;
+    let proper_names =
+        prmtop_tables::proper_type_names(&torsions, atom_types).map_err(invalid_data)?;
     let mut out = Vec::with_capacity(torsions.len());
-    for t in torsions {
-        let names: Vec<String> = if t.improper {
-            t.improper_rows(atom_types)
+    for (t, proper_name) in torsions.into_iter().zip(proper_names) {
+        let names: Vec<String> = match proper_name {
+            Some(name) => vec![name],
+            None => t
+                .improper_rows(atom_types)
                 .map_err(invalid_data)?
                 .into_iter()
                 .map(|(name, _)| name)
-                .collect()
-        } else {
-            vec![
-                TypeName::join(&t.types(atom_types))
-                    .map_err(invalid_data)?
-                    .to_string(),
-            ]
+                .collect(),
         };
         for type_name in names {
             out.push(DihedralRow {

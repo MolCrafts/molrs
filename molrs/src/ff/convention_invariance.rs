@@ -11,6 +11,10 @@
 //! UFF-typed acetanilide, and a GROMACS-, OpenMM- and LAMMPS-read field on a
 //! hand-built molecule.
 //!
+//! The GAFF improper term changes because 0.16 orders a GAFF improper's
+//! atoms as tleap does (`ff::typifier::gaff::improper`); 0.15.1 put the same
+//! barriers on another peripheral order.
+//!
 //! Two OpenMM terms change, each the point of its change: 0.15 priced an
 //! OpenMM `<Improper>` over the dihedral of OpenMM's file order (centre
 //! first), where OpenMM prices `(c2, c3, c1, c4)`. It now prices what
@@ -581,7 +585,11 @@ fn typed_molecules_price_as_in_0_15() {
             ("angle/harmonic", 2.2194097346204344),
             ("bond/harmonic", 7.3769495524832465),
             ("dihedral/periodic", 2.541103465113677),
-            ("improper/periodic", 0.010339607422863516),
+            // 0.16 also builds GAFF impropers as tleap does (atom order from
+            // the matched row, parmchk2's estimates): 0.15.1 had
+            // 0.010339607422863516, the same barriers on another peripheral
+            // order (`ff::typifier::gaff::improper`).
+            ("improper/periodic", 0.010339596944304806),
             ("pair/coul/cut", -37.15184225195395),
             ("pair/lj/cut", 8.660474394181266),
         ],

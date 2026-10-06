@@ -14,7 +14,7 @@ use crate::ff::params::{
     ParmTable, ParmType,
 };
 
-// The 99 atom types of `gaff2.dat`, interned to their MASS row.
+// The 100 atom types of `gaff2.dat`, interned to their MASS row.
 /// `c` — row 0 of the `MASS` section.
 const T_C: ParmType = ParmType(0);
 /// `cs` — row 1 of the `MASS` section.
@@ -69,152 +69,154 @@ const T_H4: ParmType = ParmType(24);
 const T_H5: ParmType = ParmType(25);
 /// `ha` — row 26 of the `MASS` section.
 const T_HA: ParmType = ParmType(26);
-/// `hc` — row 27 of the `MASS` section.
-const T_HC: ParmType = ParmType(27);
-/// `hn` — row 28 of the `MASS` section.
-const T_HN: ParmType = ParmType(28);
-/// `ho` — row 29 of the `MASS` section.
-const T_HO: ParmType = ParmType(29);
-/// `hp` — row 30 of the `MASS` section.
-const T_HP: ParmType = ParmType(30);
-/// `hs` — row 31 of the `MASS` section.
-const T_HS: ParmType = ParmType(31);
-/// `hw` — row 32 of the `MASS` section.
-const T_HW: ParmType = ParmType(32);
-/// `hx` — row 33 of the `MASS` section.
-const T_HX: ParmType = ParmType(33);
-/// `f` — row 34 of the `MASS` section.
-const T_F: ParmType = ParmType(34);
-/// `cl` — row 35 of the `MASS` section.
-const T_CL: ParmType = ParmType(35);
-/// `br` — row 36 of the `MASS` section.
-const T_BR: ParmType = ParmType(36);
-/// `i` — row 37 of the `MASS` section.
-const T_I: ParmType = ParmType(37);
-/// `n` — row 38 of the `MASS` section.
-const T_N: ParmType = ParmType(38);
-/// `n1` — row 39 of the `MASS` section.
-const T_N1: ParmType = ParmType(39);
-/// `n2` — row 40 of the `MASS` section.
-const T_N2: ParmType = ParmType(40);
-/// `n3` — row 41 of the `MASS` section.
-const T_N3: ParmType = ParmType(41);
-/// `n4` — row 42 of the `MASS` section.
-const T_N4: ParmType = ParmType(42);
-/// `na` — row 43 of the `MASS` section.
-const T_NA: ParmType = ParmType(43);
-/// `nb` — row 44 of the `MASS` section.
-const T_NB: ParmType = ParmType(44);
-/// `nc` — row 45 of the `MASS` section.
-const T_NC: ParmType = ParmType(45);
-/// `nd` — row 46 of the `MASS` section.
-const T_ND: ParmType = ParmType(46);
-/// `ne` — row 47 of the `MASS` section.
-const T_NE: ParmType = ParmType(47);
-/// `nf` — row 48 of the `MASS` section.
-const T_NF: ParmType = ParmType(48);
-/// `nh` — row 49 of the `MASS` section.
-const T_NH: ParmType = ParmType(49);
-/// `no` — row 50 of the `MASS` section.
-const T_NO: ParmType = ParmType(50);
-/// `ns` — row 51 of the `MASS` section.
-const T_NS: ParmType = ParmType(51);
-/// `nt` — row 52 of the `MASS` section.
-const T_NT: ParmType = ParmType(52);
-/// `nx` — row 53 of the `MASS` section.
-const T_NX: ParmType = ParmType(53);
-/// `ny` — row 54 of the `MASS` section.
-const T_NY: ParmType = ParmType(54);
-/// `nz` — row 55 of the `MASS` section.
-const T_NZ: ParmType = ParmType(55);
-/// `n+` — row 56 of the `MASS` section.
-const T_N_PLUS: ParmType = ParmType(56);
-/// `nu` — row 57 of the `MASS` section.
-const T_NU: ParmType = ParmType(57);
-/// `nv` — row 58 of the `MASS` section.
-const T_NV: ParmType = ParmType(58);
-/// `n7` — row 59 of the `MASS` section.
-const T_N7: ParmType = ParmType(59);
-/// `n8` — row 60 of the `MASS` section.
-const T_N8: ParmType = ParmType(60);
-/// `n9` — row 61 of the `MASS` section.
-const T_N9: ParmType = ParmType(61);
-/// `ni` — row 62 of the `MASS` section.
-const T_NI: ParmType = ParmType(62);
-/// `nj` — row 63 of the `MASS` section.
-const T_NJ: ParmType = ParmType(63);
-/// `nk` — row 64 of the `MASS` section.
-const T_NK: ParmType = ParmType(64);
-/// `nl` — row 65 of the `MASS` section.
-const T_NL: ParmType = ParmType(65);
-/// `nm` — row 66 of the `MASS` section.
-const T_NM: ParmType = ParmType(66);
-/// `nn` — row 67 of the `MASS` section.
-const T_NN: ParmType = ParmType(67);
-/// `np` — row 68 of the `MASS` section.
-const T_NP: ParmType = ParmType(68);
-/// `nq` — row 69 of the `MASS` section.
-const T_NQ: ParmType = ParmType(69);
-/// `n5` — row 70 of the `MASS` section.
-const T_N5: ParmType = ParmType(70);
-/// `n6` — row 71 of the `MASS` section.
-const T_N6: ParmType = ParmType(71);
-/// `o` — row 72 of the `MASS` section.
-const T_O: ParmType = ParmType(72);
-/// `oh` — row 73 of the `MASS` section.
-const T_OH: ParmType = ParmType(73);
-/// `op` — row 74 of the `MASS` section.
-const T_OP: ParmType = ParmType(74);
-/// `oq` — row 75 of the `MASS` section.
-const T_OQ: ParmType = ParmType(75);
-/// `os` — row 76 of the `MASS` section.
-const T_OS: ParmType = ParmType(76);
-/// `ow` — row 77 of the `MASS` section.
-const T_OW: ParmType = ParmType(77);
-/// `p2` — row 78 of the `MASS` section.
-const T_P2: ParmType = ParmType(78);
-/// `p3` — row 79 of the `MASS` section.
-const T_P3: ParmType = ParmType(79);
-/// `p4` — row 80 of the `MASS` section.
-const T_P4: ParmType = ParmType(80);
-/// `p5` — row 81 of the `MASS` section.
-const T_P5: ParmType = ParmType(81);
-/// `pb` — row 82 of the `MASS` section.
-const T_PB: ParmType = ParmType(82);
-/// `pc` — row 83 of the `MASS` section.
-const T_PC: ParmType = ParmType(83);
-/// `pd` — row 84 of the `MASS` section.
-const T_PD: ParmType = ParmType(84);
-/// `pe` — row 85 of the `MASS` section.
-const T_PE: ParmType = ParmType(85);
-/// `pf` — row 86 of the `MASS` section.
-const T_PF: ParmType = ParmType(86);
-/// `px` — row 87 of the `MASS` section.
-const T_PX: ParmType = ParmType(87);
-/// `py` — row 88 of the `MASS` section.
-const T_PY: ParmType = ParmType(88);
-/// `s` — row 89 of the `MASS` section.
-const T_S: ParmType = ParmType(89);
-/// `s2` — row 90 of the `MASS` section.
-const T_S2: ParmType = ParmType(90);
-/// `s4` — row 91 of the `MASS` section.
-const T_S4: ParmType = ParmType(91);
-/// `s6` — row 92 of the `MASS` section.
-const T_S6: ParmType = ParmType(92);
-/// `sh` — row 93 of the `MASS` section.
-const T_SH: ParmType = ParmType(93);
-/// `ss` — row 94 of the `MASS` section.
-const T_SS: ParmType = ParmType(94);
-/// `sx` — row 95 of the `MASS` section.
-const T_SX: ParmType = ParmType(95);
-/// `sy` — row 96 of the `MASS` section.
-const T_SY: ParmType = ParmType(96);
-/// `sp` — row 97 of the `MASS` section.
-const T_SP: ParmType = ParmType(97);
-/// `sq` — row 98 of the `MASS` section.
-const T_SQ: ParmType = ParmType(98);
+/// `hb` — row 27 of the `MASS` section.
+const T_HB: ParmType = ParmType(27);
+/// `hc` — row 28 of the `MASS` section.
+const T_HC: ParmType = ParmType(28);
+/// `hn` — row 29 of the `MASS` section.
+const T_HN: ParmType = ParmType(29);
+/// `ho` — row 30 of the `MASS` section.
+const T_HO: ParmType = ParmType(30);
+/// `hp` — row 31 of the `MASS` section.
+const T_HP: ParmType = ParmType(31);
+/// `hs` — row 32 of the `MASS` section.
+const T_HS: ParmType = ParmType(32);
+/// `hw` — row 33 of the `MASS` section.
+const T_HW: ParmType = ParmType(33);
+/// `hx` — row 34 of the `MASS` section.
+const T_HX: ParmType = ParmType(34);
+/// `f` — row 35 of the `MASS` section.
+const T_F: ParmType = ParmType(35);
+/// `cl` — row 36 of the `MASS` section.
+const T_CL: ParmType = ParmType(36);
+/// `br` — row 37 of the `MASS` section.
+const T_BR: ParmType = ParmType(37);
+/// `i` — row 38 of the `MASS` section.
+const T_I: ParmType = ParmType(38);
+/// `n` — row 39 of the `MASS` section.
+const T_N: ParmType = ParmType(39);
+/// `n1` — row 40 of the `MASS` section.
+const T_N1: ParmType = ParmType(40);
+/// `n2` — row 41 of the `MASS` section.
+const T_N2: ParmType = ParmType(41);
+/// `n3` — row 42 of the `MASS` section.
+const T_N3: ParmType = ParmType(42);
+/// `n4` — row 43 of the `MASS` section.
+const T_N4: ParmType = ParmType(43);
+/// `na` — row 44 of the `MASS` section.
+const T_NA: ParmType = ParmType(44);
+/// `nb` — row 45 of the `MASS` section.
+const T_NB: ParmType = ParmType(45);
+/// `nc` — row 46 of the `MASS` section.
+const T_NC: ParmType = ParmType(46);
+/// `nd` — row 47 of the `MASS` section.
+const T_ND: ParmType = ParmType(47);
+/// `ne` — row 48 of the `MASS` section.
+const T_NE: ParmType = ParmType(48);
+/// `nf` — row 49 of the `MASS` section.
+const T_NF: ParmType = ParmType(49);
+/// `nh` — row 50 of the `MASS` section.
+const T_NH: ParmType = ParmType(50);
+/// `no` — row 51 of the `MASS` section.
+const T_NO: ParmType = ParmType(51);
+/// `ns` — row 52 of the `MASS` section.
+const T_NS: ParmType = ParmType(52);
+/// `nt` — row 53 of the `MASS` section.
+const T_NT: ParmType = ParmType(53);
+/// `nx` — row 54 of the `MASS` section.
+const T_NX: ParmType = ParmType(54);
+/// `ny` — row 55 of the `MASS` section.
+const T_NY: ParmType = ParmType(55);
+/// `nz` — row 56 of the `MASS` section.
+const T_NZ: ParmType = ParmType(56);
+/// `n+` — row 57 of the `MASS` section.
+const T_N_PLUS: ParmType = ParmType(57);
+/// `nu` — row 58 of the `MASS` section.
+const T_NU: ParmType = ParmType(58);
+/// `nv` — row 59 of the `MASS` section.
+const T_NV: ParmType = ParmType(59);
+/// `n7` — row 60 of the `MASS` section.
+const T_N7: ParmType = ParmType(60);
+/// `n8` — row 61 of the `MASS` section.
+const T_N8: ParmType = ParmType(61);
+/// `n9` — row 62 of the `MASS` section.
+const T_N9: ParmType = ParmType(62);
+/// `ni` — row 63 of the `MASS` section.
+const T_NI: ParmType = ParmType(63);
+/// `nj` — row 64 of the `MASS` section.
+const T_NJ: ParmType = ParmType(64);
+/// `nk` — row 65 of the `MASS` section.
+const T_NK: ParmType = ParmType(65);
+/// `nl` — row 66 of the `MASS` section.
+const T_NL: ParmType = ParmType(66);
+/// `nm` — row 67 of the `MASS` section.
+const T_NM: ParmType = ParmType(67);
+/// `nn` — row 68 of the `MASS` section.
+const T_NN: ParmType = ParmType(68);
+/// `np` — row 69 of the `MASS` section.
+const T_NP: ParmType = ParmType(69);
+/// `nq` — row 70 of the `MASS` section.
+const T_NQ: ParmType = ParmType(70);
+/// `n5` — row 71 of the `MASS` section.
+const T_N5: ParmType = ParmType(71);
+/// `n6` — row 72 of the `MASS` section.
+const T_N6: ParmType = ParmType(72);
+/// `o` — row 73 of the `MASS` section.
+const T_O: ParmType = ParmType(73);
+/// `oh` — row 74 of the `MASS` section.
+const T_OH: ParmType = ParmType(74);
+/// `op` — row 75 of the `MASS` section.
+const T_OP: ParmType = ParmType(75);
+/// `oq` — row 76 of the `MASS` section.
+const T_OQ: ParmType = ParmType(76);
+/// `os` — row 77 of the `MASS` section.
+const T_OS: ParmType = ParmType(77);
+/// `ow` — row 78 of the `MASS` section.
+const T_OW: ParmType = ParmType(78);
+/// `p2` — row 79 of the `MASS` section.
+const T_P2: ParmType = ParmType(79);
+/// `p3` — row 80 of the `MASS` section.
+const T_P3: ParmType = ParmType(80);
+/// `p4` — row 81 of the `MASS` section.
+const T_P4: ParmType = ParmType(81);
+/// `p5` — row 82 of the `MASS` section.
+const T_P5: ParmType = ParmType(82);
+/// `pb` — row 83 of the `MASS` section.
+const T_PB: ParmType = ParmType(83);
+/// `pc` — row 84 of the `MASS` section.
+const T_PC: ParmType = ParmType(84);
+/// `pd` — row 85 of the `MASS` section.
+const T_PD: ParmType = ParmType(85);
+/// `pe` — row 86 of the `MASS` section.
+const T_PE: ParmType = ParmType(86);
+/// `pf` — row 87 of the `MASS` section.
+const T_PF: ParmType = ParmType(87);
+/// `px` — row 88 of the `MASS` section.
+const T_PX: ParmType = ParmType(88);
+/// `py` — row 89 of the `MASS` section.
+const T_PY: ParmType = ParmType(89);
+/// `s` — row 90 of the `MASS` section.
+const T_S: ParmType = ParmType(90);
+/// `s2` — row 91 of the `MASS` section.
+const T_S2: ParmType = ParmType(91);
+/// `s4` — row 92 of the `MASS` section.
+const T_S4: ParmType = ParmType(92);
+/// `s6` — row 93 of the `MASS` section.
+const T_S6: ParmType = ParmType(93);
+/// `sh` — row 94 of the `MASS` section.
+const T_SH: ParmType = ParmType(94);
+/// `ss` — row 95 of the `MASS` section.
+const T_SS: ParmType = ParmType(95);
+/// `sp` — row 96 of the `MASS` section.
+const T_SP: ParmType = ParmType(96);
+/// `sq` — row 97 of the `MASS` section.
+const T_SQ: ParmType = ParmType(97);
+/// `sx` — row 98 of the `MASS` section.
+const T_SX: ParmType = ParmType(98);
+/// `sy` — row 99 of the `MASS` section.
+const T_SY: ParmType = ParmType(99);
 
-/// The 99 `MASS` rows of `gaff2.dat` — the atom-type declarations.
+/// The 100 `MASS` rows of `gaff2.dat` — the atom-type declarations.
 ///
 /// This section's row order IS the [`ParmType`] numbering.
 #[rustfmt::skip]
@@ -246,6 +248,7 @@ pub const GAFF2_MASSES: &[ParmMassRow] = &[
     ParmMassRow { atom_type: "h4", mass: 1.008, polarizability: 0.135 },
     ParmMassRow { atom_type: "h5", mass: 1.008, polarizability: 0.135 },
     ParmMassRow { atom_type: "ha", mass: 1.008, polarizability: 0.135 },
+    ParmMassRow { atom_type: "hb", mass: 1.008, polarizability: 0.135 },
     ParmMassRow { atom_type: "hc", mass: 1.008, polarizability: 0.135 },
     ParmMassRow { atom_type: "hn", mass: 1.008, polarizability: 0.161 },
     ParmMassRow { atom_type: "ho", mass: 1.008, polarizability: 0.135 },
@@ -314,10 +317,10 @@ pub const GAFF2_MASSES: &[ParmMassRow] = &[
     ParmMassRow { atom_type: "s6", mass: 32.06, polarizability: 2.900 },
     ParmMassRow { atom_type: "sh", mass: 32.06, polarizability: 2.900 },
     ParmMassRow { atom_type: "ss", mass: 32.06, polarizability: 2.900 },
-    ParmMassRow { atom_type: "sx", mass: 32.06, polarizability: 2.900 },
-    ParmMassRow { atom_type: "sy", mass: 32.06, polarizability: 2.900 },
     ParmMassRow { atom_type: "sp", mass: 32.06, polarizability: 2.900 },
     ParmMassRow { atom_type: "sq", mass: 32.06, polarizability: 2.900 },
+    ParmMassRow { atom_type: "sx", mass: 32.06, polarizability: 2.900 },
+    ParmMassRow { atom_type: "sy", mass: 32.06, polarizability: 2.900 },
 ];
 
 /// The 1335 `BOND` rows of `gaff2.dat`.
@@ -11377,7 +11380,7 @@ pub const GAFF2_ANGLES: &[ParmAngleRow] = &[
     ParmAngleRow { i: T_SY, j: T_SY, k: T_SY, force_constant: 66.5, angle_deg: 103.29 },
 ];
 
-/// The 1817 `DIHE` rows of `gaff2.dat`, in file order.
+/// The 1814 `DIHE` rows of `gaff2.dat`, in file order.
 ///
 /// 607 of them carry a wildcard slot (`None`), and the order is
 /// significant: consecutive rows with the same quartet are the cosine terms of one
@@ -11418,8 +11421,8 @@ pub const GAFF2_DIHEDRALS: &[ParmDihedralRow] = &[
     ParmDihedralRow { i: None, j: Some(T_C), k: Some(T_P3), l: None, divisor: 4, barrier: 6.200, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_C), k: Some(T_P4), l: None, divisor: 4, barrier: 5.400, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_C), k: Some(T_PX), l: None, divisor: 4, barrier: 5.400, phase_deg: 180.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_C), k: Some(T_P5), l: None, divisor: 4, barrier: 4.000, phase_deg: 0.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_C), k: Some(T_PY), l: None, divisor: 4, barrier: 4.000, phase_deg: 0.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_C), k: Some(T_P5), l: None, divisor: 6, barrier: 6.000, phase_deg: 0.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_C), k: Some(T_PY), l: None, divisor: 6, barrier: 6.000, phase_deg: 0.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_C), k: Some(T_SH), l: None, divisor: 2, barrier: 4.500, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_C), k: Some(T_SS), l: None, divisor: 2, barrier: 6.200, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_C), k: Some(T_S4), l: None, divisor: 4, barrier: 0.800, phase_deg: 180.000, periodicity: 2, more_terms: false },
@@ -11448,11 +11451,11 @@ pub const GAFF2_DIHEDRALS: &[ParmDihedralRow] = &[
     ParmDihedralRow { i: None, j: Some(T_C1), k: Some(T_N3), l: None, divisor: 2, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_C1), k: Some(T_N4), l: None, divisor: 3, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_C1), k: Some(T_NA), l: None, divisor: 2, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_C1), k: Some(T_NB), l: None, divisor: 2, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_C1), k: Some(T_NC), l: None, divisor: 2, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_C1), k: Some(T_ND), l: None, divisor: 2, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_C1), k: Some(T_NE), l: None, divisor: 2, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_C1), k: Some(T_NF), l: None, divisor: 2, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_C1), k: Some(T_NB), l: None, divisor: 1, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_C1), k: Some(T_NC), l: None, divisor: 1, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_C1), k: Some(T_ND), l: None, divisor: 1, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_C1), k: Some(T_NE), l: None, divisor: 1, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_C1), k: Some(T_NF), l: None, divisor: 1, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_C1), k: Some(T_NH), l: None, divisor: 2, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_C1), k: Some(T_NO), l: None, divisor: 2, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_C1), k: Some(T_OH), l: None, divisor: 1, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
@@ -11553,9 +11556,9 @@ pub const GAFF2_DIHEDRALS: &[ParmDihedralRow] = &[
     ParmDihedralRow { i: None, j: Some(T_C3), k: Some(T_N), l: None, divisor: 6, barrier: 0.000, phase_deg: 0.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_CX), k: Some(T_N), l: None, divisor: 6, barrier: 0.000, phase_deg: 0.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_CY), k: Some(T_N), l: None, divisor: 6, barrier: 0.000, phase_deg: 0.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_C3), k: Some(T_N2), l: None, divisor: 6, barrier: 0.000, phase_deg: 0.000, periodicity: 3, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_C3), k: Some(T_NE), l: None, divisor: 6, barrier: 0.000, phase_deg: 0.000, periodicity: 3, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_C3), k: Some(T_NF), l: None, divisor: 6, barrier: 0.000, phase_deg: 0.000, periodicity: 3, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_C3), k: Some(T_N2), l: None, divisor: 3, barrier: 0.000, phase_deg: 0.000, periodicity: 3, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_C3), k: Some(T_NE), l: None, divisor: 3, barrier: 0.000, phase_deg: 0.000, periodicity: 3, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_C3), k: Some(T_NF), l: None, divisor: 3, barrier: 0.000, phase_deg: 0.000, periodicity: 3, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_C3), k: Some(T_N3), l: None, divisor: 6, barrier: 1.800, phase_deg: 0.000, periodicity: 3, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_C3), k: Some(T_N4), l: None, divisor: 9, barrier: 1.400, phase_deg: 0.000, periodicity: 3, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_C3), k: Some(T_NA), l: None, divisor: 6, barrier: 0.000, phase_deg: 0.000, periodicity: 2, more_terms: false },
@@ -11588,7 +11591,7 @@ pub const GAFF2_DIHEDRALS: &[ParmDihedralRow] = &[
     ParmDihedralRow { i: None, j: Some(T_CA), k: Some(T_N2), l: None, divisor: 2, barrier: 0.000, phase_deg: 180.000, periodicity: 3, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_CA), k: Some(T_NE), l: None, divisor: 2, barrier: 0.000, phase_deg: 180.000, periodicity: 3, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_CA), k: Some(T_NF), l: None, divisor: 2, barrier: 0.000, phase_deg: 180.000, periodicity: 3, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_CA), k: Some(T_N4), l: None, divisor: 4, barrier: 7.000, phase_deg: 0.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_CA), k: Some(T_N4), l: None, divisor: 6, barrier: 10.500, phase_deg: 0.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_CA), k: Some(T_NA), l: None, divisor: 4, barrier: 1.200, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_CA), k: Some(T_NB), l: None, divisor: 2, barrier: 9.60, phase_deg: 180.0, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_CA), k: Some(T_NC), l: None, divisor: 2, barrier: 9.60, phase_deg: 180.0, periodicity: 2, more_terms: false },
@@ -11622,7 +11625,7 @@ pub const GAFF2_DIHEDRALS: &[ParmDihedralRow] = &[
     ParmDihedralRow { i: None, j: Some(T_N), k: Some(T_NE), l: None, divisor: 2, barrier: 0.800, phase_deg: 0.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N), k: Some(T_NF), l: None, divisor: 2, barrier: 0.800, phase_deg: 0.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N), k: Some(T_N3), l: None, divisor: 4, barrier: 4.300, phase_deg: 0.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_N), k: Some(T_N4), l: None, divisor: 4, barrier: 3.800, phase_deg: 0.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_N), k: Some(T_N4), l: None, divisor: 6, barrier: 5.700, phase_deg: 0.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N), k: Some(T_NA), l: None, divisor: 4, barrier: 2.800, phase_deg: 0.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N), k: Some(T_NC), l: None, divisor: 2, barrier: 9.600, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N), k: Some(T_ND), l: None, divisor: 2, barrier: 9.600, phase_deg: 180.000, periodicity: 2, more_terms: false },
@@ -11663,11 +11666,11 @@ pub const GAFF2_DIHEDRALS: &[ParmDihedralRow] = &[
     ParmDihedralRow { i: None, j: Some(T_N1), k: Some(T_N3), l: None, divisor: 2, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N1), k: Some(T_N4), l: None, divisor: 3, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N1), k: Some(T_NA), l: None, divisor: 2, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_N1), k: Some(T_NB), l: None, divisor: 2, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_N1), k: Some(T_NC), l: None, divisor: 2, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_N1), k: Some(T_ND), l: None, divisor: 2, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_N1), k: Some(T_NE), l: None, divisor: 2, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_N1), k: Some(T_NF), l: None, divisor: 2, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_N1), k: Some(T_NB), l: None, divisor: 1, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_N1), k: Some(T_NC), l: None, divisor: 1, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_N1), k: Some(T_ND), l: None, divisor: 1, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_N1), k: Some(T_NE), l: None, divisor: 1, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_N1), k: Some(T_NF), l: None, divisor: 1, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N1), k: Some(T_NH), l: None, divisor: 2, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N1), k: Some(T_NO), l: None, divisor: 2, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N1), k: Some(T_OH), l: None, divisor: 1, barrier: 0.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
@@ -11753,8 +11756,8 @@ pub const GAFF2_DIHEDRALS: &[ParmDihedralRow] = &[
     ParmDihedralRow { i: None, j: Some(T_N2), k: Some(T_P5), l: None, divisor: 3, barrier: 20.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_NE), k: Some(T_P5), l: None, divisor: 3, barrier: 3.000, phase_deg: 180.000, periodicity: 3, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_NF), k: Some(T_P5), l: None, divisor: 3, barrier: 3.000, phase_deg: 180.000, periodicity: 3, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_NE), k: Some(T_PX), l: None, divisor: 3, barrier: 3.000, phase_deg: 180.000, periodicity: 3, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_NF), k: Some(T_PX), l: None, divisor: 3, barrier: 3.000, phase_deg: 180.000, periodicity: 3, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_NE), k: Some(T_PX), l: None, divisor: 2, barrier: 2.000, phase_deg: 180.000, periodicity: 3, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_NF), k: Some(T_PX), l: None, divisor: 2, barrier: 2.000, phase_deg: 180.000, periodicity: 3, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N2), k: Some(T_SH), l: None, divisor: 1, barrier: 2.100, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_NE), k: Some(T_SH), l: None, divisor: 1, barrier: 2.100, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_NF), k: Some(T_SH), l: None, divisor: 1, barrier: 2.100, phase_deg: 180.000, periodicity: 2, more_terms: false },
@@ -11777,8 +11780,8 @@ pub const GAFF2_DIHEDRALS: &[ParmDihedralRow] = &[
     ParmDihedralRow { i: None, j: Some(T_N3), k: Some(T_NA), l: None, divisor: 4, barrier: 6.400, phase_deg: 0.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N3), k: Some(T_NH), l: None, divisor: 4, barrier: 7.600, phase_deg: 0.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N3), k: Some(T_NO), l: None, divisor: 4, barrier: 16.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_N3), k: Some(T_OH), l: None, divisor: 1, barrier: 2.200, phase_deg: 0.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_N3), k: Some(T_OS), l: None, divisor: 1, barrier: 1.800, phase_deg: 0.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_N3), k: Some(T_OH), l: None, divisor: 2, barrier: 4.400, phase_deg: 0.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_N3), k: Some(T_OS), l: None, divisor: 2, barrier: 3.600, phase_deg: 0.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N3), k: Some(T_P2), l: None, divisor: 2, barrier: 6.400, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N3), k: Some(T_PE), l: None, divisor: 2, barrier: 6.400, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N3), k: Some(T_PF), l: None, divisor: 2, barrier: 6.400, phase_deg: 180.000, periodicity: 2, more_terms: false },
@@ -11787,8 +11790,8 @@ pub const GAFF2_DIHEDRALS: &[ParmDihedralRow] = &[
     ParmDihedralRow { i: None, j: Some(T_N3), k: Some(T_PX), l: None, divisor: 4, barrier: 8.400, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N3), k: Some(T_P5), l: None, divisor: 6, barrier: 18.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N3), k: Some(T_PY), l: None, divisor: 6, barrier: 18.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_N3), k: Some(T_SH), l: None, divisor: 1, barrier: 3.100, phase_deg: 0.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_N3), k: Some(T_SS), l: None, divisor: 1, barrier: 2.600, phase_deg: 0.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_N3), k: Some(T_SH), l: None, divisor: 2, barrier: 6.200, phase_deg: 0.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_N3), k: Some(T_SS), l: None, divisor: 2, barrier: 5.200, phase_deg: 0.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N3), k: Some(T_S4), l: None, divisor: 4, barrier: 15.000, phase_deg: 0.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N3), k: Some(T_SX), l: None, divisor: 4, barrier: 15.000, phase_deg: 0.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N3), k: Some(T_S6), l: None, divisor: 6, barrier: 18.800, phase_deg: 0.000, periodicity: 2, more_terms: false },
@@ -11803,8 +11806,8 @@ pub const GAFF2_DIHEDRALS: &[ParmDihedralRow] = &[
     ParmDihedralRow { i: None, j: Some(T_N4), k: Some(T_PE), l: None, divisor: 3, barrier: 0.500, phase_deg: 180.000, periodicity: 3, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N4), k: Some(T_PF), l: None, divisor: 3, barrier: 0.500, phase_deg: 180.000, periodicity: 3, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N4), k: Some(T_P3), l: None, divisor: 6, barrier: 0.900, phase_deg: 0.000, periodicity: 3, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_N4), k: Some(T_P4), l: None, divisor: 4, barrier: 0.200, phase_deg: 0.000, periodicity: 3, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_N4), k: Some(T_PX), l: None, divisor: 4, barrier: 0.200, phase_deg: 0.000, periodicity: 3, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_N4), k: Some(T_P4), l: None, divisor: 6, barrier: 0.300, phase_deg: 0.000, periodicity: 3, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_N4), k: Some(T_PX), l: None, divisor: 6, barrier: 0.300, phase_deg: 0.000, periodicity: 3, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N4), k: Some(T_P5), l: None, divisor: 9, barrier: 0.800, phase_deg: 0.000, periodicity: 3, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N4), k: Some(T_PY), l: None, divisor: 9, barrier: 0.800, phase_deg: 0.000, periodicity: 3, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_N4), k: Some(T_SH), l: None, divisor: 3, barrier: 2.000, phase_deg: 0.000, periodicity: 3, more_terms: false },
@@ -11818,9 +11821,9 @@ pub const GAFF2_DIHEDRALS: &[ParmDihedralRow] = &[
     ParmDihedralRow { i: None, j: Some(T_NA), k: Some(T_NO), l: None, divisor: 4, barrier: 24.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_NA), k: Some(T_OH), l: None, divisor: 2, barrier: 2.000, phase_deg: 0.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_NA), k: Some(T_OS), l: None, divisor: 2, barrier: 1.300, phase_deg: 0.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_NA), k: Some(T_P2), l: None, divisor: 1, barrier: 1.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_NA), k: Some(T_PE), l: None, divisor: 1, barrier: 1.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_NA), k: Some(T_PF), l: None, divisor: 1, barrier: 1.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_NA), k: Some(T_P2), l: None, divisor: 2, barrier: 2.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_NA), k: Some(T_PE), l: None, divisor: 2, barrier: 2.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_NA), k: Some(T_PF), l: None, divisor: 2, barrier: 2.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_NA), k: Some(T_P3), l: None, divisor: 4, barrier: 5.800, phase_deg: 0.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_NA), k: Some(T_P4), l: None, divisor: 4, barrier: 4.400, phase_deg: 0.000, periodicity: 3, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_NA), k: Some(T_PX), l: None, divisor: 4, barrier: 4.400, phase_deg: 0.000, periodicity: 3, more_terms: false },
@@ -11856,9 +11859,9 @@ pub const GAFF2_DIHEDRALS: &[ParmDihedralRow] = &[
     ParmDihedralRow { i: None, j: Some(T_NO), k: Some(T_NO), l: None, divisor: 4, barrier: 7.200, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_NO), k: Some(T_OH), l: None, divisor: 2, barrier: 7.800, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_NO), k: Some(T_OS), l: None, divisor: 2, barrier: 6.000, phase_deg: 180.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_NO), k: Some(T_P2), l: None, divisor: 1, barrier: 0.300, phase_deg: 180.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_NO), k: Some(T_PE), l: None, divisor: 1, barrier: 0.300, phase_deg: 180.000, periodicity: 2, more_terms: false },
-    ParmDihedralRow { i: None, j: Some(T_NO), k: Some(T_PF), l: None, divisor: 1, barrier: 0.300, phase_deg: 180.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_NO), k: Some(T_P2), l: None, divisor: 2, barrier: 0.600, phase_deg: 180.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_NO), k: Some(T_PE), l: None, divisor: 2, barrier: 0.600, phase_deg: 180.000, periodicity: 2, more_terms: false },
+    ParmDihedralRow { i: None, j: Some(T_NO), k: Some(T_PF), l: None, divisor: 2, barrier: 0.600, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_NO), k: Some(T_P3), l: None, divisor: 4, barrier: 7.600, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_NO), k: Some(T_P4), l: None, divisor: 4, barrier: 2.300, phase_deg: 180.000, periodicity: 2, more_terms: false },
     ParmDihedralRow { i: None, j: Some(T_NO), k: Some(T_PX), l: None, divisor: 4, barrier: 2.300, phase_deg: 180.000, periodicity: 2, more_terms: false },
@@ -12379,9 +12382,6 @@ pub const GAFF2_DIHEDRALS: &[ParmDihedralRow] = &[
     ParmDihedralRow { i: Some(T_HC), j: Some(T_C3), k: Some(T_CS), l: Some(T_C3), divisor: 1, barrier: 0.110, phase_deg: 0.000, periodicity: 3, more_terms: false },
     ParmDihedralRow { i: Some(T_C), j: Some(T_C3), k: Some(T_N), l: Some(T_C), divisor: 1, barrier: 0.390, phase_deg: 180.000, periodicity: 2, more_terms: true },
     ParmDihedralRow { i: Some(T_C), j: Some(T_C3), k: Some(T_N), l: Some(T_C), divisor: 1, barrier: 0.640, phase_deg: 0.000, periodicity: 1, more_terms: false },
-    ParmDihedralRow { i: Some(T_C3), j: Some(T_C3), k: Some(T_N), l: Some(T_C), divisor: 1, barrier: 0.650, phase_deg: 180.000, periodicity: 4, more_terms: true },
-    ParmDihedralRow { i: Some(T_C3), j: Some(T_C3), k: Some(T_N), l: Some(T_C), divisor: 1, barrier: 0.030, phase_deg: 180.000, periodicity: 3, more_terms: true },
-    ParmDihedralRow { i: Some(T_C3), j: Some(T_C3), k: Some(T_N), l: Some(T_C), divisor: 1, barrier: 2.260, phase_deg: 0.000, periodicity: 1, more_terms: false },
     ParmDihedralRow { i: Some(T_C3), j: Some(T_C3), k: Some(T_N), l: Some(T_C), divisor: 1, barrier: 0.100, phase_deg: 180.000, periodicity: 4, more_terms: true },
     ParmDihedralRow { i: Some(T_C3), j: Some(T_C3), k: Some(T_N), l: Some(T_C), divisor: 1, barrier: 0.170, phase_deg: 0.000, periodicity: 3, more_terms: true },
     ParmDihedralRow { i: Some(T_C3), j: Some(T_C3), k: Some(T_N), l: Some(T_C), divisor: 1, barrier: 1.020, phase_deg: 180.000, periodicity: 1, more_terms: false },
@@ -13203,9 +13203,9 @@ pub const GAFF2_DIHEDRALS: &[ParmDihedralRow] = &[
     ParmDihedralRow { i: Some(T_C3), j: Some(T_SY), k: Some(T_SY), l: Some(T_C3), divisor: 1, barrier: 1.290, phase_deg: 180.000, periodicity: 1, more_terms: false },
 ];
 
-/// The 38 `IMPROPER` rows of `gaff2.dat`, in file order.
+/// The 42 `IMPROPER` rows of `gaff2.dat`, in file order.
 ///
-/// 8 of them carry a wildcard slot (`None`). The CENTRAL atom is
+/// 12 of them carry a wildcard slot (`None`). The CENTRAL atom is
 /// [`k`](ParmImproperRow::k), the third — that is AMBER's convention, not molrs's.
 #[rustfmt::skip]
 pub const GAFF2_IMPROPERS: &[ParmImproperRow] = &[
@@ -13217,12 +13217,16 @@ pub const GAFF2_IMPROPERS: &[ParmImproperRow] = &[
     ParmImproperRow { i: None, j: None, k: Some(T_NA), l: Some(T_HN), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
     ParmImproperRow { i: None, j: Some(T_C3), k: Some(T_N), l: Some(T_C3), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
     ParmImproperRow { i: None, j: Some(T_N2), k: Some(T_CA), l: Some(T_N2), barrier: 10.5, phase_deg: 180.0, periodicity: 2 },
+    ParmImproperRow { i: None, j: None, k: Some(T_CC), l: None, barrier: 10.5, phase_deg: 180.0, periodicity: 2 },
+    ParmImproperRow { i: None, j: None, k: Some(T_CD), l: None, barrier: 10.5, phase_deg: 180.0, periodicity: 2 },
+    ParmImproperRow { i: None, j: None, k: Some(T_NC), l: None, barrier: 10.5, phase_deg: 180.0, periodicity: 2 },
+    ParmImproperRow { i: None, j: None, k: Some(T_ND), l: None, barrier: 10.5, phase_deg: 180.0, periodicity: 2 },
     ParmImproperRow { i: Some(T_C), j: Some(T_C2), k: Some(T_C2), l: Some(T_C3), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
     ParmImproperRow { i: Some(T_C), j: Some(T_CA), k: Some(T_CA), l: Some(T_C3), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
     ParmImproperRow { i: Some(T_C), j: Some(T_C3), k: Some(T_N), l: Some(T_HN), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
     ParmImproperRow { i: Some(T_C), j: Some(T_C3), k: Some(T_N), l: Some(T_O), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
     ParmImproperRow { i: Some(T_C2), j: Some(T_C2), k: Some(T_NA), l: Some(T_C3), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
-    ParmImproperRow { i: Some(T_C2), j: Some(T_C), k: Some(T_C2), l: Some(T_C3), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
+    ParmImproperRow { i: Some(T_C), j: Some(T_C2), k: Some(T_C2), l: Some(T_C3), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
     ParmImproperRow { i: Some(T_C2), j: Some(T_C3), k: Some(T_C2), l: Some(T_HC), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
     ParmImproperRow { i: Some(T_C2), j: Some(T_C3), k: Some(T_CA), l: Some(T_HC), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
     ParmImproperRow { i: Some(T_C2), j: Some(T_HC), k: Some(T_C), l: Some(T_O), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
@@ -13239,21 +13243,22 @@ pub const GAFF2_IMPROPERS: &[ParmImproperRow] = &[
     ParmImproperRow { i: Some(T_CA), j: Some(T_CA), k: Some(T_CA), l: Some(T_I), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
     ParmImproperRow { i: Some(T_CA), j: Some(T_CA), k: Some(T_C), l: Some(T_OH), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
     ParmImproperRow { i: Some(T_CA), j: Some(T_CA), k: Some(T_NA), l: Some(T_C3), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
-    ParmImproperRow { i: Some(T_CA), j: Some(T_C), k: Some(T_CA), l: Some(T_C3), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
+    ParmImproperRow { i: Some(T_C), j: Some(T_CA), k: Some(T_CA), l: Some(T_C3), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
     ParmImproperRow { i: Some(T_CA), j: Some(T_HC), k: Some(T_C), l: Some(T_O), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
     ParmImproperRow { i: Some(T_CA), j: Some(T_N2), k: Some(T_CA), l: Some(T_N2), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
     ParmImproperRow { i: Some(T_HC), j: Some(T_O), k: Some(T_C), l: Some(T_OH), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
     ParmImproperRow { i: Some(T_HC), j: Some(T_O), k: Some(T_C), l: Some(T_OS), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
     ParmImproperRow { i: Some(T_N2), j: Some(T_C2), k: Some(T_CA), l: Some(T_N2), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
-    ParmImproperRow { i: Some(T_N2), j: Some(T_CA), k: Some(T_CA), l: Some(T_N2), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
+    ParmImproperRow { i: Some(T_CA), j: Some(T_N2), k: Some(T_CA), l: Some(T_N2), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
     ParmImproperRow { i: Some(T_NA), j: Some(T_N2), k: Some(T_CA), l: Some(T_N2), barrier: 1.1, phase_deg: 180.0, periodicity: 2 },
 ];
 
-/// The 97 `NONBON` rows of `gaff2.dat` (`MOD4  RE`: R* and epsilon).
+/// The 98 `NONBON` rows of `gaff2.dat` (`MOD4  RE`: R* and epsilon).
 #[rustfmt::skip]
 pub const GAFF2_NONBONDED: &[ParmNonbondedRow] = &[
     ParmNonbondedRow { atom_type: T_HC, r_min_half: 1.4593, epsilon: 0.0208 },
     ParmNonbondedRow { atom_type: T_HA, r_min_half: 1.4735, epsilon: 0.0161 },
+    ParmNonbondedRow { atom_type: T_HB, r_min_half: 1.4735, epsilon: 0.0161 },
     ParmNonbondedRow { atom_type: T_HN, r_min_half: 0.6210, epsilon: 0.0100 },
     ParmNonbondedRow { atom_type: T_HO, r_min_half: 0.3019, epsilon: 0.0047 },
     ParmNonbondedRow { atom_type: T_HS, r_min_half: 0.6112, epsilon: 0.0124 },
@@ -13351,7 +13356,7 @@ pub const GAFF2_NONBONDED: &[ParmNonbondedRow] = &[
     ParmNonbondedRow { atom_type: T_PF, r_min_half: 2.0732, epsilon: 0.2295 },
 ];
 
-/// `gaff2.dat` as one typed table — 615 of its rows are wildcard rows.
+/// `gaff2.dat` as one typed table — 619 of its rows are wildcard rows.
 pub const GAFF2: ParmTable = ParmTable {
     name: "gaff2.dat",
     masses: GAFF2_MASSES,
