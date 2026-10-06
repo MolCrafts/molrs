@@ -41,6 +41,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use molrs::store::schema::block_names::{ANGLES, BONDS, DIHEDRALS, IMPROPERS};
 use molrs::system::molgraph::PropValue;
 use molrs::{AtomId, Atomistic};
 
@@ -148,17 +149,17 @@ pub(crate) fn annotate_mmff(
     let ctx = build_context(graph, params, variant)?;
     let mut m = Match {
         nodes: annotate_atoms(&ctx),
-        bonds: annotate_bonds(graph, &ctx),
         ..Match::default()
     };
+    *m.link_mut(BONDS) = annotate_bonds(graph, &ctx);
 
     // Enumerate angles + dihedrals on the graph (impropers are MMFF-specific and
     // are enumerated by `annotate_impropers` below).
     crate::ff::typifier::topology::typify_bonded_topology(graph)?;
 
-    m.angles = annotate_angles(graph, &ctx);
-    m.dihedrals = annotate_dihedrals(graph, &ctx);
-    m.impropers = annotate_impropers(graph, &ctx)?;
+    *m.link_mut(ANGLES) = annotate_angles(graph, &ctx);
+    *m.link_mut(DIHEDRALS) = annotate_dihedrals(graph, &ctx);
+    *m.link_mut(IMPROPERS) = annotate_impropers(graph, &ctx)?;
 
     m.declare_styles_of(library);
     let used: Vec<String> = ctx.types.iter().map(u8::to_string).collect();

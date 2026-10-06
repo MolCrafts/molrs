@@ -169,7 +169,10 @@ print("force balance:", np.abs(forces.sum(axis=0)).max())
 
 A typifier of your own subclasses `molrs.ff.typifier.Typifier` and implements
 only `match(graph)`. It returns a `Match` with one mapping of annotations per
-atom (and optionally per bond, angle, …). A type annotation is
+atom and, in `links`, per term of any relation kind: keyed by a relation class
+(`Bond`, `Angle`, …) or a kind name (`"bonds"`, or a custom
+`"urey_bradleys"` the graph registered with `register_kind`, whose types land
+in the category `urey_bradley`). A type annotation is
 `(style, name, endpoints, params)`; endpoints are empty for an atom type. The
 base class's `typify` copies the graph, stamps the match onto the copy and
 defines the types in its output force field:

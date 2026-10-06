@@ -3129,16 +3129,22 @@ class Match:
     """What a typifier's ``match`` assigns to one graph.
 
     ``nodes`` is positional against ``graph.atoms``; ``links`` maps a relation
-    class (``Bond``, ``Angle``, ``Dihedral``, ``Improper``) to rows positional
-    against ``graph.links.exact_bucket(cls)`` — the kind's own rows, so an
-    improper never shifts a dihedral position. An unknown kind raises
-    ``TypeError``. ``styles`` are ``(category, style, params)`` to declare, in
-    order; ``pairs`` are ``(style, name, endpoints, params)`` pair rows."""
+    kind to rows positional against that kind's own rows, so an improper never
+    shifts a dihedral position. A key is a relation class (``Bond``, ``Angle``,
+    ``Dihedral``, ``Improper``, ``Port``; rows as
+    ``graph.links.exact_bucket(cls)``) or a kind name (``"bonds"``, or a
+    custom ``"urey_bradleys"`` from ``graph.register_kind``; rows as
+    ``graph.relation_ids(kind)``). A type annotation under a kind defines a
+    type of the category whose block the kind is (``urey_bradleys`` →
+    ``urey_bradley``). Any other key raises ``TypeError``, a kind named twice
+    ``ValueError``. ``styles`` are ``(category, style, params)`` to declare,
+    in order; ``pairs`` are ``(style, name, endpoints, params)`` pair rows."""
 
     def __init__(
         self,
         nodes: Sequence[_AbcMapping[str, Annotation]],
-        links: _AbcMapping[type, Sequence[_AbcMapping[str, Annotation]]] | None = None,
+        links: _AbcMapping[type | str, Sequence[_AbcMapping[str, Annotation]]]
+        | None = None,
         *,
         styles: Sequence[tuple[str, str, dict[str, ParamValue]]] = (),
         pairs: Sequence[tuple[str, str, Sequence[str], dict[str, ParamValue]]] = (),

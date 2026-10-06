@@ -103,6 +103,29 @@ nothing declares, is a style category like `bond`.
   `ForceField` pickled by 0.15 does not unpickle in 0.16.
 - **C API.** `molrs_ff_def_style` accepts the same categories as
   `ForceField::def_style`.
+- **Rust: a typifier `Match` carries any relation kind.** The fixed fields
+  `bonds`, `angles`, `dihedrals` and `impropers` are gone; `Match::links`
+  (`IndexMap<String, Vec<Annotations>>`) maps a graph relation kind (the
+  Frame block of its category: `"bonds"`, a custom `"urey_bradleys"`) to
+  rows positional against that kind's own rows. Replace `m.bonds = rows` with
+  `*m.link_mut("bonds") = rows` (or `m.links.insert(..)`), `m.bonds.push(a)`
+  with `m.link_mut("bonds").push(a)`. A type under a kind defines a type of
+  the category whose block the kind is (`typifier::link_category`); a
+  non-empty vector for a kind the graph lacks is an error naming it.
+  `write_onto` defines the kinds in the graph's registration order, as
+  before for the four built-ins.
+- **Rust: `Match::assign_terms(graph, kind, library, key)`** types every row
+  of a relation kind against the library's type rows of its category by the
+  atoms' types: slot by slot with wildcards, in the orders the category's
+  `EndpointOrder` allows (reversible, ordered or unordered), fewest wildcards
+  first, then table order (molrec's rule). It returns the positions nothing
+  matched.
+- **Python: `Match(nodes, links=...)` takes a kind name as a key** as well
+  as a relation class (`{Bond: rows, "urey_bradleys": rows}`); a relation
+  class other than `Bond`/`Angle`/`Dihedral`/`Improper`/`Port`, or a key
+  that is neither class nor `str`, still raises `TypeError`, and naming one
+  kind twice (`{Bond: …, "bonds": …}`) `ValueError`. `repr(Match)` lists the
+  kinds: `Match(nodes=2, links={bonds=1}, styles=0, pairs=0)`.
 
 ### Torsion algebra and `dihedral nharmonic`
 
