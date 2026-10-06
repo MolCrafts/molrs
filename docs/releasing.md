@@ -27,7 +27,9 @@ Check version metadata before tagging. One version appears in:
 - `version` and the `molcrafts-molrs` / `molcrafts-molrs-ffi` dependency
   versions in `molrs-ffi/`, `molrs-python/`, `molrs-wasm/`, `molrs-capi/`
   and `molrs-cxxapi/Cargo.toml` (the npm `package.json` is generated from
-  `molrs-wasm/Cargo.toml` by wasm-pack);
+  `molrs-wasm/Cargo.toml` by wasm-pack), and in
+  `molrs-ext-example/Cargo.toml` (unpublished, a standalone workspace kept
+  in step);
 - `version` in `molrs-python/pyproject.toml`;
 - the `molcrafts-molrs*` entries of every committed `Cargo.lock` (the root
   one and one per binder), and the editable `molcrafts-molrs` entry of
