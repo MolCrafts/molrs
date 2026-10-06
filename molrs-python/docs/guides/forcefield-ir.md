@@ -141,6 +141,7 @@ order; molrs gives `0.003384791688934619`).
 | LAMMPS data / `improper_coeff` | I, J, K, L | as written |
 | GROMACS funct 4 (periodic), funct 2 (harmonic) | i, j, k, l (GROMACS prices φ(i,j,k,l)) | as written |
 | AMBER prmtop, frcmod, GAFF typifier | i, j, K, l (centre third) | as written |
+| chamber prmtop `CHARMM_IMPROPERS` (`improper harmonic`) | I (centre), J, K, L | as written |
 | OpenMM `<Improper class1 … class4>`, `ordering` default / `amber` | c1 = centre; OpenMM prices φ(c2, c3, c1, c4) | (c2, c3, c1, c4); the writer writes the inverse |
 | OpenMM, `ordering="charmm"`, no wildcard | OpenMM prices φ(c1, c2, c3, c4) | as written |
 | OpenMM, `ordering="smirnoff"` | three permutations averaged | refused |
@@ -202,8 +203,9 @@ parameters:
 
 **Per-pair exceptions LAMMPS cannot express** — a GROMACS `[ pairs ]` row
 with explicit parameters, an OpenMM `NonbondedForce` exception, an AMBER
-dihedral whose `SCEE`/`SCNB` differ from the field's (the prmtop reader
-refuses a non-uniform pair today) — are per-instance float columns on the
+dihedral whose `SCEE`/`SCNB` differ from the field's (the prmtop frame
+reader writes them, see [AMBER prmtop](#amber-prmtop)) — are per-instance
+float columns on the
 Frame's `pairs` block, the rows the pair kernels already price (`atomi`,
 `atomj`, `is_14`):
 
@@ -263,6 +265,7 @@ their readers map onto the IR:
 | CHARMM `.prm` `ANGLES` `Ktheta Theta0 Kub S0` | as written (CHARMM has no ½) |
 | GROMACS `[ angletypes ]` funct 5 `θ₀ k_θ r13 k_UB` (½k forms, nm, kJ/mol) | `k = k_θ/(2·4.184)`, `theta0 = θ₀`, `k_ub = k_UB/(2·418.4)`, `r_ub = 10·r13` |
 | OpenMM `<AmoebaUreyBradleyForce><UreyBradley … k d>` (OpenMM adds a `HarmonicBondForce` term with `2k`, so `k` is un-halved) | `k_ub = k/418.4`, `r_ub = 10·d`, joined with the `HarmonicAngleForce` row of the same classes |
+| chamber prmtop `CHARMM_UREY_BRADLEY` (i, k, type), `…_FORCE_CONSTANT` `K_ub`, `…_EQUIL_VALUE` | every angle of the file `angle charmm`: `k = TK`, `theta0`, and `k_ub = K_ub`, `r_ub` of the term on its end atoms (0, 0 without one) |
 
 ## CMAP
 
@@ -371,6 +374,13 @@ spline, so energies off the grid points differ from LAMMPS's at the
 interpolation's accuracy. GROMACS `[ cmaptypes ]` lists CHARMM's grid; its
 reader must be checked against a GROMACS energy before it is trusted.
 
+A prmtop stores a map as ParmEd's `CmapType.grid` — CHARMM's parameter-file
+order, φ-major from −180° — in `CHARMM_CMAP_PARAMETER_nn` (a chamber file)
+or `CMAP_PARAMETER_nn` (ff19SB), and the prmtop reader takes it as written.
+sander's CMAP energy on a CHARMM36 alanine dipeptide and on an ff19SB one
+off the grid points equals molrs's and LAMMPS's to 1e-14 relative (see
+[AMBER prmtop](#amber-prmtop)): sander interpolates as LAMMPS does.
+
 ## Torsion forms and their exact conversions
 
 Every Class-I torsion and dihedral-angle improper style above is a finite
@@ -462,6 +472,45 @@ for input rounded on print. A test evaluates every registered kernel on
 random geometries against its form's series, so the algebra and the kernels
 cannot drift.
 
+## AMBER prmtop
+
+AMBER is read, never written (no prmtop writer). The prmtop force-field
+reader (`AmberPrmtopFfReader`) and frame reader (`read_amber_prmtop`) name
+every type and row alike; a chamber prmtop (ParmEd's `chamber`, `%FLAG
+CTITLE`) reads through the same pair.
+
+| prmtop | IR |
+|---|---|
+| `BOND_*` `RK`, `ANGLE_*` `TK` (no ½), radians | `bond harmonic`, `angle harmonic` (`angle charmm` in a chamber file, see [Urey–Bradley](#ureybradley)) |
+| `DIHEDRAL_*` `PK`, `PN`, phase; the rows of one quartet and each negative-`PN` chain are one torsion | `dihedral periodic` `k<m>`, `periodicity<m>`, `phase<m>` (degrees), terms sorted by periodicity |
+| an improper (negative 4th pointer) | `improper periodic` in AMBER's order; a multi-term one (several rows, or a chain) is one frame row and one type `<quartet>@<n>` per term, as LAMMPS `cvff` holds one term |
+| a phase within 0.004 rad of ±π | ±180° exactly, as sander's `rdparm` (tleap writes π as `3.14159400`) |
+| `CHARMM_IMPROPERS` `K_ψ (ψ − ψ₀)²` | `improper harmonic` `k = K_ψ`, `chi0 = ψ₀`, centre first; ψ₀ other than 0° / 180° refused (LAMMPS prices \|ψ\|) |
+| `CHARMM_CMAP_*` / `CMAP_*` | `cmap charmm`, a type per map named by the five atom types (qualified `@<residue>` of the Cα when one name stands for two maps, as ff19SB's do); the frame's `cmaps` block |
+| `LENNARD_JONES_ACOEF/BCOEF` via ICO | `lj/cut` (`lj/charmm` in a chamber file) self rows; a cross row where the entry is not Lorentz–Berthelot (NBFIX) |
+| `LENNARD_JONES_14_ACOEF/BCOEF` (chamber) | `lj/charmm` `epsilon14` / `sigma14` (cross rows where not Lorentz–Berthelot) and `one_four = "epsilon14"` when the table differs from the regular one |
+| `CHARGE` | ÷ 18.2223, `coul/cut` at 332.0522173; ÷ √332.0716 and `coul/charmm` at 332.0716 in a chamber file |
+| `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR` per torsion type | `special_bonds` 1-4 = 1/divisor most 1-4 rows carry; the frame's `pairs` give every 1-4 pair weighted otherwise its `coul_scale` / `lj_scale` |
+| `AMBER_ATOM_TYPE` | the type name; `<name>~<class>` where one name stands for two LJ classes or masses (a chamber file cuts CHARMM's types to four characters) |
+
+sander prices a 1-4 pair once per proper row whose 3rd pointer is not
+negative, at that row's `1/SCEE`, `1/SCNB` (never an improper's, whatever its
+pointer). The field's weights are the divisors most such rows carry; the
+frame reader's `pairs` block lists the pairs whose summed weight differs —
+another divisor (GLYCAM's 1.0 beside ff14SB's 1.2 / 2.0), a pair two rows
+list, a 1-4 pair of the topology no row lists (weight 0, or 1 if the
+exclusion list leaves it out) — with only the differing cells set.
+`intramolecular_pairs` keeps those cells when it builds the full pair list.
+A chamber file's 1-4 Lennard-Jones (`one_four = "epsilon14"`) reaches a
+frame through `ForceField.materialize_one_four`.
+
+Refused by name: polarizable (`IPOL > 0`), 12-6-4 (`LENNARD_JONES_CCOEF`),
+non-zero 10-12 (`HBOND_ACOEF/BCOEF`, a negative ICO), perturbed, solvent-cap
+and `IFBOX = 3` files; a 1-4 row on a negative-`PN` chain (sander prices the
+pair once per chained term, and its Coulomb at a factor unlike any other 1-4
+pair's); a 1-4 row on a bonded or angle-end pair; two terms of one improper
+with one periodicity; a Urey–Bradley term on no angle or on several.
+
 ## Engine maps at a glance
 
 | Engine | bond `k` | angle `k`, `theta0` | phases | impropers |
@@ -469,7 +518,8 @@ cannot drift.
 | LAMMPS | `K` | `K`, deg | deg | as written |
 | GROMACS (`.top`/`.itp`) | `k_b/2`, kJ→kcal, nm→Å | `k_θ/2`, deg | deg | as written |
 | OpenMM XML | `k/2`, kJ→kcal, nm→Å | `k/2`, rad→deg | rad→deg | (c1..c4) ↔ (c2, c3, c1, c4) |
-| AMBER prmtop | `RK` | `TK`, rad→deg | rad→deg | AMBER order |
+| AMBER prmtop | `RK` | `TK`, rad→deg | rad→deg (±π snapped) | AMBER order |
+| chamber prmtop | `RK` | `TK`, rad→deg (`angle charmm`) | rad→deg | AMBER order; `CHARMM_IMPROPERS` centre first |
 | AMBER frcmod (writer) | `RK = k` | `TK = k`, deg | deg | AMBER order |
 | GAFF / GAFF2 tables | `K` | `K`, deg | deg | AMBER order |
 | OPLS-AA table (GROMACS `oplsaa.ff`) | `k_b/2` | `k_θ/2`, deg | — | — |
@@ -503,6 +553,19 @@ cannot drift.
   0.162750104621288, angle 1.35959339751695, dihedral 0.692979891423841,
   improper 0.431717012867386, van der Waals 1.22012795938037, Coulomb
   −10.7066619897381 kcal/mol.
+- The prmtop readers against sander and LAMMPS (`ff::forcefield::readers::
+  prmtop_check`, `scripts/prmtop_check.sh`): six prmtops AmberTools 26.1
+  builds — ff14SB ACE-PHE-NME, a GAFF2 molecule, the same with two
+  multi-term impropers, GLYCAM glucose beside an ff14SB dipeptide
+  (non-uniform SCEE/SCNB), a CHARMM36 chamber file (Urey–Bradley, CHARMM
+  impropers, CMAP, 1-4 table) and ff19SB ACE-ALA-NME (CMAP) — at perturbed
+  coordinates. Every term (bond, angle, Urey–Bradley, dihedral with AMBER
+  impropers, CHARMM improper, CMAP, 1-4 vdW, 1-4 Coulomb, vdW, Coulomb)
+  matches pysander to ≤ 6.2e-9 relative and LAMMPS `run 0` on the files
+  molrs writes to ≤ 3.2e-14. The van-der-Waals 1e-9 against sander is the
+  file's eight-digit `LENNARD_JONES_ACOEF/BCOEF`: sander uses each printed
+  off-diagonal entry, molrs and LAMMPS mix the self terms; every other
+  term agrees to 1e-14.
 - `angle charmm` through LAMMPS (`run 0`), as `angle_style charmm` on three
   atoms and as `angle_style hybrid harmonic charmm` on five: `pe` 0.024871552479721934
   and 0.35736516873047092 kcal/mol, which molrs reproduces bit for bit, and

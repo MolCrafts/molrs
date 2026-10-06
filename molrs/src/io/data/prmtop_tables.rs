@@ -452,7 +452,7 @@ impl Torsion {
 }
 
 /// `n` as an integer, which every LAMMPS torsion style requires.
-pub fn integral_periodicity(n: f64, what: &str) -> Result<i64, String> {
+fn integral_periodicity(n: f64, what: &str) -> Result<i64, String> {
     if n.fract() != 0.0 || !n.is_finite() {
         return Err(format!("{what}: periodicity {n} is not an integer"));
     }
