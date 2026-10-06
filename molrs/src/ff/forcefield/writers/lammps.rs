@@ -63,6 +63,13 @@
 //! (`d = cos phase`) — the atom order needs no change, because both price the
 //! dihedral I-J-K-L of the stored order (see `improper::periodic`).
 //!
+//! A category whose used types span several LAMMPS styles (say `angle
+//! harmonic` and `angle charmm`) is written as one `angle_style hybrid
+//! harmonic charmm` line, each `angle_coeff` naming its sub-style; a data
+//! file's section is `Angle Coeffs # hybrid` with the sub-style on each row.
+//! Every data-file section names its style in the header comment, as LAMMPS's
+//! `write_data` does.
+//!
 //! # Pair style layout
 //!
 //! The reader splits a combined `lj/cut/coul/*` kernel into `lj/cut` + `coul/cut`
@@ -219,6 +226,7 @@ impl Coeff {
 /// | `bond harmonic`           | `k`, `r0`                              | `K r0` |
 /// | `bond morse`              | `d0`, `alpha`, `r0`                    | `D0 alpha r0` |
 /// | `angle harmonic`          | `k`, `theta0` (deg)                    | `K theta0` |
+/// | `angle charmm`            | `k`, `theta0` (deg), `k_ub`, `r_ub`    | `K theta0 K_ub r_ub` |
 /// | `improper harmonic`       | `k`, `chi0` (deg)                      | `K chi0` |
 /// | `improper cvff`           | `k`, `sign` (±1), `periodicity`        | `K d n` |
 /// | `improper periodic`       | `k`, `periodicity`, `phase` (deg, 0 or 180) | `K d n` (LAMMPS `cvff`, `d = cos phase`) |
@@ -327,6 +335,13 @@ fn coeff_fields(
         ("angle", "harmonic") => Ok(vec![
             Real(units.angle_k(need("k")?)?),
             Real(need("theta0")?),
+        ]),
+        // Harmonic plus Urey–Bradley: `K_ub` is a bond stiffness.
+        ("angle", "charmm") => Ok(vec![
+            Real(units.angle_k(need("k")?)?),
+            Real(need("theta0")?),
+            Real(units.bond_k(need("k_ub")?)?),
+            Real(units.length(need("r_ub")?)?),
         ]),
         ("improper", "harmonic") => Ok(vec![Real(units.angle_k(need("k")?)?), Real(need("chi0")?)]),
         // E = K[1 + d·cos(nφ)]: `d` is the stored sign (±1), not a phase.
@@ -852,8 +867,10 @@ impl<'a> LammpsFfWriter<'a> {
         Ok(())
     }
 
-    /// `T_style` and `T_coeff` lines for every style holding a used label, the
-    /// coefficients in label id order.
+    /// The `T_style` line and `T_coeff` lines for the used labels, in label id
+    /// order. When the labels' types belong to more than one LAMMPS style the
+    /// line is `T_style hybrid <sub-style>…` and each coefficient line names
+    /// its sub-style, as LAMMPS reads them.
     fn write_section<T: BondedCoeff>(
         &self,
         lines: &mut Vec<String>,
@@ -861,30 +878,22 @@ impl<'a> LammpsFfWriter<'a> {
         units: &WriteUnits,
     ) -> Result<(), String> {
         let used = self.resolve::<T>(ff)?;
-        for style in ff.get_styles(T::CATEGORY) {
-            let rows: Vec<&Resolved<'_, T>> = used
-                .iter()
-                .filter(|r| std::ptr::eq(r.style, style))
-                .collect();
-            if rows.is_empty() {
-                continue;
-            }
-            let mut section = vec![format!(
-                "{}_style {}\n",
-                T::CATEGORY,
-                lammps_style_name(T::CATEGORY, style.name())
-            )];
-            for r in rows {
-                section.push(format!(
-                    "{}_coeff {} {}\n",
-                    T::CATEGORY,
-                    r.label,
-                    r.coeffs(units, self.options.precision)?
-                ));
-            }
-            section.push("\n".to_owned());
-            lines.extend(section);
+        if used.is_empty() {
+            return Ok(());
         }
+        let subs = lammps_styles_of(&used);
+        let hybrid = subs.len() > 1;
+        lines.push(format!("{}_style {}\n", T::CATEGORY, style_line(&subs)));
+        for r in &used {
+            lines.push(format!(
+                "{}_coeff {} {}{}\n",
+                T::CATEGORY,
+                r.label,
+                sub_style_field(hybrid, r),
+                r.coeffs(units, self.options.precision)?
+            ));
+        }
+        lines.push("\n".to_owned());
         Ok(())
     }
 
@@ -916,15 +925,22 @@ impl<'a> LammpsFfWriter<'a> {
         ff: &ForceField,
         units: &WriteUnits,
     ) -> Result<(), String> {
+        let used = self.resolve::<T>(ff)?;
+        let subs = lammps_styles_of(&used);
         let mut section = Vec::new();
-        for r in self.resolve::<T>(ff)? {
+        for r in &used {
             section.push(format!(
-                "{} {}\n",
+                "{} {}{}\n",
                 r.id,
+                sub_style_field(subs.len() > 1, r),
                 r.coeffs(units, self.options.precision)?
             ));
         }
-        push_data_section(lines, T::HEADING, section);
+        // The `# style` comment is how `read_data_coeffs` (and LAMMPS's own
+        // `write_data`) knows which style the numbers are; without it a reader
+        // falls back to `harmonic`.
+        let heading = format!("{} # {}", T::HEADING, style_hint(&subs));
+        push_data_section(lines, &heading, section);
         Ok(())
     }
 }
@@ -964,6 +980,47 @@ impl ForceFieldWriter for LammpsFfWriter<'_> {
         self.write_section::<ImproperType>(&mut lines, ff, &units)?;
 
         Ok(lines.concat())
+    }
+}
+
+/// The distinct LAMMPS styles of `used`, in first-use order. Two molrs styles
+/// LAMMPS spells alike (`improper cvff` and `improper periodic`, both `cvff`)
+/// are one LAMMPS style with one coefficient form.
+fn lammps_styles_of<'f, T: BondedCoeff>(used: &[Resolved<'f, T>]) -> Vec<&'f str> {
+    let mut subs: Vec<&str> = Vec::new();
+    for r in used {
+        let name = lammps_style_name(T::CATEGORY, r.style.name());
+        if !subs.contains(&name) {
+            subs.push(name);
+        }
+    }
+    subs
+}
+
+/// The argument of a `*_style` line for `subs`: the one style, or `hybrid`
+/// and every sub-style.
+fn style_line(subs: &[&str]) -> String {
+    match subs {
+        [one] => (*one).to_owned(),
+        _ => format!("hybrid {}", subs.join(" ")),
+    }
+}
+
+/// The style a data-file `* Coeffs` header names: the one style, or `hybrid`.
+fn style_hint<'s>(subs: &[&'s str]) -> &'s str {
+    match subs {
+        [one] => one,
+        _ => "hybrid",
+    }
+}
+
+/// The sub-style token (and its separating space) a hybrid coefficient line
+/// carries before its numbers; empty otherwise.
+fn sub_style_field<T: BondedCoeff>(hybrid: bool, r: &Resolved<'_, T>) -> String {
+    if hybrid {
+        format!("{} ", lammps_style_name(T::CATEGORY, r.style.name()))
+    } else {
+        String::new()
     }
 }
 
@@ -1292,7 +1349,7 @@ dihedral_coeff c3-os-c3-h1 1 0.337000 3 0.000000
             "sections only:\n{data}"
         );
         assert!(data.contains("Pair Coeffs\n"), "{data}");
-        assert!(data.contains("Bond Coeffs\n"), "{data}");
+        assert!(data.contains("Bond Coeffs # harmonic\n"), "{data}");
         assert!(
             data.contains("1 0.107800 3.397710") || data.contains("1 0.107800"),
             "pair row:\n{data}"
@@ -1312,7 +1369,9 @@ dihedral_coeff c3-os-c3-h1 1 0.337000 3 0.000000
         let Some(rest) = text.split(heading).nth(1) else {
             return vec![];
         };
+        // Past the rest of the header line (its `# style` comment).
         rest.lines()
+            .skip(1)
             .skip_while(|l| l.trim().is_empty())
             .take_while(|l| !l.trim().is_empty())
             .filter_map(|l| l.split_whitespace().next()?.parse().ok())
@@ -1497,12 +1556,14 @@ pair_coeff c3 c3 0.107800 3.397710
         ff
     }
 
-    /// Rows of a data-file `heading` section (between its blank lines).
+    /// Rows of a data-file `heading` section (between its blank lines), past
+    /// the header line and its `# style` comment.
     fn data_section_rows(text: &str, heading: &str) -> Vec<String> {
-        let Some(rest) = text.split(&format!("{heading}\n")).nth(1) else {
+        let Some(rest) = text.split(heading).nth(1) else {
             return vec![];
         };
         rest.lines()
+            .skip(1)
             .skip_while(|l| l.trim().is_empty())
             .take_while(|l| !l.trim().is_empty())
             .map(str::to_owned)
@@ -2151,6 +2212,12 @@ pair_coeff c3 c3 0.107800 3.397710
             ("bond", "harmonic", "harmonic", &["450", "0.9572"]),
             ("bond", "morse", "morse", &["95.6", "2", "1.53"]),
             ("angle", "harmonic", "harmonic", &["55", "104.52"]),
+            (
+                "angle",
+                "charmm",
+                "charmm",
+                &["33.43", "110.1", "22.53", "2.179"],
+            ),
             ("improper", "harmonic", "harmonic", &["10", "180"]),
             ("improper", "cvff", "cvff", &["1.1", "-1", "2"]),
             ("dihedral", "opls", "opls", &["1", "2", "3", "4"]),
@@ -2180,5 +2247,133 @@ pair_coeff c3 c3 0.107800 3.397710
             let back = lammps_coeff_params(category, lammps, &strs, "real").unwrap();
             assert_eq!(back, params, "{category} {lammps}: {strs:?}");
         }
+    }
+
+    /// A CHARMM include with Urey–Bradley angles beside plain ones: one
+    /// `angle_style hybrid`, each `angle_coeff` naming its sub-style.
+    const UB_HYBRID: &str = "\
+# LAMMPS force field generated by molrs
+units real
+
+special_bonds lj 0.000000 0.000000 0.000000 coul 0.000000 0.000000 0.000000
+
+angle_style hybrid harmonic charmm
+angle_coeff CT-CT-CT harmonic 58.350000 113.600000
+angle_coeff HA-CT-CT charmm 33.430000 110.100000 22.530000 2.179000
+angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
+
+";
+
+    /// `angle charmm` reads `K theta0 K_ub r_ub` as written and writes it back
+    /// the same: the LAMMPS read → write identity, hybrid included. (The
+    /// writer orders rows by label id, and `TypeLabels` sorts labels.)
+    #[test]
+    fn angle_charmm_hybrid_reads_and_writes_back_identically() {
+        let ff = LammpsFfReader::new().read_str(UB_HYBRID).unwrap();
+        let ub = ff.get_style("angle", "charmm").unwrap();
+        let StyleDefs::Angle(types) = ub.defs() else {
+            panic!("an angle style");
+        };
+        let t = types.iter().find(|t| t.name == "HA-CT-CT").unwrap();
+        for (key, want) in [
+            ("k", 33.43),
+            ("theta0", 110.1),
+            ("k_ub", 22.53),
+            ("r_ub", 2.179),
+        ] {
+            assert_eq!(t.params.get(key), Some(want), "{key}");
+        }
+        assert!(ff.get_style("angle", "harmonic").is_some());
+
+        let labels = labels_of(&[("angles", &["CT-CT-CT", "HA-CT-CT", "HA-CT-HA"])]);
+        let text = LammpsFfWriter::new(&labels).write_str(&ff).unwrap();
+        assert_eq!(text, UB_HYBRID);
+        let again = LammpsFfReader::new().read_str(&text).unwrap();
+        assert_eq!(
+            LammpsFfWriter::new(&labels).write_str(&again).unwrap(),
+            text
+        );
+    }
+
+    /// One style needs no `hybrid`; the data-file section names it.
+    #[test]
+    fn angle_charmm_alone_is_a_plain_style_and_its_data_section_says_so() {
+        let ff = LammpsFfReader::new().read_str(UB_HYBRID).unwrap();
+        let labels = labels_of(&[("angles", &["HA-CT-CT"])]);
+        let writer = LammpsFfWriter::new(&labels);
+        let text = writer.write_str(&ff).unwrap();
+        assert_eq!(
+            lines_starting_with(&text, "angle_"),
+            vec![
+                "angle_style charmm",
+                "angle_coeff HA-CT-CT 33.430000 110.100000 22.530000 2.179000",
+            ],
+            "{text}"
+        );
+        let data = writer.write_data_coeffs_str(&ff).unwrap();
+        assert!(data.contains("Angle Coeffs # charmm\n"), "{data}");
+        assert_eq!(
+            data_section_rows(&data, "Angle Coeffs"),
+            vec!["1 33.430000 110.100000 22.530000 2.179000"]
+        );
+    }
+
+    /// A data file's hybrid section carries the sub-style on each row, and
+    /// `read_data_coeffs` reads it back to the same force field.
+    #[test]
+    fn angle_charmm_hybrid_data_coeffs_round_trip() {
+        use crate::ff::forcefield::readers::lammps::LammpsTypeLabelMaps;
+        let ff = LammpsFfReader::new().read_str(UB_HYBRID).unwrap();
+        let names = ["CT-CT-CT", "HA-CT-CT", "HA-CT-HA"];
+        let labels = labels_of(&[("angles", &names)]);
+        let data = LammpsFfWriter::new(&labels)
+            .write_data_coeffs_str(&ff)
+            .unwrap();
+        assert!(data.contains("Angle Coeffs # hybrid\n"), "{data}");
+        assert_eq!(
+            data_section_rows(&data, "Angle Coeffs"),
+            vec![
+                "1 harmonic 58.350000 113.600000",
+                "2 charmm 33.430000 110.100000 22.530000 2.179000",
+                "3 charmm 35.500000 108.400000 5.400000 1.802000",
+            ]
+        );
+        let maps = LammpsTypeLabelMaps {
+            angle: (1..).zip(names.iter().map(|n| n.to_string())).collect(),
+            ..Default::default()
+        };
+        let back = LammpsFfReader::new()
+            .read_data_coeffs(&data, &maps, "real")
+            .unwrap();
+        let angles = |ff: &ForceField, style: &str| -> Vec<AngleType> {
+            match ff.get_style("angle", style).unwrap().defs() {
+                StyleDefs::Angle(types) => types.clone(),
+                _ => panic!("an angle style"),
+            }
+        };
+        for style in ["charmm", "harmonic"] {
+            assert_eq!(angles(&back, style), angles(&ff, style), "{style}");
+        }
+    }
+
+    /// Under `angle_style harmonic`, a `K theta0 K_ub r_ub` line is refused —
+    /// read as harmonic it would silently drop its Urey–Bradley term — and a
+    /// hybrid line must name a declared sub-style.
+    #[test]
+    fn a_urey_bradley_line_under_the_wrong_style_is_refused() {
+        let err = LammpsFfReader::new()
+            .read_str(
+                "special_bonds charmm\nangle_style harmonic\n\
+                 angle_coeff A-B-A 33.43 110.1 22.53 2.179\n",
+            )
+            .unwrap_err();
+        assert!(err.contains("takes 2 coefficients, got 4"), "{err}");
+        let err = LammpsFfReader::new()
+            .read_str(
+                "special_bonds charmm\nangle_style hybrid harmonic\n\
+                 angle_coeff A-B-A charmm 33.43 110.1 22.53 2.179\n",
+            )
+            .unwrap_err();
+        assert!(err.contains("not one of"), "{err}");
     }
 }

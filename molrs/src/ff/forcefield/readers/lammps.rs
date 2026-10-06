@@ -1,9 +1,10 @@
 //! LAMMPS force-field reader (the `*.ff` include next to a data file).
 //!
 //! Parses a LAMMPS force-field include — `pair_style`/`pair_coeff`,
-//! `bond_style harmonic|morse`, `angle_style harmonic`, `dihedral_style`
+//! `bond_style harmonic|morse`, `angle_style harmonic|charmm`, `dihedral_style`
 //! `fourier` / `opls` / `harmonic` / `charmm` / `multi/harmonic`,
-//! `improper_style harmonic|cvff` — with **type-label** coefficients into a
+//! `improper_style harmonic|cvff`, and a `hybrid` of those in any bonded
+//! category — with **type-label** coefficients into a
 //! molrs [`ForceField`]. Inverse of
 //! [`LammpsFfWriter`](crate::ff::forcefield::writers::lammps::LammpsFfWriter), e.g.:
 //!
@@ -28,6 +29,19 @@
 //! (`real` when the file has no `units` line). [`lammps_coeff_params`] is that
 //! one token → params map. The only renames are of style names molrs spells
 //! differently: `dihedral_style fourier` is molrs's `dihedral periodic`.
+//!
+//! A coefficient line carries exactly its style's coefficients: an extra
+//! token is an error, as it is in LAMMPS, never a number dropped (an
+//! `angle_coeff t K theta0 K_ub r_ub` line under `angle_style harmonic` would
+//! otherwise lose its Urey–Bradley term).
+//!
+//! # Hybrid bonded styles
+//!
+//! `angle_style hybrid harmonic charmm` declares one molrs style per
+//! sub-style, and each `angle_coeff t <sub-style> <coeffs…>` line is a type of
+//! the sub-style it names (which must be one of the declared ones). A data
+//! file's `Angle Coeffs # hybrid` section is the same with the sub-styles
+//! declared by its rows.
 //!
 //! # Pair rows
 //!
@@ -168,7 +182,7 @@ impl LammpsFfReader {
         let mut cutoffs: (Option<f64>, Option<f64>) = (None, None);
         let mut pair_mix: Option<String> = None;
         // The LAMMPS style each category's coefficient lines are read under.
-        let mut styles: BTreeMap<&'static str, String> = BTreeMap::new();
+        let mut styles: BTreeMap<&'static str, BondedStyle> = BTreeMap::new();
         let mut saw_special_bonds = false;
 
         for (lineno, raw) in text.lines().enumerate() {
@@ -195,19 +209,26 @@ impl LammpsFfReader {
                     let name = rest
                         .first()
                         .ok_or_else(|| format!("{}: {kw} missing name", where_()))?;
-                    require_bonded_style(category, name, &where_)?;
-                    ff.def_style(category, molrs_style_name(category, name), Params::new())
-                        .map_err(|e| e.to_string())?;
-                    styles.insert(category, (*name).to_owned());
+                    let declared = if *name == "hybrid" {
+                        let subs: Vec<String> = rest[1..].iter().map(|s| (*s).to_owned()).collect();
+                        for sub in &subs {
+                            def_bonded_style(&mut ff, category, sub, &where_)?;
+                        }
+                        BondedStyle::Hybrid(subs)
+                    } else {
+                        def_bonded_style(&mut ff, category, name, &where_)?;
+                        BondedStyle::Single((*name).to_owned())
+                    };
+                    styles.insert(category, declared);
                 }
                 "pair_coeff" => collect_pair(&rest, &mut pair_rows, &where_, labels)?,
                 "bond_coeff" | "angle_coeff" | "dihedral_coeff" | "improper_coeff" => {
                     let category = kw.trim_end_matches("_coeff");
                     let category = BONDED.iter().copied().find(|c| *c == category).unwrap();
-                    let lammps_style = styles.get(category).ok_or_else(|| {
+                    let declared = styles.get(category).ok_or_else(|| {
                         format!("{}: coeff before its `{category}_style`", where_())
                     })?;
-                    add_bonded(&mut ff, category, lammps_style, &rest, &where_, labels)?;
+                    add_bonded(&mut ff, category, declared, &rest, &where_, labels)?;
                 }
                 "special_bonds" => {
                     ff.set_special_bonds(parse_special_bonds(&rest, &where_)?);
@@ -283,7 +304,7 @@ fn molrs_style_name<'a>(category: &str, lammps: &'a str) -> &'a str {
 fn supported_styles(category: &str) -> &'static [&'static str] {
     match category {
         "bond" => &["harmonic", "morse"],
-        "angle" => &["harmonic"],
+        "angle" => &["harmonic", "charmm"],
         "dihedral" => &["fourier", "opls", "harmonic", "multi/harmonic", "charmm"],
         "improper" => &["harmonic", "cvff"],
         _ => &[],
@@ -323,6 +344,8 @@ impl SectionStyleHint {
             "pair" => {
                 require_pair_style(&[style, &DATA_PAIR_CUTOFF.to_string()], &where_).map(|_| ())
             }
+            // Each row names its sub-style, checked as the row is read.
+            _ if style == "hybrid" => Ok(()),
             _ => require_bonded_style(category, style, &where_),
         }
     }
@@ -646,11 +669,36 @@ fn build_pairs(
 
 // ── bonded ──────────────────────────────────────────────────────────────────
 
-/// One `<category>_coeff <type> <values…>` line under its LAMMPS style.
+/// The LAMMPS style a bonded category's coefficient lines are read under.
+enum BondedStyle {
+    /// `<category>_style <name>`.
+    Single(String),
+    /// `<category>_style hybrid <sub-style>…`: each coefficient line names
+    /// its sub-style. Empty for a data file's `# hybrid` section, whose rows
+    /// declare them.
+    Hybrid(Vec<String>),
+}
+
+/// Declare the molrs style of the LAMMPS bonded style `name`, refusing one
+/// this reader has no kernel for.
+fn def_bonded_style(
+    ff: &mut ForceField,
+    category: &str,
+    name: &str,
+    where_: &dyn Fn() -> String,
+) -> Result<(), String> {
+    require_bonded_style(category, name, where_)?;
+    ff.def_style(category, molrs_style_name(category, name), Params::new())
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// One `<category>_coeff <type> [<sub-style>] <values…>` line under its
+/// LAMMPS style.
 fn add_bonded(
     ff: &mut ForceField,
     category: &'static str,
-    lammps_style: &str,
+    declared: &BondedStyle,
     rest: &[&str],
     where_: &dyn Fn() -> String,
     labels: &LammpsTypeLabelMaps,
@@ -675,7 +723,29 @@ fn add_bonded(
             (name, e.to_vec())
         }
     };
-    let params = coeff_params(category, lammps_style, &rest[1..], where_)?;
+    let (lammps_style, values) = match declared {
+        BondedStyle::Single(name) => (name.as_str(), &rest[1..]),
+        BondedStyle::Hybrid(subs) => {
+            let sub = *rest.get(1).ok_or_else(|| {
+                format!(
+                    "{}: {category}_coeff under `{category}_style hybrid` names no sub-style",
+                    where_()
+                )
+            })?;
+            if subs.is_empty() {
+                def_bonded_style(ff, category, sub, where_)?;
+            } else if !subs.iter().any(|s| s == sub) {
+                return Err(format!(
+                    "{}: {category}_coeff sub-style `{sub}` is not one of the \
+                     `{category}_style hybrid` sub-styles ({})",
+                    where_(),
+                    subs.join(", ")
+                ));
+            }
+            (sub, &rest[2..])
+        }
+    };
+    let params = coeff_params(category, lammps_style, values, where_)?;
     let ends: Vec<&str> = endpoints.iter().map(String::as_str).collect();
     let directive = format!("{category}_style {lammps_style}");
     style_mut(
@@ -707,6 +777,7 @@ fn add_bonded(
 /// | `bond harmonic`         | `K r0`               | `k`, `r0` |
 /// | `bond morse`            | `D0 alpha r0`        | `d0`, `alpha`, `r0` |
 /// | `angle harmonic`        | `K theta0`           | `k`, `theta0` (deg) |
+/// | `angle charmm`          | `K theta0 K_ub r_ub` | `k`, `theta0` (deg), `k_ub`, `r_ub` |
 /// | `improper harmonic`     | `K chi0`             | `k`, `chi0` (deg) |
 /// | `improper cvff`         | `K d n`              | `k`, `sign = d` (±1), `periodicity = n` |
 /// | `dihedral opls`         | `K1 K2 K3 K4`        | `k1..k4` |
@@ -724,7 +795,8 @@ fn add_bonded(
 /// # Errors
 ///
 /// A `(category, style)` the LAMMPS reader has no kernel for, an unknown
-/// `units` keyword, a missing coefficient, or a non-numeric token.
+/// `units` keyword, a missing coefficient, an extra one (bonded styles), or a
+/// non-numeric token.
 ///
 /// ```
 /// use molrs::ff::forcefield::readers::lammps::lammps_coeff_params;
@@ -756,7 +828,20 @@ fn coeff_params(
     let num = |idx: usize, what: &str| -> Result<f64, String> {
         parse_f64(get(values, idx, what, where_)?, what, where_)
     };
+    // A bonded coefficient line is exactly its style's numbers, as LAMMPS
+    // requires; a trailing token is refused rather than dropped.
+    let exactly = |n: usize| -> Result<(), String> {
+        if category == "pair" || values.len() <= n {
+            return Ok(());
+        }
+        Err(format!(
+            "{}: {category} {style} takes {n} coefficients, got {}",
+            where_(),
+            values.len()
+        ))
+    };
     let slots = |names: &[(&str, &str)]| -> Result<Params, String> {
+        exactly(names.len())?;
         let mut params = Params::new();
         for (idx, (key, what)) in names.iter().enumerate() {
             params.set(key, num(idx, what)?);
@@ -771,6 +856,13 @@ fn coeff_params(
             ("r0", "bond r0"),
         ]),
         ("angle", "harmonic") => slots(&[("k", "angle K"), ("theta0", "angle theta0")]),
+        // E = K(θ − θ0)² + K_ub(r₁₃ − r_ub)²: harmonic plus Urey–Bradley.
+        ("angle", "charmm") => slots(&[
+            ("k", "angle K"),
+            ("theta0", "angle theta0"),
+            ("k_ub", "angle K_ub"),
+            ("r_ub", "angle r_ub"),
+        ]),
         ("improper", "harmonic") => slots(&[("k", "improper K"), ("chi0", "improper chi0")]),
         // E = K[1 + d·cos(nφ)]: `d` is a SIGN (±1), not a phase angle.
         ("improper", "cvff") | ("dihedral", "harmonic") => {
@@ -802,6 +894,7 @@ fn coeff_params(
             let m: usize = get(values, 0, "dihedral m", where_)?
                 .parse()
                 .map_err(|_| format!("{}: dihedral m is not an integer", where_()))?;
+            exactly(1 + 3 * m)?;
             let mut params = Params::new();
             for term in 0..m {
                 let base = 1 + 3 * term;
