@@ -37,6 +37,7 @@ use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
 use molrs::spatial::simbox::SimBox;
 
 use super::forces::ForceProvider;
+use crate::op::random::standard_normal;
 use molrs::types::{F, FNx3, I};
 
 use super::error::MdError;
@@ -482,13 +483,6 @@ impl Langevin {
         }
         Ok(state)
     }
-}
-
-fn standard_normal(rng: &mut rand::rngs::StdRng) -> F {
-    use rand::RngExt;
-    let u1 = rng.random::<F>().max(f64::MIN_POSITIVE);
-    let u2 = rng.random::<F>();
-    (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
 }
 
 /// Broadcast a scalar mass to `(n,)` for a homogeneous system.
