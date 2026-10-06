@@ -763,7 +763,7 @@ mod tests {
             .def_type(
                 "a-a-a",
                 &["a", "a", "a"],
-                Params::from_pairs(&[("k", 40.0), ("theta0", 2.0)]),
+                Params::from_pairs(&[("k", 40.0), ("theta0", 114.6)]),
             )
             .unwrap();
 

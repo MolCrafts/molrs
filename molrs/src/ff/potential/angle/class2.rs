@@ -2,8 +2,9 @@
 //! E = k2*(theta-theta0)^2 + k3*(theta-theta0)^3 + k4*(theta-theta0)^4
 //!
 //! The COMPASS/class2 anharmonic angle core term (cross-terms bb/ba are
-//! separate styles, not implemented here). Parameters per type: `theta0`
-//! (radians; readers normalize to radians at their boundary), `k2`, `k3`, `k4`.
+//! separate styles, not implemented here). Parameters per type, as LAMMPS
+//! `angle_style class2` takes them: `theta0` in **degrees**, `k2`, `k3`, `k4`
+//! in energy/radianⁿ. The kernel converts `theta0` to radians once.
 
 use molrs::store::schema::block_names::ANGLES;
 use std::collections::HashMap;
@@ -16,7 +17,7 @@ use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::store::frame::Frame;
 use molrs::types::F;
 
-/// Class2 quartic angle potential. `theta0` is stored in radians.
+/// Class2 quartic angle potential. Its own `theta0` array is in radians.
 pub struct AngleClass2 {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
@@ -179,7 +180,7 @@ pub fn angle_class2_ctor(
         ai.push(i_col[idx] as usize);
         aj.push(j_col[idx] as usize);
         ak.push(k_col[idx] as usize);
-        t0.push(need(p, "theta0", label)?); // consumed in radians
+        t0.push(need(p, "theta0", label)?.to_radians()); // degrees → radians
         k2.push(need(p, "k2", label)?);
         k3.push(need(p, "k3", label)?);
         k4.push(need(p, "k4", label)?);

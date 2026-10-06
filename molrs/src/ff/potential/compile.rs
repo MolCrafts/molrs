@@ -358,9 +358,9 @@ mod tests {
         let bonded = with_bond(two_atoms(), "CT-CT");
         let pots = compiler.compile(&bonded).unwrap();
         assert_eq!(pots.members().len(), 1);
-        // ½·300·(1.6 − 1.5)² = 1.5 kcal/mol
+        // k·(r − r0)² = 300·(1.6 − 1.5)² = 3 kcal/mol (LAMMPS bond harmonic)
         let e = pots.calc_energy(&[0.0, 0.0, 0.0, 1.6, 0.0, 0.0]);
-        assert!((e - 1.5).abs() < 1e-10, "{e}");
+        assert!((e - 3.0).abs() < 1e-10, "{e}");
         assert_eq!(compiler.compile_typed(&bonded).unwrap().len(), 1);
     }
 

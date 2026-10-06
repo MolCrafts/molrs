@@ -103,22 +103,13 @@ impl LammpsFfUnits {
         }
     }
 
-    /// Energy / length² (bond stiffness dimension before the ½-form map).
+    /// Energy / length² (a bond stiffness).
     fn energy_per_length2_unit(style: &str) -> String {
         format!(
             "{}/{}**2",
             Self::energy_unit(style),
             Self::length_unit(style)
         )
-    }
-
-    /// Energy / rad² — LAMMPS angle K is energy per radian² in real/metal.
-    fn energy_per_rad2_unit(style: &str) -> String {
-        // radians are dimensionless in the SI sense; LAMMPS still quotes K in
-        // energy/rad². We treat rad as a pure number: unit = energy only for
-        // conversion of the *energy* factor; form map applies 2K and deg→rad
-        // separately for theta0.
-        Self::energy_unit(style).to_string()
     }
 
     /// Convert a raw file value of the given dimension from `from` style to `to`
@@ -153,88 +144,12 @@ impl LammpsFfUnits {
         self.convert_through_lj(value, from, to, |s| Self::length_unit(s).to_string())
     }
 
-    /// Bond stiffness *K* (LAMMPS form, energy/length²) before the ½ map.
-    pub fn bond_k_lammps(&self, value: F, from: &str, to: &str) -> Result<F, String> {
+    /// Bond stiffness `K` (energy/length²): `from → lj → to`. An angle-like
+    /// stiffness (energy/rad²) converts as an [`energy`](Self::energy): a
+    /// radian is a pure number.
+    pub fn bond_k(&self, value: F, from: &str, to: &str) -> Result<F, String> {
         self.convert_through_lj(value, from, to, Self::energy_per_length2_unit)
     }
-
-    /// Angle stiffness *K* (LAMMPS form, energy/rad²) — energy factor only.
-    pub fn angle_k_lammps(&self, value: F, from: &str, to: &str) -> Result<F, String> {
-        self.convert_through_lj(value, from, to, Self::energy_per_rad2_unit)
-    }
-
-    /// Convert file-side params into **store** units (default store = real for
-    /// physical styles; lj stays lj).
-    pub fn to_store_energy(&self, value: F, file: &str) -> Result<F, String> {
-        match file {
-            "lj" => Ok(value),
-            other => self.energy(value, other, "real"),
-        }
-    }
-
-    pub fn to_store_length(&self, value: F, file: &str) -> Result<F, String> {
-        match file {
-            "lj" => Ok(value),
-            other => self.length(value, other, "real"),
-        }
-    }
-
-    pub fn to_store_bond_k_lammps(&self, value: F, file: &str) -> Result<F, String> {
-        match file {
-            "lj" => Ok(value),
-            other => self.bond_k_lammps(value, other, "real"),
-        }
-    }
-
-    pub fn to_store_angle_k_lammps(&self, value: F, file: &str) -> Result<F, String> {
-        match file {
-            "lj" => Ok(value),
-            other => self.angle_k_lammps(value, other, "real"),
-        }
-    }
-
-    /// Store (real or lj) → file units for writing.
-    pub fn from_store_energy(&self, value: F, file: &str) -> Result<F, String> {
-        match file {
-            "lj" => Ok(value),
-            other => self.energy(value, "real", other),
-        }
-    }
-
-    pub fn from_store_length(&self, value: F, file: &str) -> Result<F, String> {
-        match file {
-            "lj" => Ok(value),
-            other => self.length(value, "real", other),
-        }
-    }
-
-    pub fn from_store_bond_k_lammps(&self, value: F, file: &str) -> Result<F, String> {
-        match file {
-            "lj" => Ok(value),
-            other => self.bond_k_lammps(value, "real", other),
-        }
-    }
-
-    pub fn from_store_angle_k_lammps(&self, value: F, file: &str) -> Result<F, String> {
-        match file {
-            "lj" => Ok(value),
-            other => self.angle_k_lammps(value, "real", other),
-        }
-    }
-}
-
-// ── form maps (independent of unit style) ───────────────────────────────────
-
-/// LAMMPS harmonic `K(x−x0)²` → molrs `½k(x−x0)²` with `k = 2K`.
-#[inline]
-pub fn lammps_k_to_molrs_half_k(k_lammps: F) -> F {
-    2.0 * k_lammps
-}
-
-/// molrs `½k` → LAMMPS `K = k/2`.
-#[inline]
-pub fn molrs_half_k_to_lammps_k(k_molrs: F) -> F {
-    k_molrs / 2.0
 }
 
 #[cfg(test)]
@@ -284,16 +199,10 @@ mod tests {
     }
 
     #[test]
-    fn lj_energy_pass_through_to_store() {
+    fn same_style_is_the_identity() {
         let sys = LammpsFfUnits::canonical().unwrap();
-        assert_eq!(sys.to_store_energy(0.5, "lj").unwrap(), 0.5);
-    }
-
-    #[test]
-    fn form_half_k_roundtrip() {
-        let k = lammps_k_to_molrs_half_k(228.89);
-        assert!((k - 457.78).abs() < 1e-9);
-        assert!((molrs_half_k_to_lammps_k(k) - 228.89).abs() < 1e-9);
+        assert_eq!(sys.energy(0.5, "lj", "lj").unwrap(), 0.5);
+        assert_eq!(sys.bond_k(228.89, "real", "real").unwrap(), 228.89);
     }
 
     #[test]
@@ -309,7 +218,7 @@ mod tests {
         let sys = LammpsFfUnits::canonical().unwrap();
         // Same numerical K in metal (eV/Å²) vs real (kcal/mol/Å²) must scale
         // exactly as energy (length is Å in both).
-        let k_real = sys.bond_k_lammps(1.0, "metal", "real").unwrap();
+        let k_real = sys.bond_k(1.0, "metal", "real").unwrap();
         let e_real = sys.energy(1.0, "metal", "real").unwrap();
         assert!((k_real - e_real).abs() < 1e-12);
     }

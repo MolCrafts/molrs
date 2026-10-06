@@ -3,9 +3,12 @@
 //!
 //! These differ from [`crate::ff::forcefield::xml`], which reads molrs's own native
 //! schema. A reader here owns the translation from a foreign format — element
-//! and attribute names, **and unit normalization** — into molrs units
-//! (Å, kcal/mol, radians, e). The resulting `ForceField` is pure molrs units;
-//! there is no downstream unit fixup.
+//! and attribute names, **and unit and factor normalization** — into molrs's
+//! convention, which is LAMMPS's: every style's energy expression, factors (no
+//! hidden ½) and parameter units are the LAMMPS style's, angle-valued
+//! parameters in degrees, in a LAMMPS unit preset (`real` for every reader but
+//! the LAMMPS one, which keeps the file's `units`). The resulting `ForceField`
+//! needs no downstream fixup.
 //!
 //! Concrete readers: [`OplsXmlReader`](opls::OplsXmlReader) (OPLS-AA / GROMACS
 //! XML, nm/kJ-mol, Ryckaert–Bellemans torsions),
@@ -24,7 +27,7 @@ pub mod prmtop;
 use crate::ff::forcefield::ForceField;
 
 /// Parse a force-field definition from an external format into a molrs
-/// [`ForceField`], normalized to molrs units (Å, kcal/mol, radians, e).
+/// [`ForceField`], normalized to molrs's (LAMMPS's) convention.
 ///
 /// Implementors own format-specific element/attribute mapping and unit
 /// conversion. Reading is **total**: a malformed document or a missing required

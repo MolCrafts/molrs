@@ -6,7 +6,6 @@ yields the one :class:`ForceField` (with the FFI capsule a consumer like molpack
 resolves) and that errors map to ``ValueError``.
 """
 
-import math
 
 import molrs
 import numpy as np
@@ -82,16 +81,15 @@ def test_read_lammps_forcefield_yields_the_one_forcefield(read_ff):
 
 def test_lammps_units_pass_through_binding(read_ff):
     ff = read_ff(_FF)
-    # LAMMPS harmonic K(=228.89) → molrs k = 2K = 457.78 (½k form); r0 unchanged.
+    # molrs's convention is LAMMPS's: every coefficient is stored as written —
+    # bond K, r0; angle K, theta0 in degrees; pair epsilon, sigma.
     bond = ff.get_style("bond", "harmonic")
     bt = bond.get_type_by_name("c3-c3")
-    assert bt.params["k"] == pytest.approx(457.78)
-    assert bt.params["r0"] == pytest.approx(1.5354)
-    # angle theta0 is normalized deg→rad at the reader boundary (commit 6aa9e51,
-    # "angles internal-radians"); pair ε/σ pass through.
+    assert bt.params["k"] == 228.89
+    assert bt.params["r0"] == 1.5354
     angle = ff.get_style("angle", "harmonic")
     at = angle.get_type_by_name("c3-c3-oh")
-    assert at.params["theta0"] == pytest.approx(math.radians(109.66))
+    assert at.params["theta0"] == 109.66
     lj = ff.get_style("pair", "lj/cut")
     assert lj.get_type_by_name("c3").params["epsilon"] == pytest.approx(0.1078)
 
@@ -100,7 +98,8 @@ def test_read_lammps_forcefield_from_path(tmp_path):
     p = tmp_path / "melt.ff"
     p.write_text(_FF)
     ff = molrs.ff.read_lammps_forcefield(str(p))
-    assert len(ff.get_style("dihedral", "fourier").types) == 1
+    # LAMMPS `dihedral_style fourier` is molrs's `dihedral periodic`.
+    assert len(ff.get_style("dihedral", "periodic").types) == 1
 
 
 def test_unknown_keyword_maps_to_value_error(read_ff):
@@ -166,9 +165,9 @@ def test_write_lammps_forcefield_str_round_trip(read_ff):
 
     ff2 = read_ff(text)
     bt = ff2.get_style("bond", "harmonic").get_type_by_name("c3-c3")
-    assert bt.params["k"] == pytest.approx(457.78)
+    assert bt.params["k"] == 228.89
     at = ff2.get_style("angle", "harmonic").get_type_by_name("c3-c3-oh")
-    assert at.params["theta0"] == pytest.approx(math.radians(109.66))
+    assert at.params["theta0"] == 109.66
 
 
 def test_write_lammps_forcefield_to_path(tmp_path, read_ff):
@@ -190,7 +189,7 @@ def _hand_ff() -> molrs.ff.ForceField:
     ff.def_style("pair", "lj/cut", {"cutoff": 9.0}).def_type(
         "c3", c3, epsilon=0.1078, sigma=3.39771
     )
-    ff.def_style("bond", "harmonic").def_type("c3-c3", c3, c3, k=457.78, r0=1.5354)
+    ff.def_style("bond", "harmonic").def_type("c3-c3", c3, c3, k=228.89, r0=1.5354)
     return ff
 
 

@@ -1,7 +1,11 @@
-//! Morse pair potential: E = D0 * ((1 - exp(-alpha*(r-r0)))^2 - 1)
+//! Morse pair potential (LAMMPS `pair_style morse`):
+//! E = d0 * ((1 - exp(-alpha*(r-r0)))^2 - 1) = d0 [e^{-2α(r-r0)} - 2e^{-α(r-r0)}]
 //!
 //! Morse non-bonded form (note the `-1` offset vs the Morse bond, so the well
-//! minimum is `-D0` at `r = r0`). Parameters per pair type: `D0`, `alpha`, `r0`.
+//! minimum is `-d0` at `r = r0`). Parameters per pair type, as LAMMPS names
+//! them: `d0` (LAMMPS `D0`), `alpha`, `r0`. The compiled and the
+//! neighbour-driven constructors read the same keys (the compiled one read
+//! `D0` until 0.16, so one field could not price under both).
 
 use molrs::store::schema::block_names::PAIRS;
 use std::collections::HashMap;
@@ -344,9 +348,9 @@ pub fn pair_morse_ctor(
         ai.push(i_col[idx] as usize);
         aj.push(j_col[idx] as usize);
         dv.push(if is_14.is_some_and(|b| b[idx]) {
-            need(p, "D0", label)? * scale_14
+            need(p, "d0", label)? * scale_14
         } else {
-            need(p, "D0", label)?
+            need(p, "d0", label)?
         });
         av.push(need(p, "alpha", label)?);
         rv.push(need(p, "r0", label)?);

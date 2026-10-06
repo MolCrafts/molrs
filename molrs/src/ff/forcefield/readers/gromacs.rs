@@ -3,8 +3,10 @@
 //! Reads the force-field **directives** of a GROMACS topology
 //! (`forcefield.itp` with its `ffnonbonded.itp` / `ffbonded.itp` includes, or a
 //! `.top` whose molecule sections are skipped) into a molrs [`ForceField`].
-//! The file speaks nm, kJ/mol, degrees and e; the force field is in molrs units
-//! (Å, kcal/mol, rad, e). Every conversion happens here, at the boundary.
+//! The file speaks nm, kJ/mol, degrees and e; the force field is in molrs's
+//! convention, LAMMPS's (`real`: Å, kcal/mol, degrees for angle-valued
+//! parameters, e; LAMMPS's factors — no hidden ½). Every conversion happens
+//! here, at the boundary.
 //!
 //! # Directives read
 //!
@@ -40,13 +42,17 @@
 //!
 //! | Directive, funct | GROMACS form | molrs style | Conversion |
 //! |---|---|---|---|
-//! | bondtypes 1 | ½k_b(r−b₀)² | `bond/harmonic` {`r0`, `k`} | r0 = b₀·10 Å; k = k_b/418.4 kcal/mol/Å² |
-//! | bondtypes 3 | D[1−e^{−β(r−b₀)}]² | `bond/morse` {`D`, `alpha`, `r0`} | D/4.184 kcal/mol; alpha = β/10 Å⁻¹; r0 = b₀·10 Å |
-//! | angletypes 1 | ½k_θ(θ−θ₀)² | `angle/harmonic` {`theta0`, `k`} | θ₀ deg → rad; k/4.184 kcal/mol/rad² |
-//! | dihedraltypes 1 | k_φ[1+cos(nφ−φ_s)] | `dihedral/periodic` {`k`, `periodicity`, `phase`} | φ_s deg → rad; k/4.184 kcal/mol |
+//! | bondtypes 1 | ½k_b(r−b₀)² | `bond/harmonic` {`r0`, `k`}, k(r−r0)² | r0 = b₀·10 Å; k = k_b/(2·418.4) kcal/mol/Å² |
+//! | bondtypes 3 | D[1−e^{−β(r−b₀)}]² | `bond/morse` {`d0`, `alpha`, `r0`} | d0 = D/4.184 kcal/mol; alpha = β/10 Å⁻¹; r0 = b₀·10 Å |
+//! | angletypes 1 | ½k_θ(θ−θ₀)² | `angle/harmonic` {`theta0`, `k`}, k(θ−θ0)² | θ₀ in degrees as written; k = k_θ/(2·4.184) kcal/mol/rad² |
+//! | dihedraltypes 1 | k_φ[1+cos(nφ−φ_s)] | `dihedral/periodic` {`k`, `periodicity`, `phase`} | φ_s in degrees as written; k/4.184 kcal/mol |
 //! | dihedraltypes 2 | ½k_ξ(ξ−ξ₀)² | `improper/harmonic` {`k`, `chi0` = 0} | k = k_ξ/(2·4.184) kcal/mol/rad²; only ξ₀ = 0 |
 //! | dihedraltypes 3 | Σₙ Cₙ cosⁿψ (Ryckaert–Bellemans) | `dihedral/opls` {`k1`..`k4`} | exact RB → Fourier inversion, then /4.184 kcal/mol |
 //! | dihedraltypes 4 | k_φ[1+cos(nφ−φ_s)] | `improper/periodic` {`k`, `periodicity`, `phase`} | as funct 1 |
+//!
+//! Improper rows keep their atom order: GROMACS prices the dihedral of the
+//! listed order, as molrs does (an AMBER port lists the centre third, a CHARMM
+//! port first).
 //!
 //! ½k_ξ(ξ−ξ₀)² is signed and molrs's `improper/harmonic` is `K(χ−χ₀)²` with
 //! χ = |φ|; the two agree only at ξ₀ = 0. An RB row converts only when
@@ -681,7 +687,11 @@ impl Row {
                     "harmonic",
                     Params::from_pairs(&[
                         ("r0", b0 * NM_TO_ANGSTROM),
-                        ("k", kb / (KJ_PER_KCAL * NM_TO_ANGSTROM * NM_TO_ANGSTROM)),
+                        // GROMACS ½k_b → LAMMPS K = k_b/2.
+                        (
+                            "k",
+                            kb / (KJ_PER_KCAL * NM_TO_ANGSTROM * NM_TO_ANGSTROM) / 2.0,
+                        ),
                     ]),
                 )
             }
@@ -691,7 +701,7 @@ impl Row {
                     "bond",
                     "morse",
                     Params::from_pairs(&[
-                        ("D", d / KJ_PER_KCAL),
+                        ("d0", d / KJ_PER_KCAL),
                         ("alpha", beta / NM_TO_ANGSTROM),
                         ("r0", b0 * NM_TO_ANGSTROM),
                     ]),
@@ -702,7 +712,8 @@ impl Row {
                 (
                     "angle",
                     "harmonic",
-                    Params::from_pairs(&[("theta0", theta0.to_radians()), ("k", k / KJ_PER_KCAL)]),
+                    // GROMACS ½k_θ → LAMMPS K = k_θ/2; θ₀ stays in degrees.
+                    Params::from_pairs(&[("theta0", theta0), ("k", k / KJ_PER_KCAL / 2.0)]),
                 )
             }
             (4, 1 | 4) => {
@@ -714,7 +725,7 @@ impl Row {
                     Params::from_pairs(&[
                         ("k", k / KJ_PER_KCAL),
                         ("periodicity", mult),
-                        ("phase", phase.to_radians()),
+                        ("phase", phase),
                     ]),
                 )
             }
@@ -778,7 +789,6 @@ mod tests {
     use crate::ff::constants::VACUUM_DIELECTRIC;
     use crate::ff::forcefield::{AtomType, ForceField, PairType, Params, Style, StyleDefs};
     use molrs::units::constants::COULOMB_REAL;
-    use std::f64::consts::PI;
 
     /// `nbfunc 1`, comb-rule 3 (OPLS-AA: geometric σ and ε), `gen-pairs yes`.
     const DEFAULTS: &str = "[ defaults ]\n1  3  yes  0.5  0.5\n";
@@ -1054,25 +1064,25 @@ mod tests {
 
     // -- [ bondtypes ] ---------------------------------------------------------
 
-    /// b₀ = 0.109 nm × 10 = 1.09 Å; k = 284512 kJ/mol/nm² ÷ 418.4 = 680
-    /// kcal/mol/Å² (both ½k forms).
+    /// b₀ = 0.109 nm × 10 = 1.09 Å; GROMACS ½k_b with k_b = 284512 kJ/mol/nm²
+    /// is LAMMPS's K = k_b/2 = 284512 ÷ 418.4 ÷ 2 = 340 kcal/mol/Å².
     #[test]
     fn bondtypes_funct_1_is_bond_harmonic_in_molrs_units() {
         let ff = read(&with_section("bondtypes", "CT  HC  1  0.10900  284512.0"));
         let (ends, p) = only_type(&ff, "bond", "harmonic");
         assert_eq!(ends, ["CT", "HC"]);
         assert_param(p, "r0", 1.09, 1e-12);
-        assert_param(p, "k", 680.0, 1e-9);
+        assert_param(p, "k", 340.0, 1e-9);
     }
 
-    /// D = 400 kJ/mol ÷ 4.184 = 95.602294455066… kcal/mol; α = 20 nm⁻¹ ÷ 10 =
+    /// d0 = D = 400 kJ/mol ÷ 4.184 = 95.602294455066… kcal/mol; α = 20 nm⁻¹ ÷ 10 =
     /// 2 Å⁻¹; b₀ = 0.1529 nm × 10 = 1.529 Å.
     #[test]
     fn bondtypes_funct_3_is_bond_morse_in_molrs_units() {
         let ff = read(&with_section("bondtypes", "CT  CT  3  0.1529  400.0  20.0"));
         let (ends, p) = only_type(&ff, "bond", "morse");
         assert_eq!(ends, ["CT", "CT"]);
-        assert_param(p, "D", 95.602_294_455_066_9, 1e-9);
+        assert_param(p, "d0", 95.602_294_455_066_9, 1e-9);
         assert_param(p, "alpha", 2.0, 1e-12);
         assert_param(p, "r0", 1.529, 1e-12);
     }
@@ -1106,7 +1116,8 @@ mod tests {
 
     // -- [ angletypes ] --------------------------------------------------------
 
-    /// θ₀ = 107.8° → 107.8·π/180 rad; k = 276.144 kJ/mol/rad² ÷ 4.184 = 66.
+    /// θ₀ = 107.8° stays degrees; GROMACS ½k_θ with k_θ = 276.144 kJ/mol/rad²
+    /// is LAMMPS's K = 276.144 ÷ 4.184 ÷ 2 = 33 kcal/mol/rad².
     #[test]
     fn angletypes_funct_1_is_angle_harmonic_in_molrs_units() {
         let ff = read(&with_section(
@@ -1115,8 +1126,8 @@ mod tests {
         ));
         let (ends, p) = only_type(&ff, "angle", "harmonic");
         assert_eq!(ends, ["HC", "CT", "HC"]);
-        assert_param(p, "theta0", 107.8 * PI / 180.0, 1e-12);
-        assert_param(p, "k", 66.0, 1e-9);
+        assert_eq!(p.get("theta0"), Some(107.8));
+        assert_param(p, "k", 33.0, 1e-9);
     }
 
     #[test]
@@ -1170,7 +1181,8 @@ mod tests {
         assert_param(p, "phase", 0.0, 1e-12);
     }
 
-    /// k = 10.46 kJ/mol ÷ 4.184 = 2.5 kcal/mol; n = 2; φ_s = 180° = π.
+    /// k = 10.46 kJ/mol ÷ 4.184 = 2.5 kcal/mol; n = 2; φ_s = 180°, kept, and the
+    /// row keeps its GROMACS atom order.
     #[test]
     fn dihedraltypes_funct_4_is_improper_periodic() {
         let ff = read(&with_section(
@@ -1181,7 +1193,7 @@ mod tests {
         assert_eq!(ends, ["", "", "N", "H"]);
         assert_param(p, "k", 2.5, 1e-12);
         assert_param(p, "periodicity", 2.0, 1e-12);
-        assert_param(p, "phase", PI, 1e-12);
+        assert_eq!(p.get("phase"), Some(180.0));
     }
 
     /// ½k_ξ(ξ−0)² = K(χ−0)² with K = 167.36 ÷ (2·4.184) = 20 kcal/mol/rad²;

@@ -39,6 +39,11 @@ pub const ELEMENTARY_CHARGE: F = 1.602_176_634e-19;
 /// style, and the kernel has no default.
 pub const COULOMB_REAL: F = 332.063_71;
 
+/// Coulomb constant in LAMMPS `metal` units (eV·Å·e⁻²): LAMMPS's own `qqr2e`
+/// for that unit style, so a `metal` force field read from LAMMPS prices its
+/// electrostatics as LAMMPS does.
+pub const COULOMB_METAL: F = 14.399_645;
+
 /// Boltzmann constant in MD "real" units, kcal·mol⁻¹·K⁻¹.
 pub const BOLTZMANN_REAL: F = 1.987_204_258_640_83e-3;
 

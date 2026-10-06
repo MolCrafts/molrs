@@ -4,8 +4,9 @@
 //! [`AmberPrmtopFfReader`](crate::ff::forcefield::readers::prmtop::AmberPrmtopFfReader):
 //! it writes a [`ForceField`] as the six parameter sections of an AMBER
 //! frcmod file, so tleap can load a molrs force field with
-//! `loadamberparams`. Units are already AMBER's (Å, kcal/mol, amu); only the
-//! ½k convention and radians are converted, at this boundary only.
+//! `loadamberparams`. molrs's convention is LAMMPS's, which for these terms is
+//! AMBER's own — Å, kcal/mol, amu, un-halved `K`, degrees — so every number is
+//! written as stored.
 //!
 //! # Output
 //!
@@ -16,15 +17,14 @@
 //! | molrs style | Section | Row (file units) |
 //! |---|---|---|
 //! | `atom/full` | `MASS` | `T  mass` |
-//! | `bond/harmonic` | `BOND` | `T1-T2  RK = k/2  R0 = r0` |
-//! | `angle/harmonic` | `ANGLE` | `T1-T2-T3  TK = k/2  THETA0 = θ₀ in degrees` |
-//! | `dihedral/fourier`, `dihedral/periodic` | `DIHE` | one row per term: `T1-T2-T3-T4  IDIVF = 1  PK = k_m  PHASE = d_m in degrees  PN = ±n_m` |
-//! | `improper/periodic` | `IMPROPER` | `T1-T2-T3-T4  PK = k  PHASE = d in degrees  PN = n` |
+//! | `bond/harmonic` | `BOND` | `T1-T2  RK = k  R0 = r0` |
+//! | `angle/harmonic` | `ANGLE` | `T1-T2-T3  TK = k  THETA0 = theta0` |
+//! | `dihedral/periodic` | `DIHE` | one row per term: `T1-T2-T3-T4  IDIVF = 1  PK = k_m  PHASE = phase_m  PN = ±n_m` |
+//! | `improper/periodic` | `IMPROPER` | `T1-T2-T3-T4  PK = k  PHASE = phase  PN = n`, the atoms in the stored (AMBER) order |
 //! | `pair/lj/cut` (self rows) | `NONBON` | `  T  R*/2 = σ·2^(1/6)/2  EPSILON = ε` |
 //!
-//! `dihedral/fourier` and `dihedral/periodic` are one kernel with one
-//! parameter encoding (`k{m}`/`periodicity{m}`/`phase{m}`, or a single
-//! `k`/`periodicity`/`phase` triple); the prmtop reader writes the first, the
+//! `dihedral/periodic` takes `k{m}`/`periodicity{m}`/`phase{m}`, or a single
+//! `k`/`periodicity`/`phase` triple; the prmtop reader writes the first, the
 //! GAFF typifier the second. A multi-term torsion is written in AMBER's
 //! convention: `PN` is negative on every term but the last. In the bonded
 //! rows each atom type is padded to frcmod's two-character field, and a
@@ -234,7 +234,7 @@ impl AmberFrcmodFfWriter {
         Ok(format!("{name:<2}"))
     }
 
-    /// The `(k, n, d)` cosine terms of a `dihedral/fourier|periodic` type, in
+    /// The `(k, n, d)` cosine terms of a `dihedral/periodic` type, in
     /// the order the kernel reads them.
     fn dihedral_terms(p: &Params, what: &str) -> Result<Vec<(f64, f64, f64)>, String> {
         let mut terms = Vec::new();
@@ -270,7 +270,7 @@ impl AmberFrcmodFfWriter {
             ("atom", "full") => 0,
             ("bond", "harmonic") => 1,
             ("angle", "harmonic") => 2,
-            ("dihedral", "fourier" | "periodic") => 3,
+            ("dihedral", "periodic") => 3,
             ("improper", "periodic") => 4,
             ("pair", "lj/cut") => 5,
             ("pair", "coul/cut") => return Ok((5, Vec::new())),
@@ -293,7 +293,7 @@ impl AmberFrcmodFfWriter {
                     let key = Self::type_field(&ends, &what)?;
                     rows.push(format!(
                         "{key}  {:.6}  {:.6}{note}",
-                        need("k")? / 2.0,
+                        need("k")?,
                         need("r0")?
                     ));
                 }
@@ -302,8 +302,8 @@ impl AmberFrcmodFfWriter {
                     let key = Self::type_field(&ends, &what)?;
                     rows.push(format!(
                         "{key}  {:.6}  {:.6}{note}",
-                        need("k")? / 2.0,
-                        need("theta0")?.to_degrees()
+                        need("k")?,
+                        need("theta0")?
                     ));
                 }
                 3 => {
@@ -312,10 +312,7 @@ impl AmberFrcmodFfWriter {
                     let last = terms.len() - 1;
                     for (m, (k, n, d)) in terms.into_iter().enumerate() {
                         let pn = if m == last { n } else { -n };
-                        rows.push(format!(
-                            "{key}  1  {k:.6}  {:.6}  {pn:.1}{note}",
-                            d.to_degrees()
-                        ));
+                        rows.push(format!("{key}  1  {k:.6}  {d:.6}  {pn:.1}{note}"));
                     }
                 }
                 4 => {
@@ -328,11 +325,7 @@ impl AmberFrcmodFfWriter {
                     // IDIVF slot that a DIHE row fills with `  1`. Two spaces
                     // put PK at column 13, and tleap then stores K = 1e5 without
                     // a warning; four put it at 15.
-                    rows.push(format!(
-                        "{key}    {:.6}  {:.6}  {n:.1}{note}",
-                        need("k")?,
-                        d.to_degrees()
-                    ));
+                    rows.push(format!("{key}    {:.6}  {d:.6}  {n:.1}{note}", need("k")?));
                 }
                 _ => {
                     if ends[0] != ends[1] {
@@ -390,7 +383,6 @@ pub fn write_amber_frcmod_str(forcefield: &ForceField) -> Result<String, String>
 mod tests {
     use super::*;
     use crate::ff::forcefield::{ForceField, Params};
-    use std::f64::consts::PI;
 
     /// The rows under `header`, up to the blank line that closes the section.
     fn section<'a>(text: &'a str, header: &str) -> Vec<&'a str> {
@@ -427,7 +419,7 @@ mod tests {
     }
 
     #[test]
-    fn bond_row_halves_k() {
+    fn bond_row_writes_k_as_rk() {
         let ff = one_type(
             "bond",
             "harmonic",
@@ -439,7 +431,7 @@ mod tests {
         assert_eq!(rows.len(), 1, "{text}");
         let (key, v) = fields(rows[0], 5);
         assert_eq!(key, "c3-os");
-        assert_eq!(v, vec![320.0, 1.43]);
+        assert_eq!(v, vec![640.0, 1.43]);
     }
 
     /// An estimated term's provenance keys are metadata, not parameters: the
@@ -455,7 +447,7 @@ mod tests {
         let (values, comment) = rows[0].split_once("  same as").unwrap();
         let (key, v) = fields(values, 5);
         assert_eq!(key, "c3-oh");
-        assert_eq!(v, vec![320.0, 1.43]);
+        assert_eq!(v, vec![640.0, 1.43]);
         assert_eq!(comment, " c3-os, penalty score= 2.5");
     }
 
@@ -488,27 +480,26 @@ mod tests {
     }
 
     #[test]
-    fn angle_row_halves_k_and_writes_degrees() {
+    fn angle_row_writes_k_and_degrees_as_stored() {
         let ff = one_type(
             "angle",
             "harmonic",
             &["c3", "os", "c3"],
-            Params::from_pairs(&[("k", 100.0), ("theta0", PI / 2.0)]),
+            Params::from_pairs(&[("k", 100.0), ("theta0", 90.0)]),
         );
         let text = write(&ff);
         let rows = section(&text, "ANGLE");
         assert_eq!(rows.len(), 1, "{text}");
         let (key, v) = fields(rows[0], 8);
         assert_eq!(key, "c3-os-c3");
-        assert_eq!(v[0], 50.0);
-        assert!((v[1] - 90.0).abs() < 1e-6, "{v:?}");
+        assert_eq!(v, vec![100.0, 90.0]);
     }
 
     #[test]
-    fn two_term_fourier_dihedral_negates_every_pn_but_the_last() {
+    fn two_term_periodic_dihedral_negates_every_pn_but_the_last() {
         let ff = one_type(
             "dihedral",
-            "fourier",
+            "periodic",
             &["c3", "os", "c3", "h1"],
             Params::from_pairs(&[
                 ("k1", 0.38),
@@ -516,7 +507,7 @@ mod tests {
                 ("phase1", 0.0),
                 ("k2", 0.1),
                 ("periodicity2", 2.0),
-                ("phase2", PI),
+                ("phase2", 180.0),
             ]),
         );
         let text = write(&ff);
@@ -539,7 +530,7 @@ mod tests {
             "improper",
             "periodic",
             &["X", "o", "c", "o"],
-            Params::from_pairs(&[("k", 1.1), ("periodicity", 2.0), ("phase", PI)]),
+            Params::from_pairs(&[("k", 1.1), ("periodicity", 2.0), ("phase", 180.0)]),
         );
         let text = write(&ff);
         let (key, v) = fields(section(&text, "IMPROPER")[0], 11);
@@ -558,7 +549,7 @@ mod tests {
             "improper",
             "periodic",
             &["o", "os", "c", "os"],
-            Params::from_pairs(&[("k", 1.1), ("periodicity", 2.0), ("phase", PI)]),
+            Params::from_pairs(&[("k", 1.1), ("periodicity", 2.0), ("phase", 180.0)]),
         );
         let text = write(&ff);
         let row = section(&text, "IMPROPER")[0];
@@ -597,7 +588,7 @@ mod tests {
             "bond",
             "morse",
             &["c3", "os"],
-            Params::from_pairs(&[("D", 1.0), ("alpha", 2.0), ("r0", 1.4)]),
+            Params::from_pairs(&[("d0", 1.0), ("alpha", 2.0), ("r0", 1.4)]),
         );
         let err = write_amber_frcmod_str(&ff).unwrap_err();
         assert!(err.contains("bond/morse"), "{err}");
@@ -687,10 +678,10 @@ mod tests {
             .def_type(
                 "c3-os-c3",
                 &["c3", "os", "c3"],
-                Params::from_pairs(&[("k", 100.0), ("theta0", 1.9)]),
+                Params::from_pairs(&[("k", 100.0), ("theta0", 109.0)]),
             )
             .unwrap();
-        ff.def_style("dihedral", "fourier", Params::new())
+        ff.def_style("dihedral", "periodic", Params::new())
             .unwrap()
             .def_type(
                 "c3-os-c3-h1",
@@ -703,7 +694,7 @@ mod tests {
             .def_type(
                 "c-o-c-o",
                 &["c", "o", "c", "o"],
-                Params::from_pairs(&[("k", 1.1), ("periodicity", 2.0), ("phase", PI)]),
+                Params::from_pairs(&[("k", 1.1), ("periodicity", 2.0), ("phase", 180.0)]),
             )
             .unwrap();
         ff.def_style("pair", "lj/cut", Params::new())

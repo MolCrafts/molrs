@@ -305,21 +305,22 @@ mod tests {
     }
 
     /// GROMACS v2026.3 `ffbonded.itp` `[ bondtypes ]` (funct 1,
-    /// `½k(r − b₀)²`, molrs's own convention), hand-copied:
+    /// `½k(r − b₀)²`), hand-copied:
     ///
     /// ```text
     ///   C=    C=      1    0.14600   322168.0   ; wlj 1,3-diene 3/97
     ///   CT    HC      1    0.10900   284512.0   ; CHARMM 22 parameter file
     /// ```
     ///
-    /// Hand conversion (b₀ nm × 10 → Å; k kJ/mol/nm² ÷ 418.4 → kcal/mol/Å²):
-    /// - CT-HC: r0 1.09, k 284512.0 / 418.4 = 680.0;
-    /// - C=-C=: r0 1.46, k 322168.0 / 418.4 = 770.0.
+    /// Hand conversion (b₀ nm × 10 → Å; GROMACS ½k_b in kJ/mol/nm² → LAMMPS
+    /// K = k_b / 418.4 / 2 kcal/mol/Å²):
+    /// - CT-HC: r0 1.09, k 284512.0 / 418.4 / 2 = 340.0;
+    /// - C=-C=: r0 1.46, k 322168.0 / 418.4 / 2 = 385.0.
     #[test]
     fn bond_types_match_hand_converted_gromacs_rows() {
         let ff = try_force_field().expect("embedded OPLS-AA defines");
         let bonds = style(&ff, "bond", "harmonic");
-        for (i, j, r0, k) in [("CT", "HC", 1.09, 680.0), ("C=", "C=", 1.46, 770.0)] {
+        for (i, j, r0, k) in [("CT", "HC", 1.09, 340.0), ("C=", "C=", 1.46, 385.0)] {
             let what = format!("bond {i}-{j}");
             let bond = bonds
                 .get_bondtype(i, j)
@@ -336,8 +337,8 @@ mod tests {
     ///   CM     C=     C=      1   124.000    585.760   ; wlj
     /// ```
     ///
-    /// Hand conversion: θ₀ = 124° · π/180 rad; k = 585.760 / 4.184 = 140.0
-    /// kcal/mol/rad².
+    /// Hand conversion: θ₀ = 124° as written; GROMACS ½k_θ → LAMMPS
+    /// K = 585.760 / 4.184 / 2 = 70.0 kcal/mol/rad².
     #[test]
     fn angle_type_matches_hand_converted_gromacs_row() {
         let ff = try_force_field().expect("embedded OPLS-AA defines");
@@ -354,10 +355,10 @@ mod tests {
         let what = "angle CM-C=-C=";
         assert_rel(
             param(&angle.params, "theta0", what),
-            124.0 * std::f64::consts::PI / 180.0,
+            124.0,
             "angle CM-C=-C= theta0",
         );
-        assert_rel(param(&angle.params, "k", what), 140.0, "angle CM-C=-C= k");
+        assert_rel(param(&angle.params, "k", what), 70.0, "angle CM-C=-C= k");
     }
 
     /// GROMACS v2026.3 `ffbonded.itp` `[ dihedraltypes ]` (funct 3,

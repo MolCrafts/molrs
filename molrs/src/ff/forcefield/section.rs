@@ -817,9 +817,23 @@ mod tests {
         assert_eq!(
             section.document["units"],
             json!({"preset": "real", "length": "angstrom", "energy": "kcal/mol",
-                   "angle": "radian", "charge": "e", "mass": "dalton"})
+                   "angle": "degree", "charge": "e", "mass": "dalton"})
         );
         round_trips(&ff, "custom");
+    }
+
+    /// A section written by molrs 0.15 states `angle: radian` beside its
+    /// preset, and its parameters are in that release's convention (radians,
+    /// ½k). The 0.16 presets state degrees, so the old section disagrees with
+    /// its own preset and is refused rather than read in the wrong convention.
+    #[test]
+    fn a_section_stating_radians_beside_a_preset_is_refused() {
+        let mut ff = ForceField::new("t");
+        ff.def_style("bond", "harmonic", Params::new()).unwrap();
+        let mut section = ff.to_section().unwrap();
+        section.document["units"] = json!({"preset": "real", "length": "angstrom",
+            "energy": "kcal/mol", "angle": "radian", "charge": "e", "mass": "dalton"});
+        assert!(ForceField::from_section(&section).is_err());
     }
 
     #[test]

@@ -309,22 +309,10 @@ fn numeric_attrs<'a>(node: &'a roxmltree::Node, skip: &[&str]) -> Vec<(&'a str, 
             continue;
         }
         if let Ok(v) = attr.value().parse::<f64>() {
-            result.push((canonical_param(attr.name()), v));
+            result.push((attr.name(), v));
         }
     }
     result
-}
-
-/// Map a legacy attribute spelling onto the canonical parameter name.
-///
-/// Files molrs wrote before spec ff-params-01 spell the harmonic force constant
-/// `k0`. It is the same quantity in the same convention, so it is renamed on the
-/// way in rather than kept as a second key the kernels have to know about.
-fn canonical_param(name: &str) -> &str {
-    match name {
-        "k0" => "k",
-        other => other,
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -511,8 +499,8 @@ mod tests {
         let xml = r#"
         <ForceField name="test">
           <BondStyle name="harmonic">
-            <Type name="CT-OH" class1="CT" class2="OH" k0="300.0" r0="1.4" />
-            <Type name="CT-CT" class1="CT" class2="CT" k0="268.0" r0="1.529" />
+            <Type name="CT-OH" class1="CT" class2="OH" k="300.0" r0="1.4" />
+            <Type name="CT-CT" class1="CT" class2="CT" k="268.0" r0="1.529" />
           </BondStyle>
         </ForceField>
         "#;
@@ -532,7 +520,7 @@ mod tests {
         let xml = r#"
         <ForceField name="test">
           <AngleStyle name="harmonic">
-            <Type name="HW-OW-HW" class1="HW" class2="OW" class3="HW" k0="55.0" theta0="104.52" />
+            <Type name="HW-OW-HW" class1="HW" class2="OW" class3="HW" k="55.0" theta0="104.52" />
           </AngleStyle>
         </ForceField>
         "#;

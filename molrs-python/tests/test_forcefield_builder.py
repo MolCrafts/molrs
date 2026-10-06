@@ -127,7 +127,7 @@ def test_angle_dihedral_improper_def_type_return_typed_handles():
     ff = molrs.ff.ForceField("bonded")
     hc, ct, oh = _atoms(ff, "HC", "CT", "OH")
     angle = ff.def_style("angle", "harmonic").def_type(
-        "HC-CT-OH", hc, ct, oh, k=70.0, theta0=1.9
+        "HC-CT-OH", hc, ct, oh, k=70.0, theta0=108.9
     )
     dihedral = ff.def_style("dihedral", "opls").def_type(
         "HC-CT-CT-OH", hc, ct, ct, oh, k1=0.0, k2=0.0, k3=0.3, k4=0.0

@@ -4,7 +4,8 @@
 //!
 //! AMBER-family torsions are a sum of cosine terms per quadruple. The parameter
 //! encoding is **per-term indexed keys** `k{m}`, `periodicity{m}`, `phase{m}`
-//! (1-indexed, the phase in radians — readers normalize at their boundary),
+//! (1-indexed, the phase in **degrees**, as LAMMPS `dihedral_style fourier`
+//! writes it — the kernel converts it to radians once),
 //! scanned upward from `m = 1` until a term is absent. A single unindexed
 //! `k`/`periodicity`/`phase` triple is accepted as the one-term case (the common
 //! GAFF default), keeping the form identical to one CHARMM term. This is the
@@ -140,7 +141,7 @@ fn collect_terms(p: &Params, label: &str) -> Result<Vec<Term>, String> {
         terms.push(Term {
             k: kk.unwrap() as F,
             n: n as F,
-            d: d as F, // radians (readers normalize at their boundary)
+            d: d.to_radians() as F, // degrees → radians
         });
         m += 1;
     }
@@ -154,7 +155,7 @@ fn collect_terms(p: &Params, label: &str) -> Result<Vec<Term>, String> {
             terms.push(Term {
                 k: k as F,
                 n: n as F,
-                d: d as F, // radians (readers normalize at their boundary)
+                d: d.to_radians() as F, // degrees → radians
             });
         } else {
             return Err(format!(

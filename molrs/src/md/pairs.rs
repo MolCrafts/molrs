@@ -682,7 +682,7 @@ mod remap_tests {
 
         // The unrewritten indices are what the bug looks like: same kernel,
         // same coordinates, a bond read as eight times its rest length.
-        assert!((pot.calc_energy_forces(&flat).0 - 3200.0).abs() < 1e-9);
+        assert!((pot.calc_energy_forces(&flat).0 - 6400.0).abs() < 1e-9);
     }
 
     /// Both arms of an angle are resolved against the vertex, so the three
@@ -996,9 +996,9 @@ mod bonded_tests {
         // The naive reading: atoms 0 and 1 as stored.
         let naive = BondHarmonic::new(vec![0], vec![1], vec![k], vec![r0]);
         let (e_naive, _) = naive.calc_energy_forces(&flat);
-        // r = 9, so dr = 8 and E = 0.5·100·64.
+        // r = 9, so dr = 8 and E = k·dr² = 100·64.
         assert!(
-            (e_naive - 3200.0).abs() < 1e-9,
+            (e_naive - 6400.0).abs() < 1e-9,
             "the naive reading measures the long way round: {e_naive}"
         );
 

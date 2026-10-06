@@ -46,11 +46,11 @@
 //!
 //! # Units
 //!
-//! Angles (θ₀, phases) are **radians**, lengths Å — molrs's own conventions, and
-//! what a candidate table must present. Force constants are copied **verbatim** in
-//! the candidate table's own convention, and the empirical formulas produce the
-//! `E = K·(x − x₀)²` constant that `gaff.dat` itself tabulates: see
-//! [`empirical`] for why the ½ belongs to the consumer, not to the estimate.
+//! molrs's convention, LAMMPS's: angles (θ₀, phases) in **degrees**, lengths Å,
+//! harmonic force constants un-halved (`E = K·(x − x₀)²`) — what a candidate
+//! table must present. Force constants are copied **verbatim** from the
+//! candidate table, and the empirical formulas produce the same `K` that
+//! `gaff.dat` itself tabulates (see [`empirical`]).
 
 pub mod candidate;
 mod cascade;
@@ -314,7 +314,7 @@ impl Parmchk2Estimator {
         Some(self.bond(types)?.into_params())
     }
 
-    /// Estimate angle parameters (`k` / `theta0`, radians) for an uncovered angle,
+    /// Estimate angle parameters (`k` / `theta0`, degrees) for an uncovered angle,
     /// or `None`.
     pub fn estimate_angle(&self, types: &[String; 3]) -> Option<Params> {
         Some(self.angle(types)?.into_params())
@@ -547,13 +547,12 @@ mod tests {
             .empirical
             .bond_length("H", "Br")
             .expect("tabulated");
-        // ×2: the formula yields AMBER's un-halved `K`, and every candidate table
-        // and estimate presents molrs's `E = ½k(r−r₀)²` convention (ff-params-01).
-        let want_k = 2.0 * empirical::bond_k(ln_k, want_r, estimator.empirical.bond_power);
+        // The formula yields AMBER's un-halved `K`, molrs's (LAMMPS's) `k`.
+        let want_k = empirical::bond_k(ln_k, want_r, estimator.empirical.bond_power);
         let r0 = bond.params().get("r0").expect("r0");
         let k = bond.params().get("k").expect("k");
         assert!((r0 - want_r).abs() < 1e-12, "r₀ is the reference length");
-        assert!((k - want_k).abs() < 1e-9, "k = 2·exp(ln Kij) / r^m");
+        assert!((k - want_k).abs() < 1e-9, "k = exp(ln Kij) / r^m");
         assert!(k > 0.0, "an empirical force constant is positive");
     }
 

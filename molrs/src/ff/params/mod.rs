@@ -41,10 +41,10 @@
 //! `gaff.dat` and `gaff2.dat` become [`ParmTable`]s of MASS / BOND / ANGLE /
 //! DIHE / IMPROPER / NONBON rows. Values are kept in the **upstream's own units
 //! and conventions** — degrees, and AMBER's un-halved force constants — because
-//! the table is a transcription of the file, not a force field: converting to
-//! molrs's radians-and-half-k kernel convention is the job of the code that
-//! populates a [`ForceField`](crate::ff::forcefield::ForceField) from it (see
-//! [`crate::ff::typifier::gaff`]).
+//! the table is a transcription of the file, not a force field. That is also
+//! molrs's (LAMMPS's) convention for every bonded term; what the code that
+//! populates a [`ForceField`](crate::ff::forcefield::ForceField) from it still
+//! converts (`IDIVF`, R\*/2 → σ) is in [`crate::ff::typifier::gaff`].
 
 pub mod amber;
 pub mod atomtype_abcg2;
@@ -423,11 +423,12 @@ pub struct ParmBondRow {
     pub length: f64,
 }
 
-/// One `ANGLE` row: `E = force_constant · (θ − angle_deg)²`, θ in radians.
+/// One `ANGLE` row: `E = force_constant · (θ − angle_deg)²`, the force
+/// constant per radian².
 ///
-/// Again AMBER's un-halved convention, and again the equilibrium angle is left
-/// in the **degrees** the file writes it in — molrs consumes radians, and that
-/// conversion belongs to the reader boundary, not to a transcription.
+/// AMBER's un-halved convention, with the equilibrium angle in the **degrees**
+/// the file writes it in — which is LAMMPS's `angle_style harmonic`, and so
+/// molrs's, exactly.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ParmAngleRow {
     /// Atom type of the first leg.
@@ -777,8 +778,8 @@ impl ParmTable {
 // OPLS-AA
 // ---------------------------------------------------------------------------
 //
-// The rows of [`oplsaa`], in **molrs units** (Å, kcal/mol, radians, e) — the
-// units the kernels read. GROMACS's `oplsaa.ff` speaks nm, kJ/mol and
+// The rows of [`oplsaa`], in **molrs's convention** (LAMMPS `real`: Å,
+// kcal/mol, degrees, e; un-halved `K`) — what the kernels read. GROMACS's `oplsaa.ff` speaks nm, kJ/mol and
 // Ryckaert–Bellemans torsions; the conversion happens once, in the generator
 // (through `GromacsTopFfReader`), and its result is what is committed. The two
 // vocabularies of the source survive intact: bonded rows key on the GROMACS
@@ -833,21 +834,21 @@ pub struct OplsRuleRow {
     pub overrides: &'static [&'static str],
 }
 
-/// One GROMACS `[ bondtypes ]` funct-1 row: `½k₀(r − r₀)²`.
+/// One GROMACS `[ bondtypes ]` funct-1 row, `½k_b(r − r₀)²` in the file, as LAMMPS `K = k_b/2`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OplsBondRow {
     /// Class of the first atom.
     pub i: &'static str,
     /// Class of the second atom.
     pub j: &'static str,
-    /// Force constant (kcal/mol/Å²) in molrs's `E = ½k(r−r0)²` convention;
-    /// emitted under the canonical param key `k` (spec ff-params-01).
+    /// Force constant (kcal/mol/Å²) in molrs's — LAMMPS's — `E = k(r−r0)²`
+    /// convention (GROMACS's `k_b / 2`); emitted under the param key `k`.
     pub force_constant: f64,
     /// Equilibrium length (Å).
     pub r0: f64,
 }
 
-/// One GROMACS `[ angletypes ]` funct-1 row: `½k₀(θ − θ₀)²`.
+/// One GROMACS `[ angletypes ]` funct-1 row, `½k_θ(θ − θ₀)²` in the file, as LAMMPS `K = k_θ/2`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OplsAngleRow {
     /// Class of the first atom.
@@ -856,11 +857,12 @@ pub struct OplsAngleRow {
     pub j: &'static str,
     /// Class of the third atom.
     pub k: &'static str,
-    /// Force constant (kcal/mol/rad²) in molrs's `E = ½k(θ−θ0)²` convention;
-    /// emitted under the canonical param key `k`. Not named `k` here because
-    /// this struct's `k` is already the third atom's class.
+    /// Force constant (kcal/mol/rad²) in molrs's — LAMMPS's — `E = k(θ−θ0)²`
+    /// convention (GROMACS's `k_θ / 2`); emitted under the param key `k`. Not
+    /// named `k` here because this struct's `k` is already the third atom's
+    /// class.
     pub force_constant: f64,
-    /// Equilibrium angle (**radians**).
+    /// Equilibrium angle (**degrees**).
     pub theta0: f64,
 }
 

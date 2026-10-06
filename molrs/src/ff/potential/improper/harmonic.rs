@@ -5,9 +5,16 @@
 //! Following LAMMPS, the improper angle χ is the **unsigned** dihedral of the
 //! quadruple I-J-K-L: χ = |φ| ∈ [0, π], where φ = atan2(…) is the signed
 //! dihedral. Hence dχ/dφ = sign(φ), so dE/dφ = 2K(χ − χ₀)·sign(φ), projected
-//! onto Cartesian forces by the shared dihedral routine. `χ₀` is the
-//! equilibrium angle in radians (0 for a planar centre); readers normalize the
-//! LAMMPS degree value to radians at their boundary.
+//! onto Cartesian forces by the shared dihedral routine. `chi0` is the
+//! equilibrium angle in **degrees** (0 for a planar centre), as LAMMPS takes
+//! it; the kernel converts it to radians once. `k` is LAMMPS's `K`
+//! (energy/rad², the ½ included).
+//!
+//! # Atom order
+//!
+//! LAMMPS's: the improper angle is the dihedral I-J-K-L of the stored order,
+//! and the first atom I is the centre (LAMMPS's "atom of symmetry" for this
+//! style; CHARMM writes its impropers this way).
 
 use molrs::store::schema::block_names::IMPROPERS;
 use std::collections::HashMap;
@@ -29,7 +36,7 @@ pub struct ImproperHarmonic {
     atom_k: Vec<usize>,
     atom_l: Vec<usize>,
     k: Vec<F>,
-    /// equilibrium angle in radians
+    /// equilibrium angle in radians (the parameter is degrees)
     chi0: Vec<F>,
 }
 
@@ -121,7 +128,7 @@ impl IndexedTerms for ImproperHarmonic {
     }
 }
 
-/// Construct an [`ImproperHarmonic`] from per-type params (`k`, `chi0` radians)
+/// Construct an [`ImproperHarmonic`] from per-type params (`k`, `chi0` degrees)
 /// and a Frame's `"impropers"` block (`atomi/atomj/atomk/atoml/type`).
 pub fn improper_harmonic_ctor(
     _sp: &Params,
@@ -171,7 +178,7 @@ pub fn improper_harmonic_ctor(
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
         kk.push(p.get("k").ok_or("improper_harmonic: missing k")? as F);
-        cc.push(p.get("chi0").unwrap_or(0.0) as F); // radians (normalized at read)
+        cc.push(p.get("chi0").unwrap_or(0.0).to_radians() as F); // degrees → radians
     }
     Ok(Member::indexed(ImproperHarmonic {
         atom_i: ai,

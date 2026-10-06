@@ -527,7 +527,7 @@ impl Parmchk2Estimator {
                 let params = Params::from_pairs(&[
                     ("k", barrier),
                     ("periodicity", f64::from(periodicity)),
-                    ("phase", phase_deg.to_radians()),
+                    ("phase", phase_deg),
                 ]);
                 Estimate::estimated(params, Provenance::wildcard(0.0, ""))
             }
@@ -619,10 +619,9 @@ impl Parmchk2Estimator {
         let e2 = self.element_of(&types[1])?;
         let ln_kij = self.empirical.bond_ln_k(&e1, &e2)?;
         let rref = self.empirical.bond_length(&e1, &e2)?;
-        // ×2: the formula reproduces `gaff.dat`'s own un-halved `K`, and every
-        // candidate table presents molrs's `E = ½k(x−x₀)²` convention, so an
-        // estimate must arrive in it too (spec ff-params-01).
-        let k = 2.0 * empirical::bond_k(ln_kij, rref, self.empirical.bond_power);
+        // The formula reproduces `gaff.dat`'s own un-halved `K`, which is
+        // molrs's (LAMMPS's) `k` as it stands.
+        let k = empirical::bond_k(ln_kij, rref, self.empirical.bond_power);
         Some(Estimate::estimated(
             Params::from_pairs(&[("k", k), ("r0", rref)]),
             Provenance::empirical(self.default_penalty(Arity::Bond)),
@@ -643,22 +642,22 @@ impl Parmchk2Estimator {
             self.element_of(b)?,
             self.element_of(c)?,
         );
-        let k = 2.0
-            * empirical::angle_k(
-                self.empirical.angle_z(&ea)?,
-                self.empirical.angle_c(&eb)?,
-                self.empirical.angle_z(&ec)?,
-                self.empirical.bond_length(&ea, &eb)?,
-                self.empirical.bond_length(&eb, &ec)?,
-                theta0,
-            );
+        // Un-halved `K`, molrs's (LAMMPS's) `k`; the formula wants θ₀ in radians.
+        let k = empirical::angle_k(
+            self.empirical.angle_z(&ea)?,
+            self.empirical.angle_c(&eb)?,
+            self.empirical.angle_z(&ec)?,
+            self.empirical.bond_length(&ea, &eb)?,
+            self.empirical.bond_length(&eb, &ec)?,
+            theta0.to_radians(),
+        );
         Some(Estimate::estimated(
             Params::from_pairs(&[("k", k), ("theta0", theta0)]),
             Provenance::empirical(self.default_penalty(Arity::Angle)),
         ))
     }
 
-    /// θ₀ (radians) of an existing `i-j-k` angle in the candidate table, if one
+    /// θ₀ (degrees) of an existing `i-j-k` angle in the candidate table, if one
     /// matches by type or class in either orientation.
     fn existing_angle_theta0(&self, i: &str, j: &str, k: &str) -> Option<f64> {
         let query = [i, j, k];

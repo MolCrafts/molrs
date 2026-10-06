@@ -34,17 +34,19 @@
 //!
 //! # Units
 //!
-//! The table holds what `gaff.dat` says; the kernels want molrs's conventions.
-//! The candidate library ([`Typifier::library`]) is the boundary between the
-//! two, and the only place the conversions happen:
+//! The table holds what `gaff.dat` says; the kernels want molrs's convention,
+//! which is LAMMPS's and, for every bonded term, AMBER's own: un-halved `K`,
+//! degrees. The candidate library ([`Typifier::library`]) is the boundary
+//! between the two, and the only place a value changes:
 //!
 //! | upstream | molrs |
 //! |---|---|
-//! | `E = K(r−r₀)²` | `E = ½k(r−r₀)²`, so `k = 2·K` |
-//! | `E = K(θ−θ₀)²` | `E = ½k(θ−θ₀)²`, so `k = 2·K` |
-//! | θ₀ and phases in degrees | radians |
+//! | `E = K(r−r₀)²` | `bond harmonic`, `k = K` |
+//! | `E = K(θ−θ₀)²`, θ₀ in degrees | `angle harmonic`, `k = K`, `theta0` in degrees |
+//! | phases in degrees | degrees |
 //! | one `PK` shared by `IDIVF` torsions | one `k` per torsion: `k = PK/IDIVF` |
 //! | R\*, half the LJ minimum separation | σ = 2·R\*/2^(1/6) |
+//! | an improper in AMBER's atom order, centre third | the same order (see `improper::periodic`) |
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::OnceLock;
@@ -136,10 +138,9 @@ impl GaffParameterSet {
 /// exactly one — and this is how GAFF reaches it: over the set's candidate
 /// library, which the estimator flattens by style kind. Wildcard rows are
 /// included, because they are most of what the estimator is for. The library's
-/// rows are already in molrs's conventions (`k = 2·K`, radians), and so is every
-/// estimate drawn from them (`empirical`'s formulas are doubled where the cascade
-/// applies them), so a looked-up row and an estimate reach the output in one
-/// convention.
+/// rows are already in molrs's convention (`k = K`, degrees), and so is every
+/// estimate drawn from them (`empirical`'s formulas give AMBER's `K`), so a
+/// looked-up row and an estimate reach the output in one convention.
 ///
 /// Memoised per parameter set, like the library it reads: the table is
 /// `&'static` data, and rebuilding the estimator per call doubled the test
@@ -286,35 +287,27 @@ fn lj_params(row: &ParmNonbondedRow) -> [(&'static str, f64); 2] {
     ]
 }
 
-/// One `BOND` row as candidate params, in molrs's convention.
-///
-/// AMBER writes `E = K(r−r₀)²` and molrs's kernel writes `E = ½k(r−r₀)²`, so
-/// `k = 2·K`, and the doubling happens **here**, at the table boundary. It used
-/// to happen where the output force field was assembled instead, which left the
-/// candidate rows and every estimate drawn from them in AMBER's convention
-/// under the same name the kernels read (spec ff-params-01).
+/// One `BOND` row as candidate params, in molrs's convention: AMBER's
+/// `E = K(r−r₀)²` is LAMMPS's `bond harmonic`, so `k = K`.
 fn bond_params(row: &ParmBondRow) -> [(&'static str, f64); 2] {
-    [("k", 2.0 * row.force_constant), ("r0", row.length)]
+    [("k", row.force_constant), ("r0", row.length)]
 }
 
-/// One `ANGLE` row as candidate params: `k = 2·K`, θ₀ in **radians**.
+/// One `ANGLE` row as candidate params: `k = K`, θ₀ in degrees, as written.
 fn angle_params(row: &ParmAngleRow) -> [(&'static str, f64); 2] {
-    [
-        ("k", 2.0 * row.force_constant),
-        ("theta0", row.angle_deg.to_radians()),
-    ]
+    [("k", row.force_constant), ("theta0", row.angle_deg)]
 }
 
 /// The cosine terms of one torsion, in the `k{m}` / `periodicity{m}` / `phase{m}` encoding
 /// [`DihedralPeriodic`](crate::ff::potential::dihedral::periodic::DihedralPeriodic)
-/// scans upward from `m = 1`. `k = PK / IDIVF`; phases in radians.
+/// scans upward from `m = 1`. `k = PK / IDIVF`; phases in degrees.
 fn dihedral_params(rows: &[&ParmDihedralRow]) -> Vec<(String, f64)> {
     let mut out = Vec::with_capacity(rows.len() * 3);
     for (m, row) in rows.iter().enumerate() {
         let m = m + 1;
         out.push((format!("k{m}"), row.barrier / f64::from(row.divisor)));
         out.push((format!("periodicity{m}"), f64::from(row.periodicity)));
-        out.push((format!("phase{m}"), row.phase_deg.to_radians()));
+        out.push((format!("phase{m}"), row.phase_deg));
     }
     out
 }
@@ -324,7 +317,7 @@ fn improper_params(row: &ParmImproperRow) -> [(&'static str, f64); 3] {
     [
         ("k", row.barrier),
         ("periodicity", f64::from(row.periodicity)),
-        ("phase", row.phase_deg.to_radians()),
+        ("phase", row.phase_deg),
     ]
 }
 
@@ -1244,11 +1237,11 @@ mod tests {
     /// doubling belongs at this boundary, so a candidate row and an estimate
     /// drawn from it reach every consumer in one convention.
     #[test]
-    fn bond_params_double_ambers_force_constant() {
+    fn bond_params_keep_ambers_force_constant() {
         let row = &GaffParameterSet::Gaff.table().bonds[0];
         let params = bond_params(row);
         assert_eq!(params[0].0, "k", "the canonical key is `k`, not `k0`");
-        assert!((params[0].1 - 2.0 * row.force_constant).abs() < 1e-12);
+        assert_eq!(params[0].1, row.force_constant);
         assert!((params[1].1 - row.length).abs() < 1e-12);
     }
 
@@ -1268,17 +1261,17 @@ mod tests {
     }
 
     #[test]
-    fn angle_params_double_the_constant_and_convert_to_radians() {
+    fn angle_params_keep_the_constant_and_the_degrees() {
         let row = &GaffParameterSet::Gaff.table().angles[0];
         let params = angle_params(row);
         assert_eq!(params[0].0, "k");
-        assert!((params[0].1 - 2.0 * row.force_constant).abs() < 1e-12);
-        assert!((params[1].1 - row.angle_deg.to_radians()).abs() < 1e-12);
+        assert_eq!(params[0].1, row.force_constant);
+        assert_eq!(params[1].1, row.angle_deg);
     }
 
     /// The estimator draws from the same candidate tables, so a formula-derived
-    /// constant must be in the same convention as a looked-up row. Half strength
-    /// here is invisible in an energy — it just makes a bond too soft.
+    /// constant must be in the same convention as a looked-up row. A factor of
+    /// two here is invisible in an energy — it just makes a bond too soft.
     #[test]
     fn an_empirical_estimate_shares_the_tables_convention() {
         let estimator = gaff_estimator(GaffParameterSet::Gaff);
@@ -1291,8 +1284,8 @@ mod tests {
         let looked_up = estimator.estimate_bond(&names).expect("a row exists");
         let k = looked_up.get("k").expect("canonical `k`");
         assert!(
-            (k - 2.0 * row.force_constant).abs() < 1e-9,
-            "a table hit arrives doubled, like every estimate"
+            (k - row.force_constant).abs() < 1e-9,
+            "a table hit arrives as AMBER's K, like every estimate"
         );
     }
 }
