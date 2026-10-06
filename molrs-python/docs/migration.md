@@ -366,9 +366,11 @@ guide, "AMBER prmtop", for the full map.
 - **A phase within 0.004 rad of ±π is ±180° exactly**, as sander takes it
   (tleap writes π as `3.14159400`); 0.15 stored 180.0000153°.
 - **Dihedral types.** The terms of a `dihedral periodic` type are sorted by
-  periodicity (they were in the file's type-id order), and two torsions of one
-  name with different terms are a `TypeConflict` (0.15 merged their terms
-  into one type, silently).
+  periodicity (they were in the file's type-id order). Two torsions of one
+  type quartet with different terms (tleap reuses a quartet's first match:
+  GAFF2's `hc-c3-ca-ca` alone beside `hc-c3-ca-ca` + `X -c3-ca-X`) are two
+  types, the second named `<quartet>@<n>` in both readers; 0.15 merged their
+  terms into one type, silently.
 - **Atom types.** A type name that stands for atoms of two LJ classes or
   masses is split into `<name>~<class>` types (0.15 raised a
   `TypeConflict`); every bonded type name and frame label uses the split
@@ -483,6 +485,42 @@ and an OPLS-AA dipeptide (`scripts/gromacs_engine_check.sh`).
 - **Writer refusals:** `dihedral charmm` with `w > 0`, `epsilon14` /
   `sigma14` on an `lj/charmm` not declared `one_four = "epsilon14"`, two
   types GROMACS would read as one (same labels in one function-code table).
+
+### GAFF and GAFF2
+
+- **`GaffTypifier` in Python**: `molrs.ff.typifier.GaffTypifier(
+  parameter_set="gaff" | "gaff2")` (also `molrs.ff.GaffTypifier`), the Rust
+  `GaffTypifier` behind the usual `Typifier` interface; compose it after
+  `AtdTypifier(parameter_set=…)`, which types the atoms. See
+  [Force-field IR](guides/forcefield-ir.md#gaff-and-gaff2).
+- **`gaff2.dat` is 2.2.30** (AmberTools 26.1; it was an older 2.2): new
+  atom type `hb`, the impropers `X -X -cc-X`, `X -X -cd-X`, `X -X -nc-X`,
+  `X -X -nd-X` (10.5 kcal/mol), and revised torsion rows (34 rows of the
+  old table replaced by 31). GAFF2-typed
+  energies change accordingly. `gaff.dat` is unchanged.
+- **Impropers are built as AmberTools builds them.** `GaffTypifier` puts an
+  improper wherever tleap does, with tleap's atom order and parmchk2's
+  estimate (0.15 put one at each `PARMCHK.DAT`-planar centre, peripherals
+  sorted by type, with its own estimate: 1.1 where parmchk2 gives 10.5 and
+  back, e.g. every GAFF2 `c2` / `ce` / `cc` centre). Improper energies of
+  GAFF-typed molecules change; ethylene under GAFF2 goes from 1.1 to
+  10.5 kcal/mol per improper.
+- **Torsions the table lacks are estimated as parmchk2 estimates them**
+  (scored corresponding-type rows; 0.15's analogy ranking picked other rows,
+  e.g. indole's `ca-ca-cd-cc`, and refused guanidinium's `nh-cz-nh-hn`).
+- **Estimated torsion and improper type names** carry their analog and
+  penalty, `<types>@<analog>_<penalty>` (`c3-o-c-os@c3.o.c.oh_8.5`), so one
+  output force field can hold two estimates of a quartet; 0.15 named them by
+  their types alone.
+
+### Parameters as frame columns
+
+`ForceField.materialize_params(frame, *, prefix)` (Rust
+`ForceField::materialize_params(&mut frame, prefix)`) is new: it writes the
+parameters a force field gives each relation row and atom of a typed frame
+as columns `<prefix><parameter>` (null where a row's type lacks one) and
+returns block → columns written. See
+[Force-field IR](guides/forcefield-ir.md#parameters-as-frame-columns).
 
 ### Already in 0.15.1
 

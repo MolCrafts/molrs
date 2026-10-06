@@ -18,6 +18,7 @@ from __future__ import annotations
 from .._lib import (
     AtdTypifier,
     ElementTypifier,
+    GaffTypifier,
     Match,
     MMFF94STypifier,
     MMFF94Typifier,
@@ -28,6 +29,7 @@ from .._lib import (
 __all__ = [
     "AtdTypifier",
     "ElementTypifier",
+    "GaffTypifier",
     "MMFF94STypifier",
     "MMFF94Typifier",
     "Match",

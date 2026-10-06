@@ -583,7 +583,7 @@ CTITLE`) reads through the same pair.
 | prmtop | IR |
 |---|---|
 | `BOND_*` `RK`, `ANGLE_*` `TK` (no ½), radians | `bond harmonic`, `angle harmonic` (`angle charmm` in a chamber file, see [Urey–Bradley](#ureybradley)) |
-| `DIHEDRAL_*` `PK`, `PN`, phase; the rows of one quartet and each negative-`PN` chain are one torsion | `dihedral periodic` `k<m>`, `periodicity<m>`, `phase<m>` (degrees), terms sorted by periodicity |
+| `DIHEDRAL_*` `PK`, `PN`, phase; the rows of one quartet and each negative-`PN` chain are one torsion | `dihedral periodic` `k<m>`, `periodicity<m>`, `phase<m>` (degrees), terms sorted by periodicity; a second distinct set of terms on one type quartet (tleap reuses a quartet's first match, so two torsions of one quartet can differ) is the type `<quartet>@<n>` |
 | an improper (negative 4th pointer) | `improper periodic` in AMBER's order; a multi-term one (several rows, or a chain) is one frame row and one type `<quartet>@<n>` per term, as LAMMPS `cvff` holds one term |
 | a phase within 0.004 rad of ±π | ±180° exactly, as sander's `rdparm` (tleap writes π as `3.14159400`) |
 | `CHARMM_IMPROPERS` `K_ψ (ψ − ψ₀)²` | `improper harmonic` `k = K_ψ`, `chi0 = ψ₀`, centre first; ψ₀ other than 0° / 180° refused (LAMMPS prices \|ψ\|) |
@@ -669,6 +669,89 @@ Virtual sites, restraints, polarization and free-energy B states have no IR
 form and are refused by name. A system whose field reads with
 `one_four = "epsilon14"` (CHARMM's pairtypes) compiles once its 1-4 pairs
 are written out as per-pair rows, `ForceField.materialize_one_four(frame)`.
+
+## GAFF and GAFF2
+
+`GaffTypifier` (Python `molrs.ff.typifier.GaffTypifier(parameter_set=
+"gaff" | "gaff2")`) matches a molecule whose atoms carry GAFF types —
+`AtdTypifier` with the same `parameter_set` stamps them — against the
+`gaff.dat` / `gaff2.dat` tables compiled into molrs (GAFF 1.81, GAFF2 2.2.30,
+AmberTools 26.1), and writes the IR: `atom full` (mass), `pair lj/cut`
+(σ = 2·R\*/2^(1/6), ε), `pair coul/cut` at AMBER's 332.0522173,
+`bond harmonic` and `angle harmonic` (`k = K`, θ₀ in degrees),
+`dihedral periodic` (`k<m> = PK/IDIVF`), `improper periodic` (AMBER order,
+centre third) and `special_bonds` ½ / ⅚ (SCNB 2, SCEE 1.2). Charges are not
+a GAFF parameter: a charge model writes `atoms.charge`.
+
+What the table lacks is estimated as AmberTools estimates it, and each
+estimate carries `estimated`, `estimate_penalty`, `estimate_method` and
+`estimate_analog`:
+
+- **Torsions** follow parmchk2's `chk_torsion`: equivalent-type rows, the
+  wildcard row `X-j-k-X` (a parameter, not an estimate), equivalent-type
+  wildcard rows, then the cheapest corresponding-type row and wildcard row,
+  scored as parmchk2 scores them.
+- **Impropers** follow parmchk2's `chk_improper` (estimates at the centres
+  `PARMCHK.DAT` flags as planar) and then tleap: an improper wherever tleap
+  finds a row for a triple of an atom's neighbours, its atoms in the order
+  tleap gives them.
+- **Bonds and angles** take the closest analog or the empirical formulas
+  (Badger bond `k`, Wang's angle `K_θ`).
+
+parmchk2 searches torsions and impropers in atom and bond order, so a type
+quartet can be estimated differently in two molecules (aspirin's ester
+carbon takes `c3-o -c -oh`, ethyl acetate's the `X -X -c -o` amide term). An
+estimated torsion or improper is therefore named with its analog and
+penalty, `<types>@<analog>_<penalty>` (`c3-o-c-os@c3.o.c.oh_8.5`; the
+improper default `@default_0.0`), so one output force field holds both.
+
+Checked against antechamber + parmchk2 + tleap + sander (AmberTools 26.1) on
+73 molecules (neutral and charged; aromatic, heteroaromatic, conjugated,
+strained, S / P / halogen chemistry) under both sets: every ATD atom type,
+every bond, angle, torsion and improper row (atoms, atom order, every
+parameter), every atom's σ / ε, and every energy term at perturbed
+coordinates — bond, angle, dihedral with impropers, 1-4 and other van der
+Waals and Coulomb — agree, the angle energy to the 4·10⁻⁷ by which tleap's
+π (3.141594) moves θ₀. A term neither the table nor parmchk2's search
+reaches is an error where parmchk2 writes a zero barrier marked `ATTN, need
+revision`.
+
+## Parameters as frame columns
+
+`ForceField.materialize_params(frame, prefix=…)` (Rust
+`ForceField::materialize_params`) writes the parameters this force field
+gives each row of a typed frame next to the row, as columns
+`<prefix><parameter>`:
+
+| Block | Rows priced by | Columns (`lj/cut` + `harmonic` + `periodic` field) |
+|---|---|---|
+| `bonds`, `angles`, `dihedrals`, `impropers`, `cmaps` | the type its `type` names, under the one style of the category that defines it | `k`, `r0`; `k`, `theta0`; `k<m>`, `periodicity<m>`, `phase<m>`; `k`, `periodicity`, `phase` |
+| `atoms` | `atoms.type`: every `atom` style's type, every `pair` style's self row | `mass`; `epsilon`, `sigma` |
+
+Nothing in it is per style: the columns are the numeric parameters the
+field stores for each type, in the IR's units (degrees, `K` without a ½, the
+field's `units`), so a style added to the IR is written by the same call. A
+row whose type lacks a parameter another row's type has — a two-term torsion
+beside a three-term one, `estimate_penalty` on an estimated term only — is a
+null cell (`Block.validity(column)`), not a zero. String and array
+parameters, a pair style without per-type rows (`coul/cut`) and cross rows
+(NBFIX, which have no per-atom form; the style's `mixing` combines the self
+rows) are not written; charges are frame data unless the field stores them
+per type. A column already present under a written name is replaced. It
+returns block → columns written, and refuses a row whose type no style (or
+two styles) of its category defines.
+
+The use it is for is a **reference field**: type a molecule with one field
+and read another's parameters beside the same rows — e.g. GAFF2's bonded
+terms and Lennard-Jones as the reference of a learned Class-I field,
+
+```python
+labelled = molrs.ff.typifier.AtdTypifier(parameter_set="gaff2").typify(mol)
+gaff2 = molrs.ff.typifier.GaffTypifier(parameter_set="gaff2")
+frame = gaff2.typify(labelled).to_frame()
+gaff2.forcefield().materialize_params(frame, prefix="gaff2_")
+frame["bonds"]["gaff2_k"], frame["atoms"]["gaff2_sigma"]
+```
 
 ## Engine maps at a glance
 

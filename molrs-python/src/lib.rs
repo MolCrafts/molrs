@@ -25,6 +25,7 @@
 //! | `MMFF94STypifier`         | `PyMMFF94STypifier` | MMFF94s (static) atom-type assignment       |
 //! | `OPLSAATypifier`          | `PyOPLSAATypifier`  | OPLS-AA atom-type + bonded assignment       |
 //! | `AtdTypifier`             | `PyAtdTypifier`     | antechamber atom types (7 `-at` tables)     |
+//! | `GaffTypifier`            | `PyGaffTypifier`    | GAFF / GAFF2 bonded terms + parameters      |
 //! | `ElementTypifier`         | `PyElementTypifier` | Element-symbol type labels, no force field  |
 //! | `BccModel`                | `PyBccModel`        | AM1-BCC / ABCG2 bond-charge corrections     |
 //! | `MullikenModel`           | `PyMullikenModel`   | QM Mulliken charges, unchanged              |
@@ -96,6 +97,7 @@ use conformer::{PyConformer, PyConformerReport, PyConformerStageReport};
 mod ff;
 use ff::atd::PyAtdTypifier;
 use ff::charge::{PyBccModel, PyGasteigerModel, PyMullikenModel};
+use ff::gaff::PyGaffTypifier;
 use ff::{
     PyElementTypifier, PyForceField, PyLBFGS, PyMMFF94STypifier, PyMMFF94Typifier, PyMatch,
     PyOPLSAATypifier, PyOptReport, PyPotentialCompiler, PyPotentials, PyTypedPotentials,
@@ -423,6 +425,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMMFF94STypifier>()?;
     m.add_class::<PyOPLSAATypifier>()?;
     m.add_class::<PyAtdTypifier>()?;
+    m.add_class::<PyGaffTypifier>()?;
     m.add_class::<PyElementTypifier>()?;
     m.add_class::<PyPotentialCompiler>()?;
     m.add_class::<PyPotentials>()?;
