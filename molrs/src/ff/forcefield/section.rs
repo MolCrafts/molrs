@@ -12,6 +12,7 @@
 //! | the string style params `expression`, `endpoint_key` | the entry fields of those names |
 //! | [`Style::type_rows`], in definition order | the rows of the table at [`style_block_name`] |
 //! | row name, endpoints (a pair always two) | `name`, `itom`…`ltom` |
+//! | a pair self row / an explicit cross row (NBFIX) | a pair row with `itom == jtom` / `itom != jtom` |
 //! | row [`Params`] numeric / string | `f64` / `string` columns, after `name` and the endpoints, keys sorted bytewise |
 //! | a numeric param under a canonical non-`f64` key (`atomic_number`, `id`, …) | a column of that key's dtype; [`ForceField::from_section`] reads it back as `f64` |
 //! | a key a row does not carry | null in that row |
@@ -580,6 +581,7 @@ mod tests {
                     pair_modify mix arithmetic\n\
                     pair_coeff c3 c3 0.107800 3.397710\n\
                     pair_coeff oh oh 0.093000 3.242871\n\
+                    pair_coeff c3 oh 0.250000 3.100000\n\
                     bond_style harmonic\n\
                     bond_coeff c3-oh 314.1 1.426\n\
                     angle_style harmonic\n\
@@ -591,6 +593,17 @@ mod tests {
         let ff = crate::ff::forcefield::readers::lammps::LammpsFfReader::new()
             .read_str(text)
             .unwrap();
+        // The cross pair_coeff (NBFIX) is a pair row with itom != jtom.
+        let section = ff.to_section().unwrap();
+        let pairs = section.table("pair", "lj/cut").unwrap();
+        let ends = |c: &str| pairs.get(c).and_then(Column::as_string).unwrap().to_owned();
+        let (itom, jtom) = (ends("itom"), ends("jtom"));
+        let rows: Vec<(&str, &str)> = itom
+            .iter()
+            .zip(jtom.iter())
+            .map(|(i, j)| (i.as_str(), j.as_str()))
+            .collect();
+        assert_eq!(rows, [("c3", "c3"), ("oh", "oh"), ("c3", "oh")]);
         round_trips(&ff, "LAMMPS");
     }
 
@@ -643,6 +656,59 @@ mod tests {
         }
         assert!(atoms.validity("overrides").is_some(), "absent on opls_135");
         round_trips(&ff, "OpenMM XML");
+    }
+
+    /// Explicit cross rows from every reader that makes them survive the
+    /// section and the store, and still price their pair after the trip.
+    #[test]
+    fn explicit_cross_rows_round_trip_and_still_override_mixing() {
+        use crate::ff::potential::PotentialCompiler;
+        use molrs::store::frame::Frame;
+        use molrs::types::Idx;
+        use ndarray::Array1;
+
+        let gromacs = "[ defaults ]\n1 3 yes 0.5 0.5\n\
+                       [ atomtypes ]\n\
+                       A 12.0 0.0 A 0.30 0.4184\n\
+                       B 12.0 0.0 A 0.36 1.6736\n\
+                       [ nonbond_params ]\nA B 1 0.20 3.7656\n";
+        let ff = crate::ff::forcefield::readers::gromacs::GromacsTopFfReader::new()
+            .read_str(gromacs)
+            .unwrap();
+        round_trips(&ff, "GROMACS nonbond_params");
+        let back = ForceField::from_section(&ff.to_section().unwrap()).unwrap();
+
+        // One A–B pair at 2.5 Å: priced by the cross row (ε = 0.9, σ = 2), not
+        // by geometric mixing.
+        let mut atoms = Block::new();
+        atoms
+            .insert(
+                "type",
+                Array1::from_vec(vec!["A".to_string(), "B".to_string()]).into_dyn(),
+            )
+            .unwrap();
+        let mut pairs = Block::new();
+        pairs
+            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn())
+            .unwrap();
+        pairs
+            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn())
+            .unwrap();
+        atoms
+            .insert("charge", Array1::from_vec(vec![0.0, 0.0]).into_dyn())
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert("pairs", pairs);
+        let r: f64 = 2.5;
+        let coords = [0.0, 0.0, 0.0, r, 0.0, 0.0];
+        let s6 = (2.0 / r).powi(6);
+        let want = 4.0 * 0.9 * (s6 * s6 - s6);
+        let e = PotentialCompiler::new(&back)
+            .compile(&frame)
+            .unwrap()
+            .calc_energy(&coords);
+        assert!((e - want).abs() < 1e-9, "E = {e}, cross row gives {want}");
     }
 
     #[test]

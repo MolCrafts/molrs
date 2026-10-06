@@ -34,6 +34,15 @@
 //! token → params conversion for one coefficient line is
 //! [`lammps_coeff_params`], the single place it happens.
 //!
+//! # Pair rows
+//!
+//! `pair_coeff i i ε σ` is atom type `i`'s own `lj/cut` row. A cross
+//! `pair_coeff i j ε σ` (`i ≠ j`; CHARMM NBFIX and the like) is an explicit
+//! pair type between `i` and `j`, which the `lj/cut` kernel uses for that pair
+//! in place of the mixing rule. A later line for the same pair, in either
+//! order, replaces an earlier one, as in LAMMPS. A cross line with a wildcard
+//! (`pair_coeff c3 * …`) is refused rather than expanded.
+//!
 //! # Charges and masses
 //!
 //! Per-atom charge and mass live in the LAMMPS **data** file, not this include,
@@ -93,8 +102,10 @@ impl LammpsFfReader {
 
     /// Parse data-file `* Coeffs` sections with optional Type Labels maps.
     ///
-    /// `coeffs_text` is a fragment containing `Pair Coeffs` / `Bond Coeffs` / …
-    /// (and optional `units` line).
+    /// `coeffs_text` is a fragment containing `Pair Coeffs` / `PairIJ Coeffs` /
+    /// `Bond Coeffs` / … (and optional `units` line). A `PairIJ Coeffs` row
+    /// `i j ε σ` is the `pair_coeff i j ε σ` line: with `i ≠ j` an explicit
+    /// cross pair that replaces the mixing rule for that type pair.
     ///
     /// # Styles
     ///
@@ -160,7 +171,7 @@ impl LammpsFfReader {
             LammpsFfUnits::canonical().map_err(|e| format!("lammps unit system: {e}"))?;
         let mut file_units = self.default_units;
         let mut ff = ForceField::new("LAMMPS");
-        let mut pair_rows: Vec<(String, Params)> = Vec::new();
+        let mut pair_rows: Vec<PairRow> = Vec::new();
         let mut cutoffs: (Option<f64>, Option<f64>) = (None, None);
         let mut pair_mix: Option<String> = None;
         let mut dihedral_style_name: Option<String> = None;
@@ -338,6 +349,7 @@ fn data_sections_to_commands(
         let lower = line.to_ascii_lowercase();
         let opened = [
             ("pair coeffs", "pair"),
+            ("pairij coeffs", "pairij"),
             ("bond coeffs", "bond"),
             ("angle coeffs", "angle"),
             ("dihedral coeffs", "dihedral"),
@@ -347,9 +359,11 @@ fn data_sections_to_commands(
         .find(|(name, _)| lower.starts_with(name));
         if let Some((_, kind)) = opened {
             section = Some(kind);
+            // `PairIJ Coeffs` is the pair category: one hint for both forms.
+            let category = if kind == "pairij" { "pair" } else { kind };
             match SectionStyleHint::parse(raw) {
-                Some(hint) => hints.insert(kind, hint),
-                None => hints.remove(kind),
+                Some(hint) => hints.insert(category, hint),
+                None => hints.remove(category),
             };
             continue;
         }
@@ -374,12 +388,15 @@ fn data_sections_to_commands(
                 parts[0]
             )
         })?;
-        let type_tok = match kind {
-            "pair" => labels
+        let atom_label = |id: u32| {
+            labels
                 .atom
                 .get(&id)
                 .cloned()
-                .unwrap_or_else(|| id.to_string()),
+                .unwrap_or_else(|| id.to_string())
+        };
+        let type_tok = match kind {
+            "pair" | "pairij" => atom_label(id),
             "bond" => labels
                 .bond
                 .get(&id)
@@ -414,6 +431,30 @@ fn data_sections_to_commands(
                 out.push_str(&format!(
                     "pair_coeff {type_tok} {type_tok} {} {}\n",
                     parts[1], parts[2]
+                ));
+            }
+            "pairij" => {
+                // PairIJ Coeffs: i j ε σ  →  pair_coeff Ti Tj ε σ. A row with
+                // i ≠ j is an explicit cross pair, kept as a pair type of its
+                // own (it used to end the coefficient sections, unread).
+                if parts.len() < 4 {
+                    return Err(format!(
+                        "line {}: PairIJ Coeffs needs `i j epsilon sigma`",
+                        lineno + 1
+                    ));
+                }
+                let j: u32 = parts[1].parse().map_err(|_| {
+                    format!(
+                        "line {}: expected integer type id in PairIJ Coeffs, got {}",
+                        lineno + 1,
+                        parts[1]
+                    )
+                })?;
+                out.push_str(&format!(
+                    "pair_coeff {type_tok} {} {} {}\n",
+                    atom_label(j),
+                    parts[2],
+                    parts[3]
                 ));
             }
             other => {
@@ -503,17 +544,22 @@ fn hybrid_cutoffs(
     Ok((lj, coul.or(lj)))
 }
 
+/// One `pair_coeff` row: the two atom types (equal for a self pair) and its
+/// `lj/cut` parameters.
+type PairRow = (String, String, Params);
+
 fn collect_pair(
     rest: &[&str],
-    rows: &mut Vec<(String, Params)>,
+    rows: &mut Vec<PairRow>,
     where_: &dyn Fn() -> String,
     unit_sys: &LammpsFfUnits,
     file_units: &str,
     labels: &LammpsTypeLabelMaps,
 ) -> Result<(), String> {
-    // pair_coeff <i> <j> [sub-style] <epsilon> <sigma>. Only self-pairs i==j
-    // are transcribed; cross terms come from the combining rule in
-    // `PotentialCompiler::compile`.
+    // pair_coeff <i> <j> [sub-style] <epsilon> <sigma>. A self pair i==j is an
+    // atom type's own row; a cross pair i!=j is an explicit override (NBFIX) that
+    // the kernel uses in place of the combining rule. A later line for the same
+    // pair replaces an earlier one, as in LAMMPS.
     if rest.len() < 2 {
         return Err(format!("{}: pair_coeff needs `<i> <j> ...`", where_()));
     }
@@ -540,17 +586,23 @@ fn collect_pair(
             }
         }
     }
-    if ti != tj {
-        return Ok(());
+    if ti != tj && (ti.contains('*') || tj.contains('*')) {
+        return Err(format!(
+            "{}: pair_coeff `{ti} {tj}` is a wildcard cross pair; expand it to explicit \
+             type pairs",
+            where_()
+        ));
     }
     let params = coeff_params(unit_sys, file_units, "pair", "lj/cut", args, where_)?;
-    if !rows.iter().any(|(t, _)| t == &ti) {
-        rows.push((ti, params));
+    let same = |(a, b, _): &PairRow| (a == &ti && b == &tj) || (a == &tj && b == &ti);
+    match rows.iter_mut().find(|row| same(row)) {
+        Some(row) => *row = (ti, tj, params),
+        None => rows.push((ti, tj, params)),
     }
     Ok(())
 }
 
-/// Emit the collected LJ self-params as a `lj/cut` style plus a `coul/cut` style
+/// Emit the collected LJ rows (self pairs and explicit cross pairs) as a `lj/cut` style plus a `coul/cut` style
 /// (charges resolved from the frame), with AMBER 1-4 scales.
 ///
 /// `coul/cut` is the **buffered** Coulomb `E = k·qᵢqⱼ/(D·(r + δ))`; a LAMMPS `real`
@@ -559,7 +611,7 @@ fn collect_pair(
 /// MMFF's `k` is a different number and both are correct.
 fn build_pairs(
     ff: &mut ForceField,
-    rows: &[(String, Params)],
+    rows: &[PairRow],
     cutoffs: (Option<f64>, Option<f64>),
     mix: Option<&str>,
 ) -> Result<(), String> {
@@ -578,9 +630,14 @@ fn build_pairs(
     let lj = ff
         .def_style("pair", "lj/cut", lj_params)
         .map_err(|e| e.to_string())?;
-    for (ty, params) in rows {
-        lj.def_type(ty, &[ty], params.clone())
-            .map_err(|e| e.to_string())?;
+    for (ti, tj, params) in rows {
+        if ti == tj {
+            lj.def_type(ti, &[ti], params.clone())
+        } else {
+            let name = TypeName::pair(ti, tj)?;
+            lj.def_type(name.as_str(), &[ti, tj], params.clone())
+        }
+        .map_err(|e| e.to_string())?;
     }
     let mut coul_params = vec![("coulomb", COULOMB_REAL), ("dielectric", VACUUM_DIELECTRIC)];
     if let Some(c) = cut_coul {
@@ -1063,7 +1120,7 @@ special_bonds amber
 pair_style lj/cut/coul/long 10.0 10.0
 pair_coeff c3 c3 0.107800 3.397710
 pair_coeff oh oh 0.093000 3.242871
-pair_coeff c3 c3 0.107800 3.397710   # duplicate, ignored
+pair_coeff c3 c3 0.107800 3.397710   # duplicate; the last one is used
 
 bond_style harmonic
 bond_coeff c3-c3 228.890000 1.535400
@@ -1259,6 +1316,56 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
         assert!(err.contains("expected 2"), "err: {err}");
     }
 
+    /// A cross `pair_coeff i j` (NBFIX) is a pair type of its own. The reader used
+    /// to drop it silently, so the pair was priced by the mixing rule instead.
+    #[test]
+    fn a_cross_pair_coeff_is_kept_as_a_pair_type() {
+        let text = "\
+special_bonds amber
+pair_style lj/cut 10.0
+pair_coeff c3 c3 0.1078 3.39771
+pair_coeff oh oh 0.0930 3.24287
+pair_coeff c3 oh 0.2500 3.10000
+";
+        let ff = LammpsFfReader::new().read_str(text).unwrap();
+        let lj = ff.get_style("pair", "lj/cut").unwrap();
+        let pt = lj.get_pairtype("c3", Some("oh")).expect("cross row c3-oh");
+        assert!((pt.params.get("epsilon").unwrap() - 0.25).abs() < 1e-12);
+        assert!((pt.params.get("sigma").unwrap() - 3.1).abs() < 1e-12);
+        assert!(lj.get_pairtype("c3", None).is_some());
+    }
+
+    /// LAMMPS uses the last `pair_coeff` given for a pair.
+    #[test]
+    fn a_repeated_pair_coeff_replaces_the_earlier_one() {
+        let text = "\
+special_bonds amber
+pair_style lj/cut 10.0
+pair_coeff c3 c3 0.1078 3.39771
+pair_coeff c3 c3 0.2000 3.00000
+pair_coeff c3 oh 0.2500 3.10000
+pair_coeff oh c3 0.3000 3.20000
+";
+        let ff = LammpsFfReader::new().read_str(text).unwrap();
+        let lj = ff.get_style("pair", "lj/cut").unwrap();
+        let own = lj.get_pairtype("c3", None).unwrap();
+        assert!((own.params.get("epsilon").unwrap() - 0.2).abs() < 1e-12);
+        let cross = lj.get_pairtype("c3", Some("oh")).expect("cross row");
+        assert!((cross.params.get("epsilon").unwrap() - 0.3).abs() < 1e-12);
+    }
+
+    /// `pair_coeff 1 *` names a cross pair against every type; expanding it is
+    /// not implemented, so it is refused rather than dropped.
+    #[test]
+    fn a_wildcard_cross_pair_coeff_is_an_error() {
+        let text = "\
+special_bonds amber
+pair_style lj/cut 10.0
+pair_coeff c3 * 0.1078 3.39771
+";
+        assert!(LammpsFfReader::new().read_str(text).is_err());
+    }
+
     /// The `hybrid/overlay` pair form round-trips: both cutoffs come back and the
     /// wildcard `* * coul/cut` line is skipped rather than mistaken for LJ coefficients.
     #[test]
@@ -1378,6 +1485,38 @@ Pair Coeffs
         let lj = ff.get_style("pair", "lj/cut").unwrap();
         let pt = lj.get_pairtype("OW", None).unwrap();
         assert!((pt.params.get("epsilon").unwrap() - 0.1521).abs() < 1e-9);
+    }
+
+    /// `PairIJ Coeffs` rows are pair_coeff lines: the self rows are the types'
+    /// own, `1 2` an explicit cross pair. The section used to be skipped.
+    #[test]
+    fn data_coeffs_pairij_rows_keep_their_cross_pairs() {
+        let mut labels = LammpsTypeLabelMaps::default();
+        labels.atom.insert(1, "c3".into());
+        labels.atom.insert(2, "oh".into());
+        let coeffs = "\
+PairIJ Coeffs # lj/cut
+
+1 1 0.1078 3.39771
+1 2 0.2500 3.10000
+2 2 0.0930 3.24287
+";
+        let ff = LammpsFfReader::new()
+            .read_data_coeffs(coeffs, &labels, "real")
+            .unwrap();
+        let lj = ff.get_style("pair", "lj/cut").unwrap();
+        let cross = lj.get_pairtype("c3", Some("oh")).expect("cross row c3-oh");
+        assert!((cross.params.get("epsilon").unwrap() - 0.25).abs() < 1e-12);
+        assert!((cross.params.get("sigma").unwrap() - 3.1).abs() < 1e-12);
+        let own = lj.get_pairtype("oh", None).expect("self row oh");
+        assert!((own.params.get("epsilon").unwrap() - 0.093).abs() < 1e-12);
+        assert_eq!(lj.type_rows().len(), 3);
+    }
+
+    #[test]
+    fn data_coeffs_pairij_row_needs_both_ids() {
+        let err = read_data("PairIJ Coeffs\n\n1 0.1 3.0\n").unwrap_err();
+        assert!(err.contains("PairIJ Coeffs"), "{err}");
     }
 
     fn read_data(coeffs: &str) -> Result<ForceField, String> {

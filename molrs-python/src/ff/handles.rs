@@ -226,7 +226,7 @@ impl PyStyle {
             ends.push(atom.as_super().get().name.clone());
         }
         let params = params_from_dict(params)?;
-        {
+        let stored = {
             let mut ff = self.ff.bind(py).try_borrow_mut()?;
             let style = ff
                 .inner
@@ -234,9 +234,17 @@ impl PyStyle {
                 .ok_or_else(|| missing_style(self.category, &self.name))?;
             let ends: Vec<&str> = ends.iter().map(String::as_str).collect();
             style.def_type(name, &ends, params).map_err(py_value_err)?;
-        }
+            // A pair restating a stored pair under another name is that row.
+            match style.type_params(name) {
+                Some(_) => name.to_owned(),
+                None => style
+                    .get_pairtype(ends[0], ends.get(1).copied())
+                    .map(|row| row.name.clone())
+                    .expect("def_type stored the row or found the pair it restates"),
+            }
+        };
         self.category
-            .type_handle(py, &self.ff, Some(&self.name), name)
+            .type_handle(py, &self.ff, Some(&self.name), &stored)
     }
 }
 
@@ -352,7 +360,7 @@ impl PyStyle {
 }
 
 /// The atom style: ``def_type(name, **params)``.
-#[pyclass(module = "molrs.ff", name = "AtomStyle", extends = PyStyle, frozen)]
+#[pyclass(module = "molrs.ff", name = "AtomStyle", extends = PyStyle, frozen, subclass)]
 pub struct PyAtomStyle {}
 
 #[pymethods]
@@ -376,7 +384,7 @@ impl PyAtomStyle {
 }
 
 /// The bond style: ``def_type(name, itom, jtom, **params)``.
-#[pyclass(module = "molrs.ff", name = "BondStyle", extends = PyStyle, frozen)]
+#[pyclass(module = "molrs.ff", name = "BondStyle", extends = PyStyle, frozen, subclass)]
 pub struct PyBondStyle {}
 
 #[pymethods]
@@ -406,7 +414,7 @@ impl PyBondStyle {
 }
 
 /// The angle style: ``def_type(name, itom, jtom, ktom, **params)``.
-#[pyclass(module = "molrs.ff", name = "AngleStyle", extends = PyStyle, frozen)]
+#[pyclass(module = "molrs.ff", name = "AngleStyle", extends = PyStyle, frozen, subclass)]
 pub struct PyAngleStyle {}
 
 #[pymethods]
@@ -436,7 +444,7 @@ impl PyAngleStyle {
 }
 
 /// The dihedral style: ``def_type(name, itom, jtom, ktom, ltom, **params)``.
-#[pyclass(module = "molrs.ff", name = "DihedralStyle", extends = PyStyle, frozen)]
+#[pyclass(module = "molrs.ff", name = "DihedralStyle", extends = PyStyle, frozen, subclass)]
 pub struct PyDihedralStyle {}
 
 #[pymethods]
@@ -467,7 +475,7 @@ impl PyDihedralStyle {
 }
 
 /// The improper style: ``def_type(name, itom, jtom, ktom, ltom, **params)``.
-#[pyclass(module = "molrs.ff", name = "ImproperStyle", extends = PyStyle, frozen)]
+#[pyclass(module = "molrs.ff", name = "ImproperStyle", extends = PyStyle, frozen, subclass)]
 pub struct PyImproperStyle {}
 
 #[pymethods]
@@ -499,7 +507,7 @@ impl PyImproperStyle {
 }
 
 /// The pair style: ``def_type(name, itom, jtom=None, **params)``.
-#[pyclass(module = "molrs.ff", name = "PairStyle", extends = PyStyle, frozen)]
+#[pyclass(module = "molrs.ff", name = "PairStyle", extends = PyStyle, frozen, subclass)]
 pub struct PyPairStyle {}
 
 #[pymethods]
@@ -508,12 +516,18 @@ impl PyPairStyle {
     /// ``params`` and return its handle; ``jtom=None`` is the self pair of
     /// ``itom``.
     ///
+    /// A pair is its two atom types in either order, so a style holds one
+    /// row per pair: restating a stored pair under any name with equal
+    /// parameters (annotations such as ``desc`` aside) stores nothing and
+    /// returns the stored row's handle.
+    ///
     /// Raises
     /// ------
     /// TypeError
     ///     If an endpoint is not an ``AtomType``.
     /// ValueError
-    ///     On a conflicting re-definition.
+    ///     On a conflicting re-definition, or a restatement of a stored pair
+    ///     with different parameters.
     #[pyo3(signature = (name, itom, jtom = None, **params))]
     fn def_type(
         slf: &Bound<'_, Self>,
@@ -728,7 +742,7 @@ impl PyFfType {
 }
 
 /// An atom type; the endpoint every other type is defined on.
-#[pyclass(module = "molrs.ff", name = "AtomType", extends = PyFfType, frozen)]
+#[pyclass(module = "molrs.ff", name = "AtomType", extends = PyFfType, frozen, subclass)]
 pub struct PyAtomType {}
 
 /// The `itom` / `jtom` endpoint accessors of a type class.
@@ -780,31 +794,31 @@ macro_rules! fourth_endpoint {
 }
 
 /// A bond type.
-#[pyclass(module = "molrs.ff", name = "BondType", extends = PyFfType, frozen)]
+#[pyclass(module = "molrs.ff", name = "BondType", extends = PyFfType, frozen, subclass)]
 pub struct PyBondType {}
 first_two_endpoints!(PyBondType);
 
 /// An angle type (``jtom`` the vertex).
-#[pyclass(module = "molrs.ff", name = "AngleType", extends = PyFfType, frozen)]
+#[pyclass(module = "molrs.ff", name = "AngleType", extends = PyFfType, frozen, subclass)]
 pub struct PyAngleType {}
 first_two_endpoints!(PyAngleType);
 third_endpoint!(PyAngleType);
 
 /// A dihedral type.
-#[pyclass(module = "molrs.ff", name = "DihedralType", extends = PyFfType, frozen)]
+#[pyclass(module = "molrs.ff", name = "DihedralType", extends = PyFfType, frozen, subclass)]
 pub struct PyDihedralType {}
 first_two_endpoints!(PyDihedralType);
 third_endpoint!(PyDihedralType);
 fourth_endpoint!(PyDihedralType);
 
 /// An improper type.
-#[pyclass(module = "molrs.ff", name = "ImproperType", extends = PyFfType, frozen)]
+#[pyclass(module = "molrs.ff", name = "ImproperType", extends = PyFfType, frozen, subclass)]
 pub struct PyImproperType {}
 first_two_endpoints!(PyImproperType);
 third_endpoint!(PyImproperType);
 fourth_endpoint!(PyImproperType);
 
 /// A pair type.
-#[pyclass(module = "molrs.ff", name = "PairType", extends = PyFfType, frozen)]
+#[pyclass(module = "molrs.ff", name = "PairType", extends = PyFfType, frozen, subclass)]
 pub struct PyPairType {}
 first_two_endpoints!(PyPairType);

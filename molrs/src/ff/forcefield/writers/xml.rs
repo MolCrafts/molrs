@@ -8,6 +8,21 @@
 //! every torsion / pair energy × 4.184, lengths ÷ 10). OPLS dihedrals stored as
 //! the 4-cosine `k1..k4` are written as Ryckaert–Bellemans `c0..c5` (GROMACS
 //! Eqs. 200–201); periodic terms use `k{m}/periodicity{m}/phase{m}`.
+//! Impropers are OpenMM `<Improper>` rows under `<PeriodicTorsionForce>`
+//! (OpenMM has no improper force of its own): `improper/periodic` term for
+//! term, `improper/cvff` with its sign as the phase (`+1` → 0, `−1` → π).
+//!
+//! # Refusals
+//!
+//! What OpenMM's tags cannot hold is an `Err` naming it, never a silent
+//! approximation:
+//!
+//! - a dihedral style with neither `k1..k4` / `c0..c5` nor periodic terms
+//!   (`multi/harmonic`, …);
+//! - an improper style other than `periodic` and `cvff` (`harmonic`,
+//!   `k(χ − χ₀)²`, has no periodic form);
+//! - an explicit LJ cross row (NBFIX): OpenMM keeps pair overrides in
+//!   `<LennardJonesForce>`, which this writer does not model.
 //!
 //! # Whole-FF serialization, not coefficient writing
 //!
@@ -268,37 +283,71 @@ impl ForceFieldWriter for XmlForceFieldWriter {
                             self.fmt_f(d)
                         ));
                     }
+                    if !attrs.contains("periodicity1=") {
+                        return Err(format!(
+                            "dihedral style `{}` ({}) has no OpenMM PeriodicTorsionForce form: \
+                             no k{{m}}/periodicity{{m}}/phase{{m}} terms",
+                            style.name, dt.name
+                        ));
+                    }
                     out.push_str(&format!("    <Proper {attrs}/>\n"));
                 }
                 out.push_str("  </PeriodicTorsionForce>\n");
             }
         }
 
-        // Impropers periodic
+        // Impropers: OpenMM has no improper force of its own; its periodic
+        // impropers are `<Improper>` rows under `<PeriodicTorsionForce>`, one
+        // term each here because the periodic improper kernel holds one. `cvff`
+        // is the same function with its sign as a phase. Every other improper
+        // style (harmonic `k(χ − χ0)²`) has no form under this tag and is refused
+        // — it used to be written as a periodic row with periodicity 0.
+        let mut rows = String::new();
         for style in ff.get_styles("improper") {
             let StyleDefs::Improper(types) = style.defs() else {
                 continue;
             };
-            if types.is_empty() {
-                continue;
-            }
-            out.push_str("  <PeriodicImproperForce>\n");
             for it in types {
-                let k = it.params.get("k").unwrap_or(0.0) * KJ_PER_KCAL;
-                let n = it.params.get("periodicity").unwrap_or(0.0);
-                let d = it.params.get("phase").unwrap_or(0.0);
-                out.push_str(&format!(
+                let get = |key: &str| {
+                    it.params.get(key).ok_or_else(|| {
+                        format!("improper {} {}: missing `{key}`", style.name, it.name)
+                    })
+                };
+                let (k, n, phase) = match style.name.as_str() {
+                    "periodic" => (get("k")?, get("periodicity")?, get("phase")?),
+                    "cvff" => {
+                        let sign = get("sign")?;
+                        let phase = if sign > 0.0 {
+                            0.0
+                        } else {
+                            std::f64::consts::PI
+                        };
+                        (get("k")?, get("periodicity")?, phase)
+                    }
+                    other => {
+                        return Err(format!(
+                            "improper style `{other}` ({}) has no OpenMM \
+                             PeriodicTorsionForce form; only periodic and cvff do",
+                            it.name
+                        ));
+                    }
+                };
+                rows.push_str(&format!(
                     "    <Improper class1=\"{}\" class2=\"{}\" class3=\"{}\" class4=\"{}\" periodicity1=\"{}\" k1=\"{}\" phase1=\"{}\"/>\n",
                     self.esc(&it.itom),
                     self.esc(&it.jtom),
                     self.esc(&it.ktom),
                     self.esc(&it.ltom),
                     n as i64,
-                    self.fmt_f(k),
-                    self.fmt_f(d)
+                    self.fmt_f(k * KJ_PER_KCAL),
+                    self.fmt_f(phase)
                 ));
             }
-            out.push_str("  </PeriodicImproperForce>\n");
+        }
+        if !rows.is_empty() {
+            out.push_str("  <PeriodicTorsionForce>\n");
+            out.push_str(&rows);
+            out.push_str("  </PeriodicTorsionForce>\n");
         }
 
         // Nonbonded
@@ -320,6 +369,18 @@ impl ForceFieldWriter for XmlForceFieldWriter {
                 self.fmt_f(lj14)
             ));
             for pt in types {
+                // `<NonbondedForce>` holds one row per atom type; OpenMM puts
+                // a pair override (NBFIX) in a `<LennardJonesForce>` table,
+                // which this writer does not model. Writing the cross row as
+                // an `<Atom>` would replace `itom`'s own parameters.
+                if pt.itom != pt.jtom {
+                    return Err(format!(
+                        "pair style `{}` cross row `{}` ({} with {}) has no \
+                         <NonbondedForce> form; an OpenMM pair override needs \
+                         <LennardJonesForce>, which is not modelled",
+                        style.name, pt.name, pt.itom, pt.jtom
+                    ));
+                }
                 let eps = pt.params.get("epsilon").unwrap_or(0.0) * KJ_PER_KCAL;
                 let sig = pt.params.get("sigma").unwrap_or(0.0) * NM_PER_ANGSTROM;
                 let chg = pt.params.get("charge").unwrap_or(0.0);
@@ -521,6 +582,167 @@ mod tests {
         for (i, (got, want)) in c.iter().zip(want).enumerate() {
             assert!((got - want).abs() < 1e-9, "c{i}: got {got}, want {want}");
         }
+    }
+
+    fn improper_params(ff: &ForceField) -> Vec<(String, Params)> {
+        ff.styles()
+            .iter()
+            .filter(|s| s.category() == "improper")
+            .flat_map(|s| match &s.defs {
+                StyleDefs::Improper(v) => v
+                    .iter()
+                    .map(|t| (format!("{}:{}", s.name, t.name), t.params.clone()))
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            })
+            .collect()
+    }
+
+    /// A multi-term periodic proper is written in OpenMM's spelling and must
+    /// read back term for term. The reader used to parse that spelling as CL&P
+    /// `c0..c3` and store zeros, so this round trip silently lost every torsion.
+    #[test]
+    fn periodic_propers_round_trip_term_for_term() {
+        let mut ff = ForceField::new("amber");
+        ff.def_style("dihedral", "periodic", Params::new())
+            .unwrap()
+            .def_type(
+                "HC-CT-CT-HC",
+                &["HC", "CT", "CT", "HC"],
+                Params::from_pairs(&[
+                    ("k1", 0.15),
+                    ("periodicity1", 3.0),
+                    ("phase1", 0.0),
+                    ("k2", 0.25),
+                    ("periodicity2", 1.0),
+                    ("phase2", std::f64::consts::PI),
+                ]),
+            )
+            .unwrap();
+        let back = read_forcefield_xml_str(&write_forcefield_xml_str(&ff, 10).unwrap()).unwrap();
+        let p = type_params(style(&back, "dihedral"), "HC-CT-CT-HC");
+        for (key, want) in [
+            ("k1", 0.15),
+            ("periodicity1", 3.0),
+            ("phase1", 0.0),
+            ("k2", 0.25),
+            ("periodicity2", 1.0),
+            ("phase2", std::f64::consts::PI),
+        ] {
+            let got = p.get(key).unwrap_or_else(|| panic!("missing {key}"));
+            assert!((got - want).abs() < 1e-8, "{key}: got {got}, want {want}");
+        }
+    }
+
+    /// Impropers go out as OpenMM `<Improper>` rows under `<PeriodicTorsionForce>`
+    /// (there is no `<PeriodicImproperForce>` in OpenMM). `cvff` is the same
+    /// function with the sign as a phase: `k[1 + s cos nχ]` = `k[1 + cos(nχ − γ)]`
+    /// with γ = 0 for s = +1 and γ = π for s = −1.
+    #[test]
+    fn periodic_and_cvff_impropers_round_trip_as_openmm_impropers() {
+        let mut ff = ForceField::new("amber");
+        ff.def_style("improper", "periodic", Params::new())
+            .unwrap()
+            .def_type(
+                "C-O-N-CT",
+                &["C", "O", "N", "CT"],
+                Params::from_pairs(&[
+                    ("k", 10.5),
+                    ("periodicity", 2.0),
+                    ("phase", std::f64::consts::PI),
+                ]),
+            )
+            .unwrap();
+        ff.def_style("improper", "cvff", Params::new())
+            .unwrap()
+            .def_type(
+                "CA-CA-CA-HA",
+                &["CA", "CA", "CA", "HA"],
+                Params::from_pairs(&[("k", 1.1), ("sign", -1.0), ("periodicity", 2.0)]),
+            )
+            .unwrap();
+        let xml = write_forcefield_xml_str(&ff, 10).unwrap();
+        assert!(!xml.contains("PeriodicImproperForce"), "{xml}");
+        let back = read_forcefield_xml_str(&xml).unwrap();
+        let got = improper_params(&back);
+        assert_eq!(got.len(), 2, "{got:?}");
+        for (name, k, phase) in [
+            ("periodic:C-O-N-CT", 10.5, std::f64::consts::PI),
+            ("periodic:CA-CA-CA-HA", 1.1, std::f64::consts::PI),
+        ] {
+            let p = &got
+                .iter()
+                .find(|(n, _)| n == name)
+                .unwrap_or_else(|| panic!("{name}: {got:?}"))
+                .1;
+            assert!((p.get("k").unwrap() - k).abs() < 1e-8, "{name}");
+            assert!(
+                (p.get("periodicity").unwrap() - 2.0).abs() < 1e-12,
+                "{name}"
+            );
+            assert!((p.get("phase").unwrap() - phase).abs() < 1e-8, "{name}");
+        }
+    }
+
+    /// A dihedral style without periodic terms (`multi/harmonic`) used to be
+    /// written as an empty `<Proper>`, which reads back as nothing. Refused now.
+    #[test]
+    fn dihedral_without_periodic_terms_is_refused() {
+        let mut ff = ForceField::new("x");
+        ff.def_style("dihedral", "multi/harmonic", Params::new())
+            .unwrap()
+            .def_type(
+                "A-B-C-D",
+                &["A", "B", "C", "D"],
+                Params::from_pairs(&[("a1", 1.0), ("a2", 0.5)]),
+            )
+            .unwrap();
+        let err = write_forcefield_xml_str(&ff, 6).unwrap_err();
+        assert!(err.contains("multi/harmonic"), "{err}");
+    }
+
+    /// A harmonic improper `k(χ − χ0)²` has no `PeriodicTorsionForce` form; it was
+    /// written as a periodic term with periodicity 0. Refused now.
+    #[test]
+    fn harmonic_improper_is_refused() {
+        let mut ff = ForceField::new("charmm");
+        ff.def_style("improper", "harmonic", Params::new())
+            .unwrap()
+            .def_type(
+                "C-O-N-CT",
+                &["C", "O", "N", "CT"],
+                Params::from_pairs(&[("k", 120.0), ("chi0", 0.0)]),
+            )
+            .unwrap();
+        let err = write_forcefield_xml_str(&ff, 6).unwrap_err();
+        assert!(err.contains("harmonic"), "{err}");
+    }
+
+    /// An explicit LJ cross row (NBFIX) has no `<NonbondedForce>` row; it was
+    /// written as an `<Atom>` of its first type, overwriting that type's own
+    /// σ/ε on read. Refused now, naming the row.
+    #[test]
+    fn an_lj_cross_row_is_refused() {
+        let mut ff = ForceField::new("charmm");
+        ff.def_style("pair", "lj/cut", Params::new())
+            .unwrap()
+            .def_type(
+                "A",
+                &["A"],
+                Params::from_pairs(&[("sigma", 3.0), ("epsilon", 0.1)]),
+            )
+            .unwrap()
+            .def_type(
+                "A-B",
+                &["A", "B"],
+                Params::from_pairs(&[("sigma", 2.0), ("epsilon", 0.9)]),
+            )
+            .unwrap();
+        let err = write_forcefield_xml_str(&ff, 6).unwrap_err();
+        assert!(
+            err.contains("A-B") && err.contains("LennardJonesForce"),
+            "{err}"
+        );
     }
 
     #[test]

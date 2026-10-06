@@ -9,8 +9,8 @@
 use molrs::store::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
-use crate::ff::forcefield::Params;
 use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::{Params, pair_key};
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::PairPotential;
@@ -258,6 +258,48 @@ impl LJCut {
                 n_owned,
             },
         })
+    }
+
+    /// Price the type pair `(ti, tj)` with its own `(ε, σ)` instead of the mixed
+    /// value — an explicit cross row (CHARMM NBFIX, AMBER ACOEF/BCOEF, GROMACS
+    /// `nonbond_params`). Both orders are set; the pair is symmetric.
+    ///
+    /// # Errors
+    /// The kernel is not a type-pair table, or a type index is out of range.
+    pub fn with_type_pair(
+        mut self,
+        ti: usize,
+        tj: usize,
+        epsilon: F,
+        sigma: F,
+    ) -> Result<Self, String> {
+        let (cutoff, n, m, shifted, smeared) =
+            (self.cutoff, self.n, self.m, self.shifted, self.smeared);
+        let PairSource::Typed {
+            ntypes,
+            sigma: table_sigma,
+            ceps,
+            e0,
+            f_rc,
+            ..
+        } = &mut self.source
+        else {
+            return Err("LJCut::with_type_pair: only a typed kernel has a type-pair table".into());
+        };
+        let nt = *ntypes;
+        if ti >= nt || tj >= nt {
+            return Err(format!(
+                "LJCut::with_type_pair: type pair ({ti}, {tj}) out of range ({nt} types)"
+            ));
+        }
+        let (c, e, fr) = shift_constants(epsilon, sigma, cutoff, n, m, shifted, smeared);
+        for t in [ti * nt + tj, tj * nt + ti] {
+            table_sigma[t] = sigma;
+            ceps[t] = c;
+            e0[t] = e;
+            f_rc[t] = fr;
+        }
+        Ok(self)
     }
 
     pub fn epsilon(&self) -> F {
@@ -633,7 +675,38 @@ impl PairDriven for LJCut {
     }
 }
 
+/// `(ε, σ)` of the row keyed *key*, or `None` when there is none.
+fn lj_row(type_map: &HashMap<&str, &Params>, key: &str) -> Result<Option<(F, F)>, String> {
+    let Some(p) = type_map.get(key) else {
+        return Ok(None);
+    };
+    let eps = p
+        .get("epsilon")
+        .ok_or_else(|| format!("LJCut type '{key}': missing 'epsilon'"))? as F;
+    let sigma = p
+        .get("sigma")
+        .ok_or_else(|| format!("LJCut type '{key}': missing 'sigma'"))? as F;
+    Ok(Some((eps, sigma)))
+}
+
+/// The explicit cross row between atom types `a` and `b`, if the style defines
+/// one — keyed by [`pair_key`], as `kernel_type_params` keys it, so it answers
+/// in either order. A self pair has none.
+fn lj_cross_row(
+    type_map: &HashMap<&str, &Params>,
+    a: &str,
+    b: &str,
+) -> Result<Option<(F, F)>, String> {
+    if a == b {
+        return Ok(None);
+    }
+    lj_row(type_map, &pair_key(a, b)?)
+}
+
 /// Construct a compiled [`LJCut`] from per-atom-type params + a neighbour list.
+///
+/// A pair whose types have an explicit cross row is priced with it; every other
+/// pair is mixed from the two self rows by the style's `mixing`.
 pub fn pair_lj_cut_ctor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
@@ -673,22 +746,18 @@ pub fn pair_lj_cut_ctor(
     let mut sig_vec = Vec::with_capacity(n);
 
     let per_atom = |t: &str| -> Result<(F, F), String> {
-        let p = type_map
-            .get(t)
-            .ok_or_else(|| format!("LJCut: unknown atom type '{t}'"))?;
-        let eps = p
-            .get("epsilon")
-            .ok_or_else(|| format!("LJCut type '{t}': missing 'epsilon'"))? as F;
-        let sigma = p
-            .get("sigma")
-            .ok_or_else(|| format!("LJCut type '{t}': missing 'sigma'"))? as F;
-        Ok((eps, sigma))
+        lj_row(&type_map, t)?.ok_or_else(|| format!("LJCut: unknown atom type '{t}'"))
     };
 
     for idx in 0..n {
-        let ij = per_atom(&atom_types[i_col[idx] as usize])?;
-        let jj = per_atom(&atom_types[j_col[idx] as usize])?;
-        let (mut eps, sigma) = mixing.combine(ij, jj);
+        let (ti, tj) = (
+            atom_types[i_col[idx] as usize].as_str(),
+            atom_types[j_col[idx] as usize].as_str(),
+        );
+        let (mut eps, sigma) = match lj_cross_row(&type_map, ti, tj)? {
+            Some(row) => row,
+            None => mixing.combine(per_atom(ti)?, per_atom(tj)?),
+        };
         if is_14.is_some_and(|b| b[idx]) {
             eps *= scale_14;
         }
@@ -732,20 +801,21 @@ pub fn pair_lj_cut_typed_ctor(
     let (type_id, labels) = atom_type_index(frame)?;
     let mut per_type = Vec::with_capacity(labels.len());
     for l in &labels {
-        let p = type_map
-            .get(l.as_str())
-            .ok_or_else(|| format!("LJCut: unknown atom type '{l}'"))?;
-        let eps = p
-            .get("epsilon")
-            .ok_or_else(|| format!("LJCut type '{l}': missing 'epsilon'"))? as F;
-        let sigma = p
-            .get("sigma")
-            .ok_or_else(|| format!("LJCut type '{l}': missing 'sigma'"))? as F;
-        per_type.push((eps, sigma));
+        per_type.push(
+            lj_row(&type_map, l.as_str())?
+                .ok_or_else(|| format!("LJCut: unknown atom type '{l}'"))?,
+        );
     }
-    Ok(Member::pair(LJCut::typed(
-        type_id, &per_type, mixing, cutoff, n, m, shifted, false,
-    )?))
+    let mut kernel = LJCut::typed(type_id, &per_type, mixing, cutoff, n, m, shifted, false)?;
+    // Explicit cross rows replace the mixed entries of the type-pair table.
+    for (ti, a) in labels.iter().enumerate() {
+        for (tj, b) in labels.iter().enumerate().skip(ti + 1) {
+            if let Some((eps, sigma)) = lj_cross_row(&type_map, a, b)? {
+                kernel = kernel.with_type_pair(ti, tj, eps, sigma)?;
+            }
+        }
+    }
+    Ok(Member::pair(kernel))
 }
 
 #[cfg(test)]
@@ -999,5 +1069,135 @@ mod tests {
         let (e, f) = lj.pair_eval(4.0, [2.0, 0.0, 0.0]).unwrap();
         assert!(e.abs() < 1e-12);
         assert!(f[0] > 0.0);
+    }
+
+    // -- explicit cross rows (NBFIX) -------------------------------------------
+
+    /// Two atoms, types `A` and `B`, joined by one pair row.
+    fn ab_frame() -> Frame {
+        use molrs::store::block::Block;
+        use molrs::types::Idx;
+        use ndarray::Array1;
+        let mut atoms = Block::new();
+        atoms
+            .insert(
+                "type",
+                Array1::from_vec(vec!["A".to_string(), "B".to_string()]).into_dyn(),
+            )
+            .unwrap();
+        let mut pairs = Block::new();
+        pairs
+            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn())
+            .unwrap();
+        pairs
+            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn())
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert(ATOMS, atoms);
+        frame.insert(PAIRS, pairs);
+        frame
+    }
+
+    /// Self rows A (0.1, 3.0) and B (0.4, 3.6), plus — when given — one cross row
+    /// keyed the way `kernel_type_params` keys it, between `cross.0` and `cross.1`.
+    fn ab_rows(cross: Option<(&str, &str)>) -> Vec<(String, Params)> {
+        let mut rows = vec![
+            (
+                "A".to_string(),
+                Params::from_pairs(&[("epsilon", 0.1), ("sigma", 3.0)]),
+            ),
+            (
+                "B".to_string(),
+                Params::from_pairs(&[("epsilon", 0.4), ("sigma", 3.6)]),
+            ),
+        ];
+        if let Some((a, b)) = cross {
+            rows.push((
+                pair_key(a, b).unwrap(),
+                Params::from_pairs(&[("epsilon", 0.9), ("sigma", 2.0)]),
+            ));
+        }
+        rows
+    }
+
+    fn lj(eps: F, sigma: F, r: F) -> F {
+        let s6 = (sigma / r).powi(6);
+        4.0 * eps * (s6 * s6 - s6)
+    }
+
+    const R_AB: F = 2.5;
+
+    fn compiled_energy(rows: &[(String, Params)]) -> F {
+        let mut style = Params::new();
+        style.set_str("mixing", "geometric");
+        let refs: Vec<(&str, &Params)> = rows.iter().map(|(k, p)| (k.as_str(), p)).collect();
+        let member = pair_lj_cut_ctor(&style, &refs, &ab_frame()).unwrap();
+        let coords: Vec<F> = vec![0.0, 0.0, 0.0, R_AB, 0.0, 0.0];
+        member.as_potential().calc_energy_forces(&coords).0
+    }
+
+    fn typed_energy(rows: &[(String, Params)]) -> F {
+        use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
+        let mut style = Params::from_pairs(&[("cutoff", 10.0)]);
+        style.set_str("mixing", "geometric");
+        let refs: Vec<(&str, &Params)> = rows.iter().map(|(k, p)| (k.as_str(), p)).collect();
+        let Member::Pair(kernel) = pair_lj_cut_typed_ctor(&style, &refs, &ab_frame()).unwrap()
+        else {
+            panic!("lj/cut is a pair member");
+        };
+        let neighbors = Neighbors::from_pairs(
+            vec![NeighborPair {
+                i: 0,
+                j: 1,
+                dist_sq: R_AB * R_AB,
+                disp: [R_AB, 0.0, 0.0],
+            }],
+            NeighborsStorage::FULL,
+            QueryMode::SelfQuery { num_points: 2 },
+        );
+        let coords: Vec<F> = vec![0.0, 0.0, 0.0, R_AB, 0.0, 0.0];
+        kernel.calc_energy_forces_with_pairs(&coords, &neighbors).0
+    }
+
+    /// A pair with an explicit cross row is priced with that row, not with the
+    /// mixing rule. The row reached the kernel and was ignored, so an NBFIX was
+    /// silently replaced by the mixed value.
+    #[test]
+    fn an_explicit_cross_row_overrides_the_mixing_rule() {
+        let want = lj(0.9, 2.0, R_AB);
+        let rows = ab_rows(Some(("A", "B")));
+        assert!((compiled_energy(&rows) - want).abs() < 1e-12);
+        assert!((typed_energy(&rows) - want).abs() < 1e-12);
+    }
+
+    /// A cross row defined as `B-A` answers for the pair `(A, B)` too: the
+    /// force field keys it by its endpoints in byte order.
+    #[test]
+    fn a_cross_row_is_found_in_either_order() {
+        use crate::ff::forcefield::ForceField;
+        let lj_params =
+            |eps: f64, sigma: f64| Params::from_pairs(&[("epsilon", eps), ("sigma", sigma)]);
+        let mut ff = ForceField::new("t");
+        let style = ff.def_style("pair", "lj/cut", Params::new()).unwrap();
+        style
+            .def_type("A", &["A"], lj_params(0.1, 3.0))
+            .unwrap()
+            .def_type("B", &["B"], lj_params(0.4, 3.6))
+            .unwrap()
+            .def_type("nbfix", &["B", "A"], lj_params(0.9, 2.0))
+            .unwrap();
+        let rows = style.defs().kernel_type_params().unwrap();
+        let want = lj(0.9, 2.0, R_AB);
+        assert!((compiled_energy(&rows) - want).abs() < 1e-12);
+        assert!((typed_energy(&rows) - want).abs() < 1e-12);
+    }
+
+    /// Without a cross row the pair is mixed, geometrically here.
+    #[test]
+    fn without_a_cross_row_the_pair_is_mixed() {
+        let want = lj((0.1_f64 * 0.4).sqrt(), (3.0_f64 * 3.6).sqrt(), R_AB);
+        let rows = ab_rows(None);
+        assert!((compiled_energy(&rows) - want).abs() < 1e-12);
+        assert!((typed_energy(&rows) - want).abs() < 1e-12);
     }
 }

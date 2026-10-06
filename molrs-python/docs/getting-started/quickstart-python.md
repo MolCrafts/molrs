@@ -191,6 +191,11 @@ custom.typify(mol3d)
 print([(s.category, s.name) for s in custom.forcefield().styles])
 ```
 
+The built-in typifiers (`OPLSAATypifier`, `MMFF94Typifier`, …) can be
+subclassed to carry your own attributes or methods, but they match in Rust:
+a subclass that defines `match` or `library` raises `TypeError`. Start from
+`Typifier` to supply your own matching.
+
 ## 7. Write Files
 
 The I/O layer writes frames. This is the final boundary where the graph-based

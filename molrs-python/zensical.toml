@@ -27,7 +27,7 @@ nav = [
   ] },
   { "Release 0.15" = [
     { "What's new in 0.15" = "release-notes.md" },
-    { "Migration 0.14 → 0.15" = "migration.md" },
+    { "Migration guide" = "migration.md" },
   ] },
   { "Contributing" = "contributing.md" },
 ]

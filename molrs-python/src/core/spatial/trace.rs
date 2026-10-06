@@ -28,7 +28,13 @@ use pyo3::prelude::*;
 /// >>> trace = molrs.Trace(np.array([[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]]))
 /// >>> len(trace)
 /// 2
-#[pyclass(module = "molrs", name = "Trace", frozen, skip_from_py_object)]
+#[pyclass(
+    module = "molrs",
+    name = "Trace",
+    frozen,
+    skip_from_py_object,
+    subclass
+)]
 pub struct PyTrace {
     pub(crate) inner: Trace,
 }

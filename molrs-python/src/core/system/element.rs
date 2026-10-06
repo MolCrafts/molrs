@@ -12,7 +12,8 @@ use pyo3::types::PyType;
     frozen,
     eq,
     hash,
-    skip_from_py_object
+    skip_from_py_object,
+    subclass
 )]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PyElement {
@@ -68,9 +69,7 @@ impl PyElement {
         self.inner.z()
     }
 
-    fn __reduce__<'py>(
-        slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
         crate::helpers::reduce_via_type(slf.as_any(), (slf.borrow().number(),))
     }
 

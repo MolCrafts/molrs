@@ -19,6 +19,78 @@ npm install @molcrafts/molrs@0.15                      # JavaScript / TypeScript
 C and C++ consumers download `molrs-capi-0.15.0-<platform>.tar.gz` from the
 [GitHub release](https://github.com/MolCrafts/molrs/releases/tag/v0.15.0).
 
+## 0.15.1
+
+0.15.1 completes the class I force-field model: explicit Lennard-Jones cross
+rows (NBFIX) are read from every format that has them, priced by the kernel,
+and stored in records; OpenMM torsions are read in OpenMM's own spelling; and
+the core Python classes can be subclassed. A few readers and writers now
+refuse what they used to drop or mistranslate; the
+[migration guide](migration.md) lists each behaviour change.
+
+### Explicit LJ cross rows
+
+- **Energy change:** a `pair/lj/cut` row between two different atom types
+  (`def_type("A-B", a, b, epsilon=…, sigma=…)`) now prices that type pair in
+  place of the style's `mixing` rule, in `PotentialCompiler.compile` and
+  `compile_typed` alike. 0.15.0 compiled such rows but ignored them, so the
+  pair got the mixed value; this includes the cross rows `scale_lj` writes.
+- Readers that carry cross rows now keep them:
+  - LAMMPS `pair_coeff i j ε σ` with `i ≠ j` in a `*.ff` include, and the
+    data-file `PairIJ Coeffs` section (both used to be dropped);
+  - GROMACS `[ nonbond_params ]` (funct 1), which used to be refused;
+  - AMBER prmtop off-diagonal `LENNARD_JONES_ACOEF/BCOEF` entries that are
+    not Lorentz–Berthelot, which used to be refused.
+- Writers: the GROMACS writer emits `[ nonbond_params ]` and the LAMMPS
+  include writer `pair_coeff i j`. The OpenMM XML writer refuses a cross row
+  (an OpenMM pair override lives in `<LennardJonesForce>`, not modelled)
+  instead of writing it as an `<Atom>` row.
+- A cross row is a `pair` table row with `itom != jtom` in a record's
+  `forcefield` section, so it round-trips through `ForceField.to_section` /
+  `from_section` and `*.mrec`.
+- A pair is found by its two atom types in either order, so a pair style
+  holds one row per pair. `def_type` restating a pair already defined (`B-A`
+  after `A-B`, or a second name on `A-B`) is a no-op when the parameters are
+  equal and a `ValueError` when they differ; a stored `forcefield` section
+  whose `pair` or `pair14` table restates a pair with other parameters is
+  refused by `ForceFieldSection.validate()`, `ForceField.from_section` and
+  every `*.mrec` reader (molrec forcefield, linking rule 3). `name` and the
+  annotation columns (`desc`, `doi`, `smarts`, …) are not compared.
+- The AMBER prmtop reader states `mixing = arithmetic` on its `lj/cut` style
+  instead of leaving the rule to the kernel default.
+
+### OpenMM force-field XML
+
+- `<PeriodicTorsionForce>` rows in OpenMM's `k1/periodicity1/phase1 …`
+  spelling read as `dihedral/periodic` with every term. 0.15.0 read them as
+  CL&P `c0..c3` and stored zeros, so such torsions contributed nothing. The
+  CL&P spelling still reads as `dihedral/opls`.
+- `<Improper>` rows under `<PeriodicTorsionForce>` read as
+  `improper/periodic` (they used to be skipped), and the writer emits
+  periodic and `cvff` impropers there; `<PeriodicImproperForce>`, which OpenMM
+  does not have, is no longer written. Files 0.15.0 wrote with it still read:
+  its `<Improper>` rows are read the same way (the section used to be
+  skipped).
+
+### LAMMPS force-field writer
+
+- `dihedral/periodic` is written as `dihedral_style fourier` (it had no
+  form), including the one-term `k` / `periodicity` / `phase` spelling.
+- A bonded-only force field writes without `pair_coeff` lines instead of
+  demanding a self pair for every atom label.
+
+### Python
+
+- The core data classes are subclassable: `Block`, `Frame`, `Atomistic`,
+  `CoarseGrain`, `ForceField` and its style and type handles,
+  `ForceFieldSection`, the typifiers, units, neighbour lists, meshes,
+  trajectory observables, views and more. A subclass instance pickles as
+  its own class and keeps its instance attributes.
+- The native typifiers (`OPLSAATypifier`, `MMFF94Typifier`, …) can be
+  subclassed too. Their `match` and `library` run in Rust, so a subclass that
+  defines either raises `TypeError`; subclass `Typifier` to supply your own.
+- `ForceField.special_bonds` reads the `(lj, coul)` weights back.
+
 ## Highlights
 
 ### One column accessor, one dtype per column

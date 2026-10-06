@@ -38,7 +38,12 @@ use crate::helpers::{molrs_error_to_pyerr, py_value_err};
 /// tables
 ///     Block name → :class:`~molrs.Block` (the style tables, at
 ///     :meth:`block_name` of their style, and any other block).
-#[pyclass(module = "molrs.io.mrec", name = "ForceFieldSection", unsendable)]
+#[pyclass(
+    module = "molrs.io.mrec",
+    name = "ForceFieldSection",
+    unsendable,
+    subclass
+)]
 pub struct PyForceFieldSection {
     pub(crate) inner: ForceFieldSection,
 }
@@ -125,7 +130,9 @@ impl PyForceFieldSection {
     /// ValueError
     ///     Naming the first rule broken (units, a duplicate
     ///     style, a missing table, a duplicate or null type name, the
-    ///     wrong endpoint columns, a parameter dtype, …).
+    ///     wrong endpoint columns, a parameter dtype, a ``pair`` /
+    ///     ``pair14`` table pricing one unordered pair twice with different
+    ///     parameters, …).
     fn validate(&self) -> PyResult<()> {
         self.inner.validate().map_err(molrs_error_to_pyerr)
     }

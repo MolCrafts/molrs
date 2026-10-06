@@ -16,7 +16,7 @@
 //! | Angle | `TK` in `E = TK·(θ−θ₀)²` (no ½), `θ₀` rad | `angle_style harmonic` same | `k = 2·TK`, `θ₀` rad |
 //! | Dihedral | `PK·[1 + cos(nφ − δ)]`, `δ` rad | `dihedral_style fourier` | `k/n/d` as-is (`d` rad) |
 //! | Improper | same form; 4th pointer negative | `improper_style periodic` | `k/n/d` as-is |
-//! | LJ | `A/r¹² − B/r⁶` via ICO | `lj/cut` σ/ε | `σ = 2^{−1/6} r_min`, `ε = B²/(4A)` |
+//! | LJ | `A/r¹² − B/r⁶` via ICO | `lj/cut` σ/ε | `σ = 2^{−1/6} r_min`, `ε = B²/(4A)`; self rows from the diagonal, an explicit cross row for each off-diagonal entry that is not Lorentz–Berthelot (NBFIX) |
 //! | 1-4 scales | `SCEE`/`SCNB` divisors (default 1.2 / 2.0) | `special_bonds amber` | `coul_14 = 1/SCEE`, `lj_14 = 1/SCNB` |
 //!
 //! Notes:
@@ -33,6 +33,7 @@ use std::path::Path;
 
 use super::ForceFieldReader;
 use crate::ff::constants::VACUUM_DIELECTRIC;
+use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::params::amber::{AMBER_COULOMB, AMBER_SCEE, AMBER_SCNB};
 use crate::io::data::prmtop::parse_flag_sections;
@@ -42,6 +43,10 @@ use molrs::store::type_labels::TypeName;
 
 /// `(type_name, sigma_Å, epsilon_kcal_per_mol)` for one self LJ type.
 type LjSelfRow = (String, f64, f64);
+
+/// `(type_a, type_b, sigma_Å, epsilon_kcal_per_mol)` for one explicit cross
+/// pair (NBFIX), `type_a < type_b` bytewise.
+type LjCrossRow = (String, String, f64, f64);
 
 /// Reader for AMBER prmtop force-field parameter tables.
 #[derive(Debug, Default, Clone, Copy)]
@@ -134,21 +139,16 @@ fn ico_entry(n_types: usize, iac_i: usize, iac_j: usize, nb_index: &[i64]) -> Re
     Ok(nb)
 }
 
-fn first_name_for_type(atom_types: &[String], type_index: &[i64], itype: i64) -> String {
-    for (i, name) in atom_types.iter().enumerate() {
-        if type_index.get(i).copied().unwrap_or(0) == itype && !name.is_empty() {
-            return name.clone();
-        }
-    }
-    format!("type{itype}")
-}
-
-/// Full-ICO LJ decode: one self term per atom, in atom order; off-diagonal
-/// entries must match Lorentz–Berthelot or the topology is refused.
+/// Full-ICO LJ decode: one self term per atom, in atom order, and one
+/// explicit cross row per pair of type names whose off-diagonal entry is not
+/// the Lorentz–Berthelot mix of the two self terms (CHARMM NBFIX / ParmEd
+/// `changeLJPair` edits). A Lorentz–Berthelot entry gives no row: the
+/// `lj/cut` style states `mixing = arithmetic`, which reproduces it.
 ///
 /// Atoms sharing a type name share its LJ class (the atom-type definition
 /// makes a second class under one name a `TypeConflict`), so their rows are
-/// equal and the definition rule collapses them to one pair type.
+/// equal and the definition rule collapses them to one pair type. Several
+/// names on one LJ class each get the cross rows of that class.
 fn decode_lj_types(
     n_types: usize,
     atom_types: &[String],
@@ -156,10 +156,20 @@ fn decode_lj_types(
     nb_index: &[i64],
     acoef: &[f64],
     bcoef: &[f64],
-) -> Result<Vec<LjSelfRow>, String> {
+) -> Result<(Vec<LjSelfRow>, Vec<LjCrossRow>), String> {
     if n_types == 0 {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
+    // The type names on each LJ class (1-based), bytewise sorted.
+    let mut names_of: Vec<std::collections::BTreeSet<&str>> =
+        vec![std::collections::BTreeSet::new(); n_types + 1];
+    for (i, name) in atom_types.iter().enumerate() {
+        let itype = type_index.get(i).copied().unwrap_or(0);
+        if !name.is_empty() && itype >= 1 && itype as usize <= n_types {
+            names_of[itype as usize].insert(name.as_str());
+        }
+    }
+    let mut cross = Vec::new();
     let mut self_params = vec![(1.0, 0.0); n_types];
     for t in 1..=n_types {
         let nb = ico_entry(n_types, t, t, nb_index)?;
@@ -196,11 +206,12 @@ fn decode_lj_types(
                 }
             };
             if rel(sigma, lb_s) > 1e-6 || rel(eps, lb_e) > 1e-6 {
-                let ni = first_name_for_type(atom_types, type_index, i as i64);
-                let nj = first_name_for_type(atom_types, type_index, j as i64);
-                return Err(format!(
-                    "off-diagonal (NBFIX) Lennard-Jones pairs are not supported: {ni}-{nj} deviates from Lorentz-Berthelot"
-                ));
+                for a in &names_of[i] {
+                    for b in &names_of[j] {
+                        let (a, b) = if a <= b { (a, b) } else { (b, a) };
+                        cross.push(((*a).to_owned(), (*b).to_owned(), sigma, eps));
+                    }
+                }
             }
         }
     }
@@ -217,7 +228,7 @@ fn decode_lj_types(
         };
         out.push((name.clone(), sigma, epsilon));
     }
-    Ok(out)
+    Ok((out, cross))
 }
 
 // ---------------------------------------------------------------------------
@@ -491,16 +502,31 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
         }
     }
 
-    let rows = decode_lj_types(n_types, &atom_types, &type_index, &nb_index, &acoef, &bcoef)?;
+    let (rows, cross) =
+        decode_lj_types(n_types, &atom_types, &type_index, &nb_index, &acoef, &bcoef)?;
     {
+        // The off-diagonal entries that are no row are Lorentz–Berthelot
+        // mixes, so the style states that rule rather than lean on a default.
+        let mut lj = Params::new();
+        lj.set_str("mixing", Mixing::Arithmetic.name());
         let style = ff
-            .def_style("pair", "lj/cut", Params::new())
+            .def_style("pair", "lj/cut", lj)
             .map_err(|e| e.to_string())?;
         for (tname, sigma, epsilon) in &rows {
             style
                 .def_type(
                     tname,
                     &[tname],
+                    Params::from_pairs(&[("epsilon", *epsilon), ("sigma", *sigma)]),
+                )
+                .map_err(|e| e.to_string())?;
+        }
+        for (a, b, sigma, epsilon) in &cross {
+            let name = TypeName::pair(a, b)?;
+            style
+                .def_type(
+                    name.as_str(),
+                    &[a, b],
                     Params::from_pairs(&[("epsilon", *epsilon), ("sigma", *sigma)]),
                 )
                 .map_err(|e| e.to_string())?;
@@ -916,8 +942,11 @@ c3  c3  c3  hc
         );
     }
 
+    /// An off-diagonal ICO entry that is not Lorentz–Berthelot (CHARMM NBFIX,
+    /// ParmEd `changeLJPair`) is an explicit `lj/cut` cross row with the
+    /// entry's own σ/ε. It used to be refused.
     #[test]
-    fn decode_lj_types_refuses_nbfix_cross_terms() {
+    fn decode_lj_types_keeps_nbfix_cross_terms_as_cross_rows() {
         let nbfix = GAFF_MINI
             .replace(
                 "  1.04308023E+06  9.717081166135172E+04  7.516077034091E+03",
@@ -927,20 +956,35 @@ c3  c3  c3  hc
                 "  6.75612248E+02  1.2691914994192737E+02  2.17257827878E+01",
                 "  6.75612248E+02  1.281883414413926E+02  2.17257827878E+01",
             );
-        let err = read_err(&nbfix);
-        assert!(err.contains("c3"), "error should name c3: {err}");
-        assert!(err.contains("hc"), "error should name hc: {err}");
-        assert!(
-            err.contains("not supported"),
-            "error should say not supported: {err}"
-        );
+        let ff = read_ff(&nbfix);
+        let lj = ff.get_style("pair", "lj/cut").expect("lj/cut pair style");
+        let cross = lj.get_pairtype("c3", Some("hc")).expect("c3-hc cross row");
+        assert_eq!((cross.itom.as_str(), cross.jtom.as_str()), ("c3", "hc"));
+        // σ = (A/B)^{1/6}, ε = B²/(4A) of the off-diagonal entry.
+        let (a, b) = (9.814251977796524e4_f64, 1.281883414413926e2_f64);
+        let (sigma, eps) = ((a / b).powf(1.0 / 6.0), b * b / (4.0 * a));
+        assert!(rel_close(cross.params.get("sigma").unwrap(), sigma, 1e-12));
+        assert!(rel_close(cross.params.get("epsilon").unwrap(), eps, 1e-12));
+        // The self rows are untouched.
+        let c3 = lj.get_pairtype("c3", None).unwrap();
+        assert!(rel_close(c3.params.get("epsilon").unwrap(), 0.1094, 1e-6));
+    }
 
+    /// The `lj/cut` style states the rule its missing off-diagonal rows are
+    /// mixed by, Lorentz–Berthelot, rather than leaning on a kernel default.
+    #[test]
+    fn the_lj_style_states_arithmetic_mixing() {
         let ff = read_ff(GAFF_MINI);
         let lj = ff.get_style("pair", "lj/cut").expect("lj/cut pair style");
-        assert!(
-            lj.get_pairtype("c3", Some("hc")).is_none(),
-            "LB-consistent cross must not emit a two-endpoint pair type"
-        );
+        assert_eq!(lj.params().get_str("mixing"), Some("arithmetic"));
+    }
+
+    /// A Lorentz–Berthelot off-diagonal entry is what mixing gives: no row.
+    #[test]
+    fn decode_lj_types_emits_no_row_for_a_mixed_entry() {
+        let ff = read_ff(GAFF_MINI);
+        let lj = ff.get_style("pair", "lj/cut").expect("lj/cut pair style");
+        assert!(lj.get_pairtype("c3", Some("hc")).is_none());
         for pt in ff.get_pairtypes() {
             assert_eq!(
                 pt.itom, pt.jtom,

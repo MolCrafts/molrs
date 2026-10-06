@@ -7,7 +7,7 @@
 use molrs::store::schema::block_names::PAIRS;
 use std::collections::HashMap;
 
-use crate::ff::forcefield::Params;
+use crate::ff::forcefield::{Params, pair_key};
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::atom_type_index;
@@ -18,7 +18,6 @@ use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
-use molrs::store::type_labels::TypeName;
 use molrs::types::F;
 
 /// Where a pair's class2 `(ε, σ)` comes from.
@@ -372,22 +371,19 @@ pub fn pair_lj_class2_typed_ctor(
     let mut sigma = vec![0.0 as F; ntypes * ntypes];
     for ti in 0..ntypes {
         for tj in 0..ntypes {
-            // A cross-pair may be declared either way round; a self-pair is
-            // named by the atom type alone.
-            let forward = TypeName::pair(&labels[ti], &labels[tj])?;
-            let reverse = TypeName::pair(&labels[tj], &labels[ti])?;
+            // Keyed in either order alike; a self-pair by the atom type alone.
+            let key = pair_key(&labels[ti], &labels[tj])?;
             let p = type_map
-                .get(forward.as_str())
-                .or_else(|| type_map.get(reverse.as_str()))
-                .ok_or_else(|| format!("PairLJClass2: unknown pair type '{forward}'"))?;
+                .get(key.as_str())
+                .ok_or_else(|| format!("PairLJClass2: unknown pair type '{key}'"))?;
             let t = type_pair(ti as u32, tj as u32, ntypes);
             epsilon[t] = p
                 .get("epsilon")
-                .ok_or_else(|| format!("PairLJClass2 type '{forward}': missing 'epsilon'"))?
+                .ok_or_else(|| format!("PairLJClass2 type '{key}': missing 'epsilon'"))?
                 as F;
             sigma[t] = p
                 .get("sigma")
-                .ok_or_else(|| format!("PairLJClass2 type '{forward}': missing 'sigma'"))?
+                .ok_or_else(|| format!("PairLJClass2 type '{key}': missing 'sigma'"))?
                 as F;
         }
     }

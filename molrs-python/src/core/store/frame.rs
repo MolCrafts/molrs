@@ -29,7 +29,7 @@ use pyo3::types::{PyBool, PyCapsule, PyDict, PyFloat, PyInt, PyList, PyString, P
 use serde_json::Value as JsonValue;
 
 /// Exact-dtype frame metadata value.
-#[pyclass(module = "molrs", name = "MetaValue", frozen, from_py_object)]
+#[pyclass(module = "molrs", name = "MetaValue", frozen, from_py_object, subclass)]
 #[derive(Clone)]
 pub struct PyMetaValue {
     pub(crate) inner: MetaValue,
@@ -50,9 +50,7 @@ impl PyMetaValue {
         self.inner.dtype()
     }
 
-    fn __reduce__<'py>(
-        slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let this = slf.borrow();
         crate::helpers::reduce_via_type(slf.as_any(), (this.dtype(), this.value(slf.py())?))
     }
@@ -132,7 +130,7 @@ fn mapping_to_meta_map(source: &Bound<'_, PyAny>) -> PyResult<MetaMap> {
 /// are live `collections.abc` views in insertion order. A non-`str` lookup is
 /// absent; a non-`str` write raises `TypeError`. Deleting a not-yet-visited
 /// key while iterating `values()` or `items()` raises `KeyError`.
-#[pyclass(module = "molrs._lib", name = "FrameMeta", unsendable)]
+#[pyclass(module = "molrs._lib", name = "FrameMeta", unsendable, subclass)]
 pub struct PyFrameMeta {
     inner: FrameRef,
 }
@@ -467,7 +465,7 @@ impl PyFrameMeta {
 ///
 /// Iteration order is unspecified. ``frame.meta`` itself enumerates in
 /// insertion order; the two levels differ.
-#[pyclass(module = "molrs", name = "MetaDocument", frozen)]
+#[pyclass(module = "molrs", name = "MetaDocument", frozen, subclass)]
 pub struct PyMetaDocument {
     inner: serde_json::Map<String, JsonValue>,
 }
@@ -620,7 +618,13 @@ impl PyMetaDocument {
 /// frame["atoms"]["y"] = np.zeros(3)   # writes into the stored block
 /// print(frame)          # Frame(blocks=['atoms'], box=yes)
 /// ```
-#[pyclass(module = "molrs._lib", name = "Frame", from_py_object, unsendable)]
+#[pyclass(
+    module = "molrs._lib",
+    name = "Frame",
+    from_py_object,
+    unsendable,
+    subclass
+)]
 #[derive(Clone)]
 pub struct PyFrame {
     pub(crate) inner: FrameRef,
@@ -1053,9 +1057,7 @@ impl PyFrame {
     }
 
     /// Pickle by logical state: the blocks, the typed metadata and the box.
-    fn __reduce__<'py>(
-        slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyTuple>, Bound<'py, PyDict>)> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
         let blocks = PyDict::new(py);
@@ -1067,7 +1069,7 @@ impl PyFrame {
         // The typed snapshot: `dict(meta)` would drop every dtype tag.
         state.set_item("meta", this.meta().typed(py)?)?;
         state.set_item("box", this.get_box()?)?;
-        Ok((slf.get_type().into_any(), PyTuple::empty(py), state))
+        crate::helpers::reduce_with_state(slf.as_any(), PyTuple::empty(py), state.into_any())
     }
 
     /// Restore the state [`__reduce__`](Self::__reduce__) produced.

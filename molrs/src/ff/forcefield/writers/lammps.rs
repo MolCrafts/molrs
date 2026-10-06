@@ -214,6 +214,7 @@ impl Coeff {
 /// | `dihedral opls`           | `k1..k4` (absent → 0)                  | `K1 K2 K3 K4` |
 /// | `dihedral harmonic`       | `k`, `sign` (±1), `periodicity`        | `K d n` |
 /// | `dihedral fourier`        | `k<i>`, `periodicity<i>`, `phase<i>` (rad, absent → 0) | `m K1 n1 d1(deg) …` |
+/// | `dihedral periodic`       | as `fourier`, or one term as `k`, `periodicity`, `phase` | LAMMPS `fourier`: `m K1 n1 d1(deg) …` |
 /// | `dihedral charmm`         | `k`, `periodicity`, `phase` (rad, absent → 0), `w` | `K n d(deg) w` |
 /// | `dihedral multi/harmonic` | `a1..a5` (absent → 0)                  | `A1 A2 A3 A4 A5` |
 /// | `pair lj/cut…`            | `epsilon`, `sigma`                     | `epsilon sigma` |
@@ -263,6 +264,8 @@ fn render_coeffs(fields: &[Coeff], precision: usize) -> String {
 fn lammps_style_name<'a>(category: &str, style: &'a str) -> &'a str {
     match (category, style) {
         ("improper", "periodic") => "cvff",
+        // The canonical multi-term torsion is LAMMPS's `fourier`, term for term.
+        ("dihedral", "periodic") => "fourier",
         _ => style,
     }
 }
@@ -343,8 +346,17 @@ fn coeff_fields(
             multiplicity("periodicity", need("periodicity")?)?,
         ]),
         // m  K1 n1 d1  [K2 n2 d2 ...] from `k<i>` / `periodicity<i>` / `phase<i>`.
-        ("dihedral", "fourier") => {
+        // `periodic` is the same series under molrs's canonical name; its
+        // unindexed `k` / `periodicity` / `phase` is the one-term case.
+        ("dihedral", "fourier") | ("dihedral", "periodic") => {
             let mut terms = Vec::new();
+            if params.get("k1").is_none()
+                && let Some(k) = params.get("k")
+            {
+                terms.push(Real(units.energy(k)?));
+                terms.push(multiplicity("periodicity", need("periodicity")?)?);
+                terms.push(Real(params.get("phase").unwrap_or(0.0).to_degrees()));
+            }
             let mut i = 1usize;
             while let Some(k) = params.get(&format!("k{i}")) {
                 let n_key = format!("periodicity{i}");
@@ -659,7 +671,18 @@ impl<'a> LammpsFfWriter<'a> {
     /// Pair rows for the `atoms` labels, ordered by id pair: every label's
     /// self pair (missing → error) and every explicit cross pair of two used
     /// labels. The first style (in force-field order) defining a pair wins.
+    ///
+    /// A force field with no typed pair style (bonded-only, or only type-less
+    /// styles such as Coulomb) has no pair rows to write, so it yields none
+    /// rather than demanding a self pair per label.
     fn resolve_pairs<'f>(&self, ff: &'f ForceField) -> Result<Vec<PairRow<'f>>, String> {
+        let typed = ff
+            .get_styles("pair")
+            .iter()
+            .any(|s| matches!(s.defs(), StyleDefs::Pair(types) if !types.is_empty()));
+        if !typed {
+            return Ok(Vec::new());
+        }
         let labels = self.block_labels("atoms");
         let ids: HashMap<&str, usize> = labels
             .iter()
@@ -1024,6 +1047,25 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
             ("angles", &["c3-c3-oh"]),
             ("dihedrals", &["c3-c3-oh-ho"]),
         ])
+    }
+
+    /// A bonded-only field has no pair rows: the writer used to demand a self
+    /// pair for every atom label anyway, so such a field could not be written.
+    #[test]
+    fn a_bonded_only_field_writes_without_pair_rows() {
+        let mut ff = ForceField::new("bonded");
+        ff.def_style("bond", "harmonic", Params::new())
+            .unwrap()
+            .def_type(
+                "c3-c3",
+                &["c3", "c3"],
+                Params::from_pairs(&[("k", 457.78), ("r0", 1.5354)]),
+            )
+            .unwrap();
+        let labels = labels_of(&[("atoms", &["c3", "c3"]), ("bonds", &["c3-c3"])]);
+        let text = LammpsFfWriter::new(&labels).write_str(&ff).unwrap();
+        assert!(text.contains("bond_coeff c3-c3"), "{text}");
+        assert!(!text.contains("pair_coeff"), "{text}");
     }
 
     #[test]
@@ -2022,6 +2064,33 @@ pair_coeff c3 c3 0.107800 3.397710
         let bond = Params::from_pairs(&[("k", 900.0), ("r0", 0.9572)]);
         let err = lammps_coeff_values("bond", "harmonic", &bond, "si").unwrap_err();
         assert!(err.contains("si"), "{err}");
+    }
+
+    /// `dihedral periodic` is the canonical torsion (spec ff-params-01), the same
+    /// `Σ K[1 + cos(nφ − d)]` as LAMMPS `dihedral_style fourier`; it had no
+    /// branch here, so a canonical field could not be written at all. The
+    /// unindexed one-term spelling the kernel accepts is accepted too.
+    #[test]
+    fn periodic_dihedral_is_written_as_fourier() {
+        let pi = std::f64::consts::PI;
+        assert_eq!(lammps_style_name("dihedral", "periodic"), "fourier");
+        let multi = Params::from_pairs(&[
+            ("k1", 0.5),
+            ("periodicity1", 1.0),
+            ("phase1", pi),
+            ("k2", 0.25),
+            ("periodicity2", 3.0),
+            ("phase2", 0.0),
+        ]);
+        assert_eq!(
+            lammps_coeff_values("dihedral", "periodic", &multi, "real").unwrap(),
+            lammps_coeff_values("dihedral", "fourier", &multi, "real").unwrap()
+        );
+        let single = Params::from_pairs(&[("k", 0.3), ("periodicity", 2.0), ("phase", pi)]);
+        assert_eq!(
+            lammps_coeff_values("dihedral", "periodic", &single, "real").unwrap(),
+            vec![1.0, 0.3, 2.0, 180.0]
+        );
     }
 
     /// Writer and reader are inverse through their two public homes: the

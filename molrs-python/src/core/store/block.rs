@@ -65,7 +65,13 @@ use crate::store::ffi_error_to_pyerr;
 /// sub = b[b["x"] > 1.5]       # a new Block of the selected rows
 /// assert b.validity("x") is None   # no holes in that column
 /// ```
-#[pyclass(module = "molrs._lib", name = "Block", from_py_object, unsendable)]
+#[pyclass(
+    module = "molrs._lib",
+    name = "Block",
+    from_py_object,
+    unsendable,
+    subclass
+)]
 #[derive(Clone)]
 pub struct PyBlock {
     pub(crate) inner: BlockRef,
@@ -830,9 +836,7 @@ impl PyBlock {
 
     /// Pickle by logical state: columns, validity masks, declared precisions,
     /// row count and structural shape.
-    fn __reduce__<'py>(
-        slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyTuple>, Bound<'py, PyDict>)> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
         let columns = PyDict::new(py);
@@ -862,7 +866,7 @@ impl PyBlock {
             "shape",
             this.with_block(|b| b.structural_shape().map(<[usize]>::to_vec))?,
         )?;
-        Ok((slf.get_type().into_any(), PyTuple::empty(py), state))
+        crate::helpers::reduce_with_state(slf.as_any(), PyTuple::empty(py), state.into_any())
     }
 
     /// Restore the state [`__reduce__`](Self::__reduce__) produced.
@@ -1532,7 +1536,7 @@ where
 // ---------------------------------------------------------------------------
 
 /// Keep a typed column buffer alive for a numpy view of any storage width.
-#[pyclass(module = "molrs", unsendable)]
+#[pyclass(module = "molrs", unsendable, subclass)]
 struct ArrayOwner {
     _keep: Box<dyn std::any::Any + Send + Sync>,
 }

@@ -30,7 +30,8 @@ Check version metadata before tagging. One version appears in:
   `molrs-wasm/Cargo.toml` by wasm-pack);
 - `version` in `molrs-python/pyproject.toml`;
 - the `molcrafts-molrs*` entries of every committed `Cargo.lock` (the root
-  one and one per binder);
+  one and one per binder), and the editable `molcrafts-molrs` entry of
+  `molrs-python/uv.lock`;
 - the version-pinned examples in `README.md` and the documentation site
   (`version = "X.Y"` dependency lines, `>=X.Y.0,<X.(Y+1)` pins).
 

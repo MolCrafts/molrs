@@ -159,10 +159,14 @@ impl PyTypifier {
         }
     }
 
-    /// Reject a subclass that defines ``typify`` in its own body.
+    /// Reject a subclass that defines ``typify`` in its own body, and a
+    /// subclass of a native typifier that defines ``match`` or ``library``.
     ///
     /// ``typify`` is the only writer of :meth:`forcefield`; an override would
-    /// silently bypass the output. ``typing.final`` is only a static check.
+    /// silently bypass the output. A native typifier (``OPLSAATypifier``,
+    /// ``MMFF94Typifier``, …) types in Rust and never calls a Python ``match``
+    /// or ``library``, so overriding either on its subclass would be silently
+    /// ignored. ``typing.final`` is only a static check.
     #[classmethod]
     #[pyo3(signature = (**kwargs))]
     fn __init_subclass__(
@@ -170,15 +174,30 @@ impl PyTypifier {
         kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<()> {
         let py = cls.py();
-        if cls
-            .getattr(intern!(py, "__dict__"))?
-            .contains(intern!(py, "typify"))?
-        {
+        let own = cls.getattr(intern!(py, "__dict__"))?;
+        if own.contains(intern!(py, "typify"))? {
             return Err(PyTypeError::new_err(format!(
                 "{} defines typify; a Typifier subclass implements match (and optionally \
                  library) only — typify is the base's and the only writer of forcefield()",
                 cls.name()?
             )));
+        }
+        let native = cls.is_subclass_of::<PyOPLSAATypifier>()?
+            || cls.is_subclass_of::<PyMMFF94Typifier>()?
+            || cls.is_subclass_of::<PyMMFF94STypifier>()?
+            || cls.is_subclass_of::<PyElementTypifier>()?
+            || cls.is_subclass_of::<atd::PyAtdTypifier>()?;
+        if native {
+            for hook in ["match", "library"] {
+                if own.contains(hook)? {
+                    return Err(PyTypeError::new_err(format!(
+                        "{} defines {hook} on a native typifier, whose typify runs in Rust \
+                         and never calls it; subclass molrs.ff.typifier.Typifier to supply \
+                         your own {hook}",
+                        cls.name()?
+                    )));
+                }
+            }
         }
         PySuper::new(&py.get_type::<Self>(), cls.as_any())?.call_method(
             intern!(py, "__init_subclass__"),
@@ -338,7 +357,7 @@ impl PyTypifier {
 /// ``name`` and every param and defines the type ``name`` on ``endpoints``
 /// (atom-type names; empty for an atom type) under the style. The name is
 /// never read for endpoints. Param values are numbers or strings.
-#[pyclass(module = "molrs.ff.typifier", name = "Match", frozen)]
+#[pyclass(module = "molrs.ff.typifier", name = "Match", frozen, subclass)]
 pub struct PyMatch {
     inner: Match,
 }
@@ -466,7 +485,7 @@ impl PyMatch {
 }
 
 /// Outcome of a geometry optimization, exposed to Python as `molrs.OptReport`.
-#[pyclass(module = "molrs.optimize", name = "OptReport")]
+#[pyclass(module = "molrs.optimize", name = "OptReport", subclass)]
 pub struct PyOptReport {
     inner: OptReport,
 }
@@ -526,7 +545,7 @@ impl From<OptReport> for PyOptReport {
 /// integrator. Taking it apart in Python would mean re-deciding which member
 /// is which and how its close neighbours are scaled — the two things
 /// :meth:`PotentialCompiler.compile_typed` exists to decide once.
-#[pyclass(name = "TypedPotentials", module = "molrs.ff")]
+#[pyclass(name = "TypedPotentials", module = "molrs.ff", subclass)]
 pub struct PyTypedPotentials {
     /// Taken by the integrator that consumes it; `None` afterwards.
     pub(crate) members: Option<Vec<(Member, molrs::md::SpecialWeights)>>,
@@ -554,7 +573,7 @@ impl PyTypedPotentials {
 /// >>> frame["pairs"] = molrs.intramolecular_pairs(frame)
 /// >>> potentials = molrs.ff.PotentialCompiler(typifier.forcefield()).compile(frame)
 /// >>> energy, forces = potentials.eval(coords)
-#[pyclass(module = "molrs.ff", name = "Potentials")]
+#[pyclass(module = "molrs.ff", name = "Potentials", subclass)]
 pub struct PyPotentials {
     inner: PotBacking,
     /// Error slots of every Python-callable member (see `crate::md::ErrSlot`);
@@ -613,9 +632,10 @@ impl PotBacking {
 
 /// Force-field definition metadata exposed to Python as `molrs.ff.ForceField`.
 ///
-/// Not subclassable: this is the one ``ForceField`` class. Styles and types
+/// Subclassable, like every core data class (molnex's `ForceField` extends it).
+/// Styles and types
 /// are read and written through their handles (:mod:`handles`).
-#[pyclass(module = "molrs._lib", name = "ForceField")]
+#[pyclass(module = "molrs._lib", name = "ForceField", subclass)]
 pub struct PyForceField {
     pub(crate) inner: ForceField,
 }
@@ -626,7 +646,8 @@ pub struct PyForceField {
     name = "FragmentScaling",
     frozen,
     get_all,
-    skip_from_py_object
+    skip_from_py_object,
+    subclass
 )]
 #[derive(Clone)]
 pub struct PyFragmentScaling {
@@ -904,7 +925,7 @@ impl PyPotentials {
 /// >>> opt = molrs.LBFGS(pots, fmax=0.05, max_steps=500)
 /// >>> frame, report = opt.run(frame)
 /// >>> coords, report = opt.run(coords)         # (N, 3)
-#[pyclass(module = "molrs.optimize", name = "LBFGS")]
+#[pyclass(module = "molrs.optimize", name = "LBFGS", subclass)]
 pub struct PyLBFGS {
     potentials: Py<PyPotentials>,
     fmax: f64,
@@ -1071,7 +1092,7 @@ macro_rules! py_mmff_front_door {
         $py_ty:ident, $core:ty, $name:literal
     ) => {
         $(#[$doc])*
-        #[pyclass(module = "molrs.ff.typifier", name = $name, extends = PyTypifier)]
+        #[pyclass(module = "molrs.ff.typifier", name = $name, extends = PyTypifier, subclass)]
         pub struct $py_ty;
 
         #[pymethods]
@@ -1191,7 +1212,7 @@ fn oplsaa_source_xml(source: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Strin
 /// >>> typifier = OPLSAATypifier()
 /// >>> typed = typifier.typify(mol)        # typed Atomistic
 /// >>> # compose: typify → to_frame → intramolecular_pairs → PotentialCompiler(forcefield()).compile
-#[pyclass(module = "molrs.ff.typifier", name = "OPLSAATypifier", extends = PyTypifier)]
+#[pyclass(module = "molrs.ff.typifier", name = "OPLSAATypifier", extends = PyTypifier, subclass)]
 pub struct PyOPLSAATypifier;
 
 #[pymethods]
@@ -1237,7 +1258,7 @@ impl PyOPLSAATypifier {
 /// >>> typed = molrs.ff.typifier.ElementTypifier().typify(water)
 /// >>> list(typed.to_frame()["bonds"]["type"])
 /// ['H-O', 'H-O']
-#[pyclass(module = "molrs.ff.typifier", name = "ElementTypifier", extends = PyTypifier)]
+#[pyclass(module = "molrs.ff.typifier", name = "ElementTypifier", extends = PyTypifier, subclass)]
 pub struct PyElementTypifier;
 
 #[pymethods]
@@ -1444,6 +1465,14 @@ impl PyForceField {
         Ok(slf.clone())
     }
 
+    /// The special-bond triples ``(lj, coul)``, each ``[1-2, 1-3, 1-4]`` — what
+    /// :meth:`set_special_bonds` declared, or the default ``[0, 0, 1]``.
+    #[getter]
+    fn special_bonds(&self) -> ([f64; 3], [f64; 3]) {
+        let sb = self.inner.special_bonds();
+        (sb.lj, sb.coul)
+    }
+
     /// Declare both LJ and Coulomb special-bond triples (1-2, 1-3, 1-4).
     ///
     /// Length-3 sequences required; a wrong length raises ``ValueError``.
@@ -1554,16 +1583,14 @@ impl PyForceField {
 
     // -- pickling ----------------------------------------------------------------
 
-    fn __reduce__<'py>(
-        slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyType>, Bound<'py, PyTuple>, Bound<'py, PyTuple>)> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let py = slf.py();
         let definition = slf.try_borrow()?.definition(py)?;
-        Ok((
-            slf.get_type(),
+        crate::helpers::reduce_with_state(
+            slf.as_any(),
             PyTuple::empty(py),
-            PyTuple::new(py, [definition])?,
-        ))
+            PyTuple::new(py, [definition])?.into_any(),
+        )
     }
 
     fn __setstate__(&mut self, state: (Bound<'_, PyAny>,)) -> PyResult<()> {
@@ -1600,7 +1627,7 @@ impl PyForceField {
 /// >>> compiler = molrs.ff.PotentialCompiler(typifier.forcefield())
 /// >>> potentials = compiler.compile(frame)
 /// >>> energy = potentials.calc_energy(frame)
-#[pyclass(module = "molrs.ff", name = "PotentialCompiler")]
+#[pyclass(module = "molrs.ff", name = "PotentialCompiler", subclass)]
 pub struct PyPotentialCompiler {
     ff: ForceField,
 }
@@ -1827,12 +1854,14 @@ pub fn read_amber_prmtop_ff_py(path: PathBuf) -> PyResult<PyForceField> {
 ///
 /// Reads ``[ defaults ]`` (nbfunc 1, gen-pairs ``yes``, comb-rule 2 or 3 →
 /// ``lj/cut`` ``mixing`` ``arithmetic`` / ``geometric``), ``[ atomtypes ]``,
-/// ``[ bondtypes ]``, ``[ angletypes ]`` and ``[ dihedraltypes ]``, converting
-/// GROMACS units (nm, kJ/mol, degrees) to molrs store units (Å, kcal/mol, rad).
+/// ``[ nonbond_params ]`` (funct 1, explicit ``lj/cut`` cross rows that
+/// replace the comb-rule for their type pair), ``[ bondtypes ]``,
+/// ``[ angletypes ]`` and ``[ dihedraltypes ]``, converting GROMACS units (nm,
+/// kJ/mol, degrees) to molrs store units (Å, kcal/mol, rad).
 ///
 /// Anything the reader does not model raises ``ValueError`` naming it: an
 /// unsupported function code or comb-rule, ``[ pairtypes ]``,
-/// ``[ nonbond_params ]``, ``[ constrainttypes ]``, ``[ cmaptypes ]``,
+/// ``[ constrainttypes ]``, ``[ cmaptypes ]``,
 /// ``[ implicit_genborn_params ]``, any unknown section, and every molecule
 /// section (``[ moleculetype ]``, ``[ atoms ]``, ``[ bonds ]``, ``[ system ]``,
 /// ``[ molecules ]``, …). Molecule sections are topology: read them with

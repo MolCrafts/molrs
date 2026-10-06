@@ -30,8 +30,8 @@ pub enum Mixing {
 
 impl Mixing {
     /// The rule an `lj/cut` style that declares no `mixing` is evaluated
-    /// under: Lorentz-Berthelot, which every reader that declares none
-    /// (AMBER prmtop, GAFF) means.
+    /// under: Lorentz-Berthelot, the AMBER-family rule. Every reader whose
+    /// format has a rule states it (AMBER prmtop: `arithmetic`).
     pub(crate) const UNDECLARED: Mixing = Mixing::Arithmetic;
 
     /// The canonical spelling, the one [`Mixing::parse`] maps back to `self`.
