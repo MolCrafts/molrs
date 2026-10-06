@@ -661,10 +661,33 @@ mod tests {
         assert!(err.contains("c3x"), "{err}");
     }
 
-    #[cfg(feature = "io")]
+    /// The text under each frcmod section keyword (`MASS`, `BOND`, …), keyed
+    /// by the lower-cased keyword: enough to tell which section a row landed in.
+    fn sections(text: &str) -> std::collections::BTreeMap<String, String> {
+        const KEYWORDS: &[&str] = &["MASS", "BOND", "ANGLE", "DIHE", "IMPROPER", "NONBON"];
+        let mut out = std::collections::BTreeMap::new();
+        let mut current: Option<String> = None;
+        let mut body: Vec<&str> = Vec::new();
+        for line in text.lines() {
+            let upper = line.trim().to_ascii_uppercase();
+            if KEYWORDS.contains(&upper.as_str()) {
+                if let Some(sec) = current.take() {
+                    out.insert(sec, body.join("\n").trim().to_string());
+                }
+                current = Some(upper.to_ascii_lowercase());
+                body.clear();
+            } else if current.is_some() {
+                body.push(line);
+            }
+        }
+        if let Some(sec) = current {
+            out.insert(sec, body.join("\n").trim().to_string());
+        }
+        out
+    }
+
     #[test]
-    fn frcmod_parser_finds_each_row_in_its_section() {
-        use crate::io::data::frcmod::parse_frcmod;
+    fn each_row_lands_in_its_section() {
         let mut ff = ForceField::new("t");
         ff.def_style("atom", "full", Params::new())
             .unwrap()
@@ -711,8 +734,8 @@ mod tests {
             )
             .unwrap();
 
-        let parsed = parse_frcmod(&write(&ff));
-        let body = |s: &str| parsed.sections.get(s).cloned().unwrap_or_default();
+        let parsed = sections(&write(&ff));
+        let body = |s: &str| parsed.get(s).cloned().unwrap_or_default();
         assert!(body("mass").starts_with("c3 "), "{parsed:?}");
         assert!(body("bond").starts_with("c3-os "), "{parsed:?}");
         assert!(body("angle").starts_with("c3-os-c3 "), "{parsed:?}");

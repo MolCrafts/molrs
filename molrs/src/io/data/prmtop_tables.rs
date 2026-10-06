@@ -1,24 +1,21 @@
-//! Amber prmtop **parameter-table** decode helpers.
+//! AMBER prmtop table helpers shared by the structure reader
+//! ([`super::prmtop`]) and the force-field reader
+//! (`ff::forcefield::readers::prmtop`): POINTERS and 20a4 name parsing, atom
+//! type names, torsions, the 1-4 list, and the CHARMM (chamber) sections, so
+//! the two readers name every row the same way.
 //!
-//! These mirror the historical molpy `AmberPrmtopReader` helper surface used by
-//! tests and AmberTools workflows: bond/angle/dihedral rows and per-atom LJ
-//! σ/ε, plus POINTERS / 20a4 name parsing. They operate on already-tokenized
-//! arrays (not the full file) so call sites can inject tables in unit tests.
-//!
-//! Atom indexes in returned bond/angle/dihedral rows are **1-based** (Amber /
-//! historical molpy helper contract). Structure [`Frame`](molrs::store::frame::Frame)
-//! connectivity remains 0-based.
+//! Decoding parameter *values* into a force field is the force-field reader's
+//! job; nothing here builds parameter rows of its own.
 
-use crate::math::pair_form::lj_ab_to_sigma_epsilon;
 use molrs::store::type_labels::TypeName;
 
 use std::collections::HashMap;
 
-/// Parse POINTERS lines into the historical molpy meta map.
+/// Parse POINTERS lines into a meta map.
 ///
 /// Includes both raw Amber fields (`NATOM`, …) and derived counts
 /// (`n_atoms`, `n_bonds`, …). Accepts 30- or 31-value POINTERS (NCOPY optional).
-pub fn parse_pointers(lines: &[String]) -> Result<HashMap<String, i64>, String> {
+pub(crate) fn parse_pointers(lines: &[String]) -> Result<HashMap<String, i64>, String> {
     let values: Vec<i64> = parse_tokens(lines)?;
     const FIELDS: &[&str] = &[
         "NATOM", "NTYPES", "NBONH", "MBONA", "NTHETH", "MTHETA", "NPHIH", "MPHIA", "NHPARM",
@@ -56,7 +53,7 @@ pub fn parse_pointers(lines: &[String]) -> Result<HashMap<String, i64>, String> 
 }
 
 /// Fortran `20a4` name fields (strip each 4-char window).
-pub fn parse_a4_names(lines: &[String]) -> Vec<String> {
+pub(crate) fn parse_a4_names(lines: &[String]) -> Vec<String> {
     let mut names = Vec::new();
     for line in lines {
         let mut i = 0;
@@ -67,204 +64,6 @@ pub fn parse_a4_names(lines: &[String]) -> Vec<String> {
         }
     }
     names
-}
-
-/// Bond row: `(type_id, atom_i, atom_j, K, r0)` — atoms **1-based**.
-pub type BondParamRow = (i64, i64, i64, f64, f64);
-
-/// Decode bond pointer triples + force/equil tables.
-pub fn decode_bond_params(
-    pointers: &[i64],
-    force_k: &[f64],
-    equil: &[f64],
-) -> Result<Vec<BondParamRow>, String> {
-    if !pointers.len().is_multiple_of(3) {
-        return Err(format!(
-            "bond pointer length {} not multiple of 3",
-            pointers.len()
-        ));
-    }
-    let mut out = Vec::with_capacity(pointers.len() / 3);
-    for chunk in pointers.as_chunks::<3>().0 {
-        let a = chunk[0];
-        let b = chunk[1];
-        if a < 0 || b < 0 {
-            return Err(format!("Found negative bonded atom pointers ({a}, {b})"));
-        }
-        let type_id = chunk[2];
-        let mut i = a / 3 + 1;
-        let mut j = b / 3 + 1;
-        if i > j {
-            std::mem::swap(&mut i, &mut j);
-        }
-        let tid = (type_id - 1) as usize;
-        let k = *force_k
-            .get(tid)
-            .ok_or_else(|| format!("bond type {type_id} out of range"))?;
-        let r0 = *equil
-            .get(tid)
-            .ok_or_else(|| format!("bond type {type_id} out of range"))?;
-        out.push((type_id, i, j, k, r0));
-    }
-    Ok(out)
-}
-
-/// Angle row: `(type_id, i, j, k, K, theta0_deg)` — atoms **1-based**, θ in **degrees**.
-pub type AngleParamRow = (i64, i64, i64, i64, f64, f64);
-
-/// Decode angle pointer quads. Equilibrium angles in the table are radians;
-/// returned `theta0` is converted to **degrees** (historical molpy helper).
-pub fn decode_angle_params(
-    pointers: &[i64],
-    force_k: &[f64],
-    equil_rad: &[f64],
-) -> Result<Vec<AngleParamRow>, String> {
-    if !pointers.len().is_multiple_of(4) {
-        return Err(format!(
-            "angle pointer length {} not multiple of 4",
-            pointers.len()
-        ));
-    }
-    let mut out = Vec::with_capacity(pointers.len() / 4);
-    for chunk in pointers.as_chunks::<4>().0 {
-        let a = chunk[0];
-        let b = chunk[1];
-        let c = chunk[2];
-        if a < 0 || b < 0 || c < 0 {
-            return Err(format!(
-                "Found negative angle atom pointers ({a}, {b}, {c})"
-            ));
-        }
-        let type_id = chunk[3];
-        let mut i = a / 3 + 1;
-        let j = b / 3 + 1;
-        let mut k = c / 3 + 1;
-        if i > k {
-            std::mem::swap(&mut i, &mut k);
-        }
-        let tid = (type_id - 1) as usize;
-        let fk = *force_k
-            .get(tid)
-            .ok_or_else(|| format!("angle type {type_id} out of range"))?;
-        let teq = *equil_rad
-            .get(tid)
-            .ok_or_else(|| format!("angle type {type_id} out of range"))?;
-        out.push((type_id, i, j, k, fk, teq.to_degrees()));
-    }
-    Ok(out)
-}
-
-/// Dihedral row: `(type_id, i, j, k, l, K, phase_rad, n)` — atoms **1-based**.
-pub type DihedralParamRow = (i64, i64, i64, i64, i64, f64, f64, i64);
-
-/// Decode dihedral pointer quints, one row per prmtop row — per cosine term,
-/// each with its own `K`/phase/`n` (the structure reader merges the terms of
-/// one quartet into one torsion; this parameter table does not). Phase stays
-/// radians; `n` is `|PN|` rounded half up (a negative PN only flags that more
-/// terms follow). A proper is oriented `j ≤ k`; an improper keeps its prmtop
-/// order, centre third.
-pub fn decode_dihedral_params(
-    pointers: &[i64],
-    force_k: &[f64],
-    phase: &[f64],
-    periodicity: &[f64],
-) -> Result<Vec<DihedralParamRow>, String> {
-    if !pointers.len().is_multiple_of(5) {
-        return Err(format!(
-            "dihedral pointer length {} not multiple of 5",
-            pointers.len()
-        ));
-    }
-    let mut out = Vec::with_capacity(pointers.len() / 5);
-    for chunk in pointers.as_chunks::<5>().0 {
-        let a = chunk[0];
-        let b = chunk[1];
-        if a < 0 || b < 0 {
-            return Err(format!(
-                "Found negative dihedral atom pointers ({a}, {b}, {}, {})",
-                chunk[2], chunk[3]
-            ));
-        }
-        let type_id = chunk[4];
-        let mut i = a / 3 + 1;
-        let mut j = b / 3 + 1;
-        let mut k = chunk[2].unsigned_abs() as i64 / 3 + 1;
-        let mut l = chunk[3].unsigned_abs() as i64 / 3 + 1;
-        // A proper reads the same backwards; an improper (negative 4th
-        // pointer) keeps AMBER's order, centre third.
-        if chunk[3] >= 0 && j > k {
-            std::mem::swap(&mut i, &mut l);
-            std::mem::swap(&mut j, &mut k);
-        }
-        let tid = (type_id - 1) as usize;
-        let fk = *force_k
-            .get(tid)
-            .ok_or_else(|| format!("dihedral type {type_id} out of range"))?;
-        let ph = *phase
-            .get(tid)
-            .ok_or_else(|| format!("dihedral type {type_id} out of range"))?;
-        let pn = *periodicity
-            .get(tid)
-            .ok_or_else(|| format!("dihedral type {type_id} out of range"))?;
-        // A negative PN only flags "more terms follow"; the term's n is |PN|,
-        // rounded half up.
-        let n = (0.5 + pn.abs()) as i64;
-        out.push((type_id, i, j, k, l, fk, ph, n));
-    }
-    Ok(out)
-}
-
-/// Nonbond row: `(atom_1based, sigma, epsilon)`.
-pub type NonbondParamRow = (i64, f64, f64);
-
-/// Per-atom LJ σ/ε from diagonal ICO + A/B coefficients.
-///
-/// The A/B → σ/ε identity itself is
-/// [`crate::math::pair_form::lj_ab_to_sigma_epsilon`],
-/// shared with the force-field reader.
-///
-/// `hbond_a` / `hbond_b` must be flattened coefficient lists (any non-zero → error).
-#[allow(clippy::too_many_arguments)]
-pub fn decode_nonbond_params(
-    n_atom: usize,
-    n_types: usize,
-    atom_type_index: &[i64],
-    nonbonded_parm_index: &[i64],
-    acoef: &[f64],
-    bcoef: &[f64],
-    hbond_a: &[f64],
-    hbond_b: &[f64],
-) -> Result<Vec<NonbondParamRow>, String> {
-    for (&x, &y) in hbond_a.iter().zip(hbond_b.iter()) {
-        if x != 0.0 || y != 0.0 {
-            return Err("10-12 interactions are not supported".into());
-        }
-    }
-    // Also reject any leftover non-zero if lengths differ
-    for &x in hbond_a.iter().chain(hbond_b.iter()) {
-        if x != 0.0 {
-            return Err("10-12 interactions are not supported".into());
-        }
-    }
-
-    let mut out = Vec::with_capacity(n_atom);
-    for i_atom in 0..n_atom {
-        let itype = *atom_type_index
-            .get(i_atom)
-            .ok_or_else(|| format!("ATOM_TYPE_INDEX missing atom {i_atom}"))?;
-        // Historical diagonal: 0-based ICO index = (NTYPES+1)*(IAC-1)
-        let index = (n_types + 1) * (itype as usize - 1);
-        let nb = *nonbonded_parm_index.get(index).unwrap_or(&0);
-        if nb < 0 {
-            return Err("10-12 interactions are not supported".into());
-        }
-        let nb_idx = (nb - 1) as usize;
-        let a = *acoef.get(nb_idx).unwrap_or(&0.0);
-        let b = *bcoef.get(nb_idx).unwrap_or(&0.0);
-        let (sigma, epsilon) = lj_ab_to_sigma_epsilon(a, b);
-        out.push(((i_atom as i64) + 1, sigma, epsilon));
-    }
-    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -1058,44 +857,6 @@ mod tests {
                 "hc-c3-ca-ca"
             ]
         );
-    }
-
-    #[test]
-    fn bond_1based_and_sorted() {
-        // pointers 33,36,1 → atoms 12,13 type 1
-        let rows = decode_bond_params(&[33, 36, 1], &[100.0], &[1.5]).unwrap();
-        assert_eq!(rows, vec![(1, 12, 13, 100.0, 1.5)]);
-        let rows = decode_bond_params(&[36, 33, 1], &[100.0], &[1.5]).unwrap();
-        assert_eq!(rows[0].1, 12);
-        assert_eq!(rows[0].2, 13);
-    }
-
-    #[test]
-    fn angle_theta_degrees() {
-        let teq = std::f64::consts::FRAC_PI_2; // 90°
-        let rows = decode_angle_params(&[0, 3, 6, 1], &[50.0], &[teq]).unwrap();
-        assert!((rows[0].5 - 90.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn dihedral_abs_and_swap() {
-        // l=-18 → abs//3+1 = 7
-        let rows = decode_dihedral_params(&[0, 6, 12, -18, 1], &[0.5], &[0.0], &[2.0]).unwrap();
-        assert_eq!(rows[0].4, 7);
-    }
-
-    #[test]
-    fn an_improper_param_row_keeps_its_prmtop_atom_order() {
-        // `0 9 3 -6`: j=4 > k=2 (1-based); the centre (k) stays third.
-        let rows = decode_dihedral_params(&[0, 9, 3, -6, 1], &[1.1], &[0.0], &[2.0]).unwrap();
-        assert_eq!((rows[0].1, rows[0].2, rows[0].3, rows[0].4), (1, 4, 2, 3));
-    }
-
-    #[test]
-    fn a_multi_term_continuation_row_has_a_positive_periodicity() {
-        // A negative PN only flags "more terms follow"; the term's n is |PN|.
-        let rows = decode_dihedral_params(&[0, 3, 6, 9, 1], &[1.1], &[0.0], &[-2.0]).unwrap();
-        assert_eq!(rows[0].7, 2);
     }
 
     /// Three 1-4 rows: two at type 2 (1.0 / 1.0), one at type 1 (1.2 / 2.0).

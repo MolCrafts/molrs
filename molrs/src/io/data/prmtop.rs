@@ -1188,15 +1188,6 @@ pub fn read_amber_prmtop_from_reader<R: BufRead>(reader: R) -> Result<Frame> {
     build_frame(sections)
 }
 
-/// Read raw `%FLAG` sections from a prmtop path (flag name → data lines).
-///
-/// Skips `%VERSION` / `%FORMAT` / `%COMMENT`. Used by force-field helpers that
-/// still inspect parameter tables without a second Python text scan.
-pub fn read_amber_prmtop_sections<P: AsRef<Path>>(path: P) -> Result<HashMap<String, Vec<String>>> {
-    let file = std::fs::File::open(path.as_ref())?;
-    parse_flag_sections(std::io::BufReader::new(file))
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
