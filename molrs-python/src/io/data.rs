@@ -117,8 +117,8 @@ pub fn read_xyz(path: PathBuf) -> PyResult<PyFrame> {
 /// ``impropers``) carries the numeric ``type_id`` and the string ``type``: the
 /// file's type label, or the id spelled as a label when the file has no
 /// ``* Type Labels`` section. The ``* Coeffs`` sections are kept verbatim in
-/// ``frame.meta["lammps_coeffs_text"]`` (read them into a force field with
-/// :func:`molrs.ff.forcefield.read_lammps_data_coeffs`); the type-label inventories,
+/// ``frame.meta["lammps_coeffs_text"]`` (``molrs.ff.forcefield.read_lammps_data_coeffs(frame)``
+/// reads them into a force field); the type-label inventories,
 /// header counts, unit style and the box axes the header named are in
 /// ``frame.meta`` too.
 ///
