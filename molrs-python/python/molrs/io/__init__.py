@@ -1,15 +1,11 @@
 """File I/O — ``molrs::io``.
 
-Every reader here applies a :class:`FieldFormatter <molrs.fields.FieldFormatter>`
-to translate format-native column names (``resid``, ``q``, ``symbol``) into
-project-wide canonical names (``res_id``, ``charge``, ``element``). Writers
-apply the reverse translation before delegating to the native backend. That
-canonicalization is the whole point of this layer, so it is where callers
-should start.
-
-The un-translated bindings live in :mod:`molrs.io.raw`, one-to-one with the
-Rust ``molrs::io`` surface. Use those when the format-native spelling *is* the
-thing under test.
+Structure and trajectory file formats, SMILES and CGsmiles text, and
+``*.mrec`` records. Every reader emits the project-wide canonical column names
+(:mod:`molrs.store.keys`: ``element``, ``res_id``, ``charge``, ``mol_id``,
+…) — the Rust readers map a format's own spelling (``symbol``, ``resSeq``,
+``q``, ``mol``) at the boundary — and every writer takes them. Force-field
+file formats are :mod:`molrs.ff.forcefield`'s.
 
 Names come in pairs. A format ``X`` that holds one frame is read by
 ``read_X`` and written by ``write_X``; a sequence of frames is read by
@@ -24,13 +20,10 @@ no partner by nature, not by omission.
 path or a list of paths (frames are concatenated) and yields canonical field
 names. ``read_pdb_trajectory`` and ``read_gro_trajectory`` read the whole file
 into a ``list[Frame]`` (no seekable native reader backs them), and
-``read_mrec_trajectory`` returns the in-memory :class:`~molrs.Trajectory`;
-:class:`molrs.io.mrec.TrajectoryReader` is the lazy cursor over a store. The
-``molrs.io.raw`` counterparts return eagerly.
-
-A format whose native column names already are the canonical ones is not
-wrapped: its reader and writer here *are* the compiled functions, and every
-path argument takes a ``str`` or any ``os.PathLike``.
+``read_mrec_trajectory`` returns the in-memory
+:class:`~molrs.store.Trajectory`; :class:`molrs.io.mrec.TrajectoryReader` is the
+lazy cursor over a store. Every path argument takes a ``str`` or any
+``os.PathLike``.
 
 :class:`SmilesIR` is here because SMILES is a *format*: text in, molecule out,
 exactly like PDB or XYZ. SMARTS is not — a pattern is a query over a perceived
@@ -54,7 +47,7 @@ A :class:`BondingDescriptor` reports its ``kind`` as the grammar glyph
 (``"$"``, ``"<"``, ``">"``, ``"!"``), which is both what a user writes and
 what a stored port's ``port_kind`` prop holds — one spelling for the notation,
 the column and this boundary, so a descriptor kind reaches
-:meth:`Atomistic.def_port <molrs.Atomistic.def_port>` untranslated. The enums
+:meth:`Atomistic.def_port <molrs.system.Atomistic.def_port>` untranslated. The enums
 the notation does not spell out keep lowercase variant names:
 ``BondingDescriptor.order`` and ``ResolvedPair.kind`` are bond kinds
 (``"single"``, ``"aromatic"``, …) and ``PairEnd.end`` is ``"sub"`` or
@@ -73,9 +66,8 @@ an IR and never see the text it came from; and ``notation``, lowercase
 ``str(e)`` is the message Rust renders, caret line included.
 
 There is no ``CGSmilesReader``, deliberately: "Reader" in this module means a
-lazy, path-backed trajectory cursor (:class:`TrajectoryReader`, and the
-``*TrajReader`` classes of :mod:`molrs.io.raw`), and a text-in / IR-out parser
-is not that object. A reader-shaped ``read()`` API over CGsmiles belongs to
+lazy, path-backed trajectory cursor (:class:`TrajectoryReader`), and a
+text-in / IR-out parser is not that object. A reader-shaped ``read()`` API over CGsmiles belongs to
 molpy, which wraps :class:`CGSmilesIR` exactly as its ``SmilesReader`` wraps
 :class:`SmilesIR`.
 """
@@ -86,7 +78,7 @@ from collections.abc import Iterator, Sequence
 from io import StringIO
 from os import PathLike
 from pathlib import Path
-from typing import Any, Self, overload
+from typing import TYPE_CHECKING, Any, Self, overload
 
 from .._lib import (
     BondReactTemplate,
@@ -96,7 +88,6 @@ from .._lib import (
     CGGraph,
     CGNode,
     CGSmilesIR,
-    Frame,
     LammpsCpuUse,
     LammpsLoadBalance,
     LammpsLog,
@@ -122,7 +113,6 @@ from .._lib import (
     read_chgcar,
     read_cube,
     read_frame,
-    read_frame_bytes,
     read_lammps_data,
     read_lammps_log,
     read_mol2,
@@ -132,6 +122,11 @@ from .._lib import (
     read_mrec_system,
     read_mrec_trajectory,
     read_prep,
+    read_gro,
+    read_gro_trajectory,
+    read_lammps_molecule,
+    read_pdb,
+    read_pdb_trajectory,
     read_stl,
     read_xsf,
     read_xyz,
@@ -139,7 +134,8 @@ from .._lib import (
     write_dcd_trajectory,
     write_bond_react_map,
     write_frame,
-    write_frame_bytes,
+    write_gro,
+    write_gro_trajectory,
     write_lammps_bond_react_system,
     write_lammps_data,
     write_lammps_dump_local,
@@ -154,7 +150,6 @@ from .._lib import (
     write_pdb_trajectory,
     write_prep,
     write_smarts,
-    write_smiles,
     write_trr_trajectory,
     write_xsf,
     write_xtc_trajectory,
@@ -167,102 +162,13 @@ from .._lib import TRRTrajReader as _TRRTrajReader
 from .._lib import XTCTrajReader as _XTCTrajReader
 from .._lib import XYZTrajReader as _XYZTrajReader
 from .._lib import read_block_csv as _read_block_csv
-from .._lib import read_gro as _read_gro
-from .._lib import read_gro_trajectory as _read_gro_trajectory
-from .._lib import read_lammps_molecule as _read_lammps_molecule
-from .._lib import read_pdb as _read_pdb
-from .._lib import read_pdb_trajectory as _read_pdb_trajectory
 from .._lib import write_block_csv as _write_block_csv
-from .._lib import write_gro as _write_gro
-from .._lib import write_gro_trajectory as _write_gro_trajectory
-from ..fields import (
-    FieldFormatter,
-    LammpsFieldFormatter,
-    PdbFieldFormatter,
-)
-from . import mrec, raw
+from . import mrec
+
+if TYPE_CHECKING:
+    from ..store import Frame
 
 PathInput = str | PathLike[str]
-
-_pdb_fmt = PdbFieldFormatter()
-_lammps_fmt = LammpsFieldFormatter()
-# XYZ, DCD, TRR and XTC readers already emit canonical names (DCD / TRR /
-# XTC frames carry only coordinates and the box), so a no-op formatter is
-# correct.
-_noop_fmt = FieldFormatter()
-
-
-def read_pdb(file: PathInput) -> Frame:
-    """Read a PDB file.
-
-    Returns a molrs ``Frame`` with canonical field names
-    (``element`` instead of ``symbol``, ``res_id`` instead of ``resid``).
-    """
-    result = _read_pdb(file)
-    _pdb_fmt.canonicalize_frame(result)
-    return result
-
-
-def read_pdb_trajectory(file: PathInput) -> list[Frame]:
-    """Read every MODEL of a PDB file as a trajectory (one Frame per MODEL).
-
-    A single-model (or MODEL-less) PDB returns a one-element list. Each frame
-    is canonicalized like :func:`read_pdb`.
-    """
-    frames = _read_pdb_trajectory(file)
-    for frame in frames:
-        _pdb_fmt.canonicalize_frame(frame)
-    return frames
-
-
-def read_gro(file: PathInput) -> Frame:
-    """Read the first frame of a GROMACS GRO file.
-
-    Returns:
-        A molrs ``Frame`` with canonical field names (``res_id``,
-        ``res_name``, ``name``, ``element``, ``id``); coordinates in Å.
-
-    Raises:
-        OSError: If the file cannot be opened or parsed, or holds no frame.
-    """
-    return _read_gro(file)
-
-
-def read_gro_trajectory(file: PathInput) -> list[Frame]:
-    """Read every frame of a GROMACS GRO file, in file order.
-
-    Each frame is canonicalized like :func:`read_gro`; a single-frame file
-    returns a one-element list. Inverse of :func:`write_gro_trajectory`.
-    """
-    return _read_gro_trajectory(file)
-
-
-def read_lammps_molecule(file: PathInput) -> Frame:
-    """Read a LAMMPS molecule template (native or JSON).
-
-    Returns a molrs ``Frame`` with canonical field names (``charge`` not ``q``).
-    """
-    result = _read_lammps_molecule(file)
-    _lammps_fmt.canonicalize_frame(result)
-    return result
-
-
-def write_gro(file: PathInput, frame: Frame) -> None:
-    """Write a single Frame to a GROMACS GRO file.
-
-    Expects canonical columns (``res_id``, ``res_name``, ``name``, ``id``);
-    coordinates in Å, written as nm. *frame* is left as it was passed.
-    """
-    _write_gro(file, frame)
-
-
-def write_gro_trajectory(file: PathInput, frames: Sequence[Frame]) -> None:
-    """Write Frames as one multi-frame GROMACS GRO trajectory.
-
-    Each frame as :func:`write_gro` writes it; inverse of
-    :func:`read_gro_trajectory`.
-    """
-    _write_gro_trajectory(file, list(frames))
 
 
 # ===================================================================
@@ -280,20 +186,17 @@ def _as_paths(file: PathInput | Sequence[PathInput]) -> list[PathInput]:
 class TrajectoryReader:
     """Lazy, indexed trajectory reader over one or more files.
 
-    Wraps one or more native molrs readers (``DCDTrajReader``,
-    ``LAMMPSTrajReader``, ``XYZTrajReader``, ``TRRTrajReader``,
-    ``XTCTrajReader``). When constructed from several files their frames are
-    concatenated into one logical trajectory. Every returned :class:`Frame` is
-    canonicalized to project-wide field names.
+    Wraps one or more native molrs readers (one per file, of the format the
+    ``read_*_trajectory`` function that built it reads). When constructed from
+    several files their frames are concatenated into one logical trajectory.
 
     Surface: ``read_frame`` (negative indexing), ``read_frames``,
     ``read_range``, ``read_all``, ``n_frames``, integer and slice indexing,
     lazy iteration, ``close()``, and use as a context manager.
     """
 
-    def __init__(self, readers: Sequence[Any], formatter: FieldFormatter) -> None:
+    def __init__(self, readers: Sequence[Any]) -> None:
         self._readers = list(readers)
-        self._formatter = formatter
         self._counts: list[int] | None = None
 
     def _ensure_counts(self) -> list[int]:
@@ -319,16 +222,9 @@ class TrajectoryReader:
         return sum(self._ensure_counts())
 
     def read_frame(self, index: int) -> Frame:
-        """Read a single frame (supports negative indexing).
-
-        The single chokepoint for every indexed trajectory access
-        (``read_frames`` / ``read_range`` / ``read_all`` / indexing all funnel
-        here), so canonicalizing once here covers them all.
-        """
+        """Read a single frame (supports negative indexing)."""
         reader, local = self._locate(index)
-        frame = reader.read_frame(local)
-        self._formatter.canonicalize_frame(frame)
-        return frame
+        return reader.read_frame(local)
 
     def read_frames(self, indices: Sequence[int]) -> list[Frame]:
         """Read an explicit list of frame indices."""
@@ -374,9 +270,7 @@ class TrajectoryReader:
         is needed (progress, preallocation).
         """
         for reader in self._readers:
-            for frame in reader:
-                self._formatter.canonicalize_frame(frame)
-                yield frame
+            yield from reader
 
     def __enter__(self) -> Self:
         return self
@@ -391,37 +285,34 @@ class TrajectoryReader:
 
 def read_lammps_trajectory(traj: PathInput | Sequence[PathInput]) -> TrajectoryReader:
     """Open one LAMMPS dump file, or several whose frames are concatenated, as
-    a lazy :class:`TrajectoryReader` with canonical field names."""
-    return TrajectoryReader(
-        [_LAMMPSTrajReader(p) for p in _as_paths(traj)], _lammps_fmt
-    )
+    a lazy :class:`TrajectoryReader`."""
+    return TrajectoryReader([_LAMMPSTrajReader(p) for p in _as_paths(traj)])
 
 
 def read_xyz_trajectory(file: PathInput | Sequence[PathInput]) -> TrajectoryReader:
     """Open one XYZ trajectory, or several whose frames are concatenated, as a
-    lazy :class:`TrajectoryReader` (``molrs.io.raw.read_xyz_trajectory`` is
-    the eager ``list[Frame]`` form)."""
-    return TrajectoryReader([_XYZTrajReader(p) for p in _as_paths(file)], _noop_fmt)
+    lazy :class:`TrajectoryReader`."""
+    return TrajectoryReader([_XYZTrajReader(p) for p in _as_paths(file)])
 
 
 def read_dcd_trajectory(file: PathInput | Sequence[PathInput]) -> TrajectoryReader:
     """Open one DCD trajectory, or several whose frames are concatenated, as a
     lazy :class:`TrajectoryReader`."""
-    return TrajectoryReader([_DCDTrajReader(p) for p in _as_paths(file)], _noop_fmt)
+    return TrajectoryReader([_DCDTrajReader(p) for p in _as_paths(file)])
 
 
 def read_trr_trajectory(file: PathInput | Sequence[PathInput]) -> TrajectoryReader:
     """Open one GROMACS TRR trajectory, or several whose frames are
     concatenated, as a lazy :class:`TrajectoryReader`. Random access is O(1)
     after a one-time index scan."""
-    return TrajectoryReader([_TRRTrajReader(p) for p in _as_paths(file)], _noop_fmt)
+    return TrajectoryReader([_TRRTrajReader(p) for p in _as_paths(file)])
 
 
 def read_xtc_trajectory(file: PathInput | Sequence[PathInput]) -> TrajectoryReader:
     """Open one GROMACS XTC (compressed) trajectory, or several whose frames
     are concatenated, as a lazy :class:`TrajectoryReader`. Random access is
     O(1) after a one-time index scan."""
-    return TrajectoryReader([_XTCTrajReader(p) for p in _as_paths(file)], _noop_fmt)
+    return TrajectoryReader([_XTCTrajReader(p) for p in _as_paths(file)])
 
 
 # ===================================================================
@@ -511,7 +402,6 @@ __all__ = [
     "mrec",
     "mrec_sections",
     "parse_lammps_log_text",
-    "raw",
     "read_ac",
     "read_amber_inpcrd",
     "read_amber_prmtop",
@@ -520,7 +410,6 @@ __all__ = [
     "read_cube",
     "read_dcd_trajectory",
     "read_frame",
-    "read_frame_bytes",
     "read_gro",
     "read_gro_trajectory",
     "read_lammps_data",
@@ -547,7 +436,6 @@ __all__ = [
     "write_dcd_trajectory",
     "write_bond_react_map",
     "write_frame",
-    "write_frame_bytes",
     "write_gro",
     "write_gro_trajectory",
     "write_lammps_bond_react_system",
@@ -564,7 +452,6 @@ __all__ = [
     "write_pdb_trajectory",
     "write_prep",
     "write_smarts",
-    "write_smiles",
     "write_trr_trajectory",
     "write_xsf",
     "write_xtc_trajectory",

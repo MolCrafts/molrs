@@ -17,9 +17,9 @@ import molrs
 import pytest
 
 
-def _forcefield() -> molrs.ff.ForceField:
+def _forcefield() -> molrs.ff.forcefield.ForceField:
     """Two atom types and two bond types; ``c3-oh`` is used only by the template."""
-    ff = molrs.ff.ForceField("hand")
+    ff = molrs.ff.forcefield.ForceField("hand")
     atoms = ff.def_style("atom", "full")
     c3 = atoms.def_type("c3", mass=12.011)
     oh = atoms.def_type("oh", mass=15.999)
@@ -32,22 +32,22 @@ def _forcefield() -> molrs.ff.ForceField:
     return ff
 
 
-def _system() -> molrs.Frame:
-    mol = molrs.Atomistic()
+def _system() -> molrs.store.Frame:
+    mol = molrs.system.Atomistic()
     a = mol.def_atom(element="C", type="c3", x=0.0, y=0.0, z=0.0, charge=0.0, mol_id=1)
     b = mol.def_atom(element="C", type="c3", x=1.53, y=0.0, z=0.0, charge=0.0, mol_id=1)
     mol.def_bond(a, b, type="c3-c3")
     frame = mol.to_frame()
-    frame.box = molrs.Box.cube(20.0)
+    frame.box = molrs.spatial.Box.cube(20.0)
     return frame
 
 
 def _template() -> molrs.io.BondReactTemplate:
     """c3 + oh → c3-oh: the new bond type exists only in the post template."""
-    pre = molrs.Atomistic()
+    pre = molrs.system.Atomistic()
     c_pre = pre.def_atom(element="C", type="c3", x=0.0, y=0.0, z=0.0, charge=0.0, react_id=1)
     o_pre = pre.def_atom(element="O", type="oh", x=3.0, y=0.0, z=0.0, charge=0.0, react_id=2)
-    post = molrs.Atomistic()
+    post = molrs.system.Atomistic()
     c_post = post.def_atom(element="C", type="c3", x=0.0, y=0.0, z=0.0, charge=0.0, react_id=1)
     o_post = post.def_atom(element="O", type="oh", x=1.41, y=0.0, z=0.0, charge=0.0, react_id=2)
     post.def_bond(c_post, o_post, type="c3-oh")
@@ -68,10 +68,10 @@ def test_the_template_keeps_its_objects_and_writes_a_map(tmp_path):
 
 
 def test_react_ids_may_be_given_directly_and_must_match():
-    pre = molrs.Atomistic()
+    pre = molrs.system.Atomistic()
     pre.def_atom(element="C", type="c3", react_id=1)
     pre.def_atom(element="C", type="c3", react_id=2)
-    post = molrs.Atomistic()
+    post = molrs.system.Atomistic()
     post.def_atom(element="C", type="c3", react_id=1)
     template = molrs.io.BondReactTemplate(pre, post, [1, 2])
     with pytest.raises(ValueError, match="different atoms"):

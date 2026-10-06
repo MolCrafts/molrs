@@ -1,5 +1,5 @@
 // PyO3 bindings for `Trajectory` (frame sequence) and observable records.
-// Hosts `molrs.Trajectory`, `molrs.ScalarObservable`, `molrs.VectorObservable`.
+// Hosts `molrs.store.Trajectory`, `molrs.store.ScalarObservable`, `molrs.store.VectorObservable`.
 #![allow(clippy::too_many_arguments)]
 
 use molrs::op::types::{F, I, Idx};
@@ -12,21 +12,31 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyList};
 
 use crate::core::store::frame::PyFrame;
-use crate::helpers::{NpF, molrs_error_to_pyerr};
+use crate::error::molrs_error_to_pyerr;
 
-#[pyclass(module = "molrs", name = "Trajectory", from_py_object, subclass)]
+#[pyclass(module = "molrs.store", name = "Trajectory", from_py_object, subclass)]
 #[derive(Clone)]
 pub struct PyTrajectory {
     pub(crate) inner: CoreTrajectory,
 }
 
-#[pyclass(module = "molrs", name = "ScalarObservable", from_py_object, subclass)]
+#[pyclass(
+    module = "molrs.store",
+    name = "ScalarObservable",
+    from_py_object,
+    subclass
+)]
 #[derive(Clone)]
 pub struct PyScalarObservable {
     pub(crate) inner: ObservableRecord,
 }
 
-#[pyclass(module = "molrs", name = "VectorObservable", from_py_object, subclass)]
+#[pyclass(
+    module = "molrs.store",
+    name = "VectorObservable",
+    from_py_object,
+    subclass
+)]
 #[derive(Clone)]
 pub struct PyVectorObservable {
     pub(crate) inner: ObservableRecord,
@@ -39,7 +49,7 @@ impl PyTrajectory {
     fn new(
         frames: Vec<PyRef<'_, PyFrame>>,
         step: Option<PyReadonlyArray1<'_, i64>>,
-        time: Option<PyReadonlyArray1<'_, NpF>>,
+        time: Option<PyReadonlyArray1<'_, f64>>,
     ) -> PyResult<Self> {
         let core_frames: Vec<_> = frames
             .iter()
@@ -61,7 +71,7 @@ impl PyTrajectory {
     fn from_frames(
         frames: Vec<PyRef<'_, PyFrame>>,
         step: Option<PyReadonlyArray1<'_, i64>>,
-        time: Option<PyReadonlyArray1<'_, NpF>>,
+        time: Option<PyReadonlyArray1<'_, f64>>,
     ) -> PyResult<Self> {
         Self::new(frames, step, time)
     }
@@ -99,9 +109,9 @@ impl PyTrajectory {
     }
 
     #[getter]
-    fn time<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArrayDyn<NpF>>> {
+    fn time<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArrayDyn<f64>>> {
         self.inner.time.as_ref().map(|time| {
-            let values: Vec<NpF> = time.iter().copied().map(|v| v as NpF).collect();
+            let values: Vec<f64> = time.to_vec();
             ArrayD::from_shape_vec(IxDyn(&[values.len()]), values)
                 .unwrap()
                 .into_pyarray(py)
@@ -116,10 +126,7 @@ impl PyTrajectory {
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
-        crate::helpers::reduce_via_type(
-            slf.as_any(),
-            (this.frames()?, this.step(py), this.time(py)),
-        )
+        crate::pickle::reduce_via_type(slf.as_any(), (this.frames()?, this.step(py), this.time(py)))
     }
 }
 
@@ -204,7 +211,7 @@ impl PyScalarObservable {
 
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
         let this = slf.borrow();
-        crate::helpers::reduce_via_type(
+        crate::pickle::reduce_via_type(
             slf.as_any(),
             (
                 this.name(),
@@ -302,7 +309,7 @@ impl PyVectorObservable {
 
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
         let this = slf.borrow();
-        crate::helpers::reduce_via_type(
+        crate::pickle::reduce_via_type(
             slf.as_any(),
             (
                 this.name(),
@@ -455,10 +462,10 @@ fn observable_data_to_pyobject(py: Python<'_>, data: &ObservableData) -> PyResul
 
 fn column_to_pyobject(py: Python<'_>, column: &Column) -> PyResult<Py<PyAny>> {
     match column {
-        // .mapv through ColumnHolder's Deref produces an owned ArrayD<NpF>.
+        // .mapv through ColumnHolder's Deref produces an owned ArrayD<f64>.
         Column::Float(array) => Ok(array
             .array()
-            .mapv(|v| v as NpF)
+            .mapv(|v| v)
             .into_pyarray(py)
             .into_any()
             .unbind()),

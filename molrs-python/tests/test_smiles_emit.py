@@ -14,9 +14,12 @@ def test_write_smiles_round_trip():
     molrs.io.SmilesIR(s)  # re-parse
 
 
-def test_write_smiles_module():
+def test_write_smiles_has_one_spelling():
+    # Emitting is `SmilesIR.from_atomistic(mol, ...).write_smiles()`; the
+    # module-level alias of it is gone.
+    assert not hasattr(molrs.io, "write_smiles")
     mol = molrs.io.SmilesIR("c1ccccc1").to_atomistic()
-    s = molrs.io.write_smiles(mol, canonical=True)
+    s = molrs.io.SmilesIR.from_atomistic(mol, canonical=True).write_smiles()
     assert s
     molrs.io.SmilesIR(s)
 

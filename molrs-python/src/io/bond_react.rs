@@ -18,14 +18,15 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 use crate::core::store::frame::PyFrame;
-use crate::ff::PyForceField;
-use crate::helpers::{io_error_to_pyerr, path_str};
+use crate::error::io_error_to_pyerr;
+use crate::ff::forcefield::PyForceField;
+use crate::path::path_str;
 
 /// One ``fix bond/react`` reaction: the pre-reaction template, the same
 /// atoms after the reaction, and the atoms its map file names.
 ///
-/// ``pre`` and ``post`` are :class:`~molrs.Atomistic` graphs (or
-/// :class:`~molrs.Frame` s) whose atoms carry an integer ``react_id`` pairing
+/// ``pre`` and ``post`` are :class:`~molrs.system.Atomistic` graphs (or
+/// :class:`~molrs.store.Frame` s) whose atoms carry an integer ``react_id`` pairing
 /// them. ``initiator_atoms`` (exactly two), ``edge_atoms`` and
 /// ``deleted_atoms`` are atoms of ``pre`` — or their ``react_id`` values.
 /// The objects are kept as given (nothing is copied or renumbered); the
@@ -34,7 +35,7 @@ use crate::helpers::{io_error_to_pyerr, path_str};
 /// Serialized by :func:`write_bond_react_map` (``{name}.map``) and
 /// :func:`write_lammps_bond_react_system` (also ``{name}_pre.mol`` /
 /// ``{name}_post.mol``). https://docs.lammps.org/fix_bond_react.html
-#[pyclass(module = "molrs", name = "BondReactTemplate")]
+#[pyclass(module = "molrs.io", name = "BondReactTemplate")]
 pub struct PyBondReactTemplate {
     /// Pre-reaction template.
     #[pyo3(get, set)]
@@ -270,5 +271,13 @@ pub fn write_lammps_bond_react_system(
             ),),
         )?;
     }
+    Ok(())
+}
+
+/// Register the LAMMPS ``fix bond/react`` template and writers.
+pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyBondReactTemplate>()?;
+    m.add_function(wrap_pyfunction!(write_bond_react_map, m)?)?;
+    m.add_function(wrap_pyfunction!(write_lammps_bond_react_system, m)?)?;
     Ok(())
 }

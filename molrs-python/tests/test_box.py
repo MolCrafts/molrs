@@ -5,39 +5,39 @@ import pytest
 
 class TestBoxConstruction:
     def test_cube(self):
-        b = molrs.Box.cube(10.0)
+        b = molrs.spatial.Box.cube(10.0)
         assert pytest.approx(b.volume(), abs=1e-3) == 1000.0
 
     def test_ortho(self):
-        b = molrs.Box.ortho(np.array([2.0, 3.0, 4.0], dtype=np.float64))
+        b = molrs.spatial.Box.ortho(np.array([2.0, 3.0, 4.0], dtype=np.float64))
         assert pytest.approx(b.volume(), abs=1e-3) == 24.0
 
     def test_triclinic(self):
         h = np.array(
             [[2.0, 1.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 4.0]], dtype=np.float64
         )
-        b = molrs.Box(h)
+        b = molrs.spatial.Box(h)
         assert b.volume() > 0
 
     def test_singular_matrix_raises_value_error(self):
         h = np.zeros((3, 3), dtype=np.float64)
         with pytest.raises(ValueError):
-            molrs.Box(h)
+            molrs.spatial.Box(h)
 
     def test_cube_zero_raises_value_error(self):
         with pytest.raises(ValueError):
-            molrs.Box.cube(0.0)
+            molrs.spatial.Box.cube(0.0)
 
     def test_cube_negative_raises_value_error(self):
         with pytest.raises(ValueError):
-            molrs.Box.cube(-5.0)
+            molrs.spatial.Box.cube(-5.0)
 
     def test_custom_origin(self):
-        b = molrs.Box.cube(10.0, origin=np.array([1.0, 2.0, 3.0], dtype=np.float64))
+        b = molrs.spatial.Box.cube(10.0, origin=np.array([1.0, 2.0, 3.0], dtype=np.float64))
         np.testing.assert_allclose(b.origin, [1.0, 2.0, 3.0], atol=1e-6)
 
     def test_custom_pbc(self):
-        b = molrs.Box.cube(10.0, pbc=np.array([True, False, True]))
+        b = molrs.spatial.Box.cube(10.0, pbc=np.array([True, False, True]))
         assert b.pbc[0] == True
         assert b.pbc[1] == False
         assert b.pbc[2] == True
@@ -160,17 +160,17 @@ class TestBoxContainment:
 class TestBoxErrors:
     def test_bad_h_shape(self):
         with pytest.raises(ValueError, match="3x3"):
-            molrs.Box(np.ones((2, 3), dtype=np.float64))
+            molrs.spatial.Box(np.ones((2, 3), dtype=np.float64))
 
     def test_bad_origin_length(self):
         h = np.eye(3, dtype=np.float64) * 10.0
         with pytest.raises(ValueError, match="length 3"):
-            molrs.Box(h, origin=np.array([1.0, 2.0], dtype=np.float64))
+            molrs.spatial.Box(h, origin=np.array([1.0, 2.0], dtype=np.float64))
 
     def test_bad_pbc_length(self):
         h = np.eye(3, dtype=np.float64) * 10.0
         with pytest.raises(ValueError, match="3 elements"):
-            molrs.Box(h, pbc=np.array([True, False]))
+            molrs.spatial.Box(h, pbc=np.array([True, False]))
 
     def test_bad_to_frac_shape(self, cubic_box):
         with pytest.raises(ValueError, match="N,3"):

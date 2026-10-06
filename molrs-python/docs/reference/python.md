@@ -1,28 +1,59 @@
 # Python Reference
 
-Canonical import style:
-
 ```python
-import molrs as mr
+import molrs
 ```
 
-This page is rendered from the installed `molrs` package by `mkdocstrings-python`.
-Autodoc identifiers use the package name (`molrs.Frame`); user code should
-`import molrs as mr` and write `mr.Frame`. The type stub in
-`molrs-python/python/molrs/_lib.pyi` is the committed companion artifact that
-keeps signatures visible to static tools and the docs build.
+The top level of `molrs` is its subsystems and nothing else, exactly as the
+Rust crate's root is: every symbol has one path, the Python module named after
+its Rust owner (`molrs.store.Frame` is `molrs::store::Frame`). Import the
+subsystem you use:
 
-## Core Model
+```python
+from molrs.store import Frame, Block
+from molrs.spatial import Box, NeighborList
+from molrs.ff.potential import PotentialCompiler
+```
 
-::: molrs.Box
+This page is rendered from the installed `molrs` package by
+`mkdocstrings-python`. The type stub `molrs-python/python/molrs/_lib.pyi` is
+the committed companion artifact that keeps signatures visible to static tools
+and the docs build.
 
-::: molrs.Block
+| Module | Rust owner | Holds |
+|---|---|---|
+| `molrs.store` | `molrs::store` | `Block`, `Frame`, `FrameMeta`, `MetaValue`, `MetaDocument`, `Trajectory`, `ScalarObservable`, `VectorObservable`, `BlockDtypeError`; `keys`, `schema` |
+| `molrs.spatial` | `molrs::spatial` | `Box`, `NeighborList`, `Neighbors`, `NeighborQuery`, `VerletSkin`, the regions, `TriMesh`, `Trace` |
+| `molrs.system` | `molrs::system` | `Graph`, `Atomistic`, `CoarseGrain`, the node / relation views, `ExtractedSubgraph`, `Element`, `Topology` |
+| `molrs.units` | `molrs::units` | `Unit`, `Quantity`, `UnitRegistry`, `UnitPreset`, `UnitsError`, `AMBER_COULOMB` |
+| `molrs.op` | `molrs::op` | `superpose`, `centroid`, `Fit`, `DEFAULT_GAP_TOL` |
+| `molrs.perceive` | `molrs::perceive` | `Perceive`, `RingInfo`, `SmartsPattern`, `SmartsMatch`, `Reaction`, `SubgraphMatcher` |
+| `molrs.io` | `molrs::io` | structure and trajectory readers / writers, `TrajectoryReader`, `SmilesIR`, `CGSmilesIR`, `SmilesError`, the LAMMPS log, `*.mrec` doors |
+| `molrs.io.mrec` | `molrs::io::mrec` | `SequenceSchema`, `TrajectoryWriter`, `TrajectoryReader`, `ForceFieldSection`, `pack`, `schema` |
+| `molrs.ff.forcefield` | `molrs::ff::forcefield` | `ForceField`, the `Style` / `Type` handles, the force-field file readers and writers |
+| `molrs.ff.potential` | `molrs::ff::potential` | `PotentialCompiler`, `Potentials`, `TypedPotentials`, `kernel`, `LJCut`, `intramolecular_pairs`, `Potential` |
+| `molrs.ff.typifier` | `molrs::ff::typifier` | `Typifier`, `Match`, the built-in typifiers, `assign_cmaps` |
+| `molrs.ff.charge` | `molrs::ff::charge` | `BccModel`, `MullikenModel`, `GasteigerModel` |
+| `molrs.ff.ir` | `molrs::ff::ir` | the force-field IR registry and its `IrError` family |
+| `molrs.ff.params` | `molrs::ff::params` | `AMBER_SCEE`, `AMBER_SCNB`, `clpol_polarizability` |
+| `molrs.ff.scale_lj` | `molrs::ff::scale_lj` | `FragmentScaling`, `compute_k_ij`, `fragment_scaling_data`, `scale_lj` |
+| `molrs.optimize` | `molrs::optimize` | `LBFGS`, `OptReport` |
+| `molrs.md` | `molrs::md` | `VelocityVerlet`, `Langevin`, `MDState`, `MaxwellBoltzmann`, `MD` |
+| `molrs.conformer` | `molrs::conformer` | `Conformer`, `ConformerReport`, `ConformerStageReport` |
+| `molrs.builder` | `molrs::builder` | `GrapheneBuilder`, `CarbonTubeBuilder`, `Assembler` and its placers / orienter, `Coarsener` |
+| `molrs.compute` | `molrs::compute` | every analysis, flat, and the `Compute` protocol |
+| `molrs.signal` | `molrs::signal` | `acf_fft`, `xcorr_fft`, `apply_window`, `frequency_grid` |
+| `molrs.stream` | `molrs::stream` | `Publisher`, `ControlCommand`, `read_frame_bytes`, `write_frame_bytes` |
 
-::: molrs.Frame
+## `molrs.store`
 
-::: molrs.FrameMeta
+::: molrs.store.Block
 
-::: molrs.MetaValue
+::: molrs.store.Frame
+
+::: molrs.store.FrameMeta
+
+::: molrs.store.MetaValue
 
 Every door of `frame.meta` hands back a frozen value: a fixed-length vector
 is a `tuple`, and a JSON object is a `MetaDocument`. Nested arrays are
@@ -30,27 +61,21 @@ tuples. `json.dumps` accepts a tuple and rejects a document — use
 `json.dumps(frame.meta["run"].copy())`. Order inside a nested document is
 unspecified.
 
-::: molrs.MetaDocument
+::: molrs.store.MetaDocument
 
-## Topology and SMILES
+::: molrs.store.Trajectory
 
-::: molrs.Atomistic
+::: molrs.store.ScalarObservable
 
-::: molrs.CoarseGrain
+::: molrs.store.VectorObservable
 
-::: molrs.Graph
+## `molrs.system`
 
-::: molrs.io.SmilesIR
+::: molrs.system.Atomistic
 
-## Chemistry Perception
+::: molrs.system.CoarseGrain
 
-::: molrs.perceive.Perceive
-
-::: molrs.perceive.RingInfo
-
-::: molrs.ff.charge.GasteigerModel
-
-## Transforms
+::: molrs.system.Graph
 
 Rigid-body moves are methods of `Atomistic` and `CoarseGrain`, not module
 functions: `translate(delta)`, `rotate(axis, angle, about=None)` and
@@ -58,17 +83,64 @@ functions: `translate(delta)`, `rotate(axis, angle, about=None)` and
 place and returns the graph itself, so moves chain:
 `mol.translate([1, 0, 0]).rotate([0, 0, 1], 0.5).scale([2, 2, 2])`.
 
-## I/O
+## `molrs.spatial`
+
+::: molrs.spatial.Box
+
+A region is a solid with a signed distance to its boundary: every class
+answers `contains`, `distance` (negative inside) and `bounds`, and composes
+with `&`, `|` and `~`. Outside a shape is `~shape`; a shell is
+`outer & ~inner`. `TriMesh` is the surface a `Polyhedron` is bounded by and
+what `molrs.io.read_stl` reads (the WASM binding reads the same file with
+`readSTL` into `Mesh`).
+
+::: molrs.spatial.Sphere
+
+::: molrs.spatial.Cuboid
+
+::: molrs.spatial.Parallelepiped
+
+::: molrs.spatial.HalfSpace
+
+::: molrs.spatial.Cylinder
+
+::: molrs.spatial.Ellipsoid
+
+::: molrs.spatial.TriMesh
+
+::: molrs.spatial.Polyhedron
+
+::: molrs.spatial.SphereUnion
+
+::: molrs.spatial.Region
+
+::: molrs.spatial.NeighborList
+
+::: molrs.spatial.Neighbors
+
+::: molrs.spatial.NeighborQuery
+
+## `molrs.perceive`
+
+::: molrs.perceive.Perceive
+
+::: molrs.perceive.RingInfo
+
+::: molrs.perceive.Reaction
+
+## `molrs.io`
 
 Reader and writer names pair: `read_X` / `write_X` for one frame,
-`read_X_trajectory` / `write_X_trajectory` for a sequence. `molrs.io` returns
-canonical field names; `molrs.io.raw` keeps the format-native ones and reads
-trajectories eagerly. `read_frame` / `write_frame` pick the format from the
-file name.
+`read_X_trajectory` / `write_X_trajectory` for a sequence. Every reader emits
+the canonical column names (`molrs.store.keys`). `read_frame` /
+`write_frame` pick the format from the file name. The LAMMPS dump, XYZ, DCD,
+TRR and XTC trajectory readers return a lazy `TrajectoryReader`.
 
 ::: molrs.io.read_frame
 
 ::: molrs.io.write_frame
+
+::: molrs.io.TrajectoryReader
 
 ::: molrs.io.read_pdb
 
@@ -122,6 +194,8 @@ file name.
 
 ::: molrs.io.write_xtc_trajectory
 
+::: molrs.io.SmilesIR
+
 ::: molrs.io.read_mrec
 
 ::: molrs.io.write_mrec
@@ -170,50 +244,94 @@ The [Record files guide](../guides/records.md) shows these in use.
 
 ::: molrs.io.read_amber_inpcrd
 
-::: molrs.io.raw.LAMMPSTrajReader
-
-::: molrs.io.raw.DCDTrajReader
-
-::: molrs.io.raw.XYZTrajReader
-
-## Regions and Neighbor Search
-
-A region is a solid with a signed distance to its boundary: every class
-answers `contains`, `distance` (negative inside) and `bounds`, and composes
-with `&`, `|` and `~`. Outside a shape is `~shape`; a shell is
-`outer & ~inner`. `TriMesh` is the surface a `Polyhedron` is bounded by and
-what `molrs.io.read_stl` reads (the WASM binding reads the same file with
-`readSTL` into `Mesh`).
-
-::: molrs.Sphere
-
-::: molrs.Cuboid
-
-::: molrs.Parallelepiped
-
-::: molrs.HalfSpace
-
-::: molrs.Cylinder
-
-::: molrs.Ellipsoid
-
-::: molrs.TriMesh
-
-::: molrs.Polyhedron
-
-::: molrs.SphereUnion
-
-::: molrs.Region
-
 ::: molrs.io.read_stl
 
-::: molrs.NeighborList
+## `molrs.ff`
 
-::: molrs.Neighbors
+### `molrs.ff.forcefield`
 
-::: molrs.NeighborQuery
+The native force-field model exposes a `Style`/`Type` handle hierarchy
+(`BondStyle`/`BondType`, `PairStyle`/`PairType`, `CmapStyle`/`CmapType`,
+…); a handle's `params` is a plain dict of numbers, strings and float64
+arrays (a CMAP `grid`).
 
-## 3D Conformer Generation
+::: molrs.ff.forcefield.ForceField
+
+::: molrs.ff.forcefield.Style
+
+::: molrs.ff.forcefield.AtomStyle
+
+::: molrs.ff.forcefield.BondStyle
+
+::: molrs.ff.forcefield.AngleStyle
+
+::: molrs.ff.forcefield.DihedralStyle
+
+::: molrs.ff.forcefield.ImproperStyle
+
+::: molrs.ff.forcefield.PairStyle
+
+::: molrs.ff.forcefield.CmapStyle
+
+::: molrs.ff.forcefield.Type
+
+::: molrs.ff.forcefield.AtomType
+
+::: molrs.ff.forcefield.BondType
+
+::: molrs.ff.forcefield.AngleType
+
+::: molrs.ff.forcefield.DihedralType
+
+::: molrs.ff.forcefield.ImproperType
+
+::: molrs.ff.forcefield.PairType
+
+::: molrs.ff.forcefield.CmapType
+
+::: molrs.ff.forcefield.read_forcefield_xml
+
+::: molrs.ff.forcefield.read_opls_xml
+
+::: molrs.ff.forcefield.write_gromacs_system
+
+### `molrs.ff.potential`
+
+::: molrs.ff.potential.PotentialCompiler
+
+::: molrs.ff.potential.Potentials
+
+### `molrs.ff.typifier`
+
+::: molrs.ff.typifier.MMFF94Typifier
+
+::: molrs.ff.typifier.MMFF94STypifier
+
+::: molrs.ff.typifier.OPLSAATypifier
+
+::: molrs.ff.typifier.AtdTypifier
+
+::: molrs.ff.typifier.GaffTypifier
+
+::: molrs.ff.typifier.Typifier
+
+::: molrs.ff.typifier.Match
+
+### `molrs.ff.charge`
+
+::: molrs.ff.charge.GasteigerModel
+
+### `molrs.ff.params`
+
+::: molrs.ff.params.clpol_polarizability
+
+## `molrs.optimize`
+
+::: molrs.optimize.LBFGS
+
+::: molrs.optimize.OptReport
+
+## `molrs.conformer`
 
 ::: molrs.conformer.Conformer
 
@@ -221,173 +339,89 @@ what `molrs.io.read_stl` reads (the WASM binding reads the same file with
 
 ::: molrs.conformer.ConformerReport
 
-## Force Fields
+## `molrs.builder`
 
-The native force-field model exposes a `Style`/`Type` handle hierarchy
-(`BondStyle`/`BondType`, `PairStyle`/`PairType`, `CmapStyle`/`CmapType`,
-…); a handle's `params` is a plain dict of numbers, strings and float64
-arrays (a CMAP `grid`).
+::: molrs.builder.Coarsener
 
-::: molrs.ff.ForceField
+## `molrs.compute`
 
-::: molrs.ff.Style
+The Rust compute facade is flat, and so is `molrs.compute`: every analysis is
+`molrs.compute.<Name>`.
 
-::: molrs.ff.AtomStyle
+### Structure
 
-::: molrs.ff.BondStyle
+::: molrs.compute.RDF
 
-::: molrs.ff.AngleStyle
+::: molrs.compute.RDFResult
 
-::: molrs.ff.DihedralStyle
+::: molrs.compute.GaussianDensity
 
-::: molrs.ff.ImproperStyle
+::: molrs.compute.LocalDensity
 
-::: molrs.ff.PairStyle
+::: molrs.compute.StaticStructureFactorDebye
 
-::: molrs.ff.CmapStyle
+::: molrs.compute.PMFTXY
 
-::: molrs.ff.Type
+::: molrs.compute.BondOrder
 
-::: molrs.ff.AtomType
+### Order
 
-::: molrs.ff.BondType
+::: molrs.compute.Steinhardt
 
-::: molrs.ff.AngleType
+::: molrs.compute.Nematic
 
-::: molrs.ff.DihedralType
+::: molrs.compute.Hexatic
 
-::: molrs.ff.ImproperType
+::: molrs.compute.SolidLiquid
 
-::: molrs.ff.PairType
+### Clusters and shape
 
-::: molrs.ff.CmapType
+::: molrs.compute.Cluster
 
-::: molrs.ff.MMFF94Typifier
+::: molrs.compute.ClusterResult
 
-::: molrs.ff.MMFF94STypifier
+::: molrs.compute.ClusterCenters
 
-::: molrs.ff.OPLSAATypifier
+::: molrs.compute.ClusterCentersResult
 
-::: molrs.ff.typifier.AtdTypifier
+::: molrs.compute.ClusterProperties
 
-::: molrs.ff.GaffTypifier
+::: molrs.compute.CenterOfMass
 
-::: molrs.ff.typifier.Typifier
+::: molrs.compute.CenterOfMassResult
 
-::: molrs.ff.typifier.Match
+::: molrs.compute.GyrationTensor
 
-::: molrs.ff.PotentialCompiler
+::: molrs.compute.InertiaTensor
 
-::: molrs.ff.Potentials
+::: molrs.compute.RadiusOfGyration
 
-::: molrs.optimize.LBFGS
+### Dynamics
 
-::: molrs.optimize.OptReport
+::: molrs.compute.MSD
 
-::: molrs.ff.read_forcefield_xml
+::: molrs.compute.MSDResult
 
-::: molrs.ff.read_opls_xml
+::: molrs.compute.MSDTimeSeries
 
-::: molrs.ff.clpol_polarizability
+### Descriptors
 
-::: molrs.ff.write_gromacs_system
+::: molrs.compute.DescriptorRow
 
-## Trajectory
+::: molrs.compute.Pca2
 
-::: molrs.Trajectory
+::: molrs.compute.PcaResult
 
-::: molrs.ScalarObservable
+::: molrs.compute.KMeans
 
-::: molrs.VectorObservable
+::: molrs.compute.KMeansResult
 
-## Analysis
-
-Analysis classes live under the `molrs.compute` subpackage, organized by
-domain. The layout mirrors freud and the underlying Rust crate
-(`molrs_compute::{density, order, environment, …}`).
-
-### `molrs.compute.density`
-
-::: molrs.compute.density.RDF
-
-::: molrs.compute.density.RDFResult
-
-::: molrs.compute.density.GaussianDensity
-
-::: molrs.compute.density.LocalDensity
-
-### `molrs.compute.order`
-
-::: molrs.compute.order.Steinhardt
-
-::: molrs.compute.order.Nematic
-
-::: molrs.compute.order.Hexatic
-
-::: molrs.compute.order.SolidLiquid
-
-### `molrs.compute.environment`
-
-::: molrs.compute.environment.BondOrder
-
-### `molrs.compute.pmft`
-
-::: molrs.compute.pmft.PMFTXY
-
-### `molrs.compute.diffraction`
-
-::: molrs.compute.diffraction.StaticStructureFactorDebye
-
-### `molrs.compute.cluster`
-
-::: molrs.compute.cluster.Cluster
-
-::: molrs.compute.cluster.ClusterResult
-
-::: molrs.compute.cluster.ClusterCenters
-
-::: molrs.compute.cluster.ClusterCentersResult
-
-::: molrs.compute.cluster.ClusterProperties
-
-::: molrs.compute.cluster.CenterOfMass
-
-::: molrs.compute.cluster.CenterOfMassResult
-
-::: molrs.compute.cluster.GyrationTensor
-
-::: molrs.compute.cluster.InertiaTensor
-
-::: molrs.compute.cluster.RadiusOfGyration
-
-### `molrs.compute.msd`
-
-::: molrs.compute.msd.MSD
-
-::: molrs.compute.msd.MSDResult
-
-::: molrs.compute.msd.MSDTimeSeries
-
-### `molrs.compute.ml`
-
-::: molrs.compute.ml.DescriptorRow
-
-::: molrs.compute.ml.Pca2
-
-::: molrs.compute.ml.PcaResult
-
-::: molrs.compute.ml.KMeans
-
-::: molrs.compute.ml.KMeansResult
-
-## Transport
+### Transport
 
 Electrolyte transport kernels (ports of the *tame* recipes). Worked examples,
 units, and signatures are in the
 [molpy documentation](https://docs.molcrafts.org/molpy/).
 
-### `molrs.compute.transport`
+::: molrs.compute.Onsager
 
-::: molrs.compute.transport.Onsager
-
-::: molrs.compute.transport.Persist
+::: molrs.compute.Persist

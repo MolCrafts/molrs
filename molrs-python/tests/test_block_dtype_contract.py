@@ -2,7 +2,7 @@
 
 The Rust Store only holds numpy-representable dtypes (float, int, bool, str).
 Object / None-bearing / ragged columns are rejected at insert with a clear,
-column-named ``molrs.BlockDtypeError`` (fail-fast) — never silently routed to a
+column-named ``molrs.store.BlockDtypeError`` (fail-fast) — never silently routed to a
 Python-side overflow dict. Supported dtypes coerce, store, and expose zero-copy
 views unchanged.
 """
@@ -16,11 +16,12 @@ import pytest
 
 class TestErrorType:
     def test_importable(self):
-        assert hasattr(molrs, "BlockDtypeError")
+        assert hasattr(molrs.store, "BlockDtypeError")
+        assert not hasattr(molrs, "BlockDtypeError")
 
     def test_subclasses_typeerror(self):
         # Fixed in docs as a TypeError subclass so callers can `except` it.
-        assert issubclass(molrs.BlockDtypeError, TypeError)
+        assert issubclass(molrs.store.BlockDtypeError, TypeError)
 
 
 # --- ac-001 / ac-002 / ac-003: rejection triggers ---------------------------
@@ -28,35 +29,35 @@ class TestErrorType:
 
 class TestRejection:
     def test_object_dtype_raises_named(self):
-        b = molrs.Block()
-        with pytest.raises(molrs.BlockDtypeError) as exc:
+        b = molrs.store.Block()
+        with pytest.raises(molrs.store.BlockDtypeError) as exc:
             b.insert("mixed", np.array(["a", 1, None], dtype=object))
         msg = str(exc.value)
         assert "mixed" in msg  # column name
         assert "object" in msg.lower()  # detected dtype
 
     def test_none_bearing_raises_identified(self):
-        b = molrs.Block()
-        with pytest.raises(molrs.BlockDtypeError) as exc:
+        b = molrs.store.Block()
+        with pytest.raises(molrs.store.BlockDtypeError) as exc:
             b.insert("c", np.array([1.0, None]))
         msg = str(exc.value)
         assert "c" in msg
         assert "none" in msg.lower()  # identified as None-bearing
 
     def test_ragged_raises_named(self):
-        b = molrs.Block()
-        with pytest.raises(molrs.BlockDtypeError) as exc:
+        b = molrs.store.Block()
+        with pytest.raises(molrs.store.BlockDtypeError) as exc:
             b.insert("rag", np.array([[1, 2], [3]], dtype=object))
         assert "rag" in str(exc.value)
 
     def test_explicit_object_column_raises(self):
-        b = molrs.Block()
-        with pytest.raises(molrs.BlockDtypeError):
+        b = molrs.store.Block()
+        with pytest.raises(molrs.store.BlockDtypeError):
             b.insert("o", np.empty(3, dtype=object))
 
     def test_setitem_rejects_object(self):
-        b = molrs.Block()
-        with pytest.raises(molrs.BlockDtypeError):
+        b = molrs.store.Block()
+        with pytest.raises(molrs.store.BlockDtypeError):
             b["mixed"] = np.array(["a", 1, None], dtype=object)
 
 
@@ -74,14 +75,14 @@ class TestSupportedDtypes:
         ],
     )
     def test_round_trip(self, arr, kind):
-        b = molrs.Block()
+        b = molrs.store.Block()
         b.insert("value", arr)
         out = b["value"]
         np.testing.assert_array_equal(out, arr)
         assert b.dtype("value") == kind
 
     def test_str_round_trip(self):
-        b = molrs.Block()
+        b = molrs.store.Block()
         b.insert("name", ["a", "b", "c"])
         assert list(b["name"]) == ["a", "b", "c"]
 
@@ -91,7 +92,7 @@ class TestSupportedDtypes:
 
 class TestZeroCopy:
     def test_float_view_shares_memory(self):
-        b = molrs.Block()
+        b = molrs.store.Block()
         b.insert("x", np.array([1.0, 2.0, 3.0], dtype=np.float64))
         v = b["x"]
         assert v.base is not None  # Arc-backed window, not a defensive copy
@@ -102,13 +103,13 @@ class TestZeroCopy:
 
 class TestEmptyColumn:
     def test_empty_float_stores(self):
-        b = molrs.Block()
+        b = molrs.store.Block()
         b.insert("x", np.array([], dtype=np.float64))
         out = b["x"]
         assert out.shape == (0,)
         assert b.dtype("x") == "float"
 
     def test_empty_object_rejected(self):
-        b = molrs.Block()
-        with pytest.raises(molrs.BlockDtypeError):
+        b = molrs.store.Block()
+        with pytest.raises(molrs.store.BlockDtypeError):
             b.insert("x", np.array([], dtype=object))

@@ -20,9 +20,9 @@ TWO_SHIFTS = np.array([[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]])
 TWO_FRAG_IDS = np.array([7, 9], dtype=np.int32)
 
 
-def _ch_template() -> molrs.Atomistic:
+def _ch_template() -> molrs.system.Atomistic:
     """C at the origin bonded to H at x = 1.09."""
-    template = molrs.Atomistic()
+    template = molrs.system.Atomistic()
     c = template.def_atom(element="C", x=0.0, y=0.0, z=0.0)
     h = template.def_atom(element="H", x=1.09, y=0.0, z=0.0)
     template.def_bond(c, h)
@@ -31,7 +31,7 @@ def _ch_template() -> molrs.Atomistic:
 
 class TestAtomisticReplicate:
     def test_grows_the_graph_by_one_copy_per_transform_with_frag_ids_stamped(self):
-        world = molrs.Atomistic()
+        world = molrs.system.Atomistic()
         world.def_atom(element="O", x=-5.0, y=0.0, z=0.0)
         before = set(world.entities())
 
@@ -51,7 +51,7 @@ class TestAtomisticReplicate:
 
     def test_the_template_is_not_mutated(self):
         template = _ch_template()
-        molrs.Atomistic().replicate(template, TWO_IDENTITIES, TWO_SHIFTS, TWO_FRAG_IDS)
+        molrs.system.Atomistic().replicate(template, TWO_IDENTITIES, TWO_SHIFTS, TWO_FRAG_IDS)
         assert template.n_atoms == 2
         assert all(not template.has(h, "frag_id") for h in template.entities())
 
@@ -73,7 +73,7 @@ class TestAtomisticReplicate:
     def test_a_wrong_shape_is_a_value_error_and_leaves_the_graph_unchanged(
         self, rotations, translations, frag_ids
     ):
-        world = molrs.Atomistic()
+        world = molrs.system.Atomistic()
         with pytest.raises(ValueError):
             world.replicate(_ch_template(), rotations, translations, frag_ids)
         assert world.n_atoms == 0
@@ -81,13 +81,13 @@ class TestAtomisticReplicate:
 
 class TestPortedReplicate:
     def test_copies_keep_the_template_ports(self):
-        template = molrs.Atomistic()
+        template = molrs.system.Atomistic()
         o = template.def_atom(element="O", x=0.0, y=0.0, z=0.0)
         h = template.def_atom(element="H", x=0.96, y=0.0, z=0.0)
         template.def_bond(o, h)
         template.def_port(o, h, "$")
 
-        world = molrs.Atomistic()
+        world = molrs.system.Atomistic()
         world.replicate(template, TWO_IDENTITIES, TWO_SHIFTS, TWO_FRAG_IDS)
 
         assert world.n_atoms == 4
@@ -97,10 +97,10 @@ class TestPortedReplicate:
 
 class TestCoarseGrainReplicate:
     def test_grows_by_one_bead_per_transform(self):
-        template = molrs.CoarseGrain()
+        template = molrs.system.CoarseGrain()
         template.def_bead(bead_type="A", x=0.0, y=0.0, z=0.0)
 
-        world = molrs.CoarseGrain()
+        world = molrs.system.CoarseGrain()
         world.replicate(template, TWO_IDENTITIES, TWO_SHIFTS, TWO_FRAG_IDS)
 
         assert world.n_beads == 2

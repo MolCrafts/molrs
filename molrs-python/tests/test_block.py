@@ -1,4 +1,4 @@
-"""``molrs.Block`` — the one column store, native end to end.
+"""``molrs.store.Block`` — the one column store, native end to end.
 
 There is exactly one ``Block`` class: the PyO3 ``molrs._lib.Block``. Every
 capability below (construction from a mapping, schema-dtype adoption, row and
@@ -10,24 +10,24 @@ import pickle
 import molrs
 import numpy as np
 import pytest
-from molrs import Block
+from molrs.store import Block
 
 
-class _SubBlock(molrs.Block):
+class _SubBlock(molrs.store.Block):
     """Module level, so pickle can find it."""
 
 
 class TestOneClass:
     def test_molrs_block_is_the_native_class(self):
-        assert molrs.Block is molrs._lib.Block
+        assert molrs.store.Block is molrs._lib.Block
 
     def test_a_block_can_be_subclassed(self):
         """Core data classes are extensible; a subclass is still a Block."""
 
-        class Sub(molrs.Block):
+        class Sub(molrs.store.Block):
             pass
 
-        assert isinstance(Sub(), molrs.Block)
+        assert isinstance(Sub(), molrs.store.Block)
 
     def test_a_block_subclass_pickles_as_itself(self):
         sub = _SubBlock()
@@ -186,7 +186,7 @@ class TestBlockKeys:
 
     def test_a_schema_key_is_a_column_name(self):
         b = Block()
-        z = molrs.keys.ATOMIC_NUMBER
+        z = molrs.store.keys.ATOMIC_NUMBER
         b[z] = np.array([1, 8], dtype=np.int64)
         assert z in b
         assert "atomic_number" in b
@@ -263,7 +263,7 @@ class TestBlockSubscriptAssignment:
     def test_the_adopted_dtype_is_the_one_the_schema_reports(self):
         b = Block({"id": [1, 2], "mol_id": [1, 1], "ix": [0, 1], "x": [0, 1]})
         for key in ("id", "mol_id", "ix", "x"):
-            assert b[key].dtype == np.dtype(molrs.schema.column(key).numpy_dtype)
+            assert b[key].dtype == np.dtype(molrs.store.schema.column(key).numpy_dtype)
 
     def test_an_unconstrained_key_keeps_its_dtype(self):
         b = Block()
@@ -312,7 +312,7 @@ class TestBlockSubscriptAssignment:
 
     def test_setitem_rejects_an_object_column(self):
         b = Block()
-        with pytest.raises(molrs.BlockDtypeError):
+        with pytest.raises(molrs.store.BlockDtypeError):
             b["bad"] = np.array([object(), object()], dtype=object)
 
     def test_setitem_refuses_a_scalar(self):
@@ -353,7 +353,7 @@ class TestBlockMultiColumnIndexing:
         np.testing.assert_allclose(stacked, [[0.0, 2.0, 4.0], [1.0, 3.0, 5.0]])
 
     def test_the_canonical_coordinate_keys_work_as_a_tuple(self):
-        assert self._xyz()[molrs.keys.COORDS].shape == (2, 3)
+        assert self._xyz()[molrs.store.keys.COORDS].shape == (2, 3)
 
     def test_a_missing_column_names_itself(self):
         with pytest.raises(KeyError, match="absent"):
@@ -532,7 +532,7 @@ class TestBlockRename:
         # `id` (uint) adopts the schema dtype when the values allow it.
         b = Block()
         b.insert("serial", np.array([1, 2], dtype=np.int64))
-        b.rename("serial", molrs.keys.ID)
+        b.rename("serial", molrs.store.keys.ID)
         assert "serial" not in b
         assert b.dtype("id") == "uint"
         np.testing.assert_array_equal(b["id"], [1, 2])

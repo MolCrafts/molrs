@@ -17,7 +17,8 @@ from collections.abc import Iterator
 import molrs
 import numpy as np
 import pytest
-from molrs.ff import Potentials, ir
+from molrs.ff.potential import Potentials
+from molrs.ff import ir
 from molrs.ff.potential import kernel
 
 # A non-planar four-atom chain: every angle and the dihedral are generic.
@@ -240,15 +241,15 @@ class TestPotentialsAssembly:
             pots.push(bond)
 
     def test_a_hand_assembled_collection_prices_what_the_compiled_field_prices(self) -> None:
-        ff = molrs.ff.ForceField("chain", units="real")
+        ff = molrs.ff.forcefield.ForceField("chain", units="real")
         atoms = ff.def_style("atom", "full")
         c = atoms.def_type("C", mass=12.011)
         ff.def_style("bond", "harmonic").def_type("CC", c, c, k=300.0, r0=1.4)
         ff.def_style("angle", "harmonic").def_type("CCC", c, c, c, k=50.0, theta0=109.5)
         torsion = dict(k1=1.3, periodicity1=1.0, phase1=0.0, k2=0.4, periodicity2=2.0, phase2=180.0)
         ff.def_style("dihedral", "periodic").def_type("CCCC", c, c, c, c, **torsion)
-        frame = molrs.Frame()
-        block = molrs.Block()
+        frame = molrs.store.Frame()
+        block = molrs.store.Block()
         for d, key in enumerate("xyz"):
             block.insert(key, XYZ[:, d].copy())
         block.insert("type", ["C"] * 4)
@@ -259,12 +260,12 @@ class TestPotentialsAssembly:
             ("angles", angles, "CCC"),
             ("dihedrals", dihedrals, "CCCC"),
         ):
-            topo = molrs.Block()
+            topo = molrs.store.Block()
             for column, atom in zip(("atomi", "atomj", "atomk", "atoml"), zip(*rows)):
                 topo.insert(column, np.array(atom, dtype=np.uint32))
             topo.insert("type", [label] * len(rows))
             frame[name] = topo
-        compiled = molrs.ff.PotentialCompiler(ff).compile(frame).calc_energy_forces(FLAT)
+        compiled = molrs.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy_forces(FLAT)
 
         pots = Potentials()
         pots.push(kernel("bond", "harmonic", bonds, k=300.0, r0=1.4))

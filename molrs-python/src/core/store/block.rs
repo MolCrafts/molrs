@@ -1,4 +1,4 @@
-//! Python class `molrs.Block`, a heterogeneous column store backed by the
+//! Python class `molrs.store.Block`, a heterogeneous column store backed by the
 //! shared FFI store.
 //!
 //! A [`PyBlock`] holds typed columns keyed by name. Numeric, bool and complex
@@ -31,10 +31,10 @@ use pyo3::exceptions::{PyIndexError, PyKeyError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyIterator, PyList, PySlice, PyTuple};
 
-use crate::schema::extract_column_key;
-use crate::store::ffi_error_to_pyerr;
+use crate::core::store::schema::extract_column_key;
+use crate::error::ffi_error_to_pyerr;
 
-/// Heterogeneous column store exposed to Python as `molrs.Block`.
+/// Heterogeneous column store exposed to Python as `molrs.store.Block`.
 ///
 /// Each column is a named, typed array. All columns share the same number of
 /// rows (axis-0 length). The underlying storage lives in an FFI `Store` and is
@@ -46,7 +46,7 @@ use crate::store::ffi_error_to_pyerr;
 /// stored alongside a validity mask: `Block.validity(key)` returns it, or
 /// `None` when every cell of that column is a real value.
 ///
-/// Every column-key argument accepts a ``str`` or a :class:`molrs.keys.Key`.
+/// Every column-key argument accepts a ``str`` or a :class:`molrs.store.keys.Key`.
 ///
 /// # Python Examples
 ///
@@ -64,7 +64,7 @@ use crate::store::ffi_error_to_pyerr;
 /// assert b.validity("x") is None   # no holes in that column
 /// ```
 #[pyclass(
-    module = "molrs._lib",
+    module = "molrs.store",
     name = "Block",
     from_py_object,
     unsendable,
@@ -320,7 +320,7 @@ impl PyBlock {
     ///
     /// Examples
     /// --------
-    /// >>> b = molrs.Block({"x": np.array([0.12345, 1.5])})
+    /// >>> b = molrs.store.Block({"x": np.array([0.12345, 1.5])})
     /// >>> b.set_precision("x", 1e-3)
     /// >>> b.precision("x")
     /// 0.001
@@ -862,7 +862,7 @@ impl PyBlock {
             "shape",
             this.with_block(|b| b.structural_shape().map(<[usize]>::to_vec))?,
         )?;
-        crate::helpers::reduce_with_state(slf.as_any(), PyTuple::empty(py), state.into_any())
+        crate::pickle::reduce_with_state(slf.as_any(), PyTuple::empty(py), state.into_any())
     }
 
     /// Restore the state [`__reduce__`](Self::__reduce__) produced.
@@ -1532,7 +1532,7 @@ where
 // ---------------------------------------------------------------------------
 
 /// Keep a typed column buffer alive for a numpy view of any storage width.
-#[pyclass(module = "molrs", unsendable, subclass)]
+#[pyclass(module = "molrs._lib", unsendable, subclass)]
 struct ArrayOwner {
     _keep: Box<dyn std::any::Any + Send + Sync>,
 }

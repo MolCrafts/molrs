@@ -7,7 +7,7 @@ use pyo3::types::PyType;
 
 /// Immutable chemical-element record backed by [`Element`].
 #[pyclass(
-    module = "molrs",
+    module = "molrs.system",
     name = "Element",
     frozen,
     eq,
@@ -70,7 +70,7 @@ impl PyElement {
     }
 
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
-        crate::helpers::reduce_via_type(slf.as_any(), (slf.borrow().number(),))
+        crate::pickle::reduce_via_type(slf.as_any(), (slf.borrow().number(),))
     }
 
     /// Canonical English name.

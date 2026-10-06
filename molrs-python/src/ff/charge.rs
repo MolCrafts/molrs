@@ -1,6 +1,6 @@
 //! Python bindings for the charge models (`molrs::ff::charge`).
 //!
-//! Three classes — `molrs.BccModel`, `molrs.MullikenModel`, `molrs.GasteigerModel`
+//! Three classes — `molrs.ff.charge.BccModel`, `MullikenModel`, `GasteigerModel`
 //! — behind the one Rust trait, and behind **one Python calling convention**:
 //!
 //! ```text
@@ -105,7 +105,7 @@ fn charges_out(py: Python<'_>, charges: Vec<f64>) -> Bound<'_, PyArray1<f64>> {
     charges.into_pyarray(py)
 }
 
-/// AM1-BCC / ABCG2 bond-charge corrections — `molrs.BccModel`.
+/// AM1-BCC / ABCG2 bond-charge corrections — `molrs.ff.charge.BccModel`.
 ///
 /// The correction stage of AM1-BCC: base QM charges in, corrected charges out. The
 /// increments are pairwise antisymmetric, so the total charge is conserved to machine
@@ -125,7 +125,7 @@ fn charges_out(py: Python<'_>, charges: Vec<f64>) -> Bound<'_, PyArray1<f64>> {
 ///
 /// Examples
 /// --------
-/// >>> model = molrs.BccModel(parameter_set="bcc")
+/// >>> model = molrs.ff.charge.BccModel(parameter_set="bcc")
 /// >>> model.correct(methane, np.zeros(5))[0]     # 4 x the C-H increment
 /// 0.1572
 /// >>> model.assign(methanol, raw_sqm_charges)    # equivalences first, then corrects
@@ -234,7 +234,7 @@ impl PyBccModel {
     }
 }
 
-/// Mulliken population charges, unchanged — `molrs.MullikenModel`.
+/// Mulliken population charges, unchanged — `molrs.ff.charge.MullikenModel`.
 ///
 /// The pass-through: it hands back the QM charges it was given, bit for bit. No
 /// correction, and no equivalencing (antechamber's ``-eq`` default is ``0`` for every
@@ -242,7 +242,7 @@ impl PyBccModel {
 ///
 /// Examples
 /// --------
-/// >>> molrs.MullikenModel().assign(mol, am1)
+/// >>> molrs.ff.charge.MullikenModel().assign(mol, am1)
 #[pyclass(module = "molrs.ff.charge", name = "MullikenModel", subclass)]
 #[derive(Debug)]
 pub struct PyMullikenModel;
@@ -296,7 +296,7 @@ impl PyMullikenModel {
     }
 }
 
-/// Gasteiger / PEOE partial charges — `molrs.GasteigerModel`.
+/// Gasteiger / PEOE partial charges — `molrs.ff.charge.GasteigerModel`.
 ///
 /// The model with **no QM input**: it is handed a molecule and nothing else, and
 /// still lands on antechamber's ``-c gas`` column. The ``qm`` argument exists so that
@@ -309,7 +309,7 @@ impl PyMullikenModel {
 ///
 /// Examples
 /// --------
-/// >>> molrs.GasteigerModel().assign(mol)
+/// >>> molrs.ff.charge.GasteigerModel().assign(mol)
 #[pyclass(module = "molrs.ff.charge", name = "GasteigerModel", subclass)]
 #[derive(Debug)]
 pub struct PyGasteigerModel;
@@ -364,4 +364,12 @@ impl PyGasteigerModel {
     fn __repr__(&self) -> String {
         "GasteigerModel()".to_string()
     }
+}
+
+/// Register `molrs.ff.charge`.
+pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyBccModel>()?;
+    m.add_class::<PyMullikenModel>()?;
+    m.add_class::<PyGasteigerModel>()?;
+    Ok(())
 }

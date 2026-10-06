@@ -3,20 +3,20 @@ import pytest
 
 
 def test_registry_parses_and_converts_molecular_units():
-    units = molrs.UnitRegistry()
+    units = molrs.units.UnitRegistry()
     energy = units.quantity(1.0, "kilocalorie_per_mole")
     assert energy.to("kilojoule_per_mole").magnitude == pytest.approx(4.184)
     assert energy.to("eV").magnitude == pytest.approx(0.0433641, rel=1e-5)
 
 
 def test_spelled_out_si_prefixes_are_native():
-    units = molrs.UnitRegistry()
+    units = molrs.units.UnitRegistry()
     assert units.parse("nanometer").factor_to(units.angstrom) == pytest.approx(10.0)
     assert units.parse("femtosecond").factor_to(units.second) == pytest.approx(1e-15)
 
 
 def test_quantity_arithmetic_and_dimension_errors():
-    units = molrs.UnitRegistry()
+    units = molrs.units.UnitRegistry()
     total = 1.0 * units.nanometer + 5.0 * units.angstrom
     assert total.magnitude == pytest.approx(1.5)
     assert total.units == units.nanometer
@@ -24,73 +24,73 @@ def test_quantity_arithmetic_and_dimension_errors():
     speed = (2.0 * units.nanometer) / (4.0 * units.picosecond)
     assert speed.to("meter / second").magnitude == pytest.approx(500.0)
 
-    with pytest.raises(molrs.UnitsError, match="dimension mismatch"):
+    with pytest.raises(molrs.units.UnitsError, match="dimension mismatch"):
         (1.0 * units.meter).to("second")
 
 
 def test_custom_definition_is_registry_local():
-    units = molrs.UnitRegistry()
+    units = molrs.units.UnitRegistry()
     units.define("smoot", 1.7018, units.meter.dimension)
     assert (1.0 * units.smoot).to(units.meter).magnitude == pytest.approx(1.7018)
     with pytest.raises(AttributeError):
-        _ = molrs.UnitRegistry().smoot
+        _ = molrs.units.UnitRegistry().smoot
 
 
 def test_affine_temperature_conversion():
-    units = molrs.UnitRegistry()
+    units = molrs.units.UnitRegistry()
     assert units.quantity(25.0, "degC").to("K").magnitude == pytest.approx(298.15)
 
 
 def test_define_lj_sigma_defines_the_reduced_length_unit_alone():
-    units = molrs.UnitRegistry()
+    units = molrs.units.UnitRegistry()
     units.define_lj_sigma(units.quantity(4.2, "angstrom"))
     assert units.parse("lj_sigma").factor_to(units.angstrom) == pytest.approx(
         4.2, rel=1e-12
     )
     # Only sigma is known, so no reduced mass exists.
-    with pytest.raises(molrs.UnitsError):
+    with pytest.raises(molrs.units.UnitsError):
         units.parse("lj_mass")
 
 
 def test_define_lj_sigma_refuses_a_sigma_that_is_not_a_length():
-    units = molrs.UnitRegistry()
-    with pytest.raises(molrs.UnitsError):
+    units = molrs.units.UnitRegistry()
+    with pytest.raises(molrs.units.UnitsError):
         units.define_lj_sigma(units.quantity(1.0, "second"))
 
 
 def test_openmm_preset_is_native_with_molrs_boltzmann():
-    preset = molrs.UnitPreset("openmm")
+    preset = molrs.units.UnitPreset("openmm")
     assert preset.length() == "nanometer"
     assert preset.energy() == "kilojoule_per_mole"
-    real = molrs.UnitPreset("real")
-    units = molrs.UnitRegistry()
+    real = molrs.units.UnitPreset("real")
+    units = molrs.units.UnitRegistry()
     kj = units.quantity(real.boltzmann(), "kilocalorie_per_mole").to("kilojoule_per_mole")
     assert preset.boltzmann() == pytest.approx(kj.magnitude, rel=1e-14)
-    assert "openmm" in molrs.UnitPreset.names()
+    assert "openmm" in molrs.units.UnitPreset.names()
 
 
 def test_boltzmann_constant_is_a_registry_unit():
-    units = molrs.UnitRegistry()
+    units = molrs.units.UnitRegistry()
     rt = (300.0 * units.parse("k_B * kelvin")).to("kilojoule_per_mole")
     assert rt.magnitude == pytest.approx(2.494338785, rel=1e-9)
 
 
 def test_register_a_custom_preset():
     table = {
-        dim: getattr(molrs.UnitPreset("real"), dim)()
+        dim: getattr(molrs.units.UnitPreset("real"), dim)()
         for dim in (
             "mass", "length", "time", "energy", "temperature",
             "charge", "pressure", "velocity", "force", "density",
         )
     }
     table["length"] = "nanometer"
-    preset = molrs.UnitPreset.register("real_nm_test", table, boltzmann=1.0, coulomb=2.0)
-    assert molrs.UnitPreset("real_nm_test").length() == "nanometer"
+    preset = molrs.units.UnitPreset.register("real_nm_test", table, boltzmann=1.0, coulomb=2.0)
+    assert molrs.units.UnitPreset("real_nm_test").length() == "nanometer"
     assert preset.coulomb() == 2.0
     with pytest.raises(ValueError, match="already"):
-        molrs.UnitPreset.register("real_nm_test", table, boltzmann=1.0, coulomb=2.0)
-    molrs.UnitPreset.register("real_nm_test", table, boltzmann=3.0, coulomb=2.0, overwrite=True)
-    assert molrs.UnitPreset("real_nm_test").boltzmann() == 3.0
+        molrs.units.UnitPreset.register("real_nm_test", table, boltzmann=1.0, coulomb=2.0)
+    molrs.units.UnitPreset.register("real_nm_test", table, boltzmann=3.0, coulomb=2.0, overwrite=True)
+    assert molrs.units.UnitPreset("real_nm_test").boltzmann() == 3.0
     del table["mass"]
     with pytest.raises(ValueError, match="mass"):
-        molrs.UnitPreset.register("broken", table, boltzmann=1.0, coulomb=1.0)
+        molrs.units.UnitPreset.register("broken", table, boltzmann=1.0, coulomb=1.0)

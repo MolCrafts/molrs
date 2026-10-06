@@ -20,30 +20,30 @@ XYZ = np.array(
 ENDPOINTS = ("atomi", "atomj", "atomk", "atoml", "atomm")
 
 
-def frame(block: str, rows: list[list[int]], types: list[str]) -> molrs.Frame:
+def frame(block: str, rows: list[list[int]], types: list[str]) -> molrs.store.Frame:
     """Four atoms of type ``A`` and the terms ``rows`` (typed ``types``) in
     ``block``."""
-    atoms = molrs.Block()
+    atoms = molrs.store.Block()
     for d, key in enumerate("xyz"):
         atoms.insert(key, XYZ[:, d].copy())
     atoms.insert("type", ["A"] * 4)
-    terms = molrs.Block()
+    terms = molrs.store.Block()
     for i, key in enumerate(ENDPOINTS[: len(rows[0])]):
         terms.insert(key, np.array([r[i] for r in rows], dtype=np.uint32))
     terms.insert("type", list(types))
-    out = molrs.Frame()
+    out = molrs.store.Frame()
     out["atoms"] = atoms
     out[block] = terms
     return out
 
 
 def price(
-    ff: molrs.ff.ForceField, block: str, rows: list[list[int]], types: list[str]
+    ff: molrs.ff.forcefield.ForceField, block: str, rows: list[list[int]], types: list[str]
 ) -> dict:
     """Energy and forces of ``ff`` over the frame, exactly, or the refusal."""
     f = frame(block, rows, types)
     try:
-        e, forces = molrs.ff.PotentialCompiler(ff).compile(f).calc_energy_forces(f)
+        e, forces = molrs.ff.potential.PotentialCompiler(ff).compile(f).calc_energy_forces(f)
     except ValueError as err:
         return {"error": str(err)}
     return {"e": float(e).hex(), "f": [float(x).hex() for x in np.ravel(forces)]}
@@ -69,7 +69,7 @@ def exact(section: molrs.io.mrec.ForceFieldSection) -> dict:
 def main(cases: dict) -> dict:
     out = {}
     for name, (path, block, rows, types) in cases.items():
-        ff = molrs.ff.ForceField.from_section(molrs.io.read_mrec_forcefield(path))
+        ff = molrs.ff.forcefield.ForceField.from_section(molrs.io.read_mrec_forcefield(path))
         out[name] = {
             "price": price(ff, block, rows, types),
             "section": exact(ff.to_section()),

@@ -3,8 +3,8 @@
 import molrs
 
 
-def _ethane() -> "molrs.Atomistic":
-    mol = molrs.Atomistic()
+def _ethane() -> "molrs.system.Atomistic":
+    mol = molrs.system.Atomistic()
     c1 = mol.add_atom("C", 0.0, 0.0, 0.0)
     c2 = mol.add_atom("C", 1.54, 0.0, 0.0)
     hpos = [
@@ -25,7 +25,7 @@ def _ethane() -> "molrs.Atomistic":
 def test_mmff_typify_returns_typed_atomistic_topology():
     typifier = molrs.ff.typifier.MMFF94Typifier()
     typed = typifier.typify(_ethane())
-    assert isinstance(typed, molrs.Atomistic)
+    assert isinstance(typed, molrs.system.Atomistic)
 
     frame = typed.to_frame()
     assert frame["atoms"].nrows == 8

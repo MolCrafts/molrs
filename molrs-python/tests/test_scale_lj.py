@@ -3,7 +3,7 @@ import pytest
 
 
 def _forcefield():
-    ff = molrs.ff.ForceField()
+    ff = molrs.ff.forcefield.ForceField()
     atom_style = ff.def_style("atom", "full")
     cr = atom_style.def_type("CR", type_=1.0)
     b = atom_style.def_type("B", type_=2.0)
@@ -23,13 +23,13 @@ def test_native_scale_lj_clones_and_scales_cross_pair():
         "c2c1im": (["CR"], [(0.0, 0.0, 0.0)], [12.0]),
         "bf4": (["B"], [(4.0, 0.0, 0.0)], [11.0]),
     }
-    output = molrs.ff.scale_lj(ff, fragments)
-    expected = molrs.ff.compute_k_ij(
-        molrs.ff.fragment_scaling_data()["c2c1im"],
-        molrs.ff.fragment_scaling_data()["bf4"],
+    output = molrs.ff.scale_lj.scale_lj(ff, fragments)
+    expected = molrs.ff.scale_lj.compute_k_ij(
+        molrs.ff.scale_lj.fragment_scaling_data()["c2c1im"],
+        molrs.ff.scale_lj.fragment_scaling_data()["bf4"],
         4.0,
     )
-    assert isinstance(output, molrs.ff.ForceField)
+    assert isinstance(output, molrs.ff.forcefield.ForceField)
     assert _epsilon(output, "CR-B") == pytest.approx(expected)
     assert _epsilon(output, "CR") == 2.0
     assert _epsilon(ff, "CR-B") == 1.0
@@ -38,11 +38,11 @@ def test_native_scale_lj_clones_and_scales_cross_pair():
 def test_native_scale_lj_missing_data_is_key_error():
     fragments = {"missing": (["CR"], [(0.0, 0.0, 0.0)], [12.0])}
     with pytest.raises(KeyError, match="no scaling data"):
-        molrs.ff.scale_lj(_forcefield(), fragments)
+        molrs.ff.scale_lj.scale_lj(_forcefield(), fragments)
 
 
 def test_clpol_polarizability_ships_alpha_ff():
-    table = molrs.ff.clpol_polarizability()
+    table = molrs.ff.params.clpol_polarizability()
     assert table["NBT"] == {
         "m_D": 0.4,
         "q_D_sign": -1.0,
@@ -57,6 +57,6 @@ def test_clpol_polarizability_ships_alpha_ff():
 def test_clpol_polarizability_reads_a_file(tmp_path):
     path = tmp_path / "alpha.ff"
     path.write_text("# mine\nXX 0.4 -1.0 4184.0 2.0 2.6\nXX 0.4 -1.0 4184.0 3.0 2.6\n")
-    assert molrs.ff.clpol_polarizability(path) == {
+    assert molrs.ff.params.clpol_polarizability(path) == {
         "XX": {"m_D": 0.4, "q_D_sign": -1.0, "k_D": 4184.0, "alpha": 3.0, "a_thole": 2.6}
     }

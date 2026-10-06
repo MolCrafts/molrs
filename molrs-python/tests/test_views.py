@@ -25,11 +25,11 @@ VIEW_CLASSES = (
 )
 
 
-class _SubAtomistic(molrs.Atomistic):
+class _SubAtomistic(molrs.system.Atomistic):
     """Module level, so pickle can find it."""
 
 
-class _SubCoarseGrain(molrs.CoarseGrain):
+class _SubCoarseGrain(molrs.system.CoarseGrain):
     """Module level, so pickle can find it."""
 
 
@@ -37,8 +37,8 @@ def _roundtrip(value):
     return pickle.loads(pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL))
 
 
-def _ethanol_skeleton() -> tuple[molrs.Atomistic, list[molrs.Atom]]:
-    graph = molrs.Atomistic()
+def _ethanol_skeleton() -> tuple[molrs.system.Atomistic, list[molrs.system.Atom]]:
+    graph = molrs.system.Atomistic()
     atoms = [
         graph.def_atom(element="C", x=0.0, y=0.0, z=0.0),
         graph.def_atom(element="C", x=1.5, y=0.0, z=0.0),
@@ -51,15 +51,15 @@ def _ethanol_skeleton() -> tuple[molrs.Atomistic, list[molrs.Atom]]:
 
 class TestOneClass:
     def test_graph_classes_are_the_native_classes(self) -> None:
-        assert molrs.Atomistic is _lib.Atomistic
-        assert molrs.CoarseGrain is _lib.CoarseGrain
-        assert molrs.Graph is _lib.Graph
+        assert molrs.system.Atomistic is _lib.Atomistic
+        assert molrs.system.CoarseGrain is _lib.CoarseGrain
+        assert molrs.system.Graph is _lib.Graph
 
     @pytest.mark.parametrize("name", VIEW_CLASSES)
     def test_view_classes_are_the_native_classes(self, name: str) -> None:
-        assert getattr(molrs, name) is getattr(_lib, name)
+        assert getattr(molrs.system, name) is getattr(_lib, name)
 
-    @pytest.mark.parametrize("cls", [molrs.Atomistic, molrs.CoarseGrain])
+    @pytest.mark.parametrize("cls", [molrs.system.Atomistic, molrs.system.CoarseGrain])
     def test_leaf_graph_classes_can_be_subclassed(self, cls: type) -> None:
         """Core data classes are extensible; a subclass is still the base."""
         sub = type("Sub", (cls,), {})
@@ -83,21 +83,21 @@ class TestOneClass:
         for graph in (
             from_smiles,
             from_smiles.copy(),
-            molrs.Atomistic.from_frame(from_smiles.to_frame()),
+            molrs.system.Atomistic.from_frame(from_smiles.to_frame()),
             molrs.perceive.Perceive().find_rings(from_smiles),
         ):
-            assert type(graph) is molrs.Atomistic
+            assert type(graph) is molrs.system.Atomistic
             assert len(graph.atoms) == 2
 
 
 class TestProps:
     def test_constructor_keywords_are_the_props(self) -> None:
-        assert molrs.Atomistic(name="water").props == {"name": "water"}
-        assert molrs.CoarseGrain(name="lipid").props == {"name": "lipid"}
-        assert molrs.Atomistic().props == {}
+        assert molrs.system.Atomistic(name="water").props == {"name": "water"}
+        assert molrs.system.CoarseGrain(name="lipid").props == {"name": "lipid"}
+        assert molrs.system.Atomistic().props == {}
 
     def test_copy_keeps_props_in_an_independent_dict(self) -> None:
-        graph = molrs.Atomistic(label="x")
+        graph = molrs.system.Atomistic(label="x")
         copy = graph.copy()
         assert copy.props == {"label": "x"}
         copy.props["label"] = "y"
@@ -110,16 +110,16 @@ class TestProps:
         assert perceived.props == {"label": "methanol"}
 
     def test_coarse_grain_copy_keeps_props(self) -> None:
-        assert molrs.CoarseGrain(label="cg").copy().props == {"label": "cg"}
+        assert molrs.system.CoarseGrain(label="cg").copy().props == {"label": "cg"}
 
     def test_pickle_keeps_props(self) -> None:
-        assert _roundtrip(molrs.Atomistic(label="x")).props == {"label": "x"}
+        assert _roundtrip(molrs.system.Atomistic(label="x")).props == {"label": "x"}
 
 
 class TestBeadMembership:
     def test_bead_atoms_are_the_source_atom_views(self) -> None:
         source, atoms = _ethanol_skeleton()
-        cg = molrs.CoarseGrain()
+        cg = molrs.system.CoarseGrain()
         bead = cg.def_bead(type="CC", atoms=(atoms[0], atoms[1]))
         assert bead["atoms"] == (atoms[0], atoms[1])
         assert all(atom.world is source for atom in bead["atoms"])
@@ -128,14 +128,14 @@ class TestBeadMembership:
 
     def test_copy_keeps_bead_membership(self) -> None:
         _, atoms = _ethanol_skeleton()
-        cg = molrs.CoarseGrain()
+        cg = molrs.system.CoarseGrain()
         cg.def_bead(type="CC", atoms=(atoms[0], atoms[1]))
         copied = cg.copy()
         assert copied.beads[0]["atoms"] == (atoms[0], atoms[1])
 
     def test_pickle_keeps_bead_membership(self) -> None:
         source, atoms = _ethanol_skeleton()
-        cg = molrs.CoarseGrain()
+        cg = molrs.system.CoarseGrain()
         cg.def_bead(type="CO", atoms=(atoms[1], atoms[2]))
         restored_source, restored_cg = _roundtrip((source, cg))
         members = restored_cg.beads[0]["atoms"]
@@ -144,20 +144,20 @@ class TestBeadMembership:
     def test_membership_atoms_come_from_one_world(self) -> None:
         _, left = _ethanol_skeleton()
         _, right = _ethanol_skeleton()
-        cg = molrs.CoarseGrain()
+        cg = molrs.system.CoarseGrain()
         with pytest.raises(ValueError, match="same source world"):
             cg.def_bead(type="X", atoms=(left[0], right[0]))
 
 
 class TestFactories:
     def test_factories_return_interned_live_refs(self) -> None:
-        graph = molrs.Atomistic()
+        graph = molrs.system.Atomistic()
         carbon = graph.def_atom(element="C", x=0.0, y=0.0, z=0.0)
         oxygen = graph.def_atom(element="O", x=1.0, y=0.0, z=0.0)
         bond = graph.def_bond(carbon, oxygen, order=2.0)
 
-        assert type(carbon) is molrs.Atom
-        assert type(bond) is molrs.Bond
+        assert type(carbon) is molrs.system.Atom
+        assert type(bond) is molrs.system.Bond
         assert graph.atoms[0] is carbon
         assert graph.bonds[0] is bond
         assert bond.itom is carbon
@@ -167,7 +167,7 @@ class TestFactories:
         assert bond["order"] == 2.0
 
     def test_def_bond_stamps_both_bond_facts(self) -> None:
-        graph = molrs.Atomistic()
+        graph = molrs.system.Atomistic()
         a = graph.def_atom(element="C")
         b = graph.def_atom(element="C")
         bond = graph.def_bond(a, b)
@@ -182,9 +182,9 @@ class TestFactories:
         improper = graph.def_improper(b, a, c, d)
 
         assert (type(angle), type(dihedral), type(improper)) == (
-            molrs.Angle,
-            molrs.Dihedral,
-            molrs.Improper,
+            molrs.system.Angle,
+            molrs.system.Dihedral,
+            molrs.system.Improper,
         )
         assert graph.angles[0] is angle
         assert angle.endpoints == (a, b, c)
@@ -195,13 +195,13 @@ class TestFactories:
 
     def test_refs_have_no_detached_constructor(self) -> None:
         with pytest.raises(TypeError):
-            molrs.Atom(element="C")  # type: ignore[call-arg]
+            molrs.system.Atom(element="C")  # type: ignore[call-arg]
         with pytest.raises(TypeError):
-            molrs.Bond(object(), object())  # type: ignore[call-arg]
+            molrs.system.Bond(object(), object())  # type: ignore[call-arg]
 
     def test_cross_world_relation_is_rejected(self) -> None:
-        left = molrs.Atomistic()
-        right = molrs.Atomistic()
+        left = molrs.system.Atomistic()
+        right = molrs.system.Atomistic()
         a = left.def_atom(element="C")
         b = right.def_atom(element="C")
         with pytest.raises(ValueError, match="belong to this graph"):
@@ -210,18 +210,18 @@ class TestFactories:
             left.def_angle(a, b, a)
 
     def test_virtual_site_class_follows_its_stored_kind(self) -> None:
-        graph = molrs.Atomistic()
+        graph = molrs.system.Atomistic()
         graph.def_atom(element="O")
-        graph.def_virtual_site(kind=molrs.DrudeParticle, charge=-1.0)
-        graph.def_virtual_site(kind=molrs.MasslessSite)
+        graph.def_virtual_site(kind=molrs.system.DrudeParticle, charge=-1.0)
+        graph.def_virtual_site(kind=molrs.system.MasslessSite)
         graph.def_virtual_site()
 
         # The views are dropped; re-interning reads the stored ``vsite``.
         assert [type(atom) for atom in graph.atoms] == [
-            molrs.Atom,
-            molrs.DrudeParticle,
-            molrs.MasslessSite,
-            molrs.VirtualSite,
+            molrs.system.Atom,
+            molrs.system.DrudeParticle,
+            molrs.system.MasslessSite,
+            molrs.system.VirtualSite,
         ]
         assert [atom.get("vsite") for atom in graph.atoms] == [
             None,
@@ -231,24 +231,24 @@ class TestFactories:
         ]
 
     def test_def_port_returns_the_port_view(self) -> None:
-        graph = molrs.Atomistic()
+        graph = molrs.system.Atomistic()
         anchor = graph.def_atom(element="O")
         handle = graph.def_atom(element="H")
         graph.def_bond(anchor, handle)
         port = graph.def_port(anchor, handle, "$")
-        assert type(port) is molrs.Port
+        assert type(port) is molrs.system.Port
         assert graph.ports[0] is port
         assert port.anchor is anchor
         assert port.handle_atom is handle
         assert port["port_kind"] == "$"
 
     def test_coarse_grain_factories(self) -> None:
-        cg = molrs.CoarseGrain()
+        cg = molrs.system.CoarseGrain()
         a = cg.def_bead(bead_type="P1", x=0.0, y=0.0, z=0.0)
         b = cg.def_bead(bead_type="P1", x=1.0, y=0.0, z=0.0)
         bond = cg.def_cgbond(a, b, order=1.0)
-        assert type(a) is molrs.Bead
-        assert type(bond) is molrs.CGBond
+        assert type(a) is molrs.system.Bead
+        assert type(bond) is molrs.system.CGBond
         assert cg.beads[1] is b
         assert cg.cgbonds[0] is bond
         assert bond.endpoints == (a, b)
@@ -267,7 +267,7 @@ class TestRemoval:
 
     @pytest.mark.parametrize("cls", ["Atomistic", "CoarseGrain"])
     def test_remove_link_removes_the_relations(self, cls: str) -> None:
-        graph = getattr(molrs, cls)()
+        graph = getattr(molrs.system, cls)()
         if cls == "Atomistic":
             a, b = graph.def_atom(element="C"), graph.def_atom(element="C")
             bond = graph.def_bond(a, b)
@@ -307,13 +307,13 @@ class TestRefs:
     def test_exact_bucket_selects_one_kind(self) -> None:
         graph, (a, b, c) = _ethanol_skeleton()
         angle = graph.def_angle(a, b, c)
-        assert list(graph.links.exact_bucket(molrs.Angle)) == [angle]
-        assert len(graph.links.exact_bucket(molrs.Bond)) == 2
-        assert len(graph.links.exact_bucket(molrs.Improper)) == 0
+        assert list(graph.links.exact_bucket(molrs.system.Angle)) == [angle]
+        assert len(graph.links.exact_bucket(molrs.system.Bond)) == 2
+        assert len(graph.links.exact_bucket(molrs.system.Improper)) == 0
 
     def test_an_empty_exact_bucket_reads_as_empty_columns(self) -> None:
         graph, _ = _ethanol_skeleton()
-        empty = graph.links.exact_bucket(molrs.Improper)
+        empty = graph.links.exact_bucket(molrs.system.Improper)
         assert len(empty) == 0
         assert empty["type"].shape == (0,)
         assert "impropers" in repr(empty)
@@ -322,15 +322,15 @@ class TestRefs:
         graph, (a, b, _) = _ethanol_skeleton()
         graph.register_kind("constraints", 2)
         graph.add_relation("constraints", [a.handle, b.handle])
-        (constraint,) = graph.links.exact_bucket(molrs.RelationRef)
-        assert type(constraint) is molrs.RelationRef
+        (constraint,) = graph.links.exact_bucket(molrs.system.RelationRef)
+        assert type(constraint) is molrs.system.RelationRef
         assert constraint.kind == "constraints"
         assert constraint.endpoints == (a, b)
 
 
 class TestRefMapping:
     def test_node_ref_is_a_mapping_over_its_fields(self) -> None:
-        graph = molrs.Atomistic()
+        graph = molrs.system.Atomistic()
         atom = graph.def_atom(element="C", charge=0.5)
         assert dict(atom) == {"element": "C", "charge": 0.5}
         assert set(atom.keys()) == {"element", "charge"}
@@ -347,7 +347,7 @@ class TestRefMapping:
             _ = atom["mass"]
 
     def test_tuple_keys_read_and_write_several_fields(self) -> None:
-        graph = molrs.Atomistic()
+        graph = molrs.system.Atomistic()
         atom = graph.def_atom(element="C")
         atom["x", "y", "z"] = (1.0, 2.0, 3.0)
         assert atom["x", "y", "z"] == [1.0, 2.0, 3.0]
@@ -360,7 +360,7 @@ class TestPickle:
     def test_graph_and_views_pickle_as_one_object_graph(self) -> None:
         graph, atoms = _ethanol_skeleton()
         graph.del_atom(graph.def_atom(element="H"))  # a hole in the handles
-        drude = graph.def_virtual_site(kind=molrs.DrudeParticle)
+        drude = graph.def_virtual_site(kind=molrs.system.DrudeParticle)
         refs = [*atoms, drude, graph.bonds[1]]
         restored, restored_refs, restored_atoms = _roundtrip((graph, refs, graph.atoms))
         assert [type(ref) for ref in restored_refs] == [type(ref) for ref in refs]

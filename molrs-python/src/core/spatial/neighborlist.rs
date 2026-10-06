@@ -5,12 +5,12 @@
 //! one, because the seam is the place where a renamed concept turns into a
 //! silently different answer:
 //!
-//! - [`PyNeighborList`] (`molrs.NeighborList`) is the **engine**: it owns the
+//! - [`PyNeighborList`] (`molrs.spatial.NeighborList`) is the **engine**: it owns the
 //!   cutoff and the backend that indexes space. `build` / `update` index
 //!   coordinates and enumerate nothing; `neighbors(...)` materializes a table.
-//! - [`PyNeighbors`] (`molrs.Neighbors`) is the **table**: read-only columns,
+//! - [`PyNeighbors`] (`molrs.spatial.Neighbors`) is the **table**: read-only columns,
 //!   one row per pair.
-//! - [`PyNeighborQuery`] (`molrs.NeighborQuery`) is the **cross** door: a set of
+//! - [`PyNeighborQuery`] (`molrs.spatial.NeighborQuery`) is the **cross** door: a set of
 //!   query points searched against a separate reference set.
 //!
 //! Two conventions travel with every table and are worth stating here, because
@@ -29,7 +29,6 @@
 //! coordinates, which is Å everywhere in molrs, so `dist_sq` is in Å².
 
 use crate::core::spatial::simbox::PyBox;
-use crate::helpers::NpF;
 use molrs::spatial::SimBox;
 use molrs::spatial::neighbors::{
     NeighborList as RsNeighborList, NeighborPair, NeighborPolicy, NeighborQuery as RsNeighborQuery,
@@ -43,7 +42,7 @@ use pyo3::prelude::*;
 /// Reject a coordinate array that is not `(N, 3)` before it reaches the core,
 /// whose own check is an `assert!` — and a panic must not cross this seam.
 /// `label` names the offending argument in the error.
-fn check_points(points: &PyReadonlyArray2<'_, NpF>, label: &str) -> PyResult<()> {
+fn check_points(points: &PyReadonlyArray2<'_, f64>, label: &str) -> PyResult<()> {
     if points.as_array().ncols() != 3 {
         return Err(PyValueError::new_err(format!(
             "{label} must have shape (N, 3)"
@@ -53,7 +52,7 @@ fn check_points(points: &PyReadonlyArray2<'_, NpF>, label: &str) -> PyResult<()>
 }
 
 /// Reject a non-positive cutoff before the core asserts on it.
-fn check_cutoff(cutoff: NpF) -> PyResult<()> {
+fn check_cutoff(cutoff: f64) -> PyResult<()> {
     if cutoff.is_nan() || cutoff <= 0.0 {
         return Err(PyValueError::new_err(
             "cutoff must be a positive length in Å",
@@ -66,7 +65,7 @@ fn check_cutoff(cutoff: NpF) -> PyResult<()> {
 // PyNeighbors — the materialized pair table
 // ---------------------------------------------------------------------------
 
-/// Materialized neighbor pair table, exposed to Python as `molrs.Neighbors`.
+/// Materialized neighbor pair table, exposed to Python as `molrs.spatial.Neighbors`.
 ///
 /// A column store of every pair within the cutoff: two index columns that are
 /// always present, plus whichever physical columns the search was told to keep.
@@ -109,7 +108,7 @@ fn check_cutoff(cutoff: NpF) -> PyResult<()> {
 /// >>> i, j = neigh.query_point_indices(), neigh.point_indices()
 /// >>> distances = np.sqrt(neigh.dist_sq())
 /// >>> directions = neigh.disp() / distances[:, None]
-#[pyclass(module = "molrs", name = "Neighbors", subclass)]
+#[pyclass(module = "molrs.spatial", name = "Neighbors", subclass)]
 pub struct PyNeighbors {
     pub(crate) inner: RsNeighbors,
 }
@@ -128,8 +127,8 @@ impl PyNeighbors {
         num_query_points: usize,
         idx_i: Vec<u32>,
         idx_j: Vec<u32>,
-        dist_sq: Option<Vec<NpF>>,
-        disp: Option<Vec<[NpF; 3]>>,
+        dist_sq: Option<Vec<f64>>,
+        disp: Option<Vec<[f64; 3]>>,
     ) -> PyResult<Self> {
         let n = idx_i.len();
         if idx_j.len() != n
@@ -165,7 +164,7 @@ impl PyNeighbors {
 
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
         let inner = &slf.borrow().inner;
-        crate::helpers::reduce_via_type(
+        crate::pickle::reduce_via_type(
             slf.as_any(),
             (
                 matches!(inner.mode(), QueryMode::SelfQuery { .. }),
@@ -224,12 +223,12 @@ impl PyNeighbors {
     /// Returns
     /// -------
     /// numpy.ndarray, shape (n_pairs,), dtype float64, or None
-    fn dist_sq<'py>(slf: Bound<'py, Self>) -> Option<Bound<'py, PyArray1<NpF>>> {
+    fn dist_sq<'py>(slf: Bound<'py, Self>) -> Option<Bound<'py, PyArray1<f64>>> {
         let owner = slf.clone().into_any();
         let borrowed = slf.borrow();
         let column = borrowed.inner.dist_sq()?;
         let view = ArrayView1::from(column);
-        Some(unsafe { PyArray1::<NpF>::borrow_from_array(&view, owner) })
+        Some(unsafe { PyArray1::<f64>::borrow_from_array(&view, owner) })
     }
 
     /// Minimum-image displacements ``r_j - r_i`` (Å) as an ``(n_pairs, 3)``
@@ -243,11 +242,11 @@ impl PyNeighbors {
     /// Returns
     /// -------
     /// numpy.ndarray, shape (n_pairs, 3), dtype float64, or None
-    fn disp<'py>(slf: Bound<'py, Self>) -> Option<Bound<'py, PyArray2<NpF>>> {
+    fn disp<'py>(slf: Bound<'py, Self>) -> Option<Bound<'py, PyArray2<f64>>> {
         let owner = slf.clone().into_any();
         let borrowed = slf.borrow();
         let view = borrowed.inner.disp()?;
-        Some(unsafe { PyArray2::<NpF>::borrow_from_array(&view, owner) })
+        Some(unsafe { PyArray2::<f64>::borrow_from_array(&view, owner) })
     }
 
     /// Number of neighbor pairs — the row count every column shares.
@@ -299,7 +298,7 @@ impl PyNeighbors {
 // ---------------------------------------------------------------------------
 
 /// Neighbor search over one point set, exposed to Python as
-/// `molrs.NeighborList`.
+/// `molrs.spatial.NeighborList`.
 ///
 /// The engine owns the cutoff, the backend that indexes space, and the box the
 /// index was built for, and keeps the two halves of the job apart: ``build`` /
@@ -325,16 +324,16 @@ impl PyNeighbors {
 ///
 /// Examples
 /// --------
-/// >>> nl = molrs.NeighborList(3.0)          # O(N) cell-list backend
+/// >>> nl = molrs.spatial.NeighborList(3.0)          # O(N) cell-list backend
 /// >>> nl.build(points, box)                 # index only — no pair table
 /// >>> neigh = nl.neighbors()                # both columns (the default)
 /// >>> lean = nl.neighbors(disp=False)       # indices + d² only
 /// >>> nl.update(moved_points)               # re-index in the same box
-#[pyclass(module = "molrs", name = "NeighborList", subclass)]
+#[pyclass(module = "molrs.spatial", name = "NeighborList", subclass)]
 pub struct PyNeighborList {
     pub(crate) inner: Option<RsNeighborList>,
     brute_force: bool,
-    points: Option<Array2<NpF>>,
+    points: Option<Array2<f64>>,
     simbox: Option<SimBox>,
 }
 
@@ -362,8 +361,8 @@ impl PyNeighborList {
     #[new]
     #[pyo3(signature = (cutoff, points=None, simbox=None, brute_force=false))]
     fn new(
-        cutoff: NpF,
-        points: Option<PyReadonlyArray2<'_, NpF>>,
+        cutoff: f64,
+        points: Option<PyReadonlyArray2<'_, f64>>,
         simbox: Option<&PyBox>,
         brute_force: bool,
     ) -> PyResult<Self> {
@@ -398,13 +397,13 @@ impl PyNeighborList {
     /// ValueError
     ///     If ``cutoff`` is not positive.
     #[staticmethod]
-    fn brute_force(cutoff: NpF) -> PyResult<Self> {
+    fn brute_force(cutoff: f64) -> PyResult<Self> {
         Self::new(cutoff, None, None, true)
     }
 
     /// The cutoff distance (Å) fixed at construction.
     #[getter]
-    fn cutoff(&self) -> PyResult<NpF> {
+    fn cutoff(&self) -> PyResult<f64> {
         Ok(self.get()?.cutoff())
     }
 
@@ -427,7 +426,7 @@ impl PyNeighborList {
     /// ------
     /// ValueError
     ///     If ``points`` does not have shape ``(N, 3)``.
-    fn build(&mut self, points: PyReadonlyArray2<'_, NpF>, r#box: &PyBox) -> PyResult<()> {
+    fn build(&mut self, points: PyReadonlyArray2<'_, f64>, r#box: &PyBox) -> PyResult<()> {
         check_points(&points, "points")?;
         self.get_mut()?.build(points.as_array(), &r#box.inner);
         self.points = Some(points.as_array().to_owned());
@@ -453,7 +452,7 @@ impl PyNeighborList {
     ///     If ``points`` does not have shape ``(N, 3)``, or if no ``build`` has
     ///     run yet — the box is then unknown, and guessing one would fold
     ///     minimum images against a box the caller never named.
-    fn update(&mut self, points: PyReadonlyArray2<'_, NpF>) -> PyResult<()> {
+    fn update(&mut self, points: PyReadonlyArray2<'_, f64>) -> PyResult<()> {
         check_points(&points, "points")?;
         let engine = self.get_mut()?;
         // The core panics on an update before a build (the box is unknown);
@@ -511,7 +510,7 @@ impl PyNeighborList {
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
-        crate::helpers::reduce_via_type(
+        crate::pickle::reduce_via_type(
             slf.as_any(),
             (
                 this.cutoff()?,
@@ -529,7 +528,7 @@ impl PyNeighborList {
 // PyNeighborQuery — the cross door
 // ---------------------------------------------------------------------------
 
-/// Cross-query neighbor search, exposed to Python as `molrs.NeighborQuery`.
+/// Cross-query neighbor search, exposed to Python as `molrs.spatial.NeighborQuery`.
 ///
 /// Build a spatial index from reference points once, then answer repeated
 /// queries against it. This is the door for the *cross* question — "which
@@ -551,10 +550,10 @@ impl PyNeighborList {
 ///
 /// Examples
 /// --------
-/// >>> nq = molrs.NeighborQuery(box, positions, cutoff=3.0)
+/// >>> nq = molrs.spatial.NeighborQuery(box, positions, cutoff=3.0)
 /// >>> cross = nq.query(query_positions)   # directed, no ``i < j`` rule
 /// >>> half = nq.query_self()              # half-shell over the reference set
-#[pyclass(module = "molrs", name = "NeighborQuery", subclass)]
+#[pyclass(module = "molrs.spatial", name = "NeighborQuery", subclass)]
 pub struct PyNeighborQuery {
     inner: RsNeighborQuery,
 }
@@ -570,7 +569,7 @@ impl PyNeighborQuery {
     ///     positive.
     #[new]
     #[pyo3(signature = (r#box, points, cutoff))]
-    fn new(r#box: &PyBox, points: PyReadonlyArray2<'_, NpF>, cutoff: NpF) -> PyResult<Self> {
+    fn new(r#box: &PyBox, points: PyReadonlyArray2<'_, f64>, cutoff: f64) -> PyResult<Self> {
         check_points(&points, "points")?;
         check_cutoff(cutoff)?;
         Ok(Self {
@@ -591,7 +590,7 @@ impl PyNeighborQuery {
     ///     positive.
     #[staticmethod]
     #[pyo3(signature = (points, cutoff))]
-    fn free(points: PyReadonlyArray2<'_, NpF>, cutoff: NpF) -> PyResult<Self> {
+    fn free(points: PyReadonlyArray2<'_, f64>, cutoff: f64) -> PyResult<Self> {
         check_points(&points, "points")?;
         check_cutoff(cutoff)?;
         Ok(Self {
@@ -615,7 +614,7 @@ impl PyNeighborQuery {
     /// ------
     /// ValueError
     ///     If ``query_points`` does not have shape ``(M, 3)``.
-    fn query(&self, query_points: PyReadonlyArray2<'_, NpF>) -> PyResult<PyNeighbors> {
+    fn query(&self, query_points: PyReadonlyArray2<'_, f64>) -> PyResult<PyNeighbors> {
         check_points(&query_points, "query_points")?;
         Ok(PyNeighbors {
             inner: self.inner.query(query_points.as_array()),
@@ -644,7 +643,7 @@ impl PyNeighborQuery {
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
-        crate::helpers::reduce_via_type(
+        crate::pickle::reduce_via_type(
             slf.as_any(),
             (
                 PyBox {
@@ -666,11 +665,11 @@ fn skin_err(err: SkinError) -> PyErr {
 /// Constructed from a search engine whose cutoff is ``cutoff + skin``. The
 /// engine is **moved** into this object. Passing the skin into
 /// ``VelocityVerlet(..., neighbors=skin)`` moves it again into the integrator.
-#[pyclass(module = "molrs", name = "VerletSkin", subclass)]
+#[pyclass(module = "molrs.spatial", name = "VerletSkin", subclass)]
 pub struct PyVerletSkin {
     pub(crate) inner: Option<RsVerletSkin>,
     brute_force: bool,
-    x_hold: Array2<NpF>,
+    x_hold: Array2<f64>,
     simbox: SimBox,
     every: usize,
     delay: usize,
@@ -705,10 +704,10 @@ impl PyVerletSkin {
     #[allow(clippy::too_many_arguments, reason = "Public Python keyword arguments")]
     fn new(
         neighbors: &mut PyNeighborList,
-        cutoff: NpF,
-        positions: PyReadonlyArray2<'_, NpF>,
+        cutoff: f64,
+        positions: PyReadonlyArray2<'_, f64>,
         r#box: &PyBox,
-        skin: NpF,
+        skin: f64,
         every: usize,
         delay: usize,
         check: bool,
@@ -751,12 +750,12 @@ impl PyVerletSkin {
     }
 
     #[getter]
-    fn cutoff(&self) -> PyResult<NpF> {
+    fn cutoff(&self) -> PyResult<f64> {
         Ok(self.get()?.cutoff())
     }
 
     #[getter]
-    fn skin(&self) -> PyResult<NpF> {
+    fn skin(&self) -> PyResult<f64> {
         Ok(self.get()?.skin())
     }
 
@@ -775,7 +774,7 @@ impl PyVerletSkin {
         Ok(self.get()?.ago())
     }
 
-    fn update(&mut self, positions: PyReadonlyArray2<'_, NpF>) -> PyResult<bool> {
+    fn update(&mut self, positions: PyReadonlyArray2<'_, f64>) -> PyResult<bool> {
         check_points(&positions, "positions")?;
         let rebuilt = self
             .get_mut()?
@@ -787,7 +786,7 @@ impl PyVerletSkin {
         Ok(rebuilt)
     }
 
-    fn rebuild(&mut self, positions: PyReadonlyArray2<'_, NpF>) -> PyResult<()> {
+    fn rebuild(&mut self, positions: PyReadonlyArray2<'_, f64>) -> PyResult<()> {
         check_points(&positions, "positions")?;
         self.get_mut()?
             .rebuild(positions.as_array())
@@ -815,7 +814,7 @@ impl PyVerletSkin {
         let inner = this.get()?;
         let neighbors =
             PyNeighborList::new(inner.cutoff() + inner.skin(), None, None, this.brute_force)?;
-        crate::helpers::reduce_via_type(
+        crate::pickle::reduce_via_type(
             slf.as_any(),
             (
                 neighbors,

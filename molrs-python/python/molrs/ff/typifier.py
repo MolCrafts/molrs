@@ -9,8 +9,10 @@ the output force field — ``forcefield()``, of which ``typify`` is the only
 writer. A subclass must not define ``typify``.
 
 The built-in typifiers accept and return ``Atomistic``. :class:`ElementTypifier`
-labels by element symbol alone and defines no force field; it is exported from
-this module only.
+labels by element symbol alone and defines no force field.
+
+:func:`assign_cmaps` builds a typed frame's ``cmaps`` block from its
+dihedrals, against a force field's CMAP types.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from .._lib import (
     MMFF94Typifier,
     OPLSAATypifier,
     Typifier,
+    assign_cmaps,
 )
 
 __all__ = [
@@ -35,4 +38,5 @@ __all__ = [
     "Match",
     "OPLSAATypifier",
     "Typifier",
+    "assign_cmaps",
 ]

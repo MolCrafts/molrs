@@ -9,26 +9,25 @@
 //! (typically angstroms).
 
 use crate::core::store::frame::PyFrame;
-use crate::helpers::{NpF, box_error_to_pyerr, parse_origin, parse_pbc};
 use molrs::op::types::{F, I};
-use molrs::spatial::SimBox;
+use molrs::spatial::{BoxError, SimBox};
 use molrs::store::keys;
 use molrs::store::schema::block_names;
-use ndarray::{Array2, Axis, array};
+use ndarray::{Array1, Array2, Axis, array};
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 /// Coerce a Python array to N×3 points. The bool is true when the input was shape `(3,)`.
 fn delta_points_nx3(arg: &Bound<'_, PyAny>) -> PyResult<(Array2<F>, bool)> {
-    if let Ok(arr2) = arg.extract::<PyReadonlyArray2<'_, NpF>>() {
+    if let Ok(arr2) = arg.extract::<PyReadonlyArray2<'_, f64>>() {
         let view = arr2.as_array();
         if view.ncols() != 3 {
             return Err(PyValueError::new_err("expected shape (N, 3) or (3,)"));
         }
         return Ok((view.to_owned(), false));
     }
-    if let Ok(arr1) = arg.extract::<PyReadonlyArray1<'_, NpF>>() {
+    if let Ok(arr1) = arg.extract::<PyReadonlyArray1<'_, f64>>() {
         let view = arr1.as_array();
         if view.len() != 3 {
             return Err(PyValueError::new_err("expected shape (N, 3) or (3,)"));
@@ -56,7 +55,7 @@ fn bounds_points(arg: &Bound<'_, PyAny>) -> PyResult<Array2<F>> {
         })?;
     }
     let arr = arg
-        .extract::<PyReadonlyArray2<'_, NpF>>()
+        .extract::<PyReadonlyArray2<'_, f64>>()
         .map_err(|_| PyValueError::new_err("points must be an (N,3) float array or a Frame"))?;
     let view = arr.as_array();
     if view.ncols() != 3 {
@@ -66,7 +65,7 @@ fn bounds_points(arg: &Bound<'_, PyAny>) -> PyResult<Array2<F>> {
 }
 
 /// Simulation box with periodic boundary conditions, exposed to Python as
-/// `molrs.Box`.
+/// `molrs.spatial.Box`.
 ///
 /// The box is defined by a 3x3 cell matrix **H** whose columns are the
 /// lattice vectors, an origin point, and per-axis PBC flags.
@@ -81,7 +80,7 @@ fn bounds_points(arg: &Bound<'_, PyAny>) -> PyResult<Array2<F>> {
 /// box = Box.ortho(np.array([10, 20, 30]))    # orthorhombic
 /// print(box.volume())                        # 6000.0
 /// ```
-#[pyclass(module = "molrs", name = "Box", from_py_object, subclass)]
+#[pyclass(module = "molrs.spatial", name = "Box", from_py_object, subclass)]
 #[derive(Clone)]
 pub struct PyBox {
     pub(crate) inner: SimBox,
@@ -118,8 +117,8 @@ impl PyBox {
     #[new]
     #[pyo3(signature = (h, origin=None, pbc=None, cell_defined=true))]
     fn new(
-        h: PyReadonlyArray2<'_, NpF>,
-        origin: Option<PyReadonlyArray1<'_, NpF>>,
+        h: PyReadonlyArray2<'_, f64>,
+        origin: Option<PyReadonlyArray1<'_, f64>>,
         pbc: Option<PyReadonlyArray1<'_, bool>>,
         cell_defined: bool,
     ) -> PyResult<Self> {
@@ -146,7 +145,7 @@ impl PyBox {
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
-        crate::helpers::reduce_via_type(
+        crate::pickle::reduce_via_type(
             slf.as_any(),
             (
                 this.h(py),
@@ -180,8 +179,8 @@ impl PyBox {
     #[staticmethod]
     #[pyo3(signature = (a, origin=None, pbc=None))]
     fn cube(
-        a: NpF,
-        origin: Option<PyReadonlyArray1<'_, NpF>>,
+        a: f64,
+        origin: Option<PyReadonlyArray1<'_, f64>>,
         pbc: Option<PyReadonlyArray1<'_, bool>>,
     ) -> PyResult<Self> {
         let origin_vec = parse_origin(origin)?;
@@ -216,8 +215,8 @@ impl PyBox {
     #[staticmethod]
     #[pyo3(signature = (lengths, origin=None, pbc=None))]
     fn ortho(
-        lengths: PyReadonlyArray1<'_, NpF>,
-        origin: Option<PyReadonlyArray1<'_, NpF>>,
+        lengths: PyReadonlyArray1<'_, f64>,
+        origin: Option<PyReadonlyArray1<'_, f64>>,
         pbc: Option<PyReadonlyArray1<'_, bool>>,
     ) -> PyResult<Self> {
         let lv = lengths.as_slice()?;
@@ -331,7 +330,7 @@ impl PyBox {
     /// ------
     /// ValueError
     ///     If ``index`` is not 0, 1, or 2.
-    fn lattice<'py>(&self, py: Python<'py>, index: usize) -> PyResult<Bound<'py, PyArray1<NpF>>> {
+    fn lattice<'py>(&self, py: Python<'py>, index: usize) -> PyResult<Bound<'py, PyArray1<f64>>> {
         if index >= 3 {
             return Err(PyValueError::new_err("index must be 0, 1, or 2"));
         }
@@ -345,13 +344,13 @@ impl PyBox {
     /// -------
     /// numpy.ndarray, shape (3, 3), dtype float
     #[getter]
-    fn h<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<NpF>> {
+    fn h<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
         self.inner.h_view().to_owned().into_pyarray(py)
     }
 
     /// Inverse cell matrix.
     #[getter]
-    fn inverse<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<NpF>> {
+    fn inverse<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
         self.inner.inv_view().to_owned().into_pyarray(py)
     }
 
@@ -361,7 +360,7 @@ impl PyBox {
     /// -------
     /// numpy.ndarray, shape (3,), dtype float
     #[getter]
-    fn origin<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
+    fn origin<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         self.inner.origin_view().to_owned().into_pyarray(py)
     }
 
@@ -377,22 +376,22 @@ impl PyBox {
 
     /// Lengths of the three lattice vectors (property; ``[|a|, |b|, |c|]``).
     #[getter]
-    fn lengths<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
+    fn lengths<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         self.inner.lengths().into_pyarray(py)
     }
 
     /// Lattice angles ``[alpha, beta, gamma]`` in degrees.
     #[getter]
-    fn angles<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
+    fn angles<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         self.inner.angles().into_pyarray(py)
     }
 
     #[staticmethod]
     fn matrix_from_lengths_angles<'py>(
         py: Python<'py>,
-        lengths: [NpF; 3],
-        angles: [NpF; 3],
-    ) -> PyResult<Bound<'py, PyArray2<NpF>>> {
+        lengths: [f64; 3],
+        angles: [f64; 3],
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         Ok(SimBox::matrix_from_lengths_angles(lengths, angles)
             .map_err(box_error_to_pyerr)?
             .into_pyarray(py))
@@ -401,17 +400,17 @@ impl PyBox {
     #[staticmethod]
     fn matrix_from_lengths_tilts<'py>(
         py: Python<'py>,
-        lengths: [NpF; 3],
-        tilts: [NpF; 3],
-    ) -> Bound<'py, PyArray2<NpF>> {
+        lengths: [f64; 3],
+        tilts: [f64; 3],
+    ) -> Bound<'py, PyArray2<f64>> {
         SimBox::matrix_from_lengths_tilts(lengths, tilts).into_pyarray(py)
     }
 
     #[staticmethod]
     fn restricted_matrix<'py>(
         py: Python<'py>,
-        matrix: PyReadonlyArray2<'_, NpF>,
-    ) -> PyResult<Bound<'py, PyArray2<NpF>>> {
+        matrix: PyReadonlyArray2<'_, f64>,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         Ok(SimBox::restricted_matrix(matrix.as_array())
             .map_err(box_error_to_pyerr)?
             .into_pyarray(py))
@@ -420,7 +419,7 @@ impl PyBox {
     /// LAMMPS-convention tilt factors ``(xy, xz, yz)``. Zero on
     /// orthogonal boxes.
     #[getter]
-    fn tilts<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
+    fn tilts<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         let h = self.inner.h_view();
         let arr = ndarray::array![h[(0, 1)], h[(0, 2)], h[(1, 2)]];
         arr.into_pyarray(py)
@@ -428,18 +427,18 @@ impl PyBox {
 
     /// Perpendicular distances between opposite cell faces.
     #[getter]
-    fn nearest_plane_distance<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
+    fn nearest_plane_distance<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         self.inner.nearest_plane_distance().into_pyarray(py)
     }
 
     /// Eight Cartesian cell corners.
-    fn corners<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<NpF>> {
+    fn corners<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
         self.inner.get_corners().into_pyarray(py)
     }
 
     /// Per-axis coordinate bounds as ``[[xlo, xhi], [ylo, yhi], [zlo, zhi]]``.
     #[getter]
-    fn bounds<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<NpF>> {
+    fn bounds<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
         self.inner.bounds().into_pyarray(py)
     }
 
@@ -447,9 +446,9 @@ impl PyBox {
     fn shortest_vector<'py>(
         &self,
         py: Python<'py>,
-        r1: PyReadonlyArray1<'_, NpF>,
-        r2: PyReadonlyArray1<'_, NpF>,
-    ) -> PyResult<Bound<'py, PyArray1<NpF>>> {
+        r1: PyReadonlyArray1<'_, f64>,
+        r2: PyReadonlyArray1<'_, f64>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let r1 = r1.as_array();
         let r2 = r2.as_array();
         if r1.len() != 3 || r2.len() != 3 {
@@ -461,9 +460,9 @@ impl PyBox {
     /// Squared minimum-image distance between two points.
     fn distance_squared(
         &self,
-        r1: PyReadonlyArray1<'_, NpF>,
-        r2: PyReadonlyArray1<'_, NpF>,
-    ) -> PyResult<NpF> {
+        r1: PyReadonlyArray1<'_, f64>,
+        r2: PyReadonlyArray1<'_, f64>,
+    ) -> PyResult<f64> {
         let r1 = r1.as_array();
         let r2 = r2.as_array();
         if r1.len() != 3 || r2.len() != 3 {
@@ -475,9 +474,9 @@ impl PyBox {
     /// Minimum-image distance between two points.
     fn distance(
         &self,
-        r1: PyReadonlyArray1<'_, NpF>,
-        r2: PyReadonlyArray1<'_, NpF>,
-    ) -> PyResult<NpF> {
+        r1: PyReadonlyArray1<'_, f64>,
+        r2: PyReadonlyArray1<'_, f64>,
+    ) -> PyResult<f64> {
         Ok(self.distance_squared(r1, r2)?.sqrt())
     }
 
@@ -500,8 +499,8 @@ impl PyBox {
     fn to_frac<'py>(
         &self,
         py: Python<'py>,
-        xyz: PyReadonlyArray2<'_, NpF>,
-    ) -> PyResult<Bound<'py, PyArray2<NpF>>> {
+        xyz: PyReadonlyArray2<'_, f64>,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let view = xyz.as_array();
         if view.ncols() != 3 {
             return Err(PyValueError::new_err("expected shape (N,3)"));
@@ -529,8 +528,8 @@ impl PyBox {
     fn to_cart<'py>(
         &self,
         py: Python<'py>,
-        xyzs: PyReadonlyArray2<'_, NpF>,
-    ) -> PyResult<Bound<'py, PyArray2<NpF>>> {
+        xyzs: PyReadonlyArray2<'_, f64>,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let view = xyzs.as_array();
         if view.ncols() != 3 {
             return Err(PyValueError::new_err("expected shape (N,3)"));
@@ -560,8 +559,8 @@ impl PyBox {
     fn wrap<'py>(
         &self,
         py: Python<'py>,
-        xyzu: PyReadonlyArray2<'_, NpF>,
-    ) -> PyResult<Bound<'py, PyArray2<NpF>>> {
+        xyzu: PyReadonlyArray2<'_, f64>,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let view = xyzu.as_array();
         if view.ncols() != 3 {
             return Err(PyValueError::new_err("expected shape (N,3)"));
@@ -577,7 +576,7 @@ impl PyBox {
     fn images<'py>(
         &self,
         py: Python<'py>,
-        xyz: PyReadonlyArray2<'_, NpF>,
+        xyz: PyReadonlyArray2<'_, f64>,
     ) -> PyResult<Bound<'py, PyArray2<I>>> {
         let view = xyz.as_array();
         if view.ncols() != 3 {
@@ -593,9 +592,9 @@ impl PyBox {
     fn unwrap<'py>(
         &self,
         py: Python<'py>,
-        xyz: PyReadonlyArray2<'_, NpF>,
+        xyz: PyReadonlyArray2<'_, f64>,
         images: PyReadonlyArray2<'_, I>,
-    ) -> PyResult<Bound<'py, PyArray2<NpF>>> {
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let xyz = xyz.as_array();
         let images = images.as_array();
         if xyz.ncols() != 3 || xyz.raw_dim() != images.raw_dim() {
@@ -663,9 +662,9 @@ impl PyBox {
     fn distances<'py>(
         &self,
         py: Python<'py>,
-        points1: PyReadonlyArray2<'_, NpF>,
-        points2: PyReadonlyArray2<'_, NpF>,
-    ) -> PyResult<Bound<'py, PyArray1<NpF>>> {
+        points1: PyReadonlyArray2<'_, f64>,
+        points2: PyReadonlyArray2<'_, f64>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let points1 = points1.as_array();
         let points2 = points2.as_array();
         if points1.raw_dim() != points2.raw_dim() || points1.ncols() != 3 {
@@ -680,9 +679,9 @@ impl PyBox {
     fn pairwise_delta<'py>(
         &self,
         py: Python<'py>,
-        points1: PyReadonlyArray2<'_, NpF>,
-        points2: PyReadonlyArray2<'_, NpF>,
-    ) -> PyResult<Bound<'py, PyArray3<NpF>>> {
+        points1: PyReadonlyArray2<'_, f64>,
+        points2: PyReadonlyArray2<'_, f64>,
+    ) -> PyResult<Bound<'py, PyArray3<f64>>> {
         let points1 = points1.as_array();
         let points2 = points2.as_array();
         if points1.ncols() != 3 || points2.ncols() != 3 {
@@ -695,9 +694,9 @@ impl PyBox {
     fn pairwise_distances<'py>(
         &self,
         py: Python<'py>,
-        points1: PyReadonlyArray2<'_, NpF>,
-        points2: PyReadonlyArray2<'_, NpF>,
-    ) -> PyResult<Bound<'py, PyArray2<NpF>>> {
+        points1: PyReadonlyArray2<'_, f64>,
+        points2: PyReadonlyArray2<'_, f64>,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let points1 = points1.as_array();
         let points2 = points2.as_array();
         if points1.ncols() != 3 || points2.ncols() != 3 {
@@ -710,7 +709,7 @@ impl PyBox {
     }
 
     /// Return a box whose cell matrix is right-multiplied by `transformation`.
-    fn transformed(&self, transformation: PyReadonlyArray2<'_, NpF>) -> PyResult<Self> {
+    fn transformed(&self, transformation: PyReadonlyArray2<'_, f64>) -> PyResult<Self> {
         let transformation = transformation.as_array();
         if transformation.dim() != (3, 3) {
             return Err(PyValueError::new_err(
@@ -743,7 +742,7 @@ impl PyBox {
     fn isin<'py>(
         &self,
         py: Python<'py>,
-        xyz: PyReadonlyArray2<'_, NpF>,
+        xyz: PyReadonlyArray2<'_, f64>,
     ) -> PyResult<Bound<'py, PyArray1<bool>>> {
         let view = xyz.as_array();
         if view.ncols() != 3 {
@@ -756,4 +755,45 @@ impl PyBox {
     fn __repr__(&self) -> String {
         format!("Box(volume={:.2})", self.inner.volume())
     }
+}
+
+/// Parse an optional origin array, defaulting to `[0, 0, 0]`.
+///
+/// # Errors
+///
+/// Returns `PyValueError` if the array does not have exactly 3 elements.
+fn parse_origin(origin: Option<PyReadonlyArray1<'_, f64>>) -> PyResult<Array1<F>> {
+    match origin {
+        Some(o) => {
+            let s = o.as_slice()?;
+            if s.len() != 3 {
+                return Err(PyValueError::new_err("origin must have length 3"));
+            }
+            Ok(array![s[0], s[1], s[2]])
+        }
+        None => Ok(array![0.0 as F, 0.0 as F, 0.0 as F]),
+    }
+}
+
+/// Parse an optional PBC flag array, defaulting to `[true, true, true]`.
+///
+/// # Errors
+///
+/// Returns `PyValueError` if the array does not have exactly 3 elements.
+fn parse_pbc(pbc: Option<PyReadonlyArray1<'_, bool>>) -> PyResult<[bool; 3]> {
+    match pbc {
+        Some(p) => {
+            let s = p.as_slice()?;
+            if s.len() != 3 {
+                return Err(PyValueError::new_err("pbc must have 3 elements"));
+            }
+            Ok([s[0], s[1], s[2]])
+        }
+        None => Ok([true, true, true]),
+    }
+}
+
+/// Convert a [`BoxError`] to a Python `ValueError`.
+fn box_error_to_pyerr(e: BoxError) -> PyErr {
+    PyValueError::new_err(format!("{:?}", e))
 }

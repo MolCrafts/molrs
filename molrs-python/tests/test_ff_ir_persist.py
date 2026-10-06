@@ -57,12 +57,12 @@ TABLE = np.array([1.25 + np.sin(0.7 * i) / 3.0 - 0.01 * i * i for i in range(12)
 UB_ROWS = ([[0, 1, 2], [1, 2, 3]], ["t", "u"])
 
 
-def _atom(ff: molrs.ff.ForceField) -> molrs.ff.AtomType:
+def _atom(ff: molrs.ff.forcefield.ForceField) -> molrs.ff.forcefield.AtomType:
     return ff.def_style("atom", "full").def_type("A", mass=12.0)
 
 
-def _fene() -> molrs.ff.ForceField:
-    ff = molrs.ff.ForceField("fene")
+def _fene() -> molrs.ff.forcefield.ForceField:
+    ff = molrs.ff.forcefield.ForceField("fene")
     a = _atom(ff)
     ff.def_style("bond", "fene", {"expression": FENE}).def_type(
         "t", a, a, k=30.0, r0=2.25, epsilon=1.1, sigma=1.4
@@ -70,8 +70,8 @@ def _fene() -> molrs.ff.ForceField:
     return ff
 
 
-def _fene_registered() -> molrs.ff.ForceField:
-    ff = molrs.ff.ForceField("fene")
+def _fene_registered() -> molrs.ff.forcefield.ForceField:
+    ff = molrs.ff.forcefield.ForceField("fene")
     a = _atom(ff)
     ff.def_style("bond", "fene/registered").def_type(
         "t", a, a, k=30.0, r0=2.25, epsilon=1.1, sigma=1.4
@@ -79,8 +79,8 @@ def _fene_registered() -> molrs.ff.ForceField:
     return ff
 
 
-def _ub(style: str, expression: str | None) -> molrs.ff.ForceField:
-    ff = molrs.ff.ForceField("ub")
+def _ub(style: str, expression: str | None) -> molrs.ff.forcefield.ForceField:
+    ff = molrs.ff.forcefield.ForceField("ub")
     a = _atom(ff)
     params = {} if expression is None else {"expression": expression}
     s = ff.def_style("urey_bradley", style, params)
@@ -89,8 +89,8 @@ def _ub(style: str, expression: str | None) -> molrs.ff.ForceField:
     return ff
 
 
-def _table() -> molrs.ff.ForceField:
-    ff = molrs.ff.ForceField("table")
+def _table() -> molrs.ff.forcefield.ForceField:
+    ff = molrs.ff.forcefield.ForceField("table")
     a = _atom(ff)
     style = ff.def_style("dihedral", "table/linear")
     style.def_type("t", a, a, a, a, table=TABLE)
@@ -126,7 +126,7 @@ def fresh(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict, dict]:
     for name, (section, block, rows, types) in records.items():
         path = tmp / f"{name}.mrec"
         molrs.io.write_mrec_forcefield(path, section)
-        ff = molrs.ff.ForceField.from_section(section)
+        ff = molrs.ff.forcefield.ForceField.from_section(section)
         here_out[name] = {
             "price": price(ff, block, rows, types),
             "section": exact(section),
@@ -150,7 +150,7 @@ def test_the_fresh_process_registered_nothing() -> None:
             (
                 "import molrs\n"
                 "try:\n"
-                "    molrs.ff.ForceField('t').def_style('urey_bradley', 'x')\n"
+                "    molrs.ff.forcefield.ForceField('t').def_style('urey_bradley', 'x')\n"
                 "except ValueError:\n"
                 "    print('unknown')"
             ),
@@ -238,6 +238,6 @@ def test_an_array_param_round_trips_bit_for_bit_as_an_f64_t_n_column(
     column = section.table("dihedral", "table/linear")["table"]
     assert column.dtype == np.float64 and column.shape == (2, 12)
     assert column.tobytes() == want.tobytes()
-    back = molrs.ff.ForceField.from_section(section)
+    back = molrs.ff.forcefield.ForceField.from_section(section)
     t = back.get_style("dihedral", "table/linear").get_type_by_name("t")
     assert np.asarray(t["table"]).tobytes() == TABLE.tobytes()

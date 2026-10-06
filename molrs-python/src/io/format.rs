@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use pyo3::prelude::*;
 
 use crate::core::store::frame::PyFrame;
-use crate::helpers::{io_error_to_pyerr, path_str};
+use crate::error::io_error_to_pyerr;
+use crate::path::path_str;
 
 /// Read one structure from a file, picking the format from its name.
 ///
@@ -68,4 +69,11 @@ pub fn write_frame(path: PathBuf, frame: &PyFrame, format: Option<&str>) -> PyRe
     frame
         .with_frame(|f| molrs::io::write_frame(path, f, format))?
         .map_err(io_error_to_pyerr)
+}
+
+/// Register the format-dispatching doors.
+pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(read_frame, m)?)?;
+    m.add_function(wrap_pyfunction!(write_frame, m)?)?;
+    Ok(())
 }

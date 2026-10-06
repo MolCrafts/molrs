@@ -39,20 +39,21 @@ from __future__ import annotations
 
 import molrs
 import numpy as np
-from molrs import CoarseGrain
+from molrs.system import CoarseGrain
 from molrs.builder import Assembler, AxisOrienter, SitePlacer
 from molrs.ff.typifier import ElementTypifier
 from molrs.io import CGSmilesIR
-from molrs.perceive import Coarsener, SubgraphMatcher
+from molrs.builder import Coarsener
+from molrs.perceive import SubgraphMatcher
 
 N_CHAIN = 8
 
 
-def _cg_frame() -> molrs.Frame:
+def _cg_frame() -> molrs.store.Frame:
     """The CG chain plus one lone ``2`` bead, coordinates still zero."""
     n = N_CHAIN + 1
     index = np.arange(N_CHAIN)
-    return molrs.Frame(
+    return molrs.store.Frame(
         {
             "atoms": {
                 "type": np.array(["4", "1", "1", "1", "1", "1", "1", "4", "2"]),
@@ -79,13 +80,13 @@ def _coordinates() -> np.ndarray:
     return xyz
 
 
-def _ported_monomer() -> molrs.Atomistic:
+def _ported_monomer() -> molrs.system.Atomistic:
     """``H0-C0-C1-H1`` with ports ``(C0, H0, ">")`` and ``(C1, H1, "<")``.
 
     Kept beside the script, not imported from another test module, so this
     regression example runs on its own.
     """
-    fragment = molrs.Atomistic()
+    fragment = molrs.system.Atomistic()
     c0 = fragment.def_atom(element="C", x=0.0, y=0.0, z=0.0, mass=12.011)
     c1 = fragment.def_atom(element="C", x=1.54, y=0.0, z=0.0, mass=12.011)
     h0 = fragment.def_atom(element="H", x=-0.5, y=0.9, z=0.0, mass=1.008)
@@ -98,8 +99,8 @@ def _ported_monomer() -> molrs.Atomistic:
     return fragment
 
 
-def _lithium() -> molrs.Atomistic:
-    mol = molrs.Atomistic()
+def _lithium() -> molrs.system.Atomistic:
+    mol = molrs.system.Atomistic()
     mol.def_atom(element="Li", x=0.0, y=0.0, z=0.0, mass=6.94)
     return mol
 
@@ -124,15 +125,15 @@ def test_operator_backmap_script_crosses_every_seam() -> None:
         names += [name] * len(found)
     assert len(groups) == 3
     sites = Coarsener(cg).coarsen(groups, names)
-    assert type(sites) is molrs.CoarseGrain
+    assert type(sites) is molrs.system.CoarseGrain
     assert sites.n_beads == 3
 
     # 4. Assemble: each copy turned onto its site and placed on it; ports join
     #    the bonded sites.
     world = Assembler(lib, SitePlacer(), AxisOrienter()).assemble(
-        sites, molrs.Atomistic
+        sites, molrs.system.Atomistic
     )
-    assert type(world) is molrs.Atomistic
+    assert type(world) is molrs.system.Atomistic
     assert world.n_atoms == 7
     assert world.n_ports == 2
     mol_id = np.asarray(world.to_frame()["atoms"]["mol_id"])
@@ -140,5 +141,5 @@ def test_operator_backmap_script_crosses_every_seam() -> None:
 
     # 5. Element types for the writer.
     typed = ElementTypifier().typify(world)
-    assert type(typed) is molrs.Atomistic
+    assert type(typed) is molrs.system.Atomistic
     assert set(typed.to_frame()["atoms"]["type"]) <= {"C", "H", "Li"}

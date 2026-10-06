@@ -29,7 +29,6 @@
 
 use crate::core::spatial::mesh::PyTriMesh;
 use crate::core::spatial::simbox::PyBox;
-use crate::helpers::NpF;
 use molrs::op::types::F3x3;
 use molrs::spatial::region::{
     AndRegion, Cuboid, Cylinder, Ellipsoid, HalfSpace, NotRegion, OrRegion, Parallelepiped,
@@ -53,7 +52,7 @@ type DynRegion = Arc<dyn Region + Send + Sync>;
 fn contains_impl<'py>(
     region: &dyn Region,
     py: Python<'py>,
-    points: PyReadonlyArray2<'_, NpF>,
+    points: PyReadonlyArray2<'_, f64>,
 ) -> PyResult<Bound<'py, PyArray1<bool>>> {
     let arr = points.as_array().to_owned();
     if arr.ncols() != 3 {
@@ -68,13 +67,13 @@ fn contains_impl<'py>(
 fn distance_impl<'py>(
     region: &dyn Region,
     py: Python<'py>,
-    points: PyReadonlyArray2<'_, NpF>,
-) -> PyResult<Bound<'py, PyArray1<NpF>>> {
+    points: PyReadonlyArray2<'_, f64>,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
     let arr = points.as_array();
     if arr.ncols() != 3 {
         return Err(PyValueError::new_err("points must have shape (N, 3)"));
     }
-    let d: Vec<NpF> = arr
+    let d: Vec<f64> = arr
         .rows()
         .into_iter()
         .map(|r| region.distance(&[r[0], r[1], r[2]]))
@@ -83,13 +82,13 @@ fn distance_impl<'py>(
 }
 
 /// Return the axis-aligned bounding box of a region as a ``(3, 2)`` array.
-fn bounds_impl<'py>(region: &dyn Region, py: Python<'py>) -> Bound<'py, PyArray2<NpF>> {
+fn bounds_impl<'py>(region: &dyn Region, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
     region.bounds().into_pyarray(py)
 }
 
 /// `[F; 3]` from a length-3 sequence argument (a list, a tuple, or a 1-D
 /// array all extract).
-fn vec3(v: Vec<NpF>, what: &str) -> PyResult<[NpF; 3]> {
+fn vec3(v: Vec<f64>, what: &str) -> PyResult<[f64; 3]> {
     if v.len() != 3 {
         return Err(PyValueError::new_err(format!("{what} must have length 3")));
     }
@@ -97,7 +96,7 @@ fn vec3(v: Vec<NpF>, what: &str) -> PyResult<[NpF; 3]> {
 }
 
 /// The three-element numpy array of `v`.
-fn np3<'py>(py: Python<'py>, v: [NpF; 3]) -> Bound<'py, PyArray1<NpF>> {
+fn np3<'py>(py: Python<'py>, v: [f64; 3]) -> Bound<'py, PyArray1<f64>> {
     Array1::from_vec(vec![v[0], v[1], v[2]]).into_pyarray(py)
 }
 
@@ -216,7 +215,7 @@ fn mask_impl<'py>(
 ) -> PyResult<Bound<'py, PyArray1<bool>>> {
     let py = block.py();
     let xyz = block.get_item(("x", "y", "z"))?;
-    let points: PyReadonlyArray2<'_, NpF> = xyz.extract()?;
+    let points: PyReadonlyArray2<'_, f64> = xyz.extract()?;
     contains_impl(region, py, points)
 }
 
@@ -259,7 +258,7 @@ macro_rules! region_methods {
             fn contains<'py>(
                 &self,
                 py: Python<'py>,
-                points: PyReadonlyArray2<'_, NpF>,
+                points: PyReadonlyArray2<'_, f64>,
             ) -> PyResult<Bound<'py, PyArray1<bool>>> {
                 contains_impl(self.inner.as_ref(), py, points)
             }
@@ -284,14 +283,14 @@ macro_rules! region_methods {
             fn distance<'py>(
                 &self,
                 py: Python<'py>,
-                points: PyReadonlyArray2<'_, NpF>,
-            ) -> PyResult<Bound<'py, PyArray1<NpF>>> {
+                points: PyReadonlyArray2<'_, f64>,
+            ) -> PyResult<Bound<'py, PyArray1<f64>>> {
                 distance_impl(self.inner.as_ref(), py, points)
             }
 
             /// Axis-aligned bounding box, shape ``(3, 2)``:
             /// ``[[xmin, xmax], [ymin, ymax], [zmin, zmax]]``.
-            fn bounds<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<NpF>> {
+            fn bounds<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
                 bounds_impl(self.inner.as_ref(), py)
             }
 
@@ -352,7 +351,7 @@ macro_rules! region_methods {
 
 /// Solid sphere region.
 ///
-/// Exposed to Python as `molrs.Sphere`.
+/// Exposed to Python as `molrs.spatial.Sphere`.
 ///
 /// Parameters
 /// ----------
@@ -367,7 +366,7 @@ macro_rules! region_methods {
 /// >>> mask = s.contains(points)
 /// >>> shell = s & ~Sphere(np.array([0, 0, 0]), 2.0)
 /// >>> d = s.distance(points)  # negative inside
-#[pyclass(module = "molrs", name = "Sphere", from_py_object, subclass)]
+#[pyclass(module = "molrs.spatial", name = "Sphere", from_py_object, subclass)]
 #[derive(Clone)]
 pub struct PySphere {
     inner: Arc<Sphere>,
@@ -382,7 +381,7 @@ impl PySphere {
     /// ValueError
     ///     If ``center`` does not have length 3.
     #[new]
-    fn new(center: Vec<NpF>, radius: NpF) -> PyResult<Self> {
+    fn new(center: Vec<f64>, radius: f64) -> PyResult<Self> {
         let c = vec3(center, "center")?;
         Ok(Self {
             inner: Arc::new(Sphere::new(Array1::from_vec(c.to_vec()), radius)),
@@ -392,7 +391,7 @@ impl PySphere {
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
-        crate::helpers::reduce_via_type(
+        crate::pickle::reduce_via_type(
             slf.as_any(),
             (
                 this.inner.center.to_owned().into_pyarray(py),
@@ -403,13 +402,13 @@ impl PySphere {
 
     /// Center, shape ``(3,)``.
     #[getter]
-    fn center<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
+    fn center<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         self.inner.center.to_owned().into_pyarray(py)
     }
 
     /// Radius.
     #[getter]
-    fn radius(&self) -> NpF {
+    fn radius(&self) -> f64 {
         self.inner.radius
     }
 
@@ -426,11 +425,11 @@ region_methods!(PySphere);
 // Cuboid
 // ---------------------------------------------------------------------------
 
-/// Axis-aligned cuboid (box) region, exposed to Python as `molrs.Cuboid`.
+/// Axis-aligned cuboid (box) region, exposed to Python as `molrs.spatial.Cuboid`.
 ///
 /// A point is inside when `origin[d] <= p[d] <= origin[d] + lengths[d]` on
 /// every axis.
-#[pyclass(module = "molrs", name = "Cuboid", from_py_object, subclass)]
+#[pyclass(module = "molrs.spatial", name = "Cuboid", from_py_object, subclass)]
 #[derive(Clone)]
 pub struct PyCuboid {
     inner: Arc<Cuboid>,
@@ -446,7 +445,7 @@ impl PyCuboid {
     /// ValueError
     ///     If ``origin`` or ``lengths`` does not have length 3.
     #[new]
-    fn new(origin: Vec<NpF>, lengths: Vec<NpF>) -> PyResult<Self> {
+    fn new(origin: Vec<f64>, lengths: Vec<f64>) -> PyResult<Self> {
         let o = vec3(origin, "origin")?;
         let l = vec3(lengths, "lengths")?;
         Ok(Self {
@@ -460,7 +459,7 @@ impl PyCuboid {
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
-        crate::helpers::reduce_via_type(
+        crate::pickle::reduce_via_type(
             slf.as_any(),
             (
                 this.inner.origin.to_owned().into_pyarray(py),
@@ -472,19 +471,19 @@ impl PyCuboid {
     /// The axis-aligned cube of edge ``edge`` with minimum corner ``origin``.
     #[staticmethod]
     #[pyo3(signature = (edge, origin = vec![0.0, 0.0, 0.0]))]
-    fn cube(edge: NpF, origin: Vec<NpF>) -> PyResult<Self> {
+    fn cube(edge: f64, origin: Vec<f64>) -> PyResult<Self> {
         Self::new(origin, vec![edge; 3])
     }
 
     /// Minimum corner, shape ``(3,)``.
     #[getter]
-    fn origin<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
+    fn origin<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         self.inner.origin.to_owned().into_pyarray(py)
     }
 
     /// Edge lengths, shape ``(3,)``.
     #[getter]
-    fn lengths<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
+    fn lengths<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         self.inner.lengths.to_owned().into_pyarray(py)
     }
 
@@ -506,7 +505,7 @@ region_methods!(PyCuboid);
 // Parallelepiped
 // ---------------------------------------------------------------------------
 
-/// General parallelepiped (oblique box) region, exposed as `molrs.Parallelepiped`.
+/// General parallelepiped (oblique box) region, exposed as `molrs.spatial.Parallelepiped`.
 ///
 /// Defined by an origin corner and a 3×3 edge matrix ``h`` whose **columns**
 /// are the three edge vectors. A point is inside when its fractional
@@ -514,8 +513,13 @@ region_methods!(PyCuboid);
 /// perpendicular to the bounding planes, in the input length unit.
 ///
 /// This is pure geometric containment — **not** a periodic simulation box.
-/// For PBC / MIC / wrap, use :class:`molrs.Box`.
-#[pyclass(module = "molrs", name = "Parallelepiped", from_py_object, subclass)]
+/// For PBC / MIC / wrap, use :class:`molrs.spatial.Box`.
+#[pyclass(
+    module = "molrs.spatial",
+    name = "Parallelepiped",
+    from_py_object,
+    subclass
+)]
 #[derive(Clone)]
 pub struct PyParallelepiped {
     inner: Arc<Parallelepiped>,
@@ -531,7 +535,7 @@ impl PyParallelepiped {
     /// ValueError
     ///     If shapes are wrong or ``h`` is singular.
     #[new]
-    fn new(h: PyReadonlyArray2<'_, NpF>, origin: Vec<NpF>) -> PyResult<Self> {
+    fn new(h: PyReadonlyArray2<'_, f64>, origin: Vec<f64>) -> PyResult<Self> {
         let h_arr = h.as_array();
         if h_arr.shape() != [3, 3] {
             return Err(PyValueError::new_err("h must have shape (3, 3)"));
@@ -557,7 +561,7 @@ impl PyParallelepiped {
     /// ValueError
     ///     If a length is not positive.
     #[staticmethod]
-    fn ortho(lengths: Vec<NpF>, origin: Vec<NpF>) -> PyResult<Self> {
+    fn ortho(lengths: Vec<f64>, origin: Vec<f64>) -> PyResult<Self> {
         let l = vec3(lengths, "lengths")?;
         let o = vec3(origin, "origin")?;
         let inner =
@@ -575,7 +579,7 @@ impl PyParallelepiped {
     /// ValueError
     ///     If ``a`` is not positive.
     #[staticmethod]
-    fn cube(a: NpF, origin: Vec<NpF>) -> PyResult<Self> {
+    fn cube(a: f64, origin: Vec<f64>) -> PyResult<Self> {
         let o = vec3(origin, "origin")?;
         let inner =
             Parallelepiped::cube(a, Array1::from_vec(o.to_vec())).map_err(PyValueError::new_err)?;
@@ -585,14 +589,14 @@ impl PyParallelepiped {
     }
 
     /// Signed volume ``det(h)``.
-    fn volume(&self) -> NpF {
+    fn volume(&self) -> f64 {
         self.inner.volume()
     }
 
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
-        crate::helpers::reduce_via_type(
+        crate::pickle::reduce_via_type(
             slf.as_any(),
             (
                 this.inner.h().to_owned().into_pyarray(py),
@@ -618,7 +622,7 @@ region_methods!(PyParallelepiped);
 // HalfSpace
 // ---------------------------------------------------------------------------
 
-/// One side of a plane, exposed as `molrs.HalfSpace`.
+/// One side of a plane, exposed as `molrs.spatial.HalfSpace`.
 ///
 /// Inside is the side the ``normal`` points *away* from (``n · (x − p) <= 0``);
 /// the other side is ``~HalfSpace(...)``. ``distance`` is the exact distance
@@ -630,7 +634,7 @@ region_methods!(PyParallelepiped);
 ///     Outward normal (any non-zero length).
 /// point : numpy.ndarray, shape (3,), dtype float
 ///     A point on the plane.
-#[pyclass(module = "molrs", name = "HalfSpace", from_py_object, subclass)]
+#[pyclass(module = "molrs.spatial", name = "HalfSpace", from_py_object, subclass)]
 #[derive(Clone)]
 pub struct PyHalfSpace {
     inner: Arc<HalfSpace>,
@@ -646,7 +650,7 @@ impl PyHalfSpace {
     /// ValueError
     ///     If ``normal`` is zero or a length is wrong.
     #[new]
-    fn new(normal: Vec<NpF>, point: Vec<NpF>) -> PyResult<Self> {
+    fn new(normal: Vec<f64>, point: Vec<f64>) -> PyResult<Self> {
         let n = vec3(normal, "normal")?;
         let p = vec3(point, "point")?;
         let inner = HalfSpace::new(n, p).map_err(PyValueError::new_err)?;
@@ -656,7 +660,7 @@ impl PyHalfSpace {
     }
 
     /// Unit outward normal, shape ``(3,)``.
-    fn normal<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
+    fn normal<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         np3(py, self.inner.normal())
     }
 
@@ -669,7 +673,7 @@ impl PyHalfSpace {
             n[1] * this.inner.offset(),
             n[2] * this.inner.offset(),
         ];
-        crate::helpers::reduce_via_type(slf.as_any(), (np3(py, n), np3(py, point)))
+        crate::pickle::reduce_via_type(slf.as_any(), (np3(py, n), np3(py, point)))
     }
 
     fn __repr__(&self) -> String {
@@ -689,7 +693,7 @@ region_methods!(PyHalfSpace);
 // Cylinder
 // ---------------------------------------------------------------------------
 
-/// Finite capped cylinder, exposed as `molrs.Cylinder`.
+/// Finite capped cylinder, exposed as `molrs.spatial.Cylinder`.
 ///
 /// Parameters
 /// ----------
@@ -700,7 +704,7 @@ region_methods!(PyHalfSpace);
 /// radius : float
 /// length : float
 ///     Distance between the caps.
-#[pyclass(module = "molrs", name = "Cylinder", from_py_object, subclass)]
+#[pyclass(module = "molrs.spatial", name = "Cylinder", from_py_object, subclass)]
 #[derive(Clone)]
 pub struct PyCylinder {
     inner: Arc<Cylinder>,
@@ -715,7 +719,7 @@ impl PyCylinder {
     /// ValueError
     ///     If ``axis`` is zero, or ``radius`` / ``length`` is not positive.
     #[new]
-    fn new(base: Vec<NpF>, axis: Vec<NpF>, radius: NpF, length: NpF) -> PyResult<Self> {
+    fn new(base: Vec<f64>, axis: Vec<f64>, radius: f64, length: f64) -> PyResult<Self> {
         let b = vec3(base, "base")?;
         let a = vec3(axis, "axis")?;
         let inner = Cylinder::new(b, a, radius, length).map_err(PyValueError::new_err)?;
@@ -727,7 +731,7 @@ impl PyCylinder {
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
-        crate::helpers::reduce_via_type(
+        crate::pickle::reduce_via_type(
             slf.as_any(),
             (
                 np3(py, this.inner.base()),
@@ -752,7 +756,7 @@ region_methods!(PyCylinder);
 // Ellipsoid
 // ---------------------------------------------------------------------------
 
-/// Axis-aligned ellipsoid, exposed as `molrs.Ellipsoid`.
+/// Axis-aligned ellipsoid, exposed as `molrs.spatial.Ellipsoid`.
 ///
 /// ``distance`` has the exact sign; its magnitude is a lower bound on the
 /// Euclidean distance (exact along the shortest semi-axis).
@@ -762,7 +766,7 @@ region_methods!(PyCylinder);
 /// center : numpy.ndarray, shape (3,), dtype float
 /// semi_axes : numpy.ndarray, shape (3,), dtype float
 ///     Semi-axes along x, y, z.
-#[pyclass(module = "molrs", name = "Ellipsoid", from_py_object, subclass)]
+#[pyclass(module = "molrs.spatial", name = "Ellipsoid", from_py_object, subclass)]
 #[derive(Clone)]
 pub struct PyEllipsoid {
     inner: Arc<Ellipsoid>,
@@ -777,7 +781,7 @@ impl PyEllipsoid {
     /// ValueError
     ///     If a semi-axis is not positive.
     #[new]
-    fn new(center: Vec<NpF>, semi_axes: Vec<NpF>) -> PyResult<Self> {
+    fn new(center: Vec<f64>, semi_axes: Vec<f64>) -> PyResult<Self> {
         let c = vec3(center, "center")?;
         let a = vec3(semi_axes, "semi_axes")?;
         let inner = Ellipsoid::new(c, a).map_err(PyValueError::new_err)?;
@@ -789,7 +793,7 @@ impl PyEllipsoid {
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
-        crate::helpers::reduce_via_type(
+        crate::pickle::reduce_via_type(
             slf.as_any(),
             (
                 np3(py, this.inner.center()),
@@ -812,7 +816,7 @@ region_methods!(PyEllipsoid);
 // Polyhedron
 // ---------------------------------------------------------------------------
 
-/// Solid bounded by a watertight :class:`TriMesh`, exposed as `molrs.Polyhedron`.
+/// Solid bounded by a watertight :class:`TriMesh`, exposed as `molrs.spatial.Polyhedron`.
 ///
 /// Where the mesh came from is not the region's concern — an STL read with
 /// :func:`molrs.io.read_stl`, or a mesh built in memory. Scale the mesh
@@ -820,9 +824,14 @@ region_methods!(PyEllipsoid);
 ///
 /// Examples
 /// --------
-/// >>> cavity = molrs.Polyhedron(molrs.io.read_stl("cavity.stl").scaled(4.18))
+/// >>> cavity = molrs.spatial.Polyhedron(molrs.io.read_stl("cavity.stl").scaled(4.18))
 /// >>> inside = cavity.contains(points)
-#[pyclass(module = "molrs", name = "Polyhedron", from_py_object, subclass)]
+#[pyclass(
+    module = "molrs.spatial",
+    name = "Polyhedron",
+    from_py_object,
+    subclass
+)]
 #[derive(Clone)]
 pub struct PyPolyhedron {
     inner: Arc<Polyhedron>,
@@ -856,7 +865,7 @@ impl PyPolyhedron {
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let this = slf.borrow();
         let mesh = this.mesh();
-        crate::helpers::reduce_via_type(slf.as_any(), (mesh,))
+        crate::pickle::reduce_via_type(slf.as_any(), (mesh,))
     }
 
     fn __repr__(&self) -> String {
@@ -869,7 +878,7 @@ region_methods!(PyPolyhedron);
 // SphereUnion
 // ---------------------------------------------------------------------------
 
-/// Union of spheres, exposed as `molrs.SphereUnion` — atoms as a region.
+/// Union of spheres, exposed as `molrs.spatial.SphereUnion` — atoms as a region.
 ///
 /// One sphere per row of ``centers`` with its own radius (a scalar is
 /// broadcast). With ``radii = r_vdw + r_probe`` the union is the
@@ -879,9 +888,14 @@ region_methods!(PyPolyhedron);
 ///
 /// Examples
 /// --------
-/// >>> polymer = molrs.SphereUnion(centers, 0.5 * sigma + 1.0, box=frame.box)
+/// >>> polymer = molrs.spatial.SphereUnion(centers, 0.5 * sigma + 1.0, box=frame.box)
 /// >>> void = ~polymer
-#[pyclass(module = "molrs", name = "SphereUnion", from_py_object, subclass)]
+#[pyclass(
+    module = "molrs.spatial",
+    name = "SphereUnion",
+    from_py_object,
+    subclass
+)]
 #[derive(Clone)]
 pub struct PySphereUnion {
     inner: Arc<SphereUnion>,
@@ -895,7 +909,7 @@ impl PySphereUnion {
     /// ----------
     /// centers : numpy.ndarray, shape (N, 3), dtype float
     /// radii : float or numpy.ndarray, shape (N,), dtype float
-    /// box : molrs.Box or None
+    /// box : molrs.spatial.Box or None
     ///     Periodicity; ``None`` means open space.
     ///
     /// Raises
@@ -906,7 +920,7 @@ impl PySphereUnion {
     #[new]
     #[pyo3(signature = (centers, radii, r#box=None))]
     fn new(
-        centers: PyReadonlyArray2<'_, NpF>,
+        centers: PyReadonlyArray2<'_, f64>,
         radii: &Bound<'_, PyAny>,
         r#box: Option<&PyBox>,
     ) -> PyResult<Self> {
@@ -914,10 +928,10 @@ impl PySphereUnion {
         if c.ncols() != 3 {
             return Err(PyValueError::new_err("centers must have shape (N, 3)"));
         }
-        let r: Vec<NpF> = if let Ok(scalar) = radii.extract::<NpF>() {
+        let r: Vec<f64> = if let Ok(scalar) = radii.extract::<f64>() {
             vec![scalar; c.nrows()]
         } else {
-            let arr: PyReadonlyArray1<'_, NpF> = radii.extract()?;
+            let arr: PyReadonlyArray1<'_, f64> = radii.extract()?;
             arr.as_slice()?.to_vec()
         };
         let inner = match r#box {
@@ -937,7 +951,7 @@ impl PySphereUnion {
     }
 
     /// Sphere centres as stored (wrapped on periodic axes), shape ``(N, 3)``.
-    fn centers<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<NpF>> {
+    fn centers<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
         let cs = self.inner.centers();
         let mut a = Array2::zeros((cs.len(), 3));
         for (i, c) in cs.iter().enumerate() {
@@ -949,7 +963,7 @@ impl PySphereUnion {
     }
 
     /// Sphere radii, shape ``(N,)``.
-    fn radii<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
+    fn radii<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         self.inner.radii().to_vec().into_pyarray(py)
     }
 
@@ -964,7 +978,7 @@ impl PySphereUnion {
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
-        crate::helpers::reduce_via_type(
+        crate::pickle::reduce_via_type(
             slf.as_any(),
             (this.centers(py), this.radii(py), this.r#box()),
         )
@@ -986,7 +1000,7 @@ region_methods!(PySphereUnion);
 
 /// Composed region produced by ``&``, ``|``, or ``~`` operators.
 ///
-/// Exposed to Python as `molrs.Region`. ``Region(source)`` clones any region
+/// Exposed to Python as `molrs.spatial.Region`. ``Region(source)`` clones any region
 /// object into this class; otherwise instances come from the operators.
 ///
 /// Pickling records the composition as a tree of the operand objects, so a
@@ -996,7 +1010,7 @@ region_methods!(PySphereUnion);
 /// --------
 /// >>> shell = Sphere(c, 5.0) & ~Sphere(c, 3.0)
 /// >>> shell.contains(points)
-#[pyclass(module = "molrs", name = "Region", from_py_object, subclass)]
+#[pyclass(module = "molrs.spatial", name = "Region", from_py_object, subclass)]
 pub struct PyRegion {
     inner: DynRegion,
     /// ``(op, *operands)`` with the operand region objects, or ``("id", source)``.

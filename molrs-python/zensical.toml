@@ -72,6 +72,7 @@ members_order = "source"
 show_root_heading = true
 show_root_full_path = false
 show_source = false
-# PyO3 classes use ``module = "molrs"``; force runtime inspection so griffe
-# resolves extension types and re-exports (Frame/Block wrappers, compute.*).
+# Every PyO3 class declares its public module (``module = "molrs.store"``, …)
+# and lives in the private ``molrs._lib``; force runtime inspection so griffe
+# resolves the extension types through the package's re-exports.
 force_inspection = true

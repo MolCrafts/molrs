@@ -1,4 +1,5 @@
-//! Python wrappers for `molrs-compute::dielectric`.
+//! Dielectric raw observables (`molrs::compute::dielectric`): the static
+//! methods of the native `Dielectric` namespace.
 
 use molrs::compute::{
     compute_current_density, compute_dipole_moment, decompose_current, static_dielectric_constant,
@@ -8,13 +9,13 @@ use numpy::{
 };
 use pyo3::prelude::*;
 
-use crate::helpers::py_value_err;
+use crate::error::py_value_err;
 
 /// Raw dielectric kernels: dipole moment, current density, current partition
 /// and the Neumann static dielectric constant. The frequency-dependent ε(ω)
 /// is the raw-compute + fit composition (`DebyeRelaxation` →
 /// `EinsteinHelfandSpectrum`, `GreenKuboConductivity` → `GreenKuboSpectrum`).
-#[pyclass(module = "molrs.compute.dielectric", name = "Dielectric", frozen)]
+#[pyclass(module = "molrs.compute", name = "Dielectric", frozen)]
 pub struct PyDielectric;
 
 #[pymethods]
@@ -68,6 +69,6 @@ impl PyDielectric {
     }
 }
 
-pub fn register_dielectric(m: &Bound<'_, PyModule>) -> PyResult<()> {
+pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyDielectric>()
 }

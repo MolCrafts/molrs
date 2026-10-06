@@ -10,8 +10,8 @@ import molrs.ff
 import molrs.ff.typifier
 
 
-def _water() -> molrs.Atomistic:
-    mol = molrs.Atomistic()
+def _water() -> molrs.system.Atomistic:
+    mol = molrs.system.Atomistic()
     o = mol.def_atom(element="O", x=0.0, y=0.0, z=0.0)
     h1 = mol.def_atom(element="H", x=0.96, y=0.0, z=0.0)
     h2 = mol.def_atom(element="H", x=-0.24, y=0.93, z=0.0)

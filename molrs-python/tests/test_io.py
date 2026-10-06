@@ -18,7 +18,7 @@ class TestAmberAliasDeleted:
         assert not hasattr(molrs.io, "read_prmtop")
         assert not hasattr(molrs.io, "read_inpcrd")
         assert "read_prmtop" not in molrs.io.__all__
-        assert not hasattr(molrs.io.raw, "read_prmtop")
+        assert not hasattr(molrs.io, "read_prmtop")
         assert not hasattr(molrs._lib, "read_prmtop")
         assert callable(molrs.io.read_amber_prmtop)
         assert callable(molrs.io.read_amber_inpcrd)
@@ -27,17 +27,17 @@ class TestAmberAliasDeleted:
 class TestErrorMessages:
     def test_pyo3_type_error_names_the_argument(self):
         with pytest.raises(TypeError, match="center"):
-            molrs.Sphere("not-an-array", 1.0)
+            molrs.spatial.Sphere("not-an-array", 1.0)
 
 
 class TestReadPdb:
     def test_basic(self, water_pdb):
-        frame = molrs.io.raw.read_pdb(str(water_pdb))
+        frame = molrs.io.read_pdb(str(water_pdb))
         assert "atoms" in frame
         assert frame["atoms"].nrows == 3
 
     def test_has_coordinates(self, water_pdb):
-        frame = molrs.io.raw.read_pdb(str(water_pdb))
+        frame = molrs.io.read_pdb(str(water_pdb))
         atoms = frame["atoms"]
         assert atoms["x"] is not None
         assert atoms["y"] is not None
@@ -45,7 +45,7 @@ class TestReadPdb:
 
     def test_missing_file_raises_os_error(self):
         with pytest.raises(OSError):
-            molrs.io.raw.read_pdb("/nonexistent/path.pdb")
+            molrs.io.read_pdb("/nonexistent/path.pdb")
 
     def test_missing_file_names_the_path(self):
         with pytest.raises(OSError, match="missing.pdb"):
@@ -54,7 +54,7 @@ class TestReadPdb:
 
 class TestReadGro:
     def test_native_basic(self, water_gro):
-        frames = molrs.io.raw.read_gro_trajectory(str(water_gro))
+        frames = molrs.io.read_gro_trajectory(str(water_gro))
         assert len(frames) == 1
         f0 = frames[0]
         assert "atoms" in f0
@@ -62,7 +62,7 @@ class TestReadGro:
         assert f0.box is not None
 
     def test_native_columns(self, water_gro):
-        frames = molrs.io.raw.read_gro_trajectory(str(water_gro))
+        frames = molrs.io.read_gro_trajectory(str(water_gro))
         atoms = frames[0]["atoms"]
         # The reader emits canonical names directly; `resid`/`atom_id` were
         # format-native spellings that something downstream had to rename, and
@@ -101,23 +101,23 @@ class TestReadGro:
 
     def test_missing_file_raises_os_error(self):
         with pytest.raises(OSError):
-            molrs.io.raw.read_gro_trajectory("/nonexistent/path.gro")
+            molrs.io.read_gro_trajectory("/nonexistent/path.gro")
 
 
 class TestReadXyz:
     def test_basic(self, water_xyz):
-        frame = molrs.io.raw.read_xyz(str(water_xyz))
+        frame = molrs.io.read_xyz(str(water_xyz))
         assert "atoms" in frame
         assert frame["atoms"].nrows == 3
 
     def test_has_coordinates(self, water_xyz):
-        frame = molrs.io.raw.read_xyz(str(water_xyz))
+        frame = molrs.io.read_xyz(str(water_xyz))
         atoms = frame["atoms"]
         assert atoms["x"] is not None
 
     def test_missing_file_raises_os_error(self):
         with pytest.raises(OSError):
-            molrs.io.raw.read_xyz("/nonexistent/path.xyz")
+            molrs.io.read_xyz("/nonexistent/path.xyz")
 
     def test_trajectory_round_trip(self, water_xyz, tmp_path):
         frame = molrs.io.read_xyz(str(water_xyz))
@@ -157,10 +157,10 @@ def test_read_stl_gives_a_watertight_mesh(tmp_path) -> None:
     path.write_text("\n".join(lines) + "\n")
 
     mesh = molrs.io.read_stl(str(path))
-    assert isinstance(mesh, molrs.TriMesh)
+    assert isinstance(mesh, molrs.spatial.TriMesh)
     assert mesh.n_faces == 4 and mesh.n_vertices == 4
     assert mesh.is_watertight()
-    tet = molrs.Polyhedron(mesh.scaled(2.0))
+    tet = molrs.spatial.Polyhedron(mesh.scaled(2.0))
     assert tet.contains(np.array([[0.2, 0.2, 0.2]]))[0]
     assert not tet.contains(np.array([[3.0, 3.0, 3.0]]))[0]
 
@@ -169,7 +169,7 @@ class TestBlockCsv:
     """``molrs.io.read_block_csv`` / ``write_block_csv`` — CSV for one Block."""
 
     def test_headered_round_trip(self):
-        src = molrs.Block(
+        src = molrs.store.Block(
             {
                 "x": [1.0, 2.0],
                 "id": np.array([10, 20], dtype=np.uint32),
@@ -197,25 +197,76 @@ class TestBlockCsv:
             molrs.io.read_block_csv(StringIO(""))
 
     def test_no_header(self):
-        b = molrs.Block({"count": np.array([1, 2], dtype=np.int64)})
+        b = molrs.store.Block({"count": np.array([1, 2], dtype=np.int64)})
         text = molrs.io.write_block_csv(b, header=False)
         assert "count" not in text.splitlines()[0]
 
     def test_writes_a_file(self, tmp_path):
         path = tmp_path / "out.csv"
-        assert molrs.io.write_block_csv(molrs.Block({"x": [1.0, 2.0]}), path) is None
+        assert molrs.io.write_block_csv(molrs.store.Block({"x": [1.0, 2.0]}), path) is None
         np.testing.assert_allclose(molrs.io.read_block_csv(path)["x"], [1.0, 2.0])
 
 
 class TestCanonicalNativeColumns:
-    """Readers whose native columns are the canonical ones are re-exported
-    by identity: no Python renaming layer."""
+    """Every reader emits the canonical column names in Rust, so the readers
+    are re-exported by identity: there is no Python renaming layer."""
 
-    def test_mol2_reader_and_writer_are_the_compiled_functions(self):
-        assert molrs.io.read_mol2 is molrs._lib.read_mol2
-        assert molrs.io.write_mol2 is molrs._lib.write_mol2
-        assert molrs.io.read_xyz is molrs._lib.read_xyz
-        assert molrs.io.read_lammps_data is molrs._lib.read_lammps_data
+    def test_readers_and_writers_are_the_compiled_functions(self):
+        for name in (
+            "read_pdb",
+            "write_pdb",
+            "read_pdb_trajectory",
+            "read_gro",
+            "write_gro",
+            "read_gro_trajectory",
+            "write_gro_trajectory",
+            "read_mol2",
+            "write_mol2",
+            "read_xyz",
+            "read_lammps_data",
+            "read_lammps_molecule",
+        ):
+            assert getattr(molrs.io, name) is getattr(molrs._lib, name), name
+        assert not hasattr(molrs, "fields")
+        assert not hasattr(molrs.io, "raw")
+
+    def test_pdb_format_names_become_canonical(self, tmp_path):
+        path = tmp_path / "w.pdb"
+        path.write_text(
+            "ATOM      1  OW  SOL A   7       0.000   0.000   0.000  1.00  0.00           O\n"
+            "ATOM      2  HW1 SOL A   7       0.957   0.000   0.000  1.00  0.00           H\n"
+            "END\n"
+        )
+        atoms = molrs.io.read_pdb(path)["atoms"]
+        assert list(atoms["element"]) == ["O", "H"]
+        assert list(atoms["res_id"]) == [7, 7]
+        assert list(atoms["res_name"]) == ["SOL", "SOL"]
+        for native in ("symbol", "resname", "res_seq"):
+            assert native not in atoms
+
+    def test_lammps_dump_q_and_mol_become_charge_and_mol_id(self, tmp_path):
+        path = tmp_path / "d.lammpstrj"
+        path.write_text(
+            "ITEM: TIMESTEP\n0\nITEM: NUMBER OF ATOMS\n2\n"
+            "ITEM: BOX BOUNDS pp pp pp\n0 10\n0 10\n0 10\n"
+            "ITEM: ATOMS id type mol q x y z\n"
+            "1 1 1 -0.5 0 0 0\n2 1 1 0.5 1 0 0\n"
+        )
+        atoms = molrs.io.read_lammps_trajectory(path).read_frame(0)["atoms"]
+        np.testing.assert_allclose(atoms["charge"], [-0.5, 0.5])
+        assert list(atoms["mol_id"]) == [1, 1]
+        for native in ("q", "mol"):
+            assert native not in atoms
+
+    def test_lammps_molecule_charges_become_charge(self, tmp_path):
+        path = tmp_path / "m.mol"
+        path.write_text(
+            "two atoms\n\n2 atoms\n\nCoords\n\n1 0 0 0\n2 0 0 1\n\n"
+            "Types\n\n1 1\n2 1\n\nCharges\n\n1 0.1\n2 -0.1\n"
+        )
+        atoms = molrs.io.read_lammps_molecule(path)["atoms"]
+        np.testing.assert_allclose(atoms["charge"], [0.1, -0.1])
+        assert "q" not in atoms
 
     def test_mol2_columns_are_canonical_and_round_trip(self, tmp_path):
         path = tmp_path / "x.mol2"
@@ -296,8 +347,8 @@ class TestInpcrdIntoFrame:
     def test_coordinates_go_into_the_given_frame(self, tmp_path):
         path = tmp_path / "x.inpcrd"
         path.write_text(self.TEXT)
-        frame = molrs.Frame()
-        atoms = molrs.Block()
+        frame = molrs.store.Frame()
+        atoms = molrs.store.Block()
         atoms.insert("x", np.zeros(2))
         atoms.insert("charge", np.array([0.5, -0.5]))
         frame["atoms"] = atoms
@@ -310,8 +361,8 @@ class TestInpcrdIntoFrame:
     def test_a_count_mismatch_leaves_the_frame_alone(self, tmp_path):
         path = tmp_path / "x.inpcrd"
         path.write_text(self.TEXT)
-        frame = molrs.Frame()
-        atoms = molrs.Block()
+        frame = molrs.store.Frame()
+        atoms = molrs.store.Block()
         atoms.insert("x", np.zeros(3))
         frame["atoms"] = atoms
         with pytest.raises(OSError, match="rows"):

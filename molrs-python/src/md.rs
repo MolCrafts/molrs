@@ -6,42 +6,27 @@
 //! ```
 //!
 //! MD defines no potential. What it integrates is any member
-//! [`take_potential`] accepts: `molrs.ff.potential.LJCut`, the force-field
+//! [`take_potential`](crate::ff::potential::take_potential) accepts: `molrs.ff.potential.LJCut`, the force-field
 //! `Potentials` collection (e.g. from `molrs.ff.potential.kernel`), or a
 //! duck-typed Python object with
 //! `calc_energy_forces`. MD has no unit knowledge. Integrators own the
 //! optional `VerletSkin`.
 
-use std::sync::{Arc, Mutex};
-
 use crate::core::spatial::neighborlist::PyVerletSkin;
 use crate::core::spatial::simbox::PyBox;
-use crate::ff::PyPotentials;
-use crate::ff::potential::PyLJCut;
-use crate::helpers::NpF;
-use molrs::ff::potential::{Member, Potential};
+use crate::ff::potential::{ErrSlot, Members, PyLJCut, check_nx3, take_err, take_members};
 use molrs::math::Virial;
 use molrs::md::{
     Direct, ForceProvider, Langevin, MDState, MaxwellBoltzmann, MdError, MicPairs, VelocityVerlet,
 };
 use molrs::op::types::{F, I};
-use ndarray::{Array1, Array2};
+use ndarray::Array1;
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyAnyMethods;
 
 fn md_err(e: MdError) -> PyErr {
     PyValueError::new_err(e.to_string())
-}
-
-pub(crate) fn check_nx3(arr: &PyReadonlyArray2<'_, NpF>, label: &str) -> PyResult<()> {
-    if arr.as_array().ncols() != 3 {
-        return Err(PyValueError::new_err(format!(
-            "{label} must have shape (N, 3)"
-        )));
-    }
-    Ok(())
 }
 
 /// A Python-side neighbour argument picks the minimum-image provider; the
@@ -76,9 +61,9 @@ fn provider(
 }
 
 fn extract_state(state: &Bound<'_, PyAny>) -> PyResult<MDState> {
-    let pos: PyReadonlyArray2<NpF> = state.getattr("pos")?.extract()?;
-    let vel: PyReadonlyArray2<NpF> = state.getattr("vel")?.extract()?;
-    let forces: PyReadonlyArray2<NpF> = state.getattr("forces")?.extract()?;
+    let pos: PyReadonlyArray2<f64> = state.getattr("pos")?.extract()?;
+    let vel: PyReadonlyArray2<f64> = state.getattr("vel")?.extract()?;
+    let forces: PyReadonlyArray2<f64> = state.getattr("forces")?.extract()?;
     let energy: F = state.getattr("energy")?.extract()?;
     check_nx3(&pos, "pos")?;
     check_nx3(&vel, "vel")?;
@@ -100,7 +85,7 @@ fn mass_from(mass: &Bound<'_, PyAny>) -> PyResult<Array1<F>> {
         }
         return Ok(ndarray::array![v]);
     }
-    let arr: PyReadonlyArray1<NpF> = mass.extract().map_err(|_| {
+    let arr: PyReadonlyArray1<f64> = mass.extract().map_err(|_| {
         PyValueError::new_err("mass must be a positive scalar or a 1-D float array")
     })?;
     Ok(arr.as_array().to_owned())
@@ -120,9 +105,9 @@ pub struct PyMDState {
 impl PyMDState {
     #[new]
     fn new(
-        pos: PyReadonlyArray2<'_, NpF>,
-        vel: PyReadonlyArray2<'_, NpF>,
-        forces: PyReadonlyArray2<'_, NpF>,
+        pos: PyReadonlyArray2<'_, f64>,
+        vel: PyReadonlyArray2<'_, f64>,
+        forces: PyReadonlyArray2<'_, f64>,
         energy: F,
     ) -> PyResult<Self> {
         check_nx3(&pos, "pos")?;
@@ -141,15 +126,15 @@ impl PyMDState {
     }
 
     #[getter]
-    fn pos<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<NpF>> {
+    fn pos<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
         self.inner.pos.clone().into_pyarray(py)
     }
     #[getter]
-    fn vel<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<NpF>> {
+    fn vel<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
         self.inner.vel.clone().into_pyarray(py)
     }
     #[getter]
-    fn forces<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<NpF>> {
+    fn forces<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
         self.inner.forces.clone().into_pyarray(py)
     }
     #[getter]
@@ -200,19 +185,19 @@ impl PyMDState {
     }
 
     #[setter]
-    fn set_pos(&mut self, pos: PyReadonlyArray2<'_, NpF>) -> PyResult<()> {
+    fn set_pos(&mut self, pos: PyReadonlyArray2<'_, f64>) -> PyResult<()> {
         check_nx3(&pos, "pos")?;
         self.inner.pos = pos.as_array().to_owned();
         Ok(())
     }
     #[setter]
-    fn set_vel(&mut self, vel: PyReadonlyArray2<'_, NpF>) -> PyResult<()> {
+    fn set_vel(&mut self, vel: PyReadonlyArray2<'_, f64>) -> PyResult<()> {
         check_nx3(&vel, "vel")?;
         self.inner.vel = vel.as_array().to_owned();
         Ok(())
     }
     #[setter]
-    fn set_forces(&mut self, forces: PyReadonlyArray2<'_, NpF>) -> PyResult<()> {
+    fn set_forces(&mut self, forces: PyReadonlyArray2<'_, f64>) -> PyResult<()> {
         check_nx3(&forces, "forces")?;
         self.inner.forces = forces.as_array().to_owned();
         Ok(())
@@ -229,132 +214,6 @@ impl PyMDState {
             self.inner.energy
         )
     }
-}
-
-// ---------------------------------------------------------------------------
-// The one Potential seam — Python subclasses and post-evaluation error relay.
-// ---------------------------------------------------------------------------
-
-/// Shared slot where a Python-subclass potential parks an exception raised
-/// mid-evaluation — the `Potential` trait has no error channel, so the
-/// evaluation returns NaNs and the Python-facing caller that drove it checks
-/// the slot and re-raises the original exception.
-pub(crate) type ErrSlot = Arc<Mutex<Option<PyErr>>>;
-
-/// Re-raise the first parked exception, clearing its slot.
-pub(crate) fn take_err(slots: &[ErrSlot]) -> PyResult<()> {
-    for slot in slots {
-        if let Some(err) = slot.lock().expect("error slot poisoned").take() {
-            return Err(err);
-        }
-    }
-    Ok(())
-}
-
-/// A Python object with `calc_energy_forces` (a `molrs.ff.potential.Potential`)
-/// as the one `Potential` concept — the seam for NN / external forces. Holds a reference to the instance and
-/// dispatches to its overridden ``calc_energy_forces`` under the GIL.
-pub struct SubclassPotential {
-    obj: Py<PyAny>,
-    error: ErrSlot,
-}
-
-impl SubclassPotential {
-    fn call(&self, py: Python<'_>, coords: &[F]) -> PyResult<(F, Vec<F>)> {
-        let n = coords.len() / 3;
-        let pos = Array2::from_shape_vec((n, 3), coords.to_vec())
-            .expect("flat coords have 3N elements")
-            .into_pyarray(py);
-        let result = self
-            .obj
-            .bind(py)
-            .call_method1("calc_energy_forces", (pos,))?;
-        let (energy, forces): (F, PyReadonlyArray2<'_, NpF>) = result.extract().map_err(|_| {
-            PyValueError::new_err(
-                "Potential.calc_energy_forces must return \
-                 (energy: float, forces: float64 (N, 3) ndarray)",
-            )
-        })?;
-        let forces = forces.as_array();
-        if forces.shape() != [n, 3] {
-            return Err(PyValueError::new_err(format!(
-                "Potential.calc_energy_forces returned forces shape {:?} for {n} atoms",
-                forces.shape()
-            )));
-        }
-        Ok((energy, forces.iter().copied().collect()))
-    }
-}
-
-impl Potential for SubclassPotential {
-    fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        Python::attach(|py| match self.call(py, coords) {
-            Ok(out) => out,
-            Err(err) => {
-                *self.error.lock().expect("error slot poisoned") = Some(err);
-                (F::NAN, vec![F::NAN; coords.len()])
-            }
-        })
-    }
-}
-
-/// The members a provider will evaluate, with the weights each one takes.
-///
-/// A [`TypedPotentials`](crate::ff::PyTypedPotentials) already knows both —
-/// which kernel is which and how its close neighbours are scaled — because
-/// `PotentialCompiler::compile_typed` decided it. Anything else is one member
-/// that scales nothing.
-pub(crate) type Members = Vec<(Member, molrs::ff::potential::SpecialWeights)>;
-
-/// Move the Rust potential out of any exposed potential class.
-///
-/// Arm order is a hard invariant: concrete Rust types first, duck-typed
-/// fallback last. Putting the fallback first would wrap every `Potentials`
-/// as a Python dispatch object.
-pub(crate) fn take_members(obj: &Bound<'_, PyAny>) -> PyResult<(Members, Vec<ErrSlot>)> {
-    if let Ok(typed) = obj.cast::<crate::ff::PyTypedPotentials>() {
-        let members = typed.borrow_mut().members.take().ok_or_else(|| {
-            PyValueError::new_err(
-                "these TypedPotentials were already given to an integrator; \
-                 build them again from the force field",
-            )
-        })?;
-        // A Python kernel among them parks its exception here.
-        return Ok((members, vec![crate::ff::ir::kernel_err_slot()]));
-    }
-    let (pot, slots) = take_potential(obj)?;
-    Ok((
-        vec![(pot, molrs::ff::potential::SpecialWeights::default())],
-        slots,
-    ))
-}
-
-pub(crate) fn take_potential(obj: &Bound<'_, PyAny>) -> PyResult<(Member, Vec<ErrSlot>)> {
-    // Each arm also settles which part the member plays. A pair kernel and an
-    // aggregate of them read a neighbour table; a duck-typed Python object has
-    // only `calc_energy_forces`, so it reads coordinates and nothing else —
-    // and, being unable to tally a virial over pairs, makes the step's virial
-    // `None` rather than a number that moves with the box origin.
-    if let Ok(lj) = obj.cast::<PyLJCut>() {
-        return Ok((Member::pair(lj.borrow().inner.clone()), Vec::new()));
-    }
-    if let Ok(pots) = obj.cast::<PyPotentials>() {
-        let (inner, slots) = pots.borrow_mut().take_compiled()?;
-        return Ok((Member::pair(inner), slots));
-    }
-    if obj.hasattr("calc_energy_forces")? && obj.getattr("calc_energy_forces")?.is_callable() {
-        let error: ErrSlot = Arc::default();
-        return Ok((
-            Member::plain(SubclassPotential {
-                obj: obj.clone().unbind(),
-                error: Arc::clone(&error),
-            }),
-            vec![error],
-        ));
-    }
-    Err(PyTypeError::new_err(
-        "expected a potential with callable calc_energy_forces (LJCut, Potentials, or duck-typed)",
-    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -432,8 +291,8 @@ impl PyVelocityVerlet {
 
     fn initial(
         &mut self,
-        pos: PyReadonlyArray2<'_, NpF>,
-        vel: PyReadonlyArray2<'_, NpF>,
+        pos: PyReadonlyArray2<'_, f64>,
+        vel: PyReadonlyArray2<'_, f64>,
     ) -> PyResult<PyMDState> {
         check_nx3(&pos, "pos")?;
         check_nx3(&vel, "vel")?;
@@ -536,7 +395,7 @@ impl PyLangevin {
         self.inner.c2()
     }
     #[getter]
-    fn sigma<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<NpF>> {
+    fn sigma<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
         self.inner
             .sigma()
             .view()
@@ -545,7 +404,7 @@ impl PyLangevin {
             .into_pyarray(py)
     }
     #[getter]
-    fn inv_mass<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<NpF>> {
+    fn inv_mass<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
         self.inner
             .inv_mass()
             .view()
@@ -578,8 +437,8 @@ impl PyLangevin {
 
     fn initial(
         &mut self,
-        pos: PyReadonlyArray2<'_, NpF>,
-        vel: PyReadonlyArray2<'_, NpF>,
+        pos: PyReadonlyArray2<'_, f64>,
+        vel: PyReadonlyArray2<'_, f64>,
     ) -> PyResult<PyMDState> {
         check_nx3(&pos, "pos")?;
         check_nx3(&vel, "vel")?;
@@ -595,7 +454,7 @@ impl PyLangevin {
     fn step(
         &mut self,
         state: &Bound<'_, PyAny>,
-        noise: PyReadonlyArray2<'_, NpF>,
+        noise: PyReadonlyArray2<'_, f64>,
     ) -> PyResult<PyMDState> {
         check_nx3(&noise, "noise")?;
         let result = self.inner.step(extract_state(state)?, noise.as_array());
@@ -621,7 +480,7 @@ impl PyLangevin {
         })
     }
 
-    fn draw_noise<'py>(&mut self, py: Python<'py>, n_atoms: usize) -> Bound<'py, PyArray2<NpF>> {
+    fn draw_noise<'py>(&mut self, py: Python<'py>, n_atoms: usize) -> Bound<'py, PyArray2<f64>> {
         self.inner.draw_noise(n_atoms).into_pyarray(py)
     }
 }
@@ -659,9 +518,9 @@ impl PyMaxwellBoltzmann {
     fn velocities<'py>(
         &self,
         py: Python<'py>,
-        pos: PyReadonlyArray2<'_, NpF>,
+        pos: PyReadonlyArray2<'_, f64>,
         mass: Bound<'_, PyAny>,
-    ) -> PyResult<Bound<'py, PyArray2<NpF>>> {
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         check_nx3(&pos, "pos")?;
         let vel = self
             .inner

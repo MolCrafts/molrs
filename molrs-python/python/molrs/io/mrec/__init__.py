@@ -22,7 +22,7 @@ a store has lives here:
   a run frame by frame, without holding it all in memory
 * :class:`ForceFieldSection` — the ``forcefield`` section as data: the
   document and one ``Block`` per style table, units as stored
-  (:meth:`molrs.ff.ForceField.to_section` / ``from_section`` map it onto a
+  (:meth:`molrs.ff.forcefield.ForceField.to_section` / ``from_section`` map it onto a
   force field)
 * :func:`pack` — collapse a closed store into one ``*.mrec.zip``
 * :mod:`molrs.io.mrec.schema` — runtime check for path suffix and ``meta`` keys

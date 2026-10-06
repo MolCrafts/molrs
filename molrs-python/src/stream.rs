@@ -25,7 +25,24 @@ use pyo3::types::PyBytes;
 
 use molrs::stream::ControlCommand;
 
-use crate::helpers::{message_format, py_value_err};
+use crate::core::store::frame::PyFrame;
+use crate::error::py_value_err;
+
+/// Resolve a wire-encoding name onto [`MessageFormat`].
+///
+/// The two spellings are the only ones the Rust side can produce, so an
+/// unknown name is an error rather than a silent fall back to MessagePack —
+/// a caller who writes `"messagepack"` must find out, not stream bytes the
+/// peer will read as JSON.
+pub(crate) fn message_format(name: &str) -> PyResult<molrs::stream::MessageFormat> {
+    match name {
+        "msgpack" => Ok(molrs::stream::MessageFormat::MessagePack),
+        "json" => Ok(molrs::stream::MessageFormat::Json),
+        other => Err(PyValueError::new_err(format!(
+            "unknown wire format {other:?}; expected 'msgpack' or 'json'"
+        ))),
+    }
+}
 
 /// A control message sent from a streaming viewer back to the producer.
 ///
@@ -189,8 +206,9 @@ mod server {
     use molrs::stream::{Publisher, PublisherConfig};
 
     use super::PyControlCommand;
+    use super::message_format;
     use crate::core::store::frame::PyFrame;
-    use crate::helpers::{io_error_to_pyerr, message_format, py_value_err};
+    use crate::error::{io_error_to_pyerr, py_value_err};
 
     /// WebSocket server that broadcasts frames to every connected viewer.
     ///
@@ -366,4 +384,50 @@ mod server {
             })
         }
     }
+}
+
+/// Rebuild a :class:`Frame` from streaming wire bytes.
+///
+/// This is the encoding ``molrs::stream::Publisher`` puts on the wire, so a
+/// consumer decodes a live stream with this and never re-derives the layout.
+///
+/// Parameters
+/// ----------
+/// data : bytes
+///     A payload produced by :func:`write_frame_bytes` or by a Rust
+///     ``Publisher``.
+/// format : {"msgpack", "json"}
+///     Wire encoding the payload was written with.
+#[pyfunction]
+#[pyo3(signature = (data, format = "msgpack"))]
+pub fn read_frame_bytes(data: &[u8], format: &str) -> PyResult<PyFrame> {
+    let fmt = message_format(format)?;
+    let frame = molrs::stream::bytes_to_frame(data, fmt).map_err(py_value_err)?;
+    PyFrame::from_core_frame(frame)
+}
+
+/// Encode a :class:`Frame` as streaming wire bytes. The inverse of
+/// :func:`read_frame_bytes`.
+#[pyfunction]
+#[pyo3(signature = (frame, format = "msgpack"))]
+pub fn write_frame_bytes<'py>(
+    py: Python<'py>,
+    frame: &PyFrame,
+    format: &str,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let fmt = message_format(format)?;
+    let bytes = frame
+        .with_frame(|f| molrs::stream::frame_to_bytes(f, fmt))?
+        .map_err(py_value_err)?;
+    Ok(PyBytes::new(py, &bytes))
+}
+
+/// Register `molrs.stream`.
+pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyControlCommand>()?;
+    #[cfg(not(target_arch = "wasm32"))]
+    m.add_class::<PyPublisher>()?;
+    m.add_function(wrap_pyfunction!(read_frame_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(write_frame_bytes, m)?)?;
+    Ok(())
 }

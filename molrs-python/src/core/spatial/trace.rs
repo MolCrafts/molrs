@@ -1,13 +1,12 @@
 //! Python wrapper for [`molrs::spatial::Trace`], an ordered path of 3D points.
 
-use crate::helpers::NpF;
 use molrs::spatial::Trace;
 use ndarray::Array2;
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-/// An ordered path of 3D points, with no chemistry — ``molrs.Trace``.
+/// An ordered path of 3D points, with no chemistry — ``molrs.spatial.Trace``.
 ///
 /// A trace says *where* consecutive units of a chain sit (for example the
 /// site positions of one coarse-grained chain), not *what* sits there.
@@ -25,11 +24,11 @@ use pyo3::prelude::*;
 ///
 /// Examples
 /// --------
-/// >>> trace = molrs.Trace(np.array([[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]]))
+/// >>> trace = molrs.spatial.Trace(np.array([[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]]))
 /// >>> len(trace)
 /// 2
 #[pyclass(
-    module = "molrs",
+    module = "molrs.spatial",
     name = "Trace",
     frozen,
     skip_from_py_object,
@@ -42,7 +41,7 @@ pub struct PyTrace {
 #[pymethods]
 impl PyTrace {
     #[new]
-    fn new(points: PyReadonlyArray2<'_, NpF>) -> PyResult<Self> {
+    fn new(points: PyReadonlyArray2<'_, f64>) -> PyResult<Self> {
         let array = points.as_array();
         if array.ncols() != 3 {
             return Err(PyValueError::new_err(format!(
@@ -63,7 +62,7 @@ impl PyTrace {
 
     /// Every point, in order, as a float64 ``(k, 3)`` copy (Å).
     #[getter]
-    fn points<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<NpF>> {
+    fn points<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
         let points = self.inner.points();
         Array2::from_shape_fn((points.len(), 3), |(row, axis)| points[row][axis]).into_pyarray(py)
     }

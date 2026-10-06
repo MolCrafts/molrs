@@ -18,8 +18,8 @@
 
 use crate::core::spatial::simbox::PyBox;
 use crate::core::store::block::{PyBlock, coords_array, coords_error};
-use crate::helpers::molrs_error_to_pyerr;
-use crate::store::ffi_error_to_pyerr;
+use crate::error::ffi_error_to_pyerr;
+use crate::error::molrs_error_to_pyerr;
 use molrs::store::Frame as CoreFrame;
 use molrs::store::{MetaMap, MetaValue};
 use molrs_ffi::FrameRef;
@@ -29,7 +29,13 @@ use pyo3::types::{PyBool, PyCapsule, PyDict, PyFloat, PyInt, PyList, PyString, P
 use serde_json::Value as JsonValue;
 
 /// Exact-dtype frame metadata value.
-#[pyclass(module = "molrs", name = "MetaValue", frozen, from_py_object, subclass)]
+#[pyclass(
+    module = "molrs.store",
+    name = "MetaValue",
+    frozen,
+    from_py_object,
+    subclass
+)]
 #[derive(Clone)]
 pub struct PyMetaValue {
     pub(crate) inner: MetaValue,
@@ -52,7 +58,7 @@ impl PyMetaValue {
 
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let this = slf.borrow();
-        crate::helpers::reduce_via_type(slf.as_any(), (this.dtype(), this.value(slf.py())?))
+        crate::pickle::reduce_via_type(slf.as_any(), (this.dtype(), this.value(slf.py())?))
     }
 
     #[getter]
@@ -130,7 +136,7 @@ fn mapping_to_meta_map(source: &Bound<'_, PyAny>) -> PyResult<MetaMap> {
 /// are live `collections.abc` views in insertion order. A non-`str` lookup is
 /// absent; a non-`str` write raises `TypeError`. Deleting a not-yet-visited
 /// key while iterating `values()` or `items()` raises `KeyError`.
-#[pyclass(module = "molrs._lib", name = "FrameMeta", unsendable, subclass)]
+#[pyclass(module = "molrs.store", name = "FrameMeta", unsendable, subclass)]
 pub struct PyFrameMeta {
     inner: FrameRef,
 }
@@ -465,7 +471,7 @@ impl PyFrameMeta {
 ///
 /// Iteration order is unspecified. ``frame.meta`` itself enumerates in
 /// insertion order; the two levels differ.
-#[pyclass(module = "molrs", name = "MetaDocument", frozen, subclass)]
+#[pyclass(module = "molrs.store", name = "MetaDocument", frozen, subclass)]
 pub struct PyMetaDocument {
     inner: serde_json::Map<String, JsonValue>,
 }
@@ -597,7 +603,7 @@ impl PyMetaDocument {
     }
 }
 
-/// Hierarchical data container exposed to Python as `molrs.Frame`.
+/// Hierarchical data container exposed to Python as `molrs.store.Frame`.
 ///
 /// A `Frame` is a dictionary of named [`Block`](crate::core::store::block::PyBlock)s with
 /// optional simulation box and metadata. It is the primary exchange format for
@@ -619,7 +625,7 @@ impl PyMetaDocument {
 /// print(frame)          # Frame(blocks=['atoms'], box=yes)
 /// ```
 #[pyclass(
-    module = "molrs._lib",
+    module = "molrs.store",
     name = "Frame",
     from_py_object,
     unsendable,
@@ -1106,7 +1112,7 @@ impl PyFrame {
         // The typed snapshot: `dict(meta)` would drop every dtype tag.
         state.set_item("meta", this.meta().typed(py)?)?;
         state.set_item("box", this.get_box()?)?;
-        crate::helpers::reduce_with_state(slf.as_any(), PyTuple::empty(py), state.into_any())
+        crate::pickle::reduce_with_state(slf.as_any(), PyTuple::empty(py), state.into_any())
     }
 
     /// Restore the state [`__reduce__`](Self::__reduce__) produced.

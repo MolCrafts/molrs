@@ -4,15 +4,21 @@
 //! `molrs::io::log::lammps` struct; nested values are handed out as the
 //! matching Python class, thermo tables as NumPy arrays.
 
+use crate::path::path_str;
 use molrs::io::log::{
     LammpsCpuUse, LammpsLoadBalance, LammpsLog, LammpsLogHeader, LammpsLoopTime, LammpsMemoryUsage,
     LammpsNeighborStatistics, LammpsPerformance, LammpsRun, LammpsThermo, LammpsTimingBreakdown,
-    LammpsTimingRow, LammpsWarning,
+    LammpsTimingRow, LammpsWarning, parse_lammps_log_text as parse_lammps_log_text_rs,
+    read_lammps_log_with_style as read_lammps_log_rs,
 };
 use numpy::{PyArray1, PyArray2};
-use pyo3::exceptions::{PyKeyError, PyValueError};
+use pyo3::exceptions::{PyFileNotFoundError, PyIOError, PyKeyError, PyValueError};
 use pyo3::prelude::*;
+
+use super::json::json_object_to_pydict;
 use pyo3::types::PyDict;
+use serde_json::Value as JsonValue;
+use std::path::PathBuf;
 
 /// Header lines that precede the first run.
 #[pyclass(
@@ -687,7 +693,7 @@ impl PyLammpsLog {
 
     /// The whole log as nested plain Python values (JSON-friendly).
     fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        super::lammps_log_to_pydict(py, &self.inner)
+        lammps_log_to_pydict(py, &self.inner)
     }
 
     fn __len__(&self) -> usize {
@@ -702,4 +708,103 @@ impl PyLammpsLog {
             self.inner.version
         )
     }
+}
+
+/// Read a LAMMPS log file into a nested plain-Python dict.
+///
+/// The shape matches molpy's ``LAMMPSLog.to_dict()`` payload so higher layers
+/// can hydrate dataclasses without re-parsing. Thermo rows are
+/// ``list[list[float]]`` (not a NumPy structured array).
+///
+/// Parameters
+/// ----------
+/// path : str
+///     Path to a LAMMPS log file (e.g. ``log.lammps``).
+/// style : str, optional
+///     Thermo style. Only ``"default"`` is currently parsed.
+///
+/// Returns
+/// -------
+/// LammpsLog
+///     Structured log: ``header``, one ``LammpsRun`` per ``run`` (thermo
+///     table, timing, warnings), ``total_wall_time`` and ``warnings``.
+///
+/// Raises
+/// ------
+/// FileNotFoundError
+///     If ``path`` does not exist.
+/// OSError
+///     On other I/O failures.
+#[cfg(feature = "fs")]
+#[pyfunction]
+#[pyo3(signature = (path, style = "default"))]
+pub fn read_lammps_log(path: PathBuf, style: &str) -> PyResult<PyLammpsLog> {
+    let path = path_str(&path)?;
+    let log = read_lammps_log_rs(path, style).map_err(lammps_log_io_error)?;
+    Ok(PyLammpsLog::new(log))
+}
+
+/// Parse a LAMMPS log from an in-memory string (no filesystem access).
+///
+/// Parameters
+/// ----------
+/// text : str
+///     Full log file contents.
+/// path : str, optional
+///     Recorded on the result as ``path`` (default ``"<string>"``).
+/// style : str, optional
+///     Thermo style. Only ``"default"`` is currently parsed.
+///
+/// Returns
+/// -------
+/// LammpsLog
+///     Same structure as :func:`read_lammps_log`.
+#[cfg(feature = "fs")]
+#[pyfunction]
+#[pyo3(signature = (text, path = "<string>", style = "default"))]
+pub fn parse_lammps_log_text(text: &str, path: &str, style: &str) -> PyLammpsLog {
+    PyLammpsLog::new(parse_lammps_log_text_rs(text, path, style))
+}
+
+#[cfg(feature = "fs")]
+fn lammps_log_io_error(e: std::io::Error) -> PyErr {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        PyFileNotFoundError::new_err(e.to_string())
+    } else {
+        PyIOError::new_err(e.to_string())
+    }
+}
+
+pub(crate) fn lammps_log_to_pydict<'py>(
+    py: Python<'py>,
+    log: &molrs::io::log::LammpsLog,
+) -> PyResult<Bound<'py, PyDict>> {
+    let value = serde_json::to_value(log)
+        .map_err(|e| PyValueError::new_err(format!("failed to serialize LAMMPS log: {e}")))?;
+    match value {
+        JsonValue::Object(map) => json_object_to_pydict(py, &map),
+        _ => Err(PyValueError::new_err(
+            "internal error: LAMMPS log did not serialize to an object",
+        )),
+    }
+}
+
+/// Register the LAMMPS log doors and the views they hand out.
+pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(read_lammps_log, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_lammps_log_text, m)?)?;
+    m.add_class::<PyLammpsLog>()?;
+    m.add_class::<PyLammpsRun>()?;
+    m.add_class::<PyLammpsThermo>()?;
+    m.add_class::<PyLammpsLogHeader>()?;
+    m.add_class::<PyLammpsMemoryUsage>()?;
+    m.add_class::<PyLammpsLoopTime>()?;
+    m.add_class::<PyLammpsPerformance>()?;
+    m.add_class::<PyLammpsCpuUse>()?;
+    m.add_class::<PyLammpsTimingRow>()?;
+    m.add_class::<PyLammpsTimingBreakdown>()?;
+    m.add_class::<PyLammpsLoadBalance>()?;
+    m.add_class::<PyLammpsNeighborStatistics>()?;
+    m.add_class::<PyLammpsWarning>()?;
+    Ok(())
 }

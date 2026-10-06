@@ -21,8 +21,8 @@ K, THETA0, K_UB, R_UB = 33.43, 110.1, 22.53, 2.179
 XYZ = np.array([[1.53, 0.0, 0.0], [0.0, 0.0, 0.0], [-0.30, 1.05, 0.10]])
 
 
-def _ub_ff() -> molrs.ff.ForceField:
-    ff = molrs.ff.ForceField("charmm", units="real")
+def _ub_ff() -> molrs.ff.forcefield.ForceField:
+    ff = molrs.ff.forcefield.ForceField("charmm", units="real")
     atoms = ff.def_style("atom", "full")
     ct = atoms.def_type("CT", mass=12.011)
     ha = atoms.def_type("HA", mass=1.008)
@@ -32,16 +32,16 @@ def _ub_ff() -> molrs.ff.ForceField:
     return ff
 
 
-def _frame() -> molrs.Frame:
-    atoms = molrs.Block()
+def _frame() -> molrs.store.Frame:
+    atoms = molrs.store.Block()
     for d, key in enumerate("xyz"):
         atoms.insert(key, XYZ[:, d].copy())
     atoms.insert("type", ["HA", "CT", "CT"])
-    angles = molrs.Block()
+    angles = molrs.store.Block()
     for key, atom in (("atomi", 0), ("atomj", 1), ("atomk", 2)):
         angles.insert(key, np.array([atom], dtype=np.uint32))
     angles.insert("type", ["HA-CT-CT"])
-    frame = molrs.Frame()
+    frame = molrs.store.Frame()
     frame["atoms"] = atoms
     frame["angles"] = angles
     return frame
@@ -56,14 +56,14 @@ def _hand_energy() -> float:
 
 def test_an_angle_style_named_charmm_carries_the_four_params() -> None:
     style = _ub_ff().get_style("angle", "charmm")
-    assert isinstance(style, molrs.ff.AngleStyle)
+    assert isinstance(style, molrs.ff.forcefield.AngleStyle)
     (t,) = style.types
     assert (t["k"], t["theta0"], t["k_ub"], t["r_ub"]) == (K, THETA0, K_UB, R_UB)
 
 
 def test_it_compiles_to_the_lammps_energy() -> None:
     frame = _frame()
-    compiler = molrs.ff.PotentialCompiler(_ub_ff())
+    compiler = molrs.ff.potential.PotentialCompiler(_ub_ff())
     e = compiler.compile(frame).calc_energy(frame)
     assert math.isclose(e, _hand_energy(), rel_tol=1e-12)
     assert len(compiler.compile_typed(frame)) == 1
@@ -75,23 +75,23 @@ def test_it_round_trips_through_the_section_and_a_store(tmp_path: Path) -> None:
     assert list(table["r_ub"]) == [R_UB]
     path = tmp_path / "ff.mrec"
     molrs.io.write_mrec_forcefield(path, ff)
-    back = molrs.ff.ForceField.from_section(molrs.io.read_mrec_forcefield(path))
+    back = molrs.ff.forcefield.ForceField.from_section(molrs.io.read_mrec_forcefield(path))
     (t,) = back.get_types("angle")
     assert (t["k"], t["theta0"], t["k_ub"], t["r_ub"]) == (K, THETA0, K_UB, R_UB)
     frame = _frame()
-    assert molrs.ff.PotentialCompiler(back).compile(frame).calc_energy(
+    assert molrs.ff.potential.PotentialCompiler(back).compile(frame).calc_energy(
         frame
-    ) == molrs.ff.PotentialCompiler(ff).compile(frame).calc_energy(frame)
+    ) == molrs.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy(frame)
 
 
 def test_the_lammps_writer_and_reader_keep_it_as_written(tmp_path: Path) -> None:
-    text = molrs.ff.write_lammps_forcefield_str(_ub_ff(), _frame())
+    text = molrs.ff.forcefield.write_lammps_forcefield_str(_ub_ff(), _frame())
     assert "angle_style charmm\n" in text
     assert "angle_coeff HA-CT-CT 33.430000 110.100000 22.530000 2.179000\n" in text
     path = tmp_path / "ub.ff"
     path.write_text(text)
-    back = molrs.ff.read_lammps_forcefield(path)
+    back = molrs.ff.forcefield.read_lammps_forcefield(path)
     (t,) = back.get_types("angle")
     assert (t["k"], t["theta0"], t["k_ub"], t["r_ub"]) == (K, THETA0, K_UB, R_UB)
-    data = molrs.ff.write_lammps_data_coeffs(_ub_ff(), _frame())
+    data = molrs.ff.forcefield.write_lammps_data_coeffs(_ub_ff(), _frame())
     assert "Angle Coeffs # charmm" in data

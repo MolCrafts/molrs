@@ -31,6 +31,11 @@ never published, so coming from 0.15.0 read
   0.15's version-1 records (see [Records](#records-molrec_version-2)).
 - **A `ForceField` pickled by 0.15 does not unpickle in 0.16** (a pickle
   now carries each style's arity).
+- **A pickle names a class by its public Python path**, and most of those
+  moved (see [Python paths](#python-paths)): a 0.15 pickle holding, say, a
+  `molrs.Box` or a `molrs.Element` does not unpickle in 0.16. `Frame`,
+  `Block`, `Atomistic` and `CoarseGrain` pickled as `molrs._lib.*` and still
+  load.
 - **Force-field JSON is not converted.** `molrs_ff_from_json` reads a
   0.15 `molrs_ff_to_json` document as written, ½k harmonic `k`, radians,
   `D`, `a_thole` and `fourier` included: convert it as
@@ -329,7 +334,7 @@ The `cmap` category (five endpoints) and its kernel `cmap charmm` — LAMMPS
   endpoint) and the block `cmaps` (relation of arity 5, optional `type`,
   `type_id`, `style`) are new; `subset`, `replicate` and the validator
   renumber and range-check `atomi` … `atomm`. `keys::ENDPOINTS` (Rust
-  `[&str; 5]`, Python `molrs.keys.ENDPOINTS`) gains `atomm`, so a block
+  `[&str; 5]`, Python `molrs.store.keys.ENDPOINTS`) gains `atomm`, so a block
   without a spec now reads an `atomm` column as an endpoint into `atoms`, an
   `atomm` column at another dtype than `u64` is refused, and the fifth
   endpoint column of a five-node `MolGraph` relation is `atomm` (0.15:
@@ -363,7 +368,7 @@ The `cmap` category (five endpoints) and its kernel `cmap charmm` — LAMMPS
   file relative to the include when read from a path) and `fix_modify` of
   that fix; any other `fix` line is refused by name (0.15: "unknown LAMMPS
   keyword `fix`").
-- **Python.** `molrs.ff.CmapStyle` / `CmapType` (with `itom` … `mtom`);
+- **Python.** `molrs.ff.forcefield.CmapStyle` / `CmapType` (with `itom` … `mtom`);
   `def_style("cmap", …)` returns a `CmapStyle`.
 - **C API.** `"cmap"` is a category; `molrs_schema_column_dtype("atomm")`
   is `"uint"`.
@@ -373,8 +378,8 @@ The `cmap` category (five endpoints) and its kernel `cmap charmm` — LAMMPS
   read a `fix cmap` file into rows named `"1"` … `"K"`;
   `LammpsFfWriter::write_cmap_str` and `lammps_cmap_str` write one (CHARMM's
   own file comes back line for line); `CmapGrid` / `CmapCharmm` are the
-  kernel. Python: `molrs.ff.assign_cmaps`, `read_lammps_cmap`,
-  `write_lammps_cmap`.
+  kernel. Python: `molrs.ff.typifier.assign_cmaps`,
+  `molrs.ff.forcefield.read_lammps_cmap` / `write_lammps_cmap`.
 
 ### Array parameters
 
@@ -672,7 +677,7 @@ OPLS-AA dipeptide (`scripts/gromacs_engine_check.sh`).
   energies of a GROMACS-read field are 9.9·10⁻⁹ larger than in 0.15, and
   equal GROMACS's.
 - **Whole topologies read: `GromacsTopFfReader::read_system` / Python
-  `molrs.ff.read_gromacs_system`** read the molecule sections too, into the
+  `molrs.ff.forcefield.read_gromacs_system`** read the molecule sections too, into the
   force field and a typed frame (0-based indices): GROMACS's own type lookup,
   rows with their own parameters as types `<labels>@gmx_<n>`, `[ pairs ]`
   rows with parameters as per-pair overrides, the nrexcl pair list (every
@@ -774,7 +779,7 @@ Engine I/O follows the force-field IR's protocol; see
 ### GAFF and GAFF2
 
 - **`GaffTypifier` in Python**: `molrs.ff.typifier.GaffTypifier(
-  parameter_set="gaff" | "gaff2")` (also `molrs.ff.GaffTypifier`), the Rust
+  parameter_set="gaff" | "gaff2")`, the Rust
   `GaffTypifier` behind the usual `Typifier` interface; compose it after
   `AtdTypifier(parameter_set=…)`, which types the atoms. See
   [Force-field IR](guides/forcefield-ir.md#gaff-and-gaff2).
@@ -1026,8 +1031,8 @@ Each engine's Coulomb constant and charge factor has one owner,
 
 New beside them: `KJ_PER_KCAL` and `ANGSTROM_PER_NM`, which replace the
 private copies in the GROMACS, OpenMM XML, `.gro`, `.trr` and `.xtc` code.
-LAMMPS `real`'s `qqr2e` stays `COULOMB_REAL`. Python's `molrs.ff.AMBER_COULOMB`
-is unchanged.
+LAMMPS `real`'s `qqr2e` stays `COULOMB_REAL`. Python's `AMBER_COULOMB` is
+`molrs.units.AMBER_COULOMB` (it was `molrs.ff.AMBER_COULOMB`).
 
 The AMBER 1-4 divisors `SCEE` = 1.2 / `SCNB` = 2.0 are force-field knowledge
 (`ff::params::amber::{AMBER_SCEE, AMBER_SCNB}`), and only the force-field
@@ -1149,19 +1154,19 @@ the `ForceField` model and force-field files, `potential` the kernels,
     `TopReader`, `TopFrameWriter`) → `ff::forcefield::readers::gromacs::
     read_system` / `ff::forcefield::writers::gromacs::write_system_str`
     (0-based indices). Python: `molrs.io.read_top` →
-    `molrs.ff.read_gromacs_system`; `molrs.io.write_top` is removed (the
-    Rust system writer has no Python binding yet).
+    `molrs.ff.forcefield.read_gromacs_system`; `molrs.io.write_top` →
+    `molrs.ff.forcefield.write_gromacs_system`.
   - `molrs::io::data::frcmod::*` (`read_frcmod`, `parse_frcmod`,
     `format_frcmod`, `write_frcmod`, `FrcmodFile`) → `ff::forcefield::
     writers::frcmod::write_amber_frcmod`. Python: `molrs.io.read_frcmod`,
-    `parse_frcmod`, `write_frcmod` removed (`molrs.ff.write_amber_frcmod`
-    writes one).
+    `parse_frcmod`, `write_frcmod` removed
+    (`molrs.ff.forcefield.write_amber_frcmod` writes one).
   - `molrs::io::data::prmtop_tables::decode_{bond,angle,dihedral,nonbond}_params`
     and their row aliases, and `io::data::prmtop::read_amber_prmtop_sections`;
     `parse_pointers` / `parse_a4_names` are crate-private. Python:
     `molrs.io.prmtop_parse_pointers`, `prmtop_parse_a4_names`,
     `prmtop_decode_*`, `read_amber_prmtop_sections` removed
-    (`molrs.ff.read_amber_prmtop_ff` reads the parameters).
+    (`molrs.ff.forcefield.read_amber_prmtop_ff` reads the parameters).
 - One SMARTS parser: `molrs::io::smiles::parse_smarts`, which
   `perceive::smarts::SmartsPattern` now compiles from. Its IR gains
   `AtomPrimitive::{AtomicNumber, RingSizeRange, RingBondCount, ContextLabel}`;
@@ -1176,19 +1181,359 @@ the `ForceField` model and force-field files, `potential` the kernels,
   `Perceive::find_bond_types_from_connectivity`),
   `bond_type::assign_kekule_numbers`. The side-table queries stay public.
 - `molrs::perceive::{Coarsener, CoarsenError}` → `molrs::builder::{Coarsener,
-  CoarsenError}` (Python path unchanged: `molrs.perceive.Coarsener`).
+  CoarsenError}` (Python: `molrs.perceive.Coarsener` →
+  `molrs.builder.Coarsener`).
 - One name per handle and payload type: `AtomId`, `BeadId` → `NodeId`;
   `BondId`, `AngleId`, `DihedralId`, `ImproperId`, `PortId` → `RelationId`;
   `Bead` → `Atom`; `Bond`, `Angle`, `Dihedral`, `Improper` → `Relation`
   (all in `molrs::system`).
+
+#### Python paths
+
+The Python package follows the same rule. `molrs` holds the subsystems and
+nothing else — `store`, `spatial`, `system`, `units`, `op`, `perceive`, `io`,
+`ff`, `optimize`, `md`, `conformer`, `builder`, `compute`, `signal`,
+`stream` — and every symbol has one public path: the Python module named
+after its Rust owner (`molrs.store.Frame` is `molrs::store::Frame`). The
+class's `__module__` is that path.
+
+- A Rust namespace below a subsystem's facade is not a Python module of its
+  own: `ff::potential::pair::LJCut` is `molrs.ff.potential.LJCut`,
+  `perceive::smarts::Reaction` is `molrs.perceive.Reaction`,
+  `spatial::{neighbors, region}` are `molrs.spatial`, and the
+  `io::{data, trajectory, smiles, log, mesh, csv}` formats are `molrs.io`.
+  Kept as modules: the vocabularies `molrs.store.keys` and
+  `molrs.store.schema`, `molrs.io.mrec` (the record store's machinery,
+  including `ForceFieldSection`) and `molrs.ff.ir`.
+- `molrs.ff` holds only its submodules, one per `molrs::ff` submodule:
+  `forcefield` (the `ForceField`, its handles, and the force-field file
+  readers and writers), `potential`, `typifier`, `charge`, `ir`, `params`,
+  `scale_lj`.
+- `molrs.compute` is flat, as `molrs::compute` is; the domain subpackages
+  (`molrs.compute.density`, …) are gone.
+- Removed, with no second spelling left behind: `molrs.io.raw` and
+  `molrs.fields` (every reader emits the canonical column names — PDB, LAMMPS
+  dump / molecule, MOL2 and XYZ map their own spellings in Rust), the
+  `molrs.io.read_gro` / `write_gro` / `read_gro_trajectory` /
+  `write_gro_trajectory` pass-through wrappers (the compiled functions are
+  those names now), `molrs.io.write_smiles` (an alias of
+  `SmilesIR.from_atomistic(mol, **flags).write_smiles()`), the eager
+  `list[Frame]` readers behind `molrs.io.raw.read_{dcd,trr,xtc,xyz,lammps}_trajectory`
+  (`molrs.io.read_*_trajectory(path).read_all()`), the native `*TrajReader`
+  classes as public names (`molrs.io.read_*_trajectory` wraps them in
+  `molrs.io.TrajectoryReader`), `Atomistic.max_ring_system_size()`
+  (`molrs.perceive.RingInfo(mol).max_ring_system_size()`), and the
+  `molrs.md` lazy loader.
+- The protocol and driver modules are private: `molrs.compute.Compute`,
+  `molrs.ff.potential.Potential` and `molrs.md.MD` are the only spellings.
+
+**Core: the top level is subsystems only**
+
+| 0.15 | 0.16 |
+|---|---|
+| `molrs.Angle` | `molrs.system.Angle` |
+| `molrs.Atom` | `molrs.system.Atom` |
+| `molrs.Atomistic` | `molrs.system.Atomistic` |
+| `molrs.Bead` | `molrs.system.Bead` |
+| `molrs.Block` | `molrs.store.Block` |
+| `molrs.BlockDtypeError` | `molrs.store.BlockDtypeError` |
+| `molrs.Bond` | `molrs.system.Bond` |
+| `molrs.Box` | `molrs.spatial.Box` |
+| `molrs.CGBond` | `molrs.system.CGBond` |
+| `molrs.CoarseGrain` | `molrs.system.CoarseGrain` |
+| `molrs.Cuboid` | `molrs.spatial.Cuboid` |
+| `molrs.Cylinder` | `molrs.spatial.Cylinder` |
+| `molrs.Dihedral` | `molrs.system.Dihedral` |
+| `molrs.DrudeParticle` | `molrs.system.DrudeParticle` |
+| `molrs.Element` | `molrs.system.Element` |
+| `molrs.Ellipsoid` | `molrs.spatial.Ellipsoid` |
+| `molrs.ExtractedSubgraph` | `molrs.system.ExtractedSubgraph` |
+| `molrs.Frame` | `molrs.store.Frame` |
+| `molrs.FrameMeta` | `molrs.store.FrameMeta` |
+| `molrs.Graph` | `molrs.system.Graph` |
+| `molrs.HalfSpace` | `molrs.spatial.HalfSpace` |
+| `molrs.Improper` | `molrs.system.Improper` |
+| `molrs.MasslessSite` | `molrs.system.MasslessSite` |
+| `molrs.MetaDocument` | `molrs.store.MetaDocument` |
+| `molrs.MetaValue` | `molrs.store.MetaValue` |
+| `molrs.NeighborList` | `molrs.spatial.NeighborList` |
+| `molrs.NeighborQuery` | `molrs.spatial.NeighborQuery` |
+| `molrs.Neighbors` | `molrs.spatial.Neighbors` |
+| `molrs.NodeRef` | `molrs.system.NodeRef` |
+| `molrs.Parallelepiped` | `molrs.spatial.Parallelepiped` |
+| `molrs.Polyhedron` | `molrs.spatial.Polyhedron` |
+| `molrs.Port` | `molrs.system.Port` |
+| `molrs.Quantity` | `molrs.units.Quantity` |
+| `molrs.Reaction` | `molrs.perceive.Reaction` |
+| `molrs.Refs` | `molrs.system.Refs` |
+| `molrs.Region` | `molrs.spatial.Region` |
+| `molrs.RelationBuckets` | `molrs.system.RelationBuckets` |
+| `molrs.RelationRef` | `molrs.system.RelationRef` |
+| `molrs.ScalarObservable` | `molrs.store.ScalarObservable` |
+| `molrs.Sphere` | `molrs.spatial.Sphere` |
+| `molrs.SphereUnion` | `molrs.spatial.SphereUnion` |
+| `molrs.Topology` | `molrs.system.Topology` |
+| `molrs.Trace` | `molrs.spatial.Trace` |
+| `molrs.Trajectory` | `molrs.store.Trajectory` |
+| `molrs.TriMesh` | `molrs.spatial.TriMesh` |
+| `molrs.Unit` | `molrs.units.Unit` |
+| `molrs.UnitPreset` | `molrs.units.UnitPreset` |
+| `molrs.UnitRegistry` | `molrs.units.UnitRegistry` |
+| `molrs.UnitsError` | `molrs.units.UnitsError` |
+| `molrs.VectorObservable` | `molrs.store.VectorObservable` |
+| `molrs.VerletSkin` | `molrs.spatial.VerletSkin` |
+| `molrs.VirtualSite` | `molrs.system.VirtualSite` |
+| `molrs.keys` | `molrs.store.keys` (and `molrs.keys.<NAME>` → `molrs.store.keys.<NAME>`) |
+| `molrs.schema` | `molrs.store.schema` (and its block-name constants) |
+| `molrs.schema.BlockSpec` | `molrs.store.schema.BlockSpec` |
+| `molrs.schema.ColumnSpec` | `molrs.store.schema.ColumnSpec` |
+| `molrs.schema.block` | `molrs.store.schema.block` |
+| `molrs.schema.blocks` | `molrs.store.schema.blocks` |
+| `molrs.schema.column` | `molrs.store.schema.column` |
+| `molrs.schema.columns` | `molrs.store.schema.columns` |
+| `molrs.schema.relation_endpoints` | `molrs.store.schema.relation_endpoints` |
+| `molrs.schema.to_json` | `molrs.store.schema.to_json` |
+| `molrs.schema.to_markdown` | `molrs.store.schema.to_markdown` |
+| `molrs.Atomistic.max_ring_system_size()` | `molrs.perceive.RingInfo(mol).max_ring_system_size()` |
+
+**Force fields: `molrs.ff` holds only its submodules**
+
+| 0.15 | 0.16 |
+|---|---|
+| `molrs.ff.AMBER_COULOMB` | `molrs.units.AMBER_COULOMB` |
+| `molrs.ff.AMBER_SCEE` | `molrs.ff.params.AMBER_SCEE` |
+| `molrs.ff.AMBER_SCNB` | `molrs.ff.params.AMBER_SCNB` |
+| `molrs.ff.AngleStyle` | `molrs.ff.forcefield.AngleStyle` |
+| `molrs.ff.AngleType` | `molrs.ff.forcefield.AngleType` |
+| `molrs.ff.AtdTypifier` | `molrs.ff.typifier.AtdTypifier` |
+| `molrs.ff.AtomStyle` | `molrs.ff.forcefield.AtomStyle` |
+| `molrs.ff.AtomType` | `molrs.ff.forcefield.AtomType` |
+| `molrs.ff.BccModel` | `molrs.ff.charge.BccModel` |
+| `molrs.ff.BondStyle` | `molrs.ff.forcefield.BondStyle` |
+| `molrs.ff.BondType` | `molrs.ff.forcefield.BondType` |
+| `molrs.ff.CmapStyle` | `molrs.ff.forcefield.CmapStyle` |
+| `molrs.ff.CmapType` | `molrs.ff.forcefield.CmapType` |
+| `molrs.ff.DihedralStyle` | `molrs.ff.forcefield.DihedralStyle` |
+| `molrs.ff.DihedralType` | `molrs.ff.forcefield.DihedralType` |
+| `molrs.ff.ForceField` | `molrs.ff.forcefield.ForceField` |
+| `molrs.ff.FragmentScaling` | `molrs.ff.scale_lj.FragmentScaling` |
+| `molrs.ff.GaffTypifier` | `molrs.ff.typifier.GaffTypifier` |
+| `molrs.ff.GasteigerModel` | `molrs.ff.charge.GasteigerModel` |
+| `molrs.ff.ImproperStyle` | `molrs.ff.forcefield.ImproperStyle` |
+| `molrs.ff.ImproperType` | `molrs.ff.forcefield.ImproperType` |
+| `molrs.ff.MMFF94STypifier` | `molrs.ff.typifier.MMFF94STypifier` |
+| `molrs.ff.MMFF94Typifier` | `molrs.ff.typifier.MMFF94Typifier` |
+| `molrs.ff.Match` | `molrs.ff.typifier.Match` |
+| `molrs.ff.MullikenModel` | `molrs.ff.charge.MullikenModel` |
+| `molrs.ff.OPLSAATypifier` | `molrs.ff.typifier.OPLSAATypifier` |
+| `molrs.ff.PairStyle` | `molrs.ff.forcefield.PairStyle` |
+| `molrs.ff.PairType` | `molrs.ff.forcefield.PairType` |
+| `molrs.ff.Potential` | `molrs.ff.potential.Potential` |
+| `molrs.ff.PotentialCompiler` | `molrs.ff.potential.PotentialCompiler` |
+| `molrs.ff.Potentials` | `molrs.ff.potential.Potentials` |
+| `molrs.ff.RelationStyle` | `molrs.ff.forcefield.RelationStyle` |
+| `molrs.ff.RelationType` | `molrs.ff.forcefield.RelationType` |
+| `molrs.ff.Style` | `molrs.ff.forcefield.Style` |
+| `molrs.ff.Type` | `molrs.ff.forcefield.Type` |
+| `molrs.ff.Typifier` | `molrs.ff.typifier.Typifier` |
+| `molrs.ff.assign_cmaps` | `molrs.ff.typifier.assign_cmaps` |
+| `molrs.ff.clpol_polarizability` | `molrs.ff.params.clpol_polarizability` |
+| `molrs.ff.compute_k_ij` | `molrs.ff.scale_lj.compute_k_ij` |
+| `molrs.ff.fragment_scaling_data` | `molrs.ff.scale_lj.fragment_scaling_data` |
+| `molrs.ff.intramolecular_pairs` | `molrs.ff.potential.intramolecular_pairs` |
+| `molrs.ff.potential.protocol.Potential` | `molrs.ff.potential.Potential` |
+| `molrs.ff.read_amber_prmtop_ff` | `molrs.ff.forcefield.read_amber_prmtop_ff` |
+| `molrs.ff.read_forcefield_xml` | `molrs.ff.forcefield.read_forcefield_xml` |
+| `molrs.ff.read_gromacs_system` | `molrs.ff.forcefield.read_gromacs_system` |
+| `molrs.ff.read_gromacs_top_ff` | `molrs.ff.forcefield.read_gromacs_top_ff` |
+| `molrs.ff.read_lammps_cmap` | `molrs.ff.forcefield.read_lammps_cmap` |
+| `molrs.ff.read_lammps_data_coeffs` | `molrs.ff.forcefield.read_lammps_data_coeffs` |
+| `molrs.ff.read_lammps_forcefield` | `molrs.ff.forcefield.read_lammps_forcefield` |
+| `molrs.ff.read_opls_xml` | `molrs.ff.forcefield.read_opls_xml` |
+| `molrs.ff.write_amber_frcmod` | `molrs.ff.forcefield.write_amber_frcmod` |
+| `molrs.ff.write_forcefield_xml` | `molrs.ff.forcefield.write_forcefield_xml` |
+| `molrs.ff.write_gromacs_system` | `molrs.ff.forcefield.write_gromacs_system` |
+| `molrs.ff.write_gromacs_top_ff` | `molrs.ff.forcefield.write_gromacs_top_ff` |
+| `molrs.ff.write_lammps_cmap` | `molrs.ff.forcefield.write_lammps_cmap` |
+| `molrs.ff.write_lammps_data_coeffs` | `molrs.ff.forcefield.write_lammps_data_coeffs` |
+| `molrs.ff.write_lammps_forcefield` | `molrs.ff.forcefield.write_lammps_forcefield` |
+| `molrs.ff.write_lammps_forcefield_str` | `molrs.ff.forcefield.write_lammps_forcefield_str` |
+| `molrs.ff.potential.protocol` | private; `Potential` is `molrs.ff.potential.Potential` |
+| `molrs._lib.TypedPotentials (only path)` | `molrs.ff.potential.TypedPotentials` |
+
+**I/O**
+
+| 0.15 | 0.16 |
+|---|---|
+| `molrs.fields.FieldFormatter` | removed (readers emit canonical names) |
+| `molrs.fields.LammpsFieldFormatter` | removed (readers emit canonical names) |
+| `molrs.fields.PdbFieldFormatter` | removed (readers emit canonical names) |
+| `molrs.io.raw` | removed — every reader in `molrs.io` emits canonical names |
+| `molrs.io.raw.DCDTrajReader` | removed: `molrs.io.read_dcd_trajectory(path)` (a `molrs.io.TrajectoryReader`) |
+| `molrs.io.raw.LAMMPSTrajReader` | removed: `molrs.io.read_lammps_trajectory(path)` (a `molrs.io.TrajectoryReader`) |
+| `molrs.io.raw.TRRTrajReader` | removed: `molrs.io.read_trr_trajectory(path)` (a `molrs.io.TrajectoryReader`) |
+| `molrs.io.raw.XTCTrajReader` | removed: `molrs.io.read_xtc_trajectory(path)` (a `molrs.io.TrajectoryReader`) |
+| `molrs.io.raw.XYZTrajReader` | removed: `molrs.io.read_xyz_trajectory(path)` (a `molrs.io.TrajectoryReader`) |
+| `molrs.io.raw.parse_lammps_log_text` | `molrs.io.parse_lammps_log_text` |
+| `molrs.io.raw.read_amber_inpcrd` | `molrs.io.read_amber_inpcrd` |
+| `molrs.io.raw.read_amber_prmtop` | `molrs.io.read_amber_prmtop` |
+| `molrs.io.raw.read_chgcar` | `molrs.io.read_chgcar` |
+| `molrs.io.raw.read_cube` | `molrs.io.read_cube` |
+| `molrs.io.raw.read_dcd_trajectory` | `molrs.io.read_dcd_trajectory(path).read_all()` |
+| `molrs.io.raw.read_gro` | `molrs.io.read_gro` |
+| `molrs.io.raw.read_gro_trajectory` | `molrs.io.read_gro_trajectory` |
+| `molrs.io.raw.read_lammps_data` | `molrs.io.read_lammps_data` |
+| `molrs.io.raw.read_lammps_log` | `molrs.io.read_lammps_log` |
+| `molrs.io.raw.read_lammps_molecule` | `molrs.io.read_lammps_molecule` |
+| `molrs.io.raw.read_lammps_trajectory` | `molrs.io.read_lammps_trajectory(path).read_all()` |
+| `molrs.io.raw.read_mol2` | `molrs.io.read_mol2` |
+| `molrs.io.raw.read_pdb` | `molrs.io.read_pdb` |
+| `molrs.io.raw.read_pdb_trajectory` | `molrs.io.read_pdb_trajectory` |
+| `molrs.io.raw.read_trr_trajectory` | `molrs.io.read_trr_trajectory(path).read_all()` |
+| `molrs.io.raw.read_xsf` | `molrs.io.read_xsf` |
+| `molrs.io.raw.read_xtc_trajectory` | `molrs.io.read_xtc_trajectory(path).read_all()` |
+| `molrs.io.raw.read_xyz` | `molrs.io.read_xyz` |
+| `molrs.io.raw.read_xyz_trajectory` | `molrs.io.read_xyz_trajectory(path).read_all()` |
+| `molrs.io.raw.write_cube` | `molrs.io.write_cube` |
+| `molrs.io.raw.write_dcd_trajectory` | `molrs.io.write_dcd_trajectory` |
+| `molrs.io.raw.write_gro` | `molrs.io.write_gro` |
+| `molrs.io.raw.write_gro_trajectory` | `molrs.io.write_gro_trajectory` |
+| `molrs.io.raw.write_lammps_data` | `molrs.io.write_lammps_data` |
+| `molrs.io.raw.write_lammps_dump_local` | `molrs.io.write_lammps_dump_local` |
+| `molrs.io.raw.write_lammps_molecule` | `molrs.io.write_lammps_molecule` |
+| `molrs.io.raw.write_lammps_trajectory` | `molrs.io.write_lammps_trajectory` |
+| `molrs.io.raw.write_mol2` | `molrs.io.write_mol2` |
+| `molrs.io.raw.write_pdb` | `molrs.io.write_pdb` |
+| `molrs.io.raw.write_pdb_trajectory` | `molrs.io.write_pdb_trajectory` |
+| `molrs.io.raw.write_trr_trajectory` | `molrs.io.write_trr_trajectory` |
+| `molrs.io.raw.write_xsf` | `molrs.io.write_xsf` |
+| `molrs.io.raw.write_xtc_trajectory` | `molrs.io.write_xtc_trajectory` |
+| `molrs.io.raw.write_xyz` | `molrs.io.write_xyz` |
+| `molrs.io.raw.write_xyz_trajectory` | `molrs.io.write_xyz_trajectory` |
+| `molrs.io.read_frame_bytes` | `molrs.stream.read_frame_bytes` |
+| `molrs.io.write_frame_bytes` | `molrs.stream.write_frame_bytes` |
+| `molrs.io.write_smiles` | removed: `molrs.io.SmilesIR.from_atomistic(mol, **flags).write_smiles()` |
+| `molrs.fields` | removed — the Rust readers emit canonical column names |
+
+**Analysis: `molrs.compute` is flat, as the Rust facade is**
+
+| 0.15 | 0.16 |
+|---|---|
+| `molrs.compute.cluster` | `molrs.compute` (flat; the domain subpackages are gone) |
+| `molrs.compute.cluster.CenterOfMass` | `molrs.compute.CenterOfMass` |
+| `molrs.compute.cluster.CenterOfMassResult` | `molrs.compute.CenterOfMassResult` |
+| `molrs.compute.cluster.Cluster` | `molrs.compute.Cluster` |
+| `molrs.compute.cluster.ClusterCenters` | `molrs.compute.ClusterCenters` |
+| `molrs.compute.cluster.ClusterCentersResult` | `molrs.compute.ClusterCentersResult` |
+| `molrs.compute.cluster.ClusterProperties` | `molrs.compute.ClusterProperties` |
+| `molrs.compute.cluster.ClusterResult` | `molrs.compute.ClusterResult` |
+| `molrs.compute.cluster.GyrationTensor` | `molrs.compute.GyrationTensor` |
+| `molrs.compute.cluster.InertiaTensor` | `molrs.compute.InertiaTensor` |
+| `molrs.compute.cluster.RadiusOfGyration` | `molrs.compute.RadiusOfGyration` |
+| `molrs.compute.density` | `molrs.compute` (flat; the domain subpackages are gone) |
+| `molrs.compute.density.GaussianDensity` | `molrs.compute.GaussianDensity` |
+| `molrs.compute.density.LocalDensity` | `molrs.compute.LocalDensity` |
+| `molrs.compute.density.RDF` | `molrs.compute.RDF` |
+| `molrs.compute.density.RDFResult` | `molrs.compute.RDFResult` |
+| `molrs.compute.density.SpatialDistribution` | `molrs.compute.SpatialDistribution` |
+| `molrs.compute.density.SpatialDistributionResult` | `molrs.compute.SpatialDistributionResult` |
+| `molrs.compute.dielectric` | `molrs.compute` (flat; the domain subpackages are gone) |
+| `molrs.compute.dielectric.Dielectric` | `molrs.compute.Dielectric` |
+| `molrs.compute.diffraction` | `molrs.compute` (flat; the domain subpackages are gone) |
+| `molrs.compute.diffraction.StaticStructureFactorDebye` | `molrs.compute.StaticStructureFactorDebye` |
+| `molrs.compute.distribution` | `molrs.compute` (flat; the domain subpackages are gone) |
+| `molrs.compute.distribution.AngleDistribution` | `molrs.compute.AngleDistribution` |
+| `molrs.compute.distribution.CombinedDistribution` | `molrs.compute.CombinedDistribution` |
+| `molrs.compute.distribution.CombinedDistributionResult` | `molrs.compute.CombinedDistributionResult` |
+| `molrs.compute.distribution.DihedralDistribution` | `molrs.compute.DihedralDistribution` |
+| `molrs.compute.distribution.DistanceDistribution` | `molrs.compute.DistanceDistribution` |
+| `molrs.compute.distribution.DistributionResult` | `molrs.compute.DistributionResult` |
+| `molrs.compute.dynamics` | `molrs.compute` (flat; the domain subpackages are gone) |
+| `molrs.compute.dynamics.Acf` | `molrs.compute.Acf` |
+| `molrs.compute.dynamics.AcfResult` | `molrs.compute.AcfResult` |
+| `molrs.compute.dynamics.VanHove` | `molrs.compute.VanHove` |
+| `molrs.compute.dynamics.VanHoveResult` | `molrs.compute.VanHoveResult` |
+| `molrs.compute.environment` | `molrs.compute` (flat; the domain subpackages are gone) |
+| `molrs.compute.environment.BondOrder` | `molrs.compute.BondOrder` |
+| `molrs.compute.fitting` | `molrs.compute` (flat; the domain subpackages are gone) |
+| `molrs.compute.fitting.CumulativeTrapezoid` | `molrs.compute.CumulativeTrapezoid` |
+| `molrs.compute.fitting.LinearFit` | `molrs.compute.LinearFit` |
+| `molrs.compute.fitting.Plateau` | `molrs.compute.Plateau` |
+| `molrs.compute.hbond` | `molrs.compute` (flat; the domain subpackages are gone) |
+| `molrs.compute.hbond.HBondCriterion` | `molrs.compute.HBondCriterion` |
+| `molrs.compute.hbond.HBonds` | `molrs.compute.HBonds` |
+| `molrs.compute.hbond.HBondsResult` | `molrs.compute.HBondsResult` |
+| `molrs.compute.ml` | `molrs.compute` (flat; the domain subpackages are gone) |
+| `molrs.compute.ml.DescriptorRow` | `molrs.compute.DescriptorRow` |
+| `molrs.compute.ml.KMeans` | `molrs.compute.KMeans` |
+| `molrs.compute.ml.KMeansResult` | `molrs.compute.KMeansResult` |
+| `molrs.compute.ml.Pca2` | `molrs.compute.Pca2` |
+| `molrs.compute.ml.PcaResult` | `molrs.compute.PcaResult` |
+| `molrs.compute.msd` | `molrs.compute` (flat; the domain subpackages are gone) |
+| `molrs.compute.msd.MSD` | `molrs.compute.MSD` |
+| `molrs.compute.msd.MSDResult` | `molrs.compute.MSDResult` |
+| `molrs.compute.msd.MSDTimeSeries` | `molrs.compute.MSDTimeSeries` |
+| `molrs.compute.order` | `molrs.compute` (flat; the domain subpackages are gone) |
+| `molrs.compute.order.Hexatic` | `molrs.compute.Hexatic` |
+| `molrs.compute.order.LegendreReorientation` | `molrs.compute.LegendreReorientation` |
+| `molrs.compute.order.LegendreReorientationResult` | `molrs.compute.LegendreReorientationResult` |
+| `molrs.compute.order.Nematic` | `molrs.compute.Nematic` |
+| `molrs.compute.order.SolidLiquid` | `molrs.compute.SolidLiquid` |
+| `molrs.compute.order.Steinhardt` | `molrs.compute.Steinhardt` |
+| `molrs.compute.pmft` | `molrs.compute` (flat; the domain subpackages are gone) |
+| `molrs.compute.pmft.PMFTXY` | `molrs.compute.PMFTXY` |
+| `molrs.compute.protocol.Compute` | `molrs.compute.Compute` |
+| `molrs.compute.spectroscopy` | `molrs.compute` (flat; the domain subpackages are gone) |
+| `molrs.compute.spectroscopy.DipoleAutocorrelationSpectrum` | `molrs.compute.DipoleAutocorrelationSpectrum` |
+| `molrs.compute.spectroscopy.DipoleRateCrossSpectrum` | `molrs.compute.DipoleRateCrossSpectrum` |
+| `molrs.compute.spectroscopy.EinsteinHelfandSpectrum` | `molrs.compute.EinsteinHelfandSpectrum` |
+| `molrs.compute.spectroscopy.GreenKuboSpectrum` | `molrs.compute.GreenKuboSpectrum` |
+| `molrs.compute.spectroscopy.IRSpectrum` | `molrs.compute.IRSpectrum` |
+| `molrs.compute.spectroscopy.PowerSpectrum` | `molrs.compute.PowerSpectrum` |
+| `molrs.compute.spectroscopy.RamanSpectrum` | `molrs.compute.RamanSpectrum` |
+| `molrs.compute.spectroscopy.ResonanceRamanSpectrum` | `molrs.compute.ResonanceRamanSpectrum` |
+| `molrs.compute.spectroscopy.RoaSpectrum` | `molrs.compute.RoaSpectrum` |
+| `molrs.compute.spectroscopy.VcdSpectrum` | `molrs.compute.VcdSpectrum` |
+| `molrs.compute.spectroscopy.conductivity_sum_rule` | `molrs.compute.conductivity_sum_rule` |
+| `molrs.compute.spectroscopy.kramers_kronig` | `molrs.compute.kramers_kronig` |
+| `molrs.compute.spectroscopy.polarizability_finite_field` | `molrs.compute.polarizability_finite_field` |
+| `molrs.compute.spectroscopy.route_agreement` | `molrs.compute.route_agreement` |
+| `molrs.compute.transport` | `molrs.compute` (flat; the domain subpackages are gone) |
+| `molrs.compute.transport.DebyeFit` | `molrs.compute.DebyeFit` |
+| `molrs.compute.transport.DebyeRelaxation` | `molrs.compute.DebyeRelaxation` |
+| `molrs.compute.transport.DipoleRateCross` | `molrs.compute.DipoleRateCross` |
+| `molrs.compute.transport.EinsteinConductivity` | `molrs.compute.EinsteinConductivity` |
+| `molrs.compute.transport.EinsteinDiffusion` | `molrs.compute.EinsteinDiffusion` |
+| `molrs.compute.transport.GreenKuboConductivity` | `molrs.compute.GreenKuboConductivity` |
+| `molrs.compute.transport.GreenKuboDiffusion` | `molrs.compute.GreenKuboDiffusion` |
+| `molrs.compute.transport.Onsager` | `molrs.compute.Onsager` |
+| `molrs.compute.transport.Persist` | `molrs.compute.Persist` |
+| `molrs.compute.transport.VACF` | `molrs.compute.VACF` |
+| `molrs.compute.voronoi` | `molrs.compute` (flat; the domain subpackages are gone) |
+| `molrs.compute.voronoi.DensityGrid` | `molrs.compute.DensityGrid` |
+| `molrs.compute.voronoi.MolecularMoments` | `molrs.compute.MolecularMoments` |
+| `molrs.compute.voronoi.RadicalVoronoi` | `molrs.compute.RadicalVoronoi` |
+| `molrs.compute.voronoi.VoronoiCells` | `molrs.compute.VoronoiCells` |
+| `molrs.compute.voronoi.VoronoiIntegration` | `molrs.compute.VoronoiIntegration` |
+| `molrs.compute.voronoi.voronoi_domains` | `molrs.compute.voronoi_domains` |
+| `molrs.compute.voronoi.voronoi_voids` | `molrs.compute.voronoi_voids` |
+| `molrs.compute.protocol` | private; `Compute` is `molrs.compute.Compute` |
+
+**Perception, builders, MD**
+
+| 0.15 | 0.16 |
+|---|---|
+| `molrs.md.driver.MD` | `molrs.md.MD` |
+| `molrs.perceive.Coarsener` | `molrs.builder.Coarsener` |
+| `molrs.md.driver` | private (`molrs.md._driver`); `MD` is `molrs.md.MD` |
 
 ### Python: kernels live in `molrs.ff.potential`
 
 `LJCut` moved from `molrs.md` to `molrs.ff.potential` (molpy: `molpy.md.LJCut`
 → `molpy.potential.LJCut`), beside the `Potential` protocol, which `molrs.md`
 no longer re-exports either; nor does it re-export `Potentials`
-(`molrs.ff.Potentials` / `molpy.Potentials`). The integrators still accept all
-of them.
+(`molrs.ff.potential.Potentials` / `molpy.Potentials`). The integrators still
+accept all of them.
 
 New in the same module: `kernel(category, style, atoms, *, charges=None,
 **params)`, the kernel of **any** style the force-field IR prices — a
@@ -1205,8 +1550,7 @@ built-in style: one builder covers every registered style, custom ones
 included.
 
 ```python
-from molrs.ff import Potentials
-from molrs.ff.potential import kernel
+from molrs.ff.potential import Potentials, kernel
 
 pots = Potentials()
 pots.push(kernel("bond", "harmonic", [[0, 1], [1, 2]], k=300.0, r0=1.4))
@@ -1221,7 +1565,7 @@ energy, forces = pots.calc_energy_forces(pos)
 |---|---|
 | `from molrs.md import LJCut, Potential` | `from molrs.ff.potential import LJCut, Potential` |
 | `from molpy.md import LJCut` | `from molpy.potential import LJCut` |
-| `molrs.md.Potentials` | `molrs.ff.Potentials` |
+| `molrs.md.Potentials` | `molrs.ff.potential.Potentials` |
 
 ### From 0.15.0: the 0.15.1 changes
 

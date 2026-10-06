@@ -33,33 +33,33 @@ TYPES = [("t", 20.0, 2.45), ("u", 11.0, 2.2)]
 molrs.ff.ir.register_category("urey_bradley", 3)
 
 
-def _frame(block: str) -> molrs.Frame:
-    atoms = molrs.Block()
+def _frame(block: str) -> molrs.store.Frame:
+    atoms = molrs.store.Block()
     for d, key in enumerate("xyz"):
         atoms.insert(key, XYZ[:, d].copy())
     atoms.insert("type", ["A"] * 4)
-    rows = molrs.Block()
+    rows = molrs.store.Block()
     for key, col in (("atomi", [0, 1]), ("atomj", [1, 2]), ("atomk", [2, 3])):
         rows.insert(key, np.array(col, dtype=np.uint32))
     rows.insert("type", [name for name, _, _ in TYPES])
-    frame = molrs.Frame()
+    frame = molrs.store.Frame()
     frame["atoms"] = atoms
     frame[block] = rows
     return frame
 
 
 def _reference() -> tuple[float, np.ndarray]:
-    ff = molrs.ff.ForceField("charmm")
+    ff = molrs.ff.forcefield.ForceField("charmm")
     a = ff.def_style("atom", "full").def_type("A", mass=12.0)
     style = ff.def_style("angle", "charmm")
     for name, k_ub, r_ub in TYPES:
         style.def_type(name, a, a, a, k=0.0, theta0=109.5, k_ub=k_ub, r_ub=r_ub)
     frame = _frame("angles")
-    return molrs.ff.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
+    return molrs.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
 
 
-def _ub_ff(category: str = "urey_bradley") -> molrs.ff.ForceField:
-    ff = molrs.ff.ForceField("ub")
+def _ub_ff(category: str = "urey_bradley") -> molrs.ff.forcefield.ForceField:
+    ff = molrs.ff.forcefield.ForceField("ub")
     a = ff.def_style("atom", "full").def_type("A", mass=12.0)
     style = ff.def_style(category, "spring", {"expression": UB_EXPRESSION})
     for name, k_ub, r_ub in TYPES:
@@ -67,11 +67,11 @@ def _ub_ff(category: str = "urey_bradley") -> molrs.ff.ForceField:
     return ff
 
 
-def _assert_prices_like_the_reference(ff: molrs.ff.ForceField) -> None:
+def _assert_prices_like_the_reference(ff: molrs.ff.forcefield.ForceField) -> None:
     e_ref, f_ref = _reference()
     assert e_ref > 0.0
     frame = _frame("urey_bradleys")
-    e, f = molrs.ff.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
+    e, f = molrs.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
     assert e == pytest.approx(e_ref, rel=1e-12)
     np.testing.assert_allclose(f, f_ref, rtol=0, atol=1e-12 * np.abs(f_ref).max())
 
@@ -79,22 +79,22 @@ def _assert_prices_like_the_reference(ff: molrs.ff.ForceField) -> None:
 def test_a_registered_category_is_a_relation_style() -> None:
     ff = _ub_ff()
     style = ff.get_style("urey_bradley", "spring")
-    assert isinstance(style, molrs.ff.RelationStyle)
+    assert isinstance(style, molrs.ff.forcefield.RelationStyle)
     assert (style.category, style.arity) == ("urey_bradley", 3)
     assert style.params == {"expression": UB_EXPRESSION}
     t = style.get_type_by_name("t")
-    assert isinstance(t, molrs.ff.RelationType)
+    assert isinstance(t, molrs.ff.forcefield.RelationType)
     assert (t["k_ub"], t["r_ub"]) == (20.0, 2.45)
     assert [e.name for e in t.endpoints] == ["A", "A", "A"]
     assert style in ff.styles
     assert ff.get_styles("urey_bradley") == [style]
-    assert ff.get_styles(molrs.ff.RelationStyle) == [style]
-    assert len(ff.get_types(molrs.ff.RelationType)) == 2
+    assert ff.get_styles(molrs.ff.forcefield.RelationStyle) == [style]
+    assert len(ff.get_types(molrs.ff.forcefield.RelationType)) == 2
     assert len(ff.get_types("urey_bradley")) == 2
 
 
 def test_def_type_takes_exactly_the_arity_of_endpoints() -> None:
-    ff = molrs.ff.ForceField("t")
+    ff = molrs.ff.forcefield.ForceField("t")
     a = ff.def_style("atom", "full").def_type("A")
     style = ff.def_style("urey_bradley", "spring")
     with pytest.raises(ValueError, match="expected 3 endpoints, got 2"):
@@ -108,18 +108,18 @@ def test_a_registered_category_prices_like_angle_charmm_without_k() -> None:
 
 
 def test_a_built_in_relation_category_needs_no_registration() -> None:
-    ff = molrs.ff.ForceField("drude")
+    ff = molrs.ff.forcefield.ForceField("drude")
     atoms = ff.def_style("atom", "full")
     c, d = atoms.def_type("C"), atoms.def_type("D")
     style = ff.def_style("drude", "harmonic")
-    assert isinstance(style, molrs.ff.RelationStyle)
+    assert isinstance(style, molrs.ff.forcefield.RelationStyle)
     assert style.arity == 2
     style.def_type("C-D", c, d, k=500.0)
     assert ff.get_style("drude", "harmonic") == style
 
 
 def test_an_unknown_category_is_refused() -> None:
-    ff = molrs.ff.ForceField("t")
+    ff = molrs.ff.forcefield.ForceField("t")
     with pytest.raises(ValueError, match="unknown"):
         ff.def_style("bespoke", "x")
     with pytest.raises(ValueError, match="unknown"):
@@ -134,9 +134,9 @@ def test_a_relation_style_round_trips_through_a_section_a_store_and_a_pickle(
     assert list(table["k_ub"]) == [20.0, 11.0]
     path = tmp_path / "ff.mrec"
     molrs.io.write_mrec_forcefield(path, ff)
-    back = molrs.ff.ForceField.from_section(molrs.io.read_mrec_forcefield(path))
+    back = molrs.ff.forcefield.ForceField.from_section(molrs.io.read_mrec_forcefield(path))
     style = back.get_style("urey_bradley", "spring")
-    assert isinstance(style, molrs.ff.RelationStyle)
+    assert isinstance(style, molrs.ff.forcefield.RelationStyle)
     assert style.params == {"expression": UB_EXPRESSION}
     _assert_prices_like_the_reference(back)
     _assert_prices_like_the_reference(pickle.loads(pickle.dumps(ff)))
@@ -158,16 +158,16 @@ def _unregistered_section(expression: str | None) -> molrs.io.mrec.ForceFieldSec
 
 
 def test_an_unregistered_category_is_kept_and_refused_by_name_without_an_expression() -> None:
-    back = molrs.ff.ForceField.from_section(_unregistered_section(None))
+    back = molrs.ff.forcefield.ForceField.from_section(_unregistered_section(None))
     style = back.get_style("bespoke", "spring")
-    assert isinstance(style, molrs.ff.RelationStyle)
+    assert isinstance(style, molrs.ff.forcefield.RelationStyle)
     assert style.arity == 3
     assert [s.category for s in back.styles] == ["atom", "bespoke"]
     assert len(back.get_types("bespoke")) == 2
     assert back.to_section().table("bespoke", "spring") is not None
     pickled = pickle.loads(pickle.dumps(back))
     assert pickled.get_style("bespoke", "spring").arity == 3
-    compiler = molrs.ff.PotentialCompiler(back)
+    compiler = molrs.ff.potential.PotentialCompiler(back)
     with pytest.raises(ValueError, match="no kernel for bespoke `spring`"):
         compiler.compile(_frame("bespokes"))
     # Without its block there is nothing to price.
@@ -175,8 +175,8 @@ def test_an_unregistered_category_is_kept_and_refused_by_name_without_an_express
 
 
 def test_an_unregistered_category_with_an_expression_is_priced_by_it() -> None:
-    back = molrs.ff.ForceField.from_section(_unregistered_section(UB_EXPRESSION))
+    back = molrs.ff.forcefield.ForceField.from_section(_unregistered_section(UB_EXPRESSION))
     e_ref, _ = _reference()
     frame = _frame("bespokes")
-    e = molrs.ff.PotentialCompiler(back).compile(frame).calc_energy(frame)
+    e = molrs.ff.potential.PotentialCompiler(back).compile(frame).calc_energy(frame)
     assert e == pytest.approx(e_ref, rel=1e-12)

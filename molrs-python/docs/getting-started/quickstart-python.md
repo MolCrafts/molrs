@@ -81,7 +81,7 @@ periodic simulation cell.
 ```python
 import numpy as np
 
-frame.box = molrs.Box.cube(
+frame.box = molrs.spatial.Box.cube(
     20.0,
     pbc=np.array([True, True, True], dtype=np.bool_),
 )
@@ -104,14 +104,14 @@ points = np.column_stack(
     [atoms["x"], atoms["y"], atoms["z"]]
 ).astype(np.float64, copy=False)
 
-nl = molrs.NeighborList(6.0)
+nl = molrs.spatial.NeighborList(6.0)
 nl.build(points, frame.box)
 neigh = nl.neighbors()
 
 print("pairs:", neigh.n_pairs)
 print("first pairs:", neigh.query_point_indices()[:5], neigh.point_indices()[:5])
 
-from molrs.compute.density import RDF
+from molrs.compute import RDF
 rdf = RDF(64, 6.0)
 rdf_result = rdf.compute(frame, neigh)
 print("rdf bins:", len(rdf_result.bin_centers))
@@ -131,7 +131,7 @@ and `PotentialCompiler` turns the force field and the typed frame into
 potentials that can be evaluated.
 
 ```python
-typifier = molrs.ff.MMFF94Typifier()
+typifier = molrs.ff.typifier.MMFF94Typifier()
 typed = typifier.typify(mol3d)
 typed_frame = typed.to_frame()
 print("typed blocks:", typed_frame.keys())
@@ -139,8 +139,8 @@ print("typed blocks:", typed_frame.keys())
 # forcefield() is a copy of exactly the types typify assigned.
 ff = typifier.forcefield()
 # Non-bonded terms need an explicit pairs block; the caller owns it.
-typed_frame["pairs"] = molrs.ff.intramolecular_pairs(typed_frame, ff)
-potentials = molrs.ff.PotentialCompiler(ff).compile(typed_frame)
+typed_frame["pairs"] = molrs.ff.potential.intramolecular_pairs(typed_frame, ff)
+potentials = molrs.ff.potential.PotentialCompiler(ff).compile(typed_frame)
 
 energy, forces = potentials.calc_energy_forces(typed_frame)
 print("energy:", energy)

@@ -1,34 +1,31 @@
 """In-process MD: one ``Potential`` concept, Rust integrators, the ``MD`` driver.
 
-The user-facing spelling of everything here is ``molpy.md`` (a verbatim
-re-export); ``molrs.md`` is the engine-side home of the same objects.
-
 End to end (Ar-like LJ dimer)::
 
     import numpy as np
-    from molpy import Box, md
-    from molpy.potential import LJCut
+    from molrs import md
+    from molrs.ff.potential import LJCut
+    from molrs.spatial import Box, NeighborList, VerletSkin
 
     pos = np.array([[0.0, 0.0, 0.0], [3.8, 0.0, 0.0]])
     rc, skin = 7.5, 1.0
     # search cutoff = rc + skin (what the engine indexes);
     # force cutoff = rc (what the potential sees); skin is the rebuild buffer.
-    nl = md.VerletSkin(md.NeighborList(rc + skin), rc, pos, Box.cubic(20.0), skin=skin)
+    nl = VerletSkin(NeighborList(rc + skin), rc, pos, Box.cube(20.0), skin=skin)
     eps = 0.238  # caller units; MD does not convert
     vv = md.VelocityVerlet(1.0, potential=LJCut(eps, 3.405, rc),
                            neighbors=nl, mass=np.full(2, 39.948))
     state = vv.initial(pos, np.zeros_like(pos))
     state = vv.advance_n(state, 100)
 
-(Engine-side, ``NeighborList`` / ``VerletSkin`` live at the molrs top level —
-one spelling per namespace.) The integrator owns the neighbour loop: it runs
-the skin's rebuild policy and feeds fresh pairs to the nonbond potential;
-Python never does pair bookkeeping.
+The integrator owns the neighbour loop: it runs the skin's rebuild policy and
+feeds fresh pairs to the nonbond potential; Python never does pair
+bookkeeping.
 
 Units contract — the engine is **unit-agnostic**. Take constants from
-``molpy.UnitPreset`` (engine path ``molrs.UnitPreset``)::
+:class:`molrs.units.UnitPreset`::
 
-    kb = molpy.UnitPreset("real").boltzmann()
+    kb = molrs.units.UnitPreset("real").boltzmann()
     md.MaxwellBoltzmann(kb * 300.0, seed=0)
     md.MD().run(frame, n, dt=dt, kb=kb, thermo=100)
 
@@ -44,7 +41,7 @@ subclass :class:`molrs.ff.potential.Potential`::
 ForceField + Frame runs go through the :class:`MD` driver::
 
     md.MD().set_forcefield(ff).set_neighbors(cutoff=rc, skin=2.0).run(
-        frame, 1000, dt=1.0, kb=molpy.UnitPreset("real").boltzmann()
+        frame, 1000, dt=1.0, kb=molrs.units.UnitPreset("real").boltzmann()
     )
 
 Precision: ``MD(dtype=np.float64)`` is the only entry. ``np.float32`` / mixed
@@ -60,7 +57,9 @@ MDState = _md.MDState
 MaxwellBoltzmann = _md.MaxwellBoltzmann
 VelocityVerlet = _md.VelocityVerlet
 
-from .driver import MD
+from ._driver import MD
+
+MD.__module__ = __name__
 
 __all__ = [
     "MD",

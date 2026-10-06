@@ -246,41 +246,41 @@ ENDPOINTS = ("atomi", "atomj", "atomk", "atoml")
 
 
 def frame(xyz: np.ndarray, types: list[str], block: str | None = None,
-          rows: list[tuple[int, ...]] = (), row_types: list[str] = ()) -> molrs.Frame:
+          rows: list[tuple[int, ...]] = (), row_types: list[str] = ()) -> molrs.store.Frame:
     """Atoms of ``types`` at ``xyz`` (masses, no charge, in a box past every
     atom) and the terms ``rows`` in ``block``."""
     n = len(xyz)
-    atoms = molrs.Block()
+    atoms = molrs.store.Block()
     for d, key in enumerate("xyz"):
         atoms.insert(key, np.ascontiguousarray(xyz[:, d]))
     atoms.insert("type", list(types))
     atoms.insert("mass", np.array([MASSES[t] for t in types]))
     atoms.insert("charge", np.zeros(n))
     atoms.insert("mol_id", np.ones(n, dtype=np.uint32))
-    out = molrs.Frame()
+    out = molrs.store.Frame()
     out["atoms"] = atoms
     if block is not None:
-        terms = molrs.Block()
+        terms = molrs.store.Block()
         for i, key in enumerate(ENDPOINTS[: len(rows[0])]):
             terms.insert(key, np.array([r[i] for r in rows], dtype=np.uint32))
         terms.insert("type", list(row_types))
         out[block] = terms
-    out.box = molrs.Box.cube(100.0, origin=np.full(3, -50.0), pbc=np.zeros(3, dtype=bool))
+    out.box = molrs.spatial.Box.cube(100.0, origin=np.full(3, -50.0), pbc=np.zeros(3, dtype=bool))
     return out
 
 
-def bead_frame(xyz: np.ndarray = BEADS) -> molrs.Frame:
+def bead_frame(xyz: np.ndarray = BEADS) -> molrs.store.Frame:
     rows = [(i, i + 1) for i in range(len(xyz) - 1)]
     return frame(xyz, ["B"] * len(xyz), "bonds", rows, ["B-B"] * len(rows))
 
 
-def field(name: str, units: str) -> tuple[molrs.ff.ForceField, dict]:
-    ff = molrs.ff.ForceField(name, units=units)
+def field(name: str, units: str) -> tuple[molrs.ff.forcefield.ForceField, dict]:
+    ff = molrs.ff.forcefield.ForceField(name, units=units)
     atoms = ff.def_style("atom", "full")
     return ff, {t: atoms.def_type(t, mass=m, charge=0.0) for t, m in MASSES.items()}
 
 
-def fene_ff(style: str, **row: float) -> molrs.ff.ForceField:
+def fene_ff(style: str, **row: float) -> molrs.ff.forcefield.ForceField:
     ff, t = field("beads", "lj")
     params = {"k": K, "r0": R0, "epsilon": EPS, "sigma": SIG} | row
     params = {key: v for key, v in params.items() if v is not None}
@@ -288,7 +288,7 @@ def fene_ff(style: str, **row: float) -> molrs.ff.ForceField:
     return ff
 
 
-def smooth_ff(style: str) -> molrs.ff.ForceField:
+def smooth_ff(style: str) -> molrs.ff.forcefield.ForceField:
     ff, t = field("smooth", "real")
     pair = ff.def_style("pair", style, {"cutoff": SMOOTH_RC})
     for name, (eps, sigma) in SMOOTH_ROWS.items():
@@ -296,15 +296,15 @@ def smooth_ff(style: str) -> molrs.ff.ForceField:
     return ff
 
 
-def smooth_frame(xyz: np.ndarray) -> molrs.Frame:
+def smooth_frame(xyz: np.ndarray) -> molrs.store.Frame:
     """The six atoms at ``xyz`` and their ``pairs`` list: every pair, none
     bonded."""
     f = frame(xyz, SMOOTH_TYPES)
-    f["pairs"] = molrs.ff.intramolecular_pairs(f)
+    f["pairs"] = molrs.ff.potential.intramolecular_pairs(f)
     return f
 
 
-def ub_ff() -> molrs.ff.ForceField:
+def ub_ff() -> molrs.ff.forcefield.ForceField:
     ff, t = field("ub", "real")
     style = ff.def_style("urey_bradley", "proof")
     for _, name, k_ub, r_ub in UB_ROWS:
@@ -312,13 +312,13 @@ def ub_ff() -> molrs.ff.ForceField:
     return ff
 
 
-def ub_frame(xyz: np.ndarray, block: str = "urey_bradleys") -> molrs.Frame:
+def ub_frame(xyz: np.ndarray, block: str = "urey_bradleys") -> molrs.store.Frame:
     return frame(xyz, ["A", "B", "B", "A"], block, [r[0] for r in UB_ROWS],
                  [r[1] for r in UB_ROWS])
 
 
-def price(ff: molrs.ff.ForceField, f: molrs.Frame) -> tuple[float, np.ndarray]:
-    e, forces = molrs.ff.PotentialCompiler(ff).compile(f).calc_energy_forces(f)
+def price(ff: molrs.ff.forcefield.ForceField, f: molrs.store.Frame) -> tuple[float, np.ndarray]:
+    e, forces = molrs.ff.potential.PotentialCompiler(ff).compile(f).calc_energy_forces(f)
     return float(e), np.asarray(forces)
 
 
@@ -349,8 +349,8 @@ def fene_analytic(xyz: np.ndarray) -> tuple[float, np.ndarray]:
 # ---------------------------------------------------------------------------
 
 
-def lammps_cases() -> dict[str, list[tuple[molrs.ff.ForceField, molrs.Frame,
-                                           molrs.ff.ForceField, molrs.Frame, str]]]:
+def lammps_cases() -> dict[str, list[tuple[molrs.ff.forcefield.ForceField, molrs.store.Frame,
+                                           molrs.ff.forcefield.ForceField, molrs.store.Frame, str]]]:
     """Per case and configuration: what molrs prices (style, frame), and the
     deck LAMMPS prices (its force field, frame, units)."""
     out = {"fene": [], "smooth": [], "urey_bradley": []}
@@ -387,7 +387,7 @@ def test_write_lammps_inputs() -> None:
         out.mkdir(parents=True, exist_ok=True)
         tsv = []
         for k, (ff, f, deck, deck_frame, units) in enumerate(configs):
-            text = molrs.ff.write_lammps_forcefield_str(deck, deck_frame, precision=17,
+            text = molrs.ff.forcefield.write_lammps_forcefield_str(deck, deck_frame, precision=17,
                                                          units=units)
             lines = text.splitlines(keepends=True)
             (out / "pre.lmp").write_text("".join(l for l in lines if l.startswith("units")))
@@ -418,7 +418,7 @@ def pinned() -> dict[tuple[str, int], tuple[float, np.ndarray]]:
     return {key: (pe[key], np.array(forces[key])) for key in pe}
 
 
-def against_lammps(case: str, ff_of: Callable[[molrs.ff.ForceField], molrs.ff.ForceField]
+def against_lammps(case: str, ff_of: Callable[[molrs.ff.forcefield.ForceField], molrs.ff.forcefield.ForceField]
                    = lambda ff: ff) -> float:
     """The worst relative error of molrs (``ff_of`` the case's force field)
     against the pinned LAMMPS numbers of ``case``, every configuration."""
@@ -461,35 +461,35 @@ def test_a_numpy_kernel_is_the_expression() -> None:
 
 
 def test_fene_is_lammps_bond_style_fene() -> None:
-    deck = molrs.ff.write_lammps_forcefield_str(fene_ff("fene/proof"), bead_frame(),
+    deck = molrs.ff.forcefield.write_lammps_forcefield_str(fene_ff("fene/proof"), bead_frame(),
                                                 units="lj")
     assert "bond_style fene\n" in deck
     (coeff,) = [l for l in deck.splitlines() if l.startswith("bond_coeff B-B ")]
     assert [float(v) for v in coeff.split()[2:]] == [30.0, 1.5, 1.0, 1.0]
     assert against_lammps("fene") <= 1e-10
 
-    def numpy_twin(ff: molrs.ff.ForceField) -> molrs.ff.ForceField:
+    def numpy_twin(ff: molrs.ff.forcefield.ForceField) -> molrs.ff.forcefield.ForceField:
         return fene_ff("fene/proof-np")
 
     assert against_lammps("fene", numpy_twin) <= 1e-10
 
 
-def typed_energy_forces(ff: molrs.ff.ForceField, f: molrs.Frame,
+def typed_energy_forces(ff: molrs.ff.forcefield.ForceField, f: molrs.store.Frame,
                         xyz: np.ndarray) -> tuple[float, np.ndarray]:
     """The neighbour-driven door: ``compile_typed`` moved into an integrator
     over a neighbour list past every pair, and its first force call."""
     from molrs.md import VelocityVerlet
 
-    box = molrs.Box.cube(100.0, origin=np.full(3, -50.0), pbc=np.ones(3, dtype=bool))
-    skin = molrs.VerletSkin(molrs.NeighborList(30.0), 29.0, xyz, box, skin=1.0)
-    vv = VelocityVerlet(1.0, potential=molrs.ff.PotentialCompiler(ff).compile_typed(f),
+    box = molrs.spatial.Box.cube(100.0, origin=np.full(3, -50.0), pbc=np.ones(3, dtype=bool))
+    skin = molrs.spatial.VerletSkin(molrs.spatial.NeighborList(30.0), 29.0, xyz, box, skin=1.0)
+    vv = VelocityVerlet(1.0, potential=molrs.ff.potential.PotentialCompiler(ff).compile_typed(f),
                         neighbors=skin, mass=np.ones(len(xyz)))
     state = vv.initial(xyz, np.zeros_like(xyz))
     return float(state.energy), np.asarray(state.forces)
 
 
 def test_a_python_pair_style_is_lammps_lj_smooth_linear_at_both_doors() -> None:
-    deck = molrs.ff.write_lammps_forcefield_str(smooth_ff("lj/smooth/linear/proof"),
+    deck = molrs.ff.forcefield.write_lammps_forcefield_str(smooth_ff("lj/smooth/linear/proof"),
                                                 frame(SMOOTH_XYZ, SMOOTH_TYPES), units="real")
     (style,) = [l.split() for l in deck.splitlines() if l.startswith("pair_style ")]
     assert style[1] == "lj/smooth/linear" and float(style[2]) == SMOOTH_RC, deck
@@ -509,7 +509,7 @@ def test_a_python_pair_style_is_lammps_lj_smooth_linear_at_both_doors() -> None:
     print(f"MEASURED smooth compile_typed vs compile: {worst_doors:.1e}")
     assert against_lammps("smooth") <= 1e-10
 
-    def numpy_twin(ff: molrs.ff.ForceField) -> molrs.ff.ForceField:
+    def numpy_twin(ff: molrs.ff.forcefield.ForceField) -> molrs.ff.forcefield.ForceField:
         return smooth_ff("lj/smooth/linear/proof-np")
 
     assert against_lammps("smooth", numpy_twin) <= 1e-10
@@ -533,23 +533,23 @@ FRESH = textwrap.dedent(
 
     path, frames = sys.argv[1], json.loads(sys.argv[2])
     registered = [(s.category, s.name) for s in molrs.ff.ir.styles() if not s.builtin]
-    ff = molrs.ff.ForceField.from_section(molrs.io.read_mrec_forcefield(path))
+    ff = molrs.ff.forcefield.ForceField.from_section(molrs.io.read_mrec_forcefield(path))
     out = {"registered": registered, "styles": [[s.category, s.name] for s in ff.styles]}
     for name, spec in frames.items():
-        f = molrs.Frame()
-        atoms = molrs.Block()
+        f = molrs.store.Frame()
+        atoms = molrs.store.Block()
         xyz = np.array(spec["xyz"])
         for d, key in enumerate("xyz"):
             atoms.insert(key, np.ascontiguousarray(xyz[:, d]))
         atoms.insert("type", spec["types"])
         f["atoms"] = atoms
-        terms = molrs.Block()
+        terms = molrs.store.Block()
         for i, key in enumerate(("atomi", "atomj", "atomk", "atoml")[: len(spec["rows"][0])]):
             terms.insert(key, np.array([r[i] for r in spec["rows"]], dtype=np.uint32))
         terms.insert("type", spec["row_types"])
         f[spec["block"]] = terms
         try:
-            e, forces = molrs.ff.PotentialCompiler(ff).compile(f).calc_energy_forces(f)
+            e, forces = molrs.ff.potential.PotentialCompiler(ff).compile(f).calc_energy_forces(f)
             out[name] = {"e": float(e).hex(), "f": [float(v).hex() for v in np.ravel(forces)]}
         except ValueError as err:
             out[name] = {"error": type(err).__name__, "message": str(err),
@@ -559,7 +559,7 @@ FRESH = textwrap.dedent(
 )
 
 
-def everything() -> tuple[molrs.ff.ForceField, dict[str, dict]]:
+def everything() -> tuple[molrs.ff.forcefield.ForceField, dict[str, dict]]:
     """A force field holding every kind of extension — an expression style
     whose instance states no expression (the registry's is written), a
     category from Python, a callable-only array style — and one frame per
@@ -584,7 +584,7 @@ def everything() -> tuple[molrs.ff.ForceField, dict[str, dict]]:
     return ff, frames
 
 
-def spec_frame(spec: dict) -> molrs.Frame:
+def spec_frame(spec: dict) -> molrs.store.Frame:
     return frame(np.array(spec["xyz"]), spec["types"], spec["block"],
                  [tuple(r) for r in spec["rows"]], spec["row_types"])
 
@@ -666,7 +666,7 @@ def _gromacs(tmp: Path) -> None:
     ff.def_style("bond", "fene/proof").def_type(
         "B-B", t["B"], t["B"], k=K, r0=R0, epsilon=EPS, sigma=SIG
     )
-    molrs.ff.write_gromacs_top_ff(tmp / "x.top", ff)
+    molrs.ff.forcefield.write_gromacs_top_ff(tmp / "x.top", ff)
 
 
 REFUSALS = [
@@ -744,7 +744,7 @@ def test_an_array_param_style_is_hand_linear_interpolation_and_round_trips(tmp_p
     column = section.table("dihedral", "table/linear")["table"]
     assert column.dtype == np.float64 and column.shape == (1, len(TABLE))
     assert column.tobytes() == TABLE.tobytes()
-    back = molrs.ff.ForceField.from_section(section)
+    back = molrs.ff.forcefield.ForceField.from_section(section)
     f0 = spec_frame(frames["table"])
     assert price(back, f0)[0].hex() == price(ff, f0)[0].hex()
 

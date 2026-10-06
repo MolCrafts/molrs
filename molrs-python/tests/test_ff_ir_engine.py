@@ -32,19 +32,19 @@ def registered() -> Iterator[list[tuple[str, str]]]:
             pass
 
 
-def chain(style: str) -> tuple[molrs.ff.ForceField, molrs.Frame]:
-    atoms = molrs.Block()
+def chain(style: str) -> tuple[molrs.ff.forcefield.ForceField, molrs.store.Frame]:
+    atoms = molrs.store.Block()
     for d, key in enumerate("xyz"):
         atoms.insert(key, CHAIN[:, d].copy())
     atoms.insert("type", ["B"] * len(CHAIN))
-    bonds = molrs.Block()
+    bonds = molrs.store.Block()
     bonds.insert("atomi", np.array([0, 1], dtype=np.uint32))
     bonds.insert("atomj", np.array([1, 2], dtype=np.uint32))
     bonds.insert("type", ["B-B", "B-B"])
-    frame = molrs.Frame()
+    frame = molrs.store.Frame()
     frame["atoms"] = atoms
     frame["bonds"] = bonds
-    ff = molrs.ff.ForceField("beads", units="real")
+    ff = molrs.ff.forcefield.ForceField("beads", units="real")
     b = ff.def_style("atom", "full").def_type("B", mass=1.0)
     ff.def_style("bond", style).def_type(
         "B-B", b, b, k=30.0, r0=1.5, epsilon=1.0, sigma=1.0
@@ -52,8 +52,8 @@ def chain(style: str) -> tuple[molrs.ff.ForceField, molrs.Frame]:
     return ff, frame
 
 
-def energy(ff: molrs.ff.ForceField, frame: molrs.Frame) -> float:
-    return molrs.ff.PotentialCompiler(ff).compile(frame).calc_energy(frame)
+def energy(ff: molrs.ff.forcefield.ForceField, frame: molrs.store.Frame) -> float:
+    return molrs.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy(frame)
 
 
 def test_a_positional_style_writes_and_reads_as_its_lammps_style(
@@ -66,12 +66,12 @@ def test_a_positional_style_writes_and_reads_as_its_lammps_style(
     (info,) = [s for s in ir.styles("bond") if s.name == "fene/py"]
     assert info.lammps == "positional:fene"
     ff, frame = chain("fene/py")
-    text = molrs.ff.write_lammps_forcefield_str(ff, frame)
+    text = molrs.ff.forcefield.write_lammps_forcefield_str(ff, frame)
     assert "bond_style fene\n" in text
     assert "bond_coeff B-B 30.000000 1.500000 1.000000 1.000000\n" in text
     path = tmp_path / "fene.ff"
     path.write_text(text)
-    back = molrs.ff.read_lammps_forcefield(path)
+    back = molrs.ff.forcefield.read_lammps_forcefield(path)
     assert back.get_style("bond", "fene/py") is not None
     assert energy(back, frame) == pytest.approx(energy(ff, frame), rel=1e-12)
 
@@ -90,10 +90,10 @@ def test_without_a_lammps_form_lammps_refuses_by_name(registered) -> None:
     registered.append(("bond", "fene/none"))
     ff, frame = chain("fene/none")
     with pytest.raises(ValueError, match=r"LAMMPS has no form for bond `fene/none`.*LEPTON"):
-        molrs.ff.write_lammps_forcefield_str(ff, frame)
+        molrs.ff.forcefield.write_lammps_forcefield_str(ff, frame)
     # A form given afterwards: the style writes.
     ir.register_engine_form("lammps", "bond", "fene/none", "positional:fene")
-    assert "bond_style fene\n" in molrs.ff.write_lammps_forcefield_str(ff, frame)
+    assert "bond_style fene\n" in molrs.ff.forcefield.write_lammps_forcefield_str(ff, frame)
 
 
 def test_register_engine_form_refuses_by_variant(registered) -> None:
