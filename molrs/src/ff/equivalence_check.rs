@@ -618,7 +618,7 @@ pub(crate) fn coulomb_of(source: &Source, ir: F, engine: &str) -> F {
 }
 
 /// The Coulomb constant `ff` states.
-fn coulomb(ff: &ForceField) -> F {
+pub(crate) fn coulomb(ff: &ForceField) -> F {
     ["coul/cut", "coul/charmm"]
         .iter()
         .find_map(|s| ff.get_style("pair", s))
