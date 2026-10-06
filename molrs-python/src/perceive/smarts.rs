@@ -50,14 +50,6 @@ impl PySmartsMatch {
         self.mapping.clone()
     }
 
-    fn as_list(&self) -> Vec<u64> {
-        self.atoms.clone()
-    }
-
-    fn as_dict(&self) -> HashMap<u32, u64> {
-        self.mapping.clone()
-    }
-
     fn __repr__(&self) -> String {
         format!(
             "SmartsMatch(atoms={:?}, mapping={:?})",
@@ -75,9 +67,8 @@ impl PySmartsMatch {
 /// :class:`SmartsMatch`.
 ///
 /// Daylight atom maps (``[C:1]``) are parsed and carried through but add **no**
-/// match constraint (they are "ignored in molecule SMARTS"); pass
-/// ``mapped=True`` to :meth:`find_matches` for the legacy shortcut returning
-/// ``{map_number: atom_handle}`` dictionaries.
+/// match constraint (they are "ignored in molecule SMARTS"); each match's
+/// :attr:`SmartsMatch.mapping` is its ``{map_number: atom_handle}`` dict.
 ///
 /// Examples
 /// --------
@@ -122,21 +113,17 @@ impl PySmartsPattern {
         )
     }
 
-    /// All matches. By default each match is a :class:`SmartsMatch`; with
-    /// ``mapped=True`` each match is returned as a ``{atom_map_number:
-    /// atom_handle}`` dict. ``labels`` supplies the ``%LABEL`` context, ``root``
-    /// pins query atom 0 to one atom handle, and ``limit`` stops after N
-    /// embeddings.
-    #[pyo3(signature = (mol, *, labels=None, root=None, mapped=false, limit=None))]
+    /// All matches, each a :class:`SmartsMatch`. ``labels`` supplies the
+    /// ``%LABEL`` context, ``root`` pins query atom 0 to one atom handle, and
+    /// ``limit`` stops after N embeddings.
+    #[pyo3(signature = (mol, *, labels=None, root=None, limit=None))]
     fn find_matches(
         &self,
-        py: Python<'_>,
         mol: &PyAtomistic,
         labels: Option<HashMap<u64, String>>,
         root: Option<u64>,
-        mapped: bool,
         limit: Option<usize>,
-    ) -> PyResult<Py<PyAny>> {
+    ) -> Vec<PySmartsMatch> {
         let core_labels = labels.map(|labels| {
             labels
                 .into_iter()
@@ -151,20 +138,7 @@ impl PySmartsPattern {
                 limit,
             },
         );
-        if mapped {
-            let out: Vec<HashMap<u32, u64>> = matches
-                .iter()
-                .map(|m| {
-                    self.inner
-                        .mapped(m)
-                        .into_iter()
-                        .map(|(label, atom)| (label, node_to_u64(atom)))
-                        .collect()
-                })
-                .collect();
-            return Ok(out.into_pyobject(py)?.into_any().unbind());
-        }
-        let out: Vec<PySmartsMatch> = matches
+        matches
             .iter()
             .map(|m| PySmartsMatch {
                 atoms: m.atoms().iter().map(|&atom| node_to_u64(atom)).collect(),
@@ -175,8 +149,7 @@ impl PySmartsPattern {
                     .map(|(label, atom)| (label, node_to_u64(atom)))
                     .collect(),
             })
-            .collect();
-        Ok(out.into_pyobject(py)?.into_any().unbind())
+            .collect()
     }
 
     /// Number of query atoms in the pattern.
@@ -244,7 +217,7 @@ impl PySmartsPattern {
 /// >>> rxn.forming_bonds                 # [(1, 2)]
 /// >>> binding = {}                       # match each reactant component ...
 /// >>> for pat in rxn.reactant_patterns:  # ... and merge the map->atom dicts
-/// ...     binding.update(pat.find_matches(mol, mapped=True)[0])
+/// ...     binding.update(pat.find_matches(mol)[0].mapping)
 /// >>> rxn.apply(mol, binding)            # edits `mol` in place
 #[pyclass(module = "molrs.perceive", name = "Reaction", subclass)]
 pub struct PyReaction {

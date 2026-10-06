@@ -29,8 +29,6 @@ overlapping groups. Mapping matched groups onto the sites of a new
 :class:`molrs.builder.Coarsener`.
 """
 
-from __future__ import annotations
-
 from ._lib import (
     Perceive,
     Reaction,

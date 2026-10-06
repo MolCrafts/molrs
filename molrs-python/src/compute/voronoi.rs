@@ -283,8 +283,12 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyDensityGrid>()?;
     m.add_class::<PyMolecularMoments>()?;
     m.add_class::<PyVoronoiIntegration>()?;
-    m.add_function(wrap_pyfunction!(voronoi_domains, m)?)?;
-    m.add_function(wrap_pyfunction!(voronoi_voids, m)?)?;
-    m.add_function(wrap_pyfunction!(polarizability_finite_field_py, m)?)?;
+    crate::add_function(m, "molrs.compute", wrap_pyfunction!(voronoi_domains, m)?)?;
+    crate::add_function(m, "molrs.compute", wrap_pyfunction!(voronoi_voids, m)?)?;
+    crate::add_function(
+        m,
+        "molrs.compute",
+        wrap_pyfunction!(polarizability_finite_field_py, m)?,
+    )?;
     Ok(())
 }

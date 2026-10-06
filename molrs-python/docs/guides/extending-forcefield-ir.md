@@ -389,7 +389,7 @@ typifier = BeadSpring()
 frame = typifier.typify(chain).to_frame()  # chain: an mp.Atomistic of bonded beads
 ff = typifier.forcefield()
 energy, forces = mp.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
-mp.io.write_mrec("chain.mrec", frame, forcefield=ff)  # the expression travels along
+mp.io.mrec.write("chain.mrec", frame, forcefield=ff)  # the expression travels along
 ```
 
 ## How this is checked

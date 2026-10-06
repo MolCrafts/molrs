@@ -74,9 +74,9 @@ pub(crate) fn frequency_grid<'py>(
 
 /// Register `molrs.signal`.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(acf_fft, m)?)?;
-    m.add_function(wrap_pyfunction!(xcorr_fft, m)?)?;
-    m.add_function(wrap_pyfunction!(apply_window, m)?)?;
-    m.add_function(wrap_pyfunction!(frequency_grid, m)?)?;
+    crate::add_function(m, "molrs.signal", wrap_pyfunction!(acf_fft, m)?)?;
+    crate::add_function(m, "molrs.signal", wrap_pyfunction!(xcorr_fft, m)?)?;
+    crate::add_function(m, "molrs.signal", wrap_pyfunction!(apply_window, m)?)?;
+    crate::add_function(m, "molrs.signal", wrap_pyfunction!(frequency_grid, m)?)?;
     Ok(())
 }

@@ -791,8 +791,8 @@ pub(crate) fn lammps_log_to_pydict<'py>(
 
 /// Register the LAMMPS log doors and the views they hand out.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(read_lammps_log, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_lammps_log_text, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_lammps_log, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(parse_lammps_log_text, m)?)?;
     m.add_class::<PyLammpsLog>()?;
     m.add_class::<PyLammpsRun>()?;
     m.add_class::<PyLammpsThermo>()?;

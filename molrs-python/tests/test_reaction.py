@@ -46,9 +46,9 @@ def _bind(reaction, mol):
     """Match each reactant component and merge the map->handle dicts."""
     binding = {}
     for pat in reaction.reactant_patterns:
-        matches = pat.find_matches(mol, mapped=True)
+        matches = pat.find_matches(mol)
         assert matches, f"pattern {pat!r} did not match the fixture"
-        binding.update(matches[0])
+        binding.update(matches[0].mapping)
     return binding
 
 

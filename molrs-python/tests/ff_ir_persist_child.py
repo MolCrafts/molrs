@@ -69,7 +69,7 @@ def exact(section: molrs.io.mrec.ForceFieldSection) -> dict:
 def main(cases: dict) -> dict:
     out = {}
     for name, (path, block, rows, types) in cases.items():
-        ff = molrs.ff.forcefield.ForceField.from_section(molrs.io.read_mrec_forcefield(path))
+        ff = molrs.ff.forcefield.ForceField.from_section(molrs.io.mrec.read_forcefield(path))
         out[name] = {
             "price": price(ff, block, rows, types),
             "section": exact(ff.to_section()),

@@ -71,11 +71,14 @@ class Box:
 
     def __init__(
         self,
-        h: ArrayF,
+        h: npt.ArrayLike | None = None,
         origin: ArrayF | None = None,
         pbc: ArrayBool | None = None,
-        cell_defined: bool = True,
-    ) -> None: ...
+        cell_defined: bool | None = None,
+    ) -> None:
+        """``h`` is a ``(3, 3)`` cell matrix (lattice vectors as columns) or
+        a ``(3,)`` diagonal; ``None`` or an all-zero matrix is no cell (a free
+        box). ``pbc`` defaults to whether there is a cell."""
     @staticmethod
     def cube(
         a: float,
@@ -266,7 +269,7 @@ class VerletSkin:
 # ---------------------------------------------------------------------------
 
 # A column key: a plain name or a ``molrs.store.keys.Key``.
-type ColumnKey = str | Any
+type ColumnKey = str | keys.Key
 
 @final
 class Block:
@@ -1849,15 +1852,14 @@ class SmartsMatch:
     def atoms(self) -> list[int]: ...
     @property
     def mapping(self) -> dict[int, int]: ...
-    def as_list(self) -> list[int]: ...
-    def as_dict(self) -> dict[int, int]: ...
 
 class SmartsPattern:
     """Compiled, atom-map-aware SMARTS query over an :class:`Atomistic`.
 
     Wraps the core Rust SMARTS engine (non-uniquified, RDKit
-    ``uniquify=False``). Daylight atom maps (``[C:1]``) add no match constraint;
-    pass ``mapped=True`` to :meth:`find_matches` for the legacy dict shortcut.
+    ``uniquify=False``). Daylight atom maps (``[C:1]``) add no match
+    constraint; a match's :attr:`SmartsMatch.mapping` is its
+    ``{map_number: atom_handle}`` dict.
     """
 
     def __init__(self, smarts: str) -> None: ...
@@ -1868,26 +1870,14 @@ class SmartsPattern:
         labels: dict[int, str] | None = None,
         root: int | None = None,
     ) -> bool: ...
-    @overload
     def find_matches(
         self,
         mol: Atomistic,
         *,
         labels: dict[int, str] | None = None,
         root: int | None = None,
-        mapped: Literal[False] = False,
         limit: int | None = None,
     ) -> list[SmartsMatch]: ...
-    @overload
-    def find_matches(
-        self,
-        mol: Atomistic,
-        *,
-        labels: dict[int, str] | None = None,
-        root: int | None = None,
-        mapped: Literal[True],
-        limit: int | None = None,
-    ) -> list[dict[int, int]]: ...
     @property
     def num_query_atoms(self) -> int: ...
     def map_label(self, query_atom: int) -> int | None: ...
@@ -2049,52 +2039,187 @@ class Perceive:
     def find_equivalence_classes(self, mol: Atomistic) -> Atomistic: ...
 
 # ---------------------------------------------------------------------------
-# Field-name convention (molrs.store.keys, mirrors molrs::store::keys)
+# Frame vocabulary (molrs.store.keys / molrs.store.schema, mirrors
+# molrs::store::keys / molrs::store::schema)
 # ---------------------------------------------------------------------------
 
 class keys:
-    """String constants for the component/field naming convention."""
+    """``molrs.store.keys``: the canonical column and frame-meta names,
+    projected from the Rust key tables; ordered groups are lists."""
 
-    ATOMI: str
-    ATOMJ: str
-    ATOMK: str
-    ATOML: str
-    ATOMM: str
-    ATOMIC_NUMBER: str
-    BEAD_TYPE: str
-    BOND_NUMBER: str
-    BOND_TYPE: str
-    CHARGE: str
-    COORDS: list[str]
-    DIPOLE: list[str]
-    ELEMENT: str
-    ENDPOINTS: list[str]
-    EXCLUDE_14: str
-    FREE: str
-    ID: str
-    IS_14: str
-    MASS: str
-    MOL_ID: str
-    MUX: str
-    MUY: str
-    MUZ: str
-    NAME: str
-    QUAT: list[str]
-    QUATI: str
-    QUATJ: str
-    QUATK: str
-    QUATW: str
-    RES_ID: str
-    RES_NAME: str
-    TYPE: str
-    TYPE_ID: str
-    VELOCITIES: list[str]
-    VX: str
-    VY: str
-    VZ: str
-    X: str
-    Y: str
-    Z: str
+    class Key:
+        """A canonical name; ``str(key)`` / ``.key`` is the plain string."""
+
+        @property
+        def key(self) -> str: ...
+        def __hash__(self) -> int: ...
+
+    ALTLOC: Key
+    ANGLE_TYPE_LABELS: Key
+    ATOMI: Key
+    ATOMIC_NUMBER: Key
+    ATOMJ: Key
+    ATOMK: Key
+    ATOML: Key
+    ATOMM: Key
+    ATOM_MAP: Key
+    ATOM_TYPE_LABELS: Key
+    AXIS: list[Key]
+    AXIS_X: Key
+    AXIS_Y: Key
+    AXIS_Z: Key
+    BEAD_TYPE: Key
+    BOND_NUMBER: Key
+    BOND_TYPE: Key
+    BOND_TYPE_LABELS: Key
+    B_FACTOR: Key
+    CHAIN: Key
+    CHARGE: Key
+    CMAP_TYPE_LABELS: Key
+    COORDS: list[Key]
+    DIHEDRAL_TYPE_LABELS: Key
+    DIPOLE: list[Key]
+    ELEMENT: Key
+    ENDPOINTS: list[Key]
+    EXCLUDE_14: Key
+    FORCES: list[Key]
+    FORMAL_CHARGE: Key
+    FREE: Key
+    FX: Key
+    FY: Key
+    FZ: Key
+    IBEAD: Key
+    ICODE: Key
+    ID: Key
+    IMAGES: list[Key]
+    IMPROPER_TYPE_LABELS: Key
+    IS_14: Key
+    IX: Key
+    IY: Key
+    IZ: Key
+    MASS: Key
+    MOL_ID: Key
+    MUX: Key
+    MUY: Key
+    MUZ: Key
+    NAME: Key
+    OCCUPANCY: Key
+    QUAT: list[Key]
+    QUATI: Key
+    QUATJ: Key
+    QUATK: Key
+    QUATW: Key
+    RES_ID: Key
+    RES_NAME: Key
+    STYLE: Key
+    TYPE: Key
+    TYPE_ID: Key
+    UNITS: Key
+    VELOCITIES: list[Key]
+    VX: Key
+    VY: Key
+    VZ: Key
+    X: Key
+    Y: Key
+    Z: Key
+
+class schema:
+    """``molrs.store.schema``: the Frame vocabulary's blocks and columns,
+    projected from the Rust tables."""
+
+    class ColumnSpec:
+        """One canonical column of the Frame vocabulary."""
+
+        def __init__(
+            self,
+            key: str,
+            const_name: str,
+            dtype: str,
+            shape: str,
+            dimension: str,
+            unit: str,
+            doc: str,
+        ) -> None: ...
+        @property
+        def key(self) -> str: ...
+        @property
+        def const_name(self) -> str: ...
+        @property
+        def dtype(self) -> str: ...
+        @property
+        def shape(self) -> str: ...
+        @property
+        def dimension(self) -> str: ...
+        @property
+        def unit(self) -> str: ...
+        @property
+        def doc(self) -> str: ...
+        @property
+        def numpy_dtype(self) -> str: ...
+
+    class BlockSpec:
+        """One canonical block of the Frame vocabulary."""
+
+        def __init__(
+            self,
+            name: str,
+            row_kind: str,
+            endpoint_target: str | None,
+            endpoint_columns: list[str],
+            required: list[str],
+            optional: list[str],
+            open: bool,
+            doc: str,
+            declared_endpoints: list[str],
+        ) -> None: ...
+        @property
+        def name(self) -> str: ...
+        @property
+        def row_kind(self) -> str: ...
+        @property
+        def endpoint_target(self) -> str | None: ...
+        @property
+        def endpoint_columns(self) -> list[str]: ...
+        @property
+        def declared_endpoints(self) -> list[str]: ...
+        @property
+        def required(self) -> list[str]: ...
+        @property
+        def optional(self) -> list[str]: ...
+        @property
+        def open(self) -> bool: ...
+        @property
+        def doc(self) -> str: ...
+
+    columns: list[ColumnSpec]
+    blocks: list[BlockSpec]
+    VOCAB_VERSION: int
+    ANGLES: str
+    ATOMS: str
+    BONDS: str
+    CMAPS: str
+    CONSTRAINTS: str
+    DIHEDRALS: str
+    DRUDES: str
+    EXCLUSIONS: str
+    IMPROPERS: str
+    MEMBERS: str
+    PAIRS: str
+    VIRTUAL_SITES: str
+    TOPOLOGY: tuple[str, ...]
+
+    @staticmethod
+    def column(key: ColumnKey) -> ColumnSpec | None: ...
+    @staticmethod
+    def block(name: str) -> BlockSpec | None: ...
+    @staticmethod
+    def to_json() -> str: ...
+    @staticmethod
+    def to_markdown() -> str: ...
+    @staticmethod
+    def relation_endpoints(
+        name: str, columns: list[str], targets: dict[str, str] | None = None
+    ) -> list[tuple[str, str]]: ...
 
 # ---------------------------------------------------------------------------
 # SMILES
@@ -3592,20 +3717,22 @@ def intramolecular_pairs(
 # ---------------------------------------------------------------------------
 
 class Trajectory:
+    """An in-memory frame sequence with optional per-frame ``step`` / ``time``
+    labels; a slice is the sub-trajectory with its labels."""
+
     def __init__(
         self,
         frames: Sequence[Frame],
         step: ArrayI64 | None = None,
         time: ArrayF | None = None,
     ) -> None: ...
-    @staticmethod
-    def from_frames(
-        frames: Sequence[Frame],
-        step: ArrayI64 | None = None,
-        time: ArrayF | None = None,
-    ) -> Trajectory: ...
     def __len__(self) -> int: ...
-    def __getitem__(self, index: int) -> Frame: ...
+    def __iter__(self) -> Iterator[Frame]: ...
+    @overload
+    def __getitem__(self, key: int) -> Frame: ...
+    @overload
+    def __getitem__(self, key: slice) -> Trajectory: ...
+    def map(self, func: Callable[[Frame], Frame]) -> Trajectory: ...
     @property
     def frames(self) -> list[Frame]: ...
     @property
@@ -3683,153 +3810,176 @@ class VectorObservable:
     @property
     def target(self) -> str | None: ...
 
-class ForceFieldSection:
-    """The ``forcefield`` section of a ``*.mrec`` record: the document and one
-    :class:`Block` per style table, kept whole (molrec ``forcefield.md``)."""
+class mrec:
+    """The ``_lib.mrec`` submodule, surfaced as :mod:`molrs.io.mrec`: every
+    door onto a ``*.mrec`` scientific record."""
 
-    def __init__(
-        self,
-        document: _AbcMapping[str, Any],
-        tables: _AbcMapping[str, Block] | None = None,
-    ) -> None: ...
-    @property
-    def document(self) -> dict[str, Any]: ...
-    @property
-    def tables(self) -> dict[str, Block]: ...
-    @property
-    def name(self) -> str | None: ...
-    def table(self, category: str, style: str) -> Block | None: ...
+    class ForceFieldSection:
+        """The ``forcefield`` section of a ``*.mrec`` record: the document and one
+        :class:`Block` per style table, kept whole (molrec ``forcefield.md``)."""
+
+        def __init__(
+            self,
+            document: _AbcMapping[str, Any],
+            tables: _AbcMapping[str, Block] | None = None,
+        ) -> None: ...
+        @property
+        def document(self) -> dict[str, Any]: ...
+        @property
+        def tables(self) -> dict[str, Block]: ...
+        @property
+        def name(self) -> str | None: ...
+        def table(self, category: str, style: str) -> Block | None: ...
+        @staticmethod
+        def block_name(category: str, style: str) -> str: ...
+        def validate(self) -> None: ...
+
     @staticmethod
-    def block_name(category: str, style: str) -> str: ...
-    def validate(self) -> None: ...
-
-def write_mrec(
-    path: PathInput,
-    frame: Frame,
-    system: Frame | None = None,
-    meta: _AbcMapping[str, Any] | None = None,
-    forcefield: ForceField | ForceFieldSection | None = None,
-) -> None: ...
-def write_mrec_system(
-    path: PathInput,
-    system: Frame,
-    meta: _AbcMapping[str, Any] | None = None,
-    forcefield: ForceField | ForceFieldSection | None = None,
-) -> None: ...
-def write_mrec_forcefield(
-    path: PathInput,
-    forcefield: ForceField | ForceFieldSection,
-    meta: _AbcMapping[str, Any] | None = None,
-) -> None: ...
-def read_mrec_forcefield(path: PathInput) -> ForceFieldSection | None: ...
-def write_mrec_trajectory(
-    path: PathInput, traj: Trajectory, meta: _AbcMapping[str, Any] | None = None
-) -> None: ...
-def read_mrec(path: PathInput) -> Frame: ...
-def read_mrec_system(path: PathInput) -> Frame: ...
-def read_mrec_trajectory(path: PathInput) -> Trajectory: ...
-def read_mrec_meta(path: PathInput) -> dict[str, Any]: ...
-def mrec_sections(path: PathInput) -> frozenset[str]: ...
-def mrec_validate_path(path: PathInput) -> None: ...
-def mrec_validate_meta(meta: _AbcMapping[str, Any]) -> None: ...
-def mrec_validate_frame(frame: Frame) -> None: ...
-
-MREC_MOLREC_VERSION: int
-MREC_RESERVED_META_KEYS: tuple[str, ...]
-
-class TrajectoryReader:
-    """Lazy one-frame cursor over a ``*.mrec`` trajectory (directory or zip).
-
-    ``molrs.io.mrec.TrajectoryReader``; iterating it walks every frame.
-    """
-
-    def __init__(self, path: PathInput) -> None: ...
-    def read_frame(self, index: int) -> Frame: ...
-    def read_columns(self, index: int, columns: list[tuple[str, str]]) -> Frame: ...
-    def block_update_at(self, name: str, index: int) -> int | None: ...
-    def box_at(self, index: int) -> Box | None: ...
-    def __len__(self) -> int: ...
-    def __getitem__(self, index: int) -> Frame: ...
-    def __iter__(self) -> Iterator[Frame]: ...
-    @property
-    def step(self) -> list[int]: ...
-    @property
-    def time(self) -> list[float] | None: ...
-    def has_block(self, name: str) -> bool: ...
-    def block_names(self) -> list[str]: ...
-    def __enter__(self) -> Self: ...
-    def __exit__(self, *exc: object) -> bool: ...
-
-class SequenceSchema:
-    """A frame-sequence schema pinned before a run's frames are written.
-
-    ``molrs.io.mrec.SequenceSchema``; every ``declare_*`` returns the schema.
-    """
-
-    def __init__(self) -> None: ...
-    @staticmethod
-    def from_frame(frame: Frame) -> SequenceSchema: ...
-    @staticmethod
-    def from_frames(frames: Sequence[Frame]) -> SequenceSchema: ...
-    def declare_block(self, name: str, rows: int | None = ...) -> Self: ...
-    def declare_column(
-        self, block: str, column: str, dtype: str, trailing: list[int] | None = ...
-    ) -> Self: ...
-    def declare_structural_shape(self, block: str, shape: list[int]) -> Self: ...
-    def declare_precision(self, block: str, column: str, precision: float) -> Self:
-        """Pin the precision of an ``f64`` column: every frame's values are
-        rounded to its binary grid before the change check and the landing."""
-    def precision(self, block: str, column: str) -> float | None: ...
-    def declare_target(self, block: str, column: str, target: str) -> Self:
-        """Pin a ``u64`` column as a row reference into *target*; the writer
-        refuses a frame whose resolved blocks break it."""
-    def target(self, block: str, column: str) -> str | None: ...
-    def declare_aligned(self, block: str, target: str) -> Self:
-        """Pin *block*'s rows to *target*'s rows at every resolved frame; the
-        writer refuses a frame that breaks it (restate *block* when *target*
-        changes its row count)."""
-    def aligned_with(self, block: str) -> str | None: ...
-    def declare_meta(self, key: str, dtype: str) -> Self: ...
-    def declare_meta_with_fill(
-        self, key: str, fill: Any, dtype: str | None = ...
-    ) -> Self: ...
-    def block_names(self) -> list[str]: ...
-    def column_names(self, block: str) -> list[str] | None: ...
-    def meta_keys(self) -> list[tuple[str, str]]: ...
-
-class TrajectoryWriter:
-    """Append-first writer for a ``*.mrec`` trajectory store.
-
-    ``molrs.io.mrec.TrajectoryWriter``.
-    """
-
-    def __init__(
-        self,
+    def write(
         path: PathInput,
-        schema: SequenceSchema,
-        *,
-        flush_every: int | None = ...,
-        compression: str | None = ...,
-        durable: bool = ...,
-        meta: _AbcMapping[str, Any] | None = ...,
+        frame: Frame,
+        system: Frame | None = None,
+        meta: _AbcMapping[str, Any] | None = None,
+        forcefield: ForceField | ForceFieldSection | None = None,
     ) -> None: ...
     @staticmethod
-    def open(
-        path: PathInput, *, flush_every: int | None = ..., durable: bool = ...
-    ) -> TrajectoryWriter: ...
-    def append(
-        self, frame: Frame, step: int | None = ..., time: float | None = ...
+    def write_system(
+        path: PathInput,
+        system: Frame,
+        meta: _AbcMapping[str, Any] | None = None,
+        forcefield: ForceField | ForceFieldSection | None = None,
     ) -> None: ...
-    def flush(self) -> None: ...
-    def close(self) -> None: ...
-    @property
-    def flush_every(self) -> int: ...
-    @property
-    def committed(self) -> int: ...
-    def __enter__(self) -> Self: ...
-    def __exit__(self, *exc: object) -> bool: ...
+    @staticmethod
+    def write_forcefield(
+        path: PathInput,
+        forcefield: ForceField | ForceFieldSection,
+        meta: _AbcMapping[str, Any] | None = None,
+    ) -> None: ...
+    @staticmethod
+    def read_forcefield(path: PathInput) -> ForceFieldSection | None: ...
+    @staticmethod
+    def write_trajectory(
+        path: PathInput, traj: Trajectory, meta: _AbcMapping[str, Any] | None = None
+    ) -> None: ...
+    @staticmethod
+    def read(path: PathInput) -> Frame: ...
+    @staticmethod
+    def read_system(path: PathInput) -> Frame: ...
+    @staticmethod
+    def read_trajectory(path: PathInput) -> Trajectory: ...
+    @staticmethod
+    def read_meta(path: PathInput) -> dict[str, Any]: ...
+    @staticmethod
+    def section_names(path: PathInput) -> frozenset[str]: ...
 
-def pack(path: PathInput) -> str: ...
+    class FrameSequence:
+        """Lazy one-frame cursor over a ``*.mrec`` trajectory (directory or zip).
+
+        ``molrs.io.mrec.FrameSequence``; iterating it walks every frame.
+        """
+
+        def __init__(self, path: PathInput) -> None: ...
+        def read_frame(self, index: int) -> Frame: ...
+        def read_columns(self, index: int, columns: list[tuple[str, str]]) -> Frame: ...
+        def block_update_at(self, name: str, index: int) -> int | None: ...
+        def box_at(self, index: int) -> Box | None: ...
+        def __len__(self) -> int: ...
+        def __getitem__(self, index: int) -> Frame: ...
+        def __iter__(self) -> Iterator[Frame]: ...
+        @property
+        def step(self) -> list[int]: ...
+        @property
+        def time(self) -> list[float] | None: ...
+        def has_block(self, name: str) -> bool: ...
+        def block_names(self) -> list[str]: ...
+        def __enter__(self) -> Self: ...
+        def __exit__(self, *exc: object) -> bool: ...
+
+    class SequenceSchema:
+        """A frame-sequence schema pinned before a run's frames are written.
+
+        ``molrs.io.mrec.SequenceSchema``; every ``declare_*`` returns the schema.
+        """
+
+        def __init__(self) -> None: ...
+        @staticmethod
+        def from_frame(frame: Frame) -> SequenceSchema: ...
+        @staticmethod
+        def from_frames(frames: Sequence[Frame]) -> SequenceSchema: ...
+        def declare_block(self, name: str, rows: int | None = ...) -> Self: ...
+        def declare_column(
+            self, block: str, column: str, dtype: str, trailing: list[int] | None = ...
+        ) -> Self: ...
+        def declare_structural_shape(self, block: str, shape: list[int]) -> Self: ...
+        def declare_precision(self, block: str, column: str, precision: float) -> Self:
+            """Pin the precision of an ``f64`` column: every frame's values are
+            rounded to its binary grid before the change check and the landing."""
+        def precision(self, block: str, column: str) -> float | None: ...
+        def declare_target(self, block: str, column: str, target: str) -> Self:
+            """Pin a ``u64`` column as a row reference into *target*; the writer
+            refuses a frame whose resolved blocks break it."""
+        def target(self, block: str, column: str) -> str | None: ...
+        def declare_aligned(self, block: str, target: str) -> Self:
+            """Pin *block*'s rows to *target*'s rows at every resolved frame; the
+            writer refuses a frame that breaks it (restate *block* when *target*
+            changes its row count)."""
+        def aligned_with(self, block: str) -> str | None: ...
+        def declare_meta(self, key: str, dtype: str) -> Self: ...
+        def declare_meta_with_fill(
+            self, key: str, fill: Any, dtype: str | None = ...
+        ) -> Self: ...
+        def block_names(self) -> list[str]: ...
+        def column_names(self, block: str) -> list[str] | None: ...
+        def meta_keys(self) -> list[tuple[str, str]]: ...
+
+    class FrameSequenceWriter:
+        """Append-first writer for a ``*.mrec`` trajectory store.
+
+        ``molrs.io.mrec.FrameSequenceWriter``.
+        """
+
+        def __init__(
+            self,
+            path: PathInput,
+            schema: SequenceSchema,
+            *,
+            flush_every: int | None = ...,
+            compression: str | None = ...,
+            durable: bool = ...,
+            meta: _AbcMapping[str, Any] | None = ...,
+        ) -> None: ...
+        @staticmethod
+        def open(
+            path: PathInput, *, flush_every: int | None = ..., durable: bool = ...
+        ) -> FrameSequenceWriter: ...
+        def append(
+            self, frame: Frame, step: int | None = ..., time: float | None = ...
+        ) -> None: ...
+        def flush(self) -> None: ...
+        def close(self) -> None: ...
+        @property
+        def flush_every(self) -> int: ...
+        @property
+        def committed(self) -> int: ...
+        def __enter__(self) -> Self: ...
+        def __exit__(self, *exc: object) -> bool: ...
+
+    @staticmethod
+    def pack(path: PathInput) -> str: ...
+
+    class schema:
+        """``molrs.io.mrec.schema``: the record contract's version, its reserved
+        ``meta`` keys and the runtime checks."""
+
+        MOLREC_VERSION: int
+        RESERVED_META_KEYS: tuple[str, ...]
+
+        @staticmethod
+        def validate_path(path: PathInput) -> None: ...
+        @staticmethod
+        def validate_meta(meta: _AbcMapping[str, Any]) -> None: ...
+        @staticmethod
+        def validate_frame(frame: Frame) -> None: ...
 
 # ---------------------------------------------------------------------------
 # Analysis (compute)

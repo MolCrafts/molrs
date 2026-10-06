@@ -26,7 +26,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<trajectory::PyTrajectory>()?;
     m.add_class::<trajectory::PyScalarObservable>()?;
     m.add_class::<trajectory::PyVectorObservable>()?;
-    schema::register_keys(m)?;
-    schema::register_schema(m)?;
+    crate::add_submodule(m, "keys", "molrs.store.keys", schema::register_keys)?;
+    crate::add_submodule(m, "schema", "molrs.store.schema", schema::register_schema)?;
     Ok(())
 }

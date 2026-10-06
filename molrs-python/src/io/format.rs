@@ -73,7 +73,7 @@ pub fn write_frame(path: PathBuf, frame: &PyFrame, format: Option<&str>) -> PyRe
 
 /// Register the format-dispatching doors.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(read_frame, m)?)?;
-    m.add_function(wrap_pyfunction!(write_frame, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_frame, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_frame, m)?)?;
     Ok(())
 }

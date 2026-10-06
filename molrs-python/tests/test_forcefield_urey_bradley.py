@@ -74,8 +74,8 @@ def test_it_round_trips_through_the_section_and_a_store(tmp_path: Path) -> None:
     table = ff.to_section().table("angle", "charmm")
     assert list(table["r_ub"]) == [R_UB]
     path = tmp_path / "ff.mrec"
-    molrs.io.write_mrec_forcefield(path, ff)
-    back = molrs.ff.forcefield.ForceField.from_section(molrs.io.read_mrec_forcefield(path))
+    molrs.io.mrec.write_forcefield(path, ff)
+    back = molrs.ff.forcefield.ForceField.from_section(molrs.io.mrec.read_forcefield(path))
     (t,) = back.get_types("angle")
     assert (t["k"], t["theta0"], t["k_ub"], t["r_ub"]) == (K, THETA0, K_UB, R_UB)
     frame = _frame()

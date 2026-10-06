@@ -81,6 +81,10 @@ pub fn clpol_polarizability(
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("AMBER_SCEE", molrs::ff::params::amber::AMBER_SCEE)?;
     m.add("AMBER_SCNB", molrs::ff::params::amber::AMBER_SCNB)?;
-    m.add_function(wrap_pyfunction!(clpol_polarizability, m)?)?;
+    crate::add_function(
+        m,
+        "molrs.ff.params",
+        wrap_pyfunction!(clpol_polarizability, m)?,
+    )?;
     Ok(())
 }

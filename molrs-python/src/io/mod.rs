@@ -49,7 +49,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "fs")]
     {
         log::register(m)?;
-        mrec::register(m)?;
+        crate::add_submodule(m, "mrec", "molrs.io.mrec", mrec::register)?;
     }
     Ok(())
 }

@@ -21,8 +21,6 @@ same words; this package itself holds nothing but them:
   parameters
 """
 
-from __future__ import annotations
-
 from . import charge, forcefield, ir, params, potential, scale_lj, typifier
 
 __all__ = [

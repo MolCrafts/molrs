@@ -288,13 +288,45 @@ pub fn read_lammps_cmap_py(path: PathBuf) -> PyResult<PyForceField> {
 
 /// Register the force-field readers.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(read_forcefield_xml_py, m)?)?;
-    m.add_function(wrap_pyfunction!(read_opls_xml_py, m)?)?;
-    m.add_function(wrap_pyfunction!(read_lammps_forcefield_py, m)?)?;
-    m.add_function(wrap_pyfunction!(read_amber_prmtop_ff_py, m)?)?;
-    m.add_function(wrap_pyfunction!(read_gromacs_top_ff_py, m)?)?;
-    m.add_function(wrap_pyfunction!(read_gromacs_system_py, m)?)?;
-    m.add_function(wrap_pyfunction!(read_lammps_data_coeffs_py, m)?)?;
-    m.add_function(wrap_pyfunction!(read_lammps_cmap_py, m)?)?;
+    crate::add_function(
+        m,
+        "molrs.ff.forcefield",
+        wrap_pyfunction!(read_forcefield_xml_py, m)?,
+    )?;
+    crate::add_function(
+        m,
+        "molrs.ff.forcefield",
+        wrap_pyfunction!(read_opls_xml_py, m)?,
+    )?;
+    crate::add_function(
+        m,
+        "molrs.ff.forcefield",
+        wrap_pyfunction!(read_lammps_forcefield_py, m)?,
+    )?;
+    crate::add_function(
+        m,
+        "molrs.ff.forcefield",
+        wrap_pyfunction!(read_amber_prmtop_ff_py, m)?,
+    )?;
+    crate::add_function(
+        m,
+        "molrs.ff.forcefield",
+        wrap_pyfunction!(read_gromacs_top_ff_py, m)?,
+    )?;
+    crate::add_function(
+        m,
+        "molrs.ff.forcefield",
+        wrap_pyfunction!(read_gromacs_system_py, m)?,
+    )?;
+    crate::add_function(
+        m,
+        "molrs.ff.forcefield",
+        wrap_pyfunction!(read_lammps_data_coeffs_py, m)?,
+    )?;
+    crate::add_function(
+        m,
+        "molrs.ff.forcefield",
+        wrap_pyfunction!(read_lammps_cmap_py, m)?,
+    )?;
     Ok(())
 }
