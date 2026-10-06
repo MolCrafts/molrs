@@ -455,9 +455,11 @@ impl<'a> PotentialCompiler<'a> {
     }
 }
 
-/// The registered entry of `style`, else — when it carries an `expression`
-/// style param — the entry its expression prices it under (the compile
-/// fallback, protocol §4), else [`ir::IrError::NoKernel`].
+/// The registered entry of `style` (checking an `expression` of its own
+/// that differs from the registry's against the registered kernel, D16),
+/// else — when it carries an `expression` style param — the entry its
+/// expression prices it under (the compile fallback, protocol §4), else
+/// [`ir::IrError::NoKernel`].
 fn with_fallback<'r>(
     reg: &'r Registry,
     category: &CategorySpec,
@@ -466,7 +468,11 @@ fn with_fallback<'r>(
     tp: &[(&str, &Params)],
 ) -> Result<Cow<'r, StyleEntry>, String> {
     if let Some(e) = entry {
-        return Ok(Cow::Borrowed(e));
+        return Ok(e.with_instance_expression(
+            category,
+            style.params().get_str("expression"),
+            reg.expression_compiler(),
+        )?);
     }
     match StyleEntry::fallback(
         category,

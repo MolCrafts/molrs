@@ -19,7 +19,8 @@
 //! - a malformed `source`, `special_bonds` or style entry (a category outside
 //!   `^[a-z][a-z0-9_]*$`, an empty style, a non-finite or non-scalar param, a
 //!   `params.special` other than `lj` / `coul`, a `params.mixing` that is no
-//!   combining rule, an `endpoint_key` other than `type` / `class` /
+//!   combining rule, a `pair lj/charmm` `params.one_four` other than
+//!   [`ONE_FOUR_VALUES`], an `endpoint_key` other than `type` / `class` /
 //!   `smirks`);
 //! - a `(category, style)` listed twice, or a style without its table;
 //! - a style table with a structural shape, without a unique never-null string
@@ -76,6 +77,10 @@ pub fn is_parameter_column(column: &str) -> bool {
 
 /// The combining rules `params.mixing` may name on a van-der-Waals pair style.
 pub const MIXING_RULES: [&str; 3] = ["arithmetic", "geometric", "sixthpower"];
+
+/// The values `pair lj/charmm`'s style param `one_four` may take: at which
+/// parameters a `special_bonds` 1-4 pair is priced (absent: `regular`).
+pub const ONE_FOUR_VALUES: [&str; 2] = ["regular", "epsilon14"];
 
 /// The quantities `units` may state, in the order [`unit_preset`] lists them.
 pub const UNIT_QUANTITIES: [&str; 6] = ["length", "energy", "angle", "charge", "mass", "time"];
@@ -433,6 +438,14 @@ fn style_entry(value: &JsonValue) -> Result<StyleEntry<'_>, MolRsError> {
     {
         return Err(invalid(format!(
             "params.mixing of {category}/{style} is one of {MIXING_RULES:?}, found {mixing}"
+        )));
+    }
+    if (category, style) == ("pair", "lj/charmm")
+        && let Some(one_four) = params.and_then(|p| p.get("one_four"))
+        && !param_str("one_four").is_some_and(|v| ONE_FOUR_VALUES.contains(&v))
+    {
+        return Err(invalid(format!(
+            "params.one_four of pair/lj/charmm is one of {ONE_FOUR_VALUES:?}, found {one_four}"
         )));
     }
     let endpoint_key = match text("endpoint_key")? {
@@ -964,6 +977,38 @@ mod tests {
         assert!(ff.validate().is_err());
         ff.document["styles"][1]["params"] = json!({"grid": [1, 2]});
         assert!(ff.validate().is_err());
+    }
+
+    /// `pair lj/charmm`'s `one_four` is `regular` or `epsilon14` (molrec
+    /// `reject-ff-lj-charmm-one-four`); another style's `one_four` is its own.
+    #[test]
+    fn lj_charmm_one_four_is_regular_or_epsilon14() {
+        let mut ff = base();
+        ff.document["styles"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"category": "pair", "style": "lj/charmm"}));
+        ff.tables.insert(
+            "pair.lj%2Fcharmm".to_owned(),
+            table(vec![
+                ("name", strings(&["CT"])),
+                ("itom", strings(&["CT"])),
+                ("jtom", strings(&["CT"])),
+            ]),
+        );
+        ff.validate().unwrap();
+        for value in ["regular", "epsilon14"] {
+            ff.document["styles"][2]["params"] = json!({"one_four": value});
+            ff.validate().unwrap();
+        }
+        for value in [json!("both"), json!(1.0)] {
+            ff.document["styles"][2]["params"] = json!({ "one_four": value });
+            let err = ff.validate().unwrap_err().to_string();
+            assert!(err.contains("one_four"), "{err}");
+        }
+        ff.document["styles"][1]["params"] = json!({"one_four": "both"});
+        ff.document["styles"][2]["params"] = json!({"one_four": "regular"});
+        ff.validate().unwrap();
     }
 
     #[test]

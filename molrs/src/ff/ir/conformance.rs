@@ -729,9 +729,10 @@ fn check_agreement(
 
 /// The outcome of each style's first-compile check, once per process.
 ///
-/// Keyed by the style and its kernel's address: a style re-registered with
-/// another kernel is checked again.
-type Verdicts = Mutex<HashMap<(String, String, usize), Result<(), IrError>>>;
+/// Keyed by the style, its kernel's address and its expression: a style
+/// re-registered with another kernel, or an instance carrying another
+/// expression (D16), is checked again.
+type Verdicts = Mutex<HashMap<(String, String, usize, Option<String>), Result<(), IrError>>>;
 
 fn first_compile() -> &'static Verdicts {
     static CHECKED: OnceLock<Verdicts> = OnceLock::new();
@@ -753,7 +754,12 @@ pub(crate) fn check_at_first_compile(
     if !spec.samples.is_empty() {
         return Ok(());
     }
-    let key = (spec.category.to_string(), spec.name.to_string(), kernel_id);
+    let key = (
+        spec.category.to_string(),
+        spec.name.to_string(),
+        kernel_id,
+        spec.expression.clone(),
+    );
     if let Some(done) = first_compile().lock().unwrap().get(&key) {
         return done.clone();
     }

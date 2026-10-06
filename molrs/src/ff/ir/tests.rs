@@ -1406,3 +1406,370 @@ fn an_unregistered_category_round_trips_and_is_priced_only_by_an_expression() {
         .calc_energy_forces(&COORDS);
     assert_same_energy_forces("unregistered expression", got, &charmm_reference());
 }
+
+// ---------------------------------------------------------------------------
+// Persistence (protocol §7, D9, D16)
+// ---------------------------------------------------------------------------
+
+/// LAMMPS `bond_style fene` (with its WCA term), as an expression.
+const FENE: &str = "-0.5*k*r0^2*log(1-(r/r0)^2) + step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)";
+
+fn fene_spec() -> StyleSpec {
+    StyleSpec::new("bond", "fene")
+        .params(vec![
+            ParamSpec::new("k", "E/L^2".parse().unwrap()),
+            ParamSpec::new("r0", Dim::LENGTH),
+            ParamSpec::new("epsilon", Dim::ENERGY),
+            ParamSpec::new("sigma", Dim::LENGTH),
+        ])
+        .expression(FENE)
+}
+
+/// A tabulated torsion `E(φ)`: `table` holds `N` energies on the grid
+/// `φᵢ = −π + 2πi/N`, interpolated linearly and periodically (a Tier-2
+/// form reading an array parameter).
+struct TableLinear;
+
+impl TableLinear {
+    fn at(table: &[F], phi: F) -> (F, F) {
+        let n = table.len();
+        let h = 2.0 * std::f64::consts::PI / n as F;
+        let s = (phi + std::f64::consts::PI) / h;
+        let i = s.floor();
+        let w = s - i;
+        let i = (i as usize) % n;
+        let j = (i + 1) % n;
+        (
+            table[i] * (1.0 - w) + table[j] * w,
+            (table[j] - table[i]) / h,
+        )
+    }
+}
+
+impl ScalarForm for TableLinear {
+    fn eval(&self, phi: &[F], p: &ParamCols<'_>, e: &mut [F], de: &mut [F]) {
+        let table = p.array("table").unwrap();
+        for t in 0..phi.len() {
+            let row: Vec<F> = table
+                .index_axis(ndarray::Axis(0), t)
+                .iter()
+                .copied()
+                .collect();
+            (e[t], de[t]) = Self::at(&row, phi[t]);
+        }
+    }
+}
+
+fn table_spec() -> StyleSpec {
+    StyleSpec::new("dihedral", "table/linear").params(vec![
+        ParamSpec::new("table", Dim::ENERGY).kind(ParamKind::Array { rank: 1 }),
+    ])
+}
+
+/// The table of type `t`: twelve energies, none of them round.
+fn torsion_table() -> ndarray::ArrayD<F> {
+    ndarray::ArrayD::from_shape_fn(vec![12], |ix| {
+        let i = ix[0] as F;
+        1.25 + (0.7 * i).sin() / 3.0 - 0.01 * i * i
+    })
+}
+
+/// A registry extended the way a third party would: `bond fene` by its
+/// expression, `urey_bradley` with an expression style and a native-only
+/// one, and the native-only `dihedral table/linear` with an array param.
+fn persist_registry() -> Registry {
+    let mut r = ub_registry();
+    r.register_style(fene_spec(), None).unwrap();
+    r.register_style(table_spec(), Some(Kernel::Scalar(Arc::new(TableLinear))))
+        .unwrap();
+    r
+}
+
+/// The four records of the round trip, each a force field of one custom
+/// style defined against `r` with **no** expression of its own; the table
+/// record also holds a category nothing ever registers.
+fn persist_cases(r: &Registry) -> Vec<(&'static str, ForceField, Frame)> {
+    let mut fene = ForceField::new("fene");
+    fene.def_style_in(r, "bond", "fene", Params::new())
+        .unwrap()
+        .def_type(
+            "t",
+            &["A", "A"],
+            Params::from_pairs(&[("k", 30.0), ("r0", 2.25), ("epsilon", 1.1), ("sigma", 1.4)]),
+        )
+        .unwrap();
+    let mut table = ForceField::new("table");
+    let mut row = Params::new();
+    row.set_array("table", torsion_table());
+    table
+        .def_style_in(r, "dihedral", "table/linear", Params::new())
+        .unwrap()
+        .def_type("t", &["A", "A", "A", "A"], row)
+        .unwrap();
+    table
+        .def_style_with_arity("bespoke", 2, "x", Params::from_pairs(&[("w", 0.5)]))
+        .unwrap()
+        .def_type("q", &["A", "B"], Params::from_pairs(&[("k", 1.5)]))
+        .unwrap();
+    vec![
+        ("fene", fene, chain("bond", 2)),
+        (
+            "ub_expr",
+            ub_ff("expr", Params::new(), |ff, p| {
+                ff.def_style_in(r, "urey_bradley", "expr", p)
+            }),
+            two_terms("urey_bradley"),
+        ),
+        (
+            "ub_native",
+            ub_ff("harmonic", Params::new(), |ff, p| {
+                ff.def_style_in(r, "urey_bradley", "harmonic", p)
+            }),
+            two_terms("urey_bradley"),
+        ),
+        ("table", table, chain("dihedral", 4)),
+    ]
+}
+
+fn bits(e: F, f: &[F]) -> Vec<u64> {
+    std::iter::once(e)
+        .chain(f.iter().copied())
+        .map(F::to_bits)
+        .collect()
+}
+
+/// D16: a registered custom style with no expression of its own is written
+/// with the registry's; a built-in style, and a native-only custom one, with
+/// none; an instance's own expression byte for byte.
+#[test]
+fn to_section_writes_a_custom_styles_registry_expression() {
+    let r = persist_registry();
+    let expression = |ff: &ForceField| {
+        ff.to_section_in(&r).unwrap().document["styles"][0]
+            .get("expression")
+            .cloned()
+    };
+    let cases = persist_cases(&r);
+    assert_eq!(expression(&cases[0].1), Some(serde_json::json!(FENE)));
+    assert_eq!(
+        expression(&cases[1].1),
+        Some(serde_json::json!(UB_EXPRESSION))
+    );
+    assert_eq!(expression(&cases[2].1), None, "native only");
+    assert_eq!(expression(&cases[3].1), None, "native only");
+    // The process-wide registry does not hold them: nothing to write.
+    assert!(
+        cases[0].1.to_section().unwrap().document["styles"][0]
+            .get("expression")
+            .is_none()
+    );
+
+    // A built-in writes none, though the registry knows its expression.
+    let mut harmonic = ForceField::new("h");
+    harmonic
+        .def_style("bond", "harmonic", Params::new())
+        .unwrap();
+    assert!(r.style("bond", "harmonic").unwrap().0.expression.is_some());
+    assert_eq!(expression(&harmonic), None);
+
+    // An instance's own expression wins, byte for byte (spacing kept).
+    let own = "-0.5*k*r0^2*log(1 - (r/r0)^2)   + step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)";
+    let mut params = Params::new();
+    params.set_str("expression", own);
+    let mut ff = ForceField::new("own");
+    ff.def_style_in(&r, "bond", "fene", params).unwrap();
+    let section = ff.to_section_in(&r).unwrap();
+    assert_eq!(
+        section.document["styles"][0]["expression"],
+        serde_json::json!(own)
+    );
+    let back = ForceField::from_section(&section).unwrap();
+    assert_eq!(back.styles()[0].params().get_str("expression"), Some(own));
+}
+
+/// D16: an instance expression that differs from the registry's is checked
+/// against the registered kernel at first compile — a native form or the
+/// registry's own expression — and the registered kernel prices it.
+#[test]
+fn an_instance_expression_must_agree_with_the_registered_kernel() {
+    let mut r = Registry::builtin();
+    r.register_style(
+        harmonic_spec("bond", "spring").expression("k*(r-r0)^2"),
+        scalar(RIGHT),
+    )
+    .unwrap();
+    r.register_style(
+        harmonic_spec("bond", "spring/x").expression("k*(r-r0)^2"),
+        None,
+    )
+    .unwrap();
+    let with = |name: &str, expression: &str| {
+        let (mut ff, frame) = one_bond(name);
+        ff.get_style_mut("bond", name)
+            .unwrap()
+            .set_str_param("expression", expression);
+        PotentialCompiler::with_registry(&ff, &r).compile(&frame)
+    };
+    for name in ["spring", "spring/x"] {
+        // Spelled otherwise, the same energy: priced by the registered kernel.
+        let e = with(name, "k*(r-r0)*(r-r0)")
+            .unwrap()
+            .calc_energy(&[0.0, 0.0, 0.0, 1.6, 0.0, 0.0]);
+        assert!((e - 0.72).abs() < 1e-12, "{name}: {e}");
+        // Another energy: refused, naming the style, at every compile.
+        for _ in 0..2 {
+            let err = with(name, "k*(r-r0)^2 + 0.001").unwrap_err();
+            assert!(
+                err.contains(name) && err.contains("disagree"),
+                "{name}: {err}"
+            );
+        }
+        // An expression the style cannot bind is refused by name too.
+        let err = with(name, "k*(theta-r0)^2").unwrap_err();
+        assert!(err.contains("theta"), "{name}: {err}");
+    }
+}
+
+/// The env var naming the directory a parent test hands a fresh process.
+const FRESH_DIR: &str = "MOLRS_IR_PERSIST_DIR";
+
+/// Custom styles persist in `.mrec`: a fresh process with nothing
+/// registered reads every record back, prices the expression styles bit for
+/// bit as the registering process did, keeps the native-only styles and the
+/// array table, and refuses to price those by name (protocol §7, P-Rust
+/// `mrec_round_trip`).
+#[cfg(feature = "filesystem")]
+#[test]
+fn custom_styles_persist_to_a_fresh_process() {
+    let r = persist_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let mut expected = serde_json::Map::new();
+    for (name, ff, frame) in persist_cases(&r) {
+        let section = ff.to_section_in(&r).unwrap();
+        molrs::io::mrec::write_forcefield_file(
+            dir.path().join(format!("{name}.mrec")),
+            &section,
+            None,
+        )
+        .unwrap();
+        let (e, f) = PotentialCompiler::with_registry(&ff, &r)
+            .compile(&frame)
+            .unwrap()
+            .calc_energy_forces(&COORDS);
+        assert!(e.abs() > 1e-3, "{name}: a non-trivial energy {e}");
+        expected.insert(name.into(), serde_json::json!(bits(e, &f)));
+    }
+    std::fs::write(
+        dir.path().join("expected.json"),
+        serde_json::Value::Object(expected).to_string(),
+    )
+    .unwrap();
+
+    let test = "ff::ir::tests::fresh_process_reads_custom_styles";
+    let out = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([test, "--exact", "--nocapture", "--test-threads=1"])
+        .env(FRESH_DIR, dir.path())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success() && stdout.contains("1 passed"),
+        "the fresh process failed:\n{stdout}\n{stderr}"
+    );
+}
+
+/// The fresh-process half of [`custom_styles_persist_to_a_fresh_process`]:
+/// a no-op unless that test runs it, alone, in a process of its own.
+#[cfg(feature = "filesystem")]
+#[test]
+fn fresh_process_reads_custom_styles() {
+    let Some(dir) = std::env::var_os(FRESH_DIR) else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    let expected: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("expected.json")).unwrap()).unwrap();
+    // Nothing is registered here: the process-wide registry is the builtin one.
+    assert!(crate::ff::ir::with_global(|g| g
+        .category("urey_bradley")
+        .is_none()
+        && g.style("bond", "fene").is_none()
+        && g.style("dihedral", "table/linear").is_none()));
+    let read = |name: &str| {
+        let section = molrs::io::mrec::read_forcefield_file(dir.join(format!("{name}.mrec")))
+            .unwrap()
+            .unwrap();
+        ForceField::from_section(&section).unwrap()
+    };
+    let want = |name: &str| -> Vec<u64> { serde_json::from_value(expected[name].clone()).unwrap() };
+
+    // Priced by the expression the record carries, bit for bit.
+    for (name, frame) in [
+        ("fene", chain("bond", 2)),
+        ("ub_expr", two_terms("urey_bradley")),
+    ] {
+        let ff = read(name);
+        let (e, f) = PotentialCompiler::new(&ff)
+            .compile(&frame)
+            .unwrap_or_else(|err| panic!("{name}: {err}"))
+            .calc_energy_forces(&COORDS);
+        assert_eq!(bits(e, &f), want(name), "{name}");
+    }
+    let fene = read("fene");
+    assert_eq!(fene.styles()[0].params().get_str("expression"), Some(FENE));
+
+    // Native-only: read whole, refused to price by name.
+    let ub = read("ub_native");
+    assert_eq!(ub.styles()[0].arity(), 3);
+    assert_eq!(ub.styles()[0].type_rows().len(), 2);
+    let err = PotentialCompiler::new(&ub)
+        .compile(&two_terms("urey_bradley"))
+        .unwrap_err();
+    assert!(
+        err.contains("no kernel for urey_bradley `harmonic`: register it (molrs.ff.ir.register_style) or give it an expression"),
+        "{err}"
+    );
+    let table = read("table");
+    let rows = table.styles()[0].type_rows();
+    assert_eq!(
+        rows[0].2.get_array("table"),
+        Some(&torsion_table()),
+        "bit for bit"
+    );
+    let err = PotentialCompiler::new(&table)
+        .compile(&chain("dihedral", 4))
+        .unwrap_err();
+    assert!(
+        err.contains("no kernel for dihedral `table/linear`"),
+        "{err}"
+    );
+    // The category nothing registers is kept, rows and style params.
+    let bespoke = table.get_style("bespoke", "x").unwrap();
+    assert_eq!((bespoke.arity(), bespoke.params().get("w")), (2, Some(0.5)));
+    assert_eq!(table.get_relationtypes("bespoke")[0].endpoints.len(), 2);
+}
+
+/// The array form against a hand interpolation, and the same energy after
+/// the trip through a section with its kernel registered (D9).
+#[test]
+fn an_array_param_style_prices_its_table_and_round_trips() {
+    let r = persist_registry();
+    let (_, ff, frame) = persist_cases(&r).pop().unwrap();
+    let price = |ff: &ForceField| {
+        PotentialCompiler::with_registry(ff, &r)
+            .compile(&frame)
+            .unwrap()
+            .calc_energy_forces(&COORDS)
+    };
+    let (e, f) = price(&ff);
+    let phi = crate::ff::potential::geometry::compute_dihedral(&COORDS, 0, 1, 2, 3);
+    let table: Vec<F> = torsion_table().iter().copied().collect();
+    let (hand, _) = TableLinear::at(&table, phi);
+    assert!((e - hand).abs() <= 1e-12 * hand.abs(), "{e} vs {hand}");
+    let back = ForceField::from_section(&ff.to_section_in(&r).unwrap()).unwrap();
+    assert_eq!(bits(e, &f), {
+        let (e, f) = price(&back);
+        bits(e, &f)
+    });
+}

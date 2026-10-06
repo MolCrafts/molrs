@@ -127,6 +127,40 @@ nothing declares, is a style category like `bond`.
   kind twice (`{Bond: …, "bonds": …}`) `ValueError`. `repr(Match)` lists the
   kinds: `Match(nodes=2, links={bonds=1}, styles=0, pairs=0)`.
 
+### Force-field IR protocol: custom styles persist
+
+A custom style or category is stored in a `*.mrec` record as its molrec
+style entry, and a process that registered nothing reads it back.
+
+- **`to_section` writes a registered custom style's expression.** A style
+  with no `expression` of its own that the process-wide IR registry holds
+  as a custom (not built-in) style is written with the registry's
+  `expression`, so a fresh process prices it from the record alone. A
+  built-in style is written with none; a style's own `expression` is
+  written, and read back, byte for byte. Rust:
+  `ForceField::to_section_in(&Registry)` is `to_section` against a given
+  registry.
+- **Reading never needs a registration.** A style nothing registers, with
+  no expression, is read whole (its rows, its array params, its category);
+  compiling it is refused by name: ``no kernel for <category> `<style>`:
+  register it (molrs.ff.ir.register_style) or give it an expression``. A
+  style with an expression is priced by it, bit for bit as in the process
+  that registered it.
+- **An instance expression is checked against the registered kernel.** A
+  registered custom style whose instance carries an `expression` that
+  differs from the registry's is still priced by its registered kernel (a
+  registered kernel comes first); at first compile the instance expression
+  is checked against it, energy and derivative to 1e-10, and a disagreeing
+  one is refused (`IrError::Disagree`, naming the style). A registered style
+  with neither kernel nor expression is priced by the instance's.
+- **Array params round-trip end to end**: a parameter column `f64[T, S…]`
+  through `to_section` / `from_section`, a `*.mrec` store, and Python
+  `molrs.io.mrec` (e.g. a `dihedral table/linear` row's `table: f64[N]`).
+- **`ForceFieldSection.validate` refuses a `pair lj/charmm` `one_four`**
+  other than `"regular"` / `"epsilon14"` (molrec
+  `reject-ff-lj-charmm-one-four`), so `read_mrec_forcefield` refuses such a
+  record before anything turns it into a `ForceField`.
+
 ### Torsion algebra and `dihedral nharmonic`
 
 - **`dihedral nharmonic`** (LAMMPS's `Σᵢ₌₁ᴺ Aᵢ cosⁱ⁻¹φ`, params `a1..aN`,
