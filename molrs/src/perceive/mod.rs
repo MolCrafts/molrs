@@ -29,11 +29,13 @@
 #[cfg(all(test, feature = "smiles"))]
 mod aromatic_standard;
 pub mod aromaticity;
+pub mod bond_order;
 pub mod bond_type;
 pub mod builder;
 pub mod coarsen;
 pub mod equivalence;
 pub mod hydrogens;
+pub mod ring_class;
 pub mod rings;
 pub mod rotatable;
 pub mod smarts;

@@ -63,6 +63,7 @@ use crate::helpers::molrs_error_to_pyerr;
 /// ``find_hydrogens``               — (adds H atoms)            — (adds H bonds)
 /// ``find_stereo``                  ``stereo``                  ``stereo``
 /// ``find_rotatable``               —                           ``is_rotatable``
+/// ``find_bond_orders``             —                           ``bond_number``, ``bond_type``
 /// ``find_bond_types``              —                           ``bcc_bond_type``
 /// ``find_kekule_orders``           —                           ``bond_number``
 /// ``find_equivalence_classes``     ``equiv_class``             —
@@ -232,7 +233,10 @@ impl PyPerceive {
         mol.derive(py, self.inner.find_rotatable(mol.core(), unknown))
     }
 
-    /// Perceive antechamber bond types and project them onto the graph.
+    /// Perceive antechamber bond types, from the bond orders ``mol`` states,
+    /// and project them onto the graph. (``AtdTypifier`` judges the orders
+    /// from the connectivity instead, as antechamber does — see
+    /// :meth:`find_bond_orders`.)
     ///
     /// Every bond receives a ``bcc_bond_type`` prop in ``{1, 2, 3, 6, 7, 8, 9}`` —
     /// the alphabet AM1-BCC's atom-type rules and correction table are keyed on,
@@ -251,6 +255,29 @@ impl PyPerceive {
     ///     A clone of ``mol`` with ``bcc_bond_type`` on every bond.
     fn find_bond_types(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
         mol.derive(py, self.inner.find_bond_types(mol.core()))
+    }
+
+    /// Judge every bond's order from the connectivity alone, as antechamber's
+    /// ``bondtype -j full`` does.
+    ///
+    /// Every judged bond gets a localized ``bond_number`` (1/2/3) and the
+    /// ``bond_type`` it implies, whatever the input stated. Like antechamber's,
+    /// the answer follows the atom and bond order: where a molecule has more
+    /// than one Kekulé structure, it is the one antechamber settles on for the
+    /// same order. The bonds of a residue no valence state closes are left
+    /// untouched.
+    ///
+    /// Parameters
+    /// ----------
+    /// mol : Atomistic
+    ///     The molecule, every hydrogen drawn; left untouched.
+    ///
+    /// Returns
+    /// -------
+    /// Atomistic
+    ///     A clone of ``mol`` carrying antechamber's Kekulé structure.
+    fn find_bond_orders(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
+        mol.derive(py, self.inner.find_bond_orders(mol.core()))
     }
 
     /// Assign a localized (Kekulé) ``bond_number`` to every aromatic bond.

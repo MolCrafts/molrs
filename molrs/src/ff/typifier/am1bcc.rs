@@ -142,8 +142,9 @@ impl Typifier for BCCAtomChargeTypifier {
     /// Perceive BCC bond types, then label every atom from the set's
     /// `ATOMTYPE_*.DEF` rules.
     ///
-    /// The bond types are always **perceived** (via
-    /// [`Perceive::find_bond_types`](molrs::perceive::Perceive::find_bond_types)),
+    /// The bond types are always **perceived** — as antechamber perceives them,
+    /// bond orders judged from the connectivity (`AtdTypifier`'s default
+    /// [`AtdBondOrders::Perceive`](super::atd::AtdBondOrders::Perceive)) —
     /// never read off the input: the atom-type rules count `sb`/`db`/`ab`/`DL`
     /// bonds, so they need the delocalized (9) and aromatic (7/8) types that a bond
     /// *order* cannot express — and a supplied
