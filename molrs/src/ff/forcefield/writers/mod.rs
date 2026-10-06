@@ -1,7 +1,8 @@
 //! Writers that serialize a molrs [`ForceField`] into an *external* format.
 //!
 //! Symmetric to [`crate::ff::forcefield::readers`]: a writer owns the translation
-//! from molrs units (Å, kcal/mol, radians, e) back to the foreign convention.
+//! from molrs's convention — LAMMPS's (molrs-python docs, "Force-field
+//! conventions") — back to the foreign one.
 //! The inverse of each reader lands here so unit conversion stays at one
 //! boundary pair and never leaks into kernels or call sites.
 //!

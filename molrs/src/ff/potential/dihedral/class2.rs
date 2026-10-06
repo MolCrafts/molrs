@@ -2,8 +2,9 @@
 //!
 //! E(φ) = Σ_{n=1..3} K_n · [1 − cos(n·φ − φ_n)]
 //!
-//! `K_n` are force constants (kcal/mol) and `φ_n` the per-term phases in
-//! radians (readers normalize at their boundary). This kernel covers the *core*
+//! `K_n` are force constants (energy) and `φ_n` the per-term phases in
+//! **degrees**, as LAMMPS `dihedral_style class2` takes them (the kernel
+//! converts once). This kernel covers the *core*
 //! three-term cosine expansion that the
 //! molpy `class2` dihedral data model carries (`k1`,`phi1`,…,`k3`,`phi3`). The
 //! optional class2 cross terms (mbt / ebt / at / aat / bb13), which are emitted
@@ -29,7 +30,7 @@ pub struct DihedralClass2 {
     atom_j: Vec<usize>,
     atom_k: Vec<usize>,
     atom_l: Vec<usize>,
-    /// (K_n, φ_n radians) for n = 1..3 per dihedral instance.
+    /// (K_n, φ_n in radians) for n = 1..3 per dihedral instance.
     terms: Vec<[(F, F); 3]>,
 }
 
@@ -117,7 +118,8 @@ impl IndexedTerms for DihedralClass2 {
 }
 
 /// Construct a [`DihedralClass2`] from per-type params (`k1`,`phi1`,…,`k3`,
-/// `phi3`) and a Frame's `"dihedrals"` block.
+/// `phi3`, the phases in degrees as LAMMPS takes them) and a Frame's
+/// `"dihedrals"` block.
 pub fn dihedral_class2_ctor(
     _sp: &Params,
     tp: &[(&str, &Params)],
@@ -168,7 +170,8 @@ pub fn dihedral_class2_ctor(
         let mut t = [(0.0 as F, 0.0 as F); 3];
         for (m, slot) in t.iter_mut().enumerate() {
             let kn = p.get(&format!("k{}", m + 1)).unwrap_or(0.0) as F;
-            let pn = p.get(&format!("phi{}", m + 1)).unwrap_or(0.0) as F; // radians
+            // degrees (LAMMPS `dihedral_style class2`) → radians
+            let pn = p.get(&format!("phi{}", m + 1)).unwrap_or(0.0).to_radians() as F;
             *slot = (kn, pn);
         }
         terms.push(t);

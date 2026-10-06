@@ -1,4 +1,7 @@
-//! Harmonic bond potential: E = 0.5 * k * (r - r0)^2
+//! Harmonic bond (LAMMPS `bond_style harmonic`): E = k·(r − r0)².
+//!
+//! `k` is LAMMPS's `K`, energy/length², and carries the usual ½: there is no
+//! hidden factor, so a `bond_coeff t K r0` line is `k = K` here.
 
 use molrs::store::schema::block_names::BONDS;
 use std::collections::HashMap;
@@ -61,13 +64,14 @@ impl BondHarmonic {
             let dz = coords[j * 3 + 2] - coords[i * 3 + 2];
             let r = (dx * dx + dy * dy + dz * dz).sqrt();
             let dr = r - r0;
-            energy += 0.5 * k * dr * dr;
+            energy += k * dr * dr;
 
             if r < 1e-12 {
                 continue;
             }
 
-            let factor = -k * dr / r;
+            // dE/dr = 2k(r − r0)
+            let factor = -2.0 * k * dr / r;
             let fx = factor * dx;
             let fy = factor * dy;
             let fz = factor * dz;
@@ -158,9 +162,7 @@ pub fn bond_harmonic_ctor(
         let params = type_map
             .get(label.as_str())
             .ok_or_else(|| format!("BondHarmonic: unknown bond type '{}'", label))?;
-        // `k` is the one spelling (spec ff-params-01). The `k0` alias is gone:
-        // it was the same key in two conventions, half of the tree meaning
-        // `E = ½k(r−r₀)²` and half meaning AMBER's un-halved `K`.
+        // `k` is LAMMPS's `K` (= AMBER's `RK`): E = k(r − r0)², no ½.
         let k = params
             .get("k")
             .ok_or_else(|| format!("BondHarmonic type '{}': missing 'k'", label))?
@@ -187,12 +189,13 @@ mod tests {
 
     #[test]
     fn test_bond_harmonic_energy_and_force() {
-        let pot = BondHarmonic::new(vec![0], vec![1], vec![300.0], vec![1.5]);
+        // LAMMPS bond_style harmonic: E = K(r − r0)², F = −2K(r − r0).
+        let pot = BondHarmonic::new(vec![0], vec![1], vec![150.0], vec![1.5]);
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, 2.0, 0.0, 0.0];
 
         let (e, forces) = pot.calc_energy_forces(&coords);
-        assert!((e - 37.5).abs() < 1e-3);
-        assert!((forces[0] - 150.0).abs() < 1e-3);
-        assert!((forces[3] + 150.0).abs() < 1e-3);
+        assert_eq!(e, 150.0 * 0.5 * 0.5);
+        assert!((forces[0] - 150.0).abs() < 1e-12);
+        assert!((forces[3] + 150.0).abs() < 1e-12);
     }
 }

@@ -549,7 +549,11 @@ impl Atomistic {
 
     // ---- impropers ----
 
-    /// Add an improper dihedral (i-j-k-l; i conventionally central).
+    /// Add an improper dihedral `i-j-k-l`, in the atom order its style prices
+    /// (molrs's convention, LAMMPS's): LAMMPS's own order for `harmonic`,
+    /// `cvff` and the out-of-plane styles — the centre first — and AMBER's for
+    /// `improper periodic` — the centre third. The topology perception
+    /// ([`generate_topology`](Self::generate_topology)) lists the centre first.
     pub fn add_improper(
         &mut self,
         i: AtomId,

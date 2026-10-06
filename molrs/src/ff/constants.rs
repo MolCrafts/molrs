@@ -29,8 +29,7 @@ pub(crate) const VACUUM_DIELECTRIC: f64 = 1.0;
 
 /// degrees → radians (RDKit `DEG2RAD`).
 ///
-/// The MMFF tables store reference angles in degrees; molrs is radians
-/// internally, so the resolver converts at that boundary. (`RAD2DEG` lived here
-/// too, for the deleted bespoke energy kernels — which worked in degrees and
-/// converted back on every gradient. The generic kernels never leave radians.)
+/// The MMFF tables store reference angles in degrees, as every molrs angle
+/// parameter is; the empirical angle rule computes in radians. (`RAD2DEG` lived
+/// here too, for the deleted bespoke energy kernels.)
 pub(crate) const DEG2RAD: f64 = std::f64::consts::PI / 180.0;

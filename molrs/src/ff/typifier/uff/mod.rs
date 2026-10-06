@@ -20,7 +20,8 @@
 //! - torsion `{ti}-{tj}-{tk}-{tl}@{V}_{n}_{nphi0}` — `V` the barrier after
 //!   division by the torsion count about the central bond, `n` the
 //!   periodicity, `nphi0` `0` for `cosTerm = +1` and `180` for `cosTerm = -1`;
-//! - inversion `{ta}-{tj}-{tb}-{tc}` in improper node order (centre second),
+//! - inversion `{tj}-{ta}-{tb}-{tc}` in improper node order (centre first,
+//!   the order of LAMMPS's out-of-plane styles; RDKit lists it second),
 //!   unqualified: `K, c0, c1, c2` depend only on the centre element and on
 //!   whether an endpoint is `O_2` / `O_R`.
 //!
@@ -33,7 +34,7 @@
 //! do not reassociate, so evaluating each term in its own node order could give
 //! one name two params differing in the last bit. (A torsion's params read only
 //! the central pair, symmetrically.) Inversions are **not** oriented:
-//! reversing a 4-atom term moves the centre to position 3 and names a different
+//! reversing a 4-atom term moves the centre to position 4 and names a different
 //! term.
 //!
 //! # Route
@@ -380,7 +381,7 @@ impl Typifier for UFFTypifier {
                     ("c0", c0),
                     ("c1", c1),
                     ("c2", c2),
-                    ("theta0", theta0),
+                    ("theta0", theta0.to_degrees()),
                 ]),
             ));
         }
@@ -461,7 +462,7 @@ impl Typifier for UFFTypifier {
             let is_c_bound_to_sp2_o =
                 zc == 6 && nbrs.iter().any(|&o| z[o] == 8 && hyb[o] == Hyb::Sp2);
             let (k_inv, c0, c1, c2) = inversion_coeffs(zc, is_c_bound_to_sp2_o);
-            // three permutations: centre j, outer atoms in RDKit order
+            // three permutations: centre j first, outer atoms in RDKit order
             let perms = [
                 (nbrs[0], nbrs[1], nbrs[2]),
                 (nbrs[0], nbrs[2], nbrs[1]),
@@ -469,9 +470,9 @@ impl Typifier for UFFTypifier {
             ];
             for (a, b, c) in perms {
                 let iid = graph
-                    .add_improper(atom_ids[a], atom_ids[j], atom_ids[b], atom_ids[c])
+                    .add_improper(atom_ids[j], atom_ids[a], atom_ids[b], atom_ids[c])
                     .map_err(|e| e.to_string())?;
-                let ends = [&*labels[a], &*labels[j], &*labels[b], &*labels[c]];
+                let ends = [&*labels[j], &*labels[a], &*labels[b], &*labels[c]];
                 let name = TypeName::join(&ends)?;
                 inversions.insert(
                     iid,
@@ -1047,7 +1048,7 @@ mod tests {
     }
 
     /// Every improper label is the `TypeName` join of its atom labels in node
-    /// order, unqualified and not oriented, and its second node is the
+    /// order, unqualified and not oriented, and its first node is the
     /// centre (bonded to the other three).
     fn assert_improper_labels_keep_node_order(mol: &Atomistic) -> usize {
         let (typed, _) = uff_typed(mol);
@@ -1063,25 +1064,22 @@ mod tests {
             let expected = TypeName::join(&parts).expect("UFF labels hold no '@'");
             assert_eq!(label, expected.as_str(), "improper {nodes:?}");
             assert!(!label.contains('@'), "{label} is unqualified");
-            for &other in [nodes[0], nodes[2], nodes[3]].iter() {
-                assert!(
-                    bonded(nodes[1], other),
-                    "improper {label}: centre is second"
-                );
+            for &other in [nodes[1], nodes[2], nodes[3]].iter() {
+                assert!(bonded(nodes[0], other), "improper {label}: centre is first");
             }
         }
         impropers.len()
     }
 
     #[test]
-    fn typing_n_methylacetamide_improper_labels_keep_node_order_centre_second() {
+    fn typing_n_methylacetamide_improper_labels_keep_node_order_centre_first() {
         let n = assert_improper_labels_keep_node_order(&n_methylacetamide().0);
         assert!(n > 0, "the carbonyl C is an inversion centre");
     }
 
     /// Triphenylphosphine types without a `TypeConflict`: the P-centred and
     /// ipso-C-centred inversions keep distinct names (group-15 vs sp2-C
-    /// params), and their labels keep node order with the centre second.
+    /// params), and their labels keep node order with the centre first.
     #[test]
     fn typing_triphenylphosphine_has_no_type_conflict() {
         let mut typing = crate::ff::typifier::Typing::new(UFFTypifier::new());

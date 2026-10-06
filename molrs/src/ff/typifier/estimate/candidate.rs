@@ -162,11 +162,7 @@ mod tests {
             .def_type(
                 "X-X-ca-ha",
                 &["X", "X", "ca", "ha"],
-                Params::from_pairs(&[
-                    ("k", 1.1),
-                    ("periodicity", 2.0),
-                    ("phase", std::f64::consts::PI),
-                ]),
+                Params::from_pairs(&[("k", 1.1), ("periodicity", 2.0), ("phase", 180.0)]),
             )
             .unwrap();
 

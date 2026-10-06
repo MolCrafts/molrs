@@ -1,12 +1,20 @@
-//! CHARMM proper dihedral:
+//! CHARMM proper dihedral (LAMMPS `dihedral_style charmm`):
 //!
-//! E(φ) = k·[1 + cos(n·φ − γ)]
+//! E(φ) = k·[1 + cos(n·φ − d)]
 //!
-//! `k` is the force constant (kcal/mol), `periodicity` the integer multiplicity,
-//! and `phase` the phase γ in radians (readers normalize at their boundary; the LAMMPS
-//! `dihedral_style charmm` degree value is converted at read). The 1-4
-//! pair weight `w` is a non-bonded scaling factor handled by the pair term, not
-//! the torsion energy, so it is read but does not enter this kernel.
+//! `k` is LAMMPS's `K` (energy), `periodicity` its integer `n`, and `phase` its
+//! `d` in **degrees** (LAMMPS takes an integer number of degrees; any value is
+//! accepted here). The kernel converts the phase to radians once.
+//!
+//! # The weight `w`
+//!
+//! LAMMPS's fourth coefficient `w` weights a 1-4 non-bonded pair that the
+//! *dihedral* computes, with the `epsilon14` / `sigma14` of a `lj/charmm` pair
+//! style and the full Coulomb, beside `special_bonds` 1-4 weights of zero.
+//! molrs has no `lj/charmm` pair style and no 1-4 path in this kernel, so a
+//! non-zero `w` would silently drop that pair: [`dihedral_charmm_ctor`] refuses
+//! it. `w = 0` (or absent) is the AMBER use of the style — the 1-4 pairs are
+//! the pair styles' job, scaled by `special_bonds` — and compiles.
 
 use molrs::store::schema::block_names::DIHEDRALS;
 use std::collections::HashMap;
@@ -29,7 +37,7 @@ pub struct DihedralCharmm {
     atom_l: Vec<usize>,
     k: Vec<F>,
     n: Vec<F>,
-    /// phase in radians
+    /// phase in radians (the parameter is degrees)
     d: Vec<F>,
 }
 
@@ -113,8 +121,15 @@ impl IndexedTerms for DihedralCharmm {
     }
 }
 
-/// Construct a [`DihedralCharmm`] from per-type params (`k`, `n`, `d` radians)
-/// and a Frame's `"dihedrals"` block (`atomi/atomj/atomk/atoml/type`).
+/// Construct a [`DihedralCharmm`] from per-type params (`k`, `periodicity`,
+/// `phase` in degrees, `w`) and a Frame's `"dihedrals"` block
+/// (`atomi/atomj/atomk/atoml/type`).
+///
+/// # Errors
+///
+/// A type whose `w` is non-zero: the 1-4 pair LAMMPS computes inside this
+/// style is not computed by molrs (see the module docs), and leaving it out
+/// would be a silently different energy.
 pub fn dihedral_charmm_ctor(
     _sp: &Params,
     tp: &[(&str, &Params)],
@@ -171,7 +186,20 @@ pub fn dihedral_charmm_ctor(
             p.get("periodicity")
                 .ok_or("dihedral_charmm: missing periodicity")? as F,
         );
-        dd.push(p.get("phase").unwrap_or(0.0) as F); // radians (normalized at read)
+        dd.push(p.get("phase").unwrap_or(0.0).to_radians() as F); // degrees → radians
+        if let Some(w) = p.get("w")
+            && w != 0.0
+        {
+            return Err(format!(
+                "dihedral_charmm: type '{}' has the 1-4 weight w = {w}. In LAMMPS a non-zero w \
+                 makes the dihedral compute the 1-4 Lennard-Jones (with the epsilon14/sigma14 of \
+                 a lj/charmm pair style) and Coulomb pair itself, beside special_bonds 1-4 = 0; \
+                 molrs has neither lj/charmm nor that 1-4 path, so the pair would be missing. \
+                 Use w = 0 and carry the 1-4 interaction in the pair styles with special_bonds \
+                 (the AMBER use of this style).",
+                tc[idx]
+            ));
+        }
     }
     Ok(Member::indexed(DihedralCharmm {
         atom_i: ai,
@@ -191,6 +219,64 @@ mod tests {
     fn quad(phi: F) -> Vec<F> {
         let (s, c) = phi.sin_cos();
         vec![0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, c, s]
+    }
+
+    /// A LAMMPS-read `dihedral_style charmm` field and a frame with its one
+    /// dihedral at φ = 60°.
+    fn lammps_charmm(w: &str) -> (crate::ff::forcefield::ForceField, Frame) {
+        use crate::ff::forcefield::readers::ForceFieldReader;
+        use molrs::store::block::Block;
+        use molrs::types::Idx;
+        use ndarray::Array1;
+        let text = format!(
+            "special_bonds charmm\ndihedral_style charmm\ndihedral_coeff a-b-c-d 0.2 3 180 {w}\n"
+        );
+        let ff = crate::ff::forcefield::readers::lammps::LammpsFfReader::new()
+            .read_str(&text)
+            .unwrap();
+        let mut dihedrals = Block::new();
+        for (key, atom) in [("atomi", 0), ("atomj", 1), ("atomk", 2), ("atoml", 3)] {
+            dihedrals
+                .insert(key, Array1::from_vec(vec![atom as Idx]).into_dyn())
+                .unwrap();
+        }
+        dihedrals
+            .insert(
+                "type",
+                Array1::from_vec(vec!["a-b-c-d".to_owned()]).into_dyn(),
+            )
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("dihedrals", dihedrals);
+        (ff, frame)
+    }
+
+    /// Regression: with `special_bonds charmm` (1-4 weights 0) LAMMPS prices a
+    /// dihedral's 1-4 pair inside `dihedral_style charmm`, weighted by `w`.
+    /// molrs does not, so a non-zero `w` used to compile to a field whose every
+    /// 1-4 non-bonded energy was silently zero. It is refused at compile time,
+    /// naming the type and the weight.
+    #[test]
+    fn a_nonzero_weight_is_refused_at_compile_time() {
+        let (ff, frame) = lammps_charmm("1.0");
+        let err = crate::ff::potential::PotentialCompiler::new(&ff)
+            .compile(&frame)
+            .unwrap_err();
+        assert!(err.contains("a-b-c-d") && err.contains("w = 1"), "{err}");
+    }
+
+    /// `w = 0` is the AMBER use of the style and prices LAMMPS's
+    /// `K[1 + cos(nφ − d)]`, `d` in degrees.
+    #[test]
+    fn a_zero_weight_compiles_to_the_lammps_energy() {
+        let (ff, frame) = lammps_charmm("0.0");
+        let pots = crate::ff::potential::PotentialCompiler::new(&ff)
+            .compile(&frame)
+            .unwrap();
+        let phi = 60.0_f64.to_radians();
+        let want = 0.2 * (1.0 + (3.0 * phi - std::f64::consts::PI).cos());
+        let got = pots.calc_energy(&quad(phi));
+        assert!((got - want).abs() < 1e-12, "{got} vs {want}");
     }
 
     fn single(k: F, n: F, d_deg: F) -> DihedralCharmm {

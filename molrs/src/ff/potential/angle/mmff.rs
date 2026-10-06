@@ -1,8 +1,7 @@
 //! MMFF94 angle bending and stretch-bend coupling kernels.
 //!
-//! `theta0` is consumed in radians; the MMFF typifier normalizes the XML's
-//! degree reference angles to radians at the reader boundary
-//! (`forcefield::xml::read_mmff_params_xml_str`).
+//! `theta0` is a per-instance column in **degrees**, as MMFF's own tables and
+//! every molrs angle parameter are; the kernels convert it to radians once.
 //!
 //! # Linear centres
 //!
@@ -157,7 +156,7 @@ impl IndexedTerms for MMFFAngleBend {
 
 /// Build the MMFF angle-bend potential from the typifier's baked columns.
 ///
-/// Reads `ka` (md·Å·rad⁻²), `theta0` (radians) and `linear` (0/1) off the
+/// Reads `ka` (md·Å·rad⁻²), `theta0` (degrees) and `linear` (0/1) off the
 /// `"angles"` block. All three are per-instance: MMFF resolves them through
 /// table → equivalence → empirical rules that this kernel deliberately does not
 /// re-implement.
@@ -166,7 +165,7 @@ pub fn mmff_angle_ctor(
     _tp: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, String> {
-    // Per-instance parameters: the MMFF typifier baked ka and theta0 (radians)
+    // Per-instance parameters: the MMFF typifier baked ka and theta0 (degrees)
     // onto each angle (table → equivalence → empirical). This kernel only reads
     // the columns and evaluates — no force-field-specific resolution lives here.
     let block = frame
@@ -209,7 +208,7 @@ pub fn mmff_angle_ctor(
         aj.push(jc[idx] as usize);
         ak.push(kc[idx] as usize);
         ka.push(kac[idx] as F);
-        th0.push(th0c[idx] as F); // radians
+        th0.push(th0c[idx].to_radians() as F); // degrees → radians
         lin.push(linc[idx] != 0);
     }
     Ok(Member::indexed(MMFFAngleBend {
@@ -375,7 +374,7 @@ pub fn mmff_stbn_ctor(
     // Per-instance parameters: the MMFF typifier baked the stretch-bend force
     // constants (kba_ijk/kba_kji, via the dfsb period-row default-row fallback
     // that the shared-table path lacked) plus the two reference bond lengths and
-    // theta0 (radians) onto each angle. This kernel only reads the columns.
+    // theta0 (degrees) onto each angle. This kernel only reads the columns.
     let block = frame.get(ANGLES).ok_or("mmff_stbn: missing \"angles\"")?;
     let ic = block
         .get("atomi")
@@ -431,7 +430,7 @@ pub fn mmff_stbn_ctor(
         pot.kba_kji.push(kba_kji_c[idx] as F);
         pot.r0_ij.push(r0ij[idx] as F);
         pot.r0_kj.push(r0kj[idx] as F);
-        pot.theta0.push(th0[idx] as F); // radians
+        pot.theta0.push(th0[idx].to_radians() as F); // degrees → radians
     }
     Ok(Member::indexed(pot))
 }

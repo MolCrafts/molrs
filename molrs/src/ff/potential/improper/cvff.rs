@@ -4,8 +4,12 @@
 //!
 //! `sign` is s = ±1 (a sign, **not** a phase — hence its own canonical name)
 //! and `periodicity` is the integer multiplicity n. The improper angle χ is the
-//! dihedral angle defined by the quadruple I-J-K-L, so the geometry reuses the
+//! dihedral angle defined by the quadruple I-J-K-L of the stored order, I the
+//! centre (LAMMPS's symmetry atom for this style), so the geometry reuses the
 //! shared dihedral routines.
+//!
+//! The same function of the dihedral is LAMMPS's `dihedral_style harmonic`
+//! (`K[1 + d cos(nφ)]`); [`signed_cosine_ctor`] builds either from its block.
 
 use molrs::store::schema::block_names::IMPROPERS;
 use std::collections::HashMap;
@@ -110,17 +114,30 @@ impl IndexedTerms for ImproperCvff {
     }
 }
 
-/// Construct an [`ImproperCvff`] from per-type params (`k`, `d`, `n`) and a
-/// Frame's `"impropers"` block (`atomi/atomj/atomk/atoml/type`).
+/// Construct an [`ImproperCvff`] from per-type params (`k`, `sign`,
+/// `periodicity`) and a Frame's `"impropers"` block
+/// (`atomi/atomj/atomk/atoml/type`).
 pub fn improper_cvff_ctor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, String> {
+    signed_cosine_ctor(IMPROPERS, "improper_cvff", tp, frame)
+}
+
+/// `k·[1 + sign·cos(periodicity·φ)]` over the quadruples of `block_name`
+/// (`"impropers"` for `improper cvff`, `"dihedrals"` for `dihedral
+/// harmonic`); `what` names the style in errors.
+pub fn signed_cosine_ctor(
+    block_name: &str,
+    what: &str,
+    tp: &[(&str, &Params)],
+    frame: &Frame,
+) -> Result<Member, String> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
-        .get(IMPROPERS)
-        .ok_or("improper_cvff: missing \"impropers\" block")?;
+        .get(block_name)
+        .ok_or_else(|| format!("{what}: missing \"{block_name}\" block"))?;
     let ic = block
         .get("atomi")
         .and_then(|c| c.as_uint())
@@ -158,17 +175,15 @@ pub fn improper_cvff_ctor(
     for idx in 0..n {
         let p = type_map
             .get(tc[idx].as_str())
-            .ok_or_else(|| format!("improper_cvff: unknown type '{}'", tc[idx]))?;
+            .ok_or_else(|| format!("{what}: unknown type '{}'", tc[idx]))?;
         ai.push(ic[idx] as usize);
         aj.push(jc[idx] as usize);
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
-        kk.push(p.get("k").ok_or("improper_cvff: missing k")? as F);
-        dd.push(p.get("sign").ok_or("improper_cvff: missing sign")? as F);
-        nn.push(
-            p.get("periodicity")
-                .ok_or("improper_cvff: missing periodicity")? as F,
-        );
+        let need = |key: &str| p.get(key).ok_or_else(|| format!("{what}: missing {key}"));
+        kk.push(need("k")? as F);
+        dd.push(need("sign")? as F);
+        nn.push(need("periodicity")? as F);
     }
     Ok(Member::indexed(ImproperCvff {
         atom_i: ai,

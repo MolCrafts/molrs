@@ -32,39 +32,36 @@
 //!   is an error only then. Type-less pair styles (`coul/cut`) apply to every
 //!   atom and are always in play.
 //!
-//! # Units (molrs store → LAMMPS file)
+//! # The identity on coefficients
 //!
-//! Inverse of [`super::super::readers::lammps::LammpsFfReader`]: takes a molrs
-//! [`ForceField`] in molrs units (Å, kcal/mol, **radians**, e; harmonic
-//! stiffness in the `½k(x−x₀)²` form) and emits AMBER/GAFF-flavour LAMMPS
-//! coefficients in LAMMPS `real` units:
+//! Inverse of [`super::super::readers::lammps::LammpsFfReader`]. molrs's
+//! convention is LAMMPS's — every style's expression, factors and parameter
+//! units, with angle-valued parameters in degrees — so a coefficient is
+//! written as it is stored:
 //!
 //! ```text
 //! pair_style lj/cut/coul/cut 10.0 10.0
-//! pair_coeff c3 c3 0.107800 3.397710          # epsilon(kcal/mol) sigma(Å)
+//! pair_coeff c3 c3 0.107800 3.397710          # epsilon sigma
 //! bond_style harmonic
-//! bond_coeff c3-c3 228.890000 1.535400        # K(kcal/mol/Å²) r0(Å)  — K = k/2
+//! bond_coeff c3-c3 228.890000 1.535400        # k r0
 //! angle_style harmonic
-//! angle_coeff c3-c3-oh 76.790000 109.660000   # K  theta0(deg)
+//! angle_coeff c3-c3-oh 76.790000 109.660000   # k theta0(deg)
 //! dihedral_style fourier
-//! dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.0 # m  K1 n1 d1(deg) ...
+//! dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.0 # m  k1 periodicity1 phase1 ...
 //! ```
 //!
-//! Store is **real** (Å, kcal/mol, rad; `½k` harmonic form) for force fields
-//! read from physical styles, or **lj** pass-through when the file was already
-//! reduced. Writing always goes through
-//! [`LammpsFfUnits`]
-//! (`store → lj hub → target`) — never ad-hoc eV/kcal factors.
+//! The file is written in [`LammpsWriteOptions::units`] (default `real`). A
+//! force field declared in those units ([`ForceField::units`]) is written
+//! number for number; one declared in another LAMMPS unit style (`real`,
+//! `metal`, `lj`) has its energies and lengths converted through
+//! [`LammpsFfUnits`] (`from → lj hub → to`) — never ad-hoc eV/kcal factors.
+//! Angles need no conversion in any unit style.
 //!
-//! Form map (independent of unit style):
-//! - harmonic bond/angle: `K = k/2` (molrs `½k` → LAMMPS `K`); harmonic
-//!   improper: `K = k` (molrs's improper kernel is LAMMPS's `K(χ−χ₀)²`);
-//! - angle-valued params (`theta0`, dihedral phase, improper `chi0`) are stored
-//!   in **radians** and written in **degrees** (LAMMPS file convention for all
-//!   of real/metal/lj).
-//!
-//! Default write target is LAMMPS **`real`**. Set
-//! [`LammpsWriteOptions::units`] for `metal` or `lj`.
+//! Two styles are written under another LAMMPS name: molrs's `dihedral
+//! periodic` is LAMMPS's `fourier`, term for term, and AMBER's `improper
+//! periodic` with one term at phase 0° or 180° is LAMMPS's `cvff`
+//! (`d = cos phase`) — the atom order needs no change, because both price the
+//! dihedral I-J-K-L of the stored order (see `improper::periodic`).
 //!
 //! # Pair style layout
 //!
@@ -78,7 +75,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::ForceFieldWriter;
-use crate::ff::forcefield::lammps_units::{LammpsFfUnits, molrs_half_k_to_lammps_k, parse_style};
+use crate::ff::forcefield::lammps_units::{LammpsFfUnits, parse_style};
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::{
     AngleType, BondType, DihedralType, ForceField, ImproperType, PairType, Params, Style, StyleDefs,
@@ -128,45 +125,57 @@ impl Default for LammpsWriteOptions {
     }
 }
 
-/// Conversion context: store → file units via the lj hub + form maps.
+/// Conversion context: the force field's units → the file's, through the lj
+/// hub. The identity when the two are the same unit style.
 struct WriteUnits {
     sys: LammpsFfUnits,
-    file: &'static str,
+    from: &'static str,
+    to: &'static str,
 }
 
 impl WriteUnits {
-    fn new(file: &'static str) -> Result<Self, String> {
+    fn new(from: &'static str, to: &'static str) -> Result<Self, String> {
         Ok(Self {
             sys: LammpsFfUnits::canonical().map_err(|e| format!("lammps unit system: {e}"))?,
-            file,
+            from,
+            to,
         })
     }
 
-    fn energy(&self, store: f64) -> Result<f64, String> {
-        self.sys.from_store_energy(store, self.file)
+    /// The units of `ff`, written as `to`. A force field in a unit system
+    /// LAMMPS has no `units` style for is refused only when it would need
+    /// converting.
+    fn of(ff: &ForceField, to: &'static str) -> Result<Self, String> {
+        let from = match parse_style(ff.units()) {
+            Ok(from) => from,
+            Err(_) if ff.units() == to => to,
+            Err(e) => return Err(format!("force field units: {e}")),
+        };
+        Self::new(from, to)
     }
 
-    fn length(&self, store: f64) -> Result<f64, String> {
-        self.sys.from_store_length(store, self.file)
+    fn energy(&self, value: f64) -> Result<f64, String> {
+        self.sys.energy(value, self.from, self.to)
     }
 
-    /// molrs `½k` bond stiffness → LAMMPS file `K` (form map + unit convert).
-    fn bond_k(&self, k_molrs: f64) -> Result<f64, String> {
-        let k_lammps_store = molrs_half_k_to_lammps_k(k_molrs);
-        self.sys.from_store_bond_k_lammps(k_lammps_store, self.file)
+    fn length(&self, value: f64) -> Result<f64, String> {
+        self.sys.length(value, self.from, self.to)
     }
 
-    /// molrs `½k` angle stiffness → LAMMPS file `K`.
-    fn angle_k(&self, k_molrs: f64) -> Result<f64, String> {
-        let k_lammps_store = molrs_half_k_to_lammps_k(k_molrs);
-        self.sys
-            .from_store_angle_k_lammps(k_lammps_store, self.file)
+    /// Bond stiffness, energy/length².
+    fn bond_k(&self, value: f64) -> Result<f64, String> {
+        self.sys.bond_k(value, self.from, self.to)
     }
 
-    /// molrs improper stiffness → LAMMPS file `K`: the improper kernel is
-    /// already LAMMPS's `K·(χ − χ₀)²`, so only the unit converts.
-    fn improper_k(&self, k_molrs: f64) -> Result<f64, String> {
-        self.sys.from_store_angle_k_lammps(k_molrs, self.file)
+    /// Angle-like stiffness, energy/rad²: radians are pure numbers, so it
+    /// converts as an energy.
+    fn angle_k(&self, value: f64) -> Result<f64, String> {
+        self.energy(value)
+    }
+
+    /// Inverse length (Morse `alpha`).
+    fn inverse_length(&self, value: f64) -> Result<f64, String> {
+        Ok(1.0 / self.length(1.0 / value)?)
     }
 }
 
@@ -201,28 +210,27 @@ impl Coeff {
 /// and the conversion every `*_coeff` line and `* Coeffs` row this writer
 /// emits goes through.
 ///
-/// The result is the coefficients **after** the type field(s), in the LAMMPS
-/// `units` style `units` (`real`, `metal`, `lj`); `params` are in molrs store
-/// units — Å, kcal/mol, radians (`lj` stays reduced):
+/// The result is the coefficients **after** the type field(s). `params` and
+/// the result are both in the LAMMPS `units` style `units` (`real`, `metal`,
+/// `lj`): the map is the identity on values, slot for slot.
 ///
 /// | category / style          | stored params                          | LAMMPS values |
 /// |---------------------------|----------------------------------------|---------------|
-/// | `bond harmonic`           | `k`, `r0`                              | `K = k/2`, `r0` |
-/// | `angle harmonic`          | `k`, `theta0` (rad)                    | `K = k/2`, `theta0` (deg) |
-/// | `improper harmonic`       | `k`, `chi0` (rad)                      | `K = k`, `chi0` (deg) |
-/// | `improper periodic`       | `k`, `periodicity`, `phase` (rad, 0 or π) | `K d n` (LAMMPS `cvff`, `d` = ±1) |
+/// | `bond harmonic`           | `k`, `r0`                              | `K r0` |
+/// | `bond morse`              | `d0`, `alpha`, `r0`                    | `D0 alpha r0` |
+/// | `angle harmonic`          | `k`, `theta0` (deg)                    | `K theta0` |
+/// | `improper harmonic`       | `k`, `chi0` (deg)                      | `K chi0` |
+/// | `improper cvff`           | `k`, `sign` (±1), `periodicity`        | `K d n` |
+/// | `improper periodic`       | `k`, `periodicity`, `phase` (deg, 0 or 180) | `K d n` (LAMMPS `cvff`, `d = cos phase`) |
 /// | `dihedral opls`           | `k1..k4` (absent → 0)                  | `K1 K2 K3 K4` |
 /// | `dihedral harmonic`       | `k`, `sign` (±1), `periodicity`        | `K d n` |
-/// | `dihedral fourier`        | `k<i>`, `periodicity<i>`, `phase<i>` (rad, absent → 0) | `m K1 n1 d1(deg) …` |
-/// | `dihedral periodic`       | as `fourier`, or one term as `k`, `periodicity`, `phase` | LAMMPS `fourier`: `m K1 n1 d1(deg) …` |
-/// | `dihedral charmm`         | `k`, `periodicity`, `phase` (rad, absent → 0), `w` | `K n d(deg) w` |
+/// | `dihedral periodic`       | `k<i>`, `periodicity<i>`, `phase<i>` (deg, absent → 0), or one term as `k`, `periodicity`, `phase` | LAMMPS `fourier`: `m K1 n1 d1 …` |
+/// | `dihedral charmm`         | `k`, `periodicity`, `phase` (deg, absent → 0), `w` | `K n d w` |
 /// | `dihedral multi/harmonic` | `a1..a5` (absent → 0)                  | `A1 A2 A3 A4 A5` |
 /// | `pair lj/cut…`            | `epsilon`, `sigma`                     | `epsilon sigma` |
 ///
-/// `K = k/2` because molrs's harmonic bond and angle kernels are
-/// `½·k·(x−x₀)²` and LAMMPS's are `K·(x−x₀)²`; the improper kernel is
-/// LAMMPS's `K·(χ−χ₀)²` already, so `K = k` there. An absent param falls back only where the molrs kernel
-/// reads the same default. Multiplicities (`n`, fourier `m`) are integral.
+/// An absent param falls back only where the molrs kernel reads the same
+/// default. Multiplicities (`n`, fourier `m`) are integral.
 ///
 /// # Errors
 ///
@@ -233,9 +241,9 @@ impl Coeff {
 /// use molrs::ff::forcefield::Params;
 /// use molrs::ff::forcefield::writers::lammps::lammps_coeff_values;
 ///
-/// let p = Params::from_pairs(&[("k", 900.0), ("r0", 0.9572)]);
+/// let p = Params::from_pairs(&[("k", 450.0), ("r0", 0.9572)]);
 /// assert_eq!(lammps_coeff_values("bond", "harmonic", &p, "real").unwrap(), [450.0, 0.9572]);
-/// assert!(lammps_coeff_values("bond", "morse", &p, "real").is_err());
+/// assert!(lammps_coeff_values("bond", "fene", &p, "real").is_err());
 /// ```
 pub fn lammps_coeff_values(
     category: &str,
@@ -243,7 +251,8 @@ pub fn lammps_coeff_values(
     params: &Params,
     units: &str,
 ) -> Result<Vec<f64>, String> {
-    let units = WriteUnits::new(parse_style(units)?)?;
+    let units = parse_style(units)?;
+    let units = WriteUnits::new(units, units)?;
     Ok(coeff_fields(&units, category, style, params)?
         .into_iter()
         .map(Coeff::value)
@@ -292,6 +301,13 @@ fn coeff_fields(
             ))
         }
     };
+    let sign = |d: f64| {
+        if d == 1.0 || d == -1.0 {
+            Ok(d as i64)
+        } else {
+            Err(format!("{category} {style}: param `sign` = {d} is not ±1"))
+        }
+    };
     let energies = |keys: &[&str]| -> Result<Vec<Coeff>, String> {
         keys.iter()
             .map(|key| Ok(Coeff::Real(units.energy(params.get(key).unwrap_or(0.0))?)))
@@ -303,33 +319,38 @@ fn coeff_fields(
             Real(units.bond_k(need("k")?)?),
             Real(units.length(need("r0")?)?),
         ]),
-        // Equilibrium angles are degrees in the LAMMPS file for every unit style.
+        ("bond", "morse") => Ok(vec![
+            Real(units.energy(need("d0")?)?),
+            Real(units.inverse_length(need("alpha")?)?),
+            Real(units.length(need("r0")?)?),
+        ]),
         ("angle", "harmonic") => Ok(vec![
             Real(units.angle_k(need("k")?)?),
-            Real(need("theta0")?.to_degrees()),
+            Real(need("theta0")?),
         ]),
-        ("improper", "harmonic") => Ok(vec![
-            Real(units.improper_k(need("k")?)?),
-            Real(need("chi0")?.to_degrees()),
+        ("improper", "harmonic") => Ok(vec![Real(units.angle_k(need("k")?)?), Real(need("chi0")?)]),
+        // E = K[1 + d·cos(nφ)]: `d` is the stored sign (±1), not a phase.
+        ("improper", "cvff") => Ok(vec![
+            Real(units.energy(need("k")?)?),
+            Coeff::Int(sign(need("sign")?)?),
+            multiplicity("periodicity", need("periodicity")?)?,
         ]),
         // AMBER `improper periodic`, E = K[1 + cos(nφ − φ0)], is LAMMPS
-        // `improper_style cvff`, E = K[1 + d·cos(nφ)], when φ0 is 0 (d = +1) or
-        // π (d = −1) — every GAFF improper. AMBER writes π as 3.1416, hence the
-        // tolerance. Any other phase has no cvff form and is refused, not rounded.
+        // `improper_style cvff`, E = K[1 + d·cos(nφ)], when φ0 is 0° (d = +1) or
+        // 180° (d = −1) — every GAFF improper. AMBER writes π as 3.1416, which a
+        // reader in degrees stores as 180.0004, hence the tolerance (1e-3 rad).
+        // Any other phase has no cvff form and is refused, not rounded.
         ("improper", "periodic") => {
-            let phase = params
-                .get("phase")
-                .unwrap_or(0.0)
-                .rem_euclid(std::f64::consts::TAU);
-            let near = |x: f64| (phase - x).abs() < 1e-3;
-            let d = if near(0.0) || near(std::f64::consts::TAU) {
+            let phase = params.get("phase").unwrap_or(0.0).rem_euclid(360.0);
+            let near = |x: f64| (phase - x).abs() < 1e-3_f64.to_degrees();
+            let d = if near(0.0) || near(360.0) {
                 1
-            } else if near(std::f64::consts::PI) {
+            } else if near(180.0) {
                 -1
             } else {
                 return Err(format!(
-                    "{category} {style}: phase {phase} rad has no LAMMPS `cvff` form \
-                     (needs 0 or π)"
+                    "{category} {style}: phase {phase}° has no LAMMPS `cvff` form \
+                     (needs 0° or 180°)"
                 ));
             };
             Ok(vec![
@@ -339,31 +360,29 @@ fn coeff_fields(
             ])
         }
         ("dihedral", "opls") => energies(&["k1", "k2", "k3", "k4"]),
-        // E = K[1 + d·cos(nφ)]: `d` is the stored sign (±1), not a phase.
         ("dihedral", "harmonic") => Ok(vec![
             Real(units.energy(need("k")?)?),
-            Real(need("sign")?),
+            Coeff::Int(sign(need("sign")?)?),
             multiplicity("periodicity", need("periodicity")?)?,
         ]),
-        // m  K1 n1 d1  [K2 n2 d2 ...] from `k<i>` / `periodicity<i>` / `phase<i>`.
-        // `periodic` is the same series under molrs's canonical name; its
-        // unindexed `k` / `periodicity` / `phase` is the one-term case.
-        ("dihedral", "fourier") | ("dihedral", "periodic") => {
+        // m  K1 n1 d1  [K2 n2 d2 ...] from `k<i>` / `periodicity<i>` / `phase<i>`:
+        // molrs's `periodic` is LAMMPS's `fourier` term for term; its unindexed
+        // `k` / `periodicity` / `phase` is the one-term case.
+        ("dihedral", "periodic") => {
             let mut terms = Vec::new();
             if params.get("k1").is_none()
                 && let Some(k) = params.get("k")
             {
                 terms.push(Real(units.energy(k)?));
                 terms.push(multiplicity("periodicity", need("periodicity")?)?);
-                terms.push(Real(params.get("phase").unwrap_or(0.0).to_degrees()));
+                terms.push(Real(params.get("phase").unwrap_or(0.0)));
             }
             let mut i = 1usize;
             while let Some(k) = params.get(&format!("k{i}")) {
                 let n_key = format!("periodicity{i}");
                 terms.push(Real(units.energy(k)?));
                 terms.push(multiplicity(&n_key, need(&n_key)?)?);
-                let phase = params.get(&format!("phase{i}")).unwrap_or(0.0);
-                terms.push(Real(phase.to_degrees()));
+                terms.push(Real(params.get(&format!("phase{i}")).unwrap_or(0.0)));
                 i += 1;
             }
             if terms.is_empty() {
@@ -377,7 +396,7 @@ fn coeff_fields(
         ("dihedral", "charmm") => Ok(vec![
             Real(units.energy(need("k")?)?),
             multiplicity("periodicity", need("periodicity")?)?,
-            Real(params.get("phase").unwrap_or(0.0).to_degrees()),
+            Real(params.get("phase").unwrap_or(0.0)),
             Real(need("w")?),
         ]),
         ("dihedral", "multi/harmonic") => energies(&["a1", "a2", "a3", "a4", "a5"]),
@@ -594,7 +613,7 @@ impl<'a> LammpsFfWriter<'a> {
     /// a used explicit cross pair is an error here (write it through the
     /// include).
     pub fn write_data_coeffs_str(&self, ff: &ForceField) -> Result<String, String> {
-        let units = WriteUnits::new(self.options.units)?;
+        let units = WriteUnits::of(ff, self.options.units)?;
         let mut lines: Vec<String> = Vec::new();
         self.write_data_pair_coeffs(&mut lines, ff, &units)?;
         self.write_data_section::<BondType>(&mut lines, ff, &units)?;
@@ -740,6 +759,9 @@ impl<'a> LammpsFfWriter<'a> {
             })
             .collect();
         let opts = &self.options;
+        for style in &styles {
+            refuse_unexpressible_coulomb(style)?;
+        }
 
         // Reader always builds lj/cut + coul/cut; recombine for a correct write-back.
         if is_split_lj_coulomb(&styles) {
@@ -909,7 +931,7 @@ impl<'a> LammpsFfWriter<'a> {
 
 impl ForceFieldWriter for LammpsFfWriter<'_> {
     fn write_str(&self, ff: &ForceField) -> Result<String, String> {
-        let units = WriteUnits::new(self.options.units)?;
+        let units = WriteUnits::of(ff, self.options.units)?;
         let mut lines: Vec<String> = Vec::new();
         lines.push("# LAMMPS force field generated by molrs\n".to_owned());
         if !self.options.skip_units {
@@ -969,6 +991,32 @@ fn pair_modify_line(style: &Style) -> Option<String> {
         None => return None,
     };
     Some(format!("pair_modify mix {rule}\n"))
+}
+
+/// A `coul/cut` LAMMPS cannot price as molrs does: a buffer `delta ≠ 0`
+/// (MMFF's `qᵢqⱼ/(r + δ)`; LAMMPS's Coulomb styles have none) or a
+/// `dielectric ≠ 1` (an input-script `dielectric` command, not a coefficient).
+/// The Coulomb constant is LAMMPS's own `qqr2e` for the `units` and is not
+/// written; a field stating another (AMBER's 332.0522173) is priced by LAMMPS
+/// at LAMMPS's, a documented difference of ~3e-5 relative.
+fn refuse_unexpressible_coulomb(style: &Style) -> Result<(), String> {
+    if style.name() != "coul/cut" {
+        return Ok(());
+    }
+    let p = style.params();
+    if let Some(delta) = p.get("delta").filter(|d| *d != 0.0) {
+        return Err(format!(
+            "pair coul/cut: the buffer delta = {delta} (E = k·qq/(D·(r + delta))) has no \
+             LAMMPS Coulomb style"
+        ));
+    }
+    if let Some(d) = p.get("dielectric").filter(|d| *d != 1.0) {
+        return Err(format!(
+            "pair coul/cut: dielectric = {d} is a LAMMPS input-script `dielectric` \
+             command, not a coefficient this include can carry"
+        ));
+    }
+    Ok(())
 }
 
 fn is_split_lj_coulomb(styles: &[&Style]) -> bool {
@@ -1085,10 +1133,10 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
             "pair eps/sigma:\n{text}"
         );
 
-        // K = k/2: reader stored k=457.78 → write K=228.89
+        // The identity: the reader stored K = 228.89, the writer writes it.
         assert!(
             text.contains("bond_coeff c3-c3 228.890000 1.535400"),
-            "bond K=k/2:\n{text}"
+            "bond K:\n{text}"
         );
         // angle: K=76.79, theta0 in degrees
         assert!(
@@ -1117,7 +1165,7 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
             .unwrap()
             .get_bondtype("c3", "c3")
             .unwrap();
-        assert!((bt.params.get("k").unwrap() - 457.78).abs() < 1e-6);
+        assert_eq!(bt.params.get("k"), Some(228.89));
         assert!((bt.params.get("r0").unwrap() - 1.5354).abs() < 1e-9);
 
         let angle = ff2.get_style("angle", "harmonic").unwrap();
@@ -1125,10 +1173,10 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
             panic!("not angle");
         };
         let at = &atypes[0];
-        assert!((at.params.get("k").unwrap() - 153.58).abs() < 1e-6);
-        assert!((at.params.get("theta0").unwrap() - 109.66_f64.to_radians()).abs() < 1e-9);
+        assert_eq!(at.params.get("k"), Some(76.79));
+        assert_eq!(at.params.get("theta0"), Some(109.66));
 
-        let dih = ff2.get_style("dihedral", "fourier").unwrap();
+        let dih = ff2.get_style("dihedral", "periodic").unwrap();
         let StyleDefs::Dihedral(dtypes) = &dih.defs else {
             panic!("not dihedral");
         };
@@ -1329,22 +1377,26 @@ pair_coeff c3 c3 0.107800 3.397710
         );
     }
 
+    /// A `real` force field written as `metal` has its energies converted
+    /// through the lj hub; reading the `metal` file back gives a `metal`
+    /// force field, and writing that back as `metal` is the identity.
     #[test]
     fn metal_write_converts_energy_via_lj_hub() {
         let ff = LammpsFfReader::new().read_str(MINI).unwrap();
-        let opts = LammpsWriteOptions {
+        assert_eq!(ff.units(), "real");
+        let opts = || LammpsWriteOptions {
             units: "metal",
             ..Default::default()
         };
         let labels = mini_labels();
-        let text = LammpsFfWriter::with_options(&labels, opts)
+        let text = LammpsFfWriter::with_options(&labels, opts())
             .write_str(&ff)
             .unwrap();
         assert!(text.contains("units metal\n"), "metal header:\n{text}");
 
         // 0.1078 kcal/mol → eV through lj hub
         let sys = crate::ff::forcefield::lammps_units::LammpsFfUnits::canonical().unwrap();
-        let eps_ev = sys.from_store_energy(0.1078, "metal").unwrap();
+        let eps_ev = sys.energy(0.1078, "real", "metal").unwrap();
         let expected = format!("pair_coeff c3 c3 {:.6}", eps_ev);
         assert!(text.contains(&expected), "expected {expected} in:\n{text}");
 
@@ -1354,29 +1406,14 @@ pair_coeff c3 c3 0.107800 3.397710
             "sigma stays Å:\n{text}"
         );
 
-        // Round-trip metal → store recovers original real values within the
-        // printed precision (default 6 decimals on file numbers).
+        // The metal file reads as a metal force field, number for number, and
+        // writes back unchanged.
         let ff2 = LammpsFfReader::new().read_str(&text).unwrap();
-        let pt = ff2
-            .get_style("pair", "lj/cut")
-            .unwrap()
-            .get_pairtype("c3", None)
+        assert_eq!(ff2.units(), "metal");
+        let again = LammpsFfWriter::with_options(&labels, opts())
+            .write_str(&ff2)
             .unwrap();
-        assert!(
-            (pt.params.get("epsilon").unwrap() - 0.1078).abs() < 5e-5,
-            "eps store {}",
-            pt.params.get("epsilon").unwrap()
-        );
-        let bt = ff2
-            .get_style("bond", "harmonic")
-            .unwrap()
-            .get_bondtype("c3", "c3")
-            .unwrap();
-        assert!(
-            (bt.params.get("k").unwrap() - 457.78).abs() < 1e-3,
-            "bond k store {}",
-            bt.params.get("k").unwrap()
-        );
+        assert_eq!(again, text);
     }
 
     #[test]
@@ -1432,9 +1469,9 @@ pair_coeff c3 c3 0.107800 3.397710
         Params::from_pairs(&[("epsilon", eps), ("sigma", sigma)])
     }
 
-    /// Harmonic bond in molrs `½k` form: stored `k` is twice the LAMMPS `K`.
-    fn bond(k_lammps: f64, r0: f64) -> Params {
-        Params::from_pairs(&[("k", 2.0 * k_lammps), ("r0", r0)])
+    /// Harmonic bond: molrs's `k` is LAMMPS's `K`.
+    fn bond(k: f64, r0: f64) -> Params {
+        Params::from_pairs(&[("k", k), ("r0", r0)])
     }
 
     /// Split `lj/cut` (cutoff 9) + `coul/cut` (cutoff 10) with hand-written
@@ -1601,7 +1638,7 @@ pair_coeff c3 c3 0.107800 3.397710
     }
 
     /// Improper `k` of the kernel `k·(χ − χ₀)²` (LAMMPS's `K`), `chi0` in
-    /// radians.
+    /// degrees.
     fn improper_ff() -> ForceField {
         let mut ff = ForceField::new("hand");
         ff.def_style("improper", "harmonic", Params::new())
@@ -1609,7 +1646,7 @@ pair_coeff c3 c3 0.107800 3.397710
             .def_type(
                 "c3-n-c-o",
                 &["c3", "n", "c", "o"],
-                Params::from_pairs(&[("k", 2.2), ("chi0", std::f64::consts::PI)]),
+                Params::from_pairs(&[("k", 2.2), ("chi0", 180.0)]),
             )
             .unwrap();
         ff
@@ -1636,7 +1673,7 @@ pair_coeff c3 c3 0.107800 3.397710
         assert!(err.contains("o-c-n-c3"), "names the label: {err}");
     }
 
-    /// AMBER `improper periodic`: `k` kcal/mol, integer `periodicity`, `phase` rad.
+    /// AMBER `improper periodic`: `k` kcal/mol, integer `periodicity`, `phase` deg.
     fn periodic_improper_ff(phase: f64) -> ForceField {
         let mut ff = ForceField::new("hand");
         ff.def_style("improper", "periodic", Params::new())
@@ -1652,8 +1689,9 @@ pair_coeff c3 c3 0.107800 3.397710
 
     #[test]
     fn periodic_improper_is_written_as_cvff() {
-        // AMBER stores π rounded to 3.1416 in a prmtop, 7.3e-6 above the true value.
-        let ff = periodic_improper_ff(std::f64::consts::PI + 7.3e-6);
+        // AMBER stores π rounded to 3.1416 in a prmtop, 7.3e-6 rad above the
+        // true value, which a prmtop reader stores as 180.0004°.
+        let ff = periodic_improper_ff((std::f64::consts::PI + 7.3e-6).to_degrees());
         let labels = labels_of(&[("impropers", &["c3-o-c-os"])]);
         let text = LammpsFfWriter::new(&labels).write_str(&ff).unwrap();
         assert_eq!(
@@ -1675,11 +1713,7 @@ pair_coeff c3 c3 0.107800 3.397710
             lammps_coeff_values("improper", "periodic", &zero, "real").unwrap(),
             [1.1, 1.0, 2.0]
         );
-        let pi = Params::from_pairs(&[
-            ("k", 1.1),
-            ("periodicity", 2.0),
-            ("phase", std::f64::consts::PI),
-        ]);
+        let pi = Params::from_pairs(&[("k", 1.1), ("periodicity", 2.0), ("phase", 180.0)]);
         assert_eq!(
             lammps_coeff_values("improper", "periodic", &pi, "real").unwrap(),
             [1.1, -1.0, 2.0]
@@ -1688,7 +1722,7 @@ pair_coeff c3 c3 0.107800 3.397710
 
     #[test]
     fn periodic_improper_with_other_phase_is_refused() {
-        let p = Params::from_pairs(&[("k", 1.1), ("periodicity", 2.0), ("phase", 1.0)]);
+        let p = Params::from_pairs(&[("k", 1.1), ("periodicity", 2.0), ("phase", 57.3)]);
         let err = lammps_coeff_values("improper", "periodic", &p, "real").unwrap_err();
         assert!(err.contains("cvff"), "{err}");
     }
@@ -1813,20 +1847,20 @@ pair_coeff c3 c3 0.107800 3.397710
         );
     }
 
-    /// Harmonic `c3-hc` plus an unsupported `morse` style holding the bond
+    /// Harmonic `c3-hc` plus an unsupported `fene` style holding the bond
     /// `c3-oh` on `c3`, `oh`.
-    fn ff_with_morse() -> ForceField {
+    fn ff_with_fene() -> ForceField {
         let mut ff = ForceField::new("hand");
         ff.def_style("bond", "harmonic", Params::new())
             .unwrap()
             .def_type("c3-hc", &["c3", "hc"], bond(340.0, 1.09))
             .unwrap();
-        ff.def_style("bond", "morse", Params::new())
+        ff.def_style("bond", "fene", Params::new())
             .unwrap()
             .def_type(
                 "c3-oh",
                 &["c3", "oh"],
-                Params::from_pairs(&[("d0", 90.0), ("alpha", 2.0), ("r0", 1.4)]),
+                Params::from_pairs(&[("k", 30.0), ("r0", 1.5), ("epsilon", 1.0), ("sigma", 1.0)]),
             )
             .unwrap();
         ff
@@ -1834,11 +1868,11 @@ pair_coeff c3 c3 0.107800 3.397710
 
     #[test]
     fn label_writer_tolerates_unsupported_style_holding_only_unused_types() {
-        let ff = ff_with_morse();
+        let ff = ff_with_fene();
         let labels = labels_of(&[("bonds", &["c3-hc"])]);
         let writer = LammpsFfWriter::new(&labels);
         let text = writer.write_str(&ff).unwrap();
-        assert!(!text.contains("morse"), "{text}");
+        assert!(!text.contains("fene"), "{text}");
         assert!(text.contains("bond_coeff c3-hc"), "{text}");
         let data = writer.write_data_coeffs_str(&ff).unwrap();
         assert_eq!(
@@ -1852,7 +1886,7 @@ pair_coeff c3 c3 0.107800 3.397710
     /// error names the spelling that is defined.
     #[test]
     fn label_writer_names_the_reversed_spelling_that_is_defined() {
-        let ff = ff_with_morse();
+        let ff = ff_with_fene();
         let labels = labels_of(&[("bonds", &["hc-c3"])]);
         let err = LammpsFfWriter::new(&labels).write_str(&ff).unwrap_err();
         assert!(err.contains("`hc-c3` has no bond type"), "{err}");
@@ -1861,18 +1895,18 @@ pair_coeff c3 c3 0.107800 3.397710
 
     #[test]
     fn label_writer_rejects_unsupported_style_holding_a_used_type() {
-        let ff = ff_with_morse();
+        let ff = ff_with_fene();
         let labels = labels_of(&[("bonds", &["c3-hc", "c3-oh"])]);
         let writer = LammpsFfWriter::new(&labels);
         let err = writer.write_str(&ff).unwrap_err();
-        assert!(err.contains("morse"), "names the style: {err}");
+        assert!(err.contains("fene"), "names the style: {err}");
         let err = writer.write_data_coeffs_str(&ff).unwrap_err();
-        assert!(err.contains("morse"), "names the style: {err}");
+        assert!(err.contains("fene"), "names the style: {err}");
     }
 
     /// A label is matched to a type name exactly. The force field defines the
-    /// bond `c3-h1` (K = 340, stored `k` = 680) and the qualified angle
-    /// `C_3-C_R-O_2@1_1.5_2` (K = 60, stored `k` = 120, theta0 = 120 degrees);
+    /// bond `c3-h1` (K = 340) and the qualified angle `C_3-C_R-O_2@1_1.5_2`
+    /// (K = 60, theta0 = 120 degrees);
     /// labels spelled the same are written, and the reversed spellings
     /// `h1-c3` / `O_2-C_R-C_3@1.5_1_2` find no type — an error naming the
     /// block and the label.
@@ -1888,7 +1922,7 @@ pair_coeff c3 c3 0.107800 3.397710
             .def_type(
                 "C_3-C_R-O_2@1_1.5_2",
                 &["C_3", "C_R", "O_2"],
-                Params::from_pairs(&[("k", 120.0), ("theta0", 120.0_f64.to_radians())]),
+                Params::from_pairs(&[("k", 60.0), ("theta0", 120.0)]),
             )
             .unwrap();
 
@@ -1923,8 +1957,20 @@ pair_coeff c3 c3 0.107800 3.397710
         );
     }
 
+    /// MMFF's buffered Coulomb (`delta = 0.05`) has no LAMMPS style: refused.
+    #[test]
+    fn a_buffered_coulomb_is_refused() {
+        let mut ff = split_pair_ff();
+        ff.get_style_mut("pair", "coul/cut")
+            .unwrap()
+            .set_param("delta", 0.05);
+        let labels = labels_of(&[("atoms", &["c3", "hc"])]);
+        let err = LammpsFfWriter::new(&labels).write_str(&ff).unwrap_err();
+        assert!(err.contains("delta"), "{err}");
+    }
+
     /// A pair style whose types carry no ε/σ (`thole`: per-type `charge`,
-    /// `alpha`, `a_thole`) has no `pair_coeff` form here. Writing the
+    /// `alpha`, `damp`) has no `pair_coeff` form here. Writing the
     /// `pair_style` line without its coefficients is an incomplete include, so
     /// both writers refuse and name the category and the style.
     #[test]
@@ -1935,7 +1981,7 @@ pair_coeff c3 c3 0.107800 3.397710
             .def_type(
                 "c3",
                 &["c3"],
-                Params::from_pairs(&[("charge", -0.2), ("alpha", 1.1), ("a_thole", 2.6)]),
+                Params::from_pairs(&[("charge", -0.2), ("alpha", 1.1), ("damp", 2.6)]),
             )
             .unwrap();
         let labels = labels_of(&[("atoms", &["c3"])]);
@@ -1964,30 +2010,40 @@ pair_coeff c3 c3 0.107800 3.397710
     /// `(category, style, stored params, expected LAMMPS values)`.
     type ValuesCase<'a> = (&'a str, &'a str, &'a [(&'a str, f64)], &'a [f64]);
 
-    /// Hand-derived goldens for every kernel, in `real`: harmonic bond and
-    /// angle `K = k/2`, harmonic improper `K = k`, radians → degrees, energies
-    /// pass through.
+    /// Hand-derived goldens for every kernel, in `real`: the identity on
+    /// values, slot for slot — LAMMPS's `K`, degrees, energies as stored.
     #[test]
     fn lammps_coeff_values_renders_each_kernel() {
-        let pi = std::f64::consts::PI;
         let cases: &[ValuesCase<'_>] = &[
             (
                 "bond",
                 "harmonic",
-                &[("k", 900.0), ("r0", 0.9572)],
+                &[("k", 450.0), ("r0", 0.9572)],
                 &[450.0, 0.9572],
+            ),
+            (
+                "bond",
+                "morse",
+                &[("d0", 95.6), ("alpha", 2.0), ("r0", 1.53)],
+                &[95.6, 2.0, 1.53],
             ),
             (
                 "angle",
                 "harmonic",
-                &[("k", 110.0), ("theta0", 1.824_218_134_184_473_2)],
+                &[("k", 55.0), ("theta0", 104.52)],
                 &[55.0, 104.52],
             ),
             (
                 "improper",
                 "harmonic",
-                &[("k", 10.0), ("chi0", pi)],
+                &[("k", 10.0), ("chi0", 180.0)],
                 &[10.0, 180.0],
+            ),
+            (
+                "improper",
+                "cvff",
+                &[("k", 1.1), ("sign", -1.0), ("periodicity", 2.0)],
+                &[1.1, -1.0, 2.0],
             ),
             (
                 "dihedral",
@@ -2003,11 +2059,11 @@ pair_coeff c3 c3 0.107800 3.397710
             ),
             (
                 "dihedral",
-                "fourier",
+                "periodic",
                 &[
                     ("k1", 0.5),
                     ("periodicity1", 1.0),
-                    ("phase1", pi),
+                    ("phase1", 180.0),
                     ("k2", 0.25),
                     ("periodicity2", 3.0),
                     ("phase2", 0.0),
@@ -2017,7 +2073,12 @@ pair_coeff c3 c3 0.107800 3.397710
             (
                 "dihedral",
                 "charmm",
-                &[("k", 0.2), ("periodicity", 3.0), ("phase", pi), ("w", 0.5)],
+                &[
+                    ("k", 0.2),
+                    ("periodicity", 3.0),
+                    ("phase", 180.0),
+                    ("w", 0.5),
+                ],
                 &[0.2, 3.0, 180.0, 0.5],
             ),
             (
@@ -2048,45 +2109,31 @@ pair_coeff c3 c3 0.107800 3.397710
 
     #[test]
     fn lammps_coeff_values_rejects_unsupported_kernel_and_missing_param() {
-        let err = lammps_coeff_values("bond", "morse", &Params::from_pairs(&[("k", 1.0)]), "real")
+        let err = lammps_coeff_values("bond", "fene", &Params::from_pairs(&[("k", 1.0)]), "real")
             .unwrap_err();
-        assert!(err.contains("bond") && err.contains("morse"), "{err}");
+        assert!(err.contains("bond") && err.contains("fene"), "{err}");
 
         let err = lammps_coeff_values(
             "bond",
             "harmonic",
-            &Params::from_pairs(&[("k", 900.0)]),
+            &Params::from_pairs(&[("k", 450.0)]),
             "real",
         )
         .unwrap_err();
         assert!(err.contains("r0"), "{err}");
 
-        let bond = Params::from_pairs(&[("k", 900.0), ("r0", 0.9572)]);
+        let bond = Params::from_pairs(&[("k", 450.0), ("r0", 0.9572)]);
         let err = lammps_coeff_values("bond", "harmonic", &bond, "si").unwrap_err();
         assert!(err.contains("si"), "{err}");
     }
 
-    /// `dihedral periodic` is the canonical torsion (spec ff-params-01), the same
-    /// `Σ K[1 + cos(nφ − d)]` as LAMMPS `dihedral_style fourier`; it had no
-    /// branch here, so a canonical field could not be written at all. The
-    /// unindexed one-term spelling the kernel accepts is accepted too.
+    /// `dihedral periodic` is molrs's name for LAMMPS `dihedral_style
+    /// fourier`, term for term; the unindexed one-term spelling the kernel
+    /// accepts is written as one fourier term.
     #[test]
     fn periodic_dihedral_is_written_as_fourier() {
-        let pi = std::f64::consts::PI;
         assert_eq!(lammps_style_name("dihedral", "periodic"), "fourier");
-        let multi = Params::from_pairs(&[
-            ("k1", 0.5),
-            ("periodicity1", 1.0),
-            ("phase1", pi),
-            ("k2", 0.25),
-            ("periodicity2", 3.0),
-            ("phase2", 0.0),
-        ]);
-        assert_eq!(
-            lammps_coeff_values("dihedral", "periodic", &multi, "real").unwrap(),
-            lammps_coeff_values("dihedral", "fourier", &multi, "real").unwrap()
-        );
-        let single = Params::from_pairs(&[("k", 0.3), ("periodicity", 2.0), ("phase", pi)]);
+        let single = Params::from_pairs(&[("k", 0.3), ("periodicity", 2.0), ("phase", 180.0)]);
         assert_eq!(
             lammps_coeff_values("dihedral", "periodic", &single, "real").unwrap(),
             vec![1.0, 0.3, 2.0, 180.0]
@@ -2094,33 +2141,44 @@ pair_coeff c3 c3 0.107800 3.397710
     }
 
     /// Writer and reader are inverse through their two public homes: the
-    /// values rendered for a kernel read back, as tokens, to the same params.
+    /// values rendered for a kernel read back, as tokens, to the same params,
+    /// and the tokens come back as written.
     #[test]
     fn lammps_coeff_values_round_trips_through_lammps_coeff_params() {
         use crate::ff::forcefield::readers::lammps::lammps_coeff_params;
-        let cases: &[(&str, &str, &[&str])] = &[
-            ("bond", "harmonic", &["450", "0.9572"]),
-            ("angle", "harmonic", &["55", "104.52"]),
-            ("improper", "harmonic", &["10", "180"]),
-            ("dihedral", "opls", &["1", "2", "3", "4"]),
-            ("dihedral", "harmonic", &["2", "-1", "3"]),
+        // (category, LAMMPS style, molrs style, tokens)
+        let cases: &[(&str, &str, &str, &[&str])] = &[
+            ("bond", "harmonic", "harmonic", &["450", "0.9572"]),
+            ("bond", "morse", "morse", &["95.6", "2", "1.53"]),
+            ("angle", "harmonic", "harmonic", &["55", "104.52"]),
+            ("improper", "harmonic", "harmonic", &["10", "180"]),
+            ("improper", "cvff", "cvff", &["1.1", "-1", "2"]),
+            ("dihedral", "opls", "opls", &["1", "2", "3", "4"]),
+            ("dihedral", "harmonic", "harmonic", &["2", "-1", "3"]),
             (
                 "dihedral",
                 "fourier",
+                "periodic",
                 &["2", "0.5", "1", "180", "0.25", "3", "0"],
             ),
-            ("dihedral", "charmm", &["0.2", "3", "180", "0.5"]),
-            ("dihedral", "multi/harmonic", &["1", "2", "3", "4", "5"]),
-            ("pair", "lj/cut", &["0.066", "3.5"]),
+            ("dihedral", "charmm", "charmm", &["0.2", "3", "180", "0.5"]),
+            (
+                "dihedral",
+                "multi/harmonic",
+                "multi/harmonic",
+                &["1", "2", "3", "4", "5"],
+            ),
+            ("pair", "lj/cut", "lj/cut", &["0.066", "3.5"]),
         ];
-        for (category, style, tokens) in cases {
-            let params = lammps_coeff_params(category, style, tokens, "real").unwrap();
-            let values = lammps_coeff_values(category, style, &params, "real")
-                .unwrap_or_else(|e| panic!("{category} {style}: {e}"));
+        for (category, lammps, molrs, tokens) in cases {
+            let params = lammps_coeff_params(category, lammps, tokens, "real").unwrap();
+            let values = lammps_coeff_values(category, molrs, &params, "real")
+                .unwrap_or_else(|e| panic!("{category} {molrs}: {e}"));
             let strings: Vec<String> = values.iter().map(f64::to_string).collect();
             let strs: Vec<&str> = strings.iter().map(String::as_str).collect();
-            let back = lammps_coeff_params(category, style, &strs, "real").unwrap();
-            assert_eq!(back, params, "{category} {style}: {strs:?}");
+            assert_eq!(&strs, tokens, "{category} {lammps}: the identity on tokens");
+            let back = lammps_coeff_params(category, lammps, &strs, "real").unwrap();
+            assert_eq!(back, params, "{category} {lammps}: {strs:?}");
         }
     }
 }

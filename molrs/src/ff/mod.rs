@@ -1,5 +1,7 @@
 pub mod charge;
 pub(crate) mod constants;
+#[cfg(test)]
+mod convention_invariance;
 pub mod forcefield;
 pub mod mmff;
 pub mod params;

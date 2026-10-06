@@ -365,7 +365,7 @@ impl Table {
                             .ok_or_else(|| format!("{what} has no pair/lj/cut self row"))?;
                         let row = AtomRow {
                             name: t.name.clone(),
-                            class: t.params.get_str("bond_type").unwrap_or(&t.name).to_owned(),
+                            class: t.params.get_str("class").unwrap_or(&t.name).to_owned(),
                             mass: param(&t.params, "mass", &what)?,
                             charge: param(&t.params, "charge", &what)?,
                             sigma: param(&pair.params, "sigma", &what)?,
@@ -547,8 +547,8 @@ impl Table {
 //! | GROMACS | molrs |
 //! |---|---|
 //! | σ (nm), ε (kJ/mol) | σ × 10 (Å), ε / 4.184 (kcal/mol) |
-//! | bond b₀ (nm), k_b (kJ/mol/nm², ½k form) | r0 = b₀ × 10 (Å), k = k_b / 418.4 (kcal/mol/Å², ½k form) |
-//! | angle θ₀ (deg), k_θ (kJ/mol/rad²) | θ₀ in rad, k = k_θ / 4.184 (kcal/mol/rad²) |
+//! | bond b₀ (nm), k_b (kJ/mol/nm², ½k_b form) | r0 = b₀ × 10 (Å), k = k_b / 418.4 / 2 (kcal/mol/Å², LAMMPS `K` form) |
+//! | angle θ₀ (deg), k_θ (kJ/mol/rad², ½k_θ form) | θ₀ in degrees, k = k_θ / 4.184 / 2 (kcal/mol/rad², LAMMPS `K` form) |
 //! | dihedral funct 3, Ryckaert–Bellemans C₀..C₅ (kJ/mol) | exact RB → OPLS Fourier f₁..f₄ (GROMACS manual Eqs. 200–201), / 4.184 (kcal/mol) |
 //! | `[ defaults ] 1 3 yes 0.5 0.5` | geometric mixing, 1-4 scale LJ 0.5 / Coulomb 0.5 |
 //!
@@ -645,8 +645,8 @@ pub const OPLSAA_ATOMS: &[OplsAtomRow] = &[
 
 /// The {} `[ bondtypes ]` funct-1 rows of `ffbonded.itp`, in file order.
 ///
-/// `force_constant` is kcal/mol/Å² and `r0` is Å. molrs and GROMACS share the
-/// `½k(r−r₀)²` form, so there is no extra ½ factor.
+/// `force_constant` is kcal/mol/Å² in molrs's — LAMMPS's — `k(r−r₀)²` form
+/// (GROMACS's `k_b / 2`), and `r0` is Å.
 #[rustfmt::skip]
 pub const OPLSAA_BONDS: &[OplsBondRow] = &[
 ",
@@ -669,7 +669,8 @@ pub const OPLSAA_BONDS: &[OplsBondRow] = &[
 
 /// The {} `[ angletypes ]` funct-1 rows of `ffbonded.itp`, in file order.
 ///
-/// `force_constant` is kcal/mol/rad² and `theta0` is radians.
+/// `force_constant` is kcal/mol/rad² in molrs's — LAMMPS's — `k(θ−θ₀)²` form
+/// (GROMACS's `k_θ / 2`), and `theta0` is degrees.
 #[rustfmt::skip]
 pub const OPLSAA_ANGLES: &[OplsAngleRow] = &[
 ",

@@ -910,7 +910,7 @@ mod tests {
             .def_type(
                 "A-A-A",
                 &["A", "A", "A"],
-                Params::from_pairs(&[("k", 50.0), ("theta0", 1.911)]),
+                Params::from_pairs(&[("k", 50.0), ("theta0", 109.5)]),
             )
             .unwrap();
         ff.def_style("dihedral", "opls", Params::new())

@@ -19,6 +19,7 @@ nav = [
   ] },
   { "Guides" = [
     { "Record files (*.mrec)" = "guides/records.md" },
+    { "Force-field conventions" = "guides/forcefield-conventions.md" },
   ] },
   { "Reference" = [
     { "Rust" = "reference/rust.md" },

@@ -1,7 +1,8 @@
-//! Morse bond potential: E = D * (1 - exp(-alpha*(r-r0)))^2
+//! Morse bond (LAMMPS `bond_style morse`): E = d0·(1 − e^{−alpha·(r − r0)})²
 //!
-//! Anharmonic bond with a finite dissociation energy `D`. Parameters per type:
-//! `D` (well depth), `alpha` (steepness), `r0` (equilibrium length).
+//! Anharmonic bond with a finite dissociation energy. Parameters per type, as
+//! LAMMPS names them: `d0` (LAMMPS `D0`, well depth, energy), `alpha`
+//! (steepness, 1/length), `r0` (equilibrium length).
 
 use molrs::store::schema::block_names::BONDS;
 use std::collections::HashMap;
@@ -177,7 +178,7 @@ pub fn bond_morse_ctor(
             .ok_or_else(|| format!("BondMorse: unknown bond type '{}'", label))?;
         ai.push(i_col[idx] as usize);
         aj.push(j_col[idx] as usize);
-        dv.push(need(p, "D", label)?);
+        dv.push(need(p, "d0", label)?);
         av.push(need(p, "alpha", label)?);
         rv.push(need(p, "r0", label)?);
     }

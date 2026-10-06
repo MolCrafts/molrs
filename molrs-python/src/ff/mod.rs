@@ -1798,11 +1798,12 @@ impl PyPotentialCompiler {
 
 /// Read an OPLS-AA / GROMACS force-field XML file into a :class:`ForceField`.
 ///
-/// Parses the OpenMM-style OPLS-AA XML (GROMACS units — nm, kJ/mol,
-/// Ryckaert-Bellemans torsions) and normalizes it to molrs units (Å, kcal/mol,
-/// radians, e): bond/angle/pair conversions plus the RB → OPLS 4-cosine
-/// (``f1..f4``) inversion happen in the reader, so the returned force field is
-/// pure molrs units. Distinct from :func:`read_forcefield_xml`, which reads
+/// Parses the OpenMM-style OPLS-AA XML (GROMACS units — nm, kJ/mol, radians,
+/// ``½k`` harmonic terms, Ryckaert-Bellemans torsions) and normalizes it to
+/// molrs's convention, LAMMPS's ``real`` (Å, kcal/mol, degrees, e; harmonic
+/// ``K = k/2``): the conversions plus the RB → OPLS 4-cosine (``k1..k4``)
+/// inversion happen in the reader. An ``<Improper>`` (centre first, priced by
+/// OpenMM over ``(c2, c3, c1, c4)``) is stored as ``(c2, c3, c1, c4)``. Distinct from :func:`read_forcefield_xml`, which reads
 /// molrs's own native schema.
 ///
 /// Parameters
@@ -1832,12 +1833,11 @@ pub fn read_opls_xml_py(path: PathBuf) -> PyResult<PyForceField> {
 /// Read a LAMMPS force-field include (``*.ff``) into a :class:`ForceField`.
 ///
 /// Parses the ``pair_style``/``pair_coeff`` + ``bond_style``/``angle_style``/
-/// ``dihedral_style`` (``fourier``) [+ optional ``improper_style``] include that
-/// :func:`write_lammps_forcefield` emits (AMBER/GAFF flavour), normalizing it
-/// to molrs units (Å, kcal/mol, radians, e): LAMMPS harmonic ``K`` → molrs
-/// ``k = 2K``, angle/phase values deg → rad at this boundary, and the
-/// ``fourier`` dihedral maps to the molrs ``periodic`` kernel. AMBER 1-4 scaling
-/// (LJ ×0.5, Coulomb ×1/1.2) is recorded on the force field's special bonds.
+/// ``dihedral_style``/``improper_style`` include that
+/// :func:`write_lammps_forcefield` emits. molrs's convention is LAMMPS's, so
+/// every coefficient is stored as written (``K``, degrees) and the force field
+/// declares the file's ``units``; the ``fourier`` dihedral is molrs's
+/// ``periodic``. The ``special_bonds`` line is recorded on the force field.
 /// Distinct from :func:`read_forcefield_xml` (molrs's own schema) and
 /// :func:`read_opls_xml` (OPLS-AA / GROMACS XML).
 ///
@@ -1873,8 +1873,9 @@ pub fn read_lammps_forcefield_py(path: PathBuf) -> PyResult<PyForceField> {
 /// Read AMBER prmtop force-field parameter tables into a :class:`ForceField`.
 ///
 /// Structure/connectivity is :func:`molrs.io.read_amber_prmtop`; this parses
-/// harmonic bond/angle tables (``k = 2·K`` form map), Fourier dihedrals, and
-/// LJ A/B → σ/ε. Store units are molrs (Å, kcal/mol, radians, e).
+/// harmonic bond/angle tables (``k = K``, AMBER's and LAMMPS's form; θ₀ to
+/// degrees), periodic dihedrals (phases to degrees), impropers in AMBER's atom
+/// order, and LJ A/B → σ/ε, in LAMMPS ``real`` units.
 #[pyfunction]
 #[pyo3(name = "read_amber_prmtop_ff")]
 pub fn read_amber_prmtop_ff_py(path: PathBuf) -> PyResult<PyForceField> {
@@ -1891,7 +1892,8 @@ pub fn read_amber_prmtop_ff_py(path: PathBuf) -> PyResult<PyForceField> {
 /// ``[ nonbond_params ]`` (funct 1, explicit ``lj/cut`` cross rows that
 /// replace the comb-rule for their type pair), ``[ bondtypes ]``,
 /// ``[ angletypes ]`` and ``[ dihedraltypes ]``, converting GROMACS units (nm,
-/// kJ/mol, degrees) to molrs store units (Å, kcal/mol, rad).
+/// kJ/mol, ``½k`` harmonic terms) to molrs's convention, LAMMPS's ``real`` (Å,
+/// kcal/mol, ``K = k/2``; degrees stay degrees).
 ///
 /// Anything the reader does not model raises ``ValueError`` naming it: an
 /// unsupported function code or comb-rule, ``[ pairtypes ]``,
@@ -1958,8 +1960,8 @@ pub fn write_gromacs_top_ff_py(
 /// Write a ForceField as an AMBER frcmod file.
 ///
 /// Writes ``MASS``, ``BOND``, ``ANGLE``, ``DIHE``, ``IMPROPER`` and ``NONBON``
-/// in AMBER's conventions (``RK = k/2``, ``TK = k/2``, degrees, ``R*/2`` from
-/// sigma), so tleap can ``loadamberparams`` it. A style or parameter a frcmod
+/// in AMBER's conventions (``RK = k``, ``TK = k``, degrees — molrs's own —
+/// and ``R*/2`` from sigma), so tleap can ``loadamberparams`` it. A style or parameter a frcmod
 /// cannot express raises ``ValueError`` naming it.
 #[pyfunction]
 #[pyo3(name = "write_amber_frcmod", signature = (path, forcefield))]
@@ -2039,21 +2041,22 @@ pub fn read_lammps_data_coeffs_py(
 /// (every label matched to a type name exactly).
 /// Force-field types no label uses are not written.
 ///
-/// Inverse of :func:`read_lammps_forcefield`: molrs store (Å, kcal/mol, radians,
-/// ``½k`` harmonic form for physical styles) → LAMMPS file units
-/// (``K = k/2``, angles in degrees). Energy/length conversion for
-/// ``units="metal"`` / ``"lj"`` goes through the lj reduced hub — never
-/// hard-coded eV/kcal factors. A split ``lj/cut`` + ``coul/cut`` pair is
-/// recombined as ``lj/cut/coul/cut`` so geometric mixing is not defeated by a
-/// hybrid wildcard. Tier A: ``bond``/``angle``/``improper`` harmonic;
-/// ``dihedral`` fourier / opls / harmonic.
+/// Inverse of :func:`read_lammps_forcefield`, and the identity on coefficients:
+/// molrs's convention is LAMMPS's. A force field declared in another LAMMPS
+/// unit style than ``units`` has its energies and lengths converted through
+/// the lj reduced hub — never hard-coded eV/kcal factors. A split ``lj/cut`` +
+/// ``coul/cut`` pair is recombined as ``lj/cut/coul/cut`` so geometric mixing
+/// is not defeated by a hybrid wildcard. Styles: ``bond`` harmonic / morse,
+/// ``angle`` harmonic, ``dihedral`` periodic (as ``fourier``) / opls / harmonic
+/// / charmm / multi/harmonic, ``improper`` harmonic / cvff / periodic (as
+/// ``cvff``, the atom order unchanged).
 ///
 /// Parameters
 /// ----------
 /// path : str
 ///     Destination path for the include.
 /// forcefield : ForceField
-///     Force field in molrs store units.
+///     Force field, in molrs's (LAMMPS's) convention.
 /// frame : Frame
 ///     The system whose type labels select the coefficients.
 /// precision : int, optional

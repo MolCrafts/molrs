@@ -113,7 +113,7 @@ fn typed(
 ///   charge), both plain values — MMFF declares no atom style and its charges
 ///   are per-instance;
 /// - bonds: `type` (e.g. `"0_1_5"`) → `mmff_bond {kb, r0}`
-/// - angles: `type` (e.g. `"0_1_2_1"`) → `mmff_angle {ka, theta0}` (radians);
+/// - angles: `type` (e.g. `"0_1_2_1"`) → `mmff_angle {ka, theta0}` (degrees);
 ///   `stbn_type` → `mmff_stbn {kba_ijk, kba_kji, r0_ij, r0_kj}`, named
 ///   `{sbt}_{i}_{j}_{k}` by the MMFF stretch-bend class of the angle read in its
 ///   own node order; `linear` (0/1: the central atom is a linear centre,
@@ -124,7 +124,7 @@ fn typed(
 ///   (grammar in `annotate_dihedrals`)
 /// - impropers: `type` = canonical MMFF out-of-plane key (e.g. `"0_37_37_37"`)
 ///   → `mmff_oop {koop}` (md·Å·rad⁻², **variant-dependent**); three Wilson rows
-///   per trigonal centre, centre in the `atomj` position, sharing one `koop`
+///   per trigonal centre, centre in the `atomi` position, sharing one `koop`
 /// - styles: every style of `library`, in its order (compiled member order is
 ///   unchanged); pairs: the `mmff_vdw` rows of the atom types used.
 ///
@@ -290,10 +290,10 @@ fn annotate_angles(graph: &Atomistic, ctx: &MmffContext) -> Annotations {
                 .map(|p| p.linh != 0)
                 .unwrap_or(false);
 
-            // `theta0` comes back in degrees; the angle / stretch-bend kernels consume
-            // radians (molrs internal-radians convention).
+            // `theta0` in degrees, as MMFF's tables and every molrs angle parameter
+            // are; the angle / stretch-bend kernels convert it once.
             let (ka, theta0) = eparams::angle_params(&ctx.topo, &ctx.types, ia, ib, ic)
-                .map(|p| (p.ka, p.theta0.to_radians()))
+                .map(|p| (p.ka, p.theta0))
                 .unwrap_or((0.0, 0.0));
 
             // Stretch-bend force constants — `stretch_bend_params` carries the `dfsb`
@@ -424,12 +424,13 @@ fn annotate_dihedrals(graph: &Atomistic, ctx: &MmffContext) -> Annotations {
 ///
 /// Only atoms with *exactly three* neighbours are trigonal centres; each
 /// contributes three Wilson permutations that share one `koop`. The centre is
-/// placed in the second (`atomj`) position to match the `mmff_oop` kernel, which
-/// treats `atomj` as the centre. The `type` label is the canonical OOP key that
-/// [`eparams::oop_params`] matched on (peripherals equivalence-degraded and
-/// sorted, centre second), so the label names the row the `koop` came from and
-/// its four fields are the type's endpoints; centres for which MMFF defines no
-/// out-of-plane term are skipped.
+/// placed **first** (`atomi`), the improper order of every molrs out-of-plane
+/// style (LAMMPS's `fourier` / `umbrella`), which the `mmff_oop` kernel reads.
+/// The `type` label is the canonical OOP key that [`eparams::oop_params`]
+/// matched on (peripherals equivalence-degraded and sorted, centre second, as
+/// MMFF writes it), so the label names the row the `koop` came from; the type's
+/// endpoints are its four fields with the centre moved first. Centres for which
+/// MMFF defines no out-of-plane term are skipped.
 ///
 /// The impropers are added to `graph`; the returned annotations are positional
 /// against all of its impropers, a pre-existing one getting none.
@@ -459,18 +460,25 @@ fn annotate_impropers(graph: &mut Atomistic, ctx: &MmffContext) -> Result<Annota
         else {
             continue;
         };
-        let ends: Vec<u32> = label
+        let mut ends: Vec<u32> = label
             .split('_')
             .map(|t| {
                 t.parse::<u32>()
                     .map_err(|_| format!("MMFF out-of-plane key {label:?} is not four atom types"))
             })
             .collect::<Result<_, _>>()?;
+        if ends.len() != 4 {
+            return Err(format!(
+                "MMFF out-of-plane key {label:?} is not four atom types"
+            ));
+        }
+        // MMFF's key lists the centre second; the improper lists it first.
+        ends.swap(0, 1);
 
         let center_id = ctx.atom_ids[center];
         for &(i, k, l) in &[(a, b, c), (a, c, b), (b, c, a)] {
             let id = graph
-                .add_improper(ctx.atom_ids[i], center_id, ctx.atom_ids[k], ctx.atom_ids[l])
+                .add_improper(center_id, ctx.atom_ids[i], ctx.atom_ids[k], ctx.atom_ids[l])
                 .map_err(|e| e.to_string())?;
             added.insert(
                 id,

@@ -10,8 +10,11 @@
 //!
 //! so the damped energy of a pair is `T_ij(r) * q_i q_j / r`. The screening
 //! `s_ij` depends on **both** endpoints' atomic polarizabilities, so the
-//! constructor resolves per-atom-type `charge` / `alpha` / `a_thole` from the
-//! `atoms` block and precomputes `(s_ij, q_i q_j)` per pair.
+//! constructor resolves per-atom-type `charge` / `alpha` / `damp` from the
+//! `atoms` block and precomputes `(s_ij, q_i q_j)` per pair. `alpha` and
+//! `damp` (the Thole `a`) are LAMMPS `pair_style thole`'s `pair_coeff` names;
+//! the per-type `charge` is molrs's (LAMMPS damps the Drude charges of the
+//! atoms).
 //!
 //! Units: r in A, alpha in A^3, a dimensionless, q in e (energy in the same
 //! Coulomb units as the accompanying electrostatic kernel — Thole is a
@@ -300,7 +303,7 @@ impl PairDriven for PairThole {
 /// Construct a [`PairThole`] from per-atom-type params and Frame topology.
 ///
 /// The thole style's per-type definitions are keyed by **atom type name** and
-/// carry `charge`, `alpha`, `a_thole`. Each pair's screening is resolved from
+/// carry `charge`, `alpha`, `damp`. Each pair's screening is resolved from
 /// its two endpoints' atom types (read from the `atoms` block `type` column).
 pub fn pair_thole_ctor(
     style_params: &Params,
@@ -346,8 +349,8 @@ pub fn pair_thole_ctor(
             .ok_or_else(|| format!("PairThole type '{}': missing 'alpha'", type_name))?
             as F;
         let a = p
-            .get("a_thole")
-            .ok_or_else(|| format!("PairThole type '{}': missing 'a_thole'", type_name))?
+            .get("damp")
+            .ok_or_else(|| format!("PairThole type '{}': missing 'damp'", type_name))?
             as F;
         Ok((q, alpha, a))
     };
@@ -403,7 +406,7 @@ pub fn pair_thole_typed_ctor(
                 .ok_or_else(|| format!("PairThole type '{l}': missing '{k}'"))
                 .map(|v| v as F)
         };
-        per_type.push((get("charge")?, get("alpha")?, get("a_thole")?));
+        per_type.push((get("charge")?, get("alpha")?, get("damp")?));
     }
     let pick = |f: fn(&(F, F, F)) -> F| -> Vec<F> {
         type_id.iter().map(|&t| f(&per_type[t as usize])).collect()

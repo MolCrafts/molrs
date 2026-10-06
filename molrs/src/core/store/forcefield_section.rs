@@ -79,13 +79,20 @@ pub const UNIT_QUANTITIES: [&str; 6] = ["length", "energy", "angle", "charge", "
 
 /// The unit of each of [`UNIT_QUANTITIES`] in the preset `name`, or `None`
 /// when `name` is no preset. A `None` entry is a quantity the preset gives no
-/// unit (reduced `lj`). The angle is a radian in every preset.
+/// unit (reduced `lj`).
+///
+/// The angle is a **degree** in every preset: the presets are LAMMPS's `units`
+/// styles, and molrs's convention is LAMMPS's, whose coefficient lines give
+/// every angle-valued parameter (θ₀, χ₀, phases) in degrees. A force constant
+/// stays per **radian**ⁿ (LAMMPS's `K` for an angle is energy/rad²), as in
+/// LAMMPS: `angle` is the unit of angle values, not of force-constant
+/// denominators.
 pub fn unit_preset(name: &str) -> Option<[Option<&'static str>; 6]> {
     Some(match name {
         "real" => [
             Some("angstrom"),
             Some("kcal/mol"),
-            Some("radian"),
+            Some("degree"),
             Some("e"),
             Some("dalton"),
             Some("fs"),
@@ -93,7 +100,7 @@ pub fn unit_preset(name: &str) -> Option<[Option<&'static str>; 6]> {
         "metal" => [
             Some("angstrom"),
             Some("eV"),
-            Some("radian"),
+            Some("degree"),
             Some("e"),
             Some("dalton"),
             Some("ps"),
@@ -101,7 +108,7 @@ pub fn unit_preset(name: &str) -> Option<[Option<&'static str>; 6]> {
         "si" => [
             Some("m"),
             Some("J"),
-            Some("radian"),
+            Some("degree"),
             Some("C"),
             Some("kg"),
             Some("s"),
@@ -109,7 +116,7 @@ pub fn unit_preset(name: &str) -> Option<[Option<&'static str>; 6]> {
         "cgs" => [
             Some("cm"),
             Some("erg"),
-            Some("radian"),
+            Some("degree"),
             Some("statcoulomb"),
             Some("g"),
             Some("s"),
@@ -117,7 +124,7 @@ pub fn unit_preset(name: &str) -> Option<[Option<&'static str>; 6]> {
         "electron" => [
             Some("bohr"),
             Some("hartree"),
-            Some("radian"),
+            Some("degree"),
             Some("e"),
             Some("dalton"),
             Some("fs"),
@@ -125,7 +132,7 @@ pub fn unit_preset(name: &str) -> Option<[Option<&'static str>; 6]> {
         "micro" => [
             Some("micrometer"),
             Some("picogram * micrometer**2 / microsecond**2"),
-            Some("radian"),
+            Some("degree"),
             Some("picocoulomb"),
             Some("picogram"),
             Some("microsecond"),
@@ -133,12 +140,12 @@ pub fn unit_preset(name: &str) -> Option<[Option<&'static str>; 6]> {
         "nano" => [
             Some("nm"),
             Some("attogram * nm**2 / ns**2"),
-            Some("radian"),
+            Some("degree"),
             Some("e"),
             Some("attogram"),
             Some("ns"),
         ],
-        "lj" => [None, None, Some("radian"), None, None, None],
+        "lj" => [None, None, Some("degree"), None, None, None],
         _ => return None,
     })
 }

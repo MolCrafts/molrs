@@ -3,8 +3,9 @@
 //! The inverse of
 //! [`GromacsTopFfReader`](crate::ff::forcefield::readers::gromacs::GromacsTopFfReader):
 //! it writes a [`ForceField`] as GROMACS force-field **directives**, converting
-//! molrs units (Å, kcal/mol, rad, e) to file units (nm, kJ/mol, degrees, e)
-//! at this boundary only. No molecule section (`[ atoms ]`, `[ bonds ]`,
+//! molrs's convention — LAMMPS's `real` (Å, kcal/mol, degrees, e; LAMMPS's
+//! un-halved `K`) — to GROMACS's (nm, kJ/mol, degrees, e; ½k) at this boundary
+//! only. No molecule section (`[ atoms ]`, `[ bonds ]`,
 //! `[ angles ]`, `[ dihedrals ]`, `[ pairs ]`, …) is written: a force field
 //! holds no molecule.
 //!
@@ -28,13 +29,13 @@
 //!
 //! | molrs style | Directive, funct | Columns (file units) |
 //! |---|---|---|
-//! | `bond/harmonic` | bondtypes 1 | b₀ = r0/10 nm; k_b = k·418.4 kJ/mol/nm² |
-//! | `bond/morse` | bondtypes 3 | b₀ = r0/10 nm; D·4.184 kJ/mol; β = alpha·10 nm⁻¹ |
-//! | `angle/harmonic` | angletypes 1 | θ₀ in degrees; k·4.184 kJ/mol/rad² |
-//! | `dihedral/periodic` | dihedraltypes 1 | φ_s in degrees; k·4.184 kJ/mol; n |
+//! | `bond/harmonic` | bondtypes 1 | b₀ = r0/10 nm; k_b = 2·k·418.4 kJ/mol/nm² |
+//! | `bond/morse` | bondtypes 3 | b₀ = r0/10 nm; D = d0·4.184 kJ/mol; β = alpha·10 nm⁻¹ |
+//! | `angle/harmonic` | angletypes 1 | θ₀ = theta0 (degrees); k_θ = 2·k·4.184 kJ/mol/rad² |
+//! | `dihedral/periodic` | dihedraltypes 1 | φ_s = phase (degrees); k·4.184 kJ/mol; n |
 //! | `improper/harmonic` | dihedraltypes 2 | ξ₀ = 0; k_ξ = 2·k·4.184 kJ/mol/rad² |
 //! | `dihedral/opls` | dihedraltypes 3 | C₀..C₅ (kJ/mol) by the exact Fourier → Ryckaert–Bellemans relation |
-//! | `improper/periodic` | dihedraltypes 4 | as `dihedral/periodic` |
+//! | `improper/periodic` | dihedraltypes 4 | as `dihedral/periodic`; the atoms in the stored (AMBER) order |
 //!
 //! The empty-endpoint wildcard is written as `X`.
 //!
@@ -202,7 +203,7 @@ impl GromacsTopFfWriter {
         }
         let allowed: &[&str] = match (style.category(), style.name()) {
             ("bond", "harmonic") => &["r0", "k"],
-            ("bond", "morse") => &["D", "alpha", "r0"],
+            ("bond", "morse") => &["d0", "alpha", "r0"],
             ("angle", "harmonic") => &["theta0", "k"],
             ("dihedral" | "improper", "periodic") => &["k", "periodicity", "phase"],
             ("dihedral", "opls") => &["k1", "k2", "k3", "k4"],
@@ -219,16 +220,18 @@ impl GromacsTopFfWriter {
             ("bond", "harmonic") => vec![
                 1.0,
                 need("r0")? / NM_TO_ANGSTROM,
-                need("k")? * KJ_PER_KCAL * NM_TO_ANGSTROM * NM_TO_ANGSTROM,
+                // LAMMPS K → GROMACS ½k_b: k_b = 2K.
+                2.0 * need("k")? * KJ_PER_KCAL * NM_TO_ANGSTROM * NM_TO_ANGSTROM,
             ],
             ("bond", "morse") => vec![
                 3.0,
                 need("r0")? / NM_TO_ANGSTROM,
-                need("D")? * KJ_PER_KCAL,
+                need("d0")? * KJ_PER_KCAL,
                 need("alpha")? * NM_TO_ANGSTROM,
             ],
             ("angle", "harmonic") => {
-                vec![1.0, need("theta0")?.to_degrees(), need("k")? * KJ_PER_KCAL]
+                // LAMMPS K → GROMACS ½k_θ: k_θ = 2K.
+                vec![1.0, need("theta0")?, 2.0 * need("k")? * KJ_PER_KCAL]
             }
             ("dihedral" | "improper", "periodic") => {
                 let n = need("periodicity")?;
@@ -240,18 +243,13 @@ impl GromacsTopFfWriter {
                 } else {
                     4.0
                 };
-                vec![
-                    code,
-                    need("phase")?.to_degrees(),
-                    need("k")? * KJ_PER_KCAL,
-                    n,
-                ]
+                vec![code, need("phase")?, need("k")? * KJ_PER_KCAL, n]
             }
             ("improper", "harmonic") => {
                 let chi0 = p.get("chi0").unwrap_or(0.0);
                 if chi0 != 0.0 {
                     return Err(format!(
-                        "{what}: chi0 = {chi0} rad; dihedraltypes code 2 is signed and agrees \
+                        "{what}: chi0 = {chi0} deg; dihedraltypes code 2 is signed and agrees \
                          with K(|phi| - chi0)^2 only at chi0 = 0"
                     ));
                 }
@@ -431,9 +429,8 @@ mod tests {
     use crate::ff::forcefield::writers::ForceFieldWriter;
     use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
     use molrs::units::constants::COULOMB_REAL;
-    use std::f64::consts::PI;
 
-    // -- fixtures (molrs units: Å, kcal/mol, rad) --------------------------------
+    // -- fixtures (molrs units: Å, kcal/mol, degrees) --------------------------------
 
     fn atom_params(mass: f64, charge: f64, z: f64, bond_type: &str) -> Params {
         let mut p = Params::from_pairs(&[("mass", mass), ("charge", charge), ("atomic_number", z)]);
@@ -772,7 +769,8 @@ mod tests {
 
     // -- bonded directives -------------------------------------------------------
 
-    /// r0 = 1.09 Å → 0.109 nm; k = 680 kcal/mol/Å² × 418.4 = 284512 kJ/mol/nm².
+    /// r0 = 1.09 Å → 0.109 nm; LAMMPS K = 340 kcal/mol/Å² is GROMACS's
+    /// ½k_b with k_b = 2 × 340 × 418.4 = 284512 kJ/mol/nm².
     #[test]
     fn bond_harmonic_is_bondtypes_code_1() {
         let ff = with_type(
@@ -780,14 +778,14 @@ mod tests {
             "harmonic",
             "CT-HC",
             &["CT", "HC"],
-            Params::from_pairs(&[("r0", 1.09), ("k", 680.0)]),
+            Params::from_pairs(&[("r0", 1.09), ("k", 340.0)]),
         );
         let text = write(&ff);
         let r = row(&text, "bondtypes", &["CT", "HC"]);
         assert_row_values(&r[2..], "1", &[0.109, 284512.0]);
     }
 
-    /// b₀ = 0.1529 nm; D = 95.602294455066… × 4.184 = 400 kJ/mol; β = 2 × 10 =
+    /// b₀ = 0.1529 nm; D = d0 = 95.602294455066… × 4.184 = 400 kJ/mol; β = 2 × 10 =
     /// 20 nm⁻¹.
     #[test]
     fn bond_morse_is_bondtypes_code_3() {
@@ -796,14 +794,15 @@ mod tests {
             "morse",
             "CT-CT",
             &["CT", "CT"],
-            Params::from_pairs(&[("D", 95.602_294_455_066_9), ("alpha", 2.0), ("r0", 1.529)]),
+            Params::from_pairs(&[("d0", 95.602_294_455_066_9), ("alpha", 2.0), ("r0", 1.529)]),
         );
         let text = write(&ff);
         let r = row(&text, "bondtypes", &["CT", "CT"]);
         assert_row_values(&r[2..], "3", &[0.1529, 400.0, 20.0]);
     }
 
-    /// θ₀ = 107.8·π/180 rad → 107.8°; k = 66 × 4.184 = 276.144 kJ/mol/rad².
+    /// θ₀ = 107.8° as stored; LAMMPS K = 33 is GROMACS's ½k_θ with
+    /// k_θ = 2 × 33 × 4.184 = 276.144 kJ/mol/rad².
     #[test]
     fn angle_harmonic_is_angletypes_code_1() {
         let ff = with_type(
@@ -811,7 +810,7 @@ mod tests {
             "harmonic",
             "HC-CT-HC",
             &["HC", "CT", "HC"],
-            Params::from_pairs(&[("theta0", 107.8 * PI / 180.0), ("k", 66.0)]),
+            Params::from_pairs(&[("theta0", 107.8), ("k", 33.0)]),
         );
         let text = write(&ff);
         let r = row(&text, "angletypes", &["HC", "CT", "HC"]);
@@ -875,7 +874,7 @@ mod tests {
         assert_eq!(r[4], "3");
     }
 
-    /// k = 2.5 × 4.184 = 10.46 kJ/mol; φ_s = π → 180°; n = 2.
+    /// k = 2.5 × 4.184 = 10.46 kJ/mol; φ_s = 180°; n = 2.
     #[test]
     fn improper_periodic_is_dihedraltypes_code_4() {
         let ff = with_type(
@@ -883,7 +882,7 @@ mod tests {
             "periodic",
             "--CT-HC",
             &["", "", "CT", "HC"],
-            Params::from_pairs(&[("k", 2.5), ("periodicity", 2.0), ("phase", PI)]),
+            Params::from_pairs(&[("k", 2.5), ("periodicity", 2.0), ("phase", 180.0)]),
         );
         let text = write(&ff);
         let r = row(&text, "dihedraltypes", &["X", "X", "CT", "HC"]);
@@ -913,14 +912,14 @@ mod tests {
             "harmonic",
             "CT-HC",
             &["CT", "HC"],
-            Params::from_pairs(&[("r0", 1.09), ("k", 680.0)]),
+            Params::from_pairs(&[("r0", 1.09), ("k", 340.0)]),
         );
         ff.def_style("angle", "harmonic", Params::new())
             .unwrap()
             .def_type(
                 "HC-CT-HC",
                 &["HC", "CT", "HC"],
-                Params::from_pairs(&[("theta0", 1.9), ("k", 66.0)]),
+                Params::from_pairs(&[("theta0", 108.9), ("k", 33.0)]),
             )
             .unwrap();
         let text = write(&ff);
@@ -1002,7 +1001,7 @@ mod tests {
             "harmonic",
             "ZZ-CT",
             &["ZZ", "CT"],
-            Params::from_pairs(&[("r0", 1.09), ("k", 680.0)]),
+            Params::from_pairs(&[("r0", 1.09), ("k", 340.0)]),
         );
         let err = write_err(&ff);
         assert_names(&err, &["ZZ"]);
@@ -1016,7 +1015,7 @@ mod tests {
             "harmonic",
             "opls_135-opls_140",
             &["opls_135", "opls_140"],
-            Params::from_pairs(&[("r0", 1.09), ("k", 680.0)]),
+            Params::from_pairs(&[("r0", 1.09), ("k", 340.0)]),
         );
         let text = write(&ff);
         let r = row(&text, "bondtypes", &["opls_135", "opls_140"]);
@@ -1048,21 +1047,21 @@ mod tests {
                 "harmonic",
                 "CT-HC",
                 &["CT", "HC"],
-                &[("r0", 1.09), ("k", 680.0)],
+                &[("r0", 1.09), ("k", 340.0)],
             ),
             (
                 "bond",
                 "morse",
                 "CT-CT",
                 &["CT", "CT"],
-                &[("D", 95.602_294_455_066_9), ("alpha", 2.0), ("r0", 1.529)],
+                &[("d0", 95.602_294_455_066_9), ("alpha", 2.0), ("r0", 1.529)],
             ),
             (
                 "angle",
                 "harmonic",
                 "HC-CT-HC",
                 &["HC", "CT", "HC"],
-                &[("theta0", 107.8 * PI / 180.0), ("k", 66.0)],
+                &[("theta0", 107.8), ("k", 33.0)],
             ),
             (
                 "dihedral",
@@ -1090,7 +1089,7 @@ mod tests {
                 "periodic",
                 "--CT-HC",
                 &["", "", "CT", "HC"],
-                &[("k", 2.5), ("periodicity", 2.0), ("phase", PI)],
+                &[("k", 2.5), ("periodicity", 2.0), ("phase", 180.0)],
             ),
             (
                 "improper",
@@ -1104,7 +1103,7 @@ mod tests {
                 "harmonic",
                 "CT-CT-HC",
                 &["CT", "CT", "HC"],
-                &[("theta0", 1.9), ("k", 37.5)],
+                &[("theta0", 108.9), ("k", 37.5)],
             ),
         ];
         for (category, style, name, endpoints, params) in defs {

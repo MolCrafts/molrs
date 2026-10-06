@@ -8,21 +8,21 @@
 //!
 //! **Parsing** follows <https://ambermd.org/FileFormats.php> (and the
 //! expanded Swails prmtop appendix for section layout). **Stored potentials**
-//! use the same form map as the LAMMPS force-field boundary:
+//! are molrs's convention, LAMMPS's — which is AMBER's own for every bonded
+//! term but for the angle unit:
 //!
-//! | Term | Amber prmtop storage | LAMMPS file form | molrs store |
-//! |------|----------------------|------------------|-------------|
-//! | Bond | `RK` in `E = RK·(r−r₀)²` (no ½) | `bond_style harmonic` same | `k = 2·RK`, `E = ½k(r−r₀)²` |
-//! | Angle | `TK` in `E = TK·(θ−θ₀)²` (no ½), `θ₀` rad | `angle_style harmonic` same | `k = 2·TK`, `θ₀` rad |
-//! | Dihedral | `PK·[1 + cos(nφ − δ)]`, `δ` rad | `dihedral_style fourier` | `k/n/d` as-is (`d` rad) |
-//! | Improper | same form; 4th pointer negative | `improper_style periodic` | `k/n/d` as-is |
+//! | Term | Amber prmtop storage | LAMMPS style | molrs store |
+//! |------|----------------------|--------------|-------------|
+//! | Bond | `RK` in `E = RK·(r−r₀)²` (no ½) | `bond_style harmonic`, same | `bond harmonic`: `k = RK`, `r0` |
+//! | Angle | `TK` in `E = TK·(θ−θ₀)²` (no ½), `θ₀` rad | `angle_style harmonic`, same | `angle harmonic`: `k = TK`, `theta0` in degrees |
+//! | Dihedral | `PK·[1 + cos(nφ − δ)]`, `δ` rad | `dihedral_style fourier` | `dihedral periodic`: `k/periodicity/phase` (phase in degrees) |
+//! | Improper | same form; 4th pointer negative | `improper_style cvff` (one term) | `improper periodic`, AMBER's atom order (centre third) |
 //! | LJ | `A/r¹² − B/r⁶` via ICO | `lj/cut` σ/ε | `σ = 2^{−1/6} r_min`, `ε = B²/(4A)`; self rows from the diagonal, an explicit cross row for each off-diagonal entry that is not Lorentz–Berthelot (NBFIX) |
 //! | 1-4 scales | `SCEE`/`SCNB` divisors (default 1.2 / 2.0) | `special_bonds amber` | `coul_14 = 1/SCEE`, `lj_14 = 1/SCNB` |
 //!
 //! Notes:
-//! - OpenMM multiplies Amber bond/angle `RK`/`TK` by 2 when loading into a ½k
-//!   kernel — same as our bond/angle map. Dihedral `PK` is **not** doubled
-//!   (matches LAMMPS fourier / molrs periodic).
+//! - OpenMM multiplies Amber bond/angle `RK`/`TK` by 2 when loading into its ½k
+//!   kernels; molrs, like LAMMPS, keeps them. Dihedral `PK` is never doubled.
 //! - Swails’ appendix writes bond/angle as ½k and torsion as `k cos(…)`; those
 //!   equations disagree with Amber parameter files, OpenMM’s converter, and
 //!   the FileFormats `parm.dat` section. We follow FileFormats + OpenMM.
@@ -305,7 +305,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     }
 
     // Bonds: one type per endpoint type pair in `TypeName::orient`'s spelling;
-    // k = 2·RK (LAMMPS→molrs map). Every bond row defines its type, so two
+    // k = RK (AMBER's and LAMMPS's K). Every bond row defines its type, so two
     // rows under one name with different k/r0 are a TypeConflict.
     let bond_k = section_f64(sections, "BOND_FORCE_CONSTANT")?;
     let bond_r0 = section_f64(sections, "BOND_EQUIL_VALUE")?;
@@ -325,7 +325,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
             let j = (b / 3) as usize;
             let tid = (chunk[2] - 1) as usize;
             let ends = TypeName::orient(&[type_name(i), type_name(j)]);
-            let k = 2.0 * bond_k.get(tid).copied().unwrap_or(0.0);
+            let k = bond_k.get(tid).copied().unwrap_or(0.0);
             let r0 = bond_r0.get(tid).copied().unwrap_or(0.0);
             style
                 .def_type(
@@ -337,7 +337,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
         }
     }
 
-    // Angles: k = 2·TK, theta0 already radians in prmtop. As for bonds, every
+    // Angles: k = TK; theta0 radians in prmtop → degrees. As for bonds, every
     // angle row defines its type.
     let angle_k = section_f64(sections, "ANGLE_FORCE_CONSTANT")?;
     let angle_eq = section_f64(sections, "ANGLE_EQUIL_VALUE")?;
@@ -359,8 +359,8 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
             let k_idx = (c / 3) as usize;
             let tid = (chunk[3] - 1) as usize;
             let ends = TypeName::orient(&[type_name(i), type_name(j), type_name(k_idx)]);
-            let k = 2.0 * angle_k.get(tid).copied().unwrap_or(0.0);
-            let theta0 = angle_eq.get(tid).copied().unwrap_or(0.0);
+            let k = angle_k.get(tid).copied().unwrap_or(0.0);
+            let theta0 = angle_eq.get(tid).copied().unwrap_or(0.0).to_degrees();
             style
                 .def_type(
                     TypeName::join(&ends)?.as_str(),
@@ -373,8 +373,8 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
 
     // Dihedrals / impropers.
     // FileFormats: 3rd pointer negative → ignore 1-4; 4th negative → improper.
-    // Potential: PK * [1 + cos(n·φ − phase)], phase in radians — matches LAMMPS
-    // fourier / improper_style periodic (no form factor on K).
+    // Potential: PK * [1 + cos(n·φ − phase)], phase in radians (stored in
+    // degrees) — LAMMPS fourier / molrs periodic, no form factor on K.
     let dih_k = section_f64(sections, "DIHEDRAL_FORCE_CONSTANT")?;
     let dih_phase = section_f64(sections, "DIHEDRAL_PHASE")?;
     let dih_per = section_f64(sections, "DIHEDRAL_PERIODICITY")?;
@@ -436,7 +436,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
             let idx = (term_tid - 1) as usize;
             let k = dih_k.get(idx).copied().unwrap_or(0.0);
             let n = dih_per.get(idx).copied().unwrap_or(0.0).abs();
-            let d = dih_phase.get(idx).copied().unwrap_or(0.0);
+            let d = dih_phase.get(idx).copied().unwrap_or(0.0).to_degrees();
             entry.1.insert(term_tid, (k, n, d));
         }
     }
@@ -450,10 +450,10 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
 
     {
         let style = ff
-            .def_style("dihedral", "fourier", Params::new())
+            .def_style("dihedral", "periodic", Params::new())
             .map_err(|e| e.to_string())?;
         for (handles, terms) in proper.values() {
-            let owned = terms_to_fourier_params(terms);
+            let owned = terms_to_periodic_params(terms);
             let refs: Vec<(&str, f64)> = owned.iter().map(|(k, v)| (k.as_str(), *v)).collect();
             let ends = [&*handles[0], &*handles[1], &*handles[2], &*handles[3]];
             style
@@ -564,7 +564,7 @@ fn expand_multiterm_tids(tid: i64, periods: &[f64]) -> Vec<i64> {
     out
 }
 
-fn terms_to_fourier_params(terms: &BTreeMap<i64, (f64, f64, f64)>) -> Vec<(String, f64)> {
+fn terms_to_periodic_params(terms: &BTreeMap<i64, (f64, f64, f64)>) -> Vec<(String, f64)> {
     let mut params = Vec::new();
     for (m, (_tid, (k, n, d))) in terms.iter().enumerate() {
         let i = m + 1;
@@ -1034,8 +1034,8 @@ c3  c3  c3  hc
             .filter(|t| t.name == "c3-c3")
             .collect();
         assert_eq!(c3c3.len(), 1);
-        // k = 2·RK
-        assert_eq!(c3c3[0].params.get("k"), Some(600.0));
+        // k = RK: AMBER's K is LAMMPS's.
+        assert_eq!(c3c3[0].params.get("k"), Some(300.0));
         assert_eq!(c3c3[0].params.get("r0"), Some(1.535));
     }
 

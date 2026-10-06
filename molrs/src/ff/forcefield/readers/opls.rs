@@ -1,8 +1,9 @@
 //! OPLS-AA / GROMACS force-field XML reader.
 //!
 //! Parses the OpenMM-style OPLS-AA XML (as bundled with molpy, GROMACS units —
-//! nm, kJ/mol, Ryckaert–Bellemans torsions) into a molrs [`ForceField`] in molrs
-//! units (Å, kcal/mol, radians, e). The schema:
+//! nm, kJ/mol, Ryckaert–Bellemans torsions) into a molrs [`ForceField`] in
+//! molrs's convention, LAMMPS's `real` (Å, kcal/mol, degrees for angle-valued
+//! parameters, e; LAMMPS's factors — no hidden ½). The schema:
 //!
 //! ```xml
 //! <ForceField name="OPLS-AA" combining_rule="geometric">
@@ -37,16 +38,24 @@
 //!
 //! - length nm → Å (× 10): bond `length` → `r0`, pair `sigma`.
 //! - energy kJ/mol → kcal/mol (÷ 4.184): pair `epsilon`, dihedral coefficients.
-//! - bond `k` kJ/mol/nm² → kcal/mol/Å² (÷ 4.184 ÷ 100). molrs and GROMACS both
-//!   use the `½k(r−r₀)²` form, so no extra ½ factor (unlike a LAMMPS target).
-//! - angle `k` kJ/mol/rad² → kcal/mol/rad² (÷ 4.184); `angle` already in radians.
+//! - bond `k`: OpenMM's `½k(r−r₀)²` in kJ/mol/nm² → LAMMPS's `K(r−r₀)²`,
+//!   `K = k/2` in kcal/mol/Å² (÷ 4.184 ÷ 100 ÷ 2).
+//! - angle `k`: OpenMM's `½k(θ−θ₀)²` → LAMMPS's `K = k/2` in kcal/mol/rad²
+//!   (÷ 4.184 ÷ 2); `angle` radians → `theta0` degrees.
 //! - RB `c0..c5` (kJ/mol) → OPLS 4-cosine `k1..k4` (kcal/mol) through
 //!   `ff::forcefield::torsion::rb_to_opls` (GROMACS Eqs. 200–201), then ÷ 4.184.
 //!   A row with `C5 ≠ 0` or `ΣCₙ ≠ 0` has no OPLS form and is an error.
 //! - `PeriodicTorsionForce` in OpenMM's `k{m}/periodicity{m}/phase{m}` (kJ/mol,
-//!   rad) → `dihedral periodic` / `improper periodic`, ÷ 4.184 on `k` only; the
-//!   CL&P `c0..c3` spelling of the same tag → `dihedral opls`. A row with neither
-//!   or both spellings is an error.
+//!   rad) → `dihedral periodic` / `improper periodic`, ÷ 4.184 on `k`, phases
+//!   to degrees; the CL&P `c0..c3` spelling of the same tag → `dihedral opls`.
+//!   A row with neither or both spellings is an error.
+//! - An `<Improper class1 class2 class3 class4>` lists the centre first, and
+//!   OpenMM prices the dihedral `(c2, c3, c1, c4)` (its default and `amber`
+//!   orderings). molrs prices the dihedral of the stored order (LAMMPS's
+//!   geometry), so the row is stored as `(c2, c3, c1, c4)` — AMBER's order,
+//!   centre third. Under `ordering="charmm"` OpenMM prices `(c1, c2, c3, c4)`
+//!   for a row without wildcards, which is stored as written; `smirnoff`
+//!   (three averaged permutations) has no single-dihedral form and is refused.
 //! - charge `e`, mass `amu`: unchanged.
 
 use roxmltree::Node;
@@ -119,10 +128,7 @@ impl ForceFieldReader for OplsXmlReader {
                 "HarmonicAngleForce" => parse_angles(&mut ff, &sec)?,
                 "RBTorsionForce" => parse_dihedrals(&mut ff, &sec)?,
                 // OpenMM k{m}/periodicity{m}/phase{m}, or CL&P c0..c3 — per row.
-                "PeriodicTorsionForce" => parse_periodic_torsions(&mut ff, &sec, false)?,
-                // What the molrs 0.15.0 XML writer wrote its periodic impropers
-                // under: the same `<Improper>` rows, read the same way.
-                "PeriodicImproperForce" => parse_periodic_torsions(&mut ff, &sec, true)?,
+                "PeriodicTorsionForce" => parse_periodic_torsions(&mut ff, &sec)?,
                 "NonbondedForce" => {
                     coulomb14 = require_f64(&sec, "coulomb14scale")?;
                     lj14 = require_f64(&sec, "lj14scale")?;
@@ -389,8 +395,8 @@ fn parse_bonds(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
         let c1 = class_or_type(&b, 1)?;
         let c2 = class_or_type(&b, 2)?;
         let r0 = require_f64(&b, "length")? * NM_TO_ANGSTROM;
-        // kJ/mol/nm² → kcal/mol/Å² : ÷4.184 (energy) ÷100 (nm²→Å²). Same ½ form.
-        let k = require_f64(&b, "k")? / (KJ_PER_KCAL * 100.0);
+        // OpenMM ½k in kJ/mol/nm² → LAMMPS K = k/2 in kcal/mol/Å².
+        let k = require_f64(&b, "k")? / (KJ_PER_KCAL * 100.0) / 2.0;
         style
             .def_type(
                 TypeName::join(&[c1, c2])?.as_str(),
@@ -411,8 +417,9 @@ fn parse_angles(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
         let c1 = class_or_type(&a, 1)?;
         let c2 = class_or_type(&a, 2)?;
         let c3 = class_or_type(&a, 3)?;
-        let theta0 = require_f64(&a, "angle")?; // already radians
-        let k = require_f64(&a, "k")? / KJ_PER_KCAL; // kJ/mol/rad² → kcal/mol/rad²
+        let theta0 = require_f64(&a, "angle")?.to_degrees(); // radians → degrees
+        // OpenMM ½k in kJ/mol/rad² → LAMMPS K = k/2 in kcal/mol/rad².
+        let k = require_f64(&a, "k")? / KJ_PER_KCAL / 2.0;
         style
             .def_type(
                 TypeName::join(&[c1, c2, c3])?.as_str(),
@@ -469,35 +476,27 @@ fn parse_dihedrals(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
 ///
 /// A row carrying neither spelling, or both, is an error: the reader used to fall
 /// back to zeros, which turned every standard OpenMM torsion into no torsion at
-/// all. An `<Improper>`'s classes keep OpenMM's order, central atom first; the
-/// canonical improper atom order is spec `ff-ir-01`'s, not this reader's.
-///
-/// With `impropers_only` (the `<PeriodicImproperForce>` the molrs 0.15.0 XML
-/// writer produced), only `<Improper>` rows are admitted.
-fn parse_periodic_torsions(
-    ff: &mut ForceField,
-    sec: &Node,
-    impropers_only: bool,
-) -> Result<(), String> {
+/// all. An `<Improper>` is stored in the order whose dihedral OpenMM prices
+/// ([`improper_order`]).
+fn parse_periodic_torsions(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
     let section = sec.tag_name().name();
+    let ordering = sec.attribute("ordering").unwrap_or("default");
     for d in sec.children().filter(Node::is_element) {
         let tag = d.tag_name().name();
-        if tag != "Improper" && (impropers_only || tag != "Proper") {
-            let expected = if impropers_only {
-                "<Improper>"
-            } else {
-                "<Proper> or <Improper>"
-            };
+        if tag != "Improper" && tag != "Proper" {
             return Err(format!(
-                "{section}: unexpected child <{tag}> (expected {expected})"
+                "{section}: unexpected child <{tag}> (expected <Proper> or <Improper>)"
             ));
         }
-        let classes = [
+        let mut classes = [
             class_or_type(&d, 1)?,
             class_or_type(&d, 2)?,
             class_or_type(&d, 3)?,
             class_or_type(&d, 4)?,
         ];
+        if tag == "Improper" {
+            classes = improper_order(classes, ordering)?;
+        }
         let label = classes.join("-");
         let terms = periodic_terms(&d)?;
         let clp = (0..4).any(|i| d.attribute(format!("c{i}").as_str()).is_some());
@@ -566,8 +565,39 @@ fn parse_periodic_torsions(
     Ok(())
 }
 
-/// OpenMM's indexed terms `(k [kcal/mol], periodicity, phase [rad])`, from `m = 1`
-/// until `periodicity{m}` is absent. A started term must carry all three keys.
+/// The stored order of an OpenMM `<Improper>` row `[c1, c2, c3, c4]` (centre
+/// first), under its force's `ordering`: the order whose dihedral OpenMM
+/// prices, which is the one molrs prices.
+///
+/// - `default` / `amber`: OpenMM evaluates `(c2, c3, c1, c4)` — AMBER's order,
+///   centre third. (Where `c2` and `c3` match the same atom types OpenMM picks
+///   which of the two goes first by element and index; a caller that lists the
+///   atoms of such a row decides the same way.)
+/// - `charmm`: `(c1, c2, c3, c4)` for a row without wildcards, the
+///   `default` order for one with.
+/// - `smirnoff` averages three permutations, which no single dihedral is.
+pub fn improper_order<'a>(classes: [&'a str; 4], ordering: &str) -> Result<[&'a str; 4], String> {
+    let [c1, c2, c3, c4] = classes;
+    let wildcard = classes.iter().any(|c| c.is_empty() || *c == "*");
+    match ordering {
+        "default" | "amber" => Ok([c2, c3, c1, c4]),
+        "charmm" if wildcard => Ok([c2, c3, c1, c4]),
+        "charmm" => Ok(classes),
+        "smirnoff" => Err(format!(
+            "PeriodicTorsionForce ordering=\"smirnoff\": the improper {} averages three \
+             atom permutations, which no single molrs improper prices",
+            classes.join("-")
+        )),
+        other => Err(format!(
+            "PeriodicTorsionForce: unknown improper ordering {other:?} (OpenMM's are \
+             default, amber, charmm, smirnoff)"
+        )),
+    }
+}
+
+/// OpenMM's indexed terms `(k [kcal/mol], periodicity, phase [deg])`, from
+/// `m = 1` until `periodicity{m}` is absent. A started term must carry all
+/// three keys.
 fn periodic_terms(node: &Node) -> Result<Vec<(f64, f64, f64)>, String> {
     let mut terms = Vec::new();
     for m in 1.. {
@@ -576,7 +606,9 @@ fn periodic_terms(node: &Node) -> Result<Vec<(f64, f64, f64)>, String> {
         let phase = opt_f64(node, &format!("phase{m}"))?;
         match (n, k, phase) {
             (None, None, None) => break,
-            (Some(n), Some(k), Some(phase)) => terms.push((k / KJ_PER_KCAL, n, phase)),
+            (Some(n), Some(k), Some(phase)) => {
+                terms.push((k / KJ_PER_KCAL, n, phase.to_degrees()));
+            }
             _ => {
                 return Err(format!(
                     "<{}> term {m} needs all of periodicity{m}, k{m}, phase{m}",
@@ -711,17 +743,18 @@ mod tests {
     fn reads_all_sections_with_molrs_units() {
         let ff = OplsXmlReader::new().read_str(MINI).unwrap();
 
-        // bond: length 0.09572 nm → 0.9572 Å; k 502080 kJ/mol/nm² → /418.4 kcal/mol/Å².
+        // bond: length 0.09572 nm → 0.9572 Å; OpenMM ½k 502080 kJ/mol/nm² →
+        // LAMMPS K = 502080 / 418.4 / 2 = 600 kcal/mol/Å².
         let bond = ff.get_style("bond", "harmonic").unwrap();
         let bt = bond.get_bondtype("OW", "HW").unwrap();
         assert!((bt.params.get("r0").unwrap() - 0.9572).abs() < 1e-9);
-        assert!((bt.params.get("k").unwrap() - 502080.0 / 418.4).abs() < 1e-6);
+        assert!((bt.params.get("k").unwrap() - 600.0).abs() < 1e-9);
 
-        // angle: theta0 unchanged (rad); k 627.6 → /4.184 = 150.0 kcal/mol/rad².
+        // angle: theta0 rad → deg; OpenMM ½k 627.6 → K = 627.6 / 4.184 / 2 = 75.
         let angle = ff.get_style("angle", "harmonic").unwrap();
         let at = &angle_types(angle)[0];
-        assert!((at.params.get("theta0").unwrap() - 1.91113553093).abs() < 1e-9);
-        assert!((at.params.get("k").unwrap() - 627.6 / 4.184).abs() < 1e-9);
+        assert!((at.params.get("theta0").unwrap() - 109.5).abs() < 1e-8);
+        assert!((at.params.get("k").unwrap() - 75.0).abs() < 1e-9);
 
         // dihedral opls f1..f4 present.
         let dih = ff.get_style("dihedral", "opls").unwrap();
@@ -863,7 +896,7 @@ mod tests {
 
     /// OpenMM's own spelling — `E = Σ k_m [1 + cos(n_m φ − γ_m)]`, kJ/mol and
     /// radians — is the same form as molrs `dihedral periodic`, so it reads
-    /// term by term: 4.184 kJ/mol → 1 kcal/mol, 2.092 → 0.5, phases unchanged.
+    /// term by term: 4.184 kJ/mol → 1 kcal/mol, 2.092 → 0.5, phases in degrees.
     /// It used to be parsed as CL&P `c0..c3`, absent, and stored as all zeros.
     #[test]
     fn openmm_periodic_proper_reads_as_multi_term_periodic() {
@@ -881,7 +914,7 @@ mod tests {
             ("phase1", 0.0),
             ("k2", 0.5),
             ("periodicity2", 1.0),
-            ("phase2", std::f64::consts::PI),
+            ("phase2", 180.0),
         ] {
             let got = p.get(key).unwrap_or_else(|| panic!("missing {key}"));
             assert!((got - want).abs() < 1e-12, "{key}: got {got}, want {want}");
@@ -926,11 +959,13 @@ mod tests {
         assert!(err.contains("phase1"), "{err}");
     }
 
-    /// OpenMM impropers live under the same force. They used to be skipped.
+    /// OpenMM impropers live under the same force (they used to be skipped).
+    /// The row lists the centre (`N`) first and OpenMM prices the dihedral
+    /// `(c2, c3, c1, c4)`, so it is stored in that order: AMBER's, centre third.
     #[test]
     fn openmm_improper_reads_as_periodic_improper() {
         let xml = periodic_section(
-            r#"<Improper class1="C" class2="O" class3="N" class4="CT" periodicity1="2" k1="43.932" phase1="3.141592653589793"/>"#,
+            r#"<Improper class1="N" class2="C" class3="O" class4="CT" periodicity1="2" k1="43.932" phase1="3.141592653589793"/>"#,
         );
         let ff = OplsXmlReader::new().read_str(&xml).unwrap();
         let imp = ff
@@ -946,9 +981,35 @@ mod tests {
             ],
             ["C", "O", "N", "CT"]
         );
+        assert_eq!(t.name, "C-O-N-CT");
         assert!((t.params.get("k").unwrap() - 10.5).abs() < 1e-12);
         assert!((t.params.get("periodicity").unwrap() - 2.0).abs() < 1e-12);
-        assert!((t.params.get("phase").unwrap() - std::f64::consts::PI).abs() < 1e-12);
+        assert_eq!(t.params.get("phase"), Some(180.0));
+    }
+
+    /// Under `ordering="charmm"` OpenMM prices a wildcard-free row as written,
+    /// so it is stored as written; `smirnoff` (three averaged permutations) is
+    /// refused.
+    #[test]
+    fn improper_ordering_charmm_keeps_the_row_and_smirnoff_is_refused() {
+        let row = r#"<Improper class1="N" class2="C" class3="O" class4="CT" periodicity1="2" k1="4.184" phase1="0.0"/>"#;
+        let charmm = format!(
+            r#"<ForceField name="x"><PeriodicTorsionForce ordering="charmm">{row}</PeriodicTorsionForce></ForceField>"#
+        );
+        let ff = OplsXmlReader::new().read_str(&charmm).unwrap();
+        let t = &improper_types(ff.get_style("improper", "periodic").unwrap())[0];
+        assert_eq!(
+            [
+                t.itom.as_str(),
+                t.jtom.as_str(),
+                t.ktom.as_str(),
+                t.ltom.as_str()
+            ],
+            ["N", "C", "O", "CT"]
+        );
+        let smirnoff = charmm.replace("charmm", "smirnoff");
+        let err = OplsXmlReader::new().read_str(&smirnoff).unwrap_err();
+        assert!(err.contains("smirnoff"), "{err}");
     }
 
     /// The periodic improper kernel holds one term; a second is refused, not dropped.
@@ -960,21 +1021,16 @@ mod tests {
         assert!(OplsXmlReader::new().read_str(&xml).is_err());
     }
 
-    /// The molrs 0.15.0 writer put periodic impropers under
-    /// `<PeriodicImproperForce>`; such a file reads them back instead of
-    /// skipping the section.
+    /// `<PeriodicImproperForce>` is no OpenMM force (the molrs 0.15.0 writer
+    /// made it up, with the improper atoms in no OpenMM order); it is refused
+    /// as an unknown section.
     #[test]
-    fn a_periodic_improper_force_section_reads_its_impropers() {
+    fn a_periodic_improper_force_section_is_refused() {
         let xml = r#"<ForceField name="x"><PeriodicImproperForce>
 <Improper class1="C" class2="O" class3="N" class4="CT" periodicity1="2" k1="43.932" phase1="3.141592653589793"/>
 </PeriodicImproperForce></ForceField>"#;
-        let ff = OplsXmlReader::new().read_str(xml).unwrap();
-        let imp = ff
-            .get_style("improper", "periodic")
-            .expect("improper periodic");
-        assert!((improper_types(imp)[0].params.get("k").unwrap() - 10.5).abs() < 1e-12);
-        let proper = xml.replace("<Improper ", "<Proper ");
-        assert!(OplsXmlReader::new().read_str(&proper).is_err());
+        let err = OplsXmlReader::new().read_str(xml).unwrap_err();
+        assert!(err.contains("PeriodicImproperForce"), "{err}");
     }
 
     #[test]

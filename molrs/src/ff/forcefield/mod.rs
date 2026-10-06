@@ -2693,7 +2693,7 @@ pub(crate) mod tests {
             .def_type(
                 "A-B-C",
                 &["A", "B", "C"],
-                Params::from_pairs(&[("k", 50.0), ("theta0", 1.9)]),
+                Params::from_pairs(&[("k", 50.0), ("theta0", 108.9)]),
             )
             .unwrap();
         other
@@ -2823,7 +2823,7 @@ pub(crate) mod tests {
             .def_type(
                 "CT-CT-CT",
                 &["CT", "CT", "CT"],
-                Params::from_pairs(&[("k", 58.35), ("theta0", 1.95)]),
+                Params::from_pairs(&[("k", 58.35), ("theta0", 111.7)]),
             )
             .unwrap();
         other

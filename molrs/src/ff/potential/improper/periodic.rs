@@ -1,12 +1,25 @@
-//! Periodic improper (AMBER / GAFF dihedral-style impropers):
+//! Periodic improper (AMBER / GAFF / OpenMM impropers):
 //!
 //! E(φ) = k · [1 + cos(n·φ − γ)]
 //!
-//! `k` is the force constant, `periodicity` the multiplicity, and `phase` the
-//! phase γ in radians (readers normalize at their boundary). The improper angle φ is the
-//! dihedral defined by I-J-K-L, so the
-//! geometry reuses the shared dihedral routines. (Functionally one CHARMM-form
-//! term, evaluated over the `"impropers"` block.)
+//! `k` is the force constant (energy), `periodicity` the multiplicity, and
+//! `phase` the phase γ in **degrees**; the kernel converts it to radians once.
+//! No LAMMPS style has this name: one term with γ ∈ {0°, 180°} is LAMMPS
+//! `improper_style cvff` (`K = k`, `d = cos γ`, `n`), which is how the LAMMPS
+//! writer emits it.
+//!
+//! # Atom order
+//!
+//! The improper angle φ is the dihedral I-J-K-L **of the stored order**, as in
+//! every LAMMPS improper style that is a dihedral (`cvff`, `harmonic`), and as
+//! AMBER, GROMACS and LAMMPS each compute it from their topology files. An
+//! AMBER-family improper is stored in AMBER's order — the centre **third**
+//! (`atomk`) — because that is the order whose dihedral is AMBER's angle: no
+//! order with the centre first has the same dihedral (the axis of an AMBER
+//! improper runs through the centre). It is therefore also the order a LAMMPS
+//! data file lists such an improper in for `cvff` to reproduce AMBER's energy.
+//! OpenMM's XML lists the centre first and evaluates `(c2, c3, c1, c4)`; its
+//! reader and writer map between the two.
 
 use molrs::store::schema::block_names::IMPROPERS;
 use std::collections::HashMap;
@@ -29,7 +42,7 @@ pub struct ImproperPeriodic {
     atom_l: Vec<usize>,
     k: Vec<F>,
     n: Vec<F>,
-    /// phase in radians
+    /// phase in radians (the parameter is degrees)
     d: Vec<F>,
 }
 
@@ -112,8 +125,9 @@ impl IndexedTerms for ImproperPeriodic {
     }
 }
 
-/// Construct an [`ImproperPeriodic`] from per-type params (`k`, `n`, `d`
-/// radians) and a Frame's `"impropers"` block (`atomi/atomj/atomk/atoml/type`).
+/// Construct an [`ImproperPeriodic`] from per-type params (`k`,
+/// `periodicity`, `phase` in degrees) and a Frame's `"impropers"` block
+/// (`atomi/atomj/atomk/atoml/type`, in AMBER order — see the module docs).
 pub fn improper_periodic_ctor(
     _sp: &Params,
     tp: &[(&str, &Params)],
@@ -170,7 +184,7 @@ pub fn improper_periodic_ctor(
             p.get("periodicity")
                 .ok_or("improper_periodic: missing periodicity")? as F,
         );
-        dd.push(p.get("phase").unwrap_or(0.0) as F); // radians (normalized at read)
+        dd.push(p.get("phase").unwrap_or(0.0).to_radians() as F); // degrees → radians
     }
     Ok(Member::indexed(ImproperPeriodic {
         atom_i: ai,

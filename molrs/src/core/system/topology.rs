@@ -432,8 +432,10 @@ impl Topology {
     /// every trivalent centre and leaves the selection to the layer that has
     /// the table.
     ///
-    /// The centre is first. AMBER's slot order, with the centre third, is a
-    /// re-ordering performed by the force field that wants it.
+    /// The centre is first — LAMMPS's symmetry atom for its improper styles.
+    /// AMBER's slot order, with the centre third (the order whose dihedral is
+    /// AMBER's improper angle, and the one `improper periodic` is stored in),
+    /// is a re-ordering performed by the force field that wants it.
     pub fn trivalent_impropers(&self) -> Vec<[usize; 4]> {
         let mut result = Vec::new();
         for center in 0..self.n {

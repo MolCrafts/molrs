@@ -1,4 +1,10 @@
 //! MMFF94 out-of-plane bending: E = 0.5*143.9325*koop*chi^2 (Wilson angle)
+//!
+//! No LAMMPS style has this name. Its atom order is that of LAMMPS's
+//! out-of-plane styles (`improper_style fourier`, `umbrella`): the centre is
+//! **first** (`atomi`), and χ is the angle between the bond centre→`atoml` and
+//! the plane (centre, `atomj`, `atomk`) — MMFF's `I J K L` with `J` central,
+//! read centre first.
 
 use molrs::store::schema::block_names::IMPROPERS;
 use ndarray::{Array2, ArrayView2};
@@ -38,7 +44,8 @@ impl MMFFOutOfPlane {
         let conv = MDYNE_A_TO_KCAL as F;
 
         for idx in 0..n_terms {
-            let (i, j, k, l) = atoms(idx);
+            // Stored centre first; the Wilson math below names the centre `j`.
+            let (j, i, k, l) = atoms(idx);
             let a = sub3(coords, i, coords, j); // ji
             let b = sub3(coords, k, coords, j); // jk
             let c = sub3(coords, l, coords, j); // jl

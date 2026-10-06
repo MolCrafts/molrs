@@ -404,7 +404,7 @@ mod tests {
             .def_type(
                 "X-X-X",
                 &["X", "X", "X"],
-                Params::from_pairs(&[("k", 1.0), ("theta0", 1.9)]),
+                Params::from_pairs(&[("k", 1.0), ("theta0", 108.9)]),
             )
             .unwrap();
         ff.def_style("dihedral", "opls", Params::new())
@@ -560,13 +560,13 @@ mod tests {
             .def_type(
                 "HC-CT-HC",
                 &["HC", "CT", "HC"],
-                Params::from_pairs(&[("k", 66.0), ("theta0", 1.881)]),
+                Params::from_pairs(&[("k", 66.0), ("theta0", 107.8)]),
             )
             .unwrap()
             .def_type(
                 "CT-CT-HC",
                 &["CT", "CT", "HC"],
-                Params::from_pairs(&[("k", 75.0), ("theta0", 1.932)]),
+                Params::from_pairs(&[("k", 75.0), ("theta0", 110.7)]),
             )
             .unwrap();
         ff.def_style("dihedral", "opls", Params::new())
@@ -765,7 +765,7 @@ mod tests {
                 .def_type(
                     name,
                     &ends,
-                    Params::from_pairs(&[("k", 70.0), ("theta0", 2.0)]),
+                    Params::from_pairs(&[("k", 70.0), ("theta0", 114.6)]),
                 )
                 .unwrap();
         }
