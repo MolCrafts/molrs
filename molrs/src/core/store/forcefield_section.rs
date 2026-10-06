@@ -30,11 +30,14 @@
 //!   one exception being a `cmap` table's [`CMAP_GRID`] column, `f64[T, N, N]`
 //!   with `N ≥ 2` and every value of a non-null row finite;
 //! - a `class`-keyed style beside an atom table without `class`;
-//! - a `pair` or `pair14` table (endpoint-keyed) with two rows on one
-//!   unordered `{itom, jtom}` that differ in a parameter
-//!   ([`check_pair_restatements`]).
+//! - a `pair` table (endpoint-keyed) with two rows on one unordered
+//!   `{itom, jtom}` that differ in a parameter ([`check_pair_restatements`]).
 //!
-//! A table no style names is unknown content: kept, never checked.
+//! A table no style names is unknown content: kept, never checked. A style
+//! of a category outside the chapter's (`pair14` among them: molrec retired
+//! it — 1-4 parameters are `lj/charmm`'s `epsilon14` / `sigma14` and the
+//! frame's per-pair override columns) is kept with its table, checked only
+//! as any table is, its endpoints a prefix of `itom..mtom`.
 
 use indexmap::IndexMap;
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -60,10 +63,6 @@ pub const ANNOTATION_COLUMNS: [&str; 7] = [
     "desc",
     "doi",
 ];
-
-/// The categories whose rows are found by their unordered `{itom, jtom}`, not
-/// by name (molrec forcefield, linking rule 3).
-pub const PAIR_CATEGORIES: [&str; 2] = ["pair", "pair14"];
 
 /// Whether a style-table column is a parameter: not `name`, an endpoint or an
 /// annotation column. Rows restating one pair are compared on these alone.
@@ -155,7 +154,7 @@ pub fn unit_preset(name: &str) -> Option<[Option<&'static str>; 6]> {
 pub fn category_arity(category: &str) -> Option<usize> {
     Some(match category {
         "atom" | "virtual_site" => 0,
-        "bond" | "pair" | "pair14" | "constraint" | "drude" => 2,
+        "bond" | "pair" | "constraint" | "drude" => 2,
         "angle" => 3,
         "dihedral" | "improper" => 4,
         "cmap" => 5,
@@ -640,7 +639,9 @@ fn check_style_table(
             "a class-keyed style links through atom classes; this atom table has no class".into(),
         ));
     }
-    if PAIR_CATEGORIES.contains(&style.category) && present == ENDPOINT_COLUMNS[..2] {
+    // Linking rule 3: `pair` rows are found by their unordered `{itom, jtom}`,
+    // not by name.
+    if style.category == "pair" && present == ENDPOINT_COLUMNS[..2] {
         check_pair_restatements(table).map_err(fail)?;
     }
     Ok(())
@@ -1058,19 +1059,32 @@ mod tests {
 
     #[test]
     fn a_reversed_pair_restated_with_other_params_is_refused() {
-        for category in PAIR_CATEGORIES {
-            let rows = [
-                ("A", "A", "A", 0.1),
-                ("A-B", "A", "B", 0.9),
-                ("B-A", "B", "A", 0.8),
-            ];
-            let err = with_pairs(category, &rows)
-                .validate()
-                .unwrap_err()
-                .to_string();
-            assert!(err.contains("\"A-B\" and \"B-A\""), "{err}");
-            assert!(err.contains("[\"epsilon\"]"), "{err}");
-        }
+        let rows = [
+            ("A", "A", "A", 0.1),
+            ("A-B", "A", "B", 0.9),
+            ("B-A", "B", "A", 0.8),
+        ];
+        let err = with_pairs("pair", &rows)
+            .validate()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("\"A-B\" and \"B-A\""), "{err}");
+        assert!(err.contains("[\"epsilon\"]"), "{err}");
+    }
+
+    /// `pair14` is no category of the chapter (molrec retired it): a table
+    /// under it is unknown content, so neither its arity nor a conflicting
+    /// restatement is checked.
+    #[test]
+    fn a_pair14_table_is_an_unknown_category() {
+        assert_eq!(category_arity("pair14"), None);
+        let rows = [("A-B", "A", "B", 0.9), ("B-A", "B", "A", 0.8)];
+        let mut ff = with_pairs("pair14", &rows);
+        ff.validate().unwrap();
+        pair_table(&mut ff, "pair14")
+            .insert_column("ktom", strings(&["C", "C"]))
+            .unwrap();
+        ff.validate().unwrap();
     }
 
     /// Two names on one ordered pair are no less one pair: the last of them
@@ -1129,7 +1143,7 @@ mod tests {
         assert!(err.contains("[\"flavour\"]"), "{err}");
     }
 
-    /// Only `pair` and `pair14` rows are found by their endpoints: a bond
+    /// Only `pair` rows are found by their endpoints: a bond
     /// table may hold two names on one pair, and a smirks-keyed pair table
     /// has no endpoints to compare.
     #[test]
