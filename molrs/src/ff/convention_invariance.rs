@@ -78,7 +78,11 @@ fn per_style(ff: &ForceField, frame: &Frame) -> BTreeMap<String, f64> {
     out
 }
 
-/// `got` holds exactly `want`'s styles, each within 1e-12 relative.
+/// `got` holds exactly `want`'s styles, each within 1e-12 relative or 1e-15
+/// kcal/mol absolute. The absolute floor is for a term that is a small
+/// difference of large ones: the GROMACS RB torsion here is 1.45e-6 kcal/mol
+/// out of coefficients of 0.1 kcal/mol, and the same polynomial summed in
+/// another order (`multi/harmonic` for 0.15's `opls`) moves it by 2e-17.
 fn assert_energies(label: &str, got: &BTreeMap<String, f64>, want: &[(&str, f64)]) {
     let names: Vec<&str> = got.keys().map(String::as_str).collect();
     let want_names: Vec<&str> = want.iter().map(|(n, _)| *n).collect();
@@ -87,7 +91,7 @@ fn assert_energies(label: &str, got: &BTreeMap<String, f64>, want: &[(&str, f64)
         let g = got[*style];
         let rel = (g - w).abs() / w.abs().max(f64::MIN_POSITIVE);
         assert!(
-            rel <= 1e-12 || (g == 0.0 && *w == 0.0),
+            rel <= 1e-12 || (g - w).abs() <= 1e-15,
             "{label} {style}: {g:?} vs 0.15.1's {w:?} (rel {rel:e})"
         );
     }
@@ -391,9 +395,11 @@ improper_coeff N-C-H-CT 10.5 12.0
 
 /// The 0.15.1 per-style energies of the GROMACS-, OpenMM- and LAMMPS-read
 /// fields on the hand molecule. `dihedral/fourier` of 0.15.1 is 0.16's
-/// `dihedral/periodic` (the alias is gone); the OpenMM improper and the
-/// OpenMM Coulomb constant are the intended changes (see the module docs and
-/// the next test).
+/// `dihedral/periodic` (the alias is gone), and its GROMACS funct-3
+/// `dihedral/opls` is 0.16's `dihedral/multi/harmonic` (the same polynomial,
+/// read without the OPLS projection); the OpenMM improper and the OpenMM
+/// Coulomb constant are the intended changes (see the module docs and the next
+/// test).
 #[test]
 fn file_read_fields_price_as_in_0_15() {
     let gmx = GromacsTopFfReader::new().read_str(GROMACS_FF).unwrap();
@@ -403,7 +409,7 @@ fn file_read_fields_price_as_in_0_15() {
         &[
             ("angle/harmonic", 1.3595933975169494),
             ("bond/harmonic", 0.16275010462128736),
-            ("dihedral/opls", 1.4519861291139018e-6),
+            ("dihedral/multi/harmonic", 1.4519861291139018e-6),
             ("dihedral/periodic", 0.09469745227704568),
             ("improper/harmonic", 0.07338136844630398),
             ("improper/periodic", 0.003384791688934619),

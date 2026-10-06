@@ -548,6 +548,62 @@ fn an_override_cell_beats_the_weight_and_a_null_cell_keeps_it() {
     assert_eq!(plan.override_rows.len(), 5);
 }
 
+/// An override cell is priced only by the style it belongs to: a field
+/// without a Lennard-Jones style ignores `epsilon` / `sigma` / `lj_scale`,
+/// one without a Coulomb style `charge_product` / `coul_scale`, and a
+/// bonded-only field prices no pair of a materialized frame.
+#[test]
+fn an_override_cell_is_priced_only_by_its_own_style() {
+    let ff = plain(AMBER_LIKE);
+    let base = frame(ff.special_bonds(), false);
+    let lj_cells = with_overrides(
+        &base,
+        &[
+            ("epsilon", &|_, _| 0.3),
+            ("sigma", &|_, _| 3.1),
+            ("lj_scale", &|_, _| 1.0),
+        ],
+    );
+    let coul_cells = with_overrides(
+        &base,
+        &[
+            ("charge_product", &|_, _| -0.2),
+            ("coul_scale", &|_, _| 1.0),
+        ],
+    );
+    let all = with_overrides(
+        &lj_cells,
+        &[
+            ("charge_product", &|_, _| -0.2),
+            ("coul_scale", &|_, _| 1.0),
+        ],
+    );
+    let bond = only(&ff, "bond", "harmonic");
+    let lj = only(&ff, "pair", "lj/cut");
+    let coul = only(&ff, "pair", "coul/cut");
+    close(
+        "bond-only",
+        energy(&bond, &all),
+        energy(&bond, &base),
+        1e-14,
+    );
+    close(
+        "LJ-only",
+        energy(&lj, &coul_cells),
+        energy(&lj, &base),
+        1e-14,
+    );
+    close(
+        "Coulomb-only",
+        energy(&coul, &lj_cells),
+        energy(&coul, &base),
+        1e-14,
+    );
+    // The cells do change their own style's energy.
+    assert!((energy(&lj, &lj_cells) - energy(&lj, &base)).abs() > 1e-6);
+    assert!((energy(&coul, &coul_cells) - energy(&coul, &base)).abs() > 1e-6);
+}
+
 /// Finite differences of the whole compiled field inside every switch
 /// region's start (the Coulomb switch's force is LAMMPS's, not a gradient),
 /// with exceptions, at `w = 1`.

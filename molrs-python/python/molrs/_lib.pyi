@@ -4724,16 +4724,33 @@ def read_gromacs_top_ff(
     path: PathInput,
     include: bool = False,
     *,
+    include_dirs: Sequence[PathInput] = (),
     skip_directives: Sequence[str] = (),
 ) -> ForceField:
     """Read the force-field directives of a GROMACS topology into a :class:`ForceField`.
 
-    Reads ``[ defaults ]``, ``[ atomtypes ]``, ``[ nonbond_params ]`` (explicit
-    ``lj/cut`` cross rows), ``[ bondtypes ]``, ``[ angletypes ]`` and
-    ``[ dihedraltypes ]``. Unmodelled directives and
-    every molecule section raise ``ValueError`` naming them; molecule sections
-    need :func:`molrs.io.read_top` or a skip. Each name in ``skip_directives``
+    Reads ``[ defaults ]``, ``[ atomtypes ]``, ``[ nonbond_params ]``,
+    ``[ pairtypes ]`` (``lj/charmm`` 1-4 parameters), ``[ bondtypes ]``,
+    ``[ angletypes ]`` (funct 5: ``angle charmm``), ``[ dihedraltypes ]``
+    (funct 1, 2, 3, 4, 5, 9) and ``[ cmaptypes ]``. What the IR cannot hold
+    and every molecule section raise ``ValueError`` naming them; a whole
+    topology is :func:`read_gromacs_system`. Each name in ``skip_directives``
     is read past instead of refused.
+    """
+
+def read_gromacs_system(
+    path: PathInput,
+    *,
+    include_dirs: Sequence[PathInput] = (),
+    skip_directives: Sequence[str] = (),
+) -> tuple[ForceField, Frame]:
+    """Read a whole GROMACS topology into a :class:`ForceField` and a typed :class:`Frame`.
+
+    Directives and molecule sections; each relation row typed by GROMACS's
+    own lookup, ``pairs`` the intramolecular pairs GROMACS prices (``[ pairs ]``
+    flagged ``is_14``, with per-pair overrides where they carry parameters).
+    ``#include`` resolves relative to the including file, then against each of
+    ``include_dirs``.
     """
 
 def read_lammps_log(path: PathInput, style: str = "default") -> LammpsLog:

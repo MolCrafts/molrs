@@ -311,19 +311,6 @@ fn only(ff: &ForceField, category: &str, name: &str, edit: impl Fn(&mut Params))
     one
 }
 
-/// `ff` with only its two pair styles.
-fn pair_styles(ff: &ForceField, lj: (&str, &str), coul: (&str, &str)) -> ForceField {
-    let mut out = only(ff, lj.0, lj.1, |_| {});
-    let style = ff.get_style(coul.0, coul.1).unwrap();
-    let s = out
-        .def_style(coul.0, coul.1, style.params().clone())
-        .unwrap();
-    for (name, ends, params) in style.type_rows() {
-        s.def_type(name, &ends, params.clone()).unwrap();
-    }
-    out
-}
-
 /// `frame` with only the `pairs` rows whose `is_14` is `want`.
 fn pairs_where(frame: &Frame, want: bool) -> Frame {
     let pairs = frame.get("pairs").unwrap();
@@ -364,12 +351,6 @@ fn molrs_terms(frame: &Frame, ff: &ForceField, coords: &[F]) -> Terms {
         (("pair", "lj/cut"), ("pair", "coul/cut"))
     };
     let (near, far) = (pairs_where(frame, true), pairs_where(frame, false));
-    // The bonded terms on a frame without `pairs`: the exceptions kernel
-    // prices a pair's override cells under any force field, so a pair list
-    // with them would add the 1-4 Lennard-Jones to every term.
-    let mut frame = frame.clone();
-    frame.remove("pairs");
-    let frame = &frame;
     Terms {
         bond: term(ff, frame, coords, ("bond", "harmonic"), keep),
         angle: if charmm {
@@ -384,12 +365,8 @@ fn molrs_terms(frame: &Frame, ff: &ForceField, coords: &[F]) -> Terms {
             + term(ff, frame, coords, ("improper", "periodic"), keep),
         imp: term(ff, frame, coords, ("improper", "harmonic"), keep),
         cmap: term(ff, frame, coords, ("cmap", "charmm"), keep),
-        // A 1-4 pair with override cells is priced by the exceptions
-        // kernel, which prices its LJ cells under any style: the Coulomb
-        // part is the two pair styles' energy less the Lennard-Jones one's.
         vdw_14: term(ff, &near, coords, lj, keep),
-        elec_14: energy(&pair_styles(ff, lj, coul), &near, coords)
-            - term(ff, &near, coords, lj, keep),
+        elec_14: term(ff, &near, coords, coul, keep),
         vdw: term(ff, &far, coords, lj, keep),
         elec: term(ff, &far, coords, coul, keep),
     }

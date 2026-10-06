@@ -97,6 +97,7 @@ use super::ForceFieldReader;
 use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::one_four::{ONE_FOUR, ONE_FOUR_EPSILON14, has_own_one_four};
+use crate::ff::forcefield::torsion::rb_polynomial;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use molrs::store::type_labels::TypeName;
 
@@ -735,20 +736,7 @@ fn parse_rb_torsions(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
         for (n, slot) in c.iter_mut().enumerate() {
             *slot = require_f64(&d, &format!("c{n}"))? / KJ_PER_KCAL;
         }
-        let a: Vec<f64> = c
-            .iter()
-            .enumerate()
-            .map(|(n, &cn)| if n % 2 == 0 { cn } else { -cn })
-            .collect();
-        let (style, take) = if c[5] == 0.0 {
-            ("multi/harmonic", 5)
-        } else {
-            ("nharmonic", 6)
-        };
-        let mut params = Params::new();
-        for (i, &ai) in a.iter().take(take).enumerate() {
-            params.set(&format!("a{}", i + 1), ai);
-        }
+        let (style, params) = rb_polynomial(c);
         ff.def_style("dihedral", style, Params::new())
             .map_err(|e| e.to_string())?
             .def_type(TypeName::join(&ends)?.as_str(), &ends, params)
