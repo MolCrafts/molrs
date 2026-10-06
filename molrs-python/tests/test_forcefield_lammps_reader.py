@@ -265,3 +265,119 @@ def test_ff_file_io_accepts_pathlike(tmp_path):
     out = tmp_path / "hand.ff"
     molrs.ff.forcefield.write_lammps_forcefield(out, _hand_ff(), _labelled_frame())
     assert "bond_coeff c3-c3" in out.read_text()
+
+
+# ---------------------------------------------------------------------------
+# LAMMPS data file -> ForceField: one call on the frame the data reader gave.
+# ---------------------------------------------------------------------------
+
+# Type labels numbered out of sorted order (``1 hc``, ``2 c3``): the rows must
+# be named by the file's ids, not by a re-sorted inventory.
+_DATA = """\
+LAMMPS data file via write_data, version 4 Jul 2026, timestep = 0, units = real
+
+3 atoms
+2 atom types
+2 bonds
+1 bond types
+1 angles
+1 angle types
+
+0 10 xlo xhi
+0 10 ylo yhi
+0 10 zlo zhi
+
+Atom Type Labels
+
+1 hc
+2 c3
+
+Bond Type Labels
+
+1 c3-hc
+
+Angle Type Labels
+
+1 hc-c3-hc
+
+Masses
+
+1 1.008
+2 12.011
+
+Pair Coeffs # lj/cut/coul/cut
+
+1 0.0157 2.6495
+2 0.1094 3.3997
+
+Bond Coeffs # harmonic
+
+1 340.0 1.09
+
+Angle Coeffs # harmonic
+
+1 35.0 109.5
+
+Atoms # full
+
+1 1 2 -0.2 5.0 5.0 5.0
+2 1 1 0.1 6.09 5.0 5.0
+3 1 1 0.1 4.64 6.03 5.0
+
+Bonds
+
+1 1 1 2
+2 1 1 3
+
+Angles
+
+1 1 2 1 3
+"""
+
+
+@pytest.fixture
+def data_frame(tmp_path):
+    path = tmp_path / "in.data"
+    path.write_text(_DATA)
+    return molrs.io.read_lammps_data(path)
+
+
+def test_read_lammps_data_coeffs_takes_the_frame(data_frame):
+    ff = molrs.ff.forcefield.read_lammps_data_coeffs(data_frame)
+    text = molrs.ff.forcefield.write_lammps_forcefield_str(ff, data_frame)
+    assert "pair_coeff hc hc 0.015700 2.649500" in text
+    assert "pair_coeff c3 c3 0.109400 3.399700" in text
+    assert "bond_coeff c3-hc 340.000000 1.090000" in text
+    assert "angle_coeff hc-c3-hc 35.000000 109.500000" in text
+
+
+def test_lammps_data_forcefield_lammps_round_trip(data_frame, tmp_path):
+    """data file -> ForceField -> data file (frame + ``* Coeffs``) -> the
+    same ForceField."""
+    forcefield = molrs.ff.forcefield
+    ff = forcefield.read_lammps_data_coeffs(data_frame)
+    out = tmp_path / "out.data"
+    molrs.io.write_lammps_data(out, data_frame)
+    out.write_text(
+        out.read_text() + "\n" + forcefield.write_lammps_data_coeffs(ff, data_frame)
+    )
+    again_frame = molrs.io.read_lammps_data(out)
+    again = forcefield.read_lammps_data_coeffs(again_frame, units="real")
+    assert forcefield.write_lammps_forcefield_str(
+        again, again_frame
+    ) == forcefield.write_lammps_forcefield_str(ff, data_frame)
+
+
+def test_read_lammps_data_coeffs_refuses_other_units(data_frame):
+    with pytest.raises(ValueError, match="metal"):
+        molrs.ff.forcefield.read_lammps_data_coeffs(data_frame, units="metal")
+
+
+def test_read_lammps_data_coeffs_needs_coeffs(tmp_path):
+    with pytest.raises(ValueError, match="lammps_coeffs_text"):
+        molrs.ff.forcefield.read_lammps_data_coeffs(_labelled_frame())
+
+
+def test_read_lammps_data_coeffs_text_form_is_gone(data_frame):
+    with pytest.raises(TypeError):
+        molrs.ff.forcefield.read_lammps_data_coeffs(data_frame.meta["lammps_coeffs_text"])

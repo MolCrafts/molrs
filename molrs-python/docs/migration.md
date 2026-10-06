@@ -480,8 +480,32 @@ LAMMPS's three 1-4 mechanisms are all priced, LAMMPS's way; see
   sub-style (0.15 wrote one `*_style` line per style, and LAMMPS kept only the
   last). Every data-file `* Coeffs` section it writes names its style in the
   header comment (`Angle Coeffs # charmm`, `# hybrid` with the sub-style on
-  each row), as LAMMPS's `write_data` does, so `read_data_coeffs` reads a
-  non-`harmonic` section back under the right style.
+  each row), as LAMMPS's `write_data` does, so `read_lammps_data_coeffs`
+  reads a non-`harmonic` section back under the right style.
+- **`read_lammps_data_coeffs` takes the frame.** The signature is
+  `read_lammps_data_coeffs(frame, *, units=None)` with the frame
+  `molrs.io.read_lammps_data` returned: it reads the frame's
+  `meta["lammps_coeffs_text"]` and names each row's type id by the label the
+  file's `* Type Labels` section gave it (the reader's
+  `meta["<kind>_type_labels"]`, ids as written). `units` defaults to the
+  data file's own (its `write_data` title line), else `"real"`; a `units`
+  that disagrees with the file's raises `ValueError`, as does a frame with no
+  `* Coeffs` sections. The 0.15 form — the coefficient text plus
+  `units` and `atom_labels` … `improper_labels` maps the caller parsed out of
+  the meta — is removed:
+  ```python
+  # 0.15
+  ff = read_lammps_data_coeffs(frame.meta["lammps_coeffs_text"], units="real",
+                               atom_labels={1: "c3", 2: "hc"}, ...)
+  # 0.16
+  ff = molrs.ff.forcefield.read_lammps_data_coeffs(frame)
+  ```
+  In Rust, `LammpsFfReader::read_data_coeffs(&frame, units: Option<&str>)`
+  replaces `read_data_coeffs(text, &LammpsTypeLabelMaps, units)`;
+  `LammpsTypeLabelMaps` is no longer public. The meta keys are
+  `io::data::lammps_data::{COEFFS_TEXT_META, UNITS_META}`, and
+  `TypeLabels::declared_ids(frame, block)` gives a block's inventory with
+  its ids as written.
 - **Newly read and written**: `bond morse`, `improper cvff`, `bond class2`,
   `angle class2` and `dihedral class2` (cross-term lines at zero; a non-zero
   cross term is refused), `pair buck`, `pair morse`, `pair lj/class2`
@@ -1680,8 +1704,8 @@ the bullet says so):
     earlier one, as LAMMPS does; 0.15.0 kept the first.
   - A cross `pair_coeff` with a wildcard (`pair_coeff c3 * …`) is an error;
     it used to be dropped.
-  - `read_data_coeffs` reads a data file's `PairIJ Coeffs` section; it used
-    to be skipped.
+  - `read_lammps_data_coeffs` reads a data file's `PairIJ Coeffs` section;
+    it used to be skipped.
 - **GROMACS force-field reader and writer.** `[ nonbond_params ]` (funct 1)
   is read as cross rows and written from them; 0.15.0 refused both. Other
   funct codes are refused.

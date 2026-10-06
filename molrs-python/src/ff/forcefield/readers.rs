@@ -215,53 +215,28 @@ fn gromacs_top_ff_reader(
         .fold(reader, |reader, name| reader.with_skipped_directive(name))
 }
 
-/// Parse LAMMPS data-file ``* Coeffs`` sections into a :class:`ForceField`.
+/// The :class:`ForceField` a LAMMPS data file's ``* Coeffs`` sections define,
+/// from the :class:`Frame` :func:`molrs.io.read_lammps_data` returned.
 ///
-/// ``coeffs_text`` may contain ``Pair Coeffs`` / ``Bond Coeffs`` / … blocks
-/// (and an optional ``units`` line). Default styles are harmonic / ``lj/cut``
-/// when the data file has no style directives. Optional ``*_labels`` maps are
-/// 1-based type id → label string (from Type Labels sections).
+/// The sections are the frame's ``meta["lammps_coeffs_text"]``; a row's
+/// numeric type id is named by the label the file's ``* Type Labels``
+/// section gave it (the reader keeps them, ids as written, in
+/// ``meta["<kind>_type_labels"]``), else by the id itself. ``units`` is the
+/// unit style the coefficients are in: the one the file's ``write_data`` title
+/// line stated when ``None``, else ``"real"``. Styles come from the section
+/// headers' ``# style`` comments, default harmonic / ``lj/cut/coul/cut``.
+///
+/// Raises ``ValueError`` for a frame with no ``* Coeffs`` sections, a
+/// ``units`` that disagrees with the file's, an unsupported style, or a row
+/// that does not parse.
 #[pyfunction]
-#[pyo3(
-    name = "read_lammps_data_coeffs",
-    signature = (
-        coeffs_text,
-        units = "real",
-        atom_labels = None,
-        bond_labels = None,
-        angle_labels = None,
-        dihedral_labels = None,
-        improper_labels = None,
-    )
-)]
-#[allow(clippy::too_many_arguments)]
-pub fn read_lammps_data_coeffs_py(
-    coeffs_text: &str,
-    units: &str,
-    atom_labels: Option<std::collections::HashMap<u32, String>>,
-    bond_labels: Option<std::collections::HashMap<u32, String>>,
-    angle_labels: Option<std::collections::HashMap<u32, String>>,
-    dihedral_labels: Option<std::collections::HashMap<u32, String>>,
-    improper_labels: Option<std::collections::HashMap<u32, String>>,
-) -> PyResult<PyForceField> {
-    use molrs::ff::forcefield::lammps_units::parse_style;
-    use molrs::ff::forcefield::readers::lammps::LammpsFfReader;
-    use molrs::ff::forcefield::readers::lammps::LammpsTypeLabelMaps;
-    use std::collections::BTreeMap;
-
-    let units = parse_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
-    let to_btree = |m: Option<std::collections::HashMap<u32, String>>| -> BTreeMap<u32, String> {
-        m.unwrap_or_default().into_iter().collect()
-    };
-    let labels = LammpsTypeLabelMaps {
-        atom: to_btree(atom_labels),
-        bond: to_btree(bond_labels),
-        angle: to_btree(angle_labels),
-        dihedral: to_btree(dihedral_labels),
-        improper: to_btree(improper_labels),
-    };
-    let forcefield = LammpsFfReader::new()
-        .read_data_coeffs(coeffs_text, &labels, units)
+#[pyo3(name = "read_lammps_data_coeffs", signature = (frame, *, units = None))]
+pub fn read_lammps_data_coeffs_py(frame: &PyFrame, units: Option<&str>) -> PyResult<PyForceField> {
+    let forcefield = frame
+        .with_frame(|frame| {
+            molrs::ff::forcefield::readers::lammps::LammpsFfReader::new()
+                .read_data_coeffs(frame, units)
+        })?
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
 }
