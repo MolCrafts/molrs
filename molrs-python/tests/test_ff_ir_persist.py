@@ -12,13 +12,12 @@ back. There:
   (molrs.ff.ir.register_style) or give it an expression";
 * an array parameter (``dihedral table/linear``, ``table: f64[N]``) comes back
   bit for bit, through ``molrs.io.mrec`` as an ``f64[T, N]`` column;
-* a category nothing ever registers is kept.
+* a category nothing ever registers is kept;
+* a custom style registered here with ``molrs.ff.ir.register_style`` and an
+  expression, its instances carrying none, is written with the registry's
+  expression (D16), so the fresh process prices it all the same.
 
-The custom category is registered through the Rust registry's
-``molrs._lib._register_relation_category`` hook: ``molrs.ff.ir`` (WP5) is not
-on this branch. The record carries every expression as the style instance's
-own; writing a *registered* custom style's registry expression is tested in
-Rust (``ff::ir::tests::to_section_writes_a_custom_styles_registry_expression``).
+The custom category and style are registered through ``molrs.ff.ir``.
 """
 
 from __future__ import annotations
@@ -44,8 +43,15 @@ NO_KERNEL = (
     "or give it an expression"
 )
 
-# The Rust registration path: this process's registry gains the category.
-molrs._lib._register_relation_category("urey_bradley", 3)
+# This process's registry gains the category, and a bond style priced by
+# the registry's expression alone (its instances state none).
+molrs.ff.ir.register_category("urey_bradley", 3)
+molrs.ff.ir.register_style(
+    "bond",
+    "fene/registered",
+    params={"k": "E/L^2", "r0": "L", "epsilon": "E", "sigma": "L"},
+    expression=FENE,
+)
 
 TABLE = np.array([1.25 + np.sin(0.7 * i) / 3.0 - 0.01 * i * i for i in range(12)])
 UB_ROWS = ([[0, 1, 2], [1, 2, 3]], ["t", "u"])
@@ -59,6 +65,15 @@ def _fene() -> molrs.ff.ForceField:
     ff = molrs.ff.ForceField("fene")
     a = _atom(ff)
     ff.def_style("bond", "fene", {"expression": FENE}).def_type(
+        "t", a, a, k=30.0, r0=2.25, epsilon=1.1, sigma=1.4
+    )
+    return ff
+
+
+def _fene_registered() -> molrs.ff.ForceField:
+    ff = molrs.ff.ForceField("fene")
+    a = _atom(ff)
+    ff.def_style("bond", "fene/registered").def_type(
         "t", a, a, k=30.0, r0=2.25, epsilon=1.1, sigma=1.4
     )
     return ff
@@ -101,6 +116,7 @@ def fresh(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict, dict]:
     tmp = tmp_path_factory.mktemp("persist")
     records = {
         "fene": (_fene().to_section(), "bonds", [[0, 1]], ["t"]),
+        "fene_registered": (_fene_registered().to_section(), "bonds", [[0, 1]], ["t"]),
         "ub_expr": (_ub("spring", UB).to_section(), "urey_bradleys", *UB_ROWS),
         "ub_native": (_ub("harmonic", None).to_section(), "urey_bradleys", *UB_ROWS),
         "table": (_table().to_section(), "dihedrals", [[0, 1, 2, 3]], ["t"]),
@@ -146,7 +162,7 @@ def test_the_fresh_process_registered_nothing() -> None:
     assert done.stdout.strip() == "unknown"
 
 
-@pytest.mark.parametrize("name", ["fene", "ub_expr"])
+@pytest.mark.parametrize("name", ["fene", "ub_expr", "fene_registered"])
 def test_an_expression_style_prices_the_same_bits_in_a_fresh_process(
     fresh: tuple[dict, dict], name: str
 ) -> None:
@@ -165,6 +181,25 @@ def test_the_expression_is_kept_byte_for_byte(fresh: tuple[dict, dict]) -> None:
     }
     assert styles["fene"] == FENE
     assert styles["spring"] == UB
+
+
+def test_a_registered_style_is_written_with_the_registry_expression(
+    fresh: tuple[dict, dict],
+) -> None:
+    """D16: the instance states no expression; the record carries the
+    registry's, so a process that registered nothing prices it the same."""
+    style = _fene_registered().get_style("bond", "fene/registered")
+    assert "expression" not in style.params
+    here_out, there = fresh
+    (entry,) = [
+        s
+        for s in here_out["fene_registered"]["section"]["document"]["styles"]
+        if s["style"] == "fene/registered"
+    ]
+    assert entry["expression"] == FENE
+    assert there["fene_registered"]["price"] == here_out["fene_registered"]["price"]
+    # One force law: the same bits as the instance-expression `fene`.
+    assert here_out["fene_registered"]["price"] == here_out["fene"]["price"]
 
 
 @pytest.mark.parametrize(

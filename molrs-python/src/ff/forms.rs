@@ -8,12 +8,12 @@ use pyo3::types::{PyDict, PyList};
 use molrs::ff::ir::{IrError, Metric, Residual};
 
 use super::PyForceField;
-use crate::helpers::py_value_err;
 
-/// A refusal of the force-field IR as a Python exception (`ValueError`; its
-/// message names the variant's subject and condition).
+/// A refusal of the force-field IR as its `molrs.ff.ir` exception (a
+/// `ValueError` subclass named after the variant: `OutOfImage`, `NoForm`,
+/// `FormConflict`, …).
 fn ir_err(e: IrError) -> PyErr {
-    py_value_err(e)
+    crate::ff::ir::refuse(e)
 }
 
 fn residual_dict<'py>(py: Python<'py>, residual: &Residual) -> PyResult<Bound<'py, PyDict>> {

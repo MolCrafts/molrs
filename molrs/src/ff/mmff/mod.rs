@@ -21,7 +21,7 @@
 //! use molrs::ff::potential::{PotentialCompiler, intramolecular_pairs};
 //! use molrs::ff::typifier::Typing;
 //! use molrs::ff::typifier::mmff::MMFF94Typifier;
-//! # fn run(mol: &molrs::Atomistic) -> Result<(), String> {
+//! # fn run(mol: &molrs::Atomistic) -> Result<(), Box<dyn std::error::Error>> {
 //! let mut typing = Typing::new(MMFF94Typifier::new());
 //! let mut frame = typing.typify(mol)?.to_frame().map_err(|e| e.to_string())?;
 //! let ff = typing.forcefield();

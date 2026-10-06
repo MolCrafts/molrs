@@ -777,6 +777,12 @@ def test_a_new_category_registers_and_evaluates(registered) -> None:
         np.testing.assert_allclose(
             f, reference[1], rtol=0, atol=1e-12 * np.abs(reference[1]).max()
         )
+    # A type with the wrong number of endpoints is the IR's Arity.
+    with pytest.raises(ir.Arity, match="got 2") as err:
+        ff.get_style("urey_bradley", "harmonic/np").def_type(
+            "x", a, a, k_ub=1.0, r_ub=1.0
+        )
+    assert (err.value.category, err.value.arity) == ("urey_bradley", 2)
     with pytest.raises(TypeError, match="pass x"):
         ir.evaluate("urey_bradley", "harmonic", [1.0], k_ub=1.0, r_ub=1.0)
     with pytest.raises(ir.Point):

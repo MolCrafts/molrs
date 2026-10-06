@@ -12,20 +12,20 @@ use crate::ff::ir::IrError;
 /// matches on it instead of reading a message.
 ///
 /// ```
-/// use molrs::ff::forcefield::{ForceField, Params};
-/// use molrs::ff::ir::IrError;
-/// use molrs::ff::potential::{CompileError, PotentialCompiler};
 /// use molrs::Frame;
+/// use molrs::ff::forcefield::{ForceField, Params};
+/// use molrs::ff::ir::{IrError, Registry};
+/// use molrs::ff::potential::{CompileError, PotentialCompiler};
 ///
 /// let mut ff = ForceField::new("t");
-/// ff.def_style("bond", "nosuch", Params::new()).unwrap();
-/// let mut frame = Frame::new();
-/// let mut bonds = molrs::Block::new();
-/// bonds.insert("atomi", ndarray::arr1(&[0u32]).into_dyn()).unwrap();
-/// bonds.insert("atomj", ndarray::arr1(&[1u32]).into_dyn()).unwrap();
-/// frame.insert("bonds", bonds);
-/// let err = PotentialCompiler::new(&ff).compile(&frame).unwrap_err();
-/// assert!(matches!(err, CompileError::Ir(IrError::NoKernel { .. })));
+/// ff.def_style("bond", "harmonic", Params::new()).unwrap();
+/// // A registry that declares no `bond` category.
+/// let empty = Registry::new();
+/// let err = PotentialCompiler::with_registry(&ff, &empty)
+///     .compile(&Frame::new())
+///     .unwrap_err();
+/// let refused = IrError::UnknownCategory { category: "bond".into() };
+/// assert_eq!(err, CompileError::Ir(refused));
 /// ```
 #[derive(Clone, Debug, PartialEq)]
 pub enum CompileError {

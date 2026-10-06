@@ -83,6 +83,7 @@ KernelShape = _ir.KernelShape
 NoEngineForm = _ir.NoEngineForm
 FormConflict = _ir.FormConflict
 NoForm = _ir.NoForm
+OutOfImage = _ir.OutOfImage
 Malformed = _ir.Malformed
 
 Param = _ir.Param
@@ -220,6 +221,7 @@ __all__ = [
     "NoForm",
     "NoKernel",
     "NoMixing",
+    "OutOfImage",
     "Param",
     "Parse",
     "Point",

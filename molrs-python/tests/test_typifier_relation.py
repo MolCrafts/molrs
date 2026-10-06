@@ -23,8 +23,8 @@ ATOM_TYPES = ["A", "B", "C", "D"]
 # (name, endpoints, k_ub, r_ub) over atoms (0, 1, 2) and (1, 2, 3).
 TERMS = [("t", ("A", "B", "C"), 20.0, 2.45), ("u", ("B", "C", "D"), 11.0, 2.2)]
 
-# The Rust registration path: the process-wide registry gains the category.
-molrs._lib._register_relation_category("urey_bradley", 3)
+# The public registration path: the process-wide registry gains the category.
+molrs.ff.ir.register_category("urey_bradley", 3)
 
 
 def _chain(kind: str) -> molrs.Atomistic:

@@ -31,7 +31,7 @@
 //! use molrs::ff::potential::{PotentialCompiler, intramolecular_pairs};
 //! use molrs::ff::typifier::Typing;
 //! use molrs::ff::typifier::mmff::MMFF94Typifier;
-//! # fn main() -> Result<(), String> {
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let mol = Atomistic::new();                             // build or load your molecule
 //! let mut typing = Typing::new(MMFF94Typifier::new());
 //!

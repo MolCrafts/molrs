@@ -2634,18 +2634,22 @@ class ForceField:
 
         Raises
         ------
-        ValueError
+        molrs.ff.ir.OutOfImage
             A row the canonical style cannot hold (charmm ``w ≠ 0``, class2
-            ``k3 ≠ 0``), naming the type and the condition."""
+            ``k3 ≠ 0``), naming the type and the condition.
+        molrs.ff.ir.FormConflict
+            A form family without exactly one canonical style."""
     def to_form(self, category: str, style: str) -> ForceField:
         """Every style of ``category`` in ``style``'s form family converted
         to ``style``, exactly, through the canonical parameters.
 
         Raises
         ------
-        ValueError
-            ``style`` has no form codec, or a row is outside its image
-            (``sin(2φ) coefficient … ≠ 0``, ``the constant term …``)."""
+        molrs.ff.ir.NoForm
+            ``style`` has no form codec.
+        molrs.ff.ir.OutOfImage
+            A row is outside its image (``sin(2φ) coefficient … ≠ 0``, ``the
+            constant term …``)."""
     def fit_form(
         self,
         category: str,
@@ -4498,6 +4502,10 @@ class ir:
     class NoEngineForm(IrError): ...
     class FormConflict(IrError): ...
     class NoForm(IrError): ...
+    class OutOfImage(IrError):
+        """An exact form conversion refused; ``from_``, ``to``, ``type`` and
+        ``reason`` name the row and the condition."""
+
     class Malformed(IrError): ...
 
     class Param:

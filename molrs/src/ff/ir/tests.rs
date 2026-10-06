@@ -11,7 +11,7 @@ use crate::ff::ir::{
     Sample, ScalarForm, SpecialClass, StyleSpec, Value, builtin_categories, builtin_styles,
 };
 use crate::ff::potential::bond::harmonic::bond_harmonic_ctor;
-use crate::ff::potential::{KernelRegistry, PotentialCompiler, register_kernel};
+use crate::ff::potential::{CompileError, KernelRegistry, PotentialCompiler, register_kernel};
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::types::{F, Idx};
@@ -654,10 +654,11 @@ fn compiling_an_unregistered_category_is_an_error() {
     let err = PotentialCompiler::with_registry(&ff, &empty)
         .compile(&Frame::new())
         .unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("category 'bond' is not registered"),
-        "{err}"
+    assert_eq!(
+        err,
+        CompileError::Ir(IrError::UnknownCategory {
+            category: "bond".into()
+        })
     );
 }
 
@@ -1632,13 +1633,13 @@ fn an_instance_expression_must_agree_with_the_registered_kernel() {
         for _ in 0..2 {
             let err = with(name, "k*(r-r0)^2 + 0.001").unwrap_err();
             assert!(
-                err.contains(name) && err.contains("disagree"),
+                err.to_string().contains(name) && err.to_string().contains("disagree"),
                 "{name}: {err}"
             );
         }
         // An expression the style cannot bind is refused by name too.
         let err = with(name, "k*(theta-r0)^2").unwrap_err();
-        assert!(err.contains("theta"), "{name}: {err}");
+        assert!(err.to_string().contains("theta"), "{name}: {err}");
     }
 }
 
@@ -1739,7 +1740,7 @@ fn fresh_process_reads_custom_styles() {
         .compile(&two_terms("urey_bradley"))
         .unwrap_err();
     assert!(
-        err.contains("no kernel for urey_bradley `harmonic`: register it (molrs.ff.ir.register_style) or give it an expression"),
+        err.to_string().contains("no kernel for urey_bradley `harmonic`: register it (molrs.ff.ir.register_style) or give it an expression"),
         "{err}"
     );
     let table = read("table");
@@ -1753,7 +1754,8 @@ fn fresh_process_reads_custom_styles() {
         .compile(&chain("dihedral", 4))
         .unwrap_err();
     assert!(
-        err.contains("no kernel for dihedral `table/linear`"),
+        err.to_string()
+            .contains("no kernel for dihedral `table/linear`"),
         "{err}"
     );
     // The category nothing registers is kept, rows and style params.

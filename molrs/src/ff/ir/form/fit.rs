@@ -379,7 +379,7 @@ impl Registry {
         style: &str,
         tp: &TypeParams,
         q: &[F],
-    ) -> Result<Vec<F>, String> {
+    ) -> Result<Vec<F>, crate::ff::potential::CompileError> {
         let arity = cat.arity.endpoints();
         let ends = &["a", "b", "c", "d"][..arity];
         let mut ff = ForceField::new("fit");
@@ -446,7 +446,12 @@ impl Registry {
             tp
         };
         let sw: Vec<F> = w.iter().map(|w| w.sqrt()).collect();
-        let model = |x: &[F]| self.energies(cat, style, &at(x), q);
+        // The refusal becomes the reason of the `OutOfImage` this fit
+        // raises (the caller wraps it), so its message is what travels.
+        let model = |x: &[F]| {
+            self.energies(cat, style, &at(x), q)
+                .map_err(|e| e.to_string())
+        };
         let resid = |e: &[F], c: F| -> Vec<F> {
             e.iter()
                 .zip(e_src)

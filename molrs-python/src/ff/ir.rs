@@ -103,6 +103,7 @@ pub mod errors {
         NoEngineForm: "An engine with no form for the style.",
         FormConflict: "A form family without exactly one canonical style.",
         NoForm: "A style that belongs to no form family.",
+        OutOfImage: "An exact form conversion refused: a row outside the image of the target style.",
         Malformed: "A spec whose declarations contradict each other.",
     }
 }
@@ -252,6 +253,20 @@ pub(crate) fn ir_err(e: &IrError, message: String) -> PyErr {
             x::NoForm::new_err(message),
             vec![("category", s(category)), ("style", s(style))],
         ),
+        IrError::OutOfImage {
+            from,
+            to,
+            type_,
+            reason,
+        } => (
+            x::OutOfImage::new_err(message),
+            vec![
+                ("from_", s(from)),
+                ("to", s(to)),
+                ("type", s(type_)),
+                ("reason", s(reason)),
+            ],
+        ),
         IrError::Malformed { style, reason } => (
             x::Malformed::new_err(message),
             vec![("style", s(style)), ("reason", s(reason))],
@@ -280,7 +295,7 @@ enum Field {
 }
 
 /// `e` as its `molrs.ff.ir` exception, with its own message.
-fn refuse(e: IrError) -> PyErr {
+pub(crate) fn refuse(e: IrError) -> PyErr {
     let message = e.to_string();
     ir_err(&e, message)
 }

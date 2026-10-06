@@ -1265,7 +1265,7 @@ fn every_molrec_class_i_style_is_priced_or_refused_by_name() {
             .compile(&frame)
             .err()
             .unwrap_or_else(|| panic!("`{item}` compiled without a kernel"));
-        assert!(err.contains(style), "`{item}`: {err}");
+        assert!(err.to_string().contains(style), "`{item}`: {err}");
     }
 }
 

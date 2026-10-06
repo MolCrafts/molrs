@@ -76,10 +76,12 @@ def test_to_form_is_exact_or_raises_naming_the_condition() -> None:
     (t,) = rb.get_types("dihedral")
     assert math.isclose(_energy(rb), _energy(ff), rel_tol=1e-12)
     assert set(t.params) >= {"c0", "c1", "c2", "c3", "c4", "c5"}
-    with pytest.raises(ValueError, match=r"CT-CT-CT-CT.*sin\(2φ\)"):
+    with pytest.raises(molrs.ff.ir.OutOfImage, match=r"CT-CT-CT-CT.*sin\(2φ\)") as err:
         _periodic(30.0).to_form("dihedral", "rb")
-    with pytest.raises(ValueError, match="no form family"):
+    assert (err.value.type, err.value.to) == ("CT-CT-CT-CT", "dihedral rb")
+    with pytest.raises(molrs.ff.ir.NoForm, match="no form family") as err:
         ff.to_form("improper", "harmonic")
+    assert (err.value.category, err.value.style) == ("improper", "harmonic")
 
 
 def test_fit_form_reports_its_residual() -> None:
