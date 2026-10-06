@@ -11,11 +11,13 @@
 //! UFF-typed acetanilide, and a GROMACS-, OpenMM- and LAMMPS-read field on a
 //! hand-built molecule.
 //!
-//! The one term that changes is the point of the change: 0.15 priced an
+//! Two OpenMM terms change, each the point of its change: 0.15 priced an
 //! OpenMM `<Improper>` over the dihedral of OpenMM's file order (centre
 //! first), where OpenMM prices `(c2, c3, c1, c4)`. It now prices what
 //! OpenMM, GROMACS and AMBER price — the GROMACS-read value of the same
-//! improper, and the hand value of OpenMM's formula.
+//! improper, and the hand value of OpenMM's formula. And an OpenMM-read
+//! Coulomb style now states OpenMM's own constant, so its energy is 0.15.1's
+//! times 332.06371329919216 / 332.06371 (1 + 9.9·10⁻⁹).
 
 use std::collections::BTreeMap;
 
@@ -389,8 +391,9 @@ improper_coeff N-C-H-CT 10.5 12.0
 
 /// The 0.15.1 per-style energies of the GROMACS-, OpenMM- and LAMMPS-read
 /// fields on the hand molecule. `dihedral/fourier` of 0.15.1 is 0.16's
-/// `dihedral/periodic` (the alias is gone); the OpenMM improper is the one
-/// intended change (see the module docs and the next test).
+/// `dihedral/periodic` (the alias is gone); the OpenMM improper and the
+/// OpenMM Coulomb constant are the intended changes (see the module docs and
+/// the next test).
 #[test]
 fn file_read_fields_price_as_in_0_15() {
     let gmx = GromacsTopFfReader::new().read_str(GROMACS_FF).unwrap();
@@ -412,6 +415,16 @@ fn file_read_fields_price_as_in_0_15() {
     let mut omm_energies = per_style(&omm, &hand_frame(&omm));
     // 0.15.1: 0.0013423609738289378 — the dihedral of the wrong atom order.
     let improper = omm_energies.remove("improper/periodic").unwrap();
+    // 0.16 prices an OpenMM-read field with OpenMM's own Coulomb constant
+    // (ONE_4PI_EPS0 = 332.06371329919216 kcal·Å/(mol·e²)); 0.15.1 used LAMMPS
+    // real's 332.06371. The energy is 0.15.1's times their ratio, exactly.
+    let coul = omm_energies.remove("pair/coul/cut").unwrap();
+    let ratio = crate::ff::forcefield::readers::opls::OPENMM_COULOMB / 332.06371;
+    let want = -10.706661989738114 * ratio;
+    assert!(
+        (coul - want).abs() <= 1e-12 * want.abs(),
+        "OpenMM pair/coul/cut: {coul} vs {want}"
+    );
     assert_energies(
         "OpenMM",
         &omm_energies,
@@ -419,7 +432,6 @@ fn file_read_fields_price_as_in_0_15() {
             ("angle/harmonic", 1.3595889901856875),
             ("bond/harmonic", 0.16275010462128736),
             ("dihedral/periodic", 0.8087245811237659),
-            ("pair/coul/cut", -10.706661989738114),
             ("pair/lj/cut", 1.264689101097666),
         ],
     );

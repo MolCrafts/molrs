@@ -1517,6 +1517,44 @@ impl PyForceField {
             .set_special_bonds(molrs::ff::forcefield::SpecialBonds { lj, coul });
     }
 
+    /// Write this force field's 1-4 pricing of ``frame``'s 1-4 pairs as
+    /// per-pair override cells (``epsilon``, ``sigma``, ``lj_scale``,
+    /// ``coul_scale``) on its ``pairs`` block, and return how many rows were
+    /// filled.
+    ///
+    /// Every ``pairs`` row flagged ``is_14`` (each 1-4 pair once; the block is
+    /// built when the frame has none) that no ``dihedral charmm`` ``w > 0``
+    /// covers gets its null cells: ``epsilon``/``sigma`` are the pair's 1-4
+    /// Lennard-Jones parameters — under ``lj/charmm`` with ``one_four =
+    /// "epsilon14"`` the cross (NBFIX) row or the two types'
+    /// ``epsilon14``/``sigma14`` mixed, else the regular pair parameters — and
+    /// the scales are the ``special_bonds`` 1-4 weights. Cells already set are
+    /// kept. A field whose ``lj/charmm`` declares ``one_four = "epsilon14"``
+    /// (an OpenMM ``<LennardJonesForce>`` with ``sigma14``/``epsilon14``, a
+    /// GROMACS ``[ pairtypes ]`` table) needs this on its frames before it
+    /// compiles; LAMMPS's writers refuse the override columns.
+    ///
+    /// Parameters
+    /// ----------
+    /// frame : Frame
+    ///     A typed frame (``atoms.type``), modified in place.
+    ///
+    /// Returns
+    /// -------
+    /// int
+    ///     The number of ``pairs`` rows given override cells.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     An untyped frame, a type without a pair row, two Lennard-Jones
+    ///     styles or an invalid ``one_four``.
+    fn materialize_one_four(&self, frame: &PyFrame) -> PyResult<usize> {
+        frame
+            .with_frame_mut(|core| self.inner.materialize_one_four(core))?
+            .map_err(py_value_err)
+    }
+
     /// Export this force field's FFI handle as a ``PyCapsule``.
     ///
     /// The force-field analogue of :meth:`Frame._ffi_frameref_capsule`. The
@@ -1796,20 +1834,27 @@ impl PyPotentialCompiler {
     }
 }
 
-/// Read an OPLS-AA / GROMACS force-field XML file into a :class:`ForceField`.
+/// Read an OpenMM force-field XML file into a :class:`ForceField`.
 ///
-/// Parses the OpenMM-style OPLS-AA XML (GROMACS units — nm, kJ/mol, radians,
-/// ``½k`` harmonic terms, Ryckaert-Bellemans torsions) and normalizes it to
-/// molrs's convention, LAMMPS's ``real`` (Å, kcal/mol, degrees, e; harmonic
-/// ``K = k/2``): the conversions plus the RB → OPLS 4-cosine (``k1..k4``)
-/// inversion happen in the reader. An ``<Improper>`` (centre first, priced by
-/// OpenMM over ``(c2, c3, c1, c4)``) is stored as ``(c2, c3, c1, c4)``. Distinct from :func:`read_forcefield_xml`, which reads
-/// molrs's own native schema.
+/// Reads OpenMM's own ``<ForceField>`` schema — CHARMM36, AMBER and OPLS-AA
+/// ports alike (nm, kJ/mol, radians, ``½k`` harmonic terms) — into the
+/// force-field IR, whose definitions follow LAMMPS (Å, kcal/mol, degrees,
+/// un-halved ``K``): harmonic bonds and angles, Urey-Bradley
+/// (``angle charmm``), periodic and Ryckaert-Bellemans torsions
+/// (``dihedral periodic`` / ``multi/harmonic``), periodic impropers (stored in
+/// the order OpenMM prices them) and CHARMM's harmonic ``CustomTorsionForce``
+/// impropers, CMAP (``cmap charmm``), ``NonbondedForce`` (``lj/cut`` +
+/// ``coul/cut``) and ``LennardJonesForce`` with NBFIX and 1-4 parameters
+/// (``lj/charmm`` + ``coul/charmm``). Coulomb styles state OpenMM's own
+/// constant. A field whose ``lj/charmm`` declares ``one_four="epsilon14"``
+/// needs :meth:`ForceField.materialize_one_four` on its frames before it
+/// compiles. Distinct from :func:`read_forcefield_xml`, which also reads
+/// molrs's own schema.
 ///
 /// Parameters
 /// ----------
 /// path : str or os.PathLike
-///     Path to an ``oplsaa.xml`` (OpenMM/GROMACS layout).
+///     Path to an OpenMM force-field XML (``charmm36.xml``, ``oplsaa.xml``, …).
 ///
 /// Returns
 /// -------
@@ -1818,8 +1863,10 @@ impl PyPotentialCompiler {
 /// Raises
 /// ------
 /// ValueError
-///     On a malformed document, an unknown section, or a missing/non-numeric
-///     required attribute (reading is total — never a silent skip).
+///     On a malformed document, a section or row with no IR form (named:
+///     ``Custom*Force`` other than the harmonic improper, ``<Script>``,
+///     ``ordering="smirnoff"``, …), or a missing/non-numeric required
+///     attribute (reading is total — never a silent skip).
 #[pyfunction]
 #[pyo3(name = "read_opls_xml")]
 pub fn read_opls_xml_py(path: PathBuf) -> PyResult<PyForceField> {
@@ -1970,13 +2017,31 @@ pub fn write_amber_frcmod_py(path: PathBuf, forcefield: &PyForceField) -> PyResu
         .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
-/// Write a ForceField to OpenMM-style XML.
+/// Write a ForceField to OpenMM force-field XML.
+///
+/// Every style is written in OpenMM's own schema and units (nm, kJ/mol,
+/// radians, ½k harmonic terms), or refused naming the style when OpenMM's
+/// tags cannot hold it (see the force-field IR guide, "OpenMM").
+///
+/// Parameters
+/// ----------
+/// path : str or os.PathLike
+///     Output file.
+/// forcefield : ForceField
+/// precision : int, optional
+///     Decimals per number; ``None`` (default) writes each number in the
+///     shortest form that reads back to the same float.
+///
+/// Raises
+/// ------
+/// ValueError
+///     A style, parameter or 1-4 setting with no OpenMM form, named.
 #[pyfunction]
-#[pyo3(name = "write_forcefield_xml", signature = (path, forcefield, precision = 6))]
+#[pyo3(name = "write_forcefield_xml", signature = (path, forcefield, precision = None))]
 pub fn write_forcefield_xml_py(
     path: PathBuf,
     forcefield: &PyForceField,
-    precision: usize,
+    precision: Option<usize>,
 ) -> PyResult<()> {
     molrs::ff::write_forcefield_xml(path_str(&path)?, &forcefield.inner, precision)
         .map_err(pyo3::exceptions::PyValueError::new_err)

@@ -114,7 +114,9 @@ fn sequence_score(pattern: &[&str], atoms: &[(&str, Option<&str>)]) -> Option<i6
 const BOND_STYLE: &str = "harmonic";
 /// The angle style the candidate tables are read from.
 const ANGLE_STYLE: &str = "harmonic";
-/// The dihedral style the candidate tables are read from.
+/// The dihedral style of the shipped library, and of an estimated dihedral.
+/// Candidates are read from every dihedral style of the force field: an
+/// OpenMM-XML read stores `<RBTorsionForce>` rows as `multi/harmonic`.
 const DIHEDRAL_STYLE: &str = "opls";
 
 /// A bonded-term candidate from the force field: its type name, endpoint class
@@ -129,6 +131,8 @@ struct Candidate {
     layer: u32,
     /// The type's params (e.g. `k`/`r0`), defined and stamped for the term.
     params: Params,
+    /// The style the type is defined under.
+    style: String,
 }
 
 /// Per-arity candidate tables, built once from the force field.
@@ -170,6 +174,7 @@ impl CandidateTables {
                     pattern: vec![t.itom.clone(), t.jtom.clone()],
                     layer: layer_of(&[&t.itom, &t.jtom]),
                     params: t.params.clone(),
+                    style: BOND_STYLE.to_owned(),
                 })
                 .collect(),
             _ => Vec::new(),
@@ -183,28 +188,30 @@ impl CandidateTables {
                     pattern: vec![t.itom.clone(), t.jtom.clone(), t.ktom.clone()],
                     layer: layer_of(&[&t.itom, &t.jtom, &t.ktom]),
                     params: t.params.clone(),
+                    style: ANGLE_STYLE.to_owned(),
                 })
                 .collect(),
             _ => Vec::new(),
         };
 
-        let dihedrals = match ff.get_style("dihedral", DIHEDRAL_STYLE).map(|s| s.defs()) {
-            Some(StyleDefs::Dihedral(types)) => types
-                .iter()
-                .map(|t| Candidate {
-                    name: t.name.clone(),
-                    pattern: vec![
-                        t.itom.clone(),
-                        t.jtom.clone(),
-                        t.ktom.clone(),
-                        t.ltom.clone(),
-                    ],
-                    layer: layer_of(&[&t.itom, &t.jtom, &t.ktom, &t.ltom]),
-                    params: t.params.clone(),
-                })
-                .collect(),
-            _ => Vec::new(),
-        };
+        let mut dihedrals = Vec::new();
+        for style in ff.get_styles("dihedral") {
+            let StyleDefs::Dihedral(types) = style.defs() else {
+                continue;
+            };
+            dihedrals.extend(types.iter().map(|t| Candidate {
+                name: t.name.clone(),
+                pattern: vec![
+                    t.itom.clone(),
+                    t.jtom.clone(),
+                    t.ktom.clone(),
+                    t.ltom.clone(),
+                ],
+                layer: layer_of(&[&t.itom, &t.jtom, &t.ktom, &t.ltom]),
+                params: t.params.clone(),
+                style: style.name().to_owned(),
+            }));
+        }
 
         Self {
             bonds,
@@ -275,7 +282,7 @@ impl CandidateTables {
             return Ok(vec![(
                 "type".to_owned(),
                 Annotation::Type {
-                    style: style.to_owned(),
+                    style: cand.style.clone(),
                     name: cand.name.clone(),
                     endpoints: cand.pattern.clone(),
                     params: cand.params.clone(),
@@ -580,6 +587,7 @@ mod tests {
             pattern: pattern.iter().map(|s| s.to_string()).collect(),
             layer,
             params: Params::from_pairs(&[("k", k)]),
+            style: BOND_STYLE.to_owned(),
         }
     }
 

@@ -2628,6 +2628,11 @@ class ForceField:
     @property
     def special_bonds(self) -> tuple[list[float], list[float]]: ...
     def set_special_bonds(self, lj: Sequence[float], coul: Sequence[float]) -> None: ...
+    def materialize_one_four(self, frame: Frame) -> int:
+        """Write the 1-4 pairs of ``frame`` as per-pair override cells on its
+        ``pairs`` block (``epsilon``/``sigma`` from the 1-4 parameters when
+        ``lj/charmm`` declares ``one_four="epsilon14"``, the scales from
+        ``special_bonds``); return the number of rows filled."""
     def to_section(self) -> ForceFieldSection: ...
     @staticmethod
     def from_section(section: ForceFieldSection) -> ForceField: ...
@@ -4777,9 +4782,9 @@ class Persist:
     ) -> dict[str, ArrayF]: ...
 
 def write_forcefield_xml(
-    path: PathInput, forcefield: ForceField, precision: int = 6
+    path: PathInput, forcefield: ForceField, precision: int | None = None
 ) -> None:
-    """Write a ForceField to OpenMM-style XML."""
+    """Write a ForceField to OpenMM force-field XML."""
 
 def write_frcmod(path: PathInput, sections: dict[str, Any]):
     """Write FRCMOD sections (dict with remark/mass/bond/…) to a path."""

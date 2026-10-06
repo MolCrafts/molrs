@@ -79,6 +79,10 @@ pub fn read_forcefield_xml_str(xml: &str) -> Result<ForceField, String> {
                 | "RBTorsionForce"
                 | "NonbondedForce"
                 | "PeriodicTorsionForce"
+                | "LennardJonesForce"
+                | "AmoebaUreyBradleyForce"
+                | "CMAPTorsionForce"
+                | "CustomTorsionForce"
         )
     });
     if is_openmm_pack {
