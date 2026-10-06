@@ -61,10 +61,15 @@
 //! .mdp's `rvdw` / `rcoulomb` and switch), not force-field data, so they are
 //! not written.
 //!
-//! `pair/coul/cut` and `pair/coul/charmm` have no directive: GROMACS takes
-//! Coulomb constants from the run parameters, so only the constants the
-//! reader declares (the real-units Coulomb constant, dielectric 1) are
-//! accepted, and nothing is written.
+//! `pair/coul/cut` and `pair/coul/charmm` have no directive: GROMACS fixes
+//! its Coulomb constant (CODATA 2018, LAMMPS `real`'s × (1 + 9.9·10⁻⁹)) as
+//! LAMMPS and OpenMM fix theirs, so the field's stated `coulomb` is not
+//! written — an AMBER field's 332.0522173 is priced at GROMACS's constant,
+//! 3.5·10⁻⁵ above it, as every engine but AMBER's own prices it. Only
+//! dielectric 1 is accepted, and nothing is written.
+//!
+//! The force field must be in `real` units (the conversions above are from
+//! Å and kcal/mol); another declared preset is refused.
 //!
 //! # Refusals
 //!
@@ -87,6 +92,31 @@
 //!   two as one); `improper/harmonic` with `chi0` ∉ {0°, 180°}; a non-integral
 //!   multiplicity or `sign` other than ±1.
 //!
+//! # Systems
+//!
+//! [`GromacsTopFfWriter::write_system_str`] writes a force field **and** a
+//! typed frame as one `.top`, the inverse of
+//! [`GromacsTopFfReader::read_system_str`](crate::ff::forcefield::readers::gromacs::GromacsTopFfReader::read_system_str):
+//! `[ defaults ]`, `[ atomtypes ]`, `[ nonbond_params ]`, `[ pairtypes ]`
+//! and `[ cmaptypes ]` as above, then one `[ moleculetype ]` holding every
+//! atom (`nrexcl` 3) with each `bonds` / `angles` / `dihedrals` /
+//! `impropers` row written with its type's parameters on the line (one
+//! funct-9 line per periodic term, a single term included), so no lookup can
+//! pick another type; `cmaps` rows
+//! are found by GROMACS's lookup, which must give the row's own grid.
+//! `[ pairs ]` lists the frame's 1-4 pairs (funct 1, or with parameters of
+//! their own from the override cells: funct 1 `σ ε` when only `epsilon` /
+//! `sigma` differ, else funct 2 `fudgeQQ qᵢqⱼ 1 σ lj_scale·ε`), and
+//! `[ exclusions ]` every pair beyond three bonds the frame does not price —
+//! so GROMACS prices exactly the frame's `pairs` (built by
+//! [`intramolecular_pairs`](crate::ff::potential::intramolecular_pairs) when
+//! absent). Refused by name: a priced pair within three bonds that is not a
+//! 1-4 pair (GROMACS excludes it) or a 1-4 pair beyond them, override cells
+//! without `epsilon` and `sigma`, a crossterm GROMACS's lookup would give
+//! another grid, a type name two styles of one category share, more than
+//! `MAX_ATOMS_FOR_A_FULL_PAIR_LIST` atoms (the one molecule type lists its
+//! pairs), and the force-field refusals above.
+//!
 //! # Whole-FF serialization, not coefficient writing
 //!
 //! molrs has two kinds of force-field writer. This one is **whole-FF
@@ -105,8 +135,8 @@ use crate::ff::forcefield::torsion::nharmonic_coefficients;
 use crate::ff::forcefield::{AtomType, ForceField, Params, Style};
 use crate::ff::potential::cmap::charmm::GRID;
 use crate::ff::potential::pair::charmm::{charmm_mixing, charmm_pair_params};
-use molrs::units::constants::COULOMB_REAL;
-
+use crate::ff::potential::{MAX_ATOMS_FOR_A_FULL_PAIR_LIST, intramolecular_pairs};
+use molrs::store::frame::Frame;
 const KJ_PER_KCAL: f64 = 4.184;
 const NM_TO_ANGSTROM: f64 = 10.0;
 
@@ -230,12 +260,20 @@ impl GromacsTopFfWriter {
     }
 
     /// The `[ atomtypes ]` row of `t`, with σ/ε from its Lennard-Jones self row.
-    fn atomtypes_row(&self, t: &AtomType, lj: Option<&Style>) -> Result<String, String> {
+    /// `system`: the `[ atoms ]` rows carry each atom's mass and charge, so a
+    /// type without them is written 0.
+    fn atomtypes_row(
+        &self,
+        t: &AtomType,
+        lj: Option<&Style>,
+        system: bool,
+    ) -> Result<String, String> {
         let p = &t.params;
         let name = &t.name;
-        let need = |key: &str| {
-            p.get(key)
-                .ok_or_else(|| format!("atom type '{name}' has no {key}"))
+        let need = |key: &str| match p.get(key) {
+            Some(v) => Ok(v),
+            None if system => Ok(0.0),
+            None => Err(format!("atom type '{name}' has no {key}")),
         };
         let (mass, charge) = (need("mass")?, need("charge")?);
         let lj_name = lj.map_or("lj/cut", Style::name);
@@ -636,17 +674,17 @@ fn check_style(style: &Style) -> Result<(), String> {
             )),
             None => Ok(()),
         },
+        // The Coulomb constant is GROMACS's own (as LAMMPS's is LAMMPS's):
+        // the field's stated `coulomb` is not written, whatever it is.
         ("pair", name @ ("coul/cut" | "coul/charmm")) => {
             let extra = extra_params(&["coulomb", "dielectric", "cutoff", "inner"]);
             if extra.is_some()
-                || !declared("coulomb", COULOMB_REAL)
                 || !declared("dielectric", VACUUM_DIELECTRIC)
                 || !style.type_rows().is_empty()
             {
                 return Err(format!(
-                    "pair/{name} {:?} has no GROMACS directive: only coulomb = \
-                     {COULOMB_REAL} and dielectric = {VACUUM_DIELECTRIC}, with no types, are \
-                     implied by the directives",
+                    "pair/{name} {:?} has no GROMACS directive: only dielectric = \
+                     {VACUUM_DIELECTRIC}, with no types, is implied by the directives",
                     style.params()
                 ));
             }
@@ -658,6 +696,24 @@ fn check_style(style: &Style) -> Result<(), String> {
 
 impl ForceFieldWriter for GromacsTopFfWriter {
     fn write_str(&self, ff: &ForceField) -> Result<String, String> {
+        self.directives(ff, false)
+    }
+}
+
+impl GromacsTopFfWriter {
+    /// The force-field directives of `ff`. `system`: the directives of
+    /// [`Self::write_system_str`] — no bonded `[ *types ]` tables but
+    /// `[ cmaptypes ]` (its rows carry their parameters), and atom types
+    /// without a mass or charge written 0.
+    fn directives(&self, ff: &ForceField, system: bool) -> Result<String, String> {
+        if let Some(units) = ff.declared_units()
+            && units != "real"
+        {
+            return Err(format!(
+                "force field units '{units}': the GROMACS writer converts from real units \
+                 (Å, kcal/mol)"
+            ));
+        }
         for style in ff.styles() {
             check_style(style)?;
         }
@@ -679,7 +735,7 @@ impl ForceFieldWriter for GromacsTopFfWriter {
             out.push_str("[ atomtypes ]\n");
             out.push_str("; name  [bond_type]  [at.num]  mass  charge  ptype  sigma  epsilon\n");
             for t in &atom_types {
-                out.push_str(&self.atomtypes_row(t, lj)?);
+                out.push_str(&self.atomtypes_row(t, lj, system)?);
             }
             out.push('\n');
         }
@@ -720,19 +776,25 @@ impl ForceFieldWriter for GromacsTopFfWriter {
         // are refused.
         let mut seen: HashMap<(Table, Vec<String>), (String, Vec<String>)> = HashMap::new();
         let mut written: HashSet<(Table, Vec<String>, Vec<String>)> = HashSet::new();
-        for (directive, categories, header) in [
-            ("bondtypes", &["bond"][..], "; i  j  func  b0  kb"),
-            (
-                "angletypes",
-                &["angle"][..],
-                "; i  j  k  func  th0  cth  [r13  kub]",
-            ),
-            (
-                "dihedraltypes",
-                &["dihedral", "improper"][..],
-                "; i  j  k  l  func  params",
-            ),
-        ] {
+        // A system's rows carry their parameters: no table to look them up in.
+        let tables: &[(&str, &[&str], &str)] = if system {
+            &[]
+        } else {
+            &[
+                ("bondtypes", &["bond"], "; i  j  func  b0  kb"),
+                (
+                    "angletypes",
+                    &["angle"],
+                    "; i  j  k  func  th0  cth  [r13  kub]",
+                ),
+                (
+                    "dihedraltypes",
+                    &["dihedral", "improper"],
+                    "; i  j  k  l  func  params",
+                ),
+            ]
+        };
+        for &(directive, categories, header) in tables {
             let mut rows = String::new();
             for style in ff
                 .styles()
@@ -812,6 +874,324 @@ impl ForceFieldWriter for GromacsTopFfWriter {
                 out.push_str(&format!("[ cmaptypes ]\n\n{rows}"));
             }
         }
+        Ok(out)
+    }
+
+    /// `ff` and the typed `frame` as one GROMACS topology: the force-field
+    /// directives and one molecule type holding every atom (module docs,
+    /// "Systems").
+    pub fn write_system_str(&self, ff: &ForceField, frame: &Frame) -> Result<String, String> {
+        let mut out = self.directives(ff, true)?;
+        let atoms = frame.get("atoms").ok_or("frame has no atoms block")?;
+        let n = atoms.nrows().unwrap_or(0);
+        if n > MAX_ATOMS_FOR_A_FULL_PAIR_LIST {
+            return Err(format!(
+                "{n} atoms: the one molecule type lists its excluded pairs, which is not done \
+                 above {MAX_ATOMS_FOR_A_FULL_PAIR_LIST} atoms"
+            ));
+        }
+        let strings = |key: &str| atoms.get(key).and_then(|c| c.as_string());
+        let types = strings("type").ok_or("atoms has no string type column")?;
+        let charges = atoms
+            .get("charge")
+            .and_then(|c| c.as_float())
+            .ok_or("atoms has no charge column")?;
+        let masses = atoms.get("mass").and_then(|c| c.as_float());
+        let (names, res_names) = (strings("name"), strings("res_name"));
+        let res_id = atoms.get("res_id").and_then(|c| c.as_uint());
+        let atom_types: HashMap<&str, &AtomType> = ff
+            .get_atomtypes()
+            .into_iter()
+            .map(|t| (t.name.as_str(), t))
+            .collect();
+        let full = |v: f64| format!("{v:?}");
+
+        out.push_str("[ moleculetype ]\n; name  nrexcl\n  MOL  3\n\n[ atoms ]\n");
+        out.push_str("; nr  type  resnr  residue  atom  cgnr  charge  mass\n");
+        for i in 0..n {
+            let t = types[[i]].as_str();
+            let ty = atom_types
+                .get(t)
+                .ok_or_else(|| format!("atom {}: type '{t}' is no atom/full type", i + 1))?;
+            let mass = match masses {
+                Some(m) => m[[i]],
+                None => ty.params.get("mass").ok_or_else(|| {
+                    format!("atom {}: no mass column and type '{t}' has no mass", i + 1)
+                })?,
+            };
+            let name = names.map_or_else(|| format!("A{}", i + 1), |c| c[[i]].clone());
+            let res_name = res_names.map_or_else(|| "MOL".to_owned(), |c| c[[i]].clone());
+            out.push_str(&format!(
+                "  {}  {t}  {}  {res_name}  {name}  {}  {}  {}\n",
+                i + 1,
+                res_id.map_or(1, |c| c[[i]]),
+                i + 1,
+                full(charges[[i]]),
+                full(mass)
+            ));
+        }
+        out.push('\n');
+
+        // Every bonded row, written with its type's parameters.
+        let mut typed: HashMap<(&str, &str), (&Style, &Params)> = HashMap::new();
+        for style in ff.styles() {
+            for (name, _, params) in style.type_rows() {
+                if typed
+                    .insert((style.category(), name), (style, params))
+                    .is_some()
+                {
+                    return Err(format!(
+                        "{} type '{name}' is defined by two styles: a frame row naming it is \
+                         ambiguous",
+                        style.category()
+                    ));
+                }
+            }
+        }
+        let column = |block: &str, key: &str| -> Result<Vec<usize>, String> {
+            frame
+                .get(block)
+                .and_then(|b| b.get(key))
+                .and_then(|c| c.as_uint())
+                .map(|c| c.iter().map(|&v| v as usize).collect())
+                .ok_or_else(|| format!("{block} has no index column {key}"))
+        };
+        const KEYS: [&str; 5] = ["atomi", "atomj", "atomk", "atoml", "atomm"];
+        let rows_of = |block: &str, arity: usize| -> Result<Vec<(Vec<usize>, String)>, String> {
+            let Some(b) = frame.get(block) else {
+                return Ok(Vec::new());
+            };
+            let names = b
+                .get("type")
+                .and_then(|c| c.as_string())
+                .ok_or_else(|| format!("{block} has no string type column"))?;
+            let cols = KEYS[..arity]
+                .iter()
+                .map(|k| column(block, k))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((0..names.len())
+                .map(|r| (cols.iter().map(|c| c[r]).collect(), names[[r]].clone()))
+                .collect())
+        };
+        for (section, blocks) in [
+            ("bonds", &[("bonds", "bond", 2)][..]),
+            ("angles", &[("angles", "angle", 3)][..]),
+            (
+                "dihedrals",
+                &[("dihedrals", "dihedral", 4), ("impropers", "improper", 4)][..],
+            ),
+        ] {
+            let mut text = String::new();
+            for &(block, category, arity) in blocks {
+                for (atoms_of, name) in rows_of(block, arity)? {
+                    let (style, params) =
+                        typed.get(&(category, name.as_str())).ok_or_else(|| {
+                            format!(
+                                "{block} row names type '{name}', which no {category} style has"
+                            )
+                        })?;
+                    let index: Vec<String> = atoms_of.iter().map(|a| (a + 1).to_string()).collect();
+                    for mut line in self.bonded_lines(style, &name, params)? {
+                        // One periodic proper per line, as funct 9 writes
+                        // each term of several: one form for both.
+                        if line.funct == 1 && category == "dihedral" {
+                            line.funct = 9;
+                        }
+                        text.push_str(&format!(
+                            "  {}  {}\n",
+                            index.join("  "),
+                            self.render_values(&line)
+                        ));
+                    }
+                }
+            }
+            if !text.is_empty() {
+                out.push_str(&format!("[ {section} ]\n{text}\n"));
+            }
+        }
+
+        // Crossterms by GROMACS's lookup: exact, forward, first row.
+        let cmap_rows = rows_of("cmaps", 5)?;
+        if !cmap_rows.is_empty() {
+            let style = ff
+                .get_style("cmap", "charmm")
+                .ok_or("cmaps rows without a cmap/charmm style")?;
+            let label = |t: &str| -> String {
+                atom_types
+                    .get(t)
+                    .and_then(|ty| ty.params.get_str("class"))
+                    .unwrap_or(t)
+                    .to_owned()
+            };
+            let mut text = String::new();
+            for (atoms_of, name) in &cmap_rows {
+                let classes: Vec<String> = atoms_of.iter().map(|&a| label(&types[[a]])).collect();
+                let found = style
+                    .type_rows()
+                    .into_iter()
+                    .find(|(_, ends, _)| ends.iter().zip(&classes).all(|(e, c)| e == c))
+                    .map(|(found, _, _)| found);
+                if found != Some(name.as_str()) {
+                    return Err(format!(
+                        "cmaps row {:?} of type '{name}': GROMACS's lookup by the bond types \
+                         {} finds {found:?}",
+                        atoms_of.iter().map(|a| a + 1).collect::<Vec<_>>(),
+                        classes.join(" ")
+                    ));
+                }
+                let index: Vec<String> = atoms_of.iter().map(|a| (a + 1).to_string()).collect();
+                text.push_str(&format!("  {}  1\n", index.join("  ")));
+            }
+            out.push_str(&format!("[ cmap ]\n{text}\n"));
+        }
+
+        // The pairs GROMACS prices: nrexcl 3 excludes every pair within
+        // three bonds, `[ pairs ]` prices the 1-4 ones, `[ exclusions ]`
+        // removes the others the frame does not price.
+        let pairs = match frame.get("pairs") {
+            Some(p) => p.clone(),
+            None => intramolecular_pairs(frame, ff.special_bonds())?,
+        };
+        let (pi, pj) = (
+            pairs
+                .get("atomi")
+                .and_then(|c| c.as_uint())
+                .ok_or("pairs has no atomi")?,
+            pairs
+                .get("atomj")
+                .and_then(|c| c.as_uint())
+                .ok_or("pairs has no atomj")?,
+        );
+        let is_14 = pairs.get("is_14").and_then(|c| c.as_bool());
+        let cell = |key: &str, r: usize| -> Option<f64> {
+            let col = pairs.get(key)?.as_float()?;
+            pairs.validity(key).is_none_or(|m| m[r]).then(|| col[[r]])
+        };
+        let mut adjacent = vec![Vec::new(); n];
+        for block in ["bonds", "constraints"] {
+            if frame.get(block).is_some() {
+                for (i, j) in column(block, "atomi")?
+                    .into_iter()
+                    .zip(column(block, "atomj")?)
+                {
+                    adjacent[i].push(j);
+                    adjacent[j].push(i);
+                }
+            }
+        }
+        let mut near = HashSet::new();
+        for start in 0..n {
+            let mut depth = vec![usize::MAX; n];
+            depth[start] = 0;
+            let mut queue = std::collections::VecDeque::from([start]);
+            while let Some(a) = queue.pop_front() {
+                if depth[a] == 3 {
+                    continue;
+                }
+                for &b in &adjacent[a] {
+                    if depth[b] == usize::MAX {
+                        depth[b] = depth[a] + 1;
+                        queue.push_back(b);
+                    }
+                }
+            }
+            near.extend(
+                (start + 1..n)
+                    .filter(|&b| depth[b] != usize::MAX)
+                    .map(|b| (start, b)),
+            );
+        }
+        let sb = ff.special_bonds();
+        let mut priced = HashSet::new();
+        let mut text = String::new();
+        for r in 0..pi.len() {
+            let (a, b) = (pi[[r]] as usize, pj[[r]] as usize);
+            let key = (a.min(b), a.max(b));
+            let one_four = is_14.is_some_and(|f| f[[r]]);
+            if one_four != near.contains(&key) {
+                return Err(format!(
+                    "pair {} {}: {} — GROMACS (nrexcl 3) prices a pair within three bonds \
+                     only through [ pairs ] and one beyond them only as a regular pair",
+                    a + 1,
+                    b + 1,
+                    if one_four {
+                        "a 1-4 pair beyond three bonds"
+                    } else {
+                        "a regular pair within three bonds"
+                    }
+                ));
+            }
+            priced.insert(key);
+            if !one_four {
+                continue;
+            }
+            let [eps, sigma, qq, lj_w, coul_w] =
+                molrs::store::schema::PAIR_OVERRIDE_COLUMNS.map(|k| cell(k, r));
+            let (i, j) = (a + 1, b + 1);
+            if [eps, sigma, qq, lj_w, coul_w].iter().all(Option::is_none) {
+                text.push_str(&format!("  {i}  {j}  1\n"));
+                continue;
+            }
+            let (Some(eps), Some(sigma)) = (eps, sigma) else {
+                return Err(format!(
+                    "pair {i} {j}: override cells without epsilon and sigma — a [ pairs ] row \
+                     with parameters states both"
+                ));
+            };
+            let (v, w) = (full(sigma / NM_TO_ANGSTROM), |e: f64| full(e * KJ_PER_KCAL));
+            if qq.is_none()
+                && lj_w.is_none_or(|x| x == 1.0)
+                && coul_w.is_none_or(|x| x == sb.coul[2])
+            {
+                text.push_str(&format!("  {i}  {j}  1  {v}  {}\n", w(eps)));
+            } else {
+                let qq = qq.unwrap_or(charges[[a]] * charges[[b]]);
+                text.push_str(&format!(
+                    "  {i}  {j}  2  {}  {}  1.0  {v}  {}\n",
+                    full(coul_w.unwrap_or(sb.coul[2])),
+                    full(qq),
+                    w(eps * lj_w.unwrap_or(1.0))
+                ));
+            }
+        }
+        if !text.is_empty() {
+            out.push_str(&format!("[ pairs ]\n{text}\n"));
+        }
+        let mut text = String::new();
+        for i in 0..n {
+            let others: Vec<String> = (i + 1..n)
+                .filter(|&j| !near.contains(&(i, j)) && !priced.contains(&(i, j)))
+                .map(|j| (j + 1).to_string())
+                .collect();
+            if !others.is_empty() {
+                text.push_str(&format!("  {}  {}\n", i + 1, others.join("  ")));
+            }
+        }
+        if !text.is_empty() {
+            out.push_str(&format!("[ exclusions ]\n{text}\n"));
+        }
+        if frame.get("constraints").is_some() {
+            let r0 = frame
+                .get("constraints")
+                .and_then(|b| b.get("r0"))
+                .and_then(|c| c.as_float())
+                .ok_or("constraints has no r0 column")?;
+            let mut text = String::new();
+            for (k, (i, j)) in column("constraints", "atomi")?
+                .into_iter()
+                .zip(column("constraints", "atomj")?)
+                .enumerate()
+            {
+                text.push_str(&format!(
+                    "  {}  {}  1  {}\n",
+                    i + 1,
+                    j + 1,
+                    full(r0[[k]] / NM_TO_ANGSTROM)
+                ));
+            }
+            out.push_str(&format!("[ constraints ]\n{text}\n"));
+        }
+        out.push_str("[ system ]\nmolrs\n\n[ molecules ]\nMOL  1\n");
         Ok(out)
     }
 }

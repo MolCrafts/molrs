@@ -64,13 +64,13 @@ const TERMS: [&str; 8] = [
     "bond", "angle", "dihedral", "improper", "cmap", "vdw", "coul", "total",
 ];
 
-struct Case {
+pub(crate) struct Case {
     name: &'static str,
     xml: &'static str,
     json: &'static str,
 }
 
-const CASES: [Case; 3] = [
+pub(crate) const CASES: [Case; 3] = [
     Case {
         name: "charmm",
         xml: include_str!("testdata/openmm/charmm.xml"),
@@ -127,7 +127,7 @@ fn strings(v: &Value, key: &str) -> Vec<String> {
 
 /// The XML read with OpenMM's `NoCutoff` stated as a cutoff beyond every
 /// pair.
-fn read(c: &Case) -> ForceField {
+pub(crate) fn read(c: &Case) -> ForceField {
     let mut ff = OplsXmlReader::new().read_str(c.xml).unwrap();
     for name in ["lj/charmm", "coul/charmm", "lj/cut", "coul/cut"] {
         if let Some(style) = ff.get_style_mut("pair", name) {
@@ -195,7 +195,7 @@ fn relation(rows: &[(Vec<usize>, String)]) -> Block {
 
 /// The frame OpenMM priced, typed against `ff`, with its `pairs` (1-4
 /// flagged from every proper of the bond graph).
-fn frame(c: &Case, ff: &ForceField) -> Frame {
+pub(crate) fn frame(c: &Case, ff: &ForceField) -> Frame {
     let v = json(c);
     let types = strings(&v, "types");
     let x = rows_f(&v);
