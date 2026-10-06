@@ -42,8 +42,8 @@ use std::fmt;
 
 use ndarray::{Array2, ArrayView2};
 
-use crate::spatial::simbox::SimBox;
-use crate::types::{F, FNx3};
+use crate::op::types::{F, FNx3};
+use crate::spatial::SimBox;
 
 use super::{NeighborList, Neighbors, NeighborsStorage, QueryMode};
 

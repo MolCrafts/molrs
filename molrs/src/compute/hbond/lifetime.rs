@@ -10,7 +10,7 @@
 //! ```
 //!
 //! The continuous / intermittent accumulation mirrors molrs's
-//! [`pair_survival_tcf`](crate::compute::dynamics::persist::pair_survival_tcf) exactly
+//! [`pair_survival_tcf`](crate::compute::pair_survival_tcf) exactly
 //! (`SurvivalMethod::Continuous` walks forward until the first absence;
 //! `Intermittent` counts every lag where the bond is present).
 //!
@@ -20,14 +20,14 @@
 //! intermittent definitions to the geometric presence series produced by
 //! [`HBonds`](super::detect::HBonds), rather than re-deriving a different TCF.
 
+use molrs::op::types::F;
 use molrs::signal as sig;
-use molrs::types::F;
 use ndarray::Array1;
 use rustfft::FftPlanner;
 use std::collections::HashMap;
 
 use super::detect::HBondsResult;
-use crate::compute::error::ComputeError;
+use crate::compute::ComputeError;
 
 /// Lifetime TCFs for a set of bond presence series.
 #[derive(Debug, Clone)]

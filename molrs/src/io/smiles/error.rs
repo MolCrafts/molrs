@@ -9,7 +9,7 @@
 
 use std::fmt;
 
-use crate::io::smiles::chem::ast::{BondKind, Span};
+use crate::io::smiles::{BondKind, Span};
 use molrs::error::MolRsError;
 
 /// Which line notation was being read or written when an error was raised.
@@ -602,7 +602,7 @@ mod tests {
 
     // -- bonding-descriptor variants ----------------------------------------
 
-    use crate::io::smiles::chem::ast::BondKind;
+    use crate::io::smiles::BondKind;
 
     /// The message body of a rendered error: the first line after the
     /// `"… position N: "` prefix that every variant shares.

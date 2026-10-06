@@ -26,7 +26,7 @@
 
 use super::ast::{BinOp, Definition, Expr, NEG_PRECEDENCE, Parsed};
 use super::error::ExprError;
-use molrs::types::F;
+use molrs::op::types::F;
 
 #[derive(Debug, Clone, PartialEq)]
 enum Tok {

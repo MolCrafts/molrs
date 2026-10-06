@@ -14,16 +14,16 @@
 //! `query_orientations` argument). Without orientations the analyzer
 //! works in the lab frame.
 
-use crate::compute::result::ComputeResult;
+use crate::compute::ComputeResult;
+use molrs::op::types::F;
+use molrs::spatial::BoxKind;
 use molrs::spatial::neighbors::Neighbors;
-use molrs::spatial::simbox::BoxKind;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::store::FrameAccess;
 use ndarray::Array3;
 
-use crate::compute::error::ComputeError;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 use crate::compute::require_disp;
-use crate::compute::traits::Compute;
 use crate::op::rigid::{quat_conj, rotate_by_quat};
 
 /// `PMFTXYZ` analyzer.
@@ -284,9 +284,9 @@ impl ComputeResult for PMFTXYZResult {}
 mod tests {
     use super::*;
     use crate::compute::test_support::nlist_from_frame;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use molrs::spatial::SimBox;
+    use molrs::store::Block;
+    use molrs::store::Frame;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F, pbc: [bool; 3]) -> Frame {

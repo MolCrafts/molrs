@@ -99,16 +99,8 @@ use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::one_four::{ONE_FOUR, ONE_FOUR_EPSILON14, has_own_one_four};
 use crate::ff::forcefield::torsion::rb_polynomial;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
+use crate::units::constants::{ANGSTROM_PER_NM, KJ_PER_KCAL, OPENMM_COULOMB};
 use molrs::store::type_labels::TypeName;
-
-/// kJ/mol → kcal/mol.
-const KJ_PER_KCAL: f64 = 4.184;
-/// nm → Å.
-const NM_TO_ANGSTROM: f64 = 10.0;
-
-/// OpenMM's Coulomb constant `ONE_4PI_EPS0` = 138.93545764438198 kJ·nm/(mol·e²)
-/// in kcal·Å/(mol·e²) — the constant every OpenMM energy is computed with.
-pub const OPENMM_COULOMB: f64 = 138.935_457_644_381_98 * NM_TO_ANGSTROM / KJ_PER_KCAL;
 
 /// The energy expressions of a `<CustomTorsionForce>` read as `improper
 /// harmonic`, whitespace removed: OpenMM's CHARMM ports, and molrs's writer
@@ -588,7 +580,7 @@ fn parse_bonds(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
     for b in sec.children().filter(Node::is_element) {
         require_tag(&b, "Bond")?;
         let ends = endpoints::<2>(&b)?;
-        let r0 = require_f64(&b, "length")? * NM_TO_ANGSTROM;
+        let r0 = require_f64(&b, "length")? * ANGSTROM_PER_NM;
         // OpenMM ½k in kJ/mol/nm² → LAMMPS K = k/2 in kcal/mol/Å².
         let k = require_f64(&b, "k")? / (KJ_PER_KCAL * 100.0) / 2.0;
         style
@@ -633,7 +625,7 @@ fn parse_urey_bradley(raw: &mut Raw, sec: &Node) -> Result<(), String> {
         raw.urey_bradley.push(UreyBradleyRow {
             ends: ends.map(str::to_owned),
             k_ub: require_f64(&u, "k")? / (KJ_PER_KCAL * 100.0),
-            r_ub: require_f64(&u, "d")? * NM_TO_ANGSTROM,
+            r_ub: require_f64(&u, "d")? * ANGSTROM_PER_NM,
         });
     }
     Ok(())
@@ -1024,7 +1016,7 @@ fn parse_nonbonded(raw: &mut Raw, sec: &Node) -> Result<(), String> {
             key: AtomKey::of(&a)?,
             // TIP3P et al. omit charge here — do not invent 0.0.
             charge: opt_f64(&a, "charge")?,
-            sigma: require_f64(&a, "sigma")? * NM_TO_ANGSTROM,
+            sigma: require_f64(&a, "sigma")? * ANGSTROM_PER_NM,
             epsilon: require_f64(&a, "epsilon")? / KJ_PER_KCAL,
         });
     }
@@ -1043,9 +1035,9 @@ fn parse_lennard_jones(raw: &mut Raw, sec: &Node) -> Result<(), String> {
         match a.tag_name().name() {
             "Atom" => raw.lj_atoms.push(LjRow {
                 key: AtomKey::of(&a)?,
-                sigma: require_f64(&a, "sigma")? * NM_TO_ANGSTROM,
+                sigma: require_f64(&a, "sigma")? * ANGSTROM_PER_NM,
                 epsilon: require_f64(&a, "epsilon")? / KJ_PER_KCAL,
-                sigma14: opt_f64(&a, "sigma14")?.map(|s| s * NM_TO_ANGSTROM),
+                sigma14: opt_f64(&a, "sigma14")?.map(|s| s * ANGSTROM_PER_NM),
                 epsilon14: opt_f64(&a, "epsilon14")?.map(|e| e / KJ_PER_KCAL),
             }),
             "NBFixPair" => {
@@ -1061,7 +1053,7 @@ fn parse_lennard_jones(raw: &mut Raw, sec: &Node) -> Result<(), String> {
                 };
                 raw.nbfix.push(NbfixRow {
                     keys: [key(1)?, key(2)?],
-                    sigma: require_f64(&a, "sigma")? * NM_TO_ANGSTROM,
+                    sigma: require_f64(&a, "sigma")? * ANGSTROM_PER_NM,
                     epsilon: require_f64(&a, "epsilon")? / KJ_PER_KCAL,
                 });
             }

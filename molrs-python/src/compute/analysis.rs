@@ -8,20 +8,20 @@
 //! live in [`crate::compute::fit`] alongside the other spectral transforms.
 
 use molrs::compute::Compute;
-use molrs::compute::distribution::{
-    AngleObservable, AnyObservable, AtomGroups, AxisSpec, CombinedDistribution,
-    CombinedDistributionResult, DihedralObservable, DistanceObservable, DistributionFunction,
-    DistributionResult,
-};
 use molrs::compute::{
     AcfResult, DensityGrid, DistKind, DomainAnalysis, GridSpec, HBondCriterion, HBonds,
     HBondsResult, LegendreReorientation, LegendreReorientationResult, MolecularMoments,
     RadicalVoronoi, SpatialDistribution, SpatialDistributionResult, VanHove, VanHoveResult,
     VoidAnalysis, VoronoiCells, VoronoiIntegration, polarizability_finite_field,
 };
-use molrs::store::frame::Frame as CoreFrame;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::compute::{
+    AngleObservable, AnyObservable, AtomGroups, AxisSpec, CombinedDistribution,
+    CombinedDistributionResult, DihedralObservable, DistanceObservable, DistributionFunction,
+    DistributionResult,
+};
+use molrs::op::types::F;
+use molrs::store::Frame as CoreFrame;
+use molrs::store::FrameAccess;
 
 use ndarray::Array2;
 use numpy::{

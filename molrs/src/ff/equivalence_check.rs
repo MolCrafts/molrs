@@ -61,8 +61,8 @@ use ndarray::Array1;
 use serde_json::{Value, json};
 
 use crate::ff::forcefield::readers::ForceFieldReader;
-use crate::ff::forcefield::readers::gromacs::{GROMACS_COULOMB, GromacsTopFfReader};
-use crate::ff::forcefield::readers::opls::{OPENMM_COULOMB, OplsXmlReader};
+use crate::ff::forcefield::readers::gromacs::GromacsTopFfReader;
+use crate::ff::forcefield::readers::opls::OplsXmlReader;
 use crate::ff::forcefield::readers::prmtop::AmberPrmtopFfReader;
 use crate::ff::forcefield::writers::ForceFieldWriter;
 use crate::ff::forcefield::writers::gromacs::GromacsTopFfWriter;
@@ -74,16 +74,17 @@ use crate::ff::{
     forcefield::readers::lammps::LammpsFfReader, forcefield::writers::lammps::LammpsFfWriter,
     forcefield::writers::lammps::LammpsWriteOptions,
 };
+use crate::units::constants::{GROMACS_COULOMB, OPENMM_COULOMB};
 use molrs::io::data::gro::read_gro_frame;
 use molrs::io::data::inpcrd::read_amber_inpcrd_from_reader;
 use molrs::io::data::lammps_data::{read_lammps_data, write_lammps_data};
 use molrs::io::data::prmtop::read_amber_prmtop_from_reader;
-use molrs::spatial::simbox::SimBox;
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
+use molrs::op::types::{F, Idx};
+use molrs::spatial::SimBox;
+use molrs::store::Block;
+use molrs::store::Frame;
 use molrs::store::schema::PAIR_OVERRIDE_COLUMNS;
 use molrs::store::type_labels::TypeLabels;
-use molrs::types::{F, Idx};
 use molrs::units::constants::COULOMB_REAL;
 
 /// The terms compared, in print order.

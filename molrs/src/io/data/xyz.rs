@@ -1,11 +1,11 @@
 use crate::io::reader::{FrameIndex, FrameReader, Reader, TrajectoryReader};
 use crate::io::writer::{FrameWriter, Writer};
-use molrs::spatial::simbox::SimBox;
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
-use molrs::store::frame_access::FrameAccess;
-use molrs::store::meta::MetaValue;
-use molrs::types::{F, I, Idx};
+use molrs::op::types::{F, I, Idx};
+use molrs::spatial::SimBox;
+use molrs::store::Block;
+use molrs::store::Frame;
+use molrs::store::FrameAccess;
+use molrs::store::MetaValue;
 use ndarray::{Array1, Array2, ArrayD};
 use std::collections::HashMap;
 use std::io::{BufRead, Seek, SeekFrom, Write};
@@ -301,7 +301,7 @@ const EXTXYZ_SPECIES: &str = "species";
 
 /// The extxyz property a frame column is written as.
 fn extxyz_property_name(column: &str) -> &str {
-    if column == molrs::store::schema::consts::RES_NAME {
+    if column == molrs::store::keys::RES_NAME {
         EXTXYZ_RESNAME
     } else {
         column
@@ -483,9 +483,9 @@ fn build_block_from_props(
                 // unsigned there, and an Int column under that name would be
                 // invisible to every consumer reading it as unsigned.
                 if molrs::store::schema::column(&name).map(|c| c.dtype)
-                    == Some(molrs::store::block::DType::UInt)
+                    == Some(molrs::store::DType::UInt)
                 {
-                    let unsigned: Vec<molrs::types::Idx> = v
+                    let unsigned: Vec<molrs::op::types::Idx> = v
                         .iter()
                         .map(|&x| {
                             Idx::try_from(x).map_err(|_| {
@@ -1588,7 +1588,7 @@ mod tests {
     /// A frame shaped like what the GRO reader produces: no `element`, an `id`
     /// column, and extra string/int columns that sort *before* `id`.
     fn gro_shaped_frame() -> Frame {
-        use molrs::store::block::Block;
+        use molrs::store::Block;
         use ndarray::Array1;
 
         let floats = |v: [f64; 3]| Array1::from_vec(v.to_vec()).into_dyn();
@@ -1922,10 +1922,10 @@ pub fn write_xyz_traj<W: Write, FA: FrameAccess>(
 /// Write a single frame to the writer in Extended XYZ format.
 ///
 /// Accepts any type implementing [`FrameAccess`], including both [`Frame`] and
-/// [`FrameView`](molrs::store::frame_view::FrameView). Existing callers passing `&Frame`
+/// [`FrameView`](molrs::store::FrameView). Existing callers passing `&Frame`
 /// continue to work without changes.
 pub fn write_xyz_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io::Result<()> {
-    use molrs::store::block::DType;
+    use molrs::store::DType;
 
     // 1. Build per-atom data from the atoms block via visit_block.
     //    We collect everything we need into owned data structures inside the closure,

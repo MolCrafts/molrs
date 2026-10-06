@@ -20,16 +20,14 @@
 
 use std::collections::BTreeMap;
 
-use crate::io::smiles::cgsmiles::ast::{
-    CGFragmentDef, CGGraph, CGSmilesIR, FragmentBody, PairEnd, ResolvedPair,
-};
 use crate::io::smiles::cgsmiles::resolve::FragmentCache;
 use crate::io::smiles::cgsmiles::templates::cg_build;
-use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
+use crate::io::smiles::{CGFragmentDef, CGGraph, CGSmilesIR, FragmentBody, PairEnd, ResolvedPair};
+use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 use molrs::op::rigid::Rigid;
-use molrs::system::atomistic::Atomistic;
-use molrs::system::molgraph::NodeId;
-use molrs::types::I;
+use molrs::op::types::I;
+use molrs::system::Atomistic;
+use molrs::system::NodeId;
 
 /// The lowest level of an IR, with the fragment table that defines its
 /// nodes and its resolved pairs, as [`CGSmilesIR::lowest_level`] reads them.
@@ -54,7 +52,7 @@ impl CGSmilesIR {
     ///
     /// # Per-atom instance membership
     ///
-    /// Every atom carries the key **`frag_id`**, a [`PropValue::Int`](molrs::system::molgraph::PropValue::Int) holding
+    /// Every atom carries the key **`frag_id`**, a [`PropValue::Int`](molrs::system::PropValue::Int) holding
     /// the index of the lowest-level node it came from, so a caller can
     /// partition the result by instance without re-deriving the grouping. It
     /// is not `mol_id` (a molecule id — coarse instances are sub-molecular)
@@ -327,10 +325,10 @@ mod tests {
         FragmentBody, SmilesErrorKind, Span, parse_cgsmiles, parse_fragment_smiles,
     };
     use molrs::store::keys;
-    use molrs::system::atomistic::Atomistic;
-    use molrs::system::bond::{BondNumber, BondType};
-    use molrs::system::molgraph::NodeId;
-    use molrs::system::molgraph::PropValue;
+    use molrs::system::Atomistic;
+    use molrs::system::NodeId;
+    use molrs::system::PropValue;
+    use molrs::system::{BondNumber, BondType};
 
     // Every count below is hand-derived from the fixtures of § Domain basis of
     // `.claude/specs/cgsmiles-01d-resolve.md`: heavy atoms are counted off the

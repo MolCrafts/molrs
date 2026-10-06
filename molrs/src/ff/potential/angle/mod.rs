@@ -1,12 +1,12 @@
 //! Angle potential kernels.
 
-pub mod charmm;
-pub mod class2;
-pub mod harmonic;
-pub mod mmff;
-pub mod uff;
+pub(crate) mod charmm;
+pub(crate) mod class2;
+pub(crate) mod harmonic;
+pub(crate) mod mmff;
+pub(crate) mod uff;
 
-pub use charmm::{AngleCharmm, angle_charmm_ctor};
+pub use charmm::{AngleCharmm, CharmmAngleParams, angle_charmm_ctor};
 pub use class2::{AngleClass2, angle_class2_ctor};
 pub use harmonic::{AngleHarmonic, angle_harmonic_ctor};
 pub use mmff::{MMFFAngleBend, MMFFStretchBend, mmff_angle_ctor, mmff_stbn_ctor};

@@ -1013,7 +1013,7 @@ a field is priced by an engine at that engine's:
 
 ## Engine codecs
 
-Engine I/O follows the IR's protocol (`molrs::ff::ir::engine`), not a table
+Engine I/O follows the IR's protocol (`molrs::ff::ir::{Engine, EngineCodec}`), not a table
 per writer: a style registered with a spec reads and writes in every engine
 that can hold it with nothing else written, and is refused by name —
 `IrError::NoEngineForm { engine, category, style, reason }` — by every

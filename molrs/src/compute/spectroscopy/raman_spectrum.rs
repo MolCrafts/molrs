@@ -5,8 +5,8 @@ use rustfft::FftPlanner;
 
 use super::spectra::RamanSpectrumResult;
 use super::{acf_to_intensities, acf_to_spectrum, bose_factor, cosine_sq_window};
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Fit;
+use crate::compute::ComputeError;
+use crate::compute::Fit;
 
 /// Parallel polarization: `I_∥ = I_iso + (4/45)·I_aniso`.
 const PARALLEL_ANISO_COEFF: f64 = 4.0 / 45.0;
@@ -124,9 +124,9 @@ impl Fit for RamanSpectrum {
 mod tests {
     use super::super::raman_tensor::RamanTensor;
     use super::*;
-    use crate::compute::traits::Compute;
-    use molrs::Frame;
+    use crate::compute::Compute;
     use molrs::signal as sig;
+    use molrs::store::Frame;
     use ndarray::Array2;
 
     /// Empty frame slice for the series-based raw computes.

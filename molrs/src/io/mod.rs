@@ -4,13 +4,13 @@
 //!   LAMMPS data, XSF, CHGCAR/POSCAR, Cube, AMBER inpcrd / prmtop structure)
 //! - [`trajectory`] — multi-frame formats (DCD, LAMMPS dump)
 //! - [`mesh`] — surface meshes (STL); reads into a
-//!   [`TriMesh`](crate::spatial::TriMesh), not a [`Frame`](crate::Frame)
+//!   [`TriMesh`](crate::spatial::TriMesh), not a [`Frame`](crate::store::Frame)
 //! - [`mrec`] / [`csv`] — serialization of the store types themselves, as
 //!   opposed to [`data`] and [`trajectory`], which read molecular file
-//!   formats. [`mrec`] writes and reads a [`crate::Frame`] or
-//!   [`crate::Trajectory`] as a `*.mrec` directory or packed `*.mrec.zip`
+//!   formats. [`mrec`] writes and reads a [`crate::store::Frame`] or
+//!   [`crate::store::Trajectory`] as a `*.mrec` directory or packed `*.mrec.zip`
 //!   (Zarr V3 on disk; Cargo feature `zarr`, adapter crate-private)
-//! - [`format`](mod@format) — [`read_frame`] / [`write_frame`], the one door that picks a
+//! - [`read_frame`] / [`write_frame`] ([`FrameFormat`]), the one door that picks a
 //!   structure format from a file name (or format name) and hands off to it
 //! - [`reader`] / [`writer`] / [`streaming`] — shared traits and the
 //!   chunk-based frame-indexing infrastructure
@@ -19,11 +19,11 @@
 
 pub mod csv;
 pub mod data;
-pub mod format;
+mod format;
 /// Shared LAMMPS primitives (atom_style layouts, box bounds, helpers).
 /// Used by both the data-file and dump trajectory readers.
 pub(crate) mod lammps;
-/// Log-file parsers (LAMMPS run output / thermo diagnostics).
+// Log-file parsers (LAMMPS run output / thermo diagnostics).
 pub mod log;
 pub mod mesh;
 pub mod trajectory;

@@ -3,19 +3,18 @@
 //! SMILES is a *serialization format* for concrete molecular structures. This
 //! module owns everything that is specific to producing or consuming SMILES
 //! strings — parsing entry point, element-symbol validation, and the IR →
-//! [`Atomistic`](molrs::system::atomistic::Atomistic) conversion.
+//! [`Atomistic`](molrs::system::Atomistic) conversion.
 //!
 //! The SMARTS query engine lives in [`crate::perceive::smarts`]. Shared AST
 //! vocabulary and scanner live in [`chem`](crate::io::smiles::chem).
 
-pub mod from_atomistic;
-pub mod local_smarts;
-pub mod options;
-pub mod to_atomistic;
-pub mod validate;
-pub mod write;
+mod from_atomistic;
+mod local_smarts;
+mod options;
+mod to_atomistic;
+mod validate;
+mod write;
 
-pub use crate::io::smiles::parser::{parse_fragment_smiles, parse_smiles};
 pub use from_atomistic::{from_atomistic, write_atomistic_smiles};
 pub use local_smarts::{local_smarts_ir, write_local_smarts};
 pub use options::{
@@ -26,7 +25,7 @@ pub use to_atomistic::{fragment_to_atomistic, to_atomistic};
 pub use validate::validate_smiles;
 pub use write::{write_fragment_smiles, write_smarts, write_smiles};
 
-use molrs::Element;
+use molrs::system::Element;
 
 /// The element symbol a SMILES atom symbol denotes.
 ///

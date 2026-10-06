@@ -15,8 +15,8 @@ use ndarray::{Array2, ArrayView2};
 use crate::ff::forcefield::Params;
 use crate::ff::potential::geometry::{compute_angle, term_table, validate_coords};
 use crate::ff::potential::{IndexedTerms, Member, Potential};
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::store::Frame;
 
 /// Class2 quartic angle potential. Its own `theta0` array is in radians.
 pub struct AngleClass2 {

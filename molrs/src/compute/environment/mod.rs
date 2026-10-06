@@ -8,17 +8,19 @@
 //! | [`LocalDescriptors`] | per-particle spherical-harmonic descriptors of the local neighborhood |
 //! | [`MatchEnv`] | environment matching / clustering by neighbor-vector geometry |
 
-pub mod angular_separation;
-pub mod bond_order;
-pub mod local_bond_projection;
-pub mod local_descriptors;
-pub mod match_env;
+mod angular_separation;
+mod bond_order;
+mod local_bond_projection;
+mod local_descriptors;
+mod match_env;
 
 pub use angular_separation::{
-    AngularSeparationGlobal, AngularSeparationGlobalResult, AngularSeparationNeighbor,
-    AngularSeparationNeighborResult,
+    AngularSeparationGlobal, AngularSeparationGlobalArgs, AngularSeparationGlobalResult,
+    AngularSeparationNeighbor, AngularSeparationNeighborArgs, AngularSeparationNeighborResult,
 };
 pub use bond_order::{BondOrder, BondOrderResult};
-pub use local_bond_projection::{LocalBondProjection, LocalBondProjectionResult};
+pub use local_bond_projection::{
+    LocalBondProjection, LocalBondProjectionArgs, LocalBondProjectionResult,
+};
 pub use local_descriptors::{LocalDescriptors, LocalDescriptorsResult};
 pub use match_env::{MatchEnv, MatchEnvResult};

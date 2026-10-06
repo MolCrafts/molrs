@@ -44,11 +44,12 @@ use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::streaming::{BinaryFrameScanner, FrameIndexBuilder, FrameIndexEntry};
 use crate::io::trajectory::xdr;
 use crate::io::writer::{FrameWriter, Writer};
-use molrs::spatial::simbox::SimBox;
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::{F, Idx};
+use crate::units::constants::ANGSTROM_PER_NM;
+use molrs::op::types::{F, Idx};
+use molrs::spatial::SimBox;
+use molrs::store::Block;
+use molrs::store::Frame;
+use molrs::store::FrameAccess;
 use ndarray::{Array1, Array2, IxDyn, array};
 use std::fs::File;
 use std::io::{BufRead, BufWriter, Cursor, Read, Result, Seek, SeekFrom, Write};
@@ -766,11 +767,6 @@ fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
     block.insert(key, arr).map_err(invalid)
 }
 
-/// Nanometre → ångström. XTC is nm; molrs is Å, normalised at this boundary
-/// like every other GROMACS reader. The compression precision stays a
-/// *file* property — it is applied to the nm values the format stores.
-pub(crate) const NM_TO_ANGSTROM: F = 10.0;
-
 fn build_simbox(boxv: &[f32; 9]) -> Option<Result<SimBox>> {
     if boxv.iter().all(|&v| v == 0.0) {
         return None;
@@ -800,9 +796,9 @@ fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
     let mut y = Vec::with_capacity(natoms);
     let mut z = Vec::with_capacity(natoms);
     for a in 0..natoms {
-        x.push(coords[a * DIM] as F * NM_TO_ANGSTROM);
-        y.push(coords[a * DIM + 1] as F * NM_TO_ANGSTROM);
-        z.push(coords[a * DIM + 2] as F * NM_TO_ANGSTROM);
+        x.push(coords[a * DIM] as F * ANGSTROM_PER_NM);
+        y.push(coords[a * DIM + 1] as F * ANGSTROM_PER_NM);
+        z.push(coords[a * DIM + 2] as F * ANGSTROM_PER_NM);
     }
     insert_float_col(&mut atoms, "x", x)?;
     insert_float_col(&mut atoms, "y", y)?;
@@ -813,8 +809,8 @@ fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
     frame.simbox = match build_simbox(&hdr.boxv) {
         Some(res) => {
             let sb = res?;
-            let h = sb.h_view().to_owned() * NM_TO_ANGSTROM;
-            let origin = sb.origin_view().to_owned() * NM_TO_ANGSTROM;
+            let h = sb.h_view().to_owned() * ANGSTROM_PER_NM;
+            let origin = sb.origin_view().to_owned() * ANGSTROM_PER_NM;
             Some(SimBox::new(h, origin, sb.pbc()).map_err(|e| invalid(format!("XTC box: {e:?}")))?)
         }
         None => None,
@@ -1014,7 +1010,7 @@ fn write_xtc_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
     xdr::write_f32(w, time)?;
     if let Some(sb) = frame.simbox_ref() {
         // Å → nm on the way out, mirroring the reader.
-        let h = sb.h_view().to_owned() / NM_TO_ANGSTROM;
+        let h = sb.h_view().to_owned() / ANGSTROM_PER_NM;
         for i in 0..DIM {
             for j in 0..DIM {
                 xdr::write_f32(w, h[(j, i)] as f32)?;
@@ -1029,18 +1025,18 @@ fn write_xtc_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
     xdr::write_i32(w, natoms as i32)?;
     if natoms <= 9 {
         for a in 0..natoms {
-            xdr::write_f32(w, (xs[a] / NM_TO_ANGSTROM) as f32)?;
-            xdr::write_f32(w, (ys[a] / NM_TO_ANGSTROM) as f32)?;
-            xdr::write_f32(w, (zs[a] / NM_TO_ANGSTROM) as f32)?;
+            xdr::write_f32(w, (xs[a] / ANGSTROM_PER_NM) as f32)?;
+            xdr::write_f32(w, (ys[a] / ANGSTROM_PER_NM) as f32)?;
+            xdr::write_f32(w, (zs[a] / ANGSTROM_PER_NM) as f32)?;
         }
         return Ok(());
     }
 
     let mut coords = Vec::with_capacity(natoms * DIM);
     for a in 0..natoms {
-        coords.push(xs[a] / NM_TO_ANGSTROM);
-        coords.push(ys[a] / NM_TO_ANGSTROM);
-        coords.push(zs[a] / NM_TO_ANGSTROM);
+        coords.push(xs[a] / ANGSTROM_PER_NM);
+        coords.push(ys[a] / ANGSTROM_PER_NM);
+        coords.push(zs[a] / ANGSTROM_PER_NM);
     }
     let (minint, maxint, smallidx, buf) = compress_coords(&coords, natoms, precision)?;
     xdr::write_f32(w, precision)?;

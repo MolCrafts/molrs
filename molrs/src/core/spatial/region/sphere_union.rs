@@ -12,10 +12,10 @@
 //! The radii are the caller's: molrs knows centres and lengths, not chemistry.
 
 use super::region::Region;
+use crate::op::types::{F, FNx3, FNx3View};
 use crate::op::vec3::{add, norm, sub};
 use crate::spatial::bvh::Bvh;
-use crate::spatial::simbox::{BoxError, SimBox};
-use crate::types::{F, FNx3, FNx3View};
+use crate::spatial::{BoxError, SimBox};
 use ndarray::Array2;
 
 /// Why a set of centres and radii cannot become a [`SphereUnion`].

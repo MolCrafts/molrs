@@ -41,7 +41,7 @@
 //! then corrects; [`MullikenModel`] hands the same bits back.
 //!
 //! ```
-//! use molrs::Atomistic;
+//! use molrs::system::Atomistic;
 //! use molrs::ff::charge::{BccModel, BccParameterSet, ChargeModel, MullikenModel};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {

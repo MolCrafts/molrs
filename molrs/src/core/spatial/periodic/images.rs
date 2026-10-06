@@ -5,8 +5,8 @@
 //! integer `n`. [`ImageRange`] answers it for a reach `R`, and refuses rather
 //! than truncates when it cannot.
 
-use crate::spatial::simbox::SimBox;
-use crate::types::F;
+use crate::op::types::F;
+use crate::spatial::SimBox;
 
 /// Why an image enumeration could not be produced.
 ///

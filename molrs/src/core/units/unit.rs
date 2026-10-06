@@ -3,7 +3,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use crate::types::F;
+use crate::op::types::F;
 
 use super::dimension::Dimension;
 use super::error::UnitsError;
@@ -146,7 +146,7 @@ impl FromStr for Unit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::units::registry::UnitRegistry;
+    use crate::units::UnitRegistry;
 
     fn unit(expr: &str) -> Unit {
         UnitRegistry::new().parse(expr).unwrap()

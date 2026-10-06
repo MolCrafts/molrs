@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-use crate::types::F;
+use crate::op::types::F;
 
 use super::constants::{BOLTZMANN, BOLTZMANN_REAL, COULOMB_REAL, ELEMENTARY_CHARGE, GAS_CONSTANT};
 

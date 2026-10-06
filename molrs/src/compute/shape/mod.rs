@@ -22,11 +22,11 @@
 //! let rg = RadiusOfGyration::new().compute(&frames, (&clusters, &coms))?;
 //! ```
 
-pub mod center_of_mass;
-pub mod cluster_centers;
-pub mod gyration_tensor;
-pub mod inertia_tensor;
-pub mod radius_of_gyration;
+mod center_of_mass;
+mod cluster_centers;
+mod gyration_tensor;
+mod inertia_tensor;
+mod radius_of_gyration;
 
 pub use center_of_mass::{COMResult, CenterOfMass};
 pub use cluster_centers::{ClusterCenters, ClusterCentersResult};

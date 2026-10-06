@@ -10,9 +10,9 @@ use molrs::builder::{
     AssembleError, Assembler, AxisOrienter, GrowthPlacer, OrientError, PlaceError, Placer,
     SitePlacer,
 };
-use molrs::system::link::LinkManyError;
-use molrs::system::molgraph::MolGraph;
-use molrs::{CarbonTubeBuilder, GrapheneBuilder};
+use molrs::builder::{CarbonTubeBuilder, GrapheneBuilder};
+use molrs::system::LinkManyError;
+use molrs::system::MolGraph;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyMapping;

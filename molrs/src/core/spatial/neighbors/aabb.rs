@@ -59,10 +59,10 @@
 //! of `crate::spatial::neighbors`: every algorithm gets its periodicity from
 //! `SimBox`, never from a ghost-expanded point set.
 
+use crate::op::types::{F, FNx3, FNx3View};
+use crate::spatial::SimBox;
 use crate::spatial::bvh::Bvh;
 use crate::spatial::neighbors::{Backend, PairVisitor};
-use crate::spatial::simbox::SimBox;
-use crate::types::{F, FNx3, FNx3View};
 
 /// AABB-tree k-nearest-neighbor query.
 ///

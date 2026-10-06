@@ -1,12 +1,12 @@
 //! Green–Kubo conductivity raw compute — the current-ACF route to σ.
 
-use molrs::store::frame_access::FrameAccess;
+use molrs::store::FrameAccess;
 use ndarray::{Array1, Array2};
 
 use super::correlation::{lag_times, unbiased_cartesian_acf};
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
 
 /// Raw current autocorrelation function — the raw portion of the legacy
 /// `JacfResult`, with **no** fitted sigma.
@@ -24,7 +24,7 @@ impl ComputeResult for GreenKuboConductivityResult {}
 /// Raw current-ACF compute. Lifts the unbiased windowed-ACF loop from
 /// the Green–Kubo conductivity and stops there (no trapezoid, no σ). The
 /// σ = (1/(3·V·k_B·T))·∫⟨JJ⟩ step is a downstream
-/// [`CumulativeTrapezoid`](crate::compute::fitting::CumulativeTrapezoid) + scale.
+/// [`CumulativeTrapezoid`](crate::compute::CumulativeTrapezoid) + scale.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GreenKuboConductivity;
 
@@ -74,7 +74,7 @@ impl Compute for GreenKuboConductivity {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
+    use molrs::store::Frame;
     use ndarray::{Array1 as A1, Array2};
     use rand::{RngExt, SeedableRng};
 
@@ -130,8 +130,8 @@ mod tests {
         // ac-015: CumulativeTrapezoid on GreenKuboConductivity.jacf reproduces a manual
         // trapezoidal integral, and σ = prefactor·∫/(V·k_B·T) is well-defined
         // (replaces the removed bundled Green–Kubo conductivity).
-        use crate::compute::fitting::CumulativeTrapezoid;
-        use crate::compute::traits::Fit;
+        use crate::compute::CumulativeTrapezoid;
+        use crate::compute::Fit;
         use molrs::units::constants::{
             ANGSTROM_M, BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C, FEMTOSECOND_S,
         };

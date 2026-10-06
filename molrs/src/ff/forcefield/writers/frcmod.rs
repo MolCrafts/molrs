@@ -70,8 +70,9 @@ use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::{ForceField, Params, Style};
 use crate::ff::ir::Engine;
-use crate::ff::params::amber::{AMBER_COULOMB, AMBER_SCEE, AMBER_SCNB};
-use crate::ff::typifier::estimate::Provenance;
+use crate::ff::params::amber::{AMBER_SCEE, AMBER_SCNB};
+use crate::ff::typifier::Provenance;
+use crate::units::constants::AMBER_COULOMB;
 
 /// Section headers, in file order.
 const SECTIONS: [&str; 6] = ["MASS", "BOND", "ANGLE", "DIHE", "IMPROPER", "NONBON"];

@@ -21,9 +21,9 @@
 
 use std::collections::VecDeque;
 
-use molrs::types::F;
+use molrs::op::types::F;
 
-use crate::compute::error::ComputeError;
+use crate::compute::ComputeError;
 
 /// Streaming DOF-averaged velocity-ACF accumulator (lag ≤ `resolution`).
 ///
@@ -178,9 +178,9 @@ impl VACFAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::Compute;
     use crate::compute::VACF;
-    use crate::compute::traits::Compute;
-    use molrs::Frame;
+    use molrs::store::Frame;
     use ndarray::Array2;
     use rand::{RngExt, SeedableRng};
 

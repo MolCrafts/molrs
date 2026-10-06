@@ -20,9 +20,9 @@ use rustfft::{Fft, FftPlanner};
 
 use crate::ff::forcefield::Params;
 use crate::ff::potential::{Member, Potential};
-use molrs::spatial::simbox::Mic;
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::spatial::Mic;
+use molrs::store::Frame;
 
 // ---------------------------------------------------------------------------
 // Math helpers
@@ -966,7 +966,7 @@ pub fn pme_ctor(
 
 /// The frame's periodic cell as [`PmePotential::new`] takes it: the lattice
 /// vectors as **rows** (lower-triangular), the transpose of
-/// [`SimBox::matrix`](molrs::spatial::simbox::SimBox::matrix), whose columns
+/// [`SimBox::matrix`](molrs::spatial::SimBox::matrix), whose columns
 /// they are.
 ///
 /// # Errors
@@ -1237,7 +1237,7 @@ mod tests {
     #[test]
     fn test_pme_in_potentials_collection() {
         use crate::ff::potential::Potentials;
-        use crate::ff::potential::pair::lj_cut::LJCut;
+        use crate::ff::potential::pair::LJCut;
 
         let box_l: F = 10.0;
         let params = PmeParams {
@@ -1285,8 +1285,8 @@ mod tests {
     fn the_cell_is_the_frames_box_and_none_is_refused_by_name() {
         use crate::ff::forcefield::ForceField;
         use crate::ff::potential::{CompileError, PotentialCompiler};
-        use molrs::spatial::simbox::SimBox;
-        use molrs::store::block::Block;
+        use molrs::spatial::SimBox;
+        use molrs::store::Block;
         use ndarray::{Array1, array};
 
         let coords: Vec<F> = vec![4.0, 5.0, 5.0, 6.5, 5.3, 4.6, 5.1, 3.8, 6.2];

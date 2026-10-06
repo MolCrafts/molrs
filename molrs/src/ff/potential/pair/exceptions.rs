@@ -60,11 +60,11 @@ use crate::ff::potential::need;
 use crate::ff::potential::pair::charmm::{charmm_mixing, charmm_pair_params, lj_coeffs};
 use crate::ff::potential::pair::lj_cut::{lj_pair_params, mixing_of};
 use crate::ff::potential::{IndexedTerms, Potential};
-use molrs::store::frame::Frame;
+use molrs::op::types::F;
+use molrs::store::Frame;
+use molrs::store::keys::{ATOMI, ATOMJ, ATOML};
 use molrs::store::schema::PAIR_OVERRIDE_COLUMNS;
 use molrs::store::schema::block_names::{ATOMS, BONDS, DIHEDRALS, PAIRS};
-use molrs::store::schema::consts::{ATOMI, ATOMJ, ATOML};
-use molrs::types::F;
 
 const MIN_R2: F = 1e-24;
 

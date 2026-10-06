@@ -27,9 +27,9 @@ use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
+use molrs::op::types::F;
 use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use molrs::store::Frame;
 
 /// Tang-Toennies damped Coulomb pair potential. `b`/`n`/`c` are style-level;
 /// `qq[idx]` is the charge product `q_i q_j` of each pair.

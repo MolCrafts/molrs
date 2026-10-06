@@ -1,5 +1,3 @@
-//! Environment matching / clustering by neighbor-vector geometry.
-
 // Union-Find traversal and per-bucket O(b²) compare loops read more
 // clearly with explicit indexing than iterator combinators.
 #![allow(clippy::needless_range_loop, clippy::if_same_then_else)]
@@ -40,24 +38,26 @@
 //! comparison additionally enumerates up to `n!` permutations, bounded by
 //! [`MatchEnv::with_max_neighbors_for_registration`].
 
-use crate::compute::result::ComputeResult;
+use crate::compute::ComputeResult;
 use std::collections::HashMap;
 
 use crate::op::superpose::{DEFAULT_GAP_TOL, SuperposeError, superpose};
+use molrs::op::types::F;
 use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::store::FrameAccess;
 
-use crate::compute::error::ComputeError;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
 use crate::compute::require_disp;
-use crate::compute::traits::Compute;
 
 /// `MatchEnv` analyzer.
 ///
-/// See the [module documentation](self) for the two matching modes and
+/// See below for the two matching modes and
 /// their complexity (linear fingerprint build; quadratic per-bucket
 /// comparison).
+///
+/// Environment matching / clustering by neighbor-vector geometry.
 #[derive(Debug, Clone, Copy)]
 pub struct MatchEnv {
     rmsd_threshold: F,
@@ -401,9 +401,9 @@ impl ComputeResult for MatchEnvResult {}
 mod tests {
     use super::*;
     use crate::compute::test_support::nlist_from_frame;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use molrs::spatial::SimBox;
+    use molrs::store::Block;
+    use molrs::store::Frame;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F) -> Frame {

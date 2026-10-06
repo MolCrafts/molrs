@@ -52,9 +52,9 @@
 //! # Examples
 //!
 //! ```
-//! use molrs::system::atomistic::Atomistic;
-//! use molrs::system::bond::BondNumber;
-//! use molrs::system::port::PortKind;
+//! use molrs::system::Atomistic;
+//! use molrs::system::BondNumber;
+//! use molrs::system::PortKind;
 //!
 //! // C–C with one capping hydrogen on the first carbon, and a symmetric
 //! // descriptor `[$A]` sitting on that C–H valence.
@@ -72,11 +72,11 @@
 //! assert_eq!(port.kind, PortKind::Symmetric);
 //! assert_eq!(port.label, "A");
 //! assert_eq!(mol.frag_id(c0), Some(1));
-//! # Ok::<(), molrs::MolRsError>(())
+//! # Ok::<(), molrs::error::MolRsError>(())
 //! ```
 //!
-//! [`Atomistic`]: crate::system::atomistic::Atomistic
-//! [`CoarseGrain`]: crate::system::coarsegrain::CoarseGrain
+//! [`Atomistic`]: crate::system::Atomistic
+//! [`CoarseGrain`]: crate::system::CoarseGrain
 
 use std::collections::{BTreeSet, HashMap};
 use std::str::FromStr;
@@ -84,8 +84,10 @@ use std::str::FromStr;
 use slotmap::Key;
 
 use crate::error::MolRsError;
-use crate::system::bond::{BondNumber, BondType, write_bond_class};
-use crate::system::molgraph::{FRAG_ID, KindId, MolGraph, NodeId, PropValue, RelationId};
+use crate::system::bond::write_bond_class;
+use crate::system::molgraph::FRAG_ID;
+use crate::system::{BondNumber, BondType};
+use crate::system::{KindId, MolGraph, NodeId, PropValue, RelationId};
 
 /// The relation-kind name ports are stored under.
 pub const PORTS: &str = "ports";
@@ -499,11 +501,11 @@ mod tests {
 
     use super::{Port, PortKind, RelationId};
     use crate::error::MolRsError;
-    use crate::system::atomistic::Atomistic;
-    use crate::system::bond::BondNumber;
-    use crate::system::coarsegrain::CoarseGrain;
-    use crate::system::molgraph::NodeId;
-    use crate::system::molgraph::PropValue;
+    use crate::system::Atomistic;
+    use crate::system::BondNumber;
+    use crate::system::CoarseGrain;
+    use crate::system::NodeId;
+    use crate::system::PropValue;
 
     /// `C0–C1` plus one real capping hydrogen bonded to `C0`: the smallest
     /// graph that can carry a legal port. Returns `(mol, c0, c1, h)`.

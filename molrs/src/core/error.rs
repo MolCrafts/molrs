@@ -3,7 +3,7 @@
 use std::fmt;
 use std::io;
 
-use crate::store::block::BlockError;
+use crate::store::BlockError;
 use crate::units::UnitsError;
 
 /// Main error type for the molrs library.
@@ -203,7 +203,7 @@ impl MolRsError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::block::BlockError;
+    use crate::store::BlockError;
 
     #[test]
     fn test_error_display() {

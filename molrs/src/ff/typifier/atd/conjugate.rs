@@ -45,7 +45,7 @@
 //! it. So biphenyl's bridge is `cp cp`, and o-terphenyl's middle ring, whose two
 //! bridge carbons share an aromatic bond, is `cp … cq`.
 
-use molrs::NodeId;
+use molrs::system::NodeId;
 
 use super::facts::MolFacts;
 use crate::ff::params::{AlternatePass, AtdRule};

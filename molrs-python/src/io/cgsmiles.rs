@@ -39,7 +39,7 @@
 //! Which name depends on whether the notation itself already spells the
 //! variant. A descriptor kind does: `$`, `<`, `>`, `!` is what a user types
 //! and what a stored port's `port_kind` prop holds
-//! ([`PortKind::as_str`](molrs::core::system::PortKind::as_str)), so
+//! ([`PortKind::as_str`](molrs::system::PortKind::as_str)), so
 //! [`PyBondingDescriptor::kind`] crosses as that same glyph — one spelling
 //! for the notation, the column and the boundary, with no third vocabulary to
 //! translate between them. The enums the notation does *not* spell out cross
@@ -92,7 +92,7 @@ fn bond_kind_name(kind: BondKind) -> &'static str {
 ///
 /// The glyph is the only spelling a user ever writes (`[$]COC[$]`) and the
 /// one a stored port carries in its `port_kind` prop
-/// ([`PortKind::as_str`](molrs::core::system::PortKind::as_str)), so the
+/// ([`PortKind::as_str`](molrs::system::PortKind::as_str)), so the
 /// boundary adds no third vocabulary: a kind read off a descriptor here can
 /// be handed straight to a graph's ``add_port`` or compared against a port
 /// column without a lookup table on the Python side.

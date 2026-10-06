@@ -50,7 +50,7 @@ use crate::ff::ir::{
     CategorySpec, Coordinate, EndpointOrder, Engine, Mix, ParamKind, Registry, SpecialClass,
     StyleSpec, Value,
 };
-use molrs::types::F;
+use molrs::op::types::F;
 
 fn refuse(style: &Style, why: impl Into<String>) -> WriteError {
     Engine::OpenmmXml

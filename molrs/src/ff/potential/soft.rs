@@ -27,12 +27,12 @@ use std::sync::Mutex;
 use ndarray::ArrayView2;
 
 use crate::ff::potential::{Potential, end_pairs};
+use molrs::op::types::F;
 use molrs::spatial::neighbors::NeighborQuery;
-use molrs::spatial::simbox::{Mic, SimBox};
-use molrs::store::frame::Frame;
+use molrs::spatial::{Mic, SimBox};
+use molrs::store::Frame;
+use molrs::store::keys::{ATOMI, ATOMJ, ATOMK};
 use molrs::store::schema::block_names::{ANGLES, BONDS};
-use molrs::store::schema::consts::{ATOMI, ATOMJ, ATOMK};
-use molrs::types::F;
 
 /// How far past the cut-off the neighbour list reaches (Å), so that it stays
 /// complete until some atom has moved half of it.
@@ -262,8 +262,8 @@ fn spring(coords: &[F], forces: &mut [F], i: usize, j: usize, t: F, k: F, shift:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::store::block::Block;
-    use molrs::types::Idx;
+    use molrs::op::types::Idx;
+    use molrs::store::Block;
     use ndarray::{Array1, array};
 
     /// A frame carrying the bonds/angles blocks of a linear n-atom chain

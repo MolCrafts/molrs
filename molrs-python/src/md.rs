@@ -24,7 +24,7 @@ use molrs::math::Virial;
 use molrs::md::{
     Direct, ForceProvider, Langevin, MDState, MaxwellBoltzmann, MdError, MicPairs, VelocityVerlet,
 };
-use molrs::types::{F, I};
+use molrs::op::types::{F, I};
 use ndarray::{Array1, Array2};
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::{PyTypeError, PyValueError};

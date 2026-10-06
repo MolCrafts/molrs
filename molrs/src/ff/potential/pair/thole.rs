@@ -36,9 +36,9 @@ use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
+use molrs::op::types::F;
 use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use molrs::store::Frame;
 
 /// Thole-screened Coulomb pair potential with pre-resolved flat arrays.
 ///

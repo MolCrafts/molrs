@@ -25,7 +25,7 @@ use pyo3::types::{
 use pyo3::{PyTraverseError, PyVisit, intern};
 
 use molrs::system::entity_table::Cell;
-use molrs::system::molgraph::{
+use molrs::system::{
     KindId, MolGraph, node_from_u64, node_to_u64, relation_from_u64, relation_to_u64,
 };
 

@@ -9,11 +9,11 @@
 //! input. Its main consumer is a bead-group pattern written as notation
 //! instead of built bead by bead.
 
-use crate::io::smiles::cgsmiles::ast::CGSmilesIR;
+use crate::io::smiles::CGSmilesIR;
+use crate::io::smiles::SmilesError;
 use crate::io::smiles::cgsmiles::templates::cg_build;
-use crate::io::smiles::error::SmilesError;
-use molrs::system::coarsegrain::CoarseGrain;
-use molrs::system::molgraph::NodeId;
+use molrs::system::CoarseGrain;
+use molrs::system::NodeId;
 
 impl CGSmilesIR {
     /// Read the coarsest level, `levels[0]`, as a [`CoarseGrain`].
@@ -122,8 +122,8 @@ impl CGSmilesIR {
 mod tests {
     use crate::io::smiles::{CGSmilesIR, SmilesErrorKind, parse_cgsmiles};
     use molrs::store::keys;
-    use molrs::system::coarsegrain::CoarseGrain;
-    use molrs::system::molgraph::NodeId;
+    use molrs::system::CoarseGrain;
+    use molrs::system::NodeId;
 
     // Every expected value below is hand-derived from the notation of the
     // input string (spec `backmap-primitives-06-cgsmiles`, § Testing

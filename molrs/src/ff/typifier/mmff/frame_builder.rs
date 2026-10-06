@@ -5,7 +5,7 @@
 //! its annotations (atoms typed + charged; bonds/angles/dihedrals/impropers
 //! labeled, each distinct parameter set one type named by its label). The
 //! typing base stamps them and defines the types. Materializing the typed
-//! graph into a [`Frame`](molrs::store::frame::Frame) for the generic
+//! graph into a [`Frame`](molrs::store::Frame) for the generic
 //! `PotentialCompiler::compile` path is the caller's job (via
 //! [`Atomistic::to_frame`]); building the neighbour list is the consumer's. Atom
 //! types + partial charges are reused from the RDKit-validated MMFF front-end
@@ -42,8 +42,8 @@
 use std::collections::{HashMap, HashSet};
 
 use molrs::store::schema::block_names::{ANGLES, BONDS, DIHEDRALS, IMPROPERS};
-use molrs::system::molgraph::PropValue;
-use molrs::{Atomistic, NodeId};
+use molrs::system::PropValue;
+use molrs::system::{Atomistic, NodeId};
 
 use super::properties::{MmffMolProperties, MmffVariant};
 use super::resolve as eparams;

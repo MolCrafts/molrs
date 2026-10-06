@@ -21,10 +21,8 @@
 
 use std::sync::Arc;
 
-use molrs::store::block::{
-    Block as CoreBlock, BlockDtype, BlockError, Column, ColumnHolder, DType,
-};
-use molrs::types::{F, I, Idx};
+use molrs::op::types::{F, I, Idx};
+use molrs::store::{Block as CoreBlock, BlockDtype, BlockError, Column, ColumnHolder, DType};
 use molrs_ffi::BlockRef;
 use ndarray::{Array1, ArrayD, IxDyn};
 use num_complex::Complex;
@@ -734,9 +732,7 @@ impl PyBlock {
             .with_mut(|b| b.rename_column(&old_key, &new_key))
             .map_err(ffi_error_to_pyerr)?
             .map_err(|e| match e {
-                molrs::store::block::BlockError::Validation { .. } => {
-                    PyKeyError::new_err(old_key.clone())
-                }
+                molrs::store::BlockError::Validation { .. } => PyKeyError::new_err(old_key.clone()),
                 other => PyValueError::new_err(other.to_string()),
             })
     }

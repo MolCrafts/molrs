@@ -1,9 +1,9 @@
 //! Unified [`Compute`] trait — the single public entry point for any analysis.
 
-use molrs::store::frame_access::FrameAccess;
+use molrs::store::FrameAccess;
 
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
 
 /// Run an analysis over a sequence of frames and produce a finalized result.
 ///
@@ -186,7 +186,7 @@ pub trait Check {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::result::ComputeResult;
+    use crate::compute::ComputeResult;
     use ndarray::Array1;
 
     /// Trivial in-crate `Fit` over `&Array1<f64>` — exercises the GAT input and

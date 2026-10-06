@@ -10,7 +10,7 @@
 //! (`BccModel`), which perceives its BCC types for itself and never writes them
 //! into the caller's [`keys::TYPE`](molrs::store::keys::TYPE) column.
 
-use molrs::Atomistic;
+use molrs::system::Atomistic;
 use std::sync::OnceLock;
 
 use super::atd::AtdTypifier;

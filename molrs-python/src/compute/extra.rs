@@ -27,14 +27,14 @@
 use crate::compute::{PyClusterResult, py_value_err};
 use crate::helpers::{NpF, collect_frames, collect_neighbors};
 
-use molrs::compute::distribution::AtomGroups;
+use molrs::compute::AtomGroups;
 use molrs::compute::{
     BondOrder, ClusterProperties, Compute, GaussianDensity, Hexatic, LocalDensity, Nematic, PMFTXY,
     PMFTXYArgs, SolidLiquid, StaticStructureFactorDebye, Steinhardt,
 };
-use molrs::store::frame::Frame as CoreFrame;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::store::Frame as CoreFrame;
+use molrs::store::FrameAccess;
 
 use ndarray::{Array1, Array2, Array3};
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3};

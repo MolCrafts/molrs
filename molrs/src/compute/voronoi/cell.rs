@@ -15,7 +15,7 @@
 //! - Aurenhammer, *SIAM J. Comput.* **1987**, 16, 78 (power diagrams).
 
 use crate::op::vec3::{cross, dot, norm, sub};
-use molrs::types::F;
+use molrs::op::types::F;
 
 /// One bounding face of a cell: its area and the index of the neighbour cell
 /// across it. `neighbor < 0` marks a residual initial-box face (should not

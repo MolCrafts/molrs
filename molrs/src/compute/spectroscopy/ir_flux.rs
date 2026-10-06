@@ -1,12 +1,12 @@
 //! IR dipole-flux ACF raw compute — the IR-spectrum raw input.
 
-use molrs::store::frame_access::FrameAccess;
+use molrs::store::FrameAccess;
 use ndarray::Array2;
 
 use super::{central_diff_series, lag_times, sum_column_acf};
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
 
 /// Raw dipole-flux autocorrelation function — the IR-spectrum raw input.
 #[derive(Debug, Clone)]
@@ -26,7 +26,7 @@ impl ComputeResult for IRFluxResult {}
 /// Lifts the central-difference dipole flux + FFT-ACF + component-sum block (the
 /// part *before* windowing), returning only the raw ACF. The window + FFT step
 /// is then the [`IRSpectrum`](super::IRSpectrum)
-/// [`Fit`](crate::compute::traits::Fit).
+/// [`Fit`](crate::compute::Fit).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct IRFlux;
 

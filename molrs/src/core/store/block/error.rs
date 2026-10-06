@@ -30,9 +30,9 @@ pub enum BlockError {
         /// The canonical key.
         key: String,
         /// Dtype the vocabulary declares.
-        expected: crate::store::block::DType,
+        expected: crate::store::DType,
         /// Dtype the caller supplied.
-        got: crate::store::block::DType,
+        got: crate::store::DType,
     },
     /// A canonical column key was written at a shape the vocabulary does not
     /// allow.
@@ -75,9 +75,9 @@ pub enum BlockError {
         /// Index of the refused part in the `parts` sequence.
         part: usize,
         /// Dtype of the first part that carries the column.
-        expected: crate::store::block::DType,
+        expected: crate::store::DType,
         /// Dtype of the refused part's column.
-        got: crate::store::block::DType,
+        got: crate::store::DType,
     },
     /// Two parts of a [`Block::stack`](super::Block::stack) carry one column
     /// with different per-row shapes (e.g. `(n, 3)` beside `(n, 2)`).

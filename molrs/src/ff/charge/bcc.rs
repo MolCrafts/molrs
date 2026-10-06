@@ -28,10 +28,11 @@
 
 use std::collections::HashMap;
 
-use molrs::{Atomistic, NodeId};
+use molrs::system::{Atomistic, NodeId};
 
 use crate::ff::params::{BccAlias, BccCorrectionRow};
-use crate::ff::typifier::atd::{AtdParameterSet, AtdTypifier, antechamber_bond_type};
+use crate::ff::typifier::atd::antechamber_bond_type;
+use crate::ff::typifier::{AtdParameterSet, AtdTypifier};
 
 use super::error::ChargeError;
 use super::model::{
@@ -99,7 +100,7 @@ impl BccParameterSet {
 /// # Examples
 ///
 /// ```
-/// use molrs::Atomistic;
+/// use molrs::system::Atomistic;
 /// use molrs::ff::charge::{BccModel, BccParameterSet};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {

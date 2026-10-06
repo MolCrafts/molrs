@@ -60,7 +60,7 @@ use molrs::io::data::xyz::{
     XYZReader, read_xyz_frame, read_xyz_traj, write_xyz_frame, write_xyz_traj,
 };
 #[cfg(feature = "fs")]
-use molrs::io::log::lammps::{
+use molrs::io::log::{
     parse_lammps_log_text as parse_lammps_log_text_rs,
     read_lammps_log_with_style as read_lammps_log_rs,
 };
@@ -2341,7 +2341,7 @@ fn build_smiles_emit_options(
     organic_subset: bool,
 ) -> PyResult<molrs::io::smiles::SmilesEmitOptions> {
     use molrs::io::smiles::{AromaticEmit, HydrogenEmit, MultiComponentEmit, SmilesEmitOptions};
-    use molrs::system::molgraph::node_from_u64;
+    use molrs::system::node_from_u64;
 
     let aromatic = match aromatic {
         "as_marked" => AromaticEmit::AsMarked,
@@ -2469,7 +2469,7 @@ pub fn write_smarts(
     canonical_neighbor_order: bool,
 ) -> PyResult<String> {
     use molrs::io::smiles::{LocalSmartsOptions, NeighborStyle};
-    use molrs::system::molgraph::node_from_u64;
+    use molrs::system::node_from_u64;
 
     let neighbor_style = match neighbor_style {
         "chain" => NeighborStyle::Chain,

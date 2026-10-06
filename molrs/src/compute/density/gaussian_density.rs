@@ -24,17 +24,17 @@
 //! - PBC is honoured per-axis via wrap-around grid indexing when the
 //!   corresponding `pbc` flag is true.
 
-use crate::compute::result::ComputeResult;
+use crate::compute::ComputeResult;
 use ndarray::Array3;
 
-use molrs::spatial::simbox::BoxKind;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::spatial::BoxKind;
+use molrs::store::FrameAccess;
 
 use super::wrap_index;
-use crate::compute::error::ComputeError;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
-use crate::compute::traits::Compute;
 
 /// Gaussian-density calculator.
 #[derive(Debug, Clone, Copy)]
@@ -227,9 +227,9 @@ impl ComputeResult for GaussianDensityResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use molrs::spatial::SimBox;
+    use molrs::store::Block;
+    use molrs::store::Frame;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F, pbc: [bool; 3]) -> Frame {

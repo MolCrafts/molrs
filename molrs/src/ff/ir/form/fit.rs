@@ -6,14 +6,15 @@
 //! each sample point `q` — so it is generic over every tier: native,
 //! expression, Python.
 
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
+use molrs::op::types::{F, Idx};
+use molrs::store::Block;
+use molrs::store::Frame;
 use molrs::store::schema::block_names::ATOMS;
-use molrs::types::{F, Idx};
 use ndarray::Array1;
 
 use crate::ff::forcefield::{ForceField, Params};
-use crate::ff::ir::form::{Converted, TypeParams, convert_rows, declared, named, rewrite};
+use crate::ff::ir::TypeParams;
+use crate::ff::ir::form::{Converted, convert_rows, declared, named, rewrite};
 use crate::ff::ir::{CategorySpec, Coordinate, Dim, IrError, ParamKind, Registry, StyleSpec};
 use crate::ff::potential::PotentialCompiler;
 

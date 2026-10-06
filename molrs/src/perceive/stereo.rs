@@ -34,9 +34,9 @@ use std::collections::HashMap;
 
 use crate::op::vec3::{cross, dot, norm, scale, sub};
 use crate::store::keys;
-use crate::system::atomistic::Atomistic;
-use crate::system::bond::BondType;
-use crate::system::molgraph::{NodeId, RelationId};
+use crate::system::Atomistic;
+use crate::system::BondType;
+use crate::system::{NodeId, RelationId};
 
 // ---------------------------------------------------------------------------
 // Public enums
@@ -229,7 +229,7 @@ pub fn assign_bond_stereo_from_3d(mol: &Atomistic) -> HashMap<RelationId, BondSt
                 .ok()
                 .and_then(|a| {
                     a.get_str("element")
-                        .and_then(molrs::Element::by_symbol)
+                        .and_then(molrs::system::Element::by_symbol)
                         .map(|e| e.z())
                 })
                 .unwrap_or(0)
@@ -298,7 +298,7 @@ pub fn assign_bond_stereo_from_3d(mol: &Atomistic) -> HashMap<RelationId, BondSt
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::molgraph::Atom;
+    use crate::system::Atom;
 
     fn atom_xyz(sym: &str, x: f64, y: f64, z: f64) -> Atom {
         Atom::xyz(sym, x, y, z)
@@ -464,7 +464,7 @@ mod tests {
             let et = mol.add_atom(Atom::xyz("C", 1.3, -0.1, 0.0));
             mol.add_bond(c1, c2).unwrap();
             let d = mol.add_bond(c2, c3).unwrap();
-            mol.set_bond_type(d, crate::system::bond::BondType::Double)
+            mol.set_bond_type(d, crate::system::BondType::Double)
                 .unwrap();
             if methyl_first {
                 mol.add_bond(c3, me).unwrap();

@@ -8,7 +8,7 @@
 
 use ndarray::ArrayViewD;
 
-use molrs::types::F;
+use molrs::op::types::F;
 
 /// The per-term inputs of one batch.
 ///

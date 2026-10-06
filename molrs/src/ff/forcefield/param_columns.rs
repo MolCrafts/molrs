@@ -19,10 +19,10 @@ use std::collections::{BTreeMap, HashMap};
 use ndarray::Array1;
 
 use crate::ff::forcefield::{ForceField, Params, Style, pair_key};
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
+use molrs::op::types::F;
+use molrs::store::Block;
+use molrs::store::Frame;
 use molrs::store::schema::block_names::{ANGLES, ATOMS, BONDS, CMAPS, DIHEDRALS, IMPROPERS};
-use molrs::types::F;
 
 /// The relation categories and the frame block each one's rows live in.
 const RELATIONS: [(&str, &str); 5] = [
@@ -275,7 +275,7 @@ fn write(
 mod tests {
     use super::*;
     use crate::ff::forcefield::Params;
-    use molrs::types::Idx;
+    use molrs::op::types::Idx;
 
     fn uint(values: &[Idx]) -> ndarray::ArrayD<Idx> {
         Array1::from_vec(values.to_vec()).into_dyn()

@@ -7,10 +7,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
-use crate::MolRsError;
-use crate::store::block::Column;
-use crate::store::frame::Frame;
-use crate::types::F;
+use crate::error::MolRsError;
+use crate::op::types::F;
+use crate::store::Column;
+use crate::store::Frame;
 
 /// Trajectory-like list of frame states plus shared indexing arrays.
 #[derive(Debug, Clone, Default)]

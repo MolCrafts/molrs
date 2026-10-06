@@ -7,7 +7,7 @@
 //!
 //! # How atoms are typed
 //!
-//! - **Rules.** The shipped rules ([`crate::ff::params::oplsaa_typing`]) are
+//! - **Rules.** The shipped rules ([`crate::ff::params::OPLSAA_TYPING`]) are
 //!   molrs-owned Daylight SMARTS with explicit bonds, `[#1]` hydrogens and
 //!   lowercase aromatic atoms, matched with standard semantics against a
 //!   molecule with explicit hydrogens.
@@ -42,28 +42,28 @@
 //! Only types carrying a SMARTS `def` participate; the united-atom types
 //! (`opls_001`–`opls_134`) carry none and are out of scope for auto-typing. Improper
 //! matching is out of scope. Uncovered bonded terms follow the [`NoMatch`]
-//! policy; a consumer that wants to fill them can attach its own [`Estimator`]
+//! policy; a consumer that wants to fill them can attach its own [`ParameterInterpolator`]
 //! via [`OPLSAATypifier::with_estimator`], or the restored
 //! [`Parmchk2Estimator`] via [`OPLSAATypifier::with_default_estimator`].
 
 use std::collections::HashSet;
 
-use molrs::{Atomistic, NodeId};
+use molrs::system::{Atomistic, NodeId};
 
 use crate::ff::forcefield::ForceField;
 use crate::ff::forcefield::readers::{ForceFieldReader, opls::OplsXmlReader};
 
-use crate::ff::typifier::estimate::Parmchk2Estimator;
+use crate::ff::typifier::{BondedTerm, ParameterInterpolator, Parmchk2Estimator};
 use crate::ff::typifier::{Match, Typifier};
 
-pub mod assign;
-pub mod deps;
+mod assign;
+mod deps;
 mod embedded;
-pub mod layered;
-pub mod meta;
+mod layered;
+pub(crate) mod meta;
 pub(crate) mod typing;
 
-pub use assign::{BondedTerm, CandidateTables, Estimator, NoMatch};
+pub use assign::{CandidateTables, NoMatch};
 pub use meta::{OplsTypeRow, OplsTypingMeta};
 
 use assign::typify_bonded_with;
@@ -74,7 +74,7 @@ use typing::typify_atoms;
 /// Primary constructor [`from_xml_str`](Self::from_xml_str) parses both the
 /// typing metadata ([`OplsTypingMeta`]) and the potential parameters
 /// ([`ForceField`]) from a single OPLS-AA XML string, then precomputes the
-/// bonded candidate tables ([`CandidateTables`]) once.
+/// bonded candidate tables once.
 pub struct OPLSAATypifier {
     meta: OplsTypingMeta,
     ff: ForceField,
@@ -82,7 +82,7 @@ pub struct OPLSAATypifier {
     /// No-match policy for bonded terms with no force-field candidate.
     no_match: NoMatch,
     /// Optional missing-parameter interpolator for bonded terms.
-    estimator: Option<Box<dyn Estimator + Send + Sync>>,
+    estimator: Option<Box<dyn ParameterInterpolator<Term = BondedTerm> + Send + Sync>>,
 }
 
 impl OPLSAATypifier {
@@ -91,7 +91,7 @@ impl OPLSAATypifier {
     /// Reads typing metadata and potential parameters in one call. The two are
     /// read by independent parsers from the same XML and never share state.
     /// The bonded candidate tables are built once from the parsed force field.
-    /// Defaults to strict bonded matching ([`NoMatch::Error`]).
+    /// Defaults to strict bonded matching (an unmatched bonded term is an error).
     ///
     /// # Errors
     ///
@@ -108,13 +108,13 @@ impl OPLSAATypifier {
 
     /// Build a typifier over the shipped canonical OPLS-AA parameter set.
     ///
-    /// The parameters ([`crate::ff::params::oplsaa`]) are generated from
+    /// The parameters ([`crate::ff::params::OPLSAA_ATOMS`] and its sibling tables) are generated from
     /// GROMACS v2026.3 `share/top/oplsaa.ff` (LGPL-2.1-or-later): atom classes
     /// are GROMACS `bond_type`s, and the `pair/lj/cut` style declares
     /// OPLS-AA's **geometric** combining rule (σᵢⱼ = √(σᵢσⱼ), εᵢⱼ = √(εᵢεⱼ);
     /// Jorgensen et al. 1996, GROMACS comb-rule 3), so molrs's kernel and an
     /// exported LAMMPS input mix alike. The SMARTS typing rules
-    /// ([`crate::ff::params::oplsaa_typing`]) are molrs's own Daylight SMARTS;
+    /// ([`crate::ff::params::OPLSAA_TYPING`]) are molrs's own Daylight SMARTS;
     /// each takes its class from the atom row of the same name.
     ///
     /// The input molecule needs explicit hydrogens. Its rings may be written
@@ -135,7 +135,7 @@ impl OPLSAATypifier {
     ///
     /// ```
     /// use molrs::ff::typifier::Typifier;
-    /// use molrs::ff::typifier::opls::OPLSAATypifier;
+    /// use molrs::ff::typifier::OPLSAATypifier;
     ///
     /// let typifier = OPLSAATypifier::oplsaa();
     /// let lj = typifier
@@ -150,8 +150,8 @@ impl OPLSAATypifier {
     ///
     /// ```
     /// use molrs::ff::typifier::Typing;
-    /// use molrs::ff::typifier::opls::OPLSAATypifier;
-    /// use molrs::{Atom, Atomistic};
+    /// use molrs::ff::typifier::OPLSAATypifier;
+    /// use molrs::system::{Atom, Atomistic};
     ///
     /// let mut ethanol = Atomistic::new();
     /// let c1 = ethanol.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
@@ -189,7 +189,7 @@ impl OPLSAATypifier {
     }
 
     /// Set the bonded no-match policy (chaining). `strict=true` →
-    /// [`NoMatch::Error`]; `strict=false` → [`NoMatch::Skip`].
+    /// an unmatched bonded term is an error; `strict=false` → it is skipped.
     pub fn with_strict(mut self, strict: bool) -> Self {
         self.no_match = if strict {
             NoMatch::Error
@@ -203,10 +203,17 @@ impl OPLSAATypifier {
     ///
     /// Exact force-field table matches still win first. To keep strict mode's
     /// contract stable, attached estimators are consulted only when this
-    /// typifier is configured with [`NoMatch::Skip`] via [`with_strict(false)`](Self::with_strict).
+    /// typifier skips unmatched terms via [`with_strict(false)`](Self::with_strict).
+    ///
+    /// The bonded matcher calls
+    /// [`interpolate`](ParameterInterpolator::interpolate) for any bonded term
+    /// the force-field tables do not cover. It returns `Ok(Some(params))` —
+    /// interpolated params for the term, defined under
+    /// [`BondedTerm::type_name`] and stamped; `Ok(None)` — declined, the term
+    /// is skipped; or `Err(_)` — a hard failure, propagated.
     pub fn with_estimator<E>(mut self, estimator: E) -> Self
     where
-        E: Estimator + Send + Sync + 'static,
+        E: ParameterInterpolator<Term = BondedTerm> + Send + Sync + 'static,
     {
         self.estimator = Some(Box::new(estimator));
         self
@@ -232,13 +239,13 @@ impl Typifier for OPLSAATypifier {
     /// `mass` and `charge`, or a plain value when the library has no row) and
     /// `class`. Bonded annotations: `type`, the matched class-keyed name with
     /// its library params, or an estimate named by
-    /// [`BondedTerm::type_name`]. Styles: every library style, in library
+    /// [`BondedTerm::type_name`](crate::ff::typifier::BondedTerm::type_name). Styles: every library style, in library
     /// order. Pairs: the library's pair rows among the atom types used.
     ///
     /// # Errors
     ///
     /// Propagates atom-typing and bonded-matching errors. In strict mode
-    /// ([`NoMatch::Error`]) also returns `Err` naming every atom no def typed,
+    /// (an unmatched bonded term is an error) also returns `Err` naming every atom no def typed,
     /// before any bonded term is matched.
     fn r#match(&self, graph: &mut Atomistic) -> Result<Match, String> {
         let atoms = typify_atoms(graph, &self.meta, &self.ff)?;
@@ -257,7 +264,10 @@ impl Typifier for OPLSAATypifier {
         }
         let estimator = match self.no_match {
             NoMatch::Error => None,
-            NoMatch::Skip => self.estimator.as_deref().map(|e| e as &dyn Estimator),
+            NoMatch::Skip => self
+                .estimator
+                .as_deref()
+                .map(|e| e as &dyn ParameterInterpolator<Term = BondedTerm>),
         };
         let mut m =
             typify_bonded_with(graph, &atoms.types, &self.tables, self.no_match, estimator)?;
@@ -280,9 +290,9 @@ mod tests {
     use crate::ff::forcefield::Params;
     use crate::ff::typifier::Typing;
     use indexmap::IndexMap;
-    use molrs::Atom;
+    use molrs::system::Atom;
     use molrs::system::BondType;
-    use molrs::system::molgraph::PropValue;
+    use molrs::system::PropValue;
     use std::collections::{BTreeMap, BTreeSet};
 
     /// Methylsilane `H3C-SiH3`, hand-built: C is atom 0, Si is atom 1, the
@@ -470,7 +480,7 @@ mod tests {
     /// term.
     struct StubBondEstimator;
 
-    impl crate::ff::typifier::estimate::ParameterInterpolator for StubBondEstimator {
+    impl crate::ff::typifier::ParameterInterpolator for StubBondEstimator {
         type Term = BondedTerm;
 
         fn interpolate(&self, term: &BondedTerm) -> Result<Option<Params>, String> {

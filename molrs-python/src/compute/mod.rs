@@ -27,9 +27,9 @@ use molrs::compute::{
     GyrationTensor, InertiaTensor, KMeans, KMeansResult, MSD, MSDResult, MSDTimeSeries, MsdMode,
     Pca2, PcaResult, RDF, RDFResult, RadiusOfGyration, RgResult,
 };
+use molrs::op::types::F;
 use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame::Frame as CoreFrame;
-use molrs::types::F;
+use molrs::store::Frame as CoreFrame;
 
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayDyn, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;

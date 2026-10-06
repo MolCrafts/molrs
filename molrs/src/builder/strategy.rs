@@ -14,8 +14,8 @@ use rand::rngs::StdRng;
 use super::occupancy::OccupancyMode;
 use super::walk::GrowthStrategy;
 use crate::op::so3::unit_vector_from_uniform;
-use crate::spatial::simbox::SimBox;
-use crate::types::F;
+use crate::op::types::F;
+use crate::spatial::SimBox;
 
 /// FCC-lattice growth: nearest-neighbour spacing equals `bond_length`, the box
 /// edge is rounded up to a whole number of conventional FCC cells, and overlap

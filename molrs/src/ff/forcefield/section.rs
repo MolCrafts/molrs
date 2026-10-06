@@ -39,11 +39,10 @@ use serde_json::{Map as JsonMap, Value as JsonValue, json};
 
 use super::{ForceField, Params, SpecialBonds, Style};
 use crate::ff::ir::Registry;
-use molrs::store::block::{Block, Column, DType};
-use molrs::store::forcefield_section::{
-    ENDPOINT_COLUMNS, EndpointKey, ForceFieldSection, UNIT_QUANTITIES, style_block_name,
-    unit_preset,
-};
+use molrs::store::EndpointKey;
+use molrs::store::forcefield_section::{ENDPOINT_COLUMNS, UNIT_QUANTITIES, unit_preset};
+use molrs::store::{Block, Column, DType};
+use molrs::store::{ForceFieldSection, style_block_name};
 
 /// The string style params that are entry fields of `document.styles`.
 const ENTRY_FIELDS: [&str; 2] = ["expression", "endpoint_key"];
@@ -314,7 +313,7 @@ fn style_table(style: &Style) -> Result<Block, String> {
     let rows = style.type_rows();
     let arity = style.arity();
     let mut block = Block::new();
-    let column_err = |e: molrs::store::block::BlockError| format!("{}: {e}", what());
+    let column_err = |e: molrs::store::BlockError| format!("{}: {e}", what());
     block
         .insert_column(
             "name",
@@ -787,8 +786,8 @@ mod tests {
     #[test]
     fn explicit_cross_rows_round_trip_and_still_override_mixing() {
         use crate::ff::potential::PotentialCompiler;
-        use molrs::store::frame::Frame;
-        use molrs::types::Idx;
+        use molrs::op::types::Idx;
+        use molrs::store::Frame;
         use ndarray::Array1;
 
         let gromacs = "[ defaults ]\n1 3 yes 0.5 0.5\n\
@@ -1123,7 +1122,7 @@ mod tests {
     fn a_populated_cmap_round_trips_and_prices_the_same() {
         use crate::ff::potential::PotentialCompiler;
         use crate::ff::potential::cmap::charmm::tests::{alanine, chain};
-        use molrs::store::block::Block;
+        use molrs::store::Block;
         use ndarray::Array1;
 
         let mut ff = ForceField::new("charmm");
@@ -1148,7 +1147,7 @@ mod tests {
         cmaps
             .insert("type", Array1::from_vec(vec!["ala".to_owned()]).into_dyn())
             .unwrap();
-        let mut frame = molrs::store::frame::Frame::new();
+        let mut frame = molrs::store::Frame::new();
         frame.insert("cmaps", cmaps);
         let x = chain(-63.0, -41.0);
         let e = |ff: &ForceField| {

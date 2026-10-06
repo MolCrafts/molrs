@@ -11,10 +11,10 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::store::keys;
-use crate::system::atomistic::Atomistic;
-use crate::system::bond::BondType;
-use crate::system::molgraph::NodeId;
-use crate::system::topology::Topology;
+use crate::system::Atomistic;
+use crate::system::BondType;
+use crate::system::NodeId;
+use crate::system::Topology;
 
 /// How rotatable-bond detection reads a bond whose class is
 /// [`BondType::Unknown`] — no `bond_type` written, as from a connectivity-only
@@ -215,8 +215,8 @@ pub fn detect_rotatable_bonds_with_downstream(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::bond::BondNumber;
-    use crate::system::molgraph::Atom;
+    use crate::system::Atom;
+    use crate::system::BondNumber;
 
     /// Build a chain graph (topology only, coords irrelevant for detection).
     fn chain(n: usize) -> Atomistic {

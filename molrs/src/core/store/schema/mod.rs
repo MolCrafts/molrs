@@ -17,7 +17,7 @@
 //! # Closed vocabulary, open block set
 //!
 //! A [`ColumnSpec`] binds a key *wherever it appears*, in any block. That is
-//! what lets [`Block::insert`](crate::store::block::Block::insert) enforce dtype
+//! what lets [`Block::insert`](crate::store::Block::insert) enforce dtype
 //! without knowing which block it is about to live in — dissolving the problem
 //! that a standalone `Block` only learns its role when inserted into a `Frame`,
 //! by which time a wrong-dtype column would already exist.
@@ -36,11 +36,11 @@
 //! | required columns, arity | block-scoped | [`BlockSpec`] via [`Validator`] |
 //! | endpoint range, row counts | frame-scoped | [`Validator`] |
 
-pub mod block;
-pub mod column;
-pub mod document;
-pub mod validator;
-pub mod violation;
+mod block;
+mod column;
+mod document;
+mod validator;
+mod violation;
 
 pub use block::{BlockSpec, EndpointSpec, EndpointTarget, RowKind};
 pub use column::{ColShape, ColumnDim, ColumnSpec};
@@ -52,8 +52,8 @@ pub use violation::{
     InstancePath, MAX_CELL_VIOLATIONS_PER_COLUMN, SchemaReport, Violation, ViolationKind,
 };
 
-use crate::store::block::DType;
-use crate::units::preset::PresetDim;
+use crate::store::DType;
+use crate::units::PresetDim;
 
 use ColShape::Scalar;
 use ColumnDim::{Dimensionless, NotAQuantity, Of, Product};
@@ -129,7 +129,7 @@ macro_rules! columns {
         /// Emitted by the `columns!` table macro from the same tokens as the table.
         /// [`crate::store::keys`] re-exports this module. Groups
         /// name these constants; they do not spell the strings again.
-        pub mod consts {
+        pub(crate) mod consts {
             $(
                 #[doc = $doc]
                 pub const $name: &str = $key;
@@ -464,8 +464,8 @@ pub fn check_target(target: &str) -> Result<(), String> {
 ///
 /// Empty when the block references nothing. The one rule
 /// [`Validator`] (range checks),
-/// [`Frame::subset`](crate::store::frame::Frame::subset) (renumbering) and
-/// [`Frame::replicate`](crate::store::frame::Frame::replicate) (offsetting)
+/// [`Frame::subset`](crate::store::Frame::subset) (renumbering) and
+/// [`Frame::replicate`](crate::store::Frame::replicate) (offsetting)
 /// follow; a downstream crate that rewrites row indices asks this function
 /// rather than keeping its own list.
 ///

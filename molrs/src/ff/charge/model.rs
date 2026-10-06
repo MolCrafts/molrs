@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 
 use molrs::store::keys;
-use molrs::{Atomistic, NodeId};
+use molrs::system::{Atomistic, NodeId};
 
 use molrs::perceive::equivalence::{EquivalenceOptions, find_equivalence_classes};
 
@@ -178,7 +178,7 @@ pub(super) fn equivalence_average(mol: &Atomistic, qm: &[f64]) -> Vec<f64> {
 /// [`ChargeError::Malformed`] when a column cannot be cleared.
 pub(super) fn without_type_columns(mol: &Atomistic) -> Result<Atomistic, ChargeError> {
     let mut work = mol.clone();
-    let malformed = |e: molrs::MolRsError| ChargeError::Malformed {
+    let malformed = |e: molrs::error::MolRsError| ChargeError::Malformed {
         detail: e.to_string(),
     };
 

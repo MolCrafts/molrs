@@ -13,15 +13,15 @@
 //! reference direction by the particle's quaternion before projection);
 //! that flavour is exposed via the `with_query_orientations` builder.
 
-use crate::compute::result::ComputeResult;
+use crate::compute::ComputeResult;
+use molrs::op::types::F;
 use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::store::FrameAccess;
 use ndarray::Array2;
 
-use crate::compute::error::ComputeError;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 use crate::compute::require_disp;
-use crate::compute::traits::Compute;
 use crate::op::rigid::rotate_by_quat;
 
 /// `LocalBondProjection` analyzer.
@@ -156,9 +156,9 @@ impl ComputeResult for LocalBondProjectionResult {}
 mod tests {
     use super::*;
     use crate::compute::test_support::nlist_from_frame;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use molrs::spatial::SimBox;
+    use molrs::store::Block;
+    use molrs::store::Frame;
     use ndarray::{Array1 as A1, array};
 
     const TOL: F = 1e-12;

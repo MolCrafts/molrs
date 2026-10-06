@@ -1,44 +1,3 @@
-//! Port joining: [`MolGraph::link`] joins two ports of one world graph into a
-//! bond.
-//!
-//! The vocabulary is defined in full in [`crate::system::port`]. In short: a
-//! **port** is a marked, not-yet-used bonding site on a graph. It
-//! names two bonded atoms: the **anchor** `a`, which gains the new bond, and
-//! the **handle** `h`, a real atom (usually a capping hydrogen) standing where
-//! the partner will go. The **world** is the one fragment that holds every unit
-//! being joined; a caller first [`merge`](MolGraph::merge)s each unit into it.
-//! An atom may carry a partial charge `q` (the `charge` property, in units of
-//! the elementary charge e) and a `frag_id`, the index of the unit it came
-//! from.
-//!
-//! A port `p = (a, h)` joins its anchor `a` to a partner's anchor. Its leaving
-//! group `D_p` is the handle's connected component over bonds once the `a`–`h`
-//! bond is cut ([`MolGraph::leaving_group`]). Linking `p` (anchor `a`) with `r`
-//! (anchor `b`) pairs the two only through
-//! [`Port::accepts`](crate::system::port::Port::accepts), removes
-//! `D_p ∪ D_r` (their ports go with them), folds each leaving group's partial
-//! charge (e) onto its own anchor,
-//!
-//! ```text
-//! q_a' = q_a + Σ_{i ∈ D_p} q_i        q_b' = q_b + Σ_{i ∈ D_r} q_i
-//! ```
-//!
-//! and bonds the two anchors with the port order.
-//!
-//! **Conservation.** The refusals guarantee `D_p ∩ D_r = ∅` and that both
-//! anchors lie outside both branches, so the total charge `Σ_{i ∈ V} q_i` over
-//! the world's atom set `V` is conserved: every removed atom's charge reappears
-//! on exactly one surviving anchor (exactly in real arithmetic; to rounding in
-//! `f64`). The sum within one
-//! `frag_id` unit is conserved when every atom of `D_p` carries `frag_id(a)`
-//! and every atom of `D_r` carries `frag_id(b)` (a sufficient condition);
-//! `link` does not check that labelling.
-//!
-//! Putting the whole leaving-group charge on the one anchor is the practice of
-//! pysimm's `random_walk` polymer builder (Fortunato & Colina, *SoftwareX* **6**,
-//! 7 (2017), doi:10.1016/j.softx.2016.12.002); AMBER's `prepgen` spreads it
-//! instead, which molrs does not offer.
-
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
@@ -47,9 +6,9 @@ use slotmap::Key;
 
 use crate::error::MolRsError;
 use crate::store::keys;
-use crate::system::molgraph::MolGraph;
-use crate::system::molgraph::{NodeId, RelationId};
-use crate::system::port::Port;
+use crate::system::MolGraph;
+use crate::system::Port;
+use crate::system::{NodeId, RelationId};
 
 /// Why [`MolGraph::link`] refused to join two ports.
 #[derive(Debug)]
@@ -266,10 +225,10 @@ impl MolGraph {
     /// `q_a' = q_a + Σ_{i∈D} q_i` with `D` the branch, removes both branches
     /// (their ports go with them) and bonds the two anchors, classed from the
     /// port order through
-    /// [`BondNumber::implied_type`](crate::system::bond::BondNumber::implied_type)
+    /// [`BondNumber::implied_type`](crate::system::BondNumber::implied_type)
     /// and stamped on the new bond. Total charge
     /// is conserved; per-`frag_id` charge only under the labelling condition
-    /// in the [module docs](crate::system::link).
+    /// below.
     ///
     /// Several pairs are joined in one pass by the crate-internal batch
     /// `MolGraph::link_many`, which applies these checks to every pair.
@@ -292,12 +251,12 @@ impl MolGraph {
     ///
     /// ```
     /// use molrs::store::keys;
-    /// use molrs::system::bond::BondNumber;
-    /// use molrs::system::atomistic::Atomistic;
-    /// use molrs::system::port::PortKind;
+    /// use molrs::system::BondNumber;
+    /// use molrs::system::Atomistic;
+    /// use molrs::system::PortKind;
     ///
     /// let mut world = Atomistic::new();
-    /// let mut unit = |q_c: f64, kind: PortKind| -> Result<_, molrs::MolRsError> {
+    /// let mut unit = |q_c: f64, kind: PortKind| -> Result<_, molrs::error::MolRsError> {
     ///     let c = world.add_atom_bare("C");
     ///     let h = world.add_atom_bare("H");
     ///     world.set_node(c, keys::CHARGE, q_c)?;
@@ -319,6 +278,47 @@ impl MolGraph {
     /// assert_eq!(world.n_ports(), 0);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
+    ///
+    /// Port joining: [`MolGraph::link`] joins two ports of one world graph into a
+    /// bond.
+    ///
+    /// The vocabulary is defined in full on [`crate::system::Port`]. In short: a
+    /// **port** is a marked, not-yet-used bonding site on a graph. It
+    /// names two bonded atoms: the **anchor** `a`, which gains the new bond, and
+    /// the **handle** `h`, a real atom (usually a capping hydrogen) standing where
+    /// the partner will go. The **world** is the one fragment that holds every unit
+    /// being joined; a caller first [`merge`](MolGraph::merge)s each unit into it.
+    /// An atom may carry a partial charge `q` (the `charge` property, in units of
+    /// the elementary charge e) and a `frag_id`, the index of the unit it came
+    /// from.
+    ///
+    /// A port `p = (a, h)` joins its anchor `a` to a partner's anchor. Its leaving
+    /// group `D_p` is the handle's connected component over bonds once the `a`–`h`
+    /// bond is cut ([`MolGraph::leaving_group`]). Linking `p` (anchor `a`) with `r`
+    /// (anchor `b`) pairs the two only through
+    /// [`Port::accepts`](crate::system::Port::accepts), removes
+    /// `D_p ∪ D_r` (their ports go with them), folds each leaving group's partial
+    /// charge (e) onto its own anchor,
+    ///
+    /// ```text
+    /// q_a' = q_a + Σ_{i ∈ D_p} q_i        q_b' = q_b + Σ_{i ∈ D_r} q_i
+    /// ```
+    ///
+    /// and bonds the two anchors with the port order.
+    ///
+    /// **Conservation.** The refusals guarantee `D_p ∩ D_r = ∅` and that both
+    /// anchors lie outside both branches, so the total charge `Σ_{i ∈ V} q_i` over
+    /// the world's atom set `V` is conserved: every removed atom's charge reappears
+    /// on exactly one surviving anchor (exactly in real arithmetic; to rounding in
+    /// `f64`). The sum within one
+    /// `frag_id` unit is conserved when every atom of `D_p` carries `frag_id(a)`
+    /// and every atom of `D_r` carries `frag_id(b)` (a sufficient condition);
+    /// `link` does not check that labelling.
+    ///
+    /// Putting the whole leaving-group charge on the one anchor is the practice of
+    /// pysimm's `random_walk` polymer builder (Fortunato & Colina, *SoftwareX* **6**,
+    /// 7 (2017), doi:10.1016/j.softx.2016.12.002); AMBER's `prepgen` spreads it
+    /// instead, which molrs does not offer.
     pub fn link(&mut self, a: RelationId, b: RelationId) -> Result<RelationId, LinkError> {
         let plan = self.plan_link(a, b)?;
 
@@ -373,7 +373,7 @@ impl MolGraph {
     ///
     /// O(E + Σ|D| + pairs), with E the relation count and Σ|D| the total
     /// leaving-group size: checks 2–4 are hash lookups and the removal is one
-    /// [`remove_nodes`](crate::system::molgraph::MolGraph::remove_nodes) call,
+    /// [`remove_nodes`](crate::system::MolGraph::remove_nodes) call,
     /// which scans every relation once. A loop over `link` costs
     /// O(pairs · E).
     ///
@@ -594,12 +594,12 @@ mod tests {
     use super::{LinkError, LinkManyError};
     use crate::error::MolRsError;
     use crate::store::keys;
-    use crate::system::atomistic::Atomistic;
-    use crate::system::bond::BondNumber;
-    use crate::system::molgraph::NodeId;
-    use crate::system::molgraph::PropValue;
-    use crate::system::molgraph::RelationId;
-    use crate::system::port::{Port, PortKind};
+    use crate::system::Atomistic;
+    use crate::system::BondNumber;
+    use crate::system::NodeId;
+    use crate::system::PropValue;
+    use crate::system::RelationId;
+    use crate::system::{Port, PortKind};
 
     // ---- fixtures ----------------------------------------------------------
     //

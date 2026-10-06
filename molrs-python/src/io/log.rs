@@ -4,7 +4,7 @@
 //! `molrs::io::log::lammps` struct; nested values are handed out as the
 //! matching Python class, thermo tables as NumPy arrays.
 
-use molrs::io::log::lammps::{
+use molrs::io::log::{
     LammpsCpuUse, LammpsLoadBalance, LammpsLog, LammpsLogHeader, LammpsLoopTime, LammpsMemoryUsage,
     LammpsNeighborStatistics, LammpsPerformance, LammpsRun, LammpsThermo, LammpsTimingBreakdown,
     LammpsTimingRow, LammpsWarning,

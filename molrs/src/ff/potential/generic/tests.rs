@@ -18,9 +18,9 @@ use crate::ff::potential::generic::{CompoundForm, ParamCols, ScalarForm};
 use crate::ff::potential::geometry::{accumulate_angle_forces, compute_angle};
 use crate::ff::potential::pair::testing::{assert_virial_matches_forces, table_over};
 use crate::ff::potential::{Member, Potential, PotentialCompiler, Potentials};
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
-use molrs::types::{F, Idx};
+use molrs::op::types::{F, Idx};
+use molrs::store::Block;
+use molrs::store::Frame;
 
 const DEG: F = PI / 180.0;
 

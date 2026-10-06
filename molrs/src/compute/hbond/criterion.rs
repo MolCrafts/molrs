@@ -14,7 +14,7 @@
 //! the same near-linear-bond intent; molrs uses the angle-at-H form because that
 //! is the quantity the spec and the downstream lifetime TCFs reference.
 
-use molrs::types::F;
+use molrs::op::types::F;
 
 /// Which interatomic distance the cutoff applies to when pairing candidates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

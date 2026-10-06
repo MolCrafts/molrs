@@ -2,7 +2,7 @@
 //! decoration** over the core graph primitive.
 //!
 //! There is exactly **one** SSSR implementation in the tree and it lives in
-//! [`crate::system::topology`]: [`Topology::find_rings`] computes the
+//! [`crate::system::Topology`]: [`Topology::find_rings`] computes the
 //! **Smallest Set of Smallest Rings** (equivalently the minimum cycle basis)
 //! over contiguous `usize` vertex/edge indices. This module owns no ring
 //! algorithm of its own; it only:
@@ -20,10 +20,10 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::system::atomistic::Atomistic;
+use crate::system::Atomistic;
 
-use crate::system::molgraph::{NodeId, RelationId};
-use crate::system::topology::Topology;
+use crate::system::Topology;
+use crate::system::{NodeId, RelationId};
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -32,7 +32,7 @@ use crate::system::topology::Topology;
 /// All ring information for an [`Atomistic`], produced by [`find_rings`].
 ///
 /// The handle-keyed counterpart of
-/// [`crate::system::topology::TopologyRingInfo`]: the same rings, addressed by
+/// [`crate::system::TopologyRingInfo`]: the same rings, addressed by
 /// [`NodeId`] / [`RelationId`] instead of by graph index.
 #[derive(Debug, Clone)]
 pub struct RingInfo {
@@ -191,7 +191,7 @@ pub fn max_ring_system_size(mol: &Atomistic) -> usize {
 /// only rings of at most `max_ring_size` atoms.
 ///
 /// Feed the result to
-/// [`Atomistic::extract_subgraph`](crate::system::atomistic::Atomistic::extract_subgraph)
+/// [`Atomistic::extract_subgraph`](crate::system::Atomistic::extract_subgraph)
 /// as its `whole_groups`.
 ///
 /// # Why a size bound, and why local
@@ -407,7 +407,7 @@ pub fn find_rings(mol: &Atomistic) -> RingInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::molgraph::Atom;
+    use crate::system::Atom;
 
     fn cycle(n: usize) -> Atomistic {
         let mut g = Atomistic::new();

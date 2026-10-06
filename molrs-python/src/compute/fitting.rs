@@ -20,19 +20,19 @@
 //! analyst's explicit, parameterized choice — and a raw result can never
 //! silently fabricate a transport coefficient.
 
-use molrs::compute::fitting::{CumulativeTrapezoid, LinearFit, Plateau};
-use molrs::compute::spectroscopy::{
+use molrs::compute::DebyeFit;
+use molrs::compute::{Compute, Fit};
+use molrs::compute::{CumulativeTrapezoid, LinearFit, Plateau};
+use molrs::compute::{
+    DebyeRelaxation, DipoleRateCross, EinsteinConductivity, EinsteinDiffusion,
+    EinsteinDiffusionArgs, EwaldBoundary, GreenKuboConductivity, GreenKuboDiffusion, VACF,
+};
+use molrs::compute::{
     DipoleAutocorrelationSpectrum, DipoleRateCrossSpectrum, EinsteinHelfandSpectrum,
     GreenKuboSpectrum, IRSpectrum, PowerSpectrum, RamanSpectrum, ResonanceRamanSpectrum,
     RoaSpectrum, VcdSpectrum,
 };
-use molrs::compute::traits::{Compute, Fit};
-use molrs::compute::transport::DebyeFit;
-use molrs::compute::transport::{
-    DebyeRelaxation, DipoleRateCross, EinsteinConductivity, EinsteinDiffusion,
-    EinsteinDiffusionArgs, EwaldBoundary, GreenKuboConductivity, GreenKuboDiffusion, VACF,
-};
-use molrs::store::frame::Frame as CoreFrame;
+use molrs::store::Frame as CoreFrame;
 use ndarray::Array1;
 use numpy::{IntoPyArray, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::prelude::*;

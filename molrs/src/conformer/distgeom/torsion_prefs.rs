@@ -36,9 +36,9 @@
 use std::collections::HashMap;
 
 use molrs::perceive::smarts::{MatchOptions, SmartsPattern};
-use molrs::system::atomistic::Atomistic;
-use molrs::system::molgraph::NodeId;
-use molrs::system::molgraph::PropValue;
+use molrs::system::Atomistic;
+use molrs::system::NodeId;
+use molrs::system::PropValue;
 
 use super::mol_features::Perceived;
 use super::torsion_tables::{self, TorsionRow};
@@ -176,7 +176,7 @@ pub struct AssignedTorsion {
 /// `p` is the perception of `mol` (aromaticity / hybridization / rings); it is
 /// reused to transplant aromatic flags onto the matching copy. The `r{…}` /
 /// `x<n>` ring primitives are evaluated by the core SMARTS engine directly.
-pub fn assign_with_provenance(mol: &Atomistic, p: &Perceived) -> Vec<AssignedTorsion> {
+pub(crate) fn assign_with_provenance(mol: &Atomistic, p: &Perceived) -> Vec<AssignedTorsion> {
     let work = aromatic_working_copy(mol, p);
     let patterns = compile_all();
 

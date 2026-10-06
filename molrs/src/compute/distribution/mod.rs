@@ -23,21 +23,19 @@ mod histogram1d;
 mod observable;
 
 pub use angle::AngleObservable;
-pub use combined::{
-    AnyObservable, AxisSpec, CombinedDistribution, CombinedDistributionResult, KB_KCAL_PER_MOL_K,
-};
+pub use combined::{AnyObservable, AxisSpec, CombinedDistribution, CombinedDistributionResult};
 pub use dihedral::DihedralObservable;
 pub use distance::DistanceObservable;
 pub use histogram1d::{Histogram1d, renormalize_density};
 pub use observable::{AtomGroups, Observable};
 
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::store::FrameAccess;
 use ndarray::Array1;
 
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
 
 /// A 1-D distribution function over the samples of an [`Observable`].
 ///

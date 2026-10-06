@@ -144,10 +144,10 @@ mod zarrs_pins {
     use std::path::Path;
     use std::sync::Arc;
 
-    use molrs::MolRsError;
-    use molrs::store::block::Block;
-    use molrs::store::frame::Frame;
-    use molrs::store::record::MolRec;
+    use molrs::error::MolRsError;
+    use molrs::store::Block;
+    use molrs::store::Frame;
+    use molrs::store::MolRec;
     use ndarray::ArrayD;
     use tempfile::tempdir;
     use zarrs::array::codec::{GzipCodec, ShardingCodecBuilder, ShardingIndexLocation};

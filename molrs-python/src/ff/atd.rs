@@ -16,7 +16,7 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use molrs::ff::typifier::atd::{AtdBondOrders, AtdParameterSet, AtdTypifier};
+use molrs::ff::typifier::{AtdBondOrders, AtdParameterSet, AtdTypifier};
 
 use crate::ff::PyTypifier;
 

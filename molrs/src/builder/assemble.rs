@@ -18,20 +18,22 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::builder::orient::{OrientError, Orienter, SiteLink, SiteView, direction_fit};
-use crate::builder::place::{ParentJoin, PlaceError, PlaceSite, Placer};
+use crate::builder::orient::direction_fit;
+use crate::builder::{OrientError, Orienter, SiteLink, SiteView};
+use crate::builder::{ParentJoin, PlaceError, PlaceSite, Placer};
 use crate::error::MolRsError;
 use crate::op::rigid::{Rigid, apply};
+use crate::op::types::I;
 use crate::op::types::Vec3;
 use crate::op::vec3::sub;
 use crate::store::keys;
-use crate::system::coarsegrain::CoarseGrain;
-use crate::system::link::LinkManyError;
-use crate::system::molgraph::NodeId;
-use crate::system::molgraph::RelationId;
-use crate::system::molgraph::{FromMolGraph, MolGraph};
-use crate::system::port::Port;
-use crate::types::I;
+use crate::system::CoarseGrain;
+use crate::system::LinkManyError;
+use crate::system::MolGraph;
+use crate::system::NodeId;
+use crate::system::Port;
+use crate::system::RelationId;
+use crate::system::molgraph::FromMolGraph;
 
 /// The most port assignments tried at one site before it is refused.
 const MAX_ASSIGNMENTS: usize = 5040;
@@ -39,7 +41,7 @@ const MAX_ASSIGNMENTS: usize = 5040;
 /// Why [`Assembler::assemble`] refused its input.
 ///
 /// `site` is a 0-based ordinal of the site graph's beads, in
-/// [`node_ids`](crate::system::molgraph::MolGraph::node_ids) order — the
+/// [`node_ids`](crate::system::MolGraph::node_ids) order — the
 /// unit's `frag_id`.
 #[derive(Debug)]
 pub enum AssembleError {
@@ -328,10 +330,10 @@ enum PortChoice {
 ///
 /// use molrs::builder::{Assembler, GrowthPlacer};
 /// use molrs::store::keys;
-/// use molrs::system::bond::BondNumber;
-/// use molrs::system::coarsegrain::CoarseGrain;
-/// use molrs::system::atomistic::Atomistic;
-/// use molrs::system::port::PortKind;
+/// use molrs::system::BondNumber;
+/// use molrs::system::CoarseGrain;
+/// use molrs::system::Atomistic;
+/// use molrs::system::PortKind;
 ///
 /// // Joining carbons C0 (`<`, hydrogen on −x) and C1 (`>`, hydrogen on +x).
 /// let mut unit = Atomistic::new();
@@ -837,8 +839,7 @@ impl Assembler {
         };
         let position = |atom: NodeId| template.get_node(atom).ok().and_then(|a| a.position());
         let center =
-            crate::spatial::geometry::center(template, &template.node_ids().collect::<Vec<_>>())
-                .ok();
+            crate::spatial::center(template, &template.node_ids().collect::<Vec<_>>()).ok();
         let mut out = Vec::new();
         for id in template.ports() {
             let port = template.port(id).map_err(refuse)?;
@@ -916,17 +917,17 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::{AssembleError, Assembler};
-    use crate::builder::orient::{AxisOrienter, OrientError, Orienter, SiteView};
-    use crate::builder::place::{GrowthPlacer, PlaceError, PlaceSite, Placer, SitePlacer};
+    use crate::builder::{AxisOrienter, OrientError, Orienter, SiteView};
+    use crate::builder::{GrowthPlacer, PlaceError, PlaceSite, Placer, SitePlacer};
     use crate::op::rigid::{Rigid, about};
     use crate::op::types::Vec3;
     use crate::store::keys;
-    use crate::system::atomistic::Atomistic;
-    use crate::system::bond::BondNumber;
-    use crate::system::coarsegrain::CoarseGrain;
-    use crate::system::molgraph::MolGraph;
-    use crate::system::molgraph::NodeId;
-    use crate::system::port::PortKind;
+    use crate::system::Atomistic;
+    use crate::system::BondNumber;
+    use crate::system::CoarseGrain;
+    use crate::system::MolGraph;
+    use crate::system::NodeId;
+    use crate::system::PortKind;
 
     const TOL: f64 = 1e-9;
 
@@ -1331,11 +1332,8 @@ mod tests {
             template: &MolGraph,
             sites: &[SiteView<'_>],
         ) -> Result<Vec<Rigid>, OrientError> {
-            let c = crate::spatial::geometry::center(
-                template,
-                &template.node_ids().collect::<Vec<_>>(),
-            )
-            .map_err(OrientError::Center)?;
+            let c = crate::spatial::center(template, &template.node_ids().collect::<Vec<_>>())
+                .map_err(OrientError::Center)?;
             let rz = [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
             Ok(vec![about(rz, c); sites.len()])
         }

@@ -3,26 +3,27 @@
 //!
 //! ## Layout
 //!
-//! - [`simbox`] — periodic/triclinic simulation cell (`SimBox`, MIC, wrap)
+//! - [`SimBox`] — periodic/triclinic simulation cell (MIC, wrap)
 //! - [`region`] — solids with a signed distance (`Region`, `Sphere`, `Cuboid`,
 //!   `Parallelepiped`, Boolean composition)
-//! - [`mesh`] — triangle surfaces (`TriMesh`), what an STL reads into
+//! - [`TriMesh`] — triangle surfaces, what an STL reads into
 //! - [`neighbors`] — neighbor search algorithms
-//! - [`periodic`] — ghost atoms for the MD force path
-//! - [`geometry`] — whole-graph transforms (translate, scale, rotate) and the
-//!   node-group centre query ([`geometry::center`])
-//! - [`trace`] — an ordered path of 3D points with no chemistry ([`Trace`])
+//! - [`GhostSet`] — ghost atoms for the MD force path
+//! - [`translate`], [`scale`], [`rotate`] — whole-graph transforms, and the
+//!   node-group centre query [`center`]
+//! - [`Trace`] — an ordered path of 3D points with no chemistry
 
 pub(crate) mod bvh;
-pub mod geometry;
-pub mod mesh;
+mod geometry;
+mod mesh;
 pub mod neighbors;
-pub mod periodic;
+mod periodic;
 pub mod region;
-pub mod simbox;
-pub mod trace;
+mod simbox;
+mod trace;
 
-pub use mesh::TriMesh;
+pub use geometry::{CenterError, center, rotate, scale, translate};
+pub use mesh::{DEGENERATE_AREA2, TriMesh};
 pub use periodic::{GhostError, GhostSet, ImageRange};
 pub use simbox::{BoxError, BoxKind, Mic, SimBox};
 pub use trace::Trace;

@@ -5,15 +5,15 @@
 //! clustered via Lloyd's algorithm with k-means++ init. Deterministic given a
 //! fixed seed.
 
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::store::FrameAccess;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 
-use crate::compute::error::ComputeError;
-use crate::compute::ml::pca::PcaResult;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
+use crate::compute::PcaResult;
 
 /// Per-row cluster labels in `0..k`.
 #[derive(Debug, Clone, Default)]
@@ -250,7 +250,7 @@ fn sq_dist(a: &[F], b: &[F]) -> F {
 mod tests {
     use super::*;
     use crate::op::random::standard_normal;
-    use molrs::Frame;
+    use molrs::store::Frame;
     use rand::SeedableRng;
     use rand::rngs::StdRng;
     use std::collections::HashSet;

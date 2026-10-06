@@ -6,7 +6,7 @@
 //! a variable is any identifier, resolved against a
 //! [`Binding`](crate::ff::ir::expr::Binding) only at compile time.
 
-use molrs::types::F;
+use molrs::op::types::F;
 
 /// A binary operator of the grammar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

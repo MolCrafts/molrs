@@ -14,7 +14,7 @@
 //!
 //! No function here applies a periodic image convention: [`MolGraph`] holds no
 //! box. Callers unwrap and wrap with
-//! [`SimBox`](crate::spatial::simbox::SimBox) themselves.
+//! [`SimBox`](crate::spatial::SimBox) themselves.
 
 use std::fmt;
 
@@ -22,7 +22,7 @@ use crate::error::MolRsError;
 use crate::op::rigid::{self, apply, axis_angle};
 use crate::op::superpose::centroid;
 use crate::store::keys;
-use crate::system::molgraph::{MolGraph, NodeId};
+use crate::system::{MolGraph, NodeId};
 
 /// Translate every node that has coordinates by `delta` (Å; nodes without a
 /// full coordinate set are left untouched).
@@ -222,9 +222,9 @@ impl std::error::Error for CenterError {}
 /// space between the pieces. No periodic image convention is applied here —
 /// [`MolGraph`] holds no box. If the
 /// listed nodes may be split across the boundary, unwrap them first with
-/// [`SimBox::unwrap`](crate::spatial::simbox::SimBox::unwrap); after placing
+/// [`SimBox::unwrap`](crate::spatial::SimBox::unwrap); after placing
 /// everything, wrap the final world once with
-/// [`SimBox::wrap`](crate::spatial::simbox::SimBox::wrap). When two centres
+/// [`SimBox::wrap`](crate::spatial::SimBox::wrap). When two centres
 /// are subtracted (e.g. a coarse-grained group and the all-atom molecule that
 /// replaces it), both must be in one length unit.
 ///
@@ -243,8 +243,8 @@ impl std::error::Error for CenterError {}
 /// # Examples
 ///
 /// ```
-/// use molrs::MolGraph;
-/// use molrs::spatial::geometry::center;
+/// use molrs::system::MolGraph;
+/// use molrs::spatial::center;
 /// use molrs::store::keys;
 ///
 /// let mut mol = MolGraph::new();
@@ -296,7 +296,7 @@ pub fn center(mol: &MolGraph, nodes: &[NodeId]) -> Result<[f64; 3], CenterError>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::atomistic::Atomistic;
+    use crate::system::Atomistic;
 
     #[test]
     fn rotating_about_an_axis_with_no_direction_is_an_error() {

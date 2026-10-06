@@ -33,7 +33,9 @@ use super::meta::OplsTypingMeta;
 /// circular groups are computed once at construction.
 #[derive(Debug, Clone)]
 pub struct OplsDependencyAnalyzer {
-    /// type → set of types it depends on (each itself a def-carrying type).
+    /// type → set of types it depends on (each itself a def-carrying type);
+    /// kept for the tests, which inspect it.
+    #[cfg(test)]
     dependencies: HashMap<String, HashSet<String>>,
     /// type → topological level.
     levels: HashMap<String, usize>,
@@ -88,6 +90,7 @@ impl OplsDependencyAnalyzer {
 
         let (levels, circular_groups) = compute_levels(&dependencies);
         Self {
+            #[cfg(test)]
             dependencies,
             levels,
             circular_groups,
@@ -95,6 +98,7 @@ impl OplsDependencyAnalyzer {
     }
 
     /// The dependency set of a type (the types it references via `%label`).
+    #[cfg(test)]
     pub fn dependencies_of(&self, name: &str) -> Option<&HashSet<String>> {
         self.dependencies.get(name)
     }
@@ -110,6 +114,7 @@ impl OplsDependencyAnalyzer {
     }
 
     /// All type names at a given level (unordered).
+    #[cfg(test)]
     pub fn types_at_level(&self, level: usize) -> Vec<String> {
         self.levels
             .iter()
@@ -119,6 +124,7 @@ impl OplsDependencyAnalyzer {
     }
 
     /// The detected circular-dependency groups (each at `max_level + 1`).
+    #[cfg(test)]
     pub fn circular_groups(&self) -> &[HashSet<String>] {
         &self.circular_groups
     }
@@ -282,7 +288,7 @@ fn detect_circular_groups(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::typifier::opls::meta::OplsTypeRow;
+    use crate::ff::typifier::OplsTypeRow;
 
     fn row(def: Option<&str>) -> OplsTypeRow {
         OplsTypeRow {

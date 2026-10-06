@@ -38,7 +38,7 @@ pub(in crate::io::zarr) struct ChunkPlan {
 /// (the three components of a coordinate), and splitting them makes a single
 /// entity span several chunks.
 ///
-/// [`DType::String`]: molrs::store::block::DType::String
+/// [`DType::String`]: molrs::store::DType::String
 pub(in crate::io::zarr) fn plan(shape: &[u64], itemsize: Option<usize>) -> ChunkPlan {
     let no_plan = ChunkPlan {
         chunks: None,

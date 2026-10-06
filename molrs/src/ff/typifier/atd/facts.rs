@@ -22,8 +22,8 @@ use std::collections::HashMap;
 use molrs::perceive::bond_type::BCC_BOND_TYPE;
 use molrs::perceive::ring_class::ring_classes;
 use molrs::store::keys;
-use molrs::system::molgraph::PropValue;
-use molrs::{Atomistic, Element, NodeId, Relation, RelationId};
+use molrs::system::PropValue;
+use molrs::system::{Atomistic, Element, NodeId, Relation, RelationId};
 
 use crate::ff::params::AtomProp;
 

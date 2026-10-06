@@ -35,11 +35,11 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use molrs::NodeId;
+use molrs::system::NodeId;
 
 use crate::ff::forcefield::Params;
 use crate::ff::params::{EmpiricalTable, ParmTable, ParmchkTable, ParmchkWeights};
-use crate::ff::typifier::estimate::{EstimateMethod, Provenance};
+use crate::ff::typifier::{EstimateMethod, Provenance};
 
 /// A bond or angle parmchk2 estimated: its parameters (`k`, `r0` / `theta0`),
 /// and how it reached them.

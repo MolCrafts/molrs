@@ -41,13 +41,13 @@ mod torsion_prefs;
 mod torsion_tables;
 
 use molrs::error::MolRsError;
-use molrs::system::atomistic::Atomistic;
+use molrs::system::Atomistic;
 
 pub use chirality::{ChiralConstraint, ChiralSign, ImproperConstraint};
 pub use knowledge::KnowledgeTorsion;
 pub use matrix::BoundsMatrix;
 pub use smooth::{smooth_bounds, smooth_bounds_tol};
-pub use torsion_prefs::{AssignedTorsion, TorsionConstraint, TorsionTable, assign_with_provenance};
+pub use torsion_prefs::{AssignedTorsion, TorsionConstraint, TorsionTable};
 
 /// ETKDG generation version. This spec targets `Etkdgv3` by default.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

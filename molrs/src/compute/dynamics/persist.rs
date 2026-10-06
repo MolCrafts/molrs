@@ -45,9 +45,9 @@
 
 use ndarray::{Array1, Array2, Array3};
 
-use crate::compute::error::ComputeError;
+use crate::compute::ComputeError;
 use crate::op::vec3::{dot, sub};
-use molrs::spatial::simbox::Mic;
+use molrs::spatial::Mic;
 
 /// Pair-survival criterion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

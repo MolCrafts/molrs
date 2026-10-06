@@ -19,12 +19,12 @@
 
 use std::marker::PhantomData;
 
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::store::FrameAccess;
 
-use crate::compute::error::ComputeError;
-use crate::compute::result::{ComputeResult, DescriptorRow};
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::{ComputeResult, DescriptorRow};
 
 /// Result of a 2-component PCA projection.
 #[derive(Debug, Clone, Default)]
@@ -277,7 +277,7 @@ fn vec_norm(v: &[F]) -> F {
 mod tests {
     use super::*;
     use crate::op::random::standard_normal;
-    use molrs::Frame;
+    use molrs::store::Frame;
     use rand::SeedableRng;
     use rand::rngs::StdRng;
 

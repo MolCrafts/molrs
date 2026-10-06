@@ -52,9 +52,9 @@ use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::{atom_type_index, fold_chunks, type_pair};
 use crate::ff::potential::{CompileError, Member, PairDriven, Potential, need};
 use molrs::math::Virial;
+use molrs::op::types::F;
 use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use molrs::store::Frame;
 
 const MIN_R2: F = 1e-24;
 

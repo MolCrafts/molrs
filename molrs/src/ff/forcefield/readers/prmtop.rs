@@ -58,16 +58,17 @@ use super::ForceFieldReader;
 use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
-use crate::ff::params::amber::AMBER_COULOMB;
-use crate::ff::potential::pair::lj_cut::lj_ab_to_sigma_epsilon;
+use crate::ff::params::amber::{AMBER_SCEE, AMBER_SCNB};
+use crate::ff::potential::pair::lj_ab_to_sigma_epsilon;
 use crate::io::data::prmtop::parse_flag_sections;
 #[cfg(doc)]
 use crate::io::data::prmtop_tables::amber_phase;
 use crate::io::data::prmtop_tables::{
-    CHAMBER_COULOMB, TorsionTables, TorsionTerm, atom_type_names, canonical_terms,
-    chamber_impropers, chamber_urey_bradleys, cmap_terms, decode_torsions, is_chamber,
-    one_four_weights, parse_tokens, proper_type_names,
+    TorsionTables, TorsionTerm, atom_type_names, canonical_terms, chamber_impropers,
+    chamber_urey_bradleys, cmap_terms, decode_torsions, is_chamber, one_four_weights, parse_tokens,
+    proper_type_names,
 };
+use crate::units::constants::{AMBER_COULOMB, CHARMM_COULOMB};
 use molrs::store::type_labels::TypeName;
 
 /// `(sigma_Å, epsilon_kcal_per_mol)` of one LJ entry.
@@ -449,7 +450,16 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     // reader gives the pairs whose rows carry another their own scales.
     let scee = section_f64(sections, "SCEE_SCALE_FACTOR")?;
     let scnb = section_f64(sections, "SCNB_SCALE_FACTOR")?;
-    let one_four = one_four_weights(&dih_ptrs, n_atom, &scee, &scnb, &dih_per)?;
+    // A file without SCEE/SCNB (pre-Amber-11) is an AMBER force field's.
+    let one_four = one_four_weights(
+        &dih_ptrs,
+        n_atom,
+        &scee,
+        &scnb,
+        &dih_per,
+        Some((AMBER_SCEE, AMBER_SCNB)),
+    )?
+    .ok_or("1-4 weights unknown although AMBER's divisors stand in")?;
     ff.set_special_bonds(SpecialBonds {
         lj: [0.0, 0.0, one_four.lj],
         coul: [0.0, 0.0, one_four.coul],
@@ -538,7 +548,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
             "pair",
             "coul/charmm",
             Params::from_pairs(&[
-                ("coulomb", CHAMBER_COULOMB),
+                ("coulomb", CHARMM_COULOMB),
                 ("dielectric", VACUUM_DIELECTRIC),
             ]),
         )?;
@@ -1292,27 +1302,6 @@ c3  c3  c3  hc
         for at in angles {
             assert_eq!(at.params.get("id"), None, "{} carries an id", at.name);
         }
-    }
-
-    #[test]
-    fn amber_coulomb_is_18_2223_squared() {
-        use crate::ff::params::amber::{AMBER_COULOMB, AMBER_SCEE, AMBER_SCNB};
-        use molrs::units::constants::COULOMB_REAL;
-
-        assert!(
-            (AMBER_COULOMB - 18.2223_f64.powi(2)).abs() < 1e-9,
-            "AMBER_COULOMB={AMBER_COULOMB}"
-        );
-        let rel = (COULOMB_REAL - AMBER_COULOMB) / COULOMB_REAL;
-        assert!(
-            (rel - 3.4610e-5).abs() < 1e-8,
-            "CODATA relative offset={rel}"
-        );
-        assert!((1.0 / AMBER_SCEE - 1.0 / 1.2).abs() < 1e-12);
-        assert!((1.0 / AMBER_SCNB - 0.5).abs() < 1e-12);
-        // The format default the io layer uses is this one.
-        use crate::io::data::prmtop_tables::{SCEE_DEFAULT, SCNB_DEFAULT};
-        assert_eq!((SCEE_DEFAULT, SCNB_DEFAULT), (AMBER_SCEE, AMBER_SCNB));
     }
 
     /// A five-atom chamber (CHARMM) prmtop, hand-written: every number in it

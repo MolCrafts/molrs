@@ -38,12 +38,12 @@ use crate::ff::potential::{Member, PotentialCompiler};
 use crate::ff::{
     forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
 };
+use molrs::op::types::{F, Idx};
+use molrs::spatial::SimBox;
 use molrs::spatial::neighbors::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
-use molrs::spatial::simbox::SimBox;
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
+use molrs::store::Block;
+use molrs::store::Frame;
 use molrs::store::type_labels::TypeLabels;
-use molrs::types::{F, Idx};
 
 /// Configurations × parameter sets per style.
 const CONFIGS: usize = 64;
@@ -672,7 +672,7 @@ fn every_param_source_is_what_its_constructor_reads() {
             let v = plausible(&decl.name);
             if decl.name == "linear" {
                 // MMFF's linear-centre flag is an integer column.
-                let flags: Vec<molrs::types::I> = vec![v as molrs::types::I; n];
+                let flags: Vec<molrs::op::types::I> = vec![v as molrs::op::types::I; n];
                 b.insert("linear", Array1::from_vec(flags).into_dyn())
                     .unwrap();
             } else {

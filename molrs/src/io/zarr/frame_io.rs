@@ -33,13 +33,18 @@ use ndarray::ArrayViewD;
 use std::sync::Arc;
 
 use molrs::error::MolRsError;
-use molrs::spatial::simbox::SimBox;
+use molrs::op::types::F;
+use molrs::spatial::SimBox;
 #[cfg(feature = "zarr")]
-use molrs::store::block::DType;
-use molrs::store::block::{Block, Column};
-use molrs::store::frame::Frame;
-use molrs::store::meta::{META_TYPES_ATTR, MetaMap, MetaValue};
-use molrs::types::F;
+use molrs::store::DType;
+use molrs::store::Frame;
+use molrs::store::{Block, Column};
+use molrs::store::{MetaMap, MetaValue};
+
+/// The attribute of a frame-shaped group that maps every key of its `meta`
+/// document to its tag ([`MetaValue::dtype`]). One leading underscore, as
+/// `_validity`: binding-owned, legal in every store, and never a meta key.
+const META_TYPES_ATTR: &str = "_meta_types";
 
 #[cfg(feature = "zarr")]
 use super::chunking::{ChunkPlan, plan};
@@ -335,7 +340,7 @@ where
 /// the record doors hold and the read-only one [`FrameSequence`] holds share
 /// this one dtype dispatch.
 ///
-/// [`F`]: crate::types::F
+/// [`F`]: crate::op::types::F
 /// [`FrameSequence`]: super::FrameSequence
 pub(crate) fn read_column<S>(
     store: &Arc<S>,
@@ -469,7 +474,7 @@ pub(crate) fn insert_column_into_block(
 /// broke the contract, and converting it on read would hide that.
 pub(crate) fn check_canonical_dtype(
     name: &str,
-    stored: molrs::store::block::DType,
+    stored: molrs::store::DType,
 ) -> Result<(), MolRsError> {
     match molrs::store::schema::column(name) {
         Some(spec) if spec.dtype != stored => Err(MolRsError::zarr(format!(
@@ -777,7 +782,7 @@ pub(crate) const VALIDITY_GROUP: &str = "_validity";
 /// # A nullable column carries its mask beside its values
 ///
 /// A block column may carry a [validity
-/// mask](crate::store::block::Block::validity), and the mask is data: without
+/// mask](crate::store::Block::validity), and the mask is data: without
 /// it a row that holds *nothing* reads back as the default filled under it.
 /// Each masked column of a block therefore writes one `bool` array, one flag
 /// per row, at `<block>/`[`_validity`](VALIDITY_GROUP)`/<column>` — a
@@ -1313,7 +1318,7 @@ pub(crate) fn join_path(prefix: &str, child: &str) -> String {
 #[cfg(all(test, feature = "filesystem"))]
 mod tests {
     use super::*;
-    use molrs::store::block::DType;
+    use molrs::store::DType;
     use ndarray::array;
     use num_complex::Complex;
     use std::ffi::OsStr;

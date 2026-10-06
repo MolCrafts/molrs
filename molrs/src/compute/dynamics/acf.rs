@@ -38,7 +38,7 @@
 //!
 //! # What this is not
 //!
-//! [`VACF`](crate::compute::transport::VACF) is a *different* estimator and not
+//! [`VACF`](crate::compute::VACF) is a *different* estimator and not
 //! a special case: it mean-subtracts each degree of freedom, averages over
 //! degrees of freedom rather than entities, and uses the biased normalisation,
 //! because it exists to feed the VDOS power spectrum. Do not swap one for the
@@ -47,11 +47,11 @@
 use ndarray::{Array1, Array3};
 use rustfft::FftPlanner;
 
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
 use crate::signal as sig;
-use molrs::store::frame_access::FrameAccess;
+use molrs::store::FrameAccess;
 
 /// Autocorrelation curve, one entry per lag.
 #[derive(Debug, Clone)]

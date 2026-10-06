@@ -8,7 +8,7 @@
 //! ([`signed_cosine_ctor`]),
 //! evaluated over the `"dihedrals"` block.
 
-use molrs::store::frame::Frame;
+use molrs::store::Frame;
 use molrs::store::schema::block_names::DIHEDRALS;
 
 use crate::ff::forcefield::Params;
@@ -30,8 +30,8 @@ mod tests {
     use super::*;
     use crate::ff::forcefield::ForceField;
     use crate::ff::potential::PotentialCompiler;
-    use molrs::store::block::Block;
-    use molrs::types::{F, Idx};
+    use molrs::op::types::{F, Idx};
+    use molrs::store::Block;
     use ndarray::Array1;
 
     /// LAMMPS `dihedral_style harmonic`: E = K[1 + d·cos(nφ)], here

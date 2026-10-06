@@ -16,11 +16,11 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
-use crate::ff::params::oplsaa::{
+use crate::ff::params::OPLSAA_TYPING;
+use crate::ff::params::{
     OPLSAA_ANGLES, OPLSAA_ATOMS, OPLSAA_BONDS, OPLSAA_COULOMB_14, OPLSAA_DIHEDRALS, OPLSAA_LJ_14,
     OPLSAA_MIXING, OPLSAA_NAME,
 };
-use crate::ff::params::oplsaa_typing::OPLSAA_TYPING;
 use crate::ff::params::{OplsAtomRow, OplsRuleRow};
 use molrs::store::type_labels::TypeName;
 use molrs::units::constants::COULOMB_REAL;
@@ -194,13 +194,13 @@ mod tests {
     }
 
     use crate::ff::forcefield::{Style, StyleDefs};
-    use crate::ff::params::oplsaa_typing::OPLSAA_TYPING;
+    use crate::ff::params::OPLSAA_TYPING;
     use crate::ff::params::{OplsAtomRow, OplsRuleRow};
-    use crate::ff::typifier::opls::OPLSAATypifier;
+    use crate::ff::typifier::OPLSAATypifier;
     use crate::ff::typifier::{Typifier, Typing};
     use molrs::system::BondType;
-    use molrs::system::molgraph::PropValue;
-    use molrs::{Atom, Atomistic, NodeId};
+    use molrs::system::PropValue;
+    use molrs::system::{Atom, Atomistic, NodeId};
 
     /// Relative tolerance of the source-equivalence pins. A zero expectation
     /// therefore demands an exact zero (`-0.0` compares equal).

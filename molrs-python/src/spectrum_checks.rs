@@ -7,8 +7,8 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyAnyMethods, PyDict, PyDictMethods};
 
-use molrs::compute::spectroscopy::{ConductivitySumRule, KramersKronig, RouteAgreement};
-use molrs::compute::traits::Check;
+use molrs::compute::Check;
+use molrs::compute::{ConductivitySumRule, KramersKronig, RouteAgreement};
 
 use crate::helpers::py_value_err;
 

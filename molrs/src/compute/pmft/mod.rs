@@ -15,10 +15,10 @@
 //! `Args` struct and produces a binned free-energy surface
 //! `-ln g(...)` (see each `*Result`).
 
-pub mod r12;
-pub mod xy;
-pub mod xyt;
-pub mod xyz;
+mod r12;
+mod xy;
+mod xyt;
+mod xyz;
 
 pub use r12::{PMFTR12, PMFTR12Args, PMFTR12Result};
 pub use xy::{PMFTXY, PMFTXYArgs, PMFTXYResult};

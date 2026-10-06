@@ -59,6 +59,9 @@ use zarrs::storage::{
     ListableStorageTraits, ReadableStorageTraits, ReadableWritableListableStorage,
 };
 
+use crate::io::mrec::FrameSequence;
+#[cfg(feature = "zarr")]
+use crate::io::mrec::{FrameSequenceWriter, SequenceSchema};
 #[cfg(feature = "ff")]
 use crate::io::zarr::forcefield_io::read_stored_forcefield_if_present;
 #[cfg(feature = "zarr")]
@@ -70,28 +73,25 @@ use crate::io::zarr::frame_io::{
 #[cfg(feature = "zarr")]
 use crate::io::zarr::frame_io::{node_prefix, write_column, write_frame_group};
 use crate::io::zarr::schema;
-use crate::io::zarr::sequence::FrameSequence;
-#[cfg(feature = "zarr")]
-use crate::io::zarr::sequence::{FrameSequenceWriter, SequenceSchema};
 #[cfg(feature = "filesystem")]
 use crate::io::zarr::store::PositionalWriteStore;
-use molrs::MolRsError;
-use molrs::store::block::Column;
+use molrs::error::MolRsError;
+use molrs::store::Column;
 #[cfg(feature = "filesystem")]
-use molrs::store::forcefield_section::ForceFieldSection;
+use molrs::store::ForceFieldSection;
 // Not `filesystem`-gated: the store-taking section door below names it in
 // every configuration, wasm included.
-use molrs::store::frame::Frame;
-use molrs::store::record::MolRec;
+use molrs::store::Frame;
+use molrs::store::MolRec;
 #[cfg(feature = "filesystem")]
-use molrs::store::trajectory::Trajectory;
-use molrs::store::trajectory::{ObservableData, ObservableKind, ObservableRecord};
+use molrs::store::Trajectory;
+use molrs::store::{ObservableData, ObservableKind, ObservableRecord};
 
 // ---------------------------------------------------------------------------
 // Write
 // ---------------------------------------------------------------------------
 
-/// Write a [`crate::MolRec`] to a filesystem path as a `*.mrec` directory.
+/// Write a [`crate::store::MolRec`] to a filesystem path as a `*.mrec` directory.
 ///
 /// The conventional suffix is `.mrec` (for example `water.mrec/`). Paths whose
 /// file name ends in `.zarr` or `.zarr.zip` are refused; those were the
@@ -100,7 +100,7 @@ use molrs::store::trajectory::{ObservableData, ObservableKind, ObservableRecord}
 /// entirely — leftover sections from a wider record do not survive.
 ///
 /// The writer writes the reserved `meta` key over any producer copy:
-/// [`crate::MOLREC_VERSION`] (`molrec_version = 2`). A trajectory section is encoded by
+/// [`crate::store::MOLREC_VERSION`] (`molrec_version = 2`). A trajectory section is encoded by
 /// [`crate::io::mrec::FrameSequenceWriter`]. [`write_trajectory_file`] is the
 /// same write, with the record shaped to carry only a trajectory.
 ///
@@ -108,21 +108,21 @@ use molrs::store::trajectory::{ObservableData, ObservableKind, ObservableRecord}
 ///
 /// A [`MolRsError::Zarr`] when `path` uses a retired `.zarr` suffix, when
 /// `path` cannot be created as a directory store, or when a section fails to
-/// encode. A [`MolRsError::Validation`] when [`crate::MolRec::validate`]
+/// encode. A [`MolRsError::Validation`] when [`crate::store::MolRec::validate`]
 /// rejects the record (no state section, or a `step`/`time` length that does
 /// not match the frame count).
 ///
 /// # Examples
 ///
 /// ```
-/// # fn main() -> Result<(), molrs::MolRsError> {
+/// # fn main() -> Result<(), molrs::error::MolRsError> {
 /// use molrs::io::mrec::{read_record_file, write_record_file};
 ///
 /// let dir = tempfile::tempdir().unwrap();
 /// let path = dir.path().join("water.mrec");
 ///
-/// let mut record = molrs::MolRec::new();
-/// record.frame = Some(molrs::Frame::new());
+/// let mut record = molrs::store::MolRec::new();
+/// record.frame = Some(molrs::store::Frame::new());
 /// write_record_file(&path, &record)?;
 ///
 /// let loaded = read_record_file(&path)?;
@@ -212,7 +212,7 @@ pub fn write_record_store(
 /// Write `meta` with the current `molrec_version` stamped in.
 ///
 /// Every record this version writes is written in the current contract, so it
-/// carries [`crate::MOLREC_VERSION`] whatever the producer's map says (the key
+/// carries [`crate::store::MOLREC_VERSION`] whatever the producer's map says (the key
 /// is reserved; see [`schema::stamped_meta`]).
 #[cfg(feature = "zarr")]
 fn write_meta(
@@ -428,11 +428,11 @@ fn write_observables(
 // Read
 // ---------------------------------------------------------------------------
 
-/// Read a [`crate::MolRec`] from a `*.mrec` directory.
+/// Read a [`crate::store::MolRec`] from a `*.mrec` directory.
 ///
 /// Paths whose file name ends in `.zarr` or `.zarr.zip` are refused. A
 /// `molrec_version` in `meta` is validated when present — it must be an integer
-/// in `1..=`[`crate::MOLREC_VERSION`]. A version-1 store, and one without the
+/// in `1..=`[`crate::store::MOLREC_VERSION`]. A version-1 store, and one without the
 /// key (written before version 1), is converted section by section to the
 /// current version (`ff::forcefield::record_v1`) or refused; `meta` comes back
 /// as stored. Root sections this build does not interpret are ignored, never
@@ -667,7 +667,7 @@ pub(in crate::io::zarr) fn read_upgrade<S>(
 where
     S: ?Sized + ReadableStorageTraits + ListableStorageTraits + 'static,
 {
-    if schema::read_version(meta)? == schema::MOLREC_VERSION {
+    if schema::read_version(meta)? == crate::store::MOLREC_VERSION {
         return Ok(None);
     }
     #[cfg(feature = "ff")]
@@ -698,8 +698,8 @@ pub(in crate::io::zarr) enum V1Upgrade {}
 impl V1Upgrade {
     pub(in crate::io::zarr) fn forcefield(
         &self,
-        _: &molrs::store::forcefield_section::ForceFieldSection,
-    ) -> Result<molrs::store::forcefield_section::ForceFieldSection, MolRsError> {
+        _: &molrs::store::ForceFieldSection,
+    ) -> Result<molrs::store::ForceFieldSection, MolRsError> {
         match *self {}
     }
 
@@ -821,7 +821,7 @@ fn read_observables(
 // Trajectory-only doors (narrow entry points onto the same record layout)
 // ---------------------------------------------------------------------------
 
-/// Write a [`crate::Trajectory`] as a record whose only state section is
+/// Write a [`crate::store::Trajectory`] as a record whose only state section is
 /// `trajectory`.
 ///
 /// Same path rules as [`write_record_file`]: conventional suffix `.mrec`,
@@ -838,14 +838,14 @@ fn read_observables(
 /// # Examples
 ///
 /// ```
-/// # fn main() -> Result<(), molrs::MolRsError> {
-/// use molrs::Trajectory;
+/// # fn main() -> Result<(), molrs::error::MolRsError> {
+/// use molrs::store::Trajectory;
 /// use molrs::io::mrec::{read_trajectory_file, write_trajectory_file};
 ///
 /// let dir = tempfile::tempdir().unwrap();
 /// let path = dir.path().join("run.mrec");
 ///
-/// let traj = Trajectory::from_frames(vec![molrs::Frame::new()]);
+/// let traj = Trajectory::from_frames(vec![molrs::store::Frame::new()]);
 /// write_trajectory_file(&path, &traj, None)?;
 ///
 /// let loaded = read_trajectory_file(&path)?;
@@ -955,13 +955,13 @@ pub fn write_forcefield_file(
 /// # Examples
 ///
 /// ```
-/// # fn main() -> Result<(), molrs::MolRsError> {
+/// # fn main() -> Result<(), molrs::error::MolRsError> {
 /// use molrs::io::mrec::{read_forcefield_file, write_forcefield_file};
 ///
 /// let dir = tempfile::tempdir().unwrap();
 /// let path = dir.path().join("ff.mrec");
 ///
-/// let mut ff = molrs::ForceFieldSection::default();
+/// let mut ff = molrs::store::ForceFieldSection::default();
 /// ff.document.insert("name".into(), "empty".into());
 /// ff.document.insert("units".into(), serde_json::json!({"preset": "real"}));
 /// ff.document.insert("styles".into(), serde_json::json!([]));
@@ -1059,7 +1059,7 @@ pub fn section_names(path: impl AsRef<Path>) -> Result<Vec<String>, MolRsError> 
 /// Read the `trajectory` section of a record at `path`.
 ///
 /// Same path rules as [`read_record_file`]. A store with no `trajectory`
-/// section returns an empty [`crate::Trajectory`], not an error. A store still
+/// section returns an empty [`crate::store::Trajectory`], not an error. A store still
 /// carrying the pre-0.14 `trajectory/frames/` tree is refused by name — the
 /// same failure [`crate::io::mrec::FrameSequence::open`] reports. Only `meta`
 /// and the `trajectory` section are decoded.
@@ -1101,14 +1101,14 @@ pub fn read_trajectory_file(path: impl AsRef<Path>) -> Result<Trajectory, MolRsE
 /// # Examples
 ///
 /// ```
-/// # fn main() -> Result<(), molrs::MolRsError> {
-/// use molrs::Trajectory;
+/// # fn main() -> Result<(), molrs::error::MolRsError> {
+/// use molrs::store::Trajectory;
 /// use molrs::io::mrec::{open_trajectory_sequence, write_trajectory_file};
 ///
 /// let dir = tempfile::tempdir().unwrap();
 /// let path = dir.path().join("run.mrec");
 ///
-/// let traj = Trajectory::from_frames(vec![molrs::Frame::new()]);
+/// let traj = Trajectory::from_frames(vec![molrs::store::Frame::new()]);
 /// write_trajectory_file(&path, &traj, None)?;
 ///
 /// let mut seq = open_trajectory_sequence(&path)?;
@@ -1137,10 +1137,10 @@ pub(in crate::io::zarr) fn reject_retired_zarr_path(path: &Path) -> Result<(), M
 #[cfg(all(test, feature = "filesystem"))]
 mod tests {
     use super::*;
-    use molrs::store::block::{Block, Column};
-    use molrs::store::frame::Frame;
-    use molrs::store::record::RESERVED_META_KEYS;
-    use molrs::types::F;
+    use molrs::op::types::F;
+    use molrs::store::Frame;
+    use molrs::store::RESERVED_META_KEYS;
+    use molrs::store::{Block, Column};
     use ndarray::ArrayD;
     use tempfile::tempdir;
 
@@ -1205,7 +1205,7 @@ mod tests {
         );
         assert_eq!(
             loaded.meta["molrec_version"].as_u64(),
-            Some(schema::MOLREC_VERSION)
+            Some(crate::store::MOLREC_VERSION)
         );
     }
 
@@ -1215,11 +1215,11 @@ mod tests {
         let mut rec = MolRec::new();
         rec.frame = Some(Frame::new());
         rec.meta
-            .insert("molrec_version".into(), schema::MOLREC_VERSION.into());
+            .insert("molrec_version".into(), crate::store::MOLREC_VERSION.into());
         let loaded = write_then_read(&rec);
         assert_eq!(
             loaded.meta["molrec_version"].as_u64(),
-            Some(schema::MOLREC_VERSION)
+            Some(crate::store::MOLREC_VERSION)
         );
     }
 
@@ -1487,7 +1487,7 @@ mod tests {
     fn a_present_molrec_version_outside_the_supported_range_is_rejected() {
         let unsupported = [
             JsonValue::from(0_u64),
-            JsonValue::from(schema::MOLREC_VERSION + 1),
+            JsonValue::from(crate::store::MOLREC_VERSION + 1),
             JsonValue::from(99_u64),
             JsonValue::Null,
             JsonValue::from("1"),
@@ -1554,7 +1554,7 @@ mod tests {
         assert_eq!(back["creator"]["name"], "unit-test");
         assert_eq!(
             back["molrec_version"].as_u64(),
-            Some(schema::MOLREC_VERSION)
+            Some(crate::store::MOLREC_VERSION)
         );
     }
 
@@ -1622,7 +1622,7 @@ mod tests {
         // The identity document is present and, with nothing handed in, empty.
         assert_eq!(
             read_meta_file(&path).unwrap()["molrec_version"].as_u64(),
-            Some(schema::MOLREC_VERSION),
+            Some(crate::store::MOLREC_VERSION),
             "the writer stamps the version even when the producer sent no meta"
         );
 
@@ -1766,7 +1766,7 @@ mod tests {
             write_record_file(&path, &rec).unwrap();
             assert_eq!(
                 read_meta_file(&path).unwrap()["molrec_version"],
-                schema::MOLREC_VERSION
+                crate::store::MOLREC_VERSION
             );
         }
     }
@@ -1870,7 +1870,7 @@ mod tests {
 
     #[test]
     fn simbox_geometry_roundtrips_as_f64() {
-        use molrs::spatial::simbox::SimBox;
+        use molrs::spatial::SimBox;
         use ndarray::{Array2, array};
 
         let dir = tempdir().unwrap();
@@ -2463,7 +2463,7 @@ mod tests {
         write_record_file(&again, &record).unwrap();
         assert_eq!(
             read_meta_file(&again).unwrap()["molrec_version"],
-            schema::MOLREC_VERSION
+            crate::store::MOLREC_VERSION
         );
         let back = read_record_file(&again).unwrap();
         let (a, b) = (record.forcefield.unwrap(), back.forcefield.unwrap());

@@ -1,16 +1,16 @@
 //! ROA polarizability×optical-activity cross-correlation raw compute — the
 //! ROA-spectrum raw input.
 
-use molrs::store::frame_access::FrameAccess;
+use molrs::store::FrameAccess;
 use ndarray::{Array1, Array2};
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;
 
 use super::raman_tensor::{DIAG_ANISO_WEIGHT, OFFDIAG_ANISO_WEIGHT};
 use super::{central_diff_series, lag_times, xcorr_accumulate_into};
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
 
 /// Raw ROA cross-correlation iso/aniso curves — the ROA-spectrum raw input.
 #[derive(Debug, Clone)]

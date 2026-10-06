@@ -3,9 +3,9 @@
 use molrs::store::schema::block_names::ATOMS;
 use ndarray::{Array2, ArrayView2};
 
+use molrs::op::types::F;
 use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use molrs::store::Frame;
 
 /// Pair kernel: already-reduced geometry in, energy / force on `j` out.
 pub trait PairPotential: Send + Sync {
@@ -224,25 +224,25 @@ pub(crate) fn type_pair(ti: u32, tj: u32, ntypes: usize) -> usize {
     ti as usize * ntypes + tj as usize
 }
 
-pub mod buck;
-pub mod charmm;
-pub mod coul_cut;
-pub mod exceptions;
-pub mod lj_class2;
-pub mod lj_cut;
-pub mod mmff;
-pub mod morse;
-pub mod tang_toennies;
-pub mod thole;
-pub mod uff;
+pub(crate) mod buck;
+pub(crate) mod charmm;
+pub(crate) mod coul_cut;
+pub(crate) mod exceptions;
+pub(crate) mod lj_class2;
+pub(crate) mod lj_cut;
+pub(crate) mod mmff;
+pub(crate) mod morse;
+pub(crate) mod tang_toennies;
+pub(crate) mod thole;
+pub(crate) mod uff;
 
 pub use buck::{PairBuck, pair_buck_ctor};
 pub use charmm::{PairCoulCharmm, PairLJCharmm, pair_coul_charmm_ctor, pair_lj_charmm_ctor};
 pub use coul_cut::{PairCoulCut, pair_coul_cut_ctor};
 pub use exceptions::PairExceptions;
 pub use lj_class2::{PairLJClass2, pair_lj_class2_ctor};
-pub use lj_cut::{LJCut, pair_lj_cut_ctor};
-pub use mmff::{MMFFVdW, mmff_vdw_ctor};
+pub use lj_cut::{LJCut, lj_ab_to_sigma_epsilon, pair_lj_cut_ctor};
+pub use mmff::{MMFFVdW, VdwAtomParams, VdwStyleParams, mmff_vdw_ctor};
 pub use morse::{PairMorse, pair_morse_ctor};
 pub use tang_toennies::{PairTangToennies, pair_tang_toennies_ctor};
 pub use thole::{PairThole, pair_thole_ctor};
@@ -250,8 +250,8 @@ pub use uff::{UffVdW, uff_lj_ctor};
 
 #[cfg(test)]
 pub(crate) mod testing {
+    use molrs::op::types::F;
     use molrs::spatial::neighbors::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
-    use molrs::types::F;
 
     /// A neighbour table over exactly `links`, with the displacements a
     /// neighbour engine would have computed for them.

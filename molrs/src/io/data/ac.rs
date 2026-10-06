@@ -6,10 +6,10 @@ use std::path::Path;
 
 use ndarray::{Array1, IxDyn};
 
-use molrs::Element;
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
-use molrs::types::{F, Idx};
+use molrs::op::types::{F, Idx};
+use molrs::store::Block;
+use molrs::store::Frame;
+use molrs::system::Element;
 
 fn invalid_data<E: std::fmt::Display>(e: E) -> Error {
     Error::new(ErrorKind::InvalidData, e.to_string())

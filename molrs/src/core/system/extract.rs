@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::error::MolRsError;
-use crate::system::molgraph::{KindId, MolGraph, NodeId, RelationId};
+use crate::system::{KindId, MolGraph, NodeId, RelationId};
 
 /// Result of [`MolGraph::induced_subgraph`].
 #[derive(Debug, Clone)]
@@ -353,11 +353,11 @@ fn n_as_sort_key(n: NodeId) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::atomistic::Atomistic;
-    use crate::system::coarsegrain::CoarseGrain;
-    use crate::system::molgraph::Atom;
+    use crate::system::Atom;
+    use crate::system::Atomistic;
+    use crate::system::CoarseGrain;
 
-    fn linear_chain(n: usize) -> (Atomistic, Vec<crate::system::molgraph::NodeId>) {
+    fn linear_chain(n: usize) -> (Atomistic, Vec<crate::system::NodeId>) {
         let mut mol = Atomistic::new();
         let mut ids = Vec::with_capacity(n);
         for i in 0..n {

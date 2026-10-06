@@ -14,7 +14,7 @@
 //! # Examples
 //!
 //! ```
-//! use molrs::system::atomistic::Atomistic;
+//! use molrs::system::Atomistic;
 //!
 //! let mut mol = Atomistic::new();
 //! let c = mol.add_atom_bare("C");
@@ -29,10 +29,11 @@ use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 
 use crate::error::MolRsError;
-use crate::store::frame::Frame;
+use crate::store::Frame;
 use crate::store::keys;
-use crate::system::bond::{BondNumber, BondType, write_bond_class};
-use crate::system::molgraph::{Atom, KindId, MolGraph, NodeId, PropValue, Relation, RelationId};
+use crate::system::bond::write_bond_class;
+use crate::system::{Atom, KindId, MolGraph, NodeId, PropValue, Relation, RelationId};
+use crate::system::{BondNumber, BondType};
 
 /// Result of [`Atomistic::extract_subgraph`].
 #[derive(Debug, Clone)]
@@ -109,7 +110,7 @@ impl Atomistic {
     /// `charge` column). The caller of this constructor *built* the bag, so
     /// that is a defect in the caller and not a data condition; callers
     /// holding a **foreign** bag reach
-    /// [`MolGraph::add_node_with`](crate::system::molgraph::MolGraph::add_node_with)
+    /// [`MolGraph::add_node_with`](crate::system::MolGraph::add_node_with)
     /// through [`as_molgraph_mut`](Self::as_molgraph_mut), which returns the
     /// conflict instead.
     pub fn add_atom(&mut self, atom: Atom) -> NodeId {
@@ -377,7 +378,7 @@ impl Atomistic {
 
     /// Perceive angle and dihedral relations from the bond graph.
     ///
-    /// Builds a [`Topology`](crate::system::topology::Topology) (a native
+    /// Builds a [`Topology`](crate::system::Topology) (a native
     /// adjacency snapshot) from the current bonds and reuses its
     /// `angles()` / `dihedrals()` enumeration — angles are 2-edge paths
     /// `i-j-k` (deduplicated `i < k`), proper dihedrals are 3-edge paths
@@ -385,7 +386,7 @@ impl Atomistic {
     /// that names the graph-theoretic result.
     ///
     /// Impropers follow the molecular-mechanics reading —
-    /// [`Topology::trivalent_impropers`](crate::system::topology::Topology::trivalent_impropers),
+    /// [`Topology::trivalent_impropers`](crate::system::Topology::trivalent_impropers),
     /// one `[centre, i, j, k]` quartet per
     /// atom with exactly three neighbours — not the geometric enumeration of
     /// every 3-combination. Whether such a centre is planar enough to deserve
@@ -403,7 +404,7 @@ impl Atomistic {
         gen_improper: bool,
         clear_existing: bool,
     ) -> Result<(usize, usize, usize), MolRsError> {
-        use crate::system::topology::Topology;
+        use crate::system::Topology;
 
         if clear_existing {
             if gen_angle {
@@ -676,14 +677,14 @@ impl Atomistic {
 
     /// Translate every atom that has coordinates by `delta` (Å).
     pub fn translate(&mut self, delta: [f64; 3]) {
-        crate::spatial::geometry::translate(self.as_molgraph_mut(), delta);
+        crate::spatial::translate(self.as_molgraph_mut(), delta);
     }
 
     /// Scale every atom that has coordinates by a per-axis `factor`
     /// (dimensionless) about `about` (Å; the origin when `None`). Pass
     /// `[s, s, s]` for a uniform scale.
     pub fn scale(&mut self, factor: [f64; 3], about: Option<[f64; 3]>) {
-        crate::spatial::geometry::scale(self.as_molgraph_mut(), factor, about);
+        crate::spatial::scale(self.as_molgraph_mut(), factor, about);
     }
 
     /// Rotate every atom that has coordinates by `angle` radians about `axis`.
@@ -691,7 +692,7 @@ impl Atomistic {
     ///
     /// # Errors
     ///
-    /// The error of [`crate::spatial::geometry::rotate`] — `axis` has no
+    /// The error of [`crate::spatial::rotate`] — `axis` has no
     /// direction or `angle` is not finite; nothing moves then.
     pub fn rotate(
         &mut self,
@@ -699,36 +700,36 @@ impl Atomistic {
         angle: f64,
         about: Option<[f64; 3]>,
     ) -> Result<(), crate::error::MolRsError> {
-        crate::spatial::geometry::rotate(self.as_molgraph_mut(), axis, angle, about)
+        crate::spatial::rotate(self.as_molgraph_mut(), axis, angle, about)
     }
 
     /// Centre of mass `Σ mᵢ rᵢ / Σ mᵢ` over every atom, in the coordinates'
-    /// length unit (Å) — see [`crate::spatial::geometry::center`]. No periodic
+    /// length unit (Å) — see [`crate::spatial::center`]. No periodic
     /// imaging: unwrap a molecule split across the box first.
     ///
     /// # Errors
     ///
-    /// The [`CenterError`](crate::spatial::geometry::CenterError) of
-    /// [`crate::spatial::geometry::center`]; an atomless molecule is
-    /// [`CenterError::Empty`](crate::spatial::geometry::CenterError::Empty).
-    pub fn center(&self) -> Result<[f64; 3], crate::spatial::geometry::CenterError> {
-        crate::spatial::geometry::center(self.as_molgraph(), &self.node_ids().collect::<Vec<_>>())
+    /// The [`CenterError`](crate::spatial::CenterError) of
+    /// [`crate::spatial::center`]; an atomless molecule is
+    /// [`CenterError::Empty`](crate::spatial::CenterError::Empty).
+    pub fn center(&self) -> Result<[f64; 3], crate::spatial::CenterError> {
+        crate::spatial::center(self.as_molgraph(), &self.node_ids().collect::<Vec<_>>())
     }
 
     /// Place `transforms.len()` rigid copies of `template`, copy `c` moved by
     /// `transforms[c]` and stamped `frag_id = frag_ids[c]`; returns the new
     /// atoms copy-major. Column-wise and atomic — see
-    /// [`MolGraph::replicate`](crate::system::molgraph::MolGraph::replicate).
+    /// [`MolGraph::replicate`](crate::system::MolGraph::replicate).
     ///
     /// # Errors
     ///
-    /// The errors of [`MolGraph::replicate`](crate::system::molgraph::MolGraph::replicate);
+    /// The errors of [`MolGraph::replicate`](crate::system::MolGraph::replicate);
     /// `self` is unchanged then.
     pub fn replicate(
         &mut self,
         template: &Atomistic,
         transforms: &[crate::op::rigid::Rigid],
-        frag_ids: &[crate::types::I],
+        frag_ids: &[crate::op::types::I],
     ) -> Result<Vec<NodeId>, MolRsError> {
         self.graph.replicate(&template.graph, transforms, frag_ids)
     }
@@ -790,7 +791,7 @@ impl Atomistic {
     ///
     /// [`MolRsError::Validation`] when an atom or bond property of `other`
     /// contradicts the element type `self` holds for that key — see
-    /// [`MolGraph::merge`](crate::system::molgraph::MolGraph::merge), whose
+    /// [`MolGraph::merge`](crate::system::MolGraph::merge), whose
     /// partial-write contract this inherits.
     pub fn merge(&mut self, other: Atomistic) -> Result<HashMap<NodeId, NodeId>, MolRsError> {
         self.graph.merge(other.graph)
@@ -807,19 +808,19 @@ impl Atomistic {
     /// (element / charge / aromatic node labels, bond-order edge labels). A
     /// stable, reproducible dedup key — identical for a node-permuted copy.
     pub fn structural_hash(&self) -> u64 {
-        crate::system::graph_hash::structural_hash(&self.graph)
+        crate::system::structural_hash(&self.graph)
     }
 
     /// Deterministic canonical atom ordering from the WL refinement, so two
     /// isomorphic molecules line up node-by-node (see
-    /// [`crate::system::graph_hash::canonical_order`]).
+    /// [`crate::system::canonical_order`]).
     pub fn canonical_order(&self) -> Vec<NodeId> {
-        crate::system::graph_hash::canonical_order(&self.graph)
+        crate::system::canonical_order(&self.graph)
     }
 
     /// Whether `self` and `other` are isomorphic as labeled molecular graphs.
     pub fn is_isomorphic(&self, other: &Atomistic) -> bool {
-        crate::system::graph_hash::is_isomorphic(&self.graph, &other.graph)
+        crate::system::is_isomorphic(&self.graph, &other.graph)
     }
 
     // Aromaticity perception belongs to `crate::perceive::Perceive`
@@ -829,7 +830,7 @@ impl Atomistic {
 /// Canonical (orientation-independent) key for an angle/dihedral endpoint
 /// sequence: the lexicographically smaller of the sequence and its reverse.
 /// Matches the canonicalization in
-/// [`MolGraph::paths_of_length`](crate::system::molgraph::MolGraph::paths_of_length).
+/// [`MolGraph::paths_of_length`](crate::system::MolGraph::paths_of_length).
 /// Canonical key of an improper: the centre stays first, the peripherals are a
 /// set. An improper is symmetric under permuting its outer legs, not under
 /// reversal, so [`canonical_path`] is the wrong key for one.
@@ -860,9 +861,9 @@ impl crate::system::molgraph::FromMolGraph for Atomistic {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::block::Block;
-    use crate::system::molgraph::Atom;
-    use crate::types::{I, Idx};
+    use crate::op::types::{I, Idx};
+    use crate::store::Block;
+    use crate::system::Atom;
     use ndarray::Array1;
     use std::collections::HashSet;
 
@@ -1178,7 +1179,7 @@ mod tests {
     /// to the file.
     #[test]
     fn from_frame_leaves_unstated_bond_type_unknown() {
-        use crate::store::block::Block;
+        use crate::store::Block;
         use ndarray::Array1;
 
         let mut atoms = Block::new();
@@ -1213,7 +1214,7 @@ mod tests {
     /// explicit `0`, which means "the input said it does not know".
     #[test]
     fn from_frame_keeps_stated_bond_type_per_bond() {
-        use crate::store::block::Block;
+        use crate::store::Block;
         use ndarray::Array1;
 
         let mut atoms = Block::new();
@@ -1248,7 +1249,7 @@ mod tests {
     /// register is not its business and is ignored, bonds still read.
     #[test]
     fn from_frame_ignores_a_relation_block_of_an_unregistered_kind() {
-        use crate::store::block::Block;
+        use crate::store::Block;
         use ndarray::Array1;
 
         let mut mol = Atomistic::new();
@@ -1362,7 +1363,7 @@ mod tests {
     /// float key `x` never becomes an atom property.
     #[test]
     fn set_atom_refuses_a_str_under_a_schema_float_key() {
-        use crate::store::block::DType;
+        use crate::store::DType;
         let mut mol = Atomistic::new();
         let a = mol.add_atom_bare("C");
 
@@ -1588,7 +1589,7 @@ mod tests {
 
         assert_eq!(
             Atomistic::new().center(),
-            Err(crate::spatial::geometry::CenterError::Empty)
+            Err(crate::spatial::CenterError::Empty)
         );
     }
 }

@@ -7,10 +7,10 @@
 use std::collections::{HashMap, VecDeque};
 
 use crate::error::MolRsError;
+use crate::op::types::F;
 use crate::store::schema::block_names::{ATOMS, BONDS};
-use crate::store::{frame::Frame, keys};
-use crate::system::bond_weights::BondDistanceWeights;
-use crate::types::F;
+use crate::store::{Frame, keys};
+use crate::system::BondDistanceWeights;
 
 /// Why [`Topology::from_frame`] could not read a frame's bond graph.
 ///
@@ -1554,9 +1554,9 @@ mod tests {
         assert!(topo.are_bonded(2, 3));
     }
 
-    use crate::MolRsError;
-    use crate::store::{block::Block, frame::Frame};
-    use crate::system::bond_weights::BondDistanceWeights;
+    use crate::error::MolRsError;
+    use crate::store::{Block, Frame};
+    use crate::system::BondDistanceWeights;
     use ndarray::Array1;
 
     fn atoms_id_only(n: usize) -> Block {

@@ -15,20 +15,22 @@
 //! parameters, then `compute(&frames, args)` — `args` carries per-frame
 //! neighbor lists / orientations where the method needs them.
 
-pub mod continuous_coordination;
-pub mod cubatic;
-pub mod hexatic;
-pub mod nematic;
-pub mod reorientation_legendre;
-pub mod rotational_autocorrelation;
-pub mod solid_liquid;
-pub mod steinhardt;
+mod continuous_coordination;
+mod cubatic;
+mod hexatic;
+mod nematic;
+mod reorientation_legendre;
+mod rotational_autocorrelation;
+mod solid_liquid;
+mod steinhardt;
 
 pub use continuous_coordination::{ContinuousCoordination, ContinuousCoordinationResult};
 pub use cubatic::{Cubatic, CubaticResult};
 pub use hexatic::{Hexatic, HexaticResult};
 pub use nematic::{Nematic, NematicResult};
 pub use reorientation_legendre::{LegendreReorientation, LegendreReorientationResult};
-pub use rotational_autocorrelation::{RotationalAutocorrelation, RotationalAutocorrelationResult};
+pub use rotational_autocorrelation::{
+    RotationalAutocorrelation, RotationalAutocorrelationArgs, RotationalAutocorrelationResult,
+};
 pub use solid_liquid::{SolidLiquid, SolidLiquidResult};
 pub use steinhardt::{Steinhardt, SteinhardtResult, compute_qlm};

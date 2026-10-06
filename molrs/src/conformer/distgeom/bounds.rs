@@ -275,7 +275,7 @@ fn bond_rest_length(a: &PerceivedAtom, b: &PerceivedAtom, order: f64) -> f64 {
 
 /// Van der Waals radius (Å) as RDKit's `PeriodicTable::getRvdw` gives it.
 ///
-/// These differ from [`molrs::Element::vdw_radius`] (Bondi-style): RDKit ships
+/// These differ from [`molrs::system::Element::vdw_radius`] (Bondi-style): RDKit ships
 /// its own table in `atomic_data`, and `setLowerBoundVDW` / `set15Bounds`
 /// depend on the exact values, so they are transcribed here.
 fn rvdw(z: u8) -> f64 {
@@ -1121,7 +1121,7 @@ pub fn set_topol_bounds(p: &Perceived) -> BoundsMatrix {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Element;
+    use molrs::system::Element;
 
     fn atom(element: Element, hybridization: Hybridization) -> PerceivedAtom {
         PerceivedAtom {

@@ -3,22 +3,22 @@
 //! Reads `atoms.{x,y,z}` (Å); `Args` = per-frame
 //! ([`ClusterResult`],
 //! [`COMResult`]) pairs — run
-//! [`Cluster`](crate::compute::cluster::Cluster) and
-//! [`CenterOfMass`](crate::compute::shape::CenterOfMass) first. Output:
+//! [`Cluster`](crate::compute::Cluster) and
+//! [`CenterOfMass`](crate::compute::CenterOfMass) first. Output:
 //! per-cluster 3×3 inertia tensors (mass·Å²) (mass unit = whatever
 //! `with_masses` supplies; 1 per particle by default).
 
-use crate::compute::result::ComputeResult;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use crate::compute::ComputeResult;
+use molrs::op::types::F;
+use molrs::store::FrameAccess;
 
-use crate::compute::cluster::ClusterResult;
-use crate::compute::error::ComputeError;
+use crate::compute::COMResult;
+use crate::compute::ClusterResult;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
-use crate::compute::shape::center_of_mass::COMResult;
-use crate::compute::traits::Compute;
 use crate::op::vec3::sub;
-use molrs::spatial::simbox::{Mic, SimBox};
+use molrs::spatial::{Mic, SimBox};
 
 /// Moment of inertia tensor per cluster, per frame.
 ///
@@ -170,10 +170,10 @@ impl ComputeResult for InertiaTensorResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::shape::center_of_mass::CenterOfMass;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use crate::compute::CenterOfMass;
+    use molrs::spatial::SimBox;
+    use molrs::store::Block;
+    use molrs::store::Frame;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F) -> Frame {

@@ -1,10 +1,10 @@
 //! Result types for [`MSD`](super::MSD): one [`MSDResult`] per lag time,
 //! collected in an [`MSDTimeSeries`]. Distances squared, (Å²).
 
-use molrs::types::F;
+use molrs::op::types::F;
 use ndarray::Array1;
 
-use crate::compute::result::{ComputeResult, DescriptorRow};
+use crate::compute::{ComputeResult, DescriptorRow};
 
 /// Per-particle and mean squared displacement at a single time.
 #[derive(Debug, Clone)]

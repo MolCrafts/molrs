@@ -12,10 +12,10 @@ use std::borrow::Cow;
 
 use crate::ff::forcefield::Params;
 use crate::ff::forcefield::mixing::Mixing;
-use crate::ff::ir::engine::LammpsForm;
+use crate::ff::ir::LammpsForm;
 use crate::ff::ir::{Dim, IrError};
 use crate::ff::ir::{ParamSource, SpecialClass};
-use molrs::types::F;
+use molrs::op::types::F;
 
 /// A parameter value: a number or a string.
 #[derive(Clone, Debug, PartialEq)]

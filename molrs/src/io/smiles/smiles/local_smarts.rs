@@ -3,15 +3,15 @@
 use std::collections::{HashMap, VecDeque};
 
 use crate::io::smiles::chem::ast::*;
-use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
-use crate::io::smiles::smiles::options::{LocalSmartsOptions, NeighborStyle};
-use crate::io::smiles::smiles::write::write_smarts;
+use crate::io::smiles::write_smarts;
+use crate::io::smiles::{LocalSmartsOptions, NeighborStyle};
+use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 use crate::perceive::rings::find_rings;
-use molrs::Element;
-use molrs::system::atomistic::Atomistic;
-use molrs::system::bond::BondType;
-use molrs::system::molgraph::NodeId;
-use molrs::system::molgraph::PropValue;
+use molrs::system::Atomistic;
+use molrs::system::BondType;
+use molrs::system::Element;
+use molrs::system::NodeId;
+use molrs::system::PropValue;
 
 /// Build a query [`SmilesIR`] for `center` with the given options.
 ///
@@ -169,7 +169,7 @@ fn center_query(
     })
 }
 
-fn is_aromatic_atom(atom: &molrs::system::molgraph::Atom) -> bool {
+fn is_aromatic_atom(atom: &molrs::system::Atom) -> bool {
     match atom.get("is_aromatic") {
         Some(PropValue::Int(v)) if *v != 0 => true,
         Some(PropValue::F64(v)) if *v != 0.0 => true,
@@ -178,7 +178,7 @@ fn is_aromatic_atom(atom: &molrs::system::molgraph::Atom) -> bool {
     }
 }
 
-fn formal_charge(atom: &molrs::system::molgraph::Atom) -> Option<i8> {
+fn formal_charge(atom: &molrs::system::Atom) -> Option<i8> {
     atom.get("formal_charge")
         .and_then(PropValue::as_f64)
         .or_else(|| atom.get_f64("charge"))
@@ -236,7 +236,7 @@ fn ordered_neighbors(
             order.iter().enumerate().map(|(i, id)| (*id, i)).collect();
         nbs.sort_by_key(|id| rank.get(id).copied().unwrap_or(usize::MAX));
     } else {
-        nbs.sort_by_key(|id| molrs::system::molgraph::node_to_u64(*id));
+        nbs.sort_by_key(|id| molrs::system::node_to_u64(*id));
     }
     nbs
 }
@@ -410,8 +410,8 @@ fn build_recursive_env(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::smiles::smiles::parse_smiles;
-    use crate::io::smiles::smiles::to_atomistic::to_atomistic;
+    use crate::io::smiles::parse_smiles;
+    use crate::io::smiles::to_atomistic;
     use crate::perceive::smarts::SmartsPattern;
 
     fn heavy_atoms(mol: &Atomistic) -> Vec<NodeId> {

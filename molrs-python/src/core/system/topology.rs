@@ -1,6 +1,6 @@
 //! Python binding for the bond graph [`Topology`].
 
-use molrs::system::topology::Topology;
+use molrs::system::Topology;
 use numpy::{IntoPyArray, PyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;

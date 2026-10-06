@@ -4,7 +4,7 @@
 
 use crate::ff::forcefield::Params;
 use crate::ff::forcefield::torsion;
-use crate::ff::ir::form::{FormCodec, Refusal, TypeParams};
+use crate::ff::ir::{FormCodec, Refusal, TypeParams};
 
 /// Every built-in `(category, style, codec)`, registered and sealed by
 /// [`Registry::builtin`](crate::ff::ir::Registry::builtin).

@@ -12,8 +12,8 @@ use super::violation::{
     InstancePath, MAX_CELL_VIOLATIONS_PER_COLUMN, SchemaReport, Violation, ViolationKind,
 };
 use super::{block, column, relation_endpoints};
-use crate::store::block::BlockAccess;
-use crate::store::frame_access::FrameAccess;
+use crate::store::BlockAccess;
+use crate::store::FrameAccess;
 use std::collections::HashMap;
 
 /// Judges a frame against the canonical vocabulary.
@@ -230,9 +230,9 @@ impl Validator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::block::Block;
-    use crate::store::frame::Frame;
-    use crate::types::{F, Idx};
+    use crate::op::types::{F, Idx};
+    use crate::store::Block;
+    use crate::store::Frame;
     use ndarray::Array1;
 
     /// An `atoms` block of `n` rows carrying only `x`.

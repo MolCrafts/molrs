@@ -7,7 +7,7 @@
 //! read it from there; the reverse — a reader importing a rule out of a pair
 //! kernel — put a cycle between `ff::forcefield` and `ff::potential`.
 
-use molrs::types::F;
+use molrs::op::types::F;
 
 /// How per-atom-type ε/σ combine into a pair's ε/σ.
 ///

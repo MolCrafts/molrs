@@ -45,17 +45,17 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::core::types::F;
-use crate::io::smiles::cgsmiles::ast::{
-    CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, EdgeOrigin, FragmentBody,
-};
 use crate::io::smiles::cgsmiles::instantiate::instantiate;
 use crate::io::smiles::cgsmiles::validate::validate_ir;
-use crate::io::smiles::chem::ast::{BondKind, BondingDescriptor, DescriptorKind, Span};
 use crate::io::smiles::chem::scanner::Scanner;
 use crate::io::smiles::chem::validation::validate_descriptor;
-use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
-use crate::io::smiles::parser::parse_fragment_smiles;
+use crate::io::smiles::parse_fragment_smiles;
+use crate::io::smiles::{BondKind, BondingDescriptor, DescriptorKind, Span};
+use crate::io::smiles::{
+    CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, EdgeOrigin, FragmentBody,
+};
+use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
+use crate::op::types::F;
 
 /// One fragment table: the names one block defines, in name order.
 type FragmentTable = BTreeMap<String, CGFragmentDef>;

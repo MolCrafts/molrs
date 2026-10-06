@@ -14,7 +14,7 @@
 //! SMARTS *matching* ([`crate::perceive::smarts`]) compiles its queries from
 //! this AST: there is one SMARTS parser, the one in this module.
 
-use molrs::system::bond::{BondNumber, BondType};
+use molrs::system::{BondNumber, BondType};
 
 // ---------------------------------------------------------------------------
 // Span
@@ -42,7 +42,7 @@ impl Span {
 ///
 /// This is a pure syntax tree — it captures the notation faithfully without
 /// committing to atomistic or coarse-grained semantics. Convert to
-/// [`Atomistic`](crate::system::atomistic::Atomistic) for domain use; a
+/// [`Atomistic`](crate::system::Atomistic) for domain use; a
 /// coarse-grained bead graph comes from `CGsmiles` instead, via
 /// [`CGSmilesIR::to_coarsegrain`](crate::io::smiles::CGSmilesIR::to_coarsegrain).
 ///
@@ -239,7 +239,7 @@ pub enum BondKind {
 
 impl BondKind {
     /// The bond's **chemical class**, as
-    /// [`Atomistic::set_bond_class`](crate::system::atomistic::Atomistic::set_bond_class)
+    /// [`Atomistic::set_bond_class`](crate::system::Atomistic::set_bond_class)
     /// records it.
     ///
     /// `Aromatic` is a class of its own rather than a number: the notation
@@ -252,7 +252,7 @@ impl BondKind {
     /// # Approximation
     ///
     /// [`BondKind::Quadruple`] maps to [`BondType::Double`], because
-    /// [`BondType`](crate::system::bond::BondType) has no quadruple variant
+    /// [`BondType`](crate::system::BondType) has no quadruple variant
     /// (`core/system/bond.rs`). The number is exact —
     /// [`BondKind::bond_number`] answers [`BondNumber::Quadruple`] — so no
     /// count is lost, only the class is coarsened. Widening `BondType` is a
@@ -390,7 +390,7 @@ impl DescriptorKind {
     /// The notation glyph this operator is written as: `$`, `<`, `>` or `!`.
     ///
     /// This is the same string
-    /// [`core::PortKind::as_str`](crate::core::system::port::PortKind::as_str)
+    /// [`core::PortKind::as_str`](crate::system::PortKind::as_str)
     /// returns for the port role the descriptor is stored as, so a user reads
     /// and writes one spelling per role whether the value came from the
     /// notation side or from the stored side. The two enums stay distinct by

@@ -126,11 +126,11 @@ use crate::perceive::bond_order::judge_bond_orders;
 use crate::perceive::ring_class::{RingClasses, ring_classes};
 use crate::perceive::rings::find_rings;
 use crate::store::keys;
-use crate::system::atomistic::Atomistic;
-use crate::system::bond::{BondNumber, BondType};
-use crate::system::molgraph::PropValue;
-use crate::system::molgraph::{NodeId, RelationId};
-use molrs::Element;
+use crate::system::Atomistic;
+use crate::system::PropValue;
+use crate::system::{BondNumber, BondType};
+use crate::system::{NodeId, RelationId};
+use molrs::system::Element;
 
 /// Bond prop holding the perceived BCC bond type, as an `i32` in
 /// `{1, 2, 3, 6, 7, 8, 9}`.
@@ -205,11 +205,11 @@ const FORBIDDEN: u32 = 1000;
 /// # Examples
 ///
 /// ```
-/// use molrs::Atomistic;
+/// use molrs::system::Atomistic;
 /// use molrs::perceive::Perceive;
 /// use molrs::perceive::bond_type::BCC_BOND_TYPE;
 /// use molrs::store::keys;
-/// use molrs::system::bond::BondType;
+/// use molrs::system::BondType;
 ///
 /// // Acetate: both C–O bonds are delocalized, so both oxygens must correct
 /// // identically.
@@ -235,12 +235,12 @@ const FORBIDDEN: u32 = 1000;
 /// and is still usable to build a force field:
 ///
 /// ```
-/// use molrs::Atomistic;
+/// use molrs::system::Atomistic;
 /// use molrs::perceive::Perceive;
 /// use molrs::perceive::bond_type::BCC_BOND_TYPE;
 /// use molrs::store::keys;
-/// use molrs::system::bond::BondType;
-/// use molrs::system::molgraph::PropValue;
+/// use molrs::system::BondType;
+/// use molrs::system::PropValue;
 ///
 /// let mut mol = Atomistic::new();
 /// let c = mol.add_atom_xyz("C", 0.86, 0.12, 0.13);

@@ -10,9 +10,9 @@
 //! a defect in the cell partition cannot cancel against a defect here; that is
 //! what makes it usable as an oracle in tests.
 
+use crate::op::types::{F, FNx3, FNx3View};
+use crate::spatial::SimBox;
 use crate::spatial::neighbors::{Backend, PairVisitor};
-use crate::spatial::simbox::SimBox;
-use crate::types::{F, FNx3, FNx3View};
 
 /// Brute-force O(N^2) neighbor search — the reference
 /// [`NeighborList`](crate::spatial::neighbors::NeighborList) backend.

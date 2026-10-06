@@ -8,7 +8,7 @@
 //! molrs uses both, and the split is by **path**, not by module:
 //!
 //! * **analysis** (`compute`, the neighbour-search backends) takes its
-//!   periodicity from [`SimBox`](crate::spatial::simbox::SimBox) — see
+//!   periodicity from [`SimBox`](crate::spatial::SimBox) — see
 //!   [`neighbors`](crate::spatial::neighbors), where the index holds `N` points
 //!   and the lattice re-enters only through the minimum-image displacement;
 //! * **MD force evaluation** uses this module: owned atoms plus ghosts, so the
@@ -39,8 +39,8 @@
 //!                          reverse_comm ─┴─► forces on owned atoms
 //! ```
 
-pub mod ghosts;
-pub mod images;
+mod ghosts;
+mod images;
 
 pub use ghosts::GhostSet;
 pub use images::{GhostError, ImageRange};

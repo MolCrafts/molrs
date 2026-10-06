@@ -47,17 +47,17 @@
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
-use crate::io::smiles::cgsmiles::ast::{
+use crate::io::smiles::cgsmiles::parser::CgParser;
+use crate::io::smiles::fragment_to_atomistic;
+use crate::io::smiles::{BondKind, BondingDescriptor, DescriptorKind, SmilesIR};
+use crate::io::smiles::{
     CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGSmilesIR, EdgeOrigin, FragmentBody, PairEnd,
     ResolvedPair,
 };
-use crate::io::smiles::cgsmiles::parser::CgParser;
-use crate::io::smiles::chem::ast::{BondKind, BondingDescriptor, DescriptorKind, SmilesIR};
-use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
-use crate::io::smiles::smiles::fragment_to_atomistic;
-use molrs::system::atomistic::Atomistic;
-use molrs::system::molgraph::NodeId;
-use molrs::system::molgraph::PropValue;
+use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
+use molrs::system::Atomistic;
+use molrs::system::NodeId;
+use molrs::system::PropValue;
 
 /// Pair the bonding descriptors of every level of `ir`, coarsest level first.
 ///

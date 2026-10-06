@@ -14,9 +14,9 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
-use molrs::store::block::DType;
+use molrs::op::types::{F, I, Idx};
+use molrs::store::DType;
 use molrs::store::schema;
-use molrs::types::{F, I, Idx};
 use num_complex::Complex;
 
 // ── Key ──────────────────────────────────────────────────────────────────────

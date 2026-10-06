@@ -19,7 +19,7 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use molrs::ff::typifier::gaff::{GaffParameterSet, GaffTypifier};
+use molrs::ff::typifier::{GaffParameterSet, GaffTypifier};
 
 use crate::ff::PyTypifier;
 

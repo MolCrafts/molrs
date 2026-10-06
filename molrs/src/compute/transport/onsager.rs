@@ -32,13 +32,13 @@
 //! the curves un-normalized; the comment there about volume normalization was
 //! never applied in code).
 
-use crate::compute::result::ComputeResult;
+use crate::compute::ComputeResult;
 use ndarray::Array1;
 
-use molrs::store::frame_access::FrameAccess;
+use molrs::store::FrameAccess;
 
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 
 fn validate_series(p: &ndarray::Array2<f64>, name: &'static str) -> Result<usize, ComputeError> {
     let shape = p.shape();
@@ -69,7 +69,7 @@ fn validate_series(p: &ndarray::Array2<f64>, name: &'static str) -> Result<usize
 /// Computes the windowed (all-time-origins) cross-correlation of two species'
 /// **collective** displacements — a pure raw observable, with the long-time
 /// linear fit `L_ij(τ) ≈ 2·d·D_ij·τ` left to the caller
-/// ([`LinearFit`](crate::compute::fitting::LinearFit)). The collective-coordinate
+/// ([`LinearFit`](crate::compute::LinearFit)). The collective-coordinate
 /// reduction `P_s = Σ_a r_a` and periodic-image unwrapping are the caller's job.
 ///
 /// For each lag `τ ∈ [0, max_lag]`,
@@ -182,7 +182,7 @@ impl ComputeResult for OnsagerResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
+    use molrs::store::Frame;
     use ndarray::array;
 
     /// Empty frame slice for the series-based `OnsagerCorrelation` compute.

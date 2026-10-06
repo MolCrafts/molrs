@@ -1,6 +1,6 @@
 //! Torsion algebra: the exact linear maps between every proper-torsion and
 //! improper form molrs has, and their registration as the force-field IR's
-//! `torsion` form family ([`builtin_forms`](crate::ff::ir::form::builtin_forms)).
+//! `torsion` form family (`builtin_forms` in `ff::ir`).
 //!
 //! Every Class-I torsion form is a finite Fourier series in the dihedral angle
 //! φ (LAMMPS's signed φ of the atoms I-J-K-L as stored, the angle every molrs
@@ -92,7 +92,7 @@ use std::iter::Sum;
 use std::ops::{Add, AddAssign};
 
 use super::Params;
-use crate::ff::ir::form::{FormCodec, Refusal, TypeParams};
+use crate::ff::ir::{FormCodec, Refusal, TypeParams};
 
 /// The constant term's rounding allowance, relative to the series' scale
 /// ([`FourierSeries::scale`]): `a₀` is a sum of products, so a projection
@@ -2265,9 +2265,9 @@ mod tests {
         use crate::ff::forcefield::ForceField;
         use crate::ff::potential::PotentialCompiler;
         use crate::ff::potential::geometry::compute_dihedral;
-        use molrs::store::block::Block;
-        use molrs::store::frame::Frame;
-        use molrs::types::Idx;
+        use molrs::op::types::Idx;
+        use molrs::store::Block;
+        use molrs::store::Frame;
         use ndarray::Array1;
 
         let mut rng = StdRng::seed_from_u64(SEED + 5);

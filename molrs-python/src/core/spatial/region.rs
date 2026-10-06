@@ -30,11 +30,11 @@
 use crate::core::spatial::mesh::PyTriMesh;
 use crate::core::spatial::simbox::PyBox;
 use crate::helpers::NpF;
+use molrs::op::types::F3x3;
 use molrs::spatial::region::{
     AndRegion, Cuboid, Cylinder, Ellipsoid, HalfSpace, NotRegion, OrRegion, Parallelepiped,
     Polyhedron, Region, Sphere, SphereUnion,
 };
-use molrs::types::F3x3;
 use ndarray::{Array1, Array2};
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::{PyTypeError, PyValueError};

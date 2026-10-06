@@ -36,8 +36,8 @@
 //! the owning type lives in `core`, one layer below this one, and must not learn
 //! about [`ComputeError`] to answer a question `core` never asks.
 
+use molrs::op::types::{F, FNx3View};
 use molrs::spatial::neighbors::{Neighbors, QueryMode};
-use molrs::types::{F, FNx3View};
 
 use super::error::ComputeError;
 

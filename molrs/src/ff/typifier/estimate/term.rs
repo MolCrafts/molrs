@@ -29,7 +29,7 @@ pub enum BondedTerm {
     Dihedral([String; 4]),
     /// An improper: the four atom types with the **centre third** (`i-j-k-l`,
     /// `k` central), which is AMBER's slot order and the order
-    /// [`ImproperPeriodic`](crate::ff::potential::improper::periodic::ImproperPeriodic)
+    /// [`ImproperPeriodic`](crate::ff::potential::improper::ImproperPeriodic)
     /// reads.
     ///
     /// The three peripherals are an unordered **set** — an improper is a

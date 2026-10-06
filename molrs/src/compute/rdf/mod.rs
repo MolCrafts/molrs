@@ -14,16 +14,16 @@ mod result;
 pub use accumulator::RDFAccumulator;
 pub use result::{RDFResult, RdfMode};
 
+use molrs::op::types::{F, FNx3View};
+use molrs::spatial::SimBox;
 use molrs::spatial::neighbors::{Backend, LinkCell, NeighborList, Neighbors};
-use molrs::spatial::simbox::SimBox;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::{F, FNx3View};
+use molrs::store::FrameAccess;
 use ndarray::Array1;
 
-use crate::compute::error::ComputeError;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
 use crate::compute::require_dist_sq;
-use crate::compute::traits::Compute;
 
 /// Radial distribution function g(r) calculator.
 ///
@@ -282,7 +282,7 @@ impl RDF {
             dimensionality: self.dimensionality,
             finalized: false,
         };
-        use crate::compute::result::ComputeResult;
+        use crate::compute::ComputeResult;
         result.finalize();
         Ok(result)
     }
@@ -325,9 +325,9 @@ mod tests {
     use super::super::positions::get_positions_ref;
     use super::*;
     use crate::compute::test_support::nlist_from_frame;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use molrs::spatial::SimBox;
+    use molrs::store::Block;
+    use molrs::store::Frame;
     use ndarray::{Array1 as A1, array};
     use rand::RngExt;
 
@@ -530,7 +530,7 @@ mod tests {
 
     #[test]
     fn zero_distance_pairs_are_skipped() {
-        use molrs::store::block::Block;
+        use molrs::store::Block;
 
         let mut block = Block::new();
         block
@@ -678,7 +678,7 @@ mod tests {
 
     #[test]
     fn finalize_is_idempotent() {
-        use crate::compute::result::ComputeResult;
+        use crate::compute::ComputeResult;
 
         let frame = random_frame(200, 10.0, 42);
         let nlist = nlist_from_frame(&frame, 4.0);

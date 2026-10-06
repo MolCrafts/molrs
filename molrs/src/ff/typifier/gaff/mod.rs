@@ -59,22 +59,24 @@ use std::sync::OnceLock;
 use molrs::store::keys;
 use molrs::store::schema::block_names::{ANGLES, BONDS, DIHEDRALS, IMPROPERS};
 use molrs::store::type_labels::TypeName;
-use molrs::system::molgraph::RelationId;
-use molrs::{Atomistic, NodeId};
+use molrs::system::RelationId;
+use molrs::system::{Atomistic, NodeId};
 
 use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
-use crate::ff::params::amber::{AMBER_COULOMB, AMBER_SCEE, AMBER_SCNB};
+use crate::ff::params::amber::{AMBER_SCEE, AMBER_SCNB};
 use crate::ff::params::{
     GAFF, GAFF2, PARMCHK, ParmAngleRow, ParmBondRow, ParmDihedralRow, ParmImproperRow,
     ParmNonbondedRow, ParmTable, ParmType,
 };
-use crate::ff::typifier::estimate::{BondedTerm, EmpiricalSet, EstimateMethod, Provenance};
+use crate::ff::typifier::BondedTerm;
 use crate::ff::typifier::{Annotation, Match, Typifier};
+use crate::ff::typifier::{EmpiricalSet, EstimateMethod, Provenance};
+use crate::units::constants::AMBER_COULOMB;
 
-pub mod analog;
-pub mod improper;
-pub mod torsion;
+mod analog;
+mod improper;
+mod torsion;
 
 /// Which AMBER `parm` force field to match against.
 ///
@@ -278,7 +280,7 @@ fn angle_params(row: &ParmAngleRow) -> [(&'static str, f64); 2] {
 }
 
 /// The cosine terms of one torsion, in the `k{m}` / `periodicity{m}` / `phase{m}` encoding
-/// [`DihedralPeriodic`](crate::ff::potential::dihedral::periodic::DihedralPeriodic)
+/// [`DihedralPeriodic`](crate::ff::potential::dihedral::DihedralPeriodic)
 /// scans upward from `m = 1`. `k = PK / IDIVF`; phases in degrees.
 fn dihedral_params(rows: &[&ParmDihedralRow]) -> Vec<(String, f64)> {
     let mut out = Vec::with_capacity(rows.len() * 3);
@@ -400,13 +402,13 @@ impl std::error::Error for GaffError {}
 /// Methane, end to end — perceive + type atoms, match terms, evaluate:
 ///
 /// ```
-/// use molrs::Atomistic;
+/// use molrs::system::Atomistic;
 /// use molrs::ff::potential::{PotentialCompiler, intramolecular_pairs};
 /// use molrs::ff::typifier::Typing;
-/// use molrs::ff::typifier::atd::{AtdParameterSet, AtdTypifier};
-/// use molrs::ff::typifier::gaff::{GaffParameterSet, GaffTypifier};
+/// use molrs::ff::typifier::{AtdParameterSet, AtdTypifier};
+/// use molrs::ff::typifier::{GaffParameterSet, GaffTypifier};
 /// use molrs::store::keys;
-/// use molrs::system::molgraph::PropValue;
+/// use molrs::system::PropValue;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut mol = Atomistic::new();
@@ -653,7 +655,7 @@ impl Typifier for GaffTypifier {
     /// Match the bonded terms of a molecule whose atoms carry GAFF types.
     ///
     /// Angles and dihedrals are regenerated from the bond graph onto `graph`;
-    /// impropers are rebuilt as parmchk2 + tleap build them (see [`improper`]),
+    /// impropers are rebuilt as parmchk2 + tleap build them (see the `improper` stage of this typifier),
     /// in AMBER's central-atom-third order. Atom order and bond order are read
     /// as antechamber reads a mol2 file's: they decide parmchk2's improper
     /// estimates and tleap's atom order, as they do in AmberTools. Atoms get `type` as a
@@ -1000,7 +1002,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use molrs::store::keys;
-    use molrs::system::atomistic::Atomistic;
+    use molrs::system::Atomistic;
 
     use super::{
         GaffParameterSet, GaffTypifier, angle_params, bond_params, try_candidate_forcefield,

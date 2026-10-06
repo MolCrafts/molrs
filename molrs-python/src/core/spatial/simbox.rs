@@ -10,10 +10,10 @@
 
 use crate::core::store::frame::PyFrame;
 use crate::helpers::{NpF, box_error_to_pyerr, parse_origin, parse_pbc};
-use molrs::spatial::simbox::SimBox;
+use molrs::op::types::{F, I};
+use molrs::spatial::SimBox;
 use molrs::store::keys;
 use molrs::store::schema::block_names;
-use molrs::types::{F, I};
 use ndarray::{Array2, Axis, array};
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;

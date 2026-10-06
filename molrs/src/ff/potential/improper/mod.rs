@@ -1,10 +1,10 @@
 //! Improper (out-of-plane) potential kernels.
 
-pub mod cvff;
-pub mod harmonic;
-pub mod mmff;
-pub mod periodic;
-pub mod uff;
+pub(crate) mod cvff;
+pub(crate) mod harmonic;
+pub(crate) mod mmff;
+pub(crate) mod periodic;
+pub(crate) mod uff;
 
 pub use cvff::{ImproperCvff, improper_cvff_ctor};
 pub use harmonic::{ImproperHarmonic, improper_harmonic_ctor};

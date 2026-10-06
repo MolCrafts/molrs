@@ -32,7 +32,7 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Error, ErrorKind, Result, Write};
 use std::path::Path;
 
-use molrs::store::frame::Frame;
+use molrs::store::Frame;
 
 use crate::io::reader::FrameReader;
 
@@ -290,8 +290,8 @@ pub fn write_frame(path: impl AsRef<Path>, frame: &Frame, format: Option<&str>) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::store::block::Block;
-    use molrs::types::F;
+    use molrs::op::types::F;
+    use molrs::store::Block;
     use ndarray::Array1;
 
     fn water() -> Frame {
@@ -309,8 +309,7 @@ mod tests {
         let mut frame = Frame::new();
         frame.insert("atoms", atoms);
         frame.simbox = Some(
-            molrs::spatial::simbox::SimBox::cube(10.0, ndarray::array![0.0, 0.0, 0.0], [true; 3])
-                .unwrap(),
+            molrs::spatial::SimBox::cube(10.0, ndarray::array![0.0, 0.0, 0.0], [true; 3]).unwrap(),
         );
         frame
     }

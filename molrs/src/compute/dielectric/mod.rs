@@ -16,9 +16,9 @@
 //! [`DebyeRelaxation`](crate::compute::DebyeRelaxation) /
 //! [`GreenKuboConductivity`](crate::compute::GreenKuboConductivity) raw
 //! computes, and the window + FFT + prefactor transform is the
-//! [`EinsteinHelfandSpectrum`](crate::compute::spectroscopy::EinsteinHelfandSpectrum) /
-//! [`GreenKuboSpectrum`](crate::compute::spectroscopy::GreenKuboSpectrum)
-//! [`Fit`](crate::compute::traits::Fit) in `compute::spectroscopy` (windowing +
+//! [`EinsteinHelfandSpectrum`](crate::compute::EinsteinHelfandSpectrum) /
+//! [`GreenKuboSpectrum`](crate::compute::GreenKuboSpectrum)
+//! [`Fit`](crate::compute::Fit) in `compute::spectroscopy` (windowing +
 //! transforming a raw ACF into ε(ω) is a *fit*).
 //!
 //! # Units
@@ -39,7 +39,7 @@
 
 use ndarray::{Array1, Array2, Array3};
 
-use crate::compute::error::ComputeError;
+use crate::compute::ComputeError;
 
 // ── Physical constants (MD real units: kcal, mol, Angstrom, e, K) ─────────
 //
@@ -399,7 +399,7 @@ pub fn decompose_current(
 
 // The Einstein–Helfand ionic conductivity is now the explicit composition of
 // the raw [`EinsteinConductivity`](crate::compute::EinsteinConductivity) collective-dipole
-// MSD compute with the [`LinearFit`](crate::compute::fitting::LinearFit) slope and a
+// MSD compute with the [`LinearFit`](crate::compute::LinearFit) slope and a
 // caller-applied `slope / (6·V·k_B·T)` MD→SI prefactor. The legacy bundled
 // `ConductivityResult` + `einstein_helfand_conductivity` free function (which
 // baked the OLS slope and σ into the raw result) were removed in

@@ -7,7 +7,7 @@
 //! here until the tail is appended.
 
 use crate::error::MolRsError;
-use crate::types::F;
+use crate::op::types::F;
 
 /// Bond-distance scale weights: slot 0 is 1-2, last slot is the 1-N tail.
 ///
@@ -33,7 +33,7 @@ use crate::types::F;
 /// # Examples
 ///
 /// ```
-/// use molrs::BondDistanceWeights;
+/// use molrs::system::BondDistanceWeights;
 ///
 /// let table = BondDistanceWeights::from_exclusion_depth(3);
 /// assert_eq!(table.as_slice(), &[0.0, 0.0, 0.0, 1.0]);

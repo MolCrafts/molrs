@@ -5,26 +5,23 @@
 //! A frame read is two steps: [`visit_block`](FrameAccess::visit_block), then
 //! the column.
 
-use crate::spatial::simbox::SimBox;
-use crate::store::block::access::BlockAccess;
-use crate::store::frame::Frame;
-use crate::store::frame_view::FrameView;
-use crate::store::meta::MetaMap;
+use crate::spatial::SimBox;
+use crate::store::BlockAccess;
+use crate::store::Frame;
+use crate::store::FrameView;
+use crate::store::MetaMap;
 
 /// Unified read-only access for [`Frame`] and [`FrameView`].
 ///
 /// Metadata, the simulation box, and one column read as two keys.
-/// Project a dtype from the returned [`ColumnView`](crate::store::block::ColumnView).
+/// Project a dtype from the returned [`ColumnView`](crate::store::ColumnView).
 pub trait FrameAccess {
     /// The column `col_key` inside block `block_key`, or `None` when either key is absent.
     ///
     /// A missing block and a missing column are both `None`. A present column of
     /// another dtype is still `Some`; `as_*` on that column is the dtype check.
-    fn column<'a>(
-        &'a self,
-        block_key: &str,
-        col_key: &str,
-    ) -> Option<crate::store::block::ColumnView<'a>>;
+    fn column<'a>(&'a self, block_key: &str, col_key: &str)
+    -> Option<crate::store::ColumnView<'a>>;
     /// Returns a reference to the simulation box, if present.
     fn simbox_ref(&self) -> Option<&SimBox>;
     /// Returns a reference to the metadata map.
@@ -47,7 +44,7 @@ impl FrameAccess for Frame {
         &'a self,
         block_key: &str,
         col_key: &str,
-    ) -> Option<crate::store::block::ColumnView<'a>> {
+    ) -> Option<crate::store::ColumnView<'a>> {
         self.get(block_key)?.column(col_key)
     }
 
@@ -85,7 +82,7 @@ impl FrameAccess for FrameView<'_> {
         &'a self,
         block_key: &str,
         col_key: &str,
-    ) -> Option<crate::store::block::ColumnView<'a>> {
+    ) -> Option<crate::store::ColumnView<'a>> {
         self.get(block_key)?.column(col_key)
     }
 
@@ -121,8 +118,8 @@ impl FrameAccess for FrameView<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::block::Block;
-    use crate::types::{F, Idx};
+    use crate::op::types::{F, Idx};
+    use crate::store::Block;
     use ndarray::Array1;
 
     fn make_frame() -> Frame {

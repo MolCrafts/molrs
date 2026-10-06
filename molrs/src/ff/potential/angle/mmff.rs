@@ -23,8 +23,8 @@ use crate::ff::potential::geometry::{
 };
 use crate::ff::potential::{IndexedTerms, Member, Potential};
 use crate::op::vec3::norm;
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::store::Frame;
 
 use crate::ff::constants::MDYNE_A_TO_KCAL;
 
@@ -230,9 +230,9 @@ pub fn mmff_angle_ctor(
 ///
 /// [`IrError::MissingParam`]: crate::ff::ir::IrError::MissingParam
 fn linear_column<'a>(
-    block: &'a molrs::store::block::Block,
+    block: &'a molrs::store::Block,
     style: &str,
-) -> Result<&'a ndarray::ArrayD<molrs::types::I>, crate::ff::ir::IrError> {
+) -> Result<&'a ndarray::ArrayD<molrs::op::types::I>, crate::ff::ir::IrError> {
     block
         .get("linear")
         .and_then(|c| c.as_int())

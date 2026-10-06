@@ -7,7 +7,7 @@
 use super::compile::{Compiled, F1, Geometry, Op, Program, delta, step};
 use super::dual::{self, Dual, P3};
 use super::error::ExprError;
-use molrs::types::F;
+use molrs::op::types::F;
 
 /// The value of column `c` at term `t`, a length-1 column broadcast.
 #[inline]

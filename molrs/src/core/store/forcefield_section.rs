@@ -46,8 +46,8 @@
 use indexmap::IndexMap;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
-use crate::MolRsError;
-use crate::store::block::{Block, DType};
+use crate::error::MolRsError;
+use crate::store::{Block, DType};
 
 /// The endpoint columns of a style table, in position order.
 pub const ENDPOINT_COLUMNS: [&str; 5] = ["itom", "jtom", "ktom", "ltom", "mtom"];
@@ -192,48 +192,6 @@ pub fn style_block_name(category: &str, style: &str) -> String {
         }
     }
     name
-}
-
-/// `(category, style)` of a style table's block name: the inverse of
-/// [`style_block_name`], refusing every other spelling (a lowercase escape, a
-/// reserved byte written verbatim, an unreserved byte escaped).
-///
-/// # Errors
-///
-/// A [`MolRsError::Validation`] naming `name`.
-pub fn parse_style_block_name(name: &str) -> Result<(String, String), MolRsError> {
-    let bad = |why: &str| MolRsError::validation(format!("{name:?} is no style table name: {why}"));
-    let (category, encoded) = name
-        .split_once('.')
-        .filter(|(category, _)| !category.is_empty())
-        .ok_or_else(|| bad("expected <category>.<style>"))?;
-    let bytes = encoded.as_bytes();
-    let mut raw = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' {
-            let digits = bytes
-                .get(i + 1..i + 3)
-                .filter(|d| {
-                    d.iter()
-                        .all(|b| b.is_ascii_digit() || (b'A'..=b'F').contains(b))
-                })
-                .ok_or_else(|| bad("a % is followed by two uppercase hex digits"))?;
-            let hex = std::str::from_utf8(digits).expect("ASCII hex digits");
-            raw.push(u8::from_str_radix(hex, 16).expect("two hex digits"));
-            i += 3;
-        } else if unreserved(bytes[i]) {
-            raw.push(bytes[i]);
-            i += 1;
-        } else {
-            return Err(bad("a byte outside A-Z a-z 0-9 - _ is written as %XX"));
-        }
-    }
-    let style = String::from_utf8(raw).map_err(|_| bad("the style is not UTF-8"))?;
-    if style_block_name(category, &style) != name {
-        return Err(bad("an unreserved byte is escaped"));
-    }
-    Ok((category.to_owned(), style))
 }
 
 /// What the endpoint strings of a style's rows name.
@@ -675,7 +633,7 @@ fn check_style_table(
 fn check_array_param(
     table: &Block,
     column: &str,
-    values: &crate::store::block::Column,
+    values: &crate::store::Column,
 ) -> Result<(), String> {
     let shape = values.shape();
     let array = values
@@ -707,7 +665,7 @@ fn check_array_param(
 /// The pinned array parameter: a `cmap` table's [`CMAP_GRID`] column is
 /// `f64[T, N, N]`, `N ≥ 2`, with no precision, and every value of a row that
 /// is not null is finite.
-fn check_cmap_grid(table: &Block, values: &crate::store::block::Column) -> Result<(), String> {
+fn check_cmap_grid(table: &Block, values: &crate::store::Column) -> Result<(), String> {
     let shape = values.shape();
     let grid = values
         .as_float()
@@ -754,7 +712,7 @@ pub fn check_pair_restatements(table: &Block) -> Result<(), String> {
             .expect("a validated pair table: a string column")
     };
     let (names, itom, jtom) = (strings("name"), strings("itom"), strings("jtom"));
-    let params: Vec<(&str, &crate::store::block::Column, Option<&[bool]>)> = table
+    let params: Vec<(&str, &crate::store::Column, Option<&[bool]>)> = table
         .iter()
         .filter(|(column, _)| is_parameter_column(column))
         .map(|(column, values)| (column, values, table.validity(column)))
@@ -795,7 +753,7 @@ pub fn check_pair_restatements(table: &Block) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::block::Column;
+    use crate::store::Column;
     use ndarray::ArrayD;
     use serde_json::json;
 
@@ -863,31 +821,6 @@ mod tests {
         );
         assert_eq!(style_block_name("x", "a.b c"), "x.a%2Eb%20c");
         assert_eq!(style_block_name("x", "é"), "x.%C3%A9");
-    }
-
-    #[test]
-    fn a_style_block_name_parses_back_and_refuses_other_spellings() {
-        for (category, style) in [
-            ("pair", "lj/cut/coul/long"),
-            ("x", "é ü"),
-            ("bond", "m-o_r"),
-        ] {
-            let name = style_block_name(category, style);
-            assert_eq!(
-                parse_style_block_name(&name).unwrap(),
-                (category.to_owned(), style.to_owned())
-            );
-        }
-        for bad in [
-            "nodot",
-            ".style",
-            "pair.lj/cut",
-            "pair.lj%2fcut",
-            "pair.lj%2",
-            "pair.%41",
-        ] {
-            assert!(parse_style_block_name(bad).is_err(), "{bad}");
-        }
     }
 
     #[test]

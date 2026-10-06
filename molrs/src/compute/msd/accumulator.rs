@@ -17,9 +17,9 @@
 
 use std::collections::VecDeque;
 
-use molrs::types::F;
+use molrs::op::types::F;
 
-use crate::compute::error::ComputeError;
+use crate::compute::ComputeError;
 
 /// Streaming MSD accumulator (Direct curve + lag-capped windowed sums).
 ///
@@ -149,10 +149,10 @@ fn sum_sq_disp(a: &[F], b: &[F], n_atoms: usize) -> F {
 mod tests {
     use super::super::MSD;
     use super::*;
+    use crate::compute::Compute;
     use crate::compute::MsdMode;
-    use crate::compute::traits::Compute;
-    use molrs::Frame;
-    use molrs::store::block::Block;
+    use molrs::store::Block;
+    use molrs::store::Frame;
     use ndarray::Array1 as A1;
 
     fn make_frame(x: &[f64], y: &[f64], z: &[f64]) -> Frame {

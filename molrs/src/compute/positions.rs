@@ -3,12 +3,12 @@
 //! underlying columns are contiguous (the common case for `Frame` and
 //! `FrameView`), avoiding the per-atom copies of an owned `Vec`.
 //!
-//! Minimum image is not here: it is [`SimBox::mic`](molrs::spatial::simbox::SimBox::mic)
-//! / [`Mic`](molrs::spatial::simbox::Mic), resolved once per frame by the
+//! Minimum image is not here: it is [`SimBox::mic`](molrs::spatial::SimBox::mic)
+//! / [`Mic`](molrs::spatial::Mic), resolved once per frame by the
 //! caller.
 
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::store::FrameAccess;
 
 use super::error::ComputeError;
 

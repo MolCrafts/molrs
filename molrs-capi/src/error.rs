@@ -5,12 +5,12 @@
 //! and can be retrieved via [`crate::molrs_last_error`].
 //!
 //! Column data types are exposed to C as [`MolrsDType`] discriminants
-//! that map one-to-one to the internal [`molrs::store::block::DType`] enum.
+//! that map one-to-one to the internal [`molrs::store::DType`] enum.
 
 use std::cell::RefCell;
 use std::ffi::c_char;
 
-use molrs::store::block::DType;
+use molrs::store::DType;
 use molrs_ffi::FfiError;
 
 /// Status codes returned by every `extern "C"` function.
@@ -67,7 +67,7 @@ pub enum MolrsStatus {
 
 /// Data type discriminants for Block columns.
 ///
-/// Each column in a [`Block`](molrs::store::block::Block) stores a
+/// Each column in a [`Block`](molrs::store::Block) stores a
 /// homogeneously-typed ndarray.  This enum is the stored variant, not a
 /// width bucket: an `i64` column is [`Int64`](Self::Int64), not [`Int`](Self::Int).
 /// Discriminants 0–4 stay where they were; later variants are appended.

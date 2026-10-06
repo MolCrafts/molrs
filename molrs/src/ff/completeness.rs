@@ -758,7 +758,7 @@ const MATRIX: &[Row] = &[
                 ],
             ),
             Exact(&[
-                "ff/forcefield/readers/prmtop.rs::amber_coulomb_is_18_2223_squared",
+                "core/units/constants.rs::amber_coulomb_is_its_charge_factor_squared",
                 PRMTOP,
             ]),
             Exact(&[RECORD, RECORD_SRC]),
@@ -1097,7 +1097,7 @@ const MATRIX: &[Row] = &[
             Na("OpenMM fixes ONE_4PI_EPS0: priced at OpenMM's"),
             Exact(&[GMX]),
             Na("GROMACS fixes ONE_4PI_EPS0: priced at GROMACS's"),
-            Exact(&["ff/forcefield/readers/prmtop.rs::amber_coulomb_is_18_2223_squared"]),
+            Exact(&["core/units/constants.rs::amber_coulomb_is_its_charge_factor_squared"]),
             Exact(&[RECORD_SRC]),
         ],
     },
@@ -1389,11 +1389,11 @@ fn every_molrec_class_i_style_is_priced_or_refused_by_name() {
     }
 }
 
-fn probe_frame(category: &str, arity: usize) -> molrs::store::frame::Frame {
-    use molrs::store::block::Block;
-    use molrs::types::Idx;
+fn probe_frame(category: &str, arity: usize) -> molrs::store::Frame {
+    use molrs::op::types::Idx;
+    use molrs::store::Block;
     use ndarray::Array1;
-    let mut frame = molrs::store::frame::Frame::new();
+    let mut frame = molrs::store::Frame::new();
     let mut atoms = Block::new();
     atoms
         .insert(

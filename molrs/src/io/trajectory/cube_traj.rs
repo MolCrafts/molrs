@@ -19,7 +19,7 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 use molrs::error::MolRsError;
-use molrs::store::frame::Frame;
+use molrs::store::Frame;
 
 use crate::io::data::cube::read_cube_from_reader;
 

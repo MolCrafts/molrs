@@ -5,18 +5,17 @@
 //! voids are Boolean compositions ([`NotRegion`], [`AndRegion`], [`OrRegion`]). The trait's
 //! one required method beyond [`Region::bounds`] is [`Region::distance`]
 //! (negative inside, positive outside); containment and the gradient follow
-//! from it. The periodic simulation cell lives in [`crate::spatial::simbox`]
+//! from it. The periodic simulation cell lives in [`crate::spatial::SimBox`]
 //! — it is not a region type and must not be imported from here.
 
-pub mod cylinder;
-pub mod ellipsoid;
-pub mod half_space;
-pub mod polyhedron;
+mod cylinder;
+mod ellipsoid;
+mod half_space;
+mod polyhedron;
 #[allow(clippy::module_inception)]
-pub mod region;
-pub mod sphere_union;
+mod region;
+mod sphere_union;
 
-pub use crate::types::FNx3;
 pub use cylinder::Cylinder;
 pub use ellipsoid::Ellipsoid;
 pub use half_space::HalfSpace;

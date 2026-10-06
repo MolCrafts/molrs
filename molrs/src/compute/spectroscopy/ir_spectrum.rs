@@ -5,8 +5,8 @@ use rustfft::FftPlanner;
 
 use super::spectra::SpectrumResult;
 use super::window_and_fft;
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Fit;
+use crate::compute::ComputeError;
+use crate::compute::Fit;
 
 /// Infrared absorption spectrum transform of a **raw dipole-flux ACF**.
 ///
@@ -54,9 +54,9 @@ impl Fit for IRSpectrum {
 mod tests {
     use super::super::ir_flux::IRFlux;
     use super::*;
-    use crate::compute::traits::Compute;
-    use molrs::Frame;
+    use crate::compute::Compute;
     use molrs::signal as sig;
+    use molrs::store::Frame;
     use ndarray::Array2;
 
     /// Empty frame slice for the series-based raw computes.

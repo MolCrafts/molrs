@@ -18,14 +18,14 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::io::smiles::chem::ast::*;
-use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
 use crate::io::smiles::smiles::canonical_element_symbol;
-use molrs::Element;
+use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 use molrs::error::MolRsError;
 use molrs::store::keys;
-use molrs::system::atomistic::Atomistic;
-use molrs::system::molgraph::NodeId;
-use molrs::system::molgraph::PropValue;
+use molrs::system::Atomistic;
+use molrs::system::Element;
+use molrs::system::NodeId;
+use molrs::system::PropValue;
 
 /// Convert a parsed SMILES IR into an [`Atomistic`] molecular graph.
 ///
@@ -163,7 +163,7 @@ fn bond_query_to_kind(q: Option<&BondQuery>) -> Result<Option<BondKind>, SmilesE
             SmilesErrorKind::InvalidQueryPrimitive(
                 "SMARTS bond query cannot be atomized".to_owned(),
             ),
-            crate::io::smiles::chem::ast::Span::new(0, 0),
+            crate::io::smiles::Span::new(0, 0),
             "",
             Notation::Smarts,
         )),
@@ -769,7 +769,7 @@ mod tests {
     /// the `f64` a mass prop stores.
     fn table_mass(symbol: &str) -> f64 {
         f64::from(
-            molrs::Element::by_symbol(symbol)
+            molrs::system::Element::by_symbol(symbol)
                 .unwrap_or_else(|| panic!("{symbol:?} is not in the Element table"))
                 .atomic_mass(),
         )

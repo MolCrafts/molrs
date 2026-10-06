@@ -58,7 +58,7 @@ that dtype. Floats are always `f64`. `write_frame_file` saves the frame as a
 
 | Module | Feature | Purpose |
 | --- | --- | --- |
-| `molrs::*` | always | Core `Frame`, `Block`, topology, boxes, regions, neighbor search |
+| `molrs::store` / `molrs::system` / `molrs::spatial` / `molrs::units` | always | Core `Frame`, `Block`, topology, boxes, regions, neighbor search, units |
 | `molrs::perceive` | always | Rings, aromaticity, hydrogens, stereo, SMARTS |
 | `molrs::op` | always | Vector, linear-algebra and superposition kernels |
 | `molrs::optimize` | always (force-field optimizers need `ff`) | L-BFGS geometry optimization over a `Potential` |

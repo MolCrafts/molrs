@@ -12,7 +12,7 @@
 //! live here rather than under `io` because they pull third-party runtime
 //! dependencies — tokio, tungstenite, rmp-serde — that `io` must not acquire.
 
-pub mod message;
+mod message;
 
 pub use message::ControlCommand;
 
@@ -22,7 +22,7 @@ mod publisher;
 #[cfg(not(target_arch = "wasm32"))]
 pub use publisher::{Publisher, PublisherConfig, SendError};
 
-use crate::core::store::frame::Frame;
+use crate::store::Frame;
 
 /// Encoding used for a streamed `Frame`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,9 +81,9 @@ pub fn bytes_to_frame(bytes: &[u8], format: MessageFormat) -> Result<Frame, Stre
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::spatial::simbox::SimBox;
-    use crate::core::store::block::Block;
-    use crate::types::{F, I, Idx};
+    use crate::op::types::{F, I, Idx};
+    use crate::spatial::SimBox;
+    use crate::store::Block;
     use ndarray::{Array1, array};
 
     /// Build a full Frame used by the net-streaming lossless round-trip contract

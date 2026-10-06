@@ -11,9 +11,9 @@
 //!   into the atoms block), `order` (u32)
 
 use crate::io::reader::{FrameReader, Reader};
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
-use molrs::types::{F, Idx};
+use molrs::op::types::{F, Idx};
+use molrs::store::Block;
+use molrs::store::Frame;
 use ndarray::{Array1, IxDyn};
 use std::io::BufRead;
 
@@ -426,7 +426,7 @@ impl FrameIndexBuilder for SdfIndexBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::store::frame_access::FrameAccess;
+    use molrs::store::FrameAccess;
     use std::io::Cursor;
 
     const WATER_SDF: &str = "962\n  -OEChem-\n\n  3  2  0     0  0  0  0  0  0999 V2000\n    0.0000    0.0000    0.1173 O   0  0  0  0  0  0  0  0  0  0  0  0\n    0.7572    0.0000   -0.4692 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.7572    0.0000   -0.4692 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0  0  0  0\n  1  3  1  0  0  0  0\nM  END\n$$$$\n";

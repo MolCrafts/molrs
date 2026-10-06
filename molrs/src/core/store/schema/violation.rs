@@ -1,7 +1,7 @@
 //! Typed schema violations with instance paths, and the whole-frame report.
 
 use super::column::ColShape;
-use crate::store::block::DType;
+use crate::store::DType;
 
 /// Where in a Frame a violation sits. Ordered coarse → fine so a report sorts
 /// into a stable, diffable order.

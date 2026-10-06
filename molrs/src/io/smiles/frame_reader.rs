@@ -9,8 +9,8 @@
 use std::io::{BufRead, Result};
 
 use crate::io::reader::{FrameReader, FromFrame, Reader};
-use crate::store::frame::Frame;
-use crate::system::atomistic::Atomistic;
+use crate::store::Frame;
+use crate::system::Atomistic;
 
 /// Parse one SMILES string into an [`Atomistic`].
 ///
@@ -20,7 +20,7 @@ use crate::system::atomistic::Atomistic;
 pub fn parse_atomistic(smiles: &str) -> Result<Atomistic> {
     let ir = crate::io::smiles::parse_smiles(smiles)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
-    crate::io::smiles::smiles::to_atomistic::to_atomistic(&ir)
+    crate::io::smiles::to_atomistic(&ir)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
 }
 

@@ -16,15 +16,15 @@
 //! `ParticleLocal` (rotate by per-particle quaternion before evaluating
 //! `Y_ℓm`) is a follow-up.
 
-use crate::compute::result::ComputeResult;
+use crate::compute::ComputeResult;
 use molrs::math::complex::Complex;
 use molrs::math::spherical_harmonics::ylm_all;
 use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame_access::FrameAccess;
+use molrs::store::FrameAccess;
 
-use crate::compute::error::ComputeError;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 use crate::compute::require_disp;
-use crate::compute::traits::Compute;
 
 /// `LocalDescriptors` analyzer (Sph-mode).
 #[derive(Debug, Clone, Copy)]
@@ -146,11 +146,11 @@ impl ComputeResult for LocalDescriptorsResult {}
 mod tests {
     use super::*;
     use crate::compute::test_support::nlist_from_frame;
-    use molrs::Frame;
     use molrs::math::spherical_harmonics::ylm_complex;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
-    use molrs::types::F;
+    use molrs::op::types::F;
+    use molrs::spatial::SimBox;
+    use molrs::store::Block;
+    use molrs::store::Frame;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F) -> Frame {

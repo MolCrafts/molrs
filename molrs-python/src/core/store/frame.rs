@@ -20,8 +20,8 @@ use crate::core::spatial::simbox::PyBox;
 use crate::core::store::block::{PyBlock, coords_array, coords_error};
 use crate::helpers::molrs_error_to_pyerr;
 use crate::store::ffi_error_to_pyerr;
-use molrs::store::frame::Frame as CoreFrame;
-use molrs::store::meta::{MetaMap, MetaValue};
+use molrs::store::Frame as CoreFrame;
+use molrs::store::{MetaMap, MetaValue};
 use molrs_ffi::FrameRef;
 use pyo3::exceptions::{PyKeyError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -1073,7 +1073,7 @@ impl PyFrame {
     fn coords<'py>(
         &self,
         py: Python<'py>,
-    ) -> PyResult<Bound<'py, numpy::PyArray2<molrs::types::F>>> {
+    ) -> PyResult<Bound<'py, numpy::PyArray2<molrs::op::types::F>>> {
         use molrs::store::schema::block_names::ATOMS;
         use numpy::IntoPyArray;
         let xyz = self.with_frame(|f| {

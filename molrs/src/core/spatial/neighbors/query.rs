@@ -22,10 +22,10 @@
 //! [`NeighborList::neighbors`](crate::spatial::neighbors::NeighborList::neighbors),
 //! or drops columns afterwards with [`Neighbors::repack`].
 
+use crate::op::types::{F, FNx3, FNx3View};
+use crate::spatial::SimBox;
 use crate::spatial::neighbors::linkcell::LinkCell;
 use crate::spatial::neighbors::{Backend, Neighbors, NeighborsStorage, QueryMode};
-use crate::spatial::simbox::SimBox;
-use crate::types::{F, FNx3, FNx3View};
 
 /// Cross-query search over a fixed set of reference points.
 ///
@@ -277,7 +277,7 @@ impl NeighborQuery {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spatial::simbox::SimBox;
+    use crate::spatial::SimBox;
     use ndarray::array;
 
     #[test]

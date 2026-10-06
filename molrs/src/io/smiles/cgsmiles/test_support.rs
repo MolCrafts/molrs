@@ -5,7 +5,7 @@
 //! Compiled under `#[cfg(test)]` only, so it never reaches a shipped build.
 
 use super::ast::{PairEnd, ResolvedPair};
-use crate::io::smiles::chem::ast::BondKind;
+use crate::io::smiles::BondKind;
 
 /// An end at the last level: the instance and the port index into its body's
 /// descriptor map.

@@ -25,19 +25,17 @@
 //! - Brehm & Kirchner, *J. Chem. Inf. Model.* **2011**, 51, 2007–2023 (reference implementation).
 //! - Brehm et al., *J. Chem. Phys.* **2020**, 152, 164105.
 
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::store::FrameAccess;
 use ndarray::Array1;
 
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
 
 use super::observable::{AtomGroups, Observable};
 use super::{AngleObservable, DihedralObservable, DistanceObservable, DistributionResult};
-
-/// Boltzmann constant in molrs energy units, kcal/(mol·K).
-pub const KB_KCAL_PER_MOL_K: F = 1.987204e-3;
+use crate::units::constants::BOLTZMANN_REAL;
 
 /// One axis of a [`CombinedDistribution`]: bin count + range + optional
 /// solid-angle weighting (mirrors link-01's sin θ ADF correction).
@@ -563,7 +561,7 @@ impl CombinedDistributionResult {
     /// barrier) rather than `+∞`, so the surface is finite everywhere. Returns
     /// the flat row-major array aligned with [`density`](Self::density).
     pub fn free_energy(&self, temperature: F) -> Array1<F> {
-        let kt = KB_KCAL_PER_MOL_K * temperature;
+        let kt = BOLTZMANN_REAL * temperature;
         let mut g = Array1::<F>::zeros(self.density.len());
         let mut g_max = F::NEG_INFINITY;
         for (i, &p) in self.density.iter().enumerate() {

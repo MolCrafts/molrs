@@ -9,11 +9,11 @@
 //! [`RdfMode`] is the one input to it that depends on *how* the pairs were
 //! searched rather than on where the particles are.
 
+use molrs::op::types::F;
 use molrs::spatial::neighbors::QueryMode;
-use molrs::types::F;
 use ndarray::Array1;
 
-use crate::compute::result::{ComputeResult, DescriptorRow};
+use crate::compute::{ComputeResult, DescriptorRow};
 
 /// Which point sets a radial-distribution histogram was accumulated over — the
 /// pairing alone, with no point counts attached.

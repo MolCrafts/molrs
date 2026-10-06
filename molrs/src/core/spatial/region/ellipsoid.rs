@@ -1,7 +1,7 @@
 //! An axis-aligned ellipsoid.
 
 use super::region::Region;
-use crate::types::{F, FNx3};
+use crate::op::types::{F, FNx3};
 use ndarray::Array2;
 
 /// A solid axis-aligned ellipsoid with semi-axes `(a, b, c)` about `center`.

@@ -12,13 +12,13 @@
 //! and is the prototypical member of this family; the others reuse the same
 //! histogram and SimBox conventions.
 
-pub mod correlation_function;
-pub mod gaussian_density;
-pub mod local_density;
-pub mod spatial;
-pub mod sphere_voxelization;
+mod correlation_function;
+mod gaussian_density;
+mod local_density;
+mod spatial;
+mod sphere_voxelization;
 
-pub use correlation_function::{CorrelationFunction, CorrelationFunctionResult};
+pub use correlation_function::{CorrelationArgs, CorrelationFunction, CorrelationFunctionResult};
 pub use gaussian_density::{GaussianDensity, GaussianDensityResult};
 pub use local_density::{LocalDensity, LocalDensityResult};
 pub use spatial::{GridSpec, SpatialDistribution, SpatialDistributionResult};

@@ -14,10 +14,11 @@
 use std::f64::consts::{PI, SQRT_2};
 
 use super::region::Region;
+use crate::op::types::{F, FNx3};
 use crate::op::vec3::{add, cross, dot, norm, scale, sub};
+use crate::spatial::TriMesh;
 use crate::spatial::bvh::{Bvh, triangle_box};
-use crate::spatial::mesh::{DEGENERATE_AREA2, TriMesh};
-use crate::types::{F, FNx3};
+use crate::spatial::mesh::DEGENERATE_AREA2;
 use ndarray::Array2;
 
 /// Points closer than this to the surface count as on it: `distance` is

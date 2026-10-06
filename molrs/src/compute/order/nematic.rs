@@ -25,14 +25,14 @@
 //! choose different conventions (atom orientations vs molecular long axes
 //! vs bond directions), so the caller passes them in directly.
 
-use crate::compute::result::ComputeResult;
+use crate::compute::ComputeResult;
 use crate::op::linalg::eigh_sym_3x3;
 
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::store::FrameAccess;
 
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 
 /// Nematic order parameter calculator.
 #[derive(Debug, Clone, Default)]
@@ -130,7 +130,7 @@ impl ComputeResult for NematicResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
+    use molrs::store::Frame;
 
     const TOL: F = 1e-10;
 

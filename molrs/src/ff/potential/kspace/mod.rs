@@ -4,6 +4,6 @@
 //! gated out of the `ff` feature (0.15). This is not a ForceField category:
 //! PME is registered as the pair style `coul/long/pme`.
 
-pub mod pme;
+pub(crate) mod pme;
 
-pub use pme::{PmePotential, pme_ctor};
+pub use pme::{PmeParams, PmePotential, pme_ctor};

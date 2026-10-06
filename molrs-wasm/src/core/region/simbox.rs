@@ -25,8 +25,8 @@
 
 use crate::core::block::Block;
 use crate::core::types::{JsFloatArray, WasmArray};
-use molrs::spatial::simbox::SimBox;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::spatial::SimBox;
 use wasm_bindgen::prelude::*;
 
 /// Simulation box defining periodic boundary conditions and coordinate
@@ -702,7 +702,7 @@ mod tests {
     use super::Box as WasmBox;
     use crate::core::types::JsFloatArray;
     use crate::{Frame, WasmArray};
-    use molrs::types::F;
+    use molrs::op::types::F;
     #[allow(unused_imports)]
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::wasm_bindgen_test;

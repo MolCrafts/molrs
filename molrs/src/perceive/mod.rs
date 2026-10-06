@@ -41,7 +41,7 @@ mod aromatic_standard;
 pub mod aromaticity;
 pub mod bond_order;
 pub mod bond_type;
-pub mod builder;
+mod builder;
 pub mod equivalence;
 mod hybridization;
 pub mod hydrogens;
@@ -52,7 +52,7 @@ pub mod rotatable;
 #[cfg(feature = "smiles")]
 pub mod smarts;
 pub mod stereo;
-pub mod subgraph;
+mod subgraph;
 
 pub use builder::Perceive;
 pub use hybridization::{Hybridization, conjugated_atoms, hybridizations};

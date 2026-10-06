@@ -10,9 +10,9 @@
 use ndarray::Array1;
 
 use super::ols_slope_intercept_r2;
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Fit;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
+use crate::compute::Fit;
 
 /// Result of a linear (OLS) fit of `y = slope·x + intercept`.
 #[derive(Debug, Clone)]

@@ -24,9 +24,9 @@ use crate::ff::forcefield::readers::lammps::LammpsFfReader;
 use crate::ff::forcefield::{ForceField, SpecialBonds};
 use crate::ff::potential::pair::exceptions;
 use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
-use molrs::types::{F, Idx};
+use molrs::op::types::{F, Idx};
+use molrs::store::Block;
+use molrs::store::Frame;
 
 const TYPES: [&str; 7] = ["CT3", "CT2", "CT2", "CT2", "OH1", "H", "CT3"];
 const CHARGES: [F; 7] = [-0.09, 0.03, -0.12, 0.05, -0.66, 0.43, 0.36];
@@ -740,7 +740,7 @@ fn forces_are_the_gradient_inside_the_switches() {
 fn typed_energy(ff: &ForceField, frame: &Frame) -> (F, Vec<F>) {
     use crate::ff::potential::Member;
     use crate::ff::potential::pair::testing::table_over;
-    let topo = molrs::Topology::from_frame(frame).unwrap();
+    let topo = molrs::system::Topology::from_frame(frame).unwrap();
     let x = coords();
     let links: Vec<(usize, usize)> = (0..7)
         .flat_map(|i| ((i + 1)..7).map(move |j| (i, j)))

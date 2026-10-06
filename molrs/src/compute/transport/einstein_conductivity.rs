@@ -1,13 +1,13 @@
 //! Einstein–Helfand conductivity raw compute — the collective-dipole-MSD route
 //! to σ.
 
-use molrs::store::frame_access::FrameAccess;
+use molrs::store::FrameAccess;
 use ndarray::{Array1, Array2};
 use rustfft::FftPlanner;
 
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
 use molrs::signal as sig;
 
 /// Raw collective charge-dipole MSD — the raw portion of the legacy
@@ -26,7 +26,7 @@ impl ComputeResult for EinsteinConductivityResult {}
 /// Raw collective charge-dipole MSD compute. Lifts the time-origin MSD loop
 /// from the Einstein–Helfand conductivity and stops there (no OLS, no σ). The
 /// σ = slope/(6·V·k_B·T) step is a downstream
-/// [`LinearFit`](crate::compute::fitting::LinearFit).
+/// [`LinearFit`](crate::compute::LinearFit).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EinsteinConductivity;
 
@@ -112,7 +112,7 @@ impl Compute for EinsteinConductivity {
 mod tests {
     use super::super::green_kubo_conductivity::GreenKuboConductivity;
     use super::*;
-    use molrs::Frame;
+    use molrs::store::Frame;
     use ndarray::{Array1 as A1, Array2};
     use rand::{RngExt, SeedableRng};
 
@@ -215,8 +215,8 @@ mod tests {
         // OLS over the same diffusive window, and the σ = slope/(6·V·k_B·T)·prefactor
         // composition is well-defined (replaces the removed bundled
         // Einstein–Helfand conductivity).
-        use crate::compute::fitting::LinearFit;
-        use crate::compute::traits::Fit;
+        use crate::compute::Fit;
+        use crate::compute::LinearFit;
 
         let n = 256;
         let dt = 0.5;
@@ -262,8 +262,8 @@ mod tests {
         // Nernst–Einstein value σ = n·q²·D/(k_B·T) within the ≤0.13 ensemble
         // tolerance. M_J(t) is ONE stochastic trajectory, so we ENSEMBLE-AVERAGE
         // σ over many realisations. Seed is fixed → deterministic across CI.
-        use crate::compute::fitting::LinearFit;
-        use crate::compute::traits::Fit;
+        use crate::compute::Fit;
+        use crate::compute::LinearFit;
         use molrs::units::constants::{
             ANGSTROM_M, BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C, FEMTOSECOND_S,
         };

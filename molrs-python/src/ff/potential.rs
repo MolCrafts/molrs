@@ -22,7 +22,7 @@ use molrs::ff::forcefield::Params;
 use molrs::ff::ir::{self as rir, ParamKind, StyleSpec};
 use molrs::ff::potential::pair::{LJCut, PairPotential};
 use molrs::ff::potential::{Instances, Potential};
-use molrs::types::F;
+use molrs::op::types::F;
 use ndarray::{Array2, ArrayD, Axis};
 use numpy::{
     IntoPyArray, PyArray2, PyArrayDyn, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2,

@@ -1,6 +1,6 @@
 //! Python binding for the Rust-owned periodic table.
 
-use molrs::Element;
+use molrs::system::Element;
 use pyo3::exceptions::{PyKeyError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::PyType;

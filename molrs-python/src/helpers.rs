@@ -4,8 +4,8 @@
 //! to appropriate Python exceptions, and the [`NpF`] type alias that matches
 //! the crate's float precision setting.
 
-use molrs::spatial::simbox::BoxError;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::spatial::BoxError;
 use ndarray::{Array1, array};
 use numpy::PyReadonlyArray1;
 use pyo3::conversion::IntoPyObjectExt;
@@ -141,8 +141,8 @@ pub fn io_error_to_pyerr(e: std::io::Error) -> PyErr {
     PyIOError::new_err(e.to_string())
 }
 
-/// Convert a [`molrs::MolRsError`] to a Python `ValueError`.
-pub fn molrs_error_to_pyerr(e: molrs::MolRsError) -> PyErr {
+/// Convert a [`molrs::error::MolRsError`] to a Python `ValueError`.
+pub fn molrs_error_to_pyerr(e: molrs::error::MolRsError) -> PyErr {
     PyValueError::new_err(e.to_string())
 }
 
@@ -247,10 +247,8 @@ pub(crate) fn message_format(name: &str) -> PyResult<molrs::stream::MessageForma
 /// Collect owned core [`Frame`]s from a single `Frame` or a list of them.
 /// Used by every batch-`compute` binding to accept both shapes.
 ///
-/// [`Frame`]: molrs::store::frame::Frame
-pub(crate) fn collect_frames(
-    frames: &Bound<'_, PyAny>,
-) -> PyResult<Vec<molrs::store::frame::Frame>> {
+/// [`Frame`]: molrs::store::Frame
+pub(crate) fn collect_frames(frames: &Bound<'_, PyAny>) -> PyResult<Vec<molrs::store::Frame>> {
     use crate::core::store::frame::PyFrame;
     if let Ok(single) = frames.extract::<PyRef<'_, PyFrame>>() {
         return Ok(vec![single.clone_core_frame()?]);

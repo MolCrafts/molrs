@@ -37,9 +37,9 @@ use ndarray::{ArrayD, Axis, Slice};
 use crate::ff::forcefield::Params;
 use crate::ff::ir::ParamSource;
 use crate::ff::ir::{IrError, ParamKind, ParamSpec, StyleSpec};
-use molrs::store::frame::Frame;
-use molrs::store::schema::consts::ENDPOINTS;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::store::Frame;
+use molrs::store::keys::ENDPOINTS;
 
 /// One concrete column of a style: a declared parameter, or one member
 /// `<name><m>` of an indexed family.

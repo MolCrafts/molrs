@@ -6,9 +6,9 @@
 
 use ndarray::Array1;
 
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Fit;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
+use crate::compute::Fit;
 
 /// Result of a plateau (windowed-mean) read.
 #[derive(Debug, Clone)]

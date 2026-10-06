@@ -121,7 +121,7 @@
 //! [`with_durable(false)`](FrameSequenceWriter::with_durable) says otherwise;
 //! the automatic chunk-boundary landings are not synced.
 //!
-//! [`Trajectory`]: molrs::store::trajectory::Trajectory
+//! [`Trajectory`]: molrs::store::Trajectory
 //! [`TrajectoryReader`]: crate::io::reader::TrajectoryReader
 
 use std::collections::{BTreeMap, VecDeque};
@@ -149,13 +149,13 @@ use zarrs::storage::{
 };
 
 use super::record_io::V1Upgrade;
-use molrs::MolRsError;
-use molrs::spatial::simbox::SimBox;
-use molrs::store::block::{Block, Column, DType};
-use molrs::store::frame::Frame;
-use molrs::store::meta::{MetaMap, MetaValue};
-use molrs::store::trajectory::Trajectory;
-use molrs::types::F;
+use molrs::error::MolRsError;
+use molrs::op::types::F;
+use molrs::spatial::SimBox;
+use molrs::store::Frame;
+use molrs::store::Trajectory;
+use molrs::store::{Block, Column, DType};
+use molrs::store::{MetaMap, MetaValue};
 
 use crate::io::reader::TrajectoryReader;
 
@@ -833,7 +833,7 @@ struct ColumnSchema {
     #[serde(default)]
     trailing: Vec<u64>,
     /// Whether the column carries a [validity
-    /// mask](crate::store::block::Block::validity), stored as a `bool` array
+    /// mask](crate::store::Block::validity), stored as a `bool` array
     /// under the section's `_validity` subgroup. Absent from the serialized
     /// pin while false, so a pin written before masks existed deserializes as
     /// a run of plain columns -- which is what it is.
@@ -1190,7 +1190,7 @@ impl SequenceSchema {
     /// declaration is pinned with the schema and is the only place a
     /// trajectory states it. [`from_frames`](Self::from_frames) declares the
     /// precision every presented column carries
-    /// ([`Block::precision`](molrs::store::block::Block::precision)).
+    /// ([`Block::precision`](molrs::store::Block::precision)).
     ///
     /// # Errors
     ///
@@ -1245,7 +1245,7 @@ impl SequenceSchema {
     /// referencing block has rows, or a non-null value past its row count),
     /// and the reader refuses a store that does.
     /// [`from_frames`](Self::from_frames) declares every
-    /// [`Block::target`](molrs::store::block::Block::target) it sees.
+    /// [`Block::target`](molrs::store::Block::target) it sees.
     ///
     /// # Errors
     ///
@@ -3824,11 +3824,11 @@ impl FrameSequenceWriter {
         // Frames appended now are current-version frames; a store of an
         // earlier version is read (and converted), never continued.
         let version = super::schema::read_version(&super::record_io::read_meta(&store)?)?;
-        if version != super::schema::MOLREC_VERSION {
+        if version != crate::store::MOLREC_VERSION {
             return Err(MolRsError::zarr(format!(
                 "the store is a molrec_version {version} record; appending would mix version \
                  {} frames into it. Read it and write a new record",
-                super::schema::MOLREC_VERSION
+                crate::store::MOLREC_VERSION
             )));
         }
         let schema = schema_of(&store)?;
@@ -4210,7 +4210,7 @@ impl FrameSequenceWriter {
     ///
     /// The schema pins a dtype, a trailing shape and a nullability per column.
     /// A column declared nullable carries its [validity
-    /// mask](crate::store::block::Block::validity) into the store — a `bool`
+    /// mask](crate::store::Block::validity) into the store — a `bool`
     /// array under the section's reserved `_validity` subgroup, grown row for
     /// row with the values — so a masked column round-trips masked, and a
     /// frame that leaves it whole round-trips whole.
@@ -5590,10 +5590,10 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
 
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::{Block, Column, DType};
-    use molrs::store::frame::Frame;
-    use molrs::store::meta::MetaValue;
+    use molrs::spatial::SimBox;
+    use molrs::store::Frame;
+    use molrs::store::MetaValue;
+    use molrs::store::{Block, Column, DType};
     use ndarray::{ArrayD, array};
     use tempfile::TempDir;
     use zarrs::array::{Array, ArrayBuilder, ArraySubset, data_type};
@@ -7996,7 +7996,7 @@ mod tests {
             meta.attributes()
                 .get("molrec_version")
                 .and_then(|v| v.as_u64()),
-            Some(crate::MOLREC_VERSION),
+            Some(crate::store::MOLREC_VERSION),
             "{:?}",
             meta.attributes()
         );

@@ -17,7 +17,7 @@ pub struct ColumnDoc {
     pub key: String,
     /// Constant name (`ATOMI`) exported by the language bindings.
     pub const_name: String,
-    /// Storage dtype, as [`DType::name`](crate::store::block::DType::name)
+    /// Storage dtype, as [`DType::name`](crate::store::DType::name)
     /// spells it (`float`, `i64`, `uint`, `bool`, `string`, …).
     pub dtype: String,
     /// `scalar`, or `vec(n)`.

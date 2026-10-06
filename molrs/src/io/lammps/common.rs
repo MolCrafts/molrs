@@ -4,9 +4,9 @@
 //! attribute list: <https://docs.lammps.org/dump.html>,
 //! <https://docs.lammps.org/compute_property_atom.html>.
 
-use molrs::store::block::Block;
+use molrs::op::types::{F, I, Idx};
+use molrs::store::Block;
 use molrs::store::keys;
-use molrs::types::{F, I, Idx};
 use ndarray::{Array1, ArrayD, IxDyn};
 use std::collections::HashMap;
 

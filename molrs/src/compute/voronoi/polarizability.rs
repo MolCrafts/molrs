@@ -16,11 +16,11 @@
 //! orthogonal field runs (see the test). For a linear response
 //! `μ(E) = μ₀ + α E`, the central difference is exact.
 
-use molrs::types::F;
+use molrs::op::types::F;
 use ndarray::Array2;
 
 use super::integrate::MolecularMoments;
-use crate::compute::error::ComputeError;
+use crate::compute::ComputeError;
 
 /// Per-molecule polarizability column `∂μ/∂E_j` (e·Å per field unit), shape
 /// `(n_mol, 3)`, from the `+E` and `−E` dipole sets at field magnitude `field`.

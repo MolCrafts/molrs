@@ -3,8 +3,8 @@
 //!
 //! All three primitives are built on the generic [`MolGraph`] adjacency (arity-2
 //! relations are the graph edges), so they serve both
-//! [`Atomistic`](crate::system::atomistic::Atomistic) and
-//! [`CoarseGrain`](crate::system::coarsegrain::CoarseGrain) unchanged — the leaf
+//! [`Atomistic`](crate::system::Atomistic) and
+//! [`CoarseGrain`](crate::system::CoarseGrain) unchanged — the leaf
 //! only supplies its node vocabulary (`element` / `bead_type`).
 //!
 //! # Algorithm — Weisfeiler–Lehman color refinement
@@ -35,7 +35,7 @@
 use std::collections::HashMap;
 
 use crate::store::keys;
-use crate::system::molgraph::{MolGraph, NodeId, PropValue};
+use crate::system::{MolGraph, NodeId, PropValue};
 
 // ---------------------------------------------------------------------------
 // Deterministic hashing primitives (fixed-seed FNV-1a, 64-bit)
@@ -457,7 +457,7 @@ pub(crate) fn feasible(
 /// Stable per-graph tiebreak key for a node handle.
 #[inline]
 fn node_ffi(id: NodeId) -> u64 {
-    crate::system::molgraph::node_to_u64(id)
+    crate::system::node_to_u64(id)
 }
 
 // =========================================================================
@@ -467,9 +467,9 @@ fn node_ffi(id: NodeId) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::atomistic::Atomistic;
-    use crate::system::coarsegrain::CoarseGrain;
-    use crate::system::molgraph::NodeId;
+    use crate::system::Atomistic;
+    use crate::system::CoarseGrain;
+    use crate::system::NodeId;
 
     /// Ethanol skeleton C-C-O with explicit H (9 atoms), returned with its
     /// atom handles in build order.
@@ -595,8 +595,8 @@ mod tests {
         let (bid, _) = b.bonds().next().unwrap();
         b.set_bond_class(
             bid,
-            crate::system::bond::BondType::Aromatic,
-            crate::system::bond::BondNumber::Single,
+            crate::system::BondType::Aromatic,
+            crate::system::BondNumber::Single,
         )
         .unwrap();
 
@@ -629,7 +629,7 @@ mod tests {
         let (a, _) = ethanol();
         let mut b = a.clone();
         let (bid, _) = b.bonds().next().unwrap();
-        b.set_bond_type(bid, crate::system::bond::BondType::Double)
+        b.set_bond_type(bid, crate::system::BondType::Double)
             .unwrap();
         assert_ne!(
             structural_hash(a.as_molgraph()),

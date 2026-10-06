@@ -25,13 +25,13 @@
 
 use std::sync::Arc;
 
+use molrs::op::types::{F, F3, FNx3};
 use molrs::spatial::region::{
     AndRegion, Cuboid as RsCuboid, Cylinder as RsCylinder, Ellipsoid as RsEllipsoid,
     HalfSpace as RsHalfSpace, NotRegion, OrRegion, Parallelepiped as RsParallelepiped,
     Polyhedron as RsPolyhedron, Region as RegionTrait, Sphere as RsSphere,
     SphereUnion as RsSphereUnion,
 };
-use molrs::types::{F, F3, FNx3};
 use ndarray::Array2;
 use wasm_bindgen::prelude::*;
 

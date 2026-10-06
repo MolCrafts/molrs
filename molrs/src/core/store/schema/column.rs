@@ -1,8 +1,8 @@
 //! Canonical column vocabulary: what a column key means and how it is stored.
 
-use crate::store::block::DType;
+use crate::store::DType;
+use crate::units::PresetDim;
 use crate::units::UnitPreset;
-use crate::units::preset::PresetDim;
 
 /// Structural shape of a column beyond axis 0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,7 +89,7 @@ impl std::fmt::Display for ColumnDim {
 ///
 /// A spec binds a **column key**, wherever that key appears — in `atoms`, in
 /// `bonds`, in a relation block `MolGraph::to_frame` minted on the fly. That is
-/// what lets [`Block::insert`](crate::store::block::Block::insert) enforce
+/// what lets [`Block::insert`](crate::store::Block::insert) enforce
 /// dtype without knowing which block it is about to live in.
 ///
 /// The vocabulary is closed; the *block* set is open. A key with no spec is
@@ -118,8 +118,8 @@ pub struct ColumnSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::units::PresetDim;
     use crate::units::UnitPreset;
-    use crate::units::preset::PresetDim;
 
     #[test]
     fn unit_in_not_a_quantity_is_none() {

@@ -53,23 +53,18 @@ use std::path::Path;
 
 use ndarray::{Array1, Array2, IxDyn, array};
 
-use molrs::spatial::simbox::SimBox;
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
-use molrs::types::{F, I, Idx};
+use molrs::op::types::{F, I, Idx};
+use molrs::spatial::SimBox;
+use molrs::store::Block;
+use molrs::store::Frame;
 
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::writer::{FrameWriter, Writer};
+use crate::units::constants::ANGSTROM_PER_NM;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/// Nanometre → ångström. GRO stores lengths in nm; every other molrs format
-/// and every consumer above the reader works in Å, so the conversion happens
-/// here, at the boundary, exactly as the Cube reader converts Bohr → Å and
-/// every force-field reader converts degrees → radians.
-const NM_TO_ANGSTROM: F = 10.0;
 
 /// The element a GROMACS atom name denotes, or `None` when nothing plausible
 /// resolves.
@@ -109,17 +104,17 @@ fn element_from_atom_name(name: &str, monatomic_residue: bool) -> Option<String>
 
     if monatomic_residue {
         let whole = title(&letters);
-        if molrs::Element::by_symbol(&whole).is_some() {
+        if molrs::system::Element::by_symbol(&whole).is_some() {
             return Some(whole);
         }
     }
     let one = title(&letters[..1]);
-    if molrs::Element::by_symbol(&one).is_some() {
+    if molrs::system::Element::by_symbol(&one).is_some() {
         return Some(one);
     }
     if letters.len() >= 2 {
         let two = title(&letters[..2]);
-        if molrs::Element::by_symbol(&two).is_some() {
+        if molrs::system::Element::by_symbol(&two).is_some() {
             return Some(two);
         }
     }
@@ -150,7 +145,7 @@ fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
 /// Insert an unsigned column, rejecting negatives with a message that names
 /// the key — used for the canonical identifier columns.
 fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<I>) -> Result<()> {
-    let unsigned: Vec<molrs::types::Idx> = vals
+    let unsigned: Vec<molrs::op::types::Idx> = vals
         .iter()
         .map(|&v| {
             Idx::try_from(v).map_err(|_| {
@@ -418,15 +413,15 @@ pub fn read_gro_frame<R: BufRead>(reader: &mut R) -> Result<Option<Frame>> {
         element
             .push(element_from_atom_name(&a.atom_name, alone).unwrap_or_else(|| "X".to_string()));
         atom_id.push(a.atom_id);
-        x.push(a.x * NM_TO_ANGSTROM);
-        y.push(a.y * NM_TO_ANGSTROM);
-        z.push(a.z * NM_TO_ANGSTROM);
+        x.push(a.x * ANGSTROM_PER_NM);
+        y.push(a.y * ANGSTROM_PER_NM);
+        z.push(a.z * ANGSTROM_PER_NM);
         if let Some(v) = a.velocity {
             // nm/ps → Å/ps: the time unit is untouched, so the length scale is
             // the whole conversion.
-            vx.push(v[0] * NM_TO_ANGSTROM);
-            vy.push(v[1] * NM_TO_ANGSTROM);
-            vz.push(v[2] * NM_TO_ANGSTROM);
+            vx.push(v[0] * ANGSTROM_PER_NM);
+            vy.push(v[1] * ANGSTROM_PER_NM);
+            vz.push(v[2] * ANGSTROM_PER_NM);
         }
     }
     insert_uint_col(&mut block, "res_id", resid)?;
@@ -450,7 +445,7 @@ pub fn read_gro_frame<R: BufRead>(reader: &mut R) -> Result<Option<Frame>> {
     frame.insert("atoms", block);
 
     // SimBox: H columns = lattice vectors. cell_rows[i] = lattice vector i.
-    let h = Array2::from_shape_fn((3, 3), |(i, j)| cell_rows[j][i] * NM_TO_ANGSTROM);
+    let h = Array2::from_shape_fn((3, 3), |(i, j)| cell_rows[j][i] * ANGSTROM_PER_NM);
     let origin = array![0.0 as F, 0.0, 0.0];
     let simbox = SimBox::new(h, origin, [true; 3]).map_err(|e| invalid_data(format!("{:?}", e)))?;
     frame.simbox = Some(simbox);
@@ -553,7 +548,7 @@ pub fn write_gro_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
             .unwrap_or("X");
         let aid = atom_id
             .map(|c| c[[i]])
-            .unwrap_or((i as molrs::types::Idx) + 1);
+            .unwrap_or((i as molrs::op::types::Idx) + 1);
         // GROMACS truncates the residue number and atom number at 5 digits via modulo.
         let r_mod = r.rem_euclid(100_000);
         let aid_mod = aid.rem_euclid(100_000);
@@ -565,17 +560,17 @@ pub fn write_gro_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
             truncate_to_5(rn),
             truncate_to_5(an),
             aid_mod,
-            xs[[i]] / NM_TO_ANGSTROM,
-            ys[[i]] / NM_TO_ANGSTROM,
-            zs[[i]] / NM_TO_ANGSTROM
+            xs[[i]] / ANGSTROM_PER_NM,
+            ys[[i]] / ANGSTROM_PER_NM,
+            zs[[i]] / ANGSTROM_PER_NM
         )?;
         if let (Some(vxc), Some(vyc), Some(vzc)) = (vx, vy, vz) {
             write!(
                 writer,
                 "{:>8.4}{:>8.4}{:>8.4}",
-                vxc[[i]] / NM_TO_ANGSTROM,
-                vyc[[i]] / NM_TO_ANGSTROM,
-                vzc[[i]] / NM_TO_ANGSTROM
+                vxc[[i]] / ANGSTROM_PER_NM,
+                vyc[[i]] / ANGSTROM_PER_NM,
+                vzc[[i]] / ANGSTROM_PER_NM
             )?;
         }
         writeln!(writer)?;
@@ -584,7 +579,7 @@ pub fn write_gro_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     let h = frame
         .simbox
         .as_ref()
-        .map(|sb| sb.h_view().to_owned() / NM_TO_ANGSTROM)
+        .map(|sb| sb.h_view().to_owned() / ANGSTROM_PER_NM)
         .unwrap_or_else(|| Array2::<F>::zeros((3, 3)));
     writeln!(writer, "{}", format_box_line(&h))?;
 
@@ -773,7 +768,7 @@ mod tests {
         // The mirror of the read-side inference: a frame that came from a
         // format without atom names still knows its elements, and "X" would
         // throw away the identity the next reader is expected to recover.
-        use molrs::store::block::Block;
+        use molrs::store::Block;
         use ndarray::Array1;
 
         let mut atoms = Block::new();

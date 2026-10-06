@@ -7,14 +7,13 @@
 //! committed fourteen are AmberTools 26.1's; `--check` verifies them byte for
 //! byte); [`mmff`]
 //! is ported from RDKit's `Params.cpp` and merged with what MMFF's retired XML
-//! carried; [`oplsaa`] is generated from GROMACS `share/top/oplsaa.ff` (a
+//! carried; the OPLS-AA tables ([`OPLSAA_ATOMS`], …) are generated from GROMACS `share/top/oplsaa.ff` (a
 //! pinned release, LGPL-2.1-or-later) by `cargo mrs-gen-opls --gromacs <dir>`,
 //! through molrs's own GROMACS reader, while the OPLS-AA SMARTS typing rules in
-//! [`oplsaa_typing`] are molrs-owned and hand-maintained — GROMACS has none,
+//! [`OPLSAA_TYPING`] are molrs-owned and hand-maintained — GROMACS has none,
 //! and the generator never touches them. [`amber`] is a
-//! hand-maintained sibling (like [`mmff`] / [`clpol`] / [`uff`]): AMBER
-//! file-format constants that are neither `gaff.dat` rows nor properties of
-//! the universe. The committed `.rs` is the
+//! hand-maintained sibling (like [`mmff`] / the CL&Pol tables / [`uff`]):
+//! the AMBER 1-4 divisors, which are not `gaff.dat` rows. The committed `.rs` is the
 //! single in-repo source of truth; a malformed table is therefore a **compile**
 //! error, not a runtime one, and the tables can be grepped, diffed and stepped
 //! through like any other code.
@@ -46,7 +45,7 @@
 //! the table is a transcription of the file, not a force field. That is also
 //! molrs's (LAMMPS's) convention for every bonded term; what the code that
 //! populates a [`ForceField`](crate::ff::forcefield::ForceField) from it still
-//! converts (`IDIVF`, R\*/2 → σ) is in [`crate::ff::typifier::gaff`].
+//! converts (`IDIVF`, R\*/2 → σ) is in [`crate::ff::typifier::GaffTypifier`].
 
 pub mod amber;
 pub mod atomtype_abcg2;
@@ -56,26 +55,19 @@ pub mod atomtype_gas;
 pub mod atomtype_gff;
 pub mod atomtype_gff2;
 pub mod atomtype_sybyl;
-pub mod bccparm;
-pub mod bccparm_abcg2;
-pub mod clpol;
-pub mod gaff;
-pub mod gaff2;
-pub mod gaff_empirical;
-pub mod gaff_equiv;
-pub mod gasparm;
+mod bccparm;
+mod bccparm_abcg2;
+mod clpol;
+mod gaff;
+mod gaff2;
+mod gaff_empirical;
+mod gaff_equiv;
+mod gasparm;
 pub mod mmff;
-pub mod oplsaa;
-pub mod oplsaa_typing;
+mod oplsaa;
+mod oplsaa_typing;
 pub mod uff;
 
-pub use atomtype_abcg2::ATOMTYPE_ABCG2;
-pub use atomtype_amber::ATOMTYPE_AMBER;
-pub use atomtype_bcc::ATOMTYPE_BCC;
-pub use atomtype_gas::ATOMTYPE_GAS;
-pub use atomtype_gff::ATOMTYPE_GFF;
-pub use atomtype_gff2::ATOMTYPE_GFF2;
-pub use atomtype_sybyl::ATOMTYPE_SYBYL;
 pub use bccparm::{BCC_ALIASES, BCC_CORRECTIONS};
 pub use bccparm_abcg2::{ABCG2_ALIASES, ABCG2_CORRECTIONS};
 pub use clpol::{CLPOL_FRAGMENTS, CLPOL_POLARIZABILITY, ClpolPolarizability, clpol_polarizability};
@@ -84,7 +76,10 @@ pub use gaff_empirical::{EMPIRICAL_GAFF, EMPIRICAL_GAFF2};
 pub use gaff_equiv::{PARMCHK, PARMCHK_TYPES, PARMCHK_WEIGHTS};
 pub use gaff2::GAFF2;
 pub use gasparm::GASTEIGER_PARAMS;
-pub use oplsaa::{OPLSAA_ANGLES, OPLSAA_ATOMS, OPLSAA_BONDS, OPLSAA_DIHEDRALS};
+pub use oplsaa::{
+    OPLSAA_ANGLES, OPLSAA_ATOMS, OPLSAA_BONDS, OPLSAA_COULOMB_14, OPLSAA_DIHEDRALS, OPLSAA_LJ_14,
+    OPLSAA_MIXING, OPLSAA_NAME,
+};
 pub use oplsaa_typing::OPLSAA_TYPING;
 
 /// One oriented bond charge correction from a `BCCPARM*.DAT` table.
@@ -433,9 +428,9 @@ pub struct ParmMassRow {
 /// One `BOND` row: `E = force_constant · (r − length)²`.
 ///
 /// That is **AMBER's** convention and it carries no ½ — unlike molrs's
-/// [`BondHarmonic`](crate::ff::potential::bond::harmonic::BondHarmonic), whose
+/// [`BondHarmonic`](crate::ff::potential::bond::BondHarmonic), whose
 /// `k` is `2 · force_constant`. The factor is applied where the units are
-/// normalised (the [`gaff`](crate::ff::typifier::gaff) candidate library), never here:
+/// normalised (the [`GaffTypifier`](crate::ff::typifier::GaffTypifier) candidate library), never here:
 /// this row is what the file says.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ParmBondRow {
@@ -841,7 +836,7 @@ pub struct OplsAtomRow {
 /// One OPLS-AA typing rule — the **static, compile-time** rule record.
 ///
 /// Its runtime counterpart is
-/// [`OplsTypeRow`](crate::ff::typifier::opls::OplsTypeRow): owned strings, plus
+/// [`OplsTypeRow`](crate::ff::typifier::OplsTypeRow): owned strings, plus
 /// the class, an explicit priority and an overlay layer. The embedded OPLS-AA
 /// typifier builds one `OplsTypeRow` from each `OplsRuleRow`, taking the class
 /// from the [`OplsAtomRow`] of the same `name` and layer 0; an XML force field

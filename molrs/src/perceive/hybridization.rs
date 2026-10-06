@@ -17,11 +17,11 @@
 //! localized (Kekulé) numbers; a bond whose class is aromatic is also
 //! conjugated, as in RDKit.
 
-use molrs::Element;
-use molrs::system::atomistic::Atomistic;
-use molrs::system::bond::BondNumber;
-use molrs::system::molgraph::NodeId;
-use molrs::system::molgraph::PropValue;
+use molrs::system::Atomistic;
+use molrs::system::BondNumber;
+use molrs::system::Element;
+use molrs::system::NodeId;
+use molrs::system::PropValue;
 
 /// An atom's hybridization — RDKit's `Atom::HybridizationType`, less its
 /// `UNSPECIFIED` / `SP2D` (which `setHybridization` never assigns).
@@ -276,7 +276,7 @@ fn default_valence(atno: u8) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::system::bond::BondType;
+    use molrs::system::BondType;
 
     fn by_element(mol: &Atomistic, sym: &str) -> Vec<Hybridization> {
         let hyb = hybridizations(mol);

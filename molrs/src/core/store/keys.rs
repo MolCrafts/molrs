@@ -1,6 +1,6 @@
 //! Canonical molecular field-name constants.
 //!
-//! Column keys are a re-export of [`crate::store::schema::consts`]. The schema
+//! Column keys are a re-export of the schema's column constants (`store::schema`), whose one public path is here. The schema
 //! is the source of truth: a key is declared once, in the column table, and
 //! the constant is emitted from that same declaration.
 //!
@@ -22,8 +22,8 @@
 
 pub use crate::store::schema::consts::*;
 
-use crate::store::schema::document::{KeysDocument, NamedGroup, NamedValue};
 use crate::store::schema::{self, NamedConst};
+use crate::store::schema::{KeysDocument, NamedGroup, NamedValue};
 
 macro_rules! meta_keys {
     ($( $(#[$meta:meta])* pub const $name:ident: &str = $value:literal; )*) => {
@@ -44,7 +44,7 @@ meta_keys! {
     /// Frame meta key: the atom-type inventory, packed as `"1:C,2:H"`.
     ///
     /// Declares types no row needs to use; read by
-    /// [`TypeLabels`](crate::core::store::type_labels::TypeLabels).
+    /// [`TypeLabels`](crate::store::type_labels::TypeLabels).
     pub const ATOM_TYPE_LABELS: &str = "atom_type_labels";
     /// Frame meta key: the bond-type inventory, packed as `"1:c3-h1,2:c3-c3"`.
     pub const BOND_TYPE_LABELS: &str = "bond_type_labels";
@@ -72,8 +72,8 @@ meta_keys! {
 /// The preset a frame's [`UNITS`] meta value names: the
 /// `preset` of a units object, or a bare preset string (the form molrs wrote
 /// before the object). `None` for a value that names no preset.
-pub fn units_preset(value: &crate::store::meta::MetaValue) -> Option<&str> {
-    use crate::store::meta::MetaValue;
+pub fn units_preset(value: &crate::store::MetaValue) -> Option<&str> {
+    use crate::store::MetaValue;
     match value {
         MetaValue::String(preset) => Some(preset),
         MetaValue::Json(serde_json::Value::Object(object)) => {

@@ -90,7 +90,7 @@
 //!
 //! Per-atom charge and mass live in the LAMMPS **data** file, not this include,
 //! so they are not read here: the `coul/cut` style draws charges from the
-//! [`Frame`](molrs::store::frame::Frame) at evaluation time, with LAMMPS's own
+//! [`Frame`](molrs::store::Frame) at evaluation time, with LAMMPS's own
 //! Coulomb constant (`qqr2e`) for the file's units.
 //!
 //! # CMAP crossterms (`fix cmap`)
@@ -1711,9 +1711,9 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
     #[test]
     fn a_lammps_improper_evaluates_at_the_lammps_energy() {
         use crate::ff::potential::PotentialCompiler;
-        use molrs::store::block::Block;
-        use molrs::store::frame::Frame;
-        use molrs::types::Idx;
+        use molrs::op::types::Idx;
+        use molrs::store::Block;
+        use molrs::store::Frame;
         use ndarray::Array1;
 
         let text = "special_bonds amber\n\

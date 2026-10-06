@@ -73,6 +73,7 @@
 //! does this system's data file need" and is keyed by the system's
 //! `TypeLabels`.
 
+use crate::units::constants::{ANGSTROM_PER_NM, KJ_PER_KCAL};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
@@ -88,12 +89,6 @@ use crate::ff::forcefield::torsion::{
 use crate::ff::forcefield::{ForceField, Params, Style, StyleDefs};
 use crate::ff::ir::{Registry, RegistryRef};
 use crate::ff::potential::cmap::charmm::GRID;
-
-/// kcal/mol → kJ/mol.
-const KJ_PER_KCAL: f64 = 4.184;
-/// Å per nm: lengths are divided by it (the reader multiplies), which
-/// round-trips a decimal length exactly where × 0.1 would not.
-const ANGSTROM_PER_NM: f64 = 10.0;
 
 /// Writer for OpenMM `<ForceField>` XML.
 ///

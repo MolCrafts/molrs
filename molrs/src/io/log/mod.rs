@@ -1,9 +1,9 @@
 //! Log-file parsers (non-trajectory, non-structure diagnostics).
 //!
 //! Currently:
-//! - [`crate::io::log::lammps`] — LAMMPS standard run output (`log.lammps`)
+//! - LAMMPS standard run output (`log.lammps`): [`read_lammps_log`] → [`LammpsLog`]
 
-pub mod lammps;
+mod lammps;
 
 pub use lammps::{
     LammpsCpuUse, LammpsLoadBalance, LammpsLog, LammpsLogHeader, LammpsLoopTime, LammpsMemoryUsage,

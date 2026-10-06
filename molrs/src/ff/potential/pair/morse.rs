@@ -20,9 +20,9 @@ use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::pair::type_pair;
 use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
+use molrs::op::types::F;
 use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use molrs::store::Frame;
 
 /// Where a pair's Morse `(D₀, α, r₀)` comes from.
 enum Source {
@@ -324,7 +324,7 @@ impl PairDriven for PairMorse {
 ///
 /// A pair's row is found from its two atoms' types — the self row, else the
 /// cross row (`morse` does not mix: neither is [`IrError::NoMixing`]) — as
-/// [`pair_morse_typed_ctor`] finds it and LAMMPS's `pair_coeff i j` states it.
+/// `pair_morse_typed_ctor` finds it and LAMMPS's `pair_coeff i j` states it.
 ///
 /// [`IrError::NoMixing`]: crate::ff::ir::IrError::NoMixing
 pub fn pair_morse_ctor(

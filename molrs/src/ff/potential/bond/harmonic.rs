@@ -12,8 +12,8 @@ use ndarray::{Array2, ArrayView2};
 use crate::ff::forcefield::Params;
 use crate::ff::potential::geometry::{term_table, validate_coords};
 use crate::ff::potential::{IndexedTerms, Member, Potential};
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::store::Frame;
 
 /// Harmonic bond potential with pre-resolved flat arrays.
 pub struct BondHarmonic {

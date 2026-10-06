@@ -8,9 +8,9 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use crate::core::store::frame_access::FrameAccess;
 use crate::core::store::keys;
-use crate::core::types::Idx;
+use crate::op::types::Idx;
+use crate::store::FrameAccess;
 
 /// Starts the qualifier of a [`TypeName`]; reserved inside endpoint labels.
 const QUALIFIER: char = '@';
@@ -466,7 +466,7 @@ impl TypeLabels {
     /// and for an existing inventory that does not parse. `frame` is
     /// unchanged on error.
     pub fn declare<S: AsRef<str>>(
-        frame: &mut crate::core::store::frame::Frame,
+        frame: &mut crate::store::Frame,
         block: &str,
         labels: impl IntoIterator<Item = S>,
     ) -> Result<(), String> {
@@ -511,10 +511,10 @@ impl TypeLabels {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::store::block::Block;
-    use crate::core::store::frame::Frame;
     use crate::core::store::keys;
-    use crate::core::types::Idx;
+    use crate::op::types::Idx;
+    use crate::store::Block;
+    use crate::store::Frame;
     use ndarray::{ArrayD, IxDyn};
 
     #[test]

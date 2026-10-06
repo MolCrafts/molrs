@@ -1,13 +1,13 @@
 //! Debye dipole-relaxation raw compute — the dipole-ACF route to ε(ω) and τ_D.
 
-use molrs::store::frame_access::FrameAccess;
+use molrs::store::FrameAccess;
 use ndarray::{Array1, Array2};
 
 use super::correlation::{lag_times, unbiased_cartesian_acf};
-use crate::compute::error::ComputeError;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
 use crate::compute::fitting::ols_slope_intercept_r2;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::{Compute, Fit};
+use crate::compute::{Compute, Fit};
 
 /// Ewald boundary condition under which the dipole fluctuations were sampled.
 ///
@@ -229,7 +229,7 @@ impl Fit for DebyeFit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
+    use molrs::store::Frame;
     use ndarray::Array2;
     use rand::{RngExt, SeedableRng};
 

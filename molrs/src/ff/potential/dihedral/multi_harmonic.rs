@@ -20,8 +20,8 @@ use crate::ff::potential::geometry::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
 use crate::ff::potential::{IndexedTerms, Member, Potential};
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::store::Frame;
 
 /// Multi/harmonic (or nharmonic) proper dihedral with pre-resolved flat arrays.
 pub struct DihedralMultiHarmonic {
@@ -285,9 +285,9 @@ mod tests {
 mod nharmonic_tests {
     use crate::ff::forcefield::{ForceField, Params};
     use crate::ff::potential::PotentialCompiler;
-    use molrs::store::block::Block;
-    use molrs::store::frame::Frame;
-    use molrs::types::{F, Idx};
+    use molrs::op::types::{F, Idx};
+    use molrs::store::Block;
+    use molrs::store::Frame;
     use ndarray::Array1;
 
     fn one_dihedral(

@@ -45,11 +45,11 @@
 use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::streaming::{FrameIndexBuilder, FrameIndexEntry};
 use crate::io::writer::{FrameWriter, Writer};
-use molrs::spatial::simbox::SimBox;
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::{F, Idx, Pbc3};
+use molrs::op::types::{F, Idx, Pbc3};
+use molrs::spatial::SimBox;
+use molrs::store::Block;
+use molrs::store::Frame;
+use molrs::store::FrameAccess;
 use ndarray::{Array1, Array2, IxDyn, array};
 use std::fs::File;
 use std::io::{BufRead, Cursor, Read, Seek, SeekFrom, Write};

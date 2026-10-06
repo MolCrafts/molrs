@@ -21,9 +21,9 @@ use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::{CompileError, Member, PairDriven, Potential, need};
 use molrs::math::Virial;
+use molrs::op::types::F;
 use molrs::spatial::neighbors::{Neighbors, VerletSkin};
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use molrs::store::Frame;
 use ndarray::{Array2, ArrayView2};
 
 const MIN_R2: F = 1e-24;
@@ -961,7 +961,7 @@ pub fn pair_lj_cut_typed_ctor(
 /// divides by it.
 ///
 /// ```
-/// # use molrs::ff::potential::pair::lj_cut::lj_ab_to_sigma_epsilon;
+/// # use molrs::ff::potential::pair::lj_ab_to_sigma_epsilon;
 /// // GAFF c3: R* = 1.9080 Å, ε = 0.1094 kcal/mol.
 /// let (sigma, epsilon) = lj_ab_to_sigma_epsilon(1.043080230e6, 6.75612248e2);
 /// assert!((epsilon - 0.1094).abs() < 1e-6);
@@ -994,8 +994,8 @@ mod tests {
     #[cfg(feature = "rayon")]
     #[test]
     fn the_fold_does_not_depend_on_the_thread_count() {
+        use molrs::spatial::SimBox;
         use molrs::spatial::neighbors::{NeighborList, NeighborPolicy, VerletSkin};
-        use molrs::spatial::simbox::SimBox;
 
         // 10³ atoms at 3 Å with a 6 Å cutoff clears 8192 pairs comfortably.
         let side = 10_usize;
@@ -1119,7 +1119,7 @@ mod tests {
     /// and the spec's expression do (it priced 12-6 whatever `n`, `m` said).
     #[test]
     fn the_compiled_door_takes_the_style_exponents() {
-        use molrs::store::block::Block;
+        use molrs::store::Block;
         use ndarray::Array1;
         let rows = [(
             "A".to_string(),
@@ -1317,8 +1317,8 @@ mod tests {
 
     /// Two atoms, types `A` and `B`, joined by one pair row.
     fn ab_frame() -> Frame {
-        use molrs::store::block::Block;
-        use molrs::types::Idx;
+        use molrs::op::types::Idx;
+        use molrs::store::Block;
         use ndarray::Array1;
         let mut atoms = Block::new();
         atoms

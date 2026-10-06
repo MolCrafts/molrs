@@ -53,55 +53,34 @@ use molrs::io::trajectory::lammps_dump::{
 use molrs::io::trajectory::trr::{TrrIndexBuilder, parse_frame_bytes as parse_trr_frame_bytes};
 use molrs::io::trajectory::xtc::{XtcIndexBuilder, parse_frame_bytes as parse_xtc_frame_bytes};
 
-fn parse_dump_stream(
-    bytes: &[u8],
-    _ctx: Option<&[u8]>,
-) -> std::io::Result<molrs::store::frame::Frame> {
+fn parse_dump_stream(bytes: &[u8], _ctx: Option<&[u8]>) -> std::io::Result<molrs::store::Frame> {
     parse_lammps_dump_frame_bytes(bytes)
 }
-fn parse_xyz_stream(
-    bytes: &[u8],
-    _ctx: Option<&[u8]>,
-) -> std::io::Result<molrs::store::frame::Frame> {
+fn parse_xyz_stream(bytes: &[u8], _ctx: Option<&[u8]>) -> std::io::Result<molrs::store::Frame> {
     parse_xyz_frame_bytes(bytes)
 }
-fn parse_pdb_stream(
-    bytes: &[u8],
-    _ctx: Option<&[u8]>,
-) -> std::io::Result<molrs::store::frame::Frame> {
+fn parse_pdb_stream(bytes: &[u8], _ctx: Option<&[u8]>) -> std::io::Result<molrs::store::Frame> {
     parse_pdb_frame_bytes(bytes)
 }
 fn parse_lammps_data_stream(
     bytes: &[u8],
     _ctx: Option<&[u8]>,
-) -> std::io::Result<molrs::store::frame::Frame> {
+) -> std::io::Result<molrs::store::Frame> {
     parse_lammps_data_frame_bytes(bytes)
 }
-fn parse_sdf_stream(
-    bytes: &[u8],
-    _ctx: Option<&[u8]>,
-) -> std::io::Result<molrs::store::frame::Frame> {
+fn parse_sdf_stream(bytes: &[u8], _ctx: Option<&[u8]>) -> std::io::Result<molrs::store::Frame> {
     parse_sdf_frame_bytes(bytes)
 }
-fn parse_dcd_stream(
-    bytes: &[u8],
-    ctx: Option<&[u8]>,
-) -> std::io::Result<molrs::store::frame::Frame> {
+fn parse_dcd_stream(bytes: &[u8], ctx: Option<&[u8]>) -> std::io::Result<molrs::store::Frame> {
     match ctx {
         Some(context) => parse_frame_with_decoder_context(context, bytes),
         None => parse_dcd_frame_bytes(bytes),
     }
 }
-fn parse_xtc_stream(
-    bytes: &[u8],
-    _ctx: Option<&[u8]>,
-) -> std::io::Result<molrs::store::frame::Frame> {
+fn parse_xtc_stream(bytes: &[u8], _ctx: Option<&[u8]>) -> std::io::Result<molrs::store::Frame> {
     parse_xtc_frame_bytes(bytes)
 }
-fn parse_trr_stream(
-    bytes: &[u8],
-    _ctx: Option<&[u8]>,
-) -> std::io::Result<molrs::store::frame::Frame> {
+fn parse_trr_stream(bytes: &[u8], _ctx: Option<&[u8]>) -> std::io::Result<molrs::store::Frame> {
     parse_trr_frame_bytes(bytes)
 }
 

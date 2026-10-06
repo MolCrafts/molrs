@@ -32,7 +32,7 @@
 use std::collections::{HashMap, HashSet};
 
 use molrs::perceive::smarts::{MatchOptions, SmartsPattern};
-use molrs::{Atomistic, NodeId};
+use molrs::system::{Atomistic, NodeId};
 
 use super::deps::OplsDependencyAnalyzer;
 use super::meta::OplsTypingMeta;
@@ -303,6 +303,7 @@ impl LayeredTypingEngine {
     }
 
     /// Access the underlying dependency analyzer (levels / circular groups).
+    #[cfg(test)]
     pub fn analyzer(&self) -> &OplsDependencyAnalyzer {
         &self.analyzer
     }
@@ -310,7 +311,7 @@ impl LayeredTypingEngine {
 
 /// Compile a single SMARTS `def`, reading a bare element symbol (`Li`, which
 /// SMARTS only admits in brackets) as its bracket atom (`[Li]`) for XML inputs.
-fn compile_def(def: &str) -> Result<SmartsPattern, molrs::MolRsError> {
+fn compile_def(def: &str) -> Result<SmartsPattern, molrs::error::MolRsError> {
     match SmartsPattern::parse(def) {
         Ok(p) => Ok(p),
         Err(e) => {
@@ -336,8 +337,8 @@ fn is_bare_element_symbol(def: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::typifier::opls::meta::OplsTypeRow;
-    use molrs::Atom;
+    use crate::ff::typifier::OplsTypeRow;
+    use molrs::system::Atom;
 
     fn row(class: &str, def: Option<&str>, overrides: &[&str]) -> OplsTypeRow {
         OplsTypeRow {

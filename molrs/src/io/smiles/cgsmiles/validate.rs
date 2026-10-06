@@ -15,11 +15,11 @@
 //! the definition's [`CGFragmentDef::span`] for an atomistic body, whose own
 //! atom spans index the body rather than the whole string.
 
-use crate::io::smiles::cgsmiles::ast::{CGFragmentDef, CGGraph, CGSmilesIR, FragmentBody};
-use crate::io::smiles::chem::ast::{
+use crate::io::smiles::{
     AtomNode, BondingDescriptor, Chain, ChainElement, DescriptorKind, SmilesIR, Span,
 };
-use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
+use crate::io::smiles::{CGFragmentDef, CGGraph, CGSmilesIR, FragmentBody};
+use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 
 /// Refuse a parsed `CGsmiles` IR that carries notation this version does not
 /// model.

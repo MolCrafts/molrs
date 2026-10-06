@@ -5,11 +5,11 @@
 
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::writer::FrameWriter;
-use molrs::spatial::simbox::SimBox;
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::{F, I, Idx};
+use molrs::op::types::{F, I, Idx};
+use molrs::spatial::SimBox;
+use molrs::store::Block;
+use molrs::store::Frame;
+use molrs::store::FrameAccess;
 use ndarray::{Array1, IxDyn, array};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
@@ -892,7 +892,7 @@ fn write_atom_conect_records<W: Write>(
 /// Write a single frame in PDB format (`CRYST1` + `ATOM`/`CONECT` + `END`).
 ///
 /// Accepts any type implementing [`FrameAccess`], including both [`Frame`] and
-/// [`FrameView`](molrs::store::frame_view::FrameView).
+/// [`FrameView`](molrs::store::FrameView).
 pub fn write_pdb_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io::Result<()> {
     // REMARK: meta "name", else "MOL" (molpy / OpenMM deck convention).
     let title = frame
@@ -1255,8 +1255,8 @@ mod tests {
 
     #[test]
     fn test_write_pdb_frame_conect_from_bonds() {
-        use molrs::store::block::Block;
-        use molrs::store::frame::Frame;
+        use molrs::store::Block;
+        use molrs::store::Frame;
         use ndarray::{Array1, IxDyn};
 
         let mut frame = Frame::new();
@@ -1482,8 +1482,8 @@ END
 
     #[test]
     fn write_pdb_frame_uses_atom_columns() {
-        use molrs::store::block::Block;
-        use molrs::store::frame::Frame;
+        use molrs::store::Block;
+        use molrs::store::Frame;
         use ndarray::{Array1, IxDyn};
 
         let n = 1;

@@ -28,15 +28,15 @@ mod result;
 pub use accumulator::MSDAccumulator;
 pub use result::{MSDResult, MSDTimeSeries};
 
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::store::FrameAccess;
 use ndarray::Array1;
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex as RfComplex;
 
-use crate::compute::error::ComputeError;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref_any_dim;
-use crate::compute::traits::Compute;
 
 /// Mode of MSD computation.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -282,8 +282,8 @@ impl MSD {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
-    use molrs::store::block::Block;
+    use molrs::store::Block;
+    use molrs::store::Frame;
     use ndarray::Array1 as A1;
 
     fn make_frame(x: &[F], y: &[F], z: &[F]) -> Frame {

@@ -1,15 +1,18 @@
-//! Scalar and fixed-size array aliases shared by the `op` kernels.
+//! The crate's scalar and array aliases — their one owner.
 //!
-//! Two families live here:
+//! Three families live here:
 //!
 //! - The **F-prefix family** of ndarray-backed aliases over the scalar [`F`]
-//!   (always `f64`): `F3`, `F3x3`, `FN`, `FNx3` and their views. These
-//!   are the API types of the crate's column stores; `core::types` re-exports
-//!   them, so the crate-root `types` module stays their canonical spelling for
-//!   downstream code.
+//!   (always `f64`): `F3`, `F3x3`, `FN`, `FNx3` and their views — the API
+//!   types of the crate's column stores.
+//! - The **non-float aliases** [`I`] (signed integer), [`Idx`] (an index or
+//!   stable identifier) and [`Pbc3`] (per-axis periodic flags).
 //! - The **stack aliases** [`Vec3`], [`Mat3`] and [`Quat`] that the `op`
-//!   kernels compute on. They have exactly one path, this module, and are never
-//!   re-exported. [`to_vec3`] and [`to_mat3`] are where ndarray meets them.
+//!   kernels compute on. [`to_vec3`] and [`to_mat3`] are where ndarray meets
+//!   them.
+//!
+//! Every alias has exactly one path, this module (`molrs::op::types`); nothing
+//! re-exports them.
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
 
@@ -44,6 +47,33 @@ pub type F3View<'a> = ArrayView1<'a, F>;
 
 /// Borrowed N×3 view.
 pub type FNx3View<'a> = ArrayView2<'a, F>;
+
+// ---- Non-float ----
+
+/// Primary signed integer scalar type — always `i32`.
+pub type I = i32;
+
+/// An index into a block, or a stable entity identifier.
+///
+/// Named for what it *means*, not for what it *is*. The retired alias `U` was
+/// named after a type, so one name carried two unrelated jobs: the width a
+/// column stores at, and the type a domain value happens to be. Those pull
+/// opposite ways -- a formal charge wants to be small, an identifier wants to
+/// be wide -- and one name could not serve both.
+///
+/// Every column this appears in is identity: `id`, `mol_id`, `type_id`,
+/// `res_id`, and the `atomi`/`atomj`/`atomk`/`atoml` relation endpoints.
+/// Sixty-four bits because an identifier that wraps is not an identifier:
+/// a value past `u32::MAX` used to be truncated rather than refused.
+///
+/// `U` is also uranium. A text-level rename of the old alias once rewrote
+/// `Element::U`, `symbol: "U"` and the GAFF/BCC/ABCG2 `atom_type: "U"` rows
+/// along with the type references, and nothing caught it. Rename this through
+/// the compiler -- it points only at type positions -- never through a regex.
+pub type Idx = u64;
+
+/// Per-axis periodic boundary condition flags.
+pub type Pbc3 = [bool; 3];
 
 // ---- Stack types of the op kernels ----
 

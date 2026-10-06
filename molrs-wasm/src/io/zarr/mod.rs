@@ -240,7 +240,7 @@ impl TrajectoryReader for RecordReader {
         Ok(())
     }
 
-    fn read_step(&mut self, step: usize) -> std::io::Result<Option<molrs::store::frame::Frame>> {
+    fn read_step(&mut self, step: usize) -> std::io::Result<Option<molrs::store::Frame>> {
         self.sequence
             .frame(step as u64)
             .map_err(std::io::Error::other)
@@ -563,7 +563,7 @@ mod tests {
         values.iter().map(|&x| quantize(x, q)).collect()
     }
 
-    fn x_of(frame: &molrs::store::frame::Frame) -> Vec<f64> {
+    fn x_of(frame: &molrs::store::Frame) -> Vec<f64> {
         frame
             .get("atoms")
             .and_then(|atoms| atoms.get("x"))

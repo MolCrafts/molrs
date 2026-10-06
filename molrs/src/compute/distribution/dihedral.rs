@@ -13,14 +13,14 @@
 //! This is the Blondel–Karplus convention; φ = 0 for a cis/eclipsed (planar)
 //! arrangement and ±π for trans, matching the reference implementation's signed DDF output.
 
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::store::FrameAccess;
 
-use crate::compute::error::ComputeError;
+use crate::compute::ComputeError;
 
 use super::observable::{AtomGroups, Observable, displacement, positions};
 use crate::op::vec3::{cross, dot, norm};
-use molrs::spatial::simbox::{Mic, SimBox};
+use molrs::spatial::{Mic, SimBox};
 
 /// Signed dihedral φ ∈ (−π, π] (radians) over each quadruple i–j–k–l (arity 4).
 #[derive(Debug, Clone, Default)]

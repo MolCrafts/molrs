@@ -12,7 +12,7 @@ use molrs::io::data::lammps_bond_react::{
     BondReactTemplate, REACT_ID, write_bond_react_map as write_map_rs,
     write_lammps_bond_react_system as write_system_rs,
 };
-use molrs::store::frame::Frame;
+use molrs::store::Frame;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};

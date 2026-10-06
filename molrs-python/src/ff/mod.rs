@@ -58,8 +58,8 @@ use pyo3::types::{PyCapsule, PyDict, PyList, PyMapping, PyString, PySuper, PyTup
 use molrs::ff::forcefield::ForceField;
 use molrs::ff::potential::{Member, PotentialCompiler, Potentials};
 use molrs::ff::typifier::ElementTypifier;
+use molrs::ff::typifier::OPLSAATypifier;
 use molrs::ff::typifier::mmff::{MMFF94STypifier, MMFF94Typifier};
-use molrs::ff::typifier::opls::OPLSAATypifier;
 use molrs::ff::typifier::{Annotation, Match, Typifier, Typing};
 use molrs::optimize::{LBFGS, OptReport};
 use molrs_ffi::ForceFieldRef;
@@ -1851,7 +1851,7 @@ impl PyPotentialCompiler {
     ///     neighbour-driven form.
     fn compile_typed(&self, frame: &PyFrame) -> PyResult<PyTypedPotentials> {
         let (topo, members) = frame.with_frame(|core| -> PyResult<_> {
-            let topo = molrs::Topology::from_frame(core)
+            let topo = molrs::system::Topology::from_frame(core)
                 .map_err(|e| PyValueError::new_err(e.to_string()))?;
             ir::clear_kernel_err();
             let members = PotentialCompiler::new(&self.ff)

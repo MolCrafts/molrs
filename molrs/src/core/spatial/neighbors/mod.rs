@@ -135,14 +135,14 @@
 //! | `freud.locality.AABBQuery` | [`AabbQuery`] | one tree, both questions: the `Aabb` backend of [`NeighborList`] for cutoff searches, [`AabbQuery::query_knn`] for k-nearest |
 //! | `freud.locality.FilterSANN` / `FilterRAD` | [`filter_sann`] / [`filter_rad`] | — |
 
-use crate::spatial::simbox::SimBox;
-use crate::types::{F, FNx3, FNx3View};
+use crate::op::types::{F, FNx3, FNx3View};
+use crate::spatial::SimBox;
 use ndarray::ArrayView2;
 
-pub mod aabb;
-pub mod bruteforce;
-pub mod filter;
-pub mod grid;
+mod aabb;
+mod bruteforce;
+mod filter;
+mod grid;
 mod linkcell;
 mod query;
 mod verlet_skin;
@@ -364,7 +364,7 @@ pub(crate) trait Backend: std::fmt::Debug {
 ///
 /// ```
 /// use molrs::spatial::neighbors::NeighborList;
-/// use molrs::spatial::simbox::SimBox;
+/// use molrs::spatial::SimBox;
 /// use ndarray::array;
 ///
 /// let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
@@ -390,7 +390,7 @@ pub(crate) trait Backend: std::fmt::Debug {
 ///
 /// ```
 /// use molrs::spatial::neighbors::{NeighborList, NeighborsStorage};
-/// use molrs::spatial::simbox::SimBox;
+/// use molrs::spatial::SimBox;
 /// use ndarray::array;
 ///
 /// let bx = SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
@@ -1175,7 +1175,7 @@ mod test_fixtures {
     //! `from_pairs_tests`, `engine_tests`, and `linkcell::tests` — so one
     //! hand-derived MIC golden set has one home.
     use super::{Neighbors, SimBox};
-    use crate::types::F;
+    use crate::op::types::F;
     use ndarray::{Array2, array};
 
     /// Orthorhombic 10 × 8 × 6 Å box, fully periodic.

@@ -18,7 +18,7 @@
 //! - Deletion is swap-remove: the moved row's *handle* is unchanged (handles
 //!   are the stable identity), only its internal row index compacts.
 //!
-//! This is the storage substrate for [`crate::system::molgraph::MolGraph`] under the
+//! This is the storage substrate for [`crate::system::MolGraph`] under the
 //! ECS refactor; it is generic over the slotmap key type so the same machinery
 //! backs both the node table and each relation-kind table.
 
@@ -27,7 +27,7 @@ use indexmap::IndexMap;
 use slotmap::{Key, SlotMap};
 
 use crate::error::MolRsError;
-use crate::types::{F, I};
+use crate::op::types::{F, I};
 
 /// Per-column validity mask — one flag per row (`true` ⇒ the row holds a value).
 ///

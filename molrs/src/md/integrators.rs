@@ -34,11 +34,11 @@
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
 
-use molrs::spatial::simbox::SimBox;
+use molrs::spatial::SimBox;
 
 use super::forces::ForceProvider;
 use crate::op::random::standard_normal;
-use molrs::types::{F, FNx3, I};
+use molrs::op::types::{F, FNx3, I};
 
 use super::error::MdError;
 use super::types::{ForceOutput, MDState};
@@ -863,8 +863,8 @@ mod ghost_path_tests {
     use super::*;
     use molrs::ff::potential::Member;
     use molrs::ff::potential::pair::LJCut;
+    use molrs::spatial::SimBox;
     use molrs::spatial::neighbors::{NeighborList, NeighborPolicy, VerletSkin};
-    use molrs::spatial::simbox::SimBox;
     use ndarray::array;
 
     use super::super::pairs::Comm;

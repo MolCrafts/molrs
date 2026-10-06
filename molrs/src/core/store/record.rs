@@ -14,10 +14,10 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
-use crate::MolRsError;
-use crate::store::forcefield_section::ForceFieldSection;
-use crate::store::frame::Frame;
-use crate::store::trajectory::{ObservableRecord, Trajectory};
+use crate::error::MolRsError;
+use crate::store::ForceFieldSection;
+use crate::store::Frame;
+use crate::store::{ObservableRecord, Trajectory};
 
 /// Sole version key of a MolRec record (root layout + L1 encoding), stored as
 /// `meta.molrec_version`. Every molrs writer stamps this key, at this value.
@@ -202,7 +202,7 @@ impl MolRec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::block::Column;
+    use crate::store::Column;
     use ndarray::ArrayD;
 
     fn scalar_column(values: &[f64]) -> Column {

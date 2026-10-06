@@ -2,9 +2,9 @@
 // Hosts `molrs.Trajectory`, `molrs.ScalarObservable`, `molrs.VectorObservable`.
 #![allow(clippy::too_many_arguments)]
 
-use molrs::store::block::Column;
-use molrs::store::trajectory::{ObservableData, ObservableRecord, Trajectory as CoreTrajectory};
-use molrs::types::{F, I, Idx};
+use molrs::op::types::{F, I, Idx};
+use molrs::store::Column;
+use molrs::store::{ObservableData, ObservableRecord, Trajectory as CoreTrajectory};
 use ndarray::{ArrayD, IxDyn};
 use numpy::{IntoPyArray, PyArrayDyn, PyReadonlyArray1, PyReadonlyArrayDyn};
 use pyo3::exceptions::{PyIndexError, PyTypeError};

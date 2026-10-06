@@ -19,9 +19,9 @@
 //! neighboring cells, so every unordered pair is discovered exactly once and
 //! the resulting table satisfies `i < j`.
 
+use crate::op::types::{F, FNx3View};
+use crate::spatial::SimBox;
 use crate::spatial::neighbors::{Backend, CellGrid, Neighbors, PairVisitor};
-use crate::spatial::simbox::SimBox;
-use crate::types::{F, FNx3View};
 use ndarray::array;
 
 /// Occupied-cell count from which materializing the pair table in parallel pays
@@ -482,9 +482,9 @@ fn pos_at(sorted_pos: &[F], si: usize) -> [F; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::spatial::SimBox;
     use crate::spatial::neighbors::test_fixtures::table_rows_sorted;
     use crate::spatial::neighbors::{NeighborList, NeighborsStorage};
-    use crate::spatial::simbox::SimBox;
     use ndarray::array;
 
     /// Half-shell self pairs of `pts` from the cell-list backend, every column
@@ -901,12 +901,12 @@ mod tests {
 #[cfg(test)]
 mod equivalence {
     use super::*;
+    use crate::op::types::F3x3;
+    use crate::spatial::SimBox;
     use crate::spatial::neighbors::CellGrid;
     use crate::spatial::neighbors::NeighborList;
     use crate::spatial::neighbors::NeighborQuery;
     use crate::spatial::neighbors::NeighborsStorage;
-    use crate::spatial::simbox::SimBox;
-    use crate::types::F3x3;
     use ndarray::{Array2, array};
     use std::collections::{BTreeMap, BTreeSet};
 

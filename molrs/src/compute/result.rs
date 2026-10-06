@@ -9,7 +9,7 @@
 //!   matrix consumers such as PCA and k-means to treat any prior Compute
 //!   output as a descriptor row without an extra conversion step.
 
-use molrs::types::F;
+use molrs::op::types::F;
 
 /// Marker + finalization hook for Compute outputs.
 ///

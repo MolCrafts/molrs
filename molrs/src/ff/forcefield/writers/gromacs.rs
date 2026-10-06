@@ -140,10 +140,9 @@ use crate::ff::forcefield::{AtomType, ForceField, Params, Style};
 use crate::ff::potential::cmap::charmm::GRID;
 use crate::ff::potential::pair::charmm::{charmm_mixing, charmm_pair_params};
 use crate::ff::potential::{MAX_ATOMS_FOR_A_FULL_PAIR_LIST, intramolecular_pairs};
-use molrs::store::frame::Frame;
+use crate::units::constants::{ANGSTROM_PER_NM, KJ_PER_KCAL};
+use molrs::store::Frame;
 use molrs::store::schema::PAIR_OVERRIDE_COLUMNS;
-const KJ_PER_KCAL: f64 = 4.184;
-const NM_TO_ANGSTROM: f64 = 10.0;
 
 /// Two Lennard-Jones parameter pairs closer than this (relative) are one.
 const SAME_LJ: f64 = 1e-12;
@@ -311,7 +310,7 @@ impl GromacsTopFfWriter {
             self.fmt_f(mass),
             self.fmt_f(charge),
             p.get_str("ptype").unwrap_or("A").to_owned(),
-            self.fmt_f(sigma / NM_TO_ANGSTROM),
+            self.fmt_f(sigma / ANGSTROM_PER_NM),
             self.fmt_f(epsilon * KJ_PER_KCAL),
         ]);
         Ok(format!("  {}\n", cols.join("  ")))
@@ -341,7 +340,7 @@ impl GromacsTopFfWriter {
         let line = |a: &str, b: &str, (eps, sigma): (f64, f64)| {
             format!(
                 "  {a}  {b}  1  {}  {}\n",
-                self.fmt_f(sigma / NM_TO_ANGSTROM),
+                self.fmt_f(sigma / ANGSTROM_PER_NM),
                 self.fmt_f(eps * KJ_PER_KCAL)
             )
         };
@@ -480,14 +479,14 @@ impl GromacsTopFfWriter {
                 integer,
             }])
         };
-        let kb = KJ_PER_KCAL * NM_TO_ANGSTROM * NM_TO_ANGSTROM;
+        let kb = KJ_PER_KCAL * ANGSTROM_PER_NM * ANGSTROM_PER_NM;
         match (style.category(), style.name()) {
             ("bond", "harmonic") => {
                 allowed(&["r0", "k"])?;
                 // LAMMPS K → GROMACS ½k_b: k_b = 2K.
                 one(
                     1,
-                    vec![need("r0")? / NM_TO_ANGSTROM, 2.0 * need("k")? * kb],
+                    vec![need("r0")? / ANGSTROM_PER_NM, 2.0 * need("k")? * kb],
                     None,
                 )
             }
@@ -496,9 +495,9 @@ impl GromacsTopFfWriter {
                 one(
                     3,
                     vec![
-                        need("r0")? / NM_TO_ANGSTROM,
+                        need("r0")? / ANGSTROM_PER_NM,
                         need("d0")? * KJ_PER_KCAL,
-                        need("alpha")? * NM_TO_ANGSTROM,
+                        need("alpha")? * ANGSTROM_PER_NM,
                     ],
                     None,
                 )
@@ -519,7 +518,7 @@ impl GromacsTopFfWriter {
                     vec![
                         need("theta0")?,
                         2.0 * need("k")? * KJ_PER_KCAL,
-                        need("r_ub")? / NM_TO_ANGSTROM,
+                        need("r_ub")? / ANGSTROM_PER_NM,
                         2.0 * need("k_ub")? * kb,
                     ],
                     None,
@@ -1208,7 +1207,9 @@ impl GromacsTopFfWriter {
                     )
                     .into());
                 };
-                let (v, w) = (full(sigma / NM_TO_ANGSTROM), |e: f64| full(e * KJ_PER_KCAL));
+                let (v, w) = (full(sigma / ANGSTROM_PER_NM), |e: f64| {
+                    full(e * KJ_PER_KCAL)
+                });
                 if qq.is_none()
                     && lj_w.is_none_or(|x| x == 1.0)
                     && coul_w.is_none_or(|x| x == sb.coul[2])
@@ -1257,7 +1258,7 @@ impl GromacsTopFfWriter {
                     .push_str(&format!(
                         "  {}  1  {}\n",
                         local(m, &[i, j]),
-                        full(r0[[k]] / NM_TO_ANGSTROM)
+                        full(r0[[k]] / ANGSTROM_PER_NM)
                     ));
             }
         }
@@ -1317,10 +1318,10 @@ impl GromacsTopFfWriter {
 mod tests {
     use super::*;
     use crate::ff::constants::VACUUM_DIELECTRIC;
-    use crate::ff::forcefield::readers::gromacs::GROMACS_COULOMB;
     use crate::ff::forcefield::readers::{ForceFieldReader, gromacs::GromacsTopFfReader};
     use crate::ff::forcefield::writers::ForceFieldWriter;
     use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
+    use crate::units::constants::GROMACS_COULOMB;
 
     // -- fixtures (molrs units: Å, kcal/mol, degrees) --------------------------------
 
@@ -2360,7 +2361,7 @@ BUT  1
 SOL  2
 ";
 
-    fn read_system(text: &str) -> (ForceField, molrs::store::frame::Frame) {
+    fn read_system(text: &str) -> (ForceField, molrs::store::Frame) {
         GromacsTopFfReader::new()
             .read_system_str(text)
             .unwrap_or_else(|e| panic!("{e}\n{text}"))
@@ -2373,7 +2374,7 @@ SOL  2
             .collect()
     }
 
-    fn energy(ff: &ForceField, frame: &molrs::store::frame::Frame, x: &[f64]) -> f64 {
+    fn energy(ff: &ForceField, frame: &molrs::store::Frame, x: &[f64]) -> f64 {
         let mut ff = ff.clone();
         for name in ["lj/cut", "coul/cut"] {
             if let Some(s) = ff.get_style_mut("pair", name) {
@@ -2387,7 +2388,7 @@ SOL  2
     }
 
     /// The (i, j, is_14, override cells) of a frame's pairs.
-    fn pairs_of(frame: &molrs::store::frame::Frame) -> Vec<(u64, u64, bool, Vec<Option<f64>>)> {
+    fn pairs_of(frame: &molrs::store::Frame) -> Vec<(u64, u64, bool, Vec<Option<f64>>)> {
         let p = frame.get("pairs").unwrap();
         let (i, j) = (
             p.get("atomi").unwrap().as_uint().unwrap(),
@@ -2437,7 +2438,7 @@ SOL  2
                 }
             }
         }
-        let c = |f: &molrs::store::frame::Frame| f.get("constraints").unwrap().nrows();
+        let c = |f: &molrs::store::Frame| f.get("constraints").unwrap().nrows();
         assert_eq!(c(&frame), c(&back_frame));
         let n = frame.get("atoms").unwrap().nrows().unwrap();
         let x = coords(n);
@@ -2462,7 +2463,7 @@ SOL  2
     fn the_frame_s_pairs_are_what_gromacs_prices_or_refused() {
         let (ff, frame) = read_system(SYSTEM);
         let writer = GromacsTopFfWriter::new().with_precision(17);
-        let with_pairs = |edit: &dyn Fn(&mut molrs::store::block::Block)| {
+        let with_pairs = |edit: &dyn Fn(&mut molrs::store::Block)| {
             let mut f = frame.clone();
             edit(f.get_mut("pairs").unwrap());
             writer.write_system_str(&ff, &f)

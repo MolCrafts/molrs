@@ -1,6 +1,6 @@
 //! WASM bindings for structure generators.
 
-use molrs::CarbonTubeBuilder as RsCarbonTubeBuilder;
+use molrs::builder::CarbonTubeBuilder as RsCarbonTubeBuilder;
 use wasm_bindgen::prelude::*;
 
 use crate::core::Frame;
@@ -74,7 +74,7 @@ impl CarbonTubeBuilder {
     }
 }
 
-fn js_error(error: molrs::CarbonTubeError) -> JsValue {
+fn js_error(error: molrs::builder::CarbonTubeError) -> JsValue {
     JsValue::from_str(&error.to_string())
 }
 

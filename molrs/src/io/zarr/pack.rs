@@ -28,7 +28,7 @@ use std::sync::Arc;
 use zarrs::filesystem::FilesystemStore;
 use zarrs::storage::{ReadableListableStorage, StoreKey};
 
-use molrs::MolRsError;
+use molrs::error::MolRsError;
 
 use super::record_io::{reject_retired_zarr_path, zerr};
 
@@ -77,15 +77,15 @@ const MREC_SUFFIX: &str = "mrec";
 /// # Examples
 ///
 /// ```
-/// # fn main() -> Result<(), molrs::MolRsError> {
-/// use molrs::Trajectory;
+/// # fn main() -> Result<(), molrs::error::MolRsError> {
+/// use molrs::store::Trajectory;
 /// use molrs::io::mrec::{FrameSequence, open_packed, pack, write_trajectory_file};
 ///
 /// let dir = tempfile::tempdir().unwrap();
 /// let store = dir.path().join("traj.mrec");
 /// write_trajectory_file(
 ///     &store,
-///     &Trajectory::from_frames(vec![molrs::Frame::new()]),
+///     &Trajectory::from_frames(vec![molrs::store::Frame::new()]),
 ///     None,
 /// )?;
 ///
@@ -222,9 +222,9 @@ fn sorted_files(root: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use molrs::store::block::{Block, Column};
-    use molrs::store::frame::Frame;
-    use molrs::store::trajectory::Trajectory;
+    use molrs::store::Frame;
+    use molrs::store::Trajectory;
+    use molrs::store::{Block, Column};
     use ndarray::ArrayD;
     use tempfile::tempdir;
 

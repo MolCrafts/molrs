@@ -62,10 +62,10 @@ use crate::ff::forcefield::Params;
 use crate::ff::potential::geometry::{sub3, term_table, validate_coords};
 use crate::ff::potential::{IndexedTerms, Member, Potential};
 use crate::op::vec3::{cross, dot, scale};
-use molrs::store::frame::Frame;
+use molrs::op::types::F;
+use molrs::store::Frame;
+use molrs::store::keys::{ATOMI, ATOMJ, ATOMK, ATOML, ATOMM, TYPE};
 use molrs::store::schema::block_names::CMAPS;
-use molrs::store::schema::consts::{ATOMI, ATOMJ, ATOMK, ATOML, ATOMM, TYPE};
-use molrs::types::F;
 
 /// The array param a `cmap` type keeps its map under.
 pub const GRID: &str = "grid";
@@ -475,8 +475,8 @@ pub(crate) mod tests {
     use crate::ff::forcefield::readers::lammps::read_lammps_cmap_str;
     use crate::ff::potential::PotentialCompiler;
     use crate::ff::potential::geometry::compute_dihedral;
-    use molrs::store::block::Block;
-    use molrs::types::Idx;
+    use molrs::op::types::Idx;
+    use molrs::store::Block;
     use ndarray::Array1;
 
     /// The CHARMM36 alanine map (LAMMPS `potentials/charmm36.cmap`, type 1).

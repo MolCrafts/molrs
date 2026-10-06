@@ -30,10 +30,10 @@ use std::path::Path;
 
 use ndarray::{Array1, Array2, IxDyn, array};
 
-use molrs::spatial::simbox::SimBox;
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::spatial::SimBox;
+use molrs::store::Block;
+use molrs::store::Frame;
 
 use crate::io::data::vasp_common::{
     AtomRow, CoordMode, expand_symbols, fractional_to_cartesian, parse_atom_row, read_coords,

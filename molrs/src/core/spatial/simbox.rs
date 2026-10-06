@@ -6,9 +6,9 @@
 //! - Lattice vectors are the columns of H.
 
 use crate::op::linalg::{det3, inv3};
+use crate::op::types::{F, F3, F3View, F3x3, FNx3, FNx3View, I, Pbc3};
 use crate::op::types::{Vec3, to_mat3, to_vec3};
 use crate::op::vec3::{cross, dot, norm};
-use crate::types::{F, F3, F3View, F3x3, FNx3, FNx3View, I, Pbc3};
 use ndarray::{Array1, Array2, Array3, ArrayView1, ArrayView2, Zip, array};
 
 /// Box geometry kind, detected once at construction.
@@ -1241,7 +1241,7 @@ fn detect_box_kind(h: &F3x3) -> BoxKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::I;
+    use crate::op::types::I;
 
     fn assert_close(a: F, b: F) {
         assert!((a - b).abs() < 1e-6 as F, "{} != {}", a, b);

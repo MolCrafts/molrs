@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use crate::ff::forcefield::Params;
 use crate::ff::ir::{Dim, IrError, ParamKind, ParamSpec, StyleSpec, Value};
-use molrs::types::F;
+use molrs::op::types::F;
 
 /// The engine formats molrs reads or writes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

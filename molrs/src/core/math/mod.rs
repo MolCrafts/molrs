@@ -6,7 +6,7 @@
 
 pub mod complex;
 pub mod spherical_harmonics;
-pub mod virial;
+mod virial;
 pub mod wigner3j;
 pub mod wigner_d;
 

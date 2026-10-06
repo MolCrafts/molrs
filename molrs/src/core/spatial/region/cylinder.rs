@@ -1,7 +1,7 @@
 //! A finite, capped cylinder.
 
 use super::region::Region;
-use crate::types::{F, FNx3};
+use crate::op::types::{F, FNx3};
 use ndarray::Array2;
 
 /// A solid cylinder of radius `r` and length `L`, closed at both ends,

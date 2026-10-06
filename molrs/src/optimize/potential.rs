@@ -11,10 +11,10 @@ use std::sync::Arc;
 use super::lbfgs::{Converge, fmax_from_grad, minimize_core};
 use super::{OptReport, Optimizer};
 use crate::ff::potential::Potential;
-use crate::store::frame::Frame;
+use crate::op::types::F;
+use crate::store::Frame;
+use crate::store::keys::FREE;
 use crate::store::schema::block_names::ATOMS;
-use crate::store::schema::consts::FREE;
-use crate::types::F;
 
 /// Limited-memory BFGS over a molecule-bound [`Potential`].
 ///
@@ -289,7 +289,7 @@ fn frame_free_mask(frame: &Frame, n_atoms: usize) -> Result<Option<Vec<bool>>, S
 mod tests {
     use super::*;
     use crate::optimize::set_free_mask;
-    use crate::store::block::Block;
+    use crate::store::Block;
     use ndarray::Array1;
     use std::sync::Arc;
 

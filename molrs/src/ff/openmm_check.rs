@@ -54,11 +54,11 @@ use crate::ff::{
     forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
 };
 use molrs::io::data::lammps_data::write_lammps_data;
-use molrs::spatial::simbox::SimBox;
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
+use molrs::op::types::{F, Idx};
+use molrs::spatial::SimBox;
+use molrs::store::Block;
+use molrs::store::Frame;
 use molrs::store::type_labels::TypeLabels;
-use molrs::types::{F, Idx};
 
 use crate::ff::equivalence_check::{self, TERMS};
 
@@ -427,7 +427,7 @@ fn every_term_is_openmm_s() {
 /// term.
 #[test]
 fn every_term_is_lammps_s() {
-    let ratio = crate::ff::forcefield::readers::opls::OPENMM_COULOMB / 332.06371;
+    let ratio = crate::units::constants::OPENMM_COULOMB / 332.06371;
     for c in &CASES {
         let (ff, frame) = system(c);
         let m = molrs_terms(&ff, &frame);

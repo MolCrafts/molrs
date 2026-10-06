@@ -12,8 +12,8 @@ use crate::ff::potential::angle::accumulate_angle_forces;
 use crate::ff::potential::geometry::{sub3, term_table, validate_coords};
 use crate::ff::potential::{IndexedTerms, Member, Potential};
 use crate::op::vec3::{dot, norm};
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::store::Frame;
 
 pub struct UffAngle {
     atom_i: Vec<usize>,

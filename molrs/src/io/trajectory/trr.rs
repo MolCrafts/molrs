@@ -65,11 +65,12 @@ use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::streaming::{BinaryFrameScanner, FrameIndexBuilder, FrameIndexEntry};
 use crate::io::trajectory::xdr;
 use crate::io::writer::{FrameWriter, Writer};
-use molrs::spatial::simbox::SimBox;
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::{F, Idx};
+use crate::units::constants::ANGSTROM_PER_NM;
+use molrs::op::types::{F, Idx};
+use molrs::spatial::SimBox;
+use molrs::store::Block;
+use molrs::store::Frame;
+use molrs::store::FrameAccess;
 use ndarray::{Array1, Array2, IxDyn, array};
 use std::fs::File;
 use std::io::{BufRead, BufWriter, Cursor, Read, Result, Seek, SeekFrom, Write};
@@ -239,14 +240,6 @@ fn read_reals<R: Read>(r: &mut R, count: usize, is_double: bool) -> Result<Vec<f
     Ok(out)
 }
 
-/// Build a `SimBox` from 9 row-stored box reals (`box[i][j]` = component `j`
-/// of lattice vector `i`). `SimBox` stores lattice vectors as H columns, so
-/// `H[r][c] = vals[c*3 + r]`.
-/// Nanometre → ångström. GROMACS binary trajectories are nm; molrs is Å, so
-/// the reader normalises here and the writer inverts it — the same boundary
-/// rule the GRO reader follows.
-pub(crate) const NM_TO_ANGSTROM: F = 10.0;
-
 fn build_simbox(vals: &[f64]) -> Result<SimBox> {
     let h = Array2::from_shape_fn((DIM, DIM), |(r, c)| vals[c * DIM + r] as F);
     let origin = array![0.0 as F, 0.0, 0.0];
@@ -299,7 +292,7 @@ fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
 
     let simbox = if hdr.box_size != 0 {
         let vals = read_reals(r, DIM * DIM, hdr.is_double)?;
-        Some(scale_simbox(build_simbox(&vals)?, NM_TO_ANGSTROM)?)
+        Some(scale_simbox(build_simbox(&vals)?, ANGSTROM_PER_NM)?)
     } else {
         None
     };
@@ -331,11 +324,11 @@ fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
         .map_err(invalid)?;
     atoms.insert("id", id_arr).map_err(invalid)?;
     if let Some(x) = &x {
-        insert_rvec_cols(&mut atoms, x, natoms, "x", "y", "z", NM_TO_ANGSTROM)?;
+        insert_rvec_cols(&mut atoms, x, natoms, "x", "y", "z", ANGSTROM_PER_NM)?;
     }
     if let Some(v) = &v {
         // nm/ps → Å/ps.
-        insert_rvec_cols(&mut atoms, v, natoms, "vx", "vy", "vz", NM_TO_ANGSTROM)?;
+        insert_rvec_cols(&mut atoms, v, natoms, "vx", "vy", "vz", ANGSTROM_PER_NM)?;
     }
     if let Some(f) = &f {
         // kJ/mol/nm → kJ/mol/Å: same energy, per Å instead of per nm.
@@ -346,7 +339,7 @@ fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
             "fx",
             "fy",
             "fz",
-            1.0 / NM_TO_ANGSTROM,
+            1.0 / ANGSTROM_PER_NM,
         )?;
     }
 
@@ -589,7 +582,7 @@ fn write_trr_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
 
     if has_box {
         let sb = frame.simbox_ref().expect("box present");
-        let h = sb.h_view().to_owned() / NM_TO_ANGSTROM;
+        let h = sb.h_view().to_owned() / ANGSTROM_PER_NM;
         // GROMACS row-stored: box[i][j] = component j of lattice vector i = H[j][i].
         for i in 0..DIM {
             for j in 0..DIM {
@@ -598,12 +591,12 @@ fn write_trr_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
         }
     }
     // Å → nm on the way out, mirroring the reader.
-    write_rvecs(w, &xs, &ys, &zs, 1.0 / NM_TO_ANGSTROM)?;
+    write_rvecs(w, &xs, &ys, &zs, 1.0 / ANGSTROM_PER_NM)?;
     if let Some((vx, vy, vz)) = &vel {
-        write_rvecs(w, vx, vy, vz, 1.0 / NM_TO_ANGSTROM)?;
+        write_rvecs(w, vx, vy, vz, 1.0 / ANGSTROM_PER_NM)?;
     }
     if let Some((fx, fy, fz)) = &force {
-        write_rvecs(w, fx, fy, fz, NM_TO_ANGSTROM)?;
+        write_rvecs(w, fx, fy, fz, ANGSTROM_PER_NM)?;
     }
     Ok(())
 }

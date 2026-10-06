@@ -30,11 +30,11 @@
 
 use crate::core::spatial::simbox::PyBox;
 use crate::helpers::NpF;
+use molrs::spatial::SimBox;
 use molrs::spatial::neighbors::{
     NeighborList as RsNeighborList, NeighborPair, NeighborPolicy, NeighborQuery as RsNeighborQuery,
     Neighbors as RsNeighbors, NeighborsStorage, QueryMode, SkinError, VerletSkin as RsVerletSkin,
 };
-use molrs::spatial::simbox::SimBox;
 use ndarray::{Array2, ArrayView1};
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;

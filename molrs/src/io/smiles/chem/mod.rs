@@ -20,9 +20,9 @@
 //! vocabulary, aromaticity rules, and hybridization rules that the dialects
 //! and future consumers (embed torsion library, forcefield typifiers) depend on.
 
-use crate::io::smiles::error::Notation;
+use crate::io::smiles::Notation;
 
-pub mod ast;
+pub(crate) mod ast;
 pub(crate) mod scanner;
 #[cfg(test)]
 pub(crate) mod test_support;

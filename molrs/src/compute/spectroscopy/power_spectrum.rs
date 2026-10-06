@@ -5,15 +5,15 @@ use rustfft::FftPlanner;
 
 use super::spectra::SpectrumResult;
 use super::window_and_fft;
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Fit;
+use crate::compute::ComputeError;
+use crate::compute::Fit;
 
 /// Velocity power spectrum (VDOS) transform of a **raw velocity ACF**.
 ///
 /// Applies the CosineSq window + zero-padded forward FFT (the
 /// `window_and_fft` pipeline) to a raw, unnormalized
-/// velocity ACF — the [`VacfResult`](crate::compute::transport::VacfResult) of
-/// the [`VACF`](crate::compute::transport::VACF) compute.
+/// velocity ACF — the [`VacfResult`](crate::compute::VacfResult) of
+/// the [`VACF`](crate::compute::VACF) compute.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PowerSpectrum;
 
@@ -53,10 +53,10 @@ impl Fit for PowerSpectrum {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::traits::Compute;
-    use crate::compute::transport::VACF;
-    use molrs::Frame;
+    use crate::compute::Compute;
+    use crate::compute::VACF;
     use molrs::signal as sig;
+    use molrs::store::Frame;
     use ndarray::Array2;
 
     /// Empty frame slice for the series-based raw computes.

@@ -5,7 +5,7 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 
 use crate::op::random::standard_normal;
-use molrs::types::{F, FNx3};
+use molrs::op::types::{F, FNx3};
 
 use super::error::MdError;
 

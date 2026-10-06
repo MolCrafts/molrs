@@ -31,10 +31,10 @@ use crate::ff::{
 use molrs::io::data::inpcrd::read_amber_inpcrd_from_reader;
 use molrs::io::data::lammps_data::write_lammps_data;
 use molrs::io::data::prmtop::read_amber_prmtop_from_reader;
-use molrs::spatial::simbox::SimBox;
-use molrs::store::frame::Frame;
+use molrs::op::types::F;
+use molrs::spatial::SimBox;
+use molrs::store::Frame;
 use molrs::store::type_labels::TypeLabels;
-use molrs::types::F;
 
 /// One energy decomposition, kcal/mol, in sander's terms.
 #[derive(Debug, Clone, Copy, Default)]
@@ -482,7 +482,7 @@ fn molecule_weights(frame: &Frame, ff: &ForceField) -> Option<String> {
         }
     };
     let sb = ff.special_bonds();
-    let mut of: std::collections::BTreeMap<molrs::types::Idx, (F, F)> = Default::default();
+    let mut of: std::collections::BTreeMap<molrs::op::types::Idx, (F, F)> = Default::default();
     for r in (0..flags.len()).filter(|&r| flags[[r]]) {
         let w = (
             cell("coul_scale", r, sb.coul[2]),
@@ -531,7 +531,7 @@ fn without_style_param(ff: &ForceField, key: &str) -> ForceField {
 
 /// The 1-based molecule of each atom: the bond graph's connected components,
 /// numbered in order of their first atom.
-fn molecules(frame: &Frame) -> Vec<molrs::types::Idx> {
+fn molecules(frame: &Frame) -> Vec<molrs::op::types::Idx> {
     let n = frame.get("atoms").unwrap().nrows().unwrap();
     let mut root: Vec<usize> = (0..n).collect();
     fn find(root: &mut [usize], a: usize) -> usize {
@@ -555,7 +555,7 @@ fn molecules(frame: &Frame) -> Vec<molrs::types::Idx> {
     (0..n)
         .map(|a| {
             let r = find(&mut root, a);
-            let next = id_of.len() as molrs::types::Idx + 1;
+            let next = id_of.len() as molrs::op::types::Idx + 1;
             *id_of.entry(r).or_insert(next)
         })
         .collect()
@@ -571,7 +571,7 @@ fn molecules(frame: &Frame) -> Vec<molrs::types::Idx> {
 #[test]
 fn gaff2_typing_prices_the_gaff2_case_as_sander() {
     use crate::ff::typifier::Typing;
-    use crate::ff::typifier::gaff::{GaffParameterSet, GaffTypifier};
+    use crate::ff::typifier::{GaffParameterSet, GaffTypifier};
     use molrs::store::keys;
 
     let case = cases().into_iter().find(|c| c.name == "gaff2").unwrap();
@@ -579,7 +579,7 @@ fn gaff2_typing_prices_the_gaff2_case_as_sander() {
     let atoms = prmtop.get("atoms").unwrap();
     let element = atoms.get("element").unwrap().as_string().unwrap();
     let types = atoms.get("type").unwrap().as_string().unwrap();
-    let mut mol = molrs::Atomistic::new();
+    let mut mol = molrs::system::Atomistic::new();
     let ids: Vec<_> = (0..element.len())
         .map(|i| {
             let id = mol.add_atom_xyz(

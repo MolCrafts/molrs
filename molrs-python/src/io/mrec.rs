@@ -150,8 +150,8 @@ pub fn write_mrec_forcefield(
 fn record_arg(
     meta: Option<&Bound<'_, PyAny>>,
     forcefield: Option<&Bound<'_, PyAny>>,
-) -> PyResult<molrs::MolRec> {
-    let mut record = molrs::MolRec::new();
+) -> PyResult<molrs::store::MolRec> {
+    let mut record = molrs::store::MolRec::new();
     if let Some(meta) = meta {
         record.meta = meta_document_arg(meta)?;
     }
@@ -159,7 +159,7 @@ fn record_arg(
     Ok(record)
 }
 
-fn write_record(path: &std::path::Path, record: &molrs::MolRec) -> PyResult<()> {
+fn write_record(path: &std::path::Path, record: &molrs::store::MolRec) -> PyResult<()> {
     molrs::io::mrec::write_record_file(path_str(path)?, record).map_err(molrs_error_to_pyerr)
 }
 

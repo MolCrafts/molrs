@@ -41,7 +41,7 @@ pub enum EndpointTarget {
 
 /// The endpoint columns of a relation block, each with the block it indexes.
 ///
-/// A block's declared `targets` ([`Block::targets`](crate::store::block::Block::targets))
+/// A block's declared `targets` ([`Block::targets`](crate::store::Block::targets))
 /// override these defaults; see
 /// [`relation_endpoints`](super::relation_endpoints).
 #[derive(Debug, Clone, Copy)]

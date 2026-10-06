@@ -162,7 +162,7 @@ an older molrs needs its values converted:
 ### Records: molrec_version 2
 
 Every record molrs 0.16 writes is `molrec_version` 2
-(`molrs.io.mrec.schema.MOLREC_VERSION`, Rust `molrs::MOLREC_VERSION`). In
+(`molrs.io.mrec.schema.MOLREC_VERSION`, Rust `molrs::store::MOLREC_VERSION`). In
 version 2 the `forcefield` section is the force-field IR, so some stored
 numbers mean something else than in the version-1 records molrs 0.15 wrote.
 0.16 never reads a version-1 record as version 2: it converts every changed
@@ -939,13 +939,110 @@ changes for code written against 0.15:
   An out-of-image conversion is refused (`IrError::OutOfImage`, Python
   `molrs.ff.ir.OutOfImage`, a `ValueError`).
 
-### Module ownership: force fields (`ff`)
+### Module ownership
 
-Every `ff` module has one job — `ir` the force-field IR (LAMMPS standard) and
-its registry, `forcefield` the `ForceField` model and force-field files,
-`potential` kernels, `typifier` typing, `charge` charge models, `params` the
-shipped tables — and every public symbol has one path. Rust paths that moved
-or went away:
+Every module has one job, and every public symbol has exactly one path. Rust
+paths that moved or went away, by subsystem:
+
+#### One path per symbol
+
+The rule, applied crate-wide:
+
+- **The crate root holds subsystems only** (and `VERSION`). `molrs::core` is
+  private: its domains are top-level facades of their own — `molrs::store`,
+  `molrs::system`, `molrs::spatial`, `molrs::math`, `molrs::units`,
+  `molrs::error`. Nothing is flattened to the root any more: not core's types
+  (`molrs::Frame`, `molrs::Element`, …) and not the builders
+  (`molrs::GrapheneBuilder`, …).
+- **A facade re-exports its implementation files, which are private.** Where
+  a module re-exports a child, the child is private and the facade carries
+  its whole public API; a child module stays public only as a namespace whose
+  items nothing re-exports (`ff::potential::pair`, `spatial::neighbors`,
+  `spatial::region`, `store::keys`, `store::schema`, `units::constants`,
+  `ff::params::atomtype_amber`, `io::data::pdb`, …).
+- **One owner per symbol.** Re-exports of another module's items are gone
+  (`spatial::region::FNx3`, `io::mrec::schema::MOLREC_VERSION`,
+  `ff::typifier::opls::BondedTerm`, the `ff::params::ATOMTYPE_*` copies).
+
+| 0.15 | 0.16 |
+|---|---|
+| `molrs::Frame`, `Block`, `FrameAccess`, `FrameView`, `ForceFieldSection`, `MetaMap`, `MetaValue`, `MolRec`, `Trajectory`, … (crate root, `molrs::core::…`, `molrs::store::frame::Frame`, `store::block::Block`, …) | `molrs::store::{Frame, Block, …}` |
+| `molrs::Atomistic`, `Element`, `MolGraph`, `NodeId`, `RelationId`, `Topology`, `CoarseGrain`, … (crate root, `molrs::system::{atomistic, molgraph, topology, coarsegrain, bond, bond_weights, extract, graph_hash, link, port}::…`) | `molrs::system::{Atomistic, Element, …}` (also `FromMolGraph`, `TopologyError`) |
+| `molrs::SimBox`, `BoxKind`, `Mic`, `CenterError` (crate root), `molrs::spatial::{simbox, geometry, mesh, periodic, trace}::…` | `molrs::spatial::{SimBox, Mic, BoxKind, BoxError, translate, rotate, scale, center, CenterError, TriMesh, DEGENERATE_AREA2, GhostSet, ImageRange, Trace}` |
+| `molrs::spatial::neighbors::{aabb, bruteforce, filter, grid}::…`, `spatial::region::{region, cylinder, ellipsoid, half_space, polyhedron, sphere_union}::…` | `molrs::spatial::neighbors::…`, `molrs::spatial::region::…` |
+| `molrs::units::{dimension, error, preset, quantity, registry, unit}::…` (and the crate-root `Unit`, `UnitRegistry`, …) | `molrs::units::…` |
+| `molrs::math::virial::Virial` | `molrs::math::Virial` |
+| `molrs::types::{F, F3, FNx3, …, I, Idx, Pbc3}` (also `molrs::core::types`) | `molrs::op::types::…`, the one owner of the scalar and array aliases |
+| `molrs::store::schema::consts::…` | `molrs::store::keys::…` |
+| `molrs::store::schema::{block, column, document, validator, violation}::…` | `molrs::store::schema::…` |
+| `molrs::GrapheneBuilder`, `CarbonTubeBuilder`, `Assembler`, … | `molrs::builder::…` |
+| `molrs::compute::<family>::X`, `compute::<family>::<file>::X` (`compute::order::Nematic`, `compute::distribution::AtomGroups`, `compute::dynamics::persist::pair_survival_tcf`, `compute::dielectric::compute_dipole_moment`, …) | `molrs::compute::X` — now also the `*Args` aliases, `EinsteinDiffusionResult`, `AnyObservable`, `Observable` and the distribution observables, `NodeId`, `BOUNDARY`, `compute_qlm` |
+| `molrs::ff::potential::<family>::<file>::X` (`pair::lj_cut::LJCut`, `bond::harmonic::BondHarmonic`, `kspace::pme::PmePotential`, …) | `molrs::ff::potential::<family>::X` (also `pair::{VdwAtomParams, VdwStyleParams, lj_ab_to_sigma_epsilon}`, `angle::CharmmAngleParams`, `kspace::PmeParams`) |
+| `molrs::ff::potential::{compile, error, instances}::…` | `molrs::ff::potential::{PotentialCompiler, CompileError, Instances}` |
+| `molrs::ff::ir::{category, dim, engine, error, expression, form, registry, spec}::…`, `ff::ir::engine::positional` | `molrs::ff::ir::…`, `molrs::ff::ir::positional` |
+| `molrs::ff::params::{gaff, gaff2, gaff_equiv, gaff_empirical, bccparm, bccparm_abcg2, clpol, gasparm, oplsaa, oplsaa_typing}::…` | `molrs::ff::params::…` (`GAFF`, `OPLSAA_ATOMS`, …; a table's row arrays, `GAFF_BONDS`, …, are reached through its table) |
+| `molrs::ff::params::ATOMTYPE_AMBER`, … | `molrs::ff::params::atomtype_amber::ATOMTYPE_AMBER`, … (each beside its own `RULES` / `WILDATOMS`) |
+| `molrs::ff::typifier::{am1bcc, atd, element, estimate, gaff, opls, uff}::…` (`typifier::gaff::GaffParameterSet`, `typifier::opls::OplsTypingMeta`, `typifier::estimate::Provenance`, …) | `molrs::ff::typifier::…` (`cmap` and `mmff` stay namespaces) |
+| `molrs::ff::typifier::opls::Estimator` (a trait alias) | `ParameterInterpolator<Term = BondedTerm>` |
+| `molrs::io::format::{read_frame, write_frame, FrameFormat}` | `molrs::io::…` |
+| `molrs::io::smiles::{smiles, chem::ast, error}::…` | `molrs::io::smiles::…` |
+| `molrs::io::log::lammps::…`, `molrs::io::mesh::stl::…` | `molrs::io::log::…`, `molrs::io::mesh::…` |
+| `molrs::io::mrec::schema::{MOLREC_VERSION, RESERVED_META_KEYS}` | `molrs::store::{MOLREC_VERSION, RESERVED_META_KEYS}` |
+| `molrs::md::{error, forces, integrators, maxwell, pairs, types}::…` | `molrs::md::…` (also `com_velocity`) |
+| `molrs::optimize::lbfgs::…`, `perceive::{builder, subgraph}::…`, `signal::{acf, grid, window}::…`, `stream::message::…` | `molrs::optimize::…`, `molrs::perceive::…`, `molrs::signal::…` (also `SignalError`), `molrs::stream::…` |
+
+No longer public (each had no user outside the crate; reached before only
+through a file module): the pair styles' `*_typed_ctor`,
+`improper::cvff::signed_cosine_ctor`, `cmap::charmm::GRID`,
+`ff::ir::{LAMMPS_STYLE_CATEGORIES, builtin_forms}`,
+`store::forcefield_section::{ANNOTATION_COLUMNS, CMAP_GRID, ENDPOINT_COLUMNS,
+MIXING_RULES, ONE_FOUR_VALUES, UNIT_QUANTITIES, category_arity,
+check_pair_restatements, is_parameter_column, unit_preset}`,
+`system::port::PORTS`, the transport helpers `apply_unbiased_norm`,
+`component_means`, `gradient_axis0_order2`, `unbiased_cartesian_acf_scaled`,
+`compute::environment::angular_separation::angular_distance`,
+`conformer::distgeom::assign_with_provenance`, and the typifier internals
+`estimate::{Candidate, CandidateSet, DEFAULT_IMPROPER, is_wildcard,
+substitution_table, empirical::{angle_k, angle_theta0, bond_k}}`,
+`opls::{CandidateTables, NoMatch, deps::OplsDependencyAnalyzer,
+layered::{LayeredTypingEngine, MAX_CIRCULAR_ITERATIONS}}`. Removed outright:
+`store::forcefield_section::parse_style_block_name` (unused) and
+`store::meta::META_TYPES_ATTR` (private to the `*.mrec` adapter, its one user).
+
+#### Engine constants are unit facts (`units::constants`)
+
+Each engine's Coulomb constant and charge factor has one owner,
+`molrs::units::constants`, used by `io` and `ff` alike:
+
+| 0.15 | 0.16 |
+|---|---|
+| `molrs::ff::params::amber::AMBER_COULOMB` | `molrs::units::constants::AMBER_COULOMB` |
+| `molrs::io::data::prmtop::CHARGE_CONVERSION_FACTOR` | `molrs::units::constants::AMBER_CHARGE_FACTOR` |
+| `molrs::io::data::prmtop_tables::CHAMBER_COULOMB` | `molrs::units::constants::CHARMM_COULOMB` |
+| `molrs::ff::forcefield::readers::opls::OPENMM_COULOMB` | `molrs::units::constants::OPENMM_COULOMB` |
+| `molrs::ff::forcefield::readers::gromacs::GROMACS_COULOMB` | `molrs::units::constants::GROMACS_COULOMB` |
+| `molrs::compute::voronoi::BOHR_TO_ANG` (and the cube reader's copy) | `molrs::units::constants::ANGSTROM_PER_BOHR` |
+| `molrs::compute::distribution::KB_KCAL_PER_MOL_K` (1.987204e-3) | `molrs::units::constants::BOLTZMANN_REAL` (1.98720425864083e-3): `CombinedDistributionResult::free_energy` moves by 1.3·10⁻⁷ relative |
+
+New beside them: `KJ_PER_KCAL` and `ANGSTROM_PER_NM`, which replace the
+private copies in the GROMACS, OpenMM XML, `.gro`, `.trr` and `.xtc` code.
+LAMMPS `real`'s `qqr2e` stays `COULOMB_REAL`. Python's `molrs.ff.AMBER_COULOMB`
+is unchanged.
+
+The AMBER 1-4 divisors `SCEE` = 1.2 / `SCNB` = 2.0 are force-field knowledge
+(`ff::params::amber::{AMBER_SCEE, AMBER_SCNB}`), and only the force-field
+reader assumes them. `io::data::prmtop` (the structure reader) no longer
+does: a prmtop without `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR`
+(pre-Amber-11) reads with no `"pairs"` block. `read_amber_prmtop_ff` prices
+such a file as before. `io::data::prmtop_tables::one_four_weights` takes the
+`default: Option<(f64, f64)>` divisors and returns `Option<OneFourWeights>`
+(`None`: no divisors known).
+
+#### Force fields (`ff`)
+
+`ir` is the force-field IR (LAMMPS standard) and its registry, `forcefield`
+the `ForceField` model and force-field files, `potential` the kernels,
+`typifier` typing, `charge` the charge models, `params` the shipped tables.
 
 - **No re-exports at `molrs::ff`.** Each name is at its owner:
   - `ForceField`, `SpecialBonds` → `ff::forcefield::`;
@@ -964,7 +1061,7 @@ or went away:
   - `FragmentAtoms`, `FragmentScaling`, `ScaleLjError`, `compute_k_ij`,
     `scale_lj` → `ff::scale_lj::`.
   - `assign_cmaps` → `ff::typifier::cmap::assign_cmaps` (also no longer at
-    `ff::typifier::`); `GaffParameterSet` → `ff::typifier::gaff::`.
+    `ff::typifier::`); `GaffParameterSet` → `ff::typifier::GaffParameterSet`.
 - **IR vocabulary is the IR's.** `ParamSource`, `RowSource`, `SpecialClass`
   and `KernelConstructor` are at `ff::ir::` only (were also
   `ff::potential::` and `ff::potential::registry::`; that module is private,
@@ -1027,7 +1124,7 @@ or went away:
   class-mean is a charge-model step, applied by `ChargeModel::assign` for a
   model that declares it (`needs_equivalencing`).
 - **`molrs::math::pair_form::lj_ab_to_sigma_epsilon` →
-  `molrs::ff::potential::pair::lj_cut::lj_ab_to_sigma_epsilon`.**
+  `molrs::ff::potential::pair::lj_ab_to_sigma_epsilon`.**
 - **`molrs::store::record_v1` is removed** (the version-1 conversion is
   crate-private in `ff::forcefield`): reading a `molrec_version` 1 record
   needs the `ff` feature; without it such a record is refused.
@@ -1036,57 +1133,11 @@ or went away:
   written only, since reversing them would swap φ and ψ against the grid.
   Python: `molrs.ff.ir.categories()` reports `"ordered"` for it.
 
-### Python: kernels live in `molrs.ff.potential`
-
-`LJCut` moved from `molrs.md` to `molrs.ff.potential` (molpy: `molpy.md.LJCut`
-→ `molpy.potential.LJCut`), beside the `Potential` protocol, which `molrs.md`
-no longer re-exports either; nor does it re-export `Potentials`
-(`molrs.ff.Potentials` / `molpy.Potentials`). The integrators still accept all
-of them.
-
-New in the same module: `kernel(category, style, atoms, *, charges=None,
-**params)`, the kernel of **any** style the force-field IR prices — a
-built-in, a style registered through `molrs.ff.ir` (expression or Python
-kernel), a style of a custom category, an unregistered style given its
-`expression=` — over explicit instances: `atoms` `(n, arity)`, each per-term
-parameter a number or one value per term **as stored** (angle values in
-degrees, indexed families as `k1`, `k2`, …), style parameters (`cutoff`,
-`coulomb`, …) a number or a string, per-atom charges as `charges=`. It is
-built by the code `PotentialCompiler.compile` runs (Rust:
-`molrs::ff::potential::Instances`), returns a `Potentials`, and
-`Potentials.push` moves it into a larger collection. There is no class per
-built-in style: one builder covers every registered style, custom ones
-included.
-
-```python
-from molrs.ff import Potentials
-from molrs.ff.potential import kernel
-
-pots = Potentials()
-pots.push(kernel("bond", "harmonic", [[0, 1], [1, 2]], k=300.0, r0=1.4))
-pots.push(kernel("angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=109.5))
-pots.push(kernel("dihedral", "periodic", [[0, 1, 2, 3]],
-                 k1=1.3, periodicity1=1, phase1=0.0, k2=0.4, periodicity2=2, phase2=180.0))
-pots.push(kernel("pair", "coul/cut", [[0, 3]], charges=q, coulomb=332.06371, dielectric=1.0))
-energy, forces = pots.calc_energy_forces(pos)
-```
-
-| 0.15 | 0.16 |
-|---|---|
-| `from molrs.md import LJCut, Potential` | `from molrs.ff.potential import LJCut, Potential` |
-| `from molpy.md import LJCut` | `from molpy.potential import LJCut` |
-| `molrs.md.Potentials` | `molrs.ff.Potentials` |
-
-### Module ownership
-
-Every module has one job, and every public symbol one path. Paths that moved
-or went away:
-
-**Core, io, perceive, compute, conformer, md (single-responsibility pass A2)**
+#### Core, io, perceive, compute, conformer, md
 
 - Minimum image: `molrs::compute::util` is gone. `MicHelper` is
-  `molrs::spatial::simbox::Mic` (`SimBox::mic()`, or `Mic::ortho(lengths)`
-  for bare edge lengths); `get_positions_ref` is crate-private.
+  `molrs::spatial::Mic` (`SimBox::mic()`, or `Mic::ortho(lengths)` for bare
+  edge lengths); `get_positions_ref` is crate-private.
 - `molrs::op::random::standard_normal` is the one Gaussian draw (md had two
   private copies).
 - `molrs::conformer::etkdg` is private (`generate_3d_impl` was a second door
@@ -1129,7 +1180,48 @@ or went away:
 - One name per handle and payload type: `AtomId`, `BeadId` → `NodeId`;
   `BondId`, `AngleId`, `DihedralId`, `ImproperId`, `PortId` → `RelationId`;
   `Bead` → `Atom`; `Bond`, `Angle`, `Dihedral`, `Improper` → `Relation`
-  (all in `molrs::system::molgraph` and at the crate root).
+  (all in `molrs::system`).
+
+### Python: kernels live in `molrs.ff.potential`
+
+`LJCut` moved from `molrs.md` to `molrs.ff.potential` (molpy: `molpy.md.LJCut`
+→ `molpy.potential.LJCut`), beside the `Potential` protocol, which `molrs.md`
+no longer re-exports either; nor does it re-export `Potentials`
+(`molrs.ff.Potentials` / `molpy.Potentials`). The integrators still accept all
+of them.
+
+New in the same module: `kernel(category, style, atoms, *, charges=None,
+**params)`, the kernel of **any** style the force-field IR prices — a
+built-in, a style registered through `molrs.ff.ir` (expression or Python
+kernel), a style of a custom category, an unregistered style given its
+`expression=` — over explicit instances: `atoms` `(n, arity)`, each per-term
+parameter a number or one value per term **as stored** (angle values in
+degrees, indexed families as `k1`, `k2`, …), style parameters (`cutoff`,
+`coulomb`, …) a number or a string, per-atom charges as `charges=`. It is
+built by the code `PotentialCompiler.compile` runs (Rust:
+`molrs::ff::potential::Instances`), returns a `Potentials`, and
+`Potentials.push` moves it into a larger collection. There is no class per
+built-in style: one builder covers every registered style, custom ones
+included.
+
+```python
+from molrs.ff import Potentials
+from molrs.ff.potential import kernel
+
+pots = Potentials()
+pots.push(kernel("bond", "harmonic", [[0, 1], [1, 2]], k=300.0, r0=1.4))
+pots.push(kernel("angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=109.5))
+pots.push(kernel("dihedral", "periodic", [[0, 1, 2, 3]],
+                 k1=1.3, periodicity1=1, phase1=0.0, k2=0.4, periodicity2=2, phase2=180.0))
+pots.push(kernel("pair", "coul/cut", [[0, 3]], charges=q, coulomb=332.06371, dielectric=1.0))
+energy, forces = pots.calc_energy_forces(pos)
+```
+
+| 0.15 | 0.16 |
+|---|---|
+| `from molrs.md import LJCut, Potential` | `from molrs.ff.potential import LJCut, Potential` |
+| `from molpy.md import LJCut` | `from molpy.potential import LJCut` |
+| `molrs.md.Potentials` | `molrs.ff.Potentials` |
 
 ### From 0.15.0: the 0.15.1 changes
 

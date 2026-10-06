@@ -7,9 +7,9 @@ use super::*;
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::potential::PotentialCompiler;
 use crate::ff::potential::geometry::{compute_angle, compute_dihedral};
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
-use molrs::types::{F, Idx};
+use molrs::op::types::{F, Idx};
+use molrs::store::Block;
+use molrs::store::Frame;
 use ndarray::Array1;
 
 // ---------------------------------------------------------------------------

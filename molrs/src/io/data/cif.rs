@@ -29,11 +29,11 @@ use std::path::Path;
 
 use ndarray::{Array1, Array2, IxDyn, array};
 
-use molrs::spatial::simbox::SimBox;
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
-use molrs::store::meta::MetaMap;
-use molrs::types::{F, Idx};
+use molrs::op::types::{F, Idx};
+use molrs::spatial::SimBox;
+use molrs::store::Block;
+use molrs::store::Frame;
+use molrs::store::MetaMap;
 
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::writer::{FrameWriter, Writer};

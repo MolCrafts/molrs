@@ -19,11 +19,11 @@ use std::path::Path;
 use ndarray::{Array1, IxDyn};
 use serde_json::{Value as JsonValue, json};
 
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
+use molrs::op::types::{F, I, Idx};
+use molrs::store::Block;
+use molrs::store::Frame;
+use molrs::store::MetaValue;
 use molrs::store::keys;
-use molrs::store::meta::MetaValue;
-use molrs::types::{F, I, Idx};
 
 /// The LAMMPS molecule JSON field naming the unit style. It is the file's
 /// vocabulary, not the frame's: the frame meta key is [`keys::UNITS`].

@@ -1,60 +1,9 @@
-//! Universal Force Field typifier.
-//!
-//! Assigns RDKit-style UFF atom labels, generates bond/angle/dihedral topology,
-//! and resolves per-instance force constants so
-//! [`PotentialCompiler::compile`](crate::ff::potential::PotentialCompiler::compile)
-//! can compile `uff_bond` / `uff_angle` / `uff_torsion` / `uff_lj` kernels.
-//!
-//! # Labels
-//!
-//! Every bonded term is one type, named by a [`TypeName`] over the UFF atom
-//! labels of its atoms, qualified with the values its parameters depend on
-//! that are not a function of those labels (Rappé et al., JACS 114, 10024
-//! (1992)); each field is an `f64` in Rust `Display` form:
-//!
-//! - bond `{ti}-{tj}@{bo}` — the effective bond order used (`1`, `1.5`, `2`,
-//!   `3`; an amide C–N is `1`, as RDKit prices it);
-//! - angle `{ti}-{tj}-{tk}@{bo_ij}_{bo_jk}_{code}` — `code` is the RDKit
-//!   coordination code before the effective map (`0`, `1`, `2`, `3`, `4`,
-//!   `30`, `35`, `40`, `45`), which fixes `theta0` and the Fourier/order form;
-//! - torsion `{ti}-{tj}-{tk}-{tl}@{V}_{n}_{nphi0}` — `V` the barrier after
-//!   division by the torsion count about the central bond, `n` the
-//!   periodicity, `nphi0` `0` for `cosTerm = +1` and `180` for `cosTerm = -1`;
-//! - inversion `{tj}-{ta}-{tb}-{tc}` in improper node order (centre first,
-//!   the order of LAMMPS's out-of-plane styles; RDKit lists it second),
-//!   unqualified: `K, c0, c1, c2` depend only on the centre element and on
-//!   whether an endpoint is `O_2` / `O_R`.
-//!
-//! A bond, angle or torsion is oriented before it is named: of its forward and
-//! reversed endpoint labels (then qualifier fields, an angle's two bond orders
-//! swapping with its ends) it takes the smaller, slot by slot, so both
-//! orientations of one term share one name and one type. Bond and angle params
-//! are evaluated on that orientation: their force constants multiply
-//! the two end atoms' `Z*` into a running product, and floating-point products
-//! do not reassociate, so evaluating each term in its own node order could give
-//! one name two params differing in the last bit. (A torsion's params read only
-//! the central pair, symmetrically.) Inversions are **not** oriented:
-//! reversing a 4-atom term moves the centre to position 4 and names a different
-//! term.
-//!
-//! # Route
-//!
-//! ```ignore
-//! let mut typing = Typing::new(UFFTypifier::new());
-//! let mut frame = typing.typify(&mol)?.to_frame()?;
-//! let ff = typing.forcefield();
-//! frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds())?);
-//! let pots = PotentialCompiler::new(ff).compile(&frame)?;
-//! ```
-//!
-//! Organic / main-group subset only (see [`crate::ff::params::uff`]). No GFN-FF.
-
 use std::collections::{HashMap, HashSet};
 
 use molrs::store::schema::block_names::{ANGLES, BONDS, DIHEDRALS, IMPROPERS};
 use molrs::store::type_labels::TypeName;
-use molrs::system::molgraph::PropValue;
-use molrs::{Atomistic, Element, NodeId};
+use molrs::system::PropValue;
+use molrs::system::{Atomistic, Element, NodeId};
 
 use crate::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
 use crate::ff::params::uff::{AtomicParams, G, LAMBDA, params_for_label};
@@ -63,6 +12,57 @@ use crate::perceive::rings::find_rings;
 use crate::perceive::{Hybridization, conjugated_atoms, hybridizations};
 
 /// Universal Force Field typifier (Rappé 1992, RDKit-aligned).
+///
+/// Universal Force Field typifier.
+///
+/// Assigns RDKit-style UFF atom labels, generates bond/angle/dihedral topology,
+/// and resolves per-instance force constants so
+/// [`PotentialCompiler::compile`](crate::ff::potential::PotentialCompiler::compile)
+/// can compile `uff_bond` / `uff_angle` / `uff_torsion` / `uff_lj` kernels.
+///
+/// # Labels
+///
+/// Every bonded term is one type, named by a [`TypeName`] over the UFF atom
+/// labels of its atoms, qualified with the values its parameters depend on
+/// that are not a function of those labels (Rappé et al., JACS 114, 10024
+/// (1992)); each field is an `f64` in Rust `Display` form:
+///
+/// - bond `{ti}-{tj}@{bo}` — the effective bond order used (`1`, `1.5`, `2`,
+///   `3`; an amide C–N is `1`, as RDKit prices it);
+/// - angle `{ti}-{tj}-{tk}@{bo_ij}_{bo_jk}_{code}` — `code` is the RDKit
+///   coordination code before the effective map (`0`, `1`, `2`, `3`, `4`,
+///   `30`, `35`, `40`, `45`), which fixes `theta0` and the Fourier/order form;
+/// - torsion `{ti}-{tj}-{tk}-{tl}@{V}_{n}_{nphi0}` — `V` the barrier after
+///   division by the torsion count about the central bond, `n` the
+///   periodicity, `nphi0` `0` for `cosTerm = +1` and `180` for `cosTerm = -1`;
+/// - inversion `{tj}-{ta}-{tb}-{tc}` in improper node order (centre first,
+///   the order of LAMMPS's out-of-plane styles; RDKit lists it second),
+///   unqualified: `K, c0, c1, c2` depend only on the centre element and on
+///   whether an endpoint is `O_2` / `O_R`.
+///
+/// A bond, angle or torsion is oriented before it is named: of its forward and
+/// reversed endpoint labels (then qualifier fields, an angle's two bond orders
+/// swapping with its ends) it takes the smaller, slot by slot, so both
+/// orientations of one term share one name and one type. Bond and angle params
+/// are evaluated on that orientation: their force constants multiply
+/// the two end atoms' `Z*` into a running product, and floating-point products
+/// do not reassociate, so evaluating each term in its own node order could give
+/// one name two params differing in the last bit. (A torsion's params read only
+/// the central pair, symmetrically.) Inversions are **not** oriented:
+/// reversing a 4-atom term moves the centre to position 4 and names a different
+/// term.
+///
+/// # Route
+///
+/// ```ignore
+/// let mut typing = Typing::new(UFFTypifier::new());
+/// let mut frame = typing.typify(&mol)?.to_frame()?;
+/// let ff = typing.forcefield();
+/// frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds())?);
+/// let pots = PotentialCompiler::new(ff).compile(&frame)?;
+/// ```
+///
+/// Organic / main-group subset only (see [`crate::ff::params::uff`]). No GFN-FF.
 pub struct UFFTypifier {
     ff: ForceField,
 }
@@ -150,7 +150,7 @@ impl Typifier for UFFTypifier {
     /// Angles, dihedrals (regenerated) and inversions (added) are enumerated
     /// onto `graph`. Atoms get `type` (the UFF label), `x1` and `D1` as plain
     /// values; every bond, angle, dihedral and generated improper gets `type`
-    /// — its label (see the [module docs](self#labels)) — as a type defined
+    /// — its label (see the [type docs](UFFTypifier#labels)) — as a type defined
     /// under `uff_bond` / `uff_angle` / `uff_torsion` / `uff_inversion` with
     /// the params the kernels read. The `uff_lj` rows `{x1, D1}` of the labels
     /// used are pairs; every library style is declared.
@@ -756,7 +756,7 @@ mod tests {
     use super::*;
     use indexmap::IndexMap;
     use molrs::store::type_labels::TypeName;
-    use molrs::system::atomistic::Atomistic;
+    use molrs::system::Atomistic;
     use std::collections::{BTreeMap, BTreeSet};
 
     fn ethanol() -> Atomistic {

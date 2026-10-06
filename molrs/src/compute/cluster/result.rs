@@ -3,8 +3,8 @@
 
 use ndarray::Array1;
 
-use crate::compute::result::ComputeResult;
-use molrs::types::Idx;
+use crate::compute::ComputeResult;
+use molrs::op::types::Idx;
 
 /// Result of a cluster analysis on one frame.
 #[derive(Debug, Clone)]

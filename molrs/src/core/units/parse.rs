@@ -7,7 +7,7 @@
 //! factor   := IDENT | NUMBER | '(' expr ')'
 //! ```
 
-use crate::types::F;
+use crate::op::types::F;
 
 use super::dimension::Dimension;
 use super::error::UnitsError;
@@ -349,7 +349,7 @@ pub(crate) fn parse_expr(registry: &UnitRegistry, expr: &str) -> Result<Unit, Un
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::units::dimension::Dimension;
+    use crate::units::Dimension;
 
     fn reg() -> UnitRegistry {
         UnitRegistry::new()

@@ -39,21 +39,19 @@
 
 use std::collections::HashMap;
 
-use molrs::NodeId;
-use molrs::system::atomistic::Atomistic;
+use molrs::system::Atomistic;
+use molrs::system::NodeId;
 
 use crate::ff::forcefield::Params;
 use crate::ff::params::{ParmTable, ParmchkTable, ParmchkType};
-use crate::ff::typifier::estimate::Provenance;
+use crate::ff::typifier::Provenance;
+use crate::ff::typifier::estimate::DEFAULT_IMPROPER;
 
 /// The wildcard atom type.
 const X: &str = "X";
 
 /// What parmchk2 charges an `X` in a peripheral slot (see the module doc).
 const WEIGHT_X: f64 = 3.0;
-
-/// parmchk2's improper default: 1.1 kcal/mol, phase 180°, periodicity 2.
-const DEFAULT_IMPROPER: (f64, f64, f64) = (1.1, 180.0, 2.0);
 
 /// One improper of the molecule, as tleap builds it.
 #[derive(Debug, Clone)]
@@ -273,7 +271,7 @@ impl Parmchk2<'_> {
                     Some((row, provenance)) => (row.force, row.phase, row.periodicity, provenance),
                     None => {
                         let (k, phase, n) = DEFAULT_IMPROPER;
-                        (k, phase, n, Provenance::wildcard(0.0, ""))
+                        (k, phase, f64::from(n), Provenance::wildcard(0.0, ""))
                     }
                 };
             self.rows.push(Row {

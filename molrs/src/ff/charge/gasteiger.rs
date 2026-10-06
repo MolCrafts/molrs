@@ -55,10 +55,10 @@
 //! half-updated charge back into χ mid-sweep (Gauss–Seidel) changes the convergence
 //! trajectory and the answer.
 
-use molrs::{Atomistic, NodeId};
+use molrs::system::{Atomistic, NodeId};
 
 use crate::ff::params::{GASTEIGER_PARAMS, GasteigerRow};
-use crate::ff::typifier::atd::{AtdParameterSet, AtdTypifier};
+use crate::ff::typifier::{AtdParameterSet, AtdTypifier};
 
 use super::error::ChargeError;
 use super::model::{
@@ -99,7 +99,7 @@ const CHI_FLOOR: f64 = 1.0e-10;
 /// # Examples
 ///
 /// ```
-/// use molrs::Atomistic;
+/// use molrs::system::Atomistic;
 /// use molrs::ff::charge::{ChargeModel, GasteigerModel};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -195,7 +195,7 @@ impl ChargeModel for GasteigerModel {
 /// # Examples
 ///
 /// ```
-/// use molrs::Atomistic;
+/// use molrs::system::Atomistic;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut mol = Atomistic::new();

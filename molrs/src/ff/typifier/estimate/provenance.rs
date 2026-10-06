@@ -221,7 +221,7 @@ impl Estimate {
     /// failed to match the term against its own tables, so from its point of view
     /// the generic row is a fallback and it needs to be told so. A caller that
     /// reads the parameter table itself
-    /// ([`typifier::gaff`](crate::ff::typifier::gaff)) matches on [`Estimate`]
+    /// ([`GaffTypifier`](crate::ff::typifier::GaffTypifier)) matches on [`Estimate`]
     /// instead and keeps the distinction, which is what the parmchk2 oracle
     /// demands of it.
     pub fn into_params(self) -> Params {

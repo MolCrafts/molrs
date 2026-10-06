@@ -6,7 +6,7 @@
 //! themselves are [`crate::op::vec3`].
 
 use crate::op::vec3::{self, cross, dot, norm};
-use molrs::types::F;
+use molrs::op::types::F;
 
 // ---------------------------------------------------------------------------
 // Flat-index adapter

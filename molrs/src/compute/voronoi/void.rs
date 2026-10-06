@@ -11,11 +11,11 @@
 //! boolean mask marking which generators are probes — keeping this a pure
 //! consumer of the tessellation (no second geometry path).
 
-use molrs::types::F;
+use molrs::op::types::F;
 
 use super::cell::VoronoiCells;
-use crate::compute::error::ComputeError;
-use crate::core::system::topology::Topology;
+use crate::compute::ComputeError;
+use crate::system::Topology;
 
 /// Outcome of a [`VoidAnalysis`].
 #[derive(Debug, Clone)]

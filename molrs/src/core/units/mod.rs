@@ -35,13 +35,13 @@
 //! ```
 
 pub mod constants;
-pub mod dimension;
-pub mod error;
+mod dimension;
+mod error;
 mod parse;
-pub mod preset;
-pub mod quantity;
-pub mod registry;
-pub mod unit;
+mod preset;
+mod quantity;
+mod registry;
+mod unit;
 
 pub use dimension::Dimension;
 pub use error::UnitsError;

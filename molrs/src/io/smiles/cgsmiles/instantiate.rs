@@ -19,8 +19,8 @@
 
 use std::collections::BTreeMap;
 
-use crate::io::smiles::cgsmiles::ast::{CGEdge, CGGraph, EdgeOrigin};
-use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
+use crate::io::smiles::{CGEdge, CGGraph, EdgeOrigin};
+use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 
 /// Build the level `parent` denotes, one disjoint copy of a fragment graph per
 /// node of `parent`.

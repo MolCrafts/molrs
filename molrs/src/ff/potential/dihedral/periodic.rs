@@ -23,8 +23,8 @@ use crate::ff::potential::geometry::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
 use crate::ff::potential::{IndexedTerms, Member, Potential};
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::store::Frame;
 
 /// One cosine term `k·[1 + cos(n·φ − γ)]` with the phase `γ` in radians.
 #[derive(Clone, Copy)]

@@ -21,10 +21,10 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use molrs::NodeId;
+use molrs::system::NodeId;
 
 use crate::ff::params::{ParmDihedralRow, ParmTable, ParmchkTable};
-use crate::ff::typifier::estimate::Provenance;
+use crate::ff::typifier::Provenance;
 
 /// The wildcard atom type.
 const X: &str = "X";

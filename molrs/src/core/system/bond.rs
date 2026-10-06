@@ -20,7 +20,7 @@
 
 use crate::error::MolRsError;
 use crate::store::keys;
-use crate::system::molgraph::{KindId, MolGraph, PropValue, RelationId};
+use crate::system::{KindId, MolGraph, PropValue, RelationId};
 
 /// The chemical class of a bond.
 ///
@@ -187,7 +187,7 @@ impl From<BondNumber> for PropValue {
 /// a class without a number leaves the bond un-standardized, and a number
 /// without a class leaves a renderer no way to tell aromatic from double. It
 /// lives here, beside the vocabulary, because two leaves write it —
-/// [`Atomistic::set_bond_class`](crate::system::atomistic::Atomistic::set_bond_class)
+/// [`Atomistic::set_bond_class`](crate::system::Atomistic::set_bond_class)
 /// and the port join's new bonds (`MolGraph::link`).
 ///
 /// # Errors
@@ -210,7 +210,7 @@ pub(crate) fn write_bond_class(
 mod tests {
     use super::*;
     use crate::store::keys;
-    use crate::system::molgraph::MolGraph;
+    use crate::system::MolGraph;
 
     /// The two-key write is one function because a class without a number
     /// leaves the bond un-standardized: both keys land, or neither does.

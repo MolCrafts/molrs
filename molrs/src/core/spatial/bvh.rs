@@ -15,7 +15,7 @@
 //! signed distance `‖x − c‖ − r` to a sphere boxed as `c ± r`. The BVH
 //! changes what is *visited*, never what is *answered*.
 
-use crate::types::F;
+use crate::op::types::F;
 
 /// Items per leaf. A leaf scan is a handful of metric evaluations, cheaper
 /// than the box tests that would separate them further.

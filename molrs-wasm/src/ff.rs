@@ -27,13 +27,13 @@ use molrs::ff::potential::{
     intramolecular_pairs as topology_pairs,
 };
 use molrs::ff::typifier::Typing;
+use molrs::ff::typifier::UFFTypifier as RsUFF;
 use molrs::ff::typifier::mmff::{MMFF94STypifier as RsMMFF94S, MMFF94Typifier as RsMMFF94};
-use molrs::ff::typifier::uff::UFFTypifier as RsUFF;
+use molrs::op::types::Idx;
 use molrs::optimize::{LBFGS as RsLBFGS, Optimizer, set_free_mask};
-use molrs::store::block::Block as RsBlock;
-use molrs::store::frame::Frame as RsFrame;
-use molrs::system::atomistic::Atomistic;
-use molrs::types::Idx;
+use molrs::store::Block as RsBlock;
+use molrs::store::Frame as RsFrame;
+use molrs::system::Atomistic;
 use ndarray::Array1;
 
 use crate::compute::Neighbors;

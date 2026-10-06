@@ -6,11 +6,11 @@
 //! `src/posdomain.cpp` (e.g. polar vs. apolar domains in ionic liquids).
 //! Returns the domain size distribution, count, and largest-domain fraction.
 
-use molrs::types::F;
+use molrs::op::types::F;
 
 use super::cell::VoronoiCells;
-use crate::compute::error::ComputeError;
-use crate::core::system::topology::Topology;
+use crate::compute::ComputeError;
+use crate::system::Topology;
 
 /// Outcome of a [`DomainAnalysis`].
 #[derive(Debug, Clone)]

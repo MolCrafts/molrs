@@ -9,9 +9,9 @@ use ndarray::{Array2, ArrayView2};
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 use super::images::{GhostError, ImageRange};
+use crate::op::types::{F, FNx3, FNx3View, I};
+use crate::spatial::SimBox;
 use crate::spatial::neighbors::{NeighborList, Neighbors, NeighborsStorage, QueryMode};
-use crate::spatial::simbox::SimBox;
-use crate::types::{F, FNx3, FNx3View, I};
 
 /// The periodic copies of one owned point set.
 ///

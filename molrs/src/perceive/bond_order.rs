@@ -58,11 +58,11 @@
 use std::collections::HashMap;
 
 use crate::store::keys;
-use crate::system::atomistic::Atomistic;
-use crate::system::bond::BondNumber;
-use crate::system::molgraph::NodeId;
-use crate::system::molgraph::PropValue;
-use molrs::Element;
+use crate::system::Atomistic;
+use crate::system::BondNumber;
+use crate::system::NodeId;
+use crate::system::PropValue;
+use molrs::system::Element;
 
 /// `define.h`'s `PSCUTOFF`: penalties above it are never tried as valence states.
 const PSCUTOFF: i32 = 10;
@@ -867,7 +867,7 @@ impl IntPartition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::bond::BondType;
+    use crate::system::BondType;
 
     /// A molecule as a mol2 file lists it: atoms by element, bonds in file
     /// order, every bond stated single (what `antechamber` reads).

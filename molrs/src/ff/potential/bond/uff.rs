@@ -8,8 +8,8 @@ use crate::ff::forcefield::Params;
 use crate::ff::potential::geometry::term_table;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::{IndexedTerms, Member, Potential};
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::store::Frame;
 
 /// Harmonic UFF bond stretch with per-instance `kb` / `r0`.
 pub struct UffBond {

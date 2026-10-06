@@ -33,10 +33,10 @@ use std::path::Path;
 
 use ndarray::{Array1, IxDyn};
 
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
+use molrs::op::types::{F, I, Idx};
+use molrs::store::Block;
+use molrs::store::Frame;
 use molrs::store::schema::consts as keys;
-use molrs::types::{F, I, Idx};
 
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::writer::{FrameWriter, Writer};

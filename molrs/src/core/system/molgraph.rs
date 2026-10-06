@@ -8,8 +8,8 @@
 //! "dihedral" vs a 4-ary "improper") are distinguished by their [`KindId`], not
 //! by arity. The graph itself does not know what a "bond" or an "atom" is —
 //! those domain concepts live in the leaf types
-//! ([`Atomistic`](crate::system::atomistic::Atomistic) /
-//! [`CoarseGrain`](crate::system::coarsegrain::CoarseGrain)) that register their kinds
+//! ([`Atomistic`](crate::system::Atomistic) /
+//! [`CoarseGrain`](crate::system::CoarseGrain)) that register their kinds
 //! and expose the named convenience API.
 //!
 //! Storage uses generational arenas ([`slotmap::SlotMap`]) for O(1) insert /
@@ -32,7 +32,7 @@
 //! # Examples
 //!
 //! ```
-//! use molrs::system::molgraph::{Atom, MolGraph};
+//! use molrs::system::{Atom, MolGraph};
 //!
 //! let mut g = MolGraph::new();
 //! let bond = g.register_kind("bond", 2);
@@ -44,7 +44,7 @@
 //! assert_eq!(g.n_nodes(), 2);
 //! assert_eq!(g.n_relations(bond), 1);
 //!
-//! molrs::spatial::geometry::translate(&mut g, [1.0, 0.0, 0.0]);
+//! molrs::spatial::translate(&mut g, [1.0, 0.0, 0.0]);
 //! assert!((g.get_node(o).expect("get node").get_f64("x").unwrap() - 1.0).abs() < 1e-12);
 //! ```
 
@@ -57,11 +57,11 @@ use slotmap::{Key, KeyData, SecondaryMap, new_key_type};
 use smallvec::SmallVec;
 
 use crate::error::MolRsError;
-use crate::store::block::Block;
-use crate::store::frame::Frame;
+use crate::op::types::{F, I, Idx};
+use crate::store::Block;
+use crate::store::Frame;
 use crate::store::keys;
 use crate::system::entity_table::{Cell, EntityTable, Validity};
-use crate::types::{F, I, Idx};
 
 /// The open node key naming the fragment instance a node belongs to — an
 /// `i32` column that [`MolGraph::replicate`] stamps on every copy and
@@ -137,7 +137,7 @@ impl From<String> for PropValue {
 /// For a declared key the refusal belongs *here*, at the write, because the
 /// declared dtype is what every later stage already assumes: [`MolGraph::to_frame`]
 /// must hand [`Block::insert`] a column of exactly that dtype, the infallible
-/// leaf constructors ([`Atomistic::add_atom_xyz`](crate::system::atomistic::Atomistic::add_atom_xyz)) write their components into
+/// leaf constructors ([`Atomistic::add_atom_xyz`](crate::system::Atomistic::add_atom_xyz)) write their components into
 /// a column whose element type a stray write has already fixed, and the Python
 /// `Block` boundary re-states the same rule. Every one of those stages is past
 /// the point where the caller still holds the value — a `set_node` that
@@ -164,7 +164,7 @@ impl From<String> for PropValue {
 /// (`'x' is declared float by the Frame schema; got string`), or when a
 /// negative is offered under an unsigned key.
 fn coerce_canonical(key: &str, pv: PropValue) -> Result<PropValue, MolRsError> {
-    use crate::store::block::DType;
+    use crate::store::DType;
 
     let Some(declared) = crate::store::schema::column(key).map(|spec| spec.dtype) else {
         return Ok(pv);
@@ -251,7 +251,7 @@ fn emit_column<K: Key>(
     table: &EntityTable<K>,
     key: &str,
 ) -> Result<bool, MolRsError> {
-    use crate::store::block::DType;
+    use crate::store::DType;
     use ndarray::Array1;
 
     let declared = crate::store::schema::column(key).map(|spec| spec.dtype);
@@ -566,8 +566,8 @@ impl IndexMut<&str> for Atom {
 
 new_key_type! {
     /// Stable handle to a node in a [`MolGraph`]: an atom of an
-    /// [`Atomistic`](crate::system::atomistic::Atomistic) and a bead of a
-    /// [`CoarseGrain`](crate::system::coarsegrain::CoarseGrain) alike. It is
+    /// [`Atomistic`](crate::system::Atomistic) and a bead of a
+    /// [`CoarseGrain`](crate::system::CoarseGrain) alike. It is
     /// the one name for that handle; there are no per-graph aliases.
     pub struct NodeId;
     /// Stable handle to a relation (any kind) in a [`MolGraph`]: a bond,
@@ -712,7 +712,7 @@ impl MolGraph {
     /// [`register_kind`](Self::register_kind) asserts on an arity conflict
     /// because a leaf constructor registers fixed kinds, which is a programming
     /// error. A promotion such as
-    /// [`Atomistic::try_from_molgraph`](crate::system::atomistic::Atomistic::try_from_molgraph)
+    /// [`Atomistic::try_from_molgraph`](crate::system::Atomistic::try_from_molgraph)
     /// registers its standard kinds onto a **caller-supplied** graph, where a
     /// conflicting arity is a data condition and must come back as an `Err`.
     ///
@@ -1428,8 +1428,8 @@ impl MolGraph {
     // Frame conversion (shared mechanism)
     //
     // The PUBLIC `to_frame` / `from_frame` API is provided by the **leaf**
-    // types ([`Atomistic`](crate::system::atomistic::Atomistic) /
-    // [`CoarseGrain`](crate::system::coarsegrain::CoarseGrain)), since converting to/from
+    // types ([`Atomistic`](crate::system::Atomistic) /
+    // [`CoarseGrain`](crate::system::CoarseGrain)), since converting to/from
     // the central [`Frame`] is a domain operation with leaf-specific block/kind
     // requirements. These `pub(crate)` methods are only the shared,
     // registry-driven implementation the leaves call — not data-struct API.
@@ -1811,7 +1811,7 @@ mod tests {
         let mut g = MolGraph::new();
         let n = g.add_node();
         assert!(g.get_node(n).unwrap().is_empty());
-        crate::spatial::geometry::translate(&mut g, [1.0, 2.0, 3.0]);
+        crate::spatial::translate(&mut g, [1.0, 2.0, 3.0]);
         assert!(g.get_node(n).unwrap().get_f64("x").is_none());
         g.set_node(n, "element", "C").unwrap();
         assert_eq!(g.get_node(n).unwrap().get_str("element"), Some("C"));
@@ -1948,19 +1948,14 @@ mod tests {
         let id = g
             .add_node_with(Atom::xyz("C", 1.0, 0.0, 0.0))
             .expect("fixture node");
-        crate::spatial::geometry::translate(&mut g, [10.0, 20.0, 30.0]);
+        crate::spatial::translate(&mut g, [10.0, 20.0, 30.0]);
         let a = g.get_node(id).unwrap();
         assert!((a.get_f64("x").unwrap() - 11.0).abs() < 1e-12);
         let id2 = g
             .add_node_with(Atom::xyz("C", 1.0, 0.0, 0.0))
             .expect("fixture node");
-        crate::spatial::geometry::rotate(
-            &mut g,
-            [0.0, 0.0, 1.0],
-            std::f64::consts::FRAC_PI_2,
-            None,
-        )
-        .expect("the z axis is a direction");
+        crate::spatial::rotate(&mut g, [0.0, 0.0, 1.0], std::f64::consts::FRAC_PI_2, None)
+            .expect("the z axis is a direction");
         let b = g.get_node(id2).unwrap();
         assert!((b.get_f64("x").unwrap()).abs() < 1e-12);
         assert!((b.get_f64("y").unwrap() - 1.0).abs() < 1e-12);
@@ -2133,7 +2128,7 @@ mod tests {
     /// frame can ever carry.
     #[test]
     fn set_node_refuses_a_str_under_the_schema_float_key_x() {
-        use crate::store::block::DType;
+        use crate::store::DType;
         let mut g = MolGraph::new();
         let n = g.add_node();
 
@@ -2157,7 +2152,7 @@ mod tests {
     /// a special case carved out for coordinates.
     #[test]
     fn set_node_refuses_a_str_under_the_schema_float_key_charge() {
-        use crate::store::block::DType;
+        use crate::store::DType;
         let mut g = MolGraph::new();
         let n = g.add_node();
 
@@ -2180,7 +2175,7 @@ mod tests {
     /// under a key the schema declares float.
     #[test]
     fn set_node_refuses_a_bool_under_a_schema_float_key() {
-        use crate::store::block::DType;
+        use crate::store::DType;
         let mut g = MolGraph::new();
         let n = g.add_node();
 
@@ -2201,7 +2196,7 @@ mod tests {
     /// column under a string key.
     #[test]
     fn set_node_refuses_an_int_under_a_schema_string_key() {
-        use crate::store::block::DType;
+        use crate::store::DType;
         let mut g = MolGraph::new();
         let n = g.add_node();
 
@@ -2242,7 +2237,7 @@ mod tests {
     /// key's dtype, so it refuses there.
     #[test]
     fn set_node_refuses_an_f64_under_a_schema_uint_key() {
-        use crate::store::block::DType;
+        use crate::store::DType;
         let mut g = MolGraph::new();
         let n = g.add_node();
 
@@ -2570,9 +2565,9 @@ mod tests {
     // ----- Composition: replicate -----
 
     use crate::op::rigid::Rigid;
-    use crate::system::atomistic::Atomistic;
-    use crate::system::bond::BondNumber;
-    use crate::system::port::PortKind;
+    use crate::system::Atomistic;
+    use crate::system::BondNumber;
+    use crate::system::PortKind;
 
     /// C (0,0,0), O (1,0,0), H handle (-1,0,0); bonds C-O and C-H; one port
     /// (anchor C, handle H). Template node order is C, O, H.

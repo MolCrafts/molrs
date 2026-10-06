@@ -22,13 +22,13 @@
 //! * [`expr`] compiles a style's Lepton `expression` into its kernel, with
 //!   exact derivatives — installed in every registry
 //!   [`Registry::builtin`] makes;
-//! * a style's **engine forms** ([`engine`]): its [`LammpsForm`] (positional,
+//! * a style's **engine forms** ([`Engine`], [`EngineCodec`]): its [`LammpsForm`] (positional,
 //!   derived from the spec with conversion per [`Dim`], or a [`LammpsCodec`]
 //!   of its own) drives the LAMMPS reader and writer; an expression style is
 //!   written to OpenMM XML as its category's `Custom*Force`; every engine
 //!   that cannot hold a style refuses it with [`IrError::NoEngineForm`];
 //! * a style of a **form family** registers a [`FormCodec`] — its exact maps
-//!   to and from the family's canonical style — and [`form`] converts a force
+//!   to and from the family's canonical style — and the form machinery converts a force
 //!   field between the family's styles: exactly
 //!   (`ForceField::canonical`, `ForceField::to_form`) or by least squares
 //!   with a residual (`ForceField::fit_form`).
@@ -60,20 +60,22 @@
 //!     .unwrap();
 //! ```
 
-pub mod category;
+mod category;
 pub mod conformance;
-pub mod dim;
-pub mod engine;
-pub mod error;
+mod dim;
+mod engine;
+mod error;
 pub mod expr;
-pub mod expression;
-pub mod form;
-pub mod registry;
-pub mod spec;
+pub(crate) mod expression;
+mod form;
+pub(crate) mod registry;
+mod spec;
 
 pub use category::{Arity, CategorySpec, Coordinate, EndpointOrder, builtin_categories};
 pub use dim::Dim;
-pub use engine::{Engine, EngineCodec, LammpsCodec, LammpsCoeffs, LammpsForm, Token, UnitScale};
+pub use engine::{
+    Engine, EngineCodec, LammpsCodec, LammpsCoeffs, LammpsForm, Token, UnitScale, positional,
+};
 pub use error::IrError;
 pub use expression::{CompiledExpression, compile_expression};
 pub use form::{FormCodec, FormFn, Metric, Refusal, Residual, TypeParams, TypeResidual};

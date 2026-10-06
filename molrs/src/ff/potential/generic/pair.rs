@@ -13,10 +13,10 @@ use crate::ff::potential::need::{neighbour_cutoff, pair_cutoff};
 use crate::ff::potential::pair::{atom_type_index, fold_chunks, type_pair};
 use crate::ff::potential::{PairDriven, Potential, gather_copies};
 use molrs::math::Virial;
+use molrs::op::types::F;
 use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame::Frame;
+use molrs::store::Frame;
 use molrs::store::schema::block_names::{ATOMS, PAIRS};
-use molrs::types::F;
 
 /// Below this squared separation a pair is skipped: its direction is
 /// undefined.

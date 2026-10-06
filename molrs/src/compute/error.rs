@@ -4,7 +4,7 @@
 
 use std::fmt;
 
-use molrs::MolRsError;
+use molrs::error::MolRsError;
 
 /// Node identifier (formerly from `crate::compute::graph`, now defined locally
 /// since the graph module is decoupled from the crate).

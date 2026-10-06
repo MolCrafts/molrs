@@ -6,14 +6,14 @@
 //! (|r_ij| |r_kj|))`. The dot-product argument is clamped to `[-1, 1]` so a
 //! collinear triple yields exactly 0 or π instead of a rounding NaN.
 
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::store::FrameAccess;
 
-use crate::compute::error::ComputeError;
+use crate::compute::ComputeError;
 
 use super::observable::{AtomGroups, Observable, displacement, positions};
 use crate::op::vec3::{dot, norm};
-use molrs::spatial::simbox::{Mic, SimBox};
+use molrs::spatial::{Mic, SimBox};
 
 /// Angle θ ∈ [0, π] (radians) at atom `j` of each triple i–j–k (arity 3).
 #[derive(Debug, Clone, Default)]

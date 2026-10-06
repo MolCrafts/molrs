@@ -20,8 +20,8 @@
 
 use std::collections::BTreeMap;
 
-use crate::core::types::F;
-use crate::io::smiles::chem::ast::{BondKind, BondingDescriptor, SmilesIR, Span};
+use crate::io::smiles::{BondKind, BondingDescriptor, SmilesIR, Span};
+use crate::op::types::F;
 
 /// A parsed `CGsmiles` string: the blocks that were written, and the levels
 /// they denote.

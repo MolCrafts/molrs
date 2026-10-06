@@ -10,9 +10,9 @@ use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyMapping};
 
-use molrs::ForceFieldSection;
 use molrs::ff::forcefield::ForceField;
-use molrs::store::forcefield_section::style_block_name;
+use molrs::store::ForceFieldSection;
+use molrs::store::style_block_name;
 
 use super::PyForceField;
 use crate::core::store::block::PyBlock;

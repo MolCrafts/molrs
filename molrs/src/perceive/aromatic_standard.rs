@@ -32,9 +32,9 @@ use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 
 use crate::perceive::Perceive;
-use crate::system::atomistic::Atomistic;
-use crate::system::molgraph::PropValue;
-use crate::system::molgraph::{NodeId, RelationId};
+use crate::system::Atomistic;
+use crate::system::PropValue;
+use crate::system::{NodeId, RelationId};
 
 /// Bond prop: the chemical class (§2.1).
 const BOND_TYPE: &str = "bond_type";

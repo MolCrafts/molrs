@@ -38,11 +38,11 @@ use crate::io::lammps::common::{
 };
 use crate::io::reader::{FrameIndex, FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::writer::{FrameWriter, Writer};
-use molrs::store::block::{Block, BlockAccess, BlockDtype, ColumnView, DType};
-use molrs::store::frame::Frame;
-use molrs::store::frame_access::FrameAccess;
+use molrs::op::types::{F, I, Idx};
+use molrs::store::Frame;
+use molrs::store::FrameAccess;
 use molrs::store::keys;
-use molrs::types::{F, I, Idx};
+use molrs::store::{Block, BlockAccess, BlockDtype, ColumnView, DType};
 use ndarray::{ArrayD, IxDyn};
 use std::fs::File;
 use std::io::{BufRead, Seek, SeekFrom, Write};
@@ -892,7 +892,7 @@ impl<R: BufRead + Seek> TrajectoryReader for LAMMPSTrajReader<R> {
 ///
 /// ```no_run
 /// use molrs::io::trajectory::lammps_dump::write_lammps_dump;
-/// use molrs::store::frame::Frame;
+/// use molrs::store::Frame;
 ///
 /// # fn main() -> std::io::Result<()> {
 /// let frames: Vec<Frame> = vec![];
@@ -931,7 +931,7 @@ impl<W: Write> FrameWriter for LAMMPSDumpWriter<W> {
 /// Write a single frame in LAMMPS dump format.
 ///
 /// Accepts any type implementing [`FrameAccess`], including both [`Frame`] and
-/// [`FrameView`](molrs::store::frame_view::FrameView).
+/// [`FrameView`](molrs::store::FrameView).
 ///
 /// `columns` is the caller's `dump custom` line: `Some` writes exactly those
 /// columns in that order, `None` writes every column the block holds. See
@@ -2272,7 +2272,7 @@ ITEM: ATOMS id type x y z
 
     #[test]
     fn write_dump_local_from_bonds_roundtrip() {
-        use molrs::spatial::simbox::SimBox;
+        use molrs::spatial::SimBox;
         use ndarray::{Array1, array};
 
         let mut atoms = Block::new();
@@ -2327,7 +2327,7 @@ ITEM: ATOMS id type x y z
 
     /// A frame carrying more than a viewer needs, for the column-choice tests.
     fn wide_frame() -> Frame {
-        use molrs::spatial::simbox::SimBox;
+        use molrs::spatial::SimBox;
         use ndarray::{Array1, array};
 
         let mut atoms = Block::new();
@@ -2389,7 +2389,7 @@ ITEM: ATOMS id type x y z
 
     /// Three waters' worth of atoms in a 10 Å cube, with `extra` columns.
     fn typed_frame(extra: impl FnOnce(&mut Block)) -> Frame {
-        use molrs::spatial::simbox::SimBox;
+        use molrs::spatial::SimBox;
         use ndarray::{Array1, array};
 
         let mut atoms = Block::new();

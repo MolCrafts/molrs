@@ -6,10 +6,10 @@
 
 use indexmap::IndexMap;
 
-use crate::spatial::simbox::SimBox;
-use crate::store::block::block_view::BlockView;
-use crate::store::frame::Frame;
-use crate::store::meta::MetaMap;
+use crate::spatial::SimBox;
+use crate::store::BlockView;
+use crate::store::Frame;
+use crate::store::MetaMap;
 
 /// A borrowed, read-only view of a [`Frame`].
 ///
@@ -121,8 +121,8 @@ impl std::fmt::Debug for FrameView<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::block::Block;
-    use crate::types::{F, I, Idx};
+    use crate::op::types::{F, I, Idx};
+    use crate::store::Block;
     use ndarray::Array1;
 
     fn make_frame() -> Frame {

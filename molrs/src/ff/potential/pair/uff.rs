@@ -12,10 +12,10 @@ use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
+use molrs::op::types::F;
 use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame::Frame;
+use molrs::store::Frame;
 use molrs::store::schema::block_names::{ATOMS, PAIRS};
-use molrs::types::F;
 
 /// Where a pair's `(xᵢⱼ, Dᵢⱼ)` comes from.
 enum Source {

@@ -72,12 +72,6 @@ pub(crate) fn parse_a4_names(lines: &[String]) -> Vec<String> {
 // same way.
 // ---------------------------------------------------------------------------
 
-/// CHARMM's `CCELEC`: a chamber prmtop (one with `%FLAG CTITLE`) stores
-/// `CHARGE` as `q·√332.0716` (ParmEd's `CHARMM_ELECTROSTATIC`), where an AMBER
-/// prmtop stores `q·18.2223`. It is the Coulomb constant such a file prices
-/// its charges at.
-pub const CHAMBER_COULOMB: f64 = 332.0716;
-
 /// Whether a section map is a chamber (CHARMM) prmtop: it has a `CTITLE`
 /// where an AMBER prmtop has a `TITLE` (ParmEd's and sander's own test).
 pub fn is_chamber(sections: &HashMap<String, Vec<String>>) -> bool {
@@ -419,9 +413,8 @@ pub fn decode_torsions(
 /// its 3rd pointer — checked with sander), at `1/SCEE` (Coulomb) and `1/SCNB`
 /// (van der Waals) of the row's type. `coul` / `lj` are the force field's
 /// `special_bonds` 1-4 weights: the reciprocal of the divisor most rows
-/// carry (the first such value on a tie), or of AMBER's 1.2 / 2.0 when the
-/// file has no `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR`. `pairs` maps each
-/// 1-4 pair `(lo, hi)` (0-based) to its summed `(coul, lj)` weight.
+/// carry (the first such value on a tie). `pairs` maps each 1-4 pair
+/// `(lo, hi)` (0-based) to its summed `(coul, lj)` weight.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OneFourWeights {
     pub coul: f64,
@@ -430,6 +423,13 @@ pub struct OneFourWeights {
 }
 
 /// [`OneFourWeights`] of the torsion rows `pointers`.
+///
+/// A file without `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR` (pre-Amber-11)
+/// states no divisors; they are then its force field's, which this structure
+/// layer does not know. `default` is the `(SCEE, SCNB)` the caller assumes
+/// for such a file (the force-field reader passes AMBER's,
+/// `ff::params::amber`); with `None` the weights of such a file — and the
+/// field weights of a file with no 1-4 row — are unknown, `Ok(None)`.
 ///
 /// # Errors
 ///
@@ -444,12 +444,13 @@ pub fn one_four_weights(
     scee: &[f64],
     scnb: &[f64],
     periodicity: &[f64],
-) -> Result<OneFourWeights, String> {
+    default: Option<(f64, f64)>,
+) -> Result<Option<OneFourWeights>, String> {
     let rows: Vec<TorsionRow> = torsion_rows(pointers, n_atoms)?
         .into_iter()
         .filter(|r| !r.exclude_14 && !r.improper)
         .collect();
-    let divisor = |values: &[f64], flag: &str, tid: i64, default: f64| -> Result<f64, String> {
+    let divisor = |values: &[f64], flag: &str, tid: i64, default: Option<f64>| {
         if values.is_empty() {
             return Ok(default);
         }
@@ -460,7 +461,7 @@ pub fn one_four_weights(
         if v <= 0.0 {
             return Err(format!("{flag} type {tid} has non-positive divisor {v}"));
         }
-        Ok(v)
+        Ok(Some(v))
     };
     let mut pairs = std::collections::BTreeMap::new();
     // How many 1-4 rows carry each SCEE / SCNB divisor.
@@ -481,35 +482,38 @@ pub fn one_four_weights(
                 l + 1
             ));
         }
-        let e = divisor(scee, "SCEE_SCALE_FACTOR", row.tid, SCEE_DEFAULT)?;
-        let n = divisor(scnb, "SCNB_SCALE_FACTOR", row.tid, SCNB_DEFAULT)?;
+        let e = divisor(scee, "SCEE_SCALE_FACTOR", row.tid, default.map(|d| d.0))?;
+        let n = divisor(scnb, "SCNB_SCALE_FACTOR", row.tid, default.map(|d| d.1))?;
+        let (Some(e), Some(n)) = (e, n) else {
+            return Ok(None);
+        };
         tally(&mut ce, e);
         tally(&mut cn, n);
         let w = pairs.entry((i.min(l), i.max(l))).or_insert((0.0, 0.0));
         w.0 += 1.0 / e;
         w.1 += 1.0 / n;
     }
-    let dominant = |c: &[Tally], default: f64| {
+    let dominant = |c: &[Tally], default: Option<f64>| {
         c.iter()
             .fold(None::<Tally>, |best, &(v, n)| match best {
                 Some((_, m)) if m >= n => best,
                 _ => Some((v, n)),
             })
-            .map_or(default, |(v, _)| v)
+            .map(|(v, _)| v)
+            .or(default)
     };
-    Ok(OneFourWeights {
-        coul: 1.0 / dominant(&ce, SCEE_DEFAULT),
-        lj: 1.0 / dominant(&cn, SCNB_DEFAULT),
+    let (Some(e), Some(n)) = (
+        dominant(&ce, default.map(|d| d.0)),
+        dominant(&cn, default.map(|d| d.1)),
+    ) else {
+        return Ok(None);
+    };
+    Ok(Some(OneFourWeights {
+        coul: 1.0 / e,
+        lj: 1.0 / n,
         pairs,
-    })
+    }))
 }
-
-/// The format's `SCEE` divisor for a prmtop without `SCEE_SCALE_FACTOR`;
-/// equal to `ff::params::amber::AMBER_SCEE`, which
-/// `io` cannot name (a test in the force-field reader holds them equal).
-pub(crate) const SCEE_DEFAULT: f64 = 1.2;
-/// The format's `SCNB` divisor for a prmtop without `SCNB_SCALE_FACTOR`.
-pub(crate) const SCNB_DEFAULT: f64 = 2.0;
 
 /// The tokens of section `flag`, parsed as `T`; empty when it is absent.
 pub(crate) fn section<T: std::str::FromStr>(
@@ -866,21 +870,27 @@ mod tests {
     fn one_four_weights_take_the_majority_divisor() {
         // Atoms 0..6; rows (0,3) type 1, (1,4) type 2, (2,5) type 2.
         let rows = [0, 3, 6, 9, 1, 3, 6, 9, 12, 2, 6, 9, 12, 15, 2];
-        let w = one_four_weights(&rows, 6, &[1.2, 1.0], &[2.0, 1.0], &[3.0, 2.0]).unwrap();
+        let w = one_four_weights(&rows, 6, &[1.2, 1.0], &[2.0, 1.0], &[3.0, 2.0], None)
+            .unwrap()
+            .unwrap();
         assert_eq!((w.coul, w.lj), (1.0, 1.0));
         assert_eq!(w.pairs[&(0, 3)], (1.0 / 1.2, 0.5));
         assert_eq!(w.pairs[&(1, 4)], (1.0, 1.0));
         assert_eq!(w.pairs.len(), 3);
     }
 
-    /// No SCEE/SCNB section: AMBER's 1.2 / 2.0. An improper's row and a
-    /// suppressed row (negative 3rd pointer) list no 1-4 pair.
+    /// No SCEE/SCNB section: the divisors are the caller's `default`, and
+    /// unknown without one. An improper's row and a suppressed row (negative
+    /// 3rd pointer) list no 1-4 pair.
     #[test]
     fn one_four_weights_default_and_skip_impropers() {
         let rows = [
             0, 3, 6, 9, 1, 0, 3, -6, 9, 1, 0, 3, -6, -9, 1, 0, 3, 6, -9, 1,
         ];
-        let w = one_four_weights(&rows, 4, &[], &[], &[2.0]).unwrap();
+        assert_eq!(one_four_weights(&rows, 4, &[], &[], &[2.0], None), Ok(None));
+        let w = one_four_weights(&rows, 4, &[], &[], &[2.0], Some((1.2, 2.0)))
+            .unwrap()
+            .unwrap();
         assert_eq!((w.coul, w.lj), (1.0 / 1.2, 0.5));
         assert_eq!(w.pairs.len(), 1);
         assert_eq!(w.pairs[&(0, 3)], (1.0 / 1.2, 0.5));
@@ -889,9 +899,10 @@ mod tests {
     #[test]
     fn one_four_weights_refuse_a_chained_1_4_row_and_a_zero_divisor() {
         let rows = [0, 3, 6, 9, 1];
-        let err = one_four_weights(&rows, 4, &[1.2, 1.2], &[2.0, 2.0], &[-3.0, 2.0]).unwrap_err();
+        let err =
+            one_four_weights(&rows, 4, &[1.2, 1.2], &[2.0, 2.0], &[-3.0, 2.0], None).unwrap_err();
         assert!(err.contains("multi-term chain"), "{err}");
-        let err = one_four_weights(&rows, 4, &[0.0], &[2.0], &[3.0]).unwrap_err();
+        let err = one_four_weights(&rows, 4, &[0.0], &[2.0], &[3.0], None).unwrap_err();
         assert!(err.contains("SCEE_SCALE_FACTOR type 1"), "{err}");
     }
 

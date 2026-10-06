@@ -19,7 +19,7 @@
 
 use std::io::{BufRead, Error, ErrorKind, Result};
 
-use molrs::types::F;
+use molrs::op::types::F;
 
 /// VASP coordinate mode for atom positions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

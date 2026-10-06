@@ -21,7 +21,7 @@
 //! [`UnitRegistry`]. It does not define a unit-system type.
 
 use crate::ff::ir::UnitScale;
-use molrs::types::F;
+use molrs::op::types::F;
 use molrs::units::{Quantity, UnitRegistry, UnitsError};
 
 /// Map a LAMMPS `units` keyword onto a core preset name (`"lj"` / `"real"` / `"metal"`).

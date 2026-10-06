@@ -10,12 +10,12 @@ use crate::ff::ir::{
     Kernel, Mix, ParamKind, ParamSpec, Registry, RowSource, Sample, SpecialClass, StyleSpec, Value,
     builtin_categories, builtin_styles, register_style,
 };
-use crate::ff::potential::bond::harmonic::bond_harmonic_ctor;
+use crate::ff::potential::bond::bond_harmonic_ctor;
 use crate::ff::potential::generic::{CompoundForm, ParamCols, ScalarForm};
 use crate::ff::potential::{CompileError, KernelRegistry, PotentialCompiler};
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
-use molrs::types::{F, Idx};
+use molrs::op::types::{F, Idx};
+use molrs::store::Block;
+use molrs::store::Frame;
 use ndarray::Array1;
 
 /// `scale · k (q − q0)²`, its derivative off by `wrong` (1 is right).

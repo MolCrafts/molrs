@@ -40,9 +40,9 @@ use crate::io::smiles::chem::Dialect;
 use crate::io::smiles::chem::ast::*;
 use crate::io::smiles::chem::scanner::Scanner;
 use crate::io::smiles::chem::validation::{validate_descriptor, validate_ring_closures};
-use crate::io::smiles::error::{SmilesError, SmilesErrorKind};
 use crate::io::smiles::smiles::is_element_symbol;
-use molrs::Element;
+use crate::io::smiles::{SmilesError, SmilesErrorKind};
+use molrs::system::Element;
 
 /// Maximum recursion depth for SMARTS `$(...)` expressions.
 const MAX_RECURSION_DEPTH: usize = 16;
@@ -1677,8 +1677,8 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::smiles::Notation;
     use crate::io::smiles::chem::test_support::atom_nodes;
-    use crate::io::smiles::error::Notation;
 
     // -- helpers ------------------------------------------------------------
 

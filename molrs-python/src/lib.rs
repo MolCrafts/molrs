@@ -311,14 +311,8 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_class::<io::mrec::PyMrecTrajectoryReader>()?;
         m.add_class::<io::mrec::PyMrecSequenceSchema>()?;
         m.add_class::<io::mrec::PyMrecTrajectoryWriter>()?;
-        m.setattr(
-            "MREC_MOLREC_VERSION",
-            molrs::io::mrec::schema::MOLREC_VERSION,
-        )?;
-        m.setattr(
-            "MREC_RESERVED_META_KEYS",
-            molrs::io::mrec::schema::RESERVED_META_KEYS,
-        )?;
+        m.setattr("MREC_MOLREC_VERSION", molrs::store::MOLREC_VERSION)?;
+        m.setattr("MREC_RESERVED_META_KEYS", molrs::store::RESERVED_META_KEYS)?;
     }
 
     // Trajectory (frame sequence) + observable records
@@ -458,7 +452,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ff::read_gromacs_top_ff_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_gromacs_system_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::write_amber_frcmod_py, m)?)?;
-    m.add("AMBER_COULOMB", ::molrs::ff::params::amber::AMBER_COULOMB)?;
+    m.add("AMBER_COULOMB", ::molrs::units::constants::AMBER_COULOMB)?;
     m.add("AMBER_SCEE", ::molrs::ff::params::amber::AMBER_SCEE)?;
     m.add("AMBER_SCNB", ::molrs::ff::params::amber::AMBER_SCNB)?;
     m.add_function(wrap_pyfunction!(ff::write_gromacs_top_ff_py, m)?)?;

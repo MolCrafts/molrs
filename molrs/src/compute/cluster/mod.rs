@@ -15,14 +15,14 @@ mod result;
 pub use properties::{ClusterProperties, ClusterPropertiesResult};
 pub use result::ClusterResult;
 
+use molrs::op::types::Idx;
 use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::Idx;
+use molrs::store::FrameAccess;
 use ndarray::Array1;
 use std::collections::HashMap;
 
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 
 /// Distance-based cluster analysis using BFS on the neighbor graph.
 ///
@@ -299,10 +299,10 @@ impl Compute for Cluster {
 mod tests {
     use super::*;
     use crate::compute::test_support::nlist_from_frame;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
-    use molrs::types::F;
+    use molrs::op::types::F;
+    use molrs::spatial::SimBox;
+    use molrs::store::Block;
+    use molrs::store::Frame;
     use ndarray::{Array1 as A1, array};
 
     fn make_frame_with_positions(positions: &[[F; 3]], box_len: F) -> Frame {

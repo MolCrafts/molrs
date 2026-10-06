@@ -16,7 +16,7 @@
 //! # Examples
 //!
 //! ```
-//! use molrs::system::coarsegrain::CoarseGrain;
+//! use molrs::system::CoarseGrain;
 //!
 //! let mut cg = CoarseGrain::new();
 //! let b1 = cg.add_bead("W", 0.0, 0.0, 0.0);
@@ -34,13 +34,13 @@ use ndarray::Array1;
 use slotmap::Key;
 
 use crate::error::MolRsError;
-use crate::store::block::Block;
-use crate::store::frame::Frame;
+use crate::store::Block;
+use crate::store::Frame;
 use crate::store::keys;
 
+use crate::op::types::Idx;
 use crate::system::entity_table::EntityTable;
-use crate::system::molgraph::{Atom, KindId, MolGraph, NodeId, Relation, RelationId};
-use crate::types::Idx;
+use crate::system::{Atom, KindId, MolGraph, NodeId, Relation, RelationId};
 
 /// Result of [`CoarseGrain::extract_subgraph`].
 #[derive(Debug, Clone)]
@@ -115,7 +115,7 @@ impl CoarseGrain {
     /// `x` is an `f64` column). The bag is built here out of typed arguments,
     /// so that is a defect in the graph's own vocabulary and not a data
     /// condition; the generic
-    /// [`MolGraph::add_node_with`](crate::system::molgraph::MolGraph::add_node_with)
+    /// [`MolGraph::add_node_with`](crate::system::MolGraph::add_node_with)
     /// reached through [`as_molgraph_mut`](Self::as_molgraph_mut) returns the
     /// conflict for callers holding a foreign bag.
     pub fn add_bead(&mut self, bead_type: &str, x: f64, y: f64, z: f64) -> NodeId {
@@ -209,13 +209,13 @@ impl CoarseGrain {
     /// # Examples
     ///
     /// ```
-    /// use molrs::system::coarsegrain::CoarseGrain;
+    /// use molrs::system::CoarseGrain;
     ///
     /// let mut cg = CoarseGrain::new();
     /// let a = cg.add_bead("W", 0.0, 1.0, 2.0);
     /// let b = cg.add_bead("P1", 3.0, 4.0, 5.0);
     /// assert_eq!(cg.positions(&[b, a])?, vec![[3.0, 4.0, 5.0], [0.0, 1.0, 2.0]]);
-    /// # Ok::<(), molrs::MolRsError>(())
+    /// # Ok::<(), molrs::error::MolRsError>(())
     /// ```
     pub fn positions(&self, beads: &[NodeId]) -> Result<Vec<[f64; 3]>, MolRsError> {
         self.vectors(beads, keys::COORDS, "coordinate")
@@ -236,7 +236,7 @@ impl CoarseGrain {
     ///
     /// ```
     /// use molrs::store::keys;
-    /// use molrs::system::coarsegrain::CoarseGrain;
+    /// use molrs::system::CoarseGrain;
     ///
     /// let mut cg = CoarseGrain::new();
     /// let a = cg.add_bead("S", 0.0, 0.0, 0.0);
@@ -244,7 +244,7 @@ impl CoarseGrain {
     ///     cg.set_node(a, key, v)?;
     /// }
     /// assert_eq!(cg.axes(&[a])?, vec![[1.0, 2.0, 3.0]]);
-    /// # Ok::<(), molrs::MolRsError>(())
+    /// # Ok::<(), molrs::error::MolRsError>(())
     /// ```
     pub fn axes(&self, beads: &[NodeId]) -> Result<Vec<[f64; 3]>, MolRsError> {
         self.vectors(beads, keys::AXIS, "axis")
@@ -297,13 +297,13 @@ impl CoarseGrain {
     /// # Examples
     ///
     /// ```
-    /// use molrs::system::coarsegrain::CoarseGrain;
+    /// use molrs::system::CoarseGrain;
     ///
     /// let mut cg = CoarseGrain::new();
     /// let a = cg.add_bead("W", 0.0, 0.0, 0.0);
     /// let b = cg.add_bead("P1", 1.0, 0.0, 0.0);
     /// assert_eq!(cg.bead_types(&[b, a, b])?, ["P1", "W", "P1"]);
-    /// # Ok::<(), molrs::MolRsError>(())
+    /// # Ok::<(), molrs::error::MolRsError>(())
     /// ```
     pub fn bead_types(&self, beads: &[NodeId]) -> Result<Vec<String>, MolRsError> {
         let table = self.graph.node_table();
@@ -625,14 +625,14 @@ impl CoarseGrain {
 
     /// Translate every bead that has coordinates by `delta` (Å).
     pub fn translate(&mut self, delta: [f64; 3]) {
-        crate::spatial::geometry::translate(self.as_molgraph_mut(), delta);
+        crate::spatial::translate(self.as_molgraph_mut(), delta);
     }
 
     /// Scale every bead that has coordinates by a per-axis `factor`
     /// (dimensionless) about `about` (Å; the origin when `None`). Pass
     /// `[s, s, s]` for a uniform scale.
     pub fn scale(&mut self, factor: [f64; 3], about: Option<[f64; 3]>) {
-        crate::spatial::geometry::scale(self.as_molgraph_mut(), factor, about);
+        crate::spatial::scale(self.as_molgraph_mut(), factor, about);
     }
 
     /// Rotate every bead that has coordinates by `angle` radians about `axis`.
@@ -640,7 +640,7 @@ impl CoarseGrain {
     ///
     /// # Errors
     ///
-    /// The error of [`crate::spatial::geometry::rotate`] — `axis` has no
+    /// The error of [`crate::spatial::rotate`] — `axis` has no
     /// direction or `angle` is not finite; nothing moves then.
     pub fn rotate(
         &mut self,
@@ -648,12 +648,12 @@ impl CoarseGrain {
         angle: f64,
         about: Option<[f64; 3]>,
     ) -> Result<(), crate::error::MolRsError> {
-        crate::spatial::geometry::rotate(self.as_molgraph_mut(), axis, angle, about)
+        crate::spatial::rotate(self.as_molgraph_mut(), axis, angle, about)
     }
 
     /// Bead-mass-weighted centre `Σ mᵢ rᵢ / Σ mᵢ` of the bead group `group`,
     /// in the coordinates' length unit (Å) — see
-    /// [`crate::spatial::geometry::center`] (no periodic imaging: unwrap a
+    /// [`crate::spatial::center`] (no periodic imaging: unwrap a
     /// group split across the box first; each listed bead counts once per
     /// occurrence).
     ///
@@ -664,13 +664,10 @@ impl CoarseGrain {
     ///
     /// # Errors
     ///
-    /// The [`CenterError`](crate::spatial::geometry::CenterError) of
-    /// [`crate::spatial::geometry::center`].
-    pub fn center(
-        &self,
-        group: &[NodeId],
-    ) -> Result<[f64; 3], crate::spatial::geometry::CenterError> {
-        crate::spatial::geometry::center(self.as_molgraph(), group)
+    /// The [`CenterError`](crate::spatial::CenterError) of
+    /// [`crate::spatial::center`].
+    pub fn center(&self, group: &[NodeId]) -> Result<[f64; 3], crate::spatial::CenterError> {
+        crate::spatial::center(self.as_molgraph(), group)
     }
 
     /// Place `transforms.len()` rigid copies of `template`, copy `c` moved by
@@ -689,7 +686,7 @@ impl CoarseGrain {
         &mut self,
         template: &CoarseGrain,
         transforms: &[crate::op::rigid::Rigid],
-        frag_ids: &[crate::types::I],
+        frag_ids: &[crate::op::types::I],
     ) -> Result<Vec<NodeId>, MolRsError> {
         self.graph.replicate(&template.graph, transforms, frag_ids)
     }
@@ -749,7 +746,7 @@ impl CoarseGrain {
     ///
     /// [`MolRsError::Validation`] when a bead or relation property of `other`
     /// contradicts the element type `self` holds for that key — see
-    /// [`MolGraph::merge`](crate::system::molgraph::MolGraph::merge), whose
+    /// [`MolGraph::merge`](crate::system::MolGraph::merge), whose
     /// partial-write contract this inherits.
     pub fn merge(&mut self, other: CoarseGrain) -> Result<HashMap<NodeId, NodeId>, MolRsError> {
         let node_map = self.graph.merge(other.graph)?;
@@ -774,18 +771,18 @@ impl CoarseGrain {
     /// (bead-type node labels, bond-order edge labels). Shares the same
     /// [`MolGraph`] primitive that serves the all-atom case.
     pub fn structural_hash(&self) -> u64 {
-        crate::system::graph_hash::structural_hash(&self.graph)
+        crate::system::structural_hash(&self.graph)
     }
 
     /// Deterministic canonical bead ordering from the WL refinement (see
-    /// [`crate::system::graph_hash::canonical_order`]).
+    /// [`crate::system::canonical_order`]).
     pub fn canonical_order(&self) -> Vec<NodeId> {
-        crate::system::graph_hash::canonical_order(&self.graph)
+        crate::system::canonical_order(&self.graph)
     }
 
     /// Whether `self` and `other` are isomorphic as labeled bead graphs.
     pub fn is_isomorphic(&self, other: &CoarseGrain) -> bool {
-        crate::system::graph_hash::is_isomorphic(&self.graph, &other.graph)
+        crate::system::is_isomorphic(&self.graph, &other.graph)
     }
 }
 
@@ -862,7 +859,7 @@ mod tests {
     /// schema in the first place.
     #[test]
     fn set_node_through_the_inner_graph_refuses_a_str_under_a_schema_float_key() {
-        use crate::store::block::DType;
+        use crate::store::DType;
         let mut cg = CoarseGrain::new();
         let b = cg.add_bead("W", 0.0, 0.0, 0.0);
 
@@ -971,7 +968,7 @@ mod tests {
 
     // ---- from_frame: atoms/bonds vocabulary, validation, membership ----
 
-    use crate::store::block::Block;
+    use crate::store::Block;
     use ndarray::Array1;
 
     fn float_col(values: &[f64]) -> ndarray::ArrayD<f64> {

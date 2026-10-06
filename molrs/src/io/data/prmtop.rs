@@ -48,7 +48,10 @@
 //! - `"pairs"`: present only when some 1-4 pair is weighted otherwise than
 //!   the force field's `special_bonds` — a torsion type whose `SCEE` / `SCNB`
 //!   differ from the divisor most 1-4 rows carry (GLYCAM beside ff14SB), a
-//!   pair two rows list, a 1-4 pair no row lists. Those pairs (`atomi`,
+//!   pair two rows list, a 1-4 pair no row lists — and absent when the file
+//!   has no `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR` (pre-Amber-11): those
+//!   divisors are then the force field's, which this structure reader does
+//!   not assume (`ff`'s prmtop reader takes AMBER's). Those pairs (`atomi`,
 //!   `atomj`, `is_14`), each with the per-pair override cells `coul_scale`
 //!   (Σ 1/SCEE) / `lj_scale` (Σ 1/SCNB) where they differ, null where they
 //!   agree. It is not a pair list: build the full one with
@@ -97,21 +100,17 @@ use std::path::Path;
 
 use ndarray::{Array1, IxDyn, array};
 
-use molrs::Element;
-use molrs::spatial::simbox::SimBox;
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
+use molrs::op::types::{F, Idx};
+use molrs::spatial::SimBox;
+use molrs::store::Block;
+use molrs::store::Frame;
 use molrs::store::keys;
 use molrs::store::schema::block_names;
 use molrs::store::type_labels::TypeName;
-use molrs::types::{F, Idx};
+use molrs::system::Element;
 
 use super::prmtop_tables;
-
-/// AMBER `CHARGE` stores `q · 18.2223`. The literal is Amber's own factor
-/// (`18.2223² = 332.05221729` kcal·Å·mol⁻¹·e⁻²), 3.46e-5 below molrs CODATA
-/// `COULOMB_REAL`. Do not re-derive it from `√332.06371`.
-pub const CHARGE_CONVERSION_FACTOR: F = 18.2223;
+use crate::units::constants::AMBER_CHARGE_FACTOR;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -852,14 +851,20 @@ fn build_one_four_pairs(
     exclusions: Option<&Block>,
 ) -> Result<Option<Block>> {
     use std::collections::{BTreeMap, HashSet};
-    let weights = prmtop_tables::one_four_weights(
+    // No divisors in the file (pre-Amber-11): they are its force field's,
+    // which a structure reader does not assume, so no pair is priced.
+    let Some(weights) = prmtop_tables::one_four_weights(
         dihe_ptrs,
         n_atoms,
         &section_floats(sections, "SCEE_SCALE_FACTOR")?,
         &section_floats(sections, "SCNB_SCALE_FACTOR")?,
         &section_floats(sections, "DIHEDRAL_PERIODICITY")?,
+        None,
     )
-    .map_err(invalid_data)?;
+    .map_err(invalid_data)?
+    else {
+        return Ok(None);
+    };
     let key = |a: Idx, b: Idx| (a.min(b) as usize, a.max(b) as usize);
     let close: HashSet<(usize, usize)> = bonds
         .iter()
@@ -991,9 +996,9 @@ fn build_frame(sections: HashMap<String, Vec<String>>) -> Result<Frame> {
     }
     // A chamber file scales by CHARMM's √332.0716, an AMBER one by 18.2223.
     let charge_factor = if prmtop_tables::is_chamber(&sections) {
-        prmtop_tables::CHAMBER_COULOMB.sqrt()
+        crate::units::constants::CHARMM_COULOMB.sqrt()
     } else {
-        CHARGE_CONVERSION_FACTOR
+        AMBER_CHARGE_FACTOR
     };
     let charges: Vec<F> = raw_charges.into_iter().map(|q| q / charge_factor).collect();
 

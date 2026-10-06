@@ -10,9 +10,9 @@
 use ndarray::Array1;
 
 use super::running_trapezoid;
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Fit;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
+use crate::compute::Fit;
 
 /// Result of a running trapezoidal integration.
 #[derive(Debug, Clone)]

@@ -13,17 +13,17 @@
 //! The dependency points one way: `optimize` consumes `ff`, never the
 //! reverse.
 
-pub mod lbfgs;
+mod lbfgs;
 #[cfg(feature = "ff")]
 mod potential;
 
 #[cfg(feature = "ff")]
 pub use potential::LBFGS;
 
-use crate::store::frame::Frame;
+use crate::op::types::F;
+use crate::store::Frame;
+use crate::store::keys::FREE;
 use crate::store::schema::block_names::ATOMS;
-use crate::store::schema::consts::FREE;
-use crate::types::F;
 use ndarray::Array1;
 
 pub use lbfgs::{MinResult, minimize_lbfgs_rms};

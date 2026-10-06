@@ -3,8 +3,8 @@
 //! A **scientific record** is one self-describing package on disk: `meta`
 //! plus at least one of a snapshot (`frame`), a topology (`system`), a
 //! time-ordered frame sequence (`trajectory`), a force field (`forcefield`),
-//! or a run `status`. This module is how a [`crate::Frame`],
-//! [`crate::Trajectory`] or [`crate::ForceFieldSection`] becomes that
+//! or a run `status`. This module is how a [`crate::store::Frame`],
+//! [`crate::store::Trajectory`] or [`crate::store::ForceFieldSection`] becomes that
 //! package, and how the package becomes those objects again.
 //!
 //! The in-memory codec working set that holds every section at once is
@@ -35,7 +35,7 @@
 //! - A topology: [`read_system_file`] / [`write_system_file`].
 //! - A trajectory: [`read_trajectory_file`] / [`write_trajectory_file`].
 //! - A force field: [`read_forcefield_file`] / [`write_forcefield_file`], or
-//!   [`crate::MolRec::forcefield`] beside other sections through
+//!   [`crate::store::MolRec::forcefield`] beside other sections through
 //!   [`write_record_file`].
 //! - A run too large to hold in memory: pin a [`SequenceSchema`], append with
 //!   [`FrameSequenceWriter`], read one frame at a time with [`FrameSequence`].
@@ -47,12 +47,12 @@
 //!   `filesystem` feature.
 //!
 //! Every writer creates the record root and its `meta/` group, and stamps
-//! [`schema::MOLREC_VERSION`] there over whatever the producer supplied — so
+//! [`MOLREC_VERSION`](crate::store::MOLREC_VERSION) there over whatever the producer supplied — so
 //! every record written by this version carries the contract it was written
 //! in.
 //!
 //! Readers validate the key when it is present: it must be an integer `>= 1`
-//! no newer than [`schema::MOLREC_VERSION`]. A version-1 store (molrs ≤ 0.15),
+//! no newer than [`MOLREC_VERSION`](crate::store::MOLREC_VERSION). A version-1 store (molrs ≤ 0.15),
 //! and one without the key (written before version 1), is converted on read —
 //! the force-field IR's numbers whose meaning changed in version 2 are
 //! re-expressed exactly, or the store is refused
@@ -68,13 +68,13 @@
 //! # #[cfg(not(feature = "filesystem"))]
 //! # fn main() {}
 //! # #[cfg(feature = "filesystem")]
-//! # fn main() -> Result<(), molrs::MolRsError> {
+//! # fn main() -> Result<(), molrs::error::MolRsError> {
 //! use molrs::io::mrec::{read_frame_file, write_frame_file};
 //!
 //! let dir = tempfile::tempdir().unwrap();
 //! let path = dir.path().join("water.mrec");
 //!
-//! write_frame_file(&path, &molrs::Frame::new(), None, None)?;
+//! write_frame_file(&path, &molrs::store::Frame::new(), None, None)?;
 //!
 //! let loaded = read_frame_file(&path)?;
 //! let sections = molrs::io::mrec::section_names(&path)?;

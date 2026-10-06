@@ -28,16 +28,16 @@
 //! The output is `(order, director_basis)` where `director_basis` is the
 //! 3 × 3 rotation matrix sending the lab frame to the optimal cubic frame.
 
-use crate::compute::result::ComputeResult;
+use crate::compute::ComputeResult;
 use rand::RngExt;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::store::FrameAccess;
 
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 
 /// Cubatic calculator. Stateless: SA seed, schedule, and chain count live
 /// on the struct.
@@ -268,7 +268,7 @@ impl ComputeResult for CubaticResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
+    use molrs::store::Frame;
 
     fn frame() -> Frame {
         Frame::new()

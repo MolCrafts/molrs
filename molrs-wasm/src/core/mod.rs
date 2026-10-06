@@ -40,7 +40,7 @@ pub use block::Block;
 pub use frame::Frame;
 pub use mesh::Mesh;
 // JS-facing simulation box binding lives under `region/simbox` for historical
-// path stability of the WASM package layout; the Rust type is `molrs::SimBox`.
+// path stability of the WASM package layout; the Rust type is `molrs::spatial::SimBox`.
 pub use region::simbox::Box;
 pub use types::WasmArray;
 

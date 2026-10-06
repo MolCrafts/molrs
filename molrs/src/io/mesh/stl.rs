@@ -21,8 +21,8 @@
 use std::io::{Error, ErrorKind, Result};
 use std::path::Path;
 
+use crate::op::types::F;
 use crate::spatial::TriMesh;
-use crate::types::F;
 
 /// 80-byte header plus the `u32` triangle count.
 const BINARY_HEADER_BYTES: usize = 84;

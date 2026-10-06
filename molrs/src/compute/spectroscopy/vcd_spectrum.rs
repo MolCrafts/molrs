@@ -5,8 +5,8 @@ use rustfft::FftPlanner;
 
 use super::spectra::SpectrumResult;
 use super::window_and_fft;
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Fit;
+use crate::compute::ComputeError;
+use crate::compute::Fit;
 
 /// VCD (vibrational circular dichroism) spectrum transform of a **raw VCD
 /// cross-correlation** `⟨μ̇(0)·ṁ(τ)⟩` from [`VcdCrossFlux`](super::VcdCrossFlux).

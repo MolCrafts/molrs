@@ -8,9 +8,9 @@
 //! # Examples
 //!
 //! ```
-//! use molrs::store::frame::Frame;
-//! use molrs::store::block::Block;
-//! use molrs::types::{F, Idx};
+//! use molrs::store::Frame;
+//! use molrs::store::Block;
+//! use molrs::op::types::{F, Idx};
 //! use ndarray::Array1;
 //!
 //! let mut frame = Frame::new();
@@ -35,9 +35,9 @@ use indexmap::IndexMap;
 use std::ops::{Index, IndexMut};
 
 use crate::error::MolRsError;
-use crate::spatial::simbox::SimBox;
-use crate::store::block::Block;
-use crate::store::meta::MetaMap;
+use crate::spatial::SimBox;
+use crate::store::Block;
+use crate::store::MetaMap;
 use crate::store::schema::block_names::ATOMS;
 
 /// A dictionary from string keys to [`Block`]s.
@@ -89,7 +89,7 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::frame::Frame;
+    /// use molrs::store::Frame;
     ///
     /// let frame = Frame::new();
     /// assert!(frame.is_empty());
@@ -107,7 +107,7 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::frame::Frame;
+    /// use molrs::store::Frame;
     ///
     /// let frame = Frame::with_capacity(10);
     /// assert!(frame.is_empty());
@@ -144,8 +144,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::frame::Frame;
-    /// use molrs::store::block::Block;
+    /// use molrs::store::Frame;
+    /// use molrs::store::Block;
     /// use indexmap::IndexMap;
     ///
     /// let mut map = IndexMap::new();
@@ -167,8 +167,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::frame::Frame;
-    /// use molrs::store::block::Block;
+    /// use molrs::store::Frame;
+    /// use molrs::store::Block;
     ///
     /// let mut frame = Frame::new();
     /// frame.insert("atoms", Block::new());
@@ -188,8 +188,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::frame::Frame;
-    /// use molrs::store::block::Block;
+    /// use molrs::store::Frame;
+    /// use molrs::store::Block;
     ///
     /// let mut frame = Frame::new();
     /// assert_eq!(frame.len(), 0);
@@ -237,8 +237,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::frame::Frame;
-    /// use molrs::store::block::Block;
+    /// use molrs::store::Frame;
+    /// use molrs::store::Block;
     ///
     /// let mut frame = Frame::new();
     /// let old = frame.insert("atoms", Block::new());
@@ -263,8 +263,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::frame::Frame;
-    /// use molrs::store::block::Block;
+    /// use molrs::store::Frame;
+    /// use molrs::store::Block;
     ///
     /// let mut frame = Frame::new();
     /// frame.insert("atoms", Block::new());
@@ -283,8 +283,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::frame::Frame;
-    /// use molrs::store::block::Block;
+    /// use molrs::store::Frame;
+    /// use molrs::store::Block;
     ///
     /// let mut frame = Frame::new();
     /// frame.insert("atoms", Block::new());
@@ -308,9 +308,9 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::frame::Frame;
-    /// use molrs::store::block::Block;
-    /// use molrs::types::F;
+    /// use molrs::store::Frame;
+    /// use molrs::store::Block;
+    /// use molrs::op::types::F;
     /// use ndarray::Array1;
     ///
     /// let mut frame = Frame::new();
@@ -327,10 +327,10 @@ impl Frame {
         block_key: &str,
         old_col_key: &str,
         new_col_key: &str,
-    ) -> Result<(), crate::store::block::BlockError> {
+    ) -> Result<(), crate::store::BlockError> {
         match self.map.get_mut(block_key) {
             Some(block) => block.rename_column(old_col_key, new_col_key),
-            None => Err(crate::store::block::BlockError::Validation {
+            None => Err(crate::store::BlockError::Validation {
                 message: format!("cannot rename: no block '{block_key}'"),
             }),
         }
@@ -344,9 +344,9 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::frame::Frame;
-    /// use molrs::store::block::Block;
-    /// use molrs::types::F;
+    /// use molrs::store::Frame;
+    /// use molrs::store::Block;
+    /// use molrs::op::types::F;
     /// use ndarray::Array1;
     ///
     /// let mut frame = Frame::new();
@@ -383,9 +383,9 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::frame::Frame;
-    /// use molrs::store::block::Block;
-    /// use molrs::types::F;
+    /// use molrs::store::Frame;
+    /// use molrs::store::Block;
+    /// use molrs::op::types::F;
     /// use ndarray::Array1;
     ///
     /// let mut frame = Frame::new();
@@ -434,9 +434,9 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::frame::Frame;
-    /// use molrs::store::block::Block;
-    /// use molrs::types::F;
+    /// use molrs::store::Frame;
+    /// use molrs::store::Block;
+    /// use molrs::op::types::F;
     /// use ndarray::Array1;
     ///
     /// let mut frame = Frame::new();
@@ -465,7 +465,7 @@ impl Frame {
     /// - `block` is gathered in the order `rows` gives: old row `rows[k]`
     ///   becomes new row `k`. Every column and its validity mask (the per-row
     ///   flag that marks a null cell, see
-    ///   [`Block::validity`](crate::store::block::Block::validity)) travel.
+    ///   [`Block::validity`](crate::store::Block::validity)) travel.
     /// - A relation block whose endpoints index `block` (canonical `bonds`,
     ///   `angles`, …, and any unspecified block carrying `atomi`..`atoml`)
     ///   keeps only the rows whose endpoints all lie in `rows`, in their
@@ -500,9 +500,9 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::frame::Frame;
-    /// use molrs::store::block::Block;
-    /// use molrs::types::{F, Idx};
+    /// use molrs::store::Frame;
+    /// use molrs::store::Block;
+    /// use molrs::op::types::{F, Idx};
     /// use ndarray::Array1;
     ///
     /// // 4 atoms at x = 0..3, bonded as a chain (0,1), (1,2), (2,3).
@@ -609,7 +609,7 @@ impl Frame {
                         continue;
                     }
                     let new = new_row[*v as usize].expect("kept rows lie in the selection");
-                    *v = new as crate::types::Idx;
+                    *v = new as crate::op::types::Idx;
                 }
             }
             out.insert(name, cut);
@@ -656,9 +656,9 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::frame::Frame;
-    /// use molrs::store::block::Block;
-    /// use molrs::types::{F, Idx};
+    /// use molrs::store::Frame;
+    /// use molrs::store::Block;
+    /// use molrs::op::types::{F, Idx};
     /// use ndarray::Array1;
     ///
     /// // A diatomic: atoms 0-1 bonded.
@@ -719,7 +719,7 @@ impl Frame {
                         ))
                     })?;
                 for (i, v) in values.iter_mut().enumerate() {
-                    *v += ((i / rows) * span) as crate::types::Idx;
+                    *v += ((i / rows) * span) as crate::op::types::Idx;
                 }
             }
             out.insert(name, tiled);
@@ -761,9 +761,9 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::frame::Frame;
-    /// use molrs::store::block::Block;
-    /// use molrs::types::{F, Idx};
+    /// use molrs::store::Frame;
+    /// use molrs::store::Block;
+    /// use molrs::op::types::{F, Idx};
     /// use ndarray::Array1;
     ///
     /// fn chain(n: usize) -> Frame {
@@ -823,7 +823,7 @@ impl Frame {
                             ))
                         })?;
                     if base > 0 {
-                        values.mapv_inplace(|v| v + base as crate::types::Idx);
+                        values.mapv_inplace(|v| v + base as crate::op::types::Idx);
                     }
                 }
                 parts.entry(name.to_owned()).or_default().push(part);
@@ -847,9 +847,9 @@ impl Frame {
     /// # Errors
     ///
     /// [`MolRsError::NotFound`] without an `atoms` block, and
-    /// [`MolRsError::Block`] ([`BlockError::MissingColumn`](crate::store::block::BlockError::MissingColumn))
+    /// [`MolRsError::Block`] ([`BlockError::MissingColumn`](crate::store::BlockError::MissingColumn))
     /// when it lacks `x`, `y` or `z`.
-    pub fn coords(&self) -> Result<crate::types::FNx3, MolRsError> {
+    pub fn coords(&self) -> Result<crate::op::types::FNx3, MolRsError> {
         let atoms = self.get(ATOMS).ok_or_else(|| {
             MolRsError::not_found("block", format!("frame has no '{ATOMS}' block"))
         })?;
@@ -868,15 +868,15 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::frame::Frame;
-    /// use molrs::types::F;
+    /// use molrs::store::Frame;
+    /// use molrs::op::types::F;
     /// use ndarray::array;
     ///
     /// let mut frame = Frame::new();
     /// frame.set_coords(array![[1.0 as F, 2.0, 3.0]].view()).unwrap();
     /// assert_eq!(frame.coords().unwrap(), array![[1.0, 2.0, 3.0]]);
     /// ```
-    pub fn set_coords(&mut self, coords: crate::types::FNx3View<'_>) -> Result<(), MolRsError> {
+    pub fn set_coords(&mut self, coords: crate::op::types::FNx3View<'_>) -> Result<(), MolRsError> {
         match self.get_mut(ATOMS) {
             Some(atoms) => atoms.set_coords(coords)?,
             None => {
@@ -895,8 +895,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::frame::Frame;
-    /// use molrs::store::block::Block;
+    /// use molrs::store::Frame;
+    /// use molrs::store::Block;
     ///
     /// let frame = Frame::new();
     /// assert!(frame.is_consistent());
@@ -947,7 +947,7 @@ impl IndexMut<&str> for Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{F, I};
+    use crate::op::types::{F, I};
     use ndarray::Array1;
 
     #[test]
@@ -1011,9 +1011,7 @@ mod tests {
             .unwrap();
         let mut frame = Frame::new();
         frame.insert("atoms", block);
-        frame
-            .meta
-            .insert("step", crate::store::meta::MetaValue::I64(3));
+        frame.meta.insert("step", crate::store::MetaValue::I64(3));
 
         let copy = frame.deep_copy();
 
@@ -1312,8 +1310,8 @@ mod tests {
 
     // ---- subset ----
 
-    use crate::spatial::simbox::SimBox;
-    use crate::types::Idx;
+    use crate::op::types::Idx;
+    use crate::spatial::SimBox;
     use ndarray::array;
 
     fn float_col(values: &[F]) -> ndarray::ArrayD<F> {
@@ -1789,7 +1787,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                MolRsError::Block(crate::store::block::BlockError::RaggedAxis0 { .. })
+                MolRsError::Block(crate::store::BlockError::RaggedAxis0 { .. })
             ),
             "{err:?}"
         );

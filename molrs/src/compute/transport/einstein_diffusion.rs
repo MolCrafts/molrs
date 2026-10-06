@@ -1,12 +1,12 @@
 //! Einstein diffusion raw compute — the windowed-MSD route to D.
 
-use molrs::store::frame_access::FrameAccess;
+use molrs::store::FrameAccess;
 use ndarray::Array1;
 
-use crate::compute::error::ComputeError;
-use crate::compute::msd::{MSD, MsdMode};
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
+use crate::compute::{MSD, MsdMode};
 
 /// Raw self-MSD for the Einstein diffusion route.
 #[derive(Debug, Clone)]
@@ -22,7 +22,7 @@ impl ComputeResult for EinsteinDiffusionResult {}
 
 /// Raw self-MSD compute. Delegates to
 /// [`MSD`] in `Window` mode — MSD math is **not** re-derived here.
-/// `D = slope/(2d)` is then a [`LinearFit`](crate::compute::fitting::LinearFit) +
+/// `D = slope/(2d)` is then a [`LinearFit`](crate::compute::LinearFit) +
 /// scale step.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EinsteinDiffusion;
@@ -63,8 +63,8 @@ impl Compute for EinsteinDiffusion {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
-    use molrs::store::block::Block;
+    use molrs::store::Block;
+    use molrs::store::Frame;
     use ndarray::Array1 as A1;
 
     fn make_frame(x: &[f64], y: &[f64], z: &[f64]) -> Frame {

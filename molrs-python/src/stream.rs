@@ -17,7 +17,7 @@
 //! is therefore native-only, gated exactly like `molrs::stream::publisher`. A Pyodide
 //! build has the command type and no server.
 //!
-//! [`Frame`]: molrs::store::frame::Frame
+//! [`Frame`]: molrs::store::Frame
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;

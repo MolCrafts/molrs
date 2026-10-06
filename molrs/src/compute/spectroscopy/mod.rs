@@ -1,6 +1,6 @@
 //! Vibrational and chiral spectroscopy: raw flux/tensor correlation
 //! [`Compute`](crate::compute::Compute)s and the spectral
-//! [`Fit`](crate::compute::traits::Fit) transforms that turn them into
+//! [`Fit`](crate::compute::Fit) transforms that turn them into
 //! frequency-domain spectra.
 //!
 //! Each spectrum is an explicit two-step composition — a raw compute produces
@@ -9,13 +9,13 @@
 //!
 //! | Spectrum | Raw compute | Fit transform |
 //! |----------|-------------|---------------|
-//! | VDOS | [`VACF`](crate::compute::transport::VACF) (velocity ACF) | [`PowerSpectrum`] |
+//! | VDOS | [`VACF`](crate::compute::VACF) (velocity ACF) | [`PowerSpectrum`] |
 //! | IR | [`IRFlux`] (dipole-flux ACF) | [`IRSpectrum`] |
 //! | Raman | [`RamanTensor`] (polarizability iso/aniso ACFs) | [`RamanSpectrum`] |
 //! | VCD | [`VcdCrossFlux`] (μ̇ × ṁ cross-correlation) | [`VcdSpectrum`] |
 //! | ROA | [`RoaCrossTensor`] (α̇ × Ġ′ cross-correlations) | [`RoaSpectrum`] |
 //! | Resonance Raman | [`ResonanceRamanTensor`] (resonant iso/aniso ACFs) | [`ResonanceRamanSpectrum`] |
-//! | Dielectric ε(ω) | [`DebyeRelaxation`](crate::compute::transport::DebyeRelaxation) / [`GreenKuboConductivity`](crate::compute::transport::GreenKuboConductivity) / [`DipoleRateCross`](crate::compute::transport::DipoleRateCross) | [`EinsteinHelfandSpectrum`] / [`GreenKuboSpectrum`] / [`DipoleAutocorrelationSpectrum`] / [`DipoleRateCrossSpectrum`] |
+//! | Dielectric ε(ω) | [`DebyeRelaxation`](crate::compute::DebyeRelaxation) / [`GreenKuboConductivity`](crate::compute::GreenKuboConductivity) / [`DipoleRateCross`](crate::compute::DipoleRateCross) | [`EinsteinHelfandSpectrum`] / [`GreenKuboSpectrum`] / [`DipoleAutocorrelationSpectrum`] / [`DipoleRateCrossSpectrum`] |
 //!
 //! # Units
 //!
@@ -35,19 +35,19 @@
 //! coefficients always route through [`molrs::signal`] (never reimplemented);
 //! the pad + forward-FFT core is the crate-shared `forward_fft_onesided`.
 
-pub mod dielectric_spectrum;
-pub mod ir_flux;
-pub mod ir_spectrum;
-pub mod power_spectrum;
-pub mod raman_spectrum;
-pub mod raman_tensor;
-pub mod resonance_raman_spectrum;
-pub mod resonance_raman_tensor;
-pub mod roa_cross_tensor;
-pub mod roa_spectrum;
-pub mod spectra;
-pub mod vcd_cross_flux;
-pub mod vcd_spectrum;
+mod dielectric_spectrum;
+mod ir_flux;
+mod ir_spectrum;
+mod power_spectrum;
+mod raman_spectrum;
+mod raman_tensor;
+mod resonance_raman_spectrum;
+mod resonance_raman_tensor;
+mod roa_cross_tensor;
+mod roa_spectrum;
+mod spectra;
+mod vcd_cross_flux;
+mod vcd_spectrum;
 
 pub use dielectric_spectrum::{
     ConductivitySumRule, DielectricSpectrumResult, DipoleAutocorrelationSpectrum,
@@ -71,9 +71,9 @@ use ndarray::{Array1, Array2, ArrayD};
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;
 
-use crate::compute::error::ComputeError;
+use crate::compute::ComputeError;
 use crate::compute::fitting::forward_fft_onesided;
-use crate::compute::transport::lag_times as transport_lag_times;
+use crate::compute::lag_times as transport_lag_times;
 use molrs::signal as sig;
 
 // ── Spectral constants ────────────────────────────────────────────────────────

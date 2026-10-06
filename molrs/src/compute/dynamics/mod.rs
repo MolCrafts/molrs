@@ -15,9 +15,9 @@
 //! let gvh = VanHove::new(n_rbins, r_max, vec![0, 10, 100])?.compute(&frames, ())?;
 //! ```
 
-pub mod acf;
-pub mod persist;
-pub mod van_hove;
+mod acf;
+mod persist;
+mod van_hove;
 
 pub use acf::{Acf, AcfArgs, AcfResult, autocorrelation};
 pub use persist::{PersistResult, SurvivalMethod, pair_survival_tcf};

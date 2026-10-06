@@ -4,10 +4,10 @@
 //! `fitting.rs` as `molrs.compute.transport.*` classes — do not re-wrap them
 //! as free functions or recipe types.
 
+use molrs::compute::Compute;
 use molrs::compute::OnsagerCorrelation;
-use molrs::compute::dynamics::persist;
-use molrs::compute::traits::Compute;
-use molrs::store::frame::Frame as CoreFrame;
+use molrs::compute::{SurvivalMethod, pair_survival_tcf};
+use molrs::store::Frame as CoreFrame;
 use numpy::{IntoPyArray, PyReadonlyArray2, PyReadonlyArray3};
 use pyo3::prelude::*;
 
@@ -67,8 +67,8 @@ impl PyPersist {
         let ci = coords_i.as_array().to_owned();
         let cj = coords_j.as_array().to_owned();
         let bl = box_lengths.as_array().to_owned();
-        let m = persist::SurvivalMethod::parse(method).map_err(py_value_err)?;
-        let result = persist::pair_survival_tcf(
+        let m = SurvivalMethod::parse(method).map_err(py_value_err)?;
+        let result = pair_survival_tcf(
             &ci,
             &cj,
             &bl,

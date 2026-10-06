@@ -41,11 +41,11 @@ use std::collections::{HashMap, HashSet};
 
 use crate::perceive::rings::find_rings;
 use crate::store::keys;
-use crate::system::atomistic::Atomistic;
-use crate::system::bond::{BondNumber, BondType};
-use crate::system::molgraph::PropValue;
-use crate::system::molgraph::{NodeId, RelationId};
-use molrs::Element;
+use crate::system::Atomistic;
+use crate::system::PropValue;
+use crate::system::{BondNumber, BondType};
+use crate::system::{NodeId, RelationId};
+use molrs::system::Element;
 
 /// Maximum number of fused rings combined when checking the Hückel rule
 /// (RDKit `maxFused = 6`).
@@ -786,7 +786,7 @@ pub(crate) fn perceive_aromaticity(mol: &mut Atomistic) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::molgraph::Atom;
+    use crate::system::Atom;
 
     /// Build a Kekulé benzene ring of 6 carbons (alternating single/double).
     fn benzene() -> Atomistic {

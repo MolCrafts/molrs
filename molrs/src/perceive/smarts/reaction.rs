@@ -34,10 +34,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::error::MolRsError;
-use crate::system::atomistic::Atomistic;
-use crate::system::bond::{BondNumber, BondType};
-use crate::system::molgraph::{NodeId, RelationId};
-use molrs::Element;
+use crate::system::Atomistic;
+use crate::system::{BondNumber, BondType};
+use crate::system::{NodeId, RelationId};
+use molrs::system::Element;
 
 use super::SmartsPattern;
 use super::ast::MolContext;

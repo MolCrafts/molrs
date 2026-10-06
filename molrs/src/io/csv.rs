@@ -13,9 +13,9 @@
 
 use ndarray::Array1;
 
-use crate::core::store::block::Block;
-use crate::core::store::block::Column;
-use crate::types::{F, I};
+use crate::op::types::{F, I};
+use crate::store::Block;
+use crate::store::Column;
 
 /// Parse CSV `text` into a [`Block`].
 ///
@@ -146,9 +146,9 @@ fn insert_as(
     block: &mut Block,
     name: String,
     raw: Vec<String>,
-    dtype: crate::store::block::DType,
+    dtype: crate::store::DType,
 ) -> Result<(), String> {
-    use crate::store::block::DType;
+    use crate::store::DType;
     let parse_err = |e: std::num::ParseIntError| format!("column '{name}': {e}");
     match dtype {
         DType::Float => {
@@ -170,9 +170,9 @@ fn insert_as(
                 .map_err(|e| e.to_string())
         }
         DType::UInt => {
-            let v: Vec<crate::types::Idx> = raw
+            let v: Vec<crate::op::types::Idx> = raw
                 .iter()
-                .map(|s| s.parse::<crate::types::Idx>().map_err(parse_err))
+                .map(|s| s.parse::<crate::op::types::Idx>().map_err(parse_err))
                 .collect::<Result<_, _>>()?;
             block
                 .insert(name, Array1::from(v).into_dyn())

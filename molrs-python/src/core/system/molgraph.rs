@@ -41,18 +41,18 @@ use pyo3::{PyTraverseError, PyVisit};
 
 use molrs::perceive::rings::max_ring_system_size as core_max_ring_system_size;
 use molrs::perceive::smarts::{MatchOptions, Reaction, RingPrimitive, SmartsPattern};
-use molrs::spatial::geometry::CenterError;
+use molrs::spatial::CenterError;
 use molrs::store::keys;
-use molrs::system::atomistic::{Atomistic, ExtractedAtomistic};
-use molrs::system::bond::{BondNumber, BondType};
-use molrs::system::coarsegrain::{CoarseGrain, ExtractedCoarseGrain};
+use molrs::system::LinkError;
+use molrs::system::PortKind;
 use molrs::system::entity_table::Cell;
-use molrs::system::link::LinkError;
-use molrs::system::molgraph::{
+use molrs::system::{Atomistic, ExtractedAtomistic};
+use molrs::system::{BondNumber, BondType};
+use molrs::system::{CoarseGrain, ExtractedCoarseGrain};
+use molrs::system::{
     KindId, MolGraph, NodeId, PropValue, node_from_u64, node_to_u64, relation_from_u64,
     relation_to_u64,
 };
-use molrs::system::port::PortKind;
 
 use super::views::{BEAD_ATOMS, Leaf, PyNodeRef, PyRefs, PyRelationBuckets, ViewCache};
 use crate::core::store::frame::PyFrame;
@@ -2917,7 +2917,7 @@ macro_rules! rigid_body_impl {
             /// Translate every node that has coordinates by `delta`. Returns
             /// this graph, so moves chain.
             fn translate(mut slf: PyRefMut<'_, Self>, delta: [f64; 3]) -> PyRefMut<'_, Self> {
-                molrs::spatial::geometry::translate(slf.mol_mut(), delta);
+                molrs::spatial::translate(slf.mol_mut(), delta);
                 slf
             }
 
@@ -2931,7 +2931,7 @@ macro_rules! rigid_body_impl {
                 angle: f64,
                 about: Option<[f64; 3]>,
             ) -> PyResult<PyRefMut<'_, Self>> {
-                molrs::spatial::geometry::rotate(slf.mol_mut(), axis, angle, about)
+                molrs::spatial::rotate(slf.mol_mut(), axis, angle, about)
                     .map_err(|error| PyValueError::new_err(error.to_string()))?;
                 Ok(slf)
             }
@@ -2945,7 +2945,7 @@ macro_rules! rigid_body_impl {
                 factor: [f64; 3],
                 about: Option<[f64; 3]>,
             ) -> PyRefMut<'_, Self> {
-                molrs::spatial::geometry::scale(slf.mol_mut(), factor, about);
+                molrs::spatial::scale(slf.mol_mut(), factor, about);
                 slf
             }
         }
@@ -3043,9 +3043,9 @@ impl PyRingInfo {
 /// keeps them all. A requested column the block lacks raises
 /// ``ValueError`` naming it.
 fn select_atom_fields(
-    mut frame: molrs::store::frame::Frame,
+    mut frame: molrs::store::Frame,
     atom_fields: Option<Vec<String>>,
-) -> PyResult<molrs::store::frame::Frame> {
+) -> PyResult<molrs::store::Frame> {
     let Some(fields) = atom_fields else {
         return Ok(frame);
     };

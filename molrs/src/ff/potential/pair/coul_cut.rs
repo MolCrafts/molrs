@@ -37,10 +37,10 @@ use crate::ff::potential::need;
 use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
+use molrs::op::types::F;
 use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame::Frame;
+use molrs::store::Frame;
 use molrs::store::schema::block_names::{ATOMS, PAIRS};
-use molrs::types::F;
 
 /// Below this squared separation a pair's force has no direction, so only the
 /// (buffered) energy is accumulated. Unchanged from the unbuffered kernel.

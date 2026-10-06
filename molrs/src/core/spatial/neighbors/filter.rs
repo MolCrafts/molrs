@@ -46,8 +46,8 @@
 //! search with [`NeighborsStorage::FULL`](crate::spatial::neighbors::NeighborsStorage::FULL)
 //! instead.
 
+use crate::op::types::F;
 use crate::spatial::neighbors::Neighbors;
-use crate::types::F;
 
 /// SANN filter: keep the smallest set of nearest neighbors whose solid
 /// angles sum to `4π`.

@@ -31,14 +31,14 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyString, PyTuple};
 
 use molrs::ff::forcefield::DefError;
-use molrs::ff::ir::registry::ExpressionForm;
+use molrs::ff::ir::ExpressionForm;
 use molrs::ff::ir::{
     self as rir, Arity, CategorySpec, Coordinate, Dim, EndpointOrder, IrError, Kernel, Mix,
     ParamKind, ParamSource, ParamSpec, Registry, Sample, SpecialClass, StyleSpec, Value,
 };
 use molrs::ff::potential::CompileError;
 use molrs::ff::potential::generic::{CompoundForm, ParamCols, ScalarForm};
-use molrs::types::F;
+use molrs::op::types::F;
 
 use crate::md::ErrSlot;
 

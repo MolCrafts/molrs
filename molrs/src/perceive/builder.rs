@@ -1,41 +1,10 @@
-//! The [`Perceive`] builder — one uniform skin over the perception free
-//! functions of this layer.
-//!
-//! The wrapped functions have four different shapes: a side table
-//! ([`rings::find_rings`] → [`rings::RingInfo`]), an in-place mutation returning
-//! a count (`aromaticity::perceive_aromaticity`), a graph-out transform
-//! (`hydrogens::add_hydrogens`), and maps
-//! ([`stereo::assign_stereo_from_3d`], [`rotatable::detect_rotatable_bonds`]).
-//! `Perceive` normalises all four to a single contract:
-//!
-//! > **graph in / graph out, non-mutating** — each `find_*` clones `mol`, writes
-//! > the perceived facts onto the clone as atom / bond props, and returns it.
-//! > The input is never touched.
-//!
-//! Because the output is a graph, the finders compose: the result of one is a
-//! legal input to the next, and earlier facts survive later stages.
-//!
-//! # Props written
-//!
-//! | Method | Atom props | Bond props |
-//! |---|---|---|
-//! | [`Perceive::find_rings`] | `is_in_ring` (0/1), `n_rings` | `is_in_ring` (0/1), `n_rings` |
-//! | [`Perceive::find_aromaticity`] | `is_aromatic` (0/1) | `bond_type` (4 when aromatic), `bond_number` |
-//! | [`Perceive::find_hydrogens`] | — (adds H atoms) | — (adds H bonds) |
-//! | [`Perceive::find_stereo`] | `stereo` (`"CW"` / `"CCW"`) | `stereo` (`"E"` / `"Z"` / `"either"`) |
-//! | [`Perceive::find_rotatable`] | — | `is_rotatable` (0/1) |
-//! | [`Perceive::find_bond_orders`] | — | `bond_number`, `bond_type` (antechamber's Kekulé structure) |
-//! | [`Perceive::find_bond_types`] | — | `bcc_bond_type` (1/2/3/6/7/8/9) |
-//! | [`Perceive::find_bond_types_from_connectivity`] | — | `bcc_bond_type`, from connectivity-judged orders |
-//! | [`Perceive::find_equivalence_classes`] | `equiv_class` (0-based class id) | — |
-
 use std::collections::HashSet;
 
 use super::equivalence::{EQUIV_CLASS, EquivalenceOptions};
 use super::stereo::{BondStereo, TetrahedralStereo};
 use super::{aromaticity, bond_order, bond_type, equivalence, hydrogens, rings, rotatable, stereo};
-use crate::system::atomistic::Atomistic;
-use crate::system::molgraph::{NodeId, RelationId};
+use crate::system::Atomistic;
+use crate::system::{NodeId, RelationId};
 use molrs::error::MolRsError;
 
 /// Atom / bond prop: `1` when the atom / bond lies on at least one SSSR ring.
@@ -50,8 +19,8 @@ const STEREO: &str = "stereo";
 /// Chemical perception, as a builder.
 ///
 /// Every `find_*` method is graph-in / graph-out and **non-mutating**: it clones
-/// the input, annotates the clone, and returns it. See the [module
-/// docs](self) for the props each method writes.
+/// the input, annotates the clone, and returns it. The props each method
+/// writes are listed below.
 ///
 /// The builder currently carries no options; it exists to give the perception
 /// functions one shape (and a place to hang options later).
@@ -59,13 +28,44 @@ const STEREO: &str = "stereo";
 /// # Examples
 ///
 /// ```
-/// use molrs::Atomistic;
+/// use molrs::system::Atomistic;
 /// use molrs::perceive::Perceive;
 ///
 /// let mol = Atomistic::new();
 /// let perceived = Perceive::new().find_rings(&mol);
 /// assert_eq!(perceived.n_atoms(), mol.n_atoms());
 /// ```
+///
+/// The [`Perceive`] builder — one uniform skin over the perception free
+/// functions of this layer.
+///
+/// The wrapped functions have four different shapes: a side table
+/// ([`rings::find_rings`] → [`rings::RingInfo`]), an in-place mutation returning
+/// a count (`aromaticity::perceive_aromaticity`), a graph-out transform
+/// (`hydrogens::add_hydrogens`), and maps
+/// ([`stereo::assign_stereo_from_3d`], [`rotatable::detect_rotatable_bonds`]).
+/// `Perceive` normalises all four to a single contract:
+///
+/// > **graph in / graph out, non-mutating** — each `find_*` clones `mol`, writes
+/// > the perceived facts onto the clone as atom / bond props, and returns it.
+/// > The input is never touched.
+///
+/// Because the output is a graph, the finders compose: the result of one is a
+/// legal input to the next, and earlier facts survive later stages.
+///
+/// # Props written
+///
+/// | Method | Atom props | Bond props |
+/// |---|---|---|
+/// | [`Perceive::find_rings`] | `is_in_ring` (0/1), `n_rings` | `is_in_ring` (0/1), `n_rings` |
+/// | [`Perceive::find_aromaticity`] | `is_aromatic` (0/1) | `bond_type` (4 when aromatic), `bond_number` |
+/// | [`Perceive::find_hydrogens`] | — (adds H atoms) | — (adds H bonds) |
+/// | [`Perceive::find_stereo`] | `stereo` (`"CW"` / `"CCW"`) | `stereo` (`"E"` / `"Z"` / `"either"`) |
+/// | [`Perceive::find_rotatable`] | — | `is_rotatable` (0/1) |
+/// | [`Perceive::find_bond_orders`] | — | `bond_number`, `bond_type` (antechamber's Kekulé structure) |
+/// | [`Perceive::find_bond_types`] | — | `bcc_bond_type` (1/2/3/6/7/8/9) |
+/// | [`Perceive::find_bond_types_from_connectivity`] | — | `bcc_bond_type`, from connectivity-judged orders |
+/// | [`Perceive::find_equivalence_classes`] | `equiv_class` (0-based class id) | — |
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Perceive;
 
@@ -414,7 +414,7 @@ fn bond_label(s: BondStereo) -> Option<&'static str> {
     }
 }
 
-/// Narrow a count to the `i32` that [`crate::system::molgraph::PropValue`]
+/// Narrow a count to the `i32` that [`crate::system::PropValue`]
 /// Does the input already declare which bonds are aromatic?
 ///
 /// This is what separates "the notation told us" from "we have to work it out",

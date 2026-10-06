@@ -44,7 +44,7 @@ use pyo3::prelude::*;
 
 use molrs::builder::{CoarsenError, Coarsener};
 use molrs::perceive::{Perceive, SubgraphMatcher};
-use molrs::system::molgraph::{MolGraph, NodeId, node_from_u64, node_to_u64};
+use molrs::system::{MolGraph, NodeId, node_from_u64, node_to_u64};
 
 use crate::core::system::molgraph::{PyAtomistic, PyCoarseGrain, center_error_message};
 use crate::helpers::molrs_error_to_pyerr;

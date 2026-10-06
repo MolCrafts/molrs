@@ -21,7 +21,7 @@
 //! Accordingly the **definition** follows van Hove 1954 / Hansen-McDonald, the
 //! **distinct-part binning + shell normalization** mirror the RDF pair-binning
 //! convention molrs already ports (`CDF::AddToBin`, reference implementation `src/df.cpp`, here
-//! reused through [`Histogram1d`](crate::compute::distribution::Histogram1d) and
+//! reused through [`Histogram1d`](crate::compute::Histogram1d) and
 //! the `4π/3 (r_o³−r_i³)` shell volume of [`rdf`](crate::compute::rdf)), and the
 //! **multi-time-origin averaging** mirrors the ACF origin accumulation in
 //! reference implementation `src/reordyn.cpp` / `src/acf.cpp`. Any deviation from a literal
@@ -40,15 +40,15 @@
 //!   as [`msd`](crate::compute::msd) does — so the second-moment bridge holds.
 //!   Distinct distances use the minimum image (matching `rdf`).
 
-use crate::compute::result::ComputeResult;
+use crate::compute::ComputeResult;
+use molrs::op::types::F;
 use molrs::spatial::neighbors::NeighborQuery;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::store::FrameAccess;
 use ndarray::{Array1, Array2};
 
-use crate::compute::error::ComputeError;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
-use crate::compute::traits::Compute;
 
 /// Van Hove correlation analyzer.
 ///

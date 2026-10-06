@@ -16,9 +16,9 @@
 //! reimplemented).
 //!
 //! The raw, unwindowed ACFs these fits consume come from the raw computes
-//! [`DebyeRelaxation`](crate::compute::transport::DebyeRelaxation) (fluctuation dipole ACF +
+//! [`DebyeRelaxation`](crate::compute::DebyeRelaxation) (fluctuation dipole ACF +
 //! ⟨M(0)²⟩ + V/T/Ewald-BC) and
-//! [`GreenKuboConductivity`](crate::compute::transport::GreenKuboConductivity) (current ACF).
+//! [`GreenKuboConductivity`](crate::compute::GreenKuboConductivity) (current ACF).
 //!
 //! # Units
 //!
@@ -40,10 +40,10 @@ use ndarray::Array1;
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;
 
-use crate::compute::error::ComputeError;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
 use crate::compute::fitting::forward_fft_onesided;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::{Check, Fit, Verdict};
+use crate::compute::{Check, Fit, Verdict};
 use molrs::signal as sig;
 
 /// Zero-padding multiplier for the dielectric one-sided FT.
@@ -170,7 +170,7 @@ fn piecewise_linear_onesided_ft(y: &Array1<f64>, dt: f64, pad_factor: usize) -> 
 ///
 /// The input `acf` must be the **fluctuation** (mean-subtracted) dipole ACF
 /// `C(k) = ⟨δM(0)·δM(k·dt)⟩` summed over the 3 Cartesian components — exactly
-/// the [`DebyeRelaxationResult.acf`](crate::compute::transport::DebyeRelaxationResult::acf).
+/// the [`DebyeRelaxationResult.acf`](crate::compute::DebyeRelaxationResult::acf).
 fn taper_derivative_spectrum(acf: &Array1<f64>, dt: f64) -> RawSpectrum {
     let max_lag = acf.len() - 1;
     let mut tapered = acf.clone();
@@ -219,7 +219,7 @@ fn parse_window_type(s: &str) -> Result<sig::WindowType, ComputeError> {
 /// `X(ω) = ∫₀^T C_win(t) e^{−iωt} dt`. The input `acf` must be the unbiased
 /// current ACF `C(k) = ⟨J(0)·J(k·dt)⟩` summed over the 3 Cartesian components
 /// — exactly the
-/// [`GreenKuboConductivityResult.jacf`](crate::compute::transport::GreenKuboConductivityResult::jacf).
+/// [`GreenKuboConductivityResult.jacf`](crate::compute::GreenKuboConductivityResult::jacf).
 fn windowed_acf_spectrum(
     acf: &Array1<f64>,
     dt: f64,
@@ -252,9 +252,9 @@ fn windowed_acf_spectrum(
 ///
 /// Consumes the **raw fluctuation dipole ACF** `C(k) = ⟨δM(0)·δM(k·dt)⟩`
 /// (summed over the 3 Cartesian components) — the
-/// [`DebyeRelaxationResult.acf`](crate::compute::transport::DebyeRelaxationResult::acf) — together
+/// [`DebyeRelaxationResult.acf`](crate::compute::DebyeRelaxationResult::acf) — together
 /// with `dt`, `V`, `T`, `ε_∞`, and the zero-lag variance ⟨|δM|²⟩ (the
-/// [`zero_lag_variance`](crate::compute::transport::DebyeRelaxationResult::zero_lag_variance), which
+/// [`zero_lag_variance`](crate::compute::DebyeRelaxationResult::zero_lag_variance), which
 /// pins the exact DC bin).
 ///
 /// Implements the integration-by-parts form of Caillol-Levesque-Weis Eq. (30):
@@ -291,7 +291,7 @@ pub struct EinsteinHelfandSpectrum {
     /// High-frequency / electronic permittivity ε_∞, dimensionless.
     pub epsilon_inf: f64,
     /// Zero-lag variance ⟨|δM|²⟩ = `acf[0]`, **(e·Å)²** — the exact DC term
-    /// (the [`DebyeRelaxationResult.zero_lag_variance`](crate::compute::transport::DebyeRelaxationResult::zero_lag_variance)).
+    /// (the [`DebyeRelaxationResult.zero_lag_variance`](crate::compute::DebyeRelaxationResult::zero_lag_variance)).
     pub zero_lag_variance: f64,
 }
 
@@ -341,7 +341,7 @@ impl Fit for EinsteinHelfandSpectrum {
 ///
 /// Consumes the **raw current ACF** `C(k) = ⟨J(0)·J(k·dt)⟩` (summed over the 3
 /// Cartesian components) — the
-/// [`GreenKuboConductivityResult.jacf`](crate::compute::transport::GreenKuboConductivityResult::jacf)
+/// [`GreenKuboConductivityResult.jacf`](crate::compute::GreenKuboConductivityResult::jacf)
 /// — together with `dt`, `V`, `T`, `ε_∞`, and the window choice.
 ///
 /// Implements
@@ -923,9 +923,9 @@ impl ComputeResult for RouteAgreementCheck {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::traits::Compute;
-    use crate::compute::transport::{DebyeRelaxation, EwaldBoundary, GreenKuboConductivity};
-    use molrs::Frame;
+    use crate::compute::Compute;
+    use crate::compute::{DebyeRelaxation, EwaldBoundary, GreenKuboConductivity};
+    use molrs::store::Frame;
     use ndarray::Array2;
     use rustfft::FftPlanner;
 

@@ -273,8 +273,8 @@ compiled examples.
 ```rust
 use molrs::io::mrec::{read_frame_file, section_names, write_frame_file};
 
-fn main() -> Result<(), molrs::MolRsError> {
-    write_frame_file("water.mrec", &molrs::Frame::new(), None, None)?;
+fn main() -> Result<(), molrs::error::MolRsError> {
+    write_frame_file("water.mrec", &molrs::store::Frame::new(), None, None)?;
     let frame = read_frame_file("water.mrec")?;
     println!("{:?} {}", section_names("water.mrec")?, frame.len());
     Ok(())

@@ -15,8 +15,8 @@
 //! let labels = KMeans::new(k, max_iter, seed)?.compute(&[] as &[&Frame], &proj)?;
 //! ```
 
-pub mod kmeans;
-pub mod pca;
+mod kmeans;
+mod pca;
 
 pub use kmeans::{KMeans, KMeansResult};
 pub use pca::{Pca2, PcaResult};

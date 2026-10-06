@@ -5,7 +5,7 @@
 //! metadata. It is used for bulk coordinate data (e.g., Nx3 positions)
 //! that is too large or structured for individual typed-array columns.
 
-use molrs::types::F;
+use molrs::op::types::F;
 use ndarray::{Array2, ArrayView2};
 use wasm_bindgen::prelude::*;
 

@@ -1,22 +1,22 @@
 //! Geometric cluster centers computed with minimum image convention.
 //!
 //! The unweighted counterpart of
-//! [`CenterOfMass`](crate::compute::shape::CenterOfMass). Reads
+//! [`CenterOfMass`](crate::compute::CenterOfMass). Reads
 //! `atoms.{x,y,z}` (Å); takes one
 //! [`ClusterResult`] per frame as
 //! `Args`. Output: per-cluster geometric centers (Å), one
 //! [`ClusterCentersResult`] per frame.
 
-use crate::compute::result::{ComputeResult, DescriptorRow};
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use crate::compute::{ComputeResult, DescriptorRow};
+use molrs::op::types::F;
+use molrs::store::FrameAccess;
 
-use crate::compute::cluster::ClusterResult;
-use crate::compute::error::ComputeError;
+use crate::compute::ClusterResult;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
-use crate::compute::traits::Compute;
 use crate::op::vec3::sub;
-use molrs::spatial::simbox::{Mic, SimBox};
+use molrs::spatial::{Mic, SimBox};
 
 /// Computes the geometric center of each cluster per frame using the minimum
 /// image convention (MIC).
@@ -159,11 +159,11 @@ impl DescriptorRow for ClusterCentersResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::cluster::Cluster;
+    use crate::compute::Cluster;
     use crate::compute::test_support::nlist_from_frame;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use molrs::spatial::SimBox;
+    use molrs::store::Block;
+    use molrs::store::Frame;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F, pbc: [bool; 3]) -> Frame {

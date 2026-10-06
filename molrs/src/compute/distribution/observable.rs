@@ -6,12 +6,12 @@
 //! selection is the frozen [`AtomGroups`] index container and the extractor is
 //! any [`Observable`] (distance / angle / dihedral).
 
-use molrs::spatial::simbox::Mic;
-use molrs::store::frame_access::FrameAccess;
+use molrs::op::types::{F, Idx};
+use molrs::spatial::Mic;
+use molrs::store::FrameAccess;
 use molrs::store::keys;
-use molrs::types::{F, Idx};
 
-use crate::compute::error::ComputeError;
+use crate::compute::ComputeError;
 use crate::compute::positions::{Positions, get_positions_ref};
 use crate::op::vec3::sub;
 
@@ -147,7 +147,7 @@ impl AtomGroups {
 
 /// A stateless per-frame extractor: each selected tuple → one scalar sample.
 ///
-/// The contract mirrors the stateless [`Compute`](crate::compute::traits::Compute)
+/// The contract mirrors the stateless [`Compute`](crate::compute::Compute)
 /// trait: `&self` is an immutable parameter bag and identical inputs yield
 /// identical samples.
 pub trait Observable {
@@ -222,7 +222,7 @@ pub(crate) fn positions<FA: FrameAccess>(frame: &FA) -> Result<PosCols<'_>, Comp
 }
 
 /// Minimum-image displacement `b - a` using a per-frame [`Mic`] hoisted by
-/// the caller (built once with [`SimBox::mic`](molrs::spatial::simbox::SimBox::mic) rather than resolved per
+/// the caller (built once with [`SimBox::mic`](molrs::spatial::SimBox::mic) rather than resolved per
 /// pair). Free boundaries fall back to the raw separation. This is the one
 /// minimum-image implementation across `compute`, so distance DFs agree with
 /// [`compute::rdf`](crate::compute::rdf) on the same pair (ac-003).
@@ -255,8 +255,8 @@ mod tests {
 
     #[test]
     fn from_frame_reads_topology_block() {
-        use molrs::store::block::Block;
-        use molrs::store::frame::Frame;
+        use molrs::store::Block;
+        use molrs::store::Frame;
         use ndarray::Array1;
 
         let mut frame = Frame::new();

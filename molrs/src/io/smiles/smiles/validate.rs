@@ -10,8 +10,8 @@
 
 use crate::io::smiles::chem::ast::*;
 use crate::io::smiles::chem::validation::validate_ring_closures;
-use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
 use crate::io::smiles::smiles::is_element_symbol;
+use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 
 /// Validate a parsed SMILES molecule.
 ///
@@ -115,7 +115,7 @@ fn validate_symbol(symbol: &str, span: Span, input: &str) -> Result<(), SmilesEr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::smiles::parser::parse_smiles;
+    use crate::io::smiles::parse_smiles;
 
     #[test]
     fn test_valid_smiles() {

@@ -8,7 +8,7 @@
 
 use crate::io::smiles::chem::Dialect;
 use crate::io::smiles::chem::ast::*;
-use crate::io::smiles::error::{SmilesError, SmilesErrorKind};
+use crate::io::smiles::{SmilesError, SmilesErrorKind};
 
 /// Write a plain SMILES string from the IR.
 ///
@@ -575,8 +575,8 @@ fn write_bond_kind(out: &mut String, k: BondKind, omit_default_single: bool) {
 mod tests {
     use super::*;
     use crate::io::smiles::chem::test_support::descriptors;
-    use crate::io::smiles::parser::parse_smarts;
-    use crate::io::smiles::smiles::parse_smiles;
+    use crate::io::smiles::parse_smarts;
+    use crate::io::smiles::parse_smiles;
 
     #[test]
     fn write_smiles_ethanol_stable() {
@@ -618,7 +618,7 @@ mod tests {
     // -- fragment dialect: bonding descriptors ------------------------------
 
     fn fragment(input: &str) -> SmilesIR {
-        crate::io::smiles::smiles::parse_fragment_smiles(input)
+        crate::io::smiles::parse_fragment_smiles(input)
             .unwrap_or_else(|e| panic!("parse_fragment_smiles({input:?}) failed: {e}"))
     }
 

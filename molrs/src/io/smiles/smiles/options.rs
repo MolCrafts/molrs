@@ -2,12 +2,12 @@
 //!
 //! Every science/representation choice is an explicit field — no silent policy.
 
-use molrs::system::molgraph::NodeId;
+use molrs::system::NodeId;
 
 /// Options for [`super::from_atomistic()`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmilesEmitOptions {
-    /// Use WL [`canonical_order`](molrs::system::atomistic::Atomistic::canonical_order)
+    /// Use WL [`canonical_order`](molrs::system::Atomistic::canonical_order)
     /// for root selection and branch ordering.
     pub canonical: bool,
     /// Override root atom; when set, root selection ignores `canonical` root pick
@@ -79,7 +79,7 @@ pub enum NeighborStyle {
     Recursive,
 }
 
-/// Options for [`super::local_smarts`].
+/// Options for [`local_smarts_ir`](crate::io::smiles::local_smarts_ir).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalSmartsOptions {
     /// Bond depth from the centre atom. Must be >= 1.

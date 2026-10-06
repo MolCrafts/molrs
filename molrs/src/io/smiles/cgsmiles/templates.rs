@@ -36,17 +36,17 @@
 
 use std::collections::BTreeMap;
 
-use crate::io::smiles::cgsmiles::ast::{CGSmilesIR, FragmentBody};
-use crate::io::smiles::chem::ast::{BondingDescriptor, DescriptorKind, SmilesIR, Span};
-use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
-use crate::io::smiles::smiles::fragment_to_atomistic;
-use molrs::Element;
+use crate::io::smiles::fragment_to_atomistic;
+use crate::io::smiles::{BondingDescriptor, DescriptorKind, SmilesIR, Span};
+use crate::io::smiles::{CGSmilesIR, FragmentBody};
+use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 use molrs::error::MolRsError;
 use molrs::store::keys;
-use molrs::system::atomistic::Atomistic;
-use molrs::system::bond::BondNumber;
-use molrs::system::molgraph::NodeId;
-use molrs::system::port::PortKind;
+use molrs::system::Atomistic;
+use molrs::system::BondNumber;
+use molrs::system::Element;
+use molrs::system::NodeId;
+use molrs::system::PortKind;
 
 impl CGSmilesIR {
     /// Build one ported [`Atomistic`] template per definition of the last
@@ -119,7 +119,7 @@ impl CGSmilesIR {
     /// [`PairEnd::Body::port`](crate::io::smiles::PairEnd::Body::port) uses
     /// against the same body. The *n*-th descriptor of a definition is
     /// therefore the *n*-th port added for it.
-    /// [`ports`](molrs::system::molgraph::MolGraph::ports) promises no iteration order, so read a port back by
+    /// [`ports`](molrs::system::MolGraph::ports) promises no iteration order, so read a port back by
     /// its [`Port`](molrs::system::Port) rather than by position.
     ///
     /// # Errors
@@ -152,7 +152,7 @@ impl CGSmilesIR {
     /// ```
     /// use molrs::io::smiles::parse_cgsmiles;
     /// use molrs::perceive::Perceive;
-    /// use molrs::system::atomistic::Atomistic;
+    /// use molrs::system::Atomistic;
     ///
     /// let ir = parse_cgsmiles("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")?;
     /// let mut templates = ir.templates()?;
@@ -418,11 +418,11 @@ mod tests {
         FragmentBody, Notation, SmilesErrorKind, Span, parse_cgsmiles, parse_fragment_smiles,
     };
     use molrs::store::keys;
-    use molrs::system::atomistic::Atomistic;
-    use molrs::system::bond::{BondNumber, BondType};
-    use molrs::system::molgraph::NodeId;
-    use molrs::system::molgraph::PropValue;
-    use molrs::system::port::{Port, PortKind};
+    use molrs::system::Atomistic;
+    use molrs::system::NodeId;
+    use molrs::system::PropValue;
+    use molrs::system::{BondNumber, BondType};
+    use molrs::system::{Port, PortKind};
 
     // Every count below is hand-derived from the fixtures of § Domain basis /
     // § Testing strategy of `.claude/specs/cgsmiles-02b-to-fragment.md`: heavy
@@ -845,7 +845,7 @@ mod tests {
     fn writes_only_element_and_mass_on_a_handle() {
         let peo = template(F2, "PEO");
         let h_mass = f64::from(
-            molrs::Element::by_symbol("H")
+            molrs::system::Element::by_symbol("H")
                 .expect("H is in the Element table")
                 .atomic_mass(),
         );
@@ -893,7 +893,7 @@ mod tests {
     #[test]
     fn writes_the_hydrogen_mass_on_every_handle() {
         let h_mass = f64::from(
-            molrs::Element::by_symbol("H")
+            molrs::system::Element::by_symbol("H")
                 .expect("H is in the Element table")
                 .atomic_mass(),
         );

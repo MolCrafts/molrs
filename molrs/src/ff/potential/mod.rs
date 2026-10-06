@@ -16,12 +16,12 @@ pub mod geometry;
 pub mod angle;
 pub mod bond;
 pub mod cmap;
-pub mod compile;
+pub(crate) mod compile;
 pub mod dihedral;
-pub mod error;
+mod error;
 pub mod generic;
 pub mod improper;
-pub mod instances;
+mod instances;
 pub mod kspace;
 pub(crate) mod need;
 pub mod pair;
@@ -39,14 +39,14 @@ use ndarray::{Array1, Array2, ArrayView2};
 
 use crate::ff::forcefield::SpecialBonds;
 use molrs::math::Virial;
+use molrs::op::types::{F, Idx};
 use molrs::spatial::neighbors::Neighbors;
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
+use molrs::store::Block;
+use molrs::store::Frame;
+use molrs::store::keys::{ATOMI, ATOMJ, ATOMK, ATOML, IS_14};
 use molrs::store::schema::PAIR_OVERRIDE_COLUMNS;
 use molrs::store::schema::block_names::{ANGLES, ATOMS, BONDS, DIHEDRALS, PAIRS};
-use molrs::store::schema::consts::{ATOMI, ATOMJ, ATOMK, ATOML, IS_14};
-use molrs::system::bond_weights::BondDistanceWeights;
-use molrs::types::{F, Idx};
+use molrs::system::BondDistanceWeights;
 
 /// Above this many atoms, [`intramolecular_pairs`] refuses rather than
 /// enumerating.
@@ -633,9 +633,9 @@ impl PairWeights {
 
     /// The weights on `topo`'s close pairs: per atom, its partners whose
     /// weight is not 1 — the lists
-    /// [`Topology::special_weights`](molrs::Topology::special_weights) gives,
+    /// [`Topology::special_weights`](molrs::system::Topology::special_weights) gives,
     /// with the replaced pairs set to 0.
-    pub fn special_weights(&self, topo: &molrs::Topology) -> SpecialWeights {
+    pub fn special_weights(&self, topo: &molrs::system::Topology) -> SpecialWeights {
         let mut lists = topo.special_weights(&self.by_distance);
         for &(i, j) in &self.replaced {
             for (a, b) in [(i, j), (j, i)] {
@@ -663,7 +663,7 @@ impl PairWeights {
 ///
 /// So the weights have to be applied at evaluation time, and this holds them.
 /// Build it from [`PairWeights::special_weights`], or from
-/// [`Topology::special_weights`](molrs::Topology::special_weights), which
+/// [`Topology::special_weights`](molrs::system::Topology::special_weights), which
 /// walks the bond graph.
 ///
 /// # Why it splits the table rather than scaling in the kernel
@@ -1094,8 +1094,8 @@ mod tests {
     }
 
     use crate::ff::forcefield::{ForceField, Params};
-    use molrs::store::block::Block;
-    use molrs::types::Idx;
+    use molrs::op::types::Idx;
+    use molrs::store::Block;
     use ndarray::Array1;
 
     struct DummyPotential {
@@ -1714,7 +1714,7 @@ mod tests {
     /// nothing about what to do instead. The refusal names the alternative.
     #[test]
     fn a_frame_too_large_for_a_full_pair_list_is_refused() {
-        use molrs::store::block::Block;
+        use molrs::store::Block;
         use ndarray::Array1;
 
         let n = MAX_ATOMS_FOR_A_FULL_PAIR_LIST + 1;
@@ -1748,7 +1748,7 @@ mod tests {
 #[cfg(test)]
 pub(crate) mod test_util {
     use super::Potential;
-    use molrs::types::F;
+    use molrs::op::types::F;
 
     /// Central-difference check that every force component is `-dE/dx`.
     pub(crate) fn assert_forces_are_negative_gradient(pot: &dyn Potential, coords: &[F], tol: F) {

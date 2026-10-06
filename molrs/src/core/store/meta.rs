@@ -242,11 +242,6 @@ impl MetaValue {
     }
 }
 
-/// The attribute of a frame-shaped group that maps every key of its `meta`
-/// document to its tag ([`MetaValue::dtype`]). One leading underscore, as
-/// `_validity`: binding-owned, legal in every store, and never a meta key.
-pub const META_TYPES_ATTR: &str = "_meta_types";
-
 macro_rules! impl_from_meta {
     ($ty:ty, $variant:ident) => {
         impl From<$ty> for MetaValue {
@@ -287,7 +282,7 @@ impl From<&str> for MetaValue {
 /// # Examples
 ///
 /// ```
-/// use molrs::MetaMap;
+/// use molrs::store::MetaMap;
 ///
 /// let mut meta = MetaMap::new();
 /// meta.insert("z", "Z");

@@ -10,36 +10,37 @@
 //! a private copy of the input and defines the matched types in the output
 //! force field the base owns. No implementor writes the output itself.
 //!
-//! Materializing a typed graph into a [`Frame`](molrs::store::frame::Frame) for
+//! Materializing a typed graph into a [`Frame`](molrs::store::Frame) for
 //! `PotentialCompiler::compile` is the graph's `to_frame` job; typifiers stay on
 //! the graph boundary.
 
-pub mod am1bcc;
-pub mod atd;
+mod am1bcc;
+pub(crate) mod atd;
 pub mod cmap;
-pub mod element;
-pub mod estimate;
-pub mod gaff;
+mod element;
+pub(crate) mod estimate;
+mod gaff;
 pub mod mmff;
-pub mod opls;
+mod opls;
 pub(crate) mod topology;
-pub mod uff;
+pub(crate) mod uff;
 
 pub use am1bcc::BCCAtomChargeTypifier;
 pub use atd::{AtdBondOrders, AtdParameterSet, AtdTypifier};
 pub use element::ElementTypifier;
 pub use estimate::{
-    BondedTerm, Estimate, ParameterInterpolator, Parmchk2Estimator, TypifierParameterContext,
+    BondedTerm, EmpiricalSet, Estimate, EstimateMethod, ParameterInterpolator, Parmchk2Estimator,
+    PenaltyTier, Provenance, TypifierParameterContext,
 };
 pub use gaff::{GaffParameterSet, GaffTypifier};
-pub use opls::OPLSAATypifier;
+pub use opls::{OPLSAATypifier, OplsTypeRow, OplsTypingMeta};
 pub use uff::UFFTypifier;
 
 use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
-use molrs::system::atomistic::Atomistic;
-use molrs::system::molgraph::{KindId, MolGraph, NodeId, PropValue, RelationId};
+use molrs::system::Atomistic;
+use molrs::system::{KindId, MolGraph, NodeId, PropValue, RelationId};
 
 use crate::ff::forcefield::{ForceField, Params, Style};
 use crate::ff::ir::{Arity, EndpointOrder};
@@ -722,8 +723,8 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::Mutex;
 
-    use molrs::system::atomistic::Atomistic;
-    use molrs::system::molgraph::{Atom, PropValue};
+    use molrs::system::Atomistic;
+    use molrs::system::{Atom, PropValue};
 
     use super::*;
     use crate::ff::forcefield::tests::assert_same_definitions;

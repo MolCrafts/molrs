@@ -1,13 +1,13 @@
 //! Dihedral potential kernels.
 
-pub mod charmm;
-pub mod class2;
-pub mod harmonic;
-pub mod mmff;
-pub mod multi_harmonic;
-pub mod opls;
-pub mod periodic;
-pub mod uff;
+pub(crate) mod charmm;
+pub(crate) mod class2;
+pub(crate) mod harmonic;
+pub(crate) mod mmff;
+pub(crate) mod multi_harmonic;
+pub(crate) mod opls;
+pub(crate) mod periodic;
+pub(crate) mod uff;
 
 pub use charmm::{DihedralCharmm, dihedral_charmm_ctor};
 pub use class2::{DihedralClass2, dihedral_class2_ctor};

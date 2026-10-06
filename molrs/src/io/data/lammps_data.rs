@@ -20,13 +20,13 @@ use crate::io::lammps::common::{
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::streaming::{FrameIndexBuilder, FrameIndexEntry};
 use crate::io::writer::FrameWriter;
-use molrs::spatial::simbox::SimBox;
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
-use molrs::store::frame_access::FrameAccess;
+use molrs::op::types::{F, I, Idx, Pbc3};
+use molrs::spatial::SimBox;
+use molrs::store::Block;
+use molrs::store::Frame;
+use molrs::store::FrameAccess;
 use molrs::store::keys;
 use molrs::store::type_labels::TypeLabels;
-use molrs::types::{F, I, Idx, Pbc3};
 use ndarray::ArrayViewD;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
@@ -1621,7 +1621,7 @@ fn resolve_row_masses(frame: &impl FrameAccess, n: usize) -> Vec<F> {
         for (i, mass) in masses.iter_mut().enumerate() {
             let sym = el[[i]].as_str();
             let known = *memo.entry(sym).or_insert_with(|| {
-                crate::Element::by_symbol(sym).map(|e| F::from(e.atomic_mass()))
+                crate::system::Element::by_symbol(sym).map(|e| F::from(e.atomic_mass()))
             });
             if let Some(m) = known {
                 *mass = m;
@@ -2335,7 +2335,7 @@ mod streaming_tests {
 #[cfg(test)]
 mod atom_style_tests {
     use super::*;
-    use molrs::store::frame_access::FrameAccess;
+    use molrs::store::FrameAccess;
 
     fn parse_text(text: &str) -> Frame {
         parse_frame_bytes(text.as_bytes()).expect("parse")
@@ -2752,8 +2752,8 @@ mod atom_style_tests {
     /// wrap (`p`) or drop (`f`, `s`) the atoms out of.
     #[test]
     fn write_boxless_frame_inside_the_bounds_of_its_atoms() {
-        use crate::store::block::Block;
-        use crate::store::frame::Frame as CoreFrame;
+        use crate::store::Block;
+        use crate::store::Frame as CoreFrame;
         use ndarray::ArrayD;
 
         let column = |v: Vec<f64>| ArrayD::from_shape_vec(ndarray::IxDyn(&[3]), v).unwrap();
@@ -2804,8 +2804,8 @@ mod atom_style_tests {
 
     #[test]
     fn write_refuses_bonds_without_mol_id() {
-        use crate::store::block::Block;
-        use crate::store::frame::Frame as CoreFrame;
+        use crate::store::Block;
+        use crate::store::Frame as CoreFrame;
         use ndarray::ArrayD;
 
         let mut frame = CoreFrame::new();
@@ -2844,8 +2844,8 @@ mod atom_style_tests {
     /// `h1-c3-c3` are two angle types, both written.
     #[test]
     fn write_keeps_reverse_angle_type_labels_as_two_types() {
-        use crate::store::block::Block;
-        use crate::store::frame::Frame as CoreFrame;
+        use crate::store::Block;
+        use crate::store::Frame as CoreFrame;
         use ndarray::ArrayD;
 
         let mut frame = CoreFrame::new();
@@ -2917,8 +2917,8 @@ mod atom_style_tests {
     fn write_resolves_string_types_ids_and_masses_without_prepare() {
         // Frame carries only string `type` + coords + element — no type_id,
         // no id, no mass column. Writer must still emit a complete data file.
-        use crate::store::block::Block;
-        use crate::store::frame::Frame as CoreFrame;
+        use crate::store::Block;
+        use crate::store::Frame as CoreFrame;
         use ndarray::ArrayD;
 
         let mut frame = CoreFrame::new();

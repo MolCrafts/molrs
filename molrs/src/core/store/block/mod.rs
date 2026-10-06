@@ -6,8 +6,8 @@
 //! # Examples
 //!
 //! ```
-//! use molrs::store::block::Block;
-//! use molrs::types::{F, Idx};
+//! use molrs::store::Block;
+//! use molrs::op::types::{F, Idx};
 //! use ndarray::Array1;
 //!
 //! let mut block = Block::new();
@@ -31,9 +31,9 @@ mod column;
 mod dtype;
 mod error;
 
-pub mod access;
-pub mod block_view;
-pub mod column_view;
+mod access;
+mod block_view;
+mod column_view;
 
 pub use access::BlockAccess;
 pub use block_view::BlockView;
@@ -238,8 +238,8 @@ impl Block {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::block::Block;
-    /// use molrs::types::{F, I, Idx};
+    /// use molrs::store::Block;
+    /// use molrs::op::types::{F, I, Idx};
     /// use ndarray::Array1;
     ///
     /// let mut block = Block::new();
@@ -328,8 +328,8 @@ impl Block {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::block::Block;
-    /// use molrs::types::I;
+    /// use molrs::store::Block;
+    /// use molrs::op::types::I;
     /// use ndarray::Array1;
     ///
     /// let mut block = Block::new();
@@ -392,7 +392,7 @@ impl Block {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::block::{Block, Column};
+    /// use molrs::store::{Block, Column};
     /// use ndarray::ArrayD;
     ///
     /// let mut block = Block::new();
@@ -509,7 +509,7 @@ impl Block {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::block::Block;
+    /// use molrs::store::Block;
     /// use ndarray::Array1;
     ///
     /// let mut members = Block::new();
@@ -568,7 +568,7 @@ impl Block {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::block::Block;
+    /// use molrs::store::Block;
     /// use ndarray::Array1;
     ///
     /// let mut block = Block::new();
@@ -764,8 +764,8 @@ impl Block {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::block::Block;
-    /// use molrs::types::F;
+    /// use molrs::store::Block;
+    /// use molrs::op::types::F;
     /// use ndarray::Array1;
     ///
     /// let mut block = Block::new();
@@ -903,8 +903,8 @@ impl Block {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::block::Block;
-    /// use molrs::types::F;
+    /// use molrs::store::Block;
+    /// use molrs::op::types::F;
     /// use ndarray::Array1;
     ///
     /// let mut block = Block::new();
@@ -961,8 +961,8 @@ impl Block {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::block::Block;
-    /// use molrs::types::F;
+    /// use molrs::store::Block;
+    /// use molrs::op::types::F;
     /// use ndarray::Array1;
     ///
     /// let mut block1 = Block::new();
@@ -1034,8 +1034,8 @@ impl Block {
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::block::Block;
-    /// use molrs::types::F;
+    /// use molrs::store::Block;
+    /// use molrs::op::types::F;
     /// use ndarray::Array1;
     ///
     /// let mut a = Block::new();
@@ -1138,23 +1138,23 @@ impl Block {
     ///
     /// [`BlockError::MissingColumn`] naming the first of `x`, `y`, `z` the
     /// block lacks, and [`BlockError::SchemaDtype`] for one not stored as
-    /// [`F`](crate::types::F).
+    /// [`F`](crate::op::types::F).
     ///
     /// # Examples
     ///
     /// ```
-    /// use molrs::store::block::Block;
-    /// use molrs::types::F;
+    /// use molrs::store::Block;
+    /// use molrs::op::types::F;
     /// use ndarray::array;
     ///
     /// let mut block = Block::new();
     /// block.set_coords(array![[0.0 as F, 1.0, 2.0], [3.0, 4.0, 5.0]].view()).unwrap();
     /// assert_eq!(block.coords().unwrap(), array![[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]]);
     /// ```
-    pub fn coords(&self) -> Result<crate::types::FNx3, BlockError> {
-        use crate::store::schema::consts::COORDS;
+    pub fn coords(&self) -> Result<crate::op::types::FNx3, BlockError> {
+        use crate::store::keys::COORDS;
         let n = self.nrows.unwrap_or(0);
-        let mut out = crate::types::FNx3::zeros((n, 3));
+        let mut out = crate::op::types::FNx3::zeros((n, 3));
         for (axis, key) in COORDS.into_iter().enumerate() {
             let col = self.get(key).ok_or_else(|| BlockError::MissingColumn {
                 key: key.to_owned(),
@@ -1174,7 +1174,7 @@ impl Block {
 
     /// Write an `N × 3` array into the `x` / `y` / `z` columns.
     ///
-    /// Each column is replaced by a new [`F`](crate::types::F) column (any
+    /// Each column is replaced by a new [`F`](crate::op::types::F) column (any
     /// validity mask it had goes with it) and keeps its position among the
     /// columns; a missing one is appended. The row count must match the
     /// block's, unless the block has no columns yet.
@@ -1187,8 +1187,8 @@ impl Block {
     ///   row count from the block's.
     ///
     /// The block is unchanged on error.
-    pub fn set_coords(&mut self, coords: crate::types::FNx3View<'_>) -> Result<(), BlockError> {
-        use crate::store::schema::consts::COORDS;
+    pub fn set_coords(&mut self, coords: crate::op::types::FNx3View<'_>) -> Result<(), BlockError> {
+        use crate::store::keys::COORDS;
         if coords.ncols() != 3 {
             return Err(BlockError::validation(format!(
                 "coordinates must be an N x 3 array, got shape {:?}",
@@ -1287,11 +1287,11 @@ fn sort_order(col: &Column, nrows: usize) -> Vec<usize> {
     let mut order: Vec<usize> = (0..nrows).collect();
     match col {
         Column::Float(h) => {
-            let v: Vec<crate::types::F> = h.array().iter().copied().collect();
+            let v: Vec<crate::op::types::F> = h.array().iter().copied().collect();
             order.sort_by(|&i, &j| v[i].total_cmp(&v[j]));
         }
         Column::Int(h) => {
-            let v: Vec<crate::types::I> = h.array().iter().copied().collect();
+            let v: Vec<crate::op::types::I> = h.array().iter().copied().collect();
             order.sort_by_key(|&i| v[i]);
         }
         Column::Int8(h) => {
@@ -1307,7 +1307,7 @@ fn sort_order(col: &Column, nrows: usize) -> Vec<usize> {
             order.sort_by_key(|&i| v[i]);
         }
         Column::UInt(h) => {
-            let v: Vec<crate::types::Idx> = h.array().iter().copied().collect();
+            let v: Vec<crate::op::types::Idx> = h.array().iter().copied().collect();
             order.sort_by_key(|&i| v[i]);
         }
         Column::U8(h) => {
@@ -1411,7 +1411,7 @@ fn concat_columns(key: &str, pieces: &[Column]) -> Result<Column, BlockError> {
 /// refuse a canonical identifier stored at another width before it reaches
 /// here, so a non-conforming store is reported rather than silently widened.
 fn promote_canonical_uint(key: &str, col: Column) -> Column {
-    use crate::types::Idx;
+    use crate::op::types::Idx;
     let Some(spec) = crate::store::schema::column(key) else {
         return col;
     };
@@ -1467,7 +1467,7 @@ fn check_schema(key: &str, dtype: DType, shape: &[usize]) -> Result<(), BlockErr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{F, I, Idx};
+    use crate::op::types::{F, I, Idx};
     use ndarray::Array1;
 
     /// Block with float columns `c`, `a`, `b` inserted in that order, one row

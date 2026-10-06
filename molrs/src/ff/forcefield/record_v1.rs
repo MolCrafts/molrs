@@ -69,13 +69,12 @@ use std::collections::HashSet;
 use indexmap::IndexMap;
 use serde_json::Value as JsonValue;
 
-use crate::MolRsError;
-use crate::store::block::Column;
-use crate::store::block::{Block, DType};
-use crate::store::forcefield_section::{
-    ForceFieldSection, is_parameter_column, style_block_name, unit_preset,
-};
-use crate::store::frame::Frame;
+use crate::error::MolRsError;
+use crate::store::Column;
+use crate::store::Frame;
+use crate::store::forcefield_section::{is_parameter_column, unit_preset};
+use crate::store::{Block, DType};
+use crate::store::{ForceFieldSection, style_block_name};
 
 fn refuse(message: impl std::fmt::Display) -> MolRsError {
     MolRsError::validation(format!("molrec_version 1 record: {message}"))
@@ -689,7 +688,7 @@ impl V1Upgrade {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::forcefield_section::ForceFieldSection;
+    use crate::store::ForceFieldSection;
     use ndarray::ArrayD;
     use serde_json::json;
     use std::f64::consts::PI;

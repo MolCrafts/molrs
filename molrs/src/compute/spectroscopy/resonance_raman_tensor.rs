@@ -1,12 +1,12 @@
 //! Resonance-Raman iso/aniso ACF raw compute — Raman machinery over a resonant
 //! polarizability series.
 
-use molrs::store::frame_access::FrameAccess;
+use molrs::store::FrameAccess;
 use ndarray::Array2;
 
 use super::raman_tensor::{RamanTensor, RamanTensorResult};
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 
 /// Raw resonance-Raman iso/aniso ACFs — identical machinery to [`RamanTensor`]
 /// but consuming a caller-supplied **resonant** (excitation-frequency-dependent)

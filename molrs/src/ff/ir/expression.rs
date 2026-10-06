@@ -8,11 +8,11 @@ use std::sync::Arc;
 
 use crate::ff::forcefield::Params;
 use crate::ff::ir::expr::{self, Binding, Compiled, ExprError, Geometry};
-use crate::ff::ir::registry::{ExpressionForm, ExpressionKernel};
 use crate::ff::ir::{CategorySpec, Coordinate, Dim, IrError, Mix, ParamKind, ParamSpec, StyleSpec};
+use crate::ff::ir::{ExpressionForm, ExpressionKernel};
 use crate::ff::ir::{ParamSource, SpecialClass};
 use crate::ff::potential::generic::{CompoundForm, ParamCols, ScalarForm};
-use molrs::types::F;
+use molrs::op::types::F;
 
 /// Members an indexed family binds in an expression: `k1 … k16`. A table
 /// whose rows have fewer leaves the rest unread (an expression that reads

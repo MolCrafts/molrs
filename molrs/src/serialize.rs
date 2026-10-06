@@ -29,10 +29,10 @@ use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::core::spatial::simbox::SimBox;
-use crate::core::store::block::{Block, Column, DType};
-use crate::core::store::frame::Frame;
-use crate::core::store::meta::{MetaMap, MetaValue};
+use crate::spatial::SimBox;
+use crate::store::Frame;
+use crate::store::{Block, Column, DType};
+use crate::store::{MetaMap, MetaValue};
 
 // ===== MetaValue ===========================================================
 
@@ -528,10 +528,10 @@ impl<'de> Deserialize<'de> for Frame {
 
 #[cfg(test)]
 mod tests {
-    use crate::core::spatial::simbox::SimBox;
-    use crate::core::store::block::Block;
-    use crate::core::store::frame::Frame;
-    use crate::core::store::meta::MetaValue;
+    use crate::spatial::SimBox;
+    use crate::store::Block;
+    use crate::store::Frame;
+    use crate::store::MetaValue;
     use ndarray::{Array1, array};
 
     fn atoms() -> Block {
@@ -622,7 +622,7 @@ mod tests {
     #[test]
     fn a_column_with_a_bad_dtype_tag_is_refused() {
         let json = r#"{"dtype":"quaternion","shape":[1],"data":[0]}"#;
-        assert!(serde_json::from_str::<crate::core::store::block::Column>(json).is_err());
+        assert!(serde_json::from_str::<crate::store::Column>(json).is_err());
     }
 
     /// Column order is the file's order; a round trip must not sort it.

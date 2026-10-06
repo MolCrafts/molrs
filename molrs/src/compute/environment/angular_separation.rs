@@ -25,14 +25,14 @@
 //! - [`AngularSeparationNeighbor`]: sparse, one angular distance per
 //!   neighbor pair, driven by a `Neighbors`.
 
-use crate::compute::result::ComputeResult;
+use crate::compute::ComputeResult;
+use molrs::op::types::F;
 use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::store::FrameAccess;
 use ndarray::Array2;
 
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 use crate::op::rigid::{quat_dot, quat_norm};
 use crate::op::types::Quat;
 
@@ -242,7 +242,7 @@ impl ComputeResult for AngularSeparationNeighborResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
+    use molrs::store::Frame;
 
     const TOL: F = 1e-10;
 

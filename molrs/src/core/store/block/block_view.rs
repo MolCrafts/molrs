@@ -179,7 +179,7 @@ impl std::fmt::Debug for BlockView<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{F, Idx};
+    use crate::op::types::{F, Idx};
     use ndarray::Array1;
 
     #[test]

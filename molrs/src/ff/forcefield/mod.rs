@@ -25,7 +25,7 @@ pub mod xml;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use molrs::system::bond_weights::BondDistanceWeights;
+use molrs::system::BondDistanceWeights;
 use ndarray::ArrayD;
 use smallvec::SmallVec;
 
@@ -141,11 +141,10 @@ impl Params {
     }
 
     /// Whether `self` and `other` price alike: equal on every key that is a
-    /// parameter ([`is_parameter_column`]), numeric, string and array, a key
-    /// one carries and the other lacks being a difference. The annotation keys
-    /// (`desc`, `doi`, `smarts`, …) take no part. Exact, like `==`.
-    ///
-    /// [`is_parameter_column`]: molrs::store::forcefield_section::is_parameter_column
+    /// parameter (not an annotation column of the force-field section),
+    /// numeric, string and array, a key one carries and the other lacks being
+    /// a difference. The annotation keys (`desc`, `doi`, `smarts`, …) take no
+    /// part. Exact, like `==`.
     pub fn same_parameters(&self, other: &Params) -> bool {
         use molrs::store::forcefield_section::is_parameter_column;
         use std::collections::BTreeMap;
@@ -1148,7 +1147,7 @@ impl Style {
 /// Per-nonbonded-kind 1-2 / 1-3 / 1-4 interaction scale weights — LAMMPS
 /// `special_bonds` semantics, owned by the [`ForceField`].
 ///
-/// The always-on geometric table is [`crate::BondDistanceWeights`]: one
+/// The always-on geometric table is [`crate::system::BondDistanceWeights`]: one
 /// arbitrary-length vector with an explicit 1-N tail. A LAMMPS triple is not
 /// a transcription (`charmm 0 0 0` is `[0, 0, 0, 1]` there). There is no
 /// `From` / `Into` between the two types.

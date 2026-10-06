@@ -39,12 +39,12 @@
 //! `x·r = (|r|² + Rᵢ² − Rⱼ²)/2`; the cell keeps the generator side
 //! (`x·r ≤ off`). Equal radii reduce to the plain Voronoi bisector at `r/2`.
 
-use molrs::spatial::simbox::SimBox;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::spatial::SimBox;
 use ndarray::ArrayView2;
 
 use super::cell::{BOUNDARY, Face, Poly, VoronoiCells};
-use crate::compute::error::ComputeError;
+use crate::compute::ComputeError;
 
 /// Builder for the periodic radical-Voronoi tessellation. Orthorhombic boxes
 /// only (triclinic is out of scope; see the spec).

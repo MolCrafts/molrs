@@ -1245,7 +1245,7 @@ fn push_data_section(lines: &mut Vec<String>, heading: &str, rows: Vec<String>) 
 /// LAMMPS has no per-pair exception (see the conventions guide, "1-4
 /// interactions"). The data-file writer refuses them too; a caller writing a
 /// force field for a frame checks the frame here.
-pub fn refuse_pair_overrides(frame: &molrs::store::frame::Frame) -> Result<(), String> {
+pub fn refuse_pair_overrides(frame: &molrs::store::Frame) -> Result<(), String> {
     let Some(pairs) = frame.get("pairs") else {
         return Ok(());
     };
@@ -1719,10 +1719,10 @@ pair_coeff c3 c3 0.107800 3.397710
     // plus TypeLabels from a hand-written Frame, one stage per test.
     // ------------------------------------------------------------------
 
-    use crate::core::store::block::Block;
-    use crate::core::store::frame::Frame;
     use crate::core::store::keys;
-    use crate::core::store::type_labels::TypeLabels;
+    use crate::store::Block;
+    use crate::store::Frame;
+    use crate::store::type_labels::TypeLabels;
     use ndarray::{ArrayD, IxDyn};
 
     /// A block whose only column is the string `type` label per row.

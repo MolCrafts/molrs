@@ -1,6 +1,5 @@
-//! # molrs
-//!
-//! A Rust library providing core molecular modeling functionality.
+//! The core data model and its foundations. Not a public namespace: each
+//! domain below is re-exported at the crate root as its own facade.
 //!
 //! ## Module layout
 //!
@@ -8,6 +7,7 @@
 //! - [`system`] — molecular representations (`Atomistic`, `MolGraph`, `Topology`, elements)
 //! - [`spatial`] — regions, neighbor lists, geometry
 //! - [`math`], [`units`] — numerical and unit-system foundations
+//! - [`error`] — the crate error type
 //!
 //! Structure builders live in `crate::builder` (feature `builder`), above the
 //! core layer.
@@ -17,7 +17,7 @@
 //! ### Element lookup
 //!
 //! ```
-//! use molrs::Element;
+//! use molrs::system::Element;
 //!
 //! // Look up elements by atomic number
 //! let hydrogen = Element::by_number(1).unwrap();
@@ -41,7 +41,7 @@
 // included, since `chem-perceive-14` — so nothing here `include_str!`s an XML to
 // re-parse at runtime.
 
-// Domain groups
+// Domain groups — each re-exported at the crate root as a facade.
 pub mod spatial;
 pub mod store;
 pub mod system;
@@ -49,7 +49,6 @@ pub mod system;
 // Foundations
 pub mod error;
 pub mod math;
-pub mod types;
 pub mod units;
 
 #[cfg(all(test, feature = "rayon"))]
@@ -57,28 +56,3 @@ pub(crate) mod test_rayon;
 
 // Chemical perception (rings, aromaticity, hydrogens, stereo, rotatable, SMARTS)
 // sits one layer up in `crate::perceive` — above `core`, below `ff`.
-
-// Public re-exports for common types
-pub use error::MolRsError;
-pub use spatial::geometry::CenterError;
-pub use spatial::simbox::{BoxError, BoxKind, Mic, SimBox};
-pub use store::block::Block;
-pub use store::forcefield_section::ForceFieldSection;
-pub use store::frame::Frame;
-pub use store::frame_access::FrameAccess;
-pub use store::frame_view::FrameView;
-pub use store::meta::{MetaIter, MetaMap, MetaValue};
-pub use store::record::{MOLREC_VERSION, MolRec, Observables, RESERVED_META_KEYS};
-pub use store::trajectory::{ObservableData, ObservableKind, ObservableRecord, Trajectory};
-pub use system::atomistic::{Atomistic, ExtractedAtomistic};
-pub use system::bond_weights::BondDistanceWeights;
-pub use system::coarsegrain::{CoarseGrain, ExtractedCoarseGrain};
-pub use system::extract::{ExtractedBall, InducedSubgraph};
-pub use system::graph_hash::{canonical_order, is_isomorphic, structural_hash};
-pub use system::link::LinkError;
-pub use system::molgraph::{Atom, KindId, MolGraph, NodeId, PropValue, Relation, RelationId};
-pub use system::port::{Port, PortKind};
-pub use system::topology::{Topology, TopologyRingInfo};
-pub use units::{
-    Dimension, Quantity, Unit, UnitDef, UnitPreset, UnitPresetRegistry, UnitRegistry, UnitsError,
-};

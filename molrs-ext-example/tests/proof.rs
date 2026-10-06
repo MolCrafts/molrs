@@ -42,9 +42,10 @@ use molrs::ff::{
 };
 use molrs::io::data::lammps_data::write_lammps_data;
 use molrs::io::mrec::{read_forcefield_file, write_forcefield_file};
+use molrs::spatial::SimBox;
 use molrs::spatial::neighbors::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
 use molrs::store::type_labels::TypeLabels;
-use molrs::{Block, Frame, SimBox};
+use molrs::store::{Block, Frame};
 use molrs_ext_example as ext;
 use ndarray::Array1;
 
@@ -518,7 +519,7 @@ fn pair_style_matches_lammps() {
 
     // The neighbour-driven door, over a table of every pair, each weighted
     // as MD weights it, prices what the pair-list door prices.
-    let topo = molrs::Topology::from_frame(&case.frame).unwrap();
+    let topo = molrs::system::Topology::from_frame(&case.frame).unwrap();
     let mut worst: f64 = 0.0;
     for x in &case.configs {
         let (e, f) = price(&case.ff, &reg, &case.frame, x);

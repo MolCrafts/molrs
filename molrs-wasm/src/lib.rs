@@ -93,7 +93,7 @@ pub fn wasm_memory() -> Memory {
 /// ```
 #[wasm_bindgen(js_name = covalentRadius)]
 pub fn covalent_radius(symbol: &str) -> Option<f64> {
-    molrs::Element::by_symbol(symbol).map(|el| f64::from(el.covalent_radius()))
+    molrs::system::Element::by_symbol(symbol).map(|el| f64::from(el.covalent_radius()))
 }
 
 // Module declarations

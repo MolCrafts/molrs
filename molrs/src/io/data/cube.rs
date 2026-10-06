@@ -32,7 +32,7 @@
 //! ## Unit handling
 //!
 //! Atom coordinates and the simulation box are normalised to **Å** on read
-//! (Bohr → Å conversion by the private `BOHR_TO_ANG` constant — the Bohr radius,
+//! (Bohr → Å conversion by the private `ANGSTROM_PER_BOHR` constant — the Bohr radius,
 //! 0.529 177 210 67 Å — when the file uses Bohr units).
 //! The original unit system is recorded in `frame.meta["cube_units"]` so
 //! [`write_cube_to_writer`] can round-trip the file without surprising the
@@ -51,17 +51,13 @@ use std::path::Path;
 
 use ndarray::{Array1, ArrayD, IxDyn};
 
-use molrs::Element;
+use crate::units::constants::ANGSTROM_PER_BOHR;
 use molrs::error::MolRsError;
-use molrs::spatial::simbox::SimBox;
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
-use molrs::types::{F, Idx};
-
-/// Bohr radius in Ångström. Cube files declare their units via the sign of
-/// the first voxel-count integer (positive = Bohr, negative = Å). molvis's
-/// world is Å, so we always convert on read.
-const BOHR_TO_ANG: f64 = 0.529_177_210_67;
+use molrs::op::types::{F, Idx};
+use molrs::spatial::SimBox;
+use molrs::store::Block;
+use molrs::store::Frame;
+use molrs::system::Element;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -221,7 +217,7 @@ pub fn read_cube_from_reader<R: BufRead>(mut reader: R) -> Result<Frame, MolRsEr
     // every downstream consumer (simbox, marching cubes, atom rendering)
     // can treat the frame as Å without further bookkeeping.
     // -----------------------------------------------------------------------
-    let unit_scale: f64 = if is_angstrom { 1.0 } else { BOHR_TO_ANG };
+    let unit_scale: f64 = if is_angstrom { 1.0 } else { ANGSTROM_PER_BOHR };
     let origin_ang: [f64; 3] = [
         origin[0] * unit_scale,
         origin[1] * unit_scale,
@@ -446,7 +442,11 @@ pub fn write_cube_to_writer<W: Write>(writer: &mut W, frame: &Frame) -> Result<(
         .get("cube_units")
         .and_then(|value| value.as_str())
         .is_some_and(|u| u == "angstrom");
-    let unit_scale: f64 = if is_angstrom { 1.0 } else { 1.0 / BOHR_TO_ANG };
+    let unit_scale: f64 = if is_angstrom {
+        1.0
+    } else {
+        1.0 / ANGSTROM_PER_BOHR
+    };
 
     // Recover origin and cell columns from simbox, in the writer's unit.
     let origin_arr = simbox.origin_view().to_owned();

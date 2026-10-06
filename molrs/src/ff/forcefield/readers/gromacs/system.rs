@@ -5,13 +5,14 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use ndarray::{Array1, ArrayD};
 
-use super::{Directives, KJ_PER_KCAL, Kind, NM_TO_ANGSTROM, Row, Table, convert};
+use super::{Directives, Kind, Row, Table, convert};
 use crate::ff::potential::MAX_ATOMS_FOR_A_FULL_PAIR_LIST;
-use molrs::store::block::{Block, BlockDtype};
-use molrs::store::frame::Frame;
+use crate::units::constants::{ANGSTROM_PER_NM, KJ_PER_KCAL};
+use molrs::op::types::{F, Idx};
+use molrs::store::Frame;
 use molrs::store::schema::PAIR_OVERRIDE_COLUMNS;
 use molrs::store::type_labels::TypeName;
-use molrs::types::{F, Idx};
+use molrs::store::{Block, BlockDtype};
 
 /// A molecule type's priced pairs `(i, j, is_14, cells)` and its excluded
 /// pairs.
@@ -353,7 +354,7 @@ fn molecule_row(
                 .defaults
                 .ok_or_else(|| row.err("[ pairs ] needs [ defaults ] (fudgeQQ, gen-pairs)"))?;
             let values = numbers(row, &cols[3..])?;
-            let lj = |sigma: f64, eps: f64| (eps / KJ_PER_KCAL, sigma * NM_TO_ANGSTROM);
+            let lj = |sigma: f64, eps: f64| (eps / KJ_PER_KCAL, sigma * ANGSTROM_PER_NM);
             let cells: Cells = match (cols[2], &values[..]) {
                 ("1", []) => {
                     let (a, b) = (&mt.atoms[i].atype, &mt.atoms[j].atype);
@@ -430,7 +431,7 @@ fn molecule_row(
                 }
             };
             let r0 = match &numbers(row, &cols[3..])?[..] {
-                [b0] => b0 * NM_TO_ANGSTROM,
+                [b0] => b0 * ANGSTROM_PER_NM,
                 [] => {
                     let (a, b) = (
                         d.classes[&mt.atoms[i].atype].as_str(),
@@ -474,8 +475,8 @@ fn molecule_row(
                 return Err(row.err("a settle needs the two atoms after its oxygen"));
             }
             let (doh, dhh) = (
-                row.number(doh, "doh")? * NM_TO_ANGSTROM,
-                row.number(dhh, "dhh")? * NM_TO_ANGSTROM,
+                row.number(doh, "doh")? * ANGSTROM_PER_NM,
+                row.number(dhh, "dhh")? * ANGSTROM_PER_NM,
             );
             mt.constraints
                 .extend([(o, o + 1, doh), (o, o + 2, doh), (o + 1, o + 2, dhh)]);
@@ -774,7 +775,7 @@ fn assemble(moltypes: &[MolType], molecules: &[(usize, usize)]) -> Result<Frame,
 #[cfg(test)]
 mod tests {
     use super::super::GromacsTopFfReader;
-    use molrs::store::frame::Frame;
+    use molrs::store::Frame;
 
     /// Butane-ish C1-C2-C3-C4 with one H on C1, then a water; OPLS-style
     /// `[ atomtypes ]` with bond types.

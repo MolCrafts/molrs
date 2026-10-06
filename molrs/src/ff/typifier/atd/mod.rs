@@ -13,9 +13,9 @@
 //! break another.
 //!
 //! ```no_run
-//! use molrs::Atomistic;
+//! use molrs::system::Atomistic;
 //! use molrs::ff::typifier::Typing;
-//! use molrs::ff::typifier::atd::{AtdParameterSet, AtdTypifier};
+//! use molrs::ff::typifier::{AtdParameterSet, AtdTypifier};
 //!
 //! # fn main() -> Result<(), String> {
 //! let mol = Atomistic::new();
@@ -56,15 +56,19 @@ use std::sync::OnceLock;
 
 use molrs::perceive::Perceive;
 use molrs::store::keys;
-use molrs::system::molgraph::PropValue;
-use molrs::{Atomistic, NodeId};
+use molrs::system::PropValue;
+use molrs::system::{Atomistic, NodeId};
 
 use self::facts::MolFacts;
 use crate::ff::forcefield::ForceField;
-use crate::ff::params::{
-    ATOMTYPE_ABCG2, ATOMTYPE_AMBER, ATOMTYPE_BCC, ATOMTYPE_GAS, ATOMTYPE_GFF, ATOMTYPE_GFF2,
-    ATOMTYPE_SYBYL, AtdRule, AtdTable,
-};
+use crate::ff::params::atomtype_abcg2::ATOMTYPE_ABCG2;
+use crate::ff::params::atomtype_amber::ATOMTYPE_AMBER;
+use crate::ff::params::atomtype_bcc::ATOMTYPE_BCC;
+use crate::ff::params::atomtype_gas::ATOMTYPE_GAS;
+use crate::ff::params::atomtype_gff::ATOMTYPE_GFF;
+use crate::ff::params::atomtype_gff2::ATOMTYPE_GFF2;
+use crate::ff::params::atomtype_sybyl::ATOMTYPE_SYBYL;
+use crate::ff::params::{AtdRule, AtdTable};
 use crate::ff::typifier::{Annotation, Match, Typifier};
 
 /// Which `ATOMTYPE_*.DEF` table an [`AtdTypifier`] walks.
@@ -310,7 +314,7 @@ impl Typifier for AtdTypifier {
 mod tests {
     use super::*;
     use crate::ff::typifier::Typing;
-    use molrs::system::bond::BondType;
+    use molrs::system::BondType;
 
     /// Methane, hand-built: C is atom 0, the four hydrogens follow.
     fn methane() -> Atomistic {

@@ -29,12 +29,12 @@
 //!
 //! No `bind_*` façades. Compose required pieces in the constructor.
 
-pub mod error;
-pub mod forces;
-pub mod integrators;
-pub mod maxwell;
-pub mod pairs;
-pub mod types;
+mod error;
+mod forces;
+mod integrators;
+mod maxwell;
+mod pairs;
+mod types;
 
 // No re-exports of `ff` or `core` types here. `LJCut`, `PairPotential`,
 // `Potential`, `Potentials` and `Virial` are owned by the modules that define
@@ -43,6 +43,6 @@ pub mod types;
 pub use error::MdError;
 pub use forces::{Direct, ForceProvider, GhostPairs, MicPairs, NeighborStats};
 pub use integrators::{Langevin, VelocityVerlet, kinetic_energy, scalar_mass};
-pub use maxwell::MaxwellBoltzmann;
+pub use maxwell::{MaxwellBoltzmann, com_velocity};
 pub use pairs::{BondedLists, Comm};
 pub use types::{ForceOutput, MDState};

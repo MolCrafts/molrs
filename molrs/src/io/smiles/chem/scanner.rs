@@ -2,8 +2,8 @@
 //!
 //! All three notations are pure ASCII, so byte indexing is safe and efficient.
 
-use crate::io::smiles::chem::ast::Span;
-use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
+use crate::io::smiles::Span;
+use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 
 /// Zero-allocation cursor over a SMILES/SMARTS/`CGsmiles` input string.
 pub(crate) struct Scanner<'a> {
@@ -212,7 +212,7 @@ impl<'a> Scanner<'a> {
 mod tests {
     use super::*;
 
-    use crate::io::smiles::error::Notation;
+    use crate::io::smiles::Notation;
 
     #[test]
     fn test_peek_advance() {

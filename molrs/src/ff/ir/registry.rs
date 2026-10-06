@@ -20,17 +20,17 @@ use std::fmt;
 use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::ff::forcefield::Params;
+use crate::ff::ir::FormCodec;
 use crate::ff::ir::conformance::{self, PROBE_TERMS, Probe, form_id};
-use crate::ff::ir::engine::{Engine, LammpsCodec, LammpsForm};
-use crate::ff::ir::form::FormCodec;
 use crate::ff::ir::{CategorySpec, IrError, StyleSpec, builtin_categories, builtin_styles};
+use crate::ff::ir::{Engine, LammpsCodec, LammpsForm};
 use crate::ff::potential::KernelRegistry;
 use crate::ff::potential::Member;
 use crate::ff::potential::generic::{
     CompoundForm, CompoundTerms, ScalarBonded, ScalarForm, ScalarPair,
 };
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use molrs::op::types::F;
+use molrs::store::Frame;
 
 // ---------------------------------------------------------------------------
 // Registration vocabulary
@@ -522,7 +522,7 @@ struct FormEntry {
 
 /// Categories and styles of the force-field IR, the kernels that price the
 /// styles, and the form codecs that convert between them
-/// ([`crate::ff::ir::form`]).
+/// ([`crate::ff::ir::FormCodec`]).
 #[derive(Clone, Default)]
 pub struct Registry {
     categories: BTreeMap<String, CategoryEntry>,
@@ -556,7 +556,7 @@ impl Registry {
     /// names.
     pub fn builtin() -> Self {
         let mut r = Self::new();
-        r.set_expression_compiler(Some(crate::ff::ir::expression::compile_expression));
+        r.set_expression_compiler(Some(crate::ff::ir::compile_expression));
         // The built-in categories are molrec's table, which the custom rules
         // (`register_category`) are not: `atom` and `virtual_site` name no
         // endpoints, a pair's block is its atoms.

@@ -39,7 +39,7 @@
 //! oxygens — one `C=O`, one `C–O⁻` — are *the same atom* to this score, so
 //! antechamber **merges** them and averages their charges. Any partition that
 //! respects bond order or formal charge (Morgan / Weisfeiler-Leman /
-//! [`crate::system::graph_hash`], which folds both into its colours) **splits**
+//! [`crate::system::structural_hash`], which folds both into its colours) **splits**
 //! them. Orbits are therefore a **strictly finer** partition: the path score never
 //! splits an orbit — an automorphism maps a path to a path with the same ordered
 //! atomic numbers, hence the same score, bit for bit — but it does merge atoms that
@@ -92,10 +92,10 @@ use std::collections::HashMap;
 
 use crate::op::vec3::{cross, dot, sub};
 use crate::store::keys;
-use crate::system::atomistic::Atomistic;
-use crate::system::bond::BondType;
-use crate::system::molgraph::NodeId;
-use molrs::Element;
+use crate::system::Atomistic;
+use crate::system::BondType;
+use crate::system::NodeId;
+use molrs::system::Element;
 
 /// Atom prop written by [`crate::perceive::Perceive::find_equivalence_classes`]:
 /// the 0-based id of the atom's charge-equivalence class.

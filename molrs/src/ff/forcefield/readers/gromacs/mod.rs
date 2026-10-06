@@ -217,17 +217,9 @@ use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::torsion::rb_polynomial;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::potential::cmap::charmm::GRID;
-use molrs::store::frame::Frame;
+use crate::units::constants::{ANGSTROM_PER_NM, GROMACS_COULOMB, KJ_PER_KCAL};
+use molrs::store::Frame;
 use molrs::store::type_labels::TypeName;
-
-const KJ_PER_KCAL: f64 = 4.184;
-const NM_TO_ANGSTROM: f64 = 10.0;
-
-/// GROMACS's Coulomb constant, kcal·Å/(mol·e²): its `ONE_4PI_EPS0`, 1/(4π ε₀)
-/// from CODATA 2018 in GROMACS's own expression (`units.h`),
-/// 138.93545764438196 kJ·nm/(mol·e²) — one ulp below OpenMM's, and LAMMPS
-/// `real`'s 332.06371 × (1 + 9.9·10⁻⁹).
-pub const GROMACS_COULOMB: f64 = 138.935_457_644_381_96 * NM_TO_ANGSTROM / KJ_PER_KCAL;
 
 /// Two Lennard-Jones parameter pairs closer than this (relative) are one.
 const SAME_LJ: f64 = 1e-12;
@@ -789,7 +781,7 @@ impl Row {
         }
         let lj = (
             self.number(tail[4], "W (epsilon)")? / KJ_PER_KCAL,
-            self.number(tail[3], "V (sigma)")? * NM_TO_ANGSTROM,
+            self.number(tail[3], "V (sigma)")? * ANGSTROM_PER_NM,
         );
         Ok(AtomRow {
             name,
@@ -814,7 +806,7 @@ impl Row {
         }
         let lj = (
             self.number(w, "W (epsilon)")? / KJ_PER_KCAL,
-            self.number(v, "V (sigma)")? * NM_TO_ANGSTROM,
+            self.number(v, "V (sigma)")? * ANGSTROM_PER_NM,
         );
         let ends = if i <= j { (i, j) } else { (j, i) };
         Ok(((ends.0.to_owned(), ends.1.to_owned()), lj))
@@ -933,7 +925,7 @@ impl Row {
         Ok((
             [i.to_owned(), j.to_owned()],
             funct,
-            self.number(b0, "b0")? * NM_TO_ANGSTROM,
+            self.number(b0, "b0")? * ANGSTROM_PER_NM,
         ))
     }
 }
@@ -1006,7 +998,7 @@ pub(super) fn convert(kind: Kind, funct: u32, v: &[f64]) -> Result<Converted, St
             table,
         })
     };
-    let kb_scale = KJ_PER_KCAL * NM_TO_ANGSTROM * NM_TO_ANGSTROM;
+    let kb_scale = KJ_PER_KCAL * ANGSTROM_PER_NM * ANGSTROM_PER_NM;
     match (kind, funct) {
         (Kind::Bond, 1) => {
             exactly(2)?;
@@ -1014,7 +1006,7 @@ pub(super) fn convert(kind: Kind, funct: u32, v: &[f64]) -> Result<Converted, St
                 "bond",
                 "harmonic",
                 // GROMACS ½k_b → LAMMPS K = k_b/2.
-                Params::from_pairs(&[("r0", v[0] * NM_TO_ANGSTROM), ("k", v[1] / kb_scale / 2.0)]),
+                Params::from_pairs(&[("r0", v[0] * ANGSTROM_PER_NM), ("k", v[1] / kb_scale / 2.0)]),
                 Table::Bond(1),
             )
         }
@@ -1025,8 +1017,8 @@ pub(super) fn convert(kind: Kind, funct: u32, v: &[f64]) -> Result<Converted, St
                 "morse",
                 Params::from_pairs(&[
                     ("d0", v[1] / KJ_PER_KCAL),
-                    ("alpha", v[2] / NM_TO_ANGSTROM),
-                    ("r0", v[0] * NM_TO_ANGSTROM),
+                    ("alpha", v[2] / ANGSTROM_PER_NM),
+                    ("r0", v[0] * ANGSTROM_PER_NM),
                 ]),
                 Table::Bond(3),
             )
@@ -1051,7 +1043,7 @@ pub(super) fn convert(kind: Kind, funct: u32, v: &[f64]) -> Result<Converted, St
                     ("k", v[1] / KJ_PER_KCAL / 2.0),
                     ("theta0", v[0]),
                     ("k_ub", v[3] / kb_scale / 2.0),
-                    ("r_ub", v[2] * NM_TO_ANGSTROM),
+                    ("r_ub", v[2] * ANGSTROM_PER_NM),
                 ]),
                 Table::Angle(5),
             )

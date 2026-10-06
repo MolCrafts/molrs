@@ -31,7 +31,7 @@ use ndarray::ArrayD;
 use num_complex::Complex;
 
 use super::dtype::DType;
-use crate::types::{F, I, Idx};
+use crate::op::types::{F, I, Idx};
 
 /// Walk every column variant, binding the inner holder.
 macro_rules! map_column {
@@ -443,7 +443,7 @@ impl Column {
     }
 
     /// Gather rows at `indices` (along axis 0) into a new owned Column of the
-    /// same dtype. Backs [`Block::select_rows`](crate::store::block::Block::select_rows)
+    /// same dtype. Backs [`Block::select_rows`](crate::store::Block::select_rows)
     /// and the sort path. String rows are cloned.
     pub fn select_rows(&self, indices: &[usize]) -> Column {
         use ndarray::Axis;
@@ -855,7 +855,7 @@ impl std::fmt::Debug for Column {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{F, I, Idx};
+    use crate::op::types::{F, I, Idx};
     use ndarray::{Array1, ArrayD};
 
     // ---- helpers ----

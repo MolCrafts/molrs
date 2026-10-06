@@ -3,21 +3,21 @@
 //! Reads `atoms.{x,y,z}` (Å); `Args` = per-frame
 //! ([`ClusterResult`],
 //! [`COMResult`]) pairs — run
-//! [`Cluster`](crate::compute::cluster::Cluster) and
-//! [`CenterOfMass`](crate::compute::shape::CenterOfMass) first. Output:
+//! [`Cluster`](crate::compute::Cluster) and
+//! [`CenterOfMass`](crate::compute::CenterOfMass) first. Output:
 //! per-cluster `R_g` (Å).
 
-use crate::compute::result::{ComputeResult, DescriptorRow};
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use crate::compute::{ComputeResult, DescriptorRow};
+use molrs::op::types::F;
+use molrs::store::FrameAccess;
 
-use crate::compute::cluster::ClusterResult;
-use crate::compute::error::ComputeError;
+use crate::compute::COMResult;
+use crate::compute::ClusterResult;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
-use crate::compute::shape::center_of_mass::COMResult;
-use crate::compute::traits::Compute;
 use crate::op::vec3::sub;
-use molrs::spatial::simbox::{Mic, SimBox};
+use molrs::spatial::{Mic, SimBox};
 
 /// Computes the radius of gyration for each cluster per frame.
 ///
@@ -167,11 +167,11 @@ impl DescriptorRow for RgResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::shape::center_of_mass::CenterOfMass;
-    use crate::compute::shape::inertia_tensor::InertiaTensor;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use crate::compute::CenterOfMass;
+    use crate::compute::InertiaTensor;
+    use molrs::spatial::SimBox;
+    use molrs::store::Block;
+    use molrs::store::Frame;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F) -> Frame {

@@ -4,16 +4,16 @@
 //! [`VACF`] returns the **unbiased** velocity ACF (per-DOF trajectory-mean
 //! removal, then time-origin average `1/(n-τ)`, then DOF average). No windowing
 //! and no integrated D — the fit step is the analyst's choice of
-//! [`PowerSpectrum`](crate::compute::spectroscopy::PowerSpectrum) (VDOS) or
-//! [`CumulativeTrapezoid`](crate::compute::fitting::CumulativeTrapezoid) + `1/d` (D).
+//! [`PowerSpectrum`](crate::compute::PowerSpectrum) (VDOS) or
+//! [`CumulativeTrapezoid`](crate::compute::CumulativeTrapezoid) + `1/d` (D).
 
-use molrs::store::frame_access::FrameAccess;
+use molrs::store::FrameAccess;
 use ndarray::{Array1, Array2};
 
 use super::correlation::{lag_times, unbiased_cartesian_acf_scaled};
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
 
 /// Unbiased velocity autocorrelation function result.
 #[derive(Debug, Clone)]
@@ -23,7 +23,7 @@ pub struct VacfResult {
     /// Unbiased velocity ACF
     /// `C(τ) = (1/n_dof) Σ_d [ 1/(n-τ) Σ_t δv_d(t)·δv_d(t+τ) ]`
     /// with per-DOF trajectory-mean removal. Same curve feeds VDOS
-    /// ([`PowerSpectrum`](crate::compute::spectroscopy::PowerSpectrum)) and
+    /// ([`PowerSpectrum`](crate::compute::PowerSpectrum)) and
     /// Green–Kubo D via `D = (1/d) ∫ C(τ) dτ`. Units: `[v]²`.
     pub acf: Array1<f64>,
 }
@@ -92,8 +92,8 @@ impl Compute for VACF {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
     use molrs::signal as sig;
+    use molrs::store::Frame;
     use ndarray::{Array1 as A1, Array2};
     use rand::{RngExt, SeedableRng};
     use rustfft::FftPlanner;
@@ -164,7 +164,7 @@ mod tests {
         let res = 20;
         let v = rng_series(n, n_dof, 99);
         let raw = velocity_acf(&v, dt, res).unwrap();
-        let cart = crate::compute::transport::unbiased_cartesian_acf(&v, res, true).unwrap();
+        let cart = crate::compute::unbiased_cartesian_acf(&v, res, true).unwrap();
         for k in 0..raw.acf.len() {
             // Fused vs sequential DOF scale may differ by 1 ULP; allow tiny tol.
             assert!((raw.acf[k] - cart[k] / n_dof as f64).abs() < 1e-12, "k={k}");

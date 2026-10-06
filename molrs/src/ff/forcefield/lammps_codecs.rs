@@ -21,12 +21,10 @@ use std::sync::{Arc, LazyLock};
 use crate::ff::forcefield::Params;
 use crate::ff::forcefield::one_four::OneFour;
 use crate::ff::forcefield::torsion::nharmonic_coefficients;
-use crate::ff::ir::engine::positional::{self, number, read_named, value};
-use crate::ff::ir::engine::{
-    Engine, EngineCodec, LammpsCodec, LammpsCoeffs, LammpsForm, Token, UnitScale,
-};
+use crate::ff::ir::positional::{self, number, read_named, value};
 use crate::ff::ir::{Dim, StyleSpec};
-use molrs::types::F;
+use crate::ff::ir::{Engine, EngineCodec, LammpsCodec, LammpsCoeffs, LammpsForm, Token, UnitScale};
+use molrs::op::types::F;
 
 type Codec = LazyLock<Arc<dyn LammpsCodec>>;
 

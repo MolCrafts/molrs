@@ -42,25 +42,25 @@
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-use molrs::system::topology::{Topology as RsTopology, TopologyRingInfo as RsTopologyRingInfo};
+use molrs::system::{Topology as RsTopology, TopologyRingInfo as RsTopologyRingInfo};
 
-use molrs::compute::cluster::{Cluster as RsCluster, ClusterResult as RsClusterResult};
-use molrs::compute::ml::{KMeans as RsKMeans, Pca2 as RsPca2, PcaResult as RsPcaResult};
-use molrs::compute::msd::{MSD as RsMSD, MSDResult as RsMSDResult};
-use molrs::compute::rdf::{RDF as RsRDF, RDFResult as RsRDFResult};
-use molrs::compute::result::{ComputeResult, DescriptorRow};
-use molrs::compute::shape::{
+use molrs::compute::{
     COMResult as RsCOMResult, CenterOfMass as RsCenterOfMass, ClusterCenters as RsClusterCenters,
     GyrationTensor as RsGyrationTensor, InertiaTensor as RsInertiaTensor,
     RadiusOfGyration as RsRadiusOfGyration,
 };
-use molrs::compute::traits::{Compute, Fit};
+use molrs::compute::{Cluster as RsCluster, ClusterResult as RsClusterResult};
+use molrs::compute::{Compute, Fit};
+use molrs::compute::{ComputeResult, DescriptorRow};
+use molrs::compute::{KMeans as RsKMeans, Pca2 as RsPca2, PcaResult as RsPcaResult};
+use molrs::compute::{MSD as RsMSD, MSDResult as RsMSDResult};
+use molrs::compute::{RDF as RsRDF, RDFResult as RsRDFResult};
+use molrs::op::types::F;
 use molrs::spatial::neighbors::{
     NeighborList as RsNeighborList, NeighborQuery as RsNeighborQuery, Neighbors as RsNeighbors,
     NeighborsStorage as RsNeighborsStorage, QueryMode,
 };
 use molrs::store::keys;
-use molrs::types::F;
 use ndarray::{Array1, Array2, Array3};
 
 use crate::core::frame::Frame;
@@ -72,16 +72,16 @@ use js_sys::{Float64Array, Int32Array, Uint32Array};
 // ---------------------------------------------------------------------------
 
 /// Extract an Nx3 position matrix from the `"atoms"` block of a core
-/// [`Frame`](molrs::store::frame::Frame).
+/// [`Frame`](molrs::store::Frame).
 ///
 /// Reads the `x`, `y`, `z` columns (F, angstrom) and assembles
 /// them into a contiguous row-major matrix.
-fn positions_from_frame(frame: &molrs::store::frame::Frame) -> Result<ndarray::Array2<F>, JsValue> {
+fn positions_from_frame(frame: &molrs::store::Frame) -> Result<ndarray::Array2<F>, JsValue> {
     let atoms = frame
         .get("atoms")
         .ok_or_else(|| JsValue::from_str("Frame has no 'atoms' block"))?;
     let get = |col: &str| -> Result<&[F], JsValue> {
-        use molrs::store::block::BlockDtype;
+        use molrs::store::BlockDtype;
         let c = atoms
             .get(col)
             .ok_or_else(|| JsValue::from_str(&format!("atoms block missing '{col}' column")))?;
@@ -205,7 +205,7 @@ impl NeighborList {
             let bx_ref = match rs_frame.simbox.as_ref() {
                 Some(sb) => sb,
                 None => {
-                    simbox = molrs::spatial::simbox::SimBox::free(pos.view(), cutoff)
+                    simbox = molrs::spatial::SimBox::free(pos.view(), cutoff)
                         .map_err(|e| JsValue::from_str(&format!("free-boundary box: {e:?}")))?;
                     &simbox
                 }
@@ -826,7 +826,7 @@ impl RDF {
                         )
                     })?;
                     let box_len = v.cbrt();
-                    owned_box = molrs::spatial::simbox::SimBox::cube(
+                    owned_box = molrs::spatial::SimBox::cube(
                         box_len,
                         ndarray::array![0.0 as F, 0.0 as F, 0.0 as F],
                         [false, false, false],
@@ -851,7 +851,7 @@ impl RDF {
 
     fn compute_with_synth_box(
         &self,
-        rs_frame: &molrs::store::frame::Frame,
+        rs_frame: &molrs::store::Frame,
         volume: F,
     ) -> Result<RDFResult, JsValue> {
         // Temporarily attach a cubic box for the streaming path, then restore.
@@ -859,7 +859,7 @@ impl RDF {
         // positions and call compute_self with an owned box instead.
         let pos = positions_from_frame(rs_frame)?;
         let box_len = volume.cbrt();
-        let bx = molrs::spatial::simbox::SimBox::cube(
+        let bx = molrs::spatial::SimBox::cube(
             box_len,
             ndarray::array![0.0 as F, 0.0 as F, 0.0 as F],
             [false, false, false],
@@ -873,8 +873,8 @@ impl RDF {
     }
 }
 
-fn apply_volume_override(result: &mut molrs::compute::rdf::RDFResult, volume: F) {
-    use molrs::compute::result::ComputeResult;
+fn apply_volume_override(result: &mut molrs::compute::RDFResult, volume: F) {
+    use molrs::compute::ComputeResult;
     result.volume = volume;
     result.finalized = false;
     result.finalize();
@@ -981,7 +981,7 @@ impl RDFResult {
 /// - Einstein, A. (1905). *Annalen der Physik*, 322(8), 549-560.
 #[wasm_bindgen(js_name = MSD)]
 pub struct MSD {
-    frames: Vec<molrs::store::frame::Frame>,
+    frames: Vec<molrs::store::Frame>,
 }
 
 #[allow(clippy::new_without_default)]
@@ -1044,7 +1044,7 @@ impl MSD {
         if self.frames.is_empty() {
             return Ok(Vec::new());
         }
-        let refs: Vec<&molrs::store::frame::Frame> = self.frames.iter().collect();
+        let refs: Vec<&molrs::store::Frame> = self.frames.iter().collect();
         let series = RsMSD::new()
             .compute(&refs, ())
             .map_err(|e| JsValue::from_str(&format!("MSD results: {e}")))?;
@@ -1246,8 +1246,8 @@ mod tests {
 
     /// Helper: create a Frame with N particles at given positions + cubic simbox.
     fn make_frame(positions: &[[F; 3]], box_len: F) -> Frame {
-        use molrs::spatial::simbox::SimBox;
-        use molrs::store::block::Block;
+        use molrs::spatial::SimBox;
+        use molrs::store::Block;
         use ndarray::{Array1, array};
 
         let x = Array1::from_iter(positions.iter().map(|p| p[0]));
@@ -1259,7 +1259,7 @@ mod tests {
         block.insert("y", y.into_dyn()).unwrap();
         block.insert("z", z.into_dyn()).unwrap();
 
-        let mut rs_frame = molrs::store::frame::Frame::new();
+        let mut rs_frame = molrs::store::Frame::new();
         rs_frame.insert("atoms", block);
         rs_frame.simbox =
             Some(SimBox::cube(box_len, array![0.0 as F, 0.0, 0.0], [false, false, false]).unwrap());
@@ -1715,7 +1715,7 @@ impl WasmTopology {
             let mut topo = RsTopology::with_atoms(n_atoms);
 
             if let Some(bonds) = rs_frame.get("bonds") {
-                use molrs::store::block::BlockDtype;
+                use molrs::store::BlockDtype;
                 let col_i = bonds
                     .get("i")
                     .and_then(|c| <u64 as BlockDtype>::from_column(c))
@@ -1947,7 +1947,7 @@ impl TopologyRingInfo {
 // PCA — 2-component Principal Component Analysis
 // ===========================================================================
 
-/// Stateless wrapper for [`molrs::compute::ml::pca::Pca2`].
+/// Stateless wrapper for [`molrs::compute::Pca2`].
 ///
 /// All configuration lives on [`fitTransform`](Self::fit_transform).
 ///
@@ -2004,7 +2004,7 @@ impl WasmPca2 {
         let rows: Vec<PcaRow> = (0..n_rows)
             .map(|i| PcaRow(matrix[i * n_cols..(i + 1) * n_cols].to_vec()))
             .collect();
-        let dummy = molrs::store::frame::Frame::new();
+        let dummy = molrs::store::Frame::new();
         RsPca2::<PcaRow>::new()
             .compute(&[&dummy], &rows)
             .map(|inner| WasmPcaResult { inner })
@@ -2058,7 +2058,7 @@ impl WasmPcaResult {
 // k-means — with k-means++ init
 // ===========================================================================
 
-/// Wrapper for [`molrs::compute::ml::kmeans::KMeans`].
+/// Wrapper for [`molrs::compute::KMeans`].
 ///
 /// # Example (JavaScript)
 ///
@@ -2122,7 +2122,7 @@ impl WasmKMeans {
             coords: coords.to_vec(),
             variance: [0.0 as F, 0.0 as F],
         };
-        let dummy = molrs::store::frame::Frame::new();
+        let dummy = molrs::store::Frame::new();
         let labels = self
             .inner
             .compute(&[&dummy], &pca)
@@ -3483,7 +3483,7 @@ impl WasmVACF {
         let dt = self.dt;
         let resolution = self.resolution;
         let v = array2(velocities, n_frames, n_dof, "VACF velocities")?;
-        let frames: [&molrs::store::frame::Frame; 0] = [];
+        let frames: [&molrs::store::Frame; 0] = [];
         let calc = molrs::compute::VACF;
         let r = calc
             .compute(&frames, (&v, dt, resolution))
@@ -3517,7 +3517,7 @@ impl WasmGreenKuboDiffusion {
         let dt = self.dt;
         let resolution = self.resolution;
         let v = array2(velocities, n_frames, n_dof, "GreenKuboDiffusion velocities")?;
-        let frames: [&molrs::store::frame::Frame; 0] = [];
+        let frames: [&molrs::store::Frame; 0] = [];
         let calc = molrs::compute::GreenKuboDiffusion;
         let r = calc
             .compute(&frames, (&v, dt, resolution))
@@ -3546,7 +3546,7 @@ impl WasmGreenKuboConductivity {
         let dt = self.dt;
         let max_lag = self.max_lag;
         let c = array2(current, n_frames, 3, "GreenKuboConductivity current")?;
-        let frames: [&molrs::store::frame::Frame; 0] = [];
+        let frames: [&molrs::store::Frame; 0] = [];
         let calc = molrs::compute::GreenKuboConductivity;
         let r = calc
             .compute(&frames, (&c, dt, max_lag))
@@ -3580,7 +3580,7 @@ impl WasmEinsteinConductivity {
             3,
             "EinsteinConductivity translationalDipole",
         )?;
-        let frames: [&molrs::store::frame::Frame; 0] = [];
+        let frames: [&molrs::store::Frame; 0] = [];
         let calc = molrs::compute::EinsteinConductivity;
         let r = calc
             .compute(&frames, (&d, dt, max_lag))
@@ -3610,7 +3610,7 @@ impl WasmOnsagerCorrelation {
         let max_lag = self.max_lag;
         let pi = array2(pi, n_frames, 3, "Onsager p_i")?;
         let pj = array2(pj, n_frames, 3, "Onsager p_j")?;
-        let frames: [&molrs::store::frame::Frame; 0] = [];
+        let frames: [&molrs::store::Frame; 0] = [];
         let calc = molrs::compute::OnsagerCorrelation;
         let r = calc
             .compute(&frames, (&pi, &pj, dt, max_lag))
@@ -3625,7 +3625,7 @@ impl WasmOnsagerCorrelation {
 #[wasm_bindgen(js_name = WasmEinsteinDiffusion)]
 pub struct WasmEinsteinDiffusion {
     dt: F,
-    frames: Vec<molrs::store::frame::Frame>,
+    frames: Vec<molrs::store::Frame>,
 }
 
 #[wasm_bindgen(js_class = WasmEinsteinDiffusion)]
@@ -3647,7 +3647,7 @@ impl WasmEinsteinDiffusion {
 
     pub fn compute(&self) -> Result<JsValue, JsValue> {
         let dt = self.dt;
-        let refs: Vec<&molrs::store::frame::Frame> = self.frames.iter().collect();
+        let refs: Vec<&molrs::store::Frame> = self.frames.iter().collect();
         let calc = molrs::compute::EinsteinDiffusion;
         let r = calc
             .compute(&refs, molrs::compute::EinsteinDiffusionArgs { dt })
@@ -3707,7 +3707,7 @@ impl WasmDebyeRelaxation {
             temperature: self.temperature,
             boundary,
         };
-        let frames: [&molrs::store::frame::Frame; 0] = [];
+        let frames: [&molrs::store::Frame; 0] = [];
         let r = calc
             .compute(&frames, (&dipoles, dt, max_lag))
             .map_err(|e| JsValue::from_str(&format!("DebyeRelaxation: {e}")))?;
@@ -3739,7 +3739,7 @@ impl WasmIRFlux {
         let dt = self.dt;
         let resolution = self.resolution;
         let dipoles = array2(dipoles, n_frames, 3, "IRFlux dipoles")?;
-        let frames: [&molrs::store::frame::Frame; 0] = [];
+        let frames: [&molrs::store::Frame; 0] = [];
         let calc = molrs::compute::IRFlux;
         let r = calc
             .compute(&frames, (&dipoles, dt, resolution))
@@ -3780,7 +3780,7 @@ impl WasmRamanTensor {
             6,
             "RamanTensor polarizabilities",
         )?;
-        let frames: [&molrs::store::frame::Frame; 0] = [];
+        let frames: [&molrs::store::Frame; 0] = [];
         let calc = molrs::compute::RamanTensor;
         let r = calc
             .compute(&frames, (&p, dt, resolution))
@@ -3816,7 +3816,7 @@ impl WasmVcdCrossFlux {
         let resolution = self.resolution;
         let e = array2(electric, n_frames, 3, "VcdCrossFlux electric")?;
         let m = array2(magnetic, n_frames, 3, "VcdCrossFlux magnetic")?;
-        let frames: [&molrs::store::frame::Frame; 0] = [];
+        let frames: [&molrs::store::Frame; 0] = [];
         let calc = molrs::compute::VcdCrossFlux;
         let r = calc
             .compute(&frames, (&e, &m, dt, resolution))
@@ -3858,7 +3858,7 @@ impl WasmRoaCrossTensor {
         }
         let a = array2(electric_pol, n_frames, 6, "RoaCrossTensor electricPol")?;
         let g = array2(g_tensor, n_frames, 6, "RoaCrossTensor gTensor")?;
-        let frames: [&molrs::store::frame::Frame; 0] = [];
+        let frames: [&molrs::store::Frame; 0] = [];
         let calc = molrs::compute::RoaCrossTensor;
         let r = calc
             .compute(&frames, (&a, &g, dt, resolution))
@@ -4264,7 +4264,7 @@ impl WasmStaticDielectric {
 
 #[wasm_bindgen(js_name = WasmVanHove)]
 pub struct WasmVanHove {
-    frames: Vec<molrs::store::frame::Frame>,
+    frames: Vec<molrs::store::Frame>,
     n_r_bins: usize,
     r_max: F,
     lags: Vec<usize>,
@@ -4304,7 +4304,7 @@ impl WasmVanHove {
             dr: F,
             has_distinct: bool,
         }
-        let refs: Vec<&molrs::store::frame::Frame> = self.frames.iter().collect();
+        let refs: Vec<&molrs::store::Frame> = self.frames.iter().collect();
         let calc = molrs::compute::VanHove::new(self.n_r_bins, self.r_max, self.lags.clone())
             .map_err(|e| JsValue::from_str(&format!("VanHove: {e}")))?
             .with_stride(self.stride);
@@ -4426,7 +4426,7 @@ impl WasmCorrelationFunction {
             let nlists = std::slice::from_ref(&neighbors.inner);
             let va = vec![values_a.to_vec()];
             let vb = vec![values_b.to_vec()];
-            let args = molrs::compute::density::correlation_function::CorrelationArgs {
+            let args = molrs::compute::CorrelationArgs {
                 nlists,
                 values_a: &va,
                 values_b: &vb,
@@ -4586,7 +4586,7 @@ impl WasmSphereVoxelization {
 #[wasm_bindgen(js_name = WasmSpatialDistribution)]
 pub struct WasmSpatialDistribution {
     inner: molrs::compute::SpatialDistribution,
-    frames: Vec<molrs::store::frame::Frame>,
+    frames: Vec<molrs::store::Frame>,
     bulk_density: Option<F>,
 }
 
@@ -4662,7 +4662,7 @@ impl WasmSpatialDistribution {
             n_frames: usize,
             bulk_density: Option<F>,
         }
-        let refs: Vec<&molrs::store::frame::Frame> = self.frames.iter().collect();
+        let refs: Vec<&molrs::store::Frame> = self.frames.iter().collect();
         let r = self
             .inner
             .compute(&refs, ())
@@ -4815,7 +4815,7 @@ impl WasmNematic {
 
     pub fn compute(&self, directors: &[F]) -> Result<JsValue, JsValue> {
         let directors = vectors3(directors, "Nematic directors")?;
-        let dummy = molrs::store::frame::Frame::new();
+        let dummy = molrs::store::Frame::new();
         let calc = molrs::compute::Nematic::new();
         let mut out = calc
             .compute(&[&dummy], &directors)
@@ -4870,7 +4870,7 @@ impl WasmCubatic {
 
     pub fn compute(&self, directors: &[F]) -> Result<JsValue, JsValue> {
         let directors = vectors3(directors, "Cubatic directors")?;
-        let dummy = molrs::store::frame::Frame::new();
+        let dummy = molrs::store::Frame::new();
         let calc = molrs::compute::Cubatic::new()
             .with_seed(self.seed)
             .with_initial_temp(self.initial_temp)
@@ -4971,13 +4971,12 @@ impl WasmRotationalAutocorrelation {
         }
         let reference = quats(reference, "RotationalAutocorrelation reference")?;
         let orientations = quats(orientations, "RotationalAutocorrelation orientations")?;
-        let dummy = molrs::store::frame::Frame::new();
+        let dummy = molrs::store::Frame::new();
         let calc = molrs::compute::RotationalAutocorrelation::new(self.l);
-        let args =
-            molrs::compute::order::rotational_autocorrelation::RotationalAutocorrelationArgs {
-                ref_orientations: &reference,
-                orientations: &orientations,
-            };
+        let args = molrs::compute::RotationalAutocorrelationArgs {
+            ref_orientations: &reference,
+            orientations: &orientations,
+        };
         let mut out = calc
             .compute(&[&dummy], args)
             .map_err(|e| JsValue::from_str(&format!("RotationalAutocorrelation: {e}")))?;
@@ -5099,10 +5098,10 @@ impl WasmAngularSeparation {
     pub fn compute_global(&self, query: &[F], global: &[F]) -> Result<JsValue, JsValue> {
         let query = quats(query, "AngularSeparation query")?;
         let global = quats(global, "AngularSeparation global")?;
-        let dummy = molrs::store::frame::Frame::new();
+        let dummy = molrs::store::Frame::new();
         let calc = molrs::compute::AngularSeparationGlobal::new()
             .with_equivalent_orientations(self.equivalent_orientations);
-        let args = molrs::compute::environment::angular_separation::AngularSeparationGlobalArgs {
+        let args = molrs::compute::AngularSeparationGlobalArgs {
             query: &query,
             global: &global,
         };
@@ -5135,12 +5134,11 @@ impl WasmAngularSeparation {
             let p = vec![points];
             let calc = molrs::compute::AngularSeparationNeighbor::new()
                 .with_equivalent_orientations(self.equivalent_orientations);
-            let args =
-                molrs::compute::environment::angular_separation::AngularSeparationNeighborArgs {
-                    nlists,
-                    query_orientations: &q,
-                    point_orientations: &p,
-                };
+            let args = molrs::compute::AngularSeparationNeighborArgs {
+                nlists,
+                query_orientations: &q,
+                point_orientations: &p,
+            };
             let mut out = calc
                 .compute(&[rs_frame], args)
                 .map_err(|e| JsValue::from_str(&format!("AngularSeparationNeighbor: {e}")))?;
@@ -5296,10 +5294,10 @@ impl WasmDiffractionPattern {
     }
 }
 
-fn distribution_compute<O: molrs::compute::distribution::Observable + Sync>(
+fn distribution_compute<O: molrs::compute::Observable + Sync>(
     frame: &Frame,
-    calc: molrs::compute::distribution::DistributionFunction<O>,
-    groups: molrs::compute::distribution::AtomGroups,
+    calc: molrs::compute::DistributionFunction<O>,
+    groups: molrs::compute::AtomGroups,
 ) -> Result<JsValue, JsValue> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -5349,13 +5347,10 @@ impl WasmDistanceDistribution {
     }
 
     pub fn compute(&self, frame: &Frame, pairs: &[u32]) -> Result<JsValue, JsValue> {
-        let groups = molrs::compute::distribution::AtomGroups::new(
-            2,
-            pairs.iter().map(|&v| v as u64).collect(),
-        )
-        .map_err(|e| JsValue::from_str(&format!("DistanceDistribution groups: {e}")))?;
-        let calc = molrs::compute::distribution::DistributionFunction::new(
-            molrs::compute::distribution::DistanceObservable,
+        let groups = molrs::compute::AtomGroups::new(2, pairs.iter().map(|&v| v as u64).collect())
+            .map_err(|e| JsValue::from_str(&format!("DistanceDistribution groups: {e}")))?;
+        let calc = molrs::compute::DistributionFunction::new(
+            molrs::compute::DistanceObservable,
             self.n_bins,
             self.min,
             self.max,
@@ -5378,13 +5373,11 @@ impl WasmAngleDistribution {
     }
 
     pub fn compute(&self, frame: &Frame, triples: &[u32]) -> Result<JsValue, JsValue> {
-        let groups = molrs::compute::distribution::AtomGroups::new(
-            3,
-            triples.iter().map(|&v| v as u64).collect(),
-        )
-        .map_err(|e| JsValue::from_str(&format!("AngleDistribution groups: {e}")))?;
-        let calc = molrs::compute::distribution::DistributionFunction::over_natural_range(
-            molrs::compute::distribution::AngleObservable,
+        let groups =
+            molrs::compute::AtomGroups::new(3, triples.iter().map(|&v| v as u64).collect())
+                .map_err(|e| JsValue::from_str(&format!("AngleDistribution groups: {e}")))?;
+        let calc = molrs::compute::DistributionFunction::over_natural_range(
+            molrs::compute::AngleObservable,
             self.n_bins,
         )
         .map_err(|e| JsValue::from_str(&format!("AngleDistribution: {e}")))?;
@@ -5405,13 +5398,10 @@ impl WasmDihedralDistribution {
     }
 
     pub fn compute(&self, frame: &Frame, quads: &[u32]) -> Result<JsValue, JsValue> {
-        let groups = molrs::compute::distribution::AtomGroups::new(
-            4,
-            quads.iter().map(|&v| v as u64).collect(),
-        )
-        .map_err(|e| JsValue::from_str(&format!("DihedralDistribution groups: {e}")))?;
-        let calc = molrs::compute::distribution::DistributionFunction::over_natural_range(
-            molrs::compute::distribution::DihedralObservable,
+        let groups = molrs::compute::AtomGroups::new(4, quads.iter().map(|&v| v as u64).collect())
+            .map_err(|e| JsValue::from_str(&format!("DihedralDistribution groups: {e}")))?;
+        let calc = molrs::compute::DistributionFunction::over_natural_range(
+            molrs::compute::DihedralObservable,
             self.n_bins,
         )
         .map_err(|e| JsValue::from_str(&format!("DihedralDistribution: {e}")))?;
@@ -5426,7 +5416,7 @@ pub struct WasmHBonds {
     dist_cutoff: F,
     dist_kind: String,
     angle_cutoff: F,
-    frames: Vec<molrs::store::frame::Frame>,
+    frames: Vec<molrs::store::Frame>,
 }
 
 #[wasm_bindgen(js_class = WasmHBonds)]
@@ -5487,7 +5477,7 @@ impl WasmHBonds {
             molrs::compute::HBondCriterion::new(self.dist_cutoff, dist_kind, self.angle_cutoff);
         let calc =
             molrs::compute::HBonds::new(self.donors.clone(), self.acceptors.clone(), criterion);
-        let refs: Vec<&molrs::store::frame::Frame> = self.frames.iter().collect();
+        let refs: Vec<&molrs::store::Frame> = self.frames.iter().collect();
         let r = calc
             .compute(&refs, ())
             .map_err(|e| JsValue::from_str(&format!("HBonds: {e}")))?;
@@ -5604,14 +5594,14 @@ impl WasmHBondNetwork {
 // ===========================================================================
 
 /// Borrow an `F`-typed column of a block as a contiguous slice.
-fn f_col<'a>(atoms: &'a molrs::store::block::Block, col: &str) -> Option<&'a [F]> {
-    use molrs::store::block::BlockDtype;
+fn f_col<'a>(atoms: &'a molrs::store::Block, col: &str) -> Option<&'a [F]> {
+    use molrs::store::BlockDtype;
     <F as BlockDtype>::from_column(atoms.get(col)?)?.as_slice()
 }
 
 /// Per-atom unit quaternions `(w, i, j, k)`, normalized. `None` when the atoms
 /// block does not carry the canonical [`keys::QUAT`] columns.
-fn quaternions_from_frame(frame: &molrs::store::frame::Frame) -> Option<Vec<[F; 4]>> {
+fn quaternions_from_frame(frame: &molrs::store::Frame) -> Option<Vec<[F; 4]>> {
     let atoms = frame.get("atoms")?;
     let [w, i, j, k] = keys::QUAT.map(|col| f_col(atoms, col));
     let (w, i, j, k) = (w?, i?, j?, k?);
@@ -5635,13 +5625,13 @@ fn quaternions_from_frame(frame: &molrs::store::frame::Frame) -> Option<Vec<[F; 
 ///
 /// There is deliberately no separate angle column — the quaternion already
 /// encodes the orientation, and a second column would be a second truth.
-fn angles_from_frame(frame: &molrs::store::frame::Frame) -> Option<Vec<F>> {
+fn angles_from_frame(frame: &molrs::store::Frame) -> Option<Vec<F>> {
     quaternions_from_frame(frame)
         .map(|quats| quats.iter().map(|q| 2.0 * q[3].atan2(q[0])).collect())
 }
 
 /// `angles_from_frame` for the analyses whose orientations are mandatory.
-fn require_angles(frame: &molrs::store::frame::Frame, what: &str) -> Result<Vec<F>, JsValue> {
+fn require_angles(frame: &molrs::store::Frame, what: &str) -> Result<Vec<F>, JsValue> {
     angles_from_frame(frame).ok_or_else(|| {
         JsValue::from_str(&format!(
             "{what} needs per-atom orientations: add the {} columns to the atoms block",
@@ -5908,7 +5898,7 @@ impl WasmCombinedDistribution {
     /// `groups` is `number[][]`: one flat atom-index array per observable, each
     /// of length `arity × nGroups` (arity 2/3/4 for distance/angle/dihedral).
     pub fn compute(&self, frame: &Frame, groups: JsValue) -> Result<JsValue, JsValue> {
-        use molrs::compute::distribution::{AnyObservable, AtomGroups};
+        use molrs::compute::{AnyObservable, AtomGroups};
 
         let raw: Vec<Vec<u32>> = serde_wasm_bindgen::from_value(groups)
             .map_err(|e| JsValue::from_str(&format!("CombinedDistribution groups: {e}")))?;
@@ -5970,7 +5960,7 @@ impl WasmCombinedDistribution {
 
 /// Per-atom covalent radii from the frame's `element` column.
 #[cfg(feature = "voronoi")]
-fn covalent_radii_from_frame(frame: &molrs::store::frame::Frame) -> Result<Vec<F>, JsValue> {
+fn covalent_radii_from_frame(frame: &molrs::store::Frame) -> Result<Vec<F>, JsValue> {
     let atoms = frame
         .get("atoms")
         .ok_or_else(|| JsValue::from_str("Frame has no 'atoms' block"))?;
@@ -5986,7 +5976,7 @@ fn covalent_radii_from_frame(frame: &molrs::store::frame::Frame) -> Result<Vec<F
     column
         .iter()
         .map(|symbol| {
-            molrs::Element::by_symbol(symbol)
+            molrs::system::Element::by_symbol(symbol)
                 .map(|el| F::from(el.covalent_radius()))
                 .ok_or_else(|| JsValue::from_str(&format!("unknown element symbol {symbol}")))
         })
@@ -5999,7 +5989,7 @@ fn covalent_radii_from_frame(frame: &molrs::store::frame::Frame) -> Result<Vec<F
 /// without it every generator has radius zero, which is a plain Voronoi diagram.
 #[cfg(feature = "voronoi")]
 fn voronoi_cells(
-    frame: &molrs::store::frame::Frame,
+    frame: &molrs::store::Frame,
     use_atom_radii: bool,
 ) -> Result<(molrs::compute::VoronoiCells, F), JsValue> {
     let positions = positions_from_frame(frame)?;

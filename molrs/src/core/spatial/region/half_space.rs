@@ -1,7 +1,7 @@
 //! The half-space behind a plane.
 
 use super::region::Region;
-use crate::types::{F, FNx3};
+use crate::op::types::{F, FNx3};
 use ndarray::Array2;
 
 /// Everything on one side of a plane: inside where `n · (x − p) ≤ 0`, i.e.

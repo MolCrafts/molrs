@@ -13,18 +13,18 @@
 //! |------------------|------------|----------------|
 //! | [`unbiased_cartesian_acf`] | `Σ_α ⟨δa_α(0) δa_α(t)⟩` | Debye / PACF / JACF / VACF |
 //! | [`unbiased_cartesian_xcorr`] | `Σ_α ⟨δa_α(0) δb_α(t)⟩` | cross spectra |
-//! | [`DipoleRateCross`] | `C_{ṀM}(t)` with FD `Ṁ` | [`DipoleRateCrossSpectrum`](crate::compute::spectroscopy::DipoleRateCrossSpectrum) |
+//! | [`DipoleRateCross`] | `C_{ṀM}(t)` with FD `Ṁ` | [`DipoleRateCrossSpectrum`](crate::compute::DipoleRateCrossSpectrum) |
 //!
 //! Signal kernels stay in [`molrs::signal`]; multi-component assembly lives here.
 
-use molrs::store::frame_access::FrameAccess;
+use molrs::store::FrameAccess;
 use ndarray::{Array1, Array2};
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;
 
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
 use molrs::signal as sig;
 
 // ── Shared primitives ────────────────────────────────────────────────────────
@@ -248,7 +248,7 @@ pub fn gradient_axis0_order2(series: &Array2<f64>, dt: f64) -> Result<Array2<f64
 /// series are mean-subtracted before the FFT cross-correlation.
 ///
 /// Compose with
-/// [`DipoleRateCrossSpectrum`](crate::compute::spectroscopy::DipoleRateCrossSpectrum)
+/// [`DipoleRateCrossSpectrum`](crate::compute::DipoleRateCrossSpectrum)
 /// for ε(ω).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DipoleRateCross;
@@ -308,7 +308,7 @@ impl Compute for DipoleRateCross {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
+    use molrs::store::Frame;
     use ndarray::Array2;
     use rand::{RngExt, SeedableRng};
 

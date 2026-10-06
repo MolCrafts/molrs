@@ -3,16 +3,14 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::io::smiles::chem::ast::*;
-use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
-use crate::io::smiles::smiles::options::{
-    AromaticEmit, HydrogenEmit, MultiComponentEmit, SmilesEmitOptions,
-};
-use crate::io::smiles::smiles::write::write_smiles;
-use molrs::Element;
-use molrs::system::atomistic::Atomistic;
-use molrs::system::bond::{BondNumber, BondType};
-use molrs::system::molgraph::NodeId;
-use molrs::system::molgraph::PropValue;
+use crate::io::smiles::write_smiles;
+use crate::io::smiles::{AromaticEmit, HydrogenEmit, MultiComponentEmit, SmilesEmitOptions};
+use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
+use molrs::system::Atomistic;
+use molrs::system::Element;
+use molrs::system::NodeId;
+use molrs::system::PropValue;
+use molrs::system::{BondNumber, BondType};
 
 /// Convert a molecular graph into a concrete SMILES IR.
 pub fn from_atomistic(mol: &Atomistic, opts: &SmilesEmitOptions) -> Result<SmilesIR, SmilesError> {
@@ -157,7 +155,7 @@ fn choose_root(
     }
     // Prefer non-H, lowest handle order in component.
     let mut ids = comp.to_vec();
-    ids.sort_by_key(|id| molrs::system::molgraph::node_to_u64(*id));
+    ids.sort_by_key(|id| molrs::system::node_to_u64(*id));
     ids.into_iter()
         .find(|&id| !is_hydrogen(mol, id))
         .or_else(|| comp.first().copied())
@@ -217,7 +215,7 @@ fn build_tree(
                 order.iter().enumerate().map(|(i, id)| (*id, i)).collect();
             nbs.sort_by_key(|id| rank.get(id).copied().unwrap_or(usize::MAX));
         } else {
-            nbs.sort_by_key(|id| molrs::system::molgraph::node_to_u64(*id));
+            nbs.sort_by_key(|id| molrs::system::node_to_u64(*id));
         }
 
         for nb in nbs {
@@ -245,9 +243,7 @@ fn build_tree(
             if !include_h && is_hydrogen(mol, b) {
                 continue;
             }
-            let edge = if molrs::system::molgraph::node_to_u64(a)
-                < molrs::system::molgraph::node_to_u64(b)
-            {
+            let edge = if molrs::system::node_to_u64(a) < molrs::system::node_to_u64(b) {
                 (a, b)
             } else {
                 (b, a)
@@ -276,7 +272,7 @@ fn build_tree(
 
 fn bond_kind_for(
     mol: &Atomistic,
-    bid: molrs::system::molgraph::RelationId,
+    bid: molrs::system::RelationId,
     opts: &SmilesEmitOptions,
 ) -> Result<Option<BondKind>, SmilesError> {
     let bt = mol.bond_type(bid);
@@ -309,7 +305,7 @@ fn bond_kind_for(
     }
 }
 
-fn find_bond(mol: &Atomistic, a: NodeId, b: NodeId) -> Option<molrs::system::molgraph::RelationId> {
+fn find_bond(mol: &Atomistic, a: NodeId, b: NodeId) -> Option<molrs::system::RelationId> {
     mol.neighbor_bonds(a)
         .find(|(nb, _)| *nb == b)
         .map(|(_, bid)| bid)
@@ -497,8 +493,8 @@ fn atom_node(
 mod tests {
     use super::*;
     use crate::io::smiles::chem::test_support::atom_nodes;
-    use crate::io::smiles::smiles::parse_smiles;
-    use crate::io::smiles::smiles::to_atomistic::to_atomistic;
+    use crate::io::smiles::parse_smiles;
+    use crate::io::smiles::to_atomistic;
 
     #[test]
     fn ethanol_round_trip_stable() {

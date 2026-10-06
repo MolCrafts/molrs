@@ -32,7 +32,7 @@
 //!
 //! # No-match seam (parameter interpolation)
 //!
-//! A term that matches no candidate is routed through the [`Estimator`] seam, an
+//! A term that matches no candidate is routed through the estimator seam, an
 //! OPLS-bonded specialization of the generic [`ParameterInterpolator`] trait. If
 //! an interpolator is attached, it is asked to fill the missing params, and the
 //! term is named by [`BondedTerm::type_name`]; otherwise the configured strict
@@ -43,10 +43,10 @@ use std::collections::HashMap;
 
 use molrs::store::keys;
 use molrs::store::schema::block_names::{ANGLES, BONDS, DIHEDRALS};
-use molrs::{Atomistic, NodeId};
+use molrs::system::{Atomistic, NodeId};
 
 use crate::ff::forcefield::{ForceField, Params, StyleDefs};
-use crate::ff::typifier::estimate::ParameterInterpolator;
+use crate::ff::typifier::ParameterInterpolator;
 use crate::ff::typifier::estimate::candidate::is_wildcard;
 use crate::ff::typifier::{Annotation, Match};
 
@@ -262,7 +262,7 @@ impl CandidateTables {
         table: &[Candidate],
         style: &str,
         policy: NoMatch,
-        estimator: Option<&dyn Estimator>,
+        estimator: Option<&dyn ParameterInterpolator<Term = BondedTerm>>,
     ) -> Result<Vec<(String, Annotation)>, String> {
         let Some(names) = ends
             .iter()
@@ -342,26 +342,7 @@ pub enum NoMatch {
     Skip,
 }
 
-pub use crate::ff::typifier::estimate::BondedTerm;
-
-/// OPLS bonded specialization of the generic parameter interpolation seam.
-///
-/// The OPLS bonded matcher calls
-/// [`interpolate`](ParameterInterpolator::interpolate) for any bonded term the
-/// force-field tables do not cover, when one is attached with
-/// [`OPLSAATypifier::with_estimator`](super::OPLSAATypifier::with_estimator).
-/// An implementation returns:
-/// - `Ok(Some(params))` — interpolated params for the term, defined under
-///   [`BondedTerm::type_name`] and stamped;
-/// - `Ok(None)` — declined; fall back to the strict policy;
-/// - `Err(_)` — hard failure, propagated.
-///
-/// With none attached the [`NoMatch`] policy decides. Future typifier parameter families should implement
-/// [`ParameterInterpolator`] for their own term query type rather than extending
-/// [`BondedTerm`].
-pub trait Estimator: ParameterInterpolator<Term = BondedTerm> {}
-
-impl<T> Estimator for T where T: ParameterInterpolator<Term = BondedTerm> + ?Sized {}
+use crate::ff::typifier::BondedTerm;
 
 /// The bonded annotations of a graph whose atoms carry the OPLS `types`,
 /// choosing each term's type by the OPLS specificity + layer ranking, with an
@@ -394,7 +375,7 @@ pub(crate) fn typify_bonded_with(
     types: &HashMap<NodeId, String>,
     tables: &CandidateTables,
     policy: NoMatch,
-    estimator: Option<&dyn Estimator>,
+    estimator: Option<&dyn ParameterInterpolator<Term = BondedTerm>>,
 ) -> Result<Match, String> {
     let mut m = Match::default();
 
@@ -625,7 +606,7 @@ mod tests {
 
     #[test]
     fn class_to_layer_takes_the_max() {
-        use crate::ff::typifier::opls::OplsTypeRow;
+        use crate::ff::typifier::OplsTypeRow;
         let mut meta = OplsTypingMeta::new();
         let row = |class: &str, layer: u32| OplsTypeRow {
             class: class.to_string(),
@@ -661,7 +642,7 @@ mod tests {
     /// (class `CT`): any bond whose two endpoints are typed matches, so a
     /// failure can only come from an untyped endpoint.
     fn wildcard_bond_tables() -> CandidateTables {
-        use crate::ff::typifier::opls::OplsTypeRow;
+        use crate::ff::typifier::OplsTypeRow;
         let mut meta = OplsTypingMeta::new();
         meta.insert(
             "opls_135",
@@ -679,7 +660,7 @@ mod tests {
     /// A C-O bond where only the carbon (atom 0) is typed `opls_135`; the
     /// oxygen (atom 1) is untyped. Returns the graph and the atom types.
     fn half_typed_bond() -> (Atomistic, HashMap<NodeId, String>) {
-        use molrs::Atom;
+        use molrs::system::Atom;
         let mut g = Atomistic::new();
         let c = g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
         let o = g.add_atom(Atom::xyz("O", 1.4, 0.0, 0.0));

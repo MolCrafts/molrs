@@ -37,20 +37,20 @@
 //! # Fitting τ_c
 //!
 //! The raw `C_2(t)` curve is `Fit`-ready: feed it to
-//! [`DebyeFit`](crate::compute::transport::DebyeFit) (which fits a normalized
+//! [`DebyeFit`](crate::compute::DebyeFit) (which fits a normalized
 //! `Φ(t) → τ` decay) to extract the rotational correlation time — no new fitting
 //! code is needed.
 
-use crate::compute::result::ComputeResult;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use crate::compute::ComputeResult;
+use molrs::op::types::F;
+use molrs::store::FrameAccess;
 use ndarray::Array1;
 
-use crate::compute::error::ComputeError;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
-use crate::compute::traits::Compute;
 use crate::op::vec3::sub;
-use molrs::spatial::simbox::{Mic, SimBox};
+use molrs::spatial::{Mic, SimBox};
 
 /// Legendre reorientational TCF analyzer.
 ///

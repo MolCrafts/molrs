@@ -33,8 +33,8 @@
 
 use wasm_bindgen::prelude::*;
 
-use molrs::store::block::Block as RsBlock;
-use molrs::store::meta::MetaValue;
+use molrs::store::Block as RsBlock;
+use molrs::store::MetaValue;
 use molrs_ffi::{BlockRef, FrameRef};
 
 use super::block::Block;
@@ -412,7 +412,7 @@ impl Frame {
             .with_frame_meta_mut(self.inner.id, |meta| {
                 meta.insert(
                     name.to_string(),
-                    molrs::store::meta::MetaValue::String(value.to_string()),
+                    molrs::store::MetaValue::String(value.to_string()),
                 );
             })
             .map_err(js_err)
@@ -425,7 +425,7 @@ impl Frame {
             .store
             .borrow_mut()
             .with_frame_meta_mut(self.inner.id, |meta| {
-                meta.insert(name.to_string(), molrs::store::meta::MetaValue::F64(value));
+                meta.insert(name.to_string(), molrs::store::MetaValue::F64(value));
             })
             .map_err(js_err)
     }
@@ -539,7 +539,7 @@ impl Default for Frame {
 
 /// Internal helpers (not exposed to JS).
 impl Frame {
-    pub(crate) fn from_rs(rs_frame: molrs::store::frame::Frame) -> Result<Self, JsValue> {
+    pub(crate) fn from_rs(rs_frame: molrs::store::Frame) -> Result<Self, JsValue> {
         let store = molrs_ffi::new_shared();
         let id = store.borrow_mut().frame_new();
         store.borrow_mut().set_frame(id, rs_frame).map_err(js_err)?;
@@ -554,7 +554,7 @@ impl Frame {
     /// immutably borrowed, so it must not attempt to mutate the store.
     pub(crate) fn with_frame<R>(
         &self,
-        f: impl FnOnce(&molrs::store::frame::Frame) -> Result<R, JsValue>,
+        f: impl FnOnce(&molrs::store::Frame) -> Result<R, JsValue>,
     ) -> Result<R, JsValue> {
         self.inner
             .store
@@ -579,8 +579,8 @@ mod tests {
 
     /// Helper: build a wrapped `Frame` with two typed meta entries.
     fn frame_with_meta() -> Frame {
-        use molrs::store::meta::MetaValue;
-        let mut rs_frame = molrs::store::frame::Frame::new();
+        use molrs::store::MetaValue;
+        let mut rs_frame = molrs::store::Frame::new();
         rs_frame
             .meta
             .insert("energy".to_string(), MetaValue::F64(-1.23));

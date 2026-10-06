@@ -12,19 +12,19 @@
 //! itself implemented on top of this accumulator — one source of truth for
 //! the accumulation math.
 
+use molrs::op::types::F;
 use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::store::FrameAccess;
 use ndarray::Array1;
 
 use super::{RDF, RDFResult, RdfMode};
-use crate::compute::error::ComputeError;
+use crate::compute::ComputeError;
 
 /// Streaming g(r) accumulator (bounded memory).
 ///
 /// Construct from a configured [`RDF`], feed frames one at a time, finalize
 /// once. See the module docs for the equivalence guarantee with the batch
-/// [`RDF::compute`](crate::compute::traits::Compute::compute).
+/// [`RDF::compute`](crate::compute::Compute::compute).
 #[derive(Debug, Clone)]
 pub struct RDFAccumulator {
     rdf: RDF,
@@ -133,7 +133,7 @@ impl RDFAccumulator {
             dimensionality: self.rdf.dimensionality(),
             finalized: false,
         };
-        use crate::compute::result::ComputeResult;
+        use crate::compute::ComputeResult;
         result.finalize();
         Ok(result)
     }

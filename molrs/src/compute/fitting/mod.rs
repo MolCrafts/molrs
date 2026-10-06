@@ -15,7 +15,7 @@
 //! | [`CumulativeTrapezoid`] | curve + dt | [`CumulativeTrapezoidResult`] (cumulative trapezoid) | Green–Kubo conductivity trapezoid |
 //! | [`Plateau`] | curve | [`PlateauResult`] (windowed mean/std) | new |
 //!
-//! Debye relaxation fitting lives in [`crate::compute::transport::DebyeFit`].
+//! Debye relaxation fitting lives in [`crate::compute::DebyeFit`].
 //!
 //! # Shared numerical primitives
 //!
@@ -32,9 +32,9 @@
 //!   `1/n_pad` and emits cm⁻¹ frequencies; the dielectric path scales by `·dt`
 //!   and emits a `(freq_rad, re, im)` triple.
 
-pub mod cumulative_trapezoid;
-pub mod linear_fit;
-pub mod plateau;
+mod cumulative_trapezoid;
+mod linear_fit;
+mod plateau;
 
 pub use cumulative_trapezoid::{CumulativeTrapezoid, CumulativeTrapezoidResult};
 pub use linear_fit::{LinearFit, LinearFitResult};
@@ -59,7 +59,7 @@ use rustfft::num_traits::Zero;
 /// # Errors
 /// Returns `None` when the design is degenerate (`denom ≈ 0`, i.e. all `x` in
 /// the window are equal) — the caller maps this to
-/// [`ComputeError::OutOfRange`](crate::compute::error::ComputeError::OutOfRange).
+/// [`ComputeError::OutOfRange`](crate::compute::ComputeError::OutOfRange).
 pub(crate) fn ols_slope_intercept_r2(
     x: &[f64],
     y: &[f64],

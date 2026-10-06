@@ -19,7 +19,7 @@
 
 use crate::op::linalg::{det3, inv3};
 use crate::op::types::to_mat3;
-use crate::types::{F, F3, F3x3, FNx3};
+use crate::op::types::{F, F3, F3x3, FNx3};
 use ndarray::{Array1, Array2, array};
 use std::sync::Arc;
 
@@ -245,7 +245,7 @@ impl Region for Cuboid {
 ///
 /// This is the geometric counterpart of a triclinic simulation cell volume —
 /// **without** PBC, wrap, or MIC. For the periodic cell, use
-/// [`crate::spatial::simbox::SimBox`].
+/// [`crate::spatial::SimBox`].
 ///
 /// A point `p` is inside when the fractional coordinates
 /// `f = H⁻¹ · (p − origin)` satisfy `0 ≤ f_d ≤ 1` on every axis.

@@ -13,10 +13,8 @@
 
 use std::collections::HashMap;
 
-use crate::io::smiles::chem::ast::{
-    BondKind, BondingDescriptor, Chain, ChainElement, SmilesIR, Span,
-};
-use crate::io::smiles::error::{Notation, SmilesError, SmilesErrorKind};
+use crate::io::smiles::{BondKind, BondingDescriptor, Chain, ChainElement, SmilesIR, Span};
+use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 
 /// Ensure every ring-closure digit is opened and closed exactly once.
 ///
@@ -135,7 +133,7 @@ fn collect_ring_closures(chain: &Chain, open: &mut HashMap<u16, Span>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::smiles::chem::ast::{BondKind, BondingDescriptor, DescriptorKind};
+    use crate::io::smiles::{BondKind, BondingDescriptor, DescriptorKind};
 
     fn descriptor(label: &str, order: Option<BondKind>) -> BondingDescriptor {
         BondingDescriptor {

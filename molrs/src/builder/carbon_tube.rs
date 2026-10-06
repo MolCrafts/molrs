@@ -7,11 +7,11 @@ use std::fmt;
 
 use ndarray::array;
 
-use crate::spatial::simbox::SimBox;
-use crate::store::frame::Frame;
+use crate::op::types::F;
+use crate::spatial::SimBox;
+use crate::store::Frame;
 use crate::store::keys;
-use crate::system::atomistic::Atomistic;
-use crate::types::F;
+use crate::system::Atomistic;
 
 type SiteKey = (i64, i64, u8);
 

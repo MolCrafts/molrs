@@ -40,9 +40,9 @@ use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::{Member, PairDriven, Potential};
 use crate::op::vec3::norm;
 use molrs::math::Virial;
+use molrs::op::types::F;
 use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use molrs::store::Frame;
 
 // ---------------------------------------------------------------------------
 // MMFFVdW: Buffered 14-7 potential

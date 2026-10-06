@@ -41,6 +41,14 @@
 //! - `full`      — everything above
 //! - `stream`    — MessagePack/JSON frames and native WebSocket streaming (not in `full`)
 //!
+//! ## Paths
+//!
+//! Every public item has exactly one path: `molrs::<subsystem>::Item`, where
+//! the subsystem is a top-level module (`store`, `system`, `spatial`, `units`,
+//! `ff`, `io`, …) or a namespace its facade keeps (`ff::potential::pair`,
+//! `spatial::neighbors`, `store::keys`, …). Implementation files are private
+//! and their facade re-exports them; nothing is flattened to the crate root.
+//!
 //! Default: core only, plus `rayon`. Every sub-system is opt-in; name the
 //! ones you use, or `full` for all of them. `default-features = false` also
 //! drops `rayon` (wasm, Pyodide).
@@ -56,7 +64,7 @@
 #![warn(rustdoc::missing_crate_level_docs)]
 
 // Let in-crate paths refer to this crate by its public name `molrs::` (e.g.
-// `molrs::Frame`, `molrs::io::read_xyz`), matching how downstream code and
+// `molrs::store::Frame`, `molrs::io::read_xyz`), matching how downstream code and
 // doctests spell them. Sub-system modules below were absorbed from the former
 // `molrs-*` member crates and rely on this alias for their cross-module paths.
 extern crate self as molrs;
@@ -74,27 +82,19 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 // linear-algebra kernels); it names no other molrs module.
 pub mod op;
 
-// Core is always compiled and its public surface is re-exported at the crate
-// root, so `molrs::Frame`, `molrs::system::…`, `molrs::error::…` resolve exactly
-// as they did when core was a separate crate.
-pub mod core;
-pub use crate::core::system::element::Element;
-pub use crate::core::*;
+// Core is always compiled. It is a source directory, not a namespace: its
+// domains are top-level facades of their own — `molrs::store` (Frame, Block,
+// Trajectory, …), `molrs::system` (Atomistic, MolGraph, Topology, Element, …),
+// `molrs::spatial` (SimBox, regions, neighbour search), `molrs::math`,
+// `molrs::units` and `molrs::error`.
+mod core;
+pub use crate::core::{error, math, spatial, store, system, units};
 
-/// Structure builders (graphene, nanotubes, self-avoiding walks, trace
-/// assembly, …).
-///
-/// Builders sit above `core` and produce frames / paths without depending on
-/// feature-gated analysis or force fields; `full` includes them.
+// Structure builders (graphene, nanotubes, self-avoiding walks, trace
+// assembly, …). Builders sit above `core` and produce frames / paths without
+// depending on feature-gated analysis or force fields; `full` includes them.
 #[cfg(feature = "builder")]
 pub mod builder;
-#[cfg(feature = "builder")]
-pub use crate::builder::{
-    AssembleError, Assembler, AxisOrienter, CarbonTubeBuilder, CarbonTubeError, FccLattice,
-    GrapheneBuilder, GrapheneError, GrowthPlacer, GrowthStrategy, OccupancyMode, OffLattice,
-    OrientError, Orienter, ParentJoin, PlaceError, PlaceSite, Placer, SelfAvoidingWalk, SiteLink,
-    SitePlacer, SiteView, WalkError, WalkOutput,
-};
 
 // Chemical perception: one layer above `core`, below `ff` / `conformer`.
 // Always compiled, except the SMARTS matcher (`perceive::smarts`), which
@@ -135,9 +135,9 @@ pub mod conformer;
 #[cfg(feature = "serde")]
 mod serialize;
 
-/// Live `Frame` streaming: the transport encoding (MessagePack / JSON) over the
-/// `serde`-serializable core model, plus the WebSocket server and control
-/// commands that ride it. Kept out of `io` — and out of `full` — because it
-/// pulls third-party runtime dependencies that `io` must not acquire.
+// Live `Frame` streaming: the transport encoding (MessagePack / JSON) over the
+// `serde`-serializable core model, plus the WebSocket server and control
+// commands that ride it. Kept out of `io` — and out of `full` — because it
+// pulls third-party runtime dependencies that `io` must not acquire.
 #[cfg(feature = "stream")]
 pub mod stream;

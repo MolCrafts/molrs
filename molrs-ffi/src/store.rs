@@ -6,9 +6,10 @@
 
 use crate::error::FfiError;
 use crate::handle::{BlockHandle, FrameId};
-use molrs::store::meta::MetaMap;
-use molrs::types::{F, I, Idx};
-use molrs::{spatial::simbox::SimBox, store::block::Block, store::frame::Frame};
+use molrs::op::types::{F, I, Idx};
+use molrs::spatial::SimBox;
+use molrs::store::MetaMap;
+use molrs::store::{Block, Frame};
 use slotmap::SlotMap;
 use std::collections::{HashMap, HashSet};
 
@@ -489,7 +490,7 @@ impl Default for Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::types::F;
+    use molrs::op::types::F;
     use ndarray::Array1;
 
     #[test]

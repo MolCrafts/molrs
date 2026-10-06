@@ -1,55 +1,9 @@
-//! The force-field seam: one trait between the integrator and everything that
-//! makes a force.
-//!
-//! An integrator asks exactly one question — *what are the energy, the forces
-//! and the virial at this configuration?* — and [`ForceProvider`] is that
-//! question. Everything a force evaluation needs on the way to answering it
-//! (the potential, the neighbour bookkeeping, the periodic régime, the
-//! fold-back of copies onto owners) lives behind the trait, and the integrator
-//! sees none of it. That is what makes the engine force-field agnostic: a new
-//! way to make a force is a new implementor, not a new enum variant and a new
-//! arm in a `match` that every caller must be recompiled against.
-//!
-//! # It is also the parallelisation boundary
-//!
-//! One `compute` call is one unit of work an implementation may split across
-//! threads however it likes. This is not incidental — it is the reason the
-//! trait has the shape it has.
-//!
-//! The per-pair fold that dominates a step happens *inside*
-//! [`Potential::calc_energy_forces_with_pairs`], and `Potential` is a stable
-//! interface with dozens of implementors that this module does not get to
-//! change. So a parallel fold has to be owned by something above `Potential`
-//! and below the integrator. Before this trait there was no such object.
-//!
-//! Three consequences are load-bearing:
-//!
-//! * **`&mut self`, and no interior mutability.** A provider is not stateless:
-//!   a Verlet skin holds its reference coordinates and its age, a halo holds
-//!   its copies and a generation counter, and all of it is bound to *one*
-//!   trajectory. Exclusive access for the duration of a call is what lets an
-//!   implementation own reusable scratch and mutate it from rayon with no
-//!   locks, and split its own data with `par_chunks_mut` with no
-//!   synchronisation at all. `&self` plus interior mutability would buy only
-//!   concurrent `compute` calls on one shared provider — meaningless here,
-//!   because two replicas at different positions cannot share a skin whose
-//!   held coordinates name one of them — at the price of a lock every step,
-//!   forever. One provider per replica is the right shape, and that needs
-//!   `Send`, not `&self`.
-//! * **`Send + Sync` on the trait.** A boxed provider must be movable to a
-//!   worker thread; just as importantly, the bound *forbids* an implementor
-//!   from hiding an `Rc` or a `RefCell` and foreclosing that later.
-//! * **An owned [`ForceOutput`] out, borrowing nothing.** No lifetime crosses
-//!   the boundary, so a provider may re-partition itself between calls —
-//!   rebuild its halo, change its domain decomposition, migrate atoms — with
-//!   no caller pinned to its internal layout.
-
 use ndarray::{Array2, ArrayView2};
 
 use molrs::ff::potential::{Member, Potential};
 use molrs::math::Virial;
+use molrs::op::types::{F, FNx3, FNx3View, I};
 use molrs::spatial::neighbors::VerletSkin;
-use molrs::types::{F, FNx3, FNx3View, I};
 
 use super::error::MdError;
 use super::pairs::{BondedLists, Comm};
@@ -58,7 +12,53 @@ use molrs::ff::potential::SpecialWeights;
 
 /// What an integrator asks of a force field.
 ///
-/// See the [module documentation](self) for why the signature is what it is.
+/// Why the signature is what it is follows below.
+///
+/// The force-field seam: one trait between the integrator and everything that
+/// makes a force.
+///
+/// An integrator asks exactly one question — *what are the energy, the forces
+/// and the virial at this configuration?* — and [`ForceProvider`] is that
+/// question. Everything a force evaluation needs on the way to answering it
+/// (the potential, the neighbour bookkeeping, the periodic régime, the
+/// fold-back of copies onto owners) lives behind the trait, and the integrator
+/// sees none of it. That is what makes the engine force-field agnostic: a new
+/// way to make a force is a new implementor, not a new enum variant and a new
+/// arm in a `match` that every caller must be recompiled against.
+///
+/// # It is also the parallelisation boundary
+///
+/// One `compute` call is one unit of work an implementation may split across
+/// threads however it likes. This is not incidental — it is the reason the
+/// trait has the shape it has.
+///
+/// The per-pair fold that dominates a step happens *inside*
+/// [`Potential::calc_energy_forces_with_pairs`], and `Potential` is a stable
+/// interface with dozens of implementors that this module does not get to
+/// change. So a parallel fold has to be owned by something above `Potential`
+/// and below the integrator. Before this trait there was no such object.
+///
+/// Three consequences are load-bearing:
+///
+/// * **`&mut self`, and no interior mutability.** A provider is not stateless:
+///   a Verlet skin holds its reference coordinates and its age, a halo holds
+///   its copies and a generation counter, and all of it is bound to *one*
+///   trajectory. Exclusive access for the duration of a call is what lets an
+///   implementation own reusable scratch and mutate it from rayon with no
+///   locks, and split its own data with `par_chunks_mut` with no
+///   synchronisation at all. `&self` plus interior mutability would buy only
+///   concurrent `compute` calls on one shared provider — meaningless here,
+///   because two replicas at different positions cannot share a skin whose
+///   held coordinates name one of them — at the price of a lock every step,
+///   forever. One provider per replica is the right shape, and that needs
+///   `Send`, not `&self`.
+/// * **`Send + Sync` on the trait.** A boxed provider must be movable to a
+///   worker thread; just as importantly, the bound *forbids* an implementor
+///   from hiding an `Rc` or a `RefCell` and foreclosing that later.
+/// * **An owned [`ForceOutput`] out, borrowing nothing.** No lifetime crosses
+///   the boundary, so a provider may re-partition itself between calls —
+///   rebuild its halo, change its domain decomposition, migrate atoms — with
+///   no caller pinned to its internal layout.
 pub trait ForceProvider: Send + Sync {
     /// Energy, forces on the **owned** atoms, and the virial, at `pos`.
     ///
@@ -603,8 +603,8 @@ mod tests {
 
     use molrs::ff::potential::pair::LJCut;
     use molrs::ff::potential::{PotentialCompiler, Potentials};
+    use molrs::spatial::SimBox;
     use molrs::spatial::neighbors::{NeighborList, NeighborPolicy};
-    use molrs::spatial::simbox::SimBox;
 
     use super::*;
     use molrs::ff::potential::SpecialWeights;
@@ -698,9 +698,9 @@ mod tests {
     #[test]
     fn a_molecule_across_a_face_scores_as_one_that_is_not() {
         use molrs::ff::forcefield::{ForceField, Params};
-        use molrs::store::block::Block;
-        use molrs::store::frame::Frame;
-        use molrs::types::Idx;
+        use molrs::op::types::Idx;
+        use molrs::store::Block;
+        use molrs::store::Frame;
         use ndarray::Array1;
 
         let l = 20.0_f64;
@@ -925,9 +925,9 @@ mod tests {
     /// Exactly, because an exclusion drops the pair rather than scaling it.
     #[test]
     fn a_fully_excluded_molecule_has_no_non_bonded_energy() {
-        use molrs::Topology;
         use molrs::ff::forcefield::mixing::Mixing;
-        use molrs::system::bond_weights::BondDistanceWeights;
+        use molrs::system::BondDistanceWeights;
+        use molrs::system::Topology;
 
         let bx = SimBox::cube(20.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         // A bent chain, every atom well inside the 6 Å cutoff of the others.
@@ -1002,9 +1002,9 @@ mod tests {
     /// it matters.
     #[test]
     fn exclusions_follow_a_molecule_through_a_face() {
-        use molrs::Topology;
         use molrs::ff::forcefield::mixing::Mixing;
-        use molrs::system::bond_weights::BondDistanceWeights;
+        use molrs::system::BondDistanceWeights;
+        use molrs::system::Topology;
 
         let l = 20.0_f64;
         let cutoff = 6.0;
@@ -1087,7 +1087,7 @@ mod tests {
     /// changed when the box was re-centred.
     #[test]
     fn an_external_field_refuses_a_virial_where_a_bonded_term_gives_one() {
-        use molrs::ff::potential::bond::harmonic::BondHarmonic;
+        use molrs::ff::potential::bond::BondHarmonic;
 
         struct Push;
         impl Potential for Push {
@@ -1134,12 +1134,12 @@ mod tests {
     /// other, silently. Both doors now read the weights.
     #[test]
     fn both_doors_keep_the_1_3_pairs_a_fene_field_asks_for() {
-        use molrs::Topology;
         use molrs::ff::forcefield::{ForceField, Params, SpecialBonds};
         use molrs::ff::potential::intramolecular_pairs;
-        use molrs::store::block::Block;
-        use molrs::store::frame::Frame;
-        use molrs::types::Idx;
+        use molrs::op::types::Idx;
+        use molrs::store::Block;
+        use molrs::store::Frame;
+        use molrs::system::Topology;
         use ndarray::Array1;
 
         // Three beads, 0-1-2: (0,1) and (1,2) are 1-2, (0,2) is 1-3.
@@ -1253,9 +1253,9 @@ mod tests {
     /// index past the end of an empty slice, or quietly weight the wrong pair.
     #[test]
     fn the_minimum_image_route_excludes_the_same_pairs() {
-        use molrs::Topology;
         use molrs::ff::forcefield::mixing::Mixing;
-        use molrs::system::bond_weights::BondDistanceWeights;
+        use molrs::system::BondDistanceWeights;
+        use molrs::system::Topology;
 
         let bx = SimBox::cube(20.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         let pos = array![

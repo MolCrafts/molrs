@@ -1,16 +1,16 @@
 //! Green–Kubo diffusion raw compute — the velocity-ACF route to D.
 
-use molrs::store::frame_access::FrameAccess;
+use molrs::store::FrameAccess;
 
 use super::vacf::{VacfArgs, VacfResult, velocity_acf};
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 
 /// Named workflow over the unbiased [`VACF`](super::VACF) curve for Green–Kubo
 /// self-diffusion. Same math as `VACF` — not a second estimator.
 ///
 /// Fit step (caller): \(D = \frac{1}{d}\int_0^{\tau_{\max}} C(\tau)\,\mathrm{d}\tau\)
-/// via [`CumulativeTrapezoid`](crate::compute::fitting::CumulativeTrapezoid)
+/// via [`CumulativeTrapezoid`](crate::compute::CumulativeTrapezoid)
 /// then scale by `1/d` (`d = 3` in 3D).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GreenKuboDiffusion;
@@ -33,7 +33,7 @@ impl Compute for GreenKuboDiffusion {
 mod tests {
     use super::super::vacf::VACF;
     use super::*;
-    use molrs::Frame;
+    use molrs::store::Frame;
     use ndarray::Array2;
     use rand::{RngExt, SeedableRng};
 

@@ -10,10 +10,10 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use crate::spatial::geometry::{CenterError, center};
+use crate::spatial::{CenterError, center};
 use crate::store::keys;
-use crate::system::coarsegrain::CoarseGrain;
-use crate::system::molgraph::{MolGraph, NodeId, node_to_u64};
+use crate::system::CoarseGrain;
+use crate::system::{MolGraph, NodeId, node_to_u64};
 
 /// Why [`Coarsener::coarsen`] refuses its input. Nothing is built when it
 /// returns one.
@@ -92,7 +92,7 @@ impl std::error::Error for CoarsenError {
 /// ```
 /// use molrs::builder::Coarsener;
 /// use molrs::store::keys;
-/// use molrs::system::coarsegrain::CoarseGrain;
+/// use molrs::system::CoarseGrain;
 ///
 /// let mut src = CoarseGrain::new();
 /// let a = src.add_bead("S", 0.0, 0.0, 0.0);
@@ -189,7 +189,7 @@ impl<'a> Coarsener<'a> {
     /// ```
     /// use molrs::builder::Coarsener;
     /// use molrs::store::keys;
-    /// use molrs::system::coarsegrain::CoarseGrain;
+    /// use molrs::system::CoarseGrain;
     ///
     /// let mut src = CoarseGrain::new();
     /// let mut beads = Vec::new();
@@ -306,7 +306,7 @@ impl<'a> Coarsener<'a> {
 mod tests {
     use super::*;
     use crate::store::keys;
-    use crate::system::molgraph::NodeId;
+    use crate::system::NodeId;
 
     /// A source bead of type "S" at `(x, 0, 0)` carrying `mass`.
     fn bead(src: &mut CoarseGrain, x: f64, mass: f64) -> NodeId {

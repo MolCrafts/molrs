@@ -7,7 +7,7 @@
 //!
 //! | spectrum | raw compute (raw ACF) | transform |
 //! |----------|-----------------------|-----------|
-//! | VDOS  | [`VACF`](crate::compute::transport::VACF) (velocity ACF) | [`PowerSpectrum`](super::PowerSpectrum) |
+//! | VDOS  | [`VACF`](crate::compute::VACF) (velocity ACF) | [`PowerSpectrum`](super::PowerSpectrum) |
 //! | IR    | [`IRFlux`](super::IRFlux) (dipole-flux ACF) | [`IRSpectrum`](super::IRSpectrum) |
 //! | Raman | [`RamanTensor`](super::RamanTensor) (polarizability iso/aniso ACFs) | [`RamanSpectrum`](super::RamanSpectrum) |
 //!
@@ -32,7 +32,7 @@
 
 use ndarray::Array1;
 
-use crate::compute::result::ComputeResult;
+use crate::compute::ComputeResult;
 
 // ── Result types ─────────────────────────────────────────────────────────────
 

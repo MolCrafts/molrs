@@ -27,7 +27,7 @@
 //! # Example — the one route
 //!
 //! ```no_run
-//! use molrs::Atomistic;
+//! use molrs::system::Atomistic;
 //! use molrs::ff::potential::{PotentialCompiler, intramolecular_pairs};
 //! use molrs::ff::typifier::Typing;
 //! use molrs::ff::typifier::mmff::MMFF94Typifier;
@@ -54,7 +54,7 @@
 
 use crate::ff::forcefield::ForceField;
 use crate::ff::typifier::{Match, Typifier};
-use molrs::Atomistic;
+use molrs::system::Atomistic;
 use properties::MmffVariant;
 
 use engine::MmffEngine;
@@ -160,7 +160,7 @@ mmff_front_door! {
     /// use molrs::ff::typifier::mmff::MMFF94Typifier;
     /// use molrs::ff::typifier::{Typifier, Typing};
     /// # fn main() -> Result<(), String> {
-    /// # let mol = molrs::Atomistic::new();
+    /// # let mol = molrs::system::Atomistic::new();
     /// let typifier = MMFF94Typifier::new();
     /// assert_eq!(typifier.library().name, "MMFF94");
     /// let typed = Typing::new(typifier).typify(&mol)?;
@@ -206,7 +206,7 @@ mmff_front_door! {
     /// use molrs::ff::typifier::mmff::MMFF94STypifier;
     /// use molrs::ff::typifier::{Typifier, Typing};
     /// # fn main() -> Result<(), String> {
-    /// # let mol = molrs::Atomistic::new();
+    /// # let mol = molrs::system::Atomistic::new();
     /// let typifier = MMFF94STypifier::new();
     /// assert_eq!(typifier.library().name, "MMFF94s");
     /// let typed = Typing::new(typifier).typify(&mol)?;

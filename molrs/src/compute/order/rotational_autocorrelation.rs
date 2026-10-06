@@ -24,12 +24,12 @@
 //! ensemble decorrelates. The system-wide order parameter is the mean of
 //! `Ψ_ℓ(i)` across particles.
 
-use crate::compute::result::ComputeResult;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use crate::compute::ComputeResult;
+use molrs::op::types::F;
+use molrs::store::FrameAccess;
 
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 use crate::op::rigid::{quat_conj, quat_mul, quat_norm};
 use crate::op::types::Quat;
 
@@ -137,7 +137,7 @@ impl ComputeResult for RotationalAutocorrelationResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
+    use molrs::store::Frame;
 
     fn frame() -> Frame {
         Frame::new()

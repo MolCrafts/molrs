@@ -1,13 +1,13 @@
 //! VCD electric×magnetic dipole cross-correlation raw compute — the
 //! VCD-spectrum raw input.
 
-use molrs::store::frame_access::FrameAccess;
+use molrs::store::FrameAccess;
 use ndarray::Array2;
 
 use super::{central_diff_series, lag_times, sum_column_xcorr};
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
 
 /// Raw VCD cross-correlation — the VCD-spectrum raw input.
 #[derive(Debug, Clone)]
