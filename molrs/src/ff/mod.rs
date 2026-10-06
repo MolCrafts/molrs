@@ -28,4 +28,5 @@ pub use forcefield::writers::{
 pub use forcefield::xml::{read_forcefield_xml, read_forcefield_xml_str};
 pub use forcefield::{ForceField, SpecialBonds};
 pub use scale_lj::{FragmentAtoms, FragmentScaling, ScaleLjError, compute_k_ij, scale_lj};
+pub use typifier::cmap::assign_cmaps;
 pub use typifier::gaff::GaffParameterSet;

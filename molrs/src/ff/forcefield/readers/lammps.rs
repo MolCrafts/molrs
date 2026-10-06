@@ -59,6 +59,15 @@
 //! [`Frame`](molrs::store::frame::Frame) at evaluation time, with LAMMPS's own
 //! Coulomb constant (`qqr2e`) for the file's units.
 //!
+//! # CMAP crossterms (`fix cmap`)
+//!
+//! A `fix <id> <group> cmap <file>` line reads `<file>` (relative to the
+//! include's directory when the include is read from a path) with
+//! [`read_lammps_cmap_str`] into a `cmap charmm` style: map `t` of the file is
+//! the row named `"t"` — the crossterm type a data file's `CMAP` section
+//! gives — with the synthetic endpoints `t-t-t-t-t`. A `fix_modify` line for
+//! that fix is accepted and changes nothing; any other fix style is refused.
+//!
 //! 1-4 weights are **declared** on a `special_bonds` line and stored on
 //! [`ForceField::special_bonds`](crate::ff::forcefield::ForceField::special_bonds)
 //! (dimensionless `[1-2, 1-3, 1-4]`). An include that omits the line is an
@@ -75,7 +84,9 @@ use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::params::amber::{AMBER_SCEE, AMBER_SCNB};
 use molrs::store::type_labels::TypeName;
 use molrs::units::constants::{COULOMB_METAL, COULOMB_REAL};
+use ndarray::ArrayD;
 use std::collections::BTreeMap;
+use std::path::Path;
 
 /// Optional id→label maps (from a data-file Type Labels section).
 #[derive(Debug, Clone, Default)]
@@ -168,13 +179,39 @@ impl LammpsFfReader {
             }
         }
         synthetic.push_str(&commands);
-        self.read_str_with_labels(&synthetic, labels)
+        self.read_str_with_labels(&synthetic, labels, None)
+    }
+
+    /// Read a LAMMPS `fix cmap` file ([`read_lammps_cmap_str`]) into a force
+    /// field of one `cmap charmm` style: map `t` (1-based, the crossterm type
+    /// of a data file's `CMAP` section) is the row named `"t"`, with the
+    /// synthetic endpoints `t-t-t-t-t` (the file names no atom types), its
+    /// `grid` the map as written.
+    ///
+    /// The force field is in the file's `UNITS:` tag, or
+    /// [`default_units`](Self::default_units) when it has none.
+    ///
+    /// # Errors
+    ///
+    /// Every error of [`read_lammps_cmap_str`], and a `UNITS:` tag that is no
+    /// LAMMPS unit style.
+    pub fn read_cmap_str(&self, text: &str) -> Result<ForceField, String> {
+        let file = read_lammps_cmap_str(text)?;
+        let units = match &file.units {
+            Some(units) => parse_style(units)?,
+            None => self.default_units,
+        };
+        let mut ff = ForceField::new("LAMMPS");
+        add_cmap_rows(&mut ff, &file.maps)?;
+        ff.set_units(units);
+        Ok(ff)
     }
 
     fn read_str_with_labels(
         &self,
         text: &str,
         labels: &LammpsTypeLabelMaps,
+        dir: Option<&Path>,
     ) -> Result<ForceField, String> {
         let mut file_units = self.default_units;
         let mut ff = ForceField::new("LAMMPS");
@@ -184,6 +221,8 @@ impl LammpsFfReader {
         // The LAMMPS style each category's coefficient lines are read under.
         let mut styles: BTreeMap<&'static str, BondedStyle> = BTreeMap::new();
         let mut saw_special_bonds = false;
+        // The `fix cmap` read so far: its fix id and its file's `UNITS:` tag.
+        let mut cmap_fix: Option<(String, Option<String>)> = None;
 
         for (lineno, raw) in text.lines().enumerate() {
             let line = strip_comment(raw).trim();
@@ -243,6 +282,44 @@ impl LammpsFfReader {
                         pair_mix = Some((*rule).to_owned());
                     }
                 }
+                "fix" => {
+                    let [id, _group, style, args @ ..] = rest.as_slice() else {
+                        return Err(format!(
+                            "{}: fix needs an id, a group and a style",
+                            where_()
+                        ));
+                    };
+                    if *style != "cmap" {
+                        return Err(format!(
+                            "{}: unsupported fix style `{style}` (a force-field include \
+                             holds only `fix cmap`)",
+                            where_()
+                        ));
+                    }
+                    let [file] = args else {
+                        return Err(format!("{}: fix cmap takes one file name", where_()));
+                    };
+                    if cmap_fix.is_some() {
+                        return Err(format!("{}: a second fix cmap", where_()));
+                    }
+                    let path = dir.map_or_else(|| Path::new(file).to_path_buf(), |d| d.join(file));
+                    let text = std::fs::read_to_string(&path).map_err(|e| {
+                        format!("{}: fix cmap file {}: {e}", where_(), path.display())
+                    })?;
+                    let maps = read_lammps_cmap_str(&text)
+                        .map_err(|e| format!("{}: {}: {e}", where_(), path.display()))?;
+                    add_cmap_rows(&mut ff, &maps.maps)?;
+                    cmap_fix = Some(((*id).to_owned(), maps.units));
+                }
+                "fix_modify" => {
+                    let id = rest.first().copied().unwrap_or_default();
+                    if cmap_fix.as_ref().is_none_or(|(cmap, _)| cmap != id) {
+                        return Err(format!(
+                            "{}: fix_modify of `{id}`, which is no fix cmap read before it",
+                            where_()
+                        ));
+                    }
+                }
                 "atom_style" | "kspace_style" => {}
                 other => return Err(format!("{}: unknown LAMMPS keyword `{other}`", where_())),
             }
@@ -251,6 +328,14 @@ impl LammpsFfReader {
             return Err(
                 "special_bonds declaration is missing; 1-4 weights cannot be invented".into(),
             );
+        }
+        if let Some((_, Some(tag))) = &cmap_fix
+            && tag != file_units
+        {
+            return Err(format!(
+                "the fix cmap file states UNITS: {tag}, the include is in {file_units} \
+                 (LAMMPS refuses the file)"
+            ));
         }
 
         build_pairs(
@@ -269,8 +354,130 @@ impl LammpsFfReader {
 
 impl ForceFieldReader for LammpsFfReader {
     fn read_str(&self, text: &str) -> Result<ForceField, String> {
-        self.read_str_with_labels(text, &LammpsTypeLabelMaps::default())
+        self.read_str_with_labels(text, &LammpsTypeLabelMaps::default(), None)
     }
+
+    /// Read the include at `path`; a `fix cmap` file it names is found
+    /// relative to the include's directory.
+    fn read(&self, path: &str) -> Result<ForceField, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("read {path}: {e}"))?;
+        let dir = Path::new(path).parent();
+        self.read_str_with_labels(&text, &LammpsTypeLabelMaps::default(), dir)
+    }
+}
+
+// ── fix cmap ────────────────────────────────────────────────────────────────
+
+/// The map size LAMMPS `fix cmap` reads: 24×24, 15° spacing (`CMAPDIM`).
+pub const LAMMPS_CMAP_DIM: usize = 24;
+
+/// The most maps one `fix cmap` file holds (`CMAPMAX`).
+pub const LAMMPS_CMAP_MAX: usize = 6;
+
+/// The maps of a LAMMPS `fix cmap` file (CHARMM format).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LammpsCmapFile {
+    /// The unit style of the first line's `UNITS: <style>` tag, as LAMMPS
+    /// reads it (the word after a `UNITS:` token); `None` without one —
+    /// LAMMPS's own `charmm36.cmap` spells it `UNITS:real`, which LAMMPS does
+    /// not read as a tag either.
+    pub units: Option<String>,
+    /// The maps in file order — map `t` is crossterm type `t + 1` — each
+    /// [`LAMMPS_CMAP_DIM`]² energies, φ-major (`[i][j]` at φ = −180° + 15°·i,
+    /// ψ = −180° + 15°·j).
+    pub maps: Vec<ArrayD<f64>>,
+}
+
+/// Parse a LAMMPS `fix cmap` file, as `FixCMAP::read_grid_map` reads it.
+///
+/// Every `#` starts a comment to the end of its line; what is left is
+/// whitespace-separated numbers, 576 (24 × 24) per map, maps one after the
+/// other in φ-major order (CHARMM writes each φ row under a `# <φ>` comment,
+/// five values a line).
+///
+/// Reading is total where LAMMPS is lenient: a trailing incomplete map, a
+/// line whose values run past the end of a map (LAMMPS drops the rest of the
+/// line), and a seventh map (LAMMPS reads six and ignores the rest) are
+/// refused, as are a non-numeric token and a file with no map.
+///
+/// ```
+/// use molrs::ff::forcefield::readers::lammps::read_lammps_cmap_str;
+///
+/// let text = format!("# UNITS: real\n# map 1\n{}", "0.5\n".repeat(576));
+/// let file = read_lammps_cmap_str(&text).unwrap();
+/// assert_eq!(file.units.as_deref(), Some("real"));
+/// assert_eq!(file.maps[0].shape(), &[24, 24]);
+/// ```
+pub fn read_lammps_cmap_str(text: &str) -> Result<LammpsCmapFile, String> {
+    const PER_MAP: usize = LAMMPS_CMAP_DIM * LAMMPS_CMAP_DIM;
+    let units = text.lines().next().and_then(|first| {
+        let mut words = first.split_whitespace();
+        words.find(|w| *w == "UNITS:")?;
+        words.next().map(str::to_owned)
+    });
+    let mut maps: Vec<ArrayD<f64>> = Vec::new();
+    let mut values: Vec<f64> = Vec::with_capacity(PER_MAP);
+    for (lineno, raw) in text.lines().enumerate() {
+        let line = strip_comment(raw);
+        let tokens: Vec<&str> = line.split_whitespace().collect();
+        if tokens.is_empty() {
+            continue;
+        }
+        if maps.len() == LAMMPS_CMAP_MAX {
+            return Err(format!(
+                "line {}: a map past the {LAMMPS_CMAP_MAX} fix cmap reads",
+                lineno + 1
+            ));
+        }
+        for (k, token) in tokens.iter().enumerate() {
+            let value = token
+                .parse::<f64>()
+                .map_err(|_| format!("line {}: {token:?} is not a number", lineno + 1))?;
+            values.push(value);
+            if values.len() == PER_MAP {
+                if k + 1 < tokens.len() {
+                    return Err(format!(
+                        "line {}: values past the end of map {}, which fix cmap discards",
+                        lineno + 1,
+                        maps.len() + 1
+                    ));
+                }
+                let grid = std::mem::replace(&mut values, Vec::with_capacity(PER_MAP));
+                maps.push(
+                    ArrayD::from_shape_vec(vec![LAMMPS_CMAP_DIM, LAMMPS_CMAP_DIM], grid)
+                        .map_err(|e| e.to_string())?,
+                );
+            }
+        }
+    }
+    if !values.is_empty() {
+        return Err(format!(
+            "map {} is incomplete: {}/{PER_MAP} values",
+            maps.len() + 1,
+            values.len()
+        ));
+    }
+    if maps.is_empty() {
+        return Err("no CMAP map in the file".into());
+    }
+    Ok(LammpsCmapFile { units, maps })
+}
+
+/// Define map `t` (0-based) of `maps` as the `cmap charmm` row `"t+1"`.
+fn add_cmap_rows(ff: &mut ForceField, maps: &[ArrayD<f64>]) -> Result<(), String> {
+    let style = ff
+        .def_style("cmap", "charmm", Params::new())
+        .map_err(|e| e.to_string())?;
+    for (t, grid) in maps.iter().enumerate() {
+        let name = (t + 1).to_string();
+        let mut params = Params::new();
+        params.set_array("grid", grid.clone());
+        let ends = [name.as_str(); 5];
+        style
+            .def_type(&name, &ends, params)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// Pair cutoff `read_data_coeffs` declares: a data file carries none.
@@ -1475,7 +1682,7 @@ pair_style lj/cut 10.0
 pair_coeff 1 1 0.1 3.5
 ";
         let ff = LammpsFfReader::new()
-            .read_str_with_labels(text, &labels)
+            .read_str_with_labels(text, &labels, None)
             .unwrap();
         let bond = ff.get_style("bond", "harmonic").unwrap();
         assert!(bond.get_bondtype("CT", "HC").is_some());
@@ -1800,5 +2007,94 @@ dihedral_coeff 10-10-10-10 0.2 1.0 180.0
         assert!((p2.params.get("epsilon").unwrap() - 0.08).abs() < 1e-12);
         assert!((p10.params.get("epsilon").unwrap() - 0.046).abs() < 1e-12);
         assert!((p10.params.get("sigma").unwrap() - 0.4).abs() < 1e-12);
+    }
+
+    // ── fix cmap ────────────────────────────────────────────────────────────
+
+    const ALANINE: &str = include_str!("../../potential/cmap/testdata/charmm36_alanine.cmap");
+
+    /// CHARMM's own file: the `# <φ>` comments are skipped, the 576 numbers
+    /// fill the map φ-major, and `UNITS:real` (one word) is no tag, as for
+    /// LAMMPS.
+    #[test]
+    fn a_charmm_cmap_file_reads_phi_major() {
+        let file = read_lammps_cmap_str(ALANINE).unwrap();
+        assert_eq!(file.units, None);
+        assert_eq!(file.maps.len(), 1);
+        let map = &file.maps[0];
+        assert_eq!(map.shape(), &[24, 24]);
+        // `# -180.0` row: first and last value; `# -165.0` row: first value.
+        assert_eq!(map[[0, 0]], 0.126790);
+        assert_eq!(map[[0, 23]], -0.036650);
+        assert_eq!(map[[1, 0]], -0.127133);
+
+        let ff = LammpsFfReader::new().read_cmap_str(ALANINE).unwrap();
+        assert_eq!(ff.units(), "real");
+        let rows = ff.get_cmaptypes();
+        assert_eq!((rows[0].name.as_str(), rows[0].mtom.as_str()), ("1", "1"));
+        assert_eq!(rows[0].params.get_array("grid"), Some(map));
+    }
+
+    #[test]
+    fn a_cmap_file_fix_cmap_would_misread_is_refused() {
+        let map = "0.5\n".repeat(576);
+        let tagged = format!("# UNITS: metal\n{map}{map}");
+        let file = read_lammps_cmap_str(&tagged).unwrap();
+        assert_eq!((file.units.as_deref(), file.maps.len()), (Some("metal"), 2));
+
+        for (text, why) in [
+            (format!("{map}0.5 0.5\n"), "incomplete"),
+            (map.repeat(7), "past the 6"),
+            (
+                format!("{}0.5 0.5\n{}", "0.5\n".repeat(575), map),
+                "past the end of map 1",
+            ),
+            ("# nothing\n".to_owned(), "no CMAP map"),
+            (format!("{}x\n", "0.5\n".repeat(575)), "not a number"),
+        ] {
+            let err = read_lammps_cmap_str(&text).unwrap_err();
+            assert!(err.contains(why), "{why}: {err}");
+        }
+    }
+
+    /// An include's `fix cmap` line reads its file relative to the include,
+    /// `fix_modify` of it is accepted, and a file in other units is refused.
+    #[test]
+    fn an_include_reads_its_fix_cmap_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("c.cmap"), ALANINE).unwrap();
+        let include = "units real\nfix cm all cmap c.cmap\nfix_modify cm energy yes\n\
+                       special_bonds charmm\n";
+        let path = dir.path().join("sys.ff");
+        std::fs::write(&path, include).unwrap();
+        let ff = LammpsFfReader::new().read(path.to_str().unwrap()).unwrap();
+        assert_eq!(ff.get_cmaptypes().len(), 1);
+
+        for (text, why) in [
+            (
+                "fix cm all nve\nspecial_bonds charmm\n",
+                "unsupported fix style",
+            ),
+            (
+                "fix_modify cm energy yes\nspecial_bonds charmm\n",
+                "no fix cmap",
+            ),
+        ] {
+            std::fs::write(&path, text).unwrap();
+            let err = LammpsFfReader::new()
+                .read(path.to_str().unwrap())
+                .unwrap_err();
+            assert!(err.contains(why), "{err}");
+        }
+        std::fs::write(
+            dir.path().join("c.cmap"),
+            format!("# UNITS: metal\n{}", "0.5\n".repeat(576)),
+        )
+        .unwrap();
+        std::fs::write(&path, include).unwrap();
+        let err = LammpsFfReader::new()
+            .read(path.to_str().unwrap())
+            .unwrap_err();
+        assert!(err.contains("UNITS: metal"), "{err}");
     }
 }

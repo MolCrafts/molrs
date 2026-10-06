@@ -70,6 +70,18 @@
 //! Every data-file section names its style in the header comment, as LAMMPS's
 //! `write_data` does.
 //!
+//! # CMAP crossterms (`fix cmap`)
+//!
+//! A `cmaps` block's labels select `cmap charmm` rows the same way, in id
+//! order: [`LammpsFfWriter::write_cmap_str`] writes their grids as the
+//! `fix cmap` file (map `t` is crossterm type `t`, the id the data writer
+//! gives the `CMAP` section), and the include names that file
+//! ([`LammpsWriteOptions::cmap_file`]) on a `fix cmap all cmap <file>` line,
+//! with `fix_modify cmap energy yes` so the crossterms count in `pe`. LAMMPS
+//! reads the crossterms with the data file, so the fix must precede
+//! `read_data <data> fix cmap crossterm CMAP` (LAMMPS takes it before the box
+//! exists); the include writes it first, beside `units`.
+//!
 //! # Pair style layout
 //!
 //! The reader splits a combined `lj/cut/coul/*` kernel into `lj/cut` + `coul/cut`
@@ -84,11 +96,14 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use super::ForceFieldWriter;
 use crate::ff::forcefield::lammps_units::{LammpsFfUnits, parse_style};
 use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::readers::lammps::{LAMMPS_CMAP_DIM, LAMMPS_CMAP_MAX};
 use crate::ff::forcefield::torsion::nharmonic_coefficients;
 use crate::ff::forcefield::{
-    AngleType, BondType, DihedralType, ForceField, ImproperType, PairType, Params, Style, StyleDefs,
+    AngleType, BondType, CmapType, DihedralType, ForceField, ImproperType, PairType, Params, Style,
+    StyleDefs,
 };
 use molrs::store::type_labels::{TypeLabels, TypeName};
+use ndarray::ArrayD;
 
 /// The cutoff a `pair_style` line needs. The writer never invents one
 /// (operator 2026-09-28: the user provides the cutoff); a style without one is
@@ -120,6 +135,10 @@ pub struct LammpsWriteOptions {
     pub skip_units: bool,
     /// LAMMPS `units` style for the written include (default `"real"`).
     pub units: &'static str,
+    /// The `fix cmap` file the include names, as the input script will find
+    /// it — where [`LammpsFfWriter::write_cmap_str`]'s text is saved. Needed
+    /// exactly when the system has CMAP crossterms (default `None`).
+    pub cmap_file: Option<String>,
 }
 
 impl Default for LammpsWriteOptions {
@@ -129,9 +148,13 @@ impl Default for LammpsWriteOptions {
             skip_pair_style: false,
             skip_units: false,
             units: "real",
+            cmap_file: None,
         }
     }
 }
+
+/// The fix id the include gives `fix cmap`.
+const CMAP_FIX_ID: &str = "cmap";
 
 /// Conversion context: the force field's units → the file's, through the lj
 /// hub. The identity when the two are the same unit style.
@@ -567,6 +590,37 @@ impl BondedCoeff for ImproperType {
     }
 }
 
+impl BondedCoeff for CmapType {
+    const CATEGORY: &'static str = "cmap";
+    const BLOCK: &'static str = "cmaps";
+    const HEADING: &'static str = "CMAP";
+
+    fn types_of(defs: &StyleDefs) -> Option<&[Self]> {
+        match defs {
+            StyleDefs::Cmap(types) => Some(types),
+            _ => None,
+        }
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn endpoints(&self) -> Vec<&str> {
+        vec![
+            self.itom.as_str(),
+            self.jtom.as_str(),
+            self.ktom.as_str(),
+            self.ltom.as_str(),
+            self.mtom.as_str(),
+        ]
+    }
+
+    fn params(&self) -> &Params {
+        &self.params
+    }
+}
+
 /// A bonded label resolved to the style and type that define it.
 struct Resolved<'f, T> {
     /// 1-based type id (label order).
@@ -646,6 +700,88 @@ impl<'a> LammpsFfWriter<'a> {
         self.write_data_section::<DihedralType>(&mut lines, ff, &units)?;
         self.write_data_section::<ImproperType>(&mut lines, ff, &units)?;
         Ok(lines.concat())
+    }
+
+    /// The LAMMPS `fix cmap` file of the `cmaps` labels: the grid of the
+    /// `cmap charmm` row each label names, in label id order, so map `t` is
+    /// the crossterm type `t` the data writer gives the `CMAP` section
+    /// ([`lammps_cmap_str`] is the layout). Energies are converted to
+    /// [`LammpsWriteOptions::units`] as every coefficient is.
+    ///
+    /// # Errors
+    ///
+    /// No `cmaps` label, a label with no cmap type, a style other than
+    /// `charmm`, a row without a `grid`, a grid that is not 24×24, or more
+    /// than six maps (LAMMPS's `CMAPDIM`, `CMAPMAX`).
+    pub fn write_cmap_str(&self, ff: &ForceField) -> Result<String, String> {
+        let units = WriteUnits::of(ff, self.options.units)?;
+        let rows = self.resolve::<CmapType>(ff)?;
+        if rows.is_empty() {
+            return Err("cmaps: the system has no CMAP crossterm labels".into());
+        }
+        if rows.len() > LAMMPS_CMAP_MAX {
+            return Err(format!(
+                "cmaps: {} CMAP types, fix cmap reads at most {LAMMPS_CMAP_MAX}",
+                rows.len()
+            ));
+        }
+        let mut maps = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let what = || format!("cmaps label `{}`", r.label);
+            if r.style.name() != "charmm" {
+                return Err(format!(
+                    "{}: cmap style `{}` has no fix cmap form (only `charmm`)",
+                    what(),
+                    r.style.name()
+                ));
+            }
+            let grid =
+                r.ty.params
+                    .get_array("grid")
+                    .ok_or_else(|| format!("{}: no `grid`", what()))?;
+            if grid.shape() != [LAMMPS_CMAP_DIM, LAMMPS_CMAP_DIM] {
+                return Err(format!(
+                    "{}: a {:?} grid; fix cmap reads {LAMMPS_CMAP_DIM}×{LAMMPS_CMAP_DIM}",
+                    what(),
+                    grid.shape()
+                ));
+            }
+            let converted = grid
+                .iter()
+                .map(|&v| units.energy(v))
+                .collect::<Result<Vec<f64>, String>>()?;
+            let converted =
+                ArrayD::from_shape_vec(grid.shape(), converted).map_err(|e| e.to_string())?;
+            maps.push((r.label.clone(), converted));
+        }
+        let titled: Vec<(&str, &ArrayD<f64>)> =
+            maps.iter().map(|(label, g)| (label.as_str(), g)).collect();
+        lammps_cmap_str(&titled, self.options.units, self.options.precision)
+    }
+
+    /// The include's `fix cmap` lines when the system has CMAP crossterms,
+    /// nothing otherwise.
+    fn write_cmap_fix(&self, lines: &mut Vec<String>, ff: &ForceField) -> Result<(), String> {
+        if self.resolve::<CmapType>(ff)?.is_empty() {
+            return Ok(());
+        }
+        let file = self.options.cmap_file.as_deref().ok_or(
+            "the system has CMAP crossterms: set LammpsWriteOptions::cmap_file to the file \
+             write_cmap_str's text is saved as",
+        )?;
+        if file.is_empty() || file.chars().any(char::is_whitespace) {
+            return Err(format!(
+                "cmap_file {file:?}: LAMMPS reads one word as the fix cmap file"
+            ));
+        }
+        lines.push(
+            "# CMAP crossterms: this fix must precede `read_data <data> fix cmap crossterm CMAP`\n"
+                .to_owned(),
+        );
+        lines.push(format!("fix {CMAP_FIX_ID} all cmap {file}\n"));
+        lines.push(format!("fix_modify {CMAP_FIX_ID} energy yes\n"));
+        lines.push("\n".to_owned());
+        Ok(())
     }
 
     /// Labels of `block` in id order; the ids themselves (`"1"`, `"2"`, …)
@@ -964,6 +1100,7 @@ impl ForceFieldWriter for LammpsFfWriter<'_> {
             lines.push(format!("units {}\n", self.options.units));
             lines.push("\n".to_owned());
         }
+        self.write_cmap_fix(&mut lines, ff)?;
         // `special_bonds` is protocol (like `pair_style`), not a coefficient.
         // skip_pair_style means the include is coeff-only — the input script
         // owns 1-4 weights. Always emitting Amber 1/SCEE here is what made
@@ -1118,6 +1255,55 @@ fn style_cutoff(style: &Style) -> Option<f64> {
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
+
+/// A LAMMPS `fix cmap` file of `maps` (`(title, grid)`, each grid N×N,
+/// φ-major), in CHARMM's layout: a first line with the `UNITS:` tag LAMMPS
+/// checks, then per map a `# <title>, type <t>` comment and, per φ row, a
+/// `# <φ>` comment over its N values, five a line, each `precision` decimals
+/// wide as CHARMM's `%13.6f` is — so a map of six-decimal values (CHARMM's
+/// own files) is written back as the very lines it was read from (less the
+/// blank CHARMM ends a short line with).
+///
+/// [`read_lammps_cmap_str`](crate::ff::forcefield::readers::lammps::read_lammps_cmap_str)
+/// reads it back; a value survives bit for bit once `precision` decimals
+/// reach past its 17th significant digit.
+///
+/// # Errors
+///
+/// A grid that is not square, or a title holding a line break.
+pub fn lammps_cmap_str(
+    maps: &[(&str, &ArrayD<f64>)],
+    units: &str,
+    precision: usize,
+) -> Result<String, String> {
+    let width = precision + 7;
+    let mut out = format!("# UNITS: {units} CMAP correction maps written by molrs\n");
+    for (t, (title, grid)) in maps.iter().enumerate() {
+        let n = match grid.shape() {
+            [a, b] if a == b => *a,
+            shape => return Err(format!("map `{title}`: a {shape:?} grid is not square")),
+        };
+        if title.contains(['\n', '\r']) {
+            return Err(format!("map {}: its title holds a line break", t + 1));
+        }
+        out.push_str(&format!("\n# {title}, type {}\n", t + 1));
+        let values: Vec<f64> = grid.iter().copied().collect();
+        for (i, row) in values.chunks(n).enumerate() {
+            let phi = -180.0 + 360.0 * i as f64 / n as f64;
+            out.push_str(&format!("\n# {phi:.1}\n"));
+            for line in row.chunks(5) {
+                for (k, v) in line.iter().enumerate() {
+                    if k > 0 {
+                        out.push(' ');
+                    }
+                    out.push_str(&format!("{v:>width$.precision$}"));
+                }
+                out.push('\n');
+            }
+        }
+    }
+    Ok(out)
+}
 
 fn fmt_num(v: f64, precision: usize) -> String {
     format!("{v:.precision$}")
@@ -2391,5 +2577,127 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
             )
             .unwrap_err();
         assert!(err.contains("not one of"), "{err}");
+    }
+
+    // ── fix cmap ────────────────────────────────────────────────────────────
+
+    const ALANINE: &str = include_str!("../../potential/cmap/testdata/charmm36_alanine.cmap");
+
+    /// The numbers of a CHARMM cmap file, as its lines: comments dropped.
+    fn number_lines(text: &str) -> Vec<&str> {
+        text.lines()
+            .map(str::trim_end)
+            .filter(|l| !l.is_empty() && !l.trim_start().starts_with('#'))
+            .collect()
+    }
+
+    fn cmap_ff(grids: &[(&str, ArrayD<f64>)]) -> ForceField {
+        let mut ff = ForceField::new("charmm");
+        let style = ff.def_style("cmap", "charmm", Params::new()).unwrap();
+        for (name, grid) in grids {
+            let mut params = Params::new();
+            params.set_array("grid", grid.clone());
+            style.def_type(name, &[*name; 5], params).unwrap();
+        }
+        ff
+    }
+
+    /// Read CHARMM's file, write it: every number line comes back as the very
+    /// line it was read from, and the text reads back to the same bits.
+    #[test]
+    fn a_charmm_cmap_file_is_written_back_line_for_line() {
+        use crate::ff::forcefield::readers::lammps::read_lammps_cmap_str;
+        let map = read_lammps_cmap_str(ALANINE).unwrap().maps.remove(0);
+        let ff = cmap_ff(&[("ala", map.clone())]);
+        let labels = labels_of(&[("cmaps", &["ala", "ala"])]);
+        let text = LammpsFfWriter::new(&labels).write_cmap_str(&ff).unwrap();
+        assert_eq!(number_lines(&text), number_lines(ALANINE));
+        assert!(text.starts_with("# UNITS: real "), "{text}");
+        assert!(text.contains("\n# ala, type 1\n"), "{text}");
+        let back = read_lammps_cmap_str(&text).unwrap();
+        assert_eq!(back.units.as_deref(), Some("real"));
+        assert_eq!(back.maps, vec![map.clone()]);
+
+        // Any value survives once the decimals reach its 17th digit.
+        let odd = map.mapv(|v| v / 3.0);
+        let text = lammps_cmap_str(&[("odd", &odd)], "real", 25).unwrap();
+        assert_eq!(read_lammps_cmap_str(&text).unwrap().maps, vec![odd]);
+    }
+
+    /// Maps go out in the `cmaps` labels' id order (the data file's crossterm
+    /// types), converted to the file's units; the include names the file on
+    /// a `fix cmap` line beside `units`, and reads back.
+    #[test]
+    fn the_cmap_file_and_fix_line_follow_the_labels() {
+        let a = ArrayD::from_shape_fn(vec![24, 24], |ix| (ix[0] * 24 + ix[1]) as f64 / 100.0);
+        let b = a.mapv(|v| -v);
+        let ff = cmap_ff(&[("b", b.clone()), ("a", a.clone())]);
+        let labels = labels_of(&[("cmaps", &["b", "a", "b"])]);
+        let options = LammpsWriteOptions {
+            cmap_file: Some("sys.cmap".into()),
+            skip_pair_style: true,
+            ..LammpsWriteOptions::default()
+        };
+        let writer = LammpsFfWriter::with_options(&labels, options);
+        let text = writer.write_cmap_str(&ff).unwrap();
+        let maps = crate::ff::forcefield::readers::lammps::read_lammps_cmap_str(&text)
+            .unwrap()
+            .maps;
+        assert_eq!(maps, vec![a.clone(), b]);
+
+        let include = writer.write_str(&ff).unwrap();
+        let fix = include.find("fix cmap all cmap sys.cmap\nfix_modify cmap energy yes\n");
+        let units = include.find("units real");
+        assert!(fix.is_some() && units < fix, "{include}");
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("sys.cmap"), &text).unwrap();
+        let path = dir.path().join("sys.ff");
+        std::fs::write(&path, include.replace("\n\n", "\nspecial_bonds charmm\n\n")).unwrap();
+        let back = LammpsFfReader::new().read(path.to_str().unwrap()).unwrap();
+        let rows = back.get_cmaptypes();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].params.get_array("grid"), Some(&a));
+
+        // In metal units the energies are converted.
+        let metal = LammpsWriteOptions {
+            units: "metal",
+            precision: 12,
+            ..LammpsWriteOptions::default()
+        };
+        let text = LammpsFfWriter::with_options(&labels, metal)
+            .write_cmap_str(&ff)
+            .unwrap();
+        let file = crate::ff::forcefield::readers::lammps::read_lammps_cmap_str(&text).unwrap();
+        assert_eq!(file.units.as_deref(), Some("metal"));
+        let ev = file.maps[0][[0, 1]];
+        assert!((ev - 0.01 * 0.0433641).abs() < 1e-8, "{ev}");
+    }
+
+    #[test]
+    fn what_fix_cmap_cannot_read_is_refused() {
+        let grid = ArrayD::zeros(vec![24, 24]);
+        let labels = labels_of(&[("cmaps", &["a"])]);
+        // The include of a system with crossterms needs the file name.
+        let err = LammpsFfWriter::new(&labels)
+            .write_str(&cmap_ff(&[("a", grid.clone())]))
+            .unwrap_err();
+        assert!(err.contains("cmap_file"), "{err}");
+        // fix cmap reads 24×24 maps, at most six.
+        let err = LammpsFfWriter::new(&labels)
+            .write_cmap_str(&cmap_ff(&[("a", ArrayD::zeros(vec![12, 12]))]))
+            .unwrap_err();
+        assert!(err.contains("24×24"), "{err}");
+        let names = ["a", "b", "c", "d", "e", "f", "g"];
+        let many: Vec<(&str, ArrayD<f64>)> = names.iter().map(|n| (*n, grid.clone())).collect();
+        let err = LammpsFfWriter::new(&labels_of(&[("cmaps", &names)]))
+            .write_cmap_str(&cmap_ff(&many))
+            .unwrap_err();
+        assert!(err.contains("at most 6"), "{err}");
+        // A label without a row.
+        let err = LammpsFfWriter::new(&labels_of(&[("cmaps", &["zz"])]))
+            .write_cmap_str(&cmap_ff(&[("a", grid)]))
+            .unwrap_err();
+        assert!(err.contains("`zz`"), "{err}");
     }
 }

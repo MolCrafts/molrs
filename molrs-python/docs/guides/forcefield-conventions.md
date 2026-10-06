@@ -227,25 +227,106 @@ convention their readers will follow:
 
 ## CMAP
 
-The convention is LAMMPS `fix cmap` (CHARMM's correction map):
+The convention is LAMMPS `fix cmap` (CHARMM's correction map), and the
+kernel is `cmap charmm`, a step-for-step port of LAMMPS's
+`src/MOLECULE/fix_cmap.cpp`:
 
 - a crossterm names five atoms `(atomi, atomj, atomk, atoml, atomm)`;
   φ = dihedral(atomi, atomj, atomk, atoml), ψ = dihedral(atomj, atomk, atoml,
-  atomm), both in (−180°, 180°];
-- a map is an N×N grid (CHARMM: N = 24, 15° spacing) of energies in the
-  force field's energy unit, stored **φ-major**: element `[i][j]` (flat index
-  `i·N + j`) is the energy at φ = −180° + i·360°/N, ψ = −180° + j·360°/N —
-  the order of a CHARMM / LAMMPS `.cmap` file (each `# phi` block is one φ
-  row of N ψ values);
+  atomm) — LAMMPS's `atan2` dihedrals, in degrees, the IUPAC sign (molrs's
+  `compute_dihedral`), in [−180°, 180°) with 180° read as −180°;
+- a map is an N×N grid (CHARMM and LAMMPS: N = 24, 15° spacing) of energies
+  in the force field's energy unit, stored **φ-major**: element `[i][j]` (flat
+  index `i·N + j`) is the energy at φ = −180° + i·Δ, ψ = −180° + j·Δ,
+  Δ = 360°/N — the order of a CHARMM / LAMMPS `.cmap` file (each `# phi`
+  block is one φ row of N ψ values);
 - the energy between grid points is LAMMPS's bicubic interpolation, with the
-  derivatives LAMMPS precomputes from periodic cubic splines.
+  derivatives LAMMPS precomputes from cubic splines.
 
 A `cmap` style's row holds one map as its `grid` array parameter (`f64`
 N×N, the layout above; the `forcefield` section's `grid` column is
 `f64[T, N, N]`), and a frame's `cmaps` block lists the crossterms
-(`atomi` … `atomm`, `type`). OpenMM's
-`CMAPTorsionForce` stores `energy[i + N·j]` at φ = 2πi/N, ψ = 2πj/N (origin
-0, φ fastest): its reader maps element `(i, j)` to molrs `[(i + N/2) mod N]
+(`atomi` … `atomm`, `type`).
+
+### The interpolation, exactly
+
+**Node derivatives** (`set_map_derivatives`). With x_m = ⌊N/2⌋, the map is
+extended periodically to 2N × 2N: `T[p][q] = E[(p − x_m) mod N][(q − x_m) mod N]`,
+so index `p` is the angle −180° + (p − x_m)·Δ and the extension covers
+[−360°, 360°). `spline(y)` is LAMMPS's *natural* cubic spline on spacing Δ:
+second derivatives `y''` with `y''₀ = y''_{n−1} = 0` and, for i = 1 … n−2,
+
+```text
+p = 1/(y''_{i−1} + 4),  y''_i = −p,
+u_i = ((6y_{i+1} − 12y_i + 6y_{i−1})/Δ² − u_{i−1})·p,   u₀ = 0
+y''_j = y''_j·y''_{j+1} + u_j   for j = n−2 … 0.
+```
+
+Every row `T[k]` is splined along ψ. For a node (φ index i, ψ index j), the
+row splines give, down all 2N rows k, the value `Y_k = T[k][j']` and the slope
+`D_k = (T[k][j'+1] − T[k][j'])/Δ − (Δ/3)·T''[k][j'] − (Δ/6)·T''[k][j'+1]`
+(j' = j + x_m); `Y` and `D` are splined along φ, and with i' = i + x_m
+
+```text
+∂E/∂φ   = (Y_{i'+1} − Y_{i'})/Δ − (Δ/3)·Y''_{i'} − (Δ/6)·Y''_{i'+1}
+∂E/∂ψ   = D_{i'}
+∂²E/∂φ∂ψ = (D_{i'+1} − D_{i'})/Δ − (Δ/3)·D''_{i'} − (Δ/6)·D''_{i'+1}
+```
+
+per degree (per degree² for the cross term). The doubled map keeps the
+natural end conditions half a period from every node they are read at, so
+the slopes are those of a periodic spline to within its decay.
+
+**Patch** (`bc_coeff`, `bc_interpol`). The cell is
+`c_φ = ⌊(φ + 180°)/Δ⌋`, `c_ψ = ⌊(ψ + 180°)/Δ⌋`; its corners, counter-clockwise
+from (c_φ, c_ψ), wrap mod N. The 16 coefficients `c_ab` are Numerical Recipes'
+`bcucof` weight matrix applied to the corner values, Δ·∂E/∂φ, Δ·∂E/∂ψ and
+Δ²·∂²E/∂φ∂ψ, and with t = (φ − φ_{c_φ})/Δ, u = (ψ − ψ_{c_ψ})/Δ
+
+```text
+E = Σ_{a,b=0..3} c_ab tᵃ uᵇ,
+∂E/∂φ = (180/π)/Δ · Σ a·c_ab tᵃ⁻¹ uᵇ,   ∂E/∂ψ = (180/π)/Δ · Σ b·c_ab tᵃ uᵇ⁻¹
+```
+
+(per radian). At a node E is the grid value; E and its slopes are continuous
+across every cell edge and across ±180°.
+
+**Forces** (`post_force`). F = −(∂E/∂φ)·∇φ − (∂E/∂ψ)·∇ψ with LAMMPS's own
+∇φ, ∇ψ expressions, so the crossterm is distributed onto the five atoms
+exactly as LAMMPS distributes it: atomi feels φ only, atomm ψ only, and the
+three shared atoms both; the forces sum to zero and exert no torque.
+
+Two LAMMPS behaviours are kept because they change energies: a crossterm
+with a degenerate dihedral plane (any of the four cross products
+|r_ij × r_jk|² below 10⁻⁴ Å⁴) contributes **nothing**; and the map is a true
+2-D function — no sum of 1-D torsions reproduces it. One is generalised: LAMMPS
+fixes N = 24 and at most six maps, the kernel takes any N ≥ 2 and any number
+of maps (LAMMPS stores the derivative grids rotated by N/2 and finds their cell
+from φ wrapped to [0°, 360°); molrs stores them unrotated and reads them at the
+value cell — the same numbers but for float ties on a cell edge).
+
+### Crossterms and LAMMPS files
+
+- `assign_cmaps(frame, ff)` (Rust `molrs::ff::assign_cmaps`) builds the
+  `cmaps` block: five atoms whose dihedrals `(a, b, c, d)` and `(b, c, d, e)`
+  are both rows of `dihedrals` (either stored direction) and whose atom types
+  equal a cmap row's `itom … mtom` **forward** — never reversed, since
+  reading the five atoms backwards swaps φ and ψ.
+- A LAMMPS `fix cmap` file reads (`read_lammps_cmap`,
+  `LammpsFfReader::read_cmap_str`) into rows named `"1"` … `"K"` — map `t`
+  is crossterm type `t` — and writes (`write_lammps_cmap`,
+  `LammpsFfWriter::write_cmap_str`) the `cmaps` labels' grids in label id
+  order, in CHARMM's layout: CHARMM's own file comes back line for line.
+- The data file's `N crossterms` header line and `CMAP` section
+  (`index type a1 … a5`) are the frame's `cmaps` block (`type_id` = map
+  index), both ways.
+- The include writer emits `fix cmap all cmap <cmap_file>` and
+  `fix_modify cmap energy yes`; that fix must reach LAMMPS before
+  `read_data <data> fix cmap crossterm CMAP`. The include reader reads a
+  `fix cmap` line's file relative to the include.
+
+OpenMM's `CMAPTorsionForce` stores `energy[i + N·j]` at φ = 2πi/N, ψ = 2πj/N
+(origin 0, φ fastest): its reader maps element `(i, j)` to molrs `[(i + N/2) mod N]
 [(j + N/2) mod N]`; OpenMM interpolates with a natural periodic bicubic
 spline, so energies off the grid points differ from LAMMPS's at the
 interpolation's accuracy. GROMACS `[ cmaptypes ]` lists CHARMM's grid; its
@@ -364,6 +445,11 @@ cannot drift.
   except the OpenMM improper (the fix above), which now equals the
   GROMACS-read value of the same improper and the hand value of OpenMM's
   formula.
+- `cmap charmm` against LAMMPS `fix cmap` (`run 0`, CHARMM36's alanine map
+  and its transpose on three crossterms of an eight-atom backbone, files
+  written by molrs; `scripts/lammps_cmap_check.sh`): E = −1.25779219530854869
+  kcal/mol, molrs 1.1 × 10⁻¹⁵ relative off; 22 of the 24 force components
+  bit for bit, the other two 2 × 10⁻¹⁶ off.
 - The LAMMPS-read hand molecule run through LAMMPS (`run 0`) gives the
   same per-term energies as molrs to ≤ 2e-13 relative: bond
   0.162750104621288, angle 1.35959339751695, dihedral 0.692979891423841,

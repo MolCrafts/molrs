@@ -187,6 +187,51 @@ that changes with it:
   header comment (`Angle Coeffs # charmm`, `# hybrid` with the sub-style on
   each row), as LAMMPS's `write_data` does, so `read_data_coeffs` reads a
   non-`harmonic` section back under the right style.
+### CMAP
+
+The `cmap` category has a kernel, `cmap charmm` — LAMMPS `fix cmap`, ported
+step for step ([Force-field conventions](guides/forcefield-conventions.md),
+CMAP) — and LAMMPS's `fix cmap` files are read and written.
+
+- **A `cmaps` block compiles.** `PotentialCompiler.compile` /
+  `compile_typed` build a `cmap charmm` style over a frame's `cmaps` block
+  (0.16's infrastructure release refused it with "no kernel for style
+  category 'cmap'"). Each row needs a 2-D square `grid` (any N ≥ 2; LAMMPS
+  files are 24×24).
+- **The LAMMPS data reader reads `fix cmap`'s sections.** The header line
+  `N crossterms` (or `N cmap crossterms`) and the `CMAP` section become a
+  `cmaps` block (`atomi` … `atomm`, numeric `type_id`, the map's index in
+  the `fix cmap` file). 0.15 refused the header line and the `CMAP` section
+  (unless skipped with `with_skipped_section("CMAP")`, which still skips
+  it); a `CMAP` section without the header count is refused. The
+  `lammps_counts` meta gains `crossterms=N`.
+- **The LAMMPS data writer writes a `cmaps` block** as `N crossterms` and a
+  `CMAP` section, types by label id; `mol_id` is required for it as for every
+  bonded block. Read such a file in LAMMPS with
+  `read_data <file> fix cmap crossterm CMAP`.
+- **`TypeLabels` covers `cmaps`**, with the inventory meta key
+  `cmap_type_labels` (`keys::CMAP_TYPE_LABELS`). A frame whose `cmaps`
+  block has rows but neither `type` nor `type_id` is now refused by every
+  writer that resolves type labels.
+- **Rust: `LammpsWriteOptions` has a `cmap_file` field** (`Option<String>`,
+  default `None`); a struct literal needs it or `..Default::default()`. An
+  include written for a system with `cmaps` labels needs it — the writer
+  refuses without — and starts with `fix cmap all cmap <cmap_file>` and
+  `fix_modify cmap energy yes` beside `units` (the fix must precede
+  `read_data`). Python: `write_lammps_forcefield(…, cmap_file=…)`, same for
+  `write_lammps_forcefield_str`.
+- **The LAMMPS include reader reads `fix <id> <group> cmap <file>`** (the
+  file relative to the include when read from a path) and `fix_modify` of
+  that fix; any other `fix` line is refused by name (0.15: "unknown LAMMPS
+  keyword `fix`").
+- **New.** `assign_cmaps(frame, ff)` builds the `cmaps` block from a frame's
+  dihedrals and the field's cmap rows (forward matching only);
+  `read_lammps_cmap_str` / `LammpsCmapFile` / `LammpsFfReader::read_cmap_str`
+  read a `fix cmap` file into rows named `"1"` … `"K"`;
+  `LammpsFfWriter::write_cmap_str` and `lammps_cmap_str` write one (CHARMM's
+  own file comes back line for line); `CmapGrid` / `CmapCharmm` are the
+  kernel. Python: `molrs.ff.assign_cmaps`, `read_lammps_cmap`,
+  `write_lammps_cmap`.
 
 ### Already in 0.15.1
 

@@ -379,8 +379,9 @@ impl BlockTypes {
 ///
 /// Covered blocks, each with its inventory meta key: `atoms`
 /// ([`keys::ATOM_TYPE_LABELS`]), `bonds` ([`keys::BOND_TYPE_LABELS`]), `angles`
-/// ([`keys::ANGLE_TYPE_LABELS`]), `dihedrals` ([`keys::DIHEDRAL_TYPE_LABELS`])
-/// and `impropers` ([`keys::IMPROPER_TYPE_LABELS`]). No block is required.
+/// ([`keys::ANGLE_TYPE_LABELS`]), `dihedrals` ([`keys::DIHEDRAL_TYPE_LABELS`]),
+/// `impropers` ([`keys::IMPROPER_TYPE_LABELS`]) and `cmaps`
+/// ([`keys::CMAP_TYPE_LABELS`]). No block is required.
 ///
 /// # Id rules
 ///
@@ -410,12 +411,13 @@ pub struct TypeLabels {
 
 impl TypeLabels {
     /// Blocks covered, with their inventory key.
-    const BLOCKS: [(&'static str, &'static str); 5] = [
+    const BLOCKS: [(&'static str, &'static str); 6] = [
         ("atoms", keys::ATOM_TYPE_LABELS),
         ("bonds", keys::BOND_TYPE_LABELS),
         ("angles", keys::ANGLE_TYPE_LABELS),
         ("dihedrals", keys::DIHEDRAL_TYPE_LABELS),
         ("impropers", keys::IMPROPER_TYPE_LABELS),
+        ("cmaps", keys::CMAP_TYPE_LABELS),
     ];
 
     /// Resolve every covered block of `frame` (see the type-level docs).
