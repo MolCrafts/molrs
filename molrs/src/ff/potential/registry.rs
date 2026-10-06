@@ -468,6 +468,27 @@ impl KernelRegistry {
         r.register("angle", "charmm", angle::charmm::angle_charmm_ctor);
         // CMAP: a five-atom crossterm over the `cmaps` block (LAMMPS `fix cmap`).
         r.register("cmap", "charmm", cmap::charmm::cmap_charmm_ctor);
+        // LAMMPS `lj/charmm/coul/charmm`, as its two halves. `coul/charmm`
+        // reads per-atom charges, like `coul/cut`.
+        r.register("pair", "lj/charmm", pair::charmm::pair_lj_charmm_ctor);
+        r.register_typed(
+            "pair",
+            "lj/charmm",
+            pair::charmm::pair_lj_charmm_typed_ctor,
+            SpecialClass::Vdw,
+        );
+        r.register_with(
+            "pair",
+            "coul/charmm",
+            pair::charmm::pair_coul_charmm_ctor,
+            ParamSource::PerInstance,
+        );
+        r.register_typed(
+            "pair",
+            "coul/charmm",
+            pair::charmm::pair_coul_charmm_typed_ctor,
+            SpecialClass::Coulomb,
+        );
 
         r
     }
@@ -590,6 +611,8 @@ mod tests {
             "coul/cut",
             "coul/tt",
             "thole",
+            "lj/charmm",
+            "coul/charmm",
         ] {
             assert!(
                 r.get_typed("pair", name).is_some(),

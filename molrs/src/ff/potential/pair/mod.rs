@@ -225,6 +225,7 @@ pub(crate) fn type_pair(ti: u32, tj: u32, ntypes: usize) -> usize {
 }
 
 pub mod buck;
+pub mod charmm;
 pub mod coul_cut;
 pub mod lj_class2;
 pub mod lj_cut;
@@ -235,6 +236,7 @@ pub mod thole;
 pub mod uff;
 
 pub use buck::{PairBuck, pair_buck_ctor};
+pub use charmm::{PairCoulCharmm, PairLJCharmm, pair_coul_charmm_ctor, pair_lj_charmm_ctor};
 pub use coul_cut::{PairCoulCut, pair_coul_cut_ctor};
 pub use lj_class2::{PairLJClass2, pair_lj_class2_ctor};
 pub use lj_cut::{LJCut, pair_lj_cut_ctor};
