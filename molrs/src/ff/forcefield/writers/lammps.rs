@@ -89,7 +89,16 @@
 //! line so LAMMPS keeps geometric mixing on LJ (writing them as `hybrid` with a
 //! `pair_coeff * * coul/cut` wildcard marks every cross pair as explicit and
 //! defeats mixing). A force field that already holds a single combined-style
-//! name, or only one of the two halves, is written as-is.
+//! name, or only one of the two halves, is written as-is. `lj/charmm` +
+//! `coul/charmm` is `pair_style lj/charmm/coul/charmm`, its only LAMMPS
+//! spelling, `pair_coeff i j epsilon sigma epsilon14 sigma14`.
+//!
+//! # Per-pair 1-4 overrides
+//!
+//! LAMMPS has no per-pair exception. A frame whose `pairs` block carries an
+//! override column ([`PAIR_OVERRIDE_COLUMNS`](molrs::store::schema::PAIR_OVERRIDE_COLUMNS))
+//! is refused by name — by the data-file writer, and by
+//! [`refuse_pair_overrides`] for a caller writing a force field for it.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -452,6 +461,16 @@ fn coeff_fields(
             Real(units.energy(need("epsilon")?)?),
             Real(units.length(need("sigma")?)?),
         ]),
+        // `epsilon sigma epsilon14 sigma14`, the 1-4 pair always written.
+        ("pair", "lj/charmm") => {
+            let (eps, sigma) = (need("epsilon")?, need("sigma")?);
+            Ok(vec![
+                Real(units.energy(eps)?),
+                Real(units.length(sigma)?),
+                Real(units.energy(params.get("epsilon14").unwrap_or(eps))?),
+                Real(units.length(params.get("sigma14").unwrap_or(sigma))?),
+            ])
+        }
         _ => Err(format!(
             "unsupported LAMMPS {category} style `{style}` for coefficient output"
         )),
@@ -924,6 +943,41 @@ impl<'a> LammpsFfWriter<'a> {
             refuse_unexpressible_coulomb(style)?;
         }
 
+        // lj/charmm + coul/charmm is LAMMPS's one `lj/charmm/coul/charmm`; it
+        // has no other spelling (no `hybrid` sub-style is either half).
+        if styles
+            .iter()
+            .any(|s| matches!(s.name(), "lj/charmm" | "coul/charmm"))
+        {
+            let names: HashSet<&str> = styles.iter().map(|s| s.name()).collect();
+            if names != HashSet::from(["lj/charmm", "coul/charmm"]) {
+                let mut names: Vec<&str> = names.into_iter().collect();
+                names.sort_unstable();
+                return Err(format!(
+                    "pair styles {names:?}: LAMMPS has lj/charmm only as \
+                     `lj/charmm/coul/charmm`, the pair lj/charmm + coul/charmm and nothing \
+                     beside it"
+                ));
+            }
+            if !opts.skip_pair_style {
+                let lj = styles.iter().find(|s| s.name() == "lj/charmm").unwrap();
+                let coul = styles.iter().find(|s| s.name() == "coul/charmm").unwrap();
+                let (lj_cuts, coul_cuts) =
+                    (charmm_cutoffs(lj, units)?, charmm_cutoffs(coul, units)?);
+                let mut cuts = lj_cuts.to_vec();
+                if coul_cuts != lj_cuts {
+                    cuts.extend(coul_cuts);
+                }
+                lines.push(format!(
+                    "pair_style lj/charmm/coul/charmm {}\n",
+                    format_nums(&cuts, opts.precision)
+                ));
+                lines.extend(pair_modify_line(lj));
+                lines.push("\n".to_owned());
+            }
+            return self.push_pair_coeffs(lines, &rows, false, units);
+        }
+
         // Reader always builds lj/cut + coul/cut; recombine for a correct write-back.
         if is_split_lj_coulomb(&styles) {
             if !opts.skip_pair_style {
@@ -1204,6 +1258,15 @@ fn pair_modify_line(style: &Style) -> Option<String> {
 /// written; a field stating another (AMBER's 332.0522173) is priced by LAMMPS
 /// at LAMMPS's, a documented difference of ~3e-5 relative.
 fn refuse_unexpressible_coulomb(style: &Style) -> Result<(), String> {
+    if style.name() == "coul/charmm" {
+        if let Some(d) = style.params().get("dielectric").filter(|d| *d != 1.0) {
+            return Err(format!(
+                "pair coul/charmm: dielectric = {d} is a LAMMPS input-script `dielectric` \
+                 command, not a coefficient this include can carry"
+            ));
+        }
+        return Ok(());
+    }
     if style.name() != "coul/cut" {
         return Ok(());
     }
@@ -1248,6 +1311,43 @@ fn pair_style_cutoffs(style: &Style, units: &WriteUnits) -> Result<Vec<f64>, Str
             None => Ok(vec![]),
         },
     }
+}
+
+/// `(inner, cutoff)` of a CHARMM style, in file units; both required.
+fn charmm_cutoffs(style: &Style, units: &WriteUnits) -> Result<[f64; 2], String> {
+    let get = |key: &str| {
+        style.params().get(key).ok_or_else(|| {
+            format!(
+                "pair style '{}' has no '{key}': lj/charmm/coul/charmm needs its inner and \
+                 outer switching cutoffs",
+                style.name()
+            )
+        })
+    };
+    Ok([units.length(get("inner")?)?, units.length(get("cutoff")?)?])
+}
+
+/// The per-pair override columns of `frame`'s `pairs` block, refused by name:
+/// LAMMPS has no per-pair exception (see the conventions guide, "1-4
+/// interactions"). The data-file writer refuses them too; a caller writing a
+/// force field for a frame checks the frame here.
+pub fn refuse_pair_overrides(frame: &molrs::store::frame::Frame) -> Result<(), String> {
+    let Some(pairs) = frame.get("pairs") else {
+        return Ok(());
+    };
+    let present: Vec<&str> = molrs::store::schema::PAIR_OVERRIDE_COLUMNS
+        .iter()
+        .copied()
+        .filter(|k| pairs.get(k).is_some())
+        .collect();
+    if present.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "pairs: the per-pair override columns {present:?} have no LAMMPS form — LAMMPS \
+         prices a 1-4 pair by special_bonds, lj/charmm's epsilon14/sigma14 and dihedral \
+         charmm's w, never per pair"
+    ))
 }
 
 fn style_cutoff(style: &Style) -> Option<f64> {

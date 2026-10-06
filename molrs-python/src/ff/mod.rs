@@ -2113,6 +2113,9 @@ pub fn write_lammps_forcefield_py(
     use molrs::ff::{ForceFieldWriter, LammpsFfWriter, LammpsWriteOptions};
     use molrs::store::type_labels::TypeLabels;
     let units = parse_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    frame
+        .with_frame(molrs::ff::forcefield::writers::lammps::refuse_pair_overrides)?
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
     let labels = frame
         .with_frame(TypeLabels::from_frame)?
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
@@ -2160,6 +2163,9 @@ pub fn write_lammps_forcefield_str_py(
     use molrs::ff::{ForceFieldWriter, LammpsFfWriter, LammpsWriteOptions};
     use molrs::store::type_labels::TypeLabels;
     let units = parse_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    frame
+        .with_frame(molrs::ff::forcefield::writers::lammps::refuse_pair_overrides)?
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
     let labels = frame
         .with_frame(TypeLabels::from_frame)?
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
@@ -2206,6 +2212,9 @@ pub fn write_lammps_data_coeffs_py(
     use molrs::ff::{LammpsFfWriter, LammpsWriteOptions};
     use molrs::store::type_labels::TypeLabels;
     let units = parse_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    frame
+        .with_frame(molrs::ff::forcefield::writers::lammps::refuse_pair_overrides)?
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
     let labels = frame
         .with_frame(TypeLabels::from_frame)?
         .map_err(pyo3::exceptions::PyValueError::new_err)?;

@@ -4,6 +4,8 @@ pub(crate) mod constants;
 mod convention_invariance;
 pub mod forcefield;
 pub mod mmff;
+#[cfg(test)]
+mod one_four;
 pub mod params;
 pub mod potential;
 pub mod scale_lj;
