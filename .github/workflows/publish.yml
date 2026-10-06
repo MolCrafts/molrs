@@ -206,7 +206,7 @@ jobs:
           shared-key: publish-py-pyodide
           workspaces: ". -> target"
       - name: Build Pyodide wheel
-        uses: pypa/cibuildwheel@v4.1.1
+        uses: pypa/cibuildwheel@v4.2.1
         env:
           CIBW_PLATFORM: pyodide
           # Desktop supports Python 3.12+; this target uses Pyodide CPython 3.14.
