@@ -54,7 +54,8 @@ repos:
       # the other OS, and only CI's windows/macos legs build there. Gate it:
       # put any `#[cfg(...)]` attribute on the line directly above (or on the
       # same line). Escape hatch, for a use inside an item already gated
-      # further up: end the line with `// os-gated: <why>`.
+      # further up: end the line with `// os-gated: <why>`. A hit is reported
+      # from the line above the offending one (the match spans both).
       - id: os-cfg
         name: "std::os::unix / std::os::windows only under #[cfg]"
         language: pygrep
@@ -111,6 +112,7 @@ repos:
         language: system
         pass_filenames: false
         files: ^(molrs/|molrs-ffi/|molrs-python/|Cargo\.toml|\.cargo/|rust-toolchain\.toml|scripts/check\.sh)
+        exclude: ^molrs-python/docs/
         stages: [pre-push]
 
       - id: capi
@@ -137,6 +139,7 @@ repos:
         language: system
         pass_filenames: false
         files: ^(molrs/|molrs-ffi/|molrs-python/|Cargo\.(toml|lock)|\.cargo/|rust-toolchain\.toml|scripts/(check\.sh|ci-conformance\.py|partners\.py)|\.github/(partners\.env|workflows/ci-snapshot\.yml))
+        exclude: ^molrs-python/docs/
         stages: [pre-push]
 
       # The docs site, built as Cloudflare Pages builds it, --strict. The
