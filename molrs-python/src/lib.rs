@@ -448,6 +448,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ff::read_lammps_forcefield_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_amber_prmtop_ff_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::read_gromacs_top_ff_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::read_gromacs_system_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::write_amber_frcmod_py, m)?)?;
     m.add("AMBER_COULOMB", ::molrs::ff::params::amber::AMBER_COULOMB)?;
     m.add("AMBER_SCEE", ::molrs::ff::params::amber::AMBER_SCEE)?;

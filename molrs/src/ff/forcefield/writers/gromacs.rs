@@ -3,63 +3,89 @@
 //! The inverse of
 //! [`GromacsTopFfReader`](crate::ff::forcefield::readers::gromacs::GromacsTopFfReader):
 //! it writes a [`ForceField`] as GROMACS force-field **directives**, converting
-//! molrs's convention — LAMMPS's `real` (Å, kcal/mol, degrees, e; LAMMPS's
-//! un-halved `K`) — to GROMACS's (nm, kJ/mol, degrees, e; ½k) at this boundary
-//! only. No molecule section (`[ atoms ]`, `[ bonds ]`,
+//! the force-field IR (LAMMPS's definitions: `real` — Å, kcal/mol, degrees, e;
+//! LAMMPS's un-halved `K`) to GROMACS's (nm, kJ/mol, degrees, e; ½k) at this
+//! boundary only. No molecule section (`[ atoms ]`, `[ bonds ]`,
 //! `[ angles ]`, `[ dihedrals ]`, `[ pairs ]`, …) is written: a force field
 //! holds no molecule.
 //!
 //! # Output
 //!
 //! - **`[ defaults ]`** `1 <comb> yes <fudgeLJ> <fudgeQQ>`. comb is the
-//!   `pair/lj/cut` style's `mixing` — `arithmetic` → 2, `geometric` → 3 — or,
-//!   when none is declared, the rule an undeclared `lj/cut` is evaluated under
-//!   (arithmetic, 2). fudgeLJ / fudgeQQ are the 1-4 special-bond weights.
+//!   Lennard-Jones style's `mixing` — `arithmetic` → 2, `geometric` → 3 — or,
+//!   when none is declared, the rule the style is evaluated under (arithmetic,
+//!   2, for both `lj/cut` and `lj/charmm`). fudgeLJ / fudgeQQ are the 1-4
+//!   special-bond weights.
 //! - **`[ atomtypes ]`** `name [bond_type] [at.num] mass charge ptype V W`, one
 //!   row per `atom/full` type: `mass` (amu), `charge` (e), `bond_type` (the
-//!   type's string param `class`) and `atomic_number` from the atom type (choosing the 6-, 7- or 8-column form),
-//!   `ptype` as declared or `A` (an `atom/full` type is a real atom), and
-//!   V = σ/10 (nm), W = ε·4.184 (kJ/mol) from the type's `pair/lj/cut` self
-//!   row.
-//! - **`[ nonbond_params ]`** `i j 1 V W`, one row per explicit `pair/lj/cut`
-//!   cross row (CHARMM NBFIX and the like), V and W as for `[ atomtypes ]`;
-//!   written only when there is one.
-//! - **`[ bondtypes ]` / `[ angletypes ]` / `[ dihedraltypes ]`**, the inverse
-//!   of the reader's function-code map:
+//!   type's string param `class`) and `atomic_number` from the atom type
+//!   (choosing the 6-, 7- or 8-column form), `ptype` as declared or `A` (an
+//!   `atom/full` type is a real atom), and V = σ/10 (nm), W = ε·4.184 (kJ/mol)
+//!   from the type's self row of the Lennard-Jones style (`lj/cut` or
+//!   `lj/charmm`).
+//! - **`[ nonbond_params ]`** `i j 1 V W`: every explicit `lj/cut` cross row
+//!   (CHARMM NBFIX and the like), and every `lj/charmm` cross row whose `epsilon`
+//!   / `sigma` are not the mix of the two self rows (to 10⁻¹² relative — the
+//!   reader adds such rows only to carry `epsilon14` / `sigma14`). Written only
+//!   when there is one.
+//! - **`[ pairtypes ]`** `i j 1 V W`, from an `lj/charmm` declared
+//!   `one_four = "epsilon14"`: GROMACS prices a 1-4 pair of types `i`, `j` at
+//!   fudgeLJ × LJ(the comb-rule or `[ nonbond_params ]` parameters) unless a
+//!   pairtype gives its parameters; the IR prices it at the 1-4 weight ×
+//!   LJ(ε₁₄, σ₁₄) of that type pair. A pairtype (σ₁₄, fudgeLJ·ε₁₄) is written
+//!   for every type pair where the two differ — the inverse of the reader.
+//! - **`[ bondtypes ]` / `[ angletypes ]` / `[ dihedraltypes ]` /
+//!   `[ cmaptypes ]`**, the inverse of the reader's function-code map:
 //!
 //! | molrs style | Directive, funct | Columns (file units) |
 //! |---|---|---|
 //! | `bond/harmonic` | bondtypes 1 | b₀ = r0/10 nm; k_b = 2·k·418.4 kJ/mol/nm² |
 //! | `bond/morse` | bondtypes 3 | b₀ = r0/10 nm; D = d0·4.184 kJ/mol; β = alpha·10 nm⁻¹ |
 //! | `angle/harmonic` | angletypes 1 | θ₀ = theta0 (degrees); k_θ = 2·k·4.184 kJ/mol/rad² |
-//! | `dihedral/periodic` | dihedraltypes 1 | φ_s = phase (degrees); k·4.184 kJ/mol; n |
-//! | `improper/harmonic` | dihedraltypes 2 | ξ₀ = 0; k_ξ = 2·k·4.184 kJ/mol/rad² |
-//! | `dihedral/opls` | dihedraltypes 3 | C₀..C₅ (kJ/mol) by the exact Fourier → Ryckaert–Bellemans relation |
-//! | `improper/periodic` | dihedraltypes 4 | as `dihedral/periodic`; the atoms in the stored (AMBER) order |
+//! | `angle/charmm` | angletypes 5 | θ₀; k_θ = 2·k·4.184; r₁₃ = r_ub/10 nm; k_UB = 2·k_ub·418.4 kJ/mol/nm² |
+//! | `dihedral/periodic`, one term | dihedraltypes 1 | φ_s = phase (degrees); k·4.184 kJ/mol; n |
+//! | `dihedral/periodic`, m terms | dihedraltypes 9, m consecutive rows | each term as funct 1, in term order |
+//! | `dihedral/charmm` with `w` = 0 | dihedraltypes 9 | as funct 1 |
+//! | `dihedral/harmonic` k[1 + d cos nφ] | dihedraltypes 9 | φ_s = 0° (d = 1) or 180° (d = −1) |
+//! | `dihedral/multi/harmonic`, `dihedral/nharmonic` (N ≤ 6) | dihedraltypes 3 | Cₙ = (−1)ⁿ·aₙ₊₁·4.184 kJ/mol (C₅ = 0 for multi/harmonic) |
+//! | `dihedral/opls` | dihedraltypes 5 | Cₙ = kₙ·4.184 kJ/mol |
+//! | `improper/periodic` | dihedraltypes 4 | as funct 1; the atoms in the stored order |
+//! | `improper/cvff` k[1 + d cos nφ] | dihedraltypes 4 | φ_s = 0° (d = 1) or 180° (d = −1) |
+//! | `improper/harmonic` | dihedraltypes 2 | ξ₀ = chi0 (0° or 180°); k_ξ = 2·k·4.184 kJ/mol/rad² |
+//! | `cmap/charmm` | cmaptypes 1 | `N N` and the grid ·4.184 kJ/mol, φ-major, 10 values a line |
 //!
-//! The empty-endpoint wildcard is written as `X`.
+//! Every row is exact: each prices the same energy, constant included, as the
+//! style it comes from. The empty-endpoint wildcard is written as `X`.
 //!
-//! A pair style's `cutoff` is a run setting (the .mdp's `rvdw` / `rcoulomb`),
-//! not force-field data, so it is not written.
+//! A pair style's `cutoff` and `lj/charmm`'s `inner` are run settings (the
+//! .mdp's `rvdw` / `rcoulomb` and switch), not force-field data, so they are
+//! not written.
 //!
-//! `pair/coul/cut` has no directive: GROMACS takes Coulomb constants from the
-//! run parameters, so only the constants the reader declares (the real-units
-//! Coulomb constant, dielectric 1) are accepted, and nothing is written.
+//! `pair/coul/cut` and `pair/coul/charmm` have no directive: GROMACS takes
+//! Coulomb constants from the run parameters, so only the constants the
+//! reader declares (the real-units Coulomb constant, dielectric 1) are
+//! accepted, and nothing is written.
 //!
 //! # Refusals
 //!
 //! What GROMACS force-field directives cannot express is an `Err` naming it,
 //! never a silent drop or an invented value:
 //!
-//! - any other style (e.g. `dihedral/charmm`, `dihedral/multi/harmonic`), and a
-//!   multi-term `dihedral/periodic` (code 9 is not modelled);
+//! - any other style (`dihedral/class2`, `improper/mmff_oop`, …),
+//!   `dihedral/charmm` with `w` ≠ 0 (GROMACS prices a 1-4 pair by `[ pairs ]`,
+//!   never by a dihedral), `dihedral/nharmonic` with N > 6;
 //! - `sixthpower` mixing; a non-zero 1-2 or 1-3 special-bond weight;
-//! - an atom type lacking `mass`, `charge` or its `lj/cut` self row; an
-//!   `lj/cut` row (self or cross) whose type is not an `atom/full` type, or
-//!   that lacks `sigma` or `epsilon`;
-//! - a bonded type missing a parameter, carrying one with no column, or with
-//!   an endpoint label that is neither an atom-type name nor a `class`;
-//!   `improper/harmonic` with `chi0 ≠ 0`.
+//!   `lj/charmm` `epsilon14` / `sigma14` that no 1-4 pair is priced by (the
+//!   style is not `one_four = "epsilon14"`: LAMMPS prices them only inside
+//!   `dihedral charmm`);
+//! - an atom type lacking `mass`, `charge` or its Lennard-Jones self row; a
+//!   Lennard-Jones row (self or cross) whose type is not an `atom/full` type,
+//!   or that lacks `sigma` or `epsilon`;
+//! - a bonded type missing a parameter, carrying one with no column, with an
+//!   endpoint label that is neither an atom-type name nor a `class`, or on the
+//!   same labels as another type of its GROMACS table (GROMACS would read the
+//!   two as one); `improper/harmonic` with `chi0` ∉ {0°, 180°}; a non-integral
+//!   multiplicity or `sign` other than ±1.
 //!
 //! # Whole-FF serialization, not coefficient writing
 //!
@@ -70,17 +96,25 @@
 //! does this system's data file need" and is keyed by the system's
 //! `TypeLabels`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::ForceFieldWriter;
 use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::mixing::Mixing;
-use crate::ff::forcefield::torsion::opls_to_rb;
+use crate::ff::forcefield::torsion::nharmonic_coefficients;
 use crate::ff::forcefield::{AtomType, ForceField, Params, Style};
+use crate::ff::potential::cmap::charmm::GRID;
+use crate::ff::potential::pair::charmm::{charmm_mixing, charmm_pair_params};
 use molrs::units::constants::COULOMB_REAL;
 
 const KJ_PER_KCAL: f64 = 4.184;
 const NM_TO_ANGSTROM: f64 = 10.0;
+
+/// Two Lennard-Jones parameter pairs closer than this (relative) are one.
+const SAME_LJ: f64 = 1e-12;
+
+/// The Lennard-Jones styles, one of which carries `[ atomtypes ]` V/W.
+const LJ_STYLES: [&str; 2] = ["lj/cut", "lj/charmm"];
 
 /// Writer for GROMACS force-field directives.
 ///
@@ -99,6 +133,35 @@ impl Default for GromacsTopFfWriter {
     }
 }
 
+/// One `[ *types ]` row's function code and values (file units). The
+/// multiplicity of a periodic row is printed as an integer.
+struct Line {
+    funct: u32,
+    values: Vec<f64>,
+    /// Index of a value printed as an integer.
+    integer: Option<usize>,
+}
+
+fn same_lj(a: (f64, f64), b: (f64, f64)) -> bool {
+    let close = |x: f64, y: f64| (x - y).abs() <= SAME_LJ * x.abs().max(y.abs());
+    close(a.0, b.0) && close(a.1, b.1)
+}
+
+/// A GROMACS parameter table: directive and (funct 9 folded into 1) function
+/// code.
+type Table = (String, u32);
+
+/// The GROMACS parameter table a row of `funct` is looked up in (funct 1 and
+/// 9 share one): two types on the same labels in one table are one to GROMACS.
+fn table_key(directive: &str, funct: u32) -> Table {
+    let funct = if directive == "dihedraltypes" && funct == 9 {
+        1
+    } else {
+        funct
+    };
+    (directive.to_owned(), funct)
+}
+
 impl GromacsTopFfWriter {
     pub fn new() -> Self {
         Self::default()
@@ -113,13 +176,29 @@ impl GromacsTopFfWriter {
         format!("{:.*}", self.precision, v)
     }
 
+    /// The force field's one Lennard-Jones style, if any.
+    fn lj_style<'f>(&self, ff: &'f ForceField) -> Result<Option<&'f Style>, String> {
+        let styles: Vec<&Style> = LJ_STYLES
+            .iter()
+            .filter_map(|name| ff.get_style("pair", name))
+            .collect();
+        match styles[..] {
+            [] => Ok(None),
+            [one] => Ok(Some(one)),
+            _ => Err("pair/lj/cut and pair/lj/charmm together: GROMACS has one \
+                      Lennard-Jones table"
+                .to_owned()),
+        }
+    }
+
     /// The `[ defaults ]` row: `1 comb yes fudgeLJ fudgeQQ`.
-    fn defaults_row(&self, ff: &ForceField) -> Result<String, String> {
-        let mixing = match ff
-            .get_style("pair", "lj/cut")
-            .and_then(|s| s.params().get_str("mixing"))
-        {
-            Some(name) => Mixing::parse(name).map_err(|e| format!("pair/lj/cut: {e}"))?,
+    fn defaults_row(&self, ff: &ForceField, lj: Option<&Style>) -> Result<String, String> {
+        let mixing = match lj {
+            Some(style) if style.name() == "lj/charmm" => charmm_mixing(style.params())?,
+            Some(style) => match style.params().get_str("mixing") {
+                Some(name) => Mixing::parse(name).map_err(|e| format!("pair/lj/cut: {e}"))?,
+                None => Mixing::UNDECLARED,
+            },
             None => Mixing::UNDECLARED,
         };
         let comb = match mixing {
@@ -127,7 +206,7 @@ impl GromacsTopFfWriter {
             Mixing::Geometric => 3,
             Mixing::SixthPower => {
                 return Err(format!(
-                    "pair/lj/cut mixing '{}' has no GROMACS comb-rule (2 is arithmetic, 3 \
+                    "Lennard-Jones mixing '{}' has no GROMACS comb-rule (2 is arithmetic, 3 \
                      geometric)",
                     mixing.name()
                 ));
@@ -150,7 +229,7 @@ impl GromacsTopFfWriter {
         ))
     }
 
-    /// The `[ atomtypes ]` row of `t`, with σ/ε from its `lj/cut` self row.
+    /// The `[ atomtypes ]` row of `t`, with σ/ε from its Lennard-Jones self row.
     fn atomtypes_row(&self, t: &AtomType, lj: Option<&Style>) -> Result<String, String> {
         let p = &t.params;
         let name = &t.name;
@@ -159,14 +238,15 @@ impl GromacsTopFfWriter {
                 .ok_or_else(|| format!("atom type '{name}' has no {key}"))
         };
         let (mass, charge) = (need("mass")?, need("charge")?);
+        let lj_name = lj.map_or("lj/cut", Style::name);
         let lj_row = lj.and_then(|s| s.get_pairtype(name, None)).ok_or_else(|| {
-            format!("atom type '{name}' has no pair/lj/cut self row (sigma, epsilon)")
+            format!("atom type '{name}' has no pair/{lj_name} self row (sigma, epsilon)")
         })?;
         let lj_need = |key: &str| {
             lj_row
                 .params
                 .get(key)
-                .ok_or_else(|| format!("pair/lj/cut self row '{name}' has no {key}"))
+                .ok_or_else(|| format!("pair/{lj_name} self row '{name}' has no {key}"))
         };
         let (sigma, epsilon) = (lj_need("sigma")?, lj_need("epsilon")?);
 
@@ -192,174 +272,409 @@ impl GromacsTopFfWriter {
         Ok(format!("  {}\n", cols.join("  ")))
     }
 
-    /// The function code and file-unit columns of one bonded type of `style`.
-    fn bonded_columns(&self, style: &Style, name: &str, p: &Params) -> Result<String, String> {
-        let what = format!("{}/{} type '{name}'", style.category(), style.name());
-        if p.get("k1").is_some() && style.name() == "periodic" {
-            return Err(format!(
-                "{what} has several periodic terms: that needs dihedraltypes code 9, which \
-                 is not modelled"
-            ));
-        }
-        let allowed: &[&str] = match (style.category(), style.name()) {
-            ("bond", "harmonic") => &["r0", "k"],
-            ("bond", "morse") => &["d0", "alpha", "r0"],
-            ("angle", "harmonic") => &["theta0", "k"],
-            ("dihedral" | "improper", "periodic") => &["k", "periodicity", "phase"],
-            ("dihedral", "opls") => &["k1", "k2", "k3", "k4"],
-            ("improper", "harmonic") => &["k", "chi0"],
-            (category, style) => {
-                return Err(format!("{category}/{style} has no GROMACS directive"));
+    /// `[ nonbond_params ]` and `[ pairtypes ]` of the Lennard-Jones style.
+    fn cross_sections(
+        &self,
+        ff: &ForceField,
+        lj: &Style,
+        type_names: &HashSet<&str>,
+    ) -> Result<(String, String), String> {
+        let lj_name = lj.name();
+        let rows = lj.type_rows();
+        for (name, ends, params) in &rows {
+            if let Some(end) = ends.iter().find(|e| !type_names.contains(*e)) {
+                return Err(format!(
+                    "pair/{lj_name} row '{name}': '{end}' is no atom/full type"
+                ));
             }
+            for key in ["sigma", "epsilon"] {
+                if params.get(key).is_none() {
+                    return Err(format!("pair/{lj_name} row '{name}' has no {key}"));
+                }
+            }
+        }
+        let line = |a: &str, b: &str, (eps, sigma): (f64, f64)| {
+            format!(
+                "  {a}  {b}  1  {}  {}\n",
+                self.fmt_f(sigma / NM_TO_ANGSTROM),
+                self.fmt_f(eps * KJ_PER_KCAL)
+            )
         };
-        if let Some((key, _)) = p.iter().find(|(key, _)| !allowed.contains(key)) {
-            return Err(format!("{what}: parameter '{key}' has no GROMACS column"));
-        }
-        let need = |key: &str| p.get(key).ok_or_else(|| format!("{what} has no {key}"));
-        let cols: Vec<f64> = match (style.category(), style.name()) {
-            ("bond", "harmonic") => vec![
-                1.0,
-                need("r0")? / NM_TO_ANGSTROM,
-                // LAMMPS K → GROMACS ½k_b: k_b = 2K.
-                2.0 * need("k")? * KJ_PER_KCAL * NM_TO_ANGSTROM * NM_TO_ANGSTROM,
-            ],
-            ("bond", "morse") => vec![
-                3.0,
-                need("r0")? / NM_TO_ANGSTROM,
-                need("d0")? * KJ_PER_KCAL,
-                need("alpha")? * NM_TO_ANGSTROM,
-            ],
-            ("angle", "harmonic") => {
-                // LAMMPS K → GROMACS ½k_θ: k_θ = 2K.
-                vec![1.0, need("theta0")?, 2.0 * need("k")? * KJ_PER_KCAL]
-            }
-            ("dihedral" | "improper", "periodic") => {
-                let n = need("periodicity")?;
-                if n.fract() != 0.0 || !n.is_finite() {
-                    return Err(format!("{what}: periodicity {n} is not an integer"));
-                }
-                let code = if style.category() == "dihedral" {
-                    1.0
-                } else {
-                    4.0
-                };
-                vec![code, need("phase")?, need("k")? * KJ_PER_KCAL, n]
-            }
-            ("improper", "harmonic") => {
-                let chi0 = p.get("chi0").unwrap_or(0.0);
-                if chi0 != 0.0 {
-                    return Err(format!(
-                        "{what}: chi0 = {chi0} deg; dihedraltypes code 2 is signed and agrees \
-                         with K(|phi| - chi0)^2 only at chi0 = 0"
-                    ));
-                }
-                vec![2.0, 0.0, 2.0 * need("k")? * KJ_PER_KCAL]
-            }
-            _ => {
-                // dihedral/opls: an absent k_n is a zero term, as the kernel reads it.
-                let f = |key: &str| p.get(key).unwrap_or(0.0) * KJ_PER_KCAL;
-                let rb = opls_to_rb([f("k1"), f("k2"), f("k3"), f("k4")]);
-                std::iter::once(3.0).chain(rb).collect()
-            }
-        };
-        let (code, values) = cols.split_first().expect("a function code");
-        let mut out = format!("{}", *code as i64);
-        for (i, v) in values.iter().enumerate() {
-            let is_periodicity = style.name() == "periodic" && i == 2;
-            out.push_str("  ");
-            out.push_str(&if is_periodicity {
-                format!("{}", *v as i64)
-            } else {
-                self.fmt_f(*v)
-            });
-        }
-        Ok(out)
-    }
-}
-
-impl ForceFieldWriter for GromacsTopFfWriter {
-    fn write_str(&self, ff: &ForceField) -> Result<String, String> {
-        for style in ff.styles() {
-            match (style.category(), style.name()) {
-                ("atom", "full")
-                | ("bond", "harmonic" | "morse")
-                | ("angle", "harmonic")
-                | ("dihedral", "periodic" | "opls")
-                | ("improper", "periodic" | "harmonic") => {}
-                // A pair `cutoff` is a run setting (GROMACS keeps it in the
-                // .mdp), not force-field data: it is not written.
-                ("pair", "lj/cut") => {
-                    if let Some((key, _)) = style.params().iter().find(|(k, _)| *k != "cutoff") {
-                        return Err(format!(
-                            "pair/lj/cut style param '{key}' has no GROMACS directive"
-                        ));
-                    }
-                }
-                ("pair", "coul/cut") => {
-                    let declared =
-                        |key: &str, value: f64| style.params().get(key).is_none_or(|v| v == value);
-                    let extra = style
-                        .params()
-                        .iter()
-                        .any(|(key, _)| !matches!(key, "coulomb" | "dielectric" | "cutoff"));
-                    if extra
-                        || !declared("coulomb", COULOMB_REAL)
-                        || !declared("dielectric", VACUUM_DIELECTRIC)
-                        || !style.type_rows().is_empty()
-                    {
-                        return Err(format!(
-                            "pair/coul/cut {:?} has no GROMACS directive: only coulomb = \
-                             {COULOMB_REAL} and dielectric = {VACUUM_DIELECTRIC}, with no \
-                             types, are implied by the directives",
-                            style.params()
-                        ));
-                    }
-                }
-                (category, name) => {
-                    return Err(format!("{category}/{name} has no GROMACS directive"));
-                }
-            }
-        }
-
-        let mut out = String::from("; Generated by molrs\n\n");
-        out.push_str("[ defaults ]\n");
-        out.push_str("; nbfunc  comb-rule  gen-pairs  fudgeLJ  fudgeQQ\n");
-        out.push_str(&self.defaults_row(ff)?);
-        out.push('\n');
-
-        let atom_types: Vec<&AtomType> = ff.get_atomtypes();
-        let lj = ff.get_style("pair", "lj/cut");
-        let type_names: HashSet<&str> = atom_types.iter().map(|t| t.name.as_str()).collect();
-        let mut nonbond_params = String::new();
-        if let Some(lj) = lj {
-            for (name, ends, params) in lj.type_rows() {
+        let mut nonbond = String::new();
+        if lj_name == "lj/cut" {
+            for (name, ends, params) in &rows {
                 if ends[0] == ends[1] {
-                    if !type_names.contains(ends[0]) {
-                        return Err(format!(
-                            "pair/lj/cut self row '{name}' names no atom/full type"
-                        ));
-                    }
                     continue;
-                }
-                if let Some(end) = ends.iter().find(|e| !type_names.contains(*e)) {
-                    return Err(format!(
-                        "pair/lj/cut cross row '{name}': '{end}' is no atom/full type"
-                    ));
                 }
                 let need = |key: &str| {
                     params
                         .get(key)
                         .ok_or_else(|| format!("pair/lj/cut cross row '{name}' has no {key}"))
                 };
-                nonbond_params.push_str(&format!(
-                    "  {}  {}  1  {}  {}\n",
-                    ends[0],
-                    ends[1],
-                    self.fmt_f(need("sigma")? / NM_TO_ANGSTROM),
-                    self.fmt_f(need("epsilon")? * KJ_PER_KCAL),
-                ));
+                nonbond.push_str(&line(ends[0], ends[1], (need("epsilon")?, need("sigma")?)));
+            }
+            return Ok((nonbond, String::new()));
+        }
+
+        // lj/charmm: the kernel's own rows, keyed as it keys them (`pair_key`).
+        let kernel_rows: HashMap<String, Params> =
+            lj.defs().kernel_type_params()?.into_iter().collect();
+        let by_key: HashMap<&str, &Params> =
+            kernel_rows.iter().map(|(k, p)| (k.as_str(), p)).collect();
+        let mixing = charmm_mixing(lj.params())?;
+        let has_14 = |p: &Params| p.get("epsilon14").is_some() || p.get("sigma14").is_some();
+        let one_four = lj.params().get_str("one_four");
+        if one_four != Some("epsilon14") && rows.iter().any(|r| has_14(r.2)) {
+            return Err(format!(
+                "pair/lj/charmm carries epsilon14/sigma14 without one_four = \"epsilon14\": \
+                 they price 1-4 pairs only through dihedral charmm w (LAMMPS), which GROMACS \
+                 cannot express (one_four is {one_four:?})"
+            ));
+        }
+        // Regular cross rows that are not the mix: [ nonbond_params ].
+        for (_, ends, params) in &rows {
+            if ends[0] == ends[1] {
+                continue;
+            }
+            let own = |t: &str| {
+                let p = by_key[t];
+                (
+                    p.get("epsilon").unwrap_or(0.0),
+                    p.get("sigma").unwrap_or(0.0),
+                )
+            };
+            let row = (
+                params.get("epsilon").unwrap_or(0.0),
+                params.get("sigma").unwrap_or(0.0),
+            );
+            if !same_lj(row, mixing.combine(own(ends[0]), own(ends[1]))) {
+                nonbond.push_str(&line(ends[0], ends[1], row));
             }
         }
+        let mut pairtypes = String::new();
+        let weight = ff.special_bonds().lj[2];
+        if one_four == Some("epsilon14") && weight != 0.0 {
+            // Every type pair whose 1-4 parameters can differ from the
+            // generated ones: one end has its own, or a cross row.
+            let with_14: Vec<&str> = rows
+                .iter()
+                .filter(|r| r.1[0] == r.1[1] && has_14(r.2))
+                .map(|r| r.1[0])
+                .collect();
+            let mut atoms: Vec<&str> = type_names.iter().copied().collect();
+            atoms.sort_unstable();
+            let mut pairs: Vec<(&str, &str)> = Vec::new();
+            for &a in &with_14 {
+                for &b in &atoms {
+                    pairs.push(if a <= b { (a, b) } else { (b, a) });
+                }
+            }
+            for (_, ends, _) in &rows {
+                if ends[0] != ends[1] {
+                    pairs.push((ends[0], ends[1]));
+                }
+            }
+            pairs.sort_unstable();
+            pairs.dedup();
+            for (a, b) in pairs {
+                if !by_key.contains_key(a) || !by_key.contains_key(b) {
+                    continue;
+                }
+                let (regular, one_four) = charmm_pair_params(&by_key, mixing, a, b)?;
+                if !same_lj(regular, one_four) {
+                    pairtypes.push_str(&line(a, b, (one_four.0 * weight, one_four.1)));
+                }
+            }
+        }
+        Ok((nonbond, pairtypes))
+    }
+
+    /// A line's function code and values, as written after its labels.
+    fn render_values(&self, line: &Line) -> String {
+        let mut text = line.funct.to_string();
+        for (i, v) in line.values.iter().enumerate() {
+            text.push_str("  ");
+            text.push_str(&if line.integer == Some(i) {
+                format!("{}", *v as i64)
+            } else {
+                self.fmt_f(*v)
+            });
+        }
+        text
+    }
+
+    /// The `[ *types ]` lines of one bonded type of `style`.
+    fn bonded_lines(&self, style: &Style, name: &str, p: &Params) -> Result<Vec<Line>, String> {
+        let what = format!("{}/{} type '{name}'", style.category(), style.name());
+        let allowed = |keys: &[&str]| -> Result<(), String> {
+            match p.iter().find(|(key, _)| !keys.contains(key)) {
+                Some((key, _)) => Err(format!("{what}: parameter '{key}' has no GROMACS column")),
+                None => Ok(()),
+            }
+        };
+        let need = |key: &str| p.get(key).ok_or_else(|| format!("{what} has no {key}"));
+        let whole = |key: &str| -> Result<f64, String> {
+            let n = need(key)?;
+            if n.fract() != 0.0 || !n.is_finite() {
+                return Err(format!("{what}: {key} {n} is not an integer"));
+            }
+            Ok(n)
+        };
+        let sign_phase = |key: &str| -> Result<f64, String> {
+            match need(key)? {
+                1.0 => Ok(0.0),
+                -1.0 => Ok(180.0),
+                d => Err(format!("{what}: {key} {d} is not ±1")),
+            }
+        };
+        let one = |funct: u32, values: Vec<f64>, integer: Option<usize>| {
+            Ok(vec![Line {
+                funct,
+                values,
+                integer,
+            }])
+        };
+        let kb = KJ_PER_KCAL * NM_TO_ANGSTROM * NM_TO_ANGSTROM;
+        match (style.category(), style.name()) {
+            ("bond", "harmonic") => {
+                allowed(&["r0", "k"])?;
+                // LAMMPS K → GROMACS ½k_b: k_b = 2K.
+                one(
+                    1,
+                    vec![need("r0")? / NM_TO_ANGSTROM, 2.0 * need("k")? * kb],
+                    None,
+                )
+            }
+            ("bond", "morse") => {
+                allowed(&["d0", "alpha", "r0"])?;
+                one(
+                    3,
+                    vec![
+                        need("r0")? / NM_TO_ANGSTROM,
+                        need("d0")? * KJ_PER_KCAL,
+                        need("alpha")? * NM_TO_ANGSTROM,
+                    ],
+                    None,
+                )
+            }
+            ("angle", "harmonic") => {
+                allowed(&["theta0", "k"])?;
+                // LAMMPS K → GROMACS ½k_θ: k_θ = 2K.
+                one(
+                    1,
+                    vec![need("theta0")?, 2.0 * need("k")? * KJ_PER_KCAL],
+                    None,
+                )
+            }
+            ("angle", "charmm") => {
+                allowed(&["k", "theta0", "k_ub", "r_ub"])?;
+                one(
+                    5,
+                    vec![
+                        need("theta0")?,
+                        2.0 * need("k")? * KJ_PER_KCAL,
+                        need("r_ub")? / NM_TO_ANGSTROM,
+                        2.0 * need("k_ub")? * kb,
+                    ],
+                    None,
+                )
+            }
+            ("dihedral" | "improper", "periodic") => {
+                if p.get("k1").is_none() {
+                    allowed(&["k", "periodicity", "phase"])?;
+                    let funct = if style.category() == "dihedral" { 1 } else { 4 };
+                    return one(
+                        funct,
+                        vec![
+                            p.get("phase").unwrap_or(0.0),
+                            need("k")? * KJ_PER_KCAL,
+                            whole("periodicity")?,
+                        ],
+                        Some(2),
+                    );
+                }
+                if style.category() == "improper" {
+                    return Err(format!(
+                        "{what} has several terms: dihedraltypes funct 4 holds one"
+                    ));
+                }
+                let mut lines = Vec::new();
+                let mut m = 1;
+                while p.get(&format!("k{m}")).is_some() {
+                    lines.push(Line {
+                        funct: 9,
+                        values: vec![
+                            p.get(&format!("phase{m}")).unwrap_or(0.0),
+                            need(&format!("k{m}"))? * KJ_PER_KCAL,
+                            whole(&format!("periodicity{m}"))?,
+                        ],
+                        integer: Some(2),
+                    });
+                    m += 1;
+                }
+                let terms = m - 1;
+                if let Some((key, _)) = p.iter().find(|(key, _)| {
+                    ["k", "periodicity", "phase"].iter().all(|prefix| {
+                        key.strip_prefix(prefix)
+                            .and_then(|i| i.parse::<usize>().ok())
+                            .is_none_or(|i| i == 0 || i > terms)
+                    })
+                }) {
+                    return Err(format!("{what}: parameter '{key}' has no GROMACS column"));
+                }
+                Ok(lines)
+            }
+            ("dihedral", "charmm") => {
+                allowed(&["k", "periodicity", "phase", "w"])?;
+                if p.get("w").unwrap_or(0.0) != 0.0 {
+                    return Err(format!(
+                        "{what}: w = {} prices the dihedral's 1-4 pair, which GROMACS prices \
+                         by [ pairs ], never by a dihedral",
+                        need("w")?
+                    ));
+                }
+                one(
+                    9,
+                    vec![
+                        p.get("phase").unwrap_or(0.0),
+                        need("k")? * KJ_PER_KCAL,
+                        whole("periodicity")?,
+                    ],
+                    Some(2),
+                )
+            }
+            ("dihedral", "harmonic") | ("improper", "cvff") => {
+                allowed(&["k", "sign", "periodicity"])?;
+                let funct = if style.category() == "dihedral" { 9 } else { 4 };
+                one(
+                    funct,
+                    vec![
+                        sign_phase("sign")?,
+                        need("k")? * KJ_PER_KCAL,
+                        whole("periodicity")?,
+                    ],
+                    Some(2),
+                )
+            }
+            ("dihedral", "multi/harmonic" | "nharmonic") => {
+                let a: Vec<f64> = if style.name() == "nharmonic" {
+                    nharmonic_coefficients(p).map_err(|e| format!("{what}: {e}"))?
+                } else {
+                    allowed(&["a1", "a2", "a3", "a4", "a5"])?;
+                    (1..=5)
+                        .map(|i| p.get(&format!("a{i}")).unwrap_or(0.0))
+                        .collect()
+                };
+                if a.len() > 6 {
+                    return Err(format!(
+                        "{what}: N = {} is above Ryckaert-Bellemans' C0..C5 (N ≤ 6)",
+                        a.len()
+                    ));
+                }
+                let mut c = [0.0; 6];
+                for (n, &x) in a.iter().enumerate() {
+                    c[n] = if n % 2 == 0 { x } else { -x } * KJ_PER_KCAL;
+                }
+                one(3, c.to_vec(), None)
+            }
+            ("dihedral", "opls") => {
+                allowed(&["k1", "k2", "k3", "k4"])?;
+                // An absent k_n is a zero term, as the kernel reads it.
+                let f = |key: &str| p.get(key).unwrap_or(0.0) * KJ_PER_KCAL;
+                one(5, vec![f("k1"), f("k2"), f("k3"), f("k4")], None)
+            }
+            ("improper", "harmonic") => {
+                allowed(&["k", "chi0"])?;
+                let chi0 = p.get("chi0").unwrap_or(0.0);
+                if chi0 != 0.0 && chi0 != 180.0 {
+                    return Err(format!(
+                        "{what}: chi0 = {chi0} deg; dihedraltypes funct 2 is signed and agrees \
+                         with K(|phi| - chi0)^2 only at chi0 = 0 and 180"
+                    ));
+                }
+                one(2, vec![chi0, 2.0 * need("k")? * KJ_PER_KCAL], None)
+            }
+            (category, style) => Err(format!("{category}/{style} has no GROMACS directive")),
+        }
+    }
+}
+
+/// The styles this writer reads: `Ok` when `style` is one, `Err` naming it
+/// otherwise.
+fn check_style(style: &Style) -> Result<(), String> {
+    let declared = |key: &str, value: f64| style.params().get(key).is_none_or(|v| v == value);
+    let extra_params = |keys: &[&str]| {
+        style
+            .params()
+            .iter()
+            .map(|(k, _)| k)
+            .chain(style.params().iter_strings().map(|(k, _)| k))
+            .find(|k| !keys.contains(k))
+            .map(str::to_owned)
+    };
+    match (style.category(), style.name()) {
+        ("atom", "full")
+        | ("bond", "harmonic" | "morse")
+        | ("angle", "harmonic" | "charmm")
+        | (
+            "dihedral",
+            "periodic" | "opls" | "multi/harmonic" | "nharmonic" | "harmonic" | "charmm",
+        )
+        | ("improper", "periodic" | "harmonic" | "cvff")
+        | ("cmap", "charmm") => Ok(()),
+        // A pair `cutoff` (and the CHARMM switch's `inner`) is a run setting
+        // (GROMACS keeps it in the .mdp), not force-field data.
+        ("pair", "lj/cut") => match extra_params(&["cutoff", "mixing"]) {
+            Some(key) => Err(format!(
+                "pair/lj/cut style param '{key}' has no GROMACS directive"
+            )),
+            None => Ok(()),
+        },
+        ("pair", "lj/charmm") => match extra_params(&["cutoff", "inner", "mixing", "one_four"]) {
+            Some(key) => Err(format!(
+                "pair/lj/charmm style param '{key}' has no GROMACS directive"
+            )),
+            None => Ok(()),
+        },
+        ("pair", name @ ("coul/cut" | "coul/charmm")) => {
+            let extra = extra_params(&["coulomb", "dielectric", "cutoff", "inner"]);
+            if extra.is_some()
+                || !declared("coulomb", COULOMB_REAL)
+                || !declared("dielectric", VACUUM_DIELECTRIC)
+                || !style.type_rows().is_empty()
+            {
+                return Err(format!(
+                    "pair/{name} {:?} has no GROMACS directive: only coulomb = \
+                     {COULOMB_REAL} and dielectric = {VACUUM_DIELECTRIC}, with no types, are \
+                     implied by the directives",
+                    style.params()
+                ));
+            }
+            Ok(())
+        }
+        (category, name) => Err(format!("{category}/{name} has no GROMACS directive")),
+    }
+}
+
+impl ForceFieldWriter for GromacsTopFfWriter {
+    fn write_str(&self, ff: &ForceField) -> Result<String, String> {
+        for style in ff.styles() {
+            check_style(style)?;
+        }
+        let lj = self.lj_style(ff)?;
+
+        let mut out = String::from("; Generated by molrs\n\n");
+        out.push_str("[ defaults ]\n");
+        out.push_str("; nbfunc  comb-rule  gen-pairs  fudgeLJ  fudgeQQ\n");
+        out.push_str(&self.defaults_row(ff, lj)?);
+        out.push('\n');
+
+        let atom_types: Vec<&AtomType> = ff.get_atomtypes();
+        let type_names: HashSet<&str> = atom_types.iter().map(|t| t.name.as_str()).collect();
+        let (nonbond_params, pairtypes) = match lj {
+            Some(lj) => self.cross_sections(ff, lj, &type_names)?,
+            None => (String::new(), String::new()),
+        };
         if !atom_types.is_empty() {
             out.push_str("[ atomtypes ]\n");
             out.push_str("; name  [bond_type]  [at.num]  mass  charge  ptype  sigma  epsilon\n");
@@ -373,14 +688,45 @@ impl ForceFieldWriter for GromacsTopFfWriter {
             out.push_str(&nonbond_params);
             out.push('\n');
         }
+        if !pairtypes.is_empty() {
+            out.push_str("[ pairtypes ]\n; i  j  func  sigma14  epsilon14\n");
+            out.push_str(&pairtypes);
+            out.push('\n');
+        }
 
         // A bonded endpoint is the wildcard, an atom-type name or a class
         // (GROMACS `bond_type`).
         let mut labels = type_names;
         labels.extend(atom_types.iter().filter_map(|t| t.params.get_str("class")));
+        let resolve = |style: &Style, name: &str, ends: &[&str]| -> Result<Vec<String>, String> {
+            ends.iter()
+                .map(|end| {
+                    if end.is_empty() {
+                        Ok("X".to_owned())
+                    } else if labels.contains(end) {
+                        Ok((*end).to_owned())
+                    } else {
+                        Err(format!(
+                            "{}/{} type '{name}': endpoint '{end}' is neither an atom-type name \
+                             nor a bond_type",
+                            style.category(),
+                            style.name()
+                        ))
+                    }
+                })
+                .collect()
+        };
+        // Labels per GROMACS table, so that two types GROMACS would read as one
+        // are refused.
+        let mut seen: HashMap<(Table, Vec<String>), (String, Vec<String>)> = HashMap::new();
+        let mut written: HashSet<(Table, Vec<String>, Vec<String>)> = HashSet::new();
         for (directive, categories, header) in [
             ("bondtypes", &["bond"][..], "; i  j  func  b0  kb"),
-            ("angletypes", &["angle"][..], "; i  j  k  func  th0  cth"),
+            (
+                "angletypes",
+                &["angle"][..],
+                "; i  j  k  func  th0  cth  [r13  kub]",
+            ),
             (
                 "dihedraltypes",
                 &["dihedral", "improper"][..],
@@ -394,27 +740,76 @@ impl ForceFieldWriter for GromacsTopFfWriter {
                 .filter(|s| categories.contains(&s.category()))
             {
                 for (name, ends, params) in style.type_rows() {
-                    let mut cols = Vec::with_capacity(ends.len());
-                    for end in ends {
-                        if end.is_empty() {
-                            cols.push("X");
-                        } else if labels.contains(end) {
-                            cols.push(end);
-                        } else {
+                    let cols = resolve(style, name, &ends)?;
+                    let lines = self.bonded_lines(style, name, params)?;
+                    let table = table_key(directive, lines[0].funct);
+                    let values: Vec<String> =
+                        lines.iter().map(|line| self.render_values(line)).collect();
+                    // GROMACS finds a row in either orientation, so two rows
+                    // on the same labels either way are one; equal ones are a
+                    // harmless restatement.
+                    let reversed: Vec<String> = cols.iter().rev().cloned().collect();
+                    // The same rows on the same labels again would be read
+                    // as more funct-9 terms of the first: written once.
+                    if !written.insert((table.clone(), cols.clone(), values.clone())) {
+                        continue;
+                    }
+                    for key in [cols.clone(), reversed] {
+                        let entry = (name.to_owned(), values.clone());
+                        if let Some((other, other_values)) =
+                            seen.insert((table.clone(), key), entry)
+                            && other != name
+                            && other_values != values
+                        {
                             return Err(format!(
-                                "{}/{} type '{name}': endpoint '{end}' is neither an atom-type \
-                                 name nor a bond_type",
+                                "{}/{} type '{name}' and type '{other}' are on the same labels \
+                                 {} of [ {directive} ] funct {}: GROMACS would read them as one",
                                 style.category(),
-                                style.name()
+                                style.name(),
+                                cols.join(" "),
+                                table.1
                             ));
                         }
                     }
-                    let values = self.bonded_columns(style, name, params)?;
-                    rows.push_str(&format!("  {}  {values}\n", cols.join("  ")));
+                    for value in values {
+                        rows.push_str(&format!("  {}  {value}\n", cols.join("  ")));
+                    }
                 }
             }
             if !rows.is_empty() {
                 out.push_str(&format!("[ {directive} ]\n{header}\n{rows}\n"));
+            }
+        }
+
+        if let Some(cmap) = ff.get_style("cmap", "charmm") {
+            let mut rows = String::new();
+            for (name, ends, params) in cmap.type_rows() {
+                let cols = resolve(cmap, name, &ends)?;
+                if let Some((key, _)) = params.iter().next() {
+                    return Err(format!(
+                        "cmap/charmm type '{name}': parameter '{key}' has no GROMACS column"
+                    ));
+                }
+                let grid = params
+                    .get_array(GRID)
+                    .ok_or_else(|| format!("cmap/charmm type '{name}' has no grid"))?;
+                let n = match grid.shape() {
+                    [a, b] if a == b => *a,
+                    shape => {
+                        return Err(format!(
+                            "cmap/charmm type '{name}': grid of shape {shape:?} is not N×N"
+                        ));
+                    }
+                };
+                rows.push_str(&format!("{} 1 {n} {n}\\\n", cols.join(" ")));
+                let values: Vec<String> =
+                    grid.iter().map(|v| self.fmt_f(v * KJ_PER_KCAL)).collect();
+                let chunks: Vec<String> = values.chunks(10).map(|c| c.join(" ")).collect();
+                rows.push_str(&chunks.join("\\\n"));
+                rows.push_str("\n\n");
+            }
+            if !rows.is_empty() {
+                out.push_str(&format!("[ cmaptypes ]\n\n{rows}"));
             }
         }
         Ok(out)
@@ -832,10 +1227,10 @@ mod tests {
         assert_row_values(&r[4..], "1", &[0.0, 4.184, 3.0]);
     }
 
-    /// F3 = 0.3 kcal/mol × 4.184 = 1.2552 kJ/mol: C0 = ½·1.2552 = 0.6276,
-    /// C1 = 1.5·1.2552 = 1.8828, C3 = −2·1.2552 = −2.5104, C2 = C4 = C5 = 0.
+    /// LAMMPS `opls` is GROMACS's Fourier dihedral term for term: C3 = 0.3 ×
+    /// 4.184 = 1.2552 kJ/mol.
     #[test]
-    fn dihedral_opls_is_dihedraltypes_code_3_in_rb_form() {
+    fn dihedral_opls_is_dihedraltypes_code_5() {
         let ff = with_type(
             "dihedral",
             "opls",
@@ -845,7 +1240,156 @@ mod tests {
         );
         let text = write(&ff);
         let r = row(&text, "dihedraltypes", &["HC", "CT", "CT", "HC"]);
+        assert_row_values(&r[4..], "5", &[0.0, 0.0, 1.2552, 0.0]);
+    }
+
+    /// `multi/harmonic` is Ryckaert-Bellemans with Cₙ = (−1)ⁿ aₙ₊₁: a = (0.15,
+    /// −0.45, 0, 0.6, 0) kcal/mol is C = (0.6276, 1.8828, 0, −2.5104, 0, 0) kJ/mol.
+    #[test]
+    fn dihedral_multi_harmonic_is_dihedraltypes_code_3() {
+        let ff = with_type(
+            "dihedral",
+            "multi/harmonic",
+            "HC-CT-CT-HC",
+            &["HC", "CT", "CT", "HC"],
+            Params::from_pairs(&[
+                ("a1", 0.15),
+                ("a2", -0.45),
+                ("a3", 0.0),
+                ("a4", 0.6),
+                ("a5", 0.0),
+            ]),
+        );
+        let text = write(&ff);
+        let r = row(&text, "dihedraltypes", &["HC", "CT", "CT", "HC"]);
         assert_row_values(&r[4..], "3", &[0.6276, 1.8828, 0.0, -2.5104, 0.0, 0.0]);
+    }
+
+    /// `nharmonic` with six coefficients fills C5; seven is above RB.
+    #[test]
+    fn dihedral_nharmonic_is_dihedraltypes_code_3_up_to_six_terms() {
+        let six: Vec<(String, f64)> = (1..=6).map(|i| (format!("a{i}"), 1.0)).collect();
+        let pairs: Vec<(&str, f64)> = six.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+        let ff = with_type(
+            "dihedral",
+            "nharmonic",
+            "CT-CT-CT-CT",
+            &["CT"; 4],
+            Params::from_pairs(&pairs),
+        );
+        let text = write(&ff);
+        let r = row(&text, "dihedraltypes", &["CT", "CT", "CT", "CT"]);
+        let c = 4.184;
+        assert_row_values(&r[4..], "3", &[c, -c, c, -c, c, -c]);
+        let mut seven = pairs.clone();
+        seven.push(("a7", 1.0));
+        let ff = with_type(
+            "dihedral",
+            "nharmonic",
+            "CT-CT-CT-CT",
+            &["CT"; 4],
+            Params::from_pairs(&seven),
+        );
+        assert_names(&write_err(&ff), &["N = 7"]);
+    }
+
+    /// θ₀ = 109.5°; k_θ = 2·35.5·4.184 = 297.064; r₁₃ = 0.1802 nm; k_UB =
+    /// 2·5.4·418.4 = 4518.72 — CHARMM36 HA-CT2-HA as GROMACS writes it.
+    #[test]
+    fn angle_charmm_is_angletypes_code_5() {
+        let ff = with_type(
+            "angle",
+            "charmm",
+            "HC-CT-HC",
+            &["HC", "CT", "HC"],
+            Params::from_pairs(&[
+                ("k", 35.5),
+                ("theta0", 109.5),
+                ("k_ub", 5.4),
+                ("r_ub", 1.802),
+            ]),
+        );
+        let text = write(&ff);
+        let r = row(&text, "angletypes", &["HC", "CT", "HC"]);
+        assert_row_values(&r[3..], "5", &[109.5, 297.064, 0.1802, 4518.72]);
+    }
+
+    /// `dihedral harmonic` k[1 + d cos nφ] is one periodic term at phase 0°
+    /// (d = 1) or 180° (d = −1); `improper cvff` the same as funct 4.
+    #[test]
+    fn signed_cosines_are_periodic_rows_at_0_or_180() {
+        let ff = with_type(
+            "dihedral",
+            "harmonic",
+            "CT-CT-CT-CT",
+            &["CT"; 4],
+            Params::from_pairs(&[("k", 1.0), ("sign", -1.0), ("periodicity", 2.0)]),
+        );
+        let text = write(&ff);
+        let r = row(&text, "dihedraltypes", &["CT", "CT", "CT", "CT"]);
+        assert_row_values(&r[4..], "9", &[180.0, 4.184, 2.0]);
+        let ff = with_type(
+            "improper",
+            "cvff",
+            "HC-CT-CT-CT",
+            &["HC", "CT", "CT", "CT"],
+            Params::from_pairs(&[("k", 1.0), ("sign", 1.0), ("periodicity", 2.0)]),
+        );
+        let text = write(&ff);
+        let r = row(&text, "dihedraltypes", &["HC", "CT", "CT", "CT"]);
+        assert_row_values(&r[4..], "4", &[0.0, 4.184, 2.0]);
+    }
+
+    /// A 2×2 cmap is `[ cmaptypes ]` in kJ/mol, φ-major, and reads back.
+    #[test]
+    fn cmap_charmm_is_a_cmaptypes_row() {
+        let mut ff = opls_ff(Some("geometric"));
+        let mut p = Params::new();
+        p.set_array(
+            "grid",
+            ndarray::ArrayD::from_shape_vec(vec![2, 2], vec![1.0, 2.0, -1.0, 0.0]).unwrap(),
+        );
+        ff.def_style("cmap", "charmm", Params::new())
+            .unwrap()
+            .def_type("CT-HC-CT-CT-HC", &["CT", "HC", "CT", "CT", "HC"], p)
+            .unwrap();
+        let text = write(&ff);
+        assert!(text.contains("[ cmaptypes ]"), "{text}");
+        assert!(
+            text.contains("CT HC CT CT HC 1 2 2\\\n4.184000 8.368000 -4.184000 0.000000"),
+            "{text}"
+        );
+        let back = GromacsTopFfReader::new().read_str(&text).unwrap();
+        let grid = back.get_cmaptypes()[0]
+            .params
+            .get_array("grid")
+            .unwrap()
+            .clone();
+        assert_eq!(
+            grid.iter().copied().collect::<Vec<_>>(),
+            [1.0, 2.0, -1.0, 0.0]
+        );
+    }
+
+    /// Two periodic types on the same labels are one to GROMACS.
+    #[test]
+    fn two_types_on_the_same_labels_of_one_table_are_an_error() {
+        let mut ff = with_type(
+            "dihedral",
+            "periodic",
+            "CT-CT-CT-CT",
+            &["CT"; 4],
+            Params::from_pairs(&[("k", 1.0), ("periodicity", 3.0), ("phase", 0.0)]),
+        );
+        ff.get_style_mut("dihedral", "periodic")
+            .unwrap()
+            .def_type(
+                "CT-CT-CT-CT@gmx_1",
+                &["CT"; 4],
+                Params::from_pairs(&[("k", 2.0), ("periodicity", 3.0), ("phase", 0.0)]),
+            )
+            .unwrap();
+        assert_names(&write_err(&ff), &["CT-CT-CT-CT@gmx_1", "one"]);
     }
 
     #[test]
@@ -871,7 +1415,7 @@ mod tests {
         );
         let text = write(&ff);
         let r = row(&text, "dihedraltypes", &["X", "CT", "CT", "X"]);
-        assert_eq!(r[4], "3");
+        assert_eq!(r[4], "5");
     }
 
     /// k = 2.5 × 4.184 = 10.46 kJ/mol; φ_s = 180°; n = 2.
@@ -953,28 +1497,24 @@ mod tests {
         assert_names(&err, &["charmm"]);
     }
 
+    /// `dihedral charmm` with w = 0 is the periodic term alone: funct 9.
     #[test]
-    fn dihedral_multi_harmonic_is_an_error() {
+    fn dihedral_charmm_with_w_0_is_dihedraltypes_code_9() {
         let ff = with_type(
             "dihedral",
-            "multi/harmonic",
+            "charmm",
             "CT-CT-CT-CT",
             &["CT", "CT", "CT", "CT"],
-            Params::from_pairs(&[
-                ("a1", 1.0),
-                ("a2", 0.0),
-                ("a3", 0.0),
-                ("a4", 0.0),
-                ("a5", 0.0),
-            ]),
+            Params::from_pairs(&[("k", 1.0), ("periodicity", 3.0), ("phase", 0.0), ("w", 0.0)]),
         );
-        let err = write_err(&ff);
-        assert_names(&err, &["multi/harmonic"]);
+        let text = write(&ff);
+        let r = row(&text, "dihedraltypes", &["CT", "CT", "CT", "CT"]);
+        assert_row_values(&r[4..], "9", &[0.0, 4.184, 3.0]);
     }
 
-    /// Several periodic terms on one type need code 9, which is not modelled.
+    /// Several periodic terms on one type are consecutive funct-9 rows.
     #[test]
-    fn multi_term_dihedral_periodic_is_an_error() {
+    fn multi_term_dihedral_periodic_is_funct_9_rows() {
         let ff = with_type(
             "dihedral",
             "periodic",
@@ -989,8 +1529,11 @@ mod tests {
                 ("phase2", 0.0),
             ]),
         );
-        let err = write_err(&ff);
-        assert_names(&err, &["periodic", "CT-CT-CT-CT"]);
+        let text = write(&ff);
+        let rows: Vec<Vec<&str>> = section_rows(&text, "dihedraltypes");
+        assert_eq!(rows.len(), 2, "{text}");
+        assert_row_values(&rows[0][4..], "9", &[0.0, 4.184, 1.0]);
+        assert_row_values(&rows[1][4..], "9", &[0.0, 2.092, 3.0]);
     }
 
     /// `ZZ` is neither an atom-type name nor any type's `class`.
@@ -1041,7 +1584,7 @@ mod tests {
             &'a [&'a str],
             &'a [(&'a str, f64)],
         );
-        let defs: [TypeDef; 9] = [
+        let defs: &[TypeDef] = &[
             (
                 "bond",
                 "harmonic",
@@ -1105,8 +1648,68 @@ mod tests {
                 &["CT", "CT", "HC"],
                 &[("theta0", 108.9), ("k", 37.5)],
             ),
+            (
+                "angle",
+                "charmm",
+                "HC-CT-CT",
+                &["HC", "CT", "CT"],
+                &[
+                    ("k", 35.5),
+                    ("theta0", 109.5),
+                    ("k_ub", 5.4),
+                    ("r_ub", 1.802),
+                ],
+            ),
+            (
+                "dihedral",
+                "periodic",
+                "HC-CT-CT-CT",
+                &["HC", "CT", "CT", "CT"],
+                &[
+                    ("k1", 0.2),
+                    ("periodicity1", 1.0),
+                    ("phase1", 180.0),
+                    ("k2", 0.25),
+                    ("periodicity2", 2.0),
+                    ("phase2", 37.5),
+                ],
+            ),
+            (
+                "dihedral",
+                "multi/harmonic",
+                "CT-CT-CT-HC",
+                &["CT", "CT", "CT", "HC"],
+                &[
+                    ("a1", 0.15),
+                    ("a2", -0.45),
+                    ("a3", 0.1),
+                    ("a4", 0.6),
+                    ("a5", 0.0),
+                ],
+            ),
+            (
+                "dihedral",
+                "nharmonic",
+                "HC-HC-CT-HC",
+                &["HC", "HC", "CT", "HC"],
+                &[
+                    ("a1", 0.1),
+                    ("a2", 0.2),
+                    ("a3", 0.3),
+                    ("a4", 0.4),
+                    ("a5", 0.5),
+                    ("a6", 0.6),
+                ],
+            ),
+            (
+                "improper",
+                "harmonic",
+                "CT-HC-HC-CT",
+                &["CT", "HC", "HC", "CT"],
+                &[("k", 12.0), ("chi0", 180.0)],
+            ),
         ];
-        for (category, style, name, endpoints, params) in defs {
+        for &(category, style, name, endpoints, params) in defs {
             ff.def_style(category, style, Params::new())
                 .unwrap()
                 .def_type(name, endpoints, Params::from_pairs(params))
