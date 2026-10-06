@@ -1,24 +1,47 @@
 //! AMBER prmtop force-field reader.
 //!
 //! Builds a molrs [`ForceField`] from the parameter tables of an AMBER
-//! topology (prmtop / parm7). Structure/connectivity lives in
+//! topology (prmtop / parm7), and of a CHARMM topology ParmEd's `chamber`
+//! wrote in the same format. Structure/connectivity lives in
 //! [`crate::io::data::prmtop`]; this module owns styles + type params only.
+//! AMBER is read, never written: there is no prmtop writer.
 //!
-//! # Amber FileFormats (I/O) vs LAMMPS/molrs potentials
+//! # Amber FileFormats (I/O) vs the force-field IR
 //!
 //! **Parsing** follows <https://ambermd.org/FileFormats.php> (and the
 //! expanded Swails prmtop appendix for section layout). **Stored potentials**
-//! are molrs's convention, LAMMPS's — which is AMBER's own for every bonded
-//! term but for the angle unit:
+//! are the force-field IR's, whose definitions follow LAMMPS — AMBER's own
+//! for every bonded term but for the angle unit:
 //!
 //! | Term | Amber prmtop storage | LAMMPS style | molrs store |
 //! |------|----------------------|--------------|-------------|
 //! | Bond | `RK` in `E = RK·(r−r₀)²` (no ½) | `bond_style harmonic`, same | `bond harmonic`: `k = RK`, `r0` |
 //! | Angle | `TK` in `E = TK·(θ−θ₀)²` (no ½), `θ₀` rad | `angle_style harmonic`, same | `angle harmonic`: `k = TK`, `theta0` in degrees |
-//! | Dihedral | `PK·[1 + cos(nφ − δ)]`, `δ` rad | `dihedral_style fourier` | `dihedral periodic`: `k/periodicity/phase` (phase in degrees) |
-//! | Improper | same form; 4th pointer negative | `improper_style cvff` (one term) | `improper periodic`, AMBER's atom order (centre third) |
+//! | Dihedral | `PK·[1 + cos(nφ − δ)]`, `δ` rad; rows of one quartet and negative-`PN` chains are one torsion | `dihedral_style fourier` | `dihedral periodic`: `k<m>/periodicity<m>/phase<m>` (degrees), terms sorted by periodicity |
+//! | Improper | same form; 4th pointer negative | `improper_style cvff` (one term) | `improper periodic`, AMBER's atom order (centre third); a multi-term improper is one `<quartet>@<n>` type per term |
 //! | LJ | `A/r¹² − B/r⁶` via ICO | `lj/cut` σ/ε | `σ = 2^{−1/6} r_min`, `ε = B²/(4A)`; self rows from the diagonal, an explicit cross row for each off-diagonal entry that is not Lorentz–Berthelot (NBFIX) |
-//! | 1-4 scales | `SCEE`/`SCNB` divisors (default 1.2 / 2.0) | `special_bonds amber` | `coul_14 = 1/SCEE`, `lj_14 = 1/SCNB` |
+//! | 1-4 scales | `SCEE`/`SCNB` divisors per torsion type (default 1.2 / 2.0) | `special_bonds` | `coul_14 = 1/SCEE`, `lj_14 = 1/SCNB` of the divisor most 1-4 rows carry; the frame's `pairs` carry `coul_scale` / `lj_scale` for the pairs that differ |
+//!
+//! A chamber prmtop (`%FLAG CTITLE`) adds CHARMM's terms:
+//!
+//! | Term | chamber prmtop storage | LAMMPS style | molrs store |
+//! |------|------------------------|--------------|-------------|
+//! | Urey–Bradley | `CHARMM_UREY_BRADLEY*`: `K_ub·(r₁₃ − r_ub)²` per angle | `angle_style charmm` | every angle `angle charmm`: `k = TK`, `theta0`, `k_ub`, `r_ub` (0, 0 for an angle without one) |
+//! | Improper | `CHARMM_IMPROPER*`: `K_ψ·(ψ − ψ₀)²`, centre first | `improper_style harmonic` | `improper harmonic`: `k = K_ψ`, `chi0` in degrees, file order |
+//! | CMAP | `CHARMM_CMAP_*` (`CMAP_*` in an AMBER ff19SB file) | `fix cmap` | `cmap charmm`, one type per map ([`cmap_terms`]) |
+//! | LJ | `LENNARD_JONES_ACOEF/BCOEF` + `LENNARD_JONES_14_ACOEF/BCOEF` | `lj/charmm/coul/charmm` | `lj/charmm`: `epsilon`, `sigma`, and `epsilon14`, `sigma14` with `one_four = "epsilon14"` when the 1-4 table differs |
+//! | Coulomb | `CHARGE` = `q·√332.0716` | `coul/charmm` | `coul/charmm`: `coulomb = 332.0716` |
+//!
+//! Refused by name: polarizable (`IPOL > 0`), 12-6-4 (`LENNARD_JONES_CCOEF`)
+//! and 10-12 hydrogen-bond (non-zero `HBOND_ACOEF/BCOEF`, a negative ICO)
+//! prmtops; a 1-4 row on a negative-`PN` chain ([`one_four_weights`]: sander
+//! prices that pair once per chained term); two terms of one improper with
+//! one periodicity; a CHARMM improper with ψ₀ other than 0° or 180° (LAMMPS
+//! prices |ψ|); a Urey–Bradley term that is not on exactly one angle.
+//!
+//! Every phase within 0.004 rad of ±π is ±π exactly, as sander's `rdparm`
+//! takes it ([`amber_phase`]): tleap writes π as `3.14159400`. A type name
+//! that stands for two LJ classes or masses is split ([`atom_type_names`]).
 //!
 //! Notes:
 //! - OpenMM multiplies Amber bond/angle `RK`/`TK` by 2 when loading into its ½k
@@ -28,25 +51,26 @@
 //!   the FileFormats `parm.dat` section. We follow FileFormats + OpenMM.
 //! - `%COMMENT` lines are skipped. Section order is free (flag map).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 use super::ForceFieldReader;
 use crate::ff::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
-use crate::ff::params::amber::{AMBER_COULOMB, AMBER_SCEE, AMBER_SCNB};
+use crate::ff::params::amber::AMBER_COULOMB;
 use crate::io::data::prmtop::parse_flag_sections;
-use crate::io::data::prmtop_tables::{parse_a4_names, parse_tokens};
+#[cfg(doc)]
+use crate::io::data::prmtop_tables::amber_phase;
+use crate::io::data::prmtop_tables::{
+    CHAMBER_COULOMB, TorsionTables, TorsionTerm, atom_type_names, chamber_impropers,
+    chamber_urey_bradleys, cmap_terms, decode_torsions, is_chamber, one_four_weights, parse_tokens,
+};
 use crate::math::pair_form::lj_ab_to_sigma_epsilon;
 use molrs::store::type_labels::TypeName;
 
-/// `(type_name, sigma_Å, epsilon_kcal_per_mol)` for one self LJ type.
-type LjSelfRow = (String, f64, f64);
-
-/// `(type_a, type_b, sigma_Å, epsilon_kcal_per_mol)` for one explicit cross
-/// pair (NBFIX), `type_a < type_b` bytewise.
-type LjCrossRow = (String, String, f64, f64);
+/// `(sigma_Å, epsilon_kcal_per_mol)` of one LJ entry.
+type Lj = (f64, f64);
 
 /// Reader for AMBER prmtop force-field parameter tables.
 #[derive(Debug, Default, Clone, Copy)]
@@ -91,43 +115,6 @@ fn section_i64(sections: &HashMap<String, Vec<String>>, key: &str) -> Result<Vec
     }
 }
 
-/// Uniform SCEE/SCNB divisor over non-suppressed proper torsion type ids.
-///
-/// Empty `values` (section absent) → `default`. A used id out of range or a
-/// non-positive value is an `Err` naming `flag` and the id. Two used values
-/// differing by more than 1e-6 relative is an `Err` naming `flag` and both
-/// values.
-fn uniform_divisor(
-    values: &[f64],
-    used_tids: &[i64],
-    flag: &str,
-    default: f64,
-) -> Result<f64, String> {
-    if values.is_empty() {
-        return Ok(default);
-    }
-    let mut chosen: Option<f64> = None;
-    for &tid in used_tids {
-        let idx = (tid - 1) as usize;
-        let Some(&v) = values.get(idx) else {
-            return Err(format!("{flag} type {tid} is out of range"));
-        };
-        if v <= 0.0 {
-            return Err(format!("{flag} type {tid} has non-positive divisor {v}"));
-        }
-        match chosen {
-            None => chosen = Some(v),
-            Some(prev) => {
-                let denom = prev.abs().max(v.abs());
-                if denom > 0.0 && (prev - v).abs() / denom > 1e-6 {
-                    return Err(format!("{flag} is not uniform: {prev:?} vs {v:?}"));
-                }
-            }
-        }
-    }
-    Ok(chosen.unwrap_or(default))
-}
-
 fn ico_entry(n_types: usize, iac_i: usize, iac_j: usize, nb_index: &[i64]) -> Result<i64, String> {
     let index = n_types
         .saturating_mul(iac_i.saturating_sub(1))
@@ -139,96 +126,189 @@ fn ico_entry(n_types: usize, iac_i: usize, iac_j: usize, nb_index: &[i64]) -> Re
     Ok(nb)
 }
 
-/// Full-ICO LJ decode: one self term per atom, in atom order, and one
-/// explicit cross row per pair of type names whose off-diagonal entry is not
-/// the Lorentz–Berthelot mix of the two self terms (CHARMM NBFIX / ParmEd
-/// `changeLJPair` edits). A Lorentz–Berthelot entry gives no row: the
-/// `lj/cut` style states `mixing = arithmetic`, which reproduces it.
+/// One A/B table read through the ICO matrix: the self `(σ, ε)` of each LJ
+/// class (1-based, index 0 unused) and every off-diagonal `(i < j)` entry.
+struct LjTable {
+    self_params: Vec<Lj>,
+    cross: Vec<((usize, usize), Lj)>,
+}
+
+fn read_lj_table(
+    n_types: usize,
+    nb_index: &[i64],
+    acoef: &[f64],
+    bcoef: &[f64],
+) -> Result<LjTable, String> {
+    let entry = |i: usize, j: usize| -> Result<Option<Lj>, String> {
+        let nb = ico_entry(n_types, i, j, nb_index)?;
+        if nb == 0 {
+            return Ok(None);
+        }
+        let idx = (nb - 1) as usize;
+        Ok(Some(lj_ab_to_sigma_epsilon(
+            acoef.get(idx).copied().unwrap_or(0.0),
+            bcoef.get(idx).copied().unwrap_or(0.0),
+        )))
+    };
+    let mut self_params = vec![(1.0, 0.0); n_types + 1];
+    for (t, slot) in self_params.iter_mut().enumerate().skip(1) {
+        if let Some(p) = entry(t, t)? {
+            *slot = p;
+        }
+    }
+    let mut cross = Vec::new();
+    for i in 1..=n_types {
+        for j in (i + 1)..=n_types {
+            if let Some(p) = entry(i, j)? {
+                cross.push(((i, j), p));
+            }
+        }
+    }
+    Ok(LjTable { self_params, cross })
+}
+
+fn rel(got: f64, exp: f64) -> f64 {
+    let denom = got.abs().max(exp.abs());
+    if denom == 0.0 {
+        0.0
+    } else {
+        (got - exp).abs() / denom
+    }
+}
+
+/// Whether `(σ, ε)` is the Lorentz–Berthelot mix of two self terms.
+fn is_lorentz_berthelot(p: Lj, a: Lj, b: Lj) -> bool {
+    rel(p.0, 0.5 * (a.0 + b.0)) <= 1e-6 && rel(p.1, (a.1 * b.1).sqrt()) <= 1e-6
+}
+
+/// The LJ rows of a file: `(name, σ, ε, σ14, ε14)` self rows (one per type
+/// name, from its class's diagonal) and `(a, b, σ, ε, σ14, ε14)` cross rows,
+/// `a < b` bytewise, one per pair of type names on two classes whose
+/// off-diagonal entry — in the regular table or, with `one_four`, the 1-4
+/// table — is not the Lorentz–Berthelot mix of the classes' self terms
+/// (CHARMM NBFIX, ParmEd `changeLJPair`). A Lorentz–Berthelot entry gives no
+/// row: `mixing = arithmetic` reproduces it.
 ///
 /// Atoms sharing a type name share its LJ class (the atom-type definition
 /// makes a second class under one name a `TypeConflict`), so their rows are
 /// equal and the definition rule collapses them to one pair type. Several
 /// names on one LJ class each get the cross rows of that class.
-fn decode_lj_types(
-    n_types: usize,
+#[allow(clippy::type_complexity)]
+fn lj_rows(
     atom_types: &[String],
     type_index: &[i64],
-    nb_index: &[i64],
-    acoef: &[f64],
-    bcoef: &[f64],
-) -> Result<(Vec<LjSelfRow>, Vec<LjCrossRow>), String> {
-    if n_types == 0 {
-        return Ok((Vec::new(), Vec::new()));
-    }
-    // The type names on each LJ class (1-based), bytewise sorted.
-    let mut names_of: Vec<std::collections::BTreeSet<&str>> =
-        vec![std::collections::BTreeSet::new(); n_types + 1];
-    for (i, name) in atom_types.iter().enumerate() {
-        let itype = type_index.get(i).copied().unwrap_or(0);
-        if !name.is_empty() && itype >= 1 && itype as usize <= n_types {
-            names_of[itype as usize].insert(name.as_str());
+    regular: &LjTable,
+    one_four: Option<&LjTable>,
+) -> (Vec<(String, Lj, Lj)>, Vec<(String, String, Lj, Lj)>) {
+    let n_types = regular.self_params.len() - 1;
+    let class = |i: usize| -> usize {
+        let t = type_index.get(i).copied().unwrap_or(0);
+        if t >= 1 && t as usize <= n_types {
+            t as usize
+        } else {
+            0
         }
-    }
-    let mut cross = Vec::new();
-    let mut self_params = vec![(1.0, 0.0); n_types];
-    for t in 1..=n_types {
-        let nb = ico_entry(n_types, t, t, nb_index)?;
-        if nb == 0 {
-            continue;
-        }
-        let idx = (nb - 1) as usize;
-        self_params[t - 1] = lj_ab_to_sigma_epsilon(
-            acoef.get(idx).copied().unwrap_or(0.0),
-            bcoef.get(idx).copied().unwrap_or(0.0),
-        );
-    }
-    for i in 1..=n_types {
-        for j in (i + 1)..=n_types {
-            let nb = ico_entry(n_types, i, j, nb_index)?;
-            if nb == 0 {
-                continue;
-            }
-            let idx = (nb - 1) as usize;
-            let (sigma, eps) = lj_ab_to_sigma_epsilon(
-                acoef.get(idx).copied().unwrap_or(0.0),
-                bcoef.get(idx).copied().unwrap_or(0.0),
-            );
-            let (si, ei) = self_params[i - 1];
-            let (sj, ej) = self_params[j - 1];
-            let lb_s = 0.5 * (si + sj);
-            let lb_e = (ei * ej).sqrt();
-            let rel = |got: f64, exp: f64| {
-                let denom = got.abs().max(exp.abs());
-                if denom == 0.0 {
-                    0.0
-                } else {
-                    (got - exp).abs() / denom
-                }
-            };
-            if rel(sigma, lb_s) > 1e-6 || rel(eps, lb_e) > 1e-6 {
-                for a in &names_of[i] {
-                    for b in &names_of[j] {
-                        let (a, b) = if a <= b { (a, b) } else { (b, a) };
-                        cross.push(((*a).to_owned(), (*b).to_owned(), sigma, eps));
-                    }
-                }
-            }
-        }
-    }
-    let mut out = Vec::new();
+    };
+    let self14 = |t: usize| one_four.map_or(regular.self_params[t], |o| o.self_params[t]);
+    let mut names_of: Vec<BTreeSet<&str>> = vec![BTreeSet::new(); n_types + 1];
+    let mut selves = Vec::new();
     for (i, name) in atom_types.iter().enumerate() {
         if name.is_empty() {
             continue;
         }
-        let itype = type_index.get(i).copied().unwrap_or(1) as usize;
-        let (sigma, epsilon) = if itype == 0 || itype > n_types {
-            (1.0, 0.0)
-        } else {
-            self_params[itype - 1]
-        };
-        out.push((name.clone(), sigma, epsilon));
+        let t = class(i);
+        if t == 0 {
+            selves.push((name.clone(), (1.0, 0.0), (1.0, 0.0)));
+            continue;
+        }
+        names_of[t].insert(name.as_str());
+        selves.push((name.clone(), regular.self_params[t], self14(t)));
     }
-    Ok((out, cross))
+    let cross14: HashMap<(usize, usize), Lj> = one_four
+        .map(|o| o.cross.iter().copied().collect())
+        .unwrap_or_default();
+    let mut cross = Vec::new();
+    for &((i, j), p) in &regular.cross {
+        let (si, sj) = (regular.self_params[i], regular.self_params[j]);
+        let p14 = cross14.get(&(i, j)).copied().unwrap_or(p);
+        let mixed14 = one_four.is_none() || is_lorentz_berthelot(p14, self14(i), self14(j));
+        if is_lorentz_berthelot(p, si, sj) && mixed14 {
+            continue;
+        }
+        for a in &names_of[i] {
+            for b in &names_of[j] {
+                let (a, b) = if a <= b { (a, b) } else { (b, a) };
+                cross.push(((*a).to_owned(), (*b).to_owned(), p, p14));
+            }
+        }
+    }
+    (selves, cross)
+}
+
+/// Whether two A/B tables are the same numbers.
+fn same_table(a: &[f64], b: &[f64]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| rel(*x, *y) <= 1e-12)
+}
+
+fn periodic_params(terms: &[TorsionTerm]) -> Params {
+    let mut owned = Vec::with_capacity(3 * terms.len());
+    for (m, t) in terms.iter().enumerate() {
+        let i = m + 1;
+        owned.push((format!("k{i}"), t.k));
+        owned.push((format!("periodicity{i}"), t.periodicity));
+        owned.push((format!("phase{i}"), t.phase.to_degrees()));
+    }
+    let refs: Vec<(&str, f64)> = owned.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+    Params::from_pairs(&refs)
+}
+
+/// Terms in one canonical order — by periodicity, then phase, then k — so
+/// two torsions with the same terms in a different row order are one type.
+fn sorted_terms(terms: &[TorsionTerm]) -> Vec<TorsionTerm> {
+    let mut out = terms.to_vec();
+    out.sort_by(|a, b| {
+        a.periodicity
+            .total_cmp(&b.periodicity)
+            .then(a.phase.total_cmp(&b.phase))
+            .then(a.k.total_cmp(&b.k))
+    });
+    out
+}
+
+fn first_i64(sections: &HashMap<String, Vec<String>>, key: &str) -> Result<Option<i64>, String> {
+    Ok(section_i64(sections, key)?.first().copied())
+}
+
+/// What no force field here can hold, refused by name.
+fn refuse_unsupported(sections: &HashMap<String, Vec<String>>) -> Result<(), String> {
+    if sections.contains_key("LENNARD_JONES_CCOEF") {
+        return Err("12-6-4 Lennard-Jones prmtop files are not supported".into());
+    }
+    if first_i64(sections, "IPOL")?.unwrap_or(0) > 0 {
+        return Err(
+            "polarizable (IPOL > 0) prmtop files are not supported: the induced dipoles have \
+             no Class-I form"
+                .into(),
+        );
+    }
+    for flag in ["HBOND_ACOEF", "HBOND_BCOEF"] {
+        if section_f64(sections, flag)?.iter().any(|&v| v != 0.0) {
+            return Err(format!(
+                "10-12 interactions are not supported (%FLAG {flag} has a non-zero entry)"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn def<'s>(
+    ff: &'s mut ForceField,
+    category: &str,
+    name: &str,
+    params: Params,
+) -> Result<&'s mut crate::ff::forcefield::Style, String> {
+    ff.def_style(category, name, params)
+        .map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -243,41 +323,20 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     // NATOM, NTYPES, … — first two always present when POINTERS is valid.
     let n_atom = *ptr_vals.first().unwrap_or(&0) as usize;
     let n_types = *ptr_vals.get(1).unwrap_or(&0) as usize;
+    refuse_unsupported(sections)?;
+    let chamber = is_chamber(sections);
 
-    let mut atom_types = sections
-        .get("AMBER_ATOM_TYPE")
-        .map(|l| parse_a4_names(l))
-        .unwrap_or_default();
-    if atom_types.len() > n_atom {
-        atom_types.truncate(n_atom);
-    }
-    while atom_types.len() < n_atom {
-        atom_types.push(String::new());
-    }
+    let atom_types = atom_type_names(sections, n_atom)?;
     let type_name = |atom: usize| atom_types.get(atom).map(String::as_str).unwrap_or_default();
 
-    let masses: Vec<f64> = sections
-        .get("MASS")
-        .map(|l| parse_tokens(l))
-        .transpose()?
-        .unwrap_or_default();
+    let masses: Vec<f64> = section_f64(sections, "MASS")?;
     let type_index: Vec<i64> = parse_tokens(
         sections
             .get("ATOM_TYPE_INDEX")
             .ok_or_else(|| "%FLAG ATOM_TYPE_INDEX section missing".to_string())?,
     )?;
 
-    if sections.contains_key("LENNARD_JONES_CCOEF") {
-        return Err("12-6-4 Lennard-Jones prmtop files are not supported".into());
-    }
-
-    // 1-4 scales: FileFormats stores SCEE/SCNB as *divisors*. Applied after
-    // the dihedral walk so only non-suppressed proper type ids constrain
-    // uniformity.
-    let scee = section_f64(sections, "SCEE_SCALE_FACTOR")?;
-    let scnb = section_f64(sections, "SCNB_SCALE_FACTOR")?;
-
-    let mut ff = ForceField::new("AMBER");
+    let mut ff = ForceField::new(if chamber { "CHARMM" } else { "AMBER" });
     // prmtop stores Å, kcal/mol and e: LAMMPS `real`.
     ff.set_units("real");
 
@@ -285,9 +344,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     // atom defines its type, so two atoms of one name with a different class
     // or mass are a TypeConflict.
     {
-        let style = ff
-            .def_style("atom", "full", Params::new())
-            .map_err(|e| e.to_string())?;
+        let style = def(&mut ff, "atom", "full", Params::new())?;
         for (i, name) in atom_types.iter().enumerate() {
             if name.is_empty() {
                 continue;
@@ -312,9 +369,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     let mut bond_ptrs = section_i64(sections, "BONDS_INC_HYDROGEN")?;
     bond_ptrs.extend(section_i64(sections, "BONDS_WITHOUT_HYDROGEN")?);
     {
-        let style = ff
-            .def_style("bond", "harmonic", Params::new())
-            .map_err(|e| e.to_string())?;
+        let style = def(&mut ff, "bond", "harmonic", Params::new())?;
         for chunk in bond_ptrs.as_chunks::<3>().0 {
             let a = chunk[0];
             let b = chunk[1];
@@ -338,181 +393,177 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     }
 
     // Angles: k = TK; theta0 radians in prmtop → degrees. As for bonds, every
-    // angle row defines its type.
+    // angle row defines its type. A chamber file's angles are CHARMM's, each
+    // with its Urey–Bradley term (0, 0 without one): `angle charmm`.
     let angle_k = section_f64(sections, "ANGLE_FORCE_CONSTANT")?;
     let angle_eq = section_f64(sections, "ANGLE_EQUIL_VALUE")?;
     let mut angle_ptrs = section_i64(sections, "ANGLES_INC_HYDROGEN")?;
     angle_ptrs.extend(section_i64(sections, "ANGLES_WITHOUT_HYDROGEN")?);
+    let mut angles: Vec<([usize; 3], i64)> = Vec::with_capacity(angle_ptrs.len() / 4);
+    for chunk in angle_ptrs.as_chunks::<4>().0 {
+        let (a, b, c) = (chunk[0], chunk[1], chunk[2]);
+        if a < 0 || b < 0 || c < 0 {
+            return Err(format!("negative angle atom pointers ({a}, {b}, {c})"));
+        }
+        angles.push((
+            [(a / 3) as usize, (b / 3) as usize, (c / 3) as usize],
+            chunk[3],
+        ));
+    }
+    let urey_bradley = if chamber {
+        urey_bradley_of_angles(&angles, &chamber_urey_bradleys(sections, n_atom)?)?
+    } else {
+        vec![None; angles.len()]
+    };
     {
-        let style = ff
-            .def_style("angle", "harmonic", Params::new())
-            .map_err(|e| e.to_string())?;
-        for chunk in angle_ptrs.as_chunks::<4>().0 {
-            let a = chunk[0];
-            let b = chunk[1];
-            let c = chunk[2];
-            if a < 0 || b < 0 || c < 0 {
-                return Err(format!("negative angle atom pointers ({a}, {b}, {c})"));
-            }
-            let i = (a / 3) as usize;
-            let j = (b / 3) as usize;
-            let k_idx = (c / 3) as usize;
-            let tid = (chunk[3] - 1) as usize;
-            let ends = TypeName::orient(&[type_name(i), type_name(j), type_name(k_idx)]);
+        let style = def(
+            &mut ff,
+            "angle",
+            if chamber { "charmm" } else { "harmonic" },
+            Params::new(),
+        )?;
+        for ((atoms, tid), ub) in angles.iter().zip(&urey_bradley) {
+            let tid = (tid - 1) as usize;
+            let ends = TypeName::orient(&atoms.map(type_name));
             let k = angle_k.get(tid).copied().unwrap_or(0.0);
             let theta0 = angle_eq.get(tid).copied().unwrap_or(0.0).to_degrees();
+            let mut params = Params::from_pairs(&[("k", k), ("theta0", theta0)]);
+            if chamber {
+                let (k_ub, r_ub) = ub.unwrap_or((0.0, 0.0));
+                params.set("k_ub", k_ub);
+                params.set("r_ub", r_ub);
+            }
             style
-                .def_type(
-                    TypeName::join(&ends)?.as_str(),
-                    &ends,
-                    Params::from_pairs(&[("k", k), ("theta0", theta0)]),
-                )
+                .def_type(TypeName::join(&ends)?.as_str(), &ends, params)
                 .map_err(|e| e.to_string())?;
         }
     }
 
-    // Dihedrals / impropers.
-    // FileFormats: 3rd pointer negative → ignore 1-4; 4th negative → improper.
-    // Potential: PK * [1 + cos(n·φ − phase)], phase in radians (stored in
-    // degrees) — LAMMPS fourier / molrs periodic, no form factor on K.
+    // Torsions. FileFormats: 3rd pointer negative → no 1-4; 4th negative →
+    // improper. Potential: PK·[1 + cos(n·φ − phase)], phase stored in degrees
+    // — LAMMPS fourier / molrs periodic, no form factor on K. The rows of one
+    // atom quartet (and each row's negative-PN chain) are one torsion; every
+    // torsion defines its type, so two torsions of one name with different
+    // terms are a TypeConflict.
     let dih_k = section_f64(sections, "DIHEDRAL_FORCE_CONSTANT")?;
     let dih_phase = section_f64(sections, "DIHEDRAL_PHASE")?;
     let dih_per = section_f64(sections, "DIHEDRAL_PERIODICITY")?;
     let mut dih_ptrs = section_i64(sections, "DIHEDRALS_INC_HYDROGEN")?;
     dih_ptrs.extend(section_i64(sections, "DIHEDRALS_WITHOUT_HYDROGEN")?);
+    let tables = TorsionTables {
+        k: &dih_k,
+        periodicity: &dih_per,
+        phase: &dih_phase,
+    };
+    let torsions = decode_torsions(&dih_ptrs, &atom_types, Some(tables))?;
 
-    // name → (handles, tid → (k, n, d))
-    type DihedralTerm = (f64, f64, f64);
-    type DihedralEntry = ([String; 4], BTreeMap<i64, DihedralTerm>);
-    let mut proper: BTreeMap<String, DihedralEntry> = BTreeMap::new();
-    let mut improper: BTreeMap<String, DihedralEntry> = BTreeMap::new();
-    let mut used_tids: Vec<i64> = Vec::new();
-
-    for chunk in dih_ptrs.as_chunks::<5>().0 {
-        let a = chunk[0];
-        let b = chunk[1];
-        if a < 0 || b < 0 {
-            return Err(format!("negative dihedral atom pointers ({a}, {b})"));
-        }
-        let i = (a / 3) as usize;
-        let j = (b / 3) as usize;
-        let k_raw = chunk[2];
-        let l_raw = chunk[3];
-        let is_improper = l_raw < 0;
-        let k_idx = (k_raw.unsigned_abs() as usize) / 3;
-        let l = (l_raw.unsigned_abs() as usize) / 3;
-        let tid = chunk[4];
-        if is_improper && expand_multiterm_tids(tid, &dih_per).len() > 1 {
-            return Err(format!("multi-term improper type {tid} is not supported"));
-        }
-        if !is_improper && k_raw >= 0 {
-            used_tids.extend(expand_multiterm_tids(tid, &dih_per));
-        }
-
-        let mut quartet = [type_name(i), type_name(j), type_name(k_idx), type_name(l)];
-        // A proper torsion reads the same backwards, so it is stored in one
-        // orientation (`TypeName::orient`'s, the frame reader's too). An
-        // improper does not: AMBER puts its central atom third, and reversing
-        // it would move the centre to second place.
-        if !is_improper && TypeName::reads_reversed(&quartet) {
-            quartet.reverse();
-        }
-        let name = TypeName::join(&quartet)?.to_string();
-        let table = if is_improper {
-            &mut improper
-        } else {
-            &mut proper
-        };
-        let entry = table
-            .entry(name)
-            .or_insert_with(|| (quartet.map(str::to_owned), BTreeMap::new()));
-
-        // Multiterm: FileFormats — negative PN means the *next* PK/PN/PHASE
-        // entries continue this torsion until a positive PN is seen.
-        for term_tid in expand_multiterm_tids(tid, &dih_per) {
-            if entry.1.contains_key(&term_tid) {
-                continue;
-            }
-            let idx = (term_tid - 1) as usize;
-            let k = dih_k.get(idx).copied().unwrap_or(0.0);
-            let n = dih_per.get(idx).copied().unwrap_or(0.0).abs();
-            let d = dih_phase.get(idx).copied().unwrap_or(0.0).to_degrees();
-            entry.1.insert(term_tid, (k, n, d));
-        }
-    }
-
-    let scee_div = uniform_divisor(&scee, &used_tids, "SCEE_SCALE_FACTOR", AMBER_SCEE)?;
-    let scnb_div = uniform_divisor(&scnb, &used_tids, "SCNB_SCALE_FACTOR", AMBER_SCNB)?;
+    // 1-4: the divisor most 1-4 rows carry is the field's weight; the frame
+    // reader gives the pairs whose rows carry another their own scales.
+    let scee = section_f64(sections, "SCEE_SCALE_FACTOR")?;
+    let scnb = section_f64(sections, "SCNB_SCALE_FACTOR")?;
+    let one_four = one_four_weights(&dih_ptrs, n_atom, &scee, &scnb, &dih_per)?;
     ff.set_special_bonds(SpecialBonds {
-        lj: [0.0, 0.0, 1.0 / scnb_div],
-        coul: [0.0, 0.0, 1.0 / scee_div],
+        lj: [0.0, 0.0, one_four.lj],
+        coul: [0.0, 0.0, one_four.coul],
     });
 
     {
-        let style = ff
-            .def_style("dihedral", "periodic", Params::new())
-            .map_err(|e| e.to_string())?;
-        for (handles, terms) in proper.values() {
-            let owned = terms_to_periodic_params(terms);
-            let refs: Vec<(&str, f64)> = owned.iter().map(|(k, v)| (k.as_str(), *v)).collect();
-            let ends = [&*handles[0], &*handles[1], &*handles[2], &*handles[3]];
+        let style = def(&mut ff, "dihedral", "periodic", Params::new())?;
+        for t in torsions.iter().filter(|t| !t.improper) {
+            let ends = t.types(&atom_types);
             style
                 .def_type(
                     TypeName::join(&ends)?.as_str(),
                     &ends,
-                    Params::from_pairs(&refs),
+                    periodic_params(&sorted_terms(&t.terms)),
                 )
                 .map_err(|e| e.to_string())?;
         }
     }
+    let mut periodic_impropers: BTreeSet<String> = BTreeSet::new();
+    if torsions.iter().any(|t| t.improper) {
+        let style = def(&mut ff, "improper", "periodic", Params::new())?;
+        for t in torsions.iter().filter(|t| t.improper) {
+            let ends = t.types(&atom_types);
+            for (name, term) in t.improper_rows(&atom_types)? {
+                let term = term.ok_or_else(|| format!("improper {name} has no terms"))?;
+                style
+                    .def_type(
+                        &name,
+                        &ends,
+                        Params::from_pairs(&[
+                            ("k", term.k),
+                            ("periodicity", term.periodicity),
+                            ("phase", term.phase.to_degrees()),
+                        ]),
+                    )
+                    .map_err(|e| e.to_string())?;
+                periodic_impropers.insert(name);
+            }
+        }
+    }
 
-    if !improper.is_empty() {
-        let style = ff
-            .def_style("improper", "periodic", Params::new())
-            .map_err(|e| e.to_string())?;
-        for (handles, terms) in improper.values() {
-            let (k, n, d) = terms.values().next().copied().unwrap_or((0.0, 0.0, 0.0));
-            let ends = [&*handles[0], &*handles[1], &*handles[2], &*handles[3]];
+    if chamber {
+        def_charmm_impropers(&mut ff, sections, &atom_types, &periodic_impropers)?;
+    }
+    if let Some(cmap) = cmap_terms(sections, &atom_types)? {
+        let style = def(&mut ff, "cmap", "charmm", Params::new())?;
+        for (name, ends, n, grid) in cmap.maps {
+            let grid = ndarray::Array2::from_shape_vec((n, n), grid)
+                .map_err(|e| e.to_string())?
+                .into_dyn();
+            let mut params = Params::new();
+            params.set_array("grid", grid);
+            let ends: Vec<&str> = ends.iter().map(String::as_str).collect();
             style
-                .def_type(
-                    TypeName::join(&ends)?.as_str(),
-                    &ends,
-                    Params::from_pairs(&[("k", k), ("periodicity", n), ("phase", d)]),
-                )
+                .def_type(&name, &ends, params)
                 .map_err(|e| e.to_string())?;
         }
     }
 
     // Pair LJ from the full ICO matrix. FileFormats:
     // index = ICO[NTYPES*(IAC(i)-1) + IAC(j)] (1-based Fortran).
-    // Neither pair style gets a `cutoff`: a prmtop carries none (it lives in
-    // the mdin), so the caller declares it.
+    // No pair style gets a `cutoff`: a prmtop carries none (it lives in the
+    // mdin), so the caller declares it.
+    let nb_index = section_i64(sections, "NONBONDED_PARM_INDEX")?;
     let acoef = section_f64(sections, "LENNARD_JONES_ACOEF")?;
     let bcoef = section_f64(sections, "LENNARD_JONES_BCOEF")?;
-    let nb_index = section_i64(sections, "NONBONDED_PARM_INDEX")?;
-    let hbond_a = sections.get("HBOND_ACOEF").cloned().unwrap_or_default();
-    let hbond_b = sections.get("HBOND_BCOEF").cloned().unwrap_or_default();
-    for line in hbond_a.iter().chain(hbond_b.iter()) {
-        for tok in line.split_whitespace() {
-            if let Ok(v) = tok.parse::<f64>()
-                && v != 0.0
-            {
-                return Err("10-12 interactions are not supported".into());
-            }
-        }
-    }
-
-    let (rows, cross) =
-        decode_lj_types(n_types, &atom_types, &type_index, &nb_index, &acoef, &bcoef)?;
-    {
+    let regular = read_lj_table(n_types, &nb_index, &acoef, &bcoef)?;
+    if chamber {
+        let a14 = section_f64(sections, "LENNARD_JONES_14_ACOEF")?;
+        let b14 = section_f64(sections, "LENNARD_JONES_14_BCOEF")?;
+        // The 1-4 table matters only where it differs from the regular one.
+        let distinct = !(a14.is_empty() && b14.is_empty())
+            && !(same_table(&a14, &acoef) && same_table(&b14, &bcoef));
+        let table14 = if distinct {
+            Some(read_lj_table(n_types, &nb_index, &a14, &b14)?)
+        } else {
+            None
+        };
+        def_lj_charmm(
+            &mut ff,
+            &atom_types,
+            &type_index,
+            &regular,
+            table14.as_ref(),
+        )?;
+        def(
+            &mut ff,
+            "pair",
+            "coul/charmm",
+            Params::from_pairs(&[
+                ("coulomb", CHAMBER_COULOMB),
+                ("dielectric", VACUUM_DIELECTRIC),
+            ]),
+        )?;
+    } else {
+        let (selves, cross) = lj_rows(&atom_types, &type_index, &regular, None);
         // The off-diagonal entries that are no row are Lorentz–Berthelot
         // mixes, so the style states that rule rather than lean on a default.
         let mut lj = Params::new();
         lj.set_str("mixing", Mixing::Arithmetic.name());
-        let style = ff
-            .def_style("pair", "lj/cut", lj)
-            .map_err(|e| e.to_string())?;
-        for (tname, sigma, epsilon) in &rows {
+        let style = def(&mut ff, "pair", "lj/cut", lj)?;
+        for (tname, (sigma, epsilon), _) in &selves {
             style
                 .def_type(
                     tname,
@@ -521,58 +572,160 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
                 )
                 .map_err(|e| e.to_string())?;
         }
-        for (a, b, sigma, epsilon) in &cross {
-            let name = TypeName::pair(a, b)?;
+        for (a, b, (sigma, epsilon), _) in &cross {
             style
                 .def_type(
-                    name.as_str(),
+                    TypeName::pair(a, b)?.as_str(),
                     &[a, b],
                     Params::from_pairs(&[("epsilon", *epsilon), ("sigma", *sigma)]),
                 )
                 .map_err(|e| e.to_string())?;
         }
+        def(
+            &mut ff,
+            "pair",
+            "coul/cut",
+            Params::from_pairs(&[
+                ("coulomb", AMBER_COULOMB),
+                ("dielectric", VACUUM_DIELECTRIC),
+            ]),
+        )?;
     }
-    ff.def_style(
-        "pair",
-        "coul/cut",
-        Params::from_pairs(&[
-            ("coulomb", AMBER_COULOMB),
-            ("dielectric", VACUUM_DIELECTRIC),
-        ]),
-    )
-    .map_err(|e| e.to_string())?;
 
     Ok(ff)
 }
 
-/// Expand a 1-based dihedral type id through negative-periodicity multiterms.
-fn expand_multiterm_tids(tid: i64, periods: &[f64]) -> Vec<i64> {
-    let mut out = Vec::new();
-    let mut t = tid;
-    loop {
-        out.push(t);
-        let idx = (t - 1) as usize;
-        let pn = periods.get(idx).copied().unwrap_or(0.0);
-        if pn >= 0.0 {
-            break;
-        }
-        t += 1;
-        if t as usize > periods.len() {
-            break;
+/// The Urey–Bradley `(k_ub, r_ub)` of each angle: the chamber term whose two
+/// atoms are its end atoms. A term on no angle, or on the ends of two (a
+/// four-membered ring), has no `angle charmm` form and is an `Err`.
+fn urey_bradley_of_angles(
+    angles: &[([usize; 3], i64)],
+    terms: &[crate::io::data::prmtop_tables::UreyBradley],
+) -> Result<Vec<Option<(f64, f64)>>, String> {
+    let mut by_ends: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+    for (n, (atoms, _)) in angles.iter().enumerate() {
+        let (i, k) = (atoms[0], atoms[2]);
+        by_ends.entry((i.min(k), i.max(k))).or_default().push(n);
+    }
+    let mut out = vec![None; angles.len()];
+    for ub in terms {
+        let (i, k) = ub.ends;
+        let key = (i.min(k), i.max(k));
+        match by_ends.get(&key).map(Vec::as_slice) {
+            Some(&[n]) => {
+                if out[n].is_some() {
+                    return Err(format!(
+                        "atoms {} and {} carry two Urey-Bradley terms",
+                        key.0 + 1,
+                        key.1 + 1
+                    ));
+                }
+                out[n] = Some((ub.k_ub, ub.r_ub));
+            }
+            Some(_) => {
+                return Err(format!(
+                    "Urey-Bradley term on atoms {} and {} spans the ends of several angles; \
+                     `angle charmm` gives each angle its own term, which would count it more \
+                     than once",
+                    key.0 + 1,
+                    key.1 + 1
+                ));
+            }
+            None => {
+                return Err(format!(
+                    "Urey-Bradley term on atoms {} and {} is on no angle; `angle charmm` holds \
+                     it with its angle",
+                    key.0 + 1,
+                    key.1 + 1
+                ));
+            }
         }
     }
-    out
+    Ok(out)
 }
 
-fn terms_to_periodic_params(terms: &BTreeMap<i64, (f64, f64, f64)>) -> Vec<(String, f64)> {
-    let mut params = Vec::new();
-    for (m, (_tid, (k, n, d))) in terms.iter().enumerate() {
-        let i = m + 1;
-        params.push((format!("k{i}"), *k));
-        params.push((format!("periodicity{i}"), *n));
-        params.push((format!("phase{i}"), *d));
+/// A chamber file's CHARMM impropers as `improper harmonic`
+/// (`K (χ − chi0)²`, LAMMPS's `K`, centre first as the file lists them).
+///
+/// LAMMPS prices χ = |φ|, CHARMM the signed φ: the two agree when ψ₀ is 0°
+/// or 180°, and any other ψ₀ is an `Err`.
+fn def_charmm_impropers(
+    ff: &mut ForceField,
+    sections: &HashMap<String, Vec<String>>,
+    atom_types: &[String],
+    periodic: &BTreeSet<String>,
+) -> Result<(), String> {
+    let impropers = chamber_impropers(sections, atom_types.len())?;
+    if impropers.is_empty() {
+        return Ok(());
     }
-    params
+    let style = def(ff, "improper", "harmonic", Params::new())?;
+    for imp in impropers {
+        let ends = imp.atoms.map(|a| atom_types[a].as_str());
+        let name = TypeName::join(&ends)?.to_string();
+        if periodic.contains(&name) {
+            return Err(format!(
+                "improper type {name} is both an AMBER (periodic) and a CHARMM (harmonic) \
+                 improper; one name cannot select two styles"
+            ));
+        }
+        let chi0 = imp.psi0.to_degrees();
+        let on_axis = chi0.abs() < 1e-6 || (chi0.abs() - 180.0).abs() < 1e-6;
+        if !on_axis {
+            return Err(format!(
+                "CHARMM improper {name}: psi0 = {chi0}° — LAMMPS's improper harmonic prices \
+                 |psi|, which equals CHARMM's signed psi only for psi0 of 0° or 180°"
+            ));
+        }
+        style
+            .def_type(
+                &name,
+                &ends,
+                Params::from_pairs(&[("k", imp.k), ("chi0", chi0)]),
+            )
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// A chamber file's Lennard-Jones as `lj/charmm`: `epsilon`, `sigma` from the
+/// regular table and, when its 1-4 table differs, `epsilon14`, `sigma14` from
+/// it with the style's `one_four = "epsilon14"` (the 1-4 pairs, weighted by
+/// `special_bonds`, are meant at ε₁₄/σ₁₄); cross rows where either table's
+/// off-diagonal entry is not Lorentz–Berthelot.
+fn def_lj_charmm(
+    ff: &mut ForceField,
+    atom_types: &[String],
+    type_index: &[i64],
+    regular: &LjTable,
+    one_four: Option<&LjTable>,
+) -> Result<(), String> {
+    let (selves, cross) = lj_rows(atom_types, type_index, regular, one_four);
+    let mut style_params = Params::new();
+    style_params.set_str("mixing", Mixing::Arithmetic.name());
+    if one_four.is_some() {
+        style_params.set_str("one_four", "epsilon14");
+    }
+    let params = |p: Lj, p14: Lj| {
+        let mut out = Params::from_pairs(&[("epsilon", p.1), ("sigma", p.0)]);
+        if one_four.is_some() {
+            out.set("epsilon14", p14.1);
+            out.set("sigma14", p14.0);
+        }
+        out
+    };
+    let style = def(ff, "pair", "lj/charmm", style_params)?;
+    for (name, p, p14) in &selves {
+        style
+            .def_type(name, &[name], params(*p, *p14))
+            .map_err(|e| e.to_string())?;
+    }
+    for (a, b, p, p14) in &cross {
+        style
+            .def_type(TypeName::pair(a, b)?.as_str(), &[a, b], params(*p, *p14))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -585,12 +738,30 @@ mod tests {
         assert!(r.is_err());
     }
 
+    /// sander expands a negative PN into the next type, in a prmtop too
+    /// (checked: one PN of an ff14SB dipeptide made negative adds the next
+    /// type's term to every row of that type).
     #[test]
     fn multiterm_expansion() {
+        use crate::io::data::prmtop_tables::TorsionTables;
         // type 1 has PN=-2 → continues to type 2 (PN=+3)
-        let periods = vec![-2.0, 3.0];
-        assert_eq!(expand_multiterm_tids(1, &periods), vec![1, 2]);
-        assert_eq!(expand_multiterm_tids(2, &periods), vec![2]);
+        let (k, per, phase) = ([1.0, 2.0], [-2.0, 3.0], [0.0, 0.5]);
+        let tables = TorsionTables {
+            k: &k,
+            periodicity: &per,
+            phase: &phase,
+        };
+        let periods = |tid| -> Vec<f64> {
+            tables
+                .chain(tid)
+                .unwrap()
+                .iter()
+                .map(|t| t.periodicity)
+                .collect()
+        };
+        assert_eq!(periods(1), vec![2.0, 3.0]);
+        assert_eq!(periods(2), vec![3.0]);
+        assert!(tables.chain(3).is_err());
     }
 
     #[test]
@@ -785,7 +956,7 @@ c3  c3  c3  hc
     }
 
     #[test]
-    fn uniform_divisor_defaults_when_absent() {
+    fn one_four_divisors_default_when_absent() {
         let text = without_flag(
             &without_flag(GAFF_MINI, "SCEE_SCALE_FACTOR"),
             "SCNB_SCALE_FACTOR",
@@ -800,8 +971,12 @@ c3  c3  c3  hc
         );
     }
 
+    /// Two 1-4 rows on one pair with divisors 1.2 and 1.0: a non-uniform file
+    /// is read (it used to be refused). The field takes the divisor most 1-4
+    /// rows carry — a tie here, so the first — and the frame reader gives the
+    /// pair its own weights (`1/1.2 + 1/1.0`).
     #[test]
-    fn uniform_divisor_rejects_mixed_scee() {
+    fn a_non_uniform_scee_takes_the_divisor_most_rows_carry() {
         let text = GAFF_MINI
             .replace(
                 "  1.20000000E+00  1.20000000E+00",
@@ -811,17 +986,13 @@ c3  c3  c3  hc
                 "       0       3       6       9       1",
                 "       0       3       6       9       1       0       3       6       9       2",
             );
-        let err = read_err(&text);
-        assert!(
-            err.contains("SCEE_SCALE_FACTOR"),
-            "error should name the flag: {err}"
-        );
-        assert!(err.contains("1.2"), "error should name 1.2: {err}");
-        assert!(err.contains("1.0"), "error should name 1.0: {err}");
+        let sb = *read_ff(&text).special_bonds();
+        assert!((sb.coul[2] - 1.0 / 1.2).abs() < 1e-15, "{sb:?}");
+        assert!((sb.lj[2] - 0.5).abs() < 1e-15, "{sb:?}");
     }
 
     #[test]
-    fn uniform_divisor_ignores_suppressed_torsions() {
+    fn one_four_divisors_ignore_suppressed_torsions() {
         let text = GAFF_MINI
             .replace(
                 "  1.20000000E+00  1.20000000E+00",
@@ -842,7 +1013,7 @@ c3  c3  c3  hc
     }
 
     #[test]
-    fn uniform_divisor_rejects_nonpositive() {
+    fn a_non_positive_one_four_divisor_is_refused() {
         let text = GAFF_MINI
             .replace(
                 "  1.20000000E+00  1.20000000E+00",
@@ -887,22 +1058,52 @@ c3  c3  c3  hc
         assert_eq!(names, vec!["c3-hc-c3-c3"]);
     }
 
+    /// A negative-PN chain on an improper (types 1 → 2) is one `improper
+    /// periodic` row per term, named `<quartet>@<n>` (it used to be refused).
     #[test]
-    fn rejects_multiterm_improper() {
+    fn a_multi_term_improper_is_one_type_per_term() {
         let text = GAFF_MINI
             .replace(
                 "       0       3       6       9       1",
-                "       0       3       6      -9       1",
+                "       0       3      -6      -9       1",
             )
             .replace(
                 "  3.00000000E+00  2.00000000E+00",
                 " -2.00000000E+00  3.00000000E+00",
             );
-        let err = read_err(&text);
-        assert!(
-            err.contains("1"),
-            "error should name improper type id 1: {err}"
+        let ff = read_ff(&text);
+        let style = ff
+            .get_style("improper", "periodic")
+            .expect("improper style");
+        let mut rows: Vec<(String, Vec<f64>)> = style
+            .type_rows()
+            .into_iter()
+            .map(|(n, _, p)| {
+                let v = ["k", "periodicity", "phase"].map(|k| p.get(k).unwrap());
+                (n.to_owned(), v.to_vec())
+            })
+            .collect();
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            rows,
+            vec![
+                ("c3-c3-c3-hc@2".to_owned(), vec![0.15, 2.0, 0.0]),
+                ("c3-c3-c3-hc@3".to_owned(), vec![0.2, 3.0, 0.0]),
+            ]
         );
+    }
+
+    /// A negative-PN chain on a row that carries a 1-4 pair is refused: sander
+    /// prices that pair once per chained term, at a Coulomb factor unlike its
+    /// other 1-4 pairs.
+    #[test]
+    fn a_chain_on_a_1_4_row_is_refused() {
+        let text = GAFF_MINI.replace(
+            "  3.00000000E+00  2.00000000E+00",
+            " -3.00000000E+00  2.00000000E+00",
+        );
+        let err = read_err(&text);
+        assert!(err.contains("multi-term chain"), "{err}");
     }
 
     #[test]
@@ -1123,5 +1324,214 @@ c3  c3  c3  hc
         );
         assert!((1.0 / AMBER_SCEE - 1.0 / 1.2).abs() < 1e-12);
         assert!((1.0 / AMBER_SCNB - 0.5).abs() < 1e-12);
+        // The format default the io layer uses is this one.
+        use crate::io::data::prmtop_tables::{SCEE_DEFAULT, SCNB_DEFAULT};
+        assert_eq!((SCEE_DEFAULT, SCNB_DEFAULT), (AMBER_SCEE, AMBER_SCNB));
+    }
+
+    /// A five-atom chamber (CHARMM) prmtop, hand-written: every number in it
+    /// is hand-chosen, so each test below is a hand value.
+    const CHAMBER_MINI: &str = include_str!("../../../io/data/testdata/chamber_mini.parm7");
+
+    fn type_params(ff: &ForceField, category: &str, style: &str) -> Vec<(String, Params)> {
+        let mut rows: Vec<(String, Params)> = ff
+            .get_style(category, style)
+            .unwrap_or_else(|| panic!("no {category} {style}"))
+            .type_rows()
+            .into_iter()
+            .map(|(n, _, p)| (n.to_owned(), p.clone()))
+            .collect();
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        rows
+    }
+
+    /// Every angle of a chamber file is `angle charmm`: its Urey-Bradley
+    /// term where the file has one (K_ub 5.4, r_ub 2.4 on atoms 1-3), 0 and 0
+    /// where it has none.
+    #[test]
+    fn chamber_angles_are_angle_charmm_with_their_urey_bradley() {
+        let ff = read_ff(CHAMBER_MINI);
+        assert_eq!(ff.name, "CHARMM");
+        assert!(ff.get_style("angle", "harmonic").is_none());
+        let rows = type_params(&ff, "angle", "charmm");
+        let names: Vec<&str> = rows.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["C1-N1-C2", "C2-C3-N2", "C3-C2-N1"]);
+        let p = &rows[0].1;
+        assert_eq!(p.get("k"), Some(50.0));
+        assert!((p.get("theta0").unwrap() - 109.5).abs() < 1e-12);
+        assert_eq!((p.get("k_ub"), p.get("r_ub")), (Some(5.4), Some(2.4)));
+        for (name, p) in &rows[1..] {
+            assert_eq!(
+                (p.get("k_ub"), p.get("r_ub")),
+                (Some(0.0), Some(0.0)),
+                "{name}"
+            );
+        }
+    }
+
+    /// A CHARMM improper is `improper harmonic` in the file's order (centre
+    /// first), `k = K_psi` (CHARMM's un-halved constant is LAMMPS's).
+    #[test]
+    fn chamber_impropers_are_improper_harmonic_in_file_order() {
+        let ff = read_ff(CHAMBER_MINI);
+        let rows = type_params(&ff, "improper", "harmonic");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, "N1-C1-C2-C3");
+        assert_eq!(
+            (rows[0].1.get("k"), rows[0].1.get("chi0")),
+            (Some(20.0), Some(0.0))
+        );
+        let ends = ff.get_style("improper", "harmonic").unwrap().type_rows()[0]
+            .1
+            .clone();
+        assert_eq!(ends, vec!["N1", "C1", "C2", "C3"]);
+    }
+
+    /// A CHARMM improper whose psi0 is not 0° or 180° is refused: LAMMPS prices
+    /// |psi|, CHARMM the signed psi.
+    #[test]
+    fn a_chamber_improper_off_the_axis_is_refused() {
+        let text = replaced_once(
+            CHAMBER_MINI,
+            "%FLAG CHARMM_IMPROPER_PHASE\n%FORMAT(5E16.8)\n  0.00000000E+00",
+            "%FLAG CHARMM_IMPROPER_PHASE\n%FORMAT(5E16.8)\n  5.00000000E-01",
+        );
+        let err = read_err(&text);
+        assert!(err.contains("psi0") && err.contains("N1-C1-C2-C3"), "{err}");
+    }
+
+    /// The CMAP map is a `cmap charmm` type named by its five atom types, its
+    /// grid the file's values in the file's (φ-major) order.
+    #[test]
+    fn chamber_cmap_is_a_cmap_charmm_type() {
+        let ff = read_ff(CHAMBER_MINI);
+        let style = ff.get_style("cmap", "charmm").expect("cmap charmm");
+        let rows = style.type_rows();
+        assert_eq!(rows.len(), 1);
+        let (name, ends, params) = &rows[0];
+        assert_eq!(*name, "C1-N1-C2-C3-N2");
+        assert_eq!(ends, &vec!["C1", "N1", "C2", "C3", "N2"]);
+        let grid = params.get_array("grid").unwrap();
+        assert_eq!(grid.shape(), &[2, 2]);
+        assert_eq!(
+            grid.iter().copied().collect::<Vec<_>>(),
+            vec![0.1, 0.2, 0.3, 0.4]
+        );
+    }
+
+    /// Chamber Lennard-Jones is `lj/charmm`: the regular table's σ/ε, and —
+    /// the 1-4 table differing — `epsilon14`/`sigma14` with
+    /// `one_four = "epsilon14"`. A cross row stands where either table's
+    /// off-diagonal entry is not Lorentz–Berthelot (here the 1-4 one:
+    /// ε₁₄ 0.05 against the mix √(0.01·0.2)). Coulomb is `coul/charmm` at
+    /// CHARMM's 332.0716; the 1-4 weights are 1/SCEE = 1/SCNB = 1.
+    #[test]
+    fn chamber_lennard_jones_is_lj_charmm_with_its_1_4_table() {
+        let ff = read_ff(CHAMBER_MINI);
+        let lj = ff.get_style("pair", "lj/charmm").expect("lj/charmm");
+        assert_eq!(lj.params().get_str("one_four"), Some("epsilon14"));
+        assert_eq!(lj.params().get_str("mixing"), Some("arithmetic"));
+        let s = |rmin: f64| rmin * 2f64.powf(-1.0 / 6.0);
+        let c1 = lj.get_pairtype("C1", None).unwrap();
+        for (key, want) in [
+            ("epsilon", 0.1),
+            ("sigma", s(2.0)),
+            ("epsilon14", 0.01),
+            ("sigma14", s(1.8)),
+        ] {
+            assert!(
+                rel_close(c1.params.get(key).unwrap(), want, 1e-12),
+                "C1 {key}"
+            );
+        }
+        let cross = lj.get_pairtype("C1", Some("N1")).expect("C1-N1 cross row");
+        for (key, want) in [
+            ("epsilon", 0.02f64.sqrt()),
+            ("sigma", s(2.5)),
+            ("epsilon14", 0.05),
+            ("sigma14", s(2.4)),
+        ] {
+            assert!(
+                rel_close(cross.params.get(key).unwrap(), want, 1e-12),
+                "C1-N1 {key}"
+            );
+        }
+        // N1 and N2 share class 2; C2, C3 share class 1 with C1.
+        assert!(lj.get_pairtype("C2", Some("N2")).is_some());
+        let coul = ff.get_style("pair", "coul/charmm").expect("coul/charmm");
+        assert_eq!(coul.params().get("coulomb"), Some(332.0716));
+        assert!(ff.get_style("pair", "lj/cut").is_none());
+        let sb = ff.special_bonds();
+        assert_eq!((sb.lj, sb.coul), ([0.0, 0.0, 1.0], [0.0, 0.0, 1.0]));
+    }
+
+    /// A chamber file whose 1-4 table is the regular one has no 1-4 columns
+    /// and no `one_four`.
+    #[test]
+    fn an_equal_1_4_table_adds_nothing() {
+        let a = "  4.0960000000000000E+02  8.4293697021788080E+03  1.0628820000000001E+05";
+        let b = "  1.2800000000000001E+01  6.9053396600248790E+01  2.9160000000000002E+02";
+        let text = replaced_once(
+            &replaced_once(
+                CHAMBER_MINI,
+                "  1.1568313814261765E+01  1.8260173718028282E+03  1.0628820000000001E+05",
+                a,
+            ),
+            "  6.8024448000000000E-01  1.9110297599999996E+01  2.9160000000000002E+02",
+            b,
+        );
+        let ff = read_ff(&text);
+        let lj = ff.get_style("pair", "lj/charmm").unwrap();
+        assert_eq!(lj.params().get_str("one_four"), None);
+        for pt in ff.get_pairtypes() {
+            assert!(pt.params.get("epsilon14").is_none(), "{}", pt.name);
+        }
+        assert!(
+            lj.get_pairtype("C1", Some("N1")).is_none(),
+            "the mix needs no row"
+        );
+    }
+
+    /// A Urey-Bradley term on no angle has no `angle charmm` form.
+    #[test]
+    fn a_urey_bradley_term_on_no_angle_is_refused() {
+        let text = replaced_once(
+            CHAMBER_MINI,
+            "%FLAG CHARMM_UREY_BRADLEY\n%FORMAT(10I8)\n       1       3       1",
+            "%FLAG CHARMM_UREY_BRADLEY\n%FORMAT(10I8)\n       1       4       1",
+        );
+        let err = read_err(&text);
+        assert!(err.contains("on no angle"), "{err}");
+    }
+
+    /// tleap writes π as 3.14159400; sander prices it as π, and so does the
+    /// reader: the phase is 180° exactly, not 180.0000153°.
+    #[test]
+    fn a_phase_next_to_pi_is_pi() {
+        let text = GAFF_MINI.replace(
+            "%FLAG DIHEDRAL_PHASE\n%FORMAT(5E16.8)\n  0.00000000E+00  0.00000000E+00",
+            "%FLAG DIHEDRAL_PHASE\n%FORMAT(5E16.8)\n  3.14159400E+00  0.00000000E+00",
+        );
+        let ff = read_ff(&text);
+        let rows = type_params(&ff, "dihedral", "periodic");
+        assert_eq!(rows[0].1.get("phase1"), Some(180.0));
+    }
+
+    /// Two atoms of one AMBER_ATOM_TYPE in two LJ classes (a chamber file cuts
+    /// CHARMM's types to four characters) are two types, `<name>~<class>`.
+    #[test]
+    fn one_type_name_on_two_classes_is_two_types() {
+        let text = replaced_once(CHAMBER_MINI, "C1  N1  C2  C3  N2", "C1  N1  C1  C3  C1");
+        let ff = read_ff(&text);
+        let atoms: Vec<String> = ff
+            .get_style("atom", "full")
+            .unwrap()
+            .type_rows()
+            .into_iter()
+            .map(|(n, _, _)| n.to_owned())
+            .collect();
+        let mut atoms = atoms;
+        atoms.sort();
+        assert_eq!(atoms, vec!["C1~1", "C1~2", "C3", "N1"]);
     }
 }

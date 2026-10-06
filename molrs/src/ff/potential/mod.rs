@@ -23,7 +23,7 @@ pub use registry::{
     lookup_row_source, register_kernel, register_kernel_with,
 };
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use ndarray::{Array1, Array2, ArrayView2};
 
@@ -32,7 +32,8 @@ use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
-use molrs::store::schema::block_names::{ANGLES, ATOMS, BONDS, DIHEDRALS};
+use molrs::store::schema::PAIR_OVERRIDE_COLUMNS;
+use molrs::store::schema::block_names::{ANGLES, ATOMS, BONDS, DIHEDRALS, PAIRS};
 use molrs::store::schema::consts::{ATOMI, ATOMJ, ATOMK, ATOML, IS_14};
 use molrs::system::bond_weights::BondDistanceWeights;
 use molrs::types::{F, Idx};
@@ -64,6 +65,15 @@ const BYTES_PER_PAIR_ROW: usize = 4 + 4 + 1;
 /// privately, lifted here so every force field (GAFF/LAMMPS, OPLS, MMFF, …)
 /// shares one path. Per-pair scaling of the flagged 1-4 pairs is applied by the
 /// pair kernels using the force field's 1-4 weight, not baked into this list.
+///
+/// # Per-pair overrides
+///
+/// A `pairs` block the frame already carries — a reader's list of the pairs
+/// with their own 1-4 data, such as the AMBER prmtop reader's torsions whose
+/// `SCEE` / `SCNB` differ from the field's — keeps its override cells
+/// (`lj_scale`, `coul_scale`, `epsilon`, `sigma`, `charge_product`): they
+/// move onto the same pairs of the new list. An override on a pair the new
+/// list excludes is an [`Err`], since the list would drop it.
 ///
 /// # Why this needs the force field's weights
 ///
@@ -118,6 +128,7 @@ pub fn intramolecular_pairs(frame: &Frame, special: &SpecialBonds) -> Result<Blo
 
     let mut pairs = Block::new();
     if !pi.is_empty() {
+        let overrides = carried_overrides(frame, &pi, &pj)?;
         pairs
             .insert(ATOMI, Array1::from_vec(pi).into_dyn())
             .expect("fresh pairs block");
@@ -127,8 +138,103 @@ pub fn intramolecular_pairs(frame: &Frame, special: &SpecialBonds) -> Result<Blo
         pairs
             .insert(IS_14, Array1::from_vec(p14).into_dyn())
             .expect("fresh pairs block");
+        for (key, values, valid) in overrides {
+            pairs
+                .insert_nullable(key, Array1::from_vec(values).into_dyn(), valid)
+                .map_err(|e| e.to_string())?;
+        }
+    } else if let Some((i, j)) = override_pairs(frame)?.into_iter().next() {
+        return Err(excluded_override(i, j));
     }
     Ok(pairs)
+}
+
+/// One override column of a new pair list: its name, values and validity.
+type OverrideColumn = (&'static str, Vec<F>, Vec<bool>);
+
+/// The per-pair override cells ([`PAIR_OVERRIDE_COLUMNS`]) of the frame's
+/// own `pairs` rows, moved onto the rows `(pi, pj)` of the new list: a
+/// reader's per-pair data (an AMBER torsion's own SCEE / SCNB, a GROMACS
+/// `[ pairs ]` row's parameters) survives building the full list. An
+/// override on a pair the new list leaves out (1-2 / 1-3) is an `Err`: it
+/// would be dropped.
+fn carried_overrides(frame: &Frame, pi: &[Idx], pj: &[Idx]) -> Result<Vec<OverrideColumn>, String> {
+    let Some(old) = frame.get(PAIRS) else {
+        return Ok(Vec::new());
+    };
+    let (Some(oi), Some(oj)) = (
+        old.get(ATOMI).and_then(|c| c.as_uint()),
+        old.get(ATOMJ).and_then(|c| c.as_uint()),
+    ) else {
+        return Ok(Vec::new());
+    };
+    let row_of: HashMap<(Idx, Idx), usize> = pi
+        .iter()
+        .zip(pj)
+        .enumerate()
+        .map(|(r, (&a, &b))| ((a, b), r))
+        .collect();
+    let mut out = Vec::new();
+    for key in PAIR_OVERRIDE_COLUMNS {
+        let Some(col) = old.get(key) else {
+            continue;
+        };
+        let values = col
+            .as_float()
+            .ok_or_else(|| format!("pairs: the per-pair override column '{key}' must be float"))?;
+        let valid = old.validity(key);
+        let mut new_values = vec![0.0; pi.len()];
+        let mut new_valid = vec![false; pi.len()];
+        for (r, (&a, &b)) in oi.iter().zip(oj.iter()).enumerate() {
+            if valid.is_some_and(|m| !m[r]) {
+                continue;
+            }
+            let pair = (a.min(b), a.max(b));
+            let at = *row_of
+                .get(&pair)
+                .ok_or_else(|| excluded_override(pair.0 as usize, pair.1 as usize))?;
+            new_values[at] = values[r];
+            new_valid[at] = true;
+        }
+        if new_valid.iter().any(|&v| v) {
+            out.push((key, new_values, new_valid));
+        }
+    }
+    Ok(out)
+}
+
+/// The pairs of the frame's `pairs` rows that carry an override cell.
+fn override_pairs(frame: &Frame) -> Result<Vec<(usize, usize)>, String> {
+    let Some(old) = frame.get(PAIRS) else {
+        return Ok(Vec::new());
+    };
+    let (Some(oi), Some(oj)) = (
+        old.get(ATOMI).and_then(|c| c.as_uint()),
+        old.get(ATOMJ).and_then(|c| c.as_uint()),
+    ) else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for key in PAIR_OVERRIDE_COLUMNS {
+        if old.get(key).is_none() {
+            continue;
+        }
+        let valid = old.validity(key);
+        for (r, (&a, &b)) in oi.iter().zip(oj.iter()).enumerate() {
+            if valid.is_none_or(|m| m[r]) {
+                out.push((a.min(b) as usize, a.max(b) as usize));
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn excluded_override(i: usize, j: usize) -> String {
+    format!(
+        "intramolecular_pairs: the frame's pairs row for atoms {i} and {j} carries a per-pair \
+         override, and the force field's special_bonds exclude that pair (1-2 or 1-3), so the \
+         override would be dropped"
+    )
 }
 
 /// `(lo, hi)` end-atom pairs of a topology block (bond ends, angle i–k,

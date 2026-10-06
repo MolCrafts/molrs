@@ -329,6 +329,52 @@ CHARMM36, AMBER ff14SB and OPLS-AA molecules.
   as integer degrees and refused `180.000000`; a non-integer phase is
   refused by name.
 
+### AMBER prmtop
+
+The prmtop readers (`read_amber_prmtop`, `AmberPrmtopFfReader` /
+`read_amber_prmtop_ff`) read what they refused, and the frame and the force
+field they return change where they did. AMBER stays read-only. See the IR
+guide, "AMBER prmtop", for the full map.
+
+- **Chamber (CHARMM) prmtops read.** 0.15 refused `%FLAG CTITLE` /
+  `FORCE_FIELD_TYPE`. Now: every angle is `angle charmm` with its
+  Urey–Bradley term, `CHARMM_IMPROPERS` are `improper harmonic` (centre
+  first; a ψ₀ off 0°/180° is refused), CMAP is `cmap charmm` and a `cmaps`
+  block, Lennard-Jones is `lj/charmm` (with `epsilon14` / `sigma14` and
+  `one_four = "epsilon14"` when the file's 1-4 table differs) and Coulomb
+  `coul/charmm` at 332.0716; charges are de-scaled by √332.0716 (not
+  18.2223). The force field's `name` is `"CHARMM"`. Its pair styles carry no
+  `inner` / `cutoff`: declare them before compiling. With `one_four =
+  "epsilon14"`, build the pair list (`intramolecular_pairs`) and call
+  `ForceField.materialize_one_four(frame)` before compiling.
+- **CMAP reads** (ff19SB's `CMAP_*` too); 0.15 refused `CMAP_COUNT > 0`.
+- **Non-uniform `SCEE` / `SCNB` read.** 0.15 refused two divisors among the
+  1-4 rows. `special_bonds` is now the divisor most 1-4 rows carry (it was
+  the one value), and the frame gains a `pairs` block — only when some pair
+  is weighted otherwise — listing those 1-4 pairs with `coul_scale` /
+  `lj_scale` cells. It is not a pair list: `intramolecular_pairs` builds the
+  full list and keeps the cells (it used to drop a frame's `pairs`). An
+  `intramolecular_pairs` call on a frame whose `pairs` row with an override
+  names a 1-2 / 1-3 pair raises.
+- **Multi-term impropers read.** 0.15 refused a negative-`PN` chain on an
+  improper and silently kept only the first term of several improper rows on
+  one quartet. Such an improper is now one `improper periodic` type
+  `<quartet>@<n>` and one `impropers` row per term (a single-term improper
+  is unchanged).
+- **A phase within 0.004 rad of ±π is ±180° exactly**, as sander takes it
+  (tleap writes π as `3.14159400`); 0.15 stored 180.0000153°.
+- **Dihedral types.** The terms of a `dihedral periodic` type are sorted by
+  periodicity (they were in the file's type-id order), and two torsions of one
+  name with different terms are a `TypeConflict` (0.15 merged their terms
+  into one type, silently).
+- **Atom types.** A type name that stands for atoms of two LJ classes or
+  masses is split into `<name>~<class>` types (0.15 raised a
+  `TypeConflict`); every bonded type name and frame label uses the split
+  names.
+- **Refused, by name:** a 1-4 row on a negative-`PN` chain, or on a bonded /
+  angle-end pair; `IPOL > 0` (0.15: only `IPOL = 1`). The force-field reader
+  now refuses `IPOL > 0` as the frame reader does.
+
 ### Already in 0.15.1
 
 0.15.1 was a patch release on the 0.15 ABI line (nothing renamed or removed;
