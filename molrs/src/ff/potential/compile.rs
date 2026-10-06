@@ -4,12 +4,23 @@
 //! difference between them is what carries the non-bonded pair list:
 //!
 //! * [`PotentialCompiler::compile`] resolves every pair style against the
-//!   frame's `pairs` block — a fixed list, finite by construction and with no
-//!   spatial cutoff. Right for a molecule in free space, and what the geometry
-//!   optimizer and the conformer pipeline use.
+//!   frame's `pairs` block — a fixed list, finite by construction. Right for
+//!   a molecule in free space, and what the geometry optimizer and the
+//!   conformer pipeline use.
 //! * [`PotentialCompiler::compile_typed`] resolves them against the **atoms**,
 //!   so the kernels answer for whatever pairs a neighbour search turns up.
 //!   Right for a periodic box, and what MD uses.
+//!
+//! Both doors price a pair exactly as LAMMPS does: only at `r < cutoff`, the
+//! style's own `cutoff` (and between `inner` and `cutoff` through the
+//! switch of a style that defines one, `lj/charmm`, `coul/charmm`) — the
+//! pairs a list holds beyond it price nothing, 1-4 pairs scaled by
+//! `special_bonds` included. A style that states no cutoff has cutoff ∞
+//! (the spec's default of `lj/cut`, `coul/cut`, …), so a field read from an
+//! engine priced untruncated (OpenMM `NoCutoff`, a prmtop) prices every
+//! listed pair. The 1-4 exceptions kernel (a `dihedral charmm` `w`, per-pair
+//! overrides) is no pair style and is never truncated, as LAMMPS's
+//! `dihedral_style charmm` prices its 1-4 pair at any distance.
 //!
 //! The direction is one-way: a force field **declares** styles, types and
 //! constants, and this module reads them to build kernels. Nothing here is
@@ -96,6 +107,11 @@ impl<'a> PotentialCompiler<'a> {
     /// no Frame and evaluate from coordinates alone. Styles with no kernel
     /// (atom styles) are skipped.
     ///
+    /// Every pair style prices a `pairs` row only inside its `cutoff`
+    /// (`r < cutoff`, with its switch where it defines one), as
+    /// [`compile_typed`](Self::compile_typed) and LAMMPS do; ∞ when the style
+    /// states none.
+    ///
     /// The `pairs` block carries the 1-2 / 1-3 weights by whether a row is
     /// there, so a force field that *scales* those classes rather than
     /// excluding them is an [`Err`] here — see
@@ -110,7 +126,9 @@ impl<'a> PotentialCompiler<'a> {
     /// ([`PairExceptions`](crate::ff::potential::pair::PairExceptions)); the
     /// pair styles see the `pairs` list without the override rows. Both doors
     /// build it the same way. Precedence per pair: an override cell, else the
-    /// dihedral's `w`, else `special_bonds`.
+    /// dihedral's `w`, else `special_bonds`. The exceptions kernel is not
+    /// truncated: LAMMPS's `dihedral_style charmm` prices its 1-4 pair at any
+    /// distance, and an OpenMM exception is outside the cutoff method too.
     pub fn compile(&self, frame: &Frame) -> Result<Potentials, CompileError> {
         // The `pairs` block need not have come from `intramolecular_pairs` — a
         // GROMACS `[ pairs ]` section is read straight off a file — so the
@@ -151,10 +169,12 @@ impl<'a> PotentialCompiler<'a> {
     ///
     /// The counterpart of [`compile`](Self::compile), and what periodic MD
     /// needs. That one resolves every pair style against the frame's `pairs`
-    /// block — a fixed list, finite by construction and with no spatial
-    /// cutoff, which is right for a free-boundary molecule and wrong for a
-    /// periodic system. This one resolves them against the **atoms**, so the
-    /// kernels can answer for whatever pairs a neighbour search turns up. Of
+    /// block — a fixed list, finite by construction, which is right for a
+    /// free-boundary molecule and wrong for a periodic system. This one
+    /// resolves them against the **atoms**, so the kernels can answer for
+    /// whatever pairs a neighbour search turns up; a pair style needs a
+    /// finite `cutoff` here. Over the same pairs, the two doors price the
+    /// same energy: both truncate at the style's `cutoff`. Of
     /// the `pairs` block it reads only the rows carrying per-pair overrides:
     /// those pairs go to the exceptions kernel (an indexed member, weight
     /// `None`), and every pair member's [`PairWeights`] weights them 0.
@@ -586,7 +606,7 @@ fn regular_pairs<'f>(
 mod tests {
     use super::*;
     use molrs::store::block::Block;
-    use molrs::types::Idx;
+    use molrs::types::{F, Idx};
     use ndarray::Array1;
 
     fn two_atoms() -> Frame {
@@ -710,17 +730,155 @@ mod tests {
         ff.def_style(
             "pair",
             "coul/long/pme",
-            Params::from_pairs(&[
-                ("coulomb", 332.06371),
-                ("dielectric", 1.0),
-                ("coulomb14scale", 0.5),
-            ]),
+            Params::from_pairs(&[("coulomb", 332.06371), ("cutoff", 9.0)]),
         )
         .unwrap();
         let err = PotentialCompiler::new(&ff)
             .compile_typed(&two_atoms())
             .unwrap_err();
         assert!(err.to_string().contains("neighbour-driven"), "{err}");
+    }
+
+    /// The pairs of [`straddling`], and which of them are flagged 1-4.
+    const LINKS: [(usize, usize); 4] = [(0, 1), (0, 2), (0, 3), (1, 3)];
+    const IS_14: [bool; 4] = [true, false, true, false];
+
+    /// Four atoms on x at 0, 2.0, 3.1 and 7.0 Å, charged, and the list of
+    /// four of their pairs ([`LINKS`]): (0, 1) 2.0 Å and (0, 3) 7.0 Å flagged
+    /// 1-4, (0, 2) 3.1 Å and (1, 3) 5.0 Å regular — each kind on each side of
+    /// a 4 Å cutoff.
+    fn straddling() -> (Frame, Vec<F>) {
+        let x = vec![0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 3.1, 0.0, 0.0, 7.0, 0.0, 0.0];
+        let (links, is_14) = (LINKS, IS_14);
+        let mut atoms = Block::new();
+        for (d, key) in ["x", "y", "z"].iter().enumerate() {
+            let col: Vec<F> = x.iter().skip(d).step_by(3).copied().collect();
+            atoms
+                .insert(*key, Array1::from_vec(col).into_dyn())
+                .unwrap();
+        }
+        atoms
+            .insert(
+                "type",
+                Array1::from_vec(vec!["A".to_string(); 4]).into_dyn(),
+            )
+            .unwrap();
+        atoms
+            .insert(
+                "charge",
+                Array1::from_vec(vec![0.5, -0.4, 0.3, 0.2]).into_dyn(),
+            )
+            .unwrap();
+        let mut pairs = Block::new();
+        let col = |k: usize| -> Vec<Idx> { links.iter().map(|l| [l.0, l.1][k] as Idx).collect() };
+        pairs
+            .insert("atomi", Array1::from_vec(col(0)).into_dyn())
+            .unwrap();
+        pairs
+            .insert("atomj", Array1::from_vec(col(1)).into_dyn())
+            .unwrap();
+        pairs
+            .insert("is_14", Array1::from_vec(is_14.to_vec()).into_dyn())
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert("pairs", pairs);
+        (frame, x)
+    }
+
+    /// The `pairs`-list door truncates every pair style at its `cutoff`
+    /// (`r < cutoff`), 1-4 pairs included, and shifts a shifted `lj/cut`
+    /// there — LAMMPS's `lj/cut` with `pair_modify shift yes` and
+    /// `coul/cut`, by hand — and prices what the neighbour-driven door
+    /// prices over the same pairs with the same weights.
+    #[test]
+    fn compile_truncates_every_pair_at_its_cutoff_as_lammps_and_compile_typed() {
+        use crate::ff::potential::pair::testing::table_over;
+        let (frame, x) = straddling();
+        let (links, is_14) = (LINKS, IS_14);
+        let (rc, w14) = (4.0, 0.5);
+        let special = SpecialBonds {
+            lj: [0.0, 0.0, w14],
+            coul: [0.0, 0.0, w14],
+        };
+        let r = |(i, j): (usize, usize)| (x[3 * j] - x[3 * i]).abs();
+        let weight = |k: usize| if is_14[k] { w14 } else { 1.0 };
+        // (style, its row, its style params besides `cutoff`)
+        type Case<'a> = (&'a str, Vec<(&'a str, F)>, Vec<(&'a str, F)>);
+        let cases: [Case; 6] = [
+            (
+                "lj/cut",
+                vec![("epsilon", 0.2), ("sigma", 3.0)],
+                vec![("shift", 1.0)],
+            ),
+            ("lj/cut", vec![("epsilon", 0.2), ("sigma", 3.0)], vec![]),
+            ("lj/class2", vec![("epsilon", 0.2), ("sigma", 3.0)], vec![]),
+            (
+                "buck",
+                vec![("a", 1000.0), ("rho", 0.3), ("c", 50.0)],
+                vec![],
+            ),
+            (
+                "morse",
+                vec![("d0", 0.5), ("alpha", 1.2), ("r0", 3.0)],
+                vec![],
+            ),
+            ("coul/cut", vec![], vec![("coulomb", 332.06371)]),
+        ];
+        let lj = |r: F| 0.8 * ((3.0 / r).powi(12) - (3.0 / r).powi(6));
+        for (name, row, style) in cases {
+            let mut ff = ForceField::new("t");
+            ff.set_special_bonds(special);
+            let mut sp = Params::from_pairs(&style);
+            sp.set("cutoff", rc);
+            let s = ff.def_style("pair", name, sp).unwrap();
+            if !row.is_empty() {
+                s.def_type("A", &["A"], Params::from_pairs(&row)).unwrap();
+            }
+            let compiler = PotentialCompiler::new(&ff);
+            let (e, f) = compiler.compile(&frame).unwrap().calc_energy_forces(&x);
+            let shifted = style.iter().any(|(k, _)| *k == "shift");
+            let by_hand: F = links
+                .iter()
+                .enumerate()
+                .filter(|&(_, &l)| r(l) < rc)
+                .map(|(k, &l)| {
+                    let q = [0.5, -0.4, 0.3, 0.2];
+                    weight(k)
+                        * match name {
+                            "lj/cut" if shifted => lj(r(l)) - lj(rc),
+                            "lj/cut" => lj(r(l)),
+                            "coul/cut" => 332.06371 * q[l.0] * q[l.1] / r(l),
+                            _ => 0.0,
+                        }
+                })
+                .sum();
+            if matches!(name, "lj/cut" | "coul/cut") {
+                assert!(
+                    (e - by_hand).abs() <= 1e-12 * by_hand.abs(),
+                    "{name} shift={shifted}: compile {e}, LAMMPS by hand {by_hand}"
+                );
+            }
+            let table = table_over(&x, &links);
+            let factor: Vec<F> = (0..links.len()).map(weight).collect();
+            let mut ft = vec![0.0; x.len()];
+            let mut et = 0.0;
+            for (member, _) in compiler.compile_typed(&frame).unwrap() {
+                let Member::Pair(p) = &member else {
+                    panic!("a pair member")
+                };
+                et += p.accumulate_pairs(&x, &table, &factor, &mut ft).0;
+            }
+            let scale = f.iter().fold(e.abs(), |m, v| m.max(v.abs()));
+            assert!(scale > 1e-6, "{name}: the pairs inside must contribute");
+            assert!(
+                (e - et).abs() <= 1e-12 * scale,
+                "{name} shift={shifted}: compile {e}, compile_typed {et}"
+            );
+            for (a, b) in f.iter().zip(&ft) {
+                assert!((a - b).abs() <= 1e-12 * scale, "{name}: force {a} vs {b}");
+            }
+        }
     }
 
     #[test]

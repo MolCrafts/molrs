@@ -5,7 +5,7 @@
 //!
 //! | Test | Criterion |
 //! |---|---|
-//! | [`pair_style_matches_lammps`] | E and every force component = pinned LAMMPS `lj/smooth/linear`, rel ≤ 1e-10; `compile_typed` = `compile`, rel ≤ 1e-12 |
+//! | [`pair_style_matches_lammps`] | E and every force component = pinned LAMMPS `lj/smooth/linear`, its cutoff straddling the pairs, rel ≤ 1e-10; `compile_typed` = `compile`, rel ≤ 1e-12 |
 //! | [`new_category_matches_lammps`] | the `urey_bradley` category = pinned LAMMPS `angle_style charmm` with K = 0, rel ≤ 1e-10 |
 //! | [`fene_matches_lammps`] | `bond fene` by expression = pinned LAMMPS `bond_style fene`, rel ≤ 1e-10, (r/R0)² < 0.9 |
 //! | [`mrec_round_trip`] | energy bit for bit after `.mrec` write/read; with `Registry::builtin()` only, the expression styles still price (bit for bit), the native-only ones are `NoKernel` naming them |
@@ -154,12 +154,12 @@ fn shifted(x: &[f64], d: f64) -> Vec<f64> {
 }
 
 /// `pair lj/smooth/linear`, six unbonded atoms of two types mixed by
-/// Lorentz–Berthelot, every pair inside the 8 Å cutoff (the `pairs`-list
-/// door prices the list it is given, cutoff-free: a fixed list is finite by
-/// construction).
+/// Lorentz–Berthelot, the 5 Å cutoff straddling their pairs (ten inside,
+/// five beyond, in each configuration; the nearest 0.19 Å from it): both
+/// compile doors price a pair only at `r < cutoff`, as LAMMPS does.
 fn smooth(reg: &Registry) -> Case {
     let mut ff = field("smooth", [0.0; 3]);
-    let mut style = Params::from_pairs(&[("cutoff", 8.0)]);
+    let mut style = Params::from_pairs(&[("cutoff", SMOOTH_CUTOFF)]);
     style.set_str("mixing", "arithmetic");
     let lj = ff
         .def_style_in(reg, "pair", "lj/smooth/linear", style)
@@ -188,6 +188,9 @@ fn smooth(reg: &Registry) -> Case {
         extra: "",
     }
 }
+
+/// The `lj/smooth/linear` cutoff of [`smooth`], Å.
+const SMOOTH_CUTOFF: f64 = 5.0;
 
 /// `bond fene` on a five-atom chain, three bond types, two bonds inside
 /// the WCA range `2^(1/6) σ`.
@@ -520,6 +523,19 @@ fn pair_style_matches_lammps() {
         let links: Vec<(usize, usize)> = (0..n)
             .flat_map(|i| (i + 1..n).map(move |j| (i, j)))
             .collect();
+        let r: Vec<f64> = links
+            .iter()
+            .map(|&(i, j)| {
+                (0..3)
+                    .map(|a| (x[3 * j + a] - x[3 * i + a]).powi(2))
+                    .sum::<f64>()
+                    .sqrt()
+            })
+            .collect();
+        assert!(
+            r.iter().any(|&r| r < SMOOTH_CUTOFF) && r.iter().any(|&r| r >= SMOOTH_CUTOFF),
+            "the cutoff must straddle the pairs: {r:?}"
+        );
         let table = Neighbors::from_pairs(
             links.iter().map(|&(i, j)| {
                 let d = [0, 1, 2].map(|a| x[3 * j + a] - x[3 * i + a]);

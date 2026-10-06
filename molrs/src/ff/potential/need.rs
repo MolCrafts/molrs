@@ -91,6 +91,28 @@ pub(crate) fn unmixed_row<'p>(
     }
 }
 
+/// The `cutoff` of a pair style, as LAMMPS truncates every pair style:
+/// a pair prices only at `r < cutoff`, at both compile doors. Stated, it is
+/// positive; absent — a style whose spec declares none, or whose declared
+/// one has no default and was not stated — it is ∞, and so is the default
+/// of an untruncated style's spec (`lj/cut`, `coul/cut`, …): a field read
+/// from an engine priced with no cutoff (OpenMM `NoCutoff`, a prmtop)
+/// prices every pair.
+pub(crate) fn pair_cutoff(style: &str, params: &Params) -> Result<F, IrError> {
+    let Some(cutoff) = params.get("cutoff") else {
+        return Ok(F::INFINITY);
+    };
+    if cutoff.is_nan() || cutoff <= 0.0 {
+        return Err(bad(
+            style,
+            "",
+            "cutoff",
+            format!("= {cutoff}: a pair cutoff is positive"),
+        ));
+    }
+    Ok(cutoff)
+}
+
 /// The `cutoff` of a pair style evaluated over a neighbour search: stated,
 /// finite and positive — a periodic neighbour sum is not finite without one,
 /// and the ∞ an untruncated style's spec defaults to is no neighbour cutoff.

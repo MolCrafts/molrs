@@ -5,7 +5,10 @@
 //! The molecule is a seven-atom alcohol (`CT3 CT2 CT2 CT2 OH1 H`, a `CT3`
 //! branch on the third atom) with charges; the LAMMPS force field reads with
 //! `lj/charmm/coul/charmm 3.5 4.2 3.0 5.0` so that pairs fall inside, across
-//! and beyond both switches. The LAMMPS numbers are `run 0` of LAMMPS
+//! and beyond both switches; two more cases cut short of the 1-4 pairs
+//! (`lj/charmm/coul/charmm 2.0 2.4` with `w` = 1, `lj/cut/coul/cut 3.0`
+//! shifted with `special_bonds` ½ / ⅚): a `special_bonds` 1-4 pair is
+//! truncated by its pair style, a `w` pair at no distance. The LAMMPS numbers are `run 0` of LAMMPS
 //! (29 Aug 2024 build, `boundary f f f`, `atom_style full`, the data file
 //! with the coordinates below and the include [`ff_text`] writes), taken
 //! from `thermo_style custom evdwl ecoul ebond eangle edihed pe` and
@@ -189,9 +192,18 @@ fn terms(ff: &ForceField, frame: &Frame) -> [F; 6] {
         .kernel
         .map(|k| k.energy_terms(&coords()))
         .unwrap_or((0.0, 0.0));
+    // The van-der-Waals and the Coulomb pair style, whichever they are.
+    let pair = |coulomb: bool| {
+        let style = ff
+            .get_styles("pair")
+            .into_iter()
+            .find(|s| s.name().starts_with("coul/") == coulomb)
+            .expect("a van-der-Waals and a Coulomb pair style");
+        energy(&only(ff, "pair", style.name()), frame)
+    };
     [
-        energy(&only(ff, "pair", "lj/charmm"), frame) + lj14,
-        energy(&only(ff, "pair", "coul/charmm"), frame) + coul14,
+        pair(false) + lj14,
+        pair(true) + coul14,
         energy(&only(ff, "bond", "harmonic"), frame),
         energy(&only(ff, "angle", "harmonic"), frame),
         energy(&only(ff, "dihedral", "charmm"), frame),
@@ -317,6 +329,104 @@ fn global_weights_with_lj_charmm_match_lammps() {
             [7.7139637517845756, -3.9292510008532697, -13.149007650394131],
             [0.52118468936316775, 0.87726695505746599, 3.5170111028755109],
             [0.14804249712548181, 7.8144679933859607, 1.4420157611703608],
+        ],
+    );
+}
+
+/// `special_bonds charmm`, every `w` = 1, both switches ending at 2.4 Å —
+/// short of every pair the pair styles see (the nearest, a 1-5 pair, at
+/// 2.60 Å): LAMMPS's `evdwl` / `ecoul` are the dihedrals' 1-4 terms alone,
+/// at 2.64–3.89 Å, which no pair cutoff truncates (`dihedral_charmm.cpp`).
+#[test]
+fn a_dihedral_weight_prices_its_pair_beyond_every_cutoff_as_lammps() {
+    let text = ff_text(CHARMM, "1.0").replace("3.5 4.2 3.0 5.0", "2.0 2.4");
+    let ff = LammpsFfReader::new().read_str(&text).unwrap();
+    let frame = frame(ff.special_bonds(), false);
+    // The pair styles price nothing: every pair they see is past 2.4 Å.
+    let lj = only(&ff, "pair", "lj/charmm");
+    assert_eq!(energy(&lj, &frame), 0.0);
+    check_lammps(
+        "w = 1, cut at 2.4",
+        &ff,
+        &frame,
+        [
+            0.90857942073075881,
+            -40.148452087085076,
+            0.16703751076317958,
+            0.9568558055064269,
+            0.19377235160418241,
+            -37.922206998480526,
+        ],
+        [
+            [
+                2.0900349328165264,
+                -2.8506423721880969,
+                -0.67891467976820985,
+            ],
+            [-5.6177636085154612, 9.8845843445578563, 5.6203406598529426],
+            [13.85757963629012, -13.431861194038907, -11.27921743080738],
+            [-13.853529326934614, 5.0393265369706901, 11.756590476584099],
+            [4.1240120888758431, -3.319922385163153, -12.910663157136774],
+            [-3.0511110744082215, 4.4141287666914089, 3.0462665989272821],
+            [2.450777351875804, 0.26438630317020406, 4.4455975323480397],
+        ],
+    );
+}
+
+/// The include of [`ff_text`] under `lj/cut/coul/cut 3.0`, shifted, with
+/// `special_bonds` ½ / ⅚ and `w` = 0: the cutoff straddles the 1-4 pairs
+/// (2.64, 2.87, 2.92 Å inside; 3.04, 3.89 Å beyond) and the rest (a 1-5
+/// pair at 2.60 Å inside; 3.28–4.37 Å beyond).
+fn cut_text() -> String {
+    let charmm = ff_text(AMBER_LIKE, "0.0");
+    let bonded = &charmm[charmm.find("bond_style").unwrap()..];
+    format!(
+        "{AMBER_LIKE}
+pair_style lj/cut/coul/cut 3.0
+pair_modify mix arithmetic shift yes
+pair_coeff CT3 CT3 0.078 3.6705
+pair_coeff CT2 CT2 0.056 3.5814
+pair_coeff OH1 OH1 0.1521 3.1508
+pair_coeff H H 0.046 0.4
+pair_coeff CT3 OH1 0.12 3.3
+{bonded}"
+    )
+}
+
+/// `special_bonds` ½ / ⅚ under a shifted `lj/cut/coul/cut` whose cutoff
+/// straddles the 1-4 pairs: the pair styles truncate a 1-4 pair as any
+/// other (LAMMPS scales by `special_lj` inside `rsq < cutsq`), and shift
+/// the Lennard-Jones by the scaled offset.
+#[test]
+fn special_1_4_pairs_are_truncated_at_the_pair_cutoff_as_in_lammps() {
+    let ff = LammpsFfReader::new().read_str(&cut_text()).unwrap();
+    assert_eq!(
+        ff.get_style("pair", "lj/cut")
+            .unwrap()
+            .params()
+            .get("shift"),
+        Some(1.0)
+    );
+    check_lammps(
+        "lj/cut/coul/cut 3.0, special 1/2",
+        &ff,
+        &frame(ff.special_bonds(), false),
+        [
+            0.58996296088252342,
+            -28.545514028926917,
+            0.16703751076317958,
+            0.9568558055064269,
+            0.19377235160418241,
+            -26.637885400170603,
+        ],
+        [
+            [1.565964892175836, -3.4053854467372444, -0.36187305362756461],
+            [-7.607290253501156, 9.5414030171675428, 6.2740295703490574],
+            [13.568329408179594, -13.181928493020564, -11.154480209806508],
+            [-13.758096707005993, 5.0756475881954337, 11.761343591237026],
+            [7.4085986664295937, -3.9805563428095909, -13.08341311900913],
+            [-2.2155410431940332, 4.1180752755713108, 2.7445521786705274],
+            [1.0380350369161566, 1.8327444016331138, 3.8198410421865927],
         ],
     );
 }
@@ -658,8 +768,16 @@ fn typed_energy(ff: &ForceField, frame: &Frame) -> (F, Vec<F>) {
 #[cfg(feature = "md")]
 #[test]
 fn compile_equals_compile_typed() {
-    for (special, w) in [(CHARMM, "1.0"), (CHARMM, "0.5"), (AMBER_LIKE, "0.0")] {
-        let ff = read(special, w);
+    let short = ff_text(CHARMM, "1.0").replace("3.5 4.2 3.0 5.0", "2.0 2.4");
+    let cases = [
+        (CHARMM, "1.0", ff_text(CHARMM, "1.0")),
+        (CHARMM, "0.5", ff_text(CHARMM, "0.5")),
+        (AMBER_LIKE, "0.0", ff_text(AMBER_LIKE, "0.0")),
+        (CHARMM, "1.0, cut at 2.4", short),
+        (AMBER_LIKE, "0.0, lj/cut/coul/cut 3.0", cut_text()),
+    ];
+    for (special, w, text) in cases {
+        let ff = LammpsFfReader::new().read_str(&text).unwrap();
         let frame = frame(ff.special_bonds(), false);
         let (e, f) = PotentialCompiler::new(&ff)
             .compile(&frame)

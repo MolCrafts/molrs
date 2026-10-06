@@ -8,7 +8,7 @@ use crate::ff::forcefield::{Params, pair_key};
 use crate::ff::ir::conformance::Probe;
 use crate::ff::ir::{IrError, Mix, ParamKind, StyleSpec};
 use crate::ff::potential::generic::{Column, ScalarForm, TermParams, columns, read_by, row_num};
-use crate::ff::potential::need::neighbour_cutoff;
+use crate::ff::potential::need::{neighbour_cutoff, pair_cutoff};
 use crate::ff::potential::pair::{atom_type_index, fold_chunks, type_pair};
 use crate::ff::potential::registry::SpecialClass;
 use crate::ff::potential::{PairDriven, Potential, gather_copies};
@@ -39,6 +39,9 @@ enum Source {
         /// Per-type columns (the pair values) and `q1`, `q2`, per pair.
         terms: TermParams,
         weight: Vec<F>,
+        /// The style's `cutoff²` (∞ when it states none): a listed pair
+        /// prices only at `r < cutoff`, as at the typed door and in LAMMPS.
+        cutoff2: F,
     },
     /// A type-pair table keyed by the two atoms' types (LAMMPS's
     /// `pair_coeff i j`), which answers for whatever pairs a neighbour
@@ -65,10 +68,12 @@ enum Source {
 /// Built at both compile doors from the style's [`StyleSpec`]:
 ///
 /// * [`compiled`](Self::compiled) resolves every row of the frame's `pairs`
-///   block — the fixed, intramolecular list, finite by construction, so no
-///   cutoff — and weights an `is_14` row by the force field's 1-4 weight of
-///   the style's special class (`lj14scale` / `coulomb14scale`, which the
-///   compiler projects into the style params).
+///   block — the fixed, intramolecular list — prices a row only at
+///   `r < cutoff` (the style's `cutoff`, ∞ when it states none: LAMMPS
+///   truncates every pair, special ones included), and weights an `is_14`
+///   row by the force field's 1-4 weight of the style's special class
+///   (`lj14scale` / `coulomb14scale`, which the compiler projects into the
+///   style params).
 /// * [`typed`](Self::typed) builds a type-pair table and prices a neighbour
 ///   table, honouring the style's required `cutoff` (`r < cutoff`), the
 ///   per-pair weights the caller hands it (zero skips the pair), and
@@ -272,7 +277,8 @@ fn style_inputs(spec: &StyleSpec, style: &Params) -> Result<StyleInputs, IrError
 impl ScalarPair {
     /// The compiled form: every row of the frame's `pairs` block resolved
     /// now, an `is_14` row weighted by the style param `lj14scale`
-    /// ([`SpecialClass::Vdw`]) or `coulomb14scale` (`Coulomb`).
+    /// ([`SpecialClass::Vdw`]) or `coulomb14scale` (`Coulomb`), every row
+    /// truncated at the style param `cutoff` (absent: ∞).
     pub fn compiled(
         form: Arc<dyn ScalarForm>,
         spec: &StyleSpec,
@@ -282,6 +288,7 @@ impl ScalarPair {
     ) -> Result<Self, crate::ff::potential::CompileError> {
         let who = format!("{} `{}`", spec.category, spec.name);
         let table = PairRows::new(spec, &form.inputs(), style, tp)?;
+        let cutoff = pair_cutoff(&spec.name, style)?;
         let charge = charges(frame);
         let types = atom_types(frame, spec)?;
         let scale_14 = match spec.special_class() {
@@ -361,6 +368,7 @@ impl ScalarPair {
                 atom_j,
                 terms,
                 weight,
+                cutoff2: cutoff * cutoff,
             },
         })
     }
@@ -590,6 +598,7 @@ impl Potential for ScalarPair {
             atom_j,
             terms,
             weight,
+            cutoff2,
         } = &self.source
         else {
             // A type table needs a pair table, and nobody handed one over.
@@ -606,19 +615,22 @@ impl Potential for ScalarPair {
                 ]
             })
             .collect();
-        let r: Vec<F> = disp
+        let d2: Vec<F> = disp
             .iter()
-            .map(|d| (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt())
+            .map(|d| d[0] * d[0] + d[1] * d[1] + d[2] * d[2])
             .collect();
-        let (e, de) = self.eval(&r, &self.with_style(terms.clone(), r.len()));
+        // The rows inside the cutoff, as the typed fold selects them: the
+        // form is never evaluated past it (where it need not be defined).
+        let active: Vec<usize> = (0..d2.len())
+            .filter(|&t| d2[t] >= MIN_R2 && d2[t] < *cutoff2)
+            .collect();
+        let r: Vec<F> = active.iter().map(|&t| d2[t].sqrt()).collect();
+        let (e, de) = self.eval(&r, &self.with_style(terms.select(&active), r.len()));
         let mut energy: F = 0.0;
-        for t in 0..r.len() {
-            if r[t] * r[t] < MIN_R2 {
-                continue;
-            }
+        for (k, &t) in active.iter().enumerate() {
             let w = weight[t];
-            energy += w * e[t];
-            let scale = -de[t] / r[t];
+            energy += w * e[k];
+            let scale = -de[k] / r[k];
             for c in 0..3 {
                 let f = w * scale * disp[t][c];
                 out[atom_j[t] * 3 + c] += f;

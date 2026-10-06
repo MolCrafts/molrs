@@ -325,6 +325,7 @@ pub(crate) fn compile_err(e: CompileError) -> PyErr {
     match e {
         CompileError::Ir(e) => refuse(e),
         CompileError::Invalid(message) => PyValueError::new_err(message),
+        other @ CompileError::NoBox { .. } => PyValueError::new_err(other.to_string()),
     }
 }
 

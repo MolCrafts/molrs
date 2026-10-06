@@ -752,14 +752,6 @@ fn chain(category: &str, arity: usize) -> Frame {
     pairs
         .insert("atomj", Array1::from_vec(vec![2 as Idx, 3, 3]).into_dyn())
         .unwrap();
-    // The pair styles that key a compiled row on its own label (`lj/class2`,
-    // `buck`, `morse`) read the pair's type, `A` with `A`.
-    pairs
-        .insert(
-            "type",
-            Array1::from_vec(vec!["A".to_string(); 3]).into_dyn(),
-        )
-        .unwrap();
     frame.insert("pairs", pairs);
     frame
 }

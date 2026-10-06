@@ -6,7 +6,9 @@
 //!   and by the expression (registered as a style of its own and built into
 //!   the generic kernels), on 64 seeded configurations × parameter sets per
 //!   style: energy to 1e-10 relative, forces too unless the style's force is
-//!   not the gradient (`coul/charmm`); a pair style at both compile doors.
+//!   not the gradient (`coul/charmm`); a pair style at both compile doors,
+//!   its cutoff straddling the pairs, and `compile` = `compile_typed` to
+//!   1e-12 (both truncate at the cutoff, as LAMMPS).
 //!   The table-generated expressions (`dihedral periodic` per term count,
 //!   `nharmonic` per order) are generated here; `dihedral rb`, priced by its
 //!   expression alone, is held to `multi/harmonic`'s native kernel.
@@ -35,6 +37,7 @@ use crate::ff::ir::{Kernel, LammpsForm, ParamKind, ParamSource, Registry, StyleS
 use crate::ff::potential::{Member, PotentialCompiler};
 use crate::ff::{LammpsFfWriter, LammpsWriteOptions};
 use molrs::spatial::neighbors::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
+use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::type_labels::TypeLabels;
@@ -49,7 +52,7 @@ const D: &str = "0.017453292519943295";
 /// Four atoms of type `A`, a non-planar chain (`super::tests::chain`'s,
 /// moved by up to ±0.2 Å per coordinate), with charges; one term of
 /// `category` over the first `arity` atoms typed `t`, and the `pairs` list
-/// of the three pairs that are no chain neighbours, typed `A`.
+/// of the three pairs that are no chain neighbours.
 fn chain(category: &str, arity: usize, rng: &mut Rng) -> (Frame, Vec<F>) {
     const XYZ: [F; 12] = [
         0.0, 0.0, 0.0, 1.52, 0.1, 0.05, 2.1, 1.45, -0.1, 3.55, 1.6, 0.6,
@@ -92,7 +95,6 @@ fn chain(category: &str, arity: usize, rng: &mut Rng) -> (Frame, Vec<F>) {
     pairs
         .insert("atomj", Array1::from_vec(vec![2 as Idx, 3, 3]).into_dyn())
         .unwrap();
-    pairs.insert("type", strings(vec!["A"; 3])).unwrap();
     frame.insert("pairs", pairs);
     (frame, x)
 }
@@ -163,8 +165,8 @@ fn case(
 
 /// The base parameters of every built-in with a native kernel and an
 /// expression. Pair cutoffs are short enough that the three pairs straddle
-/// them (and CHARMM's switch), so the typed door's `r < cutoff` and the
-/// switch are both exercised.
+/// them (and CHARMM's switch), so both doors' `r < cutoff` and the switch
+/// are exercised.
 fn cases() -> Vec<Case> {
     let cut = [("cutoff", 3.6)];
     vec![
@@ -424,23 +426,11 @@ fn every_appendix_a_expression_agrees_with_its_kernel() {
                 }
             };
             let (frame, x) = chain(c.category, arity, &mut rng);
-            // The `pairs`-list door is cutoff-free by design (a fixed list,
-            // finite by construction), so there every pair is inside a
-            // cutoff past the three; the neighbour-driven door applies
-            // `r < cutoff`, and its cutoff straddles them.
-            let compiled_cutoff = 5.0 * rng.uniform(1.0, 1.2);
-            let fields = |typed: bool| {
-                let style: Vec<(String, F)> = style
-                    .iter()
-                    .map(|(k, v)| {
-                        let v = if k == "cutoff" && !typed {
-                            compiled_cutoff
-                        } else {
-                            *v
-                        };
-                        (k.clone(), v)
-                    })
-                    .collect();
+            // Both doors truncate at the style's `cutoff` (`r < cutoff`, as
+            // LAMMPS), and the cutoff straddles the three pairs: the
+            // `pairs`-list door prices the same pairs the neighbour-driven
+            // one does.
+            let fields = || {
                 if c.name == "rb" {
                     let multi: Vec<(String, F)> = row
                         .iter()
@@ -469,20 +459,19 @@ fn every_appendix_a_expression_agrees_with_its_kernel() {
             } else {
                 &[false]
             };
+            let (native_ff, twin_ff) = fields();
+            let mut by_door = Vec::new();
             for &typed in doors {
-                let (native_ff, twin_ff) = fields(typed);
                 let a = price(&native_ff, &r, &frame, &x, typed);
                 let b = price(&twin_ff, &r, &frame, &x, typed);
                 let scale = a.1.iter().fold(a.0.abs(), |m, v| m.max(v.abs()));
                 assert!(
-                    scale > 1e-8 || typed,
+                    scale > 1e-8,
                     "{} {} config {config}: the term must contribute",
                     c.category,
                     c.name
                 );
-                if scale == 0.0 {
-                    continue;
-                }
+                by_door.push(a.clone());
                 let (re, rf) = rel(&a, &b);
                 let rf = if spec.force_is_gradient { rf } else { 0.0 };
                 assert!(
@@ -498,6 +487,22 @@ fn every_appendix_a_expression_agrees_with_its_kernel() {
                     b.1
                 );
                 worst = (worst.0.max(re), worst.1.max(rf));
+            }
+            // The `pairs`-list door is the neighbour-driven one over the same
+            // pairs: the same cutoff, the same switch.
+            if let [compiled, typed] = &by_door[..] {
+                let (re, rf) = rel(compiled, typed);
+                assert!(
+                    re <= 1e-12 && rf <= 1e-12,
+                    "{} {} config {config}: compile ({:?}, {:?}), compile_typed ({:?}, {:?}): \
+                     rel energy {re:.1e}, force {rf:.1e}",
+                    c.category,
+                    c.name,
+                    compiled.0,
+                    compiled.1,
+                    typed.0,
+                    typed.1
+                );
             }
         }
         report.push(format!(
@@ -588,13 +593,6 @@ fn style_params(spec: &StyleSpec) -> Params {
         };
         p.set(&decl.name, v);
     }
-    // What PME reads beyond its spec: the periodic box, a run-time input
-    // (`box_xx` … `box_zz`), not force-field data.
-    if spec.name == "coul/long/pme" {
-        for b in ["box_xx", "box_yy", "box_zz"] {
-            p.set(b, 20.0);
-        }
-    }
     p
 }
 
@@ -652,6 +650,10 @@ fn every_param_source_is_what_its_constructor_reads() {
         let category = builtin.category(&spec.category).unwrap();
         let arity = category.arity.endpoints();
         let (mut frame, x) = chain(&spec.category, arity, &mut rng);
+        // The frame's own periodic box — frame data, which a kernel that
+        // needs it (PME's Ewald sums) reads off the frame, never off the
+        // style: every style builds from its declared parameters alone.
+        frame.simbox = Some(SimBox::cube(20.0, ndarray::array![0.0, 0.0, 0.0], [true; 3]).unwrap());
         // Every declared parameter as a per-instance column too: the block's
         // (one row), or the atoms' for a pair.
         let block = if category.is_pair_driven() {

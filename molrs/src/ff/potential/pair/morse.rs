@@ -8,7 +8,7 @@
 //! `D0` until 0.16, so one field could not price under both).
 
 use crate::ff::potential::need;
-use molrs::store::schema::block_names::PAIRS;
+use molrs::store::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
 use crate::ff::forcefield::{Params, pair_key};
@@ -55,8 +55,8 @@ enum Source {
 
 pub struct PairMorse {
     source: Source,
-    /// `cutoff²` of a neighbour-driven kernel (`r < cutoff`, as LAMMPS);
-    /// infinite for a compiled one, which prices the list it was given.
+    /// `cutoff²` (`r < cutoff`, as LAMMPS), at both compile doors; infinite
+    /// for a style that states no cutoff.
     cutoff2: F,
 }
 
@@ -118,8 +118,8 @@ impl PairMorse {
         }
     }
 
-    /// Price only pairs closer than `cutoff` (a neighbour-driven kernel:
-    /// the style's `cutoff`, as LAMMPS truncates).
+    /// Price only pairs closer than `cutoff`: the style's, as LAMMPS
+    /// truncates, at both compile doors.
     pub fn with_cutoff(mut self, cutoff: F) -> Self {
         self.cutoff2 = cutoff * cutoff;
         self
@@ -321,6 +321,12 @@ impl PairDriven for PairMorse {
 }
 
 /// Construct a [`PairMorse`] from style params, type params, and Frame topology.
+///
+/// A pair's row is found from its two atoms' types — the self row, else the
+/// cross row (`morse` does not mix: neither is [`IrError::NoMixing`]) — as
+/// [`pair_morse_typed_ctor`] finds it and LAMMPS's `pair_coeff i j` states it.
+///
+/// [`IrError::NoMixing`]: crate::ff::ir::IrError::NoMixing
 pub fn pair_morse_ctor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
@@ -344,19 +350,23 @@ pub fn pair_morse_ctor(
         .and_then(|c| c.as_uint())
         .ok_or_else(|| "PairMorse: pairs block missing \"atomj\" column".to_string())?;
     let is_14 = block.get("is_14").and_then(|c| c.as_bool());
-    let type_col = block
-        .get("type")
+    let atom_types = frame
+        .get(ATOMS)
+        .and_then(|b| b.get("type"))
         .and_then(|c| c.as_string())
-        .ok_or_else(|| "PairMorse: pairs block missing \"type\" column".to_string())?;
+        .ok_or_else(|| "PairMorse: atoms block missing \"type\" column".to_string())?;
 
     let (mut ai, mut aj) = (Vec::new(), Vec::new());
     let (mut dv, mut av, mut rv) = (Vec::new(), Vec::new(), Vec::new());
     let need = |p: &Params, key: &str, label: &str| need::type_num("morse", label, p, key);
     for idx in 0..i_col.len() {
-        let label = &type_col[idx];
-        let p = type_map
-            .get(label.as_str())
-            .ok_or_else(|| format!("PairMorse: unknown pair type '{}'", label))?;
+        let (ta, tb) = (
+            atom_types[i_col[idx] as usize].as_str(),
+            atom_types[j_col[idx] as usize].as_str(),
+        );
+        let p = need::unmixed_row("morse", "d0", &type_map, ta, tb)?;
+        let key = pair_key(ta, tb)?;
+        let label = &key;
         ai.push(i_col[idx] as usize);
         aj.push(j_col[idx] as usize);
         dv.push(if is_14.is_some_and(|b| b[idx]) {
@@ -368,7 +378,12 @@ pub fn pair_morse_ctor(
         rv.push(need(p, "r0", label)?);
     }
 
-    Ok(Member::pair(PairMorse::new(ai, aj, dv, av, rv)))
+    // The style's `cutoff` (`r < cutoff`, as LAMMPS truncates every pair,
+    // 1-4 ones included; ∞ when it states none).
+    let cutoff = need::pair_cutoff("morse", style_params)?;
+    Ok(Member::pair(
+        PairMorse::new(ai, aj, dv, av, rv).with_cutoff(cutoff),
+    ))
 }
 
 /// Construct a neighbour-driven [`PairMorse`] from per-atom parameters.
@@ -401,14 +416,10 @@ pub fn pair_morse_typed_ctor(
         }
     }
     let kernel = PairMorse::typed(type_id, ntypes, d0, alpha, r0);
-    // The style's `cutoff`, when it states one (`r < cutoff`, as LAMMPS).
-    Ok(Member::pair(match style_params.get("cutoff") {
-        Some(c) if c > 0.0 => kernel.with_cutoff(c),
-        Some(c) => {
-            return Err(format!("pair morse: 'cutoff' must be > 0, got {c}").into());
-        }
-        None => kernel,
-    }))
+    // The style's `cutoff` (`r < cutoff`, as LAMMPS): finite, for a
+    // neighbour sum is not finite without one.
+    let cutoff = need::neighbour_cutoff("morse", style_params)?;
+    Ok(Member::pair(kernel.with_cutoff(cutoff)))
 }
 
 #[cfg(test)]

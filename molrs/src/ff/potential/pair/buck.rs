@@ -6,7 +6,7 @@
 //! GROMACS spells the middle one `B = 1/rho`, normalized at that reader.
 
 use crate::ff::potential::need;
-use molrs::store::schema::block_names::PAIRS;
+use molrs::store::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
 use crate::ff::forcefield::{Params, pair_key};
@@ -53,8 +53,8 @@ enum Source {
 
 pub struct PairBuck {
     source: Source,
-    /// `cutoff²` of a neighbour-driven kernel (`r < cutoff`, as LAMMPS);
-    /// infinite for a compiled one, which prices the list it was given.
+    /// `cutoff²` (`r < cutoff`, as LAMMPS), at both compile doors; infinite
+    /// for a style that states no cutoff.
     cutoff2: F,
 }
 
@@ -110,8 +110,8 @@ impl PairBuck {
         }
     }
 
-    /// Price only pairs closer than `cutoff` (a neighbour-driven kernel:
-    /// the style's `cutoff`, as LAMMPS truncates).
+    /// Price only pairs closer than `cutoff`: the style's, as LAMMPS
+    /// truncates, at both compile doors.
     pub fn with_cutoff(mut self, cutoff: F) -> Self {
         self.cutoff2 = cutoff * cutoff;
         self
@@ -321,6 +321,12 @@ impl PairDriven for PairBuck {
 }
 
 /// Construct a [`PairBuck`] from style params, type params, and Frame topology.
+///
+/// A pair's row is found from its two atoms' types — the self row, else the
+/// cross row (`buck` does not mix: neither is [`IrError::NoMixing`]) — as
+/// [`pair_buck_typed_ctor`] finds it and LAMMPS's `pair_coeff i j` states it.
+///
+/// [`IrError::NoMixing`]: crate::ff::ir::IrError::NoMixing
 pub fn pair_buck_ctor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
@@ -344,10 +350,11 @@ pub fn pair_buck_ctor(
         .get("atomj")
         .and_then(|c| c.as_uint())
         .ok_or_else(|| "PairBuck: pairs block missing \"atomj\" column".to_string())?;
-    let type_col = block
-        .get("type")
+    let atom_types = frame
+        .get(ATOMS)
+        .and_then(|b| b.get("type"))
         .and_then(|c| c.as_string())
-        .ok_or_else(|| "PairBuck: pairs block missing \"type\" column".to_string())?;
+        .ok_or_else(|| "PairBuck: atoms block missing \"type\" column".to_string())?;
     let is_14 = block.get("is_14").and_then(|c| c.as_bool());
 
     let mut atom_i = Vec::with_capacity(i_col.len());
@@ -357,13 +364,15 @@ pub fn pair_buck_ctor(
     let mut c_vec = Vec::with_capacity(i_col.len());
 
     for idx in 0..i_col.len() {
-        let label = &type_col[idx];
-        let params = type_map
-            .get(label.as_str())
-            .ok_or_else(|| format!("PairBuck: unknown pair type '{}'", label))?;
-        let a = need::type_num("buck", label, params, "a")?;
-        let rho = need::type_num("buck", label, params, "rho")?;
-        let c = need::type_num("buck", label, params, "c")?;
+        let (ta, tb) = (
+            atom_types[i_col[idx] as usize].as_str(),
+            atom_types[j_col[idx] as usize].as_str(),
+        );
+        let params = need::unmixed_row("buck", "a", &type_map, ta, tb)?;
+        let label = pair_key(ta, tb)?;
+        let a = need::type_num("buck", &label, params, "a")?;
+        let rho = need::type_num("buck", &label, params, "rho")?;
+        let c = need::type_num("buck", &label, params, "c")?;
 
         let w = if is_14.is_some_and(|b| b[idx]) {
             scale_14
@@ -377,9 +386,12 @@ pub fn pair_buck_ctor(
         c_vec.push(c * w);
     }
 
-    Ok(Member::pair(PairBuck::new(
-        atom_i, atom_j, a_vec, rho_vec, c_vec,
-    )))
+    // The style's `cutoff` (`r < cutoff`, as LAMMPS truncates every pair,
+    // 1-4 ones included; ∞ when it states none).
+    let cutoff = need::pair_cutoff("buck", style_params)?;
+    Ok(Member::pair(
+        PairBuck::new(atom_i, atom_j, a_vec, rho_vec, c_vec).with_cutoff(cutoff),
+    ))
 }
 
 /// Construct a neighbour-driven [`PairBuck`] from per-atom parameters.
@@ -412,14 +424,10 @@ pub fn pair_buck_typed_ctor(
         }
     }
     let kernel = PairBuck::typed(type_id, ntypes, a, rho, c);
-    // The style's `cutoff`, when it states one (`r < cutoff`, as LAMMPS).
-    Ok(Member::pair(match style_params.get("cutoff") {
-        Some(c) if c > 0.0 => kernel.with_cutoff(c),
-        Some(c) => {
-            return Err(format!("pair buck: 'cutoff' must be > 0, got {c}").into());
-        }
-        None => kernel,
-    }))
+    // The style's `cutoff` (`r < cutoff`, as LAMMPS): finite, for a
+    // neighbour sum is not finite without one.
+    let cutoff = need::neighbour_cutoff("buck", style_params)?;
+    Ok(Member::pair(kernel.with_cutoff(cutoff)))
 }
 
 #[cfg(test)]
@@ -459,9 +467,6 @@ mod tests {
                 .insert("atomj", Array1::from(vec![1 as Idx]).into_dyn())
                 .unwrap();
             pairs
-                .insert("type", Array1::from(vec!["a-a".to_string()]).into_dyn())
-                .unwrap();
-            pairs
                 .insert("is_14", Array1::from(vec![true]).into_dyn())
                 .unwrap();
             frame.insert("pairs", pairs);
@@ -472,7 +477,7 @@ mod tests {
             tp.set("a", 12000.0);
             tp.set("rho", 0.31);
             tp.set("c", 280.0);
-            pair_buck_ctor(&sp, &[("a-a", &tp)], &frame).expect("buck kernel")
+            pair_buck_ctor(&sp, &[("a", &tp)], &frame).expect("buck kernel")
         };
 
         // Two separations: one where repulsion dominates, one where dispersion

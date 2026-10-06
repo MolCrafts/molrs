@@ -321,15 +321,10 @@ impl PairDriven for PairCoulCut {
     }
 }
 
-/// `(coulomb, dielectric, delta, cutoff)` of a gathered `coul/cut` style.
-fn coul_style(style_params: &Params) -> Result<(F, F, F, F), crate::ff::ir::IrError> {
+/// `(coulomb, dielectric, delta)` of a gathered `coul/cut` style.
+fn coul_style(style_params: &Params) -> Result<(F, F, F), crate::ff::ir::IrError> {
     let get = |key: &str| need::style_num("coul/cut", style_params, key);
-    Ok((
-        get("coulomb")?,
-        get("dielectric")?,
-        get("delta")?,
-        get("cutoff")?,
-    ))
+    Ok((get("coulomb")?, get("dielectric")?, get("delta")?))
 }
 
 /// Construct a [`PairCoulCut`] from **per-atom charges** + a neighbour list.
@@ -349,7 +344,7 @@ fn coul_style(style_params: &Params) -> Result<(F, F, F, F), crate::ff::ir::IrEr
 /// | `coulomb` | Coulomb constant `k` | [`IrError::MissingParam`] — the force field's to choose |
 /// | `dielectric` | dielectric `D` | the spec's default, 1 (LAMMPS's `dielectric`) |
 /// | `delta` | buffering distance δ (Å) | the spec's default, 0: no buffer, the textbook Coulomb |
-/// | `cutoff` | cutoff (Å) | the spec's default, ∞: do not truncate |
+/// | `cutoff` | cutoff (Å): a pair prices at `r < cutoff`, as LAMMPS | the spec's default, ∞: do not truncate |
 /// | `coulomb14scale` | 1-4 weight | projected from `special_bonds` by `PotentialCompiler::compile` |
 ///
 /// [`IrError::MissingParam`]: crate::ff::ir::IrError::MissingParam
@@ -363,7 +358,8 @@ pub fn pair_coul_cut_ctor(
     _type_params: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, crate::ff::potential::CompileError> {
-    let (coulomb, dielectric, delta, cutoff) = coul_style(style_params)?;
+    let (coulomb, dielectric, delta) = coul_style(style_params)?;
+    let cutoff = need::pair_cutoff("coul/cut", style_params)?;
     let scale_14 = need::style_num("coul/cut", style_params, "coulomb14scale")?;
 
     let atoms = frame
@@ -419,7 +415,8 @@ pub fn pair_coul_cut_typed_ctor(
     _type_params: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, crate::ff::potential::CompileError> {
-    let (coulomb, dielectric, delta, cutoff) = coul_style(style_params)?;
+    let (coulomb, dielectric, delta) = coul_style(style_params)?;
+    let cutoff = need::neighbour_cutoff("coul/cut", style_params)?;
     // `coulomb14scale` is deliberately not read here. On this path the 1-4
     // weight is applied to the pair table, not baked into a charge product, so
     // requiring the kernel to know it would be asking it a question it no

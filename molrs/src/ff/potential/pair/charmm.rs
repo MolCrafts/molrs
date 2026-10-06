@@ -37,8 +37,9 @@
 //! mix the same way, as LAMMPS's `init_one` does.
 //!
 //! The switch is part of the style's energy, so **both** compile doors apply
-//! it: the compiled (pair-list) form prices a pair beyond `cutoff` at zero,
-//! as LAMMPS does, where the compiled `lj/cut` has no cutoff at all.
+//! it: the compiled (pair-list) form prices a pair at or beyond `cutoff` at
+//! zero, as LAMMPS does — as every pair style's compiled form truncates at
+//! its `cutoff`.
 
 use molrs::store::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;

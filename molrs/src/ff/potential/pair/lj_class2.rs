@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use crate::ff::forcefield::Params;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
+use crate::ff::potential::need;
 use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
@@ -50,8 +51,8 @@ enum Source {
 
 pub struct PairLJClass2 {
     source: Source,
-    /// `cutoff²` of a neighbour-driven kernel (`r < cutoff`, as LAMMPS);
-    /// infinite for a compiled one, which prices the list it was given.
+    /// `cutoff²` (`r < cutoff`, as LAMMPS), at both compile doors; infinite
+    /// for a style that states no cutoff.
     cutoff2: F,
 }
 
@@ -103,8 +104,8 @@ impl PairLJClass2 {
         }
     }
 
-    /// Price only pairs closer than `cutoff` (a neighbour-driven kernel:
-    /// the style's `cutoff`, as LAMMPS truncates).
+    /// Price only pairs closer than `cutoff`: the style's, as LAMMPS
+    /// truncates, at both compile doors.
     pub fn with_cutoff(mut self, cutoff: F) -> Self {
         self.cutoff2 = cutoff * cutoff;
         self
@@ -361,9 +362,12 @@ pub fn pair_lj_class2_ctor(
         sig_vec.push(sigma);
     }
 
-    Ok(Member::pair(PairLJClass2::new(
-        atom_i, atom_j, eps_vec, sig_vec,
-    )))
+    // The style's `cutoff` (`r < cutoff`, as LAMMPS truncates every pair,
+    // 1-4 ones included; ∞ when it states none).
+    let cutoff = need::pair_cutoff("lj/class2", style_params)?;
+    Ok(Member::pair(
+        PairLJClass2::new(atom_i, atom_j, eps_vec, sig_vec).with_cutoff(cutoff),
+    ))
 }
 
 /// Construct a neighbour-driven [`PairLJClass2`] from per-atom parameters.
@@ -391,14 +395,10 @@ pub fn pair_lj_class2_typed_ctor(
         }
     }
     let kernel = PairLJClass2::typed(type_id, ntypes, epsilon, sigma);
-    // The style's `cutoff`, when it states one (`r < cutoff`, as LAMMPS).
-    Ok(Member::pair(match style_params.get("cutoff") {
-        Some(c) if c > 0.0 => kernel.with_cutoff(c),
-        Some(c) => {
-            return Err(format!("pair lj/class2: 'cutoff' must be > 0, got {c}").into());
-        }
-        None => kernel,
-    }))
+    // The style's `cutoff` (`r < cutoff`, as LAMMPS): finite, for a
+    // neighbour sum is not finite without one.
+    let cutoff = need::neighbour_cutoff("lj/class2", style_params)?;
+    Ok(Member::pair(kernel.with_cutoff(cutoff)))
 }
 
 #[cfg(test)]

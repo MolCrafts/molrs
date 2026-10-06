@@ -31,6 +31,16 @@ use crate::ff::ir::IrError;
 pub enum CompileError {
     /// The force-field IR refused a style, a parameter or a term.
     Ir(IrError),
+    /// A style that reads the simulation box — `pair coul/long/pme`'s
+    /// Ewald sums, as LAMMPS's kspace reads its simulation box — compiled
+    /// against a frame whose box it cannot use: none, one not periodic in
+    /// every direction, or a cell outside LAMMPS's restricted triclinic form.
+    /// The box is the frame's, never a force-field parameter.
+    NoBox {
+        category: String,
+        style: String,
+        reason: String,
+    },
     /// Anything else that stops the compile: a missing block or column, an
     /// unknown type label, special-bonds weights a compiled pair list cannot
     /// carry.
@@ -42,7 +52,7 @@ impl CompileError {
     pub fn ir(&self) -> Option<&IrError> {
         match self {
             CompileError::Ir(e) => Some(e),
-            CompileError::Invalid(_) => None,
+            CompileError::NoBox { .. } | CompileError::Invalid(_) => None,
         }
     }
 }
@@ -51,6 +61,14 @@ impl fmt::Display for CompileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CompileError::Ir(e) => e.fmt(f),
+            CompileError::NoBox {
+                category,
+                style,
+                reason,
+            } => write!(
+                f,
+                "{category} style `{style}` reads the frame's periodic simulation box: {reason}"
+            ),
             CompileError::Invalid(message) => f.write_str(message),
         }
     }
@@ -60,7 +78,7 @@ impl std::error::Error for CompileError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             CompileError::Ir(e) => Some(e),
-            CompileError::Invalid(_) => None,
+            CompileError::NoBox { .. } | CompileError::Invalid(_) => None,
         }
     }
 }

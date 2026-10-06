@@ -11,6 +11,7 @@ registered nothing, and what does not conform is refused by the
 | numpy callable = expression | ``test_a_numpy_kernel_is_the_expression`` | E rel ≤ 1e-12, F rel ≤ 1e-10 |
 | both = pinned LAMMPS ``bond_style fene`` (deck by ``write_lammps_forcefield``) | ``test_fene_is_lammps_bond_style_fene`` | rel ≤ 1e-10 |
 | ``urey_bradley`` from Python = pinned LAMMPS (``angle_style charmm``, K = 0) | ``test_a_python_category_is_lammps_urey_bradley`` | rel ≤ 1e-10 |
+| pair ``lj/smooth/linear`` by expression and numpy, its cutoff straddling the pairs = pinned LAMMPS; ``compile_typed`` (MD's first force call) = ``compile`` | ``test_a_python_pair_style_is_lammps_lj_smooth_linear_at_both_doors`` | rel ≤ 1e-10; doors rel ≤ 1e-12 |
 | ``.mrec`` round trip: expression byte for byte, a fresh subprocess prices it | ``test_a_record_prices_the_same_bits_in_a_fresh_process`` | bit for bit |
 | callable-only style in a fresh process | ``test_a_callable_only_style_is_no_kernel_in_a_fresh_process`` | ``NoKernel`` (a ``ValueError``) naming the style and ``molrs.ff.ir.register_style`` |
 | refusals | ``test_what_does_not_conform_is_refused_by_name`` | each its ``IrError`` subclass, naming the item |
@@ -62,6 +63,21 @@ FENE_PARAMS = [
     ir.Param("epsilon", "E"),
     ir.Param("sigma", "L"),
 ]
+# LAMMPS `pair_style lj/smooth/linear`: φ(r) − φ(rc) − (r − rc) φ′(rc), φ the
+# 12-6 Lennard-Jones, so energy and force vanish at the cutoff.
+SMOOTH = (
+    "4*epsilon*((sigma/r)^12-(sigma/r)^6)-4*epsilon*((sigma/cutoff)^12-(sigma/cutoff)^6)"
+    "+(r-cutoff)*4*epsilon*(12*(sigma/cutoff)^12-6*(sigma/cutoff)^6)/cutoff"
+)
+SMOOTH_PARAMS = [
+    ir.Param("epsilon", "E", mix=("lj_epsilon", "sigma")),
+    ir.Param("sigma", "L", mix=("lj_sigma", "epsilon")),
+]
+SMOOTH_STYLE = [
+    ir.Param("cutoff", "L"),
+    ir.Param("mixing", kind="text", choices=["arithmetic", "geometric", "sixthpower"],
+             default="arithmetic"),
+]
 UB = "k_ub*(distance(p1,p3)-r_ub)^2"
 BOND_ANGLE = (
     "(n1*(distance(p1,p2)-r1)+n2*(distance(p2,p3)-r2))"
@@ -80,6 +96,22 @@ BEADS = np.array(
         [1.76, 2.11, 1.18],
     ]
 )
+# Six unbonded atoms of two types on the 0.01 grid (the Rust proof's), and the
+# cutoff that straddles their pairs: ten inside, five beyond, the nearest
+# 0.19 Å from it, in each configuration.
+SMOOTH_XYZ = np.array(
+    [
+        [0.0, 0.0, 0.0],
+        [3.71, 0.12, 0.0],
+        [0.05, 3.93, 0.21],
+        [3.62, 3.84, 0.43],
+        [1.83, 1.91, 3.52],
+        [6.53, 0.24, 0.11],
+    ]
+)
+SMOOTH_TYPES = ["A", "A", "B", "B", "B", "A"]
+SMOOTH_ROWS = {"A": (0.2, 3.1), "B": (0.15, 3.6)}
+SMOOTH_RC = 5.0
 # Four atoms A-B-B-A: the 1-3 terms (0, 1, 2) and (1, 2, 3).
 CHAIN = np.array(
     [[0.0, 0.0, 0.0], [1.42, 0.31, 0.0], [2.05, 1.62, 0.12], [3.47, 1.81, 0.4]]
@@ -116,6 +148,18 @@ def fene_kernel(r, k, r0, epsilon, sigma):
     )
     de = k * r / (1 - x) + np.where(inner, 4 * epsilon * (6 * s6 - 12 * s6 * s6) / r, 0.0)
     return e, de
+
+
+def smooth_kernel(r, epsilon, sigma, cutoff, **_):
+    """``lj/smooth/linear`` in numpy (the other inputs — charges, the
+    special-bonds weights, ``mixing`` — arrive as keywords and are unused)."""
+
+    def lj(x):
+        s6 = (sigma / x) ** 6
+        return 4 * epsilon * (s6 * s6 - s6), 24 * epsilon * (s6 - 2 * s6 * s6) / x
+
+    (u, du), (uc, duc) = lj(r), lj(cutoff)
+    return u - uc - (r - cutoff) * duc, du - duc
 
 
 def bond_angle_kernel(x, n1, n2, r1, r2, theta0):
@@ -160,6 +204,11 @@ def extensions() -> Iterator[None]:
     ir.register_style("bond", "fene/proof", params=FENE_PARAMS, expression=FENE,
                       lammps="positional:fene")
     ir.register_style("bond", "fene/proof-np", params=FENE_PARAMS, kernel=fene_kernel)
+    ir.register_style("pair", "lj/smooth/linear/proof", params=SMOOTH_PARAMS,
+                      style_params=SMOOTH_STYLE, special="lj", expression=SMOOTH,
+                      lammps="positional:lj/smooth/linear")
+    ir.register_style("pair", "lj/smooth/linear/proof-np", params=SMOOTH_PARAMS,
+                      style_params=SMOOTH_STYLE, special="lj", kernel=smooth_kernel)
     ir.register_category("urey_bradley", 3)
     ir.register_style("urey_bradley", "proof", params={"k_ub": "E/L^2", "r_ub": "L"},
                       expression=UB)
@@ -178,6 +227,8 @@ def extensions() -> Iterator[None]:
     for category, name in [
         ("bond", "fene/proof"),
         ("bond", "fene/proof-np"),
+        ("pair", "lj/smooth/linear/proof"),
+        ("pair", "lj/smooth/linear/proof-np"),
         ("urey_bradley", "proof"),
         ("bond_angle", "class2"),
         ("bond_angle", "class2/np"),
@@ -237,6 +288,22 @@ def fene_ff(style: str, **row: float) -> molrs.ff.ForceField:
     return ff
 
 
+def smooth_ff(style: str) -> molrs.ff.ForceField:
+    ff, t = field("smooth", "real")
+    pair = ff.def_style("pair", style, {"cutoff": SMOOTH_RC})
+    for name, (eps, sigma) in SMOOTH_ROWS.items():
+        pair.def_type(name, t[name], epsilon=eps, sigma=sigma)
+    return ff
+
+
+def smooth_frame(xyz: np.ndarray) -> molrs.Frame:
+    """The six atoms at ``xyz`` and their ``pairs`` list: every pair, none
+    bonded."""
+    f = frame(xyz, SMOOTH_TYPES)
+    f["pairs"] = molrs.ff.intramolecular_pairs(f)
+    return f
+
+
 def ub_ff() -> molrs.ff.ForceField:
     ff, t = field("ub", "real")
     style = ff.def_style("urey_bradley", "proof")
@@ -286,7 +353,12 @@ def lammps_cases() -> dict[str, list[tuple[molrs.ff.ForceField, molrs.Frame,
                                            molrs.ff.ForceField, molrs.Frame, str]]]:
     """Per case and configuration: what molrs prices (style, frame), and the
     deck LAMMPS prices (its force field, frame, units)."""
-    out = {"fene": [], "urey_bradley": []}
+    out = {"fene": [], "smooth": [], "urey_bradley": []}
+    smooth = smooth_ff("lj/smooth/linear/proof")
+    for xyz in (SMOOTH_XYZ, moved(SMOOTH_XYZ, 0.13)):
+        # LAMMPS's data file carries no pair list.
+        out["smooth"].append((smooth, smooth_frame(xyz), smooth, frame(xyz, SMOOTH_TYPES),
+                              "real"))
     fene = fene_ff("fene/proof")
     for xyz in (BEADS, moved(BEADS, 0.02)):
         f = bead_frame(xyz)
@@ -400,6 +472,47 @@ def test_fene_is_lammps_bond_style_fene() -> None:
         return fene_ff("fene/proof-np")
 
     assert against_lammps("fene", numpy_twin) <= 1e-10
+
+
+def typed_energy_forces(ff: molrs.ff.ForceField, f: molrs.Frame,
+                        xyz: np.ndarray) -> tuple[float, np.ndarray]:
+    """The neighbour-driven door: ``compile_typed`` moved into an integrator
+    over a neighbour list past every pair, and its first force call."""
+    from molrs.md import VelocityVerlet
+
+    box = molrs.Box.cube(100.0, origin=np.full(3, -50.0), pbc=np.ones(3, dtype=bool))
+    skin = molrs.VerletSkin(molrs.NeighborList(30.0), 29.0, xyz, box, skin=1.0)
+    vv = VelocityVerlet(1.0, potential=molrs.ff.PotentialCompiler(ff).compile_typed(f),
+                        neighbors=skin, mass=np.ones(len(xyz)))
+    state = vv.initial(xyz, np.zeros_like(xyz))
+    return float(state.energy), np.asarray(state.forces)
+
+
+def test_a_python_pair_style_is_lammps_lj_smooth_linear_at_both_doors() -> None:
+    deck = molrs.ff.write_lammps_forcefield_str(smooth_ff("lj/smooth/linear/proof"),
+                                                frame(SMOOTH_XYZ, SMOOTH_TYPES), units="real")
+    (style,) = [l.split() for l in deck.splitlines() if l.startswith("pair_style ")]
+    assert style[1] == "lj/smooth/linear" and float(style[2]) == SMOOTH_RC, deck
+    assert "pair_modify mix arithmetic" in deck, deck
+    worst_doors = 0.0
+    for xyz in (SMOOTH_XYZ, moved(SMOOTH_XYZ, 0.13)):
+        d = xyz[:, None] - xyz[None]
+        r = np.linalg.norm(d, axis=-1)[np.triu_indices(len(xyz), 1)]
+        assert (r < SMOOTH_RC).any() and (r >= SMOOTH_RC).any(), r
+        for style in ("lj/smooth/linear/proof", "lj/smooth/linear/proof-np"):
+            ff, f = smooth_ff(style), smooth_frame(xyz)
+            e, forces = price(ff, f)
+            e_t, f_t = typed_energy_forces(ff, f, xyz)
+            scale = float(np.abs(forces).max())
+            worst_doors = max(worst_doors, abs(e_t - e) / abs(e), rel(f_t, forces, scale))
+    assert worst_doors <= 1e-12
+    print(f"MEASURED smooth compile_typed vs compile: {worst_doors:.1e}")
+    assert against_lammps("smooth") <= 1e-10
+
+    def numpy_twin(ff: molrs.ff.ForceField) -> molrs.ff.ForceField:
+        return smooth_ff("lj/smooth/linear/proof-np")
+
+    assert against_lammps("smooth", numpy_twin) <= 1e-10
 
 
 def test_a_python_category_is_lammps_urey_bradley() -> None:

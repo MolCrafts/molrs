@@ -3130,7 +3130,8 @@ class PotentialCompiler:
     ``ForceField`` do not reach it. ``compile(frame)`` binds a typed frame now;
     ``defer()`` returns ``Potentials`` that bind the frame they are evaluated
     on; ``compile_typed(frame)`` builds the kernels of a neighbour-driven (MD)
-    evaluation.
+    evaluation. Both doors price a pair only inside its style's ``cutoff``
+    (``r < cutoff``, as LAMMPS; ∞ when the style states none).
     """
 
     def __init__(self, forcefield: ForceField) -> None: ...

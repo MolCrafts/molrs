@@ -119,9 +119,10 @@ Calling conventions, every tier:
 - A form **writes** the **unweighted** energy of each term and its
   derivative `de_dq` (a compound form: `∂E/∂x`, not the force). The generic
   kernels (`ff::potential::generic`: `ScalarBonded`, `ScalarPair`,
-  `CompoundTerms`) apply the pair special-bonds weight, `r < cutoff` at the
-  neighbour-driven door (the `pairs`-list door prices the list it is given,
-  cutoff-free, as every built-in pair style does), the chain rule onto
+  `CompoundTerms`) apply the pair special-bonds weight, `r < cutoff` at
+  both compile doors (the style's `cutoff`, ∞ when it states none — LAMMPS
+  truncates every pair style, 1-4 pairs included, and so does every
+  built-in; a form is never called past the cutoff), the chain rule onto
   Cartesian forces and the virial.
 
 LAMMPS's `pair_style lj/smooth/linear` as a Tier-2 form, from
@@ -241,8 +242,11 @@ a Lepton subset:
   bare parameter (the pair value) and `x1` / `x2` (the self rows); every
   numeric parameter by name, **as stored** — an angle value in degrees,
   which the expression converts (`theta0*0.017453292519943295`).
-- The expression is the unweighted, untruncated energy of one term; a pair
-  expression must be symmetric under exchanging the atoms.
+- The expression is the unweighted energy of one term, inside the cutoff
+  (the generic pair kernel truncates at `r < cutoff`; a shift or switch to
+  zero there is the expression's own, as `lj/cut`'s `shift` and the CHARMM
+  switch are); a pair expression must be symmetric under exchanging the
+  atoms.
 
 Derivatives are exact (forward-mode duals: one for `q`, `3·arity` for the
 points). A style with no registered kernel whose instance carries an
@@ -393,7 +397,7 @@ molrs's own LAMMPS writer wrote from the specs; `%.17g` energy and forces;
 
 | Test | Criterion | Measured worst |
 |---|---|---|
-| `pair_style_matches_lammps` | E and every force component = LAMMPS `lj/smooth/linear`, rel ≤ 1e-10; `compile_typed` = `compile`, rel ≤ 1e-12 | 5.1·10⁻¹⁴; doors bit for bit |
+| `pair_style_matches_lammps` | E and every force component = LAMMPS `lj/smooth/linear` (cutoff 5 Å straddling the 15 pairs: ten inside, five beyond), rel ≤ 1e-10; `compile_typed` = `compile`, rel ≤ 1e-12 | 1.7·10⁻¹⁵; doors bit for bit |
 | `new_category_matches_lammps` | `urey_bradley` = LAMMPS `angle_style charmm` with K = 0, rel ≤ 1e-10 | bit for bit |
 | `fene_matches_lammps` | `bond fene` by expression = LAMMPS `bond_style fene`, rel ≤ 1e-10, (r/R0)² < 0.9 | 6.8·10⁻¹⁶ |
 | `mrec_round_trip` | `.mrec` write/read prices bit for bit; with `Registry::builtin()` only, `fene` prices bit for bit, `bond_angle` by its expression (≤ 1e-10 of its native form), `urey_bradley` and `lj/smooth/linear` are `NoKernel` naming them | as stated |
@@ -409,6 +413,7 @@ numbers pinned in `ff_ir_extension_lammps.tsv` by the same script:
 | a numpy kernel = the expression | E rel ≤ 1e-12, F rel ≤ 1e-10 | 1.1·10⁻¹⁶, 2.1·10⁻¹⁶ |
 | both = LAMMPS `bond_style fene` (deck by `write_lammps_forcefield`, `lj` units) | rel ≤ 1e-10 | 7.0·10⁻¹⁶ (expression), 5.2·10⁻¹⁶ (numpy) |
 | `urey_bradley` from Python = LAMMPS (`angle_style charmm`, K = 0) | rel ≤ 1e-10 | 1.6·10⁻¹⁶ |
+| `pair lj/smooth/linear` by expression and by a numpy kernel = LAMMPS, its 5 Å cutoff straddling the pairs; `compile_typed` (an integrator's first force call) = `compile` | rel ≤ 1e-10; doors rel ≤ 1e-12 | 2.5·10⁻¹⁵ (expression), 2.9·10⁻¹⁵ (numpy); doors bit for bit |
 | `.mrec` round trip; a subprocess that registered nothing | bit for bit, expression byte for byte | bit for bit |
 | a callable-only style in a fresh process | `NoKernel` naming the style and `molrs.ff.ir.register_style` | as stated |
 | refusals: unknown function, unbound variable, sealed `bond harmonic`, wrong `def_type` arity, kernel of the wrong shape, kernel raising, `write_gromacs_top_ff`, missing parameter | each its `IrError` subclass naming the item | as stated |

@@ -2,8 +2,10 @@
 //!
 //! Pair source is fixed at construction:
 //! - [`LJCut::new`] / [`LJCut::lj126`] — uniform ε/σ, loop-fed pairs (MD)
-//! - [`LJCut::compiled`] — per-pair ε/σ from a ForceField `pairs` block
+//! - [`LJCut::compiled`] — per-pair ε/σ from a ForceField `pairs` block,
+//!   truncated (and shifted) at the style's `cutoff` by [`LJCut::truncated`]
 //!
+//! Every source prices a pair only at `r < cutoff`, as LAMMPS does.
 //! Arithmetic uses `inv_r2 = 1/r2`. Degenerate pairs `r2 < 1e-24` are skipped.
 
 use molrs::store::schema::block_names::{ATOMS, PAIRS};
@@ -34,6 +36,9 @@ enum PairSource {
         atom_j: Vec<usize>,
         epsilon: Vec<F>,
         sigma: Vec<F>,
+        /// Per pair, the energy at the cutoff a shifted style subtracts
+        /// (LAMMPS's `offset`); zero unshifted.
+        e0: Vec<F>,
     },
     /// Per-atom types plus a type-pair table.
     ///
@@ -160,6 +165,7 @@ impl LJCut {
         assert_eq!(atom_i.len(), atom_j.len());
         assert_eq!(atom_i.len(), epsilon.len());
         assert_eq!(atom_i.len(), sigma.len());
+        let e0 = vec![0.0; atom_i.len()];
         Self {
             epsilon: 1.0,
             sigma: 1.0,
@@ -177,8 +183,42 @@ impl LJCut {
                 atom_j,
                 epsilon,
                 sigma,
+                e0,
             },
         }
+    }
+
+    /// The compiled kernel truncated at `cutoff` (`r < cutoff`, as LAMMPS's
+    /// `lj/cut` truncates every pair, special ones included) and, when
+    /// `shifted`, shifted to zero there (`pair_modify shift yes`) — the
+    /// constants the typed kernel computes, pair by pair. `cutoff` = ∞ is a
+    /// style that states none: every listed pair prices, unshifted.
+    ///
+    /// Call it after [`with_exponents`](Self::with_exponents): the shift is
+    /// the energy of the kernel's own exponents at the cutoff.
+    ///
+    /// # Errors
+    /// The kernel is not compiled, or `cutoff` is not positive.
+    pub fn truncated(mut self, cutoff: F, shifted: bool) -> Result<Self, String> {
+        if cutoff.is_nan() || cutoff <= 0.0 {
+            return Err(format!("LJCut requires cutoff > 0, got {cutoff}"));
+        }
+        let (n, m) = (self.n, self.m);
+        let PairSource::Compiled {
+            epsilon, sigma, e0, ..
+        } = &mut self.source
+        else {
+            return Err("LJCut::truncated: only a compiled kernel is truncated here".into());
+        };
+        if shifted {
+            for (e, (&eps, &sig)) in e0.iter_mut().zip(epsilon.iter().zip(sigma.iter())) {
+                *e = shift_constants(eps, sig, cutoff, n, m, true, false).1;
+            }
+        }
+        self.cutoff = cutoff;
+        self.cutoff2 = cutoff * cutoff;
+        self.shifted = shifted;
+        Ok(self)
     }
 
     /// The compiled kernel with the Mie exponents `n > m > 0` of the style
@@ -360,7 +400,8 @@ impl LJCut {
         n: i32,
         m: i32,
     ) -> Option<(F, [F; 3])> {
-        if r2 < MIN_R2 || r2 > cutoff2 {
+        // LAMMPS: `if (rsq < cutsq[itype][jtype])`.
+        if r2 < MIN_R2 || r2 >= cutoff2 {
             return None;
         }
         if n == 12 && m == 6 {
@@ -411,6 +452,7 @@ impl LJCut {
             atom_j,
             epsilon,
             sigma,
+            e0,
         } = &self.source
         else {
             return 0.0;
@@ -432,9 +474,9 @@ impl LJCut {
                 [dx, dy, dz],
                 sigma[idx],
                 ceps,
+                e0[idx],
                 0.0,
-                0.0,
-                F::INFINITY,
+                self.cutoff2,
                 self.n,
                 self.m,
             ) else {
@@ -658,8 +700,8 @@ impl PairDriven for LJCut {
         out: &mut [F],
     ) -> (F, Option<Virial>) {
         match &self.source {
-            // A compiled list is an intramolecular sum with no cutoff and no
-            // periodicity; a virial from its raw differences would be a number
+            // A compiled list is an intramolecular sum with no periodicity;
+            // a virial from its raw differences would be a number
             // about nothing, and it cannot read a per-pair weight either.
             PairSource::Compiled { .. } => {
                 debug_assert!(factor.is_empty());
@@ -814,7 +856,9 @@ fn exponents(style_params: &Params) -> Result<(i32, i32), IrError> {
 /// Construct a compiled [`LJCut`] from per-atom-type params + a neighbour list.
 ///
 /// A pair whose types have an explicit cross row is priced with it; every other
-/// pair is mixed from the two self rows by the style's `mixing`.
+/// pair is mixed from the two self rows by the style's `mixing`. A pair at or
+/// beyond the style's `cutoff` prices nothing, shifted by `shift` — exactly
+/// as the typed kernel and LAMMPS price it.
 pub fn pair_lj_cut_ctor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
@@ -824,6 +868,8 @@ pub fn pair_lj_cut_ctor(
     let scale_14 = style_params.get("lj14scale").unwrap_or(1.0) as F;
     let mixing = mixing_of("lj/cut", style_params)?;
     let (n_exp, m_exp) = exponents(style_params)?;
+    let cutoff = need::pair_cutoff("lj/cut", style_params)?;
+    let shifted = need::style_num("lj/cut", style_params, "shift")? != 0.0;
 
     let atoms = frame
         .get(ATOMS)
@@ -867,7 +913,9 @@ pub fn pair_lj_cut_ctor(
     }
 
     Ok(Member::pair(
-        LJCut::compiled(atom_i, atom_j, eps_vec, sig_vec).with_exponents(n_exp, m_exp)?,
+        LJCut::compiled(atom_i, atom_j, eps_vec, sig_vec)
+            .with_exponents(n_exp, m_exp)?
+            .truncated(cutoff, shifted)?,
     ))
 }
 
@@ -884,8 +932,9 @@ pub fn pair_lj_cut_typed_ctor(
 ) -> Result<Member, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let mixing = mixing_of("lj/cut", style_params)?;
-    // Required, where the compiled form has no cutoff at all: an intramolecular
-    // list is finite by construction, a periodic neighbour sum is not.
+    // Required finite, where the compiled form takes ∞ (a style stating no
+    // cutoff): an intramolecular list is finite by construction, a periodic
+    // neighbour sum is not.
     let cutoff = need::neighbour_cutoff("lj/cut", style_params)?;
     let (n, m) = exponents(style_params)?;
     let shifted = need::style_num("lj/cut", style_params, "shift")? != 0.0;
@@ -1167,13 +1216,10 @@ mod tests {
         );
     }
 
-    /// A typed kernel declares its cutoff, where a compiled one has none.
-    ///
-    /// `compiled` exists for an intramolecular list with no spatial cutoff at
-    /// all — it passes `INFINITY` — and that is correct for what it is. A
-    /// neighbour-driven kernel must not inherit it: every pair inside the
-    /// cutoff interacts and nothing outside it does, which is what makes the
-    /// sum finite in a periodic system.
+    /// A typed kernel stops at its cutoff (`r < cutoff`, as LAMMPS): every
+    /// pair inside it interacts and nothing outside it does, which is what
+    /// makes the sum finite in a periodic system. The compiled kernel stops
+    /// at the same cutoff ([`LJCut::truncated`]).
     #[test]
     fn a_typed_kernel_stops_at_its_cutoff() {
         let typed = LJCut::typed(
@@ -1192,6 +1238,41 @@ mod tests {
             typed.pair_eval(9.0, [3.0, 0.0, 0.0]).is_none(),
             "3 Å is past the 2.5 Å cutoff"
         );
+        assert!(
+            typed.pair_eval(6.25, [2.5, 0.0, 0.0]).is_none(),
+            "LAMMPS prices `rsq < cutsq`: nothing at the cutoff itself"
+        );
+    }
+
+    /// The compiled kernel truncated and shifted prices a pair as the typed
+    /// one does, bit for bit, on each side of the cutoff.
+    #[test]
+    fn a_truncated_compiled_kernel_is_the_typed_one() {
+        use crate::ff::potential::pair::testing::{assert_same, table_over};
+        let coords: Vec<F> = vec![0.0, 0.0, 0.0, 1.1, 0.2, 0.0, 2.9, -0.4, 0.3];
+        let links = [(0_usize, 1_usize), (0, 2), (1, 2)];
+        for shifted in [false, true] {
+            let compiled =
+                LJCut::compiled(vec![0, 0, 1], vec![1, 2, 2], vec![1.0; 3], vec![1.0; 3])
+                    .truncated(2.5, shifted)
+                    .unwrap();
+            let typed = LJCut::typed(
+                vec![0_u32; 3],
+                &[(1.0, 1.0)],
+                Mixing::Arithmetic,
+                2.5,
+                12,
+                6,
+                shifted,
+                false,
+            )
+            .unwrap();
+            assert_same(
+                &format!("shift {shifted}"),
+                compiled.calc_energy_forces(&coords),
+                typed.calc_energy_forces_with_pairs(&coords, &table_over(&coords, &links)),
+            );
+        }
     }
 
     #[test]

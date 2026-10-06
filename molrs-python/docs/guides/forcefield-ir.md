@@ -122,13 +122,39 @@ the energy of a physical system did not change with it.
 | `coul/cut` | coulomb qᵢqⱼ / (dielectric (r + delta)) | style `coulomb` (E·L/e²), `dielectric` (default 1), `delta` (L, default 0), `cutoff` (default ∞) | `pair_style coul/cut` with `delta = 0` (the buffer is molrs's, for MMFF; the LAMMPS writer refuses `delta ≠ 0` and `dielectric ≠ 1`). LAMMPS fixes the constant (`qqr2e`) per `units` | unchanged |
 | `lj/charmm` | 4ε[(σ/r)¹² − (σ/r)⁶]·S(r), S CHARMM's switch from `inner` to `cutoff` | `epsilon`, `sigma`, `epsilon14`, `sigma14` (absent → `epsilon`, `sigma`); style `inner`, `cutoff`, `mixing` (default `arithmetic`), `one_four` (`"regular"`, the default, or `"epsilon14"`: what a `special_bonds` 1-4 pair is priced at, see [1-4](#1-4-interactions)) | `pair_style lj/charmm/coul/charmm`, van-der-Waals half; `pair_coeff i j ε σ ε₁₄ σ₁₄` (`one_four = "epsilon14"` has no LAMMPS form) | new |
 | `coul/charmm` | coulomb qᵢqⱼ/(dielectric r)·S(r); force (C qᵢqⱼ/r²)·S(r), LAMMPS's switched force, not the gradient | style `coulomb`, `dielectric` (default 1), `inner`, `cutoff` | `pair_style lj/charmm/coul/charmm`, Coulomb half (`inner2 outer2` when its cutoffs differ) | new |
-| `coul/long/pme` | Ewald-summed coulomb qᵢqⱼ/r | style `coulomb`, `cutoff`, `alpha`, `order`, `grid_*` | `pair_style lj/cut/coul/long` (the real-space half; `kspace_style` states an accuracy, not `alpha`, so the Ewald parameters are neither read nor written, and a LAMMPS-read style prices nothing until they are stated) | `lj/cut/coul/long` reads as this (was a plain `coul/cut`) |
+| `coul/long/pme` | Ewald-summed coulomb qᵢqⱼ/r over the frame's periodic box | style `coulomb`, `cutoff`, `alpha`, `order`, `grid_*`; the cell is the frame's box (`frame.box`), as LAMMPS's kspace reads its simulation box | `pair_style lj/cut/coul/long` (the real-space half; `kspace_style` states an accuracy, not `alpha`, so the Ewald parameters are neither read nor written, and a LAMMPS-read style prices nothing until they are stated) | `lj/cut/coul/long` reads as this (was a plain `coul/cut`); the box is the frame's (was undeclared style params `box_xx` … `box_zz`) |
 | `thole` | T(r) qᵢqⱼ/r, T = 1 − (1 + s r/2) e^(−s r), s = ½(aᵢ + aⱼ)/(αᵢαⱼ)^(1/6) | per type `charge`, `alpha` (L³), `damp` | `pair_style thole` `alpha damp` (LAMMPS damps the Drude charges of the atoms; molrs's per-type `charge` is its own) | `a_thole` renamed `damp` |
 | `coul/tt` | fₙ(r) qᵢqⱼ/r (Tang–Toennies) | style `b`, `c`, `order` | `pair_style coul/tt` (`n` = `order`) | unchanged |
 | `uff_lj`, `mmff_vdw` | UFF x/D LJ; MMFF buffered 14-7 | per-instance / per-type | none | unchanged |
 
 `special_bonds` (the force field's `[1-2, 1-3, 1-4]` weights for van der
 Waals and Coulomb) is LAMMPS's `special_bonds lj … coul …`.
+
+**Cutoffs.** Every pair style prices a pair only at `r < cutoff`, its own
+`cutoff`, as LAMMPS's pair styles do (`rsq < cutsq`) — and the CHARMM
+styles switch between `inner` and `cutoff` — at **both** compile doors:
+`PotentialCompiler.compile` prices the rows of the frame's `pairs` list that
+are inside the cutoff, exactly as `compile_typed` prices the pairs a
+neighbour search finds. A `special_bonds` 1-4 pair is a pair-style pair and
+is truncated too (LAMMPS applies `special_lj` / `special_coul` inside the
+`rsq < cutsq` branch). This holds for built-in, run-time (Tier 1 and 2,
+Python callables included) and expression styles alike. A style that
+states no `cutoff` has cutoff ∞: the declared default of `lj/cut`,
+`lj/class2`, `buck`, `morse` and `coul/cut`, and every style whose spec
+declares none (`thole`, `coul/tt`, `uff_lj`, `mmff_vdw`), so a field read
+from an engine that priced it untruncated (OpenMM `NoCutoff`, a prmtop)
+prices every listed pair. A neighbour-driven evaluation (MD) still needs a
+finite `cutoff` and refuses ∞ (`BadValue`). The 1-4 exceptions kernel — a
+`dihedral charmm` `w`, per-pair overrides ([1-4](#1-4-interactions)) — is
+no pair style and is never truncated, as `dihedral_charmm.cpp` prices its
+1-4 pair at any distance.
+
+**The periodic box is frame data.** `coul/long/pme` reads its cell from the
+frame being compiled (`frame.box`), never from a style parameter. A frame
+without a box, with a box not periodic in x, y and z, or with a cell
+outside LAMMPS's restricted triclinic form (`a` along x, `b` in the xy
+plane) is refused by name (Rust `CompileError::NoBox`; Python
+`ValueError`). Its spec declares exactly the parameters its kernel reads.
 
 ## Improper atom order
 
@@ -1330,7 +1356,20 @@ reader refuses `ordering="smirnoff"`).
   matches molrs to ≤ 2.3e-15 relative (`evdwl` and `ecoul` bit for bit), and
   every force component to 1e-10 (`ff::one_four`). `special_bonds` ½ equals
   per-pair scales ½ equals per-pair parameters ε/2, qᵢqⱼ/2; `w` = 1 equals
-  per-pair rows of ε₁₄, σ₁₄; `compile` equals `compile_typed`.
+  per-pair rows of ε₁₄, σ₁₄; `compile` equals `compile_typed`. Two more
+  LAMMPS cases cut short of the 1-4 pairs: `lj/charmm/coul/charmm 2.0 2.4`
+  with every `w` = 1 (every pair the pair styles see is past 2.4 Å, so
+  `evdwl` / `ecoul` are the dihedrals' untruncated 1-4 terms), and
+  `lj/cut/coul/cut 3.0` with `pair_modify shift yes` and `special_bonds` ½
+  / ⅚ (the cutoff straddles the 1-4 pairs and the 1-5 ones): every term and
+  force component to 1e-10, `compile` = `compile_typed` to 1e-12.
+- Both compile doors truncate at the cutoff: `ff::ir::builtin_conformance`
+  holds every built-in pair style and its expression twin to each other at
+  both doors and `compile` to `compile_typed` (1e-12) on pairs straddling
+  the cutoff (and CHARMM's switch); `ff::potential::compile` holds
+  `lj/cut` (shifted and not) and `coul/cut` to LAMMPS's formula by hand,
+  and those with `lj/class2`, `buck` and `morse` to `compile_typed`, with a
+  1-4 pair and a regular one on each side of the cutoff.
 - GROMACS-read systems against GROMACS 2025.3 (double precision, `mdrun
   -rerun`, energies from the .edr) and LAMMPS (`run 0` on molrs's data file
   and include), `ff::forcefield::readers::gromacs::engine_check`,

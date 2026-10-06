@@ -195,48 +195,11 @@ fn atom_types(ff: &mut ForceField, types: &[(&str, F)]) {
 
 /// `frame` with its `pairs` block under `ff`'s special-bonds weights.
 ///
-/// A pair style whose kernel reads each pair's type (`buck`, `morse`,
-/// `lj/class2`: a row per pair) gets the `type` column: the name of the style's row on the
-/// pair's two atom types.
-///
 /// The 1-3 and 1-4 classes are the bond graph's, as an engine's are (OpenMM's
 /// `bondCutoff`), not only the rows the frame's `angles` and `dihedrals`
 /// blocks happen to hold.
 fn with_pairs(ff: &ForceField, mut frame: Frame) -> Frame {
-    let mut pairs = intramolecular_pairs(&graph_topology(&frame), ff.special_bonds()).unwrap();
-    if let Some(style) = ["buck", "morse", "lj/class2"]
-        .iter()
-        .find_map(|n| ff.get_style("pair", n))
-    {
-        let types = frame
-            .get("atoms")
-            .unwrap()
-            .get("type")
-            .unwrap()
-            .as_string()
-            .unwrap();
-        let col = |k: &str| pairs.get(k).unwrap().as_uint().unwrap().to_owned();
-        let (ai, aj) = (col("atomi"), col("atomj"));
-        let names: Vec<String> = ai
-            .iter()
-            .zip(aj.iter())
-            .map(|(&i, &j)| {
-                let (ti, tj) = (&types[[i as usize]], &types[[j as usize]]);
-                style
-                    .type_rows()
-                    .iter()
-                    .find(|(_, e, _)| {
-                        let (a, b) = (e[0], *e.last().unwrap());
-                        (a == ti && b == tj) || (a == tj && b == ti)
-                    })
-                    .map(|r| r.0.to_owned())
-                    .unwrap()
-            })
-            .collect();
-        pairs
-            .insert("type", Array1::from_vec(names).into_dyn())
-            .unwrap();
-    }
+    let pairs = intramolecular_pairs(&graph_topology(&frame), ff.special_bonds()).unwrap();
     frame.insert("pairs", pairs);
     frame
 }

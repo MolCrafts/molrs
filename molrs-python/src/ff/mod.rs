@@ -1761,7 +1761,11 @@ impl PyPotentialCompiler {
     /// resolves (``atoms``/``bonds``/``angles``/``dihedrals``/``impropers``/
     /// ``pairs``), as produced by a typifier or an external emitter. Every
     /// pair style is resolved against the frame's ``pairs`` block — a fixed
-    /// list with no spatial cutoff, right for a molecule in free space.
+    /// list, right for a molecule in free space — and prices a row only
+    /// inside its ``cutoff`` (``r < cutoff``, with its switch where it has
+    /// one), as :meth:`compile_typed` and LAMMPS do; a style stating no
+    /// ``cutoff`` prices every row. ``pair coul/long/pme`` reads the
+    /// frame's periodic ``box``.
     ///
     /// Parameters
     /// ----------
@@ -1778,8 +1782,10 @@ impl PyPotentialCompiler {
     /// TypeError
     ///     If ``frame`` is not a :class:`Frame` (``None`` included).
     /// ValueError
-    ///     If a style has no registered kernel, a type label is unknown, or
-    ///     the force field's 1-2 / 1-3 weights are not 0 or 1.
+    ///     If a style has no registered kernel, a type label is unknown, the
+    ///     force field's 1-2 / 1-3 weights are not 0 or 1, or a style that
+    ///     reads the box (``coul/long/pme``) meets a frame without a periodic
+    ///     one.
     fn compile(&self, frame: &PyFrame) -> PyResult<PyPotentials> {
         ir::clear_kernel_err();
         let potentials = frame
@@ -1815,8 +1821,8 @@ impl PyPotentialCompiler {
     ///
     /// The counterpart of :meth:`compile`, and what periodic MD needs. That
     /// one resolves every pair style against the frame's ``pairs`` block — a
-    /// fixed list with no spatial cutoff, right for a free-boundary molecule
-    /// and wrong for a periodic system. This one resolves them against the
+    /// fixed list, right for a free-boundary molecule and wrong for a
+    /// periodic system; over the same pairs the two price the same energy. This one resolves them against the
     /// **atoms**, reads no ``pairs`` block, and requires the style's declared
     /// cutoff.
     ///

@@ -625,13 +625,52 @@ IR](guides/forcefield-ir.md#engine-codecs).
   block or column, an unknown type label) stay plain `ValueError`.
 - **The neighbour-driven `pair lj/class2`, `buck` and `morse` stop at their
   `cutoff`** (`r < cutoff`, as LAMMPS and `lj/cut` do); 0.15 priced every
-  pair the neighbour table held, beyond the cutoff too. The compiled
-  (`pairs`-list) door is unchanged: cutoff-free. Found by the built-in gate
-  (`ff::ir::builtin_conformance`), which holds each built-in to its
-  expression at both doors.
+  pair the neighbour table held, beyond the cutoff too. Found by the
+  built-in gate (`ff::ir::builtin_conformance`), which holds each built-in
+  to its expression at both doors. The compiled door truncates too: see
+  [Pair cutoffs at both compile doors](#pair-cutoffs-at-both-compile-doors).
 - **`dihedral periodic`** refuses a gap in its terms (`k1`, `k3` without
   `k2`: `MissingParam` `k2`; 0.15 silently dropped `k3`) and a row spelling
   both `k` and `k1` (`BadValue`).
+
+### Pair cutoffs at both compile doors
+
+- **`PotentialCompiler.compile` (the `pairs`-list door) truncates every
+  pair style at its `cutoff`**, exactly as `compile_typed` and LAMMPS do: a
+  `pairs` row prices only at `r < cutoff`, a shifted `lj/cut`
+  (`shift`, `pair_modify shift yes`) is shifted to zero there, and the
+  CHARMM styles switch between `inner` and `cutoff` (they already did). 0.15
+  priced every listed pair whatever the style's `cutoff`. This holds for
+  every pair style: the built-ins, a run-time `ScalarForm`, a Python
+  callable and an expression. A `special_bonds` 1-4 pair is truncated with
+  the rest (LAMMPS applies the special weights inside its cutoff test); the
+  1-4 exceptions kernel — a `dihedral charmm` `w` pair, a per-pair override —
+  is not, as LAMMPS's `dihedral_style charmm` prices its 1-4 pair at any
+  distance. A pair exactly at the cutoff prices nothing (`rsq < cutsq`;
+  the typed `lj/cut` priced it).
+- **A style that states no `cutoff` is untruncated**: the declared default
+  ∞ of `lj/cut`, `lj/class2`, `buck`, `morse`, `coul/cut`, and every style
+  whose spec has none. Fields read from OpenMM XML (`NoCutoff`), a prmtop or
+  a GROMACS topology without a stated cutoff price as before. Only a field
+  that states a `cutoff` shorter than some listed pair prices differently,
+  and then as LAMMPS does.
+- **The neighbour-driven `lj/class2`, `buck`, `morse` and `coul/cut` refuse
+  an absent (∞) `cutoff`** (`BadValue`), as `lj/cut` and the generic pair
+  kernel already did: a neighbour sum is not finite without one. 0.15
+  silently priced every pair the table held.
+- **The compiled `pair buck` and `morse` find a pair's row from its two
+  atoms' types** (the self row, else the cross row; neither is `NoMixing`),
+  as their neighbour-driven forms and LAMMPS's `pair_coeff i j` do. 0.15
+  read a per-pair `type` column off the `pairs` block instead, which
+  `intramolecular_pairs` never writes, so the compiled door failed on any
+  list molrs built; that column is no longer read.
+- **`pair coul/long/pme` takes its cell from the frame** (`frame.box`), as
+  LAMMPS's kspace takes its simulation box; the undeclared style params
+  `box_xx` … `box_zz` it read are gone (a field stating them now states
+  parameters nothing reads). A frame without a box, with a box not periodic
+  in x, y and z, or with a cell outside LAMMPS's restricted triclinic form
+  is refused by name: Rust `CompileError::NoBox` (new variant), Python
+  `ValueError`.
 
 ### AMBER prmtop
 
