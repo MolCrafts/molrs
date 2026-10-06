@@ -2071,6 +2071,11 @@ pub fn read_lammps_data_coeffs_py(
 /// units : str, optional
 ///     LAMMPS ``units`` style for the written file: ``"real"`` (default),
 ///     ``"metal"``, or ``"lj"``.
+/// cmap_file : str, optional
+///     The ``fix cmap`` file the include names on its ``fix cmap all cmap
+///     <file>`` line (where :func:`write_lammps_cmap` saved it). Required
+///     exactly when ``frame`` has a ``cmaps`` block; that fix must reach
+///     LAMMPS before ``read_data <data> fix cmap crossterm CMAP``.
 ///
 /// Raises
 /// ------
@@ -2090,8 +2095,10 @@ pub fn read_lammps_data_coeffs_py(
         skip_pair_style = false,
         skip_units = false,
         units = "real",
+        cmap_file = None,
     )
 )]
+#[allow(clippy::too_many_arguments)]
 pub fn write_lammps_forcefield_py(
     path: PathBuf,
     forcefield: &PyForceField,
@@ -2100,6 +2107,7 @@ pub fn write_lammps_forcefield_py(
     skip_pair_style: bool,
     skip_units: bool,
     units: &str,
+    cmap_file: Option<String>,
 ) -> PyResult<()> {
     use molrs::ff::forcefield::lammps_units::parse_style;
     use molrs::ff::{ForceFieldWriter, LammpsFfWriter, LammpsWriteOptions};
@@ -2115,6 +2123,7 @@ pub fn write_lammps_forcefield_py(
             skip_pair_style,
             skip_units,
             units,
+            cmap_file,
         },
     );
     writer
@@ -2135,6 +2144,7 @@ pub fn write_lammps_forcefield_py(
         skip_pair_style = false,
         skip_units = false,
         units = "real",
+        cmap_file = None,
     )
 )]
 pub fn write_lammps_forcefield_str_py(
@@ -2144,6 +2154,7 @@ pub fn write_lammps_forcefield_str_py(
     skip_pair_style: bool,
     skip_units: bool,
     units: &str,
+    cmap_file: Option<String>,
 ) -> PyResult<String> {
     use molrs::ff::forcefield::lammps_units::parse_style;
     use molrs::ff::{ForceFieldWriter, LammpsFfWriter, LammpsWriteOptions};
@@ -2159,6 +2170,7 @@ pub fn write_lammps_forcefield_str_py(
             skip_pair_style,
             skip_units,
             units,
+            cmap_file,
         },
     );
     writer
@@ -2208,6 +2220,94 @@ pub fn write_lammps_data_coeffs_py(
     writer
         .write_data_coeffs_str(&forcefield.inner)
         .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
+/// Build ``frame``'s ``cmaps`` block from its dihedrals and return the number
+/// of CMAP crossterms.
+///
+/// A crossterm is five atoms ``(a, b, c, d, e)`` whose dihedrals
+/// ``(a, b, c, d)`` and ``(b, c, d, e)`` are both rows of ``frame["dihedrals"]``
+/// (in either stored direction) and whose ``atoms`` ``type`` labels equal a
+/// ``cmap`` row's ``itom`` … ``mtom`` in that order — never reversed. The block
+/// (``atomi`` … ``atomm``, ``type`` = the row's name) replaces any ``cmaps``
+/// block ``frame`` had, and is removed when nothing matches.
+///
+/// Raises
+/// ------
+/// ValueError
+///     Cmap rows in two styles, two rows on the same five types, a path that
+///     matches one row forward and another backward, or an untyped frame.
+#[pyfunction]
+#[pyo3(name = "assign_cmaps")]
+pub fn assign_cmaps_py(frame: &PyFrame, forcefield: &PyForceField) -> PyResult<usize> {
+    frame
+        .with_frame_mut(|core| molrs::ff::assign_cmaps(core, &forcefield.inner))?
+        .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
+/// Read a LAMMPS ``fix cmap`` file (CHARMM format) into a :class:`ForceField`
+/// of one ``cmap charmm`` style.
+///
+/// Map ``t`` of the file (1-based: the crossterm type a data file's ``CMAP``
+/// section gives) is the row named ``"t"``, with the synthetic endpoints
+/// ``t-t-t-t-t``, its ``grid`` the 24×24 map, φ-major, as written. The force
+/// field is in the file's ``UNITS:`` tag, else ``real``. An incomplete map, a
+/// seventh map, or a line running past a map's end raises ``ValueError``
+/// (LAMMPS would drop the values).
+#[pyfunction]
+#[pyo3(name = "read_lammps_cmap")]
+pub fn read_lammps_cmap_py(path: PathBuf) -> PyResult<PyForceField> {
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("{}: {e}", path.display())))?;
+    let forcefield = molrs::ff::LammpsFfReader::new()
+        .read_cmap_str(&text)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    Ok(PyForceField { inner: forcefield })
+}
+
+/// Write the LAMMPS ``fix cmap`` file of ``frame``'s CMAP crossterms.
+///
+/// The ``cmaps`` block's type labels are walked in id order — the crossterm
+/// types :func:`molrs.io.write_lammps_data` gives the ``CMAP`` section — and
+/// each label's ``cmap charmm`` grid is written in CHARMM's layout (a
+/// ``# UNITS:`` line, ``# <φ>`` rows of five ``precision``-decimal values),
+/// energies converted to ``units``. A CHARMM file read with
+/// :func:`read_lammps_cmap` is written back line for line.
+///
+/// Raises
+/// ------
+/// ValueError
+///     No ``cmaps`` label, a label without a row, a grid that is not 24×24,
+///     more than six maps, or a style other than ``charmm``.
+#[pyfunction]
+#[pyo3(
+    name = "write_lammps_cmap",
+    signature = (path, forcefield, frame, *, precision = 6, units = "real")
+)]
+pub fn write_lammps_cmap_py(
+    path: PathBuf,
+    forcefield: &PyForceField,
+    frame: &PyFrame,
+    precision: usize,
+    units: &str,
+) -> PyResult<()> {
+    use molrs::ff::forcefield::lammps_units::parse_style;
+    use molrs::ff::{LammpsFfWriter, LammpsWriteOptions};
+    use molrs::store::type_labels::TypeLabels;
+    let units = parse_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let labels = frame
+        .with_frame(TypeLabels::from_frame)?
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let options = LammpsWriteOptions {
+        precision,
+        units,
+        ..LammpsWriteOptions::default()
+    };
+    let text = LammpsFfWriter::with_options(&labels, options)
+        .write_cmap_str(&forcefield.inner)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    std::fs::write(&path, text)
+        .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("{}: {e}", path.display())))
 }
 
 /// Build the intramolecular non-bonded neighbour list for a typed frame.

@@ -137,3 +137,106 @@ def test_a_cmaps_block_renumbers_atomi_through_atomm(tmp_path: Path) -> None:
     molrs.io.write_mrec(path, frame)
     back = molrs.io.read_mrec(path)
     assert list(back["cmaps"]["atomm"]) == [4, 5]
+
+
+# ── CMAP crossterms: assign_cmaps, the kernel, LAMMPS fix cmap I/O ──────────
+
+ALANINE = (
+    Path(__file__).resolve().parents[2]
+    / "molrs/src/ff/potential/cmap/testdata/charmm36_alanine.cmap"
+)
+ALA = ("C", "NH1", "CT1", "C", "NH1")
+
+# Five backbone atoms, φ ≈ −60°, ψ ≈ −40°.
+BACKBONE = np.array(
+    [
+        [0.3, 1.4, 0.2],
+        [0.0, 0.0, 0.0],
+        [1.46, 0.0, 0.0],
+        [2.0, -0.8, 1.2],
+        [3.3, -0.9, 1.3],
+    ]
+)
+
+
+def _number_lines(text: str) -> list[str]:
+    return [
+        line.rstrip()
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
+def _alanine_ff() -> molrs.ff.ForceField:
+    (row,) = molrs.ff.read_lammps_cmap(ALANINE).get_types("cmap")
+    ff = molrs.ff.ForceField("charmm", units="real")
+    atoms = ff.def_style("atom", "full")
+    by_name = {name: atoms.def_type(name, mass=12.0) for name in set(ALA)}
+    ff.def_style("cmap", "charmm").def_type(
+        "ala", *(by_name[name] for name in ALA), grid=row["grid"]
+    )
+    return ff
+
+
+def _backbone() -> molrs.Frame:
+    frame = molrs.Frame()
+    atoms = molrs.Block()
+    for k, key in enumerate("xyz"):
+        atoms.insert(key, BACKBONE[:, k].copy())
+    atoms.insert("type", list(ALA))
+    atoms.insert("mol_id", np.ones(5, dtype=np.uint64))
+    atoms.insert("charge", np.zeros(5))
+    frame["atoms"] = atoms
+    dihedrals = molrs.Block()
+    for p, key in enumerate(("atomi", "atomj", "atomk", "atoml")):
+        dihedrals.insert(key, np.array([p, p + 1], dtype=np.uint64))
+    frame["dihedrals"] = dihedrals
+    return frame
+
+
+def test_read_lammps_cmap_names_rows_by_crossterm_type() -> None:
+    ff = molrs.ff.read_lammps_cmap(ALANINE)
+    assert ff.units == "real"
+    (row,) = ff.get_types("cmap")
+    assert row.name == "1"
+    assert row["grid"].shape == (24, 24)
+    assert row["grid"][0, 0] == 0.12679
+
+
+def test_assign_cmaps_builds_the_block_the_kernel_prices() -> None:
+    ff, frame = _alanine_ff(), _backbone()
+    assert molrs.ff.assign_cmaps(frame, ff) == 1
+    cmaps = frame["cmaps"]
+    assert [int(cmaps[k][0]) for k in ("atomi", "atomm")] == [0, 4]
+    assert list(cmaps["type"]) == ["ala"]
+    compiler = molrs.ff.PotentialCompiler(ff)
+    energy, forces = compiler.compile(frame).calc_energy_forces(frame)
+    assert np.isfinite(energy) and energy != 0.0
+    np.testing.assert_allclose(forces.reshape(-1, 3).sum(axis=0), 0.0, atol=1e-10)
+
+
+def test_lammps_fix_cmap_files_round_trip(tmp_path: Path) -> None:
+    ff, frame = _alanine_ff(), _backbone()
+    molrs.ff.assign_cmaps(frame, ff)
+    del frame["dihedrals"]
+
+    cmap = tmp_path / "charmm.cmap"
+    molrs.ff.write_lammps_cmap(cmap, ff, frame)
+    assert _number_lines(cmap.read_text()) == _number_lines(ALANINE.read_text())
+
+    include = molrs.ff.write_lammps_forcefield_str(
+        ff, frame, skip_pair_style=True, cmap_file="charmm.cmap"
+    )
+    assert "fix cmap all cmap charmm.cmap\nfix_modify cmap energy yes\n" in include
+    with pytest.raises(ValueError, match="cmap_file"):
+        molrs.ff.write_lammps_forcefield_str(ff, frame, skip_pair_style=True)
+
+    data = tmp_path / "data.lmp"
+    molrs.io.write_lammps_data(data, frame)
+    assert "\n1 crossterms\n" in data.read_text()
+    back = molrs.io.read_lammps_data(data)
+    assert [int(back["cmaps"][k][0]) for k in ("atomi", "atomm", "type_id")] == [
+        0,
+        4,
+        1,
+    ]

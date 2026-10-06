@@ -3285,6 +3285,7 @@ def write_lammps_forcefield(
     skip_pair_style: bool = False,
     skip_units: bool = False,
     units: str = "real",
+    cmap_file: str | None = None,
 ) -> None: ...
 def write_lammps_forcefield_str(
     forcefield: ForceField,
@@ -3294,6 +3295,7 @@ def write_lammps_forcefield_str(
     skip_pair_style: bool = False,
     skip_units: bool = False,
     units: str = "real",
+    cmap_file: str | None = None,
 ) -> str: ...
 def write_lammps_data_coeffs(
     forcefield: ForceField,
@@ -3302,6 +3304,16 @@ def write_lammps_data_coeffs(
     precision: int = 6,
     units: str = "real",
 ) -> str: ...
+def assign_cmaps(frame: Frame, forcefield: ForceField) -> int: ...
+def read_lammps_cmap(path: PathInput) -> ForceField: ...
+def write_lammps_cmap(
+    path: PathInput,
+    forcefield: ForceField,
+    frame: Frame,
+    *,
+    precision: int = 6,
+    units: str = "real",
+) -> None: ...
 def intramolecular_pairs(
     frame: Frame, forcefield: ForceField | None = None
 ) -> Block: ...

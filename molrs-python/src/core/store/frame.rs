@@ -1221,6 +1221,11 @@ impl PyFrame {
     pub(crate) fn with_frame<R>(&self, f: impl FnOnce(&CoreFrame) -> R) -> PyResult<R> {
         self.inner.with(f).map_err(ffi_error_to_pyerr)
     }
+
+    /// Run a closure that edits the underlying `CoreFrame` in place.
+    pub(crate) fn with_frame_mut<R>(&self, f: impl FnOnce(&mut CoreFrame) -> R) -> PyResult<R> {
+        self.inner.with_mut(f).map_err(ffi_error_to_pyerr)
+    }
 }
 
 /// `Frozen` is every `frame.meta` door. `Plain` is [`PyMetaValue::value`]
