@@ -226,7 +226,7 @@ impl PyStyle {
             ends.push(atom.as_super().get().name.clone());
         }
         let params = params_from_dict(params)?;
-        {
+        let stored = {
             let mut ff = self.ff.bind(py).try_borrow_mut()?;
             let style = ff
                 .inner
@@ -234,9 +234,17 @@ impl PyStyle {
                 .ok_or_else(|| missing_style(self.category, &self.name))?;
             let ends: Vec<&str> = ends.iter().map(String::as_str).collect();
             style.def_type(name, &ends, params).map_err(py_value_err)?;
-        }
+            // A pair restating a stored pair under another name is that row.
+            match style.type_params(name) {
+                Some(_) => name.to_owned(),
+                None => style
+                    .get_pairtype(ends[0], ends.get(1).copied())
+                    .map(|row| row.name.clone())
+                    .expect("def_type stored the row or found the pair it restates"),
+            }
+        };
         self.category
-            .type_handle(py, &self.ff, Some(&self.name), name)
+            .type_handle(py, &self.ff, Some(&self.name), &stored)
     }
 }
 
@@ -508,12 +516,18 @@ impl PyPairStyle {
     /// ``params`` and return its handle; ``jtom=None`` is the self pair of
     /// ``itom``.
     ///
+    /// A pair is its two atom types in either order, so a style holds one
+    /// row per pair: restating a stored pair under any name with equal
+    /// parameters (annotations such as ``desc`` aside) stores nothing and
+    /// returns the stored row's handle.
+    ///
     /// Raises
     /// ------
     /// TypeError
     ///     If an endpoint is not an ``AtomType``.
     /// ValueError
-    ///     On a conflicting re-definition.
+    ///     On a conflicting re-definition, or a restatement of a stored pair
+    ///     with different parameters.
     #[pyo3(signature = (name, itom, jtom = None, **params))]
     fn def_type(
         slf: &Bound<'_, Self>,

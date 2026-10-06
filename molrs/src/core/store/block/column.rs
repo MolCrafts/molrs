@@ -464,6 +464,18 @@ impl Column {
         }
     }
 
+    /// Whether rows `a` and `b` (along axis 0) hold equal values, element by
+    /// element under the dtype's `==` (so a float `NaN` equals nothing).
+    /// Validity is the caller's: a null row's stored value is compared as is.
+    ///
+    /// # Panics
+    ///
+    /// If `a` or `b` is out of range, or the column is 0-dimensional.
+    pub fn rows_equal(&self, a: usize, b: usize) -> bool {
+        use ndarray::Axis;
+        map_column!(self, h => h.array().index_axis(Axis(0), a) == h.array().index_axis(Axis(0), b))
+    }
+
     /// Is this column backed by a foreign (non-Rust) buffer?
     pub fn is_foreign(&self) -> bool {
         map_column!(self, a => a.is_foreign())

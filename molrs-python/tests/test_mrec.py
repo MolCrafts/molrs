@@ -552,6 +552,35 @@ class TestForceFieldSection:
         with pytest.raises(TypeError):
             molrs.io.write_mrec(path, _coords_frame(), forcefield={"name": "x"})
 
+    def test_a_pair_table_prices_each_unordered_pair_once(self) -> None:
+        """molrec forcefield linking rule 3: B-A restating A-B is one row when
+        the parameters agree (name and annotations aside), a refusal when not."""
+
+        def section(epsilon: list[float], desc: list[str]) -> molrs.io.mrec.ForceFieldSection:
+            rows = molrs.Block(
+                {
+                    "name": np.array(["A", "B", "A-B", "B-A"]),
+                    "itom": np.array(["A", "B", "A", "B"]),
+                    "jtom": np.array(["A", "B", "B", "A"]),
+                    "epsilon": np.array(epsilon),
+                    "sigma": np.array([3.0, 3.6, 2.0, 2.0]),
+                    "desc": np.array(desc),
+                }
+            )
+            document = {
+                "name": "nbfix",
+                "units": {"preset": "real"},
+                "styles": [{"category": "pair", "style": "lj/cut"}],
+            }
+            return molrs.io.mrec.ForceFieldSection(document, {"pair.lj%2Fcut": rows})
+
+        section([0.1, 0.4, 0.9, 0.9], ["a", "b", "nbfix", "restated"]).validate()
+        conflict = section([0.1, 0.4, 0.9, 0.8], ["a", "b", "c", "d"])
+        with pytest.raises(ValueError, match=r'"A-B" and "B-A".*epsilon'):
+            conflict.validate()
+        with pytest.raises(ValueError, match="epsilon"):
+            molrs.ff.ForceField.from_section(conflict)
+
     def test_block_name_percent_encodes_the_style(self) -> None:
         name = molrs.io.mrec.ForceFieldSection.block_name("pair", "lj/cut/coul/long")
         assert name == "pair.lj%2Fcut%2Fcoul%2Flong"

@@ -490,6 +490,21 @@ def test_an_explicit_cross_row_overrides_the_mixing_rule():
     )
 
 
+def test_a_pair_restated_in_reverse_is_one_row_or_a_conflict():
+    """A pair is found by its unordered endpoints, so a style holds one row
+    per pair: an equal restatement under another name is a no-op, a
+    different one is refused and the first row stands."""
+    ff = _lj_ab(cross=True)
+    lj = ff.get_style("pair", "lj/cut")
+    a, b = _atoms(ff, "A", "B")
+    restated = lj.def_type("B-A", b, a, epsilon=0.9, sigma=2.0, desc="restated")
+    assert restated.name == "A-B"
+    assert len(ff.get_style("pair", "lj/cut").types) == 3
+    with pytest.raises(ValueError, match="restates the pair"):
+        lj.def_type("nbfix", a, b, epsilon=0.8, sigma=2.0)
+    assert _lj_pair_energy(ff, 2.5) == pytest.approx(_lj(0.9, 2.0, 2.5), rel=1e-12)
+
+
 def test_potential_compiler_has_one_public_path():
     assert hasattr(molrs.ff, "PotentialCompiler")
     assert not hasattr(molrs.ff.potential, "PotentialCompiler")

@@ -29,8 +29,20 @@ change:
 - **GROMACS force-field reader and writer.** `[ nonbond_params ]` (funct 1)
   is read as cross rows and written from them; 0.15.0 refused both. Other
   funct codes are refused.
+- **One row per pair.** A pair style prices each unordered pair of atom
+  types once. `def_type` on a pair style that restates a stored pair (either
+  order, any name) with equal parameters is a no-op, so the restating row is
+  not stored; with different parameters it raises `ValueError`
+  (`DefError::PairConflict` in Rust). 0.15.0 stored both rows and refused the
+  reversed conflict only when the kernel was compiled, and let the last of
+  two same-order rows win. A `forcefield` section with such a conflict in a
+  `pair` / `pair14` table is now refused on read and by
+  `ForceFieldSection.validate()`.
 - **AMBER prmtop reader.** A non-Lorentz–Berthelot off-diagonal LJ entry
-  (NBFIX) becomes a cross row; 0.15.0 refused the file.
+  (NBFIX) becomes a cross row; 0.15.0 refused the file. The `lj/cut` style
+  carries `mixing = "arithmetic"` (0.15.0 left it unset, which meant the
+  same rule), so it compares unequal to a hand-built style without it in
+  `ForceField.merge`.
 - **OpenMM XML reader.** A `<PeriodicTorsionForce>` `<Proper>` in OpenMM's
   `k{m}/periodicity{m}/phase{m}` spelling is `dihedral/periodic` (0.15.0 read
   it as an all-zero `dihedral/opls`), and an `<Improper>` there is
