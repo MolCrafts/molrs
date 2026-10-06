@@ -132,12 +132,21 @@ use ndarray::ArrayD;
 pub struct LammpsWriteOptions {
     /// Decimal places for floating-point coefficients (default 6).
     pub precision: usize,
-    /// When true, omit protocol commands the caller sets in the input script:
-    /// `pair_style` **and** `special_bonds`. A coeff-only include that still
-    /// emits Amber `special_bonds` (coul 1-4 = 1/1.2) silently overrides a
-    /// later `special_bonds` in `in.lammps` if the include is sourced first —
-    /// or, if the input never restates 1-4, leaves Amber weights in effect.
+    /// When true, omit the `pair_style` line: the input script sets its own
+    /// (a relaxation's `lj/cut/coul/cut 10.0`), before the include. Only the
+    /// line is the caller's; what the force field says about its pairs stays
+    /// in the include — the `pair_coeff`s, `special_bonds` (unless
+    /// [`skip_special_bonds`](Self::skip_special_bonds)) and `pair_modify mix`
+    /// / `shift`, without which LAMMPS would mix unlike pairs by its own
+    /// default (`geometric` for `lj/cut`) and weight 1-4 pairs by its own
+    /// (`0 0 0`). `pair_modify` needs a pair style, so such an include is
+    /// read after the caller's `pair_style`.
     pub skip_pair_style: bool,
+    /// When true, omit `special_bonds`: the input script states its own 1-4
+    /// weights. An include that still wrote them would override a
+    /// `special_bonds` read before it (Amber's coul 1-4 = 1/1.2 over the
+    /// input's 0.5) — so a caller that writes its own says so here.
+    pub skip_special_bonds: bool,
     /// When true, omit the `units` line so the include can follow `units` /
     /// `atom_style` / `pair_style` in the input (LAMMPS rejects `units` after
     /// the box exists, and a second `units` is redundant).
@@ -155,6 +164,7 @@ impl Default for LammpsWriteOptions {
         Self {
             precision: 6,
             skip_pair_style: false,
+            skip_special_bonds: false,
             skip_units: false,
             units: "real",
             cmap_file: None,
@@ -801,20 +811,21 @@ impl<'a> LammpsFfWriter<'a> {
                 ));
             }
             let (lj, coul) = (find("lj/charmm").unwrap(), find("coul/charmm").unwrap());
-            if !opts.skip_pair_style {
+            let style_line = if opts.skip_pair_style {
+                None
+            } else {
                 let (lj_cuts, coul_cuts) = (args(lj)?, args(coul)?);
                 let mut cuts = lj_cuts.clone();
                 if coul_cuts != lj_cuts {
                     cuts.extend(coul_cuts);
                 }
-                lines.push(format!(
+                Some(format!(
                     "pair_style {} {}\n",
                     lammps_name(codecs[lj].0),
                     render(&cuts, opts.precision)
-                ));
-                lines.extend(modify(lj)?);
-                lines.push("\n".to_owned());
-            }
+                ))
+            };
+            push_pair_header(lines, style_line, modify(lj)?);
             return self.push_pair_coeffs(lines, reg, &rows, false, units);
         }
 
@@ -824,31 +835,33 @@ impl<'a> LammpsFfWriter<'a> {
             find("lj/cut"),
             find("coul/cut").or_else(|| find("coul/long/pme")),
         ) {
-            if !opts.skip_pair_style {
+            let style_line = if opts.skip_pair_style {
+                None
+            } else {
                 let mut cuts = args(lj)?;
                 cuts.extend(args(coul)?);
-                lines.push(format!(
+                Some(format!(
                     "pair_style lj/cut/{} {}\n",
                     lammps_name(codecs[coul].0),
                     render(&cuts, opts.precision)
-                ));
-                lines.extend(modify(lj)?);
-                lines.push("\n".to_owned());
-            }
+                ))
+            };
+            push_pair_header(lines, style_line, modify(lj)?);
             return self.push_pair_coeffs(lines, reg, &rows, false, units);
         }
 
         if styles.len() == 1 {
-            if !opts.skip_pair_style {
-                lines.push(format!(
+            let style_line = if opts.skip_pair_style {
+                None
+            } else {
+                Some(format!(
                     "pair_style {}\n",
                     [lammps_name(codecs[0].0), render(&args(0)?, opts.precision)]
                         .join(" ")
                         .trim_end()
-                ));
-                lines.extend(modify(0)?);
-                lines.push("\n".to_owned());
-            }
+                ))
+            };
+            push_pair_header(lines, style_line, modify(0)?);
             return self.push_pair_coeffs(lines, reg, &rows, false, units);
         }
 
@@ -863,18 +876,33 @@ impl<'a> LammpsFfWriter<'a> {
         };
         let coulombs: Vec<usize> = (0..styles.len()).filter(|&i| !typed(styles[i])).collect();
         match coulombs.as_slice() {
-            // Genuinely independent sub-styles → hybrid with per-substyle cutoffs.
-            // A hybrid needs `pair_modify pair <substyle> mix <rule>` per
-            // sub-style; no in-tree force field carries a non-default `mixing`
-            // on a hybrid, so emitting it is deferred rather than guessed.
+            // Genuinely independent sub-styles → hybrid with per-substyle
+            // cutoffs, each mixing by its own rule (`pair_modify pair <sub>`).
             [] => {
-                if !opts.skip_pair_style {
+                let style_line = if opts.skip_pair_style {
+                    None
+                } else {
                     let subs = (0..styles.len())
                         .map(sub_style)
                         .collect::<Result<Vec<_>, _>>()?;
-                    lines.push(format!("pair_style hybrid {}\n", subs.join(" ")));
-                    lines.push("\n".to_owned());
+                    Some(format!("pair_style hybrid {}\n", subs.join(" ")))
+                };
+                let mut modifies = String::new();
+                for i in 0..styles.len() {
+                    let keys = codecs[i].1.pair_modify(codecs[i].0, styles[i].params())?;
+                    if !keys.is_empty() {
+                        modifies += &format!(
+                            "pair_modify pair {} {}\n",
+                            lammps_name(codecs[i].0),
+                            keys.join(" ")
+                        );
+                    }
                 }
+                push_pair_header(
+                    lines,
+                    style_line,
+                    (!modifies.is_empty()).then_some(modifies),
+                );
                 self.push_pair_coeffs(lines, reg, &rows, true, units)?;
             }
             // One typed style and a Coulomb style on every pair.
@@ -1074,6 +1102,18 @@ impl<'a> LammpsFfWriter<'a> {
     }
 }
 
+/// A pair section's header: the `pair_style` line (absent when the caller
+/// writes its own) and the `pair_modify` lines, then the blank line that ends
+/// it when it has any.
+fn push_pair_header(lines: &mut Vec<String>, style_line: Option<String>, modify: Option<String>) {
+    let any = style_line.is_some() || modify.is_some();
+    lines.extend(style_line);
+    lines.extend(modify);
+    if any {
+        lines.push("\n".to_owned());
+    }
+}
+
 impl ForceFieldWriter for LammpsFfWriter<'_> {
     fn write_str(&self, ff: &ForceField) -> Result<String, String> {
         let units = units_of(ff, self.options.units)?;
@@ -1084,11 +1124,11 @@ impl ForceFieldWriter for LammpsFfWriter<'_> {
             lines.push("\n".to_owned());
         }
         self.write_cmap_fix(&mut lines, ff)?;
-        // `special_bonds` is protocol (like `pair_style`), not a coefficient.
-        // skip_pair_style means the include is coeff-only — the input script
-        // owns 1-4 weights. Always emitting Amber 1/SCEE here is what made
-        // PEO-Tg jobs run coul 1-4 = 0.8333 when the input asked for 0.5.
-        if !self.options.skip_pair_style {
+        // The force field's 1-4 weights, unless the input script states its
+        // own (`skip_special_bonds`): emitted over an input's 0.5, Amber's
+        // 1/SCEE is what made PEO-Tg jobs run coul 1-4 = 0.8333. Skipping the
+        // `pair_style` line does not skip them — LAMMPS's default is `0 0 0`.
+        if !self.options.skip_special_bonds {
             let sb = ff.special_bonds();
             let p = self.options.precision;
             lines.push(format!(
@@ -1408,11 +1448,38 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
             .write_str(&ff)
             .unwrap();
         assert!(!text.contains("pair_style"), "no pair_style:\n{text}");
+        // The caller owns the `pair_style` line only: the force field's 1-4
+        // weights and mixing rule stay (the reader declared LAMMPS's default,
+        // geometric, for an include without `pair_modify mix`).
         assert!(
-            !text.contains("special_bonds"),
-            "coeff include must not inject Amber 1-4:\n{text}"
+            text.contains(
+                "special_bonds lj 0.000000 0.000000 0.500000 coul 0.000000 0.000000 0.833333\n"
+            ),
+            "1-4 weights remain:\n{text}"
         );
+        assert!(text.contains("pair_modify mix geometric\n"), "{text}");
         assert!(text.contains("pair_coeff c3 c3"), "coeffs remain:\n{text}");
+    }
+
+    /// `skip_special_bonds` is the caller stating its own 1-4 weights: the
+    /// include must not override them (Amber 1/1.2 over an input's 0.5).
+    #[test]
+    fn skip_special_bonds_omits_only_special_bonds() {
+        let ff = LammpsFfReader::new().read_str(MINI).unwrap();
+        let labels = mini_labels();
+        for skip_pair_style in [false, true] {
+            let opts = LammpsWriteOptions {
+                skip_pair_style,
+                skip_special_bonds: true,
+                ..Default::default()
+            };
+            let text = LammpsFfWriter::with_options(&labels, opts)
+                .write_str(&ff)
+                .unwrap();
+            assert!(!text.contains("special_bonds"), "{text}");
+            assert_eq!(text.contains("pair_style"), !skip_pair_style, "{text}");
+            assert!(text.contains("pair_coeff c3 c3"), "{text}");
+        }
     }
 
     #[test]
@@ -1776,6 +1843,30 @@ pair_coeff c3 c3 0.107800 3.397710
         );
     }
 
+    /// A pair `hybrid`: each sub-style whose spec declares `mixing` states
+    /// its rule on its own `pair_modify pair <sub>` line (LAMMPS's default
+    /// for `lj/cut` is geometric); one without (`buck`) writes none.
+    #[test]
+    fn a_pair_hybrid_writes_each_sub_style_mixing_rule() {
+        let mut ff = lj_only_ff(None);
+        ff.def_style("pair", "buck", Params::from_pairs(&[("cutoff", 9.0)]))
+            .unwrap()
+            .def_type(
+                "oh",
+                &["oh"],
+                Params::from_pairs(&[("a", 1000.0), ("rho", 0.3), ("c", 10.0)]),
+            )
+            .unwrap();
+        let labels = labels_of(&[("atoms", &["c3", "oh"])]);
+        let text = LammpsFfWriter::new(&labels).write_str(&ff).unwrap();
+        assert!(text.contains("pair_style hybrid lj/cut"), "{text}");
+        assert_eq!(
+            lines_starting_with(&text, "pair_modify"),
+            vec!["pair_modify pair lj/cut mix arithmetic".to_owned()],
+            "{text}"
+        );
+    }
+
     /// A declared rule is written as declared, in both branches.
     #[test]
     fn declared_geometric_lj_cut_writes_pair_modify_mix_geometric() {
@@ -2035,7 +2126,7 @@ pair_coeff c3 c3 0.107800 3.397710
     }
 
     #[test]
-    fn label_writer_skip_pair_style_omits_pair_style_and_special_bonds() {
+    fn label_writer_skip_pair_style_omits_the_pair_style_line_only() {
         let ff = split_pair_ff();
         let labels = labels_of(&[("atoms", &["c3", "hc"])]);
         let opts = LammpsWriteOptions {
@@ -2046,7 +2137,13 @@ pair_coeff c3 c3 0.107800 3.397710
             .write_str(&ff)
             .unwrap();
         assert!(!text.contains("pair_style"), "{text}");
-        assert!(!text.contains("special_bonds"), "{text}");
+        assert!(
+            text.contains(
+                "special_bonds lj 0.000000 0.000000 1.000000 coul 0.000000 0.000000 1.000000\n"
+            ),
+            "{text}"
+        );
+        assert!(text.contains("pair_modify mix arithmetic\n"), "{text}");
         assert!(
             text.contains("pair_coeff c3 c3 0.107800 3.397710"),
             "{text}"

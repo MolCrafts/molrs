@@ -141,17 +141,32 @@ def test_write_lammps_forcefield_skip_units(read_ff):
     assert "bond_coeff c3-c3" in text
 
 
-def test_skip_pair_style_omits_special_bonds(read_ff):
-    """Coeff include must not inject Amber coul 1-4 = 1/1.2."""
+def test_skip_pair_style_keeps_special_bonds_and_mixing(read_ff):
+    """skip_pair_style skips the ``pair_style`` line only: the 1-4 weights and
+    the mixing rule are the force field's (LAMMPS's defaults are 0 0 0 and
+    geometric), so a relaxation that sets its own pair_style keeps them."""
     ff = read_ff(_FF)
     text = molrs.ff.write_lammps_forcefield_str(
         ff, _ff_frame(), skip_pair_style=True, skip_units=True
     )
+    assert "pair_style" not in text
+    assert "special_bonds lj" in text and "0.833333" in text
+    # The reader declared LAMMPS's default rule for an include without one.
+    assert "pair_modify mix geometric" in text
+    assert "pair_coeff" in text
+
+
+def test_skip_special_bonds_leaves_the_weights_to_the_input(read_ff):
+    """A caller stating its own 1-4 weights must not have Amber's coul
+    1-4 = 1/1.2 injected over them."""
+    ff = read_ff(_FF)
+    text = molrs.ff.write_lammps_forcefield_str(
+        ff, _ff_frame(), skip_pair_style=True, skip_special_bonds=True
+    )
     assert "special_bonds" not in text
     assert "pair_coeff" in text
-    full = molrs.ff.write_lammps_forcefield_str(ff, _ff_frame())
-    assert "special_bonds lj" in full
-    assert "0.833333" in full
+    full = molrs.ff.write_lammps_forcefield_str(ff, _ff_frame(), skip_special_bonds=True)
+    assert "special_bonds" not in full and "pair_style lj/cut/coul/long" in full
 
 
 def test_write_lammps_forcefield_str_round_trip(read_ff):

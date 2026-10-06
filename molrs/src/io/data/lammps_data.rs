@@ -20,6 +20,7 @@ use crate::io::lammps::common::{
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::streaming::{FrameIndexBuilder, FrameIndexEntry};
 use crate::io::writer::FrameWriter;
+use molrs::spatial::simbox::SimBox;
 use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::frame_access::FrameAccess;
@@ -1716,6 +1717,34 @@ fn write_topology_section<W: Write>(
     Ok(())
 }
 
+/// How far a box-less frame's box reaches past its outermost atom on every
+/// side, in the frame's length unit.
+pub const BOXLESS_MARGIN: F = 1.0;
+
+/// The box a frame without one (or with a free box, which has no cell) is
+/// written in: the axis-aligned bounds of its coordinates widened by
+/// [`BOXLESS_MARGIN`] on every side, so every atom is strictly inside and a
+/// planar or one-atom system still has a volume.
+///
+/// A box-less frame is a non-periodic system, and the box is only the
+/// envelope `read_data` needs: read the file with `boundary s s s`, which
+/// shrink-wraps it to the atoms (`boundary f f f` keeps it fixed, and loses
+/// an atom that leaves it). Under `boundary p p p` the margin would be the
+/// distance to the next periodic image — a frame meant to be periodic carries
+/// its box.
+fn enclosing_bounds(coords: &[Vec<F>]) -> std::io::Result<([F; 3], [F; 3])> {
+    if coords.iter().flatten().any(|v| !v.is_finite()) {
+        return Err(err_mapper(
+            "frame has no box and a non-finite coordinate: a box-less frame is \
+             written inside the bounds of its coordinates",
+        ));
+    }
+    let free = SimBox::free_columns(&coords[0], &coords[1], &coords[2], BOXLESS_MARGIN)
+        .map_err(|e| err_mapper(format!("the box of a box-less frame: {e:?}")))?;
+    let (o, l) = (free.origin_view(), free.lengths());
+    Ok(([o[0], o[1], o[2]], [l[0], l[1], l[2]]))
+}
+
 fn write_lammps_data_frame<W: Write>(
     writer: &mut W,
     frame: &impl FrameAccess,
@@ -1730,19 +1759,16 @@ fn write_lammps_data_frame<W: Write>(
         return Err(err_mapper("Frame has no atoms to write"));
     }
 
-    // Ensure core coords exist (required for every write style).
-    let _x = frame
-        .column("atoms", keys::X)
-        .and_then(|c| c.as_float())
-        .ok_or_else(|| err_mapper("Missing 'x' column"))?;
-    let _y = frame
-        .column("atoms", keys::Y)
-        .and_then(|c| c.as_float())
-        .ok_or_else(|| err_mapper("Missing 'y' column"))?;
-    let _z = frame
-        .column("atoms", keys::Z)
-        .and_then(|c| c.as_float())
-        .ok_or_else(|| err_mapper("Missing 'z' column"))?;
+    // Core coords are required for every write style, and bound a box-less
+    // frame's box.
+    let mut coords = Vec::with_capacity(3);
+    for key in [keys::X, keys::Y, keys::Z] {
+        let col = frame
+            .column("atoms", key)
+            .and_then(|c| c.as_float())
+            .ok_or_else(|| err_mapper(format!("Missing '{key}' column")))?;
+        coords.push(col.iter().copied().collect::<Vec<F>>());
+    }
 
     // A per-pair 1-4 override has no LAMMPS form: LAMMPS prices a close pair
     // by special_bonds, lj/charmm's epsilon14/sigma14 and dihedral charmm's
@@ -1852,13 +1878,17 @@ fn write_lammps_data_frame<W: Write>(
     }
     writeln!(writer)?;
 
-    let (box_origin, box_lengths, tilts) = if let Some(sb) = frame.simbox_ref() {
+    // A free box (no cell, `Box()`) is no box: its identity placeholder is not
+    // a region of space.
+    let simbox = frame.simbox_ref().filter(|sb| sb.is_cell_defined());
+    let (box_origin, box_lengths, tilts) = if let Some(sb) = simbox {
         let o = sb.origin_view();
         let l = sb.lengths();
         let t = sb.tilts();
         ([o[0], o[1], o[2]], [l[0], l[1], l[2]], [t[0], t[1], t[2]])
     } else {
-        ([0.0; 3], [1.0; 3], [0.0; 3])
+        let (origin, lengths) = enclosing_bounds(&coords)?;
+        (origin, lengths, [0.0; 3])
     };
     writeln!(
         writer,
@@ -2529,6 +2559,62 @@ mod atom_style_tests {
         let f2 = parse_frame_bytes(out.as_bytes()).unwrap();
         assert_eq!(f2.get("bonds").unwrap().nrows().unwrap(), 2);
         assert_eq!(f2.get("angles").unwrap().nrows().unwrap(), 1);
+    }
+
+    /// A box-less frame is written inside the bounds of its coordinates,
+    /// [`BOXLESS_MARGIN`] past the outermost atom on every side — a planar
+    /// molecule included — never in a placeholder `0 1` box that LAMMPS would
+    /// wrap (`p`) or drop (`f`, `s`) the atoms out of.
+    #[test]
+    fn write_boxless_frame_inside_the_bounds_of_its_atoms() {
+        use crate::store::block::Block;
+        use crate::store::frame::Frame as CoreFrame;
+        use ndarray::ArrayD;
+
+        let column = |v: Vec<f64>| ArrayD::from_shape_vec(ndarray::IxDyn(&[3]), v).unwrap();
+        let mut atoms = Block::new();
+        atoms
+            .insert(
+                keys::TYPE,
+                ArrayD::from_shape_vec(ndarray::IxDyn(&[3]), vec!["c".to_string(); 3]).unwrap(),
+            )
+            .unwrap();
+        atoms.insert(keys::X, column(vec![-2.0, 3.5, 0.0])).unwrap();
+        atoms
+            .insert(keys::Y, column(vec![10.0, 12.0, 11.0]))
+            .unwrap();
+        atoms.insert(keys::Z, column(vec![0.0, 0.0, 0.0])).unwrap();
+        let mut frame = CoreFrame::new();
+        frame.insert("atoms", atoms);
+        let mut buf = Vec::new();
+        write_lammps_data_frame(&mut buf, &frame).expect("write");
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("\n-3 4.5 xlo xhi\n"), "{out}");
+        assert!(out.contains("\n9 13 ylo yhi\n"), "{out}");
+        assert!(out.contains("\n-1 1 zlo zhi\n"), "{out}");
+
+        // A free box has no cell: its identity placeholder is no box either.
+        let mut free = frame.clone();
+        free.simbox = Some(
+            SimBox::new_cell(
+                ndarray::Array2::eye(3),
+                ndarray::array![0.0, 0.0, 0.0],
+                [false; 3],
+                false,
+            )
+            .unwrap(),
+        );
+        let mut buf = Vec::new();
+        write_lammps_data_frame(&mut buf, &free).expect("write");
+        assert_eq!(String::from_utf8(buf).unwrap(), out);
+
+        let mut nan = frame.clone();
+        let atoms = nan.get_mut("atoms").unwrap();
+        atoms
+            .insert(keys::Z, column(vec![0.0, f64::NAN, 0.0]))
+            .unwrap();
+        let err = write_lammps_data_frame(&mut Vec::new(), &nan).unwrap_err();
+        assert!(err.to_string().contains("no box"), "{err}");
     }
 
     #[test]

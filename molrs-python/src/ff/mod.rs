@@ -2215,9 +2215,15 @@ pub fn read_lammps_data_coeffs_py(
 /// precision : int, optional
 ///     Decimal places for floating coefficients (default 6).
 /// skip_pair_style : bool, optional
-///     When true, omit ``pair_style`` **and** ``special_bonds`` (caller sets
-///     both in the input). A coeff-only include that still writes Amber
-///     ``special_bonds`` (coul 1-4 = 1/1.2) silently applies those weights.
+///     When true, omit the ``pair_style`` line: the input script sets its own
+///     before the include. Only that line is skipped: ``special_bonds`` and
+///     ``pair_modify mix`` / ``shift`` are the force field's and stay
+///     (LAMMPS's defaults, ``0 0 0`` and ``geometric`` for ``lj/cut``, are not
+///     molrs's); ``pair_modify`` needs a pair style, so read such an include
+///     after the input's ``pair_style``.
+/// skip_special_bonds : bool, optional
+///     When true, omit ``special_bonds``: the input script states its own 1-4
+///     weights, which an include read after them would override.
 /// skip_units : bool, optional
 ///     When true, omit the ``units`` line so the include can follow ``units``
 ///     already set in the input script.
@@ -2247,6 +2253,7 @@ pub fn read_lammps_data_coeffs_py(
         *,
         precision = 6,
         skip_pair_style = false,
+        skip_special_bonds = false,
         skip_units = false,
         units = "real",
         cmap_file = None,
@@ -2259,6 +2266,7 @@ pub fn write_lammps_forcefield_py(
     frame: &PyFrame,
     precision: usize,
     skip_pair_style: bool,
+    skip_special_bonds: bool,
     skip_units: bool,
     units: &str,
     cmap_file: Option<String>,
@@ -2278,6 +2286,7 @@ pub fn write_lammps_forcefield_py(
         LammpsWriteOptions {
             precision,
             skip_pair_style,
+            skip_special_bonds,
             skip_units,
             units,
             cmap_file,
@@ -2299,16 +2308,19 @@ pub fn write_lammps_forcefield_py(
         *,
         precision = 6,
         skip_pair_style = false,
+        skip_special_bonds = false,
         skip_units = false,
         units = "real",
         cmap_file = None,
     )
 )]
+#[allow(clippy::too_many_arguments)]
 pub fn write_lammps_forcefield_str_py(
     forcefield: &PyForceField,
     frame: &PyFrame,
     precision: usize,
     skip_pair_style: bool,
+    skip_special_bonds: bool,
     skip_units: bool,
     units: &str,
     cmap_file: Option<String>,
@@ -2328,6 +2340,7 @@ pub fn write_lammps_forcefield_str_py(
         LammpsWriteOptions {
             precision,
             skip_pair_style,
+            skip_special_bonds,
             skip_units,
             units,
             cmap_file,

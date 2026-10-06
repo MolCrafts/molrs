@@ -1708,6 +1708,12 @@ pub fn write_xyz_trajectory(path: PathBuf, frames: Vec<PyRef<'_, PyFrame>>) -> P
 
 /// Write a Frame to a LAMMPS data file.
 ///
+/// The box is ``frame.box``. A frame without one is a non-periodic system and
+/// is written inside the bounds of its coordinates widened by 1 length unit on
+/// every side (``BOXLESS_MARGIN``): read it with ``boundary s s s``, which
+/// shrink-wraps that box to the atoms. A frame meant to be periodic carries
+/// its box.
+///
 /// Parameters
 /// ----------
 /// path : str
