@@ -70,8 +70,8 @@ voronoi   = ["compute"]
 ff        = ["io", "dep:rustfft", "dep:roxmltree"]
 # `conformer` depends on the `ff` module.
 conformer = ["ff"]
-# In-process MD (integrators, shifted LJ). Science only; pair search is
-# core NeighborList. Python composer / hooks live in molrs-python. Consumes
+# In-process MD: integrators and force providers (the kernels are
+# `ff::potential`). Pair search is core NeighborList. Python composer / hooks live in molrs-python. Consumes
 # the one `ff::potential::Potential`/`Potentials` seam, so it enables `ff`.
 md        = ["ff"]
 # serde `Serialize`/`Deserialize` for the core model (Frame/Block/Column/SimBox).
