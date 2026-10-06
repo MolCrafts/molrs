@@ -475,6 +475,34 @@ CHARMM36, AMBER ff14SB and OPLS-AA molecules.
 - **LAMMPS writer: `dihedral charmm` phase is an integer.** LAMMPS reads it
   as integer degrees and refused `180.000000`; a non-integer phase is
   refused by name.
+- **Writer: every `<Type>` has a class** (OpenMM refuses a file without):
+  a type without one — a prmtop's, a LAMMPS file's — is written as its own
+  class. **Two types on the same labels** (as OpenMM's generator matches
+  them) are refused when their parameters differ (OpenMM would price every
+  such term with the first) and written once when they agree; a proper's
+  periodic and RB rows on one quartet are refused (OpenMM adds both). A
+  shifted or Mie `lj/cut` and a force field in units other than `real` are
+  refused.
+
+### LAMMPS pair styles
+
+- **`pair_style lj/cut` alone has no Coulomb style.** LAMMPS prices no
+  charge under it; 0.15 added a `coul/cut` beside it, which priced the
+  charges. `lj/cut/coul/cut` reads as before.
+- **`lj/cut/coul/long` reads as `lj/cut` + `coul/long/pme`** (its cutoff and
+  LAMMPS's constant), not as a plain `coul/cut` cut off at the same
+  distance: the Ewald sum is not a cut-off sum. The include's
+  `kspace_style` states an accuracy, not an `alpha`, so the Ewald
+  parameters are not read, and compiling the style refuses until they are
+  stated. The writer writes such a style back as `lj/cut/coul/long`, and
+  refuses one that states its Ewald parameters (molrs's smooth PME is not
+  LAMMPS's PPPM). Other `lj/cut/coul/*` Coulombs (`debye`, `dsf`, `wolf`, …)
+  are refused, not read as plain.
+- **`pair_modify shift yes`** reads as `lj/cut`'s `shift` and is written
+  (0.15 dropped it both ways); a Mie `lj/cut` (`n`, `m` ≠ 12, 6) is
+  refused by the writer (0.15 wrote a 12-6 line). A pair style the writer
+  has no LAMMPS form for (`coul/tt`, …) is refused by name, no longer
+  written into a `pair_style hybrid` line LAMMPS cannot read.
 
 ### AMBER prmtop
 
@@ -627,7 +655,24 @@ and an OPLS-AA dipeptide (`scripts/gromacs_engine_check.sh`).
   only, 1-based).
 - **Writer refusals:** `dihedral charmm` with `w > 0`, `epsilon14` /
   `sigma14` on an `lj/charmm` not declared `one_four = "epsilon14"`, two
-  types GROMACS would read as one (same labels in one function-code table).
+  types GROMACS would read as one (same labels in one function-code table),
+  a force field in units other than `real`. A Coulomb constant other than
+  LAMMPS `real`'s is no longer refused (GROMACS prices at its own, as the
+  LAMMPS and OpenMM writers already let their engines do), and
+  `dihedral class2` is written as funct-9 rows at phase φₙ + 180°.
+- **Coulomb uses GROMACS's constant.** A GROMACS-read `coul/cut` /
+  `coul/charmm` has `coulomb = GROMACS_COULOMB` = 332.06371329919205
+  (GROMACS's `ONE_4PI_EPS0`, CODATA 2018), not LAMMPS `real`'s: Coulomb
+  energies of a GROMACS-read field are 9.9·10⁻⁹ larger than in 0.15, and
+  equal GROMACS's.
+- **`read_system` lists the pairs between molecules.** A system of several
+  molecules (up to `MAX_ATOMS_FOR_A_FULL_PAIR_LIST` atoms) has every pair of
+  two molecules in its `pairs` block, so `compile` prices them as GROMACS
+  does; the list held only each molecule's own pairs.
+- **Whole topologies written: `GromacsTopFfWriter::write_system_str(ff,
+  frame)`**, the inverse of `read_system`: one `[ moleculetype ]` per
+  molecule, each row with its type's parameters, `[ pairs ]` with the
+  override cells, `[ exclusions ]` for the pairs the frame does not price.
 
 ### Already in 0.15.1
 

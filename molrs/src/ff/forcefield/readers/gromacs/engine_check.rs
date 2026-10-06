@@ -19,9 +19,11 @@
 //!
 //! Settings: a plain cut-off at 2.5 nm (no shift, no reaction field) in a
 //! 6 nm box — every intramolecular pair inside it, no image — so nonbonded
-//! energies are the plain sums. GROMACS's Coulomb constant (CODATA 2018,
-//! 138.935457… kJ mol⁻¹ nm e⁻²) is LAMMPS `real`'s 332.06371 kcal mol⁻¹ Å e⁻²
-//! to 1.1 × 10⁻⁸; that is the floor of the Coulomb terms against GROMACS.
+//! energies are the plain sums. The reader states GROMACS's own Coulomb
+//! constant ([`super::GROMACS_COULOMB`], CODATA 2018), LAMMPS `real`'s
+//! 332.06371 × (1 + 9.9·10⁻⁹); LAMMPS prices at its own, so molrs's Coulomb
+//! terms are held to LAMMPS's times the constants' ratio (exact: the energy is
+//! linear in it).
 //!
 //! molrs prices each system as read, its 1-4 pairs written out by
 //! [`ForceField::materialize_one_four`] (CHARMM's `[ pairtypes ]` pairs are
@@ -39,20 +41,18 @@
 use std::io::Cursor;
 use std::path::Path;
 
-use ndarray::Array1;
-
 use super::GromacsTopFfReader;
 use crate::ff::forcefield::writers::ForceFieldWriter;
-use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
+use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::potential::PotentialCompiler;
 use crate::ff::potential::pair::exceptions;
 use crate::ff::{LammpsFfWriter, LammpsWriteOptions};
 use molrs::io::data::gro::read_gro_frame;
 use molrs::io::data::lammps_data::write_lammps_data;
-use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::type_labels::TypeLabels;
-use molrs::types::{F, Idx};
+use molrs::types::F;
+use molrs::units::constants::COULOMB_REAL;
 
 /// The terms compared, in print order.
 const TERMS: [&str; 10] = [
@@ -63,8 +63,7 @@ const TERMS: [&str; 10] = [
 const CUTOFF: F = 25.0;
 const INNER: F = 24.0;
 
-/// The `dihedral charmm` type of the LAMMPS form's 1-4 rows.
-const PAIR14: &str = "---@pairs";
+use crate::ff::equivalence_check::{PAIR14, one_four_as_dihedral_weights as lammps_form};
 
 struct Fixture {
     name: &'static str,
@@ -189,10 +188,9 @@ const FIXTURES: [Fixture; 4] = [
 
 /// Relative tolerance against GROMACS, per term. The bonded terms, CMAP and
 /// the van-der-Waals pairs agree to rounding; GROMACS prices 1-4 pairs from
-/// cubic-spline tables (1e-9), and its Coulomb constant (CODATA 2018) is
-/// LAMMPS `real`'s × (1 + 9.9e-9).
+/// cubic-spline tables (≈10⁻⁹, Coulomb-14 included).
 const GROMACS_TOL: [F; 10] = [
-    1e-12, 1e-12, 1e-12, 1e-12, 1e-12, 5e-9, 2e-8, 1e-12, 2e-8, 2e-8,
+    1e-12, 1e-12, 1e-12, 1e-12, 1e-12, 5e-9, 5e-9, 1e-12, 1e-11, 5e-9,
 ];
 
 /// The fixture's force field (with the comparison's cutoffs declared), its
@@ -225,121 +223,6 @@ fn load(f: &Fixture) -> (ForceField, Frame, Vec<F>) {
     }
     let coords: Vec<F> = frame.coords().unwrap().into_iter().collect();
     (ff, frame, coords)
-}
-
-/// A path `i-a-b-j` of bonds between two atoms, if they are 1-4.
-fn bonded_path(adjacent: &[Vec<usize>], i: usize, j: usize) -> Option<[usize; 4]> {
-    for &a in &adjacent[i] {
-        for &b in &adjacent[a] {
-            if b != i && adjacent[b].contains(&j) && a != j && b != j {
-                return Some([i, a, b, j]);
-            }
-        }
-    }
-    None
-}
-
-fn idx_col(frame: &Frame, block: &str, key: &str) -> Vec<usize> {
-    frame
-        .get(block)
-        .and_then(|b| b.get(key))
-        .and_then(|c| c.as_uint())
-        .map(|c| c.iter().map(|&v| v as usize).collect())
-        .unwrap_or_default()
-}
-
-/// The system as LAMMPS prices it. A `one_four = "epsilon14"` field (CHARMM's
-/// pairtypes, fudge 1/1) becomes `special_bonds` 0 and a zero-`K` `dihedral
-/// charmm` row with `w` = 1 per `[ pairs ]` row; any other field is itself.
-fn lammps_form(ff: &ForceField, frame: &Frame) -> (ForceField, Frame) {
-    let Some(lj) = ff.get_style("pair", "lj/charmm") else {
-        return (ff.clone(), frame.clone());
-    };
-    assert_eq!(lj.params().get_str("one_four"), Some("epsilon14"));
-    let sb = ff.special_bonds();
-    assert_eq!(
-        (sb.lj[2], sb.coul[2]),
-        (1.0, 1.0),
-        "w prices both at one weight"
-    );
-    let mut out = ff.empty_like();
-    out.set_special_bonds(SpecialBonds {
-        lj: [0.0; 3],
-        coul: [0.0; 3],
-    });
-    for style in ff.styles() {
-        let mut params = style.params().clone();
-        if style.name() == "lj/charmm" {
-            let mut plain = Params::new();
-            for (k, v) in params.iter() {
-                plain.set(k, v);
-            }
-            if let Some(m) = params.get_str("mixing") {
-                plain.set_str("mixing", m);
-            }
-            params = plain;
-        }
-        let s = out
-            .def_style(style.category(), style.name(), params)
-            .unwrap();
-        for (name, ends, p) in style.type_rows() {
-            s.def_type(name, &ends, p.clone()).unwrap();
-        }
-    }
-    out.def_style("dihedral", "charmm", Params::new())
-        .unwrap()
-        .def_type(
-            PAIR14,
-            &["", "", "", ""],
-            Params::from_pairs(&[("k", 0.0), ("periodicity", 1.0), ("phase", 0.0), ("w", 1.0)]),
-        )
-        .unwrap();
-
-    let n = frame.get("atoms").unwrap().nrows().unwrap();
-    let mut adjacent = vec![Vec::new(); n];
-    for (i, j) in idx_col(frame, "bonds", "atomi")
-        .into_iter()
-        .zip(idx_col(frame, "bonds", "atomj"))
-    {
-        adjacent[i].push(j);
-        adjacent[j].push(i);
-    }
-    let pairs = frame.get("pairs").unwrap();
-    let is_14 = pairs.get("is_14").and_then(|c| c.as_bool()).unwrap();
-    let (pi, pj) = (
-        idx_col(frame, "pairs", "atomi"),
-        idx_col(frame, "pairs", "atomj"),
-    );
-    let mut rows: Vec<([usize; 4], String)> = Vec::new();
-    let d = frame.get("dihedrals").unwrap();
-    let types = d.get("type").and_then(|c| c.as_string()).unwrap();
-    let cols: Vec<Vec<usize>> = ["atomi", "atomj", "atomk", "atoml"]
-        .iter()
-        .map(|k| idx_col(frame, "dihedrals", k))
-        .collect();
-    for (r, t) in types.iter().enumerate() {
-        rows.push(([cols[0][r], cols[1][r], cols[2][r], cols[3][r]], t.clone()));
-    }
-    for r in 0..pi.len() {
-        if is_14[r] {
-            let path = bonded_path(&adjacent, pi[r], pj[r]).expect("a 1-4 pair is 1-4");
-            rows.push((path, PAIR14.to_owned()));
-        }
-    }
-    let mut block = Block::new();
-    for (k, key) in ["atomi", "atomj", "atomk", "atoml"].iter().enumerate() {
-        let col: Vec<Idx> = rows.iter().map(|r| r.0[k] as Idx).collect();
-        block
-            .insert(*key, Array1::from_vec(col).into_dyn())
-            .unwrap();
-    }
-    let names: Vec<String> = rows.into_iter().map(|r| r.1).collect();
-    block
-        .insert("type", Array1::from_vec(names).into_dyn())
-        .unwrap();
-    let mut out_frame = frame.clone();
-    out_frame.insert("dihedrals", block);
-    (out, out_frame)
 }
 
 /// `ff` with only its `(category, name)` style, and `frame`'s relation block
@@ -570,6 +453,14 @@ fn gromacs_read_systems_price_as_gromacs_and_lammps() {
             if let Some(lammps) = f.lammps
                 && let (Some(got), Some(want)) = (lammps_form_terms[k], lammps[k])
             {
+                // LAMMPS prices at its own Coulomb constant.
+                let ratio = COULOMB_REAL / super::GROMACS_COULOMB;
+                let coul = |t: &[Option<F>; 10]| t[6].unwrap_or(0.0) + t[8].unwrap_or(0.0);
+                let got = match *term {
+                    "coul14" | "coulsr" => got * ratio,
+                    "total" => got + coul(&lammps_form_terms) * (ratio - 1.0),
+                    _ => got,
+                };
                 assert_close(&format!("{what} vs LAMMPS"), got, want, 1e-13);
             }
         }
