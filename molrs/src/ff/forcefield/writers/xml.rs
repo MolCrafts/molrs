@@ -71,8 +71,9 @@ use crate::ff::potential::cmap::charmm::GRID;
 
 /// kcal/mol → kJ/mol.
 const KJ_PER_KCAL: f64 = 4.184;
-/// Å → nm.
-const NM_PER_ANGSTROM: f64 = 0.1;
+/// Å per nm: lengths are divided by it (the reader multiplies), which
+/// round-trips a decimal length exactly where × 0.1 would not.
+const ANGSTROM_PER_NM: f64 = 10.0;
 
 /// Writer for OpenMM `<ForceField>` XML.
 ///
@@ -192,9 +193,11 @@ impl XmlForceFieldWriter {
                     for t in types {
                         let what = format!("bond harmonic {}", t.name);
                         // LAMMPS K (kcal/mol/Å²) → OpenMM ½k, k = 2K (kJ/mol/nm²).
-                        let k = 2.0 * need(&t.params, "k", &what)? * KJ_PER_KCAL
-                            / (NM_PER_ANGSTROM * NM_PER_ANGSTROM);
-                        let r0 = need(&t.params, "r0", &what)? * NM_PER_ANGSTROM;
+                        let k = 2.0
+                            * need(&t.params, "k", &what)?
+                            * KJ_PER_KCAL
+                            * (ANGSTROM_PER_NM * ANGSTROM_PER_NM);
+                        let r0 = need(&t.params, "r0", &what)? / ANGSTROM_PER_NM;
                         out.bonds.push_str(&format!(
                             "    <Bond{} length=\"{}\" k=\"{}\"/>\n",
                             ends.attrs(&[&t.itom, &t.jtom]),
@@ -227,9 +230,10 @@ impl XmlForceFieldWriter {
                                 ));
                             }
                             // OpenMM adds a bond of force constant 2k: k = K_ub.
-                            let k_ub = need(&t.params, "k_ub", &what)? * KJ_PER_KCAL
-                                / (NM_PER_ANGSTROM * NM_PER_ANGSTROM);
-                            let d = need(&t.params, "r_ub", &what)? * NM_PER_ANGSTROM;
+                            let k_ub = need(&t.params, "k_ub", &what)?
+                                * KJ_PER_KCAL
+                                * (ANGSTROM_PER_NM * ANGSTROM_PER_NM);
+                            let d = need(&t.params, "r_ub", &what)? / ANGSTROM_PER_NM;
                             out.urey_bradley.push_str(&format!(
                                 "    <UreyBradley{} k=\"{}\" d=\"{}\"/>\n",
                                 ends.attrs(&labels),
@@ -559,7 +563,7 @@ impl XmlForceFieldWriter {
 
         let lj_of = |p: &Params, what: &str| -> Result<(f64, f64), String> {
             Ok((
-                need(p, "sigma", what)? * NM_PER_ANGSTROM,
+                need(p, "sigma", what)? / ANGSTROM_PER_NM,
                 need(p, "epsilon", what)? * KJ_PER_KCAL,
             ))
         };
@@ -613,7 +617,7 @@ impl XmlForceFieldWriter {
                     self.fmt_f(epsilon)
                 );
                 if has_own_one_four(p) {
-                    let s14 = p.get("sigma14").unwrap_or(sigma / NM_PER_ANGSTROM) * NM_PER_ANGSTROM;
+                    let s14 = p.get("sigma14").unwrap_or(sigma * ANGSTROM_PER_NM) / ANGSTROM_PER_NM;
                     let e14 = p.get("epsilon14").unwrap_or(epsilon / KJ_PER_KCAL) * KJ_PER_KCAL;
                     row.push_str(&format!(
                         " sigma14=\"{}\" epsilon14=\"{}\"",

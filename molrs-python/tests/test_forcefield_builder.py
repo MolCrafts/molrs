@@ -291,9 +291,10 @@ def test_a_written_force_field_reads_back_through_a_pathlike(tmp_path):
     molrs.ff.write_forcefield_xml(path, ff)
     back = molrs.ff.read_forcefield_xml(path)
     assert type(back) is molrs.ff.ForceField
-    assert _rows(back.get_style("bond", "harmonic")) == [
-        ("CT-CT", {"k": 300.0, "r0": 1.5})
-    ]
+    # The file is in nm and kJ/mol: the trip is exact to the conversions' ulp.
+    ((name, params),) = _rows(back.get_style("bond", "harmonic"))
+    assert name == "CT-CT"
+    assert params == pytest.approx({"k": 300.0, "r0": 1.5}, rel=1e-14)
 
 
 # ---- handles: queries, params, equality ----
