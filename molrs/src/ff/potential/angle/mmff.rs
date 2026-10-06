@@ -13,6 +13,7 @@
 //! stretch-bend coupling entirely. The typifier bakes a `linear` flag on each
 //! angle row (from the *central* atom's `linh`) and both kernels below read it.
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::ANGLES;
 use ndarray::{Array2, ArrayView2};
 
@@ -183,14 +184,8 @@ pub fn mmff_angle_ctor(
         .get("atomk")
         .and_then(|c| c.as_uint())
         .ok_or("missing atomk")?;
-    let kac = block
-        .get("ka")
-        .and_then(|c| c.as_float())
-        .ok_or("mmff_angle: missing \"ka\" column (typifier did not bake angle params)")?;
-    let th0c = block
-        .get("theta0")
-        .and_then(|c| c.as_float())
-        .ok_or("mmff_angle: missing \"theta0\" column (typifier did not bake angle params)")?;
+    let kac = need::instance_col("mmff_angle", block, "ka")?;
+    let th0c = need::instance_col("mmff_angle", block, "theta0")?;
     let linc = linear_column(block, "mmff_angle")?;
 
     let n = ic.len();
@@ -229,16 +224,19 @@ pub fn mmff_angle_ctor(
 /// materializes only f64 / i32 / string properties — a `PropValue::Bool` would be
 /// dropped on the way to the [`Frame`], and the flag would silently read as
 /// "nothing is linear", which is precisely the defect this column exists to fix.
+///
+/// Without it every nitrile / alkyne / allene angle would silently use the
+/// cubic bend form, so its absence is refused ([`IrError::MissingParam`]).
+///
+/// [`IrError::MissingParam`]: crate::ff::ir::IrError::MissingParam
 fn linear_column<'a>(
     block: &'a molrs::store::block::Block,
     style: &str,
-) -> Result<&'a ndarray::ArrayD<molrs::types::I>, String> {
-    block.get("linear").and_then(|c| c.as_int()).ok_or_else(|| {
-        format!(
-            "{style}: missing \"linear\" column (typifier did not bake the linear-centre flag); \
-             without it every nitrile / alkyne / allene angle silently uses the cubic bend form"
-        )
-    })
+) -> Result<&'a ndarray::ArrayD<molrs::types::I>, crate::ff::ir::IrError> {
+    block
+        .get("linear")
+        .and_then(|c| c.as_int())
+        .ok_or_else(|| need::missing(style, "", "linear"))
 }
 
 // ---------------------------------------------------------------------------
@@ -388,23 +386,11 @@ pub fn mmff_stbn_ctor(
         .get("atomk")
         .and_then(|c| c.as_uint())
         .ok_or("missing atomk")?;
-    let kba_ijk_c = block.get("kba_ijk").and_then(|c| c.as_float()).ok_or(
-        "mmff_stbn: missing \"kba_ijk\" column (typifier did not bake stretch-bend params)",
-    )?;
-    let kba_kji_c = block.get("kba_kji").and_then(|c| c.as_float()).ok_or(
-        "mmff_stbn: missing \"kba_kji\" column (typifier did not bake stretch-bend params)",
-    )?;
-    let r0ij = block
-        .get("r0_ij")
-        .and_then(|c| c.as_float())
-        .ok_or("mmff_stbn: missing \"r0_ij\" column (typifier did not bake stretch-bend params)")?;
-    let r0kj = block
-        .get("r0_kj")
-        .and_then(|c| c.as_float())
-        .ok_or("mmff_stbn: missing \"r0_kj\" column (typifier did not bake stretch-bend params)")?;
-    let th0 = block.get("theta0").and_then(|c| c.as_float()).ok_or(
-        "mmff_stbn: missing \"theta0\" column (typifier did not bake stretch-bend params)",
-    )?;
+    let kba_ijk_c = need::instance_col("mmff_stbn", block, "kba_ijk")?;
+    let kba_kji_c = need::instance_col("mmff_stbn", block, "kba_kji")?;
+    let r0ij = need::instance_col("mmff_stbn", block, "r0_ij")?;
+    let r0kj = need::instance_col("mmff_stbn", block, "r0_kj")?;
+    let th0 = need::instance_col("mmff_stbn", block, "theta0")?;
     let linc = linear_column(block, "mmff_stbn")?;
 
     let n = ic.len();

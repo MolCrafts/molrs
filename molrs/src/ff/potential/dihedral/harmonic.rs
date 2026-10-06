@@ -22,7 +22,7 @@ pub fn dihedral_harmonic_ctor(
     tp: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, crate::ff::potential::CompileError> {
-    signed_cosine_ctor(DIHEDRALS, "dihedral_harmonic", tp, frame)
+    signed_cosine_ctor(DIHEDRALS, "harmonic", tp, frame)
 }
 
 #[cfg(test)]

@@ -191,8 +191,35 @@ class TestRefusals:
             kernel("bond", "harmonic", [[0, 1]], kb=1.0, r0=1.0)
 
     def test_a_missing_parameter(self) -> None:
-        with pytest.raises(ValueError, match="missing 'r0'"):
+        with pytest.raises(ir.MissingParam) as err:
             kernel("bond", "harmonic", [[0, 1]], k=1.0)
+        assert (err.value.style, err.value.type, err.value.param) == ("harmonic", "0", "r0")
+
+    @pytest.mark.parametrize(
+        ("category", "style", "atoms", "params", "param"),
+        [
+            ("angle", "charmm", [[0, 1, 2]], {"k": 1.0, "theta0": 100.0}, "k_ub"),
+            ("dihedral", "charmm", [[0, 1, 2, 3]], {"k": 1.0}, "periodicity"),
+            ("dihedral", "periodic", [[0, 1, 2, 3]], {"k1": 1.0}, "periodicity1"),
+            ("improper", "cvff", [[0, 1, 2, 3]], {"k": 1.0}, "sign"),
+            ("pair", "coul/cut", [[0, 1]], {}, "coulomb"),
+            ("pair", "lj/charmm", [[0, 1]], {"cutoff": 10.0}, "inner"),
+        ],
+    )
+    def test_every_built_in_refuses_a_missing_parameter_typed(
+        self, category: str, style: str, atoms: list[list[int]], params: dict, param: str
+    ) -> None:
+        charges = [0.5, -0.5] if category == "pair" else None
+        if style == "lj/charmm":
+            params = {**params, "epsilon": 0.1, "sigma": 3.0}
+        with pytest.raises(ir.MissingParam) as err:
+            kernel(category, style, atoms, charges=charges, **params)
+        assert (err.value.style, err.value.param) == (style, param)
+
+    def test_a_value_outside_its_choices(self) -> None:
+        with pytest.raises(ir.BadValue) as err:
+            kernel("pair", "lj/cut", [[0, 1]], mixing="lorentz", epsilon=0.1, sigma=3.0)
+        assert (err.value.style, err.value.param) == ("lj/cut", "mixing")
 
     def test_an_unregistered_style_without_expression(self) -> None:
         with pytest.raises(ir.NoKernel):
@@ -246,3 +273,38 @@ class TestPotentialsAssembly:
         by_hand = pots.calc_energy_forces(FLAT)
         assert math.isclose(by_hand[0], compiled[0], rel_tol=1e-12)
         np.testing.assert_allclose(by_hand[1], compiled[1], rtol=1e-12, atol=1e-12)
+
+
+class TestDefaults:
+    """A default the spec declares prices an absent parameter exactly as
+    stating it does: no kernel states one of its own."""
+
+    def test_coul_cut_dielectric_defaults_to_1(self) -> None:
+        coords = np.array([0.0, 0.0, 0.0, 2.5, 0.0, 0.0])
+        bare = kernel("pair", "coul/cut", [[0, 1]], charges=[0.5, -0.4], coulomb=332.06371)
+        stated = kernel(
+            "pair",
+            "coul/cut",
+            [[0, 1]],
+            charges=[0.5, -0.4],
+            coulomb=332.06371,
+            dielectric=1.0,
+            delta=0.0,
+        )
+        e = bare.calc_energy_forces(coords)[0]
+        assert math.isclose(e, 332.06371 * 0.5 * -0.4 / 2.5, rel_tol=1e-12)
+        assert e == stated.calc_energy_forces(coords)[0]
+
+    def test_a_phase_defaults_to_0(self) -> None:
+        bare = kernel("dihedral", "charmm", [[0, 1, 2, 3]], k=1.3, periodicity=3.0)
+        stated = kernel(
+            "dihedral", "charmm", [[0, 1, 2, 3]], k=1.3, periodicity=3.0, phase=0.0, w=0.0
+        )
+        assert _energy(bare) == _energy(stated)
+        assert _energy(bare) != 0.0
+
+    def test_lj_cut_exponents_and_shift_default_to_12_6_no(self) -> None:
+        params = {"epsilon": 0.2, "sigma": 1.1}
+        bare = kernel("pair", "lj/cut", [[0, 1]], **params)
+        stated = kernel("pair", "lj/cut", [[0, 1]], n=12.0, m=6.0, shift=0.0, **params)
+        assert _energy(bare) == _energy(stated)

@@ -5,6 +5,7 @@
 //! Lowercase is the canonical spelling (spec ff-params-01) and matches molpy;
 //! GROMACS spells the middle one `B = 1/rho`, normalized at that reader.
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::PAIRS;
 use std::collections::HashMap;
 
@@ -345,16 +346,9 @@ pub fn pair_buck_ctor(
         let params = type_map
             .get(label.as_str())
             .ok_or_else(|| format!("PairBuck: unknown pair type '{}'", label))?;
-        let a = params
-            .get("a")
-            .ok_or_else(|| format!("PairBuck type '{}': missing 'a'", label))? as F;
-        let rho = params
-            .get("rho")
-            .ok_or_else(|| format!("PairBuck type '{}': missing 'rho'", label))?
-            as F;
-        let c = params
-            .get("c")
-            .ok_or_else(|| format!("PairBuck type '{}': missing 'c'", label))? as F;
+        let a = need::type_num("buck", label, params, "a")?;
+        let rho = need::type_num("buck", label, params, "rho")?;
+        let c = need::type_num("buck", label, params, "c")?;
 
         let w = if is_14.is_some_and(|b| b[idx]) {
             scale_14
@@ -393,23 +387,13 @@ pub fn pair_buck_typed_ctor(
     for ti in 0..ntypes {
         for tj in 0..ntypes {
             // Keyed in either order alike; a self-pair by the atom type alone.
-            let key = pair_key(&labels[ti], &labels[tj])?;
-            let p = type_map
-                .get(key.as_str())
-                .ok_or_else(|| format!("PairBuck: unknown pair type '{key}'"))?;
+            let (ta, tb) = (labels[ti].as_str(), labels[tj].as_str());
+            let p = need::unmixed_row("buck", "a", &type_map, ta, tb)?;
+            let key = pair_key(ta, tb)?;
             let t = type_pair(ti as u32, tj as u32, ntypes);
-            a[t] = p
-                .get("a")
-                .ok_or_else(|| format!("PairBuck type '{key}': missing 'a'"))?
-                as F;
-            rho[t] = p
-                .get("rho")
-                .ok_or_else(|| format!("PairBuck type '{key}': missing 'rho'"))?
-                as F;
-            c[t] = p
-                .get("c")
-                .ok_or_else(|| format!("PairBuck type '{key}': missing 'c'"))?
-                as F;
+            a[t] = need::type_num("buck", &key, p, "a")?;
+            rho[t] = need::type_num("buck", &key, p, "rho")?;
+            c[t] = need::type_num("buck", &key, p, "c")?;
         }
     }
     Ok(Member::pair(PairBuck::typed(type_id, ntypes, a, rho, c)))

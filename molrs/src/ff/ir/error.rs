@@ -126,6 +126,17 @@ pub enum IrError {
         type_: String,
         param: String,
     },
+    /// A row (or the style) whose value of a declared parameter is not of
+    /// the declared kind: text where the spec declares a number, an array
+    /// of another rank, a text outside the declared choices, a number out
+    /// of its domain (a non-integer `periodicity`). Not in the protocol's
+    /// table, which has no row for an ill-typed value.
+    BadValue {
+        style: String,
+        type_: String,
+        param: String,
+        reason: String,
+    },
     /// A Tier-2 kernel's output of the wrong shape, or a kernel that raised.
     KernelShape {
         style: String,
@@ -268,6 +279,18 @@ impl fmt::Display for IrError {
                 type_,
                 param,
             } => write!(f, "style `{style}` type '{type_}': missing `{param}`"),
+            BadValue {
+                style,
+                type_,
+                param,
+                reason,
+            } if type_.is_empty() => write!(f, "style `{style}`: `{param}` {reason}"),
+            BadValue {
+                style,
+                type_,
+                param,
+                reason,
+            } => write!(f, "style `{style}` type '{type_}': `{param}` {reason}"),
             KernelShape { style, reason } => write!(f, "style `{style}`: {reason}"),
             NoEngineForm {
                 engine,

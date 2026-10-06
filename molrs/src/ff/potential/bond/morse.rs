@@ -4,6 +4,7 @@
 //! LAMMPS names them: `d0` (LAMMPS `D0`, well depth, energy), `alpha`
 //! (steepness, 1/length), `r0` (equilibrium length).
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::BONDS;
 use std::collections::HashMap;
 
@@ -166,11 +167,7 @@ pub fn bond_morse_ctor(
 
     let (mut ai, mut aj) = (Vec::new(), Vec::new());
     let (mut dv, mut av, mut rv) = (Vec::new(), Vec::new(), Vec::new());
-    let need = |p: &Params, key: &str, label: &str| -> Result<F, String> {
-        p.get(key)
-            .ok_or_else(|| format!("BondMorse type '{}': missing '{}'", label, key))
-            .map(|v| v as F)
-    };
+    let need = |p: &Params, key: &str, label: &str| need::type_num("morse", label, p, key);
     for idx in 0..i_col.len() {
         let label = &type_col[idx];
         let p = type_map

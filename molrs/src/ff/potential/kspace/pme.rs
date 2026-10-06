@@ -9,6 +9,7 @@
 //! box vectors from style_params (`box_xx`, `box_yy`, `box_zz`, etc.),
 //! and exclusion pairs from `frame["exclusions"]` (`atomi`, `atomj` columns).
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::{ATOMS, EXCLUSIONS};
 use std::sync::{Arc, Mutex};
 
@@ -895,15 +896,26 @@ pub fn pme_ctor(
     _type_params: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, crate::ff::potential::CompileError> {
-    let alpha = style_params.get("alpha").ok_or("PME: missing 'alpha'")? as F;
-    let cutoff = style_params.get("cutoff").ok_or("PME: missing 'cutoff'")? as F;
-    let grid_x = style_params.get("grid_x").ok_or("PME: missing 'grid_x'")? as usize;
-    let grid_y = style_params.get("grid_y").ok_or("PME: missing 'grid_y'")? as usize;
-    let grid_z = style_params.get("grid_z").ok_or("PME: missing 'grid_z'")? as usize;
-    let order = style_params.get("order").ok_or("PME: missing 'order'")? as usize;
-    let coulomb = style_params
-        .get("coulomb")
-        .ok_or("PME: missing 'coulomb'")? as F;
+    let get = |key: &str| need::style_num("coul/long/pme", style_params, key);
+    let count = |key: &str| -> Result<usize, crate::ff::ir::IrError> {
+        let v = get(key)?;
+        if v < 1.0 || v.fract() != 0.0 {
+            return Err(need::bad(
+                "coul/long/pme",
+                "",
+                key,
+                format!("= {v} is not a positive integer"),
+            ));
+        }
+        Ok(v as usize)
+    };
+    let alpha = get("alpha")?;
+    let cutoff = get("cutoff")?;
+    let grid_x = count("grid_x")?;
+    let grid_y = count("grid_y")?;
+    let grid_z = count("grid_z")?;
+    let order = count("order")?;
+    let coulomb = get("coulomb")?;
 
     // Read charges from Frame's "atoms" block
     let atoms = frame

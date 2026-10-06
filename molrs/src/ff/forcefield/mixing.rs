@@ -43,10 +43,11 @@ impl Mixing {
         }
     }
 
-    /// Parse the canonical spelling, accepting LAMMPS' and foyer's synonyms.
+    /// Parse the canonical spelling (LAMMPS's `pair_modify mix` names); a
+    /// reader translates its own synonyms (foyer's `lorentz`) at its door.
     pub fn parse(name: &str) -> Result<Self, String> {
         match name {
-            "arithmetic" | "lorentz" | "lorentz-berthelot" => Ok(Self::Arithmetic),
+            "arithmetic" => Ok(Self::Arithmetic),
             "geometric" => Ok(Self::Geometric),
             "sixthpower" => Ok(Self::SixthPower),
             other => Err(format!(

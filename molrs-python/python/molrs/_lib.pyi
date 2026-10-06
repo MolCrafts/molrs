@@ -3388,6 +3388,7 @@ def write_lammps_forcefield(
     *,
     precision: int = 6,
     skip_pair_style: bool = False,
+    skip_special_bonds: bool = False,
     skip_units: bool = False,
     units: str = "real",
     cmap_file: str | None = None,
@@ -3398,6 +3399,7 @@ def write_lammps_forcefield_str(
     *,
     precision: int = 6,
     skip_pair_style: bool = False,
+    skip_special_bonds: bool = False,
     skip_units: bool = False,
     units: str = "real",
     cmap_file: str | None = None,
@@ -4541,6 +4543,7 @@ class ir:
     class NoKernel(IrError): ...
     class NoMixing(IrError): ...
     class MissingParam(IrError): ...
+    class BadValue(IrError): ...
     class KernelShape(IrError):
         """A kernel output of the wrong shape or dtype, or a Python kernel
         that raised (the original exception is ``__cause__``)."""

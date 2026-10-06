@@ -8,6 +8,7 @@ use crate::ff::forcefield::{Params, pair_key};
 use crate::ff::ir::conformance::Probe;
 use crate::ff::ir::{IrError, Mix, ParamKind, StyleSpec};
 use crate::ff::potential::generic::{Column, ScalarForm, TermParams, columns, read_by, row_num};
+use crate::ff::potential::need::neighbour_cutoff;
 use crate::ff::potential::pair::{atom_type_index, fold_chunks, type_pair};
 use crate::ff::potential::registry::SpecialClass;
 use crate::ff::potential::{PairDriven, Potential, gather_copies};
@@ -109,8 +110,10 @@ impl<'a> PairRows<'a> {
             });
         }
         let mixing = match style.get_str("mixing") {
-            Some(name) => Mixing::parse(name).map_err(|reason| IrError::Malformed {
+            Some(name) => Mixing::parse(name).map_err(|reason| IrError::BadValue {
                 style: spec.name.to_string(),
+                type_: String::new(),
+                param: "mixing".into(),
                 reason,
             })?,
             None => Mixing::UNDECLARED,
@@ -123,7 +126,8 @@ impl<'a> PairRows<'a> {
         })
     }
 
-    /// Type `a`'s self-row value of column `c` (or its default).
+    /// Type `a`'s self-row value of column `c` (its row gathered:
+    /// [`StyleSpec::gather`] filled its defaults).
     fn own(&self, a: &str, c: usize) -> Result<F, IrError> {
         let col = &self.cols[c];
         let missing = || IrError::MissingParam {
@@ -132,14 +136,7 @@ impl<'a> PairRows<'a> {
             param: col.name.clone(),
         };
         let row = self.rows.get(a).ok_or_else(missing)?;
-        row_num(self.spec, col, row)
-            .or_else(|| {
-                self.spec.params[col.param]
-                    .default
-                    .as_ref()
-                    .and_then(|v| v.as_num())
-            })
-            .ok_or_else(missing)
+        row_num(self.spec, col, row).ok_or_else(missing)
     }
 
     /// The column of `base`'s family member matching column `c`.
@@ -378,14 +375,8 @@ impl ScalarPair {
         tp: &[(&str, &Params)],
         frame: &Frame,
     ) -> Result<Self, crate::ff::potential::CompileError> {
-        let who = format!("{} `{}`", spec.category, spec.name);
         let table = PairRows::new(spec, &form.inputs(), style, tp)?;
-        let cutoff = style
-            .get("cutoff")
-            .ok_or_else(|| format!("{who}: a neighbour-driven pair style must declare 'cutoff'"))?;
-        if cutoff <= 0.0 {
-            return Err(format!("{who}: 'cutoff' must be > 0").into());
-        }
+        let cutoff = neighbour_cutoff(&spec.name, style)?;
         let (type_id, labels) = atom_type_index(frame)?;
         let ntypes = labels.len();
         let mut values = vec![vec![0.0; ntypes * ntypes]; table.cols.len()];

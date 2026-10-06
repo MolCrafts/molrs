@@ -8,6 +8,7 @@
 //! `dihedral_coeff t N A1 … AN`). The coefficients are energies. One kernel
 //! prices both.
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::DIHEDRALS;
 use std::collections::HashMap;
 
@@ -129,11 +130,11 @@ pub fn dihedral_multi_harmonic_ctor(
     tp: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, crate::ff::potential::CompileError> {
-    cos_polynomial_ctor("dihedral_multi_harmonic", tp, frame, |p| {
-        Ok(["a1", "a2", "a3", "a4", "a5"]
+    cos_polynomial_ctor("dihedral_multi_harmonic", tp, frame, |label, p| {
+        ["a1", "a2", "a3", "a4", "a5"]
             .iter()
-            .map(|key| p.get(key).unwrap_or(0.0) as F)
-            .collect())
+            .map(|key| need::type_num("multi/harmonic", label, p, key))
+            .collect()
     })
 }
 
@@ -144,11 +145,14 @@ pub fn dihedral_nharmonic_ctor(
     tp: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, crate::ff::potential::CompileError> {
-    cos_polynomial_ctor("dihedral_nharmonic", tp, frame, |p| {
-        Ok(nharmonic_coefficients(p)?
-            .into_iter()
-            .map(|a| a as F)
-            .collect())
+    cos_polynomial_ctor("dihedral_nharmonic", tp, frame, |label, p| {
+        // The first coefficient absent: `a1`, or the one a gap skips.
+        nharmonic_coefficients(p).map_err(|_| {
+            let m = (1..)
+                .take_while(|m| p.get(&format!("a{m}")).is_some())
+                .count();
+            need::missing("nharmonic", label, &format!("a{}", m + 1))
+        })
     })
 }
 
@@ -157,7 +161,7 @@ fn cos_polynomial_ctor(
     what: &str,
     tp: &[(&str, &Params)],
     frame: &Frame,
-    coefficients: impl Fn(&Params) -> Result<Vec<F>, String>,
+    coefficients: impl Fn(&str, &Params) -> Result<Vec<F>, crate::ff::ir::IrError>,
 ) -> Result<Member, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
@@ -201,7 +205,7 @@ fn cos_polynomial_ctor(
         aj.push(jc[idx] as usize);
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
-        a.push(coefficients(p).map_err(|e| format!("{what}[{}]: {e}", tc[idx]))?);
+        a.push(coefficients(&tc[idx], p)?);
     }
     Ok(Member::indexed(DihedralMultiHarmonic {
         atom_i: ai,
@@ -338,10 +342,14 @@ mod nharmonic_tests {
     /// No `a1`, or a coefficient past a gap, is refused at compile time.
     #[test]
     fn a_missing_or_gapped_coefficient_is_refused() {
+        let missing = |err: crate::ff::potential::CompileError| match err.ir() {
+            Some(crate::ff::ir::IrError::MissingParam { param, .. }) => param.clone(),
+            _ => panic!("{err}"),
+        };
         let err = one_dihedral("nharmonic", Params::from_pairs(&[("a2", 1.0)])).unwrap_err();
-        assert!(err.to_string().contains("a1"), "{err}");
+        assert_eq!(missing(err), "a1");
         let err =
             one_dihedral("nharmonic", Params::from_pairs(&[("a1", 1.0), ("a3", 1.0)])).unwrap_err();
-        assert!(err.to_string().contains("a3"), "{err}");
+        assert_eq!(missing(err), "a2");
     }
 }

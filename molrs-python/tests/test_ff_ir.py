@@ -371,6 +371,7 @@ def test_every_refusal_is_a_value_error_named_after_its_variant() -> None:
         "NoKernel",
         "NoMixing",
         "MissingParam",
+        "BadValue",
         "KernelShape",
         "NoEngineForm",
         "FormConflict",

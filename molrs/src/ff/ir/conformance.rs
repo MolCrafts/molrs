@@ -425,7 +425,9 @@ impl Probe {
                 crate::ff::ir::Value::Text(t) => target.set_str(name, t),
             }
         }
-        let rows = [("sample", &row)];
+        let (style, gathered) = spec.gather(&style, &[("sample", &row)])?;
+        let row = &gathered[0].1;
+        let rows = [("sample", row)];
         let mut params = TermParams::default();
         let missing = |param: &str| IrError::MissingParam {
             style: spec.name.to_string(),
@@ -436,16 +438,12 @@ impl Probe {
             let decl = &spec.params[col.param];
             match &decl.kind {
                 ParamKind::Scalar => {
-                    let v = crate::ff::potential::generic::row_num(spec, &col, &row)
-                        .or_else(|| decl.default.as_ref().and_then(|d| d.as_num()))
+                    let v = crate::ff::potential::generic::row_num(spec, &col, row)
                         .ok_or_else(|| missing(&col.name))?;
                     params.nums.push((col.name, vec![v; n]));
                 }
                 ParamKind::Text { .. } => {
-                    let v = row
-                        .get_str(&col.name)
-                        .or_else(|| decl.default.as_ref().and_then(|d| d.as_text()))
-                        .ok_or_else(|| missing(&col.name))?;
+                    let v = row.get_str(&col.name).ok_or_else(|| missing(&col.name))?;
                     params.texts.push((col.name, vec![v.to_owned(); n]));
                 }
                 ParamKind::Array { .. } => return Err(missing(&col.name)),

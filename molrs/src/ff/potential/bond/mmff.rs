@@ -1,5 +1,6 @@
 //! MMFF94 bond stretching: E = (1/2)*143.9325*kb*dr^2*(1 + cs*dr + 7/12*cs^2*dr^2)
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::BONDS;
 use ndarray::{Array2, ArrayView2};
 
@@ -127,14 +128,8 @@ pub fn mmff_bond_ctor(
         .get("atomj")
         .and_then(|c| c.as_uint())
         .ok_or("mmff_bond: missing \"atomj\"")?;
-    let kb_col = block
-        .get("kb")
-        .and_then(|c| c.as_float())
-        .ok_or("mmff_bond: missing \"kb\" column (typifier did not bake bond params)")?;
-    let r0_col = block
-        .get("r0")
-        .and_then(|c| c.as_float())
-        .ok_or("mmff_bond: missing \"r0\" column (typifier did not bake bond params)")?;
+    let kb_col = need::instance_col("mmff_bond", block, "kb")?;
+    let r0_col = need::instance_col("mmff_bond", block, "r0")?;
 
     let n = i_col.len();
     let (mut ai, mut aj, mut kb, mut r0) = (

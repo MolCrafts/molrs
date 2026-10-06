@@ -503,6 +503,29 @@ CHARMM36, AMBER ff14SB and OPLS-AA molecules.
   refused by the writer (0.15 wrote a 12-6 line). A pair style the writer
   has no LAMMPS form for (`coul/tt`, …) is refused by name, no longer
   written into a `pair_style hybrid` line LAMMPS cannot read.
+- **`skip_pair_style` skips the `pair_style` line only.**
+  `write_lammps_forcefield(_str)(…, skip_pair_style=True)` (Rust
+  `LammpsWriteOptions::skip_pair_style`) now keeps `special_bonds` and
+  `pair_modify mix` / `shift`: they are the force field's, and LAMMPS's
+  defaults (`0 0 0`, `geometric` for `lj/cut`) are not molrs's. 0.15 dropped
+  both, so a relaxation that set its own `pair_style` ran with LAMMPS's 1-4
+  weights and mixing rule. A caller that states its own 1-4 weights passes
+  the new `skip_special_bonds=True`. `pair_modify` needs a pair style: read a
+  `skip_pair_style` include after the input's `pair_style`.
+- **A pair `hybrid` states each sub-style's mixing rule**: one
+  `pair_modify pair <sub-style> mix <rule>` per sub-style whose spec declares
+  `mixing` (its rule, else the spec's default `arithmetic`); 0.15 wrote none,
+  so LAMMPS mixed an `lj/cut` sub-style geometrically.
+
+### LAMMPS data files
+
+- **A box-less frame is written inside the bounds of its atoms.**
+  `write_lammps_data` gives a frame without a box the axis-aligned bounds of
+  its coordinates widened by 1 length unit on every side (0.15 wrote a
+  `0 1` placeholder box, which LAMMPS wraps the atoms into under `p` and
+  loses them from under `f` / `s`). Read such a file with
+  `boundary s s s`; a non-finite coordinate is refused. A frame meant to be
+  periodic carries its box, written as before.
 
 ### Engine codecs: styles carry their engine forms
 
@@ -555,6 +578,47 @@ IR](guides/forcefield-ir.md#engine-codecs).
   absent parameter: `dihedral opls` `k1..k4`, `multi/harmonic` `a1..a5`,
   `class2` `k1..k3`/`phi1..phi3`, `charmm` and `periodic` `phase`, `improper
   harmonic` `chi0`, `improper periodic` `phase`.
+
+### Parameter defaults and refusals are the spec's
+
+- **One place applies a default.** `StyleSpec::gather` fills every default a
+  spec declares (style params, per-type rows, each term of an indexed family)
+  and checks each stated value's kind, before any kernel — built-in
+  constructor, generic kernel, expression — sees a parameter; the 1-4
+  exceptions and `materialize_one_four` read through it too. No built-in
+  kernel states a default of its own any more, so an absent parameter prices
+  the same in every tier:
+  - `pair coul/cut` and `coul/charmm` take `dielectric` 1 when the style
+    omits it (LAMMPS's default; 0.15 refused it as "force-field data").
+  - `pair lj/cut`, `lj/class2`, `buck`, `morse` and `coul/cut` declare
+    `cutoff` with default ∞ (untruncated), which their compiled kernels
+    already did; an expression-priced style no longer needs one at the
+    compiled door. A neighbour-driven evaluation still needs a finite
+    `cutoff` and refuses ∞ (`BadValue`).
+  - `pair lj/class2` mixes by its `mixing` (default `sixthpower`, LAMMPS's)
+    when a pair has no cross row; 0.15 refused any pair without one.
+  - `dihedral charmm` `w` defaults to 0 (the 1-4 exception read 0), `pair
+    mmff_vdw` `da` to 0 (neither donor nor acceptor), `angle mmff_stbn`
+    declares the `linear` column it reads.
+  - `mixing` accepts the canonical names only (`arithmetic`, `geometric`,
+    `sixthpower`); foyer's `combining_rule="lorentz"` is translated by the
+    OPLS-AA (foyer XML) reader, and the `lorentz` / `lorentz-berthelot` aliases are
+    gone.
+- **Every missing or ill-typed parameter is an `IrError`.** A built-in
+  constructor that lacks a parameter raises `MissingParam` (`style`, `type`,
+  `param`) — Python `molrs.ff.ir.MissingParam` — where 0.15 raised a plain
+  `ValueError` with a message; a per-instance column a typifier did not bake
+  (`kb` of `mmff_bond`, …) is `MissingParam` too. The new variant
+  **`BadValue`** (`style`, `type`, `param`, `reason`; Python
+  `molrs.ff.ir.BadValue`) refuses a value of the wrong kind (text for a
+  number, an array of another rank), text outside its declared choices
+  (`mixing = "lorentz"`) or a value outside its domain (a non-integer `n` of
+  `lj/cut`, `inner >= cutoff` of a CHARMM switch). An unlike pair of `buck` /
+  `morse` with no cross row is `NoMixing`. Structural failures (a missing
+  block or column, an unknown type label) stay plain `ValueError`.
+- **`dihedral periodic`** refuses a gap in its terms (`k1`, `k3` without
+  `k2`: `MissingParam` `k2`; 0.15 silently dropped `k3`) and a row spelling
+  both `k` and `k1` (`BadValue`).
 
 ### AMBER prmtop
 

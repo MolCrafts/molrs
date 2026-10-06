@@ -24,11 +24,14 @@
 //! [`SpecialBonds`]: crate::ff::forcefield::SpecialBonds
 //! [`PotentialCompiler::compile`]: crate::ff::potential::PotentialCompiler::compile
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
-use crate::ff::mmff::da::{DA_ACCEPTOR, DA_DONOR, DA_NEITHER};
+#[cfg(test)]
+use crate::ff::mmff::da::DA_NEITHER;
+use crate::ff::mmff::da::{DA_ACCEPTOR, DA_DONOR};
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::{sub3, validate_coords};
 use crate::ff::potential::pair::atom_type_index;
@@ -294,7 +297,7 @@ impl PairDriven for MMFFVdW {
 ///
 /// `alpha` is the atomic polarizability α (Å³), `n_eff` the Slater-Kirkwood
 /// effective electron number N, `a_i` / `g_i` the MMFF scale factors A and G, and
-/// `da` the hydrogen-bond role ([`DA_NEITHER`] / [`DA_DONOR`] / [`DA_ACCEPTOR`]).
+/// `da` the hydrogen-bond role ([`DA_NEITHER`](crate::ff::mmff::da::DA_NEITHER) / [`DA_DONOR`] / [`DA_ACCEPTOR`]).
 #[derive(Clone, Debug)]
 pub struct VdwAtomParams {
     /// Atomic polarizability α (Å³).
@@ -305,7 +308,7 @@ pub struct VdwAtomParams {
     pub a_i: f64,
     /// MMFF scale factor G.
     pub g_i: f64,
-    /// Hydrogen-bond role: [`DA_NEITHER`], [`DA_DONOR`] or [`DA_ACCEPTOR`].
+    /// Hydrogen-bond role: [`DA_NEITHER`](crate::ff::mmff::da::DA_NEITHER), [`DA_DONOR`] or [`DA_ACCEPTOR`].
     pub da: u8,
 }
 
@@ -328,15 +331,16 @@ pub struct VdwStyleParams {
 }
 
 impl VdwStyleParams {
-    /// Read the global vdW line from a style, falling back to MMFF94's own
-    /// values for a hand-built style that omits the section.
-    pub fn from_style(sp: &Params) -> Self {
-        Self {
-            b: sp.get("B").unwrap_or(0.2),
-            beta: sp.get("Beta").unwrap_or(12.0),
-            darad: sp.get("DARAD").unwrap_or(0.8),
-            daeps: sp.get("DAEPS").unwrap_or(0.5),
-        }
+    /// Read the global vdW line from a gathered style: a hand-built style
+    /// that omits the section has MMFF94's own values, the spec's defaults.
+    pub fn from_style(sp: &Params) -> Result<Self, crate::ff::ir::IrError> {
+        let get = |key: &str| need::style_num("mmff_vdw", sp, key);
+        Ok(Self {
+            b: get("B")?,
+            beta: get("Beta")?,
+            darad: get("DARAD")?,
+            daeps: get("DAEPS")?,
+        })
     }
 }
 
@@ -416,7 +420,7 @@ pub fn mmff_vdw_ctor(
     tp: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, crate::ff::potential::CompileError> {
-    let style = VdwStyleParams::from_style(sp);
+    let style = VdwStyleParams::from_style(sp)?;
     let lj_14 = sp.get("lj14scale").unwrap_or(1.0) as F;
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let atoms = frame.get(ATOMS).ok_or("mmff_vdw: missing \"atoms\"")?;
@@ -453,17 +457,14 @@ pub fn mmff_vdw_ctor(
             .get(tj.as_str())
             .ok_or_else(|| format!("mmff_vdw: unknown atom type '{}'", tj))?;
 
-        let to_vdw = |p: &Params, label: &str| -> Result<VdwAtomParams, String> {
-            let get = |k: &str| {
-                p.get(k)
-                    .ok_or_else(|| format!("mmff_vdw type '{}': missing '{}'", label, k))
-            };
+        let to_vdw = |p: &Params, label: &str| -> Result<VdwAtomParams, crate::ff::ir::IrError> {
+            let get = |k: &str| need::type_num("mmff_vdw", label, p, k);
             Ok(VdwAtomParams {
                 alpha: get("alpha")?,
                 n_eff: get("n_eff")?,
                 a_i: get("a_i")?,
                 g_i: get("g_i")?,
-                da: p.get("da").unwrap_or(f64::from(DA_NEITHER)) as u8,
+                da: get("da")? as u8,
             })
         };
         let (rs, eps) = vdw_combining(&to_vdw(pi, ti)?, &to_vdw(pj, tj)?, &style);
@@ -493,7 +494,7 @@ pub fn mmff_vdw_typed_ctor(
     tp: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, crate::ff::potential::CompileError> {
-    let style = VdwStyleParams::from_style(sp);
+    let style = VdwStyleParams::from_style(sp)?;
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let (type_id, labels) = atom_type_index(frame)?;
     let mut per_type = Vec::with_capacity(labels.len());
@@ -501,16 +502,13 @@ pub fn mmff_vdw_typed_ctor(
         let p = type_map
             .get(l.as_str())
             .ok_or_else(|| format!("mmff_vdw: unknown atom type '{l}'"))?;
-        let get = |k: &str| {
-            p.get(k)
-                .ok_or_else(|| format!("mmff_vdw type '{l}': missing '{k}'"))
-        };
+        let get = |k: &str| need::type_num("mmff_vdw", l, p, k);
         per_type.push(VdwAtomParams {
             alpha: get("alpha")?,
             n_eff: get("n_eff")?,
             a_i: get("a_i")?,
             g_i: get("g_i")?,
-            da: p.get("da").unwrap_or(f64::from(DA_NEITHER)) as u8,
+            da: get("da")? as u8,
         });
     }
     let atoms = type_id
@@ -594,6 +592,7 @@ mod tests {
             ("DARAD", 0.8),
             ("DAEPS", 0.5),
         ]))
+        .unwrap()
     }
 
     #[test]

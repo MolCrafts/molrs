@@ -7,6 +7,7 @@
 use crate::ff::forcefield::Params;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
+use crate::ff::potential::need;
 use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::{Member, PairDriven, Potential};
@@ -272,14 +273,8 @@ pub fn uff_lj_ctor(
     frame: &Frame,
 ) -> Result<Member, crate::ff::potential::CompileError> {
     let atoms = frame.get(ATOMS).ok_or("uff_lj: missing atoms")?;
-    let x1 = atoms
-        .get("x1")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_lj: missing atoms.x1")?;
-    let d1 = atoms
-        .get("D1")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_lj: missing atoms.D1")?;
+    let x1 = need::instance_col("uff_lj", atoms, "x1")?;
+    let d1 = need::instance_col("uff_lj", atoms, "D1")?;
     // `PotentialCompiler::compile` projects the force field's `special_bonds` 1-4
     // weight here. `E = D·((x/r)¹² − 2(x/r)⁶)` is linear in `D`, so scaling
     // the well depth is exactly scaling the pair.
@@ -338,14 +333,8 @@ pub fn uff_lj_typed_ctor(
     frame: &Frame,
 ) -> Result<Member, crate::ff::potential::CompileError> {
     let atoms = frame.get(ATOMS).ok_or("uff_lj: missing atoms")?;
-    let x1 = atoms
-        .get("x1")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_lj: missing atoms.x1")?;
-    let d1 = atoms
-        .get("D1")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_lj: missing atoms.D1")?;
+    let x1 = need::instance_col("uff_lj", atoms, "x1")?;
+    let d1 = need::instance_col("uff_lj", atoms, "D1")?;
     Ok(Member::pair(UffVdW::typed(
         x1.iter().map(|&v| v as F).collect(),
         d1.iter().map(|&v| v as F).collect(),

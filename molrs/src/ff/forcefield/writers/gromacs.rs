@@ -229,7 +229,9 @@ impl GromacsTopFfWriter {
     /// The `[ defaults ]` row: `1 comb yes fudgeLJ fudgeQQ`.
     fn defaults_row(&self, ff: &ForceField, lj: Option<&Style>) -> Result<String, String> {
         let mixing = match lj {
-            Some(style) if style.name() == "lj/charmm" => charmm_mixing(style.params())?,
+            Some(style) if style.name() == "lj/charmm" => {
+                charmm_mixing(style.params()).map_err(|e| e.to_string())?
+            }
             Some(style) => match style.params().get_str("mixing") {
                 Some(name) => Mixing::parse(name).map_err(|e| format!("pair/lj/cut: {e}"))?,
                 None => Mixing::UNDECLARED,
@@ -364,7 +366,7 @@ impl GromacsTopFfWriter {
             lj.defs().kernel_type_params()?.into_iter().collect();
         let by_key: HashMap<&str, &Params> =
             kernel_rows.iter().map(|(k, p)| (k.as_str(), p)).collect();
-        let mixing = charmm_mixing(lj.params())?;
+        let mixing = charmm_mixing(lj.params()).map_err(|e| e.to_string())?;
         let has_14 = |p: &Params| p.get("epsilon14").is_some() || p.get("sigma14").is_some();
         let one_four = lj.params().get_str("one_four");
         if one_four != Some("epsilon14") && rows.iter().any(|r| has_14(r.2)) {
@@ -423,7 +425,8 @@ impl GromacsTopFfWriter {
                 if !by_key.contains_key(a) || !by_key.contains_key(b) {
                     continue;
                 }
-                let (regular, one_four) = charmm_pair_params(&by_key, mixing, a, b)?;
+                let (regular, one_four) =
+                    charmm_pair_params(&by_key, mixing, a, b).map_err(|e| e.to_string())?;
                 if !same_lj(regular, one_four) {
                     pairtypes.push_str(&line(a, b, (one_four.0 * weight, one_four.1)));
                 }

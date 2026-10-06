@@ -7,6 +7,7 @@
 //! neighbour-driven constructors read the same keys (the compiled one read
 //! `D0` until 0.16, so one field could not price under both).
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::PAIRS;
 use std::collections::HashMap;
 
@@ -335,11 +336,7 @@ pub fn pair_morse_ctor(
 
     let (mut ai, mut aj) = (Vec::new(), Vec::new());
     let (mut dv, mut av, mut rv) = (Vec::new(), Vec::new(), Vec::new());
-    let need = |p: &Params, key: &str, label: &str| -> Result<F, String> {
-        p.get(key)
-            .ok_or_else(|| format!("PairMorse type '{}': missing '{}'", label, key))
-            .map(|v| v as F)
-    };
+    let need = |p: &Params, key: &str, label: &str| need::type_num("morse", label, p, key);
     for idx in 0..i_col.len() {
         let label = &type_col[idx];
         let p = type_map
@@ -379,23 +376,13 @@ pub fn pair_morse_typed_ctor(
     for ti in 0..ntypes {
         for tj in 0..ntypes {
             // Keyed in either order alike; a self-pair by the atom type alone.
-            let key = pair_key(&labels[ti], &labels[tj])?;
-            let p = type_map
-                .get(key.as_str())
-                .ok_or_else(|| format!("PairMorse: unknown pair type '{key}'"))?;
+            let (ta, tb) = (labels[ti].as_str(), labels[tj].as_str());
+            let p = need::unmixed_row("morse", "d0", &type_map, ta, tb)?;
+            let key = pair_key(ta, tb)?;
             let t = type_pair(ti as u32, tj as u32, ntypes);
-            d0[t] = p
-                .get("d0")
-                .ok_or_else(|| format!("PairMorse type '{key}': missing 'd0'"))?
-                as F;
-            alpha[t] = p
-                .get("alpha")
-                .ok_or_else(|| format!("PairMorse type '{key}': missing 'alpha'"))?
-                as F;
-            r0[t] = p
-                .get("r0")
-                .ok_or_else(|| format!("PairMorse type '{key}': missing 'r0'"))?
-                as F;
+            d0[t] = need::type_num("morse", &key, p, "d0")?;
+            alpha[t] = need::type_num("morse", &key, p, "alpha")?;
+            r0[t] = need::type_num("morse", &key, p, "r0")?;
         }
     }
     Ok(Member::pair(PairMorse::typed(

@@ -16,6 +16,7 @@ pub mod generic;
 pub mod improper;
 pub mod instances;
 pub mod kspace;
+pub(crate) mod need;
 pub mod pair;
 pub mod registry;
 pub mod soft;

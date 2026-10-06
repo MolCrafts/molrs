@@ -11,6 +11,7 @@
 //! as separate LAMMPS coeff lines and not part of this style's per-type params,
 //! are out of scope here.
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::DIHEDRALS;
 use std::collections::HashMap;
 
@@ -169,9 +170,10 @@ pub fn dihedral_class2_ctor(
         al.push(lc[idx] as usize);
         let mut t = [(0.0 as F, 0.0 as F); 3];
         for (m, slot) in t.iter_mut().enumerate() {
-            let kn = p.get(&format!("k{}", m + 1)).unwrap_or(0.0) as F;
+            let label = tc[idx].as_str();
+            let kn = need::type_num("class2", label, p, &format!("k{}", m + 1))?;
             // degrees (LAMMPS `dihedral_style class2`) → radians
-            let pn = p.get(&format!("phi{}", m + 1)).unwrap_or(0.0).to_radians() as F;
+            let pn = need::type_num("class2", label, p, &format!("phi{}", m + 1))?.to_radians();
             *slot = (kn, pn);
         }
         terms.push(t);

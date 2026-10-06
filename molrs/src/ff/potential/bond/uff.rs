@@ -1,5 +1,6 @@
 //! UFF bond stretch: E = ½ · kb · (r − r0)² (RDKit `BondStretchContrib`).
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::BONDS;
 use ndarray::{Array2, ArrayView2};
 
@@ -112,14 +113,8 @@ pub fn uff_bond_ctor(
         .get("atomj")
         .and_then(|c| c.as_uint())
         .ok_or("uff_bond: missing atomj")?;
-    let kb = block
-        .get("kb")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_bond: missing kb (typifier must bake)")?;
-    let r0 = block
-        .get("r0")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_bond: missing r0 (typifier must bake)")?;
+    let kb = need::instance_col("uff_bond", block, "kb")?;
+    let r0 = need::instance_col("uff_bond", block, "r0")?;
     let n = i.len();
     Ok(Member::indexed(UffBond {
         atom_i: (0..n).map(|t| i[t] as usize).collect(),

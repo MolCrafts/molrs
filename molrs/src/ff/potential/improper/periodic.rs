@@ -21,6 +21,7 @@
 //! OpenMM's XML lists the centre first and evaluates `(c2, c3, c1, c4)`; its
 //! reader and writer map between the two.
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::IMPROPERS;
 use std::collections::HashMap;
 
@@ -179,12 +180,10 @@ pub fn improper_periodic_ctor(
         aj.push(jc[idx] as usize);
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
-        kk.push(p.get("k").ok_or("improper_periodic: missing k")? as F);
-        nn.push(
-            p.get("periodicity")
-                .ok_or("improper_periodic: missing periodicity")? as F,
-        );
-        dd.push(p.get("phase").unwrap_or(0.0).to_radians() as F); // degrees → radians
+        kk.push(need::type_num("periodic", &tc[idx], p, "k")?);
+        nn.push(need::type_num("periodic", &tc[idx], p, "periodicity")?);
+        // degrees → radians
+        dd.push(need::type_num("periodic", &tc[idx], p, "phase")?.to_radians());
     }
     Ok(Member::indexed(ImproperPeriodic {
         atom_i: ai,

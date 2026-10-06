@@ -16,6 +16,7 @@
 //! and the first atom I is the centre (LAMMPS's "atom of symmetry" for this
 //! style; CHARMM writes its impropers this way).
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::IMPROPERS;
 use std::collections::HashMap;
 
@@ -177,8 +178,9 @@ pub fn improper_harmonic_ctor(
         aj.push(jc[idx] as usize);
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
-        kk.push(p.get("k").ok_or("improper_harmonic: missing k")? as F);
-        cc.push(p.get("chi0").unwrap_or(0.0).to_radians() as F); // degrees → radians
+        kk.push(need::type_num("harmonic", &tc[idx], p, "k")?);
+        // degrees → radians
+        cc.push(need::type_num("harmonic", &tc[idx], p, "chi0")?.to_radians());
     }
     Ok(Member::indexed(ImproperHarmonic {
         atom_i: ai,

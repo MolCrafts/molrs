@@ -11,6 +11,7 @@
 //! The same function of the dihedral is LAMMPS's `dihedral_style harmonic`
 //! (`K[1 + d cos(nφ)]`); [`signed_cosine_ctor`] builds either from its block.
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::IMPROPERS;
 use std::collections::HashMap;
 
@@ -122,22 +123,22 @@ pub fn improper_cvff_ctor(
     tp: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, crate::ff::potential::CompileError> {
-    signed_cosine_ctor(IMPROPERS, "improper_cvff", tp, frame)
+    signed_cosine_ctor(IMPROPERS, "cvff", tp, frame)
 }
 
 /// `k·[1 + sign·cos(periodicity·φ)]` over the quadruples of `block_name`
 /// (`"impropers"` for `improper cvff`, `"dihedrals"` for `dihedral
-/// harmonic`); `what` names the style in errors.
+/// harmonic`); `style` is the style's name (`cvff`, `harmonic`).
 pub fn signed_cosine_ctor(
     block_name: &str,
-    what: &str,
+    style: &str,
     tp: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get(block_name)
-        .ok_or_else(|| format!("{what}: missing \"{block_name}\" block"))?;
+        .ok_or_else(|| format!("{style}: missing \"{block_name}\" block"))?;
     let ic = block
         .get("atomi")
         .and_then(|c| c.as_uint())
@@ -175,15 +176,15 @@ pub fn signed_cosine_ctor(
     for idx in 0..n {
         let p = type_map
             .get(tc[idx].as_str())
-            .ok_or_else(|| format!("{what}: unknown type '{}'", tc[idx]))?;
+            .ok_or_else(|| format!("{block_name} {style}: unknown type '{}'", tc[idx]))?;
         ai.push(ic[idx] as usize);
         aj.push(jc[idx] as usize);
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
-        let need = |key: &str| p.get(key).ok_or_else(|| format!("{what}: missing {key}"));
-        kk.push(need("k")? as F);
-        dd.push(need("sign")? as F);
-        nn.push(need("periodicity")? as F);
+        let need = |key: &str| need::type_num(style, &tc[idx], p, key);
+        kk.push(need("k")?);
+        dd.push(need("sign")?);
+        nn.push(need("periodicity")?);
     }
     Ok(Member::indexed(ImproperCvff {
         atom_i: ai,

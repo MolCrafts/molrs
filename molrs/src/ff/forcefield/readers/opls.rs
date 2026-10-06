@@ -382,10 +382,9 @@ fn build_nonbonded(
         if raw.nonbonded_scales.is_none() {
             return Ok(());
         }
-        let rule = combining_rule.unwrap_or("arithmetic");
-        Mixing::parse(rule).map_err(|e| format!("<ForceField combining_rule>: {e}"))?;
+        let rule = combining_rule.map_or(Ok(Mixing::Arithmetic), foyer_rule)?;
         let mut lj_params = Params::new();
-        lj_params.set_str("mixing", rule);
+        lj_params.set_str("mixing", rule.name());
         let lj = ff
             .def_style("pair", "lj/cut", lj_params)
             .map_err(|e| e.to_string())?;
@@ -416,7 +415,7 @@ fn build_nonbonded(
         ));
     }
     if let Some(rule) = combining_rule
-        && Mixing::parse(rule)? != Mixing::Arithmetic
+        && foyer_rule(rule)? != Mixing::Arithmetic
     {
         return Err(format!(
             "<ForceField combining_rule=\"{rule}\">: <LennardJonesForce> mixes \
@@ -1176,6 +1175,15 @@ fn opt_f64(node: &Node, attr: &str) -> Result<Option<f64>, String> {
                 raw
             )
         }),
+    }
+}
+
+/// foyer's `<ForceField combining_rule>`: `lorentz` (Lorentz-Berthelot,
+/// [`Mixing::Arithmetic`]) or a canonical rule name.
+fn foyer_rule(rule: &str) -> Result<Mixing, String> {
+    match rule {
+        "lorentz" => Ok(Mixing::Arithmetic),
+        other => Mixing::parse(other).map_err(|e| format!("<ForceField combining_rule>: {e}")),
     }
 }
 

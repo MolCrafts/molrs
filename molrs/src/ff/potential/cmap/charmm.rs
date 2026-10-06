@@ -52,6 +52,7 @@
 //! and read at the value cell — the same numbers, except where a float tie on
 //! a cell edge sent LAMMPS's two lookups to neighbouring cells.
 
+use crate::ff::potential::need;
 use std::collections::HashMap;
 use std::f64::consts::PI;
 
@@ -123,12 +124,12 @@ impl CmapGrid {
             [a, b] if a == b && *a >= 2 => *a,
             _ => {
                 return Err(format!(
-                    "a cmap grid is a square N×N array with N >= 2, found shape {shape:?}"
+                    "is not a square N×N array with N >= 2: its shape is {shape:?}"
                 ));
             }
         };
         if let Some(bad) = grid.iter().find(|v| !v.is_finite()) {
-            return Err(format!("a cmap grid holds {bad}; its values are finite"));
+            return Err(format!("holds {bad}; a cmap grid's values are finite"));
         }
         let e: Vec<F> = grid.iter().copied().collect();
         let dx = 360.0 / n as F;
@@ -483,8 +484,8 @@ pub fn cmap_charmm_ctor(
                     .ok_or_else(|| format!("cmap_charmm: unknown type '{label}'"))?;
                 let grid = params
                     .get_array(GRID)
-                    .ok_or_else(|| format!("cmap_charmm[{label}]: no `{GRID}` array param"))?;
-                maps.push(CmapGrid::new(grid).map_err(|e| format!("cmap_charmm[{label}]: {e}"))?);
+                    .ok_or_else(|| need::missing("charmm", label, GRID))?;
+                maps.push(CmapGrid::new(grid).map_err(|e| need::bad("charmm", label, GRID, e))?);
                 index.insert(label, maps.len() - 1);
                 maps.len() - 1
             }

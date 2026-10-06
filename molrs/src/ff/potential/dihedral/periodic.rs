@@ -11,6 +11,8 @@
 //! GAFF default), keeping the form identical to one CHARMM term. This is the
 //! canonical encoding the molpy → molrs ForceField bridge emits.
 
+use crate::ff::ir::IrError;
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::DIHEDRALS;
 use std::collections::HashMap;
 
@@ -124,47 +126,39 @@ impl IndexedTerms for DihedralPeriodic {
 }
 
 /// Collect the cosine terms from a per-type [`Params`] using the indexed
-/// `k{m}`/`periodicity{m}`/`phase{m}` encoding, falling back to a single
-/// `k`/`periodicity`/`phase` triple.
-fn collect_terms(p: &Params, label: &str) -> Result<Vec<Term>, String> {
-    let mut terms = Vec::new();
-    let mut m = 1;
-    loop {
-        let kk = p.get(&format!("k{m}"));
-        if kk.is_none() {
-            break;
-        }
-        let n = p
-            .get(&format!("periodicity{m}"))
-            .ok_or_else(|| format!("dihedral_periodic[{label}]: missing periodicity{m}"))?;
-        let d = p.get(&format!("phase{m}")).unwrap_or(0.0);
-        terms.push(Term {
-            k: kk.unwrap() as F,
-            n: n as F,
-            d: d.to_radians() as F, // degrees → radians
-        });
-        m += 1;
+/// `k{m}`/`periodicity{m}`/`phase{m}` encoding (contiguous from 1), or the
+/// single-term `k`/`periodicity`/`phase` spelling.
+fn collect_terms(p: &Params, label: &str) -> Result<Vec<Term>, IrError> {
+    let num = |key: &str| need::type_num("periodic", label, p, key);
+    let term = |m: &str| -> Result<Term, IrError> {
+        Ok(Term {
+            k: num(&format!("k{m}"))?,
+            n: num(&format!("periodicity{m}"))?,
+            d: num(&format!("phase{m}"))?.to_radians(), // degrees → radians
+        })
+    };
+    let m = (1..)
+        .take_while(|m| p.get(&format!("k{m}")).is_some())
+        .count();
+    let beyond = p.iter().any(|(key, _)| {
+        key.strip_prefix('k')
+            .and_then(|i| i.parse::<usize>().ok())
+            .is_some_and(|i| i > m)
+    });
+    if beyond {
+        return Err(need::missing("periodic", label, &format!("k{}", m + 1)));
     }
-    if terms.is_empty() {
-        // single-term fallback
-        if let Some(k) = p.get("k") {
-            let n = p
-                .get("periodicity")
-                .ok_or_else(|| format!("dihedral_periodic[{label}]: missing periodicity"))?;
-            let d = p.get("phase").unwrap_or(0.0);
-            terms.push(Term {
-                k: k as F,
-                n: n as F,
-                d: d.to_radians() as F, // degrees → radians
-            });
-        } else {
-            return Err(format!(
-                "dihedral_periodic[{label}]: no terms \
-                 (need k1/periodicity1/phase1… or k/periodicity/phase)"
-            ));
-        }
+    match (m, p.get("k").is_some()) {
+        (0, true) => Ok(vec![term("")?]),
+        (0, false) => Err(need::missing("periodic", label, "k1")),
+        (_, true) => Err(need::bad(
+            "periodic",
+            label,
+            "k",
+            "is given beside `k1`: spell one term `k`, or every term `k<m>`",
+        )),
+        (m, false) => (1..=m).map(|i| term(&i.to_string())).collect(),
     }
-    Ok(terms)
 }
 
 /// Construct a [`DihedralPeriodic`] from per-type params and a Frame's
@@ -286,6 +280,7 @@ mod tests {
         let mut q = Params::new();
         q.set("k", 2.0);
         q.set("periodicity", 3.0);
+        q.set("phase", 0.0);
         let t2 = collect_terms(&q, "y").unwrap();
         assert_eq!(t2.len(), 1);
         assert_eq!(t2[0].n, 3.0);

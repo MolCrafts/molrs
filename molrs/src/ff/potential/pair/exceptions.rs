@@ -52,11 +52,13 @@ use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::one_four::check_materialized;
-use crate::ff::forcefield::{ForceField, Params, Style};
+use crate::ff::forcefield::{ForceField, Params};
+use crate::ff::potential::compile::gathered;
 use crate::ff::potential::end_pairs;
 use crate::ff::potential::geometry::{term_table, validate_coords};
+use crate::ff::potential::need;
 use crate::ff::potential::pair::charmm::{charmm_mixing, charmm_pair_params, lj_coeffs};
-use crate::ff::potential::pair::lj_cut::lj_cut_pair_params;
+use crate::ff::potential::pair::lj_cut::{lj_pair_params, mixing_of};
 use crate::ff::potential::{IndexedTerms, Potential};
 use molrs::store::frame::Frame;
 use molrs::store::schema::PAIR_OVERRIDE_COLUMNS;
@@ -332,10 +334,11 @@ pub(crate) fn plan(ff: &ForceField, frame: &Frame) -> Result<Exceptions, String>
         let base = |mixing: Mixing, charmm: bool| -> Result<(F, F), String> {
             let (a, b) = atom_type_pair(types, i, j)?;
             if charmm {
-                let (regular, one_four) = charmm_pair_params(&lj_rows, mixing, a, b)?;
+                let (regular, one_four) =
+                    charmm_pair_params(&lj_rows, mixing, a, b).map_err(|e| e.to_string())?;
                 Ok(if w > 0.0 { one_four } else { regular })
             } else {
-                lj_cut_pair_params(&lj_rows, mixing, a, b)
+                lj_pair_params("lj/cut", &lj_rows, mixing, a, b).map_err(|e| e.to_string())
             }
         };
         let (eps, sigma, w_lj) = match &vdw {
@@ -412,8 +415,9 @@ pub(crate) fn dihedral_weights(
             continue;
         }
         let mut by_type: HashMap<String, F> = HashMap::new();
-        for (name, p) in style.defs().kernel_type_params()? {
-            let w = p.get("w").unwrap_or(0.0);
+        let (_, rows) = gathered(style).map_err(|e| e.to_string())?;
+        for (name, p) in rows {
+            let w = need::type_num("charmm", &name, &p, "w").map_err(|e| e.to_string())?;
             // LAMMPS: "Incorrect weight arg for dihedral coefficients".
             if !(0.0..=1.0).contains(&w) {
                 return Err(format!(
@@ -568,20 +572,22 @@ fn pair_styles(ff: &ForceField) -> Result<(Vdw<'_>, Option<F>), String> {
         let name = style.name();
         let found = match name {
             "lj/cut" => {
-                let p = style.params();
-                let (n, m) = (p.get("n").unwrap_or(12.0), p.get("m").unwrap_or(6.0));
-                if n == 12.0 && m == 6.0 {
-                    Some(Vdw::LjCut(owned_rows(style)?, lj_cut_mixing(p)?))
+                let (p, rows) = gathered(style).map_err(|e| e.to_string())?;
+                let num = |k: &str| need::style_num(name, &p, k).map_err(|e| e.to_string());
+                if num("n")? == 12.0 && num("m")? == 6.0 {
+                    let mixing = mixing_of(name, &p).map_err(|e| e.to_string())?;
+                    Some(Vdw::LjCut(rows.into_iter().collect(), mixing))
                 } else {
                     Some(Vdw::Other(name))
                 }
             }
-            "lj/charmm" => Some(Vdw::Charmm(
-                owned_rows(style)?,
-                charmm_mixing(style.params())?,
-            )),
+            "lj/charmm" => {
+                let (p, rows) = gathered(style).map_err(|e| e.to_string())?;
+                let mixing = charmm_mixing(&p).map_err(|e| e.to_string())?;
+                Some(Vdw::Charmm(rows.into_iter().collect(), mixing))
+            }
             "coul/cut" | "coul/charmm" => {
-                let p = style.params();
+                let (p, _) = gathered(style).map_err(|e| e.to_string())?;
                 if p.get("delta").is_some_and(|d| d != 0.0) {
                     return Err(format!(
                         "pair style '{name}': a buffered Coulomb (delta ≠ 0) has no 1-4 \
@@ -591,11 +597,8 @@ fn pair_styles(ff: &ForceField) -> Result<(Vdw<'_>, Option<F>), String> {
                 if coul.is_some() {
                     return Err("1-4 exceptions: the force field has two Coulomb styles".into());
                 }
-                let need = |k: &str| {
-                    p.get(k)
-                        .ok_or_else(|| format!("pair style '{name}': missing '{k}'"))
-                };
-                coul = Some(need("coulomb")? / need("dielectric")?);
+                let num = |k: &str| need::style_num(name, &p, k).map_err(|e| e.to_string());
+                coul = Some(num("coulomb")? / num("dielectric")?);
                 None
             }
             _ => Some(Vdw::Other(name)),
@@ -612,17 +615,6 @@ fn pair_styles(ff: &ForceField) -> Result<(Vdw<'_>, Option<F>), String> {
         }
     }
     Ok((vdw, coul))
-}
-
-fn owned_rows(style: &Style) -> Result<HashMap<String, Params>, String> {
-    Ok(style.defs().kernel_type_params()?.into_iter().collect())
-}
-
-fn lj_cut_mixing(p: &Params) -> Result<Mixing, String> {
-    match p.get_str("mixing") {
-        Some(name) => Mixing::parse(name).map_err(|e| format!("LJCut: {e}")),
-        None => Ok(Mixing::UNDECLARED),
-    }
 }
 
 /// Bond-graph distances up to 3, from the frame's `bonds`.

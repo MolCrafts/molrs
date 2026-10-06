@@ -3,6 +3,7 @@
 //!
 //! The COMPASS/class2 anharmonic bond. Parameters per type: `r0`, `k2`, `k3`, `k4`.
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::BONDS;
 use std::collections::HashMap;
 
@@ -169,11 +170,7 @@ pub fn bond_class2_ctor(
 
     let (mut ai, mut aj) = (Vec::new(), Vec::new());
     let (mut r0, mut k2, mut k3, mut k4) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    let need = |p: &Params, key: &str, label: &str| -> Result<F, String> {
-        p.get(key)
-            .ok_or_else(|| format!("BondClass2 type '{}': missing '{}'", label, key))
-            .map(|v| v as F)
-    };
+    let need = |p: &Params, key: &str, label: &str| need::type_num("class2", label, p, key);
     for idx in 0..i_col.len() {
         let label = &type_col[idx];
         let p = type_map

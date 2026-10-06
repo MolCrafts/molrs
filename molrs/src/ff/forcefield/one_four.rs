@@ -31,10 +31,12 @@ use ndarray::Array1;
 
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::{ForceField, Params};
+use crate::ff::potential::compile::gathered;
 use crate::ff::potential::intramolecular_pairs;
+use crate::ff::potential::need;
 use crate::ff::potential::pair::charmm::{charmm_mixing, charmm_pair_params};
 use crate::ff::potential::pair::exceptions::dihedral_weights;
-use crate::ff::potential::pair::lj_cut::lj_cut_pair_params;
+use crate::ff::potential::pair::lj_cut::{lj_pair_params, mixing_of};
 use molrs::store::frame::Frame;
 use molrs::store::schema::block_names::{ATOMS, PAIRS};
 use molrs::types::F;
@@ -91,32 +93,29 @@ enum Vdw {
     Charmm(HashMap<String, Params>, Mixing, OneFour),
 }
 
-fn rows_of(style: &crate::ff::forcefield::Style) -> Result<HashMap<String, Params>, String> {
-    Ok(style.defs().kernel_type_params()?.into_iter().collect())
-}
-
 fn vdw_style(ff: &ForceField) -> Result<Vdw, String> {
     let mut found = Vdw::None;
     for style in ff.get_styles("pair") {
         let next = match style.name() {
-            "lj/charmm" => Vdw::Charmm(
-                rows_of(style)?,
-                charmm_mixing(style.params())?,
-                OneFour::of(style.params())?,
-            ),
+            "lj/charmm" => {
+                let (p, rows) = gathered(style).map_err(|e| e.to_string())?;
+                Vdw::Charmm(
+                    rows.into_iter().collect(),
+                    charmm_mixing(&p).map_err(|e| e.to_string())?,
+                    OneFour::of(&p)?,
+                )
+            }
             "lj/cut" => {
-                let p = style.params();
-                if p.get("n").unwrap_or(12.0) != 12.0 || p.get("m").unwrap_or(6.0) != 6.0 {
+                let (p, rows) = gathered(style).map_err(|e| e.to_string())?;
+                let num = |k: &str| need::style_num("lj/cut", &p, k).map_err(|e| e.to_string());
+                if num("n")? != 12.0 || num("m")? != 6.0 {
                     return Err(
                         "materialize_one_four: pair lj/cut with n/m ≠ 12/6 has no 1-4 row form"
                             .into(),
                     );
                 }
-                let mixing = match p.get_str("mixing") {
-                    Some(m) => Mixing::parse(m)?,
-                    None => Mixing::UNDECLARED,
-                };
-                Vdw::LjCut(rows_of(style)?, mixing)
+                let mixing = mixing_of("lj/cut", &p).map_err(|e| e.to_string())?;
+                Vdw::LjCut(rows.into_iter().collect(), mixing)
             }
             _ => continue,
         };
@@ -237,13 +236,15 @@ impl ForceField {
                         rows.iter().map(|(k, v)| (k.as_str(), v)).collect();
                     Some(match &vdw {
                         Vdw::Charmm(_, _, mode) => {
-                            let (regular, one_four) = charmm_pair_params(&refs, *mixing, a, b)?;
+                            let (regular, one_four) = charmm_pair_params(&refs, *mixing, a, b)
+                                .map_err(|e| e.to_string())?;
                             match mode {
                                 OneFour::Epsilon14 => one_four,
                                 OneFour::Regular => regular,
                             }
                         }
-                        _ => lj_cut_pair_params(&refs, *mixing, a, b)?,
+                        _ => lj_pair_params("lj/cut", &refs, *mixing, a, b)
+                            .map_err(|e| e.to_string())?,
                     })
                 }
             };
@@ -292,12 +293,12 @@ pub(crate) fn check_materialized(
     let Some(style) = ff.get_style("pair", "lj/charmm") else {
         return Ok(());
     };
-    if OneFour::of(style.params())? != OneFour::Epsilon14 {
+    let (p, rows) = gathered(style).map_err(|e| e.to_string())?;
+    if OneFour::of(&p)? != OneFour::Epsilon14 {
         return Ok(());
     }
-    let rows = rows_of(style)?;
     let refs: HashMap<&str, &Params> = rows.iter().map(|(k, v)| (k.as_str(), v)).collect();
-    let mixing = charmm_mixing(style.params())?;
+    let mixing = charmm_mixing(&p).map_err(|e| e.to_string())?;
     let Some(types) = frame
         .get(ATOMS)
         .and_then(|b| b.get("type"))
@@ -310,7 +311,8 @@ pub(crate) fn check_materialized(
             continue;
         }
         let (a, b) = (types[i].as_str(), types[j].as_str());
-        let (regular, one_four) = charmm_pair_params(&refs, mixing, a, b)?;
+        let (regular, one_four) =
+            charmm_pair_params(&refs, mixing, a, b).map_err(|e| e.to_string())?;
         if regular != one_four {
             return Err(format!(
                 "pair lj/charmm declares one_four = \"epsilon14\": the 1-4 pair of atoms {i} \

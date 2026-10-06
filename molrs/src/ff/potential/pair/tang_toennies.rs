@@ -15,6 +15,7 @@
 //! Reference: Tang & Toennies, J. Chem. Phys. 80 (1984) 3726,
 //! DOI 10.1063/1.447150; as emitted by paduagroup/clandpol `coul_tt`.
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
@@ -271,6 +272,22 @@ impl PairDriven for PairTangToennies {
     }
 }
 
+/// The damping `b`, the order `n` (a non-negative integer) and the scale `c`
+/// of a gathered `coul/tt` style.
+fn tt_style(style_params: &Params) -> Result<(F, usize, F), crate::ff::ir::IrError> {
+    let get = |key: &str| need::style_num("coul/tt", style_params, key);
+    let order = get("order")?;
+    if order < 0.0 || order.fract() != 0.0 {
+        return Err(need::bad(
+            "coul/tt",
+            "",
+            "order",
+            format!("= {order} is not a non-negative integer"),
+        ));
+    }
+    Ok((get("b")?, order as usize, get("c")?))
+}
+
 /// Construct a [`PairTangToennies`] from style params, per-atom-type charge, and topology.
 ///
 /// Style params: `b` (default 4.5), `order` (the damping order n, default 4),
@@ -282,9 +299,7 @@ pub fn pair_tang_toennies_ctor(
     frame: &Frame,
 ) -> Result<Member, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
-    let b = style_params.get("b").unwrap_or(4.5) as F;
-    let n = style_params.get("order").unwrap_or(4.0).round() as usize;
-    let c = style_params.get("c").unwrap_or(1.0) as F;
+    let (b, n, c) = tt_style(style_params)?;
     // `PotentialCompiler::compile` projects the force field's `special_bonds` 1-4
     // weight here. The energy is linear in the charge product, so scaling it
     // is exactly scaling the pair.
@@ -310,13 +325,11 @@ pub fn pair_tang_toennies_ctor(
         .and_then(|c| c.as_uint())
         .ok_or_else(|| "PairTangToennies: pairs block missing \"atomj\" column".to_string())?;
 
-    let charge = |type_name: &str| -> Result<F, String> {
-        type_map
+    let charge = |type_name: &str| -> Result<F, crate::ff::potential::CompileError> {
+        let p = type_map
             .get(type_name)
-            .ok_or_else(|| format!("PairTangToennies: unknown atom type '{}'", type_name))?
-            .get("charge")
-            .ok_or_else(|| format!("PairTangToennies type '{}': missing 'charge'", type_name))
-            .map(|v| v as F)
+            .ok_or_else(|| format!("PairTangToennies: unknown atom type '{type_name}'"))?;
+        Ok(need::type_num("coul/tt", type_name, p, "charge")?)
     };
 
     let mut atom_i = Vec::with_capacity(i_col.len());
@@ -354,9 +367,7 @@ pub fn pair_tang_toennies_typed_ctor(
     frame: &Frame,
 ) -> Result<Member, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
-    let b = style_params.get("b").unwrap_or(4.5) as F;
-    let n = style_params.get("order").unwrap_or(4.0).round() as usize;
-    let c = style_params.get("c").unwrap_or(1.0) as F;
+    let (b, n, c) = tt_style(style_params)?;
 
     let (type_id, labels) = atom_type_index(frame)?;
     let mut per_type = Vec::with_capacity(labels.len());
@@ -364,11 +375,7 @@ pub fn pair_tang_toennies_typed_ctor(
         let p = type_map
             .get(l.as_str())
             .ok_or_else(|| format!("PairTangToennies: unknown atom type '{l}'"))?;
-        per_type.push(
-            p.get("charge")
-                .ok_or_else(|| format!("PairTangToennies type '{l}': missing 'charge'"))?
-                as F,
-        );
+        per_type.push(need::type_num("coul/tt", l, p, "charge")?);
     }
     let q: Vec<F> = type_id.iter().map(|&t| per_type[t as usize]).collect();
     Ok(Member::pair(PairTangToennies::typed(q, b, n, c)))

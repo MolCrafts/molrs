@@ -1,5 +1,6 @@
 //! MMFF94 torsional rotation: E = 0.5*(V1*(1+cos phi) + V2*(1-cos 2phi) + V3*(1+cos 3phi))
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::DIHEDRALS;
 use ndarray::{Array2, ArrayView2};
 
@@ -135,18 +136,9 @@ pub fn mmff_torsion_ctor(
         .get("atoml")
         .and_then(|c| c.as_uint())
         .ok_or("missing atoml")?;
-    let v1c = block
-        .get("v1")
-        .and_then(|c| c.as_float())
-        .ok_or("mmff_torsion: missing \"v1\" column (typifier did not bake torsion params)")?;
-    let v2c = block
-        .get("v2")
-        .and_then(|c| c.as_float())
-        .ok_or("mmff_torsion: missing \"v2\" column (typifier did not bake torsion params)")?;
-    let v3c = block
-        .get("v3")
-        .and_then(|c| c.as_float())
-        .ok_or("mmff_torsion: missing \"v3\" column (typifier did not bake torsion params)")?;
+    let v1c = need::instance_col("mmff_torsion", block, "v1")?;
+    let v2c = need::instance_col("mmff_torsion", block, "v2")?;
+    let v3c = need::instance_col("mmff_torsion", block, "v3")?;
 
     let n = ic.len();
     let (mut ai, mut aj, mut ak, mut al) = (

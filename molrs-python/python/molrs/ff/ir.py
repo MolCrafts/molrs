@@ -45,7 +45,8 @@ generic kernels'.
 Refusals are :class:`IrError` (a ``ValueError``) subclasses of the same names
 as the Rust variants: :class:`Sealed`, :class:`Conflict`,
 :class:`UnboundVariable`, :class:`UnknownFunction`, :class:`KernelShape`,
-:class:`NoKernel`, :class:`MissingParam`, :class:`Derivative`, … A Python
+:class:`NoKernel`, :class:`MissingParam`, :class:`BadValue`,
+:class:`Derivative`, … A Python
 kernel that raises during an evaluation, a compile or a registration surfaces
 as :class:`KernelShape` with the original exception as ``__cause__``.
 """
@@ -79,6 +80,7 @@ Conflict = _ir.Conflict
 NoKernel = _ir.NoKernel
 NoMixing = _ir.NoMixing
 MissingParam = _ir.MissingParam
+BadValue = _ir.BadValue
 KernelShape = _ir.KernelShape
 NoEngineForm = _ir.NoEngineForm
 FormConflict = _ir.FormConflict
@@ -222,6 +224,7 @@ __all__ = [
     "KernelShape",
     "Malformed",
     "MissingParam",
+    "BadValue",
     "NoEngineForm",
     "NoForm",
     "NoKernel",

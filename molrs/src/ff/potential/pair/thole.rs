@@ -24,6 +24,7 @@
 //! DOI 10.1016/0301-0104(81)85176-2; as emitted by the paduagroup/clandpol
 //! polarizer (LAMMPS `pair_style thole`).
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
@@ -336,22 +337,13 @@ pub fn pair_thole_ctor(
         .and_then(|c| c.as_uint())
         .ok_or_else(|| "PairThole: pairs block missing \"atomj\" column".to_string())?;
 
-    let lookup = |type_name: &str| -> Result<(F, F, F), String> {
+    let lookup = |type_name: &str| -> Result<(F, F, F), crate::ff::potential::CompileError> {
         let p = type_map
             .get(type_name)
             .ok_or_else(|| format!("PairThole: unknown atom type '{}'", type_name))?;
-        let q = p
-            .get("charge")
-            .ok_or_else(|| format!("PairThole type '{}': missing 'charge'", type_name))?
-            as F;
-        let alpha = p
-            .get("alpha")
-            .ok_or_else(|| format!("PairThole type '{}': missing 'alpha'", type_name))?
-            as F;
-        let a = p
-            .get("damp")
-            .ok_or_else(|| format!("PairThole type '{}': missing 'damp'", type_name))?
-            as F;
+        let q = need::type_num("thole", type_name, p, "charge")?;
+        let alpha = need::type_num("thole", type_name, p, "alpha")?;
+        let a = need::type_num("thole", type_name, p, "damp")?;
         Ok((q, alpha, a))
     };
 
@@ -401,11 +393,7 @@ pub fn pair_thole_typed_ctor(
         let p = type_map
             .get(l.as_str())
             .ok_or_else(|| format!("PairThole: unknown atom type '{l}'"))?;
-        let get = |k: &str| {
-            p.get(k)
-                .ok_or_else(|| format!("PairThole type '{l}': missing '{k}'"))
-                .map(|v| v as F)
-        };
+        let get = |k: &str| need::type_num("thole", l, p, k);
         per_type.push((get("charge")?, get("alpha")?, get("damp")?));
     }
     let pick = |f: fn(&(F, F, F)) -> F| -> Vec<F> {

@@ -4,15 +4,16 @@
 //! The COMPASS/class2 non-bonded form. Parameters per pair type: `epsilon`
 //! (energy), `sigma` (length).
 
-use molrs::store::schema::block_names::PAIRS;
+use molrs::store::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
-use crate::ff::forcefield::{Params, pair_key};
+use crate::ff::forcefield::Params;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
+use crate::ff::potential::pair::lj_cut::{lj_pair_params, mixing_of};
 use crate::ff::potential::pair::type_pair;
 use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
@@ -297,11 +298,17 @@ pub fn pair_lj_class2_ctor(
     frame: &Frame,
 ) -> Result<Member, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
+    let mixing = mixing_of("lj/class2", style_params)?;
     // `PotentialCompiler::compile` projects the force field's `special_bonds` 1-4
     // weight here. The energy is linear in this parameter, so scaling it is
     // exactly scaling the pair.
     let scale_14 = style_params.get("lj14scale").unwrap_or(1.0) as F;
 
+    let atom_types = frame
+        .get(ATOMS)
+        .and_then(|b| b.get("type"))
+        .and_then(|c| c.as_string())
+        .ok_or_else(|| "PairLJClass2: atoms block missing \"type\" column".to_string())?;
     let block = frame
         .get(PAIRS)
         .ok_or_else(|| "PairLJClass2: frame missing \"pairs\" block".to_string())?;
@@ -314,32 +321,23 @@ pub fn pair_lj_class2_ctor(
         .and_then(|c| c.as_uint())
         .ok_or_else(|| "PairLJClass2: pairs block missing \"atomj\" column".to_string())?;
     let is_14 = block.get("is_14").and_then(|c| c.as_bool());
-    let type_col = block
-        .get("type")
-        .and_then(|c| c.as_string())
-        .ok_or_else(|| "PairLJClass2: pairs block missing \"type\" column".to_string())?;
 
-    let mut atom_i = Vec::with_capacity(i_col.len());
-    let mut atom_j = Vec::with_capacity(i_col.len());
-    let mut eps_vec = Vec::with_capacity(i_col.len());
-    let mut sig_vec = Vec::with_capacity(i_col.len());
-
-    for idx in 0..i_col.len() {
-        let label = &type_col[idx];
-        let params = type_map
-            .get(label.as_str())
-            .ok_or_else(|| format!("PairLJClass2: unknown pair type '{}'", label))?;
-        let eps = params
-            .get("epsilon")
-            .ok_or_else(|| format!("PairLJClass2 type '{}': missing 'epsilon'", label))?
-            as F;
-        let sigma = params
-            .get("sigma")
-            .ok_or_else(|| format!("PairLJClass2 type '{}': missing 'sigma'", label))?
-            as F;
-
-        atom_i.push(i_col[idx] as usize);
-        atom_j.push(j_col[idx] as usize);
+    let n = i_col.len();
+    let mut atom_i = Vec::with_capacity(n);
+    let mut atom_j = Vec::with_capacity(n);
+    let mut eps_vec = Vec::with_capacity(n);
+    let mut sig_vec = Vec::with_capacity(n);
+    for idx in 0..n {
+        let (i, j) = (i_col[idx] as usize, j_col[idx] as usize);
+        let (eps, sigma) = lj_pair_params(
+            "lj/class2",
+            &type_map,
+            mixing,
+            &atom_types[i],
+            &atom_types[j],
+        )?;
+        atom_i.push(i);
+        atom_j.push(j);
         eps_vec.push(if is_14.is_some_and(|b| b[idx]) {
             eps * scale_14
         } else {
@@ -360,31 +358,21 @@ pub fn pair_lj_class2_ctor(
 /// search turns up. It reads no `pairs` block — there is none to read when the
 /// list is rebuilt every few steps.
 pub fn pair_lj_class2_typed_ctor(
-    _style_params: &Params,
+    style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
+    let mixing = mixing_of("lj/class2", style_params)?;
     let (type_id, labels) = atom_type_index(frame)?;
     let ntypes = labels.len();
     let mut epsilon = vec![0.0 as F; ntypes * ntypes];
     let mut sigma = vec![0.0 as F; ntypes * ntypes];
     for ti in 0..ntypes {
         for tj in 0..ntypes {
-            // Keyed in either order alike; a self-pair by the atom type alone.
-            let key = pair_key(&labels[ti], &labels[tj])?;
-            let p = type_map
-                .get(key.as_str())
-                .ok_or_else(|| format!("PairLJClass2: unknown pair type '{key}'"))?;
             let t = type_pair(ti as u32, tj as u32, ntypes);
-            epsilon[t] = p
-                .get("epsilon")
-                .ok_or_else(|| format!("PairLJClass2 type '{key}': missing 'epsilon'"))?
-                as F;
-            sigma[t] = p
-                .get("sigma")
-                .ok_or_else(|| format!("PairLJClass2 type '{key}': missing 'sigma'"))?
-                as F;
+            (epsilon[t], sigma[t]) =
+                lj_pair_params("lj/class2", &type_map, mixing, &labels[ti], &labels[tj])?;
         }
     }
     Ok(Member::pair(PairLJClass2::typed(
@@ -500,5 +488,64 @@ mod tests {
         for dim in 0..3 {
             assert!((f[dim] + f[3 + dim]).abs() < 1e-9, "dim {dim}");
         }
+    }
+
+    /// An unlike pair with no cross row is mixed by the style's `mixing`,
+    /// absent `sixthpower` — LAMMPS's rule for `lj/class2` — at both doors.
+    #[test]
+    fn an_unlike_pair_mixes_sixthpower_by_default() {
+        use crate::ff::forcefield::mixing::Mixing;
+        use crate::ff::forcefield::{ForceField, Params};
+        use crate::ff::potential::PotentialCompiler;
+        use molrs::store::block::Block;
+        use molrs::types::Idx;
+        use ndarray::Array1;
+
+        let mut ff = ForceField::new("t");
+        ff.def_style("pair", "lj/class2", Params::new())
+            .unwrap()
+            .def_type(
+                "A",
+                &["A"],
+                Params::from_pairs(&[("epsilon", 0.1), ("sigma", 3.0)]),
+            )
+            .unwrap()
+            .def_type(
+                "B",
+                &["B"],
+                Params::from_pairs(&[("epsilon", 0.4), ("sigma", 3.6)]),
+            )
+            .unwrap();
+        let mut atoms = Block::new();
+        atoms
+            .insert(
+                "type",
+                Array1::from_vec(vec!["A".to_string(), "B".to_string()]).into_dyn(),
+            )
+            .unwrap();
+        for (key, v) in [("x", [0.0, 3.4]), ("y", [0.0, 0.0]), ("z", [0.0, 0.0])] {
+            atoms
+                .insert(key, Array1::from_vec(v.to_vec()).into_dyn())
+                .unwrap();
+        }
+        let mut pairs = Block::new();
+        pairs
+            .insert("atomi", Array1::from_vec(vec![0 as Idx]).into_dyn())
+            .unwrap();
+        pairs
+            .insert("atomj", Array1::from_vec(vec![1 as Idx]).into_dyn())
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert("pairs", pairs);
+
+        let (eps, sigma) = Mixing::SixthPower.combine((0.1, 3.0), (0.4, 3.6));
+        let s = sigma / 3.4;
+        let want = eps * (2.0 * s.powi(9) - 3.0 * s.powi(6));
+        let e = PotentialCompiler::new(&ff)
+            .compile(&frame)
+            .unwrap()
+            .calc_energy(&[0.0, 0.0, 0.0, 3.4, 0.0, 0.0]);
+        assert!((e - want).abs() < 1e-12, "{e} vs {want}");
     }
 }

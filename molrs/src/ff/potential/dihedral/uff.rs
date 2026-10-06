@@ -1,5 +1,6 @@
 //! UFF torsion: E = V/2 · (1 − cosTerm · cos(n·φ)) (RDKit `TorsionAngleContrib`).
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::DIHEDRALS;
 use ndarray::{Array2, ArrayView2};
 
@@ -247,18 +248,9 @@ pub fn uff_torsion_ctor(
         .get("atoml")
         .and_then(|c| c.as_uint())
         .ok_or("uff_torsion: missing atoml")?;
-    let v = block
-        .get("V")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_torsion: missing V")?;
-    let order = block
-        .get("order")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_torsion: missing order")?;
-    let cos_term = block
-        .get("cosTerm")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_torsion: missing cosTerm")?;
+    let v = need::instance_col("uff_torsion", block, "V")?;
+    let order = need::instance_col("uff_torsion", block, "order")?;
+    let cos_term = need::instance_col("uff_torsion", block, "cosTerm")?;
     let n = i.len();
     Ok(Member::indexed(UffTorsion {
         atom_i: (0..n).map(|t| i[t] as usize).collect(),

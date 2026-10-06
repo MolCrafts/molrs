@@ -35,7 +35,7 @@ use std::ops::Range;
 use ndarray::{ArrayD, Axis, Slice};
 
 use crate::ff::forcefield::Params;
-use crate::ff::ir::{IrError, ParamKind, ParamSpec, StyleSpec, Value};
+use crate::ff::ir::{IrError, ParamKind, ParamSpec, StyleSpec};
 use crate::ff::potential::registry::ParamSource;
 use molrs::store::frame::Frame;
 use molrs::store::schema::consts::ENDPOINTS;
@@ -224,7 +224,7 @@ impl TermParams {
     }
 
     /// Add the style's declared numeric parameters as `n`-long columns, and
-    /// its text ones: the style's value, else the default.
+    /// its text ones, from `style` as [`StyleSpec::gather`] filled it.
     pub fn add_style(&mut self, spec: &StyleSpec, style: &Params, n: usize) -> Result<(), IrError> {
         for p in &spec.style_params {
             let missing = || IrError::MissingParam {
@@ -234,17 +234,11 @@ impl TermParams {
             };
             match &p.kind {
                 ParamKind::Scalar => {
-                    let v = style
-                        .get(&p.name)
-                        .or_else(|| p.default.as_ref().and_then(Value::as_num))
-                        .ok_or_else(missing)?;
+                    let v = style.get(&p.name).ok_or_else(missing)?;
                     self.nums.push((p.name.to_string(), vec![v; n]));
                 }
                 ParamKind::Text { .. } => {
-                    let v = style
-                        .get_str(&p.name)
-                        .or_else(|| p.default.as_ref().and_then(Value::as_text))
-                        .ok_or_else(missing)?;
+                    let v = style.get_str(&p.name).ok_or_else(missing)?;
                     self.style_texts.push((p.name.to_string(), v.to_owned()));
                 }
                 ParamKind::Array { .. } => {
@@ -267,8 +261,9 @@ impl TermParams {
 ///
 /// A numeric per-type value is, in order: the block's own column of that
 /// name where it is not null (molrec linking rule 4, how a per-instance
-/// style carries its numbers), the row's type in `tp`, the parameter's
-/// default; none of them is [`IrError::MissingParam`]. A table-driven style
+/// style carries its numbers), the row's type in `tp` (gathered:
+/// [`StyleSpec::gather`] filled its defaults), the parameter's default for a
+/// term with no row; none of them is [`IrError::MissingParam`]. A table-driven style
 /// needs every row's type in `tp`; a per-instance one only where it reads
 /// one.
 pub(crate) fn resolve_terms(
@@ -307,6 +302,7 @@ pub(crate) fn resolve_terms(
         }
         rows.push((label, row));
     }
+    let defaults = spec.default_row();
     let present: Vec<(&str, &Params)> = rows
         .iter()
         .filter_map(|&(l, r)| r.map(|r| (l, r)))
@@ -328,8 +324,7 @@ pub(crate) fn resolve_terms(
                 for (t, &(label, row)) in rows.iter().enumerate() {
                     let cell = own.and_then(|c| valid.is_none_or(|m| m[t]).then(|| c[t]));
                     let v = cell
-                        .or_else(|| row.and_then(|r| row_num(spec, col, r)))
-                        .or_else(|| decl.default.as_ref().and_then(Value::as_num))
+                        .or_else(|| row_num(spec, col, row.unwrap_or(&defaults)))
                         .ok_or_else(|| missing(label, &col.name))?;
                     values.push(v);
                 }
@@ -339,8 +334,8 @@ pub(crate) fn resolve_terms(
                 let mut values = Vec::with_capacity(n);
                 for &(label, row) in &rows {
                     let v = row
-                        .and_then(|r| r.get_str(&col.name))
-                        .or_else(|| decl.default.as_ref().and_then(Value::as_text))
+                        .unwrap_or(&defaults)
+                        .get_str(&col.name)
                         .ok_or_else(|| missing(label, &col.name))?;
                     values.push(v.to_owned());
                 }

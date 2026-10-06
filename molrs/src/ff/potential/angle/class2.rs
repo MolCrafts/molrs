@@ -6,6 +6,7 @@
 //! `angle_style class2` takes them: `theta0` in **degrees**, `k2`, `k3`, `k4`
 //! in energy/radianⁿ. The kernel converts `theta0` to radians once.
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::ANGLES;
 use std::collections::HashMap;
 
@@ -167,11 +168,7 @@ pub fn angle_class2_ctor(
 
     let (mut ai, mut aj, mut ak) = (Vec::new(), Vec::new(), Vec::new());
     let (mut t0, mut k2, mut k3, mut k4) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    let need = |p: &Params, key: &str, label: &str| -> Result<F, String> {
-        p.get(key)
-            .ok_or_else(|| format!("AngleClass2 type '{}': missing '{}'", label, key))
-            .map(|v| v as F)
-    };
+    let need = |p: &Params, key: &str, label: &str| need::type_num("class2", label, p, key);
     for idx in 0..i_col.len() {
         let label = &type_col[idx];
         let p = type_map

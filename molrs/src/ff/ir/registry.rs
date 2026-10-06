@@ -347,6 +347,8 @@ impl StyleEntry {
         frame: &Frame,
         expressions: Option<ExpressionCompiler>,
     ) -> Result<Member, crate::ff::potential::CompileError> {
+        let (params, rows) = self.spec.gather(params, tp)?;
+        let (params, tp) = (&params, &borrowed(&rows));
         if let Some(Kernel::Ctor { compiled, .. }) = &self.kernel {
             return compiled(params, tp, frame);
         }
@@ -389,6 +391,8 @@ impl StyleEntry {
         frame: &Frame,
         expressions: Option<ExpressionCompiler>,
     ) -> Result<Option<(Member, SpecialClass)>, crate::ff::potential::CompileError> {
+        let (params, rows) = self.spec.gather(params, tp)?;
+        let (params, tp) = (&params, &borrowed(&rows));
         match &self.kernel {
             Some(Kernel::Ctor { typed: None, .. }) => return Ok(None),
             Some(Kernel::Ctor {
@@ -408,6 +412,11 @@ impl StyleEntry {
         })?;
         Ok(Some((Member::pair(k), self.spec.special_class())))
     }
+}
+
+/// `rows` as the `(label, row)` slice a kernel takes.
+fn borrowed(rows: &[(String, Params)]) -> Vec<(&str, &Params)> {
+    rows.iter().map(|(l, r)| (l.as_str(), r)).collect()
 }
 
 /// The probe of a kernel's real terms at `coords`, or none (the check

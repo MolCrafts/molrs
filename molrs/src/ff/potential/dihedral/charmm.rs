@@ -17,6 +17,7 @@
 //! checks (`0 ≤ w ≤ 1`, `special_bonds` 1-4 = 0, a `lj/charmm` pair style).
 //! `w = 0` (or absent) is the AMBER use of the style.
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::DIHEDRALS;
 use std::collections::HashMap;
 
@@ -177,12 +178,11 @@ pub fn dihedral_charmm_ctor(
         aj.push(jc[idx] as usize);
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
-        kk.push(p.get("k").ok_or("dihedral_charmm: missing k")? as F);
-        nn.push(
-            p.get("periodicity")
-                .ok_or("dihedral_charmm: missing periodicity")? as F,
-        );
-        dd.push(p.get("phase").unwrap_or(0.0).to_radians() as F); // degrees → radians
+        let label = tc[idx].as_str();
+        kk.push(need::type_num("charmm", label, p, "k")?);
+        nn.push(need::type_num("charmm", label, p, "periodicity")?);
+        // degrees → radians
+        dd.push(need::type_num("charmm", label, p, "phase")?.to_radians());
     }
     Ok(Member::indexed(DihedralCharmm {
         atom_i: ai,

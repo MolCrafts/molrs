@@ -7,6 +7,7 @@
 //! and so is its atom order: the centre is **first** (`atomi`). RDKit lists the
 //! centre second; the UFF typifier writes it first.
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::IMPROPERS;
 use ndarray::{Array2, ArrayView2};
 
@@ -202,22 +203,10 @@ pub fn uff_inversion_ctor(
         .get("atoml")
         .and_then(|c| c.as_uint())
         .ok_or("uff_inversion: missing atoml")?;
-    let kk = block
-        .get("K")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_inversion: missing K")?;
-    let c0 = block
-        .get("c0")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_inversion: missing c0")?;
-    let c1 = block
-        .get("c1")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_inversion: missing c1")?;
-    let c2 = block
-        .get("c2")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_inversion: missing c2")?;
+    let kk = need::instance_col("uff_inversion", block, "K")?;
+    let c0 = need::instance_col("uff_inversion", block, "c0")?;
+    let c1 = need::instance_col("uff_inversion", block, "c1")?;
+    let c2 = need::instance_col("uff_inversion", block, "c2")?;
     let n = i.len();
     Ok(Member::indexed(UffInversion {
         atom_i: (0..n).map(|t| i[t] as usize).collect(),

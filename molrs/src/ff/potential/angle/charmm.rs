@@ -11,6 +11,7 @@
 //! no exclusion and changes no pair list (which 1-3 pairs a non-bonded style
 //! sees is `special_bonds`'s answer, as for any angle).
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::ANGLES;
 use std::collections::HashMap;
 
@@ -185,11 +186,7 @@ pub fn angle_charmm_ctor(
         let p = type_map
             .get(label.as_str())
             .ok_or_else(|| format!("AngleCharmm: unknown angle type '{label}'"))?;
-        let need = |key: &str| {
-            p.get(key)
-                .map(|v| v as F)
-                .ok_or_else(|| format!("AngleCharmm type '{label}': missing '{key}'"))
-        };
+        let need = |key: &str| need::type_num("charmm", label, p, key);
         ai.push(i_col[idx] as usize);
         aj.push(j_col[idx] as usize);
         ak.push(k_col[idx] as usize);
@@ -422,7 +419,14 @@ mod tests {
             .compile(&frame("A", &coords))
             .map(|_| ())
             .unwrap_err();
-        assert!(err.to_string().contains("'r_ub'"), "{err}");
+        assert!(
+            matches!(
+                err.ir(),
+                Some(crate::ff::ir::IrError::MissingParam { style, type_, param })
+                    if style == "charmm" && type_ == "A" && param == "r_ub"
+            ),
+            "{err}"
+        );
     }
 
     /// Urey–Bradley creates no exclusion: whether the 1-3 pair of a charmm

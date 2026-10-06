@@ -7,6 +7,7 @@
 //! The kernel is topology-blind: it consumes pre-resolved dihedral quadruples
 //! and coefficients, mirroring the MMFF torsion kernel.
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::DIHEDRALS;
 use std::collections::HashMap;
 
@@ -173,41 +174,34 @@ pub fn dihedral_opls_ctor(
         aj.push(jc[idx] as usize);
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
-        // A sparse term is common, so an individually missing coefficient is 0.
-        // A type carrying *none* of them is not sparse, it is mis-spelled or
-        // unparameterised — and defaulting the lot to zero used to make a whole
-        // torsion vanish in silence (molnex wrote `c1..c4`, this kernel read
-        // `f1..f4`). Canonical spelling is `k1..k4`; spec ff-params-01.
+        // Every coefficient is required, as LAMMPS's `dihedral_coeff` requires
+        // all four: a missing one used to read as 0, and a mis-spelled bag
+        // (molnex wrote `c1..c4`) made a whole torsion vanish in silence.
         // `Params` is flat scalars, so the multi-term `periodic` style spells
         // its terms `k{m}`/`periodicity{m}`/`phase{m}` — the same `k1..k4` keys
         // this style uses for the OPLS quartet, with a different meaning (LAMMPS
         // `K_n` already carries the 1/2). A bag that also names
         // `periodicity1`/`phase1` is a periodic bag on the wrong style, and
         // reading it here would price a plain barrier as a half barrier, silently.
-        if p.get("periodicity1").is_some() || p.get("phase1").is_some() {
-            return Err(format!(
-                "dihedral_opls: type '{}' carries periodicity1/phase1 — that is a \
-                 `dihedral_style periodic` term table, not the OPLS quartet; \
-                 declare the periodic style for it",
-                tc[idx]
-            )
-            .into());
-        }
-        if ["k1", "k2", "k3", "k4"]
-            .iter()
-            .all(|key| p.get(key).is_none())
+        let label = tc[idx].as_str();
+        if let Some(key) = ["periodicity1", "phase1"]
+            .into_iter()
+            .find(|key| p.get(key).is_some())
         {
-            return Err(format!(
-                "dihedral_opls: type '{}' carries none of k1..k4; an OPLS torsion \
-                 with no coefficient at all is unparameterised, not sparse",
-                tc[idx]
+            return Err(need::bad(
+                "opls",
+                label,
+                key,
+                "is no `dihedral opls` parameter: the row is a `dihedral periodic` \
+                 term table; declare the periodic style for it",
             )
             .into());
         }
-        f1.push(p.get("k1").unwrap_or(0.0) as F);
-        f2.push(p.get("k2").unwrap_or(0.0) as F);
-        f3.push(p.get("k3").unwrap_or(0.0) as F);
-        f4.push(p.get("k4").unwrap_or(0.0) as F);
+        let need = |key: &str| need::type_num("opls", label, p, key);
+        f1.push(need("k1")?);
+        f2.push(need("k2")?);
+        f3.push(need("k3")?);
+        f4.push(need("k4")?);
     }
     Ok(Member::indexed(DihedralOPLS {
         atom_i: ai,

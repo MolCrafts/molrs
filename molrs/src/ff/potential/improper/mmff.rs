@@ -6,6 +6,7 @@
 //! the plane (centre, `atomj`, `atomk`) — MMFF's `I J K L` with `J` central,
 //! read centre first.
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::IMPROPERS;
 use ndarray::{Array2, ArrayView2};
 
@@ -170,10 +171,7 @@ pub fn mmff_oop_ctor(
         .get("atoml")
         .and_then(|c| c.as_uint())
         .ok_or("missing atoml")?;
-    let koopc = block
-        .get("koop")
-        .and_then(|c| c.as_float())
-        .ok_or("mmff_oop: missing \"koop\" column (typifier did not bake oop params)")?;
+    let koopc = need::instance_col("mmff_oop", block, "koop")?;
 
     let n = ic.len();
     let (mut ai, mut aj, mut ak, mut al, mut koop) = (

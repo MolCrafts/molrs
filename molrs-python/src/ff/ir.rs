@@ -99,6 +99,7 @@ pub mod errors {
         NoKernel: "Nothing can price the style: no kernel and no expression.",
         NoMixing: "An unlike pair with no cross row stating a parameter that does not mix.",
         MissingParam: "A row (or the style) without a value its kernel needs, and no default.",
+        BadValue: "A row's (or the style's) value of a declared parameter that is not of its declared kind or domain: text for a number, an array of another rank, text outside its choices.",
         KernelShape: "A kernel's output of the wrong shape or dtype, or a Python kernel that raised (the exception is the `__cause__`).",
         NoEngineForm: "An engine with no form for the style.",
         FormConflict: "A form family without exactly one canonical style.",
@@ -226,6 +227,20 @@ pub(crate) fn ir_err(e: &IrError, message: String) -> PyErr {
         } => (
             x::MissingParam::new_err(message),
             vec![("style", s(style)), ("type", s(type_)), ("param", s(param))],
+        ),
+        IrError::BadValue {
+            style,
+            type_,
+            param,
+            reason,
+        } => (
+            x::BadValue::new_err(message),
+            vec![
+                ("style", s(style)),
+                ("type", s(type_)),
+                ("param", s(param)),
+                ("reason", s(reason)),
+            ],
         ),
         IrError::KernelShape { style, reason } => (
             x::KernelShape::new_err(message),

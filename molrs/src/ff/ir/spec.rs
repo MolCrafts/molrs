@@ -10,8 +10,10 @@
 
 use std::borrow::Cow;
 
-use crate::ff::ir::Dim;
+use crate::ff::forcefield::Params;
+use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::ir::engine::LammpsForm;
+use crate::ff::ir::{Dim, IrError};
 use crate::ff::potential::registry::{ParamSource, SpecialClass};
 use molrs::types::F;
 
@@ -65,8 +67,8 @@ pub enum Mix {
     /// `√(pᵢ pⱼ)`.
     Geometric,
     /// The well depth of the joint (ε, σ) rule the style's `mixing` names
-    /// ([`Mixing`](crate::ff::forcefield::mixing::Mixing); absent:
-    /// `arithmetic`), combined with the length parameter `sigma`.
+    /// ([`Mixing`]; absent:
+    /// the style's default), combined with the length parameter `sigma`.
     LjEpsilon { sigma: Cow<'static, str> },
     /// The length of that rule, combined with the depth `epsilon`.
     LjSigma { epsilon: Cow<'static, str> },
@@ -248,6 +250,164 @@ impl StyleSpec {
     pub fn special_class(&self) -> SpecialClass {
         self.special.unwrap_or(SpecialClass::Vdw)
     }
+
+    /// The style params and type rows a kernel is built from: every value
+    /// present checked against its declaration, every declared default
+    /// filled in where the style (or a row) lacks the parameter.
+    ///
+    /// The one place a [`ParamSpec::default`] takes effect.
+    /// [`PotentialCompiler`](crate::ff::potential::PotentialCompiler) gathers
+    /// through it before any kernel — a Tier-3 constructor, a generic kernel
+    /// or an expression — sees a parameter, so no kernel states a default of
+    /// its own and every tier prices an absent parameter alike. A row is
+    /// filled whatever it is: a pair style's cross row lacking a parameter
+    /// takes the default too, as an optional trailing `pair_coeff i j`
+    /// argument takes LAMMPS's. An indexed family's default fills each of
+    /// the row's terms.
+    ///
+    /// A value of the wrong kind is [`IrError::BadValue`]: text or an array
+    /// where the spec declares a number, an array of another rank, text
+    /// outside its declared choices.
+    pub fn gather(
+        &self,
+        style: &Params,
+        rows: &[(&str, &Params)],
+    ) -> Result<(Params, Vec<(String, Params)>), IrError> {
+        let mut gathered = style.clone();
+        self.fill("", &self.style_params, &mut gathered)?;
+        let rows = rows
+            .iter()
+            .map(|&(label, row)| {
+                let mut row = row.clone();
+                self.fill(label, &self.params, &mut row)?;
+                Ok((label.to_owned(), row))
+            })
+            .collect::<Result<_, IrError>>()?;
+        Ok((gathered, rows))
+    }
+
+    /// A row that states nothing, with every per-type default: what a
+    /// per-instance term without a type row reads.
+    pub fn default_row(&self) -> Params {
+        let mut row = Params::new();
+        self.fill("", &self.params, &mut row)
+            .expect("an empty row holds no value of the wrong kind");
+        row
+    }
+
+    /// Check `row`'s values of `decls` and fill their defaults: a plain
+    /// parameter's under its name, an indexed family's under every member
+    /// `<name><m>` the row's terms reach (`m` up to the longest family the
+    /// row states), and under the bare name when the row spells term 1
+    /// bare ([`unindexed_one_term`](Self::unindexed_one_term)).
+    fn fill(&self, label: &str, decls: &[ParamSpec], row: &mut Params) -> Result<(), IrError> {
+        let indexed = || decls.iter().filter(|d| d.indexed);
+        let terms = indexed()
+            .map(|d| {
+                (1..)
+                    .take_while(|m| row.get(&format!("{}{m}", d.name)).is_some())
+                    .count()
+            })
+            .max()
+            .unwrap_or(0);
+        let bare = self.unindexed_one_term && indexed().any(|d| row.get(&d.name).is_some());
+        for decl in decls {
+            let keys: Vec<String> = if decl.indexed {
+                for key in family(row, &decl.name) {
+                    self.check(label, decl, &key, row)?;
+                }
+                (1..=terms)
+                    .map(|m| format!("{}{m}", decl.name))
+                    .chain(bare.then(|| decl.name.to_string()))
+                    .collect()
+            } else {
+                vec![decl.name.to_string()]
+            };
+            for key in keys {
+                let present = self.check(label, decl, &key, row)?;
+                match (&decl.default, present) {
+                    (Some(Value::Num(v)), false) => row.set(&key, *v),
+                    (Some(Value::Text(t)), false) => row.set_str(&key, t),
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether `row` states `key` (of the declaration `decl`), refusing a
+    /// value of another kind.
+    fn check(
+        &self,
+        label: &str,
+        decl: &ParamSpec,
+        key: &str,
+        row: &Params,
+    ) -> Result<bool, IrError> {
+        let bad = |reason: String| IrError::BadValue {
+            style: self.name.to_string(),
+            type_: label.to_owned(),
+            param: key.to_owned(),
+            reason,
+        };
+        let (num, text, array) = (row.get(key), row.get_str(key), row.get_array(key));
+        let found = || match (num, text, array) {
+            (_, Some(t), _) => format!("is the text {t:?}"),
+            (_, _, Some(a)) => format!("is an array of rank {}", a.ndim()),
+            _ => "is a number".to_owned(),
+        };
+        match &decl.kind {
+            ParamKind::Scalar if text.is_some() || array.is_some() => {
+                Err(bad(format!("{}; the spec declares a number", found())))
+            }
+            ParamKind::Scalar => Ok(num.is_some()),
+            ParamKind::Text { .. } if num.is_some() || array.is_some() => {
+                Err(bad(format!("{}; the spec declares text", found())))
+            }
+            ParamKind::Text {
+                choices: Some(choices),
+            } => match text {
+                Some(t) if !choices.iter().any(|c| c == t) => Err(bad(format!(
+                    "is {t:?}, not one of {}",
+                    choices
+                        .iter()
+                        .map(|c| format!("{c:?}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))),
+                t => Ok(t.is_some()),
+            },
+            ParamKind::Text { choices: None } => Ok(text.is_some()),
+            ParamKind::Array { rank } => match array {
+                Some(a) if a.ndim() != *rank as usize => Err(bad(format!(
+                    "has rank {}; the spec declares rank {rank}",
+                    a.ndim()
+                ))),
+                Some(_) => Ok(true),
+                None if num.is_some() || text.is_some() => Err(bad(format!(
+                    "{}; the spec declares an array of rank {rank}",
+                    found()
+                ))),
+                None => Ok(false),
+            },
+        }
+    }
+}
+
+/// Every key of `row` (numeric, text or array) that is a member
+/// `<base><m>` of the indexed family `base`, or `base` itself.
+fn family(row: &Params, base: &str) -> Vec<String> {
+    let member = |key: &str| {
+        key.strip_prefix(base)
+            .is_some_and(|m| m.is_empty() || m.bytes().all(|b| b.is_ascii_digit()))
+    };
+    row.iter()
+        .map(|(k, _)| k)
+        .chain(row.iter_strings().map(|(k, _)| k))
+        .chain(row.iter_arrays().map(|(k, _)| k))
+        .filter(|k| member(k))
+        .map(str::to_owned)
+        .collect()
 }
 
 /// `π/180` as Appendix A of the protocol spells it in every built-in
@@ -272,9 +432,21 @@ fn cutoff() -> ParamSpec {
     p("cutoff", "L")
 }
 
+/// The `cutoff` of a pair style whose compiled kernel needs none: absent,
+/// the pair list is priced untruncated (∞). A neighbour-driven evaluation
+/// still needs a finite one, and refuses ∞ by name.
+fn untruncated() -> ParamSpec {
+    cutoff().default_num(F::INFINITY)
+}
+
 fn mixing() -> ParamSpec {
+    mixing_by(Mixing::UNDECLARED)
+}
+
+/// `mixing`, absent `rule` (LAMMPS's own default for the style).
+fn mixing_by(rule: Mixing) -> ParamSpec {
     ParamSpec::text("mixing", &["arithmetic", "geometric", "sixthpower"])
-        .default_value(Value::Text("arithmetic".into()))
+        .default_value(Value::Text(rule.name().into()))
 }
 
 /// CHARMM's switch `S(r)` from `inner` to `cutoff`, as an expression
@@ -408,6 +580,7 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
                 p("r0_ij", "L"),
                 p("r0_kj", "L"),
                 p("theta0", "A"),
+                p("linear", "1"),
             ])
             .source(PerInstance),
         s("angle", "uff_angle")
@@ -426,7 +599,7 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
                 p("k", "E"),
                 p("periodicity", "1"),
                 zero("phase", "A"),
-                p("w", "1"),
+                zero("w", "1"),
             ])
             .expression(format!("k*(1+cos(periodicity*phi-phase*{D}))"))
             .lammps(custom(&lc::DIHEDRAL_CHARMM)),
@@ -498,7 +671,7 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
         s("pair", "lj/cut")
             .params(vec![eps("sigma"), sig("epsilon")])
             .style_params(vec![
-                cutoff(),
+                untruncated(),
                 mixing(),
                 p("n", "1").default_num(12.0),
                 p("m", "1").default_num(6.0),
@@ -512,19 +685,20 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
             .lammps(custom(&lc::LJ_CUT)),
         s("pair", "lj/class2")
             .params(vec![eps("sigma"), sig("epsilon")])
-            .style_params(vec![cutoff(), mixing()])
+            // LAMMPS mixes `lj/class2` sixthpower unless told otherwise.
+            .style_params(vec![untruncated(), mixing_by(Mixing::SixthPower)])
             .special(Vdw)
             .expression("epsilon*(2*(sigma/r)^9-3*(sigma/r)^6)")
             .lammps(custom(&lc::LJ_CLASS2)),
         s("pair", "buck")
             .params(vec![p("a", "E"), p("rho", "L"), p("c", "E*L^6")])
-            .style_params(vec![cutoff()])
+            .style_params(vec![untruncated()])
             .special(Vdw)
             .expression("a*exp(-r/rho)-c/r^6")
             .lammps(positional()),
         s("pair", "morse")
             .params(vec![p("d0", "E"), p("alpha", "1/L"), p("r0", "L")])
-            .style_params(vec![cutoff()])
+            .style_params(vec![untruncated()])
             .special(Vdw)
             .expression("d0*((1-exp(-alpha*(r-r0)))^2-1)")
             .lammps(positional()),
@@ -557,7 +731,7 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
                 coulomb(),
                 dielectric(),
                 p("delta", "L").default_num(0.0),
-                cutoff(),
+                untruncated(),
             ])
             .source(PerInstance)
             .special(Coulomb)
@@ -598,7 +772,8 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
                 p("n_eff", "1"),
                 p("a_i", "1"),
                 p("g_i", "1"),
-                p("da", "1"),
+                // MMFF's own default role, neither donor nor acceptor.
+                p("da", "1").default_num(f64::from(crate::ff::mmff::da::DA_NEITHER)),
             ])
             .style_params(vec![
                 p("B", "1").default_num(0.2),

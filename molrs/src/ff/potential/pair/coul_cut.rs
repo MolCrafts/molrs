@@ -33,6 +33,7 @@
 use crate::ff::forcefield::Params;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
+use crate::ff::potential::need;
 use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
@@ -320,23 +321,15 @@ impl PairDriven for PairCoulCut {
     }
 }
 
-/// Read a style param the **force field must supply**, or say which one it did not.
-///
-/// There is no `unwrap_or` here on purpose. A kernel that defaults `coulomb` or
-/// `dielectric` is a kernel answering a question only the force field can answer: it
-/// computes plausible numbers from constants nobody handed it, and every energy test
-/// still passes. (`coulomb14scale` is projected out of the force field's
-/// `SpecialBonds` by `PotentialCompiler::compile`, so through the documented route it is
-/// always present — which is exactly why defaulting it here would be invisible.)
-fn required(style_params: &Params, key: &str) -> Result<F, String> {
-    style_params.get(key).map(|v| v as F).ok_or_else(|| {
-        format!(
-            "PairCoulCut: style params missing \"{key}\" — it is force-field data and this kernel \
-             has no default for it. `pair/coul/cut` evaluates E = coulomb·qᵢqⱼ/(dielectric·(r+delta)); \
-             the force field must declare `coulomb` (MMFF: 332.0716, OPLS/LAMMPS: 332.06371), \
-             `dielectric`, and — via `special_bonds` — `coulomb14scale`."
-        )
-    })
+/// `(coulomb, dielectric, delta, cutoff)` of a gathered `coul/cut` style.
+fn coul_style(style_params: &Params) -> Result<(F, F, F, F), crate::ff::ir::IrError> {
+    let get = |key: &str| need::style_num("coul/cut", style_params, key);
+    Ok((
+        get("coulomb")?,
+        get("dielectric")?,
+        get("delta")?,
+        get("cutoff")?,
+    ))
 }
 
 /// Construct a [`PairCoulCut`] from **per-atom charges** + a neighbour list.
@@ -348,17 +341,18 @@ fn required(style_params: &Params, key: &str) -> Result<F, String> {
 ///
 /// # Style params
 ///
-/// | param | meaning | missing |
-/// |---|---|---|
-/// | `coulomb` | Coulomb constant `k` | **`Err`** — the force field's to choose |
-/// | `dielectric` | dielectric `D` | **`Err`** — a property of the medium, not of the kernel |
-/// | `coulomb14scale` | 1-4 weight | **`Err`** — projected from `special_bonds` by `PotentialCompiler::compile` |
-/// | `delta` | buffering distance δ (Å) | `0.0` — *semantic* default: no buffer, the textbook Coulomb |
-/// | `cutoff` | cutoff (Å) | `∞` — *semantic* default: do not truncate |
+/// They arrive gathered ([`StyleSpec::gather`](crate::ff::ir::StyleSpec::gather)):
+/// the spec's defaults are in place and this kernel states none.
 ///
-/// The last two are real, meaningful choices a force field is entitled to leave
-/// unsaid. The first three are not: a default there is the kernel pretending the
-/// force field spoke.
+/// | param | meaning | absent |
+/// |---|---|---|
+/// | `coulomb` | Coulomb constant `k` | [`IrError::MissingParam`] — the force field's to choose |
+/// | `dielectric` | dielectric `D` | the spec's default, 1 (LAMMPS's `dielectric`) |
+/// | `delta` | buffering distance δ (Å) | the spec's default, 0: no buffer, the textbook Coulomb |
+/// | `cutoff` | cutoff (Å) | the spec's default, ∞: do not truncate |
+/// | `coulomb14scale` | 1-4 weight | projected from `special_bonds` by `PotentialCompiler::compile` |
+///
+/// [`IrError::MissingParam`]: crate::ff::ir::IrError::MissingParam
 ///
 /// The `pairs` block is the consumer-built neighbour list (`atomi`/`atomj`/`is_14`)
 /// from `intramolecular_pairs`; 1-2/1-3 are already excluded. Charge-free pair types
@@ -369,15 +363,8 @@ pub fn pair_coul_cut_ctor(
     _type_params: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, crate::ff::potential::CompileError> {
-    let coulomb = required(style_params, "coulomb")?;
-    let dielectric = required(style_params, "dielectric")?;
-    let scale_14 = required(style_params, "coulomb14scale")?;
-    // The two genuine semantic defaults.
-    let delta = style_params.get("delta").map(|d| d as F).unwrap_or(0.0);
-    let cutoff = style_params
-        .get("cutoff")
-        .map(|c| c as F)
-        .unwrap_or(F::INFINITY);
+    let (coulomb, dielectric, delta, cutoff) = coul_style(style_params)?;
+    let scale_14 = need::style_num("coul/cut", style_params, "coulomb14scale")?;
 
     let atoms = frame
         .get(ATOMS)
@@ -432,13 +419,7 @@ pub fn pair_coul_cut_typed_ctor(
     _type_params: &[(&str, &Params)],
     frame: &Frame,
 ) -> Result<Member, crate::ff::potential::CompileError> {
-    let coulomb = required(style_params, "coulomb")?;
-    let dielectric = required(style_params, "dielectric")?;
-    let delta = style_params.get("delta").map(|d| d as F).unwrap_or(0.0);
-    let cutoff = style_params
-        .get("cutoff")
-        .map(|c| c as F)
-        .unwrap_or(F::INFINITY);
+    let (coulomb, dielectric, delta, cutoff) = coul_style(style_params)?;
     // `coulomb14scale` is deliberately not read here. On this path the 1-4
     // weight is applied to the pair table, not baked into a charge product, so
     // requiring the kernel to know it would be asking it a question it no
@@ -589,27 +570,41 @@ mod tests {
         }
     }
 
-    /// A style that does not carry `coulomb` / `dielectric` / `coulomb14scale` is an
-    /// `Err`. The kernel must not supply the force field's own constants.
+    /// `coulomb` is the force field's to state: a style without it is
+    /// [`IrError::MissingParam`](crate::ff::ir::IrError::MissingParam). The
+    /// spec's defaults — `dielectric` 1 (LAMMPS's), `delta` 0, `cutoff` ∞ —
+    /// apply when the style leaves them out, exactly as stating them does.
     #[test]
-    fn missing_force_field_data_is_an_error() {
-        let full = [
-            ("coulomb", 332.0716),
+    fn coulomb_is_required_and_the_spec_defaults_apply() {
+        use crate::ff::ir::IrError;
+        use crate::ff::potential::Instances;
+        let terms = |style: &[(&str, f64)]| {
+            Instances::new("pair", "coul/cut")
+                .style_params(Params::from_pairs(style))
+                .atoms([vec![0, 1]])
+                .charges(vec![0.5, -0.4])
+                .compile()
+        };
+        let err = terms(&[]).map(|_| ()).unwrap_err();
+        assert_eq!(
+            err.ir(),
+            Some(&IrError::MissingParam {
+                style: "coul/cut".into(),
+                type_: String::new(),
+                param: "coulomb".into(),
+            })
+        );
+        let coords = [0.0, 0.0, 0.0, 2.5, 0.0, 0.0];
+        let bare = terms(&[("coulomb", COULOMB_REAL)]).unwrap();
+        let stated = terms(&[
+            ("coulomb", COULOMB_REAL),
             ("dielectric", 1.0),
-            ("coulomb14scale", 0.75),
-        ];
-        for omitted in ["coulomb", "dielectric", "coulomb14scale"] {
-            let pairs: Vec<(&str, f64)> = full
-                .iter()
-                .copied()
-                .filter(|(k, _)| *k != omitted)
-                .collect();
-            let params = Params::from_pairs(&pairs);
-            let err = required(&params, omitted).expect_err("must not default");
-            assert!(err.contains(omitted), "error must name `{omitted}`: {err}");
-        }
-        // All three present -> read, not invented.
-        let params = Params::from_pairs(&full);
-        assert_eq!(required(&params, "coulomb").unwrap(), 332.0716);
+            ("delta", 0.0),
+            ("cutoff", F::INFINITY),
+        ])
+        .unwrap();
+        let want = COULOMB_REAL * 0.5 * -0.4 / 2.5;
+        assert!((bare.calc_energy(&coords) - want).abs() < 1e-12);
+        assert_eq!(bare.calc_energy(&coords), stated.calc_energy(&coords));
     }
 }

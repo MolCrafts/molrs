@@ -11,12 +11,13 @@ use std::collections::HashMap;
 
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::{Params, pair_key};
+use crate::ff::ir::IrError;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::PairPotential;
 use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::fold_chunks;
-use crate::ff::potential::{Member, PairDriven, Potential};
+use crate::ff::potential::{CompileError, Member, PairDriven, Potential, need};
 use molrs::math::Virial;
 use molrs::spatial::neighbors::{Neighbors, VerletSkin};
 use molrs::store::frame::Frame;
@@ -698,17 +699,18 @@ impl PairDriven for LJCut {
     }
 }
 
-/// `(ε, σ)` of the row keyed *key*, or `None` when there is none.
-fn lj_row(type_map: &HashMap<&str, &Params>, key: &str) -> Result<Option<(F, F)>, String> {
+/// `(ε, σ)` of the row keyed *key* of the Lennard-Jones style `style`, or
+/// `None` when there is none.
+fn lj_row(
+    style: &str,
+    type_map: &HashMap<&str, &Params>,
+    key: &str,
+) -> Result<Option<(F, F)>, IrError> {
     let Some(p) = type_map.get(key) else {
         return Ok(None);
     };
-    let eps = p
-        .get("epsilon")
-        .ok_or_else(|| format!("LJCut type '{key}': missing 'epsilon'"))? as F;
-    let sigma = p
-        .get("sigma")
-        .ok_or_else(|| format!("LJCut type '{key}': missing 'sigma'"))? as F;
+    let eps = need::type_num(style, key, p, "epsilon")?;
+    let sigma = need::type_num(style, key, p, "sigma")?;
     Ok(Some((eps, sigma)))
 }
 
@@ -716,31 +718,97 @@ fn lj_row(type_map: &HashMap<&str, &Params>, key: &str) -> Result<Option<(F, F)>
 /// one — keyed by [`pair_key`], as `kernel_type_params` keys it, so it answers
 /// in either order. A self pair has none.
 fn lj_cross_row(
+    style: &str,
     type_map: &HashMap<&str, &Params>,
     a: &str,
     b: &str,
-) -> Result<Option<(F, F)>, String> {
+) -> Result<Option<(F, F)>, CompileError> {
     if a == b {
         return Ok(None);
     }
-    lj_row(type_map, &pair_key(a, b)?)
+    Ok(lj_row(style, type_map, &pair_key(a, b)?)?)
 }
 
-/// `(ε, σ)` of the atom-type pair `(a, b)`: its explicit cross row, else the
-/// two self rows mixed by `mixing` — what both `lj/cut` ctors price it with.
-pub(crate) fn lj_cut_pair_params(
+/// `(ε, σ)` of the atom-type pair `(a, b)` under the Lennard-Jones style
+/// `style` (`lj/cut`, `lj/class2`): its explicit cross row, else the two self
+/// rows mixed by `mixing` — what every such kernel prices it with.
+pub(crate) fn lj_pair_params(
+    style: &str,
     type_map: &HashMap<&str, &Params>,
     mixing: Mixing,
     a: &str,
     b: &str,
-) -> Result<(F, F), String> {
-    if let Some(row) = lj_cross_row(type_map, a, b)? {
+) -> Result<(F, F), CompileError> {
+    if let Some(row) = lj_cross_row(style, type_map, a, b)? {
         return Ok(row);
     }
-    let own = |t: &str| -> Result<(F, F), String> {
-        lj_row(type_map, t)?.ok_or_else(|| format!("LJCut: unknown atom type '{t}'"))
+    let own = |t: &str| -> Result<(F, F), CompileError> {
+        lj_row(style, type_map, t)?
+            .ok_or_else(|| format!("{style}: unknown atom type '{t}'").into())
     };
     Ok(mixing.combine(own(a)?, own(b)?))
+}
+
+/// The per-type `(ε, σ)` of every label, then each explicit cross row as
+/// `(ti, tj, ε, σ)`: what a neighbour-driven Lennard-Jones table is built
+/// from.
+pub(crate) type LjTable = (Vec<(F, F)>, Vec<(usize, usize, F, F)>);
+
+/// [`LjTable`] of `labels` under the style `style`.
+pub(crate) fn lj_table(
+    style: &str,
+    type_map: &HashMap<&str, &Params>,
+    labels: &[String],
+) -> Result<LjTable, CompileError> {
+    let mut per_type = Vec::with_capacity(labels.len());
+    for l in labels {
+        per_type.push(
+            lj_row(style, type_map, l)?
+                .ok_or_else(|| format!("{style}: unknown atom type '{l}'"))?,
+        );
+    }
+    let mut cross = Vec::new();
+    for (ti, a) in labels.iter().enumerate() {
+        for (tj, b) in labels.iter().enumerate().skip(ti + 1) {
+            if let Some((eps, sigma)) = lj_cross_row(style, type_map, a, b)? {
+                cross.push((ti, tj, eps, sigma));
+            }
+        }
+    }
+    Ok((per_type, cross))
+}
+
+/// The `mixing` rule of the Lennard-Jones style `style` (gathered: declared,
+/// else the spec's default).
+pub(crate) fn mixing_of(style: &str, style_params: &Params) -> Result<Mixing, IrError> {
+    let name = need::style_text(style, style_params, "mixing")?;
+    Mixing::parse(name).map_err(|e| need::bad(style, "", "mixing", e))
+}
+
+/// The style's exponents `(n, m)`: integers with `n > m > 0`.
+fn exponents(style_params: &Params) -> Result<(i32, i32), IrError> {
+    let get = |key: &str| -> Result<i32, IrError> {
+        let v = need::style_num("lj/cut", style_params, key)?;
+        if v.fract() != 0.0 {
+            return Err(need::bad(
+                "lj/cut",
+                "",
+                key,
+                format!("= {v} is not an integer"),
+            ));
+        }
+        Ok(v as i32)
+    };
+    let (n, m) = (get("n")?, get("m")?);
+    if m <= 0 || n <= m {
+        return Err(need::bad(
+            "lj/cut",
+            "",
+            "n",
+            format!("= {n} with m = {m}: the exponents satisfy n > m > 0"),
+        ));
+    }
+    Ok((n, m))
 }
 
 /// Construct a compiled [`LJCut`] from per-atom-type params + a neighbour list.
@@ -754,10 +822,8 @@ pub fn pair_lj_cut_ctor(
 ) -> Result<Member, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let scale_14 = style_params.get("lj14scale").unwrap_or(1.0) as F;
-    let mixing = match style_params.get_str("mixing") {
-        Some(name) => Mixing::parse(name).map_err(|e| format!("LJCut: {e}"))?,
-        None => Mixing::UNDECLARED,
-    };
+    let mixing = mixing_of("lj/cut", style_params)?;
+    let (n_exp, m_exp) = exponents(style_params)?;
 
     let atoms = frame
         .get(ATOMS)
@@ -790,7 +856,7 @@ pub fn pair_lj_cut_ctor(
             atom_types[i_col[idx] as usize].as_str(),
             atom_types[j_col[idx] as usize].as_str(),
         );
-        let (mut eps, sigma) = lj_cut_pair_params(&type_map, mixing, ti, tj)?;
+        let (mut eps, sigma) = lj_pair_params("lj/cut", &type_map, mixing, ti, tj)?;
         if is_14.is_some_and(|b| b[idx]) {
             eps *= scale_14;
         }
@@ -800,10 +866,8 @@ pub fn pair_lj_cut_ctor(
         sig_vec.push(sigma);
     }
 
-    let n = style_params.get("n").unwrap_or(12.0).round() as i32;
-    let m = style_params.get("m").unwrap_or(6.0).round() as i32;
     Ok(Member::pair(
-        LJCut::compiled(atom_i, atom_j, eps_vec, sig_vec).with_exponents(n, m)?,
+        LJCut::compiled(atom_i, atom_j, eps_vec, sig_vec).with_exponents(n_exp, m_exp)?,
     ))
 }
 
@@ -819,36 +883,19 @@ pub fn pair_lj_cut_typed_ctor(
     frame: &Frame,
 ) -> Result<Member, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
-    let mixing = match style_params.get_str("mixing") {
-        Some(name) => Mixing::parse(name).map_err(|e| format!("LJCut: {e}"))?,
-        None => Mixing::UNDECLARED,
-    };
+    let mixing = mixing_of("lj/cut", style_params)?;
     // Required, where the compiled form has no cutoff at all: an intramolecular
     // list is finite by construction, a periodic neighbour sum is not.
-    let cutoff = style_params
-        .get("cutoff")
-        .ok_or_else(|| "LJCut: a neighbour-driven pair style must declare 'cutoff'".to_string())?
-        as F;
-    let n = style_params.get("n").unwrap_or(12.0).round() as i32;
-    let m = style_params.get("m").unwrap_or(6.0).round() as i32;
-    let shifted = style_params.get("shift").unwrap_or(0.0) != 0.0;
+    let cutoff = need::neighbour_cutoff("lj/cut", style_params)?;
+    let (n, m) = exponents(style_params)?;
+    let shifted = need::style_num("lj/cut", style_params, "shift")? != 0.0;
 
     let (type_id, labels) = atom_type_index(frame)?;
-    let mut per_type = Vec::with_capacity(labels.len());
-    for l in &labels {
-        per_type.push(
-            lj_row(&type_map, l.as_str())?
-                .ok_or_else(|| format!("LJCut: unknown atom type '{l}'"))?,
-        );
-    }
+    let (per_type, cross) = lj_table("lj/cut", &type_map, &labels)?;
     let mut kernel = LJCut::typed(type_id, &per_type, mixing, cutoff, n, m, shifted, false)?;
     // Explicit cross rows replace the mixed entries of the type-pair table.
-    for (ti, a) in labels.iter().enumerate() {
-        for (tj, b) in labels.iter().enumerate().skip(ti + 1) {
-            if let Some((eps, sigma)) = lj_cross_row(&type_map, a, b)? {
-                kernel = kernel.with_type_pair(ti, tj, eps, sigma)?;
-            }
-        }
+    for (ti, tj, eps, sigma) in cross {
+        kernel = kernel.with_type_pair(ti, tj, eps, sigma)?;
     }
     Ok(Member::pair(kernel))
 }
@@ -1013,7 +1060,7 @@ mod tests {
         });
         let coords = [0.0, 0.0, 0.0, 3.7, 0.0, 0.0];
         for (n, m) in [(12.0, 6.0), (9.0, 6.0), (10.0, 4.0)] {
-            let style = Params::from_pairs(&[("cutoff", 100.0), ("n", n), ("m", m)]);
+            let style = gathered(Params::from_pairs(&[("cutoff", 100.0), ("n", n), ("m", m)]));
             let compiled = pair_lj_cut_ctor(&style, &tp, &frame).unwrap();
             let typed = pair_lj_cut_typed_ctor(&style, &tp, &frame).unwrap();
             let c = (n / (n - m)) * (n / m).powf(m / (n - m));
@@ -1204,6 +1251,14 @@ mod tests {
         rows
     }
 
+    /// `style` as a compile hands it to the kernel: the `lj/cut` spec's
+    /// defaults filled in.
+    fn gathered(style: Params) -> Params {
+        crate::ff::ir::with_global(|r| r.style("pair", "lj/cut").unwrap().0.gather(&style, &[]))
+            .unwrap()
+            .0
+    }
+
     fn lj(eps: F, sigma: F, r: F) -> F {
         let s6 = (sigma / r).powi(6);
         4.0 * eps * (s6 * s6 - s6)
@@ -1214,6 +1269,7 @@ mod tests {
     fn compiled_energy(rows: &[(String, Params)]) -> F {
         let mut style = Params::new();
         style.set_str("mixing", "geometric");
+        let style = gathered(style);
         let refs: Vec<(&str, &Params)> = rows.iter().map(|(k, p)| (k.as_str(), p)).collect();
         let member = pair_lj_cut_ctor(&style, &refs, &ab_frame()).unwrap();
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, R_AB, 0.0, 0.0];
@@ -1224,6 +1280,7 @@ mod tests {
         use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
         let mut style = Params::from_pairs(&[("cutoff", 10.0)]);
         style.set_str("mixing", "geometric");
+        let style = gathered(style);
         let refs: Vec<(&str, &Params)> = rows.iter().map(|(k, p)| (k.as_str(), p)).collect();
         let Member::Pair(kernel) = pair_lj_cut_typed_ctor(&style, &refs, &ab_frame()).unwrap()
         else {

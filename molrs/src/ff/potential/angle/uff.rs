@@ -3,6 +3,7 @@
 //! Per-instance columns: `ka`, `order` (0–4), and for `order==0` the Fourier
 //! coefficients `c0`/`c1`/`c2` derived from θ₀.
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::ANGLES;
 use ndarray::{Array2, ArrayView2};
 
@@ -155,26 +156,11 @@ pub fn uff_angle_ctor(
         .get("atomk")
         .and_then(|c| c.as_uint())
         .ok_or("uff_angle: missing atomk")?;
-    let ka = block
-        .get("ka")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_angle: missing ka")?;
-    let order = block
-        .get("order")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_angle: missing order")?;
-    let c0 = block
-        .get("c0")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_angle: missing c0")?;
-    let c1 = block
-        .get("c1")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_angle: missing c1")?;
-    let c2 = block
-        .get("c2")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_angle: missing c2")?;
+    let ka = need::instance_col("uff_angle", block, "ka")?;
+    let order = need::instance_col("uff_angle", block, "order")?;
+    let c0 = need::instance_col("uff_angle", block, "c0")?;
+    let c1 = need::instance_col("uff_angle", block, "c1")?;
+    let c2 = need::instance_col("uff_angle", block, "c2")?;
     let n = i.len();
     Ok(Member::indexed(UffAngle {
         atom_i: (0..n).map(|t| i[t] as usize).collect(),

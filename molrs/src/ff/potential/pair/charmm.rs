@@ -44,12 +44,12 @@ use molrs::store::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
 use crate::ff::forcefield::mixing::Mixing;
-use crate::ff::forcefield::one_four::OneFour;
 use crate::ff::forcefield::{Params, pair_key};
+use crate::ff::ir::IrError;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::{atom_type_index, fold_chunks, type_pair};
-use crate::ff::potential::{Member, PairDriven, Potential};
+use crate::ff::potential::{CompileError, Member, PairDriven, Potential, need};
 use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
@@ -66,16 +66,22 @@ struct Switch {
 }
 
 impl Switch {
-    fn new(inner: F, outer: F, who: &str) -> Result<Self, String> {
+    fn new(inner: F, outer: F, style: &str) -> Result<Self, IrError> {
         if !(inner.is_finite() && outer.is_finite() && inner > 0.0) {
-            return Err(format!(
-                "{who}: inner = {inner} and cutoff = {outer} must be finite and positive"
+            return Err(need::bad(
+                style,
+                "",
+                "inner",
+                format!("= {inner} with cutoff = {outer}: both must be finite and positive"),
             ));
         }
         // LAMMPS: "Pair inner cutoff >= Pair outer cutoff".
         if inner >= outer {
-            return Err(format!(
-                "{who}: inner cutoff {inner} must be below the outer cutoff {outer}"
+            return Err(need::bad(
+                style,
+                "",
+                "inner",
+                format!("= {inner} is not below the outer cutoff {outer}"),
             ));
         }
         let (inner2, outer2) = (inner * inner, outer * outer);
@@ -101,17 +107,11 @@ impl Switch {
     }
 }
 
-/// `inner` and `cutoff` of a CHARMM style; both are required.
-fn switch_of(style: &Params, who: &str) -> Result<Switch, String> {
-    let get = |key: &str| {
-        style.get(key).map(|v| v as F).ok_or_else(|| {
-            format!(
-                "{who}: style must declare '{key}' (LAMMPS's inner and outer switching \
-                 cutoffs are part of the CHARMM energy)"
-            )
-        })
-    };
-    Switch::new(get("inner")?, get("cutoff")?, who)
+/// `inner` and `cutoff` of a CHARMM style; both are required (LAMMPS's
+/// inner and outer switching cutoffs are part of the CHARMM energy).
+fn switch_of(params: &Params, style: &str) -> Result<Switch, IrError> {
+    let get = |key: &str| need::style_num(style, params, key);
+    Switch::new(get("inner")?, get("cutoff")?, style)
 }
 
 /// LAMMPS's `lj1..lj4` for one `(ε, σ)`: `48εσ¹²`, `24εσ⁶`, `4εσ¹²`, `4εσ⁶`.
@@ -126,11 +126,12 @@ pub(crate) fn lj_coeffs(epsilon: F, sigma: F) -> [F; 4] {
     ]
 }
 
-/// The mixing rule of a CHARMM style: declared, or LAMMPS's `arithmetic`.
-pub(crate) fn charmm_mixing(style: &Params) -> Result<Mixing, String> {
+/// The mixing rule of a CHARMM style: declared, or the IR's (and
+/// LAMMPS's) default [`Mixing::UNDECLARED`], `arithmetic`.
+pub(crate) fn charmm_mixing(style: &Params) -> Result<Mixing, IrError> {
     match style.get_str("mixing") {
-        Some(name) => Mixing::parse(name).map_err(|e| format!("lj/charmm: {e}")),
-        None => Ok(Mixing::Arithmetic),
+        Some(name) => Mixing::parse(name).map_err(|e| need::bad("lj/charmm", "", "mixing", e)),
+        None => Ok(Mixing::UNDECLARED),
     }
 }
 
@@ -138,12 +139,8 @@ pub(crate) fn charmm_mixing(style: &Params) -> Result<Mixing, String> {
 pub(crate) type CharmmParams = ((F, F), (F, F));
 
 /// `((ε, σ), (ε₁₄, σ₁₄))` of one `lj/charmm` row.
-fn charmm_row(p: &Params, key: &str) -> Result<CharmmParams, String> {
-    let need = |k: &str| {
-        p.get(k)
-            .map(|v| v as F)
-            .ok_or_else(|| format!("lj/charmm type '{key}': missing '{k}'"))
-    };
+fn charmm_row(p: &Params, key: &str) -> Result<CharmmParams, IrError> {
+    let need = |k: &str| need::type_num("lj/charmm", key, p, k);
     let (eps, sigma) = (need("epsilon")?, need("sigma")?);
     let eps14 = p.get("epsilon14").map(|v| v as F).unwrap_or(eps);
     let sigma14 = p.get("sigma14").map(|v| v as F).unwrap_or(sigma);
@@ -158,17 +155,18 @@ pub(crate) fn charmm_pair_params(
     mixing: Mixing,
     a: &str,
     b: &str,
-) -> Result<CharmmParams, String> {
-    if a != b
-        && let Some(p) = rows.get(pair_key(a, b)?.as_str())
-    {
-        return charmm_row(p, &pair_key(a, b)?);
+) -> Result<CharmmParams, CompileError> {
+    if a != b {
+        let key = pair_key(a, b)?;
+        if let Some(p) = rows.get(key.as_str()) {
+            return Ok(charmm_row(p, &key)?);
+        }
     }
-    let own = |t: &str| -> Result<CharmmParams, String> {
+    let own = |t: &str| -> Result<CharmmParams, CompileError> {
         let p = rows
             .get(t)
             .ok_or_else(|| format!("lj/charmm: unknown atom type '{t}'"))?;
-        charmm_row(p, t)
+        Ok(charmm_row(p, t)?)
     };
     let (ra, r14a) = own(a)?;
     let (rb, r14b) = own(b)?;
@@ -210,7 +208,7 @@ impl PairLJCharmm {
         atom_j: Vec<usize>,
         eps_sigma: &[(F, F)],
         weight: Vec<F>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, CompileError> {
         assert_eq!(atom_i.len(), atom_j.len());
         assert_eq!(atom_i.len(), eps_sigma.len());
         assert_eq!(atom_i.len(), weight.len());
@@ -227,15 +225,20 @@ impl PairLJCharmm {
 
     /// A kernel keyed on the atoms: `type_id` per atom and a full
     /// `ntypes × ntypes` table of `(ε, σ)`, laid out `ti * ntypes + tj`.
-    pub fn typed(inner: F, cutoff: F, type_id: Vec<u32>, table: &[(F, F)]) -> Result<Self, String> {
+    pub fn typed(
+        inner: F,
+        cutoff: F,
+        type_id: Vec<u32>,
+        table: &[(F, F)],
+    ) -> Result<Self, CompileError> {
         let ntypes = (table.len() as f64).sqrt().round() as usize;
         if ntypes * ntypes != table.len() || ntypes == 0 {
             return Err("lj/charmm: the type-pair table must be square and non-empty".into());
         }
         if type_id.iter().any(|&t| t as usize >= ntypes) {
-            return Err(format!(
-                "lj/charmm: an atom type is outside the {ntypes} tabulated"
-            ));
+            return Err(
+                format!("lj/charmm: an atom type is outside the {ntypes} tabulated").into(),
+            );
         }
         let n_owned = type_id.len();
         Ok(Self {
@@ -382,7 +385,7 @@ impl PairCoulCharmm {
         atom_j: Vec<usize>,
         qiqj: Vec<F>,
         weight: Vec<F>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, CompileError> {
         assert_eq!(atom_i.len(), atom_j.len());
         assert_eq!(atom_i.len(), qiqj.len());
         assert_eq!(atom_i.len(), weight.len());
@@ -399,7 +402,7 @@ impl PairCoulCharmm {
     }
 
     /// A kernel that forms `qᵢqⱼ` from per-atom charges.
-    pub fn typed(inner: F, cutoff: F, k: F, q: Vec<F>) -> Result<Self, String> {
+    pub fn typed(inner: F, cutoff: F, k: F, q: Vec<F>) -> Result<Self, CompileError> {
         let n_owned = q.len();
         Ok(Self {
             switch: Switch::new(inner, cutoff, "coul/charmm")?,
@@ -625,9 +628,6 @@ pub fn pair_lj_charmm_ctor(
 ) -> Result<Member, crate::ff::potential::CompileError> {
     let switch = switch_of(style, "lj/charmm")?;
     let mixing = charmm_mixing(style)?;
-    // The 1-4 semantics are the exceptions kernel's; checked here so an
-    // invalid value never compiles.
-    OneFour::of(style)?;
     let rows: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let types = atom_types(frame, "lj/charmm")?;
     let (ai, aj, is_14) = pair_rows(frame, "lj/charmm")?;
@@ -656,9 +656,6 @@ pub fn pair_lj_charmm_typed_ctor(
 ) -> Result<Member, crate::ff::potential::CompileError> {
     let switch = switch_of(style, "lj/charmm")?;
     let mixing = charmm_mixing(style)?;
-    // The 1-4 semantics are the exceptions kernel's; checked here so an
-    // invalid value never compiles.
-    OneFour::of(style)?;
     let rows: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let (type_id, labels) = atom_type_index(frame)?;
     let ntypes = labels.len();
@@ -682,13 +679,10 @@ pub fn pair_lj_charmm_typed_ctor(
     Ok(Member::pair(kernel))
 }
 
-/// `coulomb / dielectric`, both required (no kernel default; see `coul/cut`).
-fn coulomb_constant(style: &Params) -> Result<F, String> {
-    let need = |k: &str| {
-        style.get(k).map(|v| v as F).ok_or_else(|| {
-            format!("coul/charmm: style must declare '{k}' (force-field data, no default)")
-        })
-    };
+/// `coulomb / dielectric`: `coulomb` the force field's to state, `dielectric`
+/// gathered with its declared default (1, LAMMPS's).
+fn coulomb_constant(style: &Params) -> Result<F, IrError> {
+    let need = |k: &str| need::style_num("coul/charmm", style, k);
     Ok(need("coulomb")? / need("dielectric")?)
 }
 
@@ -829,7 +823,14 @@ mod tests {
         assert!(PairLJCharmm::typed(7.0, 6.0, vec![], &[(0.1, 3.0)]).is_err());
         let style = Params::from_pairs(&[("cutoff", 10.0)]);
         let err = switch_of(&style, "lj/charmm").unwrap_err();
-        assert!(err.contains("inner"), "{err}");
+        assert_eq!(
+            err,
+            IrError::MissingParam {
+                style: "lj/charmm".into(),
+                type_: String::new(),
+                param: "inner".into()
+            }
+        );
     }
 
     /// The compiled list and the type-pair table are the same numbers on the

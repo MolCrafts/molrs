@@ -460,6 +460,24 @@ impl<'a> PotentialCompiler<'a> {
     }
 }
 
+/// `style`'s params and kernel rows gathered under its spec in the
+/// process-wide registry ([`StyleSpec::gather`](ir::StyleSpec::gather)): what
+/// a reader of a built-in style's numbers outside a kernel (the 1-4
+/// exceptions, `materialize_one_four`) reads, so a declared default is the
+/// same number there as in the kernel. An unregistered style is as stated.
+pub(crate) fn gathered(style: &Style) -> Result<(Params, Vec<(String, Params)>), CompileError> {
+    let rows = style.defs().kernel_type_params()?;
+    let spec = ir::with_global(|r| {
+        r.style(style.category(), style.name())
+            .map(|(spec, _)| spec.clone())
+    });
+    let Some(spec) = spec else {
+        return Ok((style.params().clone(), rows));
+    };
+    let refs: Vec<(&str, &Params)> = rows.iter().map(|(l, p)| (l.as_str(), p)).collect();
+    Ok(spec.gather(style.params(), &refs)?)
+}
+
 /// The registered entry of `style` (checking an `expression` of its own
 /// that differs from the registry's against the registered kernel, D16),
 /// else — when it carries an `expression` style param — the entry its

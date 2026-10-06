@@ -4,6 +4,7 @@
 //! **degrees**, as in an `angle_coeff t K theta0` line; the kernel converts it
 //! to radians once, at construction.
 
+use crate::ff::potential::need;
 use molrs::store::schema::block_names::ANGLES;
 use std::collections::HashMap;
 
@@ -165,15 +166,9 @@ pub fn angle_harmonic_ctor(
             .get(label.as_str())
             .ok_or_else(|| format!("AngleHarmonic: unknown angle type '{}'", label))?;
         // `k` is LAMMPS's `K`: E = k(θ − θ0)², no ½.
-        let k = params
-            .get("k")
-            .ok_or_else(|| format!("AngleHarmonic type '{}': missing 'k'", label))?
-            as F;
+        let k = need::type_num("harmonic", label, params, "k")?;
         // theta0 is a parameter in degrees (LAMMPS); the kernel works in radians.
-        let theta0_rad = params
-            .get("theta0")
-            .ok_or_else(|| format!("AngleHarmonic type '{}': missing 'theta0'", label))?
-            .to_radians() as F;
+        let theta0_rad = need::type_num("harmonic", label, params, "theta0")?.to_radians();
 
         atom_i.push(i_col[idx] as usize);
         atom_j.push(j_col[idx] as usize);
