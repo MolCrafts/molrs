@@ -10,12 +10,12 @@
 use crate::io::lammps::atom_style::{
     AtomStyleLayout, DataField, field_column_key, infer_write_style, is_int_token,
     is_noninteger_float_token, layout_for_atom_style, layout_from_column_count,
-    parse_atoms_style_hint,
+    normalize_atom_style, parse_atoms_style_hint,
 };
 use crate::io::lammps::box_bounds::{BoxBounds, simbox_from_bounds};
 use crate::io::lammps::common::{
-    OptCol, TypeRef, err_mapper, insert_f, insert_i, insert_u, invert_type_labels, labels_to_meta,
-    parse_f, parse_i, tokenize,
+    OptCol, TypeRef, err_mapper, insert_f, insert_i, insert_str, insert_u, invert_type_labels,
+    labels_to_meta, parse_f, parse_i, tokenize,
 };
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::streaming::{FrameIndexBuilder, FrameIndexEntry};
@@ -958,6 +958,29 @@ fn insert_topology_block(
     Ok(())
 }
 
+/// Add the string `type` column of `block` from its numeric `type_id`: the
+/// label `labels` (id → label, as the `* Type Labels` section declared it)
+/// gives that id, else the id itself.
+fn insert_type_labels(block: &mut Block, labels: &HashMap<String, String>) -> std::io::Result<()> {
+    let Some(ids) = block.get(keys::TYPE_ID).and_then(|c| c.as_uint()) else {
+        return Ok(());
+    };
+    let by_id: HashMap<Idx, &str> = labels
+        .iter()
+        .filter_map(|(id, label)| Some((id.trim().parse::<Idx>().ok()?, label.as_str())))
+        .collect();
+    let names: Vec<String> = ids
+        .iter()
+        .map(|id| {
+            by_id
+                .get(id)
+                .map_or_else(|| id.to_string(), |l| (*l).to_owned())
+        })
+        .collect();
+    let n = names.len();
+    insert_str(block, keys::TYPE, names, n)
+}
+
 struct ParsedData {
     header: LAMMPSHeader,
     atoms: AtomColumns,
@@ -1057,6 +1080,22 @@ fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
             &atom_id_map,
             &HashMap::new(),
         )?;
+
+        // Every typed block also carries its string `type`: the file's type
+        // label, or the numeric id spelled as a label when the file declares
+        // none (the name a force field read from the same file's `* Coeffs`
+        // gives that type).
+        for (block_name, labels) in [
+            ("atoms", &data.atom_type_labels),
+            ("bonds", &data.bond_type_labels),
+            ("angles", &data.angle_type_labels),
+            ("dihedrals", &data.dihedral_type_labels),
+            ("impropers", &data.improper_type_labels),
+        ] {
+            if let Some(block) = frame.get_mut(block_name) {
+                insert_type_labels(block, labels)?;
+            }
+        }
     }
 
     let pbc: Pbc3 = [true, true, true];
@@ -1131,6 +1170,7 @@ fn dispatch_section<R: BufRead>(
     reader: &mut R,
     data: &mut ParsedData,
     skipped: &HashSet<String>,
+    atom_style: Option<&str>,
 ) -> std::io::Result<Option<SectionHeader>> {
     let name = header.name.as_str();
     if skipped.contains(name) {
@@ -1168,7 +1208,13 @@ fn dispatch_section<R: BufRead>(
             Ok(next)
         }
         "Atoms" => {
-            let hint = parse_atoms_style_hint(header.line.trim());
+            // The caller's atom style is LAMMPS's own `atom_style` command,
+            // which governs `read_data`; the section's `# style` comment is
+            // only a hint for when no style was given.
+            let hint = match atom_style {
+                Some(style) => Some(style.to_owned()),
+                None => parse_atoms_style_hint(header.line.trim()),
+            };
             data.atoms = parse_atoms_streamed(reader, data.header.num_atoms, hint.as_deref())?;
             Ok(None)
         }
@@ -1290,6 +1336,7 @@ pub struct LAMMPSDataReader<R: BufRead + Seek> {
     frame: OnceLock<Option<Frame>>,
     returned: bool,
     skipped: HashSet<String>,
+    atom_style: Option<String>,
 }
 
 impl<R: BufRead + Seek> LAMMPSDataReader<R> {
@@ -1300,7 +1347,29 @@ impl<R: BufRead + Seek> LAMMPSDataReader<R> {
             frame: OnceLock::new(),
             returned: false,
             skipped: HashSet::new(),
+            atom_style: None,
         }
+    }
+
+    /// Read the `Atoms` section in `style`'s column layout (`"full"`,
+    /// `"atomic"`, `"charge"`, …; accelerator suffixes such as `/kk` are
+    /// dropped), as LAMMPS reads a data file under the input script's
+    /// `atom_style`. Without it the section's `# style` comment decides, and
+    /// without that the column count.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidInput` when `style` is not an atom style this reader knows.
+    pub fn with_atom_style(mut self, style: &str) -> std::io::Result<Self> {
+        let style = normalize_atom_style(style);
+        if layout_for_atom_style(&style).is_none() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("unknown LAMMPS atom style {style:?}"),
+            ));
+        }
+        self.atom_style = Some(style);
+        Ok(self)
     }
 
     /// Read past the section `header` instead of refusing it, discarding its
@@ -1346,7 +1415,13 @@ impl<R: BufRead + Seek> LAMMPSDataReader<R> {
                         section.name
                     )));
                 }
-                pending = dispatch_section(&section, &mut self.reader, &mut data, &self.skipped)?;
+                pending = dispatch_section(
+                    &section,
+                    &mut self.reader,
+                    &mut data,
+                    &self.skipped,
+                    self.atom_style.as_deref(),
+                )?;
             }
             // A section that stops at its row count leaves the reader between
             // sections: scan to the next header.
@@ -1446,6 +1521,74 @@ fn write_type_label_section<W: Write>(
     }
     writeln!(writer)?;
     Ok(())
+}
+
+/// The `fix drude` C/D/N flag list of the DRUDE package, one flag per atom
+/// type in type-id order, or `None` when the frame has no Drude particle.
+///
+/// A row is a Drude particle (`D`) when a `drudes` relation names it as its
+/// `atomj`, or its `vsite` column reads `"drude"` (a `DrudeParticle` node). A
+/// type is a polarisable core (`C`) when one of its rows is the `atomi` of a
+/// `drudes` relation or is bonded (`bonds`) to a Drude particle; every other
+/// type is `N`. <https://docs.lammps.org/fix_drude.html>
+fn drude_flags(frame: &impl FrameAccess, type_ids: &[Idx], n_types: usize) -> Option<String> {
+    let n = type_ids.len();
+    let mut shell = vec![false; n];
+    if let Some(vsite) = frame.column("atoms", "vsite").and_then(|c| c.as_string()) {
+        for (i, v) in vsite.iter().enumerate().take(n) {
+            shell[i] = v == "drude";
+        }
+    }
+    let pairs = |block: &str| -> Vec<(usize, usize)> {
+        match (
+            frame.column(block, keys::ATOMI).and_then(|c| c.as_uint()),
+            frame.column(block, keys::ATOMJ).and_then(|c| c.as_uint()),
+        ) {
+            (Some(i), Some(j)) => i
+                .iter()
+                .zip(j.iter())
+                .map(|(&a, &b)| (a as usize, b as usize))
+                .filter(|&(a, b)| a < n && b < n)
+                .collect(),
+            _ => Vec::new(),
+        }
+    };
+    let drudes = pairs("drudes");
+    for &(_, d) in &drudes {
+        shell[d] = true;
+    }
+    if !shell.iter().any(|&s| s) {
+        return None;
+    }
+    let mut core = vec![false; n];
+    for &(c, _) in &drudes {
+        core[c] = true;
+    }
+    for (a, b) in pairs("bonds") {
+        if shell[a] && !shell[b] {
+            core[b] = true;
+        } else if shell[b] && !shell[a] {
+            core[a] = true;
+        }
+    }
+    let mut flags = vec!['N'; n_types];
+    for (i, &t) in type_ids.iter().enumerate() {
+        let Some(slot) = (t as usize).checked_sub(1).and_then(|k| flags.get_mut(k)) else {
+            continue;
+        };
+        if shell[i] {
+            *slot = 'D';
+        } else if core[i] && *slot != 'D' {
+            *slot = 'C';
+        }
+    }
+    Some(
+        flags
+            .iter()
+            .map(char::to_string)
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
 }
 
 /// Per-row atom IDs: existing ``id`` column, else 1..N (file artifact).
@@ -1845,6 +1988,11 @@ fn write_lammps_data_frame<W: Write>(
     let num_dihedral_types = dihedral_rt.map(|r| r.n_types()).unwrap_or(0);
     let num_improper_types = improper_rt.map(|r| r.n_types()).unwrap_or(0);
 
+    if let Some(flags) = drude_flags(frame, atom_rt.type_ids(), num_atom_types) {
+        // LAMMPS skips comment lines in the header; the DRUDE package's
+        // `fix drude` wants exactly this list, in atom-type order.
+        writeln!(writer, "# fix drude flags (atom-type order): {flags}")?;
+    }
     writeln!(writer, "{num_atoms} atoms")?;
     if num_bonds > 0 {
         writeln!(writer, "{num_bonds} bonds")?;
@@ -3081,5 +3229,134 @@ mod atom_style_tests {
         assert_eq!(spelled["cmaps"].nrows(), Some(2));
         let err = refusal(&written.replace("2 crossterms\n", ""));
         assert_invalid_data_naming(&err, "crossterms");
+    }
+}
+
+#[cfg(test)]
+mod label_and_drude_tests {
+    use super::*;
+
+    const LABELLED: &str = "\
+test
+
+3 atoms
+1 bonds
+2 atom types
+1 bond types
+
+0 10 xlo xhi
+0 10 ylo yhi
+0 10 zlo zhi
+
+Atom Type Labels
+
+1 OW
+2 HW
+
+Bond Type Labels
+
+1 OW-HW
+
+Atoms # full
+
+1 1 1 -0.8 0 0 0
+2 1 2 0.4 1 0 0
+3 1 2 0.4 0 1 0
+
+Bonds
+
+1 1 1 2
+";
+
+    fn strings(frame: &Frame, block: &str) -> Vec<String> {
+        frame[block]
+            .get("type")
+            .and_then(|c| c.as_string())
+            .unwrap()
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn typed_blocks_carry_their_labels_as_type() {
+        let frame = parse_frame_bytes(LABELLED.as_bytes()).unwrap();
+        assert_eq!(strings(&frame, "atoms"), ["OW", "HW", "HW"]);
+        assert_eq!(strings(&frame, "bonds"), ["OW-HW"]);
+        let ids: Vec<Idx> = frame["atoms"]
+            .get("type_id")
+            .and_then(|c| c.as_uint())
+            .unwrap()
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(ids, [1, 2, 2]);
+    }
+
+    #[test]
+    fn an_unlabelled_file_spells_ids_as_labels() {
+        let text = LABELLED
+            .replace("Atom Type Labels\n\n1 OW\n2 HW\n\n", "")
+            .replace("Bond Type Labels\n\n1 OW-HW\n\n", "");
+        let frame = parse_frame_bytes(text.as_bytes()).unwrap();
+        assert_eq!(strings(&frame, "atoms"), ["1", "2", "2"]);
+        assert_eq!(strings(&frame, "bonds"), ["1"]);
+    }
+
+    #[test]
+    fn an_explicit_atom_style_overrides_the_section_comment() {
+        // Five columns per row: `atomic`, whatever the comment says.
+        let text = "test\n\n2 atoms\n1 atom types\n\n0 1 xlo xhi\n0 1 ylo yhi\n0 1 zlo zhi\n\n\
+                    Atoms # full\n\n1 1 0.1 0.2 0.3\n2 1 0.4 0.5 0.6\n";
+        let frame = LAMMPSDataReader::new(Cursor::new(text.as_bytes()))
+            .with_atom_style("atomic")
+            .unwrap()
+            .read()
+            .unwrap()
+            .unwrap();
+        let atoms = &frame["atoms"];
+        assert!(!atoms.contains_key("charge") && !atoms.contains_key("mol_id"));
+        assert_eq!(atoms.get("z").and_then(|c| c.as_float()).unwrap()[[1]], 0.6);
+        assert!(
+            LAMMPSDataReader::new(Cursor::new(text.as_bytes()))
+                .with_atom_style("nonsense")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_drude_system_writes_fix_drude_flags_in_type_order() {
+        // types (sorted labels): CT=1 (core), DCT=2 (shell), HC=3 (plain).
+        let mut frame = parse_frame_bytes(LABELLED.as_bytes()).unwrap();
+        let atoms = frame.get_mut("atoms").unwrap();
+        atoms
+            .insert(
+                "type",
+                ndarray::Array1::from_vec(vec!["CT".to_string(), "DCT".into(), "HC".into()])
+                    .into_dyn(),
+            )
+            .unwrap();
+        frame.meta.remove(keys::ATOM_TYPE_LABELS);
+        let mut drudes = Block::new();
+        insert_u(&mut drudes, keys::ATOMI, vec![0], 1).unwrap();
+        insert_u(&mut drudes, keys::ATOMJ, vec![1], 1).unwrap();
+        frame.insert("drudes", drudes);
+        let mut out = Vec::new();
+        write_lammps_data_frame(&mut out, &frame).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(
+            text.contains("# fix drude flags (atom-type order): C D N\n"),
+            "{text}"
+        );
+        // The comment sits in the header, where LAMMPS and this reader skip it.
+        parse_frame_bytes(text.as_bytes()).unwrap();
+    }
+
+    #[test]
+    fn a_frame_without_drude_particles_writes_no_flags() {
+        let frame = parse_frame_bytes(LABELLED.as_bytes()).unwrap();
+        let mut out = Vec::new();
+        write_lammps_data_frame(&mut out, &frame).unwrap();
+        assert!(!String::from_utf8(out).unwrap().contains("fix drude"));
     }
 }

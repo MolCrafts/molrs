@@ -295,6 +295,10 @@ pub fn parse_comment_line(line: &str) -> std::result::Result<XYZComment, String>
 /// spelling), mapped at the I/O boundary in both directions.
 const EXTXYZ_RESNAME: &str = "resname";
 
+/// The extxyz property name of the canonical `element` column; the writer
+/// always declares it first (`species:S:1`).
+const EXTXYZ_SPECIES: &str = "species";
+
 /// The extxyz property a frame column is written as.
 fn extxyz_property_name(column: &str) -> &str {
     if column == molrs::store::schema::consts::RES_NAME {
@@ -304,33 +308,56 @@ fn extxyz_property_name(column: &str) -> &str {
     }
 }
 
-fn expand_property_columns(props: &[PropertySpec]) -> Vec<(String, PropType)> {
+/// One frame column an extxyz `Properties` entry becomes: its name, the
+/// property type, and how many values per row it holds.
+struct XyzColumn {
+    name: String,
+    ty: PropType,
+    width: usize,
+}
+
+/// The frame columns of a `Properties` declaration, in declaration order.
+///
+/// Canonical names cross the boundary here, in one place:
+///
+/// - `pos:R:3` becomes the three columns `x`, `y`, `z`;
+/// - `species:S:1` becomes `element` (unless the file also declares an
+///   `element` property, which then keeps its own name);
+/// - `type:I:1` becomes `type_id` (an ExtXYZ integer type is an ordinal);
+/// - `resname` becomes `res_name`;
+/// - any other `name:T:m` with `m > 1` is **one** `(N, m)` column `name` — the
+///   shape the writer writes back as `name:T:m`.
+fn property_columns(props: &[PropertySpec]) -> Vec<XyzColumn> {
+    use molrs::store::schema::consts;
+    let declares_element = props.iter().any(|p| p.name == consts::ELEMENT);
     let mut cols = Vec::new();
     for p in props {
-        if p.m == 1 {
-            // ExtXYZ `type:I` is a numeric ordinal; Frame stores those as `type_id`.
-            let name = if p.name.eq_ignore_ascii_case("type") && p.ty == PropType::I {
-                molrs::store::schema::consts::TYPE_ID.to_string()
-            } else if p.name == EXTXYZ_RESNAME {
-                // The extxyz spelling stays at the I/O boundary; the frame
-                // carries the canonical key.
-                molrs::store::schema::consts::RES_NAME.to_string()
-            } else {
-                p.name.clone()
-            };
-            cols.push((name, p.ty));
-        } else {
-            // Special-case: map pos:R:3 -> x,y,z (LAMMPS naming)
-            if p.name.eq_ignore_ascii_case("pos") && p.ty == PropType::R && p.m == 3 {
-                cols.push(("x".to_string(), PropType::R));
-                cols.push(("y".to_string(), PropType::R));
-                cols.push(("z".to_string(), PropType::R));
-            } else {
-                for i in 0..p.m {
-                    cols.push((format!("{}_{}", p.name, i + 1), p.ty));
-                }
+        if p.m == 3 && p.ty == PropType::R && p.name.eq_ignore_ascii_case("pos") {
+            for axis in [consts::X, consts::Y, consts::Z] {
+                cols.push(XyzColumn {
+                    name: axis.to_string(),
+                    ty: PropType::R,
+                    width: 1,
+                });
             }
+            continue;
         }
+        let name = if p.m != 1 {
+            p.name.clone()
+        } else if p.name.eq_ignore_ascii_case("type") && p.ty == PropType::I {
+            consts::TYPE_ID.to_string()
+        } else if p.name == EXTXYZ_RESNAME {
+            consts::RES_NAME.to_string()
+        } else if p.name == EXTXYZ_SPECIES && p.ty == PropType::S && !declares_element {
+            consts::ELEMENT.to_string()
+        } else {
+            p.name.clone()
+        };
+        cols.push(XyzColumn {
+            name,
+            ty: p.ty,
+            width: p.m.max(1),
+        });
     }
     cols
 }
@@ -382,13 +409,13 @@ fn build_block_from_props(
     lines: &[String],
     props: &[PropertySpec],
 ) -> Result<Block, String> {
-    let cols = expand_property_columns(props);
-    let m_total = cols.len();
+    let cols = property_columns(props);
+    let m_total: usize = cols.iter().map(|c| c.width).sum();
     if lines.len() != n {
         return Err("insufficient atom lines".into());
     }
 
-    // Prepare column buffers by type (use compile-time float for real values)
+    // One buffer per column, `width` values per row, row-major.
     enum ColBuf {
         S(Vec<String>),
         I(Vec<I>),
@@ -397,11 +424,11 @@ fn build_block_from_props(
     }
     let mut buffers: Vec<ColBuf> = cols
         .iter()
-        .map(|(_, t)| match t {
-            PropType::S => ColBuf::S(Vec::with_capacity(n)),
-            PropType::I => ColBuf::I(Vec::with_capacity(n)),
-            PropType::R => ColBuf::R(Vec::with_capacity(n)),
-            PropType::L => ColBuf::L(Vec::with_capacity(n)),
+        .map(|c| match c.ty {
+            PropType::S => ColBuf::S(Vec::with_capacity(n * c.width)),
+            PropType::I => ColBuf::I(Vec::with_capacity(n * c.width)),
+            PropType::R => ColBuf::R(Vec::with_capacity(n * c.width)),
+            PropType::L => ColBuf::L(Vec::with_capacity(n * c.width)),
         })
         .collect();
 
@@ -415,30 +442,42 @@ fn build_block_from_props(
                 toks.len()
             ));
         }
-        // Iterate over props but push into flattened buffers
-        for (buf_idx, (_, ty)) in cols.iter().enumerate() {
-            let tok = toks[buf_idx];
-            match (&mut buffers[buf_idx], ty) {
-                (ColBuf::S(v), PropType::S) => v.push(tok.to_string()),
-                (ColBuf::I(v), PropType::I) => v.push(tok.parse::<I>().map_err(|_| {
-                    format!("line {} col {}: invalid int '{}", row_i, buf_idx, tok)
-                })?),
-                (ColBuf::R(v), PropType::R) => v.push(tok.parse::<F>().map_err(|_| {
-                    format!("line {} col {}: invalid float '{}", row_i, buf_idx, tok)
-                })?),
-                (ColBuf::L(v), PropType::L) => v.push(parse_bool_token(tok).ok_or_else(|| {
-                    format!("line {} col {}: invalid bool '{}", row_i, buf_idx, tok)
-                })?),
-                _ => return Err(format!("type mismatch at line {} col {}", row_i, buf_idx)),
+        let mut tok_idx = 0;
+        for (col, buf) in cols.iter().zip(buffers.iter_mut()) {
+            for _ in 0..col.width {
+                let tok = toks[tok_idx];
+                match buf {
+                    ColBuf::S(v) => v.push(tok.to_string()),
+                    ColBuf::I(v) => v.push(tok.parse::<I>().map_err(|_| {
+                        format!("line {} col {}: invalid int '{}", row_i, tok_idx, tok)
+                    })?),
+                    ColBuf::R(v) => v.push(tok.parse::<F>().map_err(|_| {
+                        format!("line {} col {}: invalid float '{}", row_i, tok_idx, tok)
+                    })?),
+                    ColBuf::L(v) => v.push(parse_bool_token(tok).ok_or_else(|| {
+                        format!("line {} col {}: invalid bool '{}", row_i, tok_idx, tok)
+                    })?),
+                }
+                tok_idx += 1;
             }
         }
     }
 
-    // Assemble core::Block: drop string columns (S) as Block stores numeric/boolean arrays only
+    /// `(n,)` for a one-value column, `(n, width)` for a wider one.
+    fn shaped<T>(values: Vec<T>, n: usize, width: usize) -> Result<ArrayD<T>, String> {
+        if width == 1 {
+            Ok(Array1::from_vec(values).into_dyn())
+        } else {
+            Array2::from_shape_vec((n, width), values)
+                .map(|a| a.into_dyn())
+                .map_err(|e| e.to_string())
+        }
+    }
+
     let mut block = Block::new();
-    for ((name, ty), buf) in cols.into_iter().zip(buffers) {
-        match (ty, buf) {
-            (PropType::I, ColBuf::I(v)) => {
+    for (XyzColumn { name, width, .. }, buf) in cols.into_iter().zip(buffers) {
+        match buf {
+            ColBuf::I(v) => {
                 // Extended-XYZ declares `I` for any integral column, but a
                 // canonical key's dtype is fixed by the vocabulary — `id` is
                 // unsigned there, and an Int column under that name would be
@@ -454,29 +493,25 @@ fn build_block_from_props(
                             })
                         })
                         .collect::<Result<_, String>>()?;
-                    let arr = Array1::from_vec(unsigned).into_dyn();
+                    let arr = shaped(unsigned, n, width)?;
                     block.insert(name, arr).map_err(|e| e.to_string())?;
                 } else {
-                    let arr = Array1::from_vec(v).into_dyn();
+                    let arr = shaped(v, n, width)?;
                     block.insert(name, arr).map_err(|e| e.to_string())?;
                 }
             }
-            (PropType::R, ColBuf::R(v)) => {
-                // Store as float
-                let arr: ArrayD<F> = Array1::from_vec(v).into_dyn();
+            ColBuf::R(v) => {
+                let arr = shaped(v, n, width)?;
                 block.insert(name, arr).map_err(|e| e.to_string())?;
             }
-            (PropType::L, ColBuf::L(v)) => {
-                // Store as bool
-                let arr = Array1::from_vec(v).into_dyn();
+            ColBuf::L(v) => {
+                let arr = shaped(v, n, width)?;
                 block.insert(name, arr).map_err(|e| e.to_string())?;
             }
-            (PropType::S, ColBuf::S(v)) => {
-                // Store as String
-                let arr = Array1::from_vec(v).into_dyn();
+            ColBuf::S(v) => {
+                let arr = shaped(v, n, width)?;
                 block.insert(name, arr).map_err(|e| e.to_string())?;
             }
-            _ => { /* type mismatch shouldn't happen due to construction; skip */ }
         }
     }
 
@@ -2085,4 +2120,66 @@ pub fn write_xyz_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> st
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod canonical_column_tests {
+    use super::*;
+
+    const WIDE: &str = "2\nProperties=species:S:1:pos:R:3:forces:R:3:tags:I:2\n\
+                        O 0 0 0 0.1 0.2 0.3 1 2\nH 1 0 0 -0.1 -0.2 -0.3 3 4\n";
+
+    #[test]
+    fn species_reads_as_element() {
+        let frame = parse_xyz_frame_str(WIDE).unwrap();
+        let atoms = frame.get("atoms").unwrap();
+        assert!(!atoms.contains_key("species"));
+        let el = atoms.get("element").and_then(|c| c.as_string()).unwrap();
+        assert_eq!((el[[0]].as_str(), el[[1]].as_str()), ("O", "H"));
+    }
+
+    #[test]
+    fn a_wide_property_is_one_column_of_that_width() {
+        let frame = parse_xyz_frame_str(WIDE).unwrap();
+        let atoms = frame.get("atoms").unwrap();
+        let forces = atoms.get("forces").and_then(|c| c.as_float()).unwrap();
+        assert_eq!(forces.shape(), &[2, 3]);
+        assert_eq!(forces[[1, 2]], -0.3);
+        let tags = atoms.get("tags").and_then(|c| c.as_int()).unwrap();
+        assert_eq!(tags.shape(), &[2, 2]);
+        assert_eq!(tags[[1, 0]], 3);
+        assert!(!atoms.contains_key("forces_1"));
+    }
+
+    #[test]
+    fn wide_columns_and_element_round_trip_through_the_writer() {
+        let frame = parse_xyz_frame_str(WIDE).unwrap();
+        let mut out = Vec::new();
+        write_xyz_frame(&mut out, &frame).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("forces:R:3"), "{text}");
+        let back = parse_xyz_frame_str(&text).unwrap();
+        let atoms = back.get("atoms").unwrap();
+        assert_eq!(
+            atoms
+                .get("forces")
+                .and_then(|c| c.as_float())
+                .unwrap()
+                .shape(),
+            &[2, 3]
+        );
+        assert!(atoms.contains_key("element"));
+    }
+
+    #[test]
+    fn a_declared_element_property_keeps_species_apart() {
+        let text = "1\nProperties=species:S:1:pos:R:3:element:S:1\nX 0 0 0 C\n";
+        let frame = parse_xyz_frame_str(text).unwrap();
+        let atoms = frame.get("atoms").unwrap();
+        assert_eq!(
+            atoms.get("element").and_then(|c| c.as_string()).unwrap()[[0]],
+            "C"
+        );
+        assert!(atoms.contains_key("species"));
+    }
 }

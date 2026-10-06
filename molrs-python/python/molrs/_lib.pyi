@@ -637,6 +637,20 @@ class Frame:
             a relation block indexing a missing block or lacking
             ``UInt`` endpoints; a ``members`` block.
         """
+    @staticmethod
+    def concat(frames: Sequence[Frame]) -> Frame:
+        """The frames joined end to end, block by block (:meth:`replicate`
+        for parts that differ). Relation endpoints of part ``p`` are offset by
+        the rows the indexed block has in the parts before it; a column one
+        part lacks is null on its rows; every other column is copied verbatim.
+        ``meta`` and the box are the first part's. No part is modified.
+
+        Raises
+        ------
+        ValueError
+            a relation block indexing a block its part lacks or lacking
+            ``UInt`` endpoints; one column under two dtypes.
+        """
     @property
     def coords(self) -> ArrayF:
         """``(N, 3)`` float64 copy of ``atoms`` ``x`` / ``y`` / ``z``. Raises
@@ -743,9 +757,17 @@ class Sphere:
     """Solid sphere region."""
 
     def __init__(self, center: Sequence[float] | ArrayF, radius: float) -> None: ...
+    @property
+    def center(self) -> ArrayF: ...
+    @property
+    def radius(self) -> float: ...
     def contains(self, points: ArrayF) -> ArrayBool: ...
     def distance(self, points: ArrayF) -> ArrayF: ...
     def bounds(self) -> ArrayF: ...
+    def mask(self, block: Block) -> ArrayBool:
+        """Which rows of ``block`` (its ``x``/``y``/``z``) lie inside."""
+    def __call__(self, block: Block) -> Block:
+        """``block[self.mask(block)]``."""
     def __and__(self, other: RegionLike) -> Region: ...
     def __or__(self, other: RegionLike) -> Region: ...
     def __invert__(self) -> Region: ...
@@ -761,9 +783,21 @@ class Cuboid:
     def __init__(
         self, origin: Sequence[float] | ArrayF, lengths: Sequence[float] | ArrayF
     ) -> None: ...
+    @staticmethod
+    def cube(edge: float, origin: Sequence[float] | ArrayF = ...) -> Cuboid:
+        """The axis-aligned cube of edge ``edge`` at minimum corner ``origin``
+        (default the origin)."""
+    @property
+    def origin(self) -> ArrayF: ...
+    @property
+    def lengths(self) -> ArrayF: ...
     def contains(self, points: ArrayF) -> ArrayBool: ...
     def distance(self, points: ArrayF) -> ArrayF: ...
     def bounds(self) -> ArrayF: ...
+    def mask(self, block: Block) -> ArrayBool:
+        """Which rows of ``block`` (its ``x``/``y``/``z``) lie inside."""
+    def __call__(self, block: Block) -> Block:
+        """``block[self.mask(block)]``."""
     def __and__(self, other: RegionLike) -> Region: ...
     def __or__(self, other: RegionLike) -> Region: ...
     def __invert__(self) -> Region: ...
@@ -787,6 +821,10 @@ class Parallelepiped:
     def contains(self, points: ArrayF) -> ArrayBool: ...
     def distance(self, points: ArrayF) -> ArrayF: ...
     def bounds(self) -> ArrayF: ...
+    def mask(self, block: Block) -> ArrayBool:
+        """Which rows of ``block`` (its ``x``/``y``/``z``) lie inside."""
+    def __call__(self, block: Block) -> Block:
+        """``block[self.mask(block)]``."""
     def volume(self) -> float: ...
     def __and__(self, other: RegionLike) -> Region: ...
     def __or__(self, other: RegionLike) -> Region: ...
@@ -803,6 +841,10 @@ class HalfSpace:
     def contains(self, points: ArrayF) -> ArrayBool: ...
     def distance(self, points: ArrayF) -> ArrayF: ...
     def bounds(self) -> ArrayF: ...
+    def mask(self, block: Block) -> ArrayBool:
+        """Which rows of ``block`` (its ``x``/``y``/``z``) lie inside."""
+    def __call__(self, block: Block) -> Block:
+        """``block[self.mask(block)]``."""
     def __and__(self, other: RegionLike) -> Region: ...
     def __or__(self, other: RegionLike) -> Region: ...
     def __invert__(self) -> Region: ...
@@ -821,6 +863,10 @@ class Cylinder:
     def contains(self, points: ArrayF) -> ArrayBool: ...
     def distance(self, points: ArrayF) -> ArrayF: ...
     def bounds(self) -> ArrayF: ...
+    def mask(self, block: Block) -> ArrayBool:
+        """Which rows of ``block`` (its ``x``/``y``/``z``) lie inside."""
+    def __call__(self, block: Block) -> Block:
+        """``block[self.mask(block)]``."""
     def __and__(self, other: RegionLike) -> Region: ...
     def __or__(self, other: RegionLike) -> Region: ...
     def __invert__(self) -> Region: ...
@@ -835,6 +881,10 @@ class Ellipsoid:
     def contains(self, points: ArrayF) -> ArrayBool: ...
     def distance(self, points: ArrayF) -> ArrayF: ...
     def bounds(self) -> ArrayF: ...
+    def mask(self, block: Block) -> ArrayBool:
+        """Which rows of ``block`` (its ``x``/``y``/``z``) lie inside."""
+    def __call__(self, block: Block) -> Block:
+        """``block[self.mask(block)]``."""
     def __and__(self, other: RegionLike) -> Region: ...
     def __or__(self, other: RegionLike) -> Region: ...
     def __invert__(self) -> Region: ...
@@ -848,6 +898,10 @@ class Polyhedron:
     def contains(self, points: ArrayF) -> ArrayBool: ...
     def distance(self, points: ArrayF) -> ArrayF: ...
     def bounds(self) -> ArrayF: ...
+    def mask(self, block: Block) -> ArrayBool:
+        """Which rows of ``block`` (its ``x``/``y``/``z``) lie inside."""
+    def __call__(self, block: Block) -> Block:
+        """``block[self.mask(block)]``."""
     def __and__(self, other: RegionLike) -> Region: ...
     def __or__(self, other: RegionLike) -> Region: ...
     def __invert__(self) -> Region: ...
@@ -868,6 +922,10 @@ class SphereUnion:
     def contains(self, points: ArrayF) -> ArrayBool: ...
     def distance(self, points: ArrayF) -> ArrayF: ...
     def bounds(self) -> ArrayF: ...
+    def mask(self, block: Block) -> ArrayBool:
+        """Which rows of ``block`` (its ``x``/``y``/``z``) lie inside."""
+    def __call__(self, block: Block) -> Block:
+        """``block[self.mask(block)]``."""
     def __and__(self, other: RegionLike) -> Region: ...
     def __or__(self, other: RegionLike) -> Region: ...
     def __invert__(self) -> Region: ...
@@ -882,6 +940,10 @@ class Region:
     def contains(self, points: ArrayF) -> ArrayBool: ...
     def distance(self, points: ArrayF) -> ArrayF: ...
     def bounds(self) -> ArrayF: ...
+    def mask(self, block: Block) -> ArrayBool:
+        """Which rows of ``block`` (its ``x``/``y``/``z``) lie inside."""
+    def __call__(self, block: Block) -> Block:
+        """``block[self.mask(block)]``."""
     def __and__(self, other: RegionLike) -> Region: ...
     def __or__(self, other: RegionLike) -> Region: ...
     def __invert__(self) -> Region: ...
@@ -1041,6 +1103,23 @@ class UnitPreset:
     def __init__(self, name: str) -> None: ...
     @staticmethod
     def real() -> UnitPreset: ...
+    @staticmethod
+    def names() -> list[str]:
+        """Every registered preset name, sorted (the LAMMPS styles,
+        ``openmm``, and any :meth:`register` added)."""
+    @staticmethod
+    def register(
+        name: str,
+        units: _AbcMapping[str, str],
+        *,
+        boltzmann: float,
+        coulomb: float,
+        overwrite: bool = False,
+    ) -> UnitPreset:
+        """Register a preset (one unit expression per each of the ten
+        dimensions, plus its two constants) process-wide and return it.
+        Raises ``ValueError`` for a missing/unknown dimension or a taken
+        name without ``overwrite``."""
     @property
     def name(self) -> str: ...
     def boltzmann(self) -> float: ...
@@ -2269,13 +2348,67 @@ def read_pdb_trajectory(path: PathInput) -> list[Frame]:
 
 def read_xyz(path: PathInput) -> Frame: ...
 def read_xyz_trajectory(path: PathInput) -> list[Frame]: ...
-def read_lammps_data(path: PathInput) -> Frame: ...
+def read_lammps_data(path: PathInput, atom_style: str | None = None) -> Frame:
+    """Read a LAMMPS data file. Typed blocks carry ``type_id`` and the string
+    ``type`` (the file's type label, or the id as a label); ``atom_style``
+    fixes the ``Atoms`` layout as LAMMPS's ``atom_style`` does."""
+def read_frame(path: PathInput, format: str | None = None) -> Frame:
+    """Read one structure, picking the format from the file name (or
+    ``format``: a name or extension such as ``"xyz"`` / ``"lammpstrj"``).
+    A multi-structure file gives its first structure. Raises ``OSError``
+    when the format cannot be told or the file does not read."""
+
+def write_frame(path: PathInput, frame: Frame, format: str | None = None) -> None:
+    """Write ``frame``, picking the format from the file name (or
+    ``format``). ``sdf`` and ``inpcrd`` are read-only. Raises ``OSError``."""
+
+class BondReactTemplate:
+    """One ``fix bond/react`` reaction: ``pre`` / ``post`` templates
+    (``Atomistic`` or ``Frame``, atoms paired by an integer ``react_id``) and
+    the atoms the map file names (atoms of ``pre``, or their ``react_id``)."""
+
+    pre: Any
+    post: Any
+    initiator_atoms: Any
+    edge_atoms: Any
+    deleted_atoms: Any
+    def __init__(
+        self,
+        pre: Any,
+        post: Any,
+        initiator_atoms: Sequence[Any],
+        edge_atoms: Sequence[Any] | None = None,
+        deleted_atoms: Sequence[Any] | None = None,
+    ) -> None: ...
+    def map_text(self) -> str:
+        """The map file's text. Raises ``ValueError`` for a malformed
+        template."""
+
+def write_bond_react_map(template: BondReactTemplate, base_path: PathInput) -> None:
+    """Write ``{base_path}.map``. Raises ``ValueError`` for a malformed
+    template."""
+
+def write_lammps_bond_react_system(
+    workdir: PathInput,
+    frame: Frame,
+    forcefield: ForceField,
+    templates: _AbcMapping[str, BondReactTemplate] | Sequence[BondReactTemplate],
+) -> None:
+    """Write ``{stem}.data``, ``{stem}.ff`` and per template
+    ``{name}_pre.mol`` / ``{name}_post.mol`` / ``{name}.map`` into
+    ``workdir``, with one type numbering for system and templates. Warns
+    for untyped template topology it leaves out."""
+
 def read_stl(path: PathInput) -> TriMesh: ...
 def read_lammps_trajectory(path: PathInput) -> list[Frame]: ...
 def read_gro(path: PathInput) -> Frame: ...
 def read_gro_trajectory(path: PathInput) -> list[Frame]: ...
 def read_xsf(path: PathInput) -> Frame: ...
-def read_amber_inpcrd(path: PathInput) -> Frame: ...
+def read_amber_inpcrd(path: PathInput, frame: Frame | None = None) -> Frame:
+    """Read an AMBER ASCII inpcrd / restart file. With ``frame``, its
+    coordinates (``x``/``y``/``z``, ``vel``), box and meta keys go into that
+    frame in place, every other column stays, and ``frame`` is returned.
+    Raises ``OSError`` on an atom-count mismatch (``frame`` unchanged)."""
 def read_amber_prmtop(path: PathInput) -> Frame: ...
 
 class LAMMPSTrajReader:
@@ -2386,7 +2519,15 @@ def write_pdb_trajectory(path: PathInput, frames: list[Frame]) -> None:
 
 def write_xyz(path: PathInput, frame: Frame) -> None: ...
 def write_xyz_trajectory(path: PathInput, frames: Sequence[Frame]) -> None: ...
-def write_lammps_data(path: PathInput, frame: Frame) -> None: ...
+def write_lammps_data(
+    path: PathInput,
+    frame: Frame,
+    *,
+    type_labels: _AbcMapping[str, Sequence[str]] | None = None,
+) -> None:
+    """Write a LAMMPS data file. ``type_labels`` declares extra labels per
+    block (``{"atoms": [...], ...}``) even when no row uses them; a Drude
+    system gets a ``fix drude`` flags header comment."""
 def write_lammps_trajectory(
     path: PathInput, frames: Sequence[Frame], columns: Sequence[str] | None = None
 ) -> None: ...
@@ -3390,6 +3531,11 @@ class GasteigerModel:
 def read_forcefield_xml(path: PathInput) -> ForceField: ...
 def read_opls_xml(path: PathInput) -> ForceField: ...
 def read_lammps_forcefield(path: PathInput) -> ForceField: ...
+def clpol_polarizability(path: PathInput | None = None) -> dict[str, dict[str, float]]:
+    """CL&Pol Drude parameters per atom type (``m_D``, ``q_D_sign``, ``k_D``,
+    ``alpha``, ``a_thole``): the shipped ``alpha.ff`` table, or ``path``
+    read the same way. Raises ``ValueError`` for an unreadable file."""
+
 def read_lammps_data_coeffs(
     coeffs_text: str,
     units: str = "real",
@@ -5062,8 +5208,10 @@ def read_lammps_log(path: PathInput, style: str = "default") -> LammpsLog:
 def read_lammps_molecule(path: PathInput):
     """Read a LAMMPS molecule template (native ``.mol`` or JSON)."""
 
-def read_mol2(path: PathInput):
-    """Read a Tripos MOL2 file and return the first molecule as a Frame."""
+def read_mol2(path: PathInput) -> Frame:
+    """Read a Tripos MOL2 file and return the first molecule as a Frame, in
+    canonical column names (``type``, ``res_id``, ``res_name`` on atoms; the
+    SYBYL bond token as ``type`` on bonds)."""
 
 def read_prep(path: PathInput):
     """Read an Amber prep file into a nested dict (serde JSON shape)."""
@@ -5132,8 +5280,9 @@ def write_gromacs_top_ff(
 def write_lammps_molecule(path: PathInput, frame, format: str = "native"):
     """Write a Frame as a LAMMPS molecule template."""
 
-def write_mol2(path: PathInput, frame):
-    """Write a Frame to a Tripos MOL2 file."""
+def write_mol2(path: PathInput, frame: Frame) -> None:
+    """Write a Frame to a Tripos MOL2 file, reading the canonical columns
+    :func:`read_mol2` produces."""
 
 def write_prep(path: PathInput, residue: dict[str, Any]):
     """Write an Amber prep residue from a nested dict."""

@@ -137,9 +137,53 @@ pub fn read_amber_inpcrd<P: AsRef<Path>>(path: P) -> Result<Frame> {
     read_amber_inpcrd_from_reader(std::io::BufReader::new(file))
 }
 
-/// Alias for [`read_amber_inpcrd`].
-pub fn read_inpcrd<P: AsRef<Path>>(path: P) -> Result<Frame> {
-    read_amber_inpcrd(path)
+/// Read the coordinates of an AMBER ASCII inpcrd / restrt file into an
+/// existing `frame` — the structure's other half, as a prmtop pairs with its
+/// inpcrd.
+///
+/// The file's `x` / `y` / `z` (and `vel`, when it has velocities) replace
+/// those columns of `frame["atoms"]`; every other atom column stays. The
+/// file's box replaces the frame's (a box-less file clears it), and the
+/// file's meta keys (`title`, `timestep`) are set, keeping every other meta
+/// key. A frame with no `atoms` block receives the file's whole `atoms`
+/// block.
+///
+/// # Errors
+///
+/// The reader's error, or [`ErrorKind::InvalidData`] when `frame["atoms"]`
+/// has a different row count than the file has atoms. `frame` is unchanged
+/// on error.
+pub fn read_amber_inpcrd_into<P: AsRef<Path>>(path: P, frame: &mut Frame) -> Result<()> {
+    let mut loaded = read_amber_inpcrd(path)?;
+    let source = loaded
+        .remove("atoms")
+        .ok_or_else(|| invalid_data("inpcrd produced no atoms block"))?;
+    match frame.get_mut("atoms") {
+        None => {
+            frame.insert("atoms", source);
+        }
+        Some(atoms) => {
+            if atoms.nrows() != source.nrows() {
+                return Err(invalid_data(format!(
+                    "atoms block has {} rows, but the inpcrd has {} atoms",
+                    atoms.nrows().unwrap_or(0),
+                    source.nrows().unwrap_or(0)
+                )));
+            }
+            for key in ["x", "y", "z", "vel"] {
+                if let Some(col) = source.get(key) {
+                    atoms
+                        .insert_column(key, col.clone())
+                        .map_err(invalid_data)?;
+                }
+            }
+        }
+    }
+    frame.simbox = loaded.simbox.take();
+    frame
+        .meta
+        .extend(loaded.meta.iter().map(|(k, v)| (k.clone(), v.clone())));
+    Ok(())
 }
 
 /// Read an AMBER ASCII inpcrd / restrt from any [`BufRead`].
@@ -272,6 +316,56 @@ pub fn read_amber_inpcrd_from_reader<R: BufRead>(mut reader: R) -> Result<Frame>
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn into_replaces_coordinates_and_keeps_the_rest() {
+        let path =
+            std::env::temp_dir().join(format!("molrs-inpcrd-into-{}.inpcrd", std::process::id()));
+        std::fs::write(
+            &path,
+            "two atoms\n  2\n  1.0000000   2.0000000   3.0000000   4.0000000   5.0000000   6.0000000\n  10.0000000  11.0000000  12.0000000  90.0000000  90.0000000  90.0000000\n",
+        )
+        .unwrap();
+        let mut frame = Frame::new();
+        let mut atoms = Block::new();
+        atoms
+            .insert("x", Array1::from_vec(vec![0.0 as F, 0.0]).into_dyn())
+            .unwrap();
+        atoms
+            .insert("charge", Array1::from_vec(vec![0.5 as F, -0.5]).into_dyn())
+            .unwrap();
+        frame.insert("atoms", atoms);
+        frame.meta.insert("source", "prmtop");
+        read_amber_inpcrd_into(&path, &mut frame).unwrap();
+
+        let atoms = frame.get("atoms").unwrap();
+        let z = atoms.get("z").and_then(|c| c.as_float()).unwrap();
+        assert_eq!(z.iter().copied().collect::<Vec<_>>(), [3.0, 6.0]);
+        assert!(atoms.contains_key("charge"));
+        assert!(frame.simbox.is_some());
+        assert_eq!(
+            frame.meta.get("title").and_then(|v| v.as_str()),
+            Some("two atoms")
+        );
+        assert_eq!(
+            frame.meta.get("source").and_then(|v| v.as_str()),
+            Some("prmtop")
+        );
+
+        let mut three = Frame::new();
+        let mut atoms = Block::new();
+        atoms
+            .insert("x", Array1::from_vec(vec![0.0 as F; 3]).into_dyn())
+            .unwrap();
+        three.insert("atoms", atoms);
+        let err = read_amber_inpcrd_into(&path, &mut three).unwrap_err();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
+        assert!(
+            !three.get("atoms").unwrap().contains_key("y"),
+            "unchanged on error"
+        );
+    }
 
     fn frame_from(s: &str) -> Frame {
         read_amber_inpcrd_from_reader(Cursor::new(s.as_bytes())).expect("parse")

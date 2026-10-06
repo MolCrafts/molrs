@@ -208,6 +208,14 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(io::read_xyz_trajectory, m)?)?;
     m.add_class::<io::PyXYZTrajReader>()?;
     m.add_function(wrap_pyfunction!(io::read_lammps_data, m)?)?;
+    m.add_function(wrap_pyfunction!(io::format::read_frame, m)?)?;
+    m.add_function(wrap_pyfunction!(io::format::write_frame, m)?)?;
+    m.add_class::<io::bond_react::PyBondReactTemplate>()?;
+    m.add_function(wrap_pyfunction!(io::bond_react::write_bond_react_map, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        io::bond_react::write_lammps_bond_react_system,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(io::read_stl, m)?)?;
     m.add_function(wrap_pyfunction!(io::read_lammps_trajectory, m)?)?;
     m.add_class::<io::PyLAMMPSTrajReader>()?;
@@ -478,6 +486,7 @@ fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ff::compute_k_ij_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::fragment_scaling_data_py, m)?)?;
     m.add_function(wrap_pyfunction!(ff::scale_lj_py, m)?)?;
+    m.add_function(wrap_pyfunction!(ff::clpol::clpol_polarizability, m)?)?;
 
     // Compute analyses
     m.add_class::<PyRDF>()?;

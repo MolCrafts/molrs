@@ -39,3 +39,24 @@ def test_native_scale_lj_missing_data_is_key_error():
     fragments = {"missing": (["CR"], [(0.0, 0.0, 0.0)], [12.0])}
     with pytest.raises(KeyError, match="no scaling data"):
         molrs.ff.scale_lj(_forcefield(), fragments)
+
+
+def test_clpol_polarizability_ships_alpha_ff():
+    table = molrs.ff.clpol_polarizability()
+    assert table["NBT"] == {
+        "m_D": 0.4,
+        "q_D_sign": -1.0,
+        "k_D": 4184.0,
+        "alpha": 1.698,
+        "a_thole": 2.6,
+    }
+    assert table["HC"]["k_D"] == 0.0
+    assert len(table) == 78
+
+
+def test_clpol_polarizability_reads_a_file(tmp_path):
+    path = tmp_path / "alpha.ff"
+    path.write_text("# mine\nXX 0.4 -1.0 4184.0 2.0 2.6\nXX 0.4 -1.0 4184.0 3.0 2.6\n")
+    assert molrs.ff.clpol_polarizability(path) == {
+        "XX": {"m_D": 0.4, "q_D_sign": -1.0, "k_D": 4184.0, "alpha": 3.0, "a_thole": 2.6}
+    }

@@ -33,6 +33,7 @@
 
 pub mod atd;
 pub mod charge;
+pub mod clpol;
 pub mod engine;
 pub mod forms;
 pub mod gaff;

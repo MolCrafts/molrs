@@ -78,7 +78,7 @@ pub use atomtype_gff2::ATOMTYPE_GFF2;
 pub use atomtype_sybyl::ATOMTYPE_SYBYL;
 pub use bccparm::{BCC_ALIASES, BCC_CORRECTIONS};
 pub use bccparm_abcg2::{ABCG2_ALIASES, ABCG2_CORRECTIONS};
-pub use clpol::CLPOL_FRAGMENTS;
+pub use clpol::{CLPOL_FRAGMENTS, CLPOL_POLARIZABILITY, ClpolPolarizability, clpol_polarizability};
 pub use gaff::GAFF;
 pub use gaff_empirical::{EMPIRICAL_GAFF, EMPIRICAL_GAFF2};
 pub use gaff_equiv::{PARMCHK, PARMCHK_TYPES, PARMCHK_WEIGHTS};

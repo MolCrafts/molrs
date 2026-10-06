@@ -1018,6 +1018,43 @@ impl PyFrame {
         Self::from_core_frame(copies)
     }
 
+    /// The frames joined end to end, block by block — :meth:`replicate` for
+    /// parts that differ.
+    ///
+    /// Every block name any part has becomes one block of the parts' rows in
+    /// order; a column one part lacks is filled for its rows and marked null.
+    /// Every endpoint of a relation block (``bonds``, ``angles``, …, or any
+    /// block carrying ``atomi``..``atoml``) in part ``p`` is offset by the
+    /// rows the block it indexes has in the parts before it. Every other
+    /// column — ``id`` / ``mol_id`` included — is copied verbatim. ``meta`` and
+    /// the box are the first part's. No part is modified.
+    ///
+    /// Parameters
+    /// ----------
+    /// frames : Sequence[Frame]
+    ///     The parts, in order; none gives an empty frame.
+    ///
+    /// Returns
+    /// -------
+    /// Frame
+    ///     A new, independent frame.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If a relation block indexes a block its part lacks or lacks a
+    ///     ``UInt`` endpoint column, or two parts carry one column under
+    ///     different dtypes.
+    #[staticmethod]
+    fn concat(frames: Vec<PyRef<'_, PyFrame>>) -> PyResult<Self> {
+        let parts = frames
+            .iter()
+            .map(|f| f.clone_core_frame())
+            .collect::<PyResult<Vec<CoreFrame>>>()?;
+        let joined = CoreFrame::concat(&parts).map_err(molrs_error_to_pyerr)?;
+        Self::from_core_frame(joined)
+    }
+
     /// The ``atoms`` block's positions as an ``(N, 3)`` float64 array (a
     /// copy), gathered from its ``x`` / ``y`` / ``z`` columns.
     ///

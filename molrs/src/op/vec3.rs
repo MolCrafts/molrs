@@ -89,6 +89,56 @@ pub fn perpendicular(axis: Vec3) -> Option<Vec3> {
     normalize(cross(axis, basis))
 }
 
+/// `a` divided by its length, or by `√ε` when it is shorter than that, so a
+/// zero vector comes back as zero instead of NaN. The internal-coordinate
+/// kernels below ([`angle`], [`dihedral`],
+/// [`nerf`](crate::op::rigid::nerf)) share it: a vanishing arm then gives a
+/// finite (if meaningless) answer rather than poisoning the caller with NaN.
+#[inline]
+pub(crate) fn unit_or_zero(a: Vec3) -> Vec3 {
+    let n = norm(a).max(F::EPSILON.sqrt());
+    [a[0] / n, a[1] / n, a[2] / n]
+}
+
+/// The bond angle `a–vertex–c`, in radians, in `[0, π]`.
+///
+/// The angle between the arms `a − vertex` and `c − vertex`, as
+/// `acos(û · v̂)` with the cosine clamped to `[−1, 1]` against rounding. An arm
+/// of zero length (shorter than `√ε`) has no direction; it contributes a zero
+/// unit vector and the result is `π/2`, never NaN.
+#[inline]
+pub fn angle(a: Vec3, vertex: Vec3, c: Vec3) -> F {
+    let u = unit_or_zero(sub(a, vertex));
+    let v = unit_or_zero(sub(c, vertex));
+    dot(u, v).clamp(-1.0, 1.0).acos()
+}
+
+/// The dihedral (torsion) angle `a–b–c–d`, in radians, in `(−π, π]`.
+///
+/// IUPAC sign convention: looking down `b → c`, positive when the far bond
+/// `c–d` is rotated clockwise from the near bond `b–a` (the trans/anti
+/// conformation is `±π`, folded onto `+π`). With `b₁ = b − a`, `b₂ = c − b`,
+/// `b₃ = d − c`, `n₁ = b₁ × b₂`, `n₂ = b₂ × b₃` and `m₁ = n₁ × b̂₂`, the
+/// angle is `atan2(−m₁ · n₂, n₁ · n₂)` — the same angle as
+/// `atan2(|b₂| b₁ · n₂, n₁ · n₂)`, written without the extra `|b₂|` factor.
+/// `atan2` may return exactly `−π` for planar input with a signed zero; that
+/// is folded onto `+π` so the documented half-open range holds everywhere.
+#[inline]
+pub fn dihedral(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> F {
+    let b1 = sub(b, a);
+    let b2 = sub(c, b);
+    let b3 = sub(d, c);
+    let n1 = cross(b1, b2);
+    let n2 = cross(b2, b3);
+    let m1 = cross(n1, unit_or_zero(b2));
+    let phi = (-dot(m1, n2)).atan2(dot(n1, n2));
+    if phi == -std::f64::consts::PI {
+        std::f64::consts::PI
+    } else {
+        phi
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,5 +250,41 @@ mod tests {
     #[test]
     fn perpendicular_refuses_input_whose_squared_length_overflows() {
         assert_eq!(perpendicular([1e308, 1e308, 1e308]), None);
+    }
+
+    #[test]
+    fn angle_of_a_right_angle_and_a_straight_line() {
+        let r = angle([1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 2.0, 0.0]);
+        assert!((r - std::f64::consts::FRAC_PI_2).abs() < TOL);
+        let s = angle([-1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [3.0, 0.0, 0.0]);
+        assert!((s - std::f64::consts::PI).abs() < TOL);
+    }
+
+    #[test]
+    fn angle_with_a_zero_arm_is_finite() {
+        let r = angle([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]);
+        assert!((r - std::f64::consts::FRAC_PI_2).abs() < TOL);
+    }
+
+    #[test]
+    fn dihedral_signs_follow_iupac() {
+        // b = origin, c on +z; a along +x; d rotated +90° about b→c.
+        let (a, b, c) = ([1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
+        let plus = dihedral(a, b, c, [0.0, 1.0, 1.0]);
+        let minus = dihedral(a, b, c, [0.0, -1.0, 1.0]);
+        assert!((plus - std::f64::consts::FRAC_PI_2).abs() < TOL, "{plus}");
+        assert!((minus + std::f64::consts::FRAC_PI_2).abs() < TOL, "{minus}");
+        assert!(dihedral(a, b, c, [1.0, 0.0, 1.0]).abs() < TOL, "cis is 0");
+    }
+
+    #[test]
+    fn dihedral_of_trans_is_plus_pi() {
+        let phi = dihedral(
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [-1.0, 0.0, 1.0],
+        );
+        assert_eq!(phi, std::f64::consts::PI);
     }
 }

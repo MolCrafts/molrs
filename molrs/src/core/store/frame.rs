@@ -727,6 +727,120 @@ impl Frame {
         Ok(out)
     }
 
+    /// The frames joined end to end, block by block — [`replicate`](Self::replicate)
+    /// for parts that differ.
+    ///
+    /// - Every block name any part has becomes one block holding the parts'
+    ///   rows in order, stacked with [`Block::stack`]: columns in first-seen
+    ///   order, and a column one part lacks is filled for its rows and marked
+    ///   null.
+    /// - Every row reference into a block of the same frame (relation
+    ///   endpoints `atomi`..`atoml`, `members.ibead`, declared `targets`) in
+    ///   part `p` is offset by the rows the referenced block has in parts
+    ///   `0..p`, so part `p`'s bonds join part `p`'s atoms. A reference into
+    ///   another section and an undeclared handle are copied unchanged.
+    /// - Every other column is copied verbatim — **including identifier
+    ///   columns** (`id`, `mol_id`, `type_id`); regenerate them if the parts
+    ///   need distinct labels.
+    /// - `meta` and the box are the first part's. The result shares no buffer
+    ///   with any part.
+    ///
+    /// No parts give an empty frame.
+    ///
+    /// # Errors
+    ///
+    /// No part is ever modified.
+    ///
+    /// - [`MolRsError::NotFound`] if a part's relation block indexes a block
+    ///   that part lacks.
+    /// - [`MolRsError::Validation`] if a non-empty relation block carries an
+    ///   endpoint as anything but a 1-D `UInt` column.
+    /// - [`MolRsError::Block`] when two parts carry one column under
+    ///   different dtypes or per-row shapes (see [`Block::stack`]).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use molrs::store::frame::Frame;
+    /// use molrs::store::block::Block;
+    /// use molrs::types::{F, Idx};
+    /// use ndarray::Array1;
+    ///
+    /// fn chain(n: usize) -> Frame {
+    ///     let mut atoms = Block::new();
+    ///     atoms.insert("x", Array1::from_vec(vec![0.0 as F; n]).into_dyn()).unwrap();
+    ///     let mut bonds = Block::new();
+    ///     bonds.insert("atomi", Array1::from_iter(0..n as Idx - 1).into_dyn()).unwrap();
+    ///     bonds.insert("atomj", Array1::from_iter(1..n as Idx).into_dyn()).unwrap();
+    ///     let mut frame = Frame::new();
+    ///     frame.insert("atoms", atoms);
+    ///     frame.insert("bonds", bonds);
+    ///     frame
+    /// }
+    ///
+    /// // A diatomic then a triatomic: the second part's bonds start at atom 2.
+    /// let joined = Frame::concat([&chain(2), &chain(3)]).unwrap();
+    /// assert_eq!(joined["atoms"].nrows(), Some(5));
+    /// let i: Vec<Idx> = joined["bonds"].get("atomi").and_then(|c| c.as_uint()).unwrap().iter().copied().collect();
+    /// assert_eq!(i, vec![0, 2, 3]);
+    /// ```
+    pub fn concat<'a>(frames: impl IntoIterator<Item = &'a Frame>) -> Result<Frame, MolRsError> {
+        let frames: Vec<&Frame> = frames.into_iter().collect();
+        let Some(first) = frames.first() else {
+            return Ok(Frame::new());
+        };
+        // Rows each block name holds in the parts before the current one.
+        let mut seen_rows: IndexMap<String, usize> = IndexMap::new();
+        let mut parts: IndexMap<String, Vec<Block>> = IndexMap::new();
+        for frame in &frames {
+            for (name, b) in frame.iter() {
+                let mut part = b.clone();
+                let rows = b.nrows().unwrap_or(0);
+                let references = if rows > 0 {
+                    local_reference_targets(name, b)
+                } else {
+                    Vec::new()
+                };
+                for (col, target) in &references {
+                    if frame.get(target).is_none() {
+                        return Err(MolRsError::not_found(
+                            "block",
+                            format!(
+                                "cannot concat '{name}': it indexes '{target}', which its \
+                                 frame lacks"
+                            ),
+                        ));
+                    }
+                    let base = seen_rows.get(target).copied().unwrap_or(0);
+                    let values = part
+                        .get_mut(col)
+                        .and_then(|c| c.as_uint_mut())
+                        .filter(|v| v.ndim() == 1)
+                        .ok_or_else(|| {
+                            MolRsError::validation(format!(
+                                "cannot concat: block '{name}' has no 1-D UInt reference \
+                                 column '{col}'"
+                            ))
+                        })?;
+                    if base > 0 {
+                        values.mapv_inplace(|v| v + base as crate::types::Idx);
+                    }
+                }
+                parts.entry(name.to_owned()).or_default().push(part);
+            }
+            for (name, b) in frame.iter() {
+                *seen_rows.entry(name.to_owned()).or_default() += b.nrows().unwrap_or(0);
+            }
+        }
+        let mut out = Frame::with_capacity(parts.len());
+        out.meta = first.meta.clone();
+        out.simbox = first.simbox.clone();
+        for (name, blocks) in &parts {
+            out.insert(name, Block::stack(blocks)?);
+        }
+        Ok(out)
+    }
+
     /// The `atoms` block's positions as one `N × 3` array — see
     /// [`Block::coords`].
     ///
@@ -1574,6 +1688,70 @@ mod tests {
                 .unwrap()
                 .as_ptr()
         );
+    }
+
+    // ---- concat ----
+
+    #[test]
+    fn concat_of_copies_equals_replicate() {
+        let frame = chain_of_four();
+        let joined = Frame::concat([&frame, &frame, &frame]).unwrap();
+        let tiled = frame.replicate(3).unwrap();
+        for (block, col) in [("bonds", "atomi"), ("bonds", "atomj"), ("bonds", "type_id")] {
+            assert_eq!(
+                uint_values(&joined, block, col),
+                uint_values(&tiled, block, col),
+                "{block}.{col}"
+            );
+        }
+        assert_eq!(
+            float_values(&joined, "atoms", "x"),
+            float_values(&tiled, "atoms", "x")
+        );
+    }
+
+    #[test]
+    fn concat_offsets_past_a_part_without_the_relation_block() {
+        // atoms only (2 rows), then a bonded chain: its bonds start at row 2.
+        let mut lone = Frame::new();
+        let mut atoms = Block::new();
+        atoms.insert("x", float_col(&[9.0, 9.0])).unwrap();
+        atoms.insert("charge", float_col(&[0.5, -0.5])).unwrap();
+        lone.insert("atoms", atoms);
+        let joined = Frame::concat([&lone, &chain_of_four()]).unwrap();
+        assert_eq!(joined["atoms"].nrows(), Some(6));
+        assert_eq!(uint_values(&joined, "bonds", "atomi"), [2, 3, 4]);
+        // `charge` only the first part had: null on the chain's rows.
+        assert_eq!(
+            joined["atoms"].validity("charge"),
+            Some(&[true, true, false, false, false, false][..])
+        );
+    }
+
+    #[test]
+    fn concat_keeps_the_first_parts_meta_and_box() {
+        let mut a = chain_of_four();
+        a.meta.insert("title", "first".to_string());
+        let mut b = chain_of_four();
+        b.meta.insert("title", "second".to_string());
+        let joined = Frame::concat([&a, &b]).unwrap();
+        assert_eq!(
+            joined.meta.get("title").and_then(|v| v.as_str()),
+            Some("first")
+        );
+    }
+
+    #[test]
+    fn concat_of_nothing_is_an_empty_frame() {
+        assert!(Frame::concat(std::iter::empty()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn concat_refuses_a_relation_without_its_target_block() {
+        let mut orphan = chain_of_four();
+        orphan.remove("atoms");
+        let err = Frame::concat([&chain_of_four(), &orphan]).expect_err("orphan bonds");
+        assert!(matches!(err, MolRsError::NotFound { .. }), "{err:?}");
     }
 
     // ---- coords ----

@@ -521,6 +521,16 @@ fn md_defs() -> Vec<UnitDef> {
         def("erg", "erg", &[], 1e-7, 0.0, e, false),
         def("electron_volt", "eV", &[], 1.602_176_634e-19, 0.0, e, true),
         def("hartree", "Eh", &[], 4.359_744_722_207_1e-18, 0.0, e, false),
+        // Boltzmann constant k_B (SI-2019 exact) as a unit, J/K.
+        def(
+            "boltzmann_constant",
+            "k_B",
+            &[],
+            super::constants::BOLTZMANN,
+            0.0,
+            Dimension::ENERGY / Dimension::TEMPERATURE,
+            false,
+        ),
         // Force / pressure (SI derived, exact).
         def("newton", "N", &[], 1.0, 0.0, Dimension::FORCE, true),
         def("dyne", "dyn", &[], 1e-5, 0.0, Dimension::FORCE, false),
@@ -690,6 +700,21 @@ mod tests {
             assert_eq!(long.dimension(), short.dimension());
             assert_eq!(long.factor_to(&short).unwrap(), 1.0);
         }
+    }
+
+    #[test]
+    fn boltzmann_constant_is_a_unit_of_energy_per_temperature() {
+        let r = UnitRegistry::new();
+        let kt = r.quantity(300.0, "k_B * kelvin").unwrap();
+        let kj = kt.to(&r.parse("kilojoule_per_mole").unwrap()).unwrap();
+        // R T at 300 K = 2.494 338 785 kJ/mol.
+        assert!(
+            (kj.value() - 2.494_338_785_445_6).abs() < 1e-9,
+            "{}",
+            kj.value()
+        );
+        let long = r.parse("boltzmann_constant").unwrap();
+        assert_eq!(long.factor_to(&r.parse("k_B").unwrap()).unwrap(), 1.0);
     }
 
     #[test]

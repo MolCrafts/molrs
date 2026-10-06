@@ -19,6 +19,7 @@
 //! (CHARMM) prmtop parameter tables), and [`GromacsTopFfReader`](gromacs::GromacsTopFfReader) (GROMACS
 //! `.top`/`.itp` section tables).
 
+pub mod clpol;
 pub mod gromacs;
 pub mod lammps;
 pub mod opls;

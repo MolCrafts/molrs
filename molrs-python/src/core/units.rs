@@ -412,6 +412,54 @@ impl PyUnitPreset {
         }
     }
 
+    /// Every registered preset name, sorted: the LAMMPS styles (``real``,
+    /// ``metal``, ``si``, ``cgs``, ``electron``, ``lj``, ``micro``, ``nano``),
+    /// ``openmm``, and any :meth:`register` added.
+    #[staticmethod]
+    fn names() -> Vec<String> {
+        molrs::units::preset_names()
+    }
+
+    /// Register a preset of your own under ``name`` (process-wide) and return
+    /// it; ``UnitPreset(name)`` finds it afterwards.
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     Preset name.
+    /// units : dict[str, str]
+    ///     The unit expression of each of the ten dimensions (``mass``,
+    ///     ``length``, ``time``, ``energy``, ``temperature``, ``charge``,
+    ///     ``pressure``, ``velocity``, ``force``, ``density``).
+    /// boltzmann, coulomb : float
+    ///     The two constants in this preset's units.
+    /// overwrite : bool
+    ///     Replace a preset already under ``name`` (a built-in included).
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     A dimension is missing or unknown, a unit is empty, or ``name`` is
+    ///     taken and ``overwrite`` is false.
+    #[staticmethod]
+    #[pyo3(signature = (name, units, *, boltzmann, coulomb, overwrite = false))]
+    fn register(
+        name: &str,
+        units: std::collections::HashMap<String, String>,
+        boltzmann: f64,
+        coulomb: f64,
+        overwrite: bool,
+    ) -> PyResult<Self> {
+        let preset =
+            UnitPreset::new(name, units, boltzmann, coulomb).map_err(PyValueError::new_err)?;
+        if overwrite {
+            molrs::units::replace_preset(name, preset.clone()).map_err(PyValueError::new_err)?;
+        } else {
+            molrs::units::register_preset(name, preset.clone()).map_err(PyValueError::new_err)?;
+        }
+        Ok(Self { inner: preset })
+    }
+
     #[getter]
     fn name(&self) -> &str {
         self.inner.name()

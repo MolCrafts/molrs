@@ -209,8 +209,33 @@ fn compose(
     })
 }
 
+/// [`contains_impl`] over a block's `x` / `y` / `z` columns.
+fn mask_impl<'py>(
+    region: &dyn Region,
+    block: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyArray1<bool>>> {
+    let py = block.py();
+    let xyz = block.get_item(("x", "y", "z"))?;
+    let points: PyReadonlyArray2<'_, NpF> = xyz.extract()?;
+    contains_impl(region, py, points)
+}
+
+/// `left op right` as a composed region, or `NotImplemented` when `right` is
+/// not a region (so Python asks `right.__rand__` / `__ror__`).
+fn compose_or_defer(
+    op: &str,
+    left: &Bound<'_, PyAny>,
+    right: &Bound<'_, PyAny>,
+) -> PyResult<Py<PyAny>> {
+    let py = left.py();
+    if extract_region(right).is_err() {
+        return Ok(py.NotImplemented());
+    }
+    Ok(Py::new(py, compose(op, left, Some(right))?)?.into_any())
+}
+
 /// The methods every region class shares: the two queries, the bounds, the
-/// three operators, and the FFI capsule.
+/// block mask, the three operators, and the FFI capsule.
 macro_rules! region_methods {
     ($ty:ident) => {
         #[pymethods]
@@ -270,14 +295,33 @@ macro_rules! region_methods {
                 bounds_impl(self.inner.as_ref(), py)
             }
 
-            /// Intersection: ``self & other``.
-            fn __and__(slf: &Bound<'_, Self>, other: &Bound<'_, PyAny>) -> PyResult<PyRegion> {
-                compose("and", slf.as_any(), Some(other))
+            /// Which rows of ``block`` lie inside: :meth:`contains` of its
+            /// ``x`` / ``y`` / ``z`` columns.
+            ///
+            /// Raises
+            /// ------
+            /// KeyError
+            ///     If ``block`` lacks ``x``, ``y`` or ``z``.
+            fn mask<'py>(&self, block: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyArray1<bool>>> {
+                mask_impl(self.inner.as_ref(), block)
             }
 
-            /// Union: ``self | other``.
-            fn __or__(slf: &Bound<'_, Self>, other: &Bound<'_, PyAny>) -> PyResult<PyRegion> {
-                compose("or", slf.as_any(), Some(other))
+            /// The rows of ``block`` inside the region: ``block[self.mask(block)]``.
+            fn __call__<'py>(&self, block: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+                let mask = mask_impl(self.inner.as_ref(), block)?;
+                block.get_item(mask)
+            }
+
+            /// Intersection: ``self & other``. An operand that is not a region
+            /// gets ``NotImplemented``, so its own ``__rand__`` (a selector's)
+            /// decides.
+            fn __and__(slf: &Bound<'_, Self>, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+                compose_or_defer("and", slf.as_any(), other)
+            }
+
+            /// Union: ``self | other``; ``NotImplemented`` for a non-region.
+            fn __or__(slf: &Bound<'_, Self>, other: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+                compose_or_defer("or", slf.as_any(), other)
             }
 
             /// Complement: ``~self``.
@@ -357,6 +401,18 @@ impl PySphere {
         )
     }
 
+    /// Center, shape ``(3,)``.
+    #[getter]
+    fn center<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
+        self.inner.center.to_owned().into_pyarray(py)
+    }
+
+    /// Radius.
+    #[getter]
+    fn radius(&self) -> NpF {
+        self.inner.radius
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "Sphere(center=[{:.2}, {:.2}, {:.2}], radius={:.2})",
@@ -411,6 +467,25 @@ impl PyCuboid {
                 this.inner.lengths.to_owned().into_pyarray(py),
             ),
         )
+    }
+
+    /// The axis-aligned cube of edge ``edge`` with minimum corner ``origin``.
+    #[staticmethod]
+    #[pyo3(signature = (edge, origin = vec![0.0, 0.0, 0.0]))]
+    fn cube(edge: NpF, origin: Vec<NpF>) -> PyResult<Self> {
+        Self::new(origin, vec![edge; 3])
+    }
+
+    /// Minimum corner, shape ``(3,)``.
+    #[getter]
+    fn origin<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
+        self.inner.origin.to_owned().into_pyarray(py)
+    }
+
+    /// Edge lengths, shape ``(3,)``.
+    #[getter]
+    fn lengths<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<NpF>> {
+        self.inner.lengths.to_owned().into_pyarray(py)
     }
 
     fn __repr__(&self) -> String {

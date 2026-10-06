@@ -248,3 +248,44 @@ class TestSphereUnion:
             molrs.SphereUnion(np.zeros((2, 3)), np.array([1.0]))
         with pytest.raises(ValueError):
             molrs.SphereUnion(np.zeros((1, 3)), 0.0)
+
+
+class TestRegionSelection:
+    @staticmethod
+    def _block():
+        block = molrs.Block()
+        block.insert("x", np.array([0.0, 5.0, 0.5]))
+        block.insert("y", np.zeros(3))
+        block.insert("z", np.zeros(3))
+        block.insert("id", np.array([1, 2, 3], dtype=np.uint64))
+        return block
+
+    def test_mask_and_call_read_the_block_coordinates(self):
+        sphere = molrs.Sphere([0.0, 0.0, 0.0], 1.0)
+        block = self._block()
+        assert list(sphere.mask(block)) == [True, False, True]
+        assert list(sphere(block)["id"]) == [1, 3]
+        shell = sphere & ~molrs.Sphere([0.0, 0.0, 0.0], 0.25)
+        assert list(shell.mask(block)) == [False, False, True]
+
+    def test_a_non_region_operand_defers_to_its_own_operator(self):
+        class Selector:
+            def __rand__(self, other):
+                return ("and", other)
+
+            def __ror__(self, other):
+                return ("or", other)
+
+        sphere = molrs.Sphere([0.0, 0.0, 0.0], 1.0)
+        assert sphere & Selector() == ("and", sphere)
+        assert sphere | Selector() == ("or", sphere)
+        with pytest.raises(TypeError):
+            sphere & 3
+
+    def test_shape_parameters_and_cube(self):
+        cube = molrs.Cuboid.cube(2.0, [1.0, 1.0, 1.0])
+        np.testing.assert_allclose(cube.origin, [1.0, 1.0, 1.0])
+        np.testing.assert_allclose(cube.lengths, [2.0, 2.0, 2.0])
+        sphere = molrs.Sphere([1.0, 2.0, 3.0], 4.0)
+        np.testing.assert_allclose(sphere.center, [1.0, 2.0, 3.0])
+        assert sphere.radius == 4.0

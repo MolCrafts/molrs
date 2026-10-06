@@ -51,6 +51,7 @@ from .._lib import (
     Style,
     Type,
     assign_cmaps,
+    clpol_polarizability,
     read_amber_prmtop_ff,
     read_forcefield_xml,
     read_gromacs_system,
@@ -144,6 +145,7 @@ __all__ = [
     "assign_cmaps",
     # subpackages
     "charge",
+    "clpol_polarizability",
     "compute_k_ij",
     "fragment_scaling_data",
     # pair helpers + polarizable fragment scaling

@@ -817,8 +817,8 @@ fn z_for_symbol(sym: &str) -> Result<i32, String> {
 /// Read the first frame of an (ext)XYZ file into a materialize-ready `FrameRef`.
 ///
 /// All parsing (atom table, `Lattice="..."` -> simbox) is done by the molrs
-/// core ExtXYZ reader. The ExtXYZ `species` column is consumed and replaced by
-/// `atomic_number` (a UInt column), so the result satisfies the exact schema
+/// core ExtXYZ reader. The `element` column (the ExtXYZ `species` property) is
+/// consumed and replaced by `atomic_number` (a UInt column), so the result satisfies the exact schema
 /// that `cpu::materialize` requires (`atoms.{x,y,z,atomic_number}`). The
 /// external-format column does not cross that boundary.
 ///
@@ -832,10 +832,10 @@ fn xyz_read_first_frame(path: &str) -> Result<Box<FrameRef>, String> {
         .get_mut("atoms")
         .ok_or_else(|| "xyz_read_first_frame: frame has no atoms block".to_string())?;
     let species = atoms
-        .get("species")
+        .get("element")
         .and_then(|c| c.as_string())
         .ok_or_else(|| {
-            "xyz_read_first_frame: atoms block has no ExtXYZ species column".to_string()
+            "xyz_read_first_frame: atoms block has no element (ExtXYZ species) column".to_string()
         })?;
     let zs: Result<Vec<u64>, String> = species
         .iter()
@@ -845,7 +845,7 @@ fn xyz_read_first_frame(path: &str) -> Result<Box<FrameRef>, String> {
     atoms
         .insert("atomic_number", Array1::from_vec(zs).into_dyn())
         .map_err(|e| format!("xyz_read_first_frame: insert atomic_number: {e}"))?;
-    atoms.remove("species");
+    atoms.remove("element");
 
     let inner = molrs_ffi::FrameRef::new_standalone();
     inner
