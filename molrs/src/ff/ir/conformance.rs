@@ -460,6 +460,24 @@ impl Probe {
                     (0..n).map(|_| rng.uniform(-1.0, 1.0)).collect(),
                 ));
             }
+            // The two atoms' self rows, near the pair value and unequal, so
+            // an expression that reads them is checked for symmetry.
+            let pair_values: Vec<(String, F)> = spec
+                .params
+                .iter()
+                .filter_map(|p| {
+                    let col = params.nums.iter().find(|(n, _)| n == p.name.as_ref())?;
+                    Some((p.name.to_string(), col.1[0]))
+                })
+                .collect();
+            for (name, v) in pair_values {
+                for end in ["1", "2"] {
+                    params.nums.push((
+                        format!("{name}{end}"),
+                        (0..n).map(|_| v * rng.uniform(0.8, 1.2)).collect(),
+                    ));
+                }
+            }
         }
         let arity = category.arity.endpoints();
         let mut probe = Probe {
@@ -633,22 +651,20 @@ pub(crate) fn check_probe(
 /// A pair's energy with `q1` and `q2` exchanged (Tier 2 sees no other
 /// per-atom input).
 fn check_symmetry(f: &dyn ScalarForm, probe: &Probe, e: &[F], style: &str) -> Result<(), IrError> {
+    // Every per-atom column `<x>1` exchanged with its `<x>2` (`q1` ↔ `q2`,
+    // `epsilon1` ↔ `epsilon2`): `expr::Input::swapped`, by spelling.
     let mut swapped = probe.clone();
-    let names: Vec<&str> = swapped
-        .params
-        .nums
-        .iter()
-        .map(|(n, _)| n.as_str())
-        .collect();
-    let (Some(i1), Some(i2)) = (
-        names.iter().position(|n| *n == "q1"),
-        names.iter().position(|n| *n == "q2"),
-    ) else {
-        return Ok(());
-    };
-    let q1 = swapped.params.nums[i1].1.clone();
-    swapped.params.nums[i1].1 = swapped.params.nums[i2].1.clone();
-    swapped.params.nums[i2].1 = q1;
+    let lookup: HashMap<String, Vec<F>> = probe.params.nums.iter().cloned().collect();
+    for (name, col) in &mut swapped.params.nums {
+        let partner = match name.as_bytes().last() {
+            Some(b'1') => format!("{}2", &name[..name.len() - 1]),
+            Some(b'2') => format!("{}1", &name[..name.len() - 1]),
+            _ => continue,
+        };
+        if let Some(other) = lookup.get(&partner) {
+            *col = other.clone();
+        }
+    }
     let (e2, _) = scalar_eval(f, &swapped, &probe.q);
     let scale = rms(e);
     for (a, b) in e.iter().zip(&e2) {

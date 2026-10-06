@@ -17,7 +17,10 @@
 //!   builds a whole kernel (every built-in kernel; `dihedral rb` is a
 //!   built-in priced by its expression alone);
 //! * the [`Registry`] refuses anything that does not conform
-//!   ([`conformance`], [`IrError`]) and seals the built-ins.
+//!   ([`conformance`], [`IrError`]) and seals the built-ins;
+//! * [`expr`] compiles a style's Lepton `expression` into its kernel, with
+//!   exact derivatives — installed in every registry
+//!   [`Registry::builtin`] makes.
 //!
 //! ```
 //! use std::sync::Arc;
@@ -49,12 +52,15 @@ pub mod category;
 pub mod conformance;
 pub mod dim;
 pub mod error;
+pub mod expr;
+pub mod expression;
 pub mod registry;
 pub mod spec;
 
 pub use category::{Arity, CategorySpec, Coordinate, EndpointOrder, builtin_categories};
 pub use dim::Dim;
 pub use error::IrError;
+pub use expression::{CompiledExpression, compile_expression};
 pub use registry::{
     ExpressionCompiler, ExpressionForm, ExpressionKernel, Kernel, Registry, register_category,
     register_style, set_expression_compiler, unregister_style, with_global,

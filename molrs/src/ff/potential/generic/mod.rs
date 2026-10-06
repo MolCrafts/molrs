@@ -109,6 +109,38 @@ pub(crate) fn columns(
     Ok(out)
 }
 
+/// `cols` cut to those a form reads, when it states what it reads
+/// ([`ScalarForm::inputs`]): a parameter it does not read is not required.
+/// A column is read by its name, or on a pair by its self-row spelling
+/// (`<x>1`, `<x>2`) or as the mixing partner of a column that is.
+pub(crate) fn read_by(spec: &StyleSpec, cols: Vec<Column>, reads: &[String]) -> Vec<Column> {
+    if reads.is_empty() {
+        return cols;
+    }
+    let read = |c: &Column| {
+        reads
+            .iter()
+            .any(|r| r == &c.name || r.strip_suffix(['1', '2']) == Some(c.name.as_str()))
+    };
+    let partner = |c: &Column| match &spec.params[c.param].mix {
+        crate::ff::ir::Mix::LjEpsilon { sigma: p } | crate::ff::ir::Mix::LjSigma { epsilon: p } => {
+            Some(p.clone())
+        }
+        _ => None,
+    };
+    let kept: Vec<bool> = cols.iter().map(read).collect();
+    cols.iter()
+        .enumerate()
+        .filter(|&(k, c)| {
+            kept[k]
+                || cols.iter().zip(&kept).any(|(other, &on)| {
+                    on && partner(other).is_some_and(|p| spec.params[c.param].name == p)
+                })
+        })
+        .map(|(_, c)| c.clone())
+        .collect()
+}
+
 /// `column`'s numeric value in `row`, by its own name or — term 1 of a style
 /// that accepts it — the bare name of its family.
 pub(crate) fn row_num(spec: &StyleSpec, col: &Column, row: &Params) -> Option<F> {
@@ -176,6 +208,21 @@ impl TermParams {
         }
     }
 
+    /// Refuse a form input no numeric column supplies.
+    pub fn require(&self, spec: &StyleSpec, inputs: &[String]) -> Result<(), IrError> {
+        match inputs
+            .iter()
+            .find(|i| !self.nums.iter().any(|(n, _)| n == *i))
+        {
+            Some(param) => Err(IrError::MissingParam {
+                style: spec.name.to_string(),
+                type_: String::new(),
+                param: param.clone(),
+            }),
+            None => Ok(()),
+        }
+    }
+
     /// Add the style's declared numeric parameters as `n`-long columns, and
     /// its text ones: the style's value, else the default.
     pub fn add_style(&mut self, spec: &StyleSpec, style: &Params, n: usize) -> Result<(), IrError> {
@@ -226,6 +273,7 @@ impl TermParams {
 /// one.
 pub(crate) fn resolve_terms(
     spec: &StyleSpec,
+    reads: &[String],
     block_name: &str,
     arity: usize,
     style: &Params,
@@ -263,7 +311,7 @@ pub(crate) fn resolve_terms(
         .iter()
         .filter_map(|&(l, r)| r.map(|r| (l, r)))
         .collect();
-    let cols = columns(spec, &spec.params, &present)?;
+    let cols = read_by(spec, columns(spec, &spec.params, &present)?, reads);
     let missing = |label: &str, name: &str| IrError::MissingParam {
         style: spec.name.to_string(),
         type_: label.to_owned(),

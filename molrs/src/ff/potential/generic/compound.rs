@@ -42,7 +42,16 @@ impl CompoundTerms {
                 spec.category, spec.name
             ));
         }
-        let (atoms, params) = resolve_terms(spec, &category.block, arity, style, tp, frame)?;
+        let (atoms, params) = resolve_terms(
+            spec,
+            &form.inputs(),
+            &category.block,
+            arity,
+            style,
+            tp,
+            frame,
+        )?;
+        params.require(spec, &form.inputs())?;
         Ok(Self {
             form,
             atoms,

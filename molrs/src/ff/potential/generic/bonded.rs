@@ -51,7 +51,16 @@ impl ScalarBonded {
                 spec.category, spec.name
             )
         })?;
-        let (atoms, params) = resolve_terms(spec, &category.block, arity, style, tp, frame)?;
+        let (atoms, params) = resolve_terms(
+            spec,
+            &form.inputs(),
+            &category.block,
+            arity,
+            style,
+            tp,
+            frame,
+        )?;
+        params.require(spec, &form.inputs())?;
         Ok(Self {
             form,
             coordinate,
@@ -60,7 +69,7 @@ impl ScalarBonded {
         })
     }
 
-    /// Term `t`'s coordinate, its atoms named by `atoms(t, position)`.
+    /// The coordinate of the term whose atoms are `at`.
     fn coordinate_of(&self, coords: &[F], at: [usize; 4]) -> F {
         let [i, j, k, l] = at;
         match self.coordinate {

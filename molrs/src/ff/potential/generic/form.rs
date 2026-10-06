@@ -102,6 +102,17 @@ impl<'a> ParamCols<'a> {
 /// registration on the style's samples or at its first compile.
 pub trait ScalarForm: Send + Sync + 'static {
     fn eval(&self, q: &[F], p: &ParamCols<'_>, e: &mut [F], de_dq: &mut [F]);
+
+    /// The numeric columns the form reads, by name, when it states them; a
+    /// kernel refuses at build a form whose input it cannot supply
+    /// ([`IrError::MissingParam`](crate::ff::ir::IrError::MissingParam)).
+    /// A pair kernel also binds what only a pair has on request: `<x>1`,
+    /// `<x>2`, the self-row values of the two atoms' types (OpenMM's
+    /// per-particle binding, an expression feature). Default: nothing
+    /// stated, nothing checked.
+    fn inputs(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// An N-body energy `E(x; p)` of the term's atoms' positions.
@@ -112,4 +123,9 @@ pub trait ScalarForm: Send + Sync + 'static {
 /// laid out as `x`).
 pub trait CompoundForm: Send + Sync + 'static {
     fn eval(&self, x: &[[F; 3]], arity: usize, p: &ParamCols<'_>, e: &mut [F], grad: &mut [[F; 3]]);
+
+    /// The numeric columns the form reads; see [`ScalarForm::inputs`].
+    fn inputs(&self) -> Vec<String> {
+        Vec::new()
+    }
 }

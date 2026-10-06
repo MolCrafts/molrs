@@ -629,6 +629,7 @@ fn an_expression_beside_a_native_form_must_agree_with_it() {
     // Without an engine nothing about the expression can be checked, and an
     // expression-only style is priced by nothing.
     let mut r = Registry::builtin();
+    r.set_expression_compiler(None);
     r.register_style(spec(), scalar(RIGHT)).unwrap();
     r.register_style(
         harmonic_spec("bond", "by/expression").expression("k*(r-r0)^2"),
@@ -685,4 +686,407 @@ fn text_and_array_params_are_declared_by_kind() {
         ParamSpec::new("table", Dim::ENERGY).kind(ParamKind::Array { rank: 1 }),
     ]);
     r.register_style(table, scalar(RIGHT)).unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// The expression engine through the registry
+// ---------------------------------------------------------------------------
+
+/// Four atoms of type `A`, non-planar; one term of `category` over the
+/// first `arity` of them, typed `t`; and a `pairs` list of the three pairs
+/// that are not neighbours in the chain.
+fn chain(category: &str, arity: usize) -> Frame {
+    let mut atoms = Block::new();
+    let xyz = [
+        [0.0, 0.0, 0.0],
+        [1.52, 0.1, 0.05],
+        [2.1, 1.45, -0.1],
+        [3.55, 1.6, 0.6],
+    ];
+    for (a, key) in ["x", "y", "z"].iter().enumerate() {
+        let v: Vec<F> = xyz.iter().map(|p| p[a]).collect();
+        atoms.insert(*key, Array1::from_vec(v).into_dyn()).unwrap();
+    }
+    atoms
+        .insert(
+            "type",
+            Array1::from_vec(vec!["A".to_string(); 4]).into_dyn(),
+        )
+        .unwrap();
+    atoms
+        .insert(
+            "charge",
+            Array1::from_vec(vec![0.4, -0.3, 0.2, -0.25]).into_dyn(),
+        )
+        .unwrap();
+    let mut frame = Frame::new();
+    frame.insert("atoms", atoms);
+    if category != "pair" {
+        let mut block = Block::new();
+        for (key, atom) in ["atomi", "atomj", "atomk", "atoml"]
+            .into_iter()
+            .zip(0..arity)
+        {
+            block
+                .insert(key, Array1::from_vec(vec![atom as Idx]).into_dyn())
+                .unwrap();
+        }
+        block
+            .insert("type", Array1::from_vec(vec!["t".to_string()]).into_dyn())
+            .unwrap();
+        frame.insert(format!("{category}s"), block);
+    }
+    let mut pairs = Block::new();
+    pairs
+        .insert("atomi", Array1::from_vec(vec![0 as Idx, 0, 1]).into_dyn())
+        .unwrap();
+    pairs
+        .insert("atomj", Array1::from_vec(vec![2 as Idx, 3, 3]).into_dyn())
+        .unwrap();
+    // The pair styles that key a compiled row on its own label (`lj/class2`,
+    // `buck`, `morse`) read the pair's type, `A` with `A`.
+    pairs
+        .insert(
+            "type",
+            Array1::from_vec(vec!["A".to_string(); 3]).into_dyn(),
+        )
+        .unwrap();
+    frame.insert("pairs", pairs);
+    frame
+}
+
+const COORDS: [F; 12] = [
+    0.0, 0.0, 0.0, 1.52, 0.1, 0.05, 2.1, 1.45, -0.1, 3.55, 1.6, 0.6,
+];
+
+/// `(category, style, type row, style params)` of one gate case.
+type GateCase = (
+    &'static str,
+    &'static str,
+    &'static [(&'static str, F)],
+    &'static [(&'static str, F)],
+);
+
+/// The built-in gate: every built-in that has a native kernel and an
+/// Appendix-A expression prices one term identically both ways — the native
+/// kernel, and its expression registered as a style of its own and built
+/// into the generic kernels — energy to 1e-10 and (unless its force is not
+/// the gradient) forces to 1e-10, through `PotentialCompiler`.
+#[test]
+fn every_builtin_expression_agrees_with_its_native_kernel() {
+    let cases: &[GateCase] = &[
+        ("bond", "harmonic", &[("k", 300.0), ("r0", 1.4)], &[]),
+        (
+            "bond",
+            "morse",
+            &[("d0", 4.0), ("alpha", 1.5), ("r0", 1.4)],
+            &[],
+        ),
+        (
+            "bond",
+            "class2",
+            &[("r0", 1.4), ("k2", 300.0), ("k3", -400.0), ("k4", 500.0)],
+            &[],
+        ),
+        ("angle", "harmonic", &[("k", 55.0), ("theta0", 104.5)], &[]),
+        (
+            "angle",
+            "charmm",
+            &[
+                ("k", 50.0),
+                ("theta0", 109.0),
+                ("k_ub", 20.0),
+                ("r_ub", 2.4),
+            ],
+            &[],
+        ),
+        (
+            "angle",
+            "class2",
+            &[("theta0", 110.0), ("k2", 50.0), ("k3", -10.0), ("k4", 5.0)],
+            &[],
+        ),
+        (
+            "dihedral",
+            "charmm",
+            &[
+                ("k", 1.2),
+                ("periodicity", 3.0),
+                ("phase", 30.0),
+                ("w", 0.0),
+            ],
+            &[],
+        ),
+        (
+            "dihedral",
+            "opls",
+            &[("k1", 1.3), ("k2", -0.2), ("k3", 0.4), ("k4", 0.1)],
+            &[],
+        ),
+        (
+            "dihedral",
+            "multi/harmonic",
+            &[
+                ("a1", 0.3),
+                ("a2", -0.5),
+                ("a3", 0.2),
+                ("a4", 0.7),
+                ("a5", -0.1),
+            ],
+            &[],
+        ),
+        (
+            "dihedral",
+            "harmonic",
+            &[("k", 1.1), ("sign", -1.0), ("periodicity", 2.0)],
+            &[],
+        ),
+        (
+            "dihedral",
+            "class2",
+            &[
+                ("k1", 0.5),
+                ("phi1", 10.0),
+                ("k2", 0.2),
+                ("phi2", 20.0),
+                ("k3", 0.1),
+                ("phi3", 30.0),
+            ],
+            &[],
+        ),
+        ("improper", "harmonic", &[("k", 20.0), ("chi0", 5.0)], &[]),
+        (
+            "improper",
+            "cvff",
+            &[("k", 2.0), ("sign", -1.0), ("periodicity", 2.0)],
+            &[],
+        ),
+        (
+            "improper",
+            "periodic",
+            &[("k", 1.5), ("periodicity", 2.0), ("phase", 180.0)],
+            &[],
+        ),
+        (
+            "pair",
+            "lj/cut",
+            &[("epsilon", 0.2), ("sigma", 3.1)],
+            &[("cutoff", 10.0)],
+        ),
+        (
+            "pair",
+            "lj/class2",
+            &[("epsilon", 0.2), ("sigma", 3.1)],
+            &[("cutoff", 10.0)],
+        ),
+        (
+            "pair",
+            "buck",
+            &[("a", 1000.0), ("rho", 0.3), ("c", 50.0)],
+            &[("cutoff", 10.0)],
+        ),
+        (
+            "pair",
+            "morse",
+            &[("d0", 0.5), ("alpha", 1.2), ("r0", 3.0)],
+            &[("cutoff", 10.0)],
+        ),
+        (
+            "pair",
+            "lj/charmm",
+            &[("epsilon", 0.2), ("sigma", 3.1)],
+            &[("inner", 8.0), ("cutoff", 10.0)],
+        ),
+        (
+            "pair",
+            "coul/cut",
+            &[],
+            &[
+                ("coulomb", 332.06371),
+                ("dielectric", 1.0),
+                ("cutoff", 10.0),
+            ],
+        ),
+        (
+            "pair",
+            "coul/charmm",
+            &[],
+            &[
+                ("coulomb", 332.06371),
+                ("dielectric", 1.0),
+                ("inner", 8.0),
+                ("cutoff", 10.0),
+            ],
+        ),
+    ];
+    let builtin = Registry::builtin();
+    let mut checked = BTreeSet::new();
+    for &(category, name, row, style) in cases {
+        let (spec, kernel) = builtin.style(category, name).unwrap();
+        assert!(kernel.is_some(), "{category} {name}: a native kernel");
+        let mut twin = spec.clone();
+        twin.name = format!("{name}/expression").into();
+        let mut r = Registry::builtin();
+        r.register_style(twin.clone(), None)
+            .unwrap_or_else(|e| panic!("{category} {name}: {e}"));
+        let arity = r.category(category).unwrap().arity.endpoints();
+        let ends = ["A"; 4];
+        let ff = |style_name: &str| {
+            let mut ff = ForceField::new("t");
+            let s = ff
+                .def_style(category, style_name, Params::from_pairs(style))
+                .unwrap();
+            if !row.is_empty() {
+                let label = if category == "pair" { "A" } else { "t" };
+                s.def_type(
+                    label,
+                    &ends[..arity.min(if category == "pair" { 1 } else { 4 })],
+                    Params::from_pairs(row),
+                )
+                .unwrap();
+            }
+            ff
+        };
+        let frame = chain(category, arity);
+        let native = PotentialCompiler::with_registry(&ff(name), &r)
+            .compile(&frame)
+            .unwrap_or_else(|e| panic!("{category} {name}: {e}"));
+        let generic = PotentialCompiler::with_registry(&ff(&twin.name), &r)
+            .compile(&frame)
+            .unwrap_or_else(|e| panic!("{category} {name} by expression: {e}"));
+        let (e_n, f_n) = native.calc_energy_forces(&COORDS);
+        let (e_x, f_x) = generic.calc_energy_forces(&COORDS);
+        let scale = f_n.iter().fold(e_n.abs(), |m, f| m.max(f.abs()));
+        assert!(scale > 1e-6, "{category} {name}: the term must contribute");
+        assert!(
+            (e_n - e_x).abs() <= 1e-10 * scale,
+            "{category} {name}: native {e_n}, expression {e_x}"
+        );
+        if spec.force_is_gradient {
+            for (c, (a, b)) in f_n.iter().zip(&f_x).enumerate() {
+                assert!(
+                    (a - b).abs() <= 1e-10 * scale,
+                    "{category} {name}: force {c}: native {a}, expression {b}"
+                );
+            }
+        }
+        checked.insert((category, name));
+    }
+    // Every built-in with a native kernel and an expression is in the gate.
+    for (spec, kernel) in builtin.styles(None) {
+        if kernel.is_some() && spec.expression.is_some() {
+            assert!(
+                checked.contains(&(spec.category.as_ref(), spec.name.as_ref())),
+                "{} {} has an expression the gate does not check",
+                spec.category,
+                spec.name
+            );
+        }
+    }
+}
+
+/// An unregistered style that carries an `expression` is priced by it, in a
+/// fresh process with nothing registered (the compile fallback).
+#[test]
+fn an_unregistered_style_with_an_expression_is_priced_by_it() {
+    let mut style = Params::new();
+    style.set_str("expression", "-0.5*k*r0^2*log(1-(r/r0)^2)");
+    let mut ff = ForceField::new("t");
+    ff.def_style("bond", "fene/unregistered", style)
+        .unwrap()
+        .def_type(
+            "t",
+            &["A", "A"],
+            Params::from_pairs(&[("k", 30.0), ("r0", 2.0)]),
+        )
+        .unwrap();
+    let frame = chain("bond", 2);
+    let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
+    let r = 1.52_f64.hypot(0.1).hypot(0.05);
+    let want = -0.5 * 30.0 * 2.0 * 2.0 * (1.0 - (r / 2.0).powi(2)).ln();
+    let got = pots.calc_energy(&COORDS);
+    assert!((got - want).abs() <= 1e-12 * want.abs(), "{got} vs {want}");
+}
+
+/// A pair expression reads the two atoms' self rows as `x1`, `x2` and their
+/// charges as `q1`, `q2`; one that is not symmetric under exchanging them is
+/// refused on its samples.
+#[test]
+fn a_pair_expression_binds_self_rows_and_must_be_symmetric() {
+    let spec = |name: &'static str, expression: &str| {
+        StyleSpec::new("pair", name)
+            .params(vec![
+                ParamSpec::new("epsilon", Dim::ENERGY),
+                ParamSpec::new("sigma", Dim::LENGTH),
+            ])
+            .style_params(vec![ParamSpec::new("cutoff", Dim::LENGTH)])
+            .expression(expression)
+    };
+    let mut r = Registry::builtin();
+    let lb = "4*sqrt(epsilon1*epsilon2)*(((sigma1+sigma2)/2/r)^12-((sigma1+sigma2)/2/r)^6)+q1*q2/r";
+    r.register_style(spec("lb", lb), None).unwrap();
+    let lopsided = spec("lopsided", "epsilon1*sigma2/r").sample(Sample {
+        params: vec![
+            ("epsilon".into(), Value::Num(0.2)),
+            ("sigma".into(), Value::Num(3.0)),
+            ("cutoff".into(), Value::Num(10.0)),
+        ],
+        q: (2.5, 6.0),
+    });
+    assert!(matches!(
+        r.register_style(lopsided, None),
+        Err(IrError::Asymmetric { .. })
+    ));
+
+    // Two types: the self rows of each atom, not a mixed value.
+    let mut ff = ForceField::new("t");
+    ff.def_style("pair", "lb", Params::from_pairs(&[("cutoff", 10.0)]))
+        .unwrap()
+        .def_type(
+            "A",
+            &["A"],
+            Params::from_pairs(&[("epsilon", 0.2), ("sigma", 3.1)]),
+        )
+        .unwrap()
+        .def_type(
+            "B",
+            &["B"],
+            Params::from_pairs(&[("epsilon", 0.1), ("sigma", 2.5)]),
+        )
+        .unwrap()
+        // A cross row the expression does not read (it reads the self rows).
+        .def_type(
+            "A-B",
+            &["A", "B"],
+            Params::from_pairs(&[("epsilon", 9.0), ("sigma", 9.0)]),
+        )
+        .unwrap();
+    let mut frame = chain("pair", 2);
+    let types = vec!["A".to_string(), "B".into(), "A".into(), "B".into()];
+    frame
+        .get_mut("atoms")
+        .unwrap()
+        .insert("type", Array1::from_vec(types).into_dyn())
+        .unwrap();
+    let pots = PotentialCompiler::with_registry(&ff, &r)
+        .compile(&frame)
+        .unwrap();
+    let rows = [
+        (0.2, 3.1, 0.4),
+        (0.1, 2.5, -0.3),
+        (0.2, 3.1, 0.2),
+        (0.1, 2.5, -0.25),
+    ];
+    let mut want = 0.0;
+    for (i, j) in [(0, 2), (0, 3), (1, 3)] {
+        let r = (0..3)
+            .map(|c| (COORDS[j * 3 + c] - COORDS[i * 3 + c]).powi(2))
+            .sum::<F>()
+            .sqrt();
+        let (a, b): ((F, F, F), (F, F, F)) = (rows[i], rows[j]);
+        let s = (a.1 + b.1) / 2.0 / r;
+        want += 4.0 * (a.0 * b.0).sqrt() * (s.powi(12) - s.powi(6)) + a.2 * b.2 / r;
+    }
+    let got = pots.calc_energy(&COORDS);
+    assert!((got - want).abs() <= 1e-12 * want.abs(), "{got} vs {want}");
 }

@@ -18,6 +18,7 @@
 use std::borrow::Cow;
 
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
+use crate::ff::ir::registry::StyleEntry;
 use crate::ff::ir::{self, CategorySpec, Registry};
 use crate::ff::potential::pair::exceptions;
 use crate::ff::potential::registry::{self, ParamSource, RowSource};
@@ -232,7 +233,18 @@ impl<'a> PotentialCompiler<'a> {
         let category = style.category();
         let entry = reg.entry(category, style.name());
         let type_params = style.defs().kernel_type_params()?;
-        let param_source = entry.map_or(ParamSource::TypeRows, |e| e.spec().source);
+        let param_source = entry.map_or_else(
+            || {
+                // An unregistered style priced by its expression reads
+                // per-instance numbers when it has no rows.
+                if style.params().get_str("expression").is_some() {
+                    ParamSource::PerInstance
+                } else {
+                    ParamSource::TypeRows
+                }
+            },
+            |e| e.spec().source,
+        );
         if type_params.is_empty() && param_source == ParamSource::TypeRows {
             return Err(format!(
                 "Style '{}' ({}) has no type definitions",
@@ -244,7 +256,7 @@ impl<'a> PotentialCompiler<'a> {
             .iter()
             .map(|(name, params)| (name.as_str(), params))
             .collect();
-        let entry = entry.ok_or_else(|| no_kernel(style))?;
+        let entry = with_fallback(reg, spec, style, entry, &type_refs)?;
         let (pot, special) = entry
             .typed(
                 spec,
@@ -327,7 +339,18 @@ impl<'a> PotentialCompiler<'a> {
         // The registry is the authority because it is where the kernel is declared;
         // an unregistered style falls through to `TypeRows` here and then fails on
         // the kernel lookup below with a more specific message.
-        let param_source = entry.map_or(ParamSource::TypeRows, |e| e.spec().source);
+        let param_source = entry.map_or_else(
+            || {
+                // An unregistered style priced by its expression reads
+                // per-instance numbers when it has no rows.
+                if style.params().get_str("expression").is_some() {
+                    ParamSource::PerInstance
+                } else {
+                    ParamSource::TypeRows
+                }
+            },
+            |e| e.spec().source,
+        );
         if type_params.is_empty() && param_source == ParamSource::TypeRows {
             return Err(format!(
                 "Style '{}' ({}) has no type definitions",
@@ -339,7 +362,7 @@ impl<'a> PotentialCompiler<'a> {
             .iter()
             .map(|(name, params)| (name.as_str(), params))
             .collect();
-        let entry = entry.ok_or_else(|| no_kernel(style))?;
+        let entry = with_fallback(reg, spec, style, entry, &type_refs)?;
         // Project the ForceField's `special_bonds` 1-4 weights into the params the
         // pair kernel reads (`lj14scale` / `coulomb14scale`), so the kernel scales
         // 1-4-flagged pairs without the registry signature carrying special_bonds.
@@ -427,6 +450,31 @@ impl<'a> PotentialCompiler<'a> {
             block.select_rows(&keep).map_err(|e| e.to_string())?,
         );
         Ok(Cow::Owned(cut))
+    }
+}
+
+/// The registered entry of `style`, else — when it carries an `expression`
+/// style param — the entry its expression prices it under (the compile
+/// fallback, protocol §4), else [`ir::IrError::NoKernel`].
+fn with_fallback<'r>(
+    reg: &'r Registry,
+    category: &CategorySpec,
+    style: &Style,
+    entry: Option<&'r StyleEntry>,
+    tp: &[(&str, &Params)],
+) -> Result<Cow<'r, StyleEntry>, String> {
+    if let Some(e) = entry {
+        return Ok(Cow::Borrowed(e));
+    }
+    match StyleEntry::fallback(
+        category,
+        style.name(),
+        style.params(),
+        tp,
+        reg.expression_compiler(),
+    ) {
+        Some(built) => Ok(Cow::Owned(built?)),
+        None => Err(no_kernel(style)),
     }
 }
 

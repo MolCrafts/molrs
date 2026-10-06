@@ -7,7 +7,7 @@ use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::{Params, pair_key};
 use crate::ff::ir::conformance::Probe;
 use crate::ff::ir::{IrError, Mix, ParamKind, StyleSpec};
-use crate::ff::potential::generic::{Column, ScalarForm, TermParams, columns, row_num};
+use crate::ff::potential::generic::{Column, ScalarForm, TermParams, columns, read_by, row_num};
 use crate::ff::potential::pair::{atom_type_index, fold_chunks, type_pair};
 use crate::ff::potential::registry::SpecialClass;
 use crate::ff::potential::{PairDriven, Potential, gather_copies};
@@ -51,6 +51,9 @@ enum Source {
         table: Vec<(String, Vec<F>)>,
         /// Per atom; empty when the frame has no `atoms.charge`.
         charge: Vec<F>,
+        /// The self-row inputs the form asked for (`epsilon1`): spelling,
+        /// which atom of the pair (0, 1), the value per atom type.
+        own: Vec<(String, usize, Vec<F>)>,
         cutoff2: F,
         n_owned: usize,
     },
@@ -72,8 +75,9 @@ enum Source {
 ///
 /// The form sees each per-type parameter as the pair's value — the cross
 /// row's where the style has one stating it, else the two self rows by the
-/// parameter's [`Mix`] — every numeric style parameter, and `q1`, `q2` when
-/// the frame carries `atoms.charge`.
+/// parameter's [`Mix`] — every numeric style parameter, `q1`, `q2` when
+/// the frame carries `atoms.charge`, and the self-row values `<x>1`, `<x>2`
+/// the form asks for ([`ScalarForm::inputs`]).
 pub struct ScalarPair {
     form: Arc<dyn ScalarForm>,
     style: StyleInputs,
@@ -91,6 +95,7 @@ struct PairRows<'a> {
 impl<'a> PairRows<'a> {
     fn new(
         spec: &'a StyleSpec,
+        reads: &[String],
         style: &Params,
         tp: &'a [(&'a str, &'a Params)],
     ) -> Result<Self, IrError> {
@@ -112,7 +117,7 @@ impl<'a> PairRows<'a> {
         };
         Ok(Self {
             spec,
-            cols: columns(spec, &spec.params, tp)?,
+            cols: read_by(spec, columns(spec, &spec.params, tp)?, reads),
             rows: tp.iter().copied().collect(),
             mixing,
         })
@@ -201,6 +206,40 @@ impl<'a> PairRows<'a> {
     }
 }
 
+/// The self-row inputs `form` asks for: `(spelling, atom 0|1, column)`.
+fn self_rows(form: &dyn ScalarForm, cols: &[Column]) -> Vec<(String, usize, usize)> {
+    form.inputs()
+        .into_iter()
+        .filter(|i| !cols.iter().any(|c| &c.name == i))
+        .filter_map(|i| {
+            let end = match i.as_bytes().last() {
+                Some(b'1') => 0,
+                Some(b'2') => 1,
+                _ => return None,
+            };
+            let c = cols.iter().position(|c| c.name == i[..i.len() - 1])?;
+            Some((i, end, c))
+        })
+        .collect()
+}
+
+/// Refuse a form input none of `supplied` is.
+fn check_inputs(
+    spec: &StyleSpec,
+    form: &dyn ScalarForm,
+    supplied: impl Iterator<Item = String>,
+) -> Result<(), IrError> {
+    let supplied: Vec<String> = supplied.collect();
+    match form.inputs().into_iter().find(|i| !supplied.contains(i)) {
+        Some(param) => Err(IrError::MissingParam {
+            style: spec.name.to_string(),
+            type_: String::new(),
+            param,
+        }),
+        None => Ok(()),
+    }
+}
+
 fn charges(frame: &Frame) -> Vec<F> {
     frame
         .get(ATOMS)
@@ -245,7 +284,7 @@ impl ScalarPair {
         frame: &Frame,
     ) -> Result<Self, String> {
         let who = format!("{} `{}`", spec.category, spec.name);
-        let table = PairRows::new(spec, style, tp)?;
+        let table = PairRows::new(spec, &form.inputs(), style, tp)?;
         let charge = charges(frame);
         let types = atom_types(frame, spec)?;
         let scale_14 = match spec.special_class() {
@@ -267,6 +306,8 @@ impl ScalarPair {
         let n = i_col.len();
         let mut values = vec![Vec::with_capacity(n); table.cols.len()];
         let mut q = [Vec::new(), Vec::new()];
+        let own = self_rows(&*form, &table.cols);
+        let mut own_values = vec![Vec::with_capacity(n); own.len()];
         let mut resolved: HashMap<(&str, &str), Vec<F>> = HashMap::new();
         let (mut atom_i, mut atom_j, mut weight) = (Vec::new(), Vec::new(), Vec::new());
         for row in 0..n {
@@ -281,6 +322,9 @@ impl ScalarPair {
             if !charge.is_empty() {
                 q[0].push(charge[ends[0]]);
                 q[1].push(charge[ends[1]]);
+            }
+            for (k, (_, end, c)) in own.iter().enumerate() {
+                own_values[k].push(table.own(&types[ends[*end]], *c)?);
             }
             atom_i.push(ends[0]);
             atom_j.push(ends[1]);
@@ -299,9 +343,22 @@ impl ScalarPair {
             terms.nums.push(("q1".into(), q1));
             terms.nums.push(("q2".into(), q2));
         }
+        for ((name, _, _), v) in own.into_iter().zip(own_values) {
+            terms.nums.push((name, v));
+        }
+        let style_inputs = style_inputs(spec, style)?;
+        check_inputs(
+            spec,
+            &*form,
+            terms
+                .nums
+                .iter()
+                .map(|(n, _)| n.clone())
+                .chain(style_inputs.nums.iter().map(|(n, _)| n.clone())),
+        )?;
         Ok(Self {
             form,
-            style: style_inputs(spec, style)?,
+            style: style_inputs,
             source: Source::Compiled {
                 atom_i,
                 atom_j,
@@ -322,7 +379,7 @@ impl ScalarPair {
         frame: &Frame,
     ) -> Result<Self, String> {
         let who = format!("{} `{}`", spec.category, spec.name);
-        let table = PairRows::new(spec, style, tp)?;
+        let table = PairRows::new(spec, &form.inputs(), style, tp)?;
         let cutoff = style
             .get("cutoff")
             .ok_or_else(|| format!("{who}: a neighbour-driven pair style must declare 'cutoff'"))?;
@@ -340,10 +397,32 @@ impl ScalarPair {
                 }
             }
         }
+        let mut own = Vec::new();
+        for (name, end, c) in self_rows(&*form, &table.cols) {
+            let per_type = labels
+                .iter()
+                .map(|l| table.own(l, c))
+                .collect::<Result<Vec<F>, _>>()?;
+            own.push((name, end, per_type));
+        }
+        let charge = charges(frame);
+        let style_inputs = style_inputs(spec, style)?;
+        let charge_names = ["q1", "q2"].into_iter().filter(|_| !charge.is_empty());
+        check_inputs(
+            spec,
+            &*form,
+            table
+                .cols
+                .iter()
+                .map(|c| c.name.clone())
+                .chain(style_inputs.nums.iter().map(|(n, _)| n.clone()))
+                .chain(charge_names.map(str::to_owned))
+                .chain(own.iter().map(|(n, _, _)| n.clone())),
+        )?;
         let n_owned = type_id.len();
         Ok(Self {
             form,
-            style: style_inputs(spec, style)?,
+            style: style_inputs,
             source: Source::Typed {
                 type_id,
                 ntypes,
@@ -353,7 +432,8 @@ impl ScalarPair {
                     .map(|c| c.name.clone())
                     .zip(values)
                     .collect(),
-                charge: charges(frame),
+                charge,
+                own,
                 cutoff2: cutoff * cutoff,
                 n_owned,
             },
@@ -384,6 +464,7 @@ impl ScalarPair {
             ntypes,
             table,
             charge,
+            own,
             ..
         } = &self.source
         else {
@@ -404,6 +485,13 @@ impl ScalarPair {
             terms
                 .nums
                 .push(("q2".into(), pairs.iter().map(|&(_, j)| charge[j]).collect()));
+        }
+        for (name, end, per_type) in own {
+            let col = pairs
+                .iter()
+                .map(|&(i, j)| per_type[type_id[if *end == 0 { i } else { j }] as usize])
+                .collect();
+            terms.nums.push((name.clone(), col));
         }
         self.with_style(terms, pairs.len())
     }

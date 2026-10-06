@@ -187,6 +187,31 @@ impl StyleEntry {
         &self.spec
     }
 
+    /// The entry an **unregistered** style that carries an `expression` is
+    /// priced under: the compile fallback (protocol §4), through the
+    /// installed expression engine.
+    pub(crate) fn fallback(
+        category: &CategorySpec,
+        name: &str,
+        style: &Params,
+        tp: &[(&str, &Params)],
+        expressions: Option<ExpressionCompiler>,
+    ) -> Option<Result<StyleEntry, IrError>> {
+        let expression = style.get_str("expression")?;
+        let spec = crate::ff::ir::expression::fallback_spec(category, name, style, tp, expression);
+        let Some(compile) = expressions else {
+            return Some(Err(IrError::NoKernel {
+                category: category.name.to_string(),
+                style: name.to_owned(),
+            }));
+        };
+        Some(compile(category, &spec).map(|x| StyleEntry {
+            spec,
+            kernel: Some(Kernel::Expression(x)),
+            sealed: false,
+        }))
+    }
+
     /// Where the style's rows come from.
     pub fn row_source(&self) -> RowSource {
         match self.kernel {
@@ -376,6 +401,7 @@ impl Registry {
     /// names.
     pub fn builtin() -> Self {
         let mut r = Self::new();
+        r.set_expression_compiler(Some(crate::ff::ir::expression::compile_expression));
         // The built-in categories are molrec's table, which the custom rules
         // (`register_category`) are not: `atom` and `virtual_site` name no
         // endpoints, a pair's block is its atoms.
@@ -432,7 +458,7 @@ impl Registry {
     }
 
     /// Register a style and its kernel, after checking that both conform
-    /// ([`conformance`](crate::ff::ir::conformance)). `kernel` `None`
+    /// ([`conformance`]). `kernel` `None`
     /// registers a style priced by its `expression` alone (Tier 1 through
     /// the installed expression engine), or a style of a category that
     /// prices nothing.
