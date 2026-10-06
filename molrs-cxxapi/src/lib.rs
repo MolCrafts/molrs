@@ -1640,10 +1640,13 @@ mod tests {
         );
     }
 
+    /// The core reader names the element column `element` whichever key the
+    /// file used (ExtXYZ's `species`, or an `element` property), so the
+    /// bridge sees one column either way.
     #[test]
-    fn extxyz_boundary_rejects_an_alternate_element_key() {
+    fn extxyz_boundary_reads_an_element_property_like_species() {
         let path = std::env::temp_dir().join(format!(
-            "molrs-cxxapi-extxyz-wrong-key-{}.xyz",
+            "molrs-cxxapi-extxyz-element-key-{}.xyz",
             std::process::id()
         ));
         std::fs::write(
@@ -1657,9 +1660,9 @@ mod tests {
         )
         .unwrap();
 
-        let result = xyz_read_first_frame(path.to_str().unwrap());
+        let frame = xyz_read_first_frame(path.to_str().unwrap()).expect("xyz_read_first_frame");
         std::fs::remove_file(path).unwrap();
-        assert!(result.is_err());
+        assert_eq!(frame_column_u32(&frame, "atoms", "atomic_number"), [1u64]);
     }
 
     /// Round-trip: write every column dtype + simbox through the bridge,

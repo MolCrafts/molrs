@@ -63,7 +63,12 @@ place and returns the graph itself, so moves chain:
 Reader and writer names pair: `read_X` / `write_X` for one frame,
 `read_X_trajectory` / `write_X_trajectory` for a sequence. `molrs.io` returns
 canonical field names; `molrs.io.raw` keeps the format-native ones and reads
-trajectories eagerly.
+trajectories eagerly. `read_frame` / `write_frame` pick the format from the
+file name.
+
+::: molrs.io.read_frame
+
+::: molrs.io.write_frame
 
 ::: molrs.io.read_pdb
 
@@ -92,6 +97,12 @@ trajectories eagerly.
 ::: molrs.io.read_lammps_data
 
 ::: molrs.io.write_lammps_data
+
+::: molrs.io.BondReactTemplate
+
+::: molrs.io.write_bond_react_map
+
+::: molrs.io.write_lammps_bond_react_system
 
 ::: molrs.io.read_lammps_trajectory
 
@@ -152,6 +163,12 @@ The [Record files guide](../guides/records.md) shows these in use.
 ::: molrs.io.read_cube
 
 ::: molrs.io.write_cube
+
+::: molrs.io.read_mol2
+
+::: molrs.io.write_mol2
+
+::: molrs.io.read_amber_inpcrd
 
 ::: molrs.io.raw.LAMMPSTrajReader
 
@@ -270,6 +287,8 @@ arrays (a CMAP `grid`).
 ::: molrs.ff.read_forcefield_xml
 
 ::: molrs.ff.read_opls_xml
+
+::: molrs.ff.clpol_polarizability
 
 ## Trajectory
 

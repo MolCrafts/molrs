@@ -40,10 +40,10 @@ use molrs::store::block::Block;
 use molrs::store::frame::Frame;
 use molrs::store::keys;
 use molrs::store::type_labels::TypeLabels;
-use molrs::types::Idx;
+use molrs::types::{F, Idx};
 use ndarray::Array1;
 
-use crate::io::data::lammps_data::write_lammps_data;
+use crate::io::data::lammps_data::write_lammps_data_with_masses;
 use crate::io::data::lammps_molecule::write_lammps_molecule;
 
 /// The atom column pairing pre- and post-reaction template atoms.
@@ -220,7 +220,9 @@ pub struct BondReactSystem {
     /// The data file, `{workdir}/{stem}.data`.
     pub data_path: PathBuf,
     /// The force-field include path this file set expects, `{workdir}/{stem}.ff`
-    /// (not written here: coefficients are `ff`'s).
+    /// (not written here: coefficients are `ff`'s). The input reads it after
+    /// the data file, so write it without a `units` line
+    /// (`LammpsWriteOptions::skip_units`).
     pub ff_path: PathBuf,
     /// Template topology rows left out for want of a type label.
     pub dropped: Vec<DroppedRows>,
@@ -250,6 +252,37 @@ fn unified_labels(frames: &[&Frame]) -> HashMap<&'static str, Vec<String>> {
             (block, all.into_iter().collect())
         })
         .collect()
+}
+
+/// The mass of each atom label the frames use: the first row's `mass`
+/// column, else its element's periodic-table mass. The data file needs one
+/// for every declared type, a type only a template uses included.
+fn label_masses(frames: &[&Frame]) -> HashMap<String, F> {
+    let mut out = HashMap::new();
+    for frame in frames {
+        let Some(atoms) = frame.get("atoms") else {
+            continue;
+        };
+        let Some(types) = atoms.get(keys::TYPE).and_then(|c| c.as_string()) else {
+            continue;
+        };
+        let mass = atoms.get(keys::MASS).and_then(|c| c.as_float());
+        let element = atoms.get(keys::ELEMENT).and_then(|c| c.as_string());
+        for (i, label) in types.iter().enumerate() {
+            if out.contains_key(label) {
+                continue;
+            }
+            let m = mass.map(|m| m[[i]]).or_else(|| {
+                element
+                    .and_then(|e| molrs::Element::by_symbol(&e[[i]]))
+                    .map(|e| F::from(e.atomic_mass()))
+            });
+            if let Some(m) = m {
+                out.insert(label.clone(), m);
+            }
+        }
+    }
+    out
 }
 
 /// A template frame ready for `write_lammps_molecule`: atom ids its row
@@ -390,7 +423,7 @@ pub fn write_lammps_bond_react_system(
     std::fs::create_dir_all(workdir)?;
     let base = workdir.join(&stem);
     let data_path = base.with_extension("data");
-    write_lammps_data(&data_path, &system)?;
+    write_lammps_data_with_masses(&data_path, &system, &label_masses(&all))?;
 
     let mut dropped = Vec::new();
     for ((name, template), map) in templates.iter().zip(maps) {
@@ -429,7 +462,6 @@ pub fn write_lammps_bond_react_system(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::types::F;
 
     fn strings(values: &[&str]) -> ndarray::ArrayD<String> {
         Array1::from_vec(values.iter().map(|s| s.to_string()).collect()).into_dyn()
@@ -443,7 +475,15 @@ mod tests {
         atoms
             .insert(REACT_ID, Array1::from_vec(rids.to_vec()).into_dyn())
             .unwrap();
-        atoms.insert("element", strings(&vec!["C"; n])).unwrap();
+        let elements: Vec<&str> = types
+            .iter()
+            .map(|t| match *t {
+                "oh" => "O",
+                "hc" => "H",
+                _ => "C",
+            })
+            .collect();
+        atoms.insert("element", strings(&elements)).unwrap();
         for axis in ["x", "y", "z"] {
             atoms
                 .insert(axis, Array1::from_vec(vec![0.0 as F; n]).into_dyn())
@@ -561,6 +601,10 @@ mod tests {
         assert!(map_exists);
         // atoms c3=1, hc=2, oh=3; bonds c3-c3=1, c3-oh=2, hc-oh=3.
         assert!(data.contains("3 atom types"), "{data}");
+        // `oh` only a template uses: its mass is the template's, not 1.
+        let masses = &data[data.find("Masses\n\n").unwrap()..];
+        let oh: f64 = masses.lines().nth(4).unwrap()[2..].parse().unwrap();
+        assert!((oh - 15.999).abs() < 0.01, "{data}");
         assert!(data.contains("3 bond types"), "{data}");
         assert!(
             data.contains("Bond Type Labels\n\n1 c3-c3\n2 c3-oh\n3 hc-oh\n"),

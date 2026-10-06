@@ -139,6 +139,21 @@ C and C++ consumers download `molrs-capi-0.16.0-<platform>.tar.gz` from the
   style and prices them against LAMMPS; see
   [Extending the force-field IR](guides/extending-forcefield-ir.md).
 
+### What molpy and molpack used to do on top
+
+The structure-file and geometry helpers molpy and molpack kept as their own
+copies are molrs's now, so both re-export them by identity:
+`molrs.io.read_frame` / `write_frame` pick a format from the file name;
+`Frame.concat` joins frames with their topology offset; `op::vec3::{angle,
+dihedral}` and `op::rigid::nerf` are the internal-coordinate kernels; MOL2
+and extended XYZ read straight into canonical columns; a LAMMPS data file
+reads with its type labels as `type` and an optional `atom_style`, writes
+extra type labels and the `fix drude` flags; `read_amber_inpcrd` fills an
+existing frame; the LAMMPS `fix bond/react` file set (templates, map, data
+and force field with one type numbering) is written natively; regions mask
+blocks; the `openmm` unit preset and `k_B` are native; and the CL&Pol
+`alpha.ff` table ships in `ff::params`.
+
 ### Records: `molrec_version` 2
 
 - Every record molrs 0.16 writes is `molrec_version` 2, in which the

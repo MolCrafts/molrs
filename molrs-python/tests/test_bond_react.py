@@ -9,6 +9,7 @@ the files it reads are checked with ``read_data`` / ``molecule``).
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 
@@ -16,9 +17,9 @@ import molrs
 import pytest
 
 
-def _forcefield() -> molrs.ForceField:
+def _forcefield() -> molrs.ff.ForceField:
     """Two atom types and two bond types; ``c3-oh`` is used only by the template."""
-    ff = molrs.ForceField("hand")
+    ff = molrs.ff.ForceField("hand")
     atoms = ff.def_style("atom", "full")
     c3 = atoms.def_type("c3", mass=12.011)
     oh = atoms.def_type("oh", mass=15.999)
@@ -122,5 +123,11 @@ def test_lammps_reads_the_file_set(tmp_path):
         capture_output=True,
         text=True,
         timeout=120,
+        # A batch step's MPI wiring (PMI, Slurm) is not this serial run's.
+        env={
+            k: v
+            for k, v in os.environ.items()
+            if not k.startswith(("PMI_", "PMIX_", "SLURM_", "OMPI_", "I_MPI_"))
+        },
     )
     assert run.returncode == 0, run.stdout + run.stderr

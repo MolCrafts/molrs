@@ -4,7 +4,10 @@
 
 use std::path::PathBuf;
 
-use molrs::ff::forcefield::writers::{ForceFieldWriter, lammps::LammpsFfWriter};
+use molrs::ff::forcefield::writers::{
+    ForceFieldWriter,
+    lammps::{LammpsFfWriter, LammpsWriteOptions},
+};
 use molrs::io::data::lammps_bond_react::{
     BondReactTemplate, REACT_ID, write_bond_react_map as write_map_rs,
     write_lammps_bond_react_system as write_system_rs,
@@ -182,8 +185,9 @@ pub fn write_bond_react_map(
 
 /// Write the whole file set of a ``fix bond/react`` run into ``workdir``.
 ///
-/// ``{stem}.data`` (the system), ``{stem}.ff`` (``forcefield``'s
-/// coefficients), and per template ``{name}_pre.mol``, ``{name}_post.mol``
+/// ``{stem}.data`` (the system), ``{stem}.ff`` (``forcefield``'s styles and
+/// coefficients, without a ``units`` line: the input sets ``units`` and
+/// ``atom_style``, reads the data file, then includes it), and per template ``{name}_pre.mol``, ``{name}_post.mol``
 /// and ``{name}.map``; ``stem`` is ``workdir``'s own name. Every type label
 /// the system and the templates use is declared in the data file and covered
 /// by the ``.ff`` include, so the templates' type ids match the system's.
@@ -240,7 +244,13 @@ pub fn write_lammps_bond_react_system(
             io_error_to_pyerr(e)
         }
     })?;
-    LammpsFfWriter::new(&written.labels)
+    // The include is read after `read_data` (its coefficients need the
+    // box), where LAMMPS refuses a `units` line: the input states the units.
+    let options = LammpsWriteOptions {
+        skip_units: true,
+        ..LammpsWriteOptions::default()
+    };
+    LammpsFfWriter::with_options(&written.labels, options)
         .write(
             &forcefield.inner,
             written
