@@ -3306,9 +3306,10 @@ class GaffTypifier(Typifier[Atomistic]):
     """GAFF / GAFF2 bonded terms and parameters for a molecule whose atoms
     already carry GAFF types (``AtdTypifier`` with the same ``parameter_set``).
 
-    Angles and dihedrals are regenerated from the bond graph, impropers rebuilt
-    at the planar centres ``PARMCHK.DAT`` flags (AMBER order, centre third);
-    each term is an exact ``gaff.dat`` / ``gaff2.dat`` row, a wildcard row, or a
+    Angles and dihedrals are regenerated from the bond graph, impropers built
+    as tleap builds them (wherever tleap finds a row, or ``parmchk2`` an
+    estimate at a centre ``PARMCHK.DAT`` flags as planar; tleap's atom order,
+    centre third); each term is an exact ``gaff.dat`` / ``gaff2.dat`` row, a wildcard row, or a
     ``parmchk2``-style estimate whose type carries ``estimated``,
     ``estimate_penalty``, ``estimate_method`` and ``estimate_analog``.
     ``parameter_set`` is required; there is no default.

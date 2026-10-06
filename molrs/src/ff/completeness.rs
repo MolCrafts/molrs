@@ -1150,7 +1150,7 @@ const MATRIX: &[Row] = &[
             Exact(&[RUNTIME_LMP]),
             Exact(&[RUNTIME_LMP, CODEC_ENG]),
             Refused(
-                "reading a Custom*Force stays refused (D21) but for the two harmonic impropers",
+                "reading a Custom*Force is refused, but for the two harmonic impropers",
                 &[NO_CUSTOM_READ],
             ),
             Exact(&[OMM_REWRITE, CODEC_ENG]),
@@ -1173,7 +1173,7 @@ const MATRIX: &[Row] = &[
                 &[NO_ENGINE],
             ),
             Refused(
-                "reading a Custom*Force stays refused (D21) but for the two harmonic impropers",
+                "reading a Custom*Force is refused, but for the two harmonic impropers",
                 &[NO_CUSTOM_READ],
             ),
             Exact(&[NO_ENGINE, OMM_REWRITE]),

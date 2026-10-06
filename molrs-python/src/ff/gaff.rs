@@ -53,11 +53,13 @@ fn parameter_set_from_name(name: &str) -> PyResult<GaffParameterSet> {
 /// Matches a molecule whose atoms already carry GAFF atom types (``keys.TYPE``,
 /// as :class:`AtdTypifier` with the same ``parameter_set`` stamps them) against
 /// the AMBER ``gaff.dat`` / ``gaff2.dat`` table compiled into molrs. Angles and
-/// dihedrals are regenerated from the bond graph; impropers are rebuilt, in
-/// AMBER's atom order (centre third), at every three-coordinate centre
-/// ``PARMCHK.DAT`` flags as planar. Every term is looked up first against the
-/// table's exact rows, then against its wildcard rows, then estimated as
-/// ``parmchk2`` estimates it; an estimated term's type carries the provenance
+/// dihedrals are regenerated from the bond graph; impropers are built as
+/// tleap builds them, wherever tleap finds a row (or ``parmchk2`` an estimate,
+/// at the centres ``PARMCHK.DAT`` flags as planar) for a triple of an atom's
+/// neighbours, in the atom order tleap gives them (centre third). Every term
+/// is looked up first against the table's exact rows, then against its
+/// wildcard rows, then estimated as ``parmchk2`` estimates it; an estimated
+/// term's type carries the provenance
 /// params ``estimated``, ``estimate_penalty``, ``estimate_method`` and
 /// ``estimate_analog``.
 ///

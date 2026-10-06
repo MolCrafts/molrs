@@ -122,9 +122,9 @@ the energy of a physical system did not change with it.
 | `coul/cut` | coulomb qᵢqⱼ / (dielectric (r + delta)) | style `coulomb` (E·L/e²), `dielectric` (default 1), `delta` (L, default 0), `cutoff` (default ∞) | `pair_style coul/cut` with `delta = 0` (the buffer is molrs's, for MMFF; the LAMMPS writer refuses `delta ≠ 0` and `dielectric ≠ 1`). LAMMPS fixes the constant (`qqr2e`) per `units` | unchanged |
 | `lj/charmm` | 4ε[(σ/r)¹² − (σ/r)⁶]·S(r), S CHARMM's switch from `inner` to `cutoff` | `epsilon`, `sigma`, `epsilon14`, `sigma14` (absent → `epsilon`, `sigma`); style `inner`, `cutoff`, `mixing` (default `arithmetic`), `one_four` (`"regular"`, the default, or `"epsilon14"`: what a `special_bonds` 1-4 pair is priced at, see [1-4](#1-4-interactions)) | `pair_style lj/charmm/coul/charmm`, van-der-Waals half; `pair_coeff i j ε σ ε₁₄ σ₁₄` (`one_four = "epsilon14"` has no LAMMPS form) | new |
 | `coul/charmm` | coulomb qᵢqⱼ/(dielectric r)·S(r); force (C qᵢqⱼ/r²)·S(r), LAMMPS's switched force, not the gradient | style `coulomb`, `dielectric` (default 1), `inner`, `cutoff` | `pair_style lj/charmm/coul/charmm`, Coulomb half (`inner2 outer2` when its cutoffs differ) | new |
-| `coul/long/pme` | Ewald-summed coulomb qᵢqⱼ/r over the frame's periodic box | style `coulomb`, `cutoff`, `alpha`, `order`, `grid_*`; the cell is the frame's box (`frame.box`), as LAMMPS's kspace reads its simulation box | `pair_style lj/cut/coul/long` (the real-space half; `kspace_style` states an accuracy, not `alpha`, so the Ewald parameters are neither read nor written, and a LAMMPS-read style prices nothing until they are stated) | `lj/cut/coul/long` reads as this (was a plain `coul/cut`); the box is the frame's (was undeclared style params `box_xx` … `box_zz`) |
+| `coul/long/pme` | Ewald-summed coulomb qᵢqⱼ/r over the frame's periodic box | style `coulomb`, `cutoff`, `alpha`, `order`, `grid_*`; the cell is the frame's box (`frame.box`), as LAMMPS's kspace reads its simulation box | `pair_style lj/cut/coul/long` (the real-space half; `kspace_style` states an accuracy, not `alpha`, so the Ewald parameters are neither read nor written, and a LAMMPS-read style is refused (`MissingParam`) until they are stated) | `lj/cut/coul/long` reads as this (was a plain `coul/cut`); the box is the frame's (was style params `box_xx` … `box_zz`) |
 | `thole` | T(r) qᵢqⱼ/r, T = 1 − (1 + s r/2) e^(−s r), s = ½(aᵢ + aⱼ)/(αᵢαⱼ)^(1/6) | per type `charge`, `alpha` (L³), `damp` | `pair_style thole` `alpha damp` (LAMMPS damps the Drude charges of the atoms; molrs's per-type `charge` is its own) | `a_thole` renamed `damp` |
-| `coul/tt` | fₙ(r) qᵢqⱼ/r (Tang–Toennies) | style `b`, `c`, `order` | `pair_style coul/tt` (`n` = `order`) | unchanged |
+| `coul/tt` | fₙ(r) qᵢqⱼ/r (Tang–Toennies) | per type `charge`; style `b`, `c`, `order` | `pair_style coul/tt` (`n` = `order`) | unchanged |
 | `uff_lj`, `mmff_vdw` | UFF x/D LJ; MMFF buffered 14-7 | per-instance / per-type | none | unchanged |
 
 `special_bonds` (the force field's `[1-2, 1-3, 1-4]` weights for van der
@@ -331,10 +331,10 @@ exclusion (the 1-3 pair is excluded by `special_bonds`). There is no separate
 Urey–Bradley category. A field that mixes it with other angle styles is
 LAMMPS's `angle_style hybrid harmonic charmm` (`angle_coeff t charmm K theta0
 K_ub r_ub`), which the LAMMPS reader and writer read and write; molrs prices
-each angle row under the style that defines its type. 0.16 has the kernel,
-the LAMMPS reader and writer, the OpenMM reader and writer and the GROMACS
-reader and writer; the other
-engines' maps below are how their readers map onto the IR:
+each angle row under the style that defines its type. The LAMMPS, OpenMM
+and GROMACS readers and writers and the prmtop reader (a chamber file) hold
+it; the maps below are how each source writes it and maps onto the IR
+(molrs has no reader of CHARMM's own `.prm`):
 
 | Source | `angle charmm` |
 |---|---|
@@ -671,8 +671,10 @@ refused. Every Coulomb style states OpenMM's constant (`ONE_4PI_EPS0` =
 332.06371329919216 kcal·Å/(mol·e²), 9.9·10⁻⁹ above LAMMPS `real`'s
 `qqr2e`); the writers do not carry it (each engine fixes its own). OpenMM's
 cutoffs and switching are `createSystem` arguments, so no style read from a
-file has a `cutoff` (or `inner`): the caller states them, for `NoCutoff` a
-cutoff beyond every pair.
+file has a `cutoff` (or `inner`): `lj/cut` and `coul/cut` then price every
+pair untruncated, as `NoCutoff` does ([Cutoffs](#pair-styles)), and the
+caller states `inner` and `cutoff` of `lj/charmm` / `coul/charmm`, which
+have no default.
 
 **Refused**, by name: `<Script>` / `<InitializationScript>`, every
 `Custom*Force` other than the harmonic improper, a `<Proper>` under it,
@@ -1050,7 +1052,7 @@ A `StyleSpec` carries `lammps: LammpsForm`:
 | `angle class2`, `dihedral class2` | `class2` and its cross-term lines (`bb`, `ba`; `mbt`, `ebt`, `at`, `aat`, `bb13`) at zero; a data file's `BondBond Coeffs`, … sections; a non-zero cross term is refused on read |
 | `pair lj/cut` | `epsilon sigma`; `shift` as `pair_modify shift yes`; only 12-6 |
 | `pair lj/charmm` + `coul/charmm` | `lj/charmm/coul/charmm inner outer [inner2 outer2]`, `epsilon sigma epsilon14 sigma14` |
-| `pair lj/class2` | positional, mixing always `sixthpower` (LAMMPS's `init_one`) |
+| `pair lj/class2` | `epsilon sigma`, mixing always `sixthpower` (LAMMPS's `init_one`) |
 | `pair coul/cut`, `coul/long/pme` | the Coulomb half of `lj/cut/coul/cut` / `lj/cut/coul/long` (or of a `hybrid/overlay` with another style, the Coulomb on `* *`); `delta ≠ 0`, `dielectric ≠ 1` and stated Ewald parameters refused |
 | `cmap charmm` | `fix cmap` and its grid file |
 | `dihedral rb`, MMFF, UFF, `thole`, `coul/tt`, `drude harmonic` | none |
@@ -1121,8 +1123,7 @@ compound row, a compound category that is no chain of 2 to 4 atoms, two
 custom forces stating one global parameter at different values, and for a
 pair a cross row, a parameter that does not mix (`buck`, `morse`), an atom
 type without a row, and 1-4 weights a `bondCutoff` cannot state. Reading a
-`Custom*Force` stays refused (D21), but for the two harmonic-improper
-forms.
+`Custom*Force` is refused, but for the two harmonic-improper forms.
 
 ### GROMACS, AMBER
 
@@ -1130,7 +1131,8 @@ The GROMACS topology writer and the frcmod writer hold the built-in styles
 they have directives (sections) for; every other style — built in, or
 registered at run time, or an instance's expression — is `NoEngineForm`
 ("not a built-in style: GROMACS holds the built-in styles it has
-directives for"). The GROMACS reader is unchanged.
+directives for"). The GROMACS and prmtop readers produce built-in styles
+only ([GROMACS topologies](#gromacs-topologies), [AMBER prmtop](#amber-prmtop)).
 
 ### Checked against the engines
 
@@ -1233,7 +1235,7 @@ Every style molrs registers a kernel for, and every field-level setting,
 against every engine format molrs reads or writes and the record (molrec
 v2): **✓** exact — priced, read or written as the IR means it, held by the
 tests `ff::completeness` names (a numbered note bounds a ✓ or states the
-convention it holds under); **refused** — an error naming the style or
+condition it holds under); **refused** — an error naming the style or
 setting, never a silent drop or an approximation; **—** the format has no such
 thing. The table is generated: `ff::completeness` holds it with the tests
 behind every cell, and fails when a registered kernel has no row, a row names
@@ -1346,7 +1348,7 @@ ff::completeness::the_guide_holds_the_generated_table` rewrites it).
 46. OpenMM's Lennard-Jones is 12-6
 47. GROMACS's Lennard-Jones is 12-6
 48. the conversions are from real
-49. reading a Custom*Force stays refused (D21) but for the two harmonic impropers
+49. reading a Custom*Force is refused, but for the two harmonic impropers
 50. not a built-in style (NoEngineForm)
 51. no registered style reads its name (the installed LAMMPS has no LEPTON package)
 52. no LAMMPS form: an expression needs LAMMPS's LEPTON package (NoEngineForm)
@@ -1354,14 +1356,15 @@ ff::completeness::the_guide_holds_the_generated_table` rewrites it).
 54. a <Script> building a CustomCompoundBondForce over OpenMM's bonds, angles or propers (a chain of 2 to 4 atoms)
 <!-- completeness:end -->
 
-The styles marked outside the Class-I IR (Class II, Buckingham, Morse pair,
-Thole, Tang–Toennies) and molrs's own typifier styles (MMFF94, UFF) are
-priced and persisted, and no engine reader or writer maps them. Every
-Class-I style of molrec's registry is a molrs kernel of the same name, but
-two, which `compile` refuses by name ("no kernel for style …"):
-`dihedral rb` (every molrs reader reads Ryckaert–Bellemans as the
-`multi/harmonic` / `nharmonic` polynomial it is, constant included) and
-`improper trefoil` (the SMIRNOFF average over three orderings; the OpenMM
+The styles outside the Class-I IR (Thole, Tang–Toennies) and molrs's own
+typifier styles (MMFF94, UFF) are priced and persisted, and no engine
+reader or writer maps them; the Class II styles, `pair buck` and `pair
+morse` are LAMMPS's, read and written as the table says. Every Class-I style of molrec's registry is a molrs style of the
+same name with a native kernel, but two: `dihedral rb`, priced by its
+expression (no molrs reader produces it: each reads Ryckaert–Bellemans as the
+`multi/harmonic` / `nharmonic` polynomial it is, constant included), and
+`improper trefoil` (the SMIRNOFF average over three orderings), which molrs
+does not register and `compile` refuses by name (`NoKernel`; the OpenMM
 reader refuses `ordering="smirnoff"`).
 
 ## How this is checked
