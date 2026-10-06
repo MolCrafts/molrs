@@ -26,6 +26,14 @@
 //!     so `[ atomtypes ]` requires `[ defaults ]`;
 //!   - the `pair/coul/cut` style, with `coulomb` = `COULOMB_REAL` and
 //!     `dielectric` = 1 (vacuum).
+//! - **`[ nonbond_params ]`** `i j func V W`, func 1 (Lennard-Jones): an
+//!   explicit `pair/lj/cut` cross row between the atom types `i` and `j`, with
+//!   `sigma` = V·10 (Å) and `epsilon` = W/4.184 (kcal/mol) as for
+//!   `[ atomtypes ]` (so it too requires `[ defaults ]`). The `lj/cut` kernel
+//!   uses it for that type pair in place of the comb-rule. The row is stored
+//!   with its two types in byte order and named
+//!   [`TypeName::pair`](molrs::store::type_labels::TypeName::pair) of them, so
+//!   `j i` restating `i j` is the same row and a different one is an error.
 //! - **`[ bondtypes ]` / `[ angletypes ]` / `[ dihedraltypes ]`**
 //!   `labels… funct params…`, keyed by the row's labels. GROMACS `X` becomes
 //!   the empty-endpoint wildcard, so `X CT CT X` is the type `-CT-CT-`.
@@ -57,7 +65,9 @@
 //!   `ΣCₙ ≠ 0`, a row with the wrong parameter count, and the 2-name
 //!   dihedraltypes form;
 //! - comb-rule 1 (V/W are C6/C12), nbfunc 2 (Buckingham), gen-pairs `no`;
-//! - the sections `[ pairtypes ]`, `[ nonbond_params ]`, `[ constrainttypes ]`,
+//! - a `[ nonbond_params ]` row with a func other than 1, or a self pair
+//!   `i i` that differs from `i`'s `[ atomtypes ]` row;
+//! - the sections `[ pairtypes ]`, `[ constrainttypes ]`,
 //!   `[ cmaptypes ]`, `[ implicit_genborn_params ]`, and any unknown section;
 //! - every molecule section (`[ moleculetype ]`, `[ atoms ]`, `[ bonds ]`,
 //!   `[ pairs ]`, `[ angles ]`, `[ dihedrals ]`, `[ exclusions ]`,
@@ -128,7 +138,6 @@ const MOLECULE_SECTIONS: &[&str] = &[
 /// Force-field directives GROMACS defines that this reader does not model.
 const UNMODELLED_SECTIONS: &[&str] = &[
     "pairtypes",
-    "nonbond_params",
     "constrainttypes",
     "cmaptypes",
     "implicit_genborn_params",
@@ -200,7 +209,8 @@ impl GromacsTopFfReader {
             return Ok(false);
         }
         match section {
-            "defaults" | "atomtypes" | "bondtypes" | "angletypes" | "dihedraltypes" => Ok(true),
+            "defaults" | "atomtypes" | "nonbond_params" | "bondtypes" | "angletypes"
+            | "dihedraltypes" => Ok(true),
             s if MOLECULE_SECTIONS.contains(&s) => Err(format!(
                 "[ {s} ] is topology, not a force-field directive: read it with \
                  io::data::top::read_top, or skip it with with_skipped_directive(\"{s}\")"
@@ -445,9 +455,7 @@ impl Scan {
                     ff.def_style("atom", "full", Params::new())
                         .and_then(|s| s.def_type(name, &[], atom))
                         .map_err(|e| row.err(&e.to_string()))?;
-                    let mut lj_style = Params::new();
-                    lj_style.set_str("mixing", mixing.name());
-                    ff.def_style("pair", "lj/cut", lj_style)
+                    ff.def_style("pair", "lj/cut", lj_style(mixing))
                         .and_then(|s| s.def_type(name, &[name], lj))
                         .map_err(|e| row.err(&e.to_string()))?;
                     ff.def_style(
@@ -460,6 +468,24 @@ impl Scan {
                     )
                     .map_err(|e| row.err(&e.to_string()))?;
                 }
+                "nonbond_params" => {
+                    let mixing = mixing.ok_or_else(|| {
+                        row.err(
+                            "[ nonbond_params ] needs [ defaults ]: V/W are sigma/epsilon only \
+                             under the comb-rule it declares",
+                        )
+                    })?;
+                    let (ends, lj) = row.nonbond_params()?;
+                    let name = TypeName::pair(ends[0], ends[1]).map_err(|e| row.err(&e))?;
+                    let ends: &[&str] = if ends[0] == ends[1] {
+                        &ends[..1]
+                    } else {
+                        &ends
+                    };
+                    ff.def_style("pair", "lj/cut", lj_style(mixing))
+                        .and_then(|s| s.def_type(name.as_str(), ends, lj))
+                        .map_err(|e| row.err(&e.to_string()))?;
+                }
                 _ => {
                     let (category, style, labels, params) = row.bonded()?;
                     let name = TypeName::join(&labels).map_err(|e| row.err(&e))?;
@@ -471,6 +497,13 @@ impl Scan {
         }
         Ok(ff)
     }
+}
+
+/// The `pair/lj/cut` style params every LJ row of a GROMACS file shares.
+fn lj_style(mixing: Mixing) -> Params {
+    let mut params = Params::new();
+    params.set_str("mixing", mixing.name());
+    params
 }
 
 /// One admitted data row, with the section it sits in and where it came from.
@@ -576,6 +609,30 @@ impl Row {
             ("epsilon", number(tail[4], "W (epsilon)")? / KJ_PER_KCAL),
         ]);
         Ok((name, atom, lj))
+    }
+
+    /// `[ nonbond_params ]` → `([i, j] in byte order, lj/cut params)` in molrs
+    /// units. Only func 1 (Lennard-Jones, V/W = σ/ε) is modelled.
+    fn nonbond_params(&self) -> Result<([&str; 2], Params), String> {
+        let cols: Vec<&str> = self.text.split_whitespace().collect();
+        let [i, j, func, v, w] = cols[..] else {
+            return Err(self.err("expected `i j func V W`"));
+        };
+        if func != "1" {
+            return Err(self.err(&format!(
+                "func {func} is not supported: only 1 (Lennard-Jones) is modelled"
+            )));
+        }
+        let number = |tok: &str, what: &str| {
+            tok.parse::<f64>()
+                .map_err(|_| self.err(&format!("{what} is not a number: {tok}")))
+        };
+        let lj = Params::from_pairs(&[
+            ("sigma", number(v, "V (sigma)")? * NM_TO_ANGSTROM),
+            ("epsilon", number(w, "W (epsilon)")? / KJ_PER_KCAL),
+        ]);
+        let ends = if i <= j { [i, j] } else { [j, i] };
+        Ok((ends, lj))
     }
 
     /// `[ bondtypes ]` / `[ angletypes ]` / `[ dihedraltypes ]` →
@@ -1186,13 +1243,52 @@ mod tests {
         assert_names(&err, &["pairtypes"]);
     }
 
+    /// A `[ nonbond_params ]` row is an explicit `lj/cut` cross row, in molrs
+    /// units: σ = 0.3 nm = 3 Å, ε = 0.4184 kJ/mol = 0.1 kcal/mol. The section
+    /// used to be refused.
     #[test]
-    fn nonbond_params_is_an_error_naming_the_section() {
-        let err = read_err(&with_section(
-            "nonbond_params",
-            "opls_135  opls_140  1  0.3  0.2",
-        ));
-        assert_names(&err, &["nonbond_params"]);
+    fn nonbond_params_is_an_explicit_lj_cut_cross_row() {
+        let text = format!(
+            "{DEFAULTS}[ atomtypes ]\n{OPLS_135}\nopls_140  HC  1  1.008  0.06  A  0.25  0.12552\n\
+             [ nonbond_params ]\nopls_140  opls_135  1  0.3  0.4184\n"
+        );
+        let ff = read(&text);
+        let lj = style(&ff, "pair", "lj/cut");
+        let cross = lj
+            .get_pairtype("opls_135", Some("opls_140"))
+            .expect("cross row");
+        assert_eq!(
+            (cross.itom.as_str(), cross.jtom.as_str()),
+            ("opls_135", "opls_140"),
+            "stored in byte order"
+        );
+        assert_eq!(cross.name, "opls_135-opls_140");
+        assert_param(&cross.params, "sigma", 3.0, 1e-12);
+        assert_param(&cross.params, "epsilon", 0.1, 1e-12);
+        assert_eq!(lj.params().get_str("mixing"), Some("geometric"));
+    }
+
+    /// `j i` restating `i j` is one row; a different restatement is an error.
+    #[test]
+    fn nonbond_params_restated_in_reverse_is_one_row() {
+        let same = with_section("nonbond_params", "A  B  1  0.3  0.4\nB  A  1  0.3  0.4");
+        assert_eq!(style(&read(&same), "pair", "lj/cut").type_rows().len(), 1);
+        let differ = with_section("nonbond_params", "A  B  1  0.3  0.4\nB  A  1  0.3  0.5");
+        assert_names(&read_err(&differ), &["nonbond_params", "B  A"]);
+    }
+
+    #[test]
+    fn nonbond_params_func_other_than_1_is_an_error() {
+        let err = read_err(&with_section("nonbond_params", "A  B  2  1.0  2.0  3.0"));
+        assert_names(&err, &["nonbond_params", "i j func V W"]);
+        let err = read_err(&with_section("nonbond_params", "A  B  2  1.0  2.0"));
+        assert_names(&err, &["func 2"]);
+    }
+
+    #[test]
+    fn nonbond_params_needs_defaults() {
+        let err = read_err("[ nonbond_params ]\nA  B  1  0.3  0.4\n");
+        assert_names(&err, &["[ defaults ]"]);
     }
 
     #[test]
