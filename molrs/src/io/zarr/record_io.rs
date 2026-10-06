@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! <root>/
-//! ├── meta/          molrec_version = 1, + producer keys
+//! ├── meta/          molrec_version = 2, + producer keys
 //! ├── system/        frame-shaped group (topology / types)
 //! ├── frame/         frame-shaped group (snapshot)
 //! ├── trajectory/    the frame sequence — see [`crate::io::zarr::sequence`]
@@ -55,11 +55,15 @@ use zarrs::group::GroupBuilder;
 use zarrs::node::{Node, NodeMetadata};
 #[cfg(feature = "zarr")]
 use zarrs::storage::WritableStorageTraits;
-use zarrs::storage::{ReadableStorageTraits, ReadableWritableListableStorage};
+use zarrs::storage::{
+    ListableStorageTraits, ReadableStorageTraits, ReadableWritableListableStorage,
+};
 
 #[cfg(feature = "zarr")]
 use crate::io::zarr::forcefield_io::write_forcefield_group;
-use crate::io::zarr::forcefield_io::{FORCEFIELD_GROUP, read_forcefield_group};
+use crate::io::zarr::forcefield_io::{
+    FORCEFIELD_GROUP, read_forcefield_group, read_stored_forcefield_if_present,
+};
 use crate::io::zarr::frame_io::{
     check_declared_references, join_path, read_column, read_frame_group,
 };
@@ -79,6 +83,7 @@ use molrs::store::forcefield_section::ForceFieldSection;
 // every configuration, wasm included.
 use molrs::store::frame::Frame;
 use molrs::store::record::MolRec;
+use molrs::store::record_v1::V1Upgrade;
 #[cfg(feature = "filesystem")]
 use molrs::store::trajectory::Trajectory;
 use molrs::store::trajectory::{ObservableData, ObservableKind, ObservableRecord};
@@ -96,7 +101,7 @@ use molrs::store::trajectory::{ObservableData, ObservableKind, ObservableRecord}
 /// entirely — leftover sections from a wider record do not survive.
 ///
 /// The writer writes the reserved `meta` key over any producer copy:
-/// [`crate::MOLREC_VERSION`] (`molrec_version = 1`). A trajectory section is encoded by
+/// [`crate::MOLREC_VERSION`] (`molrec_version = 2`). A trajectory section is encoded by
 /// [`crate::io::mrec::FrameSequenceWriter`]. [`write_trajectory_file`] is the
 /// same write, with the record shaped to carry only a trajectory.
 ///
@@ -205,19 +210,18 @@ pub fn write_record_store(
     Ok(())
 }
 
-/// Write `meta`, stamping `molrec_version` when the producer supplied none.
+/// Write `meta` with the current `molrec_version` stamped in.
 ///
-/// Every record this version writes carries the version it was written at, so a
-/// reader never has to guess. A producer that set the key keeps its value — that
-/// is how a writer for an older version of the contract stays expressible — and
-/// [`schema::validate_meta`] judges whatever ends up there.
+/// Every record this version writes is written in the current contract, so it
+/// carries [`crate::MOLREC_VERSION`] whatever the producer's map says (the key
+/// is reserved; see [`schema::stamped_meta`]).
 #[cfg(feature = "zarr")]
 fn write_meta(
     store: &ReadableWritableListableStorage,
     path: &str,
     meta: &JsonMap<String, JsonValue>,
 ) -> Result<(), MolRsError> {
-    write_json_group(store, path, &schema::stamped_meta(meta)?)
+    write_json_group(store, path, &schema::stamped_meta(meta))
 }
 
 #[cfg(feature = "zarr")]
@@ -429,8 +433,11 @@ fn write_observables(
 ///
 /// Paths whose file name ends in `.zarr` or `.zarr.zip` are refused. A
 /// `molrec_version` in `meta` is validated when present — it must be an integer
-/// in `1..=`[`crate::MOLREC_VERSION`] — and an absent one is no version check.
-/// Root sections this build does not interpret are ignored, never misread.
+/// in `1..=`[`crate::MOLREC_VERSION`]. A version-1 store, and one without the
+/// key (written before version 1), is converted section by section to the
+/// current version ([`molrs::store::record_v1`]) or refused; `meta` comes back
+/// as stored. Root sections this build does not interpret are ignored, never
+/// misread.
 ///
 /// A store still carrying the pre-0.14 `trajectory/frames/` tree is refused
 /// by name; it is not migrated and is not read back as empty.
@@ -457,7 +464,9 @@ pub fn read_record_file(path: impl AsRef<Path>) -> Result<MolRec, MolRsError> {
 /// `section` is a top-level group name (`"frame"`, `"system"`, or a producer's
 /// own frame-shaped group). `Ok(None)` when the record has no such section; the
 /// store is listed, not decoded, to find that out. The `meta` version is
-/// validated; no other section is touched.
+/// validated; a version-1 section is converted to the current version, which
+/// reads the record's `forcefield` section as stored (it says which style each
+/// relation row is). No other section is touched.
 ///
 /// # Errors
 ///
@@ -467,12 +476,15 @@ pub fn read_frame_section_store(
     store: ReadableWritableListableStorage,
     section: &str,
 ) -> Result<Option<Frame>, MolRsError> {
-    read_meta(&store)?;
+    let meta = read_meta(&store)?;
     let sections = section_names_store(store.clone())?;
     if !sections.iter().any(|name| name == section) {
         return Ok(None);
     }
-    let frame = read_frame_group(&store, &join_path("/", section))?;
+    let mut frame = read_frame_group(&store, &join_path("/", section))?;
+    if let Some(upgrade) = read_upgrade(&store, &meta)? {
+        upgrade.frame(&mut frame)?;
+    }
     // An absolute reference into another section is checked against that
     // block's `count` attribute, without decoding the section.
     let rows_of = |target: &str| -> Option<Option<usize>> {
@@ -535,6 +547,14 @@ pub fn read_record_store(store: ReadableWritableListableStorage) -> Result<MolRe
     let mut record = MolRec::new();
 
     record.meta = read_meta(&store)?;
+    let upgrade = read_upgrade(&store, &record.meta)?;
+    let read_frame = |path: &str| -> Result<Frame, MolRsError> {
+        let mut frame = read_frame_group(&store, path)?;
+        if let Some(upgrade) = &upgrade {
+            upgrade.frame(&mut frame)?;
+        }
+        Ok(frame)
+    };
 
     let root = Node::open(&store, prefix)?;
     for child in root.children() {
@@ -548,8 +568,8 @@ pub fn read_record_store(store: ReadableWritableListableStorage) -> Result<MolRe
         }
         match name.as_str() {
             "meta" => {}
-            "system" => record.system = Some(read_frame_group(&store, &path)?),
-            "frame" => record.frame = Some(read_frame_group(&store, &path)?),
+            "system" => record.system = Some(read_frame(&path)?),
+            "frame" => record.frame = Some(read_frame(&path)?),
             "trajectory" => {
                 // One decoder, and it is not here. `FrameSequence::open`
                 // resolves the same `/trajectory` node this child is, and a
@@ -561,7 +581,7 @@ pub fn read_record_store(store: ReadableWritableListableStorage) -> Result<MolRe
                 record.trajectory = Some(sequence.to_trajectory()?);
             }
             FORCEFIELD_GROUP => {
-                record.forcefield = Some(read_forcefield_group(&store, &path)?);
+                record.forcefield = Some(read_forcefield_group(&store, &path, upgrade.as_ref())?);
             }
             "observables" => read_observables(&store, &path, &mut record)?,
             "method" => record.method = read_json_group(&store, &path)?,
@@ -615,7 +635,8 @@ fn check_absolute_references(record: &MolRec) -> Result<(), MolRsError> {
 /// Every writer creates the group, but a reader tolerates its absence — an
 /// empty document — so a store a foreign tool assembled without one still
 /// opens. A present `molrec_version` is validated; an absent one is not
-/// required. Every read door runs this, whichever section it decodes.
+/// required (the store is read by version 1's rules, [`read_upgrade`]). Every
+/// read door runs this, whichever section it decodes.
 pub(in crate::io::zarr) fn read_meta<S>(
     store: &Arc<S>,
 ) -> Result<JsonMap<String, JsonValue>, MolRsError>
@@ -629,6 +650,29 @@ where
     };
     schema::validate_meta(&attrs)?;
     Ok(attrs)
+}
+
+/// The conversion a store's sections are read through: `None` for a store of
+/// the current version. A version-1 store — or one without `molrec_version`,
+/// written before version 1 — is read through a [`V1Upgrade`] built from its
+/// force field as stored, so no section of it is read as the current version.
+///
+/// # Errors
+///
+/// A `meta` [`schema::read_version`] refuses, a force-field group that fails
+/// to decode, or version-1 units [`V1Upgrade::new`] refuses.
+pub(in crate::io::zarr) fn read_upgrade<S>(
+    store: &Arc<S>,
+    meta: &JsonMap<String, JsonValue>,
+) -> Result<Option<V1Upgrade>, MolRsError>
+where
+    S: ?Sized + ReadableStorageTraits + ListableStorageTraits + 'static,
+{
+    if schema::read_version(meta)? == schema::MOLREC_VERSION {
+        return Ok(None);
+    }
+    let stored = read_stored_forcefield_if_present(store, &join_path("/", FORCEFIELD_GROUP))?;
+    V1Upgrade::new(stored.as_ref()).map(Some)
 }
 
 fn read_json_group(
@@ -865,9 +909,10 @@ pub fn write_forcefield_file(
 /// Read the `forcefield` section of a record at `path`, or `None` when the
 /// record carries none.
 ///
-/// Decodes `meta` (for its version) and the `forcefield` section only. The
-/// section is validated ([`ForceFieldSection::validate`]); a table no style
-/// names, and a document key this build does not know, are kept.
+/// Decodes `meta` (for its version) and the `forcefield` section only. A
+/// version-1 section is converted to the current version first. The section
+/// is validated ([`ForceFieldSection::validate`]); a table no style names, and
+/// a document key this build does not know, are kept.
 ///
 /// # Errors
 ///
@@ -899,14 +944,15 @@ pub fn read_forcefield_file(
     path: impl AsRef<Path>,
 ) -> Result<Option<ForceFieldSection>, MolRsError> {
     let store = open_record_store(path.as_ref())?;
-    read_meta(&store)?;
+    let meta = read_meta(&store)?;
     if !section_names_store(store.clone())?
         .iter()
         .any(|name| name == FORCEFIELD_GROUP)
     {
         return Ok(None);
     }
-    read_forcefield_group(&store, &join_path("/", FORCEFIELD_GROUP)).map(Some)
+    let upgrade = read_upgrade(&store, &meta)?;
+    read_forcefield_group(&store, &join_path("/", FORCEFIELD_GROUP), upgrade.as_ref()).map(Some)
 }
 
 /// Read the `frame` section of a record at `path`.
@@ -1130,8 +1176,7 @@ mod tests {
         );
     }
 
-    /// A producer that does write `molrec_version` keeps it, and a supported
-    /// value round-trips untouched.
+    /// A producer that writes the current `molrec_version` gets it back.
     #[test]
     fn a_producer_molrec_version_round_trips() {
         let mut rec = MolRec::new();
@@ -1409,7 +1454,7 @@ mod tests {
     fn a_present_molrec_version_outside_the_supported_range_is_rejected() {
         let unsupported = [
             JsonValue::from(0_u64),
-            JsonValue::from(2_u64),
+            JsonValue::from(schema::MOLREC_VERSION + 1),
             JsonValue::from(99_u64),
             JsonValue::Null,
             JsonValue::from("1"),
@@ -1669,18 +1714,27 @@ mod tests {
         assert!(err.contains("float64"), "{err}");
     }
 
-    /// The contract key is validated on the way out as well as in: a producer
-    /// cannot write a version this build does not support.
+    /// The contract key is the writer's: whatever version a producer's map
+    /// claims, the record is written — and stamped — in the current one.
     #[test]
-    fn a_producer_molrec_version_out_of_range_is_refused_at_write() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("record.mrec");
-        let mut rec = MolRec::new();
-        rec.frame = Some(Frame::new());
-        rec.meta.insert("molrec_version".into(), 99u64.into());
-        let err = write_record_file(&path, &rec).unwrap_err().to_string();
-        for key in RESERVED_META_KEYS {
-            assert!(err.contains(key), "{err}");
+    fn the_writer_stamps_the_current_version_over_a_producer_claim() {
+        for claimed in [
+            JsonValue::from(1_u64),
+            JsonValue::from(99_u64),
+            JsonValue::from("x"),
+        ] {
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("record.mrec");
+            let mut rec = MolRec::new();
+            rec.frame = Some(Frame::new());
+            for key in RESERVED_META_KEYS {
+                rec.meta.insert(key.into(), claimed.clone());
+            }
+            write_record_file(&path, &rec).unwrap();
+            assert_eq!(
+                read_meta_file(&path).unwrap()["molrec_version"],
+                schema::MOLREC_VERSION
+            );
         }
     }
 
@@ -2255,5 +2309,200 @@ mod tests {
         std::fs::remove_dir_all(path.join("forcefield").join("dihedral.periodic")).unwrap();
         let err = read_forcefield_file(&path).unwrap_err();
         assert!(err.to_string().contains("dihedral.periodic"), "{err}");
+    }
+
+    /// The records `testdata/v1/generate.py` wrote with the published molrs
+    /// 0.15.0, unpacked into `dir`, by name.
+    fn v1_fixture(dir: &Path, name: &str) -> std::path::PathBuf {
+        let packed = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/io/zarr/testdata/v1")
+            .join(format!("{name}.mrec.zip"));
+        let path = dir.join(format!("{name}.mrec"));
+        zip::ZipArchive::new(std::fs::File::open(&packed).unwrap())
+            .unwrap()
+            .extract(&path)
+            .unwrap();
+        path
+    }
+
+    /// What molrs 0.15.0 computed for each fixture: `(energy, forces)`.
+    fn v1_energies() -> serde_json::Map<String, JsonValue> {
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("src/io/zarr/testdata/v1/energies.json");
+        serde_json::from_slice::<JsonValue>(&std::fs::read(path).unwrap())
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .clone()
+    }
+
+    /// `system` priced under `forcefield`, as molrs 0.15.0's
+    /// `PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)`.
+    #[cfg(feature = "ff")]
+    fn energy_forces(forcefield: &ForceFieldSection, system: &Frame) -> (F, Vec<F>) {
+        let ff = crate::ff::forcefield::ForceField::from_section(forcefield).unwrap();
+        let potentials = crate::ff::potential::PotentialCompiler::new(&ff)
+            .compile(system)
+            .unwrap();
+        let coords: Vec<F> = system.coords().unwrap().iter().copied().collect();
+        potentials.calc_energy_forces(&coords)
+    }
+
+    #[cfg(feature = "ff")]
+    fn assert_prices_as_0_15(name: &str, (energy, forces): (F, Vec<F>), want: &JsonValue) {
+        let close = |a: F, b: F| (a - b).abs() <= 1e-10 * (1.0 + b.abs());
+        let want_energy = want["energy"].as_f64().unwrap();
+        assert!(
+            close(energy, want_energy),
+            "{name}: energy {energy} vs 0.15.0 {want_energy}"
+        );
+        let want_forces: Vec<F> = want["forces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_f64().unwrap())
+            .collect();
+        assert_eq!(forces.len(), want_forces.len(), "{name}");
+        for (i, (got, want)) in forces.iter().zip(&want_forces).enumerate() {
+            assert!(
+                close(*got, *want),
+                "{name}: force {i} {got} vs 0.15.0 {want}"
+            );
+        }
+    }
+
+    /// Every record molrs 0.15.0 wrote (molrec_version 1: ½k harmonic terms,
+    /// radians, `bond morse` `D`, `pair morse` `D0`, `dihedral fourier`, MMFF
+    /// out-of-plane rows centre second and `theta0` columns in radians) reads
+    /// as a version-2 record that prices exactly as 0.15.0 priced it.
+    #[cfg(feature = "ff")]
+    #[test]
+    fn records_written_by_molrs_0_15_price_as_molrs_0_15_did() {
+        let dir = tempdir().unwrap();
+        let energies = v1_energies();
+        assert_eq!(energies.len(), 5);
+        for (name, want) in &energies {
+            let record = read_record_file(v1_fixture(dir.path(), name)).unwrap();
+            // `meta` is handed back as stored; the sections are converted.
+            assert_eq!(record.meta["molrec_version"], 1, "{name}");
+            let forcefield = record.forcefield.as_ref().unwrap();
+            let system = record.system.as_ref().unwrap();
+            assert_prices_as_0_15(name, energy_forces(forcefield, system), want);
+        }
+    }
+
+    /// Every read door converts: the force field alone, the system alone, and
+    /// a system without its force field (MMFF's own columns carry it).
+    #[cfg(feature = "ff")]
+    #[test]
+    fn every_read_door_converts_a_molrs_0_15_record() {
+        let dir = tempdir().unwrap();
+        let energies = v1_energies();
+        let mmff = v1_fixture(dir.path(), "mmff");
+        let forcefield = read_forcefield_file(&mmff).unwrap().unwrap();
+        assert_eq!(forcefield.document["units"]["angle"], "degree");
+        let system = read_system_file(&mmff).unwrap();
+        assert_prices_as_0_15(
+            "mmff",
+            energy_forces(&forcefield, &system),
+            &energies["mmff"],
+        );
+
+        let bare = read_system_file(v1_fixture(dir.path(), "mmff-frame-only")).unwrap();
+        assert_prices_as_0_15(
+            "mmff-frame-only",
+            energy_forces(&forcefield, &bare),
+            &energies["mmff"],
+        );
+
+        // The meta door reports the store as it is.
+        assert_eq!(read_meta_file(&mmff).unwrap()["molrec_version"], 1);
+    }
+
+    /// A converted record written back is a version-2 record, and reads back
+    /// unchanged: the round trip is the identity on the converted values.
+    #[cfg(feature = "ff")]
+    #[test]
+    fn a_converted_record_writes_back_as_version_2() {
+        let dir = tempdir().unwrap();
+        let record = read_record_file(v1_fixture(dir.path(), "classic")).unwrap();
+        let again = dir.path().join("again.mrec");
+        write_record_file(&again, &record).unwrap();
+        assert_eq!(
+            read_meta_file(&again).unwrap()["molrec_version"],
+            schema::MOLREC_VERSION
+        );
+        let back = read_record_file(&again).unwrap();
+        let (a, b) = (record.forcefield.unwrap(), back.forcefield.unwrap());
+        assert_eq!(a.document, b.document);
+        for (name, table) in &a.tables {
+            for (column, values) in table.iter() {
+                let other = &b.tables[name][column];
+                assert_eq!(values.as_float(), other.as_float(), "{name}/{column}");
+                assert_eq!(values.as_string(), other.as_string(), "{name}/{column}");
+                assert_eq!(table.validity(column), b.tables[name].validity(column));
+            }
+        }
+    }
+
+    /// A version-1 trajectory converts frame by frame, and is never appended
+    /// to; a store without `molrec_version` is read by the same rules.
+    #[test]
+    fn a_version_1_trajectory_converts_and_is_not_continued() {
+        let dir = tempdir().unwrap();
+        let mut frame = frame_with_atoms(4);
+        let mut angles = Block::new();
+        for (key, atom) in [("atomi", 0), ("atomj", 1), ("atomk", 2)] {
+            angles
+                .insert_column(
+                    key,
+                    Column::from_uint(ArrayD::from_shape_vec(vec![1], vec![atom]).unwrap()),
+                )
+                .unwrap();
+        }
+        angles
+            .insert_column("theta0", float_column(&[1.9]))
+            .unwrap();
+        frame.insert("angles", angles);
+        let traj = Trajectory::from_frames(vec![frame.clone(), frame]);
+        for (version, path) in [(Some(1), "v1.mrec"), (None, "pre1.mrec")] {
+            let path = dir.path().join(path);
+            write_trajectory_file(&path, &traj, None).unwrap();
+            let meta = path.join("meta/zarr.json");
+            let mut doc: JsonValue =
+                serde_json::from_slice(&std::fs::read(&meta).unwrap()).unwrap();
+            match version {
+                Some(v) => doc["attributes"]["molrec_version"] = v.into(),
+                None => {
+                    doc["attributes"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("molrec_version");
+                }
+            }
+            std::fs::write(&meta, serde_json::to_vec(&doc).unwrap()).unwrap();
+
+            let back = read_trajectory_file(&path).unwrap();
+            for frame in &back.frames {
+                assert_eq!(
+                    frame["angles"]["theta0"].as_float().unwrap()[[0]],
+                    1.9_f64.to_degrees()
+                );
+            }
+            let record = read_record_file(&path).unwrap();
+            assert_eq!(
+                record
+                    .meta
+                    .get("molrec_version")
+                    .and_then(JsonValue::as_u64),
+                version,
+                "meta comes back as stored, a missing key missing"
+            );
+            let err = FrameSequenceWriter::open(Arc::new(FilesystemStore::new(&path).unwrap()))
+                .err()
+                .expect("an earlier version's store is not appended to")
+                .to_string();
+            assert!(err.contains("molrec_version"), "{err}");
+        }
     }
 }

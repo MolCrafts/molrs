@@ -3,8 +3,10 @@
 //! The language-neutral JSON Schema is published by molrec
 //! (`schema/core/record.schema.json`). This module is the executable form
 //! molrs runs on every `*.mrec` door: path suffix, the `meta` version key,
-//! and the reserved names. Writers always stamp `molrec_version`; readers
-//! validate it only when it is present. Re-exported as [`crate::io::mrec::schema`].
+//! and the reserved names. Writers always stamp the current `molrec_version`;
+//! readers validate it when present and read a version-1 store (or one
+//! without the key) through [`molrs::store::record_v1`]. Re-exported as
+//! [`crate::io::mrec::schema`].
 
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
@@ -29,15 +31,27 @@ pub fn validate_path(path: &std::path::Path) -> Result<(), MolRsError> {
 
 /// Validate the `meta` version key against the mrec contract.
 ///
-/// `molrec_version` is **optional on read**: an absent key performs no
-/// version check, so a foreign store — or one written before molrs stamped the
-/// key — opens. A present key must be an integer in `1..=`[`MOLREC_VERSION`];
-/// anything else (`0`, a newer version, a string, `null`, a float) is refused.
-/// Identity of a record is the `*.mrec/` path suffix plus a Zarr root, not this
-/// key; the key says which contract wrote it.
+/// `molrec_version` is **optional on read**: an absent key is a store written
+/// before version 1, which opens ([`read_version`] says how it is read). A
+/// present key must be an integer in `1..=`[`MOLREC_VERSION`]; anything else
+/// (`0`, a newer version, a string, `null`, a float) is refused. Identity of a
+/// record is the `*.mrec/` path suffix plus a Zarr root, not this key; the key
+/// says which contract wrote it.
 pub fn validate_meta(attrs: &JsonMap<String, JsonValue>) -> Result<(), MolRsError> {
+    read_version(attrs).map(|_| ())
+}
+
+/// The contract version a store's sections are read under: its validated
+/// `molrec_version`, or `1` when the key is absent — a store from before
+/// version 1 is read by version 1's rules (best effort), never as the current
+/// version.
+///
+/// # Errors
+///
+/// A [`MolRsError::Zarr`] for a key [`validate_meta`] refuses.
+pub fn read_version(attrs: &JsonMap<String, JsonValue>) -> Result<u64, MolRsError> {
     let Some(value) = attrs.get("molrec_version") else {
-        return Ok(());
+        return Ok(1);
     };
     let version = value.as_u64().ok_or_else(|| {
         MolRsError::zarr(format!(
@@ -52,25 +66,24 @@ pub fn validate_meta(attrs: &JsonMap<String, JsonValue>) -> Result<(), MolRsErro
             "unsupported molrec_version {version}; this reader supports 1..={MOLREC_VERSION}"
         )));
     }
-    Ok(())
+    Ok(version)
 }
 
-/// The producer's `meta` with `molrec_version` stamped in, validated.
+/// The producer's `meta` with the current `molrec_version` stamped in.
 ///
-/// Every record molrs writes carries the version it was written at, so a
-/// reader that checks it never has to guess. A producer that set it keeps its
-/// value, which is how a writer for an older contract stays expressible.
+/// Every record molrs writes is written in the current contract, so it
+/// carries [`MOLREC_VERSION`] whatever the producer's map says: the key is
+/// reserved, and a record read from a version-1 store is converted on read,
+/// so writing it back writes the current version.
 ///
 /// Shared by the whole-record writer and the streaming one.
-pub(crate) fn stamped_meta(
-    meta: &JsonMap<String, JsonValue>,
-) -> Result<JsonMap<String, JsonValue>, MolRsError> {
+pub(crate) fn stamped_meta(meta: &JsonMap<String, JsonValue>) -> JsonMap<String, JsonValue> {
     let mut stamped = meta.clone();
+    stamped.insert(
+        "molrec_version".to_string(),
+        JsonValue::from(MOLREC_VERSION),
+    );
     stamped
-        .entry("molrec_version".to_string())
-        .or_insert_with(|| JsonValue::from(MOLREC_VERSION));
-    validate_meta(&stamped)?;
-    Ok(stamped)
 }
 
 /// Judge a snapshot or system-definition frame against the Frame vocabulary.
@@ -91,17 +104,20 @@ mod tests {
     }
 
     #[test]
-    fn molrec_version_one_passes() {
-        validate_meta(&meta(1)).unwrap();
+    fn every_supported_molrec_version_passes() {
+        for version in 1..=MOLREC_VERSION {
+            assert_eq!(read_version(&meta(version)).unwrap(), version);
+        }
     }
 
-    /// An absent version is no version check: a foreign store, or one written
-    /// before molrs stamped the key, opens.
+    /// An absent version opens, and is read under version 1's rules: a
+    /// foreign store, or one written before molrs stamped the key.
     #[test]
-    fn missing_molrec_version_is_accepted() {
+    fn missing_molrec_version_is_accepted_and_read_as_version_one() {
         let attrs = json!({ "producer": "test" }).as_object().cloned().unwrap();
         validate_meta(&attrs).unwrap();
-        validate_meta(&JsonMap::new()).unwrap();
+        assert_eq!(read_version(&attrs).unwrap(), 1);
+        assert_eq!(read_version(&JsonMap::new()).unwrap(), 1);
     }
 
     /// The retired `format_name`/`record_schema_version` keys are neither
@@ -140,15 +156,19 @@ mod tests {
         assert!(err.contains("molrec_version"), "{err}");
     }
 
-    /// The writer stamps the current version, and keeps a producer's own.
+    /// The writer stamps the current version over whatever the producer's
+    /// map says, and keeps every other key.
     #[test]
-    fn stamped_meta_adds_the_version_and_keeps_a_producer_one() {
-        let stamped = stamped_meta(&JsonMap::new()).unwrap();
+    fn stamped_meta_writes_the_current_version() {
+        let stamped = stamped_meta(&JsonMap::new());
         assert_eq!(stamped["molrec_version"].as_u64(), Some(MOLREC_VERSION));
-        let mut own = meta(1);
-        own.insert("producer".into(), "test".into());
-        assert_eq!(stamped_meta(&own).unwrap(), own);
-        assert!(stamped_meta(&meta(2)).is_err());
+        for claimed in [1, MOLREC_VERSION + 1] {
+            let mut own = meta(claimed);
+            own.insert("producer".into(), "test".into());
+            let stamped = stamped_meta(&own);
+            assert_eq!(stamped["molrec_version"].as_u64(), Some(MOLREC_VERSION));
+            assert_eq!(stamped["producer"], "test");
+        }
     }
 
     #[test]
@@ -169,7 +189,9 @@ mod tests {
 
     #[test]
     fn newer_molrec_version_is_refused() {
-        let err = validate_meta(&meta(2)).unwrap_err().to_string();
+        let err = validate_meta(&meta(MOLREC_VERSION + 1))
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("molrec_version"), "{err}");
     }
 

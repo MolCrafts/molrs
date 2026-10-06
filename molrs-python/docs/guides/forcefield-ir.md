@@ -34,9 +34,13 @@ preset. Two rules are LAMMPS's own and hold in every preset:
     `{k: 76.79, theta0: 109.66}`, with no conversion in either direction.
 
 The `forcefield` section of a record states `"angle": "degree"` beside its
-preset. A section written by molrs ≤ 0.15 states `"angle": "radian"`, so
-0.16 refuses it (its preset and its stated angle unit disagree) rather than
-misreading it.
+preset. A record molrs ≤ 0.15 wrote is `molrec_version` 1, whose sections
+state `"angle": "radian"` (or, under `lj`, nothing) and hold the ½k harmonic
+forms; 0.16 converts its numbers to these definitions on read, exactly, or
+refuses it ([Records: molrec_version 2](../migration.md#records-molrec_version-2)).
+A section built in memory with `"angle": "radian"` beside a preset is refused
+(its preset and its stated angle unit disagree) rather than read in the wrong
+units.
 
 The LAMMPS reader keeps the file's `units` (a `metal` file is a `metal` force
 field, `coul/cut` taking LAMMPS's `metal` Coulomb constant); the LAMMPS writer

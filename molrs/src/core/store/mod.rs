@@ -13,6 +13,7 @@ pub mod keys;
 pub mod meta;
 pub mod precision;
 pub mod record;
+pub mod record_v1;
 pub mod schema;
 pub mod trajectory;
 pub mod type_labels;
