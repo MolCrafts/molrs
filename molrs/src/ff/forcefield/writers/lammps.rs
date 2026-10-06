@@ -96,8 +96,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use super::ForceFieldWriter;
 use crate::ff::forcefield::lammps_units::{LammpsFfUnits, parse_style};
 use crate::ff::forcefield::mixing::Mixing;
-use crate::ff::forcefield::torsion::nharmonic_coefficients;
 use crate::ff::forcefield::readers::lammps::{LAMMPS_CMAP_DIM, LAMMPS_CMAP_MAX};
+use crate::ff::forcefield::torsion::nharmonic_coefficients;
 use crate::ff::forcefield::{
     AngleType, BondType, CmapType, DihedralType, ForceField, ImproperType, PairType, Params, Style,
     StyleDefs,
