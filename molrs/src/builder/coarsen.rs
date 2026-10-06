@@ -4,7 +4,7 @@
 //! This is the centre-of-mass mapping operator of coarse-grained modelling
 //! (Noid, *J. Chem. Phys.* **139**, 090901 (2013), doi:10.1063/1.4818908):
 //! site I stands for group G_I and sits at its centre of mass. The groups
-//! typically come from [`SubgraphMatcher::find`](super::SubgraphMatcher::find)
+//! typically come from [`SubgraphMatcher::find`](crate::perceive::SubgraphMatcher::find)
 //! after the caller has made them disjoint.
 
 use std::collections::{HashMap, HashSet};

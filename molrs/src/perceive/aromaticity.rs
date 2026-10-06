@@ -702,7 +702,7 @@ fn is_connected_subset(subset: &[usize], ring_bond_sets: &[HashSet<BondId>]) -> 
 /// Port of RDKit `setAromaticity(mol, AROMATICITY_RDKIT)` →
 /// `aromaticityHelper(mol, srings, 0, 0, /*includeFused=*/true)`.
 /// `Code/GraphMol/Aromaticity.cpp`, BSD 3-Clause, © RDKit contributors.
-pub fn perceive_aromaticity(mol: &mut Atomistic) -> usize {
+pub(crate) fn perceive_aromaticity(mol: &mut Atomistic) -> usize {
     // No snapshot: `bond_number` is never overwritten by perception, so the
     // input's own localized structure *is* the memory. This is what makes the
     // pass idempotent, and it is why there is no second localized-order field.

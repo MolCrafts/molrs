@@ -288,7 +288,7 @@ impl AtomPropertyFacts {
 /// 7/8/10 aromatic, 9 delocalized.
 ///
 /// Read from [`BCC_BOND_TYPE`] — the key bond-type perception
-/// ([`find_bond_types_from_connectivity`](molrs::perceive::bond_type::find_bond_types_from_connectivity),
+/// (`find_bond_types_from_connectivity`,
 /// [`Perceive::find_bond_types`](molrs::perceive::Perceive::find_bond_types)) writes
 /// it to — and **never** from the bond's `type`, which is the caller's and holds
 /// their force-field bond-type *name*.

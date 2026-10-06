@@ -1,7 +1,7 @@
 //! Hydrogen addition for molecular graphs.
 //!
-//! [`add_hydrogens`] computes the number of implicit hydrogens each heavy atom
-//! requires (based on its element's default valences and the sum of its current
+//! Hydrogen addition ([`Perceive::find_hydrogens`](crate::perceive::Perceive::find_hydrogens))
+//! computes the number of implicit hydrogens each heavy atom requires (based on its element's default valences and the sum of its current
 //! bond orders) and returns a **new** [`Atomistic`] with explicit H atoms added.
 //!
 //! [`remove_hydrogens`] does the inverse: it returns a new [`Atomistic`] with
@@ -66,7 +66,7 @@ const PORTS_KIND: &str = "ports";
 /// of [`Atomistic`] can produce such a graph, so the case is unreachable in
 /// practice; the `Result` is here so that the invariant is *returned* rather
 /// than asserted by a panic on a caller's thread.
-pub fn add_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
+pub(crate) fn add_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
     let mut new_mol = mol.clone();
 
     // Mass (amu) of the hydrogens this call appends, read once from the

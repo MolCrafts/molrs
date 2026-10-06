@@ -81,7 +81,7 @@ impl CGSmilesIR {
     ///   no `h_count`, so hydrogen repletion sums the atom's real incident
     ///   bonds — the handle bond among them. C0 counts O + handle = 2 and a
     ///   later
-    ///   [`add_hydrogens`](crate::perceive::hydrogens::add_hydrogens) adds
+    ///   [`Perceive::find_hydrogens`](crate::perceive::Perceive::find_hydrogens) adds
     ///   exactly the remaining 2. The handle is *subtracted* from the budget.
     /// * **Bracket anchor** (`[$][CH3]`, `[$][O-]`): the builder always writes
     ///   `h_count`, and repletion then short-circuits on it, bond-blind. The
@@ -150,7 +150,7 @@ impl CGSmilesIR {
     ///
     /// ```
     /// use molrs::io::smiles::parse_cgsmiles;
-    /// use molrs::perceive::hydrogens::add_hydrogens;
+    /// use molrs::perceive::Perceive;
     /// use molrs::system::atomistic::Atomistic;
     ///
     /// let ir = parse_cgsmiles("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")?;
@@ -166,7 +166,7 @@ impl CGSmilesIR {
     /// // The handles are real bonds, so repletion completes each carbon to
     /// // four: C0 has O + handle and gains 2 H, C2 likewise, the ether oxygen
     /// // is already satisfied — 5 + 4 = 9 atoms.
-    /// let rebuilt = add_hydrogens(&peo)?;
+    /// let rebuilt = Perceive::new().find_hydrogens(&peo)?;
     /// assert_eq!(rebuilt.n_atoms(), 9);
     ///
     /// // The ports survive repletion, and every handle is still terminal.

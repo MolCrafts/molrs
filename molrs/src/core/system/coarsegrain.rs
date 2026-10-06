@@ -226,7 +226,7 @@ impl CoarseGrain {
 
     /// The site axes `[axis_x, axis_y, axis_z]` of `beads`, in Å as stored,
     /// in the order of `beads`. A site made by
-    /// [`Coarsener::coarsen`](crate::perceive::Coarsener::coarsen) carries
+    /// `builder::Coarsener::coarsen` carries
     /// the vector from the first member of its group to the site, which
     /// fixes the site's direction; a one-member site's axis is zero. O(k) for
     /// k listed beads.

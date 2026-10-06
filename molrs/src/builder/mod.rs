@@ -12,6 +12,7 @@
 //! | [`SitePlacer`], [`GrowthPlacer`] (each a [`Placer`]) | one pose ([`Rigid`](crate::op::rigid::Rigid)) per site: centre of mass on the site, or grown onto the parent's port |
 //! | [`AxisOrienter`] (an [`Orienter`]) | one rotation per site, about the template's centre of mass: chain units onto the site axis and bond line, branch units by port-direction fit |
 //! | [`Assembler`] | one placed, linked world graph (any graph type, chosen by the caller) from a site graph (`frag_id` per site, `mol_id` per connected component) |
+//! | [`Coarsener`] | a coarse-grained graph from disjoint node groups of a source graph: one site per group at its centre of mass, with its axis |
 //!
 //! The SARW path generator is a clean-room port of the kernel from the CAVS
 //! LAMMPS tutorial `mc_gen.c` (Mark A. Tschopp & Don K. Ward), with chemistry
@@ -19,6 +20,7 @@
 
 mod assemble;
 mod carbon_tube;
+mod coarsen;
 mod graphene;
 mod occupancy;
 mod orient;
@@ -28,6 +30,7 @@ mod walk;
 
 pub use assemble::{AssembleError, Assembler};
 pub use carbon_tube::{CarbonTubeBuilder, CarbonTubeError};
+pub use coarsen::{CoarsenError, Coarsener};
 pub use graphene::{GrapheneBuilder, GrapheneError};
 pub use occupancy::OccupancyMode;
 pub use orient::{AxisOrienter, OrientError, Orienter, SiteLink, SiteView};

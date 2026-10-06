@@ -181,7 +181,7 @@ const CAP_H: [i32; 8] = [64, 0, 64, NONE, NONE, NONE, NONE, NONE];
 /// # Returns
 ///
 /// A clone of `mol` carrying the judged Kekulé structure.
-pub fn find_bond_orders(mol: &Atomistic) -> Atomistic {
+pub(crate) fn find_bond_orders(mol: &Atomistic) -> Atomistic {
     let mut out = mol.clone();
     let bond_ids: Vec<_> = mol.bonds().map(|(bid, _)| bid).collect();
     for (bid, order) in bond_ids.into_iter().zip(judge_bond_orders(mol)) {

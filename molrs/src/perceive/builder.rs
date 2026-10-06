@@ -3,8 +3,8 @@
 //!
 //! The wrapped functions have four different shapes: a side table
 //! ([`rings::find_rings`] → [`rings::RingInfo`]), an in-place mutation returning
-//! a count ([`aromaticity::perceive_aromaticity`]), a graph-out transform
-//! ([`hydrogens::add_hydrogens`]), and maps
+//! a count (`aromaticity::perceive_aromaticity`), a graph-out transform
+//! (`hydrogens::add_hydrogens`), and maps
 //! ([`stereo::assign_stereo_from_3d`], [`rotatable::detect_rotatable_bonds`]).
 //! `Perceive` normalises all four to a single contract:
 //!
@@ -156,7 +156,7 @@ impl Perceive {
 
     /// Add the hydrogens implied by each heavy atom's open valence.
     ///
-    /// Wraps [`hydrogens::add_hydrogens`], which is already graph-in / graph-out.
+    /// Wraps `hydrogens::add_hydrogens`, which is already graph-in / graph-out.
     ///
     /// # Arguments
     ///
@@ -169,7 +169,7 @@ impl Perceive {
     ///
     /// # Errors
     ///
-    /// Whatever [`hydrogens::add_hydrogens`] returns: a [`MolRsError`] when the
+    /// Whatever `hydrogens::add_hydrogens` returns: a [`MolRsError`] when the
     /// graph holds a stale atom handle, which no public constructor of
     /// [`Atomistic`] can produce. The `Result` keeps that invariant a returned
     /// value rather than a panic.
@@ -258,7 +258,7 @@ impl Perceive {
     /// Judge every bond's order from the connectivity alone, as antechamber's
     /// `bondtype -j full` does, and write it onto the graph.
     ///
-    /// Wraps [`bond_order::find_bond_orders`]: every judged bond gets a
+    /// Wraps `bond_order::find_bond_orders`: every judged bond gets a
     /// localized `bond_number` (1/2/3) and the `bond_type` it implies, whatever
     /// the input stated. The result depends on the graph's atom and bond order,
     /// exactly as antechamber's depends on its input file's.
@@ -277,9 +277,9 @@ impl Perceive {
     /// Perceive BCC bond types, from the bond orders `mol` states, and project
     /// them onto the graph. (`AtdTypifier` and the antechamber charge models
     /// judge the orders from the connectivity instead, as antechamber does:
-    /// [`bond_type::find_bond_types_from_connectivity`].)
+    /// `bond_type::find_bond_types_from_connectivity`.)
     ///
-    /// Wraps [`bond_type::find_bond_types`], which is already graph-in /
+    /// Wraps `bond_type::find_bond_types`, which is already graph-in /
     /// graph-out. Every bond receives a [`BCC_BOND_TYPE`](bond_type::BCC_BOND_TYPE)
     /// prop in `{1, 2, 3, 6, 7, 8, 9}` — the alphabet AM1-BCC's atom-type rules and
     /// correction table are keyed on, which distinguishes aromatic bonds (7/8) and
@@ -304,7 +304,7 @@ impl Perceive {
 
     /// Assign a localized (Kekulé) `bond_number` to every aromatic bond.
     ///
-    /// Wraps [`bond_type::find_kekule_orders`]. It kekulizes and nothing else —
+    /// Wraps `bond_type::find_kekule_orders`. It kekulizes and nothing else —
     /// a molecule whose aromatic bonds are not marked yet comes back unchanged,
     /// because deciding *which* bonds are aromatic is
     /// [`find_aromaticity`](Self::find_aromaticity)'s job. Reach for this

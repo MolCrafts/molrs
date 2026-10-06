@@ -39,7 +39,7 @@
 //! types follow that structure: on a molecule with two Kekulé structures
 //! (azulene, cyclooctatetraene) the `cc` / `cd` colouring is the one its search
 //! settles on, not the one the input drew. [`AtdBondOrders::Perceive`], the
-//! default, does the same — [`find_bond_types_from_connectivity`] — so a
+//! default, does the same — `find_bond_types_from_connectivity` — so a
 //! molecule read from the file antechamber reads types as antechamber types it,
 //! whatever orders the molrs graph carries. [`AtdBondOrders::Input`] keeps the
 //! graph's own orders instead (aromatic bonds without one are kekulized), for a

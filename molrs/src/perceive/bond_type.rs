@@ -25,7 +25,7 @@
 //!
 //! # Two entry points: the input's orders, or antechamber's
 //!
-//! * [`find_bond_types_from_connectivity`] is `bondtype -j full`, what
+//! * `find_bond_types_from_connectivity` is `bondtype -j full`, what
 //!   antechamber runs by default (`-j 4`, and always for `-c bcc`): the bond
 //!   orders are judged from the connectivity alone ([`judge_bond_orders`]),
 //!   the input's ignored; aromatic rings for part 1 are antechamber's own
@@ -35,7 +35,7 @@
 //!   for bond — including the Kekulé structure of a molecule that has two
 //!   (azulene, cyclooctatetraene), which the order of the atoms and bonds
 //!   decides, as it does for antechamber.
-//! * [`find_bond_types`] keeps the input's orders: a localized bond is typed
+//! * `find_bond_types` keeps the input's orders: a localized bond is typed
 //!   by the number it states, an aromatic one by the Kekulé structure molrs
 //!   derives for it (below), promoted on molrs's own aromaticity, with part 3
 //!   repaired (below). Its answer does not depend on the order of the bonds.
@@ -44,8 +44,8 @@
 //! in the tables:
 //!
 //! * **10** is not a peer of 7/8 — it is the *unresolved* aromatic precursor (the
-//!   SYBYL `ar` input token). [`find_bond_types`] resolves it into 7 or 8;
-//!   [`find_bond_types_from_connectivity`] keeps it only where antechamber
+//!   SYBYL `ar` input token). `find_bond_types` resolves it into 7 or 8;
+//!   `find_bond_types_from_connectivity` keeps it only where antechamber
 //!   does: an `ar` bond of a molecule no valence state closes.
 //! * **11** occupies 26 same-type diagonal rows of `BCCPARM.DAT`, all with a
 //!   correction of exactly `0.0000`, and no rule reaches it.
@@ -63,7 +63,7 @@
 //! # Kekulé structures, when the input's orders are kept
 //!
 //! An aromatic input carries no Kekulé structure (order 1.5), so
-//! [`find_bond_types`] derives one by minimising the valence-state penalty
+//! `find_bond_types` derives one by minimising the valence-state penalty
 //! (`APS.DAT`) over the aromatic subsystem. Which of 7/8 a given ring bond ends
 //! up with is *charge-invariant* — `BCCPARM` stores identical corrections for
 //! types 7, 8 and 10 — but the **atom types** are not: a heteroaromatic ring
@@ -71,7 +71,7 @@
 //! on a different nitrogen in each, and those two nitrogens type differently.
 //! The tie-break is calibrated to AmberTools on the simple heteroaromatics; for
 //! antechamber's own answer on any input, use
-//! [`find_bond_types_from_connectivity`].
+//! `find_bond_types_from_connectivity`.
 //!
 //! # Provenance
 //!
@@ -80,7 +80,7 @@
 //! the AmberTools developers' permission; see `.claude/notes/notes.md`
 //! (2026-07-12) for the licensing posture.
 //!
-//! # Type 6 — the order-dependence fix of [`find_bond_types`]
+//! # Type 6 — the order-dependence fix of `find_bond_types`
 //!
 //! `bondtype.c`'s type-6 rule (`/*part3*/`) has two defects that make its output
 //! depend on the order the bonds appear in the input file:
@@ -95,10 +95,10 @@
 //! final charges by 0.28 e; and **pyridine-N-oxide**'s N–O bond types as 6 or 9
 //! purely according to whether the file wrote that bond as `O-N` or `N-O`.
 //!
-//! [`find_bond_types`] repairs both: the neighbour scan is **exhaustive**, and
+//! `find_bond_types` repairs both: the neighbour scan is **exhaustive**, and
 //! the rule is **symmetric in the bond's endpoints** (nitrite stays 6/6,
 //! nitromethane 9/9, nitrobenzene 9/9, TMAO 9).
-//! [`find_bond_types_from_connectivity`] keeps both defects: its answer already
+//! `find_bond_types_from_connectivity` keeps both defects: its answer already
 //! follows the input's order, as antechamber's does, and reproducing antechamber
 //! means reproducing them.
 //!
@@ -134,7 +134,7 @@ use molrs::Element;
 /// Bond prop holding the perceived BCC bond type, as an `i32` in
 /// `{1, 2, 3, 6, 7, 8, 9}`.
 ///
-/// Written by [`find_bond_types`] and read by everything keyed on the antechamber
+/// Written by `find_bond_types` and read by everything keyed on the antechamber
 /// alphabet — the `ATOMTYPE_*.DEF` rule engine (`ff::typifier::AtdTypifier`)
 /// and the `BCCPARM.DAT` corrector (`ff::typifier::am1bcc::BCCCorrector`);
 /// `perceive` sits below `ff` and names no item of it.
@@ -169,7 +169,7 @@ const FORBIDDEN: u32 = 1000;
 /// Perceive the BCC bond type of every bond from the bond orders the input
 /// states (aromatic bonds kekulized). For the bond types antechamber itself
 /// perceives — orders judged from the connectivity, the input's ignored — use
-/// [`find_bond_types_from_connectivity`].
+/// `find_bond_types_from_connectivity`.
 ///
 /// Graph in / graph out and **non-mutating**: `mol` is cloned, the clone's bonds
 /// receive a [`BCC_BOND_TYPE`] prop holding the perceived type, and the clone is
@@ -186,7 +186,7 @@ const FORBIDDEN: u32 = 1000;
 ///
 /// Aromaticity is taken from the graph when it carries any aromatic marking
 /// (a truthy `is_aromatic` bond prop, an `order` of 1.5, or a [`BCC_BOND_TYPE`] of
-/// 7/8/10); when it carries none, [`perceive_aromaticity`] is run on the clone to
+/// 7/8/10); when it carries none, `perceive_aromaticity` is run on the clone to
 /// supply it.
 ///
 /// # Arguments
@@ -266,7 +266,7 @@ const FORBIDDEN: u32 = 1000;
 /// assert_eq!(props(b1).get(keys::TYPE), Some(&name));
 /// assert_eq!(props(b2).get(keys::TYPE), Some(&name));
 /// ```
-pub fn find_bond_types(mol: &Atomistic) -> Atomistic {
+pub(crate) fn find_bond_types(mol: &Atomistic) -> Atomistic {
     let mut out = mol.clone();
     if out.n_bonds() == 0 {
         return out;
@@ -292,7 +292,7 @@ pub fn find_bond_types(mol: &Atomistic) -> Atomistic {
 /// it discards the file's bond orders and re-derives them, so on a molecule with
 /// more than one Kekulé structure (azulene, cyclooctatetraene) the structure —
 /// and every atom type that follows it — is the one its search settles on.
-/// [`find_bond_types`] keeps the input's orders instead.
+/// `find_bond_types` keeps the input's orders instead.
 ///
 /// Two things still read the input's bond types, because `bondtype` reads them
 /// from its file — taken here as the stated number, `ar` (10) for an aromatic
@@ -316,9 +316,9 @@ pub fn find_bond_types(mol: &Atomistic) -> Atomistic {
 /// # Returns
 ///
 /// A clone of `mol` whose every bond carries a [`BCC_BOND_TYPE`] prop in
-/// `{1, 2, 3, 6, 7, 8, 9}` (10 only as above). As with [`find_bond_types`],
+/// `{1, 2, 3, 6, 7, 8, 9}` (10 only as above). As with `find_bond_types`,
 /// bond `order` and [`keys::TYPE`] are not rewritten.
-pub fn find_bond_types_from_connectivity(mol: &Atomistic) -> Atomistic {
+pub(crate) fn find_bond_types_from_connectivity(mol: &Atomistic) -> Atomistic {
     if mol.n_bonds() == 0 {
         return mol.clone();
     }
@@ -368,7 +368,7 @@ pub fn find_bond_types_from_connectivity(mol: &Atomistic) -> Atomistic {
 /// Assign a legal localized [`BondNumber`] to every aromatic bond, graph in /
 /// graph out.
 ///
-/// The non-mutating face of [`assign_kekule_numbers`], which carries the full
+/// The non-mutating face of `assign_kekule_numbers`, which carries the full
 /// contract. It **only** kekulizes: it does not perceive aromaticity, so a
 /// molecule whose aromatic bonds are not yet marked comes back unchanged. That
 /// is the division of labour — perception decides *which* bonds are aromatic,
@@ -382,7 +382,7 @@ pub fn find_bond_types_from_connectivity(mol: &Atomistic) -> Atomistic {
 ///
 /// A clone of `mol` whose aromatic bonds carry a legal localized number, or an
 /// unchanged clone when no legal assignment exists.
-pub fn find_kekule_orders(mol: &Atomistic) -> Atomistic {
+pub(crate) fn find_kekule_orders(mol: &Atomistic) -> Atomistic {
     let mut out = mol.clone();
     assign_kekule_numbers(&mut out);
     out
@@ -410,7 +410,7 @@ pub fn find_kekule_orders(mol: &Atomistic) -> Atomistic {
 ///   changed, rather than a ring half-assigned. Returns `false` in that case.
 ///
 /// Returns whether every aromatic bond came out with a legal number.
-pub fn assign_kekule_numbers(mol: &mut Atomistic) -> bool {
+pub(crate) fn assign_kekule_numbers(mol: &mut Atomistic) -> bool {
     // Nothing to assign without an aromatic bond. Checked on the bonds
     // directly: `BondGraph::new` perceives rings and implicit hydrogens for
     // every atom, which is the whole cost of this call.

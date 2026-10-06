@@ -30,7 +30,7 @@ use molrs::system::molgraph::PropValue;
 ///
 /// This resolves ring closures into bonds, sets atom properties (charge,
 /// isotope, chirality), and records bond orders. Implicit hydrogens are
-/// **not** added — call [`add_hydrogens`](crate::perceive::hydrogens::add_hydrogens)
+/// **not** added — call [`Perceive::find_hydrogens`](crate::perceive::Perceive::find_hydrogens)
 /// separately if needed.
 ///
 /// # Aromaticity
@@ -50,7 +50,7 @@ use molrs::system::molgraph::PropValue;
 /// A bracket atom states its hydrogen count exactly, so every bracket atom
 /// gets an `h_count` component — `0` when the notation omits it. Organic-subset
 /// atoms get none and are left to valence-based
-/// [`add_hydrogens`](crate::perceive::hydrogens::add_hydrogens).
+/// [`Perceive::find_hydrogens`](crate::perceive::Perceive::find_hydrogens).
 ///
 /// # Errors
 ///

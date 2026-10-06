@@ -842,8 +842,8 @@ impl Atomistic {
         crate::system::graph_hash::is_isomorphic(&self.graph, &other.graph)
     }
 
-    // Aromaticity perception is a free-function *system*:
-    // [`crate::perceive::aromaticity::perceive_aromaticity`]. No algorithm method here.
+    // Aromaticity perception belongs to `crate::perceive::Perceive`
+    // (`find_aromaticity`). No algorithm method here.
 }
 
 /// Canonical (orientation-independent) key for an angle/dihedral endpoint
