@@ -18,7 +18,8 @@
 //!   truncates the header time)
 //! - `frame.simbox`: orthorhombic cell from the first three box floats when present
 
-use std::io::{BufRead, Error, ErrorKind, Result};
+use crate::io::invalid_data;
+use std::io::{BufRead, Result};
 use std::path::Path;
 
 use ndarray::{Array1, Array2, IxDyn, array};
@@ -31,10 +32,6 @@ use molrs::store::Frame;
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn invalid_data<E: std::fmt::Display>(e: E) -> Error {
-    Error::new(ErrorKind::InvalidData, e.to_string())
-}
 
 fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
     let n = vals.len();
@@ -150,7 +147,7 @@ pub fn read_amber_inpcrd<P: AsRef<Path>>(path: P) -> Result<Frame> {
 ///
 /// # Errors
 ///
-/// The reader's error, or [`ErrorKind::InvalidData`] when `frame["atoms"]`
+/// The reader's error, or [`std::io::ErrorKind::InvalidData`] when `frame["atoms"]`
 /// has a different row count than the file has atoms. `frame` is unchanged
 /// on error.
 pub fn read_amber_inpcrd_into<P: AsRef<Path>>(path: P, frame: &mut Frame) -> Result<()> {
@@ -360,7 +357,7 @@ mod tests {
         three.insert("atoms", atoms);
         let err = read_amber_inpcrd_into(&path, &mut three).unwrap_err();
         let _ = std::fs::remove_file(&path);
-        assert_eq!(err.kind(), ErrorKind::InvalidData);
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
         assert!(
             !three.get("atoms").unwrap().contains_key("y"),
             "unchanged on error"

@@ -1,6 +1,7 @@
-//! Shared helpers for VASP-style file headers (POSCAR, CHGCAR, CONTCAR).
+//! The VASP structure header (POSCAR / CONTCAR, and the preamble of a
+//! CHGCAR): cell, species, counts and the atom rows that follow.
 //!
-//! VASP uses a common preamble across several file types:
+//! VASP uses one preamble across these file types:
 //!
 //! ```text
 //! line 1   : comment / system name
@@ -13,17 +14,21 @@
 //! line N+1+: atom records (3 floats; optionally + T/F flags + symbol)
 //! ```
 //!
-//! Helpers in this module read this preamble and return strongly typed values.
-//! Errors use `std::io::Error` with `ErrorKind::InvalidData`, matching the
-//! convention of other readers in `molrs-io`.
+//! This module reads that preamble and its atom rows into typed values;
+//! [`VaspHeader::cartesian`] places the rows in Å through the cell's
+//! [`SimBox`]. Errors are `InvalidData` I/O errors with the line number.
 
-use std::io::{BufRead, Error, ErrorKind, Result};
+use std::io::{BufRead, Error, Result};
 
+use ndarray::{Array2, array};
+
+use crate::io::invalid_data;
 use molrs::op::types::F;
+use molrs::spatial::SimBox;
 
 /// VASP coordinate mode for atom positions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CoordMode {
+pub(crate) enum CoordMode {
     /// Fractional / direct coordinates (in lattice basis).
     Direct,
     /// Cartesian coordinates (in Å, scaled by the global scale factor).
@@ -32,7 +37,7 @@ pub enum CoordMode {
 
 /// Header section of a VASP file, before the coordinate mode line.
 #[derive(Debug, Clone)]
-pub struct VaspHeader {
+pub(crate) struct VaspHeader {
     /// First-line comment / system name.
     pub title: String,
     /// Global scale factor applied to lattice vectors and Cartesian coords.
@@ -51,17 +56,53 @@ pub struct VaspHeader {
 
 impl VaspHeader {
     /// Total atom count = sum of `counts`.
-    pub fn total_atoms(&self) -> usize {
+    pub(crate) fn total_atoms(&self) -> usize {
         self.counts.iter().sum()
+    }
+
+    /// The periodic cell: `H`'s columns are the lattice vectors (the
+    /// header's rows), at the origin.
+    pub(crate) fn simbox(&self) -> Result<SimBox> {
+        let h = Array2::from_shape_fn((3, 3), |(i, j)| self.cell[j][i]);
+        SimBox::new(h, array![0.0 as F, 0.0, 0.0], [true; 3])
+            .map_err(|e| invalid_data(format!("invalid cell: {e:?}")))
+    }
+
+    /// The atom rows `xs`, `ys`, `zs` as read, in Cartesian Å: a `Direct`
+    /// file's fractions through the cell ([`SimBox::to_cart`]), a `Cartesian`
+    /// file's coordinates times the global scale factor.
+    pub(crate) fn cartesian(
+        &self,
+        simbox: &SimBox,
+        xs: &[F],
+        ys: &[F],
+        zs: &[F],
+    ) -> (Vec<F>, Vec<F>, Vec<F>) {
+        match self.mode {
+            CoordMode::Direct => {
+                let frac = Array2::from_shape_fn((xs.len(), 3), |(i, k)| [xs, ys, zs][k][i]);
+                let cart = simbox.to_cart(frac.view());
+                (
+                    cart.column(0).to_vec(),
+                    cart.column(1).to_vec(),
+                    cart.column(2).to_vec(),
+                )
+            }
+            CoordMode::Cartesian => {
+                let s = self.scale;
+                (
+                    xs.iter().map(|v| v * s).collect(),
+                    ys.iter().map(|v| v * s).collect(),
+                    zs.iter().map(|v| v * s).collect(),
+                )
+            }
+        }
     }
 }
 
 /// Wrap a parse failure as `InvalidData` with line number context.
 fn parse_err(line_no: usize, msg: impl AsRef<str>) -> Error {
-    Error::new(
-        ErrorKind::InvalidData,
-        format!("line {}: {}", line_no, msg.as_ref()),
-    )
+    invalid_data(format!("line {}: {}", line_no, msg.as_ref()))
 }
 
 /// Read one line into `buf`, returning `Ok(false)` on EOF.
@@ -72,7 +113,7 @@ fn read_line_into<R: BufRead>(reader: &mut R, buf: &mut String) -> Result<bool> 
 }
 
 /// Parse exactly `expected` whitespace-separated floats from `line`.
-pub fn parse_floats(line: &str, expected: usize, line_no: usize) -> Result<Vec<F>> {
+pub(crate) fn parse_floats(line: &str, expected: usize, line_no: usize) -> Result<Vec<F>> {
     let vals: Vec<F> = line
         .split_whitespace()
         .take(expected)
@@ -91,7 +132,7 @@ pub fn parse_floats(line: &str, expected: usize, line_no: usize) -> Result<Vec<F
 }
 
 /// Parse all whitespace-separated `usize` tokens on `line`.
-pub fn parse_usize_vec(line: &str, line_no: usize) -> Result<Vec<usize>> {
+pub(crate) fn parse_usize_vec(line: &str, line_no: usize) -> Result<Vec<usize>> {
     line.split_whitespace()
         .map(|s| {
             s.parse::<usize>()
@@ -100,33 +141,11 @@ pub fn parse_usize_vec(line: &str, line_no: usize) -> Result<Vec<usize>> {
         .collect()
 }
 
-/// Convert fractional coordinates to Cartesian using a row-major cell.
-///
-/// `cell[i] = a_{i+1}` (lattice vector i as a 3-element row).
-/// For each atom: `r_cart = s_x * a1 + s_y * a2 + s_z * a3`.
-pub fn fractional_to_cartesian(
-    sx: &[F],
-    sy: &[F],
-    sz: &[F],
-    cell: &[[F; 3]; 3],
-) -> (Vec<F>, Vec<F>, Vec<F>) {
-    let n = sx.len();
-    let mut cx = Vec::with_capacity(n);
-    let mut cy = Vec::with_capacity(n);
-    let mut cz = Vec::with_capacity(n);
-    for i in 0..n {
-        cx.push(sx[i] * cell[0][0] + sy[i] * cell[1][0] + sz[i] * cell[2][0]);
-        cy.push(sx[i] * cell[0][1] + sy[i] * cell[1][1] + sz[i] * cell[2][1]);
-        cz.push(sx[i] * cell[0][2] + sy[i] * cell[1][2] + sz[i] * cell[2][2]);
-    }
-    (cx, cy, cz)
-}
-
 /// Read the VASP header (title, scale, cell, counts, mode flags).
 ///
 /// On return, the reader is positioned at the first atom-coordinate line.
 /// `*line_no` is updated to reflect the number of lines consumed.
-pub fn read_header<R: BufRead>(reader: &mut R, line_no: &mut usize) -> Result<VaspHeader> {
+pub(crate) fn read_header<R: BufRead>(reader: &mut R, line_no: &mut usize) -> Result<VaspHeader> {
     let mut buf = String::new();
 
     // Line 1: title / comment
@@ -253,7 +272,7 @@ pub fn read_header<R: BufRead>(reader: &mut R, line_no: &mut usize) -> Result<Va
 
 /// One row of an atom-coordinate line — coordinates plus optional selective-dynamics flags.
 #[derive(Debug, Clone)]
-pub struct AtomRow {
+pub(crate) struct AtomRow {
     pub x: F,
     pub y: F,
     pub z: F,
@@ -263,7 +282,7 @@ pub struct AtomRow {
 
 /// Parse a single atom row. Selective dynamics flags are detected by the
 /// presence of `T`/`F` tokens after the three coordinates.
-pub fn parse_atom_row(line: &str, line_no: usize, expect_flags: bool) -> Result<AtomRow> {
+pub(crate) fn parse_atom_row(line: &str, line_no: usize, expect_flags: bool) -> Result<AtomRow> {
     let tokens: Vec<&str> = line.split_whitespace().collect();
     if tokens.len() < 3 {
         return Err(parse_err(
@@ -305,15 +324,15 @@ pub fn parse_atom_row(line: &str, line_no: usize, expect_flags: bool) -> Result<
 }
 
 /// Per-atom coordinates plus optional selective-dynamics flags.
-pub type CoordBlock = (Vec<F>, Vec<F>, Vec<F>, Option<Vec<[bool; 3]>>);
+pub(crate) type CoordBlock = (Vec<F>, Vec<F>, Vec<F>, Option<Vec<[bool; 3]>>);
 
 /// Read `n` atom rows from the reader. Coordinates are returned as parallel
 /// `(xs, ys, zs)` vectors plus optional selective-dynamics flags.
 ///
 /// **Note**: the values returned are exactly what the file contains — fractional
-/// coordinates are NOT yet converted to Cartesian. The caller decides based on
-/// `header.mode` whether to call `fractional_to_cartesian`.
-pub fn read_coords<R: BufRead>(
+/// coordinates are NOT yet converted to Cartesian; [`VaspHeader::cartesian`]
+/// does that.
+pub(crate) fn read_coords<R: BufRead>(
     reader: &mut R,
     n: usize,
     line_no: &mut usize,
@@ -350,7 +369,7 @@ pub fn read_coords<R: BufRead>(
 /// Build the per-atom `symbol` column from `symbols` + `counts`. Each element
 /// symbol is repeated by its count, in declaration order. Empty if the file
 /// did not declare symbols (VASP4 format).
-pub fn expand_symbols(symbols: &[String], counts: &[usize]) -> Vec<String> {
+pub(crate) fn expand_symbols(symbols: &[String], counts: &[usize]) -> Vec<String> {
     let total: usize = counts.iter().sum();
     let mut out = Vec::with_capacity(total);
     for (sym, &cnt) in symbols.iter().zip(counts.iter()) {
@@ -392,10 +411,11 @@ Direct\n\
     }
 
     #[test]
-    fn fractional_to_cartesian_roundtrip() {
-        let cell = [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]];
-        let (cx, cy, cz) = fractional_to_cartesian(&[0.5], &[0.5], &[0.5], &cell);
-        assert_eq!((cx[0], cy[0], cz[0]), (1.0, 1.0, 1.0));
+    fn direct_rows_are_placed_through_the_cell() {
+        let mut reader = Cursor::new(POSCAR_BN.as_bytes());
+        let h = read_header(&mut reader, &mut 0).unwrap();
+        let (cx, cy, cz) = h.cartesian(&h.simbox().unwrap(), &[0.5], &[0.5], &[0.5]);
+        assert_eq!((cx[0], cy[0], cz[0]), (1.25, 1.25, 1.25));
     }
 
     #[test]

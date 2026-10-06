@@ -61,6 +61,7 @@
 //! # }
 //! ```
 
+use crate::io::invalid_data;
 use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::streaming::{BinaryFrameScanner, FrameIndexBuilder, FrameIndexEntry};
 use crate::io::trajectory::xdr;
@@ -80,10 +81,6 @@ use std::sync::OnceLock;
 const TRR_MAGIC: i32 = 1993;
 const TRR_VERSION: &str = "GMX_trn_file";
 const DIM: usize = 3;
-
-fn invalid<E: std::fmt::Display>(e: E) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-}
 
 fn unsupported<E: std::fmt::Display>(e: E) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::Unsupported, e.to_string())
@@ -146,14 +143,14 @@ fn detect_double(
     } else if f_size != 0 {
         f_size as usize / (natoms * DIM)
     } else {
-        return Err(invalid(
+        return Err(invalid_data(
             "TRR frame has no box/x/v/f block to infer precision",
         ));
     };
     match float_size {
         4 => Ok(false),
         8 => Ok(true),
-        other => Err(invalid(format!(
+        other => Err(invalid_data(format!(
             "cannot infer TRR precision: implied real size {other} bytes (expected 4 or 8)"
         ))),
     }
@@ -164,7 +161,7 @@ fn detect_double(
 fn read_header<R: Read>(r: &mut R) -> Result<TrrHeader> {
     let magic = xdr::read_i32(r)?;
     if magic != TRR_MAGIC {
-        return Err(invalid(format!(
+        return Err(invalid_data(format!(
             "bad TRR magic {magic} (expected {TRR_MAGIC})"
         )));
     }
@@ -192,7 +189,7 @@ fn read_header<R: Read>(r: &mut R) -> Result<TrrHeader> {
         ));
     }
     if natoms <= 0 {
-        return Err(invalid(format!("invalid TRR natoms {natoms}")));
+        return Err(invalid_data(format!("invalid_data TRR natoms {natoms}")));
     }
     let natoms = natoms as usize;
     for (name, size) in [
@@ -204,7 +201,7 @@ fn read_header<R: Read>(r: &mut R) -> Result<TrrHeader> {
         ("f", f_size),
     ] {
         if size < 0 {
-            return Err(invalid(format!("negative TRR {name}_size {size}")));
+            return Err(invalid_data(format!("negative TRR {name}_size {size}")));
         }
     }
 
@@ -243,15 +240,15 @@ fn read_reals<R: Read>(r: &mut R, count: usize, is_double: bool) -> Result<Vec<f
 fn build_simbox(vals: &[f64]) -> Result<SimBox> {
     let h = Array2::from_shape_fn((DIM, DIM), |(r, c)| vals[c * DIM + r] as F);
     let origin = array![0.0 as F, 0.0, 0.0];
-    SimBox::new(h, origin, [true; 3]).map_err(|e| invalid(format!("TRR box: {e:?}")))
+    SimBox::new(h, origin, [true; 3]).map_err(|e| invalid_data(format!("TRR box: {e:?}")))
 }
 
 fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
     let n = vals.len();
     let arr = Array1::from_vec(vals)
         .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid)?;
-    block.insert(key, arr).map_err(invalid)
+        .map_err(invalid_data)?;
+    block.insert(key, arr).map_err(invalid_data)
 }
 
 /// De-interleave an `rvec` block (`[x0,y0,z0, x1,y1,z1, …]`) into three axis
@@ -321,8 +318,8 @@ fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
     let mut atoms = Block::new();
     let id_arr = Array1::from_iter(1..=natoms as Idx)
         .into_shape_with_order(IxDyn(&[natoms]))
-        .map_err(invalid)?;
-    atoms.insert("id", id_arr).map_err(invalid)?;
+        .map_err(invalid_data)?;
+    atoms.insert("id", id_arr).map_err(invalid_data)?;
     if let Some(x) = &x {
         insert_rvec_cols(&mut atoms, x, natoms, "x", "y", "z", ANGSTROM_PER_NM)?;
     }
@@ -509,23 +506,25 @@ fn write_rvecs<W: Write>(w: &mut W, x: &[f64], y: &[f64], z: &[f64], scale: F) -
 fn scale_simbox(sb: SimBox, scale: F) -> Result<SimBox> {
     let h = sb.h_view().to_owned() * scale;
     let origin = sb.origin_view().to_owned() * scale;
-    SimBox::new(h, origin, sb.pbc()).map_err(|e| invalid(format!("TRR box scale: {e:?}")))
+    SimBox::new(h, origin, sb.pbc()).map_err(|e| invalid_data(format!("TRR box scale: {e:?}")))
 }
 
 /// Write one frame in single-precision TRR format.
 fn write_trr_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<()> {
     let natoms = frame
         .visit_block("atoms", |a| a.nrows().unwrap_or(0))
-        .ok_or_else(|| invalid("TRR write: frame has no atoms block"))?;
+        .ok_or_else(|| invalid_data("TRR write: frame has no atoms block"))?;
     if natoms == 0 {
-        return Err(invalid("TRR write: atoms block is empty"));
+        return Err(invalid_data("TRR write: atoms block is empty"));
     }
 
-    let xs = axis(frame, "x").ok_or_else(|| invalid("TRR write: atoms.x missing"))?;
-    let ys = axis(frame, "y").ok_or_else(|| invalid("TRR write: atoms.y missing"))?;
-    let zs = axis(frame, "z").ok_or_else(|| invalid("TRR write: atoms.z missing"))?;
+    let xs = axis(frame, "x").ok_or_else(|| invalid_data("TRR write: atoms.x missing"))?;
+    let ys = axis(frame, "y").ok_or_else(|| invalid_data("TRR write: atoms.y missing"))?;
+    let zs = axis(frame, "z").ok_or_else(|| invalid_data("TRR write: atoms.z missing"))?;
     if xs.len() != natoms || ys.len() != natoms || zs.len() != natoms {
-        return Err(invalid("TRR write: coordinate columns disagree on length"));
+        return Err(invalid_data(
+            "TRR write: coordinate columns disagree on length",
+        ));
     }
     let vel = match (axis(frame, "vx"), axis(frame, "vy"), axis(frame, "vz")) {
         (Some(a), Some(b), Some(c)) => Some((a, b, c)),
@@ -670,7 +669,7 @@ fn try_trr_frame_len(bytes: &[u8]) -> Result<Option<u32>> {
     }
     let magic = i32::from_be_bytes(bytes[0..4].try_into().unwrap());
     if magic != TRR_MAGIC {
-        return Err(invalid(format!(
+        return Err(invalid_data(format!(
             "bad TRR magic {magic} (expected {TRR_MAGIC})"
         )));
     }
@@ -686,7 +685,7 @@ fn try_trr_frame_len(bytes: &[u8]) -> Result<Option<u32>> {
     }
     u32::try_from(total)
         .map(Some)
-        .map_err(|_| invalid("TRR frame larger than 4 GiB"))
+        .map_err(|_| invalid_data("TRR frame larger than 4 GiB"))
 }
 
 /// Parse exactly one TRR frame from a tightly-bounded byte slice.

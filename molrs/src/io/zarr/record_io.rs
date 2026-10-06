@@ -62,7 +62,6 @@ use zarrs::storage::{
 use crate::io::mrec::FrameSequence;
 #[cfg(feature = "zarr")]
 use crate::io::mrec::{FrameSequenceWriter, SequenceSchema};
-#[cfg(feature = "ff")]
 use crate::io::zarr::forcefield_io::read_stored_forcefield_if_present;
 #[cfg(feature = "zarr")]
 use crate::io::zarr::forcefield_io::write_forcefield_group;
@@ -434,7 +433,7 @@ fn write_observables(
 /// `molrec_version` in `meta` is validated when present — it must be an integer
 /// in `1..=`[`crate::store::MOLREC_VERSION`]. A version-1 store, and one without the
 /// key (written before version 1), is converted section by section to the
-/// current version (`ff::forcefield::record_v1`) or refused; `meta` comes back
+/// current version (the reader's version-1 conversion) or refused; `meta` comes back
 /// as stored. Root sections this build does not interpret are ignored, never
 /// misread.
 ///
@@ -670,43 +669,12 @@ where
     if schema::read_version(meta)? == crate::store::MOLREC_VERSION {
         return Ok(None);
     }
-    #[cfg(feature = "ff")]
-    {
-        let stored = read_stored_forcefield_if_present(store, &join_path("/", FORCEFIELD_GROUP))?;
-        V1Upgrade::new(stored.as_ref()).map(Some)
-    }
-    #[cfg(not(feature = "ff"))]
-    {
-        let _ = store;
-        Err(MolRsError::validation(
-            "a molrec_version 1 record is read by converting its force-field \
-             parameters, which needs molrs's `ff` feature",
-        ))
-    }
+    let stored = read_stored_forcefield_if_present(store, &join_path("/", FORCEFIELD_GROUP))?;
+    V1Upgrade::new(stored.as_ref()).map(Some)
 }
 
-/// The version-1 conversion (`ff::forcefield::record_v1`).
-#[cfg(feature = "ff")]
-pub(in crate::io::zarr) use crate::ff::forcefield::record_v1::V1Upgrade;
-
-/// Without `ff` there is no version-1 conversion: [`read_upgrade`] refuses
-/// such a record, so no value of this type exists.
-#[cfg(not(feature = "ff"))]
-pub(in crate::io::zarr) enum V1Upgrade {}
-
-#[cfg(not(feature = "ff"))]
-impl V1Upgrade {
-    pub(in crate::io::zarr) fn forcefield(
-        &self,
-        _: &molrs::store::ForceFieldSection,
-    ) -> Result<molrs::store::ForceFieldSection, MolRsError> {
-        match *self {}
-    }
-
-    pub(in crate::io::zarr) fn frame(&self, _: &mut Frame) -> Result<(), MolRsError> {
-        match *self {}
-    }
-}
+/// The version-1 conversion ([`super::record_v1`]).
+pub(in crate::io::zarr) use super::record_v1::V1Upgrade;
 
 fn read_json_group(
     store: &ReadableWritableListableStorage,

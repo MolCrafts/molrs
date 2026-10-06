@@ -156,7 +156,7 @@ impl Snapshot {
     /// RDKit `isAtomConjugCand`.
     fn is_conjugation_candidate(&self, i: usize) -> bool {
         let atno = self.atno[i];
-        let minv = min_valence(atno);
+        let minv = default_valence(atno);
         if self.formal_charge[i] == 0 && minv >= 0 && self.total_valence(i) > minv {
             return false;
         }
@@ -256,21 +256,13 @@ fn nouter_elecs(atno: u8) -> Option<i32> {
     })
 }
 
-/// The first standard valence (RDKit `getValenceList().front()`), `-1` when
-/// the element has none.
-fn min_valence(atno: u8) -> i32 {
-    match atno {
-        1 | 3 | 11 | 19 | 9 | 17 | 35 | 53 => 1,
-        4 | 12 | 20 | 8 | 16 | 34 => 2,
-        5 | 13 | 7 | 15 | 33 => 3,
-        6 | 14 | 32 => 4,
-        _ => -1,
-    }
-}
-
-/// RDKit `getDefaultValence`; for these elements the first standard valence.
+/// The first standard valence (RDKit `getValenceList().front()`, which is
+/// also its `getDefaultValence`) from the one valence table,
+/// [`Element::default_valences`]; `-1` when the element has none.
 fn default_valence(atno: u8) -> i32 {
-    min_valence(atno)
+    Element::by_number(atno)
+        .and_then(|e| e.default_valences().first())
+        .map_or(-1, |&v| i32::from(v))
 }
 
 #[cfg(test)]

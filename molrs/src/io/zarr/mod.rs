@@ -97,6 +97,7 @@ mod frame_io;
 #[cfg(feature = "filesystem")]
 mod pack;
 mod record_io;
+mod record_v1;
 pub mod schema;
 mod sequence;
 #[cfg(feature = "filesystem")]

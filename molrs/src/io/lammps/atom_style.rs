@@ -396,13 +396,13 @@ pub(crate) fn layout_for_atom_style(style: &str) -> Option<AtomStyleLayout> {
 /// `min_cols`). Ambiguous counts that need a style comment (`body`/`sphere`
 /// at 7 cols) default to the most common molecular layouts.
 pub(crate) fn layout_from_column_count(n: usize) -> std::io::Result<AtomStyleLayout> {
-    use super::common::err_mapper;
+    use crate::io::invalid_data;
     match n {
         5 | 8 => Ok(layout(ATOMIC, false)),
         // charge vs molecular: disambiguated per-line by the data reader.
         6 | 9 => Ok(layout(CHARGE, false)),
         7 | 10 => Ok(layout(FULL, false)),
-        _ => Err(err_mapper(format!(
+        _ => Err(invalid_data(format!(
             "Invalid Atoms line: unsupported column count {n} without a known \
              atom_style comment (expected 5–10 for common styles, or a style \
              hint such as `Atoms # angle`)"

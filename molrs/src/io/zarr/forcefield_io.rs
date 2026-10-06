@@ -86,7 +86,6 @@ where
 /// # Errors
 ///
 /// A block group that fails to decode.
-#[cfg(feature = "ff")]
 pub(crate) fn read_stored_forcefield_if_present<S>(
     store: &Arc<S>,
     prefix: &str,

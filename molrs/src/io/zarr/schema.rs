@@ -5,7 +5,7 @@
 //! molrs runs on every `*.mrec` door: path suffix, the `meta` version key,
 //! and the reserved names. Writers always stamp the current `molrec_version`;
 //! readers validate it when present and read a version-1 store (or one
-//! without the key) through `ff::forcefield::record_v1`. Re-exported as
+//! without the key) through the reader's version-1 conversion. Re-exported as
 //! [`crate::io::mrec::schema`].
 
 use serde_json::{Map as JsonMap, Value as JsonValue};

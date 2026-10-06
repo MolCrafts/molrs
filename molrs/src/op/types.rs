@@ -3,8 +3,9 @@
 //! Three families live here:
 //!
 //! - The **F-prefix family** of ndarray-backed aliases over the scalar [`F`]
-//!   (always `f64`): `F3`, `F3x3`, `FN`, `FNx3` and their views — the API
-//!   types of the crate's column stores.
+//!   (always `f64`): [`F3`] (any `Array1<F>`), [`FNx3`] (any `Array2<F>`) and
+//!   their views — the API types of the crate's column stores. One name per
+//!   type: a 3×3 box matrix is an `FNx3`, an N-vector an `F3`.
 //! - The **non-float aliases** [`I`] (signed integer), [`Idx`] (an index or
 //!   stable identifier) and [`Pbc3`] (per-axis periodic flags).
 //! - The **stack aliases** [`Vec3`], [`Mat3`] and [`Quat`] that the `op`
@@ -24,20 +25,14 @@ use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
 /// through this project-wide alias.
 pub type F = f64;
 
-// ---- Fixed-size 3D types ----
+// ---- Owned arrays ----
 
-/// 3-element vector (position, velocity, force, displacement).
+/// An owned float vector: a 3-element position, velocity, force or
+/// displacement, or any N-element column.
 pub type F3 = Array1<F>;
 
-/// 3×3 matrix (box matrix, rotation, stress tensor).
-pub type F3x3 = Array2<F>;
-
-// ---- Variable-size types ----
-
-/// N-element vector.
-pub type FN = Array1<F>;
-
-/// N×3 matrix (collection of 3D vectors).
+/// An owned float matrix: N×3 (a collection of 3D vectors) or 3×3 (a box
+/// matrix, rotation or stress tensor).
 pub type FNx3 = Array2<F>;
 
 // ---- Views ----

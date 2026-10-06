@@ -1,7 +1,8 @@
 //! Antechamber `.ac` file reader (ATOM / BOND sections → Frame).
 
+use crate::io::invalid_data;
 use std::fs;
-use std::io::{Error, ErrorKind, Result};
+use std::io::Result;
 use std::path::Path;
 
 use ndarray::{Array1, IxDyn};
@@ -10,10 +11,6 @@ use molrs::op::types::{F, Idx};
 use molrs::store::Block;
 use molrs::store::Frame;
 use molrs::system::Element;
-
-fn invalid_data<E: std::fmt::Display>(e: E) -> Error {
-    Error::new(ErrorKind::InvalidData, e.to_string())
-}
 
 /// Read an Antechamber `.ac` file into a Frame.
 ///

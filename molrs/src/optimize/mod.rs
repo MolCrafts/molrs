@@ -1,10 +1,11 @@
 //! Geometry optimization of a [`Frame`].
 //!
 //! The optimizer contract lives here and is always compiled: the
-//! [`Optimizer`] trait, its [`OptReport`], the `atoms.free` mask
-//! ([`set_free_mask`]) and the force-field-agnostic L-BFGS engine
-//! ([`minimize_lbfgs_rms`]). A purely geometric optimizer (e.g. a packer's
-//! torsion Monte Carlo) implements [`Optimizer`] without enabling `ff`.
+//! [`Optimizer`] trait, its [`OptReport`] and the `atoms.free` mask
+//! ([`set_free_mask`]). A purely geometric optimizer (e.g. a packer's
+//! torsion Monte Carlo) implements [`Optimizer`] without enabling `ff`. The
+//! force-field-agnostic L-BFGS engine behind `LBFGS` is crate-internal; the
+//! ETKDG conformer stages drive it on their own distance-geometry energies.
 //!
 //! The optimizer that minimizes a force-field potential
 //! (`ff::potential::Potential`), `LBFGS`, is gated on `ff`. It is the one
@@ -13,6 +14,7 @@
 //! The dependency points one way: `optimize` consumes `ff`, never the
 //! reverse.
 
+#[cfg(feature = "ff")]
 mod lbfgs;
 #[cfg(feature = "ff")]
 mod potential;
@@ -26,7 +28,8 @@ use crate::store::keys::FREE;
 use crate::store::schema::block_names::ATOMS;
 use ndarray::Array1;
 
-pub use lbfgs::{MinResult, minimize_lbfgs_rms};
+#[cfg(feature = "conformer")]
+pub(crate) use lbfgs::{MinResult, minimize_lbfgs_rms};
 
 /// Outcome of a single minimization.
 #[derive(Clone, Copy, Debug, PartialEq)]

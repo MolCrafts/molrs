@@ -77,6 +77,6 @@ mod mulliken;
 
 pub use bcc::{BccModel, BccParameterSet};
 pub use error::ChargeError;
-pub use gasteiger::{GasteigerModel, compute_gasteiger_charges};
+pub use gasteiger::GasteigerModel;
 pub use model::ChargeModel;
 pub use mulliken::MullikenModel;

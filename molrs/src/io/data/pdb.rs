@@ -3,6 +3,7 @@
 //! Implements PDB 3.3 specification for coordinate section records:
 //! <https://www.wwpdb.org/documentation/file-format-content/format33/sect9.html>
 
+use crate::io::invalid_data;
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::writer::FrameWriter;
 use molrs::op::types::{F, I, Idx};
@@ -146,7 +147,7 @@ fn parse_atom_or_hetatm_impl(
     let serial = substr(line, 6, 11)
         .trim()
         .parse::<i32>()
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     let name_raw = substr(line, 12, 16);
     let name = name_raw.trim().to_string();
     let alt_loc = char_at(line, 16);
@@ -154,33 +155,33 @@ fn parse_atom_or_hetatm_impl(
     let chain_id = char_at(line, 21);
     let res_seq_str = substr(line, 22, 26).trim();
     if res_seq_str.is_empty() {
-        return Err(err_mapper("missing res_seq"));
+        return Err(invalid_data("missing res_seq"));
     }
-    let res_seq = res_seq_str.parse::<i32>().map_err(err_mapper)?;
+    let res_seq = res_seq_str.parse::<i32>().map_err(invalid_data)?;
     let i_code = char_at(line, 26);
     let x = substr(line, 30, 38)
         .trim()
         .parse::<f32>()
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     let y = substr(line, 38, 46)
         .trim()
         .parse::<f32>()
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     let z = substr(line, 46, 54)
         .trim()
         .parse::<f32>()
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
 
     // Optional fields
     let occupancy_str = substr(line, 54, 60).trim();
     let occupancy = if occupancy_str.is_empty() {
         1.0
     } else {
-        occupancy_str.parse::<f32>().map_err(err_mapper)?
+        occupancy_str.parse::<f32>().map_err(invalid_data)?
     };
     // make sure occupancy is between 0 and 1
     if !(0.0..=1.0).contains(&occupancy) {
-        return Err(err_mapper(
+        return Err(invalid_data(
             "occupancy out of range (0.0 - 1.0) in ".to_string() + line,
         ));
     }
@@ -188,11 +189,11 @@ fn parse_atom_or_hetatm_impl(
     let temp_factor = if temp_factor_str.is_empty() {
         0.0
     } else {
-        temp_factor_str.parse::<f32>().map_err(err_mapper)?
+        temp_factor_str.parse::<f32>().map_err(invalid_data)?
     };
     // make sure temp_factor is non-negative
     if temp_factor < 0.0 {
-        return Err(err_mapper("temp_factor negative in ".to_string() + line));
+        return Err(invalid_data("temp_factor negative in ".to_string() + line));
     }
 
     // Element (columns 77-78, 0-indexed: 76-78): right-justified and upper
@@ -330,21 +331,21 @@ pub fn is_end(line: &str) -> bool {
 fn to_array_float(vec: Vec<F>, len: usize) -> std::io::Result<ndarray::ArrayD<F>> {
     Ok(Array1::from_vec(vec)
         .into_shape_with_order(IxDyn(&[len]))
-        .map_err(err_mapper)?
+        .map_err(invalid_data)?
         .into_dyn())
 }
 
 fn to_array_uint(vec: Vec<Idx>, len: usize) -> std::io::Result<ndarray::ArrayD<Idx>> {
     Ok(Array1::<Idx>::from_vec(vec)
         .into_shape_with_order(IxDyn(&[len]))
-        .map_err(err_mapper)?
+        .map_err(invalid_data)?
         .into_dyn())
 }
 
 fn to_array_string(vec: Vec<String>, len: usize) -> std::io::Result<ndarray::ArrayD<String>> {
     Ok(Array1::from_vec(vec)
         .into_shape_with_order(IxDyn(&[len]))
-        .map_err(err_mapper)?
+        .map_err(invalid_data)?
         .into_dyn())
 }
 
@@ -395,25 +396,25 @@ fn build_atoms_block(atoms: &[AtomRecord]) -> std::io::Result<(Block, String, Ha
     let mut block = Block::new();
     block
         .insert("x", to_array_float(x_vec, n)?)
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     block
         .insert("y", to_array_float(y_vec, n)?)
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     block
         .insert("z", to_array_float(z_vec, n)?)
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     block
         .insert("id", to_array_uint(ids_vec, n)?)
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     block
         .insert("element", to_array_string(elements, n)?)
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     block
         .insert("name", to_array_string(names, n)?)
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     block
         .insert("res_name", to_array_string(res_names, n)?)
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     // Emit the canonical `res_id` directly rather than a format-native
     // `res_seq` that something downstream renames: the rename would be a write
     // into a UInt key, so an Int column could not survive it anyway.
@@ -421,7 +422,7 @@ fn build_atoms_block(atoms: &[AtomRecord]) -> std::io::Result<(Block, String, Ha
         .iter()
         .map(|&v| {
             Idx::try_from(v).map_err(|_| {
-                err_mapper(format!(
+                invalid_data(format!(
                     "PDB residue sequence number {v} is negative; residue ids are unsigned"
                 ))
             })
@@ -429,22 +430,22 @@ fn build_atoms_block(atoms: &[AtomRecord]) -> std::io::Result<(Block, String, Ha
         .collect::<std::io::Result<_>>()?;
     block
         .insert("res_id", to_array_uint(res_ids, n)?)
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     block
         .insert("chain", to_array_string(chains, n)?)
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     block
         .insert("icode", to_array_string(icodes, n)?)
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     block
         .insert("altloc", to_array_string(altlocs, n)?)
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     block
         .insert("occupancy", to_array_float(occupancies, n)?)
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     block
         .insert("b_factor", to_array_float(b_factors, n)?)
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
 
     Ok((block, unique_elements, serial_map))
 }
@@ -505,10 +506,10 @@ fn build_bonds_block(
     let mut block = Block::new();
     block
         .insert("atomi", to_array_uint(i_indices, bn)?)
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     block
         .insert("atomj", to_array_uint(j_indices, bn)?)
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
 
     Ok(Some(block))
 }
@@ -550,10 +551,6 @@ fn build_frame(
     add_simbox_from_cryst1(&mut frame, cryst1);
 
     Ok(frame)
-}
-
-fn err_mapper<E: std::fmt::Display>(e: E) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
 }
 
 // ============================================================================
@@ -680,30 +677,30 @@ fn write_atom_conect_records<W: Write>(
     let x = frame
         .column("atoms", "x")
         .and_then(|c| c.as_float())
-        .ok_or_else(|| err_mapper("Missing 'x' column"))?;
+        .ok_or_else(|| invalid_data("Missing 'x' column"))?;
     let y = frame
         .column("atoms", "y")
         .and_then(|c| c.as_float())
-        .ok_or_else(|| err_mapper("Missing 'y' column"))?;
+        .ok_or_else(|| invalid_data("Missing 'y' column"))?;
     let z = frame
         .column("atoms", "z")
         .and_then(|c| c.as_float())
-        .ok_or_else(|| err_mapper("Missing 'z' column"))?;
+        .ok_or_else(|| invalid_data("Missing 'z' column"))?;
     let n = x
         .shape()
         .first()
         .copied()
-        .ok_or_else(|| err_mapper("Empty 'atoms' block"))?;
+        .ok_or_else(|| invalid_data("Empty 'atoms' block"))?;
 
     let x_slice = x
         .as_slice_memory_order()
-        .ok_or_else(|| err_mapper("Non-contiguous 'x' column"))?;
+        .ok_or_else(|| invalid_data("Non-contiguous 'x' column"))?;
     let y_slice = y
         .as_slice_memory_order()
-        .ok_or_else(|| err_mapper("Non-contiguous 'y' column"))?;
+        .ok_or_else(|| invalid_data("Non-contiguous 'y' column"))?;
     let z_slice = z
         .as_slice_memory_order()
-        .ok_or_else(|| err_mapper("Non-contiguous 'z' column"))?;
+        .ok_or_else(|| invalid_data("Non-contiguous 'z' column"))?;
 
     // Optional per-atom string columns (snake_case, as emitted by the reader).
     let owned_str = |col: &str| -> Vec<String> {
@@ -839,25 +836,25 @@ fn write_atom_conect_records<W: Write>(
                 let i_arr = bonds
                     .column("atomi")
                     .and_then(|c| c.as_uint())
-                    .ok_or_else(|| err_mapper("Bonds block missing 'atomi' column"))?;
+                    .ok_or_else(|| invalid_data("Bonds block missing 'atomi' column"))?;
                 let j_arr = bonds
                     .column("atomj")
                     .and_then(|c| c.as_uint())
-                    .ok_or_else(|| err_mapper("Bonds block missing 'atomj' column"))?;
+                    .ok_or_else(|| invalid_data("Bonds block missing 'atomj' column"))?;
 
                 let i_slice = i_arr
                     .as_slice_memory_order()
-                    .ok_or_else(|| err_mapper("Non-contiguous bonds 'atomi' column"))?;
+                    .ok_or_else(|| invalid_data("Non-contiguous bonds 'atomi' column"))?;
                 let j_slice = j_arr
                     .as_slice_memory_order()
-                    .ok_or_else(|| err_mapper("Non-contiguous bonds 'atomj' column"))?;
+                    .ok_or_else(|| invalid_data("Non-contiguous bonds 'atomj' column"))?;
 
                 let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
                 for b in 0..bn {
                     let idx_i = i_slice[b] as usize;
                     let idx_j = j_slice[b] as usize;
                     if idx_i >= n || idx_j >= n {
-                        return Err(err_mapper("Bond index out of range for atoms"));
+                        return Err(invalid_data("Bond index out of range for atoms"));
                     }
                     adj[idx_i].push(serials[idx_j]);
                     adj[idx_j].push(serials[idx_i]);

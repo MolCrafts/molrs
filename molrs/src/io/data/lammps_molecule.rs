@@ -12,8 +12,9 @@
 //! - meta: `format=lammps_molecule`, `source_format`, counts, optional
 //!   `title` / `units` / `center_of_mass` / `total_mass` / `inertia`
 
+use crate::io::invalid_data;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, BufWriter, Error, ErrorKind, Result, Write};
+use std::io::{BufRead, BufReader, BufWriter, Result, Write};
 use std::path::Path;
 
 use ndarray::{Array1, IxDyn};
@@ -28,10 +29,6 @@ use molrs::store::keys;
 /// The LAMMPS molecule JSON field naming the unit style. It is the file's
 /// vocabulary, not the frame's: the frame meta key is [`keys::UNITS`].
 const JSON_UNITS: &str = "units";
-
-fn invalid_data<E: std::fmt::Display>(e: E) -> Error {
-    Error::new(ErrorKind::InvalidData, e.to_string())
-}
 
 fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
     let n = vals.len();
@@ -1078,7 +1075,7 @@ Angles
         )
         .unwrap();
         let err = read_lammps_molecule(&path).expect_err("a numeric units must be refused");
-        assert_eq!(err.kind(), ErrorKind::InvalidData, "{err}");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData, "{err}");
         assert!(err.to_string().contains("units"), "{err}");
     }
 
@@ -1091,7 +1088,7 @@ Angles
         frame.meta.insert(keys::UNITS, MetaValue::I64(3));
         let err = write_lammps_molecule(dir.path().join("water.json"), &frame, "json")
             .expect_err("a non-string units meta must be refused");
-        assert_eq!(err.kind(), ErrorKind::InvalidData, "{err}");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData, "{err}");
         assert!(err.to_string().contains("units"), "{err}");
     }
 

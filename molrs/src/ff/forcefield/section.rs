@@ -40,7 +40,9 @@ use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use super::{ForceField, Params, SpecialBonds, Style};
 use crate::ff::ir::Registry;
 use molrs::store::EndpointKey;
-use molrs::store::forcefield_section::{ENDPOINT_COLUMNS, UNIT_QUANTITIES, unit_preset};
+use molrs::store::forcefield_section::{
+    ENDPOINT_COLUMNS, SECTION_PRESETS, UNIT_QUANTITIES, unit_preset,
+};
 use molrs::store::{Block, Column, DType};
 use molrs::store::{ForceFieldSection, style_block_name};
 
@@ -365,8 +367,9 @@ fn molrs_units(units: &JsonMap<String, JsonValue>) -> Result<String, String> {
         .collect();
     let states = |q: &str| stated.iter().any(|(i, _)| UNIT_QUANTITIES[*i] == q);
     if states("length") && states("energy") {
-        let matching: Vec<&str> = ["real", "metal", "si", "cgs", "electron", "micro", "nano"]
+        let matching: Vec<&str> = SECTION_PRESETS
             .into_iter()
+            .filter(|&name| name != "lj")
             .filter(|name| {
                 let table = unit_preset(name).expect("a preset");
                 stated.iter().all(|(i, unit)| table[*i] == Some(*unit))

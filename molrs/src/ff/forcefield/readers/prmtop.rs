@@ -28,20 +28,20 @@
 //! |------|------------------------|--------------|-------------|
 //! | Urey–Bradley | `CHARMM_UREY_BRADLEY*`: `K_ub·(r₁₃ − r_ub)²` per angle | `angle_style charmm` | every angle `angle charmm`: `k = TK`, `theta0`, `k_ub`, `r_ub` (0, 0 for an angle without one) |
 //! | Improper | `CHARMM_IMPROPER*`: `K_ψ·(ψ − ψ₀)²`, centre first | `improper_style harmonic` | `improper harmonic`: `k = K_ψ`, `chi0` in degrees, file order |
-//! | CMAP | `CHARMM_CMAP_*` (`CMAP_*` in an AMBER ff19SB file) | `fix cmap` | `cmap charmm`, one type per map ([`cmap_terms`]) |
+//! | CMAP | `CHARMM_CMAP_*` (`CMAP_*` in an AMBER ff19SB file) | `fix cmap` | `cmap charmm`, one type per map (`cmap_terms`) |
 //! | LJ | `LENNARD_JONES_ACOEF/BCOEF` + `LENNARD_JONES_14_ACOEF/BCOEF` | `lj/charmm/coul/charmm` | `lj/charmm`: `epsilon`, `sigma`, and `epsilon14`, `sigma14` with `one_four = "epsilon14"` when the 1-4 table differs |
 //! | Coulomb | `CHARGE` = `q·√332.0716` | `coul/charmm` | `coul/charmm`: `coulomb = 332.0716` |
 //!
 //! Refused by name: polarizable (`IPOL > 0`), 12-6-4 (`LENNARD_JONES_CCOEF`)
 //! and 10-12 hydrogen-bond (non-zero `HBOND_ACOEF/BCOEF`, a negative ICO)
-//! prmtops; a 1-4 row on a negative-`PN` chain ([`one_four_weights`]: sander
+//! prmtops; a 1-4 row on a negative-`PN` chain (`one_four_weights`: sander
 //! prices that pair once per chained term); two terms of one improper with
 //! one periodicity; a CHARMM improper with ψ₀ other than 0° or 180° (LAMMPS
 //! prices |ψ|); a Urey–Bradley term that is not on exactly one angle.
 //!
 //! Every phase within 0.004 rad of ±π is ±π exactly, as sander's `rdparm`
-//! takes it ([`amber_phase`]): tleap writes π as `3.14159400`. A type name
-//! that stands for two LJ classes or masses is split ([`atom_type_names`]).
+//! takes it (`amber_phase`): tleap writes π as `3.14159400`. A type name
+//! that stands for two LJ classes or masses is split (`atom_type_names`).
 //!
 //! Notes:
 //! - OpenMM multiplies Amber bond/angle `RK`/`TK` by 2 when loading into its ½k
@@ -60,16 +60,17 @@ use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::params::amber::{AMBER_SCEE, AMBER_SCNB};
 use crate::ff::potential::pair::lj_ab_to_sigma_epsilon;
-use crate::io::data::prmtop::parse_flag_sections;
-#[cfg(doc)]
-use crate::io::data::prmtop_tables::amber_phase;
+use crate::io::data::prmtop::{frame_from_sections, parse_flag_sections};
 use crate::io::data::prmtop_tables::{
-    TorsionTables, TorsionTerm, atom_type_names, canonical_terms, chamber_impropers,
-    chamber_urey_bradleys, cmap_terms, decode_torsions, is_chamber, one_four_weights, parse_tokens,
-    proper_type_names,
+    Tally, TorsionRow, TorsionTables, TorsionTerm, atom_number, atom_type_names, canonical_terms,
+    chamber_impropers, cmap_terms, decode_torsions, is_chamber, parse_tokens, proper_type_names,
+    section, table_value, tally, torsion_rows,
 };
 use crate::units::constants::{AMBER_COULOMB, CHARMM_COULOMB};
+use molrs::op::types::{F, Idx};
+use molrs::store::keys;
 use molrs::store::type_labels::TypeName;
+use molrs::store::{Block, Frame};
 
 /// `(sigma_Å, epsilon_kcal_per_mol)` of one LJ entry.
 type Lj = (f64, f64);
@@ -81,6 +82,41 @@ pub struct AmberPrmtopFfReader;
 impl AmberPrmtopFfReader {
     pub fn new() -> Self {
         Self
+    }
+
+    /// A whole AMBER system at `path`: the force field, and the structure
+    /// frame (`io::data::prmtop`'s) with its 1-4 pairs priced
+    /// ([`read_system_str`](Self::read_system_str)).
+    pub fn read_system(&self, path: &str) -> Result<(ForceField, Frame), String> {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("read {path}: {e}"))?;
+        self.read_system_str(&text)
+    }
+
+    /// A whole AMBER system: the force field, and the structure frame of
+    /// [`crate::io::data::prmtop`] plus a `pairs` block holding the 1-4 pairs
+    /// sander weighs otherwise than the field's `special_bonds` — a torsion
+    /// type whose `SCEE` / `SCNB` differ from the divisor most 1-4 rows carry
+    /// (GLYCAM beside ff14SB), a pair two rows list, a 1-4 pair no row lists
+    /// — each with its own `coul_scale` (Σ 1/SCEE) / `lj_scale` (Σ 1/SCNB)
+    /// where it differs, null where it agrees. No `pairs` block when every
+    /// pair agrees, or the file has no `SCEE_SCALE_FACTOR` /
+    /// `SCNB_SCALE_FACTOR` (pre-Amber-11). It is not a pair list: build the
+    /// full one with `ff::potential::intramolecular_pairs`, which keeps these
+    /// cells.
+    ///
+    /// # Errors
+    ///
+    /// What [`read_str`](ForceFieldReader::read_str) and the structure reader
+    /// refuse, and a 1-4 row on a bonded pair or an angle's ends (sander
+    /// prices that pair as 1-4, molrs excludes it).
+    pub fn read_system_str(&self, text: &str) -> Result<(ForceField, Frame), String> {
+        let sections = parse_flag_sections(text.as_bytes()).map_err(|e| e.to_string())?;
+        let ff = build_forcefield(&sections)?;
+        let mut frame = frame_from_sections(&sections).map_err(|e| e.to_string())?;
+        if let Some(pairs) = one_four_pairs(&sections, &frame)? {
+            frame.insert(molrs::store::schema::block_names::PAIRS, pairs);
+        }
+        Ok((ff, frame))
     }
 }
 
@@ -101,20 +137,6 @@ pub fn read_amber_prmtop_ff(path: impl AsRef<Path>) -> Result<ForceField, String
     let text = std::fs::read_to_string(path.as_ref())
         .map_err(|e| format!("read {}: {e}", path.as_ref().display()))?;
     AmberPrmtopFfReader::new().read_str(&text)
-}
-
-fn section_f64(sections: &HashMap<String, Vec<String>>, key: &str) -> Result<Vec<f64>, String> {
-    match sections.get(key) {
-        Some(lines) => parse_tokens(lines),
-        None => Ok(Vec::new()),
-    }
-}
-
-fn section_i64(sections: &HashMap<String, Vec<String>>, key: &str) -> Result<Vec<i64>, String> {
-    match sections.get(key) {
-        Some(lines) => parse_tokens(lines),
-        None => Ok(Vec::new()),
-    }
 }
 
 fn ico_entry(n_types: usize, iac_i: usize, iac_j: usize, nb_index: &[i64]) -> Result<i64, String> {
@@ -265,7 +287,7 @@ fn periodic_params(terms: &[TorsionTerm]) -> Params {
 }
 
 fn first_i64(sections: &HashMap<String, Vec<String>>, key: &str) -> Result<Option<i64>, String> {
-    Ok(section_i64(sections, key)?.first().copied())
+    Ok(section::<i64>(sections, key)?.first().copied())
 }
 
 /// What no force field here can hold, refused by name.
@@ -281,7 +303,7 @@ fn refuse_unsupported(sections: &HashMap<String, Vec<String>>) -> Result<(), Str
         );
     }
     for flag in ["HBOND_ACOEF", "HBOND_BCOEF"] {
-        if section_f64(sections, flag)?.iter().any(|&v| v != 0.0) {
+        if section::<f64>(sections, flag)?.iter().any(|&v| v != 0.0) {
             return Err(format!(
                 "10-12 interactions are not supported (%FLAG {flag} has a non-zero entry)"
             ));
@@ -318,7 +340,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     let atom_types = atom_type_names(sections, n_atom)?;
     let type_name = |atom: usize| atom_types.get(atom).map(String::as_str).unwrap_or_default();
 
-    let masses: Vec<f64> = section_f64(sections, "MASS")?;
+    let masses: Vec<f64> = section::<f64>(sections, "MASS")?;
     let type_index: Vec<i64> = parse_tokens(
         sections
             .get("ATOM_TYPE_INDEX")
@@ -353,10 +375,10 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     // Bonds: one type per endpoint type pair in `TypeName::orient`'s spelling;
     // k = RK (AMBER's and LAMMPS's K). Every bond row defines its type, so two
     // rows under one name with different k/r0 are a TypeConflict.
-    let bond_k = section_f64(sections, "BOND_FORCE_CONSTANT")?;
-    let bond_r0 = section_f64(sections, "BOND_EQUIL_VALUE")?;
-    let mut bond_ptrs = section_i64(sections, "BONDS_INC_HYDROGEN")?;
-    bond_ptrs.extend(section_i64(sections, "BONDS_WITHOUT_HYDROGEN")?);
+    let bond_k = section::<f64>(sections, "BOND_FORCE_CONSTANT")?;
+    let bond_r0 = section::<f64>(sections, "BOND_EQUIL_VALUE")?;
+    let mut bond_ptrs = section::<i64>(sections, "BONDS_INC_HYDROGEN")?;
+    bond_ptrs.extend(section::<i64>(sections, "BONDS_WITHOUT_HYDROGEN")?);
     {
         let style = def(&mut ff, "bond", "harmonic", Params::new())?;
         for chunk in bond_ptrs.as_chunks::<3>().0 {
@@ -384,10 +406,10 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     // Angles: k = TK; theta0 radians in prmtop → degrees. As for bonds, every
     // angle row defines its type. A chamber file's angles are CHARMM's, each
     // with its Urey–Bradley term (0, 0 without one): `angle charmm`.
-    let angle_k = section_f64(sections, "ANGLE_FORCE_CONSTANT")?;
-    let angle_eq = section_f64(sections, "ANGLE_EQUIL_VALUE")?;
-    let mut angle_ptrs = section_i64(sections, "ANGLES_INC_HYDROGEN")?;
-    angle_ptrs.extend(section_i64(sections, "ANGLES_WITHOUT_HYDROGEN")?);
+    let angle_k = section::<f64>(sections, "ANGLE_FORCE_CONSTANT")?;
+    let angle_eq = section::<f64>(sections, "ANGLE_EQUIL_VALUE")?;
+    let mut angle_ptrs = section::<i64>(sections, "ANGLES_INC_HYDROGEN")?;
+    angle_ptrs.extend(section::<i64>(sections, "ANGLES_WITHOUT_HYDROGEN")?);
     let mut angles: Vec<([usize; 3], i64)> = Vec::with_capacity(angle_ptrs.len() / 4);
     for chunk in angle_ptrs.as_chunks::<4>().0 {
         let (a, b, c) = (chunk[0], chunk[1], chunk[2]);
@@ -434,11 +456,11 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     // atom quartet (and each row's negative-PN chain) are one torsion; every
     // torsion defines its type; a further distinct set of terms on one
     // quartet is the type `<quartet>@<n>` (`proper_type_names`).
-    let dih_k = section_f64(sections, "DIHEDRAL_FORCE_CONSTANT")?;
-    let dih_phase = section_f64(sections, "DIHEDRAL_PHASE")?;
-    let dih_per = section_f64(sections, "DIHEDRAL_PERIODICITY")?;
-    let mut dih_ptrs = section_i64(sections, "DIHEDRALS_INC_HYDROGEN")?;
-    dih_ptrs.extend(section_i64(sections, "DIHEDRALS_WITHOUT_HYDROGEN")?);
+    let dih_k = section::<f64>(sections, "DIHEDRAL_FORCE_CONSTANT")?;
+    let dih_phase = section::<f64>(sections, "DIHEDRAL_PHASE")?;
+    let dih_per = section::<f64>(sections, "DIHEDRAL_PERIODICITY")?;
+    let mut dih_ptrs = section::<i64>(sections, "DIHEDRALS_INC_HYDROGEN")?;
+    dih_ptrs.extend(section::<i64>(sections, "DIHEDRALS_WITHOUT_HYDROGEN")?);
     let tables = TorsionTables {
         k: &dih_k,
         periodicity: &dih_per,
@@ -448,8 +470,8 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
 
     // 1-4: the divisor most 1-4 rows carry is the field's weight; the frame
     // reader gives the pairs whose rows carry another their own scales.
-    let scee = section_f64(sections, "SCEE_SCALE_FACTOR")?;
-    let scnb = section_f64(sections, "SCNB_SCALE_FACTOR")?;
+    let scee = section::<f64>(sections, "SCEE_SCALE_FACTOR")?;
+    let scnb = section::<f64>(sections, "SCNB_SCALE_FACTOR")?;
     // A file without SCEE/SCNB (pre-Amber-11) is an AMBER force field's.
     let one_four = one_four_weights(
         &dih_ptrs,
@@ -521,13 +543,13 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     // index = ICO[NTYPES*(IAC(i)-1) + IAC(j)] (1-based Fortran).
     // No pair style gets a `cutoff`: a prmtop carries none (it lives in the
     // mdin), so the caller declares it.
-    let nb_index = section_i64(sections, "NONBONDED_PARM_INDEX")?;
-    let acoef = section_f64(sections, "LENNARD_JONES_ACOEF")?;
-    let bcoef = section_f64(sections, "LENNARD_JONES_BCOEF")?;
+    let nb_index = section::<i64>(sections, "NONBONDED_PARM_INDEX")?;
+    let acoef = section::<f64>(sections, "LENNARD_JONES_ACOEF")?;
+    let bcoef = section::<f64>(sections, "LENNARD_JONES_BCOEF")?;
     let regular = read_lj_table(n_types, &nb_index, &acoef, &bcoef)?;
     if chamber {
-        let a14 = section_f64(sections, "LENNARD_JONES_14_ACOEF")?;
-        let b14 = section_f64(sections, "LENNARD_JONES_14_BCOEF")?;
+        let a14 = section::<f64>(sections, "LENNARD_JONES_14_ACOEF")?;
+        let b14 = section::<f64>(sections, "LENNARD_JONES_14_BCOEF")?;
         // The 1-4 table matters only where it differs from the regular one.
         let distinct = !(a14.is_empty() && b14.is_empty())
             && !(same_table(&a14, &acoef) && same_table(&b14, &bcoef));
@@ -591,12 +613,278 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
     Ok(ff)
 }
 
+/// AMBER's 1-4 pairs and their weights.
+///
+/// sander prices the 1-4 pair `(i, l)` of every proper torsion row whose
+/// 3rd pointer is not negative, once per row (never an improper's, whatever
+/// its 3rd pointer — checked with sander), at `1/SCEE` (Coulomb) and `1/SCNB`
+/// (van der Waals) of the row's type. `coul` / `lj` are the force field's
+/// `special_bonds` 1-4 weights: the reciprocal of the divisor most rows
+/// carry (the first such value on a tie). `pairs` maps each 1-4 pair
+/// `(lo, hi)` (0-based) to its summed `(coul, lj)` weight.
+#[derive(Debug, Clone, PartialEq)]
+struct OneFourWeights {
+    coul: f64,
+    lj: f64,
+    pairs: std::collections::BTreeMap<(usize, usize), (f64, f64)>,
+}
+
+/// [`OneFourWeights`] of the torsion rows `pointers`.
+///
+/// A file without `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR` (pre-Amber-11)
+/// states no divisors; they are then its force field's. `default` is the
+/// `(SCEE, SCNB)` the caller assumes for such a file (the force field takes
+/// AMBER's, `ff::params::amber`); with `None` the weights of such a file —
+/// and the field weights of a file with no 1-4 row — are unknown,
+/// `Ok(None)` (the per-pair rows assume nothing).
+///
+/// # Errors
+///
+/// A 1-4 row whose type has no divisor or a non-positive one, naming the
+/// flag and the type; and a 1-4 row whose
+/// type continues a multi-term chain (negative periodicity), on which sander
+/// prices the 1-4 pair once per chained term and with a Coulomb factor
+/// inconsistent with its other 1-4 pairs — no force field holds that.
+fn one_four_weights(
+    pointers: &[i64],
+    n_atoms: usize,
+    scee: &[f64],
+    scnb: &[f64],
+    periodicity: &[f64],
+    default: Option<(f64, f64)>,
+) -> Result<Option<OneFourWeights>, String> {
+    let rows: Vec<TorsionRow> = torsion_rows(pointers, n_atoms)?
+        .into_iter()
+        .filter(|r| !r.exclude_14 && !r.improper)
+        .collect();
+    let divisor = |values: &[f64], flag: &str, tid: i64, default: Option<f64>| {
+        if values.is_empty() {
+            return Ok(default);
+        }
+        let v = usize::try_from(tid - 1)
+            .ok()
+            .and_then(|i| values.get(i).copied())
+            .ok_or_else(|| format!("{flag} type {tid} is out of range"))?;
+        if v <= 0.0 {
+            return Err(format!("{flag} type {tid} has non-positive divisor {v}"));
+        }
+        Ok(Some(v))
+    };
+    let mut pairs = std::collections::BTreeMap::new();
+    // How many 1-4 rows carry each SCEE / SCNB divisor.
+    let (mut ce, mut cn): (Vec<Tally>, Vec<Tally>) = (Vec::new(), Vec::new());
+    for row in &rows {
+        let [i, _, _, l] = row.atoms;
+        let chained = usize::try_from(row.tid - 1)
+            .ok()
+            .and_then(|i| periodicity.get(i))
+            .is_some_and(|&pn| pn < 0.0);
+        if chained {
+            return Err(format!(
+                "dihedral type {} continues a multi-term chain (negative periodicity) on a row \
+                 with a 1-4 pair (atoms {} and {}): sander prices that pair once per chained term \
+                 and at a Coulomb factor unlike its other 1-4 pairs, which no force field holds",
+                row.tid,
+                i + 1,
+                l + 1
+            ));
+        }
+        let e = divisor(scee, "SCEE_SCALE_FACTOR", row.tid, default.map(|d| d.0))?;
+        let n = divisor(scnb, "SCNB_SCALE_FACTOR", row.tid, default.map(|d| d.1))?;
+        let (Some(e), Some(n)) = (e, n) else {
+            return Ok(None);
+        };
+        tally(&mut ce, e);
+        tally(&mut cn, n);
+        let w = pairs.entry((i.min(l), i.max(l))).or_insert((0.0, 0.0));
+        w.0 += 1.0 / e;
+        w.1 += 1.0 / n;
+    }
+    let dominant = |c: &[Tally], default: Option<f64>| {
+        c.iter()
+            .fold(None::<Tally>, |best, &(v, n)| match best {
+                Some((_, m)) if m >= n => best,
+                _ => Some((v, n)),
+            })
+            .map(|(v, _)| v)
+            .or(default)
+    };
+    let (Some(e), Some(n)) = (
+        dominant(&ce, default.map(|d| d.0)),
+        dominant(&cn, default.map(|d| d.1)),
+    ) else {
+        return Ok(None);
+    };
+    Ok(Some(OneFourWeights {
+        coul: 1.0 / e,
+        lj: 1.0 / n,
+        pairs,
+    }))
+}
+
+/// A chamber Urey–Bradley term: the angle's end atoms (0-based), `K_ub`
+/// (kcal/mol/Å², no ½) and `r_ub` (Å).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct UreyBradley {
+    ends: (usize, usize),
+    k_ub: f64,
+    r_ub: f64,
+}
+
+/// `CHARMM_UREY_BRADLEY` (atom, atom, type; 1-based atom numbers) with its
+/// force-constant and equilibrium tables; empty when the file has none.
+fn chamber_urey_bradleys(
+    sections: &HashMap<String, Vec<String>>,
+    n_atoms: usize,
+) -> Result<Vec<UreyBradley>, String> {
+    const FLAG: &str = "CHARMM_UREY_BRADLEY";
+    let rows: Vec<i64> = section(sections, FLAG)?;
+    let k: Vec<f64> = section(sections, "CHARMM_UREY_BRADLEY_FORCE_CONSTANT")?;
+    let r: Vec<f64> = section(sections, "CHARMM_UREY_BRADLEY_EQUIL_VALUE")?;
+    if !rows.len().is_multiple_of(3) {
+        return Err(format!(
+            "%FLAG {FLAG} has {} entries, not triples",
+            rows.len()
+        ));
+    }
+    rows.as_chunks::<3>()
+        .0
+        .iter()
+        .map(|&[i, j, t]| {
+            Ok(UreyBradley {
+                ends: (
+                    atom_number(FLAG, i, n_atoms)?,
+                    atom_number(FLAG, j, n_atoms)?,
+                ),
+                k_ub: table_value("CHARMM_UREY_BRADLEY_FORCE_CONSTANT", &k, t)?,
+                r_ub: table_value("CHARMM_UREY_BRADLEY_EQUIL_VALUE", &r, t)?,
+            })
+        })
+        .collect()
+}
+
+/// The `pairs` rows of [`AmberPrmtopFfReader::read_system_str`]: the 1-4
+/// pairs of `frame` (the structure reader's) whose summed sander weight
+/// differs from the field's (`one_four_weights`); `None` when none does.
+///
+/// sander prices a pair at full weight unless `EXCLUDED_ATOMS_LIST` names it,
+/// plus `1/SCEE`, `1/SCNB` of its type for every torsion row that lists it as
+/// its 1-4 pair. For the 1-4 pairs of the topology (the end atoms of a
+/// proper, neither bonded nor an angle's ends) that sum is the pair's
+/// weight. A 1-4 row on a bonded pair or an angle's ends is an `Err`: molrs
+/// excludes those pairs.
+fn one_four_pairs(
+    sections: &HashMap<String, Vec<String>>,
+    frame: &Frame,
+) -> Result<Option<Block>, String> {
+    use std::collections::{BTreeMap, HashSet};
+    let n_atoms = frame.get("atoms").and_then(|b| b.nrows()).unwrap_or(0);
+    let mut dihe_ptrs = section::<i64>(sections, "DIHEDRALS_INC_HYDROGEN")?;
+    dihe_ptrs.extend(section::<i64>(sections, "DIHEDRALS_WITHOUT_HYDROGEN")?);
+    // No divisors in the file (pre-Amber-11): no pair is priced on its own.
+    let Some(weights) = one_four_weights(
+        &dihe_ptrs,
+        n_atoms,
+        &section::<f64>(sections, "SCEE_SCALE_FACTOR")?,
+        &section::<f64>(sections, "SCNB_SCALE_FACTOR")?,
+        &section::<f64>(sections, "DIHEDRAL_PERIODICITY")?,
+        None,
+    )?
+    else {
+        return Ok(None);
+    };
+    let key = |a: Idx, b: Idx| (a.min(b) as usize, a.max(b) as usize);
+    // The (first, last) atom pairs of a frame block's rows.
+    let ends = |block: &str, last: &str| -> Vec<(usize, usize)> {
+        let Some(b) = frame.get(block) else {
+            return Vec::new();
+        };
+        match (
+            b.get(keys::ATOMI).and_then(|c| c.as_uint()),
+            b.get(last).and_then(|c| c.as_uint()),
+        ) {
+            (Some(i), Some(j)) => i.iter().zip(j.iter()).map(|(&a, &b)| key(a, b)).collect(),
+            _ => Vec::new(),
+        }
+    };
+    let close: HashSet<(usize, usize)> = ends("bonds", keys::ATOMJ)
+        .into_iter()
+        .chain(ends("angles", keys::ATOMK))
+        .collect();
+    if let Some(&(i, j)) = weights.pairs.keys().find(|p| close.contains(p)) {
+        return Err(format!(
+            "atoms {} and {} are a torsion's 1-4 pair (a non-negative 3rd pointer) and \
+             also bonded or an angle's ends: sander prices that pair as 1-4, molrs \
+             excludes it",
+            i + 1,
+            j + 1
+        ));
+    }
+    let excluded: Option<HashSet<(usize, usize)>> = frame
+        .get("exclusions")
+        .map(|_| ends("exclusions", keys::ATOMJ).into_iter().collect());
+    let mut topology_14: BTreeMap<(usize, usize), (F, F)> = BTreeMap::new();
+    for pair in ends("dihedrals", keys::ATOML) {
+        if close.contains(&pair) {
+            continue;
+        }
+        let (coul, lj) = weights.pairs.get(&pair).copied().unwrap_or((0.0, 0.0));
+        // Without an exclusion list every such pair is taken as excluded.
+        let full = match &excluded {
+            Some(set) if !set.contains(&pair) => 1.0,
+            _ => 0.0,
+        };
+        topology_14.insert(pair, (coul + full, lj + full));
+    }
+    let differs = |a: F, b: F| (a - b).abs() > 1e-12 * a.abs().max(b.abs()).max(1.0);
+    let rows: Vec<((usize, usize), (F, F))> = topology_14
+        .into_iter()
+        .filter(|&(_, (c, l))| differs(c, weights.coul) || differs(l, weights.lj))
+        .collect();
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let column_err = |e: molrs::store::BlockError| e.to_string();
+    let mut block = Block::new();
+    for (column, pick) in [(keys::ATOMI, 0usize), (keys::ATOMJ, 1usize)] {
+        let ids: Vec<Idx> = rows
+            .iter()
+            .map(|r| if pick == 0 { r.0.0 } else { r.0.1 } as Idx)
+            .collect();
+        block
+            .insert(column, ndarray::Array1::from_vec(ids).into_dyn())
+            .map_err(column_err)?;
+    }
+    block
+        .insert(
+            keys::IS_14,
+            ndarray::Array1::from_vec(vec![true; rows.len()]).into_dyn(),
+        )
+        .map_err(column_err)?;
+    for (column, pick, field) in [
+        ("coul_scale", 0usize, weights.coul),
+        ("lj_scale", 1usize, weights.lj),
+    ] {
+        let values: Vec<F> = rows
+            .iter()
+            .map(|r| if pick == 0 { r.1.0 } else { r.1.1 })
+            .collect();
+        let valid: Vec<bool> = values.iter().map(|&v| differs(v, field)).collect();
+        if valid.iter().any(|&v| v) {
+            block
+                .insert_nullable(column, ndarray::Array1::from_vec(values).into_dyn(), valid)
+                .map_err(column_err)?;
+        }
+    }
+    Ok(Some(block))
+}
+
 /// The Urey–Bradley `(k_ub, r_ub)` of each angle: the chamber term whose two
 /// atoms are its end atoms. A term on no angle, or on the ends of two (a
 /// four-membered ring), has no `angle charmm` form and is an `Err`.
 fn urey_bradley_of_angles(
     angles: &[([usize; 3], i64)],
-    terms: &[crate::io::data::prmtop_tables::UreyBradley],
+    terms: &[UreyBradley],
 ) -> Result<Vec<Option<(f64, f64)>>, String> {
     let mut by_ends: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
     for (n, (atoms, _)) in angles.iter().enumerate() {
@@ -727,6 +1015,163 @@ fn def_lj_charmm(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The structure frame of `text` with the `pairs` rows
+    /// [`AmberPrmtopFfReader::read_system_str`] adds (the test prmtops hold
+    /// no LJ tables, so the force field itself is not read).
+    fn read_system(text: &str) -> Frame {
+        let sections = parse_flag_sections(text.as_bytes()).unwrap();
+        let mut frame = frame_from_sections(&sections).unwrap();
+        if let Some(pairs) = one_four_pairs(&sections, &frame).unwrap() {
+            frame.insert("pairs", pairs);
+        }
+        frame
+    }
+
+    use crate::io::data::prmtop::tests::chain5_prmtop;
+
+    /// SCEE = SCNB = 1 on every 1-4 row of a chamber file: uniform, no `pairs`.
+    #[test]
+    fn a_uniform_chamber_file_has_no_pairs() {
+        let (_, frame) = AmberPrmtopFfReader::new()
+            .read_system_str(CHAMBER_MINI)
+            .unwrap();
+        assert!(frame.get("pairs").is_none());
+    }
+
+    /// [`chain5_prmtop`] with the dihedral tables and SCEE/SCNB: type 1
+    /// (1.2 / 2.0) and type 2 (`scee2` / `scnb2`).
+    fn chain5_scaled(torsions: &str, scee2: &str, scnb2: &str) -> String {
+        chain5_prmtop(torsions)
+            + &format!(
+                "\
+%FLAG DIHEDRAL_FORCE_CONSTANT
+%FORMAT(5E16.8)
+  1.00000000E+00  1.00000000E+00
+%FLAG DIHEDRAL_PERIODICITY
+%FORMAT(5E16.8)
+  3.00000000E+00  2.00000000E+00
+%FLAG DIHEDRAL_PHASE
+%FORMAT(5E16.8)
+  0.00000000E+00  0.00000000E+00
+%FLAG SCEE_SCALE_FACTOR
+%FORMAT(5E16.8)
+  1.20000000E+00  {scee2}
+%FLAG SCNB_SCALE_FACTOR
+%FORMAT(5E16.8)
+  2.00000000E+00  {scnb2}
+"
+            )
+    }
+
+    /// The `(atomi, atomj, coul_scale, lj_scale)` of each `pairs` row, a null
+    /// cell as `None`.
+    fn pair_scales(frame: &Frame) -> Vec<(Idx, Idx, Option<F>, Option<F>)> {
+        let pairs = frame.get("pairs").expect("pairs");
+        let ai = pairs.get("atomi").unwrap().as_uint().unwrap();
+        let aj = pairs.get("atomj").unwrap().as_uint().unwrap();
+        let cell = |k: &str, r: usize| -> Option<F> {
+            let col = pairs.get(k)?;
+            if pairs.validity(k).is_some_and(|m| !m[r]) {
+                return None;
+            }
+            Some(col.as_float().unwrap()[[r]])
+        };
+        (0..ai.len())
+            .map(|r| (ai[[r]], aj[[r]], cell("coul_scale", r), cell("lj_scale", r)))
+            .collect()
+    }
+
+    /// Two 1-4 pairs, (0, 3) at type 1's 1.2 / 2.0 and (1, 4) at type 2's
+    /// 1.0 / 1.0: the field takes the first divisor on the tie, and the
+    /// frame's `pairs` carry the other pair's own weights.
+    #[test]
+    fn a_non_uniform_scee_gives_the_odd_pairs_their_scales() {
+        let text = chain5_scaled(
+            "       0       3       6       9       1       3       6       9      12       2",
+            "1.00000000E+00",
+            "1.00000000E+00",
+        );
+        let frame = read_system(&text);
+        assert_eq!(pair_scales(&frame), vec![(1, 4, Some(1.0), Some(1.0))]);
+        let flags = frame.get("pairs").unwrap().get("is_14").unwrap();
+        assert!(flags.as_bool().unwrap().iter().all(|&f| f));
+    }
+
+    /// Only the weight that differs gets a cell: SCNB 2.0 on both types.
+    #[test]
+    fn a_pair_carries_only_the_scale_that_differs() {
+        let text = chain5_scaled(
+            "       0       3       6       9       1       3       6       9      12       2",
+            "1.00000000E+00",
+            "2.00000000E+00",
+        );
+        assert_eq!(
+            pair_scales(&read_system(&text)),
+            vec![(1, 4, Some(1.0), None)]
+        );
+    }
+
+    /// A 1-4 pair two rows list is priced twice by sander: its scales are the
+    /// sum; a 1-4 pair of the topology no row lists (every row's 3rd pointer
+    /// negative, no exclusion list) is priced at 0.
+    #[test]
+    fn listed_twice_sums_and_listed_never_is_zero() {
+        let text = chain5_scaled(
+            "       0       3       6       9       1       0       3       6       9       1\n       3       6      -9      12       1",
+            "1.20000000E+00",
+            "2.00000000E+00",
+        );
+        let got = pair_scales(&read_system(&text));
+        assert_eq!(got.len(), 2);
+        let (i, j, c, l) = got[0];
+        assert_eq!((i, j), (0, 3));
+        assert!((c.unwrap() - 2.0 / 1.2).abs() < 1e-15 && (l.unwrap() - 1.0).abs() < 1e-15);
+        assert_eq!(got[1], (1, 4, Some(0.0), Some(0.0)));
+    }
+
+    /// Three 1-4 rows: two at type 2 (1.0 / 1.0), one at type 1 (1.2 / 2.0).
+    /// The field's weights are type 2's, the majority; each pair's summed
+    /// weight is its rows'.
+    #[test]
+    fn one_four_weights_take_the_majority_divisor() {
+        // Atoms 0..6; rows (0,3) type 1, (1,4) type 2, (2,5) type 2.
+        let rows = [0, 3, 6, 9, 1, 3, 6, 9, 12, 2, 6, 9, 12, 15, 2];
+        let w = one_four_weights(&rows, 6, &[1.2, 1.0], &[2.0, 1.0], &[3.0, 2.0], None)
+            .unwrap()
+            .unwrap();
+        assert_eq!((w.coul, w.lj), (1.0, 1.0));
+        assert_eq!(w.pairs[&(0, 3)], (1.0 / 1.2, 0.5));
+        assert_eq!(w.pairs[&(1, 4)], (1.0, 1.0));
+        assert_eq!(w.pairs.len(), 3);
+    }
+
+    /// No SCEE/SCNB section: the divisors are the caller's `default`, and
+    /// unknown without one. An improper's row and a suppressed row (negative
+    /// 3rd pointer) list no 1-4 pair.
+    #[test]
+    fn one_four_weights_default_and_skip_impropers() {
+        let rows = [
+            0, 3, 6, 9, 1, 0, 3, -6, 9, 1, 0, 3, -6, -9, 1, 0, 3, 6, -9, 1,
+        ];
+        assert_eq!(one_four_weights(&rows, 4, &[], &[], &[2.0], None), Ok(None));
+        let w = one_four_weights(&rows, 4, &[], &[], &[2.0], Some((1.2, 2.0)))
+            .unwrap()
+            .unwrap();
+        assert_eq!((w.coul, w.lj), (1.0 / 1.2, 0.5));
+        assert_eq!(w.pairs.len(), 1);
+        assert_eq!(w.pairs[&(0, 3)], (1.0 / 1.2, 0.5));
+    }
+
+    #[test]
+    fn one_four_weights_refuse_a_chained_1_4_row_and_a_zero_divisor() {
+        let rows = [0, 3, 6, 9, 1];
+        let err =
+            one_four_weights(&rows, 4, &[1.2, 1.2], &[2.0, 2.0], &[-3.0, 2.0], None).unwrap_err();
+        assert!(err.contains("multi-term chain"), "{err}");
+        let err = one_four_weights(&rows, 4, &[0.0], &[2.0], &[3.0], None).unwrap_err();
+        assert!(err.contains("SCEE_SCALE_FACTOR type 1"), "{err}");
+    }
 
     #[test]
     fn empty_prmtop_errors() {

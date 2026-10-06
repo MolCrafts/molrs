@@ -354,6 +354,24 @@ impl UnitPreset {
         )
     }
 
+    /// The built-in preset `name` — a LAMMPS `units` style, or `openmm` —
+    /// as its constructor builds it; `None` for any other name. Unlike
+    /// [`lookup_preset`], never a preset registered or replaced at run time.
+    pub fn builtin(name: &str) -> Option<Self> {
+        Some(match name {
+            "real" => Self::real(),
+            "metal" => Self::metal(),
+            "si" => Self::si(),
+            "cgs" => Self::cgs(),
+            "electron" => Self::electron(),
+            "lj" => Self::lj(),
+            "micro" => Self::micro(),
+            "nano" => Self::nano(),
+            "openmm" => Self::openmm(),
+            _ => return None,
+        })
+    }
+
     /// Preset name (`"real"`, `"metal"`, …).
     pub fn name(&self) -> &str {
         &self.name
@@ -425,19 +443,11 @@ impl UnitPresetRegistry {
     /// lj, micro and nano, plus openmm.
     pub fn new() -> Self {
         let mut reg = Self::empty();
-        for p in [
-            UnitPreset::real(),
-            UnitPreset::metal(),
-            UnitPreset::si(),
-            UnitPreset::cgs(),
-            UnitPreset::electron(),
-            UnitPreset::lj(),
-            UnitPreset::micro(),
-            UnitPreset::nano(),
-            UnitPreset::openmm(),
+        for name in [
+            "real", "metal", "si", "cgs", "electron", "lj", "micro", "nano", "openmm",
         ] {
-            let name = p.name().to_owned();
-            reg.inner.insert(name, p);
+            let p = UnitPreset::builtin(name).expect("a built-in preset");
+            reg.inner.insert(name.to_owned(), p);
         }
         reg
     }

@@ -9,14 +9,12 @@
 //! into computational [`Potential`](super::potential::Potential) objects by
 //! [`PotentialCompiler`](super::potential::PotentialCompiler).
 
-pub mod lammps_codecs;
+pub(crate) mod lammps_codecs;
 pub mod lammps_units;
 pub mod mixing;
 pub mod one_four;
 pub mod param_columns;
 pub mod readers;
-#[cfg(feature = "zarr")]
-pub(crate) mod record_v1;
 pub mod section;
 pub mod torsion;
 pub mod writers;

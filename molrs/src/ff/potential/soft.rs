@@ -26,8 +26,10 @@ use std::sync::Mutex;
 
 use ndarray::ArrayView2;
 
+use crate::ff::potential::geometry::sub3;
 use crate::ff::potential::{Potential, end_pairs};
 use molrs::op::types::F;
+use molrs::op::vec3::norm;
 use molrs::spatial::neighbors::NeighborQuery;
 use molrs::spatial::{Mic, SimBox};
 use molrs::store::Frame;
@@ -123,7 +125,7 @@ impl SoftPotential {
     fn springs(&self, coords: &[F], ends: &[(usize, usize)]) -> Vec<Spring> {
         ends.iter()
             .map(|&(i, j)| {
-                let raw = sub(coords, i, j);
+                let raw = sub3(coords, i, coords, j);
                 let d = self.mic.apply(raw);
                 let shift = [raw[0] - d[0], raw[1] - d[1], raw[2] - d[2]];
                 (i, j, norm(d), shift)
@@ -147,7 +149,7 @@ impl SoftPotential {
                 if i == j || self.spec.excluded.contains(&(i.min(j), i.max(j))) {
                     return None;
                 }
-                let raw = sub(coords, i, j);
+                let raw = sub3(coords, i, coords, j);
                 let d = self.mic.apply(raw);
                 Some((i, j, [raw[0] - d[0], raw[1] - d[1], raw[2] - d[2]]))
             })
@@ -222,14 +224,6 @@ impl Potential for SoftPotential {
         }
         (e, forces)
     }
-}
-
-fn sub(coords: &[F], i: usize, j: usize) -> [F; 3] {
-    disp(coords, i, j, [0.0; 3])
-}
-
-fn norm(d: [F; 3]) -> F {
-    (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
 }
 
 /// `x_i − x_j − shift`.

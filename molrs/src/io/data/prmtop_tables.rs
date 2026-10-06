@@ -74,7 +74,7 @@ pub(crate) fn parse_a4_names(lines: &[String]) -> Vec<String> {
 
 /// Whether a section map is a chamber (CHARMM) prmtop: it has a `CTITLE`
 /// where an AMBER prmtop has a `TITLE` (ParmEd's and sander's own test).
-pub fn is_chamber(sections: &HashMap<String, Vec<String>>) -> bool {
+pub(crate) fn is_chamber(sections: &HashMap<String, Vec<String>>) -> bool {
     sections.contains_key("CTITLE")
 }
 
@@ -89,7 +89,7 @@ pub fn is_chamber(sections: &HashMap<String, Vec<String>>) -> bool {
 /// `~<n>` appended (n = 1, 2, … in order of appearance) where one class still
 /// carries two masses: one type per distinct atom, as the file's tables have
 /// them.
-pub fn atom_type_names(
+pub(crate) fn atom_type_names(
     sections: &HashMap<String, Vec<String>>,
     n_atoms: usize,
 ) -> Result<Vec<String>, String> {
@@ -136,7 +136,7 @@ pub fn atom_type_names(
 
 /// The prefix of a file's CMAP sections: `CHARMM_CMAP_*` in a chamber
 /// prmtop, `CMAP_*` in an AMBER one (ff19SB), `None` without CMAP terms.
-pub fn cmap_prefix(sections: &HashMap<String, Vec<String>>) -> Option<&'static str> {
+pub(crate) fn cmap_prefix(sections: &HashMap<String, Vec<String>>) -> Option<&'static str> {
     if sections.contains_key("CHARMM_CMAP_INDEX") {
         Some("CHARMM_")
     } else if sections.contains_key("CMAP_INDEX") {
@@ -149,7 +149,7 @@ pub fn cmap_prefix(sections: &HashMap<String, Vec<String>>) -> Option<&'static s
 /// One cosine term `k·[1 + cos(n·φ − phase)]` of a prmtop torsion; `phase`
 /// in radians, as the file stores it.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TorsionTerm {
+pub(crate) struct TorsionTerm {
     pub k: f64,
     pub periodicity: f64,
     pub phase: f64,
@@ -157,7 +157,7 @@ pub struct TorsionTerm {
 
 /// The dihedral parameter tables a torsion row's type id points into.
 #[derive(Debug, Clone, Copy)]
-pub struct TorsionTables<'a> {
+pub(crate) struct TorsionTables<'a> {
     pub k: &'a [f64],
     pub periodicity: &'a [f64],
     pub phase: &'a [f64],
@@ -201,7 +201,7 @@ impl TorsionTables<'_> {
 /// cosine terms in row order (empty without parameter tables); `exclude_14`
 /// is set when every merged row's 3rd pointer was negative.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Torsion {
+pub(crate) struct Torsion {
     pub atoms: [usize; 4],
     pub improper: bool,
     pub exclude_14: bool,
@@ -256,7 +256,7 @@ impl Torsion {
 /// the quartet's distinct sets from 2 in order of appearance; the first keeps
 /// the bare name. Term sets are compared in a canonical order, so rows
 /// written in another order are one set.
-pub fn proper_type_names(
+pub(crate) fn proper_type_names(
     torsions: &[Torsion],
     atom_types: &[String],
 ) -> Result<Vec<Option<String>>, String> {
@@ -288,7 +288,7 @@ pub fn proper_type_names(
 
 /// `terms` in one canonical order — by periodicity, then phase, then k — so
 /// two torsions with the same terms in a different row order compare equal.
-pub fn canonical_terms(terms: &[TorsionTerm]) -> Vec<TorsionTerm> {
+pub(crate) fn canonical_terms(terms: &[TorsionTerm]) -> Vec<TorsionTerm> {
     let mut out = terms.to_vec();
     out.sort_by(|a, b| {
         a.periodicity
@@ -311,7 +311,7 @@ fn integral_periodicity(n: f64, what: &str) -> Result<i64, String> {
 /// exactly (sander's `rdparm`, `abs(phase − π) ≤ 4·10⁻³`). tleap writes π as
 /// `3.14159400E+00`; taken as written, every such term is off by 1.3·10⁻⁶ rad
 /// and a sine term appears that the force field does not have.
-pub fn amber_phase(phase: f64) -> f64 {
+pub(crate) fn amber_phase(phase: f64) -> f64 {
     if (phase.abs() - std::f64::consts::PI).abs() <= 4e-3 {
         std::f64::consts::PI.copysign(phase)
     } else {
@@ -321,14 +321,14 @@ pub fn amber_phase(phase: f64) -> f64 {
 
 /// One prmtop torsion row, decoded: 0-based atoms in file order.
 #[derive(Debug, Clone, Copy)]
-struct TorsionRow {
-    atoms: [usize; 4],
-    improper: bool,
-    exclude_14: bool,
-    tid: i64,
+pub(crate) struct TorsionRow {
+    pub(crate) atoms: [usize; 4],
+    pub(crate) improper: bool,
+    pub(crate) exclude_14: bool,
+    pub(crate) tid: i64,
 }
 
-fn torsion_rows(pointers: &[i64], n_atoms: usize) -> Result<Vec<TorsionRow>, String> {
+pub(crate) fn torsion_rows(pointers: &[i64], n_atoms: usize) -> Result<Vec<TorsionRow>, String> {
     if !pointers.len().is_multiple_of(5) {
         return Err(format!(
             "dihedral pointer length {} not multiple of 5",
@@ -366,7 +366,7 @@ fn torsion_rows(pointers: &[i64], n_atoms: usize) -> Result<Vec<TorsionRow>, Str
 /// (`pointers`, concatenated), one per atom quartet ([`Torsion`]), in the
 /// order of each quartet's first row. With `tables`, each row's type id is
 /// expanded through its multi-term chain into the torsion's `terms`.
-pub fn decode_torsions(
+pub(crate) fn decode_torsions(
     pointers: &[i64],
     atom_types: &[String],
     tables: Option<TorsionTables<'_>>,
@@ -406,115 +406,6 @@ pub fn decode_torsions(
     Ok(out)
 }
 
-/// AMBER's 1-4 pairs and their weights.
-///
-/// sander prices the 1-4 pair `(i, l)` of every proper torsion row whose
-/// 3rd pointer is not negative, once per row (never an improper's, whatever
-/// its 3rd pointer — checked with sander), at `1/SCEE` (Coulomb) and `1/SCNB`
-/// (van der Waals) of the row's type. `coul` / `lj` are the force field's
-/// `special_bonds` 1-4 weights: the reciprocal of the divisor most rows
-/// carry (the first such value on a tie). `pairs` maps each 1-4 pair
-/// `(lo, hi)` (0-based) to its summed `(coul, lj)` weight.
-#[derive(Debug, Clone, PartialEq)]
-pub struct OneFourWeights {
-    pub coul: f64,
-    pub lj: f64,
-    pub pairs: std::collections::BTreeMap<(usize, usize), (f64, f64)>,
-}
-
-/// [`OneFourWeights`] of the torsion rows `pointers`.
-///
-/// A file without `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR` (pre-Amber-11)
-/// states no divisors; they are then its force field's, which this structure
-/// layer does not know. `default` is the `(SCEE, SCNB)` the caller assumes
-/// for such a file (the force-field reader passes AMBER's,
-/// `ff::params::amber`); with `None` the weights of such a file — and the
-/// field weights of a file with no 1-4 row — are unknown, `Ok(None)`.
-///
-/// # Errors
-///
-/// A 1-4 row whose type has no divisor or a non-positive one, naming the
-/// flag and the type; and a 1-4 row whose
-/// type continues a multi-term chain (negative periodicity), on which sander
-/// prices the 1-4 pair once per chained term and with a Coulomb factor
-/// inconsistent with its other 1-4 pairs — no force field holds that.
-pub fn one_four_weights(
-    pointers: &[i64],
-    n_atoms: usize,
-    scee: &[f64],
-    scnb: &[f64],
-    periodicity: &[f64],
-    default: Option<(f64, f64)>,
-) -> Result<Option<OneFourWeights>, String> {
-    let rows: Vec<TorsionRow> = torsion_rows(pointers, n_atoms)?
-        .into_iter()
-        .filter(|r| !r.exclude_14 && !r.improper)
-        .collect();
-    let divisor = |values: &[f64], flag: &str, tid: i64, default: Option<f64>| {
-        if values.is_empty() {
-            return Ok(default);
-        }
-        let v = usize::try_from(tid - 1)
-            .ok()
-            .and_then(|i| values.get(i).copied())
-            .ok_or_else(|| format!("{flag} type {tid} is out of range"))?;
-        if v <= 0.0 {
-            return Err(format!("{flag} type {tid} has non-positive divisor {v}"));
-        }
-        Ok(Some(v))
-    };
-    let mut pairs = std::collections::BTreeMap::new();
-    // How many 1-4 rows carry each SCEE / SCNB divisor.
-    let (mut ce, mut cn): (Vec<Tally>, Vec<Tally>) = (Vec::new(), Vec::new());
-    for row in &rows {
-        let [i, _, _, l] = row.atoms;
-        let chained = usize::try_from(row.tid - 1)
-            .ok()
-            .and_then(|i| periodicity.get(i))
-            .is_some_and(|&pn| pn < 0.0);
-        if chained {
-            return Err(format!(
-                "dihedral type {} continues a multi-term chain (negative periodicity) on a row \
-                 with a 1-4 pair (atoms {} and {}): sander prices that pair once per chained term \
-                 and at a Coulomb factor unlike its other 1-4 pairs, which no force field holds",
-                row.tid,
-                i + 1,
-                l + 1
-            ));
-        }
-        let e = divisor(scee, "SCEE_SCALE_FACTOR", row.tid, default.map(|d| d.0))?;
-        let n = divisor(scnb, "SCNB_SCALE_FACTOR", row.tid, default.map(|d| d.1))?;
-        let (Some(e), Some(n)) = (e, n) else {
-            return Ok(None);
-        };
-        tally(&mut ce, e);
-        tally(&mut cn, n);
-        let w = pairs.entry((i.min(l), i.max(l))).or_insert((0.0, 0.0));
-        w.0 += 1.0 / e;
-        w.1 += 1.0 / n;
-    }
-    let dominant = |c: &[Tally], default: Option<f64>| {
-        c.iter()
-            .fold(None::<Tally>, |best, &(v, n)| match best {
-                Some((_, m)) if m >= n => best,
-                _ => Some((v, n)),
-            })
-            .map(|(v, _)| v)
-            .or(default)
-    };
-    let (Some(e), Some(n)) = (
-        dominant(&ce, default.map(|d| d.0)),
-        dominant(&cn, default.map(|d| d.1)),
-    ) else {
-        return Ok(None);
-    };
-    Ok(Some(OneFourWeights {
-        coul: 1.0 / e,
-        lj: 1.0 / n,
-        pairs,
-    }))
-}
-
 /// The tokens of section `flag`, parsed as `T`; empty when it is absent.
 pub(crate) fn section<T: std::str::FromStr>(
     sections: &HashMap<String, Vec<String>>,
@@ -531,7 +422,7 @@ where
 
 /// A 1-based atom number of a chamber section as a 0-based index, checked
 /// against `n_atoms`.
-fn atom_number(flag: &str, v: i64, n_atoms: usize) -> Result<usize, String> {
+pub(crate) fn atom_number(flag: &str, v: i64, n_atoms: usize) -> Result<usize, String> {
     usize::try_from(v - 1)
         .ok()
         .filter(|&a| a < n_atoms)
@@ -539,59 +430,18 @@ fn atom_number(flag: &str, v: i64, n_atoms: usize) -> Result<usize, String> {
 }
 
 /// The value of a 1-based parameter index into a table.
-fn table_value(flag: &str, table: &[f64], index: i64) -> Result<f64, String> {
+pub(crate) fn table_value(flag: &str, table: &[f64], index: i64) -> Result<f64, String> {
     usize::try_from(index - 1)
         .ok()
         .and_then(|i| table.get(i).copied())
         .ok_or_else(|| format!("%FLAG {flag} has no parameter {index}"))
 }
 
-/// A chamber Urey–Bradley term: the angle's end atoms (0-based), `K_ub`
-/// (kcal/mol/Å², no ½) and `r_ub` (Å).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct UreyBradley {
-    pub ends: (usize, usize),
-    pub k_ub: f64,
-    pub r_ub: f64,
-}
-
-/// `CHARMM_UREY_BRADLEY` (atom, atom, type; 1-based atom numbers) with its
-/// force-constant and equilibrium tables; empty when the file has none.
-pub fn chamber_urey_bradleys(
-    sections: &HashMap<String, Vec<String>>,
-    n_atoms: usize,
-) -> Result<Vec<UreyBradley>, String> {
-    const FLAG: &str = "CHARMM_UREY_BRADLEY";
-    let rows: Vec<i64> = section(sections, FLAG)?;
-    let k: Vec<f64> = section(sections, "CHARMM_UREY_BRADLEY_FORCE_CONSTANT")?;
-    let r: Vec<f64> = section(sections, "CHARMM_UREY_BRADLEY_EQUIL_VALUE")?;
-    if !rows.len().is_multiple_of(3) {
-        return Err(format!(
-            "%FLAG {FLAG} has {} entries, not triples",
-            rows.len()
-        ));
-    }
-    rows.as_chunks::<3>()
-        .0
-        .iter()
-        .map(|&[i, j, t]| {
-            Ok(UreyBradley {
-                ends: (
-                    atom_number(FLAG, i, n_atoms)?,
-                    atom_number(FLAG, j, n_atoms)?,
-                ),
-                k_ub: table_value("CHARMM_UREY_BRADLEY_FORCE_CONSTANT", &k, t)?,
-                r_ub: table_value("CHARMM_UREY_BRADLEY_EQUIL_VALUE", &r, t)?,
-            })
-        })
-        .collect()
-}
-
 /// A chamber CHARMM improper `K_psi·(psi − psi0)²`: its atoms (0-based, in
 /// file order, CHARMM's centre first), `K_psi` (kcal/mol/rad², no ½) and
 /// `psi0` (radians).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CharmmImproper {
+pub(crate) struct CharmmImproper {
     pub atoms: [usize; 4],
     pub k: f64,
     pub psi0: f64,
@@ -600,7 +450,7 @@ pub struct CharmmImproper {
 /// `CHARMM_IMPROPERS` (four 1-based atom numbers and a type) with
 /// `CHARMM_IMPROPER_FORCE_CONSTANT` / `CHARMM_IMPROPER_PHASE`; empty when the
 /// file has none.
-pub fn chamber_impropers(
+pub(crate) fn chamber_impropers(
     sections: &HashMap<String, Vec<String>>,
     n_atoms: usize,
 ) -> Result<Vec<CharmmImproper>, String> {
@@ -641,7 +491,7 @@ pub fn chamber_impropers(
 /// its third (Cα) atom, `<types>@<residue>`. `maps` holds each name's grid
 /// (row-major `N × N`, the file's order) once.
 #[derive(Debug, Clone, PartialEq)]
-pub struct CmapTerms {
+pub(crate) struct CmapTerms {
     /// Five 0-based atoms per crossterm.
     pub atoms: Vec<[usize; 5]>,
     /// The type name of each crossterm.
@@ -657,7 +507,7 @@ pub struct CmapTerms {
 /// parameter-file order: φ-major from −180° (element `i·N + j` at
 /// φ = −180° + i·360°/N, ψ = −180° + j·360°/N) — molrs's and LAMMPS's
 /// layout, taken as it is.
-pub fn cmap_terms(
+pub(crate) fn cmap_terms(
     sections: &HashMap<String, Vec<String>>,
     atom_types: &[String],
 ) -> Result<Option<CmapTerms>, String> {
@@ -791,10 +641,10 @@ fn residue_labels(
 }
 
 /// A value and how many times it was seen.
-type Tally = (f64, usize);
+pub(crate) type Tally = (f64, usize);
 
 /// Count `v` in `counts` (values equal to 1e-6 relative are one value).
-fn tally(counts: &mut Vec<Tally>, v: f64) {
+pub(crate) fn tally(counts: &mut Vec<Tally>, v: f64) {
     match counts
         .iter_mut()
         .find(|(u, _)| (u - v).abs() <= 1e-6 * u.abs().max(v.abs()))
@@ -861,49 +711,6 @@ mod tests {
                 "hc-c3-ca-ca"
             ]
         );
-    }
-
-    /// Three 1-4 rows: two at type 2 (1.0 / 1.0), one at type 1 (1.2 / 2.0).
-    /// The field's weights are type 2's, the majority; each pair's summed
-    /// weight is its rows'.
-    #[test]
-    fn one_four_weights_take_the_majority_divisor() {
-        // Atoms 0..6; rows (0,3) type 1, (1,4) type 2, (2,5) type 2.
-        let rows = [0, 3, 6, 9, 1, 3, 6, 9, 12, 2, 6, 9, 12, 15, 2];
-        let w = one_four_weights(&rows, 6, &[1.2, 1.0], &[2.0, 1.0], &[3.0, 2.0], None)
-            .unwrap()
-            .unwrap();
-        assert_eq!((w.coul, w.lj), (1.0, 1.0));
-        assert_eq!(w.pairs[&(0, 3)], (1.0 / 1.2, 0.5));
-        assert_eq!(w.pairs[&(1, 4)], (1.0, 1.0));
-        assert_eq!(w.pairs.len(), 3);
-    }
-
-    /// No SCEE/SCNB section: the divisors are the caller's `default`, and
-    /// unknown without one. An improper's row and a suppressed row (negative
-    /// 3rd pointer) list no 1-4 pair.
-    #[test]
-    fn one_four_weights_default_and_skip_impropers() {
-        let rows = [
-            0, 3, 6, 9, 1, 0, 3, -6, 9, 1, 0, 3, -6, -9, 1, 0, 3, 6, -9, 1,
-        ];
-        assert_eq!(one_four_weights(&rows, 4, &[], &[], &[2.0], None), Ok(None));
-        let w = one_four_weights(&rows, 4, &[], &[], &[2.0], Some((1.2, 2.0)))
-            .unwrap()
-            .unwrap();
-        assert_eq!((w.coul, w.lj), (1.0 / 1.2, 0.5));
-        assert_eq!(w.pairs.len(), 1);
-        assert_eq!(w.pairs[&(0, 3)], (1.0 / 1.2, 0.5));
-    }
-
-    #[test]
-    fn one_four_weights_refuse_a_chained_1_4_row_and_a_zero_divisor() {
-        let rows = [0, 3, 6, 9, 1];
-        let err =
-            one_four_weights(&rows, 4, &[1.2, 1.2], &[2.0, 2.0], &[-3.0, 2.0], None).unwrap_err();
-        assert!(err.contains("multi-term chain"), "{err}");
-        let err = one_four_weights(&rows, 4, &[0.0], &[2.0], &[3.0], None).unwrap_err();
-        assert!(err.contains("SCEE_SCALE_FACTOR type 1"), "{err}");
     }
 
     #[test]

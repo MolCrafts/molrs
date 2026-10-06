@@ -20,7 +20,6 @@
 use std::io::Cursor;
 use std::path::Path;
 
-use crate::ff::forcefield::readers::ForceFieldReader;
 use crate::ff::forcefield::readers::prmtop::AmberPrmtopFfReader;
 use crate::ff::forcefield::writers::ForceFieldWriter;
 use crate::ff::forcefield::{ForceField, Params};
@@ -30,7 +29,6 @@ use crate::ff::{
 };
 use molrs::io::data::inpcrd::read_amber_inpcrd_from_reader;
 use molrs::io::data::lammps_data::write_lammps_data;
-use molrs::io::data::prmtop::read_amber_prmtop_from_reader;
 use molrs::op::types::F;
 use molrs::spatial::SimBox;
 use molrs::store::Frame;
@@ -267,11 +265,9 @@ const CUTOFF: F = 60.0;
 
 /// `case`'s frame (with its full pair list), force field and coordinates.
 fn system(case: &Case) -> (Frame, ForceField, Vec<F>) {
-    let mut frame = read_amber_prmtop_from_reader(Cursor::new(case.parm.as_bytes()))
-        .unwrap_or_else(|e| panic!("{}: frame: {e}", case.name));
-    let mut ff = AmberPrmtopFfReader::new()
-        .read_str(case.parm)
-        .unwrap_or_else(|e| panic!("{}: force field: {e}", case.name));
+    let (mut ff, mut frame) = AmberPrmtopFfReader::new()
+        .read_system_str(case.parm)
+        .unwrap_or_else(|e| panic!("{}: system: {e}", case.name));
     // A prmtop states no cutoff; the CHARMM styles need theirs declared.
     for name in ["lj/charmm", "coul/charmm"] {
         if let Some(style) = ff.get_style_mut("pair", name) {
@@ -279,7 +275,7 @@ fn system(case: &Case) -> (Frame, ForceField, Vec<F>) {
             style.set_param("cutoff", CUTOFF);
         }
     }
-    // The full pair list (keeping the frame reader's per-pair 1-4 scales),
+    // The full pair list (keeping the system reader's per-pair 1-4 scales),
     // then the field's 1-4 pricing on it: a chamber file's `one_four =
     // "epsilon14"` 1-4 pairs need their ε₁₄/σ₁₄ as override cells.
     let pairs = intramolecular_pairs(&frame, ff.special_bonds())

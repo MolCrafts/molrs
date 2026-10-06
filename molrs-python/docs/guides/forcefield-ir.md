@@ -272,8 +272,8 @@ parameters:
 
 **Per-pair exceptions LAMMPS cannot express** — a GROMACS `[ pairs ]` row
 with explicit parameters, an OpenMM `NonbondedForce` exception, an AMBER
-dihedral whose `SCEE`/`SCNB` differ from the field's (the prmtop frame
-reader writes them, see [AMBER prmtop](#amber-prmtop)) — are per-instance
+dihedral whose `SCEE`/`SCNB` differ from the field's (the force-field
+reader's `read_system` writes them, see [AMBER prmtop](#amber-prmtop)) — are per-instance
 float columns on the
 Frame's `pairs` block, the rows the pair kernels already price (`atomi`,
 `atomj`, `is_14`):
@@ -732,7 +732,7 @@ CTITLE`) reads through the same pair.
 | `LENNARD_JONES_ACOEF/BCOEF` via ICO | `lj/cut` (`lj/charmm` in a chamber file) self rows; a cross row where the entry is not Lorentz–Berthelot (NBFIX) |
 | `LENNARD_JONES_14_ACOEF/BCOEF` (chamber) | `lj/charmm` `epsilon14` / `sigma14` (cross rows where not Lorentz–Berthelot) and `one_four = "epsilon14"` when the table differs from the regular one |
 | `CHARGE` | ÷ 18.2223, `coul/cut` at 332.0522173; ÷ √332.0716 and `coul/charmm` at 332.0716 in a chamber file |
-| `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR` per torsion type | `special_bonds` 1-4 = 1/divisor most 1-4 rows carry; the frame's `pairs` give every 1-4 pair weighted otherwise its `coul_scale` / `lj_scale` |
+| `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR` per torsion type | `special_bonds` 1-4 = 1/divisor most 1-4 rows carry; the frame `AmberPrmtopFfReader::read_system` returns has `pairs` giving every 1-4 pair weighted otherwise its `coul_scale` / `lj_scale` |
 | `AMBER_ATOM_TYPE` | the type name; `<name>~<class>` where one name stands for two LJ classes or masses (a chamber file cuts CHARMM's types to four characters) |
 
 sander prices a 1-4 pair once per proper row whose 3rd pointer is not

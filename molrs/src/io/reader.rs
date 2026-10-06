@@ -349,13 +349,6 @@ pub fn open_streaming<P: AsRef<Path>>(path: P) -> Result<Box<dyn BufRead>> {
     }
 }
 
-/// Open a file with automatic gzip detection based on extension.
-///
-/// This is a compatibility wrapper that returns a seekable reader.
-pub fn open_file<P: AsRef<Path>>(path: P) -> Result<Box<dyn ReadSeek>> {
-    open_seekable(path)
-}
-
 /// Check a freshly-read frame against the Frame schema.
 ///
 /// Every [`FrameReader::read`] returns through this. The report names

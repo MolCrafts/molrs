@@ -7,15 +7,16 @@
 //! Atoms are streamed straight into typed column buffers (no intermediate
 //! per-atom struct), which cuts peak memory on large systems.
 
+use crate::io::invalid_data;
 use crate::io::lammps::atom_style::{
     AtomStyleLayout, DataField, field_column_key, infer_write_style, is_int_token,
     is_noninteger_float_token, layout_for_atom_style, layout_from_column_count,
     normalize_atom_style, parse_atoms_style_hint,
 };
 use crate::io::lammps::box_bounds::{BoxBounds, simbox_from_bounds};
-use crate::io::lammps::common::{
-    OptCol, TypeRef, err_mapper, insert_f, insert_i, insert_str, insert_u, invert_type_labels,
-    labels_to_meta, parse_f, parse_i, tokenize,
+use crate::io::lammps::columns::{OptCol, insert_f, insert_i, insert_str, insert_u};
+use crate::io::lammps::fields::{
+    TypeRef, invert_type_labels, labels_to_meta, parse_f, parse_i, tokenize,
 };
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::streaming::{FrameIndexBuilder, FrameIndexEntry};
@@ -386,7 +387,7 @@ fn push_atom_line(
     let n = tokens.len();
     let min = layout.min_cols();
     if n < min {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "Invalid Atoms line: expected at least {min} columns, got {n}"
         )));
     }
@@ -414,7 +415,7 @@ fn push_atom_line(
             None
         }
     } else {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "Invalid Atoms line: got {n} columns, layout expects {min} or {} \
              (with image flags)",
             min + 3
@@ -486,13 +487,13 @@ fn push_atom_line(
     }
 
     if !got_id || !got_type || !got_x {
-        return Err(err_mapper(
+        return Err(invalid_data(
             "Invalid atom style layout: missing id, type, or x field",
         ));
     }
     // y/z must match x length
     if cols.y.len() != cols.x.len() || cols.z.len() != cols.x.len() {
-        return Err(err_mapper("Invalid Atoms line: incomplete xyz"));
+        return Err(invalid_data("Invalid Atoms line: incomplete xyz"));
     }
 
     match image {
@@ -555,7 +556,7 @@ fn parse_header_with_first_section<R: BufRead>(
             continue;
         }
         let bad_count = |e: std::num::ParseIntError| {
-            err_mapper(format!("Invalid LAMMPS data header line `{trimmed}`: {e}"))
+            invalid_data(format!("Invalid LAMMPS data header line `{trimmed}`: {e}"))
         };
         match tokens.as_slice() {
             [n, "atoms", ..] => header.num_atoms = n.parse().map_err(bad_count)?,
@@ -597,28 +598,28 @@ fn parse_header_with_first_section<R: BufRead>(
                 n.parse::<usize>().map_err(bad_count)?;
             }
             [lo, hi, "xlo", "xhi", ..] => {
-                header.bounds.xlo = lo.parse().map_err(err_mapper)?;
-                header.bounds.xhi = hi.parse().map_err(err_mapper)?;
+                header.bounds.xlo = lo.parse().map_err(invalid_data)?;
+                header.bounds.xhi = hi.parse().map_err(invalid_data)?;
                 header.bounds.has_x = true;
             }
             [lo, hi, "ylo", "yhi", ..] => {
-                header.bounds.ylo = lo.parse().map_err(err_mapper)?;
-                header.bounds.yhi = hi.parse().map_err(err_mapper)?;
+                header.bounds.ylo = lo.parse().map_err(invalid_data)?;
+                header.bounds.yhi = hi.parse().map_err(invalid_data)?;
                 header.bounds.has_y = true;
             }
             [lo, hi, "zlo", "zhi", ..] => {
-                header.bounds.zlo = lo.parse().map_err(err_mapper)?;
-                header.bounds.zhi = hi.parse().map_err(err_mapper)?;
+                header.bounds.zlo = lo.parse().map_err(invalid_data)?;
+                header.bounds.zhi = hi.parse().map_err(invalid_data)?;
                 header.bounds.has_z = true;
             }
             [xy, xz, yz, "xy", "xz", "yz", ..] => {
-                header.bounds.xy = Some(xy.parse().map_err(err_mapper)?);
-                header.bounds.xz = Some(xz.parse().map_err(err_mapper)?);
-                header.bounds.yz = Some(yz.parse().map_err(err_mapper)?);
+                header.bounds.xy = Some(xy.parse().map_err(invalid_data)?);
+                header.bounds.xz = Some(xz.parse().map_err(invalid_data)?);
+                header.bounds.yz = Some(yz.parse().map_err(invalid_data)?);
             }
             _ => {
                 let name = SectionHeader::name_of(trimmed);
-                return Err(err_mapper(format!(
+                return Err(invalid_data(format!(
                     "LAMMPS data header line `{trimmed}` is neither a header keyword \
                      this reader reads nor a section; if it opens a section, {}",
                     skip_hint(&name)
@@ -698,7 +699,7 @@ fn skip_hint(name: &str) -> String {
 /// most likely the header of a section this reader does not read.
 fn not_a_row(section: &str, row: &str) -> std::io::Error {
     let name = SectionHeader::name_of(row);
-    err_mapper(format!(
+    invalid_data(format!(
         "LAMMPS data line `{name}` in {section} is neither a {section} row nor a \
          section this reader reads; if it opens a section, {}",
         skip_hint(&name)
@@ -744,7 +745,7 @@ fn parse_type_labels<R: BufRead>(
             return Err(not_a_row(section, row));
         }
         if tokens.len() < 2 {
-            return Err(err_mapper(format!(
+            return Err(invalid_data(format!(
                 "Invalid {section} line `{row}`: expected `type-id label`"
             )));
         }
@@ -766,14 +767,14 @@ fn parse_masses<R: BufRead>(
     let next = for_each_row(reader, skipped, |row| {
         let tokens = tokenize(row);
         if tokens.len() < 2 {
-            return Err(err_mapper(format!(
+            return Err(invalid_data(format!(
                 "Invalid Masses line `{row}`: expected `type mass`"
             )));
         }
         let type_id = match tokens[0].parse::<I>() {
             Ok(tid) => tid,
             Err(_) => *label_to_id.get(tokens[0]).ok_or_else(|| {
-                err_mapper(format!(
+                invalid_data(format!(
                     "Invalid Masses line `{row}`: `{}` is neither a type id nor an \
                      Atom Type Labels label",
                     tokens[0]
@@ -782,7 +783,7 @@ fn parse_masses<R: BufRead>(
         };
         let mass = tokens[1]
             .parse::<F>()
-            .map_err(|e| err_mapper(format!("Invalid Masses line `{row}`: {e}")))?;
+            .map_err(|e| invalid_data(format!("Invalid Masses line `{row}`: {e}")))?;
         masses.insert(type_id, mass);
         Ok(())
     })?;
@@ -813,7 +814,7 @@ fn parse_atoms_streamed<R: BufRead>(
         push_atom_line(&mut cols, &tokens, layout)?;
     }
     if cols.len() > 0 && cols.len() < num_atoms {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "Atoms section has {} rows, the header declares {num_atoms} atoms",
             cols.len()
         )));
@@ -841,7 +842,7 @@ fn parse_topology_section<R: BufRead>(
         }
         let tokens = tokenize(trimmed);
         if tokens.len() < min_cols {
-            return Err(err_mapper(format!(
+            return Err(invalid_data(format!(
                 "Invalid {section} line: expected {min_cols} columns, got {}",
                 tokens.len()
             )));
@@ -857,7 +858,7 @@ fn parse_topology_section<R: BufRead>(
         });
     }
     if terms.len() < count {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "{section} section has {} rows, the header declares {count}",
             terms.len()
         )));
@@ -882,7 +883,7 @@ fn parse_per_atom_rows<const K: usize, R: BufRead>(
     let mut seen = vec![false; ids.len()];
     let mut filled = 0usize;
     let next = for_each_row(reader, skipped, |row| {
-        let invalid = |why: String| err_mapper(format!("Invalid {section} line `{row}`: {why}"));
+        let invalid = |why: String| invalid_data(format!("Invalid {section} line `{row}`: {why}"));
         let tokens = tokenize(row);
         if tokens.len() < K + 1 {
             return Err(invalid(format!(
@@ -905,7 +906,7 @@ fn parse_per_atom_rows<const K: usize, R: BufRead>(
         Ok(())
     })?;
     if filled < ids.len() {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "{section} section has {filled} rows for {} atoms",
             ids.len()
         )));
@@ -937,7 +938,7 @@ fn insert_topology_block(
     for term in terms {
         for (i, &atom_id) in term.members().iter().enumerate() {
             let idx = atom_id_map.get(&atom_id).copied().ok_or_else(|| {
-                err_mapper(format!("{kind} references unknown atom ID: {atom_id}"))
+                invalid_data(format!("{kind} references unknown atom ID: {atom_id}"))
             })?;
             member_cols[i].push(idx);
         }
@@ -1256,7 +1257,7 @@ fn dispatch_section<R: BufRead>(
         }
         "CMAP" => {
             if data.header.num_crossterms == 0 {
-                return Err(err_mapper(
+                return Err(invalid_data(
                     "LAMMPS data section `CMAP` without a `N crossterms` header line",
                 ));
             }
@@ -1294,7 +1295,7 @@ fn dispatch_section<R: BufRead>(
                 Ok(())
             })
         }
-        _ => Err(err_mapper(format!(
+        _ => Err(invalid_data(format!(
             "LAMMPS data section `{name}` is not read by this reader; {}",
             skip_hint(name)
         ))),
@@ -1410,7 +1411,7 @@ impl<R: BufRead + Seek> LAMMPSDataReader<R> {
             while let Some(section) = pending.take() {
                 let parsed = !section.is_coeffs() && !self.skipped.contains(&section.name);
                 if parsed && !read_sections.insert(section.name.clone()) {
-                    return Err(err_mapper(format!(
+                    return Err(invalid_data(format!(
                         "LAMMPS data section `{}` appears twice",
                         section.name
                     )));
@@ -1434,7 +1435,7 @@ impl<R: BufRead + Seek> LAMMPSDataReader<R> {
                 continue;
             }
             let Some(section) = SectionHeader::parse(&line, &self.skipped) else {
-                return Err(err_mapper(format!(
+                return Err(invalid_data(format!(
                     "LAMMPS data line `{trimmed}` is outside any section; if it opens \
                      a section this reader does not read, {}",
                     skip_hint(&SectionHeader::name_of(trimmed))
@@ -1444,7 +1445,7 @@ impl<R: BufRead + Seek> LAMMPSDataReader<R> {
         }
 
         if data.atoms.len() == 0 && data.header.num_atoms > 0 {
-            return Err(err_mapper("No atoms found in file"));
+            return Err(invalid_data("No atoms found in file"));
         }
         Ok(Some(build_frame(data)?))
     }
@@ -1732,7 +1733,7 @@ impl<'a> AtomColumn<'a> {
                     frame
                         .column("atoms", key)
                         .and_then(|c| c.as_int())
-                        .ok_or_else(|| err_mapper(format!("Missing integer column '{key}'")))?,
+                        .ok_or_else(|| invalid_data(format!("Missing integer column '{key}'")))?,
                 ),
             },
             DataField::Mol => match frame
@@ -1744,14 +1745,14 @@ impl<'a> AtomColumn<'a> {
                     frame
                         .column("atoms", "molecule_id")
                         .and_then(|c| c.as_int())
-                        .ok_or_else(|| err_mapper("Missing mol_id column"))?,
+                        .ok_or_else(|| invalid_data("Missing mol_id column"))?,
                 ),
             },
             _ => Self::Float(
                 frame
                     .column("atoms", key)
                     .and_then(|c| c.as_float())
-                    .ok_or_else(|| err_mapper(format!("Missing float column '{key}'")))?,
+                    .ok_or_else(|| invalid_data(format!("Missing float column '{key}'")))?,
             ),
         };
         Ok(col)
@@ -1824,7 +1825,7 @@ fn write_topology_section<W: Write>(
         return Ok(());
     }
     if type_ids.len() != n {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "internal: {block} type_ids length {} != nrows {n}",
             type_ids.len()
         )));
@@ -1836,7 +1837,7 @@ fn write_topology_section<W: Write>(
             frame
                 .column(block, k)
                 .and_then(|c| c.as_uint())
-                .ok_or_else(|| err_mapper(format!("Missing '{block}.{k}'")))?,
+                .ok_or_else(|| invalid_data(format!("Missing '{block}.{k}'")))?,
         );
     }
 
@@ -1847,7 +1848,7 @@ fn write_topology_section<W: Write>(
         for col in &cols {
             let idx = col[[i]] as usize;
             let atom_id = atom_ids.get(idx).ok_or_else(|| {
-                err_mapper(format!(
+                invalid_data(format!(
                     "{block} endpoint index {idx} out of range for {n} atoms",
                     n = atom_ids.len()
                 ))
@@ -1877,13 +1878,13 @@ pub const BOXLESS_MARGIN: F = 1.0;
 /// its box.
 fn enclosing_bounds(coords: &[Vec<F>]) -> std::io::Result<([F; 3], [F; 3])> {
     if coords.iter().flatten().any(|v| !v.is_finite()) {
-        return Err(err_mapper(
+        return Err(invalid_data(
             "frame has no box and a non-finite coordinate: a box-less frame is \
              written inside the bounds of its coordinates",
         ));
     }
     let free = SimBox::free_columns(&coords[0], &coords[1], &coords[2], BOXLESS_MARGIN)
-        .map_err(|e| err_mapper(format!("the box of a box-less frame: {e:?}")))?;
+        .map_err(|e| invalid_data(format!("the box of a box-less frame: {e:?}")))?;
     let (o, l) = (free.origin_view(), free.lengths());
     Ok(([o[0], o[1], o[2]], [l[0], l[1], l[2]]))
 }
@@ -1910,7 +1911,7 @@ fn write_lammps_data_frame_with<W: Write>(
         .visit_block("atoms", |b| b.nrows().unwrap_or(0))
         .unwrap_or(0);
     if num_atoms == 0 {
-        return Err(err_mapper("Frame has no atoms to write"));
+        return Err(invalid_data("Frame has no atoms to write"));
     }
 
     // Core coords are required for every write style, and bound a box-less
@@ -1920,7 +1921,7 @@ fn write_lammps_data_frame_with<W: Write>(
         let col = frame
             .column("atoms", key)
             .and_then(|c| c.as_float())
-            .ok_or_else(|| err_mapper(format!("Missing '{key}' column")))?;
+            .ok_or_else(|| invalid_data(format!("Missing '{key}' column")))?;
         coords.push(col.iter().copied().collect::<Vec<F>>());
     }
 
@@ -1936,7 +1937,7 @@ fn write_lammps_data_frame_with<W: Write>(
             .collect::<Vec<_>>()
     }) && !present.is_empty()
     {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "frame['pairs'] carries the per-pair override columns {present:?}, which a \
              LAMMPS data file cannot express (LAMMPS has no per-pair 1-4 exception)"
         )));
@@ -1951,7 +1952,7 @@ fn write_lammps_data_frame_with<W: Write>(
                 .visit_block(block, |b| b.nrows().unwrap_or(0))
                 .unwrap_or(0);
             if n > 0 {
-                return Err(err_mapper(format!(
+                return Err(invalid_data(format!(
                     "frame['{block}'] has {n} rows but frame['atoms'] has no 'mol_id' \
                      column; a bonded LAMMPS data file needs a molecule ID per atom \
                      (e.g. the bond graph's connected components, \
@@ -1961,9 +1962,9 @@ fn write_lammps_data_frame_with<W: Write>(
         }
     }
 
-    let type_labels = TypeLabels::from_frame(frame).map_err(err_mapper)?;
+    let type_labels = TypeLabels::from_frame(frame).map_err(invalid_data)?;
     let atom_rt = type_labels.block("atoms").ok_or_else(|| {
-        err_mapper(
+        invalid_data(
             "frame['atoms'] has neither 'type' nor 'type_id'; \
              assign a 'type' or 'type_id' column before write",
         )
@@ -2219,7 +2220,7 @@ pub fn read_lammps_data<P: AsRef<Path>>(path: P) -> std::io::Result<Frame> {
     let mut reader = LAMMPSDataReader::new(BufReader::new(file));
     reader
         .read()?
-        .ok_or_else(|| err_mapper("No frame found in LAMMPS data file"))
+        .ok_or_else(|| invalid_data("No frame found in LAMMPS data file"))
 }
 
 pub fn write_lammps_data<P: AsRef<Path>>(path: P, frame: &impl FrameAccess) -> std::io::Result<()> {
@@ -2247,7 +2248,7 @@ pub fn parse_frame_bytes(bytes: &[u8]) -> std::io::Result<Frame> {
     let mut reader = LAMMPSDataReader::new(Cursor::new(bytes));
     reader
         .read()?
-        .ok_or_else(|| err_mapper("No frame found in LAMMPS data slice"))
+        .ok_or_else(|| invalid_data("No frame found in LAMMPS data slice"))
 }
 
 pub struct LammpsDataIndexBuilder {
@@ -2977,7 +2978,7 @@ mod atom_style_tests {
 
     #[test]
     fn dump_aliases_q_and_mol() {
-        use crate::io::lammps::common::{canonical_dump_column, native_dump_column};
+        use crate::io::lammps::columns::{canonical_dump_column, native_dump_column};
         assert_eq!(canonical_dump_column("q"), keys::CHARGE);
         assert_eq!(canonical_dump_column("mol"), keys::MOL_ID);
         assert_eq!(canonical_dump_column("molecule"), keys::MOL_ID);

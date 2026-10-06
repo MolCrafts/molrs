@@ -48,6 +48,7 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::error::MolRsError;
 use crate::store::{Block, DType};
+use crate::units::UnitPreset;
 
 /// The endpoint columns of a style table, in position order.
 pub const ENDPOINT_COLUMNS: [&str; 5] = ["itom", "jtom", "ktom", "ltom", "mtom"];
@@ -85,75 +86,77 @@ pub const ONE_FOUR_VALUES: [&str; 2] = ["regular", "epsilon14"];
 /// The quantities `units` may state, in the order [`unit_preset`] lists them.
 pub const UNIT_QUANTITIES: [&str; 6] = ["length", "energy", "angle", "charge", "mass", "time"];
 
-/// The unit of each of [`UNIT_QUANTITIES`] in the preset `name`, or `None`
-/// when `name` is no preset. A `None` entry is a quantity the preset gives no
-/// unit (reduced `lj`).
+/// The presets a section's `units.preset` may name: the LAMMPS `units`
+/// styles molrec lists (not `openmm`).
+pub const SECTION_PRESETS: [&str; 8] = [
+    "real", "metal", "si", "cgs", "electron", "micro", "nano", "lj",
+];
+
+/// The unit of each of [`UNIT_QUANTITIES`] in the preset `name`, as the
+/// section spells it, or `None` when `name` is no section preset. A `None`
+/// entry is a quantity the preset gives no unit (reduced `lj`).
 ///
-/// The angle is a **degree** in every preset: the presets are LAMMPS's `units`
-/// styles, and the force-field IR follows the LAMMPS standard, whose coefficient lines give
-/// every angle-valued parameter (θ₀, χ₀, phases) in degrees. A force constant
-/// stays per **radian**ⁿ (LAMMPS's `K` for an angle is energy/rad²), as in
-/// LAMMPS: `angle` is the unit of angle values, not of force-constant
-/// denominators.
+/// The units are [`UnitPreset::builtin`]'s — the one table of what each
+/// preset measures in — written in the record's spelling
+/// ([`section_spelling`]). The angle is a **degree** in every preset: the
+/// presets are LAMMPS's `units` styles, and the force-field IR follows the
+/// LAMMPS standard, whose coefficient lines give every angle-valued
+/// parameter (θ₀, χ₀, phases) in degrees. A force constant stays per
+/// **radian**ⁿ (LAMMPS's `K` for an angle is energy/rad²), as in LAMMPS:
+/// `angle` is the unit of angle values, not of force-constant denominators.
 pub fn unit_preset(name: &str) -> Option<[Option<&'static str>; 6]> {
-    Some(match name {
-        "real" => [
-            Some("angstrom"),
-            Some("kcal/mol"),
-            Some("degree"),
-            Some("e"),
-            Some("dalton"),
-            Some("fs"),
-        ],
-        "metal" => [
-            Some("angstrom"),
-            Some("eV"),
-            Some("degree"),
-            Some("e"),
-            Some("dalton"),
-            Some("ps"),
-        ],
-        "si" => [
-            Some("m"),
-            Some("J"),
-            Some("degree"),
-            Some("C"),
-            Some("kg"),
-            Some("s"),
-        ],
-        "cgs" => [
-            Some("cm"),
-            Some("erg"),
-            Some("degree"),
-            Some("statcoulomb"),
-            Some("g"),
-            Some("s"),
-        ],
-        "electron" => [
-            Some("bohr"),
-            Some("hartree"),
-            Some("degree"),
-            Some("e"),
-            Some("dalton"),
-            Some("fs"),
-        ],
-        "micro" => [
-            Some("micrometer"),
-            Some("picogram * micrometer**2 / microsecond**2"),
-            Some("degree"),
-            Some("picocoulomb"),
-            Some("picogram"),
-            Some("microsecond"),
-        ],
-        "nano" => [
-            Some("nm"),
-            Some("attogram * nm**2 / ns**2"),
-            Some("degree"),
-            Some("e"),
-            Some("attogram"),
-            Some("ns"),
-        ],
-        "lj" => [None, None, Some("degree"), None, None, None],
+    if !SECTION_PRESETS.contains(&name) {
+        return None;
+    }
+    if name == "lj" {
+        return Some([None, None, Some("degree"), None, None, None]);
+    }
+    let preset = UnitPreset::builtin(name)?;
+    let mut out = [None; 6];
+    for (slot, quantity) in out.iter_mut().zip(UNIT_QUANTITIES) {
+        *slot = if quantity == "angle" {
+            Some("degree")
+        } else {
+            Some(section_spelling(preset.unit(quantity)?)?)
+        };
+    }
+    Some(out)
+}
+
+/// How the record (molrec's `forcefield.units`) spells a unit
+/// [`UnitPreset`] names by its registry expression; `None` for a unit no
+/// section preset uses.
+fn section_spelling(expression: &str) -> Option<&'static str> {
+    Some(match expression {
+        "angstrom" => "angstrom",
+        "kilocalorie_per_mole" => "kcal/mol",
+        "elementary_charge" => "e",
+        "gram_per_mole" | "amu" => "dalton",
+        "femtosecond" => "fs",
+        "electron_volt" => "eV",
+        "picosecond" => "ps",
+        "meter" => "m",
+        "joule" => "J",
+        "coulomb" => "C",
+        "kilogram" => "kg",
+        "second" => "s",
+        "centimeter" => "cm",
+        "erg" => "erg",
+        "statcoulomb" => "statcoulomb",
+        "gram" => "g",
+        "bohr" => "bohr",
+        "hartree" => "hartree",
+        "micrometer" => "micrometer",
+        "picogram * micrometer ** 2 / microsecond ** 2" => {
+            "picogram * micrometer**2 / microsecond**2"
+        }
+        "picocoulomb" => "picocoulomb",
+        "picogram" => "picogram",
+        "microsecond" => "microsecond",
+        "nanometer" => "nm",
+        "attogram * nanometer ** 2 / nanosecond ** 2" => "attogram * nm**2 / ns**2",
+        "attogram" => "attogram",
+        "nanosecond" => "ns",
         _ => return None,
     })
 }
@@ -753,6 +756,78 @@ pub fn check_pair_restatements(table: &Block) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each section preset's spelled units are what molrec's table lists, and
+    /// each spelling is the unit `UnitPreset` names (the record's `kcal/mol`
+    /// is the molar form of the registry's per-molecule kcal).
+    #[test]
+    fn section_presets_spell_the_unit_preset_units() {
+        let table = [
+            (
+                "real",
+                ["angstrom", "kcal/mol", "degree", "e", "dalton", "fs"],
+            ),
+            ("metal", ["angstrom", "eV", "degree", "e", "dalton", "ps"]),
+            ("si", ["m", "J", "degree", "C", "kg", "s"]),
+            ("cgs", ["cm", "erg", "degree", "statcoulomb", "g", "s"]),
+            (
+                "electron",
+                ["bohr", "hartree", "degree", "e", "dalton", "fs"],
+            ),
+            (
+                "micro",
+                [
+                    "micrometer",
+                    "picogram * micrometer**2 / microsecond**2",
+                    "degree",
+                    "picocoulomb",
+                    "picogram",
+                    "microsecond",
+                ],
+            ),
+            (
+                "nano",
+                [
+                    "nm",
+                    "attogram * nm**2 / ns**2",
+                    "degree",
+                    "e",
+                    "attogram",
+                    "ns",
+                ],
+            ),
+        ];
+        let registry = crate::units::UnitRegistry::new();
+        for (name, units) in table {
+            assert_eq!(unit_preset(name), Some(units.map(Some)), "{name}");
+            let preset = UnitPreset::builtin(name).unwrap();
+            for (quantity, spelled) in UNIT_QUANTITIES.iter().zip(units) {
+                let Some(expression) = preset.unit(quantity) else {
+                    continue;
+                };
+                let want = registry.parse(expression).unwrap();
+                let mut got = registry.parse(spelled).unwrap();
+                if got.dimension() != want.dimension() {
+                    got = registry.parse(&format!("{spelled} * mol")).unwrap();
+                    let per_molecule = got.factor() / crate::units::constants::AVOGADRO;
+                    assert!(
+                        (per_molecule / want.factor() - 1.0).abs() < 1e-12,
+                        "{name} {quantity}"
+                    );
+                    continue;
+                }
+                assert!(
+                    (got.factor() / want.factor() - 1.0).abs() < 1e-9,
+                    "{name} {quantity}"
+                );
+            }
+        }
+        assert_eq!(
+            unit_preset("lj"),
+            Some([None, None, Some("degree"), None, None, None])
+        );
+        assert_eq!(unit_preset("openmm"), None);
+    }
     use crate::store::Column;
     use ndarray::ArrayD;
     use serde_json::json;

@@ -19,7 +19,7 @@
 
 use crate::op::linalg::{det3, inv3};
 use crate::op::types::to_mat3;
-use crate::op::types::{F, F3, F3x3, FNx3};
+use crate::op::types::{F, F3, FNx3};
 use ndarray::{Array1, Array2, array};
 use std::sync::Arc;
 
@@ -263,9 +263,9 @@ pub struct Parallelepiped {
     /// One corner of the parallelepiped, Å.
     origin: F3,
     /// Edge matrix `H` (columns are the three edge vectors), Å.
-    h: F3x3,
+    h: FNx3,
     /// Cached `H⁻¹`.
-    inv: F3x3,
+    inv: FNx3,
     /// Interplanar spacing of each face pair, Å: turns a fractional offset
     /// into a perpendicular distance.
     spacing: [F; 3],
@@ -279,8 +279,8 @@ impl Parallelepiped {
     /// # Errors
     ///
     /// Returns `Err` if `H` is singular (zero volume) or not finite.
-    pub fn new(h: F3x3, origin: F3) -> Result<Self, String> {
-        let inv: F3x3 =
+    pub fn new(h: FNx3, origin: F3) -> Result<Self, String> {
+        let inv: FNx3 =
             ndarray::arr2(&inv3(&to_mat3(h.view())).ok_or_else(|| {
                 "Parallelepiped: singular edge matrix H (zero volume)".to_string()
             })?);
@@ -362,7 +362,7 @@ impl Parallelepiped {
     }
 
     /// Edge matrix `H` (columns are edge vectors), Å.
-    pub fn h(&self) -> &F3x3 {
+    pub fn h(&self) -> &FNx3 {
         &self.h
     }
 

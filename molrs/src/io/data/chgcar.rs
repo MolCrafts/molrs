@@ -49,9 +49,9 @@ use std::path::Path;
 
 use ndarray::Array1;
 
+use super::vasp_header::{expand_symbols, parse_usize_vec, read_coords, read_header};
 use molrs::error::MolRsError;
 use molrs::op::types::F;
-use molrs::spatial::SimBox;
 use molrs::store::Block;
 use molrs::store::Frame;
 
@@ -95,154 +95,37 @@ pub fn read_chgcar_from_reader<R: BufRead>(mut reader: R) -> Result<Frame, MolRs
     }
 
     // -----------------------------------------------------------------------
-    // Header
+    // Header and atoms (the POSCAR preamble)
     // -----------------------------------------------------------------------
-
-    // Line 1: comment / system name
-    let title = next_line!().trim().to_string();
-
-    // Line 2: scaling factor
-    let scale: F = next_line!()
-        .trim()
-        .parse::<f64>()
-        .map_err(|_| parse_err!("expected scaling factor"))? as F;
-
-    // Lines 3-5: lattice vectors (rows = a1, a2, a3)
-    let mut cell = [[0.0f64; 3]; 3];
-    for row in &mut cell {
-        let s = next_line!();
-        let vals = parse_floats(&s, 3, line_no)?;
-        row[0] = vals[0] * scale as f64;
-        row[1] = vals[1] * scale as f64;
-        row[2] = vals[2] * scale as f64;
-    }
-    // Line 6: element symbols
-    let symbols_line = next_line!();
-    let symbols: Vec<&str> = symbols_line.split_whitespace().collect();
-    // Guard: must be non-empty and non-numeric (VASP4 format had no symbols)
-    let has_symbols = !symbols.is_empty() && symbols[0].parse::<u32>().is_err();
-
-    // Line 7 (or 6 if VASP4): counts
-    let counts: Vec<usize> = if has_symbols {
-        let s = next_line!();
-        parse_usize_vec(&s, line_no)?
-    } else {
-        // VASP4: counts were on the "symbols" line
-        symbols
-            .iter()
-            .map(|t| t.parse::<usize>().map_err(|_| parse_err!("bad count")))
-            .collect::<Result<Vec<_>, _>>()?
-    };
-
-    if has_symbols && symbols.len() != counts.len() {
-        return Err(MolRsError::parse_error(
-            line_no,
-            format!(
-                "element count mismatch: {} symbols but {} counts",
-                symbols.len(),
-                counts.len()
-            ),
-        ));
-    }
-
-    let n_atoms: usize = counts.iter().sum();
-
-    // Line 8: Selective dynamics (optional) or coordinate mode
-    let mut mode_line = next_line!();
-    if mode_line.trim().to_ascii_lowercase().starts_with('s') {
-        // selective dynamics line — skip and read the real mode line
-        mode_line = next_line!();
-    }
-    let mode_lower = mode_line.trim().to_ascii_lowercase();
-    let is_direct = if mode_lower.starts_with('d') {
-        true
-    } else if mode_lower.starts_with('c') {
-        false
-    } else {
-        return Err(MolRsError::parse_error(
-            line_no,
-            format!(
-                "unrecognised coordinate mode {:?}; expected 'Direct' or 'Cartesian'",
-                mode_line.trim()
-            ),
-        ));
-    };
-
-    // Lines 9..9+n_atoms: atom positions
-    let mut frac_x = Vec::with_capacity(n_atoms);
-    let mut frac_y = Vec::with_capacity(n_atoms);
-    let mut frac_z = Vec::with_capacity(n_atoms);
-
-    for _ in 0..n_atoms {
-        let s = next_line!();
-        let vals = parse_floats(&s, 3, line_no)?;
-        frac_x.push(vals[0]);
-        frac_y.push(vals[1]);
-        frac_z.push(vals[2]);
-    }
-
-    // Convert to Cartesian if Direct
-    let (cart_x, cart_y, cart_z) = if is_direct {
-        fractional_to_cartesian(&frac_x, &frac_y, &frac_z, &cell)
-    } else {
-        // Already Cartesian; apply scale
-        let s = scale as f64;
-        (
-            frac_x.iter().map(|v| v * s).collect(),
-            frac_y.iter().map(|v| v * s).collect(),
-            frac_z.iter().map(|v| v * s).collect(),
-        )
-    };
-
-    // Build atoms block
-    let mut atom_syms: Vec<String> = Vec::with_capacity(n_atoms);
-    if has_symbols {
-        for (sym, &cnt) in symbols.iter().zip(counts.iter()) {
-            for _ in 0..cnt {
-                atom_syms.push(sym.to_string());
-            }
-        }
-    }
+    let header = read_header(&mut reader, &mut line_no).map_err(MolRsError::Io)?;
+    let n_atoms = header.total_atoms();
+    let (frac_x, frac_y, frac_z, _) = read_coords(
+        &mut reader,
+        n_atoms,
+        &mut line_no,
+        header.selective_dynamics,
+    )
+    .map_err(MolRsError::Io)?;
+    let simbox = header.simbox().map_err(MolRsError::Io)?;
+    let (cart_x, cart_y, cart_z) = header.cartesian(&simbox, &frac_x, &frac_y, &frac_z);
+    let title = header.title;
+    let atom_syms = expand_symbols(&header.symbols, &header.counts);
 
     let mut atoms = Block::new();
     atoms
-        .insert(
-            "x",
-            Array1::from_vec(cart_x.iter().map(|&v| v as F).collect::<Vec<_>>()).into_dyn(),
-        )
+        .insert("x", Array1::from_vec(cart_x).into_dyn())
         .map_err(MolRsError::Block)?;
     atoms
-        .insert(
-            "y",
-            Array1::from_vec(cart_y.iter().map(|&v| v as F).collect::<Vec<_>>()).into_dyn(),
-        )
+        .insert("y", Array1::from_vec(cart_y).into_dyn())
         .map_err(MolRsError::Block)?;
     atoms
-        .insert(
-            "z",
-            Array1::from_vec(cart_z.iter().map(|&v| v as F).collect::<Vec<_>>()).into_dyn(),
-        )
+        .insert("z", Array1::from_vec(cart_z).into_dyn())
         .map_err(MolRsError::Block)?;
     if !atom_syms.is_empty() {
-        use ndarray::ArrayD;
-        use ndarray::IxDyn;
         atoms
-            .insert(
-                "element",
-                ArrayD::from_shape_vec(IxDyn(&[n_atoms]), atom_syms)
-                    .expect("shape matches")
-                    .into_dyn(),
-            )
+            .insert("element", Array1::from_vec(atom_syms).into_dyn())
             .map_err(MolRsError::Block)?;
     }
-
-    // Build SimBox from cell rows (CHGCAR rows = molrs column convention)
-    // molrs SimBox h-matrix: h[:,i] = i-th lattice vector
-    // cell[i] = i-th lattice vector row → h column i
-    let h = ndarray::Array2::from_shape_fn((3, 3), |(i, j)| cell[j][i] as F);
-    let origin = ndarray::array![0.0 as F, 0.0 as F, 0.0 as F];
-    let simbox = SimBox::new(h, origin, [true, true, true])
-        .map_err(|e| MolRsError::parse(format!("invalid cell: {:?}", e)))?;
 
     // -----------------------------------------------------------------------
     // Skip blank line(s) before grid header
@@ -253,7 +136,7 @@ pub fn read_chgcar_from_reader<R: BufRead>(mut reader: R) -> Result<Frame, MolRs
     // Grid header: nx ny nz
     // -----------------------------------------------------------------------
     let dim_line = next_line!();
-    let dims = parse_usize_vec(&dim_line, line_no)?;
+    let dims = parse_usize_vec(&dim_line, line_no).map_err(MolRsError::Io)?;
     if dims.len() < 3 {
         return Err(parse_err!("expected 'nx ny nz' grid dimensions"));
     }
@@ -302,54 +185,6 @@ pub fn read_chgcar_from_reader<R: BufRead>(mut reader: R) -> Result<Frame, MolRs
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-fn parse_floats(line: &str, expected: usize, line_no: usize) -> Result<Vec<f64>, MolRsError> {
-    let vals: Vec<f64> = line
-        .split_whitespace()
-        .take(expected)
-        .map(|s| {
-            s.parse::<f64>().map_err(|_| {
-                MolRsError::parse_error(line_no, format!("expected float, got '{}'", s))
-            })
-        })
-        .collect::<Result<_, _>>()?;
-    if vals.len() < expected {
-        return Err(MolRsError::parse_error(
-            line_no,
-            format!("expected {} floats, got {}", expected, vals.len()),
-        ));
-    }
-    Ok(vals)
-}
-
-fn parse_usize_vec(line: &str, line_no: usize) -> Result<Vec<usize>, MolRsError> {
-    line.split_whitespace()
-        .map(|s| {
-            s.parse::<usize>().map_err(|_| {
-                MolRsError::parse_error(line_no, format!("expected integer, got '{}'", s))
-            })
-        })
-        .collect()
-}
-
-fn fractional_to_cartesian(
-    sx: &[f64],
-    sy: &[f64],
-    sz: &[f64],
-    cell: &[[f64; 3]; 3],
-) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
-    let n = sx.len();
-    let mut cx = Vec::with_capacity(n);
-    let mut cy = Vec::with_capacity(n);
-    let mut cz = Vec::with_capacity(n);
-    for i in 0..n {
-        // r = s1*a1 + s2*a2 + s3*a3, cell[k] = a_{k+1}
-        cx.push(sx[i] * cell[0][0] + sy[i] * cell[1][0] + sz[i] * cell[2][0]);
-        cy.push(sx[i] * cell[0][1] + sy[i] * cell[1][1] + sz[i] * cell[2][1]);
-        cz.push(sx[i] * cell[0][2] + sy[i] * cell[1][2] + sz[i] * cell[2][2]);
-    }
-    (cx, cy, cz)
-}
 
 /// Read `n_voxels` floating-point values from `reader`, ignoring line structure.
 fn read_volumetric_data<R: BufRead>(

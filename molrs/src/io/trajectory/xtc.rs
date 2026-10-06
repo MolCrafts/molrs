@@ -40,6 +40,7 @@
 //! - `frame.simbox`: from the box (row-stored vectors → column-stored H).
 //! - `frame.meta`: `step`, `time`, `precision`.
 
+use crate::io::invalid_data;
 use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::streaming::{BinaryFrameScanner, FrameIndexBuilder, FrameIndexEntry};
 use crate::io::trajectory::xdr;
@@ -73,10 +74,6 @@ const MAGICINTS: [i32; 73] = [
 ];
 /// Largest valid index into [`MAGICINTS`].
 const LASTIDX: i32 = MAGICINTS.len() as i32 - 1;
-
-fn invalid<E: std::fmt::Display>(e: E) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-}
 
 fn unsupported<E: std::fmt::Display>(e: E) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::Unsupported, e.to_string())
@@ -154,7 +151,7 @@ impl<'a> BitReader<'a> {
         let b = *self
             .buf
             .get(self.cnt)
-            .ok_or_else(|| invalid("XTC compressed buffer underrun"))?;
+            .ok_or_else(|| invalid_data("XTC compressed buffer underrun"))?;
         self.cnt += 1;
         Ok(b as u32)
     }
@@ -225,7 +222,7 @@ impl<'a> BitReader<'a> {
 #[inline]
 fn check_idx(idx: i32) -> Result<usize> {
     if !(0..=LASTIDX).contains(&idx) {
-        return Err(invalid(format!("XTC smallidx {idx} out of range")));
+        return Err(invalid_data(format!("XTC smallidx {idx} out of range")));
     }
     Ok(idx as usize)
 }
@@ -248,7 +245,7 @@ fn decompress_coords(
     let mut sizeint = [0u32; 3];
     for d in 0..DIM {
         if maxint[d] < minint[d] {
-            return Err(invalid("XTC maxint < minint"));
+            return Err(invalid_data("XTC maxint < minint"));
         }
         sizeint[d] = (maxint[d] - minint[d]) as u32 + 1;
     }
@@ -309,7 +306,7 @@ fn decompress_coords(
         }
         if run > 0 {
             if i + (run as usize / DIM) > natoms {
-                return Err(invalid("XTC run length exceeds atom count"));
+                return Err(invalid_data("XTC run length exceeds atom count"));
             }
             let mut k = 0i32;
             while k < run {
@@ -348,7 +345,7 @@ fn decompress_coords(
     }
 
     if out.len() != natoms * DIM {
-        return Err(invalid(format!(
+        return Err(invalid_data(format!(
             "XTC decode produced {} coords, expected {}",
             out.len(),
             natoms * DIM
@@ -697,7 +694,7 @@ fn read_nbytes<R: Read>(r: &mut R, wide: bool) -> Result<usize> {
         xdr::read_i32(r)? as i64
     };
     if nbytes < 0 {
-        return Err(invalid(format!("negative XTC nbytes {nbytes}")));
+        return Err(invalid_data(format!("negative XTC nbytes {nbytes}")));
     }
     Ok(nbytes as usize)
 }
@@ -705,13 +702,13 @@ fn read_nbytes<R: Read>(r: &mut R, wide: bool) -> Result<usize> {
 fn read_header<R: Read>(r: &mut R) -> Result<XtcHeader> {
     let magic = xdr::read_i32(r)?;
     if magic != XTC_MAGIC && magic != XTC_MAGIC_2023 {
-        return Err(invalid(format!(
+        return Err(invalid_data(format!(
             "bad XTC magic {magic} (expected {XTC_MAGIC} or {XTC_MAGIC_2023})"
         )));
     }
     let natoms = xdr::read_i32(r)?;
     if natoms <= 0 {
-        return Err(invalid(format!("invalid XTC natoms {natoms}")));
+        return Err(invalid_data(format!("invalid_data XTC natoms {natoms}")));
     }
     let step = xdr::read_i32(r)?;
     let time = xdr::read_f32(r)?;
@@ -732,7 +729,7 @@ fn read_header<R: Read>(r: &mut R) -> Result<XtcHeader> {
 fn read_coords<R: Read>(r: &mut R, natoms: usize, wide_nbytes: bool) -> Result<(Vec<f64>, f32)> {
     let size = xdr::read_i32(r)?;
     if size as usize != natoms {
-        return Err(invalid(format!(
+        return Err(invalid_data(format!(
             "XTC coord size {size} disagrees with header natoms {natoms}"
         )));
     }
@@ -763,8 +760,8 @@ fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
     let n = vals.len();
     let arr = Array1::from_vec(vals)
         .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid)?;
-    block.insert(key, arr).map_err(invalid)
+        .map_err(invalid_data)?;
+    block.insert(key, arr).map_err(invalid_data)
 }
 
 fn build_simbox(boxv: &[f32; 9]) -> Option<Result<SimBox>> {
@@ -774,7 +771,7 @@ fn build_simbox(boxv: &[f32; 9]) -> Option<Result<SimBox>> {
     // Row-stored vectors → column-stored H: H[r][c] = box[c*3 + r].
     let h = Array2::from_shape_fn((DIM, DIM), |(r, c)| boxv[c * DIM + r] as F);
     let origin = array![0.0 as F, 0.0, 0.0];
-    Some(SimBox::new(h, origin, [true; 3]).map_err(|e| invalid(format!("XTC box: {e:?}"))))
+    Some(SimBox::new(h, origin, [true; 3]).map_err(|e| invalid_data(format!("XTC box: {e:?}"))))
 }
 
 /// Parse one XTC frame at the current position (no seek). `Ok(None)` on EOF.
@@ -790,8 +787,8 @@ fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
     let mut atoms = Block::new();
     let id_arr = Array1::from_iter(1..=natoms as Idx)
         .into_shape_with_order(IxDyn(&[natoms]))
-        .map_err(invalid)?;
-    atoms.insert("id", id_arr).map_err(invalid)?;
+        .map_err(invalid_data)?;
+    atoms.insert("id", id_arr).map_err(invalid_data)?;
     let mut x = Vec::with_capacity(natoms);
     let mut y = Vec::with_capacity(natoms);
     let mut z = Vec::with_capacity(natoms);
@@ -811,7 +808,10 @@ fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
             let sb = res?;
             let h = sb.h_view().to_owned() * ANGSTROM_PER_NM;
             let origin = sb.origin_view().to_owned() * ANGSTROM_PER_NM;
-            Some(SimBox::new(h, origin, sb.pbc()).map_err(|e| invalid(format!("XTC box: {e:?}")))?)
+            Some(
+                SimBox::new(h, origin, sb.pbc())
+                    .map_err(|e| invalid_data(format!("XTC box: {e:?}")))?,
+            )
         }
         None => None,
     };
@@ -849,7 +849,7 @@ fn scan_offsets<R: BufRead + Seek>(r: &mut R) -> Result<Vec<u64>> {
             Ok(h) => h,
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
             Err(e) => {
-                return Err(invalid(format!(
+                return Err(invalid_data(format!(
                     "XTC scan: header for frame {} at offset {pos} (end {end}): {e}",
                     offsets.len()
                 )));
@@ -857,7 +857,7 @@ fn scan_offsets<R: BufRead + Seek>(r: &mut R) -> Result<Vec<u64>> {
         };
         let size = xdr::read_i32(r)?;
         if size as usize != hdr.natoms {
-            return Err(invalid("XTC coord size mismatch during scan"));
+            return Err(invalid_data("XTC coord size mismatch during scan"));
         }
         if hdr.natoms <= 9 {
             r.seek(SeekFrom::Current((hdr.natoms * DIM * 4) as i64))?;
@@ -977,15 +977,17 @@ fn axis<FA: FrameAccess>(frame: &FA, key: &str) -> Option<Vec<f64>> {
 fn write_xtc_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<()> {
     let natoms = frame
         .visit_block("atoms", |a| a.nrows().unwrap_or(0))
-        .ok_or_else(|| invalid("XTC write: frame has no atoms block"))?;
+        .ok_or_else(|| invalid_data("XTC write: frame has no atoms block"))?;
     if natoms == 0 {
-        return Err(invalid("XTC write: atoms block is empty"));
+        return Err(invalid_data("XTC write: atoms block is empty"));
     }
-    let xs = axis(frame, "x").ok_or_else(|| invalid("XTC write: atoms.x missing"))?;
-    let ys = axis(frame, "y").ok_or_else(|| invalid("XTC write: atoms.y missing"))?;
-    let zs = axis(frame, "z").ok_or_else(|| invalid("XTC write: atoms.z missing"))?;
+    let xs = axis(frame, "x").ok_or_else(|| invalid_data("XTC write: atoms.x missing"))?;
+    let ys = axis(frame, "y").ok_or_else(|| invalid_data("XTC write: atoms.y missing"))?;
+    let zs = axis(frame, "z").ok_or_else(|| invalid_data("XTC write: atoms.z missing"))?;
     if xs.len() != natoms || ys.len() != natoms || zs.len() != natoms {
-        return Err(invalid("XTC write: coordinate columns disagree on length"));
+        return Err(invalid_data(
+            "XTC write: coordinate columns disagree on length",
+        ));
     }
 
     let meta = frame.meta_ref();
@@ -1121,7 +1123,7 @@ fn try_xtc_frame_len(bytes: &[u8]) -> Result<Option<u32>> {
     }
     let magic = i32::from_be_bytes(bytes[0..4].try_into().unwrap());
     if magic != XTC_MAGIC && magic != XTC_MAGIC_2023 {
-        return Err(invalid(format!(
+        return Err(invalid_data(format!(
             "bad XTC magic {magic} (expected {XTC_MAGIC} or {XTC_MAGIC_2023})"
         )));
     }
@@ -1130,7 +1132,7 @@ fn try_xtc_frame_len(bytes: &[u8]) -> Result<Option<u32>> {
     }
     let natoms = i32::from_be_bytes(bytes[4..8].try_into().unwrap());
     if natoms <= 0 {
-        return Err(invalid(format!("invalid XTC natoms {natoms}")));
+        return Err(invalid_data(format!("invalid_data XTC natoms {natoms}")));
     }
     let natoms = natoms as usize;
     let wide = magic == XTC_MAGIC_2023;
@@ -1141,7 +1143,7 @@ fn try_xtc_frame_len(bytes: &[u8]) -> Result<Option<u32>> {
     let size = i32::from_be_bytes(bytes[off..off + 4].try_into().unwrap());
     off += 4;
     if size as usize != natoms {
-        return Err(invalid(format!(
+        return Err(invalid_data(format!(
             "XTC coord size {size} disagrees with header natoms {natoms}"
         )));
     }
@@ -1152,7 +1154,7 @@ fn try_xtc_frame_len(bytes: &[u8]) -> Result<Option<u32>> {
         }
         return u32::try_from(off + need)
             .map(Some)
-            .map_err(|_| invalid("XTC frame larger than 4 GiB"));
+            .map_err(|_| invalid_data("XTC frame larger than 4 GiB"));
     }
     // precision(4) + minint(12) + maxint(12) + smallidx(4)
     if bytes.len() < off + 32 {
@@ -1173,7 +1175,7 @@ fn try_xtc_frame_len(bytes: &[u8]) -> Result<Option<u32>> {
         (n, 4usize)
     };
     if nbytes < 0 {
-        return Err(invalid(format!("negative XTC nbytes {nbytes}")));
+        return Err(invalid_data(format!("negative XTC nbytes {nbytes}")));
     }
     off += nbytes_width;
     let padded = xdr::pad4(nbytes as usize);
@@ -1182,7 +1184,7 @@ fn try_xtc_frame_len(bytes: &[u8]) -> Result<Option<u32>> {
     }
     u32::try_from(off + padded)
         .map(Some)
-        .map_err(|_| invalid("XTC frame larger than 4 GiB"))
+        .map_err(|_| invalid_data("XTC frame larger than 4 GiB"))
 }
 
 /// Parse exactly one XTC frame from a tightly-bounded byte slice.

@@ -1154,8 +1154,8 @@ impl<R: BufRead + Seek> TrajectoryReader for XYZReader<R> {
 /// # }
 /// ```
 pub fn read_xyz_frame<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Frame> {
-    use crate::io::reader::open_file;
-    let reader = open_file(path)?;
+    use crate::io::reader::open_seekable;
+    let reader = open_seekable(path)?;
     let mut xyz_reader = XYZReader::new(reader);
     xyz_reader
         .read_step(0)?
@@ -1176,8 +1176,8 @@ pub fn read_xyz_frame<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Fra
 /// # }
 /// ```
 pub fn read_xyz_traj<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Vec<Frame>> {
-    use crate::io::reader::open_file;
-    let reader = open_file(path)?;
+    use crate::io::reader::open_seekable;
+    let reader = open_seekable(path)?;
     let mut xyz_reader = XYZReader::new(reader);
     xyz_reader.iter().collect()
 }

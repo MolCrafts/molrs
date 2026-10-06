@@ -18,7 +18,8 @@
 //! and refuses without one; a viewer paints whatever it is handed. Both ask the
 //! [`TriMesh`] rather than being second-guessed here.
 
-use std::io::{Error, ErrorKind, Result};
+use crate::io::invalid_data;
+use std::io::{Error, Result};
 use std::path::Path;
 
 use crate::op::types::F;
@@ -33,7 +34,7 @@ const BINARY_TRIANGLE_BYTES: usize = 50;
 ///
 /// # Errors
 ///
-/// [`std::io::Error`] if the path cannot be read, or [`ErrorKind::InvalidData`]
+/// [`std::io::Error`] if the path cannot be read, or [`std::io::ErrorKind::InvalidData`]
 /// if the bytes are neither a length-matched binary STL nor readable ASCII —
 /// see [`parse_stl`].
 pub fn read_stl<P: AsRef<Path>>(path: P) -> Result<TriMesh> {
@@ -55,7 +56,7 @@ pub fn read_stl<P: AsRef<Path>>(path: P) -> Result<TriMesh> {
 ///
 /// # Errors
 ///
-/// [`ErrorKind::InvalidData`] when the bytes are not a length-matched binary
+/// [`std::io::ErrorKind::InvalidData`] when the bytes are not a length-matched binary
 /// STL and also not ASCII: not UTF-8, not starting with `solid`, or carrying a
 /// vertex count that is not a multiple of three.
 pub fn parse_stl(bytes: &[u8]) -> Result<TriMesh> {
@@ -97,13 +98,13 @@ fn parse_binary(bytes: &[u8], count: usize) -> Vec<[[F; 3]; 3]> {
 
 fn parse_ascii(bytes: &[u8]) -> Result<Vec<[[F; 3]; 3]>> {
     let text = std::str::from_utf8(bytes)
-        .map_err(|_| invalid("not UTF-8 and not a length-matched binary STL"))?;
+        .map_err(|_| invalid_data("not UTF-8 and not a length-matched binary STL"))?;
     let body = text.trim_start_matches('\u{feff}').trim_start();
     if !body
         .get(..5)
         .is_some_and(|head| head.eq_ignore_ascii_case("solid"))
     {
-        return Err(invalid("ASCII STL must start with 'solid'"));
+        return Err(invalid_data("ASCII STL must start with 'solid'"));
     }
 
     // Scanning for `vertex` rather than walking facet/loop/endloop: the
@@ -118,25 +119,23 @@ fn parse_ascii(bytes: &[u8]) -> Result<Vec<[[F; 3]; 3]>> {
         }
         let mut corner = [0.0; 3];
         for axis in corner.iter_mut() {
-            let word = tokens.next().ok_or_else(|| invalid("truncated vertex"))?;
+            let word = tokens
+                .next()
+                .ok_or_else(|| invalid_data("truncated vertex"))?;
             *axis = word
                 .parse::<F>()
-                .map_err(|_| invalid(format!("bad vertex coordinate {word:?}")))?;
+                .map_err(|_| invalid_data(format!("bad vertex coordinate {word:?}")))?;
         }
         corners.push(corner);
     }
 
     if !corners.len().is_multiple_of(3) {
-        return Err(invalid(format!(
+        return Err(invalid_data(format!(
             "{} vertices; not a multiple of 3",
             corners.len()
         )));
     }
     Ok(corners.as_chunks::<3>().0.to_vec())
-}
-
-fn invalid(message: impl Into<String>) -> Error {
-    Error::new(ErrorKind::InvalidData, message.into())
 }
 
 #[cfg(test)]
@@ -215,7 +214,7 @@ mod tests {
     #[test]
     fn refuses_text_that_is_not_an_stl() {
         let err = parse_stl(b"ITEM: TIMESTEP\n0\n").unwrap_err();
-        assert_eq!(err.kind(), ErrorKind::InvalidData);
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Orthogonal / triclinic box bounds → [`SimBox`].
 
-use super::common::err_mapper;
+use crate::io::invalid_data;
 use molrs::op::types::Pbc3;
 use molrs::spatial::SimBox;
 use ndarray::array;
@@ -46,10 +46,10 @@ pub(crate) fn simbox_from_bounds(bounds: &BoxBounds, pbc: Pbc3) -> std::io::Resu
     let origin = array![bounds.xlo, bounds.ylo, bounds.zlo];
     let simbox = if let (Some(xy), Some(xz), Some(yz)) = (bounds.xy, bounds.xz, bounds.yz) {
         let h = array![[lx, xy, xz], [0.0, ly, yz], [0.0, 0.0, lz]];
-        SimBox::new(h, origin, pbc).map_err(|e| err_mapper(format!("{:?}", e)))?
+        SimBox::new(h, origin, pbc).map_err(|e| invalid_data(format!("{:?}", e)))?
     } else {
         SimBox::ortho(array![lx, ly, lz], origin, pbc)
-            .map_err(|e| err_mapper(format!("{:?}", e)))?
+            .map_err(|e| invalid_data(format!("{:?}", e)))?
     };
     Ok(Some(simbox))
 }

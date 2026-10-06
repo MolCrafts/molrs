@@ -31,6 +31,7 @@
 //! Gissinger, Jensen & Wise, *Polymer* **128** (2017) 211;
 //! *Macromolecules* **53** (2020) 9953.
 
+use crate::io::invalid_data;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::io::{Error, ErrorKind, Result};
@@ -51,10 +52,6 @@ pub const REACT_ID: &str = "react_id";
 
 /// The typed blocks a template and the system share a numbering for.
 const TYPED_BLOCKS: [&str; 5] = ["atoms", "bonds", "angles", "dihedrals", "impropers"];
-
-fn invalid(message: impl Into<String>) -> Error {
-    Error::new(ErrorKind::InvalidData, message.into())
-}
 
 /// One `fix bond/react` reaction: the template before and after, and the
 /// atoms the map file names, by `react_id`.
@@ -77,9 +74,9 @@ pub struct BondReactTemplate {
 fn react_ids(frame: &Frame, which: &str) -> Result<Vec<i64>> {
     let atoms = frame
         .get("atoms")
-        .ok_or_else(|| invalid(format!("the {which} template has no atoms")))?;
+        .ok_or_else(|| invalid_data(format!("the {which} template has no atoms")))?;
     let column = atoms.get(REACT_ID).ok_or_else(|| {
-        invalid(format!(
+        invalid_data(format!(
             "the {which} template's atoms have no '{REACT_ID}' column pairing them"
         ))
     })?;
@@ -92,7 +89,7 @@ fn react_ids(frame: &Frame, which: &str) -> Result<Vec<i64>> {
     } else if let Some(v) = column.as_u32() {
         Ok(v.iter().map(|&x| x as i64).collect())
     } else {
-        Err(invalid(format!(
+        Err(invalid_data(format!(
             "the {which} template's '{REACT_ID}' column must hold integers"
         )))
     }
@@ -103,7 +100,7 @@ fn index(ids: &[i64], which: &str) -> Result<HashMap<i64, usize>> {
     let mut out = HashMap::with_capacity(ids.len());
     for (row, &rid) in ids.iter().enumerate() {
         if out.insert(rid, row + 1).is_some() {
-            return Err(invalid(format!(
+            return Err(invalid_data(format!(
                 "react_id {rid} appears twice in the {which} template"
             )));
         }
@@ -129,7 +126,7 @@ impl BondReactTemplate {
         let pre_set: BTreeSet<i64> = pre.iter().copied().collect();
         let post_set: BTreeSet<i64> = post.iter().copied().collect();
         if pre_set != post_set {
-            return Err(invalid(format!(
+            return Err(invalid_data(format!(
                 "the pre and post templates hold different atoms: missing in post \
                  {:?}, missing in pre {:?}",
                 pre_set.difference(&post_set).collect::<Vec<_>>(),
@@ -140,7 +137,7 @@ impl BondReactTemplate {
         let mut initiators = [0usize; 2];
         for (slot, rid) in initiators.iter_mut().zip(self.initiators) {
             *slot = *pre_index.get(&rid).ok_or_else(|| {
-                invalid(format!(
+                invalid_data(format!(
                     "initiator atom (react_id={rid}) is not in the pre template; \
                      extract a wider local environment"
                 ))
@@ -314,7 +311,7 @@ fn numbered_template(
         let mut block: Block = if keep.len() < n {
             if block_name == "atoms" {
                 let bad = labels.iter().find(|l| !map.contains_key(l.as_str()));
-                return Err(invalid(format!(
+                return Err(invalid_data(format!(
                     "the {which} template has an atom without a type label ({bad:?}); \
                      type every template atom"
                 )));
@@ -322,21 +319,21 @@ fn numbered_template(
             dropped.push((block_name, n - keep.len()));
             block
                 .select_rows(&keep)
-                .map_err(|e| invalid(e.to_string()))?
+                .map_err(|e| invalid_data(e.to_string()))?
         } else {
             block.clone()
         };
         let type_ids: Vec<Idx> = keep.iter().map(|&i| map[labels[i].as_str()]).collect();
         block
             .insert(keys::TYPE_ID, Array1::from_vec(type_ids).into_dyn())
-            .map_err(|e| invalid(e.to_string()))?;
+            .map_err(|e| invalid_data(e.to_string()))?;
         out.insert(block_name, block);
     }
     if let Some(atoms) = out.get_mut("atoms") {
         let n = atoms.nrows().unwrap_or(0) as Idx;
         atoms
             .insert(keys::ID, Array1::from_iter(1..=n).into_dyn())
-            .map_err(|e| invalid(e.to_string()))?;
+            .map_err(|e| invalid_data(e.to_string()))?;
     }
     Ok((out, dropped))
 }
@@ -395,13 +392,13 @@ pub fn write_lammps_bond_react_system(
 
     let mut system = frame.clone();
     for block in TYPED_BLOCKS {
-        TypeLabels::declare(&mut system, block, &unified[block]).map_err(invalid)?;
+        TypeLabels::declare(&mut system, block, &unified[block]).map_err(invalid_data)?;
     }
-    let labels = TypeLabels::from_frame(&system).map_err(invalid)?;
+    let labels = TypeLabels::from_frame(&system).map_err(invalid_data)?;
     for block in TYPED_BLOCKS {
         let declared = labels.block(block).and_then(|b| b.labels()).unwrap_or(&[]);
         if !unified[block].is_empty() && declared != unified[block].as_slice() {
-            return Err(invalid(format!(
+            return Err(invalid_data(format!(
                 "the system's {block} labels {declared:?} are not the unified numbering \
                  {:?}; give every {block} row a named type",
                 unified[block]

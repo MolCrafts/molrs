@@ -32,10 +32,9 @@
 //! # }
 //! ```
 
+use crate::io::invalid_data;
 use crate::io::lammps::box_bounds::{BoxBounds, pbc_from_boundary_tokens, simbox_from_bounds};
-use crate::io::lammps::common::{
-    canonical_dump_column, err_mapper, insert_f, insert_str, native_dump_column,
-};
+use crate::io::lammps::columns::{canonical_dump_column, insert_f, insert_str, native_dump_column};
 use crate::io::reader::{FrameIndex, FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::writer::{FrameWriter, Writer};
 use molrs::op::types::{F, I, Idx};
@@ -141,7 +140,7 @@ fn insert_integer_column(
                 .into_iter()
                 .map(|v| {
                     Idx::try_from(v).map_err(|_| {
-                        err_mapper(format!(
+                        invalid_data(format!(
                             "column '{key}' is unsigned in the Frame schema but the dump holds {v}"
                         ))
                     })
@@ -155,7 +154,7 @@ fn insert_integer_column(
                 .map(|v| match v {
                     0 => Ok(false),
                     1 => Ok(true),
-                    other => Err(err_mapper(format!(
+                    other => Err(invalid_data(format!(
                         "column '{key}' is boolean in the Frame schema but the dump holds {other}"
                     ))),
                 })
@@ -180,8 +179,8 @@ fn insert_vec<T: BlockDtype>(
     values: Vec<T>,
     nrows: usize,
 ) -> std::io::Result<()> {
-    let array = ArrayD::from_shape_vec(IxDyn(&[nrows]), values).map_err(err_mapper)?;
-    block.insert(key, array).map_err(err_mapper)
+    let array = ArrayD::from_shape_vec(IxDyn(&[nrows]), values).map_err(invalid_data)?;
+    block.insert(key, array).map_err(invalid_data)
 }
 
 // ============================================================================
@@ -248,7 +247,7 @@ impl DumpBoxBounds {
         reader.read_line(&mut line)?;
         let vals: Vec<f64> = line
             .split_whitespace()
-            .map(|s| s.parse().map_err(err_mapper))
+            .map(|s| s.parse().map_err(invalid_data))
             .collect::<Result<_, _>>()?;
 
         if vals.len() < 2 {
@@ -274,7 +273,7 @@ impl DumpBoxBounds {
         reader.read_line(&mut line)?;
         let vals: Vec<f64> = line
             .split_whitespace()
-            .map(|s| s.parse().map_err(err_mapper))
+            .map(|s| s.parse().map_err(invalid_data))
             .collect::<Result<_, _>>()?;
 
         if vals.len() < 2 {
@@ -300,7 +299,7 @@ impl DumpBoxBounds {
         reader.read_line(&mut line)?;
         let vals: Vec<f64> = line
             .split_whitespace()
-            .map(|s| s.parse().map_err(err_mapper))
+            .map(|s| s.parse().map_err(invalid_data))
             .collect::<Result<_, _>>()?;
 
         if vals.len() < 2 {
@@ -380,14 +379,14 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
         if trimmed.starts_with("ITEM: TIMESTEP") {
             line.clear();
             reader.read_line(&mut line)?;
-            break line.trim().parse().map_err(err_mapper)?;
+            break line.trim().parse().map_err(invalid_data)?;
         }
         if trimmed.starts_with("ITEM:") {
             // Unknown optional ITEM (e.g. UNITS, TIME) — skip its value line.
             line.clear();
             reader.read_line(&mut line)?;
         } else {
-            return Err(err_mapper(format!(
+            return Err(invalid_data(format!(
                 "Expected 'ITEM: TIMESTEP', got: {}",
                 trimmed
             )));
@@ -415,7 +414,7 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
     } else if let Some(label) = local_label_of(line.trim()) {
         (BlockKind::Entries, label)
     } else {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "Expected 'ITEM: NUMBER OF ATOMS' or 'ITEM: NUMBER OF <{}>', got: {}",
             LOCAL_LABELS.join("|"),
             line.trim()
@@ -424,13 +423,13 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
 
     line.clear();
     reader.read_line(&mut line)?;
-    let nrows: usize = line.trim().parse().map_err(err_mapper)?;
+    let nrows: usize = line.trim().parse().map_err(invalid_data)?;
 
     // -- ITEM: BOX BOUNDS --
     line.clear();
     reader.read_line(&mut line)?;
     if !line.trim().starts_with("ITEM: BOX BOUNDS") {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "Expected 'ITEM: BOX BOUNDS', got: {}",
             line.trim()
         )));
@@ -447,7 +446,7 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
     reader.read_line(&mut line)?;
     let header_keyword = format!("ITEM: {}", local_label);
     if !line.trim().starts_with(header_keyword.as_str()) {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "Expected '{}', got: {}",
             header_keyword,
             line.trim()
@@ -466,7 +465,7 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
         .collect();
 
     if col_names.is_empty() {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "{} header has no column names",
             header_keyword
         )));
@@ -542,7 +541,7 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
         line.clear();
         let bytes = reader.read_line(&mut line)?;
         if bytes == 0 {
-            return Err(err_mapper(format!(
+            return Err(invalid_data(format!(
                 "Unexpected EOF at row {} (expected {})",
                 row, nrows
             )));
@@ -551,7 +550,7 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
         let mut tokens = line.split_whitespace();
         for i in 0..ncols {
             let token = tokens.next().ok_or_else(|| {
-                err_mapper(format!("Row {} has fewer than {} tokens", row, ncols))
+                invalid_data(format!("Row {} has fewer than {} tokens", row, ncols))
             })?;
             match col_types[i] {
                 ColumnType::Integer => {
@@ -943,7 +942,7 @@ fn write_lammps_dump_frame<W: Write>(
 ) -> std::io::Result<()> {
     let natoms = frame
         .visit_block("atoms", |b| b.nrows().unwrap_or(0))
-        .ok_or_else(|| err_mapper("Frame must contain 'atoms' block"))?;
+        .ok_or_else(|| invalid_data("Frame must contain 'atoms' block"))?;
 
     let meta = frame.meta_ref();
 
@@ -1011,7 +1010,9 @@ fn select_dump_columns<'a>(
     col_names: &[&'a str],
 ) -> std::io::Result<Vec<&'a str>> {
     if chosen.is_empty() {
-        return Err(err_mapper("dump column list must name at least one column"));
+        return Err(invalid_data(
+            "dump column list must name at least one column",
+        ));
     }
     let keys = chosen
         .iter()
@@ -1024,7 +1025,7 @@ fn select_dump_columns<'a>(
                 .or_else(|| col_names.iter().copied().find(|key| key == name))
                 .ok_or_else(|| {
                     let have: Vec<&str> = col_names.iter().map(|n| native_dump_column(n)).collect();
-                    err_mapper(format!(
+                    invalid_data(format!(
                         "dump column '{}' is not in the 'atoms' block (have: {})",
                         name,
                         have.join(" ")
@@ -1035,7 +1036,7 @@ fn select_dump_columns<'a>(
     for (i, key) in keys.iter().enumerate() {
         let native = native_dump_column(key);
         if let Some(other) = keys[..i].iter().find(|k| native_dump_column(k) == native) {
-            return Err(err_mapper(format!(
+            return Err(invalid_data(format!(
                 "dump columns '{other}' and '{key}' would both be written as the '{native}' field"
             )));
         }
@@ -1082,15 +1083,15 @@ fn dump_lines(
         .map(|&key| {
             let column = block
                 .column(key)
-                .ok_or_else(|| err_mapper(format!("dump column '{key}' is not in the block")))?;
+                .ok_or_else(|| invalid_data(format!("dump column '{key}' is not in the block")))?;
             if column.shape().len() != 1 {
-                return Err(err_mapper(format!(
+                return Err(invalid_data(format!(
                     "column '{key}' has shape {:?}; a dump field holds one value per row",
                     column.shape()
                 )));
             }
             if matches!(column, ColumnView::Complex64(_) | ColumnView::Complex128(_)) {
-                return Err(err_mapper(format!(
+                return Err(invalid_data(format!(
                     "column '{key}' is {}; a LAMMPS dump has no complex fields",
                     column.dtype()
                 )));
@@ -1128,7 +1129,7 @@ fn dump_value(key: &str, column: &ColumnView<'_>, row: usize) -> std::io::Result
         ColumnView::String(a) => {
             let value = &a[row];
             if value.is_empty() || value.contains(char::is_whitespace) {
-                return Err(err_mapper(format!(
+                return Err(invalid_data(format!(
                     "column '{key}' row {row} is {value:?}; a dump field must be one \
                      non-empty token"
                 )));
@@ -1136,7 +1137,7 @@ fn dump_value(key: &str, column: &ColumnView<'_>, row: usize) -> std::io::Result
             value.clone()
         }
         ColumnView::Complex64(_) | ColumnView::Complex128(_) => {
-            return Err(err_mapper(format!(
+            return Err(invalid_data(format!(
                 "column '{key}' is complex; a LAMMPS dump has no complex fields"
             )));
         }
@@ -1175,7 +1176,9 @@ fn write_lammps_dump_local_frame<W: Write>(
             .unwrap_or(0)
     };
     if !from_entries && nentries == 0 && !frame.contains_block("bonds") {
-        return Err(err_mapper("dump local needs a 'bonds' or 'entries' block"));
+        return Err(invalid_data(
+            "dump local needs a 'bonds' or 'entries' block",
+        ));
     }
 
     writeln!(writer, "ITEM: NUMBER OF ENTRIES")?;
@@ -1205,17 +1208,17 @@ fn write_lammps_dump_local_frame<W: Write>(
     let atomi = frame
         .column("bonds", "atomi")
         .and_then(|c| c.as_uint())
-        .ok_or_else(|| err_mapper("bonds block missing atomi"))?;
+        .ok_or_else(|| invalid_data("bonds block missing atomi"))?;
     let atomj = frame
         .column("bonds", "atomj")
         .and_then(|c| c.as_uint())
-        .ok_or_else(|| err_mapper("bonds block missing atomj"))?;
+        .ok_or_else(|| invalid_data("bonds block missing atomj"))?;
     let atomi = atomi
         .as_slice()
-        .ok_or_else(|| err_mapper("bonds.atomi is not contiguous"))?;
+        .ok_or_else(|| invalid_data("bonds.atomi is not contiguous"))?;
     let atomj = atomj
         .as_slice()
-        .ok_or_else(|| err_mapper("bonds.atomj is not contiguous"))?;
+        .ok_or_else(|| invalid_data("bonds.atomj is not contiguous"))?;
     let btype = frame
         .column("bonds", "type_id")
         .and_then(|c| c.as_uint())
@@ -1257,7 +1260,7 @@ fn write_dump_box_bounds<W: Write>(
 ) -> std::io::Result<()> {
     let simbox = frame
         .simbox_ref()
-        .ok_or_else(|| err_mapper("Frame must have a simbox"))?;
+        .ok_or_else(|| invalid_data("Frame must have a simbox"))?;
 
     let h = simbox.h_view();
     let o = simbox.origin_view();

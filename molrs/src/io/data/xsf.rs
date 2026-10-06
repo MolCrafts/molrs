@@ -12,7 +12,8 @@
 //! - `frame.simbox` — periodic cell from PRIMVEC (else CONVVEC) for `CRYSTAL`,
 //!   or a free (no-cell) box for `MOLECULE` / unspecified
 
-use std::io::{BufRead, BufWriter, Error, ErrorKind, Result, Write};
+use crate::io::invalid_data;
+use std::io::{BufRead, BufWriter, Result, Write};
 use std::path::Path;
 
 use ndarray::{Array1, Array2, IxDyn, array};
@@ -26,10 +27,6 @@ use molrs::system::Element;
 // ---------------------------------------------------------------------------
 // Error helpers
 // ---------------------------------------------------------------------------
-
-fn invalid_data<E: std::fmt::Display>(e: E) -> Error {
-    Error::new(ErrorKind::InvalidData, e.to_string())
-}
 
 fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
     let n = vals.len();
@@ -451,6 +448,6 @@ PRIMCOORD
     fn malformed_primcoord_header() {
         let text = "MOLECULE\nPRIMCOORD\ninvalid_number 1\n";
         let err = read_xsf_from_reader(Cursor::new(text)).unwrap_err();
-        assert_eq!(err.kind(), ErrorKind::InvalidData);
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 }

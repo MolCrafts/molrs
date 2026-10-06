@@ -29,7 +29,7 @@
 
 use crate::core::spatial::mesh::PyTriMesh;
 use crate::core::spatial::simbox::PyBox;
-use molrs::op::types::F3x3;
+use molrs::op::types::FNx3;
 use molrs::spatial::region::{
     AndRegion, Cuboid, Cylinder, Ellipsoid, HalfSpace, NotRegion, OrRegion, Parallelepiped,
     Polyhedron, Region, Sphere, SphereUnion,
@@ -541,7 +541,7 @@ impl PyParallelepiped {
             return Err(PyValueError::new_err("h must have shape (3, 3)"));
         }
         let o = vec3(origin, "origin")?;
-        let mut mat: F3x3 = Array2::zeros((3, 3));
+        let mut mat: FNx3 = Array2::zeros((3, 3));
         for i in 0..3 {
             for j in 0..3 {
                 mat[[i, j]] = h_arr[[i, j]];

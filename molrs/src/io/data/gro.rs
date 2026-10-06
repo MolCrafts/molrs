@@ -48,7 +48,8 @@
 //! has to ask where it came from. There is no `gro_units` tag: a unit that is
 //! normalised at the boundary is not a property of the frame.
 
-use std::io::{BufRead, BufWriter, Error, ErrorKind, Result, Write};
+use crate::io::invalid_data;
+use std::io::{BufRead, BufWriter, Result, Write};
 use std::path::Path;
 
 use ndarray::{Array1, Array2, IxDyn, array};
@@ -119,10 +120,6 @@ fn element_from_atom_name(name: &str, monatomic_residue: bool) -> Option<String>
         }
     }
     None
-}
-
-fn invalid_data<E: std::fmt::Display>(e: E) -> Error {
-    Error::new(ErrorKind::InvalidData, e.to_string())
 }
 
 fn substr(s: &str, start: usize, end: usize) -> &str {

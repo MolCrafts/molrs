@@ -1,9 +1,16 @@
 //! Reading a `molrec_version` 1 record under version 2 — the per-style
-//! force-field parameter conversion the mrec reader (`io::mrec`) applies.
+//! parameter conversion the mrec reader (`io::mrec`) applies to every section
+//! it reads.
 //!
-//! It lives in `ff` because each rule is a fact about a style's parameters
-//! (a harmonic `k` halved, an angle in radians become degrees); the reader
-//! only applies it. Without the `ff` feature a version-1 record is refused.
+//! It lives in the reader because each rule is a fact of the **record
+//! format's** version history (molrec's "Reading a version-1 record"): which
+//! stored numbers changed meaning between two versions of the file, keyed by
+//! style name as data. It converts a [`ForceFieldSection`] and a [`Frame`]'s
+//! relation columns — `store` types — and needs nothing of `ff`: no
+//! registry, no kernel. So the record reader depends on `store` alone, `ff`
+//! depends on `io`, and nothing depends back; a version-1 record reads
+//! without the `ff` feature. `ff` meets the converted section only through
+//! `ForceField::from_section`, which reads the current version.
 //!
 //! Contract: molrec `docs/spec/overview.md` (versions) and
 //! `docs/spec/forcefield.md` ("Reading a version-1 record"). Version 2 changed

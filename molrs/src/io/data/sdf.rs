@@ -10,6 +10,7 @@
 //! - `"bonds"` block (if any): `atomi`, `atomj` (u32, 0-based indices
 //!   into the atoms block), `order` (u32)
 
+use crate::io::invalid_data;
 use crate::io::reader::{FrameReader, Reader};
 use molrs::op::types::{F, Idx};
 use molrs::store::Block;
@@ -17,21 +18,17 @@ use molrs::store::Frame;
 use ndarray::{Array1, IxDyn};
 use std::io::BufRead;
 
-fn err_mapper<E: std::fmt::Display>(e: E) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-}
-
 fn to_array_float(vec: Vec<F>, len: usize) -> std::io::Result<ndarray::ArrayD<F>> {
     Ok(Array1::from_vec(vec)
         .into_shape_with_order(IxDyn(&[len]))
-        .map_err(err_mapper)?
+        .map_err(invalid_data)?
         .into_dyn())
 }
 
 fn to_array_uint(vec: Vec<Idx>, len: usize) -> std::io::Result<ndarray::ArrayD<Idx>> {
     Ok(Array1::<Idx>::from_vec(vec)
         .into_shape_with_order(IxDyn(&[len]))
-        .map_err(err_mapper)?
+        .map_err(invalid_data)?
         .into_dyn())
 }
 
@@ -53,20 +50,20 @@ struct Counts {
 
 fn parse_counts_line(line: &str) -> std::io::Result<Counts> {
     if line.len() < 6 {
-        return Err(err_mapper("counts line too short"));
+        return Err(invalid_data("counts line too short"));
     }
     let version = substr(line, 33, 39).trim();
     if version.eq_ignore_ascii_case("V3000") {
-        return Err(err_mapper("V3000 SDF not supported"));
+        return Err(invalid_data("V3000 SDF not supported"));
     }
     let atoms = substr(line, 0, 3)
         .trim()
         .parse::<usize>()
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     let bonds = substr(line, 3, 6)
         .trim()
         .parse::<usize>()
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     Ok(Counts { atoms, bonds })
 }
 
@@ -80,20 +77,20 @@ struct SdfAtom {
 
 fn parse_atom_line(line: &str) -> std::io::Result<SdfAtom> {
     if line.len() < 34 {
-        return Err(err_mapper("atom line too short"));
+        return Err(invalid_data("atom line too short"));
     }
     let x = substr(line, 0, 10)
         .trim()
         .parse::<F>()
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     let y = substr(line, 10, 20)
         .trim()
         .parse::<F>()
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     let z = substr(line, 20, 30)
         .trim()
         .parse::<F>()
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     let element = substr(line, 31, 34).trim().to_string();
     Ok(SdfAtom { element, x, y, z })
 }
@@ -107,20 +104,20 @@ struct SdfBond {
 
 fn parse_bond_line(line: &str) -> std::io::Result<SdfBond> {
     if line.len() < 9 {
-        return Err(err_mapper("bond line too short"));
+        return Err(invalid_data("bond line too short"));
     }
     let i = substr(line, 0, 3)
         .trim()
         .parse::<Idx>()
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     let j = substr(line, 3, 6)
         .trim()
         .parse::<Idx>()
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     let order = substr(line, 6, 9)
         .trim()
         .parse::<Idx>()
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     Ok(SdfBond { i, j, order })
 }
 
@@ -147,23 +144,23 @@ fn build_frame(atoms: &[SdfAtom], bonds: &[SdfBond]) -> std::io::Result<Frame> {
     let mut atoms_block = Block::new();
     atoms_block
         .insert("x", to_array_float(x_vec, n)?)
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     atoms_block
         .insert("y", to_array_float(y_vec, n)?)
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     atoms_block
         .insert("z", to_array_float(z_vec, n)?)
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     atoms_block
         .insert("id", to_array_uint(id_vec, n)?)
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     let elements_arr = Array1::from_vec(elements)
         .into_shape_with_order(IxDyn(&[n]))
-        .map_err(err_mapper)?
+        .map_err(invalid_data)?
         .into_dyn();
     atoms_block
         .insert("element", elements_arr)
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
 
     let mut frame = Frame::new();
     frame.insert("atoms", atoms_block);
@@ -175,7 +172,7 @@ fn build_frame(atoms: &[SdfAtom], bonds: &[SdfBond]) -> std::io::Result<Frame> {
         let mut order_vec: Vec<Idx> = Vec::with_capacity(bn);
         for b in bonds {
             if b.i == 0 || b.j == 0 || (b.i as usize) > n || (b.j as usize) > n {
-                return Err(err_mapper(format!(
+                return Err(invalid_data(format!(
                     "bond references out-of-range atom: {}-{}",
                     b.i, b.j
                 )));
@@ -188,10 +185,10 @@ fn build_frame(atoms: &[SdfAtom], bonds: &[SdfBond]) -> std::io::Result<Frame> {
         let mut bonds_block = Block::new();
         bonds_block
             .insert("atomi", to_array_uint(i_vec, bn)?)
-            .map_err(err_mapper)?;
+            .map_err(invalid_data)?;
         bonds_block
             .insert("atomj", to_array_uint(j_vec, bn)?)
-            .map_err(err_mapper)?;
+            .map_err(invalid_data)?;
         // §14: an MDL bond block states integer orders (4 = aromatic in the
         // SDF query alphabet), so it maps onto both facts. An aromatic entry
         // carries no Kekulé phase — that is left `Unknown` for standardization.
@@ -205,10 +202,10 @@ fn build_frame(atoms: &[SdfAtom], bonds: &[SdfBond]) -> std::io::Result<Frame> {
             .collect();
         bonds_block
             .insert("bond_type", to_array_uint(types, bn)?)
-            .map_err(err_mapper)?;
+            .map_err(invalid_data)?;
         bonds_block
             .insert("bond_number", to_array_uint(numbers, bn)?)
-            .map_err(err_mapper)?;
+            .map_err(invalid_data)?;
         frame.insert("bonds", bonds_block);
     }
 
@@ -240,11 +237,11 @@ impl<R: BufRead> SDFReader<R> {
         // Counts line.
         let mut counts_line = String::new();
         if self.reader.read_line(&mut counts_line)? == 0 {
-            return Err(err_mapper("missing counts line"));
+            return Err(invalid_data("missing counts line"));
         }
         let counts = parse_counts_line(&counts_line)?;
         if counts.atoms == 0 {
-            return Err(err_mapper("SDF record has zero atoms"));
+            return Err(invalid_data("SDF record has zero atoms"));
         }
 
         // Atom block.
@@ -252,7 +249,7 @@ impl<R: BufRead> SDFReader<R> {
         for _ in 0..counts.atoms {
             let mut line = String::new();
             if self.reader.read_line(&mut line)? == 0 {
-                return Err(err_mapper("unexpected EOF in atom block"));
+                return Err(invalid_data("unexpected EOF in atom block"));
             }
             atoms.push(parse_atom_line(&line)?);
         }
@@ -262,7 +259,7 @@ impl<R: BufRead> SDFReader<R> {
         for _ in 0..counts.bonds {
             let mut line = String::new();
             if self.reader.read_line(&mut line)? == 0 {
-                return Err(err_mapper("unexpected EOF in bond block"));
+                return Err(invalid_data("unexpected EOF in bond block"));
             }
             bonds.push(parse_bond_line(&line)?);
         }

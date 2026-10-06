@@ -23,7 +23,7 @@ use crate::store::{ObservableRecord, Trajectory};
 /// `meta.molrec_version`. Every molrs writer stamps this key, at this value.
 /// A present key must be an integer in `1..=MOLREC_VERSION`; a version-1
 /// store, and one without the key (written before version 1), is converted on
-/// read (`ff::forcefield::record_v1`; without the `ff` feature it is refused). Identity of a store is the `*.mrec/`
+/// read by the `*.mrec` reader's version-1 conversion. Identity of a store is the `*.mrec/`
 /// path suffix plus a Zarr root; there is no separate brand key.
 ///
 /// Version 2 (molrs 0.16): the force-field IR adopts LAMMPS's definitions —

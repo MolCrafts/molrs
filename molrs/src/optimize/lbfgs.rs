@@ -2,7 +2,7 @@
 //!
 //! This is the shared minimization engine consumed both by the public
 //! geometry optimizer (`optimize::LBFGS::minimize` / `LBFGS::minimize_batch`) and by
-//! the ETKDG conformer pipeline (via [`minimize_lbfgs_rms`]). It operates on a
+//! the ETKDG conformer pipeline (via the crate-internal [`minimize_lbfgs_rms`]). It operates on a
 //! flat `3·n_atoms` coordinate buffer and any `(energy, forces = -grad)`
 //! evaluator, exactly the contract that `crate::ff::potential::Potential`
 //! exposes — the force field itself is untouched.
@@ -39,14 +39,14 @@ pub(crate) enum Converge {
     GradRms(f64),
     /// Stop when the maximum per-atom force magnitude `max_i ‖F_i‖` drops below
     /// the tolerance (kcal/mol/Å). The ASE / molpy convention used by the
-    /// public geometry optimizer. Only the `ff`-gated optimizers construct it.
-    #[cfg_attr(not(feature = "ff"), allow(dead_code))]
+    /// public geometry optimizer.
     Fmax(f64),
 }
 
 /// Outcome tuple of [`minimize_lbfgs_rms`]: `(energy, grad_rms, steps,
 /// converged)`. `grad_rms` is the RMS gradient at the returned point.
-pub type MinResult = (f64, f64, usize, bool);
+#[cfg_attr(not(feature = "conformer"), allow(dead_code))]
+pub(crate) type MinResult = (f64, f64, usize, bool);
 
 /// Maximum per-atom force magnitude from a flat `3N` gradient (= -forces).
 ///
@@ -278,7 +278,8 @@ where
 /// no trust region, history size `HISTORY`) so conformer generation is
 /// unchanged. `coords` is updated in place; returns `(energy, grad_rms, steps,
 /// converged)`.
-pub fn minimize_lbfgs_rms<F>(
+#[cfg_attr(not(feature = "conformer"), allow(dead_code))]
+pub(crate) fn minimize_lbfgs_rms<F>(
     coords: &mut [f64],
     max_iters: usize,
     grad_rms_tol: f64,

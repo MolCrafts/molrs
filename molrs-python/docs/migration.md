@@ -719,9 +719,10 @@ field they return change where they did. AMBER stays read-only. See
 - **CMAP reads** (ff19SB's `CMAP_*` too); 0.15 refused `CMAP_COUNT > 0`.
 - **Non-uniform `SCEE` / `SCNB` read.** 0.15 refused two divisors among the
   1-4 rows. `special_bonds` is now the divisor most 1-4 rows carry (it was
-  the one value), and the frame gains a `pairs` block — only when some pair
-  is weighted otherwise — listing those 1-4 pairs with `coul_scale` /
-  `lj_scale` cells. It is not a pair list: `intramolecular_pairs` builds the
+  the one value), and the frame `AmberPrmtopFfReader::read_system` returns
+  gains a `pairs` block — only when some pair is weighted otherwise —
+  listing those 1-4 pairs with `coul_scale` / `lj_scale` cells (the
+  structure reader alone, `read_amber_prmtop`, has none). It is not a pair list: `intramolecular_pairs` builds the
   full list and keeps the cells (it used to drop a frame's `pairs`). An
   `intramolecular_pairs` call on a frame whose `pairs` row with an override
   names a 1-2 / 1-3 pair raises.
@@ -1036,12 +1037,19 @@ LAMMPS `real`'s `qqr2e` stays `COULOMB_REAL`. Python's `AMBER_COULOMB` is
 
 The AMBER 1-4 divisors `SCEE` = 1.2 / `SCNB` = 2.0 are force-field knowledge
 (`ff::params::amber::{AMBER_SCEE, AMBER_SCNB}`), and only the force-field
-reader assumes them. `io::data::prmtop` (the structure reader) no longer
-does: a prmtop without `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR`
-(pre-Amber-11) reads with no `"pairs"` block. `read_amber_prmtop_ff` prices
-such a file as before. `io::data::prmtop_tables::one_four_weights` takes the
-`default: Option<(f64, f64)>` divisors and returns `Option<OneFourWeights>`
-(`None`: no divisors known).
+reader assumes them. `io::data::prmtop` (the structure reader) holds no 1-4
+weight at all: the per-pair `"pairs"` block (`coul_scale` / `lj_scale` from
+`SCEE` / `SCNB`) is force-field meaning and comes from
+`ff::forcefield::readers::prmtop::AmberPrmtopFfReader::{read_system,
+read_system_str}`, which return `(ForceField, Frame)` like
+`GromacsTopFfReader::read_system`; `io::data::prmtop::read_amber_prmtop` now
+never has a `"pairs"` block, and the refusal of a 1-4 row on a bonded /
+angle-end pair moved with it. A file without `SCEE_SCALE_FACTOR` /
+`SCNB_SCALE_FACTOR` (pre-Amber-11) still gets no `"pairs"` block;
+`read_amber_prmtop_ff` prices it as before. `io::data::prmtop_tables` is
+crate-private: its ff-only helpers (`one_four_weights` / `OneFourWeights`,
+`chamber_urey_bradleys` / `UreyBradley`) moved into the force-field reader,
+and the naming helpers both readers share are internal.
 
 #### Force fields (`ff`)
 
@@ -1147,8 +1155,8 @@ the `ForceField` model and force-field files, `potential` the kernels,
   private copies).
 - `molrs::conformer::etkdg` is private (`generate_3d_impl` was a second door
   to `Conformer::generate`); its distance-geometry objectives are internal,
-  and the stages minimize with `molrs::optimize::minimize_lbfgs_rms` instead
-  of a steepest-descent of their own, so embedded geometries differ.
+  and the stages minimize with the crate's L-BFGS engine instead of a
+  steepest-descent of their own, so embedded geometries differ.
 - Removed from `io` (force-field formats belong to `ff::forcefield`):
   - `molrs::io::data::top::*` (`read_top`, `read_top_frame`, `write_top`,
     `TopReader`, `TopFrameWriter`) → `ff::forcefield::readers::gromacs::
@@ -1183,6 +1191,43 @@ the `ForceField` model and force-field files, `potential` the kernels,
 - `molrs::perceive::{Coarsener, CoarsenError}` → `molrs::builder::{Coarsener,
   CoarsenError}` (Python: `molrs.perceive.Coarsener` →
   `molrs.builder.Coarsener`).
+- One door, one owner (wave 2):
+  - `molrs::op::types::{F3x3, FN}` are gone: one alias per type, `FNx3`
+    for any `Array2<F>` (a 3×3 box matrix included) and `F3` for any
+    `Array1<F>` (molpack used neither).
+  - `molrs::io::reader::open_file` (a "compatibility wrapper") is gone:
+    `open_seekable`.
+  - `molrs::io::data::vasp_common` is `io::data::vasp_header` and
+    crate-private (`fractional_to_cartesian`, `parse_floats`, … no longer
+    public). POSCAR, CONTCAR and CHGCAR place fractional rows through
+    `SimBox::to_cart`, and the POSCAR writer's `Direct` rows come from
+    `SimBox::to_frac` (from the cell origin; it ignored the origin). The CIF
+    reader builds its cell with `SimBox::matrix_from_lengths_angles` — its
+    `SimBox` was the transpose of the cell for a triclinic CIF — and places
+    `fract_*` through `to_cart`; DCD uses the same constructor and
+    `SimBox::{lengths, angles}`.
+  - `SimBox` holds its `Mic` and routes `shortest_vector[_impl]` through
+    `Mic::apply`: one minimum-image kernel.
+  - One io error helper (`InvalidData`), crate-private; the LAMMPS readers'
+    `io::lammps::common` is split into `fields` (tokens, numbers, type
+    references) and `columns` (Frame columns, dump attribute names).
+  - `molrs::perceive::aromaticity` and `molrs::ff::forcefield::lammps_codecs`
+    are crate-private (they had no public item).
+  - `molrs::optimize::{minimize_lbfgs_rms, MinResult}` are crate-private (the
+    ETKDG stages are their one user); `optimize::LBFGS` is the optimizer.
+  - `molrs::ff::charge::compute_gasteiger_charges` is gone:
+    `GasteigerModel` is the door.
+  - `store::forcefield_section::unit_preset` derives each section preset
+    from `units::UnitPreset::builtin` (new), the one table of preset units,
+    spelled as the record spells them; `forcefield_section::SECTION_PRESETS`
+    names the presets a section may state.
+  - Hybridization perception takes an element's first valence from
+    `Element::default_valences` (its private table is gone): Ga, In, Sn, Sb,
+    Te, Rb, Cs, Sr and Ba now have one, and Ge's is 2.
+  - Version-1 records are converted by the `*.mrec` reader itself
+    (`ff::forcefield::record_v1` → the reader's private `record_v1`): the
+    conversion needs only `store`, so `io` no longer reaches into `ff` and a
+    version-1 record reads without the `ff` feature (it was refused).
 - One name per handle and payload type: `AtomId`, `BeadId` → `NodeId`;
   `BondId`, `AngleId`, `DihedralId`, `ImproperId`, `PortId` → `RelationId`;
   `Bead` → `Atom`; `Bond`, `Angle`, `Dihedral`, `Improper` → `Relation`
@@ -1983,7 +2028,7 @@ the bullet says so):
 | `molrs::{RingInfo, find_rings, max_ring_system_size}` | `molrs::perceive::rings::…` |
 | `molrs::{MatchOptions, Reaction, RingPrimitive, SmartsMatch, SmartsPattern}` | `molrs::perceive::smarts::…` |
 | `molrs::{BondStereo, TetrahedralStereo, assign_bond_stereo_from_3d, assign_stereo_from_3d, chiral_volume, find_chiral_centers}` | `molrs::perceive::stereo::…` |
-| `molrs::compute_gasteiger_charges` | `molrs::ff::charge::compute_gasteiger_charges` |
+| `molrs::compute_gasteiger_charges` | `molrs::ff::charge::GasteigerModel` (`ChargeModel::assign`; the `(NodeId, charge)` wrapper is gone) |
 | `molrs::smiles` | `molrs::io::smiles` |
 | `molrs::Record` | `molrs::MolRec` |
 | `molrs::SchemaValue` | `serde_json::Value` |

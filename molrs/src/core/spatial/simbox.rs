@@ -6,7 +6,7 @@
 //! - Lattice vectors are the columns of H.
 
 use crate::op::linalg::{det3, inv3};
-use crate::op::types::{F, F3, F3View, F3x3, FNx3, FNx3View, I, Pbc3};
+use crate::op::types::{F, F3, F3View, FNx3, FNx3View, I, Pbc3};
 use crate::op::types::{Vec3, to_mat3, to_vec3};
 use crate::op::vec3::{cross, dot, norm};
 use ndarray::{Array1, Array2, Array3, ArrayView1, ArrayView2, Zip, array};
@@ -24,15 +24,17 @@ pub enum BoxKind {
 #[derive(Debug, Clone)]
 pub struct SimBox {
     /// Triclinic cell matrix H (columns are lattice vectors)
-    h: F3x3,
+    h: FNx3,
     /// Precomputed inverse of H
-    inv: F3x3,
+    inv: FNx3,
     /// Origin of the cell in Cartesian coordinates
     origin: F3,
     /// Per-axis periodic boundary condition flags (x, y, z)
     pbc: Pbc3,
     /// Cached geometry kind
     kind: BoxKind,
+    /// The minimum-image convention of this cell, captured once
+    mic: Mic,
     /// Whether the cell is geometrically defined. `false` marks a "no-cell"
     /// box (an undefined / zero-volume cell) — distinct from `pbc`, which only
     /// describes periodicity. A defined non-periodic box (e.g. a free-boundary
@@ -65,7 +67,7 @@ impl SimBox {
     const WRAP_REFINE_PASSES: usize = 2;
 
     /// Construct from triclinic cell matrix `H`, origin `O`, and per-axis PBC flags
-    pub fn new(h: F3x3, origin: F3, pbc: Pbc3) -> Result<Self, BoxError> {
+    pub fn new(h: FNx3, origin: F3, pbc: Pbc3) -> Result<Self, BoxError> {
         Self::new_cell(h, origin, pbc, true)
     }
 
@@ -81,32 +83,24 @@ impl SimBox {
     ///
     /// # Errors
     /// [`BoxError::SingularCell`] when the cell is defined and `h` is singular.
-    pub fn new_cell(h: F3x3, origin: F3, pbc: Pbc3, cell_defined: bool) -> Result<Self, BoxError> {
-        if !cell_defined {
-            let identity = F3x3::eye(3);
-            return Ok(Self {
-                kind: detect_box_kind(&identity),
-                inv: identity.clone(),
-                h: identity,
-                origin,
-                pbc,
-                cell_defined,
-            });
-        }
-        if let Some(inv) = inv3(&to_mat3(h.view())) {
-            let inv: F3x3 = ndarray::arr2(&inv);
-            let kind = detect_box_kind(&h);
-            Ok(Self {
-                h,
-                inv,
-                origin,
-                pbc,
-                kind,
-                cell_defined,
-            })
+    pub fn new_cell(h: FNx3, origin: F3, pbc: Pbc3, cell_defined: bool) -> Result<Self, BoxError> {
+        let (h, inv) = if cell_defined {
+            let inv = inv3(&to_mat3(h.view())).ok_or(BoxError::SingularCell)?;
+            (h, ndarray::arr2(&inv))
         } else {
-            Err(BoxError::SingularCell)
-        }
+            (FNx3::eye(3), FNx3::eye(3))
+        };
+        let kind = detect_box_kind(&h);
+        let mic = Mic::of_cell(&kind, &h, &inv, pbc);
+        Ok(Self {
+            h,
+            inv,
+            origin,
+            pbc,
+            kind,
+            mic,
+            cell_defined,
+        })
     }
 
     /// Whether the cell is geometrically defined (`false` ⇒ a no-cell box of
@@ -197,7 +191,7 @@ impl SimBox {
     }
 
     /// Restricted-triclinic matrix from edge lengths and angles in degrees.
-    pub fn matrix_from_lengths_angles(lengths: [F; 3], angles: [F; 3]) -> Result<F3x3, BoxError> {
+    pub fn matrix_from_lengths_angles(lengths: [F; 3], angles: [F; 3]) -> Result<FNx3, BoxError> {
         let [a, b, c] = lengths;
         let [alpha, beta, gamma] = angles.map(F::to_radians);
         if [a, b, c].iter().any(|value| *value <= 0.0)
@@ -223,7 +217,7 @@ impl SimBox {
     }
 
     /// Restricted-triclinic matrix from diagonal sizes and `(xy, xz, yz)` tilts.
-    pub fn matrix_from_lengths_tilts(lengths: [F; 3], tilts: [F; 3]) -> F3x3 {
+    pub fn matrix_from_lengths_tilts(lengths: [F; 3], tilts: [F; 3]) -> FNx3 {
         array![
             [lengths[0], tilts[0], tilts[1]],
             [0.0, lengths[1], tilts[2]],
@@ -232,7 +226,7 @@ impl SimBox {
     }
 
     /// Convert a general cell matrix to LAMMPS restricted-triclinic form.
-    pub fn restricted_matrix(matrix: FNx3View<'_>) -> Result<F3x3, BoxError> {
+    pub fn restricted_matrix(matrix: FNx3View<'_>) -> Result<FNx3, BoxError> {
         if matrix.dim() != (3, 3) {
             return Err(BoxError::InvalidMatrixShape {
                 rows: matrix.nrows(),
@@ -577,89 +571,11 @@ impl SimBox {
     /// out as a plain value with everything it needs on the stack, so it can be
     /// captured once and carried into the loop.
     ///
-    /// Bit-identical to `shortest_vector_impl`: both dispatch to the same
-    /// arithmetic.
+    /// This is the box's one minimum-image convention, captured at
+    /// construction: [`shortest_vector_impl`](Self::shortest_vector_impl) and
+    /// [`shortest_vector`](Self::shortest_vector) apply it.
     pub fn mic(&self) -> Mic {
-        match &self.kind {
-            BoxKind::Ortho { len, inv_len } => Mic::Ortho {
-                len: [len[0], len[1], len[2]],
-                inv_len: [inv_len[0], inv_len[1], inv_len[2]],
-                pbc: self.pbc(),
-            },
-            BoxKind::Triclinic => {
-                let mut h = [0.0; 9];
-                let mut inv = [0.0; 9];
-                for i in 0..3 {
-                    for j in 0..3 {
-                        h[3 * i + j] = self.h[[i, j]];
-                        inv[3 * i + j] = self.inv[[i, j]];
-                    }
-                }
-                Mic::Triclinic {
-                    h,
-                    inv,
-                    pbc: self.pbc(),
-                }
-            }
-        }
-    }
-
-    /// Hot-loop MIC kernel: takes and returns `[F; 3]`, zero allocation.
-    ///
-    /// Ortho boxes use the `dr − round(dr / L) · L` fast path; triclinic
-    /// boxes fall back to the general `H · round(H⁻¹ · dr)` form. This
-    /// is the single source of truth for the minimum-image convention —
-    /// both [`shortest_vector`](Self::shortest_vector) (ergonomic
-    /// `F3View` / `Array1` API) and
-    /// [`shortest_vector_impl`](Self::shortest_vector_impl) (zero-alloc
-    /// `[F; 3]` API) route through here.
-    #[inline(always)]
-    fn mic_kernel(&self, a: [F; 3], b: [F; 3]) -> [F; 3] {
-        match &self.kind {
-            BoxKind::Ortho { len, inv_len } => {
-                let mut dr = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-                if self.pbc[0] {
-                    dr[0] -= (dr[0] * inv_len[0]).round() * len[0];
-                }
-                if self.pbc[1] {
-                    dr[1] -= (dr[1] * inv_len[1]).round() * len[1];
-                }
-                if self.pbc[2] {
-                    dr[2] -= (dr[2] * inv_len[2]).round() * len[2];
-                }
-                dr
-            }
-            BoxKind::Triclinic => {
-                // General triclinic path: fold the displacement through
-                // fractional coords and wrap each periodic axis to
-                // `[-0.5, 0.5)`.
-                //
-                // Written out on the stack rather than as `inv.dot(dr)` /
-                // `h.dot(frac)`. Those allocate an `Array1` each, and this
-                // kernel sits in the innermost pair loop of every caller — a
-                // packer evaluates it millions of times per objective
-                // evaluation, where two heap allocations per pair dominate the
-                // arithmetic outright. Summation order matches ndarray's
-                // matrix-vector product (k ascending), so the result is
-                // bit-identical to the allocating form.
-                let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-                let mut f = [
-                    self.inv[[0, 0]] * d[0] + self.inv[[0, 1]] * d[1] + self.inv[[0, 2]] * d[2],
-                    self.inv[[1, 0]] * d[0] + self.inv[[1, 1]] * d[1] + self.inv[[1, 2]] * d[2],
-                    self.inv[[2, 0]] * d[0] + self.inv[[2, 1]] * d[1] + self.inv[[2, 2]] * d[2],
-                ];
-                for (fk, &periodic) in f.iter_mut().zip(self.pbc.iter()) {
-                    if periodic {
-                        *fk -= fk.round();
-                    }
-                }
-                [
-                    self.h[[0, 0]] * f[0] + self.h[[0, 1]] * f[1] + self.h[[0, 2]] * f[2],
-                    self.h[[1, 0]] * f[0] + self.h[[1, 1]] * f[1] + self.h[[1, 2]] * f[2],
-                    self.h[[2, 0]] * f[0] + self.h[[2, 1]] * f[1] + self.h[[2, 2]] * f[2],
-                ]
-            }
-        }
+        self.mic
     }
 
     /// Minimum image displacement vector from `r1` to `r2` (returns `r2 − r1`).
@@ -670,7 +586,7 @@ impl SimBox {
     /// heap allocation for the output (~70% faster per call).
     #[inline]
     pub fn shortest_vector(&self, r1: F3View<'_>, r2: F3View<'_>) -> F3 {
-        let dr = self.mic_kernel([r1[0], r1[1], r1[2]], [r2[0], r2[1], r2[2]]);
+        let dr = self.shortest_vector_impl([r1[0], r1[1], r1[2]], [r2[0], r2[1], r2[2]]);
         array![dr[0], dr[1], dr[2]]
     }
 
@@ -682,7 +598,7 @@ impl SimBox {
     /// [`AabbQuery`](crate::spatial::neighbors::AabbQuery) inner loops.
     #[inline(always)]
     pub fn shortest_vector_impl(&self, a: [F; 3], b: [F; 3]) -> [F; 3] {
-        self.mic_kernel(a, b)
+        self.mic.apply([b[0] - a[0], b[1] - a[1], b[2] - a[2]])
     }
 
     /// Calculate squared distance using MIC.
@@ -802,7 +718,7 @@ impl SimBox {
     }
 
     /// Return a box with its cell matrix right-multiplied by a transform.
-    pub fn transformed(&self, transformation: &F3x3) -> Result<Self, BoxError> {
+    pub fn transformed(&self, transformation: &FNx3) -> Result<Self, BoxError> {
         Self::new_cell(
             self.h.dot(transformation),
             self.origin.clone(),
@@ -1157,6 +1073,33 @@ pub enum Mic {
 }
 
 impl Mic {
+    /// The convention of a cell: the ortho fast path for a diagonal `h`, the
+    /// general `H · round(H⁻¹ · d)` form otherwise.
+    fn of_cell(kind: &BoxKind, h: &FNx3, inv: &FNx3, pbc: Pbc3) -> Mic {
+        match kind {
+            BoxKind::Ortho { len, inv_len } => Mic::Ortho {
+                len: [len[0], len[1], len[2]],
+                inv_len: [inv_len[0], inv_len[1], inv_len[2]],
+                pbc,
+            },
+            BoxKind::Triclinic => {
+                let mut hm = [0.0; 9];
+                let mut im = [0.0; 9];
+                for i in 0..3 {
+                    for j in 0..3 {
+                        hm[3 * i + j] = h[[i, j]];
+                        im[3 * i + j] = inv[[i, j]];
+                    }
+                }
+                Mic::Triclinic {
+                    h: hm,
+                    inv: im,
+                    pbc,
+                }
+            }
+        }
+    }
+
     /// The orthorhombic convention from edge lengths alone, for a caller that
     /// carries per-frame lengths rather than a [`SimBox`]. A non-positive edge
     /// leaves that axis unwrapped.
@@ -1221,7 +1164,7 @@ impl Mic {
     }
 }
 
-fn detect_box_kind(h: &F3x3) -> BoxKind {
+fn detect_box_kind(h: &FNx3) -> BoxKind {
     let eps: F = 1e-12;
     let is_ortho = h[[0, 1]].abs() < eps
         && h[[0, 2]].abs() < eps

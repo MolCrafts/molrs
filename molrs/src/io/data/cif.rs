@@ -23,8 +23,9 @@
 //! - `loop_` nesting
 //! - Symmetry expansion (the parsed coordinates are exactly what the file holds)
 
+use crate::io::invalid_data;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, BufWriter, Error, ErrorKind, Result, Write};
+use std::io::{BufRead, BufReader, BufWriter, Result, Write};
 use std::path::Path;
 
 use ndarray::{Array1, Array2, IxDyn, array};
@@ -41,10 +42,6 @@ use crate::io::writer::{FrameWriter, Writer};
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn invalid_data<E: std::fmt::Display>(e: E) -> Error {
-    Error::new(ErrorKind::InvalidData, e.to_string())
-}
 
 fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
     let n = vals.len();
@@ -342,15 +339,23 @@ impl FrameInProgress {
             && self.cell_alpha.is_some()
             && self.cell_beta.is_some()
             && self.cell_gamma.is_some();
-        let h = if cell_present {
-            Some(cell_to_h(
+        let simbox = if cell_present {
+            let lengths = [
                 self.cell_a.unwrap(),
                 self.cell_b.unwrap(),
                 self.cell_c.unwrap(),
+            ];
+            let angles = [
                 self.cell_alpha.unwrap(),
                 self.cell_beta.unwrap(),
                 self.cell_gamma.unwrap(),
-            ))
+            ];
+            let h = SimBox::matrix_from_lengths_angles(lengths, angles)
+                .map_err(|e| invalid_data(format!("CIF cell → SimBox: {e:?}")))?;
+            Some(
+                SimBox::new(h, array![0.0 as F, 0.0, 0.0], [true; 3])
+                    .map_err(|e| invalid_data(format!("CIF cell → SimBox: {e:?}")))?,
+            )
         } else {
             None
         };
@@ -381,27 +386,24 @@ impl FrameInProgress {
             &["_atom_site_fract_z", "_atom_site.fract_z"],
         );
 
-        let (xs, ys, zs): (Vec<F>, Vec<F>, Vec<F>) = if let (Some(x), Some(y), Some(z)) =
-            (&cartn_x, &cartn_y, &cartn_z)
-        {
-            (x.clone(), y.clone(), z.clone())
-        } else if let (Some(fx), Some(fy), Some(fz), Some(h)) = (&fract_x, &fract_y, &fract_z, &h) {
-            let mut xs = Vec::with_capacity(n);
-            let mut ys = Vec::with_capacity(n);
-            let mut zs = Vec::with_capacity(n);
-            for i in 0..n {
-                let f = [fx[i], fy[i], fz[i]];
-                let cart = h_times(h, &f);
-                xs.push(cart[0]);
-                ys.push(cart[1]);
-                zs.push(cart[2]);
-            }
-            (xs, ys, zs)
-        } else {
-            return Err(invalid_data(
-                "CIF atom loop: missing both Cartesian and fractional coordinates",
-            ));
-        };
+        let (xs, ys, zs): (Vec<F>, Vec<F>, Vec<F>) =
+            if let (Some(x), Some(y), Some(z)) = (&cartn_x, &cartn_y, &cartn_z) {
+                (x.clone(), y.clone(), z.clone())
+            } else if let (Some(fx), Some(fy), Some(fz), Some(simbox)) =
+                (&fract_x, &fract_y, &fract_z, &simbox)
+            {
+                let frac = Array2::from_shape_fn((n, 3), |(i, k)| [fx, fy, fz][k][i]);
+                let cart = simbox.to_cart(frac.view());
+                (
+                    cart.column(0).to_vec(),
+                    cart.column(1).to_vec(),
+                    cart.column(2).to_vec(),
+                )
+            } else {
+                return Err(invalid_data(
+                    "CIF atom loop: missing both Cartesian and fractional coordinates",
+                ));
+            };
 
         insert_float_col(&mut atoms, "x", xs)?;
         insert_float_col(&mut atoms, "y", ys)?;
@@ -475,13 +477,7 @@ impl FrameInProgress {
 
         frame.insert("atoms", atoms);
 
-        if let Some(h) = h {
-            let h_arr = Array2::from_shape_fn((3, 3), |(i, j)| h[i][j]);
-            let origin = array![0.0 as F, 0.0, 0.0];
-            let simbox = SimBox::new(h_arr, origin, [true; 3])
-                .map_err(|e| invalid_data(format!("CIF cell → SimBox: {:?}", e)))?;
-            frame.simbox = Some(simbox);
-        }
+        frame.simbox = simbox;
 
         Ok(frame)
     }
@@ -566,35 +562,6 @@ fn column_u32(map: &HashMap<String, Vec<String>>, keys: &[&str]) -> Option<Vec<I
         }
     }
     None
-}
-
-/// Build the H matrix (3 lattice vectors as rows) from a/b/c lengths and
-/// alpha/beta/gamma angles in degrees. Convention: a along x, b in xy plane.
-fn cell_to_h(a: F, b: F, c: F, alpha: F, beta: F, gamma: F) -> [[F; 3]; 3] {
-    let to_rad = std::f64::consts::PI / 180.0;
-    let ca = (alpha * to_rad).cos();
-    let cb = (beta * to_rad).cos();
-    let cg = (gamma * to_rad).cos();
-    let sg = (gamma * to_rad).sin();
-
-    let v1 = [a, 0.0, 0.0];
-    let v2 = [b * cg, b * sg, 0.0];
-    let v3x = c * cb;
-    let v3y = c * (ca - cb * cg) / sg;
-    let v3z2 = c * c - v3x * v3x - v3y * v3y;
-    let v3z = if v3z2 > 0.0 { v3z2.sqrt() } else { 0.0 };
-    let v3 = [v3x, v3y, v3z];
-    [v1, v2, v3]
-}
-
-/// Multiply 3-vector by H matrix where H rows = lattice vectors:
-/// `cart = fx*a1 + fy*a2 + fz*a3`.
-fn h_times(h_rows: &[[F; 3]; 3], frac: &[F; 3]) -> [F; 3] {
-    let mut out = [0.0; 3];
-    for i in 0..3 {
-        out[i] = frac[0] * h_rows[0][i] + frac[1] * h_rows[1][i] + frac[2] * h_rows[2][i];
-    }
-    out
 }
 
 /// Read one CIF data block from `src`. Returns `Ok(None)` at EOF.

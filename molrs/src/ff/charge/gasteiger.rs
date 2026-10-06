@@ -173,54 +173,6 @@ impl ChargeModel for GasteigerModel {
     }
 }
 
-/// Gasteiger charges paired with the atoms they belong to.
-///
-/// The free-function face of [`GasteigerModel`], kept because the graph-level API
-/// (and molrs-python's `compute_gasteiger_charges`) wants handles rather than a
-/// positional slice. It **delegates** — there is exactly one PEOE implementation in
-/// molrs, and it is the model above.
-///
-/// # Arguments
-///
-/// * `mol` — the molecule, with explicit hydrogens.
-///
-/// # Returns
-///
-/// `(atom, charge)` for **every** atom, hydrogens included, in graph atom order.
-///
-/// # Errors
-///
-/// [`ChargeError`] — as [`GasteigerModel::assign`].
-///
-/// # Examples
-///
-/// ```
-/// use molrs::system::Atomistic;
-///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut mol = Atomistic::new();
-/// let c = mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
-/// for [x, y, z] in [
-///     [0.63, 0.63, 0.63],
-///     [-0.63, -0.63, 0.63],
-///     [-0.63, 0.63, -0.63],
-///     [0.63, -0.63, -0.63],
-/// ] {
-///     let h = mol.add_atom_xyz("H", x, y, z);
-///     mol.add_bond(c, h)?;
-/// }
-///
-/// let q = molrs::ff::charge::compute_gasteiger_charges(&mol)?;
-/// assert_eq!(q.len(), 5, "one charge per atom — hydrogens are atoms");
-/// assert!(q.iter().map(|(_, q)| q).sum::<f64>().abs() < 1e-12, "methane is neutral");
-/// # Ok(())
-/// # }
-/// ```
-pub fn compute_gasteiger_charges(mol: &Atomistic) -> Result<Vec<(NodeId, f64)>, ChargeError> {
-    let charges = GasteigerModel.assign(mol, None)?;
-    Ok(atom_ids(mol).into_iter().zip(charges).collect())
-}
-
 /// The `GASPARM.DAT` row of every atom, in graph atom order.
 ///
 /// # Errors

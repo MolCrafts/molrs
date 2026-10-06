@@ -40,3 +40,9 @@ pub mod smiles;
 pub(crate) mod zarr;
 
 pub use format::{FrameFormat, read_frame, write_frame};
+
+/// The one `InvalidData` error of the io readers and writers: a parse or
+/// shape failure carrying `e`'s message.
+pub(crate) fn invalid_data<E: std::fmt::Display>(e: E) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+}

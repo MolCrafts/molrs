@@ -901,7 +901,7 @@ mod tests {
 #[cfg(test)]
 mod equivalence {
     use super::*;
-    use crate::op::types::F3x3;
+    use crate::op::types::FNx3;
     use crate::spatial::SimBox;
     use crate::spatial::neighbors::CellGrid;
     use crate::spatial::neighbors::NeighborList;
@@ -924,7 +924,7 @@ mod equivalence {
         }
     }
 
-    fn cells() -> Vec<(&'static str, F3x3)> {
+    fn cells() -> Vec<(&'static str, FNx3)> {
         vec![
             (
                 "ortho",

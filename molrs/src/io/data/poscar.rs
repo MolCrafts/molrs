@@ -22,33 +22,24 @@
 //!   - `symbol` — element symbol (omitted when the file did not declare them).
 //!   - `sd_x`, `sd_y`, `sd_z` — selective-dynamics flags, if present.
 //!   - `vx`, `vy`, `vz` — atomic velocities, if present.
-//! - `frame.simbox` — periodic [`SimBox`] from the lattice vectors.
+//! - `frame.simbox` — periodic [`SimBox`](molrs::spatial::SimBox) from the lattice vectors.
 //! - `frame.meta` — `title`, plus `poscar_mode = "direct" | "cartesian"`.
 
-use std::io::{BufRead, BufWriter, Error, ErrorKind, Result, Write};
+use crate::io::invalid_data;
+use std::io::{BufRead, BufWriter, Result, Write};
 use std::path::Path;
 
-use ndarray::{Array1, Array2, IxDyn, array};
+use ndarray::{Array1, IxDyn};
 
 use molrs::op::types::F;
-use molrs::spatial::SimBox;
 use molrs::store::Block;
 use molrs::store::Frame;
 
-use crate::io::data::vasp_common::{
-    AtomRow, CoordMode, expand_symbols, fractional_to_cartesian, parse_atom_row, read_coords,
-    read_header,
+use crate::io::data::vasp_header::{
+    AtomRow, CoordMode, expand_symbols, parse_atom_row, read_coords, read_header,
 };
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::writer::{FrameWriter, Writer};
-
-// ---------------------------------------------------------------------------
-// Error helper
-// ---------------------------------------------------------------------------
-
-fn invalid_data<E: std::fmt::Display>(e: E) -> Error {
-    Error::new(ErrorKind::InvalidData, e.to_string())
-}
 
 // ---------------------------------------------------------------------------
 // Reader
@@ -72,19 +63,8 @@ pub fn read_poscar_from_reader<R: BufRead>(mut reader: R) -> Result<Frame> {
     let (raw_x, raw_y, raw_z, sd_flags) =
         read_coords(&mut reader, n, &mut line_no, header.selective_dynamics)?;
 
-    let (cart_x, cart_y, cart_z) = match header.mode {
-        CoordMode::Direct => fractional_to_cartesian(&raw_x, &raw_y, &raw_z, &header.cell),
-        CoordMode::Cartesian => {
-            // Already Cartesian; lattice vectors were pre-scaled by `scale`,
-            // but Cartesian atom coords are also scaled by VASP convention.
-            let s = header.scale;
-            (
-                raw_x.iter().map(|v| v * s).collect(),
-                raw_y.iter().map(|v| v * s).collect(),
-                raw_z.iter().map(|v| v * s).collect(),
-            )
-        }
-    };
+    let simbox = header.simbox()?;
+    let (cart_x, cart_y, cart_z) = header.cartesian(&simbox, &raw_x, &raw_y, &raw_z);
 
     // Optional velocity block after a blank line. Best-effort: silently stop
     // if the file does not contain one or stops early.
@@ -144,11 +124,6 @@ pub fn read_poscar_from_reader<R: BufRead>(mut reader: R) -> Result<Frame> {
         },
     );
 
-    // SimBox: H columns = lattice vectors. cell rows = lattice vectors, so
-    // h[col, row] = cell[row][col].
-    let h = Array2::from_shape_fn((3, 3), |(i, j)| header.cell[j][i]);
-    let origin = array![0.0 as F, 0.0, 0.0];
-    let simbox = SimBox::new(h, origin, [true; 3]).map_err(|e| invalid_data(format!("{:?}", e)))?;
     frame.simbox = Some(simbox);
 
     frame.insert("atoms", atoms);
@@ -295,7 +270,7 @@ pub fn write_poscar_to_writer<W: Write>(writer: &mut W, frame: &Frame) -> Result
     writeln!(writer, "1.0")?;
 
     // Lattice rows: h columns are lattice vectors → row i = (h[0,i], h[1,i], h[2,i]).
-    let h = simbox_h_matrix(simbox);
+    let h = simbox.h_view();
     for i in 0..3 {
         writeln!(
             writer,
@@ -345,16 +320,17 @@ pub fn write_poscar_to_writer<W: Write>(writer: &mut W, frame: &Frame) -> Result
         .ok_or_else(|| invalid_data("atoms.z missing"))?;
 
     if direct {
-        // Convert Cartesian → fractional via H^{-1}.
-        let inv = invert_h(&h)?;
+        // Fractions of the cell, from its origin (`SimBox::to_frac`).
+        let xyz = ndarray::Array2::from_shape_fn((n, 3), |(i, k)| [xs, ys, zs][k][[i]]);
+        let frac = simbox.to_frac(xyz.view());
         for &i in &order {
-            let x = xs[[i]];
-            let y = ys[[i]];
-            let z = zs[[i]];
-            let fx = inv[(0, 0)] * x + inv[(0, 1)] * y + inv[(0, 2)] * z;
-            let fy = inv[(1, 0)] * x + inv[(1, 1)] * y + inv[(1, 2)] * z;
-            let fz = inv[(2, 0)] * x + inv[(2, 1)] * y + inv[(2, 2)] * z;
-            writeln!(writer, "  {:.10}  {:.10}  {:.10}", fx, fy, fz)?;
+            writeln!(
+                writer,
+                "  {:.10}  {:.10}  {:.10}",
+                frac[(i, 0)],
+                frac[(i, 1)],
+                frac[(i, 2)]
+            )?;
         }
     } else {
         for &i in &order {
@@ -368,11 +344,6 @@ pub fn write_poscar_to_writer<W: Write>(writer: &mut W, frame: &Frame) -> Result
         }
     }
     Ok(())
-}
-
-/// Pull the H matrix (3x3, columns = lattice vectors) out of a SimBox.
-fn simbox_h_matrix(simbox: &SimBox) -> ndarray::Array2<F> {
-    simbox.h_view().to_owned()
 }
 
 /// Group atoms by their `symbol` column (if present).
@@ -403,29 +374,6 @@ fn group_by_symbol(
     } else {
         (None, vec![n], (0..n).collect())
     }
-}
-
-/// Compute the inverse of a 3x3 matrix via cofactor expansion.
-fn invert_h(h: &ndarray::Array2<F>) -> Result<ndarray::Array2<F>> {
-    let m = |i: usize, j: usize| h[(i, j)];
-    let det = m(0, 0) * (m(1, 1) * m(2, 2) - m(1, 2) * m(2, 1))
-        - m(0, 1) * (m(1, 0) * m(2, 2) - m(1, 2) * m(2, 0))
-        + m(0, 2) * (m(1, 0) * m(2, 1) - m(1, 1) * m(2, 0));
-    if det.abs() < 1e-30 {
-        return Err(invalid_data("singular cell matrix"));
-    }
-    let inv_det = 1.0 / det;
-    let mut inv = ndarray::Array2::<F>::zeros((3, 3));
-    inv[(0, 0)] = (m(1, 1) * m(2, 2) - m(1, 2) * m(2, 1)) * inv_det;
-    inv[(0, 1)] = (m(0, 2) * m(2, 1) - m(0, 1) * m(2, 2)) * inv_det;
-    inv[(0, 2)] = (m(0, 1) * m(1, 2) - m(0, 2) * m(1, 1)) * inv_det;
-    inv[(1, 0)] = (m(1, 2) * m(2, 0) - m(1, 0) * m(2, 2)) * inv_det;
-    inv[(1, 1)] = (m(0, 0) * m(2, 2) - m(0, 2) * m(2, 0)) * inv_det;
-    inv[(1, 2)] = (m(0, 2) * m(1, 0) - m(0, 0) * m(1, 2)) * inv_det;
-    inv[(2, 0)] = (m(1, 0) * m(2, 1) - m(1, 1) * m(2, 0)) * inv_det;
-    inv[(2, 1)] = (m(0, 1) * m(2, 0) - m(0, 0) * m(2, 1)) * inv_det;
-    inv[(2, 2)] = (m(0, 0) * m(1, 1) - m(0, 1) * m(1, 0)) * inv_det;
-    Ok(inv)
 }
 
 /// Convenience writer: implements [`FrameWriter`].

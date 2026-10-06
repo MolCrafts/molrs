@@ -38,7 +38,7 @@
 /// Tests only; see the module docs for how to run the red line.
 #[cfg(all(test, feature = "smiles"))]
 mod aromatic_standard;
-pub mod aromaticity;
+pub(crate) mod aromaticity;
 pub mod bond_order;
 pub mod bond_type;
 mod builder;

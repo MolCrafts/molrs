@@ -3,15 +3,12 @@
 //! Minimal surface matching historical molpy `read_prep` / `write_prep`:
 //! residue name, atom Z-matrix rows, optional IMPROPER section.
 
+use crate::io::invalid_data;
 use std::fs;
-use std::io::{Error, ErrorKind, Result};
+use std::io::Result;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-
-fn invalid_data<E: std::fmt::Display>(e: E) -> Error {
-    Error::new(ErrorKind::InvalidData, e.to_string())
-}
 
 /// One atom row in a prep residue.
 #[derive(Debug, Clone, Serialize, Deserialize)]

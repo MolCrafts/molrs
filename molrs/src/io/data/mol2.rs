@@ -28,7 +28,8 @@
 //!
 //! The writer reads the same names back.
 
-use std::io::{BufRead, BufWriter, Error, ErrorKind, Result, Write};
+use crate::io::invalid_data;
+use std::io::{BufRead, BufWriter, Result, Write};
 use std::path::Path;
 
 use ndarray::{Array1, IxDyn};
@@ -44,10 +45,6 @@ use crate::io::writer::{FrameWriter, Writer};
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn invalid_data<E: std::fmt::Display>(e: E) -> Error {
-    Error::new(ErrorKind::InvalidData, e.to_string())
-}
 
 fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
     let n = vals.len();

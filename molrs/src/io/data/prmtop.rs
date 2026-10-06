@@ -5,16 +5,18 @@
 //! (harmonic constants, LJ coefficients, Fourier terms) are **not** assembled
 //! here — that is the force-field reader's product
 //! (`ff::forcefield::readers::prmtop`), which names its types exactly as the
-//! rows below are labelled (the shared [`prmtop_tables`] helpers decide both).
+//! rows below are labelled (the shared `prmtop_tables` helpers decide both).
 //! What the frame carries of the tables is per-row: which rows a multi-term
-//! improper is, and each 1-4 pair's own weight. Structure fields mirror the
+//! improper is. A 1-4 pair's own weight (`SCEE` / `SCNB`) is force-field
+//! meaning: `ff::forcefield::readers::prmtop::AmberPrmtopFfReader::read_system`
+//! returns this frame with those `pairs` rows. Structure fields mirror the
 //! historical molpy `AmberPrmtopReader` Frame contract so molpy can thin to a
 //! molrs call.
 //!
 //! ## Output Frame
 //!
 //! - `"atoms"`: `id` (uint, 1-based), `name` (str), `type` (str,
-//!   [`prmtop_tables::atom_type_names`]: the `AMBER_ATOM_TYPE`, or
+//!   `prmtop_tables::atom_type_names`: the `AMBER_ATOM_TYPE`, or
 //!   `<type>~<class>` when one type name stands for two LJ classes or masses —
 //!   a chamber file cuts CHARMM's types to four characters), `charge` (float,
 //!   electron units — prmtop value / 18.2223, or / √332.0716 in a chamber
@@ -44,18 +46,7 @@
 //!   there are none.
 //! - `"cmaps"`: `atomi` … `atomm`, `type` — the CMAP crossterms
 //!   (`CHARMM_CMAP_INDEX`, or ff19SB's `CMAP_INDEX`), typed as
-//!   [`prmtop_tables::cmap_terms`] names them; absent without CMAP.
-//! - `"pairs"`: present only when some 1-4 pair is weighted otherwise than
-//!   the force field's `special_bonds` — a torsion type whose `SCEE` / `SCNB`
-//!   differ from the divisor most 1-4 rows carry (GLYCAM beside ff14SB), a
-//!   pair two rows list, a 1-4 pair no row lists — and absent when the file
-//!   has no `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR` (pre-Amber-11): those
-//!   divisors are then the force field's, which this structure reader does
-//!   not assume (`ff`'s prmtop reader takes AMBER's). Those pairs (`atomi`,
-//!   `atomj`, `is_14`), each with the per-pair override cells `coul_scale`
-//!   (Σ 1/SCEE) / `lj_scale` (Σ 1/SCNB) where they differ, null where they
-//!   agree. It is not a pair list: build the full one with
-//!   `ff::potential::intramolecular_pairs`, which keeps these cells.
+//!   `prmtop_tables::cmap_terms` names them; absent without CMAP.
 //! - `"exclusions"`: `atomi`/`atomj` (uint, 0-based, `atomi < atomj`), the
 //!   Ewald real-space correction set from `NUMBER_EXCLUDED_ATOMS` /
 //!   `EXCLUDED_ATOMS_LIST`. `0` placeholders are dropped. An all-placeholder
@@ -73,8 +64,9 @@
 //!
 //! Refused by name: perturbed (`IFPERT > 0`), solvent-cap (`IFCAP > 0`),
 //! `IFBOX = 3`, polarizable (`IPOL > 0`), 12-6-4 (`LENNARD_JONES_CCOEF`)
-//! and 10-12 (negative ICO) files; a 1-4 row on a negative-PN chain or on a
-//! bonded / angle-end pair (sander prices both, the IR has no form).
+//! and 10-12 (negative ICO) files. A 1-4 row on a negative-PN chain or on a
+//! bonded / angle-end pair (sander prices both, the IR has no form) is the
+//! force-field reader's refusal, not this one's.
 //!
 //! ## Encoding notes (Amber [FileFormats](https://ambermd.org/FileFormats.php))
 //!
@@ -94,8 +86,9 @@
 //!   we divide by the literal 18.2223 (a chamber file: √332.0716, ParmEd's
 //!   `CHARMM_ELECTROSTATIC`) to electron charge for the Frame.
 
+use crate::io::invalid_data;
 use std::collections::HashMap;
-use std::io::{BufRead, Error, ErrorKind, Result};
+use std::io::{BufRead, Error, Result};
 use std::path::Path;
 
 use ndarray::{Array1, IxDyn, array};
@@ -115,10 +108,6 @@ use crate::units::constants::AMBER_CHARGE_FACTOR;
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn invalid_data<E: std::fmt::Display>(e: E) -> Error {
-    Error::new(ErrorKind::InvalidData, e.to_string())
-}
 
 fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
     let n = vals.len();
@@ -368,21 +357,21 @@ fn decode_angles(pointers: &[i64], atom_types: &[String]) -> Result<Vec<AngleRow
 }
 
 /// The `dihedrals` and `impropers` rows of the raw `DIHEDRALS_*` pointer rows
-/// ([`prmtop_tables::decode_torsions`]), the force-field reader's names on
+/// (`prmtop_tables::decode_torsions`), the force-field reader's names on
 /// every row.
 ///
 /// - A proper is one row per atom quartet: the rows of a multi-term torsion
 ///   share the quartet, and the force-field reader's `dihedral periodic` type
 ///   holds every term. A quartet tleap gave two different sets of terms is
 ///   two types, the second `<quartet>@<n>`
-///   ([`prmtop_tables::proper_type_names`]). It is oriented as the force-field reader names it:
+///   (`prmtop_tables::proper_type_names`). It is oriented as the force-field reader names it:
 ///   reversed when [`TypeName::reads_reversed`] says its types are, atoms and
 ///   name together. Counts therefore match the torsions, not the cosine terms.
 /// - An improper (negative 4th pointer) keeps its prmtop atom order: AMBER
 ///   puts the central atom third, and reversing it names a different term.
 ///   A single-term improper is one row; a multi-term one (several rows on one
 ///   quartet, or a negative-PN chain) is one row per term, named
-///   `<quartet>@<n>` ([`prmtop_tables::Torsion::improper_rows`]), because
+///   `<quartet>@<n>` (`prmtop_tables::Torsion::improper_rows`), because
 ///   `improper periodic` holds one term. Without the parameter tables an
 ///   improper is one row.
 /// - `exclude_14` of a merged torsion is set only when every merged row set
@@ -808,7 +797,7 @@ fn section_floats(sections: &HashMap<String, Vec<String>>, key: &str) -> Result<
 }
 
 /// The `cmaps` block: the five atoms of each crossterm and its type name
-/// ([`prmtop_tables::cmap_terms`]).
+/// (`prmtop_tables::cmap_terms`).
 fn build_cmap_block(cmap: &prmtop_tables::CmapTerms) -> Result<Block> {
     let mut block = Block::new();
     for (p, key) in [
@@ -828,121 +817,8 @@ fn build_cmap_block(cmap: &prmtop_tables::CmapTerms) -> Result<Block> {
     Ok(block)
 }
 
-/// The `pairs` rows of the 1-4 pairs sander weighs otherwise than the force
-/// field's `special_bonds` ([`prmtop_tables::one_four_weights`]), each with
-/// its own `coul_scale` / `lj_scale` (null where it agrees); `None` when no
-/// pair does.
-///
-/// sander prices a pair at full weight unless `EXCLUDED_ATOMS_LIST` names it,
-/// plus `1/SCEE`, `1/SCNB` of its type for every torsion row that lists it as
-/// its 1-4 pair. For the 1-4 pairs of the topology (the end atoms of a
-/// proper, neither bonded nor an angle's ends) that sum is the pair's
-/// weight; the pairs whose weight differs from the field's — another
-/// divisor (GLYCAM's 1.0 beside ff14SB's 1.2 / 2.0), a pair two rows list,
-/// a pair no row lists — carry it here. A 1-4 row on a bonded pair or an
-/// angle's ends is an `Err`: molrs excludes those pairs.
-fn build_one_four_pairs(
-    sections: &HashMap<String, Vec<String>>,
-    dihe_ptrs: &[i64],
-    n_atoms: usize,
-    bonds: &[BondRow],
-    angles: &[AngleRow],
-    torsions: &[DihedralRow],
-    exclusions: Option<&Block>,
-) -> Result<Option<Block>> {
-    use std::collections::{BTreeMap, HashSet};
-    // No divisors in the file (pre-Amber-11): they are its force field's,
-    // which a structure reader does not assume, so no pair is priced.
-    let Some(weights) = prmtop_tables::one_four_weights(
-        dihe_ptrs,
-        n_atoms,
-        &section_floats(sections, "SCEE_SCALE_FACTOR")?,
-        &section_floats(sections, "SCNB_SCALE_FACTOR")?,
-        &section_floats(sections, "DIHEDRAL_PERIODICITY")?,
-        None,
-    )
-    .map_err(invalid_data)?
-    else {
-        return Ok(None);
-    };
-    let key = |a: Idx, b: Idx| (a.min(b) as usize, a.max(b) as usize);
-    let close: HashSet<(usize, usize)> = bonds
-        .iter()
-        .map(|b| key(b.atomi, b.atomj))
-        .chain(angles.iter().map(|a| key(a.atomi, a.atomk)))
-        .collect();
-    if let Some(&(i, j)) = weights.pairs.keys().find(|p| close.contains(p)) {
-        return Err(invalid_data(format!(
-            "atoms {} and {} are a torsion's 1-4 pair (a non-negative 3rd pointer) and \
-             also bonded or an angle's ends: sander prices that pair as 1-4, molrs \
-             excludes it",
-            i + 1,
-            j + 1
-        )));
-    }
-    let excluded: Option<HashSet<(usize, usize)>> = exclusions.map(|b| {
-        let (i, j) = (
-            b.get(keys::ATOMI).and_then(|c| c.as_uint()),
-            b.get(keys::ATOMJ).and_then(|c| c.as_uint()),
-        );
-        match (i, j) {
-            (Some(i), Some(j)) => i.iter().zip(j.iter()).map(|(&a, &b)| key(a, b)).collect(),
-            _ => HashSet::new(),
-        }
-    });
-    let mut topology_14: BTreeMap<(usize, usize), (F, F)> = BTreeMap::new();
-    for t in torsions.iter().filter(|t| !t.is_improper) {
-        let pair = key(t.atomi, t.atoml);
-        if close.contains(&pair) {
-            continue;
-        }
-        let (coul, lj) = weights.pairs.get(&pair).copied().unwrap_or((0.0, 0.0));
-        // Without an exclusion list every such pair is taken as excluded.
-        let full = match &excluded {
-            Some(set) if !set.contains(&pair) => 1.0,
-            _ => 0.0,
-        };
-        topology_14.insert(pair, (coul + full, lj + full));
-    }
-    let differs = |a: F, b: F| (a - b).abs() > 1e-12 * a.abs().max(b.abs()).max(1.0);
-    let rows: Vec<((usize, usize), (F, F))> = topology_14
-        .into_iter()
-        .filter(|&(_, (c, l))| differs(c, weights.coul) || differs(l, weights.lj))
-        .collect();
-    if rows.is_empty() {
-        return Ok(None);
-    }
-    let mut block = Block::new();
-    insert_uint_col(
-        &mut block,
-        keys::ATOMI,
-        rows.iter().map(|r| r.0.0 as Idx).collect(),
-    )?;
-    insert_uint_col(
-        &mut block,
-        keys::ATOMJ,
-        rows.iter().map(|r| r.0.1 as Idx).collect(),
-    )?;
-    insert_bool_col(&mut block, keys::IS_14, vec![true; rows.len()])?;
-    for (column, pick, field) in [
-        ("coul_scale", 0usize, weights.coul),
-        ("lj_scale", 1usize, weights.lj),
-    ] {
-        let values: Vec<F> = rows
-            .iter()
-            .map(|r| if pick == 0 { r.1.0 } else { r.1.1 })
-            .collect();
-        let valid: Vec<bool> = values.iter().map(|&v| differs(v, field)).collect();
-        if valid.iter().any(|&v| v) {
-            block
-                .insert_nullable(column, Array1::from_vec(values).into_dyn(), valid)
-                .map_err(invalid_data)?;
-        }
-    }
-    Ok(Some(block))
-}
-
-fn build_frame(sections: HashMap<String, Vec<String>>) -> Result<Frame> {
+/// The structure [`Frame`] of the parsed `%FLAG` sections (the module docs).
+pub(crate) fn frame_from_sections(sections: &HashMap<String, Vec<String>>) -> Result<Frame> {
     let pointers_lines = sections.get("POINTERS").ok_or_else(|| {
         invalid_data(
             "Invalid or empty prmtop file: POINTERS section missing. \
@@ -1084,15 +960,6 @@ fn build_frame(sections: HashMap<String, Vec<String>>) -> Result<Frame> {
         .map_err(invalid_data)?
         .map(|c| build_cmap_block(&c))
         .transpose()?;
-    let pairs = build_one_four_pairs(
-        &sections,
-        &dihe_ptrs,
-        n_atoms,
-        &bonds,
-        &angles,
-        &dihedrals,
-        exclusions.as_ref(),
-    )?;
 
     // ---- atoms block ----
     let mut atoms = Block::new();
@@ -1168,9 +1035,6 @@ fn build_frame(sections: HashMap<String, Vec<String>>) -> Result<Frame> {
     if let Some(cmaps) = cmaps {
         frame.insert(block_names::CMAPS, cmaps);
     }
-    if let Some(pairs) = pairs {
-        frame.insert(block_names::PAIRS, pairs);
-    }
     apply_meta_scalars(&mut frame, &sections)?;
     apply_box(&mut frame, &sections, ifbox)?;
 
@@ -1190,7 +1054,7 @@ pub fn read_amber_prmtop<P: AsRef<Path>>(path: P) -> Result<Frame> {
 /// Parse AMBER prmtop structure text from any [`BufRead`].
 pub fn read_amber_prmtop_from_reader<R: BufRead>(reader: R) -> Result<Frame> {
     let sections = parse_flag_sections(reader)?;
-    build_frame(sections)
+    frame_from_sections(&sections)
 }
 
 // ---------------------------------------------------------------------------
@@ -1198,7 +1062,7 @@ pub fn read_amber_prmtop_from_reader<R: BufRead>(reader: R) -> Result<Frame> {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::io::Cursor;
 
@@ -1633,7 +1497,7 @@ c3  c3  c3  c3
         let err = refusal_from(text);
         assert_eq!(
             err.kind(),
-            ErrorKind::InvalidData,
+            std::io::ErrorKind::InvalidData,
             "refusal for {subject:?} must be InvalidData"
         );
         let msg = err.to_string();
@@ -1847,7 +1711,7 @@ c3  c3  c3  c3
             "       2       3       4       3       4       4",
         );
         let err = refusal_from(&text);
-        assert_eq!(err.kind(), ErrorKind::InvalidData);
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
         let msg = err.to_string();
         assert!(msg.contains("NNB"), "message {msg:?} must name NNB");
         assert!(
@@ -1920,7 +1784,7 @@ c3  c3  c3  c3
     /// Both quartets carry the type name `hc-c3-os-c3`: the force-field reader
     /// orients a proper so that its second type is not after its third
     /// (`c3 ≤ os`), so `1-2-3-4` (`c3-os-c3-hc`) reads as `4-3-2-1`.
-    fn chain5_prmtop(torsions: &str) -> String {
+    pub(crate) fn chain5_prmtop(torsions: &str) -> String {
         let nphih = torsions.split_whitespace().count() / 5;
         format!(
             "\
@@ -2288,7 +2152,7 @@ MOL
 ";
         let text = without_section(LITFSI_HEAD, "JOIN_ARRAY") + short;
         let err = refusal_from(&text);
-        assert_eq!(err.kind(), ErrorKind::InvalidData);
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
         let msg = err.to_string();
         assert!(
             msg.contains("JOIN_ARRAY"),
@@ -2310,7 +2174,7 @@ MOL
 ";
         let text = without_section(LITFSI_HEAD, "IROTAT") + short;
         let err = refusal_from(&text);
-        assert_eq!(err.kind(), ErrorKind::InvalidData);
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
         let msg = err.to_string();
         assert!(
             msg.contains("IROTAT"),
@@ -2332,7 +2196,7 @@ TF  LI  XX
 ";
         let text = without_section(LITFSI_HEAD, "RESIDUE_LABEL") + three;
         let err = refusal_from(&text);
-        assert_eq!(err.kind(), ErrorKind::InvalidData);
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
         let msg = err.to_string();
         assert!(
             msg.contains("RESIDUE_LABEL"),
@@ -2406,99 +2270,6 @@ TF  LI  XX
             cmaps.get("type").unwrap().as_string().unwrap()[[0]],
             "C1-N1-C2-C3-N2"
         );
-        // SCEE = SCNB = 1 on every 1-4 row: uniform, no `pairs`.
-        assert!(frame.get("pairs").is_none());
-    }
-
-    /// [`chain5_prmtop`] with the dihedral tables and SCEE/SCNB: type 1
-    /// (1.2 / 2.0) and type 2 (`scee2` / `scnb2`).
-    fn chain5_scaled(torsions: &str, scee2: &str, scnb2: &str) -> String {
-        chain5_prmtop(torsions)
-            + &format!(
-                "\
-%FLAG DIHEDRAL_FORCE_CONSTANT
-%FORMAT(5E16.8)
-  1.00000000E+00  1.00000000E+00
-%FLAG DIHEDRAL_PERIODICITY
-%FORMAT(5E16.8)
-  3.00000000E+00  2.00000000E+00
-%FLAG DIHEDRAL_PHASE
-%FORMAT(5E16.8)
-  0.00000000E+00  0.00000000E+00
-%FLAG SCEE_SCALE_FACTOR
-%FORMAT(5E16.8)
-  1.20000000E+00  {scee2}
-%FLAG SCNB_SCALE_FACTOR
-%FORMAT(5E16.8)
-  2.00000000E+00  {scnb2}
-"
-            )
-    }
-
-    /// The `(atomi, atomj, coul_scale, lj_scale)` of each `pairs` row, a null
-    /// cell as `None`.
-    fn pair_scales(frame: &Frame) -> Vec<(Idx, Idx, Option<F>, Option<F>)> {
-        let pairs = frame.get("pairs").expect("pairs");
-        let ai = pairs.get("atomi").unwrap().as_uint().unwrap();
-        let aj = pairs.get("atomj").unwrap().as_uint().unwrap();
-        let cell = |k: &str, r: usize| -> Option<F> {
-            let col = pairs.get(k)?;
-            if pairs.validity(k).is_some_and(|m| !m[r]) {
-                return None;
-            }
-            Some(col.as_float().unwrap()[[r]])
-        };
-        (0..ai.len())
-            .map(|r| (ai[[r]], aj[[r]], cell("coul_scale", r), cell("lj_scale", r)))
-            .collect()
-    }
-
-    /// Two 1-4 pairs, (0, 3) at type 1's 1.2 / 2.0 and (1, 4) at type 2's
-    /// 1.0 / 1.0: the field takes the first divisor on the tie, and the
-    /// frame's `pairs` carry the other pair's own weights.
-    #[test]
-    fn a_non_uniform_scee_gives_the_odd_pairs_their_scales() {
-        let text = chain5_scaled(
-            "       0       3       6       9       1       3       6       9      12       2",
-            "1.00000000E+00",
-            "1.00000000E+00",
-        );
-        let frame = frame_from(&text);
-        assert_eq!(pair_scales(&frame), vec![(1, 4, Some(1.0), Some(1.0))]);
-        let flags = frame.get("pairs").unwrap().get("is_14").unwrap();
-        assert!(flags.as_bool().unwrap().iter().all(|&f| f));
-    }
-
-    /// Only the weight that differs gets a cell: SCNB 2.0 on both types.
-    #[test]
-    fn a_pair_carries_only_the_scale_that_differs() {
-        let text = chain5_scaled(
-            "       0       3       6       9       1       3       6       9      12       2",
-            "1.00000000E+00",
-            "2.00000000E+00",
-        );
-        assert_eq!(
-            pair_scales(&frame_from(&text)),
-            vec![(1, 4, Some(1.0), None)]
-        );
-    }
-
-    /// A 1-4 pair two rows list is priced twice by sander: its scales are the
-    /// sum; a 1-4 pair of the topology no row lists (every row's 3rd pointer
-    /// negative, no exclusion list) is priced at 0.
-    #[test]
-    fn listed_twice_sums_and_listed_never_is_zero() {
-        let text = chain5_scaled(
-            "       0       3       6       9       1       0       3       6       9       1\n       3       6      -9      12       1",
-            "1.20000000E+00",
-            "2.00000000E+00",
-        );
-        let got = pair_scales(&frame_from(&text));
-        assert_eq!(got.len(), 2);
-        let (i, j, c, l) = got[0];
-        assert_eq!((i, j), (0, 3));
-        assert!((c.unwrap() - 2.0 / 1.2).abs() < 1e-15 && (l.unwrap() - 1.0).abs() < 1e-15);
-        assert_eq!(got[1], (1, 4, Some(0.0), Some(0.0)));
     }
 
     #[test]

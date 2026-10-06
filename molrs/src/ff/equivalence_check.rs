@@ -78,7 +78,6 @@ use crate::units::constants::{GROMACS_COULOMB, OPENMM_COULOMB};
 use molrs::io::data::gro::read_gro_frame;
 use molrs::io::data::inpcrd::read_amber_inpcrd_from_reader;
 use molrs::io::data::lammps_data::{read_lammps_data, write_lammps_data};
-use molrs::io::data::prmtop::read_amber_prmtop_from_reader;
 use molrs::op::types::{F, Idx};
 use molrs::spatial::SimBox;
 use molrs::store::Block;
@@ -214,8 +213,7 @@ fn no_cutoff(ff: &mut ForceField) {
 }
 
 fn prmtop(parm: &str, rst: &str) -> System {
-    let mut frame = read_amber_prmtop_from_reader(Cursor::new(parm.as_bytes())).unwrap();
-    let mut ff = AmberPrmtopFfReader::new().read_str(parm).unwrap();
+    let (mut ff, mut frame) = AmberPrmtopFfReader::new().read_system_str(parm).unwrap();
     no_cutoff(&mut ff);
     let pairs = intramolecular_pairs(&frame, ff.special_bonds()).unwrap();
     frame.insert("pairs", pairs);

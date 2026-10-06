@@ -28,6 +28,7 @@
 //! `sdf`), so a script's `filetype` keyword and a file extension go through
 //! the same table.
 
+use crate::io::invalid_data;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Error, ErrorKind, Result, Write};
 use std::path::Path;
@@ -188,10 +189,6 @@ impl std::fmt::Display for FrameFormat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.name())
     }
-}
-
-fn invalid_data(message: impl std::fmt::Display) -> Error {
-    Error::new(ErrorKind::InvalidData, message.to_string())
 }
 
 fn empty(path: &Path, format: FrameFormat) -> Error {

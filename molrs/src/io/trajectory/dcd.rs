@@ -42,6 +42,7 @@
 //! # }
 //! ```
 
+use crate::io::invalid_data;
 use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::streaming::{FrameIndexBuilder, FrameIndexEntry};
 use crate::io::writer::{FrameWriter, Writer};
@@ -50,7 +51,7 @@ use molrs::spatial::SimBox;
 use molrs::store::Block;
 use molrs::store::Frame;
 use molrs::store::FrameAccess;
-use ndarray::{Array1, Array2, IxDyn, array};
+use ndarray::{Array1, IxDyn, array};
 use std::fs::File;
 use std::io::{BufRead, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -59,10 +60,6 @@ use std::sync::OnceLock;
 // ============================================================================
 // Helpers
 // ============================================================================
-
-fn err_mapper<E: std::fmt::Display>(e: E) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-}
 
 fn unsupported<E: std::fmt::Display>(e: E) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::Unsupported, e.to_string())
@@ -161,7 +158,7 @@ fn write_marker<W: Write>(
 ) -> std::io::Result<()> {
     match marker_size {
         MarkerSize::Four => {
-            let v = u32::try_from(value).map_err(err_mapper)?;
+            let v = u32::try_from(value).map_err(invalid_data)?;
             let bytes = match byte_order {
                 ByteOrder::Le => v.to_le_bytes(),
                 ByteOrder::Be => v.to_be_bytes(),
@@ -208,16 +205,16 @@ fn read_record_into_max<R: Read>(
 ) -> std::io::Result<()> {
     let leading = read_marker(reader, byte_order, marker_size)?;
     if leading > max_payload {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "Fortran record payload {leading} bytes exceeds cap {max_payload}"
         )));
     }
-    let n = usize::try_from(leading).map_err(err_mapper)?;
+    let n = usize::try_from(leading).map_err(invalid_data)?;
     buf.resize(n, 0);
     reader.read_exact(buf)?;
     let trailing = read_marker(reader, byte_order, marker_size)?;
     if leading != trailing {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "Fortran record marker mismatch: leading={}, trailing={}",
             leading, trailing
         )));
@@ -384,7 +381,7 @@ fn detect_endianness_and_marker<R: Read>(
         }
     }
 
-    Err(err_mapper(format!(
+    Err(invalid_data(format!(
         "not a DCD file: first 12 bytes {:02x?} do not match any known marker layout",
         buf
     )))
@@ -402,13 +399,13 @@ fn parse_header_records<R: Read + Seek>(reader: &mut R) -> std::io::Result<Heade
     // -- Header record 1 (84 bytes) --
     let h1 = read_record(reader, byte_order, marker_size)?;
     if h1.len() != 84 {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "header record 1 has {} bytes, expected 84",
             h1.len()
         )));
     }
     if &h1[0..4] != b"CORD" {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "header magic is {:?}, expected 'CORD'",
             std::str::from_utf8(&h1[0..4]).unwrap_or("?")
         )));
@@ -441,17 +438,17 @@ fn parse_header_records<R: Read + Seek>(reader: &mut R) -> std::io::Result<Heade
     // -- Header record 2 (title) --
     let h2 = read_record(reader, byte_order, marker_size)?;
     if h2.len() < 4 {
-        return Err(err_mapper("title record too short"));
+        return Err(invalid_data("title record too short"));
     }
     let mut buf = [0u8; 4];
     buf.copy_from_slice(&h2[0..4]);
     let ntitle = read_i32(&buf, byte_order);
     if ntitle < 0 {
-        return Err(err_mapper(format!("invalid NTITLE={}", ntitle)));
+        return Err(invalid_data(format!("invalid NTITLE={}", ntitle)));
     }
     let expected_title_len = 4 + (ntitle as usize) * 80;
     if h2.len() < expected_title_len {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "title record has {} bytes, expected at least {}",
             h2.len(),
             expected_title_len
@@ -469,7 +466,7 @@ fn parse_header_records<R: Read + Seek>(reader: &mut R) -> std::io::Result<Heade
     // -- Header record 3 (NATOMS) --
     let h3 = read_record(reader, byte_order, marker_size)?;
     if h3.len() != 4 {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "NATOMS record has {} bytes, expected 4",
             h3.len()
         )));
@@ -478,12 +475,12 @@ fn parse_header_records<R: Read + Seek>(reader: &mut R) -> std::io::Result<Heade
     buf.copy_from_slice(&h3[0..4]);
     let natoms = read_i32(&buf, byte_order);
     if natoms <= 0 {
-        return Err(err_mapper(format!("invalid NATOMS={}", natoms)));
+        return Err(invalid_data(format!("invalid NATOMS={}", natoms)));
     }
     let natoms = natoms as u32;
 
     if namnf > natoms {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "NAMNF={} exceeds NATOMS={}",
             namnf, natoms
         )));
@@ -494,7 +491,7 @@ fn parse_header_records<R: Read + Seek>(reader: &mut R) -> std::io::Result<Heade
         let payload = read_record(reader, byte_order, marker_size)?;
         let nfree = (natoms - namnf) as usize;
         if payload.len() != nfree * 4 {
-            return Err(err_mapper(format!(
+            return Err(invalid_data(format!(
                 "fixed-atom record has {} bytes, expected {}",
                 payload.len(),
                 nfree * 4
@@ -589,7 +586,7 @@ fn resolve_frame_layout(
         }
     }
     if candidates.is_empty() {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "no per-frame layout (has_box, has_4d) is consistent with file size {} after header (natoms={}, namnf={}, first_marker={})",
             trailing, natoms, namnf, first_marker
         )));
@@ -676,7 +673,7 @@ fn read_coord_payload<R: Read>(
             axis_bytes,
         )?;
         if buf.len() != natoms_eff * 4 {
-            return Err(err_mapper(format!(
+            return Err(invalid_data(format!(
                 "coord record has {} bytes, expected {}",
                 buf.len(),
                 natoms_eff * 4
@@ -709,13 +706,13 @@ fn read_coord_payload<R: Read>(
     let (sx, sy, sz) = header
         .fixed_seed
         .as_ref()
-        .ok_or_else(|| err_mapper("fixed_seed missing for fixed-atom DCD"))?;
+        .ok_or_else(|| invalid_data("fixed_seed missing for fixed-atom DCD"))?;
     let free = header
         .free_atoms
         .as_ref()
-        .ok_or_else(|| err_mapper("free_atoms missing for fixed-atom DCD"))?;
+        .ok_or_else(|| invalid_data("free_atoms missing for fixed-atom DCD"))?;
     if free.len() != natoms_eff {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "free_atoms has {} entries, expected {}",
             free.len(),
             natoms_eff
@@ -727,7 +724,7 @@ fn read_coord_payload<R: Read>(
     let mut zs = sz.clone();
     for (slot, &one_indexed) in free.iter().enumerate() {
         if one_indexed < 1 || (one_indexed as usize) > natoms {
-            return Err(err_mapper(format!(
+            return Err(invalid_data(format!(
                 "free atom index {} out of range 1..={}",
                 one_indexed, natoms
             )));
@@ -744,7 +741,7 @@ fn read_coord_payload<R: Read>(
 /// Parse the box record at the current reader position into a `SimBox`.
 fn parse_box_payload(payload: &[u8], byte_order: ByteOrder) -> std::io::Result<SimBox> {
     if payload.len() != 48 {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "box record has {} bytes, expected 48",
             payload.len()
         )));
@@ -778,7 +775,7 @@ fn parse_box_payload(payload: &[u8], byte_order: ByteOrder) -> std::io::Result<S
     };
 
     if a <= 0.0 || b <= 0.0 || c <= 0.0 {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "non-positive box length: A={}, B={}, C={}",
             a, b, c
         )));
@@ -789,59 +786,12 @@ fn parse_box_payload(payload: &[u8], byte_order: ByteOrder) -> std::io::Result<S
 
     if (alpha - 90.0).abs() < 1e-6 && (beta - 90.0).abs() < 1e-6 && (gamma - 90.0).abs() < 1e-6 {
         return SimBox::ortho(array![a as F, b as F, c as F], origin, pbc)
-            .map_err(|e| err_mapper(format!("ortho box: {:?}", e)));
+            .map_err(|e| invalid_data(format!("ortho box: {:?}", e)));
     }
 
-    let h = abc_to_h(a, b, c, alpha, beta, gamma);
-    SimBox::new(h, origin, pbc).map_err(|e| err_mapper(format!("triclinic box: {:?}", e)))
-}
-
-/// Build a 3×3 H matrix whose **columns** are the lattice vectors, using the
-/// "a along x, b in xy plane" convention. Matches the column-major convention
-/// used by `SimBox` and `lammps_data` / `poscar` readers.
-fn abc_to_h(a: f64, b: f64, c: f64, alpha: f64, beta: f64, gamma: f64) -> Array2<F> {
-    let to_rad = std::f64::consts::PI / 180.0;
-    let ca = (alpha * to_rad).cos();
-    let cb = (beta * to_rad).cos();
-    let cg = (gamma * to_rad).cos();
-    let sg = (gamma * to_rad).sin();
-
-    let v1 = [a, 0.0, 0.0];
-    let v2 = [b * cg, b * sg, 0.0];
-    let v3x = c * cb;
-    let v3y = if sg.abs() > 0.0 {
-        c * (ca - cb * cg) / sg
-    } else {
-        0.0
-    };
-    let v3z2 = c * c - v3x * v3x - v3y * v3y;
-    let v3z = if v3z2 > 0.0 { v3z2.sqrt() } else { 0.0 };
-    let v3 = [v3x, v3y, v3z];
-
-    // SimBox treats columns as lattice vectors: H[:, i] = v_{i+1}.
-    array![
-        [v1[0], v2[0], v3[0]],
-        [v1[1], v2[1], v3[1]],
-        [v1[2], v2[2], v3[2]],
-    ]
-}
-
-/// Inverse of `abc_to_h`: extract `(a, b, c, alpha, beta, gamma)` from an
-/// H matrix whose columns are lattice vectors.
-fn h_to_abc(h: &Array2<F>) -> (f64, f64, f64, f64, f64, f64) {
-    let col = |j: usize| [h[[0, j]], h[[1, j]], h[[2, j]]];
-    let v1 = col(0);
-    let v2 = col(1);
-    let v3 = col(2);
-    let norm = |v: [f64; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-    let a = norm(v1);
-    let b = norm(v2);
-    let c = norm(v3);
-    let alpha = (dot(v2, v3) / (b * c)).clamp(-1.0, 1.0).acos().to_degrees();
-    let beta = (dot(v1, v3) / (a * c)).clamp(-1.0, 1.0).acos().to_degrees();
-    let gamma = (dot(v1, v2) / (a * b)).clamp(-1.0, 1.0).acos().to_degrees();
-    (a, b, c, alpha, beta, gamma)
+    SimBox::matrix_from_lengths_angles([a, b, c], [alpha, beta, gamma])
+        .and_then(|h| SimBox::new(h, origin, pbc))
+        .map_err(|e| invalid_data(format!("triclinic box: {:?}", e)))
 }
 
 /// Decode one frame whose first byte is at the current reader position.
@@ -872,8 +822,8 @@ fn parse_one_frame<R: Read>(
     let mut atoms = Block::new();
     let id_arr = Array1::from_iter(1..=natoms as Idx)
         .into_shape_with_order(IxDyn(&[natoms]))
-        .map_err(err_mapper)?;
-    atoms.insert("id", id_arr).map_err(err_mapper)?;
+        .map_err(invalid_data)?;
+    atoms.insert("id", id_arr).map_err(invalid_data)?;
 
     let to_f64 = |v: &[f32]| -> Array1<F> { v.iter().map(|&x| x as F).collect() };
 
@@ -882,34 +832,34 @@ fn parse_one_frame<R: Read>(
             "x",
             to_f64(&xs)
                 .into_shape_with_order(IxDyn(&[natoms]))
-                .map_err(err_mapper)?,
+                .map_err(invalid_data)?,
         )
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     atoms
         .insert(
             "y",
             to_f64(&ys)
                 .into_shape_with_order(IxDyn(&[natoms]))
-                .map_err(err_mapper)?,
+                .map_err(invalid_data)?,
         )
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     atoms
         .insert(
             "z",
             to_f64(&zs)
                 .into_shape_with_order(IxDyn(&[natoms]))
-                .map_err(err_mapper)?,
+                .map_err(invalid_data)?,
         )
-        .map_err(err_mapper)?;
+        .map_err(invalid_data)?;
     if let Some(w) = w {
         atoms
             .insert(
                 "w",
                 to_f64(&w)
                     .into_shape_with_order(IxDyn(&[natoms]))
-                    .map_err(err_mapper)?,
+                    .map_err(invalid_data)?,
             )
-            .map_err(err_mapper)?;
+            .map_err(invalid_data)?;
     }
 
     let mut frame = Frame::new();
@@ -1104,10 +1054,10 @@ fn write_dcd_frame<W: Write + Seek>(
 
     let natoms_in_frame = frame
         .visit_block("atoms", |a| a.nrows().unwrap_or(0))
-        .ok_or_else(|| err_mapper("frame must contain 'atoms' block"))?
+        .ok_or_else(|| invalid_data("frame must contain 'atoms' block"))?
         as u32;
     if natoms_in_frame == 0 {
-        return Err(err_mapper("frame has no atoms"));
+        return Err(invalid_data("frame has no atoms"));
     }
 
     let has_box = frame.simbox_ref().is_some();
@@ -1136,13 +1086,13 @@ fn write_dcd_frame<W: Write + Seek>(
     let meta = state.meta.as_ref().expect("meta set");
 
     if natoms_in_frame != meta.natoms {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "DCD requires constant atom count: frame has {}, header has {}",
             natoms_in_frame, meta.natoms
         )));
     }
     if has_box != meta.has_box {
-        return Err(err_mapper(
+        return Err(invalid_data(
             "DCD requires consistent box presence across frames",
         ));
     }
@@ -1232,9 +1182,9 @@ fn write_frame_payload<W: Write>(
     if meta.has_box {
         let simbox = frame
             .simbox_ref()
-            .ok_or_else(|| err_mapper("frame missing simbox but header advertised one"))?;
-        let h = simbox.h_view().to_owned();
-        let (a, b, c, alpha, beta, gamma) = h_to_abc(&h);
+            .ok_or_else(|| invalid_data("frame missing simbox but header advertised one"))?;
+        let [a, b, c] = [0, 1, 2].map(|k| simbox.lengths()[k]);
+        let [alpha, beta, gamma] = [0, 1, 2].map(|k| simbox.angles()[k]);
         let cos_alpha = alpha.to_radians().cos();
         let cos_beta = beta.to_radians().cos();
         let cos_gamma = gamma.to_radians().cos();
@@ -1266,14 +1216,14 @@ fn write_frame_payload<W: Write>(
             .column("atoms", key)
             .and_then(|c| c.as_float())
             .map(|view| view.iter().copied().collect::<Vec<f64>>())
-            .ok_or_else(|| err_mapper(format!("atoms.{} missing or not float", key)))
+            .ok_or_else(|| invalid_data(format!("atoms.{} missing or not float", key)))
     };
 
     let xs = extract_axis("x")?;
     let ys = extract_axis("y")?;
     let zs = extract_axis("z")?;
     if xs.len() != natoms || ys.len() != natoms || zs.len() != natoms {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "atom count mismatch: x={}, y={}, z={}, expected {}",
             xs.len(),
             ys.len(),
@@ -1355,7 +1305,7 @@ fn parse_header_and_first_frame(bytes: &[u8]) -> std::io::Result<Frame> {
     let mut cursor = Cursor::new(bytes);
     let header = parse_header(&mut cursor)?;
     if header.nset == 0 {
-        return Err(err_mapper("DCD header-only slice has no frames"));
+        return Err(invalid_data("DCD header-only slice has no frames"));
     }
     cursor.seek(SeekFrom::Start(header.data_offset))?;
     parse_one_frame(&mut cursor, &header, 0)
@@ -1364,24 +1314,24 @@ fn parse_header_and_first_frame(bytes: &[u8]) -> std::io::Result<Frame> {
 fn parse_standalone_frame(bytes: &[u8]) -> std::io::Result<Frame> {
     let (order, marker, records) = detect_frame_records(bytes)?;
     if records.is_empty() {
-        return Err(err_mapper("DCD frame slice has no Fortran records"));
+        return Err(invalid_data("DCD frame slice has no Fortran records"));
     }
 
     let (box_payload, coord_recs) = split_box_and_coords(&records);
     if !(3..=4).contains(&coord_recs.len()) {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "DCD frame has {} coordinate records, expected 3 or 4",
             coord_recs.len()
         )));
     }
     let coord_len = coord_recs[0].len();
     if coord_len == 0 || !coord_len.is_multiple_of(4) {
-        return Err(err_mapper(
+        return Err(invalid_data(
             "DCD coordinate record length is not a multiple of 4",
         ));
     }
     if coord_recs.iter().any(|r| r.len() != coord_len) {
-        return Err(err_mapper("DCD coordinate records have unequal lengths"));
+        return Err(invalid_data("DCD coordinate records have unequal lengths"));
     }
 
     let natoms = (coord_len / 4) as u32;
@@ -1429,7 +1379,7 @@ fn detect_frame_records(bytes: &[u8]) -> std::io::Result<(ByteOrder, MarkerSize,
             }
         }
     }
-    best.ok_or_else(|| err_mapper("not a standalone DCD frame: no consistent Fortran records"))
+    best.ok_or_else(|| invalid_data("not a standalone DCD frame: no consistent Fortran records"))
 }
 
 fn try_read_all_records(
@@ -1508,14 +1458,16 @@ fn split_decoder_context(bytes: &[u8]) -> std::io::Result<Option<(DcdHeader, &[u
     let len_off = DCD_CTX_MAGIC.len();
     let ctx_len = u32::from_le_bytes(bytes[len_off..len_off + 4].try_into().unwrap()) as usize;
     if ctx_len > MAX_DCD_RECORD_BYTES as usize {
-        return Err(err_mapper("DCD decoder context larger than the record cap"));
+        return Err(invalid_data(
+            "DCD decoder context larger than the record cap",
+        ));
     }
     let ctx_start = len_off + 4;
     let ctx_end = ctx_start
         .checked_add(ctx_len)
-        .ok_or_else(|| err_mapper("DCD decoder context length overflow"))?;
+        .ok_or_else(|| invalid_data("DCD decoder context length overflow"))?;
     if ctx_end > bytes.len() {
-        return Err(err_mapper("DCD decoder context truncated"));
+        return Err(invalid_data("DCD decoder context truncated"));
     }
     let header = decode_decoder_context(&bytes[ctx_start..ctx_end])?;
     Ok(Some((header, &bytes[ctx_end..])))
@@ -1577,7 +1529,7 @@ fn decode_decoder_context(bytes: &[u8]) -> std::io::Result<DcdHeader> {
     let mut ver = [0u8; 1];
     cur.read_exact(&mut ver)?;
     if ver[0] != 1 {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "unsupported DCD decoder context version {}",
             ver[0]
         )));
@@ -1587,12 +1539,12 @@ fn decode_decoder_context(bytes: &[u8]) -> std::io::Result<DcdHeader> {
     let byte_order = match flags[0] {
         0 => ByteOrder::Le,
         1 => ByteOrder::Be,
-        _ => return Err(err_mapper("bad DCD context byte order")),
+        _ => return Err(invalid_data("bad DCD context byte order")),
     };
     let marker_size = match flags[1] {
         4 => MarkerSize::Four,
         8 => MarkerSize::Eight,
-        _ => return Err(err_mapper("bad DCD context marker size")),
+        _ => return Err(invalid_data("bad DCD context marker size")),
     };
     let mut i32b = [0u8; 4];
     let mut u32b = [0u8; 4];
@@ -1609,7 +1561,7 @@ fn decode_decoder_context(bytes: &[u8]) -> std::io::Result<DcdHeader> {
     cur.read_exact(&mut u32b)?;
     let namnf = u32::from_le_bytes(u32b);
     if namnf > natoms {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "DCD decoder context namnf {namnf} > natoms {natoms}"
         )));
     }
@@ -1621,7 +1573,7 @@ fn decode_decoder_context(bytes: &[u8]) -> std::io::Result<DcdHeader> {
     let title_len = u32::from_le_bytes(u32b) as usize;
     let remaining = bytes.len().saturating_sub(cur.position() as usize);
     if title_len > remaining || title_len > 1_048_576 {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "DCD decoder context title length {title_len} is not credible"
         )));
     }
@@ -1630,13 +1582,13 @@ fn decode_decoder_context(bytes: &[u8]) -> std::io::Result<DcdHeader> {
     cur.read_exact(&mut u32b)?;
     let nfree = u32::from_le_bytes(u32b) as usize;
     if nfree > natoms as usize {
-        return Err(err_mapper(format!(
+        return Err(invalid_data(format!(
             "DCD decoder context nfree {nfree} > natoms {natoms}"
         )));
     }
     let remaining = bytes.len().saturating_sub(cur.position() as usize);
     if nfree.saturating_mul(4) > remaining {
-        return Err(err_mapper("DCD decoder context free-atom list truncated"));
+        return Err(invalid_data("DCD decoder context free-atom list truncated"));
     }
     let free_atoms = if nfree == 0 {
         None
@@ -1655,7 +1607,9 @@ fn decode_decoder_context(bytes: &[u8]) -> std::io::Result<DcdHeader> {
         let need = n.saturating_mul(12);
         let remaining = bytes.len().saturating_sub(cur.position() as usize);
         if need > remaining {
-            return Err(err_mapper("DCD decoder context fixed-atom seed truncated"));
+            return Err(invalid_data(
+                "DCD decoder context fixed-atom seed truncated",
+            ));
         }
         let mut read_axis = || -> std::io::Result<Vec<f32>> {
             let mut axis = vec![0.0f32; n];
@@ -1954,7 +1908,7 @@ impl FrameIndexBuilder for DcdIndexBuilder {
             return Err(err);
         }
         if self.header.is_none() && !self.buf.is_empty() {
-            return Err(err_mapper("truncated DCD header"));
+            return Err(invalid_data("truncated DCD header"));
         }
         Ok(std::mem::take(&mut self.pending))
     }
@@ -2113,15 +2067,26 @@ mod tests {
     }
 
     #[test]
-    fn test_abc_to_h_round_trip() {
-        let h = abc_to_h(10.0, 12.0, 15.0, 70.0, 80.0, 95.0);
-        let (a, b, c, al, be, ga) = h_to_abc(&h);
-        assert!((a - 10.0).abs() < 1e-9);
-        assert!((b - 12.0).abs() < 1e-9);
-        assert!((c - 15.0).abs() < 1e-9);
-        assert!((al - 70.0).abs() < 1e-7);
-        assert!((be - 80.0).abs() < 1e-7);
-        assert!((ga - 95.0).abs() < 1e-7);
+    fn a_triclinic_box_record_round_trips_its_lengths_and_angles() {
+        let payload: Vec<u8> = [
+            10.0f64,
+            95.0f64.to_radians().cos(),
+            12.0,
+            80.0f64.to_radians().cos(),
+            70.0f64.to_radians().cos(),
+            15.0,
+        ]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
+        let simbox = parse_box_payload(&payload, ByteOrder::Le).unwrap();
+        let (l, a) = (simbox.lengths(), simbox.angles());
+        for (got, want) in l.iter().zip([10.0, 12.0, 15.0]) {
+            assert!((got - want).abs() < 1e-9, "{got} vs {want}");
+        }
+        for (got, want) in a.iter().zip([70.0, 80.0, 95.0]) {
+            assert!((got - want).abs() < 1e-7, "{got} vs {want}");
+        }
     }
 
     fn two_atom_frame(x0: f64, with_box: bool) -> Frame {
