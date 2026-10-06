@@ -125,9 +125,11 @@ an older molrs needs its values converted:
 - **`dihedral harmonic` has a kernel** (`k[1 + sign·cos(nφ)]`, LAMMPS's); the
   LAMMPS reader read it but nothing priced it.
 - **`forcefield` sections state `"angle": "degree"`** beside their preset.
-  A section written by molrs 0.15 states `"angle": "radian"` and holds the
-  old convention; it is refused on read (its preset and its angle unit
-  disagree). Convert its parameters as above and restate the unit.
+  A record molrs 0.15 wrote is `molrec_version` 1 and is converted on read
+  (see [Records: molrec_version 2](#records-molrec_version-2)). A section
+  built in memory with `"angle": "radian"` beside a preset is still refused
+  (its preset and its angle unit disagree): convert its parameters as above
+  and restate the unit.
 - **Generic XML (`<BondStyle>` …) no longer renames `k0` to `k`.** The two
   meant the same `½k` number; under the force-field IR (LAMMPS standard) they do not, so a
   `k0` attribute is kept as `k0` and a kernel that needs `k` refuses it.
@@ -374,6 +376,63 @@ guide, "AMBER prmtop", for the full map.
 - **Refused, by name:** a 1-4 row on a negative-`PN` chain, or on a bonded /
   angle-end pair; `IPOL > 0` (0.15: only `IPOL = 1`). The force-field reader
   now refuses `IPOL > 0` as the frame reader does.
+
+### Records: molrec_version 2
+
+Every record molrs 0.16 writes is `molrec_version` 2
+(`molrs.io.mrec.schema.MOLREC_VERSION`, Rust `molrs::MOLREC_VERSION`). In
+version 2 the force-field IR adopts LAMMPS's definitions, so some stored
+numbers mean something else than in the version-1 records molrs 0.15 wrote.
+0.16 never reads a version-1 record as version 2: it converts every changed
+number exactly on read, or refuses the record by name.
+
+- **Readers accept versions 1 and 2 and refuse a newer one.** A store
+  without `molrec_version` predates version 1 and is read by version 1's
+  rules. `read_mrec_meta` (and `MolRec.meta` in Rust) hands `meta` back as
+  stored, so a converted record still says `molrec_version: 1`.
+- **Writers always stamp 2.** A producer's `molrec_version` in `meta` is
+  overwritten (0.15 kept it, and refused an unsupported one). Writing a
+  converted record back writes a version-2 record.
+- **What a version-1 `forcefield` section converts** (its angle unit is
+  `units.angle`, else the radian of every version-1 preset, the `lj` preset
+  included, which stated none):
+
+  | Version 1 | Version 2 |
+  |---|---|
+  | `units` | `"angle": "degree"` |
+  | `bond harmonic`, `drude harmonic` `k` (½k form) | `k / 2` |
+  | `angle harmonic` `k` (½k form) | `k / 2` |
+  | `theta0` (`angle harmonic`, `class2`, `mmff_angle`, `uff_angle`), `chi0` (`improper harmonic`), `phase` / `phase<m>` (`dihedral periodic`, `charmm`, `improper periodic`, `trefoil`), `phi1..phi3` (`dihedral class2`) | degrees |
+  | `bond morse` `D`, `pair morse` `D0` | `d0` |
+  | `pair thole` `a_thole` | `damp` |
+  | `dihedral fourier` | `dihedral periodic` |
+  | `improper mmff_oop`, `uff_inversion` rows, centre second | centre first (`itom` and `jtom` swap) |
+
+  A force constant per radianⁿ stays as it is; one stated per degree (a
+  section with `"angle": "degree"` and no preset) is re-expressed per radian.
+- **Frames convert too** (`system`, `frame`, every trajectory frame): a
+  relation row's parameter columns convert as the parameter of the same name
+  of the row's style — MMFF's per-instance `angles.theta0` becomes degrees —
+  and an `mmff_oop` / `uff_inversion` row swaps `atomi` and `atomj`. A
+  record without its force field converts by its own columns (`theta0`,
+  `chi0`, `phase*`, `phi*` are angles; an `impropers` row carrying `koop` or
+  `K` is an out-of-plane row).
+- **Refused, by name:** a `pair14` style (no 0.15 reader produced one), a
+  multi-term `improper periodic`, an `expression` on a converted style, an
+  unknown `angle` / `dihedral` / `improper` style that carries parameters, an
+  angle unit other than the radian and the degree, and a version-1 trajectory
+  opened for appending (`TrajectoryWriter` on an existing 0.15 store: read it
+  and write a new record).
+- **Unchanged:** `dihedral charmm` `w` (the same 1-4 weight in both
+  versions; 0.16 prices it), every other style's numbers, `special_bonds`,
+  and the atom order of every other improper. A 0.15 record of an
+  OpenMM-read field keeps the improper rows 0.15 priced; re-read the XML with
+  0.16 for OpenMM's own order.
+
+Every 0.15 test record (`molrs/src/io/zarr/testdata/v1`, written by the
+published molrs 0.15.0 wheel: MMFF, harmonic / periodic, morse / class2 /
+charmm, `fourier` under `lj` units, class2 under `metal`) prices in 0.16 to
+the energy and forces 0.15.0 computed for it.
 
 ### Already in 0.15.1
 

@@ -12,15 +12,22 @@
 //! `_meta_types`), written and read back key for key; the tables are blocks
 //! written by [`write_block_group`] and read by [`read_block_group`], the one
 //! description of a block every frame-shaped section shares. No unit is
-//! converted in either direction.
+//! converted in either direction; a version-1 section is converted to the
+//! current version on read ([`V1Upgrade`]).
+
+use std::sync::Arc;
 
 use zarrs::group::GroupBuilder;
 use zarrs::node::{Node, NodeMetadata};
-use zarrs::storage::{ReadableWritableListableStorage, WritableStorageTraits};
+use zarrs::storage::{
+    ListableStorageTraits, ReadableStorageTraits, ReadableWritableListableStorage,
+    WritableStorageTraits,
+};
 
 use crate::io::zarr::frame_io::{join_path, node_prefix, read_block_group, write_block_group};
 use molrs::MolRsError;
 use molrs::store::forcefield_section::ForceFieldSection;
+use molrs::store::record_v1::V1Upgrade;
 
 /// The record's root group holding its force field.
 pub(crate) const FORCEFIELD_GROUP: &str = "forcefield";
@@ -48,17 +55,55 @@ pub(crate) fn write_forcefield_group(
     Ok(())
 }
 
-/// Read the group at `prefix` back into a [`ForceFieldSection`]: the
-/// attribute map is the document, every child group a table.
+/// Read the group at `prefix` back into a [`ForceFieldSection`] — the
+/// attribute map is the document, every child group a table — converted from
+/// version 1 when `upgrade` is given, then validated.
 ///
 /// # Errors
 ///
-/// A block group that fails to decode, or a section
-/// [`ForceFieldSection::validate`] refuses.
-pub(crate) fn read_forcefield_group(
-    store: &ReadableWritableListableStorage,
+/// A block group that fails to decode, a version-1 section with no exact
+/// current form, or a section [`ForceFieldSection::validate`] refuses.
+pub(crate) fn read_forcefield_group<S>(
+    store: &Arc<S>,
     prefix: &str,
-) -> Result<ForceFieldSection, MolRsError> {
+    upgrade: Option<&V1Upgrade>,
+) -> Result<ForceFieldSection, MolRsError>
+where
+    S: ?Sized + ReadableStorageTraits + ListableStorageTraits + 'static,
+{
+    let stored = read_stored_forcefield(store, prefix)?;
+    let section = match upgrade {
+        Some(upgrade) => upgrade.forcefield(&stored)?,
+        None => stored,
+    };
+    section.validate()?;
+    Ok(section)
+}
+
+/// The group at `prefix` as stored: no version conversion, no validation.
+/// `Ok(None)` when the store holds no such group.
+///
+/// # Errors
+///
+/// A block group that fails to decode.
+pub(crate) fn read_stored_forcefield_if_present<S>(
+    store: &Arc<S>,
+    prefix: &str,
+) -> Result<Option<ForceFieldSection>, MolRsError>
+where
+    S: ?Sized + ReadableStorageTraits + ListableStorageTraits + 'static,
+{
+    match zarrs::group::Group::open(store.clone(), prefix) {
+        Ok(_) => read_stored_forcefield(store, prefix).map(Some),
+        Err(zarrs::group::GroupCreateError::MissingMetadata) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+fn read_stored_forcefield<S>(store: &Arc<S>, prefix: &str) -> Result<ForceFieldSection, MolRsError>
+where
+    S: ?Sized + ReadableStorageTraits + ListableStorageTraits + 'static,
+{
     let mut section = ForceFieldSection {
         document: zarrs::group::Group::open(store.clone(), prefix)?
             .attributes()
@@ -77,6 +122,5 @@ pub(crate) fn read_forcefield_group(
         let table = read_block_group(store, path, name)?;
         section.tables.insert(name.to_owned(), table);
     }
-    section.validate()?;
     Ok(section)
 }

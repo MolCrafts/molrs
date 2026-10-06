@@ -153,6 +153,7 @@ use molrs::spatial::simbox::SimBox;
 use molrs::store::block::{Block, Column, DType};
 use molrs::store::frame::Frame;
 use molrs::store::meta::{MetaMap, MetaValue};
+use molrs::store::record_v1::V1Upgrade;
 use molrs::store::trajectory::Trajectory;
 use molrs::types::F;
 
@@ -1801,7 +1802,7 @@ fn ensure_root_and_meta(
         // an unstamped `meta` is how a store from before the stamped format
         // looks — so a trajectory written *with* metadata was unreadable and
         // one written without it was fine.
-        let attrs = super::schema::stamped_meta(&meta.cloned().unwrap_or_default())?;
+        let attrs = super::schema::stamped_meta(&meta.cloned().unwrap_or_default());
         GroupBuilder::new()
             .attributes(attrs)
             .build(store.clone(), META_ROOT_GROUP)?
@@ -3799,7 +3800,9 @@ impl FrameSequenceWriter {
     /// # Errors
     ///
     /// A [`MolRsError::Zarr`] when the store holds the `trajectory/frames/<i>/`
-    /// layout written by molrs <= 0.13; when `trajectory/` carries no
+    /// layout written by molrs <= 0.13; when its `molrec_version` is not the
+    /// current one (an earlier version's store is read, not continued); when
+    /// `trajectory/` carries no
     /// `sequence_schema` attribute (a foreign store can be *read* without the
     /// pin but not appended to); or when a reopened column array disagrees
     /// with the pinned schema on dtype or trailing shape.
@@ -3818,6 +3821,16 @@ impl FrameSequenceWriter {
         >,
     ) -> Result<Self, MolRsError> {
         ensure_not_legacy(&store)?;
+        // Frames appended now are current-version frames; a store of an
+        // earlier version is read (and converted), never continued.
+        let version = super::schema::read_version(&super::record_io::read_meta(&store)?)?;
+        if version != super::schema::MOLREC_VERSION {
+            return Err(MolRsError::zarr(format!(
+                "the store is a molrec_version {version} record; appending would mix version \
+                 {} frames into it. Read it and write a new record",
+                super::schema::MOLREC_VERSION
+            )));
+        }
         let schema = schema_of(&store)?;
         schema.check_alignments()?;
         check_aligned_not_in_system(&store, &schema)?;
@@ -3984,9 +3997,8 @@ impl FrameSequenceWriter {
 
     /// Write `meta` as the record's identity document (`meta/` attributes).
     ///
-    /// Replaces whatever the group held. `molrec_version` is stamped when the
-    /// producer supplied none; a producer's own value must be an integer in
-    /// `1..=`[`crate::MOLREC_VERSION`].
+    /// Replaces whatever the group held, with the current `molrec_version`
+    /// stamped over any the producer's map carries.
     ///
     /// # Errors
     ///
@@ -4939,6 +4951,9 @@ pub struct FrameSequence {
     times: Option<Vec<F>>,
     blocks: IndexMap<String, BlockIndex>,
     cell: Option<BoxIndex>,
+    /// The conversion every frame is read through when the record is a
+    /// version-1 store (or one without `molrec_version`).
+    upgrade: Option<V1Upgrade>,
     state: Mutex<ReadState>,
 }
 
@@ -4979,7 +4994,8 @@ impl FrameSequence {
         // `Arc<dyn ReadableListableStorageTraits>`, so the read-only view is
         // taken here.
         let store: ReadableListableStorage = Arc::new(StorageHandle::new(store));
-        super::record_io::read_meta(&store)?;
+        let meta = super::record_io::read_meta(&store)?;
+        let upgrade = super::record_io::read_upgrade(&store, &meta)?;
         ensure_not_legacy(&store)?;
         let schema = match pinned_schema(&store)? {
             Some(pinned) => pinned,
@@ -5111,6 +5127,7 @@ impl FrameSequence {
             times,
             blocks,
             cell,
+            upgrade,
             state: Mutex::new(ReadState::default()),
         })
     }
@@ -5285,6 +5302,9 @@ impl FrameSequence {
         // must resolve, or the store is refused.
         if wanted.is_none() {
             check_local_references(&frame, &format!("trajectory frame {index}"))?;
+        }
+        if let Some(upgrade) = &self.upgrade {
+            upgrade.frame(&mut frame)?;
         }
         Ok(Some(frame))
     }

@@ -20,11 +20,17 @@ use crate::store::frame::Frame;
 use crate::store::trajectory::{ObservableRecord, Trajectory};
 
 /// Sole version key of a MolRec record (root layout + L1 encoding), stored as
-/// `meta.molrec_version`. Every molrs writer stamps this key. The readers
-/// validate it only when present: an absent key is no version check, and a
-/// present key must be an integer in `1..=MOLREC_VERSION`. Identity of a store
-/// is the `*.mrec/` path suffix plus a Zarr root; there is no separate brand key.
-pub const MOLREC_VERSION: u64 = 1;
+/// `meta.molrec_version`. Every molrs writer stamps this key, at this value.
+/// A present key must be an integer in `1..=MOLREC_VERSION`; a version-1
+/// store, and one without the key (written before version 1), is converted on
+/// read ([`crate::store::record_v1`]). Identity of a store is the `*.mrec/`
+/// path suffix plus a Zarr root; there is no separate brand key.
+///
+/// Version 2 (molrs 0.16): the force-field IR adopts LAMMPS's definitions —
+/// harmonic `k` without the ½, angle values in degrees, `bond morse` `d0` —
+/// in the `forcefield` section and in the parameter columns of relation
+/// blocks.
+pub const MOLREC_VERSION: u64 = 2;
 
 /// Reserved `meta` keys owned by the contract rather than by the producer.
 pub const RESERVED_META_KEYS: [&str; 1] = ["molrec_version"];

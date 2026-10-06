@@ -21,7 +21,9 @@ use zarrs::array::{
 #[cfg(feature = "zarr")]
 use zarrs::group::GroupBuilder;
 use zarrs::node::{Node, NodeMetadata};
-use zarrs::storage::{ReadableStorageTraits, ReadableWritableListableStorage};
+use zarrs::storage::{
+    ListableStorageTraits, ReadableStorageTraits, ReadableWritableListableStorage,
+};
 #[cfg(feature = "zarr")]
 use zarrs::storage::{StorePrefix, WritableStorageTraits};
 
@@ -988,11 +990,14 @@ pub(crate) fn read_frame_group(
 
 /// Read the block group at `group_path` (named `child_name` in messages)
 /// back into a [`Block`]: the inverse of [`write_block_group`].
-pub(crate) fn read_block_group(
-    store: &ReadableWritableListableStorage,
+pub(crate) fn read_block_group<S>(
+    store: &Arc<S>,
     group_path: &str,
     child_name: &str,
-) -> Result<Block, MolRsError> {
+) -> Result<Block, MolRsError>
+where
+    S: ?Sized + ReadableStorageTraits + ListableStorageTraits + 'static,
+{
     let mut block = Block::new();
     let block_node = Node::open(store, group_path)?;
     for col_child in block_node.children() {
@@ -1204,12 +1209,15 @@ pub(crate) fn check_local_references(frame: &Frame, what: &str) -> Result<(), Mo
 /// carry exactly one flag per row. A mask that disagrees with its column is a
 /// corrupt store: padding or truncating it would invent the very answer the
 /// mask exists to give.
-fn read_validity_group(
-    store: &ReadableWritableListableStorage,
+fn read_validity_group<S>(
+    store: &Arc<S>,
     block_path: &str,
     block_name: &str,
     block: &mut Block,
-) -> Result<(), MolRsError> {
+) -> Result<(), MolRsError>
+where
+    S: ?Sized + ReadableStorageTraits + ListableStorageTraits + 'static,
+{
     let group_path = format!("{}/{}", block_path, VALIDITY_GROUP);
     if zarrs::group::Group::open(store.clone(), &group_path).is_err() {
         return Ok(());

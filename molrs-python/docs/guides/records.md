@@ -56,7 +56,10 @@ print(frame["atoms"].dtype("res_id"))
 ```
 
 `write_mrec` writes the `frame` section and a `meta` document. Each writer
-stamps `molrec_version` into `meta` unless you supplied one.
+stamps the current `molrec_version` (2) into `meta`, over any value you
+supplied. A record molrs 0.15 wrote (`molrec_version` 1) still reads: its
+force-field numbers are converted to the 0.16 force-field IR on the way in (see
+the [migration guide](../migration.md#records-molrec_version-2)).
 
 ```python
 molrs.io.write_mrec("water.mrec", frame, meta={"producer": "quickstart"})

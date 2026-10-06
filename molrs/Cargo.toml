@@ -11,8 +11,9 @@ homepage.workspace = true
 readme = "../README.md"
 keywords = ["molecular-modeling", "chemistry", "simulation", "molecular-dynamics"]
 categories = ["science"]
-# The generator example is a repository tool, not part of the published crate.
-exclude = ["examples/"]
+# The generator example is a repository tool, not part of the published crate;
+# the molrs 0.15.0 records under testdata/ are read by unit tests only.
+exclude = ["examples/", "src/io/zarr/testdata/"]
 # No integration-test or bench targets: behaviour is tested in `#[cfg(test)]`
 # modules next to the code (`cargo test --lib`). One example target: the OPLS
 # parameter generator, a tool, not a test; excluded from the package.

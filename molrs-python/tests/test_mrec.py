@@ -96,24 +96,26 @@ class TestTrajectoryDoors:
 
 class TestSchema:
     def test_version_constant_comes_from_molrs(self) -> None:
-        assert molrs.io.mrec.schema.MOLREC_VERSION == 1
+        assert molrs.io.mrec.schema.MOLREC_VERSION == 2
         assert molrs.io.mrec.schema.MOLREC_VERSION == molrs._lib.MREC_MOLREC_VERSION
         assert molrs.io.mrec.schema.RESERVED_META_KEYS == ["molrec_version"]
 
     def test_a_missing_molrec_version_is_accepted(self) -> None:
-        # Absent means no version check: a foreign store, or one written
-        # before molrs stamped the key, opens. The retired brand keys are
-        # neither checked nor a stand-in for the version.
+        # Absent is a store from before version 1 -- a foreign store, or one
+        # written before molrs stamped the key -- and opens (read by version
+        # 1's rules). The retired brand keys are neither checked nor a
+        # stand-in for the version.
         molrs.io.mrec.schema.validate_meta(
             {"record_schema_version": 99, "format_name": "mrec"}
         )
         molrs.io.mrec.schema.validate_meta({})
 
     def test_a_present_molrec_version_out_of_range_is_refused(self) -> None:
-        for bad in (0, 2, "1", None, 1.5):
+        for bad in (0, 3, "1", None, 1.5):
             with pytest.raises(ValueError, match="molrec_version"):
                 molrs.io.mrec.schema.validate_meta({"molrec_version": bad})
         molrs.io.mrec.schema.validate_meta({"molrec_version": 1})
+        molrs.io.mrec.schema.validate_meta({"molrec_version": 2})
 
     def test_a_store_without_molrec_version_reads(self, tmp_path: Path) -> None:
         import json
@@ -584,3 +586,53 @@ class TestForceFieldSection:
     def test_block_name_percent_encodes_the_style(self) -> None:
         name = molrs.io.mrec.ForceFieldSection.block_name("pair", "lj/cut/coul/long")
         assert name == "pair.lj%2Fcut%2Fcoul%2Flong"
+
+
+#: Records the published molrs 0.15.0 wrote (molrec_version 1), and the
+#: energies and forces it computed for them (molrs/src/io/zarr/testdata/v1).
+V1_FIXTURES = Path(__file__).resolve().parents[2] / "molrs/src/io/zarr/testdata/v1"
+
+
+def _v1_record(tmp_path: Path, name: str) -> Path:
+    import zipfile
+
+    path = tmp_path / f"{name}.mrec"
+    with zipfile.ZipFile(V1_FIXTURES / f"{name}.mrec.zip") as packed:
+        packed.extractall(path)
+    return path
+
+
+class TestMolrecVersion1:
+    """A molrs 0.15 record reads as a version-2 record that prices as molrs
+    0.15.0 priced it, through the Python doors."""
+
+    @pytest.mark.parametrize(
+        "name", ["mmff", "classic", "variants", "fourier-lj", "class2-metal"]
+    )
+    def test_prices_as_molrs_0_15(self, tmp_path: Path, name: str) -> None:
+        import json
+
+        want = json.loads((V1_FIXTURES / "energies.json").read_text())[name]
+        path = _v1_record(tmp_path, name)
+        section = molrs.io.read_mrec_forcefield(path)
+        assert section.document["units"]["angle"] == "degree"
+        ff = molrs.ff.ForceField.from_section(section)
+        system = molrs.io.read_mrec_system(path)
+        energy, forces = molrs.ff.PotentialCompiler(ff).compile(system).calc_energy_forces(system)
+        assert energy == pytest.approx(want["energy"], rel=1e-10, abs=1e-10)
+        np.testing.assert_allclose(
+            np.asarray(forces).ravel(), want["forces"], rtol=1e-10, atol=1e-10
+        )
+        assert molrs.io.read_mrec_meta(path)["molrec_version"] == 1
+
+    def test_a_converted_record_is_written_as_version_2(self, tmp_path: Path) -> None:
+        path = _v1_record(tmp_path, "mmff")
+        again = tmp_path / "again.mrec"
+        molrs.io.write_mrec_system(
+            again,
+            molrs.io.read_mrec_system(path),
+            forcefield=molrs.io.read_mrec_forcefield(path),
+        )
+        assert molrs.io.read_mrec_meta(again)["molrec_version"] == 2
+        theta0 = molrs.io.read_mrec_system(again)["angles"]["theta0"]
+        assert np.all((theta0 > 90.0) & (theta0 < 180.0))
