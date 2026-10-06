@@ -41,7 +41,7 @@ use molrs::Element;
 use super::SmartsPattern;
 use super::ast::MolContext;
 use super::ast::{AtomPrimitive, AtomQuery, BondPrimitive, BondQuery};
-use super::parser::QueryGraph;
+use super::compile::QueryGraph;
 
 type ReactionAtomSets = Vec<Vec<AtomId>>;
 type DetailedReactionBatch = (ReactionAtomSets, ReactionAtomSets);

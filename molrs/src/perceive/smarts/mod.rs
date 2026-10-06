@@ -1,6 +1,8 @@
 //! SMARTS substructure-matching engine.
 //!
-//! A parser + backtracking subgraph-isomorphism matcher covering the SMARTS
+//! A compiler from the shared SMARTS syntax tree
+//! ([`crate::io::smiles::parse_smarts`] is the one SMARTS parser) plus a
+//! backtracking subgraph-isomorphism matcher covering the SMARTS
 //! feature subset used by RDKit's ETKDGv3 experimental-torsion preference
 //! tables (`torsionPreferences_v2 / _smallrings / _macrocycles`), including
 //! recursive SMARTS `[$(...)]`.
@@ -8,7 +10,6 @@
 //! Match semantics follow RDKit `GetSubstructMatches(uniquify=False)`: every
 //! distinct query-atom → mol-atom embedding is reported, ordered by query-atom
 //! index. Ported (semantics only) from RDKit under the BSD-3 licence:
-//! - `Code/GraphMol/SmilesParse/SmartsParse.cpp` (grammar)
 //! - `Code/GraphMol/Substruct/SubstructMatch.cpp` (matching + recursive eval)
 //! - `Code/GraphMol/QueryAtom.h` / `QueryBond.h` (query primitives)
 //!
@@ -23,15 +24,18 @@
 //! # Supported features
 //!
 //! - Atom primitives: aliphatic/aromatic elements, `*`, `a`, `A`, `#<n>`,
-//!   `H<n>`, `X<n>`, `D<n>`, `R`/`R<n>`, `r<n>`, `+`/`++`/`+<n>`/`-`/`-<n>`,
-//!   atom-map `:<n>`.
+//!   `H<n>`, `X<n>`, `D<n>`, `R`/`R<n>`, `r<n>`, `r{lo-hi}`, `x<n>`,
+//!   `+`/`++`/`+<n>`/`-`/`-<n>`, atom-map `:<n>`, and the molrs context
+//!   label `%LABEL` (see [`MatchOptions::labels`]).
 //! - Atom logic: implicit/`&` high AND, `;` low AND, `,` OR, `!` NOT.
 //! - Recursive SMARTS `[$(...)]` (nestable), rooted at the candidate atom.
 //! - Bond primitives: `-` `=` `#` `:` `~` `@`, `!`, logical combos
 //!   (`!@;-`, `-,:`); default bond = single-or-aromatic.
 //! - Branches `( )`, ring closures incl. `%nn`.
 //!
-//! Out of scope: chirality `@`/`@@`, isotopes, reaction / component SMARTS.
+//! Out of scope, refused with an error: chirality `@`/`@@`, isotopes, `h<n>`,
+//! `v<n>`, directional and quadruple bonds, and `.`-separated component
+//! SMARTS (a [`Reaction`] splits its reactants itself).
 //!
 //! # Example
 //!
@@ -57,8 +61,8 @@
 //! ```
 
 mod ast;
+mod compile;
 mod matcher;
-mod parser;
 mod reaction;
 
 use std::collections::HashMap;
@@ -66,7 +70,7 @@ use std::collections::HashMap;
 use crate::error::MolRsError;
 use crate::system::atomistic::{AtomId, Atomistic};
 
-use parser::QueryGraph;
+use compile::QueryGraph;
 
 pub use reaction::Reaction;
 
@@ -116,9 +120,12 @@ pub struct SmartsPattern {
 }
 
 impl SmartsPattern {
-    /// Parse a SMARTS string. Returns `Err` on any syntax error (never panics).
+    /// Parse a SMARTS string with the one SMARTS parser
+    /// ([`crate::io::smiles::parse_smarts`]) and compile it for matching.
+    /// Returns `Err` on any syntax error, or on a construct the matcher does
+    /// not evaluate (never panics).
     pub fn parse(smarts: &str) -> Result<SmartsPattern, MolRsError> {
-        let graph = parser::parse(smarts)?;
+        let graph = compile::compile(smarts)?;
         Ok(SmartsPattern { graph })
     }
 

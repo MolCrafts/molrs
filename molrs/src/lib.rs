@@ -30,7 +30,8 @@
 //! - `io`        — file I/O (PDB, XYZ, LAMMPS, CHGCAR, Cube, …; `*.mrec`
 //!   record files need `zarr`, their path doors `filesystem`)
 //! - `compute`   — trajectory analysis (RDF, MSD, clustering, tensors)
-//! - `smiles`    — SMILES/SMARTS parser (lives in `io`)
+//! - `smiles`    — SMILES/SMARTS parser (lives in `io`) and the SMARTS
+//!   matcher (`perceive::smarts`) compiled from it
 //! - `ff`        — force fields (MMFF94, PME, typifier)
 //! - `conformer` — 3D conformer generation
 //! - `signal`    — signal processing (FFT-based ACF, windowing, frequency grids)
@@ -95,11 +96,10 @@ pub use crate::builder::{
     SitePlacer, SiteView, WalkError, WalkOutput,
 };
 
-// Chemical perception: one layer above `core`, below `ff` / `io` / `conformer`.
-// Always compiled — every consumer configuration already compiled these modules
-// when they lived inside `core`, so keeping them unconditional reproduces the
-// existing build graph exactly (feature-gating them would be a behaviour change,
-// not a refactor).
+// Chemical perception: one layer above `core`, below `ff` / `conformer`.
+// Always compiled, except the SMARTS matcher (`perceive::smarts`), which
+// compiles its queries from the one SMARTS parser in `io::smiles` and so needs
+// the `smiles` feature.
 pub mod perceive;
 
 #[cfg(feature = "io")]

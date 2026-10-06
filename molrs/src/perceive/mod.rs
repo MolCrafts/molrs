@@ -46,6 +46,8 @@ pub mod hydrogens;
 pub mod ring_class;
 pub mod rings;
 pub mod rotatable;
+/// SMARTS matching compiles from the `io::smiles` parser, so it needs `smiles`.
+#[cfg(feature = "smiles")]
 pub mod smarts;
 pub mod stereo;
 pub mod subgraph;

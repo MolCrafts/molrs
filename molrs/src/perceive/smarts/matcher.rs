@@ -16,7 +16,7 @@
 use crate::system::atomistic::{AtomId, Atomistic};
 
 use super::ast::{BondFacts, MolContext, RecursiveEval};
-use super::parser::QueryGraph;
+use super::compile::QueryGraph;
 use super::{MatchOptions, SmartsMatch};
 
 /// Resolve bond facts between two molecule atoms, if they are bonded.
@@ -90,8 +90,8 @@ fn enumerate_matches(
 }
 
 /// The earliest-placed query atom `qa` is bonded to, i.e. its lowest-indexed
-/// neighbour below `qa`. The parser always connects a new atom to a prior
-/// one, so every non-root atom has one.
+/// neighbour below `qa`. A compiled query is one connected pattern numbered
+/// in writing order, so every non-root atom has one.
 fn anchor_of(query: &QueryGraph, qa: usize) -> Option<usize> {
     query
         .bonds
@@ -266,7 +266,7 @@ mod tests {
 
     fn matches(smarts: &str, mol: &Atomistic) -> Vec<Vec<usize>> {
         let ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-        let q = super::super::parser::parse(smarts).unwrap();
+        let q = super::super::compile::compile(smarts).unwrap();
         find(&q, mol, MatchOptions::default())
             .into_iter()
             .map(|m| {
@@ -331,7 +331,7 @@ mod tests {
     fn a_root_pin_and_a_limit_narrow_the_enumeration() {
         let mol = ethanol();
         let ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-        let q = super::super::parser::parse("C").unwrap();
+        let q = super::super::compile::compile("C").unwrap();
         let rooted = find(
             &q,
             &mol,

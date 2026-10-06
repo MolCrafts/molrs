@@ -58,7 +58,8 @@ full = ["io", "compute", "smiles", "ff", "conformer", "signal", "voronoi", "md",
 # Structure builders (graphene, nanotubes, self-avoiding walks); no unique deps.
 builder   = []
 io        = ["dep:flate2"]
-# `smiles` lives inside the `io` module.
+# `smiles` lives inside the `io` module; it also gates the SMARTS matcher
+# (`perceive::smarts`), which compiles from its parser.
 smiles    = ["io"]
 signal    = ["dep:rustfft"]
 # `compute` depends on the `signal` module (gets rustfft via it).
@@ -66,8 +67,9 @@ compute   = ["signal"]
 # Radical (Laguerre) Voronoi tessellation + domain/void analysis. Native
 # pure-Rust (WASM-clean); lives in the `compute` module.
 voronoi   = ["compute"]
-# `ff` reads force-field files through `io`'s format parsers (prmtop sections).
-ff        = ["io", "dep:rustfft", "dep:roxmltree"]
+# `ff` reads force-field files through `io`'s format parsers (prmtop sections)
+# and types atoms with `perceive::smarts`, which compiles from `io::smiles`.
+ff        = ["io", "smiles", "dep:rustfft", "dep:roxmltree"]
 # `conformer` depends on the `ff` module.
 conformer = ["ff"]
 # In-process MD: integrators and force providers (the kernels are
