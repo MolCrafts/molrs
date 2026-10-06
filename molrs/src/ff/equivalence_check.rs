@@ -1271,10 +1271,6 @@ fn same_text(a: &str, b: &str, what: &str) {
             .collect()
     };
     let (ta, tb) = (tokens(a), tokens(b));
-    if let Some(d) = std::env::var_os("MOLRS_EQUIV_DEBUG") {
-        std::fs::write(Path::new(&d).join("a.txt"), a).unwrap();
-        std::fs::write(Path::new(&d).join("b.txt"), b).unwrap();
-    }
     assert_eq!(ta.len(), tb.len(), "{what}: token count");
     for (x, y) in ta.iter().zip(&tb) {
         if x == y {
