@@ -1,7 +1,7 @@
 //! `extern "C"` functions for ForceField operations.
 //!
 //! A **ForceField** is a collection of interaction styles (atom, bond,
-//! angle, dihedral, improper, pair) and per-type parameter sets.
+//! angle, dihedral, improper, pair, cmap) and per-type parameter sets.
 //! This module exposes functions to build a force field programmatically
 //! from C, serialize/deserialize it as JSON, and query its contents.
 //!
@@ -45,7 +45,7 @@
 
 use std::ffi::{CStr, CString, c_char};
 
-use molrs::ff::forcefield::{DefError, Params, StyleDefs};
+use molrs::ff::forcefield::{DefError, Params, Style};
 use molrs::ff::{ForceField, SpecialBonds};
 use serde_json::{Value, json};
 
@@ -278,7 +278,7 @@ fn invalid_argument(e: DefError) -> MolrsStatus {
 ///
 /// * `ff` -- ForceField handle.
 /// * `category` -- One of `"atom"`, `"bond"`, `"angle"`, `"dihedral"`,
-///   `"improper"`, `"pair"`.
+///   `"improper"`, `"pair"`, `"cmap"`.
 /// * `name` -- Style name (e.g. `"harmonic"`, `"lj/cut"`).
 /// * `param_keys` -- Array of `n_params` style-level parameter names
 ///   (e.g. `"cutoff"`). May be `NULL` if `n_params == 0`.
@@ -606,6 +606,17 @@ pub unsafe extern "C" fn molrs_ff_to_json(
 ///         {"name": "OW", "endpoints": ["OW", "OW"],
 ///          "params": {"epsilon": 0.1553, "sigma": 3.166}, "str_params": {}}
 ///       ]
+///     },
+///     {
+///       "category": "cmap",
+///       "name": "charmm",
+///       "params": {},
+///       "str_params": {},
+///       "types": [
+///         {"name": "C-N-CA-C-N", "endpoints": ["C", "N", "CA", "C", "N"],
+///          "params": {}, "str_params": {},
+///          "array_params": {"grid": [[0.0, 0.1], [0.2, 0.3]]}}
+///       ]
 ///     }
 ///   ]
 /// }
@@ -613,12 +624,16 @@ pub unsafe extern "C" fn molrs_ff_to_json(
 ///
 /// `units` and `special_bonds` are optional: present means declared, absent
 /// means undeclared, and the force field is rebuilt declaring exactly what the
-/// document holds. Every other key shown is required and no other key is
-/// accepted. The document is carried whole or refused: a missing or unknown
-/// key, a non-string `units`, a non-number in `params`, a non-string in
-/// `str_params` or `endpoints`, a `special_bonds` array whose length is not 3,
-/// an unknown category, or an endpoint count that does not match the category
-/// is `InvalidArgument` -- nothing is skipped.
+/// document holds. `array_params` (on a style or a type) is optional and
+/// written only when the definition holds an array param: each value is the
+/// array as nested lists of numbers, one level per axis, every list of a
+/// level the same length. Every other key shown is required and no other key
+/// is accepted. The document is carried whole or refused: a missing or
+/// unknown key, a non-string `units`, a non-number in `params`, a non-string
+/// in `str_params` or `endpoints`, a ragged or non-numeric array in
+/// `array_params`, a `special_bonds` array whose length is not 3, an unknown
+/// category, or an endpoint count that does not match the category is
+/// `InvalidArgument` -- nothing is skipped.
 ///
 /// # C signature
 ///
@@ -681,20 +696,22 @@ type JsonMap = serde_json::Map<String, Value>;
 
 /// Serialize every piece of declared state: name, the declared `units` and
 /// `special_bonds` (absent when undeclared), and per style its category, name,
-/// numeric and string params, and per type its name, endpoints, numeric and
-/// string params.
+/// numeric, string and array params, and per type its name, endpoints,
+/// numeric, string and array params.
 fn ff_to_json_string(ff: &ForceField) -> String {
     let styles: Vec<Value> = ff
         .styles()
         .iter()
         .map(|style| {
-            json!({
+            let mut entry = json!({
                 "category": style.category(),
                 "name": style.name(),
                 "params": numeric_params(style.params()),
                 "str_params": string_params(style.params()),
-                "types": type_rows(style.defs()),
-            })
+                "types": type_rows(style),
+            });
+            put_array_params(&mut entry, style.params());
+            entry
         })
         .collect();
     let mut doc = JsonMap::new();
@@ -726,40 +743,41 @@ fn string_params(params: &Params) -> JsonMap {
         .collect()
 }
 
-/// Every type of a style as `{name, endpoints, params, str_params}`, in
-/// definition order (duplicated names included).
-fn type_rows(defs: &StyleDefs) -> Vec<Value> {
-    let row = |name: &str, endpoints: &[&str], params: &Params| {
-        json!({
-            "name": name,
-            "endpoints": endpoints,
-            "params": numeric_params(params),
-            "str_params": string_params(params),
-        })
-    };
-    match defs {
-        StyleDefs::Atom(v) => v.iter().map(|t| row(&t.name, &[], &t.params)).collect(),
-        StyleDefs::Bond(v) => v
-            .iter()
-            .map(|t| row(&t.name, &[&t.itom, &t.jtom], &t.params))
-            .collect(),
-        StyleDefs::Angle(v) => v
-            .iter()
-            .map(|t| row(&t.name, &[&t.itom, &t.jtom, &t.ktom], &t.params))
-            .collect(),
-        StyleDefs::Dihedral(v) => v
-            .iter()
-            .map(|t| row(&t.name, &[&t.itom, &t.jtom, &t.ktom, &t.ltom], &t.params))
-            .collect(),
-        StyleDefs::Improper(v) => v
-            .iter()
-            .map(|t| row(&t.name, &[&t.itom, &t.jtom, &t.ktom, &t.ltom], &t.params))
-            .collect(),
-        StyleDefs::Pair(v) => v
-            .iter()
-            .map(|t| row(&t.name, &[&t.itom, &t.jtom], &t.params))
-            .collect(),
+/// `array_params` on `entry` when `params` holds an array param: each array
+/// as nested lists, one level per axis.
+fn put_array_params(entry: &mut Value, params: &Params) {
+    fn nested(view: ndarray::ArrayViewD<'_, f64>) -> Value {
+        if view.ndim() == 0 {
+            return json!(view.first().copied().unwrap_or_default());
+        }
+        Value::Array(view.outer_iter().map(nested).collect())
     }
+    let arrays: JsonMap = params
+        .iter_arrays()
+        .map(|(k, v)| (k.to_owned(), nested(v.view())))
+        .collect();
+    if !arrays.is_empty() {
+        entry["array_params"] = Value::Object(arrays);
+    }
+}
+
+/// Every type of a style as `{name, endpoints, params, str_params}` (and
+/// `array_params` when it has any), in definition order.
+fn type_rows(style: &Style) -> Vec<Value> {
+    style
+        .type_rows()
+        .into_iter()
+        .map(|(name, endpoints, params)| {
+            let mut row = json!({
+                "name": name,
+                "endpoints": endpoints,
+                "params": numeric_params(params),
+                "str_params": string_params(params),
+            });
+            put_array_params(&mut row, params);
+            row
+        })
+        .collect()
 }
 
 /// Rebuild a force field from the [`ff_to_json_string`] document.
@@ -802,7 +820,7 @@ fn ff_from_json_string(json: &str) -> Result<ForceField, String> {
             style_val,
             &at,
             &["category", "name", "params", "str_params", "types"],
-            &[],
+            &["array_params"],
         )?;
         let style = ff
             .def_style(
@@ -817,7 +835,7 @@ fn ff_from_json_string(json: &str) -> Result<ForceField, String> {
                 type_val,
                 &at,
                 &["name", "endpoints", "params", "str_params"],
-                &[],
+                &["array_params"],
             )?;
             let endpoints = type_obj
                 .array("endpoints")?
@@ -835,6 +853,37 @@ fn ff_from_json_string(json: &str) -> Result<ForceField, String> {
     }
 
     Ok(ff)
+}
+
+/// The array nested lists `value` spell: one level per axis, every list of a
+/// level the same length, numbers at the leaves (a bare number is 0-d).
+fn json_array(value: &Value, at: &str) -> Result<ndarray::ArrayD<f64>, String> {
+    let mut shape = Vec::new();
+    let mut level = value;
+    while let Value::Array(items) = level {
+        shape.push(items.len());
+        match items.first() {
+            Some(first) => level = first,
+            None => break,
+        }
+    }
+    fn flatten(value: &Value, shape: &[usize], out: &mut Vec<f64>, at: &str) -> Result<(), String> {
+        match (value, shape) {
+            (Value::Array(items), [n, rest @ ..]) if items.len() == *n => items
+                .iter()
+                .try_for_each(|item| flatten(item, rest, out, at)),
+            (Value::Number(n), []) => {
+                out.push(n.as_f64().expect("a JSON number reads as f64"));
+                Ok(())
+            }
+            _ => Err(format!(
+                "{at} is not a rectangular array of numbers (shape {shape:?})"
+            )),
+        }
+    }
+    let mut values = Vec::new();
+    flatten(value, &shape, &mut values, at)?;
+    ndarray::ArrayD::from_shape_vec(shape, values).map_err(|e| format!("{at}: {e}"))
 }
 
 /// A JSON object holding every `required` key, any of the `optional` keys and
@@ -895,7 +944,8 @@ impl<'a> JsonObject<'a> {
             .ok_or_else(|| format!("{}.{key} is not an object", self.at))
     }
 
-    /// `params` (numbers) and `str_params` (strings) as one [`Params`].
+    /// `params` (numbers), `str_params` (strings) and the optional
+    /// `array_params` (nested lists of numbers) as one [`Params`].
     fn params(&self) -> Result<Params, String> {
         let mut params = Params::new();
         for (k, v) in self.object("params")? {
@@ -909,6 +959,12 @@ impl<'a> JsonObject<'a> {
                 .as_str()
                 .ok_or_else(|| format!("{}.str_params.{k} is not a string", self.at))?;
             params.set_str(k, v);
+        }
+        if self.has("array_params") {
+            for (k, v) in self.object("array_params")? {
+                let at = format!("{}.array_params.{k}", self.at);
+                params.set_array(k, json_array(v, &at)?);
+            }
         }
         Ok(params)
     }
@@ -980,6 +1036,40 @@ mod tests {
             style.type_endpoints("0_1_5"),
             Some(vec!["1".to_string(), "5".to_string()])
         );
+    }
+
+    /// An array param travels as nested lists and comes back at its shape,
+    /// on a cmap type with five endpoints.
+    #[test]
+    fn json_round_trip_keeps_a_cmap_grid() {
+        let grid =
+            ndarray::ArrayD::from_shape_fn(vec![3, 3], |ix| (ix[0] * 3 + ix[1]) as f64 / 7.0);
+        let mut params = Params::new();
+        params.set_array("grid", grid.clone());
+        let mut ff = ForceField::new("rt");
+        ff.def_style("cmap", "charmm", Params::new())
+            .unwrap()
+            .def_type("c", &["C", "N", "CA", "C", "N"], params)
+            .unwrap();
+
+        let json = ff_to_json_string(&ff);
+        assert!(json.contains("\"array_params\""), "{json}");
+        let back = ff_from_json_string(&json).unwrap();
+        let cmap = back.get_cmaptypes()[0];
+        assert_eq!(cmap.params.get_array("grid"), Some(&grid));
+        assert_eq!(cmap.mtom, "N");
+    }
+
+    #[test]
+    fn a_ragged_array_param_is_refused() {
+        let doc = r#"{"name": "x", "styles": [{"category": "cmap", "name": "charmm",
+            "params": {}, "str_params": {}, "types": [{"name": "c",
+            "endpoints": ["A", "B", "C", "D", "E"], "params": {}, "str_params": {},
+            "array_params": {"grid": [[1.0, 2.0], [3.0]]}}]}]}"#;
+        let err = ff_from_json_string(doc).unwrap_err();
+        assert!(err.contains("array_params.grid"), "{err}");
+        let doc = doc.replace("[3.0]", r#"[3.0, "x"]"#);
+        assert!(ff_from_json_string(&doc).is_err());
     }
 
     #[test]
