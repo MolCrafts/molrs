@@ -79,6 +79,25 @@ impl Params {
     pub fn iter_strings(&self) -> impl Iterator<Item = (&str, &str)> + '_ {
         self.strings.iter().map(|(k, v)| (k.as_str(), v.as_str()))
     }
+
+    /// Whether `self` and `other` price alike: equal on every key that is a
+    /// parameter ([`is_parameter_column`]), numeric and string, a key one
+    /// carries and the other lacks being a difference. The annotation keys
+    /// (`desc`, `doi`, `smarts`, …) take no part. Exact, like `==`.
+    ///
+    /// [`is_parameter_column`]: molrs::store::forcefield_section::is_parameter_column
+    pub fn same_parameters(&self, other: &Params) -> bool {
+        use molrs::store::forcefield_section::is_parameter_column;
+        use std::collections::BTreeMap;
+        fn parameters<V>(map: &HashMap<String, V>) -> BTreeMap<&str, &V> {
+            map.iter()
+                .filter(|(key, _)| is_parameter_column(key))
+                .map(|(key, value)| (key.as_str(), value))
+                .collect()
+        }
+        parameters(&self.inner) == parameters(&other.inner)
+            && parameters(&self.strings) == parameters(&other.strings)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -211,21 +230,31 @@ impl StyleDefs {
     }
 }
 
+/// The key a pair kernel finds the row of atom types `a` and `b` under in
+/// [`StyleDefs::kernel_type_params`]: [`TypeName::pair`] of the two in byte
+/// order, so `(a, b)` and `(b, a)` share it (a self pair is `a` itself).
+///
+/// [`TypeName::pair`]: molrs::store::type_labels::TypeName::pair
+pub fn pair_key(a: &str, b: &str) -> Result<String, String> {
+    let (i, j) = if a <= b { (a, b) } else { (b, a) };
+    Ok(molrs::store::type_labels::TypeName::pair(i, j)?
+        .as_str()
+        .to_owned())
+}
+
 impl StyleDefs {
     /// The rows a kernel resolves parameters from: a bonded or atom type by its
     /// name (the label a frame row carries), a pair type by the atom types it
     /// was defined between. A pair kernel meets an atom-type pair, never a
-    /// pair-type name, so the key is built from the endpoints
-    /// ([`TypeName::pair`](molrs::store::type_labels::TypeName::pair)) — a type
-    /// named anything is found through them.
+    /// pair-type name, so the key is built from the endpoints in byte order
+    /// ([`pair_key`]) — a type named anything, defined in either order, is
+    /// found through them. A style holds at most one row per unordered pair
+    /// (the conflict rule, see [`Style`]), so the keys are distinct.
     pub fn kernel_type_params(&self) -> Result<Vec<(String, Params)>, String> {
         match self {
             Self::Pair(types) => types
                 .iter()
-                .map(|t| {
-                    let key = molrs::store::type_labels::TypeName::pair(&t.itom, &t.jtom)?;
-                    Ok((key.as_str().to_owned(), t.params.clone()))
-                })
+                .map(|t| Ok((pair_key(&t.itom, &t.jtom)?, t.params.clone())))
                 .collect(),
             _ => Ok(self.collect_type_params()),
         }
@@ -249,7 +278,13 @@ impl StyleDefs {
 /// A type is identified by `(category, style, name)`. Defining a name this
 /// style already holds with the same endpoints and exactly equal [`Params`] is
 /// a no-op; anything else is `Err(DefError::TypeConflict)` and leaves the first
-/// definition in place. The edits `set_type_param`, `set_type_str_param` and
+/// definition in place. A pair is also identified by its unordered
+/// `{itom, jtom}` (a kernel finds it by its endpoints, never by its name): a
+/// pair type restating a pair another one holds, in either order and under
+/// any name, is a no-op when the two have
+/// [the same parameters](Params::same_parameters) and
+/// `Err(DefError::PairConflict)` otherwise, so a pair style holds at most one
+/// row per pair. The edits `set_type_param`, `set_type_str_param` and
 /// `remove_type` change an existing definition and are outside the rule;
 /// `rename_type` can land on an existing name and therefore carries it.
 #[derive(Debug, Clone)]
@@ -322,9 +357,10 @@ impl Style {
     /// a name is just a character. The endpoint count follows the category:
     /// an atom style takes none; a pair style one (a self pair) or two; bond
     /// two; angle three; dihedral and improper four. Any other count is
-    /// `Err(DefError::Arity)` and never panics. Re-defining a stored name
-    /// follows the conflict rule (see [`Style`]): identical is a no-op,
-    /// different is `Err(DefError::TypeConflict)`.
+    /// `Err(DefError::Arity)` and never panics. Re-defining a stored name, or
+    /// restating a stored pair, follows the conflict rule (see [`Style`]):
+    /// identical is a no-op, different is `Err(DefError::TypeConflict)` /
+    /// `Err(DefError::PairConflict)`.
     pub fn def_type(
         &mut self,
         name: &str,
@@ -379,37 +415,66 @@ impl Style {
     /// with `endpoints` and `params` here would be accepted, without defining
     /// it.
     ///
-    /// `Ok(false)` when `name` is not defined here (the definition would be
-    /// appended); `Ok(true)` when it is defined with the same endpoints and
-    /// equal params (the re-definition is a no-op);
-    /// `Err(DefError::TypeConflict)` when it is defined with anything else.
-    /// `endpoints` are the stored form: the endpoint count has been checked
-    /// against the category, and a one-endpoint pair is a self-pair.
+    /// `Ok(false)` when the definition is new (it would be appended);
+    /// `Ok(true)` when it restates one already here (a no-op): `name` defined
+    /// with the same endpoints and equal params, or — in a pair style — the
+    /// same unordered `{itom, jtom}` under another name with
+    /// [the same parameters](Params::same_parameters).
+    /// `Err(DefError::TypeConflict)` when `name` is defined with anything
+    /// else; `Err(DefError::PairConflict)` when another pair type prices
+    /// `{itom, jtom}` differently (molrec forcefield, linking rule 3: a pair is
+    /// found by its endpoints in either order, so two rows on one pair cannot
+    /// both apply). `endpoints` are the stored form: the endpoint count has
+    /// been checked against the category, and a one-endpoint pair is a
+    /// self-pair.
     pub(crate) fn check_type(
         &self,
         name: &str,
         endpoints: &[&str],
         params: &Params,
     ) -> Result<bool, DefError> {
-        let Some((stored, stored_params)) = self
+        let pair = match (&self.defs, endpoints) {
+            (StyleDefs::Pair(_), [only]) => Some((*only, *only)),
+            (StyleDefs::Pair(_), [i, j]) => Some((*i, *j)),
+            _ => None,
+        };
+        let same_pair =
+            |i: &str, j: &str| pair.is_some_and(|(a, b)| (i, j) == (a, b) || (i, j) == (b, a));
+        if let Some((stored, stored_params)) = self
             .type_rows()
             .into_iter()
             .find(|(n, _, _)| *n == name)
             .map(|(_, e, p)| (e, p))
-        else {
+        {
+            let same_endpoints = match pair {
+                Some(_) => same_pair(stored[0], stored[1]),
+                None => stored == endpoints,
+            };
+            return if same_endpoints && stored_params == params {
+                Ok(true)
+            } else {
+                Err(DefError::TypeConflict {
+                    category: self.category(),
+                    style: self.name.clone(),
+                    name: name.to_owned(),
+                })
+            };
+        }
+        let StyleDefs::Pair(types) = &self.defs else {
             return Ok(false);
         };
-        let given: Vec<&str> = match (&self.defs, endpoints) {
-            (StyleDefs::Pair(_), [only]) => vec![*only, *only],
-            _ => endpoints.to_vec(),
+        let Some(stated) = types.iter().find(|t| same_pair(&t.itom, &t.jtom)) else {
+            return Ok(false);
         };
-        if stored == given && stored_params == params {
+        if stated.params.same_parameters(params) {
             Ok(true)
         } else {
-            Err(DefError::TypeConflict {
-                category: self.category(),
+            Err(DefError::PairConflict {
                 style: self.name.clone(),
                 name: name.to_owned(),
+                stated: stated.name.clone(),
+                itom: stated.itom.clone(),
+                jtom: stated.jtom.clone(),
             })
         }
     }
@@ -541,6 +606,16 @@ pub enum DefError {
         style: String,
         name: String,
     },
+    /// The pair style `style` already prices the pair `{itom, jtom}` (in
+    /// either order) as the type `stated`, and the type `name` restates it
+    /// with other parameters. The first definition is kept.
+    PairConflict {
+        style: String,
+        name: String,
+        stated: String,
+        itom: String,
+        jtom: String,
+    },
     /// The `category` style `name` is already defined with other style params.
     /// The first definition is kept.
     StyleConflict { category: String, name: String },
@@ -587,6 +662,17 @@ impl std::fmt::Display for DefError {
                 f,
                 "{category} style '{style}' already defines type \"{name}\" with \
                  different endpoints or params"
+            ),
+            DefError::PairConflict {
+                style,
+                name,
+                stated,
+                itom,
+                jtom,
+            } => write!(
+                f,
+                "pair style '{style}': type \"{name}\" restates the pair {{{itom}, {jtom}}} \
+                 that type \"{stated}\" prices, with different params"
             ),
             DefError::StyleConflict { category, name } => write!(
                 f,
@@ -1839,6 +1925,138 @@ pub(crate) mod tests {
             style.type_endpoints("0_1_5"),
             Some(vec!["1".to_string(), "5".to_string()])
         );
+    }
+
+    // -- the conflict rule: a pair is its unordered endpoints ----------------------
+
+    fn lj_params(epsilon: f64) -> Params {
+        Params::from_pairs(&[("epsilon", epsilon), ("sigma", 2.0)])
+    }
+
+    /// `B-A` restating `A-B` with another epsilon: refused, whatever either
+    /// is named, and the first row stands.
+    #[test]
+    fn def_type_restating_a_reversed_pair_with_other_params_is_a_pair_conflict() {
+        let mut ff = ForceField::new("t");
+        let style = ff.def_style("pair", "lj/cut", Params::new()).unwrap();
+        style.def_type("A-B", &["A", "B"], lj_params(0.9)).unwrap();
+
+        let second = style.def_type("B-A", &["B", "A"], lj_params(0.8));
+
+        assert!(
+            matches!(&second, Err(DefError::PairConflict { stated, .. }) if stated == "A-B"),
+            "{second:?}"
+        );
+        let StyleDefs::Pair(types) = style.defs() else {
+            panic!("expected Pair defs");
+        };
+        assert_eq!(types.len(), 1);
+        assert_eq!(types[0].params.get("epsilon"), Some(0.9));
+    }
+
+    /// Two names on one ordered pair, and a self pair restated under another
+    /// name, are one pair as well.
+    #[test]
+    fn def_type_restating_a_pair_in_the_same_order_with_other_params_is_a_pair_conflict() {
+        let mut ff = ForceField::new("t");
+        let style = ff.def_style("pair", "lj/cut", Params::new()).unwrap();
+        style
+            .def_type("nbfix-1", &["A", "B"], lj_params(0.9))
+            .unwrap()
+            .def_type("A", &["A"], lj_params(0.1))
+            .unwrap();
+
+        let second = style.def_type("nbfix-2", &["A", "B"], lj_params(0.8));
+        assert!(
+            matches!(second, Err(DefError::PairConflict { .. })),
+            "{second:?}"
+        );
+        let self_pair = style.def_type("A-again", &["A", "A"], lj_params(0.2));
+        assert!(
+            matches!(self_pair, Err(DefError::PairConflict { .. })),
+            "{self_pair:?}"
+        );
+    }
+
+    /// An equal restatement, in either order and under any name, is a no-op:
+    /// the annotations take no part, and the first row is the one kept.
+    #[test]
+    fn def_type_restating_a_pair_with_equal_params_is_a_no_op() {
+        let mut ff = ForceField::new("t");
+        let style = ff.def_style("pair", "lj/cut", Params::new()).unwrap();
+        let mut first = lj_params(0.9);
+        first.set_str("desc", "NBFIX");
+        style.def_type("A-B", &["A", "B"], first).unwrap();
+        let mut restated = lj_params(0.9);
+        restated.set_str("desc", "restated");
+        restated.set_str("doi", "10.0/x");
+        style
+            .def_type("B-A", &["B", "A"], restated)
+            .unwrap()
+            .def_type("A-B-again", &["A", "B"], lj_params(0.9))
+            .unwrap()
+            .def_type("A-B", &["B", "A"], {
+                let mut same = lj_params(0.9);
+                same.set_str("desc", "NBFIX");
+                same
+            })
+            .unwrap();
+
+        let StyleDefs::Pair(types) = style.defs() else {
+            panic!("expected Pair defs");
+        };
+        assert_eq!(types.len(), 1);
+        assert_eq!(types[0].name, "A-B");
+        assert_eq!(types[0].params.get_str("desc"), Some("NBFIX"));
+    }
+
+    /// A parameter one row carries and the other lacks is a difference, and a
+    /// string parameter is a parameter.
+    #[test]
+    fn a_missing_or_string_parameter_is_a_pair_conflict() {
+        let mut ff = ForceField::new("t");
+        let style = ff.def_style("pair", "lj/cut", Params::new()).unwrap();
+        style.def_type("A-B", &["A", "B"], lj_params(0.9)).unwrap();
+        let lacking = Params::from_pairs(&[("epsilon", 0.9)]);
+        assert!(style.def_type("B-A", &["B", "A"], lacking).is_err());
+        let mut flavoured = lj_params(0.9);
+        flavoured.set_str("flavour", "x");
+        assert!(style.def_type("B-A", &["B", "A"], flavoured).is_err());
+    }
+
+    /// Only a pair is found by its endpoints: two bond types on one pair are
+    /// two definitions.
+    #[test]
+    fn a_bond_restating_its_endpoints_is_not_a_pair_conflict() {
+        let mut ff = ForceField::new("t");
+        let style = ff.def_style("bond", "harmonic", Params::new()).unwrap();
+        style
+            .def_type("CT-HC", &["CT", "HC"], Params::from_pairs(&[("k", 1.0)]))
+            .unwrap()
+            .def_type("HC-CT", &["HC", "CT"], Params::from_pairs(&[("k", 2.0)]))
+            .unwrap();
+        assert_eq!(style.type_rows().len(), 2);
+    }
+
+    /// The kernel finds a pair defined in either order under one key.
+    #[test]
+    fn kernel_type_params_key_a_pair_in_byte_order() {
+        let mut ff = ForceField::new("t");
+        let style = ff.def_style("pair", "lj/cut", Params::new()).unwrap();
+        style
+            .def_type("nbfix", &["B", "A"], lj_params(0.9))
+            .unwrap()
+            .def_type("C", &["C"], lj_params(0.1))
+            .unwrap();
+        let keys: Vec<String> = style
+            .defs()
+            .kernel_type_params()
+            .unwrap()
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect();
+        assert_eq!(keys, ["A-B", "C"]);
+        assert_eq!(pair_key("B", "A").unwrap(), pair_key("A", "B").unwrap());
     }
 
     // -- the conflict rule: ForceField::def_style --------------------------------

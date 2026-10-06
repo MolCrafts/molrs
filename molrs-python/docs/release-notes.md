@@ -48,6 +48,16 @@ refuse what they used to drop or mistranslate; the
 - A cross row is a `pair` table row with `itom != jtom` in a record's
   `forcefield` section, so it round-trips through `ForceField.to_section` /
   `from_section` and `*.mrec`.
+- A pair is found by its two atom types in either order, so a pair style
+  holds one row per pair. `def_type` restating a pair already defined (`B-A`
+  after `A-B`, or a second name on `A-B`) is a no-op when the parameters are
+  equal and a `ValueError` when they differ; a stored `forcefield` section
+  whose `pair` or `pair14` table restates a pair with other parameters is
+  refused by `ForceFieldSection.validate()`, `ForceField.from_section` and
+  every `*.mrec` reader (molrec forcefield, linking rule 3). `name` and the
+  annotation columns (`desc`, `doi`, `smarts`, …) are not compared.
+- The AMBER prmtop reader states `mixing = arithmetic` on its `lj/cut` style
+  instead of leaving the rule to the kernel default.
 
 ### OpenMM force-field XML
 

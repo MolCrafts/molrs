@@ -27,7 +27,10 @@
 //!   `smirks`, any endpoint column or no never-null `smirks`), or with a column
 //!   that is not `f64` / `string` (an annotation column: `string`; a canonical
 //!   key: that key's dtype), has trailing axes, or declares a precision;
-//! - a `class`-keyed style beside an atom table without `class`.
+//! - a `class`-keyed style beside an atom table without `class`;
+//! - a `pair` or `pair14` table (endpoint-keyed) with two rows on one
+//!   unordered `{itom, jtom}` that differ in a parameter
+//!   ([`check_pair_restatements`]).
 //!
 //! A table no style names is unknown content: kept, never checked.
 
@@ -50,6 +53,16 @@ pub const ANNOTATION_COLUMNS: [&str; 7] = [
     "desc",
     "doi",
 ];
+
+/// The categories whose rows are found by their unordered `{itom, jtom}`, not
+/// by name (molrec forcefield, linking rule 3).
+pub const PAIR_CATEGORIES: [&str; 2] = ["pair", "pair14"];
+
+/// Whether a style-table column is a parameter: not `name`, an endpoint or an
+/// annotation column. Rows restating one pair are compared on these alone.
+pub fn is_parameter_column(column: &str) -> bool {
+    column != "name" && !ENDPOINT_COLUMNS.contains(&column) && !ANNOTATION_COLUMNS.contains(&column)
+}
 
 /// The combining rules `params.mixing` may name on a van-der-Waals pair style.
 pub const MIXING_RULES: [&str; 3] = ["arithmetic", "geometric", "sixthpower"];
@@ -608,6 +621,67 @@ fn check_style_table(
             "a class-keyed style links through atom classes; this atom table has no class".into(),
         ));
     }
+    if PAIR_CATEGORIES.contains(&style.category) && present == ENDPOINT_COLUMNS[..2] {
+        check_pair_restatements(table).map_err(fail)?;
+    }
+    Ok(())
+}
+
+/// Linking rule 3: a pair table prices each unordered `{itom, jtom}` once.
+///
+/// Rows restating a pair, in either order, are one row when every
+/// [parameter column](is_parameter_column) holds equal values in both (a null
+/// equal only to a null); any other restatement is refused, naming both rows
+/// and the parameters they differ in. `table` is a validated pair table: a
+/// never-null string `name`, `itom` and `jtom`, every column 1-D. A
+/// `smirks`-keyed table has no endpoints and is not checked.
+///
+/// # Errors
+///
+/// The reason, without the table's name (the caller prefixes it).
+pub fn check_pair_restatements(table: &Block) -> Result<(), String> {
+    let strings = |column: &str| {
+        table
+            .get(column)
+            .and_then(|c| c.as_string())
+            .expect("a validated pair table: a string column")
+    };
+    let (names, itom, jtom) = (strings("name"), strings("itom"), strings("jtom"));
+    let params: Vec<(&str, &crate::store::block::Column, Option<&[bool]>)> = table
+        .iter()
+        .filter(|(column, _)| is_parameter_column(column))
+        .map(|(column, values)| (column, values, table.validity(column)))
+        .collect();
+    let mut first_row = std::collections::HashMap::with_capacity(names.len());
+    for row in 0..names.len() {
+        let (a, b) = (itom[[row]].as_str(), jtom[[row]].as_str());
+        let pair = if a <= b { (a, b) } else { (b, a) };
+        let first = *first_row.entry(pair).or_insert(row);
+        if first == row {
+            continue;
+        }
+        let mut differ: Vec<&str> = params
+            .iter()
+            .filter(|(_, values, validity)| {
+                let valid = |r: usize| validity.is_none_or(|mask| mask[r]);
+                match (valid(first), valid(row)) {
+                    (true, true) => !values.rows_equal(first, row),
+                    (x, y) => x != y,
+                }
+            })
+            .map(|(column, ..)| *column)
+            .collect();
+        if !differ.is_empty() {
+            differ.sort_unstable();
+            return Err(format!(
+                "rows {:?} and {:?} both price the pair {{{:?}, {:?}}} and differ in {differ:?}",
+                names[[first]],
+                names[[row]],
+                pair.0,
+                pair.1
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -823,6 +897,132 @@ mod tests {
             .insert_column("ltom", strings(&["C"]))
             .unwrap();
         assert!(ff.validate().is_err(), "itom jtom ltom is no prefix");
+    }
+
+    /// `base` with a `pair lj/cut` style (category `category`) whose rows
+    /// are `(name, itom, jtom, epsilon)`, `sigma` 2.0 throughout.
+    fn with_pairs(category: &str, rows: &[(&str, &str, &str, f64)]) -> ForceFieldSection {
+        let mut ff = base();
+        ff.document["styles"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"category": category, "style": "lj/cut"}));
+        let column = |i: usize| -> Vec<&str> { rows.iter().map(|r| [r.0, r.1, r.2][i]).collect() };
+        let epsilon: Vec<f64> = rows.iter().map(|r| r.3).collect();
+        ff.tables.insert(
+            style_block_name(category, "lj/cut"),
+            table(vec![
+                ("name", strings(&column(0))),
+                ("itom", strings(&column(1))),
+                ("jtom", strings(&column(2))),
+                ("epsilon", floats(&epsilon)),
+                ("sigma", floats(&vec![2.0; rows.len()])),
+            ]),
+        );
+        ff
+    }
+
+    fn pair_table<'a>(ff: &'a mut ForceFieldSection, category: &str) -> &'a mut Block {
+        ff.tables
+            .get_mut(&style_block_name(category, "lj/cut"))
+            .unwrap()
+    }
+
+    #[test]
+    fn a_reversed_pair_restated_with_other_params_is_refused() {
+        for category in PAIR_CATEGORIES {
+            let rows = [
+                ("A", "A", "A", 0.1),
+                ("A-B", "A", "B", 0.9),
+                ("B-A", "B", "A", 0.8),
+            ];
+            let err = with_pairs(category, &rows)
+                .validate()
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("\"A-B\" and \"B-A\""), "{err}");
+            assert!(err.contains("[\"epsilon\"]"), "{err}");
+        }
+    }
+
+    /// Two names on one ordered pair are no less one pair: the last of them
+    /// would otherwise silently win.
+    #[test]
+    fn a_pair_restated_in_the_same_order_with_other_params_is_refused() {
+        let rows = [("nbfix-1", "A", "B", 0.9), ("nbfix-2", "A", "B", 0.8)];
+        assert!(with_pairs("pair", &rows).validate().is_err());
+        let rows = [("A", "A", "A", 0.1), ("A-again", "A", "A", 0.2)];
+        assert!(with_pairs("pair", &rows).validate().is_err(), "self pair");
+    }
+
+    #[test]
+    fn an_equal_restatement_is_one_row() {
+        let rows = [
+            ("A", "A", "A", 0.1),
+            ("A-B", "A", "B", 0.9),
+            ("B-A", "B", "A", 0.9),
+            ("A-B-again", "A", "B", 0.9),
+        ];
+        with_pairs("pair", &rows).validate().unwrap();
+    }
+
+    /// A null equals a null and nothing else.
+    #[test]
+    fn a_null_parameter_differs_from_a_value_and_equals_a_null() {
+        let rows = [("A-B", "A", "B", 0.9), ("B-A", "B", "A", 0.9)];
+        let mut ff = with_pairs("pair", &rows);
+        pair_table(&mut ff, "pair")
+            .set_validity("epsilon", vec![true, false])
+            .unwrap();
+        let err = ff.validate().unwrap_err().to_string();
+        assert!(err.contains("epsilon"), "{err}");
+        pair_table(&mut ff, "pair")
+            .set_validity("epsilon", vec![false, false])
+            .unwrap();
+        ff.validate().unwrap();
+    }
+
+    /// `name` and the annotation columns are no parameters; every other
+    /// column, a string one included, is.
+    #[test]
+    fn names_and_annotations_take_no_part_but_a_string_parameter_does() {
+        let rows = [("A-B", "A", "B", 0.9), ("B-A", "B", "A", 0.9)];
+        let mut ff = with_pairs("pair", &rows);
+        for annotation in ANNOTATION_COLUMNS {
+            pair_table(&mut ff, "pair")
+                .insert_column(annotation, strings(&["one", "other"]))
+                .unwrap();
+        }
+        ff.validate().unwrap();
+        pair_table(&mut ff, "pair")
+            .insert_column("flavour", strings(&["one", "other"]))
+            .unwrap();
+        let err = ff.validate().unwrap_err().to_string();
+        assert!(err.contains("[\"flavour\"]"), "{err}");
+    }
+
+    /// Only `pair` and `pair14` rows are found by their endpoints: a bond
+    /// table may hold two names on one pair, and a smirks-keyed pair table
+    /// has no endpoints to compare.
+    #[test]
+    fn other_tables_are_not_checked() {
+        let mut ff = base();
+        ff.tables["bond.harmonic"] = table(vec![
+            ("name", strings(&["CT-HC", "HC-CT"])),
+            ("itom", strings(&["CT", "HC"])),
+            ("jtom", strings(&["HC", "CT"])),
+            ("k", floats(&[680.0, 340.0])),
+        ]);
+        ff.validate().unwrap();
+
+        let mut ff = with_pairs("pair", &[]);
+        ff.document["styles"][2]["endpoint_key"] = json!("smirks");
+        ff.tables[&style_block_name("pair", "lj/cut")] = table(vec![
+            ("name", strings(&["n1", "n2"])),
+            ("smirks", strings(&["[#6:1]", "[#6:1]"])),
+            ("epsilon", floats(&[0.1, 0.2])),
+        ]);
+        ff.validate().unwrap();
     }
 
     #[test]

@@ -8,7 +8,7 @@
 use molrs::store::schema::block_names::PAIRS;
 use std::collections::HashMap;
 
-use crate::ff::forcefield::Params;
+use crate::ff::forcefield::{Params, pair_key};
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::atom_type_index;
@@ -19,7 +19,6 @@ use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::math::Virial;
 use molrs::spatial::neighbors::Neighbors;
 use molrs::store::frame::Frame;
-use molrs::store::type_labels::TypeName;
 use molrs::types::F;
 
 /// Where a pair's Buckingham `(A, ρ, C)` comes from.
@@ -393,26 +392,23 @@ pub fn pair_buck_typed_ctor(
     let mut c = vec![0.0 as F; ntypes * ntypes];
     for ti in 0..ntypes {
         for tj in 0..ntypes {
-            // A cross-pair may be declared either way round; a self-pair is
-            // named by the atom type alone.
-            let forward = TypeName::pair(&labels[ti], &labels[tj])?;
-            let reverse = TypeName::pair(&labels[tj], &labels[ti])?;
+            // Keyed in either order alike; a self-pair by the atom type alone.
+            let key = pair_key(&labels[ti], &labels[tj])?;
             let p = type_map
-                .get(forward.as_str())
-                .or_else(|| type_map.get(reverse.as_str()))
-                .ok_or_else(|| format!("PairBuck: unknown pair type '{forward}'"))?;
+                .get(key.as_str())
+                .ok_or_else(|| format!("PairBuck: unknown pair type '{key}'"))?;
             let t = type_pair(ti as u32, tj as u32, ntypes);
             a[t] = p
                 .get("a")
-                .ok_or_else(|| format!("PairBuck type '{forward}': missing 'a'"))?
+                .ok_or_else(|| format!("PairBuck type '{key}': missing 'a'"))?
                 as F;
             rho[t] = p
                 .get("rho")
-                .ok_or_else(|| format!("PairBuck type '{forward}': missing 'rho'"))?
+                .ok_or_else(|| format!("PairBuck type '{key}': missing 'rho'"))?
                 as F;
             c[t] = p
                 .get("c")
-                .ok_or_else(|| format!("PairBuck type '{forward}': missing 'c'"))?
+                .ok_or_else(|| format!("PairBuck type '{key}': missing 'c'"))?
                 as F;
         }
     }

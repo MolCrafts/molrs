@@ -9,8 +9,8 @@
 use molrs::store::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
-use crate::ff::forcefield::Params;
 use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::{Params, pair_key};
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::PairPotential;
@@ -690,8 +690,8 @@ fn lj_row(type_map: &HashMap<&str, &Params>, key: &str) -> Result<Option<(F, F)>
 }
 
 /// The explicit cross row between atom types `a` and `b`, if the style defines
-/// one — keyed by [`TypeName::pair`](molrs::store::type_labels::TypeName::pair)
-/// in either order, as `kernel_type_params` keys it. A self pair has none.
+/// one — keyed by [`pair_key`], as `kernel_type_params` keys it, so it answers
+/// in either order. A self pair has none.
 fn lj_cross_row(
     type_map: &HashMap<&str, &Params>,
     a: &str,
@@ -700,20 +700,7 @@ fn lj_cross_row(
     if a == b {
         return Ok(None);
     }
-    let ab = molrs::store::type_labels::TypeName::pair(a, b)?;
-    let ba = molrs::store::type_labels::TypeName::pair(b, a)?;
-    match (
-        lj_row(type_map, ab.as_str())?,
-        lj_row(type_map, ba.as_str())?,
-    ) {
-        (Some(x), Some(y)) if x != y => Err(format!(
-            "LJCut: cross rows '{}' and '{}' disagree",
-            ab.as_str(),
-            ba.as_str()
-        )),
-        (Some(x), _) | (None, Some(x)) => Ok(Some(x)),
-        (None, None) => Ok(None),
-    }
+    lj_row(type_map, &pair_key(a, b)?)
 }
 
 /// Construct a compiled [`LJCut`] from per-atom-type params + a neighbour list.
@@ -1125,9 +1112,8 @@ mod tests {
             ),
         ];
         if let Some((a, b)) = cross {
-            let key = molrs::store::type_labels::TypeName::pair(a, b).unwrap();
             rows.push((
-                key.as_str().to_owned(),
+                pair_key(a, b).unwrap(),
                 Params::from_pairs(&[("epsilon", 0.9), ("sigma", 2.0)]),
             ));
         }
@@ -1184,11 +1170,24 @@ mod tests {
         assert!((typed_energy(&rows) - want).abs() < 1e-12);
     }
 
-    /// A cross row defined as `B-A` answers for the pair `(A, B)` too.
+    /// A cross row defined as `B-A` answers for the pair `(A, B)` too: the
+    /// force field keys it by its endpoints in byte order.
     #[test]
     fn a_cross_row_is_found_in_either_order() {
+        use crate::ff::forcefield::ForceField;
+        let lj_params =
+            |eps: f64, sigma: f64| Params::from_pairs(&[("epsilon", eps), ("sigma", sigma)]);
+        let mut ff = ForceField::new("t");
+        let style = ff.def_style("pair", "lj/cut", Params::new()).unwrap();
+        style
+            .def_type("A", &["A"], lj_params(0.1, 3.0))
+            .unwrap()
+            .def_type("B", &["B"], lj_params(0.4, 3.6))
+            .unwrap()
+            .def_type("nbfix", &["B", "A"], lj_params(0.9, 2.0))
+            .unwrap();
+        let rows = style.defs().kernel_type_params().unwrap();
         let want = lj(0.9, 2.0, R_AB);
-        let rows = ab_rows(Some(("B", "A")));
         assert!((compiled_energy(&rows) - want).abs() < 1e-12);
         assert!((typed_energy(&rows) - want).abs() < 1e-12);
     }
