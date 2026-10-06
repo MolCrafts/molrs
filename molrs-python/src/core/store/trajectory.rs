@@ -20,13 +20,13 @@ pub struct PyTrajectory {
     pub(crate) inner: CoreTrajectory,
 }
 
-#[pyclass(module = "molrs", name = "ScalarObservable", from_py_object)]
+#[pyclass(module = "molrs", name = "ScalarObservable", from_py_object, subclass)]
 #[derive(Clone)]
 pub struct PyScalarObservable {
     pub(crate) inner: ObservableRecord,
 }
 
-#[pyclass(module = "molrs", name = "VectorObservable", from_py_object)]
+#[pyclass(module = "molrs", name = "VectorObservable", from_py_object, subclass)]
 #[derive(Clone)]
 pub struct PyVectorObservable {
     pub(crate) inner: ObservableRecord,
@@ -113,9 +113,7 @@ impl PyTrajectory {
         self.inner.frames.len()
     }
 
-    fn __reduce__<'py>(
-        slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
         crate::helpers::reduce_via_type(
@@ -204,9 +202,7 @@ impl PyScalarObservable {
         self.inner.target.clone()
     }
 
-    fn __reduce__<'py>(
-        slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
         let this = slf.borrow();
         crate::helpers::reduce_via_type(
             slf.as_any(),
@@ -304,9 +300,7 @@ impl PyVectorObservable {
         self.inner.target.clone()
     }
 
-    fn __reduce__<'py>(
-        slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
         let this = slf.borrow();
         crate::helpers::reduce_via_type(
             slf.as_any(),

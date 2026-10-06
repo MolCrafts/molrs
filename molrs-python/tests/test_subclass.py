@@ -1,12 +1,19 @@
 """Verify that Python subclasses of ``molrs.Box`` are allowed.
 
-molpy's ``Box`` subclasses the native one. ``Frame`` and ``Block`` are not
-subclassable: there is one class each (see test_frame.py / test_block.py).
+molpy's ``Box`` subclasses the native one. The other core data classes
+(``Frame``, ``Block``, ``Atomistic``, ``ForceField``, …) are subclassable too
+(see test_frame.py, test_block.py, test_views.py, test_forcefield_builder.py).
 """
+
+import pickle
 
 import molrs
 import numpy as np
 import pytest
+
+
+class _PickledBox(molrs.Box):
+    """Module level, so pickle can find it."""
 
 
 class TestBoxSubclass:
@@ -56,3 +63,11 @@ class TestBoxSubclass:
 
         instance = Sub(np.eye(3) * 2.0)
         assert repr(instance) == "<Sub>"
+
+    def test_subclass_pickles_as_itself_with_its_attributes(self):
+        instance = _PickledBox(np.eye(3) * 3.0)
+        instance.label = "cube-3"
+        back = pickle.loads(pickle.dumps(instance))
+        assert type(back) is _PickledBox
+        assert back.label == "cube-3"
+        assert back.volume() == pytest.approx(27.0)

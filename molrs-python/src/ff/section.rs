@@ -38,7 +38,12 @@ use crate::helpers::{molrs_error_to_pyerr, py_value_err};
 /// tables
 ///     Block name → :class:`~molrs.Block` (the style tables, at
 ///     :meth:`block_name` of their style, and any other block).
-#[pyclass(module = "molrs.io.mrec", name = "ForceFieldSection", unsendable)]
+#[pyclass(
+    module = "molrs.io.mrec",
+    name = "ForceFieldSection",
+    unsendable,
+    subclass
+)]
 pub struct PyForceFieldSection {
     pub(crate) inner: ForceFieldSection,
 }

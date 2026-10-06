@@ -160,6 +160,7 @@ fn _ffi_abi_token() -> (&'static str, &'static str, String, String, String) {
 #[pyo3(name = "_lib")]
 fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(_ffi_abi_token, m)?)?;
+    m.add_function(wrap_pyfunction!(helpers::_restore_pickled_state, m)?)?;
     // SimBox + neighbors
     m.add_class::<PyBox>()?;
     m.add_class::<PyNeighborList>()?;

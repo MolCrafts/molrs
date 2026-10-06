@@ -926,16 +926,16 @@ pub struct PyAtom {}
 pub struct PyVirtualSite {}
 
 /// A Drude shell (``vsite == "drude"``).
-#[pyclass(module = "molrs", name = "DrudeParticle", extends = PyVirtualSite, frozen)]
+#[pyclass(module = "molrs", name = "DrudeParticle", extends = PyVirtualSite, frozen, subclass)]
 pub struct PyDrudeParticle {}
 
 /// A massless site (``vsite == "massless"``), e.g. the TIP4P M site.
-#[pyclass(module = "molrs", name = "MasslessSite", extends = PyVirtualSite, frozen)]
+#[pyclass(module = "molrs", name = "MasslessSite", extends = PyVirtualSite, frozen, subclass)]
 pub struct PyMasslessSite {}
 
 /// A node of a :class:`CoarseGrain`. ``bead["atoms"]`` is the tuple of atom
 /// views the bead groups, when it has members.
-#[pyclass(module = "molrs", name = "Bead", extends = PyNodeRef, frozen)]
+#[pyclass(module = "molrs", name = "Bead", extends = PyNodeRef, frozen, subclass)]
 pub struct PyBead {}
 
 // ---------------------------------------------------------------------------
@@ -1053,7 +1053,7 @@ impl PyRelationRef {
 field_mapping_impl!(PyRelationRef);
 
 /// A bond of an :class:`Atomistic`; ``itom`` / ``jtom`` are its atoms.
-#[pyclass(module = "molrs", name = "Bond", extends = PyRelationRef, frozen)]
+#[pyclass(module = "molrs", name = "Bond", extends = PyRelationRef, frozen, subclass)]
 pub struct PyBond {}
 
 #[pymethods]
@@ -1072,7 +1072,7 @@ impl PyBond {
 }
 
 /// An angle ``i–j–k`` of an :class:`Atomistic` (``j`` the vertex).
-#[pyclass(module = "molrs", name = "Angle", extends = PyRelationRef, frozen)]
+#[pyclass(module = "molrs", name = "Angle", extends = PyRelationRef, frozen, subclass)]
 pub struct PyAngle {}
 
 /// A proper dihedral ``i–j–k–l`` of an :class:`Atomistic`.
@@ -1080,11 +1080,11 @@ pub struct PyAngle {}
 pub struct PyDihedral {}
 
 /// An improper of an :class:`Atomistic`, in its style's slot order.
-#[pyclass(module = "molrs", name = "Improper", extends = PyDihedral, frozen)]
+#[pyclass(module = "molrs", name = "Improper", extends = PyDihedral, frozen, subclass)]
 pub struct PyImproper {}
 
 /// A bond of a :class:`CoarseGrain`.
-#[pyclass(module = "molrs", name = "CGBond", extends = PyRelationRef, frozen)]
+#[pyclass(module = "molrs", name = "CGBond", extends = PyRelationRef, frozen, subclass)]
 pub struct PyCGBond {}
 
 /// One unsatisfied valence (a port) of an :class:`Atomistic`.
@@ -1097,7 +1097,7 @@ pub struct PyCGBond {}
 ///
 /// The second endpoint is ``handle_atom``, not ``handle``: ``handle`` is the
 /// port's own relation handle. The two answer different questions.
-#[pyclass(module = "molrs", name = "Port", extends = PyRelationRef, frozen)]
+#[pyclass(module = "molrs", name = "Port", extends = PyRelationRef, frozen, subclass)]
 pub struct PyPort {}
 
 #[pymethods]
@@ -1125,7 +1125,7 @@ impl PyPort {
 /// reads a field of every item as a numpy array (``None`` where unset) and
 /// ``refs["x", "y", "z"]`` stacks several side by side. Views are made on
 /// demand, so ``len(graph.atoms)`` and ``graph.atoms["x"]`` make none.
-#[pyclass(module = "molrs", name = "Refs", frozen)]
+#[pyclass(module = "molrs", name = "Refs", frozen, subclass)]
 pub struct PyRefs {
     world: Py<PyAny>,
     /// `None` for nodes, the relation kind otherwise.
@@ -1380,7 +1380,7 @@ impl PyRefs {
 // ---------------------------------------------------------------------------
 
 /// A graph's relations, selected by view class (``graph.links``).
-#[pyclass(module = "molrs", name = "RelationBuckets", frozen)]
+#[pyclass(module = "molrs", name = "RelationBuckets", frozen, subclass)]
 pub struct PyRelationBuckets {
     world: Py<PyAny>,
 }

@@ -25,6 +25,14 @@ VIEW_CLASSES = (
 )
 
 
+class _SubAtomistic(molrs.Atomistic):
+    """Module level, so pickle can find it."""
+
+
+class _SubCoarseGrain(molrs.CoarseGrain):
+    """Module level, so pickle can find it."""
+
+
 def _roundtrip(value):
     return pickle.loads(pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL))
 
@@ -52,9 +60,19 @@ class TestOneClass:
         assert getattr(molrs, name) is getattr(_lib, name)
 
     @pytest.mark.parametrize("cls", [molrs.Atomistic, molrs.CoarseGrain])
-    def test_leaf_graph_classes_cannot_be_subclassed(self, cls: type) -> None:
-        with pytest.raises(TypeError):
-            type("Sub", (cls,), {})
+    def test_leaf_graph_classes_can_be_subclassed(self, cls: type) -> None:
+        """Core data classes are extensible; a subclass is still the base."""
+        sub = type("Sub", (cls,), {})
+        assert isinstance(sub(), cls)
+
+    @pytest.mark.parametrize("cls", [_SubAtomistic, _SubCoarseGrain])
+    def test_leaf_graph_subclasses_pickle_as_themselves(self, cls: type) -> None:
+        graph = cls(name="probe")
+        graph.tag = "kept"
+        back = pickle.loads(pickle.dumps(graph))
+        assert type(back) is cls
+        assert back.tag == "kept"
+        assert back.props["name"] == "probe"
 
     def test_there_is_no_python_view_module(self) -> None:
         with pytest.raises(ModuleNotFoundError):

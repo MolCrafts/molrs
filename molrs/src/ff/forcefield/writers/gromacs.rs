@@ -20,6 +20,9 @@
 //!   `ptype` as declared or `A` (an `atom/full` type is a real atom), and
 //!   V = σ/10 (nm), W = ε·4.184 (kJ/mol) from the type's `pair/lj/cut` self
 //!   row.
+//! - **`[ nonbond_params ]`** `i j 1 V W`, one row per explicit `pair/lj/cut`
+//!   cross row (CHARMM NBFIX and the like), V and W as for `[ atomtypes ]`;
+//!   written only when there is one.
 //! - **`[ bondtypes ]` / `[ angletypes ]` / `[ dihedraltypes ]`**, the inverse
 //!   of the reader's function-code map:
 //!
@@ -51,8 +54,8 @@
 //!   multi-term `dihedral/periodic` (code 9 is not modelled);
 //! - `sixthpower` mixing; a non-zero 1-2 or 1-3 special-bond weight;
 //! - an atom type lacking `mass`, `charge` or its `lj/cut` self row; an
-//!   explicit `lj/cut` cross row (that needs `[ nonbond_params ]`); an
-//!   `lj/cut` self row whose type is not an `atom/full` type;
+//!   `lj/cut` row (self or cross) whose type is not an `atom/full` type, or
+//!   that lacks `sigma` or `epsilon`;
 //! - a bonded type missing a parameter, carrying one with no column, or with
 //!   an endpoint label that is neither an atom-type name nor a `class`;
 //!   `improper/harmonic` with `chi0 ≠ 0`.
@@ -329,20 +332,34 @@ impl ForceFieldWriter for GromacsTopFfWriter {
         let atom_types: Vec<&AtomType> = ff.get_atomtypes();
         let lj = ff.get_style("pair", "lj/cut");
         let type_names: HashSet<&str> = atom_types.iter().map(|t| t.name.as_str()).collect();
+        let mut nonbond_params = String::new();
         if let Some(lj) = lj {
-            for (name, ends, _) in lj.type_rows() {
-                if ends[0] != ends[1] {
+            for (name, ends, params) in lj.type_rows() {
+                if ends[0] == ends[1] {
+                    if !type_names.contains(ends[0]) {
+                        return Err(format!(
+                            "pair/lj/cut self row '{name}' names no atom/full type"
+                        ));
+                    }
+                    continue;
+                }
+                if let Some(end) = ends.iter().find(|e| !type_names.contains(*e)) {
                     return Err(format!(
-                        "explicit pair/lj/cut cross row '{name}' ({} with {}) needs \
-                         [ nonbond_params ], which is not modelled",
-                        ends[0], ends[1]
+                        "pair/lj/cut cross row '{name}': '{end}' is no atom/full type"
                     ));
                 }
-                if !type_names.contains(ends[0]) {
-                    return Err(format!(
-                        "pair/lj/cut self row '{name}' names no atom/full type"
-                    ));
-                }
+                let need = |key: &str| {
+                    params
+                        .get(key)
+                        .ok_or_else(|| format!("pair/lj/cut cross row '{name}' has no {key}"))
+                };
+                nonbond_params.push_str(&format!(
+                    "  {}  {}  1  {}  {}\n",
+                    ends[0],
+                    ends[1],
+                    self.fmt_f(need("sigma")? / NM_TO_ANGSTROM),
+                    self.fmt_f(need("epsilon")? * KJ_PER_KCAL),
+                ));
             }
         }
         if !atom_types.is_empty() {
@@ -351,6 +368,11 @@ impl ForceFieldWriter for GromacsTopFfWriter {
             for t in &atom_types {
                 out.push_str(&self.atomtypes_row(t, lj)?);
             }
+            out.push('\n');
+        }
+        if !nonbond_params.is_empty() {
+            out.push_str("[ nonbond_params ]\n; i  j  func  sigma  epsilon\n");
+            out.push_str(&nonbond_params);
             out.push('\n');
         }
 
@@ -701,10 +723,11 @@ mod tests {
         assert_names(&err, &["opls_135", "lj/cut"]);
     }
 
-    /// `[ atomtypes ]` holds self rows only; a cross row needs
-    /// `[ nonbond_params ]`, which is not modelled.
+    /// A cross row is a `[ nonbond_params ]` row (σ = 3 Å = 0.3 nm, ε = 0.05
+    /// kcal/mol = 0.2092 kJ/mol) and reads back as the same cross row. It used
+    /// to be refused.
     #[test]
-    fn explicit_lj_cut_cross_row_is_an_error() {
+    fn explicit_lj_cut_cross_row_is_a_nonbond_params_row() {
         let mut ff = opls_ff(Some("geometric"));
         ff.get_style_mut("pair", "lj/cut")
             .unwrap()
@@ -714,8 +737,37 @@ mod tests {
                 Params::from_pairs(&[("sigma", 3.0), ("epsilon", 0.05)]),
             )
             .unwrap();
-        let err = write_err(&ff);
-        assert_names(&err, &["opls_135", "opls_140"]);
+        let text = write(&ff);
+        let r = row(&text, "nonbond_params", &["opls_135", "opls_140"]);
+        assert_row_values(&r[2..], "1", &[0.3, 0.2092]);
+        let back = GromacsTopFfReader::new().read_str(&text).unwrap();
+        let cross = back
+            .get_style("pair", "lj/cut")
+            .unwrap()
+            .get_pairtype("opls_135", Some("opls_140"))
+            .expect("cross row read back");
+        assert!((cross.params.get("sigma").unwrap() - 3.0).abs() < 1e-9);
+        assert!((cross.params.get("epsilon").unwrap() - 0.05).abs() < 1e-9);
+    }
+
+    /// No cross row, no `[ nonbond_params ]` section.
+    #[test]
+    fn no_cross_row_writes_no_nonbond_params() {
+        assert!(!write(&opls_ff(Some("geometric"))).contains("nonbond_params"));
+    }
+
+    #[test]
+    fn a_cross_row_on_an_unknown_type_is_an_error() {
+        let mut ff = opls_ff(Some("geometric"));
+        ff.get_style_mut("pair", "lj/cut")
+            .unwrap()
+            .def_type(
+                "opls_135-ZZ",
+                &["opls_135", "ZZ"],
+                Params::from_pairs(&[("sigma", 3.0), ("epsilon", 0.05)]),
+            )
+            .unwrap();
+        assert_names(&write_err(&ff), &["opls_135-ZZ", "ZZ"]);
     }
 
     // -- bonded directives -------------------------------------------------------

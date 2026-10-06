@@ -109,7 +109,7 @@ fn check_cutoff(cutoff: NpF) -> PyResult<()> {
 /// >>> i, j = neigh.query_point_indices(), neigh.point_indices()
 /// >>> distances = np.sqrt(neigh.dist_sq())
 /// >>> directions = neigh.disp() / distances[:, None]
-#[pyclass(module = "molrs", name = "Neighbors")]
+#[pyclass(module = "molrs", name = "Neighbors", subclass)]
 pub struct PyNeighbors {
     pub(crate) inner: RsNeighbors,
 }
@@ -163,9 +163,7 @@ impl PyNeighbors {
         })
     }
 
-    fn __reduce__<'py>(
-        slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
         let inner = &slf.borrow().inner;
         crate::helpers::reduce_via_type(
             slf.as_any(),
@@ -332,7 +330,7 @@ impl PyNeighbors {
 /// >>> neigh = nl.neighbors()                # both columns (the default)
 /// >>> lean = nl.neighbors(disp=False)       # indices + d² only
 /// >>> nl.update(moved_points)               # re-index in the same box
-#[pyclass(module = "molrs", name = "NeighborList")]
+#[pyclass(module = "molrs", name = "NeighborList", subclass)]
 pub struct PyNeighborList {
     pub(crate) inner: Option<RsNeighborList>,
     brute_force: bool,
@@ -510,9 +508,7 @@ impl PyNeighborList {
         }
     }
 
-    fn __reduce__<'py>(
-        slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
         crate::helpers::reduce_via_type(
@@ -558,7 +554,7 @@ impl PyNeighborList {
 /// >>> nq = molrs.NeighborQuery(box, positions, cutoff=3.0)
 /// >>> cross = nq.query(query_positions)   # directed, no ``i < j`` rule
 /// >>> half = nq.query_self()              # half-shell over the reference set
-#[pyclass(module = "molrs", name = "NeighborQuery")]
+#[pyclass(module = "molrs", name = "NeighborQuery", subclass)]
 pub struct PyNeighborQuery {
     inner: RsNeighborQuery,
 }
@@ -645,9 +641,7 @@ impl PyNeighborQuery {
         )
     }
 
-    fn __reduce__<'py>(
-        slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
         crate::helpers::reduce_via_type(
@@ -672,7 +666,7 @@ fn skin_err(err: SkinError) -> PyErr {
 /// Constructed from a search engine whose cutoff is ``cutoff + skin``. The
 /// engine is **moved** into this object. Passing the skin into
 /// ``VelocityVerlet(..., neighbors=skin)`` moves it again into the integrator.
-#[pyclass(module = "molrs", name = "VerletSkin")]
+#[pyclass(module = "molrs", name = "VerletSkin", subclass)]
 pub struct PyVerletSkin {
     pub(crate) inner: Option<RsVerletSkin>,
     brute_force: bool,
@@ -815,9 +809,7 @@ impl PyVerletSkin {
         }
     }
 
-    fn __reduce__<'py>(
-        slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
         let inner = this.get()?;

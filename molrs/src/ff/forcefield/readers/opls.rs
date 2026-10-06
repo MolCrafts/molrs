@@ -43,6 +43,10 @@
 //! - RB `c0..c5` (kJ/mol) → OPLS 4-cosine `k1..k4` (kcal/mol) through
 //!   `ff::forcefield::torsion::rb_to_opls` (GROMACS Eqs. 200–201), then ÷ 4.184.
 //!   A row with `C5 ≠ 0` or `ΣCₙ ≠ 0` has no OPLS form and is an error.
+//! - `PeriodicTorsionForce` in OpenMM's `k{m}/periodicity{m}/phase{m}` (kJ/mol,
+//!   rad) → `dihedral periodic` / `improper periodic`, ÷ 4.184 on `k` only; the
+//!   CL&P `c0..c3` spelling of the same tag → `dihedral opls`. A row with neither
+//!   or both spellings is an error.
 //! - charge `e`, mass `amu`: unchanged.
 
 use roxmltree::Node;
@@ -114,8 +118,11 @@ impl ForceFieldReader for OplsXmlReader {
                 "HarmonicBondForce" => parse_bonds(&mut ff, &sec)?,
                 "HarmonicAngleForce" => parse_angles(&mut ff, &sec)?,
                 "RBTorsionForce" => parse_dihedrals(&mut ff, &sec)?,
-                // CL&P / foyer: Fourier coeffs c0..c3 in kJ/mol under this tag.
-                "PeriodicTorsionForce" => parse_periodic_torsions(&mut ff, &sec)?,
+                // OpenMM k{m}/periodicity{m}/phase{m}, or CL&P c0..c3 — per row.
+                "PeriodicTorsionForce" => parse_periodic_torsions(&mut ff, &sec, false)?,
+                // What the molrs 0.15.0 XML writer wrote its periodic impropers
+                // under: the same `<Improper>` rows, read the same way.
+                "PeriodicImproperForce" => parse_periodic_torsions(&mut ff, &sec, true)?,
                 "NonbondedForce" => {
                     coulomb14 = require_f64(&sec, "coulomb14scale")?;
                     lj14 = require_f64(&sec, "lj14scale")?;
@@ -142,7 +149,6 @@ impl ForceFieldReader for OplsXmlReader {
                 // tip3p.xml / clp.xml (and other OpenMM-style packs) load.
                 "Residues"
                 | "ImproperTorsionForce"
-                | "PeriodicImproperForce"
                 | "CustomTorsionForce"
                 | "CustomBondForce"
                 | "CustomAngleForce"
@@ -450,36 +456,136 @@ fn parse_dihedrals(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
     Ok(())
 }
 
-/// CL&P / foyer `PeriodicTorsionForce` rows carry OPLS Fourier coeffs
-/// ``c0..c3`` in kJ/mol (not the OpenMM k/periodicity/phase form). Convert
-/// to kcal/mol ``f1..f4`` on the `opls` dihedral style.
-fn parse_periodic_torsions(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
-    let style = ff
-        .def_style("dihedral", "opls", Params::new())
-        .map_err(|e| e.to_string())?;
+/// `<PeriodicTorsionForce>` children, in either of the two spellings found in the
+/// wild, decided per row:
+///
+/// - **OpenMM's own** — `k{m}`, `periodicity{m}`, `phase{m}` for `m = 1, 2, …`,
+///   `E = Σ k_m [1 + cos(n_m φ − γ_m)]` in kJ/mol and radians. That is molrs's
+///   `dihedral periodic` form term for term, so only the energy unit changes. A
+///   `<Proper>` goes to `dihedral periodic`; an `<Improper>` to
+///   `improper periodic`, whose kernel holds one term.
+/// - **CL&P / foyer** — OPLS Fourier `c0..c3` in kJ/mol under this tag, read as
+///   `dihedral opls` `k1..k4` in kcal/mol.
+///
+/// A row carrying neither spelling, or both, is an error: the reader used to fall
+/// back to zeros, which turned every standard OpenMM torsion into no torsion at
+/// all. An `<Improper>`'s classes keep OpenMM's order, central atom first; the
+/// canonical improper atom order is spec `ff-ir-01`'s, not this reader's.
+///
+/// With `impropers_only` (the `<PeriodicImproperForce>` the molrs 0.15.0 XML
+/// writer produced), only `<Improper>` rows are admitted.
+fn parse_periodic_torsions(
+    ff: &mut ForceField,
+    sec: &Node,
+    impropers_only: bool,
+) -> Result<(), String> {
+    let section = sec.tag_name().name();
     for d in sec.children().filter(Node::is_element) {
-        if d.tag_name().name() != "Proper" {
-            // Improper children under PeriodicTorsionForce are rare; skip.
-            continue;
+        let tag = d.tag_name().name();
+        if tag != "Improper" && (impropers_only || tag != "Proper") {
+            let expected = if impropers_only {
+                "<Improper>"
+            } else {
+                "<Proper> or <Improper>"
+            };
+            return Err(format!(
+                "{section}: unexpected child <{tag}> (expected {expected})"
+            ));
         }
-        let c1 = class_or_type(&d, 1)?;
-        let c2 = class_or_type(&d, 2)?;
-        let c3 = class_or_type(&d, 3)?;
-        let c4 = class_or_type(&d, 4)?;
-        // Prefer foyer/CL&P Fourier spelling (c0..c3); fall back to zero terms.
-        let f1 = opt_f64(&d, "c0")?.unwrap_or(0.0) / KJ_PER_KCAL;
-        let f2 = opt_f64(&d, "c1")?.unwrap_or(0.0) / KJ_PER_KCAL;
-        let f3 = opt_f64(&d, "c2")?.unwrap_or(0.0) / KJ_PER_KCAL;
-        let f4 = opt_f64(&d, "c3")?.unwrap_or(0.0) / KJ_PER_KCAL;
-        style
-            .def_type(
-                TypeName::join(&[c1, c2, c3, c4])?.as_str(),
-                &[c1, c2, c3, c4],
-                Params::from_pairs(&[("k1", f1), ("k2", f2), ("k3", f3), ("k4", f4)]),
-            )
+        let classes = [
+            class_or_type(&d, 1)?,
+            class_or_type(&d, 2)?,
+            class_or_type(&d, 3)?,
+            class_or_type(&d, 4)?,
+        ];
+        let label = classes.join("-");
+        let terms = periodic_terms(&d)?;
+        let clp = (0..4).any(|i| d.attribute(format!("c{i}").as_str()).is_some());
+        let params = match (terms.is_empty(), clp) {
+            (false, true) => {
+                return Err(format!(
+                    "PeriodicTorsionForce <{tag}> {label}: carries both OpenMM \
+                     k1/periodicity1/phase1 and CL&P c0..c3 terms"
+                ));
+            }
+            (true, false) => {
+                return Err(format!(
+                    "PeriodicTorsionForce <{tag}> {label}: carries neither OpenMM \
+                     k1/periodicity1/phase1 nor CL&P c0..c3 terms"
+                ));
+            }
+            (true, true) if tag == "Improper" => {
+                return Err(format!(
+                    "PeriodicTorsionForce <Improper> {label}: CL&P c0..c3 is a proper-torsion form"
+                ));
+            }
+            (true, true) => {
+                let c = |i: usize| -> Result<f64, String> {
+                    Ok(opt_f64(&d, &format!("c{i}"))?.unwrap_or(0.0) / KJ_PER_KCAL)
+                };
+                let (f1, f2, f3, f4) = (c(0)?, c(1)?, c(2)?, c(3)?);
+                (
+                    "dihedral",
+                    "opls",
+                    Params::from_pairs(&[("k1", f1), ("k2", f2), ("k3", f3), ("k4", f4)]),
+                )
+            }
+            (false, false) if tag == "Improper" => {
+                if terms.len() != 1 {
+                    return Err(format!(
+                        "PeriodicTorsionForce <Improper> {label}: {} terms, but the \
+                         periodic improper holds one",
+                        terms.len()
+                    ));
+                }
+                let (k, n, phase) = terms[0];
+                (
+                    "improper",
+                    "periodic",
+                    Params::from_pairs(&[("k", k), ("periodicity", n), ("phase", phase)]),
+                )
+            }
+            (false, false) => {
+                let mut pairs: Vec<(String, f64)> = Vec::with_capacity(3 * terms.len());
+                for (m, (k, n, phase)) in terms.iter().enumerate() {
+                    let m = m + 1;
+                    pairs.push((format!("k{m}"), *k));
+                    pairs.push((format!("periodicity{m}"), *n));
+                    pairs.push((format!("phase{m}"), *phase));
+                }
+                let refs: Vec<(&str, f64)> = pairs.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+                ("dihedral", "periodic", Params::from_pairs(&refs))
+            }
+        };
+        let (category, style_name, params) = params;
+        ff.def_style(category, style_name, Params::new())
+            .map_err(|e| e.to_string())?
+            .def_type(TypeName::join(&classes)?.as_str(), &classes, params)
             .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// OpenMM's indexed terms `(k [kcal/mol], periodicity, phase [rad])`, from `m = 1`
+/// until `periodicity{m}` is absent. A started term must carry all three keys.
+fn periodic_terms(node: &Node) -> Result<Vec<(f64, f64, f64)>, String> {
+    let mut terms = Vec::new();
+    for m in 1.. {
+        let n = opt_f64(node, &format!("periodicity{m}"))?;
+        let k = opt_f64(node, &format!("k{m}"))?;
+        let phase = opt_f64(node, &format!("phase{m}"))?;
+        match (n, k, phase) {
+            (None, None, None) => break,
+            (Some(n), Some(k), Some(phase)) => terms.push((k / KJ_PER_KCAL, n, phase)),
+            _ => {
+                return Err(format!(
+                    "<{}> term {m} needs all of periodicity{m}, k{m}, phase{m}",
+                    node.tag_name().name()
+                ));
+            }
+        }
+    }
+    Ok(terms)
 }
 
 // --- attribute helpers (total: missing/malformed → Err) -------------------
@@ -746,8 +852,147 @@ mod tests {
         }
     }
 
+    /// One `<PeriodicTorsionForce>` holding *rows* (raw XML children).
+    fn periodic_section(rows: &str) -> String {
+        format!(
+            r#"<ForceField name="x"><PeriodicTorsionForce>
+{rows}
+</PeriodicTorsionForce></ForceField>"#
+        )
+    }
+
+    /// OpenMM's own spelling — `E = Σ k_m [1 + cos(n_m φ − γ_m)]`, kJ/mol and
+    /// radians — is the same form as molrs `dihedral periodic`, so it reads
+    /// term by term: 4.184 kJ/mol → 1 kcal/mol, 2.092 → 0.5, phases unchanged.
+    /// It used to be parsed as CL&P `c0..c3`, absent, and stored as all zeros.
+    #[test]
+    fn openmm_periodic_proper_reads_as_multi_term_periodic() {
+        let xml = periodic_section(
+            r#"<Proper class1="HC" class2="CT" class3="CT" class4="HC" periodicity1="3" k1="4.184" phase1="0.0" periodicity2="1" k2="2.092" phase2="3.141592653589793"/>"#,
+        );
+        let ff = OplsXmlReader::new().read_str(&xml).unwrap();
+        let dih = ff
+            .get_style("dihedral", "periodic")
+            .expect("dihedral periodic");
+        let p = &dihedral_types(dih)[0].params;
+        for (key, want) in [
+            ("k1", 1.0),
+            ("periodicity1", 3.0),
+            ("phase1", 0.0),
+            ("k2", 0.5),
+            ("periodicity2", 1.0),
+            ("phase2", std::f64::consts::PI),
+        ] {
+            let got = p.get(key).unwrap_or_else(|| panic!("missing {key}"));
+            assert!((got - want).abs() < 1e-12, "{key}: got {got}, want {want}");
+        }
+        assert!(p.get("k3").is_none());
+    }
+
+    /// CL&P's `c0..c3` spelling under the same tag still reads as OPLS Fourier.
+    #[test]
+    fn clp_fourier_proper_still_reads_as_opls() {
+        let xml = periodic_section(
+            r#"<Proper class1="CT" class2="CT" class3="CT" class4="CT" c0="5.4392" c1="-0.2092" c2="0.8368" c3="0.0"/>"#,
+        );
+        let ff = OplsXmlReader::new().read_str(&xml).unwrap();
+        let p = &dihedral_types(ff.get_style("dihedral", "opls").unwrap())[0].params;
+        assert!((p.get("k1").unwrap() - 1.3).abs() < 1e-12);
+        assert!((p.get("k3").unwrap() - 0.2).abs() < 1e-12);
+    }
+
+    #[test]
+    fn proper_with_neither_spelling_is_an_error() {
+        let xml = periodic_section(r#"<Proper class1="A" class2="B" class3="C" class4="D"/>"#);
+        let err = OplsXmlReader::new().read_str(&xml).unwrap_err();
+        assert!(err.contains("periodicity1") && err.contains("c0"), "{err}");
+    }
+
+    #[test]
+    fn proper_with_both_spellings_is_an_error() {
+        let xml = periodic_section(
+            r#"<Proper class1="A" class2="B" class3="C" class4="D" c0="1.0" periodicity1="2" k1="1.0" phase1="0.0"/>"#,
+        );
+        assert!(OplsXmlReader::new().read_str(&xml).is_err());
+    }
+
+    /// A term index needs all three of `k{m}`, `periodicity{m}`, `phase{m}`.
+    #[test]
+    fn incomplete_periodic_term_is_an_error() {
+        let xml = periodic_section(
+            r#"<Proper class1="A" class2="B" class3="C" class4="D" periodicity1="2" k1="1.0"/>"#,
+        );
+        let err = OplsXmlReader::new().read_str(&xml).unwrap_err();
+        assert!(err.contains("phase1"), "{err}");
+    }
+
+    /// OpenMM impropers live under the same force. They used to be skipped.
+    #[test]
+    fn openmm_improper_reads_as_periodic_improper() {
+        let xml = periodic_section(
+            r#"<Improper class1="C" class2="O" class3="N" class4="CT" periodicity1="2" k1="43.932" phase1="3.141592653589793"/>"#,
+        );
+        let ff = OplsXmlReader::new().read_str(&xml).unwrap();
+        let imp = ff
+            .get_style("improper", "periodic")
+            .expect("improper periodic");
+        let t = &improper_types(imp)[0];
+        assert_eq!(
+            [
+                t.itom.as_str(),
+                t.jtom.as_str(),
+                t.ktom.as_str(),
+                t.ltom.as_str()
+            ],
+            ["C", "O", "N", "CT"]
+        );
+        assert!((t.params.get("k").unwrap() - 10.5).abs() < 1e-12);
+        assert!((t.params.get("periodicity").unwrap() - 2.0).abs() < 1e-12);
+        assert!((t.params.get("phase").unwrap() - std::f64::consts::PI).abs() < 1e-12);
+    }
+
+    /// The periodic improper kernel holds one term; a second is refused, not dropped.
+    #[test]
+    fn multi_term_improper_is_an_error() {
+        let xml = periodic_section(
+            r#"<Improper class1="C" class2="O" class3="N" class4="CT" periodicity1="2" k1="1.0" phase1="0.0" periodicity2="1" k2="1.0" phase2="0.0"/>"#,
+        );
+        assert!(OplsXmlReader::new().read_str(&xml).is_err());
+    }
+
+    /// The molrs 0.15.0 writer put periodic impropers under
+    /// `<PeriodicImproperForce>`; such a file reads them back instead of
+    /// skipping the section.
+    #[test]
+    fn a_periodic_improper_force_section_reads_its_impropers() {
+        let xml = r#"<ForceField name="x"><PeriodicImproperForce>
+<Improper class1="C" class2="O" class3="N" class4="CT" periodicity1="2" k1="43.932" phase1="3.141592653589793"/>
+</PeriodicImproperForce></ForceField>"#;
+        let ff = OplsXmlReader::new().read_str(xml).unwrap();
+        let imp = ff
+            .get_style("improper", "periodic")
+            .expect("improper periodic");
+        assert!((improper_types(imp)[0].params.get("k").unwrap() - 10.5).abs() < 1e-12);
+        let proper = xml.replace("<Improper ", "<Proper ");
+        assert!(OplsXmlReader::new().read_str(&proper).is_err());
+    }
+
+    #[test]
+    fn unknown_periodic_torsion_child_is_an_error() {
+        let xml = periodic_section(r#"<Torsion class1="A" class2="B" class3="C" class4="D"/>"#);
+        assert!(OplsXmlReader::new().read_str(&xml).is_err());
+    }
+
     // -- small helpers to reach into StyleDefs for assertions --
-    use crate::ff::forcefield::{AngleType, AtomType, DihedralType, Style, StyleDefs};
+    use crate::ff::forcefield::{
+        AngleType, AtomType, DihedralType, ImproperType, Style, StyleDefs,
+    };
+    fn improper_types(s: &Style) -> &[ImproperType] {
+        match &s.defs {
+            StyleDefs::Improper(v) => v,
+            _ => unreachable!(),
+        }
+    }
     fn atom_types(s: &Style) -> &[AtomType] {
         match &s.defs {
             StyleDefs::Atom(v) => v,

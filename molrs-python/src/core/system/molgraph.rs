@@ -12,8 +12,8 @@
 //!   never converted into each other). They add the
 //!   domain builders (`add_atom`/`add_bond`/…), own `to_frame` /
 //!   `from_frame` (`self.inner.to_frame()`, zero conversion), carry the
-//!   graph's `props` and live views ([`super::views`]), and cannot be
-//!   subclassed: each is the one class of its concept. They subclass `Graph`;
+//!   graph's `props` and live views ([`super::views`]), and are
+//!   subclassable, like every core data class. They subclass `Graph`;
 //!   the generic graph API is shared via the [`graph_world_impl!`] macro,
 //!   which always operates on the receiver's *own* graph (`self.mol()` /
 //!   `self.mol_mut()`), so the leaf's graph is the single data slot.
@@ -668,7 +668,12 @@ macro_rules! graph_world_impl {
 /// * ``parent_of`` — ``{new_handle: parent_handle}``
 /// * ``hops`` — ``{parent_handle: hops_from_nearest_center}``
 /// * ``node_map`` — ``{parent_handle: new_handle}``
-#[pyclass(module = "molrs", name = "ExtractedSubgraph", skip_from_py_object)]
+#[pyclass(
+    module = "molrs",
+    name = "ExtractedSubgraph",
+    skip_from_py_object,
+    subclass
+)]
 pub struct PyExtractedSubgraph {
     graph: Py<PyAny>,
     boundary: Vec<u64>,
@@ -696,9 +701,7 @@ impl PyExtractedSubgraph {
         }
     }
 
-    fn __reduce__<'py>(
-        slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         crate::helpers::reduce_via_type(
             slf.as_any(),
             (
@@ -890,10 +893,6 @@ impl GraphContent for MolGraph {
     }
 }
 
-/// `(cls, (), state)`: the pickle of a graph object restored by
-/// `__setstate__`.
-type GraphReduce<'py> = (Bound<'py, PyType>, Bound<'py, PyTuple>, Bound<'py, PyTuple>);
-
 // ---------------------------------------------------------------------------
 // PyGraph — the generic world
 // ---------------------------------------------------------------------------
@@ -929,14 +928,14 @@ impl PyGraph {
         Self::base()
     }
 
-    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<GraphReduce<'py>> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let py = slf.py();
         let content = slf.borrow().inner.dump_content(py)?;
-        Ok((
-            slf.get_type(),
+        crate::helpers::reduce_with_state(
+            slf.as_any(),
             PyTuple::empty(py),
-            PyTuple::new(py, [content])?,
-        ))
+            PyTuple::new(py, [content])?.into_any(),
+        )
     }
 
     fn __setstate__(&mut self, state: (Bound<'_, PyAny>,)) -> PyResult<()> {
@@ -1103,7 +1102,7 @@ macro_rules! leaf_views_impl {
 /// Holds a core [`Atomistic`] from construction; it is never converted from a
 /// `MolGraph`. Subclasses `Graph`; the generic API operates on this leaf's own
 /// graph. ``Atomistic(**props)``: the keywords are the graph's :attr:`props`.
-#[pyclass(module = "molrs._lib", name = "Atomistic", extends = PyGraph)]
+#[pyclass(module = "molrs._lib", name = "Atomistic", extends = PyGraph, subclass)]
 pub struct PyAtomistic {
     inner: Atomistic,
     props: Py<PyDict>,
@@ -1378,12 +1377,12 @@ impl PyAtomistic {
 
     // ---- pickling ----
 
-    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<GraphReduce<'py>> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let py = slf.py();
         let this = slf.try_borrow()?;
         let state =
             (this.props.bind(py).clone(), this.mol().dump_content(py)?).into_pyobject(py)?;
-        Ok((slf.get_type(), PyTuple::empty(py), state))
+        crate::helpers::reduce_with_state(slf.as_any(), PyTuple::empty(py), state.into_any())
     }
 
     fn __setstate__(&mut self, state: (Bound<'_, PyDict>, Bound<'_, PyAny>)) -> PyResult<()> {
@@ -1802,7 +1801,12 @@ impl PyAtomistic {
 /// ``atoms`` stores molecule atom handles in query-atom order. ``mapping``
 /// stores the Daylight atom-map projection (``:1`` → atom handle), and is empty
 /// when the query carries no map labels.
-#[pyclass(module = "molrs.perceive", name = "SmartsMatch", skip_from_py_object)]
+#[pyclass(
+    module = "molrs.perceive",
+    name = "SmartsMatch",
+    skip_from_py_object,
+    subclass
+)]
 #[derive(Clone)]
 pub struct PySmartsMatch {
     atoms: Vec<u64>,
@@ -1857,7 +1861,7 @@ impl PySmartsMatch {
 /// >>> pat = molrs.SmartsPattern("[C:1][O:2][H:3]")
 /// >>> pat.find_matches(methanol)[0].mapping
 /// {1: <C>, 2: <O>, 3: <H>}
-#[pyclass(module = "molrs.perceive", name = "SmartsPattern")]
+#[pyclass(module = "molrs.perceive", name = "SmartsPattern", subclass)]
 pub struct PySmartsPattern {
     inner: SmartsPattern,
 }
@@ -2019,7 +2023,7 @@ impl PySmartsPattern {
 /// >>> for pat in rxn.reactant_patterns:  # ... and merge the map->atom dicts
 /// ...     binding.update(pat.find_matches(mol, mapped=True)[0])
 /// >>> rxn.apply(mol, binding)            # edits `mol` in place
-#[pyclass(module = "molrs", name = "Reaction")]
+#[pyclass(module = "molrs", name = "Reaction", subclass)]
 pub struct PyReaction {
     inner: Reaction,
 }
@@ -2034,9 +2038,7 @@ impl PyReaction {
         Ok(Self { inner })
     }
 
-    fn __reduce__<'py>(
-        slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         crate::helpers::reduce_via_type(slf.as_any(), (slf.borrow().inner.source().to_owned(),))
     }
 
@@ -2195,7 +2197,7 @@ impl PyReaction {
 /// ``CoarseGrain(**props)``: the keywords are the graph's :attr:`props`. A
 /// bead built with ``def_bead(atoms=...)`` groups atom views of one source
 /// graph (its *member world*); ``bead["atoms"]`` answers with those views.
-#[pyclass(module = "molrs._lib", name = "CoarseGrain", extends = PyGraph)]
+#[pyclass(module = "molrs._lib", name = "CoarseGrain", extends = PyGraph, subclass)]
 pub struct PyCoarseGrain {
     inner: CoarseGrain,
     props: Py<PyDict>,
@@ -2354,7 +2356,7 @@ impl PyCoarseGrain {
 
     // ---- pickling ----
 
-    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<GraphReduce<'py>> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let py = slf.py();
         let this = slf.try_borrow()?;
         let world = this.member_world.as_ref().map(|w| w.bind(py).clone());
@@ -2397,7 +2399,7 @@ impl PyCoarseGrain {
             memberships,
         )
             .into_pyobject(py)?;
-        Ok((slf.get_type(), PyTuple::empty(py), state))
+        crate::helpers::reduce_with_state(slf.as_any(), PyTuple::empty(py), state.into_any())
     }
 
     #[allow(
@@ -2968,7 +2970,7 @@ rigid_body_impl!(PyCoarseGrain);
 /// 1
 /// >>> rings.ring_sizes()
 /// [6]
-#[pyclass(module = "molrs.perceive", name = "RingInfo")]
+#[pyclass(module = "molrs.perceive", name = "RingInfo", subclass)]
 pub struct PyRingInfo {
     inner: molrs::perceive::rings::RingInfo,
 }

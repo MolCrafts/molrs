@@ -1235,8 +1235,7 @@ class Atomistic(Graph):
     exposes the atom/bond/angle/dihedral/improper builders. The generic
     :class:`Graph` API operates on this leaf's own graph. Owns its
     :meth:`to_frame` / :meth:`from_frame` (domain conversions); it is never
-    *converted* from a bare :class:`Graph`. Not subclassable: this is the one
-    ``Atomistic`` class.
+    *converted* from a bare :class:`Graph`. Subclassable.
 
     ``Atomistic(**props)`` — the keywords are :attr:`props`. Nodes and
     relations are read and edited through live views (:attr:`atoms`,
@@ -1439,7 +1438,7 @@ class CoarseGrain(Graph):
     """Coarse-grained leaf — holds a core ``CoarseGrain`` from construction.
 
     ``add_bead`` writes ``bead_type``; registers the CG ``bonds`` kind. Owns its
-    :meth:`to_frame` / :meth:`from_frame`. Not subclassable.
+    :meth:`to_frame` / :meth:`from_frame`. Subclassable.
 
     ``CoarseGrain(**props)`` — the keywords are :attr:`props`. A bead made by
     ``def_bead(atoms=...)`` groups atom views of one source graph;
@@ -2610,7 +2609,7 @@ class Conformer:
 # ---------------------------------------------------------------------------
 
 class ForceField:
-    """A force field: styles and their types. Not subclassable; pickles by
+    """A force field: styles and their types. Subclassable; pickles by
     content. Styles and types are read and written through their handles."""
 
     def __init__(self, name: str = "forcefield", units: str | None = None) -> None: ...
@@ -2619,6 +2618,8 @@ class ForceField:
     @property
     def units(self) -> str: ...
     def merge(self, other: ForceField) -> Self: ...
+    @property
+    def special_bonds(self) -> tuple[list[float], list[float]]: ...
     def set_special_bonds(self, lj: Sequence[float], coul: Sequence[float]) -> None: ...
     def to_section(self) -> ForceFieldSection: ...
     @staticmethod
@@ -3092,7 +3093,9 @@ class Typifier[TGraph: Graph]:
 
     A subclass implements ``match`` (and optionally ``library``) and nothing
     else; defining ``typify`` on a subclass raises ``TypeError`` at class
-    creation. The native classes extend this base and only construct."""
+    creation. The native classes extend this base and only construct; they
+    are subclassable, but a subclass of one that defines ``match`` or
+    ``library`` raises ``TypeError`` (they run in Rust)."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None: ...
     def match(self, graph: _TGraph) -> Match:
@@ -4677,8 +4680,9 @@ def read_gromacs_top_ff(
 ) -> ForceField:
     """Read the force-field directives of a GROMACS topology into a :class:`ForceField`.
 
-    Reads ``[ defaults ]``, ``[ atomtypes ]``, ``[ bondtypes ]``,
-    ``[ angletypes ]`` and ``[ dihedraltypes ]``. Unmodelled directives and
+    Reads ``[ defaults ]``, ``[ atomtypes ]``, ``[ nonbond_params ]`` (explicit
+    ``lj/cut`` cross rows), ``[ bondtypes ]``, ``[ angletypes ]`` and
+    ``[ dihedraltypes ]``. Unmodelled directives and
     every molecule section raise ``ValueError`` naming them; molecule sections
     need :func:`molrs.io.read_top` or a skip. Each name in ``skip_directives``
     is read past instead of refused.

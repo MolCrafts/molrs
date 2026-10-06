@@ -22,7 +22,7 @@ use pyo3::prelude::*;
 /// >>> mesh.is_watertight()
 /// True
 /// >>> region = molrs.Polyhedron(mesh)
-#[pyclass(module = "molrs", name = "TriMesh", from_py_object)]
+#[pyclass(module = "molrs", name = "TriMesh", from_py_object, subclass)]
 #[derive(Clone)]
 pub struct PyTriMesh {
     pub(crate) inner: TriMesh,
@@ -137,9 +137,7 @@ impl PyTriMesh {
         Ok(b.into_pyarray(py))
     }
 
-    fn __reduce__<'py>(
-        slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
         let py = slf.py();
         let this = slf.borrow();
         crate::helpers::reduce_via_type(slf.as_any(), (this.vertices(py), this.faces(py)))

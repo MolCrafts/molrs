@@ -8,6 +8,47 @@ add features are not listed here, apart from a short "Also new" list at the
 end of each section; [What's new in 0.15](release-notes.md) walks through the
 new features.
 
+## 0.15.0 → 0.15.1
+
+A patch release on the 0.15 ABI line: nothing is renamed or removed, and
+consumers pinned to `>=0.15.0,<0.16` need no rebuild. These behaviours
+change:
+
+- **LJ cross rows are applied.** A `pair/lj/cut` row whose two endpoints
+  differ overrides the style's `mixing` rule for that type pair. 0.15.0
+  ignored it at compile time, so energies and forces of any force field
+  holding one (hand-built, `scale_lj` output, or read as below) change.
+- **LAMMPS force-field reader.**
+  - A cross `pair_coeff i j` is kept as a pair type; it used to be dropped.
+  - A repeated `pair_coeff` for the same pair (in either order) replaces the
+    earlier one, as LAMMPS does; 0.15.0 kept the first.
+  - A cross `pair_coeff` with a wildcard (`pair_coeff c3 * …`) is an error;
+    it used to be dropped.
+  - `read_data_coeffs` reads a data file's `PairIJ Coeffs` section; it used
+    to be skipped.
+- **GROMACS force-field reader and writer.** `[ nonbond_params ]` (funct 1)
+  is read as cross rows and written from them; 0.15.0 refused both. Other
+  funct codes are refused.
+- **AMBER prmtop reader.** A non-Lorentz–Berthelot off-diagonal LJ entry
+  (NBFIX) becomes a cross row; 0.15.0 refused the file.
+- **OpenMM XML reader.** A `<PeriodicTorsionForce>` `<Proper>` in OpenMM's
+  `k{m}/periodicity{m}/phase{m}` spelling is `dihedral/periodic` (0.15.0 read
+  it as an all-zero `dihedral/opls`), and an `<Improper>` there is
+  `improper/periodic` (0.15.0 skipped it), and so is an `<Improper>` under
+  `<PeriodicImproperForce>` (0.15.0 skipped the section). A row with neither
+  spelling, with both, an incomplete term, a multi-term `<Improper>`, or
+  another child tag is an error.
+- **OpenMM XML writer.** Impropers are `<Improper>` rows under
+  `<PeriodicTorsionForce>`, not `<PeriodicImproperForce>`. A harmonic
+  improper, a dihedral style with no periodic or OPLS form
+  (`multi/harmonic`, …) and an LJ cross row are errors; 0.15.0 wrote them as
+  rows that read back wrong or not at all.
+- **LAMMPS force-field writer.** `dihedral/periodic` is written as
+  `dihedral_style fourier`; a force field without pair types writes no
+  `pair_coeff` lines instead of failing.
+- **Python native typifiers** can be subclassed, but a subclass that
+  defines `match` or `library` raises `TypeError` at class creation.
+
 ## 0.14 → 0.15
 
 ### All surfaces

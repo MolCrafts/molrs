@@ -6,7 +6,7 @@ use pyo3::exceptions::{PyAttributeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 
-#[pyclass(module = "molrs", name = "Unit", frozen, skip_from_py_object)]
+#[pyclass(module = "molrs", name = "Unit", frozen, skip_from_py_object, subclass)]
 #[derive(Clone)]
 pub struct PyUnit {
     inner: Unit,
@@ -73,9 +73,7 @@ impl PyUnit {
         format!("<Unit('{}')>", self.inner)
     }
 
-    fn __reduce__<'py>(
-        slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let unit = &slf.borrow().inner;
         crate::helpers::reduce_via_type(
             slf.as_any(),
@@ -89,7 +87,13 @@ impl PyUnit {
     }
 }
 
-#[pyclass(module = "molrs", name = "Quantity", frozen, skip_from_py_object)]
+#[pyclass(
+    module = "molrs",
+    name = "Quantity",
+    frozen,
+    skip_from_py_object,
+    subclass
+)]
 #[derive(Clone)]
 pub struct PyQuantity {
     inner: Quantity,
@@ -115,9 +119,7 @@ impl PyQuantity {
         Self::new(Quantity::new(magnitude, unit.inner.clone()))
     }
 
-    fn __reduce__<'py>(
-        slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let this = slf.borrow();
         crate::helpers::reduce_via_type(slf.as_any(), (this.magnitude(), this.unit()))
     }
@@ -382,7 +384,13 @@ impl PyUnitRegistry {
 
 /// Named unit-system view (`"real"`, `"metal"`, …). Constants live in core;
 /// this is the Python spelling of `molrs::units::UnitPreset`.
-#[pyclass(module = "molrs", name = "UnitPreset", frozen, from_py_object)]
+#[pyclass(
+    module = "molrs",
+    name = "UnitPreset",
+    frozen,
+    from_py_object,
+    subclass
+)]
 #[derive(Clone)]
 pub struct PyUnitPreset {
     pub(crate) inner: UnitPreset,
@@ -409,9 +417,7 @@ impl PyUnitPreset {
         self.inner.name()
     }
 
-    fn __reduce__<'py>(
-        slf: &Bound<'py, Self>,
-    ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, pyo3::types::PyTuple>)> {
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         crate::helpers::reduce_via_type(slf.as_any(), (slf.borrow().name().to_owned(),))
     }
 
