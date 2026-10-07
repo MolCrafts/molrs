@@ -28,6 +28,7 @@
 # by molrs.io.read_lammps_log, kJ→kcal is a factor of molrs's unit registry).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+source scripts/without_slurm_step.sh
 GMX=${GMX:-gmx_d}
 LMP=${LMP:-lmp}
 PYTHON=${PYTHON:-python3}
@@ -38,21 +39,16 @@ work=$(mktemp -d)
 
 if [[ ${1:-} == --regen ]]; then
     "$PYTHON" - "$work" <<'PY'
-import math, sys
+import sys
 from pathlib import Path
 
-def sub(a, b): return [a[i] - b[i] for i in range(3)]
-def add(a, b): return [a[i] + b[i] for i in range(3)]
-def mul(a, s): return [x * s for x in a]
-def dot(a, b): return sum(a[i] * b[i] for i in range(3))
-def cross(a, b): return [a[1]*b[2] - a[2]*b[1], a[2]*b[0] - a[0]*b[2], a[0]*b[1] - a[1]*b[0]]
-def unit(a): n = math.sqrt(dot(a, a)); return [x / n for x in a]
+import molrs
+
+DEG = molrs.core.UnitRegistry().factor("deg", "rad")
+
 def place(a, b, c, bond, ang, tor):
-    """The atom bonded to c at `bond` Å, angle b-c-x `ang`, dihedral a-b-c-x `tor`."""
-    ang, tor = math.radians(ang), math.radians(tor)
-    bc = unit(sub(c, b)); n = unit(cross(sub(b, a), bc)); m = cross(n, bc)
-    d = [-bond * math.cos(ang), bond * math.sin(ang) * math.cos(tor), bond * math.sin(ang) * math.sin(tor)]
-    return add(c, add(add(mul(bc, d[0]), mul(m, d[1])), mul(n, d[2])))
+    """The atom bonded to c at `bond` Å, angle b-c-x `ang`°, dihedral a-b-c-x `tor`° (NeRF)."""
+    return list(molrs.op.place_from_internal_coords(a, b, c, bond, ang * DEG, tor * DEG))
 
 # ACE-ALA-ALA-NME heavy atoms, phi/psi off the CMAP grid.
 X = {}
@@ -266,10 +262,7 @@ thermo_style    custom step pe ebond eangle edihed eimp evdwl ecoul $(cat "$dir/
 thermo_modify   format float %.17g
 run             0
 IN
-        # Without the Slurm / PMI environment: inside one Slurm step a second
-        # MPI singleton start dies of SIGPIPE.
-        (cd "$dir" && env $(env | grep -o '^\(PMI\|PMIX\|SLURM\|OMPI\)[A-Za-z0-9_]*' |
-            sed 's/^/-u /') "$LMP" -in "in.$run" -log "log.$run" -screen none </dev/null)
+        (cd "$dir" && without_slurm_step "$LMP" -in "in.$run" -log "log.$run" -screen none </dev/null)
     done
 done
 

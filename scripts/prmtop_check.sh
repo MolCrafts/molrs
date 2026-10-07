@@ -35,6 +35,7 @@
 # `qqr2e` from molrs.core.constants.COULOMB_REAL.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+source scripts/without_slurm_step.sh
 PYTHON=${PYTHON:-python3}
 fixtures=molrs/src/io/amber/testdata/prmtop
 dir=${PRMTOP_CHECK_DIR:-$(mktemp -d)}
@@ -80,10 +81,8 @@ thermo_style    custom step pe ebond eangle edihed eimp evdwl ecoul c_s1 c_s2 ${
 thermo_modify   format float %.17g
 run             0
 IN
-    # A singleton MPI `lmp` inside a Slurm step takes the step's PMI, which
-    # the second one cannot have: run it without the step's PMI/Slurm env.
-    (cd "$case" && env $(env | grep -oE '^(PMI|PMIX|SLURM)[A-Za-z0-9_]*' | sed 's/^/-u /') \
-        "${LMP:-lmp}" -in "in.$name" -log "log.$name" -screen none </dev/null) ||
+    (cd "$case" && without_slurm_step "${LMP:-lmp}" -in "in.$name" -log "log.$name" \
+        -screen none </dev/null) ||
         { echo "lmp failed on $case/in.$name" >&2; exit 1; }
     "$PYTHON" scripts/engine_check_tables.py thermo "$case/log.$name"
 }
