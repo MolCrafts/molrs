@@ -3,7 +3,7 @@ use std::path::PathBuf;
 /// CXX bridge interface schema — single source of truth.
 ///
 /// The merged `molcrafts-molrs` crate hardcodes `F = f64`, so every coordinate,
-/// per-atom field, and distance crosses the bridge as `f64` unconditionally
+/// per-atom field, and distance crosses the bridge as `f64` unconditionally;
 /// Atomiverse converts at its Frame materialization boundary when its storage
 /// tier is not f64. There is no molrs precision-switching feature.
 const CXX_BRIDGE_SCHEMA: &str = r#"use super::*;
@@ -39,8 +39,9 @@ __MOLRS_ELEMENT_VARIANTS__    }
         F64x9,
     }
 
-    /// One exact-dtype metadata entry. Only the payload selected by `dtype` is used.
-    struct MetaEntry {
+    /// One frame-metadata value with its key and exact dtype. Only the payload
+    /// selected by `dtype` is used.
+    struct KeyedMetaValue {
         key: String,
         dtype: MetaType,
         bool_value: bool,
@@ -73,8 +74,9 @@ __MOLRS_ELEMENT_VARIANTS__    }
         // a shell is `region_and(outer, region_not(inner))`.
         type RegionRef;
 
-        fn region_sphere(center: &[f64], radius: f64) -> Box<RegionRef>;
-        fn region_cuboid(origin: &[f64], lengths: &[f64]) -> Box<RegionRef>;
+        // Every vector argument is exactly 3 values; anything else is an error.
+        fn region_sphere(center: &[f64], radius: f64) -> Result<Box<RegionRef>>;
+        fn region_cuboid(origin: &[f64], lengths: &[f64]) -> Result<Box<RegionRef>>;
         fn region_half_space(normal: &[f64], point: &[f64]) -> Result<Box<RegionRef>>;
         fn region_cylinder(
             base: &[f64],
@@ -88,8 +90,9 @@ __MOLRS_ELEMENT_VARIANTS__    }
         fn region_or(a: &RegionRef, b: &RegionRef) -> Box<RegionRef>;
         fn region_not(a: &RegionRef) -> Box<RegionRef>;
 
-        fn region_distance(rref: &RegionRef, points: &[f64]) -> Vec<f64>;
-        fn region_contains(rref: &RegionRef, points: &[f64]) -> Vec<u8>;
+        // `points` is flat [x, y, z, ...]; a ragged length is an error.
+        fn region_distance(rref: &RegionRef, points: &[f64]) -> Result<Vec<f64>>;
+        fn region_contains(rref: &RegionRef, points: &[f64]) -> Result<Vec<u8>>;
         fn region_bounds(rref: &RegionRef) -> Vec<f64>;
 
         fn frame_new() -> Box<FrameRef>;
@@ -105,14 +108,20 @@ __MOLRS_ELEMENT_VARIANTS__    }
         fn frame_has_block(fref: &FrameRef, block: &str) -> bool;
         fn frame_block_columns(fref: &FrameRef, block: &str) -> Vec<String>;
         fn frame_block_nrows(fref: &FrameRef, block: &str) -> i64;
-        fn frame_meta_entries(fref: &FrameRef) -> Vec<MetaEntry>;
 
-        // readers — owned copies (RefCell precludes returning borrowed slices)
+        // metadata: keys in insertion order, one value by key, insert/replace
+        fn frame_meta_keys(fref: &FrameRef) -> Vec<String>;
+        fn frame_get_meta(fref: &FrameRef, key: &str) -> Result<KeyedMetaValue>;
+        fn frame_set_meta(fref: &mut FrameRef, value: KeyedMetaValue) -> Result<()>;
+
+        // readers — owned copies (RefCell precludes returning borrowed slices);
+        // an absent block or column reads as empty. The box is its cell
+        // matrix H, 9 row-major values (empty when the frame has no box).
         fn frame_column_f64(fref: &FrameRef, block: &str, col: &str) -> Vec<f64>;
         fn frame_column_i32(fref: &FrameRef, block: &str, col: &str) -> Vec<i32>;
-        fn frame_column_u32(fref: &FrameRef, block: &str, col: &str) -> Vec<u64>;
+        fn frame_column_u64(fref: &FrameRef, block: &str, col: &str) -> Vec<u64>;
         fn frame_column_str(fref: &FrameRef, block: &str, col: &str) -> Vec<String>;
-        fn frame_box(fref: &FrameRef) -> Vec<f64>;
+        fn frame_box_h(fref: &FrameRef) -> Vec<f64>;
 
         // create-or-update writers
         fn frame_set_column_f64(
@@ -127,7 +136,7 @@ __MOLRS_ELEMENT_VARIANTS__    }
             col: &str,
             data: &[i32],
         ) -> Result<()>;
-        fn frame_set_column_u32(
+        fn frame_set_column_u64(
             fref: &mut FrameRef,
             block: &str,
             col: &str,
@@ -139,8 +148,8 @@ __MOLRS_ELEMENT_VARIANTS__    }
             col: &str,
             data: &[String],
         ) -> Result<()>;
-        fn frame_set_box(fref: &mut FrameRef, h: &[f64]) -> Result<()>;
-        fn frame_set_meta_entry(fref: &mut FrameRef, entry: MetaEntry) -> Result<()>;
+        // a periodic box at the origin from its 9-value row-major H
+        fn frame_set_box_h(fref: &mut FrameRef, h: &[f64]) -> Result<()>;
         // declared precision of an f64 column: a `*.mrec` writer stores it
         // rounded to the largest power of two <= precision (molrec)
         fn frame_set_precision(
@@ -169,141 +178,149 @@ __MOLRS_ELEMENT_VARIANTS__    }
         ) -> Result<Vec<f64>>;
 
         // ── I/O ──────────────────────────────────────────────────
-        // Write one frame (element + coords + typed metadata) to an XYZ file.
-        // Every MetaEntry carries an explicit dtype; malformed vector lengths
-        // are returned as errors. append=false truncates (create); append=true
-        // appends the frame.
-        fn write_frame_xyz_typed(
+        // The writers take atomic numbers + blocked coordinates; `h` is empty
+        // (no box) or a 9-value row-major H. A length mismatch, an unknown
+        // atomic number or a malformed / singular H is an error.
+
+        // Write one frame (element + coords + typed metadata) to an XYZ file
+        // (molrs XyzWriter). append=false truncates; append=true appends.
+        fn write_xyz_frame(
             path: &str,
-            type_id: &[i32],
+            atomic_number: &[i32],
             x: &[f64],
             y: &[f64],
             z: &[f64],
-            box_mat: &[f64],
-            meta: Vec<MetaEntry>,
+            h: &[f64],
+            meta: Vec<KeyedMetaValue>,
             append: bool,
         ) -> Result<()>;
-        // Write one frame + named per-atom fields (field_data reshaped
-        // [n_fields, n_atoms]) to a single-frame Zarr store.
-        fn write_frame(
+        // Read the first frame of an (ext)XYZ file into a materialize-ready
+        // FrameRef (atoms.{x,y,z,atomic_number} + box). `atomic_number` is
+        // derived from the required ExtXYZ species column. All XYZ parsing
+        // lives in molrs (io::read_xyz).
+        fn read_xyz_frame(path: &str) -> Result<Box<FrameRef>>;
+
+        // Write one frame + named per-atom fields (field_data is
+        // [n_fields, n_atoms]) as a `*.mrec` record whose `frame` section is
+        // that frame (molrs io::write_mrec_frame); read it back with
+        // read_mrec_frame (molrs io::read_mrec_frame).
+        fn write_mrec_frame(
             path: &str,
-            type_id: &[i32],
+            atomic_number: &[i32],
             x: &[f64],
             y: &[f64],
             z: &[f64],
-            box_mat: &[f64],
+            h: &[f64],
             field_names: Vec<String>,
             field_data: &[f64],
         ) -> Result<()>;
-        fn read_first_frame(path: &str) -> Result<Box<FrameRef>>;
+        fn read_mrec_frame(path: &str) -> Result<Box<FrameRef>>;
+        // Frame `index` of the trajectory in a `*.mrec` record (molrs
+        // MrecReader::frame); reads what an MrecWriterRef wrote.
+        fn read_mrec_trajectory_frame(path: &str, index: u64) -> Result<Box<FrameRef>>;
 
-        // ── Streaming trajectory writer (`*.mrec`, append-first) ──
+        // ── Streaming `*.mrec` trajectory writer (molrs MrecWriter) ──
         // The engine's output path: one writer per run, one frame per
         // append; complete inner chunks land on their own, `flush` commits
         // (durably when `durable`), `close` ends the run. `flush_every == 0`
         // leaves the landing cadence to the writer. `schema_from` pins the
         // blocks/columns every later frame must stay inside.
-        type TrajectoryWriterRef;
-        fn trajectory_writer_create(
+        type MrecWriterRef;
+        fn mrec_writer_create(
             path: &str,
             schema_from: &FrameRef,
             flush_every: u64,
             durable: bool,
-        ) -> Result<Box<TrajectoryWriterRef>>;
-        fn trajectory_writer_open(
+        ) -> Result<Box<MrecWriterRef>>;
+        fn mrec_writer_open(
             path: &str,
             flush_every: u64,
             durable: bool,
-        ) -> Result<Box<TrajectoryWriterRef>>;
-        fn trajectory_writer_append(
-            writer: &mut TrajectoryWriterRef,
+        ) -> Result<Box<MrecWriterRef>>;
+        fn mrec_writer_append(
+            writer: &mut MrecWriterRef,
             fref: &FrameRef,
             step: i64,
             time: f64,
             has_time: bool,
         ) -> Result<()>;
-        fn trajectory_writer_flush(writer: &mut TrajectoryWriterRef) -> Result<()>;
-        fn trajectory_writer_committed(writer: &TrajectoryWriterRef) -> u64;
-        fn trajectory_writer_close(writer: Box<TrajectoryWriterRef>) -> Result<()>;
-        // Read the first frame of an (ext)XYZ file into a materialize-ready
-        // FrameRef (atoms.{x,y,z,type} + simbox). `type` is derived from the
-        // required ExtXYZ species column (Z). All XYZ parsing lives in molrs.
-        fn xyz_read_first_frame(path: &str) -> Result<Box<FrameRef>>;
+        fn mrec_writer_flush(writer: &mut MrecWriterRef) -> Result<()>;
+        fn mrec_writer_committed(writer: &MrecWriterRef) -> u64;
+        fn mrec_writer_close(writer: Box<MrecWriterRef>) -> Result<()>;
 
-        // ── Trajectory-analysis compute objects (mirror molrs::compute::*) ──
-        // molrs's own calling convention, bridged as CXX opaque types:
-        // instantiate a compute with its config (`*_compute_new`), then call
-        // `compute(...)` over the whole accumulated raw trajectory. One-shot and
-        // stateless — matching the molrs `Compute` trait, there is no
-        // frame-by-frame accumulator. Each `compute` rebuilds transient molrs
-        // frames from the flat buffers and delegates the math to molrs
-        // (`compute::*`); no analysis math lives in C++. See molrs/src/compute/.
+        // ── Trajectory analysis (mirrors molrs::compute) ─────────
+        // Two shapes, named as molrs names them. One-shot analyses (`Msd`,
+        // `EinsteinDiffusion`, `Vacf`, `Rdf`): construct with the config
+        // (`*_new`), then `compute(...)` over the whole raw trajectory. Their
+        // streaming counterparts (`RdfAccumulator`, `MsdAccumulator`,
+        // `VacfAccumulator`) further down take one frame per call. Each
+        // rebuilds transient molrs frames from the flat buffers and delegates
+        // the math to molrs; no analysis math lives in C++.
 
         // Mean squared displacement (MsdMode::Direct): MSD(t) = <|r(t) - r(0)|^2>
         // over a row-major [n_frames, n_dof] position buffer (per frame blocked
         // x|y|z, n_dof = 3*n_atoms), first frame = reference (LAMMPS `compute
         // msd`). `compute` returns the mean-MSD curve (index 0 = 0); empty on < 2
         // frames / bad shape.
-        type MsdCompute;
-        fn msd_compute_new() -> Box<MsdCompute>;
-        fn compute(self: &MsdCompute, positions: &[f64], n_frames: i64, n_dof: i64) -> Vec<f64>;
+        type Msd;
+        fn msd_new() -> Box<Msd>;
+        fn compute(self: &Msd, positions: &[f64], n_frames: i64, n_dof: i64) -> Vec<f64>;
 
-        // Einstein self-diffusion coefficient D = slope / (2*dims) from the
-        // windowed-MSD slope over [fit_lo, fit_hi] (fractions of the last lag).
-        // `dt` = time between frames; `dims` = spatial dimensionality. `compute`
-        // takes the same [n_frames, n_dof] position buffer as MsdCompute and
-        // returns D; NaN on < 2 frames / bad shape / fit error. All math is molrs
-        // (EinsteinDiffusion + LinearFit).
-        type DiffusionCompute;
-        fn diffusion_compute_new(
+        // Einstein self-diffusion coefficient D (molrs
+        // EinsteinDiffusionResult::diffusion_coefficient) from the windowed-MSD
+        // slope over [fit_lo, fit_hi] (fractions of the last lag). `dt` = time
+        // between frames; `dims` = spatial dimensionality. `compute` takes the
+        // same [n_frames, n_dof] position buffer as Msd and returns D; NaN on
+        // < 2 frames / bad shape / fit error.
+        type EinsteinDiffusion;
+        fn einstein_diffusion_new(
             dt: f64,
             dims: i32,
             fit_lo: f64,
             fit_hi: f64,
-        ) -> Box<DiffusionCompute>;
-        fn compute(self: &DiffusionCompute, positions: &[f64], n_frames: i64, n_dof: i64) -> f64;
+        ) -> Box<EinsteinDiffusion>;
+        fn compute(self: &EinsteinDiffusion, positions: &[f64], n_frames: i64, n_dof: i64) -> f64;
 
         // Velocity autocorrelation function (VDOS / Green-Kubo input). `dt` = time
         // between frames; `resolution` caps the max lag. `compute` takes a
         // row-major [n_frames, n_dof] velocity buffer (n_dof = 3*n_atoms) and
         // returns the DOF-averaged VACF curve (index 0 = zero lag); empty on < 2
-        // frames / bad args. molrs owns the FFT-ACF math (compute::VACF).
-        type VacfCompute;
-        fn vacf_compute_new(dt: f64, resolution: i64) -> Box<VacfCompute>;
-        fn compute(self: &VacfCompute, velocities: &[f64], n_frames: i64, n_dof: i64) -> Vec<f64>;
+        // frames / bad args. molrs owns the FFT-ACF math (compute::Vacf).
+        type Vacf;
+        fn vacf_new(dt: f64, resolution: i64) -> Box<Vacf>;
+        fn compute(self: &Vacf, velocities: &[f64], n_frames: i64, n_dof: i64) -> Vec<f64>;
 
         // Radial distribution function g(r). Config: n_bins, r_max, r_min (Å).
         // `compute` takes raw [n_frames, 3*n_atoms] positions (blocked x|y|z per
-        // frame) + [n_frames, 9] per-frame cell matrices (supports NPT), rebuilds
-        // a LinkCell self-neighbor list per frame (cutoff = r_max), and returns
+        // frame) + [n_frames, 9] per-frame cell matrices H (supports NPT),
+        // builds a self-neighbor list per frame (cutoff = r_max), and returns
         // the g(r) curve (one value per bin; the caller derives bin-center radii
-        // r_min + (i+0.5)*bin_width). Empty on bad args/shape, a missing SimBox,
-        // or a compute error. All math is molrs (compute::RDF).
-        type RdfCompute;
-        fn rdf_compute_new(n_bins: i64, r_max: f64, r_min: f64) -> Box<RdfCompute>;
+        // r_min + (i+0.5)*bin_width). Empty on bad args/shape, a singular H,
+        // or a compute error. All math is molrs (compute::Rdf).
+        type Rdf;
+        fn rdf_new(n_bins: i64, r_max: f64, r_min: f64) -> Box<Rdf>;
         fn compute(
-            self: &RdfCompute,
+            self: &Rdf,
             positions: &[f64],
             boxes: &[f64],
             n_frames: i64,
             n_atoms: i64,
         ) -> Vec<f64>;
 
-        // ── Streaming trajectory-analysis accumulators (bounded memory) ──
-        // Frame-by-frame counterparts of the batch computes above: construct
-        // with the same config, feed ONE frame per `accumulate` call, read the
+        // ── Streaming accumulators (bounded memory) ──────────────
+        // Frame-by-frame counterparts of the analyses above: construct with
+        // the same config, feed ONE frame per `accumulate` call, read the
         // result once at the end. State is O(bins / window·n_dof /
         // resolution·n_dof) — never O(trajectory) — so arbitrarily long MD
         // runs stream through without growing memory. All math is molrs
-        // (compute::{RDFAccumulator, MSDAccumulator},
-        // compute::transport::VACFAccumulator); `accumulate` returns false when a
-        // frame is rejected (shape/DOF mismatch, bad box), leaving state
-        // unchanged.
+        // (compute::{RdfAccumulator, MsdAccumulator, VacfAccumulator});
+        // `accumulate` returns false when a frame is rejected (shape/DOF
+        // mismatch, bad box), leaving state unchanged.
 
         // Streaming g(r): one flat blocked-x|y|z position frame + row-major
-        // 3x3 cell per call; `finalize` returns the normalized g(r) (empty
-        // before the first accepted frame). Identical numerics to RdfCompute
-        // over the same frames.
+        // 3x3 H per call; `finalize` returns the normalized g(r) (empty
+        // before the first accepted frame). Identical numerics to Rdf over
+        // the same frames.
         type RdfAccumulator;
         fn rdf_accumulator_new(n_bins: i64, r_max: f64, r_min: f64) -> Box<RdfAccumulator>;
         fn accumulate(self: &mut RdfAccumulator, positions: &[f64], box9: &[f64]) -> bool;
@@ -312,9 +329,9 @@ __MOLRS_ELEMENT_VARIANTS__    }
 
         // Streaming MSD: Direct-mode curve (frame 0 = reference, exact) plus
         // windowed-MSD sums capped at `window` lags (ring buffer). `diffusion`
-        // = LinearFit slope / (2*dims) over the windowed curve within
-        // [fit_lo, fit_hi] fractions of the max resolved lag; NaN on bad
-        // args / too few frames / window = 0.
+        // is molrs EinsteinDiffusionResult::diffusion_coefficient over the
+        // windowed curve within [fit_lo, fit_hi] fractions of the max resolved
+        // lag; NaN on bad args / too few frames / window = 0.
         type MsdAccumulator;
         fn msd_accumulator_new(window: i64) -> Box<MsdAccumulator>;
         fn accumulate(self: &mut MsdAccumulator, positions: &[f64]) -> bool;
@@ -323,8 +340,8 @@ __MOLRS_ELEMENT_VARIANTS__    }
         fn diffusion(self: &MsdAccumulator, dt: f64, dims: i32, fit_lo: f64, fit_hi: f64) -> f64;
 
         // Streaming DOF-averaged velocity ACF, lags 0..=resolution
-        // (resolution >= 1). Matches VacfCompute (FFT batch path) to FFT
-        // round-off over the same frames.
+        // (resolution >= 1). Matches Vacf (FFT batch path) to FFT round-off
+        // over the same frames.
         type VacfAccumulator;
         fn vacf_accumulator_new(resolution: i64) -> Box<VacfAccumulator>;
         fn accumulate(self: &mut VacfAccumulator, velocities: &[f64]) -> bool;

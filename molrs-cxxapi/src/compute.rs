@@ -1,59 +1,54 @@
 //! Trajectory analysis for the C++ engine — the CXX face of `molrs::compute`.
 //!
-//! Two shapes per analysis: one-shot computes (`*Compute`) over a whole raw
-//! trajectory buffer, and bounded-memory streaming accumulators
-//! (`*Accumulator`) fed one frame per call. Each rebuilds transient molrs
-//! frames from the caller's flat buffers and delegates the math to molrs; no
-//! analysis math lives here. The engine measures; molrs analyzes.
+//! Two shapes per analysis, named as molrs names them: one-shot analyses
+//! (`Msd`, `EinsteinDiffusion`, `Vacf`, `Rdf`) over a whole raw trajectory
+//! buffer, and the bounded-memory streaming accumulators (`RdfAccumulator`,
+//! `MsdAccumulator`, `VacfAccumulator`) fed one frame per call. Each rebuilds
+//! transient molrs frames from the caller's flat buffers and delegates the
+//! math to molrs; no analysis math lives here. The engine measures; molrs
+//! analyzes.
 
-use molrs::compute::RdfAccumulator as RdfAccumulatorCore;
-use molrs::core::SimBox;
-use molrs::core::{Block, Frame};
-use molrs::op::F;
-use ndarray::{Array1, Array2};
+use molrs::compute::Compute;
+use molrs::core::Frame;
+use ndarray::Array2;
 
-/// Build a bare frame carrying only `atoms.{x,y,z}` (+ optional simbox).
-///
-/// Used by the analysis kernels, which read positions via `FrameAccess`.
-fn xyz_frame(
-    x: Vec<f64>,
-    y: Vec<f64>,
-    z: Vec<f64>,
-    box_mat: Option<&[f64]>,
-) -> Result<Frame, String> {
-    let mut atoms = Block::new();
-    atoms
-        .insert("x", Array1::from_vec(x).into_dyn())
-        .map_err(|e| format!("xyz_frame insert x: {e}"))?;
-    atoms
-        .insert("y", Array1::from_vec(y).into_dyn())
-        .map_err(|e| format!("xyz_frame insert y: {e}"))?;
-    atoms
-        .insert("z", Array1::from_vec(z).into_dyn())
-        .map_err(|e| format!("xyz_frame insert z: {e}"))?;
-    let mut frame = Frame::new();
-    frame.insert("atoms", atoms);
-    if let Some(bm) = box_mat
-        && bm.len() >= 9
-    {
-        let h = Array2::from_shape_vec((3, 3), bm[..9].to_vec())
-            .map_err(|e| format!("xyz_frame box reshape: {e}"))?;
-        if let Ok(sb) = SimBox::new(h, Array1::zeros(3), [true, true, true]) {
-            frame.simbox = Some(sb);
-        }
+use crate::frame::coords_frame;
+
+/// One transient frame per row of a row-major `[n_frames, 3 * n_atoms]`
+/// buffer, each row blocked `x[0..na) y[..) z[..)`. `None` on a shape that
+/// does not fit (fewer than `min_frames` frames, an `n_dof` that is not a
+/// positive multiple of 3, or a buffer of the wrong length).
+fn frames_from_blocked_rows(
+    positions: &[f64],
+    n_frames: i64,
+    n_dof: i64,
+    min_frames: i64,
+) -> Option<Vec<Frame>> {
+    if n_frames < min_frames || n_dof < 3 || n_dof % 3 != 0 {
+        return None;
     }
-    Ok(frame)
+    let (nf, nd) = (n_frames as usize, n_dof as usize);
+    if positions.len() != nf * nd {
+        return None;
+    }
+    positions
+        .chunks(nd)
+        .map(|row| {
+            let na = nd / 3;
+            coords_frame(&row[..na], &row[na..2 * na], &row[2 * na..], &[]).ok()
+        })
+        .collect()
 }
 
-/// Mean squared displacement compute — see [`MsdCompute::compute`].
-pub struct MsdCompute;
+/// Mean squared displacement — molrs `compute::Msd` (see [`Msd::compute`]).
+pub struct Msd;
 
-/// Construct an MSD compute (Direct mode: first frame = reference).
-pub(crate) fn msd_compute_new() -> Box<MsdCompute> {
-    Box::new(MsdCompute)
+/// Construct an MSD analysis (Direct mode: first frame = reference).
+pub(crate) fn msd_new() -> Box<Msd> {
+    Box::new(Msd)
 }
 
-impl MsdCompute {
+impl Msd {
     /// `Msd(t)` over a raw `[n_frames, n_dof]` position buffer.
     ///
     /// `positions` is row-major with each frame blocked `x[0..na) y[..) z[..)`
@@ -62,55 +57,36 @@ impl MsdCompute {
     /// (`compute::Msd`). Returns one mean value per frame (index 0 = 0); empty on
     /// < 2 frames or a bad shape — never panics.
     pub fn compute(&self, positions: &[f64], n_frames: i64, n_dof: i64) -> Vec<f64> {
-        use molrs::compute::{Compute, Msd};
-        if n_frames < 2 || n_dof < 3 || n_dof % 3 != 0 {
+        let Some(frames) = frames_from_blocked_rows(positions, n_frames, n_dof, 2) else {
             return Vec::new();
-        }
-        let (nf, nd) = (n_frames as usize, n_dof as usize);
-        if positions.len() != nf * nd {
-            return Vec::new();
-        }
-        let na = nd / 3;
-        let frames: Vec<Frame> = match (0..nf)
-            .map(|t| {
-                let b = t * nd;
-                xyz_frame(
-                    positions[b..b + na].to_vec(),
-                    positions[b + na..b + 2 * na].to_vec(),
-                    positions[b + 2 * na..b + 3 * na].to_vec(),
-                    None,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()
-        {
-            Ok(f) => f,
-            Err(_) => return Vec::new(),
         };
         let refs: Vec<&Frame> = frames.iter().collect();
-        match Msd::new().compute(&refs, ()) {
+        match molrs::compute::Msd::new().compute(&refs, ()) {
             Ok(ts) => ts.data.iter().map(|r| r.mean).collect(),
             Err(_) => Vec::new(),
         }
     }
 }
 
-/// Einstein self-diffusion compute — see [`DiffusionCompute::compute`].
-pub struct DiffusionCompute {
+/// Einstein self-diffusion — molrs `compute::EinsteinDiffusion` (see
+/// [`EinsteinDiffusion::compute`]).
+pub struct EinsteinDiffusion {
     dt: f64,
     dims: i32,
     fit_lo: f64,
     fit_hi: f64,
 }
 
-/// Construct an Einstein-diffusion compute. `dt` = time between frames; `dims` =
-/// spatial dimensionality; `[fit_lo, fit_hi]` = the MSD-slope fit window.
-pub(crate) fn diffusion_compute_new(
+/// Construct an Einstein-diffusion analysis. `dt` = time between frames;
+/// `dims` = spatial dimensionality; `[fit_lo, fit_hi]` = the MSD-slope fit
+/// window (fractions of the last lag).
+pub(crate) fn einstein_diffusion_new(
     dt: f64,
     dims: i32,
     fit_lo: f64,
     fit_hi: f64,
-) -> Box<DiffusionCompute> {
-    Box::new(DiffusionCompute {
+) -> Box<EinsteinDiffusion> {
+    Box::new(EinsteinDiffusion {
         dt,
         dims,
         fit_lo,
@@ -118,70 +94,46 @@ pub(crate) fn diffusion_compute_new(
     })
 }
 
-impl DiffusionCompute {
-    /// Einstein `D` (molrs `EinsteinDiffusionResult::diffusion_coefficient`) from the windowed-MSD slope over `[fit_lo, fit_hi]`
-    /// (fractions of the last lag), over a raw `[n_frames, n_dof]` position
-    /// buffer (same layout as [`MsdCompute::compute`]). All math is molrs
-    /// (`EinsteinDiffusion` + `LinearFit`). Returns `NaN` on < 2 frames, a bad
-    /// shape/args, or a fit error — never panics.
+impl EinsteinDiffusion {
+    /// Einstein `D` (molrs `EinsteinDiffusionResult::diffusion_coefficient`)
+    /// from the windowed-MSD slope over `[fit_lo, fit_hi]`, over a raw
+    /// `[n_frames, n_dof]` position buffer (same layout as [`Msd::compute`]).
+    /// Returns `NaN` on < 2 frames, a bad shape/args, or a fit error — never
+    /// panics.
     pub fn compute(&self, positions: &[f64], n_frames: i64, n_dof: i64) -> f64 {
-        use molrs::compute::{Compute, EinsteinDiffusion, EinsteinDiffusionArgs};
-        if n_frames < 2
-            || n_dof < 3
-            || n_dof % 3 != 0
-            || self.dt <= 0.0
-            || self.dt.is_nan()
-            || self.dims <= 0
-        {
+        use molrs::compute::EinsteinDiffusionArgs;
+        if self.dt <= 0.0 || self.dt.is_nan() || self.dims <= 0 {
             return f64::NAN;
         }
-        let (nf, nd) = (n_frames as usize, n_dof as usize);
-        if positions.len() != nf * nd {
+        let Some(frames) = frames_from_blocked_rows(positions, n_frames, n_dof, 2) else {
             return f64::NAN;
-        }
-        let na = nd / 3;
-        let frames: Vec<Frame> = match (0..nf)
-            .map(|t| {
-                let b = t * nd;
-                xyz_frame(
-                    positions[b..b + na].to_vec(),
-                    positions[b + na..b + 2 * na].to_vec(),
-                    positions[b + 2 * na..b + 3 * na].to_vec(),
-                    None,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()
-        {
-            Ok(f) => f,
-            Err(_) => return f64::NAN,
         };
         let refs: Vec<&Frame> = frames.iter().collect();
-        EinsteinDiffusion
+        molrs::compute::EinsteinDiffusion
             .compute(&refs, EinsteinDiffusionArgs { dt: self.dt })
             .and_then(|ed| ed.diffusion_coefficient(self.dims as usize, (self.fit_lo, self.fit_hi)))
             .unwrap_or(f64::NAN)
     }
 }
 
-/// Velocity autocorrelation compute — see [`VacfCompute::compute`].
-pub struct VacfCompute {
+/// Velocity autocorrelation — molrs `compute::Vacf` (see [`Vacf::compute`]).
+pub struct Vacf {
     dt: f64,
     resolution: i64,
 }
 
-/// Construct a VACF compute. `dt` = time between frames; `resolution` caps the
-/// max lag.
-pub(crate) fn vacf_compute_new(dt: f64, resolution: i64) -> Box<VacfCompute> {
-    Box::new(VacfCompute { dt, resolution })
+/// Construct a VACF analysis. `dt` = time between frames; `resolution` caps
+/// the max lag.
+pub(crate) fn vacf_new(dt: f64, resolution: i64) -> Box<Vacf> {
+    Box::new(Vacf { dt, resolution })
 }
 
-impl VacfCompute {
+impl Vacf {
     /// DOF-averaged VACF over a row-major `[n_frames, n_dof]` velocity buffer.
     /// All math is molrs (`compute::Vacf`, FFT-ACF). Returns the VACF curve (one
     /// value per lag, index 0 = zero lag); empty on fewer than two frames, a
     /// shape/arg error, or a compute error.
     pub fn compute(&self, velocities: &[f64], n_frames: i64, n_dof: i64) -> Vec<f64> {
-        use molrs::compute::{Compute, Vacf};
         if n_frames < 2 || n_dof < 1 || self.dt <= 0.0 || self.dt.is_nan() || self.resolution < 1 {
             return Vec::new();
         }
@@ -194,36 +146,36 @@ impl VacfCompute {
             Err(_) => return Vec::new(),
         };
         let frames: &[&Frame] = &[]; // VACF ignores the frame slice; velocities are in args
-        match Vacf.compute(frames, (&vel, self.dt, self.resolution as usize)) {
+        match molrs::compute::Vacf.compute(frames, (&vel, self.dt, self.resolution as usize)) {
             Ok(r) => r.acf.to_vec(),
             Err(_) => Vec::new(),
         }
     }
 }
 
-/// Radial distribution function compute — see [`RdfCompute::compute`].
-pub struct RdfCompute {
+/// Radial distribution function — molrs `compute::Rdf` (see [`Rdf::compute`]).
+pub struct Rdf {
     n_bins: i64,
     r_max: f64,
     r_min: f64,
 }
 
-/// Construct an RDF compute. `n_bins`, `r_max`, `r_min` (Å) — argument order
-/// mirrors molrs `Rdf::new(n_bins, r_max, r_min)`.
-pub(crate) fn rdf_compute_new(n_bins: i64, r_max: f64, r_min: f64) -> Box<RdfCompute> {
-    Box::new(RdfCompute {
+/// Construct an RDF analysis. `n_bins`, `r_max`, `r_min` (Å) — argument
+/// order mirrors molrs `Rdf::new(n_bins, r_max, r_min)`.
+pub(crate) fn rdf_new(n_bins: i64, r_max: f64, r_min: f64) -> Box<Rdf> {
+    Box::new(Rdf {
         n_bins,
         r_max,
         r_min,
     })
 }
 
-impl RdfCompute {
+impl Rdf {
     /// g(r) over raw `[n_frames, 3*n_atoms]` positions (blocked `x|y|z` per
     /// frame) + `[n_frames, 9]` per-frame cell matrices.
     ///
     /// Per frame: rebuild a transient `Frame` (x/y/z + `SimBox` from the 9 cell
-    /// values, periodic) and a `LinkCell` self-neighbor list (cutoff `r_max`),
+    /// values, periodic) and a `NeighborList` self-neighbor list (cutoff `r_max`),
     /// then `compute::Rdf` batch-accumulates pair distances into `n_bins` bins
     /// over `[r_min, r_max]` (Å), normalized by the ideal-gas shell volume at
     /// each frame's number density. The per-frame `boxes` support NPT. The
@@ -236,7 +188,6 @@ impl RdfCompute {
         n_frames: i64,
         n_atoms: i64,
     ) -> Vec<f64> {
-        use molrs::compute::Rdf;
         if n_frames < 1
             || n_atoms < 1
             || self.n_bins < 1
@@ -253,12 +204,12 @@ impl RdfCompute {
             return Vec::new();
         }
         // Stream frame-by-frame through the core accumulator (one transient
-        // frame + LinkCell at a time — the batch buffer is never duplicated).
-        let rdf = match Rdf::new(self.n_bins as usize, self.r_max, self.r_min) {
+        // frame + neighbour list at a time — the batch buffer is never duplicated).
+        let rdf = match molrs::compute::Rdf::new(self.n_bins as usize, self.r_max, self.r_min) {
             Ok(r) => r,
             Err(_) => return Vec::new(),
         };
-        let mut acc = RdfAccumulatorCore::new(rdf);
+        let mut acc = molrs::compute::RdfAccumulator::new(rdf);
         for t in 0..nf {
             let b = t * nd;
             let Some((frame, nlist)) =
@@ -280,7 +231,7 @@ impl RdfCompute {
 /// Build one transient molrs frame + cell-list self-neighbor list from a flat
 /// blocked `x|y|z` position frame and a row-major 3×3 cell.
 ///
-/// Shared by the batch [`RdfCompute`] and the streaming [`RdfAccumulator`] —
+/// Shared by the batch [`Rdf`] and the streaming [`RdfAccumulator`] —
 /// one marshaling path for both. `None` on an empty / non-multiple-of-3
 /// position slice, a malformed cell, or a rejected `SimBox`.
 fn frame_and_self_nlist(
@@ -293,19 +244,14 @@ fn frame_and_self_nlist(
         return None;
     }
     let na = positions.len() / 3;
-    let frame = xyz_frame(
-        positions[0..na].to_vec(),
-        positions[na..2 * na].to_vec(),
-        positions[2 * na..3 * na].to_vec(),
-        Some(box9),
+    let frame = coords_frame(
+        &positions[..na],
+        &positions[na..2 * na],
+        &positions[2 * na..],
+        box9,
     )
     .ok()?;
-    let mut pos = Array2::<F>::zeros((na, 3));
-    for a in 0..na {
-        pos[[a, 0]] = positions[a];
-        pos[[a, 1]] = positions[na + a];
-        pos[[a, 2]] = positions[2 * na + a];
-    }
+    let pos: Array2<f64> = frame.coords().ok()?;
     let nlist = {
         let simbox = frame.simbox.as_ref()?;
         let mut nl = NeighborList::new(r_max);
@@ -320,17 +266,16 @@ fn frame_and_self_nlist(
 /// `accumulate` returns `false` and `finalize` returns empty.
 pub struct RdfAccumulator {
     r_max: f64,
-    inner: Option<RdfAccumulatorCore>,
+    inner: Option<molrs::compute::RdfAccumulator>,
 }
 
 /// Construct a streaming RDF accumulator. `n_bins`, `r_max`, `r_min` (Å) —
-/// same argument order as [`rdf_compute_new`].
+/// same argument order as [`rdf_new`].
 pub(crate) fn rdf_accumulator_new(n_bins: i64, r_max: f64, r_min: f64) -> Box<RdfAccumulator> {
-    use molrs::compute::Rdf;
     let inner = if n_bins >= 1 {
-        Rdf::new(n_bins as usize, r_max, r_min)
+        molrs::compute::Rdf::new(n_bins as usize, r_max, r_min)
             .ok()
-            .map(RdfAccumulatorCore::new)
+            .map(molrs::compute::RdfAccumulator::new)
     } else {
         None
     };
@@ -409,7 +354,7 @@ impl MsdAccumulator {
         }
         let curve = molrs::compute::EinsteinDiffusionResult {
             lag_times: (0..msd.len()).map(|i| i as f64 * dt).collect(),
-            msd: Array1::from_vec(msd),
+            msd: ndarray::Array1::from_vec(msd),
         };
         curve
             .diffusion_coefficient(dims as usize, (fit_lo, fit_hi))
